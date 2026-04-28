@@ -47,6 +47,7 @@
 //! | Build a triangulation, insert/remove vertices | `use delaunay::prelude::triangulation::*` |
 //! | Read-only queries, traversal, convex hull | `use delaunay::prelude::query::*` |
 //! | Geometry helpers, predicates, points | `use delaunay::prelude::geometry::*` |
+//! | Random points / triangulations for examples and tests | `use delaunay::prelude::generators::*` |
 //! | Bistellar flips (Pachner moves) | `use delaunay::prelude::triangulation::flips::*` |
 //! | Delaunay repair and flip-based Level 4 validation | `use delaunay::prelude::triangulation::repair::*` |
 //! | Delaunayize workflow (repair + flip) | `use delaunay::prelude::triangulation::delaunayize::*` |
@@ -987,10 +988,6 @@ pub mod prelude {
     /// This is useful if you want a smaller import surface than `delaunay::prelude::*`,
     /// while still having access to the key public APIs typically used in docs/tests/examples/benches.
     ///
-    /// Note: `query` currently also re-exports a few helpers commonly used in
-    /// docs/tests/examples/benches (e.g., random generators). If this grows over time, it may be
-    /// split into more focused modules (e.g., `prelude::generators`).
-    ///
     /// Includes:
     /// - Topology traversal: [`DelaunayTriangulation::edges`], [`DelaunayTriangulation::incident_edges`],
     ///   [`DelaunayTriangulation::cell_neighbors`]
@@ -998,7 +995,6 @@ pub mod prelude {
     /// - Zero-allocation geometry accessors: [`DelaunayTriangulation::vertex_coords`],
     ///   [`DelaunayTriangulation::cell_vertices`]
     /// - Convex hull extraction: [`ConvexHull::from_triangulation`]
-    /// - Test/example helpers: [`generate_random_triangulation`], [`generate_random_points_seeded`]
     pub mod query {
         // Core read-only traversal / adjacency
         pub use crate::core::adjacency::{AdjacencyIndex, AdjacencyIndexBuildError};
@@ -1024,7 +1020,8 @@ pub mod prelude {
         // Read-only algorithms
         pub use crate::geometry::algorithms::convex_hull::ConvexHull;
 
-        // Convenience generators (commonly used in docs/tests/examples/benches)
+        // Convenience generators kept for compatibility with existing docs/tests/examples/benches.
+        // Prefer prelude::generators for new code that only needs fixture data.
         pub use crate::geometry::util::{
             generate_random_points_seeded, generate_random_triangulation,
         };
@@ -1034,6 +1031,33 @@ pub mod prelude {
 
         // Convenience macro (commonly used in docs/tests/examples) without importing full `prelude::*`.
         pub use crate::vertex;
+    }
+
+    /// Focused exports for generating fixture data in doctests, integration tests,
+    /// examples, and benchmarks.
+    ///
+    /// This module is intentionally separate from [`prelude::query`](crate::prelude::query)
+    /// so read-only traversal imports do not need to imply random data generation.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use delaunay::prelude::generators::generate_random_points_seeded;
+    /// use delaunay::prelude::geometry::Point;
+    ///
+    /// let points: Vec<Point<f64, 3>> =
+    ///     generate_random_points_seeded(4, (0.0, 1.0), 42).unwrap();
+    ///
+    /// assert_eq!(points.len(), 4);
+    /// ```
+    pub mod generators {
+        pub use crate::geometry::util::{
+            RandomPointGenerationError, generate_grid_points, generate_poisson_points,
+            generate_random_points, generate_random_points_in_ball,
+            generate_random_points_in_ball_seeded, generate_random_points_periodic,
+            generate_random_points_seeded, generate_random_triangulation,
+            generate_random_triangulation_with_topology_guarantee,
+        };
     }
     /// Topology validation & analysis utilities.
     pub mod topology {
@@ -1057,7 +1081,7 @@ pub mod prelude {
 /// Traits are checked at compile time, so this function is only used for
 /// testing.
 #[must_use]
-pub const fn is_normal<T: Sized + Send + Sync + Unpin>() -> bool {
+pub const fn is_normal<T: Send + Sync + Unpin>() -> bool {
     true
 }
 
@@ -1086,8 +1110,12 @@ mod tests {
             RepairQueueOrder, TopologyGuarantee, verify_delaunay_for_triangulation,
             verify_delaunay_via_flip_predicates, vertex,
         },
+        prelude::*,
         triangulation::delaunay::DelaunayTriangulation,
     };
+
+    #[cfg(feature = "count-allocations")]
+    use allocation_counter::measure;
 
     // =============================================================================
     // TYPE SAFETY TESTS
@@ -1117,9 +1145,7 @@ mod tests {
     }
 
     #[test]
-    fn test_prelude_collections_exports() {
-        use crate::prelude::*;
-
+    fn prelude_collections_exports() {
         // Test that we can use the collections from the prelude
         let mut map: FastHashMap<u64, usize> = FastHashMap::default();
         map.insert(123, 456);
@@ -1147,7 +1173,7 @@ mod tests {
     }
 
     #[test]
-    fn test_prelude_triangulation_repair_exports() {
+    fn prelude_repair_exports() {
         let vertices = vec![
             vertex!([0.0, 0.0]),
             vertex!([1.0, 0.0]),
@@ -1181,9 +1207,7 @@ mod tests {
     }
 
     #[test]
-    fn test_prelude_quality_exports() {
-        use crate::prelude::*;
-
+    fn prelude_quality_exports() {
         // Test that quality functions are accessible from prelude
         let vertices = vec![
             vertex!([0.0, 0.0]),
@@ -1206,8 +1230,6 @@ mod tests {
 
     #[test]
     fn test_prelude_kernel_exports() {
-        use crate::prelude::*;
-
         // Test that kernel types and predicates are accessible from prelude
         let fast_kernel = FastKernel::<f64>::new();
         let robust_kernel = RobustKernel::<f64>::new();
@@ -1252,8 +1274,6 @@ mod tests {
 
     #[test]
     fn test_prelude_core_types() {
-        use crate::prelude::*;
-
         // Test that core types are accessible and work from prelude
         // Point construction
         let p1 = Point::new([0.0, 0.0, 0.0]);
@@ -1292,8 +1312,6 @@ mod tests {
 
     #[test]
     fn test_prelude_point_location() {
-        use crate::prelude::*;
-
         // Test that point location algorithms are accessible
         let vertices = vec![
             vertex!([0.0, 0.0]),
@@ -1326,8 +1344,6 @@ mod tests {
 
     #[test]
     fn test_prelude_geometry_types() {
-        use crate::prelude::*;
-
         // Test Point with Coordinate trait
         let p = Point::new([1.0_f64, 2.0_f64, 3.0_f64]);
         assert!((p.coords()[0] - 1.0_f64).abs() < f64::EPSILON);
@@ -1353,8 +1369,6 @@ mod tests {
 
     #[test]
     fn test_prelude_convex_hull() {
-        use crate::prelude::*;
-
         // Test that convex hull operations are accessible
         let vertices = vec![
             vertex!([0.0, 0.0, 0.0]),
@@ -1390,9 +1404,7 @@ mod tests {
     /// Run these with `cargo test allocation_counting --features count-allocations`
     #[cfg(feature = "count-allocations")]
     #[test]
-    fn test_basic_allocation_counting() {
-        use allocation_counter::measure;
-
+    fn basic_alloc_counting() {
         // Test a trivial operation that should not allocate
         let result = measure(|| {
             let x = 1 + 1;
@@ -1428,9 +1440,7 @@ mod tests {
 
     #[cfg(feature = "count-allocations")]
     #[test]
-    fn test_allocation_counting_with_allocating_operation() {
-        use allocation_counter::measure;
-
+    fn alloc_counting_with_vec() {
         // Test an operation that does allocate memory
         let result = measure(|| {
             let _vec: Vec<i32> = vec![1, 2, 3, 4, 5];

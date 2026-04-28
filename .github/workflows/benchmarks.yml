@@ -42,6 +42,7 @@ concurrency:
 env:
   CARGO_TERM_COLOR: always
   RUST_BACKTRACE: 1
+  UV_VERSION: "0.11.8"
   BENCHMARK_TIMEOUT: 1800 # 30 min; pre-computed seeds + reduced 5D counts keep runtime well under this
   DELAUNAY_BENCH_DISCOVER_SEEDS_LIMIT: 256 # fallback only; ci_performance_suite uses pre-computed seeds
 
@@ -64,7 +65,7 @@ jobs:
       - name: Install uv (Python package manager)
         uses: astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b # v8.1.0
         with:
-          version: "latest"
+          version: ${{ env.UV_VERSION }}
 
       - name: Verify uv installation
         run: uv --version

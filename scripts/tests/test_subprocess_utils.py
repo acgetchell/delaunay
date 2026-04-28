@@ -16,6 +16,8 @@ import pytest
 # Add scripts directory to path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
+from typing import Never
+
 from subprocess_utils import (
     ExecutableNotFoundError,
     check_git_history,
@@ -34,7 +36,7 @@ class TestGetSafeExecutable:
     """Test get_safe_executable function."""
 
     @pytest.mark.parametrize("command", ["echo", "git", "ls"])
-    def test_finds_existing_executables(self, command):
+    def test_finds_existing_executables(self, command) -> None:
         """Test that it finds common executables."""
         result = get_safe_executable(command)
         assert isinstance(result, str)
@@ -47,7 +49,7 @@ class TestGetSafeExecutable:
             pytest.skip(f"{command} may not be an external executable on Windows")
 
     @pytest.mark.parametrize("fake_command", ["definitely-nonexistent-command-xyz", "fake-command-for-testing", "nonexistent123"])
-    def test_raises_on_nonexistent_executables(self, fake_command):
+    def test_raises_on_nonexistent_executables(self, fake_command) -> None:
         """Test that it raises ExecutableNotFoundError for nonexistent commands."""
         with pytest.raises(ExecutableNotFoundError, match="not found in PATH") as exc_info:
             get_safe_executable(fake_command)
@@ -58,26 +60,26 @@ class TestGetSafeExecutable:
 class TestRunGitCommand:
     """Test run_git_command function."""
 
-    def test_git_version(self):
+    def test_git_version(self) -> None:
         """Test basic git command execution."""
         result = run_git_command(["--version"])
         assert result.returncode == 0
         assert "git version" in result.stdout.lower()
         assert isinstance(result.stdout, str)
 
-    def test_git_command_with_custom_params(self):
+    def test_git_command_with_custom_params(self) -> None:
         """Test git command with custom parameters."""
         result = run_git_command(["status", "--porcelain"], check=False)
         # Should not raise even if there are changes (check=False)
         assert isinstance(result.returncode, int)
         assert isinstance(result.stdout, str)
 
-    def test_git_command_failure_handling(self):
+    def test_git_command_failure_handling(self) -> None:
         """Test that failed git commands raise CalledProcessError when check=True."""
         with pytest.raises(subprocess.CalledProcessError):
             run_git_command(["invalid-git-subcommand-xyz"], check=True)
 
-    def test_git_command_no_failure_with_check_false(self):
+    def test_git_command_no_failure_with_check_false(self) -> None:
         """Test that failed git commands don't raise when check=False."""
         result = run_git_command(["invalid-git-subcommand-xyz"], check=False)
         assert result.returncode != 0
@@ -88,7 +90,7 @@ class TestRunCargoCommand:
     """Test run_cargo_command function."""
 
     @pytest.mark.skipif(shutil.which("cargo") is None, reason="cargo not installed in PATH")
-    def test_cargo_version(self):
+    def test_cargo_version(self) -> None:
         """Test basic cargo command execution."""
         result = run_cargo_command(["--version"])
         assert result.returncode == 0
@@ -96,7 +98,7 @@ class TestRunCargoCommand:
         assert isinstance(result.stdout, str)
 
     @pytest.mark.skipif(shutil.which("cargo") is None, reason="cargo not installed in PATH")
-    def test_cargo_command_with_custom_params(self):
+    def test_cargo_command_with_custom_params(self) -> None:
         """Test cargo command with custom parameters."""
         result = run_cargo_command(["check", "--dry-run"], check=False)
         assert isinstance(result.returncode, int)
@@ -106,14 +108,14 @@ class TestRunCargoCommand:
 class TestRunSafeCommand:
     """Test run_safe_command function with various scenarios."""
 
-    def test_basic_command_execution(self):
+    def test_basic_command_execution(self) -> None:
         """Test basic command execution with default parameters."""
         result = run_safe_command("echo", ["hello world"])
         assert result.returncode == 0
         assert result.stdout.strip() == "hello world"
         assert isinstance(result.stdout, str)
 
-    def test_secure_defaults_are_applied(self):
+    def test_secure_defaults_are_applied(self) -> None:
         """Test that secure defaults are applied."""
         result = run_safe_command("echo", ["test"])
         # Should use secure defaults:
@@ -123,21 +125,21 @@ class TestRunSafeCommand:
         assert isinstance(result.stdout, str)
         assert result.stdout.strip() == "test"
 
-    def test_text_parameter_enforced(self):
+    def test_text_parameter_enforced(self) -> None:
         """Test that text parameter is enforced for security/stability."""
         # run_safe_command enforces text=True for stable CompletedProcess[str] typing
         result = run_safe_command("echo", ["test output"], text=False)  # text=False is ignored
         assert isinstance(result.stdout, str)  # Should still be string
         assert "test output" in result.stdout
 
-    def test_custom_check_parameter(self):
+    def test_custom_check_parameter(self) -> None:
         """Test overriding check parameter."""
         # Command that will fail
         result = run_safe_command("git", ["invalid-git-subcommand-xyz"], check=False)
         assert result.returncode != 0
         # Should not raise because check=False
 
-    def test_custom_capture_output_parameter(self):
+    def test_custom_capture_output_parameter(self) -> None:
         """Test overriding capture_output parameter."""
         if sys.platform.startswith("win"):
             pytest.skip("echo may not be an external executable on Windows")
@@ -145,19 +147,19 @@ class TestRunSafeCommand:
         # When capture_output=False, stdout should be None
         assert result.stdout is None
 
-    def test_multiple_custom_parameters(self):
+    def test_multiple_custom_parameters(self) -> None:
         """Test multiple custom parameters at once (text is enforced)."""
         result = run_safe_command("echo", ["multi param test"], text=False, check=False, capture_output=True)
         assert isinstance(result.stdout, str)  # text=False is ignored, still returns string
         assert result.returncode == 0
         assert "multi param test" in result.stdout
 
-    def test_nonexistent_command_raises_error(self):
+    def test_nonexistent_command_raises_error(self) -> None:
         """Test that nonexistent commands raise ExecutableNotFoundError."""
         with pytest.raises(ExecutableNotFoundError):
             run_safe_command("definitely-nonexistent-command", ["arg"])
 
-    def test_additional_kwargs_passed_through(self):
+    def test_additional_kwargs_passed_through(self) -> None:
         """Test that additional kwargs are passed through to subprocess.run."""
         # Test with timeout (a subprocess.run parameter not explicitly handled)
         result = run_safe_command("echo", ["timeout test"], timeout=10)
@@ -168,19 +170,19 @@ class TestRunSafeCommand:
 class TestGitRepositoryFunctions:
     """Test git repository detection functions."""
 
-    def test_check_git_repo_in_git_repo(self):
+    def test_check_git_repo_in_git_repo(self) -> None:
         """Test check_git_repo returns True when in a git repository."""
         if not check_git_repo():
             pytest.skip("Not running inside a git repository")
         assert check_git_repo() is True
 
-    def test_check_git_history_with_history(self):
+    def test_check_git_history_with_history(self) -> None:
         """Test check_git_history returns True when git history exists."""
         if not check_git_history():
             pytest.skip("Repository has no commit history")
         assert check_git_history() is True
 
-    def test_get_git_commit_hash_returns_hash(self):
+    def test_get_git_commit_hash_returns_hash(self) -> None:
         """Test that get_git_commit_hash returns a valid commit hash."""
         commit_hash = get_git_commit_hash()
         assert isinstance(commit_hash, str)
@@ -188,7 +190,7 @@ class TestGitRepositoryFunctions:
         # Should be hexadecimal
         assert all(c in "0123456789abcdef" for c in commit_hash.lower())
 
-    def test_get_git_remote_url_returns_url(self):
+    def test_get_git_remote_url_returns_url(self) -> None:
         """Test that get_git_remote_url returns a valid URL."""
         remotes = run_git_command(["remote"]).stdout.split()
         if "origin" not in remotes:
@@ -203,17 +205,17 @@ class TestGitRepositoryFunctions:
 class TestErrorHandling:
     """Test error handling and edge cases."""
 
-    def test_executable_not_found_error_attributes(self):
+    def test_executable_not_found_error_attributes(self) -> None:
         """Test ExecutableNotFoundError has proper attributes."""
         error = ExecutableNotFoundError("test message")
         assert str(error) == "test message"
         assert isinstance(error, Exception)
 
-    def test_git_functions_handle_missing_git(self, monkeypatch):
+    def test_git_functions_handle_missing_git(self, monkeypatch) -> None:
         """Test git functions handle missing git executable gracefully."""
 
         # Mock get_safe_executable to raise ExecutableNotFoundError for git
-        def mock_get_safe_executable(command):
+        def mock_get_safe_executable(command) -> str:
             if command == "git":
                 raise ExecutableNotFoundError(f"Required executable '{command}' not found in PATH")
             return "/bin/echo"  # Return echo for other commands
@@ -235,7 +237,7 @@ class TestErrorHandling:
 class TestSecurityFeatures:
     """Test security-related features of the utilities."""
 
-    def test_uses_full_executable_paths(self):
+    def test_uses_full_executable_paths(self) -> None:
         """Test that commands use full executable paths."""
         # This is implicitly tested by get_safe_executable tests,
         # but let's verify the behavior
@@ -243,7 +245,7 @@ class TestSecurityFeatures:
         assert Path(git_path).is_absolute()  # Should be absolute path
         assert "git" in git_path
 
-    def test_no_shell_execution(self):
+    def test_no_shell_execution(self) -> None:
         """Test that commands don't use shell=True."""
         # The functions should not use shell=True, which would be a security risk
         # We can't directly test this, but the implementation uses subprocess.run
@@ -252,7 +254,7 @@ class TestSecurityFeatures:
         # If shell=True was used, this would expand the environment variable
         assert result.stdout.strip() == "$HOME"
 
-    def test_check_parameter_security_default(self):
+    def test_check_parameter_security_default(self) -> None:
         """Test that check=True is the default for security."""
         # Command that will fail should raise by default
         with pytest.raises(subprocess.CalledProcessError):
@@ -266,11 +268,11 @@ class TestSecurityFeatures:
             (run_safe_command, ("echo", ["test"]), {"executable": "/malicious/fake/command"}),
         ],
     )
-    def test_rejects_executable_override(self, function, args, kwargs, monkeypatch):
+    def test_rejects_executable_override(self, function, args, kwargs, monkeypatch) -> None:
         """Test that functions reject executable override for security."""
         called = {"run": False}
 
-        def fake_run(*_a, **_k):
+        def fake_run(*_a, **_k) -> Never:
             called["run"] = True  # should never be set
             msg = "subprocess.run should not be called on override"
             raise AssertionError(msg)
@@ -280,7 +282,7 @@ class TestSecurityFeatures:
             function(*args, **kwargs)
         assert called["run"] is False
 
-    def test_run_git_command_with_input_rejects_executable_override(self):
+    def test_run_git_command_with_input_rejects_executable_override(self) -> None:
         """Test that run_git_command_with_input raises ValueError when executable is overridden."""
         with pytest.raises(ValueError, match="Overriding 'executable' is not allowed"):
             run_git_command_with_input(["hash-object", "--stdin"], "test content", executable="/malicious/fake/git")

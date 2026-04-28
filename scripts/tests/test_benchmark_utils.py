@@ -20,6 +20,7 @@ import tempfile
 import time
 from io import StringIO
 from pathlib import Path
+from typing import Any
 from unittest.mock import Mock, patch
 
 import pytest
@@ -30,6 +31,7 @@ from benchmark_models import (
     CircumsphereTestCase,
 )
 from benchmark_utils import (
+    _CI_PERFORMANCE_SUITE_MANIFEST_IDS_FILE,
     DEFAULT_REGRESSION_THRESHOLD,
     DEV_MODE_BENCH_ARGS,
     TRUSTED_BENCH_PROFILE,
@@ -40,6 +42,7 @@ from benchmark_utils import (
     PerformanceSummaryGenerator,
     ProjectRootNotFoundError,
     WorkflowHelper,
+    _expand_ci_benchmark_id_pattern,
     configure_logging,
     create_argument_parser,
     find_project_root,
@@ -47,9 +50,55 @@ from benchmark_utils import (
 )
 
 THRESHOLD_PERCENT = f"{DEFAULT_REGRESSION_THRESHOLD:.1f}%"
+CI_MANIFEST_STDOUT = (
+    "api_benchmark group=boundary_facets public_api=DelaunayTriangulation::boundary_facets "
+    "dimensions=3 benchmark_ids=boundary_facets/boundary_facets_3d/50 note=test\n"
+)
+PUBLIC_API_TITLE = "### Public API Performance Contract (`ci_performance_suite`)"
+CIRCUMSPHERE_TITLE = "## Circumsphere Predicate Analysis"
+PERFORMANCE_RANKING_TITLE = "### Performance Ranking"
+RECOMMENDATIONS_TITLE = "### Recommendations"
+PERFORMANCE_UPDATES_TITLE = "## Performance Data Updates"
 
 
-def compute_average_time_change(current_results, baseline_results):
+def completed_process(
+    stdout: str = "",
+    *,
+    returncode: int = 0,
+    stderr: str = "",
+    args: list[str] | None = None,
+) -> subprocess.CompletedProcess[str]:
+    """Return a typed subprocess result for command-wrapper mocks."""
+    return subprocess.CompletedProcess(args=args or [], returncode=returncode, stdout=stdout, stderr=stderr)
+
+
+def write_estimate(target_dir: Path, path_parts, mean_ns) -> None:
+    """Write a minimal Criterion estimates.json fixture."""
+    estimates_dir = target_dir / "criterion" / Path(*path_parts) / "base"
+    estimates_dir.mkdir(parents=True)
+    estimates = {
+        "mean": {
+            "point_estimate": mean_ns,
+            "confidence_interval": {
+                "lower_bound": mean_ns * 0.9,
+                "upper_bound": mean_ns * 1.1,
+            },
+        },
+    }
+    (estimates_dir / "estimates.json").write_text(json.dumps(estimates), encoding="utf-8")
+
+
+def write_ci_performance_manifest(target_dir: Path, benchmark_ids: list[str]) -> None:
+    """Write the ci_performance_suite runtime manifest sidecar."""
+    criterion_dir = target_dir / "criterion"
+    criterion_dir.mkdir(parents=True, exist_ok=True)
+    (criterion_dir / _CI_PERFORMANCE_SUITE_MANIFEST_IDS_FILE).write_text(
+        "\n".join(benchmark_ids) + "\n",
+        encoding="utf-8",
+    )
+
+
+def compute_average_time_change(current_results, baseline_results) -> float:
     """Replicate PerformanceComparator's geometric mean logic for tests."""
     time_changes = []
     for current in current_results:
@@ -73,7 +122,7 @@ def compute_average_time_change(current_results, baseline_results):
 
 
 @pytest.fixture
-def sample_estimates_data():
+def sample_estimates_data() -> dict[str, object]:
     """Fixture for common estimates.json test data."""
     return {
         "mean": {
@@ -84,7 +133,7 @@ def sample_estimates_data():
 
 
 @pytest.fixture
-def sample_benchmark_data():
+def sample_benchmark_data() -> dict[str, BenchmarkData]:
     """Fixture for common BenchmarkData test objects."""
     return {
         "2d_1000": BenchmarkData(1000, "2D").with_timing(100.0, 110.0, 120.0, "µs"),
@@ -96,7 +145,7 @@ def sample_benchmark_data():
 class TestCriterionParser:
     """Test cases for CriterionParser class."""
 
-    def test_parse_estimates_json_valid_data(self, sample_estimates_data):
+    def test_parse_estimates_json_valid_data(self, sample_estimates_data) -> None:
         """Test parsing valid estimates.json data."""
         with tempfile.NamedTemporaryFile(mode="w", suffix=".json", delete=False) as f:
             json.dump(sample_estimates_data, f)
@@ -118,7 +167,35 @@ class TestCriterionParser:
         finally:
             estimates_path.unlink()
 
-    def test_parse_estimates_json_zero_mean(self):
+    def test_benchmark_data_positional_timing_compatibility(self) -> None:
+        """Test legacy positional construction still maps the third argument to time_low."""
+        benchmark = BenchmarkData(1000, "2D", 1.0, 2.0, 3.0, "µs")
+
+        assert benchmark.time_low == 1.0
+        assert benchmark.time_mean == 2.0
+        assert benchmark.time_high == 3.0
+        assert benchmark.time_unit == "µs"
+        assert benchmark.benchmark_id == ""
+
+    def test_parse_estimates_json_preserves_unsized_workload(self, sample_estimates_data) -> None:
+        """Test Criterion estimates without numeric input size do not get fake throughput."""
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".json", delete=False) as f:
+            json.dump(sample_estimates_data, f)
+            f.flush()
+            estimates_path = Path(f.name)
+
+        try:
+            result = CriterionParser.parse_estimates_json(estimates_path, None, "4D")
+
+            assert result is not None
+            assert result.points is None
+            assert result.dimension == "4D"
+            assert result.throughput_mean is None
+            assert "0 Points" not in result.to_baseline_format()
+        finally:
+            estimates_path.unlink()
+
+    def test_parse_estimates_json_zero_mean(self) -> None:
         """Test parsing estimates.json with zero mean time."""
         estimates_data = {"mean": {"point_estimate": 0.0, "confidence_interval": {"lower_bound": 0.0, "upper_bound": 0.0}}}
 
@@ -133,7 +210,7 @@ class TestCriterionParser:
         finally:
             estimates_path.unlink()
 
-    def test_parse_estimates_json_very_fast_benchmark_division_by_zero_protection(self):
+    def test_parse_estimates_json_very_fast_benchmark_division_by_zero_protection(self) -> None:
         """Test division by zero protection for very fast benchmarks with near-zero confidence intervals."""
         estimates_data = {
             "mean": {
@@ -170,12 +247,12 @@ class TestCriterionParser:
         finally:
             estimates_path.unlink()
 
-    def test_parse_estimates_json_invalid_file(self):
+    def test_parse_estimates_json_invalid_file(self) -> None:
         """Test parsing non-existent estimates.json file."""
         result = CriterionParser.parse_estimates_json(Path("nonexistent.json"), 1000, "2D")
         assert result is None
 
-    def test_parse_estimates_json_malformed_json(self):
+    def test_parse_estimates_json_malformed_json(self) -> None:
         """Test parsing malformed JSON file."""
         with tempfile.NamedTemporaryFile(mode="w", suffix=".json", delete=False) as f:
             f.write("{ invalid json")
@@ -190,7 +267,7 @@ class TestCriterionParser:
 
     @patch("benchmark_utils.Path.exists")
     @patch("benchmark_utils.Path.iterdir")
-    def test_find_criterion_results_no_criterion_dir(self, mock_iterdir, mock_exists):  # noqa: ARG002
+    def test_find_criterion_results_no_criterion_dir(self, mock_iterdir, mock_exists) -> None:  # noqa: ARG002
         """Test finding criterion results when criterion directory doesn't exist."""
         mock_exists.return_value = False
 
@@ -199,7 +276,7 @@ class TestCriterionParser:
 
         assert results == []
 
-    def test_find_criterion_results_sorting(self):
+    def test_find_criterion_results_sorting(self) -> None:
         """Test that results are sorted by dimension and points."""
         # Create test data that would be unsorted initially
         test_results = [
@@ -222,7 +299,7 @@ class TestCriterionParser:
         assert test_results[3].dimension == "4D"
         assert test_results[3].points == 1000
 
-    def test_ci_performance_suite_patterns(self):
+    def test_ci_performance_suite_patterns(self) -> None:
         """Test CI performance suite benchmark patterns (2D, 3D, 4D, 5D with 10, 25, 50 points)."""
         # Test data representing CI performance suite dimensions and point counts
         ci_suite_results = [
@@ -248,18 +325,78 @@ class TestCriterionParser:
         actual_order = [(b.dimension, b.points) for b in ci_suite_results]
         assert actual_order == expected_order
 
+    def test_ci_benchmark_id_pattern_expands_braced_segments(self) -> None:
+        """Test ci_performance_suite manifest brace patterns expand to concrete IDs."""
+        result = _expand_ci_benchmark_id_pattern("tds_new_2d/{tds_new,tds_new_adversarial}/{10,25}")
+
+        assert result == {
+            "tds_new_2d/tds_new/10",
+            "tds_new_2d/tds_new/25",
+            "tds_new_2d/tds_new_adversarial/10",
+            "tds_new_2d/tds_new_adversarial/25",
+        }
+
+    def test_find_criterion_results_preserves_ci_suite_ids(self) -> None:
+        """Test ci_performance_suite results keep expanded Criterion benchmark IDs."""
+        with tempfile.TemporaryDirectory() as temp_dir:
+            target_dir = Path(temp_dir) / "target"
+
+            write_estimate(target_dir, ("boundary_facets", "boundary_facets_3d", "50"), 10_000.0)
+            write_estimate(target_dir, ("validation", "validate_3d", "50"), 20_000.0)
+            write_estimate(target_dir, ("boundary_facets", "boundary_facets_3d_adversarial", "50"), 30_000.0)
+            write_estimate(target_dir, ("bistellar_flips_4d", "k2_roundtrip"), 40_000.0)
+
+            results = CriterionParser.find_criterion_results(target_dir)
+
+            assert [result.comparison_key for result in results] == [
+                "boundary_facets/boundary_facets_3d/50",
+                "boundary_facets/boundary_facets_3d_adversarial/50",
+                "validation/validate_3d/50",
+                "bistellar_flips_4d/k2_roundtrip",
+            ]
+            sized_results = [result for result in results if result.comparison_key != "bistellar_flips_4d/k2_roundtrip"]
+            assert {(result.points, result.dimension) for result in sized_results} == {(50, "3D")}
+
+            roundtrip = next(result for result in results if result.comparison_key == "bistellar_flips_4d/k2_roundtrip")
+            assert roundtrip.points is None
+            assert roundtrip.dimension == "4D"
+            assert roundtrip.throughput_mean is None
+
+    def test_find_criterion_results_filters_stale_ci_suite_ids_with_manifest(self) -> None:
+        """Test ci_performance_suite parsing ignores stale Criterion files outside the manifest."""
+        with tempfile.TemporaryDirectory() as temp_dir:
+            target_dir = Path(temp_dir) / "target"
+
+            write_estimate(target_dir, ("boundary_facets", "boundary_facets_3d", "50"), 10_000.0)
+            write_estimate(target_dir, ("validation", "validate_3d", "50"), 20_000.0)
+            write_estimate(target_dir, ("boundary_facets", "old_boundary_facets_3d", "50"), 30_000.0)
+            write_ci_performance_manifest(
+                target_dir,
+                [
+                    "boundary_facets/boundary_facets_3d/50",
+                    "validation/validate_3d/50",
+                ],
+            )
+
+            results = CriterionParser.find_criterion_results(target_dir)
+
+            assert [result.comparison_key for result in results] == [
+                "boundary_facets/boundary_facets_3d/50",
+                "validation/validate_3d/50",
+            ]
+
 
 class TestPerformanceComparator:
     """Test cases for PerformanceComparator class."""
 
     @pytest.fixture
-    def comparator(self):
+    def comparator(self) -> PerformanceComparator:
         """Fixture for PerformanceComparator instance."""
         project_root = Path("/fake/project")
         return PerformanceComparator(project_root)
 
     @pytest.fixture
-    def sample_baseline_content(self):
+    def sample_baseline_content(self) -> str:
         """Fixture for sample baseline content."""
         return """Date: 2023-06-15 10:30:00 PDT
 Git commit: abc123def456
@@ -285,7 +422,7 @@ Time: [200.0, 220.0, 240.0] µs
 Throughput: [4.167, 4.545, 5.0] Kelem/s
 """
 
-    def test_parse_baseline_file(self, comparator, sample_baseline_content):
+    def test_parse_baseline_file(self, comparator, sample_baseline_content) -> None:
         """Test parsing baseline file content."""
         results = comparator._parse_baseline_file(sample_baseline_content)
 
@@ -301,7 +438,98 @@ Throughput: [4.167, 4.545, 5.0] Kelem/s
         assert bench_2d_1000.time_mean == 110.0
         assert bench_2d_1000.throughput_mean == 9.091
 
-    def test_write_time_comparison_no_regression(self, comparator):
+    def test_parse_baseline_file_with_benchmark_ids(self, comparator) -> None:
+        """Test parsing expanded ci_performance_suite baseline identifiers."""
+        baseline_content = """Date: 2023-06-15 10:30:00 PDT
+Git commit: abc123def456
+
+=== 50 Points (3D) ===
+Benchmark ID: boundary_facets/boundary_facets_3d/50
+Time: [9.0, 10.0, 11.0] µs
+Throughput: [4.545, 5.0, 5.556] Kelem/s
+
+=== 50 Points (3D) ===
+Benchmark ID: validation/validate_3d/50
+Time: [19.0, 20.0, 21.0] µs
+Throughput: [2.381, 2.5, 2.632] Kelem/s
+"""
+
+        results = comparator._parse_baseline_file(baseline_content)
+
+        assert set(results) == {
+            "boundary_facets/boundary_facets_3d/50",
+            "validation/validate_3d/50",
+        }
+        assert results["boundary_facets/boundary_facets_3d/50"].time_mean == 10.0
+        assert results["validation/validate_3d/50"].time_mean == 20.0
+
+    def test_parse_baseline_file_with_unsized_benchmark_id(self, comparator) -> None:
+        """Test parsing expanded CI benchmarks without numeric input sizes."""
+        baseline_content = """Date: 2023-06-15 10:30:00 PDT
+Git commit: abc123def456
+
+=== Unsized Workload (4D) ===
+Benchmark ID: bistellar_flips_4d/k2_roundtrip
+Time: [0.8, 0.95, 1.1] µs
+"""
+
+        results = comparator._parse_baseline_file(baseline_content)
+
+        benchmark = results["bistellar_flips_4d/k2_roundtrip"]
+        assert benchmark.points is None
+        assert benchmark.dimension == "4D"
+        assert benchmark.throughput_mean is None
+
+    def test_write_performance_comparison_matches_benchmark_ids(self, comparator) -> None:
+        """Test comparison uses expanded benchmark IDs instead of point/dimension collisions."""
+        current_results = [
+            BenchmarkData(50, "3D", benchmark_id="boundary_facets/boundary_facets_3d/50").with_timing(9.0, 10.0, 11.0, "µs"),
+            BenchmarkData(50, "3D", benchmark_id="validation/validate_3d/50").with_timing(19.0, 20.0, 21.0, "µs"),
+        ]
+        baseline_results = {
+            "boundary_facets/boundary_facets_3d/50": BenchmarkData(
+                50,
+                "3D",
+                benchmark_id="boundary_facets/boundary_facets_3d/50",
+            ).with_timing(9.0, 10.0, 11.0, "µs"),
+            "validation/validate_3d/50": BenchmarkData(
+                50,
+                "3D",
+                benchmark_id="validation/validate_3d/50",
+            ).with_timing(38.0, 40.0, 42.0, "µs"),
+        }
+
+        output = StringIO()
+        comparator._write_performance_comparison(output, current_results, baseline_results)
+        content = output.getvalue()
+
+        assert "Benchmark ID: boundary_facets/boundary_facets_3d/50" in content
+        assert "Benchmark ID: validation/validate_3d/50" in content
+        assert "OK: Time change +0.0%" in content
+        assert "IMPROVEMENT: Time decreased by 50.0%" in content
+
+    def test_write_performance_comparison_no_legacy_fallback_for_benchmark_id(self, comparator) -> None:
+        """Test expanded IDs do not compare against unrelated collapsed legacy baselines."""
+        current_results = [
+            BenchmarkData(50, "3D", benchmark_id="validation/validate_3d/50").with_timing(
+                19.0,
+                20.0,
+                21.0,
+                "µs",
+            ),
+        ]
+        baseline_results = {
+            "50_3D": BenchmarkData(50, "3D").with_timing(38.0, 40.0, 42.0, "µs"),
+        }
+
+        output = StringIO()
+        comparator._write_performance_comparison(output, current_results, baseline_results)
+        content = output.getvalue()
+
+        assert "Baseline: N/A (no matching entry)" in content
+        assert "IMPROVEMENT: Time decreased by 50.0%" not in content
+
+    def test_write_time_comparison_no_regression(self, comparator) -> None:
         """Test time comparison writing with no regression."""
         current = BenchmarkData(1000, "2D").with_timing(100.0, 110.0, 120.0, "µs")
         baseline = BenchmarkData(1000, "2D").with_timing(95.0, 105.0, 115.0, "µs")
@@ -317,7 +545,7 @@ Throughput: [4.167, 4.545, 5.0] Kelem/s
         assert "4.8%" in result
         assert "✅ OK: Time change +4.8% within acceptable range" in result
 
-    def test_write_time_comparison_with_regression(self, comparator):
+    def test_write_time_comparison_with_regression(self, comparator) -> None:
         """Test time comparison writing with regression."""
         current = BenchmarkData(1000, "2D").with_timing(100.0, 115.0, 130.0, "µs")
         baseline = BenchmarkData(1000, "2D").with_timing(95.0, 100.0, 105.0, "µs")
@@ -333,7 +561,7 @@ Throughput: [4.167, 4.545, 5.0] Kelem/s
         assert "15.0%" in result
         assert "⚠️  REGRESSION" in result
 
-    def test_write_time_comparison_with_improvement(self, comparator):
+    def test_write_time_comparison_with_improvement(self, comparator) -> None:
         """Test time comparison writing with significant improvement."""
         current = BenchmarkData(1000, "2D").with_timing(80.0, 90.0, 100.0, "µs")
         baseline = BenchmarkData(1000, "2D").with_timing(95.0, 100.0, 105.0, "µs")
@@ -349,7 +577,7 @@ Throughput: [4.167, 4.545, 5.0] Kelem/s
         assert "10.0%" in result
         assert "✅ IMPROVEMENT: Time decreased by 10.0% (faster performance)" in result
 
-    def test_write_time_comparison_zero_baseline(self, comparator):
+    def test_write_time_comparison_zero_baseline(self, comparator) -> None:
         """Test time comparison with zero baseline time."""
         current = BenchmarkData(1000, "2D").with_timing(100.0, 110.0, 120.0, "µs")
         baseline = BenchmarkData(1000, "2D").with_timing(0.0, 0.0, 0.0, "µs")
@@ -365,7 +593,7 @@ Throughput: [4.167, 4.545, 5.0] Kelem/s
 
     @pytest.mark.parametrize("dev_mode", [False, True])
     @patch("benchmark_utils.run_cargo_command")
-    def test_compare_omits_quiet_flag(self, mock_cargo, dev_mode):
+    def test_compare_omits_quiet_flag(self, mock_cargo, dev_mode) -> None:
         """Test that PerformanceComparator invokes cargo without --quiet flag (removed for better error visibility)."""
         with tempfile.TemporaryDirectory() as temp_dir:
             temp_path = Path(temp_dir)
@@ -380,10 +608,7 @@ Time: [1.0, 1.0, 1.0] µs
             baseline_file.write_text(baseline_content)
 
             # Mock successful cargo command
-            mock_result = Mock()
-            mock_result.returncode = 0
-            mock_result.stdout = ""
-            mock_cargo.return_value = mock_result
+            mock_cargo.return_value = completed_process(CI_MANIFEST_STDOUT)
 
             comparator = PerformanceComparator(temp_path)
             comparator.compare_with_baseline(baseline_file, dev_mode=dev_mode)
@@ -399,7 +624,7 @@ Time: [1.0, 1.0, 1.0] µs
             # And output is captured
             assert mock_cargo.call_args.kwargs.get("capture_output") is True
 
-    def test_write_performance_comparison_no_average_regression(self, comparator):
+    def test_write_performance_comparison_no_average_regression(self, comparator) -> None:
         """Test performance comparison with individual regressions but no average regression."""
         # Create current results with mixed performance changes
         current_results = [
@@ -432,7 +657,7 @@ Time: [1.0, 1.0, 1.0] µs
         assert re.search(r"Average time change:\s*-?0\.0%", result)
         assert "✅ OVERALL OK" in result
 
-    def test_write_performance_comparison_with_average_regression(self, comparator):
+    def test_write_performance_comparison_with_average_regression(self, comparator) -> None:
         """Test performance comparison with average regression exceeding threshold."""
         # Create current results with overall performance degradation
         current_results = [
@@ -465,7 +690,7 @@ Time: [1.0, 1.0, 1.0] µs
         assert "Average time change: 11.0%" in result
         assert "🚨 OVERALL REGRESSION" in result
 
-    def test_write_performance_comparison_with_average_improvement(self, comparator):
+    def test_write_performance_comparison_with_average_improvement(self, comparator) -> None:
         """Test performance comparison with significant average improvement."""
         # Create current results with overall performance improvement
         current_results = [
@@ -500,7 +725,7 @@ Time: [1.0, 1.0, 1.0] µs
         assert expected_average_line in result
         assert "✅ OVERALL OK" in result
 
-    def test_write_performance_comparison_missing_baseline(self, comparator):
+    def test_write_performance_comparison_missing_baseline(self, comparator) -> None:
         """Test performance comparison when some baselines are missing."""
         current_results = [
             BenchmarkData(1000, "2D").with_timing(105.0, 110.0, 115.0, "µs"),
@@ -522,7 +747,7 @@ Time: [1.0, 1.0, 1.0] µs
         assert "Total benchmarks compared: 1" in result
         assert "3000 Points (2D)" in result  # Should still show the benchmark without baseline
 
-    def test_write_performance_comparison_no_benchmarks(self, comparator):
+    def test_write_performance_comparison_no_benchmarks(self, comparator) -> None:
         """Test performance comparison with no benchmarks."""
         output = StringIO()
         regression_found = comparator._write_performance_comparison(output, [], {})
@@ -532,7 +757,7 @@ Time: [1.0, 1.0, 1.0] µs
 
     @patch("benchmark_utils.get_git_commit_hash")
     @patch("benchmark_utils.datetime")
-    def test_prepare_comparison_metadata(self, mock_datetime, mock_git, comparator, sample_baseline_content):
+    def test_prepare_comparison_metadata(self, mock_datetime, mock_git, comparator, sample_baseline_content) -> None:
         """Test preparation of comparison metadata."""
         # Mock current datetime
         mock_now = Mock()
@@ -550,15 +775,15 @@ Time: [1.0, 1.0, 1.0] µs
         assert metadata["baseline_commit"] == "abc123def456"
 
     @patch("benchmark_utils.get_git_commit_hash")
-    def test_prepare_comparison_metadata_git_failure(self, mock_git, comparator, sample_baseline_content):
+    def test_prepare_comparison_metadata_git_failure(self, mock_git, comparator, sample_baseline_content) -> None:
         """Test metadata preparation when git command fails."""
-        mock_git.side_effect = Exception("Git not available")
+        mock_git.side_effect = RuntimeError("Git not available")
 
         metadata = comparator._prepare_comparison_metadata(sample_baseline_content)
 
         assert metadata["current_commit"] == "unknown"
 
-    def test_regression_threshold_configuration(self, comparator):
+    def test_regression_threshold_configuration(self, comparator) -> None:
         """Test that regression threshold can be configured."""
         # Test default threshold
         assert comparator.regression_threshold == DEFAULT_REGRESSION_THRESHOLD
@@ -576,7 +801,7 @@ Time: [1.0, 1.0, 1.0] µs
         assert time_change == pytest.approx(7.0, abs=0.001)  # Use pytest.approx for floating-point comparison
         assert not is_regression
 
-    def test_write_error_file_baseline_not_found(self, comparator):
+    def test_write_error_file_baseline_not_found(self, comparator) -> None:
         """Test writing error file when baseline is not found."""
         with tempfile.TemporaryDirectory() as temp_dir:
             output_file = Path(temp_dir) / "error_results.txt"
@@ -591,7 +816,7 @@ Time: [1.0, 1.0, 1.0] µs
             assert str(baseline_file) in content
             assert "This error prevented the benchmark comparison from completing successfully" in content
 
-    def test_write_error_file_benchmark_error(self, comparator):
+    def test_write_error_file_benchmark_error(self, comparator) -> None:
         """Test writing error file when benchmark execution fails."""
         with tempfile.TemporaryDirectory() as temp_dir:
             output_file = Path(temp_dir) / "error_results.txt"
@@ -605,7 +830,7 @@ Time: [1.0, 1.0, 1.0] µs
             assert error_message in content
             assert "Please check the CI logs for more information" in content
 
-    def test_write_error_file_creates_parent_directory(self, comparator):
+    def test_write_error_file_creates_parent_directory(self, comparator) -> None:
         """Test that _write_error_file creates parent directory if it doesn't exist."""
         with tempfile.TemporaryDirectory() as temp_dir:
             output_file = Path(temp_dir) / "nested" / "path" / "error_results.txt"
@@ -617,7 +842,7 @@ Time: [1.0, 1.0, 1.0] µs
             content = output_file.read_text()
             assert "❌ Error: Test error" in content
 
-    def test_write_error_file_handles_write_failure(self, comparator):
+    def test_write_error_file_handles_write_failure(self, comparator) -> None:
         """Test that _write_error_file handles write failures gracefully."""
         with tempfile.TemporaryDirectory() as temp_dir:
             output_file = Path(temp_dir) / "error_results.txt"
@@ -630,7 +855,7 @@ Time: [1.0, 1.0, 1.0] µs
             # File should not exist due to write failure
             assert not output_file.exists()
 
-    def test_sampling_warning_reports_dev_full_mismatch(self):
+    def test_sampling_warning_reports_dev_full_mismatch(self) -> None:
         """Test that comparison warns when baseline and current sampling modes differ."""
         with tempfile.TemporaryDirectory() as temp_dir:
             comparator = PerformanceComparator(Path(temp_dir))
@@ -651,7 +876,7 @@ Criterion warm-up time: 1
             assert "Criterion measurement time: baseline=2, current=criterion-default" in warning
             assert "Criterion warm-up time: baseline=1, current=criterion-default" in warning
 
-    def test_sampling_warning_reports_missing_baseline_metadata(self, comparator, sample_baseline_content):
+    def test_sampling_warning_reports_missing_baseline_metadata(self, comparator, sample_baseline_content) -> None:
         """Test that legacy baselines without sampling metadata produce a warning."""
         warning = comparator._sampling_warning(sample_baseline_content, dev_mode=False)
 
@@ -674,9 +899,9 @@ class TestBaselineGenerator:
     @patch("benchmark_utils.get_git_commit_hash", return_value="abc123")
     @patch("benchmark_utils.CriterionParser.find_criterion_results")
     @patch("benchmark_utils.run_cargo_command")
-    def test_generate_baseline_uses_perf_profile(self, mock_cargo, mock_find_results, mock_git):
+    def test_generate_baseline_uses_perf_profile(self, mock_cargo, mock_find_results, mock_git) -> None:
         """Test that full baseline generation benchmarks with the trusted Cargo profile."""
-        mock_cargo.return_value = Mock(stdout="")
+        mock_cargo.return_value = completed_process(CI_MANIFEST_STDOUT)
         mock_find_results.return_value = self._sample_benchmark_results()
 
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -700,9 +925,9 @@ class TestBaselineGenerator:
     @patch("benchmark_utils.get_git_commit_hash", return_value="abc123")
     @patch("benchmark_utils.CriterionParser.find_criterion_results")
     @patch("benchmark_utils.run_cargo_command")
-    def test_generate_baseline_dev_mode_keeps_perf_profile(self, mock_cargo, mock_find_results, mock_git):
+    def test_generate_baseline_dev_mode_keeps_perf_profile(self, mock_cargo, mock_find_results, mock_git) -> None:
         """Test that dev baseline mode reduces Criterion settings without changing Cargo profile."""
-        mock_cargo.return_value = Mock(stdout="")
+        mock_cargo.return_value = completed_process(CI_MANIFEST_STDOUT)
         mock_find_results.return_value = self._sample_benchmark_results()
 
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -731,12 +956,12 @@ class TestIntegrationScenarios:
     """Integration test scenarios for real-world use cases."""
 
     @pytest.fixture
-    def comparator(self):
+    def comparator(self) -> PerformanceComparator:
         """Fixture for PerformanceComparator instance."""
         project_root = Path("/fake/project")
         return PerformanceComparator(project_root)
 
-    def test_realistic_mixed_performance_scenario(self, comparator):
+    def test_realistic_mixed_performance_scenario(self, comparator) -> None:
         """Test a realistic scenario with mixed performance changes."""
         # Simulate a realistic benchmark run with various performance changes
         current_results = [
@@ -775,7 +1000,7 @@ class TestIntegrationScenarios:
         assert expected_average_line in result
         assert "✅ OVERALL OK" in result
 
-    def test_gradual_performance_degradation_scenario(self, comparator):
+    def test_gradual_performance_degradation_scenario(self, comparator) -> None:
         """Test scenario where performance gradually degrades across all benchmarks."""
         # Simulate gradual performance degradation that individually isn't alarming
         # but collectively indicates a problem
@@ -809,7 +1034,7 @@ class TestIntegrationScenarios:
         assert "Average time change: 9.0%" in result
         assert "🚨 OVERALL REGRESSION" in result
 
-    def test_noisy_benchmarks_scenario(self, comparator):
+    def test_noisy_benchmarks_scenario(self, comparator) -> None:
         """Test scenario with noisy benchmarks that have high individual variance."""
         # Simulate noisy benchmarks where individual results vary significantly
         # but overall trend is acceptable
@@ -850,12 +1075,12 @@ class TestEdgeCases:
     """Test edge cases and error conditions."""
 
     @pytest.fixture
-    def comparator(self):
+    def comparator(self) -> PerformanceComparator:
         """Fixture for PerformanceComparator instance."""
         project_root = Path("/fake/project")
         return PerformanceComparator(project_root)
 
-    def test_empty_current_results(self, comparator):
+    def test_empty_current_results(self, comparator) -> None:
         """Test comparison with empty current results."""
         baseline_results = {
             "1000_2D": BenchmarkData(1000, "2D").with_timing(95.0, 100.0, 105.0, "µs"),
@@ -867,7 +1092,7 @@ class TestEdgeCases:
         assert not regression_found
         assert "SUMMARY" not in output.getvalue()
 
-    def test_empty_baseline_results(self, comparator):
+    def test_empty_baseline_results(self, comparator) -> None:
         """Test comparison with empty baseline results."""
         current_results = [
             BenchmarkData(1000, "2D").with_timing(105.0, 110.0, 115.0, "µs"),
@@ -881,7 +1106,7 @@ class TestEdgeCases:
         assert "1000 Points (2D)" in result
         assert "SUMMARY" not in result
 
-    def test_all_zero_baseline_times(self, comparator):
+    def test_all_zero_baseline_times(self, comparator) -> None:
         """Test comparison when all baseline times are zero."""
         current_results = [
             BenchmarkData(1000, "2D").with_timing(105.0, 110.0, 115.0, "µs"),
@@ -901,7 +1126,7 @@ class TestEdgeCases:
         assert "N/A (baseline mean is 0)" in result
         assert "SUMMARY" not in result  # No valid comparisons
 
-    def test_mixed_valid_invalid_baselines(self, comparator):
+    def test_mixed_valid_invalid_baselines(self, comparator) -> None:
         """Test comparison with mix of valid and invalid baseline data."""
         current_results = [
             BenchmarkData(1000, "2D").with_timing(105.0, 110.0, 115.0, "µs"),
@@ -929,14 +1154,14 @@ class TestWorkflowHelper:
     """Test cases for WorkflowHelper class."""
 
     @patch.dict(os.environ, {"GITHUB_REF": "refs/tags/v1.2.3"}, clear=False)
-    def test_determine_tag_name_from_github_ref(self):
+    def test_determine_tag_name_from_github_ref(self) -> None:
         """Test tag name determination from GITHUB_REF with tag."""
         tag_name = WorkflowHelper.determine_tag_name()
         assert tag_name == "v1.2.3"
 
     @patch.dict(os.environ, {"GITHUB_REF": "refs/heads/main"}, clear=False)
     @patch("benchmark_utils.datetime")
-    def test_determine_tag_name_generated(self, mock_datetime):
+    def test_determine_tag_name_generated(self, mock_datetime) -> None:
         """Test tag name generation when not from a tag push."""
         # Mock datetime
         mock_now = Mock()
@@ -947,7 +1172,7 @@ class TestWorkflowHelper:
         assert tag_name == "manual-20231215-143000"
 
     @patch.dict(os.environ, {"GITHUB_REF": "refs/tags/v2.0.0"}, clear=False)
-    def test_determine_tag_name_with_github_output(self):
+    def test_determine_tag_name_with_github_output(self) -> None:
         """Test tag name determination with GITHUB_OUTPUT file."""
         with tempfile.NamedTemporaryFile(mode="w", delete=False) as f:
             output_file = f.name
@@ -964,7 +1189,7 @@ class TestWorkflowHelper:
         finally:
             Path(output_file).unlink(missing_ok=True)
 
-    def test_create_metadata_success(self):
+    def test_create_metadata_success(self) -> None:
         """Test successful metadata creation."""
         with tempfile.TemporaryDirectory() as temp_dir:
             output_dir = Path(temp_dir)
@@ -998,7 +1223,7 @@ class TestWorkflowHelper:
             # Check ISO format timestamp
             assert metadata["generated_at"].endswith("Z")
 
-    def test_create_metadata_with_safe_env_vars(self):
+    def test_create_metadata_with_safe_env_vars(self) -> None:
         """Test metadata creation with SAFE_ prefixed environment variables."""
         with tempfile.TemporaryDirectory() as temp_dir:
             output_dir = Path(temp_dir)
@@ -1027,7 +1252,7 @@ class TestWorkflowHelper:
             assert metadata["commit"] == "def456abc789"
             assert metadata["workflow_run_id"] == "987654321"
 
-    def test_create_metadata_missing_env_vars(self):
+    def test_create_metadata_missing_env_vars(self) -> None:
         """Test metadata creation with missing environment variables."""
         with tempfile.TemporaryDirectory() as temp_dir:
             output_dir = Path(temp_dir)
@@ -1048,7 +1273,7 @@ class TestWorkflowHelper:
             assert metadata["runner_os"] == "unknown"
             assert metadata["runner_arch"] == "unknown"
 
-    def test_create_metadata_directory_creation(self):
+    def test_create_metadata_directory_creation(self) -> None:
         """Test that metadata creation creates directory if it doesn't exist."""
         with tempfile.TemporaryDirectory() as temp_dir:
             output_dir = Path(temp_dir) / "nested" / "path"
@@ -1058,7 +1283,7 @@ class TestWorkflowHelper:
             assert output_dir.exists()
             assert (output_dir / "metadata.json").exists()
 
-    def test_display_baseline_summary_success(self, capsys):
+    def test_display_baseline_summary_success(self, capsys) -> None:
         """Test successful baseline summary display."""
         baseline_content = """Date: 2023-12-15 14:30:00 UTC
 Git commit: abc123def456
@@ -1095,7 +1320,7 @@ Time: [220.0, 250.0, 280.0] µs
         finally:
             baseline_file.unlink()
 
-    def test_display_baseline_summary_nonexistent_file(self, capsys):
+    def test_display_baseline_summary_nonexistent_file(self, capsys) -> None:
         """Test baseline summary with non-existent file."""
         baseline_file = Path("/nonexistent/file.txt")
 
@@ -1106,7 +1331,7 @@ Time: [220.0, 250.0, 280.0] µs
         captured = capsys.readouterr()
         assert "❌ Baseline file not found" in captured.err
 
-    def test_display_baseline_summary_long_file(self, capsys):
+    def test_display_baseline_summary_long_file(self, capsys) -> None:
         """Test baseline summary with file longer than 10 lines."""
         baseline_content = "\n".join([f"Line {i}" for i in range(20)])
 
@@ -1125,17 +1350,17 @@ Time: [220.0, 250.0, 280.0] µs
         finally:
             baseline_file.unlink()
 
-    def test_sanitize_artifact_name_basic(self):
+    def test_sanitize_artifact_name_basic(self) -> None:
         """Test basic artifact name sanitization."""
         artifact_name = WorkflowHelper.sanitize_artifact_name("v1.2.3")
         assert artifact_name == "performance-baseline-v1_2_3"
 
-    def test_sanitize_artifact_name_with_special_chars(self):
+    def test_sanitize_artifact_name_with_special_chars(self) -> None:
         """Test artifact name sanitization with special characters."""
         artifact_name = WorkflowHelper.sanitize_artifact_name("manual-2023/12/15-14:30:00")
         assert artifact_name == "performance-baseline-manual-2023_12_15-14_30_00"
 
-    def test_sanitize_artifact_name_with_github_output(self):
+    def test_sanitize_artifact_name_with_github_output(self) -> None:
         """Test artifact name sanitization with GITHUB_OUTPUT file."""
         with tempfile.NamedTemporaryFile(mode="w", delete=False) as f:
             output_file = f.name
@@ -1160,12 +1385,12 @@ Time: [220.0, 250.0, 280.0] µs
             ("v1.0.0+build.123", "performance-baseline-v1_0_0_build_123"),
         ],
     )
-    def test_sanitize_artifact_name_edge_cases(self, input_tag, expected_output):
+    def test_sanitize_artifact_name_edge_cases(self, input_tag, expected_output) -> None:
         """Test artifact name sanitization with edge cases."""
         result = WorkflowHelper.sanitize_artifact_name(input_tag)
         assert result == expected_output
 
-    def test_sanitize_artifact_name_special_characters(self):
+    def test_sanitize_artifact_name_special_characters(self) -> None:
         """Test that special characters are properly replaced in artifact names."""
         special_chars_input = "@#$%^&*()[]{}|\\<>?"
         result = WorkflowHelper.sanitize_artifact_name(special_chars_input)
@@ -1176,7 +1401,7 @@ Time: [220.0, 250.0, 280.0] µs
 class TestBenchmarkRegressionHelper:
     """Test cases for BenchmarkRegressionHelper class."""
 
-    def test_prepare_baseline_success(self, capsys):
+    def test_prepare_baseline_success(self, capsys) -> None:
         """Test successful baseline preparation."""
         with tempfile.TemporaryDirectory() as temp_dir:
             baseline_dir = Path(temp_dir)
@@ -1217,7 +1442,7 @@ Time: [95.0, 100.0, 105.0] µs
             finally:
                 Path(env_path).unlink(missing_ok=True)
 
-    def test_prepare_baseline_copy_error_handling(self, capsys):
+    def test_prepare_baseline_copy_error_handling(self, capsys) -> None:
         """Test error handling when copying baseline file fails."""
         with tempfile.TemporaryDirectory() as temp_dir:
             baseline_dir = Path(temp_dir)
@@ -1258,7 +1483,7 @@ Tag: v1.0.0
             finally:
                 Path(env_path).unlink(missing_ok=True)
 
-    def test_prepare_baseline_read_summary_error_handling(self, capsys):
+    def test_prepare_baseline_read_summary_error_handling(self, capsys) -> None:
         """Test graceful error handling when baseline summary cannot be read."""
         with tempfile.TemporaryDirectory() as temp_dir:
             baseline_dir = Path(temp_dir)
@@ -1284,7 +1509,7 @@ Time: [95.0, 100.0, 105.0] µs
                 # Mock Path.open method to fail for read operations on baseline_results.txt
                 original_path_open = Path.open
 
-                def mock_path_open(self, mode="r", *args, **kwargs):
+                def mock_path_open(self, mode="r", *args, **kwargs) -> Any:
                     if self.name == "baseline_results.txt" and "r" in mode:
                         msg = "Read permission denied"
                         raise OSError(msg)
@@ -1314,7 +1539,7 @@ Time: [95.0, 100.0, 105.0] µs
             finally:
                 Path(env_path).unlink(missing_ok=True)
 
-    def test_prepare_baseline_missing_file(self, capsys):
+    def test_prepare_baseline_missing_file(self, capsys) -> None:
         """Test baseline preparation when baseline file is missing."""
         with tempfile.TemporaryDirectory() as temp_dir:
             baseline_dir = Path(temp_dir)
@@ -1341,7 +1566,7 @@ Time: [95.0, 100.0, 105.0] µs
             finally:
                 Path(env_path).unlink(missing_ok=True)
 
-    def test_set_no_baseline_status(self, capsys):
+    def test_set_no_baseline_status(self, capsys) -> None:
         """Test setting no baseline status."""
         with tempfile.NamedTemporaryFile(mode="w", delete=False) as env_file:
             env_path = env_file.name
@@ -1363,7 +1588,7 @@ Time: [95.0, 100.0, 105.0] µs
         finally:
             Path(env_path).unlink(missing_ok=True)
 
-    def test_extract_baseline_commit_from_baseline_file(self):
+    def test_extract_baseline_commit_from_baseline_file(self) -> None:
         """Test extracting commit SHA from baseline_results.txt."""
         with tempfile.TemporaryDirectory() as temp_dir:
             baseline_dir = Path(temp_dir)
@@ -1393,7 +1618,7 @@ Hardware Information:
             finally:
                 Path(env_path).unlink(missing_ok=True)
 
-    def test_extract_baseline_commit_from_metadata(self):
+    def test_extract_baseline_commit_from_metadata(self) -> None:
         """Test extracting commit SHA from metadata.json when baseline file fails."""
         with tempfile.TemporaryDirectory() as temp_dir:
             baseline_dir = Path(temp_dir)
@@ -1421,7 +1646,7 @@ Hardware Information:
             finally:
                 Path(env_path).unlink(missing_ok=True)
 
-    def test_extract_baseline_commit_unknown(self):
+    def test_extract_baseline_commit_unknown(self) -> None:
         """Test extracting commit SHA when no valid SHA is found."""
         with tempfile.TemporaryDirectory() as temp_dir:
             baseline_dir = Path(temp_dir)
@@ -1444,14 +1669,14 @@ Hardware Information:
             finally:
                 Path(env_path).unlink(missing_ok=True)
 
-    def test_determine_benchmark_skip_unknown_baseline(self):
+    def test_determine_benchmark_skip_unknown_baseline(self) -> None:
         """Test skip determination with unknown baseline commit."""
         should_skip, reason = BenchmarkRegressionHelper.determine_benchmark_skip("unknown", "def4567")
 
         assert not should_skip
         assert reason == "unknown_baseline"
 
-    def test_determine_benchmark_skip_same_commit(self):
+    def test_determine_benchmark_skip_same_commit(self) -> None:
         """Test skip determination with same commit."""
         should_skip, reason = BenchmarkRegressionHelper.determine_benchmark_skip("abc1234", "abc1234")
 
@@ -1459,7 +1684,7 @@ Hardware Information:
         assert reason == "same_commit"
 
     @patch("benchmark_utils.run_git_command")
-    def test_determine_benchmark_skip_baseline_not_found(self, mock_git):
+    def test_determine_benchmark_skip_baseline_not_found(self, mock_git) -> None:
         """Test skip determination when baseline commit not found in history."""
         # Simulate git cat-file failing
         mock_git.side_effect = subprocess.CalledProcessError(1, "git")
@@ -1470,12 +1695,12 @@ Hardware Information:
         assert reason == "baseline_commit_not_found"
 
     @patch("benchmark_utils.run_git_command")
-    def test_determine_benchmark_skip_no_changes(self, mock_git):
+    def test_determine_benchmark_skip_no_changes(self, mock_git) -> None:
         """Test skip determination when no relevant changes found."""
         # Mock successful git commands
         mock_git.side_effect = [
-            Mock(returncode=0),  # git cat-file succeeds
-            Mock(returncode=0, stdout="docs/README.md\n.github/workflows/other.yml\n", stderr=""),  # git diff
+            completed_process(),  # git cat-file succeeds
+            completed_process("docs/README.md\n.github/workflows/other.yml\n"),  # git diff
         ]
 
         should_skip, reason = BenchmarkRegressionHelper.determine_benchmark_skip("abc1234", "def4567")
@@ -1484,12 +1709,12 @@ Hardware Information:
         assert reason == "no_relevant_changes"
 
     @patch("benchmark_utils.run_git_command")
-    def test_determine_benchmark_skip_changes_detected(self, mock_git):
+    def test_determine_benchmark_skip_changes_detected(self, mock_git) -> None:
         """Test skip determination when relevant changes are detected."""
         # Mock successful git commands
         mock_git.side_effect = [
-            Mock(returncode=0),  # git cat-file succeeds
-            Mock(returncode=0, stdout="src/core/mod.rs\nbenches/performance.rs\n", stderr=""),  # git diff
+            completed_process(),  # git cat-file succeeds
+            completed_process("src/core/mod.rs\nbenches/performance.rs\n"),  # git diff
         ]
 
         should_skip, reason = BenchmarkRegressionHelper.determine_benchmark_skip("abc1234", "def4567")
@@ -1497,14 +1722,14 @@ Hardware Information:
         assert not should_skip
         assert reason == "changes_detected"
 
-    def test_display_skip_message(self, capsys):
+    def test_display_skip_message(self, capsys) -> None:
         """Test displaying skip messages."""
         BenchmarkRegressionHelper.display_skip_message("same_commit", "abc1234")
 
         captured = capsys.readouterr()
         assert "🔍 Current commit matches baseline (abc1234)" in captured.out
 
-    def test_display_no_baseline_message(self, capsys):
+    def test_display_no_baseline_message(self, capsys) -> None:
         """Test displaying no baseline message."""
         BenchmarkRegressionHelper.display_no_baseline_message()
 
@@ -1512,7 +1737,7 @@ Hardware Information:
         assert "⚠️ No performance baseline available" in captured.out
         assert "💡 To enable performance regression testing:" in captured.out
 
-    def test_run_regression_test_success(self, capsys):
+    def test_run_regression_test_success(self, capsys) -> None:
         """Test successful regression test run."""
         with tempfile.TemporaryDirectory() as temp_dir:
             baseline_file = Path(temp_dir) / "baseline.txt"
@@ -1531,7 +1756,7 @@ Hardware Information:
                 captured = capsys.readouterr()
                 assert "🚀 Running performance regression test" in captured.out
 
-    def test_run_regression_test_dev_mode(self, capsys):
+    def test_run_regression_test_dev_mode(self, capsys) -> None:
         """Test regression test run with dev mode enabled."""
         with tempfile.TemporaryDirectory() as temp_dir:
             baseline_file = Path(temp_dir) / "baseline.txt"
@@ -1550,7 +1775,7 @@ Hardware Information:
                 captured = capsys.readouterr()
                 assert "dev mode (10x faster)" in captured.out
 
-    def test_run_regression_test_failure(self):
+    def test_run_regression_test_failure(self) -> None:
         """Test regression test run failure."""
         with tempfile.TemporaryDirectory() as temp_dir:
             baseline_file = Path(temp_dir) / "baseline.txt"
@@ -1565,7 +1790,7 @@ Hardware Information:
 
                 assert not success
 
-    def test_run_regression_test_custom_timeout(self, capsys):
+    def test_run_regression_test_custom_timeout(self, capsys) -> None:
         """Test regression test run with custom bench_timeout parameter."""
         with tempfile.TemporaryDirectory() as temp_dir:
             baseline_file = Path(temp_dir) / "baseline.txt"
@@ -1584,7 +1809,7 @@ Hardware Information:
                 captured = capsys.readouterr()
                 assert "🚀 Running performance regression test" in captured.out
 
-    def test_display_results_file_exists(self, capsys):
+    def test_display_results_file_exists(self, capsys) -> None:
         """Test displaying results when file exists."""
         with tempfile.TemporaryDirectory() as temp_dir:
             results_file = Path(temp_dir) / "results.txt"
@@ -1597,7 +1822,7 @@ Hardware Information:
             assert "=== Performance Regression Test Results ===" in captured.out
             assert "All tests passed" in captured.out
 
-    def test_display_results_file_missing(self, capsys):
+    def test_display_results_file_missing(self, capsys) -> None:
         """Test displaying results when file is missing."""
         missing_file = Path("/nonexistent/results.txt")
 
@@ -1606,7 +1831,7 @@ Hardware Information:
         captured = capsys.readouterr()
         assert "⚠️ No comparison results file found" in captured.out
 
-    def test_generate_summary_with_regression(self, temp_chdir, capsys):
+    def test_generate_summary_with_regression(self, temp_chdir, capsys) -> None:
         """Test generating summary when regression is detected."""
         with tempfile.TemporaryDirectory() as temp_dir:
             results_file = Path(temp_dir) / "benches" / "compare_results.txt"
@@ -1631,7 +1856,7 @@ Hardware Information:
                 assert "Baseline source: artifact" in captured.out
                 assert "Result: ⚠️ Performance regressions detected" in captured.out
 
-    def test_generate_summary_skip_same_commit(self, capsys):
+    def test_generate_summary_skip_same_commit(self, capsys) -> None:
         """Test generating summary when benchmarks skipped due to same commit."""
         env_vars = {
             "BASELINE_SOURCE": "artifact",
@@ -1647,7 +1872,7 @@ Hardware Information:
             captured = capsys.readouterr()
             assert "Result: ⏭️ Benchmarks skipped (same commit as baseline)" in captured.out
 
-    def test_generate_summary_no_baseline(self, capsys):
+    def test_generate_summary_no_baseline(self, capsys) -> None:
         """Test generating summary when no baseline available."""
         env_vars = {
             "BASELINE_EXISTS": "false",
@@ -1660,7 +1885,7 @@ Hardware Information:
             captured = capsys.readouterr()
             assert "Result: ⏭️ Benchmarks skipped (no baseline available)" in captured.out
 
-    def test_generate_summary_sets_regression_environment_variable(self, temp_chdir, capsys):
+    def test_generate_summary_sets_regression_environment_variable(self, temp_chdir, capsys) -> None:
         """Test that generate_summary sets BENCHMARK_REGRESSION_DETECTED environment variable when regressions are found."""
         with tempfile.TemporaryDirectory() as temp_dir:
             results_file = Path(temp_dir) / "benches" / "compare_results.txt"
@@ -1686,7 +1911,7 @@ Hardware Information:
                 captured = capsys.readouterr()
                 assert "Exported BENCHMARK_REGRESSION_DETECTED=true for downstream CI steps" in captured.out
 
-    def test_generate_summary_github_env_export(self, temp_chdir):
+    def test_generate_summary_github_env_export(self, temp_chdir) -> None:
         """Test that BENCHMARK_REGRESSION_DETECTED is also exported to GITHUB_ENV when available."""
         with tempfile.TemporaryDirectory() as temp_dir:
             results_file = Path(temp_dir) / "benches" / "compare_results.txt"
@@ -1708,7 +1933,7 @@ Hardware Information:
                 github_env_content = github_env_file.read_text()
                 assert "BENCHMARK_REGRESSION_DETECTED=true" in github_env_content
 
-    def test_generate_summary_with_error_file(self, temp_chdir, capsys):
+    def test_generate_summary_with_error_file(self, temp_chdir, capsys) -> None:
         """Test generating summary when comparison failed with error file."""
         with tempfile.TemporaryDirectory() as temp_dir:
             results_file = Path(temp_dir) / "benches" / "compare_results.txt"
@@ -1748,7 +1973,7 @@ Hardware Information:
 class TestProjectRootHandling:
     """Test cases for find_project_root functionality."""
 
-    def test_find_project_root_success(self, temp_chdir):
+    def test_find_project_root_success(self, temp_chdir) -> None:
         """Test finding project root when Cargo.toml exists."""
         with tempfile.TemporaryDirectory() as temp_dir:
             temp_path = Path(temp_dir)
@@ -1766,7 +1991,7 @@ class TestProjectRootHandling:
                 # Resolve both paths to handle symlinks (macOS /var -> /private/var)
                 assert result.resolve() == temp_path.resolve()
 
-    def test_find_project_root_not_found(self, temp_chdir):
+    def test_find_project_root_not_found(self, temp_chdir) -> None:
         """Test finding project root when Cargo.toml doesn't exist."""
         with tempfile.TemporaryDirectory() as temp_dir:
             temp_path = Path(temp_dir)
@@ -1793,7 +2018,7 @@ class TestTimeoutHandling:
             ),
         ],
     )
-    def test_timeout_parameter_passed(self, component_class, method_name, setup_func):
+    def test_timeout_parameter_passed(self, component_class, method_name, setup_func) -> None:
         """Test that benchmark components accept and use timeout parameter."""
         with tempfile.TemporaryDirectory() as temp_dir:
             project_root = Path(temp_dir)
@@ -1826,7 +2051,7 @@ class TestTimeoutHandling:
                 assert mock_cargo.call_count >= 1
                 assert any(call.kwargs.get("timeout") == 120 for call in mock_cargo.call_args_list)
 
-    def test_timeout_error_handling_baseline_generator(self, capsys):
+    def test_timeout_error_handling_baseline_generator(self, capsys) -> None:
         """Test proper error handling when benchmark times out in BaselineGenerator."""
         with tempfile.TemporaryDirectory() as temp_dir:
             project_root = Path(temp_dir)
@@ -1844,7 +2069,7 @@ class TestTimeoutHandling:
                 assert "timed out after 1800 seconds" in captured.err
                 assert "Consider increasing --bench-timeout" in captured.err
 
-    def test_timeout_error_handling_performance_comparator(self, capsys):
+    def test_timeout_error_handling_performance_comparator(self, capsys) -> None:
         """Test proper error handling when benchmark times out in PerformanceComparator."""
         with tempfile.TemporaryDirectory() as temp_dir:
             project_root = Path(temp_dir)
@@ -1874,7 +2099,7 @@ class TestTimeoutHandling:
                 assert "cargo bench" in error_content  # Command from exception
                 assert "timeout after 1800 seconds" in error_content  # Explicit timeout value
 
-    def test_cli_bench_timeout_validation(self, monkeypatch, temp_chdir):
+    def test_cli_bench_timeout_validation(self, monkeypatch, temp_chdir) -> None:
         """Test that CLI validates bench_timeout is positive via main()."""
         # Create a temporary project with Cargo.toml to satisfy find_project_root
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -1903,7 +2128,7 @@ class TestTimeoutHandling:
                 assert hasattr(args, "validate_bench_timeout")
                 assert args.validate_bench_timeout
 
-    def test_parser_accepts_verbose_flag(self):
+    def test_parser_accepts_verbose_flag(self) -> None:
         """Test that the CLI parser accepts the shared verbose logging flag."""
         parser = create_argument_parser()
         args = parser.parse_args(["--verbose", "generate-summary"])
@@ -1911,7 +2136,7 @@ class TestTimeoutHandling:
         assert args.verbose
         assert args.command == "generate-summary"
 
-    def test_configure_logging_uses_debug_when_verbose(self):
+    def test_configure_logging_uses_debug_when_verbose(self) -> None:
         """Test that verbose mode configures debug-level CLI logging."""
         with patch("benchmark_utils.logging.basicConfig") as mock_basic_config:
             configure_logging(verbose=True)
@@ -1921,7 +2146,7 @@ class TestTimeoutHandling:
             format="%(levelname)s: %(message)s",
         )
 
-    def test_configure_logging_defaults_to_info(self):
+    def test_configure_logging_defaults_to_info(self) -> None:
         """Test that non-verbose mode configures info-level CLI logging."""
         with patch("benchmark_utils.logging.basicConfig") as mock_basic_config:
             configure_logging(verbose=False)
@@ -1935,7 +2160,7 @@ class TestTimeoutHandling:
 class TestPerformanceSummaryGenerator:
     """Test cases for PerformanceSummaryGenerator class."""
 
-    def test_init(self):
+    def test_init(self) -> None:
         """Test PerformanceSummaryGenerator initialization."""
         with tempfile.TemporaryDirectory() as temp_dir:
             project_root = Path(temp_dir)
@@ -1949,7 +2174,7 @@ class TestPerformanceSummaryGenerator:
             assert isinstance(generator.current_version, str)
             assert isinstance(generator.current_date, str)
 
-    def test_generate_summary_parser_defaults_to_trusted_profile(self):
+    def test_generate_summary_parser_defaults_to_trusted_profile(self) -> None:
         """Test that fresh summary benchmarks default to the trusted Cargo profile."""
         parser = create_argument_parser()
         args = parser.parse_args(["generate-summary", "--run-benchmarks"])
@@ -1957,11 +2182,9 @@ class TestPerformanceSummaryGenerator:
         assert args.profile == TRUSTED_BENCH_PROFILE
 
     @patch("benchmark_utils.run_git_command")
-    def test_get_current_version_with_tag(self, mock_git_command):
+    def test_get_current_version_with_tag(self, mock_git_command) -> None:
         """Test getting current version from git tags."""
-        mock_result = Mock()
-        mock_result.stdout.strip.return_value = "v1.2.3"
-        mock_git_command.return_value = mock_result
+        mock_git_command.return_value = completed_process("v1.2.3\n")
 
         with tempfile.TemporaryDirectory() as temp_dir:
             project_root = Path(temp_dir)
@@ -1972,14 +2195,13 @@ class TestPerformanceSummaryGenerator:
             mock_git_command.assert_called_with(["describe", "--tags", "--abbrev=0", "--match=v*"], cwd=project_root)
 
     @patch("benchmark_utils.run_git_command")
-    def test_get_current_version_fallback(self, mock_git_command):
+    def test_get_current_version_fallback(self, mock_git_command) -> None:
         """Test fallback version detection when describe fails."""
         # First call (describe) fails, second call (tag -l) succeeds
-        mock_result = Mock()
-        mock_result.stdout.strip.return_value = "v0.1.0\nv0.2.0"
+        mock_result = completed_process("v0.1.0\nv0.2.0")
 
         # The second call is made within the exception handler
-        def side_effect(*args, **kwargs):
+        def side_effect(*args, **kwargs) -> subprocess.CompletedProcess[str]:
             if "describe" in args[0]:
                 raise subprocess.CalledProcessError(1, "git describe", "describe failed")
             return mock_result
@@ -1994,9 +2216,9 @@ class TestPerformanceSummaryGenerator:
             assert version == "0.1.0"
 
     @patch("benchmark_utils.run_git_command")
-    def test_get_current_version_no_tags(self, mock_git_command):
+    def test_get_current_version_no_tags(self, mock_git_command) -> None:
         """Test version detection when no tags are found."""
-        mock_git_command.side_effect = Exception("No tags found")
+        mock_git_command.side_effect = RuntimeError("No tags found")
 
         with tempfile.TemporaryDirectory() as temp_dir:
             project_root = Path(temp_dir)
@@ -2007,11 +2229,9 @@ class TestPerformanceSummaryGenerator:
 
     @patch("benchmark_utils.run_git_command")
     @patch("benchmark_utils.datetime")
-    def test_get_version_date_with_tag(self, mock_datetime, mock_git_command):  # noqa: ARG002
+    def test_get_version_date_with_tag(self, mock_datetime, mock_git_command) -> None:  # noqa: ARG002
         """Test getting version date from git tag."""
-        mock_result = Mock()
-        mock_result.stdout.strip.return_value = "2024-01-15"
-        mock_git_command.return_value = mock_result
+        mock_git_command.return_value = completed_process("2024-01-15\n")
 
         with tempfile.TemporaryDirectory() as temp_dir:
             project_root = Path(temp_dir)
@@ -2024,9 +2244,9 @@ class TestPerformanceSummaryGenerator:
 
     @patch("benchmark_utils.run_git_command")
     @patch("benchmark_utils.datetime")
-    def test_get_version_date_fallback(self, mock_datetime, mock_git_command):
+    def test_get_version_date_fallback(self, mock_datetime, mock_git_command) -> None:
         """Test version date fallback to current date."""
-        mock_git_command.side_effect = Exception("Git command failed")
+        mock_git_command.side_effect = RuntimeError("Git command failed")
         mock_now = Mock()
         mock_now.strftime.return_value = "2024-01-15"
         mock_datetime.now.return_value = mock_now
@@ -2040,7 +2260,7 @@ class TestPerformanceSummaryGenerator:
             assert date == "2024-01-15"
             mock_now.strftime.assert_called_with("%Y-%m-%d")
 
-    def test_parse_baseline_results_nonexistent_file(self):
+    def test_parse_baseline_results_nonexistent_file(self) -> None:
         """Test parsing baseline results when file doesn't exist."""
         with tempfile.TemporaryDirectory() as temp_dir:
             project_root = Path(temp_dir)
@@ -2052,7 +2272,7 @@ class TestPerformanceSummaryGenerator:
             assert "### Baseline Results" in content
             assert "Error parsing baseline results" in content
 
-    def test_parse_baseline_results_with_data(self):
+    def test_parse_baseline_results_with_data(self) -> None:
         """Test parsing baseline results with actual data."""
         baseline_content = """Date: 2024-01-15 10:30:00 UTC
 Git commit: abc123def456
@@ -2089,7 +2309,7 @@ Throughput: [8333.3, 9090.9, 10000.0] Kelem/s
             assert "### 3D Triangulation Performance" in markdown_content
             assert "| Points | Time (mean) | Throughput (mean) | Scaling |" in markdown_content
 
-    def test_parse_comparison_results_with_regression(self):
+    def test_parse_comparison_results_with_regression(self) -> None:
         """Test parsing comparison results that show regression."""
         comparison_content = """Performance Comparison Results
 ⚠️  REGRESSION: Time increased by 15.2% (slower performance)
@@ -2112,7 +2332,7 @@ Throughput: [8333.3, 9090.9, 10000.0] Kelem/s
             assert "REGRESSION: Time increased by 15.2%" in markdown_content
             assert "IMPROVEMENT: Time decreased by 8.5%" in markdown_content
 
-    def test_parse_comparison_results_no_regression(self):
+    def test_parse_comparison_results_no_regression(self) -> None:
         """Test parsing comparison results with no regression."""
         comparison_content = """Performance Comparison Results
 ✅ OK: Time change +2.1% within acceptable range
@@ -2137,10 +2357,10 @@ Throughput: [8333.3, 9090.9, 10000.0] Kelem/s
     @patch("benchmark_utils.get_git_commit_hash")
     @patch("benchmark_utils.run_git_command")
     @patch("benchmark_utils.datetime")
-    def test_generate_markdown_content(self, mock_datetime, mock_run_git, mock_git_commit):
+    def test_generate_markdown_content(self, mock_datetime, mock_run_git, mock_git_commit) -> None:
         """Test generating complete markdown content."""
         # Avoid calling actual git in __init__ helpers
-        mock_run_git.side_effect = Exception("git unavailable in test")
+        mock_run_git.side_effect = RuntimeError("git unavailable in test")
         mock_git_commit.return_value = "abc123def456"
         mock_now = Mock()
         mock_now.strftime.return_value = "2024-01-15 10:30:00 UTC"
@@ -2161,12 +2381,38 @@ Throughput: [8333.3, 9090.9, 10000.0] Kelem/s
             assert "## Performance Results Summary" in content
 
             # Check static content sections
-            assert "## Key Findings" in content
-            assert "### Performance Ranking" in content
-            assert "## Recommendations" in content
-            assert "## Performance Data Updates" in content
+            assert PUBLIC_API_TITLE in content
+            assert CIRCUMSPHERE_TITLE in content
+            assert PERFORMANCE_RANKING_TITLE in content
+            assert RECOMMENDATIONS_TITLE in content
+            assert PERFORMANCE_UPDATES_TITLE in content
 
-    def test_get_circumsphere_performance_results(self):
+    def test_get_ci_performance_suite_results(self) -> None:
+        """Test public API summary generation from ci_performance_suite Criterion data."""
+        with tempfile.TemporaryDirectory() as temp_dir:
+            project_root = Path(temp_dir)
+
+            write_estimate(project_root / "target", ("tds_new_2d", "tds_new", "10"), 120_000.0)
+            write_estimate(project_root / "target", ("boundary_facets", "boundary_facets_3d_adversarial", "50"), 7_500.0)
+            write_estimate(project_root / "target", ("bistellar_flips_4d", "k2_roundtrip"), 950.0)
+
+            generator = PerformanceSummaryGenerator(project_root)
+            lines = generator._get_ci_performance_suite_results()
+            content = "\n".join(lines)
+
+            assert PUBLIC_API_TITLE in content
+            assert "#### Construction" in content
+            assert "Public API: `DelaunayTriangulation::new_with_options`" in content
+            assert "`tds_new_2d/tds_new/10`" in content
+            assert "well-conditioned" in content
+            assert "#### Boundary facets" in content
+            assert "`boundary_facets/boundary_facets_3d_adversarial/50`" in content
+            assert "| `boundary_facets/boundary_facets_3d_adversarial/50` | 3D | 50 | adversarial |" in content
+            assert "adversarial" in content
+            assert "#### Bistellar flips" in content
+            assert "`bistellar_flips_4d/k2_roundtrip`" in content
+
+    def test_get_circumsphere_performance_results(self) -> None:
         """Test getting circumsphere performance results."""
         with tempfile.TemporaryDirectory() as temp_dir:
             project_root = Path(temp_dir)
@@ -2175,11 +2421,11 @@ Throughput: [8333.3, 9090.9, 10000.0] Kelem/s
             lines = generator._get_circumsphere_performance_results()
             content = "\n".join(lines)
 
-            assert "### Circumsphere Performance Results" in content
+            assert "### Circumsphere Predicate Performance" in content
             # Should contain fallback performance data when no criterion results exist
             assert "Basic 3D" in content or "Version unknown" in content
 
-    def test_get_update_instructions(self):
+    def test_get_update_instructions(self) -> None:
         """Test getting performance data update instructions."""
         with tempfile.TemporaryDirectory() as temp_dir:
             project_root = Path(temp_dir)
@@ -2188,12 +2434,12 @@ Throughput: [8333.3, 9090.9, 10000.0] Kelem/s
             lines = generator._get_update_instructions()
             content = "\n".join(lines)
 
-            assert "## Performance Data Updates" in content
+            assert PERFORMANCE_UPDATES_TITLE in content
             assert "uv run benchmark-utils generate-baseline" in content
             assert "uv run benchmark-utils generate-summary" in content
             assert "PerformanceSummaryGenerator" in content
 
-    def test_parse_numerical_accuracy_output_success(self):
+    def test_parse_numerical_accuracy_output_success(self) -> None:
         """Test parsing numerical accuracy output successfully."""
         with tempfile.TemporaryDirectory() as temp_dir:
             project_root = Path(temp_dir)
@@ -2216,7 +2462,7 @@ Benchmark completed."""
             assert result["distance_lifted"] == "20.3%"
             assert result["all_agree"] == "0.8%"
 
-    def test_parse_numerical_accuracy_output_no_data(self):
+    def test_parse_numerical_accuracy_output_no_data(self) -> None:
         """Test parsing numerical accuracy output with no relevant data."""
         with tempfile.TemporaryDirectory() as temp_dir:
             project_root = Path(temp_dir)
@@ -2230,7 +2476,7 @@ Benchmark completed."""
 
             assert result is None
 
-    def test_parse_numerical_accuracy_output_malformed(self):
+    def test_parse_numerical_accuracy_output_malformed(self) -> None:
         """Test parsing numerical accuracy output with malformed data."""
         with tempfile.TemporaryDirectory() as temp_dir:
             project_root = Path(temp_dir)
@@ -2245,9 +2491,9 @@ Benchmark completed."""
             assert result is None
 
     @patch("benchmark_utils.run_cargo_command")
-    def test_run_circumsphere_benchmarks_success(self, mock_cargo):
+    def test_run_circumsphere_benchmarks_success(self, mock_cargo) -> None:
         """Test running circumsphere benchmarks successfully."""
-        mock_cargo.return_value = Mock(stdout="")
+        mock_cargo.return_value = completed_process()
 
         with tempfile.TemporaryDirectory() as temp_dir:
             project_root = Path(temp_dir)
@@ -2271,9 +2517,9 @@ Benchmark completed."""
             ]
 
     @patch("benchmark_utils.run_cargo_command")
-    def test_run_circumsphere_benchmarks_uses_requested_cargo_profile(self, mock_cargo):
+    def test_run_circumsphere_benchmarks_uses_requested_cargo_profile(self, mock_cargo) -> None:
         """Test running circumsphere benchmarks with an explicit Cargo profile."""
-        mock_cargo.return_value = Mock(stdout="")
+        mock_cargo.return_value = completed_process()
 
         with tempfile.TemporaryDirectory() as temp_dir:
             project_root = Path(temp_dir)
@@ -2289,17 +2535,18 @@ Benchmark completed."""
             assert args[:5] == ["bench", "--profile", requested_profile, "--bench", "circumsphere_containment"]
 
     @patch("benchmark_utils.run_cargo_command")
-    def test_run_circumsphere_benchmarks_with_numerical_data(self, mock_cargo):
+    def test_run_circumsphere_benchmarks_with_numerical_data(self, mock_cargo) -> None:
         """Test running circumsphere benchmarks with numerical accuracy data."""
         # Mock cargo command to return output with numerical accuracy data
-        mock_result = Mock()
-        mock_result.stdout = """Running benchmarks...
+        mock_result = completed_process(
+            """Running benchmarks...
 Method Comparisons (1000 total tests):
   insphere vs insphere_distance:  820/1000 (82.0%)
   insphere vs insphere_lifted:  5/1000 (0.5%)
   insphere_distance vs insphere_lifted:  180/1000 (18.0%)
   All three methods agree:  2/1000 (0.2%)
-Benchmark completed."""
+Benchmark completed.""",
+        )
         mock_cargo.return_value = mock_result
 
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -2328,9 +2575,9 @@ Benchmark completed."""
             ]
 
     @patch("benchmark_utils.run_cargo_command")
-    def test_run_circumsphere_benchmarks_failure(self, mock_cargo, capsys):
+    def test_run_circumsphere_benchmarks_failure(self, mock_cargo, capsys) -> None:
         """Test handling circumsphere benchmark failures."""
-        mock_cargo.side_effect = Exception("Benchmark failed")
+        mock_cargo.side_effect = RuntimeError("Benchmark failed")
 
         with tempfile.TemporaryDirectory() as temp_dir:
             project_root = Path(temp_dir)
@@ -2345,10 +2592,117 @@ Benchmark completed."""
             captured = capsys.readouterr()
             assert "Error running circumsphere benchmarks" in captured.out
 
+    @patch("benchmark_utils.run_cargo_command")
+    def test_run_ci_performance_suite_success(self, mock_cargo) -> None:
+        """Test running the public API CI performance suite successfully."""
+        mock_cargo.return_value = completed_process(CI_MANIFEST_STDOUT)
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            project_root = Path(temp_dir)
+            generator = PerformanceSummaryGenerator(project_root)
+
+            success = generator._run_ci_performance_suite()
+
+            assert success is True
+            mock_cargo.assert_called_once()
+            args = mock_cargo.call_args.args[0]
+            assert args[:5] == [
+                "bench",
+                "--profile",
+                TRUSTED_BENCH_PROFILE,
+                "--bench",
+                "ci_performance_suite",
+            ]
+            assert "--" not in args
+            manifest_path = project_root / "target" / "criterion" / _CI_PERFORMANCE_SUITE_MANIFEST_IDS_FILE
+            assert manifest_path.read_text(encoding="utf-8") == "boundary_facets/boundary_facets_3d/50\n"
+
+    @patch("benchmark_utils.run_cargo_command")
+    def test_run_ci_performance_suite_uses_requested_cargo_profile(self, mock_cargo) -> None:
+        """Test running the public API CI performance suite with an explicit profile."""
+        mock_cargo.return_value = completed_process(CI_MANIFEST_STDOUT)
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            project_root = Path(temp_dir)
+            generator = PerformanceSummaryGenerator(project_root)
+
+            requested_profile = "release"
+            success = generator._run_ci_performance_suite(cargo_profile=requested_profile)
+
+            assert success is True
+            mock_cargo.assert_called_once()
+            args = mock_cargo.call_args.args[0]
+            assert args[:5] == ["bench", "--profile", requested_profile, "--bench", "ci_performance_suite"]
+            assert "--" not in args
+
+    @patch("benchmark_utils.run_cargo_command")
+    def test_run_ci_performance_suite_dev_mode_uses_reduced_sampling(self, mock_cargo) -> None:
+        """Test dev mode appends reduced Criterion sampling args explicitly."""
+        mock_cargo.return_value = completed_process(CI_MANIFEST_STDOUT)
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            project_root = Path(temp_dir)
+            generator = PerformanceSummaryGenerator(project_root)
+
+            success = generator._run_ci_performance_suite(use_dev_mode=True)
+
+            assert success is True
+            args = mock_cargo.call_args.args[0]
+            assert "--" in args
+            for arg in DEV_MODE_BENCH_ARGS:
+                assert arg in args
+
+    @patch("benchmark_utils.run_cargo_command")
+    def test_run_ci_performance_suite_requires_manifest(self, mock_cargo) -> None:
+        """Test successful ci_performance_suite runs must emit the manifest."""
+        mock_cargo.return_value = completed_process()
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            project_root = Path(temp_dir)
+            stale_manifest_path = project_root / "target" / "criterion" / _CI_PERFORMANCE_SUITE_MANIFEST_IDS_FILE
+            stale_manifest_path.parent.mkdir(parents=True)
+            stale_manifest_path.write_text("stale/benchmark/id\n", encoding="utf-8")
+            generator = PerformanceSummaryGenerator(project_root)
+
+            with pytest.raises(RuntimeError, match="emitted no api_benchmark manifest"):
+                generator._run_ci_performance_suite()
+
+            assert stale_manifest_path.read_text(encoding="utf-8") == "stale/benchmark/id\n"
+
+    @patch("benchmark_utils.run_cargo_command")
+    def test_run_ci_performance_suite_nonzero_exit(self, mock_cargo, capsys) -> None:
+        """Test handling ci_performance_suite nonzero process exits."""
+        mock_cargo.return_value = completed_process(returncode=101, stderr="benchmark failed")
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            project_root = Path(temp_dir)
+            generator = PerformanceSummaryGenerator(project_root)
+
+            success = generator._run_ci_performance_suite()
+
+            assert success is False
+            captured = capsys.readouterr()
+            assert "cargo exited with status 101" in captured.out
+
+    @patch("benchmark_utils.run_cargo_command")
+    def test_run_ci_performance_suite_failure(self, mock_cargo, capsys) -> None:
+        """Test handling ci_performance_suite benchmark failures."""
+        mock_cargo.side_effect = OSError("Benchmark failed")
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            project_root = Path(temp_dir)
+            generator = PerformanceSummaryGenerator(project_root)
+
+            success = generator._run_ci_performance_suite()
+
+            assert success is False
+            captured = capsys.readouterr()
+            assert "Error running ci_performance_suite benchmarks" in captured.out
+
     @patch("benchmark_utils.run_git_command")
-    def test_generate_summary_success(self, mock_git, capsys):
+    def test_generate_summary_success(self, mock_git, capsys) -> None:
         """Test successful generation of performance summary."""
-        mock_git.side_effect = Exception("git unavailable in test")
+        mock_git.side_effect = RuntimeError("git unavailable in test")
         with tempfile.TemporaryDirectory() as temp_dir:
             project_root = Path(temp_dir)
             generator = PerformanceSummaryGenerator(project_root)
@@ -2370,8 +2724,10 @@ Benchmark completed."""
             assert "Generated performance summary" in captured.out
 
     @patch("benchmark_utils.PerformanceSummaryGenerator._run_circumsphere_benchmarks")
-    def test_generate_summary_with_benchmarks(self, mock_run_benchmarks):
+    @patch("benchmark_utils.PerformanceSummaryGenerator._run_ci_performance_suite")
+    def test_generate_summary_with_benchmarks(self, mock_run_ci_suite, mock_run_benchmarks) -> None:
         """Test generating summary with fresh benchmark run."""
+        mock_run_ci_suite.return_value = True
         mock_run_benchmarks.return_value = (True, None)
 
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -2385,12 +2741,15 @@ Benchmark completed."""
             assert success is True
             # When run_benchmarks=True without an explicit profile, generate_summary
             # must default to TRUSTED_BENCH_PROFILE.
+            mock_run_ci_suite.assert_called_once_with(cargo_profile=TRUSTED_BENCH_PROFILE)
             mock_run_benchmarks.assert_called_once_with(cargo_profile=TRUSTED_BENCH_PROFILE)
             assert output_file.exists()
 
     @patch("benchmark_utils.PerformanceSummaryGenerator._run_circumsphere_benchmarks")
-    def test_generate_summary_passes_cargo_profile_to_benchmarks(self, mock_run_benchmarks):
+    @patch("benchmark_utils.PerformanceSummaryGenerator._run_ci_performance_suite")
+    def test_generate_summary_passes_cargo_profile_to_benchmarks(self, mock_run_ci_suite, mock_run_benchmarks) -> None:
         """Test generating a summary with fresh benchmarks under a specific Cargo profile."""
+        mock_run_ci_suite.return_value = True
         mock_run_benchmarks.return_value = (True, None)
 
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -2403,12 +2762,15 @@ Benchmark completed."""
             success = generator.generate_summary(output_path=output_file, run_benchmarks=True, cargo_profile=requested_profile)
 
             assert success is True
+            mock_run_ci_suite.assert_called_once_with(cargo_profile=requested_profile)
             mock_run_benchmarks.assert_called_once_with(cargo_profile=requested_profile)
             assert output_file.exists()
 
     @patch("benchmark_utils.PerformanceSummaryGenerator._run_circumsphere_benchmarks")
-    def test_generate_summary_benchmark_failure_continues(self, mock_run_benchmarks, capsys):
+    @patch("benchmark_utils.PerformanceSummaryGenerator._run_ci_performance_suite")
+    def test_generate_summary_benchmark_failure_continues(self, mock_run_ci_suite, mock_run_benchmarks, capsys) -> None:
         """Test that summary generation continues even if benchmark run fails."""
+        mock_run_ci_suite.return_value = False
         mock_run_benchmarks.return_value = (False, None)
 
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -2426,7 +2788,7 @@ Benchmark completed."""
             captured = capsys.readouterr()
             assert "Benchmark run failed" in captured.out
 
-    def test_generate_summary_exception_handling(self, capsys):
+    def test_generate_summary_exception_handling(self, capsys) -> None:
         """Test exception handling in generate_summary."""
         with tempfile.TemporaryDirectory() as temp_dir:
             project_root = Path(temp_dir)
@@ -2442,7 +2804,7 @@ Benchmark completed."""
             captured = capsys.readouterr()
             assert "Failed to generate performance summary" in captured.err
 
-    def test_get_static_content(self):
+    def test_get_static_content(self) -> None:
         """Test getting static content sections."""
         with tempfile.TemporaryDirectory() as temp_dir:
             project_root = Path(temp_dir)
@@ -2455,7 +2817,7 @@ Benchmark completed."""
             assert "## Implementation Notes" in content
             assert "## Benchmark Structure" in content
 
-    def test_empty_benchmark_results_edge_case(self):
+    def test_empty_benchmark_results_edge_case(self) -> None:
         """Test handling of empty benchmark results (edge case)."""
         with tempfile.TemporaryDirectory() as temp_dir:
             project_root = Path(temp_dir)
@@ -2465,7 +2827,7 @@ Benchmark completed."""
             results = generator._parse_circumsphere_benchmark_results()
             assert len(results) > 0
 
-    def test_malformed_estimates_json_edge_case(self):
+    def test_malformed_estimates_json_edge_case(self) -> None:
         """Test handling of malformed estimates.json files (edge case)."""
         with tempfile.TemporaryDirectory() as temp_dir:
             project_root = Path(temp_dir)
@@ -2483,7 +2845,7 @@ Benchmark completed."""
             results = generator._parse_circumsphere_benchmark_results()
             assert len(results) > 0
 
-    def test_missing_git_info_edge_case(self):
+    def test_missing_git_info_edge_case(self) -> None:
         """Test handling when git information is not available (edge case)."""
         with tempfile.TemporaryDirectory() as temp_dir:
             project_root = Path(temp_dir)
@@ -2493,8 +2855,8 @@ Benchmark completed."""
                 patch("benchmark_utils.run_git_command") as mock_git,
                 patch("benchmark_utils.get_git_commit_hash") as mock_commit,
             ):
-                mock_git.side_effect = Exception("Git not available")
-                mock_commit.side_effect = Exception("Git not available")
+                mock_git.side_effect = RuntimeError("Git not available")
+                mock_commit.side_effect = RuntimeError("Git not available")
 
                 generator = PerformanceSummaryGenerator(project_root)
                 success = generator.generate_summary(output_file)
@@ -2505,7 +2867,7 @@ Benchmark completed."""
                 content = output_file.read_text()
                 assert "Version unknown" in content
 
-    def test_baseline_fallback_behavior_edge_case(self):
+    def test_baseline_fallback_behavior_edge_case(self) -> None:
         """Test baseline file fallback from primary to secondary location (edge case)."""
         with tempfile.TemporaryDirectory() as temp_dir:
             project_root = Path(temp_dir)
@@ -2551,7 +2913,7 @@ Benchmark completed."""
                 # Performance data "1000 Points (3D)" would come from benchmark parsing,
                 # not baseline parsing. The important test is that the fallback file is read.
 
-    def test_full_generation_workflow_integration(self):
+    def test_full_generation_workflow_integration(self) -> None:
         """Test complete summary generation workflow (integration test)."""
         with tempfile.TemporaryDirectory() as temp_dir:
             project_root = Path(temp_dir)
@@ -2592,12 +2954,13 @@ Benchmark completed."""
                 assert "Single Query Performance (3D)" in content
                 assert "Triangulation Data Structure Performance" in content
                 assert "Performance Status: Good" in content
-                assert "Key Findings" in content
-                assert "Performance Ranking" in content
-                assert "Recommendations" in content
-                assert "Performance Data Updates" in content
+                assert PUBLIC_API_TITLE.removeprefix("### ") in content
+                assert CIRCUMSPHERE_TITLE.removeprefix("## ") in content
+                assert PERFORMANCE_RANKING_TITLE.removeprefix("### ") in content
+                assert RECOMMENDATIONS_TITLE.removeprefix("### ") in content
+                assert PERFORMANCE_UPDATES_TITLE.removeprefix("## ") in content
 
-    def test_dimension_sorting_numeric_order(self):
+    def test_dimension_sorting_numeric_order(self) -> None:
         """Test that dimensions are sorted numerically, not lexically."""
         with tempfile.TemporaryDirectory() as temp_dir:
             project_root = Path(temp_dir)
@@ -2633,7 +2996,7 @@ Benchmark completed."""
                 assert "Test9" in content  # 9D test case
                 assert "Test10" in content  # 10D test case
 
-    def test_hardware_metadata_parsing_with_cores(self):
+    def test_hardware_metadata_parsing_with_cores(self) -> None:
         """Test that hardware metadata parsing includes cores and guards against IndexError."""
         with tempfile.TemporaryDirectory() as temp_dir:
             project_root = Path(temp_dir)
@@ -2680,7 +3043,7 @@ Hardware Information:
             assert "Apple M4 Max" in content
             assert "(" not in content.split("Apple M4 Max")[1].split("\n")[0] if "Apple M4 Max" in content else True
 
-    def test_dev_mode_args_consistency(self):
+    def test_dev_mode_args_consistency(self) -> None:
         """Test that DEV_MODE_BENCH_ARGS is used consistently."""
         # Verify the constant exists and has expected structure
         assert isinstance(DEV_MODE_BENCH_ARGS, list)
@@ -2692,7 +3055,7 @@ Hardware Information:
         # with pairs of argument name and value
         assert len(DEV_MODE_BENCH_ARGS) >= 6  # At least 3 arg-value pairs
 
-    def test_numerical_accuracy_phrasing_flexibility(self):
+    def test_numerical_accuracy_phrasing_flexibility(self) -> None:
         """Test that numerical accuracy section doesn't hardcode sample size."""
         with tempfile.TemporaryDirectory() as temp_dir:
             project_root = Path(temp_dir)
@@ -2710,7 +3073,7 @@ Hardware Information:
 class TestTagSpecificBaselineHandling:
     """Test cases for tag-specific baseline file handling functionality."""
 
-    def test_prepare_baseline_with_tag_specific_file(self, capsys):
+    def test_prepare_baseline_with_tag_specific_file(self, capsys) -> None:
         """Test baseline preparation with tag-specific file (baseline-v*.txt)."""
         with tempfile.TemporaryDirectory() as temp_dir:
             baseline_dir = Path(temp_dir)
@@ -2762,7 +3125,7 @@ Time: [160.1, 168.18, 177.67] µs
             finally:
                 Path(env_path).unlink(missing_ok=True)
 
-    def test_prepare_baseline_with_generic_baseline_file(self, capsys):
+    def test_prepare_baseline_with_generic_baseline_file(self, capsys) -> None:
         """Test baseline preparation with generic baseline*.txt file."""
         with tempfile.TemporaryDirectory() as temp_dir:
             baseline_dir = Path(temp_dir)
@@ -2809,7 +3172,7 @@ Time: [95.0, 100.0, 105.0] µs
             finally:
                 Path(env_path).unlink(missing_ok=True)
 
-    def test_prepare_baseline_prefers_standard_name(self, capsys):
+    def test_prepare_baseline_prefers_standard_name(self, capsys) -> None:
         """Test that prepare_baseline prefers baseline_results.txt over tag-specific files."""
         with tempfile.TemporaryDirectory() as temp_dir:
             baseline_dir = Path(temp_dir)
@@ -2851,7 +3214,7 @@ Time: [95.0, 100.0, 105.0] µs
             finally:
                 Path(env_path).unlink(missing_ok=True)
 
-    def test_prepare_baseline_no_matching_files(self, capsys):
+    def test_prepare_baseline_no_matching_files(self, capsys) -> None:
         """Test baseline preparation when no matching baseline files are found."""
         with tempfile.TemporaryDirectory() as temp_dir:
             baseline_dir = Path(temp_dir)
@@ -2884,7 +3247,7 @@ Time: [95.0, 100.0, 105.0] µs
             finally:
                 Path(env_path).unlink(missing_ok=True)
 
-    def test_extract_baseline_commit_from_tag_file(self):
+    def test_extract_baseline_commit_from_tag_file(self) -> None:
         """Test extracting commit SHA from tag-specific baseline file."""
         with tempfile.TemporaryDirectory() as temp_dir:
             baseline_dir = Path(temp_dir)
@@ -2916,7 +3279,7 @@ Hardware Information:
             finally:
                 Path(env_path).unlink(missing_ok=True)
 
-    def test_extract_baseline_commit_fallback_to_metadata(self):
+    def test_extract_baseline_commit_fallback_to_metadata(self) -> None:
         """Test extracting commit SHA from metadata.json when baseline files have no commit info."""
         with tempfile.TemporaryDirectory() as temp_dir:
             baseline_dir = Path(temp_dir)
@@ -2954,7 +3317,7 @@ Hardware Information:
             finally:
                 Path(env_path).unlink(missing_ok=True)
 
-    def test_extract_baseline_commit_handles_multiple_tag_files(self):
+    def test_extract_baseline_commit_handles_multiple_tag_files(self) -> None:
         """Test that extract_baseline_commit selects the highest semver tag file when multiple exist."""
         with tempfile.TemporaryDirectory() as temp_dir:
             baseline_dir = Path(temp_dir)
@@ -2988,7 +3351,7 @@ Tag: v0.4.3
             finally:
                 Path(env_path).unlink(missing_ok=True)
 
-    def test_semver_prefers_stable_over_prerelease(self):
+    def test_semver_prefers_stable_over_prerelease(self) -> None:
         """Test that stable releases are preferred over pre-releases of the same version."""
         with tempfile.TemporaryDirectory() as temp_dir:
             baseline_dir = Path(temp_dir)
@@ -3007,7 +3370,7 @@ Tag: v0.4.3
             assert selected is not None
             assert selected.name == "baseline-v1.2.3.txt"
 
-    def test_semver_v043_vs_v043_beta1_preference(self):
+    def test_semver_v043_vs_v043_beta1_preference(self) -> None:
         """Test specific case: v0.4.3 is preferred over v0.4.3-beta.1."""
         with tempfile.TemporaryDirectory() as temp_dir:
             baseline_dir = Path(temp_dir)
@@ -3029,7 +3392,7 @@ Tag: v0.4.3
             assert "stable043" in content
             assert "Tag: v0.4.3" in content
 
-    def test_semver_prefers_higher_prerelease_when_no_stable(self):
+    def test_semver_prefers_higher_prerelease_when_no_stable(self) -> None:
         """Test that higher pre-release is selected when only pre-releases exist."""
         with tempfile.TemporaryDirectory() as temp_dir:
             baseline_dir = Path(temp_dir)
@@ -3049,7 +3412,7 @@ Tag: v0.4.3
             # Current behavior: lexicographic prerelease ordering; expect beta.2 to win
             assert selected.name == "baseline-v1.2.3-beta.2.txt"
 
-    def test_baseline_commit_source_from_baseline_file(self):
+    def test_baseline_commit_source_from_baseline_file(self) -> None:
         """Test that BASELINE_COMMIT_SOURCE is 'baseline' when commit is extracted from baseline file."""
         with tempfile.TemporaryDirectory() as temp_dir:
             baseline_dir = Path(temp_dir)
@@ -3078,7 +3441,7 @@ Hardware Information:
             finally:
                 Path(env_path).unlink(missing_ok=True)
 
-    def test_baseline_commit_source_from_metadata_file(self):
+    def test_baseline_commit_source_from_metadata_file(self) -> None:
         """Test that BASELINE_COMMIT_SOURCE is 'metadata' when commit is extracted from metadata.json."""
         with tempfile.TemporaryDirectory() as temp_dir:
             baseline_dir = Path(temp_dir)
@@ -3109,7 +3472,7 @@ Hardware Information:
             finally:
                 Path(env_path).unlink(missing_ok=True)
 
-    def test_baseline_commit_source_unknown_when_no_commit_found(self):
+    def test_baseline_commit_source_unknown_when_no_commit_found(self) -> None:
         """Test that BASELINE_COMMIT_SOURCE is 'unknown' when no commit is found anywhere."""
         with tempfile.TemporaryDirectory() as temp_dir:
             baseline_dir = Path(temp_dir)
@@ -3132,7 +3495,7 @@ Hardware Information:
             finally:
                 Path(env_path).unlink(missing_ok=True)
 
-    def test_env_vars_mirrored_to_current_process(self):
+    def test_env_vars_mirrored_to_current_process(self) -> None:
         """Test that write_github_env_vars mirrors variables into current process."""
         with tempfile.NamedTemporaryFile(mode="w", delete=False) as env_file:
             env_path = env_file.name
@@ -3166,7 +3529,7 @@ Hardware Information:
             for key in ["TEST_BASELINE_EXISTS", "TEST_BASELINE_SOURCE"]:
                 os.environ.pop(key, None)
 
-    def test_env_vars_multiline_handling(self):
+    def test_env_vars_multiline_handling(self) -> None:
         """Test that write_github_env_vars correctly handles multiline values with heredoc format."""
         with tempfile.NamedTemporaryFile(mode="w", delete=False) as env_file:
             env_path = env_file.name
@@ -3215,7 +3578,7 @@ Hardware Information:
             for key in ["TEST_MULTILINE", "TEST_SINGLE_LINE", "TEST_WITH_CR"]:
                 os.environ.pop(key, None)
 
-    def test_env_vars_none_value_handling(self):
+    def test_env_vars_none_value_handling(self) -> None:
         """Test that write_github_env_vars correctly handles None values without errors."""
         with tempfile.NamedTemporaryFile(mode="w", delete=False) as env_file:
             env_path = env_file.name
@@ -3250,7 +3613,7 @@ Hardware Information:
             for key in ["TEST_NONE", "TEST_NORMAL"]:
                 os.environ.pop(key, None)
 
-    def test_baseline_tag_sanitization(self):
+    def test_baseline_tag_sanitization(self) -> None:
         """Test that BASELINE_TAG is sanitized before being exported to GITHUB_ENV."""
         with tempfile.TemporaryDirectory() as temp_dir:
             baseline_dir = Path(temp_dir)
@@ -3291,7 +3654,7 @@ Hardware Information:
             finally:
                 Path(env_path).unlink(missing_ok=True)
 
-    def test_baseline_tag_length_capping(self):
+    def test_baseline_tag_length_capping(self) -> None:
         """Test that BASELINE_TAG is capped at 64 characters."""
         with tempfile.TemporaryDirectory() as temp_dir:
             baseline_dir = Path(temp_dir)
@@ -3334,7 +3697,7 @@ Hardware Information:
             finally:
                 Path(env_path).unlink(missing_ok=True)
 
-    def test_packaging_version_complex_comparisons(self):
+    def test_packaging_version_complex_comparisons(self) -> None:
         """Test that packaging.version handles complex version comparisons correctly."""
         with tempfile.TemporaryDirectory() as temp_dir:
             baseline_dir = Path(temp_dir)
@@ -3360,7 +3723,7 @@ Hardware Information:
             assert selected is not None
             assert selected.name == "baseline-v2.0.0.txt"
 
-    def test_packaging_version_invalid_versions(self):
+    def test_packaging_version_invalid_versions(self) -> None:
         """Test that invalid version formats are handled gracefully."""
         with tempfile.TemporaryDirectory() as temp_dir:
             baseline_dir = Path(temp_dir)
@@ -3382,7 +3745,7 @@ Hardware Information:
             assert selected.name == "baseline-v1.2.txt"
             assert "Valid 1.2.0 content" in selected.read_text()
 
-    def test_packaging_version_truly_invalid_versions(self):
+    def test_packaging_version_truly_invalid_versions(self) -> None:
         """Test that truly invalid version formats fall back to generic baseline selection."""
         with tempfile.TemporaryDirectory() as temp_dir:
             baseline_dir = Path(temp_dir)
@@ -3404,7 +3767,7 @@ Hardware Information:
             assert selected.name == "baseline_results.txt"
             assert "Generic baseline content" in selected.read_text()
 
-    def test_generic_baseline_prefers_newest_mtime(self):
+    def test_generic_baseline_prefers_newest_mtime(self) -> None:
         """Test that generic baseline files are selected by most recent mtime."""
         with tempfile.TemporaryDirectory() as temp_dir:
             baseline_dir = Path(temp_dir)
@@ -3429,7 +3792,7 @@ Hardware Information:
             assert selected.name == "baseline-newer.txt"
             assert "Newer baseline content" in selected.read_text()
 
-    def test_prerelease_detection_fix_validation(self):
+    def test_prerelease_detection_fix_validation(self) -> None:
         """Test that prerelease detection correctly identifies stable vs prerelease versions."""
         with tempfile.TemporaryDirectory() as temp_dir:
             baseline_dir = Path(temp_dir)
@@ -3447,7 +3810,7 @@ Hardware Information:
             assert selected.name == "baseline-v1.0.0.txt"
             assert "Stable content" in selected.read_text()
 
-    def test_prepare_baseline_and_extract_commit_integration(self):
+    def test_prepare_baseline_and_extract_commit_integration(self) -> None:
         """Test the integration between prepare_baseline and extract_baseline_commit."""
         with tempfile.TemporaryDirectory() as temp_dir:
             baseline_dir = Path(temp_dir)

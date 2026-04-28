@@ -21,7 +21,7 @@ from compare_storage_backends import TRUSTED_BENCH_PROFILE, StorageBackendCompar
 
 
 @pytest.fixture
-def temp_project_root(tmp_path):
+def temp_project_root(tmp_path) -> Path:
     """Create a temporary project root with necessary directories."""
     project_root = tmp_path / "project"
     project_root.mkdir()
@@ -38,13 +38,13 @@ def temp_project_root(tmp_path):
 
 
 @pytest.fixture
-def comparator(temp_project_root):
+def comparator(temp_project_root) -> StorageBackendComparator:
     """Create a StorageBackendComparator instance with temp project root."""
     return StorageBackendComparator(temp_project_root)
 
 
 @pytest.fixture
-def sample_criterion_json():
+def sample_criterion_json() -> dict[str, object]:
     """Sample Criterion estimates.json data."""
     return {
         "mean": {
@@ -58,7 +58,7 @@ def sample_criterion_json():
 
 
 @pytest.fixture
-def sample_criterion_stdout():
+def sample_criterion_stdout() -> str:
     """Sample Criterion stdout output for regex parsing."""
     return """
 Running benchmarks...
@@ -73,7 +73,7 @@ queries/neighbors/1000v
 
 
 @pytest.fixture
-def completed_ok():
+def completed_ok() -> CompletedProcess[str]:
     """Reusable fixture for successful cargo bench results."""
     return CompletedProcess(
         args=["cargo", "bench"],
@@ -86,14 +86,14 @@ def completed_ok():
 class TestStorageBackendComparator:
     """Test cases for StorageBackendComparator class."""
 
-    def test_init(self, temp_project_root):
+    def test_init(self, temp_project_root) -> None:
         """Test comparator initialization."""
         comparator = StorageBackendComparator(temp_project_root)
 
         assert comparator.project_root == temp_project_root
         assert comparator.criterion_dir == temp_project_root / "target" / "criterion"
 
-    def test_parse_criterion_output_json_success(self, comparator, sample_criterion_json):
+    def test_parse_criterion_output_json_success(self, comparator, sample_criterion_json) -> None:
         """Test parsing Criterion output from JSON files."""
         # Create fake criterion directory structure
         bench_dir = comparator.criterion_dir / "construction" / "2D" / "1000v"
@@ -118,7 +118,7 @@ class TestStorageBackendComparator:
         assert bench["lower"] == 145000000.0
         assert bench["upper"] == 155000000.0
 
-    def test_parse_criterion_output_regex_fallback(self, comparator, sample_criterion_stdout):
+    def test_parse_criterion_output_regex_fallback(self, comparator, sample_criterion_stdout) -> None:
         """Test parsing Criterion output using regex fallback when JSON unavailable."""
         results = comparator._parse_criterion_output(sample_criterion_stdout)
 
@@ -145,7 +145,7 @@ class TestStorageBackendComparator:
         assert bench3["estimate"] == 9.012
         assert bench3["unit"] == "ms"
 
-    def test_parse_criterion_output_empty(self, comparator):
+    def test_parse_criterion_output_empty(self, comparator) -> None:
         """Test parsing empty Criterion output."""
         results = comparator._parse_criterion_output("")
 
@@ -153,7 +153,7 @@ class TestStorageBackendComparator:
         assert len(results["benchmarks"]) == 0
         assert "raw_output" in results
 
-    def test_build_comparison_table_basic(self, comparator):
+    def test_build_comparison_table_basic(self, comparator) -> None:
         """Test building comparison table with matching benchmarks."""
         slotmap_by_name = {
             "test1": {"estimate": 100.0, "unit": "ms"},
@@ -186,7 +186,7 @@ class TestStorageBackendComparator:
         assert "+10.0%" in lines[1]
         assert "SlotMap" in lines[1]
 
-    def test_build_comparison_table_similar_performance(self, comparator):
+    def test_build_comparison_table_similar_performance(self, comparator) -> None:
         """Test comparison table with similar performance (< 2% difference)."""
         slotmap_by_name = {
             "test": {"estimate": 100.0, "unit": "ms"},
@@ -203,7 +203,7 @@ class TestStorageBackendComparator:
         assert len(lines) == 1
         assert "~Same" in lines[0]
 
-    def test_build_comparison_table_missing_data(self, comparator):
+    def test_build_comparison_table_missing_data(self, comparator) -> None:
         """Test comparison table with missing data for one backend."""
         slotmap_by_name = {
             "test1": {"estimate": 100.0, "unit": "ms"},
@@ -226,7 +226,7 @@ class TestStorageBackendComparator:
         assert "N/A" in lines[1]
 
     @patch("compare_storage_backends.run_cargo_command")
-    def test_run_benchmark_success(self, mock_run_cargo, comparator, completed_ok):
+    def test_run_benchmark_success(self, mock_run_cargo, comparator, completed_ok) -> None:
         """Test successful benchmark execution."""
         mock_run_cargo.return_value = completed_ok
 
@@ -244,7 +244,7 @@ class TestStorageBackendComparator:
         assert args[5] == "test_bench"
 
     @patch("compare_storage_backends.run_cargo_command")
-    def test_run_benchmark_with_dense_slotmap(self, mock_run_cargo, comparator, completed_ok):
+    def test_run_benchmark_with_dense_slotmap(self, mock_run_cargo, comparator, completed_ok) -> None:
         """Test benchmark execution with DenseSlotMap feature."""
         mock_run_cargo.return_value = completed_ok
 
@@ -263,7 +263,7 @@ class TestStorageBackendComparator:
         assert "dense-slotmap" in args
 
     @patch("compare_storage_backends.run_cargo_command")
-    def test_run_benchmark_dev_mode(self, mock_run_cargo, comparator, completed_ok):
+    def test_run_benchmark_dev_mode(self, mock_run_cargo, comparator, completed_ok) -> None:
         """Test benchmark execution in development mode."""
         mock_run_cargo.return_value = completed_ok
 
@@ -281,7 +281,7 @@ class TestStorageBackendComparator:
         assert "--noplot" in args
 
     @patch("compare_storage_backends.run_cargo_command")
-    def test_run_benchmark_with_extra_args(self, mock_run_cargo, comparator, completed_ok):
+    def test_run_benchmark_with_extra_args(self, mock_run_cargo, comparator, completed_ok) -> None:
         """Test benchmark execution with extra arguments."""
         mock_run_cargo.return_value = completed_ok
 
@@ -301,7 +301,7 @@ class TestStorageBackendComparator:
         assert "construction" in args
 
     @patch("compare_storage_backends.run_cargo_command")
-    def test_run_benchmark_failure(self, mock_run_cargo, comparator, capsys):
+    def test_run_benchmark_failure(self, mock_run_cargo, comparator, capsys) -> None:
         """Test benchmark execution failure handling."""
         # Mock failed cargo bench run
         mock_result = CompletedProcess(
@@ -321,7 +321,7 @@ class TestStorageBackendComparator:
         assert "Benchmark failed" in captured.err
 
     @patch("compare_storage_backends.run_cargo_command")
-    def test_run_comparison_success(self, mock_run_cargo, comparator, tmp_path):
+    def test_run_comparison_success(self, mock_run_cargo, comparator, tmp_path) -> None:
         """Test full comparison workflow success."""
         # Mock successful benchmark runs for both backends
         mock_result = CompletedProcess(
@@ -350,7 +350,7 @@ class TestStorageBackendComparator:
         assert "DenseSlotMap" in report
 
     @patch("compare_storage_backends.run_cargo_command")
-    def test_run_comparison_slotmap_failure(self, mock_run_cargo, comparator):
+    def test_run_comparison_slotmap_failure(self, mock_run_cargo, comparator) -> None:
         """Test comparison when SlotMap benchmark fails."""
         # Mock failed SlotMap run
         mock_result = CompletedProcess(
@@ -366,7 +366,7 @@ class TestStorageBackendComparator:
         assert success is False
 
     @patch("compare_storage_backends.run_cargo_command")
-    def test_run_comparison_denseslotmap_failure(self, mock_run_cargo, comparator):
+    def test_run_comparison_denseslotmap_failure(self, mock_run_cargo, comparator) -> None:
         """Test comparison when DenseSlotMap benchmark fails."""
         # Mock successful SlotMap, failed DenseSlotMap
         mock_run_cargo.side_effect = [
@@ -390,7 +390,7 @@ class TestStorageBackendComparator:
 
         assert success is False
 
-    def test_generate_comparison_report_structure(self, comparator):
+    def test_generate_comparison_report_structure(self, comparator) -> None:
         """Test comparison report generation structure."""
         slotmap_results = {
             "backend": "SlotMap",
@@ -431,7 +431,7 @@ class TestStorageBackendComparator:
 class TestIntegration:
     """Integration tests for compare_storage_backends module."""
 
-    def test_find_project_root_integration(self, tmp_path):
+    def test_find_project_root_integration(self, tmp_path) -> None:
         """Test integration with find_project_root utility."""
         # Create a fake project with Cargo.toml
         project_root = tmp_path / "project"

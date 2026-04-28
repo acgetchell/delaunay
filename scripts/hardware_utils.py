@@ -37,7 +37,7 @@ logger = logging.getLogger(__name__)
 class HardwareInfo:
     """Cross-platform hardware information detection."""
 
-    def __init__(self):
+    def __init__(self) -> None:
         """Initialize cached platform identifiers for hardware probes."""
         self.os_type = platform.system()
         self.machine = platform.machine()
@@ -118,33 +118,29 @@ class HardwareInfo:
 
         return "Unknown"
 
-    def _get_linux_cpu_cores(self) -> str:
-        """
-        Get CPU core count on Linux.
-
-        Returns:
-            CPU core count or "Unknown"
-        """
-        if not shutil.which("lscpu"):
-            # Fallback: parse physical core count from /proc/cpuinfo
-            try:
-                physical_cores: set[tuple[str, str]] = set()
-                with open("/proc/cpuinfo", encoding="utf-8") as f:
-                    physical_id = core_id = None
-                    for line in f:
-                        if line.startswith("physical id"):
-                            physical_id = line.split(":", 1)[1].strip()
-                        elif line.startswith("core id"):
-                            core_id = line.split(":", 1)[1].strip()
-                        if physical_id is not None and core_id is not None:
-                            physical_cores.add((physical_id, core_id))
-                            physical_id = core_id = None
-                if physical_cores:
-                    return str(len(physical_cores))
-            except (FileNotFoundError, PermissionError, ValueError):
-                return "Unknown"
+    def _get_linux_cpu_cores_from_proc(self) -> str:
+        """Parse physical CPU cores from /proc/cpuinfo when lscpu is unavailable."""
+        try:
+            physical_cores: set[tuple[str, str]] = set()
+            with open("/proc/cpuinfo", encoding="utf-8") as f:
+                physical_id = core_id = None
+                for line in f:
+                    if line.startswith("physical id"):
+                        physical_id = line.split(":", 1)[1].strip()
+                    elif line.startswith("core id"):
+                        core_id = line.split(":", 1)[1].strip()
+                    if physical_id is not None and core_id is not None:
+                        physical_cores.add((physical_id, core_id))
+                        physical_id = core_id = None
+            if physical_cores:
+                return str(len(physical_cores))
+        except (FileNotFoundError, PermissionError, ValueError):
             return "Unknown"
 
+        return "Unknown"
+
+    def _get_linux_cpu_cores_from_lscpu(self) -> str:
+        """Parse physical CPU cores from lscpu output."""
         try:
             lscpu_output = self._run_command(["lscpu"])
             cores_per_socket = None
@@ -159,9 +155,20 @@ class HardwareInfo:
             if cores_per_socket is not None and sockets is not None:
                 return str(cores_per_socket * sockets)
         except (subprocess.CalledProcessError, ValueError, IndexError):
-            pass
+            return "Unknown"
 
         return "Unknown"
+
+    def _get_linux_cpu_cores(self) -> str:
+        """
+        Get CPU core count on Linux.
+
+        Returns:
+            CPU core count or "Unknown"
+        """
+        if not shutil.which("lscpu"):
+            return self._get_linux_cpu_cores_from_proc()
+        return self._get_linux_cpu_cores_from_lscpu()
 
     def _get_linux_cpu_threads(self) -> str:
         """
@@ -353,7 +360,7 @@ class HardwareInfo:
                         break
         except subprocess.CalledProcessError as e:
             logger.debug("rustc command failed: %s", e)
-        except Exception as e:
+        except (OSError, subprocess.SubprocessError) as e:
             logger.debug("Failed to get Rust info: %s", e)
 
         return rust_version, rust_target
@@ -638,7 +645,7 @@ class HardwareComparator:
         return None
 
 
-def main():
+def main() -> None:
     """Command-line interface for hardware utilities."""
     parser = argparse.ArgumentParser(description="Cross-platform hardware information detection and comparison")
     parser.add_argument("command", choices=["info", "kv", "compare"], help="Command to run")

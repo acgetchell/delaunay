@@ -682,7 +682,8 @@ gh release create vX.Y.Z --notes-from-tag
 # 1. Run benchmarks directly (CI performance suite)
 cargo bench --profile perf --bench ci_performance_suite
 
-# Generate release performance summary with fresh perf-profile data
+# Generate release performance summary with fresh perf-profile public API
+# and circumsphere predicate data
 uv run benchmark-utils generate-summary --run-benchmarks --profile perf
 
 # 2. Generate new baseline
@@ -692,12 +693,16 @@ uv run benchmark-utils generate-baseline
 uv run benchmark-utils compare --baseline baseline-artifact/baseline_results.txt
 ```
 
-**CI Performance Suite**: The benchmark utilities now use `benches/ci_performance_suite.rs` for CI/CD-optimized performance testing:
+**CI Performance Suite**: The benchmark utilities use `benches/ci_performance_suite.rs` for CI/CD-optimized
+performance testing and as the primary generated performance-summary source:
 
 - **Dimensions**: 2D, 3D, 4D, and 5D triangulations.
 - **Point counts**: [10, 25, 50].
 - **Runtime**: ~5–10 minutes.
-- **Coverage**: Core triangulation performance across all supported dimensions.
+- **Coverage**: Public construction, hull, validation, insertion, boundary, and bistellar-flip workflows across supported dimensions.
+
+Circumsphere predicate benchmarks remain part of `generate-summary` as a
+dedicated subsection because they track `la-stack`-backed predicate performance.
 
 **Migration Notes**:
 

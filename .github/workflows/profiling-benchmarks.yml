@@ -41,7 +41,6 @@ permissions:
 env:
   CARGO_TERM_COLOR: always
   RUST_BACKTRACE: 1
-  RUST_TOOLCHAIN: 1.92.0
 
 jobs:
   comprehensive-profiling:
@@ -56,7 +55,6 @@ jobs:
       - name: Install Rust toolchain
         uses: actions-rust-lang/setup-rust-toolchain@2b1f5e9b395427c92ee4e3331786ca3c37afe2d7 # v1.16.0
         with:
-          toolchain: ${{ env.RUST_TOOLCHAIN }}
           cache: false
           rustflags: ""
 
@@ -111,6 +109,11 @@ jobs:
               echo "BENCH_LARGE_SCALE=1"  # enable 4D @ 10K
             } >> "$GITHUB_ENV"
           fi
+
+      - name: Capture profiling environment metadata
+        env:
+          BENCH_FILTER_VALUE: ${{ github.event.inputs.benchmark_filter || '' }}
+        run: ./scripts/ci/capture_profiling_metadata.sh
 
       - name: Build profiling suite
         run: |
@@ -197,6 +200,7 @@ jobs:
 
           - \`profiling_output.log\`: Complete benchmark output
           - \`memory_profiling_detailed.log\`: Detailed memory allocation analysis
+          - \`environment_metadata.md\`: Code ref, compiler, profile, and filter metadata
           - \`criterion/\`: HTML reports and detailed timing data
 
           EOF
@@ -253,7 +257,6 @@ jobs:
       - name: Install Rust toolchain
         uses: actions-rust-lang/setup-rust-toolchain@2b1f5e9b395427c92ee4e3331786ca3c37afe2d7 # v1.16.0
         with:
-          toolchain: ${{ env.RUST_TOOLCHAIN }}
           cache: false
           rustflags: ""
 
@@ -272,6 +275,13 @@ jobs:
         run: |
           echo "Running allocation API tests..."
           cargo test --test allocation_api --features count-allocations --verbose
+
+      - name: Capture memory profiling environment metadata
+        env:
+          PROFILE_METADATA_TITLE: Memory Profiling Environment
+          PROFILE_METADATA_FILTER: memory_profiling
+          PROFILE_METADATA_MODE: development
+        run: ./scripts/ci/capture_profiling_metadata.sh
 
       - name: Run memory scaling benchmarks
         env:
@@ -292,5 +302,6 @@ jobs:
         with:
           name: memory-stress-results-${{ github.run_number }}
           path: |
+            profiling-results/
             target/criterion/
           retention-days: 14
