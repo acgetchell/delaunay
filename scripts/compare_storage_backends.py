@@ -27,6 +27,7 @@ Usage:
 
 import argparse
 import logging
+import math
 import re
 import shutil
 import subprocess
@@ -44,15 +45,36 @@ except ModuleNotFoundError:
 
 logger = logging.getLogger(__name__)
 
+_DURATION_UNIT_TO_NS = {
+    "ns": 1.0,
+    "µs": 1_000.0,
+    "μs": 1_000.0,
+    "us": 1_000.0,
+    "ms": 1_000_000.0,
+    "s": 1_000_000_000.0,
+}
+
 _RECOVERABLE_COMPARISON_ERRORS: tuple[type[BaseException], ...] = (
     ExecutableNotFoundError,
     OSError,
     RuntimeError,
-    TypeError,
     ValueError,
-    KeyError,
     subprocess.SubprocessError,
 )
+
+
+def _duration_to_ns(value: str | float, unit: object) -> float | None:
+    """Convert a positive finite duration to nanoseconds."""
+    if not isinstance(unit, str):
+        return None
+    try:
+        duration = float(value)
+    except (TypeError, ValueError):
+        return None
+    scale = _DURATION_UNIT_TO_NS.get(unit)
+    if scale is None or duration <= 0 or not math.isfinite(duration):
+        return None
+    return duration * scale
 
 
 class StorageBackendComparator:
@@ -241,11 +263,15 @@ class StorageBackendComparator:
                 for path in criterion_path.rglob("new/estimates.json"):
                     try:
                         data = loads(path.read_text(encoding="utf-8"))
-                        estimate = data["mean"]["point_estimate"]
-                        # Infer name from parent directory
-                        name = path.parent.parent.name
+                        estimate = float(data["mean"]["point_estimate"])
+                        # Preserve the full Criterion benchmark ID, excluding new/estimates.json.
+                        name = "/".join(path.relative_to(criterion_path).parts[:-2])
                         lower_bound = float(data["mean"]["confidence_interval"]["lower_bound"])
                         upper_bound = float(data["mean"]["confidence_interval"]["upper_bound"])
+                        if not (math.isfinite(estimate) and math.isfinite(lower_bound) and math.isfinite(upper_bound)):
+                            continue
+                        if estimate <= 0 or not (0 <= lower_bound <= estimate <= upper_bound):
+                            continue
 
                         benchmarks_list.append(
                             {
@@ -304,8 +330,17 @@ class StorageBackendComparator:
             if slotmap_bench and denseslotmap_bench:
                 slotmap_time = slotmap_bench["estimate"]
                 denseslotmap_time = denseslotmap_bench["estimate"]
-                unit = slotmap_bench["unit"]
-                diff_pct = ((denseslotmap_time - slotmap_time) / slotmap_time) * 100
+                slotmap_unit = slotmap_bench["unit"]
+                denseslotmap_unit = denseslotmap_bench["unit"]
+                slotmap_time_ns = _duration_to_ns(slotmap_time, slotmap_unit)
+                denseslotmap_time_ns = _duration_to_ns(denseslotmap_time, denseslotmap_unit)
+                if slotmap_time_ns is None or denseslotmap_time_ns is None:
+                    lines.append(
+                        f"| {name} | {slotmap_time:.2f} {slotmap_unit} | {denseslotmap_time:.2f} {denseslotmap_unit} | N/A | invalid timing data |",
+                    )
+                    continue
+
+                diff_pct = ((denseslotmap_time_ns - slotmap_time_ns) / slotmap_time_ns) * 100
                 diffs.append(diff_pct)
 
                 # Determine winner (green=faster, yellow=same)
@@ -316,7 +351,12 @@ class StorageBackendComparator:
                 else:
                     winner, emoji = "✅ SlotMap", "🟢"
 
-                lines.append(f"| {name} | {slotmap_time:.2f} {unit} | {denseslotmap_time:.2f} {unit} | {diff_pct:+.1f}% {emoji} | {winner} |")
+                lines.append(
+                    (
+                        f"| {name} | {slotmap_time:.2f} {slotmap_unit} | "
+                        f"{denseslotmap_time:.2f} {denseslotmap_unit} | {diff_pct:+.1f}% {emoji} | {winner} |"
+                    ),
+                )
             elif slotmap_bench:
                 lines.append(f"| {name} | {slotmap_bench['estimate']:.2f} {slotmap_bench['unit']} | N/A | - | - |")
             elif denseslotmap_bench:
