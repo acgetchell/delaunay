@@ -118,6 +118,16 @@ class TestCriterionParser:
         finally:
             estimates_path.unlink()
 
+    def test_benchmark_data_positional_timing_compatibility(self):
+        """Test legacy positional construction still maps the third argument to time_low."""
+        benchmark = BenchmarkData(1000, "2D", 1.0, 2.0, 3.0, "µs")
+
+        assert benchmark.time_low == 1.0
+        assert benchmark.time_mean == 2.0
+        assert benchmark.time_high == 3.0
+        assert benchmark.time_unit == "µs"
+        assert benchmark.benchmark_id == ""
+
     def test_parse_estimates_json_zero_mean(self):
         """Test parsing estimates.json with zero mean time."""
         estimates_data = {"mean": {"point_estimate": 0.0, "confidence_interval": {"lower_bound": 0.0, "upper_bound": 0.0}}}
@@ -248,6 +258,46 @@ class TestCriterionParser:
         actual_order = [(b.dimension, b.points) for b in ci_suite_results]
         assert actual_order == expected_order
 
+    def test_find_criterion_results_preserves_ci_suite_ids(self):
+        """Test ci_performance_suite results keep expanded Criterion benchmark IDs."""
+        with tempfile.TemporaryDirectory() as temp_dir:
+            target_dir = Path(temp_dir) / "target"
+
+            def write_estimate(path_parts, mean_ns):
+                estimates_dir = target_dir / "criterion" / Path(*path_parts) / "base"
+                estimates_dir.mkdir(parents=True)
+                estimates = {
+                    "mean": {
+                        "point_estimate": mean_ns,
+                        "confidence_interval": {
+                            "lower_bound": mean_ns * 0.9,
+                            "upper_bound": mean_ns * 1.1,
+                        },
+                    },
+                }
+                (estimates_dir / "estimates.json").write_text(json.dumps(estimates), encoding="utf-8")
+
+            write_estimate(("boundary_facets", "boundary_facets_3d", "50"), 10_000.0)
+            write_estimate(("validation", "validate_3d", "50"), 20_000.0)
+            write_estimate(("boundary_facets", "boundary_facets_3d_adversarial", "50"), 30_000.0)
+            write_estimate(("bistellar_flips_4d", "k2_roundtrip"), 40_000.0)
+
+            results = CriterionParser.find_criterion_results(target_dir)
+
+            assert [result.comparison_key for result in results] == [
+                "boundary_facets/boundary_facets_3d/50",
+                "boundary_facets/boundary_facets_3d_adversarial/50",
+                "validation/validate_3d/50",
+                "bistellar_flips_4d/k2_roundtrip",
+            ]
+            sized_results = [result for result in results if result.comparison_key != "bistellar_flips_4d/k2_roundtrip"]
+            assert {(result.points, result.dimension) for result in sized_results} == {(50, "3D")}
+
+            roundtrip = next(result for result in results if result.comparison_key == "bistellar_flips_4d/k2_roundtrip")
+            assert roundtrip.points == 0
+            assert roundtrip.dimension == "4D"
+            assert roundtrip.throughput_mean is None
+
 
 class TestPerformanceComparator:
     """Test cases for PerformanceComparator class."""
@@ -300,6 +350,80 @@ Throughput: [4.167, 4.545, 5.0] Kelem/s
         assert bench_2d_1000.dimension == "2D"
         assert bench_2d_1000.time_mean == 110.0
         assert bench_2d_1000.throughput_mean == 9.091
+
+    def test_parse_baseline_file_with_benchmark_ids(self, comparator):
+        """Test parsing expanded ci_performance_suite baseline identifiers."""
+        baseline_content = """Date: 2023-06-15 10:30:00 PDT
+Git commit: abc123def456
+
+=== 50 Points (3D) ===
+Benchmark ID: boundary_facets/boundary_facets_3d/50
+Time: [9.0, 10.0, 11.0] µs
+Throughput: [4.545, 5.0, 5.556] Kelem/s
+
+=== 50 Points (3D) ===
+Benchmark ID: validation/validate_3d/50
+Time: [19.0, 20.0, 21.0] µs
+Throughput: [2.381, 2.5, 2.632] Kelem/s
+"""
+
+        results = comparator._parse_baseline_file(baseline_content)
+
+        assert set(results) == {
+            "boundary_facets/boundary_facets_3d/50",
+            "validation/validate_3d/50",
+        }
+        assert results["boundary_facets/boundary_facets_3d/50"].time_mean == 10.0
+        assert results["validation/validate_3d/50"].time_mean == 20.0
+
+    def test_write_performance_comparison_matches_benchmark_ids(self, comparator):
+        """Test comparison uses expanded benchmark IDs instead of point/dimension collisions."""
+        current_results = [
+            BenchmarkData(50, "3D", benchmark_id="boundary_facets/boundary_facets_3d/50").with_timing(9.0, 10.0, 11.0, "µs"),
+            BenchmarkData(50, "3D", benchmark_id="validation/validate_3d/50").with_timing(19.0, 20.0, 21.0, "µs"),
+        ]
+        baseline_results = {
+            "boundary_facets/boundary_facets_3d/50": BenchmarkData(
+                50,
+                "3D",
+                benchmark_id="boundary_facets/boundary_facets_3d/50",
+            ).with_timing(9.0, 10.0, 11.0, "µs"),
+            "validation/validate_3d/50": BenchmarkData(
+                50,
+                "3D",
+                benchmark_id="validation/validate_3d/50",
+            ).with_timing(38.0, 40.0, 42.0, "µs"),
+        }
+
+        output = StringIO()
+        comparator._write_performance_comparison(output, current_results, baseline_results)
+        content = output.getvalue()
+
+        assert "Benchmark ID: boundary_facets/boundary_facets_3d/50" in content
+        assert "Benchmark ID: validation/validate_3d/50" in content
+        assert "OK: Time change +0.0%" in content
+        assert "IMPROVEMENT: Time decreased by 50.0%" in content
+
+    def test_write_performance_comparison_no_legacy_fallback_for_benchmark_id(self, comparator):
+        """Test expanded IDs do not compare against unrelated collapsed legacy baselines."""
+        current_results = [
+            BenchmarkData(50, "3D", benchmark_id="validation/validate_3d/50").with_timing(
+                19.0,
+                20.0,
+                21.0,
+                "µs",
+            ),
+        ]
+        baseline_results = {
+            "50_3D": BenchmarkData(50, "3D").with_timing(38.0, 40.0, 42.0, "µs"),
+        }
+
+        output = StringIO()
+        comparator._write_performance_comparison(output, current_results, baseline_results)
+        content = output.getvalue()
+
+        assert "Baseline: N/A (no matching entry)" in content
+        assert "IMPROVEMENT: Time decreased by 50.0%" not in content
 
     def test_write_time_comparison_no_regression(self, comparator):
         """Test time comparison writing with no regression."""

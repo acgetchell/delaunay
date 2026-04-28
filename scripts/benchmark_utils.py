@@ -1570,7 +1570,7 @@ class CriterionParser:
     """Parse Criterion benchmark output and JSON data."""
 
     @staticmethod
-    def parse_estimates_json(estimates_path: Path, points: int, dimension: str) -> BenchmarkData | None:
+    def parse_estimates_json(estimates_path: Path, points: int | None, dimension: str) -> BenchmarkData | None:
         """
         Parse Criterion estimates.json file to extract benchmark data.
 
@@ -1599,26 +1599,97 @@ class CriterionParser:
             low_us = low_ns / 1000
             high_us = high_ns / 1000
 
-            # Calculate throughput in Kelem/s
-            # Throughput = points / time_in_seconds
-            # For time in microseconds: throughput = points * 1,000,000 / time_us
-            # For Kelem/s: throughput_kelem = (points * 1,000,000 / time_us) / 1000 = points * 1000 / time_us
-            # Guard against division by zero for very fast benchmarks
-            eps = 1e-9  # µs - minimum time to prevent division by zero
-            thrpt_mean = points * 1000 / max(mean_us, eps)
-            thrpt_low = points * 1000 / max(high_us, eps)  # Lower time = higher throughput
-            thrpt_high = points * 1000 / max(low_us, eps)  # Higher time = lower throughput
+            benchmark = BenchmarkData(points or 0, dimension).with_timing(round(low_us, 2), round(mean_us, 2), round(high_us, 2), "µs")
 
-            return (
-                BenchmarkData(points, dimension)
-                # Baseline timing values are rounded to 2 decimal places for consistency
-                # This standardizes storage format and avoids spurious precision differences
-                .with_timing(round(low_us, 2), round(mean_us, 2), round(high_us, 2), "µs")
-                .with_throughput(round(thrpt_low, 3), round(thrpt_mean, 3), round(thrpt_high, 3), "Kelem/s")
-            )
+            if points is not None:
+                # Calculate throughput in Kelem/s
+                # Throughput = points / time_in_seconds
+                # For time in microseconds: throughput = points * 1,000,000 / time_us
+                # For Kelem/s: throughput_kelem = (points * 1,000,000 / time_us) / 1000 = points * 1000 / time_us
+                # Guard against division by zero for very fast benchmarks
+                eps = 1e-9  # µs - minimum time to prevent division by zero
+                thrpt_mean = points * 1000 / max(mean_us, eps)
+                thrpt_low = points * 1000 / max(high_us, eps)  # Lower time = higher throughput
+                thrpt_high = points * 1000 / max(low_us, eps)  # Higher time = lower throughput
+                benchmark.with_throughput(round(thrpt_low, 3), round(thrpt_mean, 3), round(thrpt_high, 3), "Kelem/s")
+
+            return benchmark
 
         except (FileNotFoundError, json.JSONDecodeError, KeyError, ZeroDivisionError, ValueError):
             return None
+
+    @staticmethod
+    def _ci_suite_group_key(first_path_part: str) -> str | None:
+        """Map a Criterion path prefix to a ci_performance_suite group key."""
+        if first_path_part.startswith("tds_new_"):
+            return "construction"
+        if first_path_part.startswith("bistellar_flips"):
+            return "bistellar_flips"
+        if first_path_part in CI_PERFORMANCE_SUITE_GROUPS:
+            return first_path_part
+        return None
+
+    @staticmethod
+    def _ci_suite_dimension(benchmark_id: str) -> str:
+        """Extract the dimension label from a ci_performance_suite benchmark ID."""
+        match = re.search(r"(?:^|_|/)(\d+)d(?:_|/|$)", benchmark_id)
+        if match:
+            return f"{match.group(1)}D"
+        return "n/a"
+
+    @staticmethod
+    def _ci_suite_input_points(path_parts: tuple[str, ...]) -> int | None:
+        """Extract the numeric input size when the Criterion ID has one."""
+        if path_parts and path_parts[-1].isdigit():
+            return int(path_parts[-1])
+        return None
+
+    @staticmethod
+    def _process_ci_performance_suite_results(criterion_dir: Path) -> list[BenchmarkData]:
+        """Discover ci_performance_suite Criterion results with expanded benchmark IDs."""
+        estimates_by_id: dict[tuple[str, ...], tuple[str, Path]] = {}
+
+        for estimates_path in sorted(criterion_dir.glob("**/estimates.json")):
+            if estimates_path.parent.name not in {"base", "new"}:
+                continue
+
+            try:
+                path_parts = estimates_path.relative_to(criterion_dir).parts[:-2]
+            except ValueError:
+                continue
+
+            if not path_parts or CriterionParser._ci_suite_group_key(path_parts[0]) is None:
+                continue
+
+            existing = estimates_by_id.get(path_parts)
+            if existing is None or (existing[0] == "base" and estimates_path.parent.name == "new"):
+                estimates_by_id[path_parts] = (estimates_path.parent.name, estimates_path)
+
+        results: list[BenchmarkData] = []
+        for path_parts, (_, estimates_path) in estimates_by_id.items():
+            benchmark_id = "/".join(path_parts)
+            dimension = CriterionParser._ci_suite_dimension(benchmark_id)
+            if dimension == "n/a":
+                continue
+
+            points = CriterionParser._ci_suite_input_points(path_parts)
+            benchmark_data = CriterionParser.parse_estimates_json(estimates_path, points, dimension)
+            if benchmark_data is None:
+                continue
+
+            benchmark_data.benchmark_id = benchmark_id
+            results.append(benchmark_data)
+
+        group_order = {group: index for index, group in enumerate(CI_PERFORMANCE_SUITE_GROUP_ORDER)}
+        results.sort(
+            key=lambda result: (
+                group_order.get(CriterionParser._ci_suite_group_key(result.benchmark_id.split("/", 1)[0]) or "", sys.maxsize),
+                int(result.dimension.removesuffix("D")) if result.dimension.removesuffix("D").isdigit() else sys.maxsize,
+                result.points,
+                result.benchmark_id,
+            ),
+        )
+        return results
 
     @staticmethod
     def _extract_dimension_from_dir(dim_dir: Path) -> str | None:
@@ -1660,7 +1731,7 @@ class CriterionParser:
     def _process_fallback_discovery(criterion_dir: Path) -> list[BenchmarkData]:
         """Recursively discover estimates.json files when structured search fails."""
         results = []
-        seen: set[tuple[int, str]] = set()
+        seen: set[str] = set()
 
         for estimates_file in criterion_dir.rglob("estimates.json"):
             parent_name = estimates_file.parent.name
@@ -1679,7 +1750,7 @@ class CriterionParser:
 
             points = int(points_dir.name)
             dimension = f"{dim_match.group(1)}D"
-            key = (points, dimension)
+            key = f"{points}_{dimension}"
 
             # Prefer "new" over "base" when duplicates exist
             if key in seen and parent_name == "base":
@@ -1707,6 +1778,10 @@ class CriterionParser:
         criterion_dir = target_dir / "criterion"
 
         if not criterion_dir.exists():
+            return results
+
+        results = CriterionParser._process_ci_performance_suite_results(criterion_dir)
+        if results:
             return results
 
         # Look for benchmark results in *d directories (group names can change)
@@ -1975,10 +2050,18 @@ class PerformanceComparator:
             if match:
                 points = int(match.group(1))
                 dimension = f"{match.group(2)}D"
+                benchmark_id = ""
+                next_line_index = i + 1
+
+                if next_line_index < len(lines):
+                    id_match = re.match(r"Benchmark ID:\s*(.+)", lines[next_line_index].strip())
+                    if id_match:
+                        benchmark_id = id_match.group(1).strip()
+                        next_line_index += 1
 
                 # Parse time line
-                if i + 1 < len(lines):
-                    time_line = lines[i + 1].strip()
+                if next_line_index < len(lines):
+                    time_line = lines[next_line_index].strip()
                     time_match = re.match(r"Time: \[([0-9.]+), ([0-9.]+), ([0-9.]+)\] (.+)", time_line)
                     if time_match:
                         time_low = float(time_match.group(1))
@@ -1990,8 +2073,8 @@ class PerformanceComparator:
                         throughput_low = throughput_mean = throughput_high = None
                         throughput_unit = None
 
-                        if i + 2 < len(lines):
-                            thrpt_line = lines[i + 2].strip()
+                        if next_line_index + 1 < len(lines):
+                            thrpt_line = lines[next_line_index + 1].strip()
                             thrpt_match = re.match(r"Throughput: \[([0-9.]+), ([0-9.]+), ([0-9.]+)\] (.+)", thrpt_line)
                             if thrpt_match:
                                 throughput_low = float(thrpt_match.group(1))
@@ -1999,8 +2082,7 @@ class PerformanceComparator:
                                 throughput_high = float(thrpt_match.group(3))
                                 throughput_unit = thrpt_match.group(4)
 
-                        key = f"{points}_{dimension}"
-                        benchmark = BenchmarkData(points, dimension).with_timing(time_low, time_mean, time_high, time_unit)
+                        benchmark = BenchmarkData(points, dimension, benchmark_id=benchmark_id).with_timing(time_low, time_mean, time_high, time_unit)
                         if throughput_mean is not None and throughput_low is not None and throughput_high is not None and throughput_unit is not None:
                             benchmark.with_throughput(
                                 throughput_low,
@@ -2011,13 +2093,13 @@ class PerformanceComparator:
                         else:
                             logger.debug(
                                 "Missing throughput data for %s: low=%s mean=%s high=%s unit=%s",
-                                key,
+                                benchmark.comparison_key,
                                 throughput_low,
                                 throughput_mean,
                                 throughput_high,
                                 throughput_unit,
                             )
-                        results[key] = benchmark
+                        results[benchmark.comparison_key] = benchmark
 
             i += 1
 
@@ -2160,14 +2242,21 @@ class PerformanceComparator:
             f.write(f"{sampling_warning}\n\n")
         f.write(hardware_report)
 
+    @staticmethod
+    def _matching_baseline(current: BenchmarkData, baseline_results: dict[str, BenchmarkData]) -> BenchmarkData | None:
+        """Return the matching baseline entry, using legacy keys only for legacy current IDs."""
+        baseline_benchmark = baseline_results.get(current.comparison_key)
+        if baseline_benchmark is not None or current.benchmark_id:
+            return baseline_benchmark
+        return baseline_results.get(f"{current.points}_{current.dimension}")
+
     def _write_performance_comparison(self, f: TextIO, current_results: list[BenchmarkData], baseline_results: dict[str, BenchmarkData]) -> bool:
         """Write performance comparison section and return whether average regression exceeds threshold."""
         time_changes = []  # Track all time changes for average calculation
         individual_regressions = 0
 
         for current_benchmark in current_results:
-            key = f"{current_benchmark.points}_{current_benchmark.dimension}"
-            baseline_benchmark = baseline_results.get(key)
+            baseline_benchmark = self._matching_baseline(current_benchmark, baseline_results)
 
             self._write_benchmark_header(f, current_benchmark)
             self._write_current_benchmark_data(f, current_benchmark)
@@ -2258,6 +2347,8 @@ class PerformanceComparator:
     def _write_benchmark_header(self, f, benchmark: BenchmarkData) -> None:
         """Write benchmark section header."""
         f.write(f"=== {benchmark.points} Points ({benchmark.dimension}) ===\n")
+        if benchmark.benchmark_id:
+            f.write(f"Benchmark ID: {benchmark.benchmark_id}\n")
 
     def _write_current_benchmark_data(self, f, benchmark: BenchmarkData) -> None:
         """Write current benchmark data."""

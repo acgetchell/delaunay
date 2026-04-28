@@ -288,6 +288,27 @@ class TestFormattingFunctions:
         assert "| 5000 |" in markdown_content  # Should contain the 5000 point row
         assert "4.5x" in markdown_content  # Scaling: 500/110 ≈ 4.5
 
+    def test_format_benchmark_tables_includes_benchmark_ids(self):
+        """Test expanded benchmark IDs are shown in baseline summary tables."""
+        benchmarks = [
+            BenchmarkData(50, "3D", benchmark_id="boundary_facets/boundary_facets_3d/50")
+            .with_timing(9.0, 10.0, 11.0, "µs")
+            .with_throughput(4.545, 5.0, 5.556, "Kelem/s"),
+            BenchmarkData(50, "3D", benchmark_id="validation/validate_3d/50").with_timing(
+                19.0,
+                20.0,
+                21.0,
+                "µs",
+            ),
+        ]
+
+        lines = format_benchmark_tables(benchmarks)
+        markdown_content = "\n".join(lines)
+
+        assert "| Benchmark ID | Points | Time (mean) | Throughput (mean) | Scaling |" in markdown_content
+        assert "| `boundary_facets/boundary_facets_3d/50` | 50 | 10.00 µs | 5.00 Kelem/s | 1.0x |" in markdown_content
+        assert "| `validation/validate_3d/50` | 50 | 20.00 µs | N/A | 2.0x |" in markdown_content
+
     def test_format_time_value(self):
         """Test formatting time values with appropriate precision."""
         # Test zero and negative values (should return N/A)

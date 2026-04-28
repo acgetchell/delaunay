@@ -88,17 +88,6 @@ fn init_tracing() {
 #[cfg(not(feature = "bench-logging"))]
 const fn init_tracing() {}
 
-#[cfg(not(feature = "count-allocations"))]
-macro_rules! bench_warn {
-    ($($arg:tt)*) => {{
-        #[cfg(feature = "bench-logging")]
-        {
-            init_tracing();
-            tracing::warn!($($arg)*);
-        }
-    }};
-}
-
 // SmallBuffer size constants for different use cases
 const BENCHMARK_ITERATION_BUFFER_SIZE: usize = 8; // For tracking allocation info across benchmark iterations
 const SIMPLEX_VERTICES_BUFFER_SIZE: usize = 4; // 3D simplex = 4 vertices
@@ -116,26 +105,19 @@ use allocation_counter::{AllocationInfo, measure};
 
 #[cfg(not(feature = "count-allocations"))]
 #[derive(Debug, Default)]
-struct AllocationInfo {
-    count_total: u64,
-    count_current: i64,
-    count_max: u64,
-    bytes_total: u64,
-    bytes_current: i64,
-    bytes_max: u64,
-}
+struct AllocationInfo;
 
 #[cfg(not(feature = "count-allocations"))]
 fn measure(f: impl FnOnce()) -> AllocationInfo {
     f();
-    AllocationInfo::default()
+    AllocationInfo
 }
 
 #[cfg(not(feature = "count-allocations"))]
 fn print_alloc_banner_once() {
     static ONCE: Once = Once::new();
     ONCE.call_once(|| {
-        bench_warn!("count-allocations feature not enabled; memory stats are placeholders.");
+        println!("allocation stats unavailable: count-allocations feature disabled");
     });
 }
 
@@ -478,6 +460,7 @@ fn bench_scaling(c: &mut Criterion) {
 // ============================================================================
 
 /// Read the memory summary percentile from `BENCH_PERCENTILE` (default: 95).
+#[cfg(feature = "count-allocations")]
 fn configured_percentile() -> usize {
     env::var("BENCH_PERCENTILE")
         .ok()
@@ -486,6 +469,7 @@ fn configured_percentile() -> usize {
 }
 
 /// Format a percentile as an ordinal label for the memory summary.
+#[cfg(feature = "count-allocations")]
 fn percentile_label(percentile: usize) -> String {
     let suffix = match percentile % 100 {
         11..=13 => "th",
@@ -500,6 +484,7 @@ fn percentile_label(percentile: usize) -> String {
 }
 
 /// Calculate percentile from a slice of values using nearest-rank method.
+#[cfg(feature = "count-allocations")]
 fn calculate_percentile(values: &mut [u64], percentile: usize) -> u64 {
     if values.is_empty() {
         return 0;
@@ -516,6 +501,7 @@ fn calculate_percentile(values: &mut [u64], percentile: usize) -> u64 {
 }
 
 /// Print memory allocation summary
+#[cfg(feature = "count-allocations")]
 #[expect(clippy::cast_precision_loss)]
 fn print_alloc_summary(
     info: &AllocationInfo,
@@ -553,7 +539,7 @@ fn print_alloc_summary(
 }
 
 /// Generic helper to benchmark memory usage for a specific dimension D
-#[expect(clippy::cast_possible_wrap)]
+#[cfg_attr(feature = "count-allocations", expect(clippy::cast_possible_wrap))]
 fn bench_memory_usage<const D: usize>(
     group: &mut BenchmarkGroup<'_, WallTime>,
     bench_id_prefix: &str,
@@ -590,56 +576,71 @@ fn bench_memory_usage<const D: usize>(
                     actual_point_counts.push(pts_len);
                 }
 
-                // Report memory usage summary if available
-                if !allocation_infos.is_empty() {
-                    // Safe cast for division - allocation_infos.len() is guaranteed to be small and non-zero
-                    let divisor_unsigned = allocation_infos.len() as u64;
-                    let divisor_signed = allocation_infos.len() as i64;
-                    let avg_info = AllocationInfo {
-                        count_total: allocation_infos.iter().map(|i| i.count_total).sum::<u64>()
-                            / divisor_unsigned,
-                        count_current: allocation_infos
-                            .iter()
-                            .map(|i| i.count_current)
-                            .sum::<i64>()
-                            / divisor_signed,
-                        count_max: allocation_infos
-                            .iter()
-                            .map(|i| i.count_max)
-                            .max()
-                            .unwrap_or(0),
-                        bytes_total: allocation_infos.iter().map(|i| i.bytes_total).sum::<u64>()
-                            / divisor_unsigned,
-                        bytes_current: allocation_infos
-                            .iter()
-                            .map(|i| i.bytes_current)
-                            .sum::<i64>()
-                            / divisor_signed,
-                        bytes_max: allocation_infos
-                            .iter()
-                            .map(|i| i.bytes_max)
-                            .max()
-                            .unwrap_or(0),
-                    };
-                    let avg_actual_count = if actual_point_counts.is_empty() {
-                        0
-                    } else {
-                        actual_point_counts.iter().sum::<usize>() / actual_point_counts.len()
-                    };
+                #[cfg(not(feature = "count-allocations"))]
+                {
+                    print_alloc_banner_once();
+                }
 
-                    // Calculate percentile of bytes_max (configurable via BENCH_PERCENTILE, default 95th)
-                    let mut bytes_max_values: Vec<u64> =
-                        allocation_infos.iter().map(|i| i.bytes_max).collect();
-                    let percentile = configured_percentile();
-                    let percentile_value = calculate_percentile(&mut bytes_max_values, percentile);
+                #[cfg(feature = "count-allocations")]
+                {
+                    // Report memory usage summary if available
+                    if !allocation_infos.is_empty() {
+                        // Safe cast for division - allocation_infos.len() is guaranteed to be small and non-zero
+                        let divisor_unsigned = allocation_infos.len() as u64;
+                        let divisor_signed = allocation_infos.len() as i64;
+                        let avg_info = AllocationInfo {
+                            count_total: allocation_infos
+                                .iter()
+                                .map(|i| i.count_total)
+                                .sum::<u64>()
+                                / divisor_unsigned,
+                            count_current: allocation_infos
+                                .iter()
+                                .map(|i| i.count_current)
+                                .sum::<i64>()
+                                / divisor_signed,
+                            count_max: allocation_infos
+                                .iter()
+                                .map(|i| i.count_max)
+                                .max()
+                                .unwrap_or(0),
+                            bytes_total: allocation_infos
+                                .iter()
+                                .map(|i| i.bytes_total)
+                                .sum::<u64>()
+                                / divisor_unsigned,
+                            bytes_current: allocation_infos
+                                .iter()
+                                .map(|i| i.bytes_current)
+                                .sum::<i64>()
+                                / divisor_signed,
+                            bytes_max: allocation_infos
+                                .iter()
+                                .map(|i| i.bytes_max)
+                                .max()
+                                .unwrap_or(0),
+                        };
+                        let avg_actual_count = if actual_point_counts.is_empty() {
+                            0
+                        } else {
+                            actual_point_counts.iter().sum::<usize>() / actual_point_counts.len()
+                        };
 
-                    print_alloc_summary(
-                        &avg_info,
-                        &format!("{D}D Triangulation"),
-                        avg_actual_count,
-                        percentile,
-                        percentile_value,
-                    );
+                        // Calculate percentile of bytes_max (configurable via BENCH_PERCENTILE, default 95th)
+                        let mut bytes_max_values: Vec<u64> =
+                            allocation_infos.iter().map(|i| i.bytes_max).collect();
+                        let percentile = configured_percentile();
+                        let percentile_value =
+                            calculate_percentile(&mut bytes_max_values, percentile);
+
+                        print_alloc_summary(
+                            &avg_info,
+                            &format!("{D}D Triangulation"),
+                            avg_actual_count,
+                            percentile,
+                            percentile_value,
+                        );
+                    }
                 }
 
                 total_time
