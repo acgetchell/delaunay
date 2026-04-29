@@ -8,6 +8,7 @@ use delaunay::prelude::triangulation::{
     DelaunayTriangulationConstructionError, InsertionOrderStrategy, RetryPolicy, TopologyGuarantee,
 };
 use delaunay::vertex;
+#[cfg(feature = "test-debug")]
 use rand::{RngExt, SeedableRng, rngs::StdRng};
 
 type Dt<const D: usize> = DelaunayTriangulation<AdaptiveKernel<f64>, (), (), D>;
@@ -91,6 +92,7 @@ fn as_triangulation_mut_valid_view() {
 /// This remains ignored by default because it is nondeterministic and expensive.
 /// For deterministic coverage, see the forced heuristic rebuild tests in
 /// `src/triangulation/delaunay.rs`.
+#[cfg(feature = "test-debug")]
 #[test]
 #[ignore = "manual search helper; run explicitly to discover natural repro cases"]
 fn find_stale_key_after_rebuild() {
@@ -103,9 +105,6 @@ fn find_stale_key_after_rebuild() {
     let mut rng = StdRng::seed_from_u64(0xD3_1A_7A_1C_0A_17_u64);
 
     for case in 0..CASES {
-        #[cfg(not(feature = "test-debug"))]
-        let _ = case;
-
         let mut vertices = Vec::with_capacity(INITIAL_COUNT);
         for _ in 0..INITIAL_COUNT {
             // Use a coarse lattice + tiny noise to encourage near-degenerate configurations.

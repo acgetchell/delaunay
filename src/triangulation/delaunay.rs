@@ -8452,24 +8452,31 @@ mod tests {
         vertex!([coord; D])
     }
 
-    fn assert_remove_vertex_rollback<const D: usize>() {
-        init_tracing();
-        let vertices = simplex_vertices::<D>();
+    fn rollback_probe_vertex<const D: usize>(point_index: usize) -> Vertex<f64, (), D> {
+        let dimension =
+            safe_usize_to_scalar::<f64>(D).expect("test dimensions should convert exactly");
+        let point_index_scalar =
+            safe_usize_to_scalar::<f64>(point_index).expect("point index should convert exactly");
+        let mut coords = [0.2 / dimension; D];
+        let axis = point_index % D;
+        coords[axis] += point_index_scalar.mul_add(0.005, 0.02);
+        vertex!(coords)
+    }
 
-        let mut dt: DelaunayTriangulation<AdaptiveKernel<f64>, (), (), D> =
-            DelaunayTriangulation::new(&vertices).unwrap();
-        dt.set_topology_guarantee(TopologyGuarantee::PLManifold);
+    fn incident_cell_count<const D: usize>(
+        dt: &DelaunayTriangulation<AdaptiveKernel<f64>, (), (), D>,
+        vertex_key: VertexKey,
+    ) -> usize {
+        dt.cells()
+            .filter(|(_, cell)| cell.vertices().contains(&vertex_key))
+            .count()
+    }
 
-        let cell_key = dt.cells().next().unwrap().0;
-        let inserted_vertex = interior_vertex_for_k1_insert::<D>();
-        let inserted_uuid = inserted_vertex.uuid();
-        dt.flip_k1_insert(cell_key, inserted_vertex).unwrap();
-
-        let vertex_key = dt
-            .vertices()
-            .find(|(_, v)| v.uuid() == inserted_uuid)
-            .map(|(k, _)| k)
-            .expect("Inserted vertex not found");
+    fn assert_forced_remove_vertex_rolls_back<const D: usize>(
+        dt: &mut DelaunayTriangulation<AdaptiveKernel<f64>, (), (), D>,
+        vertex_key: VertexKey,
+        inserted_uuid: Uuid,
+    ) {
         let vertex_count_before = dt.number_of_vertices();
         let cell_count_before = dt.number_of_cells();
         let hint_cell_before = dt.cells().next().map(|(key, _)| key);
@@ -8519,12 +8526,73 @@ mod tests {
         assert!(dt.as_triangulation().validate().is_ok());
     }
 
+    fn assert_remove_vertex_rollback<const D: usize>() {
+        init_tracing();
+        let vertices = simplex_vertices::<D>();
+
+        let mut dt: DelaunayTriangulation<AdaptiveKernel<f64>, (), (), D> =
+            DelaunayTriangulation::new(&vertices).unwrap();
+        dt.set_topology_guarantee(TopologyGuarantee::PLManifold);
+
+        let cell_key = dt.cells().next().unwrap().0;
+        let inserted_vertex = interior_vertex_for_k1_insert::<D>();
+        let inserted_uuid = inserted_vertex.uuid();
+        dt.flip_k1_insert(cell_key, inserted_vertex).unwrap();
+
+        let vertex_key = dt
+            .vertices()
+            .find(|(_, v)| v.uuid() == inserted_uuid)
+            .map(|(k, _)| k)
+            .expect("Inserted vertex not found");
+
+        assert_forced_remove_vertex_rolls_back(&mut dt, vertex_key, inserted_uuid);
+    }
+
+    fn assert_remove_vertex_fallback_rollback<const D: usize>() {
+        init_tracing();
+        let vertices = simplex_vertices::<D>();
+
+        let mut dt: DelaunayTriangulation<AdaptiveKernel<f64>, (), (), D> =
+            DelaunayTriangulation::new(&vertices).unwrap();
+        dt.set_topology_guarantee(TopologyGuarantee::PLManifold);
+
+        let mut inserted_vertices = Vec::new();
+        for point_index in 0..(D + 3) {
+            let inserted_vertex = rollback_probe_vertex::<D>(point_index);
+            let inserted_uuid = inserted_vertex.uuid();
+            let vertex_key = dt
+                .insert(inserted_vertex)
+                .expect("rollback fallback fixture insertion should succeed");
+            inserted_vertices.push((vertex_key, inserted_uuid));
+        }
+
+        let (vertex_key, inserted_uuid, incident_cells) = inserted_vertices
+            .iter()
+            .find_map(|&(vertex_key, inserted_uuid)| {
+                let incident_cells = incident_cell_count(&dt, vertex_key);
+                (incident_cells != D + 1).then_some((vertex_key, inserted_uuid, incident_cells))
+            })
+            .expect("expected at least one inserted vertex with a non-simplex star");
+        assert_ne!(
+            incident_cells,
+            D + 1,
+            "fallback rollback fixture must avoid the inverse-k=1 simplex-star path"
+        );
+
+        assert_forced_remove_vertex_rolls_back(&mut dt, vertex_key, inserted_uuid);
+    }
+
     macro_rules! gen_remove_vertex_rollback_tests {
         ($dim:literal) => {
             pastey::paste! {
                 #[test]
                 fn [<remove_vertex_rollback_ $dim d>]() {
                     assert_remove_vertex_rollback::<$dim>();
+                }
+
+                #[test]
+                fn [<remove_vertex_fallback_rollback_ $dim d>]() {
+                    assert_remove_vertex_fallback_rollback::<$dim>();
                 }
             }
         };
