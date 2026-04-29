@@ -1198,7 +1198,10 @@ mod tests {
     }
 
     #[test]
-    #[expect(clippy::too_many_lines)]
+    #[expect(
+        clippy::too_many_lines,
+        reason = "orientation regression test keeps dimension-specific cases together"
+    )]
     fn test_simplex_orientation_comprehensive() {
         // Test 2D orientation - positive case
         let positive_2d = vec![

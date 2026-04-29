@@ -35,7 +35,10 @@ use proptest::prelude::*;
 ///
 /// Uses exact equality because coordinates are derived from integers
 /// via `f64::from()`, so no rounding occurs.
-#[allow(clippy::float_cmp)]
+#[expect(
+    clippy::float_cmp,
+    reason = "coordinates are integer-derived f64 values, so exact equality is intentional"
+)]
 fn points_all_distinct<const D: usize>(points: &[Point<f64, D>]) -> bool {
     (0..points.len())
         .all(|i| ((i + 1)..points.len()).all(|j| points[i].coords() != points[j].coords()))

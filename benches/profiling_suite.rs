@@ -270,7 +270,11 @@ fn gen_points<const D: usize>(
 // ============================================================================
 
 /// Comprehensive triangulation scaling analysis across dimensions and distributions
-#[expect(clippy::significant_drop_tightening, clippy::too_many_lines)]
+#[expect(
+    clippy::significant_drop_tightening,
+    clippy::too_many_lines,
+    reason = "profiling setup keeps benchmark state lifetimes and measurement branches visible"
+)]
 fn bench_scaling(c: &mut Criterion) {
     let counts = get_profiling_counts();
     let distributions = [
@@ -505,7 +509,10 @@ fn calculate_percentile(values: &mut [u64], percentile: usize) -> u64 {
 
 /// Print memory allocation summary
 #[cfg(all(feature = "count-allocations", feature = "bench-logging"))]
-#[expect(clippy::cast_precision_loss)]
+#[expect(
+    clippy::cast_precision_loss,
+    reason = "allocation summary reports byte ratios where f64 precision is sufficient"
+)]
 fn print_alloc_summary(
     info: &AllocationInfo,
     description: &str,
@@ -542,7 +549,10 @@ fn print_alloc_summary(
 }
 
 #[cfg(all(feature = "count-allocations", feature = "bench-logging"))]
-#[expect(clippy::cast_possible_wrap)]
+#[expect(
+    clippy::cast_possible_wrap,
+    reason = "sample counts fit signed indexing for percentile diagnostics"
+)]
 fn print_alloc_summary_from_samples<const D: usize>(
     allocation_infos: &SmallBuffer<AllocationInfo, BENCHMARK_ITERATION_BUFFER_SIZE>,
     actual_point_counts: &SmallBuffer<usize, BENCHMARK_ITERATION_BUFFER_SIZE>,

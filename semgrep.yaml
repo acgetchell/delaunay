@@ -33,25 +33,6 @@ rules:
           mod tests {
               ...
           }
-      - pattern-not: $TYPE::try_from($VALUE).expect(...)
-      - pattern-not: $VALUE.to_f64().expect(...)
-      - pattern-not: $VALUE.to_i64().expect(...)
-      - pattern-not: <f64 as num_traits::NumCast>::from($VALUE).expect(...)
-      - pattern-not: NonZeroUsize::new($VALUE).expect(...)
-      - pattern-not: $VALUE.build_facet_to_cells_map().expect(...)
-      - pattern-not: $VALUE.expect("Closure should have set result")
-      - pattern-not: $VALUE.expect("conflict_cells should be computed above")
-      - pattern-not: $VALUE.expect("retry_seed is only used when retry attempts are enabled")
-      - pattern-not: $VALUE.expect("epsilon validated above")
-      - pattern-not-regex: 'try_from\([^)]*\)\.expect\('
-      - pattern-not-regex: '\.to_(f64|i64)\(\)\s*\.expect\('
-      - pattern-not-regex: 'NumCast>::from\([^)]*\)\s*\.expect\('
-      - pattern-not-regex: 'NonZeroUsize::new\([^)]*\)\.expect\('
-      - pattern-not-regex: 'build_facet_to_cells_map\(\)\s*\.expect\('
-      - pattern-not-regex: 'expect\("Closure should have set result"\)'
-      - pattern-not-regex: 'expect\("conflict_cells should be computed above"\)'
-      - pattern-not-regex: 'expect\("retry_seed is only used when retry attempts are enabled"\)'
-      - pattern-not-regex: 'expect\("epsilon validated above"\)'
       - pattern-not-inside: |
           #[cfg(test)]
           mod $MOD {
@@ -192,7 +173,7 @@ rules:
           - pattern: num_traits::NumCast::from($VALUE).unwrap_or($FALLBACK)
           - pattern: num_traits::NumCast::from($VALUE).unwrap_or_else($FALLBACK)
           - patterns:
-              - pattern: $SAFE($ARGS...).unwrap_or($FALLBACK)
+              - pattern: $SAFE(...).unwrap_or($FALLBACK)
               - metavariable-regex:
                   metavariable: $SAFE
                   regex: safe_[A-Za-z0-9_]+
@@ -264,3 +245,223 @@ rules:
               eprintln!(...);
               ...
           }
+
+  - id: delaunay.rust.no-box-dyn-error-in-src
+    languages:
+      - rust
+    severity: WARNING
+    message: "Use a typed error enum in production src/ instead of Box<dyn Error>, &dyn Error, or anyhow::Error."
+    metadata:
+      category: maintainability
+      rationale: >-
+        Public and production fallible paths should preserve typed error
+        contracts rather than erasing error shape behind dynamic errors.
+    paths:
+      include:
+        - "/src/**/*.rs"
+      exclude:
+        - "/tests/**"
+        - "/examples/**"
+        - "/benches/**"
+        - "/tests/semgrep/**"
+    patterns:
+      # Regex is deliberate here: Rust AST patterns over-match associated
+      # error types such as serde's `S::Error`; this rule is about exact
+      # dynamic-error spellings in production code.
+      - pattern-regex: >-
+          ^[ \t]*[^\n]*(\bBox\s*<\s*dyn\s+(std::error::)?Error\b|&\s*dyn\s+(std::error::)?Error\b|\banyhow::Error\b)
+      - pattern-not-regex: '^[ \t]*(//|///|/\*|\*)'
+      - pattern-not-inside: |
+          mod tests {
+              ...
+          }
+      - pattern-not-inside: |
+          #[cfg(test)]
+          mod $MOD {
+              ...
+          }
+      - pattern-not-inside: |
+          #[cfg(any(test, ...))]
+          mod $MOD {
+              ...
+          }
+      - pattern-not-inside: |
+          #[cfg(test)]
+          fn $FUNC(...) {
+              ...
+          }
+      - pattern-not-inside: |
+          #[cfg(any(test, ...))]
+          fn $FUNC(...) {
+              ...
+          }
+      - pattern-not-inside: |
+          #[cfg(test)]
+          impl $TYPE {
+              ...
+          }
+      - pattern-not-inside: |
+          #[cfg(any(test, ...))]
+          impl $TYPE {
+              ...
+          }
+
+  - id: delaunay.rust.no-clippy-allow-lints
+    languages:
+      - rust
+    severity: WARNING
+    message: "Use #[expect(..., reason = ...)] instead of #[allow(...)] for Clippy suppressions."
+    metadata:
+      category: maintainability
+      rationale: >-
+        Clippy suppressions should be checked by the compiler and carry a
+        stable reason so stale suppressions are noticed during linting.
+    paths:
+      include:
+        - "/src/**/*.rs"
+        - "/tests/**/*.rs"
+        - "/benches/**/*.rs"
+      exclude:
+        - "/tests/semgrep/**"
+    pattern-regex: '^\s*#\s*\[\s*allow\s*\(\s*clippy::'
+
+  - id: delaunay.rust.expect-requires-reason
+    languages:
+      - rust
+    severity: WARNING
+    message: "Add reason = \"...\" to #[expect(...)] so lint suppressions remain auditable."
+    metadata:
+      category: maintainability
+      rationale: >-
+        Repository guidance prefers documented lint expectations over
+        unexplained suppressions.
+    paths:
+      include:
+        - "/src/**/*.rs"
+        - "/tests/**/*.rs"
+        - "/benches/**/*.rs"
+      exclude:
+        - "/tests/semgrep/**"
+    patterns:
+      # Regex keeps this intentionally scoped to one-line `#[expect(...)]`
+      # attributes; multiline attributes remain a review concern.
+      - pattern-regex: '^\s*#\s*\[\s*expect\s*\([^\]\n]*\)\s*\]'
+      - pattern-not-regex: '\breason\s*='
+
+  - id: delaunay.python.no-broad-exception
+    languages:
+      - python
+    severity: WARNING
+    message: "Catch a specific exception type instead of broad Exception."
+    metadata:
+      category: maintainability
+      rationale: >-
+        Python tooling should surface expected failure modes explicitly instead
+        of swallowing unrelated errors.
+    paths:
+      include:
+        - "/scripts/**/*.py"
+      exclude:
+        - "/tests/semgrep/**"
+    pattern-regex: '^\s*except\s+Exception\s*:'
+
+  - id: delaunay.python.no-raw-exception-in-tests
+    languages:
+      - python
+    severity: WARNING
+    message: "Raise a specific exception type in Python tests instead of raw Exception."
+    metadata:
+      category: maintainability
+      rationale: "Typed exceptions make test failures and expected errors easier to diagnose."
+    paths:
+      include:
+        - "/scripts/tests/**/*.py"
+      exclude:
+        - "/tests/semgrep/**"
+    pattern: raise Exception(...)
+
+  - id: delaunay.python.no-adhoc-completedprocess-mock
+    languages:
+      - python
+    severity: WARNING
+    message: "Use subprocess.CompletedProcess[str] instead of ad hoc Mock stdout/returncode objects."
+    metadata:
+      category: maintainability
+      rationale: >-
+        Command-wrapper tests should use the real subprocess result shape so
+        mocks stay aligned with production subprocess APIs.
+    paths:
+      include:
+        - "/scripts/tests/**/*.py"
+      exclude:
+        - "/tests/semgrep/**"
+    pattern-either:
+      - patterns:
+          - pattern-either:
+              - pattern: |
+                  $PROC = Mock(...)
+                  ...
+                  $PROC.stdout = ...
+              - pattern: |
+                  $PROC = unittest.mock.Mock(...)
+                  ...
+                  $PROC.stdout = ...
+              - pattern: |
+                  $PROC = mock.Mock(...)
+                  ...
+                  $PROC.stdout = ...
+              - pattern: |
+                  $PROC = MagicMock(...)
+                  ...
+                  $PROC.stdout = ...
+              - pattern: |
+                  $PROC = unittest.mock.MagicMock(...)
+                  ...
+                  $PROC.stdout = ...
+              - pattern: |
+                  $PROC = mock.MagicMock(...)
+                  ...
+                  $PROC.stdout = ...
+      - patterns:
+          - pattern-either:
+              - pattern: |
+                  $PROC = Mock(...)
+                  ...
+                  $PROC.returncode = ...
+              - pattern: |
+                  $PROC = unittest.mock.Mock(...)
+                  ...
+                  $PROC.returncode = ...
+              - pattern: |
+                  $PROC = mock.Mock(...)
+                  ...
+                  $PROC.returncode = ...
+              - pattern: |
+                  $PROC = MagicMock(...)
+                  ...
+                  $PROC.returncode = ...
+              - pattern: |
+                  $PROC = unittest.mock.MagicMock(...)
+                  ...
+                  $PROC.returncode = ...
+              - pattern: |
+                  $PROC = mock.MagicMock(...)
+                  ...
+                  $PROC.returncode = ...
+
+  - id: delaunay.python.no-untyped-defs-in-scripts
+    languages:
+      - python
+    severity: WARNING
+    message: "Add an explicit return annotation to script functions."
+    metadata:
+      category: maintainability
+      rationale: "Typed script helpers are easier for ty and reviewers to reason about."
+    paths:
+      include:
+        - "/scripts/**/*.py"
+      exclude:
+        - "/tests/semgrep/**"
+    # Regex catches obvious unannotated definitions while avoiding a custom
+    # Python parser rule that would duplicate ty.
+    pattern-regex: '^( {0,4}|\t)(async\s+)?def\s+[A-Za-z_][A-Za-z0-9_]*\([^#\n]*\)\s*:'

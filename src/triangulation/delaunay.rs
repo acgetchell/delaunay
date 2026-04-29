@@ -2628,7 +2628,10 @@ where
 
     /// Retries batch construction with deterministic shuffles so retryable
     /// degeneracies can be escaped reproducibly.
-    #[allow(clippy::too_many_lines)]
+    #[expect(
+        clippy::too_many_lines,
+        reason = "construction retry flow keeps seed selection, validation, and diagnostics together"
+    )]
     fn build_with_shuffled_retries(
         kernel: &K,
         vertices: &[Vertex<K::Scalar, U, D>],
@@ -2800,7 +2803,10 @@ where
 
     /// Mirrors shuffled retry construction while preserving per-attempt
     /// statistics for callers that need skip and retry diagnostics.
-    #[allow(clippy::too_many_lines)]
+    #[expect(
+        clippy::too_many_lines,
+        reason = "statistics variant mirrors construction retry flow for comparable diagnostics"
+    )]
     #[expect(
         clippy::result_large_err,
         reason = "Internal helper propagates public by-value construction-statistics error type"
@@ -3565,7 +3571,10 @@ where
 
     /// Inserts the non-simplex vertices under a fixed perturbation seed so bulk
     /// construction retries are reproducible.
-    #[allow(clippy::too_many_lines)]
+    #[expect(
+        clippy::too_many_lines,
+        reason = "seeded insertion loop keeps cache repair and retry diagnostics in one flow"
+    )]
     fn insert_remaining_vertices_seeded(
         &mut self,
         vertices: &[Vertex<K::Scalar, U, D>],
@@ -5006,7 +5015,13 @@ where
     }
 
     /// Enables test-only repair fallback paths without exposing a public knob.
-    #[allow(clippy::missing_const_for_fn)]
+    #[cfg_attr(
+        not(test),
+        expect(
+            clippy::missing_const_for_fn,
+            reason = "runtime feature and environment checks should remain ordinary functions"
+        )
+    )]
     fn force_heuristic_rebuild_enabled() -> bool {
         #[cfg(test)]
         {
@@ -5139,7 +5154,10 @@ where
 
     /// Rebuilds from the current vertex set with varied deterministic seeds when
     /// flip repair cannot converge directly.
-    #[allow(clippy::too_many_lines)]
+    #[expect(
+        clippy::too_many_lines,
+        reason = "heuristic rebuild keeps point extraction, reconstruction, and validation together"
+    )]
     fn rebuild_with_heuristic(
         &self,
         base_seeds: DelaunayRepairHeuristicSeeds,

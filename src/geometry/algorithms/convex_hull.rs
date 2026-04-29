@@ -901,7 +901,10 @@ where
     /// # Errors
     ///
     /// Returns a [`ConvexHullConstructionError`] if visibility checking fails.
-    #[expect(clippy::too_many_lines)]
+    #[expect(
+        clippy::too_many_lines,
+        reason = "visibility check keeps predicate setup, cache lookup, and diagnostics together"
+    )]
     fn is_facet_visible_from_point_with_cache(
         &self,
         facet_handle: &FacetHandle,
@@ -1898,7 +1901,11 @@ mod tests {
     /// Comprehensive test for visibility algorithms covering all dimensions and edge cases
     /// Consolidates: `test_visibility_algorithms_comprehensive`, `test_visibility_edge_cases`,
     /// `test_visibility_algorithm_coverage`, `test_edge_case_distance_calculations`
-    #[expect(clippy::too_many_lines, clippy::cognitive_complexity)]
+    #[expect(
+        clippy::too_many_lines,
+        clippy::cognitive_complexity,
+        reason = "test keeps dimension-specific visibility cases together"
+    )]
     #[test]
     fn test_visibility_algorithms_comprehensive() {
         println!("Testing comprehensive visibility algorithms in dimensions 2D-5D");
@@ -2184,7 +2191,10 @@ mod tests {
     // These tests target private methods to ensure thorough coverage of internal
     // ConvexHull functionality, particularly the fallback_visibility_test method.
 
-    #[expect(clippy::too_many_lines)]
+    #[expect(
+        clippy::too_many_lines,
+        reason = "test keeps fallback visibility scenarios together"
+    )]
     #[test]
     fn test_fallback_visibility_comprehensive() {
         println!("Testing comprehensive fallback visibility algorithm");
@@ -2461,7 +2471,11 @@ mod tests {
     /// Consolidates: `test_convex_hull_validation_comprehensive`, `test_validate_method_comprehensive`,
     /// `test_validate_method_various_dimensions`
     #[test]
-    #[expect(clippy::cognitive_complexity, clippy::too_many_lines)]
+    #[expect(
+        clippy::cognitive_complexity,
+        clippy::too_many_lines,
+        reason = "test keeps hull validation scenarios and diagnostics together"
+    )]
     fn test_convex_hull_validation_comprehensive() {
         println!("Testing ConvexHull validation comprehensively");
 
@@ -3792,7 +3806,10 @@ mod tests {
         println!("✓ Numeric cast error handling tested successfully");
     }
 
-    #[expect(clippy::too_many_lines)]
+    #[expect(
+        clippy::too_many_lines,
+        reason = "test keeps cache invalidation scenarios together"
+    )]
     #[test]
     fn test_cache_invalidation_behavior() {
         println!("Testing cache invalidation behavior in ConvexHull");
@@ -4838,7 +4855,11 @@ mod tests {
     // These tests provide comprehensive coverage of error conditions that can
     // occur during convex hull construction and operation.
 
-    #[expect(clippy::too_many_lines, clippy::cognitive_complexity)]
+    #[expect(
+        clippy::too_many_lines,
+        clippy::cognitive_complexity,
+        reason = "test keeps convex hull error variants and scenarios together"
+    )]
     #[test]
     fn test_convex_hull_error_handling_comprehensive() {
         println!("Testing comprehensive ConvexHull error handling");
@@ -4973,12 +4994,12 @@ mod tests {
             source: facet_error,
         };
 
-        // Walk the error source chain
-        let mut current_error: &dyn Error = &chained_visibility_error;
+        // Walk the error source chain without erasing the root error type.
+        let mut current_source = chained_visibility_error.source();
         let mut depth = 0;
-        while let Some(source) = current_error.source() {
+        while let Some(source) = current_source {
             depth += 1;
-            current_error = source;
+            current_source = source.source();
         }
         assert!(
             depth > 0,
@@ -4991,27 +5012,56 @@ mod tests {
         // ========================================================================
         println!("  Testing error message formatting consistency...");
 
-        let test_errors: Vec<Box<dyn Error>> = vec![
-            Box::new(ConvexHullValidationError::InvalidFacet {
-                facet_index: 0,
-                source: FacetError::InsufficientVertices {
-                    expected: 3,
-                    actual: 2,
-                    dimension: 3,
-                },
-            }),
-            Box::new(ConvexHullConstructionError::InvalidTriangulation {
-                message: "Test message".to_string(),
-            }),
-            Box::new(ConvexHullConstructionError::GeometricDegeneracy {
-                message: "Collinear points".to_string(),
-            }),
+        let test_errors = [
+            (
+                ConvexHullValidationError::InvalidFacet {
+                    facet_index: 0,
+                    source: FacetError::InsufficientVertices {
+                        expected: 3,
+                        actual: 2,
+                        dimension: 3,
+                    },
+                }
+                .to_string(),
+                format!(
+                    "{:?}",
+                    ConvexHullValidationError::InvalidFacet {
+                        facet_index: 0,
+                        source: FacetError::InsufficientVertices {
+                            expected: 3,
+                            actual: 2,
+                            dimension: 3,
+                        },
+                    }
+                ),
+            ),
+            (
+                ConvexHullConstructionError::InvalidTriangulation {
+                    message: "Test message".to_string(),
+                }
+                .to_string(),
+                format!(
+                    "{:?}",
+                    ConvexHullConstructionError::InvalidTriangulation {
+                        message: "Test message".to_string(),
+                    }
+                ),
+            ),
+            (
+                ConvexHullConstructionError::GeometricDegeneracy {
+                    message: "Collinear points".to_string(),
+                }
+                .to_string(),
+                format!(
+                    "{:?}",
+                    ConvexHullConstructionError::GeometricDegeneracy {
+                        message: "Collinear points".to_string(),
+                    }
+                ),
+            ),
         ];
 
-        for (i, error) in test_errors.iter().enumerate() {
-            let display_msg = format!("{error}");
-            let debug_msg = format!("{error:?}");
-
+        for (i, (display_msg, debug_msg)) in test_errors.iter().enumerate() {
             assert!(
                 !display_msg.is_empty(),
                 "Error {i} display message should not be empty"
@@ -5146,7 +5196,10 @@ mod tests {
     // under various degenerate and edge-case conditions.
 
     #[test]
-    #[expect(clippy::too_many_lines)]
+    #[expect(
+        clippy::too_many_lines,
+        reason = "test keeps degenerate facet visibility scenarios together"
+    )]
     fn test_fallback_visibility_with_degenerate_facets() {
         println!("Testing fallback visibility algorithm with degenerate facet geometries");
 
@@ -5346,7 +5399,10 @@ mod tests {
     }
 
     #[test]
-    #[expect(clippy::too_many_lines)]
+    #[expect(
+        clippy::too_many_lines,
+        reason = "test keeps threshold and heuristic visibility scenarios together"
+    )]
     fn test_fallback_visibility_threshold_behavior() {
         println!("Testing fallback visibility threshold and heuristic behavior");
 
@@ -5505,7 +5561,10 @@ mod tests {
     // geometric configurations that can cause numerical instability.
 
     #[test]
-    #[expect(clippy::too_many_lines)]
+    #[expect(
+        clippy::too_many_lines,
+        reason = "test keeps collinear hull edge cases together"
+    )]
     fn test_collinear_points_handling() {
         println!("Testing convex hull construction with collinear point configurations");
 
@@ -5634,7 +5693,10 @@ mod tests {
     }
 
     #[test]
-    #[expect(clippy::too_many_lines)]
+    #[expect(
+        clippy::too_many_lines,
+        reason = "test keeps coplanar higher-dimensional cases together"
+    )]
     fn test_coplanar_points_in_higher_dimensions() {
         println!("Testing convex hull construction with coplanar point configurations");
 
@@ -5875,7 +5937,10 @@ mod tests {
     // and with larger datasets to ensure robustness and performance.
 
     #[test]
-    #[expect(clippy::too_many_lines)]
+    #[expect(
+        clippy::too_many_lines,
+        reason = "test keeps high-dimensional hull cases together"
+    )]
     fn test_high_dimensional_convex_hulls() {
         println!("Testing convex hull construction in high dimensions (6D, 7D, 8D)");
 

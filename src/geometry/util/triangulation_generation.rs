@@ -209,14 +209,11 @@ where
 /// - Topology/Euler validation failure after robust fallback attempts
 ///
 /// **Other construction failures** (various variants):
-/// - Vertex/cell construction errors
+/// - Cell construction errors
 /// - Triangulation validation failures
 ///
-/// # Panics
-///
-/// This function can panic if:
-/// - Vertex construction fails due to invalid data types or constraints
-/// - This should not happen with valid inputs and supported data types
+/// Vertex construction from generated points is infallible; failures are
+/// returned from point generation, triangulation construction, or validation.
 ///
 /// # Examples
 ///
@@ -346,7 +343,6 @@ where
 /// .unwrap();
 /// assert_eq!(dt.dim(), 3);
 /// ```
-#[allow(clippy::too_many_lines)]
 pub fn generate_random_triangulation_with_topology_guarantee<T, U, V, const D: usize>(
     n_points: usize,
     bounds: (T, T),

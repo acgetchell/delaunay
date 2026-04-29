@@ -589,6 +589,8 @@ semgrep-test: _ensure-uv
     set -euo pipefail
     cd tests/semgrep
     uv run semgrep scan --test --strict --config ../../semgrep.yaml src/core/algorithms/no_std_hash_collections.rs
+    uv run semgrep scan --test --strict --config ../../semgrep.yaml src/project_rules/rust_style.rs
+    uv run semgrep scan --test --strict --config ../../semgrep.yaml scripts/tests/python_exceptions.py
 
 # Development setup
 setup: setup-tools

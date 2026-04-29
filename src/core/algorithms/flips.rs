@@ -2525,10 +2525,9 @@ where
     })
 }
 
-#[allow(clippy::too_many_lines)]
 #[expect(
     clippy::too_many_arguments,
-    reason = "Local predicate evaluation threads topology, source cells, and diagnostics explicitly"
+    reason = "local predicate evaluation threads topology, source cells, and diagnostics explicitly"
 )]
 /// Evaluate the k=2 facet flip predicate for a local Delaunay violation.
 fn delaunay_violation_k2_for_facet<K, U, V, const D: usize>(
@@ -4932,9 +4931,9 @@ impl RepairQueues {
 
 /// Seeds exactly the queues supported by the current dimension so repair and
 /// verification inspect the same local neighborhoods.
-#[allow(
+#[expect(
     clippy::too_many_lines,
-    reason = "Seeding logic mirrors runtime queues; keep as single flow for diagnostics"
+    reason = "seeding logic mirrors runtime queues and stays as one diagnostic flow"
 )]
 fn seed_repair_queues<T, U, V, const D: usize>(
     tds: &Tds<T, U, V, D>,

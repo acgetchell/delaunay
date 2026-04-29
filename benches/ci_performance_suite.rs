@@ -738,7 +738,10 @@ fn seed_search_limit() -> usize {
 macro_rules! benchmark_tds_new_dimension {
     ($dim:literal, $func_name:ident, $seed:literal, $counts:expr) => {
         /// Benchmark triangulation creation for D-dimensional triangulations
-        #[allow(clippy::too_many_lines)]
+        #[expect(
+            clippy::too_many_lines,
+            reason = "dimension-specific benchmark macro keeps setup and measurements together"
+        )]
         fn $func_name(c: &mut Criterion) {
             print_manifest_once();
             let counts = $counts;

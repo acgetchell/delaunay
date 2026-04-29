@@ -653,7 +653,10 @@ mod tests {
         assert!(result.is_ok());
     }
 
-    #[expect(clippy::too_many_lines)]
+    #[expect(
+        clippy::too_many_lines,
+        reason = "insphere consistency test keeps related robust predicate cases together"
+    )]
     #[test]
     fn test_verify_insphere_consistency_comprehensive() {
         let points = vec![

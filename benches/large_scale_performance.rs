@@ -243,12 +243,18 @@ fn measure_construction_with_memory<const D: usize>(n_points: usize, seed: u64) 
 
     // Total delta includes setup + TDS
     let delta_i128 = i128::from(mem_after) - i128::from(mem_before);
-    #[expect(clippy::cast_possible_truncation)] // Clamped to i64 range, safe to cast
+    #[expect(
+        clippy::cast_possible_truncation,
+        reason = "clamped to i64 range before casting"
+    )]
     let delta = delta_i128.clamp(i128::from(i64::MIN), i128::from(i64::MAX)) as i64;
 
     // TDS-only delta excludes setup overhead
     let tds_delta_i128 = i128::from(mem_after) - i128::from(mem_before_tds);
-    #[expect(clippy::cast_possible_truncation)] // Clamped to i64 range, safe to cast
+    #[expect(
+        clippy::cast_possible_truncation,
+        reason = "clamped to i64 range before casting"
+    )]
     let tds_delta = tds_delta_i128.clamp(i128::from(i64::MIN), i128::from(i64::MAX)) as i64;
 
     MemoryInfo {
