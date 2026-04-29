@@ -360,7 +360,9 @@ where
             for (idx, d) in diff.iter_mut().enumerate() {
                 *d = vi.point().coords()[idx] - vj.point().coords()[idx];
             }
-            let len: f64 = NumCast::from(hypot(&diff)).unwrap_or(f64::MAX);
+            let Some(len): Option<f64> = NumCast::from(hypot(&diff)) else {
+                return f64::MAX;
+            };
             edge_lengths.push(len);
         }
     }

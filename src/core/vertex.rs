@@ -596,7 +596,12 @@ where
     pub fn from_points(points: &[Point<T, D>]) -> Vec<Self> {
         points
             .iter()
-            .map(|p| VertexBuilder::default().point(*p).build().unwrap())
+            .map(|p| {
+                VertexBuilder::default()
+                    .point(*p)
+                    .build()
+                    .expect("point was set before building vertex")
+            })
             .collect()
     }
 

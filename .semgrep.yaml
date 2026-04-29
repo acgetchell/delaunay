@@ -5,11 +5,8 @@
 # been noisy for this Rust library and duplicate CodeQL, cargo-audit, Clippy,
 # Ruff, and ShellCheck coverage.
 #
-# The rules below are intentionally disabled with an impossible include path
-# while legacy call sites are cleaned up in
-# https://github.com/acgetchell/delaunay/issues/338. To enable one, replace its
-# "__semgrep_disabled__/**" include with the intended path such as "src/**/*.rs"
-# and remove the "enabled: false" metadata note.
+# These rules encode repository-specific Rust invariants. Keep them focused so
+# local and CodeRabbit Semgrep runs stay low-noise.
 
 rules:
   - id: delaunay.rust.no-stdio-diagnostics-in-src
@@ -18,13 +15,12 @@ rules:
     severity: WARNING
     message: "Use tracing macros for production diagnostics instead of stdout/stderr macros."
     metadata:
-      enabled: false
       category: maintainability
       tracking_issue: "https://github.com/acgetchell/delaunay/issues/338"
       rationale: "Runtime diagnostics should be filterable through tracing and RUST_LOG."
     paths:
       include:
-        - "/__semgrep_disabled__/**/*.rs"
+        - "/src/**/*.rs"
       exclude:
         - "/tests/**"
         - "/examples/**"
@@ -33,6 +29,10 @@ rules:
       - pattern-either:
           - pattern: println!(...)
           - pattern: eprintln!(...)
+      - pattern-not-inside: |
+          mod tests {
+              ...
+          }
       - pattern-not-inside: |
           #[cfg(test)]
           mod $MOD {
@@ -70,7 +70,6 @@ rules:
     severity: WARNING
     message: "Do not hide failed floating-point conversion with NaN or infinity defaults."
     metadata:
-      enabled: false
       category: correctness
       tracking_issue: "https://github.com/acgetchell/delaunay/issues/338"
       rationale: >-
@@ -78,7 +77,7 @@ rules:
         sentinels after conversion failure.
     paths:
       include:
-        - "/__semgrep_disabled__/**/*.rs"
+        - "/src/**/*.rs"
     pattern-either:
       - pattern: $VALUE.unwrap_or(f64::NAN)
       - pattern: $VALUE.unwrap_or(f64::INFINITY)
@@ -89,3 +88,153 @@ rules:
       - pattern: $VALUE.unwrap_or_else(|| f64::NAN)
       - pattern: $VALUE.unwrap_or_else(|| f64::INFINITY)
       - pattern: $VALUE.unwrap_or_else(|| f64::NEG_INFINITY)
+
+  - id: delaunay.rust.no-std-hash-collections-in-hot-src
+    languages:
+      - rust
+    severity: WARNING
+    message: "Use crate FastHashMap/FastHashSet aliases in hot source paths instead of std hash collections."
+    metadata:
+      category: performance
+      rationale: >-
+        Performance-sensitive topology and geometry paths should use the
+        repository's optimized hash aliases unless a local exception is
+        documented outside these paths.
+    paths:
+      include:
+        - "/src/core/algorithms/**/*.rs"
+        - "/src/core/collections/**/*.rs"
+        - "/src/core/tds.rs"
+        - "/src/core/triangulation.rs"
+        - "/src/geometry/algorithms/**/*.rs"
+        - "/src/triangulation/**/*.rs"
+    patterns:
+      - pattern-either:
+          - pattern: use std::collections::HashMap;
+          - pattern: use std::collections::HashSet;
+          - pattern-regex: '^\s*use\s+std::collections::\{[^;\n]*\bHashMap\b[^;\n]*\};'
+          - pattern-regex: '^\s*use\s+std::collections::\{[^;\n]*\bHashSet\b[^;\n]*\};'
+          - pattern: std::collections::HashMap::new()
+          - pattern: std::collections::HashSet::new()
+          - pattern: std::collections::HashMap::default()
+          - pattern: std::collections::HashSet::default()
+          - pattern: std::collections::HashMap::with_capacity(...)
+          - pattern: std::collections::HashSet::with_capacity(...)
+          - pattern: std::collections::HashMap::with_hasher(...)
+          - pattern: std::collections::HashSet::with_hasher(...)
+          - pattern: std::collections::HashMap::with_capacity_and_hasher(...)
+          - pattern: std::collections::HashSet::with_capacity_and_hasher(...)
+          - pattern: std::collections::HashMap::<$KEY, $VALUE>::new()
+          - pattern: std::collections::HashSet::<$VALUE>::new()
+          - pattern: std::collections::HashMap::<$KEY, $VALUE>::default()
+          - pattern: std::collections::HashSet::<$VALUE>::default()
+          - pattern: std::collections::HashMap::<$KEY, $VALUE>::with_capacity(...)
+          - pattern: std::collections::HashSet::<$VALUE>::with_capacity(...)
+          - pattern: std::collections::HashMap::<$KEY, $VALUE>::with_hasher(...)
+          - pattern: std::collections::HashSet::<$VALUE>::with_hasher(...)
+          - pattern: std::collections::HashMap::<$KEY, $VALUE>::with_capacity_and_hasher(...)
+          - pattern: std::collections::HashSet::<$VALUE>::with_capacity_and_hasher(...)
+          - pattern: "let $NAME: std::collections::HashMap<$KEY, $VALUE> = $INIT;"
+          - pattern: "let $NAME: std::collections::HashSet<$VALUE> = $INIT;"
+          - pattern: "type $NAME = std::collections::HashMap<$KEY, $VALUE>;"
+          - pattern: "type $NAME = std::collections::HashSet<$VALUE>;"
+          - pattern: "fn $FUNC(...) -> std::collections::HashMap<$KEY, $VALUE> { ... }"
+          - pattern: "fn $FUNC(...) -> std::collections::HashSet<$VALUE> { ... }"
+          - pattern: "fn $FUNC(...) -> std::collections::HashMap<$KEY, $VALUE>;"
+          - pattern: "fn $FUNC(...) -> std::collections::HashSet<$VALUE>;"
+          - pattern: $ITER.collect::<std::collections::HashMap<$KEY, $VALUE>>()
+          - pattern: $ITER.collect::<std::collections::HashSet<$VALUE>>()
+      - pattern-not-inside: |
+          mod tests {
+              ...
+          }
+
+  - id: delaunay.rust.no-silent-conversion-fallbacks
+    languages:
+      - rust
+    severity: WARNING
+    message: "Handle numeric conversion failures explicitly instead of hiding them behind unwrap_or fallbacks."
+    metadata:
+      category: correctness
+      rationale: >-
+        Geometry and topology code should preserve conversion failure context
+        or choose an explicit fallback branch rather than silently substituting
+        sentinel values.
+    paths:
+      include:
+        - "/src/core/**/*.rs"
+        - "/src/geometry/**/*.rs"
+        - "/src/topology/**/*.rs"
+        - "/src/triangulation/**/*.rs"
+    patterns:
+      - pattern-either:
+          - pattern: NumCast::from($VALUE).unwrap_or($FALLBACK)
+          - pattern: NumCast::from($VALUE).unwrap_or_else($FALLBACK)
+          - pattern: num_traits::NumCast::from($VALUE).unwrap_or($FALLBACK)
+          - pattern: num_traits::NumCast::from($VALUE).unwrap_or_else($FALLBACK)
+          - patterns:
+              - pattern: $SAFE($ARGS...).unwrap_or($FALLBACK)
+              - metavariable-regex:
+                  metavariable: $SAFE
+                  regex: safe_[A-Za-z0-9_]+
+      - pattern-not-inside: |
+          mod tests {
+              ...
+          }
+
+  - id: delaunay.rust.no-production-unwrap-panic
+    languages:
+      - rust
+    severity: WARNING
+    message: "Avoid unwrap/panic in non-test source; return typed errors or document an internal invariant."
+    metadata:
+      category: correctness
+      rationale: "Public library paths should fail explicitly rather than panicking on user input."
+    paths:
+      include:
+        - "/src/**/*.rs"
+    patterns:
+      - pattern-either:
+          - pattern: $VALUE.unwrap()
+          - pattern: panic!(...)
+      - pattern-not-inside: |
+          mod tests {
+              ...
+          }
+
+  - id: delaunay.rust.no-env-gated-stdio-diagnostics
+    languages:
+      - rust
+    severity: WARNING
+    message: "Environment-gated diagnostics should use tracing and repository feature gates instead of stdio macros."
+    metadata:
+      category: maintainability
+      rationale: "Debug hooks should remain filterable through tracing and RUST_LOG."
+    paths:
+      include:
+        - "/src/**/*.rs"
+    pattern-either:
+      - pattern: |
+          if std::env::var_os($NAME).is_some() {
+              ...
+              println!(...);
+              ...
+          }
+      - pattern: |
+          if std::env::var_os($NAME).is_some() {
+              ...
+              eprintln!(...);
+              ...
+          }
+      - pattern: |
+          if env::var_os($NAME).is_some() {
+              ...
+              println!(...);
+              ...
+          }
+      - pattern: |
+          if env::var_os($NAME).is_some() {
+              ...
+              eprintln!(...);
+              ...
+          }

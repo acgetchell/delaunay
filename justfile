@@ -303,8 +303,8 @@ help-workflows:
 # All linting: code + documentation + configuration
 lint: lint-code lint-docs lint-config
 
-# Code linting: Rust (fmt-check, clippy, docs) + Python (ruff, ty, mypy) + Shell scripts
-lint-code: fmt-check clippy doc-check python-lint shell-lint
+# Code linting: Rust (fmt-check, clippy, docs, Semgrep) + Python (ruff, ty, mypy) + Shell scripts
+lint-code: fmt-check clippy doc-check semgrep semgrep-test python-lint shell-lint
 
 # Configuration validation: JSON, TOML, YAML, GitHub Actions workflows
 lint-config: validate-json toml-lint toml-fmt-check yaml-lint action-lint
@@ -580,10 +580,12 @@ python-sync: _ensure-uv
 python-typecheck: _ensure-uv
     uv run ty check scripts/ --error all
 
-# Repository-owned Semgrep rules. Currently opt-in because the Rust rules are
-# staged but disabled while legacy diagnostics are cleaned up.
+# Repository-owned Semgrep rules for project-specific Rust diagnostics.
 semgrep: _ensure-uv
-    uv run semgrep --config .semgrep.yaml .
+    uv run semgrep --error --strict --timeout 30 --config .semgrep.yaml .
+
+semgrep-test: _ensure-uv
+    uv run semgrep scan --test --strict --config .semgrep.yaml tests/semgrep/src/core/algorithms/no_std_hash_collections.rs
 
 # Development setup
 setup: setup-tools

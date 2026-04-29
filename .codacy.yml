@@ -6,6 +6,7 @@
 #
 # Recommended enabled tools:
 # - markdownlint: documentation linting
+# - opengrep: repository-owned Rust Semgrep rules from .semgrep.yaml
 # - ruff: Python utility linting
 # - shellcheck: shell-script linting
 # - duplication: advisory duplicate-code metric
@@ -13,8 +14,6 @@
 #
 # Recommended disabled tools:
 # - bandit, prospector, pylintpython3: redundant with Ruff/ty for this repo
-# - opengrep: keep broad/default rules disabled until repo-owned rules in
-#   .semgrep.yaml are cleaned up and enabled
 # - trivy: dependency vulnerability scanning is handled by cargo-audit and
 #   Dependabot unless this repository adds containers or IaC
 # - jacksonlinter, spectral: not relevant to the current project surface
@@ -50,6 +49,9 @@ engines:
       - "**/*.md"
     config:
       file: ".markdownlint.json"
+  opengrep:
+    include_paths:
+      - "src/**/*.rs"
   ruff:
     include_paths:
       - "scripts/**/*.py"

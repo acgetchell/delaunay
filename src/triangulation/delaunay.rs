@@ -4781,8 +4781,7 @@ where
     )]
     pub fn as_triangulation_mut(&mut self) -> &mut Triangulation<K, U, V, D> {
         // Direct mutable access can invalidate performance caches.
-        self.insertion_state.last_inserted_cell = None;
-        self.spatial_index = None;
+        self.invalidate_repair_caches();
         &mut self.tri
     }
 

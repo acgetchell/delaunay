@@ -40,6 +40,30 @@ pub enum HilbertError {
         /// The dimension that exceeded representable limits.
         dimension: usize,
     },
+
+    /// The quantization grid maximum could not be represented as the coordinate scalar.
+    #[error(
+        "Hilbert quantization grid maximum {max_grid_value} for {bits} bits cannot be represented by the coordinate scalar"
+    )]
+    QuantizationScaleConversionFailed {
+        /// The requested number of Hilbert bits per coordinate.
+        bits: u32,
+        /// The computed grid maximum, `2^bits - 1`.
+        max_grid_value: u32,
+    },
+}
+
+/// Converts a validated bit depth into a scalar grid maximum so Hilbert
+/// ordering cannot silently collapse when a coordinate type cannot represent it.
+fn hilbert_quantization_scale<T: CoordinateScalar>(bits: u32) -> Result<(u32, T), HilbertError> {
+    let max_grid_value = (1_u32 << bits) - 1;
+    let Some(max_grid_value_scalar): Option<T> = num_traits::NumCast::from(max_grid_value) else {
+        return Err(HilbertError::QuantizationScaleConversionFailed {
+            bits,
+            max_grid_value,
+        });
+    };
+    Ok((max_grid_value, max_grid_value_scalar))
 }
 
 /// Quantize D-dimensional coordinates into integer grid coordinates in `[0, 2^bits)`.
@@ -50,6 +74,9 @@ pub enum HilbertError {
 /// # Errors
 ///
 /// Returns [`HilbertError::InvalidBitsParameter`] if `bits` is 0 or greater than 31.
+///
+/// Returns [`HilbertError::QuantizationScaleConversionFailed`] if the quantization
+/// grid maximum cannot be represented by the coordinate scalar type.
 ///
 /// # Examples
 ///
@@ -74,55 +101,26 @@ pub fn hilbert_quantize<T: CoordinateScalar, const D: usize>(
         return Ok([0_u32; D]);
     }
 
-    let extent = bounds.1 - bounds.0;
+    let (max_val_u32, max_val_t) = hilbert_quantization_scale::<T>(bits)?;
 
-    // `2^bits - 1` as u32.
-    let max_val_u32 = (1_u32 << bits) - 1;
-    let max_val_t: T = num_traits::NumCast::from(max_val_u32).unwrap_or_else(T::zero);
-
-    let mut quantized = [0_u32; D];
-    for (i, &coord) in coords.iter().enumerate() {
-        // Normalize to [0, 1]. If bounds are degenerate or non-finite, fall back to 0.
-        let normalized = if extent > T::zero() {
-            let t = (coord - bounds.0) / extent;
-            if t.is_finite_generic() {
-                t.max(T::zero()).min(T::one())
-            } else {
-                T::zero()
-            }
-        } else {
-            T::zero()
-        };
-
-        let scaled = normalized * max_val_t;
-        // Round to nearest grid cell (instead of truncating) for fairer distribution.
-        let q: u32 = scaled.round().to_u32().unwrap_or(0).min(max_val_u32);
-        quantized[i] = q;
-    }
-
-    Ok(quantized)
+    Ok(hilbert_quantize_with_scale(
+        coords,
+        bounds,
+        max_val_u32,
+        max_val_t,
+    ))
 }
 
-/// Internal unchecked quantization - assumes bits parameter is already validated.
-/// This is used in hot paths after pre-validation to avoid Result overhead.
+/// Quantizes coordinates with a precomputed scalar grid maximum so hot callers
+/// can validate conversion once before sorting or batch index generation.
 #[inline]
-fn hilbert_quantize_unchecked<T: CoordinateScalar, const D: usize>(
+fn hilbert_quantize_with_scale<T: CoordinateScalar, const D: usize>(
     coords: &[T; D],
     bounds: (T, T),
-    bits: u32,
+    max_val_u32: u32,
+    max_val_t: T,
 ) -> [u32; D] {
-    debug_assert!(bits > 0 && bits <= 31, "bits must be pre-validated");
-
-    if D == 0 {
-        return [0_u32; D];
-    }
-
     let extent = bounds.1 - bounds.0;
-
-    // `2^bits - 1` as u32.
-    let max_val_u32 = (1_u32 << bits) - 1;
-    let max_val_t: T = num_traits::NumCast::from(max_val_u32).unwrap_or_else(T::zero);
-
     let mut quantized = [0_u32; D];
     for (i, &coord) in coords.iter().enumerate() {
         // Normalize to [0, 1]. If bounds are degenerate or non-finite, fall back to 0.
@@ -139,7 +137,10 @@ fn hilbert_quantize_unchecked<T: CoordinateScalar, const D: usize>(
 
         let scaled = normalized * max_val_t;
         // Round to nearest grid cell (instead of truncating) for fairer distribution.
-        let q: u32 = scaled.round().to_u32().unwrap_or(0).min(max_val_u32);
+        let q = scaled
+            .round()
+            .to_u32()
+            .map_or(0, |value| value.min(max_val_u32));
         quantized[i] = q;
     }
 
@@ -159,6 +160,9 @@ fn hilbert_quantize_unchecked<T: CoordinateScalar, const D: usize>(
 ///
 /// Returns [`HilbertError::DimensionTooLarge`] if the dimension `D` exceeds `u32::MAX`
 /// (extremely unlikely in practice).
+///
+/// Returns [`HilbertError::QuantizationScaleConversionFailed`] if the quantization
+/// grid maximum cannot be represented by the coordinate scalar type.
 ///
 /// # Examples
 ///
@@ -298,6 +302,9 @@ fn hilbert_index_from_quantized<const D: usize>(coords: &[u32; D], bits: u32) ->
 /// Returns [`HilbertError::DimensionTooLarge`] if the dimension `D` exceeds `u32::MAX`
 /// (extremely unlikely in practice).
 ///
+/// Returns [`HilbertError::QuantizationScaleConversionFailed`] if the quantization
+/// grid maximum cannot be represented by the coordinate scalar type.
+///
 /// # Examples
 ///
 /// ```rust
@@ -333,15 +340,17 @@ where
         });
     }
 
+    if D == 0 {
+        return Ok(());
+    }
+
+    let (max_val_u32, max_val_t) = hilbert_quantization_scale::<T>(bits)?;
+
     // Sort using cached keys - parameters are pre-validated
     items.sort_by_cached_key(|item| {
         let c = coords_of(item);
-        let q = hilbert_quantize_unchecked(&c, bounds, bits);
-        let idx = if D == 0 {
-            0
-        } else {
-            hilbert_index_from_quantized(&q, bits)
-        };
+        let q = hilbert_quantize_with_scale(&c, bounds, max_val_u32, max_val_t);
+        let idx = hilbert_index_from_quantized(&q, bits);
         (idx, q)
     });
 
@@ -365,6 +374,9 @@ where
 ///
 /// Returns [`HilbertError::DimensionTooLarge`] if the dimension `D` exceeds `u32::MAX`
 /// (extremely unlikely in practice).
+///
+/// Returns [`HilbertError::QuantizationScaleConversionFailed`] if the quantization
+/// grid maximum cannot be represented by the coordinate scalar type.
 ///
 /// # Examples
 ///
@@ -401,21 +413,19 @@ where
         });
     }
 
+    if D == 0 {
+        return Ok(());
+    }
+
+    let (max_val_u32, max_val_t) = hilbert_quantization_scale::<T>(bits)?;
+
     items.sort_unstable_by(|a, b| {
         let ca = coords_of(a);
         let cb = coords_of(b);
-        let qa = hilbert_quantize_unchecked(&ca, bounds, bits);
-        let qb = hilbert_quantize_unchecked(&cb, bounds, bits);
-        let ida = if D == 0 {
-            0
-        } else {
-            hilbert_index_from_quantized(&qa, bits)
-        };
-        let idb = if D == 0 {
-            0
-        } else {
-            hilbert_index_from_quantized(&qb, bits)
-        };
+        let qa = hilbert_quantize_with_scale(&ca, bounds, max_val_u32, max_val_t);
+        let qb = hilbert_quantize_with_scale(&cb, bounds, max_val_u32, max_val_t);
+        let ida = hilbert_index_from_quantized(&qa, bits);
+        let idb = hilbert_index_from_quantized(&qb, bits);
         (ida, qa).cmp(&(idb, qb))
     });
 
@@ -442,6 +452,9 @@ where
 ///
 /// Returns [`HilbertError::DimensionTooLarge`] if the dimension `D` exceeds `u32::MAX`
 /// (extremely unlikely in practice).
+///
+/// Returns [`HilbertError::QuantizationScaleConversionFailed`] if the quantization
+/// grid maximum cannot be represented by the coordinate scalar type.
 ///
 /// # Examples
 ///
@@ -557,16 +570,18 @@ pub fn hilbert_sorted_indices<T: CoordinateScalar, const D: usize>(
         });
     }
 
+    if D == 0 {
+        return Ok((0..coords.len()).collect());
+    }
+
+    let (max_val_u32, max_val_t) = hilbert_quantization_scale::<T>(bits)?;
+
     let mut keyed: Vec<((u128, [u32; D]), usize)> = coords
         .iter()
         .enumerate()
         .map(|(i, c)| {
-            let q = hilbert_quantize_unchecked(c, bounds, bits);
-            let idx = if D == 0 {
-                0
-            } else {
-                hilbert_index_from_quantized(&q, bits)
-            };
+            let q = hilbert_quantize_with_scale(c, bounds, max_val_u32, max_val_t);
+            let idx = hilbert_index_from_quantized(&q, bits);
             ((idx, q), i)
         })
         .collect();
