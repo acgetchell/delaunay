@@ -560,8 +560,38 @@ where
         }
     }
 
+    /// Creates a vertex directly from a point with a fresh UUID and no user data.
+    ///
+    /// This constructor is infallible because [`Point`] already owns validated
+    /// coordinates for the vertex dimension.
+    #[inline]
+    #[must_use]
+    pub fn from_point(point: Point<T, D>) -> Self {
+        Self {
+            point,
+            uuid: make_uuid(),
+            incident_cell: None,
+            data: None,
+        }
+    }
+
+    /// Creates a vertex directly from a point and user data with a fresh UUID.
+    ///
+    /// This constructor is infallible because [`Point`] already owns validated
+    /// coordinates for the vertex dimension and `data` is stored as provided.
+    #[inline]
+    #[must_use]
+    pub fn from_point_with_data(point: Point<T, D>, data: impl Into<U>) -> Self {
+        Self {
+            point,
+            uuid: make_uuid(),
+            incident_cell: None,
+            data: Some(data.into()),
+        }
+    }
+
     /// The function `from_points` takes a slice of points and returns a
-    /// vector of vertices, using the `new` method.
+    /// vector of vertices.
     ///
     /// # Arguments
     ///
@@ -573,12 +603,6 @@ where
     /// is the type of the coordinates of the [Vertex], `U` is the type of the
     /// optional data associated with the [Vertex], and `D` is the
     /// dimensionality of the [Vertex].
-    ///
-    /// # Panics
-    ///
-    /// Cannot panic in practice: the only [`VertexBuilderError`] variant is
-    /// `MissingPoint`, and this method always calls
-    /// [`VertexBuilder::point`] before [`VertexBuilder::build`].
     ///
     /// # Example
     ///
@@ -594,15 +618,7 @@ where
     #[inline]
     #[must_use]
     pub fn from_points(points: &[Point<T, D>]) -> Vec<Self> {
-        points
-            .iter()
-            .map(|p| {
-                VertexBuilder::default()
-                    .point(*p)
-                    .build()
-                    .expect("point was set before building vertex")
-            })
-            .collect()
+        points.iter().copied().map(Self::from_point).collect()
     }
 
     /// The function `into_hashmap` converts a collection of vertices into a

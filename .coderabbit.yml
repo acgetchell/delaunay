@@ -107,9 +107,10 @@ reviews:
       enabled: true
 
     # Semantic code analysis uses only the focused, repository-owned rules in
-    # .semgrep.yaml. Default Semgrep packs remain disabled in CodeRabbit.
+    # semgrep.yaml. Default Semgrep packs remain disabled in CodeRabbit.
     semgrep:
       enabled: true
+      config_file: semgrep.yaml
 
     # Python linter (ruff provides comprehensive Python analysis)
     ruff:

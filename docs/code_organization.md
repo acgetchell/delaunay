@@ -28,7 +28,7 @@ The delaunay project follows a standard Rust library structure with additional t
 > ```bash
 > # Requires tree command (install with: brew install tree or apt-get install tree)
 > git --no-pager ls-files | LC_ALL=C sort | \
->   LC_ALL=C tree --charset UTF-8 --dirsfirst --noreport \
+>   LC_ALL=C tree -a --charset UTF-8 --dirsfirst --noreport \
 >     -I 'target|.git|**/*.png|**/*.svg' -F --fromfile
 >
 > # Alternative using find (when tree is not available):
@@ -52,8 +52,8 @@ delaunay/
 │   │   ├── benchmarks.yml
 │   │   ├── ci.yml
 │   │   ├── codacy.yml
-│   │   ├── codeql.yml
 │   │   ├── codecov.yml
+│   │   ├── codeql.yml
 │   │   ├── generate-baseline.yml
 │   │   ├── profiling-benchmarks.yml
 │   │   └── rust-clippy.yml
@@ -64,6 +64,7 @@ delaunay/
 │   ├── README.md
 │   ├── ci_performance_suite.rs
 │   ├── circumsphere_containment.rs
+│   ├── cold_path_predicates.rs
 │   ├── large_scale_performance.rs
 │   ├── profiling_suite.rs
 │   └── topology_guarantee_construction.rs
@@ -94,6 +95,7 @@ delaunay/
 │   ├── dev/
 │   │   ├── commands.md
 │   │   ├── debug_env_vars.md
+│   │   ├── python.md
 │   │   ├── rust.md
 │   │   └── testing.md
 │   ├── templates/
@@ -113,8 +115,8 @@ delaunay/
 │   └── workflows.md
 ├── examples/
 │   ├── README.md
-│   ├── delaunayize_repair.rs
 │   ├── convex_hull_3d_100_points.rs
+│   ├── delaunayize_repair.rs
 │   ├── into_from_conversions.rs
 │   ├── memory_analysis.rs
 │   ├── pachner_roundtrip_4d.rs
@@ -123,6 +125,8 @@ delaunay/
 │   ├── triangulation_3d_100_points.rs
 │   └── zero_allocation_iterator_demo.rs
 ├── scripts/
+│   ├── ci/
+│   │   └── capture_profiling_metadata.sh
 │   ├── tests/
 │   │   ├── __init__.py
 │   │   ├── conftest.py
@@ -222,6 +226,11 @@ delaunay/
 │   │   └── flips.rs
 │   └── lib.rs
 ├── tests/
+│   ├── semgrep/
+│   │   └── src/
+│   │       └── core/
+│   │           └── algorithms/
+│   │               └── no_std_hash_collections.rs
 │   ├── COVERAGE.md
 │   ├── README.md
 │   ├── allocation_api.rs
@@ -232,12 +241,14 @@ delaunay/
 │   ├── dedup_batch_construction.rs
 │   ├── delaunay_edge_cases.rs
 │   ├── delaunay_incremental_insertion.rs
+│   ├── delaunay_public_api_coverage.rs
 │   ├── delaunay_repair_fallback.rs
 │   ├── delaunayize_workflow.rs
 │   ├── euler_characteristic.rs
 │   ├── insert_with_statistics.rs
 │   ├── k3_cycle_predicate.rs
 │   ├── large_scale_debug.rs
+│   ├── prelude_exports.rs
 │   ├── proptest_cell.rs
 │   ├── proptest_convex_hull.rs
 │   ├── proptest_delaunay_triangulation.proptest-regressions
@@ -268,7 +279,6 @@ delaunay/
 ├── .gitleaks.toml
 ├── .markdownlint.json
 ├── .python-version
-├── .semgrep.yaml
 ├── .taplo.toml
 ├── .yamllint
 ├── AGENTS.md
@@ -281,6 +291,7 @@ delaunay/
 ├── LICENSE
 ├── README.md
 ├── REFERENCES.md
+├── SECURITY.md
 ├── cliff.toml
 ├── clippy.toml
 ├── justfile
@@ -288,6 +299,7 @@ delaunay/
 ├── pyproject.toml
 ├── rust-toolchain.toml
 ├── rustfmt.toml
+├── semgrep.yaml
 ├── ty.toml
 ├── typos.toml
 └── uv.lock

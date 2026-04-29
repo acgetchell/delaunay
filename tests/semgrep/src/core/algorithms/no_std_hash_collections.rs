@@ -53,3 +53,13 @@ fn collects() {
         .into_iter()
         .collect::<std::collections::HashSet<_>>();
 }
+
+pub fn public_expect_bypass(value: Option<u8>) -> u8 {
+    // ruleid: delaunay.rust.no-production-unwrap-panic
+    value.expect("public APIs should return typed errors instead")
+}
+
+fn private_documented_invariant(value: Option<u8>) -> u8 {
+    // ok: delaunay.rust.no-production-unwrap-panic
+    value.expect("private helper documents an internal invariant")
+}

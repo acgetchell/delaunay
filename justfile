@@ -582,10 +582,13 @@ python-typecheck: _ensure-uv
 
 # Repository-owned Semgrep rules for project-specific Rust diagnostics.
 semgrep: _ensure-uv
-    uv run semgrep --error --strict --timeout 30 --config .semgrep.yaml .
+    uv run semgrep --error --strict --timeout 30 --config semgrep.yaml .
 
 semgrep-test: _ensure-uv
-    uv run semgrep scan --test --strict --config .semgrep.yaml tests/semgrep/src/core/algorithms/no_std_hash_collections.rs
+    #!/usr/bin/env bash
+    set -euo pipefail
+    cd tests/semgrep
+    uv run semgrep scan --test --strict --config ../../semgrep.yaml src/core/algorithms/no_std_hash_collections.rs
 
 # Development setup
 setup: setup-tools

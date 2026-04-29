@@ -13,6 +13,7 @@ use crate::geometry::traits::coordinate::CoordinateScalar;
 
 /// Errors that can occur during Hilbert curve operations.
 #[derive(Clone, Debug, thiserror::Error, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum HilbertError {
     /// The `bits` parameter is out of valid range [1, 31].
     #[error("bits parameter {bits} is out of valid range [1, 31]")]
@@ -453,9 +454,6 @@ where
 /// Returns [`HilbertError::DimensionTooLarge`] if the dimension `D` exceeds `u32::MAX`
 /// (extremely unlikely in practice).
 ///
-/// Returns [`HilbertError::QuantizationScaleConversionFailed`] if the quantization
-/// grid maximum cannot be represented by the coordinate scalar type.
-///
 /// # Examples
 ///
 /// ```rust
@@ -539,6 +537,9 @@ pub fn hilbert_indices_prequantized<const D: usize>(
 ///
 /// Returns [`HilbertError::DimensionTooLarge`] if the dimension `D` exceeds `u32::MAX`
 /// (extremely unlikely in practice).
+///
+/// Returns [`HilbertError::QuantizationScaleConversionFailed`] if the quantization
+/// grid maximum cannot be represented by the coordinate scalar type.
 ///
 /// # Examples
 ///

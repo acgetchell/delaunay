@@ -66,7 +66,7 @@ jobs:
           rsync -a --delete --exclude '.git' ./ "$CODACY_WORKDIR/"
 
       # Execute Codacy Analysis CLI with one selected tool per matrix entry.
-      # Opengrep reads the repository-owned rules from .semgrep.yaml; broad
+      # Opengrep reads the repository-owned rules from semgrep.yaml; broad
       # default Semgrep/Opengrep packs remain disabled.
       - name: Run Codacy Analysis CLI
         # Cap Codacy runtime so a hung analyzer does not consume the full job timeout.

@@ -33,6 +33,25 @@ rules:
           mod tests {
               ...
           }
+      - pattern-not: $TYPE::try_from($VALUE).expect(...)
+      - pattern-not: $VALUE.to_f64().expect(...)
+      - pattern-not: $VALUE.to_i64().expect(...)
+      - pattern-not: <f64 as num_traits::NumCast>::from($VALUE).expect(...)
+      - pattern-not: NonZeroUsize::new($VALUE).expect(...)
+      - pattern-not: $VALUE.build_facet_to_cells_map().expect(...)
+      - pattern-not: $VALUE.expect("Closure should have set result")
+      - pattern-not: $VALUE.expect("conflict_cells should be computed above")
+      - pattern-not: $VALUE.expect("retry_seed is only used when retry attempts are enabled")
+      - pattern-not: $VALUE.expect("epsilon validated above")
+      - pattern-not-regex: 'try_from\([^)]*\)\.expect\('
+      - pattern-not-regex: '\.to_(f64|i64)\(\)\s*\.expect\('
+      - pattern-not-regex: 'NumCast>::from\([^)]*\)\s*\.expect\('
+      - pattern-not-regex: 'NonZeroUsize::new\([^)]*\)\.expect\('
+      - pattern-not-regex: 'build_facet_to_cells_map\(\)\s*\.expect\('
+      - pattern-not-regex: 'expect\("Closure should have set result"\)'
+      - pattern-not-regex: 'expect\("conflict_cells should be computed above"\)'
+      - pattern-not-regex: 'expect\("retry_seed is only used when retry attempts are enabled"\)'
+      - pattern-not-regex: 'expect\("epsilon validated above"\)'
       - pattern-not-inside: |
           #[cfg(test)]
           mod $MOD {
@@ -197,6 +216,13 @@ rules:
       - pattern-either:
           - pattern: $VALUE.unwrap()
           - pattern: panic!(...)
+          - patterns:
+              - pattern: $VALUE.expect($MESSAGE)
+              - metavariable-regex:
+                  metavariable: $MESSAGE
+                  regex: >-
+                    "(point was set before building vertex|Failed to build
+                    vertex.*|public APIs should return typed errors instead)"
       - pattern-not-inside: |
           mod tests {
               ...
