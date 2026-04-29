@@ -42,7 +42,7 @@ use crate::geometry::util::safe_usize_to_scalar;
 use crate::topology::manifold::validate_ridge_links_for_cells;
 use crate::topology::traits::topological_space::{GlobalTopology, TopologyKind};
 use crate::triangulation::builder::DelaunayTriangulationBuilder;
-use core::cmp::Ordering;
+use core::{cmp::Ordering, fmt};
 use num_traits::{NumCast, ToPrimitive, Zero};
 use rand::SeedableRng;
 use rand::rngs::StdRng;
@@ -322,6 +322,30 @@ pub enum DelaunayTriangulationConstructionError {
     ExplicitConstruction(#[from] crate::triangulation::builder::ExplicitConstructionError),
 }
 
+/// Mutating Delaunay operation that can invoke flip-based repair internally.
+///
+/// # Examples
+///
+/// ```rust
+/// use delaunay::prelude::triangulation::DelaunayRepairOperation;
+///
+/// assert_eq!(DelaunayRepairOperation::VertexRemoval.to_string(), "vertex removal");
+/// ```
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum DelaunayRepairOperation {
+    /// Repair after removing a vertex.
+    VertexRemoval,
+}
+
+impl fmt::Display for DelaunayRepairOperation {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::VertexRemoval => f.write_str("vertex removal"),
+        }
+    }
+}
+
 /// Errors that can occur during Delaunay triangulation validation and repair.
 ///
 /// The first three variants are returned by [`DelaunayTriangulation::validate`]
@@ -333,10 +357,9 @@ pub enum DelaunayTriangulationConstructionError {
 /// [`DelaunayTriangulation::is_valid`] returns only the Level 4
 /// [`VerificationFailed`](Self::VerificationFailed) variant.
 ///
-/// The [`RepairFailed`](Self::RepairFailed) variant is **not** returned by
-/// `validate()` or `is_valid()`. It is produced by mutating operations that
-/// invoke flip-based repair internally (e.g.
-/// [`DelaunayTriangulation::remove_vertex`]).
+/// The repair-failure variants are **not** returned by `validate()` or
+/// `is_valid()`. They are produced by mutating operations that invoke
+/// flip-based repair internally (e.g. [`DelaunayTriangulation::remove_vertex`]).
 ///
 /// # Examples
 ///
@@ -377,12 +400,11 @@ pub enum DelaunayTriangulationValidationError {
         message: String,
     },
 
-    /// Flip-based Delaunay repair failed.
+    /// Flip-based Delaunay repair failed with string-only context.
     ///
-    /// This is returned by mutating operations that invoke flip-based repair
-    /// internally (e.g. [`DelaunayTriangulation::remove_vertex`]) when repair
-    /// encounters any error (budget exhaustion, topology violation, predicate
-    /// failure, etc.).
+    /// This variant is retained for compatibility with existing callers. New
+    /// mutating operations that can preserve the repair source should prefer
+    /// [`RepairOperationFailed`](Self::RepairOperationFailed).
     ///
     /// **Not** returned by `validate()` or `is_valid()` — those use
     /// [`VerificationFailed`](Self::VerificationFailed) for passive checks.
@@ -390,6 +412,26 @@ pub enum DelaunayTriangulationValidationError {
     RepairFailed {
         /// Description of the repair failure.
         message: String,
+    },
+
+    /// Flip-based Delaunay repair failed during a specific mutating operation.
+    ///
+    /// This preserves the underlying [`DelaunayRepairError`] so callers can
+    /// inspect budget exhaustion, topology errors, predicate failures, and other
+    /// repair causes without parsing display text. Operations that report this
+    /// variant are responsible for documenting whether failure is transactional;
+    /// [`remove_vertex`](DelaunayTriangulation::remove_vertex) restores the
+    /// pre-removal triangulation when post-removal repair fails.
+    ///
+    /// **Not** returned by `validate()` or `is_valid()` — those use
+    /// [`VerificationFailed`](Self::VerificationFailed) for passive checks.
+    #[error("Delaunay repair failed during {operation}: {source}")]
+    RepairOperationFailed {
+        /// Mutating operation that invoked repair.
+        operation: DelaunayRepairOperation,
+        /// Underlying flip-repair failure.
+        #[source]
+        source: DelaunayRepairError,
     },
 }
 
@@ -4705,6 +4747,23 @@ where
     /// [`remove_vertex()`](Self::remove_vertex), [`set_vertex_data`](Self::set_vertex_data),
     /// [`set_cell_data`](Self::set_cell_data), and read-only
     /// [`as_triangulation()`](Self::as_triangulation) access.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// #![allow(deprecated)]
+    /// use delaunay::prelude::triangulation::*;
+    ///
+    /// let vertices = vec![
+    ///     vertex!([0.0, 0.0]),
+    ///     vertex!([1.0, 0.0]),
+    ///     vertex!([0.0, 1.0]),
+    /// ];
+    /// let mut dt: DelaunayTriangulation<_, (), (), 2> =
+    ///     DelaunayTriangulation::new(&vertices).unwrap();
+    ///
+    /// assert!(dt.as_triangulation_mut().is_valid().is_ok());
+    /// ```
     #[must_use]
     #[deprecated(
         since = "0.7.7",
@@ -6234,6 +6293,12 @@ where
     /// property in some cases. If the [`DelaunayRepairPolicy`] allows it, a flip-based
     /// repair pass is run automatically after removal.
     ///
+    /// The post-removal repair and orientation canonicalization steps are
+    /// transactional: if either step fails, this method restores the triangulation,
+    /// insertion state, and spatial index to their pre-removal state before
+    /// returning the error. On successful removal, topology-dependent caches
+    /// (`last_inserted_cell` and the spatial index) are invalidated.
+    ///
     /// **Future Enhancement**: Delaunay-aware cavity retriangulation will be added for
     /// removals. For now, occasional Delaunay violations after removal are expected and
     /// can be addressed by running flip-based repair (e.g., [`repair_delaunay_with_flips`](Self::repair_delaunay_with_flips))
@@ -6255,7 +6320,8 @@ where
     /// Returns [`InvariantError`] if:
     /// - The inverse k=1 flip encounters a neighbor-wiring failure (`InvariantError::Tds`).
     /// - Fan retriangulation fails (`InvariantError::Tds`).
-    /// - Delaunay flip-based repair fails after removal (`InvariantError::Delaunay`).
+    /// - Delaunay flip-based repair fails after removal
+    ///   (`InvariantError::Delaunay(DelaunayTriangulationValidationError::RepairOperationFailed { .. })`).
     /// - Orientation canonicalization fails after repair (`InvariantError::Tds`).
     ///
     /// # Examples
@@ -6285,7 +6351,7 @@ where
     /// let cells_removed = dt.remove_vertex(vertex_key).unwrap();
     /// println!("Removed {} cells along with the vertex", cells_removed);
     ///
-    /// // Vertex removal preserves Levels 1–3 but may not preserve the Delaunay property.
+    /// // Vertex removal preserves topology; automatic repair is attempted when enabled.
     /// assert!(dt.as_triangulation().validate().is_ok());
     /// ```
     pub fn remove_vertex(&mut self, vertex_key: VertexKey) -> Result<usize, InvariantError> {
@@ -6332,10 +6398,13 @@ where
                     repair_result
                 };
 
-                repair_result.map_err(|e| {
-                    InvariantError::Delaunay(DelaunayTriangulationValidationError::RepairFailed {
-                        message: format!("Delaunay repair failed after vertex removal: {e}"),
-                    })
+                repair_result.map_err(|source| {
+                    InvariantError::Delaunay(
+                        DelaunayTriangulationValidationError::RepairOperationFailed {
+                            operation: DelaunayRepairOperation::VertexRemoval,
+                            source,
+                        },
+                    )
                 })?;
 
                 // Re-canonicalize geometric orientation (#258): flip repair may leave
@@ -6354,7 +6423,11 @@ where
         })();
 
         match result {
-            Ok(cells_removed) => Ok(cells_removed),
+            Ok(cells_removed) => {
+                self.insertion_state.last_inserted_cell = None;
+                self.spatial_index = None;
+                Ok(cells_removed)
+            }
             Err(err) => {
                 let (tds, insertion_state, spatial_index) = snapshot;
                 self.tri.tds = tds;
@@ -6956,11 +7029,10 @@ mod tests {
     use crate::topology::traits::topological_space::ToroidalConstructionMode;
     use crate::triangulation::flips::BistellarFlips;
     use crate::vertex;
-    use rand::{RngExt, SeedableRng};
     use slotmap::KeyData;
-    use std::sync::Once;
+    use std::{error::Error as StdError, sync::Once};
 
-    type TestDelaunay4 = DelaunayTriangulation<AdaptiveKernel<f64>, (), (), 4>;
+    type TestDelaunay<const D: usize> = DelaunayTriangulation<AdaptiveKernel<f64>, (), (), D>;
 
     fn init_tracing() {
         static INIT: Once = Once::new();
@@ -7362,6 +7434,240 @@ mod tests {
         assert_eq!(vertex_coords_f64(&infinite_vertex), None);
     }
 
+    fn coord_sequence_2d(vertices: &[Vertex<f64, (), 2>]) -> Vec<[f64; 2]> {
+        vertices.iter().map(|v| *v.point().coords()).collect()
+    }
+
+    #[test]
+    fn order_vertices_input_preserves_order() {
+        init_tracing();
+        let vertices = vec![
+            vertex!([2.0, 0.0]),
+            vertex!([0.0, 0.0]),
+            vertex!([1.0, 0.0]),
+        ];
+        let expected = coord_sequence_2d(&vertices);
+
+        let ordered = order_vertices_by_strategy(vertices, InsertionOrderStrategy::Input);
+
+        assert_eq!(coord_sequence_2d(&ordered), expected);
+    }
+
+    #[test]
+    fn dedup_exact_sorted_without_grid() {
+        init_tracing();
+        let vertices = vec![
+            vertex!([1.0, 0.0]),
+            vertex!([0.0, 0.0]),
+            vertex!([1.0, 0.0]),
+            vertex!([0.0, 1.0]),
+        ];
+
+        let unique = dedup_vertices_exact_sorted(vertices);
+
+        assert_eq!(
+            coord_sequence_2d(&unique),
+            vec![[0.0, 0.0], [0.0, 1.0], [1.0, 0.0]]
+        );
+    }
+
+    #[test]
+    fn dedup_exact_grid_fallback() {
+        init_tracing();
+        let vertices = vec![
+            vertex!([0.0, 0.0]),
+            vertex!([1.0, 0.0]),
+            vertex!([0.0, 0.0]),
+        ];
+        let mut grid = HashGridIndex::<f64, 2, usize>::new(1.0e-10);
+
+        let unique = dedup_vertices_exact_hash_grid(vertices, &mut grid);
+
+        assert_eq!(coord_sequence_2d(&unique), vec![[0.0, 0.0], [1.0, 0.0]]);
+
+        let vertices_6d = vec![
+            vertex!([1.0, 0.0, 0.0, 0.0, 0.0, 0.0]),
+            vertex!([1.0, 0.0, 0.0, 0.0, 0.0, 0.0]),
+        ];
+        let mut unusable_grid = HashGridIndex::<f64, 6, usize>::new(1.0e-10);
+
+        let fallback_unique = dedup_vertices_exact_hash_grid(vertices_6d, &mut unusable_grid);
+
+        assert_eq!(fallback_unique.len(), 1);
+    }
+
+    #[test]
+    fn epsilon_dedup_quantized_paths() {
+        init_tracing();
+        let vertices = vec![
+            vertex!([0.0, 0.0]),
+            vertex!([0.09, 0.0]),
+            vertex!([0.25, 0.0]),
+        ];
+
+        let unique = dedup_vertices_epsilon_quantized(vertices, 0.1);
+
+        assert_eq!(coord_sequence_2d(&unique), vec![[0.0, 0.0], [0.25, 0.0]]);
+
+        let zero_epsilon_vertices = vec![vertex!([0.0, 0.0]), vertex!([0.0, 0.0])];
+        let zero_epsilon_unique = dedup_vertices_epsilon_quantized(zero_epsilon_vertices, 0.0);
+        assert_eq!(zero_epsilon_unique.len(), 2);
+
+        let nonfinite_vertices = vec![
+            vertex!([0.0, 0.0]),
+            Vertex::new_with_uuid(Point::new([f64::NAN, 0.0]), Uuid::new_v4(), None),
+        ];
+        let nonfinite_unique = dedup_vertices_epsilon_quantized(nonfinite_vertices, 0.1);
+        assert_eq!(nonfinite_unique.len(), 2);
+
+        let vertices_6d = vec![
+            vertex!([0.0, 0.0, 0.0, 0.0, 0.0, 0.0]),
+            vertex!([0.01, 0.0, 0.0, 0.0, 0.0, 0.0]),
+        ];
+        let fallback_unique = dedup_vertices_epsilon_quantized(vertices_6d, 0.1);
+        assert_eq!(fallback_unique.len(), 1);
+    }
+
+    #[test]
+    fn dedup_epsilon_grid_fallback() {
+        init_tracing();
+        let vertices = vec![
+            vertex!([0.0, 0.0]),
+            vertex!([0.05, 0.0]),
+            vertex!([0.25, 0.0]),
+        ];
+        let mut grid = HashGridIndex::<f64, 2, usize>::new(0.1);
+
+        let unique = dedup_vertices_epsilon_hash_grid(vertices, 0.1, &mut grid);
+
+        assert_eq!(coord_sequence_2d(&unique), vec![[0.0, 0.0], [0.25, 0.0]]);
+
+        let fallback_vertices = vec![vertex!([0.0, 0.0]), vertex!([0.05, 0.0])];
+        let mut unusable_grid = HashGridIndex::<f64, 2, usize>::new(0.0);
+
+        let fallback_unique =
+            dedup_vertices_epsilon_hash_grid(fallback_vertices, 0.1, &mut unusable_grid);
+
+        assert_eq!(fallback_unique.len(), 1);
+    }
+
+    #[test]
+    fn preprocess_falls_back_when_grid_unusable() {
+        init_tracing();
+        let exact_vertices = vec![
+            vertex!([1.0, 0.0, 0.0, 0.0, 0.0, 0.0]),
+            vertex!([0.0, 0.0, 0.0, 0.0, 0.0, 0.0]),
+            vertex!([1.0, 0.0, 0.0, 0.0, 0.0, 0.0]),
+        ];
+
+        let exact = TestDelaunay::<6>::preprocess_vertices_for_construction(
+            &exact_vertices,
+            DedupPolicy::Exact,
+            InsertionOrderStrategy::Input,
+            InitialSimplexStrategy::First,
+        )
+        .unwrap();
+
+        assert_eq!(exact.primary_slice(&exact_vertices).len(), 2);
+        assert!(exact.grid_cell_size().is_none());
+
+        let epsilon_vertices = vec![
+            vertex!([0.0, 0.0, 0.0, 0.0, 0.0, 0.0]),
+            vertex!([0.01, 0.0, 0.0, 0.0, 0.0, 0.0]),
+            vertex!([0.5, 0.0, 0.0, 0.0, 0.0, 0.0]),
+        ];
+
+        let epsilon = TestDelaunay::<6>::preprocess_vertices_for_construction(
+            &epsilon_vertices,
+            DedupPolicy::Epsilon { tolerance: 0.1 },
+            InsertionOrderStrategy::Input,
+            InitialSimplexStrategy::First,
+        )
+        .unwrap();
+
+        assert_eq!(epsilon.primary_slice(&epsilon_vertices).len(), 2);
+        assert!(epsilon.grid_cell_size().is_none());
+    }
+
+    #[test]
+    fn preprocess_zero_epsilon_keeps_base() {
+        init_tracing();
+        let vertices = vec![
+            vertex!([0.0, 0.0, 0.0]),
+            vertex!([0.0, 0.0, 0.0]),
+            vertex!([1.0, 0.0, 0.0]),
+        ];
+
+        let preprocess = TestDelaunay::<3>::preprocess_vertices_for_construction(
+            &vertices,
+            DedupPolicy::Epsilon { tolerance: 0.0 },
+            InsertionOrderStrategy::Input,
+            InitialSimplexStrategy::Balanced,
+        )
+        .unwrap();
+
+        assert!(preprocess.grid_cell_size().is_some());
+        assert_eq!(preprocess.primary_slice(&vertices).len(), vertices.len());
+        assert!(preprocess.fallback_slice().is_none());
+    }
+
+    #[test]
+    fn quantize_and_neighbor_edges() {
+        init_tracing();
+        assert_eq!(quantize_coords(&[0.25, -0.25], 10.0), Some([2, -3]));
+        assert_eq!(quantize_coords(&[f64::NAN, 0.0], 10.0), None);
+        assert_eq!(quantize_coords(&[1.0e308, 0.0], 1.0e308), None);
+
+        let mut visited = Vec::new();
+        let mut current = [0_i64, 0_i64];
+        let completed = visit_quantized_neighbors(0, &[4, 7], &mut current, &mut |neighbor| {
+            visited.push(neighbor);
+            visited.len() < 4
+        });
+
+        assert!(!completed);
+        assert_eq!(visited.len(), 4);
+    }
+
+    #[test]
+    fn hilbert_fallback_for_nonfinite_coords() {
+        init_tracing();
+        let vertices = vec![
+            vertex!([1.0, 0.0]),
+            Vertex::new_with_uuid(Point::new([f64::NAN, 0.0]), Uuid::new_v4(), None),
+            vertex!([0.0, 0.0]),
+        ];
+
+        let ordered = order_vertices_hilbert(vertices, true);
+
+        assert_eq!(ordered.len(), 3);
+        assert!(
+            ordered.iter().any(|v| v.point().coords()[0].is_nan()),
+            "fallback ordering should preserve the non-finite vertex"
+        );
+        assert!(
+            ordered
+                .iter()
+                .any(|v| coords_equal_exact(v.point().coords(), &[0.0, 0.0]))
+        );
+        assert!(
+            ordered
+                .iter()
+                .any(|v| coords_equal_exact(v.point().coords(), &[1.0, 0.0]))
+        );
+    }
+
+    #[test]
+    fn hilbert_fallback_for_unsupported_dim() {
+        init_tracing();
+        let vertices = vec![vertex!([1.0; 17]), vertex!([0.0; 17])];
+
+        let ordered = order_vertices_hilbert(vertices, true);
+
+        assert!(coords_equal_exact(ordered[0].point().coords(), &[0.0; 17]));
+        assert!(coords_equal_exact(ordered[1].point().coords(), &[1.0; 17]));
+    }
+
     #[test]
     fn test_construction_statistics_record_insertion_tracks_inserted_common_fields() {
         init_tracing();
@@ -7671,13 +7977,10 @@ mod tests {
     }
 
     /// Build simplex vertices plus an interior point (all distinct).
-    #[expect(
-        clippy::cast_precision_loss,
-        reason = "D ≤ 5 in practice; no precision loss"
-    )]
     fn simplex_with_interior<const D: usize>() -> Vec<Vertex<f64, (), D>> {
         let mut verts = simplex_vertices::<D>();
-        let interior = [0.1_f64 / (D as f64); D];
+        let dimension = safe_usize_to_scalar::<f64>(D).expect("test dimensions fit in f64");
+        let interior = [0.1_f64 / dimension; D];
         verts.push(vertex!(interior));
         verts
     }
@@ -8056,76 +8359,6 @@ mod tests {
         assert_eq!(dt.topology_guarantee(), TopologyGuarantee::PLManifold);
     }
 
-    /// Slow search helper to find a natural stale-key repro case.
-    ///
-    /// This remains ignored by default because it is nondeterministic and expensive.
-    /// For deterministic coverage, see `test_insert_remaps_vertex_key_after_forced_heuristic_rebuild`.
-    #[test]
-    #[ignore = "manual search helper; run explicitly to discover natural repro cases"]
-    fn find_stale_vertex_key_after_heuristic_rebuild_repro_case() {
-        const DIM: usize = 4;
-        const INITIAL_COUNT: usize = 12;
-        const CASES: usize = 2_000;
-
-        init_tracing();
-
-        // This probes for a configuration that triggers a heuristic rebuild during automatic
-        // flip-repair after insertion, which historically could invalidate the returned VertexKey.
-        let mut rng = rand::rngs::StdRng::seed_from_u64(0xD3_1A_7A_1C_0A_17_u64);
-
-        for case in 0..CASES {
-            let mut vertices: Vec<Vertex<f64, (), DIM>> = Vec::with_capacity(INITIAL_COUNT);
-            for _ in 0..INITIAL_COUNT {
-                // Use a coarse lattice + tiny noise to encourage near-degenerate configurations.
-                let mut coords = [0.0_f64; DIM];
-                for c in &mut coords {
-                    let base: i32 = rng.random_range(-3..=3);
-                    let noise: f64 = rng.random_range(-1.0e-6..=1.0e-6);
-                    *c = <f64 as std::convert::From<i32>>::from(base) + noise;
-                }
-                vertices.push(vertex!(coords));
-            }
-
-            let Ok(mut dt) =
-                DelaunayTriangulation::<AdaptiveKernel<f64>, (), (), DIM>::new(&vertices)
-            else {
-                continue;
-            };
-
-            let mut inserted_coords = [0.0_f64; DIM];
-            for c in &mut inserted_coords {
-                let base: i32 = rng.random_range(-3..=3);
-                let noise: f64 = rng.random_range(-1.0e-6..=1.0e-6);
-                *c = <f64 as std::convert::From<i32>>::from(base) + noise;
-            }
-            let inserted = vertex!(inserted_coords);
-            let inserted_uuid = inserted.uuid();
-
-            let Ok(vertex_key) = dt.insert(inserted) else {
-                continue;
-            };
-
-            let found = dt
-                .tri
-                .tds
-                .get_vertex_by_key(vertex_key)
-                .is_some_and(|v| v.uuid() == inserted_uuid);
-
-            if !found {
-                tracing::debug!(case, "FOUND stale key after insertion");
-                tracing::debug!(vertex_key = ?vertex_key, inserted_uuid = %inserted_uuid);
-                tracing::debug!("initial vertices:");
-                for v in &vertices {
-                    tracing::debug!(coords = ?v.point().coords(), "  vertex");
-                }
-                tracing::debug!("inserted vertex coords: {inserted_coords:?}");
-                panic!("stale VertexKey returned from insert() after heuristic rebuild");
-            }
-        }
-
-        panic!("no stale-key case found after {CASES} attempts");
-    }
-
     #[test]
     fn test_remove_vertex_fast_path_inverse_k1() {
         init_tracing();
@@ -8167,21 +8400,46 @@ mod tests {
     }
 
     #[test]
-    fn test_remove_vertex_rolls_back_on_repair_failure() {
+    fn remove_vertex_invalidates_caches() {
         init_tracing();
-        let vertices: Vec<Vertex<f64, (), 3>> = vec![
-            vertex!([0.0, 0.0, 0.0]),
-            vertex!([1.0, 0.0, 0.0]),
-            vertex!([0.0, 1.0, 0.0]),
-            vertex!([0.0, 0.0, 1.0]),
+        let vertices: Vec<Vertex<f64, (), 2>> = vec![
+            vertex!([0.0, 0.0]),
+            vertex!([1.0, 0.0]),
+            vertex!([0.0, 1.0]),
         ];
+        let mut dt: DelaunayTriangulation<_, (), (), 2> =
+            DelaunayTriangulation::new(&vertices).unwrap();
 
-        let mut dt: DelaunayTriangulation<AdaptiveKernel<f64>, (), (), 3> =
+        let vertex_key = dt.insert(vertex!([0.25, 0.25])).unwrap();
+        assert!(dt.insertion_state.last_inserted_cell.is_some());
+        assert!(dt.spatial_index.is_some());
+
+        dt.set_delaunay_repair_policy(DelaunayRepairPolicy::Never);
+        let removed_cells = dt.remove_vertex(vertex_key).unwrap();
+
+        assert!(removed_cells > 0);
+        assert!(dt.insertion_state.last_inserted_cell.is_none());
+        assert!(dt.spatial_index.is_none());
+        assert!(dt.as_triangulation().validate().is_ok());
+    }
+
+    fn interior_vertex_for_k1_insert<const D: usize>() -> Vertex<f64, (), D> {
+        let denominator = safe_usize_to_scalar::<f64>(D + 2)
+            .expect("D + 2 should convert exactly for rollback test dimensions");
+        let coord = 1.0 / denominator;
+        vertex!([coord; D])
+    }
+
+    fn assert_remove_vertex_rollback<const D: usize>() {
+        init_tracing();
+        let vertices = simplex_vertices::<D>();
+
+        let mut dt: DelaunayTriangulation<AdaptiveKernel<f64>, (), (), D> =
             DelaunayTriangulation::new(&vertices).unwrap();
         dt.set_topology_guarantee(TopologyGuarantee::PLManifold);
 
         let cell_key = dt.cells().next().unwrap().0;
-        let inserted_vertex = vertex!([0.2, 0.2, 0.2]);
+        let inserted_vertex = interior_vertex_for_k1_insert::<D>();
         let inserted_uuid = inserted_vertex.uuid();
         dt.flip_k1_insert(cell_key, inserted_vertex).unwrap();
 
@@ -8195,16 +8453,42 @@ mod tests {
 
         let _guard = ForceRepairNonconvergentGuard::enable();
         let result = dt.remove_vertex(vertex_key);
-        assert!(
-            result.is_err(),
-            "forced repair failure should make removal fail"
-        );
+        let err = result.expect_err("forced repair failure should make removal fail");
+        match err {
+            InvariantError::Delaunay(
+                DelaunayTriangulationValidationError::RepairOperationFailed {
+                    operation: DelaunayRepairOperation::VertexRemoval,
+                    source: DelaunayRepairError::NonConvergent { max_flips: 0, .. },
+                },
+            ) => {
+                // Expected forced path.
+            }
+            other => panic!(
+                "expected vertex-removal RepairOperationFailed from forced repair path, got {other:?}"
+            ),
+        }
 
         assert_eq!(dt.number_of_vertices(), vertex_count_before);
         assert_eq!(dt.number_of_cells(), cell_count_before);
         assert!(dt.vertices().any(|(_, v)| v.uuid() == inserted_uuid));
         assert!(dt.as_triangulation().validate().is_ok());
     }
+
+    macro_rules! gen_remove_vertex_rollback_tests {
+        ($dim:literal) => {
+            pastey::paste! {
+                #[test]
+                fn [<remove_vertex_rollback_ $dim d>]() {
+                    assert_remove_vertex_rollback::<$dim>();
+                }
+            }
+        };
+    }
+
+    gen_remove_vertex_rollback_tests!(2);
+    gen_remove_vertex_rollback_tests!(3);
+    gen_remove_vertex_rollback_tests!(4);
+    gen_remove_vertex_rollback_tests!(5);
 
     #[test]
     fn test_repair_delaunay_with_flips_allows_pl_manifold() {
@@ -9529,23 +9813,23 @@ mod tests {
     #[test]
     fn test_repair_soft_fail_classification() {
         let nonconvergent = test_hooks::synthetic_nonconvergent_error();
-        assert!(TestDelaunay4::can_soft_fail(&nonconvergent));
+        assert!(TestDelaunay::<4>::can_soft_fail(&nonconvergent));
 
         let postcondition = DelaunayRepairError::PostconditionFailed {
             message: "unresolved facet".to_string(),
         };
-        assert!(TestDelaunay4::can_soft_fail(&postcondition));
+        assert!(TestDelaunay::<4>::can_soft_fail(&postcondition));
 
         let flip_error =
             DelaunayRepairError::Flip(FlipError::UnsupportedDimension { dimension: 1 });
-        assert!(!TestDelaunay4::can_soft_fail(&flip_error));
+        assert!(!TestDelaunay::<4>::can_soft_fail(&flip_error));
 
         let topology_error = DelaunayRepairError::InvalidTopology {
             required: TopologyGuarantee::PLManifold,
             found: TopologyGuarantee::Pseudomanifold,
             message: "local repair requires manifold topology",
         };
-        assert!(!TestDelaunay4::can_soft_fail(&topology_error));
+        assert!(!TestDelaunay::<4>::can_soft_fail(&topology_error));
 
         let verification_error = DelaunayRepairError::VerificationFailed {
             context: "local k=3 postcondition verification",
@@ -9553,14 +9837,14 @@ mod tests {
                 message: "bad ridge frame".to_string(),
             },
         };
-        assert!(!TestDelaunay4::can_soft_fail(&verification_error));
+        assert!(!TestDelaunay::<4>::can_soft_fail(&verification_error));
 
         let canonicalization_error = DelaunayRepairError::OrientationCanonicalizationFailed {
             message: "after flip repair: broken orientation".to_string(),
         };
-        assert!(!TestDelaunay4::can_soft_fail(&canonicalization_error));
+        assert!(!TestDelaunay::<4>::can_soft_fail(&canonicalization_error));
 
-        let mapped_hard = TestDelaunay4::map_hard_repair_error(23, &flip_error);
+        let mapped_hard = TestDelaunay::<4>::map_hard_repair_error(23, &flip_error);
         assert!(
             matches!(
                 mapped_hard,
@@ -9573,7 +9857,7 @@ mod tests {
         );
 
         let geometric_error = DelaunayRepairError::Flip(FlipError::DegenerateCell);
-        let mapped_geometric = TestDelaunay4::map_hard_repair_error(24, &geometric_error);
+        let mapped_geometric = TestDelaunay::<4>::map_hard_repair_error(24, &geometric_error);
         assert!(
             matches!(
                 mapped_geometric,
@@ -9585,7 +9869,7 @@ mod tests {
             "geometric hard D>=4 repair failures should remain retryable degeneracies: {mapped_geometric:?}"
         );
 
-        let mapped_verification = TestDelaunay4::map_hard_repair_error(25, &verification_error);
+        let mapped_verification = TestDelaunay::<4>::map_hard_repair_error(25, &verification_error);
         assert!(
             matches!(
                 mapped_verification,
@@ -9603,7 +9887,8 @@ mod tests {
                 message: "in_sphere failed".to_string(),
             },
         };
-        let mapped_predicate = TestDelaunay4::map_hard_repair_error(26, &predicate_verification);
+        let mapped_predicate =
+            TestDelaunay::<4>::map_hard_repair_error(26, &predicate_verification);
         assert!(
             matches!(
                 mapped_predicate,
@@ -10236,6 +10521,44 @@ mod tests {
             msg.contains("flip predicate detected non-Delaunay facet"),
             "Display should contain inner message: {msg}"
         );
+    }
+
+    #[test]
+    fn repair_operation_failed_preserves_source() {
+        let source = DelaunayRepairError::NonConvergent {
+            max_flips: 7,
+            diagnostics: Box::new(DelaunayRepairDiagnostics {
+                facets_checked: 3,
+                flips_performed: 7,
+                max_queue_len: 5,
+                ambiguous_predicates: 0,
+                ambiguous_predicate_samples: Vec::new(),
+                predicate_failures: 0,
+                cycle_detections: 0,
+                cycle_signature_samples: Vec::new(),
+                attempt: 1,
+                queue_order: RepairQueueOrder::Fifo,
+            }),
+        };
+        let err = DelaunayTriangulationValidationError::RepairOperationFailed {
+            operation: DelaunayRepairOperation::VertexRemoval,
+            source,
+        };
+
+        let msg = err.to_string();
+        assert!(msg.contains("vertex removal"));
+        match &err {
+            DelaunayTriangulationValidationError::RepairOperationFailed {
+                operation: DelaunayRepairOperation::VertexRemoval,
+                source: DelaunayRepairError::NonConvergent { max_flips: 7, .. },
+            } => {}
+            other => panic!("expected typed vertex-removal repair source, got {other:?}"),
+        }
+        let chained = err
+            .source()
+            .expect("typed repair failure should expose source error")
+            .to_string();
+        assert!(chained.contains("failed to converge after 7 flips"));
     }
 
     #[test]

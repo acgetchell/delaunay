@@ -770,6 +770,13 @@ mod tests {
     }
 
     #[test]
+    fn simplex_volume_degenerate_segment_errors() {
+        let line = vec![Point::new([2.0]), Point::new([2.0])];
+        let result = simplex_volume(&line);
+        assert!(result.is_err(), "coincident 1D points should be degenerate");
+    }
+
+    #[test]
     fn test_simplex_volume_2d_triangle() {
         // 2D: Right triangle with legs 3 and 4
         let triangle = vec![
@@ -829,6 +836,18 @@ mod tests {
         ];
         let result = simplex_volume(&collinear);
         assert!(result.is_err(), "Degenerate simplex should return an error");
+    }
+
+    #[test]
+    fn simplex_volume_coplanar_tetrahedron_errors() {
+        let coplanar = vec![
+            Point::new([0.0, 0.0, 0.0]),
+            Point::new([1.0, 0.0, 0.0]),
+            Point::new([0.0, 1.0, 0.0]),
+            Point::new([0.25, 0.25, 0.0]),
+        ];
+        let result = simplex_volume(&coplanar);
+        assert!(result.is_err(), "coplanar tetrahedron should be degenerate");
     }
 
     #[test]
@@ -1004,6 +1023,18 @@ mod tests {
     fn test_gram_determinant_parallel_edges_errors() {
         let edges = [[1.0, 0.0, 0.0], [2.0, 0.0, 0.0]];
         assert!(gram_det_from_edges(&edges).is_err());
+    }
+
+    #[test]
+    fn degeneracy_tolerance_zero_scale() {
+        assert_relative_eq!(degeneracy_tolerance::<f64>(0.0).unwrap(), 0.0);
+        assert_relative_eq!(degeneracy_tolerance::<f64>(-1.0).unwrap(), 0.0);
+    }
+
+    #[test]
+    fn gram_determinant_nonfinite_errors() {
+        assert!(validate_gram_determinant(f64::NAN).is_err());
+        assert!(validate_gram_determinant(f64::INFINITY).is_err());
     }
 
     #[test]

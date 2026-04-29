@@ -76,7 +76,7 @@ let mut dt: DelaunayTriangulation<_, (), (), 3> =
 let new_vertex = vertex!([0.5, 0.5, 0.5]);
 dt.insert(new_vertex).unwrap();
 
-// Vertex removal (maintains Delaunay property via fan retriangulation)
+// Vertex removal (topology-preserving, with automatic repair when enabled)
 let vertex_key = dt.vertices().next().unwrap().0;
 dt.remove_vertex(vertex_key).unwrap();
 ```
@@ -125,14 +125,21 @@ for topology guarantee and validation policy details.
 
 ### Key Characteristics
 
-- **Automatic property preservation**: The Delaunay empty-circumsphere property is maintained automatically
+- **Automatic property preservation**: Insertion maintains the Delaunay
+  empty-circumsphere property; removal runs flip-based repair when the active
+  `DelaunayRepairPolicy` permits it
 - **Cavity-based insertion**: New vertices are inserted by identifying conflicting cells, removing them, and filling the cavity
-- **Fan retriangulation**: Vertex removal uses fan-based retriangulation of the vertex star
+- **Transactional vertex removal**: Vertex removal uses an inverse k=1 fast path
+  when possible and fan-based retriangulation otherwise. If post-removal
+  Delaunay repair or orientation canonicalization fails, the triangulation and
+  internal caches are restored to their pre-removal state.
 - **Auxiliary data**: Vertices and cells carry optional user data (`U` / `V`). Read via `vertex.data()` /
   `cell.data()`, write via `dt.set_vertex_data(key, data)` / `dt.set_cell_data(key, data)` (O(1),
   invariant-preserving). See [`workflows.md`](workflows.md) for examples.
 - **Error handling**: Operations fail gracefully if they would violate invariants (see
-  [`invariants.md`](invariants.md)).
+  [`invariants.md`](invariants.md)). Mutating operations that invoke repair use
+  typed repair diagnostics where available, for example
+  `RepairOperationFailed { operation, source }`.
 - **Validation**: The active `ValidationPolicy` (set with
   `dt.set_validation_policy(...)`) governs automatic topology validation for
   subsequent construction/modification operations
@@ -370,6 +377,10 @@ assert!(outcome.topology_repair.succeeded);
    empty-circumsphere property.
 3. **Optional fallback rebuild** — rebuilds from the vertex set when both
    repair passes fail (`DelaunayizeConfig { fallback_rebuild: true, .. }`).
+   If a failed topology repair is recovered by fallback rebuild,
+   `outcome.topology_repair.succeeded` remains `false`; use
+   `outcome.used_fallback_rebuild` to distinguish successful rebuild recovery
+   from direct repair success.
 
 ### Configuration
 

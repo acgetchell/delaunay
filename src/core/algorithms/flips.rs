@@ -6818,7 +6818,7 @@ mod tests {
     use approx::assert_relative_eq;
     use rand::{RngExt, SeedableRng, rngs::StdRng};
     use slotmap::KeyData;
-    use std::sync::Once;
+    use std::{iter::once, sync::Once};
 
     fn init_tracing() {
         static INIT: Once = Once::new();
@@ -8237,6 +8237,77 @@ mod tests {
     test_bistellar_roundtrip_dimension!(3, k3);
     test_bistellar_roundtrip_dimension!(4, k3);
     test_bistellar_roundtrip_dimension!(5, k3);
+
+    #[test]
+    fn dynamic_flip_rejects_bad_context() {
+        init_tracing();
+        let mut tds: Tds<f64, (), (), 3> = Tds::empty();
+        let v0 = VertexKey::from(KeyData::from_ffi(1));
+        let v1 = VertexKey::from(KeyData::from_ffi(2));
+        let v2 = VertexKey::from(KeyData::from_ffi(3));
+        let v3 = VertexKey::from(KeyData::from_ffi(4));
+        let v4 = VertexKey::from(KeyData::from_ffi(5));
+        let c0 = CellKey::from(KeyData::from_ffi(11));
+        let c1 = CellKey::from(KeyData::from_ffi(12));
+
+        let valid_shape = FlipContextDyn {
+            removed_face_vertices: [v0, v1, v2].into_iter().collect(),
+            inserted_face_vertices: [v3, v4].into_iter().collect(),
+            removed_cells: [c0, c1].into_iter().collect(),
+            direction: FlipDirection::Forward,
+        };
+
+        assert!(matches!(
+            apply_bistellar_flip_dynamic(&mut tds, 0, &valid_shape),
+            Err(FlipError::InvalidFlipContext { ref message }) if message.contains("k must be")
+        ));
+        assert!(matches!(
+            apply_bistellar_flip_dynamic(&mut tds, 5, &valid_shape),
+            Err(FlipError::InvalidFlipContext { ref message }) if message.contains("k must be")
+        ));
+
+        let wrong_removed_face = FlipContextDyn {
+            removed_face_vertices: [v0, v1].into_iter().collect(),
+            ..valid_shape.clone()
+        };
+        assert!(matches!(
+            apply_bistellar_flip_dynamic(&mut tds, 2, &wrong_removed_face),
+            Err(FlipError::InvalidFlipContext { ref message })
+                if message.contains("removed-face must have")
+        ));
+
+        let wrong_inserted_face = FlipContextDyn {
+            inserted_face_vertices: once(v3).collect(),
+            ..valid_shape.clone()
+        };
+        assert!(matches!(
+            apply_bistellar_flip_dynamic(&mut tds, 2, &wrong_inserted_face),
+            Err(FlipError::InvalidFlipContext { ref message })
+                if message.contains("inserted-face must have")
+        ));
+
+        let wrong_removed_cells = FlipContextDyn {
+            removed_cells: once(c0).collect(),
+            ..valid_shape.clone()
+        };
+        assert!(matches!(
+            apply_bistellar_flip_dynamic(&mut tds, 2, &wrong_removed_cells),
+            Err(FlipError::InvalidFlipContext { ref message })
+                if message.contains("removed_cells must have")
+        ));
+
+        let overlapping_faces = FlipContextDyn {
+            inserted_face_vertices: [v2, v3].into_iter().collect(),
+            ..valid_shape
+        };
+        assert!(matches!(
+            apply_bistellar_flip_dynamic(&mut tds, 2, &overlapping_faces),
+            Err(FlipError::InvalidFlipContext { ref message })
+                if message.contains("must be disjoint")
+        ));
+        assert_eq!(tds.number_of_vertices(), 0);
+        assert_eq!(tds.number_of_cells(), 0);
+    }
 
     #[test]
     fn test_flip_k2_2d_edge_flip() {
