@@ -223,6 +223,11 @@ def _load_ci_performance_manifest_ids(criterion_dir: Path) -> set[str] | None:
     return manifest_ids or None
 
 
+def is_valid_criterion_estimate(mean_ns: float, low_ns: float, high_ns: float) -> bool:
+    """Return whether Criterion estimate values are finite and ordered."""
+    return all(math.isfinite(value) for value in (mean_ns, low_ns, high_ns)) and mean_ns > 0 and 0 <= low_ns <= mean_ns <= high_ns
+
+
 def _collect_ci_suite_estimates(criterion_dir: Path) -> list[tuple[tuple[str, ...], Path]]:
     """Collect deduplicated ci_performance_suite estimates, preferring new over base."""
     manifest_ids = _load_ci_performance_manifest_ids(criterion_dir)
@@ -874,10 +879,21 @@ class PerformanceSummaryGenerator:
         if estimates_file.exists():
             try:
                 with estimates_file.open(encoding="utf-8") as f:
-                    estimates = json.load(f)
+                    data = json.load(f)
 
-                # Extract mean time in nanoseconds
-                mean_ns = estimates["mean"]["point_estimate"]
+                if not isinstance(data, dict):
+                    return None
+                mean_data = data.get("mean", {})
+                if not isinstance(mean_data, dict):
+                    return None
+                mean_ns = float(mean_data["point_estimate"])
+                confidence_interval = mean_data.get("confidence_interval", {})
+                if not isinstance(confidence_interval, dict):
+                    return None
+                low_ns = float(confidence_interval.get("lower_bound", mean_ns))
+                high_ns = float(confidence_interval.get("upper_bound", mean_ns))
+                if not is_valid_criterion_estimate(mean_ns, low_ns, high_ns):
+                    return None
                 return CircumspherePerformanceData(method=method_name, time_ns=mean_ns)
 
             except (OSError, KeyError, TypeError, ValueError, json.JSONDecodeError) as e:
@@ -1036,12 +1052,18 @@ class PerformanceSummaryGenerator:
             with estimates_path.open("r", encoding="utf-8") as f:
                 data = json.load(f)
 
+            if not isinstance(data, dict):
+                return None
             mean_data = data.get("mean", {})
+            if not isinstance(mean_data, dict):
+                return None
             mean_ns = float(mean_data["point_estimate"])
             confidence_interval = mean_data.get("confidence_interval", {})
+            if not isinstance(confidence_interval, dict):
+                return None
             low_ns = float(confidence_interval.get("lower_bound", mean_ns))
             high_ns = float(confidence_interval.get("upper_bound", mean_ns))
-            if mean_ns <= 0:
+            if not is_valid_criterion_estimate(mean_ns, low_ns, high_ns):
                 return None
             return mean_ns, low_ns, high_ns
         except (OSError, KeyError, TypeError, ValueError, json.JSONDecodeError):
@@ -1674,11 +1696,11 @@ class CriterionParser:
                 data = json.load(f)
 
             # Extract timing data (nanoseconds from Criterion)
-            mean_ns = data["mean"]["point_estimate"]
-            low_ns = data["mean"]["confidence_interval"]["lower_bound"]
-            high_ns = data["mean"]["confidence_interval"]["upper_bound"]
+            mean_ns = float(data["mean"]["point_estimate"])
+            low_ns = float(data["mean"]["confidence_interval"]["lower_bound"])
+            high_ns = float(data["mean"]["confidence_interval"]["upper_bound"])
 
-            if mean_ns <= 0:
+            if not is_valid_criterion_estimate(mean_ns, low_ns, high_ns):
                 return None
 
             # Convert nanoseconds to microseconds
@@ -1702,7 +1724,7 @@ class CriterionParser:
 
             return benchmark
 
-        except (FileNotFoundError, json.JSONDecodeError, KeyError, ZeroDivisionError, ValueError):
+        except (FileNotFoundError, json.JSONDecodeError, KeyError, TypeError, ZeroDivisionError, ValueError):
             return None
 
     @staticmethod
@@ -2093,70 +2115,14 @@ class PerformanceComparator:
     def _parse_baseline_file(self, baseline_content: str) -> dict[str, BenchmarkData]:
         """Parse baseline file content into benchmark data."""
         results = {}
-        lines = baseline_content.split("\n")
-        i = 0
-
-        while i < len(lines):
-            line = lines[i].strip()
-
-            # Look for benchmark sections
-            match = re.match(r"=== (?:(\d+) Points|Unsized Workload) \((\d+)D\) ===", line)
-            if match:
-                points = int(match.group(1)) if match.group(1) is not None else None
-                dimension = f"{match.group(2)}D"
-                benchmark_id = ""
-                next_line_index = i + 1
-
-                if next_line_index < len(lines):
-                    id_match = re.match(r"Benchmark ID:\s*(.+)", lines[next_line_index].strip())
-                    if id_match:
-                        benchmark_id = id_match.group(1).strip()
-                        next_line_index += 1
-
-                # Parse time line
-                if next_line_index < len(lines):
-                    time_line = lines[next_line_index].strip()
-                    time_match = re.match(r"Time: \[([0-9.]+), ([0-9.]+), ([0-9.]+)\] (.+)", time_line)
-                    if time_match:
-                        time_low = float(time_match.group(1))
-                        time_mean = float(time_match.group(2))
-                        time_high = float(time_match.group(3))
-                        time_unit = time_match.group(4)
-
-                        # Parse throughput line if present
-                        throughput_low = throughput_mean = throughput_high = None
-                        throughput_unit = None
-
-                        if next_line_index + 1 < len(lines):
-                            thrpt_line = lines[next_line_index + 1].strip()
-                            thrpt_match = re.match(r"Throughput: \[([0-9.]+), ([0-9.]+), ([0-9.]+)\] (.+)", thrpt_line)
-                            if thrpt_match:
-                                throughput_low = float(thrpt_match.group(1))
-                                throughput_mean = float(thrpt_match.group(2))
-                                throughput_high = float(thrpt_match.group(3))
-                                throughput_unit = thrpt_match.group(4)
-
-                        benchmark = BenchmarkData(points, dimension, benchmark_id=benchmark_id).with_timing(time_low, time_mean, time_high, time_unit)
-                        if throughput_mean is not None and throughput_low is not None and throughput_high is not None and throughput_unit is not None:
-                            benchmark.with_throughput(
-                                throughput_low,
-                                throughput_mean,
-                                throughput_high,
-                                throughput_unit,
-                            )
-                        else:
-                            logger.debug(
-                                "Missing throughput data for %s: low=%s mean=%s high=%s unit=%s",
-                                benchmark.comparison_key,
-                                throughput_low,
-                                throughput_mean,
-                                throughput_high,
-                                throughput_unit,
-                            )
-                        results[benchmark.comparison_key] = benchmark
-
-            i += 1
-
+        for benchmark in extract_benchmark_data(baseline_content):
+            if not benchmark.time_unit:
+                logger.debug("Skipping baseline benchmark without timing data: %s", benchmark)
+                continue
+            try:
+                results[benchmark.comparison_key] = benchmark
+            except ValueError:
+                logger.debug("Skipping baseline benchmark without stable comparison key: %s", benchmark)
         return results
 
     def parse_baseline_file(self, baseline_content: str) -> dict[str, BenchmarkData]:

@@ -112,11 +112,48 @@ class TestStorageBackendComparator:
         assert len(results["benchmarks"]) == 1
 
         bench = results["benchmarks"][0]
-        assert bench["name"] == "1000v"
+        assert bench["name"] == "construction/2D/1000v"
         assert bench["estimate"] == 150000000.0
         assert bench["unit"] == "ns"
         assert bench["lower"] == 145000000.0
         assert bench["upper"] == 155000000.0
+
+    def test_parse_criterion_output_json_preserves_full_ids(self, comparator, sample_criterion_json) -> None:
+        """Test JSON parsing keeps full Criterion IDs when leaf names collide."""
+        for group in ("construction", "validation"):
+            estimates_file = comparator.criterion_dir / group / "2D" / "1000v" / "new" / "estimates.json"
+            estimates_file.parent.mkdir(parents=True)
+            estimates_file.write_text(json.dumps(sample_criterion_json), encoding="utf-8")
+
+        results = comparator._parse_criterion_output("")
+
+        names = {bench["name"] for bench in results["benchmarks"]}
+        assert names == {"construction/2D/1000v", "validation/2D/1000v"}
+
+    def test_parse_criterion_output_json_rejects_nonfinite_estimates(self, comparator) -> None:
+        """Test non-finite Criterion JSON timings are skipped."""
+        estimates_file = comparator.criterion_dir / "construction" / "2D" / "1000v" / "new" / "estimates.json"
+        estimates_file.parent.mkdir(parents=True)
+        estimates_file.write_text(
+            json.dumps({"mean": {"point_estimate": float("nan"), "confidence_interval": {"lower_bound": 1.0, "upper_bound": 2.0}}}),
+            encoding="utf-8",
+        )
+
+        results = comparator._parse_criterion_output("")
+
+        assert results["benchmarks"] == []
+
+    @patch("compare_storage_backends.is_valid_criterion_estimate", return_value=False)
+    def test_parse_criterion_output_json_uses_shared_estimate_validator(self, mock_validator, comparator, sample_criterion_json) -> None:
+        """Test JSON parsing delegates Criterion estimate validation to the shared helper."""
+        estimates_file = comparator.criterion_dir / "construction" / "2D" / "1000v" / "new" / "estimates.json"
+        estimates_file.parent.mkdir(parents=True)
+        estimates_file.write_text(json.dumps(sample_criterion_json), encoding="utf-8")
+
+        results = comparator._parse_criterion_output("")
+
+        assert results["benchmarks"] == []
+        mock_validator.assert_called_once_with(150000000.0, 145000000.0, 155000000.0)
 
     def test_parse_criterion_output_regex_fallback(self, comparator, sample_criterion_stdout) -> None:
         """Test parsing Criterion output using regex fallback when JSON unavailable."""
@@ -144,6 +181,17 @@ class TestStorageBackendComparator:
         assert bench3["name"] == "queries/neighbors/1000v"
         assert bench3["estimate"] == 9.012
         assert bench3["unit"] == "ms"
+
+    def test_parse_criterion_output_malformed_json_uses_regex_fallback(self, comparator, sample_criterion_stdout) -> None:
+        """Test malformed Criterion JSON is handled locally before regex fallback."""
+        estimates_file = comparator.criterion_dir / "construction" / "2D" / "1000v" / "new" / "estimates.json"
+        estimates_file.parent.mkdir(parents=True)
+        estimates_file.write_text(json.dumps({"unexpected": "shape"}), encoding="utf-8")
+
+        results = comparator._parse_criterion_output(sample_criterion_stdout)
+
+        assert len(results["benchmarks"]) == 3
+        assert results["benchmarks"][0]["name"] == "construction/2D/1000v"
 
     def test_parse_criterion_output_empty(self, comparator) -> None:
         """Test parsing empty Criterion output."""
@@ -202,6 +250,36 @@ class TestStorageBackendComparator:
 
         assert len(lines) == 1
         assert "~Same" in lines[0]
+
+    def test_build_comparison_table_normalizes_mixed_units(self, comparator) -> None:
+        """Test backend comparison normalizes units before calculating differences."""
+        slotmap_by_name = {
+            "test": {"estimate": 1_000_000.0, "unit": "ns"},
+        }
+        denseslotmap_by_name = {
+            "test": {"estimate": 0.95, "unit": "ms"},
+        }
+
+        lines, diffs = comparator._build_comparison_table(slotmap_by_name, denseslotmap_by_name, ["test"])
+
+        assert diffs == pytest.approx([-5.0])
+        assert "1000000.00 ns" in lines[0]
+        assert "0.95 ms" in lines[0]
+        assert "-5.0%" in lines[0]
+
+    def test_build_comparison_table_rejects_invalid_timing_data(self, comparator) -> None:
+        """Test invalid timing data is not used for percentage differences."""
+        slotmap_by_name = {
+            "test": {"estimate": 100.0, "unit": "ms"},
+        }
+        denseslotmap_by_name = {
+            "test": {"estimate": float("inf"), "unit": "ms"},
+        }
+
+        lines, diffs = comparator._build_comparison_table(slotmap_by_name, denseslotmap_by_name, ["test"])
+
+        assert diffs == []
+        assert "invalid timing data" in lines[0]
 
     def test_build_comparison_table_missing_data(self, comparator) -> None:
         """Test comparison table with missing data for one backend."""
@@ -319,6 +397,16 @@ class TestStorageBackendComparator:
         # Check error message was printed
         captured = capsys.readouterr()
         assert "Benchmark failed" in captured.err
+
+    @patch.object(StorageBackendComparator, "_parse_criterion_output")
+    @patch("compare_storage_backends.run_cargo_command")
+    def test_run_benchmark_type_error_propagates(self, mock_run_cargo, mock_parse_output, comparator, completed_ok) -> None:
+        """Test programming errors are not downgraded to benchmark failures."""
+        mock_run_cargo.return_value = completed_ok
+        mock_parse_output.side_effect = TypeError("programming error")
+
+        with pytest.raises(TypeError, match="programming error"):
+            comparator._run_benchmark("test_bench", use_dense_slotmap=False, dev_mode=False)
 
     @patch("compare_storage_backends.run_cargo_command")
     def test_run_comparison_success(self, mock_run_cargo, comparator, tmp_path) -> None:

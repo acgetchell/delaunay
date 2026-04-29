@@ -210,6 +210,65 @@ class TestCriterionParser:
         finally:
             estimates_path.unlink()
 
+    @pytest.mark.parametrize(
+        "estimates_data",
+        [
+            {"mean": {"point_estimate": float("nan"), "confidence_interval": {"lower_bound": 100000.0, "upper_bound": 120000.0}}},
+            {"mean": {"point_estimate": float("inf"), "confidence_interval": {"lower_bound": 100000.0, "upper_bound": 120000.0}}},
+            {"mean": {"point_estimate": 110000.0, "confidence_interval": {"lower_bound": 120000.0, "upper_bound": 130000.0}}},
+        ],
+    )
+    def test_parse_estimates_json_rejects_invalid_estimates(self, estimates_data) -> None:
+        """Test parsing rejects non-finite or unordered Criterion estimates."""
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".json", delete=False) as f:
+            json.dump(estimates_data, f)
+            f.flush()
+            estimates_path = Path(f.name)
+
+        try:
+            result = CriterionParser.parse_estimates_json(estimates_path, 1000, "2D")
+            assert result is None
+        finally:
+            estimates_path.unlink()
+
+    def test_summary_estimate_loader_rejects_nonfinite_values(self) -> None:
+        """Test performance summary loader rejects non-finite Criterion estimates."""
+        estimates_data = {
+            "mean": {
+                "point_estimate": float("nan"),
+                "confidence_interval": {"lower_bound": 100000.0, "upper_bound": 120000.0},
+            },
+        }
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".json", delete=False) as f:
+            json.dump(estimates_data, f)
+            f.flush()
+            estimates_path = Path(f.name)
+
+        try:
+            assert PerformanceSummaryGenerator._load_criterion_estimate(estimates_path) is None
+        finally:
+            estimates_path.unlink()
+
+    @pytest.mark.parametrize(
+        "estimates_data",
+        [
+            [],
+            {"mean": []},
+            {"mean": {"point_estimate": 100000.0, "confidence_interval": []}},
+        ],
+    )
+    def test_summary_estimate_loader_rejects_structurally_invalid_mean_data(self, estimates_data) -> None:
+        """Test performance summary loader rejects structurally malformed Criterion estimates."""
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".json", delete=False) as f:
+            json.dump(estimates_data, f)
+            f.flush()
+            estimates_path = Path(f.name)
+
+        try:
+            assert PerformanceSummaryGenerator._load_criterion_estimate(estimates_path) is None
+        finally:
+            estimates_path.unlink()
+
     def test_parse_estimates_json_very_fast_benchmark_division_by_zero_protection(self) -> None:
         """Test division by zero protection for very fast benchmarks with near-zero confidence intervals."""
         estimates_data = {
@@ -463,6 +522,41 @@ Throughput: [2.381, 2.5, 2.632] Kelem/s
         assert results["boundary_facets/boundary_facets_3d/50"].time_mean == 10.0
         assert results["validation/validate_3d/50"].time_mean == 20.0
 
+    def test_parse_baseline_file_with_scientific_notation(self, comparator) -> None:
+        """Test baseline parsing accepts the full float domain written by Python."""
+        baseline_content = """Date: 2023-06-15 10:30:00 PDT
+Git commit: abc123def456
+
+=== 1000 Points (2D) ===
+Time: [1.0e-6, 1.1e-6, 1.2e-6] µs
+Throughput: [8.333e3, 9.091e3, 1.0e4] Kelem/s
+"""
+
+        results = comparator._parse_baseline_file(baseline_content)
+
+        benchmark = results["1000_2D"]
+        assert benchmark.time_low == pytest.approx(1.0e-6)
+        assert benchmark.time_mean == pytest.approx(1.1e-6)
+        assert benchmark.time_high == pytest.approx(1.2e-6)
+        assert benchmark.throughput_mean == pytest.approx(9.091e3)
+
+    def test_parse_baseline_file_skips_sections_without_timing(self, comparator) -> None:
+        """Test malformed baseline sections without timing data are not compared."""
+        baseline_content = """Date: 2023-06-15 10:30:00 PDT
+Git commit: abc123def456
+
+=== 1000 Points (2D) ===
+Benchmark ID: malformed/no_timing
+
+=== 2000 Points (2D) ===
+Time: [190.0, 200.0, 210.0] µs
+Throughput: [9.524, 10.0, 10.526] Kelem/s
+"""
+
+        results = comparator._parse_baseline_file(baseline_content)
+
+        assert set(results) == {"2000_2D"}
+
     def test_parse_baseline_file_with_unsized_benchmark_id(self, comparator) -> None:
         """Test parsing expanded CI benchmarks without numeric input sizes."""
         baseline_content = """Date: 2023-06-15 10:30:00 PDT
@@ -559,7 +653,7 @@ Time: [0.8, 0.95, 1.1] µs
 
         result = output.getvalue()
         assert "15.0%" in result
-        assert "⚠️  REGRESSION" in result
+        assert "REGRESSION" in result
 
     def test_write_time_comparison_with_improvement(self, comparator) -> None:
         """Test time comparison writing with significant improvement."""
@@ -951,6 +1045,37 @@ class TestBaselineGenerator:
             assert f"Cargo profile: {TRUSTED_BENCH_PROFILE}" in content
             assert "Criterion sample size: 10" in content
 
+    @patch("benchmark_utils.get_git_commit_hash", return_value="abc123")
+    def test_written_baseline_round_trips_through_parser(self, mock_git, tmp_path) -> None:
+        """Test the baseline writer/parser contract for representative records."""
+        benchmark_results = [
+            BenchmarkData(1000, "2D").with_timing(1.0e-6, 1.1e-6, 1.2e-6, "µs").with_throughput(8.333e3, 9.091e3, 1.0e4, "Kelem/s"),
+            BenchmarkData(None, "4D", benchmark_id="bistellar_flips_4d/k2_roundtrip").with_timing(0.8, 0.95, 1.1, "µs"),
+        ]
+        output_file = tmp_path / "baseline.txt"
+        generator = BaselineGenerator(tmp_path)
+
+        with patch.object(generator.hardware, "format_hardware_info", return_value="Hardware Information:\n"):
+            generator._write_baseline_file(benchmark_results, output_file, dev_mode=True)
+
+        parsed = PerformanceComparator(tmp_path)._parse_baseline_file(output_file.read_text(encoding="utf-8"))
+
+        assert set(parsed) == {"1000_2D", "bistellar_flips_4d/k2_roundtrip"}
+        for expected in benchmark_results:
+            actual = parsed[expected.comparison_key]
+            assert actual.points == expected.points
+            assert actual.dimension == expected.dimension
+            assert actual.benchmark_id == expected.benchmark_id
+            assert actual.time_low == pytest.approx(expected.time_low)
+            assert actual.time_mean == pytest.approx(expected.time_mean)
+            assert actual.time_high == pytest.approx(expected.time_high)
+            assert actual.time_unit == expected.time_unit
+            assert actual.throughput_low == expected.throughput_low
+            assert actual.throughput_mean == expected.throughput_mean
+            assert actual.throughput_high == expected.throughput_high
+            assert actual.throughput_unit == expected.throughput_unit
+        mock_git.assert_called_once()
+
 
 class TestIntegrationScenarios:
     """Integration test scenarios for real-world use cases."""
@@ -1314,7 +1439,7 @@ Time: [220.0, 250.0, 280.0] µs
 
             # Check that summary was printed
             captured = capsys.readouterr()
-            assert "📊 Baseline summary:" in captured.out
+            assert "Baseline summary:" in captured.out
             assert "Total benchmarks: 3" in captured.out
             assert "Date: 2023-12-15 14:30:00 UTC" in captured.out
         finally:
@@ -1533,7 +1658,7 @@ Time: [95.0, 100.0, 105.0] µs
 
                     # Check warning message was printed to stderr
                     captured = capsys.readouterr()
-                    assert "⚠️ Failed to read baseline summary: Read permission denied" in captured.err
+                    assert "Failed to read baseline summary: Read permission denied" in captured.err
                     assert "=== Baseline Information (from artifact) ===" in captured.out
 
             finally:
@@ -1727,15 +1852,15 @@ Hardware Information:
         BenchmarkRegressionHelper.display_skip_message("same_commit", "abc1234")
 
         captured = capsys.readouterr()
-        assert "🔍 Current commit matches baseline (abc1234)" in captured.out
+        assert "Current commit matches baseline (abc1234)" in captured.out
 
     def test_display_no_baseline_message(self, capsys) -> None:
         """Test displaying no baseline message."""
         BenchmarkRegressionHelper.display_no_baseline_message()
 
         captured = capsys.readouterr()
-        assert "⚠️ No performance baseline available" in captured.out
-        assert "💡 To enable performance regression testing:" in captured.out
+        assert "No performance baseline available" in captured.out
+        assert "To enable performance regression testing:" in captured.out
 
     def test_run_regression_test_success(self, capsys) -> None:
         """Test successful regression test run."""
@@ -1754,7 +1879,7 @@ Hardware Information:
                 mock_comparator.compare_with_baseline.assert_called_once_with(baseline_file, dev_mode=False, bench_timeout=1800)
 
                 captured = capsys.readouterr()
-                assert "🚀 Running performance regression test" in captured.out
+                assert "Running performance regression test" in captured.out
 
     def test_run_regression_test_dev_mode(self, capsys) -> None:
         """Test regression test run with dev mode enabled."""
@@ -1807,7 +1932,7 @@ Hardware Information:
                 mock_comparator.compare_with_baseline.assert_called_once_with(baseline_file, dev_mode=False, bench_timeout=3600)
 
                 captured = capsys.readouterr()
-                assert "🚀 Running performance regression test" in captured.out
+                assert "Running performance regression test" in captured.out
 
     def test_display_results_file_exists(self, capsys) -> None:
         """Test displaying results when file exists."""
@@ -1829,7 +1954,7 @@ Hardware Information:
         BenchmarkRegressionHelper.display_results(missing_file)
 
         captured = capsys.readouterr()
-        assert "⚠️ No comparison results file found" in captured.out
+        assert "No comparison results file found" in captured.out
 
     def test_generate_summary_with_regression(self, temp_chdir, capsys) -> None:
         """Test generating summary when regression is detected."""
@@ -1852,9 +1977,10 @@ Hardware Information:
                 BenchmarkRegressionHelper.generate_summary()
 
                 captured = capsys.readouterr()
-                assert "📊 Performance Regression Testing Summary" in captured.out
+                assert "Performance Regression Testing Summary" in captured.out
                 assert "Baseline source: artifact" in captured.out
-                assert "Result: ⚠️ Performance regressions detected" in captured.out
+                assert "Result:" in captured.out
+                assert "Performance regressions detected" in captured.out
 
     def test_generate_summary_skip_same_commit(self, capsys) -> None:
         """Test generating summary when benchmarks skipped due to same commit."""
@@ -1870,7 +1996,8 @@ Hardware Information:
             BenchmarkRegressionHelper.generate_summary()
 
             captured = capsys.readouterr()
-            assert "Result: ⏭️ Benchmarks skipped (same commit as baseline)" in captured.out
+            assert "Result:" in captured.out
+            assert "Benchmarks skipped (same commit as baseline)" in captured.out
 
     def test_generate_summary_no_baseline(self, capsys) -> None:
         """Test generating summary when no baseline available."""
@@ -1883,7 +2010,8 @@ Hardware Information:
             BenchmarkRegressionHelper.generate_summary()
 
             captured = capsys.readouterr()
-            assert "Result: ⏭️ Benchmarks skipped (no baseline available)" in captured.out
+            assert "Result:" in captured.out
+            assert "Benchmarks skipped (no baseline available)" in captured.out
 
     def test_generate_summary_sets_regression_environment_variable(self, temp_chdir, capsys) -> None:
         """Test that generate_summary sets BENCHMARK_REGRESSION_DETECTED environment variable when regressions are found."""
@@ -1961,13 +2089,14 @@ Hardware Information:
                 BenchmarkRegressionHelper.generate_summary()
 
                 captured = capsys.readouterr()
-                assert "📊 Performance Regression Testing Summary" in captured.out
+                assert "Performance Regression Testing Summary" in captured.out
                 assert "Baseline source: artifact" in captured.out
                 # Should detect error and report failure, not "no regressions"
-                assert "Result: ❌ Benchmark comparison failed" in captured.out
+                assert "Result:" in captured.out
+                assert "Benchmark comparison failed" in captured.out
                 assert "(see benches/compare_results.txt for details)" in captured.out
                 # Should NOT say "no regressions" when there was an error
-                assert "✅ No significant performance regressions" not in captured.out
+                assert "No significant performance regressions" not in captured.out
 
 
 class TestProjectRootHandling:
@@ -2174,6 +2303,53 @@ class TestPerformanceSummaryGenerator:
             assert isinstance(generator.current_version, str)
             assert isinstance(generator.current_date, str)
 
+    def test_parse_single_method_result_accepts_valid_estimate(self, tmp_path) -> None:
+        """Test circumsphere method parsing accepts finite ordered Criterion estimates."""
+        criterion_path = tmp_path / "target" / "criterion" / "basic_2d_insphere"
+        estimates_dir = criterion_path / "base"
+        estimates_dir.mkdir(parents=True)
+        (estimates_dir / "estimates.json").write_text(
+            json.dumps(
+                {
+                    "mean": {
+                        "point_estimate": 100000.0,
+                        "confidence_interval": {
+                            "lower_bound": 90000.0,
+                            "upper_bound": 110000.0,
+                        },
+                    },
+                },
+            ),
+            encoding="utf-8",
+        )
+        generator = PerformanceSummaryGenerator(tmp_path)
+
+        result = generator._parse_single_method_result(criterion_path, "insphere")
+
+        assert result is not None
+        assert result.method == "insphere"
+        assert result.time_ns == pytest.approx(100000.0)
+
+    @pytest.mark.parametrize(
+        "estimates_data",
+        [
+            [],
+            {"mean": []},
+            {"mean": {"point_estimate": 100000.0, "confidence_interval": []}},
+            {"mean": {"point_estimate": float("nan"), "confidence_interval": {"lower_bound": 90000.0, "upper_bound": 110000.0}}},
+            {"mean": {"point_estimate": 100000.0, "confidence_interval": {"lower_bound": 110000.0, "upper_bound": 120000.0}}},
+        ],
+    )
+    def test_parse_single_method_result_rejects_invalid_estimates(self, tmp_path, estimates_data) -> None:
+        """Test circumsphere method parsing rejects malformed or invalid Criterion estimates."""
+        criterion_path = tmp_path / "target" / "criterion" / "basic_2d_insphere"
+        estimates_dir = criterion_path / "base"
+        estimates_dir.mkdir(parents=True)
+        (estimates_dir / "estimates.json").write_text(json.dumps(estimates_data), encoding="utf-8")
+        generator = PerformanceSummaryGenerator(tmp_path)
+
+        assert generator._parse_single_method_result(criterion_path, "insphere") is None
+
     def test_generate_summary_parser_defaults_to_trusted_profile(self) -> None:
         """Test that fresh summary benchmarks default to the trusted Cargo profile."""
         parser = create_argument_parser()
@@ -2312,9 +2488,9 @@ Throughput: [8333.3, 9090.9, 10000.0] Kelem/s
     def test_parse_comparison_results_with_regression(self) -> None:
         """Test parsing comparison results that show regression."""
         comparison_content = """Performance Comparison Results
-⚠️  REGRESSION: Time increased by 15.2% (slower performance)
-✅ OK: Time change +2.1% within acceptable range
-✅ IMPROVEMENT: Time decreased by 8.5% (faster performance)
+REGRESSION: Time increased by 15.2% (slower performance)
+OK: Time change +2.1% within acceptable range
+IMPROVEMENT: Time decreased by 8.5% (faster performance)
 """
 
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -2328,16 +2504,16 @@ Throughput: [8333.3, 9090.9, 10000.0] Kelem/s
             lines = generator._parse_comparison_results()
 
             markdown_content = "\n".join(lines)
-            assert "### ⚠️ Performance Regression Detected" in markdown_content
+            assert "Performance Regression Detected" in markdown_content
             assert "REGRESSION: Time increased by 15.2%" in markdown_content
             assert "IMPROVEMENT: Time decreased by 8.5%" in markdown_content
 
     def test_parse_comparison_results_no_regression(self) -> None:
         """Test parsing comparison results with no regression."""
         comparison_content = """Performance Comparison Results
-✅ OK: Time change +2.1% within acceptable range
-✅ IMPROVEMENT: Time decreased by 3.2% (faster performance)
-✅ OK: Time change -1.8% within acceptable range
+OK: Time change +2.1% within acceptable range
+IMPROVEMENT: Time decreased by 3.2% (faster performance)
+OK: Time change -1.8% within acceptable range
 """
 
         with tempfile.TemporaryDirectory() as temp_dir:

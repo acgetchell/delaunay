@@ -166,9 +166,16 @@ class HardwareInfo:
         Returns:
             CPU core count or "Unknown"
         """
-        if not shutil.which("lscpu"):
-            return self._get_linux_cpu_cores_from_proc()
-        return self._get_linux_cpu_cores_from_lscpu()
+        if shutil.which("lscpu"):
+            try:
+                cpu_cores = self._get_linux_cpu_cores_from_lscpu()
+            except (OSError, RuntimeError, subprocess.SubprocessError, TypeError, ValueError, IndexError):
+                logger.debug("Failed to parse Linux CPU cores from lscpu", exc_info=True)
+            else:
+                if cpu_cores != "Unknown":
+                    return cpu_cores
+
+        return self._get_linux_cpu_cores_from_proc()
 
     def _get_linux_cpu_threads(self) -> str:
         """

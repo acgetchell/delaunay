@@ -128,6 +128,32 @@ Thread(s) per core:  2"""
         assert cpu_cores == "Unknown"  # Can't determine cores without lscpu
         assert cpu_threads == "2"  # Count of processors
 
+    @patch("hardware_utils.shutil.which")
+    @patch.object(HardwareInfo, "_get_linux_cpu_cores_from_proc")
+    @patch.object(HardwareInfo, "_get_linux_cpu_cores_from_lscpu")
+    def test_get_linux_cpu_cores_falls_back_when_lscpu_unknown(self, mock_lscpu_cores, mock_proc_cores, mock_which, hardware) -> None:
+        """Test Linux CPU core fallback when lscpu output is unusable."""
+        mock_which.side_effect = lambda cmd: cmd == "lscpu"
+        mock_lscpu_cores.return_value = "Unknown"
+        mock_proc_cores.return_value = "6"
+
+        assert hardware._get_linux_cpu_cores() == "6"
+        mock_lscpu_cores.assert_called_once_with()
+        mock_proc_cores.assert_called_once_with()
+
+    @patch("hardware_utils.shutil.which")
+    @patch.object(HardwareInfo, "_get_linux_cpu_cores_from_proc")
+    @patch.object(HardwareInfo, "_get_linux_cpu_cores_from_lscpu")
+    def test_get_linux_cpu_cores_falls_back_when_lscpu_raises(self, mock_lscpu_cores, mock_proc_cores, mock_which, hardware) -> None:
+        """Test Linux CPU core fallback when lscpu parsing raises."""
+        mock_which.side_effect = lambda cmd: cmd == "lscpu"
+        mock_lscpu_cores.side_effect = RuntimeError("bad lscpu output")
+        mock_proc_cores.return_value = "6"
+
+        assert hardware._get_linux_cpu_cores() == "6"
+        mock_lscpu_cores.assert_called_once_with()
+        mock_proc_cores.assert_called_once_with()
+
     @patch("hardware_utils.platform.system")
     @patch("hardware_utils.shutil.which")
     @patch.object(HardwareInfo, "_run_command")

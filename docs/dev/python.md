@@ -84,3 +84,14 @@ Put reusable typed test helpers near the top of the test module or in
 `scripts/tests/conftest.py` when they are shared. Prefer one helper that returns
 the real structured type over repeating partially configured mocks throughout a
 file.
+
+## Parser and File-Format Contracts
+
+When a script both writes and parses a text format, add a focused round-trip
+test that writes representative records and parses them back. The test should
+cover stable identifiers, optional sections, units, and numeric forms such as
+scientific notation when those values can be emitted by production code.
+
+For parser refactors, keep malformed-input regression tests for behavior that
+callers depend on, such as skipping incomplete sections or failing loudly on
+invalid numerical data.
