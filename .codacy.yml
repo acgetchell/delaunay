@@ -64,3 +64,5 @@ exclude_paths:
   - "node_modules/**"
   - ".git/**"
   - "docs/archive/**"
+  # Semgrep fixtures intentionally contain bad examples for rule tests.
+  - "tests/semgrep/**"

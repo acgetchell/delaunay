@@ -23,6 +23,9 @@ jobs:
   clippy-sarif:
     name: Clippy SARIF Analysis
     runs-on: ubuntu-latest
+    env:
+      CLIPPY_SARIF_VERSION: "0.8.0"
+      SARIF_FMT_VERSION: "0.8.0"
     steps:
       - name: Checkout code
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
@@ -34,15 +37,20 @@ jobs:
           # toolchain, components, etc. are specified in rust-toolchain.toml
 
       - name: Cache clippy tools
-        uses: actions/cache@9255dc7a253b0ccc959486e2bca901246202afeb # v5.0.1
+        uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
         with:
-          path: ~/.cargo/bin/clippy-sarif
-          key: clippy-sarif-${{ runner.os }}
+          path: |
+            ~/.cargo/bin/clippy-sarif
+            ~/.cargo/bin/sarif-fmt
+          key: clippy-sarif-${{ runner.os }}-${{ env.CLIPPY_SARIF_VERSION }}-sarif-fmt-${{ env.SARIF_FMT_VERSION }}
 
       - name: Install clippy-sarif tools
         run: |
           if ! command -v clippy-sarif &> /dev/null; then
-            cargo install clippy-sarif sarif-fmt --locked
+            cargo install clippy-sarif --locked --version "${CLIPPY_SARIF_VERSION}"
+          fi
+          if ! command -v sarif-fmt &> /dev/null; then
+            cargo install sarif-fmt --locked --version "${SARIF_FMT_VERSION}"
           fi
 
       - name: Run clippy with SARIF output
@@ -59,7 +67,7 @@ jobs:
         continue-on-error: true
 
       - name: Upload SARIF results
-        uses: github/codeql-action/upload-sarif@95e58e9a2cdfd71adc6e0353d5c52f41a045d225 # v4
+        uses: github/codeql-action/upload-sarif@b25d0ebf40e5b63ee81e1bd6e5d2a12b7c2aeb61 # v4
         with:
           sarif_file: rust-clippy-results.sarif
           category: "clippy"

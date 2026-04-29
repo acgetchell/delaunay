@@ -634,6 +634,33 @@ mod tests {
     }
 
     #[test]
+    fn test_hilbert_sort_by_unstable_orders_by_hilbert_key() {
+        let coords: Vec<[f64; 2]> =
+            vec![[0.9, 0.9], [0.1, 0.1], [0.5, 0.5], [0.1, 0.9], [0.9, 0.1]];
+        let expected_order = hilbert_sorted_indices(&coords, (0.0, 1.0), 16).unwrap();
+
+        let mut payload: Vec<usize> = (0..coords.len()).collect();
+        hilbert_sort_by_unstable(&mut payload, (0.0_f64, 1.0), 16, |&i| coords[i]).unwrap();
+
+        assert_eq!(payload, expected_order);
+    }
+
+    #[test]
+    fn test_hilbert_zero_dimension_sort_helpers_are_noops() {
+        let coords: Vec<[f64; 0]> = vec![[], [], []];
+        let order = hilbert_sorted_indices(&coords, (0.0, 1.0), 8).unwrap();
+        assert_eq!(order, vec![0, 1, 2]);
+
+        let mut stable_payload = vec![3, 2, 1];
+        hilbert_sort_by_stable(&mut stable_payload, (0.0_f64, 1.0), 8, |_| []).unwrap();
+        assert_eq!(stable_payload, vec![3, 2, 1]);
+
+        let mut unstable_payload = vec![3, 2, 1];
+        hilbert_sort_by_unstable(&mut unstable_payload, (0.0_f64, 1.0), 8, |_| []).unwrap();
+        assert_eq!(unstable_payload, vec![3, 2, 1]);
+    }
+
+    #[test]
     fn test_hilbert_curve_is_continuous_on_2d_grid() {
         // A defining property of the (discrete) Hilbert curve is continuity:
         // successive indices correspond to adjacent grid cells.

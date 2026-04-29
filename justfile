@@ -29,6 +29,15 @@ _ensure-cargo-llvm-cov:
         exit 1
     fi
 
+_ensure-cargo-machete:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    if ! cargo machete --version >/dev/null 2>&1; then
+        echo "❌ 'cargo-machete' not found. Install with:"
+        echo "   cargo install --locked cargo-machete"
+        exit 1
+    fi
+
 # Internal helpers: ensure external tooling is installed
 _ensure-git-cliff:
     #!/usr/bin/env bash
@@ -898,6 +907,10 @@ toml-lint: _ensure-taplo
     else
         echo "No TOML files found to lint."
     fi
+
+# Check for unused direct Cargo dependencies.
+unused-deps: _ensure-cargo-machete
+    cargo machete
 
 # File validation
 validate-json: _ensure-jq

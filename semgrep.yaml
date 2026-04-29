@@ -329,7 +329,7 @@ rules:
     languages:
       - rust
     severity: WARNING
-    message: "Add reason = \"...\" to #[expect(...)] so lint suppressions remain auditable."
+    message: 'Add reason = "..." to #[expect(...)] so lint suppressions remain auditable.'
     metadata:
       category: maintainability
       rationale: >-

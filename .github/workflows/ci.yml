@@ -21,10 +21,12 @@ on:
 env:
   CARGO_TERM_COLOR: always
   RUST_BACKTRACE: 1
-  ACTIONLINT_VERSION: "1.7.10"
-  MARKDOWNLINT_VERSION: "0.47.0"
-  SHFMT_VERSION: "3.12.0"
-  TYPOS_VERSION: "1.43.4"
+  ACTIONLINT_VERSION: "1.7.12"
+  JUST_VERSION: "1.50.0"
+  MARKDOWNLINT_VERSION: "0.48.0"
+  SHFMT_VERSION: "3.13.1"
+  TAPLO_VERSION: "0.10.0"
+  TYPOS_VERSION: "1.45.2"
   UV_VERSION: "0.11.8"
 
 jobs:
@@ -57,9 +59,9 @@ jobs:
 
       - name: Install just
         if: matrix.os != 'windows-latest'
-        uses: taiki-e/install-action@cf525cb33f51aca27cd6fa02034117ab963ff9f1 # v2.75.22
+        uses: taiki-e/install-action@b651345a718c8f44efa2460560b3dbf29cbd7ee1 # v2.75.26
         with:
-          tool: just
+          tool: just@${{ env.JUST_VERSION }}
 
       - name: Install uv (for Python scripts and pytest)
         if: matrix.os != 'windows-latest'
@@ -80,15 +82,15 @@ jobs:
 
       - name: Install typos-cli
         if: matrix.os != 'windows-latest'
-        uses: taiki-e/install-action@cf525cb33f51aca27cd6fa02034117ab963ff9f1 # v2.75.22
+        uses: taiki-e/install-action@b651345a718c8f44efa2460560b3dbf29cbd7ee1 # v2.75.26
         with:
           tool: typos-cli@${{ env.TYPOS_VERSION }}
 
       - name: Install taplo (for TOML formatting and linting)
         if: matrix.os != 'windows-latest'
-        uses: taiki-e/install-action@cf525cb33f51aca27cd6fa02034117ab963ff9f1 # v2.75.22
+        uses: taiki-e/install-action@b651345a718c8f44efa2460560b3dbf29cbd7ee1 # v2.75.26
         with:
-          tool: taplo-cli
+          tool: taplo-cli@${{ env.TAPLO_VERSION }}
 
       - name: Install actionlint (Linux/macOS)
         if: matrix.os != 'windows-latest'
