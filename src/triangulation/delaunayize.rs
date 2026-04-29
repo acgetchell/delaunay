@@ -548,30 +548,29 @@ where
         max_iterations: config.topology_max_iterations,
         max_cells_removed: config.topology_max_cells_removed,
     };
-    let topology_stats =
-        match repair_facet_oversharing(&mut dt.as_triangulation_mut().tds, &pl_config) {
-            Ok(stats) => stats,
-            // Topology repair failed but fallback is enabled — try rebuilding.
-            Err(topo_err) if let Some((ref verts, ref cell_data)) = fallback_state => {
-                match rebuild_preserving_data(&dt.as_triangulation().kernel, verts, cell_data) {
-                    Ok(rebuilt) => {
-                        *dt = rebuilt;
-                        return Ok(DelaunayizeOutcome {
-                            topology_repair: PlManifoldRepairStats {
-                                succeeded: true,
-                                ..PlManifoldRepairStats::default()
-                            },
-                            delaunay_repair: DelaunayRepairStats::default(),
-                            used_fallback_rebuild: true,
-                        });
-                    }
-                    Err(fallback_error) => {
-                        return Err(topology_rebuild_error(topo_err, fallback_error));
-                    }
+    let topology_stats = match repair_facet_oversharing(dt.tds_mut_for_repair(), &pl_config) {
+        Ok(stats) => stats,
+        // Topology repair failed but fallback is enabled — try rebuilding.
+        Err(topo_err) if let Some((ref verts, ref cell_data)) = fallback_state => {
+            match rebuild_preserving_data(&dt.as_triangulation().kernel, verts, cell_data) {
+                Ok(rebuilt) => {
+                    *dt = rebuilt;
+                    return Ok(DelaunayizeOutcome {
+                        topology_repair: PlManifoldRepairStats {
+                            succeeded: true,
+                            ..PlManifoldRepairStats::default()
+                        },
+                        delaunay_repair: DelaunayRepairStats::default(),
+                        used_fallback_rebuild: true,
+                    });
+                }
+                Err(fallback_error) => {
+                    return Err(topology_rebuild_error(topo_err, fallback_error));
                 }
             }
-            Err(topo_err) => return Err(topo_err.into()),
-        };
+        }
+        Err(topo_err) => return Err(topo_err.into()),
+    };
 
     // Step 2: Flip-based Delaunay repair.
     let delaunay_result = if let Some(max_flips) = config.delaunay_max_flips {

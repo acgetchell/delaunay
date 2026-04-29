@@ -1143,7 +1143,7 @@ where
                     self.construction_options,
                 )?;
                 dt.set_global_topology(topology);
-                dt.as_triangulation_mut()
+                dt.tri
                     .normalize_and_promote_positive_orientation()
                     .map_err(|e| TriangulationConstructionError::GeometricDegeneracy {
                         message: format!(

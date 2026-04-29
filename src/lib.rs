@@ -300,9 +300,9 @@
 
 // Allow multiple crate versions due to transitive dependencies
 #![expect(clippy::multiple_crate_versions)]
-// Temporarily allow deprecated warnings during API migration (v0.6.0)
-// - Facet -> FacetView migration
-// - Tds::new()/add() -> DelaunayTriangulation::new()/insert()
+// Temporarily allow deprecated warnings during API migrations.
+// - Historical Facet -> FacetView and Tds construction migrations
+// - DelaunayTriangulation::as_triangulation_mut() removal planned for v0.8.0
 // Forbid unsafe code throughout the entire crate
 #![forbid(unsafe_code)]
 

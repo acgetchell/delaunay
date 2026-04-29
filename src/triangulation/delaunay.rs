@@ -4657,6 +4657,16 @@ where
         &mut self.tri.tds
     }
 
+    /// Returns mutable TDS access for crate-internal repair algorithms.
+    ///
+    /// Repair passes may rewrite topology and invalidate locate hints, so this
+    /// deliberately clears the ephemeral caches before handing out the borrow.
+    pub(crate) fn tds_mut_for_repair(&mut self) -> &mut Tds<K::Scalar, U, V, D> {
+        self.insertion_state.last_inserted_cell = None;
+        self.spatial_index = None;
+        &mut self.tri.tds
+    }
+
     /// Returns a reference to the underlying `Triangulation` (kernel + tds).
     ///
     /// This is useful when you need to pass the triangulation to methods that
@@ -4687,60 +4697,19 @@ where
 
     /// Returns a mutable reference to the underlying `Triangulation`.
     ///
-    /// # ⚠️ WARNING - ADVANCED USE ONLY
+    /// # Deprecated
     ///
-    /// This method provides direct mutable access to the internal triangulation state.
-    /// **Modifying the triangulation through this reference can break Delaunay invariants
-    /// and leave the data structure in an inconsistent state.**
-    ///
-    /// ## When to Use
-    ///
-    /// This is primarily intended for:
-    /// - **Testing internal algorithms** (topology validation, repair mechanisms)
-    /// - **Advanced library development** (implementing custom triangulation operations)
-    /// - **Research prototyping** (experimenting with new algorithms)
-    ///
-    /// ## What Can Go Wrong
-    ///
-    /// Direct mutations can violate critical invariants:
-    /// - **Delaunay property**: Cells may no longer satisfy the empty circumsphere condition
-    /// - **Manifold topology**: Facets may become over-shared or improperly connected
-    /// - **Neighbor consistency**: Cell neighbor pointers may become invalid
-    /// - **Hint caching**: Location hints may point to deleted cells
-    ///
-    /// After direct modification, you should:
-    /// 1. Call `detect_local_facet_issues()` and `repair_local_facet_issues()` if you modified topology
-    /// 2. Run `dt.as_triangulation().validate()` (Levels 1–3) or `dt.validate()` (Levels 1–4) to verify structural/topological consistency
-    /// 3. Reserve `dt.is_valid()` for Delaunay-only (Level 4) checks
-    ///
-    /// ## Safe Alternatives
-    ///
-    /// For most use cases, prefer these safe, high-level methods:
-    /// - [`insert()`](Self::insert) - Add vertices (maintains all invariants)
-    /// - [`remove_vertex()`](Self::remove_vertex) - Remove vertices safely
-    /// - [`tds()`](Self::tds) - Read-only access to the data structure
-    ///
-    /// # Examples
-    ///
-    /// ```rust
-    /// use delaunay::prelude::triangulation::*;
-    ///
-    /// let vertices = vec![
-    ///     vertex!([0.0, 0.0, 0.0]),
-    ///     vertex!([1.0, 0.0, 0.0]),
-    ///     vertex!([0.0, 1.0, 0.0]),
-    ///     vertex!([0.0, 0.0, 1.0]),
-    /// ];
-    /// let mut dt = DelaunayTriangulation::new(&vertices).unwrap();
-    ///
-    /// // ⚠️ Advanced use: direct access for testing validation
-    /// let tri = dt.as_triangulation_mut();
-    /// // ... perform internal algorithm testing ...
-    ///
-    /// // Always validate after direct modifications
-    /// assert!(dt.validate().is_ok());
-    /// ```
+    /// Direct mutable access can break the Delaunay, topology, neighbor, and
+    /// locate-hint invariants owned by `DelaunayTriangulation`. Prefer safe
+    /// high-level methods such as [`insert()`](Self::insert),
+    /// [`remove_vertex()`](Self::remove_vertex), [`set_vertex_data`](Self::set_vertex_data),
+    /// [`set_cell_data`](Self::set_cell_data), and read-only
+    /// [`as_triangulation()`](Self::as_triangulation) access.
     #[must_use]
+    #[deprecated(
+        since = "0.7.7",
+        note = "use safe DelaunayTriangulation APIs or read-only as_triangulation(); this mutable escape hatch is planned for removal in 0.8.0"
+    )]
     pub fn as_triangulation_mut(&mut self) -> &mut Triangulation<K, U, V, D> {
         // Direct mutable access can invalidate performance caches.
         self.insertion_state.last_inserted_cell = None;
@@ -6324,47 +6293,76 @@ where
             return Ok(0);
         }
 
-        // Fast path: inverse k=1 flip when the vertex star is a simplex.
-        let mut seed_cells: Option<CellKeyBuffer> = None;
-        let cells_removed = match apply_bistellar_flip_k1_inverse(&mut self.tri.tds, vertex_key) {
-            Ok(info) => {
-                seed_cells = Some(info.new_cells);
-                info.removed_cells.len()
-            }
-            Err(FlipError::NeighborWiring { message }) => {
-                return Err(TdsError::InvalidNeighbors {
-                    message: format!("inverse k=1 flip failed during remove_vertex: {message}"),
-                }
-                .into());
-            }
-            Err(_) => self.tri.remove_vertex(vertex_key)?,
-        };
+        let snapshot = (
+            self.tri.tds.clone(),
+            self.insertion_state,
+            self.spatial_index.clone(),
+        );
 
-        let topology = self.tri.topology_guarantee();
-        if self.should_run_delaunay_repair_for(topology, 0) {
-            let seed_ref = seed_cells.as_deref();
-            let (tds, kernel) = (&mut self.tri.tds, &self.tri.kernel);
-            repair_delaunay_with_flips_k2_k3(tds, kernel, seed_ref, topology, None).map_err(
-                |e| {
+        let result = (|| {
+            // Fast path: inverse k=1 flip when the vertex star is a simplex.
+            let mut seed_cells: Option<CellKeyBuffer> = None;
+            let cells_removed = match apply_bistellar_flip_k1_inverse(&mut self.tri.tds, vertex_key)
+            {
+                Ok(info) => {
+                    seed_cells = Some(info.new_cells);
+                    info.removed_cells.len()
+                }
+                Err(FlipError::NeighborWiring { message }) => {
+                    return Err(TdsError::InvalidNeighbors {
+                        message: format!("inverse k=1 flip failed during remove_vertex: {message}"),
+                    }
+                    .into());
+                }
+                Err(_) => self.tri.remove_vertex(vertex_key)?,
+            };
+
+            let topology = self.tri.topology_guarantee();
+            if self.should_run_delaunay_repair_for(topology, 0) {
+                let seed_ref = seed_cells.as_deref();
+                let repair_result = {
+                    let (tds, kernel) = (&mut self.tri.tds, &self.tri.kernel);
+                    repair_delaunay_with_flips_k2_k3(tds, kernel, seed_ref, topology, None)
+                };
+
+                #[cfg(test)]
+                let repair_result = if test_hooks::force_repair_nonconvergent_enabled() {
+                    Err(test_hooks::synthetic_nonconvergent_error())
+                } else {
+                    repair_result
+                };
+
+                repair_result.map_err(|e| {
                     InvariantError::Delaunay(DelaunayTriangulationValidationError::RepairFailed {
                         message: format!("Delaunay repair failed after vertex removal: {e}"),
                     })
-                },
-            )?;
-
-            // Re-canonicalize geometric orientation (#258): flip repair may leave
-            // the global sign negative.
-            self.tri
-                .normalize_and_promote_positive_orientation()
-                .map_err(|e| {
-                    insertion_error_to_invariant_error(
-                        e,
-                        "Orientation canonicalization failed after vertex removal",
-                    )
                 })?;
-        }
 
-        Ok(cells_removed)
+                // Re-canonicalize geometric orientation (#258): flip repair may leave
+                // the global sign negative.
+                self.tri
+                    .normalize_and_promote_positive_orientation()
+                    .map_err(|e| {
+                        insertion_error_to_invariant_error(
+                            e,
+                            "Orientation canonicalization failed after vertex removal",
+                        )
+                    })?;
+            }
+
+            Ok(cells_removed)
+        })();
+
+        match result {
+            Ok(cells_removed) => Ok(cells_removed),
+            Err(err) => {
+                let (tds, insertion_state, spatial_index) = snapshot;
+                self.tri.tds = tds;
+                self.insertion_state = insertion_state;
+                self.spatial_index = spatial_index;
+                Err(err)
+            }
+        }
     }
 }
 
@@ -8166,6 +8164,46 @@ mod tests {
         assert_eq!(dt.number_of_cells(), original_cell_count);
         assert!(dt.as_triangulation().validate().is_ok());
         assert!(dt.vertices().all(|(_, v)| v.uuid() != inserted_uuid));
+    }
+
+    #[test]
+    fn test_remove_vertex_rolls_back_on_repair_failure() {
+        init_tracing();
+        let vertices: Vec<Vertex<f64, (), 3>> = vec![
+            vertex!([0.0, 0.0, 0.0]),
+            vertex!([1.0, 0.0, 0.0]),
+            vertex!([0.0, 1.0, 0.0]),
+            vertex!([0.0, 0.0, 1.0]),
+        ];
+
+        let mut dt: DelaunayTriangulation<AdaptiveKernel<f64>, (), (), 3> =
+            DelaunayTriangulation::new(&vertices).unwrap();
+        dt.set_topology_guarantee(TopologyGuarantee::PLManifold);
+
+        let cell_key = dt.cells().next().unwrap().0;
+        let inserted_vertex = vertex!([0.2, 0.2, 0.2]);
+        let inserted_uuid = inserted_vertex.uuid();
+        dt.flip_k1_insert(cell_key, inserted_vertex).unwrap();
+
+        let vertex_key = dt
+            .vertices()
+            .find(|(_, v)| v.uuid() == inserted_uuid)
+            .map(|(k, _)| k)
+            .expect("Inserted vertex not found");
+        let vertex_count_before = dt.number_of_vertices();
+        let cell_count_before = dt.number_of_cells();
+
+        let _guard = ForceRepairNonconvergentGuard::enable();
+        let result = dt.remove_vertex(vertex_key);
+        assert!(
+            result.is_err(),
+            "forced repair failure should make removal fail"
+        );
+
+        assert_eq!(dt.number_of_vertices(), vertex_count_before);
+        assert_eq!(dt.number_of_cells(), cell_count_before);
+        assert!(dt.vertices().any(|(_, v)| v.uuid() == inserted_uuid));
+        assert!(dt.as_triangulation().validate().is_ok());
     }
 
     #[test]

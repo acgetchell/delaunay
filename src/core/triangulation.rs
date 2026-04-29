@@ -1391,11 +1391,11 @@ where
     ///     .build::<()>()
     ///     .unwrap();
     /// let key = dt.vertices().next().unwrap().0;
-    /// let prev = dt.as_triangulation_mut().set_vertex_data(key, Some(99));
+    /// let prev = dt.set_vertex_data(key, Some(99));
     /// assert!(prev.is_some());
     ///
     /// // Clear data
-    /// let prev = dt.as_triangulation_mut().set_vertex_data(key, None);
+    /// let prev = dt.set_vertex_data(key, None);
     /// assert_eq!(prev, Some(Some(99)));
     /// assert_eq!(dt.tds().get_vertex_by_key(key).unwrap().data(), None);
     /// ```
@@ -1428,11 +1428,11 @@ where
     ///     .build::<i32>()
     ///     .unwrap();
     /// let key = dt.cells().next().unwrap().0;
-    /// let prev = dt.as_triangulation_mut().set_cell_data(key, Some(42));
+    /// let prev = dt.set_cell_data(key, Some(42));
     /// assert_eq!(prev, Some(None));
     ///
     /// // Clear data
-    /// let prev = dt.as_triangulation_mut().set_cell_data(key, None);
+    /// let prev = dt.set_cell_data(key, None);
     /// assert_eq!(prev, Some(Some(42)));
     /// assert_eq!(dt.tds().get_cell(key).unwrap().data(), None);
     /// ```
@@ -6026,10 +6026,8 @@ where
     /// let mut dt: DelaunayTriangulation<_, (), (), 2> = DelaunayTriangulation::new(&vertices).unwrap();
     ///
     /// // Empty issues map => nothing to remove.
-    /// let removed = dt
-    ///     .as_triangulation_mut()
-    ///     .repair_local_facet_issues(&FacetIssuesMap::default())
-    ///     .unwrap();
+    /// let mut tri = dt.as_triangulation().clone();
+    /// let removed = tri.repair_local_facet_issues(&FacetIssuesMap::default()).unwrap();
     /// assert_eq!(removed, 0);
     /// ```
     ///
@@ -10473,9 +10471,9 @@ mod tests {
             vertex!([0.0, 1.0]),
             vertex!([1.0, 1.0]),
         ];
-        let mut dt: DelaunayTriangulation<_, (), (), 2> =
+        let dt: DelaunayTriangulation<_, (), (), 2> =
             DelaunayTriangulation::new(&vertices).unwrap();
-        let tri = dt.as_triangulation_mut();
+        let mut tri = dt.as_triangulation().clone();
 
         // Add a duplicate cell with the same vertices as an existing cell.
         let (_, existing_cell) = tri.tds.cells().next().unwrap();

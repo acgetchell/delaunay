@@ -4344,15 +4344,46 @@ struct RepairDiagnostics {
     cycle_detections: usize,
     cycle_samples: Vec<u64>,
     inserted_simplex_skips: usize,
-    inserted_simplex_sample: Option<String>,
+    inserted_simplex_sample: Option<InsertedSimplexSkipSample>,
     invalid_ridge_multiplicity_skips: usize,
-    invalid_ridge_multiplicity_sample: Option<String>,
+    invalid_ridge_multiplicity_sample: Option<RidgeMultiplicitySkipSample>,
     missing_cell_skips: usize,
-    missing_cell_sample: Option<String>,
+    missing_cell_sample: Option<MissingCellSkipSample>,
     flip_signature_window: VecDeque<u64>,
     flip_signature_counts: FastHashMap<u64, usize>,
     ridge_debug_emitted: usize,
     postcondition_facet_debug_emitted: usize,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct InsertedSimplexSkipSample {
+    location: RepairSkipLocation,
+    removed_face: VertexKeyList,
+    inserted_face: VertexKeyList,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct RidgeMultiplicitySkipSample {
+    ridge: RidgeHandle,
+    multiplicity: usize,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct MissingCellSkipSample {
+    location: RepairSkipLocation,
+    cell_key: CellKey,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum RepairSkipLocation {
+    Edge(EdgeKey),
+    Facet(FacetHandle),
+    Ridge(RidgeHandle),
+    Triangle(TriangleHandle),
+}
+
+fn vertex_key_list(vertices: &[VertexKey]) -> VertexKeyList {
+    vertices.iter().copied().collect()
 }
 
 impl RepairDiagnostics {
@@ -4411,30 +4442,32 @@ impl RepairDiagnostics {
         }
     }
 
-    /// Captures one duplicate-simplex skip sample without formatting strings on
-    /// every skipped flip.
-    fn record_inserted_simplex_skip(&mut self, sample: impl FnOnce() -> String) {
+    /// Captures one duplicate-simplex skip sample with typed context.
+    fn record_inserted_simplex_skip(&mut self, sample: InsertedSimplexSkipSample) {
         self.inserted_simplex_skips = self.inserted_simplex_skips.saturating_add(1);
         if self.inserted_simplex_sample.is_none() {
-            self.inserted_simplex_sample = Some(sample());
+            self.inserted_simplex_sample = Some(sample);
         }
     }
 
-    /// Captures one invalid-ridge sample lazily so common skip paths stay cheap.
-    fn record_invalid_ridge_multiplicity_skip(&mut self, sample: impl FnOnce() -> String) {
+    /// Captures one invalid-ridge sample with typed context.
+    const fn record_invalid_ridge_multiplicity_skip(
+        &mut self,
+        sample: RidgeMultiplicitySkipSample,
+    ) {
         self.invalid_ridge_multiplicity_skips =
             self.invalid_ridge_multiplicity_skips.saturating_add(1);
         if self.invalid_ridge_multiplicity_sample.is_none() {
-            self.invalid_ridge_multiplicity_sample = Some(sample());
+            self.invalid_ridge_multiplicity_sample = Some(sample);
         }
     }
 
-    /// Captures one stale-cell sample lazily so slot-swap churn is visible when
+    /// Captures one stale-cell sample so slot-swap churn is visible when
     /// repair diagnostics are inspected.
-    fn record_missing_cell_skip(&mut self, sample: impl FnOnce() -> String) {
+    const fn record_missing_cell_skip(&mut self, sample: MissingCellSkipSample) {
         self.missing_cell_skips = self.missing_cell_skips.saturating_add(1);
         if self.missing_cell_sample.is_none() {
-            self.missing_cell_sample = Some(sample());
+            self.missing_cell_sample = Some(sample);
         }
     }
 }
@@ -5049,9 +5082,12 @@ where
         ) => {
             match &err {
                 FlipError::InvalidRidgeMultiplicity { found } => {
-                    diagnostics.record_invalid_ridge_multiplicity_skip(|| {
-                        format!("ridge={ridge:?} multiplicity={found}")
-                    });
+                    diagnostics.record_invalid_ridge_multiplicity_skip(
+                        RidgeMultiplicitySkipSample {
+                            ridge,
+                            multiplicity: *found,
+                        },
+                    );
                     // This is the main #204 failure mode: capture both the local ridge walk
                     // and the full global incidence so we can see whether repair is skipping
                     // a stale handle or a genuinely overshared ridge.
@@ -5069,8 +5105,9 @@ where
                     debug_ridge_context(tds, ridge, None, diagnostics, last_applied_flip.as_ref());
                 }
                 FlipError::MissingCell { cell_key } => {
-                    diagnostics.record_missing_cell_skip(|| {
-                        format!("ridge={ridge:?} missing_cell={cell_key:?}")
+                    diagnostics.record_missing_cell_skip(MissingCellSkipSample {
+                        location: RepairSkipLocation::Ridge(ridge),
+                        cell_key: *cell_key,
                     });
                 }
                 _ => {}
@@ -5153,11 +5190,10 @@ where
     let applied = match apply_delaunay_flip_k3(tds, &context) {
         Ok(applied) => applied,
         Err(err) if let FlipError::InsertedSimplexAlreadyExists { .. } = &err => {
-            diagnostics.record_inserted_simplex_skip(|| {
-                format!(
-                    "ridge={ridge:?} removed_face={:?} inserted_face={:?}",
-                    context.removed_face_vertices, context.inserted_face_vertices
-                )
+            diagnostics.record_inserted_simplex_skip(InsertedSimplexSkipSample {
+                location: RepairSkipLocation::Ridge(ridge),
+                removed_face: vertex_key_list(&context.removed_face_vertices),
+                inserted_face: vertex_key_list(&context.inserted_face_vertices),
             });
             log_apply_skip(&err);
             return Ok(true);
@@ -5238,8 +5274,10 @@ where
     let context = match build_k2_flip_context_from_edge(tds, edge) {
         Ok(ctx) => ctx,
         Err(ref err) if let FlipError::MissingCell { cell_key } = err => {
-            diagnostics
-                .record_missing_cell_skip(|| format!("edge={edge:?} missing_cell={cell_key:?}"));
+            diagnostics.record_missing_cell_skip(MissingCellSkipSample {
+                location: RepairSkipLocation::Edge(edge),
+                cell_key: *cell_key,
+            });
             log_build_skip(err);
             return Ok(true);
         }
@@ -5343,11 +5381,10 @@ where
     let applied = match apply_delaunay_flip_dynamic(tds, D, &context) {
         Ok(applied) => applied,
         Err(err) if let FlipError::InsertedSimplexAlreadyExists { .. } = &err => {
-            diagnostics.record_inserted_simplex_skip(|| {
-                format!(
-                    "edge={edge:?} removed_face={:?} inserted_face={:?}",
-                    context.removed_face_vertices, context.inserted_face_vertices
-                )
+            diagnostics.record_inserted_simplex_skip(InsertedSimplexSkipSample {
+                location: RepairSkipLocation::Edge(edge),
+                removed_face: vertex_key_list(&context.removed_face_vertices),
+                inserted_face: vertex_key_list(&context.inserted_face_vertices),
             });
             log_apply_skip(&err);
             return Ok(true);
@@ -5430,8 +5467,9 @@ where
     let context = match build_k3_flip_context_from_triangle(tds, triangle) {
         Ok(ctx) => ctx,
         Err(ref err) if let FlipError::MissingCell { cell_key } = err => {
-            diagnostics.record_missing_cell_skip(|| {
-                format!("triangle={triangle:?} missing_cell={cell_key:?}")
+            diagnostics.record_missing_cell_skip(MissingCellSkipSample {
+                location: RepairSkipLocation::Triangle(triangle),
+                cell_key: *cell_key,
             });
             log_build_skip(err);
             return Ok(true);
@@ -5525,11 +5563,10 @@ where
     let applied = match apply_delaunay_flip_dynamic(tds, D - 1, &context) {
         Ok(applied) => applied,
         Err(err) if let FlipError::InsertedSimplexAlreadyExists { .. } = &err => {
-            diagnostics.record_inserted_simplex_skip(|| {
-                format!(
-                    "triangle={triangle:?} removed_face={:?} inserted_face={:?}",
-                    context.removed_face_vertices, context.inserted_face_vertices
-                )
+            diagnostics.record_inserted_simplex_skip(InsertedSimplexSkipSample {
+                location: RepairSkipLocation::Triangle(triangle),
+                removed_face: vertex_key_list(&context.removed_face_vertices),
+                inserted_face: vertex_key_list(&context.inserted_face_vertices),
             });
             log_apply_skip(&err);
             return Ok(true);
@@ -5614,8 +5651,10 @@ where
     let context = match build_k2_flip_context(tds, facet) {
         Ok(ctx) => ctx,
         Err(ref err) if let FlipError::MissingCell { cell_key } = err => {
-            diagnostics
-                .record_missing_cell_skip(|| format!("facet={facet:?} missing_cell={cell_key:?}"));
+            diagnostics.record_missing_cell_skip(MissingCellSkipSample {
+                location: RepairSkipLocation::Facet(facet),
+                cell_key: *cell_key,
+            });
             log_build_skip(err);
             return Ok(true);
         }
@@ -5711,11 +5750,10 @@ where
     let applied = match apply_delaunay_flip_k2(tds, &context) {
         Ok(applied) => applied,
         Err(err) if let FlipError::InsertedSimplexAlreadyExists { .. } = &err => {
-            diagnostics.record_inserted_simplex_skip(|| {
-                format!(
-                    "facet={facet:?} removed_face={:?} inserted_face={:?}",
-                    context.removed_face_vertices, context.inserted_face_vertices
-                )
+            diagnostics.record_inserted_simplex_skip(InsertedSimplexSkipSample {
+                location: RepairSkipLocation::Facet(facet),
+                removed_face: vertex_key_list(&context.removed_face_vertices),
+                inserted_face: vertex_key_list(&context.inserted_face_vertices),
             });
             log_apply_skip(&err);
             return Ok(true);
@@ -6780,10 +6818,7 @@ mod tests {
     use approx::assert_relative_eq;
     use rand::{RngExt, SeedableRng, rngs::StdRng};
     use slotmap::KeyData;
-    use std::sync::{
-        Once,
-        atomic::{AtomicUsize, Ordering},
-    };
+    use std::sync::Once;
 
     fn init_tracing() {
         static INIT: Once = Once::new();
@@ -7880,58 +7915,68 @@ mod tests {
     }
 
     #[test]
-    fn test_skip_recording_is_lazy() {
+    fn test_skip_recording_keeps_first_typed_sample() {
         let mut diagnostics = RepairDiagnostics::default();
-        let call_count = AtomicUsize::new(0);
+        let cell = CellKey::from(KeyData::from_ffi(91));
+        let missing_cell = CellKey::from(KeyData::from_ffi(92));
+        let v0 = VertexKey::from(KeyData::from_ffi(101));
+        let v1 = VertexKey::from(KeyData::from_ffi(102));
+        let v2 = VertexKey::from(KeyData::from_ffi(103));
+        let edge = EdgeKey::new(v0, v1);
+        let facet = FacetHandle::new(cell, 0);
+        let ridge = RidgeHandle::new(cell, 0, 1);
+        let triangle = TriangleHandle::new(v0, v1, v2);
 
-        // First call: sample slot is None, closure must be invoked.
-        diagnostics.record_inserted_simplex_skip(|| {
-            call_count.fetch_add(1, Ordering::Relaxed);
-            "first".to_owned()
-        });
+        let first_inserted_sample = InsertedSimplexSkipSample {
+            location: RepairSkipLocation::Facet(facet),
+            removed_face: [v0, v1].into_iter().collect(),
+            inserted_face: std::iter::once(v2).collect(),
+        };
+        diagnostics.record_inserted_simplex_skip(first_inserted_sample.clone());
         assert_eq!(diagnostics.inserted_simplex_skips, 1);
         assert_eq!(
-            diagnostics.inserted_simplex_sample.as_deref(),
-            Some("first")
+            diagnostics.inserted_simplex_sample,
+            Some(first_inserted_sample.clone())
         );
-        assert_eq!(call_count.load(Ordering::Relaxed), 1);
 
-        // Second call: sample already set, closure must NOT be invoked.
-        diagnostics.record_inserted_simplex_skip(|| {
-            call_count.fetch_add(1, Ordering::Relaxed);
-            "second".to_owned()
+        diagnostics.record_inserted_simplex_skip(InsertedSimplexSkipSample {
+            location: RepairSkipLocation::Edge(edge),
+            removed_face: std::iter::once(v1).collect(),
+            inserted_face: [v0, v2].into_iter().collect(),
         });
         assert_eq!(diagnostics.inserted_simplex_skips, 2);
         assert_eq!(
-            diagnostics.inserted_simplex_sample.as_deref(),
-            Some("first")
+            diagnostics.inserted_simplex_sample,
+            Some(first_inserted_sample)
         );
-        assert_eq!(call_count.load(Ordering::Relaxed), 1);
 
         // Same contract for ridge-multiplicity and missing-cell helpers.
-        let ridge_calls = AtomicUsize::new(0);
-        diagnostics.record_invalid_ridge_multiplicity_skip(|| {
-            ridge_calls.fetch_add(1, Ordering::Relaxed);
-            "ridge".to_owned()
-        });
-        diagnostics.record_invalid_ridge_multiplicity_skip(|| {
-            ridge_calls.fetch_add(1, Ordering::Relaxed);
-            "ridge2".to_owned()
+        let first_ridge_sample = RidgeMultiplicitySkipSample {
+            ridge,
+            multiplicity: 3,
+        };
+        diagnostics.record_invalid_ridge_multiplicity_skip(first_ridge_sample);
+        diagnostics.record_invalid_ridge_multiplicity_skip(RidgeMultiplicitySkipSample {
+            ridge: RidgeHandle::new(cell, 1, 2),
+            multiplicity: 4,
         });
         assert_eq!(diagnostics.invalid_ridge_multiplicity_skips, 2);
-        assert_eq!(ridge_calls.load(Ordering::Relaxed), 1);
+        assert_eq!(
+            diagnostics.invalid_ridge_multiplicity_sample,
+            Some(first_ridge_sample)
+        );
 
-        let cell_calls = AtomicUsize::new(0);
-        diagnostics.record_missing_cell_skip(|| {
-            cell_calls.fetch_add(1, Ordering::Relaxed);
-            "cell".to_owned()
-        });
-        diagnostics.record_missing_cell_skip(|| {
-            cell_calls.fetch_add(1, Ordering::Relaxed);
-            "cell2".to_owned()
+        let first_missing_sample = MissingCellSkipSample {
+            location: RepairSkipLocation::Triangle(triangle),
+            cell_key: missing_cell,
+        };
+        diagnostics.record_missing_cell_skip(first_missing_sample);
+        diagnostics.record_missing_cell_skip(MissingCellSkipSample {
+            location: RepairSkipLocation::Ridge(ridge),
+            cell_key: CellKey::from(KeyData::from_ffi(93)),
         });
         assert_eq!(diagnostics.missing_cell_skips, 2);
-        assert_eq!(cell_calls.load(Ordering::Relaxed), 1);
+        assert_eq!(diagnostics.missing_cell_sample, Some(first_missing_sample));
     }
 
     #[derive(Debug, Clone, PartialEq, Eq)]

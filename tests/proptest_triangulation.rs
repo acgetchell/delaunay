@@ -713,11 +713,11 @@ macro_rules! test_facet_topology_invariant {
                     )
                 ) {
                     // Build triangulation
-                    if let Ok(mut dt) = DelaunayTriangulation::new_with_topology_guarantee(
+                    if let Ok(dt) = DelaunayTriangulation::new_with_topology_guarantee(
                         &vertices,
                         TopologyGuarantee::PLManifold,
                     ) {
-                        let tri = dt.as_triangulation_mut();
+                        let mut tri = dt.as_triangulation().clone();
 
                         // Get all cell keys
                         let cell_keys: Vec<_> = tri.cells().map(|(k, _)| k).collect();
