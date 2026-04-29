@@ -103,6 +103,9 @@ fn find_stale_key_after_rebuild() {
     let mut rng = StdRng::seed_from_u64(0xD3_1A_7A_1C_0A_17_u64);
 
     for case in 0..CASES {
+        #[cfg(not(feature = "test-debug"))]
+        let _ = case;
+
         let mut vertices = Vec::with_capacity(INITIAL_COUNT);
         for _ in 0..INITIAL_COUNT {
             // Use a coarse lattice + tiny noise to encourage near-degenerate configurations.
@@ -137,7 +140,12 @@ fn find_stale_key_after_rebuild() {
             .get_vertex_by_key(vertex_key)
             .is_some_and(|v| v.uuid() == inserted_uuid);
 
-        if !found {
+        if found {
+            continue;
+        }
+
+        #[cfg(feature = "test-debug")]
+        {
             tracing::debug!(case, "FOUND stale key after insertion");
             tracing::debug!(vertex_key = ?vertex_key, inserted_uuid = %inserted_uuid);
             tracing::debug!("initial vertices:");
@@ -145,8 +153,8 @@ fn find_stale_key_after_rebuild() {
                 tracing::debug!(coords = ?v.point().coords(), "  vertex");
             }
             tracing::debug!("inserted vertex coords: {inserted_coords:?}");
-            panic!("stale VertexKey returned from insert() after heuristic rebuild");
         }
+        panic!("stale VertexKey returned from insert() after heuristic rebuild");
     }
 
     panic!("no stale-key case found after {CASES} attempts");

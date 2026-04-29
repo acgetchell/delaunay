@@ -4355,31 +4355,100 @@ struct RepairDiagnostics {
     postcondition_facet_debug_emitted: usize,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Clone, PartialEq, Eq)]
 struct InsertedSimplexSkipSample {
     location: RepairSkipLocation,
     removed_face: VertexKeyList,
     inserted_face: VertexKeyList,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Clone, Copy, PartialEq, Eq)]
 struct RidgeMultiplicitySkipSample {
     ridge: RidgeHandle,
     multiplicity: usize,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Clone, Copy, PartialEq, Eq)]
 struct MissingCellSkipSample {
     location: RepairSkipLocation,
     cell_key: CellKey,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Clone, Copy, PartialEq, Eq)]
 enum RepairSkipLocation {
     Edge(EdgeKey),
     Facet(FacetHandle),
     Ridge(RidgeHandle),
     Triangle(TriangleHandle),
+}
+
+impl RepairSkipLocation {
+    fn fmt_label(self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Edge(edge) => write!(f, "edge={edge:?}"),
+            Self::Facet(facet) => write!(f, "facet={facet:?}"),
+            Self::Ridge(ridge) => write!(f, "ridge={ridge:?}"),
+            Self::Triangle(triangle) => write!(f, "triangle={triangle:?}"),
+        }
+    }
+}
+
+impl fmt::Display for RepairSkipLocation {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        self.fmt_label(f)
+    }
+}
+
+impl fmt::Debug for RepairSkipLocation {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        fmt::Display::fmt(self, f)
+    }
+}
+
+impl fmt::Display for InsertedSimplexSkipSample {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        self.location.fmt_label(f)?;
+        write!(
+            f,
+            " removed_face={:?} inserted_face={:?}",
+            self.removed_face, self.inserted_face
+        )
+    }
+}
+
+impl fmt::Debug for InsertedSimplexSkipSample {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        fmt::Debug::fmt(&self.to_string(), f)
+    }
+}
+
+impl fmt::Display for RidgeMultiplicitySkipSample {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            f,
+            "ridge={:?} multiplicity={}",
+            self.ridge, self.multiplicity
+        )
+    }
+}
+
+impl fmt::Debug for RidgeMultiplicitySkipSample {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        fmt::Debug::fmt(&self.to_string(), f)
+    }
+}
+
+impl fmt::Display for MissingCellSkipSample {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        self.location.fmt_label(f)?;
+        write!(f, " missing_cell={:?}", self.cell_key)
+    }
+}
+
+impl fmt::Debug for MissingCellSkipSample {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        fmt::Debug::fmt(&self.to_string(), f)
+    }
 }
 
 fn vertex_key_list(vertices: &[VertexKey]) -> VertexKeyList {
@@ -7979,6 +8048,58 @@ mod tests {
         assert_eq!(diagnostics.missing_cell_sample, Some(first_missing_sample));
     }
 
+    #[test]
+    fn test_repair_skip_samples_keep_legacy_debug_shape() {
+        let cell = CellKey::from(KeyData::from_ffi(91));
+        let missing_cell = CellKey::from(KeyData::from_ffi(92));
+        let v0 = VertexKey::from(KeyData::from_ffi(101));
+        let v1 = VertexKey::from(KeyData::from_ffi(102));
+        let v2 = VertexKey::from(KeyData::from_ffi(103));
+        let facet = FacetHandle::new(cell, 0);
+        let ridge = RidgeHandle::new(cell, 0, 1);
+        let triangle = TriangleHandle::new(v0, v1, v2);
+
+        let removed_face: VertexKeyList = [v0, v1].into_iter().collect();
+        let inserted_face: VertexKeyList = std::iter::once(v2).collect();
+        let inserted_sample = InsertedSimplexSkipSample {
+            location: RepairSkipLocation::Facet(facet),
+            removed_face: removed_face.clone(),
+            inserted_face: inserted_face.clone(),
+        };
+        assert_eq!(
+            format!("{:?}", Some(inserted_sample)),
+            format!(
+                "{:?}",
+                Some(format!(
+                    "facet={facet:?} removed_face={removed_face:?} inserted_face={inserted_face:?}"
+                ))
+            )
+        );
+
+        let ridge_sample = RidgeMultiplicitySkipSample {
+            ridge,
+            multiplicity: 3,
+        };
+        assert_eq!(
+            format!("{:?}", Some(ridge_sample)),
+            format!("{:?}", Some(format!("ridge={ridge:?} multiplicity=3")))
+        );
+
+        let missing_sample = MissingCellSkipSample {
+            location: RepairSkipLocation::Triangle(triangle),
+            cell_key: missing_cell,
+        };
+        assert_eq!(
+            format!("{:?}", Some(missing_sample)),
+            format!(
+                "{:?}",
+                Some(format!(
+                    "triangle={triangle:?} missing_cell={missing_cell:?}"
+                ))
+            )
+        );
+    }
+
     #[derive(Debug, Clone, PartialEq, Eq)]
     struct TopologySnapshot {
         vertex_uuids: Vec<Uuid>,
@@ -8238,21 +8359,30 @@ mod tests {
     test_bistellar_roundtrip_dimension!(4, k3);
     test_bistellar_roundtrip_dimension!(5, k3);
 
-    #[test]
-    fn dynamic_flip_rejects_bad_context() {
+    fn synthetic_vertex_key(index: u64) -> VertexKey {
+        VertexKey::from(KeyData::from_ffi(index))
+    }
+
+    fn synthetic_cell_key(index: u64) -> CellKey {
+        CellKey::from(KeyData::from_ffi(index))
+    }
+
+    fn dynamic_flip_rejects_bad_context_for_dimension<const D: usize>() {
         init_tracing();
-        let mut tds: Tds<f64, (), (), 3> = Tds::empty();
-        let v0 = VertexKey::from(KeyData::from_ffi(1));
-        let v1 = VertexKey::from(KeyData::from_ffi(2));
-        let v2 = VertexKey::from(KeyData::from_ffi(3));
-        let v3 = VertexKey::from(KeyData::from_ffi(4));
-        let v4 = VertexKey::from(KeyData::from_ffi(5));
-        let c0 = CellKey::from(KeyData::from_ffi(11));
-        let c1 = CellKey::from(KeyData::from_ffi(12));
+        let mut tds: Tds<f64, (), (), D> = Tds::empty();
+        let vertices = (1..=D + 2)
+            .map(|index| {
+                synthetic_vertex_key(
+                    u64::try_from(index).expect("test vertex key index should fit in u64"),
+                )
+            })
+            .collect::<Vec<_>>();
+        let c0 = synthetic_cell_key(11);
+        let c1 = synthetic_cell_key(12);
 
         let valid_shape = FlipContextDyn {
-            removed_face_vertices: [v0, v1, v2].into_iter().collect(),
-            inserted_face_vertices: [v3, v4].into_iter().collect(),
+            removed_face_vertices: vertices[..D].iter().copied().collect(),
+            inserted_face_vertices: vertices[D..D + 2].iter().copied().collect(),
             removed_cells: [c0, c1].into_iter().collect(),
             direction: FlipDirection::Forward,
         };
@@ -8262,12 +8392,12 @@ mod tests {
             Err(FlipError::InvalidFlipContext { ref message }) if message.contains("k must be")
         ));
         assert!(matches!(
-            apply_bistellar_flip_dynamic(&mut tds, 5, &valid_shape),
+            apply_bistellar_flip_dynamic(&mut tds, D + 2, &valid_shape),
             Err(FlipError::InvalidFlipContext { ref message }) if message.contains("k must be")
         ));
 
         let wrong_removed_face = FlipContextDyn {
-            removed_face_vertices: [v0, v1].into_iter().collect(),
+            removed_face_vertices: vertices[..D - 1].iter().copied().collect(),
             ..valid_shape.clone()
         };
         assert!(matches!(
@@ -8277,7 +8407,7 @@ mod tests {
         ));
 
         let wrong_inserted_face = FlipContextDyn {
-            inserted_face_vertices: once(v3).collect(),
+            inserted_face_vertices: once(vertices[D]).collect(),
             ..valid_shape.clone()
         };
         assert!(matches!(
@@ -8297,7 +8427,7 @@ mod tests {
         ));
 
         let overlapping_faces = FlipContextDyn {
-            inserted_face_vertices: [v2, v3].into_iter().collect(),
+            inserted_face_vertices: [vertices[D - 1], vertices[D]].into_iter().collect(),
             ..valid_shape
         };
         assert!(matches!(
@@ -8308,6 +8438,22 @@ mod tests {
         assert_eq!(tds.number_of_vertices(), 0);
         assert_eq!(tds.number_of_cells(), 0);
     }
+
+    macro_rules! gen_dynamic_flip_bad_context_tests {
+        ($dim:literal) => {
+            pastey::paste! {
+                #[test]
+                fn [<dynamic_flip_rejects_bad_context_ $dim d>]() {
+                    dynamic_flip_rejects_bad_context_for_dimension::<$dim>();
+                }
+            }
+        };
+    }
+
+    gen_dynamic_flip_bad_context_tests!(2);
+    gen_dynamic_flip_bad_context_tests!(3);
+    gen_dynamic_flip_bad_context_tests!(4);
+    gen_dynamic_flip_bad_context_tests!(5);
 
     #[test]
     fn test_flip_k2_2d_edge_flip() {

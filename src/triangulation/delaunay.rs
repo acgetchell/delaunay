@@ -3503,6 +3503,7 @@ where
         );
 
         let escalation_result = {
+            self.invalidate_repair_caches();
             let (tds, kernel) = (&mut self.tri.tds, &self.tri.kernel);
             repair_delaunay_local_single_pass(tds, kernel, &full_seeds, escalated_budget)
         };
@@ -3700,6 +3701,7 @@ where
                                 if !seed_cells.is_empty() {
                                     let max_flips = local_repair_flip_budget::<D>(seed_cells.len());
                                     let repair_result = {
+                                        self.invalidate_repair_caches();
                                         let (tds, kernel) = (&mut self.tri.tds, &self.tri.kernel);
                                         repair_delaunay_local_single_pass(
                                             tds,
@@ -3723,6 +3725,7 @@ where
                                         }
                                         Err(repair_err) => {
                                             if D < 4 {
+                                                self.invalidate_repair_caches();
                                                 Self::try_d_lt4_global_repair_fallback(
                                                     &mut self.tri.tds,
                                                     &self.tri.kernel,
@@ -3966,6 +3969,7 @@ where
                                 if !seed_cells.is_empty() {
                                     let max_flips = local_repair_flip_budget::<D>(seed_cells.len());
                                     let repair_result = {
+                                        self.invalidate_repair_caches();
                                         let (tds, kernel) = (&mut self.tri.tds, &self.tri.kernel);
                                         repair_delaunay_local_single_pass(
                                             tds,
@@ -3989,6 +3993,7 @@ where
                                         }
                                         Err(repair_err) => {
                                             if D < 4 {
+                                                self.invalidate_repair_caches();
                                                 Self::try_d_lt4_global_repair_fallback(
                                                     &mut self.tri.tds,
                                                     &self.tri.kernel,
@@ -4209,6 +4214,7 @@ where
                     );
                     let repair_started = Instant::now();
                     let repair_result = {
+                        self.invalidate_repair_caches();
                         let (tds, kernel) = (&mut self.tri.tds, &self.tri.kernel);
                         repair_delaunay_local_single_pass(tds, kernel, &all_cells, 512).map(|_| ())
                     };
@@ -4228,6 +4234,7 @@ where
                 let repair_started = Instant::now();
                 let max_flips = (soft_fail_seeds.len() * (D + 1) * 16).max(512);
                 let repair_result = {
+                    self.invalidate_repair_caches();
                     let (tds, kernel) = (&mut self.tri.tds, &self.tri.kernel);
                     repair_delaunay_local_single_pass(tds, kernel, soft_fail_seeds, max_flips)
                         .map(|_| ())
@@ -4694,9 +4701,13 @@ where
     #[cfg(test)]
     pub(crate) fn tds_mut(&mut self) -> &mut Tds<K::Scalar, U, V, D> {
         // Direct mutable access can invalidate performance caches.
+        self.invalidate_repair_caches();
+        &mut self.tri.tds
+    }
+
+    fn invalidate_repair_caches(&mut self) {
         self.insertion_state.last_inserted_cell = None;
         self.spatial_index = None;
-        &mut self.tri.tds
     }
 
     /// Returns mutable TDS access for crate-internal repair algorithms.
@@ -4704,8 +4715,7 @@ where
     /// Repair passes may rewrite topology and invalidate locate hints, so this
     /// deliberately clears the ephemeral caches before handing out the borrow.
     pub(crate) fn tds_mut_for_repair(&mut self) -> &mut Tds<K::Scalar, U, V, D> {
-        self.insertion_state.last_inserted_cell = None;
-        self.spatial_index = None;
+        self.invalidate_repair_caches();
         &mut self.tri.tds
     }
 
@@ -4926,6 +4936,7 @@ where
                 message: "Bistellar flips require a PL-manifold (vertex-link validation)",
             });
         }
+        self.invalidate_repair_caches();
         let (tds, kernel) = (&mut self.tri.tds, &self.tri.kernel);
         let stats = repair_delaunay_with_flips_k2_k3(tds, kernel, None, topology, max_flips)?;
 
@@ -4965,6 +4976,7 @@ where
     ) -> Result<DelaunayRepairRun, DelaunayRepairError> {
         let topology = self.tri.topology_guarantee();
         let kernel = RobustKernel::<K::Scalar>::new();
+        self.invalidate_repair_caches();
         let (tds, kernel) = (&mut self.tri.tds, &kernel);
         repair_delaunay_with_flips_k2_k3_run(tds, kernel, seed_cells, topology, max_flips)
     }
@@ -5274,6 +5286,7 @@ where
                 let _ = (rebuild_repair_policy, rebuild_check_policy);
 
                 let topology = candidate.tri.topology_guarantee();
+                candidate.invalidate_repair_caches();
                 let (tds, kernel) = (&mut candidate.tri.tds, &candidate.tri.kernel);
                 let stats = repair_delaunay_with_flips_k2_k3(
                     tds,
@@ -6143,6 +6156,7 @@ where
         };
 
         let repair_result = {
+            self.invalidate_repair_caches();
             let (tds, kernel) = (&mut self.tri.tds, &self.tri.kernel);
             repair_delaunay_with_flips_k2_k3_run(tds, kernel, seed_ref, topology, max_flips)
         };
@@ -6387,6 +6401,7 @@ where
             if self.should_run_delaunay_repair_for(topology, 0) {
                 let seed_ref = seed_cells.as_deref();
                 let repair_result = {
+                    self.invalidate_repair_caches();
                     let (tds, kernel) = (&mut self.tri.tds, &self.tri.kernel);
                     repair_delaunay_with_flips_k2_k3(tds, kernel, seed_ref, topology, None)
                 };
@@ -8411,6 +8426,13 @@ mod tests {
             DelaunayTriangulation::new(&vertices).unwrap();
 
         let vertex_key = dt.insert(vertex!([0.25, 0.25])).unwrap();
+        let hint_cell = dt.cells().next().map(|(key, _)| key);
+        dt.insertion_state.last_inserted_cell = hint_cell;
+        let mut spatial_index = HashGridIndex::<f64, 2>::new(1.0);
+        for (vertex_key, vertex) in dt.vertices() {
+            spatial_index.insert_vertex(vertex_key, vertex.point().coords());
+        }
+        dt.spatial_index = Some(spatial_index);
         assert!(dt.insertion_state.last_inserted_cell.is_some());
         assert!(dt.spatial_index.is_some());
 
@@ -8450,6 +8472,18 @@ mod tests {
             .expect("Inserted vertex not found");
         let vertex_count_before = dt.number_of_vertices();
         let cell_count_before = dt.number_of_cells();
+        let hint_cell_before = dt.cells().next().map(|(key, _)| key);
+        dt.insertion_state.last_inserted_cell = hint_cell_before;
+        let mut spatial_index = HashGridIndex::<f64, D>::new(1.0);
+        for (vertex_key, vertex) in dt.vertices() {
+            spatial_index.insert_vertex(vertex_key, vertex.point().coords());
+        }
+        dt.spatial_index = Some(spatial_index);
+        let last_inserted_cell_before = dt.insertion_state.last_inserted_cell;
+        let spatial_index_before = dt
+            .spatial_index
+            .as_ref()
+            .map(HashGridIndex::<f64, D>::debug_snapshot);
 
         let _guard = ForceRepairNonconvergentGuard::enable();
         let result = dt.remove_vertex(vertex_key);
@@ -8470,6 +8504,17 @@ mod tests {
 
         assert_eq!(dt.number_of_vertices(), vertex_count_before);
         assert_eq!(dt.number_of_cells(), cell_count_before);
+        assert_eq!(
+            dt.insertion_state.last_inserted_cell, last_inserted_cell_before,
+            "remove_vertex rollback should restore last_inserted_cell"
+        );
+        assert_eq!(
+            dt.spatial_index
+                .as_ref()
+                .map(HashGridIndex::<f64, D>::debug_snapshot),
+            spatial_index_before,
+            "remove_vertex rollback should restore spatial_index"
+        );
         assert!(dt.vertices().any(|(_, v)| v.uuid() == inserted_uuid));
         assert!(dt.as_triangulation().validate().is_ok());
     }
@@ -9324,6 +9369,7 @@ mod tests {
 
         let mut dt: DelaunayTriangulation<_, (), (), 2> =
             DelaunayTriangulation::new(&vertices).unwrap();
+        dt.set_delaunay_repair_policy(DelaunayRepairPolicy::Never);
 
         // Initially no last_inserted_cell
         assert!(dt.insertion_state.last_inserted_cell.is_none());
