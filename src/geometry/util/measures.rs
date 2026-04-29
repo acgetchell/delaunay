@@ -19,6 +19,27 @@ use std::ops::AddAssign;
 // Re-export error types
 pub use super::{CircumcenterError, SurfaceMeasureError, ValueConversionError};
 
+const DEGENERACY_EPSILON_FACTOR: f64 = 64.0;
+
+fn degeneracy_tolerance<T: CoordinateScalar>(scale: T) -> Result<T, CircumcenterError> {
+    if scale <= T::zero() {
+        return Ok(T::zero());
+    }
+
+    let factor = safe_scalar_from_f64(DEGENERACY_EPSILON_FACTOR)
+        .map_err(CircumcenterError::CoordinateConversion)?;
+    Ok(scale * factor * T::epsilon())
+}
+
+fn is_zero_or_roundoff<T: CoordinateScalar>(value: T, scale: T) -> Result<bool, CircumcenterError> {
+    let magnitude = Float::abs(value);
+    if magnitude == T::zero() {
+        return Ok(true);
+    }
+
+    Ok(magnitude <= degeneracy_tolerance(scale)?)
+}
+
 /// Calculate the volume of a D-dimensional simplex.
 ///
 /// This function computes the D-dimensional volume of a simplex formed by D+1 points.
@@ -104,16 +125,8 @@ where
             let diff = [p1[0] - p0[0]];
             let length = Float::abs(diff[0]);
 
-            // Check for degeneracy (coincident points)
-            let epsilon = T::from(1e-12).ok_or_else(|| {
-                CircumcenterError::ValueConversion(ValueConversionError::ConversionFailed {
-                    value: "1e-12".to_string(),
-                    from_type: "f64",
-                    to_type: std::any::type_name::<T>(),
-                    details: "Failed to convert epsilon threshold".to_string(),
-                })
-            })?;
-            if length < epsilon {
+            // Check for degeneracy (coincident points).
+            if length == T::zero() {
                 return Err(CircumcenterError::MatrixInversionFailed {
                     details: "Degenerate simplex with zero volume (coincident points)".to_string(),
                 });
@@ -135,16 +148,10 @@ where
             let cross_z = v1[0] * v2[1] - v1[1] * v2[0];
             let area = Float::abs(cross_z) / T::from(2).unwrap_or_else(|| T::one() + T::one());
 
-            // Check for degeneracy (collinear points)
-            let epsilon = T::from(1e-12).ok_or_else(|| {
-                CircumcenterError::ValueConversion(ValueConversionError::ConversionFailed {
-                    value: "1e-12".to_string(),
-                    from_type: "f64",
-                    to_type: std::any::type_name::<T>(),
-                    details: "Failed to convert epsilon threshold".to_string(),
-                })
-            })?;
-            if area < epsilon {
+            // Check for degeneracy (collinear points) using a scale-aware
+            // determinant threshold instead of an absolute area cutoff.
+            let cross_scale = Float::abs(v1[0] * v2[1]) + Float::abs(v1[1] * v2[0]);
+            if is_zero_or_roundoff(cross_z, cross_scale)? {
                 return Err(CircumcenterError::MatrixInversionFailed {
                     details: "Degenerate simplex with zero volume (collinear points)".to_string(),
                 });
@@ -175,16 +182,15 @@ where
                 .unwrap_or_else(|| T::one() + T::one() + T::one() + T::one() + T::one() + T::one());
             let volume = Float::abs(triple_product) / six;
 
-            // Check for degeneracy (coplanar points)
-            let epsilon = T::from(1e-12).ok_or_else(|| {
-                CircumcenterError::ValueConversion(ValueConversionError::ConversionFailed {
-                    value: "1e-12".to_string(),
-                    from_type: "f64",
-                    to_type: std::any::type_name::<T>(),
-                    details: "Failed to convert epsilon threshold".to_string(),
-                })
-            })?;
-            if volume < epsilon {
+            // Check for degeneracy (coplanar points) using the expansion scale
+            // of the 3x3 determinant.
+            let triple_scale = Float::abs(v1[0] * v2[1] * v3[2])
+                + Float::abs(v1[0] * v2[2] * v3[1])
+                + Float::abs(v1[1] * v2[2] * v3[0])
+                + Float::abs(v1[1] * v2[0] * v3[2])
+                + Float::abs(v1[2] * v2[0] * v3[1])
+                + Float::abs(v1[2] * v2[1] * v3[0]);
+            if is_zero_or_roundoff(triple_product, triple_scale)? {
                 return Err(CircumcenterError::MatrixInversionFailed {
                     details: "Degenerate simplex with zero volume (coplanar points)".to_string(),
                 });
@@ -199,38 +205,30 @@ where
     }
 }
 
-/// Clamp and validate a Gram determinant.
+/// Validate a Gram determinant.
 ///
 /// For valid inputs, Gram determinants should be non-negative.
 ///
 /// In this crate we compute Gram determinants via a symmetry-exploiting LDLT factorization
 /// (see [`gram_determinant_ldlt`]), so **negative** determinants should not occur for PSD Gram
-/// matrices. We still keep a small negative clamp as a defensive check, since other callers may
-/// pass in raw determinants.
+/// matrices. Any negative determinant is reported as an error instead of being hidden behind an
+/// absolute tolerance.
 ///
 /// This function treats any non-positive determinant as a degenerate simplex:
 /// - non-finite determinants error
-/// - sufficiently negative determinants error
-/// - determinants in `(-1e-12, 0)` are clamped to `0.0`, and **zero always errors**
-///
-/// In other words, clamping does not “allow near-zero volumes”; it just avoids propagating
-/// tiny negative values caused by floating-point noise.
-fn clamp_gram_determinant(mut det: f64) -> Result<f64, CircumcenterError> {
+/// - negative determinants error
+/// - zero determinants error
+fn validate_gram_determinant(det: f64) -> Result<f64, CircumcenterError> {
     if !det.is_finite() {
         return Err(CircumcenterError::MatrixInversionFailed {
             details: "Gram determinant is non-finite".to_string(),
         });
     }
 
-    // Clamp small negative values to zero (numerical tolerance)
     if det < 0.0 {
-        if det > -1e-12 {
-            det = 0.0;
-        } else {
-            return Err(CircumcenterError::MatrixInversionFailed {
-                details: "Gram matrix has negative determinant (degenerate simplex)".to_string(),
-            });
-        }
+        return Err(CircumcenterError::MatrixInversionFailed {
+            details: "Gram matrix has negative determinant (degenerate simplex)".to_string(),
+        });
     }
 
     // Degenerate case: zero determinant means no volume
@@ -301,8 +299,8 @@ where
         }
     }
 
-    // Compute Gram determinant with clamping (LDLT exploits symmetry / PSD structure).
-    let det = clamp_gram_determinant(gram_determinant_ldlt(gram_matrix))?;
+    // Compute Gram determinant with validation (LDLT exploits symmetry / PSD structure).
+    let det = validate_gram_determinant(gram_determinant_ldlt(gram_matrix))?;
 
     let volume_f64 = {
         let sqrt_det = det.sqrt();
@@ -388,16 +386,7 @@ where
     // Compute volume
     let volume = simplex_volume(points)?;
 
-    // Check for degenerate simplex (using same epsilon as simplex_volume for consistency)
-    let epsilon = T::from(1e-12).ok_or_else(|| {
-        CircumcenterError::ValueConversion(ValueConversionError::ConversionFailed {
-            value: "1e-12".to_string(),
-            from_type: "f64",
-            to_type: std::any::type_name::<T>(),
-            details: "Failed to convert epsilon threshold".to_string(),
-        })
-    })?;
-    if volume < epsilon {
+    if volume <= T::zero() {
         return Err(CircumcenterError::MatrixInversionFailed {
             details: format!("Degenerate simplex with volume ≈ {volume:?}"),
         });
@@ -422,8 +411,8 @@ where
         surface_area += facet_area;
     }
 
-    // Check for degenerate surface area
-    if surface_area < epsilon {
+    // Check for degenerate surface area.
+    if surface_area <= T::zero() {
         return Err(CircumcenterError::MatrixInversionFailed {
             details: format!("Degenerate simplex with surface_area ≈ {surface_area:?}"),
         });
@@ -527,9 +516,8 @@ where
             let diff = [p1[0] - p0[0], p1[1] - p0[1]];
             let length = hypot(&diff);
 
-            // Check for degeneracy (coincident points)
-            let epsilon = T::from(1e-12).unwrap_or_else(T::zero);
-            if length < epsilon {
+            // Check for degeneracy (coincident points).
+            if length == T::zero() {
                 return Err(CircumcenterError::MatrixInversionFailed {
                     details: "Degenerate facet with zero length (coincident points)".to_string(),
                 });
@@ -558,9 +546,15 @@ where
             let cross_magnitude = hypot(&cross);
             let area = cross_magnitude / (T::one() + T::one()); // Divide by 2
 
-            // Check for degeneracy (collinear points)
-            let epsilon = T::from(1e-12).unwrap_or_else(T::zero);
-            if area < epsilon {
+            // Check for degeneracy (collinear points) using the expansion scale
+            // of the cross-product components.
+            let cross_scale = Float::abs(v1[1] * v2[2])
+                + Float::abs(v1[2] * v2[1])
+                + Float::abs(v1[2] * v2[0])
+                + Float::abs(v1[0] * v2[2])
+                + Float::abs(v1[0] * v2[1])
+                + Float::abs(v1[1] * v2[0]);
+            if is_zero_or_roundoff(cross_magnitude, cross_scale)? {
                 return Err(CircumcenterError::MatrixInversionFailed {
                     details: "Degenerate facet with zero area (collinear points)".to_string(),
                 });
@@ -633,7 +627,7 @@ where
         *dst = safe_coords_to_f64(p.coords())?;
     }
 
-    // Compute Gram determinant with clamping.
+    // Compute Gram determinant with validation.
     //
     // For a (D-1)-simplex embedded in D dimensions, there are (D-1) edge vectors from
     // one vertex to the remaining vertices, so the Gram matrix is (D-1)×(D-1).
@@ -655,7 +649,7 @@ where
             }
         }
 
-        clamp_gram_determinant(gram_determinant_ldlt(gram_matrix))
+        validate_gram_determinant(gram_determinant_ldlt(gram_matrix))
     })?;
 
     let volume_f64 = {
@@ -776,6 +770,13 @@ mod tests {
     }
 
     #[test]
+    fn simplex_volume_degenerate_segment_errors() {
+        let line = vec![Point::new([2.0]), Point::new([2.0])];
+        let result = simplex_volume(&line);
+        assert!(result.is_err(), "coincident 1D points should be degenerate");
+    }
+
+    #[test]
     fn test_simplex_volume_2d_triangle() {
         // 2D: Right triangle with legs 3 and 4
         let triangle = vec![
@@ -835,6 +836,44 @@ mod tests {
         ];
         let result = simplex_volume(&collinear);
         assert!(result.is_err(), "Degenerate simplex should return an error");
+    }
+
+    #[test]
+    fn simplex_volume_coplanar_tetrahedron_errors() {
+        let coplanar = vec![
+            Point::new([0.0, 0.0, 0.0]),
+            Point::new([1.0, 0.0, 0.0]),
+            Point::new([0.0, 1.0, 0.0]),
+            Point::new([0.25, 0.25, 0.0]),
+        ];
+        let result = simplex_volume(&coplanar);
+        assert!(result.is_err(), "coplanar tetrahedron should be degenerate");
+    }
+
+    #[test]
+    fn test_simplex_volume_very_small_valid_simplices() {
+        let small_val = 1e-14;
+
+        let triangle = vec![
+            Point::new([0.0, 0.0]),
+            Point::new([small_val, 0.0]),
+            Point::new([0.0, small_val]),
+        ];
+        let area = simplex_volume(&triangle).unwrap();
+        assert_relative_eq!(area, small_val * small_val / 2.0, max_relative = 1e-12);
+
+        let tetrahedron = vec![
+            Point::new([0.0, 0.0, 0.0]),
+            Point::new([small_val, 0.0, 0.0]),
+            Point::new([0.0, small_val, 0.0]),
+            Point::new([0.0, 0.0, small_val]),
+        ];
+        let volume = simplex_volume(&tetrahedron).unwrap();
+        assert_relative_eq!(
+            volume,
+            small_val * small_val * small_val / 6.0,
+            max_relative = 1e-12
+        );
     }
 
     #[test]
@@ -968,7 +1007,7 @@ mod tests {
                 }
             }
 
-            clamp_gram_determinant(gram_determinant_ldlt(gram_matrix))
+            validate_gram_determinant(gram_determinant_ldlt(gram_matrix))
         })
     }
 
@@ -987,8 +1026,20 @@ mod tests {
     }
 
     #[test]
-    fn test_clamp_gram_determinant_tiny_negative_errors() {
-        assert!(clamp_gram_determinant(-1e-13).is_err());
+    fn degeneracy_tolerance_zero_scale() {
+        assert_relative_eq!(degeneracy_tolerance::<f64>(0.0).unwrap(), 0.0);
+        assert_relative_eq!(degeneracy_tolerance::<f64>(-1.0).unwrap(), 0.0);
+    }
+
+    #[test]
+    fn gram_determinant_nonfinite_errors() {
+        assert!(validate_gram_determinant(f64::NAN).is_err());
+        assert!(validate_gram_determinant(f64::INFINITY).is_err());
+    }
+
+    #[test]
+    fn test_validate_gram_determinant_tiny_negative_errors() {
+        assert!(validate_gram_determinant(-1e-13).is_err());
     }
 
     // Macro to test orthogonal edges across dimensions
@@ -1442,9 +1493,9 @@ mod tests {
 
     #[test]
     fn test_facet_measure_very_small_coordinates() {
-        // Test with very small but non-zero coordinates
-        // Use 1e-5 so that area (1e-10/2 = 5e-11) is above epsilon threshold (1e-12)
-        let small_val = 1e-5;
+        // Test with very small but non-zero coordinates. The degeneracy check
+        // should be scale-aware rather than rejecting every tiny valid facet.
+        let small_val = 1e-14;
         let points = vec![
             Point::new([0.0, 0.0, 0.0]),
             Point::new([small_val, 0.0, 0.0]),
@@ -1458,7 +1509,7 @@ mod tests {
         assert!(measure.is_finite(), "Measure should be finite");
         // Should be area of right triangle: small_val * small_val / 2
         let expected = small_val * small_val / 2.0;
-        assert_relative_eq!(measure, expected, epsilon = 1e-10);
+        assert_relative_eq!(measure, expected, epsilon = 1e-40);
     }
 
     #[test]

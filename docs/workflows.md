@@ -305,9 +305,10 @@ For guidance on retry/skip behavior and choosing `RobustKernel`, see
 
 ## Builder API: removing a vertex
 
-Vertex removal is supported and preserves Levels 1–3, but it may not preserve the Delaunay
-property in all cases. If you need the Delaunay property after removals, run a repair pass and/or
-validate explicitly.
+Vertex removal is supported and preserves Levels 1–3. It uses an inverse k=1 fast path when
+possible and fan retriangulation otherwise, then runs flip-based Delaunay repair when the active
+`DelaunayRepairPolicy` allows it. If post-removal repair or orientation canonicalization fails,
+the operation rolls back to the pre-removal triangulation.
 
 ```rust
 use delaunay::prelude::triangulation::*;
@@ -328,10 +329,17 @@ let _cells_removed = dt.remove_vertex(vertex_key).unwrap();
 // Topology should still be valid:
 assert!(dt.as_triangulation().validate().is_ok());
 
-// If you need Delaunay after edits (requires K: ExactPredicates):
-// dt.repair_delaunay_with_flips().unwrap();
-// dt.is_valid().unwrap();
+// If automatic repair is enabled, successful removal has already attempted to
+// restore the Delaunay property.
+dt.is_valid().unwrap();
 ```
+
+When automatic repair fails after the mutation, `remove_vertex` reports
+`InvariantError::Delaunay(DelaunayTriangulationValidationError::RepairOperationFailed { operation:
+DelaunayRepairOperation::VertexRemoval, source })`, preserving the underlying
+`DelaunayRepairError` for callers that need to inspect the exact repair failure.
+Successful removals invalidate internal locate hints and the spatial index so subsequent queries do
+not observe stale topology-dependent cache entries.
 
 ## Edit API: minimal flip example
 

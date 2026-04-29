@@ -21,6 +21,19 @@ fn finite_coordinate() -> impl Strategy<Value = f64> {
     (-100.0..100.0).prop_filter("must be finite", |x: &f64| x.is_finite())
 }
 
+fn nonzero_scale() -> impl Strategy<Value = f64> {
+    (-90.0_f64..90.0).prop_map(|exponent| 10.0_f64.powf(exponent))
+}
+
+fn prop_assert_relative_close(actual: f64, expected: f64) -> Result<(), TestCaseError> {
+    let tolerance = 1e-10 * expected.abs().max(1.0e-300);
+    prop_assert!(
+        (actual - expected).abs() <= tolerance,
+        "expected {expected:e}, got {actual:e}"
+    );
+    Ok(())
+}
+
 // =============================================================================
 // DIMENSIONAL TEST GENERATION MACROS
 // =============================================================================
@@ -177,3 +190,47 @@ test_geometry_properties!(2, 3);
 test_geometry_properties!(3, 4);
 test_geometry_properties!(4, 5);
 test_geometry_properties!(5, 6);
+
+proptest! {
+    /// Property: Low-dimensional simplex volume remains scale-aware across many orders
+    /// of magnitude. This guards against fixed absolute degeneracy thresholds.
+    #[test]
+    fn prop_low_dimensional_simplex_volume_accepts_scaled_valid_simplices(scale in nonzero_scale()) {
+        let segment = vec![Point::new([0.0]), Point::new([scale])];
+        let length = simplex_volume(&segment).unwrap();
+        prop_assert_relative_close(length, scale)?;
+
+        let triangle = vec![
+            Point::new([0.0, 0.0]),
+            Point::new([scale, 0.0]),
+            Point::new([0.0, scale]),
+        ];
+        let area = simplex_volume(&triangle).unwrap();
+        prop_assert_relative_close(area, scale * scale / 2.0)?;
+
+        let tetrahedron = vec![
+            Point::new([0.0, 0.0, 0.0]),
+            Point::new([scale, 0.0, 0.0]),
+            Point::new([0.0, scale, 0.0]),
+            Point::new([0.0, 0.0, scale]),
+        ];
+        let volume = simplex_volume(&tetrahedron).unwrap();
+        prop_assert_relative_close(volume, scale * scale * scale / 6.0)?;
+    }
+
+    /// Property: Low-dimensional facet measure remains scale-aware for valid facets.
+    #[test]
+    fn prop_low_dimensional_facet_measure_accepts_scaled_valid_facets(scale in nonzero_scale()) {
+        let segment = vec![Point::new([0.0, 0.0]), Point::new([scale, 0.0])];
+        let length = facet_measure(&segment).unwrap();
+        prop_assert_relative_close(length, scale)?;
+
+        let triangle = vec![
+            Point::new([0.0, 0.0, 0.0]),
+            Point::new([scale, 0.0, 0.0]),
+            Point::new([0.0, scale, 0.0]),
+        ];
+        let area = facet_measure(&triangle).unwrap();
+        prop_assert_relative_close(area, scale * scale / 2.0)?;
+    }
+}

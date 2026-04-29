@@ -147,6 +147,11 @@ impl Default for DelaunayizeConfig {
 #[non_exhaustive]
 pub struct DelaunayizeOutcome<T, U, V, const D: usize> {
     /// Statistics from the PL-manifold topology repair pass.
+    ///
+    /// If topology repair fails but fallback rebuild succeeds, these remain the
+    /// failed/default repair stats for the repair attempt. Use
+    /// [`used_fallback_rebuild`](Self::used_fallback_rebuild) to distinguish
+    /// successful rebuild recovery from direct topology repair success.
     pub topology_repair: PlManifoldRepairStats<T, U, V, D>,
     /// Statistics from the flip-based Delaunay repair pass.
     pub delaunay_repair: DelaunayRepairStats,
@@ -500,6 +505,11 @@ where
 ///   fails
 ///   ([`DelaunayRepairFailedWithRebuild`](DelaunayizeError::DelaunayRepairFailedWithRebuild)).
 ///
+/// When topology repair fails and fallback rebuild succeeds, this function
+/// returns `Ok` with `used_fallback_rebuild = true` and
+/// `topology_repair.succeeded = false`; the topology pass is not reported as
+/// successful merely because rebuild recovered the workflow.
+///
 /// The `*WithRebuild` variants preserve both errors as typed fields so
 /// consumers can inspect both typed errors;
 /// [`Error::source`](std::error::Error::source) exposes the primary repair error.
@@ -548,30 +558,26 @@ where
         max_iterations: config.topology_max_iterations,
         max_cells_removed: config.topology_max_cells_removed,
     };
-    let topology_stats =
-        match repair_facet_oversharing(&mut dt.as_triangulation_mut().tds, &pl_config) {
-            Ok(stats) => stats,
-            // Topology repair failed but fallback is enabled — try rebuilding.
-            Err(topo_err) if let Some((ref verts, ref cell_data)) = fallback_state => {
-                match rebuild_preserving_data(&dt.as_triangulation().kernel, verts, cell_data) {
-                    Ok(rebuilt) => {
-                        *dt = rebuilt;
-                        return Ok(DelaunayizeOutcome {
-                            topology_repair: PlManifoldRepairStats {
-                                succeeded: true,
-                                ..PlManifoldRepairStats::default()
-                            },
-                            delaunay_repair: DelaunayRepairStats::default(),
-                            used_fallback_rebuild: true,
-                        });
-                    }
-                    Err(fallback_error) => {
-                        return Err(topology_rebuild_error(topo_err, fallback_error));
-                    }
+    let topology_stats = match repair_facet_oversharing(dt.tds_mut_for_repair(), &pl_config) {
+        Ok(stats) => stats,
+        // Topology repair failed but fallback is enabled — try rebuilding.
+        Err(topo_err) if let Some((ref verts, ref cell_data)) = fallback_state => {
+            match rebuild_preserving_data(&dt.as_triangulation().kernel, verts, cell_data) {
+                Ok(rebuilt) => {
+                    *dt = rebuilt;
+                    return Ok(DelaunayizeOutcome {
+                        topology_repair: PlManifoldRepairStats::default(),
+                        delaunay_repair: DelaunayRepairStats::default(),
+                        used_fallback_rebuild: true,
+                    });
+                }
+                Err(fallback_error) => {
+                    return Err(topology_rebuild_error(topo_err, fallback_error));
                 }
             }
-            Err(topo_err) => return Err(topo_err.into()),
-        };
+        }
+        Err(topo_err) => return Err(topo_err.into()),
+    };
 
     // Step 2: Flip-based Delaunay repair.
     let delaunay_result = if let Some(max_flips) = config.delaunay_max_flips {
@@ -983,6 +989,46 @@ mod tests {
         };
         let outcome = delaunayize_by_flips(&mut dt, config).unwrap();
         assert!(!outcome.used_fallback_rebuild);
+    }
+
+    #[test]
+    fn topology_repair_fallback_stats_failed() {
+        init_tracing();
+        let vertices = [
+            vertex!([0.0, 0.0]),
+            vertex!([1.0, 0.0]),
+            vertex!([0.0, 1.0]),
+        ];
+        let mut dt: DelaunayTriangulation<_, (), (), 2> =
+            DelaunayTriangulation::new(&vertices).unwrap();
+
+        let (_, existing_cell) = dt.cells().next().unwrap();
+        let duplicate_vertices = existing_cell.vertices().to_vec();
+        dt.tri
+            .tds
+            .insert_cell_with_mapping(Cell::new(duplicate_vertices.clone(), None).unwrap())
+            .unwrap();
+        dt.tri
+            .tds
+            .insert_cell_with_mapping(Cell::new(duplicate_vertices, None).unwrap())
+            .unwrap();
+
+        let outcome = delaunayize_by_flips(
+            &mut dt,
+            DelaunayizeConfig {
+                topology_max_cells_removed: 0,
+                fallback_rebuild: true,
+                ..DelaunayizeConfig::default()
+            },
+        )
+        .unwrap();
+
+        assert!(outcome.used_fallback_rebuild);
+        assert!(
+            !outcome.topology_repair.succeeded,
+            "fallback rebuild should not mark the failed topology repair as succeeded"
+        );
+        assert!(dt.validate().is_ok());
     }
 
     #[test]

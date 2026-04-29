@@ -64,7 +64,7 @@ combinatorial and geometric checks.
   well-conditioned exploratory work; not accepted by explicit repair APIs)
 - [x]  Bulk insertion ordering (`InsertionOrderStrategy`): [Hilbert curve] (default) or input order
 - [x]  Batch construction options (`ConstructionOptions`): optional deduplication and deterministic retries
-- [x]  Incremental construction APIs: insertion plus vertex removal (`remove_vertex`)
+- [x]  Incremental construction APIs: insertion plus transactional vertex removal (`remove_vertex`)
 - [x]  4-level validation hierarchy (element validity → TDS structural validity → manifold topology → Delaunay property), including full diagnostics via `validation_report`
 - [x]  Local topology validation ([PL-manifold] default, [Pseudomanifold] opt-out)
 - [x]  Coherent combinatorial orientation validation/normalization for cells, maintaining oriented simplicial complexes
@@ -144,6 +144,8 @@ For the full periodic image-point method (Phase 2), see the [`DelaunayTriangulat
   see [`docs/workflows.md`](docs/workflows.md) for a minimal example and [`docs/api_design.md`](docs/api_design.md) for details.
 - **Flip-based Delaunay repair**, including the heuristic rebuild fallback (`repair_delaunay_with_flips*`):
   see [`docs/workflows.md`](docs/workflows.md).
+- **Repair diagnostics and mutating-operation rollback**:
+  `remove_vertex` rolls back if post-removal repair or orientation canonicalization fails, and repair failures preserve typed source errors for debugging.
 - **Insertion outcomes and statistics** (`insert_with_statistics`, `InsertionOutcome`, `InsertionStatistics`):
   see [`docs/workflows.md`](docs/workflows.md) and [`docs/numerical_robustness_guide.md`](docs/numerical_robustness_guide.md).
 - **Topology guarantees** (`TopologyGuarantee`) and **automatic topology validation** (`ValidationPolicy`):

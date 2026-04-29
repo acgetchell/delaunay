@@ -8356,7 +8356,7 @@ mod tests {
     }
 
     #[test]
-    fn test_set_vertex_data_via_triangulation_wrapper() {
+    fn test_set_vertex_data_via_delaunay_wrapper() {
         let vertices: [Vertex<f64, i32, 2>; 3] = [
             vertex!([0.0, 0.0], 10i32),
             vertex!([1.0, 0.0], 20),
@@ -8367,19 +8367,19 @@ mod tests {
             .unwrap();
         let key = dt.vertices().next().unwrap().0;
 
-        // Set via Triangulation wrapper
-        let prev = dt.as_triangulation_mut().set_vertex_data(key, Some(99));
+        // Set via Delaunay wrapper
+        let prev = dt.set_vertex_data(key, Some(99));
         assert!(prev.unwrap().is_some());
         assert_eq!(dt.tds().get_vertex_by_key(key).unwrap().data, Some(99));
 
-        // Clear via Triangulation wrapper
-        let prev = dt.as_triangulation_mut().set_vertex_data(key, None);
+        // Clear via Delaunay wrapper
+        let prev = dt.set_vertex_data(key, None);
         assert_eq!(prev, Some(Some(99)));
         assert_eq!(dt.tds().get_vertex_by_key(key).unwrap().data, None);
     }
 
     #[test]
-    fn test_set_cell_data_via_triangulation_wrapper() {
+    fn test_set_cell_data_via_delaunay_wrapper() {
         let vertices = [
             vertex!([0.0, 0.0]),
             vertex!([1.0, 0.0]),
@@ -8390,13 +8390,13 @@ mod tests {
             .unwrap();
         let key = dt.cells().next().unwrap().0;
 
-        // Set via Triangulation wrapper
-        let prev = dt.as_triangulation_mut().set_cell_data(key, Some(42));
+        // Set via Delaunay wrapper
+        let prev = dt.set_cell_data(key, Some(42));
         assert_eq!(prev, Some(None));
         assert_eq!(dt.tds().get_cell(key).unwrap().data, Some(42));
 
-        // Clear via Triangulation wrapper
-        let prev = dt.as_triangulation_mut().set_cell_data(key, None);
+        // Clear via Delaunay wrapper
+        let prev = dt.set_cell_data(key, None);
         assert_eq!(prev, Some(Some(42)));
         assert_eq!(dt.tds().get_cell(key).unwrap().data, None);
     }

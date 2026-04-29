@@ -72,6 +72,14 @@ pub struct HashGridIndex<T, const D: usize, K = VertexKey> {
     cells: FastHashMap<GridKey<T, D>, SmallBuffer<K, BUCKET_INLINE_CAPACITY>>,
 }
 
+#[cfg(test)]
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct HashGridIndexSnapshot {
+    cell_size: String,
+    usable: bool,
+    cells: Vec<String>,
+}
+
 impl<T, const D: usize, K> HashGridIndex<T, D, K>
 where
     T: CoordinateScalar,
@@ -91,6 +99,25 @@ where
     }
     pub const fn cell_size(&self) -> T {
         self.cell_size
+    }
+
+    #[cfg(test)]
+    pub(crate) fn debug_snapshot(&self) -> HashGridIndexSnapshot
+    where
+        T: std::fmt::Debug,
+        K: std::fmt::Debug,
+    {
+        let mut cells = self
+            .cells
+            .iter()
+            .map(|(key, bucket)| format!("{key:?}={bucket:?}"))
+            .collect::<Vec<_>>();
+        cells.sort();
+        HashGridIndexSnapshot {
+            cell_size: format!("{:?}", self.cell_size),
+            usable: self.usable,
+            cells,
+        }
     }
 
     pub fn clear(&mut self) {

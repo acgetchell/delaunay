@@ -11,6 +11,7 @@ Agents must follow these rules when modifying or adding Rust code.
 - [Core Principles](#core-principles)
 - [Safety](#safety)
 - [Dimension Generic Architecture](#dimension-generic-architecture)
+- [Numeric Conversions](#numeric-conversions)
 - [Borrowing and Ownership](#borrowing-and-ownership)
 - [Error Handling](#error-handling)
 - [Panic Policy](#panic-policy)
@@ -97,6 +98,31 @@ struct Point<const D: usize> {
 ```
 
 Algorithms should operate generically over `D` whenever practical.
+
+---
+
+## Numeric Conversions
+
+Avoid unchecked numeric casts in geometry, topology, tests, and benchmarks when
+precision or range can matter.
+
+Prefer repository helpers from `crate::geometry::util`, for example:
+
+- `safe_usize_to_scalar::<T>(value)`
+- `safe_scalar_to_f64(value)`
+- `safe_scalar_from_f64::<T>(value)`
+- `safe_coords_to_f64(coords)`
+- `safe_coords_from_f64::<T, D>(coords)`
+
+Do not silence `clippy::cast_precision_loss` with `#[expect(...)]` simply
+because the current values are small. Use a safe conversion helper and handle
+or justify the `Result` at the call site. A lint expectation is appropriate only
+when no safe conversion applies and the invariant is documented in the code.
+
+Avoid fallback conversions such as `unwrap_or(f64::NAN)`,
+`unwrap_or(f64::INFINITY)`, or silently clamping failed conversions. These hide
+the numerical state that geometric predicates and validation layers need in
+order to fail explicitly.
 
 ---
 

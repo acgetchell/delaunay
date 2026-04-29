@@ -1070,9 +1070,9 @@ class TestBaselineGenerator:
             assert actual.time_mean == pytest.approx(expected.time_mean)
             assert actual.time_high == pytest.approx(expected.time_high)
             assert actual.time_unit == expected.time_unit
-            assert actual.throughput_low == expected.throughput_low
-            assert actual.throughput_mean == expected.throughput_mean
-            assert actual.throughput_high == expected.throughput_high
+            assert actual.throughput_low == pytest.approx(expected.throughput_low)
+            assert actual.throughput_mean == pytest.approx(expected.throughput_mean)
+            assert actual.throughput_high == pytest.approx(expected.throughput_high)
             assert actual.throughput_unit == expected.throughput_unit
         mock_git.assert_called_once()
 
