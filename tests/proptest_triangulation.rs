@@ -36,6 +36,7 @@
 
 use ::uuid::Uuid;
 use delaunay::prelude::geometry::*;
+use delaunay::prelude::tds::CellKey;
 use delaunay::prelude::triangulation::*;
 use proptest::prelude::*;
 use std::collections::HashMap;

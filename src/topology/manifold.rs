@@ -168,7 +168,7 @@ fn periodic_ridge_key(lifted_vertices: &[VertexKey]) -> u64 {
 /// # Examples
 ///
 /// ```rust
-/// use delaunay::topology::manifold::ManifoldError;
+/// use delaunay::prelude::topology::validation::ManifoldError;
 ///
 /// let err = ManifoldError::BoundaryRidgeMultiplicity {
 ///     ridge_key: 1,
@@ -267,7 +267,7 @@ pub enum ManifoldError {
 /// ```rust
 /// use delaunay::prelude::geometry::*;
 /// use delaunay::prelude::triangulation::*;
-/// use delaunay::topology::manifold::validate_facet_degree;
+/// use delaunay::prelude::topology::validation::validate_facet_degree;
 ///
 /// let vertices = vec![
 ///     vertex!([0.0, 0.0, 0.0]),
@@ -320,7 +320,7 @@ pub fn validate_facet_degree(facet_to_cells: &FacetToCellsMap) -> Result<(), Man
 /// ```rust
 /// use delaunay::prelude::geometry::*;
 /// use delaunay::prelude::triangulation::*;
-/// use delaunay::topology::manifold::validate_closed_boundary;
+/// use delaunay::prelude::topology::validation::validate_closed_boundary;
 ///
 /// let vertices = vec![
 ///     vertex!([0.0, 0.0, 0.0]),
@@ -1030,7 +1030,7 @@ where
 /// ```rust
 /// use delaunay::prelude::geometry::*;
 /// use delaunay::prelude::triangulation::*;
-/// use delaunay::topology::manifold::validate_ridge_links;
+/// use delaunay::prelude::topology::validation::validate_ridge_links;
 ///
 /// let vertices = vec![
 ///     vertex!([0.0, 0.0, 0.0]),
@@ -1109,8 +1109,8 @@ where
 /// ```rust
 /// use delaunay::prelude::geometry::*;
 /// use delaunay::prelude::triangulation::*;
-/// use delaunay::topology::manifold::validate_ridge_links_for_cells;
-/// use delaunay::core::collections::CellKeyBuffer;
+/// use delaunay::prelude::topology::validation::validate_ridge_links_for_cells;
+/// use delaunay::prelude::collections::CellKeyBuffer;
 ///
 /// let vertices = vec![
 ///     vertex!([0.0, 0.0, 0.0]),
@@ -1200,7 +1200,7 @@ where
 /// ```rust
 /// use delaunay::prelude::geometry::*;
 /// use delaunay::prelude::triangulation::*;
-/// use delaunay::topology::manifold::{
+/// use delaunay::prelude::topology::validation::{
 ///     validate_closed_boundary, validate_facet_degree, validate_vertex_links,
 /// };
 ///

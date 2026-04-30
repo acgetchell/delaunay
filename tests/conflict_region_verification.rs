@@ -5,14 +5,16 @@
 //!
 //! These tests are `#[ignore]` by default — run with:
 //! ```bash
-//! cargo test --test conflict_region_verification -- --ignored --nocapture
+//! cargo test --test conflict_region_verification --features diagnostics -- --ignored --nocapture
 //! ```
 
 #![forbid(unsafe_code)]
+#![cfg(feature = "diagnostics")]
 
 use delaunay::core::algorithms::locate::{LocateResult, find_conflict_region, locate};
 use delaunay::geometry::kernel::AdaptiveKernel;
 use delaunay::geometry::util::generate_random_points_in_ball_seeded;
+use delaunay::prelude::diagnostics::verify_conflict_region_completeness;
 use delaunay::prelude::triangulation::*;
 
 /// Verify that `verify_conflict_region_completeness` runs without panicking on
@@ -44,7 +46,6 @@ fn verify_conflict_region_diagnostic_3d_35v() {
         DelaunayTriangulation::new(initial).expect("initial simplex should succeed");
 
     let kernel = AdaptiveKernel::<f64>::new();
-    #[allow(unused_mut)] // only mutated under debug_assertions
     let mut total_missed = 0_usize;
     let mut insertions_checked = 0_usize;
     let mut insert_errors: Vec<String> = Vec::new();
@@ -65,30 +66,21 @@ fn verify_conflict_region_diagnostic_3d_35v() {
         if let LocateResult::InsideCell(start_cell) = location {
             match find_conflict_region(dt.tds(), &kernel, &point, start_cell) {
                 Ok(conflict_cells) => {
-                    #[cfg(debug_assertions)]
-                    {
-                        let missed =
-                            delaunay::core::algorithms::locate::verify_conflict_region_completeness(
-                                dt.tds(),
-                                &kernel,
-                                &point,
-                                &conflict_cells,
-                            );
-                        if missed > 0 {
-                            println!(
-                                "[{i}] INCOMPLETE conflict region: {missed} cells missed \
-                                 (BFS found {}, brute-force found more)",
-                                conflict_cells.len()
-                            );
-                        }
-                        total_missed += missed;
-                        insertions_checked += 1;
+                    let missed = verify_conflict_region_completeness(
+                        dt.tds(),
+                        &kernel,
+                        &point,
+                        &conflict_cells,
+                    );
+                    if missed > 0 {
+                        println!(
+                            "[{i}] INCOMPLETE conflict region: {missed} cells missed \
+                             (BFS found {}, brute-force found more)",
+                            conflict_cells.len()
+                        );
                     }
-                    #[cfg(not(debug_assertions))]
-                    {
-                        let _ = conflict_cells;
-                        insertions_checked += 1;
-                    }
+                    total_missed += missed;
+                    insertions_checked += 1;
                 }
                 Err(e) => {
                     println!("[{i}] find_conflict_region failed: {e}");

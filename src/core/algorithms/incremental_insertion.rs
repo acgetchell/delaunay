@@ -52,7 +52,7 @@ pub use crate::core::operations::{InsertionOutcome, InsertionResult, InsertionSt
 /// # Examples
 ///
 /// ```rust
-/// use delaunay::core::algorithms::incremental_insertion::HullExtensionReason;
+/// use delaunay::prelude::triangulation::insertion::HullExtensionReason;
 ///
 /// let reason = HullExtensionReason::NoVisibleFacets;
 /// assert!(matches!(reason, HullExtensionReason::NoVisibleFacets));
@@ -108,7 +108,7 @@ impl std::fmt::Display for HullExtensionReason {
 /// # Examples
 ///
 /// ```rust
-/// use delaunay::core::algorithms::incremental_insertion::InsertionError;
+/// use delaunay::prelude::triangulation::insertion::InsertionError;
 ///
 /// let err = InsertionError::DuplicateCoordinates {
 ///     coordinates: "[0.0, 0.0, 0.0]".to_string(),
@@ -246,7 +246,7 @@ impl InsertionError {
     /// # Examples
     ///
     /// ```rust
-    /// use delaunay::core::algorithms::incremental_insertion::{HullExtensionReason, InsertionError};
+    /// use delaunay::prelude::triangulation::insertion::{HullExtensionReason, InsertionError};
     ///
     /// let retryable = InsertionError::NonManifoldTopology {
     ///     facet_hash: 1,
@@ -397,8 +397,8 @@ impl InsertionError {
 /// # Examples
 ///
 /// ```rust
-/// use delaunay::core::algorithms::incremental_insertion::fill_cavity;
-/// use delaunay::core::facet::FacetHandle;
+/// use delaunay::prelude::triangulation::insertion::fill_cavity;
+/// use delaunay::prelude::tds::FacetHandle;
 /// use delaunay::prelude::query::*;
 ///
 /// let vertices = vec![
@@ -705,9 +705,9 @@ where
 /// # Examples
 ///
 /// ```rust
-/// use delaunay::core::algorithms::incremental_insertion::wire_cavity_neighbors;
-/// use delaunay::core::collections::CellKeyBuffer;
-/// use delaunay::core::tds::Tds;
+/// use delaunay::prelude::triangulation::insertion::wire_cavity_neighbors;
+/// use delaunay::prelude::collections::CellKeyBuffer;
+/// use delaunay::prelude::tds::Tds;
 ///
 /// let mut tds: Tds<f64, (), (), 3> = Tds::empty();
 /// let new_cells = CellKeyBuffer::new();
@@ -1506,12 +1506,12 @@ where
 /// # Examples
 ///
 /// ```rust
-/// use delaunay::core::algorithms::incremental_insertion::extend_hull;
-/// use delaunay::core::tds::Tds;
-/// use delaunay::core::tds::VertexKey;
-/// use delaunay::geometry::kernel::FastKernel;
-/// use delaunay::geometry::point::Point;
-/// use delaunay::geometry::traits::coordinate::Coordinate;
+/// use delaunay::prelude::triangulation::insertion::extend_hull;
+/// use delaunay::prelude::tds::Tds;
+/// use delaunay::prelude::tds::VertexKey;
+/// use delaunay::prelude::geometry::FastKernel;
+/// use delaunay::prelude::geometry::Point;
+/// use delaunay::prelude::geometry::Coordinate;
 /// use slotmap::Key;
 ///
 /// let mut tds: Tds<f64, (), (), 3> = Tds::empty();

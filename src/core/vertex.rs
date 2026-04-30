@@ -18,7 +18,7 @@
 //! # Examples
 //!
 //! ```rust
-//! use delaunay::core::vertex::Vertex;
+//! use delaunay::prelude::triangulation::Vertex;
 //! use delaunay::vertex;
 //!
 //! // Create a simple vertex
@@ -62,8 +62,8 @@ use uuid::Uuid;
 /// # Examples
 ///
 /// ```rust
-/// use delaunay::core::util::UuidValidationError;
-/// use delaunay::core::vertex::VertexValidationError;
+/// use delaunay::prelude::tds::UuidValidationError;
+/// use delaunay::prelude::triangulation::VertexValidationError;
 ///
 /// let err = VertexValidationError::InvalidUuid {
 ///     source: UuidValidationError::NilUuid,
@@ -93,7 +93,7 @@ pub enum VertexValidationError {
 /// # Examples
 ///
 /// ```rust
-/// use delaunay::core::vertex::VertexBuilderError;
+/// use delaunay::prelude::triangulation::VertexBuilderError;
 ///
 /// let err = VertexBuilderError::MissingPoint;
 /// assert_eq!(err.to_string(), "Missing required field: `point`");
@@ -124,9 +124,9 @@ pub enum VertexBuilderError {
 /// # Examples
 ///
 /// ```rust
-/// use delaunay::core::vertex::{Vertex, VertexBuilder};
-/// use delaunay::geometry::point::Point;
-/// use delaunay::geometry::traits::coordinate::Coordinate;
+/// use delaunay::prelude::triangulation::{Vertex, VertexBuilder};
+/// use delaunay::prelude::geometry::Point;
+/// use delaunay::prelude::geometry::Coordinate;
 ///
 /// // Build a vertex with just a point
 /// let v: Vertex<f64, (), 3> = VertexBuilder::default()
@@ -225,7 +225,7 @@ where
 ///
 /// ```rust
 /// use delaunay::vertex;
-/// use delaunay::core::vertex::Vertex;
+/// use delaunay::prelude::triangulation::Vertex;
 ///
 /// // Create a vertex without data
 /// let v1: Vertex<f64, (), 3> = vertex!([1.0, 2.0, 3.0]);
@@ -291,7 +291,7 @@ pub use crate::vertex;
 /// Vertices are typically created using the builder pattern for convenience:
 ///
 /// ```rust
-/// use delaunay::core::vertex::Vertex;
+/// use delaunay::prelude::triangulation::Vertex;
 /// use delaunay::vertex;
 ///
 /// let vertex: Vertex<f64, i32, 3> = vertex!([1.0, 2.0, 3.0], 42);
@@ -337,9 +337,9 @@ where
     /// # Example
     ///
     /// ```
-    /// use delaunay::core::vertex::Vertex;
+    /// use delaunay::prelude::triangulation::Vertex;
     /// use delaunay::vertex;
-    /// use delaunay::geometry::traits::coordinate::Coordinate;
+    /// use delaunay::prelude::geometry::Coordinate;
     ///
     /// let vertex: Vertex<f64, (), 3> = vertex!([1.0, 2.0, 3.0]);
     /// let retrieved_point = vertex.point();
@@ -356,7 +356,7 @@ where
     ///
     /// ```
     /// use delaunay::vertex;
-    /// use delaunay::core::vertex::Vertex;
+    /// use delaunay::prelude::triangulation::Vertex;
     ///
     /// let v: Vertex<f64, i32, 2> = vertex!([1.0, 2.0], 42);
     /// assert_eq!(v.data(), Some(&42));
@@ -534,8 +534,8 @@ where
     /// # Examples
     ///
     /// ```
-    /// use delaunay::core::vertex::Vertex;
-    /// use delaunay::geometry::traits::coordinate::Coordinate;
+    /// use delaunay::prelude::triangulation::Vertex;
+    /// use delaunay::prelude::geometry::Coordinate;
     /// use approx::assert_relative_eq;
     ///
     /// let empty_vertex: Vertex<f64, (), 3> = Vertex::empty();
@@ -562,8 +562,10 @@ where
 
     /// Creates a vertex directly from a point with a fresh UUID and no user data.
     ///
-    /// This constructor is infallible because [`Point`] already owns validated
-    /// coordinates for the vertex dimension.
+    /// This constructor is infallible because it stores the supplied [`Point`]
+    /// without performing additional validation. Callers that require finite or
+    /// otherwise validated coordinates must enforce that before constructing
+    /// the vertex.
     ///
     /// # Examples
     ///
@@ -590,8 +592,10 @@ where
 
     /// Creates a vertex directly from a point and user data with a fresh UUID.
     ///
-    /// This constructor is infallible because [`Point`] already owns validated
-    /// coordinates for the vertex dimension and `data` is stored as provided.
+    /// This constructor is infallible because it stores the supplied [`Point`]
+    /// and user data without performing additional validation. Callers that
+    /// require finite or otherwise validated coordinates must enforce that
+    /// before constructing the vertex.
     ///
     /// # Examples
     ///
@@ -632,9 +636,9 @@ where
     /// # Example
     ///
     /// ```
-    /// use delaunay::core::vertex::Vertex;
-    /// use delaunay::geometry::point::Point;
-    /// use delaunay::geometry::traits::coordinate::Coordinate;
+    /// use delaunay::prelude::triangulation::Vertex;
+    /// use delaunay::prelude::geometry::Point;
+    /// use delaunay::prelude::geometry::Coordinate;
     /// let points = [Point::new([1.0, 2.0, 3.0])];
     /// let vertices: Vec<Vertex<f64, (), 3>> = Vertex::from_points(&points);
     /// assert_eq!(vertices.len(), 1);
@@ -662,7 +666,7 @@ where
     ///
     /// ```
     /// use std::collections::HashMap;
-    /// use delaunay::core::vertex::Vertex;
+    /// use delaunay::prelude::triangulation::Vertex;
     /// use delaunay::vertex;
     ///
     /// let v1: Vertex<f64, (), 2> = vertex!([1.0, 2.0]);
@@ -726,7 +730,7 @@ where
     /// # Example
     ///
     /// ```
-    /// use delaunay::core::vertex::{Vertex, VertexValidationError};
+    /// use delaunay::prelude::triangulation::{Vertex, VertexValidationError};
     /// use delaunay::vertex;
     /// use uuid::Uuid;
     ///

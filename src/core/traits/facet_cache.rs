@@ -33,10 +33,10 @@ use std::sync::{
 /// # Examples
 ///
 /// ```
-/// use delaunay::core::traits::facet_cache::FacetCacheProvider;
-/// use delaunay::core::tds::Tds;
-/// use delaunay::geometry::traits::coordinate::CoordinateScalar;
-/// use delaunay::core::traits::data_type::DataType;
+/// use delaunay::prelude::tds::FacetCacheProvider;
+/// use delaunay::prelude::tds::Tds;
+/// use delaunay::prelude::geometry::CoordinateScalar;
+/// use delaunay::prelude::triangulation::DataType;
 /// use std::sync::Arc;
 /// use std::sync::atomic::{AtomicU64, Ordering};
 /// use serde::de::DeserializeOwned;

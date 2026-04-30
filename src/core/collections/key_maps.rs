@@ -118,7 +118,7 @@ pub type UuidToCellKeyMap = FastHashMap<Uuid, CellKey>;
 /// # Examples
 ///
 /// ```rust
-/// use delaunay::core::collections::CellKeySet;
+/// use delaunay::prelude::collections::CellKeySet;
 ///
 /// let cell_set: CellKeySet = CellKeySet::default();
 /// assert!(cell_set.is_empty());
@@ -146,7 +146,7 @@ pub type CellKeySet = FastHashSet<CellKey>;
 /// # Examples
 ///
 /// ```rust
-/// use delaunay::core::collections::VertexKeySet;
+/// use delaunay::prelude::collections::VertexKeySet;
 ///
 /// let vertex_set: VertexKeySet = VertexKeySet::default();
 /// assert!(vertex_set.is_empty());
@@ -175,7 +175,7 @@ pub type VertexKeySet = FastHashSet<VertexKey>;
 /// # Examples
 ///
 /// ```rust
-/// use delaunay::core::collections::KeyBasedCellMap;
+/// use delaunay::prelude::collections::KeyBasedCellMap;
 ///
 /// let cell_map: KeyBasedCellMap<f64> = KeyBasedCellMap::default();
 /// assert!(cell_map.is_empty());
@@ -204,7 +204,7 @@ pub type KeyBasedCellMap<V> = FastHashMap<CellKey, V>;
 /// # Examples
 ///
 /// ```rust
-/// use delaunay::core::collections::KeyBasedVertexMap;
+/// use delaunay::prelude::collections::KeyBasedVertexMap;
 ///
 /// let vertex_map: KeyBasedVertexMap<i32> = KeyBasedVertexMap::default();
 /// assert!(vertex_map.is_empty());

@@ -8,7 +8,7 @@ use delaunay::prelude::triangulation::{
     DelaunayTriangulationConstructionError, InsertionOrderStrategy, RetryPolicy, TopologyGuarantee,
 };
 use delaunay::vertex;
-#[cfg(feature = "test-debug")]
+#[cfg(feature = "diagnostics")]
 use rand::{RngExt, SeedableRng, rngs::StdRng};
 
 type Dt<const D: usize> = DelaunayTriangulation<AdaptiveKernel<f64>, (), (), D>;
@@ -92,7 +92,7 @@ fn as_triangulation_mut_valid_view() {
 /// This remains ignored by default because it is nondeterministic and expensive.
 /// For deterministic coverage, see the forced heuristic rebuild tests in
 /// `src/triangulation/delaunay.rs`.
-#[cfg(feature = "test-debug")]
+#[cfg(feature = "diagnostics")]
 #[test]
 #[ignore = "manual search helper; run explicitly to discover natural repro cases"]
 fn find_stale_key_after_rebuild() {
@@ -143,7 +143,7 @@ fn find_stale_key_after_rebuild() {
             continue;
         }
 
-        #[cfg(feature = "test-debug")]
+        #[cfg(feature = "diagnostics")]
         {
             tracing::debug!(case, "FOUND stale key after insertion");
             tracing::debug!(vertex_key = ?vertex_key, inserted_uuid = %inserted_uuid);

@@ -12,6 +12,7 @@
 use delaunay::assert_jaccard_gte;
 use delaunay::core::util::extract_vertex_coordinate_set;
 use delaunay::prelude::geometry::*;
+use delaunay::prelude::tds::Tds;
 use delaunay::prelude::triangulation::*;
 use std::collections::HashSet;
 

@@ -39,7 +39,7 @@ use proptest::prelude::*;
 fn init_tracing() {
     static INIT: std::sync::Once = std::sync::Once::new();
     INIT.call_once(|| {
-        let default_filter = if cfg!(feature = "test-debug") {
+        let default_filter = if cfg!(feature = "diagnostics") {
             "info"
         } else {
             "warn"

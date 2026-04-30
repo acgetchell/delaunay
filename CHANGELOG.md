@@ -5,6 +5,116 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Merged Pull Requests
+
+- Enable repo Semgrep rules for issue #338 [#354](https://github.com/acgetchell/delaunay/pull/354)
+- Type repair diagnostics and harden invariants [#332](https://github.com/acgetchell/delaunay/pull/332) [#352](https://github.com/acgetchell/delaunay/pull/352)
+- Harden Python benchmark parsing [#351](https://github.com/acgetchell/delaunay/pull/351)
+- Expand profiling benchmarks around public API workflows [#349](https://github.com/acgetchell/delaunay/pull/349)
+- Bump taiki-e/install-action from 2.75.18 to 2.75.22 [#348](https://github.com/acgetchell/delaunay/pull/348)
+
+### Changed
+
+- Type repair diagnostics and harden invariants [#332](https://github.com/acgetchell/delaunay/pull/332) [#352](https://github.com/acgetchell/delaunay/pull/352)
+  [`a244053`](https://github.com/acgetchell/delaunay/commit/a2440531ae7ee1407e7436379a82fe092f02e7dd)
+
+- Replace stringified flip-repair skip samples with typed diagnostic context.
+  - Make vertex removal transactional across post-removal repair and orientation canonicalization.
+  - Deprecate DelaunayTriangulation::as_triangulation_mut ahead of removal in v0.8.0.
+  - Use scale-aware degeneracy checks for low-dimensional simplex and facet measures.
+  - Add regression and property coverage for rollback behavior, typed diagnostics, and scaled valid measures.
+  - Tolerate throughput formatting precision in benchmark baseline round-trip tests.
+
+### Fixed
+
+- Harden Python benchmark parsing [#351](https://github.com/acgetchell/delaunay/pull/351)
+  [`fea5898`](https://github.com/acgetchell/delaunay/commit/fea58987a2fb84e47603be9f0d1960aaa7e0f5f0)
+
+  - Reject non-finite and unordered Criterion timing estimates before using them in summaries, baselines, or backend comparisons.
+  - Preserve full Criterion benchmark IDs and normalize timing units when comparing storage backend results.
+  - Reuse the shared baseline parser while preserving malformed-section skip behavior and supporting scientific notation.
+  - Fall back from unusable lscpu output to /proc CPU core detection on Linux.
+  - Add regression and round-trip tests for parser behavior, benchmark IDs, unit normalization, and Linux CPU fallback.
+  - Document Python parser/file-format round-trip test expectations.
+
+  **Fixed: Harden Criterion estimate parsing and validation**
+
+  Consolidates estimate validation into a single public helper,
+  `is_valid_criterion_estimate`, now used by `PerformanceSummaryGenerator`
+  and `StorageBackendComparator`. Adds explicit type checks to
+  `PerformanceSummaryGenerator` to reject structurally malformed JSON
+  data, improving parsing robustness.
+
+### Maintenance
+
+- Bump taiki-e/install-action from 2.75.18 to 2.75.22 [#348](https://github.com/acgetchell/delaunay/pull/348)
+  [`31ec720`](https://github.com/acgetchell/delaunay/commit/31ec720a8638103b9acd7ea58c35b2baa5f571b9)
+
+Bumps [taiki-e/install-action](https://github.com/taiki-e/install-action) from 2.75.18 to 2.75.22.
+
+- [Release notes](https://github.com/taiki-e/install-action/releases)
+- [Changelog](https://github.com/taiki-e/install-action/blob/main/CHANGELOG.md)
+- [Commits](https://github.com/taiki-e/install-action/compare/055f5df8c3f65ea01cd41e9dc855becd88953486...cf525cb33f51aca27cd6fa02034117ab963ff9f1)
+
+  ---
+  updated-dependencies:
+
+- dependency-name: taiki-e/install-action
+    dependency-version: 2.75.22
+    dependency-type: direct:production
+    update-type: version-update:semver-patch
+  ...
+
+- Enable repo Semgrep rules for issue #338 [#354](https://github.com/acgetchell/delaunay/pull/354)
+  [`9d51d30`](https://github.com/acgetchell/delaunay/commit/9d51d3038ae3f3316102ecaf39429bdfb73ff1cc)
+
+  - Enable project-owned Semgrep rules in local checks, CodeRabbit, and Codacy/OpenGrep scanning.
+  - Harden Semgrep execution with strict mode, a higher timeout, and fixture coverage for hot-path hash collection rules.
+  - Replace flagged diagnostics and silent numeric fallbacks with explicit tracing, expectations, and typed Hilbert quantization errors.
+  - Centralize Delaunay triangulation cache invalidation through the existing repair-cache helper.
+
+  **Maintenance: Enable repository Semgrep rules**
+
+  - Rename the Semgrep config to semgrep.yaml and wire it into local checks, CodeRabbit, and Codacy/OpenGrep.
+  - Add strict Semgrep execution plus fixture coverage for hot-path hash collections and targeted panic bypasses.
+  - Make Hilbert errors non-exhaustive and document quantization-scale conversion failures on APIs that can return them.
+  - Replace fragile VertexBuilder expect paths with infallible Vertex point constructors.
+
+  **Maintenance: Expand repository Semgrep rules**
+
+  - Add project-specific Semgrep checks for Rust dynamic errors, lint suppression reasons, Python subprocess mocks, and typed script helpers.
+  - Add focused Semgrep fixtures for hot-path hash collections, Rust project rules, and Python test conventions.
+  - Wire the expanded Semgrep fixture suite into `just check`.
+  - Replace stale Clippy `allow` suppressions with documented `expect` attributes and remove dynamic error trait-object usage from tests.
+
+  **Maintenance: Refresh quality tooling and diagnostics**
+
+  - Pin GitHub workflow tool versions and update action SHAs for cache, artifact upload, install-action, and SARIF upload.
+  - Exclude Semgrep fixtures from Codacy analysis so intentional rule-test violations do not surface as production issues.
+  - Add a cargo-machete backed just unused-deps recipe for checking unused direct dependencies.
+  - Gate convex hull test diagnostics behind test-debug tracing instead of unconditional stdout output.
+  - Add Hilbert ordering and zero-dimensional sort coverage for Codecov patch gaps.
+
+  **Fixed: Harden Hilbert ordering errors and prelude checks [#338](https://github.com/acgetchell/delaunay/pull/338)**
+
+  - Return typed Hilbert errors for non-finite quantization inputs and failed u32 coordinate conversions instead of silently collapsing values.
+  - Preserve item order when Hilbert sort key construction fails, and add regression coverage for the new error paths.
+  - Add the focused ordering prelude and update doctests, examples, benchmarks, and integration tests to use orthogonal prelude imports.
+  - Add a Semgrep rule and fixture coverage for examples and benchmarks that bypass focused preludes.
+  - Verify pinned shfmt binaries in CI with explicit SHA256 values instead of downloading a missing upstream checksum file.
+
+### Performance
+
+- Expand profiling benchmarks around public API workflows [#349](https://github.com/acgetchell/delaunay/pull/349)
+  [`0acbf65`](https://github.com/acgetchell/delaunay/commit/0acbf651b57c287aecc10bd51eea55fdbcbe2442)
+
+- Run profiling comparisons with the checked-out crate toolchain by default
+  - Add local `just profile` support for comparing code refs and compiler versions
+  - Expand `ci_performance_suite` beyond construction to cover hulls, boundary traversal, validation, and bistellar flips
+  - Emit a versioned API benchmark manifest so benchmark logs show which public workflows were measured
+
 ## [0.7.6] - 2026-04-25
 
 ### ⚠️ Breaking Changes
@@ -14,6 +124,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Merged Pull Requests
 
+- Release v0.7.6 [#347](https://github.com/acgetchell/delaunay/pull/347)
 - Preserve fallback rebuild cell data [#305](https://github.com/acgetchell/delaunay/pull/305) [#346](https://github.com/acgetchell/delaunay/pull/346)
 - Switch coverage reporting to cargo-llvm-cov [#345](https://github.com/acgetchell/delaunay/pull/345)
 - Clarify research scope and changelog hygiene [#344](https://github.com/acgetchell/delaunay/pull/344)
@@ -502,6 +613,13 @@ Bumps [actions/setup-node](https://github.com/actions/setup-node) from 6.3.0 to 
   - Add GitHub issue templates and clarify private vulnerability reporting guidance.
   - Tighten Python lint/typecheck settings and clean up benchmark/changelog utility diagnostics.
   - Add changelog post-processing coverage for version-heading reset behavior.
+- Release v0.7.6 [#347](https://github.com/acgetchell/delaunay/pull/347)
+  [`6e437fb`](https://github.com/acgetchell/delaunay/commit/6e437fb5869f7ada49d6760114c4d25f15eb9b29)
+
+- Bump version to v0.7.6
+  - Update changelog with latest changes
+  - Update documentation for release
+  - Add performance results for v0.7.6
 
 ## [0.7.5] - 2026-04-10
 
@@ -2866,6 +2984,7 @@ Older releases are archived by minor series:
 - [0.3.x](docs/archive/changelog/0.3.md)
 - [0.2.x](docs/archive/changelog/0.2.md)
 
+[unreleased]: https://github.com/acgetchell/delaunay/compare/v0.7.6..HEAD
 [0.7.6]: https://github.com/acgetchell/delaunay/compare/v0.7.5..v0.7.6
 [0.7.5]: https://github.com/acgetchell/delaunay/compare/v0.7.4..v0.7.5
 [0.7.4]: https://github.com/acgetchell/delaunay/compare/v0.7.3..v0.7.4

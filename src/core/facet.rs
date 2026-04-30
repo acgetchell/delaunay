@@ -35,6 +35,7 @@
 //!
 //! ```rust
 //! use delaunay::prelude::triangulation::*;
+//! use delaunay::prelude::tds::FacetView;
 //!
 //! // Create vertices for a tetrahedron
 //! let vertices = vec![
@@ -78,7 +79,7 @@ use thiserror::Error;
 /// # Examples
 ///
 /// ```rust
-/// use delaunay::core::facet::FacetError;
+/// use delaunay::prelude::tds::FacetError;
 ///
 /// let err = FacetError::FacetNotFoundInTriangulation;
 /// assert!(matches!(err, FacetError::FacetNotFoundInTriangulation));
@@ -219,6 +220,7 @@ pub enum FacetError {
 ///
 /// ```rust
 /// use delaunay::prelude::triangulation::*;
+/// use delaunay::prelude::tds::{FacetHandle, FacetView};
 ///
 /// let vertices = vec![
 ///     vertex!([0.0, 0.0, 0.0]),
@@ -253,6 +255,7 @@ impl FacetHandle {
     ///
     /// ```rust
     /// use delaunay::prelude::triangulation::*;
+    /// use delaunay::prelude::tds::FacetHandle;
     ///
     /// let vertices = vec![
     ///     vertex!([0.0, 0.0]),
@@ -280,6 +283,7 @@ impl FacetHandle {
     ///
     /// ```rust
     /// use delaunay::prelude::triangulation::*;
+    /// use delaunay::prelude::tds::FacetHandle;
     ///
     /// let vertices = vec![
     ///     vertex!([0.0, 0.0]),
@@ -303,6 +307,7 @@ impl FacetHandle {
     ///
     /// ```rust
     /// use delaunay::prelude::triangulation::*;
+    /// use delaunay::prelude::tds::FacetHandle;
     ///
     /// let vertices = vec![
     ///     vertex!([0.0, 0.0]),
@@ -352,8 +357,8 @@ impl FacetHandle {
 /// # Examples
 ///
 /// ```rust,no_run
-/// use delaunay::core::facet::FacetView;
-/// use delaunay::core::tds::{Tds, CellKey};
+/// use delaunay::prelude::tds::FacetView;
+/// use delaunay::prelude::tds::{Tds, CellKey};
 ///
 /// // This is a conceptual example showing FacetView usage
 /// // In practice, tds and cell_key would come from your triangulation
@@ -436,6 +441,7 @@ where
     ///
     /// ```rust
     /// use delaunay::prelude::triangulation::*;
+    /// use delaunay::prelude::tds::FacetView;
     ///
     /// let vertices = vec![
     ///     vertex!([0.0, 0.0, 0.0]),
@@ -498,6 +504,7 @@ where
     ///
     /// ```rust
     /// use delaunay::prelude::triangulation::*;
+    /// use delaunay::prelude::tds::FacetView;
     ///
     /// let vertices = vec![
     ///     vertex!([0.0, 0.0, 0.0]),
@@ -551,6 +558,7 @@ where
     ///
     /// ```rust
     /// use delaunay::prelude::triangulation::*;
+    /// use delaunay::prelude::tds::FacetView;
     ///
     /// let vertices = vec![
     ///     vertex!([0.0, 0.0, 0.0]),
@@ -602,6 +610,7 @@ where
     ///
     /// ```rust
     /// use delaunay::prelude::triangulation::*;
+    /// use delaunay::prelude::tds::FacetView;
     ///
     /// let vertices = vec![
     ///     vertex!([0.0, 0.0, 0.0]),
@@ -640,6 +649,7 @@ where
     ///
     /// ```rust
     /// use delaunay::prelude::triangulation::*;
+    /// use delaunay::prelude::tds::FacetView;
     ///
     /// let vertices = vec![
     ///     vertex!([0.0, 0.0, 0.0]),
@@ -757,7 +767,7 @@ where
 ///
 /// ```rust
 /// use delaunay::prelude::triangulation::*;
-/// use delaunay::core::facet::all_facets_for_cell;
+/// use delaunay::prelude::tds::all_facets_for_cell;
 ///
 /// let vertices = vec![
 ///     vertex!([0.0, 0.0, 0.0]),
@@ -805,7 +815,7 @@ where
 /// # Examples
 ///
 /// ```rust
-/// use delaunay::core::facet::AllFacetsIter;
+/// use delaunay::prelude::tds::AllFacetsIter;
 /// use delaunay::prelude::triangulation::*;
 ///
 /// let vertices = vec![
@@ -844,7 +854,7 @@ where
     /// # Examples
     ///
     /// ```rust
-    /// use delaunay::core::facet::AllFacetsIter;
+    /// use delaunay::prelude::tds::AllFacetsIter;
     /// use delaunay::prelude::triangulation::*;
     ///
     /// let vertices = vec![
@@ -936,7 +946,7 @@ where
 /// # Examples
 ///
 /// ```rust
-/// use delaunay::core::facet::BoundaryFacetsIter;
+/// use delaunay::prelude::tds::BoundaryFacetsIter;
 /// use delaunay::prelude::triangulation::*;
 ///
 /// let vertices = vec![
@@ -968,7 +978,7 @@ where
     /// # Examples
     ///
     /// ```rust
-    /// use delaunay::core::facet::BoundaryFacetsIter;
+    /// use delaunay::prelude::tds::BoundaryFacetsIter;
     /// use delaunay::prelude::triangulation::*;
     ///
     /// let vertices = vec![
@@ -1051,8 +1061,8 @@ where
 /// # Examples
 ///
 /// ```
-/// use delaunay::core::facet::facet_key_from_vertices;
-/// use delaunay::core::tds::VertexKey;
+/// use delaunay::prelude::tds::facet_key_from_vertices;
+/// use delaunay::prelude::tds::VertexKey;
 /// use slotmap::Key;
 ///
 /// // Create some vertex keys (normally these would come from a TDS)
@@ -1446,8 +1456,8 @@ mod tests {
                         let facet2 = FacetView::new(dt.tds(), cell_key, 0).unwrap();
                         let facet3 = FacetView::new(dt.tds(), cell_key, 1).unwrap();
 
-                        assert_eq!(facet1, facet2, "Same facet should be equal");
-                        assert_ne!(facet1, facet3, "Different facets should not be equal");
+                        assert!(facet1 == facet2, "Same facet should be equal");
+                        assert!(facet1 != facet3, "Different facets should not be equal");
                     }
 
                     #[test]

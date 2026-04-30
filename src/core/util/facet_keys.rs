@@ -34,7 +34,7 @@ use thiserror::Error;
 ///
 /// ```
 /// use delaunay::prelude::query::*;
-/// use delaunay::core::util::checked_facet_key_from_vertex_keys;
+/// use delaunay::prelude::tds::checked_facet_key_from_vertex_keys;
 ///
 /// let vertices = vec![
 ///     vertex!([0.0, 0.0, 0.0]),
@@ -205,8 +205,8 @@ pub(crate) fn periodic_facet_key_from_lifted_vertices<const D: usize>(
 /// # Examples
 ///
 /// ```rust,no_run
-/// use delaunay::core::util::verify_facet_index_consistency;
-/// use delaunay::core::tds::Tds;
+/// use delaunay::prelude::tds::verify_facet_index_consistency;
+/// use delaunay::prelude::tds::Tds;
 ///
 /// fn validate_neighbor_consistency(
 ///     tds: &Tds<f64, (), (), 3>,
@@ -296,7 +296,7 @@ pub fn verify_facet_index_consistency<const D: usize>(
 /// # Examples
 ///
 /// ```
-/// use delaunay::core::util::usize_to_u8;
+/// use delaunay::prelude::tds::usize_to_u8;
 ///
 /// // Successful conversion
 /// assert_eq!(usize_to_u8(0, 4), Ok(0));

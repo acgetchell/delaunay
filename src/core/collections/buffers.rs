@@ -67,7 +67,7 @@ pub type CellKeyBuffer = SmallBuffer<CellKey, CLEANUP_OPERATION_BUFFER_SIZE>;
 /// # Examples
 ///
 /// ```rust
-/// use delaunay::core::collections::BadCellBuffer;
+/// use delaunay::prelude::collections::BadCellBuffer;
 ///
 /// // Accumulate bad cells during insertion
 /// let mut bad_cells: BadCellBuffer = BadCellBuffer::new();
@@ -129,7 +129,7 @@ pub type CavityBoundaryBuffer = SmallBuffer<FacetHandle, 64>;
 /// # Examples
 ///
 /// ```rust
-/// use delaunay::core::collections::FacetSharingCellsBuffer;
+/// use delaunay::prelude::collections::FacetSharingCellsBuffer;
 ///
 /// let mut sharing_cells: FacetSharingCellsBuffer = FacetSharingCellsBuffer::new();
 /// assert!(sharing_cells.is_empty());
@@ -180,8 +180,8 @@ pub type VertexKeyBuffer = SimplexVertexBuffer<VertexKey>;
 /// # Examples
 ///
 /// ```rust
-/// use delaunay::core::collections::NeighborBuffer;
-/// use delaunay::core::tds::CellKey;
+/// use delaunay::prelude::collections::NeighborBuffer;
+/// use delaunay::prelude::tds::CellKey;
 ///
 /// let mut neighbors: NeighborBuffer<Option<CellKey>> = NeighborBuffer::new();
 /// assert!(neighbors.is_empty());

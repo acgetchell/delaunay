@@ -112,12 +112,14 @@ use crate::core::algorithms::incremental_insertion::{
     HullExtensionReason, InsertionError, extend_hull, external_facets_for_boundary, fill_cavity,
     repair_neighbor_pointers, wire_cavity_neighbors,
 };
+#[cfg(debug_assertions)]
+use crate::core::algorithms::locate::locate_with_stats;
+#[cfg(feature = "diagnostics")]
+use crate::core::algorithms::locate::verify_conflict_region_completeness;
 use crate::core::algorithms::locate::{
     ConflictError, LocateResult, extract_cavity_boundary, find_conflict_region, locate,
     locate_by_scan,
 };
-#[cfg(debug_assertions)]
-use crate::core::algorithms::locate::{locate_with_stats, verify_conflict_region_completeness};
 use crate::core::cell::{Cell, CellValidationError};
 use crate::core::collections::spatial_hash_grid::HashGridIndex;
 use crate::core::collections::{
@@ -491,8 +493,8 @@ pub(crate) fn insertion_error_to_invariant_error(
 /// # Examples
 ///
 /// ```rust
-/// use delaunay::core::triangulation::{Triangulation, TriangulationConstructionError};
-/// use delaunay::geometry::kernel::FastKernel;
+/// use delaunay::prelude::triangulation::{Triangulation, TriangulationConstructionError};
+/// use delaunay::prelude::geometry::FastKernel;
 /// use delaunay::vertex;
 ///
 /// let vertices = vec![
@@ -563,7 +565,7 @@ pub enum TriangulationConstructionError {
 /// # Examples
 ///
 /// ```rust
-/// use delaunay::core::tds::InvariantError;
+/// use delaunay::prelude::tds::InvariantError;
 /// use delaunay::prelude::triangulation::*;
 ///
 /// let vertices = vec![
@@ -794,8 +796,8 @@ pub(crate) struct DetailedInsertionResult {
 /// # Examples
 ///
 /// ```rust
-/// use delaunay::core::operations::SuspicionFlags;
-/// use delaunay::core::triangulation::ValidationPolicy;
+/// use delaunay::prelude::triangulation::operations::SuspicionFlags;
+/// use delaunay::prelude::triangulation::ValidationPolicy;
 ///
 /// let policy = ValidationPolicy::OnSuspicion;
 /// let suspicion = SuspicionFlags { perturbation_used: true, ..SuspicionFlags::default() };
@@ -942,7 +944,7 @@ impl TopologyGuarantee {
     /// # Examples
     ///
     /// ```rust
-    /// use delaunay::core::triangulation::{TopologyGuarantee, ValidationPolicy};
+    /// use delaunay::prelude::triangulation::{TopologyGuarantee, ValidationPolicy};
     ///
     /// assert_eq!(
     ///     TopologyGuarantee::PLManifoldStrict.default_validation_policy(),
@@ -987,8 +989,8 @@ impl TopologyGuarantee {
 /// # Examples
 ///
 /// ```rust
-/// use delaunay::core::triangulation::Triangulation;
-/// use delaunay::geometry::kernel::FastKernel;
+/// use delaunay::prelude::triangulation::Triangulation;
+/// use delaunay::prelude::geometry::FastKernel;
 ///
 /// let tri: Triangulation<FastKernel<f64>, (), (), 3> =
 ///     Triangulation::new_empty(FastKernel::new());
@@ -1141,8 +1143,8 @@ where
     /// # Examples
     ///
     /// ```rust
-    /// use delaunay::core::triangulation::{Triangulation, ValidationPolicy};
-    /// use delaunay::geometry::kernel::FastKernel;
+    /// use delaunay::prelude::triangulation::{Triangulation, ValidationPolicy};
+    /// use delaunay::prelude::geometry::FastKernel;
     ///
     /// let tri: Triangulation<FastKernel<f64>, (), (), 2> =
     ///     Triangulation::new_empty(FastKernel::new());
@@ -1166,8 +1168,8 @@ where
     /// # Examples
     ///
     /// ```rust
-    /// use delaunay::core::triangulation::{Triangulation, ValidationPolicy};
-    /// use delaunay::geometry::kernel::FastKernel;
+    /// use delaunay::prelude::triangulation::{Triangulation, ValidationPolicy};
+    /// use delaunay::prelude::geometry::FastKernel;
     ///
     /// let mut tri: Triangulation<FastKernel<f64>, (), (), 2> =
     ///     Triangulation::new_empty(FastKernel::new());
@@ -1213,8 +1215,8 @@ where
     /// # Examples
     ///
     /// ```rust
-    /// use delaunay::core::triangulation::{TopologyGuarantee, Triangulation};
-    /// use delaunay::geometry::kernel::FastKernel;
+    /// use delaunay::prelude::triangulation::{TopologyGuarantee, Triangulation};
+    /// use delaunay::prelude::geometry::FastKernel;
     ///
     /// let mut tri: Triangulation<FastKernel<f64>, (), (), 2> =
     ///     Triangulation::new_empty(FastKernel::new());
@@ -1262,9 +1264,10 @@ where
     /// # Examples
     ///
     /// ```rust
-    /// use delaunay::core::triangulation::Triangulation;
+    /// use delaunay::prelude::geometry::FastKernel;
+    /// use delaunay::prelude::triangulation::Triangulation;
     ///
-    /// let count = Triangulation::<delaunay::geometry::kernel::FastKernel<f64>, (), (), 3>
+    /// let count = Triangulation::<FastKernel<f64>, (), (), 3>
     ///     ::topology_safety_net_star_split_fallback_successes();
     /// assert!(count >= 0);
     /// ```
@@ -1282,9 +1285,10 @@ where
     /// # Examples
     ///
     /// ```rust
-    /// use delaunay::core::triangulation::{DuplicateDetectionMetrics, Triangulation};
+    /// use delaunay::prelude::geometry::FastKernel;
+    /// use delaunay::prelude::triangulation::{DuplicateDetectionMetrics, Triangulation};
     ///
-    /// let metrics = Triangulation::<delaunay::geometry::kernel::FastKernel<f64>, (), (), 3>
+    /// let metrics = Triangulation::<FastKernel<f64>, (), (), 3>
     ///     ::duplicate_detection_metrics();
     /// let _ = metrics; // None unless DELAUNAY_DUPLICATE_METRICS is set
     /// ```
@@ -5163,7 +5167,7 @@ where
                 // a star-split of that cell to keep the simplicial complex connected.
                 let computed = find_conflict_region(&self.tds, &self.kernel, &point, start_cell)?;
 
-                #[cfg(debug_assertions)]
+                #[cfg(feature = "diagnostics")]
                 if std::env::var_os("DELAUNAY_DEBUG_CONFLICT_VERIFY").is_some() {
                     let missed = verify_conflict_region_completeness(
                         &self.tds,
@@ -6014,7 +6018,7 @@ where
     /// # Examples
     ///
     /// ```rust
-    /// use delaunay::core::collections::FacetIssuesMap;
+    /// use delaunay::prelude::collections::FacetIssuesMap;
     /// use delaunay::prelude::triangulation::*;
     ///
     /// // Start with a valid 2D simplex.

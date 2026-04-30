@@ -16,7 +16,7 @@ use rand::seq::SliceRandom;
 fn init_tracing() {
     static INIT: std::sync::Once = std::sync::Once::new();
     INIT.call_once(|| {
-        let default_filter = if cfg!(feature = "test-debug") {
+        let default_filter = if cfg!(feature = "diagnostics") {
             "info"
         } else {
             "warn"
@@ -32,12 +32,12 @@ fn init_tracing() {
 
 macro_rules! test_debug_info {
     ($($arg:tt)*) => {{
-        #[cfg(feature = "test-debug")]
+        #[cfg(feature = "diagnostics")]
         {
             init_tracing();
             tracing::info!($($arg)*);
         }
-        #[cfg(not(feature = "test-debug"))]
+        #[cfg(not(feature = "diagnostics"))]
         {
             let _ = format_args!($($arg)*);
         }
@@ -46,12 +46,12 @@ macro_rules! test_debug_info {
 
 macro_rules! test_debug_warn {
     ($($arg:tt)*) => {{
-        #[cfg(feature = "test-debug")]
+        #[cfg(feature = "diagnostics")]
         {
             init_tracing();
             tracing::warn!($($arg)*);
         }
-        #[cfg(not(feature = "test-debug"))]
+        #[cfg(not(feature = "diagnostics"))]
         {
             let _ = format_args!($($arg)*);
         }
@@ -274,7 +274,7 @@ fn debug_issue_120_empty_circumsphere_5d() {
     }
 
     if let Err(err) = dt.is_valid() {
-        #[cfg(debug_assertions)]
+        #[cfg(feature = "diagnostics")]
         {
             delaunay::core::util::debug_print_first_delaunay_violation(dt.tds(), None);
         }

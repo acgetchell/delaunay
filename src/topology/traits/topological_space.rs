@@ -16,7 +16,7 @@ use thiserror::Error;
 /// # Examples
 ///
 /// ```rust
-/// use delaunay::topology::traits::topological_space::TopologyError;
+/// use delaunay::prelude::topology::spaces::TopologyError;
 ///
 /// let error = TopologyError::Counting("Failed to enumerate edges".to_string());
 /// assert_eq!(error.to_string(), "Failed to count simplices: Failed to enumerate edges");
@@ -64,7 +64,7 @@ pub enum TopologyError {
 /// # Examples
 ///
 /// ```rust
-/// use delaunay::topology::traits::topological_space::TopologyKind;
+/// use delaunay::prelude::topology::spaces::TopologyKind;
 ///
 /// let kind = TopologyKind::Euclidean;
 /// assert_eq!(format!("{:?}", kind), "Euclidean");
@@ -172,7 +172,7 @@ impl<const D: usize> GlobalTopology<D> {
     /// # Examples
     ///
     /// ```rust
-    /// use delaunay::topology::traits::topological_space::GlobalTopology;
+    /// use delaunay::prelude::topology::spaces::GlobalTopology;
     ///
     /// let topo = GlobalTopology::<3>::Euclidean;
     /// assert!(topo.is_euclidean());
@@ -223,7 +223,7 @@ impl<const D: usize> GlobalTopology<D> {
 /// # Examples
 ///
 /// ```rust
-/// use delaunay::topology::traits::topological_space::{TopologicalSpace, TopologyKind};
+/// use delaunay::prelude::topology::spaces::{TopologicalSpace, TopologyKind};
 ///
 /// // Future: EuclideanSpace will implement this trait
 /// // let space = EuclideanSpace::<3>::new();
@@ -243,7 +243,7 @@ pub trait TopologicalSpace {
     /// # Examples
     ///
     /// ```rust
-    /// use delaunay::topology::traits::topological_space::{TopologicalSpace, TopologyKind};
+    /// use delaunay::prelude::topology::spaces::{TopologicalSpace, TopologyKind};
     ///
     /// struct DummySpace;
     ///
@@ -280,7 +280,7 @@ pub trait TopologicalSpace {
     /// # Examples
     ///
     /// ```rust
-    /// use delaunay::topology::traits::topological_space::{TopologicalSpace, TopologyKind};
+    /// use delaunay::prelude::topology::spaces::{TopologicalSpace, TopologyKind};
     ///
     /// struct DummySpace {
     ///     allows: bool,
@@ -336,7 +336,7 @@ pub trait TopologicalSpace {
     /// # Examples
     ///
     /// ```rust
-    /// use delaunay::topology::traits::topological_space::{TopologicalSpace, TopologyKind};
+    /// use delaunay::prelude::topology::spaces::{TopologicalSpace, TopologyKind};
     ///
     /// struct ToroidalSpace {
     ///     domain: [f64; 2],
@@ -386,7 +386,7 @@ pub trait TopologicalSpace {
     /// # Examples
     ///
     /// ```rust
-    /// use delaunay::topology::traits::topological_space::{TopologicalSpace, TopologyKind};
+    /// use delaunay::prelude::topology::spaces::{TopologicalSpace, TopologyKind};
     ///
     /// struct DummySpace {
     ///     domain: Option<[f64; 2]>,

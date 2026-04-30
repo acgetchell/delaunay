@@ -72,9 +72,9 @@ fn is_zero_or_roundoff<T: CoordinateScalar>(value: T, scale: T) -> Result<bool, 
 /// # Examples
 ///
 /// ```
-/// use delaunay::geometry::point::Point;
-/// use delaunay::geometry::traits::coordinate::Coordinate;
-/// use delaunay::geometry::util::simplex_volume;
+/// use delaunay::prelude::geometry::Point;
+/// use delaunay::prelude::geometry::Coordinate;
+/// use delaunay::prelude::geometry::simplex_volume;
 /// use approx::assert_relative_eq;
 ///
 /// // 2D: Triangle area
@@ -350,9 +350,9 @@ where
 /// # Examples
 ///
 /// ```
-/// use delaunay::geometry::point::Point;
-/// use delaunay::geometry::traits::coordinate::Coordinate;
-/// use delaunay::geometry::util::inradius;
+/// use delaunay::prelude::geometry::Point;
+/// use delaunay::prelude::geometry::Coordinate;
+/// use delaunay::prelude::geometry::inradius;
 /// use approx::assert_relative_eq;
 ///
 /// // 2D: Equilateral triangle with side length 1
@@ -461,9 +461,9 @@ where
 /// # Examples
 ///
 /// ```
-/// use delaunay::geometry::point::Point;
-/// use delaunay::geometry::traits::coordinate::Coordinate;
-/// use delaunay::geometry::util::facet_measure;
+/// use delaunay::prelude::geometry::Point;
+/// use delaunay::prelude::geometry::Coordinate;
+/// use delaunay::prelude::geometry::facet_measure;
 /// use approx::assert_relative_eq;
 ///
 /// // 2D: Line segment length (1D facet in 2D space)
@@ -695,7 +695,7 @@ where
 ///
 /// ```
 /// use delaunay::prelude::query::*;
-/// use delaunay::geometry::util::surface_measure;
+/// use delaunay::prelude::geometry::surface_measure;
 ///
 /// // Create a triangulation and calculate surface measure of boundary facets
 /// let vertices = vec![
@@ -1102,7 +1102,7 @@ mod tests {
         ];
         let area_3d = facet_measure(&triangle_3d).unwrap();
         assert_relative_eq!(area_3d, 0.5, epsilon = 1e-10);
-        #[cfg(feature = "test-debug")]
+        #[cfg(feature = "diagnostics")]
         tracing::debug!("3D triangle area: {area_3d} (expected: 0.5)");
 
         // Test 1b: Nearly singular triangle should not error due to tiny negative det
@@ -1118,7 +1118,7 @@ mod tests {
         // Test 2: Same triangle but use direct Gram matrix calculation
         let area_3d_gram = facet_measure_gram_matrix::<f64, 3>(&triangle_3d).unwrap();
         assert_relative_eq!(area_3d_gram, 0.5, epsilon = 1e-10);
-        #[cfg(feature = "test-debug")]
+        #[cfg(feature = "diagnostics")]
         tracing::debug!("3D triangle area (Gram): {area_3d_gram} (expected: 0.5)");
 
         // Test 3: Unit tetrahedron in 4D - should be 1/6 ≈ 0.167
@@ -1130,7 +1130,7 @@ mod tests {
         ];
         let volume_4d = facet_measure(&tetrahedron_4d).unwrap();
         assert_relative_eq!(volume_4d, 1.0 / 6.0, epsilon = 1e-10);
-        #[cfg(feature = "test-debug")]
+        #[cfg(feature = "diagnostics")]
         tracing::debug!(
             "4D tetrahedron volume: {} (expected: {})",
             volume_4d,
@@ -1140,7 +1140,7 @@ mod tests {
         // Test 4: Manual calculation for the 4D tetrahedron
         let volume_4d_gram = facet_measure_gram_matrix::<f64, 4>(&tetrahedron_4d).unwrap();
         assert_relative_eq!(volume_4d_gram, 1.0 / 6.0, epsilon = 1e-10);
-        #[cfg(feature = "test-debug")]
+        #[cfg(feature = "diagnostics")]
         tracing::debug!(
             "4D tetrahedron volume (Gram): {} (expected: {})",
             volume_4d_gram,

@@ -408,7 +408,7 @@ just bench-dev        # Reduced-sample perf-profile comparison (~1-2 min)
 - `just test-release` - All tests in release mode
 - `just test-slow` - Run slow/stress tests with --features slow-tests
 - `just test-slow-release` - Slow tests in release mode (faster)
-- `just test-debug` - Debug tools with output
+- `just test-diagnostics` - Diagnostics tools with output
 - `just debug-large-scale-*` - Active large-scale debug harnesses retained
   while issues #307 and #204 are being fixed
 - `just test-allocation` - Memory allocation profiling

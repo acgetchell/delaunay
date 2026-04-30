@@ -26,7 +26,7 @@ static STRICT_INSPHERE_CONSISTENCY: LazyLock<bool> =
 /// # Examples
 ///
 /// ```rust
-/// use delaunay::geometry::robust_predicates::ConsistencyResult;
+/// use delaunay::prelude::geometry::ConsistencyResult;
 ///
 /// let result = ConsistencyResult::Consistent;
 /// assert!(result.is_consistent());
@@ -116,10 +116,10 @@ pub enum InsphereConsistencyError {
 ///
 /// Example (3D):
 /// ```rust
-/// use delaunay::geometry::point::Point;
-/// use delaunay::geometry::robust_predicates::robust_insphere;
-/// use delaunay::geometry::predicates::InSphere;
-/// use delaunay::geometry::traits::coordinate::Coordinate;
+/// use delaunay::prelude::geometry::Point;
+/// use delaunay::prelude::geometry::robust_insphere;
+/// use delaunay::prelude::geometry::InSphere;
+/// use delaunay::prelude::geometry::Coordinate;
 ///
 /// let tetra = vec![
 ///     Point::new([0.0, 0.0, 0.0]),
@@ -344,10 +344,10 @@ where
 /// # Examples
 ///
 /// ```rust
-/// use delaunay::geometry::point::Point;
-/// use delaunay::geometry::predicates::Orientation;
-/// use delaunay::geometry::robust_predicates::robust_orientation;
-/// use delaunay::geometry::traits::coordinate::Coordinate;
+/// use delaunay::prelude::geometry::Point;
+/// use delaunay::prelude::geometry::Orientation;
+/// use delaunay::prelude::geometry::robust_orientation;
+/// use delaunay::prelude::geometry::Coordinate;
 ///
 /// let tri = vec![
 ///     Point::new([0.0, 0.0]),

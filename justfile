@@ -283,7 +283,7 @@ help-workflows:
     @echo "  just examples          # Run all examples"
     @echo ""
     @echo "Active large-scale debugging:"
-    @echo "  just test-debug            # Run debug tools with output"
+    @echo "  just test-diagnostics      # Run diagnostics tools with output"
     @echo "  just debug-large-scale-4d [n] # Issue #340: 4D large-scale runtime (default n=3000)"
     @echo "  just debug-large-scale-3d [n] # Issue #341: 3D scalability (default n=10000)"
     @echo "  just debug-large-scale-5d [n] # Issue #342: 5D feasibility (default n=1000)"
@@ -832,8 +832,8 @@ test-all: test-unit test-integration test-python
 test-allocation:
     cargo test --test allocation_api --features count-allocations -- --nocapture
 
-test-debug:
-    cargo test --test circumsphere_debug_tools -- --nocapture
+test-diagnostics:
+    cargo test --test circumsphere_debug_tools --features diagnostics -- --nocapture
 
 # test-integration: runs all integration tests (includes proptests) in release mode.
 # Release mode is required because exact-predicate arithmetic in debug mode makes

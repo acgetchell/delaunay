@@ -24,7 +24,7 @@ use crate::topology::{
 ///
 /// ```rust
 /// use delaunay::prelude::query::*;
-/// use delaunay::topology::characteristics::validation;
+/// use delaunay::prelude::topology::validation;
 ///
 /// let vertices = vec![
 ///     vertex!([0.0, 0.0, 0.0]),
@@ -65,7 +65,7 @@ impl TopologyCheckResult {
     /// # Examples
     ///
     /// ```rust
-    /// use delaunay::topology::characteristics::{euler::*, validation::TopologyCheckResult};
+    /// use delaunay::prelude::topology::validation::{euler::*, TopologyCheckResult};
     ///
     /// let valid_result = TopologyCheckResult {
     ///     chi: 1,
@@ -109,7 +109,7 @@ impl TopologyCheckResult {
 ///
 /// ```rust
 /// use delaunay::prelude::query::*;
-/// use delaunay::topology::characteristics::validation;
+/// use delaunay::prelude::topology::validation;
 ///
 /// let vertices = vec![
 ///     vertex!([0.0, 0.0]),

@@ -367,6 +367,27 @@ rules:
       - pattern-regex: '^\s*use\s+delaunay::(core|geometry|triangulation|topology)::'
       - pattern-not-regex: '^\s*use\s+delaunay::prelude::'
 
+  - id: delaunay.rust.prefer-prelude-imports-in-triangulation-doctests
+    languages:
+      - rust
+    severity: WARNING
+    message: >-
+      Use focused delaunay::prelude imports in public triangulation doctests
+      instead of deep crate module paths.
+    metadata:
+      category: maintainability
+      tracking_issue: "https://github.com/acgetchell/delaunay/issues/355"
+      rationale: >-
+        Public doctests should model the small, orthogonal prelude import
+        surfaces that users can copy into their own code.
+    paths:
+      include:
+        - "/src/**/*.rs"
+        - "/tests/semgrep/src/project_rules/**/*.rs"
+    patterns:
+      - pattern-regex: '^\s*//[/!]\s*(?:#\s*)?use\s+delaunay::(core|geometry|triangulation|topology)::'
+      - pattern-not-regex: '^\s*//[/!]\s*(?:#\s*)?use\s+delaunay::prelude::'
+
   - id: delaunay.python.no-broad-exception
     languages:
       - python

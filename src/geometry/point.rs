@@ -61,8 +61,8 @@ use std::marker::PhantomData;
 /// # Examples
 ///
 /// ```rust
-/// use delaunay::geometry::point::Point;
-/// use delaunay::geometry::traits::coordinate::Coordinate;
+/// use delaunay::prelude::geometry::Point;
+/// use delaunay::prelude::geometry::Coordinate;
 ///
 /// let p = Point::new([1.0, 2.0]);
 /// assert_eq!(p.coords(), &[1.0, 2.0]);
@@ -92,8 +92,8 @@ where
     /// # Example
     ///
     /// ```rust
-    /// use delaunay::geometry::point::Point;
-    /// use delaunay::geometry::traits::coordinate::Coordinate;
+    /// use delaunay::prelude::geometry::Point;
+    /// use delaunay::prelude::geometry::Coordinate;
     ///
     /// let point = Point::new([1.0, 2.0, 3.0]);
     /// let coords = point.coords();
@@ -402,8 +402,8 @@ where
     /// # Example
     ///
     /// ```rust
-    /// use delaunay::geometry::point::Point;
-    /// use delaunay::geometry::traits::coordinate::Coordinate;
+    /// use delaunay::prelude::geometry::Point;
+    /// use delaunay::prelude::geometry::Coordinate;
     /// let point = Point::new([1.0, 2.0]);
     /// let coords: [f64; 2] = point.into();
     /// assert_eq!(coords, [1.0, 2.0]);
@@ -421,8 +421,8 @@ where
     /// # Example
     ///
     /// ```rust
-    /// use delaunay::geometry::point::Point;
-    /// use delaunay::geometry::traits::coordinate::Coordinate;
+    /// use delaunay::prelude::geometry::Point;
+    /// use delaunay::prelude::geometry::Coordinate;
     /// let point = Point::new([3.0, 4.0]);
     /// let coords: [f64; 2] = (&point).into();
     /// assert_eq!(coords, [3.0, 4.0]);

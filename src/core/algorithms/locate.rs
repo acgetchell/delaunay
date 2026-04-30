@@ -69,8 +69,8 @@ fn ridge_fan_dump_enabled() -> bool {
 /// # Examples
 ///
 /// ```rust
-/// use delaunay::core::algorithms::locate::LocateResult;
-/// use delaunay::core::tds::VertexKey;
+/// use delaunay::prelude::query::LocateResult;
+/// use delaunay::prelude::tds::VertexKey;
 /// use slotmap::KeyData;
 ///
 /// let vertex = VertexKey::from(KeyData::from_ffi(2));
@@ -96,7 +96,7 @@ pub enum LocateResult {
 /// # Examples
 ///
 /// ```rust
-/// use delaunay::core::algorithms::locate::LocateError;
+/// use delaunay::prelude::query::LocateError;
 ///
 /// let err = LocateError::EmptyTriangulation;
 /// assert!(matches!(err, LocateError::EmptyTriangulation));
@@ -128,8 +128,8 @@ pub enum LocateError {
 /// # Examples
 ///
 /// ```rust
-/// use delaunay::core::algorithms::locate::ConflictError;
-/// use delaunay::core::tds::CellKey;
+/// use delaunay::prelude::query::ConflictError;
+/// use delaunay::prelude::tds::CellKey;
 /// use slotmap::KeyData;
 ///
 /// let cell_key = CellKey::from(KeyData::from_ffi(5));
@@ -295,7 +295,7 @@ pub enum ConflictError {
 /// # Examples
 ///
 /// ```rust
-/// use delaunay::core::algorithms::locate::{ConflictError, InternalInconsistencySite};
+/// use delaunay::prelude::query::{ConflictError, InternalInconsistencySite};
 ///
 /// let site = InternalInconsistencySite::RidgeFanExtraFacetOutOfBounds {
 ///     index: 7,
@@ -585,7 +585,7 @@ fn collect_ridge_fan_extra_cells(
 /// # Examples
 ///
 /// ```rust
-/// use delaunay::core::algorithms::locate::LocateFallbackReason;
+/// use delaunay::prelude::query::LocateFallbackReason;
 ///
 /// let reason = LocateFallbackReason::StepLimit;
 /// assert_eq!(reason, LocateFallbackReason::StepLimit);
@@ -603,7 +603,7 @@ pub enum LocateFallbackReason {
 /// # Examples
 ///
 /// ```rust
-/// use delaunay::core::algorithms::locate::{LocateFallback, LocateFallbackReason};
+/// use delaunay::prelude::query::{LocateFallback, LocateFallbackReason};
 ///
 /// let fallback = LocateFallback {
 ///     reason: LocateFallbackReason::CycleDetected,
@@ -627,8 +627,8 @@ pub struct LocateFallback {
 /// # Examples
 ///
 /// ```rust
-/// use delaunay::core::algorithms::locate::LocateStats;
-/// use delaunay::core::tds::CellKey;
+/// use delaunay::prelude::query::LocateStats;
+/// use delaunay::prelude::tds::CellKey;
 /// use slotmap::KeyData;
 ///
 /// let stats = LocateStats {
@@ -725,7 +725,7 @@ impl LocateStats {
 /// Using a hint cell for faster location:
 ///
 /// ```rust
-/// use delaunay::geometry::kernel::RobustKernel;
+/// use delaunay::prelude::geometry::RobustKernel;
 /// use delaunay::prelude::algorithms::*;
 /// use delaunay::prelude::query::*;
 ///
@@ -1029,11 +1029,11 @@ where
 /// # Examples
 ///
 /// ```rust
-/// use delaunay::core::algorithms::locate::{locate, find_conflict_region, LocateResult};
+/// use delaunay::prelude::query::{locate, find_conflict_region, LocateResult};
 /// use delaunay::prelude::DelaunayTriangulation;
-/// use delaunay::geometry::kernel::FastKernel;
-/// use delaunay::geometry::point::Point;
-/// use delaunay::geometry::traits::coordinate::Coordinate;
+/// use delaunay::prelude::geometry::FastKernel;
+/// use delaunay::prelude::geometry::Point;
+/// use delaunay::prelude::geometry::Coordinate;
 /// use delaunay::vertex;
 ///
 /// // Create a 4D simplex (5 vertices forming a 4-simplex)
@@ -1255,7 +1255,7 @@ where
 /// Activated by setting `DELAUNAY_DEBUG_CONFLICT_VERIFY=1`.
 ///
 /// Returns the number of missed cells (0 means the BFS result is complete).
-#[cfg(debug_assertions)]
+#[cfg(any(test, feature = "diagnostics"))]
 pub fn verify_conflict_region_completeness<K, U, V, const D: usize>(
     tds: &Tds<K::Scalar, U, V, D>,
     kernel: &K,
@@ -1398,9 +1398,9 @@ where
 /// # Examples
 ///
 /// ```rust
-/// use delaunay::core::algorithms::locate::extract_cavity_boundary;
-/// use delaunay::core::collections::CellKeyBuffer;
-/// use delaunay::core::tds::Tds;
+/// use delaunay::prelude::query::extract_cavity_boundary;
+/// use delaunay::prelude::collections::CellKeyBuffer;
+/// use delaunay::prelude::tds::Tds;
 ///
 /// let tds: Tds<f64, (), (), 3> = Tds::empty();
 /// let boundary = extract_cavity_boundary(&tds, &CellKeyBuffer::new()).unwrap();
@@ -1409,11 +1409,11 @@ where
 ///
 ///
 /// ```rust
-/// use delaunay::core::algorithms::locate::{locate, find_conflict_region, extract_cavity_boundary, LocateResult};
+/// use delaunay::prelude::query::{locate, find_conflict_region, extract_cavity_boundary, LocateResult};
 /// use delaunay::prelude::DelaunayTriangulation;
-/// use delaunay::geometry::kernel::FastKernel;
-/// use delaunay::geometry::point::Point;
-/// use delaunay::geometry::traits::coordinate::Coordinate;
+/// use delaunay::prelude::geometry::FastKernel;
+/// use delaunay::prelude::geometry::Point;
+/// use delaunay::prelude::geometry::Coordinate;
 /// use delaunay::vertex;
 ///
 /// // Create a 4D simplex
@@ -3061,8 +3061,8 @@ mod tests {
     // =============================================================================
     // VERIFY CONFLICT REGION COMPLETENESS TESTS
     // =============================================================================
-    // The function under test is #[cfg(debug_assertions)], so these tests are
-    // also gated to avoid compilation errors in release/bench builds.
+    // The production diagnostic is feature-gated; keep the unit coverage in
+    // debug builds to avoid adding cost to release/bench test runs.
 
     #[cfg(debug_assertions)]
     /// Macro to test `verify_conflict_region_completeness` across dimensions.

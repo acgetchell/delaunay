@@ -16,7 +16,7 @@ use thiserror::Error;
 /// # Examples
 ///
 /// ```rust
-/// use delaunay::core::util::JaccardComputationError;
+/// use delaunay::prelude::query::JaccardComputationError;
 ///
 /// let err = JaccardComputationError::SetSizeTooLarge {
 ///     intersection: 1,
@@ -78,7 +78,7 @@ where
 /// # Examples
 /// ```
 /// use std::collections::HashSet;
-/// use delaunay::core::util::jaccard_index;
+/// use delaunay::prelude::query::jaccard_index;
 ///
 /// // Identical sets => similarity 1.0
 /// let a: HashSet<_> = [1, 2, 3].into_iter().collect();
@@ -143,7 +143,7 @@ where
 /// # Examples
 /// ```
 /// use std::collections::HashSet;
-/// use delaunay::core::util::{jaccard_index, jaccard_distance};
+/// use delaunay::prelude::query::{jaccard_distance, jaccard_index};
 ///
 /// let a: HashSet<_> = [1, 2, 3].into_iter().collect();
 /// let b: HashSet<_> = [3, 4].into_iter().collect();
@@ -193,7 +193,7 @@ where
 ///
 /// ```
 /// use delaunay::prelude::query::*;
-/// use delaunay::core::util::extract_vertex_coordinate_set;
+/// use delaunay::prelude::query::extract_vertex_coordinate_set;
 ///
 /// let vertices = vec![
 ///     vertex!([0.0, 0.0, 0.0]),
@@ -250,7 +250,7 @@ const fn canonical_edge(u: u128, v: u128) -> (u128, u128) {
 ///
 /// ```
 /// use delaunay::prelude::query::*;
-/// use delaunay::core::util::extract_edge_set;
+/// use delaunay::prelude::query::extract_edge_set;
 ///
 /// let vertices = vec![
 ///     vertex!([0.0, 0.0, 0.0]),
@@ -322,7 +322,7 @@ where
 ///
 /// ```
 /// use delaunay::prelude::query::*;
-/// use delaunay::core::util::extract_facet_identifier_set;
+/// use delaunay::prelude::query::extract_facet_identifier_set;
 ///
 /// let vertices = vec![
 ///     vertex!([0.0, 0.0, 0.0]),
@@ -387,9 +387,9 @@ where
 /// # Examples
 ///
 /// ```
-/// use delaunay::core::util::extract_hull_facet_set;
-/// use delaunay::triangulation::delaunay::DelaunayTriangulation;
-/// use delaunay::geometry::algorithms::convex_hull::ConvexHull;
+/// use delaunay::prelude::query::extract_hull_facet_set;
+/// use delaunay::prelude::triangulation::DelaunayTriangulation;
+/// use delaunay::prelude::query::ConvexHull;
 /// use delaunay::vertex;
 ///
 /// let vertices: Vec<_> = vec![
@@ -456,7 +456,7 @@ where
 ///
 /// ```
 /// use std::collections::HashSet;
-/// use delaunay::core::util::format_jaccard_report;
+/// use delaunay::prelude::query::format_jaccard_report;
 ///
 /// let a: HashSet<i32> = [1, 2, 3, 4].into_iter().collect();
 /// let b: HashSet<i32> = [3, 4, 5, 6].into_iter().collect();

@@ -283,6 +283,12 @@ degenerate input, and tests under `tests/proptest_sos.rs` enforce that.
 - New functionality is additive: use `crate::prelude::*` (or the focused
   `prelude::triangulation`, `prelude::query`, etc.) for ergonomic
   re‑exports; never silently rename or remove a public item.
+- Focused preludes are an exception to preserving accidental breadth: keep
+  them narrow, orthogonal, and purpose-specific, bundling only related,
+  non-overlapping functionality. Prefer fixing an over-broad or ambiguous
+  focused prelude over maintaining backwards compatibility for unrelated
+  re-exports. The root `crate::prelude::*` remains the kitchen-sink import for
+  new users, quick experiments, and exploratory tests.
 - Pre‑1.0 semver: `0.x.Y` is a patch‑level additive bump, `0.X.y` is a
   minor bump that may include breaking changes.  Conventional‑commit
   types (`feat`, `fix`, `refactor`, …) mirror this convention.
@@ -300,7 +306,7 @@ degenerate input, and tests under `tests/proptest_sos.rs` enforce that.
   necessity, not by accident.
 - Feature flags isolate optional dependency weight.  Default builds stay
   dep‑minimal.  Known flags: `dense-slotmap` (default),
-  `count-allocations`, `bench`, `bench-logging`, `test-debug`,
+  `count-allocations`, `bench`, `bench-logging`, `diagnostics`,
   `slow-tests`.
 
 ### Idiomatic Rust as a proxy for mathematical clarity
@@ -328,11 +334,11 @@ degenerate input, and tests under `tests/proptest_sos.rs` enforce that.
 - Never log inside hot benchmark loops or Criterion-measured closures.
   Emit setup/summary diagnostics outside the measured path instead.
 - Gate non-essential test/benchmark diagnostics behind feature flags.
-  In this repository use `test-debug` for test diagnostics and
+  In this repository use `diagnostics` for test diagnostics and
   `bench-logging` for benchmark diagnostics, e.g.:
 
   ```rust
-  #[cfg(feature = "test-debug")]
+  #[cfg(feature = "diagnostics")]
   tracing::debug!("test diagnostic");
 
   #[cfg(feature = "bench-logging")]
