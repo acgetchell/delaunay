@@ -274,7 +274,7 @@ fn debug_issue_120_empty_circumsphere_5d() {
     }
 
     if let Err(err) = dt.is_valid() {
-        #[cfg(debug_assertions)]
+        #[cfg(feature = "test-debug")]
         {
             delaunay::core::util::debug_print_first_delaunay_violation(dt.tds(), None);
         }

@@ -948,7 +948,7 @@ pub mod prelude {
             pub use crate::core::triangulation::{
                 TopologyGuarantee, Triangulation, ValidationPolicy,
             };
-            #[cfg(any(test, debug_assertions))]
+            #[cfg(any(test, feature = "test-debug"))]
             pub use crate::core::util::debug_print_first_delaunay_violation;
             pub use crate::core::util::{DelaunayValidationError, find_delaunay_violations};
             pub use crate::triangulation::delaunay::{
@@ -1017,7 +1017,7 @@ pub mod prelude {
 
     /// Focused exports for core algorithms.
     pub mod algorithms {
-        #[cfg(debug_assertions)]
+        #[cfg(feature = "test-debug")]
         pub use crate::core::algorithms::locate::verify_conflict_region_completeness;
         pub use crate::core::algorithms::locate::{
             ConflictError, InternalInconsistencySite, LocateError, LocateFallback,
@@ -1048,7 +1048,7 @@ pub mod prelude {
         pub use crate::triangulation::delaunay::DelaunayTriangulation;
 
         // Locate and conflict-region queries
-        #[cfg(debug_assertions)]
+        #[cfg(feature = "test-debug")]
         pub use crate::core::algorithms::locate::verify_conflict_region_completeness;
         pub use crate::core::algorithms::locate::{
             ConflictError, InternalInconsistencySite, LocateError, LocateFallback,

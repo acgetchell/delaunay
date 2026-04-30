@@ -1255,7 +1255,7 @@ where
 /// Activated by setting `DELAUNAY_DEBUG_CONFLICT_VERIFY=1`.
 ///
 /// Returns the number of missed cells (0 means the BFS result is complete).
-#[cfg(debug_assertions)]
+#[cfg(any(test, feature = "test-debug"))]
 pub fn verify_conflict_region_completeness<K, U, V, const D: usize>(
     tds: &Tds<K::Scalar, U, V, D>,
     kernel: &K,
@@ -3061,8 +3061,8 @@ mod tests {
     // =============================================================================
     // VERIFY CONFLICT REGION COMPLETENESS TESTS
     // =============================================================================
-    // The function under test is #[cfg(debug_assertions)], so these tests are
-    // also gated to avoid compilation errors in release/bench builds.
+    // The production diagnostic is feature-gated; keep the unit coverage in
+    // debug builds to avoid adding cost to release/bench test runs.
 
     #[cfg(debug_assertions)]
     /// Macro to test `verify_conflict_region_completeness` across dimensions.

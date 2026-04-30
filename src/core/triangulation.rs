@@ -112,12 +112,14 @@ use crate::core::algorithms::incremental_insertion::{
     HullExtensionReason, InsertionError, extend_hull, external_facets_for_boundary, fill_cavity,
     repair_neighbor_pointers, wire_cavity_neighbors,
 };
+#[cfg(debug_assertions)]
+use crate::core::algorithms::locate::locate_with_stats;
+#[cfg(feature = "test-debug")]
+use crate::core::algorithms::locate::verify_conflict_region_completeness;
 use crate::core::algorithms::locate::{
     ConflictError, LocateResult, extract_cavity_boundary, find_conflict_region, locate,
     locate_by_scan,
 };
-#[cfg(debug_assertions)]
-use crate::core::algorithms::locate::{locate_with_stats, verify_conflict_region_completeness};
 use crate::core::cell::{Cell, CellValidationError};
 use crate::core::collections::spatial_hash_grid::HashGridIndex;
 use crate::core::collections::{
@@ -5163,7 +5165,7 @@ where
                 // a star-split of that cell to keep the simplicial complex connected.
                 let computed = find_conflict_region(&self.tds, &self.kernel, &point, start_cell)?;
 
-                #[cfg(debug_assertions)]
+                #[cfg(feature = "test-debug")]
                 if std::env::var_os("DELAUNAY_DEBUG_CONFLICT_VERIFY").is_some() {
                     let missed = verify_conflict_region_completeness(
                         &self.tds,

@@ -386,7 +386,7 @@ rules:
         - "/tests/semgrep/src/project_rules/**/*.rs"
     patterns:
       - pattern-regex: '^\s*//[/!]\s*(?:#\s*)?use\s+delaunay::(core|geometry|triangulation|topology)::'
-      - pattern-not-regex: '^\s*//[/!]\s+use\s+delaunay::prelude::'
+      - pattern-not-regex: '^\s*//[/!]\s*(?:#\s*)?use\s+delaunay::prelude::'
 
   - id: delaunay.python.no-broad-exception
     languages:
