@@ -5,7 +5,7 @@
 //! zero-allocation `vertex_uuid_iter()` method compared to the traditional
 //! `vertex_uuids()` method that allocates a Vec.
 
-use delaunay::prelude::query::*;
+use delaunay::prelude::generators::generate_random_triangulation;
 use std::hint::black_box;
 use std::time::Instant;
 

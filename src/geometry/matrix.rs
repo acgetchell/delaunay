@@ -25,7 +25,7 @@ pub type Matrix<const D: usize> = LaMatrix<D>;
 /// # Examples
 ///
 /// ```rust
-/// use delaunay::geometry::matrix::MatrixError;
+/// use delaunay::prelude::geometry::MatrixError;
 ///
 /// let err = MatrixError::SingularMatrix;
 /// assert!(matches!(err, MatrixError::SingularMatrix));
@@ -138,7 +138,7 @@ pub(crate) fn matrix_set<const D: usize>(m: &mut Matrix<D>, r: usize, c: usize, 
 /// # Examples
 ///
 /// ```rust
-/// use delaunay::geometry::matrix::{determinant, Matrix};
+/// use delaunay::prelude::geometry::{determinant, Matrix};
 ///
 /// let m = Matrix::<2>::zero();
 /// assert_eq!(determinant(&m), 0.0);

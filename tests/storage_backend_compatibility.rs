@@ -51,6 +51,7 @@
 use delaunay::assert_jaccard_gte;
 use delaunay::core::util::extract_edge_set;
 use delaunay::geometry::kernel::AdaptiveKernel;
+use delaunay::prelude::tds::Tds;
 use delaunay::prelude::triangulation::*;
 
 #[cfg(feature = "test-debug")]

@@ -85,7 +85,7 @@ fn format_bytes(bytes: usize) -> String {
 /// # Examples
 ///
 /// ```
-/// use delaunay::geometry::util::scaled_bounds_by_point_count;
+/// use delaunay::prelude::generators::scaled_bounds_by_point_count;
 ///
 /// // 100 points -> side length 100, i.e. [-50, 50]
 /// let bounds = scaled_bounds_by_point_count::<f64>(100).unwrap();
@@ -133,7 +133,7 @@ pub fn scaled_bounds_by_point_count<T: CoordinateScalar>(
 /// # Examples
 ///
 /// ```
-/// use delaunay::geometry::util::generate_random_points;
+/// use delaunay::prelude::generators::generate_random_points;
 ///
 /// // Generate 100 random 2D points with coordinates in [-10.0, 10.0]
 /// let points_2d = generate_random_points::<f64, 2>(100, (-10.0, 10.0)).unwrap();
@@ -205,7 +205,7 @@ pub fn generate_random_points<T: CoordinateScalar + SampleUniform, const D: usiz
 /// # Examples
 ///
 /// ```
-/// use delaunay::geometry::util::generate_random_points_seeded;
+/// use delaunay::prelude::generators::generate_random_points_seeded;
 ///
 /// // Generate reproducible random points
 /// let points1 = generate_random_points_seeded::<f64, 3>(100, (-5.0, 5.0), 42).unwrap();
@@ -280,7 +280,7 @@ pub fn generate_random_points_seeded<T: CoordinateScalar + SampleUniform, const 
 /// # Examples
 ///
 /// ```
-/// use delaunay::geometry::util::generate_random_points_periodic;
+/// use delaunay::prelude::generators::generate_random_points_periodic;
 ///
 /// // Generate 100 random 2D points in [0,1) × [0,2)
 /// let points = generate_random_points_periodic::<f64, 2>(100, [1.0, 2.0], 42).unwrap();
@@ -382,7 +382,7 @@ where
 /// # Examples
 ///
 /// ```
-/// use delaunay::geometry::util::generate_random_points_in_ball;
+/// use delaunay::prelude::generators::generate_random_points_in_ball;
 ///
 /// // Generate 100 random 4D points in a radius-10 ball.
 /// let points = generate_random_points_in_ball::<f64, 4>(100, 10.0).unwrap();
@@ -413,7 +413,7 @@ pub fn generate_random_points_in_ball<T: CoordinateScalar + SampleUniform, const
 /// # Examples
 ///
 /// ```
-/// use delaunay::geometry::util::generate_random_points_in_ball_seeded;
+/// use delaunay::prelude::generators::generate_random_points_in_ball_seeded;
 ///
 /// let points1 = generate_random_points_in_ball_seeded::<f64, 4>(10, 1.0, 42).unwrap();
 /// let points2 = generate_random_points_in_ball_seeded::<f64, 4>(10, 1.0, 42).unwrap();
@@ -466,7 +466,7 @@ pub fn generate_random_points_in_ball_seeded<
 /// # Examples
 ///
 /// ```
-/// use delaunay::geometry::util::generate_grid_points;
+/// use delaunay::prelude::generators::generate_grid_points;
 ///
 /// // Generate 2D grid: 4x4 = 16 points with unit spacing
 /// let grid_2d = generate_grid_points::<f64, 2>(4, 1.0, [0.0, 0.0]).unwrap();
@@ -585,7 +585,7 @@ pub fn generate_grid_points<T: CoordinateScalar, const D: usize>(
 /// # Examples
 ///
 /// ```
-/// use delaunay::geometry::util::generate_poisson_points;
+/// use delaunay::prelude::generators::generate_poisson_points;
 ///
 /// // Generate ~100 2D points with minimum distance 0.1 in unit square
 /// let poisson_2d = generate_poisson_points::<f64, 2>(100, (0.0, 1.0), 0.1, 42).unwrap();

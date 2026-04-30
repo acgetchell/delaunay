@@ -6711,7 +6711,8 @@ where
     ///
     /// ```rust
     /// use delaunay::prelude::geometry::FastKernel;
-    /// use delaunay::prelude::triangulation::{DelaunayTriangulation, Tds};
+    /// use delaunay::prelude::tds::Tds;
+    /// use delaunay::prelude::triangulation::DelaunayTriangulation;
     /// use delaunay::vertex;
     ///
     /// let vertices = vec![
@@ -6802,6 +6803,7 @@ where
 ///
 /// ```rust
 /// # use delaunay::prelude::geometry::*;
+/// # use delaunay::prelude::tds::Tds;
 /// # use delaunay::prelude::triangulation::*;
 /// # fn example() -> Result<(), Box<dyn std::error::Error>> {
 /// // Create and serialize a triangulation

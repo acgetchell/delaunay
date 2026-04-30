@@ -75,7 +75,7 @@ use uuid::Uuid;
 /// # Examples
 ///
 /// ```rust
-/// use delaunay::core::cell::CellValidationError;
+/// use delaunay::prelude::tds::CellValidationError;
 ///
 /// let err = CellValidationError::DuplicateVertices;
 /// assert!(matches!(err, CellValidationError::DuplicateVertices));
@@ -179,7 +179,7 @@ impl From<crate::geometry::matrix::StackMatrixDispatchError> for CellValidationE
 ///
 /// Since cells now store keys, you need a `&Tds` reference to access vertex data:
 /// ```rust
-/// use delaunay::core::collections::Uuid;
+/// use delaunay::prelude::collections::Uuid;
 /// use delaunay::prelude::triangulation::*;
 ///
 /// // Create a triangulation with some vertices
@@ -585,7 +585,7 @@ where
     ///
     /// This method returns keys (not full vertex objects). Use the TDS to resolve keys:
     /// ```rust
-    /// use delaunay::core::collections::Uuid;
+    /// use delaunay::prelude::collections::Uuid;
     /// use delaunay::prelude::triangulation::*;
     ///
     /// let vertices = vec![
@@ -822,7 +822,7 @@ where
     /// # Example
     ///
     /// ```
-    /// use delaunay::core::collections::Uuid;
+    /// use delaunay::prelude::collections::Uuid;
     /// use delaunay::prelude::triangulation::*;
     ///
     /// let vertices = vec![
@@ -847,6 +847,7 @@ where
     ///
     /// ```
     /// use delaunay::prelude::triangulation::*;
+    /// use delaunay::prelude::tds::Cell;
     ///
     /// let vertices = [
     ///     vertex!([0.0, 0.0]),
@@ -1033,6 +1034,7 @@ where
     ///
     /// ```
     /// use delaunay::prelude::triangulation::*;
+    /// use delaunay::prelude::tds::Cell;
     ///
     /// let vertices = vec![
     ///     vertex!([0.0, 0.0, 1.0]),
@@ -1069,7 +1071,7 @@ where
     ///
     /// ```
     /// use delaunay::prelude::triangulation::*;
-    /// use delaunay::core::cell::Cell;
+    /// use delaunay::prelude::tds::Cell;
     ///
     /// // Create two separate triangulations
     /// let vertices1 = vec![
@@ -1103,7 +1105,7 @@ where
     /// ```
     ///
     /// ```
-    /// use delaunay::core::cell::Cell;
+    /// use delaunay::prelude::tds::Cell;
     ///
     /// // Empty collection produces empty FastHashMap
     /// let empty_map = Cell::<f64, (), (), 3>::into_hashmap([]);
@@ -1150,6 +1152,7 @@ where
     ///
     /// ```
     /// use delaunay::prelude::triangulation::*;
+    /// use delaunay::prelude::tds::Cell;
     ///
     /// let vertices = vec![
     ///     vertex!([0.0, 0.0, 1.0]),
@@ -1296,6 +1299,7 @@ where
     ///
     /// ```
     /// use delaunay::prelude::triangulation::*;
+    /// use delaunay::prelude::tds::Cell;
     ///
     /// let vertices = vec![
     ///     vertex!([0.0, 0.0, 0.0]),
@@ -1473,6 +1477,7 @@ where
     ///
     /// ```
     /// use delaunay::prelude::triangulation::*;
+    /// use delaunay::prelude::tds::Cell;
     ///
     /// let vertices = vec![
     ///     vertex!([0.0, 0.0, 0.0]),
@@ -1498,6 +1503,7 @@ where
     ///
     /// ```
     /// use delaunay::prelude::triangulation::*;
+    /// use delaunay::prelude::tds::Cell;
     ///
     /// let vertices = vec![
     ///     vertex!([0.0, 0.0, 0.0]),

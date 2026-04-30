@@ -44,10 +44,10 @@ pub enum DeduplicationError {
 /// # Examples
 ///
 /// ```
-/// use delaunay::core::util::dedup_vertices_exact;
-/// use delaunay::core::vertex::Vertex;
-/// use delaunay::geometry::point::Point;
-/// use delaunay::geometry::traits::coordinate::Coordinate;
+/// use delaunay::prelude::triangulation::dedup_vertices_exact;
+/// use delaunay::prelude::triangulation::Vertex;
+/// use delaunay::prelude::geometry::Point;
+/// use delaunay::prelude::geometry::Coordinate;
 ///
 /// let v1: Vertex<f64, (), 2> = Vertex::from_points(&[Point::new([0.0, 0.0])])
 ///     .into_iter().next().unwrap();
@@ -113,10 +113,10 @@ where
 /// # Examples
 ///
 /// ```
-/// use delaunay::core::util::dedup_vertices_epsilon;
-/// use delaunay::core::vertex::Vertex;
-/// use delaunay::geometry::point::Point;
-/// use delaunay::geometry::traits::coordinate::Coordinate;
+/// use delaunay::prelude::triangulation::dedup_vertices_epsilon;
+/// use delaunay::prelude::triangulation::Vertex;
+/// use delaunay::prelude::geometry::Point;
+/// use delaunay::prelude::geometry::Coordinate;
 ///
 /// let v1: Vertex<f64, (), 2> = Vertex::from_points(&[Point::new([0.0, 0.0])])
 ///     .into_iter().next().unwrap();
@@ -225,10 +225,10 @@ where
 /// # Examples
 ///
 /// ```
-/// use delaunay::core::util::filter_vertices_excluding;
-/// use delaunay::core::vertex::Vertex;
-/// use delaunay::geometry::point::Point;
-/// use delaunay::geometry::traits::coordinate::Coordinate;
+/// use delaunay::prelude::triangulation::filter_vertices_excluding;
+/// use delaunay::prelude::triangulation::Vertex;
+/// use delaunay::prelude::geometry::Point;
+/// use delaunay::prelude::geometry::Coordinate;
 ///
 /// let v1: Vertex<f64, (), 2> = Vertex::from_points(&[Point::new([0.0, 0.0])])
 ///     .into_iter().next().unwrap();

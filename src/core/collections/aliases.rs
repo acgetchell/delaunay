@@ -27,7 +27,7 @@ use slotmap::DenseSlotMap;
 /// # Examples
 ///
 /// ```rust
-/// use delaunay::core::collections::FacetIndex;
+/// use delaunay::prelude::collections::FacetIndex;
 ///
 /// // 3D triangulation: facets 0, 1, 2, 3 (fits comfortably in u8)
 /// let facet: FacetIndex = 2;
@@ -94,7 +94,7 @@ pub type StorageMap<K, V> = DenseSlotMap<K, V>;
 /// # Examples
 ///
 /// ```rust
-/// use delaunay::core::collections::FastHashMap;
+/// use delaunay::prelude::collections::FastHashMap;
 ///
 /// let mut map: FastHashMap<u64, usize> = FastHashMap::default();
 /// map.insert(123, 456);
@@ -120,7 +120,7 @@ pub type FastBuildHasher = FxBuildHasher;
 /// # Examples
 ///
 /// ```rust
-/// use delaunay::core::collections::{Entry, FastHashMap};
+/// use delaunay::prelude::collections::{Entry, FastHashMap};
 ///
 /// let mut map: FastHashMap<String, String> = FastHashMap::default();
 /// match map.entry("key".to_string()) {
@@ -150,7 +150,7 @@ pub use std::collections::hash_map::Entry;
 ///
 /// External API usage (UUID-based for compatibility):
 /// ```rust
-/// use delaunay::core::collections::FastHashSet;
+/// use delaunay::prelude::collections::FastHashSet;
 /// use uuid::Uuid;
 ///
 /// let mut set: FastHashSet<Uuid> = FastHashSet::default();
@@ -159,8 +159,8 @@ pub use std::collections::hash_map::Entry;
 ///
 /// **Phase 1**: Internal operations (key-based for performance):
 /// ```rust
-/// use delaunay::core::collections::{CellKeySet, FastHashSet};
-/// use delaunay::core::tds::CellKey;
+/// use delaunay::prelude::collections::{CellKeySet, FastHashSet};
+/// use delaunay::prelude::tds::CellKey;
 ///
 /// // For internal algorithms, prefer direct key-based collections
 /// let mut internal_set: CellKeySet = CellKeySet::default();
@@ -189,7 +189,7 @@ pub type FastHashSet<T> = FxHashSet<T>;
 /// # Examples
 ///
 /// ```rust
-/// use delaunay::core::collections::SmallBuffer;
+/// use delaunay::prelude::collections::SmallBuffer;
 ///
 /// // Stack-allocated for ≤8 elements, heap for more
 /// let mut buffer: SmallBuffer<i32, 8> = SmallBuffer::new();

@@ -109,7 +109,7 @@ pub(in crate::geometry::util) fn safe_cast_from_f64<T: CoordinateScalar>(
 /// # Examples
 ///
 /// ```
-/// use delaunay::geometry::util::safe_coords_to_f64;
+/// use delaunay::prelude::geometry::safe_coords_to_f64;
 ///
 /// // Convert f32 coordinates to f64
 /// let coords_f32 = [1.5f32, 2.5f32, 3.5f32];
@@ -151,7 +151,7 @@ pub fn safe_coords_to_f64<T: CoordinateScalar, const D: usize>(
 /// # Examples
 ///
 /// ```
-/// use delaunay::geometry::util::safe_coords_from_f64;
+/// use delaunay::prelude::geometry::safe_coords_from_f64;
 ///
 /// // Convert f64 coordinates to f32
 /// let coords_f64 = [1.5f64, 2.5f64, 3.5f64];
@@ -195,7 +195,7 @@ pub fn safe_coords_from_f64<T: CoordinateScalar, const D: usize>(
 /// # Example
 ///
 /// ```
-/// use delaunay::geometry::util::safe_scalar_to_f64;
+/// use delaunay::prelude::geometry::safe_scalar_to_f64;
 ///
 /// let value_f32 = 42.5f32;
 /// let value_f64 = safe_scalar_to_f64(value_f32).unwrap();
@@ -224,7 +224,7 @@ pub fn safe_scalar_to_f64<T: CoordinateScalar>(value: T) -> Result<f64, Coordina
 /// # Examples
 ///
 /// ```
-/// use delaunay::geometry::util::safe_scalar_from_f64;
+/// use delaunay::prelude::geometry::safe_scalar_from_f64;
 ///
 /// // Convert f64 to f32
 /// let value_f64 = 123.456f64;
@@ -266,7 +266,7 @@ pub fn safe_scalar_from_f64<T: CoordinateScalar>(
 /// # Examples
 ///
 /// ```
-/// use delaunay::geometry::util::safe_usize_to_scalar;
+/// use delaunay::prelude::geometry::safe_usize_to_scalar;
 ///
 /// // Normal case - small usize values
 /// let result: Result<f64, _> = safe_usize_to_scalar(42_usize);

@@ -24,8 +24,8 @@ use slotmap::Key;
 /// # Examples
 ///
 /// ```rust
-/// use delaunay::core::edge::EdgeKey;
-/// use delaunay::core::tds::VertexKey;
+/// use delaunay::prelude::tds::EdgeKey;
+/// use delaunay::prelude::tds::VertexKey;
 /// use slotmap::KeyData;
 ///
 /// let a = VertexKey::from(KeyData::from_ffi(1));

@@ -7,7 +7,7 @@
 //!
 //! ```rust
 //! use delaunay::prelude::query::*;
-//! use delaunay::topology::characteristics::euler;
+//! use delaunay::prelude::topology::validation::euler;
 //!
 //! let vertices = vec![
 //!     vertex!([0.0, 0.0, 0.0]),
@@ -51,7 +51,7 @@ use crate::topology::traits::topological_space::TopologyError;
 /// # Examples
 ///
 /// ```rust
-/// use delaunay::topology::characteristics::euler::FVector;
+/// use delaunay::prelude::topology::validation::FVector;
 ///
 /// // 2D triangle: 3 vertices, 3 edges, 1 face
 /// let counts = FVector {
@@ -77,7 +77,7 @@ impl FVector {
     /// # Examples
     ///
     /// ```rust
-    /// use delaunay::topology::characteristics::euler::FVector;
+    /// use delaunay::prelude::topology::validation::FVector;
     ///
     /// let counts = FVector {
     ///     by_dim: vec![4, 6, 4, 1],  // 3D tetrahedron
@@ -100,7 +100,7 @@ impl FVector {
     /// # Examples
     ///
     /// ```rust
-    /// use delaunay::topology::characteristics::euler::FVector;
+    /// use delaunay::prelude::topology::validation::FVector;
     ///
     /// let counts_3d = FVector {
     ///     by_dim: vec![4, 6, 4, 1],
@@ -134,7 +134,7 @@ impl FVector {
 /// # Examples
 ///
 /// ```rust
-/// use delaunay::topology::characteristics::euler::TopologyClassification;
+/// use delaunay::prelude::topology::validation::TopologyClassification;
 ///
 /// let ball = TopologyClassification::Ball(3);
 /// assert_eq!(format!("{:?}", ball), "Ball(3)");
@@ -191,7 +191,7 @@ pub enum TopologyClassification {
 ///
 /// ```rust
 /// use delaunay::prelude::query::*;
-/// use delaunay::topology::characteristics::euler;
+/// use delaunay::prelude::topology::validation::euler;
 ///
 /// let vertices = vec![
 ///     vertex!([0.0, 0.0]),
@@ -380,7 +380,7 @@ fn insert_simplices_of_size(
 ///
 /// ```rust
 /// use delaunay::prelude::query::*;
-/// use delaunay::topology::characteristics::euler;
+/// use delaunay::prelude::topology::validation::euler;
 ///
 /// // 3D tetrahedron - boundary is S² (sphere)
 /// let vertices = vec![
@@ -504,7 +504,7 @@ where
 /// # Examples
 ///
 /// ```rust
-/// use delaunay::topology::characteristics::euler::{FVector, euler_characteristic};
+/// use delaunay::prelude::topology::validation::{FVector, euler_characteristic};
 ///
 /// // 2D triangle: V=3, E=3, F=1 → χ = 3-3+1 = 1
 /// let counts = FVector {
@@ -662,7 +662,7 @@ pub(crate) fn triangulated_surface_boundary_component_count(
 ///
 /// ```rust
 /// use delaunay::prelude::query::*;
-/// use delaunay::topology::characteristics::euler::{classify_triangulation, TopologyClassification};
+/// use delaunay::prelude::topology::validation::{classify_triangulation, TopologyClassification};
 ///
 /// let vertices = vec![
 ///     vertex!([0.0, 0.0, 0.0]),
@@ -727,7 +727,7 @@ where
 /// # Examples
 ///
 /// ```rust
-/// use delaunay::topology::characteristics::euler::{TopologyClassification, expected_chi_for};
+/// use delaunay::prelude::topology::validation::{TopologyClassification, expected_chi_for};
 ///
 /// assert_eq!(expected_chi_for(&TopologyClassification::Empty), Some(0));
 /// assert_eq!(expected_chi_for(&TopologyClassification::Ball(3)), Some(1));

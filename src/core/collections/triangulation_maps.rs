@@ -23,7 +23,7 @@ use crate::core::tds::{CellKey, VertexKey};
 /// # Examples
 ///
 /// ```rust
-/// use delaunay::core::collections::FacetToCellsMap;
+/// use delaunay::prelude::collections::FacetToCellsMap;
 ///
 /// let facet_map: FacetToCellsMap = FacetToCellsMap::default();
 /// assert!(facet_map.is_empty());
@@ -45,7 +45,7 @@ pub type FacetToCellsMap = FastHashMap<u64, SmallBuffer<FacetHandle, 2>>;
 /// # Examples
 ///
 /// ```rust
-/// use delaunay::core::collections::FacetIssuesMap;
+/// use delaunay::prelude::collections::FacetIssuesMap;
 ///
 /// let issues: FacetIssuesMap = FacetIssuesMap::default();
 /// assert!(issues.is_empty());
@@ -69,7 +69,7 @@ pub type FacetIssuesMap = FastHashMap<u64, SmallBuffer<(CellKey, FacetIndex), 4>
 /// # Examples
 ///
 /// ```rust
-/// use delaunay::core::collections::CellNeighborsMap;
+/// use delaunay::prelude::collections::CellNeighborsMap;
 ///
 /// let neighbors: CellNeighborsMap = CellNeighborsMap::default();
 /// assert!(neighbors.is_empty());
@@ -91,7 +91,7 @@ pub type CellNeighborsMap = FastHashMap<CellKey, NeighborBuffer<Option<CellKey>>
 /// # Examples
 ///
 /// ```rust
-/// use delaunay::core::collections::VertexToCellsMap;
+/// use delaunay::prelude::collections::VertexToCellsMap;
 ///
 /// let vertex_cells: VertexToCellsMap = VertexToCellsMap::default();
 /// assert!(vertex_cells.is_empty());
@@ -112,7 +112,7 @@ pub type VertexToCellsMap =
 /// # Examples
 ///
 /// ```rust
-/// use delaunay::core::collections::CellVerticesMap;
+/// use delaunay::prelude::collections::CellVerticesMap;
 ///
 /// let cell_vertices: CellVerticesMap = CellVerticesMap::default();
 /// assert!(cell_vertices.is_empty());
@@ -132,7 +132,7 @@ pub type CellVerticesMap = FastHashMap<CellKey, FastHashSet<VertexKey>>;
 /// # Examples
 ///
 /// ```rust
-/// use delaunay::core::collections::CellVertexKeysMap;
+/// use delaunay::prelude::collections::CellVertexKeysMap;
 ///
 /// let cell_vertex_keys: CellVertexKeysMap = CellVertexKeysMap::default();
 /// assert!(cell_vertex_keys.is_empty());
@@ -168,7 +168,7 @@ pub type FacetVertexMap = FastHashMap<u64, VertexUuidSet>;
 /// # Examples
 ///
 /// ```rust
-/// use delaunay::core::collections::CellToVertexUuidsMap;
+/// use delaunay::prelude::collections::CellToVertexUuidsMap;
 ///
 /// let mapping: CellToVertexUuidsMap = CellToVertexUuidsMap::default();
 /// assert!(mapping.is_empty());

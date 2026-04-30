@@ -547,17 +547,33 @@ pub mod core {
 
 ## Prelude Design
 
-Preludes should remain **small and purpose‑specific**.
+Focused preludes should remain **small and purpose-specific**.
 
-A prelude should import only the items needed for a specific task.
+A focused prelude should import only the items needed for a specific task.
+Prefer these focused preludes in doctests, integration tests, examples, and
+benchmarks because they make intent visible at the import site.
 
-Example:
+Examples:
 
 ```text
 delaunay::prelude::triangulation
+delaunay::prelude::triangulation::flips
+delaunay::prelude::triangulation::repair
+delaunay::prelude::triangulation::delaunayize
+delaunay::prelude::query
+delaunay::prelude::geometry
+delaunay::prelude::generators
+delaunay::prelude::ordering
+delaunay::prelude::collections
+delaunay::prelude::tds
+delaunay::prelude::topology::validation
+delaunay::prelude::topology::spaces
 ```
 
-Avoid giant catch‑all preludes.
+The root `delaunay::prelude::*` is intentionally available as a convenience for
+new users and quick experiments. Avoid using it in committed examples,
+benchmarks, and doctests when a focused prelude communicates the workflow more
+clearly.
 
 ---
 

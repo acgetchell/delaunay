@@ -23,8 +23,8 @@ use thiserror::Error;
 /// # Examples
 ///
 /// ```rust
-/// use delaunay::core::adjacency::AdjacencyIndexBuildError;
-/// use delaunay::core::tds::{CellKey, VertexKey};
+/// use delaunay::prelude::query::AdjacencyIndexBuildError;
+/// use delaunay::prelude::tds::{CellKey, VertexKey};
 /// use slotmap::KeyData;
 ///
 /// let cell_key = CellKey::from(KeyData::from_ffi(1));

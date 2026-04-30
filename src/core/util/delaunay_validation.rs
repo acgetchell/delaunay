@@ -18,8 +18,8 @@ use thiserror::Error;
 /// # Examples
 ///
 /// ```rust
-/// use delaunay::core::tds::CellKey;
-/// use delaunay::core::util::DelaunayValidationError;
+/// use delaunay::prelude::tds::CellKey;
+/// use delaunay::prelude::triangulation::repair::DelaunayValidationError;
 /// use slotmap::KeyData;
 ///
 /// let cell_key = CellKey::from(KeyData::from_ffi(1));
@@ -277,7 +277,7 @@ where
 ///
 /// ```
 /// use delaunay::prelude::query::*;
-/// use delaunay::core::util::find_delaunay_violations;
+/// use delaunay::prelude::triangulation::repair::find_delaunay_violations;
 ///
 /// let vertices = vec![
 ///     vertex!([0.0, 0.0, 0.0]),
@@ -373,8 +373,8 @@ where
 /// # Examples
 ///
 /// ```rust
-/// use delaunay::core::tds::Tds;
-/// use delaunay::core::util::debug_print_first_delaunay_violation;
+/// use delaunay::prelude::tds::Tds;
+/// use delaunay::prelude::triangulation::repair::debug_print_first_delaunay_violation;
 ///
 /// let tds: Tds<f64, (), (), 3> = Tds::empty();
 /// debug_print_first_delaunay_violation(&tds, None);

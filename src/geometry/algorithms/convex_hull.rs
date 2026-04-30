@@ -71,7 +71,7 @@ use num_traits::NumCast;
 /// # Examples
 ///
 /// ```rust
-/// use delaunay::geometry::algorithms::convex_hull::ConvexHullValidationError;
+/// use delaunay::prelude::query::ConvexHullValidationError;
 ///
 /// let err = ConvexHullValidationError::StaleHull {
 ///     hull_generation: 1,
@@ -116,7 +116,7 @@ pub enum ConvexHullValidationError {
 /// # Examples
 ///
 /// ```rust
-/// use delaunay::geometry::algorithms::convex_hull::ConvexHullConstructionError;
+/// use delaunay::prelude::query::ConvexHullConstructionError;
 ///
 /// let err = ConvexHullConstructionError::InvalidTriangulation {
 ///     message: "empty".to_string(),
@@ -237,8 +237,8 @@ pub enum ConvexHullConstructionError {
 /// Use `is_valid_for_triangulation()` to check if a hull is still valid for a given TDS:
 ///
 /// ```rust
-/// # use delaunay::triangulation::delaunay::DelaunayTriangulation;
-/// # use delaunay::geometry::algorithms::convex_hull::ConvexHull;
+/// # use delaunay::prelude::triangulation::DelaunayTriangulation;
+/// # use delaunay::prelude::query::ConvexHull;
 /// # use delaunay::vertex;
 /// # let mut dt: DelaunayTriangulation<_, (), (), 3> = DelaunayTriangulation::new(&vec![
 /// #     vertex!([0.0, 0.0, 0.0]),
@@ -264,8 +264,8 @@ pub enum ConvexHullConstructionError {
 /// ## Example: Correct Usage Pattern
 ///
 /// ```rust
-/// use delaunay::triangulation::delaunay::DelaunayTriangulation;
-/// use delaunay::geometry::algorithms::convex_hull::ConvexHull;
+/// use delaunay::prelude::triangulation::DelaunayTriangulation;
+/// use delaunay::prelude::query::ConvexHull;
 /// use delaunay::vertex;
 ///
 /// let mut dt: DelaunayTriangulation<_, (), (), 3> = DelaunayTriangulation::new(&vec![
@@ -365,8 +365,8 @@ where
     /// # Examples
     ///
     /// ```rust
-    /// use delaunay::triangulation::delaunay::DelaunayTriangulation;
-    /// use delaunay::geometry::algorithms::convex_hull::ConvexHull;
+    /// use delaunay::prelude::triangulation::DelaunayTriangulation;
+    /// use delaunay::prelude::query::ConvexHull;
     /// use delaunay::vertex;
     ///
     /// // Create a 3D tetrahedron
@@ -400,8 +400,8 @@ where
     /// # Examples
     ///
     /// ```rust
-    /// use delaunay::triangulation::delaunay::DelaunayTriangulation;
-    /// use delaunay::geometry::algorithms::convex_hull::ConvexHull;
+    /// use delaunay::prelude::triangulation::DelaunayTriangulation;
+    /// use delaunay::prelude::query::ConvexHull;
     /// use delaunay::vertex;
     ///
     /// // Create a 3D tetrahedron
@@ -430,8 +430,8 @@ where
     /// # Examples
     ///
     /// ```rust
-    /// use delaunay::triangulation::delaunay::DelaunayTriangulation;
-    /// use delaunay::geometry::algorithms::convex_hull::ConvexHull;
+    /// use delaunay::prelude::triangulation::DelaunayTriangulation;
+    /// use delaunay::prelude::query::ConvexHull;
     /// use delaunay::vertex;
     ///
     /// // Create a 3D tetrahedron
@@ -451,7 +451,7 @@ where
     ///
     /// // Check that all facets have the expected number of vertices
     /// // Note: facets() returns FacetHandle structs - need to create FacetView to access vertices
-    /// use delaunay::core::facet::FacetView;
+    /// use delaunay::prelude::tds::FacetView;
     /// for facet_handle in hull.facets() {
     ///     if let Ok(facet_view) = FacetView::new(&dt.tds(), facet_handle.cell_key(), facet_handle.facet_index()) {
     ///         assert_eq!(facet_view.vertices().unwrap().count(), 3); // 3D facets have 3 vertices
@@ -467,8 +467,8 @@ where
     /// # Examples
     ///
     /// ```rust
-    /// use delaunay::triangulation::delaunay::DelaunayTriangulation;
-    /// use delaunay::geometry::algorithms::convex_hull::ConvexHull;
+    /// use delaunay::prelude::triangulation::DelaunayTriangulation;
+    /// use delaunay::prelude::query::ConvexHull;
     /// use delaunay::vertex;
     ///
     /// // Empty hull
@@ -499,8 +499,8 @@ where
     /// # Examples
     ///
     /// ```rust
-    /// use delaunay::triangulation::delaunay::DelaunayTriangulation;
-    /// use delaunay::geometry::algorithms::convex_hull::ConvexHull;
+    /// use delaunay::prelude::triangulation::DelaunayTriangulation;
+    /// use delaunay::prelude::query::ConvexHull;
     /// use delaunay::vertex;
     ///
     /// // Create different dimensional hulls
@@ -550,8 +550,8 @@ where
     /// # Examples
     ///
     /// ```rust
-    /// use delaunay::triangulation::delaunay::DelaunayTriangulation;
-    /// use delaunay::geometry::algorithms::convex_hull::ConvexHull;
+    /// use delaunay::prelude::triangulation::DelaunayTriangulation;
+    /// use delaunay::prelude::query::ConvexHull;
     /// use delaunay::vertex;
     ///
     /// let mut dt: DelaunayTriangulation<_, (), (), 3> = DelaunayTriangulation::new(&vec![
@@ -629,8 +629,8 @@ where
     /// # Examples
     ///
     /// ```rust
-    /// use delaunay::triangulation::delaunay::DelaunayTriangulation;
-    /// use delaunay::geometry::algorithms::convex_hull::ConvexHull;
+    /// use delaunay::prelude::triangulation::DelaunayTriangulation;
+    /// use delaunay::prelude::query::ConvexHull;
     /// use delaunay::vertex;
     ///
     /// // Create a 3D tetrahedron
@@ -691,8 +691,8 @@ where
     /// # Examples
     ///
     /// ```rust
-    /// use delaunay::triangulation::delaunay::DelaunayTriangulation;
-    /// use delaunay::geometry::algorithms::convex_hull::ConvexHull;
+    /// use delaunay::prelude::triangulation::DelaunayTriangulation;
+    /// use delaunay::prelude::query::ConvexHull;
     /// use delaunay::vertex;
     ///
     /// // 3D example
@@ -817,10 +817,10 @@ where
     /// # Examples
     ///
     /// ```rust
-    /// use delaunay::triangulation::delaunay::DelaunayTriangulation;
-    /// use delaunay::geometry::algorithms::convex_hull::ConvexHull;
-    /// use delaunay::geometry::point::Point;
-    /// use delaunay::geometry::traits::coordinate::Coordinate;
+    /// use delaunay::prelude::triangulation::DelaunayTriangulation;
+    /// use delaunay::prelude::query::ConvexHull;
+    /// use delaunay::prelude::geometry::Point;
+    /// use delaunay::prelude::geometry::Coordinate;
     /// use delaunay::vertex;
     ///
     /// // Create a 3D tetrahedron
@@ -1205,10 +1205,10 @@ where
     /// # Examples
     ///
     /// ```rust
-    /// use delaunay::triangulation::delaunay::DelaunayTriangulation;
-    /// use delaunay::geometry::algorithms::convex_hull::ConvexHull;
-    /// use delaunay::geometry::point::Point;
-    /// use delaunay::geometry::traits::coordinate::Coordinate;
+    /// use delaunay::prelude::triangulation::DelaunayTriangulation;
+    /// use delaunay::prelude::query::ConvexHull;
+    /// use delaunay::prelude::geometry::Point;
+    /// use delaunay::prelude::geometry::Coordinate;
     /// use delaunay::vertex;
     ///
     /// // Create a 3D tetrahedron
@@ -1281,10 +1281,10 @@ where
     /// # Examples
     ///
     /// ```rust
-    /// use delaunay::triangulation::delaunay::DelaunayTriangulation;
-    /// use delaunay::geometry::algorithms::convex_hull::ConvexHull;
-    /// use delaunay::geometry::point::Point;
-    /// use delaunay::geometry::traits::coordinate::Coordinate;
+    /// use delaunay::prelude::triangulation::DelaunayTriangulation;
+    /// use delaunay::prelude::query::ConvexHull;
+    /// use delaunay::prelude::geometry::Point;
+    /// use delaunay::prelude::geometry::Coordinate;
     /// use delaunay::vertex;
     ///
     /// // Create a 3D tetrahedron
@@ -1403,10 +1403,10 @@ where
     /// # Examples
     ///
     /// ```rust
-    /// use delaunay::triangulation::delaunay::DelaunayTriangulation;
-    /// use delaunay::geometry::algorithms::convex_hull::ConvexHull;
-    /// use delaunay::geometry::point::Point;
-    /// use delaunay::geometry::traits::coordinate::Coordinate;
+    /// use delaunay::prelude::triangulation::DelaunayTriangulation;
+    /// use delaunay::prelude::query::ConvexHull;
+    /// use delaunay::prelude::geometry::Point;
+    /// use delaunay::prelude::geometry::Coordinate;
     /// use delaunay::vertex;
     ///
     /// // Create a 3D tetrahedron
@@ -1449,8 +1449,8 @@ where
     /// # Examples
     ///
     /// ```rust
-    /// use delaunay::triangulation::delaunay::DelaunayTriangulation;
-    /// use delaunay::geometry::algorithms::convex_hull::ConvexHull;
+    /// use delaunay::prelude::triangulation::DelaunayTriangulation;
+    /// use delaunay::prelude::query::ConvexHull;
     /// use delaunay::vertex;
     ///
     /// // Create a valid 3D tetrahedron

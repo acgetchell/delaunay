@@ -35,9 +35,9 @@ use crate::geometry::traits::coordinate::CoordinateScalar;
 /// # Examples
 ///
 /// ```rust,no_run
-/// use delaunay::core::facet::{FacetView, FacetError};
-/// use delaunay::core::util::facet_views_are_adjacent;
-/// use delaunay::core::tds::Tds;
+/// use delaunay::prelude::tds::{FacetView, FacetError};
+/// use delaunay::prelude::tds::facet_views_are_adjacent;
+/// use delaunay::prelude::tds::Tds;
 ///
 /// // This is a conceptual example - in practice you would get these from a real TDS
 /// fn example(tds: &Tds<f64, (), (), 3>) -> Result<bool, FacetError> {
@@ -105,9 +105,9 @@ where
 /// # Examples
 ///
 /// ```rust,no_run
-/// use delaunay::core::facet::FacetView;
-/// use delaunay::core::util::facet_view_to_vertices;
-/// use delaunay::core::tds::Tds;
+/// use delaunay::prelude::tds::FacetView;
+/// use delaunay::prelude::tds::facet_view_to_vertices;
+/// use delaunay::prelude::tds::Tds;
 ///
 /// fn extract_vertices_example(
 ///     tds: &Tds<f64, (), (), 3>,
@@ -157,8 +157,8 @@ where
 /// This function is made public for testing purposes.
 ///
 /// ```
-/// use delaunay::core::util::generate_combinations;
-/// use delaunay::core::vertex::Vertex;
+/// use delaunay::prelude::tds::generate_combinations;
+/// use delaunay::prelude::triangulation::Vertex;
 /// use delaunay::vertex;
 ///
 /// let vertices: Vec<Vertex<f64, (), 1>> = vec![

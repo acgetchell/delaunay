@@ -42,9 +42,9 @@ use core::marker::PhantomData;
 /// # Examples
 ///
 /// ```
-/// use delaunay::geometry::kernel::{FastKernel, Kernel};
-/// use delaunay::geometry::point::Point;
-/// use delaunay::geometry::traits::coordinate::Coordinate;
+/// use delaunay::prelude::geometry::{FastKernel, Kernel};
+/// use delaunay::prelude::geometry::Point;
+/// use delaunay::prelude::geometry::Coordinate;
 ///
 /// let kernel = FastKernel::<f64>::new();
 ///
@@ -97,9 +97,9 @@ pub trait Kernel<const D: usize>: Clone + Default {
     /// # Examples
     ///
     /// ```
-    /// use delaunay::geometry::kernel::{FastKernel, Kernel};
-    /// use delaunay::geometry::point::Point;
-    /// use delaunay::geometry::traits::coordinate::Coordinate;
+    /// use delaunay::prelude::geometry::{FastKernel, Kernel};
+    /// use delaunay::prelude::geometry::Point;
+    /// use delaunay::prelude::geometry::Coordinate;
     ///
     /// let kernel = FastKernel::<f64>::new();
     ///
@@ -148,9 +148,9 @@ pub trait Kernel<const D: usize>: Clone + Default {
     /// # Examples
     ///
     /// ```
-    /// use delaunay::geometry::kernel::{FastKernel, Kernel};
-    /// use delaunay::geometry::point::Point;
-    /// use delaunay::geometry::traits::coordinate::Coordinate;
+    /// use delaunay::prelude::geometry::{FastKernel, Kernel};
+    /// use delaunay::prelude::geometry::Point;
+    /// use delaunay::prelude::geometry::Coordinate;
     ///
     /// let kernel = FastKernel::<f64>::new();
     ///
@@ -214,7 +214,7 @@ pub trait Kernel<const D: usize>: Clone + Default {
 /// [`FastKernel`] does not implement `ExactPredicates`, so this fails:
 ///
 /// ```compile_fail
-/// use delaunay::geometry::kernel::{ExactPredicates, FastKernel};
+/// use delaunay::prelude::geometry::{ExactPredicates, FastKernel};
 /// fn requires_exact<T: ExactPredicates>() {}
 /// requires_exact::<FastKernel<f64>>(); // ERROR: FastKernel doesn't implement ExactPredicates
 /// ```
@@ -252,9 +252,9 @@ impl<T: CoordinateScalar> ExactPredicates for AdaptiveKernel<T> {}
 /// # Examples
 ///
 /// ```
-/// use delaunay::geometry::kernel::{FastKernel, Kernel};
-/// use delaunay::geometry::point::Point;
-/// use delaunay::geometry::traits::coordinate::Coordinate;
+/// use delaunay::prelude::geometry::{FastKernel, Kernel};
+/// use delaunay::prelude::geometry::Point;
+/// use delaunay::prelude::geometry::Coordinate;
 ///
 /// // Create a fast kernel for f64 coordinates
 /// let kernel = FastKernel::<f64>::new();
@@ -286,7 +286,7 @@ impl<T: CoordinateScalar> FastKernel<T> {
     /// # Examples
     ///
     /// ```
-    /// use delaunay::geometry::kernel::FastKernel;
+    /// use delaunay::prelude::geometry::FastKernel;
     ///
     /// let kernel = FastKernel::<f64>::new();
     /// ```
@@ -363,9 +363,9 @@ where
 /// # Examples
 ///
 /// ```
-/// use delaunay::geometry::kernel::{RobustKernel, Kernel};
-/// use delaunay::geometry::point::Point;
-/// use delaunay::geometry::traits::coordinate::Coordinate;
+/// use delaunay::prelude::geometry::{RobustKernel, Kernel};
+/// use delaunay::prelude::geometry::Point;
+/// use delaunay::prelude::geometry::Coordinate;
 ///
 /// let kernel = RobustKernel::<f64>::new();
 ///
@@ -394,7 +394,7 @@ impl<T: CoordinateScalar> RobustKernel<T> {
     /// # Examples
     ///
     /// ```
-    /// use delaunay::geometry::kernel::RobustKernel;
+    /// use delaunay::prelude::geometry::RobustKernel;
     ///
     /// let kernel = RobustKernel::<f64>::new();
     /// ```
@@ -474,9 +474,9 @@ where
 /// # Examples
 ///
 /// ```
-/// use delaunay::geometry::kernel::{AdaptiveKernel, Kernel};
-/// use delaunay::geometry::point::Point;
-/// use delaunay::geometry::traits::coordinate::Coordinate;
+/// use delaunay::prelude::geometry::{AdaptiveKernel, Kernel};
+/// use delaunay::prelude::geometry::Point;
+/// use delaunay::prelude::geometry::Coordinate;
 ///
 /// let kernel = AdaptiveKernel::<f64>::new();
 ///
@@ -500,7 +500,7 @@ impl<T: CoordinateScalar> AdaptiveKernel<T> {
     /// # Examples
     ///
     /// ```
-    /// use delaunay::geometry::kernel::AdaptiveKernel;
+    /// use delaunay::prelude::geometry::AdaptiveKernel;
     ///
     /// let kernel = AdaptiveKernel::<f64>::new();
     /// ```

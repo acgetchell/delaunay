@@ -382,10 +382,10 @@ rules:
         surfaces that users can copy into their own code.
     paths:
       include:
-        - "/src/triangulation/**/*.rs"
+        - "/src/**/*.rs"
         - "/tests/semgrep/src/project_rules/**/*.rs"
     patterns:
-      - pattern-regex: '^\s*//[/!]\s+use\s+delaunay::(core|geometry|triangulation|topology)::'
+      - pattern-regex: '^\s*//[/!]\s*(?:#\s*)?use\s+delaunay::(core|geometry|triangulation|topology)::'
       - pattern-not-regex: '^\s*//[/!]\s+use\s+delaunay::prelude::'
 
   - id: delaunay.python.no-broad-exception

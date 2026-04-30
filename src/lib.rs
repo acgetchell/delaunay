@@ -53,6 +53,8 @@
 //! | Delaunay repair and flip-based Level 4 validation | `use delaunay::prelude::triangulation::repair::*` |
 //! | Delaunayize workflow (repair + flip) | `use delaunay::prelude::triangulation::delaunayize::*` |
 //! | Topology validation, Euler characteristic | `use delaunay::prelude::topology::validation::*` |
+//! | Topological spaces and topology traits | `use delaunay::prelude::topology::spaces::*` |
+//! | Low-level TDS cells, facets, keys | `use delaunay::prelude::tds::*` |
 //! | Collection types (`FastHashMap`, etc.) | `use delaunay::prelude::collections::*` |
 //! | Everything (kitchen sink) | `use delaunay::prelude::*` |
 //!
@@ -393,7 +395,7 @@ pub mod core {
     /// # Examples
     ///
     /// ```rust
-    /// use delaunay::core::collections::{FastHashMap, FacetToCellsMap, SmallBuffer};
+    /// use delaunay::prelude::collections::{FastHashMap, FacetToCellsMap, SmallBuffer};
     ///
     /// // Use optimized HashMap for temporary mappings
     /// let mut temp_map: FastHashMap<u64, usize> = FastHashMap::default();
@@ -413,7 +415,7 @@ pub mod core {
     /// This module provides optimized maps/sets keyed by those identifiers:
     ///
     /// ```rust
-    /// use delaunay::core::collections::{CellKeySet, KeyBasedCellMap, VertexKeySet};
+    /// use delaunay::prelude::collections::{CellKeySet, KeyBasedCellMap, VertexKeySet};
     ///
     /// let mut internal_cells: CellKeySet = CellKeySet::default();
     /// let mut internal_vertices: VertexKeySet = VertexKeySet::default();
@@ -540,7 +542,7 @@ pub mod geometry {
         /// # Examples
         ///
         /// ```rust
-        /// use delaunay::geometry::util::ValueConversionError;
+        /// use delaunay::prelude::geometry::ValueConversionError;
         ///
         /// let err = ValueConversionError::ConversionFailed {
         ///     value: "1.0".to_string(),
@@ -571,7 +573,7 @@ pub mod geometry {
         /// # Examples
         ///
         /// ```rust
-        /// use delaunay::geometry::util::RandomPointGenerationError;
+        /// use delaunay::prelude::generators::RandomPointGenerationError;
         ///
         /// let err = RandomPointGenerationError::InvalidRange {
         ///     min: "1.0".to_string(),
@@ -614,7 +616,7 @@ pub mod geometry {
         /// # Examples
         ///
         /// ```rust
-        /// use delaunay::geometry::util::CircumcenterError;
+        /// use delaunay::prelude::geometry::CircumcenterError;
         ///
         /// let err = CircumcenterError::EmptyPointSet;
         /// assert!(matches!(err, CircumcenterError::EmptyPointSet));
@@ -685,7 +687,7 @@ pub mod geometry {
         /// # Examples
         ///
         /// ```rust
-        /// use delaunay::geometry::util::{CircumcenterError, SurfaceMeasureError};
+        /// use delaunay::prelude::geometry::{CircumcenterError, SurfaceMeasureError};
         ///
         /// let err = SurfaceMeasureError::GeometryError(CircumcenterError::EmptyPointSet);
         /// assert!(matches!(err, SurfaceMeasureError::GeometryError(_)));
@@ -776,7 +778,7 @@ pub mod triangulation {
 ///
 /// ```rust
 /// use delaunay::prelude::triangulation::*;
-/// use delaunay::topology::characteristics::validation;
+/// use delaunay::prelude::topology::validation;
 ///
 /// let vertices = vec![
 ///     vertex!([0.0, 0.0, 0.0]),
@@ -890,38 +892,50 @@ pub mod prelude {
         robust_predicates::*, traits::coordinate::*, util::*,
     };
 
-    /// Focused exports for triangulation construction and inspection.
+    /// Focused exports for triangulation construction and mutation.
     pub mod triangulation {
-        pub use crate::core::{
-            adjacency::*,
-            cell::*,
-            edge::*,
-            facet::*,
-            tds::*,
-            traits::{boundary_analysis::*, data_type::*},
-            triangulation::*,
-            vertex::*,
+        pub use crate::core::operations::{InsertionOutcome, InsertionStatistics, SuspicionFlags};
+        pub use crate::core::traits::data_type::DataType;
+        pub use crate::core::triangulation::{
+            DuplicateDetectionMetrics, TopologyGuarantee, Triangulation,
+            TriangulationConstructionError, TriangulationValidationError, ValidationPolicy,
         };
+        pub use crate::core::util::{
+            dedup_vertices_epsilon, dedup_vertices_exact, filter_vertices_excluding,
+        };
+        pub use crate::core::vertex::{
+            Vertex, VertexBuilder, VertexBuilderError, VertexValidationError,
+        };
+        pub use crate::topology::traits::{GlobalTopology, TopologyKind, ToroidalConstructionMode};
         pub use crate::triangulation::builder::*;
         pub use crate::triangulation::delaunay::*;
 
-        pub use crate::core::algorithms::incremental_insertion::InsertionError;
-        pub use crate::core::operations::{InsertionOutcome, InsertionStatistics, SuspicionFlags};
-
-        // Diagnostic types for scientific analysis of construction and repair
-        pub use crate::core::algorithms::flips::{
-            DelaunayRepairDiagnostics, DelaunayRepairError, DelaunayRepairStats, RepairQueueOrder,
-        };
-        pub use crate::topology::traits::{GlobalTopology, TopologyKind, ToroidalConstructionMode};
-
         /// Bistellar (Pachner) flips for explicit triangulation editing.
         pub mod flips {
+            pub use crate::core::algorithms::flips::*;
+            pub use crate::core::collections::{
+                CellKeyBuffer, MAX_PRACTICAL_DIMENSION_SIZE, SmallBuffer,
+            };
+            pub use crate::core::tds::{CellKey, VertexKey};
             pub use crate::core::triangulation::{TopologyGuarantee, Triangulation};
             pub use crate::triangulation::delaunay::DelaunayTriangulation;
             pub use crate::triangulation::flips::*;
 
             // Convenience macro (commonly used in docs/examples).
             pub use crate::vertex;
+        }
+
+        /// Incremental insertion building blocks and diagnostics.
+        pub mod insertion {
+            pub use crate::core::algorithms::incremental_insertion::*;
+            pub use crate::core::collections::CellKeyBuffer;
+            pub use crate::core::facet::FacetHandle;
+            pub use crate::core::tds::{CellKey, Tds, VertexKey};
+        }
+
+        /// Topological operation telemetry and repair decisions.
+        pub mod operations {
+            pub use crate::core::operations::*;
         }
 
         /// Flip-based Delaunay repair, diagnostics, and Level 4 validation.
@@ -931,7 +945,12 @@ pub mod prelude {
                 RepairQueueOrder, verify_delaunay_for_triangulation,
                 verify_delaunay_via_flip_predicates,
             };
-            pub use crate::core::triangulation::{TopologyGuarantee, Triangulation};
+            pub use crate::core::triangulation::{
+                TopologyGuarantee, Triangulation, ValidationPolicy,
+            };
+            #[cfg(any(test, debug_assertions))]
+            pub use crate::core::util::debug_print_first_delaunay_violation;
+            pub use crate::core::util::{DelaunayValidationError, find_delaunay_violations};
             pub use crate::triangulation::delaunay::{
                 DelaunayCheckPolicy, DelaunayRepairHeuristicConfig, DelaunayRepairHeuristicSeeds,
                 DelaunayRepairOutcome, DelaunayRepairPolicy, DelaunayTriangulation,
@@ -947,6 +966,9 @@ pub mod prelude {
         /// import brings in [`DelaunayTriangulation`], [`vertex!`], and all
         /// delaunayize-specific types.
         pub mod delaunayize {
+            pub use crate::core::algorithms::pl_manifold_repair::{
+                PlManifoldRepairError, PlManifoldRepairStats,
+            };
             pub use crate::triangulation::delaunay::DelaunayTriangulation;
             pub use crate::triangulation::delaunayize::*;
 
@@ -954,32 +976,53 @@ pub mod prelude {
             pub use crate::vertex;
         }
 
+        pub use crate::core::algorithms::incremental_insertion::InsertionError;
         // Convenience macro (commonly used in docs/tests/examples).
         pub use crate::vertex;
     }
 
     /// Focused exports for collection types used throughout the crate.
     pub mod collections {
+        pub use crate::core::collections::*;
+    }
+
+    /// Focused exports for low-level topology data structures.
+    pub mod tds {
+        pub use crate::core::adjacency::*;
+        pub use crate::core::cell::*;
         pub use crate::core::collections::{
-            CellNeighborsMap, CellSecondaryMap, FacetToCellsMap, FastHashMap, FastHashSet,
-            SmallBuffer, VertexSecondaryMap, VertexToCellsMap, fast_hash_map_with_capacity,
-            fast_hash_set_with_capacity,
+            CellKeyBuffer, FacetIndex, FastHashMap, FastHashSet, NeighborBuffer, SmallBuffer, Uuid,
         };
+        pub use crate::core::edge::*;
+        pub use crate::core::facet::*;
+        pub use crate::core::tds::*;
+        pub use crate::core::traits::facet_cache::*;
+        pub use crate::core::util::{
+            UuidValidationError, checked_facet_key_from_vertex_keys, facet_view_to_vertices,
+            facet_views_are_adjacent, format_jaccard_report, generate_combinations,
+            jaccard_distance, jaccard_index, make_uuid, measure_with_result, stable_hash_u64_slice,
+            usize_to_u8, validate_uuid, verify_facet_index_consistency,
+        };
+        pub use crate::core::vertex::*;
     }
 
     /// Focused exports for geometry types, predicates, and helpers.
     pub mod geometry {
         pub use crate::geometry::{
-            algorithms::*, kernel::*, matrix::*, point::*, predicates::*, quality::*,
-            robust_predicates::*, traits::coordinate::*, util::*,
+            kernel::*, matrix::*, point::*, predicates::*, quality::*, robust_predicates::*,
+            traits::coordinate::*, util::circumsphere::*, util::conversions::*, util::measures::*,
+            util::norms::*,
         };
     }
 
     /// Focused exports for core algorithms.
     pub mod algorithms {
+        #[cfg(debug_assertions)]
+        pub use crate::core::algorithms::locate::verify_conflict_region_completeness;
         pub use crate::core::algorithms::locate::{
             ConflictError, InternalInconsistencySite, LocateError, LocateFallback,
-            LocateFallbackReason, LocateResult, LocateStats, locate, locate_with_stats,
+            LocateFallbackReason, LocateResult, LocateStats, extract_cavity_boundary,
+            find_conflict_region, locate, locate_with_stats,
         };
     }
 
@@ -1004,6 +1047,15 @@ pub mod prelude {
         pub use crate::core::triangulation::Triangulation;
         pub use crate::triangulation::delaunay::DelaunayTriangulation;
 
+        // Locate and conflict-region queries
+        #[cfg(debug_assertions)]
+        pub use crate::core::algorithms::locate::verify_conflict_region_completeness;
+        pub use crate::core::algorithms::locate::{
+            ConflictError, InternalInconsistencySite, LocateError, LocateFallback,
+            LocateFallbackReason, LocateResult, LocateStats, extract_cavity_boundary,
+            find_conflict_region, locate, locate_with_stats,
+        };
+
         // Common input/output types (kept intentionally small)
         pub use crate::core::facet::FacetView;
         pub use crate::core::traits::boundary_analysis::BoundaryAnalysis;
@@ -1019,12 +1071,14 @@ pub mod prelude {
         pub use crate::geometry::{insphere, insphere_distance, insphere_lifted};
 
         // Read-only algorithms
-        pub use crate::geometry::algorithms::convex_hull::ConvexHull;
-
-        // Convenience generators kept for compatibility with existing docs/tests/examples/benches.
-        // Prefer prelude::generators for new code that only needs fixture data.
-        pub use crate::geometry::util::{
-            generate_random_points_seeded, generate_random_triangulation,
+        pub use crate::assert_jaccard_gte;
+        pub use crate::core::util::{
+            JaccardComputationError, extract_edge_set, extract_facet_identifier_set,
+            extract_hull_facet_set, extract_vertex_coordinate_set, format_jaccard_report,
+            jaccard_distance, jaccard_index,
+        };
+        pub use crate::geometry::algorithms::convex_hull::{
+            ConvexHull, ConvexHullConstructionError, ConvexHullValidationError,
         };
 
         // Instrumentation helpers (no-op unless features enable extra tracking)
@@ -1052,13 +1106,15 @@ pub mod prelude {
     /// assert_eq!(points.len(), 4);
     /// ```
     pub mod generators {
+        pub use crate::core::triangulation::TopologyGuarantee;
         pub use crate::geometry::util::{
-            RandomPointGenerationError, generate_grid_points, generate_poisson_points,
-            generate_random_points, generate_random_points_in_ball,
+            RandomPointGenerationError, RandomTriangulationBuilder, generate_grid_points,
+            generate_poisson_points, generate_random_points, generate_random_points_in_ball,
             generate_random_points_in_ball_seeded, generate_random_points_periodic,
             generate_random_points_seeded, generate_random_triangulation,
-            generate_random_triangulation_with_topology_guarantee,
+            generate_random_triangulation_with_topology_guarantee, scaled_bounds_by_point_count,
         };
+        pub use crate::triangulation::delaunay::InsertionOrderStrategy;
     }
 
     /// Focused exports for Hilbert ordering and quantization utilities.
@@ -1090,12 +1146,22 @@ pub mod prelude {
         /// Topology validation utilities.
         pub mod validation {
             pub use crate::topology::TopologyGuarantee;
-            pub use crate::topology::characteristics::*;
+            pub use crate::topology::characteristics::{euler, validation};
+            pub use crate::topology::characteristics::{euler::*, validation::*};
             pub use crate::topology::manifold::{
                 ManifoldError, validate_closed_boundary, validate_facet_degree,
-                validate_ridge_links, validate_vertex_links,
+                validate_ridge_links, validate_ridge_links_for_cells, validate_vertex_links,
             };
             pub use crate::topology::traits::*;
+        }
+
+        /// Topological space models and traits.
+        pub mod spaces {
+            pub use crate::topology::spaces::*;
+            pub use crate::topology::traits::{
+                GlobalTopology, TopologicalSpace, TopologyError, TopologyKind,
+                ToroidalConstructionMode,
+            };
         }
     }
 

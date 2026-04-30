@@ -28,7 +28,7 @@
 ///
 /// ```rust,ignore
 /// // With count-allocations feature enabled
-/// use delaunay::core::util::measure_with_result;
+/// use delaunay::prelude::tds::measure_with_result;
 ///
 /// let (result, alloc_info) = measure_with_result(|| {
 ///     // Some memory-allocating operation
@@ -57,7 +57,7 @@ where
 /// # Examples
 ///
 /// ```rust
-/// use delaunay::core::util::measure_with_result;
+/// use delaunay::prelude::tds::measure_with_result;
 ///
 /// let (value, alloc) = measure_with_result(|| 7u64);
 /// assert_eq!(value, 7);

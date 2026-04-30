@@ -18,8 +18,8 @@ use crate::topology::traits::topological_space::{TopologicalSpace, TopologyKind}
 /// # Examples
 ///
 /// ```rust
-/// use delaunay::topology::spaces::SphericalSpace;
-/// use delaunay::topology::traits::topological_space::TopologicalSpace;
+/// use delaunay::prelude::topology::spaces::SphericalSpace;
+/// use delaunay::prelude::topology::spaces::TopologicalSpace;
 ///
 /// let space = SphericalSpace::<2>::new();
 /// assert!(!space.allows_boundary());

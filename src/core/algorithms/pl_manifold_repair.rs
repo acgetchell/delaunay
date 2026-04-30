@@ -78,7 +78,7 @@ impl Default for PlManifoldRepairConfig {
 /// # Examples
 ///
 /// ```rust
-/// use delaunay::triangulation::delaunayize::PlManifoldRepairStats;
+/// use delaunay::prelude::triangulation::delaunayize::PlManifoldRepairStats;
 ///
 /// let stats = PlManifoldRepairStats::<f64, (), (), 3>::default();
 /// assert_eq!(stats.iterations, 0);
@@ -152,7 +152,7 @@ where
 /// # Examples
 ///
 /// ```rust
-/// use delaunay::triangulation::delaunayize::PlManifoldRepairError;
+/// use delaunay::prelude::triangulation::delaunayize::PlManifoldRepairError;
 ///
 /// let err = PlManifoldRepairError::BudgetExhausted {
 ///     iterations: 64,

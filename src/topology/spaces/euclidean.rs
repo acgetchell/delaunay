@@ -18,8 +18,8 @@ use crate::topology::traits::topological_space::{TopologicalSpace, TopologyKind}
 /// # Examples
 ///
 /// ```rust
-/// use delaunay::topology::spaces::EuclideanSpace;
-/// use delaunay::topology::traits::topological_space::TopologicalSpace;
+/// use delaunay::prelude::topology::spaces::EuclideanSpace;
+/// use delaunay::prelude::topology::spaces::TopologicalSpace;
 ///
 /// let space = EuclideanSpace::<3>::new();
 /// assert!(space.allows_boundary());

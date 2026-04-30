@@ -10,7 +10,7 @@ use uuid::Uuid;
 /// # Examples
 ///
 /// ```rust
-/// use delaunay::core::util::UuidValidationError;
+/// use delaunay::prelude::tds::UuidValidationError;
 ///
 /// let err = UuidValidationError::NilUuid;
 /// assert!(matches!(err, UuidValidationError::NilUuid));
@@ -51,8 +51,8 @@ pub enum UuidValidationError {
 /// # Examples
 ///
 /// ```
-/// use delaunay::core::collections::Uuid;
-/// use delaunay::core::util::{make_uuid, validate_uuid};
+/// use delaunay::prelude::collections::Uuid;
+/// use delaunay::prelude::tds::{make_uuid, validate_uuid};
 ///
 /// // Valid UUID (version 4)
 /// let valid_uuid = make_uuid();
@@ -87,7 +87,7 @@ pub const fn validate_uuid(uuid: &Uuid) -> Result<(), UuidValidationError> {
 /// # Example
 ///
 /// ```
-/// use delaunay::core::util::make_uuid;
+/// use delaunay::prelude::tds::make_uuid;
 /// let uuid = make_uuid();
 /// assert_eq!(uuid.get_version_num(), 4);
 /// ```

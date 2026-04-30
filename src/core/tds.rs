@@ -270,7 +270,7 @@ use uuid::Uuid;
 /// # Examples
 ///
 /// ```
-/// use delaunay::prelude::triangulation::*;
+/// use delaunay::prelude::tds::TriangulationConstructionState;
 ///
 /// let state = TriangulationConstructionState::Incomplete(2);
 /// assert!(matches!(state, TriangulationConstructionState::Incomplete(2)));
@@ -305,7 +305,7 @@ impl Default for TriangulationConstructionState {
 /// # Examples
 ///
 /// ```
-/// use delaunay::prelude::triangulation::*;
+/// use delaunay::prelude::tds::{EntityKind, TdsConstructionError};
 /// use uuid::Uuid;
 ///
 /// let err = TdsConstructionError::DuplicateUuid {
@@ -335,7 +335,7 @@ pub enum TdsConstructionError {
 /// # Examples
 ///
 /// ```
-/// use delaunay::prelude::triangulation::*;
+/// use delaunay::prelude::tds::EntityKind;
 ///
 /// let kind = EntityKind::Cell;
 /// assert_eq!(kind, EntityKind::Cell);
@@ -358,7 +358,7 @@ pub enum EntityKind {
 /// # Examples
 ///
 /// ```
-/// use delaunay::prelude::triangulation::*;
+/// use delaunay::prelude::tds::GeometricError;
 ///
 /// let err = GeometricError::DegenerateOrientation {
 ///     message: "det=0".to_string(),
@@ -612,7 +612,7 @@ pub enum TdsError {
 /// # Examples
 ///
 /// ```
-/// use delaunay::prelude::triangulation::*;
+/// use delaunay::prelude::tds::{TdsError, TdsMutationError};
 ///
 /// let err = TdsError::InvalidNeighbors {
 ///     message: "bad neighbors".to_string(),
@@ -656,7 +656,7 @@ impl From<TdsMutationError> for TdsError {
 /// # Examples
 ///
 /// ```
-/// use delaunay::prelude::triangulation::*;
+/// use delaunay::prelude::tds::InvariantKind;
 ///
 /// let kind = InvariantKind::Topology;
 /// assert_eq!(kind, InvariantKind::Topology);
@@ -701,7 +701,7 @@ pub enum InvariantKind {
 /// # Examples
 ///
 /// ```
-/// use delaunay::prelude::triangulation::*;
+/// use delaunay::prelude::tds::{InvariantError, TdsError};
 ///
 /// let err = InvariantError::Tds(TdsError::InvalidNeighbors {
 ///     message: "bad neighbors".to_string(),
@@ -733,7 +733,7 @@ pub enum InvariantError {
 /// # Examples
 ///
 /// ```
-/// use delaunay::prelude::triangulation::*;
+/// use delaunay::prelude::tds::{InvariantError, InvariantKind, InvariantViolation, TdsError};
 ///
 /// let violation = InvariantViolation {
 ///     kind: InvariantKind::Topology,
@@ -762,7 +762,7 @@ pub struct InvariantViolation {
 /// # Examples
 ///
 /// ```rust
-/// use delaunay::core::tds::TriangulationValidationReport;
+/// use delaunay::prelude::tds::TriangulationValidationReport;
 ///
 /// let report = TriangulationValidationReport { violations: Vec::new() };
 /// assert!(report.is_empty());
@@ -1408,7 +1408,7 @@ where
     /// Count vertices in an empty triangulation:
     ///
     /// ```
-    /// use delaunay::core::tds::Tds;
+    /// use delaunay::prelude::tds::Tds;
     ///
     /// let tds = Tds::<f64, (), (), 3>::empty();
     /// assert_eq!(tds.number_of_vertices(), 0);
@@ -1463,9 +1463,9 @@ where
     /// Dimension of an empty triangulation:
     ///
     /// ```
-    /// use delaunay::core::tds::Tds;
-    /// use delaunay::geometry::point::Point;
-    /// use delaunay::geometry::traits::coordinate::Coordinate;
+    /// use delaunay::prelude::tds::Tds;
+    /// use delaunay::prelude::geometry::Point;
+    /// use delaunay::prelude::geometry::Coordinate;
     ///
     /// let tds = Tds::<f64, (), (), 3>::empty();
     /// assert_eq!(tds.dim(), -1); // Empty triangulation
@@ -1581,7 +1581,7 @@ where
     /// Empty triangulation has no cells:
     ///
     /// ```
-    /// use delaunay::core::tds::Tds;
+    /// use delaunay::prelude::tds::Tds;
     ///
     /// let tds = Tds::<f64, (), (), 3>::empty();
     /// assert_eq!(tds.number_of_cells(), 0); // No cells for empty input
@@ -1689,7 +1689,7 @@ where
     /// # Examples
     ///
     /// ```
-    /// use delaunay::core::tds::Tds;
+    /// use delaunay::prelude::tds::Tds;
     ///
     /// let tds: Tds<f64, (), (), 2> = Tds::empty();
     /// assert_eq!(tds.generation(), 0);
@@ -1989,7 +1989,7 @@ where
     /// Returns `None` for non-existent UUID:
     ///
     /// ```
-    /// use delaunay::core::tds::Tds;
+    /// use delaunay::prelude::tds::Tds;
     /// use uuid::Uuid;
     ///
     /// let tds: Tds<f64, (), (), 3> = Tds::empty();
@@ -2049,7 +2049,7 @@ where
     /// Returns `None` for non-existent UUID:
     ///
     /// ```
-    /// use delaunay::core::tds::Tds;
+    /// use delaunay::prelude::tds::Tds;
     /// use uuid::Uuid;
     ///
     /// let tds: Tds<f64, (), (), 3> = Tds::empty();
@@ -3441,8 +3441,8 @@ where
     /// # Examples
     ///
     /// ```
-    /// use delaunay::core::tds::Tds;
-    /// use delaunay::core::tds::TriangulationConstructionState;
+    /// use delaunay::prelude::tds::Tds;
+    /// use delaunay::prelude::tds::TriangulationConstructionState;
     ///
     /// let tds: Tds<f64, (), (), 3> = Tds::empty();
     /// assert_eq!(tds.number_of_vertices(), 0);
@@ -3728,7 +3728,7 @@ where
     /// # Examples
     ///
     /// ```
-    /// use delaunay::core::tds::Tds;
+    /// use delaunay::prelude::tds::Tds;
     ///
     /// let mut tds: Tds<f64, (), (), 2> = Tds::empty();
     /// let removed = tds.remove_duplicate_cells().unwrap();

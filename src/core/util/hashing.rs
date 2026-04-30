@@ -26,7 +26,7 @@
 /// # Examples
 ///
 /// ```
-/// use delaunay::core::util::stable_hash_u64_slice;
+/// use delaunay::prelude::tds::stable_hash_u64_slice;
 /// let values = vec![1u64, 2u64, 3u64];
 /// let hash1 = stable_hash_u64_slice(&values);
 ///

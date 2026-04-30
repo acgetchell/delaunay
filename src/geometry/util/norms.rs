@@ -49,7 +49,7 @@ pub(in crate::geometry::util) fn scaled_hypot_2d<T: CoordinateScalar>(x: T, y: T
 /// # Examples
 ///
 /// ```
-/// use delaunay::geometry::util::squared_norm;
+/// use delaunay::prelude::geometry::squared_norm;
 ///
 /// // 2D vector
 /// let coords_2d = [3.0, 4.0];
@@ -98,7 +98,7 @@ where
 /// # Examples
 ///
 /// ```
-/// use delaunay::geometry::util::hypot;
+/// use delaunay::prelude::geometry::hypot;
 ///
 /// // 2D case - uses std::f64::hypot internally
 /// let distance_2d = hypot(&[3.0, 4.0]);

@@ -12,6 +12,8 @@
 //!
 //! For property-based tests with random triangulations, see `proptest_euler_characteristic.rs`.
 
+use delaunay::prelude::query::BoundaryAnalysis;
+use delaunay::prelude::tds::Tds;
 use delaunay::prelude::triangulation::*;
 use delaunay::topology::characteristics::{euler, validation};
 

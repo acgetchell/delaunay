@@ -218,7 +218,7 @@ where
 /// # Examples
 ///
 /// ```no_run
-/// use delaunay::geometry::util::generate_random_triangulation;
+/// use delaunay::prelude::generators::generate_random_triangulation;
 ///
 /// // Generate a 2D triangulation with 50 points, no seed (random each time)
 /// let triangulation_2d = generate_random_triangulation::<f64, (), (), 2>(
@@ -330,8 +330,8 @@ where
 /// # Examples
 ///
 /// ```no_run
-/// use delaunay::geometry::util::generate_random_triangulation_with_topology_guarantee;
-/// use delaunay::core::triangulation::TopologyGuarantee;
+/// use delaunay::prelude::generators::generate_random_triangulation_with_topology_guarantee;
+/// use delaunay::prelude::triangulation::TopologyGuarantee;
 ///
 /// let dt = generate_random_triangulation_with_topology_guarantee::<f64, (), (), 3>(
 ///     20,
@@ -465,9 +465,9 @@ where
 /// # Examples
 ///
 /// ```no_run
-/// use delaunay::geometry::util::RandomTriangulationBuilder;
-/// use delaunay::core::InsertionOrderStrategy;
-/// use delaunay::core::triangulation::TopologyGuarantee;
+/// use delaunay::prelude::generators::RandomTriangulationBuilder;
+/// use delaunay::prelude::generators::InsertionOrderStrategy;
+/// use delaunay::prelude::triangulation::TopologyGuarantee;
 ///
 /// // Override the default `Hilbert` ordering with `Input` ordering.
 /// let dt = RandomTriangulationBuilder::new(20, (-3.0, 3.0))
@@ -512,7 +512,7 @@ where
     /// # Examples
     ///
     /// ```no_run
-    /// use delaunay::geometry::util::RandomTriangulationBuilder;
+    /// use delaunay::prelude::generators::RandomTriangulationBuilder;
     ///
     /// let builder = RandomTriangulationBuilder::new(10, (-1.0, 1.0)).seed(42);
     /// let _ = builder;
@@ -549,8 +549,8 @@ where
     /// # Examples
     ///
     /// ```no_run
-    /// use delaunay::geometry::util::RandomTriangulationBuilder;
-    /// use delaunay::core::InsertionOrderStrategy;
+    /// use delaunay::prelude::generators::RandomTriangulationBuilder;
+    /// use delaunay::prelude::generators::InsertionOrderStrategy;
     ///
     /// // Override the default `Hilbert` ordering with `Input` ordering.
     /// let dt = RandomTriangulationBuilder::new(20, (-3.0, 3.0))
@@ -593,7 +593,7 @@ where
     /// # Examples
     ///
     /// ```no_run
-    /// use delaunay::geometry::util::RandomTriangulationBuilder;
+    /// use delaunay::prelude::generators::RandomTriangulationBuilder;
     ///
     /// let dt = RandomTriangulationBuilder::new(12, (-2.0, 2.0))
     ///     .seed(7)
@@ -627,7 +627,7 @@ where
     /// # Examples
     ///
     /// ```no_run
-    /// use delaunay::geometry::util::RandomTriangulationBuilder;
+    /// use delaunay::prelude::generators::RandomTriangulationBuilder;
     ///
     /// let dt = RandomTriangulationBuilder::new(12, (-2.0, 2.0))
     ///     .seed(7)

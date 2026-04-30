@@ -88,6 +88,26 @@ Add the library to your crate:
 cargo add delaunay
 ```
 
+Choose the smallest prelude that matches the task:
+
+| Task | Import |
+|---|---|
+| Build, configure, insert, or remove vertices | `use delaunay::prelude::triangulation::*` |
+| Read-only traversal, adjacency, convex hulls, and comparison helpers | `use delaunay::prelude::query::*` |
+| Points, kernels, predicates, and geometric measures | `use delaunay::prelude::geometry::*` |
+| Random points or triangulations for examples, tests, and benchmarks | `use delaunay::prelude::generators::*` |
+| Bistellar flips / Edit API | `use delaunay::prelude::triangulation::flips::*` |
+| Delaunay repair diagnostics and policies | `use delaunay::prelude::triangulation::repair::*` |
+| Delaunayize workflow | `use delaunay::prelude::triangulation::delaunayize::*` |
+| Hilbert ordering and quantization utilities | `use delaunay::prelude::ordering::*` |
+| Low-level TDS cells, facets, keys, and validation reports | `use delaunay::prelude::tds::*` |
+| Collection aliases and small buffers | `use delaunay::prelude::collections::*` |
+| Topology validation and Euler characteristic helpers | `use delaunay::prelude::topology::validation::*` |
+| Topological spaces and topology traits | `use delaunay::prelude::topology::spaces::*` |
+
+`use delaunay::prelude::*` remains available for quick experiments, but examples
+and benchmarks in this repository prefer focused preludes so imports document intent.
+
 ```rust
 use delaunay::prelude::triangulation::*;
 

@@ -70,7 +70,7 @@ type RemovedCellVertexSnapshot = SmallBuffer<VertexKeyList, MAX_PRACTICAL_DIMENS
 /// # Examples
 ///
 /// ```rust
-/// use delaunay::core::algorithms::flips::BistellarFlipKind;
+/// use delaunay::prelude::triangulation::flips::BistellarFlipKind;
 ///
 /// let kind = BistellarFlipKind::k2(3);
 /// let inverse = kind.inverse();
@@ -1322,7 +1322,7 @@ where
 /// # Examples
 ///
 /// ```rust
-/// use delaunay::core::algorithms::flips::FlipDirection;
+/// use delaunay::prelude::triangulation::flips::FlipDirection;
 ///
 /// assert_eq!(FlipDirection::Forward.inverse(), FlipDirection::Inverse);
 /// ```
@@ -1551,7 +1551,7 @@ impl BistellarFlipKind {
 /// # Examples
 ///
 /// ```rust
-/// use delaunay::core::algorithms::flips::{BistellarMove, ConstK};
+/// use delaunay::prelude::triangulation::flips::{BistellarMove, ConstK};
 ///
 /// fn move_k<const D: usize, M: BistellarMove<D>>() -> usize {
 ///     M::K
@@ -1567,7 +1567,7 @@ pub struct ConstK<const K: usize>;
 /// # Examples
 ///
 /// ```rust
-/// use delaunay::core::algorithms::flips::{BistellarMove, ConstK};
+/// use delaunay::prelude::triangulation::flips::{BistellarMove, ConstK};
 ///
 /// fn move_k<const D: usize, M: BistellarMove<D>>() -> usize {
 ///     M::K
@@ -1589,7 +1589,7 @@ impl<const D: usize, const K: usize> BistellarMove<D> for ConstK<K> {
 /// # Examples
 ///
 /// ```rust
-/// use delaunay::core::algorithms::flips::FlipError;
+/// use delaunay::prelude::triangulation::flips::FlipError;
 ///
 /// let err = FlipError::UnsupportedDimension { dimension: 1 };
 /// assert!(matches!(err, FlipError::UnsupportedDimension { .. }));
@@ -1783,9 +1783,9 @@ pub enum FlipError {
 /// # Examples
 ///
 /// ```rust
-/// use delaunay::core::algorithms::flips::{BistellarFlipKind, FlipDirection, FlipInfo};
-/// use delaunay::core::collections::{CellKeyBuffer, SmallBuffer, MAX_PRACTICAL_DIMENSION_SIZE};
-/// use delaunay::core::tds::{CellKey, VertexKey};
+/// use delaunay::prelude::triangulation::flips::{BistellarFlipKind, FlipDirection, FlipInfo};
+/// use delaunay::prelude::collections::{CellKeyBuffer, SmallBuffer, MAX_PRACTICAL_DIMENSION_SIZE};
+/// use delaunay::prelude::tds::{CellKey, VertexKey};
 /// use slotmap::KeyData;
 ///
 /// let mut removed_cells = CellKeyBuffer::new();
@@ -1863,8 +1863,8 @@ pub(crate) struct FlipContextDyn<const D: usize> {
 /// # Examples
 ///
 /// ```rust
-/// use delaunay::core::algorithms::flips::TriangleHandle;
-/// use delaunay::core::tds::VertexKey;
+/// use delaunay::prelude::triangulation::flips::TriangleHandle;
+/// use delaunay::prelude::tds::VertexKey;
 /// use slotmap::KeyData;
 ///
 /// let a = VertexKey::from(KeyData::from_ffi(1));
@@ -1888,8 +1888,8 @@ impl TriangleHandle {
     /// # Examples
     ///
     /// ```rust
-    /// use delaunay::core::algorithms::flips::TriangleHandle;
-    /// use delaunay::core::tds::VertexKey;
+    /// use delaunay::prelude::triangulation::flips::TriangleHandle;
+    /// use delaunay::prelude::tds::VertexKey;
     /// use slotmap::KeyData;
     ///
     /// let a = VertexKey::from(KeyData::from_ffi(10));
@@ -1921,8 +1921,8 @@ impl TriangleHandle {
 /// # Examples
 ///
 /// ```rust
-/// use delaunay::core::algorithms::flips::RidgeHandle;
-/// use delaunay::core::tds::CellKey;
+/// use delaunay::prelude::triangulation::flips::RidgeHandle;
+/// use delaunay::prelude::tds::CellKey;
 /// use slotmap::KeyData;
 ///
 /// let cell_key = CellKey::from(KeyData::from_ffi(7));
@@ -3664,7 +3664,7 @@ where
 /// ```
 /// use delaunay::prelude::triangulation::*;
 /// use delaunay::prelude::triangulation::repair::verify_delaunay_via_flip_predicates;
-/// use delaunay::geometry::kernel::AdaptiveKernel;
+/// use delaunay::prelude::geometry::AdaptiveKernel;
 ///
 /// let vertices = vec![
 ///     vertex!([0.0, 0.0, 0.0]),

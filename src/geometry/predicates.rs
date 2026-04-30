@@ -153,7 +153,7 @@ pub(crate) fn orientation_from_matrix<const N: usize>(
 /// # Examples
 ///
 /// ```rust
-/// use delaunay::geometry::predicates::InSphere;
+/// use delaunay::prelude::geometry::InSphere;
 ///
 /// let status = InSphere::INSIDE;
 /// assert_eq!(status.to_string(), "INSIDE");
@@ -183,7 +183,7 @@ impl std::fmt::Display for InSphere {
 /// # Examples
 ///
 /// ```rust
-/// use delaunay::geometry::predicates::Orientation;
+/// use delaunay::prelude::geometry::Orientation;
 ///
 /// let orientation = Orientation::POSITIVE;
 /// assert_eq!(orientation.to_string(), "POSITIVE");
@@ -252,10 +252,10 @@ impl std::fmt::Display for Orientation {
 /// # Example
 ///
 /// ```
-/// use delaunay::geometry::Orientation;
-/// use delaunay::geometry::point::Point;
-/// use delaunay::geometry::traits::coordinate::Coordinate;
-/// use delaunay::geometry::predicates::simplex_orientation;
+/// use delaunay::prelude::geometry::Orientation;
+/// use delaunay::prelude::geometry::Point;
+/// use delaunay::prelude::geometry::Coordinate;
+/// use delaunay::prelude::geometry::simplex_orientation;
 /// let point1 = Point::new([0.0, 0.0, 0.0]);
 /// let point2 = Point::new([1.0, 0.0, 0.0]);
 /// let point3 = Point::new([0.0, 1.0, 0.0]);
@@ -354,9 +354,9 @@ where
 /// # Example
 ///
 /// ```
-/// use delaunay::geometry::point::Point;
-/// use delaunay::geometry::traits::coordinate::Coordinate;
-/// use delaunay::geometry::predicates::{insphere_distance, InSphere};
+/// use delaunay::prelude::geometry::Point;
+/// use delaunay::prelude::geometry::Coordinate;
+/// use delaunay::prelude::geometry::{insphere_distance, InSphere};
 /// let point1 = Point::new([0.0, 0.0, 0.0]);
 /// let point2 = Point::new([1.0, 0.0, 0.0]);
 /// let point3 = Point::new([0.0, 1.0, 0.0]);
@@ -501,10 +501,10 @@ where
 /// # Example
 ///
 /// ```
-/// use delaunay::geometry::point::Point;
-/// use delaunay::geometry::traits::coordinate::Coordinate;
-/// use delaunay::geometry::predicates::insphere;
-/// use delaunay::geometry::InSphere;
+/// use delaunay::prelude::geometry::Point;
+/// use delaunay::prelude::geometry::Coordinate;
+/// use delaunay::prelude::geometry::insphere;
+/// use delaunay::prelude::geometry::InSphere;
 /// let point1 = Point::new([0.0, 0.0, 0.0]);
 /// let point2 = Point::new([1.0, 0.0, 0.0]);
 /// let point3 = Point::new([0.0, 1.0, 0.0]);
@@ -712,9 +712,9 @@ where
 /// # Example
 ///
 /// ```
-/// use delaunay::geometry::point::Point;
-/// use delaunay::geometry::traits::coordinate::Coordinate;
-/// use delaunay::geometry::predicates::insphere_lifted;
+/// use delaunay::prelude::geometry::Point;
+/// use delaunay::prelude::geometry::Coordinate;
+/// use delaunay::prelude::geometry::insphere_lifted;
 /// let point1 = Point::new([0.0, 0.0, 0.0]);
 /// let point2 = Point::new([1.0, 0.0, 0.0]);
 /// let point3 = Point::new([0.0, 1.0, 0.0]);

@@ -72,9 +72,9 @@ fn is_zero_or_roundoff<T: CoordinateScalar>(value: T, scale: T) -> Result<bool, 
 /// # Examples
 ///
 /// ```
-/// use delaunay::geometry::point::Point;
-/// use delaunay::geometry::traits::coordinate::Coordinate;
-/// use delaunay::geometry::util::simplex_volume;
+/// use delaunay::prelude::geometry::Point;
+/// use delaunay::prelude::geometry::Coordinate;
+/// use delaunay::prelude::geometry::simplex_volume;
 /// use approx::assert_relative_eq;
 ///
 /// // 2D: Triangle area
@@ -350,9 +350,9 @@ where
 /// # Examples
 ///
 /// ```
-/// use delaunay::geometry::point::Point;
-/// use delaunay::geometry::traits::coordinate::Coordinate;
-/// use delaunay::geometry::util::inradius;
+/// use delaunay::prelude::geometry::Point;
+/// use delaunay::prelude::geometry::Coordinate;
+/// use delaunay::prelude::geometry::inradius;
 /// use approx::assert_relative_eq;
 ///
 /// // 2D: Equilateral triangle with side length 1
@@ -461,9 +461,9 @@ where
 /// # Examples
 ///
 /// ```
-/// use delaunay::geometry::point::Point;
-/// use delaunay::geometry::traits::coordinate::Coordinate;
-/// use delaunay::geometry::util::facet_measure;
+/// use delaunay::prelude::geometry::Point;
+/// use delaunay::prelude::geometry::Coordinate;
+/// use delaunay::prelude::geometry::facet_measure;
 /// use approx::assert_relative_eq;
 ///
 /// // 2D: Line segment length (1D facet in 2D space)
@@ -695,7 +695,7 @@ where
 ///
 /// ```
 /// use delaunay::prelude::query::*;
-/// use delaunay::geometry::util::surface_measure;
+/// use delaunay::prelude::geometry::surface_measure;
 ///
 /// // Create a triangulation and calculate surface measure of boundary facets
 /// let vertices = vec![

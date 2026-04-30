@@ -88,7 +88,6 @@ use `DelaunayTriangulationBuilder`:
 
 ```rust
 use delaunay::prelude::triangulation::*;
-use delaunay::core::triangulation::{TopologyGuarantee, ValidationPolicy};
 
 // Toroidal (periodic) triangulation in 2D
 let vertices = vec![

@@ -69,6 +69,7 @@ use delaunay::geometry::kernel::RobustKernel;
 use delaunay::geometry::util::{
     generate_random_points_in_ball_seeded, generate_random_points_seeded, safe_usize_to_scalar,
 };
+use delaunay::prelude::tds::{InvariantKind, TriangulationValidationReport};
 use delaunay::prelude::triangulation::*;
 use delaunay::triangulation::delaunay::{
     ConstructionOptions, ConstructionStatistics, DelaunayRepairHeuristicConfig,

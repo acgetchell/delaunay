@@ -137,7 +137,7 @@ If repair fails to converge within the flip budget, you get
 detections, etc.).
 
 ```rust
-use delaunay::core::algorithms::flips::DelaunayRepairError;
+use delaunay::prelude::triangulation::repair::DelaunayRepairError;
 use delaunay::prelude::triangulation::*;
 
 let vertices = vec![

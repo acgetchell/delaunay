@@ -16,7 +16,7 @@ use super::{FastBuildHasher, FastHashMap, FastHashSet, SmallBuffer};
 /// # Examples
 ///
 /// ```rust
-/// use delaunay::core::collections::fast_hash_map_with_capacity;
+/// use delaunay::prelude::collections::fast_hash_map_with_capacity;
 ///
 /// let map = fast_hash_map_with_capacity::<u64, usize>(1000);
 /// // Can insert up to ~750 items without rehashing (load factor ~0.75)
@@ -40,7 +40,7 @@ pub fn fast_hash_map_with_capacity<K, V>(capacity: usize) -> FastHashMap<K, V> {
 ///
 /// External API usage (UUID-based):
 /// ```rust
-/// use delaunay::core::collections::fast_hash_set_with_capacity;
+/// use delaunay::prelude::collections::fast_hash_set_with_capacity;
 /// use uuid::Uuid;
 ///
 /// let set = fast_hash_set_with_capacity::<Uuid>(500);
@@ -49,8 +49,8 @@ pub fn fast_hash_map_with_capacity<K, V>(capacity: usize) -> FastHashMap<K, V> {
 ///
 /// **Phase 1**: Internal operations (key-based for better performance):
 /// ```rust
-/// use delaunay::core::collections::fast_hash_set_with_capacity;
-/// use delaunay::core::tds::CellKey;
+/// use delaunay::prelude::collections::fast_hash_set_with_capacity;
+/// use delaunay::prelude::tds::CellKey;
 ///
 /// let set = fast_hash_set_with_capacity::<CellKey>(500);
 /// // Can insert up to ~375 CellKeys without rehashing, avoids UUID→Key lookups
@@ -76,7 +76,7 @@ pub fn fast_hash_set_with_capacity<T>(capacity: usize) -> FastHashSet<T> {
 /// # Examples
 ///
 /// ```rust
-/// use delaunay::core::collections::SmallBuffer;
+/// use delaunay::prelude::collections::SmallBuffer;
 ///
 /// // Use concrete types directly (preferred)
 /// let mut small_buf: SmallBuffer<i32, 8> = SmallBuffer::with_capacity(5);
@@ -95,7 +95,7 @@ pub fn small_buffer_with_capacity_8<T>(capacity: usize) -> SmallBuffer<T, 8> {
 /// # Examples
 ///
 /// ```rust
-/// use delaunay::core::collections::small_buffer_with_capacity_2;
+/// use delaunay::prelude::collections::small_buffer_with_capacity_2;
 ///
 /// let mut buf = small_buffer_with_capacity_2::<i32>(2);
 /// buf.push(1);
@@ -115,7 +115,7 @@ pub fn small_buffer_with_capacity_2<T>(capacity: usize) -> SmallBuffer<T, 2> {
 /// # Examples
 ///
 /// ```rust
-/// use delaunay::core::collections::small_buffer_with_capacity_16;
+/// use delaunay::prelude::collections::small_buffer_with_capacity_16;
 ///
 /// let mut buf = small_buffer_with_capacity_16::<i32>(4);
 /// buf.extend([1, 2, 3, 4]);

@@ -3,6 +3,7 @@
 //! This example demonstrates basic memory usage analysis for Delaunay triangulations
 //! using the existing allocation counter infrastructure from the tests.
 
+use delaunay::prelude::generators::generate_random_triangulation;
 use delaunay::prelude::query::*;
 use std::any::Any;
 use std::backtrace::Backtrace;

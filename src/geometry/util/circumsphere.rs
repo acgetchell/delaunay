@@ -70,9 +70,9 @@ pub use super::CircumcenterError;
 /// # Example
 ///
 /// ```
-/// use delaunay::geometry::point::Point;
-/// use delaunay::geometry::traits::coordinate::Coordinate;
-/// use delaunay::geometry::util::circumcenter;
+/// use delaunay::prelude::geometry::Point;
+/// use delaunay::prelude::geometry::Coordinate;
+/// use delaunay::prelude::geometry::circumcenter;
 /// let point1 = Point::new([0.0, 0.0, 0.0]);
 /// let point2 = Point::new([1.0, 0.0, 0.0]);
 /// let point3 = Point::new([0.0, 1.0, 0.0]);
@@ -209,9 +209,9 @@ where
 /// # Example
 ///
 /// ```
-/// use delaunay::geometry::point::Point;
-/// use delaunay::geometry::traits::coordinate::Coordinate;
-/// use delaunay::geometry::util::circumradius;
+/// use delaunay::prelude::geometry::Point;
+/// use delaunay::prelude::geometry::Coordinate;
+/// use delaunay::prelude::geometry::circumradius;
 /// use approx::assert_relative_eq;
 /// let point1 = Point::new([0.0, 0.0, 0.0]);
 /// let point2 = Point::new([1.0, 0.0, 0.0]);
@@ -254,9 +254,9 @@ where
 /// # Example
 ///
 /// ```
-/// use delaunay::geometry::point::Point;
-/// use delaunay::geometry::traits::coordinate::Coordinate;
-/// use delaunay::geometry::util::{circumcenter, circumradius_with_center};
+/// use delaunay::prelude::geometry::Point;
+/// use delaunay::prelude::geometry::Coordinate;
+/// use delaunay::prelude::geometry::{circumcenter, circumradius_with_center};
 /// use approx::assert_relative_eq;
 /// let point1 = Point::new([0.0, 0.0, 0.0]);
 /// let point2 = Point::new([1.0, 0.0, 0.0]);

@@ -21,7 +21,7 @@ use num_traits::NumCast;
 /// # Examples
 ///
 /// ```rust
-/// use delaunay::topology::spaces::ToroidalSpace;
+/// use delaunay::prelude::topology::spaces::ToroidalSpace;
 ///
 /// let space = ToroidalSpace::<2>::new([1.0, 2.0]);
 /// assert_eq!(space.domain, [1.0, 2.0]);
@@ -48,7 +48,7 @@ impl<const D: usize> ToroidalSpace<D> {
     /// # Examples
     ///
     /// ```rust
-    /// use delaunay::topology::spaces::ToroidalSpace;
+    /// use delaunay::prelude::topology::spaces::ToroidalSpace;
     ///
     /// let space = ToroidalSpace::<3>::unit();
     /// assert_eq!(space.domain, [1.0, 1.0, 1.0]);
@@ -73,7 +73,7 @@ impl<const D: usize> ToroidalSpace<D> {
     /// # Examples
     ///
     /// ```rust
-    /// use delaunay::topology::spaces::ToroidalSpace;
+    /// use delaunay::prelude::topology::spaces::ToroidalSpace;
     ///
     /// let space = ToroidalSpace::<2>::new([1.0, 2.0]);
     ///

@@ -54,7 +54,7 @@ use thiserror::Error;
 /// # Examples
 ///
 /// ```rust
-/// use delaunay::geometry::quality::QualityError;
+/// use delaunay::prelude::geometry::QualityError;
 ///
 /// let err = QualityError::NumericalError {
 ///     message: "overflow".to_string(),
@@ -215,7 +215,7 @@ where
 ///
 /// ```
 /// use delaunay::prelude::query::*;
-/// use delaunay::geometry::quality::radius_ratio;
+/// use delaunay::prelude::geometry::radius_ratio;
 ///
 /// // Create a 2D equilateral triangle
 /// let vertices = vec![
@@ -312,7 +312,7 @@ where
 ///
 /// ```
 /// use delaunay::prelude::query::*;
-/// use delaunay::geometry::quality::normalized_volume;
+/// use delaunay::prelude::geometry::normalized_volume;
 ///
 /// // Create a 2D triangle
 /// let vertices = vec![

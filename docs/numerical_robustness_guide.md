@@ -80,7 +80,7 @@ The convenience constructors (`DelaunayTriangulation::new()`, `::empty()`, etc.)
 `AdaptiveKernel`. To opt into a different kernel, use the explicit-kernel constructors:
 
 ```rust
-use delaunay::geometry::kernel::RobustKernel;
+use delaunay::prelude::geometry::RobustKernel;
 use delaunay::prelude::triangulation::*;
 
 let kernel = RobustKernel::<f64>::new();
