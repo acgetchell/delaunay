@@ -2,6 +2,11 @@
 
 use num_traits::NumCast;
 
+// ruleid: delaunay.rust.prefer-prelude-imports-in-examples-benches
+use delaunay::core::vertex::Vertex as DeepVertex;
+// ok: delaunay.rust.prefer-prelude-imports-in-examples-benches
+use delaunay::prelude::triangulation::Vertex as PreludeVertex;
+
 pub fn production_stdio() {
     // ruleid: delaunay.rust.no-stdio-diagnostics-in-src
     println!("debug output");

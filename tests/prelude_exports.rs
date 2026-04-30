@@ -6,6 +6,10 @@
 
 use delaunay::prelude::generators::generate_random_points_seeded;
 use delaunay::prelude::geometry::{AdaptiveKernel, Point};
+use delaunay::prelude::ordering::{
+    HilbertError, hilbert_index, hilbert_indices_prequantized, hilbert_quantize,
+    hilbert_sort_by_stable, hilbert_sort_by_unstable, hilbert_sorted_indices,
+};
 use delaunay::prelude::query::ConvexHull;
 use delaunay::prelude::triangulation::delaunayize::{
     DelaunayizeConfig, DelaunayizeError, DelaunayizeOutcome, delaunayize_by_flips,
@@ -22,6 +26,7 @@ use delaunay::prelude::triangulation::{
 };
 use delaunay::vertex;
 
+/// Proves the focused flips prelude exports the trait bound expected by benchmarks.
 const fn assert_bistellar_flips(_: &impl BistellarFlips<AdaptiveKernel<f64>, (), (), 3>) {}
 
 #[test]
@@ -97,4 +102,31 @@ fn diagnostic_preludes_cover_repair_apis() {
     assert!(!outcome.used_fallback_rebuild);
     let _typed_outcome: DelaunayizeOutcome<f64, (), (), 3> = outcome;
     let _typed_error: Option<DelaunayizeError> = None;
+}
+
+#[test]
+fn ordering_prelude_covers_hilbert_apis() -> Result<(), HilbertError> {
+    let coords = [[0.9_f64, 0.9], [0.1, 0.1], [0.5, 0.5]];
+    let order = hilbert_sorted_indices(&coords, (0.0, 1.0), 8)?;
+    assert_eq!(order.len(), coords.len());
+
+    let quantized: Vec<[u32; 2]> = coords
+        .iter()
+        .map(|coord| hilbert_quantize(coord, (0.0, 1.0), 8))
+        .collect::<Result<_, _>>()?;
+    let indices = hilbert_indices_prequantized(&quantized, 8)?;
+    assert_eq!(indices.len(), coords.len());
+
+    let index = hilbert_index(&coords[0], (0.0, 1.0), 8)?;
+    assert_eq!(index, indices[0]);
+
+    let mut stable_payload = vec![0_usize, 1, 2];
+    hilbert_sort_by_stable(&mut stable_payload, (0.0, 1.0), 8, |&i| coords[i])?;
+    assert_eq!(stable_payload, order);
+
+    let mut unstable_payload = vec![0_usize, 1, 2];
+    hilbert_sort_by_unstable(&mut unstable_payload, (0.0, 1.0), 8, |&i| coords[i])?;
+    assert_eq!(unstable_payload, order);
+
+    Ok(())
 }

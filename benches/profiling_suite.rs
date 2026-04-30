@@ -58,12 +58,11 @@ use criterion::measurement::WallTime;
 use criterion::{
     BatchSize, BenchmarkGroup, BenchmarkId, Criterion, Throughput, criterion_group, criterion_main,
 };
-use delaunay::core::collections::SmallBuffer;
-use delaunay::geometry::traits::coordinate::Coordinate;
-use delaunay::geometry::util::{
+use delaunay::prelude::collections::SmallBuffer;
+use delaunay::prelude::generators::{
     generate_grid_points, generate_poisson_points, generate_random_points_seeded,
-    safe_usize_to_scalar,
 };
+use delaunay::prelude::geometry::{Coordinate, safe_usize_to_scalar};
 use delaunay::prelude::query::*;
 use delaunay::prelude::triangulation::{
     ConstructionOptions, DelaunayTriangulationBuilder, RetryPolicy,

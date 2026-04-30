@@ -33,7 +33,7 @@
 //! ```
 
 use criterion::{BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
-use delaunay::geometry::util::generate_random_points_seeded;
+use delaunay::prelude::generators::generate_random_points_seeded;
 use delaunay::prelude::query::*;
 use std::hint::black_box;
 

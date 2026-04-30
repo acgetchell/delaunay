@@ -348,6 +348,25 @@ rules:
       - pattern-regex: '^\s*#\s*\[\s*expect\s*\([^\]\n]*\)\s*\]'
       - pattern-not-regex: '\breason\s*='
 
+  - id: delaunay.rust.prefer-prelude-imports-in-examples-benches
+    languages:
+      - rust
+    severity: WARNING
+    message: "Use focused delaunay::prelude imports in examples and benchmarks instead of deep crate module paths."
+    metadata:
+      category: maintainability
+      rationale: >-
+        Public examples and benchmarks should model the small, orthogonal
+        prelude import surfaces that users can copy into their own code.
+    paths:
+      include:
+        - "/examples/**/*.rs"
+        - "/benches/**/*.rs"
+        - "/src/project_rules/**/*.rs"
+    patterns:
+      - pattern-regex: '^\s*use\s+delaunay::(core|geometry|triangulation|topology)::'
+      - pattern-not-regex: '^\s*use\s+delaunay::prelude::'
+
   - id: delaunay.python.no-broad-exception
     languages:
       - python

@@ -564,6 +564,19 @@ where
     ///
     /// This constructor is infallible because [`Point`] already owns validated
     /// coordinates for the vertex dimension.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use delaunay::prelude::geometry::{Coordinate, Point};
+    /// use delaunay::prelude::triangulation::Vertex;
+    ///
+    /// let point = Point::new([1.0, 2.0]);
+    /// let vertex = Vertex::<f64, (), 2>::from_point(point);
+    ///
+    /// assert_eq!(vertex.point().coords(), &[1.0, 2.0]);
+    /// assert!(vertex.data().is_none());
+    /// ```
     #[inline]
     #[must_use]
     pub fn from_point(point: Point<T, D>) -> Self {
@@ -579,6 +592,18 @@ where
     ///
     /// This constructor is infallible because [`Point`] already owns validated
     /// coordinates for the vertex dimension and `data` is stored as provided.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use delaunay::prelude::geometry::{Coordinate, Point};
+    /// use delaunay::prelude::triangulation::Vertex;
+    ///
+    /// let point = Point::new([1.0, 2.0]);
+    /// let vertex = Vertex::<f64, u8, 2>::from_point_with_data(point, 7);
+    ///
+    /// assert_eq!(vertex.data(), Some(&7));
+    /// ```
     #[inline]
     #[must_use]
     pub fn from_point_with_data(point: Point<T, D>, data: impl Into<U>) -> Self {

@@ -25,6 +25,9 @@ env:
   JUST_VERSION: "1.50.0"
   MARKDOWNLINT_VERSION: "0.48.0"
   SHFMT_VERSION: "3.13.1"
+  SHFMT_SHA256_DARWIN_AMD64: "6feedafc72915794163114f512348e2437d080d0047ef8b8fa2ec63b575f12af"
+  SHFMT_SHA256_DARWIN_ARM64: "9680526be4a66ea1ffe988ed08af58e1400fe1e4f4aef5bd88b20bb9b3da33f8"
+  SHFMT_SHA256_LINUX_AMD64: "fb096c5d1ac6beabbdbaa2874d025badb03ee07929f0c9ff67563ce8c75398b1"
   TAPLO_VERSION: "0.10.0"
   TYPOS_VERSION: "1.45.2"
   UV_VERSION: "0.11.8"
@@ -171,6 +174,7 @@ jobs:
           # Install shfmt (pinned for CI consistency)
           SHFMT_ASSET="shfmt_v${SHFMT_VERSION}_linux_amd64"
           SHFMT_BASE_URL="https://github.com/mvdan/sh/releases/download/v${SHFMT_VERSION}"
+          SHFMT_SHA256="${SHFMT_SHA256_LINUX_AMD64}"
 
           tmpdir="$(mktemp -d)"
           trap 'rm -rf "$tmpdir"' EXIT
@@ -178,13 +182,10 @@ jobs:
           curl -fsSL \
             "${SHFMT_BASE_URL}/${SHFMT_ASSET}" \
             -o "$tmpdir/${SHFMT_ASSET}"
-          curl -fsSL \
-            "${SHFMT_BASE_URL}/sha256sums.txt" \
-            -o "$tmpdir/sha256sums.txt"
 
           (
             cd "$tmpdir"
-            grep -F "  ${SHFMT_ASSET}" sha256sums.txt > checksum.txt
+            printf '%s  %s\n' "$SHFMT_SHA256" "$SHFMT_ASSET" > checksum.txt
             sha256sum -c checksum.txt
           )
 
@@ -204,6 +205,14 @@ jobs:
 
           SHFMT_ASSET="shfmt_v${SHFMT_VERSION}_darwin_${SHFMT_ARCH}"
           SHFMT_BASE_URL="https://github.com/mvdan/sh/releases/download/v${SHFMT_VERSION}"
+          case "$SHFMT_ARCH" in
+            amd64) SHFMT_SHA256="${SHFMT_SHA256_DARWIN_AMD64}" ;;
+            arm64) SHFMT_SHA256="${SHFMT_SHA256_DARWIN_ARM64}" ;;
+            *)
+              echo "Unsupported shfmt architecture: $SHFMT_ARCH" >&2
+              exit 1
+              ;;
+          esac
 
           tmpdir="$(mktemp -d)"
           trap 'rm -rf "$tmpdir"' EXIT
@@ -211,13 +220,10 @@ jobs:
           curl -fsSL \
             "${SHFMT_BASE_URL}/${SHFMT_ASSET}" \
             -o "$tmpdir/${SHFMT_ASSET}"
-          curl -fsSL \
-            "${SHFMT_BASE_URL}/sha256sums.txt" \
-            -o "$tmpdir/sha256sums.txt"
 
           (
             cd "$tmpdir"
-            grep -F "  ${SHFMT_ASSET}" sha256sums.txt > checksum.txt
+            printf '%s  %s\n' "$SHFMT_SHA256" "$SHFMT_ASSET" > checksum.txt
             shasum -a 256 -c checksum.txt
           )
 

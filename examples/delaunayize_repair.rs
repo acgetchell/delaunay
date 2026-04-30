@@ -22,8 +22,8 @@ use delaunay::prelude::triangulation::delaunayize::*;
 use delaunay::prelude::triangulation::flips::*;
 
 // For the generic print_outcome helper.
-use delaunay::geometry::traits::coordinate::CoordinateScalar;
 use delaunay::prelude::DataType;
+use delaunay::prelude::geometry::CoordinateScalar;
 
 fn main() {
     println!("============================================================");
