@@ -374,12 +374,12 @@ where
 ///
 /// ```rust
 /// use delaunay::prelude::tds::Tds;
-/// use delaunay::prelude::triangulation::repair::debug_print_first_delaunay_violation;
+/// use delaunay::prelude::diagnostics::debug_print_first_delaunay_violation;
 ///
 /// let tds: Tds<f64, (), (), 3> = Tds::empty();
 /// debug_print_first_delaunay_violation(&tds, None);
 /// ```
-#[cfg(any(test, feature = "test-debug"))]
+#[cfg(any(test, feature = "diagnostics"))]
 #[expect(
     clippy::too_many_lines,
     reason = "Debug-only helper with intentionally verbose logging"
@@ -599,7 +599,7 @@ mod tests {
 
         // Smoke test for the debug helper: it should not panic and should print a
         // summary indicating that no violations were found.
-        #[cfg(any(test, feature = "test-debug"))]
+        #[cfg(any(test, feature = "diagnostics"))]
         debug_print_first_delaunay_violation(tds, None);
     }
 
@@ -768,7 +768,7 @@ mod tests {
         init_tracing();
         let (tds, _, _) = build_non_delaunay_quad_2d();
 
-        #[cfg(any(test, feature = "test-debug"))]
+        #[cfg(any(test, feature = "diagnostics"))]
         debug_print_first_delaunay_violation(&tds, None);
     }
 

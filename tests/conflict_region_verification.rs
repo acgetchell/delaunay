@@ -44,9 +44,14 @@ fn verify_conflict_region_diagnostic_3d_35v() {
         DelaunayTriangulation::new(initial).expect("initial simplex should succeed");
 
     let kernel = AdaptiveKernel::<f64>::new();
-    #[allow(unused_mut)] // only mutated with test-debug diagnostics enabled
+    #[cfg(feature = "diagnostics")]
     let mut total_missed = 0_usize;
+    #[cfg(not(feature = "diagnostics"))]
+    let total_missed = 0_usize;
+    #[cfg(feature = "diagnostics")]
     let mut insertions_checked = 0_usize;
+    #[cfg(not(feature = "diagnostics"))]
+    let insertions_checked = 0_usize;
     let mut insert_errors: Vec<String> = Vec::new();
 
     for (i, v) in vertices[4..].iter().enumerate() {
@@ -65,7 +70,7 @@ fn verify_conflict_region_diagnostic_3d_35v() {
         if let LocateResult::InsideCell(start_cell) = location {
             match find_conflict_region(dt.tds(), &kernel, &point, start_cell) {
                 Ok(conflict_cells) => {
-                    #[cfg(feature = "test-debug")]
+                    #[cfg(feature = "diagnostics")]
                     {
                         let missed =
                             delaunay::core::algorithms::locate::verify_conflict_region_completeness(
@@ -84,10 +89,9 @@ fn verify_conflict_region_diagnostic_3d_35v() {
                         total_missed += missed;
                         insertions_checked += 1;
                     }
-                    #[cfg(not(feature = "test-debug"))]
+                    #[cfg(not(feature = "diagnostics"))]
                     {
                         let _ = conflict_cells;
-                        insertions_checked += 1;
                     }
                 }
                 Err(e) => {

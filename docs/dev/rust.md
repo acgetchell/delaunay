@@ -547,11 +547,17 @@ pub mod core {
 
 ## Prelude Design
 
-Focused preludes should remain **small and purpose-specific**.
+Focused preludes should remain **small, orthogonal, and purpose-specific**.
 
 A focused prelude should import only the items needed for a specific task.
-Prefer these focused preludes in doctests, integration tests, examples, and
-benchmarks because they make intent visible at the import site.
+Bundle only related, non-overlapping functionality in a focused prelude; do
+not use one focused prelude as a compatibility bucket for adjacent workflows.
+If a focused prelude has grown too broad or ambiguous, prefer fixing the
+taxonomy over preserving backwards compatibility for unrelated re-exports.
+Create a new focused prelude when a distinct workflow needs one.
+
+Prefer focused preludes in doctests, integration tests, examples, and benchmarks
+because they make intent visible at the import site.
 
 Examples:
 
@@ -563,6 +569,7 @@ delaunay::prelude::triangulation::delaunayize
 delaunay::prelude::query
 delaunay::prelude::geometry
 delaunay::prelude::generators
+delaunay::prelude::diagnostics
 delaunay::prelude::ordering
 delaunay::prelude::collections
 delaunay::prelude::tds
@@ -570,10 +577,10 @@ delaunay::prelude::topology::validation
 delaunay::prelude::topology::spaces
 ```
 
-The root `delaunay::prelude::*` is intentionally available as a convenience for
-new users and quick experiments. Avoid using it in committed examples,
-benchmarks, and doctests when a focused prelude communicates the workflow more
-clearly.
+The root `delaunay::prelude::*` is intentionally available as the
+kitchen-sink prelude for new users, quick experiments, and exploratory tests.
+Avoid using it in committed examples, benchmarks, and doctests when a focused
+prelude communicates the workflow more clearly.
 
 ---
 
@@ -802,11 +809,11 @@ if std::env::var_os("DELAUNAY_DEBUG_FOO").is_some() {
   Emit diagnostics before or after the measured path so measurements stay
   meaningful.
 - Gate non-essential test and benchmark diagnostics behind feature flags.
-  In this repository, use `test-debug` for test diagnostics and
+  In this repository, use `diagnostics` for test diagnostics and
   `bench-logging` for benchmark diagnostics:
 
 ```rust
-#[cfg(feature = "test-debug")]
+#[cfg(feature = "diagnostics")]
 tracing::debug!("test diagnostic");
 
 #[cfg(feature = "bench-logging")]

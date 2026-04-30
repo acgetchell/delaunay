@@ -296,12 +296,12 @@ a point lies inside the circumsphere of a simplex in 2D, 3D, and 4D.
 
 ```bash
 # Run specific debug test functions with verbose output
-cargo test --test circumsphere_debug_tools test_2d_circumsphere_debug -- --nocapture
-cargo test --test circumsphere_debug_tools test_3d_circumsphere_debug -- --nocapture
-cargo test --test circumsphere_debug_tools test_all_debug -- --nocapture
+cargo test --test circumsphere_debug_tools --features diagnostics test_2d_circumsphere_debug -- --nocapture
+cargo test --test circumsphere_debug_tools --features diagnostics test_3d_circumsphere_debug -- --nocapture
+cargo test --test circumsphere_debug_tools --features diagnostics test_all_debug -- --nocapture
 
 # Run all debug tests at once (recommended)
-just test-debug
+just test-diagnostics
 ```
 
 **Available Test Functions:**
@@ -467,7 +467,7 @@ Memory allocation profiling and testing utilities for tracking memory usage patt
 just test-release
 
 # Run with verbose output for debugging
-just test-debug
+just test-diagnostics
 ```
 
 ### Individual Test Files
@@ -477,7 +477,7 @@ just test-debug
 cargo test --test <test_file_name>
 
 # Examples
-just test-debug                                  # circumsphere_debug_tools
+just test-diagnostics                            # circumsphere_debug_tools
 cargo test --test delaunay_incremental_insertion # specific integration test
 just test-allocation                             # allocation profiling
 ```
@@ -492,7 +492,7 @@ measurements, run tests in release mode:
 just test-release
 
 # Debug mode with verbose output
-just test-debug
+just test-diagnostics
 ```
 
 ### Test Output
@@ -501,7 +501,7 @@ Many integration tests produce detailed analysis output:
 
 ```bash
 # See detailed test output
-just test-debug
+just test-diagnostics
 ```
 
 ## Test Development Guidelines

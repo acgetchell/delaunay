@@ -310,14 +310,14 @@ delaunay/
 
 ```bash
 # Run debug tests with interactive output (just command)
-just test-debug
+just test-diagnostics
 
 # Or run specific test functions with verbose output (direct cargo)
-cargo test --test circumsphere_debug_tools test_2d_circumsphere_debug -- --nocapture
-cargo test --test circumsphere_debug_tools test_3d_circumsphere_debug -- --nocapture
-cargo test --test circumsphere_debug_tools test_all_debug -- --nocapture
+cargo test --test circumsphere_debug_tools --features diagnostics test_2d_circumsphere_debug -- --nocapture
+cargo test --test circumsphere_debug_tools --features diagnostics test_3d_circumsphere_debug -- --nocapture
+cargo test --test circumsphere_debug_tools --features diagnostics test_all_debug -- --nocapture
 # Or run all debug tests at once
-cargo test --test circumsphere_debug_tools -- --nocapture
+cargo test --test circumsphere_debug_tools --features diagnostics -- --nocapture
 ```
 
 **Note**: Memory allocation profiling is available through the `count-allocations` feature:
@@ -552,7 +552,7 @@ just test-python   # Python tests only (pytest)
 just test-release  # All tests in release mode
 just test-slow     # Run slow/stress tests with --features slow-tests
 just test-slow-release # Slow tests in release mode (faster)
-just test-debug    # Run debug tools with output
+just test-diagnostics # Run diagnostics tools with output
 just test-allocation  # Run allocation profiling tests
 ```
 

@@ -54,7 +54,7 @@ use delaunay::geometry::kernel::AdaptiveKernel;
 use delaunay::prelude::tds::Tds;
 use delaunay::prelude::triangulation::*;
 
-#[cfg(feature = "test-debug")]
+#[cfg(feature = "diagnostics")]
 fn init_tracing() {
     static INIT: std::sync::Once = std::sync::Once::new();
     INIT.call_once(|| {
@@ -67,17 +67,17 @@ fn init_tracing() {
     });
 }
 
-#[cfg(not(feature = "test-debug"))]
+#[cfg(not(feature = "diagnostics"))]
 const fn init_tracing() {}
 
 macro_rules! test_debug_info {
     ($($arg:tt)*) => {{
-        #[cfg(feature = "test-debug")]
+        #[cfg(feature = "diagnostics")]
         {
             init_tracing();
             tracing::info!($($arg)*);
         }
-        #[cfg(not(feature = "test-debug"))]
+        #[cfg(not(feature = "diagnostics"))]
         {
             let _ = format_args!($($arg)*);
         }
@@ -86,12 +86,12 @@ macro_rules! test_debug_info {
 
 macro_rules! test_debug_warn {
     ($($arg:tt)*) => {{
-        #[cfg(feature = "test-debug")]
+        #[cfg(feature = "diagnostics")]
         {
             init_tracing();
             tracing::warn!($($arg)*);
         }
-        #[cfg(not(feature = "test-debug"))]
+        #[cfg(not(feature = "diagnostics"))]
         {
             let _ = format_args!($($arg)*);
         }

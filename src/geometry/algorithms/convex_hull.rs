@@ -1612,14 +1612,14 @@ mod tests {
     use std::sync::atomic::Ordering;
     use std::thread;
 
-    #[cfg(feature = "test-debug")]
+    #[cfg(feature = "diagnostics")]
     macro_rules! test_debug {
         ($($arg:tt)*) => {{
             tracing::debug!($($arg)*);
         }};
     }
 
-    #[cfg(not(feature = "test-debug"))]
+    #[cfg(not(feature = "diagnostics"))]
     macro_rules! test_debug {
         ($($arg:tt)*) => {{
             let _ = core::format_args!($($arg)*);

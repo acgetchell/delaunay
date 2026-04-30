@@ -114,7 +114,7 @@ use crate::core::algorithms::incremental_insertion::{
 };
 #[cfg(debug_assertions)]
 use crate::core::algorithms::locate::locate_with_stats;
-#[cfg(feature = "test-debug")]
+#[cfg(feature = "diagnostics")]
 use crate::core::algorithms::locate::verify_conflict_region_completeness;
 use crate::core::algorithms::locate::{
     ConflictError, LocateResult, extract_cavity_boundary, find_conflict_region, locate,
@@ -1264,9 +1264,10 @@ where
     /// # Examples
     ///
     /// ```rust
+    /// use delaunay::prelude::geometry::FastKernel;
     /// use delaunay::prelude::triangulation::Triangulation;
     ///
-    /// let count = Triangulation::<delaunay::geometry::kernel::FastKernel<f64>, (), (), 3>
+    /// let count = Triangulation::<FastKernel<f64>, (), (), 3>
     ///     ::topology_safety_net_star_split_fallback_successes();
     /// assert!(count >= 0);
     /// ```
@@ -1284,9 +1285,10 @@ where
     /// # Examples
     ///
     /// ```rust
+    /// use delaunay::prelude::geometry::FastKernel;
     /// use delaunay::prelude::triangulation::{DuplicateDetectionMetrics, Triangulation};
     ///
-    /// let metrics = Triangulation::<delaunay::geometry::kernel::FastKernel<f64>, (), (), 3>
+    /// let metrics = Triangulation::<FastKernel<f64>, (), (), 3>
     ///     ::duplicate_detection_metrics();
     /// let _ = metrics; // None unless DELAUNAY_DUPLICATE_METRICS is set
     /// ```
@@ -5165,7 +5167,7 @@ where
                 // a star-split of that cell to keep the simplicial complex connected.
                 let computed = find_conflict_region(&self.tds, &self.kernel, &point, start_cell)?;
 
-                #[cfg(feature = "test-debug")]
+                #[cfg(feature = "diagnostics")]
                 if std::env::var_os("DELAUNAY_DEBUG_CONFLICT_VERIFY").is_some() {
                     let missed = verify_conflict_region_completeness(
                         &self.tds,

@@ -47,7 +47,7 @@ default = [ "dense-slotmap" ]
 count-allocations = [ "allocation-counter" ]
 bench = [  ] # Enable benchmark-style tests and performance analysis
 bench-logging = [  ] # Enable extra benchmark logging for CI diagnostics
-test-debug = [  ] # Enable verbose debug output in tests for development
+diagnostics = [  ] # Enable opt-in diagnostic helpers and verbose test diagnostics
 dense-slotmap = [  ] # Use DenseSlotMap-backed internal storage (default)
 slow-tests = [
 ] # Enable slow-running integration tests (100+ vertices, multiple dimensions)

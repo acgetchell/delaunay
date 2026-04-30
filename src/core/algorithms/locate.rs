@@ -1255,7 +1255,7 @@ where
 /// Activated by setting `DELAUNAY_DEBUG_CONFLICT_VERIFY=1`.
 ///
 /// Returns the number of missed cells (0 means the BFS result is complete).
-#[cfg(any(test, feature = "test-debug"))]
+#[cfg(any(test, feature = "diagnostics"))]
 pub fn verify_conflict_region_completeness<K, U, V, const D: usize>(
     tds: &Tds<K::Scalar, U, V, D>,
     kernel: &K,

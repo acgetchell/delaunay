@@ -948,8 +948,6 @@ pub mod prelude {
             pub use crate::core::triangulation::{
                 TopologyGuarantee, Triangulation, ValidationPolicy,
             };
-            #[cfg(any(test, feature = "test-debug"))]
-            pub use crate::core::util::debug_print_first_delaunay_violation;
             pub use crate::core::util::{DelaunayValidationError, find_delaunay_violations};
             pub use crate::triangulation::delaunay::{
                 DelaunayCheckPolicy, DelaunayRepairHeuristicConfig, DelaunayRepairHeuristicSeeds,
@@ -1017,13 +1015,22 @@ pub mod prelude {
 
     /// Focused exports for core algorithms.
     pub mod algorithms {
-        #[cfg(feature = "test-debug")]
-        pub use crate::core::algorithms::locate::verify_conflict_region_completeness;
         pub use crate::core::algorithms::locate::{
             ConflictError, InternalInconsistencySite, LocateError, LocateFallback,
             LocateFallbackReason, LocateResult, LocateStats, extract_cavity_boundary,
             find_conflict_region, locate, locate_with_stats,
         };
+    }
+
+    /// Focused exports for opt-in diagnostic helpers.
+    ///
+    /// These helpers are compiled only with the `diagnostics` feature because
+    /// they are intended for explicit debugging and verification workflows, not
+    /// the default public API surface.
+    #[cfg(feature = "diagnostics")]
+    pub mod diagnostics {
+        pub use crate::core::algorithms::locate::verify_conflict_region_completeness;
+        pub use crate::core::util::debug_print_first_delaunay_violation;
     }
 
     /// Convenience re-exports for common **read-only** workflows (topology traversal, adjacency,
@@ -1048,8 +1055,6 @@ pub mod prelude {
         pub use crate::triangulation::delaunay::DelaunayTriangulation;
 
         // Locate and conflict-region queries
-        #[cfg(feature = "test-debug")]
-        pub use crate::core::algorithms::locate::verify_conflict_region_completeness;
         pub use crate::core::algorithms::locate::{
             ConflictError, InternalInconsistencySite, LocateError, LocateFallback,
             LocateFallbackReason, LocateResult, LocateStats, extract_cavity_boundary,

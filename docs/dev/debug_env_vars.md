@@ -61,7 +61,7 @@ This matters for large-scale investigations that need to run under
 | `DELAUNAY_DEBUG_CONFLICT` | presence | `locate.rs` | Per-cell insphere classification during BFS, including BFS boundary cells |
 | `DELAUNAY_DEBUG_CONFLICT_PROGRESS` | presence | `locate.rs` | Periodic progress during large BFS traversals |
 | `DELAUNAY_DEBUG_CONFLICT_PROGRESS_EVERY` | **value** (integer) | `locate.rs` | Interval for progress logging (default: dimension-dependent) |
-| `DELAUNAY_DEBUG_CONFLICT_VERIFY` | presence | `triangulation.rs` | Brute-force verification of BFS conflict-region completeness with reachability analysis |
+| `DELAUNAY_DEBUG_CONFLICT_VERIFY` | presence | `triangulation.rs` | `[diagnostics]` Brute-force BFS conflict-region completeness check |
 | `DELAUNAY_DEBUG_RIDGE_FAN_ONCE` | presence | `locate.rs` | `[release]` One-shot dump of first detected ridge fan (ridge verts, boundary facets, extras). |
 
 ## Cavity & Hull

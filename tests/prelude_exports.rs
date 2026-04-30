@@ -4,13 +4,23 @@
 //! paths so doctests, integration tests, examples, and benchmarks have a small
 //! import contract to copy from.
 
+#[cfg(feature = "diagnostics")]
+use delaunay::prelude::collections::CellKeyBuffer;
+#[cfg(feature = "diagnostics")]
+use delaunay::prelude::diagnostics::{
+    debug_print_first_delaunay_violation, verify_conflict_region_completeness,
+};
 use delaunay::prelude::generators::generate_random_points_seeded;
+#[cfg(feature = "diagnostics")]
+use delaunay::prelude::geometry::Coordinate;
 use delaunay::prelude::geometry::{AdaptiveKernel, Point};
 use delaunay::prelude::ordering::{
     HilbertError, hilbert_index, hilbert_indices_prequantized, hilbert_quantize,
     hilbert_sort_by_stable, hilbert_sort_by_unstable, hilbert_sorted_indices,
 };
 use delaunay::prelude::query::ConvexHull;
+#[cfg(feature = "diagnostics")]
+use delaunay::prelude::tds::Tds;
 use delaunay::prelude::triangulation::delaunayize::{
     DelaunayizeConfig, DelaunayizeError, DelaunayizeOutcome, delaunayize_by_flips,
 };
@@ -102,6 +112,21 @@ fn diagnostic_preludes_cover_repair_apis() {
     assert!(!outcome.used_fallback_rebuild);
     let _typed_outcome: DelaunayizeOutcome<f64, (), (), 3> = outcome;
     let _typed_error: Option<DelaunayizeError> = None;
+}
+
+#[cfg(feature = "diagnostics")]
+#[test]
+fn diagnostics_prelude_covers_opt_in_helpers() {
+    let tds: Tds<f64, (), (), 2> = Tds::empty();
+    debug_print_first_delaunay_violation(&tds, None);
+
+    let kernel = AdaptiveKernel::new();
+    let point = Point::new([0.0, 0.0]);
+    let conflict_cells = CellKeyBuffer::new();
+    assert_eq!(
+        verify_conflict_region_completeness(&tds, &kernel, &point, &conflict_cells),
+        0
+    );
 }
 
 #[test]
