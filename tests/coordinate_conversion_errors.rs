@@ -342,7 +342,10 @@ fn test_zero_and_negative_zero() {
 }
 
 #[test]
-#[expect(clippy::match_same_arms)]
+#[expect(
+    clippy::match_same_arms,
+    reason = "test asserts each conversion error maps to the same public category"
+)]
 fn test_very_large_finite_values() {
     // Test that very large but finite values are handled correctly
     // Use a large value that won't overflow when squared (f64::MAX would become infinity when squared)

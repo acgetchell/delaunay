@@ -901,7 +901,10 @@ where
     /// # Errors
     ///
     /// Returns a [`ConvexHullConstructionError`] if visibility checking fails.
-    #[expect(clippy::too_many_lines)]
+    #[expect(
+        clippy::too_many_lines,
+        reason = "visibility check keeps predicate setup, cache lookup, and diagnostics together"
+    )]
     fn is_facet_visible_from_point_with_cache(
         &self,
         facet_handle: &FacetHandle,
@@ -1609,6 +1612,20 @@ mod tests {
     use std::sync::atomic::Ordering;
     use std::thread;
 
+    #[cfg(feature = "test-debug")]
+    macro_rules! test_debug {
+        ($($arg:tt)*) => {{
+            tracing::debug!($($arg)*);
+        }};
+    }
+
+    #[cfg(not(feature = "test-debug"))]
+    macro_rules! test_debug {
+        ($($arg:tt)*) => {{
+            let _ = core::format_args!($($arg)*);
+        }};
+    }
+
     // =============================================================================
     // HELPER FUNCTIONS
     // =============================================================================
@@ -1898,15 +1915,19 @@ mod tests {
     /// Comprehensive test for visibility algorithms covering all dimensions and edge cases
     /// Consolidates: `test_visibility_algorithms_comprehensive`, `test_visibility_edge_cases`,
     /// `test_visibility_algorithm_coverage`, `test_edge_case_distance_calculations`
-    #[expect(clippy::too_many_lines, clippy::cognitive_complexity)]
+    #[expect(
+        clippy::too_many_lines,
+        clippy::cognitive_complexity,
+        reason = "test keeps dimension-specific visibility cases together"
+    )]
     #[test]
     fn test_visibility_algorithms_comprehensive() {
-        println!("Testing comprehensive visibility algorithms in dimensions 2D-5D");
+        test_debug!("Testing comprehensive visibility algorithms in dimensions 2D-5D");
 
         // ========================================================================
         // Test 1: 2D visibility (point-in-polygon and visible facets)
         // ========================================================================
-        println!("  Testing 2D visibility algorithms...");
+        test_debug!("  Testing 2D visibility algorithms...");
         let vertices_2d = vec![
             vertex!([0.0, 0.0]),
             vertex!([1.0, 0.0]),
@@ -1953,7 +1974,7 @@ mod tests {
         // ========================================================================
         // Test 2: 3D visibility (comprehensive testing)
         // ========================================================================
-        println!("  Testing 3D visibility algorithms...");
+        test_debug!("  Testing 3D visibility algorithms...");
         let vertices_3d = vec![
             vertex!([0.0, 0.0, 0.0]),
             vertex!([1.0, 0.0, 0.0]),
@@ -2050,7 +2071,7 @@ mod tests {
         // ========================================================================
         // Test 3: Edge cases with boundary and near-boundary points
         // ========================================================================
-        println!("  Testing visibility edge cases...");
+        test_debug!("  Testing visibility edge cases...");
         let boundary_points = [
             Point::new([0.5, 0.5, 0.0]), // On a face
             Point::new([0.3, 0.3, 0.3]), // Near centroid
@@ -2085,7 +2106,7 @@ mod tests {
         // ========================================================================
         // Test 4: Distance calculations with edge cases
         // ========================================================================
-        println!("  Testing edge case distance calculations...");
+        test_debug!("  Testing edge case distance calculations...");
 
         // Test find_nearest_visible_facet with equidistant points
         let equidistant_point = Point::new([0.5, 0.5, 0.5]);
@@ -2115,7 +2136,7 @@ mod tests {
         // ========================================================================
         // Test 5: 4D visibility
         // ========================================================================
-        println!("  Testing 4D visibility algorithms...");
+        test_debug!("  Testing 4D visibility algorithms...");
         let vertices_4d = vec![
             vertex!([0.0, 0.0, 0.0, 0.0]),
             vertex!([1.0, 0.0, 0.0, 0.0]),
@@ -2146,7 +2167,7 @@ mod tests {
         // ========================================================================
         // Test 6: 5D visibility
         // ========================================================================
-        println!("  Testing 5D visibility algorithms...");
+        test_debug!("  Testing 5D visibility algorithms...");
         let vertices_5d = vec![
             vertex!([0.0, 0.0, 0.0, 0.0, 0.0]),
             vertex!([1.0, 0.0, 0.0, 0.0, 0.0]),
@@ -2175,7 +2196,7 @@ mod tests {
             "5D outside point should be outside"
         );
 
-        println!("  ✓ Visibility algorithms tested comprehensively across all dimensions");
+        test_debug!("  ✓ Visibility algorithms tested comprehensively across all dimensions");
     }
 
     // ============================================================================
@@ -2184,13 +2205,16 @@ mod tests {
     // These tests target private methods to ensure thorough coverage of internal
     // ConvexHull functionality, particularly the fallback_visibility_test method.
 
-    #[expect(clippy::too_many_lines)]
+    #[expect(
+        clippy::too_many_lines,
+        reason = "test keeps fallback visibility scenarios together"
+    )]
     #[test]
     fn test_fallback_visibility_comprehensive() {
-        println!("Testing comprehensive fallback visibility algorithm");
+        test_debug!("Testing comprehensive fallback visibility algorithm");
 
         // Test distance-based heuristic with 3D tetrahedron
-        println!("  Testing distance-based heuristic...");
+        test_debug!("  Testing distance-based heuristic...");
         let vertices = vec![
             vertex!([0.0, 0.0, 0.0]),
             vertex!([1.0, 0.0, 0.0]),
@@ -2223,7 +2247,7 @@ mod tests {
             .unwrap();
             visibility_results.push(is_visible);
             let coords = point.coords();
-            println!("    Point {coords:?} ({description}) - Visible: {is_visible}");
+            test_debug!("    Point {coords:?} ({description}) - Visible: {is_visible}");
         }
 
         let visible_count = visibility_results.iter().filter(|&&v| v).count();
@@ -2233,7 +2257,7 @@ mod tests {
         );
 
         // Test degenerate cases
-        println!("  Testing degenerate and edge cases...");
+        test_debug!("  Testing degenerate and edge cases...");
         let degenerate_points = vec![
             (Point::new([0.0, 0.0, 0.0]), "Origin point"),
             (
@@ -2254,11 +2278,11 @@ mod tests {
                 result.is_ok(),
                 "{description} should not cause fallback to error"
             );
-            println!("    {description} - Result: {:?}", result.unwrap());
+            test_debug!("    {description} - Result: {:?}", result.unwrap());
         }
 
         // Test consistency - same point multiple times should give same result
-        println!("  Testing consistency...");
+        test_debug!("  Testing consistency...");
         let consistency_point = Point::new([2.0, 2.0, 2.0]);
         let consistency_results: Vec<bool> = (0..5)
             .map(|_| {
@@ -2277,14 +2301,14 @@ mod tests {
                 .all(|&result| result == first_result),
             "Fallback visibility should be consistent for same point"
         );
-        println!(
+        test_debug!(
             "    Consistency test: all {} results were {}",
             consistency_results.len(),
             first_result
         );
 
         // Test numerical precision with high-precision coordinates
-        println!("  Testing numerical precision...");
+        test_debug!("  Testing numerical precision...");
         let precise_points = vec![
             Point::new([1e-15, 1e-15, 1e-15]),
             Point::new([
@@ -2311,13 +2335,13 @@ mod tests {
                 "High precision coordinates should not cause errors"
             );
             let coords = point.coords();
-            println!(
+            test_debug!(
                 "    High precision Point {coords:?} - Visible: {:?}",
                 result.unwrap()
             );
         }
 
-        println!("  Testing in different dimensions...");
+        test_debug!("  Testing in different dimensions...");
 
         // Test 2D fallback
         let vertices_2d = vec![
@@ -2338,7 +2362,7 @@ mod tests {
             2,
         >::fallback_visibility_test(&test_facet_2d_vertices, &test_point_2d);
         assert!(result_2d.is_ok(), "2D fallback should work");
-        println!("    2D fallback result: {:?}", result_2d.unwrap());
+        test_debug!("    2D fallback result: {:?}", result_2d.unwrap());
 
         // Test 4D fallback
         let vertices_4d = vec![
@@ -2361,9 +2385,9 @@ mod tests {
             4,
         >::fallback_visibility_test(&test_facet_4d_vertices, &test_point_4d);
         assert!(result_4d.is_ok(), "4D fallback should work");
-        println!("    4D fallback result: {:?}", result_4d.unwrap());
+        test_debug!("    4D fallback result: {:?}", result_4d.unwrap());
 
-        println!("  ✓ Comprehensive fallback visibility algorithm tested successfully");
+        test_debug!("  ✓ Comprehensive fallback visibility algorithm tested successfully");
     }
 
     // ============================================================================
@@ -2461,14 +2485,18 @@ mod tests {
     /// Consolidates: `test_convex_hull_validation_comprehensive`, `test_validate_method_comprehensive`,
     /// `test_validate_method_various_dimensions`
     #[test]
-    #[expect(clippy::cognitive_complexity, clippy::too_many_lines)]
+    #[expect(
+        clippy::cognitive_complexity,
+        clippy::too_many_lines,
+        reason = "test keeps hull validation scenarios and diagnostics together"
+    )]
     fn test_convex_hull_validation_comprehensive() {
-        println!("Testing ConvexHull validation comprehensively");
+        test_debug!("Testing ConvexHull validation comprehensively");
 
         // ========================================================================
         // Test 1: Valid hulls in different dimensions (1D-5D comprehensive coverage)
         // ========================================================================
-        println!("  Testing valid hull validation in different dimensions...");
+        test_debug!("  Testing valid hull validation in different dimensions...");
 
         // Test 1D hull (empty hull validation)
         let dummy_vertices_1d = vec![vertex!([0.0]), vertex!([1.0])];
@@ -2478,7 +2506,7 @@ mod tests {
             hull_1d.validate(dummy_dt_1d.as_triangulation()).is_ok(),
             "1D empty hull should validate"
         );
-        println!("    1D empty hull validated");
+        test_debug!("    1D empty hull validated");
 
         // Test 2D hull
         let vertices_2d = vec![
@@ -2504,7 +2532,7 @@ mod tests {
             let vertices = facet_view.vertices().unwrap().count();
             assert_eq!(vertices, 2, "2D facet {i} should have exactly 2 vertices");
         }
-        println!(
+        test_debug!(
             "    2D hull: {} facets validated",
             hull_2d.number_of_facets()
         );
@@ -2541,7 +2569,7 @@ mod tests {
             let vertices = facet_view.vertices().unwrap().count();
             assert_eq!(vertices, 3, "3D facet {i} should have exactly 3 vertices");
         }
-        println!(
+        test_debug!(
             "    3D hull: {} facets validated",
             hull_3d.number_of_facets()
         );
@@ -2579,7 +2607,7 @@ mod tests {
             let vertices = facet_view.vertices().unwrap().count();
             assert_eq!(vertices, 4, "4D facet {i} should have exactly 4 vertices");
         }
-        println!(
+        test_debug!(
             "    4D hull: {} facets validated",
             hull_4d.number_of_facets()
         );
@@ -2618,7 +2646,7 @@ mod tests {
             let vertices = facet_view.vertices().unwrap().count();
             assert_eq!(vertices, 5, "5D facet {i} should have exactly 5 vertices");
         }
-        println!(
+        test_debug!(
             "    5D hull: {} facets validated",
             hull_5d.number_of_facets()
         );
@@ -2630,13 +2658,13 @@ mod tests {
             "5D empty hull should validate successfully"
         );
 
-        println!("  ✓ Empty hull validation passed for dimensions 1D-5D");
-        println!("  ✓ Valid hull validation passed for all tested dimensions");
+        test_debug!("  ✓ Empty hull validation passed for dimensions 1D-5D");
+        test_debug!("  ✓ Valid hull validation passed for all tested dimensions");
 
         // ========================================================================
         // Test 2: Validation with different data types
         // ========================================================================
-        println!("  Testing validation with different data types...");
+        test_debug!("  Testing validation with different data types...");
 
         // Test with integer vertex data
         let vertices_int = vec![
@@ -2673,12 +2701,12 @@ mod tests {
             hull_char.validate(dt_char.as_triangulation()).is_ok(),
             "Hull with character data should validate successfully"
         );
-        println!("  ✓ Validation with different data types passed");
+        test_debug!("  ✓ Validation with different data types passed");
 
         // ========================================================================
         // Test 4: Validation with extreme coordinate values
         // ========================================================================
-        println!("  Testing validation with extreme coordinate values...");
+        test_debug!("  Testing validation with extreme coordinate values...");
 
         let extreme_vertices = vec![
             // Large coordinates
@@ -2734,7 +2762,7 @@ mod tests {
                     // numerically unstable by the robust initial simplex search, or
                     // Hilbert-sort dedup may collapse near-identical coordinates at
                     // quantization resolution, leaving fewer than D+1 vertices.
-                    println!(
+                    test_debug!(
                         "  \x1b[33mWarning:\x1b[0m skipping {desc} extreme coordinate hull validation \
                          due to geometric degeneracy or insufficient vertices in DelaunayTriangulation::new",
                     );
@@ -2744,12 +2772,12 @@ mod tests {
                 }
             }
         }
-        println!("  ✓ Validation with extreme coordinate values passed");
+        test_debug!("  ✓ Validation with extreme coordinate values passed");
 
         // ========================================================================
         // Test 5: Error type structure and formatting
         // ========================================================================
-        println!("  Testing error type structure and formatting...");
+        test_debug!("  Testing error type structure and formatting...");
 
         // Test ConvexHullValidationError::InvalidFacet structure
         let invalid_facet_error = ConvexHullValidationError::InvalidFacet {
@@ -2765,7 +2793,7 @@ mod tests {
         assert!(error_message.contains("Facet 42 validation failed"));
         assert!(error_message.contains("exactly 3 vertices"));
         assert!(error_message.contains("got 2"));
-        println!("    InvalidFacet error: {error_message}");
+        test_debug!("    InvalidFacet error: {error_message}");
 
         // Test ConvexHullValidationError::DuplicateVerticesInFacet structure
         let duplicate_vertices_error = ConvexHullValidationError::DuplicateVerticesInFacet {
@@ -2776,7 +2804,7 @@ mod tests {
         let error_message = format!("{duplicate_vertices_error}");
         assert!(error_message.contains("Facet 17 has duplicate vertices"));
         assert!(error_message.contains("[[0, 2], [1, 3, 5]]"));
-        println!("    DuplicateVertices error: {error_message}");
+        test_debug!("    DuplicateVertices error: {error_message}");
 
         // Test error equality and cloning
         let cloned_error = invalid_facet_error.clone();
@@ -2805,12 +2833,12 @@ mod tests {
                 panic!("Expected InsufficientVertices error");
             }
         }
-        println!("  ✓ Error type structure and formatting tests passed");
+        test_debug!("  ✓ Error type structure and formatting tests passed");
 
         // ========================================================================
         // Test 6: Validation consistency and performance
         // ========================================================================
-        println!("  Testing validation consistency and performance...");
+        test_debug!("  Testing validation consistency and performance...");
 
         // Test consistency across multiple calls
         let results: Vec<Result<(), ConvexHullValidationError>> = (0..5)
@@ -2856,10 +2884,10 @@ mod tests {
             "Validation should be fast (< {budget_ms} ms for 100 calls); took {elapsed:?}"
         );
 
-        println!("    100 validation calls completed in {elapsed:?}");
-        println!("  ✓ Validation consistency and performance tests passed");
+        test_debug!("    100 validation calls completed in {elapsed:?}");
+        test_debug!("  ✓ Validation consistency and performance tests passed");
 
-        println!("✓ All comprehensive ConvexHull validation tests passed successfully!");
+        test_debug!("✓ All comprehensive ConvexHull validation tests passed successfully!");
     }
 
     #[test]
@@ -3281,7 +3309,7 @@ mod tests {
             // This should either succeed or fail gracefully
             match result {
                 Ok(_visibility) => (), // Success case
-                Err(e) => println!("Expected visibility error: {e}"),
+                Err(e) => test_debug!("Expected visibility error: {e}"),
             }
         }
     }
@@ -3580,7 +3608,7 @@ mod tests {
 
     #[test]
     fn test_error_handling_paths() {
-        println!("Testing error handling paths in convex hull methods");
+        test_debug!("Testing error handling paths in convex hull methods");
 
         let vertices = vec![
             vertex!([0.0, 0.0, 0.0]),
@@ -3601,7 +3629,7 @@ mod tests {
         );
 
         // The method should handle extreme coordinates gracefully
-        println!("  Fallback visibility result with extreme point: {result:?}");
+        test_debug!("  Fallback visibility result with extreme point: {result:?}");
 
         // Test normal visibility methods with edge case points
         let edge_points = vec![
@@ -3615,12 +3643,12 @@ mod tests {
             assert!(result.is_ok(), "Edge case visibility test should not error");
         }
 
-        println!("✓ Error handling paths tested successfully");
+        test_debug!("✓ Error handling paths tested successfully");
     }
 
     #[test]
     fn test_degenerate_orientation_fallback() {
-        println!("Testing degenerate orientation fallback behavior");
+        test_debug!("Testing degenerate orientation fallback behavior");
 
         // Create a triangulation that might produce degenerate orientations
         // while still allowing the initial simplex search to succeed.
@@ -3649,18 +3677,18 @@ mod tests {
             );
 
             let coords = point.coords();
-            println!(
+            test_debug!(
                 "  Degenerate point {coords:?} - Outside: {:?}",
                 result.unwrap()
             );
         }
 
-        println!("✓ Degenerate orientation fallback tested successfully");
+        test_debug!("✓ Degenerate orientation fallback tested successfully");
     }
 
     #[test]
     fn test_extreme_coordinate_precision() {
-        println!("Testing extreme coordinate precision handling");
+        test_debug!("Testing extreme coordinate precision handling");
 
         // Test with coordinates at the limits of f64 precision
         let vertices_extreme = vec![
@@ -3701,7 +3729,7 @@ mod tests {
                         &facet_vertices,
                         &test_point,
                     );
-                println!("  Extreme precision fallback result: {fallback_result:?}");
+                test_debug!("  Extreme precision fallback result: {fallback_result:?}");
             }
             Err(DelaunayTriangulationConstructionError::Triangulation(
                 TriangulationConstructionError::GeometricDegeneracy { .. },
@@ -3711,7 +3739,7 @@ mod tests {
                 // case, it's acceptable for DelaunayTriangulation::new to fail with geometric
                 // degeneracy; later parts of this test still exercise max-scale
                 // behavior.
-                println!(
+                test_debug!(
                     "  \x1b[33mWarning:\x1b[0m skipping MIN_POSITIVE extreme simplex due to geometric degeneracy",
                 );
             }
@@ -3737,12 +3765,12 @@ mod tests {
             "Maximum finite coordinates should not crash"
         );
 
-        println!("✓ Extreme coordinate precision tested successfully");
+        test_debug!("✓ Extreme coordinate precision tested successfully");
     }
 
     #[test]
     fn test_numeric_cast_error_handling() {
-        println!("Testing numeric cast error handling in find_nearest_visible_facet");
+        test_debug!("Testing numeric cast error handling in find_nearest_visible_facet");
 
         let vertices = vec![
             vertex!([0.0, 0.0, 0.0]),
@@ -3786,16 +3814,19 @@ mod tests {
 
             let coords = point.coords();
             let result_val = result.unwrap();
-            println!("  Edge point {coords:?} - Result: {result_val:?}");
+            test_debug!("  Edge point {coords:?} - Result: {result_val:?}");
         }
 
-        println!("✓ Numeric cast error handling tested successfully");
+        test_debug!("✓ Numeric cast error handling tested successfully");
     }
 
-    #[expect(clippy::too_many_lines)]
+    #[expect(
+        clippy::too_many_lines,
+        reason = "test keeps cache invalidation scenarios together"
+    )]
     #[test]
     fn test_cache_invalidation_behavior() {
-        println!("Testing cache invalidation behavior in ConvexHull");
+        test_debug!("Testing cache invalidation behavior in ConvexHull");
 
         // Create initial triangulation
         let vertices = vec![
@@ -3811,8 +3842,8 @@ mod tests {
         let initial_tds_generation = dt.as_triangulation().tds.generation();
         let initial_hull_generation = hull.cached_generation().load(Ordering::Acquire);
 
-        println!("  Initial TDS generation: {initial_tds_generation}");
-        println!("  Initial hull cached generation: {initial_hull_generation}");
+        test_debug!("  Initial TDS generation: {initial_tds_generation}");
+        test_debug!("  Initial hull cached generation: {initial_hull_generation}");
 
         // ConvexHull keeps an independent snapshot for staleness detection
         // Since generation is now private, we can't compare pointers directly
@@ -3828,7 +3859,7 @@ mod tests {
         let test_point = Point::new([2.0, 2.0, 2.0]);
         let facet = hull.get_facet(0).unwrap();
 
-        println!("  Performing initial visibility test to build cache...");
+        test_debug!("  Performing initial visibility test to build cache...");
         let result1 = hull.is_facet_visible_from_point(facet, &test_point, dt.as_triangulation());
         assert!(result1.is_ok(), "Initial visibility test should succeed");
 
@@ -3836,7 +3867,7 @@ mod tests {
         let post_cache_tds_gen = dt.as_triangulation().tds.generation();
         let post_cache_hull_gen = hull.cached_generation().load(Ordering::Acquire);
 
-        println!(
+        test_debug!(
             "  After cache build - TDS gen: {post_cache_tds_gen}, Hull gen: {post_cache_hull_gen}"
         );
         assert_eq!(
@@ -3851,17 +3882,17 @@ mod tests {
             "Cache should exist after first visibility test"
         );
 
-        println!("  ✓ Cache successfully built and generations synchronized");
+        test_debug!("  ✓ Cache successfully built and generations synchronized");
 
         // Test validity checking before TDS modification
-        println!("  Testing validity checking...");
+        test_debug!("  Testing validity checking...");
         assert!(
             hull.is_valid_for_triangulation(dt.as_triangulation()),
             "Hull should be valid for initial TDS"
         );
 
         // Test TDS modification by adding a new vertex
-        println!("  Testing TDS modification and hull invalidation...");
+        test_debug!("  Testing TDS modification and hull invalidation...");
         let old_generation = dt.as_triangulation().tds.generation();
         let stale_hull_gen = hull.cached_generation().load(Ordering::Acquire);
 
@@ -3871,9 +3902,9 @@ mod tests {
             .expect("Failed to insert vertex into DelaunayTriangulation");
 
         let modified_tds_gen = dt.as_triangulation().tds.generation();
-        println!("  After TDS modification (added vertex):");
-        println!("    TDS generation: {modified_tds_gen}");
-        println!("    Hull cached generation: {stale_hull_gen}");
+        test_debug!("  After TDS modification (added vertex):");
+        test_debug!("    TDS generation: {modified_tds_gen}");
+        test_debug!("    Hull cached generation: {stale_hull_gen}");
 
         // Hull snapshot is now stale relative to TDS
         assert!(
@@ -3891,11 +3922,11 @@ mod tests {
             "Hull should be invalid for modified TDS"
         );
 
-        println!("  ✓ Generation change correctly detected - hull is now invalid");
+        test_debug!("  ✓ Generation change correctly detected - hull is now invalid");
 
         // IMPORTANT: After TDS modification, the old hull's facet handles are invalid!
         // We must rebuild the hull to get fresh facet handles
-        println!("  Rebuilding hull after TDS modification...");
+        test_debug!("  Rebuilding hull after TDS modification...");
         let new_hull = ConvexHull::from_triangulation(dt.as_triangulation()).unwrap();
 
         // The new hull should be valid and have matching generation
@@ -3904,7 +3935,7 @@ mod tests {
             "New hull should be valid for modified TDS"
         );
         let new_hull_gen = new_hull.cached_generation().load(Ordering::Acquire);
-        println!("    New hull generation: {new_hull_gen}");
+        test_debug!("    New hull generation: {new_hull_gen}");
         assert_eq!(
             new_hull_gen, modified_tds_gen,
             "New hull should have same generation as modified TDS"
@@ -3914,7 +3945,7 @@ mod tests {
         let new_facet = new_hull.get_facet(0).unwrap();
 
         // Test visibility with the new hull and fresh facet handle
-        println!("  Testing visibility with rebuilt hull...");
+        test_debug!("  Testing visibility with rebuilt hull...");
         let result2 =
             new_hull.is_facet_visible_from_point(new_facet, &test_point, dt.as_triangulation());
         assert!(
@@ -3929,10 +3960,10 @@ mod tests {
             "Cache should exist after visibility test on new hull"
         );
 
-        println!("  ✓ Hull rebuilt successfully after TDS modification");
+        test_debug!("  ✓ Hull rebuilt successfully after TDS modification");
 
         // Test manual cache invalidation on the new hull
-        println!("  Testing manual cache invalidation...");
+        test_debug!("  Testing manual cache invalidation...");
 
         // Store current generation
         let pre_invalidation_gen = new_hull.cached_generation().load(Ordering::Acquire);
@@ -3954,8 +3985,8 @@ mod tests {
             "Generation should be reset to 0 after manual invalidation"
         );
 
-        println!("    Generation before invalidation: {pre_invalidation_gen}");
-        println!("    Generation after invalidation: {post_invalidation_gen}");
+        test_debug!("    Generation before invalidation: {pre_invalidation_gen}");
+        test_debug!("    Generation after invalidation: {post_invalidation_gen}");
 
         // Next visibility test should rebuild cache
         let result3 =
@@ -3980,10 +4011,10 @@ mod tests {
             "Hull generation should match TDS generation after cache rebuild"
         );
 
-        println!("    Final TDS generation: {final_tds_gen}");
-        println!("    Final hull generation: {final_hull_gen}");
+        test_debug!("    Final TDS generation: {final_tds_gen}");
+        test_debug!("    Final hull generation: {final_hull_gen}");
 
-        println!("  ✓ Manual cache invalidation working correctly");
+        test_debug!("  ✓ Manual cache invalidation working correctly");
 
         // Note: We verified that:
         // 1. The initial hull works correctly with the initial TDS
@@ -3991,7 +4022,7 @@ mod tests {
         // 3. A new hull can be built for the modified TDS
         // 4. The new hull works correctly with the modified TDS
         // 5. Manual cache invalidation works as expected
-        println!("  All tests verified correct hull and cache management");
+        test_debug!("  All tests verified correct hull and cache management");
 
         // Verify that all visibility tests succeeded
         assert!(
@@ -4007,10 +4038,10 @@ mod tests {
             "Third visibility test (after cache invalidation) should succeed"
         );
 
-        println!("  ✓ Hull rebuilding and cache management working correctly");
+        test_debug!("  ✓ Hull rebuilding and cache management working correctly");
 
         // Test concurrent access safety using the new hull
-        println!("  Testing thread safety of cache operations...");
+        test_debug!("  Testing thread safety of cache operations...");
 
         let test_results: Vec<_> = (0..10)
             .map(|i| {
@@ -4028,14 +4059,14 @@ mod tests {
             );
         }
 
-        println!("  ✓ Thread safety test passed");
+        test_debug!("  ✓ Thread safety test passed");
 
-        println!("✓ All cache invalidation behavior tests passed successfully!");
+        test_debug!("✓ All cache invalidation behavior tests passed successfully!");
     }
 
     #[test]
     fn test_try_get_or_build_facet_cache() {
-        println!("Testing try_get_or_build_facet_cache method");
+        test_debug!("Testing try_get_or_build_facet_cache method");
 
         // Create a triangulation
         let vertices = vec![
@@ -4052,7 +4083,7 @@ mod tests {
         assert!(initial_cache.is_none(), "Cache should be empty initially");
 
         // First call should build the cache
-        println!("  Testing initial cache building...");
+        test_debug!("  Testing initial cache building...");
         let cache1 = hull
             .try_get_or_build_facet_cache(&dt.as_triangulation().tds)
             .expect("Failed to build cache");
@@ -4069,7 +4100,7 @@ mod tests {
         );
 
         // Second call with same generation should reuse cache
-        println!("  Testing cache reuse with same generation...");
+        test_debug!("  Testing cache reuse with same generation...");
         let cache2 = hull
             .try_get_or_build_facet_cache(&dt.as_triangulation().tds)
             .expect("Failed to reuse cache");
@@ -4094,7 +4125,7 @@ mod tests {
         }
 
         // Modify triangulation by adding a vertex to trigger generation change
-        println!("  Testing cache invalidation with generation change...");
+        test_debug!("  Testing cache invalidation with generation change...");
         let old_generation = dt.as_triangulation().tds.generation();
 
         // Add a new vertex to trigger generation bump
@@ -4130,12 +4161,12 @@ mod tests {
             "Hull generation should match TDS generation after rebuild"
         );
 
-        println!("  ✓ Cache building, reuse, and invalidation working correctly");
+        test_debug!("  ✓ Cache building, reuse, and invalidation working correctly");
     }
 
     #[test]
     fn test_helper_methods_integration() {
-        println!("Testing integration between helper methods");
+        test_debug!("Testing integration between helper methods");
 
         // Create a triangulation
         let vertices = vec![
@@ -4148,7 +4179,7 @@ mod tests {
         let hull = ConvexHull::from_triangulation(dt.as_triangulation()).unwrap();
 
         // Test that cache contains keys derivable by the key derivation method
-        println!("  Testing cache-key derivation consistency...");
+        test_debug!("  Testing cache-key derivation consistency...");
         let cache = hull
             .try_get_or_build_facet_cache(&dt.as_triangulation().tds)
             .expect("Failed to build cache");
@@ -4177,19 +4208,19 @@ mod tests {
             if let Ok(derived_key) = derived_key_result {
                 if cache.contains_key(&derived_key) {
                     keys_found += 1;
-                    println!("    Facet {i}: key {derived_key} found in cache ✓");
+                    test_debug!("    Facet {i}: key {derived_key} found in cache ✓");
                 } else {
-                    println!("    Facet {i}: key {derived_key} NOT in cache (unexpected)");
+                    test_debug!("    Facet {i}: key {derived_key} NOT in cache (unexpected)");
                 }
             } else {
-                println!(
+                test_debug!(
                     "    Facet {i}: key derivation failed: {:?}",
                     derived_key_result.err()
                 );
             }
         }
 
-        println!(
+        test_debug!(
             "  Found {keys_found}/{} hull facet keys in cache",
             hull.number_of_facets()
         );
@@ -4206,7 +4237,7 @@ mod tests {
         );
 
         // Test that helper methods work correctly together in visibility testing
-        println!("  Testing helper methods in visibility context...");
+        test_debug!("  Testing helper methods in visibility context...");
         let test_point = Point::new([2.0, 2.0, 2.0]);
         let test_facet = hull.get_facet(0).unwrap();
 
@@ -4217,13 +4248,13 @@ mod tests {
             "Visibility test using helper methods should succeed"
         );
 
-        println!("  Visibility result: {}", visibility_result.unwrap());
-        println!("  ✓ Integration between helper methods working correctly");
+        test_debug!("  Visibility result: {}", visibility_result.unwrap());
+        test_debug!("  ✓ Integration between helper methods working correctly");
     }
 
     #[test]
     fn test_facet_cache_build_failed_error() {
-        println!("Testing FacetCacheBuildFailed error path");
+        test_debug!("Testing FacetCacheBuildFailed error path");
 
         // This test is challenging because we need to trigger a TdsError
         // during facet cache building. In practice, this is rare with valid TDS objects.
@@ -4257,10 +4288,10 @@ mod tests {
         // Verify that the method returns ConvexHullConstructionError (not FacetError)
         // This ensures our error hierarchy changes are properly implemented
         match result {
-            Ok(_) => println!("  ✓ Normal case succeeded as expected"),
+            Ok(_) => test_debug!("  ✓ Normal case succeeded as expected"),
             Err(e) => {
                 // If there is an error, verify it's the right type
-                println!("  Error type verification: {e:?}");
+                test_debug!("  Error type verification: {e:?}");
                 // The fact that it compiles with ConvexHullConstructionError shows the type is correct
             }
         }
@@ -4273,15 +4304,15 @@ mod tests {
             "find_visible_facets should succeed in normal case"
         );
 
-        println!("  ✓ FacetCacheBuildFailed error path properly configured");
-        println!(
+        test_debug!("  ✓ FacetCacheBuildFailed error path properly configured");
+        test_debug!(
             "  Note: Actual cache build failure requires corrupted TDS, which is hard to create in tests"
         );
     }
 
     #[test]
     fn test_nearest_facet_equidistant_cases() {
-        println!("Testing find_nearest_visible_facet with equidistant facets");
+        test_debug!("Testing find_nearest_visible_facet with equidistant facets");
 
         // Create a symmetric triangulation where multiple facets might be equidistant
         let vertices = vec![
@@ -4293,7 +4324,7 @@ mod tests {
         let dt = create_triangulation(&vertices);
         let hull = ConvexHull::from_triangulation(dt.as_triangulation()).unwrap();
 
-        println!("  Testing with point equidistant from multiple facets...");
+        test_debug!("  Testing with point equidistant from multiple facets...");
 
         // Point at (1,1,1) should be roughly equidistant from all facets
         let equidistant_point = Point::new([1.0, 1.0, 1.0]);
@@ -4306,7 +4337,7 @@ mod tests {
                     facet_index < hull.number_of_facets(),
                     "Returned facet index should be valid"
                 );
-                println!("  ✓ Found nearest facet at index: {facet_index}");
+                test_debug!("  ✓ Found nearest facet at index: {facet_index}");
 
                 // Verify the facet is actually visible
                 let selected_facet = hull.get_facet(facet_index).unwrap();
@@ -4321,7 +4352,7 @@ mod tests {
                 );
             }
             Ok(None) => {
-                println!("  No visible facets found (point might be inside)");
+                test_debug!("  No visible facets found (point might be inside)");
                 // Verify this is correct by checking if point is actually inside
                 let is_outside = hull
                     .is_point_outside(&equidistant_point, dt.as_triangulation())
@@ -4336,7 +4367,7 @@ mod tests {
             }
         }
 
-        println!("  Testing with point clearly outside...");
+        test_debug!("  Testing with point clearly outside...");
 
         // Point clearly outside should always find a nearest facet
         let far_point = Point::new([10.0, 10.0, 10.0]);
@@ -4345,7 +4376,7 @@ mod tests {
         match far_result {
             Ok(Some(facet_index)) => {
                 assert!(facet_index < hull.number_of_facets());
-                println!("  ✓ Found nearest facet for far point at index: {facet_index}");
+                test_debug!("  ✓ Found nearest facet for far point at index: {facet_index}");
             }
             Ok(None) => {
                 panic!("Far outside point should always see some facets");
@@ -4355,7 +4386,7 @@ mod tests {
             }
         }
 
-        println!("  Testing with point clearly inside...");
+        test_debug!("  Testing with point clearly inside...");
 
         // Point clearly inside should see no facets
         let inside_point = Point::new([0.1, 0.1, 0.1]);
@@ -4363,11 +4394,11 @@ mod tests {
 
         match inside_result {
             Ok(None) => {
-                println!("  ✓ Inside point correctly sees no facets");
+                test_debug!("  ✓ Inside point correctly sees no facets");
             }
             Ok(Some(facet_index)) => {
                 // This might happen due to numerical precision - verify it's reasonable
-                println!(
+                test_debug!(
                     "  Inside point unexpectedly sees facet {facet_index} (may be due to precision)"
                 );
                 assert!(facet_index < hull.number_of_facets());
@@ -4377,12 +4408,12 @@ mod tests {
             }
         }
 
-        println!("  ✓ Equidistant facet selection working correctly");
+        test_debug!("  ✓ Equidistant facet selection working correctly");
     }
 
     #[test]
     fn test_concurrent_cache_access_patterns() {
-        println!("Testing concurrent cache access patterns");
+        test_debug!("Testing concurrent cache access patterns");
 
         // Create a triangulation
         let vertices = vec![
@@ -4398,7 +4429,7 @@ mod tests {
         let hull = Arc::new(hull);
         let dt = Arc::new(dt);
 
-        println!("  Testing concurrent cache building...");
+        test_debug!("  Testing concurrent cache building...");
 
         // Spawn multiple threads that will try to build/access the cache concurrently
         let mut handles = vec![];
@@ -4433,7 +4464,7 @@ mod tests {
             let result = handle.join().expect("Thread should not panic");
             match result {
                 Ok((facet_count, is_outside, thread_id)) => {
-                    println!(
+                    test_debug!(
                         "    Thread {thread_id}: {facet_count} visible facets, outside: {is_outside}"
                     );
                     results.push((facet_count, is_outside, thread_id));
@@ -4459,7 +4490,7 @@ mod tests {
             );
         }
 
-        println!("  Testing cache consistency after concurrent access...");
+        test_debug!("  Testing cache consistency after concurrent access...");
 
         // Verify cache is in a consistent state after concurrent access
         let cache = hull
@@ -4478,13 +4509,15 @@ mod tests {
             "Operations should work normally after concurrent access"
         );
 
-        println!("  ✓ Concurrent cache access working correctly");
-        println!("  Note: This test verifies basic thread safety, not high-contention scenarios");
+        test_debug!("  ✓ Concurrent cache access working correctly");
+        test_debug!(
+            "  Note: This test verifies basic thread safety, not high-contention scenarios"
+        );
     }
 
     #[test]
     fn test_invalidate_cache_behavior() {
-        println!("Testing cache invalidation behavior");
+        test_debug!("Testing cache invalidation behavior");
 
         // Create a triangulation
         let vertices = vec![
@@ -4497,7 +4530,7 @@ mod tests {
         let hull = ConvexHull::from_triangulation(dt.as_triangulation()).unwrap();
 
         // Build initial cache
-        println!("  Building initial cache...");
+        test_debug!("  Building initial cache...");
         let initial_cache = hull
             .try_get_or_build_facet_cache(&dt.as_triangulation().tds)
             .unwrap();
@@ -4519,7 +4552,7 @@ mod tests {
         );
 
         // Manually invalidate cache
-        println!("  Manually invalidating cache...");
+        test_debug!("  Manually invalidating cache...");
         hull.invalidate_cache();
 
         // Verify cache is cleared
@@ -4537,7 +4570,7 @@ mod tests {
         );
 
         // Rebuild cache after invalidation
-        println!("  Rebuilding cache after invalidation...");
+        test_debug!("  Rebuilding cache after invalidation...");
         let rebuilt_cache = hull
             .try_get_or_build_facet_cache(&dt.as_triangulation().tds)
             .unwrap();
@@ -4562,7 +4595,7 @@ mod tests {
         );
 
         // Verify functionality still works after invalidation/rebuild cycle
-        println!("  Testing functionality after invalidation/rebuild...");
+        test_debug!("  Testing functionality after invalidation/rebuild...");
         let test_point = Point::new([2.0, 2.0, 2.0]);
         let visible_facets = hull.find_visible_facets(&test_point, dt.as_triangulation());
         assert!(
@@ -4576,12 +4609,12 @@ mod tests {
             "Outside point should see visible facets after rebuild"
         );
 
-        println!("  ✓ Cache invalidation and rebuild working correctly");
+        test_debug!("  ✓ Cache invalidation and rebuild working correctly");
     }
 
     #[test]
     fn test_error_propagation_chain() {
-        println!("Testing complete error propagation chain");
+        test_debug!("Testing complete error propagation chain");
 
         // Create a valid setup
         let vertices = vec![
@@ -4593,7 +4626,7 @@ mod tests {
         let dt = create_triangulation(&vertices);
         let hull = ConvexHull::from_triangulation(dt.as_triangulation()).unwrap();
 
-        println!("  Testing error types are properly propagated...");
+        test_debug!("  Testing error types are properly propagated...");
 
         let test_point = Point::new([2.0, 2.0, 2.0]);
         let test_facet = hull.get_facet(0).unwrap();
@@ -4603,20 +4636,20 @@ mod tests {
             hull.is_facet_visible_from_point(test_facet, &test_point, dt.as_triangulation());
         match visibility_result {
             Ok(visible) => {
-                println!("    is_facet_visible_from_point: Ok({visible})");
+                test_debug!("    is_facet_visible_from_point: Ok({visible})");
             }
             Err(e) => {
-                println!("    is_facet_visible_from_point error: {e:?}");
+                test_debug!("    is_facet_visible_from_point error: {e:?}");
                 // Verify it's the right error type by matching on variants
                 match e {
                     ConvexHullConstructionError::FacetCacheBuildFailed { source: _ } => {
-                        println!("      ✓ FacetCacheBuildFailed variant present");
+                        test_debug!("      ✓ FacetCacheBuildFailed variant present");
                     }
                     ConvexHullConstructionError::VisibilityCheckFailed { source: _ } => {
-                        println!("      ✓ VisibilityCheckFailed variant present");
+                        test_debug!("      ✓ VisibilityCheckFailed variant present");
                     }
                     _ => {
-                        println!("      Unexpected error variant: {e:?}");
+                        test_debug!("      Unexpected error variant: {e:?}");
                     }
                 }
             }
@@ -4643,13 +4676,13 @@ mod tests {
             "find_nearest_visible_facet should succeed in normal case"
         );
 
-        println!("  ✓ Error propagation chain correctly implemented");
-        println!("  ✓ All methods return ConvexHullConstructionError as expected");
+        test_debug!("  ✓ Error propagation chain correctly implemented");
+        test_debug!("  ✓ All methods return ConvexHullConstructionError as expected");
     }
 
     #[test]
     fn test_adjacent_cell_resolution_failed_error() {
-        println!("Testing AdjacentCellResolutionFailed error variant");
+        test_debug!("Testing AdjacentCellResolutionFailed error variant");
 
         // Create a simple triangulation to test with
         let vertices = vec![
@@ -4696,14 +4729,14 @@ mod tests {
             "AdjacentCellResolutionFailed should have a source error"
         );
 
-        println!("  ✓ AdjacentCellResolutionFailed error variant properly implemented");
-        println!("  ✓ Error preserves underlying TdsError as source");
-        println!("  ✓ Error display format correct: {error_message}");
+        test_debug!("  ✓ AdjacentCellResolutionFailed error variant properly implemented");
+        test_debug!("  ✓ Error preserves underlying TdsError as source");
+        test_debug!("  ✓ Error display format correct: {error_message}");
     }
 
     #[test]
     fn test_enhanced_facet_key_error_information() {
-        println!("Testing enhanced facet key error information");
+        test_debug!("Testing enhanced facet key error information");
 
         // Create example UUIDs for testing
         let uuid1 = uuid::Uuid::new_v4();
@@ -4720,7 +4753,7 @@ mod tests {
             vertex_uuids: vertex_uuids.clone(),
         };
 
-        println!("  Testing error message format...");
+        test_debug!("  Testing error message format...");
         let error_message = format!("{enhanced_error}");
 
         // Verify the error message contains expected components
@@ -4741,9 +4774,9 @@ mod tests {
             "Error message should mention key derivation mismatch: {error_message}"
         );
 
-        println!("    Enhanced error message: {error_message}");
+        test_debug!("    Enhanced error message: {error_message}");
 
-        println!("  Testing error debug format...");
+        test_debug!("  Testing error debug format...");
         let debug_message = format!("{enhanced_error:?}");
         assert!(
             debug_message.contains("FacetKeyNotFoundInCache"),
@@ -4759,9 +4792,9 @@ mod tests {
             "Debug format should contain vertex UUIDs: {debug_message}"
         );
 
-        println!("    Debug representation: {debug_message}");
+        test_debug!("    Debug representation: {debug_message}");
 
-        println!("  Testing error comparison and cloning...");
+        test_debug!("  Testing error comparison and cloning...");
 
         // Test Clone
         let cloned_error = enhanced_error.clone();
@@ -4781,7 +4814,7 @@ mod tests {
             "Different errors should not be equal"
         );
 
-        println!("  Testing integration with ConvexHullConstructionError...");
+        test_debug!("  Testing integration with ConvexHullConstructionError...");
 
         // Wrap in the higher-level error
         let construction_error = ConvexHullConstructionError::VisibilityCheckFailed {
@@ -4809,9 +4842,9 @@ mod tests {
             );
         }
 
-        println!("    Construction error message: {construction_message}");
+        test_debug!("    Construction error message: {construction_message}");
 
-        println!("  Testing backward compatibility...");
+        test_debug!("  Testing backward compatibility...");
 
         // Verify the old error variant still exists and works
         let old_error = FacetError::FacetNotFoundInTriangulation;
@@ -4821,15 +4854,15 @@ mod tests {
             "Old error variant should still work: {old_message}"
         );
 
-        println!("    Old error message: {old_message}");
+        test_debug!("    Old error message: {old_message}");
 
-        println!("  ✓ Enhanced facet key error information working correctly");
-        println!("  ✓ Error provides detailed diagnostic information including:");
-        println!("    - Facet key in hex format for debugging");
-        println!("    - Cache size for context");
-        println!("    - Vertex UUIDs that generated the key");
-        println!("    - Actionable error message suggesting possible causes");
-        println!("  ✓ Backward compatibility maintained with existing error variants");
+        test_debug!("  ✓ Enhanced facet key error information working correctly");
+        test_debug!("  ✓ Error provides detailed diagnostic information including:");
+        test_debug!("    - Facet key in hex format for debugging");
+        test_debug!("    - Cache size for context");
+        test_debug!("    - Vertex UUIDs that generated the key");
+        test_debug!("    - Actionable error message suggesting possible causes");
+        test_debug!("  ✓ Backward compatibility maintained with existing error variants");
     }
 
     // ============================================================================
@@ -4838,15 +4871,19 @@ mod tests {
     // These tests provide comprehensive coverage of error conditions that can
     // occur during convex hull construction and operation.
 
-    #[expect(clippy::too_many_lines, clippy::cognitive_complexity)]
+    #[expect(
+        clippy::too_many_lines,
+        clippy::cognitive_complexity,
+        reason = "test keeps convex hull error variants and scenarios together"
+    )]
     #[test]
     fn test_convex_hull_error_handling_comprehensive() {
-        println!("Testing comprehensive ConvexHull error handling");
+        test_debug!("Testing comprehensive ConvexHull error handling");
 
         // ========================================================================
         // Test 1: ConvexHullValidationError variants
         // ========================================================================
-        println!("  Testing ConvexHullValidationError variants...");
+        test_debug!("  Testing ConvexHullValidationError variants...");
 
         let invalid_facet_error = ConvexHullValidationError::InvalidFacet {
             facet_index: 5,
@@ -4878,13 +4915,13 @@ mod tests {
         assert_eq!(invalid_facet_error, cloned_invalid);
         assert_ne!(invalid_facet_error, duplicate_error);
 
-        println!("    InvalidFacet: {error_msg}");
-        println!("    DuplicateVertices: {dup_msg}");
+        test_debug!("    InvalidFacet: {error_msg}");
+        test_debug!("    DuplicateVertices: {dup_msg}");
 
         // ========================================================================
         // Test 2: ConvexHullConstructionError variants
         // ========================================================================
-        println!("  Testing ConvexHullConstructionError variants...");
+        test_debug!("  Testing ConvexHullConstructionError variants...");
 
         let boundary_error = ConvexHullConstructionError::BoundaryFacetExtractionFailed {
             source: TdsError::InconsistentDataStructure {
@@ -4939,17 +4976,17 @@ mod tests {
         assert_eq!(boundary_error, cloned_boundary);
         assert_ne!(boundary_error, cast_error);
 
-        println!("    BoundaryExtraction: {boundary_msg}");
-        println!("    VisibilityCheck: {visibility_msg}");
-        println!("    InvalidTriangulation: {invalid_tri_msg}");
-        println!("    GeometricDegeneracy: {degeneracy_msg}");
-        println!("    NumericCast: {cast_msg}");
-        println!("    CoordinateConversion: {coord_msg}");
+        test_debug!("    BoundaryExtraction: {boundary_msg}");
+        test_debug!("    VisibilityCheck: {visibility_msg}");
+        test_debug!("    InvalidTriangulation: {invalid_tri_msg}");
+        test_debug!("    GeometricDegeneracy: {degeneracy_msg}");
+        test_debug!("    NumericCast: {cast_msg}");
+        test_debug!("    CoordinateConversion: {coord_msg}");
 
         // ========================================================================
         // Test 3: Error propagation and source chains
         // ========================================================================
-        println!("  Testing error propagation and source chains...");
+        test_debug!("  Testing error propagation and source chains...");
 
         // Test coordinate conversion error propagation
         let coord_conv_error =
@@ -4960,7 +4997,7 @@ mod tests {
         let hull_error: ConvexHullConstructionError = coord_conv_error.into();
         match hull_error {
             ConvexHullConstructionError::CoordinateConversion(_) => {
-                println!("    ✓ Coordinate conversion error properly wrapped");
+                test_debug!("    ✓ Coordinate conversion error properly wrapped");
             }
             _ => panic!("Coordinate conversion error not properly wrapped"),
         }
@@ -4973,45 +5010,74 @@ mod tests {
             source: facet_error,
         };
 
-        // Walk the error source chain
-        let mut current_error: &dyn Error = &chained_visibility_error;
+        // Walk the error source chain without erasing the root error type.
+        let mut current_source = chained_visibility_error.source();
         let mut depth = 0;
-        while let Some(source) = current_error.source() {
+        while let Some(source) = current_source {
             depth += 1;
-            current_error = source;
+            current_source = source.source();
         }
         assert!(
             depth > 0,
             "Error chain should have at least one level of nesting"
         );
-        println!("    ✓ Error source chain depth: {depth}");
+        test_debug!("    ✓ Error source chain depth: {depth}");
 
         // ========================================================================
         // Test 4: Error message consistency and formatting
         // ========================================================================
-        println!("  Testing error message formatting consistency...");
+        test_debug!("  Testing error message formatting consistency...");
 
-        let test_errors: Vec<Box<dyn Error>> = vec![
-            Box::new(ConvexHullValidationError::InvalidFacet {
-                facet_index: 0,
-                source: FacetError::InsufficientVertices {
-                    expected: 3,
-                    actual: 2,
-                    dimension: 3,
-                },
-            }),
-            Box::new(ConvexHullConstructionError::InvalidTriangulation {
-                message: "Test message".to_string(),
-            }),
-            Box::new(ConvexHullConstructionError::GeometricDegeneracy {
-                message: "Collinear points".to_string(),
-            }),
+        let test_errors = [
+            (
+                ConvexHullValidationError::InvalidFacet {
+                    facet_index: 0,
+                    source: FacetError::InsufficientVertices {
+                        expected: 3,
+                        actual: 2,
+                        dimension: 3,
+                    },
+                }
+                .to_string(),
+                format!(
+                    "{:?}",
+                    ConvexHullValidationError::InvalidFacet {
+                        facet_index: 0,
+                        source: FacetError::InsufficientVertices {
+                            expected: 3,
+                            actual: 2,
+                            dimension: 3,
+                        },
+                    }
+                ),
+            ),
+            (
+                ConvexHullConstructionError::InvalidTriangulation {
+                    message: "Test message".to_string(),
+                }
+                .to_string(),
+                format!(
+                    "{:?}",
+                    ConvexHullConstructionError::InvalidTriangulation {
+                        message: "Test message".to_string(),
+                    }
+                ),
+            ),
+            (
+                ConvexHullConstructionError::GeometricDegeneracy {
+                    message: "Collinear points".to_string(),
+                }
+                .to_string(),
+                format!(
+                    "{:?}",
+                    ConvexHullConstructionError::GeometricDegeneracy {
+                        message: "Collinear points".to_string(),
+                    }
+                ),
+            ),
         ];
 
-        for (i, error) in test_errors.iter().enumerate() {
-            let display_msg = format!("{error}");
-            let debug_msg = format!("{error:?}");
-
+        for (i, (display_msg, debug_msg)) in test_errors.iter().enumerate() {
             assert!(
                 !display_msg.is_empty(),
                 "Error {i} display message should not be empty"
@@ -5029,7 +5095,7 @@ mod tests {
         // ========================================================================
         // Test 5: Extreme coordinate error handling
         // ========================================================================
-        println!("  Testing extreme coordinate error handling...");
+        test_debug!("  Testing extreme coordinate error handling...");
 
         // Test with very large coordinates (may cause numeric issues)
         let large_vertices = vec![
@@ -5053,25 +5119,27 @@ mod tests {
                             visibility_result.is_ok(),
                             "Visibility test should handle large coordinates"
                         );
-                        println!("    ✓ Large coordinates handled successfully");
+                        test_debug!("    ✓ Large coordinates handled successfully");
                     }
                     Err(e) => {
-                        println!("    Large coordinate hull construction failed (acceptable): {e}");
+                        test_debug!(
+                            "    Large coordinate hull construction failed (acceptable): {e}"
+                        );
                         // Verify appropriate error types for numeric issues
                         match e {
                             ConvexHullConstructionError::CoordinateConversion(_)
                             | ConvexHullConstructionError::NumericCastFailed { .. }
                             | ConvexHullConstructionError::GeometricDegeneracy { .. } => {
-                                println!("      ✓ Appropriate error type for numeric issues");
+                                test_debug!("      ✓ Appropriate error type for numeric issues");
                             }
-                            _ => println!(
+                            _ => test_debug!(
                                 "      Note: Unexpected error type but may be acceptable: {e:?}"
                             ),
                         }
                     }
                 }
             }
-            Err(e) => println!(
+            Err(e) => test_debug!(
                 "    Large coordinate DelaunayTriangulation construction failed (acceptable): {e}"
             ),
         }
@@ -5088,13 +5156,13 @@ mod tests {
             Ok(small_dt) => match ConvexHull::from_triangulation(small_dt.as_triangulation()) {
                 Ok(small_hull) => {
                     assert!(small_hull.validate(small_dt.as_triangulation()).is_ok());
-                    println!("    ✓ Small coordinates handled successfully");
+                    test_debug!("    ✓ Small coordinates handled successfully");
                 }
                 Err(e) => {
-                    println!("    Small coordinate hull construction failed (acceptable): {e}");
+                    test_debug!("    Small coordinate hull construction failed (acceptable): {e}");
                 }
             },
-            Err(e) => println!(
+            Err(e) => test_debug!(
                 "    Small coordinate DelaunayTriangulation construction failed (acceptable): {e}"
             ),
         }
@@ -5128,15 +5196,15 @@ mod tests {
                 );
             match fallback_result {
                 Ok(is_visible) => {
-                    println!("    Extreme point {i}: fallback visibility = {is_visible}");
+                    test_debug!("    Extreme point {i}: fallback visibility = {is_visible}");
                 }
                 Err(e) => {
-                    println!("    Extreme point {i}: fallback failed (acceptable): {e}");
+                    test_debug!("    Extreme point {i}: fallback failed (acceptable): {e}");
                 }
             }
         }
 
-        println!("✓ All comprehensive ConvexHull error handling tests passed successfully!");
+        test_debug!("✓ All comprehensive ConvexHull error handling tests passed successfully!");
     }
 
     // ============================================================================
@@ -5146,9 +5214,12 @@ mod tests {
     // under various degenerate and edge-case conditions.
 
     #[test]
-    #[expect(clippy::too_many_lines)]
+    #[expect(
+        clippy::too_many_lines,
+        reason = "test keeps degenerate facet visibility scenarios together"
+    )]
     fn test_fallback_visibility_with_degenerate_facets() {
-        println!("Testing fallback visibility algorithm with degenerate facet geometries");
+        test_debug!("Testing fallback visibility algorithm with degenerate facet geometries");
 
         // Create basic triangulation to get valid facet structure
         let vertices = vec![
@@ -5160,7 +5231,7 @@ mod tests {
         let dt = create_triangulation(&vertices);
         let hull = ConvexHull::from_triangulation(dt.as_triangulation()).unwrap();
 
-        println!("  Testing fallback with points at various distances...");
+        test_debug!("  Testing fallback with points at various distances...");
 
         let facet_handle = hull.get_facet(0).unwrap();
         let facet_view = FacetView::new(
@@ -5200,37 +5271,37 @@ mod tests {
 
             match fallback_result {
                 Ok(is_visible) => {
-                    println!("    {description} ({category}): visible = {is_visible}");
+                    test_debug!("    {description} ({category}): visible = {is_visible}");
 
                     // Validate that the result makes geometric sense
                     match category {
                         "zero_distance" | "very_close" => {
                             // Very close points might be visible or not due to precision
-                            println!(
+                            test_debug!(
                                 "      Close point visibility: {is_visible} (precision-dependent)"
                             );
                         }
                         "very_far" => {
                             // Very far points should typically be visible
                             if !is_visible {
-                                println!(
+                                test_debug!(
                                     "      Warning: Very far point unexpectedly not visible (may indicate threshold issues)"
                                 );
                             }
                         }
                         _ => {
                             // Middle-range points - no strong expectations
-                            println!("      Medium distance point visibility: {is_visible}");
+                            test_debug!("      Medium distance point visibility: {is_visible}");
                         }
                     }
                 }
                 Err(e) => {
-                    println!("    {description} ({category}): error = {e:?}");
+                    test_debug!("    {description} ({category}): error = {e:?}");
 
                     // Errors should only occur for coordinate conversion issues
                     match e {
                         ConvexHullConstructionError::CoordinateConversion(_) => {
-                            println!("      ✓ Acceptable coordinate conversion error");
+                            test_debug!("      ✓ Acceptable coordinate conversion error");
                         }
                         _ => {
                             panic!("Unexpected error type for fallback visibility: {e:?}");
@@ -5240,7 +5311,7 @@ mod tests {
             }
         }
 
-        println!("  Testing fallback with collinear facet vertices (degenerate geometry)...");
+        test_debug!("  Testing fallback with collinear facet vertices (degenerate geometry)...");
 
         // Create a triangulation with near-collinear points
         let near_collinear_vertices = vec![
@@ -5254,7 +5325,7 @@ mod tests {
             Ok(collinear_dt) => {
                 match ConvexHull::from_triangulation(collinear_dt.as_triangulation()) {
                     Ok(collinear_hull) => {
-                        println!("    ✓ Near-collinear triangulation created successfully");
+                        test_debug!("    ✓ Near-collinear triangulation created successfully");
 
                         let collinear_facet_vertices = extract_facet_vertices(
                             collinear_hull.get_facet(0).unwrap(),
@@ -5271,27 +5342,27 @@ mod tests {
 
                         match collinear_result {
                             Ok(is_visible) => {
-                                println!("      Near-collinear facet visibility: {is_visible}");
+                                test_debug!("      Near-collinear facet visibility: {is_visible}");
                             }
                             Err(e) => {
-                                println!("      Near-collinear facet test failed: {e}");
+                                test_debug!("      Near-collinear facet test failed: {e}");
                                 // This is acceptable for degenerate geometry
                             }
                         }
                     }
                     Err(e) => {
-                        println!("    Near-collinear hull construction failed (expected): {e}");
+                        test_debug!("    Near-collinear hull construction failed (expected): {e}");
                     }
                 }
             }
             Err(e) => {
-                println!(
+                test_debug!(
                     "    Near-collinear DelaunayTriangulation construction failed (expected): {e}"
                 );
             }
         }
 
-        println!("  Testing fallback with zero-area configurations...");
+        test_debug!("  Testing fallback with zero-area configurations...");
 
         // Create a triangulation where facets might have very small areas
         let tiny_area_vertices = vec![
@@ -5305,7 +5376,7 @@ mod tests {
             Ok(tiny_dt) => {
                 match ConvexHull::from_triangulation(tiny_dt.as_triangulation()) {
                     Ok(tiny_hull) => {
-                        println!("    ✓ Tiny area triangulation created successfully");
+                        test_debug!("    ✓ Tiny area triangulation created successfully");
 
                         let tiny_facet_vertices = extract_facet_vertices(
                             tiny_hull.get_facet(0).unwrap(),
@@ -5322,33 +5393,36 @@ mod tests {
 
                         match tiny_result {
                             Ok(is_visible) => {
-                                println!("      Tiny area facet visibility: {is_visible}");
+                                test_debug!("      Tiny area facet visibility: {is_visible}");
                             }
                             Err(e) => {
-                                println!("      Tiny area facet test failed: {e}");
+                                test_debug!("      Tiny area facet test failed: {e}");
                                 // This might fail due to precision issues
                             }
                         }
                     }
                     Err(e) => {
-                        println!("    Tiny area hull construction failed (acceptable): {e}");
+                        test_debug!("    Tiny area hull construction failed (acceptable): {e}");
                     }
                 }
             }
             Err(e) => {
-                println!(
+                test_debug!(
                     "    Tiny area DelaunayTriangulation construction failed (acceptable): {e}"
                 );
             }
         }
 
-        println!("  ✓ Fallback visibility algorithm tested with degenerate facets");
+        test_debug!("  ✓ Fallback visibility algorithm tested with degenerate facets");
     }
 
     #[test]
-    #[expect(clippy::too_many_lines)]
+    #[expect(
+        clippy::too_many_lines,
+        reason = "test keeps threshold and heuristic visibility scenarios together"
+    )]
     fn test_fallback_visibility_threshold_behavior() {
-        println!("Testing fallback visibility threshold and heuristic behavior");
+        test_debug!("Testing fallback visibility threshold and heuristic behavior");
 
         // Create a well-defined triangulation
         let vertices = vec![
@@ -5363,7 +5437,7 @@ mod tests {
         let test_facet_vertices =
             extract_facet_vertices(hull.get_facet(0).unwrap(), dt.as_triangulation()).unwrap();
 
-        println!("  Testing threshold behavior with systematic point placement...");
+        test_debug!("  Testing threshold behavior with systematic point placement...");
 
         // Test points at increasing distances to understand threshold behavior
         let base_distance = 0.1;
@@ -5383,18 +5457,20 @@ mod tests {
             match result {
                 Ok(is_visible) => {
                     visibility_results.push((multiplier, distance, is_visible));
-                    println!(
+                    test_debug!(
                         "    Distance {distance:.6} (multiplier {multiplier}): visible = {is_visible}"
                     );
                 }
                 Err(e) => {
-                    println!("    Distance {distance:.6} (multiplier {multiplier}): error = {e:?}");
+                    test_debug!(
+                        "    Distance {distance:.6} (multiplier {multiplier}): error = {e:?}"
+                    );
                     visibility_results.push((multiplier, distance, false)); // Treat error as not visible
                 }
             }
         }
 
-        println!("  Analyzing threshold behavior patterns...");
+        test_debug!("  Analyzing threshold behavior patterns...");
 
         // Look for patterns in visibility results
         let visible_count = visibility_results
@@ -5403,11 +5479,11 @@ mod tests {
             .count();
         let not_visible_count = visibility_results.len() - visible_count;
 
-        println!(
+        test_debug!(
             "    Visible results: {visible_count}/{}",
             visibility_results.len()
         );
-        println!(
+        test_debug!(
             "    Not visible results: {not_visible_count}/{}",
             visibility_results.len()
         );
@@ -5418,7 +5494,7 @@ mod tests {
 
         for (multiplier, distance, visible) in &visibility_results {
             if !last_visible && *visible {
-                println!(
+                test_debug!(
                     "    ✓ Visibility transition found at distance {distance:.6} (multiplier {multiplier})"
                 );
                 transition_found = true;
@@ -5427,12 +5503,12 @@ mod tests {
         }
 
         if !transition_found && visible_count > 0 {
-            println!("    No clear transition, but some points are visible");
+            test_debug!("    No clear transition, but some points are visible");
         } else if visible_count == 0 {
-            println!("    Warning: No points were deemed visible (possible threshold issue)");
+            test_debug!("    Warning: No points were deemed visible (possible threshold issue)");
         }
 
-        println!("  Testing edge case geometries for threshold calculation...");
+        test_debug!("  Testing edge case geometries for threshold calculation...");
 
         // Test with facets that have different edge length distributions
         let edge_test_cases = vec![
@@ -5458,7 +5534,7 @@ mod tests {
         ];
 
         for (description, vertices) in edge_test_cases {
-            println!("    Testing {description}...");
+            test_debug!("    Testing {description}...");
 
             match DelaunayTriangulation::new(&vertices) {
                 Ok(edge_dt) => match ConvexHull::from_triangulation(edge_dt.as_triangulation()) {
@@ -5478,24 +5554,26 @@ mod tests {
 
                         match edge_result {
                             Ok(is_visible) => {
-                                println!("      {description} visibility: {is_visible}");
+                                test_debug!("      {description} visibility: {is_visible}");
                             }
                             Err(e) => {
-                                println!("      {description} test failed: {e}");
+                                test_debug!("      {description} test failed: {e}");
                             }
                         }
                     }
                     Err(e) => {
-                        println!("      {description} hull construction failed: {e}");
+                        test_debug!("      {description} hull construction failed: {e}");
                     }
                 },
                 Err(e) => {
-                    println!("      {description} DelaunayTriangulation construction failed: {e}");
+                    test_debug!(
+                        "      {description} DelaunayTriangulation construction failed: {e}"
+                    );
                 }
             }
         }
 
-        println!("  ✓ Fallback visibility threshold behavior thoroughly tested");
+        test_debug!("  ✓ Fallback visibility threshold behavior thoroughly tested");
     }
 
     // ============================================================================
@@ -5505,11 +5583,14 @@ mod tests {
     // geometric configurations that can cause numerical instability.
 
     #[test]
-    #[expect(clippy::too_many_lines)]
+    #[expect(
+        clippy::too_many_lines,
+        reason = "test keeps collinear hull edge cases together"
+    )]
     fn test_collinear_points_handling() {
-        println!("Testing convex hull construction with collinear point configurations");
+        test_debug!("Testing convex hull construction with collinear point configurations");
 
-        println!("  Testing perfectly collinear points in 2D...");
+        test_debug!("  Testing perfectly collinear points in 2D...");
 
         let collinear_2d_vertices = vec![
             vertex!([0.0, 0.0]),
@@ -5521,13 +5602,13 @@ mod tests {
             Ok(collinear_dt) => {
                 match ConvexHull::from_triangulation(collinear_dt.as_triangulation()) {
                     Ok(collinear_hull) => {
-                        println!("    ✓ Collinear 2D hull constructed successfully");
+                        test_debug!("    ✓ Collinear 2D hull constructed successfully");
                         assert!(
                             collinear_hull
                                 .validate(collinear_dt.as_triangulation())
                                 .is_ok()
                         );
-                        println!("    Facet count: {}", collinear_hull.number_of_facets());
+                        test_debug!("    Facet count: {}", collinear_hull.number_of_facets());
 
                         // Test operations on collinear hull
                         let test_point = Point::new([0.5, 1.0]);
@@ -5535,40 +5616,40 @@ mod tests {
                             .is_point_outside(&test_point, collinear_dt.as_triangulation());
                         match visibility_result {
                             Ok(is_outside) => {
-                                println!("    Point outside test: {is_outside}");
+                                test_debug!("    Point outside test: {is_outside}");
                             }
                             Err(e) => {
-                                println!(
+                                test_debug!(
                                     "    Point outside test failed (acceptable for degenerate case): {e}"
                                 );
                             }
                         }
                     }
                     Err(e) => {
-                        println!("    Collinear 2D hull construction failed: {e}");
+                        test_debug!("    Collinear 2D hull construction failed: {e}");
                         match e {
                             ConvexHullConstructionError::GeometricDegeneracy { .. }
                             | ConvexHullConstructionError::InvalidTriangulation { .. }
                             | ConvexHullConstructionError::BoundaryFacetExtractionFailed {
                                 ..
                             } => {
-                                println!("      ✓ Appropriate error type for collinear points");
+                                test_debug!("      ✓ Appropriate error type for collinear points");
                             }
                             _ => {
-                                println!("      Unexpected error type: {e:?}");
+                                test_debug!("      Unexpected error type: {e:?}");
                             }
                         }
                     }
                 }
             }
             Err(e) => {
-                println!(
+                test_debug!(
                     "    Collinear 2D DelaunayTriangulation construction failed (expected): {e}"
                 );
             }
         }
 
-        println!("  Testing nearly collinear points with small perturbations...");
+        test_debug!("  Testing nearly collinear points with small perturbations...");
 
         let nearly_collinear_vertices = vec![
             vertex!([0.0, 0.0]),
@@ -5580,7 +5661,7 @@ mod tests {
             Ok(nearly_dt) => {
                 match ConvexHull::from_triangulation(nearly_dt.as_triangulation()) {
                     Ok(nearly_hull) => {
-                        println!("    ✓ Nearly collinear 2D hull constructed successfully");
+                        test_debug!("    ✓ Nearly collinear 2D hull constructed successfully");
                         assert!(nearly_hull.validate(nearly_dt.as_triangulation()).is_ok());
 
                         // Test that operations handle numerical precision gracefully
@@ -5589,26 +5670,26 @@ mod tests {
                             .is_point_outside(&precision_test_point, nearly_dt.as_triangulation());
                         match precision_result {
                             Ok(is_outside) => {
-                                println!(
+                                test_debug!(
                                     "    Precision test successful: point outside = {is_outside}"
                                 );
                             }
                             Err(e) => {
-                                println!("    Precision test failed (may be acceptable): {e}");
+                                test_debug!("    Precision test failed (may be acceptable): {e}");
                             }
                         }
                     }
                     Err(e) => {
-                        println!("    Nearly collinear hull construction failed: {e}");
+                        test_debug!("    Nearly collinear hull construction failed: {e}");
                     }
                 }
             }
             Err(e) => {
-                println!("    Nearly collinear DelaunayTriangulation construction failed: {e}");
+                test_debug!("    Nearly collinear DelaunayTriangulation construction failed: {e}");
             }
         }
 
-        println!("  Testing collinear points in 3D (degenerate configuration)...");
+        test_debug!("  Testing collinear points in 3D (degenerate configuration)...");
 
         let collinear_3d_vertices = vec![
             vertex!([0.0, 0.0, 0.0]),
@@ -5619,26 +5700,29 @@ mod tests {
 
         match DelaunayTriangulation::new(&collinear_3d_vertices) {
             Ok(_) => {
-                println!(
+                test_debug!(
                     "    Warning: 3D collinear DelaunayTriangulation constructed (unexpected but handled)"
                 );
             }
             Err(e) => {
-                println!(
+                test_debug!(
                     "    3D collinear DelaunayTriangulation construction failed (expected): {e}"
                 );
             }
         }
 
-        println!("  ✓ Collinear point configurations tested");
+        test_debug!("  ✓ Collinear point configurations tested");
     }
 
     #[test]
-    #[expect(clippy::too_many_lines)]
+    #[expect(
+        clippy::too_many_lines,
+        reason = "test keeps coplanar higher-dimensional cases together"
+    )]
     fn test_coplanar_points_in_higher_dimensions() {
-        println!("Testing convex hull construction with coplanar point configurations");
+        test_debug!("Testing convex hull construction with coplanar point configurations");
 
-        println!("  Testing coplanar points in 3D...");
+        test_debug!("  Testing coplanar points in 3D...");
 
         // Four points in the same plane (z=0)
         let coplanar_3d_vertices = vec![
@@ -5650,18 +5734,18 @@ mod tests {
 
         match DelaunayTriangulation::new(&coplanar_3d_vertices) {
             Ok(_) => {
-                println!(
+                test_debug!(
                     "    Warning: Coplanar 3D DelaunayTriangulation constructed (may indicate insufficient degeneracy detection)"
                 );
             }
             Err(e) => {
-                println!(
+                test_debug!(
                     "    Coplanar 3D DelaunayTriangulation construction failed (expected): {e}"
                 );
             }
         }
 
-        println!("  Testing nearly coplanar points with small z-perturbations...");
+        test_debug!("  Testing nearly coplanar points with small z-perturbations...");
 
         let nearly_coplanar_vertices = vec![
             vertex!([0.0, 0.0, 0.0]),
@@ -5674,16 +5758,16 @@ mod tests {
             Ok(nearly_coplanar_dt) => {
                 match ConvexHull::from_triangulation(nearly_coplanar_dt.as_triangulation()) {
                     Ok(nearly_coplanar_hull) => {
-                        println!("    ✓ Nearly coplanar 3D hull constructed successfully");
+                        test_debug!("    ✓ Nearly coplanar 3D hull constructed successfully");
 
                         let validation_result =
                             nearly_coplanar_hull.validate(nearly_coplanar_dt.as_triangulation());
                         match validation_result {
                             Ok(()) => {
-                                println!("    Hull validation successful");
+                                test_debug!("    Hull validation successful");
                             }
                             Err(e) => {
-                                println!(
+                                test_debug!(
                                     "    Hull validation failed (may be due to degeneracy): {e}"
                                 );
                             }
@@ -5695,12 +5779,12 @@ mod tests {
                             .is_point_outside(&test_point, nearly_coplanar_dt.as_triangulation());
                         match visibility_result {
                             Ok(is_outside) => {
-                                println!(
+                                test_debug!(
                                     "    Nearly coplanar visibility test: point outside = {is_outside}"
                                 );
                             }
                             Err(e) => {
-                                println!("    Nearly coplanar visibility test failed: {e}");
+                                test_debug!("    Nearly coplanar visibility test failed: {e}");
                                 match e {
                                     ConvexHullConstructionError::VisibilityCheckFailed {
                                         ..
@@ -5709,39 +5793,39 @@ mod tests {
                                     | ConvexHullConstructionError::FacetCacheBuildFailed {
                                         ..
                                     } => {
-                                        println!(
+                                        test_debug!(
                                             "      ✓ Appropriate error for nearly degenerate geometry"
                                         );
                                     }
                                     _ => {
-                                        println!("      Unexpected error type: {e:?}");
+                                        test_debug!("      Unexpected error type: {e:?}");
                                     }
                                 }
                             }
                         }
                     }
                     Err(e) => {
-                        println!("    Nearly coplanar hull construction failed: {e}");
+                        test_debug!("    Nearly coplanar hull construction failed: {e}");
                         match e {
                             ConvexHullConstructionError::GeometricDegeneracy { .. }
                             | ConvexHullConstructionError::BoundaryFacetExtractionFailed {
                                 ..
                             } => {
-                                println!("      ✓ Appropriate error for nearly coplanar points");
+                                test_debug!("      ✓ Appropriate error for nearly coplanar points");
                             }
                             _ => {
-                                println!("      Unexpected error type: {e:?}");
+                                test_debug!("      Unexpected error type: {e:?}");
                             }
                         }
                     }
                 }
             }
             Err(e) => {
-                println!("    Nearly coplanar DelaunayTriangulation construction failed: {e}");
+                test_debug!("    Nearly coplanar DelaunayTriangulation construction failed: {e}");
             }
         }
 
-        println!("  Testing coplanar points in 4D...");
+        test_debug!("  Testing coplanar points in 4D...");
 
         // Five points in the same 3D hyperplane (w=0)
         let coplanar_4d_vertices = vec![
@@ -5754,25 +5838,25 @@ mod tests {
 
         match DelaunayTriangulation::new(&coplanar_4d_vertices) {
             Ok(_) => {
-                println!(
+                test_debug!(
                     "    Warning: Coplanar 4D DelaunayTriangulation constructed (may indicate insufficient degeneracy detection)"
                 );
             }
             Err(e) => {
-                println!(
+                test_debug!(
                     "    Coplanar 4D DelaunayTriangulation construction failed (expected): {e}"
                 );
             }
         }
 
-        println!("  ✓ Coplanar point configurations tested");
+        test_debug!("  ✓ Coplanar point configurations tested");
     }
 
     #[test]
     fn test_duplicate_and_coincident_vertices() {
-        println!("Testing convex hull construction with duplicate and coincident vertices");
+        test_debug!("Testing convex hull construction with duplicate and coincident vertices");
 
-        println!("  Testing exact duplicate vertices...");
+        test_debug!("  Testing exact duplicate vertices...");
 
         let duplicate_vertices = vec![
             vertex!([0.0, 0.0, 0.0]),
@@ -5784,43 +5868,43 @@ mod tests {
 
         match DelaunayTriangulation::new(&duplicate_vertices) {
             Ok(dup_dt) => {
-                println!("    Duplicate vertices DelaunayTriangulation constructed");
+                test_debug!("    Duplicate vertices DelaunayTriangulation constructed");
                 match ConvexHull::from_triangulation(dup_dt.as_triangulation()) {
                     Ok(dup_hull) => {
-                        println!("    ✓ Hull with duplicate vertices constructed");
+                        test_debug!("    ✓ Hull with duplicate vertices constructed");
 
                         // Test validation - should catch duplicate vertices in facets
                         let validation_result = dup_hull.validate(dup_dt.as_triangulation());
                         match validation_result {
                             Ok(()) => {
-                                println!(
+                                test_debug!(
                                     "    Hull validation passed (duplicates may have been handled)"
                                 );
                             }
                             Err(ConvexHullValidationError::DuplicateVerticesInFacet { .. }) => {
-                                println!(
+                                test_debug!(
                                     "    ✓ Validation correctly detected duplicate vertices in facets"
                                 );
                             }
                             Err(e) => {
-                                println!("    Hull validation failed with different error: {e}");
+                                test_debug!("    Hull validation failed with different error: {e}");
                             }
                         }
                     }
                     Err(e) => {
-                        println!("    Hull construction with duplicates failed: {e}");
+                        test_debug!("    Hull construction with duplicates failed: {e}");
                         // This might be expected depending on how the TDS handles duplicates
                     }
                 }
             }
             Err(e) => {
-                println!(
+                test_debug!(
                     "    Duplicate vertices DelaunayTriangulation construction failed (may be expected): {e}"
                 );
             }
         }
 
-        println!("  Testing nearly coincident vertices (within floating-point precision)...");
+        test_debug!("  Testing nearly coincident vertices (within floating-point precision)...");
 
         let nearly_coincident_vertices = vec![
             vertex!([0.0, 0.0, 0.0]),
@@ -5834,7 +5918,7 @@ mod tests {
             Ok(nearly_coin_dt) => {
                 match ConvexHull::from_triangulation(nearly_coin_dt.as_triangulation()) {
                     Ok(nearly_coin_hull) => {
-                        println!("    ✓ Hull with nearly coincident vertices constructed");
+                        test_debug!("    ✓ Hull with nearly coincident vertices constructed");
 
                         // Test operations to see how they handle near-duplicates
                         let test_point = Point::new([2.0, 2.0, 2.0]);
@@ -5842,30 +5926,32 @@ mod tests {
                             .is_point_outside(&test_point, nearly_coin_dt.as_triangulation());
                         match visibility_result {
                             Ok(is_outside) => {
-                                println!(
+                                test_debug!(
                                     "    Nearly coincident hull visibility test: {is_outside}"
                                 );
                             }
                             Err(e) => {
-                                println!("    Nearly coincident hull visibility test failed: {e}");
+                                test_debug!(
+                                    "    Nearly coincident hull visibility test failed: {e}"
+                                );
                             }
                         }
                     }
                     Err(e) => {
-                        println!(
+                        test_debug!(
                             "    Hull construction with nearly coincident vertices failed: {e}"
                         );
                     }
                 }
             }
             Err(e) => {
-                println!(
+                test_debug!(
                     "    Nearly coincident vertices DelaunayTriangulation construction failed: {e}"
                 );
             }
         }
 
-        println!("  ✓ Duplicate and coincident vertex configurations tested");
+        test_debug!("  ✓ Duplicate and coincident vertex configurations tested");
     }
 
     // ============================================================================
@@ -5875,11 +5961,14 @@ mod tests {
     // and with larger datasets to ensure robustness and performance.
 
     #[test]
-    #[expect(clippy::too_many_lines)]
+    #[expect(
+        clippy::too_many_lines,
+        reason = "test keeps high-dimensional hull cases together"
+    )]
     fn test_high_dimensional_convex_hulls() {
-        println!("Testing convex hull construction in high dimensions (6D, 7D, 8D)");
+        test_debug!("Testing convex hull construction in high dimensions (6D, 7D, 8D)");
 
-        println!("  Testing 6D convex hull...");
+        test_debug!("  Testing 6D convex hull...");
 
         // Create a 6D simplex (7 vertices)
         let vertices_6d = vec![
@@ -5896,18 +5985,18 @@ mod tests {
             Ok(dt_6d) => {
                 match ConvexHull::from_triangulation(dt_6d.as_triangulation()) {
                     Ok(hull_6d) => {
-                        println!("    ✓ 6D hull constructed successfully");
-                        println!("    6D hull facet count: {}", hull_6d.number_of_facets());
+                        test_debug!("    ✓ 6D hull constructed successfully");
+                        test_debug!("    6D hull facet count: {}", hull_6d.number_of_facets());
                         assert_eq!(hull_6d.dimension(), 6);
 
                         // Test validation in 6D
                         let validation_result = hull_6d.validate(dt_6d.as_triangulation());
                         match validation_result {
                             Ok(()) => {
-                                println!("    6D hull validation successful");
+                                test_debug!("    6D hull validation successful");
                             }
                             Err(e) => {
-                                println!("    6D hull validation failed: {e}");
+                                test_debug!("    6D hull validation failed: {e}");
                             }
                         }
 
@@ -5917,26 +6006,26 @@ mod tests {
                             hull_6d.is_point_outside(&test_point_6d, dt_6d.as_triangulation());
                         match visibility_result {
                             Ok(is_outside) => {
-                                println!("    6D point outside test: {is_outside}");
+                                test_debug!("    6D point outside test: {is_outside}");
                             }
                             Err(e) => {
-                                println!("    6D point outside test failed: {e}");
+                                test_debug!("    6D point outside test failed: {e}");
                                 // High dimensional operations might fail due to complexity
                             }
                         }
                     }
                     Err(e) => {
-                        println!("    6D hull construction failed: {e}");
+                        test_debug!("    6D hull construction failed: {e}");
                         // This might be expected for high-dimensional cases
                     }
                 }
             }
             Err(e) => {
-                println!("    6D DelaunayTriangulation construction failed: {e}");
+                test_debug!("    6D DelaunayTriangulation construction failed: {e}");
             }
         }
 
-        println!("  Testing 7D convex hull...");
+        test_debug!("  Testing 7D convex hull...");
 
         let vertices_7d = vec![
             vertex!([1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]),
@@ -5952,21 +6041,21 @@ mod tests {
         match DelaunayTriangulation::new(&vertices_7d) {
             Ok(dt_7d) => match ConvexHull::from_triangulation(dt_7d.as_triangulation()) {
                 Ok(hull_7d) => {
-                    println!("    ✓ 7D hull constructed successfully");
-                    println!("    7D hull facet count: {}", hull_7d.number_of_facets());
+                    test_debug!("    ✓ 7D hull constructed successfully");
+                    test_debug!("    7D hull facet count: {}", hull_7d.number_of_facets());
                     assert_eq!(hull_7d.dimension(), 7);
                     assert!(!hull_7d.is_empty());
                 }
                 Err(e) => {
-                    println!("    7D hull construction failed: {e}");
+                    test_debug!("    7D hull construction failed: {e}");
                 }
             },
             Err(e) => {
-                println!("    7D DelaunayTriangulation construction failed: {e}");
+                test_debug!("    7D DelaunayTriangulation construction failed: {e}");
             }
         }
 
-        println!("  Testing 8D convex hull (stress test)...");
+        test_debug!("  Testing 8D convex hull (stress test)...");
 
         let vertices_8d = vec![
             vertex!([1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]),
@@ -5984,27 +6073,27 @@ mod tests {
             Ok(dt_8d) => {
                 match ConvexHull::from_triangulation(dt_8d.as_triangulation()) {
                     Ok(hull_8d) => {
-                        println!("    ✓ 8D hull constructed successfully (impressive!)");
-                        println!("    8D hull facet count: {}", hull_8d.number_of_facets());
+                        test_debug!("    ✓ 8D hull constructed successfully (impressive!)");
+                        test_debug!("    8D hull facet count: {}", hull_8d.number_of_facets());
                         assert_eq!(hull_8d.dimension(), 8);
 
                         // Stress test operations on 8D hull
                         let clear_ops_start = std::time::Instant::now();
                         assert!(!hull_8d.is_empty());
                         let basic_ops_duration = clear_ops_start.elapsed();
-                        println!("    8D basic operations took: {basic_ops_duration:?}");
+                        test_debug!("    8D basic operations took: {basic_ops_duration:?}");
                     }
                     Err(e) => {
-                        println!("    8D hull construction failed (acceptable): {e}");
+                        test_debug!("    8D hull construction failed (acceptable): {e}");
                     }
                 }
             }
             Err(e) => {
-                println!("    8D DelaunayTriangulation construction failed (acceptable): {e}");
+                test_debug!("    8D DelaunayTriangulation construction failed (acceptable): {e}");
             }
         }
 
-        println!("  ✓ High-dimensional convex hull tests completed");
+        test_debug!("  ✓ High-dimensional convex hull tests completed");
     }
 
     #[test]
@@ -6013,9 +6102,9 @@ mod tests {
         reason = "performance test covers 3D and 2D cases"
     )]
     fn test_large_dataset_performance() {
-        println!("Testing convex hull performance with larger datasets");
+        test_debug!("Testing convex hull performance with larger datasets");
 
-        println!("  Testing 3D hull with many vertices...");
+        test_debug!("  Testing 3D hull with many vertices...");
         // Generate a larger set of 3D points *near* (but not on) a sphere.
         // Varying the radius per point breaks exact cosphericity so the f64
         // fast filter resolves most insphere queries without exact Bareiss.
@@ -6034,7 +6123,7 @@ mod tests {
             large_vertices.push(vertex!([x, y, z]));
         }
 
-        println!("    Generated {num_vertices} vertices");
+        test_debug!("    Generated {num_vertices} vertices");
 
         let start_time = std::time::Instant::now();
 
@@ -6046,15 +6135,17 @@ mod tests {
         ) {
             Ok(large_dt) => {
                 let dt_construction_time = start_time.elapsed();
-                println!("    DelaunayTriangulation construction took: {dt_construction_time:?}");
+                test_debug!(
+                    "    DelaunayTriangulation construction took: {dt_construction_time:?}"
+                );
 
                 let hull_start = std::time::Instant::now();
                 match ConvexHull::from_triangulation(large_dt.as_triangulation()) {
                     Ok(large_hull) => {
                         let hull_construction_time = hull_start.elapsed();
-                        println!("    ✓ Large 3D hull constructed successfully");
-                        println!("    Hull construction took: {hull_construction_time:?}");
-                        println!(
+                        test_debug!("    ✓ Large 3D hull constructed successfully");
+                        test_debug!("    Hull construction took: {hull_construction_time:?}");
+                        test_debug!(
                             "    Large hull facet count: {}",
                             large_hull.number_of_facets()
                         );
@@ -6080,29 +6171,29 @@ mod tests {
                         );
 
                         let ops_duration = ops_start.elapsed();
-                        println!("    Operations on large hull took: {ops_duration:?}");
+                        test_debug!("    Operations on large hull took: {ops_duration:?}");
 
                         // Performance expectations (loose bounds)
                         if hull_construction_time.as_millis() > 1000 {
-                            println!("    Warning: Hull construction took longer than expected");
+                            test_debug!("    Warning: Hull construction took longer than expected");
                         }
 
                         if ops_duration.as_millis() > 100 {
-                            println!("    Warning: Operations took longer than expected");
+                            test_debug!("    Warning: Operations took longer than expected");
                         }
                     }
                     Err(e) => {
-                        println!("    Large hull construction failed: {e}");
+                        test_debug!("    Large hull construction failed: {e}");
                         // This might be acceptable for very large datasets
                     }
                 }
             }
             Err(e) => {
-                println!("    Large DelaunayTriangulation construction failed: {e}");
+                test_debug!("    Large DelaunayTriangulation construction failed: {e}");
             }
         }
 
-        println!("  Testing 2D hull with many vertices...");
+        test_debug!("  Testing 2D hull with many vertices...");
 
         // Generate points near (but not exactly on) a 2D circle.
         let num_2d_vertices = 40;
@@ -6129,8 +6220,8 @@ mod tests {
             {
                 Ok(large_2d_hull) => {
                     let construction_2d_time = start_2d.elapsed();
-                    println!("    ✓ Large 2D hull constructed in {construction_2d_time:?}");
-                    println!(
+                    test_debug!("    ✓ Large 2D hull constructed in {construction_2d_time:?}");
+                    test_debug!(
                         "    2D hull facet count: {} (should be ~{})",
                         large_2d_hull.number_of_facets(),
                         num_2d_vertices
@@ -6143,15 +6234,15 @@ mod tests {
                     );
                 }
                 Err(e) => {
-                    println!("    Large 2D hull construction failed: {e}");
+                    test_debug!("    Large 2D hull construction failed: {e}");
                 }
             },
             Err(e) => {
-                println!("    Large 2D DelaunayTriangulation construction failed: {e}");
+                test_debug!("    Large 2D DelaunayTriangulation construction failed: {e}");
             }
         }
 
-        println!("  ✓ Large dataset performance tests completed");
+        test_debug!("  ✓ Large dataset performance tests completed");
     }
 
     // ============================================================================
@@ -6162,7 +6253,7 @@ mod tests {
 
     #[test]
     fn test_generation_counter_edge_cases() {
-        println!("Testing generation counter edge cases and overflow scenarios");
+        test_debug!("Testing generation counter edge cases and overflow scenarios");
 
         // Create a basic triangulation for testing
         let vertices = vec![
@@ -6174,26 +6265,26 @@ mod tests {
         let mut dt = create_triangulation(&vertices);
         let hull = ConvexHull::from_triangulation(dt.as_triangulation()).unwrap();
 
-        println!("  Testing rapid generation changes...");
+        test_debug!("  Testing rapid generation changes...");
 
         // Record initial generation
         let initial_generation = dt.as_triangulation().tds.generation();
         let initial_hull_generation = hull.cached_generation().load(Ordering::Acquire);
 
-        println!("    Initial TDS generation: {initial_generation}");
-        println!("    Initial hull generation: {initial_hull_generation}");
+        test_debug!("    Initial TDS generation: {initial_generation}");
+        test_debug!("    Initial hull generation: {initial_hull_generation}");
 
         // Rapidly modify the TDS to increment generation many times
         for i in 0..20 {
             let new_vertex = vertex!([<f64 as From<_>>::from(i).mul_add(0.01, 0.1), 0.1, 0.1]);
             if dt.insert(new_vertex).is_ok() {
                 let current_gen = dt.as_triangulation().tds.generation();
-                println!("    After modification {i}: TDS generation = {current_gen}");
+                test_debug!("    After modification {i}: TDS generation = {current_gen}");
 
                 // Test that hull detects staleness
                 let hull_gen = hull.cached_generation().load(Ordering::Acquire);
                 if hull_gen > 0 && hull_gen < current_gen {
-                    println!(
+                    test_debug!(
                         "      ✓ Hull generation ({hull_gen}) correctly behind TDS ({current_gen})"
                     );
                 }
@@ -6202,10 +6293,10 @@ mod tests {
             }
         }
 
-        println!("  Testing cache rebuild with high generation values...");
+        test_debug!("  Testing cache rebuild with high generation values...");
 
         let final_generation = dt.as_triangulation().tds.generation();
-        println!("    Final TDS generation: {final_generation}");
+        test_debug!("    Final TDS generation: {final_generation}");
 
         // Force cache rebuild
         let test_point = Point::new([2.0, 2.0, 2.0]);
@@ -6213,21 +6304,21 @@ mod tests {
         match visibility_result {
             Ok(is_outside) => {
                 let updated_hull_gen = hull.cached_generation().load(Ordering::Acquire);
-                println!("    After cache rebuild: hull generation = {updated_hull_gen}");
+                test_debug!("    After cache rebuild: hull generation = {updated_hull_gen}");
                 assert_eq!(
                     updated_hull_gen, final_generation,
                     "Hull generation should match TDS after rebuild"
                 );
-                println!(
+                test_debug!(
                     "    ✓ Cache rebuild with high generation successful: point outside = {is_outside}"
                 );
             }
             Err(e) => {
-                println!("    Cache rebuild failed: {e}");
+                test_debug!("    Cache rebuild failed: {e}");
             }
         }
 
-        println!("  Testing manual invalidation with high generation values...");
+        test_debug!("  Testing manual invalidation with high generation values...");
 
         // Test manual invalidation
         hull.invalidate_cache();
@@ -6236,7 +6327,7 @@ mod tests {
             invalidated_gen, 0,
             "Generation should be reset to 0 after manual invalidation"
         );
-        println!("    ✓ Manual invalidation correctly reset generation to 0");
+        test_debug!("    ✓ Manual invalidation correctly reset generation to 0");
 
         // Test rebuild after manual invalidation
         let rebuild_result = hull.is_point_outside(&test_point, dt.as_triangulation());
@@ -6247,19 +6338,19 @@ mod tests {
                     rebuilt_gen, final_generation,
                     "Generation should match TDS after rebuild from manual invalidation"
                 );
-                println!("    ✓ Rebuild after manual invalidation successful");
+                test_debug!("    ✓ Rebuild after manual invalidation successful");
             }
             Err(e) => {
-                println!("    Rebuild after manual invalidation failed: {e}");
+                test_debug!("    Rebuild after manual invalidation failed: {e}");
             }
         }
 
-        println!("  ✓ Generation counter edge cases tested");
+        test_debug!("  ✓ Generation counter edge cases tested");
     }
 
     #[test]
     fn test_cache_consistency_under_stress() {
-        println!("Testing cache consistency under rapid operations");
+        test_debug!("Testing cache consistency under rapid operations");
 
         let vertices = vec![
             vertex!([0.0, 0.0, 0.0]),
@@ -6270,7 +6361,7 @@ mod tests {
         let dt = create_triangulation(&vertices);
         let hull = ConvexHull::from_triangulation(dt.as_triangulation()).unwrap();
 
-        println!("  Testing rapid cache invalidation and rebuild cycles...");
+        test_debug!("  Testing rapid cache invalidation and rebuild cycles...");
 
         let num_cycles = 50;
         let test_points = [
@@ -6318,7 +6409,7 @@ mod tests {
                             );
                         }
 
-                        println!("    Cycle {cycle}, Point {i}: outside = {is_outside}");
+                        test_debug!("    Cycle {cycle}, Point {i}: outside = {is_outside}");
                     }
                     Err(e) => {
                         panic!("Visibility test failed in cycle {cycle}, point {i}: {e:?}");
@@ -6338,13 +6429,13 @@ mod tests {
             );
 
             if (cycle + 1) % 10 == 0 {
-                println!("    Completed {cycle} invalidation/rebuild cycles");
+                test_debug!("    Completed {cycle} invalidation/rebuild cycles");
             }
         }
 
-        println!("    ✓ Completed {num_cycles} invalidation/rebuild cycles successfully");
+        test_debug!("    ✓ Completed {num_cycles} invalidation/rebuild cycles successfully");
 
-        println!("  Testing cache reuse efficiency...");
+        test_debug!("  Testing cache reuse efficiency...");
 
         // Test that cache is reused when generation hasn't changed
         let cache_before = hull.facet_cache().load();
@@ -6371,14 +6462,14 @@ mod tests {
         if let (Some(before_arc), Some(after_arc)) = (&*cache_before, &*cache_after) {
             // Compare Arc pointer equality for reuse detection
             let cache_reused = Arc::ptr_eq(before_arc, after_arc);
-            println!("    Cache reused: {cache_reused}");
+            test_debug!("    Cache reused: {cache_reused}");
 
             // For this test, we expect cache to be reused since generation didn't change
             assert!(
                 cache_reused,
                 "Cache Arc should be reused when generation unchanged"
             );
-            println!("    ✓ Cache efficiently reused across multiple operations");
+            test_debug!("    ✓ Cache efficiently reused across multiple operations");
         } else {
             panic!("Cache should exist both before and after operations");
         }
@@ -6388,14 +6479,14 @@ mod tests {
             "Generation should remain unchanged"
         );
 
-        println!("  ✓ Cache consistency under stress tested");
+        test_debug!("  ✓ Cache consistency under stress tested");
     }
 
     #[test]
     fn test_memory_usage_and_cleanup() {
-        println!("Testing memory usage patterns and cleanup behavior");
+        test_debug!("Testing memory usage patterns and cleanup behavior");
 
-        println!("  Testing cache memory cleanup...");
+        test_debug!("  Testing cache memory cleanup...");
 
         let vertices = vec![
             vertex!([0.0, 0.0, 0.0]),
@@ -6433,9 +6524,9 @@ mod tests {
             "Cache should be rebuilt after invalidation"
         );
 
-        println!("    ✓ Cache memory cleanup behavior correct");
+        test_debug!("    ✓ Cache memory cleanup behavior correct");
 
-        println!("  Testing multiple hull instances with shared TDS...");
+        test_debug!("  Testing multiple hull instances with shared TDS...");
 
         // Create multiple hull instances from the same triangulation
         let hull1: ConvexHull<AdaptiveKernel<f64>, (), (), 3> =
@@ -6453,8 +6544,8 @@ mod tests {
         if let (Some(cache1_arc), Some(cache2_arc)) = (&*cache1, &*cache2) {
             // Caches should be independent (different Arc instances)
             // but might have the same content
-            println!("    Hull1 cache size: {}", cache1_arc.len());
-            println!("    Hull2 cache size: {}", cache2_arc.len());
+            test_debug!("    Hull1 cache size: {}", cache1_arc.len());
+            test_debug!("    Hull2 cache size: {}", cache2_arc.len());
 
             // They should have the same content but be independent instances
             assert_eq!(
@@ -6462,7 +6553,7 @@ mod tests {
                 cache2_arc.len(),
                 "Cache sizes should be equal"
             );
-            println!("    ✓ Multiple hull instances have independent but equivalent caches");
+            test_debug!("    ✓ Multiple hull instances have independent but equivalent caches");
         } else {
             panic!("Both hulls should have caches after operations");
         }
@@ -6482,9 +6573,9 @@ mod tests {
             "Hull2 cache should still exist"
         );
 
-        println!("    ✓ Independent cache invalidation working correctly");
+        test_debug!("    ✓ Independent cache invalidation working correctly");
 
-        println!("  ✓ Memory usage and cleanup patterns tested");
+        test_debug!("  ✓ Memory usage and cleanup patterns tested");
     }
 
     /// Regression test for the bug where stale hulls could silently revalidate after `invalidate_cache()`.
@@ -6498,7 +6589,7 @@ mod tests {
     /// Expected behavior: Hull remains invalid for the modified TDS even after cache invalidation.
     #[test]
     fn test_stale_hull_detection_after_invalidate_cache() {
-        println!("Testing stale hull detection after invalidate_cache (regression test)");
+        test_debug!("Testing stale hull detection after invalidate_cache (regression test)");
 
         // Step 1: Create hull from initial DelaunayTriangulation
         let mut dt = DelaunayTriangulation::new(&[
@@ -6516,7 +6607,7 @@ mod tests {
             hull.is_valid_for_triangulation(dt.as_triangulation()),
             "Hull should be valid for initial triangulation"
         );
-        println!("  ✓ Hull created with generation {initial_gen}");
+        test_debug!("  ✓ Hull created with generation {initial_gen}");
 
         // Step 2: Mutate triangulation (increases generation)
         dt.insert(vertex!([0.5, 0.5, 0.5])).unwrap();
@@ -6525,18 +6616,18 @@ mod tests {
             initial_gen, new_gen,
             "Triangulation generation should increase after mutation"
         );
-        println!("  ✓ Triangulation mutated, generation increased to {new_gen}");
+        test_debug!("  ✓ Triangulation mutated, generation increased to {new_gen}");
 
         // Verify hull is now invalid (stale)
         assert!(
             !hull.is_valid_for_triangulation(dt.as_triangulation()),
             "Hull should be invalid after triangulation modification"
         );
-        println!("  ✓ Hull correctly detected as stale");
+        test_debug!("  ✓ Hull correctly detected as stale");
 
         // Step 3: Call invalidate_cache() (the critical operation that triggered the bug)
         hull.invalidate_cache();
-        println!("  ✓ Called invalidate_cache()");
+        test_debug!("  ✓ Called invalidate_cache()");
 
         // Step 4: Try to use the hull (this would trigger cache rebuild in the old buggy code)
         let test_point = Point::new([2.0, 2.0, 2.0]);
@@ -6561,7 +6652,7 @@ mod tests {
                 tds_generation, new_gen,
                 "Error should report current TDS generation"
             );
-            println!("  ✓ Visibility operation correctly failed with StaleHull error");
+            test_debug!("  ✓ Visibility operation correctly failed with StaleHull error");
         } else {
             panic!("Expected StaleHull error, got: {visibility_result:?}");
         }
@@ -6572,7 +6663,7 @@ mod tests {
             !hull.is_valid_for_triangulation(dt.as_triangulation()),
             "BUG DETECTED: Hull should STILL be invalid for modified triangulation after invalidate_cache()"
         );
-        println!(
+        test_debug!(
             "  ✓ CRITICAL: is_valid_for_triangulation() correctly returns false after cache invalidation"
         );
 
@@ -6589,9 +6680,9 @@ mod tests {
             new_visibility_result.is_ok(),
             "Visibility operation should succeed on new hull"
         );
-        println!("  ✓ New hull works correctly with modified TDS");
+        test_debug!("  ✓ New hull works correctly with modified TDS");
 
-        println!(
+        test_debug!(
             "  ✓ Regression test passed: stale hull detection works correctly after invalidate_cache()"
         );
     }
@@ -6602,7 +6693,7 @@ mod tests {
 
     #[test]
     fn test_stale_hull_all_operations_fail() {
-        println!("Testing that all hull operations fail on stale hull");
+        test_debug!("Testing that all hull operations fail on stale hull");
 
         let mut dt = DelaunayTriangulation::new(&[
             vertex!([0.0, 0.0, 0.0]),
@@ -6619,7 +6710,7 @@ mod tests {
         let test_point = Point::new([2.0, 2.0, 2.0]);
 
         // Test that all operations detect staleness
-        println!("  Testing find_visible_facets...");
+        test_debug!("  Testing find_visible_facets...");
         let visible_result = hull.find_visible_facets(&test_point, dt.as_triangulation());
         assert!(
             matches!(
@@ -6629,7 +6720,7 @@ mod tests {
             "find_visible_facets should fail with StaleHull error"
         );
 
-        println!("  Testing find_nearest_visible_facet...");
+        test_debug!("  Testing find_nearest_visible_facet...");
         let nearest_result = hull.find_nearest_visible_facet(&test_point, dt.as_triangulation());
         assert!(
             matches!(
@@ -6639,7 +6730,7 @@ mod tests {
             "find_nearest_visible_facet should fail with StaleHull error"
         );
 
-        println!("  Testing is_point_outside...");
+        test_debug!("  Testing is_point_outside...");
         let outside_result = hull.is_point_outside(&test_point, dt.as_triangulation());
         assert!(
             matches!(
@@ -6649,7 +6740,7 @@ mod tests {
             "is_point_outside should fail with StaleHull error"
         );
 
-        println!("  Testing validate...");
+        test_debug!("  Testing validate...");
         let validate_result = hull.validate(dt.as_triangulation());
         // validate() should fail with explicit StaleHull error
         assert!(
@@ -6660,7 +6751,7 @@ mod tests {
             "validate should fail on stale hull with StaleHull error, got: {validate_result:?}"
         );
 
-        println!("  ✓ All operations correctly detect stale hull");
+        test_debug!("  ✓ All operations correctly detect stale hull");
     }
 
     // ============================================================================
@@ -6669,7 +6760,7 @@ mod tests {
 
     #[test]
     fn test_fallback_visibility_degenerate_facets() {
-        println!("Testing fallback visibility check for degenerate facets");
+        test_debug!("Testing fallback visibility check for degenerate facets");
 
         // Create hull with nearly coplanar points (z << x,y) but still valid simplex
         let dt = DelaunayTriangulation::new(&[
@@ -6681,7 +6772,7 @@ mod tests {
         .unwrap();
         let hull = ConvexHull::from_triangulation(dt.as_triangulation()).unwrap();
 
-        println!("  Testing point visibility with degenerate geometry...");
+        test_debug!("  Testing point visibility with degenerate geometry...");
         let test_point = Point::new([0.5, 0.5, 1.0]);
         let result = hull.is_point_outside(&test_point, dt.as_triangulation());
 
@@ -6690,12 +6781,12 @@ mod tests {
             "Visibility test should handle degenerate geometry: {:?}",
             result.err()
         );
-        println!("  ✓ Degenerate geometry handled gracefully");
+        test_debug!("  ✓ Degenerate geometry handled gracefully");
     }
 
     #[test]
     fn test_extreme_aspect_ratio_facets() {
-        println!("Testing convex hull with extreme aspect ratio facets");
+        test_debug!("Testing convex hull with extreme aspect ratio facets");
 
         // Create a very flat triangulation (extreme aspect ratio)
         let dt = DelaunayTriangulation::new(&[
@@ -6707,7 +6798,7 @@ mod tests {
         .unwrap();
         let hull = ConvexHull::from_triangulation(dt.as_triangulation()).unwrap();
 
-        println!("  Testing operations with extreme aspect ratio...");
+        test_debug!("  Testing operations with extreme aspect ratio...");
         let test_point = Point::new([500.0, 10.0, 10.0]);
         let result = hull.is_point_outside(&test_point, dt.as_triangulation());
 
@@ -6716,7 +6807,7 @@ mod tests {
             "Should handle extreme aspect ratios: {:?}",
             result.err()
         );
-        println!("  ✓ Extreme aspect ratio handled correctly");
+        test_debug!("  ✓ Extreme aspect ratio handled correctly");
     }
 
     // ============================================================================
@@ -6725,7 +6816,7 @@ mod tests {
 
     #[test]
     fn test_point_exactly_on_hull_surface() {
-        println!("Testing points exactly on hull surface");
+        test_debug!("Testing points exactly on hull surface");
 
         let dt = create_triangulation(&[
             vertex!([0.0, 0.0, 0.0]),
@@ -6735,32 +6826,32 @@ mod tests {
         ]);
         let hull = ConvexHull::from_triangulation(dt.as_triangulation()).unwrap();
 
-        println!("  Testing point on facet plane...");
+        test_debug!("  Testing point on facet plane...");
         // Point on the plane defined by (1,0,0), (0,1,0), (0,0,0)
         let on_facet = Point::new([0.5, 0.5, 0.0]);
         let result = hull.is_point_outside(&on_facet, dt.as_triangulation());
         // Should handle boundary case without panic
         assert!(result.is_ok(), "Point on facet should be handled");
-        println!("  ✓ Point on facet handled: inside={}", !result.unwrap());
+        test_debug!("  ✓ Point on facet handled: inside={}", !result.unwrap());
 
-        println!("  Testing point at vertex...");
+        test_debug!("  Testing point at vertex...");
         let at_vertex = Point::new([1.0, 0.0, 0.0]);
         let result = hull.is_point_outside(&at_vertex, dt.as_triangulation());
         assert!(result.is_ok(), "Point at vertex should be handled");
         // Point at vertex should be inside hull
         assert!(!result.unwrap(), "Point at vertex should be inside");
-        println!("  ✓ Point at vertex correctly identified as inside");
+        test_debug!("  ✓ Point at vertex correctly identified as inside");
 
-        println!("  Testing point on edge...");
+        test_debug!("  Testing point on edge...");
         let on_edge = Point::new([0.5, 0.0, 0.0]);
         let result = hull.is_point_outside(&on_edge, dt.as_triangulation());
         assert!(result.is_ok(), "Point on edge should be handled");
-        println!("  ✓ Point on edge handled");
+        test_debug!("  ✓ Point on edge handled");
     }
 
     #[test]
     fn test_point_very_close_to_surface() {
-        println!("Testing points very close to hull surface (epsilon distance)");
+        test_debug!("Testing points very close to hull surface (epsilon distance)");
 
         let dt = create_triangulation(&[
             vertex!([0.0, 0.0, 0.0]),
@@ -6770,17 +6861,17 @@ mod tests {
         ]);
         let hull = ConvexHull::from_triangulation(dt.as_triangulation()).unwrap();
 
-        println!("  Testing point just outside (epsilon away)...");
+        test_debug!("  Testing point just outside (epsilon away)...");
         let just_outside = Point::new([0.5, 0.5, f64::EPSILON * 10.0]);
         let result = hull.is_point_outside(&just_outside, dt.as_triangulation());
         assert!(result.is_ok(), "Near-surface point should be handled");
-        println!("  ✓ Epsilon-distance point handled");
+        test_debug!("  ✓ Epsilon-distance point handled");
 
-        println!("  Testing point just inside (negative epsilon)...");
+        test_debug!("  Testing point just inside (negative epsilon)...");
         let just_inside = Point::new([0.25, 0.25, -f64::EPSILON * 10.0]);
         let result = hull.is_point_outside(&just_inside, dt.as_triangulation());
         assert!(result.is_ok(), "Near-surface point should be handled");
-        println!("  ✓ Negative epsilon-distance point handled");
+        test_debug!("  ✓ Negative epsilon-distance point handled");
     }
 
     // ============================================================================
@@ -6802,7 +6893,7 @@ mod tests {
                     }};
                 }
 
-                println!("Testing {}D convex hull construction and operations", $dim);
+                test_debug!("Testing {}D convex hull construction and operations", $dim);
 
                 // Generate simplex vertices for dimension D
                 let mut vertices_vec = Vec::new();
@@ -6815,7 +6906,7 @@ mod tests {
                     vertices_vec.push(make_vertex!(coords));
                 }
 
-                println!(
+                test_debug!(
                     "  Creating {}D triangulation with {} vertices...",
                     $dim,
                     vertices_vec.len()
@@ -6823,7 +6914,7 @@ mod tests {
                 let dt = DelaunayTriangulation::<_, (), (), $dim>::new(&vertices_vec)
                     .expect(&format!("Failed to create {}D DelaunayTriangulation", $dim));
 
-                println!("  Constructing {}D convex hull...", $dim);
+                test_debug!("  Constructing {}D convex hull...", $dim);
                 let hull = ConvexHull::from_triangulation(dt.as_triangulation())
                     .expect(&format!("Failed to create {}D hull", $dim));
 
@@ -6836,13 +6927,14 @@ mod tests {
                     $dim,
                     expected_facets
                 );
-                println!(
+                test_debug!(
                     "  ✓ {}D hull has correct facet count: {}",
-                    $dim, expected_facets
+                    $dim,
+                    expected_facets
                 );
 
                 // Test point outside
-                println!("  Testing point outside {}D hull...", $dim);
+                test_debug!("  Testing point outside {}D hull...", $dim);
                 let outside_coords = [2.0; $dim];
                 let outside_point = Point::new(outside_coords);
                 let is_outside = hull
@@ -6853,10 +6945,10 @@ mod tests {
                     "Point at {:?} should be outside {}D hull",
                     outside_coords, $dim
                 );
-                println!("  ✓ Outside point correctly identified in {}D", $dim);
+                test_debug!("  ✓ Outside point correctly identified in {}D", $dim);
 
                 // Test point inside (centroid)
-                println!("  Testing point inside {}D hull...", $dim);
+                test_debug!("  Testing point inside {}D hull...", $dim);
                 let mut inside_coords = [0.0; $dim];
                 for i in 0..$dim {
                     inside_coords[i] = 1.0 / <f64 as std::convert::From<i32>>::from($dim + 1);
@@ -6866,10 +6958,10 @@ mod tests {
                     .is_point_outside(&inside_point, dt.as_triangulation())
                     .expect(&format!("Failed to test inside point in {}D", $dim));
                 assert!(!is_outside, "Centroid should be inside {}D hull", $dim);
-                println!("  ✓ Inside point correctly identified in {}D", $dim);
+                test_debug!("  ✓ Inside point correctly identified in {}D", $dim);
 
                 // Test visibility
-                println!("  Testing visibility in {}D...", $dim);
+                test_debug!("  Testing visibility in {}D...", $dim);
                 let visible_facets = hull
                     .find_visible_facets(&outside_point, dt.as_triangulation())
                     .expect(&format!("Failed to find visible facets in {}D", $dim));
@@ -6878,19 +6970,19 @@ mod tests {
                     "Outside point should see some facets in {}D",
                     $dim
                 );
-                println!(
+                test_debug!(
                     "  ✓ Visibility test passed in {}D: {} visible facets",
                     $dim,
                     visible_facets.len()
                 );
 
                 // Test validation
-                println!("  Validating {}D hull...", $dim);
+                test_debug!("  Validating {}D hull...", $dim);
                 hull.validate(dt.as_triangulation())
                     .expect(&format!("{}D hull validation failed", $dim));
-                println!("  ✓ {}D hull validation passed", $dim);
+                test_debug!("  ✓ {}D hull validation passed", $dim);
 
-                println!("  ✓ All {}D convex hull tests passed", $dim);
+                test_debug!("  ✓ All {}D convex hull tests passed", $dim);
             }
         };
     }
@@ -6907,7 +6999,7 @@ mod tests {
 
     #[test]
     fn test_cache_lifecycle_multiple_operations() {
-        println!("Testing cache lifecycle through multiple operations");
+        test_debug!("Testing cache lifecycle through multiple operations");
 
         let dt = create_triangulation(&[
             vertex!([0.0, 0.0, 0.0]),
@@ -6919,14 +7011,14 @@ mod tests {
 
         let test_point = Point::new([2.0, 2.0, 2.0]);
 
-        println!("  Initial state: cache already built during construction");
+        test_debug!("  Initial state: cache already built during construction");
         let initial_gen = hull.cached_generation().load(Ordering::Acquire);
         assert!(
             initial_gen > 0,
             "Generation should be set after construction"
         );
 
-        println!("  First operation: should build cache");
+        test_debug!("  First operation: should build cache");
         hull.find_visible_facets(&test_point, dt.as_triangulation())
             .unwrap();
         assert!(
@@ -6939,7 +7031,7 @@ mod tests {
             "Generation should be updated after build"
         );
 
-        println!("  Second operation: should reuse cache");
+        test_debug!("  Second operation: should reuse cache");
         let gen_before_reuse = hull.cached_generation().load(Ordering::Acquire);
         hull.find_visible_facets(&test_point, dt.as_triangulation())
             .unwrap();
@@ -6949,7 +7041,7 @@ mod tests {
             "Generation should not change when reusing cache"
         );
 
-        println!("  Manual invalidation: should clear cache and reset generation");
+        test_debug!("  Manual invalidation: should clear cache and reset generation");
         hull.invalidate_cache();
         assert!(
             hull.facet_cache().load().is_none(),
@@ -6967,7 +7059,7 @@ mod tests {
             "Should have had cache before invalidation"
         );
 
-        println!("  Operation after invalidation: should rebuild cache");
+        test_debug!("  Operation after invalidation: should rebuild cache");
         hull.find_visible_facets(&test_point, dt.as_triangulation())
             .unwrap();
         assert!(
@@ -6980,12 +7072,12 @@ mod tests {
             "Generation should be updated after rebuild"
         );
 
-        println!("  ✓ Cache lifecycle behaves correctly through all operations");
+        test_debug!("  ✓ Cache lifecycle behaves correctly through all operations");
     }
 
     #[test]
     fn test_cache_independence_multiple_hulls() {
-        println!("Testing cache independence between multiple hull instances");
+        test_debug!("Testing cache independence between multiple hull instances");
 
         let dt = create_triangulation(&[
             vertex!([0.0, 0.0, 0.0]),
@@ -6994,7 +7086,7 @@ mod tests {
             vertex!([0.0, 0.0, 1.0]),
         ]);
 
-        println!("  Creating first hull and building cache...");
+        test_debug!("  Creating first hull and building cache...");
         let hull1: ConvexHull<AdaptiveKernel<f64>, (), (), 3> =
             ConvexHull::from_triangulation(dt.as_triangulation()).unwrap();
         let test_point = Point::new([2.0, 2.0, 2.0]);
@@ -7002,18 +7094,18 @@ mod tests {
             .find_visible_facets(&test_point, dt.as_triangulation())
             .unwrap();
 
-        println!("  Creating second hull from same triangulation...");
+        test_debug!("  Creating second hull from same triangulation...");
         let hull2: ConvexHull<AdaptiveKernel<f64>, (), (), 3> =
             ConvexHull::from_triangulation(dt.as_triangulation()).unwrap();
 
-        println!("  Second hull also has cache built during construction...");
+        test_debug!("  Second hull also has cache built during construction...");
         let hull2_gen_initial = hull2.cached_generation().load(Ordering::Acquire);
         assert!(
             hull2_gen_initial > 0,
             "Hull2 should have cache built during construction"
         );
 
-        println!("  Building cache in second hull...");
+        test_debug!("  Building cache in second hull...");
         hull2
             .find_visible_facets(&test_point, dt.as_triangulation())
             .unwrap();
@@ -7030,7 +7122,7 @@ mod tests {
             "Hull2 should have cache"
         );
 
-        println!("  Invalidating first hull cache...");
+        test_debug!("  Invalidating first hull cache...");
         hull1.invalidate_cache();
 
         // Hull1 should be cleared
@@ -7045,6 +7137,6 @@ mod tests {
             "Hull2 cache should be independent"
         );
 
-        println!("  ✓ Cache independence between multiple hull instances verified");
+        test_debug!("  ✓ Cache independence between multiple hull instances verified");
     }
 }

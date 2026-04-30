@@ -1273,8 +1273,7 @@ let cell_key = dt.cells().next().unwrap().0;
         let err = QualityError::InvalidCell {
             message: "test".to_string(),
         };
-        // Should be able to use as Error trait object
-        let _: &dyn std::error::Error = &err;
+        assert!(std::error::Error::source(&err).is_none());
         assert!(format!("{err}").contains("test"));
     }
 

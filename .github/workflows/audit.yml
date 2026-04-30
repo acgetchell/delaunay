@@ -30,6 +30,8 @@ permissions:
 jobs:
   audit:
     runs-on: ubuntu-latest
+    env:
+      CARGO_AUDIT_VERSION: "0.22.1"
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
 
@@ -40,14 +42,14 @@ jobs:
           # toolchain, components, etc. are specified in rust-toolchain.toml
 
       - name: Cache audit database
-        uses: actions/cache@9255dc7a253b0ccc959486e2bca901246202afeb # v5.0.1
+        uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
         with:
           path: ~/.cargo/advisory-db
           key: advisory-db-${{ github.ref_name }}-v1
           restore-keys: advisory-db-
 
       - name: Install cargo-audit
-        run: cargo install --locked cargo-audit
+        run: cargo install --locked cargo-audit --version "${CARGO_AUDIT_VERSION}"
 
       - name: Run cargo audit
         run: |
@@ -71,14 +73,14 @@ jobs:
 
       - name: Upload audit SARIF results
         if: always()
-        uses: github/codeql-action/upload-sarif@95e58e9a2cdfd71adc6e0353d5c52f41a045d225 # v4
+        uses: github/codeql-action/upload-sarif@b25d0ebf40e5b63ee81e1bd6e5d2a12b7c2aeb61 # v4
         with:
           sarif_file: audit-results.sarif
           category: "cargo-audit"
           wait-for-processing: true
 
       - name: Upload audit results
-        uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f # v7.0.0
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         if: always()
         with:
           name: audit-results

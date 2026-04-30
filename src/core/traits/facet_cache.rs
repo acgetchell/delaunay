@@ -123,8 +123,10 @@ where
                 return Some(existing.clone());
             }
             // Build the cache only once, even if RCU retries
-            #[expect(clippy::option_if_let_else)]
-            // Complex error handling doesn't benefit from map_or_else
+            #[expect(
+                clippy::option_if_let_else,
+                reason = "explicit match keeps cache-hit and cache-build errors readable"
+            )]
             match built.get_or_insert_with(|| tds.build_facet_to_cells_map().map(Arc::new)) {
                 Ok(arc) => Some(arc.clone()),
                 Err(_) => None, // Let the caller handle the error

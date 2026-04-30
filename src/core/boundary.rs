@@ -235,7 +235,10 @@ mod tests {
     // SINGLE SIMPLEX TESTS
     // =============================================================================
 
-    #[expect(clippy::too_many_lines)]
+    #[expect(
+        clippy::too_many_lines,
+        reason = "boundary regression test keeps topology setup and assertions together"
+    )]
     #[test]
     fn test_boundary_facets_single_simplices() {
         // Test boundary analysis for single simplices in different dimensions

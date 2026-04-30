@@ -1306,12 +1306,9 @@ mod tests {
         // Test source() method - should return None for this error type
         assert!(error.source().is_none());
 
-        // Test that it can be converted to a boxed error
-        let _boxed_error: Box<dyn Error> = Box::new(error.clone());
-
-        // Test error chain handling
-        let error_ref: &dyn Error = &error;
-        assert_eq!(error_ref.to_string(), error.to_string());
+        // Test error trait handling without erasing the concrete type.
+        assert!(Error::source(&error).is_none());
+        assert_eq!(format!("{error}"), error.to_string());
     }
 
     #[test]

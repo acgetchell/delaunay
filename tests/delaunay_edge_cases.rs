@@ -131,9 +131,18 @@ test_regression_config!(
 );
 
 #[test]
-#[expect(clippy::collapsible_if)]
-#[expect(clippy::too_many_lines)]
-#[expect(clippy::unreadable_literal)]
+#[expect(
+    clippy::collapsible_if,
+    reason = "test keeps nested invariant checks aligned with diagnostic messages"
+)]
+#[expect(
+    clippy::too_many_lines,
+    reason = "edge-case regression test keeps construction and validation assertions together"
+)]
+#[expect(
+    clippy::unreadable_literal,
+    reason = "large literal documents the exact stress-case coordinate"
+)]
 fn debug_issue_120_empty_circumsphere_5d() {
     init_tracing();
     let vertices = vec![

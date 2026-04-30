@@ -3,14 +3,14 @@
 # separate terms of service, privacy policy, and support
 # documentation.
 
-# This workflow checks out code, runs Codacy's Markdownlint engine only, and
-# integrates the results with GitHub Advanced Security code scanning.
+# This workflow checks out code, runs selected Codacy engines, and integrates
+# the results with GitHub Advanced Security code scanning.
 # For more information on the Codacy analysis action usage and
 # parameters, see https://github.com/codacy/codacy-analysis-cli-action.
 # For more information on Codacy Analysis CLI in general, see
 # https://github.com/codacy/codacy-analysis-cli.
 
-name: Codacy Markdownlint Scan
+name: Codacy Quality Scan
 
 concurrency:
   # This concurrency group ensures that only one Codacy analysis runs at a time
@@ -30,7 +30,7 @@ permissions:
   contents: read
 
 jobs:
-  codacy-markdownlint-scan:
+  codacy-quality-scan:
     permissions:
       # for actions/checkout to fetch code
       contents: read
@@ -39,9 +39,15 @@ jobs:
       # only required for a private repository by
       # github/codeql-action/upload-sarif to get the Action run status
       actions: read
-    name: Codacy Markdownlint Scan
+    name: Codacy ${{ matrix.tool }} Scan
     runs-on: ubuntu-latest
     timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        tool:
+          - markdownlint
+          - opengrep
     steps:
       # Checkout the repository to the GitHub Actions runner
       - name: Checkout code
@@ -51,7 +57,7 @@ jobs:
         run: |
           set -euo pipefail
           echo "CODACY_WORKDIR=$RUNNER_TEMP/codacy-src" >> "$GITHUB_ENV"
-          echo "CODACY_SARIF=$RUNNER_TEMP/results.sarif" >> "$GITHUB_ENV"
+          echo "CODACY_SARIF=$RUNNER_TEMP/results-${{ matrix.tool }}.sarif" >> "$GITHUB_ENV"
 
       - name: Prepare workspace copy without .git
         run: |
@@ -59,9 +65,9 @@ jobs:
           mkdir -p "$CODACY_WORKDIR"
           rsync -a --delete --exclude '.git' ./ "$CODACY_WORKDIR/"
 
-      # Execute Codacy Analysis CLI with a single tool. The Codacy GitHub App may
-      # run curated PR-quality tools, but this SARIF workflow stays Markdownlint
-      # only so maintainability checks are not mirrored into GitHub Code Scanning.
+      # Execute Codacy Analysis CLI with one selected tool per matrix entry.
+      # Opengrep reads the repository-owned rules from semgrep.yaml; broad
+      # default Semgrep/Opengrep packs remain disabled.
       - name: Run Codacy Analysis CLI
         # Cap Codacy runtime so a hung analyzer does not consume the full job timeout.
         timeout-minutes: 20
@@ -76,7 +82,7 @@ jobs:
           directory: ${{ env.CODACY_WORKDIR }}
           output: ${{ env.CODACY_SARIF }}
           format: sarif
-          tool: markdownlint
+          tool: ${{ matrix.tool }}
           skip-uncommitted-files-check: true
           # Adjust severity of non-security issues
           gh-code-scanning-compat: true
@@ -148,7 +154,7 @@ jobs:
           PY
 
       - name: Upload split SARIF files
-        uses: github/codeql-action/upload-sarif@95e58e9a2cdfd71adc6e0353d5c52f41a045d225 # v4
+        uses: github/codeql-action/upload-sarif@b25d0ebf40e5b63ee81e1bd6e5d2a12b7c2aeb61 # v4
         with:
           sarif_file: ${{ env.CODACY_SPLIT_SARIF_DIR }}
           wait-for-processing: true

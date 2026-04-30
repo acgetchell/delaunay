@@ -48,6 +48,7 @@
 //! | Read-only queries, traversal, convex hull | `use delaunay::prelude::query::*` |
 //! | Geometry helpers, predicates, points | `use delaunay::prelude::geometry::*` |
 //! | Random points / triangulations for examples and tests | `use delaunay::prelude::generators::*` |
+//! | Hilbert ordering and quantization utilities | `use delaunay::prelude::ordering::*` |
 //! | Bistellar flips (Pachner moves) | `use delaunay::prelude::triangulation::flips::*` |
 //! | Delaunay repair and flip-based Level 4 validation | `use delaunay::prelude::triangulation::repair::*` |
 //! | Delaunayize workflow (repair + flip) | `use delaunay::prelude::triangulation::delaunayize::*` |
@@ -1059,6 +1060,31 @@ pub mod prelude {
             generate_random_triangulation_with_topology_guarantee,
         };
     }
+
+    /// Focused exports for Hilbert ordering and quantization utilities.
+    ///
+    /// These helpers are useful in doctests, integration tests, examples, and
+    /// benchmarks that need deterministic space-filling-curve ordering without
+    /// importing the broader triangulation or geometry preludes.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use delaunay::prelude::ordering::{hilbert_sorted_indices, HilbertError};
+    ///
+    /// let coords = [[0.9_f64, 0.9], [0.1, 0.1], [0.5, 0.5]];
+    /// let order = hilbert_sorted_indices(&coords, (0.0, 1.0), 8)?;
+    ///
+    /// assert_eq!(order.len(), coords.len());
+    /// # Ok::<(), HilbertError>(())
+    /// ```
+    pub mod ordering {
+        pub use crate::core::util::{
+            HilbertError, hilbert_index, hilbert_indices_prequantized, hilbert_quantize,
+            hilbert_sort_by_stable, hilbert_sort_by_unstable, hilbert_sorted_indices,
+        };
+    }
+
     /// Topology validation & analysis utilities.
     pub mod topology {
         /// Topology validation utilities.

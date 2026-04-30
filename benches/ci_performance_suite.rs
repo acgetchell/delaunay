@@ -31,9 +31,10 @@ use criterion::measurement::WallTime;
 use criterion::{
     BatchSize, BenchmarkGroup, BenchmarkId, Criterion, Throughput, criterion_group, criterion_main,
 };
-use delaunay::geometry::util::simplex_volume;
 use delaunay::prelude::generators::generate_random_points_seeded;
-use delaunay::prelude::geometry::{AdaptiveKernel, Coordinate, Point, RobustKernel};
+use delaunay::prelude::geometry::{
+    AdaptiveKernel, Coordinate, Point, RobustKernel, simplex_volume,
+};
 use delaunay::prelude::query::ConvexHull;
 use delaunay::prelude::triangulation::flips::{
     BistellarFlips, CellKey, EdgeKey, FacetHandle, RidgeHandle, TopologyGuarantee, TriangleHandle,
@@ -738,7 +739,10 @@ fn seed_search_limit() -> usize {
 macro_rules! benchmark_tds_new_dimension {
     ($dim:literal, $func_name:ident, $seed:literal, $counts:expr) => {
         /// Benchmark triangulation creation for D-dimensional triangulations
-        #[allow(clippy::too_many_lines)]
+        #[expect(
+            clippy::too_many_lines,
+            reason = "dimension-specific benchmark macro keeps setup and measurements together"
+        )]
         fn $func_name(c: &mut Criterion) {
             print_manifest_once();
             let counts = $counts;

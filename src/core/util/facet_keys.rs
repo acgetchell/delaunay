@@ -411,7 +411,10 @@ mod tests {
     }
 
     #[test]
-    #[expect(clippy::too_many_lines)]
+    #[expect(
+        clippy::too_many_lines,
+        reason = "facet-key test keeps related canonicalization cases together"
+    )]
     fn test_checked_facet_key_from_vertex_keys_comprehensive() {
         println!("Testing checked_facet_key_from_vertex_keys comprehensively");
 

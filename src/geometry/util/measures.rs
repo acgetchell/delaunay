@@ -1101,9 +1101,9 @@ mod tests {
             Point::new([0.0, 1.0, 0.0]),
         ];
         let area_3d = facet_measure(&triangle_3d).unwrap();
-        if std::env::var_os("TEST_DEBUG").is_some() {
-            println!("3D triangle area: {area_3d} (expected: 0.5)");
-        }
+        assert_relative_eq!(area_3d, 0.5, epsilon = 1e-10);
+        #[cfg(feature = "test-debug")]
+        tracing::debug!("3D triangle area: {area_3d} (expected: 0.5)");
 
         // Test 1b: Nearly singular triangle should not error due to tiny negative det
         let eps = 1e-10;
@@ -1117,9 +1117,9 @@ mod tests {
 
         // Test 2: Same triangle but use direct Gram matrix calculation
         let area_3d_gram = facet_measure_gram_matrix::<f64, 3>(&triangle_3d).unwrap();
-        if std::env::var_os("TEST_DEBUG").is_some() {
-            println!("3D triangle area (Gram): {area_3d_gram} (expected: 0.5)");
-        }
+        assert_relative_eq!(area_3d_gram, 0.5, epsilon = 1e-10);
+        #[cfg(feature = "test-debug")]
+        tracing::debug!("3D triangle area (Gram): {area_3d_gram} (expected: 0.5)");
 
         // Test 3: Unit tetrahedron in 4D - should be 1/6 ≈ 0.167
         let tetrahedron_4d = vec![
@@ -1129,23 +1129,23 @@ mod tests {
             Point::new([0.0, 0.0, 1.0, 0.0]),
         ];
         let volume_4d = facet_measure(&tetrahedron_4d).unwrap();
-        if std::env::var_os("TEST_DEBUG").is_some() {
-            println!(
-                "4D tetrahedron volume: {} (expected: {})",
-                volume_4d,
-                1.0 / 6.0
-            );
-        }
+        assert_relative_eq!(volume_4d, 1.0 / 6.0, epsilon = 1e-10);
+        #[cfg(feature = "test-debug")]
+        tracing::debug!(
+            "4D tetrahedron volume: {} (expected: {})",
+            volume_4d,
+            1.0 / 6.0
+        );
 
         // Test 4: Manual calculation for the 4D tetrahedron
         let volume_4d_gram = facet_measure_gram_matrix::<f64, 4>(&tetrahedron_4d).unwrap();
-        if std::env::var_os("TEST_DEBUG").is_some() {
-            println!(
-                "4D tetrahedron volume (Gram): {} (expected: {})",
-                volume_4d_gram,
-                1.0 / 6.0
-            );
-        }
+        assert_relative_eq!(volume_4d_gram, 1.0 / 6.0, epsilon = 1e-10);
+        #[cfg(feature = "test-debug")]
+        tracing::debug!(
+            "4D tetrahedron volume (Gram): {} (expected: {})",
+            volume_4d_gram,
+            1.0 / 6.0
+        );
     }
 
     #[test]

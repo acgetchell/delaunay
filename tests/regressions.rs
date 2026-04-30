@@ -6,10 +6,10 @@
 
 #[cfg(debug_assertions)]
 use delaunay::core::util::debug_print_first_delaunay_violation;
-use delaunay::core::util::{hilbert_indices_prequantized, hilbert_quantize};
 use delaunay::geometry::kernel::RobustKernel;
 use delaunay::geometry::point::Point;
 use delaunay::geometry::util::generate_random_points_in_ball_seeded;
+use delaunay::prelude::ordering::{hilbert_indices_prequantized, hilbert_quantize};
 use delaunay::prelude::triangulation::*;
 use delaunay::triangulation::delaunay::{ConstructionOptions, InsertionOrderStrategy, RetryPolicy};
 

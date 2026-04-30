@@ -25,10 +25,10 @@
 //! - Boundary analysis
 //! - Performance metrics
 
-use delaunay::geometry::traits::coordinate::CoordinateScalar;
-use delaunay::geometry::util::generate_random_triangulation;
+use delaunay::prelude::generators::generate_random_triangulation;
+use delaunay::prelude::geometry::CoordinateScalar;
 use delaunay::prelude::query::*;
-use delaunay::topology::characteristics::validation as topology_validation;
+use delaunay::prelude::topology::validation as topology_validation;
 use num_traits::NumCast;
 use num_traits::cast::cast;
 use std::time::Instant;

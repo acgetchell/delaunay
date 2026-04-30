@@ -8,7 +8,7 @@
 use super::point_generation::{generate_random_points, generate_random_points_seeded};
 use crate::core::traits::data_type::DataType;
 use crate::core::triangulation::{TopologyGuarantee, TriangulationConstructionError};
-use crate::core::vertex::{Vertex, VertexBuilder};
+use crate::core::vertex::Vertex;
 use crate::geometry::kernel::AdaptiveKernel;
 use crate::geometry::point::Point;
 use crate::geometry::traits::coordinate::CoordinateScalar;
@@ -97,19 +97,8 @@ where
         .into_iter()
         .map(|point| {
             vertex_data.map_or_else(
-                || {
-                    VertexBuilder::default()
-                        .point(point)
-                        .build()
-                        .expect("Failed to build vertex without data")
-                },
-                |data| {
-                    VertexBuilder::default()
-                        .point(point)
-                        .data(data)
-                        .build()
-                        .expect("Failed to build vertex with data")
-                },
+                || Vertex::from_point(point),
+                |data| Vertex::from_point_with_data(point, data),
             )
         })
         .collect()
@@ -220,14 +209,11 @@ where
 /// - Topology/Euler validation failure after robust fallback attempts
 ///
 /// **Other construction failures** (various variants):
-/// - Vertex/cell construction errors
+/// - Cell construction errors
 /// - Triangulation validation failures
 ///
-/// # Panics
-///
-/// This function can panic if:
-/// - Vertex construction fails due to invalid data types or constraints
-/// - This should not happen with valid inputs and supported data types
+/// Vertex construction from generated points is infallible; failures are
+/// returned from point generation, triangulation construction, or validation.
 ///
 /// # Examples
 ///
@@ -357,7 +343,6 @@ where
 /// .unwrap();
 /// assert_eq!(dt.dim(), 3);
 /// ```
-#[allow(clippy::too_many_lines)]
 pub fn generate_random_triangulation_with_topology_guarantee<T, U, V, const D: usize>(
     n_points: usize,
     bounds: (T, T),

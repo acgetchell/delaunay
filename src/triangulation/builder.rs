@@ -110,7 +110,7 @@ use crate::core::tds::{CellKey, Tds, TriangulationConstructionState, VertexKey};
 use crate::core::traits::data_type::DataType;
 use crate::core::triangulation::{TopologyGuarantee, TriangulationConstructionError};
 use crate::core::util::periodic_facet_key_from_lifted_vertices;
-use crate::core::vertex::{Vertex, VertexBuilder};
+use crate::core::vertex::Vertex;
 use crate::geometry::kernel::{AdaptiveKernel, Kernel};
 use crate::geometry::point::Point;
 use crate::geometry::traits::coordinate::{Coordinate, CoordinateScalar};
@@ -1510,10 +1510,7 @@ where
                     let canonical_v = Vertex::new_with_uuid(new_point, v.uuid(), v.data);
                     expanded.push(canonical_v);
                 } else {
-                    let image_v: Vertex<T, U, D> = VertexBuilder::default()
-                        .point(new_point)
-                        .build()
-                        .expect("image vertex with valid coords always builds");
+                    let image_v: Vertex<T, U, D> = Vertex::from_point(new_point);
                     image_uuid_to_canonical_with_offset.insert(image_v.uuid(), (v.uuid(), offset));
                     expanded.push(image_v);
                 }
@@ -2359,6 +2356,7 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::core::vertex::VertexBuilder;
     use crate::geometry::kernel::RobustKernel;
     use crate::topology::traits::global_topology_model::{
         EuclideanModel, GlobalTopologyModel, GlobalTopologyModelError, ToroidalModel,

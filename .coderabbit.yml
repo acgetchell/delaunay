@@ -106,11 +106,11 @@ reviews:
     yamllint:
       enabled: true
 
-    # Semantic code analysis is intentionally disabled until the staged,
-    # repository-owned rules in .semgrep.yaml are enabled after legacy cleanup.
-    # Default Semgrep packs are noisy here and duplicate CodeQL/cargo-audit.
+    # Semantic code analysis uses only the focused, repository-owned rules in
+    # semgrep.yaml. Default Semgrep packs remain disabled in CodeRabbit.
     semgrep:
-      enabled: false
+      enabled: true
+      config_file: semgrep.yaml
 
     # Python linter (ruff provides comprehensive Python analysis)
     ruff:

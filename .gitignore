@@ -8,9 +8,6 @@
 /*.profraw
 /cobertura.xml
 /logs
-# Keep tarpaulin.toml but ignore generated files
-!/tarpaulin.toml
-/tarpaulin-report.*
 /benches/results
 /node_modules/
 /.package-lock.json
@@ -18,7 +15,6 @@
 /package.json
 /__pycache__/
 **/__pycache__/
-/coverage_report/tarpaulin-report.*
 
 # Python packaging artifacts
 *.egg-info/

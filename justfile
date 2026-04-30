@@ -29,6 +29,15 @@ _ensure-cargo-llvm-cov:
         exit 1
     fi
 
+_ensure-cargo-machete:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    if ! cargo machete --version >/dev/null 2>&1; then
+        echo "❌ 'cargo-machete' not found. Install with:"
+        echo "   cargo install --locked cargo-machete"
+        exit 1
+    fi
+
 # Internal helpers: ensure external tooling is installed
 _ensure-git-cliff:
     #!/usr/bin/env bash
@@ -303,8 +312,8 @@ help-workflows:
 # All linting: code + documentation + configuration
 lint: lint-code lint-docs lint-config
 
-# Code linting: Rust (fmt-check, clippy, docs) + Python (ruff, ty, mypy) + Shell scripts
-lint-code: fmt-check clippy doc-check python-lint shell-lint
+# Code linting: Rust (fmt-check, clippy, docs, Semgrep) + Python (ruff, ty, mypy) + Shell scripts
+lint-code: fmt-check clippy doc-check semgrep semgrep-test python-lint shell-lint
 
 # Configuration validation: JSON, TOML, YAML, GitHub Actions workflows
 lint-config: validate-json toml-lint toml-fmt-check yaml-lint action-lint
@@ -580,10 +589,17 @@ python-sync: _ensure-uv
 python-typecheck: _ensure-uv
     uv run ty check scripts/ --error all
 
-# Repository-owned Semgrep rules. Currently opt-in because the Rust rules are
-# staged but disabled while legacy diagnostics are cleaned up.
+# Repository-owned Semgrep rules for project-specific Rust diagnostics.
 semgrep: _ensure-uv
-    uv run semgrep --config .semgrep.yaml .
+    uv run semgrep --error --strict --timeout 30 --config semgrep.yaml .
+
+semgrep-test: _ensure-uv
+    #!/usr/bin/env bash
+    set -euo pipefail
+    cd tests/semgrep
+    uv run semgrep scan --test --strict --config ../../semgrep.yaml src/core/algorithms/no_std_hash_collections.rs
+    uv run semgrep scan --test --strict --config ../../semgrep.yaml src/project_rules/rust_style.rs
+    uv run semgrep scan --test --strict --config ../../semgrep.yaml scripts/tests/python_exceptions.py
 
 # Development setup
 setup: setup-tools
@@ -891,6 +907,10 @@ toml-lint: _ensure-taplo
     else
         echo "No TOML files found to lint."
     fi
+
+# Check for unused direct Cargo dependencies.
+unused-deps: _ensure-cargo-machete
+    cargo machete
 
 # File validation
 validate-json: _ensure-jq

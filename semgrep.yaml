@@ -1,0 +1,486 @@
+---
+# Repository-owned Semgrep rules.
+#
+# Keep this file small and project-specific. Broad default/community rules have
+# been noisy for this Rust library and duplicate CodeQL, cargo-audit, Clippy,
+# Ruff, and ShellCheck coverage.
+#
+# These rules encode repository-specific Rust invariants. Keep them focused so
+# local and CodeRabbit Semgrep runs stay low-noise.
+
+rules:
+  - id: delaunay.rust.no-stdio-diagnostics-in-src
+    languages:
+      - rust
+    severity: WARNING
+    message: "Use tracing macros for production diagnostics instead of stdout/stderr macros."
+    metadata:
+      category: maintainability
+      tracking_issue: "https://github.com/acgetchell/delaunay/issues/338"
+      rationale: "Runtime diagnostics should be filterable through tracing and RUST_LOG."
+    paths:
+      include:
+        - "/src/**/*.rs"
+      exclude:
+        - "/tests/**"
+        - "/examples/**"
+        - "/benches/**"
+    patterns:
+      - pattern-either:
+          - pattern: println!(...)
+          - pattern: eprintln!(...)
+      - pattern-not-inside: |
+          mod tests {
+              ...
+          }
+      - pattern-not-inside: |
+          #[cfg(test)]
+          mod $MOD {
+              ...
+          }
+      - pattern-not-inside: |
+          #[cfg(any(test, ...))]
+          mod $MOD {
+              ...
+          }
+      - pattern-not-inside: |
+          #[cfg(test)]
+          fn $FUNC(...) {
+              ...
+          }
+      - pattern-not-inside: |
+          #[cfg(any(test, ...))]
+          fn $FUNC(...) {
+              ...
+          }
+      - pattern-not-inside: |
+          #[cfg(test)]
+          impl $TYPE {
+              ...
+          }
+      - pattern-not-inside: |
+          #[cfg(any(test, ...))]
+          impl $TYPE {
+              ...
+          }
+
+  - id: delaunay.rust.no-nonfinite-unwrap-defaults
+    languages:
+      - rust
+    severity: WARNING
+    message: "Do not hide failed floating-point conversion with NaN or infinity defaults."
+    metadata:
+      category: correctness
+      tracking_issue: "https://github.com/acgetchell/delaunay/issues/338"
+      rationale: >-
+        Geometric predicates and diagnostics should not synthesize non-finite
+        sentinels after conversion failure.
+    paths:
+      include:
+        - "/src/**/*.rs"
+    pattern-either:
+      - pattern: $VALUE.unwrap_or(f64::NAN)
+      - pattern: $VALUE.unwrap_or(f64::INFINITY)
+      - pattern: $VALUE.unwrap_or(f64::NEG_INFINITY)
+      - pattern: $VALUE.unwrap_or(std::f64::NAN)
+      - pattern: $VALUE.unwrap_or(std::f64::INFINITY)
+      - pattern: $VALUE.unwrap_or(std::f64::NEG_INFINITY)
+      - pattern: $VALUE.unwrap_or_else(|| f64::NAN)
+      - pattern: $VALUE.unwrap_or_else(|| f64::INFINITY)
+      - pattern: $VALUE.unwrap_or_else(|| f64::NEG_INFINITY)
+
+  - id: delaunay.rust.no-std-hash-collections-in-hot-src
+    languages:
+      - rust
+    severity: WARNING
+    message: "Use crate FastHashMap/FastHashSet aliases in hot source paths instead of std hash collections."
+    metadata:
+      category: performance
+      rationale: >-
+        Performance-sensitive topology and geometry paths should use the
+        repository's optimized hash aliases unless a local exception is
+        documented outside these paths.
+    paths:
+      include:
+        - "/src/core/algorithms/**/*.rs"
+        - "/src/core/collections/**/*.rs"
+        - "/src/core/tds.rs"
+        - "/src/core/triangulation.rs"
+        - "/src/geometry/algorithms/**/*.rs"
+        - "/src/triangulation/**/*.rs"
+    patterns:
+      - pattern-either:
+          - pattern: use std::collections::HashMap;
+          - pattern: use std::collections::HashSet;
+          - pattern-regex: '^\s*use\s+std::collections::\{[^;\n]*\bHashMap\b[^;\n]*\};'
+          - pattern-regex: '^\s*use\s+std::collections::\{[^;\n]*\bHashSet\b[^;\n]*\};'
+          - pattern: std::collections::HashMap::new()
+          - pattern: std::collections::HashSet::new()
+          - pattern: std::collections::HashMap::default()
+          - pattern: std::collections::HashSet::default()
+          - pattern: std::collections::HashMap::with_capacity(...)
+          - pattern: std::collections::HashSet::with_capacity(...)
+          - pattern: std::collections::HashMap::with_hasher(...)
+          - pattern: std::collections::HashSet::with_hasher(...)
+          - pattern: std::collections::HashMap::with_capacity_and_hasher(...)
+          - pattern: std::collections::HashSet::with_capacity_and_hasher(...)
+          - pattern: std::collections::HashMap::<$KEY, $VALUE>::new()
+          - pattern: std::collections::HashSet::<$VALUE>::new()
+          - pattern: std::collections::HashMap::<$KEY, $VALUE>::default()
+          - pattern: std::collections::HashSet::<$VALUE>::default()
+          - pattern: std::collections::HashMap::<$KEY, $VALUE>::with_capacity(...)
+          - pattern: std::collections::HashSet::<$VALUE>::with_capacity(...)
+          - pattern: std::collections::HashMap::<$KEY, $VALUE>::with_hasher(...)
+          - pattern: std::collections::HashSet::<$VALUE>::with_hasher(...)
+          - pattern: std::collections::HashMap::<$KEY, $VALUE>::with_capacity_and_hasher(...)
+          - pattern: std::collections::HashSet::<$VALUE>::with_capacity_and_hasher(...)
+          - pattern: "let $NAME: std::collections::HashMap<$KEY, $VALUE> = $INIT;"
+          - pattern: "let $NAME: std::collections::HashSet<$VALUE> = $INIT;"
+          - pattern: "type $NAME = std::collections::HashMap<$KEY, $VALUE>;"
+          - pattern: "type $NAME = std::collections::HashSet<$VALUE>;"
+          - pattern: "fn $FUNC(...) -> std::collections::HashMap<$KEY, $VALUE> { ... }"
+          - pattern: "fn $FUNC(...) -> std::collections::HashSet<$VALUE> { ... }"
+          - pattern: "fn $FUNC(...) -> std::collections::HashMap<$KEY, $VALUE>;"
+          - pattern: "fn $FUNC(...) -> std::collections::HashSet<$VALUE>;"
+          - pattern: $ITER.collect::<std::collections::HashMap<$KEY, $VALUE>>()
+          - pattern: $ITER.collect::<std::collections::HashSet<$VALUE>>()
+      - pattern-not-inside: |
+          mod tests {
+              ...
+          }
+
+  - id: delaunay.rust.no-silent-conversion-fallbacks
+    languages:
+      - rust
+    severity: WARNING
+    message: "Handle numeric conversion failures explicitly instead of hiding them behind unwrap_or fallbacks."
+    metadata:
+      category: correctness
+      rationale: >-
+        Geometry and topology code should preserve conversion failure context
+        or choose an explicit fallback branch rather than silently substituting
+        sentinel values.
+    paths:
+      include:
+        - "/src/core/**/*.rs"
+        - "/src/geometry/**/*.rs"
+        - "/src/topology/**/*.rs"
+        - "/src/triangulation/**/*.rs"
+    patterns:
+      - pattern-either:
+          - pattern: NumCast::from($VALUE).unwrap_or($FALLBACK)
+          - pattern: NumCast::from($VALUE).unwrap_or_else($FALLBACK)
+          - pattern: num_traits::NumCast::from($VALUE).unwrap_or($FALLBACK)
+          - pattern: num_traits::NumCast::from($VALUE).unwrap_or_else($FALLBACK)
+          - patterns:
+              - pattern: $SAFE(...).unwrap_or($FALLBACK)
+              - metavariable-regex:
+                  metavariable: $SAFE
+                  regex: safe_[A-Za-z0-9_]+
+      - pattern-not-inside: |
+          mod tests {
+              ...
+          }
+
+  - id: delaunay.rust.no-production-unwrap-panic
+    languages:
+      - rust
+    severity: WARNING
+    message: "Avoid unwrap/panic in non-test source; return typed errors or document an internal invariant."
+    metadata:
+      category: correctness
+      rationale: "Public library paths should fail explicitly rather than panicking on user input."
+    paths:
+      include:
+        - "/src/**/*.rs"
+    patterns:
+      - pattern-either:
+          - pattern: $VALUE.unwrap()
+          - pattern: panic!(...)
+          - patterns:
+              - pattern: $VALUE.expect($MESSAGE)
+              - metavariable-regex:
+                  metavariable: $MESSAGE
+                  regex: >-
+                    "(point was set before building vertex|Failed to build
+                    vertex.*|public APIs should return typed errors instead)"
+      - pattern-not-inside: |
+          mod tests {
+              ...
+          }
+
+  - id: delaunay.rust.no-env-gated-stdio-diagnostics
+    languages:
+      - rust
+    severity: WARNING
+    message: "Environment-gated diagnostics should use tracing and repository feature gates instead of stdio macros."
+    metadata:
+      category: maintainability
+      rationale: "Debug hooks should remain filterable through tracing and RUST_LOG."
+    paths:
+      include:
+        - "/src/**/*.rs"
+    pattern-either:
+      - pattern: |
+          if std::env::var_os($NAME).is_some() {
+              ...
+              println!(...);
+              ...
+          }
+      - pattern: |
+          if std::env::var_os($NAME).is_some() {
+              ...
+              eprintln!(...);
+              ...
+          }
+      - pattern: |
+          if env::var_os($NAME).is_some() {
+              ...
+              println!(...);
+              ...
+          }
+      - pattern: |
+          if env::var_os($NAME).is_some() {
+              ...
+              eprintln!(...);
+              ...
+          }
+
+  - id: delaunay.rust.no-box-dyn-error-in-src
+    languages:
+      - rust
+    severity: WARNING
+    message: "Use a typed error enum in production src/ instead of Box<dyn Error>, &dyn Error, or anyhow::Error."
+    metadata:
+      category: maintainability
+      rationale: >-
+        Public and production fallible paths should preserve typed error
+        contracts rather than erasing error shape behind dynamic errors.
+    paths:
+      include:
+        - "/src/**/*.rs"
+      exclude:
+        - "/tests/**"
+        - "/examples/**"
+        - "/benches/**"
+        - "/tests/semgrep/**"
+    patterns:
+      # Regex is deliberate here: Rust AST patterns over-match associated
+      # error types such as serde's `S::Error`; this rule is about exact
+      # dynamic-error spellings in production code.
+      - pattern-regex: >-
+          ^[ \t]*[^\n]*(\bBox\s*<\s*dyn\s+(std::error::)?Error\b|&\s*dyn\s+(std::error::)?Error\b|\banyhow::Error\b)
+      - pattern-not-regex: '^[ \t]*(//|///|/\*|\*)'
+      - pattern-not-inside: |
+          mod tests {
+              ...
+          }
+      - pattern-not-inside: |
+          #[cfg(test)]
+          mod $MOD {
+              ...
+          }
+      - pattern-not-inside: |
+          #[cfg(any(test, ...))]
+          mod $MOD {
+              ...
+          }
+      - pattern-not-inside: |
+          #[cfg(test)]
+          fn $FUNC(...) {
+              ...
+          }
+      - pattern-not-inside: |
+          #[cfg(any(test, ...))]
+          fn $FUNC(...) {
+              ...
+          }
+      - pattern-not-inside: |
+          #[cfg(test)]
+          impl $TYPE {
+              ...
+          }
+      - pattern-not-inside: |
+          #[cfg(any(test, ...))]
+          impl $TYPE {
+              ...
+          }
+
+  - id: delaunay.rust.no-clippy-allow-lints
+    languages:
+      - rust
+    severity: WARNING
+    message: "Use #[expect(..., reason = ...)] instead of #[allow(...)] for Clippy suppressions."
+    metadata:
+      category: maintainability
+      rationale: >-
+        Clippy suppressions should be checked by the compiler and carry a
+        stable reason so stale suppressions are noticed during linting.
+    paths:
+      include:
+        - "/src/**/*.rs"
+        - "/tests/**/*.rs"
+        - "/benches/**/*.rs"
+      exclude:
+        - "/tests/semgrep/**"
+    pattern-regex: '^\s*#\s*\[\s*allow\s*\(\s*clippy::'
+
+  - id: delaunay.rust.expect-requires-reason
+    languages:
+      - rust
+    severity: WARNING
+    message: 'Add reason = "..." to #[expect(...)] so lint suppressions remain auditable.'
+    metadata:
+      category: maintainability
+      rationale: >-
+        Repository guidance prefers documented lint expectations over
+        unexplained suppressions.
+    paths:
+      include:
+        - "/src/**/*.rs"
+        - "/tests/**/*.rs"
+        - "/benches/**/*.rs"
+      exclude:
+        - "/tests/semgrep/**"
+    patterns:
+      # Regex keeps this intentionally scoped to one-line `#[expect(...)]`
+      # attributes; multiline attributes remain a review concern.
+      - pattern-regex: '^\s*#\s*\[\s*expect\s*\([^\]\n]*\)\s*\]'
+      - pattern-not-regex: '\breason\s*='
+
+  - id: delaunay.rust.prefer-prelude-imports-in-examples-benches
+    languages:
+      - rust
+    severity: WARNING
+    message: "Use focused delaunay::prelude imports in examples and benchmarks instead of deep crate module paths."
+    metadata:
+      category: maintainability
+      rationale: >-
+        Public examples and benchmarks should model the small, orthogonal
+        prelude import surfaces that users can copy into their own code.
+    paths:
+      include:
+        - "/examples/**/*.rs"
+        - "/benches/**/*.rs"
+        - "/src/project_rules/**/*.rs"
+    patterns:
+      - pattern-regex: '^\s*use\s+delaunay::(core|geometry|triangulation|topology)::'
+      - pattern-not-regex: '^\s*use\s+delaunay::prelude::'
+
+  - id: delaunay.python.no-broad-exception
+    languages:
+      - python
+    severity: WARNING
+    message: "Catch a specific exception type instead of broad Exception."
+    metadata:
+      category: maintainability
+      rationale: >-
+        Python tooling should surface expected failure modes explicitly instead
+        of swallowing unrelated errors.
+    paths:
+      include:
+        - "/scripts/**/*.py"
+      exclude:
+        - "/tests/semgrep/**"
+    pattern-regex: '^\s*except\s+Exception\s*:'
+
+  - id: delaunay.python.no-raw-exception-in-tests
+    languages:
+      - python
+    severity: WARNING
+    message: "Raise a specific exception type in Python tests instead of raw Exception."
+    metadata:
+      category: maintainability
+      rationale: "Typed exceptions make test failures and expected errors easier to diagnose."
+    paths:
+      include:
+        - "/scripts/tests/**/*.py"
+      exclude:
+        - "/tests/semgrep/**"
+    pattern: raise Exception(...)
+
+  - id: delaunay.python.no-adhoc-completedprocess-mock
+    languages:
+      - python
+    severity: WARNING
+    message: "Use subprocess.CompletedProcess[str] instead of ad hoc Mock stdout/returncode objects."
+    metadata:
+      category: maintainability
+      rationale: >-
+        Command-wrapper tests should use the real subprocess result shape so
+        mocks stay aligned with production subprocess APIs.
+    paths:
+      include:
+        - "/scripts/tests/**/*.py"
+      exclude:
+        - "/tests/semgrep/**"
+    pattern-either:
+      - patterns:
+          - pattern-either:
+              - pattern: |
+                  $PROC = Mock(...)
+                  ...
+                  $PROC.stdout = ...
+              - pattern: |
+                  $PROC = unittest.mock.Mock(...)
+                  ...
+                  $PROC.stdout = ...
+              - pattern: |
+                  $PROC = mock.Mock(...)
+                  ...
+                  $PROC.stdout = ...
+              - pattern: |
+                  $PROC = MagicMock(...)
+                  ...
+                  $PROC.stdout = ...
+              - pattern: |
+                  $PROC = unittest.mock.MagicMock(...)
+                  ...
+                  $PROC.stdout = ...
+              - pattern: |
+                  $PROC = mock.MagicMock(...)
+                  ...
+                  $PROC.stdout = ...
+      - patterns:
+          - pattern-either:
+              - pattern: |
+                  $PROC = Mock(...)
+                  ...
+                  $PROC.returncode = ...
+              - pattern: |
+                  $PROC = unittest.mock.Mock(...)
+                  ...
+                  $PROC.returncode = ...
+              - pattern: |
+                  $PROC = mock.Mock(...)
+                  ...
+                  $PROC.returncode = ...
+              - pattern: |
+                  $PROC = MagicMock(...)
+                  ...
+                  $PROC.returncode = ...
+              - pattern: |
+                  $PROC = unittest.mock.MagicMock(...)
+                  ...
+                  $PROC.returncode = ...
+              - pattern: |
+                  $PROC = mock.MagicMock(...)
+                  ...
+                  $PROC.returncode = ...
+
+  - id: delaunay.python.no-untyped-defs-in-scripts
+    languages:
+      - python
+    severity: WARNING
+    message: "Add an explicit return annotation to script functions."
+    metadata:
+      category: maintainability
+      rationale: "Typed script helpers are easier for ty and reviewers to reason about."
+    paths:
+      include:
+        - "/scripts/**/*.py"
+      exclude:
+        - "/tests/semgrep/**"
+    # Regex catches obvious unannotated definitions while avoiding a custom
+    # Python parser rule that would duplicate ty.
+    pattern-regex: '^( {0,4}|\t)(async\s+)?def\s+[A-Za-z_][A-Za-z0-9_]*\([^#\n]*\)\s*:'
