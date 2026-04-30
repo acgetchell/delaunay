@@ -1446,8 +1446,8 @@ mod tests {
                         let facet2 = FacetView::new(dt.tds(), cell_key, 0).unwrap();
                         let facet3 = FacetView::new(dt.tds(), cell_key, 1).unwrap();
 
-                        assert_eq!(facet1, facet2, "Same facet should be equal");
-                        assert_ne!(facet1, facet3, "Different facets should not be equal");
+                        assert!(facet1 == facet2, "Same facet should be equal");
+                        assert!(facet1 != facet3, "Different facets should not be equal");
                     }
 
                     #[test]

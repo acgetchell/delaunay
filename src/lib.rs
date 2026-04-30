@@ -487,7 +487,7 @@ pub mod core {
     }
 
     // Re-export the `core` modules.
-    pub use crate::triangulation::builder::DelaunayTriangulationBuilder;
+    pub use crate::triangulation::builder::*;
     pub use crate::triangulation::delaunay::*;
     pub use adjacency::*;
     pub use cell::*;
@@ -902,7 +902,7 @@ pub mod prelude {
             triangulation::*,
             vertex::*,
         };
-        pub use crate::triangulation::builder::DelaunayTriangulationBuilder;
+        pub use crate::triangulation::builder::*;
         pub use crate::triangulation::delaunay::*;
 
         pub use crate::core::algorithms::incremental_insertion::InsertionError;

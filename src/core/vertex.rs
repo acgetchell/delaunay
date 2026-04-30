@@ -562,8 +562,10 @@ where
 
     /// Creates a vertex directly from a point with a fresh UUID and no user data.
     ///
-    /// This constructor is infallible because [`Point`] already owns validated
-    /// coordinates for the vertex dimension.
+    /// This constructor is infallible because it stores the supplied [`Point`]
+    /// without performing additional validation. Callers that require finite or
+    /// otherwise validated coordinates must enforce that before constructing
+    /// the vertex.
     ///
     /// # Examples
     ///
@@ -590,8 +592,10 @@ where
 
     /// Creates a vertex directly from a point and user data with a fresh UUID.
     ///
-    /// This constructor is infallible because [`Point`] already owns validated
-    /// coordinates for the vertex dimension and `data` is stored as provided.
+    /// This constructor is infallible because it stores the supplied [`Point`]
+    /// and user data without performing additional validation. Callers that
+    /// require finite or otherwise validated coordinates must enforce that
+    /// before constructing the vertex.
     ///
     /// # Examples
     ///

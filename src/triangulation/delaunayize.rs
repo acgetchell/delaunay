@@ -79,7 +79,7 @@ use thiserror::Error;
 /// # Examples
 ///
 /// ```rust
-/// use delaunay::triangulation::delaunayize::DelaunayizeConfig;
+/// use delaunay::prelude::triangulation::delaunayize::DelaunayizeConfig;
 ///
 /// let config = DelaunayizeConfig::default();
 /// assert_eq!(config.topology_max_iterations, 64);

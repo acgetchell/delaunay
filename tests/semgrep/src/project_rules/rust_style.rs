@@ -85,3 +85,11 @@ trait ProductionDynamicErrors {
 
 /// # Ok::<(), Box<dyn std::error::Error>>(())
 fn doctest_style_error_is_ignored() {}
+
+/// ```rust
+/// // ruleid: delaunay.rust.prefer-prelude-imports-in-triangulation-doctests
+/// use delaunay::triangulation::delaunay::DelaunayTriangulation;
+/// // ok: delaunay.rust.prefer-prelude-imports-in-triangulation-doctests
+/// use delaunay::prelude::triangulation::DelaunayTriangulation;
+/// ```
+fn triangulation_doctest_deep_import_fixture() {}

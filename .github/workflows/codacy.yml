@@ -46,7 +46,9 @@ jobs:
       fail-fast: false
       matrix:
         tool:
-          - markdownlint
+          # Upload only repository-owned rules to GitHub Code Scanning.
+          # Advisory quality engines stay in local/Codacy checks so they do
+          # not create empty Security/Quality tool configurations.
           - opengrep
     steps:
       # Checkout the repository to the GitHub Actions runner
@@ -56,8 +58,11 @@ jobs:
       - name: Set Codacy paths
         run: |
           set -euo pipefail
-          echo "CODACY_WORKDIR=$RUNNER_TEMP/codacy-src" >> "$GITHUB_ENV"
-          echo "CODACY_SARIF=$RUNNER_TEMP/results-${{ matrix.tool }}.sarif" >> "$GITHUB_ENV"
+          {
+            echo "CODACY_WORKDIR=$RUNNER_TEMP/codacy-src"
+            echo "CODACY_SARIF=$RUNNER_TEMP/results-${{ matrix.tool }}.sarif"
+            echo "CODACY_HAS_UPLOADABLE_SARIF=false"
+          } >> "$GITHUB_ENV"
 
       - name: Prepare workspace copy without .git
         run: |
@@ -126,7 +131,14 @@ jobs:
               return normalized.strip("-") or "unknown"
 
           seen_categories: dict[str, int] = {}
+          uploadable_count = 0
           for index, run in enumerate(runs, start=1):
+              rules = run.get("tool", {}).get("driver", {}).get("rules")
+              results = run.get("results")
+              if not rules and not results:
+                  print(f"Skipping empty SARIF run {index} with no rules or results")
+                  continue
+
               run_copy = copy.deepcopy(run)
               tool = run_copy.get("tool", {}).get("driver", {}).get("name")
               base_category = f"codacy-{slug(str(tool or f'run-{index}'))}"
@@ -148,12 +160,18 @@ jobs:
               out_file = out_dir / f"{index:02d}-{category}.sarif"
               out_file.write_text(json.dumps(split_sarif, indent=2), encoding="utf-8")
               print(f"Wrote {out_file} with category {category}")
+              uploadable_count += 1
 
           with Path(os.environ["GITHUB_ENV"]).open("a", encoding="utf-8") as env_file:
               env_file.write(f"CODACY_SPLIT_SARIF_DIR={out_dir}\n")
+              env_file.write(f"CODACY_HAS_UPLOADABLE_SARIF={'true' if uploadable_count else 'false'}\n")
+
+          if uploadable_count == 0:
+              print("No non-empty Codacy SARIF runs to upload")
           PY
 
       - name: Upload split SARIF files
+        if: env.CODACY_HAS_UPLOADABLE_SARIF == 'true'
         uses: github/codeql-action/upload-sarif@b25d0ebf40e5b63ee81e1bd6e5d2a12b7c2aeb61 # v4
         with:
           sarif_file: ${{ env.CODACY_SPLIT_SARIF_DIR }}
