@@ -1087,6 +1087,42 @@ impl ConstructionStatistics {
         }
     }
 
+    /// Merges attempt-level statistics from another construction pass.
+    fn merge_from(&mut self, other: &Self) {
+        self.inserted = self.inserted.saturating_add(other.inserted);
+        self.skipped_duplicate = self
+            .skipped_duplicate
+            .saturating_add(other.skipped_duplicate);
+        self.skipped_degeneracy = self
+            .skipped_degeneracy
+            .saturating_add(other.skipped_degeneracy);
+        self.total_attempts = self.total_attempts.saturating_add(other.total_attempts);
+        self.max_attempts = self.max_attempts.max(other.max_attempts);
+
+        if self.attempts_histogram.len() < other.attempts_histogram.len() {
+            self.attempts_histogram
+                .resize(other.attempts_histogram.len(), 0);
+        }
+        for (idx, count) in other.attempts_histogram.iter().enumerate() {
+            self.attempts_histogram[idx] = self.attempts_histogram[idx].saturating_add(*count);
+        }
+
+        self.used_perturbation = self
+            .used_perturbation
+            .saturating_add(other.used_perturbation);
+        self.cells_removed_total = self
+            .cells_removed_total
+            .saturating_add(other.cells_removed_total);
+        self.cells_removed_max = self.cells_removed_max.max(other.cells_removed_max);
+
+        for sample in &other.skip_samples {
+            if self.skip_samples.len() >= Self::MAX_SKIP_SAMPLES {
+                break;
+            }
+            self.skip_samples.push(sample.clone());
+        }
+    }
+
     /// Total number of skipped vertices.
     #[must_use]
     pub const fn total_skipped(&self) -> usize {
@@ -2771,14 +2807,30 @@ where
             )
         };
 
-        let result = build_with_vertices(primary_vertices);
-        if result.is_err()
-            && let Some(fallback) = fallback_vertices
-        {
-            return build_with_vertices(fallback);
-        }
+        match build_with_vertices(primary_vertices) {
+            Ok(result) => Ok(result),
+            Err(primary_err) => {
+                let Some(fallback) = fallback_vertices else {
+                    return Err(primary_err);
+                };
 
-        result
+                match build_with_vertices(fallback) {
+                    Ok((dt, stats)) => {
+                        let mut aggregate = primary_err.statistics;
+                        aggregate.merge_from(&stats);
+                        Ok((dt, aggregate))
+                    }
+                    Err(fallback_err) => {
+                        let mut aggregate = primary_err.statistics;
+                        aggregate.merge_from(&fallback_err.statistics);
+                        Err(DelaunayTriangulationConstructionErrorWithStatistics {
+                            error: fallback_err.error,
+                            statistics: aggregate,
+                        })
+                    }
+                }
+            }
+        }
     }
 
     /// Applies deduplication, insertion ordering, and initial-simplex selection
@@ -3113,6 +3165,7 @@ where
         }
 
         let mut last_stats: Option<ConstructionStatistics> = None;
+        let mut aggregate_stats = ConstructionStatistics::default();
 
         // Attempt 0: original order, no extra perturbation salt.
         log_construction_retry_result(0, None, 0_u64, "started", None, None);
@@ -3128,6 +3181,7 @@ where
             ) {
                 Ok((candidate, stats)) => match is_delaunay_property_only(&candidate.tri.tds) {
                     Ok(()) => {
+                        aggregate_stats.merge_from(&stats);
                         log_construction_retry_result(
                             0,
                             None,
@@ -3136,9 +3190,10 @@ where
                             None,
                             Some(&stats),
                         );
-                        return Ok((candidate, stats));
+                        return Ok((candidate, aggregate_stats));
                     }
                     Err(err) => {
+                        aggregate_stats.merge_from(&stats);
                         last_stats.replace(stats);
                         format!("Delaunay property violated after construction: {err}")
                     }
@@ -3146,6 +3201,7 @@ where
                 Err(err) => {
                     let DelaunayTriangulationConstructionErrorWithStatistics { error, statistics } =
                         err;
+                    aggregate_stats.merge_from(&statistics);
                     if Self::is_non_retryable_construction_error(&error) {
                         let last_error = error.to_string();
                         log_construction_retry_result(
@@ -3158,7 +3214,7 @@ where
                         );
                         return Err(DelaunayTriangulationConstructionErrorWithStatistics {
                             error,
-                            statistics,
+                            statistics: aggregate_stats,
                         });
                     }
                     last_stats.replace(statistics);
@@ -3221,6 +3277,7 @@ where
             ) {
                 Ok((candidate, stats)) => match is_delaunay_property_only(&candidate.tri.tds) {
                     Ok(()) => {
+                        aggregate_stats.merge_from(&stats);
                         log_construction_retry_result(
                             attempt,
                             Some(attempt_seed),
@@ -3229,9 +3286,10 @@ where
                             None,
                             Some(&stats),
                         );
-                        return Ok((candidate, stats));
+                        return Ok((candidate, aggregate_stats));
                     }
                     Err(err) => {
+                        aggregate_stats.merge_from(&stats);
                         last_stats.replace(stats);
                         last_error =
                             format!("Delaunay property violated after construction: {err}");
@@ -3240,6 +3298,7 @@ where
                 Err(err) => {
                     let DelaunayTriangulationConstructionErrorWithStatistics { error, statistics } =
                         err;
+                    aggregate_stats.merge_from(&statistics);
                     if Self::is_non_retryable_construction_error(&error) {
                         let last_error = error.to_string();
                         log_construction_retry_result(
@@ -3252,7 +3311,7 @@ where
                         );
                         return Err(DelaunayTriangulationConstructionErrorWithStatistics {
                             error,
-                            statistics,
+                            statistics: aggregate_stats,
                         });
                     }
                     last_stats.replace(statistics);
@@ -3282,7 +3341,6 @@ where
 
         // Treat persistent construction failures or Delaunay violations as hard construction
         // errors so callers can deterministically reject.
-        let statistics = last_stats.unwrap_or_default();
         Err(DelaunayTriangulationConstructionErrorWithStatistics {
             error: TriangulationConstructionError::GeometricDegeneracy {
                 message: format!(
@@ -3290,7 +3348,7 @@ where
                 ),
             }
             .into(),
-            statistics,
+            statistics: aggregate_stats,
         })
     }
 
@@ -6985,6 +7043,9 @@ where
     ///   via `try_from_tds` validates with [`GlobalTopology::Euclidean`]. Use
     ///   [`try_from_tds_with_topology_context`](Self::try_from_tds_with_topology_context) if you
     ///   need to validate toroidal or other non-default topology metadata during reconstruction.
+    /// - Euclidean reconstruction validates Level 4 with the crate's robust
+    ///   empty-circumsphere validator, independent of the supplied runtime kernel.
+    ///   The supplied kernel is stored for later queries and insertions.
     ///
     /// # Examples
     ///
@@ -7130,7 +7191,23 @@ where
     ) -> Result<Self, DelaunayTriangulationValidationError> {
         let mut candidate = Self::from_tds_with_topology_guarantee(tds, kernel, topology_guarantee);
         candidate.set_global_topology(global_topology);
-        candidate.validate()?;
+        candidate.tri.validate().map_err(|e| match e {
+            InvariantError::Tds(tds_err) => DelaunayTriangulationValidationError::Tds(tds_err),
+            InvariantError::Triangulation(tri_err) => {
+                DelaunayTriangulationValidationError::Triangulation(tri_err)
+            }
+            InvariantError::Delaunay(dt_err) => dt_err,
+        })?;
+
+        if candidate.global_topology().is_euclidean() {
+            is_delaunay_property_only(&candidate.tri.tds).map_err(|e| {
+                DelaunayTriangulationValidationError::VerificationFailed {
+                    message: format!("kernel-independent reconstruction validation failed: {e}"),
+                }
+            })?;
+        } else {
+            candidate.is_valid()?;
+        }
         Ok(candidate)
     }
 

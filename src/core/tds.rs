@@ -624,6 +624,7 @@ pub enum TdsError {
 /// ```
 #[derive(Clone, Debug, Error, PartialEq, Eq)]
 #[error(transparent)]
+#[must_use]
 pub struct TdsMutationError(TdsError);
 
 impl TdsMutationError {
@@ -1053,7 +1054,7 @@ where
             let offset = periodic_offsets.map_or([0_i8; D], |offsets| offsets[vertex_idx]);
             vertex_uuid_offsets.push((vertex.uuid(), offset));
         }
-        vertex_uuid_offsets.sort_unstable_by_key(|(uuid, _)| *uuid);
+        vertex_uuid_offsets.sort_unstable();
 
         Ok(vertex_uuid_offsets)
     }
@@ -2233,25 +2234,9 @@ where
     ///
     /// An `Option` containing a mutable reference to the cell if it exists.
     ///
-    /// # Examples
-    ///
-    /// ```
-    /// use delaunay::prelude::triangulation::*;
-    ///
-    /// let vertices = [
-    ///     vertex!([0.0, 0.0]),
-    ///     vertex!([1.0, 0.0]),
-    ///     vertex!([0.0, 1.0]),
-    /// ];
-    /// let dt = DelaunayTriangulation::new(&vertices).unwrap();
-    /// let mut tds = dt.tds().clone();
-    /// let cell_key = tds.cell_keys().next().unwrap();
-    /// let cell = tds.cell_mut(cell_key).unwrap();
-    /// assert_eq!(cell.number_of_vertices(), 3);
-    /// ```
     #[inline]
     #[must_use]
-    pub fn cell_mut(&mut self, cell_key: CellKey) -> Option<&mut Cell<T, U, V, D>> {
+    pub(crate) fn cell_mut(&mut self, cell_key: CellKey) -> Option<&mut Cell<T, U, V, D>> {
         self.cells.get_mut(cell_key)
     }
 
@@ -2299,24 +2284,9 @@ where
     ///
     /// An `Option` containing a mutable reference to the vertex if it exists.
     ///
-    /// # Examples
-    ///
-    /// ```
-    /// use delaunay::prelude::triangulation::*;
-    ///
-    /// let vertices = [
-    ///     vertex!([0.0, 0.0]),
-    ///     vertex!([1.0, 0.0]),
-    ///     vertex!([0.0, 1.0]),
-    /// ];
-    /// let dt = DelaunayTriangulation::new(&vertices).unwrap();
-    /// let mut tds = dt.tds().clone();
-    /// let vertex_key = tds.vertex_keys().next().unwrap();
-    /// assert!(tds.vertex_mut(vertex_key).is_some());
-    /// ```
     #[inline]
     #[must_use]
-    pub fn vertex_mut(&mut self, vertex_key: VertexKey) -> Option<&mut Vertex<T, U, D>> {
+    pub(crate) fn vertex_mut(&mut self, vertex_key: VertexKey) -> Option<&mut Vertex<T, U, D>> {
         self.vertices.get_mut(vertex_key)
     }
 
@@ -5113,7 +5083,8 @@ where
 // TRAIT IMPLEMENTATIONS
 // =============================================================================
 
-type CellUuidSortEntry<'a, T, U, V, const D: usize> = (Vec<Uuid>, &'a Cell<T, U, V, D>);
+type CellUuidSortKey<const D: usize> = Vec<(Uuid, [i8; D])>;
+type CellUuidSortEntry<'a, T, U, V, const D: usize> = (CellUuidSortKey<D>, &'a Cell<T, U, V, D>);
 
 /// Builds stable cell sort keys once so equality does not hide dangling
 /// vertex references or allocate sort keys repeatedly during comparison.
@@ -5128,11 +5099,19 @@ where
     tds.cells
         .values()
         .map(|cell| {
-            let mut ids: Vec<Uuid> = cell
-                .vertices()
-                .iter()
-                .map(|&vkey| tds.vertex(vkey).map(Vertex::uuid))
-                .collect::<Option<Vec<_>>>()?;
+            let offsets = cell.periodic_vertex_offsets();
+            if let Some(offsets) = offsets
+                && offsets.len() != cell.number_of_vertices()
+            {
+                return None;
+            }
+
+            let mut ids = Vec::with_capacity(cell.number_of_vertices());
+            for (idx, &vkey) in cell.vertices().iter().enumerate() {
+                let uuid = tds.vertex(vkey).map(Vertex::uuid)?;
+                let offset = offsets.map_or([0_i8; D], |offsets| offsets[idx]);
+                ids.push((uuid, offset));
+            }
             ids.sort_unstable();
             Some((ids, cell))
         })

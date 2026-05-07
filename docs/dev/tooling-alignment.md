@@ -86,8 +86,14 @@ The next enforcement step is to make this a zero-tolerance Semgrep rule for:
 Current baseline before that cleanup:
 
 - `examples/**/*.rs`: 35 `.expect(...)` calls.
-- `benches/**/*.rs`: 64 `.expect(...)` calls.
+- `benches/**/*.rs`: 57 `.expect(...)` calls.
 - public Rust doc comments in `src/**/*.rs`: 17 `.expect(...)` calls.
+
+Keep the baseline synchronized with:
+
+```bash
+just verify-expect-counts
+```
 
 When removing this baseline, prefer:
 

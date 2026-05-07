@@ -513,10 +513,11 @@ where
     ///
     /// This is not an unchecked topology wrapper. The deferred
     /// [`build`](Self::build) or [`build_with_kernel`](Self::build_with_kernel)
-    /// call validates the assembled Euclidean triangulation at Levels 1–4, so
-    /// the supplied connectivity must already satisfy the Delaunay
-    /// empty-circumsphere property. Invalid explicit connectivity is reported as
-    /// [`DelaunayTriangulationConstructionError::ExplicitConstruction`].
+    /// call accepts only Euclidean explicit connectivity and validates the
+    /// assembled triangulation at Levels 1–4, so the supplied connectivity must
+    /// already satisfy the Delaunay empty-circumsphere property. Non-Euclidean
+    /// explicit connectivity is rejected because it requires Level 4 handling
+    /// that is not available for quotient meshes.
     ///
     /// # Examples
     ///
@@ -579,10 +580,10 @@ where
     /// The explicit connectivity is still validated when
     /// [`build`](Self::build) or [`build_with_kernel`](Self::build_with_kernel)
     /// is called. Euclidean explicit meshes are checked at Levels 1–4, including
-    /// the Delaunay empty-circumsphere property; non-Euclidean explicit metadata
-    /// is validated through the currently topology-aware layers (Levels 1–3)
-    /// and geometric nondegeneracy. Invalid explicit connectivity is returned
-    /// as [`DelaunayTriangulationConstructionError::ExplicitConstruction`].
+    /// the Delaunay empty-circumsphere property. Non-Euclidean explicit
+    /// connectivity is rejected because there is no successful Levels 1–3-only
+    /// path for the public `DelaunayTriangulation` wrapper; quotient meshes need
+    /// Level 4 handling before they can be accepted.
     ///
     /// For `f64` coordinates, prefer the convenience wrapper on the
     /// `f64`-specialised impl which avoids explicit type annotations.
@@ -1194,8 +1195,9 @@ where
     /// This is a purely combinatorial construction that assembles a valid TDS from
     /// the given connectivity without Delaunay point insertion. Euclidean explicit
     /// meshes are validated at Levels 1–4 (elements, structure, topology, and the
-    /// Delaunay property). Non-Euclidean explicit metadata is validated through the
-    /// currently topology-aware layers: Levels 1–3 and geometric nondegeneracy.
+    /// Delaunay property). Non-Euclidean explicit connectivity is rejected because
+    /// it requires Level 4 quotient-topology validation before the public
+    /// `DelaunayTriangulation` wrapper can accept it.
     ///
     /// # Algorithm
     ///
@@ -1206,12 +1208,13 @@ where
     /// 5. Wrap in `DelaunayTriangulation` via `from_tds_with_topology_guarantee`.
     /// 6. Normalize coherent orientation and promote to positive canonical sign
     ///    via `normalize_and_promote_positive_orientation()`.
-    /// 7. Validate Levels 1–2 (TDS structural: `tds.validate()`).
-    /// 8. Validate Level 3 topology (excluding geometric orientation).
-    /// 9. Validate PL-manifold completion (vertex links, if required).
-    /// 10. Validate geometric nondegeneracy (reject zero-volume cells).
-    /// 11. Validate the Level 4 Delaunay property when the explicit mesh is
-    ///     Euclidean.
+    /// 7. Reject non-Euclidean explicit connectivity until Level 4 quotient
+    ///    validation exists.
+    /// 8. Validate Levels 1–2 (TDS structural: `tds.validate()`).
+    /// 9. Validate Level 3 topology (excluding geometric orientation).
+    /// 10. Validate PL-manifold completion (vertex links, if required).
+    /// 11. Validate geometric nondegeneracy (reject zero-volume cells).
+    /// 12. Validate the Euclidean Level 4 Delaunay property.
     fn build_explicit<K, V>(
         kernel: &K,
         vertices: &[Vertex<T, U, D>],
@@ -1227,6 +1230,7 @@ where
         if cells.is_empty() {
             return Err(ExplicitConstructionError::EmptyCells.into());
         }
+        Self::reject_explicit_non_euclidean_topology(global_topology)?;
 
         let vertex_count = vertices.len();
         for (cell_idx, cell_spec) in cells.iter().enumerate() {
@@ -1373,37 +1377,44 @@ where
             .into());
         }
 
-        Self::validate_explicit_delaunay_property_if_euclidean(&dt)?;
+        Self::enforce_explicit_delaunay_property(&dt)?;
 
         Ok(dt)
     }
 
-    /// Validates explicit Euclidean connectivity before returning the Delaunay wrapper.
+    /// Enforces Level 4 validation before returning the Delaunay wrapper.
     ///
     /// The public return type is `DelaunayTriangulation`, so Euclidean explicit
     /// connectivity must prove the empty-circumsphere property before it crosses
-    /// this API boundary. Explicit non-Euclidean topology is rejected until a
-    /// Level 4 validator exists for quotient connectivity.
-    fn validate_explicit_delaunay_property_if_euclidean<K, V>(
+    /// this API boundary. Explicit non-Euclidean topology is rejected earlier in
+    /// `build_explicit` until a Level 4 validator exists for quotient connectivity.
+    fn enforce_explicit_delaunay_property<K, V>(
         dt: &DelaunayTriangulation<K, U, V, D>,
     ) -> Result<(), DelaunayTriangulationConstructionError>
     where
         K: Kernel<D, Scalar = T>,
         V: DataType,
     {
-        if !dt.global_topology().is_euclidean() {
-            return Err(ExplicitConstructionError::ValidationFailed {
-                message: "Explicit non-Euclidean connectivity is not supported for construction; Level 4 validator required".to_string(),
-            }
-            .into());
-        }
-
         dt.is_valid().map_err(|e| {
             ExplicitConstructionError::ValidationFailed {
                 message: format!("Delaunay validation failed: {e}"),
             }
             .into()
         })
+    }
+
+    /// Rejects explicit quotient connectivity until Level 4 validation supports it.
+    fn reject_explicit_non_euclidean_topology(
+        global_topology: GlobalTopology<D>,
+    ) -> Result<(), DelaunayTriangulationConstructionError> {
+        if global_topology.is_euclidean() {
+            return Ok(());
+        }
+
+        Err(ExplicitConstructionError::ValidationFailed {
+            message: "Explicit non-Euclidean connectivity is not supported for construction; Level 4 validator required".to_string(),
+        }
+        .into())
     }
 
     /// Builds a true periodic (toroidal) Delaunay triangulation using the 3^D image-point method.

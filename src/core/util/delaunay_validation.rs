@@ -175,6 +175,20 @@ where
     U: DataType,
     V: DataType,
 {
+    Ok(first_delaunay_violation_witness(tds, cell_key, cell_vertex_points)?.map(|_| cell_key))
+}
+
+/// Finds one external vertex that witnesses a cell's Delaunay violation.
+fn first_delaunay_violation_witness<T, U, V, const D: usize>(
+    tds: &Tds<T, U, V, D>,
+    cell_key: CellKey,
+    cell_vertex_points: &mut SmallVec<[Point<T, D>; 8]>,
+) -> Result<Option<VertexKey>, DelaunayValidationError>
+where
+    T: CoordinateScalar,
+    U: DataType,
+    V: DataType,
+{
     let Some(cell) = tds.cell(cell_key) else {
         // Cell doesn't exist (possibly removed), skip validation
         return Ok(None);
@@ -289,7 +303,7 @@ where
                     }
                 }
                 // Genuine violation
-                return Ok(Some(cell_key));
+                return Ok(Some(test_vkey));
             }
             Ok(InSphere::BOUNDARY | InSphere::OUTSIDE) => {
                 // Vertex is outside/on boundary; continue checking other vertices
@@ -550,23 +564,10 @@ where
     U: DataType,
     V: DataType,
 {
-    let cell = tds.cell(cell_key)?;
-    let cell_vertex_keys: SmallVec<[VertexKey; 8]> = cell.vertices().iter().copied().collect();
     let mut cell_vertex_points: SmallVec<[Point<T, D>; 8]> = SmallVec::with_capacity(D + 1);
-
-    for &vkey in &cell_vertex_keys {
-        cell_vertex_points.push(*tds.vertex(vkey)?.point());
-    }
-
-    tds.vertices()
-        .filter(|(test_vkey, _)| !cell_vertex_keys.contains(test_vkey))
-        .find_map(|(test_vkey, test_vertex)| {
-            matches!(
-                robust_insphere(&cell_vertex_points, test_vertex.point()),
-                Ok(InSphere::INSIDE)
-            )
-            .then_some(test_vkey)
-        })
+    first_delaunay_violation_witness(tds, cell_key, &mut cell_vertex_points)
+        .ok()
+        .flatten()
 }
 
 /// Debug helper: print detailed information about the first detected Delaunay

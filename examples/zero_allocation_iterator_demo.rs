@@ -14,6 +14,7 @@ use std::hint::black_box;
 use std::time::Instant;
 
 #[derive(Debug, thiserror::Error)]
+#[non_exhaustive]
 enum DemoError {
     #[error(transparent)]
     Construction(#[from] DelaunayTriangulationConstructionError),
@@ -39,7 +40,7 @@ fn main() -> Result<(), DemoError> {
 
     // Get the first cell from the triangulation
     let Some(cell) = dt.tds().cells().map(|(_, cell)| cell).next() else {
-        eprintln!("No cells in triangulation; nothing to demo.");
+        println!("No cells in triangulation; nothing to demo.");
         return Ok(());
     };
     println!(
@@ -91,9 +92,11 @@ fn main() -> Result<(), DemoError> {
     let start = Instant::now();
     let mut total_count_iter = 0;
     for _ in 0..iterations {
-        // Note: count() on Iterator<Item = Result<Uuid, _>> counts all items (both Ok and Err).
-        // This is appropriate for performance comparison since errors should not occur here.
-        let count = cell.vertex_uuid_iter(dt.tds()).count(); // No allocation
+        // Match Method 1 by counting only successfully resolved UUIDs.
+        let count = cell
+            .vertex_uuid_iter(dt.tds())
+            .filter_map(Result::ok)
+            .count(); // No allocation
         total_count_iter += black_box(count);
     }
     let iter_duration = start.elapsed();

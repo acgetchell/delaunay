@@ -438,9 +438,11 @@ where
     // traces (see #204 investigation).
     let removed_cell_vertices = snapshot_removed_cell_vertices(tds, removed_cells)?;
 
+    let mut trial = tds.clone();
+
     for vertices in new_cell_vertices {
         let cell = Cell::new(vertices, None)?;
-        let cell_key = tds.insert_cell_with_mapping(cell).map_err(|source| {
+        let cell_key = trial.insert_cell_with_mapping(cell).map_err(|source| {
             FlipMutationError::CellInsertion {
                 source: Box::new(source),
             }
@@ -449,19 +451,21 @@ where
     }
 
     wire_cavity_neighbors(
-        tds,
+        &mut trial,
         &new_cells,
         external_facets.iter().copied(),
         Some(removed_cells),
     )
     .map_err(FlipNeighborWiringError::from)?;
 
-    tds.remove_cells_by_keys(removed_cells);
+    trial.remove_cells_by_keys(removed_cells);
 
     debug_assert!(
-        tds.is_coherently_oriented(),
+        trial.is_coherently_oriented(),
         "TDS coherent orientation invariant violated after bistellar flip (k={k_move}, direction={direction:?})",
     );
+
+    *tds = trial;
 
     Ok(AppliedFlip {
         info: FlipInfo {

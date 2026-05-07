@@ -502,6 +502,31 @@ profile-dev:
 profile-mem:
     samply record cargo bench --profile perf --bench profiling_suite --features count-allocations -- memory_profiling
 
+verify-expect-counts:
+    #!/usr/bin/env bash
+    set -euo pipefail
+
+    check_count() {
+        local label="$1"
+        local expected="$2"
+        local pattern="$3"
+        shift 3
+
+        local actual
+        actual="$( (rg -o "$pattern" "$@" || true) | wc -l | tr -d ' ')"
+
+        if [[ "$actual" != "$expected" ]]; then
+            echo "❌ $label: expected $expected, found $actual"
+            return 1
+        fi
+
+        echo "✓ $label: $actual"
+    }
+
+    check_count 'examples/**/*.rs .expect(' 35 '\.expect\(' examples
+    check_count 'benches/**/*.rs .expect(' 57 '\.expect\(' benches
+    check_count 'src/**/*.rs doc-comment .expect(' 17 '^\s*//[/!].*\.expect\(' src
+
 # Pre-publish validation: checks crates.io metadata rules that cargo publish --dry-run does NOT catch
 publish-check: _ensure-jq
     #!/usr/bin/env bash

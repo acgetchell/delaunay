@@ -15,7 +15,9 @@ use delaunay::prelude::diagnostics::{
 #[cfg(feature = "diagnostics")]
 use delaunay::prelude::geometry::AdaptiveKernel;
 #[cfg(feature = "diagnostics")]
-use delaunay::prelude::triangulation::{DelaunayTriangulation, flips::*};
+use delaunay::prelude::triangulation::{
+    DelaunayTriangulation, DelaunayTriangulationValidationError, flips::*,
+};
 #[cfg(feature = "diagnostics")]
 use delaunay::vertex;
 
@@ -115,7 +117,13 @@ fn build_non_delaunay_triangulation_2d() -> DelaunayTriangulation<AdaptiveKernel
                 };
                 let facet = FacetHandle::new(cell_key, facet_index);
                 let mut trial = dt.clone();
-                if trial.flip_k2(facet).is_ok() && trial.is_valid().is_err() {
+                if trial.flip_k2(facet).is_ok()
+                    && trial.as_triangulation().validate().is_ok()
+                    && matches!(
+                        trial.is_valid(),
+                        Err(DelaunayTriangulationValidationError::VerificationFailed { .. })
+                    )
+                {
                     return trial;
                 }
             }
