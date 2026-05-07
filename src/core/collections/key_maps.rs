@@ -52,7 +52,7 @@ pub type VertexUuidSet = FastHashSet<Uuid>;
 ///
 /// // Get first vertex key and its UUID
 /// let (vertex_key, _) = tds.vertices().next().unwrap();
-/// let vertex_uuid = tds.get_vertex_by_key(vertex_key).unwrap().uuid();
+/// let vertex_uuid = tds.vertex(vertex_key).unwrap().uuid();
 /// ```
 pub type UuidToVertexKeyMap = FastHashMap<Uuid, VertexKey>;
 
@@ -89,7 +89,7 @@ pub type UuidToVertexKeyMap = FastHashMap<Uuid, VertexKey>;
 ///
 /// // Get first cell key and its UUID
 /// let (cell_key, _) = tds.cells().next().unwrap();
-/// let cell_uuid = tds.get_cell(cell_key).unwrap().uuid();
+/// let cell_uuid = tds.cell(cell_key).unwrap().uuid();
 /// ```
 pub type UuidToCellKeyMap = FastHashMap<Uuid, CellKey>;
 

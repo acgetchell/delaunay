@@ -23,6 +23,7 @@ use crate::geometry::traits::coordinate::{
 };
 use num_traits::cast;
 use serde::de::{Error, SeqAccess, Visitor};
+use serde::ser::SerializeTuple;
 use serde::{Deserialize, Serialize};
 use std::any;
 use std::cmp::Ordering;
@@ -235,7 +236,6 @@ where
     where
         S: serde::Serializer,
     {
-        use serde::ser::SerializeTuple;
         let mut tuple = serializer.serialize_tuple(D)?;
         for coord in &self.coords {
             if coord.is_finite_generic() {
@@ -3115,7 +3115,9 @@ mod tests {
                 assert_eq!(coordinate_index, 0);
             }
             CoordinateConversionError::ConversionFailed { .. }
-            | CoordinateConversionError::InsphereInconsistency { .. } => {
+            | CoordinateConversionError::InsphereInconsistency { .. }
+            | CoordinateConversionError::UnsupportedMatrixDimension { .. }
+            | CoordinateConversionError::LinearAlgebraFailure { .. } => {
                 panic!("Expected NonFiniteValue error")
             }
         }
@@ -3131,7 +3133,9 @@ mod tests {
                 assert_eq!(coordinate_index, 1);
             }
             CoordinateConversionError::ConversionFailed { .. }
-            | CoordinateConversionError::InsphereInconsistency { .. } => {
+            | CoordinateConversionError::InsphereInconsistency { .. }
+            | CoordinateConversionError::UnsupportedMatrixDimension { .. }
+            | CoordinateConversionError::LinearAlgebraFailure { .. } => {
                 panic!("Expected NonFiniteValue error")
             }
         }
@@ -3236,7 +3240,9 @@ mod tests {
                     assert_eq!(coordinate_index, expected_index);
                 }
                 CoordinateConversionError::ConversionFailed { .. }
-                | CoordinateConversionError::InsphereInconsistency { .. } => {
+                | CoordinateConversionError::InsphereInconsistency { .. }
+                | CoordinateConversionError::UnsupportedMatrixDimension { .. }
+                | CoordinateConversionError::LinearAlgebraFailure { .. } => {
                     panic!("Expected NonFiniteValue error at position {expected_index}")
                 }
             }
@@ -3258,7 +3264,9 @@ mod tests {
                 assert_eq!(coordinate_index, 0);
             }
             CoordinateConversionError::ConversionFailed { .. }
-            | CoordinateConversionError::InsphereInconsistency { .. } => {
+            | CoordinateConversionError::InsphereInconsistency { .. }
+            | CoordinateConversionError::UnsupportedMatrixDimension { .. }
+            | CoordinateConversionError::LinearAlgebraFailure { .. } => {
                 panic!("Expected NonFiniteValue error")
             }
         }

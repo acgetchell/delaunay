@@ -35,6 +35,7 @@ use delaunay::geometry::kernel::{AdaptiveKernel, RobustKernel};
 use delaunay::prelude::geometry::*;
 use delaunay::prelude::triangulation::*;
 use proptest::prelude::*;
+use rand::{SeedableRng, seq::SliceRandom};
 
 fn init_tracing() {
     static INIT: std::sync::Once = std::sync::Once::new();
@@ -889,9 +890,6 @@ macro_rules! gen_insertion_order_robustness_test {
                         $min_vertices..=$max_vertices
                     ).prop_map(|pts| dedup_vertices_by_coords::<$dim>(Vertex::from_points(&pts)))
                 ) {
-                    use rand::seq::SliceRandom;
-                    use rand::SeedableRng;
-
                     // Require at least D+1 distinct vertices for valid simplices
                     prop_assume!(points.len() > $dim);
 
@@ -1048,9 +1046,6 @@ fn prop_insertion_order_robustness_3d() {
     let stats = RefCell::new(RejectStats::default());
 
     let run_result = runner.run(&strategy, |points| {
-        use rand::SeedableRng;
-        use rand::seq::SliceRandom;
-
         let mut stats = stats.borrow_mut();
         stats.generated += 1;
 
@@ -1358,9 +1353,6 @@ macro_rules! gen_insertion_order_robustness_high_dim_impl {
                 let stats = RefCell::new(RejectStats::default());
 
                 let run_result = runner.run(&strategy, |points| {
-                    use rand::seq::SliceRandom;
-                    use rand::SeedableRng;
-
                     let mut stats = stats.borrow_mut();
                     stats.generated += 1;
 

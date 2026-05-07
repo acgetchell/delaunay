@@ -30,7 +30,6 @@ fn validate_random_triangulation<K, U, V, const D: usize>(
 ) -> Result<DelaunayTriangulation<K, U, V, D>, DelaunayTriangulationConstructionError>
 where
     K: crate::geometry::kernel::Kernel<D>,
-    K::Scalar: CoordinateScalar,
     U: DataType,
     V: DataType,
 {
@@ -48,7 +47,6 @@ fn random_triangulation_is_acceptable<K, U, V, const D: usize>(
 ) -> bool
 where
     K: crate::geometry::kernel::Kernel<D>,
-    K::Scalar: CoordinateScalar,
     U: DataType,
     V: DataType,
 {

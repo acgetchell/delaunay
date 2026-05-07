@@ -111,6 +111,16 @@ class TestVersionSortKey:
             "unreleased",
         ]
 
+    def test_prerelease_labels_stay_semantic(self) -> None:
+        labels = ["1.2.3", "1.2.3-rc.10", "1.2.3-rc.2", "1.2.3-alpha.1", "unreleased"]
+        assert sorted(labels, key=_version_sort_key) == [
+            "1.2.3-alpha.1",
+            "1.2.3-rc.2",
+            "1.2.3-rc.10",
+            "1.2.3",
+            "unreleased",
+        ]
+
     def test_reverse_unreleased_first(self) -> None:
         labels = ["0.7.2", "unreleased", "0.6.1"]
         assert sorted(labels, key=_version_sort_key, reverse=True) == [

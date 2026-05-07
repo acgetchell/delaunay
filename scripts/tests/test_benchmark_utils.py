@@ -36,6 +36,7 @@ from benchmark_utils import (
     DEV_MODE_BENCH_ARGS,
     TRUSTED_BENCH_PROFILE,
     BaselineGenerator,
+    BaselineParseError,
     BenchmarkRegressionHelper,
     CriterionParser,
     PerformanceComparator,
@@ -444,6 +445,31 @@ class TestCriterionParser:
                 "validation/validate_3d/50",
             ]
 
+    def test_fallback_discovery_prefers_new_estimates_over_base(self, tmp_path) -> None:
+        """Test fallback Criterion discovery replaces stale base estimates with new estimates."""
+        criterion_dir = tmp_path / "criterion"
+        base_dir = criterion_dir / "legacy" / "2d" / "benchmark" / "1000" / "base"
+        new_dir = criterion_dir / "legacy" / "2d" / "benchmark" / "1000" / "new"
+
+        for estimates_dir, mean_ns in ((base_dir, 10_000.0), (new_dir, 20_000.0)):
+            estimates_dir.mkdir(parents=True)
+            estimates = {
+                "mean": {
+                    "point_estimate": mean_ns,
+                    "confidence_interval": {
+                        "lower_bound": mean_ns * 0.9,
+                        "upper_bound": mean_ns * 1.1,
+                    },
+                },
+            }
+            (estimates_dir / "estimates.json").write_text(json.dumps(estimates), encoding="utf-8")
+
+        results = CriterionParser._process_fallback_discovery(criterion_dir)
+
+        assert len(results) == 1
+        assert results[0].comparison_key == "1000_2D"
+        assert results[0].time_mean == pytest.approx(20.0)
+
 
 class TestPerformanceComparator:
     """Test cases for PerformanceComparator class."""
@@ -540,8 +566,8 @@ Throughput: [8.333e3, 9.091e3, 1.0e4] Kelem/s
         assert benchmark.time_high == pytest.approx(1.2e-6)
         assert benchmark.throughput_mean == pytest.approx(9.091e3)
 
-    def test_parse_baseline_file_skips_sections_without_timing(self, comparator) -> None:
-        """Test malformed baseline sections without timing data are not compared."""
+    def test_parse_baseline_file_rejects_sections_without_timing(self, comparator) -> None:
+        """Test malformed baseline sections without timing data fail loudly."""
         baseline_content = """Date: 2023-06-15 10:30:00 PDT
 Git commit: abc123def456
 
@@ -553,9 +579,8 @@ Time: [190.0, 200.0, 210.0] µs
 Throughput: [9.524, 10.0, 10.526] Kelem/s
 """
 
-        results = comparator._parse_baseline_file(baseline_content)
-
-        assert set(results) == {"2000_2D"}
+        with pytest.raises(BaselineParseError, match=r"malformed/no_timing.*missing or invalid Time line"):
+            comparator._parse_baseline_file(baseline_content)
 
     def test_parse_baseline_file_with_unsized_benchmark_id(self, comparator) -> None:
         """Test parsing expanded CI benchmarks without numeric input sizes."""
@@ -573,6 +598,38 @@ Time: [0.8, 0.95, 1.1] µs
         assert benchmark.points is None
         assert benchmark.dimension == "4D"
         assert benchmark.throughput_mean is None
+
+    @patch("benchmark_utils.CriterionParser.find_criterion_results")
+    @patch("benchmark_utils.run_cargo_command")
+    def test_compare_with_baseline_rejects_malformed_baseline(self, mock_cargo, mock_find_results, tmp_path) -> None:
+        """Test compare fails instead of silently ignoring malformed baseline sections."""
+        baseline_file = tmp_path / "baseline.txt"
+        output_file = tmp_path / "compare_results.txt"
+        baseline_file.write_text(
+            """Date: 2023-06-15 10:30:00 PDT
+Git commit: abc123def456
+
+=== 1000 Points (2D) ===
+Benchmark ID: malformed/no_timing
+
+=== 2000 Points (2D) ===
+Time: [190.0, 200.0, 210.0] µs
+""",
+            encoding="utf-8",
+        )
+        mock_cargo.return_value = completed_process(CI_MANIFEST_STDOUT)
+        mock_find_results.return_value = [
+            BenchmarkData(2000, "2D").with_timing(190.0, 200.0, 210.0, "µs"),
+        ]
+        comparator = PerformanceComparator(tmp_path)
+
+        success, regression = comparator.compare_with_baseline(baseline_file, output_file=output_file)
+
+        assert not success
+        assert not regression
+        content = output_file.read_text(encoding="utf-8")
+        assert "Malformed baseline section" in content
+        assert "malformed/no_timing" in content
 
     def test_write_performance_comparison_matches_benchmark_ids(self, comparator) -> None:
         """Test comparison uses expanded benchmark IDs instead of point/dimension collisions."""
@@ -718,8 +775,8 @@ Time: [1.0, 1.0, 1.0] µs
             # And output is captured
             assert mock_cargo.call_args.kwargs.get("capture_output") is True
 
-    def test_write_performance_comparison_no_average_regression(self, comparator) -> None:
-        """Test performance comparison with individual regressions but no average regression."""
+    def test_write_performance_comparison_detects_individual_regression(self, comparator) -> None:
+        """Test performance comparison fails for individual regressions even when average is fine."""
         # Create current results with mixed performance changes
         current_results = [
             # Big regression: +20%
@@ -740,16 +797,16 @@ Time: [1.0, 1.0, 1.0] µs
         output = StringIO()
         regression_found = comparator._write_performance_comparison(output, current_results, baseline_results)
 
-        # Average change using geometric mean: ~0.0%
-        # This is less than DEFAULT_REGRESSION_THRESHOLD, so no overall regression
-        assert not regression_found
+        # Average change using geometric mean: ~0.0%, but the +20% individual
+        # regression is still a workflow failure.
+        assert regression_found
 
         result = output.getvalue()
         assert "SUMMARY" in result
         assert "Total benchmarks compared: 3" in result
         assert f"Individual regressions (>{THRESHOLD_PERCENT}): 1" in result  # Only the +20% one
         assert re.search(r"Average time change:\s*-?0\.0%", result)
-        assert "✅ OVERALL OK" in result
+        assert "⚠️ INDIVIDUAL REGRESSION" in result
 
     def test_write_performance_comparison_with_average_regression(self, comparator) -> None:
         """Test performance comparison with average regression exceeding threshold."""
@@ -1113,9 +1170,9 @@ class TestIntegrationScenarios:
         output = StringIO()
         regression_found = comparator._write_performance_comparison(output, current_results, baseline_results)
 
-        # Average change using geometric mean: -0.2%
-        # No overall regression should be detected
-        assert not regression_found
+        # Average change using geometric mean: -0.2%, but the +8% individual
+        # regression is still a workflow failure.
+        assert regression_found
 
         result = output.getvalue()
         assert "Total benchmarks compared: 5" in result
@@ -1123,7 +1180,7 @@ class TestIntegrationScenarios:
         expected_average_change = compute_average_time_change(current_results, baseline_results)
         expected_average_line = f"Average time change: {expected_average_change:.1f}%"
         assert expected_average_line in result
-        assert "✅ OVERALL OK" in result
+        assert "⚠️ INDIVIDUAL REGRESSION" in result
 
     def test_gradual_performance_degradation_scenario(self, comparator) -> None:
         """Test scenario where performance gradually degrades across all benchmarks."""
@@ -1185,15 +1242,15 @@ class TestIntegrationScenarios:
         output = StringIO()
         regression_found = comparator._write_performance_comparison(output, current_results, baseline_results)
 
-        # Average change using geometric mean: 4.9%
-        # Despite the one big outlier, no overall regression should be detected (4.9% < DEFAULT_REGRESSION_THRESHOLD)
-        assert not regression_found
+        # Average change using geometric mean: 4.9%, but the one big outlier
+        # still needs to fail the benchmark comparison.
+        assert regression_found
 
         result = output.getvalue()
         assert "Total benchmarks compared: 5" in result
         assert f"Individual regressions (>{THRESHOLD_PERCENT}): 1" in result  # Only the 40% outlier
         assert "Average time change: 4.9%" in result
-        assert "✅ OVERALL OK" in result
+        assert "⚠️ INDIVIDUAL REGRESSION" in result
 
 
 class TestEdgeCases:

@@ -653,7 +653,7 @@ mod tests {
     }
 
     fn construction_error() -> DelaunayTriangulationConstructionError {
-        DelaunayTriangulationConstructionError::Triangulation(
+        DelaunayTriangulationConstructionError::from(
             TriangulationConstructionError::FailedToCreateCell {
                 message: "synthetic rebuild degeneracy".to_string(),
             },

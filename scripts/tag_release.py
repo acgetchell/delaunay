@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+#!/usr/bin/env -S uv run
 """Create annotated git tags from CHANGELOG.md sections.
 
 Handles GitHub's 125KB tag-annotation size limit by falling back to a short
@@ -343,11 +343,11 @@ def create_tag(tag_version: str, *, force: bool = False) -> None:
     the tag will be created with a short reference message pointing to CHANGELOG.md and the
     version heading anchor instead of embedding the full section. If a tag with the same name
     already exists and `force` is False, the function prints a warning and exits with status 1;
-    if `force` is True, the existing tag is deleted before creation.
+    if `force` is True, git replaces the existing tag reference during tag creation.
 
     Parameters:
         tag_version (str): The tag to create (must follow the project's SemVer format, e.g., "v1.2.3").
-        force (bool): If True, delete and recreate the tag when it already exists; otherwise bail out.
+        force (bool): If True, replace the tag when it already exists; otherwise bail out.
     """
     validate_semver(tag_version)
     version = parse_version(tag_version)
@@ -374,11 +374,12 @@ def create_tag(tag_version: str, *, force: bool = False) -> None:
             source_rel = source.relative_to(changelog.parent)
         except ValueError:
             source_rel = source
+        source_rel_posix = source_rel.as_posix()
         tag_message = (
             f"Version {version}\n\n"
             f"This release contains extensive changes. See full changelog:\n"
-            f"<{repo_url}/blob/{tag_version}/{source_rel}#{anchor}>\n\n"
-            f"For detailed release notes, refer to {source_rel} in the repository.\n"
+            f"<{repo_url}/blob/{tag_version}/{source_rel_posix}#{anchor}>\n\n"
+            f"For detailed release notes, refer to {source_rel_posix} in the repository.\n"
         )
         is_truncated = True
         print(f"{_BLUE}→ Creating annotated tag with CHANGELOG.md reference{_RESET}")
@@ -393,15 +394,16 @@ def create_tag(tag_version: str, *, force: bool = False) -> None:
             print("... (truncated for preview)")
         print("----------------------------------------")
 
-    # Delete existing tag only after all validation succeeds
-    if tag_existed and force:
-        print(f"{_BLUE}Deleting existing tag '{tag_version}'...{_RESET}")
-        _delete_tag(tag_version)
-
-    # Create annotated tag
+    # Create annotated tag. Let git replace the ref transactionally instead of
+    # deleting the existing tag before the replacement object exists.
     label = "reference" if is_truncated else "full changelog"
+    tag_command = ["tag", "-a", tag_version, "-F", "-", "--cleanup=verbatim"]
+    if tag_existed and force:
+        print(f"{_BLUE}Replacing existing tag '{tag_version}'...{_RESET}")
+        tag_command.insert(1, "-f")
+
     print(f"{_BLUE}Creating annotated tag '{tag_version}' with {label} content...{_RESET}")
-    run_git_command_with_input(["tag", "-a", tag_version, "-F", "-"], input_data=tag_message)
+    run_git_command_with_input(tag_command, input_data=tag_message)
 
     # Success
     print(f"{_GREEN}✓ Successfully created tag '{tag_version}'{_RESET}")
@@ -451,6 +453,7 @@ def main() -> None:
         LookupError,
         ExecutableNotFoundError,
         subprocess.CalledProcessError,
+        subprocess.TimeoutExpired,
     ) as exc:
         print(f"Error: {exc}", file=sys.stderr)
         sys.exit(1)

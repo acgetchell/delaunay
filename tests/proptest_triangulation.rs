@@ -100,7 +100,7 @@ where
 
     // Iterate through all cells in original triangulation
     for orig_key in tds_orig.cell_keys() {
-        if let Some(orig_cell) = tds_orig.get_cell(orig_key) {
+        if let Some(orig_cell) = tds_orig.cell(orig_key) {
             // Get original cell's vertex UUIDs
             if let Ok(orig_uuids) = orig_cell.vertex_uuids(tds_orig) {
                 // Map to transformed UUIDs
@@ -112,7 +112,7 @@ where
 
                 // Find matching cell in transformed triangulation
                 for trans_key in tds_transformed.cell_keys() {
-                    if let Some(trans_cell) = tds_transformed.get_cell(trans_key)
+                    if let Some(trans_cell) = tds_transformed.cell(trans_key)
                         && let Ok(trans_cell_uuids) = trans_cell.vertex_uuids(tds_transformed)
                     {
                         // Check if cells have same vertices (by UUID)

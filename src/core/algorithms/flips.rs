@@ -255,7 +255,7 @@ where
         .copied()
         .map(|cell_key| {
             let cell = tds
-                .get_cell(cell_key)
+                .cell(cell_key)
                 .ok_or(FlipError::MissingCell { cell_key })?;
             Ok(cell.vertices().iter().copied().collect())
         })
@@ -436,7 +436,7 @@ where
 
     // Snapshot the removed cells' vertex lists before any TDS mutation so an
     // unexpected missing cell aborts without leaving replacement cells behind.
-    // After `tds.remove_cells_by_keys` runs, `tds.get_cell(removed_key)` returns
+    // After `tds.remove_cells_by_keys` runs, `tds.cell(removed_key)` returns
     // `None`, which would strip the most useful context from predecessor-flip
     // traces (see #204 investigation).
     let removed_cell_vertices = snapshot_removed_cell_vertices(tds, removed_cells)?;
@@ -510,7 +510,7 @@ where
             continue;
         }
 
-        let Some(cell) = tds.get_cell(cell_key) else {
+        let Some(cell) = tds.cell(cell_key) else {
             continue;
         };
 
@@ -541,7 +541,7 @@ where
 
     for &external in external_facets {
         let external_cell =
-            tds.get_cell(external.cell_key())
+            tds.cell(external.cell_key())
                 .ok_or_else(|| FlipError::MissingCell {
                     cell_key: external.cell_key(),
                 })?;
@@ -576,7 +576,7 @@ where
 
         for source_idx in 0..cells.len() {
             for target_idx in (source_idx + 1)..cells.len() {
-                let Some((source_facet_idx, target_facet_idx)) =
+                let Some((source_facet_idx, tarfacet_idx)) =
                     shared_facet_indices(&cells[source_idx], &cells[target_idx])
                 else {
                     continue;
@@ -585,7 +585,7 @@ where
                     &cells[source_idx],
                     source_facet_idx,
                     &cells[target_idx],
-                    target_facet_idx,
+                    tarfacet_idx,
                 )?;
                 match (flips[source_idx], flips[target_idx]) {
                     (Some(source_flip), Some(target_flip)) => {
@@ -683,18 +683,18 @@ fn matching_facet_index(
         return Ok(None);
     }
 
-    let mut target_facet_idx = None;
+    let mut tarfacet_idx = None;
     for (idx, &vertex) in target_vertices.iter().enumerate() {
         if source_facet.contains(&vertex) {
             continue;
         }
-        if target_facet_idx.is_some() {
+        if tarfacet_idx.is_some() {
             return Ok(None);
         }
-        target_facet_idx = Some(idx);
+        tarfacet_idx = Some(idx);
     }
 
-    Ok(target_facet_idx)
+    Ok(tarfacet_idx)
 }
 
 /// Finds the opposite slots for two replacement cells that share a facet.
@@ -707,8 +707,8 @@ fn shared_facet_indices(
     }
 
     let source_facet_idx = unique_vertex_index(source_vertices, target_vertices)?;
-    let target_facet_idx = unique_vertex_index(target_vertices, source_vertices)?;
-    Some((source_facet_idx, target_facet_idx))
+    let tarfacet_idx = unique_vertex_index(target_vertices, source_vertices)?;
+    Some((source_facet_idx, tarfacet_idx))
 }
 
 /// Returns the single vertex slot in `vertices` that is absent from `other`.
@@ -731,16 +731,16 @@ fn facet_orders_coherent(
     source_vertices: &[VertexKey],
     source_facet_idx: usize,
     target_vertices: &[VertexKey],
-    target_facet_idx: usize,
+    tarfacet_idx: usize,
 ) -> Result<bool, FlipError> {
     let source_order = facet_order(source_vertices, source_facet_idx)?;
-    let target_order = facet_order(target_vertices, target_facet_idx)?;
+    let target_order = facet_order(target_vertices, tarfacet_idx)?;
     let observed_odd = permutation_odd(&source_order, &target_order).ok_or_else(|| {
         FlipError::InvalidFlipContext {
             message: "could not derive replacement facet-order permutation parity".to_string(),
         }
     })?;
-    let expected_odd = (source_facet_idx + target_facet_idx).is_multiple_of(2);
+    let expected_odd = (source_facet_idx + tarfacet_idx).is_multiple_of(2);
     Ok(observed_odd == expected_odd)
 }
 
@@ -876,7 +876,7 @@ fn debug_ridge_context<T, U, V, const D: usize>(
     if !should_emit_ridge_debug(diagnostics, reported_multiplicity) {
         return;
     }
-    let Some(cell) = tds.get_cell(ridge.cell_key()) else {
+    let Some(cell) = tds.cell(ridge.cell_key()) else {
         tracing::debug!(
             ridge = ?ridge,
             reported_multiplicity,
@@ -943,7 +943,7 @@ where
     U: DataType,
     V: DataType,
 {
-    let Some(cell) = tds.get_cell(cell_key) else {
+    let Some(cell) = tds.cell(cell_key) else {
         return format!("{cell_key:?}: missing");
     };
 
@@ -1029,7 +1029,7 @@ where
     U: DataType,
     V: DataType,
 {
-    let Some(cell) = tds.get_cell(cell_key) else {
+    let Some(cell) = tds.cell(cell_key) else {
         return format!("{cell_key:?}: missing");
     };
     format!("{cell_key:?}: vertices={:?}", cell.vertices())
@@ -1055,18 +1055,12 @@ fn debug_postcondition_facet_context<T, U, V, const D: usize>(
     let removed_face_details: Vec<_> = context
         .removed_face_vertices
         .iter()
-        .filter_map(|&vkey| {
-            tds.get_vertex_by_key(vkey)
-                .map(|vertex| (vkey, *vertex.point()))
-        })
+        .filter_map(|&vkey| tds.vertex(vkey).map(|vertex| (vkey, *vertex.point())))
         .collect();
     let inserted_face_details: Vec<_> = context
         .inserted_face_vertices
         .iter()
-        .filter_map(|&vkey| {
-            tds.get_vertex_by_key(vkey)
-                .map(|vertex| (vkey, *vertex.point()))
-        })
+        .filter_map(|&vkey| tds.vertex(vkey).map(|vertex| (vkey, *vertex.point())))
         .collect();
     let incident_cell_details: Vec<String> = context
         .removed_cells
@@ -1100,7 +1094,7 @@ where
     U: DataType,
     V: DataType,
 {
-    let Some(cell) = tds.get_cell(cell_key) else {
+    let Some(cell) = tds.cell(cell_key) else {
         return format!("{cell_key:?}: missing");
     };
 
@@ -1399,12 +1393,12 @@ where
             let removed_details: Vec<_> = context
                 .removed_face_vertices
                 .iter()
-                .filter_map(|&vkey| tds.get_vertex_by_key(vkey).map(|v| (vkey, *v.point())))
+                .filter_map(|&vkey| tds.vertex(vkey).map(|v| (vkey, *v.point())))
                 .collect();
             let inserted_details: Vec<_> = context
                 .inserted_face_vertices
                 .iter()
-                .filter_map(|&vkey| tds.get_vertex_by_key(vkey).map(|v| (vkey, *v.point())))
+                .filter_map(|&vkey| tds.vertex(vkey).map(|v| (vkey, *v.point())))
                 .collect();
 
             tracing::debug!(
@@ -1443,7 +1437,7 @@ where
     V: DataType,
 {
     let cell_key = handle.cell_key();
-    let cell = tds.get_cell(cell_key)?;
+    let cell = tds.cell(cell_key)?;
 
     let facet_index = usize::from(handle.facet_index());
     if facet_index < cell.number_of_vertices() {
@@ -1484,7 +1478,7 @@ where
     }
 
     let cell_key = handle.cell_key();
-    let cell = tds.get_cell(cell_key)?;
+    let cell = tds.cell(cell_key)?;
     let vertex_count = cell.number_of_vertices();
 
     let omit_a = usize::from(handle.omit_a());
@@ -2231,7 +2225,7 @@ where
     }
 
     let cell_a_key = facet.cell_key();
-    let cell_a = tds.get_cell(cell_a_key).ok_or(FlipError::MissingCell {
+    let cell_a = tds.cell(cell_a_key).ok_or(FlipError::MissingCell {
         cell_key: cell_a_key,
     })?;
 
@@ -2257,7 +2251,7 @@ where
         });
     }
 
-    let cell_b = tds.get_cell(neighbor_key).ok_or(FlipError::MissingCell {
+    let cell_b = tds.cell(neighbor_key).ok_or(FlipError::MissingCell {
         cell_key: neighbor_key,
     })?;
 
@@ -2339,10 +2333,10 @@ where
         });
     }
 
-    if tds.get_vertex_by_key(v0).is_none() {
+    if tds.vertex(v0).is_none() {
         return Err(FlipError::MissingVertex { vertex_key: v0 });
     }
-    if tds.get_vertex_by_key(v1).is_none() {
+    if tds.vertex(v1).is_none() {
         return Err(FlipError::MissingVertex { vertex_key: v1 });
     }
 
@@ -2371,7 +2365,7 @@ where
     let mut counts: FastHashMap<VertexKey, usize> = FastHashMap::default();
     for &cell_key in &removed_cells {
         let cell = tds
-            .get_cell(cell_key)
+            .cell(cell_key)
             .ok_or(FlipError::MissingCell { cell_key })?;
         if !cell.contains_vertex(v0) || !cell.contains_vertex(v1) {
             return Err(FlipError::InvalidEdgeAdjacency {
@@ -2426,9 +2420,9 @@ where
     }
 
     let cell = tds
-        .get_cell(cell_key)
+        .cell(cell_key)
         .ok_or(FlipError::MissingCell { cell_key })?;
-    if tds.get_vertex_by_key(inserted_vertex).is_none() {
+    if tds.vertex(inserted_vertex).is_none() {
         return Err(FlipError::MissingVertex {
             vertex_key: inserted_vertex,
         });
@@ -2469,7 +2463,7 @@ where
         return Err(FlipError::UnsupportedDimension { dimension: D });
     }
 
-    if tds.get_vertex_by_key(vertex_key).is_none() {
+    if tds.vertex(vertex_key).is_none() {
         return Err(FlipError::MissingVertex { vertex_key });
     }
 
@@ -2486,7 +2480,7 @@ where
     let mut removed_cells_buf: CellKeyBuffer = CellKeyBuffer::new();
     for &cell_key in &removed_cells {
         let cell = tds
-            .get_cell(cell_key)
+            .cell(cell_key)
             .ok_or(FlipError::MissingCell { cell_key })?;
         if !cell.contains_vertex(vertex_key) {
             return Err(FlipError::InvalidVertexAdjacency {
@@ -2799,7 +2793,7 @@ where
 
     let cell_key = ridge.cell_key();
     let cell = tds
-        .get_cell(cell_key)
+        .cell(cell_key)
         .ok_or(FlipError::MissingCell { cell_key })?;
 
     let vertex_count = cell.number_of_vertices();
@@ -2831,7 +2825,7 @@ where
 
     for &ck in &cells {
         let cell = tds
-            .get_cell(ck)
+            .cell(ck)
             .ok_or(FlipError::MissingCell { cell_key: ck })?;
         let extras = cell_extras_for_ridge(ck, cell, &ridge_vertices)?;
         if extras.len() != 2 {
@@ -2903,13 +2897,13 @@ where
     }
 
     let [a, b, c] = triangle.vertices();
-    if tds.get_vertex_by_key(a).is_none() {
+    if tds.vertex(a).is_none() {
         return Err(FlipError::MissingVertex { vertex_key: a });
     }
-    if tds.get_vertex_by_key(b).is_none() {
+    if tds.vertex(b).is_none() {
         return Err(FlipError::MissingVertex { vertex_key: b });
     }
-    if tds.get_vertex_by_key(c).is_none() {
+    if tds.vertex(c).is_none() {
         return Err(FlipError::MissingVertex { vertex_key: c });
     }
 
@@ -2935,7 +2929,7 @@ where
     let mut counts: FastHashMap<VertexKey, usize> = FastHashMap::default();
     for &cell_key in &removed_cells {
         let cell = tds
-            .get_cell(cell_key)
+            .cell(cell_key)
             .ok_or(FlipError::MissingCell { cell_key })?;
         if !cell.contains_vertex(a) || !cell.contains_vertex(b) || !cell.contains_vertex(c) {
             return Err(FlipError::InvalidTriangleAdjacency {
@@ -4010,18 +4004,12 @@ where
                     let removed_details: Vec<_> = context
                         .removed_face_vertices
                         .iter()
-                        .filter_map(|&vkey| {
-                            tds.get_vertex_by_key(vkey)
-                                .map(|vertex| (vkey, *vertex.point()))
-                        })
+                        .filter_map(|&vkey| tds.vertex(vkey).map(|vertex| (vkey, *vertex.point())))
                         .collect();
                     let inserted_details: Vec<_> = context
                         .inserted_face_vertices
                         .iter()
-                        .filter_map(|&vkey| {
-                            tds.get_vertex_by_key(vkey)
-                                .map(|vertex| (vkey, *vertex.point()))
-                        })
+                        .filter_map(|&vkey| tds.vertex(vkey).map(|vertex| (vkey, *vertex.point())))
                         .collect();
                     message = format!(
                         "{message}; removed_face={removed_details:?}; inserted_face={inserted_details:?}"
@@ -5964,7 +5952,7 @@ where
         }
 
         let cell = tds
-            .get_cell(cell_key)
+            .cell(cell_key)
             .ok_or(FlipError::MissingCell { cell_key })?;
         if !ridge.iter().all(|v| cell.contains_vertex(*v)) {
             return Err(FlipError::InvalidRidgeAdjacency { cell_key });
@@ -5988,10 +5976,9 @@ where
                     if !tds.contains_cell(neighbor_key) {
                         continue;
                     }
-                    let neighbor_cell =
-                        tds.get_cell(neighbor_key).ok_or(FlipError::MissingCell {
-                            cell_key: neighbor_key,
-                        })?;
+                    let neighbor_cell = tds.cell(neighbor_key).ok_or(FlipError::MissingCell {
+                        cell_key: neighbor_key,
+                    })?;
                     if !ridge.iter().all(|v| neighbor_cell.contains_vertex(*v)) {
                         return Err(FlipError::InvalidRidgeAdjacency { cell_key });
                     }
@@ -6019,7 +6006,7 @@ where
         SmallBuffer::with_capacity(vertices.len());
     for &vkey in vertices {
         let vertex = tds
-            .get_vertex_by_key(vkey)
+            .vertex(vkey)
             .ok_or(FlipError::MissingVertex { vertex_key: vkey })?;
         points.push(*vertex.point());
     }
@@ -6084,7 +6071,7 @@ fn vertex_point_lifted_into_cell<T, U, V, const D: usize>(
     tds: &Tds<T, U, V, D>,
     topology_model: &GlobalTopologyModelAdapter<D>,
     vertex_key: VertexKey,
-    target_cell: Option<CellKey>,
+    tarcell: Option<CellKey>,
     source_cells: &[CellKey],
 ) -> Result<Point<T, D>, FlipError>
 where
@@ -6092,7 +6079,7 @@ where
     U: DataType,
     V: DataType,
 {
-    let Some(target_cell_key) = target_cell else {
+    let Some(tarcell_key) = tarcell else {
         return vertex_point_with_optional_lift(tds, topology_model, vertex_key, None);
     };
 
@@ -6100,20 +6087,18 @@ where
         return lift_vertex_point(tds, topology_model, vertex_key, None);
     }
 
-    let target_offset = periodic_offset_for_cell_vertex(tds, target_cell_key, vertex_key)?;
+    let target_offset = periodic_offset_for_cell_vertex(tds, tarcell_key, vertex_key)?;
     if let Some(offset) = target_offset {
         return lift_vertex_point(tds, topology_model, vertex_key, Some(offset));
     }
 
-    let target_cell = tds
-        .get_cell(target_cell_key)
-        .ok_or(FlipError::MissingCell {
-            cell_key: target_cell_key,
-        })?;
-    let target_offsets = periodic_offsets_or_zero_frame(target_cell_key, target_cell)?;
+    let tarcell = tds.cell(tarcell_key).ok_or(FlipError::MissingCell {
+        cell_key: tarcell_key,
+    })?;
+    let target_offsets = periodic_offsets_or_zero_frame(tarcell_key, tarcell)?;
 
     for &source_cell_key in source_cells {
-        let Some(source_cell) = tds.get_cell(source_cell_key) else {
+        let Some(source_cell) = tds.cell(source_cell_key) else {
             continue;
         };
         if !source_cell.contains_vertex(vertex_key) {
@@ -6127,7 +6112,7 @@ where
         else {
             continue;
         };
-        let shared_indices = shared_vertex_indices(target_cell, source_cell);
+        let shared_indices = shared_vertex_indices(tarcell, source_cell);
         if shared_indices.is_empty() {
             continue;
         }
@@ -6142,7 +6127,7 @@ where
                 if candidate_offset != expected_offset {
                     return Err(FlipError::InvalidFlipContext {
                         message: format!(
-                            "conflicting periodic frame translations while aligning vertex {vertex_key:?} from cell {source_cell_key:?} into frame {target_cell_key:?}: expected {expected_offset:?}, got {candidate_offset:?}"
+                            "conflicting periodic frame translations while aligning vertex {vertex_key:?} from cell {source_cell_key:?} into frame {tarcell_key:?}: expected {expected_offset:?}, got {candidate_offset:?}"
                         ),
                     });
                 }
@@ -6156,9 +6141,7 @@ where
     }
 
     Err(FlipError::InvalidFlipContext {
-        message: format!(
-            "cannot align periodic vertex {vertex_key:?} into frame {target_cell_key:?}"
-        ),
+        message: format!("cannot align periodic vertex {vertex_key:?} into frame {tarcell_key:?}"),
     })
 }
 
@@ -6176,7 +6159,7 @@ where
     V: DataType,
 {
     let vertex = tds
-        .get_vertex_by_key(vertex_key)
+        .vertex(vertex_key)
         .ok_or(FlipError::MissingVertex { vertex_key })?;
     let lifted_coords = topology_model
         .lift_for_orientation(*vertex.point().coords(), periodic_offset)
@@ -6200,7 +6183,7 @@ where
     V: DataType,
 {
     let cell = tds
-        .get_cell(cell_key)
+        .cell(cell_key)
         .ok_or(FlipError::MissingCell { cell_key })?;
     let offsets = periodic_offsets_or_zero_frame(cell_key, cell)?;
     Ok(cell
@@ -6256,7 +6239,7 @@ where
 /// Finds every common vertex to act as a consistency check when aligning two
 /// periodic cell frames.
 fn shared_vertex_indices<T, U, V, const D: usize>(
-    target_cell: &Cell<T, U, V, D>,
+    tarcell: &Cell<T, U, V, D>,
     source_cell: &Cell<T, U, V, D>,
 ) -> SmallBuffer<(usize, usize), MAX_PRACTICAL_DIMENSION_SIZE>
 where
@@ -6264,7 +6247,7 @@ where
     V: DataType,
 {
     let mut shared = SmallBuffer::new();
-    for (target_index, &target_vertex) in target_cell.vertices().iter().enumerate() {
+    for (target_index, &target_vertex) in tarcell.vertices().iter().enumerate() {
         if let Some(source_index) = source_cell
             .vertices()
             .iter()
@@ -6312,7 +6295,7 @@ where
     V: DataType,
 {
     source_cells.iter().copied().find(|&cell_key| {
-        tds.get_cell(cell_key).is_some_and(|cell| {
+        tds.cell(cell_key).is_some_and(|cell| {
             cell.number_of_vertices() == vertices.len()
                 && vertices
                     .iter()
@@ -6542,7 +6525,7 @@ where
             vertices.iter().copied().collect();
         target.sort_unstable();
 
-        let existing_sorted = tds.get_cell(cell_key).map(|cell| {
+        let existing_sorted = tds.cell(cell_key).map(|cell| {
             let mut v: SmallBuffer<VertexKey, MAX_PRACTICAL_DIMENSION_SIZE> =
                 cell.vertices().iter().copied().collect();
             v.sort_unstable();
@@ -6632,7 +6615,7 @@ where
     U: DataType,
     V: DataType,
 {
-    let Some(cell) = tds.get_cell(cell_key) else {
+    let Some(cell) = tds.cell(cell_key) else {
         return Ok(());
     };
     for facet_index in 0..cell.number_of_vertices() {
@@ -6663,7 +6646,7 @@ fn enqueue_facet<T, U, V, const D: usize>(
     U: DataType,
     V: DataType,
 {
-    let Some(cell) = tds.get_cell(handle.cell_key()) else {
+    let Some(cell) = tds.cell(handle.cell_key()) else {
         return;
     };
 
@@ -6706,7 +6689,7 @@ fn enqueue_cell_edges<T, U, V, const D: usize>(
         return;
     }
 
-    let Some(cell) = tds.get_cell(cell_key) else {
+    let Some(cell) = tds.cell(cell_key) else {
         return;
     };
 
@@ -6751,7 +6734,7 @@ fn enqueue_cell_triangles<T, U, V, const D: usize>(
         return;
     }
 
-    let Some(cell) = tds.get_cell(cell_key) else {
+    let Some(cell) = tds.cell(cell_key) else {
         return;
     };
 
@@ -6802,7 +6785,7 @@ where
         return Ok(());
     }
 
-    let Some(cell) = tds.get_cell(cell_key) else {
+    let Some(cell) = tds.cell(cell_key) else {
         return Ok(());
     };
 
@@ -6849,7 +6832,7 @@ fn enqueue_ridge<T, U, V, const D: usize>(
         return;
     }
 
-    let Some(cell) = tds.get_cell(handle.cell_key()) else {
+    let Some(cell) = tds.cell(handle.cell_key()) else {
         return;
     };
 
@@ -7173,7 +7156,7 @@ mod tests {
         init_tracing();
         let fixture = RidgeDiagnosticFixture3d::new();
         let ridge = fixture.ridge_ab();
-        let cell = fixture.tds.get_cell(fixture.upper_tetrahedron).unwrap();
+        let cell = fixture.tds.cell(fixture.upper_tetrahedron).unwrap();
 
         let ridge_neighbors = ridge_neighbor_cells_for_cell(cell, &ridge);
         assert!(
@@ -7346,7 +7329,7 @@ mod tests {
         edge_start: VertexKey,
         edge_end: VertexKey,
     ) -> u8 {
-        let cell = tds.get_cell(cell_key).expect("cell key missing in TDS");
+        let cell = tds.cell(cell_key).expect("cell key missing in TDS");
         for facet_idx in 0..cell.number_of_vertices() {
             let facet = facet_vertices_from_cell(cell, facet_idx);
             if facet.len() == 2 && facet.contains(&edge_start) && facet.contains(&edge_end) {
@@ -7364,7 +7347,7 @@ mod tests {
         face_v1: VertexKey,
         face_v2: VertexKey,
     ) -> u8 {
-        let cell = tds.get_cell(cell_key).expect("cell key missing in TDS");
+        let cell = tds.cell(cell_key).expect("cell key missing in TDS");
         for facet_idx in 0..cell.number_of_vertices() {
             let facet = facet_vertices_from_cell(cell, facet_idx);
             if facet.len() == 3
@@ -7414,16 +7397,14 @@ mod tests {
             .unwrap();
         let stale_handle = FacetHandle::new(cell_key, 0);
         let stable_key = {
-            let cell = tds.get_cell(cell_key).unwrap();
+            let cell = tds.cell(cell_key).unwrap();
             let facet_vertices =
                 facet_vertices_from_cell(cell, usize::from(stale_handle.facet_index()));
             facet_key_from_vertices(&facet_vertices)
         };
 
         // Reorder slots so the original index no longer identifies the same facet.
-        tds.get_cell_by_key_mut(cell_key)
-            .unwrap()
-            .swap_vertex_slots(0, 1);
+        tds.cell_mut(cell_key).unwrap().swap_vertex_slots(0, 1);
 
         let resolved = resolve_facet_handle_for_key(&tds, stale_handle, stable_key)
             .expect("facet handle should be recoverable by stable key");
@@ -7431,7 +7412,7 @@ mod tests {
         assert_eq!(usize::from(resolved.facet_index()), 1);
 
         let resolved_key = {
-            let cell = tds.get_cell(cell_key).unwrap();
+            let cell = tds.cell(cell_key).unwrap();
             let facet_vertices =
                 facet_vertices_from_cell(cell, usize::from(resolved.facet_index()));
             facet_key_from_vertices(&facet_vertices)
@@ -7460,7 +7441,7 @@ mod tests {
             .unwrap();
         let stale_handle = RidgeHandle::new(cell_key, 0, 1);
         let stable_key = {
-            let cell = tds.get_cell(cell_key).unwrap();
+            let cell = tds.cell(cell_key).unwrap();
             let ridge_vertices = ridge_vertices_from_cell(
                 cell,
                 usize::from(stale_handle.omit_a()),
@@ -7470,9 +7451,7 @@ mod tests {
         };
 
         // Reorder slots so the original omit pair no longer identifies the same ridge.
-        tds.get_cell_by_key_mut(cell_key)
-            .unwrap()
-            .swap_vertex_slots(0, 2);
+        tds.cell_mut(cell_key).unwrap().swap_vertex_slots(0, 2);
 
         let resolved = resolve_ridge_handle_for_key(&tds, stale_handle, stable_key)
             .expect("ridge handle should be recoverable by stable key");
@@ -7480,7 +7459,7 @@ mod tests {
         assert_eq!((resolved.omit_a(), resolved.omit_b()), (1, 2));
 
         let resolved_key = {
-            let cell = tds.get_cell(cell_key).unwrap();
+            let cell = tds.cell(cell_key).unwrap();
             let ridge_vertices = ridge_vertices_from_cell(
                 cell,
                 usize::from(resolved.omit_a()),
@@ -7543,7 +7522,7 @@ mod tests {
         // External cell must be rewired from the removed cell to a newly inserted cell.
         let facet_idx_glue_edge =
             facet_index_for_edge_2d(&tds, cell_external_left, v_left_bottom, v_left_top);
-        let external_cell = tds.get_cell(cell_external_left).unwrap();
+        let external_cell = tds.cell(cell_external_left).unwrap();
         let neighbors = external_cell
             .neighbors()
             .expect("external neighbors should exist");
@@ -7560,7 +7539,7 @@ mod tests {
         );
 
         // Neighbor relation must be symmetric.
-        let neighbor_cell = tds.get_cell(neighbor_key_glue).unwrap();
+        let neighbor_cell = tds.cell(neighbor_key_glue).unwrap();
         let mirror_idx = external_cell
             .mirror_facet_index(usize::from(facet_idx_glue_edge), neighbor_cell)
             .expect("mirror facet index should exist");
@@ -7571,7 +7550,7 @@ mod tests {
 
         // Ensure flip did not leave any dangling neighbor pointers in the newly inserted cells.
         for &cell_key in &info.new_cells {
-            let cell = tds.get_cell(cell_key).unwrap();
+            let cell = tds.cell(cell_key).unwrap();
             if let Some(ns) = cell.neighbors() {
                 for neighbor_key in ns.iter().flatten() {
                     assert!(
@@ -7623,7 +7602,7 @@ mod tests {
                     let external_cell_key = tds
                         .insert_cell_with_mapping(Cell::new(simplex_vertices.clone(), None).unwrap())
                         .unwrap();
-                    assert!(tds.remove_cell_by_key(external_cell_key).is_some());
+                    assert_eq!(tds.remove_cells_by_keys(&[external_cell_key]), 1);
 
                     let mut replacement_cells = vec![vertex_key_buffer(&simplex_vertices)];
                     let result = orient_replacement_cells(
@@ -7762,14 +7741,14 @@ mod tests {
                         vertex_key_buffer(&adjacent_vertices),
                     ];
                     orient_replacement_cells(&tds, &mut internally_aligned, &[]).unwrap();
-                    let (source_facet_idx, target_facet_idx) =
+                    let (source_facet_idx, tarfacet_idx) =
                         shared_facet_indices(&internally_aligned[0], &internally_aligned[1]).unwrap();
                     assert!(
                         facet_orders_coherent(
                             &internally_aligned[0],
                             source_facet_idx,
                             &internally_aligned[1],
-                            target_facet_idx,
+                            tarfacet_idx,
                         )
                         .unwrap(),
                         "internal shared facets should be coherent after parity propagation"
@@ -7923,7 +7902,7 @@ mod tests {
         // (v_edge_start, v_cycle_0, v_cycle_1).
         let glue_face_facet_index =
             facet_index_for_face_3d(&tds, cell_external, v_edge_start, v_cycle_0, v_cycle_1);
-        let external_cell = tds.get_cell(cell_external).unwrap();
+        let external_cell = tds.cell(cell_external).unwrap();
         let neighbors = external_cell
             .neighbors()
             .expect("external cell should have neighbors after repair");
@@ -7940,7 +7919,7 @@ mod tests {
         );
 
         // Neighbor relation must be symmetric.
-        let neighbor_cell = tds.get_cell(glued_neighbor).unwrap();
+        let neighbor_cell = tds.cell(glued_neighbor).unwrap();
         let mirror_idx = external_cell
             .mirror_facet_index(usize::from(glue_face_facet_index), neighbor_cell)
             .expect("mirror facet index should exist");
@@ -7951,7 +7930,7 @@ mod tests {
 
         // Ensure the newly inserted cells do not reference removed cells.
         for &cell_key in &info.new_cells {
-            let cell = tds.get_cell(cell_key).unwrap();
+            let cell = tds.cell(cell_key).unwrap();
             if let Some(ns) = cell.neighbors() {
                 for neighbor_key in ns.iter().flatten() {
                     assert!(
@@ -8115,11 +8094,7 @@ mod tests {
                 let mut uuids: Vec<Uuid> = cell
                     .vertices()
                     .iter()
-                    .map(|&vkey| {
-                        tds.get_vertex_by_key(vkey)
-                            .expect("vertex key missing in TDS")
-                            .uuid()
-                    })
+                    .map(|&vkey| tds.vertex(vkey).expect("vertex key missing in TDS").uuid())
                     .collect();
                 uuids.sort();
                 uuids
@@ -8218,7 +8193,7 @@ mod tests {
                     if $dim == 2 {
                         let mut inverse_facet: Option<FacetHandle> = None;
                         for &cell_key in &info.new_cells {
-                            let cell = tds.get_cell(cell_key).unwrap();
+                            let cell = tds.cell(cell_key).unwrap();
                             if cell.contains_vertex(opposite_a) && cell.contains_vertex(opposite_b) {
                                 let facet_index = cell
                                     .vertices()
@@ -8312,7 +8287,7 @@ mod tests {
                     if $dim == 3 {
                         let mut inverse_facet: Option<FacetHandle> = None;
                         for &cell_key in &info.new_cells {
-                            let cell = tds.get_cell(cell_key).unwrap();
+                            let cell = tds.cell(cell_key).unwrap();
                             if cell.contains_vertex(a)
                                 && cell.contains_vertex(b)
                                 && cell.contains_vertex(c)
@@ -10060,7 +10035,7 @@ mod tests {
                     target_vertices.push(shared_vertex);
                     target_vertices.extend(periodic_helper_vertices::<$dim>(&mut tds, $dim));
                     let target_offsets = vec![[0_i8; $dim]; target_vertices.len()];
-                    let target_cell =
+                    let tarcell =
                         insert_periodic_cell_with_offsets(&mut tds, target_vertices, target_offsets);
 
                     let mut source_vertices = Vec::with_capacity($dim + 1);
@@ -10077,7 +10052,7 @@ mod tests {
                         &tds,
                         &topology_model,
                         lifted_vertex,
-                        Some(target_cell),
+                        Some(tarcell),
                         &[source_cell],
                     );
                     let lifted = result.unwrap();
@@ -10108,7 +10083,7 @@ mod tests {
                     target_vertices.extend(periodic_helper_vertices::<$dim>(&mut tds, $dim - 1));
                     let mut target_offsets = vec![[0_i8; $dim]; target_vertices.len()];
                     target_offsets[1][0] = 1;
-                    let target_cell =
+                    let tarcell =
                         insert_periodic_cell_with_offsets(&mut tds, target_vertices, target_offsets);
 
                     let mut source_vertices = Vec::with_capacity($dim + 1);
@@ -10128,7 +10103,7 @@ mod tests {
                         &tds,
                         &topology_model,
                         lifted_vertex,
-                        Some(target_cell),
+                        Some(tarcell),
                         &[source_cell],
                     );
                     assert!(
@@ -10244,11 +10219,11 @@ mod tests {
                 fn [<test_periodic_inverse_k2_uses_removed_cell_frame_ $dim d>]() {
                     let (tds, face_vertices, opposite_a, opposite_b, removed_cells) =
                         periodic_inverse_k2_fixture::<$dim>();
-                    let mut target_cell_vertices = face_vertices.clone();
-                    target_cell_vertices.push(opposite_a);
-                    target_cell_vertices.sort_unstable_by_key(|v| v.data().as_ffi());
+                    let mut tarcell_vertices = face_vertices.clone();
+                    tarcell_vertices.push(opposite_a);
+                    tarcell_vertices.sort_unstable_by_key(|v| v.data().as_ffi());
                     assert!(
-                        matching_source_cell(&tds, &target_cell_vertices, &removed_cells)
+                        matching_source_cell(&tds, &tarcell_vertices, &removed_cells)
                             .is_none(),
                         "inverse k=2 target cell should require explicit frame alignment",
                     );
@@ -10293,11 +10268,11 @@ mod tests {
                 fn [<test_periodic_inverse_k3_uses_removed_cell_frame_ $dim d>]() {
                     let (tds, ridge_vertices, triangle_vertices, removed_cells) =
                         periodic_inverse_k3_fixture::<$dim>();
-                    let mut target_cell_vertices = ridge_vertices.clone();
-                    target_cell_vertices.extend_from_slice(&triangle_vertices[1..]);
-                    target_cell_vertices.sort_unstable_by_key(|v| v.data().as_ffi());
+                    let mut tarcell_vertices = ridge_vertices.clone();
+                    tarcell_vertices.extend_from_slice(&triangle_vertices[1..]);
+                    tarcell_vertices.sort_unstable_by_key(|v| v.data().as_ffi());
                     assert!(
-                        matching_source_cell(&tds, &target_cell_vertices, &removed_cells)
+                        matching_source_cell(&tds, &tarcell_vertices, &removed_cells)
                             .is_none(),
                         "inverse k=3 target cell should require explicit frame alignment",
                     );
@@ -10352,7 +10327,7 @@ mod tests {
             .iter()
             .copied()
             .find(|&cell_key| {
-                tds.get_cell(cell_key)
+                tds.cell(cell_key)
                     .is_some_and(|cell| cell.contains_vertex(lifted_vertex))
             })
             .expect("fixture should contain a removed cell with the lifted vertex");

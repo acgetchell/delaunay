@@ -682,7 +682,7 @@ fn debug_large_case<const D: usize>(dimension_name: &str, default_n_points: usiz
             let kernel = RobustKernel::<f64>::new();
             println!("Starting batch construction (new)...");
             let t_batch = Instant::now();
-            match DelaunayTriangulation::with_topology_guarantee_and_options_with_construction_statistics(
+            match DelaunayTriangulation::with_options_and_statistics(
                 &kernel,
                 &vertices,
                 TopologyGuarantee::PLManifoldStrict,
@@ -1059,13 +1059,14 @@ fn regression_issue_230_4d_100_orientation() {
     let vertices: Vec<Vertex<f64, (), 4>> = points.into_iter().map(|p| vertex!(p)).collect();
 
     let kernel = RobustKernel::<f64>::new();
-    let (dt, stats) = DelaunayTriangulation::<RobustKernel<f64>, (), (), 4>::with_topology_guarantee_and_options_with_construction_statistics(
-        &kernel,
-        &vertices,
-        TopologyGuarantee::PLManifoldStrict,
-        ConstructionOptions::default(),
-    )
-    .expect("construction must not fail (#230 regression)");
+    let (dt, stats) =
+        DelaunayTriangulation::<RobustKernel<f64>, (), (), 4>::with_options_and_statistics(
+            &kernel,
+            &vertices,
+            TopologyGuarantee::PLManifoldStrict,
+            ConstructionOptions::default(),
+        )
+        .expect("construction must not fail (#230 regression)");
 
     println!(
         "regression_issue_230: inserted={} skipped={} (duplicate={} degeneracy={}) seed=0x{seed:X}",

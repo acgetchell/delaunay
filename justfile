@@ -167,26 +167,32 @@ build-release:
 changelog: _ensure-git-cliff python-sync
     #!/usr/bin/env bash
     set -euo pipefail
-    git-cliff -o CHANGELOG.md
+    GIT_CLIFF_OFFLINE=true git-cliff -o CHANGELOG.md
     uv run postprocess-changelog
     uv run archive-changelog
 
-changelog-tag version: python-sync
-    uv run tag-release {{version}}
+changelog-unreleased version: _ensure-git-cliff python-sync
+    #!/usr/bin/env bash
+    set -euo pipefail
+    GIT_CLIFF_OFFLINE=true git-cliff --tag {{version}} -o CHANGELOG.md
+    uv run postprocess-changelog
+    uv run archive-changelog
+
+changelog-tag version:
+    just tag {{version}}
 
 changelog-update: changelog
     @echo "📝 Changelog updated successfully!"
     @echo "To create a git tag with changelog content for a specific version, run:"
-    @echo "  just changelog-tag <version>  # e.g., just changelog-tag v0.4.2"
+    @echo "  just tag <version>  # e.g., just tag v0.4.2"
 
-# Check (non-mutating): run all linters/validators
+# Check (non-mutating): run all linters/validators.
 check: lint
     @echo "✅ Checks complete!"
 
-# Optional SlotMap compatibility canary. DenseSlotMap is the default production
-# backend; run this when changing storage abstractions or before releases.
-check-storage-backends:
-    cargo clippy --workspace --all-targets --no-default-features -- -D warnings -W clippy::pedantic -W clippy::nursery -W clippy::cargo
+# Fast compile check (no binary produced)
+check-fast:
+    cargo check
 
 # CI simulation: comprehensive validation (matches .github/workflows/ci.yml)
 # Runs: checks + test workflow + examples
@@ -211,20 +217,10 @@ clean:
 
 # Code quality and formatting
 clippy:
-    # DenseSlotMap backend (default)
     cargo clippy --workspace --all-targets -- -D warnings -W clippy::pedantic -W clippy::nursery -W clippy::cargo
 
     # All features
     cargo clippy --workspace --all-targets --all-features -- -D warnings -W clippy::pedantic -W clippy::nursery -W clippy::cargo
-
-# Compare SlotMap vs DenseSlotMap storage backends
-compare-storage: _ensure-uv
-    @echo "📊 Comparing SlotMap vs DenseSlotMap performance (~4-6 hours)"
-    uv run compare-storage-backends --bench large_scale_performance
-
-compare-storage-large: _ensure-uv
-    @echo "📊 Comparing storage backends at large scale (~8-12 hours, use on compute cluster)"
-    BENCH_LARGE_SCALE=1 uv run compare-storage-backends --bench large_scale_performance
 
 # Coverage analysis for local development (HTML output)
 coverage: _ensure-cargo-llvm-cov
@@ -301,11 +297,8 @@ help-workflows:
     @echo "Larger/optional workflows:"
     @echo "  just ci-slow             # CI + slow tests (100+ vertices)"
     @echo "  just ci-baseline         # CI + save performance baseline"
-    @echo "  just check-storage-backends # Optional SlotMap compatibility canary"
     @echo "  just coverage            # Generate coverage report (HTML)"
     @echo "  just semgrep             # Run repository-owned Semgrep rules"
-    @echo "  just compare-storage       # Compare SlotMap vs DenseSlotMap (~4-6 hours)"
-    @echo "  just compare-storage-large # Large scale comparison (~8-12 hours, compute cluster)"
     @echo ""
     @echo "Use 'just --list' for every granular recipe."
 
@@ -816,7 +809,7 @@ spell-check: _ensure-typos
 tag version: python-sync
     uv run tag-release {{version}}
 
-# Recreate an existing tag (delete + recreate)
+# Replace an existing annotated tag from the CHANGELOG.md section.
 tag-force version: python-sync
     uv run tag-release {{version}} --force
 

@@ -26,18 +26,23 @@
 
 #![forbid(unsafe_code)]
 
-use crate::core::algorithms::locate::{ConflictError, LocateError, extract_cavity_boundary};
-use crate::core::cell::Cell;
+use crate::core::algorithms::locate::{
+    ConflictError, LocateError, LocateResult, extract_cavity_boundary,
+};
+use crate::core::cell::{Cell, CellValidationError};
 use crate::core::collections::{
     CellKeyBuffer, FastHashMap, FastHashSet, FastHasher, MAX_PRACTICAL_DIMENSION_SIZE, SmallBuffer,
     VertexKeyBuffer,
 };
 use crate::core::facet::FacetHandle;
-use crate::core::tds::{CellKey, EntityKind, Tds, TdsError, VertexKey};
+use crate::core::tds::{
+    CellKey, EntityKind, GeometricError, Tds, TdsConstructionError, TdsError, VertexKey,
+};
 use crate::core::traits::boundary_analysis::BoundaryAnalysis;
 use crate::core::traits::data_type::DataType;
 use crate::core::triangulation::TriangulationConstructionError;
 use crate::core::triangulation::TriangulationValidationError;
+use crate::core::vertex::VertexValidationError;
 use crate::geometry::kernel::Kernel;
 use crate::geometry::point::Point;
 use crate::geometry::predicates::Orientation;
@@ -57,7 +62,7 @@ pub use crate::core::operations::{InsertionOutcome, InsertionResult, InsertionSt
 /// let reason = HullExtensionReason::NoVisibleFacets;
 /// assert!(matches!(reason, HullExtensionReason::NoVisibleFacets));
 /// ```
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum HullExtensionReason {
     /// No visible boundary facets (coplanar with hull surface).
@@ -103,6 +108,716 @@ impl std::fmt::Display for HullExtensionReason {
     }
 }
 
+/// Compact, typed summary of a [`TdsError`] used inside insertion-stage errors.
+#[derive(Debug, Clone, thiserror::Error, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum TdsValidationFailure {
+    /// The triangulation contains an invalid vertex.
+    #[error("invalid vertex {vertex_id}: {source}")]
+    InvalidVertex {
+        /// UUID of the invalid vertex.
+        vertex_id: uuid::Uuid,
+        /// Underlying vertex validation error.
+        #[source]
+        source: VertexValidationError,
+    },
+
+    /// The triangulation contains an invalid cell.
+    #[error("invalid cell {cell_id}: {source}")]
+    InvalidCell {
+        /// UUID of the invalid cell.
+        cell_id: uuid::Uuid,
+        /// Underlying cell validation error.
+        #[source]
+        source: CellValidationError,
+    },
+
+    /// Neighbor relationships are invalid.
+    #[error("invalid neighbor relationships: {message}")]
+    InvalidNeighbors {
+        /// Neighbor validation failure detail.
+        message: String,
+    },
+
+    /// Coherent orientation was violated between adjacent cells.
+    #[error(
+        "orientation invariant violated between cells {cell1_uuid} and {cell2_uuid} \
+         (facet indices {cell1_facet_index}/{cell2_facet_index}, vertex counts \
+         {facet_vertex_count}/{cell2_facet_vertex_count}, observed odd permutation \
+         {observed_odd_permutation}, expected {expected_odd_permutation})"
+    )]
+    OrientationViolation {
+        /// Key of the first cell.
+        cell1_key: CellKey,
+        /// UUID of the first cell.
+        cell1_uuid: uuid::Uuid,
+        /// Key of the second cell.
+        cell2_key: CellKey,
+        /// UUID of the second cell.
+        cell2_uuid: uuid::Uuid,
+        /// Facet index in the first cell.
+        cell1_facet_index: usize,
+        /// Facet index in the second cell.
+        cell2_facet_index: usize,
+        /// Number of vertices in the first facet ordering.
+        facet_vertex_count: usize,
+        /// Number of vertices in the second facet ordering.
+        cell2_facet_vertex_count: usize,
+        /// Observed permutation parity.
+        observed_odd_permutation: bool,
+        /// Expected permutation parity.
+        expected_odd_permutation: bool,
+    },
+
+    /// Duplicate cells were detected.
+    #[error("duplicate cells detected: {message}")]
+    DuplicateCells {
+        /// Duplicate-cell detail.
+        message: String,
+    },
+
+    /// Cell creation failed inside TDS validation.
+    #[error("failed to create cell: {message}")]
+    FailedToCreateCell {
+        /// Cell creation failure detail.
+        message: String,
+    },
+
+    /// Cells were not neighbors as expected.
+    #[error("cells {cell1} and {cell2} are not neighbors")]
+    NotNeighbors {
+        /// First cell UUID.
+        cell1: uuid::Uuid,
+        /// Second cell UUID.
+        cell2: uuid::Uuid,
+    },
+
+    /// Entity mapping became inconsistent.
+    #[error("{entity:?} mapping inconsistency: {message}")]
+    MappingInconsistency {
+        /// Entity with an inconsistent mapping.
+        entity: EntityKind,
+        /// Mapping inconsistency detail.
+        message: String,
+    },
+
+    /// Vertex-key retrieval failed for a cell.
+    #[error("failed to retrieve vertex keys for cell {cell_id}: {message}")]
+    VertexKeyRetrievalFailed {
+        /// Cell UUID.
+        cell_id: uuid::Uuid,
+        /// Retrieval failure detail.
+        message: String,
+    },
+
+    /// A cell key was missing from storage.
+    #[error("cell key {cell_key:?} not found: {context}")]
+    CellNotFound {
+        /// Missing cell key.
+        cell_key: CellKey,
+        /// Lookup context.
+        context: String,
+    },
+
+    /// A vertex key was missing from storage.
+    #[error("vertex key {vertex_key:?} not found: {context}")]
+    VertexNotFound {
+        /// Missing vertex key.
+        vertex_key: VertexKey,
+        /// Lookup context.
+        context: String,
+    },
+
+    /// A dimensional invariant was violated.
+    #[error("dimension mismatch: expected {expected}, got {actual}: {context}")]
+    DimensionMismatch {
+        /// Expected count.
+        expected: usize,
+        /// Observed count.
+        actual: usize,
+        /// Validation context.
+        context: String,
+    },
+
+    /// An index exceeded the valid range.
+    #[error("index out of bounds: index {index}, bound {bound}: {context}")]
+    IndexOutOfBounds {
+        /// Invalid index.
+        index: usize,
+        /// Exclusive upper bound.
+        bound: usize,
+        /// Access context.
+        context: String,
+    },
+
+    /// Internal TDS consistency failed.
+    #[error("internal data structure inconsistency: {message}")]
+    InconsistentDataStructure {
+        /// Inconsistency detail.
+        message: String,
+    },
+
+    /// Geometric orientation or predicate validation failed.
+    #[error("geometric validation failed: {source}")]
+    Geometric {
+        /// Underlying geometric validation error.
+        #[source]
+        source: GeometricError,
+    },
+
+    /// Facet validation failed.
+    #[error("facet validation failed: {message}")]
+    Facet {
+        /// Facet failure detail.
+        message: String,
+    },
+
+    /// A cell contains duplicate coordinates.
+    #[error("duplicate coordinates in cell {cell_id}: {message}")]
+    DuplicateCoordinatesInCell {
+        /// UUID of the cell containing duplicates.
+        cell_id: uuid::Uuid,
+        /// Duplicate-coordinate detail.
+        message: String,
+    },
+}
+
+impl From<TdsError> for TdsValidationFailure {
+    fn from(source: TdsError) -> Self {
+        match source {
+            TdsError::InvalidVertex { vertex_id, source } => {
+                Self::InvalidVertex { vertex_id, source }
+            }
+            TdsError::InvalidCell { cell_id, source } => Self::InvalidCell { cell_id, source },
+            TdsError::InvalidNeighbors { message } => Self::InvalidNeighbors { message },
+            TdsError::OrientationViolation {
+                cell1_key,
+                cell1_uuid,
+                cell2_key,
+                cell2_uuid,
+                cell1_facet_index,
+                cell2_facet_index,
+                facet_vertices,
+                cell2_facet_vertices,
+                observed_odd_permutation,
+                expected_odd_permutation,
+            } => Self::OrientationViolation {
+                cell1_key,
+                cell1_uuid,
+                cell2_key,
+                cell2_uuid,
+                cell1_facet_index,
+                cell2_facet_index,
+                facet_vertex_count: facet_vertices.len(),
+                cell2_facet_vertex_count: cell2_facet_vertices.len(),
+                observed_odd_permutation,
+                expected_odd_permutation,
+            },
+            TdsError::DuplicateCells { message } => Self::DuplicateCells { message },
+            TdsError::FailedToCreateCell { message } => Self::FailedToCreateCell { message },
+            TdsError::NotNeighbors { cell1, cell2 } => Self::NotNeighbors { cell1, cell2 },
+            TdsError::MappingInconsistency { entity, message } => {
+                Self::MappingInconsistency { entity, message }
+            }
+            TdsError::VertexKeyRetrievalFailed { cell_id, message } => {
+                Self::VertexKeyRetrievalFailed { cell_id, message }
+            }
+            TdsError::CellNotFound { cell_key, context } => {
+                Self::CellNotFound { cell_key, context }
+            }
+            TdsError::VertexNotFound {
+                vertex_key,
+                context,
+            } => Self::VertexNotFound {
+                vertex_key,
+                context,
+            },
+            TdsError::DimensionMismatch {
+                expected,
+                actual,
+                context,
+            } => Self::DimensionMismatch {
+                expected,
+                actual,
+                context,
+            },
+            TdsError::IndexOutOfBounds {
+                index,
+                bound,
+                context,
+            } => Self::IndexOutOfBounds {
+                index,
+                bound,
+                context,
+            },
+            TdsError::InconsistentDataStructure { message } => {
+                Self::InconsistentDataStructure { message }
+            }
+            TdsError::Geometric(source) => Self::Geometric { source },
+            TdsError::FacetError(source) => Self::Facet {
+                message: source.to_string(),
+            },
+            TdsError::DuplicateCoordinatesInCell { cell_id, message } => {
+                Self::DuplicateCoordinatesInCell { cell_id, message }
+            }
+        }
+    }
+}
+
+/// Compact, typed summary of a [`TdsConstructionError`].
+#[derive(Debug, Clone, thiserror::Error, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum TdsConstructionFailure {
+    /// TDS validation failed during construction.
+    #[error("TDS validation failed during construction: {reason}")]
+    Validation {
+        /// Structured validation failure.
+        #[source]
+        reason: TdsValidationFailure,
+    },
+
+    /// A duplicate UUID was inserted.
+    #[error("duplicate UUID during construction: {entity:?} {uuid}")]
+    DuplicateUuid {
+        /// Entity kind.
+        entity: EntityKind,
+        /// Duplicated UUID.
+        uuid: uuid::Uuid,
+    },
+}
+
+impl From<TdsConstructionError> for TdsConstructionFailure {
+    fn from(source: TdsConstructionError) -> Self {
+        match source {
+            TdsConstructionError::ValidationError(source) => Self::Validation {
+                reason: source.into(),
+            },
+            TdsConstructionError::DuplicateUuid { entity, uuid } => {
+                Self::DuplicateUuid { entity, uuid }
+            }
+        }
+    }
+}
+
+/// Structured reason why initial-simplex construction failed during insertion.
+#[derive(Debug, Clone, thiserror::Error, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum InitialSimplexConstructionError {
+    /// TDS validation failed while assembling the bootstrap simplex.
+    #[error("TDS validation failed while building initial simplex: {source}")]
+    TdsValidation {
+        /// Underlying TDS validation error.
+        #[source]
+        source: TdsValidationFailure,
+    },
+
+    /// The bootstrap simplex attempted to insert a duplicate UUID.
+    #[error("duplicate UUID while building initial simplex: {entity:?} {uuid}")]
+    DuplicateUuid {
+        /// Duplicated entity kind.
+        entity: EntityKind,
+        /// Duplicated UUID.
+        uuid: uuid::Uuid,
+    },
+
+    /// Bootstrap cell creation failed.
+    #[error("failed to create bootstrap cell: {message}")]
+    FailedToCreateCell {
+        /// Cell creation failure detail.
+        message: String,
+    },
+
+    /// Not enough vertices were available for the bootstrap simplex.
+    #[error("insufficient vertices for {dimension}D initial simplex: {source}")]
+    InsufficientVertices {
+        /// Attempted dimension.
+        dimension: usize,
+        /// Underlying cell validation error.
+        #[source]
+        source: CellValidationError,
+    },
+
+    /// Geometric degeneracy prevented bootstrap construction.
+    #[error("geometric degeneracy while building initial simplex: {message}")]
+    GeometricDegeneracy {
+        /// Degeneracy detail.
+        message: String,
+    },
+
+    /// Internal construction invariant failed.
+    #[error("internal inconsistency while building initial simplex: {message}")]
+    InternalInconsistency {
+        /// Internal inconsistency detail.
+        message: String,
+    },
+
+    /// Duplicate coordinates were detected in the bootstrap simplex.
+    #[error("duplicate coordinates while building initial simplex: {coordinates}")]
+    DuplicateCoordinates {
+        /// Duplicate coordinate tuple.
+        coordinates: String,
+    },
+
+    /// An insertion-stage-only construction error escaped initial-simplex construction.
+    #[error(
+        "unexpected insertion-stage construction error while building initial simplex: {message}"
+    )]
+    UnexpectedInsertionStage {
+        /// Display form of the unexpected insertion-stage error.
+        message: String,
+    },
+}
+
+impl From<TdsConstructionError> for InitialSimplexConstructionError {
+    fn from(source: TdsConstructionError) -> Self {
+        match source {
+            TdsConstructionError::ValidationError(source) => Self::TdsValidation {
+                source: source.into(),
+            },
+            TdsConstructionError::DuplicateUuid { entity, uuid } => {
+                Self::DuplicateUuid { entity, uuid }
+            }
+        }
+    }
+}
+
+impl From<TriangulationConstructionError> for InitialSimplexConstructionError {
+    fn from(source: TriangulationConstructionError) -> Self {
+        match source {
+            TriangulationConstructionError::Tds(source) => source.into(),
+            TriangulationConstructionError::FailedToCreateCell { message } => {
+                Self::FailedToCreateCell { message }
+            }
+            TriangulationConstructionError::InsufficientVertices { dimension, source } => {
+                Self::InsufficientVertices { dimension, source }
+            }
+            TriangulationConstructionError::GeometricDegeneracy { message } => {
+                Self::GeometricDegeneracy { message }
+            }
+            TriangulationConstructionError::InternalInconsistency { message } => {
+                Self::InternalInconsistency { message }
+            }
+            TriangulationConstructionError::DuplicateCoordinates { coordinates } => {
+                Self::DuplicateCoordinates { coordinates }
+            }
+            TriangulationConstructionError::InsertionConflictRegion { source } => {
+                Self::UnexpectedInsertionStage {
+                    message: source.to_string(),
+                }
+            }
+            TriangulationConstructionError::InsertionLocation { source } => {
+                Self::UnexpectedInsertionStage {
+                    message: source.to_string(),
+                }
+            }
+            TriangulationConstructionError::InsertionNonManifoldTopology {
+                facet_hash,
+                cell_count,
+            } => Self::UnexpectedInsertionStage {
+                message: format!(
+                    "facet {facet_hash:#x} shared by {cell_count} cells during initial simplex"
+                ),
+            },
+            TriangulationConstructionError::InsertionHullExtension { reason } => {
+                Self::UnexpectedInsertionStage {
+                    message: reason.to_string(),
+                }
+            }
+            TriangulationConstructionError::InsertionDelaunayValidation { source } => {
+                Self::UnexpectedInsertionStage {
+                    message: source.to_string(),
+                }
+            }
+            TriangulationConstructionError::InsertionTopologyValidation { source, .. } => {
+                Self::UnexpectedInsertionStage {
+                    message: source.to_string(),
+                }
+            }
+        }
+    }
+}
+
+/// Structured reason why a global neighbor rebuild failed after cavity repair.
+#[derive(Debug, Clone, thiserror::Error, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum NeighborRebuildError {
+    /// Neighbor wiring failed during the rebuild.
+    #[error("neighbor wiring failed during rebuild: {reason}")]
+    Wiring {
+        /// Structured wiring failure.
+        #[source]
+        reason: NeighborWiringError,
+    },
+
+    /// The rebuilt facet incidence is non-manifold.
+    #[error(
+        "non-manifold topology during neighbor rebuild: facet {facet_hash:#x} shared by {cell_count} cells"
+    )]
+    NonManifoldTopology {
+        /// Hash of the over-shared facet.
+        facet_hash: u64,
+        /// Number of incident cells.
+        cell_count: usize,
+    },
+
+    /// TDS validation failed during neighbor rebuild.
+    #[error("TDS validation failed during neighbor rebuild: {reason}")]
+    TopologyValidation {
+        /// Underlying TDS validation error.
+        #[source]
+        reason: TdsValidationFailure,
+    },
+
+    /// Another insertion error escaped the neighbor-rebuild helper.
+    #[error("unexpected neighbor rebuild error: {message}")]
+    Unexpected {
+        /// Display form of the unexpected insertion error.
+        message: String,
+    },
+}
+
+/// Structured reason why cavity filling failed.
+///
+/// The high-level [`InsertionError::CavityFilling`] bucket identifies the
+/// insertion stage; this type carries the recoverable, pattern-matchable reason
+/// within that stage.
+///
+/// # Examples
+///
+/// ```rust
+/// use delaunay::prelude::tds::CellKey;
+/// use delaunay::prelude::triangulation::insertion::CavityFillingError;
+/// use slotmap::KeyData;
+///
+/// let cell_key = CellKey::from(KeyData::from_ffi(7));
+/// let err = CavityFillingError::InvalidFacetIndex {
+///     cell_key,
+///     facet_index: 4,
+///     vertex_count: 3,
+/// };
+/// assert!(matches!(err, CavityFillingError::InvalidFacetIndex { .. }));
+/// ```
+#[derive(Debug, Clone, thiserror::Error)]
+#[non_exhaustive]
+pub enum CavityFillingError {
+    /// A boundary facet references a cell that is no longer present.
+    #[error("boundary facet cell {cell_key:?} not found")]
+    MissingBoundaryCell {
+        /// Missing boundary cell key.
+        cell_key: CellKey,
+    },
+
+    /// The vertex being inserted is not present in the TDS.
+    #[error("inserted vertex {vertex_key:?} not found in TDS")]
+    MissingInsertedVertex {
+        /// Missing inserted vertex key.
+        vertex_key: VertexKey,
+    },
+
+    /// A boundary cell has the wrong number of vertices for the dimension.
+    #[error("boundary cell {cell_key:?} has {actual} vertices, expected {expected}")]
+    WrongCellArity {
+        /// Cell with the wrong arity.
+        cell_key: CellKey,
+        /// Observed vertex count.
+        actual: usize,
+        /// Expected vertex count.
+        expected: usize,
+    },
+
+    /// A facet index is outside the referenced cell's vertex range.
+    #[error(
+        "facet index {facet_index} out of range for boundary cell {cell_key:?} with {vertex_count} vertices"
+    )]
+    InvalidFacetIndex {
+        /// Cell referenced by the facet handle.
+        cell_key: CellKey,
+        /// Invalid facet index.
+        facet_index: usize,
+        /// Number of vertices in the referenced cell.
+        vertex_count: usize,
+    },
+
+    /// Creating a replacement cell failed validation.
+    #[error("failed to create replacement cell: {source}")]
+    CellCreation {
+        /// Underlying cell validation error.
+        #[from]
+        source: CellValidationError,
+    },
+
+    /// Inserting a replacement cell into the TDS failed.
+    #[error("failed to insert replacement cell: {reason}")]
+    CellInsertion {
+        /// Underlying TDS construction error.
+        #[source]
+        reason: TdsConstructionFailure,
+    },
+
+    /// Initial simplex bootstrap failed.
+    #[error("failed to build initial simplex: {reason}")]
+    InitialSimplexConstruction {
+        /// Underlying triangulation construction error.
+        #[source]
+        reason: InitialSimplexConstructionError,
+    },
+
+    /// A rebuilt TDS did not preserve the just-inserted vertex UUID.
+    #[error("inserted vertex with UUID {uuid} not found in rebuilt TDS")]
+    RebuiltVertexMissing {
+        /// UUID that should have been present after rebuilding.
+        uuid: uuid::Uuid,
+    },
+
+    /// The conflict region was empty and no fallback cell was available.
+    #[error("empty conflict region for exterior insertion (fallback cell: {fallback_cell:?})")]
+    EmptyConflictRegion {
+        /// Optional fallback cell that was available to split.
+        fallback_cell: Option<CellKey>,
+    },
+
+    /// The extracted cavity boundary was empty and no fallback cell was available.
+    #[error("empty cavity boundary for exterior insertion (fallback cell: {fallback_cell:?})")]
+    EmptyBoundary {
+        /// Optional fallback cell that was available to split.
+        fallback_cell: Option<CellKey>,
+    },
+
+    /// Facet sharing remained invalid after local insertion repair.
+    #[error("facet sharing invalid after insertion repairs during {stage}")]
+    InvalidFacetSharingAfterRepair {
+        /// Repair stage that observed invalid facet sharing.
+        stage: CavityRepairStage,
+    },
+
+    /// Rebuilding neighbor pointers after cavity repair failed.
+    #[error("failed to rebuild neighbors after insertion repairs: {reason}")]
+    NeighborRebuild {
+        /// Underlying insertion-layer error from the neighbor rebuild.
+        #[source]
+        reason: NeighborRebuildError,
+    },
+
+    /// Bootstrap perturbation scale could not be represented in the scalar type.
+    #[error("failed to convert perturbation scale {value} into scalar type")]
+    PerturbationScaleConversion {
+        /// Value that could not be converted.
+        value: String,
+    },
+
+    /// The locate result lies on a lower-dimensional feature that insertion does not support yet.
+    #[error("unsupported degenerate insertion location: {location:?}")]
+    UnsupportedDegenerateLocation {
+        /// Degenerate location returned by point location.
+        location: LocateResult,
+    },
+
+    /// Fan filling produced no replacement cells.
+    #[error("fan triangulation produced no cells")]
+    EmptyFanTriangulation,
+}
+
+/// Stage where cavity repair detected invalid facet sharing.
+///
+/// # Examples
+///
+/// ```rust
+/// use delaunay::prelude::triangulation::insertion::CavityRepairStage;
+///
+/// assert_eq!(
+///     CavityRepairStage::PrimaryInsertion.to_string(),
+///     "primary insertion"
+/// );
+/// ```
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum CavityRepairStage {
+    /// Primary cavity insertion path.
+    PrimaryInsertion,
+    /// Fan triangulation fallback path.
+    FanTriangulation,
+}
+
+impl std::fmt::Display for CavityRepairStage {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::PrimaryInsertion => f.write_str("primary insertion"),
+            Self::FanTriangulation => f.write_str("fan triangulation"),
+        }
+    }
+}
+
+/// Structured reason why neighbor wiring failed.
+///
+/// # Examples
+///
+/// ```rust
+/// use delaunay::prelude::tds::CellKey;
+/// use delaunay::prelude::triangulation::insertion::NeighborWiringError;
+/// use slotmap::KeyData;
+///
+/// let cell_key = CellKey::from(KeyData::from_ffi(11));
+/// let err = NeighborWiringError::MissingCell { cell_key };
+/// assert!(matches!(err, NeighborWiringError::MissingCell { .. }));
+/// ```
+#[derive(Debug, Clone, thiserror::Error, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum NeighborWiringError {
+    /// A cell required for neighbor wiring was not found.
+    #[error("cell {cell_key:?} not found during neighbor wiring")]
+    MissingCell {
+        /// Missing cell key.
+        cell_key: CellKey,
+    },
+
+    /// A facet index is outside the referenced cell's vertex range.
+    #[error(
+        "facet index {facet_index} out of range for cell {cell_key:?} with {vertex_count} vertices"
+    )]
+    InvalidFacetIndex {
+        /// Referenced cell.
+        cell_key: CellKey,
+        /// Invalid facet index.
+        facet_index: usize,
+        /// Number of vertices in the referenced cell.
+        vertex_count: usize,
+    },
+
+    /// A facet index cannot fit in the compact facet-index storage type.
+    #[error("facet index {facet_index} exceeds compact facet-index maximum {max}")]
+    FacetIndexOverflow {
+        /// Facet index that overflowed.
+        facet_index: usize,
+        /// Maximum storable facet index.
+        max: u8,
+    },
+
+    /// A cell points to itself as a neighbor.
+    #[error("cell {cell_key:?} has a self-neighbor pointer")]
+    SelfNeighbor {
+        /// Cell containing the self-neighbor pointer.
+        cell_key: CellKey,
+    },
+
+    /// A neighbor pointer references a missing cell.
+    #[error("cell {cell_key:?} has neighbor pointer to missing cell {neighbor_key:?}")]
+    MissingNeighborTarget {
+        /// Cell containing the stale neighbor pointer.
+        cell_key: CellKey,
+        /// Missing neighbor key.
+        neighbor_key: CellKey,
+    },
+
+    /// Neighbor traversal discovered more cells than the TDS contains.
+    #[error("neighbor walk visited {visited} unique cells but triangulation contains {total}")]
+    NeighborWalkExceededCellCount {
+        /// Number of unique cells visited.
+        visited: usize,
+        /// Number of cells in the TDS.
+        total: usize,
+    },
+}
+
 /// Error during incremental insertion.
 ///
 /// # Examples
@@ -116,6 +831,7 @@ impl std::fmt::Display for HullExtensionReason {
 /// assert!(matches!(err, InsertionError::DuplicateCoordinates { .. }));
 /// ```
 #[derive(Debug, Clone, thiserror::Error)]
+#[non_exhaustive]
 pub enum InsertionError {
     /// Conflict region finding failed
     #[error("Conflict region error: {0}")]
@@ -125,22 +841,20 @@ pub enum InsertionError {
     #[error("Location error: {0}")]
     Location(#[from] LocateError),
 
-    /// Triangulation construction failed
-    #[error("Construction error: {0}")]
-    Construction(#[from] TriangulationConstructionError),
-
-    /// Cavity filling failed
-    #[error("Cavity filling failed: {message}")]
+    /// Cavity filling failed.
+    #[error("Cavity filling failed: {reason}")]
     CavityFilling {
-        /// Error message
-        message: String,
+        /// Structured reason for the cavity-filling failure.
+        #[source]
+        reason: CavityFillingError,
     },
 
-    /// Neighbor wiring failed
-    #[error("Neighbor wiring failed: {message}")]
+    /// Neighbor wiring failed.
+    #[error("Neighbor wiring failed: {reason}")]
     NeighborWiring {
-        /// Error message
-        message: String,
+        /// Structured reason for the neighbor-wiring failure.
+        #[source]
+        reason: NeighborWiringError,
     },
 
     /// Non-manifold topology detected during neighbor wiring.
@@ -229,6 +943,58 @@ pub enum InsertionError {
     },
 }
 
+impl From<CavityFillingError> for InsertionError {
+    fn from(reason: CavityFillingError) -> Self {
+        Self::CavityFilling { reason }
+    }
+}
+
+impl From<TdsConstructionError> for CavityFillingError {
+    fn from(source: TdsConstructionError) -> Self {
+        Self::CellInsertion {
+            reason: source.into(),
+        }
+    }
+}
+
+impl From<TdsConstructionError> for InsertionError {
+    fn from(source: TdsConstructionError) -> Self {
+        match source {
+            TdsConstructionError::ValidationError(source) => Self::TopologyValidation(source),
+            TdsConstructionError::DuplicateUuid { entity, uuid } => {
+                Self::DuplicateUuid { entity, uuid }
+            }
+        }
+    }
+}
+
+impl From<NeighborWiringError> for InsertionError {
+    fn from(reason: NeighborWiringError) -> Self {
+        Self::NeighborWiring { reason }
+    }
+}
+
+impl From<InsertionError> for NeighborRebuildError {
+    fn from(source: InsertionError) -> Self {
+        match source {
+            InsertionError::NeighborWiring { reason } => Self::Wiring { reason },
+            InsertionError::NonManifoldTopology {
+                facet_hash,
+                cell_count,
+            } => Self::NonManifoldTopology {
+                facet_hash,
+                cell_count,
+            },
+            InsertionError::TopologyValidation(source) => Self::TopologyValidation {
+                reason: source.into(),
+            },
+            other => Self::Unexpected {
+                message: other.to_string(),
+            },
+        }
+    }
+}
+
 impl InsertionError {
     /// Returns true if this error is retryable via coordinate perturbation.
     ///
@@ -314,7 +1080,6 @@ impl InsertionError {
             // `NonManifoldTopology` variant.
             Self::NeighborWiring { .. }
             | Self::Location(_)
-            | Self::Construction(_)
             | Self::CavityFilling { .. }
             | Self::DelaunayValidationFailed { .. }
             | Self::DelaunayRepairFailed { .. }
@@ -370,7 +1135,16 @@ impl InsertionError {
 /// Buffer of newly created cell keys
 ///
 /// # Errors
-/// Returns error if cell creation or insertion fails.
+///
+/// Returns [`InsertionError`] if the cavity cannot be expanded into valid new
+/// cells. Recoverable causes include:
+/// - `new_vertex_key` does not identify a vertex in `tds`.
+/// - A boundary [`FacetHandle`] references a missing cell or an invalid facet
+///   index.
+/// - A boundary cell has the wrong vertex count for dimension `D`.
+/// - Boundary facets imply duplicate or non-manifold replacement cells.
+/// - Geometric orientation checks fail while canonicalizing the new cells.
+/// - Cell insertion into the underlying [`Tds`] fails.
 ///
 /// # Partial Mutation on Error
 ///
@@ -429,13 +1203,20 @@ where
     U: DataType,
     V: DataType,
 {
+    if !tds.contains_vertex_key(new_vertex_key) {
+        return Err(CavityFillingError::MissingInsertedVertex {
+            vertex_key: new_vertex_key,
+        }
+        .into());
+    }
+
     #[cfg(debug_assertions)]
     {
         let log_enabled = std::env::var_os("DELAUNAY_DEBUG_CAVITY").is_some();
         // Check for duplicate boundary facets
         let mut seen_facets: FastHashMap<u64, Vec<FacetHandle>> = FastHashMap::default();
         for facet_handle in boundary_facets {
-            if let Some(boundary_cell) = tds.get_cell(facet_handle.cell_key()) {
+            if let Some(boundary_cell) = tds.cell(facet_handle.cell_key()) {
                 let facet_idx = usize::from(facet_handle.facet_index());
                 let mut facet_vkeys = SmallBuffer::<VertexKey, MAX_PRACTICAL_DIMENSION_SIZE>::new();
                 for (i, &vertex_key) in boundary_cell.vertices().iter().enumerate() {
@@ -480,7 +1261,7 @@ where
             let mut ridge_vertices_map: FastHashMap<u64, VertexKeyBuffer> = FastHashMap::default();
 
             for facet_handle in boundary_facets {
-                let Some(boundary_cell) = tds.get_cell(facet_handle.cell_key()) else {
+                let Some(boundary_cell) = tds.cell(facet_handle.cell_key()) else {
                     tracing::warn!(
                         cell_key = ?facet_handle.cell_key(),
                         "fill_cavity: missing boundary cell while building ridge incidence"
@@ -559,28 +1340,31 @@ where
     let mut new_cells = CellKeyBuffer::new();
 
     for facet_handle in boundary_facets {
-        let boundary_cell =
-            tds.get_cell(facet_handle.cell_key())
-                .ok_or_else(|| InsertionError::CavityFilling {
-                    message: format!(
-                        "Boundary facet cell {:?} not found",
-                        facet_handle.cell_key()
-                    ),
-                })?;
+        let boundary_cell = tds.cell(facet_handle.cell_key()).ok_or_else(|| {
+            CavityFillingError::MissingBoundaryCell {
+                cell_key: facet_handle.cell_key(),
+            }
+        })?;
 
         // Validate boundary cell has correct dimensionality (D+1 vertices)
         if boundary_cell.number_of_vertices() != D + 1 {
-            return Err(InsertionError::CavityFilling {
-                message: format!(
-                    "Boundary cell {:?} has {} vertices, expected {} (D+1)",
-                    facet_handle.cell_key(),
-                    boundary_cell.number_of_vertices(),
-                    D + 1
-                ),
-            });
+            return Err(CavityFillingError::WrongCellArity {
+                cell_key: facet_handle.cell_key(),
+                actual: boundary_cell.number_of_vertices(),
+                expected: D + 1,
+            }
+            .into());
         }
 
         let facet_idx = usize::from(facet_handle.facet_index());
+        if facet_idx >= boundary_cell.number_of_vertices() {
+            return Err(CavityFillingError::InvalidFacetIndex {
+                cell_key: facet_handle.cell_key(),
+                facet_index: facet_idx,
+                vertex_count: boundary_cell.number_of_vertices(),
+            }
+            .into());
+        }
         let mut new_cell_vertices = SmallBuffer::<VertexKey, MAX_PRACTICAL_DIMENSION_SIZE>::new();
 
         // Get vertices of the facet (all except the opposite vertex)
@@ -601,27 +1385,22 @@ where
         }
 
         // Create and insert the new cell
-        let new_cell =
-            Cell::new(new_cell_vertices, None).map_err(|e| InsertionError::CavityFilling {
-                message: format!("Failed to create cell: {e}"),
-            })?;
-        let cell_key =
-            tds.insert_cell_with_mapping(new_cell)
-                .map_err(|e| InsertionError::CavityFilling {
-                    message: format!("Failed to insert cell: {e}"),
-                })?;
+        let new_cell = Cell::new(new_cell_vertices, None).map_err(CavityFillingError::from)?;
+        let cell_key = tds
+            .insert_cell_with_mapping(new_cell)
+            .map_err(CavityFillingError::from)?;
 
         // Cell creation provenance: log each newly created cell with its
         // vertex ordering, geometric orientation, and source boundary facet.
         // Helps trace which insertion step produces negative-orientation cells.
         #[cfg(debug_assertions)]
         if std::env::var_os("DELAUNAY_DEBUG_CAVITY").is_some()
-            && let Some(created_cell) = tds.get_cell(cell_key)
+            && let Some(created_cell) = tds.cell(cell_key)
         {
             let cell_points: SmallBuffer<Point<T, D>, MAX_PRACTICAL_DIMENSION_SIZE> = created_cell
                 .vertices()
                 .iter()
-                .filter_map(|&vk| tds.get_vertex_by_key(vk).map(|v| *v.point()))
+                .filter_map(|&vk| tds.vertex(vk).map(|v| *v.point()))
                 .collect();
             let orientation: Option<i32> = if cell_points.len() == D + 1 {
                 match robust_orientation(&cell_points) {
@@ -755,10 +1534,8 @@ where
     // Index all facets of new cells.
     for &cell_key in new_cells {
         let cell = tds
-            .get_cell(cell_key)
-            .ok_or_else(|| InsertionError::NeighborWiring {
-                message: format!("New cell {cell_key:?} not found"),
-            })?;
+            .cell(cell_key)
+            .ok_or(NeighborWiringError::MissingCell { cell_key })?;
 
         for facet_idx in 0..cell.number_of_vertices() {
             let mut facet_vkeys = SmallBuffer::<VertexKey, MAX_PRACTICAL_DIMENSION_SIZE>::new();
@@ -772,8 +1549,9 @@ where
             let facet_key = compute_facet_hash(&facet_vkeys);
 
             let facet_idx_u8 =
-                u8::try_from(facet_idx).map_err(|_| InsertionError::NeighborWiring {
-                    message: format!("Facet index {facet_idx} exceeds u8::MAX"),
+                u8::try_from(facet_idx).map_err(|_| NeighborWiringError::FacetIndexOverflow {
+                    facet_index: facet_idx,
+                    max: u8::MAX,
                 })?;
 
             facet_map
@@ -790,17 +1568,16 @@ where
         let facet_idx = usize::from(external.facet_index());
 
         let cell = tds
-            .get_cell(cell_key)
-            .ok_or_else(|| InsertionError::NeighborWiring {
-                message: format!("External facet cell {cell_key:?} not found"),
-            })?;
+            .cell(cell_key)
+            .ok_or(NeighborWiringError::MissingCell { cell_key })?;
 
         if facet_idx >= cell.number_of_vertices() {
-            return Err(InsertionError::NeighborWiring {
-                message: format!(
-                    "External facet index {facet_idx} out of range for cell {cell_key:?}"
-                ),
-            });
+            return Err(NeighborWiringError::InvalidFacetIndex {
+                cell_key,
+                facet_index: facet_idx,
+                vertex_count: cell.number_of_vertices(),
+            }
+            .into());
         }
 
         let mut facet_vkeys = SmallBuffer::<VertexKey, MAX_PRACTICAL_DIMENSION_SIZE>::new();
@@ -930,7 +1707,7 @@ where
     if std::env::var_os("DELAUNAY_DEBUG_NEIGHBORS").is_some() {
         let mut mismatches = 0usize;
         for &cell_key in new_cells {
-            let Some(cell) = tds.get_cell(cell_key) else {
+            let Some(cell) = tds.cell(cell_key) else {
                 continue;
             };
             let Some(neighbors) = cell.neighbors() else {
@@ -940,7 +1717,7 @@ where
                 let Some(neighbor_key) = neighbor_opt else {
                     continue;
                 };
-                let Some(neighbor_cell) = tds.get_cell(*neighbor_key) else {
+                let Some(neighbor_cell) = tds.cell(*neighbor_key) else {
                     continue;
                 };
                 let Some(mirror_idx) = cell.mirror_facet_index(facet_idx, neighbor_cell) else {
@@ -1003,7 +1780,7 @@ where
         let mut anomaly_samples: Vec<(CellKey, usize, Option<CellKey>, String)> = Vec::new();
 
         for &cell_key in new_cells {
-            let Some(cell) = tds.get_cell(cell_key) else {
+            let Some(cell) = tds.cell(cell_key) else {
                 continue;
             };
 
@@ -1109,17 +1886,16 @@ where
         let facet_idx = usize::from(facet.facet_index());
 
         let cell = tds
-            .get_cell(cell_key)
-            .ok_or_else(|| InsertionError::NeighborWiring {
-                message: format!("Boundary facet cell {cell_key:?} not found"),
-            })?;
+            .cell(cell_key)
+            .ok_or(NeighborWiringError::MissingCell { cell_key })?;
 
         if facet_idx >= cell.number_of_vertices() {
-            return Err(InsertionError::NeighborWiring {
-                message: format!(
-                    "Boundary facet index {facet_idx} out of range for cell {cell_key:?}"
-                ),
-            });
+            return Err(NeighborWiringError::InvalidFacetIndex {
+                cell_key,
+                facet_index: facet_idx,
+                vertex_count: cell.number_of_vertices(),
+            }
+            .into());
         }
 
         let mut facet_vkeys = SmallBuffer::<VertexKey, MAX_PRACTICAL_DIMENSION_SIZE>::new();
@@ -1135,7 +1911,7 @@ where
     // Candidate external cells are those reachable via neighbor pointers from the internal set.
     let mut candidate_cells: FastHashSet<CellKey> = FastHashSet::default();
     for &cell_key in internal_cells {
-        let Some(cell) = tds.get_cell(cell_key) else {
+        let Some(cell) = tds.cell(cell_key) else {
             continue;
         };
         let Some(neighbors) = cell.neighbors() else {
@@ -1156,10 +1932,8 @@ where
 
     for &cell_key in &candidate_cells {
         let cell = tds
-            .get_cell(cell_key)
-            .ok_or_else(|| InsertionError::NeighborWiring {
-                message: format!("External cell {cell_key:?} not found"),
-            })?;
+            .cell(cell_key)
+            .ok_or(NeighborWiringError::MissingCell { cell_key })?;
 
         for facet_idx in 0..cell.number_of_vertices() {
             let mut facet_vkeys = SmallBuffer::<VertexKey, MAX_PRACTICAL_DIMENSION_SIZE>::new();
@@ -1176,8 +1950,9 @@ where
             }
 
             let facet_idx_u8 =
-                u8::try_from(facet_idx).map_err(|_| InsertionError::NeighborWiring {
-                    message: format!("Facet index {facet_idx} exceeds u8::MAX"),
+                u8::try_from(facet_idx).map_err(|_| NeighborWiringError::FacetIndexOverflow {
+                    facet_index: facet_idx,
+                    max: u8::MAX,
                 })?;
             external_facets.push(FacetHandle::new(cell_key, facet_idx_u8));
         }
@@ -1199,10 +1974,8 @@ where
     V: DataType,
 {
     let cell = tds
-        .get_cell_by_key_mut(cell_key)
-        .ok_or_else(|| InsertionError::NeighborWiring {
-            message: format!("Cell {cell_key:?} not found"),
-        })?;
+        .cell_mut(cell_key)
+        .ok_or(NeighborWiringError::MissingCell { cell_key })?;
 
     let mut neighbors = cell.neighbors().map_or_else(
         || SmallBuffer::from_elem(None, D + 1),
@@ -1280,10 +2053,8 @@ where
 
     for &cell_key in &cell_keys {
         let cell = tds
-            .get_cell(cell_key)
-            .ok_or_else(|| InsertionError::NeighborWiring {
-                message: format!("Cell {cell_key:?} not found"),
-            })?;
+            .cell(cell_key)
+            .ok_or(NeighborWiringError::MissingCell { cell_key })?;
 
         let vertex_count = cell.number_of_vertices();
         let mut neighbors = SmallBuffer::with_capacity(vertex_count);
@@ -1303,8 +2074,9 @@ where
             let facet_hash = compute_facet_hash(&facet_vkeys);
 
             let facet_idx_u8 =
-                u8::try_from(facet_idx).map_err(|_| InsertionError::NeighborWiring {
-                    message: format!("Facet index {facet_idx} exceeds u8::MAX"),
+                u8::try_from(facet_idx).map_err(|_| NeighborWiringError::FacetIndexOverflow {
+                    facet_index: facet_idx,
+                    max: u8::MAX,
                 })?;
 
             let entry = facet_map.entry(facet_hash).or_default();
@@ -1324,19 +2096,15 @@ where
         match incidents.as_slice() {
             [(c1, i1), (c2, i2)] => {
                 {
-                    let n1 = neighbors_by_cell.get_mut(c1).ok_or_else(|| {
-                        InsertionError::NeighborWiring {
-                            message: format!("Cell {c1:?} not found during neighbor rebuild"),
-                        }
-                    })?;
+                    let n1 = neighbors_by_cell
+                        .get_mut(c1)
+                        .ok_or(NeighborWiringError::MissingCell { cell_key: *c1 })?;
                     n1[usize::from(*i1)] = Some(*c2);
                 }
                 {
-                    let n2 = neighbors_by_cell.get_mut(c2).ok_or_else(|| {
-                        InsertionError::NeighborWiring {
-                            message: format!("Cell {c2:?} not found during neighbor rebuild"),
-                        }
-                    })?;
+                    let n2 = neighbors_by_cell
+                        .get_mut(c2)
+                        .ok_or(NeighborWiringError::MissingCell { cell_key: *c2 })?;
                     n2[usize::from(*i2)] = Some(*c1);
                 }
             }
@@ -1357,10 +2125,8 @@ where
     for (cell_key, rebuilt) in neighbors_by_cell {
         let old_neighbors: SmallBuffer<Option<CellKey>, MAX_PRACTICAL_DIMENSION_SIZE> = {
             let cell = tds
-                .get_cell(cell_key)
-                .ok_or_else(|| InsertionError::NeighborWiring {
-                    message: format!("Cell {cell_key:?} not found"),
-                })?;
+                .cell(cell_key)
+                .ok_or(NeighborWiringError::MissingCell { cell_key })?;
 
             cell.neighbors().map_or_else(
                 || SmallBuffer::from_elem(None, rebuilt.len()),
@@ -1376,11 +2142,9 @@ where
                 .count(),
         );
 
-        let cell =
-            tds.get_cell_by_key_mut(cell_key)
-                .ok_or_else(|| InsertionError::NeighborWiring {
-                    message: format!("Cell {cell_key:?} not found"),
-                })?;
+        let cell = tds
+            .cell_mut(cell_key)
+            .ok_or(NeighborWiringError::MissingCell { cell_key })?;
 
         if rebuilt.iter().all(Option::is_none) {
             cell.neighbors = None;
@@ -1437,10 +2201,8 @@ where
 
         while let Some(current) = to_visit.pop() {
             let cell = tds
-                .get_cell(current)
-                .ok_or_else(|| InsertionError::NeighborWiring {
-                    message: format!("Neighbor walk encountered missing cell {current:?}"),
-                })?;
+                .cell(current)
+                .ok_or(NeighborWiringError::MissingCell { cell_key: current })?;
 
             let Some(neighbors) = cell.neighbors() else {
                 continue;
@@ -1452,28 +2214,25 @@ where
                 };
 
                 if neighbor_key == current {
-                    return Err(InsertionError::NeighborWiring {
-                        message: format!("Cell {current:?} has a self-neighbor pointer"),
-                    });
+                    return Err(NeighborWiringError::SelfNeighbor { cell_key: current }.into());
                 }
 
                 if !tds.contains_cell(neighbor_key) {
-                    return Err(InsertionError::NeighborWiring {
-                        message: format!(
-                            "Cell {current:?} has neighbor pointer to missing cell {neighbor_key:?}"
-                        ),
-                    });
+                    return Err(NeighborWiringError::MissingNeighborTarget {
+                        cell_key: current,
+                        neighbor_key,
+                    }
+                    .into());
                 }
 
                 if visited.insert(neighbor_key) {
                     to_visit.push(neighbor_key);
                     if visited.len() > max_cells {
-                        return Err(InsertionError::NeighborWiring {
-                            message: format!(
-                                "Neighbor walk visited {} unique cells but triangulation contains {max_cells} cells",
-                                visited.len()
-                            ),
-                        });
+                        return Err(NeighborWiringError::NeighborWalkExceededCellCount {
+                            visited: visited.len(),
+                            total: max_cells,
+                        }
+                        .into());
                     }
                 }
             }
@@ -1648,7 +2407,7 @@ where
         let cell_key = facet_view.cell_key();
         let facet_index = facet_view.facet_index();
         let cell = tds
-            .get_cell(cell_key)
+            .cell(cell_key)
             .ok_or_else(|| InsertionError::HullExtension {
                 reason: HullExtensionReason::Other {
                     message: format!("Boundary facet cell {cell_key:?} not found"),
@@ -1659,13 +2418,13 @@ where
         let mut opposite_point: Option<Point<T, D>> = None;
 
         for (i, &vkey) in cell.vertices().iter().enumerate() {
-            let vertex =
-                tds.get_vertex_by_key(vkey)
-                    .ok_or_else(|| InsertionError::HullExtension {
-                        reason: HullExtensionReason::Other {
-                            message: format!("Vertex {vkey:?} not found in TDS"),
-                        },
-                    })?;
+            let vertex = tds
+                .vertex(vkey)
+                .ok_or_else(|| InsertionError::HullExtension {
+                    reason: HullExtensionReason::Other {
+                        message: format!("Vertex {vkey:?} not found in TDS"),
+                    },
+                })?;
             if i == usize::from(facet_index) {
                 opposite_point = Some(*vertex.point());
             } else {
@@ -1842,7 +2601,7 @@ where
 
         // Get the cell and its vertices
         let cell = tds
-            .get_cell(cell_key)
+            .cell(cell_key)
             .ok_or_else(|| InsertionError::HullExtension {
                 reason: HullExtensionReason::Other {
                     message: format!("Boundary facet cell {cell_key:?} not found"),
@@ -1855,13 +2614,13 @@ where
         let mut opposite_point: Option<Point<K::Scalar, D>> = None;
 
         for (i, &vkey) in cell.vertices().iter().enumerate() {
-            let vertex =
-                tds.get_vertex_by_key(vkey)
-                    .ok_or_else(|| InsertionError::HullExtension {
-                        reason: HullExtensionReason::Other {
-                            message: format!("Vertex {vkey:?} not found in TDS"),
-                        },
-                    })?;
+            let vertex = tds
+                .vertex(vkey)
+                .ok_or_else(|| InsertionError::HullExtension {
+                    reason: HullExtensionReason::Other {
+                        message: format!("Vertex {vkey:?} not found in TDS"),
+                    },
+                })?;
             if i == usize::from(facet_index) {
                 opposite_point = Some(*vertex.point());
             } else {
@@ -2018,7 +2777,7 @@ where
         let mut ridge_vertices_map: FastHashMap<u64, VertexKeyBuffer> = FastHashMap::default();
 
         for (facet_idx, facet_handle) in visible_facets.iter().enumerate() {
-            let Some(cell) = tds.get_cell(facet_handle.cell_key()) else {
+            let Some(cell) = tds.cell(facet_handle.cell_key()) else {
                 #[cfg(debug_assertions)]
                 tracing::warn!(
                     cell_key = ?facet_handle.cell_key(),
@@ -2411,7 +3170,7 @@ mod tests {
 
                     // Verify all new cells have correct vertex count
                     for &cell_key in &new_cells {
-                        let cell = tds.get_cell(cell_key).unwrap();
+                        let cell = tds.cell(cell_key).unwrap();
                         assert_eq!(
                             cell.number_of_vertices(),
                             $dim + 1,
@@ -2493,7 +3252,12 @@ mod tests {
 
         let result = fill_cavity(tds, invalid_vkey, &boundary_facets);
         assert!(
-            matches!(result, Err(InsertionError::CavityFilling { .. })),
+            matches!(
+                result,
+                Err(InsertionError::CavityFilling {
+                    reason: CavityFillingError::MissingInsertedVertex { .. },
+                })
+            ),
             "Expected CavityFilling error, got: {result:?}"
         );
     }
@@ -2516,7 +3280,42 @@ mod tests {
 
         let result = fill_cavity(tds, new_vkey, &invalid_boundary_facets);
         assert!(result.is_err());
-        assert!(matches!(result, Err(InsertionError::CavityFilling { .. })));
+        assert!(matches!(
+            result,
+            Err(InsertionError::CavityFilling {
+                reason: CavityFillingError::MissingBoundaryCell { .. },
+            })
+        ));
+    }
+
+    #[test]
+    fn test_fill_cavity_with_invalid_facet_index() {
+        let vertices = vec![
+            vertex!([0.0, 0.0]),
+            vertex!([1.0, 0.0]),
+            vertex!([0.0, 1.0]),
+        ];
+        let mut dt = DelaunayTriangulation::<_, (), (), 2>::new(&vertices).unwrap();
+        let tds = dt.tds_mut();
+
+        let new_vkey = tds.insert_vertex_with_mapping(vertex!([0.5, 0.5])).unwrap();
+        let cell_key = tds.cell_keys().next().unwrap();
+        let original_cell_count = tds.number_of_cells();
+        let invalid_boundary_facets = vec![FacetHandle::new(cell_key, 3)];
+
+        let result = fill_cavity(tds, new_vkey, &invalid_boundary_facets);
+
+        assert!(matches!(
+            result,
+            Err(InsertionError::CavityFilling {
+                reason: CavityFillingError::InvalidFacetIndex { .. },
+            })
+        ));
+        assert_eq!(
+            tds.number_of_cells(),
+            original_cell_count,
+            "invalid facet index must fail before inserting replacement cells"
+        );
     }
 
     #[test]
@@ -2535,7 +3334,12 @@ mod tests {
 
         let result = wire_cavity_neighbors(tds, &invalid_cells, [], None);
         assert!(result.is_err());
-        assert!(matches!(result, Err(InsertionError::NeighborWiring { .. })));
+        assert!(matches!(
+            result,
+            Err(InsertionError::NeighborWiring {
+                reason: NeighborWiringError::MissingCell { .. },
+            })
+        ));
     }
 
     #[test]
@@ -2570,7 +3374,7 @@ mod tests {
         let external = external_facets[0];
         assert_eq!(external.cell_key(), c2);
 
-        let cell = tds.get_cell(external.cell_key()).unwrap();
+        let cell = tds.cell(external.cell_key()).unwrap();
         let facet_idx = usize::from(external.facet_index());
 
         let mut edge: SmallBuffer<VertexKey, 2> = SmallBuffer::new();
@@ -2617,15 +3421,18 @@ mod tests {
 
         // Corrupt the single boundary cell by adding one extra vertex key.
         let cell_key = tds.cell_keys().next().unwrap();
-        let extra_vkey = tds.get_cell(cell_key).unwrap().vertices()[0];
-        tds.get_cell_by_key_mut(cell_key)
-            .unwrap()
-            .push_vertex_key(extra_vkey);
+        let extra_vkey = tds.cell(cell_key).unwrap().vertices()[0];
+        tds.cell_mut(cell_key).unwrap().push_vertex_key(extra_vkey);
 
         let boundary_facets = vec![FacetHandle::new(cell_key, 0)];
         let err = fill_cavity(tds, new_vkey, &boundary_facets).unwrap_err();
 
-        assert!(matches!(err, InsertionError::CavityFilling { .. }));
+        assert!(matches!(
+            err,
+            InsertionError::CavityFilling {
+                reason: CavityFillingError::WrongCellArity { .. },
+            }
+        ));
     }
 
     #[test]
@@ -2675,10 +3482,10 @@ mod tests {
         let tds = dt.tds_mut();
 
         let cell_key = tds.cell_keys().next().unwrap();
-        let vkey0 = tds.get_cell(cell_key).unwrap().vertices()[0];
+        let vkey0 = tds.cell(cell_key).unwrap().vertices()[0];
 
         {
-            let cell = tds.get_cell_by_key_mut(cell_key).unwrap();
+            let cell = tds.cell_mut(cell_key).unwrap();
             while cell.number_of_vertices() <= usize::from(u8::MAX) + 1 {
                 cell.push_vertex_key(vkey0);
             }
@@ -2688,7 +3495,12 @@ mod tests {
         new_cells.push(cell_key);
 
         let err = wire_cavity_neighbors(tds, &new_cells, [], None).unwrap_err();
-        assert!(matches!(err, InsertionError::NeighborWiring { .. }));
+        assert!(matches!(
+            err,
+            InsertionError::NeighborWiring {
+                reason: NeighborWiringError::FacetIndexOverflow { .. },
+            }
+        ));
     }
 
     // InsertionError::is_retryable() tests
@@ -2846,7 +3658,9 @@ mod tests {
         // NeighborWiring is unconditionally non-retryable.
         assert!(
             !InsertionError::NeighborWiring {
-                message: "Non-manifold topology detected".to_string()
+                reason: NeighborWiringError::MissingCell {
+                    cell_key: CellKey::from(KeyData::from_ffi(u64::MAX)),
+                }
             }
             .is_retryable()
         );
@@ -2968,7 +3782,7 @@ mod tests {
 
         assert!(
             !InsertionError::CavityFilling {
-                message: "test".to_string()
+                reason: CavityFillingError::EmptyFanTriangulation,
             }
             .is_retryable()
         );
@@ -3253,7 +4067,12 @@ mod tests {
         let missing = CellKey::from(KeyData::from_ffi(u64::MAX));
 
         let err = set_neighbor(&mut tds, missing, 0, None).unwrap_err();
-        assert!(matches!(err, InsertionError::NeighborWiring { .. }));
+        assert!(matches!(
+            err,
+            InsertionError::NeighborWiring {
+                reason: NeighborWiringError::MissingCell { .. },
+            }
+        ));
     }
 
     #[test]

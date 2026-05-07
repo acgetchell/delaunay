@@ -101,7 +101,8 @@ pub enum LocateResult {
 /// let err = LocateError::EmptyTriangulation;
 /// assert!(matches!(err, LocateError::EmptyTriangulation));
 /// ```
-#[derive(Debug, Clone, thiserror::Error)]
+#[derive(Debug, Clone, thiserror::Error, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum LocateError {
     /// Triangulation has no cells.
     #[error("Cannot locate in empty triangulation")]
@@ -136,7 +137,7 @@ pub enum LocateError {
 /// let err = ConflictError::InvalidStartCell { cell_key };
 /// assert!(matches!(err, ConflictError::InvalidStartCell { .. }));
 /// ```
-#[derive(Debug, Clone, thiserror::Error)]
+#[derive(Debug, Clone, thiserror::Error, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum ConflictError {
     /// Starting cell is invalid
@@ -413,7 +414,7 @@ where
     vertex_keys
         .iter()
         .map(|&vertex_key| {
-            let uuid = tds.get_vertex_by_key(vertex_key).map_or_else(
+            let uuid = tds.vertex(vertex_key).map_or_else(
                 || String::from("missing"),
                 |vertex| vertex.uuid().to_string(),
             );
@@ -432,7 +433,7 @@ where
     U: DataType,
     V: DataType,
 {
-    let Some(cell) = tds.get_cell(handle.cell_key()) else {
+    let Some(cell) = tds.cell(handle.cell_key()) else {
         return String::from("<missing-cell>");
     };
 
@@ -452,7 +453,7 @@ where
     U: DataType,
     V: DataType,
 {
-    let Some(cell) = tds.get_cell(cell_key) else {
+    let Some(cell) = tds.cell(cell_key) else {
         return String::from("<missing-cell>");
     };
     format_vertex_refs(tds, cell.vertices())
@@ -843,7 +844,7 @@ where
             return Ok((result, stats));
         }
 
-        let cell = tds.get_cell(current_cell).ok_or(LocateError::InvalidCell {
+        let cell = tds.cell(current_cell).ok_or(LocateError::InvalidCell {
             cell_key: current_cell,
         })?;
 
@@ -946,7 +947,7 @@ where
     V: DataType,
 {
     let cell = tds
-        .get_cell(cell_key)
+        .cell(cell_key)
         .ok_or(LocateError::InvalidCell { cell_key })?;
 
     let cell_vertex_keys = cell.vertices();
@@ -960,7 +961,7 @@ where
 
     // The vertex at facet_idx is opposite the facet
     let opposite_key = cell_vertex_keys[facet_idx];
-    let Some(opposite_point) = tds.get_vertex_by_key(opposite_key).map(|v| *v.point()) else {
+    let Some(opposite_point) = tds.vertex(opposite_key).map(|v| *v.point()) else {
         return Ok(None); // Unresolvable vertex → degenerate cell
     };
 
@@ -1127,7 +1128,7 @@ where
 
         // Get cell vertices for in_sphere test
         let cell = tds
-            .get_cell(cell_key)
+            .cell(cell_key)
             .ok_or_else(|| ConflictError::CellDataAccessFailed {
                 cell_key,
                 message: "Cell vanished during BFS traversal".to_string(),
@@ -1501,7 +1502,7 @@ where
 
     for &cell_key in &conflict_set {
         let cell = tds
-            .get_cell(cell_key)
+            .cell(cell_key)
             .ok_or(ConflictError::InvalidStartCell { cell_key })?;
 
         let facet_count = cell.number_of_vertices(); // D+1 facets
@@ -1917,7 +1918,7 @@ mod tests {
         let dt = DelaunayTriangulation::new(&vertices).unwrap();
         let tds = dt.tds();
         let cell_key = tds.cell_keys().next().unwrap();
-        let cell = tds.get_cell(cell_key).unwrap();
+        let cell = tds.cell(cell_key).unwrap();
 
         let formatted_vertices = format_vertex_refs(tds, cell.vertices());
         assert!(formatted_vertices.contains("VertexKey"));
@@ -2067,13 +2068,13 @@ mod tests {
 
         // Get the single cell
         let cell_key = dt.tds().cell_keys().next().unwrap();
-        let cell = dt.tds().get_cell(cell_key).unwrap();
+        let cell = dt.tds().cell(cell_key).unwrap();
 
         // Get cell vertices in order
         let cell_points: Vec<Point<f64, 2>> = cell
             .vertices()
             .iter()
-            .map(|&vkey| *dt.tds().get_vertex_by_key(vkey).unwrap().point())
+            .map(|&vkey| *dt.tds().vertex(vkey).unwrap().point())
             .collect();
 
         println!("Cell vertices: {cell_points:?}");
@@ -2265,7 +2266,7 @@ mod tests {
         let cell_key = dt.tds().cell_keys().next().unwrap();
 
         // ⚠️ Dangerous test-only mutation: create a neighbor self-loop on every facet.
-        let cell = dt.tds_mut().get_cell_by_key_mut(cell_key).unwrap();
+        let cell = dt.tds_mut().cell_mut(cell_key).unwrap();
         let mut neighbors = crate::core::collections::NeighborBuffer::<Option<CellKey>>::new();
         neighbors.resize(3, Some(cell_key));
         cell.neighbors = Some(neighbors);
@@ -2847,7 +2848,7 @@ mod tests {
 
         // Shrink cell to only 2 vertices (D+1 = 3 required for D=2).
         {
-            let cell = tds.get_cell_by_key_mut(cell_key).unwrap();
+            let cell = tds.cell_mut(cell_key).unwrap();
             cell.clear_vertex_keys();
             cell.push_vertex_key(v0);
             cell.push_vertex_key(v1);
@@ -2880,7 +2881,7 @@ mod tests {
         // with a missing key, keeping the cell at D+1 vertex keys.
         let missing = VertexKey::from(KeyData::from_ffi(999_999));
         {
-            let cell = tds.get_cell_by_key_mut(cell_key).unwrap();
+            let cell = tds.cell_mut(cell_key).unwrap();
             cell.clear_vertex_keys();
             cell.push_vertex_key(missing); // index 0 = opposite vertex for facet_idx=0
             cell.push_vertex_key(v1);
@@ -2912,10 +2913,10 @@ mod tests {
         let cell_key = tds
             .insert_cell_with_mapping(Cell::new(vec![v0, v1, v2], None).unwrap())
             .unwrap();
-        let existing_vertices = tds.get_cell(cell_key).unwrap().vertices().to_vec();
+        let existing_vertices = tds.cell(cell_key).unwrap().vertices().to_vec();
         let missing = VertexKey::from(KeyData::from_ffi(999_999));
         {
-            let cell = tds.get_cell_by_key_mut(cell_key).unwrap();
+            let cell = tds.cell_mut(cell_key).unwrap();
             cell.clear_vertex_keys();
             cell.push_vertex_key(existing_vertices[0]);
             cell.push_vertex_key(existing_vertices[1]);
@@ -2950,7 +2951,7 @@ mod tests {
         // Wire a neighbor that doesn't exist in the TDS.
         let ghost = CellKey::from(KeyData::from_ffi(777_777));
         {
-            let cell = tds.get_cell_by_key_mut(cell_key).unwrap();
+            let cell = tds.cell_mut(cell_key).unwrap();
             let buf = cell.ensure_neighbors_buffer_mut();
             buf[0] = Some(ghost);
         }
@@ -2985,7 +2986,7 @@ mod tests {
 
         // Shrink cell to only 2 vertices (both valid).
         {
-            let cell = tds.get_cell_by_key_mut(cell_key).unwrap();
+            let cell = tds.cell_mut(cell_key).unwrap();
             cell.clear_vertex_keys();
             cell.push_vertex_key(v0);
             cell.push_vertex_key(v1);
@@ -3017,10 +3018,10 @@ mod tests {
         let cell_key = tds
             .insert_cell_with_mapping(Cell::new(vec![v0, v1, v2], None).unwrap())
             .unwrap();
-        let existing_vertices = tds.get_cell(cell_key).unwrap().vertices().to_vec();
+        let existing_vertices = tds.cell(cell_key).unwrap().vertices().to_vec();
         let missing = VertexKey::from(KeyData::from_ffi(999_999));
         {
-            let cell = tds.get_cell_by_key_mut(cell_key).unwrap();
+            let cell = tds.cell_mut(cell_key).unwrap();
             cell.clear_vertex_keys();
             cell.push_vertex_key(existing_vertices[0]);
             cell.push_vertex_key(existing_vertices[1]);

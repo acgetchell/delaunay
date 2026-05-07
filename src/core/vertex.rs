@@ -42,6 +42,7 @@ use crate::geometry::{
 use serde::{
     Deserialize, Serialize,
     de::{self, IgnoredAny, MapAccess, Visitor},
+    ser::SerializeStruct,
 };
 use std::{
     cmp::Ordering,
@@ -71,6 +72,7 @@ use uuid::Uuid;
 /// assert!(matches!(err, VertexValidationError::InvalidUuid { .. }));
 /// ```
 #[derive(Clone, Debug, Error, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum VertexValidationError {
     /// The vertex has an invalid point.
     #[error("Invalid point: {source}")]
@@ -99,6 +101,7 @@ pub enum VertexValidationError {
 /// assert_eq!(err.to_string(), "Missing required field: `point`");
 /// ```
 #[derive(Clone, Debug, Error, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum VertexBuilderError {
     /// The required `point` field was not set before calling [`VertexBuilder::build`].
     #[error("Missing required field: `point`")]
@@ -146,10 +149,7 @@ pub struct VertexBuilder<T, U, const D: usize> {
     data: Option<U>,
 }
 
-impl<T, U, const D: usize> Default for VertexBuilder<T, U, D>
-where
-    U: DataType,
-{
+impl<T, U, const D: usize> Default for VertexBuilder<T, U, D> {
     fn default() -> Self {
         Self {
             point: None,
@@ -158,10 +158,7 @@ where
     }
 }
 
-impl<T, U, const D: usize> VertexBuilder<T, U, D>
-where
-    U: DataType,
-{
+impl<T, U, const D: usize> VertexBuilder<T, U, D> {
     /// Sets the point coordinates for the vertex.
     ///
     /// This is a required field — [`build`](Self::build) will return an error
@@ -269,7 +266,7 @@ pub use crate::vertex;
 /// # Generic Parameters
 ///
 /// * `T` - The scalar coordinate type (typically `f32` or `f64`)
-/// * `U` - User data type that implements `DataType` (use `()` for no data)
+/// * `U` - User data type stored with the vertex (use `()` for no data)
 /// * `D` - The spatial dimension (compile-time constant)
 ///
 /// # Properties
@@ -284,7 +281,9 @@ pub use crate::vertex;
 ///
 /// - `T` must implement `CoordinateScalar` for geometric operations, validation, and serialization
 ///   (the struct itself does not require it, enabling purely combinatorial use)
-/// - `U` must implement `DataType` (serialization, equality, hashing, etc.)
+/// - `U` only needs [`DataType`] when the vertex is stored in a triangulation,
+///   serialized, compared, or hashed. Standalone construction and accessors
+///   accept arbitrary metadata types.
 ///
 /// # Usage
 ///
@@ -312,10 +311,7 @@ pub struct Vertex<T, U, const D: usize> {
     pub(crate) data: Option<U>,
 }
 
-impl<T, U, const D: usize> Vertex<T, U, D>
-where
-    U: DataType,
-{
+impl<T, U, const D: usize> Vertex<T, U, D> {
     /// Returns the UUID of the vertex.
     #[inline]
     pub const fn uuid(&self) -> Uuid {
@@ -389,7 +385,6 @@ where
     where
         S: serde::Serializer,
     {
-        use serde::ser::SerializeStruct;
         let field_count = if self.data.is_some() { 3 } else { 2 };
         let mut state = serializer.serialize_struct("Vertex", field_count)?;
         state.serialize_field("point", &self.point)?;
@@ -517,11 +512,7 @@ where
 // VERTEX IMPLEMENTATION - CORE METHODS
 // =============================================================================
 
-impl<T, U, const D: usize> Vertex<T, U, D>
-where
-    T: CoordinateScalar,
-    U: DataType,
-{
+impl<T, U, const D: usize> Vertex<T, U, D> {
     /// Creates an empty vertex at the origin with nil UUID and default data.
     ///
     /// This method creates a vertex with coordinates all set to `T::default()` (typically zero),
@@ -550,7 +541,7 @@ where
     #[must_use]
     pub fn empty() -> Self
     where
-        T: Default,
+        T: CoordinateScalar + Default,
     {
         Self {
             point: Point::default(),
@@ -646,7 +637,10 @@ where
     /// ```
     #[inline]
     #[must_use]
-    pub fn from_points(points: &[Point<T, D>]) -> Vec<Self> {
+    pub fn from_points(points: &[Point<T, D>]) -> Vec<Self>
+    where
+        T: Copy,
+    {
         points.iter().copied().map(Self::from_point).collect()
     }
 
@@ -746,6 +740,7 @@ where
     /// ```
     pub fn is_valid(self) -> Result<(), VertexValidationError>
     where
+        T: CoordinateScalar,
         Point<T, D>: Coordinate<T, D>,
     {
         // Check if the point is valid using the Coordinate trait validation
@@ -806,7 +801,6 @@ where
 impl<T, U, const D: usize> PartialEq for Vertex<T, U, D>
 where
     T: CoordinateScalar,
-    U: DataType,
 {
     /// Equality of vertices is based on ordered equality of coordinates using the Coordinate trait.
     #[inline]
@@ -821,7 +815,6 @@ where
 impl<T, U, const D: usize> PartialOrd for Vertex<T, U, D>
 where
     T: CoordinateScalar,
-    U: DataType,
 {
     /// Order of vertices is based on lexicographic order of coordinates using Point's `partial_cmp`.
     /// This ensures consistent ordering with special floating-point values (NaN, infinity)
@@ -837,7 +830,6 @@ where
 impl<T, U, const D: usize> From<Vertex<T, U, D>> for [T; D]
 where
     T: CoordinateScalar,
-    U: DataType,
 {
     #[inline]
     fn from(vertex: Vertex<T, U, D>) -> [T; D] {
@@ -850,7 +842,6 @@ where
 impl<T, U, const D: usize> From<&Vertex<T, U, D>> for [T; D]
 where
     T: CoordinateScalar,
-    U: DataType,
 {
     #[inline]
     fn from(vertex: &Vertex<T, U, D>) -> [T; D] {
@@ -863,7 +854,6 @@ where
 impl<T, U, const D: usize> From<&Vertex<T, U, D>> for Point<T, D>
 where
     T: CoordinateScalar,
-    U: DataType,
 {
     #[inline]
     fn from(vertex: &Vertex<T, U, D>) -> Self {
@@ -877,7 +867,6 @@ where
 impl<T, U, const D: usize> Eq for Vertex<T, U, D>
 where
     T: CoordinateScalar,
-    U: DataType,
 {
     // Generic Eq implementation for Vertex based on point equality
 }
@@ -885,7 +874,6 @@ where
 impl<T, U, const D: usize> Hash for Vertex<T, U, D>
 where
     T: CoordinateScalar,
-    U: DataType,
     Point<T, D>: Hash,
 {
     /// Hash implementation for Vertex using only coordinates for consistency with `PartialEq`.
@@ -1014,6 +1002,17 @@ mod tests {
             epsilon = 1e-9
         );
         assert_eq!(v.data, Some(42));
+    }
+
+    #[test]
+    fn test_vertex_builder_accepts_non_data_type_metadata() {
+        let v: Vertex<f64, String, 2> = VertexBuilder::default()
+            .point(Point::new([0.0, 1.0]))
+            .data(String::from("standalone-label"))
+            .build()
+            .unwrap();
+
+        assert_eq!(v.data().map(String::as_str), Some("standalone-label"));
     }
 
     #[test]
@@ -1889,16 +1888,14 @@ mod tests {
         ];
 
         // Verify we can retrieve the labels
-        for (i, v) in vertices_with_ids.iter().enumerate() {
+        for (v, expected_label) in
+            vertices_with_ids
+                .iter()
+                .zip(["center", "corner", "edge_midpoint", "boundary_point"])
+        {
             let label_id = v.data.unwrap();
             let label = label_lookup.get(&label_id).unwrap();
-            match i {
-                0 => assert_eq!(label, "center"),
-                1 => assert_eq!(label, "corner"),
-                2 => assert_eq!(label, "edge_midpoint"),
-                3 => assert_eq!(label, "boundary_point"),
-                _ => unreachable!(),
-            }
+            assert_eq!(label, expected_label);
         }
 
         // Test that these vertices work with all normal operations

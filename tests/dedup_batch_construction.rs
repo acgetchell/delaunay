@@ -9,12 +9,7 @@
 //!
 //! Dimension coverage: 2D–5D via `gen_dedup_batch_tests!`.
 
-use delaunay::core::triangulation::TriangulationConstructionError;
 use delaunay::prelude::triangulation::*;
-use delaunay::triangulation::delaunay::{
-    ConstructionOptions, DedupPolicy, DelaunayTriangulationConstructionError,
-    InsertionOrderStrategy,
-};
 
 // =============================================================================
 // HELPERS
@@ -143,7 +138,7 @@ macro_rules! gen_dedup_batch_tests {
                     matches!(
                         result,
                         Err(DelaunayTriangulationConstructionError::Triangulation(
-                            TriangulationConstructionError::InsufficientVertices { .. }
+                            DelaunayConstructionFailure::InsufficientVertices { .. }
                         ))
                     ),
                     "{}D: all-duplicate input should fail with InsufficientVertices",

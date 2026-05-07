@@ -6,10 +6,20 @@
 //! `vertex_uuids()` method that allocates a Vec.
 
 use delaunay::prelude::generators::generate_random_triangulation;
+use delaunay::prelude::tds::CellValidationError;
+use delaunay::prelude::triangulation::DelaunayTriangulationConstructionError;
 use std::hint::black_box;
 use std::time::Instant;
 
-fn main() -> Result<(), Box<dyn std::error::Error>> {
+#[derive(Debug, thiserror::Error)]
+enum DemoError {
+    #[error(transparent)]
+    Construction(#[from] DelaunayTriangulationConstructionError),
+    #[error(transparent)]
+    Cell(#[from] CellValidationError),
+}
+
+fn main() -> Result<(), DemoError> {
     println!("=================================================================");
     println!("Zero-Allocation Iterator Demo");
     println!("=================================================================\n");

@@ -1,3 +1,4 @@
+#![cfg_attr(docsrs, feature(doc_cfg))]
 #![cfg_attr(any(doc, doctest), doc = include_str!("../README.md"))]
 
 //! ---
@@ -553,6 +554,7 @@ pub mod geometry {
         /// assert!(matches!(err, ValueConversionError::ConversionFailed { .. }));
         /// ```
         #[derive(Clone, Debug, thiserror::Error, PartialEq, Eq)]
+        #[non_exhaustive]
         pub enum ValueConversionError {
             /// Failed to convert a value from one type to another
             #[error("Cannot convert {value} from {from_type} to {to_type}: {details}")]
@@ -582,6 +584,7 @@ pub mod geometry {
         /// assert!(matches!(err, RandomPointGenerationError::InvalidRange { .. }));
         /// ```
         #[derive(Clone, Debug, thiserror::Error, PartialEq, Eq)]
+        #[non_exhaustive]
         pub enum RandomPointGenerationError {
             /// Invalid coordinate range provided
             #[error("Invalid coordinate range: minimum {min} must be less than maximum {max}")]
@@ -622,6 +625,7 @@ pub mod geometry {
         /// assert!(matches!(err, CircumcenterError::EmptyPointSet));
         /// ```
         #[derive(Clone, Debug, thiserror::Error, PartialEq, Eq)]
+        #[non_exhaustive]
         pub enum CircumcenterError {
             /// Empty point set provided
             #[error("Empty point set")]
@@ -644,6 +648,22 @@ pub mod geometry {
             #[error("Matrix inversion failed: {details}")]
             MatrixInversionFailed {
                 /// Details about the matrix inversion failure
+                details: String,
+            },
+
+            /// Runtime-dispatched stack matrix dimension is unsupported.
+            #[error("Unsupported stack matrix dimension {requested} (maximum supported is {max})")]
+            UnsupportedMatrixDimension {
+                /// Requested matrix dimension.
+                requested: usize,
+                /// Maximum supported matrix dimension.
+                max: usize,
+            },
+
+            /// Linear algebra backend operation failed.
+            #[error("Linear algebra failure: {details}")]
+            LinearAlgebraFailure {
+                /// Backend diagnostic.
                 details: String,
             },
 
@@ -671,12 +691,10 @@ pub mod geometry {
             fn from(source: StackMatrixDispatchError) -> Self {
                 match source {
                     StackMatrixDispatchError::UnsupportedDim { k, max } => {
-                        Self::MatrixInversionFailed {
-                            details: format!("unsupported stack matrix size: {k} (max {max})"),
-                        }
+                        Self::UnsupportedMatrixDimension { requested: k, max }
                     }
-                    StackMatrixDispatchError::La(source) => Self::MatrixInversionFailed {
-                        details: format!("la-stack error: {source}"),
+                    StackMatrixDispatchError::La(source) => Self::LinearAlgebraFailure {
+                        details: source.to_string(),
                     },
                 }
             }
@@ -693,6 +711,7 @@ pub mod geometry {
         /// assert!(matches!(err, SurfaceMeasureError::GeometryError(_)));
         /// ```
         #[derive(Clone, Debug, thiserror::Error, PartialEq, Eq)]
+        #[non_exhaustive]
         pub enum SurfaceMeasureError {
             /// Error retrieving vertices from a facet.
             #[error("Failed to retrieve facet vertices: {0}")]
@@ -870,7 +889,11 @@ pub mod prelude {
     };
 
     // Re-export incremental insertion types
-    pub use crate::core::algorithms::incremental_insertion::InsertionError;
+    pub use crate::core::algorithms::incremental_insertion::{
+        CavityFillingError, CavityRepairStage, HullExtensionReason,
+        InitialSimplexConstructionError, InsertionError, NeighborRebuildError, NeighborWiringError,
+        TdsConstructionFailure, TdsValidationFailure,
+    };
     pub use crate::core::operations::{InsertionOutcome, InsertionStatistics, SuspicionFlags};
 
     // Re-export diagnostic types for scientific analysis of construction and repair
@@ -927,9 +950,17 @@ pub mod prelude {
 
         /// Incremental insertion building blocks and diagnostics.
         pub mod insertion {
-            pub use crate::core::algorithms::incremental_insertion::*;
+            pub use crate::core::algorithms::incremental_insertion::{
+                CavityFillingError, CavityRepairStage, HullExtensionReason,
+                InitialSimplexConstructionError, InsertionError, NeighborRebuildError,
+                NeighborWiringError, TdsConstructionFailure, TdsValidationFailure, extend_hull,
+                fill_cavity, wire_cavity_neighbors,
+            };
             pub use crate::core::collections::CellKeyBuffer;
             pub use crate::core::facet::FacetHandle;
+            pub use crate::core::operations::{
+                InsertionOutcome, InsertionResult, InsertionStatistics,
+            };
             pub use crate::core::tds::{CellKey, Tds, VertexKey};
         }
 
@@ -974,7 +1005,10 @@ pub mod prelude {
             pub use crate::vertex;
         }
 
-        pub use crate::core::algorithms::incremental_insertion::InsertionError;
+        pub use crate::core::algorithms::incremental_insertion::{
+            CavityFillingError, CavityRepairStage, HullExtensionReason, InsertionError,
+            NeighborWiringError,
+        };
         // Convenience macro (commonly used in docs/tests/examples).
         pub use crate::vertex;
     }
@@ -1403,7 +1437,7 @@ mod tests {
 
         // Iterate over cells
         for (cell_key, _cell) in tri.cells() {
-            assert!(tds.get_cell(cell_key).is_some());
+            assert!(tds.cell(cell_key).is_some());
         }
     }
 

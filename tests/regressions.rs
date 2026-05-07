@@ -171,13 +171,14 @@ fn regression_issue_307_4d_bulk_repair_keeps_positive_orientation() {
     let options = ConstructionOptions::default()
         .with_insertion_order(InsertionOrderStrategy::Input)
         .with_retry_policy(RetryPolicy::Disabled);
-    let (dt, stats) = DelaunayTriangulation::<RobustKernel<f64>, (), (), 4>::with_topology_guarantee_and_options_with_construction_statistics(
-        &kernel,
-        &vertices,
-        TopologyGuarantee::PLManifoldStrict,
-        options,
-    )
-    .expect("4D bulk construction should not fail after repair orientation cleanup");
+    let (dt, stats) =
+        DelaunayTriangulation::<RobustKernel<f64>, (), (), 4>::with_options_and_statistics(
+            &kernel,
+            &vertices,
+            TopologyGuarantee::PLManifoldStrict,
+            options,
+        )
+        .expect("4D bulk construction should not fail after repair orientation cleanup");
 
     assert_eq!(
         stats.inserted,

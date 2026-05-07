@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+#!/usr/bin/env -S uv run
 """Archive completed minor series from CHANGELOG.md into per-minor files.
 
 Parses the full CHANGELOG.md (produced by git-cliff + postprocess-changelog)
@@ -61,7 +61,7 @@ def _minor_key(version: str) -> str:
     return f"{parts[0]}.{parts[1]}"
 
 
-def _version_sort_key(label: str) -> tuple[bool, tuple[int, ...]]:
+def _version_sort_key(label: str) -> tuple[bool, tuple[int, ...], tuple[tuple[int, int | str], ...]]:
     """Return a sort key for a version label that orders by semantic version.
 
     Non-numeric labels (e.g. ``unreleased``) sort after all numeric versions.
@@ -73,13 +73,20 @@ def _version_sort_key(label: str) -> tuple[bool, tuple[int, ...]]:
     Returns:
         A tuple suitable for use as a sort key.
     """
-    parts = label.split(".")
+    core, separator, prerelease = label.partition("-")
+    parts = core.split(".")
     try:
         nums = tuple(int(p) for p in parts)
     except ValueError:
         # Non-numeric labels ("unreleased") sort last (True > False).
-        return (True, ())
-    return (False, nums)
+        return (True, (), ())
+
+    if not separator:
+        prerelease_key: tuple[tuple[int, int | str], ...] = ((2, ""),)
+    else:
+        prerelease_key = tuple((0, int(part)) if part.isdecimal() else (1, part) for part in prerelease.split("."))
+
+    return (False, nums, prerelease_key)
 
 
 def _extract_link_defs(text: str) -> tuple[str, dict[str, str]]:
@@ -125,9 +132,13 @@ def parse_changelog(text: str) -> tuple[str, str, list[tuple[str, str]]]:
         text: The full contents of CHANGELOG.md.
 
     Returns:
-        A 3-tuple of (preamble, unreleased_block, version_blocks) where
-        *version_blocks* is a list of ``(version_string, block_text)`` pairs
-        in the order they appear (newest first).
+        A 3-tuple of (preamble, unreleased_block, version_blocks). The
+        ``unreleased_block`` is the complete ``## [Unreleased]`` block,
+        including its heading. Each item in ``version_blocks`` is a
+        ``(semver_label, full_heading_block)`` pair in the order it appears
+        (newest first), where ``semver_label`` is only the parsed version text
+        (for example ``"0.7.2"``) and ``full_heading_block`` still includes
+        the raw ``## [...]`` heading and body.
     """
     lines = text.split("\n")
 
@@ -209,7 +220,10 @@ def write_archive(
     Parameters:
         archive_dir: Directory for archive files.
         minor: The ``X.Y`` minor key.
-        blocks: Version blocks belonging to this minor, newest first.
+        blocks: Version blocks belonging to this minor, newest first, using
+            the ``(semver_label, full_heading_block)`` shape returned by
+            ``parse_changelog``. The archive writer preserves each provided
+            block verbatim after the generated archive title.
         link_defs: Optional mapping of lowercase labels to reference-style
             link definition lines.  Only definitions matching versions in
             *blocks* are included.
@@ -325,9 +339,9 @@ def archive_changelog(
 
     # Compute relative path from changelog location to archive dir.
     try:
-        archive_dir_rel = str(archive_dir.relative_to(changelog_path.parent))
+        archive_dir_rel = archive_dir.relative_to(changelog_path.parent).as_posix()
     except ValueError:
-        archive_dir_rel = str(archive_dir)
+        archive_dir_rel = archive_dir.as_posix()
 
     root_text = build_root(
         preamble,

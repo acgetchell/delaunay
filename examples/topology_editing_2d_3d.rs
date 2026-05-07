@@ -18,9 +18,7 @@
 //! cargo run --example topology_editing_2d_3d
 //! ```
 
-use delaunay::prelude::geometry::{
-    Coordinate, CoordinateScalar, Kernel, Point, circumcenter, hypot,
-};
+use delaunay::prelude::geometry::{Coordinate, Kernel, Point, circumcenter, hypot};
 use delaunay::prelude::triangulation::flips::*;
 use delaunay::prelude::triangulation::*;
 
@@ -121,16 +119,11 @@ fn edit_api_2d_k1() {
 
     // Apply k=1 flip (insert vertex into cell)
     let cell_key = dt.cells().next().unwrap().0;
-    let cell = dt.tds().get_cell(cell_key).expect("Cell should exist");
+    let cell = dt.tds().cell(cell_key).expect("Cell should exist");
     let vertex_points: Vec<Point<f64, 2>> = cell
         .vertices()
         .iter()
-        .map(|vkey| {
-            *dt.tds()
-                .get_vertex_by_key(*vkey)
-                .expect("Vertex should exist")
-                .point()
-        })
+        .map(|vkey| *dt.tds().vertex(*vkey).expect("Vertex should exist").point())
         .collect();
     let circumcenter = circumcenter(&vertex_points).expect("Circumcenter should exist");
     let circumcenter_coords = circumcenter.to_array();
@@ -312,16 +305,11 @@ fn edit_api_3d_k1() {
 
     // Apply k=1 flip
     let cell_key = dt.cells().next().unwrap().0;
-    let cell = dt.tds().get_cell(cell_key).expect("Cell should exist");
+    let cell = dt.tds().cell(cell_key).expect("Cell should exist");
     let vertex_points: Vec<Point<f64, 3>> = cell
         .vertices()
         .iter()
-        .map(|vkey| {
-            *dt.tds()
-                .get_vertex_by_key(*vkey)
-                .expect("Vertex should exist")
-                .point()
-        })
+        .map(|vkey| *dt.tds().vertex(*vkey).expect("Vertex should exist").point())
         .collect();
     let circumcenter = circumcenter(&vertex_points).expect("Circumcenter should exist");
     let circumcenter_coords = circumcenter.to_array();
@@ -485,10 +473,7 @@ fn edit_api_3d_k3() {
 // UTILITY FUNCTIONS
 // ============================================================================
 
-fn print_stats_2d<K: Kernel<2>>(dt: &DelaunayTriangulation<K, (), (), 2>)
-where
-    K::Scalar: CoordinateScalar,
-{
+fn print_stats_2d<K: Kernel<2>>(dt: &DelaunayTriangulation<K, (), (), 2>) {
     println!(
         "  Vertices: {}, Triangles: {}",
         dt.number_of_vertices(),
@@ -496,10 +481,7 @@ where
     );
 }
 
-fn print_stats_3d<K: Kernel<3>>(dt: &DelaunayTriangulation<K, (), (), 3>)
-where
-    K::Scalar: CoordinateScalar,
-{
+fn print_stats_3d<K: Kernel<3>>(dt: &DelaunayTriangulation<K, (), (), 3>) {
     println!(
         "  Vertices: {}, Tetrahedra: {}",
         dt.number_of_vertices(),
@@ -509,10 +491,7 @@ where
 
 fn find_interior_facet_2d<K: Kernel<2>>(
     dt: &DelaunayTriangulation<K, (), (), 2>,
-) -> Option<FacetHandle>
-where
-    K::Scalar: CoordinateScalar,
-{
+) -> Option<FacetHandle> {
     for (cell_key, cell) in dt.cells() {
         if let Some(neighbors) = cell.neighbors() {
             for (facet_idx, neighbor) in neighbors.iter().enumerate() {
@@ -528,10 +507,7 @@ where
 
 fn find_interior_facet_3d<K: Kernel<3>>(
     dt: &DelaunayTriangulation<K, (), (), 3>,
-) -> Option<FacetHandle>
-where
-    K::Scalar: CoordinateScalar,
-{
+) -> Option<FacetHandle> {
     for (cell_key, cell) in dt.cells() {
         if let Some(neighbors) = cell.neighbors() {
             for (facet_idx, neighbor) in neighbors.iter().enumerate() {
@@ -547,10 +523,7 @@ where
 
 fn find_flippable_ridge_3d<K: Kernel<3>>(
     dt: &DelaunayTriangulation<K, (), (), 3>,
-) -> Option<RidgeHandle>
-where
-    K::Scalar: CoordinateScalar,
-{
+) -> Option<RidgeHandle> {
     // Try to find any ridge (edge in 3D shared by multiple tetrahedra)
     for (cell_key, cell) in dt.cells() {
         let vertex_count = cell.number_of_vertices();

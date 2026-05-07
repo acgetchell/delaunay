@@ -99,7 +99,7 @@ where
     // Extract points from vertices
     let points: Vec<Point<T, D>> = vertices
         .iter()
-        .map(|&vk| tds.get_vertex_by_key(vk).unwrap().point().clone())
+        .map(|&vk| tds.vertex(vk).unwrap().point().clone())
         .collect();
     
     // Check orientation

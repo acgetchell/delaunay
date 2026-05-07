@@ -37,6 +37,11 @@ logger = logging.getLogger(__name__)
 
 DEFAULT_REGRESSION_THRESHOLD = 7.5
 
+
+class BaselineParseError(ValueError):
+    """Raised when a benchmark baseline cannot be parsed without losing coverage."""
+
+
 if TYPE_CHECKING:
     from benchmark_models import (
         BenchmarkData,
@@ -1803,10 +1808,9 @@ class CriterionParser:
     @staticmethod
     def _process_fallback_discovery(criterion_dir: Path) -> list[BenchmarkData]:
         """Recursively discover estimates.json files when structured search fails."""
-        results = []
-        seen: set[str] = set()
+        results_by_key: dict[str, tuple[str, BenchmarkData]] = {}
 
-        for estimates_file in criterion_dir.rglob("estimates.json"):
+        for estimates_file in sorted(criterion_dir.rglob("estimates.json")):
             parent_name = estimates_file.parent.name
             if parent_name not in {"base", "new"}:
                 continue
@@ -1825,15 +1829,14 @@ class CriterionParser:
             dimension = f"{dim_match.group(1)}D"
             key = f"{points}_{dimension}"
 
-            # Prefer "new" over "base" when duplicates exist
-            if key in seen and parent_name == "base":
-                continue
-
             bd = CriterionParser.parse_estimates_json(estimates_file, points, dimension)
             if bd:
-                seen.add(key)
-                results.append(bd)
+                existing = results_by_key.get(key)
+                if existing is None or (existing[0] == "base" and parent_name == "new"):
+                    results_by_key[key] = (parent_name, bd)
 
+        results = [benchmark for _, benchmark in results_by_key.values()]
+        results.sort(key=lambda result: (int(result.dimension.rstrip("D")), result.points is None, result.points or 0))
         return results
 
     @staticmethod
@@ -2117,12 +2120,15 @@ class PerformanceComparator:
         results = {}
         for benchmark in extract_benchmark_data(baseline_content):
             if not benchmark.time_unit:
-                logger.debug("Skipping baseline benchmark without timing data: %s", benchmark)
-                continue
+                section_label = benchmark.benchmark_id or benchmark.header_line()
+                msg = f"Malformed baseline section {section_label!r}: missing or invalid Time line"
+                raise BaselineParseError(msg)
             try:
                 results[benchmark.comparison_key] = benchmark
-            except ValueError:
-                logger.debug("Skipping baseline benchmark without stable comparison key: %s", benchmark)
+            except ValueError as exc:
+                section_label = benchmark.benchmark_id or benchmark.header_line()
+                msg = f"Malformed baseline section {section_label!r}: {exc}"
+                raise BaselineParseError(msg) from exc
         return results
 
     def parse_baseline_file(self, baseline_content: str) -> dict[str, BenchmarkData]:
@@ -2133,7 +2139,8 @@ class PerformanceComparator:
         """Public wrapper for writing the performance comparison section.
 
         Returns:
-            True if the overall average regression exceeds the threshold.
+            True if any individual benchmark or the overall average exceeds the
+            regression threshold.
         """
         return self._write_performance_comparison(f, current_results, baseline_results)
 
@@ -2273,7 +2280,7 @@ class PerformanceComparator:
         return baseline_results.get(f"{current.points}_{current.dimension}")
 
     def _write_performance_comparison(self, f: TextIO, current_results: list[BenchmarkData], baseline_results: dict[str, BenchmarkData]) -> bool:
-        """Write performance comparison section and return whether average regression exceeds threshold."""
+        """Write performance comparison section and return whether any regression exceeds threshold."""
         time_changes = []  # Track all time changes for average calculation
         individual_regressions = 0
 
@@ -2323,37 +2330,12 @@ class PerformanceComparator:
             if top:
                 f.write("Top regressions (by time change %): " + ", ".join(f"{t:.1f}%" for t in top) + "\n")
 
-            average_regression_found = average_change > self.regression_threshold
-            if average_regression_found:
-                f.write(
-                    f"🚨 OVERALL REGRESSION: Average performance decreased by {average_change:.1f}% "
-                    f"(exceeds {self.regression_threshold}% threshold)\n",
-                )
-                logger.warning(
-                    "Average regression detected: average_change=%.2f%% threshold=%.2f%% benchmarks=%s",
-                    average_change,
-                    self.regression_threshold,
-                    len(time_changes),
-                )
-            elif average_change < -self.regression_threshold:
-                f.write(
-                    f"🎉 OVERALL IMPROVEMENT: Average performance improved by {abs(average_change):.1f}% "
-                    f"(exceeds {self.regression_threshold}% threshold)\n",
-                )
-                logger.info(
-                    "Average improvement detected: average_change=%.2f%% threshold=%.2f%% benchmarks=%s",
-                    average_change,
-                    self.regression_threshold,
-                    len(time_changes),
-                )
-            else:
-                f.write(f"✅ OVERALL OK: Average change within acceptable range (±{self.regression_threshold}%)\n")
-                logger.debug(
-                    "Average change within threshold: average_change=%.2f%% threshold=%.2f%% benchmarks=%s",
-                    average_change,
-                    self.regression_threshold,
-                    len(time_changes),
-                )
+            regression_found = self._write_summary_status(
+                f,
+                average_change=average_change,
+                individual_regressions=individual_regressions,
+                compared_count=len(time_changes),
+            )
 
             logger.debug(
                 "Performance comparison summary: individual_regressions=%s top_regressions=%s",
@@ -2362,8 +2344,59 @@ class PerformanceComparator:
             )
 
             f.write("\n")
-            return average_regression_found
+            return regression_found
 
+        return False
+
+    def _write_summary_status(self, f: TextIO, *, average_change: float, individual_regressions: int, compared_count: int) -> bool:
+        """Write the summary status line and return whether the comparison failed."""
+        average_regression_found = average_change > self.regression_threshold
+        if average_regression_found:
+            f.write(
+                f"🚨 OVERALL REGRESSION: Average performance decreased by {average_change:.1f}% (exceeds {self.regression_threshold}% threshold)\n",
+            )
+            logger.warning(
+                "Average regression detected: average_change=%.2f%% threshold=%.2f%% benchmarks=%s",
+                average_change,
+                self.regression_threshold,
+                compared_count,
+            )
+            return True
+
+        if individual_regressions > 0:
+            f.write(
+                f"⚠️ INDIVIDUAL REGRESSION: {individual_regressions} benchmark(s) exceeded "
+                f"{self.regression_threshold}% threshold while average changed by {average_change:.1f}%\n",
+            )
+            logger.warning(
+                "Individual regression detected: individual_regressions=%s average_change=%.2f%% threshold=%.2f%% benchmarks=%s",
+                individual_regressions,
+                average_change,
+                self.regression_threshold,
+                compared_count,
+            )
+            return True
+
+        if average_change < -self.regression_threshold:
+            f.write(
+                f"🎉 OVERALL IMPROVEMENT: Average performance improved by {abs(average_change):.1f}% "
+                f"(exceeds {self.regression_threshold}% threshold)\n",
+            )
+            logger.info(
+                "Average improvement detected: average_change=%.2f%% threshold=%.2f%% benchmarks=%s",
+                average_change,
+                self.regression_threshold,
+                compared_count,
+            )
+            return False
+
+        f.write(f"✅ OVERALL OK: Average change within acceptable range (±{self.regression_threshold}%)\n")
+        logger.debug(
+            "Average change within threshold: average_change=%.2f%% threshold=%.2f%% benchmarks=%s",
+            average_change,
+            self.regression_threshold,
+            compared_count,
+        )
         return False
 
     def _write_benchmark_header(self, f, benchmark: BenchmarkData) -> None:

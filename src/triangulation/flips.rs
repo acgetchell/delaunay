@@ -51,11 +51,10 @@ use crate::triangulation::delaunay::DelaunayTriangulation;
 ///     .flip_k1_insert(cell_key, vertex!([0.1, 0.1, 0.1]))
 ///     .unwrap();
 /// ```
-pub trait BistellarFlips<K, U, V, const D: usize>
+pub trait BistellarFlips<K, U, const D: usize>
 where
     K: Kernel<D>,
     U: DataType,
-    V: DataType,
 {
     /// Apply a forward k=1 move (cell split) by inserting a vertex into a cell.
     ///
@@ -153,7 +152,7 @@ where
     /// // Note: k=2 flips require specific geometric conditions
     /// let cell_key = dt.cells().next().map(|(k, _)| k);
     /// if let Some(key) = cell_key {
-    ///     let has_neighbor = dt.tds().get_cell(key)
+    ///     let has_neighbor = dt.tds().cell(key)
     ///         .and_then(|cell| cell.neighbors())
     ///         .map(|neighbors| neighbors.iter().any(|n| n.is_some()))
     ///         .unwrap_or(false);
@@ -215,7 +214,7 @@ where
     ) -> Result<FlipInfo<D>, FlipError>;
 }
 
-impl<K, U, V, const D: usize> BistellarFlips<K, U, V, D> for Triangulation<K, U, V, D>
+impl<K, U, V, const D: usize> BistellarFlips<K, U, D> for Triangulation<K, U, V, D>
 where
     K: Kernel<D>,
     U: DataType,
@@ -268,7 +267,7 @@ where
     }
 }
 
-impl<K, U, V, const D: usize> BistellarFlips<K, U, V, D> for DelaunayTriangulation<K, U, V, D>
+impl<K, U, V, const D: usize> BistellarFlips<K, U, D> for DelaunayTriangulation<K, U, V, D>
 where
     K: Kernel<D>,
     U: DataType,
@@ -279,29 +278,53 @@ where
         cell_key: CellKey,
         vertex: Vertex<K::Scalar, U, D>,
     ) -> Result<FlipInfo<D>, FlipError> {
-        self.tri.flip_k1_insert(cell_key, vertex)
+        let result = self.tri.flip_k1_insert(cell_key, vertex);
+        if result.is_ok() {
+            self.invalidate_repair_caches();
+        }
+        result
     }
 
     fn flip_k1_remove(&mut self, vertex_key: VertexKey) -> Result<FlipInfo<D>, FlipError> {
-        self.tri.flip_k1_remove(vertex_key)
+        let result = self.tri.flip_k1_remove(vertex_key);
+        if result.is_ok() {
+            self.invalidate_repair_caches();
+        }
+        result
     }
 
     fn flip_k2(&mut self, facet: FacetHandle) -> Result<FlipInfo<D>, FlipError> {
-        self.tri.flip_k2(facet)
+        let result = self.tri.flip_k2(facet);
+        if result.is_ok() {
+            self.invalidate_repair_caches();
+        }
+        result
     }
 
     fn flip_k3(&mut self, ridge: RidgeHandle) -> Result<FlipInfo<D>, FlipError> {
-        self.tri.flip_k3(ridge)
+        let result = self.tri.flip_k3(ridge);
+        if result.is_ok() {
+            self.invalidate_repair_caches();
+        }
+        result
     }
 
     fn flip_k2_inverse_from_edge(&mut self, edge: EdgeKey) -> Result<FlipInfo<D>, FlipError> {
-        self.tri.flip_k2_inverse_from_edge(edge)
+        let result = self.tri.flip_k2_inverse_from_edge(edge);
+        if result.is_ok() {
+            self.invalidate_repair_caches();
+        }
+        result
     }
 
     fn flip_k3_inverse_from_triangle(
         &mut self,
         triangle: TriangleHandle,
     ) -> Result<FlipInfo<D>, FlipError> {
-        self.tri.flip_k3_inverse_from_triangle(triangle)
+        let result = self.tri.flip_k3_inverse_from_triangle(triangle);
+        if result.is_ok() {
+            self.invalidate_repair_caches();
+        }
+        result
     }
 }

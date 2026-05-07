@@ -27,6 +27,7 @@ use thiserror::Error;
 /// assert!(matches!(err, DelaunayValidationError::DelaunayViolation { .. }));
 /// ```
 #[derive(Clone, Debug, Error, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum DelaunayValidationError {
     /// A cell violates the Delaunay property (has an external vertex inside its circumsphere).
     #[error("Cell violates Delaunay property: cell contains vertex that is inside circumsphere")]
@@ -84,7 +85,7 @@ where
     U: DataType,
     V: DataType,
 {
-    let Some(cell) = tds.get_cell(cell_key) else {
+    let Some(cell) = tds.cell(cell_key) else {
         // Cell doesn't exist (possibly removed), skip validation
         return Ok(None);
     };
@@ -99,7 +100,7 @@ where
     // Build the cell's circumsphere
     cell_vertex_points.clear();
     for &vkey in &cell_vertex_keys {
-        let Some(v) = tds.get_vertex_by_key(vkey) else {
+        let Some(v) = tds.vertex(vkey) else {
             return Err(DelaunayValidationError::TriangulationState {
                 source: TdsError::InconsistentDataStructure {
                     message: format!("Cell {cell_key:?} references non-existent vertex {vkey:?}"),
@@ -148,7 +149,7 @@ where
                             let Some(b_key) = neighbor_opt else {
                                 continue;
                             };
-                            let Some(b_cell) = tds.get_cell(*b_key) else {
+                            let Some(b_cell) = tds.cell(*b_key) else {
                                 continue;
                             };
                             // Is test_vkey the apex of B w.r.t. A?
@@ -157,14 +158,14 @@ where
                             }
                             // Found. A's apex w.r.t. B = cell.vertices()[k].
                             let apex_a_key = cell_vertex_keys[k];
-                            let Some(apex_a_v) = tds.get_vertex_by_key(apex_a_key) else {
+                            let Some(apex_a_v) = tds.vertex(apex_a_key) else {
                                 continue;
                             };
                             // Build B's circumsphere points.
                             b_points.clear();
                             let mut valid = true;
                             for &bv in b_cell.vertices() {
-                                let Some(v) = tds.get_vertex_by_key(bv) else {
+                                let Some(v) = tds.vertex(bv) else {
                                     valid = false;
                                     break;
                                 };
@@ -434,7 +435,7 @@ pub fn debug_print_first_delaunay_violation<T, U, V, const D: usize>(
 
     // Dump each violating cell with its vertices.
     for cell_key in &violations {
-        match tds.get_cell(*cell_key) {
+        match tds.cell(*cell_key) {
             Some(cell) => {
                 tracing::debug!(
                     "[Delaunay debug]  Cell {:?}: uuid={}, vertices:",
@@ -442,7 +443,7 @@ pub fn debug_print_first_delaunay_violation<T, U, V, const D: usize>(
                     cell.uuid()
                 );
                 for &vkey in cell.vertices() {
-                    match tds.get_vertex_by_key(vkey) {
+                    match tds.vertex(vkey) {
                         Some(v) => {
                             tracing::debug!(
                                 "[Delaunay debug]    vkey={:?}, uuid={}, point={:?}",
@@ -468,7 +469,7 @@ pub fn debug_print_first_delaunay_violation<T, U, V, const D: usize>(
     // Focus on the first violating cell to identify at least one offending
     // external vertex and neighbor information.
     let first_cell_key = violations[0];
-    let Some(cell) = tds.get_cell(first_cell_key) else {
+    let Some(cell) = tds.cell(first_cell_key) else {
         tracing::debug!(
             "[Delaunay debug] First violating cell {first_cell_key:?} not found in TDS"
         );
@@ -480,7 +481,7 @@ pub fn debug_print_first_delaunay_violation<T, U, V, const D: usize>(
     cell_vertex_points.clear();
     let mut missing_vertex_keys: SmallVec<[VertexKey; 8]> = SmallVec::new();
     for &vkey in &cell_vertex_keys {
-        match tds.get_vertex_by_key(vkey) {
+        match tds.vertex(vkey) {
             Some(v) => {
                 cell_vertex_points.push(*v.point());
             }
@@ -533,7 +534,7 @@ pub fn debug_print_first_delaunay_violation<T, U, V, const D: usize>(
         for (facet_idx, neighbor_key_opt) in neighbors.iter().enumerate() {
             match neighbor_key_opt {
                 Some(neighbor_key) => {
-                    if let Some(neighbor_cell) = tds.get_cell(*neighbor_key) {
+                    if let Some(neighbor_cell) = tds.cell(*neighbor_key) {
                         tracing::debug!(
                             "[Delaunay debug]  facet {facet_idx}: neighbor cell {neighbor_key:?}, uuid={}",
                             neighbor_cell.uuid()
@@ -786,13 +787,13 @@ mod tests {
             Triangulation::<FastKernel<f64>, (), (), 3>::build_initial_simplex(&vertices).unwrap();
         let cell_key = tds.cell_keys().next().unwrap();
         let original_vertices = {
-            let cell = tds.get_cell(cell_key).unwrap();
+            let cell = tds.cell(cell_key).unwrap();
             cell.vertices().to_vec()
         };
         let invalid_vkey = VertexKey::from(slotmap::KeyData::from_ffi(u64::MAX));
 
         {
-            let cell = tds.get_cell_by_key_mut(cell_key).unwrap();
+            let cell = tds.cell_mut(cell_key).unwrap();
             cell.clear_vertex_keys();
             for (idx, &vkey) in original_vertices.iter().enumerate() {
                 if idx == 0 {
@@ -822,7 +823,7 @@ mod tests {
         let mut tds =
             Triangulation::<FastKernel<f64>, (), (), 2>::build_initial_simplex(&vertices).unwrap();
         let cell_key = tds.cell_keys().next().unwrap();
-        let cell = tds.get_cell_by_key_mut(cell_key).unwrap();
+        let cell = tds.cell_mut(cell_key).unwrap();
         cell.neighbors = Some(vec![None, None].into()); // wrong length (expected 3)
 
         let err = is_delaunay_property_only(&tds).unwrap_err();

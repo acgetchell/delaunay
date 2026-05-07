@@ -764,7 +764,7 @@ fn test_explicit_round_trip_3d() {
 
     let extracted_vertices: Vec<_> = vertex_keys
         .iter()
-        .map(|&vk| *tds.get_vertex_by_key(vk).unwrap())
+        .map(|&vk| *tds.vertex(vk).unwrap())
         .collect();
 
     let mut cell_specs: Vec<Vec<usize>> = Vec::new();
@@ -812,7 +812,7 @@ fn test_explicit_round_trip_2d() {
 
     let extracted_vertices: Vec<_> = vertex_keys
         .iter()
-        .map(|&vk| *tds.get_vertex_by_key(vk).unwrap())
+        .map(|&vk| *tds.vertex(vk).unwrap())
         .collect();
 
     let mut cell_specs: Vec<Vec<usize>> = Vec::new();
@@ -960,7 +960,8 @@ fn test_explicit_3d_single_tetrahedron() {
 }
 
 /// Non-Delaunay mesh: prescribed connectivity that violates the empty-circumsphere
-/// property. Levels 1–3 should pass; Level 4 (Delaunay) should fail.
+/// property. Because the builder returns `DelaunayTriangulation`, Level 4
+/// validation must reject this connectivity before construction succeeds.
 ///
 /// Geometry: A=(0,0), B=(4,0), C=(4,2), D=(1,2). The circumcircle of ABC has
 /// center (2,1) and radius √5. Point D=(1,2) is at distance √2 < √5 from the
@@ -979,19 +980,22 @@ fn test_explicit_non_delaunay_mesh() {
     // the circumcircle of triangle ABC.
     let cells = vec![vec![0, 1, 2], vec![0, 2, 3]];
 
-    let dt = DelaunayTriangulationBuilder::from_vertices_and_cells(&vertices, &cells)
+    let err = DelaunayTriangulationBuilder::from_vertices_and_cells(&vertices, &cells)
         .build::<()>()
-        .expect("non-Delaunay mesh should build successfully (Levels 1-3)");
+        .expect_err("non-Delaunay mesh must not construct a DelaunayTriangulation");
 
-    assert_eq!(dt.number_of_vertices(), 4);
-    assert_eq!(dt.number_of_cells(), 2);
     assert!(
-        dt.tds().is_valid().is_ok(),
-        "TDS structural validity (Levels 1-3) should pass"
+        matches!(
+            err,
+            DelaunayTriangulationConstructionError::ExplicitConstruction(
+                ExplicitConstructionError::ValidationFailed { .. }
+            )
+        ),
+        "expected explicit validation failure, got {err:?}"
     );
     assert!(
-        dt.is_valid().is_err(),
-        "Delaunay property (Level 4) should fail for non-Delaunay connectivity"
+        err.to_string().contains("Delaunay validation failed"),
+        "error should identify the Level 4 validation failure: {err}"
     );
 }
 

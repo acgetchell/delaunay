@@ -13,10 +13,10 @@
 //!   - Validation time (topology checks)
 //!   - Query performance (neighbor finding, iteration)
 //!
-//! # Phase 4 `SlotMap` Evaluation
+//! # Large-scale Throughput
 //!
-//! This benchmark is specifically designed to support Phase 4 `SlotMap` evaluation:
-//! - Large-scale tests reveal `SlotMap` performance characteristics
+//! This benchmark is designed for manual scaling work:
+//! - Large-scale tests reveal construction and validation growth patterns
 //! - Query benchmarks measure lookup/iteration efficiency
 //! - Memory measurements show allocation patterns
 //! - Scalability tests (1K→5K→10K) reveal growth patterns
@@ -74,7 +74,7 @@
 //! ```
 //!
 //! **Memory complexity:** O(n^⌈d/2⌉) cells in d dimensions
-//! **Query performance:** Directly measures `SlotMap` iteration efficiency
+//! **Query performance:** Directly measures storage iteration efficiency
 
 use criterion::{BatchSize, Criterion, Throughput, criterion_group, criterion_main};
 use delaunay::prelude::generators::generate_random_points_seeded;
@@ -386,7 +386,7 @@ fn bench_validation<const D: usize>(c: &mut Criterion, dimension_name: &str, n_p
 // Query Performance Benchmarks
 // =============================================================================
 
-/// Benchmark: Neighbor query performance (critical for `SlotMap` evaluation)
+/// Benchmark: Neighbor query performance.
 fn bench_neighbor_queries<const D: usize>(
     c: &mut Criterion,
     dimension_name: &str,
@@ -418,7 +418,7 @@ fn bench_neighbor_queries<const D: usize>(
 
     group.bench_function("find_neighbors_all_cells", |b| {
         b.iter(|| {
-            // Query neighbors for all cells - measures `SlotMap` lookup performance
+            // Query neighbors for all cells to measure storage lookup performance.
             for &cell_key in &cell_keys {
                 let neighbors = tds.find_neighbors_by_key(cell_key);
                 black_box(neighbors);
@@ -429,7 +429,7 @@ fn bench_neighbor_queries<const D: usize>(
     group.finish();
 }
 
-/// Benchmark: Vertex iteration performance (tests `SlotMap` iteration efficiency)
+/// Benchmark: Vertex iteration performance.
 fn bench_vertex_iteration<const D: usize>(
     c: &mut Criterion,
     dimension_name: &str,
@@ -456,7 +456,7 @@ fn bench_vertex_iteration<const D: usize>(
 
     group.bench_function("iterate_all_vertices", |b| {
         b.iter(|| {
-            // Iterate through all vertices - measures `SlotMap` iteration performance
+            // Iterate through all vertices to measure storage iteration performance.
             let mut count = 0;
             for (_, vertex) in tds.vertices() {
                 black_box(vertex);
@@ -469,7 +469,7 @@ fn bench_vertex_iteration<const D: usize>(
     group.finish();
 }
 
-/// Benchmark: Cell iteration performance (tests `SlotMap` cell iteration)
+/// Benchmark: Cell iteration performance.
 fn bench_cell_iteration<const D: usize>(c: &mut Criterion, dimension_name: &str, n_points: usize) {
     let bench_name = format!("queries/cells/{dimension_name}/{n_points}v");
     let mut group = c.benchmark_group(&bench_name);
@@ -494,7 +494,7 @@ fn bench_cell_iteration<const D: usize>(c: &mut Criterion, dimension_name: &str,
 
     group.bench_function("iterate_all_cells", |b| {
         b.iter(|| {
-            // Iterate through all cells - measures `SlotMap` cell iteration performance
+            // Iterate through all cells to measure storage iteration performance.
             let mut count = 0;
             for cell_key in tds.cell_keys() {
                 black_box(cell_key);

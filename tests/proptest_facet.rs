@@ -81,7 +81,7 @@ macro_rules! test_facet_properties {
                     ) {
                         let tds = dt.tds();
                         for cell_key in tds.cell_keys() {
-                            if let Some(cell) = tds.get_cell(cell_key) {
+                            if let Some(cell) = tds.cell(cell_key) {
                                 let cell_vertex_count = cell.vertices().len();
 
                                 for facet_index in 0..=($dim as u8) {

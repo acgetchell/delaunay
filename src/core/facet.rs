@@ -462,7 +462,7 @@ where
     ) -> Result<Self, FacetError> {
         // Validate cell exists
         let cell = tds
-            .get_cell(cell_key)
+            .cell(cell_key)
             .ok_or(FacetError::CellNotFoundInTriangulation)?;
 
         // Validate facet index
@@ -523,7 +523,7 @@ where
     pub fn vertices(&self) -> Result<impl Iterator<Item = &'tds Vertex<T, U, D>>, FacetError> {
         let cell = self
             .tds
-            .get_cell(self.cell_key)
+            .cell(self.cell_key)
             .ok_or(FacetError::CellNotFoundInTriangulation)?;
         let facet_index = usize::from(self.facet_index);
 
@@ -537,7 +537,7 @@ where
             }
             refs.push(
                 self.tds
-                    .get_vertex_by_key(vkey)
+                    .vertex(vkey)
                     .ok_or(FacetError::VertexKeyNotFoundInTriangulation { key: vkey })?,
             );
         }
@@ -576,7 +576,7 @@ where
     pub fn opposite_vertex(&self) -> Result<&'tds Vertex<T, U, D>, FacetError> {
         let cell = self
             .tds
-            .get_cell(self.cell_key)
+            .cell(self.cell_key)
             .ok_or(FacetError::CellNotFoundInTriangulation)?;
 
         // Phase 3A: Use vertices and resolve via TDS
@@ -592,7 +592,7 @@ where
 
         // Use get() to safely handle potentially invalid vertex keys
         self.tds
-            .get_vertex_by_key(*vkey)
+            .vertex(*vkey)
             .ok_or(FacetError::VertexKeyNotFoundInTriangulation { key: *vkey })
     }
 
@@ -627,7 +627,7 @@ where
     /// ```
     pub fn cell(&self) -> Result<&'tds Cell<T, U, V, D>, FacetError> {
         self.tds
-            .get_cell(self.cell_key)
+            .cell(self.cell_key)
             .ok_or(FacetError::CellNotFoundInTriangulation)
     }
 
@@ -791,7 +791,7 @@ where
     V: DataType,
 {
     let cell = tds
-        .get_cell(cell_key)
+        .cell(cell_key)
         .ok_or(FacetError::CellNotFoundInTriangulation)?;
 
     let vertex_count = cell.number_of_vertices();
@@ -922,7 +922,7 @@ where
 
             // Move to next cell
             if let Some(next_cell_key) = self.cell_keys.next() {
-                if let Some(cell) = self.tds.get_cell(next_cell_key) {
+                if let Some(cell) = self.tds.cell(next_cell_key) {
                     self.current_cell_key = Some(next_cell_key);
                     self.current_facet_index = 0;
                     self.current_cell_facet_count = cell.number_of_vertices();
@@ -1792,12 +1792,9 @@ mod tests {
         let opposite = facet_view.opposite_vertex().unwrap();
 
         // The opposite vertex should be the vertex at index 1
-        let cell = dt.tds().get_cell(cell_key).expect("cell exists");
+        let cell = dt.tds().cell(cell_key).expect("cell exists");
         let cell_vertex_keys = cell.vertices();
-        let expected_vertex = dt
-            .tds()
-            .get_vertex_by_key(cell_vertex_keys[1])
-            .expect("vertex exists");
+        let expected_vertex = dt.tds().vertex(cell_vertex_keys[1]).expect("vertex exists");
         assert_eq!(opposite.uuid(), expected_vertex.uuid());
     }
 

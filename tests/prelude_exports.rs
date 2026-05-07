@@ -31,13 +31,13 @@ use delaunay::prelude::triangulation::repair::{
     verify_delaunay_for_triangulation,
 };
 use delaunay::prelude::triangulation::{
-    ConstructionOptions, DelaunayRepairOperation, DelaunayTriangulation,
-    DelaunayTriangulationValidationError, InsertionOrderStrategy, Vertex,
+    ConstructionOptions, DelaunayConstructionFailure, DelaunayRepairOperation,
+    DelaunayTriangulation, DelaunayTriangulationValidationError, InsertionOrderStrategy, Vertex,
 };
 use delaunay::vertex;
 
 /// Proves the focused flips prelude exports the trait bound expected by benchmarks.
-const fn assert_bistellar_flips(_: &impl BistellarFlips<AdaptiveKernel<f64>, (), (), 3>) {}
+const fn assert_bistellar_flips(_: &impl BistellarFlips<AdaptiveKernel<f64>, (), 3>) {}
 
 #[test]
 fn preludes_cover_bench_apis() {
@@ -59,6 +59,13 @@ fn preludes_cover_bench_apis() {
     assert!(ConvexHull::from_triangulation(dt.as_triangulation()).is_ok());
     assert!(dt.validate().is_ok());
     assert_bistellar_flips(&dt);
+
+    assert!(matches!(
+        DelaunayConstructionFailure::GeometricDegeneracy {
+            message: "synthetic".to_string(),
+        },
+        DelaunayConstructionFailure::GeometricDegeneracy { .. }
+    ));
 }
 
 #[test]

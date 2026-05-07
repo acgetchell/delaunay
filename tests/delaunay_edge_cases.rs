@@ -8,8 +8,8 @@
 //!
 //! Converted from legacy `Tds::new()` tests to use the new `DelaunayTriangulation` API.
 
-use delaunay::geometry::kernel::RobustKernel;
-use delaunay::geometry::util::generate_random_points_in_ball_seeded;
+use delaunay::prelude::generators::generate_random_points_in_ball_seeded;
+use delaunay::prelude::geometry::RobustKernel;
 use delaunay::prelude::triangulation::*;
 use rand::SeedableRng;
 use rand::seq::SliceRandom;
@@ -217,11 +217,12 @@ fn debug_issue_120_empty_circumsphere_5d() {
         }
     }
     let mut dt_robust: DelaunayTriangulation<RobustKernel<f64>, (), (), 5> =
-        DelaunayTriangulation::from_tds_with_topology_guarantee(
+        DelaunayTriangulation::try_from_tds_with_topology_guarantee(
             dt.tds().clone(),
             RobustKernel::new(),
             TopologyGuarantee::PLManifold,
-        );
+        )
+        .unwrap_or_else(|err| panic!("5D robust TDS should validate: {err}"));
     match dt_robust.repair_delaunay_with_flips() {
         Ok(stats) => {
             test_debug_info!(
@@ -261,10 +262,7 @@ fn debug_issue_120_empty_circumsphere_5d() {
     for (cell_key, cell) in dt.cells() {
         test_debug_info!("[Issue #120 debug] cell {cell_key:?}:");
         for &vkey in cell.vertices() {
-            let vertex = dt
-                .tds()
-                .get_vertex_by_key(vkey)
-                .expect("vertex key should exist");
+            let vertex = dt.tds().vertex(vkey).expect("vertex key should exist");
             test_debug_info!(
                 "  vkey={vkey:?}, uuid={}, point={:?}",
                 vertex.uuid(),
@@ -878,7 +876,7 @@ fn test_collinear_points_2d() {
         matches!(
             result,
             Err(DelaunayTriangulationConstructionError::Triangulation(
-                TriangulationConstructionError::GeometricDegeneracy { .. },
+                DelaunayConstructionFailure::GeometricDegeneracy { .. },
             ))
         ),
         "Expected GeometricDegeneracy error for collinear points, got: {result:?}"

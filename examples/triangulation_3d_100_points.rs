@@ -26,7 +26,6 @@
 //! - Performance metrics
 
 use delaunay::prelude::generators::generate_random_triangulation;
-use delaunay::prelude::geometry::CoordinateScalar;
 use delaunay::prelude::query::*;
 use delaunay::prelude::topology::validation as topology_validation;
 use num_traits::NumCast;
@@ -128,7 +127,7 @@ fn main() {
 fn analyze_triangulation<K, U, V, const D: usize>(dt: &DelaunayTriangulation<K, U, V, D>)
 where
     K: Kernel<D>,
-    K::Scalar: CoordinateScalar + NumCast,
+    K::Scalar: NumCast,
     U: DataType,
     V: DataType,
 {
@@ -207,7 +206,7 @@ where
 fn validate_triangulation<K, U, V, const D: usize>(dt: &DelaunayTriangulation<K, U, V, D>)
 where
     K: Kernel<D>,
-    K::Scalar: CoordinateScalar + NumCast,
+    K::Scalar: NumCast,
     U: DataType,
     V: DataType,
 {
@@ -299,7 +298,7 @@ where
 fn analyze_boundary_properties<K, U, V, const D: usize>(dt: &DelaunayTriangulation<K, U, V, D>)
 where
     K: Kernel<D>,
-    K::Scalar: CoordinateScalar + NumCast,
+    K::Scalar: NumCast,
     U: DataType,
     V: DataType,
 {
@@ -351,7 +350,7 @@ where
 fn performance_analysis<K, U, V, const D: usize>(dt: &DelaunayTriangulation<K, U, V, D>)
 where
     K: Kernel<D>,
-    K::Scalar: CoordinateScalar + NumCast,
+    K::Scalar: NumCast,
     U: DataType,
     V: DataType,
 {

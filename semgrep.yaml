@@ -88,6 +88,9 @@ rules:
       - pattern: $VALUE.unwrap_or_else(|| f64::NAN)
       - pattern: $VALUE.unwrap_or_else(|| f64::INFINITY)
       - pattern: $VALUE.unwrap_or_else(|| f64::NEG_INFINITY)
+      - pattern: $VALUE.unwrap_or_else(|| std::f64::NAN)
+      - pattern: $VALUE.unwrap_or_else(|| std::f64::INFINITY)
+      - pattern: $VALUE.unwrap_or_else(|| std::f64::NEG_INFINITY)
 
   - id: delaunay.rust.no-std-hash-collections-in-hot-src
     languages:
@@ -403,7 +406,7 @@ rules:
         - "/scripts/**/*.py"
       exclude:
         - "/tests/semgrep/**"
-    pattern-regex: '^\s*except\s+Exception\s*:'
+    pattern-regex: '^\s*except\s+Exception(?:\s+as\s+\w+)?\s*:'
 
   - id: delaunay.python.no-raw-exception-in-tests
     languages:
@@ -488,6 +491,18 @@ rules:
                   $PROC = mock.MagicMock(...)
                   ...
                   $PROC.returncode = ...
+      - pattern: Mock(..., stdout=..., ...)
+      - pattern: unittest.mock.Mock(..., stdout=..., ...)
+      - pattern: mock.Mock(..., stdout=..., ...)
+      - pattern: MagicMock(..., stdout=..., ...)
+      - pattern: unittest.mock.MagicMock(..., stdout=..., ...)
+      - pattern: mock.MagicMock(..., stdout=..., ...)
+      - pattern: Mock(..., returncode=..., ...)
+      - pattern: unittest.mock.Mock(..., returncode=..., ...)
+      - pattern: mock.Mock(..., returncode=..., ...)
+      - pattern: MagicMock(..., returncode=..., ...)
+      - pattern: unittest.mock.MagicMock(..., returncode=..., ...)
+      - pattern: mock.MagicMock(..., returncode=..., ...)
 
   - id: delaunay.python.no-untyped-defs-in-scripts
     languages:

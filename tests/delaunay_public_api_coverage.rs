@@ -51,7 +51,7 @@ fn statistics_default_on_preprocess_error() {
         tolerance: f64::NAN,
     });
 
-    let result = Dt::<3>::with_topology_guarantee_and_options_with_construction_statistics(
+    let result = Dt::<3>::with_options_and_statistics(
         &AdaptiveKernel::new(),
         &vertices,
         TopologyGuarantee::PLManifold,
@@ -136,7 +136,7 @@ fn find_stale_key_after_rebuild() {
 
         let found = dt
             .tds()
-            .get_vertex_by_key(vertex_key)
+            .vertex(vertex_key)
             .is_some_and(|v| v.uuid() == inserted_uuid);
 
         if found {

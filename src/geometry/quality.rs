@@ -62,6 +62,7 @@ use thiserror::Error;
 /// assert!(matches!(err, QualityError::NumericalError { .. }));
 /// ```
 #[derive(Debug, Clone, PartialEq, Eq, Error)]
+#[non_exhaustive]
 pub enum QualityError {
     /// Cell has invalid or missing vertex keys
     #[error("Invalid cell: {message}")]
@@ -93,27 +94,26 @@ fn cell_points<K, U, V, const D: usize>(
 ) -> Result<SmallBuffer<Point<K::Scalar, D>, MAX_PRACTICAL_DIMENSION_SIZE>, QualityError>
 where
     K: Kernel<D>,
-    K::Scalar: CoordinateScalar,
     U: DataType,
     V: DataType,
 {
-    let vertex_keys =
-        tri.tds
-            .get_cell_vertices(cell_key)
-            .map_err(|e| QualityError::InvalidCell {
-                message: format!("Failed to get cell vertices: {e}"),
-            })?;
+    let vertex_keys = tri
+        .tds
+        .cell_vertices(cell_key)
+        .map_err(|e| QualityError::InvalidCell {
+            message: format!("Failed to get cell vertices: {e}"),
+        })?;
 
     // Use SmallBuffer to avoid heap allocation (cells have D+1 vertices, D ≤ MAX_PRACTICAL_DIMENSION_SIZE)
     let mut points = SmallBuffer::new();
     for &vkey in &vertex_keys {
-        let point = tri
-            .tds
-            .get_vertex_by_key(vkey)
-            .map(|v| *v.point())
-            .ok_or_else(|| QualityError::InvalidCell {
-                message: format!("Vertex {vkey:?} not found in triangulation"),
-            })?;
+        let point =
+            tri.tds
+                .vertex(vkey)
+                .map(|v| *v.point())
+                .ok_or_else(|| QualityError::InvalidCell {
+                    message: format!("Vertex {vkey:?} not found in triangulation"),
+                })?;
         points.push(point);
     }
     Ok(points)
@@ -236,7 +236,7 @@ pub fn radius_ratio<K, U, V, const D: usize>(
 ) -> Result<K::Scalar, QualityError>
 where
     K: Kernel<D>,
-    K::Scalar: CoordinateScalar + Div<Output = K::Scalar>,
+    K::Scalar: Div<Output = K::Scalar>,
     U: DataType,
     V: DataType,
 {
@@ -332,7 +332,7 @@ pub fn normalized_volume<K, U, V, const D: usize>(
 ) -> Result<K::Scalar, QualityError>
 where
     K: Kernel<D>,
-    K::Scalar: CoordinateScalar + Div<Output = K::Scalar>,
+    K::Scalar: Div<Output = K::Scalar>,
     U: DataType,
     V: DataType,
 {
@@ -397,7 +397,6 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::core::triangulation::TriangulationConstructionError;
     use crate::geometry::kernel::AdaptiveKernel;
     use crate::geometry::traits::coordinate::Coordinate;
     use crate::triangulation::delaunay::{
@@ -1216,7 +1215,9 @@ let cell_key = dt.cells().next().unwrap().0;
                 );
             }
             Err(DelaunayTriangulationConstructionError::Triangulation(
-                TriangulationConstructionError::GeometricDegeneracy { .. },
+                crate::triangulation::delaunay::DelaunayConstructionFailure::GeometricDegeneracy {
+                    ..
+                },
             )) => {
                 // For sufficiently extreme configurations, the robust initial simplex
                 // search may reject the input up-front as geometrically degenerate.
@@ -1253,8 +1254,12 @@ let cell_key = dt.cells().next().unwrap().0;
                 );
             }
             Err(DelaunayTriangulationConstructionError::Triangulation(
-                TriangulationConstructionError::GeometricDegeneracy { .. }
-                | TriangulationConstructionError::InsufficientVertices { .. },
+                crate::triangulation::delaunay::DelaunayConstructionFailure::GeometricDegeneracy {
+                    ..
+                }
+                | crate::triangulation::delaunay::DelaunayConstructionFailure::InsufficientVertices {
+                    ..
+                },
             )) => {
                 // Extremely flat/near-degenerate configurations may now be rejected
                 // up-front by the initial simplex search, or Hilbert-sort dedup may
@@ -1301,7 +1306,9 @@ let cell_key = dt.cells().next().unwrap().0;
                 }
             }
             Err(DelaunayTriangulationConstructionError::Triangulation(
-                TriangulationConstructionError::GeometricDegeneracy { .. },
+                crate::triangulation::delaunay::DelaunayConstructionFailure::GeometricDegeneracy {
+                    ..
+                },
             )) => {
                 // In some numeric regimes, degeneracy is now detected at construction
                 // time instead of by the quality metrics. That is still acceptable

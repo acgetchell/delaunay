@@ -246,6 +246,7 @@ use crate::geometry::traits::coordinate::CoordinateScalar;
 use serde::{
     Deserialize, Deserializer, Serialize,
     de::{self, MapAccess, Visitor},
+    ser::SerializeStruct,
 };
 use slotmap::{Key, new_key_type};
 use std::{
@@ -1062,7 +1063,7 @@ where
         cell_key: CellKey,
         facet_index: usize,
     ) -> Result<u64, TdsError> {
-        let vertices = self.get_cell_vertices(cell_key)?;
+        let vertices = self.cell_vertices(cell_key)?;
         let cell = self
             .cells
             .get(cell_key)
@@ -1100,7 +1101,7 @@ where
             fast_hash_map_with_capacity(cap);
 
         for (cell_key, cell) in &self.cells {
-            let vertices = self.get_cell_vertices(cell_key).map_err(|err| {
+            let vertices = self.cell_vertices(cell_key).map_err(|err| {
                 TdsError::VertexKeyRetrievalFailed {
                     cell_id: cell.uuid(),
                     message: format!(
@@ -1201,7 +1202,7 @@ where
     /// exposing the underlying storage implementation. The iterator yields
     /// `(CellKey, &Cell)` pairs for each cell in the triangulation.
     ///
-    /// For direct key-based access, use [`get_cell`](Self::get_cell).
+    /// For direct key-based access, use [`cell`](Self::cell).
     ///
     /// # Returns
     ///
@@ -1269,7 +1270,7 @@ where
     /// exposing the underlying storage implementation. The iterator yields
     /// `(VertexKey, &Vertex)` pairs for each vertex in the triangulation.
     ///
-    /// For direct key-based access, use [`get_vertex_by_key`](Self::get_vertex_by_key).
+    /// For direct key-based access, use [`vertex`](Self::vertex).
     ///
     /// # Returns
     ///
@@ -1362,11 +1363,11 @@ where
     /// let dt = DelaunayTriangulation::new(&vertices).unwrap();
     /// let tds = dt.tds();
     /// let cell_key = tds.cell_keys().next().unwrap();
-    /// let cell = tds.get_cell(cell_key).unwrap();
+    /// let cell = tds.cell(cell_key).unwrap();
     /// assert_eq!(cell.number_of_vertices(), 3);
     /// ```
     #[must_use]
-    pub fn get_cell(&self, key: CellKey) -> Option<&Cell<T, U, V, D>> {
+    pub fn cell(&self, key: CellKey) -> Option<&Cell<T, U, V, D>> {
         self.cells.get(key)
     }
 
@@ -1721,7 +1722,7 @@ where
     /// if used incorrectly. It is intended **ONLY** for:
     /// - Internal crate implementation
     /// - Performance benchmarks that need to violate invariants deliberately
-    /// - Integration tests validating storage backend behavior
+    /// - Targeted invariant and mutation tests
     ///
     /// **DO NOT** use this in production code. Modifying cells through this method bypasses
     /// all safety checks and can leave the triangulation in an inconsistent state.
@@ -1913,17 +1914,17 @@ where
     /// let dt = DelaunayTriangulation::new(&vertices).unwrap();
     /// let tds = dt.tds();
     /// let cell_key = tds.cell_keys().next().unwrap();
-    /// let keys = tds.get_cell_vertices(cell_key).unwrap();
+    /// let keys = tds.cell_vertices(cell_key).unwrap();
     /// assert_eq!(keys.len(), 3);
     /// ```
     #[inline]
-    pub fn get_cell_vertices(&self, cell_key: CellKey) -> Result<VertexKeyBuffer, TdsError> {
+    pub fn cell_vertices(&self, cell_key: CellKey) -> Result<VertexKeyBuffer, TdsError> {
         let cell = self
             .cells
             .get(cell_key)
             .ok_or_else(|| TdsError::CellNotFound {
                 cell_key,
-                context: "get_cell_vertices lookup".to_string(),
+                context: "cell_vertices lookup".to_string(),
             })?;
 
         // Phase 3A: Cell now stores vertex keys directly
@@ -2220,7 +2221,7 @@ where
 
     /// Gets a mutable reference to a cell directly by its key.
     ///
-    /// This method provides direct mutable access to cells, similar to [`get_vertex_by_key_mut()`](Self::get_vertex_by_key_mut).
+    /// This method provides direct mutable access to cells, similar to [`vertex_mut()`](Self::vertex_mut).
     /// While this allows modifying cell data fields, callers should use safe topology setter APIs
     /// like [`set_neighbors_by_key()`](Self::set_neighbors_by_key) when modifying neighbor relationships.
     ///
@@ -2245,12 +2246,12 @@ where
     /// let dt = DelaunayTriangulation::new(&vertices).unwrap();
     /// let mut tds = dt.tds().clone();
     /// let cell_key = tds.cell_keys().next().unwrap();
-    /// let cell = tds.get_cell_by_key_mut(cell_key).unwrap();
+    /// let cell = tds.cell_mut(cell_key).unwrap();
     /// assert_eq!(cell.number_of_vertices(), 3);
     /// ```
     #[inline]
     #[must_use]
-    pub fn get_cell_by_key_mut(&mut self, cell_key: CellKey) -> Option<&mut Cell<T, U, V, D>> {
+    pub fn cell_mut(&mut self, cell_key: CellKey) -> Option<&mut Cell<T, U, V, D>> {
         self.cells.get_mut(cell_key)
     }
 
@@ -2280,11 +2281,11 @@ where
     /// let dt = DelaunayTriangulation::new(&vertices).unwrap();
     /// let tds = dt.tds();
     /// let vertex_key = tds.vertex_keys().next().unwrap();
-    /// assert!(tds.get_vertex_by_key(vertex_key).is_some());
+    /// assert!(tds.vertex(vertex_key).is_some());
     /// ```
     #[inline]
     #[must_use]
-    pub fn get_vertex_by_key(&self, vertex_key: VertexKey) -> Option<&Vertex<T, U, D>> {
+    pub fn vertex(&self, vertex_key: VertexKey) -> Option<&Vertex<T, U, D>> {
         self.vertices.get(vertex_key)
     }
 
@@ -2311,11 +2312,11 @@ where
     /// let dt = DelaunayTriangulation::new(&vertices).unwrap();
     /// let mut tds = dt.tds().clone();
     /// let vertex_key = tds.vertex_keys().next().unwrap();
-    /// assert!(tds.get_vertex_by_key_mut(vertex_key).is_some());
+    /// assert!(tds.vertex_mut(vertex_key).is_some());
     /// ```
     #[inline]
     #[must_use]
-    pub fn get_vertex_by_key_mut(&mut self, vertex_key: VertexKey) -> Option<&mut Vertex<T, U, D>> {
+    pub fn vertex_mut(&mut self, vertex_key: VertexKey) -> Option<&mut Vertex<T, U, D>> {
         self.vertices.get_mut(vertex_key)
     }
 
@@ -2355,13 +2356,13 @@ where
     /// assert!(prev.is_some()); // key was found
     ///
     /// // Verify new value
-    /// let vertex = tds.get_vertex_by_key(key).unwrap();
+    /// let vertex = tds.vertex(key).unwrap();
     /// assert_eq!(vertex.data(), Some(&99));
     ///
     /// // Clear data
     /// let prev = tds.set_vertex_data(key, None);
     /// assert_eq!(prev, Some(Some(99)));
-    /// assert_eq!(tds.get_vertex_by_key(key).unwrap().data(), None);
+    /// assert_eq!(tds.vertex(key).unwrap().data(), None);
     /// ```
     #[inline]
     pub fn set_vertex_data(&mut self, key: VertexKey, data: Option<U>) -> Option<Option<U>> {
@@ -2407,13 +2408,13 @@ where
     /// assert_eq!(prev, Some(None)); // key found, previous was None
     ///
     /// // Verify new value
-    /// let cell = tds.get_cell(key).unwrap();
+    /// let cell = tds.cell(key).unwrap();
     /// assert_eq!(cell.data(), Some(&42));
     ///
     /// // Clear data
     /// let prev = tds.set_cell_data(key, None);
     /// assert_eq!(prev, Some(Some(42)));
-    /// assert_eq!(tds.get_cell(key).unwrap().data(), None);
+    /// assert_eq!(tds.cell(key).unwrap().data(), None);
     /// ```
     #[inline]
     pub fn set_cell_data(&mut self, key: CellKey, data: Option<V>) -> Option<Option<V>> {
@@ -2483,55 +2484,6 @@ where
     #[must_use]
     pub fn contains_vertex_key(&self, vertex_key: VertexKey) -> bool {
         self.vertices.contains_key(vertex_key)
-    }
-
-    /// Removes a cell by its key, updating all necessary mappings.
-    ///
-    /// This is a key-based version of cell removal that avoids UUID lookups.
-    ///
-    /// # Safety Warning
-    ///
-    /// This method only removes the cell and updates the UUID→Key mapping.
-    /// It does NOT maintain topology consistency. The caller MUST:
-    /// 1. Call `assign_neighbors()` to rebuild neighbor relationships
-    /// 2. Call `assign_incident_cells()` to update vertex-cell associations
-    ///
-    /// Failure to do so will leave the triangulation in an inconsistent state.
-    ///
-    /// # Arguments
-    ///
-    /// * `cell_key` - The key of the cell to remove
-    ///
-    /// # Returns
-    ///
-    /// The removed cell if it existed, `None` otherwise.
-    ///
-    /// # Examples
-    ///
-    /// ```
-    /// use delaunay::prelude::triangulation::*;
-    ///
-    /// let vertices = [
-    ///     vertex!([0.0, 0.0]),
-    ///     vertex!([1.0, 0.0]),
-    ///     vertex!([0.0, 1.0]),
-    /// ];
-    /// let dt = DelaunayTriangulation::new(&vertices).unwrap();
-    /// let mut tds = dt.tds().clone();
-    /// let cell_key = tds.cell_keys().next().unwrap();
-    /// assert!(tds.remove_cell_by_key(cell_key).is_some());
-    /// assert_eq!(tds.number_of_cells(), 0);
-    /// ```
-    pub fn remove_cell_by_key(&mut self, cell_key: CellKey) -> Option<Cell<T, U, V, D>> {
-        if let Some(removed_cell) = self.cells.remove(cell_key) {
-            // Also remove from UUID mapping
-            self.uuid_to_cell_key.remove(&removed_cell.uuid());
-            // Topology changed; invalidate caches
-            self.bump_generation();
-            Some(removed_cell)
-        } else {
-            None
-        }
     }
 
     /// Removes multiple cells by their keys in a batch operation.
@@ -2985,7 +2937,7 @@ where
         vertex_key: VertexKey,
     ) -> Result<usize, TdsMutationError> {
         // Look up the vertex to get its UUID before removal
-        let Some(vertex) = self.get_vertex_by_key(vertex_key) else {
+        let Some(vertex) = self.vertex(vertex_key) else {
             return Ok(0); // Vertex not found, nothing to remove
         };
         let uuid = vertex.uuid();
@@ -3013,7 +2965,7 @@ where
     /// This removes only the vertex and its UUID mapping. It does **not** touch
     /// any cells. If the vertex has an incident cell, this is a no-op.
     pub(crate) fn remove_isolated_vertex(&mut self, vertex_key: VertexKey) {
-        let Some(vertex) = self.get_vertex_by_key(vertex_key) else {
+        let Some(vertex) = self.vertex(vertex_key) else {
             return;
         };
         // Only remove if truly isolated.
@@ -3047,7 +2999,7 @@ where
     /// **Special case**: If the cell does not exist (invalid `cell_key`), returns a buffer
     /// filled with `None` values. This is a non-panicking fallback that allows callers to
     /// distinguish "cell missing" from "no neighbors assigned" by checking cell existence
-    /// separately with `get_cell()` if needed.
+    /// separately with `cell()` if needed.
     ///
     /// # Examples
     ///
@@ -3072,7 +3024,7 @@ where
         let mut neighbors = NeighborBuffer::new();
         neighbors.resize(D + 1, None);
 
-        let Some(cell) = self.get_cell(cell_key) else {
+        let Some(cell) = self.cell(cell_key) else {
             return neighbors;
         };
 
@@ -3254,7 +3206,7 @@ where
     /// let cell_key = tds.cell_keys().next().unwrap();
     /// let neighbors = vec![None; 3];
     /// tds.set_neighbors_by_key(cell_key, &neighbors).unwrap();
-    /// assert!(tds.get_cell(cell_key).unwrap().neighbors().is_none());
+    /// assert!(tds.cell(cell_key).unwrap().neighbors().is_none());
     /// ```
     pub fn set_neighbors_by_key(
         &mut self,
@@ -3270,7 +3222,7 @@ where
 
         // Get mutable reference and update, or return error if not found
         let cell = self
-            .get_cell_by_key_mut(cell_key)
+            .cell_mut(cell_key)
             .ok_or_else(|| TdsError::CellNotFound {
                 cell_key,
                 context: "set_neighbors_by_key".to_string(),
@@ -3322,7 +3274,7 @@ where
     /// ```
     #[must_use]
     pub fn find_cells_containing_vertex_by_key(&self, vertex_key: VertexKey) -> CellKeySet {
-        if self.get_vertex_by_key(vertex_key).is_none() {
+        if self.vertex(vertex_key).is_none() {
             return CellKeySet::default();
         }
 
@@ -3687,8 +3639,8 @@ where
         // Iterate over all cells and their facets
         for (cell_id, cell) in &self.cells {
             // Use direct key-based method to avoid UUID→Key lookups
-            // The error from get_cell_vertices is already TdsError
-            let vertices = self.get_cell_vertices(cell_id)?;
+            // The error from cell_vertices is already TdsError
+            let vertices = self.cell_vertices(cell_id)?;
 
             for i in 0..vertices.len() {
                 let facet_key = Self::periodic_facet_key_from_cell_vertices(cell, &vertices, i)?;
@@ -3740,7 +3692,7 @@ where
 
         // First pass: identify duplicate cells
         for cell_key in self.cells.keys() {
-            let vertices = self.get_cell_vertices(cell_key)?;
+            let vertices = self.cell_vertices(cell_key)?;
             let vertex_uuid_offsets =
                 self.build_periodic_vertex_uuid_offsets(cell_key, &vertices)?;
 
@@ -4016,7 +3968,7 @@ where
         let mut duplicates = Vec::new();
 
         for (cell_key, _cell) in &self.cells {
-            let vertices = self.get_cell_vertices(cell_key)?;
+            let vertices = self.cell_vertices(cell_key)?;
             let vertex_uuid_offsets =
                 self.build_periodic_vertex_uuid_offsets(cell_key, &vertices)?;
 
@@ -4068,7 +4020,7 @@ where
             let vkeys = cell.vertices();
             // O(D²) pairwise comparison per cell — acceptable since D is small (≤ 6).
             for i in 0..vkeys.len() {
-                let Some(vi) = self.get_vertex_by_key(vkeys[i]) else {
+                let Some(vi) = self.vertex(vkeys[i]) else {
                     continue; // Missing keys are caught by validate_cell_vertex_keys
                 };
                 for j in (i + 1)..vkeys.len() {
@@ -4078,7 +4030,7 @@ where
                     if vkeys[i] == vkeys[j] {
                         continue;
                     }
-                    let Some(vj) = self.get_vertex_by_key(vkeys[j]) else {
+                    let Some(vj) = self.vertex(vkeys[j]) else {
                         continue;
                     };
                     if crate::core::util::deduplication::coords_equal_exact(
@@ -4986,9 +4938,9 @@ where
         let mut cell_vertices: CellVerticesMap = fast_hash_map_with_capacity(self.cells.len());
 
         for cell_key in self.cells.keys() {
-            // Use get_cell_vertices to ensure all vertex keys are present
+            // Use cell_vertices to ensure all vertex keys are present
             // The error is already TdsError, so just propagate it
-            let vertices = self.get_cell_vertices(cell_key)?;
+            let vertices = self.cell_vertices(cell_key)?;
 
             // Store the HashSet for containment checks
             let vertex_set: VertexKeySet = vertices.iter().copied().collect();
@@ -5230,7 +5182,7 @@ where
             let mut ids: Vec<Uuid> = cell
                 .vertices()
                 .iter()
-                .filter_map(|&vkey| tds.get_vertex_by_key(vkey).map(Vertex::uuid))
+                .filter_map(|&vkey| tds.vertex(vkey).map(Vertex::uuid))
                 .collect();
             ids.sort_unstable();
             ids
@@ -5295,8 +5247,6 @@ where
     where
         S: serde::Serializer,
     {
-        use serde::ser::SerializeStruct;
-
         // Build cell UUID → vertex UUIDs mapping
         // Note: Using Vec<Uuid> for serde compatibility (SmallVec isn't natively serializable)
         let cell_vertices: FastHashMap<Uuid, Vec<Uuid>> = self
@@ -5538,7 +5488,7 @@ mod tests {
         let cell_key = tds
             .insert_cell_with_mapping(Cell::new(vec![v_a, v_b, v_c], None).unwrap())
             .unwrap();
-        tds.get_cell_by_key_mut(cell_key)
+        tds.cell_mut(cell_key)
             .unwrap()
             .set_periodic_vertex_offsets(vec![[-128_i8, 0_i8], [127_i8, 0_i8], [0_i8, 0_i8]]);
 
@@ -5565,12 +5515,12 @@ mod tests {
         // Deliberately corrupt for regression coverage: duplicate v_a with a smaller
         // periodic lift so anchor selection must use the (key, offset) tie-breaker.
         {
-            let cell = tds.get_cell_by_key_mut(cell_key).unwrap();
+            let cell = tds.cell_mut(cell_key).unwrap();
             cell.push_vertex_key(v_a);
             cell.set_periodic_vertex_offsets(vec![[5, 0], [9, 0], [8, 0], [1, 0]]);
         }
 
-        let cell = tds.get_cell(cell_key).unwrap();
+        let cell = tds.cell(cell_key).unwrap();
         let identities =
             Tds::<f64, (), (), 2>::facet_vertex_identities_in_cell_order(cell, 2).unwrap();
         assert_eq!(identities.len(), 3);
@@ -5703,9 +5653,9 @@ mod tests {
 
         // Insert and then remove a third cell so we get a real CellKey that no longer exists.
         // Removing *after* inserting bad_cell avoids key reuse affecting the test.
-        let removed_target_cell = Cell::new(vec![v_keys[1], v_keys[2], v_keys[3]], None).unwrap();
-        let removed_target_key = tds.insert_cell_with_mapping(removed_target_cell).unwrap();
-        assert!(tds.remove_cell_by_key(removed_target_key).is_some());
+        let removed_tarcell = Cell::new(vec![v_keys[1], v_keys[2], v_keys[3]], None).unwrap();
+        let removed_target_key = tds.insert_cell_with_mapping(removed_tarcell).unwrap();
+        assert_eq!(tds.remove_cells_by_keys(&[removed_target_key]), 1);
 
         // Inject a dangling neighbor pointer using cells_mut() (violates invariants deliberately).
         {
@@ -5776,14 +5726,10 @@ mod tests {
         assert!(
             matches!(
                 result,
-                Err(InsertionError::Construction(
-                    crate::core::triangulation::TriangulationConstructionError::Tds(
-                        TdsConstructionError::DuplicateUuid {
-                            entity: EntityKind::Vertex,
-                            ..
-                        },
-                    ),
-                ))
+                Err(InsertionError::DuplicateUuid {
+                    entity: EntityKind::Vertex,
+                    ..
+                })
             ),
             "Same UUID with different coordinates should fail with DuplicateUuid"
         );
@@ -5829,7 +5775,7 @@ mod tests {
         let stored_vertex = dt
             .as_triangulation()
             .tds
-            .get_vertex_by_key(vertex_key.unwrap())
+            .vertex(vertex_key.unwrap())
             .unwrap();
         let coords = *stored_vertex.point().coords();
         let expected = [1.0, 2.0, 3.0];
@@ -6100,7 +6046,7 @@ mod tests {
         assert!(
             dt.as_triangulation()
                 .tds
-                .get_vertex_by_key(removed_vertex_key)
+                .vertex(removed_vertex_key)
                 .is_none(),
             "Deleted vertex key should not exist in storage"
         );
@@ -6117,11 +6063,7 @@ mod tests {
                 );
 
                 // Verify the incident cell actually contains this vertex
-                let incident_cell = dt
-                    .as_triangulation()
-                    .tds
-                    .get_cell(incident_cell_key)
-                    .unwrap();
+                let incident_cell = dt.as_triangulation().tds.cell(incident_cell_key).unwrap();
                 assert!(
                     incident_cell.contains_vertex(vertex_key),
                     "Vertex {vertex_key:?} incident_cell {incident_cell_key:?} does not contain the vertex"
@@ -6156,7 +6098,7 @@ mod tests {
         let some_vertex_key = dt
             .as_triangulation()
             .tds
-            .get_cell_vertices(first_cell_key)
+            .cell_vertices(first_cell_key)
             .unwrap()[0];
         let cells_with_vertex = dt
             .as_triangulation()
@@ -6171,7 +6113,7 @@ mod tests {
 
         // Verify all returned cells actually contain the vertex
         for &cell_key in &cells_with_vertex {
-            let cell = dt.as_triangulation().tds.get_cell(cell_key).unwrap();
+            let cell = dt.as_triangulation().tds.cell(cell_key).unwrap();
             assert!(
                 cell.contains_vertex(some_vertex_key),
                 "Cell {cell_key:?} should contain vertex {some_vertex_key:?}"
@@ -6218,7 +6160,7 @@ mod tests {
 
         // Corrupt the cell by inserting a vertex key that doesn't exist in the TDS.
         let invalid_vkey = VertexKey::from(KeyData::from_ffi(u64::MAX));
-        tds.get_cell_by_key_mut(cell_key)
+        tds.cell_mut(cell_key)
             .unwrap()
             .push_vertex_key(invalid_vkey);
 
@@ -6278,7 +6220,7 @@ mod tests {
 
         // Sanity: at least one neighbor pointer should exist before removal.
         assert!(
-            tds.get_cell(cell1)
+            tds.cell(cell1)
                 .unwrap()
                 .neighbors()
                 .is_some_and(|n| n.iter().any(Option::is_some))
@@ -6319,25 +6261,25 @@ mod tests {
         tds.assign_neighbors().unwrap();
 
         // Force deterministic incident_cell pointers that require repair.
-        tds.get_vertex_by_key_mut(a).unwrap().incident_cell = Some(cell1);
-        tds.get_vertex_by_key_mut(b).unwrap().incident_cell = Some(cell1);
-        tds.get_vertex_by_key_mut(c).unwrap().incident_cell = Some(cell1);
-        tds.get_vertex_by_key_mut(d).unwrap().incident_cell = Some(cell2);
+        tds.vertex_mut(a).unwrap().incident_cell = Some(cell1);
+        tds.vertex_mut(b).unwrap().incident_cell = Some(cell1);
+        tds.vertex_mut(c).unwrap().incident_cell = Some(cell1);
+        tds.vertex_mut(d).unwrap().incident_cell = Some(cell2);
 
         assert_eq!(tds.remove_cells_by_keys(&[cell1]), 1);
 
         // A is now isolated (no remaining cells contain it) => incident_cell must be None.
-        assert!(tds.get_vertex_by_key(a).unwrap().incident_cell.is_none());
+        assert!(tds.vertex(a).unwrap().incident_cell.is_none());
 
         // B, C, D are still in cell2 => their incident_cell must be valid and contain them.
         for vk in [b, c, d] {
             let incident = tds
-                .get_vertex_by_key(vk)
+                .vertex(vk)
                 .unwrap()
                 .incident_cell
                 .expect("vertex should have an incident cell after repair");
             assert!(tds.cells.contains_key(incident));
-            let cell = tds.get_cell(incident).unwrap();
+            let cell = tds.cell(incident).unwrap();
             assert!(cell.contains_vertex(vk));
         }
 
@@ -6345,7 +6287,7 @@ mod tests {
         assert!(tds.is_valid().is_ok());
 
         // Neighbor pointers in the surviving cell must not reference the removed cell.
-        let cell2_ref = tds.get_cell(cell2).unwrap();
+        let cell2_ref = tds.cell(cell2).unwrap();
         if let Some(neighbors) = cell2_ref.neighbors() {
             assert!(neighbors.iter().all(|n| *n != Some(cell1)));
         }
@@ -6374,7 +6316,7 @@ mod tests {
 
         // Manually set an incident cell so the vertex appears non-isolated.
         let fake_cell_key = CellKey::from(KeyData::from_ffi(1));
-        tds.get_vertex_by_key_mut(vk).unwrap().incident_cell = Some(fake_cell_key);
+        tds.vertex_mut(vk).unwrap().incident_cell = Some(fake_cell_key);
 
         let gen_before = tds.generation();
         tds.remove_isolated_vertex(vk);
@@ -6383,25 +6325,22 @@ mod tests {
             gen_before,
             "Non-isolated vertex should not be removed"
         );
-        assert!(tds.get_vertex_by_key(vk).is_some());
+        assert!(tds.vertex(vk).is_some());
     }
 
     #[test]
     fn test_remove_isolated_vertex_removes_truly_isolated() {
         let mut tds: Tds<f64, (), (), 2> = Tds::empty();
         let vk = tds.insert_vertex_with_mapping(vertex!([1.0, 2.0])).unwrap();
-        let uuid = tds.get_vertex_by_key(vk).unwrap().uuid();
+        let uuid = tds.vertex(vk).unwrap().uuid();
 
         // No incident cell set → truly isolated.
-        assert!(tds.get_vertex_by_key(vk).unwrap().incident_cell.is_none());
+        assert!(tds.vertex(vk).unwrap().incident_cell.is_none());
 
         let gen_before = tds.generation();
         tds.remove_isolated_vertex(vk);
         assert!(tds.generation() > gen_before);
-        assert!(
-            tds.get_vertex_by_key(vk).is_none(),
-            "Vertex should be removed"
-        );
+        assert!(tds.vertex(vk).is_none(), "Vertex should be removed");
         assert!(
             tds.vertex_key_from_uuid(&uuid).is_none(),
             "UUID mapping should be removed"
@@ -6438,36 +6377,34 @@ mod tests {
         // - ORIGIN points at cell1 so star discovery can use the neighbor-walk fast path.
         // - EAST/NORTH point at cell1 so removal must repair them to cell2.
         // - DIAGONAL points at cell2 and should remain valid.
-        tds.get_vertex_by_key_mut(origin_key).unwrap().incident_cell = Some(cell1);
-        tds.get_vertex_by_key_mut(east_key).unwrap().incident_cell = Some(cell1);
-        tds.get_vertex_by_key_mut(north_key).unwrap().incident_cell = Some(cell1);
-        tds.get_vertex_by_key_mut(diagonal_key)
-            .unwrap()
-            .incident_cell = Some(cell2);
+        tds.vertex_mut(origin_key).unwrap().incident_cell = Some(cell1);
+        tds.vertex_mut(east_key).unwrap().incident_cell = Some(cell1);
+        tds.vertex_mut(north_key).unwrap().incident_cell = Some(cell1);
+        tds.vertex_mut(diagonal_key).unwrap().incident_cell = Some(cell2);
 
-        let origin_uuid = tds.get_vertex_by_key(origin_key).unwrap().uuid();
+        let origin_uuid = tds.vertex(origin_key).unwrap().uuid();
         let removed = tds.remove_vertex(origin_key).unwrap();
         assert_eq!(removed, 1);
 
         // The removed vertex should be gone.
         assert!(tds.vertex_key_from_uuid(&origin_uuid).is_none());
-        assert!(tds.get_vertex_by_key(origin_key).is_none());
+        assert!(tds.vertex(origin_key).is_none());
 
         // cell2 should remain and must not reference cell1 as a neighbor.
         assert!(tds.cells.contains_key(cell2));
-        let cell2_ref = tds.get_cell(cell2).unwrap();
+        let cell2_ref = tds.cell(cell2).unwrap();
         if let Some(neighbors) = cell2_ref.neighbors() {
             assert!(neighbors.iter().all(|n| *n != Some(cell1)));
         }
 
         // Remaining vertices must have valid incident_cell pointers (if present).
         for vertex_key in [east_key, north_key, diagonal_key] {
-            let v = tds.get_vertex_by_key(vertex_key).unwrap();
+            let v = tds.vertex(vertex_key).unwrap();
             let Some(incident) = v.incident_cell else {
                 panic!("vertex {vertex_key:?} should have an incident cell after removal");
             };
             assert!(tds.cells.contains_key(incident));
-            assert!(tds.get_cell(incident).unwrap().contains_vertex(vertex_key));
+            assert!(tds.cell(incident).unwrap().contains_vertex(vertex_key));
         }
     }
 
@@ -6559,9 +6496,7 @@ mod tests {
 
         // Corrupt the cell by inserting a vertex key that doesn't exist in the TDS.
         let invalid_vkey = VertexKey::from(KeyData::from_ffi(u64::MAX));
-        tds.get_cell_by_key_mut(cell)
-            .unwrap()
-            .push_vertex_key(invalid_vkey);
+        tds.cell_mut(cell).unwrap().push_vertex_key(invalid_vkey);
 
         let err = tds.build_cell_vertex_sets().unwrap_err();
         assert!(matches!(err, TdsError::VertexNotFound { .. }));
@@ -6583,8 +6518,8 @@ mod tests {
             .insert_cell_with_mapping(Cell::new(vec![v_a, v_b, v_d], None).unwrap())
             .unwrap();
 
-        let cell1 = tds.get_cell(cell1_key).unwrap();
-        let cell2 = tds.get_cell(cell2_key).unwrap();
+        let cell1 = tds.cell(cell1_key).unwrap();
+        let cell2 = tds.cell(cell2_key).unwrap();
 
         let this_vertices: VertexKeySet = [v_a, v_b, v_c].into_iter().collect();
         let neighbor_vertices: VertexKeySet = [v_a, v_b, v_d].into_iter().collect();
@@ -6612,8 +6547,8 @@ mod tests {
             .insert_cell_with_mapping(Cell::new(vec![v_a, v_d, v_e], None).unwrap())
             .unwrap();
 
-        let cell1 = tds.get_cell(cell1_key).unwrap();
-        let cell_far = tds.get_cell(cell_far_key).unwrap();
+        let cell1 = tds.cell(cell1_key).unwrap();
+        let cell_far = tds.cell(cell_far_key).unwrap();
 
         let this_vertices: VertexKeySet = [v_a, v_b, v_c].into_iter().collect();
         let far_vertices: VertexKeySet = [v_a, v_d, v_e].into_iter().collect();
@@ -6648,8 +6583,8 @@ mod tests {
             .insert_cell_with_mapping(Cell::new(vec![v_d, v_a, v_b], None).unwrap())
             .unwrap();
 
-        let cell1 = tds.get_cell(cell1_key).unwrap();
-        let cell2 = tds.get_cell(cell2_key).unwrap();
+        let cell1 = tds.cell(cell1_key).unwrap();
+        let cell2 = tds.cell(cell2_key).unwrap();
 
         let this_vertices: VertexKeySet = [v_a, v_b, v_c].into_iter().collect();
 
@@ -6675,8 +6610,8 @@ mod tests {
             .insert_cell_with_mapping(Cell::new(vec![v_a, v_d, v_e], None).unwrap())
             .unwrap();
 
-        let cell1 = tds.get_cell(cell1_key).unwrap();
-        let cell2 = tds.get_cell(cell2_key).unwrap();
+        let cell1 = tds.cell(cell1_key).unwrap();
+        let cell2 = tds.cell(cell2_key).unwrap();
 
         let this_vertices: VertexKeySet = [v_a, v_b, v_c].into_iter().collect();
 
@@ -6705,8 +6640,8 @@ mod tests {
             .insert_cell_with_mapping(Cell::new(vec![v_a, v_b, v_c], None).unwrap())
             .unwrap();
 
-        let cell1 = tds.get_cell(cell1_key).unwrap();
-        let cell2 = tds.get_cell(cell2_key).unwrap();
+        let cell1 = tds.cell(cell1_key).unwrap();
+        let cell2 = tds.cell(cell2_key).unwrap();
 
         let this_vertices: VertexKeySet = [v_a, v_b, v_c].into_iter().collect();
 
@@ -6735,8 +6670,8 @@ mod tests {
             .insert_cell_with_mapping(Cell::new(vec![v_a, v_b, v_d], None).unwrap())
             .unwrap();
 
-        let cell1 = tds.get_cell(cell1_key).unwrap();
-        let cell2 = tds.get_cell(cell2_key).unwrap();
+        let cell1 = tds.cell(cell1_key).unwrap();
+        let cell2 = tds.cell(cell2_key).unwrap();
 
         let this_vertices: VertexKeySet = [v_a, v_b, v_c].into_iter().collect();
 
@@ -6762,8 +6697,8 @@ mod tests {
             .insert_cell_with_mapping(Cell::new(vec![v_a, v_b, v_d], None).unwrap())
             .unwrap();
 
-        let cell1 = tds.get_cell(cell1_key).unwrap();
-        let cell2 = tds.get_cell(cell2_key).unwrap();
+        let cell1 = tds.cell(cell1_key).unwrap();
+        let cell2 = tds.cell(cell2_key).unwrap();
 
         let this_vertices: VertexKeySet = [v_a, v_b, v_c].into_iter().collect();
 
@@ -6793,8 +6728,8 @@ mod tests {
             .insert_cell_with_mapping(Cell::new(vec![v_a, v_b, v_d], None).unwrap())
             .unwrap();
 
-        let cell1 = tds.get_cell(cell1_key).unwrap();
-        let cell2 = tds.get_cell(cell2_key).unwrap();
+        let cell1 = tds.cell(cell1_key).unwrap();
+        let cell2 = tds.cell(cell2_key).unwrap();
 
         // Intentionally WRONG vertex set (includes v_d, excludes v_b) to force the mismatch branch.
         // This is a unit-level test of the helper's defensive cross-check behavior.
@@ -6872,8 +6807,8 @@ mod tests {
             .insert_cell_with_mapping(Cell::new(vec![v_a, v_b, v_d], None).unwrap())
             .unwrap();
 
-        let cell1 = tds.get_cell(cell1_key).unwrap();
-        let cell2 = tds.get_cell(cell2_key).unwrap();
+        let cell1 = tds.cell(cell1_key).unwrap();
+        let cell2 = tds.cell(cell2_key).unwrap();
 
         let this_vertices: VertexKeySet = [v_a, v_b, v_c].into_iter().collect();
         let neighbor_vertices: VertexKeySet = [v_a, v_b, v_d].into_iter().collect();
@@ -6907,8 +6842,8 @@ mod tests {
             .insert_cell_with_mapping(Cell::new(vec![v_a, v_b, v_d], None).unwrap())
             .unwrap();
 
-        let cell1 = tds.get_cell(cell1_key).unwrap();
-        let cell2 = tds.get_cell(cell2_key).unwrap();
+        let cell1 = tds.cell(cell1_key).unwrap();
+        let cell2 = tds.cell(cell2_key).unwrap();
 
         let this_vertices: VertexKeySet = [v_a, v_b, v_c].into_iter().collect();
         let neighbor_vertices: VertexKeySet = [v_a, v_b, v_d].into_iter().collect();
@@ -6950,8 +6885,8 @@ mod tests {
         // Build neighbor pointers so mutual back-references exist.
         tds.assign_neighbors().unwrap();
 
-        let cell1 = tds.get_cell(cell1_key).unwrap();
-        let cell2 = tds.get_cell(cell2_key).unwrap();
+        let cell1 = tds.cell(cell1_key).unwrap();
+        let cell2 = tds.cell(cell2_key).unwrap();
 
         assert!(
             Tds::validate_mutual_neighbor_back_reference(
@@ -6979,8 +6914,8 @@ mod tests {
             .unwrap();
 
         // NOTE: We intentionally do NOT call assign_neighbors(), so neighbor_cell.neighbors is None.
-        let cell1 = tds.get_cell(cell1_key).unwrap();
-        let cell2 = tds.get_cell(cell2_key).unwrap();
+        let cell1 = tds.cell(cell1_key).unwrap();
+        let cell2 = tds.cell(cell2_key).unwrap();
 
         let err = Tds::validate_mutual_neighbor_back_reference(cell1_key, cell1, 2, cell2, 2)
             .unwrap_err();
@@ -7011,7 +6946,7 @@ mod tests {
         tds.assign_neighbors().unwrap();
 
         {
-            let cell2_mut = tds.get_cell_by_key_mut(cell2_key).unwrap();
+            let cell2_mut = tds.cell_mut(cell2_key).unwrap();
             let neighbors = cell2_mut
                 .neighbors
                 .as_mut()
@@ -7020,8 +6955,8 @@ mod tests {
             neighbors[2] = None;
         }
 
-        let cell1 = tds.get_cell(cell1_key).unwrap();
-        let cell2 = tds.get_cell(cell2_key).unwrap();
+        let cell1 = tds.cell(cell1_key).unwrap();
+        let cell2 = tds.cell(cell2_key).unwrap();
 
         let err = Tds::validate_mutual_neighbor_back_reference(cell1_key, cell1, 2, cell2, 2)
             .unwrap_err();
@@ -7045,11 +6980,11 @@ mod tests {
             .unwrap();
 
         {
-            let cell = tds.get_cell_by_key_mut(cell_key).unwrap();
+            let cell = tds.cell_mut(cell_key).unwrap();
             cell.neighbors = Some(vec![Some(cell_key), None, None].into());
         }
 
-        let cell = tds.get_cell(cell_key).unwrap();
+        let cell = tds.cell(cell_key).unwrap();
         assert!(!Tds::allows_periodic_self_neighbor(cell));
 
         let err = tds.validate_coherent_orientation().unwrap_err();
@@ -7084,12 +7019,12 @@ mod tests {
             .unwrap();
 
         {
-            let cell = tds.get_cell_by_key_mut(cell_key).unwrap();
+            let cell = tds.cell_mut(cell_key).unwrap();
             cell.neighbors = Some(vec![Some(cell_key), None, None].into());
             cell.set_periodic_vertex_offsets(vec![[0, 0], [0, 0], [0, 0]]);
         }
 
-        let cell = tds.get_cell(cell_key).unwrap();
+        let cell = tds.cell(cell_key).unwrap();
         assert!(Tds::allows_periodic_self_neighbor(cell));
         assert!(tds.validate_coherent_orientation().is_ok());
         assert!(tds.is_coherently_oriented());
@@ -7115,7 +7050,7 @@ mod tests {
         assert!(tds.validate_coherent_orientation().is_ok());
 
         let mirror_idx = {
-            let cell1 = tds.get_cell(cell1_key).unwrap();
+            let cell1 = tds.cell(cell1_key).unwrap();
             let neighbors = cell1
                 .neighbors()
                 .expect("cell1 should have neighbors after assign_neighbors()");
@@ -7123,14 +7058,14 @@ mod tests {
                 .iter()
                 .position(|n| *n == Some(cell2_key))
                 .expect("cell1 should reference cell2");
-            let cell2 = tds.get_cell(cell2_key).unwrap();
+            let cell2 = tds.cell(cell2_key).unwrap();
             cell1
                 .mirror_facet_index(facet_idx, cell2)
                 .expect("adjacent cells should have a mirror facet")
         };
 
         {
-            let cell2 = tds.get_cell_by_key_mut(cell2_key).unwrap();
+            let cell2 = tds.cell_mut(cell2_key).unwrap();
             let neighbors = cell2
                 .neighbors
                 .as_mut()
@@ -7215,12 +7150,12 @@ mod tests {
         let vkey = tds.insert_vertex_with_mapping(vertex!([0.0, 0.0])).unwrap();
 
         // Corrupt incident_cell and ensure it gets cleared.
-        tds.get_vertex_by_key_mut(vkey).unwrap().incident_cell =
+        tds.vertex_mut(vkey).unwrap().incident_cell =
             Some(CellKey::from(KeyData::from_ffi(u64::MAX)));
-        assert!(tds.get_vertex_by_key(vkey).unwrap().incident_cell.is_some());
+        assert!(tds.vertex(vkey).unwrap().incident_cell.is_some());
 
         tds.assign_incident_cells().unwrap();
-        assert!(tds.get_vertex_by_key(vkey).unwrap().incident_cell.is_none());
+        assert!(tds.vertex(vkey).unwrap().incident_cell.is_none());
     }
 
     #[test]
@@ -7245,7 +7180,7 @@ mod tests {
         //
         // Inflate the vertex buffer (still using valid vertex keys) so facet indices exceed u8.
         {
-            let cell = tds.get_cell_by_key_mut(cell_key).unwrap();
+            let cell = tds.cell_mut(cell_key).unwrap();
             while cell.number_of_vertices() <= usize::from(u8::MAX) + 1 {
                 cell.push_vertex_key(a);
             }
@@ -7270,7 +7205,7 @@ mod tests {
         assert!(tds.validate_cell_mappings().is_ok());
 
         // Break vertex mapping: remove one uuid entry (len mismatch).
-        let uuid_a = tds.get_vertex_by_key(a).unwrap().uuid();
+        let uuid_a = tds.vertex(a).unwrap().uuid();
         tds.uuid_to_vertex_key.remove(&uuid_a);
         assert!(matches!(
             tds.validate_vertex_mappings(),
@@ -7291,7 +7226,7 @@ mod tests {
         ));
 
         // Break cell mapping similarly.
-        let uuid_cell = tds.get_cell(cell_key).unwrap().uuid();
+        let uuid_cell = tds.cell(cell_key).unwrap().uuid();
         tds.uuid_to_cell_key.remove(&uuid_cell);
         assert!(matches!(
             tds.validate_cell_mappings(),
@@ -7314,7 +7249,7 @@ mod tests {
             .unwrap();
 
         let invalid_vkey = VertexKey::from(KeyData::from_ffi(u64::MAX));
-        tds.get_cell_by_key_mut(cell_key)
+        tds.cell_mut(cell_key)
             .unwrap()
             .push_vertex_key(invalid_vkey);
 
@@ -7627,9 +7562,9 @@ mod tests {
         // Assign neighbors: shared facet is edge v1-v2.
         // c0[v0,v1,v2]: facet opposite v0 (index 0) = edge [v1,v2] → neighbor c1
         // c1[v1,v2,v3]: facet opposite v3 (index 2) = edge [v1,v2] → neighbor c0
-        tds.get_cell_by_key_mut(c0).unwrap().neighbors =
+        tds.cell_mut(c0).unwrap().neighbors =
             Some(NeighborBuffer::from_iter([Some(c1), None, None]));
-        tds.get_cell_by_key_mut(c1).unwrap().neighbors =
+        tds.cell_mut(c1).unwrap().neighbors =
             Some(NeighborBuffer::from_iter([None, None, Some(c0)]));
 
         tds.normalize_coherent_orientation().unwrap();
@@ -7946,7 +7881,7 @@ mod tests {
     // =========================================================================
 
     #[test]
-    fn test_get_cell_vertices_errors_on_missing_vertex_key() {
+    fn test_cell_vertices_errors_on_missing_vertex_key() {
         let mut tds: Tds<f64, (), (), 2> = Tds::empty();
         let v0 = tds.insert_vertex_with_mapping(vertex!([0.0, 0.0])).unwrap();
         let v1 = tds.insert_vertex_with_mapping(vertex!([1.0, 0.0])).unwrap();
@@ -7960,7 +7895,7 @@ mod tests {
         tds.vertices.remove(v2);
         tds.uuid_to_vertex_key.retain(|_, &mut vk| vk != v2);
 
-        let err = tds.get_cell_vertices(ck).unwrap_err();
+        let err = tds.cell_vertices(ck).unwrap_err();
         assert!(matches!(err, TdsError::VertexNotFound { .. }));
     }
 
@@ -7985,7 +7920,7 @@ mod tests {
         let ck2 = tds
             .insert_cell_with_mapping(Cell::new(vec![v1, v2, v3], None).unwrap())
             .unwrap();
-        tds.get_vertex_by_key_mut(v0).unwrap().incident_cell = Some(ck2);
+        tds.vertex_mut(v0).unwrap().incident_cell = Some(ck2);
 
         let err = tds.validate_vertex_incidence().unwrap_err();
         assert!(matches!(err, TdsError::InconsistentDataStructure { .. }));
@@ -8004,7 +7939,7 @@ mod tests {
 
         // Point v0 at a non-existent cell key.
         let dangling = CellKey::from(KeyData::from_ffi(0xDEAD));
-        tds.get_vertex_by_key_mut(v0).unwrap().incident_cell = Some(dangling);
+        tds.vertex_mut(v0).unwrap().incident_cell = Some(dangling);
 
         let err = tds.validate_vertex_incidence().unwrap_err();
         assert!(matches!(err, TdsError::CellNotFound { .. }));
@@ -8176,14 +8111,79 @@ mod tests {
     }
 
     // =========================================================================
-    // REMOVE CELL BY KEY
+    // REMOVE CELLS BY KEYS
     // =========================================================================
 
     #[test]
-    fn test_remove_cell_by_key_returns_none_for_missing() {
+    fn test_remove_cells_by_keys_returns_zero_for_missing() {
         let mut tds: Tds<f64, (), (), 2> = Tds::empty();
         let stale = CellKey::from(KeyData::from_ffi(0xDEAD));
-        assert!(tds.remove_cell_by_key(stale).is_none());
+        assert_eq!(tds.remove_cells_by_keys(&[stale]), 0);
+    }
+
+    #[test]
+    fn test_remove_cells_by_keys_repairs_local_topology() {
+        let mut tds: Tds<f64, (), (), 2> = Tds::empty();
+        let v0 = tds.insert_vertex_with_mapping(vertex!([0.0, 0.0])).unwrap();
+        let v1 = tds.insert_vertex_with_mapping(vertex!([1.0, 0.0])).unwrap();
+        let v2 = tds.insert_vertex_with_mapping(vertex!([1.0, 1.0])).unwrap();
+        let v3 = tds.insert_vertex_with_mapping(vertex!([0.0, 1.0])).unwrap();
+
+        let removed_key = tds
+            .insert_cell_with_mapping(Cell::new(vec![v0, v1, v2], None).unwrap())
+            .unwrap();
+        let surviving_key = tds
+            .insert_cell_with_mapping(Cell::new(vec![v0, v2, v3], None).unwrap())
+            .unwrap();
+        tds.construction_state = TriangulationConstructionState::Constructed;
+        tds.assign_neighbors().unwrap();
+        tds.assign_incident_cells().unwrap();
+
+        assert!(
+            tds.cells
+                .get(surviving_key)
+                .unwrap()
+                .neighbors()
+                .unwrap()
+                .contains(&Some(removed_key))
+        );
+
+        let removed_uuid = tds.cells.get(removed_key).unwrap().uuid();
+        let removed_vertices = tds.cells.get(removed_key).unwrap().vertices().to_vec();
+
+        assert_eq!(tds.remove_cells_by_keys(&[removed_key]), 1);
+
+        assert_eq!(removed_vertices, vec![v0, v1, v2]);
+        assert!(!tds.cells.contains_key(removed_key));
+        assert!(tds.cells.contains_key(surviving_key));
+        assert!(!tds.uuid_to_cell_key.contains_key(&removed_uuid));
+        if let Some(neighbors) = tds.cells.get(surviving_key).unwrap().neighbors() {
+            assert!(
+                neighbors
+                    .iter()
+                    .all(|neighbor| *neighbor != Some(removed_key))
+            );
+        }
+        assert_ne!(
+            tds.vertices.get(v0).unwrap().incident_cell,
+            Some(removed_key)
+        );
+        assert_ne!(
+            tds.vertices.get(v1).unwrap().incident_cell,
+            Some(removed_key)
+        );
+        assert_ne!(
+            tds.vertices.get(v2).unwrap().incident_cell,
+            Some(removed_key)
+        );
+        assert_eq!(
+            tds.vertices.get(v0).unwrap().incident_cell,
+            Some(surviving_key)
+        );
+        assert_eq!(
+            tds.vertices.get(v2).unwrap().incident_cell,
+            Some(surviving_key)
+        );
     }
 
     // =========================================================================
@@ -8227,7 +8227,7 @@ mod tests {
 
         let prev = tds.set_vertex_data(key, Some(99));
         assert!(prev.unwrap().is_some()); // had data before
-        assert_eq!(tds.get_vertex_by_key(key).unwrap().data, Some(99));
+        assert_eq!(tds.vertex(key).unwrap().data, Some(99));
     }
 
     #[test]
@@ -8245,7 +8245,7 @@ mod tests {
         let prev = tds.set_vertex_data(key, Some(()));
         // Vertices constructed without explicit data have data = None
         assert_eq!(prev, Some(None));
-        assert_eq!(tds.get_vertex_by_key(key).unwrap().data, Some(()));
+        assert_eq!(tds.vertex(key).unwrap().data, Some(()));
     }
 
     #[test]
@@ -8270,7 +8270,7 @@ mod tests {
 
         let prev = tds.set_cell_data(key, Some(42));
         assert_eq!(prev, Some(None)); // key found, no previous data
-        assert_eq!(tds.get_cell(key).unwrap().data, Some(42));
+        assert_eq!(tds.cell(key).unwrap().data, Some(42));
     }
 
     #[test]
@@ -8289,7 +8289,7 @@ mod tests {
         tds.set_cell_data(key, Some(1));
         let prev = tds.set_cell_data(key, Some(2));
         assert_eq!(prev, Some(Some(1)));
-        assert_eq!(tds.get_cell(key).unwrap().data, Some(2));
+        assert_eq!(tds.cell(key).unwrap().data, Some(2));
     }
 
     #[test]
@@ -8321,7 +8321,7 @@ mod tests {
 
         // Verify all data was updated.
         for (key, i) in keys.iter().zip(0i32..) {
-            let v = dt.tds().get_vertex_by_key(*key).unwrap();
+            let v = dt.tds().vertex(*key).unwrap();
             assert_eq!(v.data, Some(i * 100));
         }
     }
@@ -8350,7 +8350,7 @@ mod tests {
 
         // Verify all data was updated.
         for (key, i) in keys.iter().zip(0i32..) {
-            let c = dt.tds().get_cell(*key).unwrap();
+            let c = dt.tds().cell(*key).unwrap();
             assert_eq!(c.data, Some(i));
         }
     }
@@ -8370,12 +8370,12 @@ mod tests {
         // Set via Delaunay wrapper
         let prev = dt.set_vertex_data(key, Some(99));
         assert!(prev.unwrap().is_some());
-        assert_eq!(dt.tds().get_vertex_by_key(key).unwrap().data, Some(99));
+        assert_eq!(dt.tds().vertex(key).unwrap().data, Some(99));
 
         // Clear via Delaunay wrapper
         let prev = dt.set_vertex_data(key, None);
         assert_eq!(prev, Some(Some(99)));
-        assert_eq!(dt.tds().get_vertex_by_key(key).unwrap().data, None);
+        assert_eq!(dt.tds().vertex(key).unwrap().data, None);
     }
 
     #[test]
@@ -8393,12 +8393,12 @@ mod tests {
         // Set via Delaunay wrapper
         let prev = dt.set_cell_data(key, Some(42));
         assert_eq!(prev, Some(None));
-        assert_eq!(dt.tds().get_cell(key).unwrap().data, Some(42));
+        assert_eq!(dt.tds().cell(key).unwrap().data, Some(42));
 
         // Clear via Delaunay wrapper
         let prev = dt.set_cell_data(key, None);
         assert_eq!(prev, Some(Some(42)));
-        assert_eq!(dt.tds().get_cell(key).unwrap().data, None);
+        assert_eq!(dt.tds().cell(key).unwrap().data, None);
     }
 
     #[test]
@@ -8421,7 +8421,7 @@ mod tests {
         let prev = dt.set_vertex_data(key, Some(999));
         assert!(prev.is_some(), "set_vertex_data should find the key");
         assert_eq!(
-            dt.tds().get_vertex_by_key(key).unwrap().data,
+            dt.tds().vertex(key).unwrap().data,
             Some(999),
             "stored value should reflect the mutation"
         );
