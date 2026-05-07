@@ -3117,7 +3117,7 @@ mod tests {
             CoordinateConversionError::ConversionFailed { .. }
             | CoordinateConversionError::InsphereInconsistency { .. }
             | CoordinateConversionError::UnsupportedMatrixDimension { .. }
-            | CoordinateConversionError::LinearAlgebraFailure { .. } => {
+            | CoordinateConversionError::LinearAlgebraFailure(_) => {
                 panic!("Expected NonFiniteValue error")
             }
         }
@@ -3135,7 +3135,7 @@ mod tests {
             CoordinateConversionError::ConversionFailed { .. }
             | CoordinateConversionError::InsphereInconsistency { .. }
             | CoordinateConversionError::UnsupportedMatrixDimension { .. }
-            | CoordinateConversionError::LinearAlgebraFailure { .. } => {
+            | CoordinateConversionError::LinearAlgebraFailure(_) => {
                 panic!("Expected NonFiniteValue error")
             }
         }
@@ -3242,7 +3242,7 @@ mod tests {
                 CoordinateConversionError::ConversionFailed { .. }
                 | CoordinateConversionError::InsphereInconsistency { .. }
                 | CoordinateConversionError::UnsupportedMatrixDimension { .. }
-                | CoordinateConversionError::LinearAlgebraFailure { .. } => {
+                | CoordinateConversionError::LinearAlgebraFailure(_) => {
                     panic!("Expected NonFiniteValue error at position {expected_index}")
                 }
             }
@@ -3266,7 +3266,7 @@ mod tests {
             CoordinateConversionError::ConversionFailed { .. }
             | CoordinateConversionError::InsphereInconsistency { .. }
             | CoordinateConversionError::UnsupportedMatrixDimension { .. }
-            | CoordinateConversionError::LinearAlgebraFailure { .. } => {
+            | CoordinateConversionError::LinearAlgebraFailure(_) => {
                 panic!("Expected NonFiniteValue error")
             }
         }

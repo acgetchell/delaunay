@@ -121,7 +121,7 @@ fn main() -> Result<(), PachnerRoundtripError> {
         start.elapsed()
     );
 
-    let baseline = snapshot_topology(&dt);
+    let baseline = snapshot_topology(&dt)?;
 
     let start = Instant::now();
     roundtrip_k1(&mut dt)?;
@@ -181,29 +181,29 @@ fn stable_vertices() -> Vec<Vertex<f64, (), 4>> {
         .collect()
 }
 
-fn snapshot_topology(dt: &Dt4) -> TopologySnapshot {
+fn snapshot_topology(dt: &Dt4) -> Result<TopologySnapshot, PachnerRoundtripError> {
     let tds = dt.tds();
     let mut vertex_uuids: Vec<Uuid> = tds.vertices().map(|(_, vertex)| vertex.uuid()).collect();
     vertex_uuids.sort();
 
-    let mut cell_vertex_uuids: Vec<Vec<Uuid>> = tds
-        .cells()
-        .map(|(_, cell)| {
-            let mut uuids: Vec<Uuid> = cell
-                .vertices()
-                .iter()
-                .map(|&vkey| tds.vertex(vkey).expect("vertex key missing in TDS").uuid())
-                .collect();
-            uuids.sort();
-            uuids
-        })
-        .collect();
+    let mut cell_vertex_uuids: Vec<Vec<Uuid>> = Vec::new();
+    for (_, cell) in tds.cells() {
+        let mut uuids: Vec<Uuid> = Vec::new();
+        for &vkey in cell.vertices() {
+            let vertex = tds
+                .vertex(vkey)
+                .ok_or(PachnerRoundtripError::MissingVertex { vertex_key: vkey })?;
+            uuids.push(vertex.uuid());
+        }
+        uuids.sort();
+        cell_vertex_uuids.push(uuids);
+    }
     cell_vertex_uuids.sort();
 
-    TopologySnapshot {
+    Ok(TopologySnapshot {
         vertex_uuids,
         cell_vertex_uuids,
-    }
+    })
 }
 
 fn assert_roundtrip(
@@ -211,7 +211,7 @@ fn assert_roundtrip(
     dt: &Dt4,
     baseline: &TopologySnapshot,
 ) -> Result<(), PachnerRoundtripError> {
-    let after = snapshot_topology(dt);
+    let after = snapshot_topology(dt)?;
     if &after != baseline {
         return Err(PachnerRoundtripError::TopologyChanged { move_kind });
     }

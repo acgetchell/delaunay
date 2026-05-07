@@ -3596,6 +3596,9 @@ def _cmd_compare_baselines(args: argparse.Namespace, project_root: Path) -> None
     except FileNotFoundError as e:
         print(f"❌ {e}", file=sys.stderr)
         sys.exit(3)
+    except BaselineParseError as e:
+        print(f"❌ Failed to parse baseline file: {e}", file=sys.stderr)
+        sys.exit(1)
     except RuntimeError as e:
         print(f"❌ Failed to compare baseline files: {e}", file=sys.stderr)
         sys.exit(1)
@@ -3643,6 +3646,9 @@ def _cmd_compare_tags(args: argparse.Namespace, project_root: Path) -> None:
     except FileNotFoundError as e:
         print(f"❌ {e}", file=sys.stderr)
         sys.exit(3)
+    except BaselineParseError as e:
+        print(f"❌ Failed to parse baseline file: {e}", file=sys.stderr)
+        sys.exit(1)
     except TimeoutError as e:
         print(f"❌ {e}", file=sys.stderr)
         sys.exit(1)

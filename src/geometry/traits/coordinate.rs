@@ -62,6 +62,7 @@
 
 #![forbid(unsafe_code)]
 
+use la_stack::LaError;
 use num_traits::{Float, Zero};
 use ordered_float::OrderedFloat;
 use serde::{Serialize, de::DeserializeOwned};
@@ -133,11 +134,8 @@ pub enum CoordinateConversionError {
         max: usize,
     },
     /// A linear algebra backend operation failed.
-    #[error("Linear algebra failure: {details}")]
-    LinearAlgebraFailure {
-        /// Backend diagnostic.
-        details: String,
-    },
+    #[error("Linear algebra failure: {0}")]
+    LinearAlgebraFailure(#[from] LaError),
 }
 
 impl From<crate::geometry::matrix::StackMatrixDispatchError> for CoordinateConversionError {
@@ -147,9 +145,7 @@ impl From<crate::geometry::matrix::StackMatrixDispatchError> for CoordinateConve
                 Self::UnsupportedMatrixDimension { requested: k, max }
             }
             crate::geometry::matrix::StackMatrixDispatchError::La(source) => {
-                Self::LinearAlgebraFailure {
-                    details: source.to_string(),
-                }
+                Self::LinearAlgebraFailure(source)
             }
         }
     }

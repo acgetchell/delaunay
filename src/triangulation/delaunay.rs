@@ -474,6 +474,19 @@ pub enum DelaunayConstructionFailure {
         /// Validation failure detail.
         message: String,
     },
+
+    /// Final topology validation failed after construction.
+    ///
+    /// Mirrors insertion-time topology validation for post-build checks that
+    /// run after incremental insertion has completed.
+    #[error("final topology validation failed after construction: {message}: {source}")]
+    FinalTopologyValidation {
+        /// Validation failure detail.
+        message: String,
+        /// Underlying validation error.
+        #[source]
+        source: Box<InvariantError>,
+    },
 }
 
 impl From<TriangulationConstructionError> for DelaunayConstructionFailure {
@@ -526,6 +539,9 @@ impl From<TriangulationConstructionError> for DelaunayConstructionFailure {
                 Self::InsertionTopologyValidation {
                     message: format!("{message}: {source}"),
                 }
+            }
+            TriangulationConstructionError::FinalTopologyValidation { message, source } => {
+                Self::FinalTopologyValidation { message, source }
             }
         }
     }
@@ -1014,6 +1030,7 @@ pub struct ConstructionSkipSample {
 #[derive(Debug, Clone, thiserror::Error)]
 #[error("{error}")]
 #[non_exhaustive]
+#[must_use]
 pub struct DelaunayTriangulationConstructionErrorWithStatistics {
     /// Underlying construction error.
     #[source]
@@ -3338,8 +3355,9 @@ where
                 "post-construction: topology validation (build) completed"
             );
             if let Err(err) = validation_result {
-                return Err(TriangulationConstructionError::GeometricDegeneracy {
-                    message: format!("PL-manifold validation failed after construction: {err}"),
+                return Err(TriangulationConstructionError::FinalTopologyValidation {
+                    message: "PL-manifold validation failed after construction".to_string(),
+                    source: Box::new(err),
                 }
                 .into());
             }
@@ -3404,8 +3422,9 @@ where
             );
             if let Err(err) = validation_result {
                 return Err(DelaunayTriangulationConstructionErrorWithStatistics {
-                    error: TriangulationConstructionError::GeometricDegeneracy {
-                        message: format!("PL-manifold validation failed after construction: {err}"),
+                    error: TriangulationConstructionError::FinalTopologyValidation {
+                        message: "PL-manifold validation failed after construction".to_string(),
+                        source: Box::new(err),
                     }
                     .into(),
                     statistics: stats,
@@ -4541,8 +4560,9 @@ where
                 "post-construction: topology validation (finalize) completed"
             );
             if let Err(err) = validation_result {
-                return Err(TriangulationConstructionError::GeometricDegeneracy {
-                    message: format!("PL-manifold validation failed after construction: {err}"),
+                return Err(TriangulationConstructionError::FinalTopologyValidation {
+                    message: "PL-manifold validation failed after construction".to_string(),
+                    source: Box::new(err),
                 }
                 .into());
             }

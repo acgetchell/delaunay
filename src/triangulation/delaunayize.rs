@@ -544,15 +544,6 @@ where
     U: DataType,
     V: DataType,
 {
-    // Snapshot vertex and cell data before repair so fallback rebuild can use it.
-    let fallback_state: Option<FallbackRebuildState<K::Scalar, U, V, D>> =
-        if config.fallback_rebuild {
-            let tds = &dt.as_triangulation().tds;
-            Some(snapshot_rebuild_state(tds)?)
-        } else {
-            None
-        };
-
     // Step 1: PL-manifold topology repair (facet over-sharing).
     let pl_config = PlManifoldRepairConfig {
         max_iterations: config.topology_max_iterations,
@@ -561,8 +552,17 @@ where
     let topology_stats = match repair_facet_oversharing(dt.tds_mut_for_repair(), &pl_config) {
         Ok(stats) => stats,
         // Topology repair failed but fallback is enabled — try rebuilding.
-        Err(topo_err) if let Some((ref verts, ref cell_data)) = fallback_state => {
-            match rebuild_preserving_data(&dt.as_triangulation().kernel, verts, cell_data) {
+        Err(topo_err) if config.fallback_rebuild => {
+            let tds = &dt.as_triangulation().tds;
+            let (vertices, cell_data) = match snapshot_rebuild_state(tds) {
+                Ok(state) => state,
+                Err(snapshot_error) => {
+                    return Err(DelaunayizeError::FallbackCellDataSnapshotFailed {
+                        source: snapshot_error,
+                    });
+                }
+            };
+            match rebuild_preserving_data(&dt.as_triangulation().kernel, &vertices, &cell_data) {
                 Ok(rebuilt) => {
                     *dt = rebuilt;
                     return Ok(DelaunayizeOutcome {

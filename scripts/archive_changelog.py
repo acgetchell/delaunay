@@ -73,7 +73,8 @@ def _version_sort_key(label: str) -> tuple[bool, tuple[int, ...], tuple[tuple[in
     Returns:
         A tuple suitable for use as a sort key.
     """
-    core, separator, prerelease = label.partition("-")
+    label_without_build = label.split("+", 1)[0]
+    core, separator, prerelease = label_without_build.partition("-")
     parts = core.split(".")
     try:
         nums = tuple(int(p) for p in parts)

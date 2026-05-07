@@ -488,21 +488,12 @@ gen_toroidal_periodic_validation_test!(
 );
 
 /// Explicit 7-vertex torus (Heawood triangulation) with `GlobalTopology::Toroidal`
-/// builds successfully under `PLManifold` guarantee.
+/// is rejected until explicit non-Euclidean construction has Level 4 validation.
 ///
-/// The 14-triangle closed mesh has χ = 0 (torus). Without the Toroidal override
-/// in `validate_topology_core()`, the heuristic would classify it as
-/// `ClosedSphere(2)` and expect χ = 2, failing at build time. Setting
-/// `global_topology = Toroidal` overrides to `ClosedToroid(2)` (χ = 0).
-///
-/// Uses explicit construction with unique vertex keys, so ridge and vertex link
-/// checks are correctly evaluated under `PLManifold` guarantee.
-///
-/// Note: `validate_geometric_cell_orientation()` fails for this planar embedding
-/// of a torus (self-intersection makes some cells negative-oriented), so we
-/// verify TDS structural validity (Level 1–2) rather than full `validate()`.
+/// The 14-triangle closed mesh has χ = 0 (torus), but explicit quotient
+/// connectivity cannot yet be validated against the Level 4 Delaunay property.
 #[test]
-fn test_explicit_toroidal_heawood_torus_validates() {
+fn test_explicit_toroidal_heawood_torus_rejected() {
     // Regular heptagon: 7 well-separated points, no 3 collinear.
     let vertices: Vec<_> = (0..7)
         .map(|i| {
@@ -520,30 +511,23 @@ fn test_explicit_toroidal_heawood_torus_validates() {
         cells.push(vec![i, (i + 2) % 7, (i + 3) % 7]);
     }
 
-    // Build succeeds: the Toroidal override in validate_topology_core() accepts
-    // χ = 0 for the ClosedToroid classification. Without global_topology = Toroidal,
-    // this build would fail (see test_explicit_toroidal_torus_euler_mismatch_without_override).
-    let dt = DelaunayTriangulationBuilder::from_vertices_and_cells(&vertices, &cells)
+    let err = DelaunayTriangulationBuilder::from_vertices_and_cells(&vertices, &cells)
         .global_topology(GlobalTopology::Toroidal {
             domain: [2.0, 2.0],
             mode: ToroidalConstructionMode::Explicit,
         })
         .build::<()>()
-        .expect("explicit toroidal torus build should succeed");
+        .expect_err("explicit toroidal connectivity requires a Level 4 quotient validator");
 
-    assert_eq!(dt.number_of_vertices(), 7);
-    assert_eq!(dt.number_of_cells(), 14);
-    assert!(
-        dt.global_topology().is_toroidal(),
-        "global_topology should be Toroidal"
-    );
-    assert!(
-        dt.tds().is_valid().is_ok(),
-        "TDS structural validity (Level 1-2) should pass"
-    );
-    let counts = count_simplices(dt.tds()).unwrap();
-    let chi = euler_characteristic(&counts);
-    assert_eq!(chi, 0, "Euler characteristic of explicit torus must be 0");
+    match err {
+        DelaunayTriangulationConstructionError::ExplicitConstruction(
+            ExplicitConstructionError::ValidationFailed { message },
+        ) => assert!(
+            message.contains("Explicit non-Euclidean connectivity is not supported"),
+            "unexpected validation message: {message}"
+        ),
+        other => panic!("expected explicit construction validation failure, got {other:?}"),
+    }
 }
 
 /// Explicit 7-vertex torus with Euclidean `global_topology` fails Euler validation.

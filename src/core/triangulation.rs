@@ -438,6 +438,7 @@ fn log_retryable_conflict_skip(
 }
 
 /// Telemetry counters for duplicate-coordinate detection.
+#[must_use]
 #[derive(Debug, Clone, Copy, Default)]
 pub struct DuplicateDetectionMetrics {
     /// Total number of duplicate-coordinate checks executed.
@@ -587,6 +588,19 @@ pub enum TriangulationConstructionError {
         /// Underlying topology validation error.
         #[source]
         source: TriangulationValidationError,
+    },
+
+    /// Final cumulative topology validation failed after construction.
+    ///
+    /// Mirrors [`InsertionTopologyValidation`](Self::InsertionTopologyValidation)
+    /// for post-build checks that run after the incremental insertion phase.
+    #[error("{message}: {source}")]
+    FinalTopologyValidation {
+        /// High-level finalization context.
+        message: String,
+        /// Underlying validation error.
+        #[source]
+        source: Box<InvariantError>,
     },
 
     /// Attempted to insert a vertex with coordinates that already exist.

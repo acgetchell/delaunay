@@ -738,7 +738,7 @@ impl<T, U, const D: usize> Vertex<T, U, D> {
     ///     other => panic!("Expected InvalidUuid error, got: {:?}", other),
     /// }
     /// ```
-    pub fn is_valid(self) -> Result<(), VertexValidationError>
+    pub fn is_valid(&self) -> Result<(), VertexValidationError>
     where
         T: CoordinateScalar,
         Point<T, D>: Coordinate<T, D>,
@@ -1853,20 +1853,7 @@ mod tests {
 
     #[test]
     fn vertex_string_data_usage_examples() {
-        // This test demonstrates what works and what doesn't work with string data in vertices.
-        // Note: String data has limitations due to the DataType trait requirements and lifetime complexities.
-
-        // =====================================================================
-        // DEMONSTRATE THE FUNDAMENTAL ISSUE
-        // =====================================================================
-
-        // The following would NOT compile because String doesn't implement Copy:
-        // let vertex_string: Vertex<f64, String, 2> = vertex!([1.0, 2.0], "test".to_string());
-        // Error: String doesn't implement Copy trait required by DataType
-
-        // The following would also cause lifetime issues in real usage:
-        // let vertex_str: Vertex<f64, &str, 2> = vertex!([1.0, 2.0], "test");
-        // While this compiles, it has severe lifetime limitations in practice
+        // String metadata now works with `Vertex`, `VertexBuilder`, and the `vertex!` macro.
 
         // =====================================================================
         // PRACTICAL ALTERNATIVE: Use numeric IDs with external lookup

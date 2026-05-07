@@ -533,6 +533,11 @@ impl From<TriangulationConstructionError> for InitialSimplexConstructionError {
                     message: source.to_string(),
                 }
             }
+            TriangulationConstructionError::FinalTopologyValidation { source, .. } => {
+                Self::UnexpectedInsertionStage {
+                    message: source.to_string(),
+                }
+            }
         }
     }
 }
@@ -790,6 +795,34 @@ pub enum NeighborWiringError {
         facet_index: usize,
         /// Maximum storable facet index.
         max: u8,
+    },
+
+    /// An external facet did not match any new-cell boundary facet.
+    #[error(
+        "external facet {facet_index} on cell {cell_key:?} with hash {facet_hash:#x} did not match any new-cell facet"
+    )]
+    ExternalFacetNotFound {
+        /// External cell being glued.
+        cell_key: CellKey,
+        /// Facet index on the external cell.
+        facet_index: u8,
+        /// Hash of the external facet vertex set.
+        facet_hash: u64,
+    },
+
+    /// An external facet matched a facet already shared by multiple new cells.
+    #[error(
+        "external facet {facet_index} on cell {cell_key:?} with hash {facet_hash:#x} matched {existing_incidents} new-cell incidents"
+    )]
+    ExternalFacetAlreadyShared {
+        /// External cell being glued.
+        cell_key: CellKey,
+        /// Facet index on the external cell.
+        facet_index: u8,
+        /// Hash of the external facet vertex set.
+        facet_hash: u64,
+        /// Number of existing new-cell incidents for the facet.
+        existing_incidents: usize,
     },
 
     /// A cell points to itself as a neighbor.
@@ -1075,12 +1108,12 @@ impl InsertionError {
                     HullExtensionReason::NoVisibleFacets | HullExtensionReason::InvalidPatch { .. }
                 )
             }
+            Self::CavityFilling { reason } => Self::is_cavity_filling_error_retryable(reason),
             // Neighbor wiring errors are structural failures (missing cells, index
             // overflow, etc.). Non-manifold topology detection uses the dedicated
             // `NonManifoldTopology` variant.
             Self::NeighborWiring { .. }
             | Self::Location(_)
-            | Self::CavityFilling { .. }
             | Self::DelaunayValidationFailed { .. }
             | Self::DelaunayRepairFailed { .. }
             | Self::DuplicateCoordinates { .. }
@@ -1098,6 +1131,44 @@ impl InsertionError {
             tds_err,
             TdsError::Geometric(_) | TdsError::OrientationViolation { .. }
         )
+    }
+
+    /// Check whether a compact TDS validation summary is geometry-related.
+    const fn is_tds_validation_failure_retryable(err: &TdsValidationFailure) -> bool {
+        matches!(
+            err,
+            TdsValidationFailure::Geometric { .. }
+                | TdsValidationFailure::OrientationViolation { .. }
+        )
+    }
+
+    /// Check whether a cavity-filling failure is safe to retry after rollback.
+    const fn is_cavity_filling_error_retryable(err: &CavityFillingError) -> bool {
+        match err {
+            CavityFillingError::InvalidFacetSharingAfterRepair { .. } => true,
+            CavityFillingError::NeighborRebuild { reason } => match reason {
+                NeighborRebuildError::NonManifoldTopology { .. } => true,
+                NeighborRebuildError::TopologyValidation { reason } => {
+                    Self::is_tds_validation_failure_retryable(reason)
+                }
+                NeighborRebuildError::Wiring { .. } | NeighborRebuildError::Unexpected { .. } => {
+                    false
+                }
+            },
+            CavityFillingError::MissingBoundaryCell { .. }
+            | CavityFillingError::MissingInsertedVertex { .. }
+            | CavityFillingError::WrongCellArity { .. }
+            | CavityFillingError::InvalidFacetIndex { .. }
+            | CavityFillingError::CellCreation { .. }
+            | CavityFillingError::CellInsertion { .. }
+            | CavityFillingError::InitialSimplexConstruction { .. }
+            | CavityFillingError::RebuiltVertexMissing { .. }
+            | CavityFillingError::EmptyConflictRegion { .. }
+            | CavityFillingError::EmptyBoundary { .. }
+            | CavityFillingError::PerturbationScaleConversion { .. }
+            | CavityFillingError::UnsupportedDegenerateLocation { .. }
+            | CavityFillingError::EmptyFanTriangulation => false,
+        }
     }
 
     /// Check whether a Level 3 (Triangulation) validation error is geometry-related (retryable).
@@ -1522,22 +1593,21 @@ where
     let log_enabled = std::env::var_os("DELAUNAY_DEBUG_CAVITY").is_some();
     #[cfg(debug_assertions)]
     let ridge_link_debug = std::env::var_os("DELAUNAY_DEBUG_RIDGE_LINK").is_some();
-    #[cfg(debug_assertions)]
-    let mut skipped_external_matches: Vec<(u64, CellKey, usize)> = Vec::new();
-    #[cfg(debug_assertions)]
-    let mut skipped_external_count = 0usize;
-    #[cfg(debug_assertions)]
-    let mut unmatched_external: Vec<(CellKey, u8)> = Vec::new();
-    #[cfg(debug_assertions)]
-    let mut unmatched_external_count = 0usize;
-
     // Index all facets of new cells.
     for &cell_key in new_cells {
         let cell = tds
             .cell(cell_key)
             .ok_or(NeighborWiringError::MissingCell { cell_key })?;
+        let vertex_count = cell.number_of_vertices();
+        if vertex_count > D + 1 {
+            return Err(NeighborWiringError::FacetIndexOverflow {
+                facet_index: vertex_count - 1,
+                max: u8::try_from(D).unwrap_or(u8::MAX),
+            }
+            .into());
+        }
 
-        for facet_idx in 0..cell.number_of_vertices() {
+        for facet_idx in 0..vertex_count {
             let mut facet_vkeys = SmallBuffer::<VertexKey, MAX_PRACTICAL_DIMENSION_SIZE>::new();
             for (i, &vkey) in cell.vertices().iter().enumerate() {
                 if i != facet_idx {
@@ -1590,14 +1660,12 @@ where
         let facet_key = compute_facet_hash(&facet_vkeys);
 
         let Some(incidents) = facet_map.get_mut(&facet_key) else {
-            #[cfg(debug_assertions)]
-            {
-                unmatched_external_count = unmatched_external_count.saturating_add(1);
-                if unmatched_external.len() < 10 {
-                    unmatched_external.push((cell_key, external.facet_index()));
-                }
+            return Err(NeighborWiringError::ExternalFacetNotFound {
+                cell_key,
+                facet_index: external.facet_index(),
+                facet_hash: facet_key,
             }
-            continue;
+            .into());
         };
 
         // Only glue to boundary facets (len == 1). If len >= 2, the facet is already
@@ -1606,13 +1674,13 @@ where
         if incidents.len() == 1 {
             incidents.push((cell_key, external.facet_index()));
         } else {
-            #[cfg(debug_assertions)]
-            if ridge_link_debug {
-                skipped_external_count = skipped_external_count.saturating_add(1);
-                if skipped_external_matches.len() < 10 {
-                    skipped_external_matches.push((facet_key, cell_key, incidents.len()));
-                }
+            return Err(NeighborWiringError::ExternalFacetAlreadyShared {
+                cell_key,
+                facet_index: external.facet_index(),
+                facet_hash: facet_key,
+                existing_incidents: incidents.len(),
             }
+            .into());
         }
     }
 
@@ -1755,22 +1823,6 @@ where
 
     #[cfg(debug_assertions)]
     if ridge_link_debug {
-        if skipped_external_count > 0 {
-            tracing::debug!(
-                skipped_external_count,
-                skipped_external_matches = ?skipped_external_matches,
-                "wire_cavity_neighbors: skipped external-facet matches (facet already shared by >1 new cell)"
-            );
-        }
-
-        if unmatched_external_count > 0 {
-            tracing::debug!(
-                unmatched_external_count,
-                unmatched_external = ?unmatched_external,
-                "wire_cavity_neighbors: external facets did not match any new-cell facet hash"
-            );
-        }
-
         let mut total_slots = 0usize;
         let mut neighbor_new = 0usize;
         let mut neighbor_existing = 0usize;
@@ -1911,9 +1963,9 @@ where
     // Candidate external cells are those reachable via neighbor pointers from the internal set.
     let mut candidate_cells: FastHashSet<CellKey> = FastHashSet::default();
     for &cell_key in internal_cells {
-        let Some(cell) = tds.cell(cell_key) else {
-            continue;
-        };
+        let cell = tds
+            .cell(cell_key)
+            .ok_or(NeighborWiringError::MissingCell { cell_key })?;
         let Some(neighbors) = cell.neighbors() else {
             continue;
         };
@@ -3783,6 +3835,25 @@ mod tests {
         assert!(
             !InsertionError::CavityFilling {
                 reason: CavityFillingError::EmptyFanTriangulation,
+            }
+            .is_retryable()
+        );
+        assert!(
+            InsertionError::CavityFilling {
+                reason: CavityFillingError::InvalidFacetSharingAfterRepair {
+                    stage: CavityRepairStage::PrimaryInsertion,
+                },
+            }
+            .is_retryable()
+        );
+        assert!(
+            InsertionError::CavityFilling {
+                reason: CavityFillingError::NeighborRebuild {
+                    reason: NeighborRebuildError::NonManifoldTopology {
+                        facet_hash: 0x123,
+                        cell_count: 3,
+                    },
+                },
             }
             .is_retryable()
         );

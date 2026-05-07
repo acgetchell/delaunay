@@ -790,8 +790,10 @@ where
     /// mesh instead of χ = 2 (the sphere default).
     ///
     /// This is **metadata only** and does not trigger any coordinate
-    /// canonicalization or image-point construction. For construction-time
-    /// toroidal processing, use [`.toroidal()`](Self::toroidal) or
+    /// canonicalization or image-point construction. Explicit non-Euclidean
+    /// connectivity is rejected until Level 4 validation supports quotient
+    /// topology. For construction-time toroidal processing, use
+    /// [`.toroidal()`](Self::toroidal) or
     /// [`.toroidal_periodic()`](Self::toroidal_periodic) instead.
     ///
     /// Defaults to [`GlobalTopology::Euclidean`].
@@ -811,15 +813,14 @@ where
     /// ];
     /// let cells = vec![vec![0, 1, 2]];
     ///
-    /// let dt = DelaunayTriangulationBuilder::from_vertices_and_cells(&vertices, &cells)
+    /// let result = DelaunayTriangulationBuilder::from_vertices_and_cells(&vertices, &cells)
     ///     .global_topology(GlobalTopology::Toroidal {
     ///         domain: [1.0, 1.0],
     ///         mode: ToroidalConstructionMode::Explicit,
     ///     })
-    ///     .build::<()>()
-    ///     .unwrap();
+    ///     .build::<()>();
     ///
-    /// assert!(dt.global_topology().is_toroidal());
+    /// assert!(result.is_err());
     /// ```
     #[must_use]
     pub const fn global_topology(mut self, global_topology: GlobalTopology<D>) -> Self {
@@ -1381,9 +1382,8 @@ where
     ///
     /// The public return type is `DelaunayTriangulation`, so Euclidean explicit
     /// connectivity must prove the empty-circumsphere property before it crosses
-    /// this API boundary. Explicit non-Euclidean topology is metadata-only today;
-    /// applying the Euclidean flip predicates to quotient connectivity would
-    /// reject valid toroidal complexes for the wrong geometric reason.
+    /// this API boundary. Explicit non-Euclidean topology is rejected until a
+    /// Level 4 validator exists for quotient connectivity.
     fn validate_explicit_delaunay_property_if_euclidean<K, V>(
         dt: &DelaunayTriangulation<K, U, V, D>,
     ) -> Result<(), DelaunayTriangulationConstructionError>
@@ -1392,7 +1392,10 @@ where
         V: DataType,
     {
         if !dt.global_topology().is_euclidean() {
-            return Ok(());
+            return Err(ExplicitConstructionError::ValidationFailed {
+                message: "Explicit non-Euclidean connectivity is not supported for construction; Level 4 validator required".to_string(),
+            }
+            .into());
         }
 
         dt.is_valid().map_err(|e| {

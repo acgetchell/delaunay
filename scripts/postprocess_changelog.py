@@ -174,18 +174,20 @@ def _compact_entry(line: str, *, strip_breaking: bool = False) -> str:
     Produce a compact summary of a changelog list item.
 
     Removes a trailing commit-hash link from the given line. If `strip_breaking` is True,
-    also removes a single leading "[**breaking**] " prefix.
+    also removes a single leading breaking marker.
 
     Parameters:
         line (str): The changelog list item to compact.
-        strip_breaking (bool): If True, strip a single leading "[**breaking**] " prefix.
+        strip_breaking (bool): If True, strip a single leading breaking marker.
 
     Returns:
         str: The compacted changelog entry with the commit-hash link (and optional breaking prefix) removed.
     """
     result = _COMMIT_LINK_RE.sub("", line).rstrip()
     if strip_breaking:
-        result = result.replace("[**breaking**] ", "", 1)
+        bullet = result[:2] if result.startswith(("- ", "* ")) else ""
+        body = result[2:] if bullet else result
+        result = bullet + _BREAKING_MARKER_RE.sub("", body, count=1)
     return result
 
 
@@ -202,8 +204,8 @@ def _extract_section_summaries(
     Extract summary lines for merged pull requests and breaking changes from a version section.
 
     Processes only top-level list items in the provided `section` (lines starting with "- " or
-    "* "), detects PR-linked entries and entries containing "[**breaking**]". Each matching line
-    is compacted (trailing commit-hash links removed; the "[**breaking**]" prefix is stripped when
+    "* "), detects PR-linked entries and entries containing breaking markers. Each matching line
+    is compacted (trailing commit-hash links removed; the breaking marker is stripped when
     requested) before inclusion.
 
     Parameters:
@@ -221,7 +223,7 @@ def _extract_section_summaries(
         if not sline.startswith(("- ", "* ")):
             continue
 
-        is_breaking = "[**breaking**]" in sline
+        is_breaking = bool(_BREAKING_MARKER_RE.search(sline))
         has_pr = bool(_PR_LINK_RE.search(sline))
 
         if is_breaking:

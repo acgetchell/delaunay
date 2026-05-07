@@ -121,6 +121,18 @@ class TestVersionSortKey:
             "unreleased",
         ]
 
+    def test_build_metadata_is_ignored_for_sorting(self) -> None:
+        labels = [
+            "1.2.3-rc.1+build.7",
+            "1.2.3+build.7",
+            "1.2.3-alpha.1+build.7",
+        ]
+        assert sorted(labels, key=_version_sort_key) == [
+            "1.2.3-alpha.1+build.7",
+            "1.2.3-rc.1+build.7",
+            "1.2.3+build.7",
+        ]
+
     def test_reverse_unreleased_first(self) -> None:
         labels = ["0.7.2", "unreleased", "0.6.1"]
         assert sorted(labels, key=_version_sort_key, reverse=True) == [

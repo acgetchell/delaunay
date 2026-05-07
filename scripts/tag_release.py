@@ -220,16 +220,6 @@ def _tag_exists(tag_version: str) -> bool:
         return True
 
 
-def _delete_tag(tag_version: str) -> None:
-    """
-    Delete the specified local Git tag from the repository.
-
-    Parameters:
-        tag_version (str): Git tag name to remove (e.g., "v1.2.3").
-    """
-    run_git_command(["tag", "-d", tag_version])
-
-
 def _get_repo_url() -> str:
     """
     Return a normalized GitHub HTTPS repository URL derived from the `origin` remote.

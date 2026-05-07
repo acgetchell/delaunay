@@ -578,6 +578,7 @@ fn collect_ridge_fan_extra_cells(
             extra_cells.push(ck);
         }
     }
+    extra_cells.sort_unstable();
     Ok(extra_cells)
 }
 
@@ -1792,6 +1793,7 @@ where
         }
 
         if let Some((facet_count, ridge_vertex_count)) = first_ridge_fan {
+            ridge_fan_extra_cells.sort_unstable();
             return Err(ConflictError::RidgeFan {
                 facet_count,
                 ridge_vertex_count,
@@ -1831,13 +1833,14 @@ where
             // Collect de-duplicated cell keys from the unreachable (disconnected) component
             // so callers can reduce the conflict region to eliminate the disconnection.
             let mut seen = FastHashSet::<CellKey>::default();
-            let disconnected_cells: Vec<CellKey> = boundary_facets
+            let mut disconnected_cells: Vec<CellKey> = boundary_facets
                 .iter()
                 .enumerate()
                 .filter(|(i, _)| !visited[*i])
                 .map(|(_, fh)| fh.cell_key())
                 .filter(|ck| seen.insert(*ck))
                 .collect();
+            disconnected_cells.sort_unstable();
             return Err(ConflictError::DisconnectedBoundary {
                 visited: visited_count,
                 total: boundary_len,

@@ -535,6 +535,7 @@ pub mod geometry {
     pub mod util {
         use crate::geometry::matrix::{MatrixError, StackMatrixDispatchError};
         use crate::geometry::traits::coordinate::CoordinateConversionError;
+        use la_stack::LaError;
 
         // Error types defined here and re-exported from submodules
 
@@ -661,11 +662,8 @@ pub mod geometry {
             },
 
             /// Linear algebra backend operation failed.
-            #[error("Linear algebra failure: {details}")]
-            LinearAlgebraFailure {
-                /// Backend diagnostic.
-                details: String,
-            },
+            #[error("Linear algebra failure: {0}")]
+            LinearAlgebraFailure(#[from] LaError),
 
             /// Matrix operation error
             #[error("Matrix error: {0}")]
@@ -693,9 +691,7 @@ pub mod geometry {
                     StackMatrixDispatchError::UnsupportedDim { k, max } => {
                         Self::UnsupportedMatrixDimension { requested: k, max }
                     }
-                    StackMatrixDispatchError::La(source) => Self::LinearAlgebraFailure {
-                        details: source.to_string(),
-                    },
+                    StackMatrixDispatchError::La(source) => Self::LinearAlgebraFailure(source),
                 }
             }
         }
