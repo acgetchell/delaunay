@@ -62,6 +62,7 @@ impl std::fmt::Display for ConsistencyResult {
 
 /// Error details for direct contradiction between insphere implementations.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
+#[non_exhaustive]
 pub enum InsphereConsistencyError {
     /// Determinant and distance methods classify a point in opposite half-spaces.
     #[error(

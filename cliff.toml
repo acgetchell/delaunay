@@ -7,11 +7,15 @@ header = """
 # Changelog\n
 All notable changes to this project will be documented in this file.
 
-The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
+The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).\n
 """
 
-# Tera template for each release section
+# Tera template for each release section.
+#
+# Release sections are generated from commit ranges. Angle brackets in commit
+# text are escaped so Rust generics like Foo<T> do not render as HTML tags on
+# GitHub.
 body = """
 {% if version -%}
     ## [{{ version | trim_start_matches(pat="v") }}] - {{ timestamp | date(format="%Y-%m-%d") }}
@@ -22,16 +26,17 @@ body = """
     ### {{ group | upper_first }}
     {% for commit in commits %}
         - {% if commit.breaking %}[**breaking**] {% endif %}\
-            {{ commit.message | split(pat="\n") | first | upper_first | trim }} \
+            {{ commit.message | split(pat="\n") | first | upper_first | trim | replace(from="<", to="&lt;") | replace(from=">", to="&gt;") }} \
             [`{{ commit.id | truncate(length=7, end="") }}`]\
             (https://github.com/{{ remote.github.owner }}/{{ remote.github.repo }}\
             /commit/{{ commit.id }})
-        {%- if commit.body %}
+        {%- if commit.body and group != "Dependencies" %}
 
-        {{ commit.body | indent(prefix="  ") }}
+        {{ commit.body | replace(from="<", to="&lt;") | replace(from=">", to="&gt;") | indent(prefix="  ", first=true) }}
         {%- endif %}
     {%- endfor %}
 {% endfor %}\n
+
 """
 
 # Compare-link footer (requires [remote.github] below)
@@ -41,15 +46,15 @@ footer = """
         {% if release.previous.version -%}
             [{{ release.version | trim_start_matches(pat="v") }}]: \
                 https://github.com/{{ remote.github.owner }}/{{ remote.github.repo }}\
-                /compare/{{ release.previous.version }}..{{ release.version }}
+                /compare/{{ release.previous.version }}...{{ release.version }}
         {% else -%}
             [{{ release.version | trim_start_matches(pat="v") }}]: \
                 https://github.com/{{ remote.github.owner }}/{{ remote.github.repo }}\
                 /tree/{{ release.version }}
         {% endif -%}
     {% else -%}
-        [unreleased]: https://github.com/{{ remote.github.owner }}/{{ remote.github.repo }}\
-            /compare/{{ release.previous.version }}..HEAD
+        [Unreleased]: https://github.com/{{ remote.github.owner }}/{{ remote.github.repo }}\
+            /compare/{{ release.previous.version }}...HEAD
     {% endif -%}
 {% endfor -%}
 """
@@ -63,8 +68,8 @@ postprocessors = [
 
 [git]
 conventional_commits = true
-# Include non-conventional commits so we capture delaunay's full history
-# (mixed styles: "feat:", "Changed:", plain merge commits, dependabot bumps).
+# Include non-conventional commits so we capture the full history
+# (mixed styles: "feat:", "Changed:", plain merge commits, dependency bumps).
 filter_unconventional = false
 filter_commits = false
 protect_breaking_commits = true
@@ -73,18 +78,24 @@ topo_order = false
 sort_commits = "oldest"
 
 # Link (#N) references to GitHub PRs before rendering.
-# NOTE: The repo path is hardcoded here because commit_preprocessors run
-# before Tera template rendering, so {{ remote.github.owner }} variables
-# are not available.  The body/footer templates above *do* use the
-# remote.github variables.  Update this manually if forking/renaming.
+# NOTE: The repo path is hardcoded here because commit_preprocessors run before
+# Tera template rendering, so {{ remote.github.owner }} variables are not
+# available. The body/footer templates above do use the remote.github variables.
 commit_preprocessors = [
+    { pattern = '(?m)^Closes #\d+\n\n', replace = "" },
     { pattern = '\(#(\d+)\)', replace = '[#${1}](https://github.com/acgetchell/delaunay/pull/${1})' },
 ]
 
 commit_parsers = [
-    # Skip merge commits and bot noise from the changelog body
+    # Skip merge commits and release-prep noise from the changelog body.
     { message = "^Merge pull request", skip = true },
     { message = "^Merge branch", skip = true },
+    { message = '(?i)^(chore(:|\(release\):) |Changed: )?(prepare|release) v[0-9]', skip = true },
+
+    # Dependency bumps: keep all bump commits so archived release history
+    # preserves CI/action/tooling dependency updates as well as Rust crates.
+    { message = "^chore\\(deps\\): bump ", group = "Dependencies" },
+    { message = "(?i)^bump ", group = "Dependencies" },
 
     # Conventional commit types
     { message = "^feat", group = "Added" },
@@ -96,19 +107,16 @@ commit_parsers = [
     { message = "^style", group = "Changed" },
     { message = "^build", group = "Maintenance" },
 
-    # Dependabot / dependency bumps
-    { message = "^[Bb]ump ", group = "Dependencies" },
-
     # Non-conventional patterns used in delaunay history
-    { message = "^[Aa]dd", group = "Added" },
-    { message = "^[Ss]upport", group = "Added" },
-    { message = "^[Ii]mplement", group = "Added" },
-    { message = "^[Dd]eprecate", group = "Deprecated" },
-    { message = "^[Rr]emove", group = "Removed" },
-    { message = "^[Dd]elete", group = "Removed" },
-    { message = "^[Cc]hange", group = "Changed" },
-    { message = "^[Uu]pdate", group = "Changed" },
-    { message = "^[Ff]ix", group = "Fixed" },
+    { message = "(?i)^add", group = "Added" },
+    { message = "(?i)^support", group = "Added" },
+    { message = "(?i)^implement", group = "Added" },
+    { message = "(?i)^deprecate", group = "Deprecated" },
+    { message = "(?i)^remove", group = "Removed" },
+    { message = "(?i)^delete", group = "Removed" },
+    { message = "(?i)^change", group = "Changed" },
+    { message = "(?i)^update", group = "Changed" },
+    { message = "(?i)^fix", group = "Fixed" },
 
     # Chore / CI
     { message = "^chore|^ci", group = "Maintenance" },

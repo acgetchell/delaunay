@@ -25,6 +25,7 @@ use thiserror::Error;
 /// assert!(matches!(err, JaccardComputationError::SetSizeTooLarge { .. }));
 /// ```
 #[derive(Clone, Debug, Error, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum JaccardComputationError {
     /// Set sizes too large for safe f64 conversion.
     #[error(
@@ -230,7 +231,7 @@ const fn canonical_edge(u: u128, v: u128) -> (u128, u128) {
 ///
 /// This function creates a set of all edges in the triangulation, represented as
 /// pairs of vertex UUIDs in canonical (sorted) order. This is useful for comparing
-/// triangulation topology across different storage backends or algorithms.
+/// triangulation topology across algorithms or construction paths.
 ///
 /// # Arguments
 ///
@@ -280,12 +281,12 @@ where
         // Generate all pairs of vertices (edges)
         for i in 0..vertex_keys.len() {
             for j in (i + 1)..vertex_keys.len() {
-                let v_i = tds.get_vertex_by_key(vertex_keys[i]).ok_or(
+                let v_i = tds.vertex(vertex_keys[i]).ok_or(
                     FacetError::VertexKeyNotFoundInTriangulation {
                         key: vertex_keys[i],
                     },
                 )?;
-                let v_j = tds.get_vertex_by_key(vertex_keys[j]).ok_or(
+                let v_j = tds.vertex(vertex_keys[j]).ok_or(
                     FacetError::VertexKeyNotFoundInTriangulation {
                         key: vertex_keys[j],
                     },
@@ -411,7 +412,6 @@ pub fn extract_hull_facet_set<K, U, V, const D: usize>(
 ) -> Result<HashSet<u64>, FacetError>
 where
     K: crate::geometry::kernel::Kernel<D>,
-    K::Scalar: CoordinateScalar,
     U: DataType,
     V: DataType,
 {
@@ -709,7 +709,7 @@ mod tests {
         let invalid_vkey = VertexKey::from(KeyData::from_ffi(u64::MAX));
         dt.tri
             .tds
-            .get_cell_by_key_mut(cell_key)
+            .cell_mut(cell_key)
             .unwrap()
             .push_vertex_key(invalid_vkey);
 
@@ -736,7 +736,7 @@ mod tests {
         let invalid_vkey = VertexKey::from(KeyData::from_ffi(u64::MAX));
         dt.tri
             .tds
-            .get_cell_by_key_mut(cell_key)
+            .cell_mut(cell_key)
             .unwrap()
             .push_vertex_key(invalid_vkey);
 

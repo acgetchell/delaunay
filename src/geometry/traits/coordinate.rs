@@ -62,6 +62,7 @@
 
 #![forbid(unsafe_code)]
 
+use la_stack::LaError;
 use num_traits::{Float, Zero};
 use ordered_float::OrderedFloat;
 use serde::{Serialize, de::DeserializeOwned};
@@ -88,6 +89,7 @@ use std::{
 /// assert!(matches!(err, CoordinateConversionError::ConversionFailed { .. }));
 /// ```
 #[derive(Clone, Debug, thiserror::Error, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum CoordinateConversionError {
     /// Coordinate conversion failed during matrix operations
     #[error(
@@ -95,10 +97,6 @@ pub enum CoordinateConversionError {
     )]
     ConversionFailed {
         /// Index of the coordinate that failed to convert.
-        ///
-        /// Some conversion failures are not associated with a particular coordinate (for example,
-        /// matrix dimension dispatch or linear algebra errors). In those cases, this field may be
-        /// set to `0` as a placeholder.
         coordinate_index: usize,
         /// String representation of the problematic coordinate value
         coordinate_value: String,
@@ -127,26 +125,27 @@ pub enum CoordinateConversionError {
         /// Detailed inconsistency message.
         details: String,
     },
+    /// A runtime-dispatched stack matrix exceeded the supported dimension.
+    #[error("Unsupported stack matrix dimension {requested} (maximum supported is {max})")]
+    UnsupportedMatrixDimension {
+        /// Requested matrix dimension.
+        requested: usize,
+        /// Maximum supported matrix dimension.
+        max: usize,
+    },
+    /// A linear algebra backend operation failed.
+    #[error("Linear algebra failure: {0}")]
+    LinearAlgebraFailure(#[from] LaError),
 }
 
 impl From<crate::geometry::matrix::StackMatrixDispatchError> for CoordinateConversionError {
     fn from(source: crate::geometry::matrix::StackMatrixDispatchError) -> Self {
         match source {
             crate::geometry::matrix::StackMatrixDispatchError::UnsupportedDim { k, max } => {
-                Self::ConversionFailed {
-                    coordinate_index: 0,
-                    coordinate_value: format!("unsupported stack matrix size: {k} (max {max})"),
-                    from_type: "matrix dimension",
-                    to_type: "stack matrix",
-                }
+                Self::UnsupportedMatrixDimension { requested: k, max }
             }
             crate::geometry::matrix::StackMatrixDispatchError::La(source) => {
-                Self::ConversionFailed {
-                    coordinate_index: 0,
-                    coordinate_value: source.to_string(),
-                    from_type: "la-stack",
-                    to_type: "linear algebra",
-                }
+                Self::LinearAlgebraFailure(source)
             }
         }
     }
@@ -167,6 +166,7 @@ impl From<crate::geometry::matrix::StackMatrixDispatchError> for CoordinateConve
 /// assert!(matches!(err, CoordinateValidationError::InvalidCoordinate { .. }));
 /// ```
 #[derive(Clone, Debug, thiserror::Error, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum CoordinateValidationError {
     /// A coordinate value is invalid (NaN or infinite).
     #[error(

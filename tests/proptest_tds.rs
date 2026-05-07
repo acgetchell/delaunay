@@ -127,7 +127,7 @@ macro_rules! gen_neighbor_symmetry {
                             if let Some(neighbors) = cell.neighbors() {
                                 for neighbor_key in neighbors.iter().flatten() {
                                     let found_reciprocal = tds
-                                        .get_cell(*neighbor_key)
+                                        .cell(*neighbor_key)
                                         .and_then(|c| c.neighbors())
                                         .is_some_and(|nn| nn.iter().any(|n| n == &Some(cell_key)));
 
@@ -139,7 +139,7 @@ macro_rules! gen_neighbor_symmetry {
                                             .copied()
                                             .collect();
                                         let neighbor_neighbors: HashSet<_> = tds
-                                            .get_cell(*neighbor_key)
+                                            .cell(*neighbor_key)
                                             .and_then(|c| c.neighbors())
                                             .map(|nn| nn.iter().flatten().copied().collect())
                                             .unwrap_or_default();
@@ -195,7 +195,7 @@ macro_rules! gen_neighbor_index_semantics {
                                 let a_vertices = cell.vertices();
                                 for (i, nb) in neighbors.iter().enumerate() {
                                     if let Some(b_key) = nb {
-                                        let b_cell = tds.get_cell(*b_key).unwrap();
+                                        let b_cell = tds.cell(*b_key).unwrap();
                                         let b_vertices = b_cell.vertices();
                                         let mut a_facet: SimplexVertexBuffer<_> = a_vertices.iter().enumerate()
                                             .filter_map(|(idx, &vk)| (idx != i).then_some(vk))

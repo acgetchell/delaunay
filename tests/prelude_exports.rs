@@ -4,11 +4,13 @@
 //! paths so doctests, integration tests, examples, and benchmarks have a small
 //! import contract to copy from.
 
+use delaunay::prelude::algorithms::LocateResult;
 #[cfg(feature = "diagnostics")]
 use delaunay::prelude::collections::CellKeyBuffer;
 #[cfg(feature = "diagnostics")]
 use delaunay::prelude::diagnostics::{
-    debug_print_first_delaunay_violation, verify_conflict_region_completeness,
+    DelaunayViolationDetail, DelaunayViolationReport, debug_print_first_delaunay_violation,
+    delaunay_violation_report, verify_conflict_region_completeness,
 };
 use delaunay::prelude::generators::generate_random_points_seeded;
 #[cfg(feature = "diagnostics")]
@@ -27,17 +29,20 @@ use delaunay::prelude::triangulation::delaunayize::{
 use delaunay::prelude::triangulation::flips::{BistellarFlips, TopologyGuarantee};
 use delaunay::prelude::triangulation::repair::{
     DelaunayCheckPolicy, DelaunayRepairDiagnostics, DelaunayRepairError, DelaunayRepairOutcome,
-    DelaunayRepairPolicy, DelaunayRepairStats, FlipError, RepairQueueOrder,
+    DelaunayRepairPolicy, DelaunayRepairStats, FlipEdgeAdjacencyError, FlipError,
+    FlipTriangleAdjacencyError, FlipVertexAdjacencyError, RepairQueueOrder,
     verify_delaunay_for_triangulation,
 };
 use delaunay::prelude::triangulation::{
-    ConstructionOptions, DelaunayRepairOperation, DelaunayTriangulation,
-    DelaunayTriangulationValidationError, InsertionOrderStrategy, Vertex,
+    ConstructionOptions, DelaunayConstructionFailure, DelaunayRepairOperation,
+    DelaunayTriangulation, DelaunayTriangulationValidationError, InsertionOrderStrategy, Vertex,
 };
 use delaunay::vertex;
 
 /// Proves the focused flips prelude exports the trait bound expected by benchmarks.
-const fn assert_bistellar_flips(_: &impl BistellarFlips<AdaptiveKernel<f64>, (), (), 3>) {}
+const fn assert_bistellar_flips(_: &impl BistellarFlips<AdaptiveKernel<f64>, (), 3>) {}
+
+const fn assert_send_sync_unpin<T: Send + Sync + Unpin>() {}
 
 #[test]
 fn preludes_cover_bench_apis() {
@@ -59,6 +64,14 @@ fn preludes_cover_bench_apis() {
     assert!(ConvexHull::from_triangulation(dt.as_triangulation()).is_ok());
     assert!(dt.validate().is_ok());
     assert_bistellar_flips(&dt);
+
+    assert!(matches!(
+        DelaunayConstructionFailure::GeometricDegeneracy {
+            message: "synthetic".to_string(),
+        },
+        DelaunayConstructionFailure::GeometricDegeneracy { .. }
+    ));
+    assert!(matches!(LocateResult::Outside, LocateResult::Outside));
 }
 
 #[test]
@@ -100,9 +113,12 @@ fn diagnostic_preludes_cover_repair_apis() {
         DelaunayRepairError::Flip(FlipError::DegenerateCell),
         DelaunayRepairError::Flip(_)
     ));
+    assert_send_sync_unpin::<FlipEdgeAdjacencyError>();
+    assert_send_sync_unpin::<FlipTriangleAdjacencyError>();
+    assert_send_sync_unpin::<FlipVertexAdjacencyError>();
     let validation_error = DelaunayTriangulationValidationError::RepairOperationFailed {
         operation: DelaunayRepairOperation::VertexRemoval,
-        source: DelaunayRepairError::Flip(FlipError::DegenerateCell),
+        source: Box::new(DelaunayRepairError::Flip(FlipError::DegenerateCell)),
     };
     assert!(validation_error.to_string().contains("vertex removal"));
 
@@ -119,6 +135,9 @@ fn diagnostic_preludes_cover_repair_apis() {
 fn diagnostics_prelude_covers_opt_in_helpers() {
     let tds: Tds<f64, (), (), 2> = Tds::empty();
     debug_print_first_delaunay_violation(&tds, None);
+    let report = delaunay_violation_report(&tds, None).unwrap();
+    let _typed_report: DelaunayViolationReport = report;
+    let _typed_detail: Option<DelaunayViolationDetail> = None;
 
     let kernel = AdaptiveKernel::new();
     let point = Point::new([0.0, 0.0]);

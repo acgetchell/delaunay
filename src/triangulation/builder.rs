@@ -511,10 +511,21 @@ where
     /// [`from_vertices_and_cells_generic`](Self::from_vertices_and_cells_generic)
     /// on the `T: CoordinateScalar` impl block.
     ///
+    /// This is not an unchecked topology wrapper. The deferred
+    /// [`build`](Self::build) or [`build_with_kernel`](Self::build_with_kernel)
+    /// call accepts only Euclidean explicit connectivity and validates the
+    /// assembled triangulation at Levels 1–4, so the supplied connectivity must
+    /// already satisfy the Delaunay empty-circumsphere property. Non-Euclidean
+    /// explicit connectivity is rejected because it requires Level 4 handling
+    /// that is not available for quotient meshes.
+    ///
     /// # Examples
     ///
     /// ```rust
-    /// use delaunay::prelude::triangulation::DelaunayTriangulationBuilder;
+    /// use delaunay::prelude::triangulation::{
+    ///     DelaunayTriangulationBuilder, DelaunayTriangulationConstructionError,
+    ///     ExplicitConstructionError,
+    /// };
     /// use delaunay::vertex;
     ///
     /// let vertices = vec![
@@ -531,6 +542,17 @@ where
     ///
     /// assert_eq!(dt.number_of_vertices(), 4);
     /// assert_eq!(dt.number_of_cells(), 2);
+    ///
+    /// let bad_cells = vec![vec![0, 1]]; // Wrong arity for a 2D simplex.
+    /// let err = DelaunayTriangulationBuilder::from_vertices_and_cells(&vertices, &bad_cells)
+    ///     .build::<()>()
+    ///     .unwrap_err();
+    /// assert!(matches!(
+    ///     err,
+    ///     DelaunayTriangulationConstructionError::ExplicitConstruction(
+    ///         ExplicitConstructionError::InvalidCellArity { .. }
+    ///     )
+    /// ));
     /// ```
     #[must_use]
     pub fn from_vertices_and_cells(
@@ -554,6 +576,14 @@ where
     ///
     /// This constructs a triangulation from the given connectivity without
     /// Delaunay point insertion. Works with any scalar type `T`.
+    ///
+    /// The explicit connectivity is still validated when
+    /// [`build`](Self::build) or [`build_with_kernel`](Self::build_with_kernel)
+    /// is called. Euclidean explicit meshes are checked at Levels 1–4, including
+    /// the Delaunay empty-circumsphere property. Non-Euclidean explicit
+    /// connectivity is rejected because there is no successful Levels 1–3-only
+    /// path for the public `DelaunayTriangulation` wrapper; quotient meshes need
+    /// Level 4 handling before they can be accepted.
     ///
     /// For `f64` coordinates, prefer the convenience wrapper on the
     /// `f64`-specialised impl which avoids explicit type annotations.
@@ -761,8 +791,10 @@ where
     /// mesh instead of χ = 2 (the sphere default).
     ///
     /// This is **metadata only** and does not trigger any coordinate
-    /// canonicalization or image-point construction. For construction-time
-    /// toroidal processing, use [`.toroidal()`](Self::toroidal) or
+    /// canonicalization or image-point construction. Explicit non-Euclidean
+    /// connectivity is rejected until Level 4 validation supports quotient
+    /// topology. For construction-time toroidal processing, use
+    /// [`.toroidal()`](Self::toroidal) or
     /// [`.toroidal_periodic()`](Self::toroidal_periodic) instead.
     ///
     /// Defaults to [`GlobalTopology::Euclidean`].
@@ -782,15 +814,14 @@ where
     /// ];
     /// let cells = vec![vec![0, 1, 2]];
     ///
-    /// let dt = DelaunayTriangulationBuilder::from_vertices_and_cells(&vertices, &cells)
+    /// let result = DelaunayTriangulationBuilder::from_vertices_and_cells(&vertices, &cells)
     ///     .global_topology(GlobalTopology::Toroidal {
     ///         domain: [1.0, 1.0],
     ///         mode: ToroidalConstructionMode::Explicit,
     ///     })
-    ///     .build::<()>()
-    ///     .unwrap();
+    ///     .build::<()>();
     ///
-    /// assert!(dt.global_topology().is_toroidal());
+    /// assert!(result.is_err());
     /// ```
     #[must_use]
     pub const fn global_topology(mut self, global_topology: GlobalTopology<D>) -> Self {
@@ -1015,7 +1046,6 @@ where
         DelaunayTriangulationConstructionError,
     >
     where
-        T: CoordinateScalar,
         V: DataType,
     {
         self.build_with_kernel(&AdaptiveKernel::new())
@@ -1066,7 +1096,6 @@ where
     ) -> Result<DelaunayTriangulation<K, U, V, D>, DelaunayTriangulationConstructionError>
     where
         K: Kernel<D, Scalar = T>,
-        K::Scalar: CoordinateScalar,
         V: DataType,
     {
         // Explicit-cells path: bypass Delaunay insertion entirely.
@@ -1164,9 +1193,11 @@ where
     /// Builds a triangulation from explicit vertex and cell specifications.
     ///
     /// This is a purely combinatorial construction that assembles a valid TDS from
-    /// the given connectivity without Delaunay point insertion. The result is validated
-    /// at Levels 1–3 (elements, structure, topology) but the Delaunay property
-    /// (Level 4) is **not** checked or guaranteed.
+    /// the given connectivity without Delaunay point insertion. Euclidean explicit
+    /// meshes are validated at Levels 1–4 (elements, structure, topology, and the
+    /// Delaunay property). Non-Euclidean explicit connectivity is rejected because
+    /// it requires Level 4 quotient-topology validation before the public
+    /// `DelaunayTriangulation` wrapper can accept it.
     ///
     /// # Algorithm
     ///
@@ -1177,10 +1208,13 @@ where
     /// 5. Wrap in `DelaunayTriangulation` via `from_tds_with_topology_guarantee`.
     /// 6. Normalize coherent orientation and promote to positive canonical sign
     ///    via `normalize_and_promote_positive_orientation()`.
-    /// 7. Validate Levels 1–2 (TDS structural: `tds.validate()`).
-    /// 8. Validate Level 3 topology (excluding geometric orientation).
-    /// 9. Validate PL-manifold completion (vertex links, if required).
-    /// 10. Validate geometric nondegeneracy (reject zero-volume cells).
+    /// 7. Reject non-Euclidean explicit connectivity until Level 4 quotient
+    ///    validation exists.
+    /// 8. Validate Levels 1–2 (TDS structural: `tds.validate()`).
+    /// 9. Validate Level 3 topology (excluding geometric orientation).
+    /// 10. Validate PL-manifold completion (vertex links, if required).
+    /// 11. Validate geometric nondegeneracy (reject zero-volume cells).
+    /// 12. Validate the Euclidean Level 4 Delaunay property.
     fn build_explicit<K, V>(
         kernel: &K,
         vertices: &[Vertex<T, U, D>],
@@ -1196,6 +1230,7 @@ where
         if cells.is_empty() {
             return Err(ExplicitConstructionError::EmptyCells.into());
         }
+        Self::reject_explicit_non_euclidean_topology(global_topology)?;
 
         let vertex_count = vertices.len();
         for (cell_idx, cell_spec) in cells.iter().enumerate() {
@@ -1342,7 +1377,44 @@ where
             .into());
         }
 
+        Self::enforce_explicit_delaunay_property(&dt)?;
+
         Ok(dt)
+    }
+
+    /// Enforces Level 4 validation before returning the Delaunay wrapper.
+    ///
+    /// The public return type is `DelaunayTriangulation`, so Euclidean explicit
+    /// connectivity must prove the empty-circumsphere property before it crosses
+    /// this API boundary. Explicit non-Euclidean topology is rejected earlier in
+    /// `build_explicit` until a Level 4 validator exists for quotient connectivity.
+    fn enforce_explicit_delaunay_property<K, V>(
+        dt: &DelaunayTriangulation<K, U, V, D>,
+    ) -> Result<(), DelaunayTriangulationConstructionError>
+    where
+        K: Kernel<D, Scalar = T>,
+        V: DataType,
+    {
+        dt.is_valid().map_err(|e| {
+            ExplicitConstructionError::ValidationFailed {
+                message: format!("Delaunay validation failed: {e}"),
+            }
+            .into()
+        })
+    }
+
+    /// Rejects explicit quotient connectivity until Level 4 validation supports it.
+    fn reject_explicit_non_euclidean_topology(
+        global_topology: GlobalTopology<D>,
+    ) -> Result<(), DelaunayTriangulationConstructionError> {
+        if global_topology.is_euclidean() {
+            return Ok(());
+        }
+
+        Err(ExplicitConstructionError::ValidationFailed {
+            message: "Explicit non-Euclidean connectivity is not supported for construction; Level 4 validator required".to_string(),
+        }
+        .into())
     }
 
     /// Builds a true periodic (toroidal) Delaunay triangulation using the 3^D image-point method.
@@ -1379,7 +1451,6 @@ where
     ) -> Result<DelaunayTriangulation<K, U, V, D>, DelaunayTriangulationConstructionError>
     where
         K: Kernel<D, Scalar = T>,
-        K::Scalar: CoordinateScalar,
         V: DataType,
         M: GlobalTopologyModel<D>,
     {
@@ -1654,16 +1725,26 @@ where
         let tds_ref = full_dt.tds();
 
         // Map canonical UUIDs → VertexKeys in the full DT.
-        let central_key_set: VertexKeySet = canonical_uuids
+        let Some(central_keys) = canonical_uuids
             .iter()
-            .filter_map(|uuid| tds_ref.vertex_key_from_uuid(uuid))
-            .collect();
+            .map(|uuid| tds_ref.vertex_key_from_uuid(uuid))
+            .collect::<Option<Vec<_>>>()
+        else {
+            return Err(TriangulationConstructionError::GeometricDegeneracy {
+                message: format!(
+                    "Periodic expanded DT is missing at least one canonical vertex: canonical_vertices_len={}",
+                    canonical_uuids.len()
+                ),
+            }
+            .into());
+        };
+        let central_key_set: VertexKeySet = central_keys.into_iter().collect();
 
         // Map every full-DT vertex key to its canonical key and lattice offset.
         let mut vertex_key_to_lifted: FastHashMap<VertexKey, (VertexKey, [i8; D])> =
             FastHashMap::default();
         for vk in tds_ref.vertex_keys() {
-            let Some(vertex) = tds_ref.get_vertex_by_key(vk) else {
+            let Some(vertex) = tds_ref.vertex(vk) else {
                 continue;
             };
             let Some((canonical_uuid, offset)) =
@@ -1678,7 +1759,7 @@ where
         }
 
         let normalize_cell_lifted = |cell_key: CellKey| -> Option<Vec<(VertexKey, [i8; D])>> {
-            let cell = tds_ref.get_cell(cell_key)?;
+            let cell = tds_ref.cell(cell_key)?;
             let mut lifted: Vec<(VertexKey, [i8; D])> = cell
                 .vertices()
                 .iter()
@@ -1704,10 +1785,10 @@ where
             Some(lifted)
         };
         let cell_barycenter_in_fundamental_domain = |cell_key: CellKey| -> Option<bool> {
-            let cell = tds_ref.get_cell(cell_key)?;
+            let cell = tds_ref.cell(cell_key)?;
             let mut sums = [0.0_f64; D];
             for vk in cell.vertices() {
-                let vertex = tds_ref.get_vertex_by_key(*vk)?;
+                let vertex = tds_ref.vertex(*vk)?;
                 let coords = vertex.point().coords();
                 for (axis, sum) in sums.iter_mut().enumerate() {
                     *sum += coords[axis].to_f64()?;
@@ -2363,7 +2444,7 @@ mod tests {
     use crate::topology::traits::topological_space::{
         GlobalTopology, TopologyKind, ToroidalConstructionMode,
     };
-    use crate::triangulation::delaunay::InsertionOrderStrategy;
+    use crate::triangulation::delaunay::{DelaunayConstructionFailure, InsertionOrderStrategy};
     use crate::vertex;
     use approx::assert_relative_eq;
     use slotmap::Key;
@@ -2870,7 +2951,7 @@ mod tests {
         .unwrap_err();
         match err {
             DelaunayTriangulationConstructionError::Triangulation(
-                TriangulationConstructionError::GeometricDegeneracy { message },
+                DelaunayConstructionFailure::GeometricDegeneracy { message },
             ) => {
                 assert!(
                     message.contains(

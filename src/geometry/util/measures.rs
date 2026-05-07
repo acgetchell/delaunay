@@ -1316,7 +1316,7 @@ mod tests {
         let boundary_facets: Vec<_> = dt.tds().boundary_facets().unwrap().collect();
 
         // Find the facet opposite to v4 (contains vertices v1, v2, v3)
-        let target_facet = boundary_facets
+        let tarfacet = boundary_facets
             .iter()
             .find(|facet| {
                 let facet_vertices: Vec<_> = facet.vertices().unwrap().collect();
@@ -1336,7 +1336,7 @@ mod tests {
             })
             .expect("Should find the target facet");
 
-        let surface_area = surface_measure(&[*target_facet]).unwrap();
+        let surface_area = surface_measure(&[*tarfacet]).unwrap();
 
         // Should be area of right triangle: 3 * 4 / 2 = 6.0
         assert_relative_eq!(surface_area, 6.0, epsilon = 1e-10);

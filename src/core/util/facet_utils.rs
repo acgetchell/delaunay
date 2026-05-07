@@ -107,11 +107,11 @@ where
 /// ```rust,no_run
 /// use delaunay::prelude::tds::FacetView;
 /// use delaunay::prelude::tds::facet_view_to_vertices;
-/// use delaunay::prelude::tds::Tds;
+/// use delaunay::prelude::tds::{FacetError, Tds};
 ///
 /// fn extract_vertices_example(
 ///     tds: &Tds<f64, (), (), 3>,
-/// ) -> Result<(), Box<dyn std::error::Error>> {
+/// ) -> Result<(), FacetError> {
 ///     let cell_key = tds.cell_keys().next().unwrap();
 ///     let facet_view = FacetView::new(tds, cell_key, 0)?;
 ///     

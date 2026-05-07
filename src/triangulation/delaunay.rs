@@ -12,7 +12,8 @@ use crate::core::algorithms::flips::{
     repair_delaunay_with_flips_k2_k3, repair_delaunay_with_flips_k2_k3_run,
     verify_delaunay_for_triangulation,
 };
-use crate::core::algorithms::incremental_insertion::InsertionError;
+use crate::core::algorithms::incremental_insertion::{InsertionError, TdsConstructionFailure};
+use crate::core::algorithms::locate::LocateError;
 use crate::core::cell::{Cell, CellValidationError};
 use crate::core::collections::spatial_hash_grid::HashGridIndex;
 use crate::core::collections::{CellKeyBuffer, FastHashMap, FastHashSet, FastHasher, SmallBuffer};
@@ -39,7 +40,7 @@ use crate::core::vertex::Vertex;
 use crate::geometry::kernel::{AdaptiveKernel, ExactPredicates, Kernel, RobustKernel};
 use crate::geometry::traits::coordinate::CoordinateScalar;
 use crate::geometry::util::safe_usize_to_scalar;
-use crate::topology::manifold::validate_ridge_links_for_cells;
+use crate::topology::manifold::{ManifoldError, validate_ridge_links_for_cells};
 use crate::topology::traits::topological_space::{GlobalTopology, TopologyKind};
 use crate::triangulation::builder::DelaunayTriangulationBuilder;
 use core::{cmp::Ordering, fmt};
@@ -89,6 +90,17 @@ pub(crate) const LOCAL_REPAIR_FLIP_BUDGET_FLOOR_D_LT_4: usize = 16;
 // so every insertion does not pay for a near-global flip pass.
 pub(crate) const LOCAL_REPAIR_ESCALATION_BUDGET_FACTOR_D_GE_4: usize = 4;
 pub(crate) const LOCAL_REPAIR_ESCALATION_MIN_GAP: usize = 8;
+const RIDGE_LINK_REPAIR_VALIDATION_MESSAGE: &str = "Topology invalid after Delaunay repair";
+
+fn ridge_link_repair_validation_error(err: ManifoldError) -> InsertionError {
+    match TriangulationValidationError::try_from(err) {
+        Ok(source) => InsertionError::TopologyValidationFailed {
+            message: RIDGE_LINK_REPAIR_VALIDATION_MESSAGE.to_string(),
+            source: Box::new(source),
+        },
+        Err(source) => InsertionError::TopologyValidation(source),
+    }
+}
 
 /// Outcome of a per-insertion D≥4 local-repair escalation attempt.
 ///
@@ -153,8 +165,8 @@ const fn is_geometric_repair_error(repair_err: &DelaunayRepairError) -> bool {
     match repair_err {
         DelaunayRepairError::NonConvergent { .. }
         | DelaunayRepairError::PostconditionFailed { .. } => true,
-        DelaunayRepairError::VerificationFailed { source, .. }
-        | DelaunayRepairError::Flip(source) => is_geometric_flip_error(source),
+        DelaunayRepairError::VerificationFailed { source, .. } => is_geometric_flip_error(source),
+        DelaunayRepairError::Flip(source) => is_geometric_flip_error(source),
         DelaunayRepairError::OrientationCanonicalizationFailed { .. }
         | DelaunayRepairError::InvalidTopology { .. }
         | DelaunayRepairError::HeuristicRebuildFailed { .. } => false,
@@ -308,9 +320,12 @@ impl Drop for HeuristicRebuildRecursionGuard {
 #[derive(Clone, Debug, Error, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum DelaunayTriangulationConstructionError {
-    /// Lower-layer construction error (Triangulation / TDS).
+    /// Lower-layer construction failure summarized for Delaunay construction.
+    ///
+    /// See [`DelaunayConstructionFailure`] for the pattern-matchable payload and
+    /// for which lower-layer sources are preserved versus summarized.
     #[error(transparent)]
-    Triangulation(#[from] TriangulationConstructionError),
+    Triangulation(DelaunayConstructionFailure),
 
     /// Input validation error from explicit combinatorial construction.
     ///
@@ -320,6 +335,216 @@ pub enum DelaunayTriangulationConstructionError {
     /// [`Triangulation`](Self::Triangulation) variant instead.
     #[error(transparent)]
     ExplicitConstruction(#[from] crate::triangulation::builder::ExplicitConstructionError),
+}
+
+impl From<TriangulationConstructionError> for DelaunayTriangulationConstructionError {
+    fn from(source: TriangulationConstructionError) -> Self {
+        Self::Triangulation(source.into())
+    }
+}
+
+/// Pattern-matchable summary of a lower-layer construction failure.
+///
+/// This is the payload for
+/// [`DelaunayTriangulationConstructionError::Triangulation`]. It keeps common
+/// construction failure classes orthogonal for callers that need to distinguish
+/// input-size errors, duplicate UUIDs, predicate/location failures, topology
+/// validation failures, and internal invariant breaches.
+///
+/// Typed lower-layer sources are preserved where the public Delaunay error can
+/// expose them without coupling unrelated layers: for example [`Tds`](Self::Tds),
+/// [`InsufficientVertices`](Self::InsufficientVertices), and
+/// [`InsertionLocation`](Self::InsertionLocation) carry structured sources.
+/// Other insertion, repair, and validation paths are summarized as strings
+/// because they may aggregate multiple retry attempts or cross layer boundaries.
+/// Those variants remain stable buckets for matching, but callers should treat
+/// their `message` fields as diagnostics rather than machine-readable data.
+///
+/// # Examples
+///
+/// ```rust
+/// use delaunay::prelude::triangulation::{
+///     DelaunayConstructionFailure, DelaunayTriangulation,
+///     DelaunayTriangulationConstructionError,
+/// };
+/// use delaunay::vertex;
+///
+/// let vertices = vec![vertex!([0.0, 0.0, 0.0])];
+/// let err = DelaunayTriangulation::new(&vertices).unwrap_err();
+///
+/// match err {
+///     DelaunayTriangulationConstructionError::Triangulation(
+///         DelaunayConstructionFailure::InsufficientVertices { dimension, .. },
+///     ) => assert_eq!(dimension, 3),
+///     other => panic!("unexpected construction error: {other:?}"),
+/// }
+/// ```
+#[derive(Clone, Debug, Error, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum DelaunayConstructionFailure {
+    /// Lower-layer TDS construction failed.
+    #[error("TDS construction failed: {reason}")]
+    Tds {
+        /// Structured TDS construction failure.
+        #[source]
+        reason: TdsConstructionFailure,
+    },
+
+    /// Failed to create a cell during construction.
+    #[error("failed to create cell during construction: {message}")]
+    FailedToCreateCell {
+        /// Cell creation failure detail.
+        message: String,
+    },
+
+    /// Insufficient vertices were provided.
+    #[error("insufficient vertices for {dimension}D triangulation: {source}")]
+    InsufficientVertices {
+        /// Attempted dimension.
+        dimension: usize,
+        /// Underlying cell validation error.
+        #[source]
+        source: CellValidationError,
+    },
+
+    /// Geometric degeneracy prevented construction.
+    #[error("geometric degeneracy encountered during construction: {message}")]
+    GeometricDegeneracy {
+        /// Degeneracy detail.
+        message: String,
+    },
+
+    /// Internal construction invariant failed.
+    #[error("internal inconsistency during construction: {message}")]
+    InternalInconsistency {
+        /// Inconsistency detail.
+        message: String,
+    },
+
+    /// Duplicate coordinates were detected.
+    #[error("duplicate coordinates detected: {coordinates}")]
+    DuplicateCoordinates {
+        /// Duplicate coordinate tuple.
+        coordinates: String,
+    },
+
+    /// Conflict-region extraction failed during insertion.
+    #[error("conflict region failed during insertion: {message}")]
+    InsertionConflictRegion {
+        /// Conflict-region failure detail.
+        message: String,
+    },
+
+    /// Point location failed during insertion.
+    #[error("point location failed during insertion: {source}")]
+    InsertionLocation {
+        /// Underlying point-location error.
+        #[source]
+        source: LocateError,
+    },
+
+    /// Incremental insertion detected non-manifold topology.
+    #[error(
+        "non-manifold topology during insertion: facet {facet_hash:#x} shared by {cell_count} cells"
+    )]
+    InsertionNonManifoldTopology {
+        /// Hash of the over-shared facet.
+        facet_hash: u64,
+        /// Number of cells sharing the facet.
+        cell_count: usize,
+    },
+
+    /// Hull extension failed during insertion.
+    #[error("hull extension failed during insertion: {message}")]
+    InsertionHullExtension {
+        /// Hull-extension failure detail.
+        message: String,
+    },
+
+    /// Level 4 Delaunay validation failed during insertion.
+    #[error("Delaunay validation failed during insertion: {message}")]
+    InsertionDelaunayValidation {
+        /// Validation failure detail.
+        message: String,
+    },
+
+    /// Level 3 topology validation failed during insertion.
+    #[error("topology validation failed during insertion: {message}")]
+    InsertionTopologyValidation {
+        /// Validation failure detail.
+        message: String,
+    },
+
+    /// Final topology validation failed after construction.
+    ///
+    /// Mirrors insertion-time topology validation for post-build checks that
+    /// run after incremental insertion has completed.
+    #[error("final topology validation failed after construction: {message}: {source}")]
+    FinalTopologyValidation {
+        /// Validation failure detail.
+        message: String,
+        /// Underlying validation error.
+        #[source]
+        source: Box<InvariantError>,
+    },
+}
+
+impl From<TriangulationConstructionError> for DelaunayConstructionFailure {
+    fn from(source: TriangulationConstructionError) -> Self {
+        match source {
+            TriangulationConstructionError::Tds(source) => Self::Tds {
+                reason: source.into(),
+            },
+            TriangulationConstructionError::FailedToCreateCell { message } => {
+                Self::FailedToCreateCell { message }
+            }
+            TriangulationConstructionError::InsufficientVertices { dimension, source } => {
+                Self::InsufficientVertices { dimension, source }
+            }
+            TriangulationConstructionError::GeometricDegeneracy { message } => {
+                Self::GeometricDegeneracy { message }
+            }
+            TriangulationConstructionError::InternalInconsistency { message } => {
+                Self::InternalInconsistency { message }
+            }
+            TriangulationConstructionError::DuplicateCoordinates { coordinates } => {
+                Self::DuplicateCoordinates { coordinates }
+            }
+            TriangulationConstructionError::InsertionConflictRegion { source } => {
+                Self::InsertionConflictRegion {
+                    message: source.to_string(),
+                }
+            }
+            TriangulationConstructionError::InsertionLocation { source } => {
+                Self::InsertionLocation { source }
+            }
+            TriangulationConstructionError::InsertionNonManifoldTopology {
+                facet_hash,
+                cell_count,
+            } => Self::InsertionNonManifoldTopology {
+                facet_hash,
+                cell_count,
+            },
+            TriangulationConstructionError::InsertionHullExtension { reason } => {
+                Self::InsertionHullExtension {
+                    message: reason.to_string(),
+                }
+            }
+            TriangulationConstructionError::InsertionDelaunayValidation { source } => {
+                Self::InsertionDelaunayValidation {
+                    message: source.to_string(),
+                }
+            }
+            TriangulationConstructionError::InsertionTopologyValidation { message, source } => {
+                Self::InsertionTopologyValidation {
+                    message: format!("{message}: {source}"),
+                }
+            }
+            TriangulationConstructionError::FinalTopologyValidation { message, source } => {
+                Self::FinalTopologyValidation { message, source }
+            }
+        }
+    }
 }
 
 /// Mutating Delaunay operation that can invoke flip-based repair internally.
@@ -431,7 +656,7 @@ pub enum DelaunayTriangulationValidationError {
         operation: DelaunayRepairOperation,
         /// Underlying flip-repair failure.
         #[source]
-        source: DelaunayRepairError,
+        source: Box<DelaunayRepairError>,
     },
 }
 
@@ -796,9 +1021,16 @@ pub struct ConstructionSkipSample {
 }
 
 /// Construction error that also carries aggregate statistics collected up to the failure point.
+///
+/// Returned by statistics constructors such as
+/// [`DelaunayTriangulation::new_with_construction_statistics`]. The
+/// [`error`](Self::error) field carries the normal construction failure while
+/// [`statistics`](Self::statistics) captures the insertion attempts completed
+/// before that failure.
 #[derive(Debug, Clone, thiserror::Error)]
 #[error("{error}")]
 #[non_exhaustive]
+#[must_use]
 pub struct DelaunayTriangulationConstructionErrorWithStatistics {
     /// Underlying construction error.
     #[source]
@@ -852,6 +1084,42 @@ impl ConstructionStatistics {
     pub fn record_skip_sample(&mut self, sample: ConstructionSkipSample) {
         if self.skip_samples.len() < Self::MAX_SKIP_SAMPLES {
             self.skip_samples.push(sample);
+        }
+    }
+
+    /// Merges attempt-level statistics from another construction pass.
+    fn merge_from(&mut self, other: &Self) {
+        self.inserted = self.inserted.saturating_add(other.inserted);
+        self.skipped_duplicate = self
+            .skipped_duplicate
+            .saturating_add(other.skipped_duplicate);
+        self.skipped_degeneracy = self
+            .skipped_degeneracy
+            .saturating_add(other.skipped_degeneracy);
+        self.total_attempts = self.total_attempts.saturating_add(other.total_attempts);
+        self.max_attempts = self.max_attempts.max(other.max_attempts);
+
+        if self.attempts_histogram.len() < other.attempts_histogram.len() {
+            self.attempts_histogram
+                .resize(other.attempts_histogram.len(), 0);
+        }
+        for (idx, count) in other.attempts_histogram.iter().enumerate() {
+            self.attempts_histogram[idx] = self.attempts_histogram[idx].saturating_add(*count);
+        }
+
+        self.used_perturbation = self
+            .used_perturbation
+            .saturating_add(other.used_perturbation);
+        self.cells_removed_total = self
+            .cells_removed_total
+            .saturating_add(other.cells_removed_total);
+        self.cells_removed_max = self.cells_removed_max.max(other.cells_removed_max);
+
+        for sample in &other.skip_samples {
+            if self.skip_samples.len() >= Self::MAX_SKIP_SAMPLES {
+                break;
+            }
+            self.skip_samples.push(sample.clone());
         }
     }
 
@@ -1855,6 +2123,39 @@ impl<const D: usize> DelaunayTriangulation<AdaptiveKernel<f64>, (), (), D> {
     /// Returns [`DelaunayTriangulationConstructionErrorWithStatistics`] if construction fails.
     /// The returned error includes the partial [`ConstructionStatistics`] collected up to the
     /// failure point.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use delaunay::prelude::triangulation::{
+    ///     DelaunayConstructionFailure, DelaunayTriangulation,
+    ///     DelaunayTriangulationConstructionError,
+    /// };
+    /// use delaunay::vertex;
+    ///
+    /// let vertices = vec![
+    ///     vertex!([0.0, 0.0, 0.0]),
+    ///     vertex!([1.0, 0.0, 0.0]),
+    ///     vertex!([0.0, 1.0, 0.0]),
+    ///     vertex!([0.0, 0.0, 1.0]),
+    /// ];
+    ///
+    /// let (dt, stats) = DelaunayTriangulation::new_with_construction_statistics(&vertices)
+    ///     .unwrap();
+    /// assert_eq!(dt.number_of_vertices(), 4);
+    /// assert_eq!(stats.inserted, 4);
+    ///
+    /// let invalid = vec![vertex!([0.0, 0.0, 0.0])];
+    /// let err = DelaunayTriangulation::new_with_construction_statistics(&invalid)
+    ///     .unwrap_err();
+    /// assert!(matches!(
+    ///     err.error,
+    ///     DelaunayTriangulationConstructionError::Triangulation(
+    ///         DelaunayConstructionFailure::InsufficientVertices { dimension: 3, .. }
+    ///     )
+    /// ));
+    /// assert_eq!(err.statistics.inserted, 0);
+    /// ```
     #[expect(
         clippy::result_large_err,
         reason = "Public API intentionally returns by-value construction statistics for compatibility"
@@ -1864,7 +2165,7 @@ impl<const D: usize> DelaunayTriangulation<AdaptiveKernel<f64>, (), (), D> {
     ) -> Result<(Self, ConstructionStatistics), DelaunayTriangulationConstructionErrorWithStatistics>
     {
         let kernel = AdaptiveKernel::<f64>::new();
-        Self::with_topology_guarantee_and_options_with_construction_statistics(
+        Self::with_options_and_statistics(
             &kernel,
             vertices,
             TopologyGuarantee::DEFAULT,
@@ -1879,6 +2180,13 @@ impl<const D: usize> DelaunayTriangulation<AdaptiveKernel<f64>, (), (), D> {
     /// Returns [`DelaunayTriangulationConstructionErrorWithStatistics`] if construction fails.
     /// The returned error includes the partial [`ConstructionStatistics`] collected up to the
     /// failure point.
+    ///
+    /// # Examples
+    ///
+    /// See [`new_with_construction_statistics`](Self::new_with_construction_statistics)
+    /// for a runnable example showing both tuple unpacking and failure
+    /// inspection. This constructor has the same return shape, with explicit
+    /// [`ConstructionOptions`].
     #[expect(
         clippy::result_large_err,
         reason = "Public API intentionally returns by-value construction statistics for compatibility"
@@ -1889,12 +2197,7 @@ impl<const D: usize> DelaunayTriangulation<AdaptiveKernel<f64>, (), (), D> {
     ) -> Result<(Self, ConstructionStatistics), DelaunayTriangulationConstructionErrorWithStatistics>
     {
         let kernel = AdaptiveKernel::<f64>::new();
-        Self::with_topology_guarantee_and_options_with_construction_statistics(
-            &kernel,
-            vertices,
-            TopologyGuarantee::DEFAULT,
-            options,
-        )
+        Self::with_options_and_statistics(&kernel, vertices, TopologyGuarantee::DEFAULT, options)
     }
 
     /// Create a Delaunay triangulation with explicit batch-construction options (fast-kernel convenience).
@@ -2094,12 +2397,13 @@ impl<const D: usize> DelaunayTriangulation<AdaptiveKernel<f64>, (), (), D> {
 // =============================================================================
 //
 // Batch and incremental constructors, preprocessing, Hilbert ordering, spatial
-// hashing, and deduplication — all require `CoordinateScalar + NumCast`.
+// hashing, and deduplication — the kernel already guarantees `CoordinateScalar`;
+// these paths add `NumCast`.
 
 impl<K, U, V, const D: usize> DelaunayTriangulation<K, U, V, D>
 where
     K: Kernel<D>,
-    K::Scalar: CoordinateScalar + NumCast,
+    K::Scalar: NumCast,
     U: DataType,
     V: DataType,
 {
@@ -2413,11 +2717,18 @@ where
     /// Returns [`DelaunayTriangulationConstructionErrorWithStatistics`] if construction fails.
     /// The returned error includes the partial [`ConstructionStatistics`] collected up to the
     /// failure point.
+    ///
+    /// # Examples
+    ///
+    /// See [`new_with_construction_statistics`](Self::new_with_construction_statistics)
+    /// for the statistics return shape and failure-inspection pattern. This
+    /// constructor uses the same `(triangulation, statistics)` tuple with an
+    /// explicit kernel, [`TopologyGuarantee`], and [`ConstructionOptions`].
     #[expect(
         clippy::result_large_err,
         reason = "Public API intentionally returns by-value construction statistics for compatibility"
     )]
-    pub fn with_topology_guarantee_and_options_with_construction_statistics(
+    pub fn with_options_and_statistics(
         kernel: &K,
         vertices: &[Vertex<K::Scalar, U, D>],
         topology_guarantee: TopologyGuarantee,
@@ -2496,14 +2807,30 @@ where
             )
         };
 
-        let result = build_with_vertices(primary_vertices);
-        if result.is_err()
-            && let Some(fallback) = fallback_vertices
-        {
-            return build_with_vertices(fallback);
-        }
+        match build_with_vertices(primary_vertices) {
+            Ok(result) => Ok(result),
+            Err(primary_err) => {
+                let Some(fallback) = fallback_vertices else {
+                    return Err(primary_err);
+                };
 
-        result
+                match build_with_vertices(fallback) {
+                    Ok((dt, stats)) => {
+                        let mut aggregate = primary_err.statistics;
+                        aggregate.merge_from(&stats);
+                        Ok((dt, aggregate))
+                    }
+                    Err(fallback_err) => {
+                        let mut aggregate = primary_err.statistics;
+                        aggregate.merge_from(&fallback_err.statistics);
+                        Err(DelaunayTriangulationConstructionErrorWithStatistics {
+                            error: fallback_err.error,
+                            statistics: aggregate,
+                        })
+                    }
+                }
+            }
+        }
     }
 
     /// Applies deduplication, insertion ordering, and initial-simplex selection
@@ -2620,8 +2947,9 @@ where
         matches!(
             err,
             DelaunayTriangulationConstructionError::Triangulation(
-                TriangulationConstructionError::Tds(TdsConstructionError::DuplicateUuid { .. })
-                    | TriangulationConstructionError::InternalInconsistency { .. }
+                DelaunayConstructionFailure::Tds {
+                    reason: TdsConstructionFailure::DuplicateUuid { .. },
+                } | DelaunayConstructionFailure::InternalInconsistency { .. }
             )
         )
     }
@@ -2837,6 +3165,7 @@ where
         }
 
         let mut last_stats: Option<ConstructionStatistics> = None;
+        let mut aggregate_stats = ConstructionStatistics::default();
 
         // Attempt 0: original order, no extra perturbation salt.
         log_construction_retry_result(0, None, 0_u64, "started", None, None);
@@ -2852,6 +3181,7 @@ where
             ) {
                 Ok((candidate, stats)) => match is_delaunay_property_only(&candidate.tri.tds) {
                     Ok(()) => {
+                        aggregate_stats.merge_from(&stats);
                         log_construction_retry_result(
                             0,
                             None,
@@ -2860,9 +3190,10 @@ where
                             None,
                             Some(&stats),
                         );
-                        return Ok((candidate, stats));
+                        return Ok((candidate, aggregate_stats));
                     }
                     Err(err) => {
+                        aggregate_stats.merge_from(&stats);
                         last_stats.replace(stats);
                         format!("Delaunay property violated after construction: {err}")
                     }
@@ -2870,6 +3201,7 @@ where
                 Err(err) => {
                     let DelaunayTriangulationConstructionErrorWithStatistics { error, statistics } =
                         err;
+                    aggregate_stats.merge_from(&statistics);
                     if Self::is_non_retryable_construction_error(&error) {
                         let last_error = error.to_string();
                         log_construction_retry_result(
@@ -2882,7 +3214,7 @@ where
                         );
                         return Err(DelaunayTriangulationConstructionErrorWithStatistics {
                             error,
-                            statistics,
+                            statistics: aggregate_stats,
                         });
                     }
                     last_stats.replace(statistics);
@@ -2945,6 +3277,7 @@ where
             ) {
                 Ok((candidate, stats)) => match is_delaunay_property_only(&candidate.tri.tds) {
                     Ok(()) => {
+                        aggregate_stats.merge_from(&stats);
                         log_construction_retry_result(
                             attempt,
                             Some(attempt_seed),
@@ -2953,9 +3286,10 @@ where
                             None,
                             Some(&stats),
                         );
-                        return Ok((candidate, stats));
+                        return Ok((candidate, aggregate_stats));
                     }
                     Err(err) => {
+                        aggregate_stats.merge_from(&stats);
                         last_stats.replace(stats);
                         last_error =
                             format!("Delaunay property violated after construction: {err}");
@@ -2964,6 +3298,7 @@ where
                 Err(err) => {
                     let DelaunayTriangulationConstructionErrorWithStatistics { error, statistics } =
                         err;
+                    aggregate_stats.merge_from(&statistics);
                     if Self::is_non_retryable_construction_error(&error) {
                         let last_error = error.to_string();
                         log_construction_retry_result(
@@ -2976,7 +3311,7 @@ where
                         );
                         return Err(DelaunayTriangulationConstructionErrorWithStatistics {
                             error,
-                            statistics,
+                            statistics: aggregate_stats,
                         });
                     }
                     last_stats.replace(statistics);
@@ -3006,7 +3341,6 @@ where
 
         // Treat persistent construction failures or Delaunay violations as hard construction
         // errors so callers can deterministically reject.
-        let statistics = last_stats.unwrap_or_default();
         Err(DelaunayTriangulationConstructionErrorWithStatistics {
             error: TriangulationConstructionError::GeometricDegeneracy {
                 message: format!(
@@ -3014,7 +3348,7 @@ where
                 ),
             }
             .into(),
-            statistics,
+            statistics: aggregate_stats,
         })
     }
 
@@ -3079,8 +3413,9 @@ where
                 "post-construction: topology validation (build) completed"
             );
             if let Err(err) = validation_result {
-                return Err(TriangulationConstructionError::GeometricDegeneracy {
-                    message: format!("PL-manifold validation failed after construction: {err}"),
+                return Err(TriangulationConstructionError::FinalTopologyValidation {
+                    message: "PL-manifold validation failed after construction".to_string(),
+                    source: Box::new(err),
                 }
                 .into());
             }
@@ -3145,8 +3480,9 @@ where
             );
             if let Err(err) = validation_result {
                 return Err(DelaunayTriangulationConstructionErrorWithStatistics {
-                    error: TriangulationConstructionError::GeometricDegeneracy {
-                        message: format!("PL-manifold validation failed after construction: {err}"),
+                    error: TriangulationConstructionError::FinalTopologyValidation {
+                        message: "PL-manifold validation failed after construction".to_string(),
+                        source: Box::new(err),
                     }
                     .into(),
                     statistics: stats,
@@ -4282,8 +4618,9 @@ where
                 "post-construction: topology validation (finalize) completed"
             );
             if let Err(err) = validation_result {
-                return Err(TriangulationConstructionError::GeometricDegeneracy {
-                    message: format!("PL-manifold validation failed after construction: {err}"),
+                return Err(TriangulationConstructionError::FinalTopologyValidation {
+                    message: "PL-manifold validation failed after construction".to_string(),
+                    source: Box::new(err),
                 }
                 .into());
             }
@@ -4308,9 +4645,6 @@ where
         error: InsertionError,
     ) -> TriangulationConstructionError {
         match error {
-            // Construction already wraps a TriangulationConstructionError — preserve it
-            // directly rather than rewrapping, mirroring map_insertion_error.
-            InsertionError::Construction(source) => source,
             // Geometric orientation errors (degenerate or negative) are
             // geometry problems, not internal bugs.
             InsertionError::TopologyValidation(error @ TdsError::Geometric(_)) => {
@@ -4371,14 +4705,14 @@ where
     /// inconsistency for construction callers.
     fn map_insertion_error(error: InsertionError) -> TriangulationConstructionError {
         match error {
-            // Preserve underlying construction errors (e.g. duplicate UUID).
-            InsertionError::Construction(source) => source,
-            InsertionError::CavityFilling { message } => {
-                TriangulationConstructionError::FailedToCreateCell { message }
+            InsertionError::CavityFilling { reason } => {
+                TriangulationConstructionError::FailedToCreateCell {
+                    message: reason.to_string(),
+                }
             }
-            InsertionError::NeighborWiring { message } => {
+            InsertionError::NeighborWiring { reason } => {
                 TriangulationConstructionError::InternalInconsistency {
-                    message: format!("Neighbor wiring failed: {message}"),
+                    message: format!("Neighbor wiring failed: {reason}"),
                 }
             }
             InsertionError::TopologyValidation(source) => {
@@ -4402,26 +4736,29 @@ where
                 }
             }
 
-            // Insertion-layer failures that are best surfaced during construction as a
-            // geometric degeneracy (e.g. numerical instability, hull visibility issues).
-            //
-            // NOTE: This match is intentionally exhaustive over `InsertionError`.
-            // When adding new insertion failure modes in the future, revisit whether they
-            // deserve a dedicated `TriangulationConstructionError` variant instead of being
-            // collapsed into `GeometricDegeneracy`.
-            //
-            // We intentionally preserve the high-level insertion failure *bucket* in the
-            // degeneracy message by capturing `error.to_string()` (rather than only
-            // `source.to_string()`), so callers/telemetry can distinguish e.g.
-            // "Conflict region error" vs "Location error" vs "Hull extension failed".
-            insertion_error @ (InsertionError::ConflictRegion(_)
-            | InsertionError::Location(_)
-            | InsertionError::NonManifoldTopology { .. }
-            | InsertionError::HullExtension { .. }
-            | InsertionError::DelaunayValidationFailed { .. }
-            | InsertionError::TopologyValidationFailed { .. }) => {
-                TriangulationConstructionError::GeometricDegeneracy {
-                    message: insertion_error.to_string(),
+            InsertionError::ConflictRegion(source) => {
+                TriangulationConstructionError::InsertionConflictRegion { source }
+            }
+            InsertionError::Location(source) => {
+                TriangulationConstructionError::InsertionLocation { source }
+            }
+            InsertionError::NonManifoldTopology {
+                facet_hash,
+                cell_count,
+            } => TriangulationConstructionError::InsertionNonManifoldTopology {
+                facet_hash,
+                cell_count,
+            },
+            InsertionError::HullExtension { reason } => {
+                TriangulationConstructionError::InsertionHullExtension { reason }
+            }
+            InsertionError::DelaunayValidationFailed { source } => {
+                TriangulationConstructionError::InsertionDelaunayValidation { source: *source }
+            }
+            InsertionError::TopologyValidationFailed { message, source } => {
+                TriangulationConstructionError::InsertionTopologyValidation {
+                    message,
+                    source: *source,
                 }
             }
         }
@@ -4623,7 +4960,7 @@ where
     /// // Clear data
     /// let prev = dt.set_vertex_data(key, None);
     /// assert_eq!(prev, Some(Some(99)));
-    /// assert_eq!(dt.tds().get_vertex_by_key(key).unwrap().data(), None);
+    /// assert_eq!(dt.tds().vertex(key).unwrap().data(), None);
     /// ```
     #[inline]
     pub fn set_vertex_data(&mut self, key: VertexKey, data: Option<U>) -> Option<Option<U>> {
@@ -4662,7 +4999,7 @@ where
     /// // Clear data
     /// let prev = dt.set_cell_data(key, None);
     /// assert_eq!(prev, Some(Some(42)));
-    /// assert_eq!(dt.tds().get_cell(key).unwrap().data(), None);
+    /// assert_eq!(dt.tds().cell(key).unwrap().data(), None);
     /// ```
     #[inline]
     pub fn set_cell_data(&mut self, key: CellKey, data: Option<V>) -> Option<Option<V>> {
@@ -4714,7 +5051,7 @@ where
         &mut self.tri.tds
     }
 
-    fn invalidate_repair_caches(&mut self) {
+    pub(crate) fn invalidate_repair_caches(&mut self) {
         self.insertion_state.last_inserted_cell = None;
         self.spatial_index = None;
     }
@@ -5039,12 +5376,13 @@ where
 // =============================================================================
 //
 // `repair_delaunay_with_flips_advanced` can fall back to `rebuild_with_heuristic`,
-// which constructs a new triangulation and therefore requires `CoordinateScalar`.
+// which constructs a new triangulation and therefore adds `NumCast` on top of
+// the scalar requirements guaranteed by `Kernel`.
 
 impl<K, U, V, const D: usize> DelaunayTriangulation<K, U, V, D>
 where
     K: Kernel<D>,
-    K::Scalar: CoordinateScalar + NumCast,
+    K::Scalar: NumCast,
     U: DataType,
     V: DataType,
 {
@@ -5812,13 +6150,14 @@ where
 // =============================================================================
 //
 // Incremental insertion, removal, and post-insertion repair/check helpers.
-// These require `CoordinateScalar + NumCast` for spatial-index construction,
-// Triangulation-layer insertion, and Triangulation-layer removal.
+// These require `NumCast` for spatial-index construction, Triangulation-layer
+// insertion, and Triangulation-layer removal. `Kernel` already guarantees
+// `CoordinateScalar`.
 
 impl<K, U, V, const D: usize> DelaunayTriangulation<K, U, V, D>
 where
     K: Kernel<D>,
-    K::Scalar: CoordinateScalar + NumCast,
+    K::Scalar: NumCast,
     U: DataType,
     V: DataType,
 {
@@ -6155,7 +6494,7 @@ where
             let contains_vertex = self
                 .tri
                 .tds
-                .get_cell(ck)
+                .cell(ck)
                 .is_some_and(|cell| cell.contains_vertex(vertex_key));
             if !contains_vertex && env::var_os("DELAUNAY_REPAIR_TRACE").is_some() {
                 tracing::debug!(
@@ -6242,12 +6581,8 @@ where
             if cells.is_empty() {
                 return Ok(());
             }
-            validate_ridge_links_for_cells(&self.tri.tds, cells).map_err(|err| {
-                InsertionError::TopologyValidationFailed {
-                    message: "Topology invalid after Delaunay repair".to_string(),
-                    source: Box::new(TriangulationValidationError::from(err)),
-                }
-            })
+            validate_ridge_links_for_cells(&self.tri.tds, cells)
+                .map_err(ridge_link_repair_validation_error)
         };
 
         if !run.used_full_reseed && !run.touched_cells.is_empty() {
@@ -6386,7 +6721,7 @@ where
     /// assert!(dt.as_triangulation().validate().is_ok());
     /// ```
     pub fn remove_vertex(&mut self, vertex_key: VertexKey) -> Result<usize, InvariantError> {
-        if self.tri.tds.get_vertex_by_key(vertex_key).is_none() {
+        if self.tri.tds.vertex(vertex_key).is_none() {
             return Ok(0);
         }
 
@@ -6405,9 +6740,9 @@ where
                     seed_cells = Some(info.new_cells);
                     info.removed_cells.len()
                 }
-                Err(FlipError::NeighborWiring { message }) => {
+                Err(FlipError::NeighborWiring { reason }) => {
                     return Err(TdsError::InvalidNeighbors {
-                        message: format!("inverse k=1 flip failed during remove_vertex: {message}"),
+                        message: format!("inverse k=1 flip failed during remove_vertex: {reason}"),
                     }
                     .into());
                 }
@@ -6434,7 +6769,7 @@ where
                     InvariantError::Delaunay(
                         DelaunayTriangulationValidationError::RepairOperationFailed {
                             operation: DelaunayRepairOperation::VertexRemoval,
-                            source,
+                            source: Box::new(source),
                         },
                     )
                 })?;
@@ -6682,30 +7017,35 @@ where
     // -------------------------------------------------------------------------
     // PURE STRUCT ASSEMBLY
     // -------------------------------------------------------------------------
-    /// Create a `DelaunayTriangulation` from a `Tds` with a default kernel.
+    /// Create a validated `DelaunayTriangulation` from a `Tds` with an explicit kernel.
     ///
     /// This is useful when you've serialized just the `Tds` and want to reconstruct
-    /// the `DelaunayTriangulation` with default kernel settings.
+    /// the `DelaunayTriangulation` with a caller-supplied kernel. The `kernel`
+    /// parameter provides the geometric predicates used during validation and later
+    /// insertions.
     ///
     /// # Notes
     ///
     /// - The internal `insertion_state.last_inserted_cell` "locate hint" is intentionally **not** persisted
-    ///   across serialization boundaries. Constructing via `from_tds` (including the serde
+    ///   across serialization boundaries. Reconstructing via `try_from_tds` (including the serde
     ///   `Deserialize` impl below) always resets it to `None`. This can make the first few
     ///   insertions after loading slightly slower, but is otherwise behaviorally irrelevant.
     /// - The internal spatial hash-grid index used to accelerate incremental insertion is also a
-    ///   performance-only cache and is not serialized. Constructing via `from_tds` leaves it unset
+    ///   performance-only cache and is not serialized. Reconstructing via `try_from_tds` leaves it unset
     ///   so it can be rebuilt lazily on demand.
     /// - The topology guarantee ([`TopologyGuarantee`]) is also not serialized (this type serializes
-    ///   only the `Tds`). Constructing via `from_tds` resets it to `TopologyGuarantee::DEFAULT`
+    ///   only the `Tds`). Reconstructing via `try_from_tds` resets it to `TopologyGuarantee::DEFAULT`
     ///   (currently `PLManifold`). Call [`set_topology_guarantee`](Self::set_topology_guarantee)
     ///   after loading if you want to relax to `Pseudomanifold` for performance, or use
-    ///   [`from_tds_with_topology_guarantee`](Self::from_tds_with_topology_guarantee) to set it
+    ///   [`try_from_tds_with_topology_guarantee`](Self::try_from_tds_with_topology_guarantee) to set it
     ///   at construction time.
-    /// - Runtime global topology metadata ([`GlobalTopology`]) is also not serialized. Constructing
-    ///   via `from_tds` resets it to [`GlobalTopology::Euclidean`]. Use
-    ///   [`set_global_topology`](Self::set_global_topology) after loading if you need to restore
-    ///   toroidal metadata.
+    /// - Runtime global topology metadata ([`GlobalTopology`]) is also not serialized. Reconstructing
+    ///   via `try_from_tds` validates with [`GlobalTopology::Euclidean`]. Use
+    ///   [`try_from_tds_with_topology_context`](Self::try_from_tds_with_topology_context) if you
+    ///   need to validate toroidal or other non-default topology metadata during reconstruction.
+    /// - Euclidean reconstruction validates Level 4 with the crate's robust
+    ///   empty-circumsphere validator, independent of the supplied runtime kernel.
+    ///   The supplied kernel is stored for later queries and insertions.
     ///
     /// # Examples
     ///
@@ -6730,24 +7070,158 @@ where
     ///
     /// // Deserialize Tds and reconstruct DelaunayTriangulation
     /// let tds: Tds<f64, (), (), 4> = serde_json::from_str(&json).unwrap();
-    /// let reconstructed = DelaunayTriangulation::from_tds(tds, FastKernel::new());
+    /// let reconstructed = DelaunayTriangulation::try_from_tds(tds, FastKernel::new()).unwrap();
     /// assert_eq!(reconstructed.number_of_vertices(), 5);
     /// ```
-    #[must_use]
-    pub const fn from_tds(tds: Tds<K::Scalar, U, V, D>, kernel: K) -> Self {
-        Self::from_tds_with_topology_guarantee(tds, kernel, TopologyGuarantee::DEFAULT)
+    ///
+    /// # Errors
+    ///
+    /// Returns [`DelaunayTriangulationValidationError`] if the TDS violates
+    /// structural, topological, or Delaunay invariants.
+    pub fn try_from_tds(
+        tds: Tds<K::Scalar, U, V, D>,
+        kernel: K,
+    ) -> Result<Self, DelaunayTriangulationValidationError> {
+        Self::try_from_tds_with_topology_context(
+            tds,
+            kernel,
+            TopologyGuarantee::DEFAULT,
+            GlobalTopology::DEFAULT,
+        )
     }
 
-    /// Create a `DelaunayTriangulation` from a `Tds` with an explicit topology guarantee.
+    /// Create a validated `DelaunayTriangulation` from a `Tds` with an explicit topology guarantee.
     ///
-    /// This is identical to [`from_tds`](Self::from_tds), but allows callers to set the desired
-    /// [`TopologyGuarantee`] at construction time. The initial
+    /// The candidate is assembled with the requested guarantee, then validated
+    /// at Levels 1–4 before being returned.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use delaunay::prelude::geometry::FastKernel;
+    /// use delaunay::prelude::triangulation::{DelaunayTriangulation, TopologyGuarantee};
+    /// use delaunay::vertex;
+    ///
+    /// let vertices = vec![
+    ///     vertex!([0.0, 0.0]),
+    ///     vertex!([1.0, 0.0]),
+    ///     vertex!([0.0, 1.0]),
+    /// ];
+    /// let dt: DelaunayTriangulation<_, (), (), 2> =
+    ///     DelaunayTriangulation::new(&vertices).unwrap();
+    ///
+    /// let reconstructed = DelaunayTriangulation::try_from_tds_with_topology_guarantee(
+    ///     dt.tds().clone(),
+    ///     FastKernel::new(),
+    ///     TopologyGuarantee::PLManifoldStrict,
+    /// )
+    /// .unwrap();
+    ///
+    /// assert_eq!(
+    ///     reconstructed.topology_guarantee(),
+    ///     TopologyGuarantee::PLManifoldStrict
+    /// );
+    /// ```
+    ///
+    /// # Errors
+    ///
+    /// Returns [`DelaunayTriangulationValidationError`] if the TDS violates
+    /// structural, topological, or Delaunay invariants.
+    pub fn try_from_tds_with_topology_guarantee(
+        tds: Tds<K::Scalar, U, V, D>,
+        kernel: K,
+        topology_guarantee: TopologyGuarantee,
+    ) -> Result<Self, DelaunayTriangulationValidationError> {
+        Self::try_from_tds_with_topology_context(
+            tds,
+            kernel,
+            topology_guarantee,
+            GlobalTopology::DEFAULT,
+        )
+    }
+
+    /// Create a validated `DelaunayTriangulation` from a `Tds` with explicit topology context.
+    ///
+    /// This is the checked reconstruction path for serialized TDS data whose
+    /// runtime [`TopologyGuarantee`] or [`GlobalTopology`] metadata must be
+    /// restored before validation.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use delaunay::prelude::geometry::FastKernel;
+    /// use delaunay::prelude::triangulation::{
+    ///     DelaunayTriangulation, GlobalTopology, TopologyGuarantee,
+    /// };
+    /// use delaunay::vertex;
+    ///
+    /// let vertices = vec![
+    ///     vertex!([0.0, 0.0]),
+    ///     vertex!([1.0, 0.0]),
+    ///     vertex!([0.0, 1.0]),
+    /// ];
+    /// let dt: DelaunayTriangulation<_, (), (), 2> =
+    ///     DelaunayTriangulation::new(&vertices).unwrap();
+    ///
+    /// let reconstructed = DelaunayTriangulation::try_from_tds_with_topology_context(
+    ///     dt.tds().clone(),
+    ///     FastKernel::new(),
+    ///     TopologyGuarantee::PLManifoldStrict,
+    ///     GlobalTopology::Euclidean,
+    /// )
+    /// .unwrap();
+    ///
+    /// assert_eq!(
+    ///     reconstructed.topology_guarantee(),
+    ///     TopologyGuarantee::PLManifoldStrict
+    /// );
+    /// assert_eq!(reconstructed.global_topology(), GlobalTopology::Euclidean);
+    /// ```
+    ///
+    /// # Errors
+    ///
+    /// Returns [`DelaunayTriangulationValidationError`] if the TDS violates
+    /// structural, topological, or Delaunay invariants under the supplied
+    /// topology context.
+    pub fn try_from_tds_with_topology_context(
+        tds: Tds<K::Scalar, U, V, D>,
+        kernel: K,
+        topology_guarantee: TopologyGuarantee,
+        global_topology: GlobalTopology<D>,
+    ) -> Result<Self, DelaunayTriangulationValidationError> {
+        let mut candidate = Self::from_tds_with_topology_guarantee(tds, kernel, topology_guarantee);
+        candidate.set_global_topology(global_topology);
+        candidate.tri.validate().map_err(|e| match e {
+            InvariantError::Tds(tds_err) => DelaunayTriangulationValidationError::Tds(tds_err),
+            InvariantError::Triangulation(tri_err) => {
+                DelaunayTriangulationValidationError::Triangulation(tri_err)
+            }
+            InvariantError::Delaunay(dt_err) => dt_err,
+        })?;
+
+        if candidate.global_topology().is_euclidean() {
+            is_delaunay_property_only(&candidate.tri.tds).map_err(|e| {
+                DelaunayTriangulationValidationError::VerificationFailed {
+                    message: format!("kernel-independent reconstruction validation failed: {e}"),
+                }
+            })?;
+        } else {
+            candidate.is_valid()?;
+        }
+        Ok(candidate)
+    }
+
+    /// Assemble a `DelaunayTriangulation` from a `Tds` with an explicit topology guarantee.
+    ///
+    /// This crate-internal constructor performs no validation; public callers
+    /// must use [`try_from_tds_with_topology_guarantee`](Self::try_from_tds_with_topology_guarantee).
+    /// The initial
     /// [`ValidationPolicy`] is derived from the guarantee:
     /// [`PLManifoldStrict`](TopologyGuarantee::PLManifoldStrict) uses
     /// [`Always`](ValidationPolicy::Always); all others default to
     /// [`OnSuspicion`](ValidationPolicy::OnSuspicion).
     #[must_use]
-    pub const fn from_tds_with_topology_guarantee(
+    pub(crate) const fn from_tds_with_topology_guarantee(
         tds: Tds<K::Scalar, U, V, D>,
         kernel: K,
         topology_guarantee: TopologyGuarantee,
@@ -6793,19 +7267,19 @@ where
 ///
 /// The internal `insertion_state.last_inserted_cell` "locate hint" is intentionally
 /// **not** serialized.  Deserialization reconstructs a fresh triangulation via
-/// [`from_tds()`](Self::from_tds), which resets the hint to `None`.  This only
+/// [`try_from_tds()`](Self::try_from_tds), which resets the hint to `None`.  This only
 /// affects performance for the first few insertions after loading.
 ///
 /// # Usage with Other Kernels
 ///
 /// For other kernels (e.g., `AdaptiveKernel`, `FastKernel`) or custom data types,
-/// deserialize the `Tds` directly and reconstruct with [`from_tds()`](Self::from_tds):
+/// deserialize the `Tds` directly and reconstruct with [`try_from_tds()`](Self::try_from_tds):
 ///
 /// ```rust
 /// # use delaunay::prelude::geometry::*;
 /// # use delaunay::prelude::tds::Tds;
 /// # use delaunay::prelude::triangulation::*;
-/// # fn example() -> Result<(), Box<dyn std::error::Error>> {
+/// # fn example() {
 /// // Create and serialize a triangulation
 /// let vertices = vec![
 ///     vertex!([0.0, 0.0, 0.0]),
@@ -6813,13 +7287,15 @@ where
 ///     vertex!([0.0, 1.0, 0.0]),
 ///     vertex!([0.0, 0.0, 1.0]),
 /// ];
-/// let dt = DelaunayTriangulation::<_, (), (), 3>::new(&vertices)?;
-/// let json = serde_json::to_string(&dt)?;
+/// let dt = DelaunayTriangulation::<_, (), (), 3>::new(&vertices)
+///     .expect("nondegenerate tetrahedron should construct");
+/// let json = serde_json::to_string(&dt).expect("triangulation should serialize");
 ///
-/// // Deserialize with a specific kernel via from_tds
-/// let tds: Tds<f64, (), (), 3> = serde_json::from_str(&json)?;
-/// let dt_adaptive = DelaunayTriangulation::from_tds(tds, AdaptiveKernel::new());
-/// # Ok(())
+/// // Deserialize with a specific kernel via try_from_tds
+/// let tds: Tds<f64, (), (), 3> =
+///     serde_json::from_str(&json).expect("serialized triangulation should deserialize");
+/// let dt_adaptive = DelaunayTriangulation::try_from_tds(tds, AdaptiveKernel::new())
+///     .expect("deserialized TDS should validate");
 /// # }
 /// ```
 impl<'de, const D: usize> Deserialize<'de> for DelaunayTriangulation<RobustKernel<f64>, (), (), D>
@@ -6831,7 +7307,7 @@ where
         De: Deserializer<'de>,
     {
         let tds = Tds::deserialize(deserializer)?;
-        Ok(Self::from_tds(tds, RobustKernel::new()))
+        Self::try_from_tds(tds, RobustKernel::new()).map_err(serde::de::Error::custom)
     }
 }
 
@@ -7045,19 +7521,21 @@ impl DelaunayCheckPolicy {
 mod tests {
     use super::*;
     use crate::core::algorithms::flips::{
-        DelaunayRepairDiagnostics, DelaunayRepairError, FlipError, RepairQueueOrder,
+        DelaunayRepairDiagnostics, DelaunayRepairError, FlipContextError, FlipError,
+        FlipPredicateError, FlipPredicateOperation, RepairQueueOrder,
         verify_delaunay_via_flip_predicates,
     };
     use crate::core::algorithms::incremental_insertion::{
-        HullExtensionReason, repair_neighbor_pointers,
+        CavityFillingError, HullExtensionReason, NeighborWiringError, repair_neighbor_pointers,
     };
     use crate::core::algorithms::locate::{ConflictError, LocateError};
     use crate::core::operations::InsertionResult;
-    use crate::core::tds::{EntityKind, GeometricError};
+    use crate::core::tds::{EntityKind, GeometricError, TriangulationConstructionState};
     use crate::core::vertex::VertexBuilder;
     use crate::geometry::kernel::{AdaptiveKernel, FastKernel, RobustKernel};
     use crate::geometry::point::Point;
     use crate::geometry::traits::coordinate::Coordinate;
+    use crate::geometry::traits::coordinate::CoordinateConversionError;
     use crate::topology::characteristics::euler::TopologyClassification;
     use crate::topology::traits::topological_space::ToroidalConstructionMode;
     use crate::triangulation::flips::BistellarFlips;
@@ -7077,6 +7555,41 @@ mod tests {
                 .with_test_writer()
                 .try_init();
         });
+    }
+
+    #[test]
+    fn test_ridge_link_repair_validation_error_routes_tds_errors_to_tds_layer() {
+        let tds_err = TdsError::InvalidNeighbors {
+            message: "unit test".to_string(),
+        };
+
+        match ridge_link_repair_validation_error(ManifoldError::Tds(tds_err.clone())) {
+            InsertionError::TopologyValidation(source) => assert_eq!(source, tds_err),
+            other => panic!("expected TopologyValidation, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn test_ridge_link_repair_validation_error_routes_manifold_errors_to_triangulation_layer() {
+        let ridge_key = 0x1234_u64;
+        let error = ridge_link_repair_validation_error(ManifoldError::BoundaryRidgeMultiplicity {
+            ridge_key,
+            boundary_facet_count: 3,
+        });
+
+        match error {
+            InsertionError::TopologyValidationFailed { message, source } => {
+                assert_eq!(message, RIDGE_LINK_REPAIR_VALIDATION_MESSAGE);
+                assert!(matches!(
+                    *source,
+                    TriangulationValidationError::BoundaryRidgeMultiplicity {
+                        ridge_key: observed_ridge_key,
+                        boundary_facet_count: 3
+                    } if observed_ridge_key == ridge_key
+                ));
+            }
+            other => panic!("expected TopologyValidationFailed, got {other:?}"),
+        }
     }
 
     macro_rules! gen_local_repair_flip_budget_tests {
@@ -7900,7 +8413,7 @@ mod tests {
         assert!(matches!(
             result,
             Err(DelaunayTriangulationConstructionError::Triangulation(
-                TriangulationConstructionError::GeometricDegeneracy { .. }
+                DelaunayConstructionFailure::GeometricDegeneracy { .. }
             ))
         ));
     }
@@ -8187,7 +8700,7 @@ mod tests {
         );
 
         let dt_from_tds: DelaunayTriangulation<_, (), (), 2> =
-            DelaunayTriangulation::from_tds(dt_new.tds().clone(), FastKernel::new());
+            DelaunayTriangulation::try_from_tds(dt_new.tds().clone(), FastKernel::new()).unwrap();
         assert_eq!(
             dt_from_tds.topology_guarantee(),
             TopologyGuarantee::PLManifold
@@ -8355,7 +8868,7 @@ mod tests {
 
         // The vertex key may have changed after heuristic rebuild, but the
         // vertex should still be present and accessible.
-        assert!(dt.tri.tds.get_vertex_by_key(remapped).is_some());
+        assert!(dt.tri.tds.vertex(remapped).is_some());
         assert!(dt.validate().is_ok());
         // Original vertex_key may be stale after heuristic rebuild; that is
         // expected. The important invariant is that the UUID lookup works.
@@ -8463,6 +8976,114 @@ mod tests {
         assert!(dt.as_triangulation().validate().is_ok());
     }
 
+    #[test]
+    fn flip_k1_insert_invalidates_caches() {
+        init_tracing();
+        let vertices: Vec<Vertex<f64, (), 3>> = vec![
+            vertex!([0.0, 0.0, 0.0]),
+            vertex!([1.0, 0.0, 0.0]),
+            vertex!([0.0, 1.0, 0.0]),
+            vertex!([0.0, 0.0, 1.0]),
+        ];
+        let mut dt: DelaunayTriangulation<_, (), (), 3> =
+            DelaunayTriangulation::new(&vertices).unwrap();
+
+        let cell_key = dt.cells().next().unwrap().0;
+        dt.insertion_state.last_inserted_cell = Some(cell_key);
+        let mut spatial_index = HashGridIndex::<f64, 3>::new(1.0);
+        for (vertex_key, vertex) in dt.vertices() {
+            spatial_index.insert_vertex(vertex_key, vertex.point().coords());
+        }
+        dt.spatial_index = Some(spatial_index);
+
+        dt.flip_k1_insert(cell_key, vertex!([0.2, 0.2, 0.2]))
+            .unwrap();
+
+        assert!(dt.insertion_state.last_inserted_cell.is_none());
+        assert!(dt.spatial_index.is_none());
+        assert!(dt.as_triangulation().validate().is_ok());
+    }
+
+    fn non_delaunay_quad_tds() -> Tds<f64, (), (), 2> {
+        let mut tds: Tds<f64, (), (), 2> = Tds::empty();
+        let v0 = tds.insert_vertex_with_mapping(vertex!([0.0, 0.0])).unwrap();
+        let v1 = tds.insert_vertex_with_mapping(vertex!([4.0, 0.0])).unwrap();
+        let v2 = tds.insert_vertex_with_mapping(vertex!([4.0, 2.0])).unwrap();
+        let v3 = tds.insert_vertex_with_mapping(vertex!([1.0, 2.0])).unwrap();
+
+        tds.insert_cell_with_mapping(Cell::new(vec![v0, v1, v2], None).unwrap())
+            .unwrap();
+        tds.insert_cell_with_mapping(Cell::new(vec![v0, v2, v3], None).unwrap())
+            .unwrap();
+        tds.construction_state = TriangulationConstructionState::Constructed;
+        tds.assign_neighbors().unwrap();
+        tds.assign_incident_cells().unwrap();
+        tds
+    }
+
+    #[test]
+    fn as_triangulation_mut_invalidates_caches() {
+        init_tracing();
+        let vertices: Vec<Vertex<f64, (), 2>> = vec![
+            vertex!([0.0, 0.0]),
+            vertex!([1.0, 0.0]),
+            vertex!([0.0, 1.0]),
+        ];
+        let mut dt: DelaunayTriangulation<_, (), (), 2> =
+            DelaunayTriangulation::new(&vertices).unwrap();
+
+        let cell_key = dt.cells().next().unwrap().0;
+        dt.insertion_state.last_inserted_cell = Some(cell_key);
+        let mut spatial_index = HashGridIndex::<f64, 2>::new(1.0);
+        for (vertex_key, vertex) in dt.vertices() {
+            spatial_index.insert_vertex(vertex_key, vertex.point().coords());
+        }
+        dt.spatial_index = Some(spatial_index);
+        assert!(dt.insertion_state.last_inserted_cell.is_some());
+        assert!(dt.spatial_index.is_some());
+
+        #[allow(deprecated)]
+        {
+            assert!(dt.as_triangulation_mut().validate().is_ok());
+        }
+
+        assert!(dt.insertion_state.last_inserted_cell.is_none());
+        assert!(dt.spatial_index.is_none());
+    }
+
+    #[test]
+    fn try_from_tds_rejects_non_delaunay_connectivity() {
+        init_tracing();
+        let tds = non_delaunay_quad_tds();
+
+        let err = DelaunayTriangulation::try_from_tds(tds, AdaptiveKernel::new())
+            .expect_err("checked TDS reconstruction must reject non-Delaunay connectivity");
+
+        assert!(
+            matches!(
+                err,
+                DelaunayTriangulationValidationError::VerificationFailed { .. }
+            ),
+            "expected Level 4 validation failure, got {err:?}"
+        );
+    }
+
+    #[test]
+    fn robust_deserialize_rejects_non_delaunay_connectivity() {
+        init_tracing();
+        let json = serde_json::to_string(&non_delaunay_quad_tds()).unwrap();
+
+        let err =
+            serde_json::from_str::<DelaunayTriangulation<RobustKernel<f64>, (), (), 2>>(&json)
+                .expect_err("serde reconstruction must reject non-Delaunay connectivity");
+
+        let message = err.to_string();
+        assert!(
+            message.contains("Delaunay verification failed"),
+            "serde error should preserve the Level 4 validation failure: {message}"
+        );
+    }
+
     fn interior_vertex_for_k1_insert<const D: usize>() -> Vertex<f64, (), D> {
         let denominator = safe_usize_to_scalar::<f64>(D + 2)
             .expect("D + 2 should convert exactly for rollback test dimensions");
@@ -8517,9 +9138,13 @@ mod tests {
             InvariantError::Delaunay(
                 DelaunayTriangulationValidationError::RepairOperationFailed {
                     operation: DelaunayRepairOperation::VertexRemoval,
-                    source: DelaunayRepairError::NonConvergent { max_flips: 0, .. },
+                    source,
                 },
-            ) => {
+            ) if matches!(
+                source.as_ref(),
+                DelaunayRepairError::NonConvergent { max_flips: 0, .. }
+            ) =>
+            {
                 // Expected forced path.
             }
             other => panic!(
@@ -8796,7 +9421,11 @@ mod tests {
         }
         let tds = raw_tds.expect("need a non-Delaunay 2D config");
         let mut dt: DelaunayTriangulation<AdaptiveKernel<f64>, (), (), 2> =
-            DelaunayTriangulation::from_tds(tds, kernel);
+            DelaunayTriangulation::from_tds_with_topology_guarantee(
+                tds,
+                kernel,
+                TopologyGuarantee::PLManifold,
+            );
         dt.set_topology_guarantee(TopologyGuarantee::PLManifold);
 
         // max_flips=0 should fail (flips are needed but budget is zero).
@@ -8854,7 +9483,11 @@ mod tests {
         }
         let tds2 = raw_tds2.unwrap();
         let mut dt2: DelaunayTriangulation<AdaptiveKernel<f64>, (), (), 2> =
-            DelaunayTriangulation::from_tds(tds2, AdaptiveKernel::new());
+            DelaunayTriangulation::from_tds_with_topology_guarantee(
+                tds2,
+                AdaptiveKernel::new(),
+                TopologyGuarantee::PLManifold,
+            );
         dt2.set_topology_guarantee(TopologyGuarantee::PLManifold);
         let outcome_generous = dt2
             .repair_delaunay_with_flips_advanced(config_generous)
@@ -9138,12 +9771,12 @@ mod tests {
             ValidationPolicy::OnSuspicion
         );
 
-        // from_tds() is a separate constructor path (const-friendly), and should also
-        // default to OnSuspicion.
+        // try_from_tds() is a separate reconstruction path and should also
+        // default to OnSuspicion after validation succeeds.
         let tds =
             Triangulation::<FastKernel<f64>, (), (), 2>::build_initial_simplex(&vertices).unwrap();
         let dt_from_tds: DelaunayTriangulation<_, (), (), 2> =
-            DelaunayTriangulation::from_tds(tds, FastKernel::new());
+            DelaunayTriangulation::try_from_tds(tds, FastKernel::new()).unwrap();
         assert_eq!(
             dt_from_tds.validation_policy(),
             ValidationPolicy::OnSuspicion
@@ -9226,7 +9859,7 @@ mod tests {
         assert!(result.is_err());
         match result {
             Err(DelaunayTriangulationConstructionError::Triangulation(
-                TriangulationConstructionError::InsufficientVertices { dimension, .. },
+                DelaunayConstructionFailure::InsufficientVertices { dimension, .. },
             )) => {
                 assert_eq!(dimension, 2);
             }
@@ -9249,7 +9882,7 @@ mod tests {
         assert!(result.is_err());
         match result {
             Err(DelaunayTriangulationConstructionError::Triangulation(
-                TriangulationConstructionError::InsufficientVertices { dimension, .. },
+                DelaunayConstructionFailure::InsufficientVertices { dimension, .. },
             )) => {
                 assert_eq!(dimension, 3);
             }
@@ -9389,7 +10022,7 @@ mod tests {
         assert_eq!(dt.number_of_cells(), 3);
 
         // Verify the returned key can access the vertex
-        assert!(dt.tri.tds.get_vertex_by_key(v_key).is_some());
+        assert!(dt.tri.tds.vertex(v_key).is_some());
     }
 
     #[test]
@@ -9628,10 +10261,9 @@ mod tests {
 
         match result.unwrap_err() {
             DelaunayTriangulationConstructionError::Triangulation(
-                TriangulationConstructionError::Tds(TdsConstructionError::DuplicateUuid {
-                    entity: _,
-                    uuid,
-                }),
+                DelaunayConstructionFailure::Tds {
+                    reason: TdsConstructionFailure::DuplicateUuid { entity: _, uuid },
+                },
             ) => {
                 assert_eq!(uuid, dup_uuid);
             }
@@ -9704,11 +10336,7 @@ mod tests {
 
         // Corrupt a `Vertex::incident_cell` pointer.
         let vertex_key = dt.tri.tds.vertices().next().unwrap().0;
-        dt.tri
-            .tds
-            .get_vertex_by_key_mut(vertex_key)
-            .unwrap()
-            .incident_cell = Some(CellKey::default());
+        dt.tri.tds.vertex_mut(vertex_key).unwrap().incident_cell = Some(CellKey::default());
 
         let report = dt.validation_report().unwrap_err();
         assert!(
@@ -9734,9 +10362,10 @@ mod tests {
 
         let json = serde_json::to_string(&dt).unwrap();
 
-        // AdaptiveKernel: no auto-Deserialize impl, use from_tds.
+        // AdaptiveKernel: no auto-Deserialize impl, use try_from_tds.
         let tds: Tds<f64, (), (), 3> = serde_json::from_str(&json).unwrap();
-        let roundtrip_adaptive = DelaunayTriangulation::from_tds(tds, AdaptiveKernel::new());
+        let roundtrip_adaptive =
+            DelaunayTriangulation::try_from_tds(tds, AdaptiveKernel::new()).unwrap();
 
         assert_eq!(
             roundtrip_adaptive.number_of_vertices(),
@@ -9929,13 +10558,16 @@ mod tests {
 
         let _guard = ForceRepairNonconvergentGuard::enable();
         let kernel = RobustKernel::<f64>::new();
-        let (dt, stats) = DelaunayTriangulation::<RobustKernel<f64>, (), (), 4>::with_topology_guarantee_and_options_with_construction_statistics(
-            &kernel,
-            &vertices,
-            TopologyGuarantee::DEFAULT,
-            ConstructionOptions::default(),
-        )
-        .expect("D>=4 stats construction should continue after forced local repair non-convergence");
+        let (dt, stats) =
+            DelaunayTriangulation::<RobustKernel<f64>, (), (), 4>::with_options_and_statistics(
+                &kernel,
+                &vertices,
+                TopologyGuarantee::DEFAULT,
+                ConstructionOptions::default(),
+            )
+            .expect(
+                "D>=4 stats construction should continue after forced local repair non-convergence",
+            );
 
         assert_eq!(dt.number_of_vertices(), vertices.len());
         assert_eq!(stats.inserted, vertices.len());
@@ -9965,9 +10597,9 @@ mod tests {
 
         let verification_error = DelaunayRepairError::VerificationFailed {
             context: "local k=3 postcondition verification",
-            source: FlipError::InvalidFlipContext {
-                message: "bad ridge frame".to_string(),
-            },
+            source: Box::new(FlipError::InvalidFlipContext {
+                reason: FlipContextError::MissingRemovedCellFrame,
+            }),
         };
         assert!(!TestDelaunay::<4>::can_soft_fail(&verification_error));
 
@@ -9981,7 +10613,7 @@ mod tests {
             matches!(
                 mapped_hard,
                 DelaunayTriangulationConstructionError::Triangulation(
-                    TriangulationConstructionError::InternalInconsistency { ref message }
+                    DelaunayConstructionFailure::InternalInconsistency { ref message }
                 ) if message.contains("per-insertion Delaunay repair failed at index 23")
                     && message.contains("Bistellar flip not supported for D=1")
             ),
@@ -9994,7 +10626,7 @@ mod tests {
             matches!(
                 mapped_geometric,
                 DelaunayTriangulationConstructionError::Triangulation(
-                    TriangulationConstructionError::GeometricDegeneracy { ref message }
+                    DelaunayConstructionFailure::GeometricDegeneracy { ref message }
                 ) if message.contains("per-insertion Delaunay repair failed at index 24")
                     && message.contains("degenerate cell")
             ),
@@ -10006,18 +10638,26 @@ mod tests {
             matches!(
                 mapped_verification,
                 DelaunayTriangulationConstructionError::Triangulation(
-                    TriangulationConstructionError::InternalInconsistency { ref message }
+                    DelaunayConstructionFailure::InternalInconsistency { ref message }
                 ) if message.contains("per-insertion Delaunay repair failed at index 25")
-                    && message.contains("bad ridge frame")
+                    && message.contains("removed cell frame")
             ),
             "verification context failures should stop shuffled retries: {mapped_verification:?}"
         );
 
         let predicate_verification = DelaunayRepairError::VerificationFailed {
             context: "strict validation",
-            source: FlipError::PredicateFailure {
-                message: "in_sphere failed".to_string(),
-            },
+            source: Box::new(FlipError::PredicateFailure {
+                reason: FlipPredicateError::CoordinateConversion {
+                    operation: FlipPredicateOperation::K2CellAInSphere,
+                    source: CoordinateConversionError::ConversionFailed {
+                        coordinate_index: 0,
+                        coordinate_value: "in_sphere failed".to_string(),
+                        from_type: "f64",
+                        to_type: "f64",
+                    },
+                },
+            }),
         };
         let mapped_predicate =
             TestDelaunay::<4>::map_hard_repair_error(26, &predicate_verification);
@@ -10025,7 +10665,7 @@ mod tests {
             matches!(
                 mapped_predicate,
                 DelaunayTriangulationConstructionError::Triangulation(
-                    TriangulationConstructionError::GeometricDegeneracy { ref message }
+                    DelaunayConstructionFailure::GeometricDegeneracy { ref message }
                 ) if message.contains("per-insertion Delaunay repair failed at index 26")
                     && message.contains("in_sphere failed")
             ),
@@ -10266,23 +10906,6 @@ mod tests {
     }
 
     #[test]
-    fn test_map_orientation_canonicalization_error_construction_preserves_source() {
-        let error =
-            InsertionError::Construction(TriangulationConstructionError::FailedToCreateCell {
-                message: "test".to_string(),
-            });
-        let mapped =
-            DelaunayTriangulation::<AdaptiveKernel<f64>, (), (), 3>::map_orientation_canonicalization_error(error);
-        assert!(
-            matches!(
-                mapped,
-                TriangulationConstructionError::FailedToCreateCell { .. }
-            ),
-            "Construction should preserve the inner error, got: {mapped:?}"
-        );
-    }
-
-    #[test]
     fn test_map_orientation_canonicalization_error_topology_validation_failed_is_internal() {
         let error = InsertionError::TopologyValidationFailed {
             message: "post-insertion".to_string(),
@@ -10306,7 +10929,7 @@ mod tests {
     #[test]
     fn test_map_orientation_canonicalization_error_cavity_filling_is_internal() {
         let error = InsertionError::CavityFilling {
-            message: "test".to_string(),
+            reason: CavityFillingError::EmptyFanTriangulation,
         };
         let mapped =
             DelaunayTriangulation::<AdaptiveKernel<f64>, (), (), 3>::map_orientation_canonicalization_error(error);
@@ -10319,7 +10942,9 @@ mod tests {
     #[test]
     fn test_map_orientation_canonicalization_error_neighbor_wiring_is_internal() {
         let error = InsertionError::NeighborWiring {
-            message: "test".to_string(),
+            reason: NeighborWiringError::MissingCell {
+                cell_key: CellKey::from(slotmap::KeyData::from_ffi(1)),
+            },
         };
         let mapped =
             DelaunayTriangulation::<AdaptiveKernel<f64>, (), (), 3>::map_orientation_canonicalization_error(error);
@@ -10388,9 +11013,9 @@ mod tests {
         let error = InsertionError::DelaunayRepairFailed {
             source: Box::new(DelaunayRepairError::VerificationFailed {
                 context: "local k=3 postcondition verification",
-                source: FlipError::InvalidFlipContext {
-                    message: "bad ridge frame".to_string(),
-                },
+                source: Box::new(FlipError::InvalidFlipContext {
+                    reason: FlipContextError::MissingRemovedCellFrame,
+                }),
             }),
             context: "orientation canonicalization".to_string(),
         };
@@ -10401,7 +11026,7 @@ mod tests {
                 mapped,
                 TriangulationConstructionError::InternalInconsistency { ref message }
                     if message.contains("orientation canonicalization")
-                        && message.contains("bad ridge frame")
+                        && message.contains("removed cell frame")
             ),
             "hard repair errors during orientation canonicalization should be internal: {mapped:?}"
         );
@@ -10410,26 +11035,9 @@ mod tests {
     // ---- map_insertion_error tests ----
 
     #[test]
-    fn test_map_insertion_error_construction_preserves_source() {
-        let error =
-            InsertionError::Construction(TriangulationConstructionError::FailedToCreateCell {
-                message: "inner".to_string(),
-            });
-        let mapped =
-            DelaunayTriangulation::<AdaptiveKernel<f64>, (), (), 3>::map_insertion_error(error);
-        assert!(
-            matches!(
-                mapped,
-                TriangulationConstructionError::FailedToCreateCell { .. }
-            ),
-            "Construction should preserve inner error, got: {mapped:?}"
-        );
-    }
-
-    #[test]
     fn test_map_insertion_error_cavity_filling() {
         let error = InsertionError::CavityFilling {
-            message: "test".to_string(),
+            reason: CavityFillingError::EmptyFanTriangulation,
         };
         let mapped =
             DelaunayTriangulation::<AdaptiveKernel<f64>, (), (), 3>::map_insertion_error(error);
@@ -10445,7 +11053,9 @@ mod tests {
     #[test]
     fn test_map_insertion_error_neighbor_wiring() {
         let error = InsertionError::NeighborWiring {
-            message: "bad wiring".to_string(),
+            reason: NeighborWiringError::MissingCell {
+                cell_key: CellKey::from(slotmap::KeyData::from_ffi(1)),
+            },
         };
         let mapped =
             DelaunayTriangulation::<AdaptiveKernel<f64>, (), (), 3>::map_insertion_error(error);
@@ -10502,53 +11112,84 @@ mod tests {
     }
 
     #[test]
-    fn test_map_insertion_error_geometry_variants_are_degeneracy() {
-        let geometry_errors: Vec<InsertionError> = vec![
-            InsertionError::ConflictRegion(ConflictError::OpenBoundary {
-                facet_count: 2,
-                ridge_vertex_count: 1,
-                open_cell: CellKey::from(slotmap::KeyData::from_ffi(1)),
-            }),
-            InsertionError::Location(LocateError::EmptyTriangulation),
-            InsertionError::NonManifoldTopology {
-                facet_hash: 0,
+    fn test_map_insertion_error_preserves_typed_insertion_sources() {
+        let conflict = InsertionError::ConflictRegion(ConflictError::OpenBoundary {
+            facet_count: 2,
+            ridge_vertex_count: 1,
+            open_cell: CellKey::from(slotmap::KeyData::from_ffi(1)),
+        });
+        let mapped =
+            DelaunayTriangulation::<AdaptiveKernel<f64>, (), (), 3>::map_insertion_error(conflict);
+        assert!(matches!(
+            mapped,
+            TriangulationConstructionError::InsertionConflictRegion {
+                source: ConflictError::OpenBoundary { .. },
+            }
+        ));
+
+        let location = InsertionError::Location(LocateError::EmptyTriangulation);
+        let mapped =
+            DelaunayTriangulation::<AdaptiveKernel<f64>, (), (), 3>::map_insertion_error(location);
+        assert!(matches!(
+            mapped,
+            TriangulationConstructionError::InsertionLocation {
+                source: LocateError::EmptyTriangulation,
+            }
+        ));
+
+        let non_manifold = InsertionError::NonManifoldTopology {
+            facet_hash: 0xab,
+            cell_count: 3,
+        };
+        let mapped = DelaunayTriangulation::<AdaptiveKernel<f64>, (), (), 3>::map_insertion_error(
+            non_manifold,
+        );
+        assert!(matches!(
+            mapped,
+            TriangulationConstructionError::InsertionNonManifoldTopology {
+                facet_hash: 0xab,
                 cell_count: 3,
-            },
-            InsertionError::HullExtension {
+            }
+        ));
+
+        let hull = InsertionError::HullExtension {
+            reason: HullExtensionReason::NoVisibleFacets,
+        };
+        let mapped =
+            DelaunayTriangulation::<AdaptiveKernel<f64>, (), (), 3>::map_insertion_error(hull);
+        assert!(matches!(
+            mapped,
+            TriangulationConstructionError::InsertionHullExtension {
                 reason: HullExtensionReason::NoVisibleFacets,
-            },
-            InsertionError::DelaunayValidationFailed {
-                source: Box::new(DelaunayTriangulationValidationError::VerificationFailed {
-                    message: "test".to_string(),
-                }),
-            },
-            InsertionError::DelaunayRepairFailed {
-                source: Box::new(DelaunayRepairError::PostconditionFailed {
-                    message: "test".to_string(),
-                }),
-                context: "test".to_string(),
-            },
-            InsertionError::TopologyValidationFailed {
+            }
+        ));
+
+        let delaunay = InsertionError::DelaunayValidationFailed {
+            source: Box::new(DelaunayTriangulationValidationError::VerificationFailed {
                 message: "test".to_string(),
-                source: Box::new(TriangulationValidationError::EulerCharacteristicMismatch {
-                    computed: 3,
-                    expected: 2,
-                    classification: TopologyClassification::Ball(3),
-                }),
-            },
-        ];
-        for error in geometry_errors {
-            let label = format!("{error}");
-            let mapped =
-                DelaunayTriangulation::<AdaptiveKernel<f64>, (), (), 3>::map_insertion_error(error);
-            assert!(
-                matches!(
-                    mapped,
-                    TriangulationConstructionError::GeometricDegeneracy { .. }
-                ),
-                "{label} should map to GeometricDegeneracy, got: {mapped:?}"
-            );
-        }
+            }),
+        };
+        let mapped =
+            DelaunayTriangulation::<AdaptiveKernel<f64>, (), (), 3>::map_insertion_error(delaunay);
+        assert!(matches!(
+            mapped,
+            TriangulationConstructionError::InsertionDelaunayValidation { .. }
+        ));
+
+        let topology = InsertionError::TopologyValidationFailed {
+            message: "test".to_string(),
+            source: Box::new(TriangulationValidationError::EulerCharacteristicMismatch {
+                computed: 3,
+                expected: 2,
+                classification: TopologyClassification::Ball(3),
+            }),
+        };
+        let mapped =
+            DelaunayTriangulation::<AdaptiveKernel<f64>, (), (), 3>::map_insertion_error(topology);
+        assert!(matches!(
+            mapped,
+            TriangulationConstructionError::InsertionTopologyValidation { .. }
+        ));
     }
 
     #[test]
@@ -10674,7 +11315,7 @@ mod tests {
         };
         let err = DelaunayTriangulationValidationError::RepairOperationFailed {
             operation: DelaunayRepairOperation::VertexRemoval,
-            source,
+            source: Box::new(source),
         };
 
         let msg = err.to_string();
@@ -10682,8 +11323,11 @@ mod tests {
         match &err {
             DelaunayTriangulationValidationError::RepairOperationFailed {
                 operation: DelaunayRepairOperation::VertexRemoval,
-                source: DelaunayRepairError::NonConvergent { max_flips: 7, .. },
-            } => {}
+                source,
+            } if matches!(
+                source.as_ref(),
+                DelaunayRepairError::NonConvergent { max_flips: 7, .. }
+            ) => {}
             other => panic!("expected typed vertex-removal repair source, got {other:?}"),
         }
         let chained = err
@@ -10728,7 +11372,7 @@ mod tests {
 
         // Break vertex mapping so Level 2 structural validation fails.
         let vk = dt.tds().vertex_keys().next().unwrap();
-        let uuid = dt.tds().get_vertex_by_key(vk).unwrap().uuid();
+        let uuid = dt.tds().vertex(vk).unwrap().uuid();
         dt.tds_mut().uuid_to_vertex_key.remove(&uuid);
 
         match dt.validate() {

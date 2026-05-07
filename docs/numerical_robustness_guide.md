@@ -5,6 +5,13 @@ Delaunay triangulation can be sensitive to floating-point roundoff when point se
 
 This document summarizes the robustness tools available in this crate and how to apply them.
 
+For a runnable companion, see
+[`examples/numerical_robustness.rs`](../examples/numerical_robustness.rs):
+
+```bash
+cargo run --release --example numerical_robustness
+```
+
 ## Robustness toolbox
 
 ### Exact predicates (v0.7.1+)

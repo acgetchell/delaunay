@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+#!/usr/bin/env -S uv run
 """Post-process a git-cliff generated CHANGELOG.md.
 
 Applies lightweight markdown hygiene that is difficult to express in
@@ -26,15 +26,6 @@ from pathlib import Path
 # markdownlint MD013 line-length limit used by this project.
 MAX_LINE_WIDTH = 160
 
-# Common misspellings found in historical commit messages.
-# Keys are whole-word patterns; values are their replacements.
-# Applied as word-boundary replacements so partial matches are avoided.
-_TYPO_MAP: dict[str, str] = {
-    "deniest": "denies",
-    "varous": "various",
-    "runtim": "runtime",
-}
-
 # Tokenise a line into atomic markdown units that must not be split.
 # Order matters: longer patterns first.
 _TOKEN_RE = re.compile(
@@ -55,6 +46,9 @@ _PR_LINK_RE = re.compile(r"\[#(\d+)\]\(https://github\.com/[^)]+/pull/\d+\)")
 
 # Commit-hash link to strip from summary lines.
 _COMMIT_LINK_RE = re.compile(r"\s*\[`[a-f0-9]{7}`\]\(https://github\.com/[^)]+/commit/[a-f0-9]+\)")
+
+# Leading git-cliff breaking marker to strip from normalized comparison keys.
+_BREAKING_MARKER_RE = re.compile(r"^\s*(?:[-*]\s+)?\[?\*\*breaking\*\*\]?\s*", re.IGNORECASE)
 
 # Leading ``* `` list marker to normalise to ``- `` (MD004).
 _STAR_LIST_RE = re.compile(r"^(\s*)\* ")
@@ -100,6 +94,7 @@ _SQUASH_HEADING_LABELS: dict[str, str] = {
 
 def _plain_summary(text: str) -> str:
     """Return a normalized comparison key for changelog entry text."""
+    text = _BREAKING_MARKER_RE.sub("", text)
     text = _COMMIT_LINK_RE.sub("", text)
     text = _PR_LINK_RE.sub("", text)
     text = re.sub(r"^\s*[-*]\s+", "", text)
@@ -179,19 +174,27 @@ def _compact_entry(line: str, *, strip_breaking: bool = False) -> str:
     Produce a compact summary of a changelog list item.
 
     Removes a trailing commit-hash link from the given line. If `strip_breaking` is True,
-    also removes a single leading "[**breaking**] " prefix.
+    also removes a single leading breaking marker.
 
     Parameters:
         line (str): The changelog list item to compact.
-        strip_breaking (bool): If True, strip a single leading "[**breaking**] " prefix.
+        strip_breaking (bool): If True, strip a single leading breaking marker.
 
     Returns:
         str: The compacted changelog entry with the commit-hash link (and optional breaking prefix) removed.
     """
     result = _COMMIT_LINK_RE.sub("", line).rstrip()
     if strip_breaking:
-        result = result.replace("[**breaking**] ", "", 1)
+        bullet = result[:2] if result.startswith(("- ", "* ")) else ""
+        body = result[2:] if bullet else result
+        result = bullet + _BREAKING_MARKER_RE.sub("", body, count=1)
     return result
+
+
+def _append_unique(entries: list[str], entry: str) -> None:
+    """Append *entry* to *entries* only once, preserving first-seen order."""
+    if entry not in entries:
+        entries.append(entry)
 
 
 def _extract_section_summaries(
@@ -200,9 +203,9 @@ def _extract_section_summaries(
     """
     Extract summary lines for merged pull requests and breaking changes from a version section.
 
-    Processes only top-level list items in the provided `section` (lines starting with "- "),
-    detects PR-linked entries and entries containing "[**breaking**]". Each matching line is
-    compacted (trailing commit-hash links removed; the "[**breaking**]" prefix is stripped when
+    Processes only top-level list items in the provided `section` (lines starting with "- " or
+    "* "), detects PR-linked entries and entries containing breaking markers. Each matching line
+    is compacted (trailing commit-hash links removed; the breaking marker is stripped when
     requested) before inclusion.
 
     Parameters:
@@ -217,16 +220,16 @@ def _extract_section_summaries(
 
     for sline in section:
         # Only top-level list items (no leading whitespace).
-        if not sline.startswith("- "):
+        if not sline.startswith(("- ", "* ")):
             continue
 
-        is_breaking = "[**breaking**]" in sline
+        is_breaking = bool(_BREAKING_MARKER_RE.search(sline))
         has_pr = bool(_PR_LINK_RE.search(sline))
 
         if is_breaking:
-            breaking_entries.append(_compact_entry(sline, strip_breaking=True))
+            _append_unique(breaking_entries, _compact_entry(sline, strip_breaking=True))
         if has_pr:
-            pr_entries.append(_compact_entry(sline, strip_breaking=True))
+            _append_unique(pr_entries, _compact_entry(sline, strip_breaking=True))
 
     return pr_entries, breaking_entries
 
@@ -400,16 +403,6 @@ def _needs_blank_before(stripped: str, result: list[str]) -> bool:
     return not prev.startswith(("-", "#"))
 
 
-def _fix_typos(text: str) -> str:
-    """Fix known misspellings from historical commit messages.
-
-    Uses word-boundary matching so partial words are not affected.
-    """
-    for typo, correction in _TYPO_MAP.items():
-        text = re.sub(rf"\b{re.escape(typo)}\b", correction, text)
-    return text
-
-
 def _normalize_indented_heading(line: str) -> str:
     """
     Convert indented commit-body headings into bold prose.
@@ -432,7 +425,7 @@ def _normalize_indented_heading(line: str) -> str:
     return f"{match.group('indent')}**{title}**"
 
 
-def _process_code_fence(line: str, result: list[str], in_code_block: bool) -> tuple[bool, bool]:
+def _process_code_fence(line: str, result: list[str], in_code_block: bool, next_line: str | None) -> tuple[bool, bool]:
     """Handle fenced-code transitions and append the line when consumed."""
     stripped = line.lstrip()
     if not stripped.startswith("```"):
@@ -450,6 +443,8 @@ def _process_code_fence(line: str, result: list[str], in_code_block: bool) -> tu
         in_code_block = False
 
     result.append(line)
+    if not in_code_block and next_line is not None and next_line.strip():
+        result.append("")
     return True, in_code_block
 
 
@@ -493,9 +488,6 @@ def postprocess(path: Path) -> None:
     """Read *path*, apply hygiene fixes, and write it back."""
     text = path.read_text(encoding="utf-8")
 
-    # Fix known typos from historical commit messages.
-    text = _fix_typos(text)
-
     # Inject PR / breaking-change summary sections before reflow.
     text = _inject_summary_sections(text)
 
@@ -507,7 +499,8 @@ def postprocess(path: Path) -> None:
 
     for idx, line in enumerate(lines):
         # --- fenced code-block tracking ---
-        handled, in_code_block = _process_code_fence(line, result, in_code_block)
+        next_line = lines[idx + 1] if idx + 1 < len(lines) else None
+        handled, in_code_block = _process_code_fence(line, result, in_code_block, next_line)
         if handled:
             continue
 

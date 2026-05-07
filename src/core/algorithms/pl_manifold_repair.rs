@@ -106,8 +106,6 @@ pub struct PlManifoldRepairStats<T, U, V, const D: usize> {
 impl<T, U, V, const D: usize> PartialEq for PlManifoldRepairStats<T, U, V, D>
 where
     T: CoordinateScalar,
-    U: DataType,
-    V: DataType,
 {
     fn eq(&self, other: &Self) -> bool {
         self.iterations == other.iterations
@@ -118,20 +116,9 @@ where
     }
 }
 
-impl<T, U, V, const D: usize> Eq for PlManifoldRepairStats<T, U, V, D>
-where
-    T: CoordinateScalar,
-    U: DataType,
-    V: DataType,
-{
-}
+impl<T, U, V, const D: usize> Eq for PlManifoldRepairStats<T, U, V, D> where T: CoordinateScalar {}
 
-impl<T, U, V, const D: usize> Default for PlManifoldRepairStats<T, U, V, D>
-where
-    T: CoordinateScalar,
-    U: DataType,
-    V: DataType,
-{
+impl<T, U, V, const D: usize> Default for PlManifoldRepairStats<T, U, V, D> {
     fn default() -> Self {
         Self {
             iterations: 0,
@@ -292,12 +279,12 @@ where
         // Snapshot cells before removal (sorted by UUID for determinism).
         let mut keys: Vec<CellKey> = removal_candidates.into_iter().collect();
         keys.sort_by(|a, b| {
-            let uuid_a = tds.get_cell(*a).map(Cell::uuid);
-            let uuid_b = tds.get_cell(*b).map(Cell::uuid);
+            let uuid_a = tds.cell(*a).map(Cell::uuid);
+            let uuid_b = tds.cell(*b).map(Cell::uuid);
             uuid_a.cmp(&uuid_b)
         });
         for &ck in &keys {
-            if let Some(cell) = tds.get_cell(ck) {
+            if let Some(cell) = tds.cell(ck) {
                 stats.removed_cells.push(cell.clone());
             }
         }
@@ -342,17 +329,17 @@ where
     U: DataType,
     V: DataType,
 {
-    let Ok(vertices) = tds.get_cell_vertices(cell_key) else {
+    let Ok(vertices) = tds.cell_vertices(cell_key) else {
         return f64::MAX;
     };
 
     let mut edge_lengths: SmallBuffer<f64, 16> = SmallBuffer::new();
     for i in 0..vertices.len() {
         for j in (i + 1)..vertices.len() {
-            let Some(vi) = tds.get_vertex_by_key(vertices[i]) else {
+            let Some(vi) = tds.vertex(vertices[i]) else {
                 return f64::MAX;
             };
-            let Some(vj) = tds.get_vertex_by_key(vertices[j]) else {
+            let Some(vj) = tds.vertex(vertices[j]) else {
                 return f64::MAX;
             };
 
@@ -413,7 +400,7 @@ where
 
     for handle in handles {
         let cell_key = handle.cell_key();
-        let Some(cell) = tds.get_cell(cell_key) else {
+        let Some(cell) = tds.cell(cell_key) else {
             continue;
         };
 
@@ -466,7 +453,7 @@ fn remove_orphaned_vertices<T, U, V, const D: usize>(
     orphaned.sort_by_key(|(_, uuid)| *uuid);
 
     for (vk, _) in orphaned {
-        if let Some(vertex) = tds.get_vertex_by_key(vk) {
+        if let Some(vertex) = tds.vertex(vk) {
             stats.removed_vertices.push(*vertex);
         }
         tds.remove_isolated_vertex(vk);
@@ -501,6 +488,21 @@ mod tests {
         let config = PlManifoldRepairConfig::default();
         assert_eq!(config.max_iterations, 64);
         assert_eq!(config.max_cells_removed, 10_000);
+    }
+
+    #[test]
+    fn stats_default_does_not_require_data_type_metadata() {
+        struct NonDataType(String);
+
+        let stats: PlManifoldRepairStats<f64, String, NonDataType, 3> =
+            PlManifoldRepairStats::default();
+
+        assert_eq!(stats.iterations, 0);
+        assert!(stats.removed_cells.is_empty());
+        assert!(stats.removed_vertices.is_empty());
+
+        let metadata = NonDataType("owned metadata".to_string());
+        assert_eq!(metadata.0, "owned metadata");
     }
 
     // =============================================================================
@@ -631,7 +633,7 @@ mod tests {
 
         // Duplicate the first cell → its facets go from degree 2 to degree 3.
         let cell_key = tds.cell_keys().next().unwrap();
-        let vkeys = tds.get_cell_vertices(cell_key).unwrap();
+        let vkeys = tds.cell_vertices(cell_key).unwrap();
         let dup_cell = Cell::new(vkeys.to_vec(), None).unwrap();
         tds.insert_cell_with_mapping(dup_cell).unwrap();
 

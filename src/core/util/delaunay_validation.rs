@@ -4,6 +4,8 @@
 
 use crate::core::cell::CellValidationError;
 use crate::core::collections::ViolationBuffer;
+#[cfg(any(test, feature = "diagnostics"))]
+use crate::core::collections::{CellVertexBuffer, NeighborBuffer};
 use crate::core::tds::{CellKey, Tds, TdsError, VertexKey};
 use crate::core::traits::data_type::DataType;
 use crate::geometry::point::Point;
@@ -27,6 +29,7 @@ use thiserror::Error;
 /// assert!(matches!(err, DelaunayValidationError::DelaunayViolation { .. }));
 /// ```
 #[derive(Clone, Debug, Error, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum DelaunayValidationError {
     /// A cell violates the Delaunay property (has an external vertex inside its circumsphere).
     #[error("Cell violates Delaunay property: cell contains vertex that is inside circumsphere")]
@@ -65,6 +68,94 @@ pub enum DelaunayValidationError {
     },
 }
 
+/// Structured summary of Delaunay empty-circumsphere violations.
+///
+/// This diagnostic report is available with the `diagnostics` feature and is
+/// intended for bug reports, regression tests, and local investigation. It
+/// records stable TDS keys rather than copying all coordinates; callers can
+/// look up coordinates, UUIDs, and cell data in the original [`Tds`].
+///
+/// # Examples
+///
+/// ```rust
+/// use delaunay::prelude::diagnostics::delaunay_violation_report;
+/// use delaunay::prelude::triangulation::*;
+///
+/// let vertices = vec![
+///     vertex!([0.0, 0.0]),
+///     vertex!([1.0, 0.0]),
+///     vertex!([0.0, 1.0]),
+/// ];
+/// let dt = DelaunayTriangulation::new(&vertices).unwrap();
+///
+/// let report = delaunay_violation_report(dt.tds(), None).unwrap();
+/// assert!(report.is_valid());
+/// ```
+#[cfg(any(test, feature = "diagnostics"))]
+#[derive(Clone, Debug, PartialEq, Eq)]
+#[must_use]
+pub struct DelaunayViolationReport {
+    /// Number of vertices in the TDS when the report was generated.
+    pub number_of_vertices: usize,
+    /// Number of cells in the TDS when the report was generated.
+    pub number_of_cells: usize,
+    /// Number of requested cells considered by the report.
+    ///
+    /// When `cells_to_check` is `None`, this is the TDS cell count. When a
+    /// subset is provided, this is the subset length; missing cell keys are
+    /// still counted as requested work and are skipped by the violation scan.
+    pub checked_cells: usize,
+    /// Cells that failed the empty-circumsphere property.
+    pub violating_cells: ViolationBuffer,
+    /// Details for the first violating cell, if one is still present in the TDS.
+    pub first_violation: Option<DelaunayViolationDetail>,
+}
+
+#[cfg(any(test, feature = "diagnostics"))]
+impl DelaunayViolationReport {
+    /// Returns `true` when no Delaunay violations were found.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use delaunay::prelude::diagnostics::DelaunayViolationReport;
+    ///
+    /// let report = DelaunayViolationReport {
+    ///     number_of_vertices: 0,
+    ///     number_of_cells: 0,
+    ///     checked_cells: 0,
+    ///     violating_cells: Default::default(),
+    ///     first_violation: None,
+    /// };
+    /// assert!(report.is_valid());
+    /// ```
+    #[must_use]
+    pub fn is_valid(&self) -> bool {
+        self.violating_cells.is_empty()
+    }
+}
+
+/// Details for the first cell in a [`DelaunayViolationReport`].
+///
+/// The detail record keeps the report compact and key-oriented. Use
+/// [`cell_key`](Self::cell_key), [`cell_vertices`](Self::cell_vertices), and
+/// [`offending_vertex`](Self::offending_vertex) to recover full vertex or cell
+/// records from the source [`Tds`].
+#[cfg(any(test, feature = "diagnostics"))]
+#[derive(Clone, Debug, PartialEq, Eq)]
+#[must_use]
+pub struct DelaunayViolationDetail {
+    /// Violating cell key.
+    pub cell_key: CellKey,
+    /// Vertex keys stored by the violating cell at report time.
+    pub cell_vertices: CellVertexBuffer,
+    /// First external vertex found inside the cell circumsphere, if one could
+    /// be identified.
+    pub offending_vertex: Option<VertexKey>,
+    /// Neighbor slots of the violating cell, preserving facet-index order.
+    pub neighbor_cells: NeighborBuffer<Option<CellKey>>,
+}
+
 // =============================================================================
 // DELAUNAY PROPERTY VALIDATION
 // =============================================================================
@@ -84,7 +175,21 @@ where
     U: DataType,
     V: DataType,
 {
-    let Some(cell) = tds.get_cell(cell_key) else {
+    Ok(first_delaunay_violation_witness(tds, cell_key, cell_vertex_points)?.map(|_| cell_key))
+}
+
+/// Finds one external vertex that witnesses a cell's Delaunay violation.
+fn first_delaunay_violation_witness<T, U, V, const D: usize>(
+    tds: &Tds<T, U, V, D>,
+    cell_key: CellKey,
+    cell_vertex_points: &mut SmallVec<[Point<T, D>; 8]>,
+) -> Result<Option<VertexKey>, DelaunayValidationError>
+where
+    T: CoordinateScalar,
+    U: DataType,
+    V: DataType,
+{
+    let Some(cell) = tds.cell(cell_key) else {
         // Cell doesn't exist (possibly removed), skip validation
         return Ok(None);
     };
@@ -99,7 +204,7 @@ where
     // Build the cell's circumsphere
     cell_vertex_points.clear();
     for &vkey in &cell_vertex_keys {
-        let Some(v) = tds.get_vertex_by_key(vkey) else {
+        let Some(v) = tds.vertex(vkey) else {
             return Err(DelaunayValidationError::TriangulationState {
                 source: TdsError::InconsistentDataStructure {
                     message: format!("Cell {cell_key:?} references non-existent vertex {vkey:?}"),
@@ -148,7 +253,7 @@ where
                             let Some(b_key) = neighbor_opt else {
                                 continue;
                             };
-                            let Some(b_cell) = tds.get_cell(*b_key) else {
+                            let Some(b_cell) = tds.cell(*b_key) else {
                                 continue;
                             };
                             // Is test_vkey the apex of B w.r.t. A?
@@ -157,14 +262,14 @@ where
                             }
                             // Found. A's apex w.r.t. B = cell.vertices()[k].
                             let apex_a_key = cell_vertex_keys[k];
-                            let Some(apex_a_v) = tds.get_vertex_by_key(apex_a_key) else {
+                            let Some(apex_a_v) = tds.vertex(apex_a_key) else {
                                 continue;
                             };
                             // Build B's circumsphere points.
                             b_points.clear();
                             let mut valid = true;
                             for &bv in b_cell.vertices() {
-                                let Some(v) = tds.get_vertex_by_key(bv) else {
+                                let Some(v) = tds.vertex(bv) else {
                                     valid = false;
                                     break;
                                 };
@@ -198,7 +303,7 @@ where
                     }
                 }
                 // Genuine violation
-                return Ok(Some(cell_key));
+                return Ok(Some(test_vkey));
             }
             Ok(InSphere::BOUNDARY | InSphere::OUTSIDE) => {
                 // Vertex is outside/on boundary; continue checking other vertices
@@ -357,6 +462,114 @@ where
     Ok(violating_cells)
 }
 
+/// Build a structured Delaunay violation report.
+///
+/// This is the structured counterpart to
+/// [`debug_print_first_delaunay_violation`]. It uses the same robust
+/// empty-circumsphere scan as [`find_delaunay_violations`] and returns compact,
+/// key-based diagnostics that can be attached to bug reports or inspected by
+/// tests without relying on tracing output.
+///
+/// # Arguments
+///
+/// * `tds` - The triangulation data structure to inspect.
+/// * `cells_to_check` - Optional subset of cells to check. Missing cells are
+///   skipped by the underlying scan but still counted in
+///   [`DelaunayViolationReport::checked_cells`].
+///
+/// # Errors
+///
+/// Returns [`DelaunayValidationError`] if the underlying Delaunay scan finds
+/// invalid cell structure, missing vertex references, or robust predicate
+/// conversion failures.
+///
+/// # Examples
+///
+/// ```rust
+/// use delaunay::prelude::diagnostics::delaunay_violation_report;
+/// use delaunay::prelude::triangulation::*;
+///
+/// let vertices = vec![
+///     vertex!([0.0, 0.0, 0.0]),
+///     vertex!([1.0, 0.0, 0.0]),
+///     vertex!([0.0, 1.0, 0.0]),
+///     vertex!([0.0, 0.0, 1.0]),
+/// ];
+/// let dt = DelaunayTriangulation::new(&vertices).unwrap();
+///
+/// let report = delaunay_violation_report(dt.tds(), None).unwrap();
+/// assert!(report.violating_cells.is_empty());
+/// ```
+#[cfg(any(test, feature = "diagnostics"))]
+pub fn delaunay_violation_report<T, U, V, const D: usize>(
+    tds: &Tds<T, U, V, D>,
+    cells_to_check: Option<&[CellKey]>,
+) -> Result<DelaunayViolationReport, DelaunayValidationError>
+where
+    T: CoordinateScalar,
+    U: DataType,
+    V: DataType,
+{
+    let violating_cells = find_delaunay_violations(tds, cells_to_check)?;
+    let checked_cells = cells_to_check.map_or_else(|| tds.number_of_cells(), <[_]>::len);
+    let first_violation = violating_cells
+        .first()
+        .and_then(|&cell_key| build_violation_detail(tds, cell_key));
+
+    Ok(DelaunayViolationReport {
+        number_of_vertices: tds.number_of_vertices(),
+        number_of_cells: tds.number_of_cells(),
+        checked_cells,
+        violating_cells,
+        first_violation,
+    })
+}
+
+/// Builds the compact detail record for a violating cell that still exists in the TDS.
+#[cfg(any(test, feature = "diagnostics"))]
+fn build_violation_detail<T, U, V, const D: usize>(
+    tds: &Tds<T, U, V, D>,
+    cell_key: CellKey,
+) -> Option<DelaunayViolationDetail>
+where
+    T: CoordinateScalar,
+    U: DataType,
+    V: DataType,
+{
+    let cell = tds.cell(cell_key)?;
+    let cell_vertices = cell.vertices().iter().copied().collect();
+    let neighbor_cells = cell
+        .neighbors()
+        .map_or_else(NeighborBuffer::new, |neighbors| {
+            neighbors.iter().copied().collect()
+        });
+    let offending_vertex = first_offending_vertex(tds, cell_key);
+
+    Some(DelaunayViolationDetail {
+        cell_key,
+        cell_vertices,
+        offending_vertex,
+        neighbor_cells,
+    })
+}
+
+/// Finds one external vertex that witnesses a cell's Delaunay violation, if available.
+#[cfg(any(test, feature = "diagnostics"))]
+fn first_offending_vertex<T, U, V, const D: usize>(
+    tds: &Tds<T, U, V, D>,
+    cell_key: CellKey,
+) -> Option<VertexKey>
+where
+    T: CoordinateScalar,
+    U: DataType,
+    V: DataType,
+{
+    let mut cell_vertex_points: SmallVec<[Point<T, D>; 8]> = SmallVec::with_capacity(D + 1);
+    first_delaunay_violation_witness(tds, cell_key, &mut cell_vertex_points)
+        .ok()
+        .flatten()
+}
+
 /// Debug helper: print detailed information about the first detected Delaunay
 /// violation (or all vertices if none are found) to aid in debugging.
 ///
@@ -392,9 +605,9 @@ pub fn debug_print_first_delaunay_violation<T, U, V, const D: usize>(
     U: DataType,
     V: DataType,
 {
-    // First, find violating cells using the standard helper.
-    let violations = match find_delaunay_violations(tds, cells_subset) {
-        Ok(v) => v,
+    // First, build the structured report used by downstream diagnostics.
+    let report = match delaunay_violation_report(tds, cells_subset) {
+        Ok(report) => report,
         Err(e) => {
             tracing::warn!(
                 "[Delaunay debug] debug_print_first_delaunay_violation: error while finding violations: {e}"
@@ -402,10 +615,12 @@ pub fn debug_print_first_delaunay_violation<T, U, V, const D: usize>(
             return;
         }
     };
+    let violations = &report.violating_cells;
     tracing::debug!(
-        "[Delaunay debug] Triangulation summary: {} vertices, {} cells",
-        tds.number_of_vertices(),
-        tds.number_of_cells()
+        "[Delaunay debug] Triangulation summary: {} vertices, {} cells, {} checked cells",
+        report.number_of_vertices,
+        report.number_of_cells,
+        report.checked_cells,
     );
 
     // Dump all input vertices once for reproducibility.
@@ -433,8 +648,8 @@ pub fn debug_print_first_delaunay_violation<T, U, V, const D: usize>(
     let mut cell_vertex_points: SmallVec<[Point<T, D>; 8]> = SmallVec::with_capacity(D + 1);
 
     // Dump each violating cell with its vertices.
-    for cell_key in &violations {
-        match tds.get_cell(*cell_key) {
+    for cell_key in violations {
+        match tds.cell(*cell_key) {
             Some(cell) => {
                 tracing::debug!(
                     "[Delaunay debug]  Cell {:?}: uuid={}, vertices:",
@@ -442,7 +657,7 @@ pub fn debug_print_first_delaunay_violation<T, U, V, const D: usize>(
                     cell.uuid()
                 );
                 for &vkey in cell.vertices() {
-                    match tds.get_vertex_by_key(vkey) {
+                    match tds.vertex(vkey) {
                         Some(v) => {
                             tracing::debug!(
                                 "[Delaunay debug]    vkey={:?}, uuid={}, point={:?}",
@@ -468,7 +683,7 @@ pub fn debug_print_first_delaunay_violation<T, U, V, const D: usize>(
     // Focus on the first violating cell to identify at least one offending
     // external vertex and neighbor information.
     let first_cell_key = violations[0];
-    let Some(cell) = tds.get_cell(first_cell_key) else {
+    let Some(cell) = tds.cell(first_cell_key) else {
         tracing::debug!(
             "[Delaunay debug] First violating cell {first_cell_key:?} not found in TDS"
         );
@@ -480,7 +695,7 @@ pub fn debug_print_first_delaunay_violation<T, U, V, const D: usize>(
     cell_vertex_points.clear();
     let mut missing_vertex_keys: SmallVec<[VertexKey; 8]> = SmallVec::new();
     for &vkey in &cell_vertex_keys {
-        match tds.get_vertex_by_key(vkey) {
+        match tds.vertex(vkey) {
             Some(v) => {
                 cell_vertex_points.push(*v.point());
             }
@@ -533,7 +748,7 @@ pub fn debug_print_first_delaunay_violation<T, U, V, const D: usize>(
         for (facet_idx, neighbor_key_opt) in neighbors.iter().enumerate() {
             match neighbor_key_opt {
                 Some(neighbor_key) => {
-                    if let Some(neighbor_cell) = tds.get_cell(*neighbor_key) {
+                    if let Some(neighbor_cell) = tds.cell(*neighbor_key) {
                         tracing::debug!(
                             "[Delaunay debug]  facet {facet_idx}: neighbor cell {neighbor_key:?}, uuid={}",
                             neighbor_cell.uuid()
@@ -561,6 +776,7 @@ pub fn debug_print_first_delaunay_violation<T, U, V, const D: usize>(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::core::algorithms::incremental_insertion::repair_neighbor_pointers;
     use crate::core::cell::Cell;
     use crate::core::triangulation::Triangulation;
     use crate::core::util::make_uuid;
@@ -568,6 +784,7 @@ mod tests {
     use crate::geometry::kernel::FastKernel;
     use crate::geometry::point::Point;
     use crate::geometry::traits::coordinate::{Coordinate, CoordinateConversionError};
+    use crate::triangulation::delaunay::DelaunayTriangulation;
 
     use crate::vertex;
 
@@ -583,7 +800,7 @@ mod tests {
             vertex!([0.0, 0.0, 1.0]),
         ];
 
-        let dt = crate::triangulation::delaunay::DelaunayTriangulation::new(&vertices).unwrap();
+        let dt = DelaunayTriangulation::new(&vertices).unwrap();
         let tds = &dt.as_triangulation().tds;
 
         // Basic Delaunay helpers should report no violations.
@@ -631,6 +848,7 @@ mod tests {
             .unwrap();
 
         tds.assign_incident_cells().unwrap();
+        repair_neighbor_pointers(&mut tds).unwrap();
 
         (tds, cell_1, cell_2)
     }
@@ -773,6 +991,63 @@ mod tests {
     }
 
     #[test]
+    fn delaunay_violation_report_summarizes_valid_tds() {
+        init_tracing();
+        let vertices = vec![
+            vertex!([0.0, 0.0, 0.0]),
+            vertex!([1.0, 0.0, 0.0]),
+            vertex!([0.0, 1.0, 0.0]),
+            vertex!([0.0, 0.0, 1.0]),
+        ];
+        let dt = DelaunayTriangulation::new(&vertices).unwrap();
+
+        let report = delaunay_violation_report(dt.tds(), None).unwrap();
+
+        assert!(report.is_valid());
+        assert_eq!(report.number_of_vertices, 4);
+        assert_eq!(report.number_of_cells, 1);
+        assert_eq!(report.checked_cells, 1);
+        assert!(report.first_violation.is_none());
+    }
+
+    #[test]
+    fn delaunay_violation_report_includes_first_violation_detail() {
+        init_tracing();
+        let (tds, cell_1, cell_2) = build_non_delaunay_quad_2d();
+
+        let report = delaunay_violation_report(&tds, None).unwrap();
+
+        assert!(!report.is_valid());
+        assert_eq!(report.violating_cells.len(), 1);
+        let detail = report
+            .first_violation
+            .as_ref()
+            .expect("violating report should include first violation details");
+        assert!(detail.cell_key == cell_1 || detail.cell_key == cell_2);
+        assert_eq!(detail.cell_vertices.len(), 3);
+        assert_eq!(detail.neighbor_cells.len(), 3);
+        assert!(detail.offending_vertex.is_some());
+    }
+
+    #[test]
+    fn delaunay_violation_report_tracks_requested_subset_size() {
+        init_tracing();
+        let (tds, cell_1, _) = build_non_delaunay_quad_2d();
+
+        let report = delaunay_violation_report(&tds, Some(&[cell_1, CellKey::default()])).unwrap();
+
+        assert_eq!(report.checked_cells, 2);
+        assert_eq!(report.violating_cells.as_slice(), &[cell_1]);
+        assert_eq!(
+            report
+                .first_violation
+                .as_ref()
+                .map(|detail| detail.cell_key),
+            Some(cell_1)
+        );
+    }
+
+    #[test]
     fn delaunay_property_only_reports_triangulation_state_on_missing_vertex() {
         init_tracing();
         let vertices = vec![
@@ -786,13 +1061,13 @@ mod tests {
             Triangulation::<FastKernel<f64>, (), (), 3>::build_initial_simplex(&vertices).unwrap();
         let cell_key = tds.cell_keys().next().unwrap();
         let original_vertices = {
-            let cell = tds.get_cell(cell_key).unwrap();
+            let cell = tds.cell(cell_key).unwrap();
             cell.vertices().to_vec()
         };
         let invalid_vkey = VertexKey::from(slotmap::KeyData::from_ffi(u64::MAX));
 
         {
-            let cell = tds.get_cell_by_key_mut(cell_key).unwrap();
+            let cell = tds.cell_mut(cell_key).unwrap();
             cell.clear_vertex_keys();
             for (idx, &vkey) in original_vertices.iter().enumerate() {
                 if idx == 0 {
@@ -822,7 +1097,7 @@ mod tests {
         let mut tds =
             Triangulation::<FastKernel<f64>, (), (), 2>::build_initial_simplex(&vertices).unwrap();
         let cell_key = tds.cell_keys().next().unwrap();
-        let cell = tds.get_cell_by_key_mut(cell_key).unwrap();
+        let cell = tds.cell_mut(cell_key).unwrap();
         cell.neighbors = Some(vec![None, None].into()); // wrong length (expected 3)
 
         let err = is_delaunay_property_only(&tds).unwrap_err();

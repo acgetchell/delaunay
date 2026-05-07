@@ -380,7 +380,7 @@ where
         let facet_index = handle.facet_index() as usize;
 
         // Derive the facet's vertex keys from the owning cell.
-        let cell_vertices = tds.get_cell_vertices(cell_key)?;
+        let cell_vertices = tds.cell_vertices(cell_key)?;
         if facet_index >= cell_vertices.len() {
             return Err(TdsError::IndexOutOfBounds {
                 index: facet_index,
@@ -480,7 +480,7 @@ where
     let mut star_cells: SmallBuffer<CellKey, 8> = SmallBuffer::with_capacity(candidates.len());
 
     for cell_key in candidates {
-        let cell_vertices = tds.get_cell_vertices(cell_key)?;
+        let cell_vertices = tds.cell_vertices(cell_key)?;
         if simplex_vertices
             .iter()
             .all(|&sv| cell_vertices.contains(&sv))
@@ -520,10 +520,8 @@ where
         SmallBuffer::with_capacity(star_cells.len());
 
     for &cell_key in star_cells {
-        let cell_vertices = tds.get_cell_vertices(cell_key)?;
-        let offsets = tds
-            .get_cell(cell_key)
-            .and_then(|c| c.periodic_vertex_offsets());
+        let cell_vertices = tds.cell_vertices(cell_key)?;
+        let offsets = tds.cell(cell_key).and_then(|c| c.periodic_vertex_offsets());
 
         // Find the reference offset: the first simplex vertex's offset in
         // this cell.  All link vertex offsets are computed relative to this
@@ -645,10 +643,8 @@ where
     let mut link_vertices: VertexKeyBuffer = VertexKeyBuffer::with_capacity(2);
 
     for &cell_key in star_cells {
-        let cell_vertices = tds.get_cell_vertices(cell_key)?;
-        let offsets = tds
-            .get_cell(cell_key)
-            .and_then(|c| c.periodic_vertex_offsets());
+        let cell_vertices = tds.cell_vertices(cell_key)?;
+        let offsets = tds.cell(cell_key).and_then(|c| c.periodic_vertex_offsets());
 
         // Find the reference offset from the first ridge vertex's slot.
         let ref_slot = offsets.and_then(|offs| {
@@ -757,7 +753,7 @@ where
     let mut ridge_vertices: VertexKeyBuffer = VertexKeyBuffer::with_capacity(D.saturating_sub(1));
 
     for (cell_key, cell) in tds.cells() {
-        let cell_vertices = tds.get_cell_vertices(cell_key)?;
+        let cell_vertices = tds.cell_vertices(cell_key)?;
         let offsets = cell.periodic_vertex_offsets();
 
         if cell_vertices.len() != D + 1 {
@@ -848,10 +844,8 @@ where
             continue;
         }
 
-        let cell_vertices = tds.get_cell_vertices(cell_key)?;
-        let offsets = tds
-            .get_cell(cell_key)
-            .and_then(|c| c.periodic_vertex_offsets());
+        let cell_vertices = tds.cell_vertices(cell_key)?;
+        let offsets = tds.cell(cell_key).and_then(|c| c.periodic_vertex_offsets());
 
         if cell_vertices.len() != D + 1 {
             return Err(TdsError::DimensionMismatch {
@@ -934,7 +928,7 @@ where
 ///
 /// Returns [`ManifoldError::Tds`] if:
 /// - `simplex_star_cells` fails (vertex not found, etc.).
-/// - `get_cell_vertices` fails for any candidate cell.
+/// - `cell_vertices` fails for any candidate cell.
 /// - Periodic offset filtering produces an empty star, indicating inconsistent
 ///   offsets in the TDS.
 fn periodic_aware_ridge_star<T, U, V, const D: usize>(
@@ -953,14 +947,14 @@ where
     // For periodic cells, keep only cells whose lifted ridge vertices agree
     // with this ridge's lifted vertices.  For non-periodic cells the check is
     // a no-op (offsets are `None`).  We use an explicit loop instead of
-    // `.filter()` so that `get_cell_vertices` errors propagate.
+    // `.filter()` so that `cell_vertices` errors propagate.
     let mut star_cells: SmallBuffer<CellKey, 8> = SmallBuffer::with_capacity(all_star_cells.len());
     for &ck in &all_star_cells {
-        let cell_offsets = tds.get_cell(ck).and_then(|c| c.periodic_vertex_offsets());
+        let cell_offsets = tds.cell(ck).and_then(|c| c.periodic_vertex_offsets());
         let matches = match cell_offsets {
             None => true,
             Some(offs) => {
-                let cv = tds.get_cell_vertices(ck)?;
+                let cv = tds.cell_vertices(ck)?;
                 lifted_vertices.iter().all(|lv| {
                     cv.iter()
                         .enumerate()
@@ -1069,7 +1063,7 @@ where
                 let mut star_cell_vertices: Vec<(CellKey, VertexKeyBuffer)> =
                     Vec::with_capacity(star.star_cells.len());
                 for &cell_key in &star.star_cells {
-                    match tds.get_cell_vertices(cell_key) {
+                    match tds.cell_vertices(cell_key) {
                         Ok(vertices) => star_cell_vertices.push((cell_key, vertices)),
                         Err(_) => star_cell_vertices.push((cell_key, VertexKeyBuffer::new())),
                     }
@@ -1152,7 +1146,7 @@ where
                 let mut star_cell_vertices: Vec<(CellKey, VertexKeyBuffer)> =
                     Vec::with_capacity(star.star_cells.len());
                 for &cell_key in &star.star_cells {
-                    match tds.get_cell_vertices(cell_key) {
+                    match tds.cell_vertices(cell_key) {
                         Ok(vertices) => star_cell_vertices.push((cell_key, vertices)),
                         Err(_) => star_cell_vertices.push((cell_key, VertexKeyBuffer::new())),
                     }
@@ -1268,7 +1262,7 @@ where
         let cell_key = handle.cell_key();
         let facet_index = handle.facet_index() as usize;
 
-        let cell_vertices = tds.get_cell_vertices(cell_key)?;
+        let cell_vertices = tds.cell_vertices(cell_key)?;
         if facet_index >= cell_vertices.len() {
             return Err(TdsError::IndexOutOfBounds {
                 index: facet_index,
@@ -2540,7 +2534,7 @@ mod tests {
         // Corrupt the cell in-place: keep length == D+1 but introduce a duplicate link vertex.
         {
             let cell = tds
-                .get_cell_by_key_mut(cell_key)
+                .cell_mut(cell_key)
                 .expect("cell key should be valid in test");
             cell.clear_vertex_keys();
             cell.push_vertex_key(v0);
@@ -2588,7 +2582,7 @@ mod tests {
         // Corrupt the cell in-place: keep length == D+1 but introduce a duplicate vertex.
         {
             let cell = tds
-                .get_cell_by_key_mut(cell_key)
+                .cell_mut(cell_key)
                 .expect("cell key should be valid in test");
             cell.clear_vertex_keys();
             cell.push_vertex_key(v0);
@@ -2828,7 +2822,7 @@ mod tests {
         // Corrupt the cell in-place: change it to have only 2 vertices.
         {
             let cell = tds
-                .get_cell_by_key_mut(cell_key)
+                .cell_mut(cell_key)
                 .expect("cell key should be valid in test");
             cell.clear_vertex_keys();
             cell.push_vertex_key(v0);
@@ -2987,7 +2981,7 @@ mod tests {
         // Corrupt the cell in-place: change it to have only 2 vertices.
         {
             let cell = tds
-                .get_cell_by_key_mut(cell_key)
+                .cell_mut(cell_key)
                 .expect("cell key should be valid in test");
             cell.clear_vertex_keys();
             cell.push_vertex_key(v0);
@@ -3224,7 +3218,7 @@ mod tests {
         // Build a facet-to-cells map with a synthetic boundary facet pointing at facet_index=0
         // but then corrupt the cell to only have 2 vertices.
         {
-            let cell = tds.get_cell_by_key_mut(cell_key).unwrap();
+            let cell = tds.cell_mut(cell_key).unwrap();
             // Replace with only 2 vertices so the facet subtraction produces wrong count.
             cell.clear_vertex_keys();
             cell.push_vertex_key(v0);
@@ -3337,7 +3331,7 @@ mod tests {
         let c1 = tds
             .insert_cell_with_mapping(Cell::new(vec![v0, v1, v2], None).unwrap())
             .unwrap();
-        tds.get_cell_by_key_mut(c1)
+        tds.cell_mut(c1)
             .unwrap()
             .set_periodic_vertex_offsets(vec![[0, 0], [0, 0], [0, 0]]);
 
@@ -3345,7 +3339,7 @@ mod tests {
         let c2 = tds
             .insert_cell_with_mapping(Cell::new(vec![v0, v1, v2], None).unwrap())
             .unwrap();
-        tds.get_cell_by_key_mut(c2)
+        tds.cell_mut(c2)
             .unwrap()
             .set_periodic_vertex_offsets(vec![[1, 0], [0, 0], [0, 0]]);
 
@@ -3381,7 +3375,7 @@ mod tests {
         let c1 = tds
             .insert_cell_with_mapping(Cell::new(vec![v0, v1, v2], None).unwrap())
             .unwrap();
-        tds.get_cell_by_key_mut(c1)
+        tds.cell_mut(c1)
             .unwrap()
             .set_periodic_vertex_offsets(vec![[0, 0], [0, 0], [0, 0]]);
 
@@ -3414,14 +3408,14 @@ mod tests {
         let c1 = tds
             .insert_cell_with_mapping(Cell::new(vec![v0, v1, v2], None).unwrap())
             .unwrap();
-        tds.get_cell_by_key_mut(c1)
+        tds.cell_mut(c1)
             .unwrap()
             .set_periodic_vertex_offsets(vec![[0, 0], [0, 0], [0, 0]]);
 
         let c2 = tds
             .insert_cell_with_mapping(Cell::new(vec![v0, v1, v2], None).unwrap())
             .unwrap();
-        tds.get_cell_by_key_mut(c2)
+        tds.cell_mut(c2)
             .unwrap()
             .set_periodic_vertex_offsets(vec![[1, 0], [0, 0], [0, 0]]);
 

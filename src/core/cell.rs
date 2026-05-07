@@ -56,6 +56,7 @@ use crate::geometry::traits::coordinate::{CoordinateConversionError, CoordinateS
 use serde::{
     Deserialize, Deserializer, Serialize,
     de::{self, IgnoredAny, MapAccess, Visitor},
+    ser::SerializeStruct,
 };
 use std::{
     cmp,
@@ -81,6 +82,7 @@ use uuid::Uuid;
 /// assert!(matches!(err, CellValidationError::DuplicateVertices));
 /// ```
 #[derive(Clone, Debug, Error, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum CellValidationError {
     /// The cell has an invalid vertex.
     #[error("Invalid vertex: {source}")]
@@ -194,7 +196,7 @@ impl From<crate::geometry::matrix::StackMatrixDispatchError> for CellValidationE
 /// let (cell_key, cell) = dt.cells().next().unwrap();
 /// let tds = dt.tds();
 /// for &vertex_key in cell.vertices() {
-///     let vertex = &tds.get_vertex_by_key(vertex_key).unwrap();
+///     let vertex = &tds.vertex(vertex_key).unwrap();
 ///     // use vertex...
 ///     assert!(vertex.uuid() != Uuid::nil());
 /// }
@@ -267,7 +269,6 @@ where
     where
         S: serde::Serializer,
     {
-        use serde::ser::SerializeStruct;
         let has_data = self.data.is_some();
         let field_count = if has_data { 2 } else { 1 };
         let mut state = serializer.serialize_struct("Cell", field_count)?;
@@ -568,7 +569,7 @@ where
     /// if let Some(neighbors) = cell.neighbors() {
     ///     for (i, neighbor_key_opt) in neighbors.iter().enumerate() {
     ///         if let Some(neighbor_key) = neighbor_key_opt {
-    ///             let neighbor_cell = &tds.get_cell(*neighbor_key).unwrap();
+    ///             let neighbor_cell = &tds.cell(*neighbor_key).unwrap();
     ///             // neighbor_cell is opposite to vertex i
     ///         }
     ///     }
@@ -598,7 +599,7 @@ where
     /// let tds = dt.tds();
     ///
     /// for &vkey in cell.vertices() {
-    ///     let vertex = &tds.get_vertex_by_key(vkey).unwrap();
+    ///     let vertex = &tds.vertex(vkey).unwrap();
     ///     // use vertex data...
     ///     assert!(vertex.uuid() != Uuid::nil());
     /// }
@@ -805,7 +806,7 @@ where
     /// let dt = DelaunayTriangulation::new(&vertices).unwrap();
     /// let cell_key = dt.cells().next().unwrap().0;
     /// let tds = dt.tds();
-    /// let cell = &tds.get_cell(cell_key).unwrap();
+    /// let cell = &tds.cell(cell_key).unwrap();
     /// assert_eq!(cell.number_of_vertices(), 4);
     /// ```
     #[inline]
@@ -916,7 +917,7 @@ where
     /// // This example is conceptual - actual usage requires accessing tds directly
     /// # let cell_key = dt.cells().next().unwrap().0;
     /// # let tds = dt.tds();
-    /// # // assert!(tds.get_cell(cell_key).unwrap().neighbors().is_none());
+    /// # // assert!(tds.cell(cell_key).unwrap().neighbors().is_none());
     /// ```
     #[inline]
     pub(crate) fn clear_neighbors(&mut self) {
@@ -957,7 +958,7 @@ where
     /// let dt = DelaunayTriangulation::new(&vertices).unwrap();
     /// let cell_key = dt.cells().next().unwrap().0;
     /// let tds = dt.tds();
-    /// let cell = &tds.get_cell(cell_key).unwrap();
+    /// let cell = &tds.cell(cell_key).unwrap();
     /// let uuids = cell.vertex_uuids(tds).unwrap();
     /// assert_eq!(uuids.len(), 4);
     /// ```
@@ -969,7 +970,7 @@ where
         self.vertices
             .iter()
             .map(|&vkey| {
-                tds.get_vertex_by_key(vkey)
+                tds.vertex(vkey)
                     .map(Vertex::uuid)
                     .ok_or(CellValidationError::VertexKeyNotFound { key: vkey })
             })
@@ -1008,7 +1009,7 @@ where
     /// let dt = DelaunayTriangulation::new(&vertices).unwrap();
     /// let cell_key = dt.cells().next().unwrap().0;
     /// let tds = dt.tds();
-    /// let cell = &tds.get_cell(cell_key).unwrap();
+    /// let cell = &tds.cell(cell_key).unwrap();
     /// let uuids: Vec<_> = cell.vertex_uuid_iter(tds).collect::<Result<Vec<_>, _>>().unwrap();
     /// assert_eq!(uuids.len(), 3);
     /// ```
@@ -1018,7 +1019,7 @@ where
         tds: &'a Tds<T, U, V, D>,
     ) -> impl ExactSizeIterator<Item = Result<Uuid, CellValidationError>> + 'a {
         self.vertices.iter().map(move |&vkey| {
-            tds.get_vertex_by_key(vkey)
+            tds.vertex(vkey)
                 .map(Vertex::uuid)
                 .ok_or(CellValidationError::VertexKeyNotFound { key: vkey })
         })
@@ -1324,7 +1325,7 @@ where
     ) -> Result<Vec<crate::core::facet::FacetView<'_, T, U, V, D>>, FacetError> {
         // Get the cell from the TDS using the key
         let cell = tds
-            .get_cell(cell_key)
+            .cell(cell_key)
             .ok_or(FacetError::CellNotFoundInTriangulation)?;
 
         let vertex_count = cell.number_of_vertices();
@@ -1423,13 +1424,13 @@ where
         let self_vertices: Option<Vec<_>> = self
             .vertices()
             .iter()
-            .map(|&vkey| self_tds.get_vertex_by_key(vkey))
+            .map(|&vkey| self_tds.vertex(vkey))
             .collect();
 
         let other_vertices: Option<Vec<_>> = other
             .vertices()
             .iter()
-            .map(|&vkey| other_tds.get_vertex_by_key(vkey))
+            .map(|&vkey| other_tds.vertex(vkey))
             .collect();
 
         // If we couldn't resolve all vertex keys, cells are not equal
@@ -1517,10 +1518,10 @@ where
     /// let cell_key = tds.cell_keys().next().unwrap();
     /// let facet_iter = Cell::facet_view_iter(tds, cell_key).expect("Failed to get facet iterator");
     ///
-    /// // Collect only successful facets, filtering out any errors
+    /// // Collect all facets and surface any construction error
     /// let successful_facets: Vec<_> = facet_iter
-    ///     .filter_map(Result::ok)
-    ///     .collect();
+    ///     .collect::<Result<Vec<_>, _>>()
+    ///     .expect("facet creation should succeed");
     /// assert_eq!(successful_facets.len(), 4);
     /// ```
     pub fn facet_view_iter(
@@ -1532,7 +1533,7 @@ where
     > {
         // Get the cell from the TDS using the key
         let cell = tds
-            .get_cell(cell_key)
+            .cell(cell_key)
             .ok_or(FacetError::CellNotFoundInTriangulation)?;
 
         let vertex_count = cell.number_of_vertices();
@@ -1562,11 +1563,7 @@ where
 ///
 /// **Note**: This compares cells within the same TDS context. For cross-TDS
 /// comparison, use `eq_by_vertex_uuids()` (to be added if needed).
-impl<T, U, V, const D: usize> PartialEq for Cell<T, U, V, D>
-where
-    U: DataType,
-    V: DataType,
-{
+impl<T, U, V, const D: usize> PartialEq for Cell<T, U, V, D> {
     #[inline]
     fn eq(&self, other: &Self) -> bool {
         // Fast comparison using vertex keys (just u64 comparisons)
@@ -1587,11 +1584,7 @@ where
 ///
 /// This provides a consistent ordering for cells based on their vertex keys.
 /// Fast (O(D log D)) and doesn't require TDS access.
-impl<T, U, V, const D: usize> PartialOrd for Cell<T, U, V, D>
-where
-    U: DataType,
-    V: DataType,
-{
+impl<T, U, V, const D: usize> PartialOrd for Cell<T, U, V, D> {
     #[inline]
     fn partial_cmp(&self, other: &Self) -> Option<cmp::Ordering> {
         // Fast comparison using vertex keys
@@ -1617,12 +1610,7 @@ where
 ///
 /// Maintains the Eq contract with `PartialEq`: cells with the same vertex keys
 /// are considered equal.
-impl<T, U, V, const D: usize> Eq for Cell<T, U, V, D>
-where
-    U: DataType,
-    V: DataType,
-{
-}
+impl<T, U, V, const D: usize> Eq for Cell<T, U, V, D> {}
 
 /// Phase 3A: Custom Hash implementation for Cell using sorted vertex keys.
 ///
@@ -1633,11 +1621,7 @@ where
 ///
 /// **Note**: UUID, neighbors, and data are excluded from hashing to match
 /// the `PartialEq` implementation which only compares vertex keys.
-impl<T, U, V, const D: usize> Hash for Cell<T, U, V, D>
-where
-    U: DataType,
-    V: DataType,
-{
+impl<T, U, V, const D: usize> Hash for Cell<T, U, V, D> {
     fn hash<H: Hasher>(&self, state: &mut H) {
         // Hash sorted vertex keys for consistent ordering
         // Use CellVertexBuffer for stack allocation (D+1 keys fit on stack for D ≤ 7)
@@ -1678,6 +1662,25 @@ mod tests {
     use crate::geometry::kernel::AdaptiveKernel;
     use crate::prelude::DelaunayTriangulation;
     use crate::triangulation::builder::DelaunayTriangulationBuilder;
+
+    struct NonDataType(String);
+
+    fn cell_with_non_data_type_metadata<const D: usize>(
+        vertex_ids: [u64; D],
+        data: NonDataType,
+    ) -> Cell<f64, String, NonDataType, D> {
+        Cell {
+            vertices: vertex_ids
+                .into_iter()
+                .map(|id| VertexKey::from(slotmap::KeyData::from_ffi(id)))
+                .collect(),
+            uuid: make_uuid(),
+            neighbors: None,
+            data: Some(data),
+            periodic_vertex_offsets: None,
+            _phantom: PhantomData,
+        }
+    }
 
     // =============================================================================
     // DIMENSION-PARAMETERIZED TEST MACRO
@@ -1772,6 +1775,26 @@ mod tests {
                 }
             )+
         };
+    }
+
+    #[test]
+    fn equality_ordering_and_hash_do_not_require_data_type_metadata() {
+        let cell_a = cell_with_non_data_type_metadata([1, 2, 3], NonDataType("left".to_string()));
+        let cell_b = cell_with_non_data_type_metadata([3, 2, 1], NonDataType("right".to_string()));
+        let cell_c = cell_with_non_data_type_metadata([1, 2, 4], NonDataType("other".to_string()));
+
+        assert!(cell_a == cell_b);
+        assert!(cell_a != cell_c);
+        assert_eq!(cell_a.partial_cmp(&cell_b), Some(cmp::Ordering::Equal));
+
+        let mut hash_a = DefaultHasher::new();
+        let mut hash_b = DefaultHasher::new();
+        cell_a.hash(&mut hash_a);
+        cell_b.hash(&mut hash_b);
+        assert_eq!(hash_a.finish(), hash_b.finish());
+
+        assert_eq!(cell_a.data.as_ref().unwrap().0, "left");
+        assert_eq!(cell_b.data.as_ref().unwrap().0, "right");
     }
 
     // Generate tests for dimensions 2D through 5D
@@ -1869,7 +1892,7 @@ mod tests {
             .iter()
             .map(|&vkey| {
                 dt.tds()
-                    .get_vertex_by_key(vkey)
+                    .vertex(vkey)
                     .unwrap()
                     .point()
                     .coords()
@@ -1970,7 +1993,7 @@ mod tests {
             .iter()
             .map(|&vkey| {
                 dt.tds()
-                    .get_vertex_by_key(vkey)
+                    .vertex(vkey)
                     .unwrap()
                     .point()
                     .coords()
@@ -2020,7 +2043,7 @@ mod tests {
         let cell_data: Vec<i32> = cell
             .vertices()
             .iter()
-            .map(|&vkey| dt.tds().get_vertex_by_key(vkey).unwrap().data.unwrap())
+            .map(|&vkey| dt.tds().vertex(vkey).unwrap().data.unwrap())
             .collect();
 
         for expected in &[1, 2, 3, 4] {
@@ -2157,13 +2180,13 @@ mod tests {
         let vertices_2d = create_test_vertices_2d();
         let dt_2d = DelaunayTriangulation::new(&vertices_2d).unwrap();
         let cell_key_2d = dt_2d.tds().cell_keys().next().unwrap();
-        let triangle = dt_2d.tds().get_cell(cell_key_2d).unwrap();
+        let triangle = dt_2d.tds().cell(cell_key_2d).unwrap();
         assert_eq!(triangle.number_of_vertices(), 3);
 
         let vertices_3d = create_test_vertices_3d();
         let dt_3d = DelaunayTriangulation::new(&vertices_3d).unwrap();
         let cell_key_3d = dt_3d.tds().cell_keys().next().unwrap();
-        let tetrahedron = dt_3d.tds().get_cell(cell_key_3d).unwrap();
+        let tetrahedron = dt_3d.tds().cell(cell_key_3d).unwrap();
         assert_eq!(tetrahedron.number_of_vertices(), 4);
     }
 
@@ -2292,13 +2315,13 @@ mod tests {
         let vertices_2d = create_test_vertices_2d();
         let dt_2d = DelaunayTriangulation::new(&vertices_2d).unwrap();
         let cell_key_2d = dt_2d.tds().cell_keys().next().unwrap();
-        let triangle = dt_2d.tds().get_cell(cell_key_2d).unwrap();
+        let triangle = dt_2d.tds().cell(cell_key_2d).unwrap();
         assert_eq!(triangle.dim(), 2);
 
         let vertices_3d = create_test_vertices_3d();
         let dt_3d = DelaunayTriangulation::new(&vertices_3d).unwrap();
         let cell_key_3d = dt_3d.tds().cell_keys().next().unwrap();
-        let tetrahedron = dt_3d.tds().get_cell(cell_key_3d).unwrap();
+        let tetrahedron = dt_3d.tds().cell(cell_key_3d).unwrap();
         assert_eq!(tetrahedron.dim(), 3);
     }
 
@@ -2315,7 +2338,7 @@ mod tests {
             DelaunayTriangulation::with_kernel(&AdaptiveKernel::new(), &vertices).unwrap();
 
         let cell_key = dt.cells().next().unwrap().0;
-        let cell = &dt.tds().get_cell(cell_key).unwrap();
+        let cell = &dt.tds().cell(cell_key).unwrap();
 
         // Get vertex keys from DT
         let vertex_keys: Vec<_> = dt.tds().vertices().map(|(k, _)| k).collect();
@@ -2382,7 +2405,7 @@ mod tests {
             DelaunayTriangulation::with_kernel(&AdaptiveKernel::new(), &vertices).unwrap();
 
         let cell_key = dt.cells().next().unwrap().0;
-        let cell = &dt.tds().get_cell(cell_key).unwrap();
+        let cell = &dt.tds().cell(cell_key).unwrap();
 
         // Get vertex UUIDs
         let vertex_uuids = cell.vertex_uuids(dt.tds()).unwrap();
@@ -2433,7 +2456,7 @@ mod tests {
         let dt: DelaunayTriangulation<AdaptiveKernel<f64>, i32, (), 2> =
             DelaunayTriangulation::with_kernel(&AdaptiveKernel::new(), &vertices).unwrap();
         let cell_key = dt.cells().next().unwrap().0;
-        let cell = &dt.tds().get_cell(cell_key).unwrap();
+        let cell = &dt.tds().cell(cell_key).unwrap();
 
         // Get vertex UUIDs
         let vertex_uuids = cell.vertex_uuids(dt.tds()).unwrap();
@@ -2472,7 +2495,7 @@ mod tests {
         let dt: DelaunayTriangulation<AdaptiveKernel<f64>, i32, (), 4> =
             DelaunayTriangulation::with_kernel(&AdaptiveKernel::new(), &vertices).unwrap();
         let cell_key = dt.cells().next().unwrap().0;
-        let cell = &dt.tds().get_cell(cell_key).unwrap();
+        let cell = &dt.tds().cell(cell_key).unwrap();
 
         // Get vertex UUIDs
         let vertex_uuids = cell.vertex_uuids(dt.tds()).unwrap();
@@ -2493,7 +2516,7 @@ mod tests {
         let vertex_data: Vec<i32> = cell
             .vertices()
             .iter()
-            .map(|&vkey| dt.tds().get_vertex_by_key(vkey).unwrap().data.unwrap())
+            .map(|&vkey| dt.tds().vertex(vkey).unwrap().data.unwrap())
             .collect();
 
         for expected in 1..=5 {
@@ -2526,7 +2549,7 @@ mod tests {
         let dt: DelaunayTriangulation<AdaptiveKernel<f32>, (), (), 3> =
             DelaunayTriangulation::with_kernel(&AdaptiveKernel::new(), &vertices).unwrap();
         let cell_key = dt.cells().next().unwrap().0;
-        let cell = &dt.tds().get_cell(cell_key).unwrap();
+        let cell = &dt.tds().cell(cell_key).unwrap();
 
         // Get vertex UUIDs
         let vertex_uuids = cell.vertex_uuids(dt.tds()).unwrap();
@@ -2534,7 +2557,7 @@ mod tests {
 
         // Verify coordinate type is preserved
         let first_vertex_key = cell.vertices()[0];
-        let first_vertex = &dt.tds().get_vertex_by_key(first_vertex_key).unwrap();
+        let first_vertex = &dt.tds().vertex(first_vertex_key).unwrap();
         assert_relative_eq!(
             first_vertex.point().coords()[0],
             0.0f32,
@@ -2746,9 +2769,10 @@ mod tests {
         assert!(serialized.contains("vertices"));
         assert!(serialized.contains("cells"));
 
-        // Deserialize back to DT via from_tds (AdaptiveKernel has no auto-Deserialize).
+        // Deserialize back to DT via try_from_tds (AdaptiveKernel has no auto-Deserialize).
         let tds: crate::core::tds::Tds<f64, (), (), 3> = serde_json::from_str(&serialized).unwrap();
-        let deserialized = DelaunayTriangulation::from_tds(tds, AdaptiveKernel::new());
+        let deserialized = DelaunayTriangulation::try_from_tds(tds, AdaptiveKernel::new())
+            .expect("serialized Delaunay TDS should validate");
 
         // Verify DT properties match
         assert_eq!(deserialized.number_of_vertices(), dt.number_of_vertices());
@@ -2918,13 +2942,13 @@ mod tests {
         let vertices = vec![vertex1, vertex2, vertex3];
         let dt = DelaunayTriangulation::new(&vertices).unwrap();
         let cell_key = dt.cells().next().unwrap().0;
-        let cell = &dt.tds().get_cell(cell_key).unwrap();
+        let cell = &dt.tds().cell(cell_key).unwrap();
 
         // Resolve VertexKeys to actual vertices
         let vertex_points: Vec<Point<f64, 2>> = cell
             .vertices()
             .iter()
-            .map(|vk| *dt.tds().get_vertex_by_key(*vk).unwrap().point())
+            .map(|vk| *dt.tds().vertex(*vk).unwrap().point())
             .collect();
         let circumradius = circumradius(&vertex_points).unwrap();
 
@@ -2944,7 +2968,7 @@ mod tests {
         let vertices = vec![vertex1, vertex2, vertex3, vertex4];
         let dt = DelaunayTriangulation::new(&vertices).unwrap();
         let cell_key = dt.cells().next().unwrap().0;
-        let cell = &dt.tds().get_cell(cell_key).unwrap();
+        let cell = &dt.tds().cell(cell_key).unwrap();
 
         // Create a vertex key for the outside vertex - it won't be in the cell
         let outside_key = dt.tds().vertex_key_from_uuid(&vertex_outside.uuid());
@@ -2964,7 +2988,7 @@ mod tests {
         let dt: DelaunayTriangulation<AdaptiveKernel<f64>, i32, (), 3> =
             DelaunayTriangulation::with_kernel(&AdaptiveKernel::new(), &vertices).unwrap();
         let cell_key = dt.cells().next().unwrap().0;
-        let cell = &dt.tds().get_cell(cell_key).unwrap();
+        let cell = &dt.tds().cell(cell_key).unwrap();
 
         // Test vertex clearly outside circumsphere
         let vertex_far_outside: Vertex<f64, i32, 3> = vertex!([10.0, 10.0, 10.0], 4);
@@ -2972,7 +2996,7 @@ mod tests {
         let vertex_points: Vec<Point<f64, 3>> = cell
             .vertices()
             .iter()
-            .map(|vk| *dt.tds().get_vertex_by_key(*vk).unwrap().point())
+            .map(|vk| *dt.tds().vertex(*vk).unwrap().point())
             .collect();
         let result = insphere(&vertex_points, *vertex_far_outside.point());
         assert!(result.is_ok());
@@ -2982,7 +3006,7 @@ mod tests {
         let vertex_points: Vec<Point<f64, 3>> = cell
             .vertices()
             .iter()
-            .map(|vk| *dt.tds().get_vertex_by_key(*vk).unwrap().point())
+            .map(|vk| *dt.tds().vertex(*vk).unwrap().point())
             .collect();
         let result_origin = insphere(&vertex_points, *origin.point());
         assert!(result_origin.is_ok());
@@ -2998,14 +3022,14 @@ mod tests {
         let vertices = vec![vertex1, vertex2, vertex3];
         let dt = DelaunayTriangulation::new(&vertices).unwrap();
         let cell_key = dt.cells().next().unwrap().0;
-        let cell = &dt.tds().get_cell(cell_key).unwrap();
+        let cell = &dt.tds().cell(cell_key).unwrap();
 
         // Test vertex far outside circumcircle
         let vertex_far_outside: Vertex<f64, (), 2> = vertex!([10.0, 10.0]);
         let vertex_points: Vec<Point<f64, 2>> = cell
             .vertices()
             .iter()
-            .map(|vk| *dt.tds().get_vertex_by_key(*vk).unwrap().point())
+            .map(|vk| *dt.tds().vertex(*vk).unwrap().point())
             .collect();
         let result = insphere(&vertex_points, *vertex_far_outside.point());
         assert!(result.is_ok());
@@ -3015,7 +3039,7 @@ mod tests {
         let vertex_points: Vec<Point<f64, 2>> = cell
             .vertices()
             .iter()
-            .map(|vk| *dt.tds().get_vertex_by_key(*vk).unwrap().point())
+            .map(|vk| *dt.tds().vertex(*vk).unwrap().point())
             .collect();
         let result_center = insphere(&vertex_points, *center.point());
         assert!(result_center.is_ok());
@@ -3032,12 +3056,12 @@ mod tests {
         let vertices = vec![vertex1, vertex2, vertex3, vertex4];
         let dt = DelaunayTriangulation::new(&vertices).unwrap();
         let cell_key = dt.cells().next().unwrap().0;
-        let cell = &dt.tds().get_cell(cell_key).unwrap();
+        let cell = &dt.tds().cell(cell_key).unwrap();
 
         let vertex_points: Vec<Point<f64, 3>> = cell
             .vertices()
             .iter()
-            .map(|vk| *dt.tds().get_vertex_by_key(*vk).unwrap().point())
+            .map(|vk| *dt.tds().vertex(*vk).unwrap().point())
             .collect();
 
         let circumcenter = circumcenter(&vertex_points).unwrap();
@@ -3077,7 +3101,7 @@ mod tests {
         }
 
         // Verify opposite vertices are correct
-        let cell = dt.tds().get_cell(cell_key).unwrap();
+        let cell = dt.tds().cell(cell_key).unwrap();
         for (i, facet_view) in facet_views.iter().enumerate() {
             let opposite_vertex = facet_view
                 .opposite_vertex()
@@ -3173,7 +3197,7 @@ mod tests {
         let vertices = vec![vertex1, vertex2, vertex3, vertex4, vertex5, vertex6];
         let dt = DelaunayTriangulation::new(&vertices).unwrap();
         let cell_key = dt.cells().next().unwrap().0;
-        let cell = &dt.tds().get_cell(cell_key).unwrap();
+        let cell = &dt.tds().cell(cell_key).unwrap();
 
         assert_eq!(cell.number_of_vertices(), 6);
         assert_eq!(cell.dim(), 5);
@@ -3203,13 +3227,13 @@ mod tests {
             cell.data = Some(42u32);
         }
 
-        let cell = &dt.tds().get_cell(cell_key).unwrap();
+        let cell = &dt.tds().cell(cell_key).unwrap();
 
         // Verify all expected vertex data values exist (order-independent)
         let vertex_data: Vec<i32> = cell
             .vertices()
             .iter()
-            .map(|&vkey| dt.tds().get_vertex_by_key(vkey).unwrap().data.unwrap())
+            .map(|&vkey| dt.tds().vertex(vkey).unwrap().data.unwrap())
             .collect();
 
         for expected in 1..=4 {
@@ -3502,7 +3526,7 @@ mod tests {
 
         // Grab a stable key we can duplicate to inflate the vertex buffer.
         let vkey0 = {
-            let cell = dt.tds().get_cell(cell_key).unwrap();
+            let cell = dt.tds().cell(cell_key).unwrap();
             cell.vertices()[0]
         };
 
@@ -3668,7 +3692,9 @@ mod tests {
         let facet_iter3 =
             Cell::facet_view_iter(dt.tds(), cell_key).expect("Failed to get third facet iterator");
 
-        let successful_facets: Vec<_> = facet_iter3.filter_map(Result::ok).collect();
+        let successful_facets: Vec<_> = facet_iter3
+            .collect::<Result<Vec<_>, _>>()
+            .expect("all facets should be created successfully");
         assert_eq!(
             successful_facets.len(),
             4,
@@ -3727,7 +3753,7 @@ mod tests {
         let uuid_values: Vec<Uuid> = cell
             .vertices()
             .iter()
-            .map(|&vkey| dt.tds().get_vertex_by_key(vkey).unwrap().uuid())
+            .map(|&vkey| dt.tds().vertex(vkey).unwrap().uuid())
             .collect();
         let uuid_refs: Vec<&Uuid> = uuid_values.iter().collect();
         let first_uuid_ref = uuid_refs[0];
@@ -3757,7 +3783,7 @@ mod tests {
             let uuid_values: Vec<Uuid> = cell
                 .vertices()
                 .iter()
-                .map(|&vkey| dt.tds().get_vertex_by_key(vkey).unwrap().uuid())
+                .map(|&vkey| dt.tds().vertex(vkey).unwrap().uuid())
                 .collect();
             for uuid_ref in &uuid_values {
                 if *uuid_ref != Uuid::nil() {
@@ -3831,11 +3857,11 @@ mod tests {
         let key = dt.cells().next().unwrap().0;
 
         // No data initially
-        assert_eq!(dt.tds().get_cell(key).unwrap().data(), None);
+        assert_eq!(dt.tds().cell(key).unwrap().data(), None);
 
         // Set data and verify via accessor
         dt.set_cell_data(key, Some(99));
-        assert_eq!(dt.tds().get_cell(key).unwrap().data(), Some(&99));
+        assert_eq!(dt.tds().cell(key).unwrap().data(), Some(&99));
     }
 
     #[test]

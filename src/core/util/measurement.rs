@@ -21,24 +21,27 @@
 ///
 /// # Panics
 ///
-/// This function should never panic under normal usage. The internal `expect()` call
-/// is used because the closure is guaranteed to execute and set the result.
+/// Panics if `f` panics. The internal `expect()` call is used because a
+/// normally returning closure is guaranteed to set the result.
 ///
 /// # Examples
 ///
-/// ```rust,ignore
-/// // With count-allocations feature enabled
+/// ```rust
 /// use delaunay::prelude::tds::measure_with_result;
 ///
 /// let (result, alloc_info) = measure_with_result(|| {
-///     // Some memory-allocating operation
 ///     vec![1, 2, 3, 4, 5]
 /// });
+/// assert_eq!(result, vec![1, 2, 3, 4, 5]);
 ///
 /// #[cfg(feature = "count-allocations")]
-/// println!("Allocated {} bytes", alloc_info.bytes_total);
+/// assert!(alloc_info.bytes_total > 0);
+///
+/// #[cfg(not(feature = "count-allocations"))]
+/// let _: () = alloc_info;
 /// ```
 #[cfg(feature = "count-allocations")]
+#[cfg_attr(docsrs, doc(cfg(feature = "count-allocations")))]
 pub fn measure_with_result<F, R>(f: F) -> (R, allocation_counter::AllocationInfo)
 where
     F: FnOnce() -> R,

@@ -15,6 +15,10 @@ readme = "README.md"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
+[package.metadata.docs.rs]
+all-features = true
+rustdoc-args = [ "--cfg", "docsrs" ]
+
 [dependencies]
 allocation-counter = { version = "0.8.1", optional = true } # for memory profiling
 arc-swap = "1.9.1"
@@ -40,15 +44,10 @@ sysinfo = "0.38.4" # Process memory monitoring for benchmarks
 tracing-subscriber = { version = "0.3.23", features = [ "env-filter" ] }
 
 [features]
-# Default feature set: prefer DenseSlotMap for better construction + iteration performance.
-# Use `--no-default-features` to benchmark or run with SlotMap.
-default = [ "dense-slotmap" ]
-
-count-allocations = [ "allocation-counter" ]
+count-allocations = [ "dep:allocation-counter" ]
 bench = [  ] # Enable benchmark-style tests and performance analysis
 bench-logging = [  ] # Enable extra benchmark logging for CI diagnostics
 diagnostics = [  ] # Enable opt-in diagnostic helpers and verbose test diagnostics
-dense-slotmap = [  ] # Use DenseSlotMap-backed internal storage (default)
 slow-tests = [
 ] # Enable slow-running integration tests (100+ vertices, multiple dimensions)
 
@@ -99,6 +98,11 @@ warnings = { level = "deny", priority = -1 }
 unsafe_code = "forbid"
 dead_code = { level = "warn", priority = 0 }
 missing_docs = { level = "warn", priority = 0 }
+unexpected_cfgs = { level = "warn", check-cfg = [ "cfg(docsrs)" ] }
+
+[lints.rustdoc]
+bare_urls = "deny"
+broken_intra_doc_links = "deny"
 
 [lints.clippy]
 extra_unused_type_parameters = "warn"

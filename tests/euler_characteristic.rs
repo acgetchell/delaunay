@@ -220,7 +220,7 @@ fn test_5d_single_simplex() {
 // =============================================================================
 
 #[test]
-fn test_2d_toroidal_explicit_construction_chi_zero() {
+fn test_2d_toroidal_explicit_construction_rejected() {
     use delaunay::topology::traits::topological_space::{GlobalTopology, ToroidalConstructionMode};
     use delaunay::triangulation::builder::DelaunayTriangulationBuilder;
 
@@ -255,28 +255,28 @@ fn test_2d_toroidal_explicit_construction_chi_zero() {
         }
     }
 
-    // Without global_topology, this would fail with:
-    //   "Euler characteristic mismatch: computed χ=0, expected χ=2 for ClosedSphere(2)"
-    let dt = DelaunayTriangulationBuilder::from_vertices_and_cells(&vertices, &cells)
+    let err = DelaunayTriangulationBuilder::from_vertices_and_cells(&vertices, &cells)
         .global_topology(GlobalTopology::Toroidal {
             domain: [1.0, 1.0],
             mode: ToroidalConstructionMode::Explicit,
         })
         .topology_guarantee(TopologyGuarantee::Pseudomanifold)
         .build::<()>()
-        .expect("toroidal explicit construction should succeed with χ=0");
+        .expect_err("explicit toroidal connectivity requires a Level 4 quotient validator");
 
-    assert_eq!(dt.number_of_vertices(), 9);
-    assert_eq!(dt.number_of_cells(), 18);
-    assert!(dt.global_topology().is_toroidal());
-
-    // Verify χ = 0 via the topology module.
-    let result = validation::validate_triangulation_euler(dt.tds()).unwrap();
-    assert_eq!(result.chi, 0, "T² should have χ = 0");
+    match err {
+        DelaunayTriangulationConstructionError::ExplicitConstruction(
+            ExplicitConstructionError::ValidationFailed { message },
+        ) => assert!(
+            message.contains("Explicit non-Euclidean connectivity is not supported"),
+            "unexpected validation message: {message}"
+        ),
+        other => panic!("expected explicit construction validation failure, got {other:?}"),
+    }
 }
 
 #[test]
-fn test_3d_toroidal_explicit_construction_chi_zero() {
+fn test_3d_toroidal_explicit_construction_rejected() {
     use delaunay::topology::traits::topological_space::{GlobalTopology, ToroidalConstructionMode};
     use delaunay::triangulation::builder::DelaunayTriangulationBuilder;
 
@@ -343,25 +343,24 @@ fn test_3d_toroidal_explicit_construction_chi_zero() {
         }
     }
 
-    let dt = DelaunayTriangulationBuilder::from_vertices_and_cells(&vertices, &cells)
+    let err = DelaunayTriangulationBuilder::from_vertices_and_cells(&vertices, &cells)
         .global_topology(GlobalTopology::Toroidal {
             domain: [1.0, 1.0, 1.0],
             mode: ToroidalConstructionMode::Explicit,
         })
         .topology_guarantee(TopologyGuarantee::Pseudomanifold)
         .build::<()>()
-        .expect("T³ explicit construction should succeed with χ=0");
+        .expect_err("explicit toroidal connectivity requires a Level 4 quotient validator");
 
-    assert_eq!(dt.number_of_vertices(), 27);
-    assert_eq!(dt.number_of_cells(), 162);
-    assert!(dt.global_topology().is_toroidal());
-
-    let result = validation::validate_triangulation_euler(dt.tds()).unwrap();
-    assert_eq!(result.counts.count(0), 27, "V = 27");
-    assert_eq!(result.counts.count(1), 189, "E = 189");
-    assert_eq!(result.counts.count(2), 324, "F = 324");
-    assert_eq!(result.counts.count(3), 162, "C = 162");
-    assert_eq!(result.chi, 0, "T³ should have χ = 0");
+    match err {
+        DelaunayTriangulationConstructionError::ExplicitConstruction(
+            ExplicitConstructionError::ValidationFailed { message },
+        ) => assert!(
+            message.contains("Explicit non-Euclidean connectivity is not supported"),
+            "unexpected validation message: {message}"
+        ),
+        other => panic!("expected explicit construction validation failure, got {other:?}"),
+    }
 }
 
 // =============================================================================

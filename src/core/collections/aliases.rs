@@ -1,12 +1,6 @@
 use rustc_hash::{FxBuildHasher, FxHashMap, FxHashSet, FxHasher};
-use smallvec::SmallVec;
-
-// Import slotmap types for storage backend
-#[cfg(not(feature = "dense-slotmap"))]
-use slotmap::SlotMap;
-
-#[cfg(feature = "dense-slotmap")]
 use slotmap::DenseSlotMap;
+use smallvec::SmallVec;
 
 /// Compact index type for facet positions within a cell.
 ///
@@ -44,16 +38,9 @@ pub use uuid::Uuid;
 
 /// Internal storage backend for triangulation data structures.
 ///
-/// This type alias abstracts over the concrete storage implementation,
-/// allowing the choice between `DenseSlotMap` (**default**) and `SlotMap`
-/// (when built with `--no-default-features`) without exposing the choice
-/// in public APIs.
-///
-/// # Feature Flags
-///
-/// - **default**: Uses `DenseSlotMap` (enabled via the default `dense-slotmap` feature)
-/// - **--no-default-features**: Uses `SlotMap` for comparison and experimentation
-/// - **dense-slotmap**: Explicitly selects `DenseSlotMap` (redundant with defaults)
+/// This type alias keeps the concrete storage implementation out of public
+/// API signatures while using `DenseSlotMap` unconditionally for construction
+/// and iteration locality.
 ///
 /// # Internal Use Only
 ///
@@ -67,10 +54,6 @@ pub use uuid::Uuid;
 /// // Internal use - not exposed in public API
 /// let vertices: StorageMap<VertexKey, Vertex<f64, (), 3>> = StorageMap::with_key();
 /// ```
-#[cfg(not(feature = "dense-slotmap"))]
-pub type StorageMap<K, V> = SlotMap<K, V>;
-
-#[cfg(feature = "dense-slotmap")]
 pub type StorageMap<K, V> = DenseSlotMap<K, V>;
 
 // =============================================================================

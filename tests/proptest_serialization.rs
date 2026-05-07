@@ -60,11 +60,12 @@ macro_rules! test_serialization_properties {
                         // Serialize to JSON
                         let json = serde_json::to_string(&dt).expect("Serialization failed");
 
-                        // Deserialize from JSON via from_tds
+                        // Deserialize from JSON via try_from_tds
                         let tds: Tds<f64, (), (), $dim> =
                             serde_json::from_str(&json).expect("Deserialization failed");
                         let deserialized: DefaultDt<$dim> =
-                            DelaunayTriangulation::from_tds(tds, AdaptiveKernel::new());
+                            DelaunayTriangulation::try_from_tds(tds, AdaptiveKernel::new())
+                                .expect("serialized Delaunay TDS should validate");
 
                         // Verify structure preservation
                         prop_assert_eq!(
@@ -102,12 +103,13 @@ macro_rules! test_serialization_properties {
                         TopologyGuarantee::PLManifold,
                     ) {
                         if dt.tds().validate().is_ok() {
-                            // Serialize and deserialize via from_tds
+                            // Serialize and deserialize via try_from_tds
                             let json = serde_json::to_string(&dt).expect("Serialization failed");
                             let tds: Tds<f64, (), (), $dim> =
                                 serde_json::from_str(&json).expect("Deserialization failed");
                             let deserialized: DefaultDt<$dim> =
-                                DelaunayTriangulation::from_tds(tds, AdaptiveKernel::new());
+                                DelaunayTriangulation::try_from_tds(tds, AdaptiveKernel::new())
+                                    .expect("serialized Delaunay TDS should validate");
 
                             // Deserialized triangulation should also be valid
                             prop_assert!(
@@ -144,12 +146,13 @@ macro_rules! test_serialization_properties {
                             .map(|(_, v)| *v.point())
                             .collect();
 
-                        // Serialize and deserialize via from_tds
+                        // Serialize and deserialize via try_from_tds
                         let json = serde_json::to_string(&dt).expect("Serialization failed");
                         let tds: Tds<f64, (), (), $dim> =
                             serde_json::from_str(&json).expect("Deserialization failed");
                         let deserialized: DefaultDt<$dim> =
-                            DelaunayTriangulation::from_tds(tds, AdaptiveKernel::new());
+                            DelaunayTriangulation::try_from_tds(tds, AdaptiveKernel::new())
+                                .expect("serialized Delaunay TDS should validate");
 
                         // Collect deserialized vertex points
                         let deserialized_points: Vec<_> = deserialized.vertices()
@@ -201,12 +204,13 @@ macro_rules! test_serialization_properties {
                             }
                         }
 
-                        // Serialize and deserialize via from_tds
+                        // Serialize and deserialize via try_from_tds
                         let json = serde_json::to_string(&dt).expect("Serialization failed");
                         let tds: Tds<f64, (), (), $dim> =
                             serde_json::from_str(&json).expect("Deserialization failed");
                         let deserialized: DefaultDt<$dim> =
-                            DelaunayTriangulation::from_tds(tds, AdaptiveKernel::new());
+                            DelaunayTriangulation::try_from_tds(tds, AdaptiveKernel::new())
+                                .expect("serialized Delaunay TDS should validate");
 
                         // Count deserialized neighbor relationships
                         let mut deserialized_neighbor_count = 0;

@@ -193,6 +193,10 @@ just ci
 
 Refer to `docs/dev/commands.md` for full details.
 
+For tooling-alignment work, update `docs/dev/tooling-alignment.md` with the
+comparison and rationale before adding or changing config, workflow, or
+repository-rule files.
+
 ---
 
 ## Project Context
@@ -302,12 +306,11 @@ degenerate input, and tests under `tests/proptest_sos.rs` enforce that.
   No runtime dimension.
 - Per‑simplex data is stack‑allocated (`[T; D]` coordinates,
   `SmallBuffer<VertexKey, MAX_PRACTICAL_DIMENSION_SIZE>`).  The
-  triangulation's topology is stored in `SlotMap` — heap‑backed by
+  triangulation's topology is stored in `DenseSlotMap` — heap‑backed by
   necessity, not by accident.
 - Feature flags isolate optional dependency weight.  Default builds stay
-  dep‑minimal.  Known flags: `dense-slotmap` (default),
-  `count-allocations`, `bench`, `bench-logging`, `diagnostics`,
-  `slow-tests`.
+  dep‑minimal.  Known flags: `count-allocations`, `bench`, `bench-logging`,
+  `diagnostics`, `slow-tests`.
 
 ### Idiomatic Rust as a proxy for mathematical clarity
 
@@ -361,7 +364,7 @@ degenerate input, and tests under `tests/proptest_sos.rs` enforce that.
   invariant.
 - **In scope**: d‑dimensional Delaunay triangulations for small‑to‑medium
   dimensions (typically 2 ≤ D ≤ 7), single‑threaded in‑memory
-  construction, `SlotMap`‑backed topology, Hilbert‑ordered insertion.
+  construction, `DenseSlotMap`‑backed topology, Hilbert‑ordered insertion.
 - **Out of scope**: massively parallel / GPU meshing, out‑of‑core
   triangulations, sparse sampling, dynamic remeshing at scale.  Those
   belong to specialised tools (CGAL, TetGen, Gmsh).

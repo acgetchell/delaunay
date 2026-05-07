@@ -34,6 +34,7 @@ Typical development loop:
 ```bash
 just fix
 just check
+just check-fast
 just test
 just ci
 ```
@@ -103,14 +104,14 @@ just check
 `just check` is the non-mutating lint/validator bundle. It does not run tests,
 examples, or benchmarks.
 
-`just check` runs the default DenseSlotMap backend checks and an
-`--all-features` pass. The justfile runs Clippy for the default feature set and
-for `--all-features`; the legacy SlotMap backend is kept as an optional
-compatibility canary. Run it explicitly with:
+`just check-fast` is the cheapest compile-only check:
 
 ```bash
-just check-storage-backends
+just check-fast
 ```
+
+`just check` runs the default checks plus an `--all-features` pass. DenseSlotMap
+is the only supported storage backend.
 
 ---
 
@@ -290,6 +291,7 @@ just action-lint
 |-----|-----|
 | Format code | `just fix` |
 | Run lints | `just check` |
+| Fast compile check | `just check-fast` |
 | Run tests + compile smoke | `just test` |
 | Run unit/doc tests only | `just test-unit` |
 | Run integration tests | `just test-integration` |
@@ -310,8 +312,7 @@ CI enforces:
 - tests
 
 Rust warnings are denied by the manifest lint policy and Clippy warnings are
-denied by the `just clippy` invocations. `just check-storage-backends` separately
-checks the SlotMap backend with `--no-default-features`. Keep any intentional warning-level
+denied by the `just clippy` invocations. Keep any intentional warning-level
 exceptions explicit in `Cargo.toml`.
 
 Agents must ensure changes pass CI locally before proposing patches.
@@ -328,4 +329,21 @@ Regenerate with:
 
 ```bash
 just changelog
+```
+
+This runs `git-cliff`, applies the Python postprocessor, and archives completed
+minor release series under `docs/archive/changelog/`.
+
+For release PRs, generate the changelog for a version before the final tag
+exists with:
+
+```bash
+just changelog-unreleased v0.7.7
+```
+
+Create annotated release tags from the generated changelog after the release PR
+is merged with:
+
+```bash
+just tag v0.7.7
 ```

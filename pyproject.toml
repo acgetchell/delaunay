@@ -39,7 +39,6 @@ dependencies = [ "packaging" ]
 [project.scripts]
 archive-changelog = "archive_changelog:main"
 benchmark-utils = "benchmark_utils:main"
-compare-storage-backends = "compare_storage_backends:main"
 hardware-utils = "hardware_utils:main"
 postprocess-changelog = "postprocess_changelog:main"
 tag-release = "tag_release:main"
@@ -50,7 +49,6 @@ package-dir = { "" = "scripts" }
 py-modules = [
     "archive_changelog",
     "benchmark_utils",
-    "compare_storage_backends",
     "hardware_utils",
     "postprocess_changelog",
     "subprocess_utils",
@@ -173,7 +171,6 @@ max-complexity = 10
 known-first-party = [
     "archive_changelog",
     "benchmark_utils",
-    "compare_storage_backends",
     "hardware_utils",
     "postprocess_changelog",
     "subprocess_utils",

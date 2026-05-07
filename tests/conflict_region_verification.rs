@@ -11,10 +11,10 @@
 #![forbid(unsafe_code)]
 #![cfg(feature = "diagnostics")]
 
-use delaunay::core::algorithms::locate::{LocateResult, find_conflict_region, locate};
-use delaunay::geometry::kernel::AdaptiveKernel;
-use delaunay::geometry::util::generate_random_points_in_ball_seeded;
+use delaunay::prelude::algorithms::{LocateResult, find_conflict_region, locate};
 use delaunay::prelude::diagnostics::verify_conflict_region_completeness;
+use delaunay::prelude::generators::generate_random_points_in_ball_seeded;
+use delaunay::prelude::geometry::AdaptiveKernel;
 use delaunay::prelude::triangulation::*;
 
 /// Verify that `verify_conflict_region_completeness` runs without panicking on

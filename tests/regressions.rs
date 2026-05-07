@@ -5,13 +5,11 @@
 //! feature flags, or profile isolation.
 
 #[cfg(feature = "diagnostics")]
-use delaunay::core::util::debug_print_first_delaunay_violation;
-use delaunay::geometry::kernel::RobustKernel;
-use delaunay::geometry::point::Point;
-use delaunay::geometry::util::generate_random_points_in_ball_seeded;
+use delaunay::prelude::diagnostics::debug_print_first_delaunay_violation;
+use delaunay::prelude::generators::generate_random_points_in_ball_seeded;
+use delaunay::prelude::geometry::{Point, RobustKernel};
 use delaunay::prelude::ordering::{hilbert_indices_prequantized, hilbert_quantize};
 use delaunay::prelude::triangulation::*;
-use delaunay::triangulation::delaunay::{ConstructionOptions, InsertionOrderStrategy, RetryPolicy};
 
 /// Replays a full Hilbert ordering while keeping only the prefix that first
 /// exposed issue #307, so the regression stays fast and deterministic.
@@ -171,13 +169,14 @@ fn regression_issue_307_4d_bulk_repair_keeps_positive_orientation() {
     let options = ConstructionOptions::default()
         .with_insertion_order(InsertionOrderStrategy::Input)
         .with_retry_policy(RetryPolicy::Disabled);
-    let (dt, stats) = DelaunayTriangulation::<RobustKernel<f64>, (), (), 4>::with_topology_guarantee_and_options_with_construction_statistics(
-        &kernel,
-        &vertices,
-        TopologyGuarantee::PLManifoldStrict,
-        options,
-    )
-    .expect("4D bulk construction should not fail after repair orientation cleanup");
+    let (dt, stats) =
+        DelaunayTriangulation::<RobustKernel<f64>, (), (), 4>::with_options_and_statistics(
+            &kernel,
+            &vertices,
+            TopologyGuarantee::PLManifoldStrict,
+            options,
+        )
+        .expect("4D bulk construction should not fail after repair orientation cleanup");
 
     assert_eq!(
         stats.inserted,

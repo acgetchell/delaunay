@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from typing import TYPE_CHECKING
 
 import pytest
@@ -109,6 +110,28 @@ class TestVersionSortKey:
             "0.6.1",
             "0.7.2",
             "unreleased",
+        ]
+
+    def test_prerelease_labels_stay_semantic(self) -> None:
+        labels = ["1.2.3", "1.2.3-rc.10", "1.2.3-rc.2", "1.2.3-alpha.1", "unreleased"]
+        assert sorted(labels, key=_version_sort_key) == [
+            "1.2.3-alpha.1",
+            "1.2.3-rc.2",
+            "1.2.3-rc.10",
+            "1.2.3",
+            "unreleased",
+        ]
+
+    def test_build_metadata_is_ignored_for_sorting(self) -> None:
+        labels = [
+            "1.2.3-rc.1+build.7",
+            "1.2.3+build.7",
+            "1.2.3-alpha.1+build.7",
+        ]
+        assert sorted(labels, key=_version_sort_key) == [
+            "1.2.3-alpha.1+build.7",
+            "1.2.3-rc.1+build.7",
+            "1.2.3+build.7",
         ]
 
     def test_reverse_unreleased_first(self) -> None:
@@ -284,6 +307,21 @@ class TestArchiveChangelog:
         a06 = (archive_dir / "0.6.md").read_text(encoding="utf-8")
         assert "## [0.6.2]" in a06
         assert "## [0.6.1]" in a06
+
+    def test_archive_dir_outside_changelog_tree_uses_relative_link(self, tmp_path: Path, caplog: pytest.LogCaptureFixture) -> None:
+        changelog_dir = tmp_path / "repo"
+        changelog_dir.mkdir()
+        changelog = changelog_dir / "CHANGELOG.md"
+        changelog.write_text(_full_changelog(), encoding="utf-8")
+        archive_dir = tmp_path / "outside" / "archive"
+
+        with caplog.at_level(logging.WARNING, logger="archive_changelog"):
+            archive_changelog(changelog, archive_dir)
+
+        root = changelog.read_text(encoding="utf-8")
+        assert "- [0.6.x](../outside/archive/0.6.md)" in root
+        assert str(archive_dir) in caplog.text
+        assert str(changelog_dir) in caplog.text
 
     def test_idempotent(self, tmp_path: Path) -> None:
         """Running archive twice produces the same output."""

@@ -523,14 +523,14 @@ fn build_flip_dt_4d() -> FlipTriangulation4 {
 fn cell_centroid_4d(dt: &FlipTriangulation4, cell_key: CellKey) -> [f64; 4] {
     let cell = dt
         .tds()
-        .get_cell(cell_key)
+        .cell(cell_key)
         .expect("cell key should exist in benchmark triangulation");
 
     let mut coords = [0.0_f64; 4];
     for &vkey in cell.vertices() {
         let vertex = dt
             .tds()
-            .get_vertex_by_key(vkey)
+            .vertex(vkey)
             .expect("vertex key should exist in benchmark triangulation");
         let vcoords = vertex.point().coords();
         for i in 0..4 {
@@ -550,14 +550,14 @@ fn cell_centroid_4d(dt: &FlipTriangulation4, cell_key: CellKey) -> [f64; 4] {
 fn cell_points_4d(dt: &FlipTriangulation4, cell_key: CellKey) -> Vec<Point<f64, 4>> {
     let cell = dt
         .tds()
-        .get_cell(cell_key)
+        .cell(cell_key)
         .expect("cell key should exist in benchmark triangulation");
 
     cell.vertices()
         .iter()
         .map(|vertex_key| {
             *dt.tds()
-                .get_vertex_by_key(*vertex_key)
+                .vertex(*vertex_key)
                 .expect("vertex key should exist in benchmark triangulation")
                 .point()
         })

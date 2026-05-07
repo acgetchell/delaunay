@@ -3,7 +3,7 @@
 This directory contains performance benchmarks for the delaunay library, organized by purpose:
 
 - **CI Regression Detection**: Fast benchmarks for every PR
-- **Phase 4 SlotMap Evaluation**: Large-scale iteration and query performance
+- **Large-scale Throughput**: Construction, validation, and query scaling
 - **Comprehensive Profiling**: Deep analysis for optimization work
 - **Algorithm Comparison**: Comparing different implementations
 - **Specialized Benchmarks**: Focused testing of specific operations
@@ -14,7 +14,7 @@ This directory contains performance benchmarks for the delaunay library, organiz
 |-----------|---------|-------|---------|----------|
 | `ci_performance_suite.rs` | **CI regression detection** | 10–50 vertices | ~5-10 min | CI workflows, baseline generation, performance summary |
 | `circumsphere_containment.rs` | Predicate algorithm comparison | Random queries | ~5 min | Performance summary predicate subsection |
-| `large_scale_performance.rs` | **Phase 4 SlotMap evaluation** | 1k–10k vertices | ~10-30 min (default); ~2-3 hours (BENCH_LARGE_SCALE=1) | Manual |
+| `large_scale_performance.rs` | Throughput and memory scaling | 1k–10k vertices | ~10-30 min; ~2-3 hours with `BENCH_LARGE_SCALE=1` | Manual |
 | `profiling_suite.rs` | Comprehensive profiling | 10³–10⁶ vertices | 1-2 hours | Monthly profiling, manual |
 | `topology_guarantee_construction.rs` | Topology guarantee construction overhead | 2D–5D (small/medium point counts) | ~5–15 min | Manual |
 | ~~`triangulation_creation.rs`~~ | ~~Simple construction~~ | ~~1000 vertices~~ | ~~N/A~~ | **DEPRECATED / REMOVED** |
@@ -26,7 +26,7 @@ This directory contains performance benchmarks for the delaunay library, organiz
 | CI regression check | `ci_performance_suite.rs` | `just bench-ci` or `cargo bench --profile perf --bench ci_performance_suite` |
 | Release performance summary | `ci_performance_suite.rs` + `circumsphere_containment.rs` | `just bench-perf-summary` |
 | Smoke-test benchmark harnesses | Workspace benches | `just bench-smoke` |
-| Phase 4 SlotMap evaluation | `large_scale_performance.rs` | `cargo bench --profile perf --bench large_scale_performance` |
+| Large-scale throughput | `large_scale_performance.rs` | `cargo bench --profile perf --bench large_scale_performance` |
 | Deep profiling (1-2 hours) | `profiling_suite.rs` | `cargo bench --profile perf --bench profiling_suite` |
 | Memory analysis | `profiling_suite.rs` (memory groups) | `cargo bench --profile perf --bench profiling_suite -- memory_profiling` |
 | Validation layer diagnostics | `profiling_suite.rs` (validation components) | `cargo bench --profile perf --bench profiling_suite -- validation_components` |
@@ -142,20 +142,17 @@ The `circumsphere_containment.rs` benchmark includes:
 - **Edge cases**: Boundary vertices and far-away points
 - **Numerical consistency**: Agreement analysis between all methods
 
-### Large-scale Performance (`large_scale_performance.rs`) (Phase 4 SlotMap evaluation)
-
-**Status:** Active (consolidation plan archived)  
-**Documentation:** See [docs/archive/phase4.md](../docs/archive/phase4.md) for the archived consolidation plan and progress log
+### Large-scale Performance (`large_scale_performance.rs`)
 
 #### Purpose
 
-Phase 4 aims to abstract SlotMap usage behind traits to enable swapping implementations
-(SlotMap → DenseSlotMap → HopSlotMap) without code changes, targeting **10-15% iteration
-performance improvement**.
+This suite measures how construction, validation, iteration, and query paths
+scale on larger point sets than the CI regression suite. It is useful for
+manual performance work and for validating memory behavior before release.
 
 #### Key Metrics
 
-1. **Iteration Performance** (10-15% improvement target)
+1. **Iteration Performance**
    - Full vertex/cell traversals
    - Neighbor-following patterns
    - Filtered iteration
@@ -164,7 +161,7 @@ performance improvement**.
    - Peak RSS during construction
    - Per-element footprint
 
-3. **Cache Locality** (5-10% cache miss reduction target)
+3. **Cache Locality**
    - Sequential vs random access
    - BFS traversal patterns
 
@@ -172,25 +169,20 @@ performance improvement**.
    - Key lookups
    - Neighbor queries
 
-#### Running Phase 4 Benchmarks
+#### Running Large-scale Benchmarks
 
 ```bash
-# Run large-scale performance benchmarks (Phase 4 primary)
+# Run large-scale performance benchmarks
 cargo bench --profile perf --bench large_scale_performance
 
 # Run specific test categories
 cargo bench --profile perf --bench large_scale_performance -- "construction/3D"
 cargo bench --profile perf --bench large_scale_performance -- "queries/neighbors"
 cargo bench --profile perf --bench large_scale_performance -- "iteration/vertices"
-
-# Storage backend comparison
-just compare-storage       # Compare SlotMap vs DenseSlotMap (~4-6 hours)
-just compare-storage-large # Large scale comparison (~8-12 hours, compute cluster)
 ```
 
-**Note:** `large_scale_performance.rs` was specifically designed for Phase 4 evaluation.
-It measures iteration speed, memory usage, query performance, and validation - all critical
-for SlotMap comparison.
+**Note:** `large_scale_performance.rs` measures iteration speed, memory usage,
+query performance, and validation across 2D-5D.
 
 ### Profiling Suite (`profiling_suite.rs`) (comprehensive)
 

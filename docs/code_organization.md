@@ -133,7 +133,6 @@ delaunay/
 │   │   ├── test_archive_changelog.py
 │   │   ├── test_benchmark_models.py
 │   │   ├── test_benchmark_utils.py
-│   │   ├── test_compare_storage_backends.py
 │   │   ├── test_hardware_utils.py
 │   │   ├── test_postprocess_changelog.py
 │   │   ├── test_subprocess_utils.py
@@ -142,11 +141,9 @@ delaunay/
 │   ├── archive_changelog.py
 │   ├── benchmark_models.py
 │   ├── benchmark_utils.py
-│   ├── compare_storage_backends.py
 │   ├── hardware_utils.py
 │   ├── postprocess_changelog.py
 │   ├── run_all_examples.sh
-│   ├── slurm_storage_comparison.sh
 │   ├── subprocess_utils.py
 │   └── tag_release.py
 ├── src/
@@ -269,7 +266,6 @@ delaunay/
 │   ├── public_topology_api.rs
 │   ├── regressions.rs
 │   ├── serialization_vertex_preservation.rs
-│   ├── storage_backend_compatibility.rs
 │   ├── tds_orientation.rs
 │   └── triangulation_builder.rs
 ├── .codacy.yml
@@ -585,17 +581,11 @@ just bench-perf-summary # Generate perf-profile release summary (~30-45 min)
 **Storage Backend Comparison (large-scale):**
 
 ```bash
-# DenseSlotMap (default)
+# Large-scale performance benchmarks
 cargo bench --profile perf --bench large_scale_performance
-
-# SlotMap (disable default DenseSlotMap)
-cargo bench --profile perf --no-default-features --bench large_scale_performance
 
 # Enable larger 4D point counts (use on a compute cluster)
 BENCH_LARGE_SCALE=1 cargo bench --profile perf --bench large_scale_performance
-
-# Compare SlotMap (--no-default-features) vs DenseSlotMap (default)
-just compare-storage    # SlotMap (--no-default-features) vs DenseSlotMap (default) (~4-6 hours)
 ```
 
 **Performance Analysis:**

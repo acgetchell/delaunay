@@ -65,7 +65,7 @@ where
 
     let mut points = SmallBuffer::with_capacity(keys.len());
     for &vk in &keys {
-        points.push(*tds.get_vertex_by_key(vk)?.point());
+        points.push(*tds.vertex(vk)?.point());
     }
     Some(points)
 }
@@ -107,7 +107,7 @@ where
 
     let mut points = SmallBuffer::with_capacity(sorted_keys.len() + 1);
     for &vk in &sorted_keys {
-        points.push(*tds.get_vertex_by_key(vk)?.point());
+        points.push(*tds.vertex(vk)?.point());
     }
     points.push(extra);
     Some(points)
@@ -161,7 +161,7 @@ mod tests {
             .insert_cell_with_mapping(cell)
             .expect("insert should succeed");
 
-        let cell_ref = tds.get_cell(cell_key).unwrap();
+        let cell_ref = tds.cell(cell_key).unwrap();
         let points = sorted_cell_points(&tds, cell_ref).expect("should resolve all vertices");
 
         // Verify points are in VertexKey canonical order
@@ -169,7 +169,7 @@ mod tests {
         sorted_keys.sort_unstable_by_key(|vk| vk.data().as_ffi());
 
         for (i, &vk) in sorted_keys.iter().enumerate() {
-            let expected = *tds.get_vertex_by_key(vk).unwrap().point();
+            let expected = *tds.vertex(vk).unwrap().point();
             assert_eq!(points[i], expected);
         }
     }
@@ -191,8 +191,8 @@ mod tests {
             .insert_cell_with_mapping(cell_b)
             .expect("insert should succeed");
 
-        let points_a = sorted_cell_points(&tds, tds.get_cell(key_a).unwrap()).unwrap();
-        let points_b = sorted_cell_points(&tds, tds.get_cell(key_b).unwrap()).unwrap();
+        let points_a = sorted_cell_points(&tds, tds.cell(key_a).unwrap()).unwrap();
+        let points_b = sorted_cell_points(&tds, tds.cell(key_b).unwrap()).unwrap();
 
         // Both should produce the same canonical ordering
         assert_eq!(points_a.as_slice(), points_b.as_slice());
@@ -270,7 +270,7 @@ mod tests {
                 .expect("insert should succeed");
 
             // Use canonical sorting to collect points
-            let sorted = sorted_cell_points(&tds, tds.get_cell(cell_key).unwrap()).unwrap();
+            let sorted = sorted_cell_points(&tds, tds.cell(cell_key).unwrap()).unwrap();
             let sign = kernel.in_sphere(&sorted, &test_point).unwrap();
             signs.push(sign);
         }
@@ -318,7 +318,7 @@ mod tests {
                 .insert_cell_with_mapping(cell)
                 .expect("insert should succeed");
 
-            let sorted = sorted_cell_points(&tds, tds.get_cell(cell_key).unwrap()).unwrap();
+            let sorted = sorted_cell_points(&tds, tds.cell(cell_key).unwrap()).unwrap();
             let sign = kernel.in_sphere(&sorted, &test_point).unwrap();
             signs.push(sign);
         }

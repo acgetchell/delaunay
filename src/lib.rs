@@ -1,3 +1,4 @@
+#![cfg_attr(docsrs, feature(doc_cfg))]
 #![cfg_attr(any(doc, doctest), doc = include_str!("../README.md"))]
 
 //! ---
@@ -32,6 +33,10 @@
 //!   Formal definitions of validation Levels 1–4, their costs, and guidance on when
 //!   each level should be applied.
 //!
+//! - **docs/diagnostics.md**:
+//!   Opt-in diagnostic helpers, structured reports, debug switches, and guidance for
+//!   producing useful failure reports without expanding the default API surface.
+//!
 //! - **docs/invariants.md**:
 //!   Deeper theoretical discussion of topological and geometric invariants
 //!   (PL-manifold conditions, ridge/vertex links, ordering heuristics, and
@@ -46,6 +51,7 @@
 //! |---|---|
 //! | Build a triangulation, insert/remove vertices | `use delaunay::prelude::triangulation::*` |
 //! | Read-only queries, traversal, convex hull | `use delaunay::prelude::query::*` |
+//! | Point location and conflict-region algorithms | `use delaunay::prelude::algorithms::*` |
 //! | Geometry helpers, predicates, points | `use delaunay::prelude::geometry::*` |
 //! | Random points / triangulations for examples and tests | `use delaunay::prelude::generators::*` |
 //! | Hilbert ordering and quantization utilities | `use delaunay::prelude::ordering::*` |
@@ -534,6 +540,7 @@ pub mod geometry {
     pub mod util {
         use crate::geometry::matrix::{MatrixError, StackMatrixDispatchError};
         use crate::geometry::traits::coordinate::CoordinateConversionError;
+        use la_stack::LaError;
 
         // Error types defined here and re-exported from submodules
 
@@ -553,6 +560,7 @@ pub mod geometry {
         /// assert!(matches!(err, ValueConversionError::ConversionFailed { .. }));
         /// ```
         #[derive(Clone, Debug, thiserror::Error, PartialEq, Eq)]
+        #[non_exhaustive]
         pub enum ValueConversionError {
             /// Failed to convert a value from one type to another
             #[error("Cannot convert {value} from {from_type} to {to_type}: {details}")]
@@ -582,6 +590,7 @@ pub mod geometry {
         /// assert!(matches!(err, RandomPointGenerationError::InvalidRange { .. }));
         /// ```
         #[derive(Clone, Debug, thiserror::Error, PartialEq, Eq)]
+        #[non_exhaustive]
         pub enum RandomPointGenerationError {
             /// Invalid coordinate range provided
             #[error("Invalid coordinate range: minimum {min} must be less than maximum {max}")]
@@ -622,6 +631,7 @@ pub mod geometry {
         /// assert!(matches!(err, CircumcenterError::EmptyPointSet));
         /// ```
         #[derive(Clone, Debug, thiserror::Error, PartialEq, Eq)]
+        #[non_exhaustive]
         pub enum CircumcenterError {
             /// Empty point set provided
             #[error("Empty point set")]
@@ -647,6 +657,19 @@ pub mod geometry {
                 details: String,
             },
 
+            /// Runtime-dispatched stack matrix dimension is unsupported.
+            #[error("Unsupported stack matrix dimension {requested} (maximum supported is {max})")]
+            UnsupportedMatrixDimension {
+                /// Requested matrix dimension.
+                requested: usize,
+                /// Maximum supported matrix dimension.
+                max: usize,
+            },
+
+            /// Linear algebra backend operation failed.
+            #[error("Linear algebra failure: {0}")]
+            LinearAlgebraFailure(#[from] LaError),
+
             /// Matrix operation error
             #[error("Matrix error: {0}")]
             MatrixError(#[from] MatrixError),
@@ -671,13 +694,9 @@ pub mod geometry {
             fn from(source: StackMatrixDispatchError) -> Self {
                 match source {
                     StackMatrixDispatchError::UnsupportedDim { k, max } => {
-                        Self::MatrixInversionFailed {
-                            details: format!("unsupported stack matrix size: {k} (max {max})"),
-                        }
+                        Self::UnsupportedMatrixDimension { requested: k, max }
                     }
-                    StackMatrixDispatchError::La(source) => Self::MatrixInversionFailed {
-                        details: format!("la-stack error: {source}"),
-                    },
+                    StackMatrixDispatchError::La(source) => Self::LinearAlgebraFailure(source),
                 }
             }
         }
@@ -693,6 +712,7 @@ pub mod geometry {
         /// assert!(matches!(err, SurfaceMeasureError::GeometryError(_)));
         /// ```
         #[derive(Clone, Debug, thiserror::Error, PartialEq, Eq)]
+        #[non_exhaustive]
         pub enum SurfaceMeasureError {
             /// Error retrieving vertices from a facet.
             #[error("Failed to retrieve facet vertices: {0}")]
@@ -858,9 +878,12 @@ pub mod prelude {
     //
     // In particular, exporting `core::util::uuid` as `uuid` conflicts with the external `uuid`
     // crate name, making `use uuid::Uuid;` ambiguous for downstream users.
+    pub use crate::core::util::delaunay_validation::{
+        DelaunayValidationError, find_delaunay_violations,
+    };
     pub use crate::core::util::{
-        deduplication::*, delaunay_validation::*, facet_keys::*, facet_utils::*, hashing::*,
-        hilbert::*, jaccard::*, measurement::*, uuid::*,
+        deduplication::*, facet_keys::*, facet_utils::*, hashing::*, hilbert::*, jaccard::*,
+        measurement::*, uuid::*,
     };
 
     // Re-export point location algorithms from core::algorithms
@@ -870,12 +893,19 @@ pub mod prelude {
     };
 
     // Re-export incremental insertion types
-    pub use crate::core::algorithms::incremental_insertion::InsertionError;
+    pub use crate::core::algorithms::incremental_insertion::{
+        CavityFillingError, CavityRepairStage, HullExtensionReason,
+        InitialSimplexConstructionError, InsertionError, NeighborRebuildError, NeighborWiringError,
+        TdsConstructionFailure, TdsValidationFailure,
+    };
     pub use crate::core::operations::{InsertionOutcome, InsertionStatistics, SuspicionFlags};
 
     // Re-export diagnostic types for scientific analysis of construction and repair
     pub use crate::core::algorithms::flips::{
-        DelaunayRepairDiagnostics, DelaunayRepairError, DelaunayRepairStats, RepairQueueOrder,
+        DelaunayRepairDiagnostics, DelaunayRepairError, DelaunayRepairStats, FlipContextError,
+        FlipEdgeAdjacencyError, FlipError, FlipMutationError, FlipNeighborWiringError,
+        FlipPredicateError, FlipPredicateOperation, FlipTriangleAdjacencyError,
+        FlipVertexAdjacencyError, RepairQueueOrder,
     };
 
     // Re-export commonly used collection types from core::collections
@@ -927,9 +957,17 @@ pub mod prelude {
 
         /// Incremental insertion building blocks and diagnostics.
         pub mod insertion {
-            pub use crate::core::algorithms::incremental_insertion::*;
+            pub use crate::core::algorithms::incremental_insertion::{
+                CavityFillingError, CavityRepairStage, HullExtensionReason,
+                InitialSimplexConstructionError, InsertionError, NeighborRebuildError,
+                NeighborWiringError, TdsConstructionFailure, TdsValidationFailure, extend_hull,
+                fill_cavity, wire_cavity_neighbors,
+            };
             pub use crate::core::collections::CellKeyBuffer;
             pub use crate::core::facet::FacetHandle;
+            pub use crate::core::operations::{
+                InsertionOutcome, InsertionResult, InsertionStatistics,
+            };
             pub use crate::core::tds::{CellKey, Tds, VertexKey};
         }
 
@@ -941,9 +979,11 @@ pub mod prelude {
         /// Flip-based Delaunay repair, diagnostics, and Level 4 validation.
         pub mod repair {
             pub use crate::core::algorithms::flips::{
-                DelaunayRepairDiagnostics, DelaunayRepairError, DelaunayRepairStats, FlipError,
-                RepairQueueOrder, verify_delaunay_for_triangulation,
-                verify_delaunay_via_flip_predicates,
+                DelaunayRepairDiagnostics, DelaunayRepairError, DelaunayRepairStats,
+                FlipContextError, FlipEdgeAdjacencyError, FlipError, FlipMutationError,
+                FlipNeighborWiringError, FlipPredicateError, FlipPredicateOperation,
+                FlipTriangleAdjacencyError, FlipVertexAdjacencyError, RepairQueueOrder,
+                verify_delaunay_for_triangulation, verify_delaunay_via_flip_predicates,
             };
             pub use crate::core::triangulation::{
                 TopologyGuarantee, Triangulation, ValidationPolicy,
@@ -974,7 +1014,10 @@ pub mod prelude {
             pub use crate::vertex;
         }
 
-        pub use crate::core::algorithms::incremental_insertion::InsertionError;
+        pub use crate::core::algorithms::incremental_insertion::{
+            CavityFillingError, CavityRepairStage, HullExtensionReason, InsertionError,
+            NeighborWiringError,
+        };
         // Convenience macro (commonly used in docs/tests/examples).
         pub use crate::vertex;
     }
@@ -1028,9 +1071,13 @@ pub mod prelude {
     /// they are intended for explicit debugging and verification workflows, not
     /// the default public API surface.
     #[cfg(feature = "diagnostics")]
+    #[cfg_attr(docsrs, doc(cfg(feature = "diagnostics")))]
     pub mod diagnostics {
         pub use crate::core::algorithms::locate::verify_conflict_region_completeness;
-        pub use crate::core::util::debug_print_first_delaunay_violation;
+        pub use crate::core::util::{
+            DelaunayViolationDetail, DelaunayViolationReport, debug_print_first_delaunay_violation,
+            delaunay_violation_report,
+        };
     }
 
     /// Convenience re-exports for common **read-only** workflows (topology traversal, adjacency,
@@ -1403,7 +1450,7 @@ mod tests {
 
         // Iterate over cells
         for (cell_key, _cell) in tri.cells() {
-            assert!(tds.get_cell(cell_key).is_some());
+            assert!(tds.cell(cell_key).is_some());
         }
     }
 

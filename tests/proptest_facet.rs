@@ -81,20 +81,23 @@ macro_rules! test_facet_properties {
                     ) {
                         let tds = dt.tds();
                         for cell_key in tds.cell_keys() {
-                            if let Some(cell) = tds.get_cell(cell_key) {
-                                let cell_vertex_count = cell.vertices().len();
+                            prop_assert!(
+                                tds.cell(cell_key).is_some(),
+                                "cell key from iterator should exist: {cell_key:?}"
+                            );
+                            let cell = tds.cell(cell_key).expect("checked above");
+                            let cell_vertex_count = cell.vertices().len();
 
-                                for facet_index in 0..=($dim as u8) {
-                                    if let Ok(facet) = FacetView::new(&tds, cell_key, facet_index) {
-                                        if let Ok(facet_vertices) = facet.vertices() {
-                                            let facet_vertex_count = facet_vertices.count();
-                                            prop_assert_eq!(
-                                                facet_vertex_count,
-                                                cell_vertex_count - 1,
-                                                "{}D facet should have one fewer vertex than cell",
-                                                $dim
-                                            );
-                                        }
+                            for facet_index in 0..=($dim as u8) {
+                                if let Ok(facet) = FacetView::new(&tds, cell_key, facet_index) {
+                                    if let Ok(facet_vertices) = facet.vertices() {
+                                        let facet_vertex_count = facet_vertices.count();
+                                        prop_assert_eq!(
+                                            facet_vertex_count,
+                                            cell_vertex_count - 1,
+                                            "{}D facet should have one fewer vertex than cell",
+                                            $dim
+                                        );
                                     }
                                 }
                             }

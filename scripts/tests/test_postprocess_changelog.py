@@ -6,7 +6,6 @@ from typing import TYPE_CHECKING
 
 from postprocess_changelog import (
     _compact_entry,
-    _fix_typos,
     _inject_summary_sections,
     _is_duplicate_squash_heading,
     _is_isolated_body_heading,
@@ -79,27 +78,6 @@ class TestStripTrailingBlanks:
         postprocess(f)
 
         assert f.read_text(encoding="utf-8") == "\n"
-
-
-class TestFixTypos:
-    def test_fixes_deniest(self) -> None:
-        assert _fix_typos("Also deniest warnings") == "Also denies warnings"
-
-    def test_fixes_varous(self) -> None:
-        assert _fix_typos("Fix varous issues") == "Fix various issues"
-
-    def test_fixes_runtim(self) -> None:
-        assert _fix_typos("Increase max runtim") == "Increase max runtime"
-
-    def test_no_partial_match(self) -> None:
-        assert _fix_typos("runtime is fine") == "runtime is fine"
-
-    def test_no_change_when_clean(self) -> None:
-        text = "All various things at runtime work"
-        assert _fix_typos(text) == text
-
-    def test_multiple_occurrences(self) -> None:
-        assert _fix_typos("varous varous") == "various various"
 
 
 class TestReflowLine:
@@ -208,6 +186,13 @@ def _commit(short: str = "abc1234", full: str = "abc1234deadbeef0123456789") -> 
     return f"[`{short}`]({_COMMIT_URL}/{full})"
 
 
+def _merged_pr_summary_block(text: str) -> str:
+    """Return the injected merged-PR summary block."""
+    start = text.index("### Merged Pull Requests")
+    end = text.find("\n### ", start + len("### Merged Pull Requests"))
+    return text[start:] if end == -1 else text[start:end]
+
+
 class TestCompactEntry:
     def test_strips_commit_hash_link(self) -> None:
         line = f"- Some feature {_commit()}"
@@ -255,9 +240,11 @@ class TestSummarySections:
     def test_injects_pr_summary(self) -> None:
         content = self._changelog(f"- Feature A {_pr(10)} {_commit()}\n- Plain commit {_commit('def5678', 'def5678deadbeef')}")
         result = _inject_summary_sections(content)
-        assert "### Merged Pull Requests" in result
+        summary_block = _merged_pr_summary_block(result)
+        assert "### Merged Pull Requests" in summary_block
         # PR entry in summary (without commit hash).
-        assert f"- Feature A {_pr(10)}" in result
+        assert f"- Feature A {_pr(10)}" in summary_block
+        assert "- Plain commit" not in summary_block
         # Plain entry only appears once (in Added, not in summary).
         plain_lines = [ln for ln in result.split("\n") if ln.startswith("- Plain commit")]
         assert len(plain_lines) == 1
@@ -269,6 +256,21 @@ class TestSummarySections:
         assert "### Merged Pull Requests" in result
         # Breaking section appears before Merged PRs.
         assert result.index("### ⚠️ Breaking Changes") < result.index("### Merged Pull Requests")
+
+    def test_injects_breaking_summary_from_marker_variants(self) -> None:
+        content = self._changelog(f"- **BREAKING** Big change {_pr(5)} {_commit()}")
+        result = _inject_summary_sections(content)
+
+        assert "### ⚠️ Breaking Changes" in result
+        assert f"- Big change {_pr(5)}" in result
+
+    def test_injects_summary_from_star_bullets(self) -> None:
+        content = self._changelog(f"* [**breaking**] Star change {_pr(7)} {_commit()}")
+        result = _inject_summary_sections(content)
+
+        assert "### ⚠️ Breaking Changes" in result
+        assert "### Merged Pull Requests" in result
+        assert f"* Star change {_pr(7)}" in result
 
     def test_pr_sorted_descending(self) -> None:
         """
@@ -318,7 +320,15 @@ class TestSummarySections:
     def test_multiple_pr_links_preserved(self) -> None:
         content = self._changelog(f"- Feature {_pr(10)} {_pr(20)} {_commit()}")
         result = _inject_summary_sections(content)
-        assert f"- Feature {_pr(10)} {_pr(20)}" in result
+        summary_block = _merged_pr_summary_block(result)
+        assert f"- Feature {_pr(10)} {_pr(20)}" in summary_block
+
+    def test_duplicate_summary_entries_are_collapsed(self) -> None:
+        entry = f"- Feature A {_pr(10)} {_commit()}"
+        content = self._changelog(f"{entry}\n{entry}")
+        result = _inject_summary_sections(content)
+        summary_block = _merged_pr_summary_block(result)
+        assert summary_block.count(f"- Feature A {_pr(10)}") == 1
 
 
 class TestListMarkerNormalization:
@@ -430,6 +440,10 @@ class TestSquashHeadingNormalization:
         line = f"- fix: Improve benchmark output {_pr(42)} {_commit()}"
         assert _plain_summary(line) == "improve benchmark output"
 
+    def test_plain_summary_removes_breaking_marker(self) -> None:
+        line = f"- [**breaking**] feat!: Remove old API {_pr(42)} {_commit()}"
+        assert _plain_summary(line) == "remove old api"
+
     def test_squash_heading_parts_maps_kind_to_changelog_label(self) -> None:
         assert _squash_heading_parts("  - perf(core): speed up predicates") == (
             "  ",
@@ -527,7 +541,7 @@ class TestCodeBlockLanguage:
     def test_process_code_fence_opens_and_tags_bare_fence(self) -> None:
         result: list[str] = []
 
-        handled, in_code_block = _process_code_fence("```", result, in_code_block=False)
+        handled, in_code_block = _process_code_fence("```", result, in_code_block=False, next_line="let x = 1;")
 
         assert handled
         assert in_code_block
@@ -536,16 +550,25 @@ class TestCodeBlockLanguage:
     def test_process_code_fence_closes_existing_block(self) -> None:
         result: list[str] = []
 
-        handled, in_code_block = _process_code_fence("```", result, in_code_block=True)
+        handled, in_code_block = _process_code_fence("```", result, in_code_block=True, next_line=None)
 
         assert handled
         assert not in_code_block
         assert result == ["```"]
 
+    def test_process_code_fence_adds_blank_after_closing_fence(self) -> None:
+        result: list[str] = []
+
+        handled, in_code_block = _process_code_fence("```", result, in_code_block=True, next_line="following prose")
+
+        assert handled
+        assert not in_code_block
+        assert result == ["```", ""]
+
     def test_process_code_fence_ignores_regular_line(self) -> None:
         result: list[str] = []
 
-        handled, in_code_block = _process_code_fence("regular text", result, in_code_block=False)
+        handled, in_code_block = _process_code_fence("regular text", result, in_code_block=False, next_line=None)
 
         assert not handled
         assert not in_code_block
@@ -580,6 +603,14 @@ class TestCodeBlockLanguage:
         result = f.read_text(encoding="utf-8")
         assert long_code in result
 
+    def test_adds_blank_after_code_block_before_prose(self, tmp_path: Path) -> None:
+        f = tmp_path / "CHANGELOG.md"
+        f.write_text("```text\ncode\n```\nfollowing prose\n", encoding="utf-8")
+
+        postprocess(f)
+
+        assert f.read_text(encoding="utf-8") == "```text\ncode\n```\n\nfollowing prose\n"
+
 
 class TestIntegration:
     def test_full_changelog_reflow(self, tmp_path: Path) -> None:
@@ -600,7 +631,7 @@ class TestIntegration:
         result = f.read_text(encoding="utf-8")
         for line in result.split("\n"):
             if line.strip():
-                assert len(line) <= 160 or "[" in line, f"Line too long ({len(line)}): {line[:80]}..."
+                assert len(line) <= 160 or "](" in line or "http" in line, f"Line too long ({len(line)}): {line[:80]}..."
 
     def test_summary_sections_in_full_pipeline(self, tmp_path: Path) -> None:
         """Summary sections are injected and survive reflow."""

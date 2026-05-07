@@ -494,7 +494,7 @@ macro_rules! test_bootstrap_key_stability {
 
                 // Verify all keys remain valid after simplex creation
                 for (i, &key) in keys.iter().enumerate() {
-                    let vertex = dt.tds().get_vertex_by_key(key);
+                    let vertex = dt.tds().vertex(key);
                     assert!(vertex.is_some(),
                         "Key {} should remain valid after simplex creation", i);
 
@@ -594,7 +594,7 @@ fn test_bootstrap_returns_valid_key_after_tds_rebuild() {
     assert_eq!(dt.number_of_cells(), 1);
 
     // Verify all returned keys are valid in the final TDS
-    let vertex1 = dt.tds().get_vertex_by_key(key1);
+    let vertex1 = dt.tds().vertex(key1);
     assert!(
         vertex1.is_some(),
         "First key should be valid after simplex creation"
@@ -605,7 +605,7 @@ fn test_bootstrap_returns_valid_key_after_tds_rebuild() {
         "First key should map to correct vertex UUID"
     );
 
-    let vertex2 = dt.tds().get_vertex_by_key(key2);
+    let vertex2 = dt.tds().vertex(key2);
     assert!(
         vertex2.is_some(),
         "Second key should be valid after simplex creation"
@@ -616,7 +616,7 @@ fn test_bootstrap_returns_valid_key_after_tds_rebuild() {
         "Second key should map to correct vertex UUID"
     );
 
-    let vertex3 = dt.tds().get_vertex_by_key(key3);
+    let vertex3 = dt.tds().vertex(key3);
     assert!(
         vertex3.is_some(),
         "Third key (D+1) should be valid after simplex creation"

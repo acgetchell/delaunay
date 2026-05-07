@@ -10,6 +10,7 @@ Historical design notes, investigations, and completed optimization roadmaps liv
 - [`api_design.md`](api_design.md): builder vs edit APIs (bistellar flips) and how to combine them.
 - [`topology.md`](topology.md): Level 3 topology invariants (manifold checks, Euler characteristic).
 - [`validation.md`](validation.md): the four-level validation model (Levels 1–4) and how to configure it.
+- [`diagnostics.md`](diagnostics.md): opt-in diagnostic helpers, structured reports, and debug switches.
 - [`workflows.md`](workflows.md): practical recipes (Builder API vs Edit API), including minimal flip examples.
 - [`limitations.md`](limitations.md): supported dimensions, predicate limits, large-scale cautions, and feature gaps.
 

@@ -10,6 +10,14 @@ def catches_broad_exception() -> None:
         pass
 
 
+def catches_broad_exception_with_binding() -> None:
+    try:
+        pass
+    # ruleid: delaunay.python.no-broad-exception
+    except Exception as exc:
+        raise RuntimeError("wrapped") from exc
+
+
 def catches_specific_exception() -> None:
     try:
         pass
@@ -38,6 +46,16 @@ def adhoc_mock_returncode() -> None:
     # ruleid: delaunay.python.no-adhoc-completedprocess-mock
     result = MagicMock()
     result.returncode = 0
+
+
+def adhoc_mock_constructor_stdout() -> None:
+    # ruleid: delaunay.python.no-adhoc-completedprocess-mock
+    Mock(stdout="ok")
+
+
+def adhoc_mock_constructor_returncode() -> None:
+    # ruleid: delaunay.python.no-adhoc-completedprocess-mock
+    MagicMock(returncode=0)
 
 
 def typed_completed_process() -> subprocess.CompletedProcess[str]:

@@ -268,7 +268,7 @@ assert!(prev.is_some()); // returns the old Option<U>
 // Cell data works the same way
 let cell_key = dt.cells().next().unwrap().0;
 dt.set_cell_data(cell_key, Some(42));
-assert_eq!(dt.tds().get_cell(cell_key).unwrap().data(), Some(&42));
+assert_eq!(dt.tds().cell(cell_key).unwrap().data(), Some(&42));
 ```
 
 `set_vertex_data` and `set_cell_data` are safe O(1) operations — they modify only the

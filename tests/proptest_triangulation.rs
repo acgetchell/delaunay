@@ -82,7 +82,7 @@ fn finite_coordinate() -> impl Strategy<Value = f64> {
 /// 2. Map their vertex UUIDs to transformed triangulation
 /// 3. Find matching cell in transformed triangulation
 /// 4. Compare quality metrics between matched cells
-/// 5. Track whether any cells were successfully matched (to avoid vacuous success)
+/// 5. Assert every original cell has a transformed counterpart.
 fn compare_transformed_cells<const D: usize, F>(
     dt_orig: &DelaunayTriangulation<AdaptiveKernel<f64>, (), (), D>,
     dt_transformed: &DelaunayTriangulation<AdaptiveKernel<f64>, (), (), D>,
@@ -90,49 +90,60 @@ fn compare_transformed_cells<const D: usize, F>(
     _metric_name: &str,
     _dimension: usize,
     mut compare_fn: F,
-) -> Result<bool, TestCaseError>
+) -> Result<(), TestCaseError>
 where
     F: FnMut(CellKey, CellKey) -> Result<(), TestCaseError>,
 {
-    let mut matched_any = false;
     let tds_orig = dt_orig.tds();
     let tds_transformed = dt_transformed.tds();
 
     // Iterate through all cells in original triangulation
     for orig_key in tds_orig.cell_keys() {
-        if let Some(orig_cell) = tds_orig.get_cell(orig_key) {
-            // Get original cell's vertex UUIDs
-            if let Ok(orig_uuids) = orig_cell.vertex_uuids(tds_orig) {
-                // Map to transformed UUIDs
-                let transformed_uuids: Vec<_> = orig_uuids
-                    .iter()
-                    .filter_map(|uuid| uuid_map.get(uuid))
-                    .copied()
-                    .collect();
+        prop_assert!(
+            tds_orig.cell(orig_key).is_some(),
+            "original cell key from iterator should exist: {orig_key:?}"
+        );
+        let orig_cell = tds_orig.cell(orig_key).expect("checked above");
+        let orig_uuids = orig_cell.vertex_uuids(tds_orig)?;
+        let transformed_uuids: Vec<_> = orig_uuids
+            .iter()
+            .filter_map(|uuid| uuid_map.get(uuid))
+            .copied()
+            .collect();
+        prop_assert_eq!(
+            transformed_uuids.len(),
+            orig_uuids.len(),
+            "all original cell UUIDs should map to transformed UUIDs"
+        );
 
-                // Find matching cell in transformed triangulation
-                for trans_key in tds_transformed.cell_keys() {
-                    if let Some(trans_cell) = tds_transformed.get_cell(trans_key)
-                        && let Ok(trans_cell_uuids) = trans_cell.vertex_uuids(tds_transformed)
-                    {
-                        // Check if cells have same vertices (by UUID)
-                        if transformed_uuids.len() == trans_cell_uuids.len()
-                            && transformed_uuids
-                                .iter()
-                                .all(|u| trans_cell_uuids.contains(u))
-                        {
-                            // Found matching cell - compare quality metrics
-                            compare_fn(orig_key, trans_key)?;
-                            matched_any = true;
-                            break; // Found the match, no need to check other cells
-                        }
-                    }
+        let mut found_match = false;
+        for trans_key in tds_transformed.cell_keys() {
+            prop_assert!(
+                tds_transformed.cell(trans_key).is_some(),
+                "transformed cell key from iterator should exist: {trans_key:?}"
+            );
+            let trans_cell = tds_transformed.cell(trans_key).expect("checked above");
+            if let Ok(trans_cell_uuids) = trans_cell.vertex_uuids(tds_transformed) {
+                // Check if cells have same vertices (by UUID)
+                if transformed_uuids.len() == trans_cell_uuids.len()
+                    && transformed_uuids
+                        .iter()
+                        .all(|u| trans_cell_uuids.contains(u))
+                {
+                    // Found matching cell - compare quality metrics
+                    compare_fn(orig_key, trans_key)?;
+                    found_match = true;
+                    break; // Found the match, no need to check other cells
                 }
             }
         }
+        prop_assert!(
+            found_match,
+            "no transformed cell matched original cell {orig_key:?}"
+        );
     }
 
-    Ok(matched_any)
+    Ok(())
 }
 
 // =============================================================================
@@ -404,7 +415,7 @@ macro_rules! test_quality_properties {
                                 .collect();
 
                             // Compare cells using helper function
-                            let matched_any = compare_transformed_cells(
+                            compare_transformed_cells(
                                 &dt,
                                 &dt_translated,
                                 &uuid_map,
@@ -432,9 +443,6 @@ macro_rules! test_quality_properties {
                                     Ok(())
                                 },
                             )?;
-
-                            // If no cells matched, discard this case to avoid vacuous success
-                            prop_assume!(matched_any);
                         }
                     }
                 }
@@ -481,7 +489,7 @@ macro_rules! test_quality_properties {
                                 .collect();
 
                             // Compare cells using helper function
-                            let matched_any = compare_transformed_cells(
+                            compare_transformed_cells(
                                 &dt,
                                 &dt_translated,
                                 &uuid_map,
@@ -509,9 +517,6 @@ macro_rules! test_quality_properties {
                                     Ok(())
                                 },
                             )?;
-
-                            // If no cells matched, discard this case to avoid vacuous success
-                            prop_assume!(matched_any);
                         }
                     }
                 }
@@ -558,7 +563,7 @@ macro_rules! test_quality_properties {
                                 .collect();
 
                             // Compare cells using helper function
-                            let matched_any = compare_transformed_cells(
+                            compare_transformed_cells(
                                 &dt,
                                 &dt_scaled,
                                 &uuid_map,
@@ -586,9 +591,6 @@ macro_rules! test_quality_properties {
                                     Ok(())
                                 },
                             )?;
-
-                            // If no cells matched, discard this case to avoid vacuous success
-                            prop_assume!(matched_any);
                         }
                     }
                 }

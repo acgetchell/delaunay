@@ -16,7 +16,10 @@
 use ::uuid::Uuid;
 use delaunay::prelude::geometry::RobustKernel;
 use delaunay::prelude::triangulation::flips::*;
-use delaunay::prelude::triangulation::{ConstructionOptions, InsertionOrderStrategy, Vertex};
+use delaunay::prelude::triangulation::{
+    ConstructionOptions, DelaunayTriangulationConstructionError,
+    DelaunayTriangulationValidationError, InsertionOrderStrategy, Vertex,
+};
 use std::time::Instant;
 
 type Dt4 = DelaunayTriangulation<RobustKernel<f64>, (), (), 4>;
@@ -43,7 +46,55 @@ struct TopologySnapshot {
     cell_vertex_uuids: Vec<Vec<Uuid>>,
 }
 
-fn main() {
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum MoveKind {
+    K1,
+    K2,
+    K3,
+}
+
+impl std::fmt::Display for MoveKind {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::K1 => f.write_str("k=1"),
+            Self::K2 => f.write_str("k=2"),
+            Self::K3 => f.write_str("k=3"),
+        }
+    }
+}
+
+#[derive(Debug, thiserror::Error)]
+enum PachnerRoundtripError {
+    #[error(transparent)]
+    Construction(#[from] DelaunayTriangulationConstructionError),
+    #[error(transparent)]
+    Validation(#[from] DelaunayTriangulationValidationError),
+    #[error(transparent)]
+    Flip(#[from] FlipError),
+    #[error("triangulation has no cells")]
+    EmptyTriangulation,
+    #[error("cell {cell_key:?} not found in TDS")]
+    MissingCell { cell_key: CellKey },
+    #[error("vertex {vertex_key:?} not found in TDS")]
+    MissingVertex { vertex_key: VertexKey },
+    #[error("inserted vertex with UUID {uuid} not found in TDS")]
+    MissingInsertedVertexUuid { uuid: Uuid },
+    #[error("{move_kind} roundtrip changed the combinatorial topology")]
+    TopologyChanged { move_kind: MoveKind },
+    #[error("{move_kind} flip produced {actual} inserted-face vertices, expected {expected}")]
+    UnexpectedInsertedFace {
+        move_kind: MoveKind,
+        actual: usize,
+        expected: usize,
+    },
+    #[error("no flippable candidate found for {move_kind}; last error: {last_error:?}")]
+    NoFlippableMove {
+        move_kind: MoveKind,
+        last_error: Option<FlipError>,
+    },
+}
+
+fn main() -> Result<(), PachnerRoundtripError> {
     println!("============================================================");
     println!("4D Pachner Move Roundtrip Example (k=1,2,3 + inverses)");
     println!("============================================================\n");
@@ -53,7 +104,7 @@ fn main() {
         Err(err) => {
             eprintln!("⚠️  Unable to build the stable 4D PL-manifold triangulation: {err}");
             eprintln!("    Skipping Pachner roundtrip example for this run.");
-            return;
+            return Ok(());
         }
     };
 
@@ -64,34 +115,33 @@ fn main() {
     );
 
     let start = Instant::now();
-    dt.validate()
-        .expect("initial triangulation should satisfy Levels 1-4");
+    dt.validate()?;
     println!(
         "✓ Initial PL-manifold + Delaunay validation passed in {:?}\n",
         start.elapsed()
     );
 
-    let baseline = snapshot_topology(&dt);
+    let baseline = snapshot_topology(&dt)?;
 
     let start = Instant::now();
-    roundtrip_k1(&mut dt).expect("k=1 roundtrip failed");
-    assert_roundtrip("k=1", &dt, &baseline).expect("k=1 validation failed");
+    roundtrip_k1(&mut dt)?;
+    assert_roundtrip(MoveKind::K1, &dt, &baseline)?;
     println!(
         "✓ k=1 roundtrip preserved triangulation ({:?})",
         start.elapsed()
     );
 
     let start = Instant::now();
-    roundtrip_k2(&mut dt).expect("k=2 roundtrip failed");
-    assert_roundtrip("k=2", &dt, &baseline).expect("k=2 validation failed");
+    roundtrip_k2(&mut dt)?;
+    assert_roundtrip(MoveKind::K2, &dt, &baseline)?;
     println!(
         "✓ k=2 roundtrip preserved triangulation ({:?})",
         start.elapsed()
     );
 
     let start = Instant::now();
-    roundtrip_k3(&mut dt).expect("k=3 roundtrip failed");
-    assert_roundtrip("k=3", &dt, &baseline).expect("k=3 validation failed");
+    roundtrip_k3(&mut dt)?;
+    assert_roundtrip(MoveKind::K3, &dt, &baseline)?;
     println!(
         "✓ k=3 roundtrip preserved triangulation ({:?})",
         start.elapsed()
@@ -100,9 +150,11 @@ fn main() {
     println!("\n============================================================");
     println!("All Pachner move roundtrips preserved the Delaunay triangulation");
     println!("============================================================");
+
+    Ok(())
 }
 
-fn build_triangulation() -> Result<Dt4, String> {
+fn build_triangulation() -> Result<Dt4, PachnerRoundtripError> {
     let vertices = stable_vertices();
     let start = Instant::now();
     let options =
@@ -112,8 +164,7 @@ fn build_triangulation() -> Result<Dt4, String> {
         &vertices,
         TopologyGuarantee::PLManifold,
         options,
-    )
-    .map_err(|e| format!("construction failed: {e}"))?;
+    )?;
     println!(
         "✓ Stable 4D triangulation built ({} points) in {:?}",
         vertices.len(),
@@ -130,60 +181,57 @@ fn stable_vertices() -> Vec<Vertex<f64, (), 4>> {
         .collect()
 }
 
-fn snapshot_topology(dt: &Dt4) -> TopologySnapshot {
+fn snapshot_topology(dt: &Dt4) -> Result<TopologySnapshot, PachnerRoundtripError> {
     let tds = dt.tds();
     let mut vertex_uuids: Vec<Uuid> = tds.vertices().map(|(_, vertex)| vertex.uuid()).collect();
     vertex_uuids.sort();
 
-    let mut cell_vertex_uuids: Vec<Vec<Uuid>> = tds
-        .cells()
-        .map(|(_, cell)| {
-            let mut uuids: Vec<Uuid> = cell
-                .vertices()
-                .iter()
-                .map(|&vkey| {
-                    tds.get_vertex_by_key(vkey)
-                        .expect("vertex key missing in TDS")
-                        .uuid()
-                })
-                .collect();
-            uuids.sort();
-            uuids
-        })
-        .collect();
+    let mut cell_vertex_uuids: Vec<Vec<Uuid>> = Vec::new();
+    for (_, cell) in tds.cells() {
+        let mut uuids: Vec<Uuid> = Vec::new();
+        for &vkey in cell.vertices() {
+            let vertex = tds
+                .vertex(vkey)
+                .ok_or(PachnerRoundtripError::MissingVertex { vertex_key: vkey })?;
+            uuids.push(vertex.uuid());
+        }
+        uuids.sort();
+        cell_vertex_uuids.push(uuids);
+    }
     cell_vertex_uuids.sort();
 
-    TopologySnapshot {
+    Ok(TopologySnapshot {
         vertex_uuids,
         cell_vertex_uuids,
-    }
+    })
 }
 
-fn assert_roundtrip(step: &str, dt: &Dt4, baseline: &TopologySnapshot) -> Result<(), String> {
-    let after = snapshot_topology(dt);
+fn assert_roundtrip(
+    move_kind: MoveKind,
+    dt: &Dt4,
+    baseline: &TopologySnapshot,
+) -> Result<(), PachnerRoundtripError> {
+    let after = snapshot_topology(dt)?;
     if &after != baseline {
-        return Err(format!(
-            "{step} roundtrip changed the combinatorial topology"
-        ));
+        return Err(PachnerRoundtripError::TopologyChanged { move_kind });
     }
 
-    dt.validate()
-        .map_err(|e| format!("{step} roundtrip failed validation: {e}"))?;
+    dt.validate()?;
     Ok(())
 }
 
-fn cell_centroid(dt: &Dt4, cell_key: CellKey) -> Result<[f64; 4], String> {
+fn cell_centroid(dt: &Dt4, cell_key: CellKey) -> Result<[f64; 4], PachnerRoundtripError> {
     let cell = dt
         .tds()
-        .get_cell(cell_key)
-        .ok_or_else(|| "cell not found in TDS".to_string())?;
+        .cell(cell_key)
+        .ok_or(PachnerRoundtripError::MissingCell { cell_key })?;
 
     let mut coords = [0.0_f64; 4];
     for &vkey in cell.vertices() {
         let vertex = dt
             .tds()
-            .get_vertex_by_key(vkey)
-            .ok_or_else(|| "vertex key missing in TDS".to_string())?;
+            .vertex(vkey)
+            .ok_or(PachnerRoundtripError::MissingVertex { vertex_key: vkey })?;
         let vcoords = vertex.point().coords();
         for i in 0..4 {
             coords[i] += vcoords[i];
@@ -199,27 +247,25 @@ fn cell_centroid(dt: &Dt4, cell_key: CellKey) -> Result<[f64; 4], String> {
     Ok(coords)
 }
 
-fn roundtrip_k1(dt: &mut Dt4) -> Result<(), String> {
+fn roundtrip_k1(dt: &mut Dt4) -> Result<(), PachnerRoundtripError> {
     let cell_key = dt
         .cells()
         .next()
         .map(|(cell_key, _)| cell_key)
-        .ok_or_else(|| "triangulation has no cells".to_string())?;
+        .ok_or(PachnerRoundtripError::EmptyTriangulation)?;
     let centroid = cell_centroid(dt, cell_key)?;
 
     let new_vertex = vertex!(centroid);
     let new_uuid = new_vertex.uuid();
 
-    dt.flip_k1_insert(cell_key, new_vertex)
-        .map_err(|e| format!("k=1 insert failed: {e}"))?;
+    dt.flip_k1_insert(cell_key, new_vertex)?;
 
     let new_key = dt
         .tds()
         .vertex_key_from_uuid(&new_uuid)
-        .ok_or_else(|| "inserted vertex not found in TDS".to_string())?;
+        .ok_or(PachnerRoundtripError::MissingInsertedVertexUuid { uuid: new_uuid })?;
 
-    dt.flip_k1_remove(new_key)
-        .map_err(|e| format!("k=1 remove failed: {e}"))?;
+    dt.flip_k1_remove(new_key)?;
     Ok(())
 }
 
@@ -238,35 +284,38 @@ fn collect_interior_facets(dt: &Dt4) -> Vec<FacetHandle> {
     facets
 }
 
-fn roundtrip_k2(dt: &mut Dt4) -> Result<(), String> {
+fn roundtrip_k2(dt: &mut Dt4) -> Result<(), PachnerRoundtripError> {
     let candidates = collect_interior_facets(dt);
-    let mut last_error: Option<String> = None;
+    let mut last_error: Option<FlipError> = None;
 
     for facet in candidates {
         match dt.flip_k2(facet) {
             Ok(info) => {
                 if info.inserted_face_vertices.len() != 2 {
-                    return Err("k=2 flip produced unexpected inserted face".to_string());
+                    return Err(PachnerRoundtripError::UnexpectedInsertedFace {
+                        move_kind: MoveKind::K2,
+                        actual: info.inserted_face_vertices.len(),
+                        expected: 2,
+                    });
                 }
 
                 let edge = EdgeKey::new(
                     info.inserted_face_vertices[0],
                     info.inserted_face_vertices[1],
                 );
-                dt.flip_k2_inverse_from_edge(edge)
-                    .map_err(|e| format!("k=2 inverse failed: {e}"))?;
+                dt.flip_k2_inverse_from_edge(edge)?;
                 return Ok(());
             }
             Err(err) => {
-                last_error = Some(format!("{err}"));
+                last_error = Some(err);
             }
         }
     }
 
-    Err(format!(
-        "No flippable interior facet found for k=2 (last error: {})",
-        last_error.unwrap_or_else(|| "none".to_string())
-    ))
+    Err(PachnerRoundtripError::NoFlippableMove {
+        move_kind: MoveKind::K2,
+        last_error,
+    })
 }
 
 fn collect_ridges(dt: &Dt4) -> Vec<RidgeHandle> {
@@ -284,15 +333,19 @@ fn collect_ridges(dt: &Dt4) -> Vec<RidgeHandle> {
     ridges
 }
 
-fn roundtrip_k3(dt: &mut Dt4) -> Result<(), String> {
+fn roundtrip_k3(dt: &mut Dt4) -> Result<(), PachnerRoundtripError> {
     let candidates = collect_ridges(dt);
-    let mut last_error: Option<String> = None;
+    let mut last_error: Option<FlipError> = None;
 
     for ridge in candidates {
         match dt.flip_k3(ridge) {
             Ok(info) => {
                 if info.inserted_face_vertices.len() != 3 {
-                    return Err("k=3 flip produced unexpected inserted face".to_string());
+                    return Err(PachnerRoundtripError::UnexpectedInsertedFace {
+                        move_kind: MoveKind::K3,
+                        actual: info.inserted_face_vertices.len(),
+                        expected: 3,
+                    });
                 }
 
                 let triangle = TriangleHandle::new(
@@ -300,18 +353,17 @@ fn roundtrip_k3(dt: &mut Dt4) -> Result<(), String> {
                     info.inserted_face_vertices[1],
                     info.inserted_face_vertices[2],
                 );
-                dt.flip_k3_inverse_from_triangle(triangle)
-                    .map_err(|e| format!("k=3 inverse failed: {e}"))?;
+                dt.flip_k3_inverse_from_triangle(triangle)?;
                 return Ok(());
             }
             Err(err) => {
-                last_error = Some(format!("{err}"));
+                last_error = Some(err);
             }
         }
     }
 
-    Err(format!(
-        "No flippable ridge found for k=3 (last error: {})",
-        last_error.unwrap_or_else(|| "none".to_string())
-    ))
+    Err(PachnerRoundtripError::NoFlippableMove {
+        move_kind: MoveKind::K3,
+        last_error,
+    })
 }

@@ -9,7 +9,10 @@
 #![forbid(unsafe_code)]
 
 pub use crate::core::algorithms::flips::{
-    BistellarFlipKind, FlipDirection, FlipError, FlipInfo, RidgeHandle, TriangleHandle,
+    BistellarFlipKind, FlipContextError, FlipDirection, FlipEdgeAdjacencyError, FlipError,
+    FlipInfo, FlipMutationError, FlipNeighborWiringError, FlipPredicateError,
+    FlipPredicateOperation, FlipTriangleAdjacencyError, FlipVertexAdjacencyError, RidgeHandle,
+    TriangleHandle,
 };
 pub use crate::core::edge::EdgeKey;
 pub use crate::core::facet::FacetHandle;
@@ -51,11 +54,10 @@ use crate::triangulation::delaunay::DelaunayTriangulation;
 ///     .flip_k1_insert(cell_key, vertex!([0.1, 0.1, 0.1]))
 ///     .unwrap();
 /// ```
-pub trait BistellarFlips<K, U, V, const D: usize>
+pub trait BistellarFlips<K, U, const D: usize>
 where
     K: Kernel<D>,
     U: DataType,
-    V: DataType,
 {
     /// Apply a forward k=1 move (cell split) by inserting a vertex into a cell.
     ///
@@ -153,7 +155,7 @@ where
     /// // Note: k=2 flips require specific geometric conditions
     /// let cell_key = dt.cells().next().map(|(k, _)| k);
     /// if let Some(key) = cell_key {
-    ///     let has_neighbor = dt.tds().get_cell(key)
+    ///     let has_neighbor = dt.tds().cell(key)
     ///         .and_then(|cell| cell.neighbors())
     ///         .map(|neighbors| neighbors.iter().any(|n| n.is_some()))
     ///         .unwrap_or(false);
@@ -215,7 +217,7 @@ where
     ) -> Result<FlipInfo<D>, FlipError>;
 }
 
-impl<K, U, V, const D: usize> BistellarFlips<K, U, V, D> for Triangulation<K, U, V, D>
+impl<K, U, V, const D: usize> BistellarFlips<K, U, D> for Triangulation<K, U, V, D>
 where
     K: Kernel<D>,
     U: DataType,
@@ -268,7 +270,7 @@ where
     }
 }
 
-impl<K, U, V, const D: usize> BistellarFlips<K, U, V, D> for DelaunayTriangulation<K, U, V, D>
+impl<K, U, V, const D: usize> BistellarFlips<K, U, D> for DelaunayTriangulation<K, U, V, D>
 where
     K: Kernel<D>,
     U: DataType,
@@ -279,29 +281,158 @@ where
         cell_key: CellKey,
         vertex: Vertex<K::Scalar, U, D>,
     ) -> Result<FlipInfo<D>, FlipError> {
-        self.tri.flip_k1_insert(cell_key, vertex)
+        let result = self.tri.flip_k1_insert(cell_key, vertex);
+        if result.is_ok() {
+            self.invalidate_repair_caches();
+        }
+        result
     }
 
     fn flip_k1_remove(&mut self, vertex_key: VertexKey) -> Result<FlipInfo<D>, FlipError> {
-        self.tri.flip_k1_remove(vertex_key)
+        let result = self.tri.flip_k1_remove(vertex_key);
+        if result.is_ok() {
+            self.invalidate_repair_caches();
+        }
+        result
     }
 
     fn flip_k2(&mut self, facet: FacetHandle) -> Result<FlipInfo<D>, FlipError> {
-        self.tri.flip_k2(facet)
+        let result = self.tri.flip_k2(facet);
+        if result.is_ok() {
+            self.invalidate_repair_caches();
+        }
+        result
     }
 
     fn flip_k3(&mut self, ridge: RidgeHandle) -> Result<FlipInfo<D>, FlipError> {
-        self.tri.flip_k3(ridge)
+        let result = self.tri.flip_k3(ridge);
+        if result.is_ok() {
+            self.invalidate_repair_caches();
+        }
+        result
     }
 
     fn flip_k2_inverse_from_edge(&mut self, edge: EdgeKey) -> Result<FlipInfo<D>, FlipError> {
-        self.tri.flip_k2_inverse_from_edge(edge)
+        let result = self.tri.flip_k2_inverse_from_edge(edge);
+        if result.is_ok() {
+            self.invalidate_repair_caches();
+        }
+        result
     }
 
     fn flip_k3_inverse_from_triangle(
         &mut self,
         triangle: TriangleHandle,
     ) -> Result<FlipInfo<D>, FlipError> {
-        self.tri.flip_k3_inverse_from_triangle(triangle)
+        let result = self.tri.flip_k3_inverse_from_triangle(triangle);
+        if result.is_ok() {
+            self.invalidate_repair_caches();
+        }
+        result
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    use crate::geometry::kernel::{AdaptiveKernel, FastKernel};
+    use crate::vertex;
+    use slotmap::KeyData;
+
+    #[test]
+    fn triangulation_flip_k1_insert_and_remove_roundtrip() {
+        let vertices = vec![
+            vertex!([0.0, 0.0, 0.0]),
+            vertex!([1.0, 0.0, 0.0]),
+            vertex!([0.0, 1.0, 0.0]),
+            vertex!([0.0, 0.0, 1.0]),
+        ];
+        let dt: DelaunayTriangulation<_, (), (), 3> =
+            DelaunayTriangulation::new_with_topology_guarantee(
+                &vertices,
+                crate::core::triangulation::TopologyGuarantee::PLManifold,
+            )
+            .unwrap();
+        let mut tri = dt.as_triangulation().clone();
+        let cell_key = tri.cells().next().unwrap().0;
+
+        let inserted = tri
+            .flip_k1_insert(cell_key, vertex!([0.25, 0.25, 0.25]))
+            .unwrap();
+        let inserted_vertex = inserted.inserted_face_vertices[0];
+        assert!(!inserted.new_cells.is_empty());
+        assert!(tri.validate().is_ok());
+
+        let removed = tri.flip_k1_remove(inserted_vertex).unwrap();
+        assert!(!removed.removed_cells.is_empty());
+        assert!(tri.validate().is_ok());
+    }
+
+    #[test]
+    fn triangulation_flip_k2_rejects_invalid_facet_index() {
+        let vertices = vec![
+            vertex!([0.0, 0.0, 0.0]),
+            vertex!([1.0, 0.0, 0.0]),
+            vertex!([0.0, 1.0, 0.0]),
+            vertex!([0.0, 0.0, 1.0]),
+        ];
+        let dt: DelaunayTriangulation<_, (), (), 3> =
+            DelaunayTriangulation::new_with_topology_guarantee(
+                &vertices,
+                crate::core::triangulation::TopologyGuarantee::PLManifold,
+            )
+            .unwrap();
+        let mut tri = dt.as_triangulation().clone();
+        let cell_key = tri.cells().next().unwrap().0;
+
+        let err = tri
+            .flip_k2(FacetHandle::new(cell_key, u8::MAX))
+            .unwrap_err();
+
+        assert!(matches!(
+            err,
+            FlipError::InvalidFacetIndex {
+                cell_key: key,
+                facet_index: u8::MAX,
+                vertex_count: 4,
+            } if key == cell_key
+        ));
+    }
+
+    #[test]
+    fn delaunay_flip_k3_inverse_rejects_unsupported_dimension() {
+        let mut dt: DelaunayTriangulation<AdaptiveKernel<f64>, (), (), 3> =
+            DelaunayTriangulation::with_empty_kernel(AdaptiveKernel::new());
+        let a = VertexKey::from(KeyData::from_ffi(1));
+        let b = VertexKey::from(KeyData::from_ffi(2));
+        let c = VertexKey::from(KeyData::from_ffi(3));
+
+        let err = dt
+            .flip_k3_inverse_from_triangle(TriangleHandle::new(a, b, c))
+            .unwrap_err();
+
+        assert!(matches!(
+            err,
+            FlipError::UnsupportedDimension { dimension: 3 }
+        ));
+    }
+
+    #[test]
+    fn triangulation_flip_k3_inverse_rejects_zero_dimension_without_underflow() {
+        let mut tri: Triangulation<FastKernel<f64>, (), (), 0> =
+            Triangulation::new_empty(FastKernel::new());
+        let a = VertexKey::from(KeyData::from_ffi(1));
+        let b = VertexKey::from(KeyData::from_ffi(2));
+        let c = VertexKey::from(KeyData::from_ffi(3));
+
+        let err = tri
+            .flip_k3_inverse_from_triangle(TriangleHandle::new(a, b, c))
+            .unwrap_err();
+
+        assert!(matches!(
+            err,
+            FlipError::UnsupportedDimension { dimension: 0 }
+        ));
     }
 }

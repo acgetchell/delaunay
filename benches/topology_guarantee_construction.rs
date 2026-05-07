@@ -14,7 +14,7 @@
 
 use criterion::{BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
 use delaunay::prelude::generators::generate_random_points_seeded;
-use delaunay::prelude::{
+use delaunay::prelude::triangulation::{
     DelaunayRepairPolicy, DelaunayTriangulation, TopologyGuarantee, ValidationPolicy,
 };
 use delaunay::vertex;

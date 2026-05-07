@@ -16,6 +16,7 @@ use uuid::Uuid;
 /// assert!(matches!(err, UuidValidationError::NilUuid));
 /// ```
 #[derive(Clone, Debug, Error, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum UuidValidationError {
     /// The UUID is nil (all zeros), which is not allowed.
     #[error("UUID is nil (all zeros) which is not allowed")]

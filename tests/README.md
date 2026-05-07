@@ -345,25 +345,6 @@ Integration tests for serialization ensuring vertex identifiers and associated d
 
 **Run with:** `cargo test --release --test serialization_vertex_preservation`
 
-#### [`storage_backend_compatibility.rs`](./storage_backend_compatibility.rs)
-
-Integration tests verifying equivalence of triangulation behavior across different storage backends (e.g., SlotMap vs DenseSlotMap).
-
-**Test Coverage:**
-
-- **Behavioral Equivalence**: Triangulation operations produce identical results across backends
-- **Data Structure Integrity**: Cell and vertex relationships consistent regardless of backend
-- **API Compatibility**: All public APIs work consistently across backends
-- **Performance Characteristics**: Backend-specific performance trade-offs are documented
-
-**Run with:** `cargo test --release --test storage_backend_compatibility`
-
-**Note**: If storage backends are feature-gated, specify the feature:
-
-```bash
-cargo test --release --features <backend_feature> --test storage_backend_compatibility
-```
-
 #### [`delaunayize_workflow.rs`](./delaunayize_workflow.rs)
 
 Integration tests for the `delaunayize_by_flips` workflow validating the public API in `delaunay::triangulation::delaunayize`.
@@ -747,10 +728,6 @@ assert_jaccard_gte!(
   - Strict invariants maintained (no relaxation)
   - On failure: reports Jaccard similarity, set sizes, and common neighbors
   - Helps debug "near-miss" failures by quantifying similarity
-
-**Deferred (not currently active):**
-
-- `storage_backend_compatibility.rs` - Edge set comparison (all tests ignored - Phase 4 evaluation)
 
 ### Related Documentation
 
