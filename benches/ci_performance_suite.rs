@@ -65,6 +65,29 @@ type SeedSearchResult<const D: usize> = Option<(u64, Vec<Point<f64, D>>, Vec<Ver
 type BenchTriangulation<const D: usize> = DelaunayTriangulation<AdaptiveKernel<f64>, (), (), D>;
 type FlipTriangulation4 = DelaunayTriangulation<RobustKernel<f64>, (), (), 4>;
 
+fn abort_benchmark(message: impl std::fmt::Display) -> ! {
+    eprintln!("{message}");
+    std::process::exit(1);
+}
+
+fn bench_result<T, E: std::fmt::Display>(result: Result<T, E>, context: &str) -> T {
+    match result {
+        Ok(value) => value,
+        Err(error) => abort_benchmark(format_args!("{context}: {error}")),
+    }
+}
+
+fn bench_option<T>(option: Option<T>, context: impl std::fmt::Display) -> T {
+    option.unwrap_or_else(|| abort_benchmark(context))
+}
+
+fn retry_attempts(value: usize) -> NonZeroUsize {
+    let Some(attempts) = NonZeroUsize::new(value) else {
+        unreachable!("hard-coded retry attempt count must be non-zero");
+    };
+    attempts
+}
+
 #[derive(Clone, Copy)]
 enum Dataset {
     WellConditioned,
@@ -325,41 +348,44 @@ fn prepare_data<const D: usize>(
     // Slow fallback: runtime search from the base seed
     let base_seed = dim_seed.wrapping_add(count as u64);
     let search_limit = seed_search_limit();
-    find_seed_vertices::<D>(base_seed, count, bounds, search_limit, attempts).unwrap_or_else(|| {
-        panic!(
+    bench_option(
+        find_seed_vertices::<D>(base_seed, count, bounds, search_limit, attempts),
+        format_args!(
             "No stable benchmark seed found for {D}D/{count}: \
                  start_seed={base_seed}; search_limit={search_limit}; bounds={bounds:?}"
-        )
-    })
+        ),
+    )
 }
 
 fn prepare_dt<const D: usize>(dim_seed: u64, count: usize) -> BenchTriangulation<D> {
     let bounds = (-100.0, 100.0);
-    let attempts = NonZeroUsize::new(6).expect("retry attempts must be non-zero");
+    let attempts = retry_attempts(6);
     let (seed, _, vertices) = prepare_data::<D>(dim_seed, count, bounds, attempts);
     let options = ConstructionOptions::default().with_retry_policy(RetryPolicy::Shuffled {
         attempts,
         base_seed: Some(seed),
     });
 
-    BenchTriangulation::<D>::new_with_options(&vertices, options).unwrap_or_else(|err| {
-        panic!("failed to prepare {D}D benchmark triangulation with {count} vertices: {err}");
-    })
+    bench_result(
+        BenchTriangulation::<D>::new_with_options(&vertices, options),
+        &format!("failed to prepare {D}D benchmark triangulation with {count} vertices"),
+    )
 }
 
 fn prepare_adv_dt<const D: usize>(dim_seed: u64, count: usize) -> BenchTriangulation<D> {
-    let attempts = NonZeroUsize::new(8).expect("retry attempts must be non-zero");
+    let attempts = retry_attempts(8);
     let (seed, _, vertices) = prepare_adv_data::<D>(dim_seed, count, attempts);
     let options = ConstructionOptions::default().with_retry_policy(RetryPolicy::Shuffled {
         attempts,
         base_seed: Some(seed),
     });
 
-    BenchTriangulation::<D>::new_with_options(&vertices, options).unwrap_or_else(|err| {
-        panic!(
-            "failed to prepare adversarial {D}D benchmark triangulation with {count} vertices: {err}"
-        );
-    })
+    bench_result(
+        BenchTriangulation::<D>::new_with_options(&vertices, options),
+        &format!(
+            "failed to prepare adversarial {D}D benchmark triangulation with {count} vertices"
+        ),
+    )
 }
 
 fn prepare_inserts<const D: usize>(
@@ -372,10 +398,10 @@ fn prepare_inserts<const D: usize>(
         seed ^= 0xA5A5_A5A5;
     }
     let points = match dataset {
-        Dataset::WellConditioned => {
-            generate_random_points_seeded::<f64, D>(count, (-50.0, 50.0), seed)
-                .unwrap_or_else(|error| panic!("insert point generation failed for {D}D: {error}"))
-        }
+        Dataset::WellConditioned => bench_result(
+            generate_random_points_seeded::<f64, D>(count, (-50.0, 50.0), seed),
+            &format!("insert point generation failed for {D}D"),
+        ),
         Dataset::Adversarial => generate_adv_points::<D>(count, seed),
     };
     points.iter().map(|point| vertex!(*point)).collect()
@@ -390,10 +416,10 @@ fn find_seed_vertices<const D: usize>(
 ) -> SeedSearchResult<D> {
     for offset in 0..limit {
         let candidate_seed = start_seed.wrapping_add(offset as u64);
-        let points = generate_random_points_seeded::<f64, D>(count, bounds, candidate_seed)
-            .unwrap_or_else(|error| {
-                panic!("generate_random_points_seeded failed for {D}D: {error}");
-            });
+        let points = bench_result(
+            generate_random_points_seeded::<f64, D>(count, bounds, candidate_seed),
+            &format!("generate_random_points_seeded failed for {D}D"),
+        );
         let vertices = points.iter().map(|p| vertex!(*p)).collect::<Vec<_>>();
 
         let options = ConstructionOptions::default().with_retry_policy(RetryPolicy::Shuffled {
@@ -469,26 +495,29 @@ fn prepare_adv_data<const D: usize>(
         }
     }
 
-    panic!(
+    abort_benchmark(format_args!(
         "No stable adversarial benchmark seed found for {D}D/{count}: \
          start_seed={start_seed}; search_limit={search_limit}"
-    );
+    ));
 }
 
 fn generate_adv_points<const D: usize>(count: usize, seed: u64) -> Vec<Point<f64, D>> {
-    let base_points = generate_random_points_seeded::<f64, D>(count, (-1.0, 1.0), seed)
-        .unwrap_or_else(|error| {
-            panic!("generate_random_points_seeded failed for adversarial {D}D: {error}");
-        });
+    let base_points = bench_result(
+        generate_random_points_seeded::<f64, D>(count, (-1.0, 1.0), seed),
+        &format!("generate_random_points_seeded failed for adversarial {D}D"),
+    );
 
     base_points
         .iter()
         .enumerate()
         .map(|(index, point)| {
-            let index = u32::try_from(index).expect("benchmark point index should fit in u32");
+            let index = bench_result(
+                u32::try_from(index),
+                "benchmark point index should fit in u32",
+            );
             let mut coords = [0.0_f64; D];
             for (axis, coord) in coords.iter_mut().enumerate() {
-                let axis_number = u32::try_from(axis + 1).expect("axis should fit in u32");
+                let axis_number = bench_result(u32::try_from(axis + 1), "axis should fit in u32");
                 let base = point.coords()[axis];
                 let cluster_offset = f64::from(index % 7) * 1.0e-3;
                 let axis_offset = f64::from(axis_number) * 0.25;
@@ -517,29 +546,35 @@ fn build_flip_dt_4d() -> FlipTriangulation4 {
         TopologyGuarantee::PLManifold,
         options,
     )
-    .unwrap_or_else(|err| panic!("failed to build stable 4D flip triangulation: {err}"))
+    .unwrap_or_else(|err| {
+        abort_benchmark(format_args!(
+            "failed to build stable 4D flip triangulation: {err}"
+        ))
+    })
 }
 
 fn cell_centroid_4d(dt: &FlipTriangulation4, cell_key: CellKey) -> [f64; 4] {
-    let cell = dt
-        .tds()
-        .cell(cell_key)
-        .expect("cell key should exist in benchmark triangulation");
+    let cell = bench_option(
+        dt.tds().cell(cell_key),
+        "cell key should exist in benchmark triangulation",
+    );
 
     let mut coords = [0.0_f64; 4];
     for &vkey in cell.vertices() {
-        let vertex = dt
-            .tds()
-            .vertex(vkey)
-            .expect("vertex key should exist in benchmark triangulation");
+        let vertex = bench_option(
+            dt.tds().vertex(vkey),
+            "vertex key should exist in benchmark triangulation",
+        );
         let vcoords = vertex.point().coords();
         for i in 0..4 {
             coords[i] += vcoords[i];
         }
     }
 
-    let vertex_count =
-        u32::try_from(cell.vertices().len()).expect("cell vertex count should fit in u32");
+    let vertex_count = bench_result(
+        u32::try_from(cell.vertices().len()),
+        "cell vertex count should fit in u32",
+    );
     let inv = 1.0_f64 / f64::from(vertex_count);
     for coord in &mut coords {
         *coord *= inv;
@@ -548,18 +583,19 @@ fn cell_centroid_4d(dt: &FlipTriangulation4, cell_key: CellKey) -> [f64; 4] {
 }
 
 fn cell_points_4d(dt: &FlipTriangulation4, cell_key: CellKey) -> Vec<Point<f64, 4>> {
-    let cell = dt
-        .tds()
-        .cell(cell_key)
-        .expect("cell key should exist in benchmark triangulation");
+    let cell = bench_option(
+        dt.tds().cell(cell_key),
+        "cell key should exist in benchmark triangulation",
+    );
 
     cell.vertices()
         .iter()
         .map(|vertex_key| {
-            *dt.tds()
-                .vertex(*vertex_key)
-                .expect("vertex key should exist in benchmark triangulation")
-                .point()
+            *bench_option(
+                dt.tds().vertex(*vertex_key),
+                "vertex key should exist in benchmark triangulation",
+            )
+            .point()
         })
         .collect()
 }
@@ -572,8 +608,14 @@ fn largest_volume_cell_4d(dt: &FlipTriangulation4) -> CellKey {
                 .map(|volume| (cell_key, volume))
         })
         .max_by(|(_, left), (_, right)| left.total_cmp(right))
-        .map(|(cell_key, _)| cell_key)
-        .expect("stable 4D benchmark triangulation should have a non-degenerate cell")
+        .map_or_else(
+            || {
+                abort_benchmark(
+                    "stable 4D benchmark triangulation should have a non-degenerate cell",
+                )
+            },
+            |(cell_key, _)| cell_key,
+        )
 }
 
 fn roundtrip_k1_4d(dt: &mut FlipTriangulation4, cell_key: CellKey) {
@@ -581,16 +623,20 @@ fn roundtrip_k1_4d(dt: &mut FlipTriangulation4, cell_key: CellKey) {
     let new_vertex = vertex!(centroid);
     let new_uuid = new_vertex.uuid();
 
-    dt.flip_k1_insert(cell_key, new_vertex)
-        .expect("k=1 insert should succeed on stable 4D benchmark triangulation");
+    bench_result(
+        dt.flip_k1_insert(cell_key, new_vertex),
+        "k=1 insert should succeed on stable 4D benchmark triangulation",
+    );
 
-    let new_key = dt
-        .tds()
-        .vertex_key_from_uuid(&new_uuid)
-        .expect("inserted vertex should be present after k=1 insert");
+    let new_key = bench_option(
+        dt.tds().vertex_key_from_uuid(&new_uuid),
+        "inserted vertex should be present after k=1 insert",
+    );
 
-    dt.flip_k1_remove(new_key)
-        .expect("k=1 remove should invert k=1 insert");
+    bench_result(
+        dt.flip_k1_remove(new_key),
+        "k=1 remove should invert k=1 insert",
+    );
 }
 
 fn interior_facets_4d(dt: &FlipTriangulation4) -> Vec<FacetHandle> {
@@ -599,7 +645,9 @@ fn interior_facets_4d(dt: &FlipTriangulation4) -> Vec<FacetHandle> {
         if let Some(neighbors) = cell.neighbors() {
             for (facet_index, neighbor) in neighbors.iter().enumerate() {
                 if neighbor.is_some() {
-                    let facet_index = u8::try_from(facet_index).expect("facet index fits in u8");
+                    let Ok(facet_index) = u8::try_from(facet_index) else {
+                        continue;
+                    };
                     facets.push(FacetHandle::new(cell_key, facet_index));
                 }
             }
@@ -623,25 +671,27 @@ fn flippable_k2_facet_4d(dt: &FlipTriangulation4) -> FacetHandle {
                     info.inserted_face_vertices[0],
                     info.inserted_face_vertices[1],
                 );
-                trial
-                    .flip_k2_inverse_from_edge(edge)
-                    .expect("k=2 inverse should succeed after k=2 flip");
+                bench_result(
+                    trial.flip_k2_inverse_from_edge(edge),
+                    "k=2 inverse should succeed after k=2 flip",
+                );
                 return facet;
             }
             Err(err) => last_error = Some(format!("{err}")),
         }
     }
 
-    panic!(
+    abort_benchmark(format_args!(
         "no flippable interior facet found for k=2 benchmark (last error: {})",
         last_error.unwrap_or_else(|| "none".to_string())
-    );
+    ));
 }
 
 fn roundtrip_k2_4d(dt: &mut FlipTriangulation4, facet: FacetHandle) {
-    let info = dt
-        .flip_k2(facet)
-        .expect("k=2 flip should succeed for preselected 4D benchmark facet");
+    let info = bench_result(
+        dt.flip_k2(facet),
+        "k=2 flip should succeed for preselected 4D benchmark facet",
+    );
     assert_eq!(
         info.inserted_face_vertices.len(),
         2,
@@ -651,8 +701,10 @@ fn roundtrip_k2_4d(dt: &mut FlipTriangulation4, facet: FacetHandle) {
         info.inserted_face_vertices[0],
         info.inserted_face_vertices[1],
     );
-    dt.flip_k2_inverse_from_edge(edge)
-        .expect("k=2 inverse should succeed after k=2 flip");
+    bench_result(
+        dt.flip_k2_inverse_from_edge(edge),
+        "k=2 inverse should succeed after k=2 flip",
+    );
 }
 
 fn ridges_4d(dt: &FlipTriangulation4) -> Vec<RidgeHandle> {
@@ -661,8 +713,12 @@ fn ridges_4d(dt: &FlipTriangulation4) -> Vec<RidgeHandle> {
         let vertex_count = cell.number_of_vertices();
         for i in 0..vertex_count {
             for j in (i + 1)..vertex_count {
-                let omit_a = u8::try_from(i).expect("ridge index fits in u8");
-                let omit_b = u8::try_from(j).expect("ridge index fits in u8");
+                let Ok(omit_a) = u8::try_from(i) else {
+                    continue;
+                };
+                let Ok(omit_b) = u8::try_from(j) else {
+                    continue;
+                };
                 ridges.push(RidgeHandle::new(cell_key, omit_a, omit_b));
             }
         }
@@ -686,25 +742,27 @@ fn flippable_k3_ridge_4d(dt: &FlipTriangulation4) -> RidgeHandle {
                     info.inserted_face_vertices[1],
                     info.inserted_face_vertices[2],
                 );
-                trial
-                    .flip_k3_inverse_from_triangle(triangle)
-                    .expect("k=3 inverse should succeed after k=3 flip");
+                bench_result(
+                    trial.flip_k3_inverse_from_triangle(triangle),
+                    "k=3 inverse should succeed after k=3 flip",
+                );
                 return ridge;
             }
             Err(err) => last_error = Some(format!("{err}")),
         }
     }
 
-    panic!(
+    abort_benchmark(format_args!(
         "no flippable ridge found for k=3 benchmark (last error: {})",
         last_error.unwrap_or_else(|| "none".to_string())
-    );
+    ));
 }
 
 fn roundtrip_k3_4d(dt: &mut FlipTriangulation4, ridge: RidgeHandle) {
-    let info = dt
-        .flip_k3(ridge)
-        .expect("k=3 flip should succeed for preselected 4D benchmark ridge");
+    let info = bench_result(
+        dt.flip_k3(ridge),
+        "k=3 flip should succeed for preselected 4D benchmark ridge",
+    );
     assert_eq!(
         info.inserted_face_vertices.len(),
         3,
@@ -715,8 +773,10 @@ fn roundtrip_k3_4d(dt: &mut FlipTriangulation4, ridge: RidgeHandle) {
         info.inserted_face_vertices[1],
         info.inserted_face_vertices[2],
     );
-    dt.flip_k3_inverse_from_triangle(triangle)
-        .expect("k=3 inverse should succeed after k=3 flip");
+    bench_result(
+        dt.flip_k3_inverse_from_triangle(triangle),
+        "k=3 inverse should succeed after k=3 flip",
+    );
 }
 
 fn discover_seeds_enabled() -> bool {
@@ -777,8 +837,7 @@ macro_rules! benchmark_tds_new_dimension {
                     if !filters.is_empty()
                         && filters.iter().any(|filter| adv_bench_id.contains(filter))
                     {
-                        let attempts =
-                            NonZeroUsize::new(8).expect("retry attempts must be non-zero");
+                        let attempts = retry_attempts(8);
                         let _ = prepare_adv_data::<$dim>($seed, count, attempts);
                         return;
                     }
@@ -788,8 +847,7 @@ macro_rules! benchmark_tds_new_dimension {
                     {
                         let seed = ($seed as u64).wrapping_add(count as u64);
                         let limit = seed_search_limit();
-                        let attempts =
-                            NonZeroUsize::new(6).expect("retry attempts must be non-zero");
+                        let attempts = retry_attempts(6);
 
                         if let Some((candidate_seed, _, _)) =
                             find_seed_vertices::<$dim>(seed, count, bounds, limit, attempts)
@@ -801,13 +859,13 @@ macro_rules! benchmark_tds_new_dimension {
                             return;
                         }
 
-                        panic!(
+                        abort_benchmark(format_args!(
                             "seed_search_failed dim={} count={} start_seed={} limit={}",
                             $dim,
                             count,
                             seed,
                             limit
-                        );
+                        ));
                     }
                 }
 
@@ -831,8 +889,7 @@ macro_rules! benchmark_tds_new_dimension {
                     // Reduce variance: pre-generate deterministic inputs outside the measured loop,
                     // then benchmark only triangulation construction.
                     let bounds = (-100.0, 100.0);
-                    let attempts =
-                        NonZeroUsize::new(6).expect("retry attempts must be non-zero");
+                    let attempts = retry_attempts(6);
                     let (seed, points, vertices) =
                         prepare_data::<$dim>($seed, count, bounds, attempts);
                     let sample_points = points.iter().take(5).collect::<Vec<_>>();
@@ -856,14 +913,14 @@ macro_rules! benchmark_tds_new_dimension {
                             }
                             Err(err) => {
                                 let error = format!("{err:?}");
-                                panic!(
+                                abort_benchmark(format_args!(
                                     "DelaunayTriangulation::new failed for {}D: {error}; dim={}; count={}; seed={}; bounds={:?}; sample_points={sample_points:?}",
                                     $dim,
                                     $dim,
                                     count,
                                     seed,
                                     bounds
-                                );
+                                ));
                             }
                         }
                     });
@@ -873,8 +930,7 @@ macro_rules! benchmark_tds_new_dimension {
                     BenchmarkId::new("tds_new_adversarial", count),
                     &count,
                     |b, &count| {
-                        let attempts =
-                            NonZeroUsize::new(8).expect("retry attempts must be non-zero");
+                        let attempts = retry_attempts(8);
                         let (seed, points, vertices) =
                             prepare_adv_data::<$dim>($seed, count, attempts);
                         let sample_points = points.iter().take(5).collect::<Vec<_>>();
@@ -895,13 +951,13 @@ macro_rules! benchmark_tds_new_dimension {
                                 }
                                 Err(err) => {
                                     let error = format!("{err:?}");
-                                    panic!(
+                                    abort_benchmark(format_args!(
                                         "adversarial DelaunayTriangulation::new failed for {}D: {error}; dim={}; count={}; seed={}; sample_points={sample_points:?}",
                                         $dim,
                                         $dim,
                                         count,
                                         seed
-                                    );
+                                    ));
                                 }
                             }
                         });
@@ -954,11 +1010,10 @@ fn bench_hull_case<const D: usize>(
         ),
         |b| {
             b.iter(|| {
-                black_box(
-                    ConvexHull::from_triangulation(dt.as_triangulation()).unwrap_or_else(|err| {
-                        panic!("{dimension}D convex hull extraction should succeed: {err}")
-                    }),
-                );
+                black_box(bench_result(
+                    ConvexHull::from_triangulation(dt.as_triangulation()),
+                    &format!("{dimension}D convex hull extraction should succeed"),
+                ));
             });
         },
     );
@@ -976,9 +1031,10 @@ fn bench_validate_case<const D: usize>(
         BenchmarkId::new(format!("validate_{dimension}d{}", dataset.suffix()), count),
         |b| {
             b.iter(|| {
-                black_box(dt.validate()).unwrap_or_else(|err| {
-                    panic!("{dimension}D benchmark triangulation should validate: {err}");
-                });
+                bench_result(
+                    black_box(dt.validate()),
+                    &format!("{dimension}D benchmark triangulation should validate"),
+                );
             });
         },
     );
@@ -1000,9 +1056,10 @@ fn bench_insert_case<const D: usize>(
                 || (base_dt.clone(), insert_vertices.to_vec()),
                 |(mut dt, vertices)| {
                     for vertex in vertices {
-                        black_box(dt.insert(vertex)).unwrap_or_else(|err| {
-                            panic!("{dimension}D incremental insert should succeed: {err}");
-                        });
+                        bench_result(
+                            black_box(dt.insert(vertex)),
+                            &format!("{dimension}D incremental insert should succeed"),
+                        );
                     }
                     black_box(dt);
                 },

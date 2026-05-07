@@ -28,9 +28,11 @@
 #![forbid(unsafe_code)]
 
 use crate::core::algorithms::incremental_insertion::{
-    InsertionError, NeighborWiringError, external_facets_for_boundary, wire_cavity_neighbors,
+    CavityFillingError, HullExtensionReason, InsertionError, NeighborWiringError,
+    TdsConstructionFailure, TdsValidationFailure, external_facets_for_boundary,
+    wire_cavity_neighbors,
 };
-use crate::core::algorithms::locate::{ConflictError, extract_cavity_boundary};
+use crate::core::algorithms::locate::{ConflictError, LocateError, extract_cavity_boundary};
 use crate::core::cell::{Cell, CellValidationError};
 use crate::core::collections::{
     CellKeyBuffer, FastHashMap, FastHashSet, FastHasher, MAX_PRACTICAL_DIMENSION_SIZE, SmallBuffer,
@@ -38,9 +40,9 @@ use crate::core::collections::{
 use crate::core::edge::EdgeKey;
 use crate::core::facet::{AllFacetsIter, FacetHandle, facet_key_from_vertices};
 use crate::core::operations::TopologicalOperation;
-use crate::core::tds::{CellKey, Tds, TdsConstructionError, TdsError, VertexKey};
+use crate::core::tds::{CellKey, EntityKind, Tds, VertexKey};
 use crate::core::traits::data_type::DataType;
-use crate::core::triangulation::{TopologyGuarantee, Triangulation};
+use crate::core::triangulation::{TopologyGuarantee, Triangulation, TriangulationValidationError};
 use crate::core::util::stable_hash_u64_slice;
 use crate::core::vertex::Vertex;
 use crate::geometry::kernel::Kernel;
@@ -444,7 +446,7 @@ where
         let cell = Cell::new(vertices, None)?;
         let cell_key = trial.insert_cell_with_mapping(cell).map_err(|source| {
             FlipMutationError::CellInsertion {
-                source: Box::new(source),
+                source: source.into(),
             }
         })?;
         new_cells.push(cell_key);
@@ -459,6 +461,15 @@ where
     .map_err(FlipNeighborWiringError::from)?;
 
     trial.remove_cells_by_keys(removed_cells);
+
+    if let Err(source) = trial.is_valid() {
+        return Err(FlipMutationError::TrialValidation {
+            k_move,
+            direction,
+            source: source.into(),
+        }
+        .into());
+    }
 
     debug_assert!(
         trial.is_coherently_oriented(),
@@ -1787,6 +1798,378 @@ pub enum FlipContextError {
     MissingRemovedCellFrame,
 }
 
+/// Non-recursive summary of a flip error that reached another flip error path.
+#[derive(Clone, Copy, Debug, Error, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum FlipFailureKind {
+    /// Flips are not supported for this dimension.
+    #[error("unsupported dimension")]
+    UnsupportedDimension,
+    /// Boundary facet.
+    #[error("boundary facet")]
+    BoundaryFacet,
+    /// Missing cell.
+    #[error("missing cell")]
+    MissingCell,
+    /// Missing vertex.
+    #[error("missing vertex")]
+    MissingVertex,
+    /// Missing neighbor.
+    #[error("missing neighbor")]
+    MissingNeighbor,
+    /// Invalid facet adjacency.
+    #[error("invalid facet adjacency")]
+    InvalidFacetAdjacency,
+    /// Invalid facet index.
+    #[error("invalid facet index")]
+    InvalidFacetIndex,
+    /// Invalid ridge index.
+    #[error("invalid ridge index")]
+    InvalidRidgeIndex,
+    /// Invalid ridge adjacency.
+    #[error("invalid ridge adjacency")]
+    InvalidRidgeAdjacency,
+    /// Invalid ridge multiplicity.
+    #[error("invalid ridge multiplicity")]
+    InvalidRidgeMultiplicity,
+    /// Invalid edge multiplicity.
+    #[error("invalid edge multiplicity")]
+    InvalidEdgeMultiplicity,
+    /// Invalid triangle multiplicity.
+    #[error("invalid triangle multiplicity")]
+    InvalidTriangleMultiplicity,
+    /// Invalid edge adjacency.
+    #[error("invalid edge adjacency")]
+    InvalidEdgeAdjacency,
+    /// Invalid triangle adjacency.
+    #[error("invalid triangle adjacency")]
+    InvalidTriangleAdjacency,
+    /// Invalid vertex multiplicity.
+    #[error("invalid vertex multiplicity")]
+    InvalidVertexMultiplicity,
+    /// Invalid vertex adjacency.
+    #[error("invalid vertex adjacency")]
+    InvalidVertexAdjacency,
+    /// Invalid flip context.
+    #[error("invalid flip context")]
+    InvalidFlipContext,
+    /// Predicate failure.
+    #[error("predicate failure")]
+    PredicateFailure,
+    /// Degenerate cell.
+    #[error("degenerate cell")]
+    DegenerateCell,
+    /// Negative orientation.
+    #[error("negative orientation")]
+    NegativeOrientation,
+    /// Duplicate cell.
+    #[error("duplicate cell")]
+    DuplicateCell,
+    /// Non-manifold facet.
+    #[error("non-manifold facet")]
+    NonManifoldFacet,
+    /// Inserted simplex already exists.
+    #[error("inserted simplex already exists")]
+    InsertedSimplexAlreadyExists,
+    /// Cell creation failed.
+    #[error("cell creation")]
+    CellCreation,
+    /// Neighbor wiring failed.
+    #[error("neighbor wiring")]
+    NeighborWiring,
+    /// TDS mutation failed.
+    #[error("TDS mutation")]
+    TdsMutation,
+}
+
+/// Non-recursive summary of a cavity-filling error at the flip wiring boundary.
+#[derive(Clone, Copy, Debug, Error, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum FlipNeighborCavityFailureKind {
+    /// Boundary cell was missing.
+    #[error("missing boundary cell")]
+    MissingBoundaryCell,
+    /// Inserted vertex was missing.
+    #[error("missing inserted vertex")]
+    MissingInsertedVertex,
+    /// Boundary cell had the wrong arity.
+    #[error("wrong cell arity")]
+    WrongCellArity,
+    /// Facet index was invalid.
+    #[error("invalid facet index")]
+    InvalidFacetIndex,
+    /// Replacement cell creation failed.
+    #[error("cell creation")]
+    CellCreation,
+    /// Replacement cell insertion failed.
+    #[error("cell insertion")]
+    CellInsertion,
+    /// Initial simplex construction failed.
+    #[error("initial simplex construction")]
+    InitialSimplexConstruction,
+    /// Rebuilt TDS lost the inserted vertex.
+    #[error("rebuilt vertex missing")]
+    RebuiltVertexMissing,
+    /// Conflict region was empty.
+    #[error("empty conflict region")]
+    EmptyConflictRegion,
+    /// Cavity boundary was empty.
+    #[error("empty boundary")]
+    EmptyBoundary,
+    /// Facet sharing remained invalid after repair.
+    #[error("invalid facet sharing after repair")]
+    InvalidFacetSharingAfterRepair,
+    /// Neighbor rebuild failed.
+    #[error("neighbor rebuild")]
+    NeighborRebuild,
+    /// Perturbation scale conversion failed.
+    #[error("perturbation scale conversion")]
+    PerturbationScaleConversion,
+    /// Degenerate insertion location is unsupported.
+    #[error("unsupported degenerate location")]
+    UnsupportedDegenerateLocation,
+    /// Fan filling produced no cells.
+    #[error("empty fan triangulation")]
+    EmptyFanTriangulation,
+}
+
+impl From<&CavityFillingError> for FlipNeighborCavityFailureKind {
+    fn from(source: &CavityFillingError) -> Self {
+        match source {
+            CavityFillingError::MissingBoundaryCell { .. } => Self::MissingBoundaryCell,
+            CavityFillingError::MissingInsertedVertex { .. } => Self::MissingInsertedVertex,
+            CavityFillingError::WrongCellArity { .. } => Self::WrongCellArity,
+            CavityFillingError::InvalidFacetIndex { .. } => Self::InvalidFacetIndex,
+            CavityFillingError::CellCreation { .. } => Self::CellCreation,
+            CavityFillingError::CellInsertion { .. } => Self::CellInsertion,
+            CavityFillingError::InitialSimplexConstruction { .. } => {
+                Self::InitialSimplexConstruction
+            }
+            CavityFillingError::RebuiltVertexMissing { .. } => Self::RebuiltVertexMissing,
+            CavityFillingError::EmptyConflictRegion { .. } => Self::EmptyConflictRegion,
+            CavityFillingError::EmptyBoundary { .. } => Self::EmptyBoundary,
+            CavityFillingError::InvalidFacetSharingAfterRepair { .. } => {
+                Self::InvalidFacetSharingAfterRepair
+            }
+            CavityFillingError::NeighborRebuild { .. } => Self::NeighborRebuild,
+            CavityFillingError::PerturbationScaleConversion { .. } => {
+                Self::PerturbationScaleConversion
+            }
+            CavityFillingError::UnsupportedDegenerateLocation { .. } => {
+                Self::UnsupportedDegenerateLocation
+            }
+            CavityFillingError::EmptyFanTriangulation => Self::EmptyFanTriangulation,
+        }
+    }
+}
+
+impl From<CavityFillingError> for FlipNeighborCavityFailureKind {
+    fn from(source: CavityFillingError) -> Self {
+        Self::from(&source)
+    }
+}
+
+/// Non-recursive summary of a hull-extension error at the flip wiring boundary.
+#[derive(Clone, Copy, Debug, Error, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum FlipNeighborHullExtensionFailureKind {
+    /// No visible facets were found.
+    #[error("no visible facets")]
+    NoVisibleFacets,
+    /// Visible facets formed an invalid patch.
+    #[error("invalid patch")]
+    InvalidPatch,
+    /// Geometric predicate failed.
+    #[error("predicate failed")]
+    PredicateFailed,
+    /// Lower-layer TDS error.
+    #[error("TDS")]
+    Tds,
+    /// Other hull-extension failure.
+    #[error("other")]
+    Other,
+}
+
+impl From<&HullExtensionReason> for FlipNeighborHullExtensionFailureKind {
+    fn from(source: &HullExtensionReason) -> Self {
+        match source {
+            HullExtensionReason::NoVisibleFacets => Self::NoVisibleFacets,
+            HullExtensionReason::InvalidPatch { .. } => Self::InvalidPatch,
+            HullExtensionReason::PredicateFailed(_) => Self::PredicateFailed,
+            HullExtensionReason::Tds(_) => Self::Tds,
+            HullExtensionReason::Other { .. } => Self::Other,
+        }
+    }
+}
+
+impl From<HullExtensionReason> for FlipNeighborHullExtensionFailureKind {
+    fn from(source: HullExtensionReason) -> Self {
+        Self::from(&source)
+    }
+}
+
+/// Non-recursive summary of a Delaunay validation error at the flip wiring boundary.
+#[derive(Clone, Copy, Debug, Error, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum FlipNeighborDelaunayValidationFailureKind {
+    /// Lower-layer TDS validation failed.
+    #[error("TDS")]
+    Tds,
+    /// Lower-layer topology validation failed.
+    #[error("triangulation")]
+    Triangulation,
+    /// Delaunay verification failed.
+    #[error("verification failed")]
+    VerificationFailed,
+    /// Legacy repair validation failed.
+    #[error("repair failed")]
+    RepairFailed,
+    /// Repair operation validation failed.
+    #[error("repair operation failed")]
+    RepairOperationFailed,
+}
+
+impl From<&crate::triangulation::delaunay::DelaunayTriangulationValidationError>
+    for FlipNeighborDelaunayValidationFailureKind
+{
+    fn from(source: &crate::triangulation::delaunay::DelaunayTriangulationValidationError) -> Self {
+        match source {
+            crate::triangulation::delaunay::DelaunayTriangulationValidationError::Tds(_) => {
+                Self::Tds
+            }
+            crate::triangulation::delaunay::DelaunayTriangulationValidationError::Triangulation(
+                _,
+            ) => Self::Triangulation,
+            crate::triangulation::delaunay::DelaunayTriangulationValidationError::VerificationFailed {
+                ..
+            } => Self::VerificationFailed,
+            crate::triangulation::delaunay::DelaunayTriangulationValidationError::RepairFailed {
+                ..
+            } => Self::RepairFailed,
+            crate::triangulation::delaunay::DelaunayTriangulationValidationError::RepairOperationFailed {
+                ..
+            } => Self::RepairOperationFailed,
+        }
+    }
+}
+
+impl From<crate::triangulation::delaunay::DelaunayTriangulationValidationError>
+    for FlipNeighborDelaunayValidationFailureKind
+{
+    fn from(source: crate::triangulation::delaunay::DelaunayTriangulationValidationError) -> Self {
+        Self::from(&source)
+    }
+}
+
+/// Compact repair diagnostics preserved when embedding repair failures in flip wiring errors.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct FlipNeighborRepairDiagnostics {
+    /// Number of queued items checked.
+    pub facets_checked: usize,
+    /// Number of flips performed.
+    pub flips_performed: usize,
+    /// Maximum queue length observed.
+    pub max_queue_len: usize,
+    /// Count of ambiguous predicate evaluations.
+    pub ambiguous_predicates: usize,
+    /// Count of predicate failures.
+    pub predicate_failures: usize,
+    /// Count of detected flip cycles.
+    pub cycle_detections: usize,
+    /// Attempt number.
+    pub attempt: usize,
+    /// Queue ordering policy used for this attempt.
+    pub queue_order: RepairQueueOrder,
+}
+
+impl fmt::Display for FlipNeighborRepairDiagnostics {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            f,
+            "checked={}, flips={}, max_queue={}, ambiguous={}, predicate_failures={}, cycles={}, attempt={}, order={:?}",
+            self.facets_checked,
+            self.flips_performed,
+            self.max_queue_len,
+            self.ambiguous_predicates,
+            self.predicate_failures,
+            self.cycle_detections,
+            self.attempt,
+            self.queue_order
+        )
+    }
+}
+
+impl From<DelaunayRepairDiagnostics> for FlipNeighborRepairDiagnostics {
+    fn from(source: DelaunayRepairDiagnostics) -> Self {
+        Self {
+            facets_checked: source.facets_checked,
+            flips_performed: source.flips_performed,
+            max_queue_len: source.max_queue_len,
+            ambiguous_predicates: source.ambiguous_predicates,
+            predicate_failures: source.predicate_failures,
+            cycle_detections: source.cycle_detections,
+            attempt: source.attempt,
+            queue_order: source.queue_order,
+        }
+    }
+}
+
+/// Non-recursive reason Delaunay repair reached flip neighbor wiring.
+#[derive(Clone, Debug, Error, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum FlipNeighborRepairFailure {
+    /// Repair did not converge within the flip budget.
+    #[error("repair did not converge after {max_flips} flips ({diagnostics})")]
+    NonConvergent {
+        /// Maximum flips allowed.
+        max_flips: usize,
+        /// Diagnostics captured during the failed attempt.
+        diagnostics: FlipNeighborRepairDiagnostics,
+    },
+    /// Repair completed but left a Delaunay violation.
+    #[error("repair postcondition failed: {message}")]
+    PostconditionFailed {
+        /// Additional context describing the postcondition failure.
+        message: String,
+    },
+    /// Post-repair verification could not evaluate a local flip predicate.
+    #[error("repair verification failed during {context}: {source_kind}")]
+    VerificationFailed {
+        /// Verification phase that failed.
+        context: &'static str,
+        /// Non-recursive class of the underlying flip error.
+        source_kind: FlipFailureKind,
+    },
+    /// Repair completed but orientation canonicalization failed.
+    #[error("repair orientation canonicalization failed: {message}")]
+    OrientationCanonicalizationFailed {
+        /// Additional context describing the canonicalization failure.
+        message: String,
+    },
+    /// Flip-based repair is not admissible under the current topology guarantee.
+    #[error("repair requires {required:?} topology, found {found:?}: {message}")]
+    InvalidTopology {
+        /// Required topology guarantee.
+        required: TopologyGuarantee,
+        /// Actual topology guarantee.
+        found: TopologyGuarantee,
+        /// Additional context for the mismatch.
+        message: &'static str,
+    },
+    /// Heuristic rebuild failed during advanced repair.
+    #[error("heuristic rebuild failed: {message}")]
+    HeuristicRebuildFailed {
+        /// Additional context for the rebuild failure.
+        message: String,
+    },
+    /// Underlying flip error.
+    #[error("flip error: {source_kind}")]
+    Flip {
+        /// Non-recursive class of the underlying flip error.
+        source_kind: FlipFailureKind,
+    },
+}
+
 /// Structured reason neighbor wiring failed during flip application.
 #[derive(Clone, Debug, Error, PartialEq, Eq)]
 #[non_exhaustive]
@@ -1818,13 +2201,69 @@ pub enum FlipNeighborWiringError {
     TopologyValidation {
         /// Underlying TDS validation error.
         #[source]
-        source: TdsError,
+        source: TdsValidationFailure,
     },
-    /// An unexpected insertion-layer error reached flip neighbor wiring.
-    #[error("unexpected neighbor wiring error: {message}")]
-    Unexpected {
-        /// Display form of the unexpected error.
+    /// Conflict-region extraction reached flip neighbor wiring.
+    #[error("conflict-region error reached flip neighbor wiring: {source}")]
+    ConflictRegion {
+        /// Underlying conflict-region error.
+        #[source]
+        source: ConflictError,
+    },
+    /// Point-location failure reached flip neighbor wiring.
+    #[error("point-location error reached flip neighbor wiring: {source}")]
+    Location {
+        /// Underlying point-location error.
+        #[source]
+        source: LocateError,
+    },
+    /// Cavity filling failed while preparing flip neighbor wiring.
+    #[error("cavity filling error reached flip neighbor wiring: {reason}")]
+    CavityFilling {
+        /// Structured cavity-filling reason.
+        reason: FlipNeighborCavityFailureKind,
+    },
+    /// Hull extension failed while preparing flip neighbor wiring.
+    #[error("hull extension error reached flip neighbor wiring: {reason}")]
+    HullExtension {
+        /// Structured hull-extension reason.
+        reason: FlipNeighborHullExtensionFailureKind,
+    },
+    /// Delaunay validation failed while preparing flip neighbor wiring.
+    #[error("Delaunay validation error reached flip neighbor wiring: {reason}")]
+    DelaunayValidation {
+        /// Structured validation reason.
+        reason: FlipNeighborDelaunayValidationFailureKind,
+    },
+    /// Delaunay repair failed while preparing flip neighbor wiring.
+    #[error("Delaunay repair error reached flip neighbor wiring: {reason}")]
+    DelaunayRepair {
+        /// Structured non-recursive repair reason.
+        #[source]
+        reason: FlipNeighborRepairFailure,
+    },
+    /// Duplicate coordinates reached flip neighbor wiring.
+    #[error("duplicate coordinates reached flip neighbor wiring: {coordinates}")]
+    DuplicateCoordinates {
+        /// Duplicate coordinate tuple.
+        coordinates: String,
+    },
+    /// Duplicate UUID reached flip neighbor wiring.
+    #[error("duplicate UUID reached flip neighbor wiring: {entity:?} {uuid}")]
+    DuplicateUuid {
+        /// Entity kind.
+        entity: EntityKind,
+        /// Duplicated UUID.
+        uuid: uuid::Uuid,
+    },
+    /// Level 3 topology validation failed while preparing flip neighbor wiring.
+    #[error("topology validation error reached flip neighbor wiring: {message}: {source}")]
+    TopologyValidationFailed {
+        /// High-level insertion context.
         message: String,
+        /// Underlying topology validation error.
+        #[source]
+        source: TriangulationValidationError,
     },
 }
 
@@ -1839,10 +2278,33 @@ impl From<InsertionError> for FlipNeighborWiringError {
                 facet_hash,
                 cell_count,
             },
-            InsertionError::TopologyValidation(source) => Self::TopologyValidation { source },
-            other => Self::Unexpected {
-                message: other.to_string(),
+            InsertionError::TopologyValidation(source) => Self::TopologyValidation {
+                source: source.into(),
             },
+            InsertionError::ConflictRegion(source) => Self::ConflictRegion { source },
+            InsertionError::Location(source) => Self::Location { source },
+            InsertionError::CavityFilling { reason } => Self::CavityFilling {
+                reason: reason.into(),
+            },
+            InsertionError::HullExtension { reason } => Self::HullExtension {
+                reason: reason.into(),
+            },
+            InsertionError::DelaunayValidationFailed { source } => Self::DelaunayValidation {
+                reason: (*source).into(),
+            },
+            InsertionError::DelaunayRepairFailed { source, context: _ } => Self::DelaunayRepair {
+                reason: FlipNeighborRepairFailure::from(*source),
+            },
+            InsertionError::DuplicateCoordinates { coordinates } => {
+                Self::DuplicateCoordinates { coordinates }
+            }
+            InsertionError::DuplicateUuid { entity, uuid } => Self::DuplicateUuid { entity, uuid },
+            InsertionError::TopologyValidationFailed { message, source } => {
+                Self::TopologyValidationFailed {
+                    message,
+                    source: *source,
+                }
+            }
         }
     }
 }
@@ -1856,14 +2318,27 @@ pub enum FlipMutationError {
     VertexInsertion {
         /// Underlying TDS construction error.
         #[source]
-        source: Box<TdsConstructionError>,
+        source: TdsConstructionFailure,
     },
     /// Replacement-cell insertion failed.
     #[error("cell insertion failed: {source}")]
     CellInsertion {
         /// Underlying TDS construction error.
         #[source]
-        source: Box<TdsConstructionError>,
+        source: TdsConstructionFailure,
+    },
+    /// Trial TDS validation failed before committing a flip.
+    #[error(
+        "trial TDS validation failed after bistellar flip (k={k_move}, direction={direction:?}): {source}"
+    )]
+    TrialValidation {
+        /// k for the attempted move.
+        k_move: usize,
+        /// Direction of the attempted move.
+        direction: FlipDirection,
+        /// Underlying TDS validation error.
+        #[source]
+        source: TdsValidationFailure,
     },
 }
 
@@ -2176,6 +2651,45 @@ impl From<FlipNeighborWiringError> for FlipError {
 impl From<FlipMutationError> for FlipError {
     fn from(reason: FlipMutationError) -> Self {
         Self::TdsMutation { reason }
+    }
+}
+
+impl From<&FlipError> for FlipFailureKind {
+    fn from(source: &FlipError) -> Self {
+        match source {
+            FlipError::UnsupportedDimension { .. } => Self::UnsupportedDimension,
+            FlipError::BoundaryFacet { .. } => Self::BoundaryFacet,
+            FlipError::MissingCell { .. } => Self::MissingCell,
+            FlipError::MissingVertex { .. } => Self::MissingVertex,
+            FlipError::MissingNeighbor { .. } => Self::MissingNeighbor,
+            FlipError::InvalidFacetAdjacency { .. } => Self::InvalidFacetAdjacency,
+            FlipError::InvalidFacetIndex { .. } => Self::InvalidFacetIndex,
+            FlipError::InvalidRidgeIndex { .. } => Self::InvalidRidgeIndex,
+            FlipError::InvalidRidgeAdjacency { .. } => Self::InvalidRidgeAdjacency,
+            FlipError::InvalidRidgeMultiplicity { .. } => Self::InvalidRidgeMultiplicity,
+            FlipError::InvalidEdgeMultiplicity { .. } => Self::InvalidEdgeMultiplicity,
+            FlipError::InvalidTriangleMultiplicity { .. } => Self::InvalidTriangleMultiplicity,
+            FlipError::InvalidEdgeAdjacency { .. } => Self::InvalidEdgeAdjacency,
+            FlipError::InvalidTriangleAdjacency { .. } => Self::InvalidTriangleAdjacency,
+            FlipError::InvalidVertexMultiplicity { .. } => Self::InvalidVertexMultiplicity,
+            FlipError::InvalidVertexAdjacency { .. } => Self::InvalidVertexAdjacency,
+            FlipError::InvalidFlipContext { .. } => Self::InvalidFlipContext,
+            FlipError::PredicateFailure { .. } => Self::PredicateFailure,
+            FlipError::DegenerateCell => Self::DegenerateCell,
+            FlipError::NegativeOrientation { .. } => Self::NegativeOrientation,
+            FlipError::DuplicateCell => Self::DuplicateCell,
+            FlipError::NonManifoldFacet => Self::NonManifoldFacet,
+            FlipError::InsertedSimplexAlreadyExists { .. } => Self::InsertedSimplexAlreadyExists,
+            FlipError::CellCreation(_) => Self::CellCreation,
+            FlipError::NeighborWiring { .. } => Self::NeighborWiring,
+            FlipError::TdsMutation { .. } => Self::TdsMutation,
+        }
+    }
+}
+
+impl From<FlipError> for FlipFailureKind {
+    fn from(source: FlipError) -> Self {
+        Self::from(&source)
     }
 }
 
@@ -2610,6 +3124,47 @@ pub enum DelaunayRepairError {
     /// Underlying flip error.
     #[error(transparent)]
     Flip(#[from] FlipError),
+}
+
+impl From<DelaunayRepairError> for FlipNeighborRepairFailure {
+    fn from(source: DelaunayRepairError) -> Self {
+        match source {
+            DelaunayRepairError::NonConvergent {
+                max_flips,
+                diagnostics,
+            } => Self::NonConvergent {
+                max_flips,
+                diagnostics: (*diagnostics).into(),
+            },
+            DelaunayRepairError::PostconditionFailed { message } => {
+                Self::PostconditionFailed { message }
+            }
+            DelaunayRepairError::VerificationFailed { context, source } => {
+                Self::VerificationFailed {
+                    context,
+                    source_kind: FlipFailureKind::from(source.as_ref()),
+                }
+            }
+            DelaunayRepairError::OrientationCanonicalizationFailed { message } => {
+                Self::OrientationCanonicalizationFailed { message }
+            }
+            DelaunayRepairError::InvalidTopology {
+                required,
+                found,
+                message,
+            } => Self::InvalidTopology {
+                required,
+                found,
+                message,
+            },
+            DelaunayRepairError::HeuristicRebuildFailed { message } => {
+                Self::HeuristicRebuildFailed { message }
+            }
+            DelaunayRepairError::Flip(source) => Self::Flip {
+                source_kind: FlipFailureKind::from(source),
+            },
+        }
+    }
 }
 
 /// Build flip context for a k=2 (facet) flip.
@@ -3519,7 +4074,7 @@ where
 
     let vertex_key = tds.insert_vertex_with_mapping(vertex).map_err(|source| {
         FlipMutationError::VertexInsertion {
-            source: Box::new(source),
+            source: source.into(),
         }
     })?;
 

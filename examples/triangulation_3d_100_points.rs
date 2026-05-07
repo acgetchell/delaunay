@@ -25,6 +25,7 @@
 //! - Boundary analysis
 //! - Performance metrics
 
+use delaunay::prelude::AdjacencyIndexBuildError;
 use delaunay::prelude::generators::generate_random_triangulation;
 use delaunay::prelude::query::*;
 use delaunay::prelude::topology::validation as topology_validation;
@@ -34,7 +35,13 @@ use std::time::Instant;
 
 const SEED_CANDIDATES: &[u64] = &[1, 7, 11, 42, 99, 123, 666];
 
-fn main() {
+#[derive(Debug, thiserror::Error)]
+enum Triangulation3dExampleError {
+    #[error(transparent)]
+    AdjacencyIndex(#[from] AdjacencyIndexBuildError),
+}
+
+fn main() -> Result<(), Triangulation3dExampleError> {
     println!("=================================================================");
     println!("3D Delaunay Triangulation Example - 100 Random Points");
     println!("=================================================================\\n");
@@ -86,7 +93,7 @@ fn main() {
             "✗ Failed to create triangulation after trying seeds {seed_candidates:?}: {}",
             last_error.unwrap_or_else(|| "unknown error".to_string())
         );
-        return;
+        return Ok(());
     };
 
     // Display some vertex information by accessing the triangulation's vertices
@@ -107,7 +114,7 @@ fn main() {
     println!();
 
     // Display triangulation properties
-    analyze_triangulation(&dt);
+    analyze_triangulation(&dt)?;
 
     // Validate the triangulation
     validate_triangulation(&dt);
@@ -121,10 +128,13 @@ fn main() {
     println!("\n=================================================================");
     println!("Example completed successfully!");
     println!("=================================================================");
+    Ok(())
 }
 
 /// Analyze and display triangulation properties
-fn analyze_triangulation<K, U, V, const D: usize>(dt: &DelaunayTriangulation<K, U, V, D>)
+fn analyze_triangulation<K, U, V, const D: usize>(
+    dt: &DelaunayTriangulation<K, U, V, D>,
+) -> Result<(), Triangulation3dExampleError>
 where
     K: Kernel<D>,
     K::Scalar: NumCast,
@@ -140,9 +150,7 @@ where
     // Demonstrate the public topology traversal API using an opt-in adjacency index.
     // This avoids per-call allocations in methods like edges()/incident_edges().
     let tri = dt.as_triangulation();
-    let index = tri
-        .build_adjacency_index()
-        .expect("adjacency index should build for a valid triangulation");
+    let index = tri.build_adjacency_index()?;
 
     let edge_count = tri.number_of_edges_with_index(&index);
     println!("  Number of edges:    {edge_count}");
@@ -200,6 +208,7 @@ where
         }
     }
     println!();
+    Ok(())
 }
 
 /// Validate the triangulation and report results
@@ -372,8 +381,12 @@ where
     let len_u32 = u32::try_from(validation_times.len()).unwrap_or(1u32);
     let avg_validation_time: std::time::Duration =
         validation_times.iter().sum::<std::time::Duration>() / len_u32;
-    let min_validation_time = *validation_times.iter().min().unwrap();
-    let max_validation_time = *validation_times.iter().max().unwrap();
+    let Some(min_validation_time) = validation_times.iter().min().copied() else {
+        return;
+    };
+    let Some(max_validation_time) = validation_times.iter().max().copied() else {
+        return;
+    };
 
     println!("  Full Validation Performance (Levels 1–4, 5 runs):");
     println!("    • Average time: {avg_validation_time:?}");

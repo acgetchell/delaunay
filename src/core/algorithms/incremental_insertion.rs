@@ -602,7 +602,7 @@ pub enum NeighborRebuildError {
 /// };
 /// assert!(matches!(err, CavityFillingError::InvalidFacetIndex { .. }));
 /// ```
-#[derive(Debug, Clone, thiserror::Error)]
+#[derive(Debug, Clone, thiserror::Error, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum CavityFillingError {
     /// A boundary facet references a cell that is no longer present.
@@ -874,7 +874,7 @@ pub enum NeighborWiringError {
 /// };
 /// assert!(matches!(err, InsertionError::DuplicateCoordinates { .. }));
 /// ```
-#[derive(Debug, Clone, thiserror::Error)]
+#[derive(Debug, Clone, thiserror::Error, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum InsertionError {
     /// Conflict region finding failed

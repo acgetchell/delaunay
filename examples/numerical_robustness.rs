@@ -6,25 +6,41 @@
 //! default adaptive construction path on a small point set.
 
 use delaunay::prelude::geometry::{
-    AdaptiveKernel, Coordinate, FastKernel, Kernel, Point, RobustKernel, robust_insphere,
-    robust_orientation,
+    AdaptiveKernel, CircumcenterError, Coordinate, CoordinateConversionError, FastKernel, Kernel,
+    Point, RobustKernel, robust_insphere, robust_orientation,
 };
-use delaunay::prelude::triangulation::DelaunayTriangulation;
+use delaunay::prelude::triangulation::{
+    DelaunayTriangulation, DelaunayTriangulationConstructionError,
+    DelaunayTriangulationValidationError,
+};
 use delaunay::vertex;
 
-fn main() {
+#[derive(Debug, thiserror::Error)]
+enum NumericalRobustnessExampleError {
+    #[error(transparent)]
+    Predicate(#[from] CircumcenterError),
+    #[error(transparent)]
+    CoordinateConversion(#[from] CoordinateConversionError),
+    #[error(transparent)]
+    Construction(#[from] DelaunayTriangulationConstructionError),
+    #[error(transparent)]
+    Validation(#[from] DelaunayTriangulationValidationError),
+}
+
+fn main() -> Result<(), NumericalRobustnessExampleError> {
     println!("Numerical robustness example");
     println!("============================\n");
 
-    compare_orientation_kernels();
+    compare_orientation_kernels()?;
     println!();
-    compare_insphere_boundary_handling();
+    compare_insphere_boundary_handling()?;
     println!();
-    build_with_adaptive_kernel();
+    build_with_adaptive_kernel()?;
+    Ok(())
 }
 
 /// Compares orientation predicate behavior on a degenerate collinear simplex.
-fn compare_orientation_kernels() {
+fn compare_orientation_kernels() -> Result<(), NumericalRobustnessExampleError> {
     let collinear = [
         Point::new([0.0, 0.0]),
         Point::new([1.0, 1.0]),
@@ -35,10 +51,10 @@ fn compare_orientation_kernels() {
     let robust = RobustKernel::<f64>::new();
     let adaptive = AdaptiveKernel::<f64>::new();
 
-    let direct_robust = robust_orientation(&collinear).unwrap();
-    let fast_sign = fast.orientation(&collinear).unwrap();
-    let robust_sign = robust.orientation(&collinear).unwrap();
-    let adaptive_sign = adaptive.orientation(&collinear).unwrap();
+    let direct_robust = robust_orientation(&collinear)?;
+    let fast_sign = fast.orientation(&collinear)?;
+    let robust_sign = robust.orientation(&collinear)?;
+    let adaptive_sign = adaptive.orientation(&collinear)?;
 
     println!("Collinear orientation:");
     println!("  robust_orientation: {direct_robust:?}");
@@ -48,10 +64,11 @@ fn compare_orientation_kernels() {
 
     assert_eq!(robust_sign, 0);
     assert_ne!(adaptive_sign, 0);
+    Ok(())
 }
 
 /// Compares explicit boundary reporting with adaptive `SoS` tie-breaking.
-fn compare_insphere_boundary_handling() {
+fn compare_insphere_boundary_handling() -> Result<(), NumericalRobustnessExampleError> {
     let simplex = [
         Point::new([0.0, 0.0]),
         Point::new([1.0, 0.0]),
@@ -62,9 +79,9 @@ fn compare_insphere_boundary_handling() {
     let robust = RobustKernel::<f64>::new();
     let adaptive = AdaptiveKernel::<f64>::new();
 
-    let direct_robust = robust_insphere(&simplex, &boundary_point).unwrap();
-    let robust_sign = robust.in_sphere(&simplex, &boundary_point).unwrap();
-    let adaptive_sign = adaptive.in_sphere(&simplex, &boundary_point).unwrap();
+    let direct_robust = robust_insphere(&simplex, &boundary_point)?;
+    let robust_sign = robust.in_sphere(&simplex, &boundary_point)?;
+    let adaptive_sign = adaptive.in_sphere(&simplex, &boundary_point)?;
 
     println!("Cospherical insphere query:");
     println!("  robust_insphere: {direct_robust:?}");
@@ -73,10 +90,11 @@ fn compare_insphere_boundary_handling() {
 
     assert_eq!(robust_sign, 0);
     assert_ne!(adaptive_sign, 0);
+    Ok(())
 }
 
 /// Builds a small triangulation with the default exact adaptive kernel and validates it.
-fn build_with_adaptive_kernel() {
+fn build_with_adaptive_kernel() -> Result<(), NumericalRobustnessExampleError> {
     let vertices = vec![
         vertex!([0.0, 0.0, 0.0]),
         vertex!([1.0, 0.0, 0.0]),
@@ -86,12 +104,13 @@ fn build_with_adaptive_kernel() {
     ];
 
     let dt: DelaunayTriangulation<AdaptiveKernel<f64>, (), (), 3> =
-        DelaunayTriangulation::new(&vertices).unwrap();
+        DelaunayTriangulation::new(&vertices)?;
 
-    dt.validate().unwrap();
+    dt.validate()?;
     println!(
         "Adaptive construction: {} vertices, {} cells, full validation passed",
         dt.number_of_vertices(),
         dt.number_of_cells()
     );
+    Ok(())
 }

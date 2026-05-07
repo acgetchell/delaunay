@@ -73,29 +73,31 @@ The following previously deferred checks are now repository-owned Semgrep rules:
 
 ## Public Sample Error Handling
 
-Examples, doctests, and benchmarks should model the same error-handling style
-the crate asks users to copy: return or route through typed errors instead of
-using `.expect(...)` as narrative control flow.
+Examples, benchmarks, and public API integration tests should model the same
+error-handling style the crate asks users to copy: return or route through
+typed errors instead of using `.unwrap()`, `.expect(...)`, or `panic!(...)` as
+narrative control flow.
 
-The next enforcement step is to make this a zero-tolerance Semgrep rule for:
+This is now enforced by `delaunay.rust.no-public-surface-unwrap-panic` for:
 
 - `examples/**/*.rs`
 - `benches/**/*.rs`
-- Rust doc comments in `src/**/*.rs`
+- public API integration tests:
+  - `tests/allocation_api.rs`
+  - `tests/delaunay_public_api_coverage.rs`
+  - `tests/prelude_exports.rs`
+  - `tests/public_*.rs`
 
-Current baseline before that cleanup:
-
-- `examples/**/*.rs`: 35 `.expect(...)` calls.
-- `benches/**/*.rs`: 57 `.expect(...)` calls.
-- public Rust doc comments in `src/**/*.rs`: 17 `.expect(...)` calls.
-
-Keep the baseline synchronized with:
+The doctest migration remains intentionally separate because Rust doc comments
+still have an existing `.unwrap()`/`.expect(...)` baseline that should be
+converted with hidden `Result` wrappers in a focused documentation pass.
 
 ```bash
 just verify-expect-counts
 ```
 
-When removing this baseline, prefer:
+The `verify-expect-counts` recipe tracks only that remaining doctest baseline.
+When extending the zero-tolerance Semgrep rule to doctests, prefer:
 
 - `fn main() -> Result<(), ExampleError>` in examples, with local
   `#[derive(thiserror::Error)]` enums that wrap the crate's typed errors.

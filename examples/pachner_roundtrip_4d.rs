@@ -71,6 +71,8 @@ enum PachnerRoundtripError {
     Validation(#[from] DelaunayTriangulationValidationError),
     #[error(transparent)]
     Flip(#[from] FlipError),
+    #[error(transparent)]
+    IntegerConversion(#[from] std::num::TryFromIntError),
     #[error("triangulation has no cells")]
     EmptyTriangulation,
     #[error("cell {cell_key:?} not found in TDS")]
@@ -238,8 +240,7 @@ fn cell_centroid(dt: &Dt4, cell_key: CellKey) -> Result<[f64; 4], PachnerRoundtr
         }
     }
 
-    let vertex_count =
-        u32::try_from(cell.vertices().len()).expect("cell vertex count should fit in u32");
+    let vertex_count = u32::try_from(cell.vertices().len())?;
     let inv = 1.0_f64 / f64::from(vertex_count);
     for coord in &mut coords {
         *coord *= inv;
@@ -275,7 +276,9 @@ fn collect_interior_facets(dt: &Dt4) -> Vec<FacetHandle> {
         if let Some(neighbors) = cell.neighbors() {
             for (facet_index, neighbor) in neighbors.iter().enumerate() {
                 if neighbor.is_some() {
-                    let facet_index = u8::try_from(facet_index).expect("facet index fits in u8");
+                    let Ok(facet_index) = u8::try_from(facet_index) else {
+                        continue;
+                    };
                     facets.push(FacetHandle::new(cell_key, facet_index));
                 }
             }
@@ -324,8 +327,12 @@ fn collect_ridges(dt: &Dt4) -> Vec<RidgeHandle> {
         let vertex_count = cell.number_of_vertices();
         for i in 0..vertex_count {
             for j in (i + 1)..vertex_count {
-                let omit_a = u8::try_from(i).expect("ridge index fits in u8");
-                let omit_b = u8::try_from(j).expect("ridge index fits in u8");
+                let Ok(omit_a) = u8::try_from(i) else {
+                    continue;
+                };
+                let Ok(omit_b) = u8::try_from(j) else {
+                    continue;
+                };
                 ridges.push(RidgeHandle::new(cell_key, omit_a, omit_b));
             }
         }

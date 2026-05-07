@@ -3679,28 +3679,11 @@ where
 
         let duplicate_count = cells_to_remove.len();
 
-        // Second pass: remove duplicate cells and their corresponding UUID mappings
-        for cell_key in &cells_to_remove {
-            if let Some(removed_cell) = self.cells.remove(*cell_key) {
-                // Remove from our optimized UUID-to-key mapping
-                self.uuid_to_cell_key.remove(&removed_cell.uuid());
-            }
+        if duplicate_count == 0 {
+            return Ok(0);
         }
 
-        if duplicate_count > 0 {
-            // Rebuild topology to avoid stale references after cell removal.
-            // This ensures vertices don't point to removed cells via incident_cell,
-            // and neighbor arrays don't reference removed keys.
-            //
-            // NOTE: Both `assign_neighbors()` and `assign_incident_cells()` are full rebuilds
-            // across all cells/vertices (O(#cells)). This is intentionally conservative and is
-            // expected to be used in repair/cleanup paths rather than per-step hot loops.
-            self.assign_neighbors()?;
-            self.assign_incident_cells()?;
-
-            // Generation already bumped by assign_neighbors(); avoid double increment
-        }
-        Ok(duplicate_count)
+        Ok(self.remove_cells_by_keys(&cells_to_remove))
     }
 
     // =========================================================================

@@ -212,6 +212,35 @@ rules:
               ...
           }
 
+  - id: delaunay.rust.no-public-surface-unwrap-panic
+    languages:
+      - rust
+    severity: WARNING
+    message: >-
+      Use typed Result handling in public examples, benchmarks, and public API
+      tests instead of unwrap/expect/panic.
+    metadata:
+      category: correctness
+      rationale: >-
+        User-facing examples, benchmarks, and public API tests are copied as
+        usage patterns. They should preserve typed error information instead
+        of erasing failures behind unwrap, expect, or panic.
+    paths:
+      include:
+        - "/examples/**/*.rs"
+        - "/benches/**/*.rs"
+        - "/tests/allocation_api.rs"
+        - "/tests/delaunay_public_api_coverage.rs"
+        - "/tests/prelude_exports.rs"
+        - "/tests/public_*.rs"
+        - "/tests/semgrep/src/project_rules/**/*.rs"
+      exclude:
+        - "/tests/semgrep/**"
+    pattern-either:
+      - pattern: $VALUE.unwrap()
+      - pattern: $VALUE.expect(...)
+      - pattern: panic!(...)
+
   - id: delaunay.rust.public-error-enums-non-exhaustive
     languages:
       - generic
@@ -272,7 +301,7 @@ rules:
     languages:
       - rust
     severity: WARNING
-    message: "Use a typed error enum in production src/ instead of Box<dyn Error>, &dyn Error, or anyhow::Error."
+    message: "Use a typed error enum instead of Box<dyn Error>, &dyn Error, or anyhow::Error."
     metadata:
       category: maintainability
       rationale: >-
@@ -281,10 +310,13 @@ rules:
     paths:
       include:
         - "/src/**/*.rs"
+        - "/examples/**/*.rs"
+        - "/benches/**/*.rs"
+        - "/tests/allocation_api.rs"
+        - "/tests/delaunay_public_api_coverage.rs"
+        - "/tests/prelude_exports.rs"
+        - "/tests/public_*.rs"
       exclude:
-        - "/tests/**"
-        - "/examples/**"
-        - "/benches/**"
         - "/tests/semgrep/**"
     patterns:
       # Regex is deliberate here: Rust AST patterns over-match associated
