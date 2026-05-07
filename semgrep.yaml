@@ -212,6 +212,25 @@ rules:
               ...
           }
 
+  - id: delaunay.rust.public-error-enums-non-exhaustive
+    languages:
+      - generic
+    severity: WARNING
+    message: "Public error enums must be #[non_exhaustive] so new typed error variants remain semver-compatible."
+    metadata:
+      category: maintainability
+      rationale: >-
+        Public error enums are part of the API contract. Marking them
+        non-exhaustive lets the crate add orthogonal, more precise error
+        variants without forcing callers into a breaking exhaustive match.
+    paths:
+      include:
+        - "/src/**/*.rs"
+        - "/src/project_rules/**/*.rs"
+      exclude:
+        - "/tests/semgrep/**"
+    pattern-regex: '(?m)(?<!#\[non_exhaustive\]\n)^\s*pub\s+enum\s+[A-Za-z0-9_]*Error\b'
+
   - id: delaunay.rust.no-env-gated-stdio-diagnostics
     languages:
       - rust

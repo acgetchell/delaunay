@@ -9,7 +9,10 @@
 #![forbid(unsafe_code)]
 
 pub use crate::core::algorithms::flips::{
-    BistellarFlipKind, FlipDirection, FlipError, FlipInfo, RidgeHandle, TriangleHandle,
+    BistellarFlipKind, FlipContextError, FlipDirection, FlipEdgeAdjacencyError, FlipError,
+    FlipInfo, FlipMutationError, FlipNeighborWiringError, FlipPredicateError,
+    FlipPredicateOperation, FlipTriangleAdjacencyError, FlipVertexAdjacencyError, RidgeHandle,
+    TriangleHandle,
 };
 pub use crate::core::edge::EdgeKey;
 pub use crate::core::facet::FacetHandle;
@@ -326,5 +329,110 @@ where
             self.invalidate_repair_caches();
         }
         result
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    use crate::geometry::kernel::{AdaptiveKernel, FastKernel};
+    use crate::vertex;
+    use slotmap::KeyData;
+
+    #[test]
+    fn triangulation_flip_k1_insert_and_remove_roundtrip() {
+        let vertices = vec![
+            vertex!([0.0, 0.0, 0.0]),
+            vertex!([1.0, 0.0, 0.0]),
+            vertex!([0.0, 1.0, 0.0]),
+            vertex!([0.0, 0.0, 1.0]),
+        ];
+        let dt: DelaunayTriangulation<_, (), (), 3> =
+            DelaunayTriangulation::new_with_topology_guarantee(
+                &vertices,
+                crate::core::triangulation::TopologyGuarantee::PLManifold,
+            )
+            .unwrap();
+        let mut tri = dt.as_triangulation().clone();
+        let cell_key = tri.cells().next().unwrap().0;
+
+        let inserted = tri
+            .flip_k1_insert(cell_key, vertex!([0.25, 0.25, 0.25]))
+            .unwrap();
+        let inserted_vertex = inserted.inserted_face_vertices[0];
+        assert!(!inserted.new_cells.is_empty());
+        assert!(tri.validate().is_ok());
+
+        let removed = tri.flip_k1_remove(inserted_vertex).unwrap();
+        assert!(!removed.removed_cells.is_empty());
+        assert!(tri.validate().is_ok());
+    }
+
+    #[test]
+    fn triangulation_flip_k2_rejects_invalid_facet_index() {
+        let vertices = vec![
+            vertex!([0.0, 0.0, 0.0]),
+            vertex!([1.0, 0.0, 0.0]),
+            vertex!([0.0, 1.0, 0.0]),
+            vertex!([0.0, 0.0, 1.0]),
+        ];
+        let dt: DelaunayTriangulation<_, (), (), 3> =
+            DelaunayTriangulation::new_with_topology_guarantee(
+                &vertices,
+                crate::core::triangulation::TopologyGuarantee::PLManifold,
+            )
+            .unwrap();
+        let mut tri = dt.as_triangulation().clone();
+        let cell_key = tri.cells().next().unwrap().0;
+
+        let err = tri
+            .flip_k2(FacetHandle::new(cell_key, u8::MAX))
+            .unwrap_err();
+
+        assert!(matches!(
+            err,
+            FlipError::InvalidFacetIndex {
+                cell_key: key,
+                facet_index: u8::MAX,
+                vertex_count: 4,
+            } if key == cell_key
+        ));
+    }
+
+    #[test]
+    fn delaunay_flip_k3_inverse_rejects_unsupported_dimension() {
+        let mut dt: DelaunayTriangulation<AdaptiveKernel<f64>, (), (), 3> =
+            DelaunayTriangulation::with_empty_kernel(AdaptiveKernel::new());
+        let a = VertexKey::from(KeyData::from_ffi(1));
+        let b = VertexKey::from(KeyData::from_ffi(2));
+        let c = VertexKey::from(KeyData::from_ffi(3));
+
+        let err = dt
+            .flip_k3_inverse_from_triangle(TriangleHandle::new(a, b, c))
+            .unwrap_err();
+
+        assert!(matches!(
+            err,
+            FlipError::UnsupportedDimension { dimension: 3 }
+        ));
+    }
+
+    #[test]
+    fn triangulation_flip_k3_inverse_rejects_zero_dimension_without_underflow() {
+        let mut tri: Triangulation<FastKernel<f64>, (), (), 0> =
+            Triangulation::new_empty(FastKernel::new());
+        let a = VertexKey::from(KeyData::from_ffi(1));
+        let b = VertexKey::from(KeyData::from_ffi(2));
+        let c = VertexKey::from(KeyData::from_ffi(3));
+
+        let err = tri
+            .flip_k3_inverse_from_triangle(TriangleHandle::new(a, b, c))
+            .unwrap_err();
+
+        assert!(matches!(
+            err,
+            FlipError::UnsupportedDimension { dimension: 0 }
+        ));
     }
 }

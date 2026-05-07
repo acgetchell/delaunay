@@ -1714,10 +1714,20 @@ where
         let tds_ref = full_dt.tds();
 
         // Map canonical UUIDs → VertexKeys in the full DT.
-        let central_key_set: VertexKeySet = canonical_uuids
+        let Some(central_keys) = canonical_uuids
             .iter()
-            .filter_map(|uuid| tds_ref.vertex_key_from_uuid(uuid))
-            .collect();
+            .map(|uuid| tds_ref.vertex_key_from_uuid(uuid))
+            .collect::<Option<Vec<_>>>()
+        else {
+            return Err(TriangulationConstructionError::GeometricDegeneracy {
+                message: format!(
+                    "Periodic expanded DT is missing at least one canonical vertex: canonical_vertices_len={}",
+                    canonical_uuids.len()
+                ),
+            }
+            .into());
+        };
+        let central_key_set: VertexKeySet = central_keys.into_iter().collect();
 
         // Map every full-DT vertex key to its canonical key and lattice offset.
         let mut vertex_key_to_lifted: FastHashMap<VertexKey, (VertexKey, [i8; D])> =

@@ -357,19 +357,22 @@ impl FacetHandle {
 /// # Examples
 ///
 /// ```rust,no_run
-/// use delaunay::prelude::tds::FacetView;
+/// use delaunay::prelude::tds::{FacetError, FacetView};
 /// use delaunay::prelude::tds::{Tds, CellKey};
 ///
 /// // This is a conceptual example showing FacetView usage
 /// // In practice, tds and cell_key would come from your triangulation
-/// fn example_usage<'a>(tds: &'a Tds<f64, (), (), 3>, cell_key: CellKey) -> Result<(), Box<dyn std::error::Error>> {
+/// fn example_usage<'a>(
+///     tds: &'a Tds<f64, (), (), 3>,
+///     cell_key: CellKey,
+/// ) -> Result<(), FacetError> {
 ///     // Create a facet view for the first facet of a cell
 ///     let facet_view = FacetView::new(tds, cell_key, 0)?;
 ///
 ///     // Access vertices through the view (lazy evaluation)
-/// for vertex in facet_view.vertices().unwrap() {
-///     println!("Vertex: {:?}", vertex.point());
-/// }
+///     for vertex in facet_view.vertices()? {
+///         println!("Vertex: {:?}", vertex.point());
+///     }
 ///
 ///     // Get the opposite vertex
 ///     let opposite = facet_view.opposite_vertex()?;

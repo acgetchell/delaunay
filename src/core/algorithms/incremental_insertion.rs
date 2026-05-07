@@ -797,6 +797,17 @@ pub enum NeighborWiringError {
         max: u8,
     },
 
+    /// A cell has the wrong number of vertices for the triangulation dimension.
+    #[error("cell {cell_key:?} has {found} vertices; expected {expected} for neighbor wiring")]
+    WrongCellArity {
+        /// Cell with mismatched arity.
+        cell_key: CellKey,
+        /// Expected number of vertices.
+        expected: usize,
+        /// Observed number of vertices.
+        found: usize,
+    },
+
     /// An external facet did not match any new-cell boundary facet.
     #[error(
         "external facet {facet_index} on cell {cell_key:?} with hash {facet_hash:#x} did not match any new-cell facet"
@@ -1146,6 +1157,24 @@ impl InsertionError {
     const fn is_cavity_filling_error_retryable(err: &CavityFillingError) -> bool {
         match err {
             CavityFillingError::InvalidFacetSharingAfterRepair { .. } => true,
+            CavityFillingError::CellInsertion { reason } => match reason {
+                TdsConstructionFailure::Validation { reason } => {
+                    Self::is_tds_validation_failure_retryable(reason)
+                }
+                TdsConstructionFailure::DuplicateUuid { .. } => false,
+            },
+            CavityFillingError::InitialSimplexConstruction { reason } => match reason {
+                InitialSimplexConstructionError::TdsValidation { source } => {
+                    Self::is_tds_validation_failure_retryable(source)
+                }
+                InitialSimplexConstructionError::GeometricDegeneracy { .. } => true,
+                InitialSimplexConstructionError::DuplicateUuid { .. }
+                | InitialSimplexConstructionError::FailedToCreateCell { .. }
+                | InitialSimplexConstructionError::InsufficientVertices { .. }
+                | InitialSimplexConstructionError::InternalInconsistency { .. }
+                | InitialSimplexConstructionError::DuplicateCoordinates { .. }
+                | InitialSimplexConstructionError::UnexpectedInsertionStage { .. } => false,
+            },
             CavityFillingError::NeighborRebuild { reason } => match reason {
                 NeighborRebuildError::NonManifoldTopology { .. } => true,
                 NeighborRebuildError::TopologyValidation { reason } => {
@@ -1160,8 +1189,6 @@ impl InsertionError {
             | CavityFillingError::WrongCellArity { .. }
             | CavityFillingError::InvalidFacetIndex { .. }
             | CavityFillingError::CellCreation { .. }
-            | CavityFillingError::CellInsertion { .. }
-            | CavityFillingError::InitialSimplexConstruction { .. }
             | CavityFillingError::RebuiltVertexMissing { .. }
             | CavityFillingError::EmptyConflictRegion { .. }
             | CavityFillingError::EmptyBoundary { .. }
@@ -1599,10 +1626,12 @@ where
             .cell(cell_key)
             .ok_or(NeighborWiringError::MissingCell { cell_key })?;
         let vertex_count = cell.number_of_vertices();
-        if vertex_count > D + 1 {
-            return Err(NeighborWiringError::FacetIndexOverflow {
-                facet_index: vertex_count - 1,
-                max: u8::try_from(D).unwrap_or(u8::MAX),
+        let expected = D + 1;
+        if vertex_count != expected {
+            return Err(NeighborWiringError::WrongCellArity {
+                cell_key,
+                expected,
+                found: vertex_count,
             }
             .into());
         }
@@ -3395,6 +3424,142 @@ mod tests {
     }
 
     #[test]
+    fn test_wire_cavity_neighbors_errors_on_unmatched_external_facet() {
+        let mut tds: Tds<f64, (), (), 2> = Tds::empty();
+
+        let v0 = tds.insert_vertex_with_mapping(vertex!([0.0, 0.0])).unwrap();
+        let v1 = tds.insert_vertex_with_mapping(vertex!([1.0, 0.0])).unwrap();
+        let v2 = tds.insert_vertex_with_mapping(vertex!([0.0, 1.0])).unwrap();
+        let v3 = tds.insert_vertex_with_mapping(vertex!([2.0, 2.0])).unwrap();
+        let v4 = tds.insert_vertex_with_mapping(vertex!([3.0, 2.0])).unwrap();
+        let v5 = tds.insert_vertex_with_mapping(vertex!([2.0, 3.0])).unwrap();
+
+        let new_cell = tds
+            .insert_cell_with_mapping(Cell::new(vec![v0, v1, v2], None).unwrap())
+            .unwrap();
+        let external_cell = tds
+            .insert_cell_with_mapping(Cell::new(vec![v3, v4, v5], None).unwrap())
+            .unwrap();
+
+        let mut new_cells = CellKeyBuffer::new();
+        new_cells.push(new_cell);
+
+        let err = wire_cavity_neighbors(
+            &mut tds,
+            &new_cells,
+            [FacetHandle::new(external_cell, 0)],
+            None,
+        )
+        .unwrap_err();
+
+        assert!(matches!(
+            err,
+            InsertionError::NeighborWiring {
+                reason: NeighborWiringError::ExternalFacetNotFound {
+                    cell_key,
+                    facet_index: 0,
+                    ..
+                },
+            } if cell_key == external_cell
+        ));
+    }
+
+    #[test]
+    fn test_wire_cavity_neighbors_errors_on_already_shared_external_facet() {
+        let mut tds: Tds<f64, (), (), 2> = Tds::empty();
+
+        let v0 = tds.insert_vertex_with_mapping(vertex!([0.0, 0.0])).unwrap();
+        let v1 = tds.insert_vertex_with_mapping(vertex!([1.0, 0.0])).unwrap();
+        let v2 = tds.insert_vertex_with_mapping(vertex!([0.0, 1.0])).unwrap();
+        let v3 = tds
+            .insert_vertex_with_mapping(vertex!([0.0, -1.0]))
+            .unwrap();
+        let v4 = tds.insert_vertex_with_mapping(vertex!([2.0, 0.0])).unwrap();
+
+        let new_cell_a = tds
+            .insert_cell_with_mapping(Cell::new(vec![v0, v1, v2], None).unwrap())
+            .unwrap();
+        let new_cell_b = tds
+            .insert_cell_with_mapping(Cell::new(vec![v1, v0, v3], None).unwrap())
+            .unwrap();
+        let external_cell = tds
+            .insert_cell_with_mapping(Cell::new(vec![v0, v1, v4], None).unwrap())
+            .unwrap();
+
+        let mut new_cells = CellKeyBuffer::new();
+        new_cells.push(new_cell_a);
+        new_cells.push(new_cell_b);
+
+        let err = wire_cavity_neighbors(
+            &mut tds,
+            &new_cells,
+            [FacetHandle::new(external_cell, 2)],
+            None,
+        )
+        .unwrap_err();
+
+        assert!(matches!(
+            err,
+            InsertionError::NeighborWiring {
+                reason: NeighborWiringError::ExternalFacetAlreadyShared {
+                    cell_key,
+                    facet_index: 2,
+                    existing_incidents: 2,
+                    ..
+                },
+            } if cell_key == external_cell
+        ));
+    }
+
+    #[test]
+    fn test_external_facets_for_boundary_errors_on_missing_internal_cell() {
+        let tds: Tds<f64, (), (), 2> = Tds::empty();
+        let missing_cell = CellKey::from(KeyData::from_ffi(u64::MAX));
+        let mut internal_cells = CellKeyBuffer::new();
+        internal_cells.push(missing_cell);
+        let boundary_facets = [FacetHandle::new(missing_cell, 0)];
+
+        let err =
+            external_facets_for_boundary(&tds, &internal_cells, &boundary_facets).unwrap_err();
+
+        assert!(matches!(
+            err,
+            InsertionError::NeighborWiring {
+                reason: NeighborWiringError::MissingCell { cell_key },
+            } if cell_key == missing_cell
+        ));
+    }
+
+    #[test]
+    fn test_external_facets_for_boundary_errors_on_missing_neighbor_cell() {
+        let mut tds: Tds<f64, (), (), 2> = Tds::empty();
+
+        let v0 = tds.insert_vertex_with_mapping(vertex!([0.0, 0.0])).unwrap();
+        let v1 = tds.insert_vertex_with_mapping(vertex!([1.0, 0.0])).unwrap();
+        let v2 = tds.insert_vertex_with_mapping(vertex!([0.0, 1.0])).unwrap();
+        let cell_key = tds
+            .insert_cell_with_mapping(Cell::new(vec![v0, v1, v2], None).unwrap())
+            .unwrap();
+        let missing_neighbor = CellKey::from(KeyData::from_ffi(u64::MAX - 1));
+        tds.cell_mut(cell_key).unwrap().neighbors =
+            Some(vec![Some(missing_neighbor), None, None].into());
+
+        let mut internal_cells = CellKeyBuffer::new();
+        internal_cells.push(cell_key);
+        let boundary_facets = [FacetHandle::new(cell_key, 0)];
+
+        let err =
+            external_facets_for_boundary(&tds, &internal_cells, &boundary_facets).unwrap_err();
+
+        assert!(matches!(
+            err,
+            InsertionError::NeighborWiring {
+                reason: NeighborWiringError::MissingCell { cell_key },
+            } if cell_key == missing_neighbor
+        ));
+    }
+
+    #[test]
     fn test_external_facets_for_boundary_finds_shared_edge_only() {
         // Two triangles share one edge; only that edge should be returned as an external facet.
         let mut tds: Tds<f64, (), (), 2> = Tds::empty();
@@ -3523,8 +3688,8 @@ mod tests {
     }
 
     #[test]
-    fn test_wire_cavity_neighbors_errors_on_facet_index_overflow() {
-        // Force a cell to have > 255 vertices so facet_idx -> u8 conversion fails.
+    fn test_wire_cavity_neighbors_errors_on_wrong_cell_arity() {
+        // Force a 2D cell away from triangle arity so wiring reports the invariant directly.
         let vertices = vec![
             vertex!([0.0, 0.0]),
             vertex!([1.0, 0.0]),
@@ -3538,9 +3703,7 @@ mod tests {
 
         {
             let cell = tds.cell_mut(cell_key).unwrap();
-            while cell.number_of_vertices() <= usize::from(u8::MAX) + 1 {
-                cell.push_vertex_key(vkey0);
-            }
+            cell.push_vertex_key(vkey0);
         }
 
         let mut new_cells = CellKeyBuffer::new();
@@ -3550,9 +3713,103 @@ mod tests {
         assert!(matches!(
             err,
             InsertionError::NeighborWiring {
-                reason: NeighborWiringError::FacetIndexOverflow { .. },
-            }
+                reason: NeighborWiringError::WrongCellArity {
+                    cell_key: key,
+                    expected: 3,
+                    found: 4,
+                },
+            } if key == cell_key
         ));
+    }
+
+    #[test]
+    fn test_neighbor_wiring_error_facet_index_overflow_variant_remains_distinct() {
+        let err = NeighborWiringError::FacetIndexOverflow {
+            facet_index: usize::from(u8::MAX) + 1,
+            max: u8::MAX,
+        };
+
+        assert!(matches!(
+            err,
+            NeighborWiringError::FacetIndexOverflow {
+                facet_index,
+                max: u8::MAX,
+            } if facet_index == usize::from(u8::MAX) + 1
+        ));
+    }
+
+    #[test]
+    fn test_neighbor_wiring_error_wrong_cell_arity_reports_expected_and_found() {
+        let cell_key = CellKey::from(KeyData::from_ffi(42));
+        let err = NeighborWiringError::WrongCellArity {
+            cell_key,
+            expected: 3,
+            found: 2,
+        };
+
+        assert!(matches!(
+            err,
+            NeighborWiringError::WrongCellArity {
+                cell_key: key,
+                expected: 3,
+                found: 2,
+            } if key == cell_key
+        ));
+        assert!(err.to_string().contains("expected 3"));
+        assert!(err.to_string().contains("has 2 vertices"));
+    }
+
+    #[test]
+    fn test_cavity_filling_retryability_inspects_construction_payloads() {
+        let geometry_failure = TdsValidationFailure::Geometric {
+            source: GeometricError::DegenerateOrientation {
+                message: "near-degenerate".to_string(),
+            },
+        };
+        let structural_failure = TdsValidationFailure::InconsistentDataStructure {
+            message: "dangling link".to_string(),
+        };
+
+        assert!(
+            InsertionError::CavityFilling {
+                reason: CavityFillingError::CellInsertion {
+                    reason: TdsConstructionFailure::Validation {
+                        reason: geometry_failure.clone(),
+                    },
+                },
+            }
+            .is_retryable()
+        );
+        assert!(
+            !InsertionError::CavityFilling {
+                reason: CavityFillingError::CellInsertion {
+                    reason: TdsConstructionFailure::Validation {
+                        reason: structural_failure,
+                    },
+                },
+            }
+            .is_retryable()
+        );
+        assert!(
+            InsertionError::CavityFilling {
+                reason: CavityFillingError::InitialSimplexConstruction {
+                    reason: InitialSimplexConstructionError::TdsValidation {
+                        source: geometry_failure,
+                    },
+                },
+            }
+            .is_retryable()
+        );
+        assert!(
+            InsertionError::CavityFilling {
+                reason: CavityFillingError::InitialSimplexConstruction {
+                    reason: InitialSimplexConstructionError::GeometricDegeneracy {
+                        message: "coplanar bootstrap".to_string(),
+                    },
+                },
+            }
+            .is_retryable()
+        );
     }
 
     // InsertionError::is_retryable() tests

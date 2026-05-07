@@ -106,8 +106,6 @@ pub struct PlManifoldRepairStats<T, U, V, const D: usize> {
 impl<T, U, V, const D: usize> PartialEq for PlManifoldRepairStats<T, U, V, D>
 where
     T: CoordinateScalar,
-    U: DataType,
-    V: DataType,
 {
     fn eq(&self, other: &Self) -> bool {
         self.iterations == other.iterations
@@ -118,20 +116,9 @@ where
     }
 }
 
-impl<T, U, V, const D: usize> Eq for PlManifoldRepairStats<T, U, V, D>
-where
-    T: CoordinateScalar,
-    U: DataType,
-    V: DataType,
-{
-}
+impl<T, U, V, const D: usize> Eq for PlManifoldRepairStats<T, U, V, D> where T: CoordinateScalar {}
 
-impl<T, U, V, const D: usize> Default for PlManifoldRepairStats<T, U, V, D>
-where
-    T: CoordinateScalar,
-    U: DataType,
-    V: DataType,
-{
+impl<T, U, V, const D: usize> Default for PlManifoldRepairStats<T, U, V, D> {
     fn default() -> Self {
         Self {
             iterations: 0,
@@ -501,6 +488,21 @@ mod tests {
         let config = PlManifoldRepairConfig::default();
         assert_eq!(config.max_iterations, 64);
         assert_eq!(config.max_cells_removed, 10_000);
+    }
+
+    #[test]
+    fn stats_default_does_not_require_data_type_metadata() {
+        struct NonDataType(String);
+
+        let stats: PlManifoldRepairStats<f64, String, NonDataType, 3> =
+            PlManifoldRepairStats::default();
+
+        assert_eq!(stats.iterations, 0);
+        assert!(stats.removed_cells.is_empty());
+        assert!(stats.removed_vertices.is_empty());
+
+        let metadata = NonDataType("owned metadata".to_string());
+        assert_eq!(metadata.0, "owned metadata");
     }
 
     // =============================================================================

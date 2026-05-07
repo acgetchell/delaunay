@@ -191,17 +191,20 @@ where
     ///     vertex!([0.0, 1.0, 0.0]),
     ///     vertex!([0.0, 0.0, 1.0]),
     /// ];
-    /// let dt = DelaunayTriangulation::new(&vertices)?;
+    /// let dt = DelaunayTriangulation::new(&vertices)
+    ///     .expect("nondegenerate tetrahedron should construct");
     ///
     /// // Build facet-to-cells mapping
-    /// let facet_map = dt.tds().build_facet_to_cells_map()?;
+    /// let facet_map = dt
+    ///     .tds()
+    ///     .build_facet_to_cells_map()
+    ///     .expect("valid triangulation should build a facet cache");
     ///
     /// // Use the mapping for facet lookups
     /// for (facet_key, adjacent_cells) in facet_map.iter() {
     ///     // Each facet has at most 2 adjacent cells
     ///     assert!(adjacent_cells.len() <= 2);
     /// }
-    /// # Ok::<(), Box<dyn std::error::Error>>(())
     /// ```
     fn try_get_or_build_facet_cache(
         &self,

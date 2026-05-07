@@ -8,6 +8,8 @@
 //!
 //! Converted from legacy `Tds::new()` tests to use the new `DelaunayTriangulation` API.
 
+#[cfg(feature = "diagnostics")]
+use delaunay::prelude::diagnostics::debug_print_first_delaunay_violation;
 use delaunay::prelude::generators::generate_random_points_in_ball_seeded;
 use delaunay::prelude::geometry::RobustKernel;
 use delaunay::prelude::triangulation::*;
@@ -274,7 +276,7 @@ fn debug_issue_120_empty_circumsphere_5d() {
     if let Err(err) = dt.is_valid() {
         #[cfg(feature = "diagnostics")]
         {
-            delaunay::core::util::debug_print_first_delaunay_violation(dt.tds(), None);
+            debug_print_first_delaunay_violation(dt.tds(), None);
         }
         panic!("5D debug configuration violates Delaunay property: {err:?}");
     }

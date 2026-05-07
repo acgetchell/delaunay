@@ -165,8 +165,8 @@ const fn is_geometric_repair_error(repair_err: &DelaunayRepairError) -> bool {
     match repair_err {
         DelaunayRepairError::NonConvergent { .. }
         | DelaunayRepairError::PostconditionFailed { .. } => true,
-        DelaunayRepairError::VerificationFailed { source, .. }
-        | DelaunayRepairError::Flip(source) => is_geometric_flip_error(source),
+        DelaunayRepairError::VerificationFailed { source, .. } => is_geometric_flip_error(source),
+        DelaunayRepairError::Flip(source) => is_geometric_flip_error(source),
         DelaunayRepairError::OrientationCanonicalizationFailed { .. }
         | DelaunayRepairError::InvalidTopology { .. }
         | DelaunayRepairError::HeuristicRebuildFailed { .. } => false,
@@ -656,7 +656,7 @@ pub enum DelaunayTriangulationValidationError {
         operation: DelaunayRepairOperation,
         /// Underlying flip-repair failure.
         #[source]
-        source: DelaunayRepairError,
+        source: Box<DelaunayRepairError>,
     },
 }
 
@@ -6682,9 +6682,9 @@ where
                     seed_cells = Some(info.new_cells);
                     info.removed_cells.len()
                 }
-                Err(FlipError::NeighborWiring { message }) => {
+                Err(FlipError::NeighborWiring { reason }) => {
                     return Err(TdsError::InvalidNeighbors {
-                        message: format!("inverse k=1 flip failed during remove_vertex: {message}"),
+                        message: format!("inverse k=1 flip failed during remove_vertex: {reason}"),
                     }
                     .into());
                 }
@@ -6711,7 +6711,7 @@ where
                     InvariantError::Delaunay(
                         DelaunayTriangulationValidationError::RepairOperationFailed {
                             operation: DelaunayRepairOperation::VertexRemoval,
-                            source,
+                            source: Box::new(source),
                         },
                     )
                 })?;
@@ -6959,10 +6959,12 @@ where
     // -------------------------------------------------------------------------
     // PURE STRUCT ASSEMBLY
     // -------------------------------------------------------------------------
-    /// Create a validated `DelaunayTriangulation` from a `Tds` with a default kernel.
+    /// Create a validated `DelaunayTriangulation` from a `Tds` with an explicit kernel.
     ///
     /// This is useful when you've serialized just the `Tds` and want to reconstruct
-    /// the `DelaunayTriangulation` with default kernel settings.
+    /// the `DelaunayTriangulation` with a caller-supplied kernel. The `kernel`
+    /// parameter provides the geometric predicates used during validation and later
+    /// insertions.
     ///
     /// # Notes
     ///
@@ -7200,7 +7202,7 @@ where
 /// # use delaunay::prelude::geometry::*;
 /// # use delaunay::prelude::tds::Tds;
 /// # use delaunay::prelude::triangulation::*;
-/// # fn example() -> Result<(), Box<dyn std::error::Error>> {
+/// # fn example() {
 /// // Create and serialize a triangulation
 /// let vertices = vec![
 ///     vertex!([0.0, 0.0, 0.0]),
@@ -7208,13 +7210,15 @@ where
 ///     vertex!([0.0, 1.0, 0.0]),
 ///     vertex!([0.0, 0.0, 1.0]),
 /// ];
-/// let dt = DelaunayTriangulation::<_, (), (), 3>::new(&vertices)?;
-/// let json = serde_json::to_string(&dt)?;
+/// let dt = DelaunayTriangulation::<_, (), (), 3>::new(&vertices)
+///     .expect("nondegenerate tetrahedron should construct");
+/// let json = serde_json::to_string(&dt).expect("triangulation should serialize");
 ///
 /// // Deserialize with a specific kernel via try_from_tds
-/// let tds: Tds<f64, (), (), 3> = serde_json::from_str(&json)?;
-/// let dt_adaptive = DelaunayTriangulation::try_from_tds(tds, AdaptiveKernel::new())?;
-/// # Ok(())
+/// let tds: Tds<f64, (), (), 3> =
+///     serde_json::from_str(&json).expect("serialized triangulation should deserialize");
+/// let dt_adaptive = DelaunayTriangulation::try_from_tds(tds, AdaptiveKernel::new())
+///     .expect("deserialized TDS should validate");
 /// # }
 /// ```
 impl<'de, const D: usize> Deserialize<'de> for DelaunayTriangulation<RobustKernel<f64>, (), (), D>
@@ -7440,7 +7444,8 @@ impl DelaunayCheckPolicy {
 mod tests {
     use super::*;
     use crate::core::algorithms::flips::{
-        DelaunayRepairDiagnostics, DelaunayRepairError, FlipError, RepairQueueOrder,
+        DelaunayRepairDiagnostics, DelaunayRepairError, FlipContextError, FlipError,
+        FlipPredicateError, FlipPredicateOperation, RepairQueueOrder,
         verify_delaunay_via_flip_predicates,
     };
     use crate::core::algorithms::incremental_insertion::{
@@ -7453,6 +7458,7 @@ mod tests {
     use crate::geometry::kernel::{AdaptiveKernel, FastKernel, RobustKernel};
     use crate::geometry::point::Point;
     use crate::geometry::traits::coordinate::Coordinate;
+    use crate::geometry::traits::coordinate::CoordinateConversionError;
     use crate::topology::characteristics::euler::TopologyClassification;
     use crate::topology::traits::topological_space::ToroidalConstructionMode;
     use crate::triangulation::flips::BistellarFlips;
@@ -9055,9 +9061,13 @@ mod tests {
             InvariantError::Delaunay(
                 DelaunayTriangulationValidationError::RepairOperationFailed {
                     operation: DelaunayRepairOperation::VertexRemoval,
-                    source: DelaunayRepairError::NonConvergent { max_flips: 0, .. },
+                    source,
                 },
-            ) => {
+            ) if matches!(
+                source.as_ref(),
+                DelaunayRepairError::NonConvergent { max_flips: 0, .. }
+            ) =>
+            {
                 // Expected forced path.
             }
             other => panic!(
@@ -10510,9 +10520,9 @@ mod tests {
 
         let verification_error = DelaunayRepairError::VerificationFailed {
             context: "local k=3 postcondition verification",
-            source: FlipError::InvalidFlipContext {
-                message: "bad ridge frame".to_string(),
-            },
+            source: Box::new(FlipError::InvalidFlipContext {
+                reason: FlipContextError::MissingRemovedCellFrame,
+            }),
         };
         assert!(!TestDelaunay::<4>::can_soft_fail(&verification_error));
 
@@ -10553,16 +10563,24 @@ mod tests {
                 DelaunayTriangulationConstructionError::Triangulation(
                     DelaunayConstructionFailure::InternalInconsistency { ref message }
                 ) if message.contains("per-insertion Delaunay repair failed at index 25")
-                    && message.contains("bad ridge frame")
+                    && message.contains("removed cell frame")
             ),
             "verification context failures should stop shuffled retries: {mapped_verification:?}"
         );
 
         let predicate_verification = DelaunayRepairError::VerificationFailed {
             context: "strict validation",
-            source: FlipError::PredicateFailure {
-                message: "in_sphere failed".to_string(),
-            },
+            source: Box::new(FlipError::PredicateFailure {
+                reason: FlipPredicateError::CoordinateConversion {
+                    operation: FlipPredicateOperation::K2CellAInSphere,
+                    source: CoordinateConversionError::ConversionFailed {
+                        coordinate_index: 0,
+                        coordinate_value: "in_sphere failed".to_string(),
+                        from_type: "f64",
+                        to_type: "f64",
+                    },
+                },
+            }),
         };
         let mapped_predicate =
             TestDelaunay::<4>::map_hard_repair_error(26, &predicate_verification);
@@ -10918,9 +10936,9 @@ mod tests {
         let error = InsertionError::DelaunayRepairFailed {
             source: Box::new(DelaunayRepairError::VerificationFailed {
                 context: "local k=3 postcondition verification",
-                source: FlipError::InvalidFlipContext {
-                    message: "bad ridge frame".to_string(),
-                },
+                source: Box::new(FlipError::InvalidFlipContext {
+                    reason: FlipContextError::MissingRemovedCellFrame,
+                }),
             }),
             context: "orientation canonicalization".to_string(),
         };
@@ -10931,7 +10949,7 @@ mod tests {
                 mapped,
                 TriangulationConstructionError::InternalInconsistency { ref message }
                     if message.contains("orientation canonicalization")
-                        && message.contains("bad ridge frame")
+                        && message.contains("removed cell frame")
             ),
             "hard repair errors during orientation canonicalization should be internal: {mapped:?}"
         );
@@ -11220,7 +11238,7 @@ mod tests {
         };
         let err = DelaunayTriangulationValidationError::RepairOperationFailed {
             operation: DelaunayRepairOperation::VertexRemoval,
-            source,
+            source: Box::new(source),
         };
 
         let msg = err.to_string();
@@ -11228,8 +11246,11 @@ mod tests {
         match &err {
             DelaunayTriangulationValidationError::RepairOperationFailed {
                 operation: DelaunayRepairOperation::VertexRemoval,
-                source: DelaunayRepairError::NonConvergent { max_flips: 7, .. },
-            } => {}
+                source,
+            } if matches!(
+                source.as_ref(),
+                DelaunayRepairError::NonConvergent { max_flips: 7, .. }
+            ) => {}
             other => panic!("expected typed vertex-removal repair source, got {other:?}"),
         }
         let chained = err

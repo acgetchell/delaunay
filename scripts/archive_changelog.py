@@ -20,6 +20,8 @@ Usage:
 from __future__ import annotations
 
 import argparse
+import logging
+import os
 import re
 import sys
 from pathlib import Path
@@ -35,6 +37,8 @@ _LINK_DEF_RE = re.compile(r"^\[([^\]]+)\]:\s+\S+")
 
 # Archive directory relative to the repository root.
 _DEFAULT_ARCHIVE_DIR = "docs/archive/changelog"
+
+LOGGER = logging.getLogger(__name__)
 
 
 # ---------------------------------------------------------------------------
@@ -269,7 +273,7 @@ def build_root(
         unreleased: The full Unreleased block (empty string if absent).
         active_blocks: Version blocks for the active minor series.
         archived_minors: Sorted list of archived ``X.Y`` minor keys.
-        archive_dir_rel: Relative path to the archive directory from the repo root.
+        archive_dir_rel: Relative path to the archive directory from the changelog file.
 
     Returns:
         The full text for the trimmed CHANGELOG.md.
@@ -342,7 +346,14 @@ def archive_changelog(
     try:
         archive_dir_rel = archive_dir.relative_to(changelog_path.parent).as_posix()
     except ValueError:
-        archive_dir_rel = archive_dir.as_posix()
+        archive_dir_rel = Path(os.path.relpath(archive_dir, changelog_path.parent)).as_posix()
+        if archive_dir_rel == ".." or archive_dir_rel.startswith("../") or Path(archive_dir_rel).is_absolute():
+            LOGGER.warning(
+                "Archive directory %s is outside changelog directory %s; generated Markdown links use %s",
+                archive_dir,
+                changelog_path.parent,
+                archive_dir_rel,
+            )
 
     root_text = build_root(
         preamble,

@@ -316,6 +316,7 @@ This includes information about:
 
 - **[API Design](docs/api_design.md)** - Builder vs Edit API design (explicit bistellar flips)
 - **[Code Organization](docs/code_organization.md)** - Project structure and module patterns
+- **[Diagnostics](docs/diagnostics.md)** - Opt-in diagnostic helpers, structured reports, and debug switches
 - **[Invariants](docs/invariants.md)** - Theoretical background and rationale for the topological and geometric invariants
 - **[Numerical Robustness Guide](docs/numerical_robustness_guide.md)** - Robustness strategies, kernels, and retry/repair behavior
 - **[Property Testing Summary](docs/property_testing_summary.md)** - Property-based testing with proptest (where tests live, how to run)

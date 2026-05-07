@@ -83,6 +83,22 @@ trait ProductionDynamicErrors {
     fn anyhow_error(&self, error: anyhow::Error);
 }
 
+// ruleid: delaunay.rust.public-error-enums-non-exhaustive
+pub enum PublicFixtureError {
+    Invalid,
+}
+
+// ok: delaunay.rust.public-error-enums-non-exhaustive
+#[non_exhaustive]
+pub enum PublicNonExhaustiveFixtureError {
+    Invalid,
+}
+
+// ok: delaunay.rust.public-error-enums-non-exhaustive
+enum PrivateFixtureError {
+    Invalid,
+}
+
 /// # Ok::<(), Box<dyn std::error::Error>>(())
 fn doctest_style_error_is_ignored() {}
 

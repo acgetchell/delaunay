@@ -1930,10 +1930,11 @@ mod tests {
         // SUMMARY OF STRING DATA LIMITATIONS
         // =====================================================================
 
-        // 1. String doesn't work because it doesn't implement Copy
+        // 1. Owned String metadata is supported with Vertex, VertexBuilder, and vertex!,
+        //    but it is not Copy and cannot be used in Copy-only contexts.
         // 2. &str has complex lifetime issues that make it impractical
         // 3. &'static str could work but only for compile-time constants
-        // 4. Recommended alternatives:
+        // 4. Recommended Copy alternatives:
         //    - Numeric IDs with external lookup (most flexible)
         //    - Character codes (for single characters)
         //    - Custom Copy enums (for predefined categories)

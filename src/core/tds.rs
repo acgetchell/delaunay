@@ -5113,6 +5113,32 @@ where
 // TRAIT IMPLEMENTATIONS
 // =============================================================================
 
+type CellUuidSortEntry<'a, T, U, V, const D: usize> = (Vec<Uuid>, &'a Cell<T, U, V, D>);
+
+/// Builds stable cell sort keys once so equality does not hide dangling
+/// vertex references or allocate sort keys repeatedly during comparison.
+fn cell_uuid_sort_entries<T, U, V, const D: usize>(
+    tds: &Tds<T, U, V, D>,
+) -> Option<Vec<CellUuidSortEntry<'_, T, U, V, D>>>
+where
+    T: CoordinateScalar,
+    U: DataType,
+    V: DataType,
+{
+    tds.cells
+        .values()
+        .map(|cell| {
+            let mut ids: Vec<Uuid> = cell
+                .vertices()
+                .iter()
+                .map(|&vkey| tds.vertex(vkey).map(Vertex::uuid))
+                .collect::<Option<Vec<_>>>()?;
+            ids.sort_unstable();
+            Some((ids, cell))
+        })
+        .collect()
+}
+
 /// Manual implementation of `PartialEq` for Tds
 ///
 /// Two triangulation data structures are considered equal if they have:
@@ -5168,44 +5194,24 @@ where
             return false;
         }
 
-        // Compare cells using Cell::eq_by_vertices() which uses Vertex::PartialEq
-        // This provides consistent behavior: Tds uses Vertex::PartialEq and Cell::eq_by_vertices()
-        // which internally uses Vertex::PartialEq for semantic equality across TDS instances.
-
-        // Collect cells into vectors for sorting
-        let mut self_cells: Vec<_> = self.cells.values().collect();
-        let mut other_cells: Vec<_> = other.cells.values().collect();
-
-        // Sort cells for order-independent comparison using UUID-based keys
-        // This avoids allocating coordinate vectors and is cheaper than coordinate comparison
-        let sort_key = |cell: &Cell<T, U, V, D>, tds: &Self| -> Vec<Uuid> {
-            let mut ids: Vec<Uuid> = cell
-                .vertices()
-                .iter()
-                .filter_map(|&vkey| tds.vertex(vkey).map(Vertex::uuid))
-                .collect();
-            ids.sort_unstable();
-            ids
+        // Compare cells using Cell::eq_by_vertices() which uses
+        // Vertex::PartialEq. Missing vertex references make the structures
+        // unequal rather than being silently dropped from sort keys.
+        let (Some(mut self_cells), Some(mut other_cells)) =
+            (cell_uuid_sort_entries(self), cell_uuid_sort_entries(other))
+        else {
+            return false;
         };
 
-        self_cells.sort_by(|a, b| {
-            sort_key(a, self)
-                .partial_cmp(&sort_key(b, self))
-                .unwrap_or(CmpOrdering::Equal)
-        });
-
-        other_cells.sort_by(|a, b| {
-            sort_key(a, other)
-                .partial_cmp(&sort_key(b, other))
-                .unwrap_or(CmpOrdering::Equal)
-        });
+        self_cells.sort_by(|(a_ids, _), (b_ids, _)| a_ids.cmp(b_ids));
+        other_cells.sort_by(|(a_ids, _), (b_ids, _)| a_ids.cmp(b_ids));
 
         // Compare sorted cell lists using Cell::eq_by_vertices
         if self_cells.len() != other_cells.len() {
             return false;
         }
 
-        for (self_cell, other_cell) in self_cells.iter().zip(other_cells.iter()) {
+        for ((_, self_cell), (_, other_cell)) in self_cells.iter().zip(other_cells.iter()) {
             if !self_cell.eq_by_vertices(self, other_cell, other) {
                 return false;
             }

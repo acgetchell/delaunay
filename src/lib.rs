@@ -33,6 +33,10 @@
 //!   Formal definitions of validation Levels 1–4, their costs, and guidance on when
 //!   each level should be applied.
 //!
+//! - **docs/diagnostics.md**:
+//!   Opt-in diagnostic helpers, structured reports, debug switches, and guidance for
+//!   producing useful failure reports without expanding the default API surface.
+//!
 //! - **docs/invariants.md**:
 //!   Deeper theoretical discussion of topological and geometric invariants
 //!   (PL-manifold conditions, ridge/vertex links, ordering heuristics, and
@@ -47,6 +51,7 @@
 //! |---|---|
 //! | Build a triangulation, insert/remove vertices | `use delaunay::prelude::triangulation::*` |
 //! | Read-only queries, traversal, convex hull | `use delaunay::prelude::query::*` |
+//! | Point location and conflict-region algorithms | `use delaunay::prelude::algorithms::*` |
 //! | Geometry helpers, predicates, points | `use delaunay::prelude::geometry::*` |
 //! | Random points / triangulations for examples and tests | `use delaunay::prelude::generators::*` |
 //! | Hilbert ordering and quantization utilities | `use delaunay::prelude::ordering::*` |
@@ -873,9 +878,12 @@ pub mod prelude {
     //
     // In particular, exporting `core::util::uuid` as `uuid` conflicts with the external `uuid`
     // crate name, making `use uuid::Uuid;` ambiguous for downstream users.
+    pub use crate::core::util::delaunay_validation::{
+        DelaunayValidationError, find_delaunay_violations,
+    };
     pub use crate::core::util::{
-        deduplication::*, delaunay_validation::*, facet_keys::*, facet_utils::*, hashing::*,
-        hilbert::*, jaccard::*, measurement::*, uuid::*,
+        deduplication::*, facet_keys::*, facet_utils::*, hashing::*, hilbert::*, jaccard::*,
+        measurement::*, uuid::*,
     };
 
     // Re-export point location algorithms from core::algorithms
@@ -894,7 +902,10 @@ pub mod prelude {
 
     // Re-export diagnostic types for scientific analysis of construction and repair
     pub use crate::core::algorithms::flips::{
-        DelaunayRepairDiagnostics, DelaunayRepairError, DelaunayRepairStats, RepairQueueOrder,
+        DelaunayRepairDiagnostics, DelaunayRepairError, DelaunayRepairStats, FlipContextError,
+        FlipEdgeAdjacencyError, FlipError, FlipMutationError, FlipNeighborWiringError,
+        FlipPredicateError, FlipPredicateOperation, FlipTriangleAdjacencyError,
+        FlipVertexAdjacencyError, RepairQueueOrder,
     };
 
     // Re-export commonly used collection types from core::collections
@@ -968,9 +979,11 @@ pub mod prelude {
         /// Flip-based Delaunay repair, diagnostics, and Level 4 validation.
         pub mod repair {
             pub use crate::core::algorithms::flips::{
-                DelaunayRepairDiagnostics, DelaunayRepairError, DelaunayRepairStats, FlipError,
-                RepairQueueOrder, verify_delaunay_for_triangulation,
-                verify_delaunay_via_flip_predicates,
+                DelaunayRepairDiagnostics, DelaunayRepairError, DelaunayRepairStats,
+                FlipContextError, FlipEdgeAdjacencyError, FlipError, FlipMutationError,
+                FlipNeighborWiringError, FlipPredicateError, FlipPredicateOperation,
+                FlipTriangleAdjacencyError, FlipVertexAdjacencyError, RepairQueueOrder,
+                verify_delaunay_for_triangulation, verify_delaunay_via_flip_predicates,
             };
             pub use crate::core::triangulation::{
                 TopologyGuarantee, Triangulation, ValidationPolicy,
@@ -1058,9 +1071,13 @@ pub mod prelude {
     /// they are intended for explicit debugging and verification workflows, not
     /// the default public API surface.
     #[cfg(feature = "diagnostics")]
+    #[cfg_attr(docsrs, doc(cfg(feature = "diagnostics")))]
     pub mod diagnostics {
         pub use crate::core::algorithms::locate::verify_conflict_region_completeness;
-        pub use crate::core::util::debug_print_first_delaunay_violation;
+        pub use crate::core::util::{
+            DelaunayViolationDetail, DelaunayViolationReport, debug_print_first_delaunay_violation,
+            delaunay_violation_report,
+        };
     }
 
     /// Convenience re-exports for common **read-only** workflows (topology traversal, adjacency,

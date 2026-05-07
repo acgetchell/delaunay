@@ -7,7 +7,9 @@
 
 use delaunay::prelude::generators::generate_random_triangulation;
 use delaunay::prelude::tds::CellValidationError;
-use delaunay::prelude::triangulation::DelaunayTriangulationConstructionError;
+use delaunay::prelude::triangulation::{
+    DelaunayTriangulation, DelaunayTriangulationConstructionError,
+};
 use std::hint::black_box;
 use std::time::Instant;
 
@@ -28,13 +30,12 @@ fn main() -> Result<(), DemoError> {
     // NOTE: The (n_points, bounds, seed) triple matches the 4D configuration used in
     // `test_generate_random_triangulation_dimensions` so that this example exercises
     // a realistic 4D triangulation without triggering extreme Delaunay repair in CI.
-    let dt: delaunay::triangulation::delaunay::DelaunayTriangulation<_, (), (), 4> =
-        generate_random_triangulation(
-            12,          // Number of points (fewer for faster demo)
-            (-1.0, 1.0), // Coordinate bounds
-            None,        // No vertex data
-            Some(777),   // Fixed seed for reproducibility (matches tested configuration)
-        )?;
+    let dt: DelaunayTriangulation<_, (), (), 4> = generate_random_triangulation(
+        12,          // Number of points (fewer for faster demo)
+        (-1.0, 1.0), // Coordinate bounds
+        None,        // No vertex data
+        Some(777),   // Fixed seed for reproducibility (matches tested configuration)
+    )?;
 
     // Get the first cell from the triangulation
     let Some(cell) = dt.tds().cells().map(|(_, cell)| cell).next() else {
@@ -121,7 +122,8 @@ fn main() -> Result<(), DemoError> {
 
     // Can be used in for loops
     let mut count = 0;
-    for uuid in cell.vertex_uuid_iter(dt.tds()).flatten() {
+    for uuid_result in cell.vertex_uuid_iter(dt.tds()) {
+        let uuid = uuid_result?;
         if !uuid.is_nil() {
             count += 1;
         }
@@ -129,11 +131,13 @@ fn main() -> Result<(), DemoError> {
     println!("  Non-nil UUIDs via for loop: {count}");
 
     // Can be chained with other iterator methods
-    let valid_uuid_count = cell
-        .vertex_uuid_iter(dt.tds())
-        .filter_map(Result::ok)
-        .filter(|uuid| !uuid.is_nil())
-        .count();
+    let valid_uuid_count = cell.vertex_uuid_iter(dt.tds()).try_fold(
+        0usize,
+        |count, uuid| -> Result<usize, CellValidationError> {
+            let uuid = uuid?;
+            Ok(count + usize::from(!uuid.is_nil()))
+        },
+    )?;
     println!("  Valid UUIDs via iterator chain: {valid_uuid_count}");
 
     // Can be used with iterator combinators

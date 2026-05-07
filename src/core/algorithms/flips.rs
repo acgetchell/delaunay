@@ -28,9 +28,9 @@
 #![forbid(unsafe_code)]
 
 use crate::core::algorithms::incremental_insertion::{
-    external_facets_for_boundary, wire_cavity_neighbors,
+    InsertionError, NeighborWiringError, external_facets_for_boundary, wire_cavity_neighbors,
 };
-use crate::core::algorithms::locate::extract_cavity_boundary;
+use crate::core::algorithms::locate::{ConflictError, extract_cavity_boundary};
 use crate::core::cell::{Cell, CellValidationError};
 use crate::core::collections::{
     CellKeyBuffer, FastHashMap, FastHashSet, FastHasher, MAX_PRACTICAL_DIMENSION_SIZE, SmallBuffer,
@@ -38,7 +38,7 @@ use crate::core::collections::{
 use crate::core::edge::EdgeKey;
 use crate::core::facet::{AllFacetsIter, FacetHandle, facet_key_from_vertices};
 use crate::core::operations::TopologicalOperation;
-use crate::core::tds::{CellKey, Tds, VertexKey};
+use crate::core::tds::{CellKey, Tds, TdsConstructionError, TdsError, VertexKey};
 use crate::core::traits::data_type::DataType;
 use crate::core::triangulation::{TopologyGuarantee, Triangulation};
 use crate::core::util::stable_hash_u64_slice;
@@ -282,43 +282,41 @@ where
     V: DataType,
 {
     if k_move == 0 || k_move > D + 1 {
-        return Err(FlipError::InvalidFlipContext {
-            message: format!("k must be in 1..=D+1 (k={k_move}, D={D})"),
-        });
+        return Err(FlipContextError::InvalidMoveSize {
+            k_move,
+            dimension: D,
+        }
+        .into());
     }
 
     let expected_removed_face = D + 2 - k_move;
     if removed_face_vertices.len() != expected_removed_face {
-        return Err(FlipError::InvalidFlipContext {
-            message: format!(
-                "removed-face must have {expected_removed_face} vertices, got {}",
-                removed_face_vertices.len()
-            ),
-        });
+        return Err(FlipContextError::WrongRemovedFaceArity {
+            expected: expected_removed_face,
+            found: removed_face_vertices.len(),
+        }
+        .into());
     }
     if inserted_face_vertices.len() != k_move {
-        return Err(FlipError::InvalidFlipContext {
-            message: format!(
-                "inserted-face must have {k_move} vertices, got {}",
-                inserted_face_vertices.len()
-            ),
-        });
+        return Err(FlipContextError::WrongInsertedFaceArity {
+            k_move,
+            expected: k_move,
+            found: inserted_face_vertices.len(),
+        }
+        .into());
     }
     if removed_cells.len() != k_move {
-        return Err(FlipError::InvalidFlipContext {
-            message: format!(
-                "removed_cells must have {k_move} entries, got {}",
-                removed_cells.len()
-            ),
-        });
+        return Err(FlipContextError::WrongRemovedCellCount {
+            expected: k_move,
+            found: removed_cells.len(),
+        }
+        .into());
     }
     if removed_face_vertices
         .iter()
         .any(|v| inserted_face_vertices.contains(v))
     {
-        return Err(FlipError::InvalidFlipContext {
-            message: "removed-face and inserted-face must be disjoint".to_string(),
-        });
+        return Err(FlipContextError::OverlappingFaces.into());
     }
     debug_assert!(
         tds.is_coherently_oriented(),
@@ -368,15 +366,12 @@ where
         new_cell_vertices.push(vertices);
     }
 
-    let boundary_facets =
-        extract_cavity_boundary(tds, removed_cells).map_err(|e| FlipError::NeighborWiring {
-            message: format!("flip boundary extraction failed: {e}"),
-        })?;
+    let boundary_facets = extract_cavity_boundary(tds, removed_cells).map_err(|source| {
+        FlipError::from(FlipNeighborWiringError::BoundaryExtraction { source })
+    })?;
 
     let external_facets = external_facets_for_boundary(tds, removed_cells, &boundary_facets)
-        .map_err(|e| FlipError::NeighborWiring {
-            message: e.to_string(),
-        })?;
+        .map_err(FlipNeighborWiringError::from)?;
 
     let topology_index = build_flip_topology_index(
         tds,
@@ -401,9 +396,11 @@ where
         // kernel predicate, so it is kernel-independent.
         match robust_orientation(&points) {
             Err(e) => {
-                return Err(FlipError::PredicateFailure {
-                    message: format!("robust orientation failed for flip cell: {e}"),
-                });
+                return Err(FlipPredicateError::coordinate_conversion(
+                    FlipPredicateOperation::ReplacementCellOrientation,
+                    e,
+                )
+                .into());
             }
             Ok(Orientation::DEGENERATE) => {
                 if env::var_os("DELAUNAY_REPAIR_DEBUG_FACETS").is_some() {
@@ -443,11 +440,11 @@ where
 
     for vertices in new_cell_vertices {
         let cell = Cell::new(vertices, None)?;
-        let cell_key = tds
-            .insert_cell_with_mapping(cell)
-            .map_err(|e| FlipError::TdsMutation {
-                message: e.to_string(),
-            })?;
+        let cell_key = tds.insert_cell_with_mapping(cell).map_err(|source| {
+            FlipMutationError::CellInsertion {
+                source: Box::new(source),
+            }
+        })?;
         new_cells.push(cell_key);
     }
 
@@ -457,9 +454,7 @@ where
         external_facets.iter().copied(),
         Some(removed_cells),
     )
-    .map_err(|e| FlipError::NeighborWiring {
-        message: e.to_string(),
-    })?;
+    .map_err(FlipNeighborWiringError::from)?;
 
     tds.remove_cells_by_keys(removed_cells);
 
@@ -546,12 +541,10 @@ where
                     cell_key: external.cell_key(),
                 })?;
         if external_cell.periodic_vertex_offsets().is_some() {
-            return Err(FlipError::InvalidFlipContext {
-                message: format!(
-                    "periodic external cell {:?} cannot be used for replacement-cell parity without aligned periodic offsets",
-                    external.cell_key()
-                ),
-            });
+            return Err(FlipContextError::PeriodicExternalCell {
+                cell_key: external.cell_key(),
+            }
+            .into());
         }
 
         let external_facet_idx = usize::from(external.facet_index());
@@ -590,12 +583,13 @@ where
                 match (flips[source_idx], flips[target_idx]) {
                     (Some(source_flip), Some(target_flip)) => {
                         if target_flip != (source_flip ^ !coherent) {
-                            return Err(FlipError::InvalidFlipContext {
-                                message: format!(
-                                    "conflicting replacement-cell orientation constraints between \
-                                     local cells {source_idx} and {target_idx}"
-                                ),
-                            });
+                            return Err(
+                                FlipContextError::ConflictingReplacementOrientationBetweenCells {
+                                    source_cell_index: source_idx,
+                                    target_cell_index: target_idx,
+                                }
+                                .into(),
+                            );
                         }
                     }
                     (Some(source_flip), None) => {
@@ -626,10 +620,7 @@ where
     for (vertices, should_flip) in cells.iter_mut().zip(flips) {
         if should_flip.unwrap_or(false) {
             if vertices.len() < 2 {
-                return Err(FlipError::InvalidFlipContext {
-                    message: "replacement cell needs at least two vertices to flip orientation"
-                        .to_string(),
-                });
+                return Err(FlipContextError::ReplacementCellTooSmallForOrientationFlip.into());
             }
             vertices.swap(0, 1);
         }
@@ -645,17 +636,19 @@ fn set_flip_assignment(
     required: bool,
 ) -> Result<bool, FlipError> {
     if cell_idx >= assignments.len() {
-        return Err(FlipError::InvalidFlipContext {
-            message: format!("replacement orientation index {cell_idx} out of range"),
-        });
+        return Err(FlipContextError::ReplacementOrientationIndexOutOfRange {
+            cell_index: cell_idx,
+        }
+        .into());
     }
 
     match assignments[cell_idx] {
-        Some(existing) if existing != required => Err(FlipError::InvalidFlipContext {
-            message: format!(
-                "conflicting replacement-cell orientation constraints for local cell {cell_idx}"
-            ),
-        }),
+        Some(existing) if existing != required => {
+            Err(FlipContextError::ConflictingReplacementOrientationForCell {
+                cell_index: cell_idx,
+            }
+            .into())
+        }
         Some(_) => Ok(false),
         None => {
             assignments[cell_idx] = Some(required);
@@ -735,11 +728,8 @@ fn facet_orders_coherent(
 ) -> Result<bool, FlipError> {
     let source_order = facet_order(source_vertices, source_facet_idx)?;
     let target_order = facet_order(target_vertices, tarfacet_idx)?;
-    let observed_odd = permutation_odd(&source_order, &target_order).ok_or_else(|| {
-        FlipError::InvalidFlipContext {
-            message: "could not derive replacement facet-order permutation parity".to_string(),
-        }
-    })?;
+    let observed_odd = permutation_odd(&source_order, &target_order)
+        .ok_or(FlipContextError::FacetOrderParityUnavailable)?;
     let expected_odd = (source_facet_idx + tarfacet_idx).is_multiple_of(2);
     Ok(observed_odd == expected_odd)
 }
@@ -750,12 +740,11 @@ fn facet_order(
     omit_idx: usize,
 ) -> Result<SmallBuffer<VertexKey, MAX_PRACTICAL_DIMENSION_SIZE>, FlipError> {
     if omit_idx >= vertices.len() {
-        return Err(FlipError::InvalidFlipContext {
-            message: format!(
-                "facet index {omit_idx} out of range for replacement cell with {} vertices",
-                vertices.len()
-            ),
-        });
+        return Err(FlipContextError::ReplacementFacetIndexOutOfRange {
+            facet_index: omit_idx,
+            vertex_count: vertices.len(),
+        }
+        .into());
     }
 
     let mut order = SmallBuffer::with_capacity(vertices.len().saturating_sub(1));
@@ -823,11 +812,11 @@ where
                 });
             }
             Err(error) => {
-                return Err(FlipError::PredicateFailure {
-                    message: format!(
-                        "robust orientation failed for Delaunay repair flip cell {vertices:?}: {error}"
-                    ),
-                });
+                return Err(FlipPredicateError::coordinate_conversion(
+                    FlipPredicateOperation::DelaunayRepairReplacementOrientation,
+                    error,
+                )
+                .into());
             }
         }
     }
@@ -1578,6 +1567,392 @@ impl<const D: usize, const K: usize> BistellarMove<D> for ConstK<K> {
     const K: usize = K;
 }
 
+/// Predicate operation being evaluated by flip logic.
+#[derive(Clone, Copy, Debug, Error, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum FlipPredicateOperation {
+    /// Replacement-cell orientation check while applying a flip.
+    #[error("replacement-cell orientation")]
+    ReplacementCellOrientation,
+    /// Replacement-cell orientation postcondition during Delaunay repair.
+    #[error("Delaunay-repair replacement-cell orientation")]
+    DelaunayRepairReplacementOrientation,
+    /// Degenerate-cell precheck before applying a flip.
+    #[error("degenerate-cell precheck")]
+    DegenerateCellPrecheck,
+    /// First k=2 insphere predicate.
+    #[error("k=2 cell-A insphere")]
+    K2CellAInSphere,
+    /// Second k=2 insphere predicate.
+    #[error("k=2 cell-B insphere")]
+    K2CellBInSphere,
+    /// k=3 insphere predicate.
+    #[error("k=3 cell insphere")]
+    K3CellInSphere,
+}
+
+/// Structured reason a geometric predicate failed during a flip.
+#[derive(Clone, Debug, Error, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum FlipPredicateError {
+    /// A coordinate-conversion or exact-predicate helper failed.
+    #[error("{operation} predicate failed: {source}")]
+    CoordinateConversion {
+        /// Predicate operation being evaluated.
+        operation: FlipPredicateOperation,
+        /// Underlying coordinate conversion failure.
+        #[source]
+        source: crate::geometry::traits::coordinate::CoordinateConversionError,
+    },
+    /// A topology model failed to lift a periodic vertex for predicate evaluation.
+    #[error("failed to lift vertex {vertex_key:?} for periodic predicate: {details}")]
+    PeriodicVertexLift {
+        /// Vertex being lifted.
+        vertex_key: VertexKey,
+        /// Underlying topology-model error, captured in display form because it
+        /// may contain floating-point values and therefore is not `Eq`.
+        details: String,
+    },
+}
+
+impl FlipPredicateError {
+    const fn coordinate_conversion(
+        operation: FlipPredicateOperation,
+        source: crate::geometry::traits::coordinate::CoordinateConversionError,
+    ) -> Self {
+        Self::CoordinateConversion { operation, source }
+    }
+}
+
+/// Structured reason a flip context is invalid before mutation.
+#[derive(Clone, Debug, Error, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum FlipContextError {
+    /// The requested move size is outside `1..=D+1`.
+    #[error("k must be in 1..=D+1 (k={k_move}, D={dimension})")]
+    InvalidMoveSize {
+        /// Requested k-move.
+        k_move: usize,
+        /// Triangulation dimension.
+        dimension: usize,
+    },
+    /// Removed face has the wrong arity for the k-move.
+    #[error("removed-face must have {expected} vertices, got {found}")]
+    WrongRemovedFaceArity {
+        /// Expected removed-face vertex count.
+        expected: usize,
+        /// Observed removed-face vertex count.
+        found: usize,
+    },
+    /// Inserted face has the wrong arity for the k-move.
+    #[error("k={k_move} inserted-face must have {expected} vertices, got {found}")]
+    WrongInsertedFaceArity {
+        /// Requested k-move.
+        k_move: usize,
+        /// Expected inserted-face vertex count.
+        expected: usize,
+        /// Observed inserted-face vertex count.
+        found: usize,
+    },
+    /// The number of cells selected for removal does not match the k-move.
+    #[error("removed_cells must have {expected} entries, got {found}")]
+    WrongRemovedCellCount {
+        /// Expected number of removed cells.
+        expected: usize,
+        /// Observed number of removed cells.
+        found: usize,
+    },
+    /// Removed and inserted faces are not disjoint.
+    #[error("removed-face and inserted-face must be disjoint")]
+    OverlappingFaces,
+    /// A periodic external cell lacks aligned offsets for replacement parity.
+    #[error(
+        "periodic external cell {cell_key:?} cannot be used for replacement-cell parity without aligned periodic offsets"
+    )]
+    PeriodicExternalCell {
+        /// External cell with periodic offsets.
+        cell_key: CellKey,
+    },
+    /// Replacement-cell orientation constraints disagree.
+    #[error(
+        "conflicting replacement-cell orientation constraints between local cells {source_cell_index} and {target_cell_index}"
+    )]
+    ConflictingReplacementOrientationBetweenCells {
+        /// First local replacement-cell index.
+        source_cell_index: usize,
+        /// Second local replacement-cell index.
+        target_cell_index: usize,
+    },
+    /// Replacement-cell orientation cannot be flipped because the cell is too small.
+    #[error("replacement cell needs at least two vertices to flip orientation")]
+    ReplacementCellTooSmallForOrientationFlip,
+    /// Replacement orientation assignment referenced a missing local cell.
+    #[error("replacement orientation index {cell_index} out of range")]
+    ReplacementOrientationIndexOutOfRange {
+        /// Local replacement-cell index.
+        cell_index: usize,
+    },
+    /// Two parity constraints disagree for the same replacement cell.
+    #[error("conflicting replacement-cell orientation constraints for local cell {cell_index}")]
+    ConflictingReplacementOrientationForCell {
+        /// Local replacement-cell index.
+        cell_index: usize,
+    },
+    /// The facet-order permutation parity could not be derived.
+    #[error("could not derive replacement facet-order permutation parity")]
+    FacetOrderParityUnavailable,
+    /// A facet index is outside the replacement cell's vertex range.
+    #[error(
+        "facet index {facet_index} out of range for replacement cell with {vertex_count} vertices"
+    )]
+    ReplacementFacetIndexOutOfRange {
+        /// Invalid facet index.
+        facet_index: usize,
+        /// Replacement-cell vertex count.
+        vertex_count: usize,
+    },
+    /// A k=2 facet predicate received the wrong number of facet vertices.
+    #[error("k=2 facet must have {expected} vertices, got {found}")]
+    K2FacetArity {
+        /// Expected facet vertex count.
+        expected: usize,
+        /// Observed facet vertex count.
+        found: usize,
+    },
+    /// k=2 opposite vertices are not a valid complementary face.
+    #[error("k=2 opposites must be distinct and not in the facet")]
+    InvalidK2Opposites,
+    /// A k=3 predicate received the wrong number of ridge vertices.
+    #[error("k=3 ridge must have {expected} vertices, got {found}")]
+    K3RidgeArity {
+        /// Expected ridge vertex count.
+        expected: usize,
+        /// Observed ridge vertex count.
+        found: usize,
+    },
+    /// Periodic frame alignment found contradictory translations.
+    #[error(
+        "conflicting periodic frame translations while aligning vertex {vertex_key:?} from cell {source_cell_key:?} into frame {target_cell_key:?}: expected {expected_offset:?}, got {found_offset:?}"
+    )]
+    ConflictingPeriodicFrameTranslation {
+        /// Vertex being aligned.
+        vertex_key: VertexKey,
+        /// Source cell used for alignment.
+        source_cell_key: CellKey,
+        /// Target cell frame.
+        target_cell_key: CellKey,
+        /// Previously derived offset.
+        expected_offset: Vec<i8>,
+        /// Conflicting candidate offset.
+        found_offset: Vec<i8>,
+    },
+    /// No source cell could align a periodic vertex into the target frame.
+    #[error("cannot align periodic vertex {vertex_key:?} into frame {target_cell_key:?}")]
+    PeriodicVertexAlignmentFailed {
+        /// Vertex being aligned.
+        vertex_key: VertexKey,
+        /// Target cell frame.
+        target_cell_key: CellKey,
+    },
+    /// Periodic offset count does not match the cell's vertex count.
+    #[error(
+        "cell {cell_key:?} periodic offset count {offset_count} does not match vertex count {vertex_count}"
+    )]
+    PeriodicOffsetCountMismatch {
+        /// Cell with malformed offsets.
+        cell_key: CellKey,
+        /// Number of stored offsets.
+        offset_count: usize,
+        /// Number of cell vertices.
+        vertex_count: usize,
+    },
+    /// Periodic offset subtraction overflowed on an axis.
+    #[error("periodic offset subtraction overflow on axis {axis}")]
+    PeriodicOffsetSubtractionOverflow {
+        /// Coordinate axis.
+        axis: usize,
+    },
+    /// Periodic offset addition overflowed on an axis.
+    #[error("periodic offset addition overflow on axis {axis}")]
+    PeriodicOffsetAdditionOverflow {
+        /// Coordinate axis.
+        axis: usize,
+    },
+    /// Inverse predicate evaluation had no removed-cell frame.
+    #[error("inverse flip predicate requires at least one removed cell frame")]
+    MissingRemovedCellFrame,
+}
+
+/// Structured reason neighbor wiring failed during flip application.
+#[derive(Clone, Debug, Error, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum FlipNeighborWiringError {
+    /// Boundary extraction failed before replacement cells were created.
+    #[error("flip boundary extraction failed: {source}")]
+    BoundaryExtraction {
+        /// Underlying conflict-region error.
+        #[source]
+        source: ConflictError,
+    },
+    /// Neighbor wiring failed with a structured insertion-layer reason.
+    #[error("neighbor wiring failed: {source}")]
+    NeighborWiring {
+        /// Underlying neighbor-wiring error.
+        #[source]
+        source: NeighborWiringError,
+    },
+    /// The replacement cells would create a non-manifold facet.
+    #[error("non-manifold topology: facet {facet_hash:#x} shared by {cell_count} cells")]
+    NonManifoldTopology {
+        /// Over-shared facet hash.
+        facet_hash: u64,
+        /// Number of incident cells.
+        cell_count: usize,
+    },
+    /// TDS topology validation failed while wiring neighbors.
+    #[error("topology validation failed during neighbor wiring: {source}")]
+    TopologyValidation {
+        /// Underlying TDS validation error.
+        #[source]
+        source: TdsError,
+    },
+    /// An unexpected insertion-layer error reached flip neighbor wiring.
+    #[error("unexpected neighbor wiring error: {message}")]
+    Unexpected {
+        /// Display form of the unexpected error.
+        message: String,
+    },
+}
+
+impl From<InsertionError> for FlipNeighborWiringError {
+    fn from(source: InsertionError) -> Self {
+        match source {
+            InsertionError::NeighborWiring { reason } => Self::NeighborWiring { source: reason },
+            InsertionError::NonManifoldTopology {
+                facet_hash,
+                cell_count,
+            } => Self::NonManifoldTopology {
+                facet_hash,
+                cell_count,
+            },
+            InsertionError::TopologyValidation(source) => Self::TopologyValidation { source },
+            other => Self::Unexpected {
+                message: other.to_string(),
+            },
+        }
+    }
+}
+
+/// Structured reason a TDS mutation failed while applying a flip.
+#[derive(Clone, Debug, Error, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum FlipMutationError {
+    /// Vertex insertion failed before a k=1 flip.
+    #[error("vertex insertion failed: {source}")]
+    VertexInsertion {
+        /// Underlying TDS construction error.
+        #[source]
+        source: Box<TdsConstructionError>,
+    },
+    /// Replacement-cell insertion failed.
+    #[error("cell insertion failed: {source}")]
+    CellInsertion {
+        /// Underlying TDS construction error.
+        #[source]
+        source: Box<TdsConstructionError>,
+    },
+}
+
+/// Structured reason inverse k=2 edge adjacency is inconsistent.
+#[derive(Clone, Copy, Debug, Error, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum FlipEdgeAdjacencyError {
+    /// Edge endpoints are identical.
+    #[error("edge endpoints must be distinct ({vertex_key:?})")]
+    DuplicateEndpoints {
+        /// Repeated endpoint key.
+        vertex_key: VertexKey,
+    },
+    /// Incident cell does not contain both edge endpoints.
+    #[error("cell {cell_key:?} does not contain edge vertices {v0:?} and {v1:?}")]
+    CellMissingEdgeVertices {
+        /// Cell expected to contain the edge.
+        cell_key: CellKey,
+        /// First edge endpoint.
+        v0: VertexKey,
+        /// Second edge endpoint.
+        v1: VertexKey,
+    },
+    /// Edge star has the wrong opposite-vertex incidence pattern.
+    #[error(
+        "edge star must have {expected_vertices} distinct opposite vertices each appearing {expected_occurrences} times, found {found_vertices} distinct vertices"
+    )]
+    InvalidOppositeVertexIncidence {
+        /// Expected number of distinct opposite vertices.
+        expected_vertices: usize,
+        /// Observed number of distinct opposite vertices.
+        found_vertices: usize,
+        /// Expected occurrence count for each opposite vertex.
+        expected_occurrences: usize,
+    },
+}
+
+/// Structured reason inverse k=3 triangle adjacency is inconsistent.
+#[derive(Clone, Copy, Debug, Error, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum FlipTriangleAdjacencyError {
+    /// Incident cell does not contain all triangle vertices.
+    #[error("cell {cell_key:?} does not contain triangle vertices {a:?}, {b:?}, and {c:?}")]
+    CellMissingTriangleVertices {
+        /// Cell expected to contain the triangle.
+        cell_key: CellKey,
+        /// First triangle vertex.
+        a: VertexKey,
+        /// Second triangle vertex.
+        b: VertexKey,
+        /// Third triangle vertex.
+        c: VertexKey,
+    },
+    /// Triangle star has the wrong ridge-vertex incidence pattern.
+    #[error(
+        "triangle star must have {expected_vertices} ridge vertices each appearing {expected_occurrences} times, found {found_vertices} distinct vertices"
+    )]
+    InvalidRidgeVertexIncidence {
+        /// Expected number of distinct ridge vertices.
+        expected_vertices: usize,
+        /// Observed number of distinct ridge vertices.
+        found_vertices: usize,
+        /// Expected occurrence count for each ridge vertex.
+        expected_occurrences: usize,
+    },
+}
+
+/// Structured reason inverse k=1 vertex-star adjacency is inconsistent.
+#[derive(Clone, Copy, Debug, Error, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum FlipVertexAdjacencyError {
+    /// Incident cell does not contain the removed vertex.
+    #[error("cell {cell_key:?} does not contain vertex {vertex_key:?}")]
+    CellMissingVertex {
+        /// Cell expected to contain the vertex.
+        cell_key: CellKey,
+        /// Removed vertex.
+        vertex_key: VertexKey,
+    },
+    /// Vertex star has the wrong link-vertex incidence pattern.
+    #[error(
+        "vertex star must have {expected_vertices} link vertices each appearing {expected_occurrences} times, found {found_vertices} distinct vertices"
+    )]
+    InvalidLinkVertexIncidence {
+        /// Expected number of distinct link vertices.
+        expected_vertices: usize,
+        /// Observed number of distinct link vertices.
+        found_vertices: usize,
+        /// Expected occurrence count for each link vertex.
+        expected_occurrences: usize,
+    },
+}
+
 /// Errors that can occur during bistellar flips or repair.
 ///
 /// # Examples
@@ -1686,16 +2061,16 @@ pub enum FlipError {
         expected: usize,
     },
     /// Edge adjacency information is inconsistent.
-    #[error("Edge adjacency mismatch: {message}")]
+    #[error("Edge adjacency mismatch: {reason}")]
     InvalidEdgeAdjacency {
-        /// Context message.
-        message: String,
+        /// Structured edge-adjacency reason.
+        reason: FlipEdgeAdjacencyError,
     },
     /// Triangle adjacency information is inconsistent.
-    #[error("Triangle adjacency mismatch: {message}")]
+    #[error("Triangle adjacency mismatch: {reason}")]
     InvalidTriangleAdjacency {
-        /// Context message.
-        message: String,
+        /// Structured triangle-adjacency reason.
+        reason: FlipTriangleAdjacencyError,
     },
     /// Vertex star has an invalid multiplicity for inverse k=1 flips.
     #[error("Vertex star has invalid multiplicity {found}, expected {expected}")]
@@ -1706,22 +2081,24 @@ pub enum FlipError {
         expected: usize,
     },
     /// Vertex adjacency information is inconsistent.
-    #[error("Vertex adjacency mismatch: {message}")]
+    #[error("Vertex adjacency mismatch: {reason}")]
     InvalidVertexAdjacency {
-        /// Context message.
-        message: String,
+        /// Structured vertex-adjacency reason.
+        reason: FlipVertexAdjacencyError,
     },
     /// Flip context is inconsistent with the requested move.
-    #[error("Flip context invalid: {message}")]
+    #[error("Flip context invalid: {reason}")]
     InvalidFlipContext {
-        /// Context message.
-        message: String,
+        /// Structured invalid-context reason.
+        #[source]
+        reason: FlipContextError,
     },
     /// Geometric predicate failed.
-    #[error("Geometric predicate failed: {message}")]
+    #[error("Geometric predicate failed: {reason}")]
     PredicateFailure {
-        /// Error message from predicate evaluation.
-        message: String,
+        /// Structured predicate failure.
+        #[source]
+        reason: FlipPredicateError,
     },
     /// Flip would create a degenerate cell (zero orientation).
     #[error("Flip would create a degenerate cell (zero orientation)")]
@@ -1759,17 +2136,43 @@ pub enum FlipError {
     #[error(transparent)]
     CellCreation(#[from] CellValidationError),
     /// Neighbor wiring failed during flip application.
-    #[error("Neighbor wiring failed: {message}")]
+    #[error("Neighbor wiring failed: {reason}")]
     NeighborWiring {
-        /// Error message from neighbor wiring.
-        message: String,
+        /// Structured neighbor-wiring failure.
+        #[source]
+        reason: FlipNeighborWiringError,
     },
     /// TDS mutation failed.
-    #[error("TDS mutation failed: {message}")]
+    #[error("TDS mutation failed: {reason}")]
     TdsMutation {
-        /// Error message from TDS mutation.
-        message: String,
+        /// Structured TDS mutation failure.
+        #[source]
+        reason: FlipMutationError,
     },
+}
+
+impl From<FlipContextError> for FlipError {
+    fn from(reason: FlipContextError) -> Self {
+        Self::InvalidFlipContext { reason }
+    }
+}
+
+impl From<FlipPredicateError> for FlipError {
+    fn from(reason: FlipPredicateError) -> Self {
+        Self::PredicateFailure { reason }
+    }
+}
+
+impl From<FlipNeighborWiringError> for FlipError {
+    fn from(reason: FlipNeighborWiringError) -> Self {
+        Self::NeighborWiring { reason }
+    }
+}
+
+impl From<FlipMutationError> for FlipError {
+    fn from(reason: FlipMutationError) -> Self {
+        Self::TdsMutation { reason }
+    }
 }
 
 /// Information about a successful flip.
@@ -2176,7 +2579,7 @@ pub enum DelaunayRepairError {
         context: &'static str,
         /// Underlying flip or predicate error.
         #[source]
-        source: FlipError,
+        source: Box<FlipError>,
     },
     /// Repair completed but orientation canonicalization failed.
     #[error("Delaunay repair orientation canonicalization failed: {message}")]
@@ -2329,7 +2732,7 @@ where
     let (v0, v1) = edge.endpoints();
     if v0 == v1 {
         return Err(FlipError::InvalidEdgeAdjacency {
-            message: "edge endpoints must be distinct".to_string(),
+            reason: FlipEdgeAdjacencyError::DuplicateEndpoints { vertex_key: v0 },
         });
     }
 
@@ -2369,7 +2772,7 @@ where
             .ok_or(FlipError::MissingCell { cell_key })?;
         if !cell.contains_vertex(v0) || !cell.contains_vertex(v1) {
             return Err(FlipError::InvalidEdgeAdjacency {
-                message: format!("cell {cell_key:?} does not contain edge vertices"),
+                reason: FlipEdgeAdjacencyError::CellMissingEdgeVertices { cell_key, v0, v1 },
             });
         }
         for &vk in cell.vertices() {
@@ -2381,10 +2784,11 @@ where
 
     if counts.len() != D || !counts.values().all(|&count| count == D - 1) {
         return Err(FlipError::InvalidEdgeAdjacency {
-            message: format!(
-                "edge star must have {D} distinct opposite vertices each appearing {expected} times",
-                expected = D - 1
-            ),
+            reason: FlipEdgeAdjacencyError::InvalidOppositeVertexIncidence {
+                expected_vertices: D,
+                found_vertices: counts.len(),
+                expected_occurrences: D - 1,
+            },
         });
     }
 
@@ -2484,7 +2888,10 @@ where
             .ok_or(FlipError::MissingCell { cell_key })?;
         if !cell.contains_vertex(vertex_key) {
             return Err(FlipError::InvalidVertexAdjacency {
-                message: format!("cell {cell_key:?} does not contain vertex"),
+                reason: FlipVertexAdjacencyError::CellMissingVertex {
+                    cell_key,
+                    vertex_key,
+                },
             });
         }
         removed_cells_buf.push(cell_key);
@@ -2497,9 +2904,11 @@ where
 
     if counts.len() != expected || !counts.values().all(|&count| count == D) {
         return Err(FlipError::InvalidVertexAdjacency {
-            message: format!(
-                "vertex star must have {expected} link vertices each appearing {D} times"
-            ),
+            reason: FlipVertexAdjacencyError::InvalidLinkVertexIncidence {
+                expected_vertices: expected,
+                found_vertices: counts.len(),
+                expected_occurrences: D,
+            },
         });
     }
 
@@ -2542,20 +2951,17 @@ where
     V: DataType,
 {
     if facet_vertices.len() != D {
-        return Err(FlipError::InvalidFlipContext {
-            message: format!(
-                "k=2 facet must have {D} vertices, got {}",
-                facet_vertices.len()
-            ),
-        });
+        return Err(FlipContextError::K2FacetArity {
+            expected: D,
+            found: facet_vertices.len(),
+        }
+        .into());
     }
     if facet_vertices.contains(&opposite_a)
         || facet_vertices.contains(&opposite_b)
         || opposite_a == opposite_b
     {
-        return Err(FlipError::InvalidFlipContext {
-            message: "k=2 opposites must be distinct and not in the facet".to_string(),
-        });
+        return Err(FlipContextError::InvalidK2Opposites.into());
     }
 
     let mut cell_vertices: [SmallBuffer<VertexKey, MAX_PRACTICAL_DIMENSION_SIZE>; 2] = [
@@ -2597,9 +3003,11 @@ where
         Ok(value) => value,
         Err(e) => {
             diagnostics.record_predicate_failure();
-            return Err(FlipError::PredicateFailure {
-                message: format!("in_sphere failed for k=2 cell A: {e}"),
-            });
+            return Err(FlipPredicateError::coordinate_conversion(
+                FlipPredicateOperation::K2CellAInSphere,
+                e,
+            )
+            .into());
         }
     };
 
@@ -2607,9 +3015,11 @@ where
         Ok(value) => value,
         Err(e) => {
             diagnostics.record_predicate_failure();
-            return Err(FlipError::PredicateFailure {
-                message: format!("in_sphere failed for k=2 cell B: {e}"),
-            });
+            return Err(FlipPredicateError::coordinate_conversion(
+                FlipPredicateOperation::K2CellBInSphere,
+                e,
+            )
+            .into());
         }
     };
 
@@ -2673,9 +3083,11 @@ where
         // apply_bistellar_flip_with_k.
         match robust_orientation(&points) {
             Err(e) => {
-                return Err(FlipError::PredicateFailure {
-                    message: format!("robust orientation failed for flip postcondition: {e}"),
-                });
+                return Err(FlipPredicateError::coordinate_conversion(
+                    FlipPredicateOperation::DegenerateCellPrecheck,
+                    e,
+                )
+                .into());
             }
             Ok(Orientation::DEGENERATE) => return Ok(true),
             Ok(_) => {}
@@ -2696,12 +3108,12 @@ where
     V: DataType,
 {
     if context.inserted_face_vertices.len() != 2 {
-        return Err(FlipError::InvalidFlipContext {
-            message: format!(
-                "k=2 inserted-face must have 2 vertices, got {}",
-                context.inserted_face_vertices.len()
-            ),
-        });
+        return Err(FlipContextError::WrongInsertedFaceArity {
+            k_move: 2,
+            expected: 2,
+            found: context.inserted_face_vertices.len(),
+        }
+        .into());
     }
 
     flip_would_create_degenerate_cell(
@@ -2730,12 +3142,12 @@ where
     V: DataType,
 {
     if context.inserted_face_vertices.len() != 2 {
-        return Err(FlipError::InvalidFlipContext {
-            message: format!(
-                "k=2 inserted-face must have 2 vertices, got {}",
-                context.inserted_face_vertices.len()
-            ),
-        });
+        return Err(FlipContextError::WrongInsertedFaceArity {
+            k_move: 2,
+            expected: 2,
+            found: context.inserted_face_vertices.len(),
+        }
+        .into());
     }
     let opposite_a = context.inserted_face_vertices[0];
     let opposite_b = context.inserted_face_vertices[1];
@@ -2933,7 +3345,12 @@ where
             .ok_or(FlipError::MissingCell { cell_key })?;
         if !cell.contains_vertex(a) || !cell.contains_vertex(b) || !cell.contains_vertex(c) {
             return Err(FlipError::InvalidTriangleAdjacency {
-                message: format!("cell {cell_key:?} does not contain triangle vertices"),
+                reason: FlipTriangleAdjacencyError::CellMissingTriangleVertices {
+                    cell_key,
+                    a,
+                    b,
+                    c,
+                },
             });
         }
         for &vk in cell.vertices() {
@@ -2945,10 +3362,11 @@ where
 
     if counts.len() != expected || !counts.values().all(|&count| count == expected - 1) {
         return Err(FlipError::InvalidTriangleAdjacency {
-            message: format!(
-                "triangle star must have {expected} ridge vertices each appearing {count} times",
-                count = expected - 1
-            ),
+            reason: FlipTriangleAdjacencyError::InvalidRidgeVertexIncidence {
+                expected_vertices: expected,
+                found_vertices: counts.len(),
+                expected_occurrences: expected - 1,
+            },
         });
     }
 
@@ -2991,21 +3409,19 @@ where
     V: DataType,
 {
     if triangle_vertices.len() != 3 {
-        return Err(FlipError::InvalidFlipContext {
-            message: format!(
-                "k=3 inserted-face must have 3 vertices, got {}",
-                triangle_vertices.len()
-            ),
-        });
+        return Err(FlipContextError::WrongInsertedFaceArity {
+            k_move: 3,
+            expected: 3,
+            found: triangle_vertices.len(),
+        }
+        .into());
     }
     if ridge_vertices.len() != D.saturating_sub(1) {
-        return Err(FlipError::InvalidFlipContext {
-            message: format!(
-                "k=3 ridge must have {} vertices, got {}",
-                D.saturating_sub(1),
-                ridge_vertices.len()
-            ),
-        });
+        return Err(FlipContextError::K3RidgeArity {
+            expected: D.saturating_sub(1),
+            found: ridge_vertices.len(),
+        }
+        .into());
     }
 
     for &missing in triangle_vertices {
@@ -3036,9 +3452,11 @@ where
             Ok(value) => value,
             Err(e) => {
                 diagnostics.record_predicate_failure();
-                return Err(FlipError::PredicateFailure {
-                    message: format!("in_sphere failed for k=3 cell: {e}"),
-                });
+                return Err(FlipPredicateError::coordinate_conversion(
+                    FlipPredicateOperation::K3CellInSphere,
+                    e,
+                )
+                .into());
             }
         };
 
@@ -3095,11 +3513,11 @@ where
         return Err(FlipError::UnsupportedDimension { dimension: D });
     }
 
-    let vertex_key =
-        tds.insert_vertex_with_mapping(vertex)
-            .map_err(|e| FlipError::TdsMutation {
-                message: e.to_string(),
-            })?;
+    let vertex_key = tds.insert_vertex_with_mapping(vertex).map_err(|source| {
+        FlipMutationError::VertexInsertion {
+            source: Box::new(source),
+        }
+    })?;
 
     let context = match build_k1_forward_context_from_cell(tds, cell_key, vertex_key) {
         Ok(ctx) => ctx,
@@ -3785,8 +4203,11 @@ enum PostconditionMode {
 }
 
 /// Builds a verification failure that preserves the structured flip error.
-const fn verification_failed(context: &'static str, source: FlipError) -> DelaunayRepairError {
-    DelaunayRepairError::VerificationFailed { context, source }
+fn verification_failed(context: &'static str, source: FlipError) -> DelaunayRepairError {
+    DelaunayRepairError::VerificationFailed {
+        context,
+        source: Box::new(source),
+    }
 }
 
 /// Adapts the public topology enum into the model used for lifted predicate
@@ -6125,11 +6546,14 @@ where
                 align_periodic_offset(source_vertex_offset, source_offset, target_offset)?;
             if let Some(expected_offset) = aligned_offset {
                 if candidate_offset != expected_offset {
-                    return Err(FlipError::InvalidFlipContext {
-                        message: format!(
-                            "conflicting periodic frame translations while aligning vertex {vertex_key:?} from cell {source_cell_key:?} into frame {tarcell_key:?}: expected {expected_offset:?}, got {candidate_offset:?}"
-                        ),
-                    });
+                    return Err(FlipContextError::ConflictingPeriodicFrameTranslation {
+                        vertex_key,
+                        source_cell_key,
+                        target_cell_key: tarcell_key,
+                        expected_offset: expected_offset.into(),
+                        found_offset: candidate_offset.into(),
+                    }
+                    .into());
                 }
             } else {
                 aligned_offset = Some(candidate_offset);
@@ -6140,9 +6564,11 @@ where
         }
     }
 
-    Err(FlipError::InvalidFlipContext {
-        message: format!("cannot align periodic vertex {vertex_key:?} into frame {tarcell_key:?}"),
-    })
+    Err(FlipContextError::PeriodicVertexAlignmentFailed {
+        vertex_key,
+        target_cell_key: tarcell_key,
+    }
+    .into())
 }
 
 /// Centralizes topology-model lifting so missing vertices and non-liftable
@@ -6163,10 +6589,9 @@ where
         .ok_or(FlipError::MissingVertex { vertex_key })?;
     let lifted_coords = topology_model
         .lift_for_orientation(*vertex.point().coords(), periodic_offset)
-        .map_err(|error| FlipError::PredicateFailure {
-            message: format!(
-                "failed to lift vertex {vertex_key:?} for periodic predicate: {error}"
-            ),
+        .map_err(|source| FlipPredicateError::PeriodicVertexLift {
+            vertex_key,
+            details: source.to_string(),
         })?;
     Ok(Point::new(lifted_coords))
 }
@@ -6227,13 +6652,12 @@ where
     if offsets.len() == cell.number_of_vertices() {
         return Ok(());
     }
-    Err(FlipError::InvalidFlipContext {
-        message: format!(
-            "cell {cell_key:?} periodic offset count {} does not match vertex count {}",
-            offsets.len(),
-            cell.number_of_vertices()
-        ),
-    })
+    Err(FlipContextError::PeriodicOffsetCountMismatch {
+        cell_key,
+        offset_count: offsets.len(),
+        vertex_count: cell.number_of_vertices(),
+    }
+    .into())
 }
 
 /// Finds every common vertex to act as a consistency check when aligning two
@@ -6271,14 +6695,10 @@ fn align_periodic_offset<const D: usize>(
     for axis in 0..D {
         let delta = target_reference_offset[axis]
             .checked_sub(source_reference_offset[axis])
-            .ok_or_else(|| FlipError::InvalidFlipContext {
-                message: format!("periodic offset subtraction overflow on axis {axis}"),
-            })?;
+            .ok_or(FlipContextError::PeriodicOffsetSubtractionOverflow { axis })?;
         aligned[axis] = source_vertex_offset[axis]
             .checked_add(delta)
-            .ok_or_else(|| FlipError::InvalidFlipContext {
-                message: format!("periodic offset addition overflow on axis {axis}"),
-            })?;
+            .ok_or(FlipContextError::PeriodicOffsetAdditionOverflow { axis })?;
     }
     Ok(aligned)
 }
@@ -6310,9 +6730,7 @@ fn removed_cell_frame(source_cells: &[CellKey]) -> Result<CellKey, FlipError> {
     source_cells
         .first()
         .copied()
-        .ok_or_else(|| FlipError::InvalidFlipContext {
-            message: "inverse flip predicate requires at least one removed cell frame".to_string(),
-        })
+        .ok_or_else(|| FlipContextError::MissingRemovedCellFrame.into())
 }
 
 #[derive(Debug, Default)]
@@ -7582,14 +8000,13 @@ mod tests {
                         &mut replacement_cells,
                         &[FacetHandle::new(external_cell_key, 0)],
                     );
-                    let expected_key = format!("{external_cell_key:?}");
 
                     assert!(
                         matches!(
                             result,
-                            Err(FlipError::InvalidFlipContext { ref message })
-                                if message.contains("periodic external cell")
-                                    && message.contains(&expected_key)
+                            Err(FlipError::InvalidFlipContext {
+                                reason: FlipContextError::PeriodicExternalCell { cell_key }
+                            }) if cell_key == external_cell_key
                         ),
                         "periodic external cells should fail before parity constraints are dropped: {result:?}"
                     );
@@ -7653,8 +8070,12 @@ mod tests {
                     assert!(
                         matches!(
                             facet_order(&source, source.len()),
-                            Err(FlipError::InvalidFlipContext { ref message })
-                                if message.contains("facet index")
+                            Err(FlipError::InvalidFlipContext {
+                                reason: FlipContextError::ReplacementFacetIndexOutOfRange {
+                                    facet_index,
+                                    vertex_count,
+                                }
+                            }) if facet_index == source.len() && vertex_count == source.len()
                         ),
                         "out-of-range facet indices should be rejected"
                     );
@@ -7695,16 +8116,22 @@ mod tests {
                     assert!(
                         matches!(
                             set_flip_assignment(&mut assignments, 0, false),
-                            Err(FlipError::InvalidFlipContext { ref message })
-                                if message.contains("conflicting replacement-cell orientation")
+                            Err(FlipError::InvalidFlipContext {
+                                reason: FlipContextError::ConflictingReplacementOrientationForCell {
+                                    cell_index: 0,
+                                }
+                            })
                         ),
                         "conflicting parity assignments should fail"
                     );
                     assert!(
                         matches!(
                             set_flip_assignment(&mut assignments, 1, false),
-                            Err(FlipError::InvalidFlipContext { ref message })
-                                if message.contains("out of range")
+                            Err(FlipError::InvalidFlipContext {
+                                reason: FlipContextError::ReplacementOrientationIndexOutOfRange {
+                                    cell_index: 1,
+                                }
+                            })
                         ),
                         "out-of-range parity assignments should fail"
                     );
@@ -8363,11 +8790,21 @@ mod tests {
 
         assert!(matches!(
             apply_bistellar_flip_dynamic(&mut tds, 0, &valid_shape),
-            Err(FlipError::InvalidFlipContext { ref message }) if message.contains("k must be")
+            Err(FlipError::InvalidFlipContext {
+                reason: FlipContextError::InvalidMoveSize {
+                    k_move: 0,
+                    dimension,
+                }
+            }) if dimension == D
         ));
         assert!(matches!(
             apply_bistellar_flip_dynamic(&mut tds, D + 2, &valid_shape),
-            Err(FlipError::InvalidFlipContext { ref message }) if message.contains("k must be")
+            Err(FlipError::InvalidFlipContext {
+                reason: FlipContextError::InvalidMoveSize {
+                    k_move,
+                    dimension,
+                }
+            }) if k_move == D + 2 && dimension == D
         ));
 
         let wrong_removed_face = FlipContextDyn {
@@ -8376,8 +8813,12 @@ mod tests {
         };
         assert!(matches!(
             apply_bistellar_flip_dynamic(&mut tds, 2, &wrong_removed_face),
-            Err(FlipError::InvalidFlipContext { ref message })
-                if message.contains("removed-face must have")
+            Err(FlipError::InvalidFlipContext {
+                reason: FlipContextError::WrongRemovedFaceArity {
+                    expected,
+                    found,
+                }
+            }) if expected == D && found == D - 1
         ));
 
         let wrong_inserted_face = FlipContextDyn {
@@ -8386,8 +8827,13 @@ mod tests {
         };
         assert!(matches!(
             apply_bistellar_flip_dynamic(&mut tds, 2, &wrong_inserted_face),
-            Err(FlipError::InvalidFlipContext { ref message })
-                if message.contains("inserted-face must have")
+            Err(FlipError::InvalidFlipContext {
+                reason: FlipContextError::WrongInsertedFaceArity {
+                    k_move: 2,
+                    expected: 2,
+                    found: 1,
+                }
+            })
         ));
 
         let wrong_removed_cells = FlipContextDyn {
@@ -8396,8 +8842,12 @@ mod tests {
         };
         assert!(matches!(
             apply_bistellar_flip_dynamic(&mut tds, 2, &wrong_removed_cells),
-            Err(FlipError::InvalidFlipContext { ref message })
-                if message.contains("removed_cells must have")
+            Err(FlipError::InvalidFlipContext {
+                reason: FlipContextError::WrongRemovedCellCount {
+                    expected: 2,
+                    found: 1,
+                }
+            })
         ));
 
         let overlapping_faces = FlipContextDyn {
@@ -8406,8 +8856,9 @@ mod tests {
         };
         assert!(matches!(
             apply_bistellar_flip_dynamic(&mut tds, 2, &overlapping_faces),
-            Err(FlipError::InvalidFlipContext { ref message })
-                if message.contains("must be disjoint")
+            Err(FlipError::InvalidFlipContext {
+                reason: FlipContextError::OverlappingFaces,
+            })
         ));
         assert_eq!(tds.number_of_vertices(), 0);
         assert_eq!(tds.number_of_cells(), 0);
@@ -9778,15 +10229,15 @@ mod tests {
 
         let verification_err = DelaunayRepairError::VerificationFailed {
             context: "strict validation",
-            source: FlipError::DegenerateCell,
+            source: Box::new(FlipError::DegenerateCell),
         };
         let verification_err_copy = DelaunayRepairError::VerificationFailed {
             context: "strict validation",
-            source: FlipError::DegenerateCell,
+            source: Box::new(FlipError::DegenerateCell),
         };
         let verification_other = DelaunayRepairError::VerificationFailed {
             context: "strict validation",
-            source: FlipError::DuplicateCell,
+            source: Box::new(FlipError::DuplicateCell),
         };
         assert_eq!(verification_err, verification_err_copy);
         assert_ne!(verification_err, verification_other);
@@ -10109,8 +10560,9 @@ mod tests {
                     assert!(
                         matches!(
                             result,
-                            Err(FlipError::InvalidFlipContext { ref message })
-                                if message.contains("conflicting periodic frame translations")
+                            Err(FlipError::InvalidFlipContext {
+                                reason: FlipContextError::ConflictingPeriodicFrameTranslation { .. }
+                            })
                         ),
                         "conflicting shared translations should be rejected: {result:?}"
                     );

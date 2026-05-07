@@ -60,14 +60,41 @@ Some causal-triangulations tooling remains project-specific and was not ported:
   detailed benchmark-profile guidance because it documents the `perf` profile,
   backend compatibility canary, and release benchmark summary workflow.
 
-## Deferred Updates
+## Activated Deferred Updates
 
-These were evaluated but deferred:
+The following previously deferred checks are now repository-owned Semgrep rules:
 
-- A Semgrep rule requiring every public `*Error` enum to be
-  `#[non_exhaustive]`. Delaunay already has strong error-enum guidance, but
-  enabling the rule should be a focused API audit because it may surface
-  historical public enums.
-- Production-wide bare `unwrap()` / `panic!` Semgrep rules copied exactly from
-  CDT. Delaunay already has a narrower production panic rule; broadening it
-  should be handled alongside any intentional invariant-panics it exposes.
+- `delaunay.rust.public-error-enums-non-exhaustive` requires every public
+  `*Error` enum to carry `#[non_exhaustive]`, preserving room for more precise
+  typed variants without forcing a breaking exhaustive-match change on users.
+- `delaunay.rust.no-production-unwrap-panic` blocks bare `unwrap()` and
+  `panic!` in non-test `src/` code, with narrowly scoped `expect(...)` matches
+  for reviewed public-API panic messages that should become typed errors.
+
+## Public Sample Error Handling
+
+Examples, doctests, and benchmarks should model the same error-handling style
+the crate asks users to copy: return or route through typed errors instead of
+using `.expect(...)` as narrative control flow.
+
+The next enforcement step is to make this a zero-tolerance Semgrep rule for:
+
+- `examples/**/*.rs`
+- `benches/**/*.rs`
+- Rust doc comments in `src/**/*.rs`
+
+Current baseline before that cleanup:
+
+- `examples/**/*.rs`: 35 `.expect(...)` calls.
+- `benches/**/*.rs`: 64 `.expect(...)` calls.
+- public Rust doc comments in `src/**/*.rs`: 17 `.expect(...)` calls.
+
+When removing this baseline, prefer:
+
+- `fn main() -> Result<(), ExampleError>` in examples, with local
+  `#[derive(thiserror::Error)]` enums that wrap the crate's typed errors.
+- Setup helpers returning typed `Result` values in benchmarks; Criterion entry
+  points may still abort setup explicitly, but benchmark bodies should not hide
+  fallible API calls behind `.expect(...)`.
+- Doctests that use hidden `Result` wrappers and `?` where the visible API is
+  fallible, so examples demonstrate the real error variant users receive.

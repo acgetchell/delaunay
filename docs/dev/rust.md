@@ -567,6 +567,7 @@ delaunay::prelude::triangulation::flips
 delaunay::prelude::triangulation::repair
 delaunay::prelude::triangulation::delaunayize
 delaunay::prelude::query
+delaunay::prelude::algorithms
 delaunay::prelude::geometry
 delaunay::prelude::generators
 delaunay::prelude::diagnostics

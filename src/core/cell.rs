@@ -1518,10 +1518,10 @@ where
     /// let cell_key = tds.cell_keys().next().unwrap();
     /// let facet_iter = Cell::facet_view_iter(tds, cell_key).expect("Failed to get facet iterator");
     ///
-    /// // Collect only successful facets, filtering out any errors
+    /// // Collect all facets and surface any construction error
     /// let successful_facets: Vec<_> = facet_iter
-    ///     .filter_map(Result::ok)
-    ///     .collect();
+    ///     .collect::<Result<Vec<_>, _>>()
+    ///     .expect("facet creation should succeed");
     /// assert_eq!(successful_facets.len(), 4);
     /// ```
     pub fn facet_view_iter(
@@ -1563,11 +1563,7 @@ where
 ///
 /// **Note**: This compares cells within the same TDS context. For cross-TDS
 /// comparison, use `eq_by_vertex_uuids()` (to be added if needed).
-impl<T, U, V, const D: usize> PartialEq for Cell<T, U, V, D>
-where
-    U: DataType,
-    V: DataType,
-{
+impl<T, U, V, const D: usize> PartialEq for Cell<T, U, V, D> {
     #[inline]
     fn eq(&self, other: &Self) -> bool {
         // Fast comparison using vertex keys (just u64 comparisons)
@@ -1588,11 +1584,7 @@ where
 ///
 /// This provides a consistent ordering for cells based on their vertex keys.
 /// Fast (O(D log D)) and doesn't require TDS access.
-impl<T, U, V, const D: usize> PartialOrd for Cell<T, U, V, D>
-where
-    U: DataType,
-    V: DataType,
-{
+impl<T, U, V, const D: usize> PartialOrd for Cell<T, U, V, D> {
     #[inline]
     fn partial_cmp(&self, other: &Self) -> Option<cmp::Ordering> {
         // Fast comparison using vertex keys
@@ -1618,12 +1610,7 @@ where
 ///
 /// Maintains the Eq contract with `PartialEq`: cells with the same vertex keys
 /// are considered equal.
-impl<T, U, V, const D: usize> Eq for Cell<T, U, V, D>
-where
-    U: DataType,
-    V: DataType,
-{
-}
+impl<T, U, V, const D: usize> Eq for Cell<T, U, V, D> {}
 
 /// Phase 3A: Custom Hash implementation for Cell using sorted vertex keys.
 ///
@@ -1634,11 +1621,7 @@ where
 ///
 /// **Note**: UUID, neighbors, and data are excluded from hashing to match
 /// the `PartialEq` implementation which only compares vertex keys.
-impl<T, U, V, const D: usize> Hash for Cell<T, U, V, D>
-where
-    U: DataType,
-    V: DataType,
-{
+impl<T, U, V, const D: usize> Hash for Cell<T, U, V, D> {
     fn hash<H: Hasher>(&self, state: &mut H) {
         // Hash sorted vertex keys for consistent ordering
         // Use CellVertexBuffer for stack allocation (D+1 keys fit on stack for D ≤ 7)
@@ -1679,6 +1662,25 @@ mod tests {
     use crate::geometry::kernel::AdaptiveKernel;
     use crate::prelude::DelaunayTriangulation;
     use crate::triangulation::builder::DelaunayTriangulationBuilder;
+
+    struct NonDataType(String);
+
+    fn cell_with_non_data_type_metadata<const D: usize>(
+        vertex_ids: [u64; D],
+        data: NonDataType,
+    ) -> Cell<f64, String, NonDataType, D> {
+        Cell {
+            vertices: vertex_ids
+                .into_iter()
+                .map(|id| VertexKey::from(slotmap::KeyData::from_ffi(id)))
+                .collect(),
+            uuid: make_uuid(),
+            neighbors: None,
+            data: Some(data),
+            periodic_vertex_offsets: None,
+            _phantom: PhantomData,
+        }
+    }
 
     // =============================================================================
     // DIMENSION-PARAMETERIZED TEST MACRO
@@ -1773,6 +1775,26 @@ mod tests {
                 }
             )+
         };
+    }
+
+    #[test]
+    fn equality_ordering_and_hash_do_not_require_data_type_metadata() {
+        let cell_a = cell_with_non_data_type_metadata([1, 2, 3], NonDataType("left".to_string()));
+        let cell_b = cell_with_non_data_type_metadata([3, 2, 1], NonDataType("right".to_string()));
+        let cell_c = cell_with_non_data_type_metadata([1, 2, 4], NonDataType("other".to_string()));
+
+        assert!(cell_a == cell_b);
+        assert!(cell_a != cell_c);
+        assert_eq!(cell_a.partial_cmp(&cell_b), Some(cmp::Ordering::Equal));
+
+        let mut hash_a = DefaultHasher::new();
+        let mut hash_b = DefaultHasher::new();
+        cell_a.hash(&mut hash_a);
+        cell_b.hash(&mut hash_b);
+        assert_eq!(hash_a.finish(), hash_b.finish());
+
+        assert_eq!(cell_a.data.as_ref().unwrap().0, "left");
+        assert_eq!(cell_b.data.as_ref().unwrap().0, "right");
     }
 
     // Generate tests for dimensions 2D through 5D
@@ -3670,7 +3692,9 @@ mod tests {
         let facet_iter3 =
             Cell::facet_view_iter(dt.tds(), cell_key).expect("Failed to get third facet iterator");
 
-        let successful_facets: Vec<_> = facet_iter3.filter_map(Result::ok).collect();
+        let successful_facets: Vec<_> = facet_iter3
+            .collect::<Result<Vec<_>, _>>()
+            .expect("all facets should be created successfully");
         assert_eq!(
             successful_facets.len(),
             4,
