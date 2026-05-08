@@ -15,16 +15,30 @@
 //! ```rust
 //! use delaunay::prelude::query::*;
 //!
+//! # #[derive(Debug, thiserror::Error)]
+//! # enum ExampleError {
+//! #     #[error(transparent)]
+//! #     Construction(#[from] delaunay::prelude::triangulation::DelaunayTriangulationConstructionError),
+//! #     #[error(transparent)]
+//! #     Hull(#[from] delaunay::prelude::query::ConvexHullConstructionError),
+//! #     #[error(transparent)]
+//! #     Insertion(#[from] delaunay::prelude::triangulation::InsertionError),
+//! #     #[error("expected tetrahedron hull to have a first facet")]
+//! #     MissingFacet,
+//! # }
+//! # fn main() -> Result<(), ExampleError> {
 //! let vertices = vec![
 //!     vertex!([0.0, 0.0, 0.0]),
 //!     vertex!([1.0, 0.0, 0.0]),
 //!     vertex!([0.0, 1.0, 0.0]),
 //!     vertex!([0.0, 0.0, 1.0]),
 //! ];
-//! let dt: DelaunayTriangulation<_, (), (), 3> = DelaunayTriangulation::new(&vertices).unwrap();
-//! let hull = ConvexHull::from_triangulation(dt.as_triangulation()).unwrap();
+//! let dt: DelaunayTriangulation<_, (), (), 3> = DelaunayTriangulation::new(&vertices)?;
+//! let hull = ConvexHull::from_triangulation(dt.as_triangulation())?;
 //! let outside = Point::new([2.0, 2.0, 2.0]);
-//! assert!(hull.is_point_outside(&outside, dt.as_triangulation()).unwrap());
+//! assert!(hull.is_point_outside(&outside, dt.as_triangulation())?);
+//! # Ok(())
+//! # }
 //! ```
 
 #![forbid(unsafe_code)]
@@ -242,17 +256,31 @@ pub enum ConvexHullConstructionError {
 /// # use delaunay::prelude::triangulation::DelaunayTriangulation;
 /// # use delaunay::prelude::query::ConvexHull;
 /// # use delaunay::vertex;
+/// # #[derive(Debug, thiserror::Error)]
+/// # enum ExampleError {
+/// #     #[error(transparent)]
+/// #     Construction(#[from] delaunay::prelude::triangulation::DelaunayTriangulationConstructionError),
+/// #     #[error(transparent)]
+/// #     Hull(#[from] delaunay::prelude::query::ConvexHullConstructionError),
+/// #     #[error(transparent)]
+/// #     Insertion(#[from] delaunay::prelude::triangulation::InsertionError),
+/// #     #[error("expected tetrahedron hull to have a first facet")]
+/// #     MissingFacet,
+/// # }
+/// # fn main() -> Result<(), ExampleError> {
 /// # let mut dt: DelaunayTriangulation<_, (), (), 3> = DelaunayTriangulation::new(&vec![
 /// #     vertex!([0.0, 0.0, 0.0]),
 /// #     vertex!([1.0, 0.0, 0.0]),
 /// #     vertex!([0.0, 1.0, 0.0]),
 /// #     vertex!([0.0, 0.0, 1.0]),
-/// # ]).unwrap();
-/// let hull = ConvexHull::from_triangulation(dt.as_triangulation()).unwrap();
+/// # ])?;
+/// let hull = ConvexHull::from_triangulation(dt.as_triangulation())?;
 /// assert!(hull.is_valid_for_triangulation(dt.as_triangulation())); // Valid initially
 ///
 /// // Hull extension is now implemented - inserting outside points works!
-/// dt.insert(vertex!([2.0, 2.0, 2.0])).unwrap();
+/// dt.insert(vertex!([2.0, 2.0, 2.0]))?;
+/// # Ok(())
+/// # }
 /// ```
 ///
 /// ## When to Rebuild the Hull
@@ -270,23 +298,37 @@ pub enum ConvexHullConstructionError {
 /// use delaunay::prelude::query::ConvexHull;
 /// use delaunay::vertex;
 ///
+/// # #[derive(Debug, thiserror::Error)]
+/// # enum ExampleError {
+/// #     #[error(transparent)]
+/// #     Construction(#[from] delaunay::prelude::triangulation::DelaunayTriangulationConstructionError),
+/// #     #[error(transparent)]
+/// #     Hull(#[from] delaunay::prelude::query::ConvexHullConstructionError),
+/// #     #[error(transparent)]
+/// #     Insertion(#[from] delaunay::prelude::triangulation::InsertionError),
+/// #     #[error("expected tetrahedron hull to have a first facet")]
+/// #     MissingFacet,
+/// # }
+/// # fn main() -> Result<(), ExampleError> {
 /// let mut dt: DelaunayTriangulation<_, (), (), 3> = DelaunayTriangulation::new(&vec![
 ///     vertex!([0.0, 0.0, 0.0]),
 ///     vertex!([1.0, 0.0, 0.0]),
 ///     vertex!([0.0, 1.0, 0.0]),
 ///     vertex!([0.0, 0.0, 1.0]),
-/// ]).unwrap();
+/// ])?;
 ///
 /// // Create initial hull (note: immutable binding)
-/// let hull = ConvexHull::from_triangulation(dt.as_triangulation()).unwrap();
+/// let hull = ConvexHull::from_triangulation(dt.as_triangulation())?;
 /// assert_eq!(hull.number_of_facets(), 4);
 /// assert!(hull.is_valid_for_triangulation(dt.as_triangulation()));
 ///
 /// // Hull extension is now implemented - inserting outside points works!
 /// // Note: The hull becomes invalid after modification and needs to be recreated
 /// let new_vertex = vertex!([2.0, 2.0, 2.0]);
-/// dt.insert(new_vertex).unwrap(); // Now works with hull extension!
+/// dt.insert(new_vertex)?; // Now works with hull extension!
 /// assert!(!hull.is_valid_for_triangulation(dt.as_triangulation())); // Hull is stale
+/// # Ok(())
+/// # }
 /// ```
 ///
 /// # Type Parameters
@@ -371,6 +413,18 @@ where
     /// use delaunay::prelude::query::ConvexHull;
     /// use delaunay::vertex;
     ///
+    /// # #[derive(Debug, thiserror::Error)]
+    /// # enum ExampleError {
+    /// #     #[error(transparent)]
+    /// #     Construction(#[from] delaunay::prelude::triangulation::DelaunayTriangulationConstructionError),
+    /// #     #[error(transparent)]
+    /// #     Hull(#[from] delaunay::prelude::query::ConvexHullConstructionError),
+    /// #     #[error(transparent)]
+    /// #     Insertion(#[from] delaunay::prelude::triangulation::InsertionError),
+    /// #     #[error("expected tetrahedron hull to have a first facet")]
+    /// #     MissingFacet,
+    /// # }
+    /// # fn main() -> Result<(), ExampleError> {
     /// // Create a 3D tetrahedron
     /// let vertices = vec![
     ///     vertex!([0.0, 0.0, 0.0]),
@@ -378,11 +432,13 @@ where
     ///     vertex!([0.0, 1.0, 0.0]),
     ///     vertex!([0.0, 0.0, 1.0]),
     /// ];
-    /// let dt: DelaunayTriangulation<_, (), (), 3> = DelaunayTriangulation::new(&vertices).unwrap();
+    /// let dt: DelaunayTriangulation<_, (), (), 3> = DelaunayTriangulation::new(&vertices)?;
     /// let hull =
-    ///     ConvexHull::from_triangulation(dt.as_triangulation()).unwrap();
+    ///     ConvexHull::from_triangulation(dt.as_triangulation())?;
     ///
     /// assert_eq!(hull.number_of_facets(), 4); // Tetrahedron has 4 faces
+    /// # Ok(())
+    /// # }
     /// ```
     #[must_use]
     pub const fn number_of_facets(&self) -> usize {
@@ -406,6 +462,18 @@ where
     /// use delaunay::prelude::query::ConvexHull;
     /// use delaunay::vertex;
     ///
+    /// # #[derive(Debug, thiserror::Error)]
+    /// # enum ExampleError {
+    /// #     #[error(transparent)]
+    /// #     Construction(#[from] delaunay::prelude::triangulation::DelaunayTriangulationConstructionError),
+    /// #     #[error(transparent)]
+    /// #     Hull(#[from] delaunay::prelude::query::ConvexHullConstructionError),
+    /// #     #[error(transparent)]
+    /// #     Insertion(#[from] delaunay::prelude::triangulation::InsertionError),
+    /// #     #[error("expected tetrahedron hull to have a first facet")]
+    /// #     MissingFacet,
+    /// # }
+    /// # fn main() -> Result<(), ExampleError> {
     /// // Create a 3D tetrahedron
     /// let vertices = vec![
     ///     vertex!([0.0, 0.0, 0.0]),
@@ -413,14 +481,16 @@ where
     ///     vertex!([0.0, 1.0, 0.0]),
     ///     vertex!([0.0, 0.0, 1.0]),
     /// ];
-    /// let dt: DelaunayTriangulation<_, (), (), 3> = DelaunayTriangulation::new(&vertices).unwrap();
+    /// let dt: DelaunayTriangulation<_, (), (), 3> = DelaunayTriangulation::new(&vertices)?;
     /// let hull =
-    ///     ConvexHull::from_triangulation(dt.as_triangulation()).unwrap();
+    ///     ConvexHull::from_triangulation(dt.as_triangulation())?;
     ///
     /// // Get the first facet
     /// assert!(hull.facet(0).is_some());
     /// // Index out of bounds returns None
     /// assert!(hull.facet(10).is_none());
+    /// # Ok(())
+    /// # }
     /// ```
     #[must_use]
     pub fn facet(&self, index: usize) -> Option<&FacetHandle> {
@@ -436,6 +506,20 @@ where
     /// use delaunay::prelude::query::ConvexHull;
     /// use delaunay::vertex;
     ///
+    /// # #[derive(Debug, thiserror::Error)]
+    /// # enum ExampleError {
+    /// #     #[error(transparent)]
+    /// #     Construction(#[from] delaunay::prelude::triangulation::DelaunayTriangulationConstructionError),
+    /// #     #[error(transparent)]
+    /// #     Hull(#[from] delaunay::prelude::query::ConvexHullConstructionError),
+    /// #     #[error(transparent)]
+    /// #     Insertion(#[from] delaunay::prelude::triangulation::InsertionError),
+    /// #     #[error(transparent)]
+    /// #     Facet(#[from] delaunay::prelude::tds::FacetError),
+    /// #     #[error("expected tetrahedron hull to have a first facet")]
+    /// #     MissingFacet,
+    /// # }
+    /// # fn main() -> Result<(), ExampleError> {
     /// // Create a 3D tetrahedron
     /// let vertices = vec![
     ///     vertex!([0.0, 0.0, 0.0]),
@@ -443,9 +527,9 @@ where
     ///     vertex!([0.0, 1.0, 0.0]),
     ///     vertex!([0.0, 0.0, 1.0]),
     /// ];
-    /// let dt: DelaunayTriangulation<_, (), (), 3> = DelaunayTriangulation::new(&vertices).unwrap();
+    /// let dt: DelaunayTriangulation<_, (), (), 3> = DelaunayTriangulation::new(&vertices)?;
     /// let hull =
-    ///     ConvexHull::from_triangulation(dt.as_triangulation()).unwrap();
+    ///     ConvexHull::from_triangulation(dt.as_triangulation())?;
     ///
     /// // Iterate over all hull facets
     /// let facet_count = hull.facets().count();
@@ -456,9 +540,11 @@ where
     /// use delaunay::prelude::tds::FacetView;
     /// for facet_handle in hull.facets() {
     ///     if let Ok(facet_view) = FacetView::new(&dt.tds(), facet_handle.cell_key(), facet_handle.facet_index()) {
-    ///         assert_eq!(facet_view.vertices().unwrap().count(), 3); // 3D facets have 3 vertices
+    ///         assert_eq!(facet_view.vertices()?.count(), 3); // 3D facets have 3 vertices
     ///     }
     /// }
+    /// # Ok(())
+    /// # }
     /// ```
     pub fn facets(&self) -> std::slice::Iter<'_, FacetHandle> {
         self.hull_facets.iter()
@@ -473,6 +559,18 @@ where
     /// use delaunay::prelude::query::ConvexHull;
     /// use delaunay::vertex;
     ///
+    /// # #[derive(Debug, thiserror::Error)]
+    /// # enum ExampleError {
+    /// #     #[error(transparent)]
+    /// #     Construction(#[from] delaunay::prelude::triangulation::DelaunayTriangulationConstructionError),
+    /// #     #[error(transparent)]
+    /// #     Hull(#[from] delaunay::prelude::query::ConvexHullConstructionError),
+    /// #     #[error(transparent)]
+    /// #     Insertion(#[from] delaunay::prelude::triangulation::InsertionError),
+    /// #     #[error("expected tetrahedron hull to have a first facet")]
+    /// #     MissingFacet,
+    /// # }
+    /// # fn main() -> Result<(), ExampleError> {
     /// // Empty hull
     /// let empty_hull: ConvexHull<delaunay::geometry::kernel::FastKernel<f64>, (), (), 3> = ConvexHull::default();
     /// assert!(empty_hull.is_empty());
@@ -484,10 +582,12 @@ where
     ///     vertex!([0.0, 1.0, 0.0]),
     ///     vertex!([0.0, 0.0, 1.0]),
     /// ];
-    /// let dt: DelaunayTriangulation<_, (), (), 3> = DelaunayTriangulation::new(&vertices).unwrap();
+    /// let dt: DelaunayTriangulation<_, (), (), 3> = DelaunayTriangulation::new(&vertices)?;
     /// let hull =
-    ///     ConvexHull::from_triangulation(dt.as_triangulation()).unwrap();
+    ///     ConvexHull::from_triangulation(dt.as_triangulation())?;
     /// assert!(!hull.is_empty());
+    /// # Ok(())
+    /// # }
     /// ```
     #[must_use]
     pub const fn is_empty(&self) -> bool {
@@ -505,15 +605,27 @@ where
     /// use delaunay::prelude::query::ConvexHull;
     /// use delaunay::vertex;
     ///
+    /// # #[derive(Debug, thiserror::Error)]
+    /// # enum ExampleError {
+    /// #     #[error(transparent)]
+    /// #     Construction(#[from] delaunay::prelude::triangulation::DelaunayTriangulationConstructionError),
+    /// #     #[error(transparent)]
+    /// #     Hull(#[from] delaunay::prelude::query::ConvexHullConstructionError),
+    /// #     #[error(transparent)]
+    /// #     Insertion(#[from] delaunay::prelude::triangulation::InsertionError),
+    /// #     #[error("expected tetrahedron hull to have a first facet")]
+    /// #     MissingFacet,
+    /// # }
+    /// # fn main() -> Result<(), ExampleError> {
     /// // Create different dimensional hulls
     /// let vertices_2d: Vec<_> = vec![
     ///     vertex!([0.0, 0.0]),
     ///     vertex!([1.0, 0.0]),
     ///     vertex!([0.0, 1.0]),
     /// ];
-    /// let dt_2d: DelaunayTriangulation<_, (), (), 2> = DelaunayTriangulation::new(&vertices_2d).unwrap();
+    /// let dt_2d: DelaunayTriangulation<_, (), (), 2> = DelaunayTriangulation::new(&vertices_2d)?;
     /// let hull_2d =
-    ///     ConvexHull::from_triangulation(dt_2d.as_triangulation()).unwrap();
+    ///     ConvexHull::from_triangulation(dt_2d.as_triangulation())?;
     /// assert_eq!(hull_2d.dimension(), 2);
     ///
     /// let vertices_3d: Vec<_> = vec![
@@ -522,10 +634,12 @@ where
     ///     vertex!([0.0, 1.0, 0.0]),
     ///     vertex!([0.0, 0.0, 1.0]),
     /// ];
-    /// let dt_3d: DelaunayTriangulation<_, (), (), 3> = DelaunayTriangulation::new(&vertices_3d).unwrap();
+    /// let dt_3d: DelaunayTriangulation<_, (), (), 3> = DelaunayTriangulation::new(&vertices_3d)?;
     /// let hull_3d =
-    ///     ConvexHull::from_triangulation(dt_3d.as_triangulation()).unwrap();
+    ///     ConvexHull::from_triangulation(dt_3d.as_triangulation())?;
     /// assert_eq!(hull_3d.dimension(), 3);
+    /// # Ok(())
+    /// # }
     /// ```
     #[must_use]
     pub const fn dimension(&self) -> usize {
@@ -556,20 +670,34 @@ where
     /// use delaunay::prelude::query::ConvexHull;
     /// use delaunay::vertex;
     ///
+    /// # #[derive(Debug, thiserror::Error)]
+    /// # enum ExampleError {
+    /// #     #[error(transparent)]
+    /// #     Construction(#[from] delaunay::prelude::triangulation::DelaunayTriangulationConstructionError),
+    /// #     #[error(transparent)]
+    /// #     Hull(#[from] delaunay::prelude::query::ConvexHullConstructionError),
+    /// #     #[error(transparent)]
+    /// #     Insertion(#[from] delaunay::prelude::triangulation::InsertionError),
+    /// #     #[error("expected tetrahedron hull to have a first facet")]
+    /// #     MissingFacet,
+    /// # }
+    /// # fn main() -> Result<(), ExampleError> {
     /// let mut dt: DelaunayTriangulation<_, (), (), 3> = DelaunayTriangulation::new(&vec![
     ///     vertex!([0.0, 0.0, 0.0]),
     ///     vertex!([1.0, 0.0, 0.0]),
     ///     vertex!([0.0, 1.0, 0.0]),
     ///     vertex!([0.0, 0.0, 1.0]),
-    /// ]).unwrap();
+    /// ])?;
     ///
     /// // Create hull and verify it's valid
-    /// let hull = ConvexHull::from_triangulation(dt.as_triangulation()).unwrap();
+    /// let hull = ConvexHull::from_triangulation(dt.as_triangulation())?;
     /// assert!(hull.is_valid_for_triangulation(dt.as_triangulation()));
     ///
     /// // After any modification to the triangulation, the hull would become invalid
     /// // Note: Currently, hull extension is not yet implemented, so inserting
     /// // outside points will cause an error. This demonstrates the validation concept.
+    /// # Ok(())
+    /// # }
     /// ```
     #[must_use]
     pub fn is_valid_for_triangulation(&self, tri: &Triangulation<K, U, V, D>) -> bool {
@@ -635,6 +763,18 @@ where
     /// use delaunay::prelude::query::ConvexHull;
     /// use delaunay::vertex;
     ///
+    /// # #[derive(Debug, thiserror::Error)]
+    /// # enum ExampleError {
+    /// #     #[error(transparent)]
+    /// #     Construction(#[from] delaunay::prelude::triangulation::DelaunayTriangulationConstructionError),
+    /// #     #[error(transparent)]
+    /// #     Hull(#[from] delaunay::prelude::query::ConvexHullConstructionError),
+    /// #     #[error(transparent)]
+    /// #     Insertion(#[from] delaunay::prelude::triangulation::InsertionError),
+    /// #     #[error("expected tetrahedron hull to have a first facet")]
+    /// #     MissingFacet,
+    /// # }
+    /// # fn main() -> Result<(), ExampleError> {
     /// // Create a 3D tetrahedron
     /// let vertices = vec![
     ///     vertex!([0.0, 0.0, 0.0]),
@@ -642,15 +782,17 @@ where
     ///     vertex!([0.0, 1.0, 0.0]),
     ///     vertex!([0.0, 0.0, 1.0]),
     /// ];
-    /// let dt: DelaunayTriangulation<_, (), (), 3> = DelaunayTriangulation::new(&vertices).unwrap();
+    /// let dt: DelaunayTriangulation<_, (), (), 3> = DelaunayTriangulation::new(&vertices)?;
     /// let hull =
-    ///     ConvexHull::from_triangulation(dt.as_triangulation()).unwrap();
+    ///     ConvexHull::from_triangulation(dt.as_triangulation())?;
     ///
     /// // Manually invalidate the cache (note: takes &self, not &mut self)
     /// hull.invalidate_cache();
     ///
     /// // The next visibility test will rebuild the cache
     /// // ... perform visibility operations ...
+    /// # Ok(())
+    /// # }
     /// ```
     pub fn invalidate_cache(&self) {
         // Clear the cache using ArcSwapOption::store(None)
@@ -697,6 +839,18 @@ where
     /// use delaunay::prelude::query::ConvexHull;
     /// use delaunay::vertex;
     ///
+    /// # #[derive(Debug, thiserror::Error)]
+    /// # enum ExampleError {
+    /// #     #[error(transparent)]
+    /// #     Construction(#[from] delaunay::prelude::triangulation::DelaunayTriangulationConstructionError),
+    /// #     #[error(transparent)]
+    /// #     Hull(#[from] delaunay::prelude::query::ConvexHullConstructionError),
+    /// #     #[error(transparent)]
+    /// #     Insertion(#[from] delaunay::prelude::triangulation::InsertionError),
+    /// #     #[error("expected tetrahedron hull to have a first facet")]
+    /// #     MissingFacet,
+    /// # }
+    /// # fn main() -> Result<(), ExampleError> {
     /// // 3D example
     /// let vertices_3d: Vec<_> = vec![
     ///     vertex!([0.0, 0.0, 0.0]),
@@ -704,9 +858,9 @@ where
     ///     vertex!([0.0, 1.0, 0.0]),
     ///     vertex!([0.0, 0.0, 1.0]),
     /// ];
-    /// let dt_3d: DelaunayTriangulation<_, (), (), 3> = DelaunayTriangulation::new(&vertices_3d).unwrap();
+    /// let dt_3d: DelaunayTriangulation<_, (), (), 3> = DelaunayTriangulation::new(&vertices_3d)?;
     /// let hull_3d: ConvexHull<_, (), (), 3> =
-    ///     ConvexHull::from_triangulation(dt_3d.as_triangulation()).unwrap();
+    ///     ConvexHull::from_triangulation(dt_3d.as_triangulation())?;
     /// assert_eq!(hull_3d.number_of_facets(), 4); // Tetrahedron has 4 faces
     ///
     /// // 4D example
@@ -717,10 +871,12 @@ where
     ///     vertex!([0.0, 0.0, 1.0, 0.0]),
     ///     vertex!([0.0, 0.0, 0.0, 1.0]),
     /// ];
-    /// let dt_4d: DelaunayTriangulation<_, (), (), 4> = DelaunayTriangulation::new(&vertices_4d).unwrap();
+    /// let dt_4d: DelaunayTriangulation<_, (), (), 4> = DelaunayTriangulation::new(&vertices_4d)?;
     /// let hull_4d =
-    ///     ConvexHull::from_triangulation(dt_4d.as_triangulation()).unwrap();
+    ///     ConvexHull::from_triangulation(dt_4d.as_triangulation())?;
     /// assert_eq!(hull_4d.number_of_facets(), 5); // 4-simplex has 5 facets
+    /// # Ok(())
+    /// # }
     /// ```
     pub fn from_triangulation(
         tri: &Triangulation<K, U, V, D>,
@@ -825,6 +981,18 @@ where
     /// use delaunay::prelude::geometry::Coordinate;
     /// use delaunay::vertex;
     ///
+    /// # #[derive(Debug, thiserror::Error)]
+    /// # enum ExampleError {
+    /// #     #[error(transparent)]
+    /// #     Construction(#[from] delaunay::prelude::triangulation::DelaunayTriangulationConstructionError),
+    /// #     #[error(transparent)]
+    /// #     Hull(#[from] delaunay::prelude::query::ConvexHullConstructionError),
+    /// #     #[error(transparent)]
+    /// #     Insertion(#[from] delaunay::prelude::triangulation::InsertionError),
+    /// #     #[error("expected tetrahedron hull to have a first facet")]
+    /// #     MissingFacet,
+    /// # }
+    /// # fn main() -> Result<(), ExampleError> {
     /// // Create a 3D tetrahedron
     /// let vertices = vec![
     ///     vertex!([0.0, 0.0, 0.0]),
@@ -832,25 +1000,30 @@ where
     ///     vertex!([0.0, 1.0, 0.0]),
     ///     vertex!([0.0, 0.0, 1.0]),
     /// ];
-    /// let dt: DelaunayTriangulation<_, (), (), 3> = DelaunayTriangulation::new(&vertices).unwrap();
+    /// let dt: DelaunayTriangulation<_, (), (), 3> = DelaunayTriangulation::new(&vertices)?;
     /// let hull =
-    ///     ConvexHull::from_triangulation(dt.as_triangulation()).unwrap();
+    ///     ConvexHull::from_triangulation(dt.as_triangulation())?;
     ///
     /// // Get a hull facet to test
-    /// let facet = hull.facet(0).unwrap();
+    /// let Some(facet) = hull.facet(0) else {
+    ///     return Err(ExampleError::MissingFacet);
+    /// };
     ///
     /// // Test visibility from different points
     /// let inside_point = Point::new([0.2, 0.2, 0.2]); // Inside the tetrahedron
     /// let outside_point = Point::new([2.0, 2.0, 2.0]); // Outside the tetrahedron
     ///
     /// // Inside point should not see the facet (facet not visible)
-    /// let inside_visible = hull.is_facet_visible_from_point(facet, &inside_point, dt.as_triangulation()).unwrap();
+    /// let inside_visible = hull.is_facet_visible_from_point(facet, &inside_point, dt.as_triangulation())?;
     /// assert!(!inside_visible, "Inside point should not see hull facet");
     ///
     /// // Outside point may see the facet depending on which facet we're testing
-    /// let outside_visible = hull.is_facet_visible_from_point(facet, &outside_point, dt.as_triangulation()).unwrap();
+    /// let outside_visible = hull.is_facet_visible_from_point(facet, &outside_point, dt.as_triangulation())?;
     /// // Note: The result depends on which facet is selected and the point's position
     /// // This test just verifies the method executes without error
+    /// # let _ = outside_visible;
+    /// # Ok(())
+    /// # }
     /// ```
     pub fn is_facet_visible_from_point(
         &self,
@@ -1213,6 +1386,18 @@ where
     /// use delaunay::prelude::geometry::Coordinate;
     /// use delaunay::vertex;
     ///
+    /// # #[derive(Debug, thiserror::Error)]
+    /// # enum ExampleError {
+    /// #     #[error(transparent)]
+    /// #     Construction(#[from] delaunay::prelude::triangulation::DelaunayTriangulationConstructionError),
+    /// #     #[error(transparent)]
+    /// #     Hull(#[from] delaunay::prelude::query::ConvexHullConstructionError),
+    /// #     #[error(transparent)]
+    /// #     Insertion(#[from] delaunay::prelude::triangulation::InsertionError),
+    /// #     #[error("expected tetrahedron hull to have a first facet")]
+    /// #     MissingFacet,
+    /// # }
+    /// # fn main() -> Result<(), ExampleError> {
     /// // Create a 3D tetrahedron
     /// let vertices = vec![
     ///     vertex!([0.0, 0.0, 0.0]),
@@ -1220,19 +1405,21 @@ where
     ///     vertex!([0.0, 1.0, 0.0]),
     ///     vertex!([0.0, 0.0, 1.0]),
     /// ];
-    /// let dt: DelaunayTriangulation<_, (), (), 3> = DelaunayTriangulation::new(&vertices).unwrap();
+    /// let dt: DelaunayTriangulation<_, (), (), 3> = DelaunayTriangulation::new(&vertices)?;
     /// let hull =
-    ///     ConvexHull::from_triangulation(dt.as_triangulation()).unwrap();
+    ///     ConvexHull::from_triangulation(dt.as_triangulation())?;
     ///
     /// // Test with a point outside the hull
     /// let outside_point = Point::new([2.0, 2.0, 2.0]);
-    /// let visible_facets = hull.find_visible_facets(&outside_point, dt.as_triangulation()).unwrap();
+    /// let visible_facets = hull.find_visible_facets(&outside_point, dt.as_triangulation())?;
     /// assert!(!visible_facets.is_empty(), "Outside point should see some facets");
     ///
     /// // Test with a point inside the hull
     /// let inside_point = Point::new([0.2, 0.2, 0.2]);
-    /// let visible_facets = hull.find_visible_facets(&inside_point, dt.as_triangulation()).unwrap();
+    /// let visible_facets = hull.find_visible_facets(&inside_point, dt.as_triangulation())?;
     /// assert!(visible_facets.is_empty(), "Inside point should see no facets");
+    /// # Ok(())
+    /// # }
     /// ```
     pub fn find_visible_facets(
         &self,
@@ -1289,6 +1476,18 @@ where
     /// use delaunay::prelude::geometry::Coordinate;
     /// use delaunay::vertex;
     ///
+    /// # #[derive(Debug, thiserror::Error)]
+    /// # enum ExampleError {
+    /// #     #[error(transparent)]
+    /// #     Construction(#[from] delaunay::prelude::triangulation::DelaunayTriangulationConstructionError),
+    /// #     #[error(transparent)]
+    /// #     Hull(#[from] delaunay::prelude::query::ConvexHullConstructionError),
+    /// #     #[error(transparent)]
+    /// #     Insertion(#[from] delaunay::prelude::triangulation::InsertionError),
+    /// #     #[error("expected tetrahedron hull to have a first facet")]
+    /// #     MissingFacet,
+    /// # }
+    /// # fn main() -> Result<(), ExampleError> {
     /// // Create a 3D tetrahedron
     /// let vertices = vec![
     ///     vertex!([0.0, 0.0, 0.0]),
@@ -1296,19 +1495,21 @@ where
     ///     vertex!([0.0, 1.0, 0.0]),
     ///     vertex!([0.0, 0.0, 1.0]),
     /// ];
-    /// let dt: DelaunayTriangulation<_, (), (), 3> = DelaunayTriangulation::new(&vertices).unwrap();
+    /// let dt: DelaunayTriangulation<_, (), (), 3> = DelaunayTriangulation::new(&vertices)?;
     /// let hull =
-    ///     ConvexHull::from_triangulation(dt.as_triangulation()).unwrap();
+    ///     ConvexHull::from_triangulation(dt.as_triangulation())?;
     ///
     /// // Test with a point outside the hull - should find a nearest visible facet
     /// let outside_point = Point::new([2.0, 2.0, 2.0]);
-    /// let nearest_facet = hull.find_nearest_visible_facet(&outside_point, dt.as_triangulation()).unwrap();
+    /// let nearest_facet = hull.find_nearest_visible_facet(&outside_point, dt.as_triangulation())?;
     /// assert!(nearest_facet.is_some(), "Outside point should have a nearest visible facet");
     ///
     /// // Test with a point inside the hull - should find no visible facets
     /// let inside_point = Point::new([0.2, 0.2, 0.2]);
-    /// let nearest_facet = hull.find_nearest_visible_facet(&inside_point, dt.as_triangulation()).unwrap();
+    /// let nearest_facet = hull.find_nearest_visible_facet(&inside_point, dt.as_triangulation())?;
     /// assert!(nearest_facet.is_none(), "Inside point should have no visible facets");
+    /// # Ok(())
+    /// # }
     /// ```
     pub fn find_nearest_visible_facet(
         &self,
@@ -1411,6 +1612,18 @@ where
     /// use delaunay::prelude::geometry::Coordinate;
     /// use delaunay::vertex;
     ///
+    /// # #[derive(Debug, thiserror::Error)]
+    /// # enum ExampleError {
+    /// #     #[error(transparent)]
+    /// #     Construction(#[from] delaunay::prelude::triangulation::DelaunayTriangulationConstructionError),
+    /// #     #[error(transparent)]
+    /// #     Hull(#[from] delaunay::prelude::query::ConvexHullConstructionError),
+    /// #     #[error(transparent)]
+    /// #     Insertion(#[from] delaunay::prelude::triangulation::InsertionError),
+    /// #     #[error("expected tetrahedron hull to have a first facet")]
+    /// #     MissingFacet,
+    /// # }
+    /// # fn main() -> Result<(), ExampleError> {
     /// // Create a 3D tetrahedron
     /// let vertices = vec![
     ///     vertex!([0.0, 0.0, 0.0]),
@@ -1418,17 +1631,19 @@ where
     ///     vertex!([0.0, 1.0, 0.0]),
     ///     vertex!([0.0, 0.0, 1.0]),
     /// ];
-    /// let dt: DelaunayTriangulation<_, (), (), 3> = DelaunayTriangulation::new(&vertices).unwrap();
+    /// let dt: DelaunayTriangulation<_, (), (), 3> = DelaunayTriangulation::new(&vertices)?;
     /// let hull =
-    ///     ConvexHull::from_triangulation(dt.as_triangulation()).unwrap();
+    ///     ConvexHull::from_triangulation(dt.as_triangulation())?;
     ///
     /// // Test with a point inside the hull
     /// let inside_point = Point::new([0.2, 0.2, 0.2]);
-    /// assert!(!hull.is_point_outside(&inside_point, dt.as_triangulation()).unwrap());
+    /// assert!(!hull.is_point_outside(&inside_point, dt.as_triangulation())?);
     ///
     /// // Test with a point outside the hull
     /// let outside_point = Point::new([2.0, 2.0, 2.0]);
-    /// assert!(hull.is_point_outside(&outside_point, dt.as_triangulation()).unwrap());
+    /// assert!(hull.is_point_outside(&outside_point, dt.as_triangulation())?);
+    /// # Ok(())
+    /// # }
     /// ```
     pub fn is_point_outside(
         &self,
@@ -1455,6 +1670,18 @@ where
     /// use delaunay::prelude::query::ConvexHull;
     /// use delaunay::vertex;
     ///
+    /// # #[derive(Debug, thiserror::Error)]
+    /// # enum ExampleError {
+    /// #     #[error(transparent)]
+    /// #     Construction(#[from] delaunay::prelude::triangulation::DelaunayTriangulationConstructionError),
+    /// #     #[error(transparent)]
+    /// #     Hull(#[from] delaunay::prelude::query::ConvexHullConstructionError),
+    /// #     #[error(transparent)]
+    /// #     Insertion(#[from] delaunay::prelude::triangulation::InsertionError),
+    /// #     #[error("expected tetrahedron hull to have a first facet")]
+    /// #     MissingFacet,
+    /// # }
+    /// # fn main() -> Result<(), ExampleError> {
     /// // Create a valid 3D tetrahedron
     /// let vertices = vec![
     ///     vertex!([0.0, 0.0, 0.0]),
@@ -1462,9 +1689,9 @@ where
     ///     vertex!([0.0, 1.0, 0.0]),
     ///     vertex!([0.0, 0.0, 1.0]),
     /// ];
-    /// let dt: DelaunayTriangulation<_, (), (), 3> = DelaunayTriangulation::new(&vertices).unwrap();
+    /// let dt: DelaunayTriangulation<_, (), (), 3> = DelaunayTriangulation::new(&vertices)?;
     /// let hull =
-    ///     ConvexHull::from_triangulation(dt.as_triangulation()).unwrap();
+    ///     ConvexHull::from_triangulation(dt.as_triangulation())?;
     ///
     /// // Validation should pass for a well-formed hull
     /// assert!(hull.validate(dt.as_triangulation()).is_ok());
@@ -1473,6 +1700,8 @@ where
     /// let empty_hull: ConvexHull<delaunay::geometry::kernel::AdaptiveKernel<f64>, (), (), 3> = ConvexHull::default();
     /// // Note: validate() requires a TDS, so use an empty TDS for validation
     /// assert!(empty_hull.validate(dt.as_triangulation()).is_ok());
+    /// # Ok(())
+    /// # }
     /// ```
     pub fn validate(
         &self,

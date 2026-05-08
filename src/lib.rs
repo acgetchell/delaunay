@@ -71,13 +71,14 @@
 //! ```rust
 //! use delaunay::prelude::triangulation::*;
 //!
+//! # fn main() -> Result<(), DelaunayTriangulationConstructionError> {
 //! let vertices = vec![
 //!     vertex!([0.0, 0.0, 0.0]),
 //!     vertex!([1.0, 0.0, 0.0]),
 //!     vertex!([0.0, 1.0, 0.0]),
 //!     vertex!([0.0, 0.0, 1.0]),
 //! ];
-//! let dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>().unwrap();
+//! let dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
 //!
 //! // Levels 1–2: elements + structural (TDS)
 //! assert!(dt.tds().validate().is_ok());
@@ -90,6 +91,8 @@
 //!
 //! // Levels 1–4: full cumulative validation
 //! assert!(dt.validate().is_ok());
+//! # Ok(())
+//! # }
 //! ```
 //!
 //! ### Topology guarantees and insertion-time validation (`TopologyGuarantee`, `ValidationPolicy`)
@@ -97,13 +100,14 @@
 //! ```rust
 //! use delaunay::prelude::triangulation::*;
 //!
+//! # fn main() -> Result<(), DelaunayTriangulationConstructionError> {
 //! let vertices = vec![
 //!     vertex!([0.0, 0.0, 0.0]),
 //!     vertex!([1.0, 0.0, 0.0]),
 //!     vertex!([0.0, 1.0, 0.0]),
 //!     vertex!([0.0, 0.0, 1.0]),
 //! ];
-//! let mut dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>().unwrap();
+//! let mut dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
 //!
 //! assert_eq!(dt.topology_guarantee(), TopologyGuarantee::PLManifold);
 //! assert_eq!(dt.validation_policy(), ValidationPolicy::OnSuspicion);
@@ -113,6 +117,8 @@
 //!
 //! assert_eq!(dt.topology_guarantee(), TopologyGuarantee::Pseudomanifold);
 //! assert_eq!(dt.validation_policy(), ValidationPolicy::Always);
+//! # Ok(())
+//! # }
 //! ```
 //!
 //! ### Transactional operations and duplicate rejection
@@ -120,12 +126,13 @@
 //! ```rust
 //! use delaunay::prelude::triangulation::*;
 //!
+//! # fn main() -> Result<(), DelaunayTriangulationConstructionError> {
 //! let vertices = vec![
 //!     vertex!([0.0, 0.0]),
 //!     vertex!([1.0, 0.0]),
 //!     vertex!([0.0, 1.0]),
 //! ];
-//! let mut dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>().unwrap();
+//! let mut dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
 //!
 //! let before_vertices = dt.number_of_vertices();
 //! let before_cells = dt.number_of_cells();
@@ -137,6 +144,8 @@
 //! // On error, the triangulation is unchanged.
 //! assert_eq!(dt.number_of_vertices(), before_vertices);
 //! assert_eq!(dt.number_of_cells(), before_cells);
+//! # Ok(())
+//! # }
 //! ```
 //!
 //! # Triangulation invariants and validation hierarchy
@@ -219,22 +228,32 @@
 //! ```rust
 //! use delaunay::prelude::triangulation::*;
 //!
+//! # #[derive(Debug, thiserror::Error)]
+//! # enum ExampleError {
+//! #     #[error(transparent)]
+//! #     Construction(#[from] DelaunayTriangulationConstructionError),
+//! #     #[error(transparent)]
+//! #     Insertion(#[from] InsertionError),
+//! # }
+//! # fn main() -> Result<(), ExampleError> {
 //! let vertices = vec![
 //!     vertex!([0.0, 0.0, 0.0]),
 //!     vertex!([1.0, 0.0, 0.0]),
 //!     vertex!([0.0, 1.0, 0.0]),
 //!     vertex!([0.0, 0.0, 1.0]),
 //! ];
-//! let mut dt = DelaunayTriangulation::new(&vertices).unwrap();
+//! let mut dt = DelaunayTriangulation::new(&vertices)?;
 //!
 //! // Performance mode: disable insertion-time Level 3 topology validation.
 //! dt.set_validation_policy(ValidationPolicy::Never);
 //!
 //! // Do incremental work...
-//! dt.insert(vertex!([0.2, 0.2, 0.2])).unwrap();
+//! dt.insert(vertex!([0.2, 0.2, 0.2]))?;
 //!
 //! // ...then explicitly validate the topology layer when you need a certificate.
 //! assert!(dt.as_triangulation().validate().is_ok());
+//! # Ok(())
+//! # }
 //! ```
 //!
 //! ### Choosing Level 3 topology guarantee (`TopologyGuarantee`)
@@ -263,33 +282,39 @@
 //! ```rust
 //! use delaunay::prelude::triangulation::*;
 //!
+//! # fn main() -> Result<(), DelaunayTriangulationConstructionError> {
 //! let vertices = vec![
 //!     vertex!([0.0, 0.0, 0.0]),
 //!     vertex!([1.0, 0.0, 0.0]),
 //!     vertex!([0.0, 1.0, 0.0]),
 //!     vertex!([0.0, 0.0, 1.0]),
 //! ];
-//! let dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>().unwrap();
+//! let dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
 //!
 //! // For `TopologyGuarantee::PLManifold`, full certification includes a completion-time
 //! // vertex-link validation pass.
 //! assert!(dt.as_triangulation().validate_at_completion().is_ok());
+//! # Ok(())
+//! # }
 //! ```
 //!
 //! ```rust
 //! use delaunay::prelude::triangulation::*;
 //!
+//! # fn main() -> Result<(), DelaunayTriangulationConstructionError> {
 //! let vertices = vec![
 //!     vertex!([0.0, 0.0, 0.0]),
 //!     vertex!([1.0, 0.0, 0.0]),
 //!     vertex!([0.0, 1.0, 0.0]),
 //!     vertex!([0.0, 0.0, 1.0]),
 //! ];
-//! let dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>().unwrap();
+//! let dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
 //!
 //! // `validate()` returns the first violation; `validation_report()` is intended for
 //! // debugging/telemetry where you want the full set of violated invariants.
 //! assert!(dt.validation_report().is_ok());
+//! # Ok(())
+//! # }
 //! ```
 //!
 //! For implementation details on invariant enforcement, see [`core::algorithms::incremental_insertion`].
@@ -800,17 +825,27 @@ pub mod triangulation {
 /// use delaunay::prelude::triangulation::*;
 /// use delaunay::prelude::topology::validation;
 ///
+/// # #[derive(Debug, thiserror::Error)]
+/// # enum ExampleError {
+/// #     #[error(transparent)]
+/// #     Construction(#[from] DelaunayTriangulationConstructionError),
+/// #     #[error(transparent)]
+/// #     Topology(#[from] delaunay::topology::TopologyError),
+/// # }
+/// # fn main() -> Result<(), ExampleError> {
 /// let vertices = vec![
 ///     vertex!([0.0, 0.0, 0.0]),
 ///     vertex!([1.0, 0.0, 0.0]),
 ///     vertex!([0.0, 1.0, 0.0]),
 ///     vertex!([0.0, 0.0, 1.0]),
 /// ];
-/// let dt = DelaunayTriangulation::new(&vertices).unwrap();
+/// let dt = DelaunayTriangulation::new(&vertices)?;
 ///
-/// let result = validation::validate_triangulation_euler(dt.tds()).unwrap();
+/// let result = validation::validate_triangulation_euler(dt.tds())?;
 /// assert_eq!(result.chi, 1);  // Tetrahedron has χ = 1
 /// assert!(result.is_valid());
+/// # Ok(())
+/// # }
 /// ```
 pub mod topology {
     /// Traits for topological spaces and error types
@@ -1149,13 +1184,18 @@ pub mod prelude {
     /// # Examples
     ///
     /// ```rust
-    /// use delaunay::prelude::generators::generate_random_points_seeded;
+    /// use delaunay::prelude::generators::{
+    ///     RandomPointGenerationError, generate_random_points_seeded,
+    /// };
     /// use delaunay::prelude::geometry::Point;
     ///
+    /// # fn main() -> Result<(), RandomPointGenerationError> {
     /// let points: Vec<Point<f64, 3>> =
-    ///     generate_random_points_seeded(4, (0.0, 1.0), 42).unwrap();
+    ///     generate_random_points_seeded(4, (0.0, 1.0), 42)?;
     ///
     /// assert_eq!(points.len(), 4);
+    /// # Ok(())
+    /// # }
     /// ```
     pub mod generators {
         pub use crate::core::triangulation::TopologyGuarantee;

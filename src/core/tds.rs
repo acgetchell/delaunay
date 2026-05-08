@@ -3699,6 +3699,7 @@ where
 
         let original_generation = self.generation();
         let mut trial = self.clone();
+        trial.generation = Arc::new(AtomicU64::new(original_generation));
         let removed = trial.remove_cells_by_keys(&cells_to_remove);
         let rebuild_result = (|| -> Result<(), TdsMutationError> {
             trial.assign_neighbors().map_err(TdsMutationError::from)?;

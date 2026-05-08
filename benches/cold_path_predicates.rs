@@ -1,3 +1,5 @@
+#![forbid(unsafe_code)]
+
 //! Microbenchmark for `core::hint::cold_path` adoption in geometric predicates.
 //!
 //! This benchmark exercises the hot Stage-1 path of the [`insphere`] / [`insphere_lifted`]

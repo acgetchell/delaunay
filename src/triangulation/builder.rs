@@ -35,6 +35,7 @@
 //! use delaunay::prelude::triangulation::DelaunayTriangulationBuilder;
 //! use delaunay::vertex;
 //!
+//! # fn main() -> Result<(), delaunay::prelude::triangulation::DelaunayTriangulationConstructionError> {
 //! let vertices = vec![
 //!     vertex!([0.0, 0.0]),
 //!     vertex!([1.0, 0.0]),
@@ -42,10 +43,11 @@
 //! ];
 //!
 //! let dt = DelaunayTriangulationBuilder::new(&vertices)
-//!     .build::<()>()
-//!     .unwrap();
+//!     .build::<()>()?;
 //!
 //! assert_eq!(dt.number_of_vertices(), 3);
+//! # Ok(())
+//! # }
 //! ```
 //!
 //! ## Toroidal construction (Phase 1: canonicalization only)
@@ -54,6 +56,7 @@
 //! use delaunay::prelude::triangulation::DelaunayTriangulationBuilder;
 //! use delaunay::vertex;
 //!
+//! # fn main() -> Result<(), delaunay::prelude::triangulation::DelaunayTriangulationConstructionError> {
 //! // Vertices that fall outside [0, 1)² are wrapped before triangulation.
 //! let vertices = vec![
 //!     vertex!([0.2, 0.3]),
@@ -64,10 +67,11 @@
 //!
 //! let dt = DelaunayTriangulationBuilder::new(&vertices)
 //!     .toroidal([1.0, 1.0])
-//!     .build::<()>()
-//!     .unwrap();
+//!     .build::<()>()?;
 //!
 //! assert_eq!(dt.number_of_vertices(), 4);
+//! # Ok(())
+//! # }
 //! ```
 //!
 //! ## Toroidal construction (Phase 2: full periodic / image-point method)
@@ -80,6 +84,7 @@
 //! use delaunay::prelude::triangulation::DelaunayTriangulationBuilder;
 //! use delaunay::vertex;
 //!
+//! # fn main() -> Result<(), delaunay::prelude::triangulation::DelaunayTriangulationConstructionError> {
 //! let vertices = vec![
 //!     vertex!([0.1, 0.2]),
 //!     vertex!([0.4, 0.7]),
@@ -93,12 +98,13 @@
 //! let kernel = RobustKernel::new();
 //! let dt = DelaunayTriangulationBuilder::new(&vertices)
 //!     .toroidal_periodic([1.0, 1.0])
-//!     .build_with_kernel::<_, ()>(&kernel)
-//!     .unwrap();
+//!     .build_with_kernel::<_, ()>(&kernel)?;
 //!
 //! assert_eq!(dt.number_of_vertices(), 7);
 //! // Every vertex has a valid incident cell (no boundary).
 //! assert!(dt.tds().is_valid().is_ok());
+//! # Ok(())
+//! # }
 //! ```
 
 #![forbid(unsafe_code)]
@@ -307,15 +313,11 @@ fn search_closed_2d_selection(
 /// let vertices = vec![vertex!([0.0, 0.0]), vertex!([1.0, 0.0]), vertex!([0.0, 1.0])];
 /// let cells = vec![vec![0, 1]]; // Wrong arity for 2D (needs 3 vertices)
 ///
-/// let err = DelaunayTriangulationBuilder::from_vertices_and_cells(&vertices, &cells)
-///     .build::<()>()
-///     .unwrap_err();
-///
 /// assert!(matches!(
-///     err,
-///     DelaunayTriangulationConstructionError::ExplicitConstruction(
-///         ExplicitConstructionError::InvalidCellArity { cell_index: 0, actual: 2, expected: 3 }
-///     )
+///     DelaunayTriangulationBuilder::from_vertices_and_cells(&vertices, &cells).build::<()>(),
+///     Err(DelaunayTriangulationConstructionError::ExplicitConstruction(
+///         ExplicitConstructionError::InvalidCellArity { cell_index: 0, actual: 2, expected: 3 },
+///     ))
 /// ));
 /// ```
 #[derive(Clone, Debug, Error, PartialEq, Eq)]
@@ -405,6 +407,7 @@ pub enum ExplicitConstructionError {
 /// };
 /// use delaunay::vertex;
 ///
+/// # fn main() -> Result<(), delaunay::prelude::triangulation::DelaunayTriangulationConstructionError> {
 /// let vertices = vec![
 ///     vertex!([0.0, 0.0, 0.0]),
 ///     vertex!([1.0, 0.0, 0.0]),
@@ -415,10 +418,11 @@ pub enum ExplicitConstructionError {
 /// let dt = DelaunayTriangulationBuilder::new(&vertices)
 ///     .topology_guarantee(TopologyGuarantee::Pseudomanifold)
 ///     .construction_options(ConstructionOptions::default())
-///     .build::<()>()
-///     .unwrap();
+///     .build::<()>()?;
 ///
 /// assert_eq!(dt.number_of_vertices(), 4);
+/// # Ok(())
+/// # }
 /// ```
 pub struct DelaunayTriangulationBuilder<'v, T, U, const D: usize> {
     vertices: &'v [Vertex<T, U, D>],
@@ -478,9 +482,10 @@ where
     /// ```rust
     /// use delaunay::prelude::triangulation::*;
     ///
+    /// # fn main() -> Result<(), delaunay::prelude::triangulation::DelaunayTriangulationConstructionError> {
     /// // No vertex data (U = () inferred)
     /// let vertices = vec![vertex!([0.0, 0.0]), vertex!([1.0, 0.0]), vertex!([0.0, 1.0])];
-    /// let _dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>().unwrap();
+    /// let _dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
     ///
     /// // Typed vertex data (U = i32 inferred)
     /// let typed: [Vertex<f64, i32, 2>; 3] = [
@@ -488,7 +493,9 @@ where
     ///     vertex!([1.0, 0.0], 2),
     ///     vertex!([0.0, 1.0], 3),
     /// ];
-    /// let _dt = DelaunayTriangulationBuilder::new(&typed).build::<()>().unwrap();
+    /// let _dt = DelaunayTriangulationBuilder::new(&typed).build::<()>()?;
+    /// # Ok(())
+    /// # }
     /// ```
     #[must_use]
     pub fn new(vertices: &'v [Vertex<f64, U, D>]) -> Self {
@@ -528,6 +535,7 @@ where
     /// };
     /// use delaunay::vertex;
     ///
+    /// # fn main() -> Result<(), delaunay::prelude::triangulation::DelaunayTriangulationConstructionError> {
     /// let vertices = vec![
     ///     vertex!([0.0, 0.0]),
     ///     vertex!([1.0, 0.0]),
@@ -537,22 +545,20 @@ where
     /// let cells = vec![vec![0, 1, 2], vec![0, 2, 3]];
     ///
     /// let dt = DelaunayTriangulationBuilder::from_vertices_and_cells(&vertices, &cells)
-    ///     .build::<()>()
-    ///     .unwrap();
+    ///     .build::<()>()?;
     ///
     /// assert_eq!(dt.number_of_vertices(), 4);
     /// assert_eq!(dt.number_of_cells(), 2);
     ///
     /// let bad_cells = vec![vec![0, 1]]; // Wrong arity for a 2D simplex.
-    /// let err = DelaunayTriangulationBuilder::from_vertices_and_cells(&vertices, &bad_cells)
-    ///     .build::<()>()
-    ///     .unwrap_err();
     /// assert!(matches!(
-    ///     err,
-    ///     DelaunayTriangulationConstructionError::ExplicitConstruction(
-    ///         ExplicitConstructionError::InvalidCellArity { .. }
-    ///     )
+    ///     DelaunayTriangulationBuilder::from_vertices_and_cells(&vertices, &bad_cells).build::<()>(),
+    ///     Err(DelaunayTriangulationConstructionError::ExplicitConstruction(
+    ///         ExplicitConstructionError::InvalidCellArity { .. },
+    ///     ))
     /// ));
+    /// # Ok(())
+    /// # }
     /// ```
     #[must_use]
     pub fn from_vertices_and_cells(
@@ -594,19 +600,28 @@ where
     /// use delaunay::prelude::geometry::{Coordinate, Point};
     /// use delaunay::prelude::triangulation::{DelaunayTriangulationBuilder, Vertex, VertexBuilder};
     ///
+    /// # #[derive(Debug, thiserror::Error)]
+    /// # enum ExampleError {
+    /// #     #[error(transparent)]
+    /// #     Vertex(#[from] delaunay::prelude::triangulation::VertexBuilderError),
+    /// #     #[error(transparent)]
+    /// #     Construction(#[from] delaunay::prelude::triangulation::DelaunayTriangulationConstructionError),
+    /// # }
+    /// # fn main() -> Result<(), ExampleError> {
     /// let vertices: Vec<Vertex<f32, (), 2>> = vec![
-    ///     VertexBuilder::default().point(Point::new([0.0_f32, 0.0])).build().unwrap(),
-    ///     VertexBuilder::default().point(Point::new([1.0_f32, 0.0])).build().unwrap(),
-    ///     VertexBuilder::default().point(Point::new([0.0_f32, 1.0])).build().unwrap(),
+    ///     VertexBuilder::default().point(Point::new([0.0_f32, 0.0])).build()?,
+    ///     VertexBuilder::default().point(Point::new([1.0_f32, 0.0])).build()?,
+    ///     VertexBuilder::default().point(Point::new([0.0_f32, 1.0])).build()?,
     /// ];
     /// let cells = vec![vec![0, 1, 2]];
     ///
     /// let dt = DelaunayTriangulationBuilder::from_vertices_and_cells_generic(&vertices, &cells)
-    ///     .build::<()>()
-    ///     .unwrap();
+    ///     .build::<()>()?;
     ///
     /// assert_eq!(dt.number_of_vertices(), 3);
     /// assert_eq!(dt.number_of_cells(), 1);
+    /// # Ok(())
+    /// # }
     /// ```
     #[must_use]
     pub fn from_vertices_and_cells_generic(
@@ -636,18 +651,27 @@ where
     /// use delaunay::prelude::geometry::{Coordinate, Point};
     /// use delaunay::prelude::triangulation::{DelaunayTriangulationBuilder, Vertex, VertexBuilder};
     ///
+    /// # #[derive(Debug, thiserror::Error)]
+    /// # enum ExampleError {
+    /// #     #[error(transparent)]
+    /// #     Vertex(#[from] delaunay::prelude::triangulation::VertexBuilderError),
+    /// #     #[error(transparent)]
+    /// #     Construction(#[from] delaunay::prelude::triangulation::DelaunayTriangulationConstructionError),
+    /// # }
+    /// # fn main() -> Result<(), ExampleError> {
     /// // f32 vertices — new() is f64-only, so from_vertices is required here.
     /// let vertices: Vec<Vertex<f32, (), 2>> = vec![
-    ///     VertexBuilder::default().point(Point::new([0.0_f32, 0.0])).build().unwrap(),
-    ///     VertexBuilder::default().point(Point::new([1.0_f32, 0.0])).build().unwrap(),
-    ///     VertexBuilder::default().point(Point::new([0.0_f32, 1.0])).build().unwrap(),
+    ///     VertexBuilder::default().point(Point::new([0.0_f32, 0.0])).build()?,
+    ///     VertexBuilder::default().point(Point::new([1.0_f32, 0.0])).build()?,
+    ///     VertexBuilder::default().point(Point::new([0.0_f32, 1.0])).build()?,
     /// ];
     ///
     /// let dt = DelaunayTriangulationBuilder::from_vertices(&vertices)
-    ///     .build::<()>()
-    ///     .unwrap();
+    ///     .build::<()>()?;
     ///
     /// assert_eq!(dt.number_of_vertices(), 3);
+    /// # Ok(())
+    /// # }
     /// ```
     #[must_use]
     pub fn from_vertices(vertices: &'v [Vertex<T, U, D>]) -> Self {
@@ -680,6 +704,7 @@ where
     /// use delaunay::prelude::triangulation::DelaunayTriangulationBuilder;
     /// use delaunay::vertex;
     ///
+    /// # fn main() -> Result<(), delaunay::prelude::triangulation::DelaunayTriangulationConstructionError> {
     /// let vertices = vec![
     ///     vertex!([0.2, 0.3]),
     ///     vertex!([0.8, 0.1]),
@@ -689,10 +714,11 @@ where
     ///
     /// let dt = DelaunayTriangulationBuilder::new(&vertices)
     ///     .toroidal([1.0, 1.0])
-    ///     .build::<()>()
-    ///     .unwrap();
+    ///     .build::<()>()?;
     ///
     /// assert_eq!(dt.number_of_vertices(), 4);
+    /// # Ok(())
+    /// # }
     /// ```
     #[must_use]
     pub const fn toroidal(mut self, domain: [f64; D]) -> Self {
@@ -728,6 +754,7 @@ where
     /// use delaunay::prelude::triangulation::DelaunayTriangulationBuilder;
     /// use delaunay::vertex;
     ///
+    /// # fn main() -> Result<(), delaunay::prelude::triangulation::DelaunayTriangulationConstructionError> {
     /// let vertices = vec![
     ///     vertex!([0.1, 0.2]),
     ///     vertex!([0.4, 0.7]),
@@ -741,11 +768,12 @@ where
     /// let kernel = RobustKernel::new();
     /// let dt = DelaunayTriangulationBuilder::new(&vertices)
     ///     .toroidal_periodic([1.0, 1.0])
-    ///     .build_with_kernel::<_, ()>(&kernel)
-    ///     .unwrap();
+    ///     .build_with_kernel::<_, ()>(&kernel)?;
     ///
     /// assert_eq!(dt.number_of_vertices(), 7);
     /// assert!(dt.tds().is_valid().is_ok());
+    /// # Ok(())
+    /// # }
     /// ```
     #[must_use]
     pub const fn toroidal_periodic(mut self, domain: [f64; D]) -> Self {
@@ -764,6 +792,7 @@ where
     /// use delaunay::prelude::triangulation::{DelaunayTriangulationBuilder, TopologyGuarantee};
     /// use delaunay::vertex;
     ///
+    /// # fn main() -> Result<(), delaunay::prelude::triangulation::DelaunayTriangulationConstructionError> {
     /// let vertices = vec![
     ///     vertex!([0.0, 0.0]),
     ///     vertex!([1.0, 0.0]),
@@ -772,10 +801,11 @@ where
     ///
     /// let dt = DelaunayTriangulationBuilder::new(&vertices)
     ///     .topology_guarantee(TopologyGuarantee::Pseudomanifold)
-    ///     .build::<()>()
-    ///     .unwrap();
+    ///     .build::<()>()?;
     ///
     /// assert_eq!(dt.topology_guarantee(), TopologyGuarantee::Pseudomanifold);
+    /// # Ok(())
+    /// # }
     /// ```
     #[must_use]
     pub const fn topology_guarantee(mut self, topology_guarantee: TopologyGuarantee) -> Self {
@@ -841,6 +871,7 @@ where
     /// };
     /// use delaunay::vertex;
     ///
+    /// # fn main() -> Result<(), delaunay::prelude::triangulation::DelaunayTriangulationConstructionError> {
     /// let vertices = vec![
     ///     vertex!([0.0, 0.0]),
     ///     vertex!([1.0, 0.0]),
@@ -852,10 +883,11 @@ where
     ///
     /// let dt = DelaunayTriangulationBuilder::new(&vertices)
     ///     .construction_options(opts)
-    ///     .build::<()>()
-    ///     .unwrap();
+    ///     .build::<()>()?;
     ///
     /// assert_eq!(dt.number_of_vertices(), 3);
+    /// # Ok(())
+    /// # }
     /// ```
     #[must_use]
     pub const fn construction_options(mut self, construction_options: ConstructionOptions) -> Self {
@@ -1025,6 +1057,7 @@ where
     /// use delaunay::prelude::triangulation::DelaunayTriangulationBuilder;
     /// use delaunay::vertex;
     ///
+    /// # fn main() -> Result<(), delaunay::prelude::triangulation::DelaunayTriangulationConstructionError> {
     /// let vertices = vec![
     ///     vertex!([0.0, 0.0, 0.0]),
     ///     vertex!([1.0, 0.0, 0.0]),
@@ -1033,11 +1066,12 @@ where
     /// ];
     ///
     /// let dt = DelaunayTriangulationBuilder::new(&vertices)
-    ///     .build::<()>()
-    ///     .unwrap();
+    ///     .build::<()>()?;
     ///
     /// assert_eq!(dt.number_of_vertices(), 4);
     /// assert!(dt.validate().is_ok());
+    /// # Ok(())
+    /// # }
     /// ```
     pub fn build<V>(
         self,
@@ -1076,6 +1110,7 @@ where
     /// use delaunay::prelude::triangulation::DelaunayTriangulationBuilder;
     /// use delaunay::vertex;
     ///
+    /// # fn main() -> Result<(), delaunay::prelude::triangulation::DelaunayTriangulationConstructionError> {
     /// let vertices = vec![
     ///     vertex!([0.0, 0.0, 0.0]),
     ///     vertex!([1.0, 0.0, 0.0]),
@@ -1085,10 +1120,11 @@ where
     ///
     /// let kernel = RobustKernel::new();
     /// let dt = DelaunayTriangulationBuilder::new(&vertices)
-    ///     .build_with_kernel::<_, ()>(&kernel)
-    ///     .unwrap();
+    ///     .build_with_kernel::<_, ()>(&kernel)?;
     ///
     /// assert_eq!(dt.number_of_vertices(), 4);
+    /// # Ok(())
+    /// # }
     /// ```
     pub fn build_with_kernel<K, V>(
         self,
