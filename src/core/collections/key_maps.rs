@@ -24,22 +24,35 @@ pub type VertexUuidSet = FastHashSet<Uuid>;
 // UUID-KEY MAPPING TYPES
 // =============================================================================
 
-/// Optimized mapping from Vertex UUIDs to `VertexKeys` for fast UUID → Key lookups.
+/// Optimized mapping from vertex [`Uuid`] values to [`VertexKey`] values for fast UUID → key lookups.
 /// This is the primary direction for most triangulation operations.
 ///
 /// # Optimization Rationale
 ///
 /// - **Primary Direction**: UUID → Key is the hot path in most algorithms
 /// - **Hash Function**: `FastHasher` provides ~2-3x faster lookups than default hasher in typical non-adversarial workloads
-/// - **Use Case**: Converting vertex UUIDs to keys for `SlotMap` access
+/// - **Use Case**: Converting vertex UUIDs to keys for slot-map access
 /// - **Performance**: O(1) average case, optimized for triangulation algorithms
 ///
 /// # Reverse Lookups
 ///
-/// For Key → UUID lookups (less common), use direct `SlotMap` access:
+/// For key → UUID lookups (less common), use direct topology access:
 /// ```rust
 /// use delaunay::prelude::triangulation::*;
 ///
+/// # #[derive(Debug, thiserror::Error)]
+/// # enum ReverseLookupExampleError {
+/// #     #[error(transparent)]
+/// #     Construction {
+/// #         #[from]
+/// #         source: DelaunayTriangulationConstructionError,
+/// #     },
+/// #     #[error("expected at least one vertex in the triangulation")]
+/// #     MissingVertex,
+/// #     #[error("vertex key should resolve in the triangulation")]
+/// #     UnresolvedVertexKey,
+/// # }
+/// # fn main() -> Result<(), ReverseLookupExampleError> {
 /// let vertices = vec![
 ///     vertex!([0.0, 0.0, 0.0]),
 ///     vertex!([1.0, 0.0, 0.0]),
@@ -50,33 +63,52 @@ pub type VertexUuidSet = FastHashSet<Uuid>;
 ///     DelaunayTriangulation::new_with_topology_guarantee(
 ///         &vertices,
 ///         TopologyGuarantee::PLManifold,
-///     )
-///     .unwrap();
+///     )?;
 /// println!("Topology guarantee: {:?}", dt.topology_guarantee());
 /// let tds = dt.tds();
 ///
 /// // Get first vertex key and its UUID
-/// let (vertex_key, _) = tds.vertices().next().unwrap();
-/// let vertex_uuid = tds.vertex(vertex_key).unwrap().uuid();
+/// let Some((vertex_key, _)) = tds.vertices().next() else {
+///     return Err(ReverseLookupExampleError::MissingVertex);
+/// };
+/// let Some(vertex) = tds.vertex(vertex_key) else {
+///     return Err(ReverseLookupExampleError::UnresolvedVertexKey);
+/// };
+/// let vertex_uuid = vertex.uuid();
+/// # Ok(())
+/// # }
 /// ```
 pub type UuidToVertexKeyMap = FastHashMap<Uuid, VertexKey>;
 
-/// Optimized mapping from Cell UUIDs to `CellKeys` for fast UUID → Key lookups.
+/// Optimized mapping from cell [`Uuid`] values to [`CellKey`] values for fast UUID → key lookups.
 /// This is the primary direction for most triangulation operations.
 ///
 /// # Optimization Rationale
 ///
 /// - **Primary Direction**: UUID → Key is the hot path in neighbor assignment
 /// - **Hash Function**: `FastHasher` provides ~2-3x faster lookups than default hasher in typical non-adversarial workloads
-/// - **Use Case**: Converting cell UUIDs to keys for `SlotMap` access
+/// - **Use Case**: Converting cell UUIDs to keys for slot-map access
 /// - **Performance**: O(1) average case, optimized for triangulation algorithms
 ///
 /// # Reverse Lookups
 ///
-/// For Key → UUID lookups (less common), use direct `SlotMap` access:
+/// For key → UUID lookups (less common), use direct topology access:
 /// ```rust
 /// use delaunay::prelude::triangulation::*;
 ///
+/// # #[derive(Debug, thiserror::Error)]
+/// # enum ReverseLookupExampleError {
+/// #     #[error(transparent)]
+/// #     Construction {
+/// #         #[from]
+/// #         source: DelaunayTriangulationConstructionError,
+/// #     },
+/// #     #[error("expected at least one cell in the triangulation")]
+/// #     MissingCell,
+/// #     #[error("cell key should resolve in the triangulation")]
+/// #     UnresolvedCellKey,
+/// # }
+/// # fn main() -> Result<(), ReverseLookupExampleError> {
 /// let vertices = vec![
 ///     vertex!([0.0, 0.0, 0.0]),
 ///     vertex!([1.0, 0.0, 0.0]),
@@ -87,14 +119,21 @@ pub type UuidToVertexKeyMap = FastHashMap<Uuid, VertexKey>;
 ///     DelaunayTriangulation::new_with_topology_guarantee(
 ///         &vertices,
 ///         TopologyGuarantee::PLManifold,
-///     )
-///     .unwrap();
-/// println!("Topology guarantee: {:?}", dt.topology_guarantee());
+///     )?;
+/// assert_eq!(dt.topology_guarantee(), TopologyGuarantee::PLManifold);
 /// let tds = dt.tds();
 ///
 /// // Get first cell key and its UUID
-/// let (cell_key, _) = tds.cells().next().unwrap();
-/// let cell_uuid = tds.cell(cell_key).unwrap().uuid();
+/// let Some((cell_key, _)) = tds.cells().next() else {
+///     return Err(ReverseLookupExampleError::MissingCell);
+/// };
+/// let Some(cell) = tds.cell(cell_key) else {
+///     return Err(ReverseLookupExampleError::UnresolvedCellKey);
+/// };
+/// let cell_uuid = cell.uuid();
+/// assert_eq!(tds.cell_key_from_uuid(&cell_uuid), Some(cell_key));
+/// # Ok(())
+/// # }
 /// ```
 pub type UuidToCellKeyMap = FastHashMap<Uuid, CellKey>;
 

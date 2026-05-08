@@ -47,6 +47,11 @@ use std::{env, hint::black_box, num::NonZeroUsize, sync::Once};
 #[cfg(feature = "bench-logging")]
 use tracing::warn;
 
+/// Shared benchmark setup error helpers.
+#[path = "common/bench_utils.rs"]
+pub mod bench_utils;
+use bench_utils::{abort_benchmark, bench_option, bench_result};
+
 /// Default point counts for 2D–4D benchmarks.
 const COUNTS: &[usize] = &[10, 25, 50];
 /// Reduced point counts for 5D (50-point construction is prohibitively slow).
@@ -64,25 +69,6 @@ const INSERT_COUNT_5D: usize = 4;
 type SeedSearchResult<const D: usize> = Option<(u64, Vec<Point<f64, D>>, Vec<Vertex<f64, (), D>>)>;
 type BenchTriangulation<const D: usize> = DelaunayTriangulation<AdaptiveKernel<f64>, (), (), D>;
 type FlipTriangulation4 = DelaunayTriangulation<RobustKernel<f64>, (), (), 4>;
-
-fn abort_benchmark(message: impl std::fmt::Display) -> ! {
-    #[cfg(not(feature = "bench-logging"))]
-    let _ = &message;
-    #[cfg(feature = "bench-logging")]
-    tracing::error!("{message}");
-    std::process::exit(1);
-}
-
-fn bench_result<T, E: std::fmt::Display>(result: Result<T, E>, context: &str) -> T {
-    match result {
-        Ok(value) => value,
-        Err(error) => abort_benchmark(format_args!("{context}: {error}")),
-    }
-}
-
-fn bench_option<T>(option: Option<T>, context: impl std::fmt::Display) -> T {
-    option.unwrap_or_else(|| abort_benchmark(context))
-}
 
 fn retry_attempts(value: usize) -> NonZeroUsize {
     let Some(attempts) = NonZeroUsize::new(value) else {
@@ -371,7 +357,7 @@ fn prepare_dt<const D: usize>(dim_seed: u64, count: usize) -> BenchTriangulation
 
     bench_result(
         BenchTriangulation::<D>::new_with_options(&vertices, options),
-        &format!("failed to prepare {D}D benchmark triangulation with {count} vertices"),
+        format!("failed to prepare {D}D benchmark triangulation with {count} vertices"),
     )
 }
 
@@ -385,9 +371,7 @@ fn prepare_adv_dt<const D: usize>(dim_seed: u64, count: usize) -> BenchTriangula
 
     bench_result(
         BenchTriangulation::<D>::new_with_options(&vertices, options),
-        &format!(
-            "failed to prepare adversarial {D}D benchmark triangulation with {count} vertices"
-        ),
+        format!("failed to prepare adversarial {D}D benchmark triangulation with {count} vertices"),
     )
 }
 
@@ -403,7 +387,7 @@ fn prepare_inserts<const D: usize>(
     let points = match dataset {
         Dataset::WellConditioned => bench_result(
             generate_random_points_seeded::<f64, D>(count, (-50.0, 50.0), seed),
-            &format!("insert point generation failed for {D}D"),
+            format!("insert point generation failed for {D}D"),
         ),
         Dataset::Adversarial => generate_adv_points::<D>(count, seed),
     };
@@ -421,7 +405,7 @@ fn find_seed_vertices<const D: usize>(
         let candidate_seed = start_seed.wrapping_add(offset as u64);
         let points = bench_result(
             generate_random_points_seeded::<f64, D>(count, bounds, candidate_seed),
-            &format!("generate_random_points_seeded failed for {D}D"),
+            format!("generate_random_points_seeded failed for {D}D"),
         );
         let vertices = points.iter().map(|p| vertex!(*p)).collect::<Vec<_>>();
 
@@ -507,7 +491,7 @@ fn prepare_adv_data<const D: usize>(
 fn generate_adv_points<const D: usize>(count: usize, seed: u64) -> Vec<Point<f64, D>> {
     let base_points = bench_result(
         generate_random_points_seeded::<f64, D>(count, (-1.0, 1.0), seed),
-        &format!("generate_random_points_seeded failed for adversarial {D}D"),
+        format!("generate_random_points_seeded failed for adversarial {D}D"),
     );
 
     base_points
@@ -1013,10 +997,13 @@ fn bench_hull_case<const D: usize>(
         ),
         |b| {
             b.iter(|| {
-                black_box(bench_result(
-                    ConvexHull::from_triangulation(dt.as_triangulation()),
-                    &format!("{dimension}D convex hull extraction should succeed"),
-                ));
+                let hull = match ConvexHull::from_triangulation(dt.as_triangulation()) {
+                    Ok(value) => value,
+                    Err(error) => abort_benchmark(format_args!(
+                        "convex hull extraction should succeed: {error}"
+                    )),
+                };
+                black_box(hull);
             });
         },
     );

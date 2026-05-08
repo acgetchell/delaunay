@@ -36,36 +36,11 @@ use criterion::{BenchmarkId, Criterion, Throughput, criterion_group, criterion_m
 use delaunay::prelude::generators::generate_random_points_seeded;
 use delaunay::prelude::query::*;
 use std::hint::black_box;
-#[cfg(feature = "bench-logging")]
-use std::sync::Once;
 
-#[cfg(feature = "bench-logging")]
-fn init_tracing() {
-    static INIT: Once = Once::new();
-    INIT.call_once(|| {
-        let filter = tracing_subscriber::EnvFilter::try_from_default_env()
-            .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("error"));
-        let _ = tracing_subscriber::fmt().with_env_filter(filter).try_init();
-    });
-}
-
-fn abort_benchmark<E: std::fmt::Display>(context: &str, error: E) -> ! {
-    #[cfg(not(feature = "bench-logging"))]
-    let _ = (context, &error);
-    #[cfg(feature = "bench-logging")]
-    {
-        init_tracing();
-        tracing::error!(context = %context, error = %error);
-    }
-    std::process::exit(1);
-}
-
-fn bench_result<T, E: std::fmt::Display>(result: Result<T, E>, context: &str) -> T {
-    match result {
-        Ok(value) => value,
-        Err(error) => abort_benchmark(context, error),
-    }
-}
+/// Shared benchmark setup error helpers.
+#[path = "common/bench_utils.rs"]
+pub mod bench_utils;
+use bench_utils::{abort_benchmark, bench_result};
 
 /// Deterministic seed for query-point generation in the hot path.
 const HOT_SEED: u64 = 0xC01D_BEEF_0000_CAFE_u64;
@@ -120,7 +95,7 @@ fn run_insphere<const D: usize>(simplex: &[Point<f64, D>], queries: &[Point<f64,
     for q in queries {
         let result = match insphere(black_box(simplex), black_box(*q)) {
             Ok(value) => value,
-            Err(error) => abort_benchmark("insphere query failed", error),
+            Err(error) => abort_benchmark(format_args!("insphere query failed: {error}")),
         };
         black_box(result);
     }
@@ -131,7 +106,7 @@ fn run_insphere_lifted<const D: usize>(simplex: &[Point<f64, D>], queries: &[Poi
     for q in queries {
         let result = match insphere_lifted(black_box(simplex), black_box(*q)) {
             Ok(value) => value,
-            Err(error) => abort_benchmark("insphere_lifted query failed", error),
+            Err(error) => abort_benchmark(format_args!("insphere_lifted query failed: {error}")),
         };
         black_box(result);
     }

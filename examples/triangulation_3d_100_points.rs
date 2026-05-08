@@ -29,9 +29,13 @@ use delaunay::prelude::AdjacencyIndexBuildError;
 use delaunay::prelude::generators::generate_random_triangulation;
 use delaunay::prelude::query::*;
 use delaunay::prelude::topology::validation as topology_validation;
+use delaunay::prelude::triangulation::DelaunayTriangulationConstructionError;
 use num_traits::NumCast;
 use num_traits::cast::cast;
-use std::time::Instant;
+use std::{
+    env,
+    time::{Duration, Instant},
+};
 
 const SEED_CANDIDATES: &[u64] = &[1, 7, 11, 42, 99, 123, 666];
 
@@ -39,11 +43,16 @@ const SEED_CANDIDATES: &[u64] = &[1, 7, 11, 42, 99, 123, 666];
 enum Triangulation3dExampleError {
     #[error(transparent)]
     AdjacencyIndex(#[from] AdjacencyIndexBuildError),
-    #[error("failed to create triangulation after trying seeds {seed_candidates:?}: {last_error}")]
+    #[error("failed to create triangulation after trying seeds {seed_candidates:?}: {source}")]
     TriangulationConstruction {
         seed_candidates: Vec<u64>,
-        last_error: String,
+        #[source]
+        source: DelaunayTriangulationConstructionError,
     },
+    #[error(
+        "failed to create triangulation because no seed candidates were available: {seed_candidates:?}"
+    )]
+    MissingSeedCandidates { seed_candidates: Vec<u64> },
 }
 
 fn main() -> Result<(), Triangulation3dExampleError> {
@@ -55,10 +64,9 @@ fn main() -> Result<(), Triangulation3dExampleError> {
     // Use a fixed seed + bounds so that `just examples` is reproducible and robust.
     let n_points = 100;
     let bounds = (-3.0, 3.0);
-    let seed_override: Option<u64> = std::env::var("DELAUNAY_EXAMPLE_SEED")
+    let seed_override: Option<u64> = env::var("DELAUNAY_EXAMPLE_SEED")
         .ok()
-        .and_then(|value| value.parse().ok())
-        .or(None);
+        .and_then(|value| value.parse().ok());
     let seed_candidates: Vec<u64> =
         seed_override.map_or_else(|| SEED_CANDIDATES.to_vec(), |seed| vec![seed]);
 
@@ -68,7 +76,7 @@ fn main() -> Result<(), Triangulation3dExampleError> {
     );
     let start = Instant::now();
 
-    let mut last_error: Option<String> = None;
+    let mut last_error: Option<DelaunayTriangulationConstructionError> = None;
     let mut used_seed: Option<u64> = None;
     let mut dt: Option<DelaunayTriangulation<AdaptiveKernel<f64>, (), (), 3>> = None;
     for &candidate in &seed_candidates {
@@ -78,27 +86,27 @@ fn main() -> Result<(), Triangulation3dExampleError> {
                 used_seed = Some(candidate);
                 break;
             }
-            Err(e) => {
-                last_error = Some(format!("{e}"));
+            Err(error) => {
+                last_error = Some(error);
             }
         }
     }
 
-    let dt: DelaunayTriangulation<AdaptiveKernel<f64>, (), (), 3> = if let Some(triangulation) = dt
-    {
-        let construction_time = start.elapsed();
-        if let Some(seed) = used_seed {
-            println!("✓ Triangulation created successfully in {construction_time:?} (seed={seed})");
-        } else {
-            println!("✓ Triangulation created successfully in {construction_time:?}");
-        }
-        triangulation
-    } else {
+    let Some(dt) = dt else {
+        let Some(source) = last_error else {
+            return Err(Triangulation3dExampleError::MissingSeedCandidates { seed_candidates });
+        };
         return Err(Triangulation3dExampleError::TriangulationConstruction {
             seed_candidates,
-            last_error: last_error.unwrap_or_else(|| "unknown error".to_string()),
+            source,
         });
     };
+    let construction_time = start.elapsed();
+    if let Some(seed) = used_seed {
+        println!("✓ Triangulation created successfully in {construction_time:?} (seed={seed})");
+    } else {
+        println!("✓ Triangulation created successfully in {construction_time:?}");
+    }
 
     // Display some vertex information by accessing the triangulation's vertices
     let vertex_count = dt.tds().number_of_vertices();
@@ -382,13 +390,22 @@ where
         })
         .collect();
 
+    if validation_times.is_empty() {
+        #[cfg(feature = "diagnostics")]
+        tracing::warn!("validation timing skipped: no validation runs were recorded");
+        return;
+    }
+
     let len_u32 = u32::try_from(validation_times.len()).unwrap_or(1u32);
-    let avg_validation_time: std::time::Duration =
-        validation_times.iter().sum::<std::time::Duration>() / len_u32;
+    let avg_validation_time: Duration = validation_times.iter().sum::<Duration>() / len_u32;
     let Some(min_validation_time) = validation_times.iter().min().copied() else {
+        #[cfg(feature = "diagnostics")]
+        tracing::warn!("validation timing skipped: no minimum validation time was recorded");
         return;
     };
     let Some(max_validation_time) = validation_times.iter().max().copied() else {
+        #[cfg(feature = "diagnostics")]
+        tracing::warn!("validation timing skipped: no maximum validation time was recorded");
         return;
     };
 
@@ -407,8 +424,7 @@ where
         .collect();
 
     let len_u32_boundary = u32::try_from(boundary_times.len()).unwrap_or(1u32);
-    let avg_boundary_time: std::time::Duration =
-        boundary_times.iter().sum::<std::time::Duration>() / len_u32_boundary;
+    let avg_boundary_time: Duration = boundary_times.iter().sum::<Duration>() / len_u32_boundary;
 
     println!("\n  Boundary Computation Performance (3 runs):");
     println!("    • Average time: {avg_boundary_time:?}");

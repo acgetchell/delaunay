@@ -75,23 +75,10 @@ use std::num::NonZeroUsize;
 use std::sync::Once;
 use std::time::{Duration, Instant};
 
-fn abort_benchmark(message: impl std::fmt::Display) -> ! {
-    #[cfg(not(feature = "bench-logging"))]
-    let _ = &message;
-    #[cfg(feature = "bench-logging")]
-    {
-        init_tracing();
-        tracing::error!(target: "bench", "{message}");
-    }
-    std::process::exit(1);
-}
-
-fn bench_result<T, E: std::fmt::Display>(result: Result<T, E>, context: &str) -> T {
-    match result {
-        Ok(value) => value,
-        Err(error) => abort_benchmark(format_args!("{context}: {error}")),
-    }
-}
+/// Shared benchmark setup error helpers.
+#[path = "common/bench_utils.rs"]
+pub mod bench_utils;
+use bench_utils::{abort_benchmark, bench_result};
 
 fn retry_attempts(value: usize) -> NonZeroUsize {
     let Some(attempts) = NonZeroUsize::new(value) else {
@@ -974,8 +961,14 @@ fn bench_bottlenecks(c: &mut Criterion) {
                     },
                     |dt| {
                         if let Some(dt) = dt {
-                            let boundary_facets =
-                                bench_result(dt.tds().boundary_facets(), "boundary_facets failed");
+                            let boundary_facets = match dt.tds().boundary_facets() {
+                                Ok(value) => value,
+                                Err(error) => {
+                                    abort_benchmark(format_args!(
+                                        "boundary_facets failed: {error}"
+                                    ));
+                                }
+                            };
                             black_box(boundary_facets);
                         }
                     },
@@ -1000,10 +993,12 @@ fn bench_bottlenecks(c: &mut Criterion) {
                     },
                     |dt| {
                         if let Some(dt) = dt {
-                            let hull = bench_result(
-                                ConvexHull::from_triangulation(dt.as_triangulation()),
-                                "convex hull extraction failed",
-                            );
+                            let hull = match ConvexHull::from_triangulation(dt.as_triangulation()) {
+                                Ok(value) => value,
+                                Err(error) => abort_benchmark(format_args!(
+                                    "convex hull extraction failed: {error}"
+                                )),
+                            };
                             black_box(hull);
                         }
                     },

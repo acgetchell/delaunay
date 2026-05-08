@@ -18,24 +18,10 @@ use delaunay::prelude::generators::generate_random_points_seeded;
 use delaunay::prelude::query::*;
 use std::hint::black_box;
 
-fn abort_benchmark(message: impl std::fmt::Display) -> ! {
-    #[cfg(not(feature = "bench-logging"))]
-    let _ = &message;
-    #[cfg(feature = "bench-logging")]
-    tracing::error!("{message}");
-    std::process::exit(1);
-}
-
-fn bench_result<T, E: std::fmt::Display>(result: Result<T, E>, context: &str) -> T {
-    match result {
-        Ok(value) => value,
-        Err(error) => abort_benchmark(format_args!("{context}: {error}")),
-    }
-}
-
-fn bench_option<T>(option: Option<T>, context: &str) -> T {
-    option.unwrap_or_else(|| abort_benchmark(context))
-}
+/// Shared benchmark setup error helpers.
+#[path = "common/bench_utils.rs"]
+pub mod bench_utils;
+use bench_utils::{abort_benchmark, bench_option, bench_result};
 
 /// Generate a standard D-dimensional simplex (D+1 vertices)
 ///

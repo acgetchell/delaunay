@@ -85,13 +85,18 @@ use delaunay::prelude::triangulation::{
 use delaunay::vertex;
 use std::hint::black_box;
 use std::num::NonZeroUsize;
-use std::sync::{Mutex, OnceLock};
+use std::sync::{Mutex, Once, OnceLock};
 use std::time::Duration;
-use sysinfo::{ProcessRefreshKind, ProcessesToUpdate, RefreshKind, System};
+use sysinfo::{ProcessRefreshKind, ProcessesToUpdate, RefreshKind, System, get_current_pid};
+
+/// Shared benchmark setup error helpers.
+#[path = "common/bench_utils.rs"]
+pub mod bench_utils;
+use bench_utils::{abort_benchmark, bench_result};
 
 #[cfg(feature = "bench-logging")]
 fn init_tracing() {
-    static INIT: std::sync::Once = std::sync::Once::new();
+    static INIT: Once = Once::new();
     INIT.call_once(|| {
         let filter = tracing_subscriber::EnvFilter::try_from_default_env()
             .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info"));
@@ -110,24 +115,6 @@ macro_rules! bench_info {
             tracing::info!($($arg)*);
         }
     }};
-}
-
-fn abort_benchmark(message: impl std::fmt::Display) -> ! {
-    #[cfg(not(feature = "bench-logging"))]
-    let _ = &message;
-    #[cfg(feature = "bench-logging")]
-    {
-        init_tracing();
-        tracing::error!("{message}");
-    }
-    std::process::exit(1);
-}
-
-fn bench_result<T, E: std::fmt::Display>(result: Result<T, E>, context: &str) -> T {
-    match result {
-        Ok(value) => value,
-        Err(error) => abort_benchmark(format_args!("{context}: {error}")),
-    }
 }
 
 /// Memory usage information for benchmarking (in KiB)
@@ -149,14 +136,14 @@ struct MemoryInfo {
 /// Get current process memory usage in KiB
 fn get_memory_usage() -> u64 {
     static SYS: OnceLock<Mutex<System>> = OnceLock::new();
-    static UNIT_LOGGED: std::sync::Once = std::sync::Once::new();
+    static UNIT_LOGGED: Once = Once::new();
 
     // Log memory unit on first call for clarity in all benchmark runs
     UNIT_LOGGED.call_once(|| {
         bench_info!("Memory measurements in KiB (sysinfo::Process::memory() / 1024)");
     });
 
-    let pid = bench_result(sysinfo::get_current_pid(), "failed to get current PID");
+    let pid = bench_result(get_current_pid(), "failed to get current PID");
     let sys = SYS.get_or_init(|| {
         Mutex::new(System::new_with_specifics(
             RefreshKind::nothing().with_processes(ProcessRefreshKind::nothing().with_memory()),
@@ -236,7 +223,7 @@ fn construct_triangulation<const D: usize>(
 ) -> DelaunayTriangulation<AdaptiveKernel<f64>, (), (), D> {
     bench_result(
         DelaunayTriangulation::new_with_options(vertices, construction_options(seed)),
-        &format!(
+        format!(
             "failed to create triangulation (dim={D}, n_vertices={}, seed={seed})",
             vertices.len()
         ),

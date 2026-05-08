@@ -249,12 +249,6 @@ mod tests {
     fn test_cell_vertex_buffer_stack_allocation_boundary() {
         let mut vertex_slots: SlotMap<VertexKey, i32> = SlotMap::default();
 
-        eprintln!(
-            "inline capacity: {}, uuid size: {} bytes",
-            MAX_PRACTICAL_DIMENSION_SIZE,
-            std::mem::size_of::<Uuid>()
-        );
-
         // Test D=7 case: 8 vertices (D+1) should stay on stack
         // MAX_PRACTICAL_DIMENSION_SIZE is 8, so inline capacity is 8
         let mut buffer_d7: CellVertexBuffer = CellVertexBuffer::new();

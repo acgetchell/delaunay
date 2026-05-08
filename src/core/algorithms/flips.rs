@@ -9088,6 +9088,7 @@ mod tests {
     struct TopologySnapshot {
         vertices: Vec<Uuid>,
         cell_vertices: Vec<Vec<Uuid>>,
+        cell_neighbors: Vec<Vec<Option<Uuid>>>,
     }
 
     fn snapshot_topology<const D: usize>(tds: &Tds<f64, (), (), D>) -> TopologySnapshot {
@@ -9108,10 +9109,37 @@ mod tests {
             .collect();
         cell_vertices.sort();
 
+        let cell_neighbors = snapshot_neighbors(tds);
+
         TopologySnapshot {
             vertices,
             cell_vertices,
+            cell_neighbors,
         }
+    }
+
+    fn snapshot_neighbors<const D: usize>(tds: &Tds<f64, (), (), D>) -> Vec<Vec<Option<Uuid>>> {
+        let mut cell_neighbors: Vec<Vec<Option<Uuid>>> = tds
+            .cells()
+            .map(|(_, cell)| {
+                let mut neighbors: Vec<Option<Uuid>> = cell
+                    .neighbors()
+                    .map(|neighbor_keys| {
+                        neighbor_keys
+                            .iter()
+                            .map(|neighbor| {
+                                neighbor
+                                    .and_then(|neighbor_key| tds.cell(neighbor_key).map(Cell::uuid))
+                            })
+                            .collect()
+                    })
+                    .unwrap_or_default();
+                neighbors.sort();
+                neighbors
+            })
+            .collect();
+        cell_neighbors.sort();
+        cell_neighbors
     }
 
     fn snapshot_incidence<const D: usize>(tds: &Tds<f64, (), (), D>) -> Vec<(Uuid, Option<Uuid>)> {
@@ -9128,6 +9156,11 @@ mod tests {
             .collect();
         incident_cells.sort();
         incident_cells
+    }
+
+    fn assert_same_vertex_cell_topology(actual: &TopologySnapshot, expected: &TopologySnapshot) {
+        assert_eq!(actual.vertices, expected.vertices);
+        assert_eq!(actual.cell_vertices, expected.cell_vertices);
     }
 
     fn insert_translated_simplex<const D: usize>(
@@ -9315,7 +9348,8 @@ mod tests {
                     }
 
                     assert!(tds.is_valid().is_ok());
-                    assert_eq!(snapshot_topology(&tds), before);
+                    let after = snapshot_topology(&tds);
+                    assert_same_vertex_cell_topology(&after, &before);
                 }
             }
         };
@@ -9416,7 +9450,8 @@ mod tests {
                     }
 
                     assert!(tds.is_valid().is_ok());
-                    assert_eq!(snapshot_topology(&tds), before);
+                    let after = snapshot_topology(&tds);
+                    assert_same_vertex_cell_topology(&after, &before);
                 }
             }
         };
@@ -10150,7 +10185,8 @@ mod tests {
             let _info_back = apply_bistellar_flip_dynamic(&mut tds, 3, &context_back).unwrap();
 
             assert!(tds.is_valid().is_ok());
-            assert_eq!(snapshot_topology(&tds), before);
+            let after = snapshot_topology(&tds);
+            assert_same_vertex_cell_topology(&after, &before);
         }
     }
 

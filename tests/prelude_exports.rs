@@ -30,6 +30,7 @@ use delaunay::prelude::ordering::{
 use delaunay::prelude::query::ConvexHull;
 #[cfg(feature = "diagnostics")]
 use delaunay::prelude::tds::Tds;
+use delaunay::prelude::tds::TdsMutationError;
 use delaunay::prelude::triangulation::delaunayize::{
     DelaunayizeConfig, DelaunayizeError, DelaunayizeOutcome, delaunayize_by_flips,
 };
@@ -93,14 +94,11 @@ fn preludes_cover_bench_apis() -> Result<(), PreludeExportTestError> {
         DelaunayConstructionFailure::GeometricDegeneracy { .. }
     ));
     assert!(matches!(LocateResult::Outside, LocateResult::Outside));
+    assert_send_sync_unpin::<TdsMutationError>();
     Ok(())
 }
 
 #[test]
-#[expect(
-    clippy::result_large_err,
-    reason = "test preserves typed delaunayize failures instead of erasing them"
-)]
 fn diagnostic_preludes_cover_repair_apis() -> Result<(), PreludeExportTestError> {
     let vertices: Vec<Vertex<f64, (), 3>> = vec![
         vertex!([0.0, 0.0, 0.0]),

@@ -21,23 +21,13 @@ use delaunay::vertex;
 use std::hint::black_box;
 use std::time::Duration;
 
+/// Shared benchmark setup error helpers.
+#[path = "common/bench_utils.rs"]
+pub mod bench_utils;
+use bench_utils::{abort_benchmark, bench_result};
+
 const BOUNDS: (f64, f64) = (-100.0, 100.0);
 const SEED_SALT: u64 = 0x9E37_79B9_7F4A_7C15;
-
-fn abort_benchmark(message: impl std::fmt::Display) -> ! {
-    #[cfg(not(feature = "bench-logging"))]
-    let _ = &message;
-    #[cfg(feature = "bench-logging")]
-    tracing::error!("{message}");
-    std::process::exit(1);
-}
-
-fn bench_result<T, E: std::fmt::Display>(result: Result<T, E>, context: &str) -> T {
-    match result {
-        Ok(value) => value,
-        Err(error) => abort_benchmark(format_args!("{context}: {error}")),
-    }
-}
 
 fn bench_dimension<const D: usize>(
     c: &mut Criterion,
