@@ -45,6 +45,20 @@ The useful updates ported in this pass are:
   constructors.
 - release documentation describing the no-temporary-tag changelog flow and
   final annotated tag creation from the generated changelog.
+- `scripts/tag_release.py` now normalizes archived changelog paths with
+  `as_posix()` before rendering GitHub URLs, with a regression test that
+  exercises a Windows-style archive path.
+- `just semgrep-test` now discovers all fixtures under `tests/semgrep` by
+  mirroring fixture paths to a temporary Semgrep config tree backed by the
+  repository `semgrep.yaml`, matching the causal-triangulations fixture
+  discovery model.
+- `.github/workflows/rust-clippy.yml` now matches the hardened SARIF pipeline:
+  `set -euo pipefail`, `clippy::cargo`, and guarded upload that skips missing
+  SARIF files and forked pull-request uploads.
+- `.github/workflows/semgrep-sarif.yml` adds the direct repository-rule SARIF
+  workflow used by causal-triangulations, pinned to this repository's current
+  uv version. It complements the Codacy Opengrep workflow by uploading
+  Semgrep-native SARIF and failing the workflow on repository-rule findings.
 
 ## Intentional Differences
 
