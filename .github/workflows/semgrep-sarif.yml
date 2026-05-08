@@ -1,0 +1,75 @@
+name: Repository Rule SARIF
+
+concurrency:
+  group: >
+    semgrep-sarif-${{ github.workflow }}-${{
+      github.event_name == 'pull_request' &&
+      github.event.pull_request.number ||
+      github.ref
+    }}
+  cancel-in-progress: true
+
+on:
+  push:
+    branches: ["main"]
+  pull_request:
+    branches: ["main"]
+  schedule:
+    - cron: "42 0 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  security-events: write
+  actions: read
+
+env:
+  UV_VERSION: "0.11.8"
+
+jobs:
+  semgrep-sarif:
+    name: Repository Rule SARIF Analysis
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b # v8.1.0
+        with:
+          version: ${{ env.UV_VERSION }}
+
+      - name: Run repository Semgrep rules
+        id: semgrep
+        run: |
+          set +e
+          uv run semgrep \
+            --error \
+            --strict \
+            --timeout 30 \
+            --config semgrep.yaml \
+            --sarif \
+            --output semgrep-results.sarif \
+            .
+          status=$?
+          echo "exit_code=$status" >> "$GITHUB_OUTPUT"
+          exit 0
+
+      - name: Upload SARIF results
+        if: >-
+          always() &&
+          hashFiles('semgrep-results.sarif') != '' &&
+          (
+            github.event_name != 'pull_request' ||
+            github.event.pull_request.head.repo.full_name == github.repository
+          )
+        uses: github/codeql-action/upload-sarif@b25d0ebf40e5b63ee81e1bd6e5d2a12b7c2aeb61 # v4
+        with:
+          sarif_file: semgrep-results.sarif
+          category: semgrep-repository-rules
+          wait-for-processing: true
+
+      - name: Fail on repository rule findings
+        if: steps.semgrep.outputs.exit_code != '0'
+        run: exit 1

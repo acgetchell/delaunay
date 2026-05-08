@@ -612,10 +612,23 @@ semgrep: _ensure-uv
 semgrep-test: _ensure-uv
     #!/usr/bin/env bash
     set -euo pipefail
-    cd tests/semgrep
-    uv run semgrep scan --test --strict --config ../../semgrep.yaml src/core/algorithms/no_std_hash_collections.rs
-    uv run semgrep scan --test --strict --config ../../semgrep.yaml src/project_rules/rust_style.rs
-    uv run semgrep scan --test --strict --config ../../semgrep.yaml scripts/tests/python_exceptions.py
+    config_dir="$(mktemp -d "${TMPDIR:-/tmp}/delaunay-semgrep-config.XXXXXX")"
+    cleanup() {
+        find "$config_dir" -type l -exec unlink {} \;
+        find "$config_dir" -depth -type d -exec rmdir {} +
+    }
+    trap cleanup EXIT
+
+    # Semgrep directory test mode maps fixture paths to config paths, so mirror
+    # each fixture to the shared config while keeping semgrep.yaml authoritative.
+    while IFS= read -r -d '' fixture; do
+        rel="${fixture#tests/semgrep/}"
+        config_path="$config_dir/${rel%.*}.yaml"
+        mkdir -p "$(dirname "$config_path")"
+        ln -s "$PWD/semgrep.yaml" "$config_path"
+    done < <(find tests/semgrep -type f ! -name '*.fixed' -print0)
+
+    uv run semgrep scan --test --strict --config "$config_dir" tests/semgrep
 
 # Development setup
 setup: setup-tools
