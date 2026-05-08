@@ -84,6 +84,7 @@ This matters for large-scale investigations that need to run under
 |---|---|---|---|
 | `DELAUNAY_DEBUG_NEIGHBORS` | presence | `incremental_insertion.rs`, `triangulation.rs` | Neighbor symmetry checks after cavity wiring and hull extension |
 | `DELAUNAY_DEBUG_RIDGE_LINK` | presence | `incremental_insertion.rs`, `triangulation.rs` | Ridge-link validation after wiring; skipped external facet matches |
+| `DELAUNAY_FORCE_GLOBAL_NEIGHBOR_REBUILD` | presence | `triangulation.rs` | `[release]` Bypass local repair; use global rebuild for A/B isolation. |
 
 ## Flip Repair
 

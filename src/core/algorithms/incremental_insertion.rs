@@ -542,21 +542,37 @@ impl From<TriangulationConstructionError> for InitialSimplexConstructionError {
     }
 }
 
-/// Structured reason why a global neighbor rebuild failed after cavity repair.
+/// Structured reason why neighbor repair failed after cavity repair.
+///
+/// # Examples
+///
+/// ```rust
+/// use delaunay::prelude::tds::CellKey;
+/// use delaunay::prelude::triangulation::insertion::{
+///     NeighborRebuildError, NeighborWiringError,
+/// };
+/// use slotmap::KeyData;
+///
+/// let cell_key = CellKey::from(KeyData::from_ffi(11));
+/// let err = NeighborRebuildError::Wiring {
+///     reason: NeighborWiringError::MissingCell { cell_key },
+/// };
+/// assert!(matches!(err, NeighborRebuildError::Wiring { .. }));
+/// ```
 #[derive(Debug, Clone, thiserror::Error, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum NeighborRebuildError {
-    /// Neighbor wiring failed during the rebuild.
-    #[error("neighbor wiring failed during rebuild: {reason}")]
+    /// Neighbor wiring failed while repairing neighbor pointers.
+    #[error("neighbor wiring failed while repairing neighbors: {reason}")]
     Wiring {
         /// Structured wiring failure.
         #[source]
         reason: NeighborWiringError,
     },
 
-    /// The rebuilt facet incidence is non-manifold.
+    /// The repaired facet incidence is non-manifold.
     #[error(
-        "non-manifold topology during neighbor rebuild: facet {facet_hash:#x} shared by {cell_count} cells"
+        "non-manifold topology while repairing neighbors: facet {facet_hash:#x} shared by {cell_count} cells"
     )]
     NonManifoldTopology {
         /// Hash of the over-shared facet.
@@ -565,19 +581,20 @@ pub enum NeighborRebuildError {
         cell_count: usize,
     },
 
-    /// TDS validation failed during neighbor rebuild.
-    #[error("TDS validation failed during neighbor rebuild: {reason}")]
+    /// TDS validation failed while repairing neighbor pointers.
+    #[error("TDS validation failed while repairing neighbors: {reason}")]
     TopologyValidation {
         /// Underlying TDS validation error.
         #[source]
         reason: TdsValidationFailure,
     },
 
-    /// Another insertion error escaped the neighbor-rebuild helper.
-    #[error("unexpected neighbor rebuild error: {message}")]
+    /// Another insertion error escaped the neighbor repair helper.
+    #[error("unexpected neighbor repair error: {source}")]
     Unexpected {
-        /// Display form of the unexpected insertion error.
-        message: String,
+        /// Insertion-layer error that did not map to a neighbor repair category.
+        #[source]
+        source: Box<InsertionError>,
     },
 }
 
@@ -695,8 +712,8 @@ pub enum CavityFillingError {
         stage: CavityRepairStage,
     },
 
-    /// Rebuilding neighbor pointers after cavity repair failed.
-    #[error("failed to rebuild neighbors after insertion repairs: {reason}")]
+    /// Repairing neighbor pointers after cavity repair failed.
+    #[error("failed to repair neighbors after insertion repairs: {reason}")]
     NeighborRebuild {
         /// Underlying insertion-layer error from the neighbor rebuild.
         #[source]
@@ -850,6 +867,24 @@ pub enum NeighborWiringError {
         cell_key: CellKey,
         /// Missing neighbor key.
         neighbor_key: CellKey,
+    },
+
+    /// A neighbor pointer does not point back through the matching mirror facet.
+    #[error(
+        "cell {cell_key:?} facet {facet_index} points to {neighbor_key:?}, \
+         but the mirror facet {mirror_facet_index:?} points back to {neighbor_back:?}"
+    )]
+    AsymmetricNeighbor {
+        /// Cell containing the neighbor pointer.
+        cell_key: CellKey,
+        /// Facet index in `cell_key`.
+        facet_index: usize,
+        /// Neighbor referenced by `cell_key`.
+        neighbor_key: CellKey,
+        /// Matching facet index in `neighbor_key`, if one could be found.
+        mirror_facet_index: Option<usize>,
+        /// Neighbor's pointer back through the mirror facet.
+        neighbor_back: Option<CellKey>,
     },
 
     /// Neighbor traversal discovered more cells than the TDS contains.
@@ -1033,7 +1068,7 @@ impl From<InsertionError> for NeighborRebuildError {
                 reason: source.into(),
             },
             other => Self::Unexpected {
-                message: other.to_string(),
+                source: Box::new(other),
             },
         }
     }
@@ -2050,7 +2085,6 @@ fn set_neighbor<T, U, V, const D: usize>(
     neighbor: Option<CellKey>,
 ) -> Result<(), InsertionError>
 where
-    T: CoordinateScalar,
     U: DataType,
     V: DataType,
 {
@@ -2079,6 +2113,323 @@ fn compute_facet_hash(sorted_vkeys: &[VertexKey]) -> u64 {
         vkey.hash(&mut hasher);
     }
     hasher.finish()
+}
+
+/// Compute a canonical hash for one cell facet so local repair can match
+/// newly exposed facets without scanning the full triangulation.
+fn facet_hash_for_cell<T, U, V, const D: usize>(cell: &Cell<T, U, V, D>, facet_idx: usize) -> u64
+where
+    U: DataType,
+    V: DataType,
+{
+    let mut facet_vkeys = SmallBuffer::<VertexKey, MAX_PRACTICAL_DIMENSION_SIZE>::new();
+    for (i, &vkey) in cell.vertices().iter().enumerate() {
+        if i != facet_idx {
+            facet_vkeys.push(vkey);
+        }
+    }
+    facet_vkeys.sort_unstable();
+    compute_facet_hash(&facet_vkeys)
+}
+
+/// Return whether `neighbor_key` is the cell incident across `cell`'s `facet_idx`.
+fn neighbor_slot_points_across_facet<T, U, V, const D: usize>(
+    tds: &Tds<T, U, V, D>,
+    cell: &Cell<T, U, V, D>,
+    facet_idx: usize,
+    neighbor_key: CellKey,
+) -> bool
+where
+    U: DataType,
+    V: DataType,
+{
+    tds.cell(neighbor_key)
+        .is_some_and(|neighbor_cell| cell.mirror_facet_index(facet_idx, neighbor_cell).is_some())
+}
+
+/// Repair neighbor pointers for a locally affected cell set.
+///
+/// This is the cold-path counterpart to [`repair_neighbor_pointers`]. It avoids a
+/// triangulation-wide facet scan after a small repair removes cells by:
+/// - seeding the affected set from `seeds` and `optional_external_cells`,
+/// - adding one-hop neighbors reachable through current pointers,
+/// - building facet incidence only for that affected set, and
+/// - filling only empty, dangling, or facet-incompatible neighbor slots that can be matched locally.
+///
+/// Existing valid neighbor pointers are preserved, including pointers into cells outside
+/// the affected set.
+///
+/// This helper is intentionally scoped: it only considers `seeds`,
+/// `optional_external_cells`, and one-hop neighbors reachable from those cells.
+/// Damage outside that local region is ignored. Use [`repair_neighbor_pointers`]
+/// when callers need a full triangulation-wide rebuild, or run validation after
+/// local repair when the affected region is not known precisely.
+///
+/// # Arguments
+///
+/// - `tds` - triangulation data structure whose neighbor slots may be repaired.
+/// - `seeds` - cells that mark the local region touched by cavity repair.
+/// - `optional_external_cells` - outside cells that share facets with the repaired region.
+///
+/// # Returns
+///
+/// `Ok(n)` where `n` is the number of neighbor-pointer slots whose values changed.
+///
+/// # Errors
+///
+/// Returns [`InsertionError::NeighborWiring`] if an affected cell is malformed, a facet index
+/// cannot fit in `u8`, or debug-only local validation finds a dangling or asymmetric neighbor
+/// pointer. Returns [`InsertionError::NonManifoldTopology`] if local facet incidence has more
+/// than two incident cells for one facet.
+///
+/// # Examples
+///
+/// ```rust
+/// use delaunay::prelude::triangulation::{DelaunayTriangulation, vertex};
+/// use delaunay::prelude::triangulation::DelaunayTriangulationConstructionError;
+/// use delaunay::prelude::triangulation::insertion::{
+///     InsertionError, TdsMutationError, repair_neighbor_pointers_local,
+/// };
+///
+/// # #[derive(Debug, thiserror::Error)]
+/// # enum ExampleError {
+/// #     #[error(transparent)]
+/// #     Construction(#[from] DelaunayTriangulationConstructionError),
+/// #     #[error(transparent)]
+/// #     Mutation(#[from] TdsMutationError),
+/// #     #[error(transparent)]
+/// #     Insertion(#[from] InsertionError),
+/// # }
+/// # fn main() -> Result<(), ExampleError> {
+/// let vertices = [
+///     vertex!([0.0, 0.0]),
+///     vertex!([1.0, 0.0]),
+///     vertex!([0.0, 1.0]),
+///     vertex!([1.0, 1.1]),
+/// ];
+/// let dt: DelaunayTriangulation<_, (), (), 2> = DelaunayTriangulation::new(&vertices)?;
+/// let mut tds = dt.tds().clone();
+///
+/// let (cell_key, facet_idx, neighbor_key) = tds
+///     .cells()
+///     .find_map(|(cell_key, cell)| {
+///         cell.neighbors()?.iter().enumerate().find_map(|(facet_idx, neighbor)| {
+///             neighbor.map(|neighbor_key| (cell_key, facet_idx, neighbor_key))
+///         })
+///     })
+///     .expect("test triangulation should contain adjacent cells");
+///
+/// let mut neighbors: Vec<_> = tds
+///     .cell(cell_key)
+///     .expect("cell key came from the TDS")
+///     .neighbors()
+///     .expect("neighbor slot exists")
+///     .iter()
+///     .copied()
+///     .collect();
+/// neighbors[facet_idx] = None;
+/// tds.set_neighbors_by_key(cell_key, &neighbors)?;
+///
+/// let repaired = repair_neighbor_pointers_local(&mut tds, &[cell_key], Some(&[neighbor_key]))?;
+/// assert_eq!(repaired, 1);
+/// assert_eq!(
+///     tds.cell(cell_key)
+///         .and_then(|cell| cell.neighbors())
+///         .and_then(|neighbors| neighbors.get(facet_idx))
+///         .copied()
+///         .flatten(),
+///     Some(neighbor_key)
+/// );
+/// # Ok(())
+/// # }
+/// ```
+#[expect(
+    clippy::too_many_lines,
+    reason = "Local neighbor repair keeps affected-set construction, facet indexing, and slot application together"
+)]
+pub fn repair_neighbor_pointers_local<T, U, V, const D: usize>(
+    tds: &mut Tds<T, U, V, D>,
+    seeds: &[CellKey],
+    optional_external_cells: Option<&[CellKey]>,
+) -> Result<usize, InsertionError>
+where
+    U: DataType,
+    V: DataType,
+{
+    type FacetIncidents = SmallBuffer<(CellKey, u8), 2>;
+
+    let mut affected_cells: FastHashSet<CellKey> = FastHashSet::default();
+    for &cell_key in seeds {
+        if tds.contains_cell(cell_key) {
+            affected_cells.insert(cell_key);
+        }
+    }
+    if let Some(external_cells) = optional_external_cells {
+        for &cell_key in external_cells {
+            if tds.contains_cell(cell_key) {
+                affected_cells.insert(cell_key);
+            }
+        }
+    }
+
+    if affected_cells.is_empty() {
+        return Ok(0);
+    }
+
+    // Expand once through existing pointers.  This keeps the repair local while
+    // including the surviving cells whose facets may now match a repaired seed.
+    let seed_snapshot: Vec<CellKey> = affected_cells.iter().copied().collect();
+    for cell_key in seed_snapshot {
+        let Some(cell) = tds.cell(cell_key) else {
+            continue;
+        };
+        let Some(neighbors) = cell.neighbors() else {
+            continue;
+        };
+        for &neighbor_key in neighbors.iter().flatten() {
+            if tds.contains_cell(neighbor_key) {
+                affected_cells.insert(neighbor_key);
+            }
+        }
+    }
+
+    let mut facet_map: FastHashMap<u64, FacetIncidents> = FastHashMap::default();
+
+    for &cell_key in &affected_cells {
+        let cell = tds
+            .cell(cell_key)
+            .ok_or(NeighborWiringError::MissingCell { cell_key })?;
+
+        let vertex_count = cell.number_of_vertices();
+        let expected = D + 1;
+        if vertex_count != expected {
+            return Err(NeighborWiringError::WrongCellArity {
+                cell_key,
+                expected,
+                found: vertex_count,
+            }
+            .into());
+        }
+
+        for facet_idx in 0..vertex_count {
+            let facet_hash = facet_hash_for_cell(cell, facet_idx);
+            let facet_idx_u8 =
+                u8::try_from(facet_idx).map_err(|_| NeighborWiringError::FacetIndexOverflow {
+                    facet_index: facet_idx,
+                    max: u8::MAX,
+                })?;
+
+            let entry = facet_map.entry(facet_hash).or_default();
+            entry.push((cell_key, facet_idx_u8));
+
+            if entry.len() > 2 {
+                return Err(InsertionError::NonManifoldTopology {
+                    facet_hash,
+                    cell_count: entry.len(),
+                });
+            }
+        }
+    }
+
+    let mut total_neighbor_slots_fixed = 0usize;
+
+    for &cell_key in &affected_cells {
+        let (vertex_count, old_neighbors, replacement_by_facet, current_usable_by_facet) = {
+            let cell = tds
+                .cell(cell_key)
+                .ok_or(NeighborWiringError::MissingCell { cell_key })?;
+            let vertex_count = cell.number_of_vertices();
+            let old_neighbors: SmallBuffer<Option<CellKey>, MAX_PRACTICAL_DIMENSION_SIZE> =
+                cell.neighbors().map_or_else(
+                    || SmallBuffer::from_elem(None, vertex_count),
+                    |neighbors| {
+                        let mut copied: SmallBuffer<Option<CellKey>, MAX_PRACTICAL_DIMENSION_SIZE> =
+                            neighbors.iter().copied().collect();
+                        copied.resize(vertex_count, None);
+                        copied
+                    },
+                );
+
+            let mut replacement_by_facet =
+                SmallBuffer::<Option<CellKey>, MAX_PRACTICAL_DIMENSION_SIZE>::new();
+            replacement_by_facet.resize(vertex_count, None);
+
+            let mut current_usable_by_facet =
+                SmallBuffer::<bool, MAX_PRACTICAL_DIMENSION_SIZE>::new();
+            current_usable_by_facet.resize(vertex_count, false);
+
+            for facet_idx in 0..vertex_count {
+                let current_neighbor = old_neighbors.get(facet_idx).copied().flatten();
+                let current_usable = current_neighbor.is_some_and(|neighbor_key| {
+                    neighbor_slot_points_across_facet(tds, cell, facet_idx, neighbor_key)
+                });
+                current_usable_by_facet[facet_idx] = current_usable;
+                if current_usable {
+                    continue;
+                }
+
+                let facet_hash = facet_hash_for_cell(cell, facet_idx);
+                let Some(incidents) = facet_map.get(&facet_hash) else {
+                    continue;
+                };
+                let [(c1, _), (c2, _)] = incidents.as_slice() else {
+                    continue;
+                };
+
+                replacement_by_facet[facet_idx] = if *c1 == cell_key {
+                    Some(*c2)
+                } else if *c2 == cell_key {
+                    Some(*c1)
+                } else {
+                    None
+                };
+            }
+
+            (
+                vertex_count,
+                old_neighbors,
+                replacement_by_facet,
+                current_usable_by_facet,
+            )
+        };
+
+        let mut rebuilt_neighbors = old_neighbors;
+        let mut changed = false;
+        for facet_idx in 0..vertex_count {
+            let current_neighbor = rebuilt_neighbors.get(facet_idx).copied().flatten();
+            if current_usable_by_facet[facet_idx] {
+                continue;
+            }
+
+            let replacement = replacement_by_facet[facet_idx];
+            if current_neighbor != replacement {
+                rebuilt_neighbors[facet_idx] = replacement;
+                total_neighbor_slots_fixed = total_neighbor_slots_fixed.saturating_add(1);
+                changed = true;
+            }
+        }
+
+        if !changed {
+            continue;
+        }
+
+        let cell = tds
+            .cell_mut(cell_key)
+            .ok_or(NeighborWiringError::MissingCell { cell_key })?;
+        if rebuilt_neighbors.iter().all(Option::is_none) {
+            cell.neighbors = None;
+        } else {
+            cell.neighbors = Some(rebuilt_neighbors);
+        }
+    }
+
+    #[cfg(debug_assertions)]
+    {
+        validate_no_neighbor_cycles_for_cells(tds, &affected_cells)?;
+        validate_neighbor_symmetry_for_cells(tds, &affected_cells)?;
+    }
+
+    Ok(total_neighbor_slots_fixed)
 }
 
 /// Repair neighbor pointers using a global facet-incidence rebuild.
@@ -2267,7 +2618,6 @@ fn validate_no_neighbor_cycles<T, U, V, const D: usize>(
     tds: &Tds<T, U, V, D>,
 ) -> Result<(), InsertionError>
 where
-    T: CoordinateScalar,
     U: DataType,
     V: DataType,
 {
@@ -2321,6 +2671,127 @@ where
     }
 
     tracing::trace!("validate_no_neighbor_cycles: neighbor walk terminated");
+    Ok(())
+}
+
+/// Validate neighbor walks from a local affected set after partial pointer repair.
+#[cfg(debug_assertions)]
+fn validate_no_neighbor_cycles_for_cells<T, U, V, const D: usize>(
+    tds: &Tds<T, U, V, D>,
+    sample_cells: &FastHashSet<CellKey>,
+) -> Result<(), InsertionError>
+where
+    U: DataType,
+    V: DataType,
+{
+    let sample_cells: Vec<CellKey> = sample_cells.iter().copied().take(10).collect();
+    let max_cells = tds.number_of_cells();
+
+    for &start_cell in &sample_cells {
+        let mut visited: FastHashSet<CellKey> = FastHashSet::default();
+        let mut to_visit = vec![start_cell];
+        visited.insert(start_cell);
+
+        while let Some(current) = to_visit.pop() {
+            let cell = tds
+                .cell(current)
+                .ok_or(NeighborWiringError::MissingCell { cell_key: current })?;
+
+            let Some(neighbors) = cell.neighbors() else {
+                continue;
+            };
+
+            for &neighbor_opt in neighbors {
+                let Some(neighbor_key) = neighbor_opt else {
+                    continue;
+                };
+
+                if neighbor_key == current {
+                    return Err(NeighborWiringError::SelfNeighbor { cell_key: current }.into());
+                }
+
+                if !tds.contains_cell(neighbor_key) {
+                    return Err(NeighborWiringError::MissingNeighborTarget {
+                        cell_key: current,
+                        neighbor_key,
+                    }
+                    .into());
+                }
+
+                if visited.insert(neighbor_key) {
+                    to_visit.push(neighbor_key);
+                    if visited.len() > max_cells {
+                        return Err(NeighborWiringError::NeighborWalkExceededCellCount {
+                            visited: visited.len(),
+                            total: max_cells,
+                        }
+                        .into());
+                    }
+                }
+            }
+        }
+    }
+
+    Ok(())
+}
+
+/// Check mirror-facet symmetry for neighbor slots touched by local repair.
+#[cfg(debug_assertions)]
+fn validate_neighbor_symmetry_for_cells<T, U, V, const D: usize>(
+    tds: &Tds<T, U, V, D>,
+    affected_cells: &FastHashSet<CellKey>,
+) -> Result<(), InsertionError>
+where
+    U: DataType,
+    V: DataType,
+{
+    for &cell_key in affected_cells {
+        let cell = tds
+            .cell(cell_key)
+            .ok_or(NeighborWiringError::MissingCell { cell_key })?;
+        let Some(neighbors) = cell.neighbors() else {
+            continue;
+        };
+
+        for (facet_idx, &neighbor_opt) in neighbors.iter().enumerate() {
+            let Some(neighbor_key) = neighbor_opt else {
+                continue;
+            };
+
+            if neighbor_key == cell_key {
+                return Err(NeighborWiringError::SelfNeighbor { cell_key }.into());
+            }
+
+            let Some(neighbor_cell) = tds.cell(neighbor_key) else {
+                return Err(NeighborWiringError::MissingNeighborTarget {
+                    cell_key,
+                    neighbor_key,
+                }
+                .into());
+            };
+
+            let mirror_facet_index = cell.mirror_facet_index(facet_idx, neighbor_cell);
+            let neighbor_back = mirror_facet_index.and_then(|mirror_idx| {
+                neighbor_cell
+                    .neighbors()
+                    .and_then(|neighbor_neighbors| neighbor_neighbors.get(mirror_idx))
+                    .copied()
+                    .flatten()
+            });
+
+            if neighbor_back != Some(cell_key) {
+                return Err(NeighborWiringError::AsymmetricNeighbor {
+                    cell_key,
+                    facet_index: facet_idx,
+                    neighbor_key,
+                    mirror_facet_index,
+                    neighbor_back,
+                }
+                .into());
+            }
+        }
+    }
+
     Ok(())
 }
 
@@ -3203,6 +3674,34 @@ mod tests {
     use crate::vertex;
     use slotmap::KeyData;
 
+    /// Return one mutual neighbor pair from a test TDS.
+    fn first_neighbor_pair<T, U, V, const D: usize>(
+        tds: &Tds<T, U, V, D>,
+    ) -> Option<(CellKey, u8, CellKey, u8)>
+    where
+        U: DataType,
+        V: DataType,
+    {
+        for (cell_key, cell) in tds.cells() {
+            let Some(neighbors) = cell.neighbors() else {
+                continue;
+            };
+            for (facet_idx, &neighbor_opt) in neighbors.iter().enumerate() {
+                let Some(neighbor_key) = neighbor_opt else {
+                    continue;
+                };
+                let Some(neighbor_cell) = tds.cell(neighbor_key) else {
+                    continue;
+                };
+                let mirror_idx = cell.mirror_facet_index(facet_idx, neighbor_cell)?;
+                let facet_idx = u8::try_from(facet_idx).ok()?;
+                let mirror_idx = u8::try_from(mirror_idx).ok()?;
+                return Some((cell_key, facet_idx, neighbor_key, mirror_idx));
+            }
+        }
+        None
+    }
+
     /// Macro to generate cavity filling tests for different dimensions
     macro_rules! test_fill_cavity {
         ($dim:literal, $initial_vertices:expr, $new_vertex:expr, $expected_facets:literal) => {
@@ -3663,7 +4162,7 @@ mod tests {
         let v_d = tds
             .insert_vertex_with_mapping(vertex!([0.0, -1.0]))
             .unwrap();
-        let v_e = tds.insert_vertex_with_mapping(vertex!([2.0, 0.0])).unwrap();
+        let v_e = tds.insert_vertex_with_mapping(vertex!([1.0, 1.0])).unwrap();
 
         let c1 = tds
             .insert_cell_with_mapping(Cell::new(vec![v_a, v_b, v_c], None).unwrap())
@@ -3757,6 +4256,22 @@ mod tests {
         ));
         assert!(err.to_string().contains("expected 3"));
         assert!(err.to_string().contains("has 2 vertices"));
+    }
+
+    #[test]
+    fn test_neighbor_rebuild_error_unexpected_preserves_source_error() {
+        let source = InsertionError::DuplicateCoordinates {
+            coordinates: "[0.0, 0.0]".to_string(),
+        };
+
+        let err = NeighborRebuildError::from(source.clone());
+
+        match err {
+            NeighborRebuildError::Unexpected { source: boxed } => {
+                assert_eq!(*boxed, source);
+            }
+            other => panic!("expected unexpected neighbor repair error, got {other:?}"),
+        }
     }
 
     #[test]
@@ -4283,6 +4798,269 @@ mod tests {
             "Expected at least one internal neighbor after repair"
         );
 
+        assert!(tds.is_valid().is_ok());
+    }
+
+    macro_rules! test_repair_neighbor_pointers_local_dimensions {
+        (
+            $dim:literal,
+            $initial_vertices:expr,
+            $shared_facet_vertices:expr,
+            $opposite_vertices:expr
+        ) => {
+            pastey::paste! {
+                #[test]
+                fn [<test_repair_neighbor_pointers_local_reconstructs_missing_slot_ $dim d>]() {
+                    let vertices = $initial_vertices;
+                    let mut dt = DelaunayTriangulation::<_, (), (), $dim>::new(&vertices).unwrap();
+                    let tds = dt.tds_mut();
+                    let (cell_key, facet_idx, neighbor_key, _) =
+                        first_neighbor_pair(tds).expect("test triangulation should have adjacent cells");
+
+                    set_neighbor(tds, cell_key, facet_idx, None).unwrap();
+                    let repaired = repair_neighbor_pointers_local(tds, &[cell_key], Some(&[neighbor_key]))
+                        .expect("local repair should reconstruct the missing slot");
+
+                    assert_eq!(repaired, 1);
+                    let cell = tds.cell(cell_key).unwrap();
+                    assert_eq!(
+                        cell.neighbors()
+                            .and_then(|neighbors| neighbors.get(usize::from(facet_idx)))
+                            .copied()
+                            .flatten(),
+                        Some(neighbor_key)
+                    );
+                    assert!(tds.is_valid().is_ok());
+                }
+
+                #[test]
+                fn [<test_repair_neighbor_pointers_local_reports_non_manifold_incidence_ $dim d>]() {
+                    let mut tds: Tds<f64, (), (), $dim> = Tds::empty();
+                    let shared_vertices = $shared_facet_vertices;
+                    let opposite_vertices = $opposite_vertices;
+
+                    let mut shared_keys = Vec::new();
+                    for vertex in shared_vertices {
+                        shared_keys.push(tds.insert_vertex_with_mapping(vertex).unwrap());
+                    }
+
+                    let mut cell_keys = Vec::new();
+                    for vertex in opposite_vertices {
+                        let opposite_key = tds.insert_vertex_with_mapping(vertex).unwrap();
+                        let mut vertices = shared_keys.clone();
+                        vertices.push(opposite_key);
+                        cell_keys.push(
+                            tds.insert_cell_with_mapping(Cell::new(vertices, None).unwrap())
+                                .unwrap(),
+                        );
+                    }
+
+                    let err = repair_neighbor_pointers_local(&mut tds, &cell_keys, None).unwrap_err();
+
+                    assert!(matches!(
+                        err,
+                        InsertionError::NonManifoldTopology { cell_count: 3, .. }
+                    ));
+                }
+            }
+        };
+    }
+
+    test_repair_neighbor_pointers_local_dimensions!(
+        2,
+        vec![
+            vertex!([0.0, 0.0]),
+            vertex!([1.0, 0.0]),
+            vertex!([0.0, 1.0]),
+            vertex!([1.0, 1.1]),
+        ],
+        vec![vertex!([0.0, 0.0]), vertex!([1.0, 0.0])],
+        vec![
+            vertex!([0.0, 1.0]),
+            vertex!([0.0, -1.0]),
+            vertex!([2.0, 0.0]),
+        ]
+    );
+
+    test_repair_neighbor_pointers_local_dimensions!(
+        3,
+        vec![
+            vertex!([0.0, 0.0, 0.0]),
+            vertex!([1.0, 0.0, 0.0]),
+            vertex!([0.0, 1.0, 0.0]),
+            vertex!([0.0, 0.0, 1.0]),
+            vertex!([0.25, 0.25, 0.25]),
+        ],
+        vec![
+            vertex!([0.0, 0.0, 0.0]),
+            vertex!([1.0, 0.0, 0.0]),
+            vertex!([0.0, 1.0, 0.0]),
+        ],
+        vec![
+            vertex!([0.0, 0.0, 1.0]),
+            vertex!([0.0, 0.0, -1.0]),
+            vertex!([1.0, 1.0, 1.0]),
+        ]
+    );
+
+    test_repair_neighbor_pointers_local_dimensions!(
+        4,
+        vec![
+            vertex!([0.0, 0.0, 0.0, 0.0]),
+            vertex!([1.0, 0.0, 0.0, 0.0]),
+            vertex!([0.0, 1.0, 0.0, 0.0]),
+            vertex!([0.0, 0.0, 1.0, 0.0]),
+            vertex!([0.0, 0.0, 0.0, 1.0]),
+            vertex!([0.2, 0.2, 0.2, 0.2]),
+        ],
+        vec![
+            vertex!([0.0, 0.0, 0.0, 0.0]),
+            vertex!([1.0, 0.0, 0.0, 0.0]),
+            vertex!([0.0, 1.0, 0.0, 0.0]),
+            vertex!([0.0, 0.0, 1.0, 0.0]),
+        ],
+        vec![
+            vertex!([0.0, 0.0, 0.0, 1.0]),
+            vertex!([0.0, 0.0, 0.0, -1.0]),
+            vertex!([1.0, 1.0, 1.0, 1.0]),
+        ]
+    );
+
+    test_repair_neighbor_pointers_local_dimensions!(
+        5,
+        vec![
+            vertex!([0.0, 0.0, 0.0, 0.0, 0.0]),
+            vertex!([1.0, 0.0, 0.0, 0.0, 0.0]),
+            vertex!([0.0, 1.0, 0.0, 0.0, 0.0]),
+            vertex!([0.0, 0.0, 1.0, 0.0, 0.0]),
+            vertex!([0.0, 0.0, 0.0, 1.0, 0.0]),
+            vertex!([0.0, 0.0, 0.0, 0.0, 1.0]),
+            vertex!([0.15, 0.15, 0.15, 0.15, 0.15]),
+        ],
+        vec![
+            vertex!([0.0, 0.0, 0.0, 0.0, 0.0]),
+            vertex!([1.0, 0.0, 0.0, 0.0, 0.0]),
+            vertex!([0.0, 1.0, 0.0, 0.0, 0.0]),
+            vertex!([0.0, 0.0, 1.0, 0.0, 0.0]),
+            vertex!([0.0, 0.0, 0.0, 1.0, 0.0]),
+        ],
+        vec![
+            vertex!([0.0, 0.0, 0.0, 0.0, 1.0]),
+            vertex!([0.0, 0.0, 0.0, 0.0, -1.0]),
+            vertex!([1.0, 1.0, 1.0, 1.0, 1.0]),
+        ]
+    );
+
+    #[test]
+    fn test_repair_neighbor_pointers_local_replaces_stale_neighbor_slot() {
+        let vertices = vec![
+            vertex!([0.0, 0.0]),
+            vertex!([1.0, 0.0]),
+            vertex!([0.0, 1.0]),
+            vertex!([1.0, 1.1]),
+        ];
+        let mut dt = DelaunayTriangulation::<_, (), (), 2>::new(&vertices).unwrap();
+        let tds = dt.tds_mut();
+        let (cell_key, facet_idx, neighbor_key, _) =
+            first_neighbor_pair(tds).expect("test triangulation should have adjacent cells");
+        let stale_neighbor = CellKey::from(KeyData::from_ffi(u64::MAX - 7));
+        assert!(!tds.contains_cell(stale_neighbor));
+
+        set_neighbor(tds, cell_key, facet_idx, Some(stale_neighbor)).unwrap();
+        let repaired = repair_neighbor_pointers_local(tds, &[cell_key], Some(&[neighbor_key]))
+            .expect("local repair should replace a stale neighbor slot");
+
+        assert_eq!(repaired, 1);
+        let cell = tds.cell(cell_key).unwrap();
+        assert_eq!(
+            cell.neighbors()
+                .and_then(|neighbors| neighbors.get(usize::from(facet_idx)))
+                .copied()
+                .flatten(),
+            Some(neighbor_key)
+        );
+        assert!(tds.is_valid().is_ok());
+    }
+
+    #[test]
+    fn test_repair_neighbor_pointers_local_replaces_wrong_live_neighbor_slot() {
+        let mut tds: Tds<f64, (), (), 2> = Tds::empty();
+
+        let v_a = tds.insert_vertex_with_mapping(vertex!([0.0, 0.0])).unwrap();
+        let v_b = tds.insert_vertex_with_mapping(vertex!([1.0, 0.0])).unwrap();
+        let v_c = tds.insert_vertex_with_mapping(vertex!([0.0, 1.0])).unwrap();
+        let v_d = tds
+            .insert_vertex_with_mapping(vertex!([0.0, -1.0]))
+            .unwrap();
+        let v_e = tds.insert_vertex_with_mapping(vertex!([2.0, 0.0])).unwrap();
+        let v_f = tds.insert_vertex_with_mapping(vertex!([2.0, 1.0])).unwrap();
+
+        let c1 = tds
+            .insert_cell_with_mapping(Cell::new(vec![v_a, v_b, v_c], None).unwrap())
+            .unwrap();
+        let c2 = tds
+            .insert_cell_with_mapping(Cell::new(vec![v_a, v_b, v_d], None).unwrap())
+            .unwrap();
+        let wrong_live_neighbor = tds
+            .insert_cell_with_mapping(Cell::new(vec![v_a, v_e, v_f], None).unwrap())
+            .unwrap();
+
+        let shared_facet_idx = 2usize;
+        let shared_facet_idx_u8 = u8::try_from(shared_facet_idx).unwrap();
+        assert!(
+            tds.cell(c1)
+                .unwrap()
+                .mirror_facet_index(shared_facet_idx, tds.cell(wrong_live_neighbor).unwrap())
+                .is_none()
+        );
+
+        set_neighbor(&mut tds, c1, shared_facet_idx_u8, Some(wrong_live_neighbor)).unwrap();
+        set_neighbor(&mut tds, c2, shared_facet_idx_u8, Some(c1)).unwrap();
+
+        let repaired = repair_neighbor_pointers_local(&mut tds, &[c1], Some(&[c2]))
+            .expect("local repair should replace a live neighbor across the wrong facet");
+
+        assert_eq!(repaired, 1);
+        let cell = tds.cell(c1).unwrap();
+        assert_eq!(
+            cell.neighbors()
+                .and_then(|neighbors| neighbors.get(shared_facet_idx))
+                .copied()
+                .flatten(),
+            Some(c2)
+        );
+    }
+
+    #[test]
+    fn test_repair_neighbor_pointers_local_does_not_scan_unseeded_cells() {
+        let vertices = vec![
+            vertex!([0.0, 0.0]),
+            vertex!([1.0, 0.0]),
+            vertex!([0.0, 1.0]),
+            vertex!([1.0, 1.1]),
+            vertex!([0.5, 0.35]),
+        ];
+        let mut dt = DelaunayTriangulation::<_, (), (), 2>::new(&vertices).unwrap();
+        let tds = dt.tds_mut();
+        let (cell_key, facet_idx, _neighbor_key, _) =
+            first_neighbor_pair(tds).expect("test triangulation should have adjacent cells");
+
+        set_neighbor(tds, cell_key, facet_idx, None).unwrap();
+        let repaired = repair_neighbor_pointers_local(tds, &[], None)
+            .expect("local repair should ignore unseeded damage");
+
+        assert_eq!(repaired, 0);
+        let cell = tds.cell(cell_key).unwrap();
+        assert_eq!(
+            cell.neighbors()
+                .and_then(|neighbors| neighbors.get(usize::from(facet_idx)))
+                .copied()
+                .flatten(),
+            None
+        );
+
+        // The global repair still sees the missing slot, proving the local path was scoped.
+        assert!(repair_neighbor_pointers(tds).unwrap() > 0);
         assert!(tds.is_valid().is_ok());
     }
 

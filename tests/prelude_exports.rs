@@ -30,11 +30,14 @@ use delaunay::prelude::ordering::{
 use delaunay::prelude::query::ConvexHull;
 #[cfg(feature = "diagnostics")]
 use delaunay::prelude::tds::Tds;
-use delaunay::prelude::tds::TdsMutationError;
 use delaunay::prelude::triangulation::delaunayize::{
     DelaunayizeConfig, DelaunayizeError, DelaunayizeOutcome, delaunayize_by_flips,
 };
 use delaunay::prelude::triangulation::flips::{BistellarFlips, TopologyGuarantee};
+use delaunay::prelude::triangulation::insertion::{
+    InsertionError, NeighborRebuildError, Tds as InsertionTds, TdsMutationError,
+    repair_neighbor_pointers_local,
+};
 use delaunay::prelude::triangulation::repair::{
     DelaunayCheckPolicy, DelaunayRepairDiagnostics, DelaunayRepairError, DelaunayRepairOutcome,
     DelaunayRepairPolicy, DelaunayRepairStats, FlipEdgeAdjacencyError, FlipError,
@@ -60,6 +63,8 @@ enum PreludeExportTestError {
     DelaunayRepair(#[from] DelaunayRepairError),
     #[error(transparent)]
     Delaunayize(#[from] DelaunayizeError),
+    #[error(transparent)]
+    Insertion(#[from] InsertionError),
 }
 
 /// Proves the focused flips prelude exports the trait bound expected by benchmarks.
@@ -87,6 +92,11 @@ fn preludes_cover_bench_apis() -> Result<(), PreludeExportTestError> {
     assert!(dt.validate().is_ok());
     assert_bistellar_flips(&dt);
 
+    let mut empty_tds: InsertionTds<f64, (), (), 2> = InsertionTds::empty();
+    assert_eq!(
+        repair_neighbor_pointers_local(&mut empty_tds, &[], None)?,
+        0
+    );
     assert!(matches!(
         DelaunayConstructionFailure::GeometricDegeneracy {
             message: "synthetic".to_string(),
@@ -95,6 +105,7 @@ fn preludes_cover_bench_apis() -> Result<(), PreludeExportTestError> {
     ));
     assert!(matches!(LocateResult::Outside, LocateResult::Outside));
     assert_send_sync_unpin::<TdsMutationError>();
+    assert_send_sync_unpin::<NeighborRebuildError>();
     Ok(())
 }
 

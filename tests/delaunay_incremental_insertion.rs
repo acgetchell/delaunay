@@ -8,7 +8,117 @@
 //! - Different kernels (Fast vs Robust)
 
 use approx::assert_relative_eq;
+use delaunay::prelude::algorithms::{LocateResult, find_conflict_region, locate};
+use delaunay::prelude::collections::MAX_PRACTICAL_DIMENSION_SIZE;
+use delaunay::prelude::geometry::{AdaptiveKernel, Coordinate, Point};
+use delaunay::prelude::tds::{Cell, CellKey, SmallBuffer, VertexKey, facet_key_from_vertices};
 use delaunay::prelude::triangulation::*;
+
+/// Build the canonical facet key used to compare neighbor mirror facets in tests.
+fn facet_key_for_cell<const D: usize>(cell: &Cell<f64, (), (), D>, facet_idx: usize) -> u64 {
+    let mut facet_vertices = SmallBuffer::<VertexKey, MAX_PRACTICAL_DIMENSION_SIZE>::new();
+    for (idx, &vertex_key) in cell.vertices().iter().enumerate() {
+        if idx != facet_idx {
+            facet_vertices.push(vertex_key);
+        }
+    }
+    facet_key_from_vertices(&facet_vertices)
+}
+
+/// Assert that every populated neighbor slot references an existing cell that points back.
+fn assert_neighbors_valid_and_symmetric<const D: usize>(
+    dt: &DelaunayTriangulation<AdaptiveKernel<f64>, (), (), D>,
+) {
+    for (cell_key, cell) in dt.cells() {
+        let Some(neighbors) = cell.neighbors() else {
+            continue;
+        };
+        for (facet_idx, &neighbor_opt) in neighbors.iter().enumerate() {
+            let Some(neighbor_key) = neighbor_opt else {
+                continue;
+            };
+            let neighbor_cell = dt
+                .tds()
+                .cell(neighbor_key)
+                .unwrap_or_else(|| panic!("neighbor {neighbor_key:?} for {cell_key:?} is missing"));
+            let facet_key = facet_key_for_cell(cell, facet_idx);
+            let mirror_idx = (0..neighbor_cell.number_of_vertices())
+                .find(|&idx| facet_key_for_cell(neighbor_cell, idx) == facet_key)
+                .unwrap_or_else(|| {
+                    panic!(
+                        "neighbor {neighbor_key:?} does not share facet {facet_idx} with {cell_key:?}"
+                    )
+                });
+            let neighbor_back = neighbor_cell
+                .neighbors()
+                .and_then(|neighbor_neighbors| neighbor_neighbors.get(mirror_idx))
+                .copied()
+                .flatten();
+            assert_eq!(
+                neighbor_back,
+                Some(cell_key),
+                "neighbor symmetry failed for {cell_key:?} facet {facet_idx}"
+            );
+        }
+    }
+}
+
+/// Return a query point strictly inside the first cell so locate traversal has a stable target.
+fn centroid_of_first_cell<const D: usize>(
+    dt: &DelaunayTriangulation<AdaptiveKernel<f64>, (), (), D>,
+) -> (CellKey, Point<f64, D>) {
+    let (cell_key, cell) = dt
+        .cells()
+        .next()
+        .expect("test triangulation should contain at least one cell");
+    let mut coords = [0.0; D];
+    for &vertex_key in cell.vertices() {
+        let vertex = dt
+            .tds()
+            .vertex(vertex_key)
+            .expect("cell vertex should exist");
+        for (coord, &value) in coords.iter_mut().zip(vertex.point().coords()) {
+            *coord += value;
+        }
+    }
+    let mut vertex_count = 0.0;
+    for _ in cell.vertices() {
+        vertex_count += 1.0;
+    }
+    let scale = 1.0 / vertex_count;
+    for coord in &mut coords {
+        *coord *= scale;
+    }
+    (cell_key, Point::new(coords))
+}
+
+/// Verify repaired neighbor pointers support hinted locate and conflict-region traversal.
+fn assert_locate_and_conflict_traversal<const D: usize>(
+    dt: &DelaunayTriangulation<AdaptiveKernel<f64>, (), (), D>,
+) {
+    let kernel = AdaptiveKernel::<f64>::new();
+    let (hint_cell, query) = centroid_of_first_cell(dt);
+
+    let no_hint = locate(dt.tds(), &kernel, &query, None).expect("locate without hint failed");
+    let with_hint =
+        locate(dt.tds(), &kernel, &query, Some(hint_cell)).expect("locate with hint failed");
+
+    let start_cell = match with_hint {
+        LocateResult::InsideCell(cell_key) => cell_key,
+        other => panic!("centroid should locate inside a cell with hint, got {other:?}"),
+    };
+    assert!(
+        matches!(no_hint, LocateResult::InsideCell(_)),
+        "centroid should locate inside a cell without hint, got {no_hint:?}"
+    );
+
+    let conflict_cells = find_conflict_region(dt.tds(), &kernel, &query, start_cell)
+        .expect("conflict traversal failed");
+    assert!(!conflict_cells.is_empty());
+    for &cell_key in &conflict_cells {
+        assert!(dt.tds().contains_cell(cell_key));
+    }
+}
 
 // =========================================================================
 // Basic Incremental Insertion Tests (using macros for 2D-5D)
@@ -174,6 +284,98 @@ test_insert_5_points!(
         [0.1, 0.15, 0.1, 0.1, 0.1],
         [0.1, 0.1, 0.15, 0.1, 0.1],
         [0.12, 0.12, 0.12, 0.12, 0.12]
+    ]
+);
+
+macro_rules! test_local_neighbor_repair_guardrails {
+    ($dim:expr, [$($simplex:expr),+ $(,)?], [$($point:expr),+ $(,)?]) => {
+        pastey::paste! {
+            #[test]
+            fn [<test_local_neighbor_repair_guardrails_ $dim d>]() {
+                let vertices = vec![
+                    $(vertex!($simplex)),+
+                ];
+                let mut dt: DelaunayTriangulation<AdaptiveKernel<f64>, (), (), $dim> =
+                    DelaunayTriangulation::with_topology_guarantee(
+                        &AdaptiveKernel::new(),
+                        &vertices,
+                        TopologyGuarantee::PLManifold,
+                    )
+                    .unwrap();
+
+                for point in [$(vertex!($point)),+] {
+                    dt.insert(point).unwrap();
+                    assert_neighbors_valid_and_symmetric(&dt);
+                    assert_locate_and_conflict_traversal(&dt);
+                }
+            }
+        }
+    };
+}
+
+test_local_neighbor_repair_guardrails!(
+    2,
+    [[0.0, 0.0], [4.0, 0.0], [0.0, 4.0]],
+    [
+        [0.8, 0.8],
+        [1.6, 0.7],
+        [0.7, 1.5],
+        [1.2, 1.2],
+        [1.0, 1.0e-9]
+    ]
+);
+
+test_local_neighbor_repair_guardrails!(
+    3,
+    [
+        [0.0, 0.0, 0.0],
+        [4.0, 0.0, 0.0],
+        [0.0, 4.0, 0.0],
+        [0.0, 0.0, 4.0]
+    ],
+    [
+        [0.8, 0.8, 0.8],
+        [1.2, 0.6, 0.7],
+        [0.7, 1.1, 0.9],
+        [1.0, 0.9, 1.2],
+        [1.0e-9, 0.8, 0.8]
+    ]
+);
+
+test_local_neighbor_repair_guardrails!(
+    4,
+    [
+        [0.0, 0.0, 0.0, 0.0],
+        [4.0, 0.0, 0.0, 0.0],
+        [0.0, 4.0, 0.0, 0.0],
+        [0.0, 0.0, 4.0, 0.0],
+        [0.0, 0.0, 0.0, 4.0]
+    ],
+    [
+        [0.5, 0.5, 0.5, 0.5],
+        [0.8, 0.4, 0.5, 0.6],
+        [0.4, 0.8, 0.6, 0.5],
+        [0.6, 0.5, 0.8, 0.4],
+        [1.0e-9, 0.6, 0.6, 0.6]
+    ]
+);
+
+test_local_neighbor_repair_guardrails!(
+    5,
+    [
+        [0.0, 0.0, 0.0, 0.0, 0.0],
+        [4.0, 0.0, 0.0, 0.0, 0.0],
+        [0.0, 4.0, 0.0, 0.0, 0.0],
+        [0.0, 0.0, 4.0, 0.0, 0.0],
+        [0.0, 0.0, 0.0, 4.0, 0.0],
+        [0.0, 0.0, 0.0, 0.0, 4.0]
+    ],
+    [
+        [0.4, 0.4, 0.4, 0.4, 0.4],
+        [0.7, 0.3, 0.4, 0.5, 0.4],
+        [0.3, 0.7, 0.5, 0.4, 0.4],
+        [0.4, 0.5, 0.7, 0.3, 0.4],
+        [1.0e-9, 0.5, 0.5, 0.5, 0.5]
     ]
 );
 

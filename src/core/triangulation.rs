@@ -110,7 +110,8 @@
 use crate::core::adjacency::{AdjacencyIndex, AdjacencyIndexBuildError};
 use crate::core::algorithms::incremental_insertion::{
     CavityFillingError, CavityRepairStage, HullExtensionReason, InsertionError, extend_hull,
-    external_facets_for_boundary, fill_cavity, repair_neighbor_pointers, wire_cavity_neighbors,
+    external_facets_for_boundary, fill_cavity, repair_neighbor_pointers,
+    repair_neighbor_pointers_local, wire_cavity_neighbors,
 };
 #[cfg(debug_assertions)]
 use crate::core::algorithms::locate::locate_with_stats;
@@ -195,6 +196,7 @@ static DUPLICATE_DETECTION_GRID_CANDIDATES: AtomicU64 = AtomicU64::new(0);
 static DUPLICATE_DETECTION_ENABLED: OnceLock<bool> = OnceLock::new();
 static RETRYABLE_SKIP_TRACE_ENABLED: OnceLock<bool> = OnceLock::new();
 static CAVITY_REDUCTION_TRACE_ENABLED: OnceLock<bool> = OnceLock::new();
+static FORCE_GLOBAL_NEIGHBOR_REBUILD_ENABLED: OnceLock<bool> = OnceLock::new();
 static CAVITY_REDUCTION_TRACE_EMITTED: AtomicBool = AtomicBool::new(false);
 
 #[cfg(test)]
@@ -242,6 +244,12 @@ fn retryable_skip_trace_enabled() -> bool {
 fn cavity_reduction_trace_enabled() -> bool {
     *CAVITY_REDUCTION_TRACE_ENABLED
         .get_or_init(|| env::var_os("DELAUNAY_DEBUG_CAVITY_REDUCTION_ONCE").is_some())
+}
+
+/// Returns whether local neighbor repair should be bypassed for regression isolation.
+fn force_global_neighbor_rebuild_enabled() -> bool {
+    *FORCE_GLOBAL_NEIGHBOR_REBUILD_ENABLED
+        .get_or_init(|| env::var_os("DELAUNAY_FORCE_GLOBAL_NEIGHBOR_REBUILD").is_some())
 }
 
 /// Extracts a compact one-line summary for retryable conflict-region failures.
@@ -834,6 +842,24 @@ struct TryInsertImplOk {
     /// This retains cells that were shrunk out of the final conflict region so higher
     /// layers can still revisit them if the insertion leaves a nearby Delaunay violation.
     repair_seed_cells: CellKeyBuffer,
+}
+
+/// Internal result from over-shared-facet repair, including the surviving frontier
+/// that should seed local neighbor-pointer repair.
+struct LocalFacetRepairOutcome {
+    /// Number of cells actually removed from the TDS.
+    removed_count: usize,
+    /// Cells selected for removal before they were deleted.
+    #[cfg_attr(
+        not(debug_assertions),
+        expect(
+            dead_code,
+            reason = "Removed-cell keys are retained for debug logging and future local repair diagnostics"
+        )
+    )]
+    removed_cells: CellKeyBuffer,
+    /// Surviving one-hop neighbors whose back-references may have been cleared.
+    frontier_cells: CellKeyBuffer,
 }
 
 enum InsertionSite<'a> {
@@ -4125,6 +4151,71 @@ where
         }
     }
 
+    /// Repair neighbor pointers after local cell removal without scanning the full TDS.
+    fn repair_neighbors_after_local_cell_removal(
+        &mut self,
+        new_cells: &CellKeyBuffer,
+        frontier_cells: &[CellKey],
+    ) -> Result<usize, InsertionError> {
+        #[cfg(debug_assertions)]
+        tracing::debug!(
+            cells = self.tds.number_of_cells(),
+            surviving_new_cell_seeds = new_cells
+                .iter()
+                .filter(|&&cell_key| self.tds.contains_cell(cell_key))
+                .count(),
+            frontier_cell_seeds = frontier_cells
+                .iter()
+                .filter(|&&cell_key| self.tds.contains_cell(cell_key))
+                .count(),
+            "Before local neighbor-pointer repair"
+        );
+
+        if force_global_neighbor_rebuild_enabled() {
+            #[cfg(debug_assertions)]
+            tracing::debug!(
+                "DELAUNAY_FORCE_GLOBAL_NEIGHBOR_REBUILD set; using global neighbor rebuild"
+            );
+            return repair_neighbor_pointers(&mut self.tds).map_err(|source| {
+                CavityFillingError::NeighborRebuild {
+                    reason: source.into(),
+                }
+                .into()
+            });
+        }
+
+        #[cfg(debug_assertions)]
+        {
+            match repair_neighbor_pointers_local(&mut self.tds, new_cells, Some(frontier_cells)) {
+                Ok(repaired) => Ok(repaired),
+                Err(local_error) => {
+                    tracing::warn!(
+                        error = %local_error,
+                        "Local neighbor-pointer repair failed; falling back to global rebuild in debug mode"
+                    );
+                    repair_neighbor_pointers(&mut self.tds).map_err(|source| {
+                        CavityFillingError::NeighborRebuild {
+                            reason: source.into(),
+                        }
+                        .into()
+                    })
+                }
+            }
+        }
+
+        #[cfg(not(debug_assertions))]
+        {
+            repair_neighbor_pointers_local(&mut self.tds, new_cells, Some(frontier_cells)).map_err(
+                |source| {
+                    CavityFillingError::NeighborRebuild {
+                        reason: source.into(),
+                    }
+                    .into()
+                },
+            )
+        }
+    }
+
     /// Attempt an insertion, and if Level 3 validation fails, roll back and try a
     /// conservative star-split fallback of the containing cell.
     fn try_insert_with_topology_safety_net(
@@ -4908,6 +4999,8 @@ where
 
         // Iteratively repair non-manifold topology until facet sharing is valid
         let mut total_removed = 0;
+        let mut facet_sharing_known_valid = true;
+        let mut neighbor_repair_frontier = CellKeyBuffer::new();
         #[cfg_attr(
             not(debug_assertions),
             expect(
@@ -4935,7 +5028,8 @@ where
                     issues.len()
                 );
 
-                let removed = self.repair_local_facet_issues(&issues)?;
+                let repair = self.repair_local_facet_issues_with_frontier(&issues)?;
+                let removed = repair.removed_count;
 
                 // Early exit if repair made no progress
                 if removed == 0 {
@@ -4955,16 +5049,21 @@ where
                 }
 
                 total_removed += removed;
+                neighbor_repair_frontier.extend(repair.frontier_cells);
 
                 if removed > 0 {
                     suspicion.cells_removed = true;
                 }
 
                 #[cfg(debug_assertions)]
-                tracing::debug!("Removed {removed} cells (total: {total_removed})");
+                tracing::debug!(
+                    removed_cells = ?repair.removed_cells,
+                    "Removed {removed} cells (total: {total_removed})"
+                );
 
                 // Early exit if repair succeeded
-                if self.tds.validate_facet_sharing().is_ok() {
+                facet_sharing_known_valid = self.tds.validate_facet_sharing().is_ok();
+                if facet_sharing_known_valid {
                     break;
                 }
             } else {
@@ -4977,34 +5076,21 @@ where
         #[cfg(debug_assertions)]
         tracing::debug!("After repair loop: total_removed={total_removed}");
 
+        if !facet_sharing_known_valid {
+            return Err(CavityFillingError::InvalidFacetSharingAfterRepair {
+                stage: CavityRepairStage::PrimaryInsertion,
+            }
+            .into());
+        }
+
         // Global neighbor rebuild is expensive. In the common case (no cells removed during the
         // local facet-repair loop), `wire_cavity_neighbors` has already glued the cavity locally.
         //
-        // If we *did* remove cells during the repair loop, neighbor pointers may no longer match
-        // facet incidence, so we rebuild globally.
+        // If we *did* remove cells during the repair loop, repair only the new-cell/frontier
+        // neighborhood unless the force-rebuild diagnostic environment variable is set.
         if total_removed > 0 {
-            // Double-check that facet sharing is actually valid.
-            let facet_valid = self.tds.validate_facet_sharing().is_ok();
-            #[cfg(debug_assertions)]
-            tracing::debug!(
-                "Before repair_neighbor_pointers: facet_sharing_valid={facet_valid}, cells={}",
-                self.tds.number_of_cells()
-            );
-
-            if !facet_valid {
-                return Err(CavityFillingError::InvalidFacetSharingAfterRepair {
-                    stage: CavityRepairStage::PrimaryInsertion,
-                }
-                .into());
-            }
-
-            // Rebuild neighbor pointers from facet incidence (global O(n·D) pass).
-            // This is only needed after we removed cells in the local repair loop.
-            let repaired = repair_neighbor_pointers(&mut self.tds).map_err(|source| {
-                CavityFillingError::NeighborRebuild {
-                    reason: source.into(),
-                }
-            })?;
+            let repaired = self
+                .repair_neighbors_after_local_cell_removal(&new_cells, &neighbor_repair_frontier)?;
             suspicion.neighbor_pointers_rebuilt = repaired > 0;
         }
 
@@ -5584,6 +5670,8 @@ where
 
                 // Iteratively repair non-manifold topology until facet sharing is valid
                 let mut total_removed = 0;
+                let mut facet_sharing_known_valid = true;
+                let mut neighbor_repair_frontier = CellKeyBuffer::new();
                 #[cfg_attr(
                     not(debug_assertions),
                     expect(
@@ -5612,7 +5700,8 @@ where
                             issues.len()
                         );
 
-                        let removed = self.repair_local_facet_issues(&issues)?;
+                        let repair = self.repair_local_facet_issues_with_frontier(&issues)?;
+                        let removed = repair.removed_count;
 
                         // Early exit if repair made no progress
                         if removed == 0 {
@@ -5632,15 +5721,20 @@ where
                         }
 
                         total_removed += removed;
+                        neighbor_repair_frontier.extend(repair.frontier_cells);
                         if removed > 0 {
                             suspicion.cells_removed = true;
                         }
 
                         #[cfg(debug_assertions)]
-                        tracing::debug!("Removed {removed} cells (total: {total_removed})");
+                        tracing::debug!(
+                            removed_cells = ?repair.removed_cells,
+                            "Removed {removed} cells (total: {total_removed})"
+                        );
 
                         // Early exit if repair succeeded
-                        if self.tds.validate_facet_sharing().is_ok() {
+                        facet_sharing_known_valid = self.tds.validate_facet_sharing().is_ok();
+                        if facet_sharing_known_valid {
                             break;
                         }
                     } else {
@@ -5649,30 +5743,19 @@ where
                     }
                 }
 
-                // Rebuild neighbor pointers now that topology is manifold
-                if total_removed > 0 {
-                    // Double-check that facet sharing is actually valid
-                    let facet_valid = self.tds.validate_facet_sharing().is_ok();
-                    #[cfg(debug_assertions)]
-                    tracing::debug!(
-                        "Before repair_neighbor_pointers: facet_sharing_valid={facet_valid}, cells={}",
-                        self.tds.number_of_cells()
-                    );
-
-                    if !facet_valid {
-                        return Err(CavityFillingError::InvalidFacetSharingAfterRepair {
-                            stage: CavityRepairStage::FanTriangulation,
-                        }
-                        .into());
+                // Repair neighbor pointers now that topology is manifold.
+                if !facet_sharing_known_valid {
+                    return Err(CavityFillingError::InvalidFacetSharingAfterRepair {
+                        stage: CavityRepairStage::FanTriangulation,
                     }
+                    .into());
+                }
 
-                    // Rebuild neighbor pointers from facet incidence (global O(n·D) pass).
-                    // This is only needed after we removed cells in the local repair loop.
-                    let repaired = repair_neighbor_pointers(&mut self.tds).map_err(|source| {
-                        CavityFillingError::NeighborRebuild {
-                            reason: source.into(),
-                        }
-                    })?;
+                if total_removed > 0 {
+                    let repaired = self.repair_neighbors_after_local_cell_removal(
+                        &new_cells,
+                        &neighbor_repair_frontier,
+                    )?;
                     suspicion.neighbor_pointers_rebuilt = repaired > 0;
                 }
 
@@ -6079,56 +6162,11 @@ where
         }
     }
 
-    /// Repairs over-shared facets by removing lower-quality cells.
-    ///
-    /// Uses geometric quality metrics (`radius_ratio`) to select which cells to keep
-    /// when a facet is shared by more than 2 cells. UUID ordering is used as a tie-breaker
-    /// when cells have equal quality. Errors if quality computation or conversion fails.
-    ///
-    /// # Performance
-    ///
-    /// - **Complexity**: O(m * q) where m = number of problematic facets, q = quality computation cost
-    /// - **Localized**: Only processes cells involved in detected issues
-    ///
-    /// # Arguments
-    ///
-    /// * `issues` - Detected facet issues map from `detect_local_facet_issues()`
-    ///
-    /// # Returns
-    ///
-    /// Number of cells removed during repair.
-    ///
-    /// # Errors
-    ///
-    /// Returns error if quality evaluation or facet bookkeeping fails while
-    /// selecting cells to remove. This function itself does not rebuild neighbors;
-    /// callers are responsible for repairing or validating topology after removal
-    /// (e.g., via `repair_neighbor_pointers` or a validation pass).
-    ///
-    /// # Examples
-    ///
-    /// ```rust
-    /// use delaunay::prelude::collections::FacetIssuesMap;
-    /// use delaunay::prelude::triangulation::*;
-    ///
-    /// // Start with a valid 2D simplex.
-    /// let vertices = vec![
-    ///     vertex!([0.0, 0.0]),
-    ///     vertex!([1.0, 0.0]),
-    ///     vertex!([0.0, 1.0]),
-    /// ];
-    /// let mut dt: DelaunayTriangulation<_, (), (), 2> = DelaunayTriangulation::new(&vertices).unwrap();
-    ///
-    /// // Empty issues map => nothing to remove.
-    /// let mut tri = dt.as_triangulation().clone();
-    /// let removed = tri.repair_local_facet_issues(&FacetIssuesMap::default()).unwrap();
-    /// assert_eq!(removed, 0);
-    /// ```
-    ///
-    /// In practice, this method is typically called with issues detected by
-    /// [`detect_local_facet_issues`](Self::detect_local_facet_issues) after insertion/removal
-    /// operations. See `insert_transactional` for a typical usage pattern.
-    pub fn repair_local_facet_issues(&mut self, issues: &FacetIssuesMap) -> Result<usize, TdsError>
+    /// Select cells to remove for over-shared-facet repair without mutating the TDS.
+    fn cells_for_local_facet_issue_repair(
+        &self,
+        issues: &FacetIssuesMap,
+    ) -> Result<CellKeyBuffer, TdsError>
     where
         K::Scalar: Div<Output = K::Scalar>,
     {
@@ -6136,11 +6174,9 @@ where
 
         // For each over-shared facet, select cells to remove
         for cell_facet_pairs in issues.values() {
-            let involved_cells: Vec<CellKey> = cell_facet_pairs.iter().map(|(ck, _)| *ck).collect();
-
             // Compute quality for each cell - propagate errors from quality evaluation
             let mut cell_qualities: Vec<(CellKey, f64, Uuid)> = Vec::new();
-            for &cell_key in &involved_cells {
+            for &(cell_key, _) in cell_facet_pairs {
                 let cell = self
                     .tds
                     .cell(cell_key)
@@ -6189,12 +6225,147 @@ where
             }
         }
 
-        // Remove the selected cells - do NOT rebuild neighbors here
-        // Neighbor wiring should happen AFTER all non-manifold issues are resolved
-        let to_remove: Vec<CellKey> = cells_to_remove.into_iter().collect();
+        Ok(cells_to_remove.into_iter().collect())
+    }
+
+    /// Collect surviving neighbor cells that will have removed-cell back-references cleared.
+    fn removal_frontier_for_cells(&self, cells_to_remove: &[CellKey]) -> CellKeyBuffer {
+        if cells_to_remove.is_empty() {
+            return CellKeyBuffer::new();
+        }
+
+        let removal_set: CellKeySet = cells_to_remove.iter().copied().collect();
+        let mut frontier = CellKeyBuffer::new();
+        let mut seen = FastHashSet::default();
+
+        for &cell_key in cells_to_remove {
+            let Some(cell) = self.tds.cell(cell_key) else {
+                continue;
+            };
+            let Some(neighbors) = cell.neighbors() else {
+                continue;
+            };
+            for &neighbor_key in neighbors.iter().flatten() {
+                if removal_set.contains(&neighbor_key) || !self.tds.contains_cell(neighbor_key) {
+                    continue;
+                }
+                if seen.insert(neighbor_key) {
+                    frontier.push(neighbor_key);
+                }
+            }
+        }
+
+        frontier
+    }
+
+    /// Add surviving cells from the facet-issue incidence map to the local repair frontier.
+    fn add_issue_survivors_to_frontier(
+        &self,
+        issues: &FacetIssuesMap,
+        cells_to_remove: &[CellKey],
+        frontier: &mut CellKeyBuffer,
+    ) {
+        let removal_set: CellKeySet = cells_to_remove.iter().copied().collect();
+        let mut seen: FastHashSet<CellKey> = frontier.iter().copied().collect();
+
+        for cell_facet_pairs in issues.values() {
+            for &(cell_key, _) in cell_facet_pairs {
+                if removal_set.contains(&cell_key) || !self.tds.contains_cell(cell_key) {
+                    continue;
+                }
+                if seen.insert(cell_key) {
+                    frontier.push(cell_key);
+                }
+            }
+        }
+    }
+
+    /// Repair over-shared facets and return the local frontier for neighbor repair.
+    fn repair_local_facet_issues_with_frontier(
+        &mut self,
+        issues: &FacetIssuesMap,
+    ) -> Result<LocalFacetRepairOutcome, TdsError>
+    where
+        K::Scalar: Div<Output = K::Scalar>,
+    {
+        let to_remove = self.cells_for_local_facet_issue_repair(issues)?;
+        let mut frontier_cells = self.removal_frontier_for_cells(&to_remove);
+        self.add_issue_survivors_to_frontier(issues, &to_remove, &mut frontier_cells);
         let removed_count = self.tds.remove_cells_by_keys(&to_remove);
 
-        Ok(removed_count)
+        Ok(LocalFacetRepairOutcome {
+            removed_count,
+            removed_cells: to_remove,
+            frontier_cells,
+        })
+    }
+
+    /// Repairs over-shared facets by removing lower-quality cells.
+    ///
+    /// Uses geometric quality metrics (`radius_ratio`) to select which cells to keep
+    /// when a facet is shared by more than 2 cells. UUID ordering is used as a tie-breaker
+    /// when cells have equal quality. Errors if quality computation or conversion fails.
+    ///
+    /// # Performance
+    ///
+    /// - **Complexity**: O(m * q) where m = number of problematic facets, q = quality computation cost
+    /// - **Localized**: Only processes cells involved in detected issues
+    ///
+    /// # Arguments
+    ///
+    /// * `issues` - Detected facet issues map from `detect_local_facet_issues()`
+    ///
+    /// # Returns
+    ///
+    /// Number of cells removed during repair.
+    ///
+    /// # Errors
+    ///
+    /// Returns error if quality evaluation or facet bookkeeping fails while
+    /// selecting cells to remove. This function itself does not rebuild neighbors;
+    /// callers are responsible for repairing or validating topology after removal
+    /// (e.g., via local or global neighbor-pointer repair, or a validation pass).
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use delaunay::prelude::collections::FacetIssuesMap;
+    /// use delaunay::prelude::tds::TdsError;
+    /// use delaunay::prelude::triangulation::*;
+    ///
+    /// # #[derive(Debug, thiserror::Error)]
+    /// # enum ExampleError {
+    /// #     #[error(transparent)]
+    /// #     Construction(#[from] DelaunayTriangulationConstructionError),
+    /// #     #[error(transparent)]
+    /// #     Tds(#[from] TdsError),
+    /// # }
+    /// # fn main() -> Result<(), ExampleError> {
+    /// // Start with a valid 2D simplex.
+    /// let vertices = vec![
+    ///     vertex!([0.0, 0.0]),
+    ///     vertex!([1.0, 0.0]),
+    ///     vertex!([0.0, 1.0]),
+    /// ];
+    /// let dt: DelaunayTriangulation<_, (), (), 2> = DelaunayTriangulation::new(&vertices)?;
+    ///
+    /// // Empty issues map => nothing to remove.
+    /// let mut tri = dt.as_triangulation().clone();
+    /// let removed = tri.repair_local_facet_issues(&FacetIssuesMap::default())?;
+    /// assert_eq!(removed, 0);
+    /// # Ok(())
+    /// # }
+    /// ```
+    ///
+    /// In practice, this method is typically called with issues detected by
+    /// [`detect_local_facet_issues`](Self::detect_local_facet_issues) after insertion/removal
+    /// operations. See `insert_transactional` for a typical usage pattern.
+    pub fn repair_local_facet_issues(&mut self, issues: &FacetIssuesMap) -> Result<usize, TdsError>
+    where
+        K::Scalar: Div<Output = K::Scalar>,
+    {
+        self.repair_local_facet_issues_with_frontier(issues)
+            .map(|outcome| outcome.removed_count)
     }
 }
 
@@ -10580,6 +10751,129 @@ mod tests {
 
         let removed = tri.repair_local_facet_issues(&issues.unwrap()).unwrap();
         assert!(removed > 0, "Should remove at least one duplicate cell");
+    }
+
+    /// Return the facet index opposite the vertex not on the tested shared edge.
+    fn shared_edge_facet_index(
+        cell: &Cell<f64, (), (), 2>,
+        v_a: VertexKey,
+        v_b: VertexKey,
+    ) -> usize {
+        cell.vertices()
+            .iter()
+            .position(|&vertex_key| vertex_key != v_a && vertex_key != v_b)
+            .expect("test cells should contain the shared edge")
+    }
+
+    /// Read the neighbor slot across the tested shared edge in a 2D repair fixture.
+    fn neighbor_across_shared_edge(
+        tri: &Triangulation<FastKernel<f64>, (), (), 2>,
+        cell_key: CellKey,
+        v_a: VertexKey,
+        v_b: VertexKey,
+    ) -> Option<CellKey> {
+        let cell = tri.tds.cell(cell_key).unwrap();
+        let facet_idx = shared_edge_facet_index(cell, v_a, v_b);
+        cell.neighbors()
+            .and_then(|neighbors| neighbors.get(facet_idx))
+            .copied()
+            .flatten()
+    }
+
+    #[test]
+    fn test_local_repair_uses_removal_frontier() {
+        let mut tds: Tds<f64, (), (), 2> = Tds::empty();
+
+        let v_a = tds.insert_vertex_with_mapping(vertex!([0.0, 0.0])).unwrap();
+        let v_b = tds.insert_vertex_with_mapping(vertex!([1.0, 0.0])).unwrap();
+        let v_c = tds.insert_vertex_with_mapping(vertex!([0.0, 1.0])).unwrap();
+        let v_d = tds
+            .insert_vertex_with_mapping(vertex!([0.0, -1.0]))
+            .unwrap();
+        let v_e = tds.insert_vertex_with_mapping(vertex!([1.0, 1.0])).unwrap();
+
+        let c1 = tds
+            .insert_cell_with_mapping(Cell::new(vec![v_a, v_b, v_c], None).unwrap())
+            .unwrap();
+        let c2 = tds
+            .insert_cell_with_mapping(Cell::new(vec![v_a, v_b, v_d], None).unwrap())
+            .unwrap();
+        let c3 = tds
+            .insert_cell_with_mapping(Cell::new(vec![v_a, v_b, v_e], None).unwrap())
+            .unwrap();
+
+        for (cell_key, neighbor_key) in [(c1, c2), (c2, c3), (c3, c1)] {
+            let cell = tds.cell_mut(cell_key).unwrap();
+            let mut neighbors = NeighborBuffer::<Option<CellKey>>::new();
+            neighbors.resize(3, None);
+            neighbors[2] = Some(neighbor_key);
+            cell.neighbors = Some(neighbors);
+        }
+        tds.assign_incident_cells().unwrap();
+
+        let mut tri =
+            Triangulation::<FastKernel<f64>, (), (), 2>::new_with_tds(FastKernel::new(), tds);
+        let original_cells = [c1, c2, c3];
+        let issues = tri
+            .detect_local_facet_issues(&original_cells)
+            .unwrap()
+            .expect("three cells sharing one edge should be detected as over-shared");
+
+        let repair = tri
+            .repair_local_facet_issues_with_frontier(&issues)
+            .unwrap();
+        assert_eq!(repair.removed_count, 1);
+        assert!(
+            !repair.frontier_cells.is_empty(),
+            "removed-cell neighbors should seed the local repair frontier"
+        );
+
+        let survivors: Vec<_> = original_cells
+            .into_iter()
+            .filter(|cell_key| tri.tds.contains_cell(*cell_key))
+            .collect();
+        assert_eq!(survivors.len(), 2);
+        let [first_survivor, second_survivor] = survivors.as_slice() else {
+            panic!("fixture should leave exactly two surviving cells");
+        };
+        for &survivor in &survivors {
+            assert!(
+                repair.frontier_cells.contains(&survivor),
+                "facet-issue survivors should seed the local repair frontier"
+            );
+        }
+        let survivor_pairs = [
+            (*first_survivor, *second_survivor),
+            (*second_survivor, *first_survivor),
+        ];
+
+        let missing_shared_slots_before = survivor_pairs
+            .iter()
+            .filter(|&&(cell_key, other)| {
+                neighbor_across_shared_edge(&tri, cell_key, v_a, v_b) != Some(other)
+            })
+            .count();
+        assert!(
+            missing_shared_slots_before > 0,
+            "cell removal should leave at least one survivor slot needing local repair"
+        );
+
+        let mut new_cells = CellKeyBuffer::new();
+        new_cells.extend(original_cells);
+        let repaired = tri
+            .repair_neighbors_after_local_cell_removal(&new_cells, &repair.frontier_cells)
+            .unwrap();
+
+        assert!(repaired > 0);
+        for (cell_key, other) in survivor_pairs {
+            assert_eq!(
+                neighbor_across_shared_edge(&tri, cell_key, v_a, v_b),
+                Some(other),
+                "surviving cells should be rewired across the formerly over-shared edge"
+            );
+        }
+        assert!(tri.tds.validate_facet_sharing().is_ok());
+        assert!(tri.detect_local_facet_issues(&survivors).unwrap().is_none());
     }
 
     // =========================================================================
