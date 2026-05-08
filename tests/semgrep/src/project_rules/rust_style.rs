@@ -35,17 +35,23 @@ pub fn safe_conversion_fallback(value: u64) -> f64 {
 }
 
 pub fn public_unwrap_bypass(value: Option<u8>) -> u8 {
-    // ruleid: delaunay.rust.no-production-unwrap-panic
+    // ruleid: delaunay.rust.no-production-unwrap-panic, delaunay.rust.no-public-surface-unwrap-panic
     value.unwrap()
 }
 
 pub fn public_expect_bypass(value: Option<u8>) -> u8 {
-    // ruleid: delaunay.rust.no-production-unwrap-panic
+    // ruleid: delaunay.rust.no-production-unwrap-panic, delaunay.rust.no-public-surface-unwrap-panic
     value.expect("public APIs should return typed errors instead")
+}
+
+pub fn public_panic_bypass() {
+    // ruleid: delaunay.rust.no-production-unwrap-panic, delaunay.rust.no-public-surface-unwrap-panic
+    panic!("public APIs should return typed errors instead");
 }
 
 fn private_documented_invariant(value: Option<u8>) -> u8 {
     // ok: delaunay.rust.no-production-unwrap-panic
+    // ruleid: delaunay.rust.no-public-surface-unwrap-panic
     value.expect("private helper documents an internal invariant")
 }
 

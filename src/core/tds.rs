@@ -3632,31 +3632,45 @@ where
         Ok(facet_to_cells)
     }
 
-    /// Remove duplicate cells (cells with identical vertex sets)
+    /// Removes duplicate cells with identical vertex sets.
     ///
     /// Returns the number of duplicate cells that were removed.
     ///
-    /// After removing duplicate cells, this method rebuilds the topology
-    /// (neighbor relationships and incident cells) to maintain data structure
-    /// invariants and prevent stale references.
+    /// Duplicate removal is applied to a cloned trial [`Tds`], then the
+    /// topology (neighbor relationships and incident cells) is rebuilt to
+    /// maintain data structure invariants and prevent stale references. If the
+    /// rebuild or validation fails, the original structure is left unchanged.
+    ///
+    /// When duplicates are present, the rollback guarantee is implemented by
+    /// cloning the current [`Tds`] before removal. This keeps failed mutations
+    /// atomic, but the snapshot cost is linear in the size of the stored
+    /// topology. The method therefore requires `T: Clone` so vertex coordinates
+    /// can be preserved in the trial structure.
     ///
     /// # Errors
     ///
-    /// Returns a `TdsMutationError` if:
+    /// Returns a [`TdsMutationError`] if:
     /// - Vertex keys cannot be retrieved for any cell (data structure corruption)
     /// - Neighbor assignment fails after cell removal
     /// - Incident cell assignment fails after cell removal
+    /// - Validation fails after topology rebuild
     ///
     /// # Examples
     ///
     /// ```
-    /// use delaunay::prelude::tds::Tds;
+    /// use delaunay::prelude::tds::{Tds, TdsMutationError};
     ///
+    /// # fn main() -> Result<(), TdsMutationError> {
     /// let mut tds: Tds<f64, (), (), 2> = Tds::empty();
-    /// let removed = tds.remove_duplicate_cells().unwrap();
+    /// let removed = tds.remove_duplicate_cells()?;
     /// assert_eq!(removed, 0);
+    /// # Ok(())
+    /// # }
     /// ```
-    pub fn remove_duplicate_cells(&mut self) -> Result<usize, TdsMutationError> {
+    pub fn remove_duplicate_cells(&mut self) -> Result<usize, TdsMutationError>
+    where
+        T: Clone,
+    {
         let mut unique_cells = FastHashMap::default();
         let mut cells_to_remove = CellRemovalBuffer::new();
 
@@ -3679,28 +3693,29 @@ where
 
         let duplicate_count = cells_to_remove.len();
 
-        // Second pass: remove duplicate cells and their corresponding UUID mappings
-        for cell_key in &cells_to_remove {
-            if let Some(removed_cell) = self.cells.remove(*cell_key) {
-                // Remove from our optimized UUID-to-key mapping
-                self.uuid_to_cell_key.remove(&removed_cell.uuid());
-            }
+        if duplicate_count == 0 {
+            return Ok(0);
         }
 
-        if duplicate_count > 0 {
-            // Rebuild topology to avoid stale references after cell removal.
-            // This ensures vertices don't point to removed cells via incident_cell,
-            // and neighbor arrays don't reference removed keys.
-            //
-            // NOTE: Both `assign_neighbors()` and `assign_incident_cells()` are full rebuilds
-            // across all cells/vertices (O(#cells)). This is intentionally conservative and is
-            // expected to be used in repair/cleanup paths rather than per-step hot loops.
-            self.assign_neighbors()?;
-            self.assign_incident_cells()?;
+        let original_generation = self.generation();
+        let mut trial = self.clone();
+        trial.generation = Arc::new(AtomicU64::new(original_generation));
+        let removed = trial.remove_cells_by_keys(&cells_to_remove);
+        let rebuild_result = (|| -> Result<(), TdsMutationError> {
+            trial.assign_neighbors().map_err(TdsMutationError::from)?;
+            trial.assign_incident_cells()?;
+            trial.is_valid().map_err(TdsMutationError::from)?;
+            Ok(())
+        })();
 
-            // Generation already bumped by assign_neighbors(); avoid double increment
+        if let Err(error) = rebuild_result {
+            self.generation
+                .store(original_generation, Ordering::Relaxed);
+            return Err(error);
         }
-        Ok(duplicate_count)
+
+        *self = trial;
+        Ok(removed)
     }
 
     // =========================================================================
@@ -7582,10 +7597,13 @@ mod tests {
         tds.insert_cell_with_mapping(Cell::new(vec![v0, v1, v2], None).unwrap())
             .unwrap();
         assert_eq!(tds.number_of_cells(), 2);
+        let generation_before = tds.generation();
 
         let removed = tds.remove_duplicate_cells().unwrap();
         assert_eq!(removed, 1);
         assert_eq!(tds.number_of_cells(), 1);
+        assert!(tds.generation() > generation_before);
+        assert!(tds.is_valid().is_ok());
     }
 
     #[test]
@@ -7593,9 +7611,49 @@ mod tests {
         let verts = initial_simplex_vertices_3d();
         let dt = DelaunayTriangulation::new(&verts).unwrap();
         let mut tds = dt.tds().clone();
+        let generation_before = tds.generation();
 
         let removed = tds.remove_duplicate_cells().unwrap();
         assert_eq!(removed, 0);
+        assert_eq!(tds.generation(), generation_before);
+        assert!(tds.is_valid().is_ok());
+    }
+
+    #[test]
+    fn test_remove_duplicate_cells_rolls_back_when_rebuild_fails() {
+        let mut tds: Tds<f64, (), (), 2> = Tds::empty();
+        let v0 = tds.insert_vertex_with_mapping(vertex!([0.0, 0.0])).unwrap();
+        let v1 = tds.insert_vertex_with_mapping(vertex!([1.0, 0.0])).unwrap();
+        let v2 = tds.insert_vertex_with_mapping(vertex!([0.0, 1.0])).unwrap();
+        let v3 = tds
+            .insert_vertex_with_mapping(vertex!([0.0, -1.0]))
+            .unwrap();
+        let v4 = tds
+            .insert_vertex_with_mapping(vertex!([0.5, -0.5]))
+            .unwrap();
+
+        // Three distinct triangles share edge v0-v1, so global neighbor
+        // assignment will reject the complex after duplicate removal starts.
+        tds.insert_cell_with_mapping(Cell::new(vec![v0, v1, v2], None).unwrap())
+            .unwrap();
+        tds.insert_cell_with_mapping(Cell::new(vec![v0, v1, v2], None).unwrap())
+            .unwrap();
+        tds.insert_cell_with_mapping(Cell::new(vec![v0, v1, v3], None).unwrap())
+            .unwrap();
+        tds.insert_cell_with_mapping(Cell::new(vec![v0, v1, v4], None).unwrap())
+            .unwrap();
+        let before = tds.clone();
+        let generation_before = tds.generation();
+
+        let error = tds.remove_duplicate_cells().unwrap_err();
+
+        assert!(matches!(
+            error.into_inner(),
+            TdsError::InconsistentDataStructure { .. }
+        ));
+        assert_eq!(tds.number_of_cells(), 4);
+        assert_eq!(tds.generation(), generation_before);
+        assert_eq!(tds, before);
     }
 
     // =========================================================================
@@ -8089,10 +8147,13 @@ mod tests {
         tds.insert_cell_with_mapping(Cell::new(vec![v0, v1, v2], None).unwrap())
             .unwrap();
         assert_eq!(tds.number_of_cells(), 2);
+        let generation_before = tds.generation();
 
         let removed = tds.remove_duplicate_cells().unwrap();
         assert_eq!(removed, 1);
         assert_eq!(tds.number_of_cells(), 1);
+        assert!(tds.generation() > generation_before);
+        assert!(tds.is_valid().is_ok());
     }
 
     // =========================================================================

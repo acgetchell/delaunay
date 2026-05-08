@@ -523,8 +523,6 @@ verify-expect-counts:
         echo "✓ $label: $actual"
     }
 
-    check_count 'examples/**/*.rs .expect(' 35 '\.expect\(' examples
-    check_count 'benches/**/*.rs .expect(' 57 '\.expect\(' benches
     check_count 'src/**/*.rs doc-comment .expect(' 17 '^\s*//[/!].*\.expect\(' src
 
 # Pre-publish validation: checks crates.io metadata rules that cargo publish --dry-run does NOT catch

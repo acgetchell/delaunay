@@ -1,3 +1,8 @@
+//! Constructors for optimized hash maps, sets, and small buffers.
+//!
+//! These helpers keep allocation and hasher choices explicit at call sites without
+//! repeating the concrete collection aliases throughout the codebase.
+
 use super::{FastBuildHasher, FastHashMap, FastHashSet, SmallBuffer};
 
 // =============================================================================
@@ -132,12 +137,6 @@ mod tests {
 
     #[test]
     fn test_capacity_helpers() {
-        eprintln!(
-            "small_buffer_with_capacity_2: use case is facet-to-cell relationships (2 cells per facet)"
-        );
-        eprintln!(
-            "small_buffer_with_capacity_16: use case is batch vertex/cell collections in higher-dimensional operations"
-        );
         // Test hash map and set capacity helpers
         let map = fast_hash_map_with_capacity::<u64, usize>(100);
         assert!(map.capacity() >= 100);

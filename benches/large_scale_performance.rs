@@ -85,13 +85,18 @@ use delaunay::prelude::triangulation::{
 use delaunay::vertex;
 use std::hint::black_box;
 use std::num::NonZeroUsize;
-use std::sync::{Mutex, OnceLock};
+use std::sync::{Mutex, Once, OnceLock};
 use std::time::Duration;
-use sysinfo::{ProcessRefreshKind, ProcessesToUpdate, RefreshKind, System};
+use sysinfo::{ProcessRefreshKind, ProcessesToUpdate, RefreshKind, System, get_current_pid};
+
+/// Shared benchmark setup error helpers.
+#[path = "common/bench_utils.rs"]
+pub mod bench_utils;
+use bench_utils::{abort_benchmark, bench_result};
 
 #[cfg(feature = "bench-logging")]
 fn init_tracing() {
-    static INIT: std::sync::Once = std::sync::Once::new();
+    static INIT: Once = Once::new();
     INIT.call_once(|| {
         let filter = tracing_subscriber::EnvFilter::try_from_default_env()
             .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info"));
@@ -131,20 +136,20 @@ struct MemoryInfo {
 /// Get current process memory usage in KiB
 fn get_memory_usage() -> u64 {
     static SYS: OnceLock<Mutex<System>> = OnceLock::new();
-    static UNIT_LOGGED: std::sync::Once = std::sync::Once::new();
+    static UNIT_LOGGED: Once = Once::new();
 
     // Log memory unit on first call for clarity in all benchmark runs
     UNIT_LOGGED.call_once(|| {
         bench_info!("Memory measurements in KiB (sysinfo::Process::memory() / 1024)");
     });
 
-    let pid = sysinfo::get_current_pid().expect("Failed to get current PID");
+    let pid = bench_result(get_current_pid(), "failed to get current PID");
     let sys = SYS.get_or_init(|| {
         Mutex::new(System::new_with_specifics(
             RefreshKind::nothing().with_processes(ProcessRefreshKind::nothing().with_memory()),
         ))
     });
-    let mut system = sys.lock().expect("lock System");
+    let mut system = bench_result(sys.lock(), "failed to lock System");
     system.refresh_processes_specifics(
         ProcessesToUpdate::Some(&[pid]),
         true,
@@ -189,7 +194,10 @@ fn benchmark_retry_attempts() -> NonZeroUsize {
             .unwrap_or(6)
             .max(1);
 
-        NonZeroUsize::new(attempts).expect("attempts clamped to >= 1")
+        let Some(attempts) = NonZeroUsize::new(attempts) else {
+            unreachable!("attempts clamped to >= 1");
+        };
+        attempts
     })
 }
 
@@ -213,13 +221,12 @@ fn construct_triangulation<const D: usize>(
     vertices: &[Vertex<f64, (), D>],
     seed: u64,
 ) -> DelaunayTriangulation<AdaptiveKernel<f64>, (), (), D> {
-    DelaunayTriangulation::new_with_options(vertices, construction_options(seed)).unwrap_or_else(
-        |err| {
-            panic!(
-                "Failed to create triangulation (dim={D}, n_vertices={}, seed={seed}): {err:?}",
-                vertices.len()
-            )
-        },
+    bench_result(
+        DelaunayTriangulation::new_with_options(vertices, construction_options(seed)),
+        format!(
+            "failed to create triangulation (dim={D}, n_vertices={}, seed={seed})",
+            vertices.len()
+        ),
     )
 }
 
@@ -228,8 +235,10 @@ fn measure_construction_with_memory<const D: usize>(n_points: usize, seed: u64) 
     let mem_before = get_memory_usage();
 
     // Generate points and vertices (setup overhead)
-    let points = generate_random_points_seeded::<f64, D>(n_points, (-100.0, 100.0), seed)
-        .expect("Failed to generate points");
+    let points = bench_result(
+        generate_random_points_seeded::<f64, D>(n_points, (-100.0, 100.0), seed),
+        "failed to generate points",
+    );
     let vertices: Vec<_> = points.into_iter().map(|p| vertex!(p)).collect();
 
     // Measure memory before triangulation construction to isolate allocation
@@ -288,9 +297,10 @@ fn bench_construction<const D: usize>(c: &mut Criterion, dimension_name: &str, n
         b.iter_batched(
             || {
                 // Setup: Generate points (not measured)
-                let points =
-                    generate_random_points_seeded::<f64, D>(n_points, (-100.0, 100.0), seed)
-                        .expect("Failed to generate points");
+                let points = bench_result(
+                    generate_random_points_seeded::<f64, D>(n_points, (-100.0, 100.0), seed),
+                    "failed to generate points",
+                );
                 points.into_iter().map(|p| vertex!(p)).collect::<Vec<_>>()
             },
             |vertices| {
@@ -362,8 +372,10 @@ fn bench_validation<const D: usize>(c: &mut Criterion, dimension_name: &str, n_p
     }
 
     // Pre-generate triangulation for validation benchmarks
-    let points = generate_random_points_seeded::<f64, D>(n_points, (-100.0, 100.0), seed)
-        .expect("Failed to generate points");
+    let points = bench_result(
+        generate_random_points_seeded::<f64, D>(n_points, (-100.0, 100.0), seed),
+        "failed to generate points",
+    );
     let vertices: Vec<_> = points.into_iter().map(|p| vertex!(p)).collect();
     let dt = construct_triangulation::<D>(&vertices, seed);
     let tri = dt.as_triangulation();
@@ -374,8 +386,11 @@ fn bench_validation<const D: usize>(c: &mut Criterion, dimension_name: &str, n_p
     group.bench_function("validate_topology", |b| {
         b.iter(|| {
             // Level 3 topology check (manifold-with-boundary + Euler characteristic)
-            tri.is_valid()
-                .expect("triangulation should be structurally valid during validation benchmark");
+            if let Err(error) = tri.is_valid() {
+                abort_benchmark(format_args!(
+                    "triangulation should be structurally valid during validation benchmark: {error}"
+                ));
+            }
         });
     });
 
@@ -404,8 +419,10 @@ fn bench_neighbor_queries<const D: usize>(
     let seed = seed_for_case::<D>(n_points);
 
     // Pre-generate triangulation
-    let points = generate_random_points_seeded::<f64, D>(n_points, (-100.0, 100.0), seed)
-        .expect("Failed to generate points");
+    let points = bench_result(
+        generate_random_points_seeded::<f64, D>(n_points, (-100.0, 100.0), seed),
+        "failed to generate points",
+    );
     let vertices: Vec<_> = points.into_iter().map(|p| vertex!(p)).collect();
     let dt = construct_triangulation::<D>(&vertices, seed);
     let tds = dt.tds();
@@ -448,8 +465,10 @@ fn bench_vertex_iteration<const D: usize>(
     let seed = seed_for_case::<D>(n_points);
 
     // Pre-generate triangulation
-    let points = generate_random_points_seeded::<f64, D>(n_points, (-100.0, 100.0), seed)
-        .expect("Failed to generate points");
+    let points = bench_result(
+        generate_random_points_seeded::<f64, D>(n_points, (-100.0, 100.0), seed),
+        "failed to generate points",
+    );
     let vertices: Vec<_> = points.into_iter().map(|p| vertex!(p)).collect();
     let dt = construct_triangulation::<D>(&vertices, seed);
     let tds = dt.tds();
@@ -483,8 +502,10 @@ fn bench_cell_iteration<const D: usize>(c: &mut Criterion, dimension_name: &str,
     let seed = seed_for_case::<D>(n_points);
 
     // Pre-generate triangulation
-    let points = generate_random_points_seeded::<f64, D>(n_points, (-100.0, 100.0), seed)
-        .expect("Failed to generate points");
+    let points = bench_result(
+        generate_random_points_seeded::<f64, D>(n_points, (-100.0, 100.0), seed),
+        "failed to generate points",
+    );
     let vertices: Vec<_> = points.into_iter().map(|p| vertex!(p)).collect();
     let dt = construct_triangulation::<D>(&vertices, seed);
     let tds = dt.tds();

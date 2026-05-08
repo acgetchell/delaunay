@@ -1,3 +1,5 @@
+#![forbid(unsafe_code)]
+
 //! Microbenchmark for `core::hint::cold_path` adoption in geometric predicates.
 //!
 //! This benchmark exercises the hot Stage-1 path of the [`insphere`] / [`insphere_lifted`]
@@ -37,6 +39,11 @@ use delaunay::prelude::generators::generate_random_points_seeded;
 use delaunay::prelude::query::*;
 use std::hint::black_box;
 
+/// Shared benchmark setup error helpers.
+#[path = "common/bench_utils.rs"]
+pub mod bench_utils;
+use bench_utils::{abort_benchmark, bench_result};
+
 /// Deterministic seed for query-point generation in the hot path.
 const HOT_SEED: u64 = 0xC01D_BEEF_0000_CAFE_u64;
 /// Deterministic seed for query-point generation in the near-boundary group.
@@ -65,8 +72,10 @@ fn standard_simplex<const D: usize>() -> Vec<Point<f64, D>> {
 /// Uses the range `[-10, 10]` against a unit simplex so that the Shewchuk
 /// errbound comfortably resolves the sign in Stage 1.
 fn hot_queries<const D: usize>() -> Vec<Point<f64, D>> {
-    generate_random_points_seeded(HOT_QUERIES, (-10.0, 10.0), HOT_SEED)
-        .expect("failed to generate hot-path query points")
+    bench_result(
+        generate_random_points_seeded(HOT_QUERIES, (-10.0, 10.0), HOT_SEED),
+        "failed to generate hot-path query points",
+    )
 }
 
 /// Generate near-boundary query points for dimension `D`.
@@ -77,21 +86,31 @@ fn near_boundary_queries<const D: usize>() -> Vec<Point<f64, D>> {
     // Centered near the circumsphere radius of the standard simplex (~0.5 for
     // the D = 3 unit case); the exact value is unimportant — we just want a
     // high rate of errbound-ambiguous inputs.
-    generate_random_points_seeded(NEAR_BOUNDARY_QUERIES, (0.40, 0.60), NEAR_BOUNDARY_SEED)
-        .expect("failed to generate near-boundary query points")
+    bench_result(
+        generate_random_points_seeded(NEAR_BOUNDARY_QUERIES, (0.40, 0.60), NEAR_BOUNDARY_SEED),
+        "failed to generate near-boundary query points",
+    )
 }
 
 /// Run `insphere` across `queries` against `simplex`, black-boxing each result.
 fn run_insphere<const D: usize>(simplex: &[Point<f64, D>], queries: &[Point<f64, D>]) {
     for q in queries {
-        black_box(insphere(black_box(simplex), black_box(*q)).unwrap());
+        let result = match insphere(black_box(simplex), black_box(*q)) {
+            Ok(value) => value,
+            Err(error) => abort_benchmark(format_args!("insphere query failed: {error}")),
+        };
+        black_box(result);
     }
 }
 
 /// Run `insphere_lifted` across `queries` against `simplex`, black-boxing each result.
 fn run_insphere_lifted<const D: usize>(simplex: &[Point<f64, D>], queries: &[Point<f64, D>]) {
     for q in queries {
-        black_box(insphere_lifted(black_box(simplex), black_box(*q)).unwrap());
+        let result = match insphere_lifted(black_box(simplex), black_box(*q)) {
+            Ok(value) => value,
+            Err(error) => abort_benchmark(format_args!("insphere_lifted query failed: {error}")),
+        };
+        black_box(result);
     }
 }
 

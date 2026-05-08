@@ -1,3 +1,8 @@
+//! Sparse secondary-map aliases for data associated with slotmap keys.
+//!
+//! These aliases provide type-safe auxiliary storage keyed by cells or vertices
+//! without requiring dense side arrays.
+
 use crate::core::tds::{CellKey, VertexKey};
 use slotmap::SparseSecondaryMap;
 

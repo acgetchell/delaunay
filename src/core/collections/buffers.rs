@@ -1,3 +1,8 @@
+//! Stack-friendly buffer aliases for topology and geometry algorithms.
+//!
+//! The aliases in this module document the expected cardinality of common
+//! intermediate collections while keeping hot paths allocation-conscious.
+
 use super::{MAX_PRACTICAL_DIMENSION_SIZE, SmallBuffer, Uuid};
 use crate::core::facet::FacetHandle;
 use crate::core::tds::{CellKey, VertexKey};
@@ -243,12 +248,6 @@ mod tests {
     #[test]
     fn test_cell_vertex_buffer_stack_allocation_boundary() {
         let mut vertex_slots: SlotMap<VertexKey, i32> = SlotMap::default();
-
-        eprintln!(
-            "inline capacity: {}, uuid size: {} bytes",
-            MAX_PRACTICAL_DIMENSION_SIZE,
-            std::mem::size_of::<Uuid>()
-        );
 
         // Test D=7 case: 8 vertices (D+1) should stay on stack
         // MAX_PRACTICAL_DIMENSION_SIZE is 8, so inline capacity is 8

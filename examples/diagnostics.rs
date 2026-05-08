@@ -9,6 +9,8 @@
 //! ```
 
 #[cfg(feature = "diagnostics")]
+use delaunay::prelude::DelaunayValidationError;
+#[cfg(feature = "diagnostics")]
 use delaunay::prelude::diagnostics::{
     debug_print_first_delaunay_violation, delaunay_violation_report,
 };
@@ -16,23 +18,36 @@ use delaunay::prelude::diagnostics::{
 use delaunay::prelude::geometry::AdaptiveKernel;
 #[cfg(feature = "diagnostics")]
 use delaunay::prelude::triangulation::{
-    DelaunayTriangulation, DelaunayTriangulationValidationError, flips::*,
+    DelaunayTriangulation, DelaunayTriangulationConstructionError,
+    DelaunayTriangulationValidationError, flips::*,
 };
 #[cfg(feature = "diagnostics")]
 use delaunay::vertex;
 
 #[cfg(feature = "diagnostics")]
-fn main() {
+#[derive(Debug, thiserror::Error)]
+enum DiagnosticsExampleError {
+    #[error(transparent)]
+    Construction(#[from] DelaunayTriangulationConstructionError),
+    #[error(transparent)]
+    DelaunayValidation(#[from] DelaunayValidationError),
+    #[error("expected at least one public k=2 flip to produce a Delaunay violation")]
+    NoDelaunayViolatingFlip,
+}
+
+#[cfg(feature = "diagnostics")]
+fn main() -> Result<(), DiagnosticsExampleError> {
     init_tracing();
 
     println!("Diagnostics feature example");
     println!("===========================\n");
 
-    report_valid_triangulation();
+    report_valid_triangulation()?;
     println!();
-    report_non_delaunay_triangulation();
+    report_non_delaunay_triangulation()?;
 
     println!("\nDone. Set RUST_LOG=delaunay=debug to see verbose tracing output.");
+    Ok(())
 }
 
 #[cfg(not(feature = "diagnostics"))]
@@ -51,16 +66,16 @@ fn init_tracing() {
 
 /// Shows the shape of an empty diagnostics report for a valid triangulation.
 #[cfg(feature = "diagnostics")]
-fn report_valid_triangulation() {
+fn report_valid_triangulation() -> Result<(), DiagnosticsExampleError> {
     let vertices = vec![
         vertex!([0.0, 0.0, 0.0]),
         vertex!([1.0, 0.0, 0.0]),
         vertex!([0.0, 1.0, 0.0]),
         vertex!([0.0, 0.0, 1.0]),
     ];
-    let dt: DelaunayTriangulation<_, (), (), 3> = DelaunayTriangulation::new(&vertices).unwrap();
+    let dt: DelaunayTriangulation<_, (), (), 3> = DelaunayTriangulation::new(&vertices)?;
 
-    let report = delaunay_violation_report(dt.tds(), None).unwrap();
+    let report = delaunay_violation_report(dt.tds(), None)?;
 
     println!("Valid 3D triangulation:");
     println!("  vertices: {}", report.number_of_vertices);
@@ -68,13 +83,14 @@ fn report_valid_triangulation() {
     println!("  checked cells: {}", report.checked_cells);
     println!("  Delaunay valid: {}", report.is_valid());
     assert!(report.is_valid());
+    Ok(())
 }
 
 /// Applies a public topology edit that breaks Delaunayness, then reports the violation.
 #[cfg(feature = "diagnostics")]
-fn report_non_delaunay_triangulation() {
-    let dt = build_non_delaunay_triangulation_2d();
-    let report = delaunay_violation_report(dt.tds(), None).unwrap();
+fn report_non_delaunay_triangulation() -> Result<(), DiagnosticsExampleError> {
+    let dt = build_non_delaunay_triangulation_2d()?;
+    let report = delaunay_violation_report(dt.tds(), None)?;
 
     println!("Non-Delaunay 2D triangulation after an explicit k=2 flip:");
     println!("  vertices: {}", report.number_of_vertices);
@@ -89,11 +105,13 @@ fn report_non_delaunay_triangulation() {
     }
 
     debug_print_first_delaunay_violation(dt.tds(), None);
+    Ok(())
 }
 
 /// Builds a valid 2D triangulation and returns a clone after a k=2 flip creates a violation.
 #[cfg(feature = "diagnostics")]
-fn build_non_delaunay_triangulation_2d() -> DelaunayTriangulation<AdaptiveKernel<f64>, (), (), 2> {
+fn build_non_delaunay_triangulation_2d()
+-> Result<DelaunayTriangulation<AdaptiveKernel<f64>, (), (), 2>, DiagnosticsExampleError> {
     let vertices = vec![
         vertex!([0.0, 0.0]),
         vertex!([4.0, 0.0]),
@@ -103,7 +121,7 @@ fn build_non_delaunay_triangulation_2d() -> DelaunayTriangulation<AdaptiveKernel
         vertex!([1.0, 1.0]),
         vertex!([3.0, 1.0]),
     ];
-    let dt: DelaunayTriangulation<_, (), (), 2> = DelaunayTriangulation::new(&vertices).unwrap();
+    let dt: DelaunayTriangulation<_, (), (), 2> = DelaunayTriangulation::new(&vertices)?;
 
     for (cell_key, cell) in dt.cells() {
         if let Some(neighbors) = cell.neighbors() {
@@ -124,11 +142,11 @@ fn build_non_delaunay_triangulation_2d() -> DelaunayTriangulation<AdaptiveKernel
                         Err(DelaunayTriangulationValidationError::VerificationFailed { .. })
                     )
                 {
-                    return trial;
+                    return Ok(trial);
                 }
             }
         }
     }
 
-    panic!("expected at least one public k=2 flip to produce a Delaunay violation");
+    Err(DiagnosticsExampleError::NoDelaunayViolatingFlip)
 }

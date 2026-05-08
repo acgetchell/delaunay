@@ -2948,8 +2948,11 @@ where
             err,
             DelaunayTriangulationConstructionError::Triangulation(
                 DelaunayConstructionFailure::Tds {
-                    reason: TdsConstructionFailure::DuplicateUuid { .. },
+                    reason: TdsConstructionFailure::DuplicateUuid { .. }
+                        | TdsConstructionFailure::Validation { .. },
                 } | DelaunayConstructionFailure::InternalInconsistency { .. }
+                    | DelaunayConstructionFailure::InsertionTopologyValidation { .. }
+                    | DelaunayConstructionFailure::FinalTopologyValidation { .. },
             )
         )
     }
@@ -3396,31 +3399,6 @@ where
             use_global_repair_fallback,
         )?;
 
-        // Final validation at construction completion for PLManifold/PLManifoldStrict.
-        // This ensures PL-manifold guarantee even with ValidationPolicy::OnSuspicion during
-        // incremental insertion.
-        if dt
-            .tri
-            .topology_guarantee
-            .requires_vertex_links_at_completion()
-        {
-            tracing::debug!("post-construction: starting topology validation (build)");
-            let validation_started = Instant::now();
-            let validation_result = dt.tri.validate();
-            tracing::debug!(
-                elapsed = ?validation_started.elapsed(),
-                success = validation_result.is_ok(),
-                "post-construction: topology validation (build) completed"
-            );
-            if let Err(err) = validation_result {
-                return Err(TriangulationConstructionError::FinalTopologyValidation {
-                    message: "PL-manifold validation failed after construction".to_string(),
-                    source: Box::new(err),
-                }
-                .into());
-            }
-        }
-
         // `DelaunayCheckPolicy::EndOnly`: always run a final global Delaunay validation pass after
         // batch construction.
         tracing::debug!("post-construction: starting Delaunay validation (build)");
@@ -3461,34 +3439,6 @@ where
             grid_cell_size,
             use_global_repair_fallback,
         )?;
-
-        // Final validation at construction completion for PLManifold/PLManifoldStrict.
-        // This ensures PL-manifold guarantee even with ValidationPolicy::OnSuspicion during
-        // incremental insertion.
-        if dt
-            .tri
-            .topology_guarantee
-            .requires_vertex_links_at_completion()
-        {
-            tracing::debug!("post-construction: starting topology validation (build stats)");
-            let validation_started = Instant::now();
-            let validation_result = dt.tri.validate();
-            tracing::debug!(
-                elapsed = ?validation_started.elapsed(),
-                success = validation_result.is_ok(),
-                "post-construction: topology validation (build stats) completed"
-            );
-            if let Err(err) = validation_result {
-                return Err(DelaunayTriangulationConstructionErrorWithStatistics {
-                    error: TriangulationConstructionError::FinalTopologyValidation {
-                        message: "PL-manifold validation failed after construction".to_string(),
-                        source: Box::new(err),
-                    }
-                    .into(),
-                    statistics: stats,
-                });
-            }
-        }
 
         // `DelaunayCheckPolicy::EndOnly`: always run a final global Delaunay validation pass after
         // batch construction.
@@ -11514,6 +11464,60 @@ mod tests {
                 &err
             ),
             "InternalInconsistency should be non-retryable"
+        );
+    }
+
+    #[test]
+    fn test_is_non_retryable_construction_error_tds_validation() {
+        let err: DelaunayTriangulationConstructionError = TriangulationConstructionError::Tds(
+            TdsConstructionError::ValidationError(TdsError::InconsistentDataStructure {
+                message: "test".to_string(),
+            }),
+        )
+        .into();
+        assert!(
+            DelaunayTriangulation::<AdaptiveKernel<f64>, (), (), 3>::is_non_retryable_construction_error(
+                &err
+            ),
+            "TDS validation failures should be non-retryable"
+        );
+    }
+
+    #[test]
+    fn test_is_non_retryable_construction_error_topology_validation_buckets() {
+        let vertex_key = VertexKey::from(KeyData::from_ffi(1));
+        let insertion_err: DelaunayTriangulationConstructionError =
+            TriangulationConstructionError::InsertionTopologyValidation {
+                message: "test".to_string(),
+                source: TriangulationValidationError::IsolatedVertex {
+                    vertex_key,
+                    vertex_uuid: Uuid::nil(),
+                },
+            }
+            .into();
+        let final_err: DelaunayTriangulationConstructionError =
+            TriangulationConstructionError::FinalTopologyValidation {
+                message: "test".to_string(),
+                source: Box::new(InvariantError::Triangulation(
+                    TriangulationValidationError::IsolatedVertex {
+                        vertex_key,
+                        vertex_uuid: Uuid::nil(),
+                    },
+                )),
+            }
+            .into();
+
+        assert!(
+            DelaunayTriangulation::<AdaptiveKernel<f64>, (), (), 3>::is_non_retryable_construction_error(
+                &insertion_err
+            ),
+            "InsertionTopologyValidation should be non-retryable"
+        );
+        assert!(
+            DelaunayTriangulation::<AdaptiveKernel<f64>, (), (), 3>::is_non_retryable_construction_error(
+                &final_err
+            ),
+            "FinalTopologyValidation should be non-retryable"
         );
     }
 

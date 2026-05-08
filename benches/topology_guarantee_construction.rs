@@ -21,6 +21,11 @@ use delaunay::vertex;
 use std::hint::black_box;
 use std::time::Duration;
 
+/// Shared benchmark setup error helpers.
+#[path = "common/bench_utils.rs"]
+pub mod bench_utils;
+use bench_utils::{abort_benchmark, bench_result};
+
 const BOUNDS: (f64, f64) = (-100.0, 100.0);
 const SEED_SALT: u64 = 0x9E37_79B9_7F4A_7C15;
 
@@ -41,8 +46,10 @@ fn bench_dimension<const D: usize>(
 
         // Deterministic input per (dimension, count).
         let seed = seed_base ^ (n_points as u64).wrapping_mul(SEED_SALT);
-        let points =
-            generate_random_points_seeded::<f64, D>(n_points, BOUNDS, seed).expect("gen points");
+        let points = bench_result(
+            generate_random_points_seeded::<f64, D>(n_points, BOUNDS, seed),
+            "failed to generate benchmark points",
+        );
         let vertices = points.into_iter().map(|p| vertex!(p)).collect::<Vec<_>>();
 
         group.bench_with_input(
@@ -63,9 +70,9 @@ fn bench_dimension<const D: usize>(
                     for v in vertices {
                         // Use the statistics API so retryable degeneracies can be skipped
                         // (transactional rollback) instead of aborting the benchmark.
-                        let _ = dt
-                            .insert_with_statistics(*v)
-                            .expect("non-retryable insertion error");
+                        if let Err(error) = dt.insert_with_statistics(*v) {
+                            abort_benchmark(format_args!("non-retryable insertion error: {error}"));
+                        }
                     }
                     // Completion-time PL-manifold certification when required.
                     let _ = dt.as_triangulation().validate_at_completion();
@@ -89,9 +96,9 @@ fn bench_dimension<const D: usize>(
                     dt.set_delaunay_repair_policy(DelaunayRepairPolicy::Never);
 
                     for v in vertices {
-                        let _ = dt
-                            .insert_with_statistics(*v)
-                            .expect("non-retryable insertion error");
+                        if let Err(error) = dt.insert_with_statistics(*v) {
+                            abort_benchmark(format_args!("non-retryable insertion error: {error}"));
+                        }
                     }
 
                     // Completion-time PL-manifold certification when required.
@@ -116,9 +123,9 @@ fn bench_dimension<const D: usize>(
                     dt.set_delaunay_repair_policy(DelaunayRepairPolicy::Never);
 
                     for v in vertices {
-                        let _ = dt
-                            .insert_with_statistics(*v)
-                            .expect("non-retryable insertion error");
+                        if let Err(error) = dt.insert_with_statistics(*v) {
+                            abort_benchmark(format_args!("non-retryable insertion error: {error}"));
+                        }
                     }
                     // Completion-time PL-manifold certification when required.
                     let _ = dt.as_triangulation().validate_at_completion();

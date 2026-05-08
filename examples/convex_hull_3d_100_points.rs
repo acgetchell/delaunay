@@ -445,8 +445,12 @@ fn performance_analysis(dt: &DelaunayTriangulation<AdaptiveKernel<f64>, (), (), 
 
     let len_u32 = u32::try_from(extraction_times.len()).unwrap_or(1u32);
     let avg_extraction_time: Duration = extraction_times.iter().sum::<Duration>() / len_u32;
-    let min_extraction_time = *extraction_times.iter().min().unwrap();
-    let max_extraction_time = *extraction_times.iter().max().unwrap();
+    let Some(min_extraction_time) = extraction_times.iter().min().copied() else {
+        return;
+    };
+    let Some(max_extraction_time) = extraction_times.iter().max().copied() else {
+        return;
+    };
 
     println!("  Convex Hull Extraction (5 runs):");
     println!("    • Average time: {avg_extraction_time:?}");

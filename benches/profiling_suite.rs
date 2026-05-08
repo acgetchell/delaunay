@@ -75,6 +75,18 @@ use std::num::NonZeroUsize;
 use std::sync::Once;
 use std::time::{Duration, Instant};
 
+/// Shared benchmark setup error helpers.
+#[path = "common/bench_utils.rs"]
+pub mod bench_utils;
+use bench_utils::{abort_benchmark, bench_result};
+
+fn retry_attempts(value: usize) -> NonZeroUsize {
+    let Some(attempts) = NonZeroUsize::new(value) else {
+        unreachable!("hard-coded retry attempt count must be non-zero");
+    };
+    attempts
+}
+
 #[cfg(feature = "bench-logging")]
 fn init_tracing() {
     static INIT: Once = Once::new();
@@ -201,21 +213,28 @@ fn gen_points<const D: usize>(
     seed: u64,
 ) -> Vec<Point<f64, D>> {
     match distribution {
-        PointDistribution::Random => generate_random_points_seeded(count, (-100.0, 100.0), seed)
-            .expect("random point generation failed"),
-        PointDistribution::Adversarial => generate_random_points_seeded::<f64, D>(
-            count,
-            (-1.0, 1.0),
-            seed ^ 0xA5A5_A5A5_A5A5_A5A5,
+        PointDistribution::Random => bench_result(
+            generate_random_points_seeded(count, (-100.0, 100.0), seed),
+            "random point generation failed",
+        ),
+        PointDistribution::Adversarial => bench_result(
+            generate_random_points_seeded::<f64, D>(
+                count,
+                (-1.0, 1.0),
+                seed ^ 0xA5A5_A5A5_A5A5_A5A5,
+            ),
+            "adversarial base point generation failed",
         )
-        .expect("adversarial base point generation failed")
         .iter()
         .enumerate()
         .map(|(index, point)| {
-            let index = u32::try_from(index).expect("benchmark point index should fit in u32");
+            let index = bench_result(
+                u32::try_from(index),
+                "benchmark point index should fit in u32",
+            );
             let mut coords = [0.0_f64; D];
             for (axis, coord) in coords.iter_mut().enumerate() {
-                let axis_number = u32::try_from(axis + 1).expect("axis should fit in u32");
+                let axis_number = bench_result(u32::try_from(axis + 1), "axis should fit in u32");
                 let base: f64 = point.coords()[axis];
                 let cluster_offset = f64::from(index % 7) * 1.0e-3;
                 let axis_offset = f64::from(axis_number) * 0.25;
@@ -243,10 +262,10 @@ fn gen_points<const D: usize>(
                     // Grid generation failed - this indicates a configuration issue
                     // Rather than silently falling back and producing misleading benchmarks,
                     // we should fail fast to alert developers to adjust parameters
-                    panic!(
+                    abort_benchmark(format_args!(
                         "Grid generation failed for D={D}: count={count}, points_per_dim={points_per_dim}, err={e:?}. \
                          Adjust grid parameters or use smaller point counts for high-dimensional grid benchmarks."
-                    );
+                    ));
                 }
             }
         }
@@ -258,8 +277,10 @@ fn gen_points<const D: usize>(
                 5 => 15.0, // 5D: even larger spacing
                 _ => 20.0, // Higher dimensions: very large spacing
             };
-            generate_poisson_points(count, (-100.0, 100.0), min_distance, seed)
-                .expect("poisson point generation failed")
+            bench_result(
+                generate_poisson_points(count, (-100.0, 100.0), min_distance, seed),
+                "poisson point generation failed",
+            )
         }
     }
 }
@@ -819,8 +840,7 @@ macro_rules! benchmark_validation_components_dimension {
                     let vertices: Vec<_> = points.iter().map(|point| vertex!(*point)).collect();
                     let builder = DelaunayTriangulationBuilder::new(&vertices);
                     let builder = if is_adversarial {
-                        let attempts =
-                            NonZeroUsize::new(8).expect("retry attempts must be non-zero");
+                        let attempts = retry_attempts(8);
                         builder.construction_options(
                             ConstructionOptions::default().with_retry_policy(
                                 RetryPolicy::Shuffled {
@@ -842,13 +862,13 @@ macro_rules! benchmark_validation_components_dimension {
                     }
                 })
                 .unwrap_or_else(|| {
-                    panic!(
+                    abort_benchmark(format_args!(
                         "failed to build {}D validation component benchmark triangulation \
                          after {} seeds (last error: {})",
                         $dim,
                         VALIDATION_SEED_SEARCH_LIMIT,
                         last_error.unwrap_or_else(|| "none".to_string())
-                    );
+                    ));
                 });
 
             let mut group = c.benchmark_group(format!("validation_components_{}d{}", $dim, suffix));
@@ -857,29 +877,41 @@ macro_rules! benchmark_validation_components_dimension {
 
             group.bench_function("tds_is_valid", |b| {
                 b.iter(|| {
-                    black_box(dt.tds().is_valid())
-                        .expect("TDS validation should pass for benchmark triangulation");
+                    if let Err(error) = black_box(dt.tds().is_valid()) {
+                        abort_benchmark(format_args!(
+                            "TDS validation should pass for benchmark triangulation: {error}"
+                        ));
+                    }
                 });
             });
 
             group.bench_function("tri_is_valid", |b| {
                 b.iter(|| {
-                    black_box(dt.as_triangulation().is_valid())
-                        .expect("triangulation validation should pass for benchmark triangulation");
+                    if let Err(error) = black_box(dt.as_triangulation().is_valid()) {
+                        abort_benchmark(format_args!(
+                            "triangulation validation should pass for benchmark triangulation: {error}"
+                        ));
+                    }
                 });
             });
 
             group.bench_function("is_valid_delaunay", |b| {
                 b.iter(|| {
-                    black_box(dt.is_valid())
-                        .expect("Delaunay validation should pass for benchmark triangulation");
+                    if let Err(error) = black_box(dt.is_valid()) {
+                        abort_benchmark(format_args!(
+                            "Delaunay validation should pass for benchmark triangulation: {error}"
+                        ));
+                    }
                 });
             });
 
             group.bench_function("validate", |b| {
                 b.iter(|| {
-                    black_box(dt.validate())
-                        .expect("full validation should pass for benchmark triangulation");
+                    if let Err(error) = black_box(dt.validate()) {
+                        abort_benchmark(format_args!(
+                            "full validation should pass for benchmark triangulation: {error}"
+                        ));
+                    }
                 });
             });
 
@@ -929,8 +961,14 @@ fn bench_bottlenecks(c: &mut Criterion) {
                     },
                     |dt| {
                         if let Some(dt) = dt {
-                            let boundary_facets =
-                                dt.tds().boundary_facets().expect("boundary_facets failed");
+                            let boundary_facets = match dt.tds().boundary_facets() {
+                                Ok(value) => value,
+                                Err(error) => {
+                                    abort_benchmark(format_args!(
+                                        "boundary_facets failed: {error}"
+                                    ));
+                                }
+                            };
                             black_box(boundary_facets);
                         }
                     },
@@ -955,8 +993,12 @@ fn bench_bottlenecks(c: &mut Criterion) {
                     },
                     |dt| {
                         if let Some(dt) = dt {
-                            let hull =
-                                ConvexHull::from_triangulation(dt.as_triangulation()).unwrap();
+                            let hull = match ConvexHull::from_triangulation(dt.as_triangulation()) {
+                                Ok(value) => value,
+                                Err(error) => abort_benchmark(format_args!(
+                                    "convex hull extraction failed: {error}"
+                                )),
+                            };
                             black_box(hull);
                         }
                     },

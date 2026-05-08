@@ -18,45 +18,84 @@
 //! cargo run --example topology_editing_2d_3d
 //! ```
 
-use delaunay::prelude::geometry::{Coordinate, Kernel, Point, circumcenter, hypot};
+#![expect(
+    clippy::result_large_err,
+    reason = "example preserves the crate's typed insertion and flip errors instead of erasing them"
+)]
+
+use delaunay::prelude::geometry::{
+    CircumcenterError, Coordinate, Kernel, Point, circumcenter, hypot,
+};
 use delaunay::prelude::triangulation::flips::*;
 use delaunay::prelude::triangulation::*;
+use delaunay::prelude::{TdsError, VertexKey};
 
-fn main() {
+type ExampleResult<T = ()> = Result<T, TopologyEditingExampleError>;
+
+#[derive(Debug, thiserror::Error)]
+enum TopologyEditingExampleError {
+    #[error(transparent)]
+    Construction(#[from] DelaunayTriangulationConstructionError),
+    #[error(transparent)]
+    Validation(#[from] DelaunayTriangulationValidationError),
+    #[error(transparent)]
+    Insertion(#[from] InsertionError),
+    #[error(transparent)]
+    Flip(#[from] FlipError),
+    #[error(transparent)]
+    Tds(#[from] TdsError),
+    #[error(transparent)]
+    Circumcenter(#[from] CircumcenterError),
+    #[error("{demo} triangulation has no cells")]
+    EmptyTriangulation { demo: &'static str },
+    #[error("{demo} cell key was not found")]
+    MissingCell { demo: &'static str },
+    #[error("{demo} vertex key {vertex_key:?} was not found")]
+    MissingVertex {
+        demo: &'static str,
+        vertex_key: VertexKey,
+    },
+    #[error("{demo} has no interior facet")]
+    NoInteriorFacet { demo: &'static str },
+}
+
+fn main() -> ExampleResult {
     println!("============================================================");
     println!("Topology Editing: Builder API vs Edit API (2D and 3D)");
     println!("============================================================\n");
 
     // Part 1: 2D examples (k=1 and k=2 flips)
-    demo_2d();
+    demo_2d()?;
 
     println!("\n############################################################\n");
 
     // Part 2: 3D examples (k=1, k=2, and k=3 flips)
-    demo_3d();
+    demo_3d()?;
 
     println!("\n============================================================");
     println!("Example complete!");
     println!("============================================================");
+    Ok(())
 }
 
 // ============================================================================
 // 2D DEMONSTRATIONS
 // ============================================================================
 
-fn demo_2d() {
+fn demo_2d() -> ExampleResult {
     println!("PART 1: 2D TRIANGULATION");
     println!("============================================================\n");
 
-    builder_api_2d();
+    builder_api_2d()?;
     println!("\n------------------------------------------------------------\n");
-    edit_api_2d_k1();
+    edit_api_2d_k1()?;
     println!("\n------------------------------------------------------------\n");
-    edit_api_2d_k2();
+    edit_api_2d_k2()?;
+    Ok(())
 }
 
 /// Demonstrates the Builder API in 2D.
-fn builder_api_2d() {
+fn builder_api_2d() -> ExampleResult {
     println!("2D Builder API: Automatic Delaunay Preservation");
     println!("------------------------------------------------\n");
 
@@ -67,13 +106,11 @@ fn builder_api_2d() {
         vertex!([2.0, 3.0]),
     ];
 
-    let mut dt = DelaunayTriangulationBuilder::new(&vertices)
-        .build::<()>()
-        .expect("Failed to construct triangulation");
+    let mut dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
 
     println!("Initial triangle:");
     print_stats_2d(&dt);
-    dt.validate().expect("Should be valid");
+    dt.validate()?;
     println!("  ✓ Delaunay property verified\n");
 
     // Insert vertices using Builder API
@@ -85,7 +122,7 @@ fn builder_api_2d() {
     ];
 
     for (i, v) in new_vertices.into_iter().enumerate() {
-        dt.insert(v).expect("Insertion should succeed");
+        dt.insert(v)?;
         println!(
             "  After insert {}: {} vertices, {} cells",
             i + 1,
@@ -95,12 +132,13 @@ fn builder_api_2d() {
     }
 
     // Verify Delaunay property is maintained
-    dt.validate().expect("Should remain valid");
+    dt.validate()?;
     println!("\n✓ Builder API automatically maintained Delaunay property");
+    Ok(())
 }
 
 /// Demonstrates k=1 flips (cell split/merge) in 2D.
-fn edit_api_2d_k1() {
+fn edit_api_2d_k1() -> ExampleResult {
     println!("2D Edit API: k=1 Flips (Cell Split/Merge)");
     println!("------------------------------------------\n");
 
@@ -110,22 +148,36 @@ fn edit_api_2d_k1() {
         vertex!([1.5, 2.5]),
     ];
 
-    let mut dt = DelaunayTriangulationBuilder::new(&vertices)
-        .build::<()>()
-        .expect("Failed to construct triangulation");
+    let mut dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
 
     println!("Initial triangle:");
     print_stats_2d(&dt);
 
     // Apply k=1 flip (insert vertex into cell)
-    let cell_key = dt.cells().next().unwrap().0;
-    let cell = dt.tds().cell(cell_key).expect("Cell should exist");
+    let cell_key = dt.cells().next().map(|(cell_key, _)| cell_key).ok_or(
+        TopologyEditingExampleError::EmptyTriangulation {
+            demo: "2D k=1 demo",
+        },
+    )?;
+    let cell = dt
+        .tds()
+        .cell(cell_key)
+        .ok_or(TopologyEditingExampleError::MissingCell {
+            demo: "2D k=1 demo",
+        })?;
     let vertex_points: Vec<Point<f64, 2>> = cell
         .vertices()
         .iter()
-        .map(|vkey| *dt.tds().vertex(*vkey).expect("Vertex should exist").point())
-        .collect();
-    let circumcenter = circumcenter(&vertex_points).expect("Circumcenter should exist");
+        .map(|vkey| {
+            dt.tds().vertex(*vkey).map(|vertex| *vertex.point()).ok_or(
+                TopologyEditingExampleError::MissingVertex {
+                    demo: "2D k=1 demo",
+                    vertex_key: *vkey,
+                },
+            )
+        })
+        .collect::<Result<_, _>>()?;
+    let circumcenter = circumcenter(&vertex_points)?;
     let circumcenter_coords = circumcenter.to_array();
     let distances: Vec<f64> = vertex_points
         .iter()
@@ -145,9 +197,7 @@ fn edit_api_2d_k1() {
         circumcenter_coords[0], circumcenter_coords[1]
     );
 
-    let flip_info = dt
-        .flip_k1_insert(cell_key, vertex!(circumcenter_coords))
-        .expect("k=1 flip should succeed");
+    let flip_info = dt.flip_k1_insert(cell_key, vertex!(circumcenter_coords))?;
 
     println!("After k=1 forward:");
     print_stats_2d(&dt);
@@ -156,25 +206,25 @@ fn edit_api_2d_k1() {
     println!("  New vertex: {:?}", flip_info.inserted_face_vertices);
 
     // Verify structural validity (always maintained)
-    dt.tds().is_valid().expect("Structure should be valid");
+    dt.tds().is_valid()?;
     println!("  ✓ Structural invariants preserved");
 
     // Apply inverse k=1 flip (remove vertex)
     println!("\nApplying k=1 inverse (remove vertex):");
     let vertex_to_remove = flip_info.inserted_face_vertices[0];
-    dt.flip_k1_remove(vertex_to_remove)
-        .expect("k=1 inverse should succeed");
+    dt.flip_k1_remove(vertex_to_remove)?;
 
     println!("After k=1 inverse:");
     print_stats_2d(&dt);
 
     // Verify we're back to original state
-    dt.validate().expect("Should be valid");
+    dt.validate()?;
     println!("\n✓ k=1 flip roundtrip successful (Edit API)");
+    Ok(())
 }
 
 /// Demonstrates k=2 flips (edge flip) in 2D.
-fn edit_api_2d_k2() {
+fn edit_api_2d_k2() -> ExampleResult {
     println!("2D Edit API: k=2 Flips (Edge Flip)");
     println!("-----------------------------------\n");
 
@@ -186,9 +236,7 @@ fn edit_api_2d_k2() {
         vertex!([0.0, 2.0]),
     ];
 
-    let mut dt = DelaunayTriangulationBuilder::new(&vertices)
-        .build::<()>()
-        .expect("Failed to construct triangulation");
+    let mut dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
 
     println!("Initial square (2 triangles):");
     print_stats_2d(&dt);
@@ -200,10 +248,13 @@ fn edit_api_2d_k2() {
     );
 
     // Find an interior edge to flip
-    let facet = find_interior_facet_2d(&dt).expect("Should have an interior edge");
+    let facet =
+        find_interior_facet_2d(&dt).ok_or(TopologyEditingExampleError::NoInteriorFacet {
+            demo: "2D k=2 demo",
+        })?;
 
     println!("\nApplying k=2 flip (flipping diagonal edge):");
-    let flip_info = dt.flip_k2(facet).expect("k=2 flip should succeed");
+    let flip_info = dt.flip_k2(facet)?;
 
     println!("After k=2 forward:");
     print_stats_2d(&dt);
@@ -226,27 +277,29 @@ fn edit_api_2d_k2() {
     println!("      In 2D, k=2 flips are always reversible by another k=2 flip");
 
     println!("\n✓ k=2 flip successful (Edit API)");
+    Ok(())
 }
 
 // ============================================================================
 // 3D DEMONSTRATIONS
 // ============================================================================
 
-fn demo_3d() {
+fn demo_3d() -> ExampleResult {
     println!("PART 2: 3D TRIANGULATION");
     println!("============================================================\n");
 
-    builder_api_3d();
+    builder_api_3d()?;
     println!("\n------------------------------------------------------------\n");
-    edit_api_3d_k1();
+    edit_api_3d_k1()?;
     println!("\n------------------------------------------------------------\n");
-    edit_api_3d_k2();
+    edit_api_3d_k2()?;
     println!("\n------------------------------------------------------------\n");
-    edit_api_3d_k3();
+    edit_api_3d_k3()?;
+    Ok(())
 }
 
 /// Demonstrates the Builder API in 3D.
-fn builder_api_3d() {
+fn builder_api_3d() -> ExampleResult {
     println!("3D Builder API: Automatic Delaunay Preservation");
     println!("------------------------------------------------\n");
 
@@ -257,13 +310,11 @@ fn builder_api_3d() {
         vertex!([1.0, 0.5, 1.5]),
     ];
 
-    let mut dt = DelaunayTriangulationBuilder::new(&vertices)
-        .build::<()>()
-        .expect("Failed to construct triangulation");
+    let mut dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
 
     println!("Initial tetrahedron:");
     print_stats_3d(&dt);
-    dt.validate().expect("Should be valid");
+    dt.validate()?;
     println!("  ✓ Delaunay property verified\n");
 
     // Insert vertices using Builder API
@@ -271,7 +322,7 @@ fn builder_api_3d() {
     let new_vertices = vec![vertex!([1.0, 0.5, 0.5]), vertex!([0.8, 0.8, 0.8])];
 
     for (i, v) in new_vertices.into_iter().enumerate() {
-        dt.insert(v).expect("Insertion should succeed");
+        dt.insert(v)?;
         println!(
             "  After insert {}: {} vertices, {} cells",
             i + 1,
@@ -280,12 +331,13 @@ fn builder_api_3d() {
         );
     }
 
-    dt.validate().expect("Should remain valid");
+    dt.validate()?;
     println!("\n✓ Builder API automatically maintained Delaunay property");
+    Ok(())
 }
 
 /// Demonstrates k=1 flips in 3D.
-fn edit_api_3d_k1() {
+fn edit_api_3d_k1() -> ExampleResult {
     println!("3D Edit API: k=1 Flips (Cell Split/Merge)");
     println!("------------------------------------------\n");
 
@@ -296,22 +348,36 @@ fn edit_api_3d_k1() {
         vertex!([1.0, 0.5, 1.5]),
     ];
 
-    let mut dt = DelaunayTriangulationBuilder::new(&vertices)
-        .build::<()>()
-        .expect("Failed to construct triangulation");
+    let mut dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
 
     println!("Initial tetrahedron:");
     print_stats_3d(&dt);
 
     // Apply k=1 flip
-    let cell_key = dt.cells().next().unwrap().0;
-    let cell = dt.tds().cell(cell_key).expect("Cell should exist");
+    let cell_key = dt.cells().next().map(|(cell_key, _)| cell_key).ok_or(
+        TopologyEditingExampleError::EmptyTriangulation {
+            demo: "3D k=1 demo",
+        },
+    )?;
+    let cell = dt
+        .tds()
+        .cell(cell_key)
+        .ok_or(TopologyEditingExampleError::MissingCell {
+            demo: "3D k=1 demo",
+        })?;
     let vertex_points: Vec<Point<f64, 3>> = cell
         .vertices()
         .iter()
-        .map(|vkey| *dt.tds().vertex(*vkey).expect("Vertex should exist").point())
-        .collect();
-    let circumcenter = circumcenter(&vertex_points).expect("Circumcenter should exist");
+        .map(|vkey| {
+            dt.tds().vertex(*vkey).map(|vertex| *vertex.point()).ok_or(
+                TopologyEditingExampleError::MissingVertex {
+                    demo: "3D k=1 demo",
+                    vertex_key: *vkey,
+                },
+            )
+        })
+        .collect::<Result<_, _>>()?;
+    let circumcenter = circumcenter(&vertex_points)?;
     let circumcenter_coords = circumcenter.to_array();
     let distances: Vec<f64> = vertex_points
         .iter()
@@ -331,9 +397,7 @@ fn edit_api_3d_k1() {
         "\nApplying k=1 flip (split tetrahedron at circumcenter [{:.2}, {:.2}, {:.2}]):",
         circumcenter_coords[0], circumcenter_coords[1], circumcenter_coords[2]
     );
-    let flip_info = dt
-        .flip_k1_insert(cell_key, vertex!(circumcenter_coords))
-        .expect("k=1 flip should succeed");
+    let flip_info = dt.flip_k1_insert(cell_key, vertex!(circumcenter_coords))?;
 
     println!("After k=1 forward:");
     print_stats_3d(&dt);
@@ -342,17 +406,17 @@ fn edit_api_3d_k1() {
     // Apply inverse
     println!("\nApplying k=1 inverse:");
     let vertex_to_remove = flip_info.inserted_face_vertices[0];
-    dt.flip_k1_remove(vertex_to_remove)
-        .expect("k=1 inverse should succeed");
+    dt.flip_k1_remove(vertex_to_remove)?;
 
     println!("After k=1 inverse:");
     print_stats_3d(&dt);
 
     println!("\n✓ k=1 flip roundtrip successful in 3D");
+    Ok(())
 }
 
 /// Demonstrates k=2 flips (facet flip) in 3D.
-fn edit_api_3d_k2() {
+fn edit_api_3d_k2() -> ExampleResult {
     println!("3D Edit API: k=2 Flips (Facet Flip: 2↔3)");
     println!("-----------------------------------------\n");
 
@@ -368,9 +432,7 @@ fn edit_api_3d_k2() {
         vertex!([1.0, 0.6, 0.4]), // Interior point
     ];
 
-    let mut dt = DelaunayTriangulationBuilder::new(&vertices)
-        .build::<()>()
-        .expect("Failed to construct triangulation");
+    let mut dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
 
     println!("Triangulation with interior point:");
     print_stats_3d(&dt);
@@ -413,10 +475,12 @@ fn edit_api_3d_k2() {
     } else {
         println!("⚠️  No interior facet found for k=2 flip demo");
     }
+
+    Ok(())
 }
 
 /// Demonstrates k=3 flips (ridge flip) in 3D.
-fn edit_api_3d_k3() {
+fn edit_api_3d_k3() -> ExampleResult {
     println!("3D Edit API: k=3 Flips (Ridge Flip: 3↔2)");
     println!("-----------------------------------------\n");
     println!("Note: k=3 flips are only available in 3D and higher dimensions\n");
@@ -441,32 +505,29 @@ fn edit_api_3d_k3() {
         vertex!([1.0, 0.6, 1.4]),
     ];
 
-    if let Ok(mut dt) = DelaunayTriangulationBuilder::new(&vertices).build::<()>() {
-        print_stats_3d(&dt);
+    let mut dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
+    print_stats_3d(&dt);
 
-        // Try to find and flip a ridge
-        if let Some(ridge) = find_flippable_ridge_3d(&dt) {
-            match dt.flip_k3(ridge) {
-                Ok(flip_info) => {
-                    println!("\n✓ k=3 flip succeeded:");
-                    print_stats_3d(&dt);
-                    println!("  Removed: {} cells", flip_info.removed_cells.len());
-                    println!("  Inserted: {} cells", flip_info.new_cells.len());
-                }
-                Err(e) => {
-                    println!("\n⚠️  k=3 flip not applicable: {e}");
-                    println!("   (Geometric constraints not satisfied for this configuration)");
-                }
+    // Try to find and flip a ridge
+    if let Some(ridge) = find_flippable_ridge_3d(&dt) {
+        match dt.flip_k3(ridge) {
+            Ok(flip_info) => {
+                println!("\n✓ k=3 flip succeeded:");
+                print_stats_3d(&dt);
+                println!("  Removed: {} cells", flip_info.removed_cells.len());
+                println!("  Inserted: {} cells", flip_info.new_cells.len());
             }
-        } else {
-            println!("\n⚠️  No ridges found in this simple triangulation");
+            Err(e) => {
+                println!("\n⚠️  k=3 flip not applicable: {e}");
+                println!("   (Geometric constraints not satisfied for this configuration)");
+            }
         }
     } else {
-        println!("\n⚠️  Note: k=3 flips require complex geometric configurations");
-        println!("   This example demonstrates that the API is available in 3D+");
+        println!("\n⚠️  No ridges found in this simple triangulation");
     }
 
     println!("\n✓ k=3 flip API demonstrated (Edit API - 3D+ only)");
+    Ok(())
 }
 
 // ============================================================================
@@ -496,7 +557,9 @@ fn find_interior_facet_2d<K: Kernel<2>>(
         if let Some(neighbors) = cell.neighbors() {
             for (facet_idx, neighbor) in neighbors.iter().enumerate() {
                 if neighbor.is_some() {
-                    let facet_idx = u8::try_from(facet_idx).expect("facet index fits in u8");
+                    let Ok(facet_idx) = u8::try_from(facet_idx) else {
+                        continue;
+                    };
                     return Some(FacetHandle::new(cell_key, facet_idx));
                 }
             }
@@ -512,7 +575,9 @@ fn find_interior_facet_3d<K: Kernel<3>>(
         if let Some(neighbors) = cell.neighbors() {
             for (facet_idx, neighbor) in neighbors.iter().enumerate() {
                 if neighbor.is_some() {
-                    let facet_idx = u8::try_from(facet_idx).expect("facet index fits in u8");
+                    let Ok(facet_idx) = u8::try_from(facet_idx) else {
+                        continue;
+                    };
                     return Some(FacetHandle::new(cell_key, facet_idx));
                 }
             }
@@ -532,8 +597,12 @@ fn find_flippable_ridge_3d<K: Kernel<3>>(
             if i + 1 >= vertex_count {
                 continue;
             }
-            let omit_a = u8::try_from(i).expect("ridge index fits in u8");
-            let omit_b = u8::try_from(i + 1).expect("ridge index fits in u8");
+            let Ok(omit_a) = u8::try_from(i) else {
+                continue;
+            };
+            let Ok(omit_b) = u8::try_from(i + 1) else {
+                continue;
+            };
             let ridge = RidgeHandle::new(cell_key, omit_a, omit_b);
 
             // Just return the first one we find

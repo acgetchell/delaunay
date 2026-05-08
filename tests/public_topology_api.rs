@@ -8,9 +8,26 @@
 
 use delaunay::prelude::TopologyGuarantee;
 use delaunay::prelude::query::*;
+use delaunay::prelude::triangulation::DelaunayTriangulationConstructionError;
+
+#[derive(Debug, thiserror::Error)]
+enum PublicTopologyApiTestError {
+    #[error(transparent)]
+    Construction(#[from] DelaunayTriangulationConstructionError),
+    #[error(transparent)]
+    AdjacencyIndex(#[from] AdjacencyIndexBuildError),
+    #[error("single tetrahedron triangulation has no vertices")]
+    EmptySingleTetrahedronVertices,
+    #[error("single tetrahedron triangulation has no cells")]
+    EmptySingleTetrahedronCells,
+    #[error("cell key from triangulation has no vertices")]
+    MissingCellVertices,
+    #[error("double tetrahedron did not contain the expected shared vertex")]
+    MissingExpectedSharedVertex,
+}
 
 #[test]
-fn edges_and_incident_edges_on_single_tetrahedron() {
+fn edges_and_incident_edges_on_single_tetrahedron() -> Result<(), PublicTopologyApiTestError> {
     // Single tetrahedron: 4 vertices, 1 cell, 6 unique edges.
     let vertices = vec![
         vertex!([0.0, 0.0, 0.0]),
@@ -23,8 +40,7 @@ fn edges_and_incident_edges_on_single_tetrahedron() {
         DelaunayTriangulation::new_with_topology_guarantee(
             &vertices,
             TopologyGuarantee::PLManifold,
-        )
-        .unwrap();
+        )?;
     let tri = dt.as_triangulation();
 
     assert_eq!(dt.number_of_vertices(), 4);
@@ -36,12 +52,16 @@ fn edges_and_incident_edges_on_single_tetrahedron() {
     let edges: std::collections::HashSet<_> = dt.edges().collect();
     assert_eq!(edges.len(), 6);
 
-    let index = tri.build_adjacency_index().unwrap();
+    let index = tri.build_adjacency_index()?;
     let edges_with_index: std::collections::HashSet<_> = dt.edges_with_index(&index).collect();
     assert_eq!(edges_with_index, edges);
 
     // Pick an arbitrary vertex; in a tetrahedron its degree is 3.
-    let v0 = dt.vertices().next().unwrap().0;
+    let v0 = dt
+        .vertices()
+        .next()
+        .map(|(vertex_key, _)| vertex_key)
+        .ok_or(PublicTopologyApiTestError::EmptySingleTetrahedronVertices)?;
     assert_eq!(dt.incident_edges(v0).count(), 3);
     assert_eq!(dt.incident_edges_with_index(&index, v0).count(), 3);
 
@@ -49,7 +69,11 @@ fn edges_and_incident_edges_on_single_tetrahedron() {
     assert_eq!(incident.len(), 3);
 
     // A single tetrahedron has no cell neighbors.
-    let cell_key = dt.cells().next().unwrap().0;
+    let cell_key = dt
+        .cells()
+        .next()
+        .map(|(cell_key, _)| cell_key)
+        .ok_or(PublicTopologyApiTestError::EmptySingleTetrahedronCells)?;
     assert_eq!(dt.cell_neighbors(cell_key).count(), 0);
     assert_eq!(dt.cell_neighbors_with_index(&index, cell_key).count(), 0);
 
@@ -59,11 +83,17 @@ fn edges_and_incident_edges_on_single_tetrahedron() {
     assert!(dt.vertex_coords(v0).is_some());
 
     assert_eq!(dt.cell_vertices(cell_key), tri.cell_vertices(cell_key));
-    assert_eq!(dt.cell_vertices(cell_key).unwrap().len(), 4);
+    assert_eq!(
+        dt.cell_vertices(cell_key)
+            .ok_or(PublicTopologyApiTestError::MissingCellVertices)?
+            .len(),
+        4
+    );
+    Ok(())
 }
 
 #[test]
-fn adjacency_index_on_double_tetrahedron() {
+fn adjacency_index_on_double_tetrahedron() -> Result<(), PublicTopologyApiTestError> {
     // Two tetrahedra sharing a triangular facet.
     let vertices: Vec<_> = vec![
         // Shared triangle
@@ -79,8 +109,7 @@ fn adjacency_index_on_double_tetrahedron() {
         DelaunayTriangulation::new_with_topology_guarantee(
             &vertices,
             TopologyGuarantee::PLManifold,
-        )
-        .unwrap();
+        )?;
     let tri = dt.as_triangulation();
 
     assert_eq!(tri.number_of_vertices(), 5);
@@ -93,7 +122,7 @@ fn adjacency_index_on_double_tetrahedron() {
             let coords = dt.vertex_coords(vk)?;
             (coords == [0.0, 0.0, 0.0]).then_some(vk)
         })
-        .unwrap();
+        .ok_or(PublicTopologyApiTestError::MissingExpectedSharedVertex)?;
 
     // The shared vertex should be incident to both cells.
     assert_eq!(tri.adjacent_cells(shared_vertex_key).count(), 2);
@@ -110,7 +139,7 @@ fn adjacency_index_on_double_tetrahedron() {
     }
 
     // Build opt-in adjacency index and validate key properties.
-    let index = tri.build_adjacency_index().unwrap();
+    let index = tri.build_adjacency_index()?;
 
     // Triangulation-level with_index helpers should match the index and the baseline APIs.
     assert_eq!(
@@ -177,4 +206,5 @@ fn adjacency_index_on_double_tetrahedron() {
             .count(),
         0
     );
+    Ok(())
 }

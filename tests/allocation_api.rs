@@ -29,9 +29,6 @@ pub mod test_helpers {
 
     /// Helper to measure allocations with error handling
     ///
-    /// # Panics
-    ///
-    /// Panics if the closure `f` does not complete successfully.
     #[cfg(feature = "count-allocations")]
     pub fn measure_with_result<F, R>(f: F) -> (R, allocation_counter::AllocationInfo)
     where
@@ -42,7 +39,10 @@ pub mod test_helpers {
             result = Some(f());
         });
         println!("Memory info: {info:?}");
-        (result.expect("Closure should have set result"), info)
+        let Some(result) = result else {
+            unreachable!("allocation_counter::measure did not execute the closure");
+        };
+        (result, info)
     }
 
     /// Fallback for when allocation counting is disabled
@@ -92,12 +92,13 @@ pub mod test_helpers {
 
     /// Create a triangulation with some test vertices
     ///
-    /// # Panics
+    /// # Errors
     ///
-    /// Panics if triangulation creation with vertices fails.
-    #[must_use]
-    pub fn create_test_tds_with_vertices() -> DelaunayTriangulation<AdaptiveKernel<f64>, (), (), 3>
-    {
+    /// Returns the typed construction error if triangulation creation with vertices fails.
+    pub fn create_test_tds_with_vertices() -> Result<
+        DelaunayTriangulation<AdaptiveKernel<f64>, (), (), 3>,
+        DelaunayTriangulationConstructionError,
+    > {
         let vertices = vec![
             vertex!([0.0, 0.0, 0.0]),
             vertex!([1.0, 0.0, 0.0]),
@@ -105,7 +106,6 @@ pub mod test_helpers {
             vertex!([0.0, 0.0, 1.0]),
         ];
         DelaunayTriangulation::new_with_topology_guarantee(&vertices, TopologyGuarantee::PLManifold)
-            .expect("Failed to create triangulation with vertices")
     }
 
     /// Print memory allocation summary

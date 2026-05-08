@@ -1,11 +1,16 @@
 //! Public API integration coverage for `DelaunayTriangulation`.
 
 #![forbid(unsafe_code)]
+#![expect(
+    clippy::result_large_err,
+    reason = "tests preserve typed construction and insertion errors"
+)]
 
 use delaunay::prelude::geometry::AdaptiveKernel;
 use delaunay::prelude::triangulation::{
     ConstructionOptions, DedupPolicy, DelaunayTriangulation,
-    DelaunayTriangulationConstructionError, InsertionOrderStrategy, RetryPolicy, TopologyGuarantee,
+    DelaunayTriangulationConstructionError, InsertionError, InsertionOrderStrategy, RetryPolicy,
+    TopologyGuarantee,
 };
 use delaunay::vertex;
 #[cfg(feature = "diagnostics")]
@@ -13,8 +18,22 @@ use rand::{RngExt, SeedableRng, rngs::StdRng};
 
 type Dt<const D: usize> = DelaunayTriangulation<AdaptiveKernel<f64>, (), (), D>;
 
+#[derive(Debug, thiserror::Error)]
+enum PublicApiCoverageTestError {
+    #[error(transparent)]
+    Construction(#[from] DelaunayTriangulationConstructionError),
+    #[error(transparent)]
+    Insertion(#[from] InsertionError),
+    #[cfg(feature = "diagnostics")]
+    #[error("stale VertexKey returned from insert() after heuristic rebuild")]
+    StaleVertexKey,
+    #[cfg(feature = "diagnostics")]
+    #[error("no stale-key case found after {cases} attempts")]
+    NoStaleKeyCase { cases: usize },
+}
+
 #[test]
-fn topology_options_smoke_3d() {
+fn topology_options_smoke_3d() -> Result<(), PublicApiCoverageTestError> {
     let vertices = vec![
         vertex!([0.0, 0.0, 0.0]),
         vertex!([1.0, 0.0, 0.0]),
@@ -31,12 +50,12 @@ fn topology_options_smoke_3d() {
         &vertices,
         TopologyGuarantee::PLManifold,
         options,
-    )
-    .expect("3D construction with explicit options should succeed");
+    )?;
 
     assert_eq!(dt.number_of_vertices(), 4);
     assert_eq!(dt.number_of_cells(), 1);
     assert!(dt.validate().is_ok());
+    Ok(())
 }
 
 #[test]
@@ -71,20 +90,19 @@ fn statistics_default_on_preprocess_error() {
 
 #[test]
 #[allow(deprecated)]
-fn as_triangulation_mut_valid_view() {
+fn as_triangulation_mut_valid_view() -> Result<(), PublicApiCoverageTestError> {
     let vertices = vec![
         vertex!([0.0, 0.0]),
         vertex!([1.0, 0.0]),
         vertex!([0.0, 1.0]),
     ];
-    let mut dt: DelaunayTriangulation<_, (), (), 2> =
-        DelaunayTriangulation::new(&vertices).expect("2D construction should succeed");
+    let mut dt: DelaunayTriangulation<_, (), (), 2> = DelaunayTriangulation::new(&vertices)?;
 
-    dt.insert(vertex!([0.2, 0.2]))
-        .expect("interior insertion should succeed");
+    dt.insert(vertex!([0.2, 0.2]))?;
 
     let tri = dt.as_triangulation_mut();
     assert!(tri.is_valid().is_ok());
+    Ok(())
 }
 
 /// Slow search helper to find a natural stale-key repro case.
@@ -95,7 +113,7 @@ fn as_triangulation_mut_valid_view() {
 #[cfg(feature = "diagnostics")]
 #[test]
 #[ignore = "manual search helper; run explicitly to discover natural repro cases"]
-fn find_stale_key_after_rebuild() {
+fn find_stale_key_after_rebuild() -> Result<(), PublicApiCoverageTestError> {
     const DIM: usize = 4;
     const INITIAL_COUNT: usize = 12;
     const CASES: usize = 2_000;
@@ -153,8 +171,8 @@ fn find_stale_key_after_rebuild() {
             }
             tracing::debug!("inserted vertex coords: {inserted_coords:?}");
         }
-        panic!("stale VertexKey returned from insert() after heuristic rebuild");
+        return Err(PublicApiCoverageTestError::StaleVertexKey);
     }
 
-    panic!("no stale-key case found after {CASES} attempts");
+    Err(PublicApiCoverageTestError::NoStaleKeyCase { cases: CASES })
 }
