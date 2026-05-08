@@ -1,3 +1,8 @@
+//! Triangulation-specific map aliases for adjacency and incidence bookkeeping.
+//!
+//! These aliases encode the small-buffer capacities expected by common topology
+//! relationships such as facets, neighbors, cells, and vertex incidence.
+
 use super::{
     CellVertexBuffer, CellVertexUuidBuffer, FacetIndex, FastHashMap, FastHashSet,
     MAX_PRACTICAL_DIMENSION_SIZE, NeighborBuffer, SmallBuffer, Uuid, VertexUuidSet,

@@ -112,13 +112,21 @@ macro_rules! bench_info {
     }};
 }
 
+fn abort_benchmark(message: impl std::fmt::Display) -> ! {
+    #[cfg(not(feature = "bench-logging"))]
+    let _ = &message;
+    #[cfg(feature = "bench-logging")]
+    {
+        init_tracing();
+        tracing::error!("{message}");
+    }
+    std::process::exit(1);
+}
+
 fn bench_result<T, E: std::fmt::Display>(result: Result<T, E>, context: &str) -> T {
     match result {
         Ok(value) => value,
-        Err(error) => {
-            eprintln!("{context}: {error}");
-            std::process::exit(1);
-        }
+        Err(error) => abort_benchmark(format_args!("{context}: {error}")),
     }
 }
 
@@ -154,13 +162,7 @@ fn get_memory_usage() -> u64 {
             RefreshKind::nothing().with_processes(ProcessRefreshKind::nothing().with_memory()),
         ))
     });
-    let mut system = match sys.lock() {
-        Ok(system) => system,
-        Err(error) => {
-            eprintln!("failed to lock System: {error}");
-            std::process::exit(1);
-        }
-    };
+    let mut system = bench_result(sys.lock(), "failed to lock System");
     system.refresh_processes_specifics(
         ProcessesToUpdate::Some(&[pid]),
         true,
@@ -397,10 +399,11 @@ fn bench_validation<const D: usize>(c: &mut Criterion, dimension_name: &str, n_p
     group.bench_function("validate_topology", |b| {
         b.iter(|| {
             // Level 3 topology check (manifold-with-boundary + Euler characteristic)
-            bench_result(
-                tri.is_valid(),
-                "triangulation should be structurally valid during validation benchmark",
-            );
+            if let Err(error) = tri.is_valid() {
+                abort_benchmark(format_args!(
+                    "triangulation should be structurally valid during validation benchmark: {error}"
+                ));
+            }
         });
     });
 

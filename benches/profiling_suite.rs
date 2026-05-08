@@ -76,7 +76,13 @@ use std::sync::Once;
 use std::time::{Duration, Instant};
 
 fn abort_benchmark(message: impl std::fmt::Display) -> ! {
-    eprintln!("{message}");
+    #[cfg(not(feature = "bench-logging"))]
+    let _ = &message;
+    #[cfg(feature = "bench-logging")]
+    {
+        init_tracing();
+        tracing::error!(target: "bench", "{message}");
+    }
     std::process::exit(1);
 }
 
@@ -884,37 +890,41 @@ macro_rules! benchmark_validation_components_dimension {
 
             group.bench_function("tds_is_valid", |b| {
                 b.iter(|| {
-                    bench_result(
-                        black_box(dt.tds().is_valid()),
-                        "TDS validation should pass for benchmark triangulation",
-                    );
+                    if let Err(error) = black_box(dt.tds().is_valid()) {
+                        abort_benchmark(format_args!(
+                            "TDS validation should pass for benchmark triangulation: {error}"
+                        ));
+                    }
                 });
             });
 
             group.bench_function("tri_is_valid", |b| {
                 b.iter(|| {
-                    bench_result(
-                        black_box(dt.as_triangulation().is_valid()),
-                        "triangulation validation should pass for benchmark triangulation",
-                    );
+                    if let Err(error) = black_box(dt.as_triangulation().is_valid()) {
+                        abort_benchmark(format_args!(
+                            "triangulation validation should pass for benchmark triangulation: {error}"
+                        ));
+                    }
                 });
             });
 
             group.bench_function("is_valid_delaunay", |b| {
                 b.iter(|| {
-                    bench_result(
-                        black_box(dt.is_valid()),
-                        "Delaunay validation should pass for benchmark triangulation",
-                    );
+                    if let Err(error) = black_box(dt.is_valid()) {
+                        abort_benchmark(format_args!(
+                            "Delaunay validation should pass for benchmark triangulation: {error}"
+                        ));
+                    }
                 });
             });
 
             group.bench_function("validate", |b| {
                 b.iter(|| {
-                    bench_result(
-                        black_box(dt.validate()),
-                        "full validation should pass for benchmark triangulation",
-                    );
+                    if let Err(error) = black_box(dt.validate()) {
+                        abort_benchmark(format_args!(
+                            "full validation should pass for benchmark triangulation: {error}"
+                        ));
+                    }
                 });
             });
 

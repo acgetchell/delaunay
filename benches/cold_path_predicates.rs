@@ -36,14 +36,34 @@ use criterion::{BenchmarkId, Criterion, Throughput, criterion_group, criterion_m
 use delaunay::prelude::generators::generate_random_points_seeded;
 use delaunay::prelude::query::*;
 use std::hint::black_box;
+#[cfg(feature = "bench-logging")]
+use std::sync::Once;
+
+#[cfg(feature = "bench-logging")]
+fn init_tracing() {
+    static INIT: Once = Once::new();
+    INIT.call_once(|| {
+        let filter = tracing_subscriber::EnvFilter::try_from_default_env()
+            .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("error"));
+        let _ = tracing_subscriber::fmt().with_env_filter(filter).try_init();
+    });
+}
+
+fn abort_benchmark<E: std::fmt::Display>(context: &str, error: E) -> ! {
+    #[cfg(not(feature = "bench-logging"))]
+    let _ = (context, &error);
+    #[cfg(feature = "bench-logging")]
+    {
+        init_tracing();
+        tracing::error!(context = %context, error = %error);
+    }
+    std::process::exit(1);
+}
 
 fn bench_result<T, E: std::fmt::Display>(result: Result<T, E>, context: &str) -> T {
     match result {
         Ok(value) => value,
-        Err(error) => {
-            eprintln!("{context}: {error}");
-            std::process::exit(1);
-        }
+        Err(error) => abort_benchmark(context, error),
     }
 }
 
@@ -98,20 +118,22 @@ fn near_boundary_queries<const D: usize>() -> Vec<Point<f64, D>> {
 /// Run `insphere` across `queries` against `simplex`, black-boxing each result.
 fn run_insphere<const D: usize>(simplex: &[Point<f64, D>], queries: &[Point<f64, D>]) {
     for q in queries {
-        black_box(bench_result(
-            insphere(black_box(simplex), black_box(*q)),
-            "insphere query failed",
-        ));
+        let result = match insphere(black_box(simplex), black_box(*q)) {
+            Ok(value) => value,
+            Err(error) => abort_benchmark("insphere query failed", error),
+        };
+        black_box(result);
     }
 }
 
 /// Run `insphere_lifted` across `queries` against `simplex`, black-boxing each result.
 fn run_insphere_lifted<const D: usize>(simplex: &[Point<f64, D>], queries: &[Point<f64, D>]) {
     for q in queries {
-        black_box(bench_result(
-            insphere_lifted(black_box(simplex), black_box(*q)),
-            "insphere_lifted query failed",
-        ));
+        let result = match insphere_lifted(black_box(simplex), black_box(*q)) {
+            Ok(value) => value,
+            Err(error) => abort_benchmark("insphere_lifted query failed", error),
+        };
+        black_box(result);
     }
 }
 

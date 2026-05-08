@@ -1,3 +1,8 @@
+//! Stack-friendly buffer aliases for topology and geometry algorithms.
+//!
+//! The aliases in this module document the expected cardinality of common
+//! intermediate collections while keeping hot paths allocation-conscious.
+
 use super::{MAX_PRACTICAL_DIMENSION_SIZE, SmallBuffer, Uuid};
 use crate::core::facet::FacetHandle;
 use crate::core::tds::{CellKey, VertexKey};

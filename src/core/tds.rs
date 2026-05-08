@@ -3646,6 +3646,7 @@ where
     /// - Vertex keys cannot be retrieved for any cell (data structure corruption)
     /// - Neighbor assignment fails after cell removal
     /// - Incident cell assignment fails after cell removal
+    /// - Validation fails after topology rebuild
     ///
     /// # Examples
     ///
@@ -3683,7 +3684,11 @@ where
             return Ok(0);
         }
 
-        Ok(self.remove_cells_by_keys(&cells_to_remove))
+        let removed = self.remove_cells_by_keys(&cells_to_remove);
+        self.assign_neighbors().map_err(TdsMutationError::from)?;
+        self.assign_incident_cells()?;
+        self.is_valid().map_err(TdsMutationError::from)?;
+        Ok(removed)
     }
 
     // =========================================================================

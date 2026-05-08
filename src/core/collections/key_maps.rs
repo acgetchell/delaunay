@@ -1,3 +1,8 @@
+//! Keyed map and set aliases for vertex, cell, and UUID lookups.
+//!
+//! These types describe the canonical hash-map shapes used for topology storage,
+//! validation, and geometric algorithm bookkeeping.
+
 use super::{FastHashMap, FastHashSet, Uuid};
 use crate::core::tds::{CellKey, VertexKey};
 

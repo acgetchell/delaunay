@@ -1,3 +1,8 @@
+//! Core collection aliases used throughout triangulation storage and algorithms.
+//!
+//! These aliases centralize the crate's hasher, slotmap, and small-buffer choices so
+//! public APIs and internal algorithms use consistent collection types.
+
 use rustc_hash::{FxBuildHasher, FxHashMap, FxHashSet, FxHasher};
 use slotmap::DenseSlotMap;
 use smallvec::SmallVec;

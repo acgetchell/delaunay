@@ -4,6 +4,7 @@
 //! paths so doctests, integration tests, examples, and benchmarks have a small
 //! import contract to copy from.
 
+#![forbid(unsafe_code)]
 #![expect(
     clippy::result_large_err,
     reason = "tests preserve typed construction, repair, and delaunayize errors"

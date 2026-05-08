@@ -18,21 +18,23 @@ use delaunay::prelude::generators::generate_random_points_seeded;
 use delaunay::prelude::query::*;
 use std::hint::black_box;
 
+fn abort_benchmark(message: impl std::fmt::Display) -> ! {
+    #[cfg(not(feature = "bench-logging"))]
+    let _ = &message;
+    #[cfg(feature = "bench-logging")]
+    tracing::error!("{message}");
+    std::process::exit(1);
+}
+
 fn bench_result<T, E: std::fmt::Display>(result: Result<T, E>, context: &str) -> T {
     match result {
         Ok(value) => value,
-        Err(error) => {
-            eprintln!("{context}: {error}");
-            std::process::exit(1);
-        }
+        Err(error) => abort_benchmark(format_args!("{context}: {error}")),
     }
 }
 
 fn bench_option<T>(option: Option<T>, context: &str) -> T {
-    option.unwrap_or_else(|| {
-        eprintln!("{context}");
-        std::process::exit(1);
-    })
+    option.unwrap_or_else(|| abort_benchmark(context))
 }
 
 /// Generate a standard D-dimensional simplex (D+1 vertices)
@@ -87,10 +89,11 @@ fn benchmark_random_queries(c: &mut Criterion) {
     c.bench_function("random/insphere_1000_queries", |b| {
         b.iter(|| {
             for test_point in &test_points {
-                black_box(bench_result(
-                    insphere(black_box(&simplex_points), black_box(*test_point)),
-                    "insphere query failed",
-                ));
+                let result = match insphere(black_box(&simplex_points), black_box(*test_point)) {
+                    Ok(value) => value,
+                    Err(error) => abort_benchmark(format_args!("insphere query failed: {error}")),
+                };
+                black_box(result);
             }
         });
     });
@@ -98,10 +101,16 @@ fn benchmark_random_queries(c: &mut Criterion) {
     c.bench_function("random/insphere_distance_1000_queries", |b| {
         b.iter(|| {
             for test_point in &test_points {
-                black_box(bench_result(
-                    insphere_distance(black_box(&simplex_points), black_box(*test_point)),
-                    "insphere_distance query failed",
-                ));
+                let result =
+                    match insphere_distance(black_box(&simplex_points), black_box(*test_point)) {
+                        Ok(value) => value,
+                        Err(error) => {
+                            abort_benchmark(format_args!(
+                                "insphere_distance query failed: {error}"
+                            ));
+                        }
+                    };
+                black_box(result);
             }
         });
     });
@@ -109,10 +118,14 @@ fn benchmark_random_queries(c: &mut Criterion) {
     c.bench_function("random/insphere_lifted_1000_queries", |b| {
         b.iter(|| {
             for test_point in &test_points {
-                black_box(bench_result(
-                    insphere_lifted(black_box(&simplex_points), black_box(*test_point)),
-                    "insphere_lifted query failed",
-                ));
+                let result =
+                    match insphere_lifted(black_box(&simplex_points), black_box(*test_point)) {
+                        Ok(value) => value,
+                        Err(error) => {
+                            abort_benchmark(format_args!("insphere_lifted query failed: {error}"));
+                        }
+                    };
+                black_box(result);
             }
         });
     });
@@ -123,26 +136,39 @@ macro_rules! bench_simplex {
     ($c:ident, $dim:literal, $simplex:expr, $pt:expr) => {{
         $c.bench_function(concat!($dim, "d/insphere"), |b| {
             b.iter(|| {
-                black_box(bench_result(
-                    insphere(black_box(&$simplex), black_box($pt)),
-                    "insphere benchmark query failed",
-                ))
+                let result = match insphere(black_box(&$simplex), black_box($pt)) {
+                    Ok(value) => value,
+                    Err(error) => {
+                        abort_benchmark(format_args!("insphere benchmark query failed: {error}"));
+                    }
+                };
+                black_box(result)
             })
         });
         $c.bench_function(concat!($dim, "d/insphere_distance"), |b| {
             b.iter(|| {
-                black_box(bench_result(
-                    insphere_distance(black_box(&$simplex), black_box($pt)),
-                    "insphere_distance benchmark query failed",
-                ))
+                let result = match insphere_distance(black_box(&$simplex), black_box($pt)) {
+                    Ok(value) => value,
+                    Err(error) => {
+                        abort_benchmark(format_args!(
+                            "insphere_distance benchmark query failed: {error}"
+                        ));
+                    }
+                };
+                black_box(result)
             })
         });
         $c.bench_function(concat!($dim, "d/insphere_lifted"), |b| {
             b.iter(|| {
-                black_box(bench_result(
-                    insphere_lifted(black_box(&$simplex), black_box($pt)),
-                    "insphere_lifted benchmark query failed",
-                ))
+                let result = match insphere_lifted(black_box(&$simplex), black_box($pt)) {
+                    Ok(value) => value,
+                    Err(error) => {
+                        abort_benchmark(format_args!(
+                            "insphere_lifted benchmark query failed: {error}"
+                        ));
+                    }
+                };
+                black_box(result)
             })
         });
     }};
@@ -155,10 +181,15 @@ macro_rules! bench_edge_case {
             concat!("edge_cases_", $dim, "d/", $case, "_insphere"),
             |b| {
                 b.iter(|| {
-                    black_box(bench_result(
-                        insphere(black_box(&$simplex), black_box($pt)),
-                        "edge-case insphere benchmark query failed",
-                    ))
+                    let result = match insphere(black_box(&$simplex), black_box($pt)) {
+                        Ok(value) => value,
+                        Err(error) => {
+                            abort_benchmark(format_args!(
+                                "edge-case insphere benchmark query failed: {error}"
+                            ));
+                        }
+                    };
+                    black_box(result)
                 })
             },
         );
@@ -166,19 +197,29 @@ macro_rules! bench_edge_case {
             concat!("edge_cases_", $dim, "d/", $case, "_distance"),
             |b| {
                 b.iter(|| {
-                    black_box(bench_result(
-                        insphere_distance(black_box(&$simplex), black_box($pt)),
-                        "edge-case insphere_distance benchmark query failed",
-                    ))
+                    let result = match insphere_distance(black_box(&$simplex), black_box($pt)) {
+                        Ok(value) => value,
+                        Err(error) => {
+                            abort_benchmark(format_args!(
+                                "edge-case insphere_distance benchmark query failed: {error}"
+                            ));
+                        }
+                    };
+                    black_box(result)
                 })
             },
         );
         $c.bench_function(concat!("edge_cases_", $dim, "d/", $case, "_lifted"), |b| {
             b.iter(|| {
-                black_box(bench_result(
-                    insphere_lifted(black_box(&$simplex), black_box($pt)),
-                    "edge-case insphere_lifted benchmark query failed",
-                ))
+                let result = match insphere_lifted(black_box(&$simplex), black_box($pt)) {
+                    Ok(value) => value,
+                    Err(error) => {
+                        abort_benchmark(format_args!(
+                            "edge-case insphere_lifted benchmark query failed: {error}"
+                        ));
+                    }
+                };
+                black_box(result)
             })
         });
     }};

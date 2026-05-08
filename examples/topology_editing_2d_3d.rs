@@ -292,9 +292,9 @@ fn demo_3d() -> ExampleResult {
     println!("\n------------------------------------------------------------\n");
     edit_api_3d_k1()?;
     println!("\n------------------------------------------------------------\n");
-    edit_api_3d_k2();
+    edit_api_3d_k2()?;
     println!("\n------------------------------------------------------------\n");
-    edit_api_3d_k3();
+    edit_api_3d_k3()?;
     Ok(())
 }
 
@@ -416,7 +416,7 @@ fn edit_api_3d_k1() -> ExampleResult {
 }
 
 /// Demonstrates k=2 flips (facet flip) in 3D.
-fn edit_api_3d_k2() {
+fn edit_api_3d_k2() -> ExampleResult {
     println!("3D Edit API: k=2 Flips (Facet Flip: 2↔3)");
     println!("-----------------------------------------\n");
 
@@ -432,10 +432,7 @@ fn edit_api_3d_k2() {
         vertex!([1.0, 0.6, 0.4]), // Interior point
     ];
 
-    let Ok(mut dt) = DelaunayTriangulationBuilder::new(&vertices).build::<()>() else {
-        println!("⚠️  Could not construct triangulation for k=2 demo");
-        return;
-    };
+    let mut dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
 
     println!("Triangulation with interior point:");
     print_stats_3d(&dt);
@@ -478,10 +475,12 @@ fn edit_api_3d_k2() {
     } else {
         println!("⚠️  No interior facet found for k=2 flip demo");
     }
+
+    Ok(())
 }
 
 /// Demonstrates k=3 flips (ridge flip) in 3D.
-fn edit_api_3d_k3() {
+fn edit_api_3d_k3() -> ExampleResult {
     println!("3D Edit API: k=3 Flips (Ridge Flip: 3↔2)");
     println!("-----------------------------------------\n");
     println!("Note: k=3 flips are only available in 3D and higher dimensions\n");
@@ -506,32 +505,29 @@ fn edit_api_3d_k3() {
         vertex!([1.0, 0.6, 1.4]),
     ];
 
-    if let Ok(mut dt) = DelaunayTriangulationBuilder::new(&vertices).build::<()>() {
-        print_stats_3d(&dt);
+    let mut dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
+    print_stats_3d(&dt);
 
-        // Try to find and flip a ridge
-        if let Some(ridge) = find_flippable_ridge_3d(&dt) {
-            match dt.flip_k3(ridge) {
-                Ok(flip_info) => {
-                    println!("\n✓ k=3 flip succeeded:");
-                    print_stats_3d(&dt);
-                    println!("  Removed: {} cells", flip_info.removed_cells.len());
-                    println!("  Inserted: {} cells", flip_info.new_cells.len());
-                }
-                Err(e) => {
-                    println!("\n⚠️  k=3 flip not applicable: {e}");
-                    println!("   (Geometric constraints not satisfied for this configuration)");
-                }
+    // Try to find and flip a ridge
+    if let Some(ridge) = find_flippable_ridge_3d(&dt) {
+        match dt.flip_k3(ridge) {
+            Ok(flip_info) => {
+                println!("\n✓ k=3 flip succeeded:");
+                print_stats_3d(&dt);
+                println!("  Removed: {} cells", flip_info.removed_cells.len());
+                println!("  Inserted: {} cells", flip_info.new_cells.len());
             }
-        } else {
-            println!("\n⚠️  No ridges found in this simple triangulation");
+            Err(e) => {
+                println!("\n⚠️  k=3 flip not applicable: {e}");
+                println!("   (Geometric constraints not satisfied for this configuration)");
+            }
         }
     } else {
-        println!("\n⚠️  Note: k=3 flips require complex geometric configurations");
-        println!("   This example demonstrates that the API is available in 3D+");
+        println!("\n⚠️  No ridges found in this simple triangulation");
     }
 
     println!("\n✓ k=3 flip API demonstrated (Edit API - 3D+ only)");
+    Ok(())
 }
 
 // ============================================================================

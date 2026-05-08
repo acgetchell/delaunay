@@ -1,3 +1,8 @@
+//! Constructors for optimized hash maps, sets, and small buffers.
+//!
+//! These helpers keep allocation and hasher choices explicit at call sites without
+//! repeating the concrete collection aliases throughout the codebase.
+
 use super::{FastBuildHasher, FastHashMap, FastHashSet, SmallBuffer};
 
 // =============================================================================

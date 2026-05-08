@@ -555,7 +555,10 @@ where
     ///
     /// # Errors
     ///
-    /// Returns `FacetError::CellNotFoundInTriangulation` if the cell is no longer in the TDS.
+    /// Returns [`FacetError::CellNotFoundInTriangulation`] if the cell is no longer in the TDS,
+    /// [`FacetError::InvalidFacetIndex`] if the facet index is outside the cell's vertex list,
+    /// or [`FacetError::VertexKeyNotFoundInTriangulation`] if the opposite vertex key no longer
+    /// resolves to a stored vertex.
     ///
     /// # Examples
     ///

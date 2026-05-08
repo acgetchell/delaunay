@@ -1877,6 +1877,15 @@ pub enum FlipFailureKind {
     /// Neighbor wiring failed.
     #[error("neighbor wiring")]
     NeighborWiring,
+    /// Trial TDS validation failed before committing a flip.
+    #[error("trial validation")]
+    TrialValidation,
+    /// Neighbor wiring reached a validation failure.
+    #[error("wiring validation")]
+    WiringValidation,
+    /// Neighbor wiring reached a Delaunay repair failure.
+    #[error("Delaunay repair failed")]
+    DelaunayRepairFailed,
     /// TDS mutation failed.
     #[error("TDS mutation")]
     TdsMutation,
@@ -2681,7 +2690,18 @@ impl From<&FlipError> for FlipFailureKind {
             FlipError::NonManifoldFacet => Self::NonManifoldFacet,
             FlipError::InsertedSimplexAlreadyExists { .. } => Self::InsertedSimplexAlreadyExists,
             FlipError::CellCreation(_) => Self::CellCreation,
-            FlipError::NeighborWiring { .. } => Self::NeighborWiring,
+            FlipError::NeighborWiring { reason } => match reason {
+                FlipNeighborWiringError::TopologyValidation { .. }
+                | FlipNeighborWiringError::DelaunayValidation { .. }
+                | FlipNeighborWiringError::TopologyValidationFailed { .. } => {
+                    Self::WiringValidation
+                }
+                FlipNeighborWiringError::DelaunayRepair { .. } => Self::DelaunayRepairFailed,
+                _ => Self::NeighborWiring,
+            },
+            FlipError::TdsMutation {
+                reason: FlipMutationError::TrialValidation { .. },
+            } => Self::TrialValidation,
             FlipError::TdsMutation { .. } => Self::TdsMutation,
         }
     }
@@ -9066,15 +9086,15 @@ mod tests {
 
     #[derive(Debug, Clone, PartialEq, Eq)]
     struct TopologySnapshot {
-        vertex_uuids: Vec<Uuid>,
-        cell_vertex_uuids: Vec<Vec<Uuid>>,
+        vertices: Vec<Uuid>,
+        cell_vertices: Vec<Vec<Uuid>>,
     }
 
     fn snapshot_topology<const D: usize>(tds: &Tds<f64, (), (), D>) -> TopologySnapshot {
-        let mut vertex_uuids: Vec<Uuid> = tds.vertices().map(|(_, vertex)| vertex.uuid()).collect();
-        vertex_uuids.sort();
+        let mut vertices: Vec<Uuid> = tds.vertices().map(|(_, vertex)| vertex.uuid()).collect();
+        vertices.sort();
 
-        let mut cell_vertex_uuids: Vec<Vec<Uuid>> = tds
+        let mut cell_vertices: Vec<Vec<Uuid>> = tds
             .cells()
             .map(|(_, cell)| {
                 let mut uuids: Vec<Uuid> = cell
@@ -9086,13 +9106,101 @@ mod tests {
                 uuids
             })
             .collect();
-        cell_vertex_uuids.sort();
+        cell_vertices.sort();
 
         TopologySnapshot {
-            vertex_uuids,
-            cell_vertex_uuids,
+            vertices,
+            cell_vertices,
         }
     }
+
+    fn snapshot_incidence<const D: usize>(tds: &Tds<f64, (), (), D>) -> Vec<(Uuid, Option<Uuid>)> {
+        let mut incident_cells: Vec<(Uuid, Option<Uuid>)> = tds
+            .vertices()
+            .map(|(_, vertex)| {
+                (
+                    vertex.uuid(),
+                    vertex
+                        .incident_cell
+                        .and_then(|cell_key| tds.cell(cell_key).map(Cell::uuid)),
+                )
+            })
+            .collect();
+        incident_cells.sort();
+        incident_cells
+    }
+
+    fn insert_translated_simplex<const D: usize>(
+        tds: &mut Tds<f64, (), (), D>,
+        offset: f64,
+    ) -> (Vec<VertexKey>, CellKey) {
+        let mut vertices = Vec::with_capacity(D + 1);
+        vertices.push(
+            tds.insert_vertex_with_mapping(vertex!([offset; D]))
+                .unwrap(),
+        );
+
+        for axis in 0..D {
+            let mut coords = [offset; D];
+            coords[axis] += 1.0;
+            vertices.push(tds.insert_vertex_with_mapping(vertex!(coords)).unwrap());
+        }
+
+        let cell_key = tds
+            .insert_cell_with_mapping(Cell::new(vertices.clone(), None).unwrap())
+            .unwrap();
+        (vertices, cell_key)
+    }
+
+    fn test_flip_trial_validation_rollback_for_dim<const D: usize>() {
+        let mut tds: Tds<f64, (), (), D> = Tds::empty();
+        let (_first_vertices, first_cell) = insert_translated_simplex(&mut tds, 0.0);
+        let (_second_vertices, second_cell) = insert_translated_simplex(&mut tds, 10.0);
+        repair_neighbor_pointers(&mut tds).unwrap();
+        tds.assign_incident_cells().unwrap();
+
+        let isolated_vertex = tds.insert_vertex_with_mapping(vertex!([20.0; D])).unwrap();
+        tds.vertex_mut(isolated_vertex).unwrap().incident_cell = Some(second_cell);
+
+        let before = snapshot_topology(&tds);
+        let before_incidence = snapshot_incidence(&tds);
+        let denominator = f64::from(u32::try_from(D + 2).unwrap());
+        let new_vertex = vertex!([1.0 / denominator; D]);
+
+        let result = apply_bistellar_flip_k1(&mut tds, first_cell, new_vertex);
+        match result {
+            Err(FlipError::TdsMutation {
+                reason: FlipMutationError::TrialValidation { .. },
+            }) => {}
+            other => panic!("expected FlipMutationError::TrialValidation, got {other:?}"),
+        }
+
+        assert_eq!(
+            snapshot_topology(&tds),
+            before,
+            "trial.is_valid() failure must leave the original TDS unchanged"
+        );
+        assert_eq!(
+            snapshot_incidence(&tds),
+            before_incidence,
+            "trial.is_valid() failure must leave incident_cell pointers unchanged"
+        );
+    }
+
+    macro_rules! gen_trial_validation_rollback_tests {
+        ($($dim:literal),+ $(,)?) => {
+            pastey::paste! {
+                $(
+                    #[test]
+                    fn [<test_flip_trial_validation_rollback_ $dim d>]() {
+                        test_flip_trial_validation_rollback_for_dim::<$dim>();
+                    }
+                )+
+            }
+        };
+    }
+
+    gen_trial_validation_rollback_tests!(2, 3, 4, 5);
 
     macro_rules! test_bistellar_roundtrip_dimension {
         ($dim:literal) => {
@@ -10770,6 +10878,173 @@ mod tests {
         let ridge_5 = FlipError::InvalidRidgeMultiplicity { found: 5 };
         assert_eq!(ridge_4, ridge_4_copy);
         assert_ne!(ridge_4, ridge_5);
+    }
+
+    fn sample_tds_validation_failure() -> TdsValidationFailure {
+        TdsValidationFailure::InvalidNeighbors {
+            message: "synthetic neighbor mismatch".to_string(),
+        }
+    }
+
+    fn sample_repair_diagnostics() -> DelaunayRepairDiagnostics {
+        DelaunayRepairDiagnostics {
+            facets_checked: 7,
+            flips_performed: 3,
+            max_queue_len: 5,
+            ambiguous_predicates: 2,
+            ambiguous_predicate_samples: vec![11, 13],
+            predicate_failures: 1,
+            cycle_detections: 4,
+            cycle_signature_samples: vec![17, 19],
+            attempt: 2,
+            queue_order: RepairQueueOrder::Lifo,
+        }
+    }
+
+    #[test]
+    fn test_flip_failure_kind_preserves_nested_validation_and_repair_reasons() {
+        let trial_error = FlipError::from(FlipMutationError::TrialValidation {
+            k_move: 2,
+            direction: FlipDirection::Forward,
+            source: sample_tds_validation_failure(),
+        });
+        assert_eq!(
+            FlipFailureKind::from(&trial_error),
+            FlipFailureKind::TrialValidation
+        );
+
+        let wiring_validation = FlipError::from(FlipNeighborWiringError::TopologyValidation {
+            source: sample_tds_validation_failure(),
+        });
+        assert_eq!(
+            FlipFailureKind::from(&wiring_validation),
+            FlipFailureKind::WiringValidation
+        );
+
+        let repair_reason =
+            FlipNeighborRepairFailure::from(DelaunayRepairError::VerificationFailed {
+                context: "post-repair verification",
+                source: Box::new(trial_error),
+            });
+        match &repair_reason {
+            FlipNeighborRepairFailure::VerificationFailed {
+                context,
+                source_kind,
+            } => {
+                assert_eq!(*context, "post-repair verification");
+                assert_eq!(*source_kind, FlipFailureKind::TrialValidation);
+            }
+            other => panic!("expected verification failure, got {other:?}"),
+        }
+
+        let wiring_repair = FlipError::from(FlipNeighborWiringError::DelaunayRepair {
+            reason: repair_reason,
+        });
+        assert_eq!(
+            FlipFailureKind::from(&wiring_repair),
+            FlipFailureKind::DelaunayRepairFailed
+        );
+    }
+
+    #[test]
+    fn test_flip_neighbor_conversion_kinds_cover_insertion_suberrors() {
+        let cavity_kind = FlipNeighborCavityFailureKind::from(
+            &CavityFillingError::UnsupportedDegenerateLocation {
+                location: crate::core::algorithms::locate::LocateResult::Outside,
+            },
+        );
+        assert_eq!(
+            cavity_kind,
+            FlipNeighborCavityFailureKind::UnsupportedDegenerateLocation
+        );
+        assert_eq!(cavity_kind.to_string(), "unsupported degenerate location");
+
+        let hull_kind =
+            FlipNeighborHullExtensionFailureKind::from(&HullExtensionReason::InvalidPatch {
+                details: "non-manifold visible patch".to_string(),
+            });
+        assert_eq!(
+            hull_kind,
+            FlipNeighborHullExtensionFailureKind::InvalidPatch
+        );
+        assert_eq!(hull_kind.to_string(), "invalid patch");
+
+        let validation_kind = FlipNeighborDelaunayValidationFailureKind::from(
+            &crate::triangulation::delaunay::DelaunayTriangulationValidationError::RepairOperationFailed {
+                operation: crate::triangulation::delaunay::DelaunayRepairOperation::VertexRemoval,
+                source: Box::new(DelaunayRepairError::InvalidTopology {
+                    required: TopologyGuarantee::PLManifold,
+                    found: TopologyGuarantee::Pseudomanifold,
+                    message: "repair requires PL topology",
+                }),
+            },
+        );
+        assert_eq!(
+            validation_kind,
+            FlipNeighborDelaunayValidationFailureKind::RepairOperationFailed
+        );
+        assert_eq!(validation_kind.to_string(), "repair operation failed");
+
+        let repair_wiring = FlipNeighborWiringError::from(InsertionError::DelaunayRepairFailed {
+            source: Box::new(DelaunayRepairError::InvalidTopology {
+                required: TopologyGuarantee::PLManifold,
+                found: TopologyGuarantee::Pseudomanifold,
+                message: "repair requires PL topology",
+            }),
+            context: "post-insertion repair".to_string(),
+        });
+        match repair_wiring {
+            FlipNeighborWiringError::DelaunayRepair {
+                reason:
+                    FlipNeighborRepairFailure::InvalidTopology {
+                        required,
+                        found,
+                        message,
+                    },
+            } => {
+                assert_eq!(required, TopologyGuarantee::PLManifold);
+                assert_eq!(found, TopologyGuarantee::Pseudomanifold);
+                assert_eq!(message, "repair requires PL topology");
+            }
+            other => panic!("expected preserved Delaunay repair reason, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn test_flip_neighbor_repair_diagnostics_preserve_summary_fields() {
+        let diagnostics = sample_repair_diagnostics();
+        let summary = FlipNeighborRepairDiagnostics::from(diagnostics.clone());
+
+        assert_eq!(summary.facets_checked, diagnostics.facets_checked);
+        assert_eq!(summary.flips_performed, diagnostics.flips_performed);
+        assert_eq!(summary.max_queue_len, diagnostics.max_queue_len);
+        assert_eq!(
+            summary.ambiguous_predicates,
+            diagnostics.ambiguous_predicates
+        );
+        assert_eq!(summary.predicate_failures, diagnostics.predicate_failures);
+        assert_eq!(summary.cycle_detections, diagnostics.cycle_detections);
+        assert_eq!(summary.attempt, diagnostics.attempt);
+        assert_eq!(summary.queue_order, diagnostics.queue_order);
+        assert_eq!(
+            summary.to_string(),
+            "checked=7, flips=3, max_queue=5, ambiguous=2, predicate_failures=1, cycles=4, attempt=2, order=Lifo"
+        );
+
+        let non_convergent = FlipNeighborRepairFailure::from(DelaunayRepairError::NonConvergent {
+            max_flips: 42,
+            diagnostics: Box::new(diagnostics),
+        });
+        match non_convergent {
+            FlipNeighborRepairFailure::NonConvergent {
+                max_flips,
+                diagnostics,
+            } => {
+                assert_eq!(max_flips, 42);
+                assert_eq!(diagnostics.flips_performed, 3);
+            }
+            other => panic!("expected non-convergent repair summary, got {other:?}"),
+        }
     }
 
     #[test]

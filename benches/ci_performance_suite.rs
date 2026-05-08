@@ -66,7 +66,10 @@ type BenchTriangulation<const D: usize> = DelaunayTriangulation<AdaptiveKernel<f
 type FlipTriangulation4 = DelaunayTriangulation<RobustKernel<f64>, (), (), 4>;
 
 fn abort_benchmark(message: impl std::fmt::Display) -> ! {
-    eprintln!("{message}");
+    #[cfg(not(feature = "bench-logging"))]
+    let _ = &message;
+    #[cfg(feature = "bench-logging")]
+    tracing::error!("{message}");
     std::process::exit(1);
 }
 
@@ -1030,11 +1033,13 @@ fn bench_validate_case<const D: usize>(
     group.bench_function(
         BenchmarkId::new(format!("validate_{dimension}d{}", dataset.suffix()), count),
         |b| {
-            b.iter(|| {
-                bench_result(
-                    black_box(dt.validate()),
-                    &format!("{dimension}D benchmark triangulation should validate"),
-                );
+            b.iter(|| match black_box(dt.validate()) {
+                Ok(()) => {}
+                Err(error) => {
+                    abort_benchmark(format_args!(
+                        "{dimension}D benchmark triangulation should validate: {error}"
+                    ));
+                }
             });
         },
     );
@@ -1056,10 +1061,14 @@ fn bench_insert_case<const D: usize>(
                 || (base_dt.clone(), insert_vertices.to_vec()),
                 |(mut dt, vertices)| {
                     for vertex in vertices {
-                        bench_result(
-                            black_box(dt.insert(vertex)),
-                            &format!("{dimension}D incremental insert should succeed"),
-                        );
+                        match black_box(dt.insert(vertex)) {
+                            Ok(_) => {}
+                            Err(error) => {
+                                abort_benchmark(format_args!(
+                                    "{dimension}D incremental insert should succeed: {error}"
+                                ));
+                            }
+                        }
                     }
                     black_box(dt);
                 },

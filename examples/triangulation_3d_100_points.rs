@@ -39,6 +39,11 @@ const SEED_CANDIDATES: &[u64] = &[1, 7, 11, 42, 99, 123, 666];
 enum Triangulation3dExampleError {
     #[error(transparent)]
     AdjacencyIndex(#[from] AdjacencyIndexBuildError),
+    #[error("failed to create triangulation after trying seeds {seed_candidates:?}: {last_error}")]
+    TriangulationConstruction {
+        seed_candidates: Vec<u64>,
+        last_error: String,
+    },
 }
 
 fn main() -> Result<(), Triangulation3dExampleError> {
@@ -89,11 +94,10 @@ fn main() -> Result<(), Triangulation3dExampleError> {
         }
         triangulation
     } else {
-        eprintln!(
-            "✗ Failed to create triangulation after trying seeds {seed_candidates:?}: {}",
-            last_error.unwrap_or_else(|| "unknown error".to_string())
-        );
-        return Ok(());
+        return Err(Triangulation3dExampleError::TriangulationConstruction {
+            seed_candidates,
+            last_error: last_error.unwrap_or_else(|| "unknown error".to_string()),
+        });
     };
 
     // Display some vertex information by accessing the triangulation's vertices
