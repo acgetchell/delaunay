@@ -50,6 +50,7 @@
 //! | Task | Import |
 //! |---|---|
 //! | Build a triangulation, insert/remove vertices | `use delaunay::prelude::triangulation::*` |
+//! | Low-level incremental insertion building blocks | `use delaunay::prelude::triangulation::insertion::*` |
 //! | Read-only queries, traversal, convex hull | `use delaunay::prelude::query::*` |
 //! | Point location and conflict-region algorithms | `use delaunay::prelude::algorithms::*` |
 //! | Geometry helpers, predicates, points | `use delaunay::prelude::geometry::*` |
@@ -996,14 +997,14 @@ pub mod prelude {
                 CavityFillingError, CavityRepairStage, HullExtensionReason,
                 InitialSimplexConstructionError, InsertionError, NeighborRebuildError,
                 NeighborWiringError, TdsConstructionFailure, TdsValidationFailure, extend_hull,
-                fill_cavity, wire_cavity_neighbors,
+                fill_cavity, repair_neighbor_pointers_local, wire_cavity_neighbors,
             };
             pub use crate::core::collections::CellKeyBuffer;
             pub use crate::core::facet::FacetHandle;
             pub use crate::core::operations::{
                 InsertionOutcome, InsertionResult, InsertionStatistics,
             };
-            pub use crate::core::tds::{CellKey, Tds, VertexKey};
+            pub use crate::core::tds::{CellKey, Tds, TdsMutationError, VertexKey};
         }
 
         /// Topological operation telemetry and repair decisions.
