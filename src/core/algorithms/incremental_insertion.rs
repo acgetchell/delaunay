@@ -2159,6 +2159,12 @@ where
 /// Existing valid neighbor pointers are preserved, including pointers into cells outside
 /// the affected set.
 ///
+/// This helper is intentionally scoped: it only considers `seeds`,
+/// `optional_external_cells`, and one-hop neighbors reachable from those cells.
+/// Damage outside that local region is ignored. Use [`repair_neighbor_pointers`]
+/// when callers need a full triangulation-wide rebuild, or run validation after
+/// local repair when the affected region is not known precisely.
+///
 /// # Arguments
 ///
 /// - `tds` - triangulation data structure whose neighbor slots may be repaired.
@@ -4795,34 +4801,155 @@ mod tests {
         assert!(tds.is_valid().is_ok());
     }
 
-    #[test]
-    fn test_repair_neighbor_pointers_local_reconstructs_missing_slot() {
-        let vertices = vec![
+    macro_rules! test_repair_neighbor_pointers_local_dimensions {
+        (
+            $dim:literal,
+            $initial_vertices:expr,
+            $shared_facet_vertices:expr,
+            $opposite_vertices:expr
+        ) => {
+            pastey::paste! {
+                #[test]
+                fn [<test_repair_neighbor_pointers_local_reconstructs_missing_slot_ $dim d>]() {
+                    let vertices = $initial_vertices;
+                    let mut dt = DelaunayTriangulation::<_, (), (), $dim>::new(&vertices).unwrap();
+                    let tds = dt.tds_mut();
+                    let (cell_key, facet_idx, neighbor_key, _) =
+                        first_neighbor_pair(tds).expect("test triangulation should have adjacent cells");
+
+                    set_neighbor(tds, cell_key, facet_idx, None).unwrap();
+                    let repaired = repair_neighbor_pointers_local(tds, &[cell_key], Some(&[neighbor_key]))
+                        .expect("local repair should reconstruct the missing slot");
+
+                    assert_eq!(repaired, 1);
+                    let cell = tds.cell(cell_key).unwrap();
+                    assert_eq!(
+                        cell.neighbors()
+                            .and_then(|neighbors| neighbors.get(usize::from(facet_idx)))
+                            .copied()
+                            .flatten(),
+                        Some(neighbor_key)
+                    );
+                    assert!(tds.is_valid().is_ok());
+                }
+
+                #[test]
+                fn [<test_repair_neighbor_pointers_local_reports_non_manifold_incidence_ $dim d>]() {
+                    let mut tds: Tds<f64, (), (), $dim> = Tds::empty();
+                    let shared_vertices = $shared_facet_vertices;
+                    let opposite_vertices = $opposite_vertices;
+
+                    let mut shared_keys = Vec::new();
+                    for vertex in shared_vertices {
+                        shared_keys.push(tds.insert_vertex_with_mapping(vertex).unwrap());
+                    }
+
+                    let mut cell_keys = Vec::new();
+                    for vertex in opposite_vertices {
+                        let opposite_key = tds.insert_vertex_with_mapping(vertex).unwrap();
+                        let mut vertices = shared_keys.clone();
+                        vertices.push(opposite_key);
+                        cell_keys.push(
+                            tds.insert_cell_with_mapping(Cell::new(vertices, None).unwrap())
+                                .unwrap(),
+                        );
+                    }
+
+                    let err = repair_neighbor_pointers_local(&mut tds, &cell_keys, None).unwrap_err();
+
+                    assert!(matches!(
+                        err,
+                        InsertionError::NonManifoldTopology { cell_count: 3, .. }
+                    ));
+                }
+            }
+        };
+    }
+
+    test_repair_neighbor_pointers_local_dimensions!(
+        2,
+        vec![
             vertex!([0.0, 0.0]),
             vertex!([1.0, 0.0]),
             vertex!([0.0, 1.0]),
             vertex!([1.0, 1.1]),
-        ];
-        let mut dt = DelaunayTriangulation::<_, (), (), 2>::new(&vertices).unwrap();
-        let tds = dt.tds_mut();
-        let (cell_key, facet_idx, neighbor_key, _) =
-            first_neighbor_pair(tds).expect("test triangulation should have adjacent cells");
+        ],
+        vec![vertex!([0.0, 0.0]), vertex!([1.0, 0.0])],
+        vec![
+            vertex!([0.0, 1.0]),
+            vertex!([0.0, -1.0]),
+            vertex!([2.0, 0.0]),
+        ]
+    );
 
-        set_neighbor(tds, cell_key, facet_idx, None).unwrap();
-        let repaired = repair_neighbor_pointers_local(tds, &[cell_key], Some(&[neighbor_key]))
-            .expect("local repair should reconstruct the missing slot");
+    test_repair_neighbor_pointers_local_dimensions!(
+        3,
+        vec![
+            vertex!([0.0, 0.0, 0.0]),
+            vertex!([1.0, 0.0, 0.0]),
+            vertex!([0.0, 1.0, 0.0]),
+            vertex!([0.0, 0.0, 1.0]),
+            vertex!([0.25, 0.25, 0.25]),
+        ],
+        vec![
+            vertex!([0.0, 0.0, 0.0]),
+            vertex!([1.0, 0.0, 0.0]),
+            vertex!([0.0, 1.0, 0.0]),
+        ],
+        vec![
+            vertex!([0.0, 0.0, 1.0]),
+            vertex!([0.0, 0.0, -1.0]),
+            vertex!([1.0, 1.0, 1.0]),
+        ]
+    );
 
-        assert_eq!(repaired, 1);
-        let cell = tds.cell(cell_key).unwrap();
-        assert_eq!(
-            cell.neighbors()
-                .and_then(|neighbors| neighbors.get(usize::from(facet_idx)))
-                .copied()
-                .flatten(),
-            Some(neighbor_key)
-        );
-        assert!(tds.is_valid().is_ok());
-    }
+    test_repair_neighbor_pointers_local_dimensions!(
+        4,
+        vec![
+            vertex!([0.0, 0.0, 0.0, 0.0]),
+            vertex!([1.0, 0.0, 0.0, 0.0]),
+            vertex!([0.0, 1.0, 0.0, 0.0]),
+            vertex!([0.0, 0.0, 1.0, 0.0]),
+            vertex!([0.0, 0.0, 0.0, 1.0]),
+            vertex!([0.2, 0.2, 0.2, 0.2]),
+        ],
+        vec![
+            vertex!([0.0, 0.0, 0.0, 0.0]),
+            vertex!([1.0, 0.0, 0.0, 0.0]),
+            vertex!([0.0, 1.0, 0.0, 0.0]),
+            vertex!([0.0, 0.0, 1.0, 0.0]),
+        ],
+        vec![
+            vertex!([0.0, 0.0, 0.0, 1.0]),
+            vertex!([0.0, 0.0, 0.0, -1.0]),
+            vertex!([1.0, 1.0, 1.0, 1.0]),
+        ]
+    );
+
+    test_repair_neighbor_pointers_local_dimensions!(
+        5,
+        vec![
+            vertex!([0.0, 0.0, 0.0, 0.0, 0.0]),
+            vertex!([1.0, 0.0, 0.0, 0.0, 0.0]),
+            vertex!([0.0, 1.0, 0.0, 0.0, 0.0]),
+            vertex!([0.0, 0.0, 1.0, 0.0, 0.0]),
+            vertex!([0.0, 0.0, 0.0, 1.0, 0.0]),
+            vertex!([0.0, 0.0, 0.0, 0.0, 1.0]),
+            vertex!([0.15, 0.15, 0.15, 0.15, 0.15]),
+        ],
+        vec![
+            vertex!([0.0, 0.0, 0.0, 0.0, 0.0]),
+            vertex!([1.0, 0.0, 0.0, 0.0, 0.0]),
+            vertex!([0.0, 1.0, 0.0, 0.0, 0.0]),
+            vertex!([0.0, 0.0, 1.0, 0.0, 0.0]),
+            vertex!([0.0, 0.0, 0.0, 1.0, 0.0]),
+        ],
+        vec![
+            vertex!([0.0, 0.0, 0.0, 0.0, 1.0]),
+            vertex!([0.0, 0.0, 0.0, 0.0, -1.0]),
+            vertex!([1.0, 1.0, 1.0, 1.0, 1.0]),
+        ]
+    );
 
     #[test]
     fn test_repair_neighbor_pointers_local_replaces_stale_neighbor_slot() {
@@ -4902,36 +5029,6 @@ mod tests {
                 .flatten(),
             Some(c2)
         );
-    }
-
-    #[test]
-    fn test_repair_neighbor_pointers_local_reports_non_manifold_incidence() {
-        let mut tds: Tds<f64, (), (), 2> = Tds::empty();
-
-        let v_a = tds.insert_vertex_with_mapping(vertex!([0.0, 0.0])).unwrap();
-        let v_b = tds.insert_vertex_with_mapping(vertex!([1.0, 0.0])).unwrap();
-        let v_c = tds.insert_vertex_with_mapping(vertex!([0.0, 1.0])).unwrap();
-        let v_d = tds
-            .insert_vertex_with_mapping(vertex!([0.0, -1.0]))
-            .unwrap();
-        let v_e = tds.insert_vertex_with_mapping(vertex!([2.0, 0.0])).unwrap();
-
-        let c1 = tds
-            .insert_cell_with_mapping(Cell::new(vec![v_a, v_b, v_c], None).unwrap())
-            .unwrap();
-        let c2 = tds
-            .insert_cell_with_mapping(Cell::new(vec![v_a, v_b, v_d], None).unwrap())
-            .unwrap();
-        let c3 = tds
-            .insert_cell_with_mapping(Cell::new(vec![v_a, v_b, v_e], None).unwrap())
-            .unwrap();
-
-        let err = repair_neighbor_pointers_local(&mut tds, &[c1, c2, c3], None).unwrap_err();
-
-        assert!(matches!(
-            err,
-            InsertionError::NonManifoldTopology { cell_count: 3, .. }
-        ));
     }
 
     #[test]

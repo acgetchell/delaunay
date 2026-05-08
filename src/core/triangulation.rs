@@ -196,6 +196,7 @@ static DUPLICATE_DETECTION_GRID_CANDIDATES: AtomicU64 = AtomicU64::new(0);
 static DUPLICATE_DETECTION_ENABLED: OnceLock<bool> = OnceLock::new();
 static RETRYABLE_SKIP_TRACE_ENABLED: OnceLock<bool> = OnceLock::new();
 static CAVITY_REDUCTION_TRACE_ENABLED: OnceLock<bool> = OnceLock::new();
+static FORCE_GLOBAL_NEIGHBOR_REBUILD_ENABLED: OnceLock<bool> = OnceLock::new();
 static CAVITY_REDUCTION_TRACE_EMITTED: AtomicBool = AtomicBool::new(false);
 
 #[cfg(test)]
@@ -247,7 +248,8 @@ fn cavity_reduction_trace_enabled() -> bool {
 
 /// Returns whether local neighbor repair should be bypassed for regression isolation.
 fn force_global_neighbor_rebuild_enabled() -> bool {
-    env::var_os("DELAUNAY_FORCE_GLOBAL_NEIGHBOR_REBUILD").is_some()
+    *FORCE_GLOBAL_NEIGHBOR_REBUILD_ENABLED
+        .get_or_init(|| env::var_os("DELAUNAY_FORCE_GLOBAL_NEIGHBOR_REBUILD").is_some())
 }
 
 /// Extracts a compact one-line summary for retryable conflict-region failures.
@@ -4154,12 +4156,9 @@ where
         &mut self,
         new_cells: &CellKeyBuffer,
         frontier_cells: &[CellKey],
-        stage: CavityRepairStage,
     ) -> Result<usize, InsertionError> {
-        let facet_valid = self.tds.validate_facet_sharing().is_ok();
         #[cfg(debug_assertions)]
         tracing::debug!(
-            facet_sharing_valid = facet_valid,
             cells = self.tds.number_of_cells(),
             surviving_new_cell_seeds = new_cells
                 .iter()
@@ -4171,10 +4170,6 @@ where
                 .count(),
             "Before local neighbor-pointer repair"
         );
-
-        if !facet_valid {
-            return Err(CavityFillingError::InvalidFacetSharingAfterRepair { stage }.into());
-        }
 
         if force_global_neighbor_rebuild_enabled() {
             #[cfg(debug_assertions)]
@@ -5004,6 +4999,7 @@ where
 
         // Iteratively repair non-manifold topology until facet sharing is valid
         let mut total_removed = 0;
+        let mut facet_sharing_known_valid = true;
         let mut neighbor_repair_frontier = CellKeyBuffer::new();
         #[cfg_attr(
             not(debug_assertions),
@@ -5066,7 +5062,8 @@ where
                 );
 
                 // Early exit if repair succeeded
-                if self.tds.validate_facet_sharing().is_ok() {
+                facet_sharing_known_valid = self.tds.validate_facet_sharing().is_ok();
+                if facet_sharing_known_valid {
                     break;
                 }
             } else {
@@ -5079,17 +5076,21 @@ where
         #[cfg(debug_assertions)]
         tracing::debug!("After repair loop: total_removed={total_removed}");
 
+        if !facet_sharing_known_valid {
+            return Err(CavityFillingError::InvalidFacetSharingAfterRepair {
+                stage: CavityRepairStage::PrimaryInsertion,
+            }
+            .into());
+        }
+
         // Global neighbor rebuild is expensive. In the common case (no cells removed during the
         // local facet-repair loop), `wire_cavity_neighbors` has already glued the cavity locally.
         //
         // If we *did* remove cells during the repair loop, repair only the new-cell/frontier
         // neighborhood unless the force-rebuild diagnostic environment variable is set.
         if total_removed > 0 {
-            let repaired = self.repair_neighbors_after_local_cell_removal(
-                &new_cells,
-                &neighbor_repair_frontier,
-                CavityRepairStage::PrimaryInsertion,
-            )?;
+            let repaired = self
+                .repair_neighbors_after_local_cell_removal(&new_cells, &neighbor_repair_frontier)?;
             suspicion.neighbor_pointers_rebuilt = repaired > 0;
         }
 
@@ -5669,6 +5670,7 @@ where
 
                 // Iteratively repair non-manifold topology until facet sharing is valid
                 let mut total_removed = 0;
+                let mut facet_sharing_known_valid = true;
                 let mut neighbor_repair_frontier = CellKeyBuffer::new();
                 #[cfg_attr(
                     not(debug_assertions),
@@ -5731,7 +5733,8 @@ where
                         );
 
                         // Early exit if repair succeeded
-                        if self.tds.validate_facet_sharing().is_ok() {
+                        facet_sharing_known_valid = self.tds.validate_facet_sharing().is_ok();
+                        if facet_sharing_known_valid {
                             break;
                         }
                     } else {
@@ -5741,11 +5744,17 @@ where
                 }
 
                 // Repair neighbor pointers now that topology is manifold.
+                if !facet_sharing_known_valid {
+                    return Err(CavityFillingError::InvalidFacetSharingAfterRepair {
+                        stage: CavityRepairStage::FanTriangulation,
+                    }
+                    .into());
+                }
+
                 if total_removed > 0 {
                     let repaired = self.repair_neighbors_after_local_cell_removal(
                         &new_cells,
                         &neighbor_repair_frontier,
-                        CavityRepairStage::FanTriangulation,
                     )?;
                     suspicion.neighbor_pointers_rebuilt = repaired > 0;
                 }
@@ -10852,11 +10861,7 @@ mod tests {
         let mut new_cells = CellKeyBuffer::new();
         new_cells.extend(original_cells);
         let repaired = tri
-            .repair_neighbors_after_local_cell_removal(
-                &new_cells,
-                &repair.frontier_cells,
-                CavityRepairStage::PrimaryInsertion,
-            )
+            .repair_neighbors_after_local_cell_removal(&new_cells, &repair.frontier_cells)
             .unwrap();
 
         assert!(repaired > 0);
