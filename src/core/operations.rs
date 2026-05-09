@@ -260,6 +260,31 @@ pub(crate) struct InsertionTelemetry {
     pub conflict_region_cells_total: usize,
     /// Maximum number of cells in a single local conflict region.
     pub conflict_region_cells_max: usize,
+    /// Wall-clock nanoseconds spent computing local conflict regions.
+    pub conflict_region_nanos: u64,
+    /// Maximum wall-clock nanoseconds spent computing one local conflict region.
+    pub conflict_region_nanos_max: u64,
+
+    /// Number of cavity insertion attempts observed by insertion.
+    pub cavity_insertion_calls: usize,
+    /// Wall-clock nanoseconds spent filling cavities and wiring neighbors.
+    pub cavity_insertion_nanos: u64,
+    /// Maximum wall-clock nanoseconds spent in one cavity insertion attempt.
+    pub cavity_insertion_nanos_max: u64,
+
+    /// Number of hull extension attempts observed by insertion.
+    pub hull_extension_calls: usize,
+    /// Wall-clock nanoseconds spent extending the convex hull.
+    pub hull_extension_nanos: u64,
+    /// Maximum wall-clock nanoseconds spent in one hull extension attempt.
+    pub hull_extension_nanos_max: u64,
+
+    /// Number of post-insertion topology validations observed by insertion.
+    pub topology_validation_calls: usize,
+    /// Wall-clock nanoseconds spent in post-insertion topology validation.
+    pub topology_validation_nanos: u64,
+    /// Maximum wall-clock nanoseconds spent in one post-insertion validation.
+    pub topology_validation_nanos_max: u64,
 
     /// Number of global exterior-point conflict scans.
     pub global_conflict_scans: usize,
@@ -270,7 +295,7 @@ pub(crate) struct InsertionTelemetry {
     /// Maximum cells found by a single global exterior-point conflict scan.
     pub global_conflict_cells_found_max: usize,
     /// Wall-clock nanoseconds spent in global exterior-point conflict scans.
-    pub global_conflict_scan_nanos: u128,
+    pub global_conflict_scan_nanos: u64,
 }
 
 /// Ephemeral insertion state used by Delaunay triangulations.

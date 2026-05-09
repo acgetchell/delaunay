@@ -795,6 +795,7 @@ pub mod triangulation {
     pub mod delaunayize;
     /// Triangulation editing operations (bistellar flips).
     pub mod flips;
+    pub(crate) mod locality;
 
     // Re-export commonly used triangulation types for discoverability.
     pub use crate::core::triangulation::Triangulation;

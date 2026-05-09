@@ -73,6 +73,7 @@
 
 #![forbid(unsafe_code)]
 
+use delaunay::core::operations::InsertionResult;
 use delaunay::core::triangulation::TopologyGuarantee;
 use delaunay::geometry::kernel::RobustKernel;
 use delaunay::geometry::util::{
@@ -140,6 +141,24 @@ struct SkipSample<const D: usize> {
     error: String,
 }
 
+#[derive(Debug, Clone)]
+struct SlowInsertionSample {
+    index: usize,
+    uuid: uuid::Uuid,
+    attempts: usize,
+    result: InsertionResult,
+    elapsed_nanos: u64,
+    cells_after: usize,
+    locate_calls: usize,
+    locate_walk_steps_total: usize,
+    conflict_region_calls: usize,
+    conflict_region_cells_total: usize,
+    cavity_insertion_calls: usize,
+    global_conflict_scans: usize,
+    hull_extension_calls: usize,
+    topology_validation_calls: usize,
+}
+
 #[derive(Debug, Default, Clone)]
 struct InsertionSummary<const D: usize> {
     inserted: usize,
@@ -157,6 +176,7 @@ struct InsertionSummary<const D: usize> {
 
     telemetry: ConstructionTelemetry,
 
+    slow_insertions: Vec<SlowInsertionSample>,
     skip_samples: Vec<SkipSample<D>>,
 }
 
@@ -210,6 +230,26 @@ impl<const D: usize> InsertionSummary<D> {
 
 impl<const D: usize> From<ConstructionStatistics> for InsertionSummary<D> {
     fn from(stats: ConstructionStatistics) -> Self {
+        let slow_insertions = stats
+            .slow_insertions
+            .iter()
+            .map(|sample| SlowInsertionSample {
+                index: sample.index,
+                uuid: sample.uuid,
+                attempts: sample.attempts,
+                result: sample.result,
+                elapsed_nanos: sample.elapsed_nanos,
+                cells_after: sample.cells_after,
+                locate_calls: sample.locate_calls,
+                locate_walk_steps_total: sample.locate_walk_steps_total,
+                conflict_region_calls: sample.conflict_region_calls,
+                conflict_region_cells_total: sample.conflict_region_cells_total,
+                cavity_insertion_calls: sample.cavity_insertion_calls,
+                global_conflict_scans: sample.global_conflict_scans,
+                hull_extension_calls: sample.hull_extension_calls,
+                topology_validation_calls: sample.topology_validation_calls,
+            })
+            .collect();
         let skip_samples: Vec<SkipSample<D>> = stats
             .skip_samples
             .iter()
@@ -252,6 +292,7 @@ impl<const D: usize> From<ConstructionStatistics> for InsertionSummary<D> {
             cells_removed_total: stats.cells_removed_total,
             cells_removed_max: stats.cells_removed_max,
             telemetry: stats.telemetry,
+            slow_insertions,
             skip_samples,
         }
     }
@@ -343,11 +384,14 @@ impl ConstructionMode {
     }
 }
 
-const fn initial_simplex_strategy_name(strategy: InitialSimplexStrategy) -> &'static str {
+fn initial_simplex_strategy_name(strategy: InitialSimplexStrategy) -> &'static str {
     match strategy {
         InitialSimplexStrategy::First => "first",
         InitialSimplexStrategy::Balanced => "balanced",
-        _ => "unknown",
+        _ => {
+            tracing::debug!(?strategy, "unknown initial simplex strategy");
+            "unknown"
+        }
     }
 }
 
@@ -627,9 +671,54 @@ fn format_ratio_2_u128(numerator: u128, denominator: u128) -> String {
     format!("{}.{:02}", scaled / 100, scaled % 100)
 }
 
-fn format_nanos_as_ms(nanos: u128) -> String {
-    let micros = nanos / 1_000;
+fn format_nanos_as_ms(nanos: u64) -> String {
+    let micros = u128::from(nanos) / 1_000;
     format!("{}.{:03}", micros / 1_000, micros % 1_000)
+}
+
+fn format_avg_nanos_as_ms(total_nanos: u64, count: usize) -> String {
+    if count == 0 {
+        return "0.000".to_string();
+    }
+
+    let count = u64::try_from(count).expect("sample count should fit in u64 for debug reporting");
+    format_nanos_as_ms(total_nanos / count)
+}
+
+fn print_timing_summary(label: &str, calls: usize, total_nanos: u64, max_nanos: u64) {
+    if calls == 0 {
+        return;
+    }
+
+    println!(
+        "    {label}: calls={calls} total_ms={} avg_ms={} max_ms={}",
+        format_nanos_as_ms(total_nanos),
+        format_avg_nanos_as_ms(total_nanos, calls),
+        format_nanos_as_ms(max_nanos)
+    );
+}
+
+fn print_repair_seed_accumulation_telemetry(telemetry: &ConstructionTelemetry) {
+    if telemetry.repair_seed_accumulation_calls == 0 {
+        return;
+    }
+
+    println!(
+        "    repair_seed_accumulation: calls={} cells_added_total={} avg_cells_added={} max_cells_added={} total_ms={} avg_ms={} max_ms={}",
+        telemetry.repair_seed_accumulation_calls,
+        telemetry.repair_seed_cells_added_total,
+        format_ratio_2(
+            telemetry.repair_seed_cells_added_total,
+            telemetry.repair_seed_accumulation_calls,
+        ),
+        telemetry.repair_seed_cells_added_max,
+        format_nanos_as_ms(telemetry.repair_seed_accumulation_nanos),
+        format_avg_nanos_as_ms(
+            telemetry.repair_seed_accumulation_nanos,
+            telemetry.repair_seed_accumulation_calls,
+        ),
+        format_nanos_as_ms(telemetry.repair_seed_accumulation_nanos_max)
+    );
 }
 
 fn print_construction_telemetry(telemetry: &ConstructionTelemetry) {
@@ -639,6 +728,12 @@ fn print_construction_telemetry(telemetry: &ConstructionTelemetry) {
 
     println!();
     println!("  insertion telemetry:");
+    print_timing_summary(
+        "insertion_wall",
+        telemetry.insertion_wall_time_calls,
+        telemetry.insertion_wall_time_nanos,
+        telemetry.insertion_wall_time_nanos_max,
+    );
     println!(
         "    locate: calls={} walk_steps_total={} avg_walk={} max_walk={} hint_uses={} scan_fallbacks={}",
         telemetry.locate_calls,
@@ -655,19 +750,52 @@ fn print_construction_telemetry(telemetry: &ConstructionTelemetry) {
 
     if telemetry.conflict_region_calls > 0 {
         println!(
-            "    conflict_regions: calls={} cells_total={} avg_cells={} max_cells={}",
+            "    conflict_regions: calls={} cells_total={} avg_cells={} max_cells={} total_ms={} avg_ms={} max_ms={}",
             telemetry.conflict_region_calls,
             telemetry.conflict_region_cells_total,
             format_ratio_2(
                 telemetry.conflict_region_cells_total,
                 telemetry.conflict_region_calls,
             ),
-            telemetry.conflict_region_cells_max
+            telemetry.conflict_region_cells_max,
+            format_nanos_as_ms(telemetry.conflict_region_nanos),
+            format_avg_nanos_as_ms(
+                telemetry.conflict_region_nanos,
+                telemetry.conflict_region_calls,
+            ),
+            format_nanos_as_ms(telemetry.conflict_region_nanos_max)
         );
     }
 
+    print_timing_summary(
+        "cavity_insertions",
+        telemetry.cavity_insertion_calls,
+        telemetry.cavity_insertion_nanos,
+        telemetry.cavity_insertion_nanos_max,
+    );
+    print_timing_summary(
+        "hull_extensions",
+        telemetry.hull_extension_calls,
+        telemetry.hull_extension_nanos,
+        telemetry.hull_extension_nanos_max,
+    );
+    print_timing_summary(
+        "topology_validations",
+        telemetry.topology_validation_calls,
+        telemetry.topology_validation_nanos,
+        telemetry.topology_validation_nanos_max,
+    );
+    print_timing_summary(
+        "local_repairs",
+        telemetry.local_repair_calls,
+        telemetry.local_repair_nanos,
+        telemetry.local_repair_nanos_max,
+    );
+    print_repair_seed_accumulation_telemetry(telemetry);
+
     if telemetry.global_conflict_scans > 0 {
-        let scans = usize_to_u128(telemetry.global_conflict_scans);
+        let scans = u64::try_from(telemetry.global_conflict_scans)
+            .expect("scan count should fit in u64 for debug reporting");
         println!(
             "    global_conflict_scans: scans={} cells_scanned_total={} avg_cells_scanned={} cells_found_total={} avg_cells_found={} max_cells_found={} total_ms={} avg_ms={}",
             telemetry.global_conflict_scans,
@@ -714,6 +842,33 @@ fn print_insertion_summary<const D: usize>(summary: &InsertionSummary<D>, elapse
     }
 
     print_construction_telemetry(&summary.telemetry);
+
+    if !summary.slow_insertions.is_empty() {
+        println!();
+        println!(
+            "  slow_insertions (top {} by transactional insertion wall time):",
+            summary.slow_insertions.len()
+        );
+        for s in &summary.slow_insertions {
+            println!(
+                "    idx={} uuid={} attempts={} result={:?} elapsed_ms={} cells_after={} locate_calls={} walk_steps={} conflict_calls={} conflict_cells={} cavity_calls={} global_scans={} hull_calls={} validation_calls={}",
+                s.index,
+                s.uuid,
+                s.attempts,
+                s.result,
+                format_nanos_as_ms(s.elapsed_nanos),
+                s.cells_after,
+                s.locate_calls,
+                s.locate_walk_steps_total,
+                s.conflict_region_calls,
+                s.conflict_region_cells_total,
+                s.cavity_insertion_calls,
+                s.global_conflict_scans,
+                s.hull_extension_calls,
+                s.topology_validation_calls
+            );
+        }
+    }
 
     if !summary.skip_samples.is_empty() {
         println!();
@@ -1201,6 +1356,7 @@ fn test_initial_simplex_strategy_from_name_maps_ab_switch() {
 #[test]
 fn test_skip_percentage_reports_ratio() {
     assert!((skip_percentage(0, 100) - 0.0).abs() < f64::EPSILON);
+    assert!((skip_percentage(0, 0) - 0.0).abs() < f64::EPSILON);
     assert!((skip_percentage(4, 400) - 1.0).abs() < f64::EPSILON);
     assert!((skip_percentage(12, 100) - 12.0).abs() < f64::EPSILON);
 }

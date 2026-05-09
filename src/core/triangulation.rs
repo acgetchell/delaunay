@@ -113,11 +113,13 @@ use crate::core::algorithms::incremental_insertion::{
     external_facets_for_boundary, fill_cavity, repair_neighbor_pointers,
     repair_neighbor_pointers_local, wire_cavity_neighbors,
 };
+#[cfg(debug_assertions)]
+use crate::core::algorithms::locate::locate;
 #[cfg(feature = "diagnostics")]
 use crate::core::algorithms::locate::verify_conflict_region_completeness;
 use crate::core::algorithms::locate::{
     ConflictError, LocateError, LocateResult, LocateStats, extract_cavity_boundary,
-    find_conflict_region, locate, locate_by_scan, locate_with_stats,
+    find_conflict_region, locate_by_scan, locate_with_stats,
 };
 use crate::core::cell::{Cell, CellValidationError};
 use crate::core::collections::spatial_hash_grid::HashGridIndex;
@@ -164,7 +166,7 @@ use std::sync::{
     OnceLock,
     atomic::{AtomicBool, AtomicU64, Ordering},
 };
-use std::time::Instant;
+use std::time::{Duration, Instant};
 use thiserror::Error;
 use uuid::Uuid;
 
@@ -836,10 +838,11 @@ struct TryInsertImplOk {
     cells_removed: usize,
     /// Suspicion flags observed during the insertion attempt.
     suspicion: SuspicionFlags,
-    /// Cells touched while shaping the cavity that should seed follow-up local repair.
+    /// Cells touched by insertion that should seed follow-up local repair.
     ///
-    /// This retains cells that were shrunk out of the final conflict region so higher
-    /// layers can still revisit them if the insertion leaves a nearby Delaunay violation.
+    /// This includes live cells created by the insertion plus cells that were shrunk
+    /// out of the final conflict region so higher layers can revisit nearby
+    /// Delaunay violations without rediscovering the inserted vertex star globally.
     repair_seed_cells: CellKeyBuffer,
 }
 
@@ -880,7 +883,7 @@ pub(crate) struct DetailedInsertionResult {
     pub stats: InsertionStatistics,
     /// Internal path telemetry collected while attempting the insertion.
     pub telemetry: InsertionTelemetry,
-    /// Extra cells that should widen the caller's local repair seed set.
+    /// Local cells that should seed the caller's Delaunay repair set.
     pub repair_seed_cells: CellKeyBuffer,
 }
 
@@ -4247,7 +4250,13 @@ where
             return Ok(insert_ok);
         }
 
-        if let Err(validation_err) = self.validate_after_insertion(insert_ok.suspicion) {
+        let validation_started = Instant::now();
+        let validation_result = self.validate_after_insertion(insert_ok.suspicion);
+        Self::record_topology_validation_telemetry(
+            telemetry,
+            Self::duration_nanos_saturating(validation_started.elapsed()),
+        );
+        if let Err(validation_err) = validation_result {
             // Roll back to snapshot and attempt a star-split fallback for interior points.
             self.tds = tds_snapshot.clone();
             return self.try_star_split_fallback_after_topology_failure(
@@ -4297,9 +4306,13 @@ where
                     fallback_ok.suspicion.perturbation_used = true;
                 }
 
-                if let Err(fallback_validation_err) =
-                    self.validate_after_insertion(fallback_ok.suspicion)
-                {
+                let validation_started = Instant::now();
+                let validation_result = self.validate_after_insertion(fallback_ok.suspicion);
+                Self::record_topology_validation_telemetry(
+                    telemetry,
+                    Self::duration_nanos_saturating(validation_started.elapsed()),
+                );
+                if let Err(fallback_validation_err) = validation_result {
                     return Err(Self::invariant_error_to_insertion_error(
                         fallback_validation_err,
                     ));
@@ -5155,6 +5168,14 @@ where
         // Connectedness guard (STRUCTURAL SAFETY, NOT Level 3 validation)
         self.validate_connectedness(&new_cells)?;
 
+        // Seed follow-up Delaunay repair from the local insertion product.  Higher layers
+        // use these cells to avoid rediscovering the inserted vertex star with a global scan.
+        for &cell_key in &new_cells {
+            if self.tds.contains_cell(cell_key) && seen_repair_seed_cells.insert(cell_key) {
+                repair_seed_cells.push(cell_key);
+            }
+        }
+
         // Return hint for next insertion
         Ok((hint, total_removed, repair_seed_cells))
     }
@@ -5253,11 +5274,51 @@ where
     }
 
     #[inline]
+    fn record_conflict_region_timing(telemetry: &mut InsertionTelemetry, elapsed_nanos: u64) {
+        telemetry.conflict_region_nanos = telemetry
+            .conflict_region_nanos
+            .saturating_add(elapsed_nanos);
+        telemetry.conflict_region_nanos_max =
+            telemetry.conflict_region_nanos_max.max(elapsed_nanos);
+    }
+
+    #[inline]
+    fn record_cavity_insertion_telemetry(telemetry: &mut InsertionTelemetry, elapsed_nanos: u64) {
+        telemetry.cavity_insertion_calls = telemetry.cavity_insertion_calls.saturating_add(1);
+        telemetry.cavity_insertion_nanos = telemetry
+            .cavity_insertion_nanos
+            .saturating_add(elapsed_nanos);
+        telemetry.cavity_insertion_nanos_max =
+            telemetry.cavity_insertion_nanos_max.max(elapsed_nanos);
+    }
+
+    #[inline]
+    fn record_hull_extension_telemetry(telemetry: &mut InsertionTelemetry, elapsed_nanos: u64) {
+        telemetry.hull_extension_calls = telemetry.hull_extension_calls.saturating_add(1);
+        telemetry.hull_extension_nanos =
+            telemetry.hull_extension_nanos.saturating_add(elapsed_nanos);
+        telemetry.hull_extension_nanos_max = telemetry.hull_extension_nanos_max.max(elapsed_nanos);
+    }
+
+    #[inline]
+    fn record_topology_validation_telemetry(
+        telemetry: &mut InsertionTelemetry,
+        elapsed_nanos: u64,
+    ) {
+        telemetry.topology_validation_calls = telemetry.topology_validation_calls.saturating_add(1);
+        telemetry.topology_validation_nanos = telemetry
+            .topology_validation_nanos
+            .saturating_add(elapsed_nanos);
+        telemetry.topology_validation_nanos_max =
+            telemetry.topology_validation_nanos_max.max(elapsed_nanos);
+    }
+
+    #[inline]
     fn record_global_conflict_scan_telemetry(
         telemetry: &mut InsertionTelemetry,
         cells_scanned: usize,
         cells_found: usize,
-        elapsed_nanos: u128,
+        elapsed_nanos: u64,
     ) {
         telemetry.global_conflict_scans = telemetry.global_conflict_scans.saturating_add(1);
         telemetry.global_conflict_cells_scanned = telemetry
@@ -5271,6 +5332,11 @@ where
         telemetry.global_conflict_scan_nanos = telemetry
             .global_conflict_scan_nanos
             .saturating_add(elapsed_nanos);
+    }
+
+    #[inline]
+    fn duration_nanos_saturating(duration: Duration) -> u64 {
+        u64::try_from(duration.as_nanos()).unwrap_or(u64::MAX)
     }
 
     /// Internal implementation of insert without retry logic.
@@ -5387,8 +5453,13 @@ where
                 //
                 // Fallback: treat the containing cell as the conflict region, effectively performing
                 // a star-split of that cell to keep the simplicial complex connected.
+                let conflict_started = Instant::now();
                 let computed = find_conflict_region(&self.tds, &self.kernel, &point, start_cell)?;
                 Self::record_conflict_region_telemetry(telemetry, computed.len());
+                Self::record_conflict_region_timing(
+                    telemetry,
+                    Self::duration_nanos_saturating(conflict_started.elapsed()),
+                );
 
                 #[cfg(feature = "diagnostics")]
                 if std::env::var_os("DELAUNAY_DEBUG_CONFLICT_VERIFY").is_some() {
@@ -5461,11 +5532,13 @@ where
                     let cells_scanned = self.tds.number_of_cells();
                     let global_scan_started = Instant::now();
                     let computed = self.find_conflict_region_global(&point)?;
+                    let elapsed_nanos =
+                        u64::try_from(global_scan_started.elapsed().as_nanos()).unwrap_or(u64::MAX);
                     Self::record_global_conflict_scan_telemetry(
                         telemetry,
                         cells_scanned,
                         computed.len(),
-                        global_scan_started.elapsed().as_nanos(),
+                        elapsed_nanos,
                     );
                     if computed.is_empty() {
                         #[cfg(debug_assertions)]
@@ -5537,13 +5610,19 @@ where
                 conflict_cells,
             } => {
                 let conflict_cells = conflict_cells.into_owned();
-                let (hint, total_removed, repair_seed_cells) = self.insert_with_conflict_region(
+                let cavity_started = Instant::now();
+                let insertion_result = self.insert_with_conflict_region(
                     v_key,
                     &point,
                     conflict_cells,
                     Some(start_cell),
                     &mut suspicion,
-                )?;
+                );
+                Self::record_cavity_insertion_telemetry(
+                    telemetry,
+                    Self::duration_nanos_saturating(cavity_started.elapsed()),
+                );
+                let (hint, total_removed, repair_seed_cells) = insertion_result?;
                 Ok(TryInsertImplOk {
                     inserted: (v_key, hint),
                     cells_removed: total_removed,
@@ -5560,12 +5639,17 @@ where
                     tracing::debug!(
                         "Outside insertion attempting cavity insertion with conflict region size {conflict_len}"
                     );
+                    let cavity_started = Instant::now();
                     let result = self.insert_with_conflict_region(
                         v_key,
                         &point,
                         conflict_cells,
                         None,
                         &mut suspicion,
+                    );
+                    Self::record_cavity_insertion_telemetry(
+                        telemetry,
+                        Self::duration_nanos_saturating(cavity_started.elapsed()),
                     );
                     match result {
                         Ok((hint, total_removed, repair_seed_cells)) => {
@@ -5624,7 +5708,13 @@ where
                         "Outside insertion: proceeding to hull extension"
                     );
                 }
-                let new_cells = match extend_hull(&mut self.tds, &self.kernel, v_key, &point) {
+                let hull_started = Instant::now();
+                let hull_result = extend_hull(&mut self.tds, &self.kernel, v_key, &point);
+                Self::record_hull_extension_telemetry(
+                    telemetry,
+                    Self::duration_nanos_saturating(hull_started.elapsed()),
+                );
+                let new_cells = match hull_result {
                     Ok(cells) => cells,
                     Err(err) => {
                         let retry_inside = matches!(
@@ -5636,6 +5726,26 @@ where
                         if retry_inside {
                             let fallback_location =
                                 locate_by_scan(&self.tds, &self.kernel, &point)?;
+                            // This retry starts as a scan, so account for the fallback
+                            // explicitly and let the common recorder handle the outcome.
+                            telemetry.locate_scan_fallbacks =
+                                telemetry.locate_scan_fallbacks.saturating_add(1);
+                            let scan_start_cell = self
+                                .tds
+                                .cell_keys()
+                                .next()
+                                .ok_or(LocateError::EmptyTriangulation)?;
+                            let scan_stats = LocateStats {
+                                start_cell: scan_start_cell,
+                                used_hint: false,
+                                walk_steps: 0,
+                                fallback: None,
+                            };
+                            Self::record_locate_telemetry(
+                                telemetry,
+                                fallback_location,
+                                &scan_stats,
+                            );
                             if let LocateResult::InsideCell(start_cell) = fallback_location {
                                 #[cfg(debug_assertions)]
                                 if std::env::var_os("DELAUNAY_DEBUG_HULL").is_some() {
@@ -5648,14 +5758,19 @@ where
                                 suspicion.fallback_star_split = true;
                                 let mut star_conflict = CellKeyBuffer::new();
                                 star_conflict.push(start_cell);
-                                let (hint, total_removed, repair_seed_cells) = self
-                                    .insert_with_conflict_region(
-                                        v_key,
-                                        &point,
-                                        star_conflict,
-                                        Some(start_cell),
-                                        &mut suspicion,
-                                    )?;
+                                let cavity_started = Instant::now();
+                                let insertion_result = self.insert_with_conflict_region(
+                                    v_key,
+                                    &point,
+                                    star_conflict,
+                                    Some(start_cell),
+                                    &mut suspicion,
+                                );
+                                Self::record_cavity_insertion_telemetry(
+                                    telemetry,
+                                    Self::duration_nanos_saturating(cavity_started.elapsed()),
+                                );
+                                let (hint, total_removed, repair_seed_cells) = insertion_result?;
                                 return Ok(TryInsertImplOk {
                                     inserted: (v_key, hint),
                                     cells_removed: total_removed,
@@ -5866,11 +5981,16 @@ where
                 self.validate_connectedness(&new_cells)?;
 
                 // Return vertex key and hint for next insertion
+                let repair_seed_cells: CellKeyBuffer = new_cells
+                    .iter()
+                    .copied()
+                    .filter(|&cell_key| self.tds.contains_cell(cell_key))
+                    .collect();
                 Ok(TryInsertImplOk {
                     inserted: (v_key, hint),
                     cells_removed: total_removed,
                     suspicion,
-                    repair_seed_cells: CellKeyBuffer::new(),
+                    repair_seed_cells,
                 })
             }
         }

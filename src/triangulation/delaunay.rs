@@ -20,8 +20,8 @@ use crate::core::collections::{CellKeyBuffer, FastHashMap, FastHashSet, FastHash
 use crate::core::edge::EdgeKey;
 use crate::core::facet::{AllFacetsIter, BoundaryFacetsIter};
 use crate::core::operations::{
-    DelaunayInsertionState, InsertionOutcome, InsertionStatistics, InsertionTelemetry,
-    RepairDecision, TopologicalOperation,
+    DelaunayInsertionState, InsertionOutcome, InsertionResult, InsertionStatistics,
+    InsertionTelemetry, RepairDecision, TopologicalOperation,
 };
 use crate::core::tds::{
     CellKey, InvariantError, InvariantKind, InvariantViolation, Tds, TdsConstructionError,
@@ -43,6 +43,9 @@ use crate::geometry::util::safe_usize_to_scalar;
 use crate::topology::manifold::{ManifoldError, validate_ridge_links_for_cells};
 use crate::topology::traits::topological_space::{GlobalTopology, TopologyKind};
 use crate::triangulation::builder::DelaunayTriangulationBuilder;
+use crate::triangulation::locality::{
+    accumulate_live_cell_seeds, clear_cell_seed_set, retain_live_cell_seeds,
+};
 use core::{cmp::Ordering, fmt};
 use num_traits::{NumCast, ToPrimitive, Zero};
 use rand::SeedableRng;
@@ -52,7 +55,7 @@ use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use std::env;
 use std::hash::{Hash, Hasher};
 use std::num::NonZeroUsize;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 use thiserror::Error;
 use uuid::Uuid;
 
@@ -69,27 +72,19 @@ const HEURISTIC_REBUILD_ATTEMPTS: usize = 6;
 // `FLOOR`. Two regimes so that D≥4's higher queue demand does not force a
 // global budget increase.
 //
-// The D≥4 constants are sized from the measured `max_queue` distribution on
-// the 500-point 4D seeded repro (seed `0xD225B8A07E274AE6`, ball radius 100)
+// The D≥4 constants are sized from the measured `max_queue` distribution on the
+// 500-point 4D seeded repro (seed `0xD225B8A07E274AE6`, ball radius 100)
 // captured in `docs/archive/issue_204_investigation.md`:
 //
 //   max_queue samples  min=91 p50=207 p90=281 p95=312 p99=409 max=416
 //
 // `FACTOR = 12` with `FLOOR = 96` yields a typical 300-flip budget (5-cell seed
-// set), covering p50–p90 and brushing p95. The p95–p99 tail is intentionally
-// left to the escalation pass (see `LOCAL_REPAIR_ESCALATION_*`) rather than
-// paid for on every insertion.
+// set), covering p50–p90 and brushing p95. The p95–p99 tail is deferred to the
+// final completion repair rather than paid for during every cadenced repair.
 pub(crate) const LOCAL_REPAIR_FLIP_BUDGET_FACTOR_D_GE_4: usize = 12;
 pub(crate) const LOCAL_REPAIR_FLIP_BUDGET_FLOOR_D_GE_4: usize = 96;
 pub(crate) const LOCAL_REPAIR_FLIP_BUDGET_FACTOR_D_LT_4: usize = 4;
 pub(crate) const LOCAL_REPAIR_FLIP_BUDGET_FLOOR_D_LT_4: usize = 16;
-
-// Escalation tunables for D≥4. When the base local repair hits its budget,
-// the soft-fail path reruns the repair once with `BASE_BUDGET * ESCALATION_FACTOR`
-// and the full TDS as seed set before giving up. The escalation is rate-limited
-// so every insertion does not pay for a near-global flip pass.
-pub(crate) const LOCAL_REPAIR_ESCALATION_BUDGET_FACTOR_D_GE_4: usize = 4;
-pub(crate) const LOCAL_REPAIR_ESCALATION_MIN_GAP: usize = 8;
 const RIDGE_LINK_REPAIR_VALIDATION_MESSAGE: &str = "Topology invalid after Delaunay repair";
 
 fn ridge_link_repair_validation_error(err: ManifoldError) -> InsertionError {
@@ -100,63 +95,6 @@ fn ridge_link_repair_validation_error(err: ManifoldError) -> InsertionError {
         },
         Err(source) => InsertionError::TopologyValidation(source),
     }
-}
-
-/// Outcome of a per-insertion D≥4 local-repair escalation attempt.
-///
-/// Three orthogonal cases so the caller and any telemetry downstream can match
-/// on the outcome without string parsing:
-///
-/// - [`Skipped`](Self::Skipped) — the escalation did not run. The caller
-///   should fall through to the soft-fail path using the original
-///   [`DelaunayRepairError`] that triggered escalation.
-/// - [`Succeeded`](Self::Succeeded) — the escalation converged. The caller
-///   has already canonicalized the triangulation and should continue to the
-///   next insertion.
-/// - [`FailedAlso`](Self::FailedAlso) — the escalation ran but also hit its
-///   budget or postcondition. The typed `DelaunayRepairError` is preserved so
-///   downstream diagnostics can correlate it with the original error; the
-///   caller should fall through to the soft-fail path.
-///
-/// [`DelaunayRepairError`]: crate::core::algorithms::flips::DelaunayRepairError
-#[derive(Clone, Debug)]
-enum LocalRepairEscalationOutcome {
-    /// The escalation was not attempted.
-    Skipped {
-        /// Why the escalation was skipped.
-        reason: EscalationSkipReason,
-    },
-    /// The escalation ran and successfully converged.
-    Succeeded {
-        /// Repair diagnostics from the successful escalation attempt.
-        stats: DelaunayRepairStats,
-    },
-    /// The escalation ran but also failed to converge or satisfy its
-    /// postcondition.
-    FailedAlso {
-        /// Typed repair error produced by the escalation attempt. Preserved
-        /// by value so callers can match on the variant instead of parsing
-        /// the display form.
-        escalation_error: DelaunayRepairError,
-    },
-}
-
-/// Why a [`LocalRepairEscalationOutcome::Skipped`] escalation attempt did not
-/// run.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum EscalationSkipReason {
-    /// The previous escalation ran within the `min_gap` insertion window, so
-    /// this attempt was rate-limited.
-    RateLimited {
-        /// Insertion index of the previous escalation.
-        last_escalation_idx: usize,
-        /// Configured minimum gap between escalations.
-        min_gap: usize,
-    },
-    /// The triangulation had no cells to seed repair with. This is an edge
-    /// case for early insertions where the initial simplex has not been
-    /// committed; escalation there has nothing to escalate against.
-    EmptyTds,
 }
 
 /// Returns true when a repair error represents input geometry or predicate
@@ -226,6 +164,7 @@ mod test_hooks {
     thread_local! {
         static FORCE_HEURISTIC_REBUILD: Cell<bool> = const { Cell::new(false) };
         static FORCE_REPAIR_NONCONVERGENT: Cell<bool> = const { Cell::new(false) };
+        static BATCH_LOCAL_REPAIR_CALLS: Cell<usize> = const { Cell::new(0) };
     }
 
     pub(super) fn force_heuristic_rebuild_enabled() -> bool {
@@ -258,6 +197,18 @@ mod test_hooks {
 
     pub(super) fn restore_force_repair_nonconvergent(prior: bool) {
         FORCE_REPAIR_NONCONVERGENT.with(|flag| flag.set(prior));
+    }
+
+    pub(super) fn reset_batch_local_repair_calls() {
+        BATCH_LOCAL_REPAIR_CALLS.with(|calls| calls.set(0));
+    }
+
+    pub(super) fn batch_local_repair_calls() -> usize {
+        BATCH_LOCAL_REPAIR_CALLS.with(Cell::get)
+    }
+
+    pub(super) fn record_batch_local_repair_call() {
+        BATCH_LOCAL_REPAIR_CALLS.with(|calls| calls.set(calls.get().saturating_add(1)));
     }
 
     pub(super) fn synthetic_nonconvergent_error() -> DelaunayRepairError {
@@ -889,10 +840,11 @@ pub struct ConstructionOptions {
     initial_simplex: InitialSimplexStrategy,
     retry_policy: RetryPolicy,
     batch_repair_policy: DelaunayRepairPolicy,
-    /// When `true` (default), D<4 per-insertion repair falls back to a global
-    /// `repair_delaunay_with_flips_k2_k3` pass when the bounded local pass
-    /// cycles.  Set to `false` for constructions where global repair could
-    /// disrupt the triangulation topology (e.g. periodic image-point builds).
+    /// When `true` (default), final bulk repair can fall back to a global
+    /// `repair_delaunay_with_flips_k2_k3` pass before acceptance when the
+    /// seeded completion pass cycles. Set to `false` for constructions where
+    /// global repair could disrupt the triangulation topology (e.g. periodic
+    /// image-point builds).
     pub(crate) use_global_repair_fallback: bool,
 }
 
@@ -999,6 +951,13 @@ impl ConstructionOptions {
 #[derive(Debug, Default, Clone)]
 #[non_exhaustive]
 pub struct ConstructionTelemetry {
+    /// Number of transactional insertion calls with wall-clock timing.
+    pub insertion_wall_time_calls: usize,
+    /// Wall-clock nanoseconds spent in transactional insertion calls.
+    pub insertion_wall_time_nanos: u64,
+    /// Maximum wall-clock nanoseconds spent in one transactional insertion call.
+    pub insertion_wall_time_nanos_max: u64,
+
     /// Number of point-location calls performed during construction.
     pub locate_calls: usize,
     /// Total facet-walk steps across all point-location calls.
@@ -1022,6 +981,49 @@ pub struct ConstructionTelemetry {
     pub conflict_region_cells_total: usize,
     /// Maximum number of cells in a single local conflict region.
     pub conflict_region_cells_max: usize,
+    /// Wall-clock nanoseconds spent computing local conflict regions.
+    pub conflict_region_nanos: u64,
+    /// Maximum wall-clock nanoseconds spent computing one local conflict region.
+    pub conflict_region_nanos_max: u64,
+
+    /// Number of cavity insertion attempts observed during construction.
+    pub cavity_insertion_calls: usize,
+    /// Wall-clock nanoseconds spent filling cavities and wiring neighbors.
+    pub cavity_insertion_nanos: u64,
+    /// Maximum wall-clock nanoseconds spent in one cavity insertion attempt.
+    pub cavity_insertion_nanos_max: u64,
+
+    /// Number of hull extension attempts observed during construction.
+    pub hull_extension_calls: usize,
+    /// Wall-clock nanoseconds spent extending the convex hull.
+    pub hull_extension_nanos: u64,
+    /// Maximum wall-clock nanoseconds spent in one hull extension attempt.
+    pub hull_extension_nanos_max: u64,
+
+    /// Number of post-insertion topology validations observed during construction.
+    pub topology_validation_calls: usize,
+    /// Wall-clock nanoseconds spent in post-insertion topology validation.
+    pub topology_validation_nanos: u64,
+    /// Maximum wall-clock nanoseconds spent in one post-insertion validation.
+    pub topology_validation_nanos_max: u64,
+
+    /// Number of cadenced local Delaunay repair calls during batch construction.
+    pub local_repair_calls: usize,
+    /// Wall-clock nanoseconds spent in cadenced local Delaunay repair.
+    pub local_repair_nanos: u64,
+    /// Maximum wall-clock nanoseconds spent in one cadenced local repair call.
+    pub local_repair_nanos_max: u64,
+
+    /// Number of bulk local-repair seed accumulation calls.
+    pub repair_seed_accumulation_calls: usize,
+    /// Wall-clock nanoseconds spent accumulating bulk local-repair seeds.
+    pub repair_seed_accumulation_nanos: u64,
+    /// Maximum wall-clock nanoseconds spent in one bulk seed accumulation call.
+    pub repair_seed_accumulation_nanos_max: u64,
+    /// Total live seed cells added to pending bulk local-repair frontiers.
+    pub repair_seed_cells_added_total: usize,
+    /// Maximum live seed cells added by one bulk seed accumulation call.
+    pub repair_seed_cells_added_max: usize,
 
     /// Number of global exterior-point conflict scans.
     pub global_conflict_scans: usize,
@@ -1032,14 +1034,56 @@ pub struct ConstructionTelemetry {
     /// Maximum cells found by a single global exterior-point conflict scan.
     pub global_conflict_cells_found_max: usize,
     /// Wall-clock nanoseconds spent in global exterior-point conflict scans.
-    pub global_conflict_scan_nanos: u128,
+    pub global_conflict_scan_nanos: u64,
 }
 
 impl ConstructionTelemetry {
     /// Returns true when any insertion-path telemetry was recorded.
     #[must_use]
     pub const fn has_data(&self) -> bool {
-        self.locate_calls > 0 || self.conflict_region_calls > 0 || self.global_conflict_scans > 0
+        self.insertion_wall_time_calls > 0
+            || self.insertion_wall_time_nanos > 0
+            || self.locate_calls > 0
+            || self.conflict_region_calls > 0
+            || self.cavity_insertion_calls > 0
+            || self.hull_extension_calls > 0
+            || self.topology_validation_calls > 0
+            || self.local_repair_calls > 0
+            || self.repair_seed_accumulation_calls > 0
+            || self.global_conflict_scans > 0
+    }
+
+    /// Records the wall-clock duration of one transactional insertion call.
+    pub(crate) fn record_insertion_timing(&mut self, elapsed_nanos: u64) {
+        self.insertion_wall_time_calls = self.insertion_wall_time_calls.saturating_add(1);
+        self.insertion_wall_time_nanos =
+            self.insertion_wall_time_nanos.saturating_add(elapsed_nanos);
+        self.insertion_wall_time_nanos_max = self.insertion_wall_time_nanos_max.max(elapsed_nanos);
+    }
+
+    /// Records the wall-clock duration of one cadenced local repair call.
+    pub(crate) fn record_local_repair_timing(&mut self, elapsed_nanos: u64) {
+        self.local_repair_calls = self.local_repair_calls.saturating_add(1);
+        self.local_repair_nanos = self.local_repair_nanos.saturating_add(elapsed_nanos);
+        self.local_repair_nanos_max = self.local_repair_nanos_max.max(elapsed_nanos);
+    }
+
+    /// Records one bulk local-repair seed accumulation step.
+    pub(crate) fn record_repair_seed_accumulation(
+        &mut self,
+        elapsed_nanos: u64,
+        cells_added: usize,
+    ) {
+        self.repair_seed_accumulation_calls = self.repair_seed_accumulation_calls.saturating_add(1);
+        self.repair_seed_accumulation_nanos = self
+            .repair_seed_accumulation_nanos
+            .saturating_add(elapsed_nanos);
+        self.repair_seed_accumulation_nanos_max =
+            self.repair_seed_accumulation_nanos_max.max(elapsed_nanos);
+        self.repair_seed_cells_added_total = self
+            .repair_seed_cells_added_total
+            .saturating_add(cells_added);
+        self.repair_seed_cells_added_max = self.repair_seed_cells_added_max.max(cells_added);
     }
 
     /// Adds one insertion's telemetry into this construction summary.
@@ -1074,6 +1118,42 @@ impl ConstructionTelemetry {
         self.conflict_region_cells_max = self
             .conflict_region_cells_max
             .max(telemetry.conflict_region_cells_max);
+        self.conflict_region_nanos = self
+            .conflict_region_nanos
+            .saturating_add(telemetry.conflict_region_nanos);
+        self.conflict_region_nanos_max = self
+            .conflict_region_nanos_max
+            .max(telemetry.conflict_region_nanos_max);
+
+        self.cavity_insertion_calls = self
+            .cavity_insertion_calls
+            .saturating_add(telemetry.cavity_insertion_calls);
+        self.cavity_insertion_nanos = self
+            .cavity_insertion_nanos
+            .saturating_add(telemetry.cavity_insertion_nanos);
+        self.cavity_insertion_nanos_max = self
+            .cavity_insertion_nanos_max
+            .max(telemetry.cavity_insertion_nanos_max);
+
+        self.hull_extension_calls = self
+            .hull_extension_calls
+            .saturating_add(telemetry.hull_extension_calls);
+        self.hull_extension_nanos = self
+            .hull_extension_nanos
+            .saturating_add(telemetry.hull_extension_nanos);
+        self.hull_extension_nanos_max = self
+            .hull_extension_nanos_max
+            .max(telemetry.hull_extension_nanos_max);
+
+        self.topology_validation_calls = self
+            .topology_validation_calls
+            .saturating_add(telemetry.topology_validation_calls);
+        self.topology_validation_nanos = self
+            .topology_validation_nanos
+            .saturating_add(telemetry.topology_validation_nanos);
+        self.topology_validation_nanos_max = self
+            .topology_validation_nanos_max
+            .max(telemetry.topology_validation_nanos_max);
 
         self.global_conflict_scans = self
             .global_conflict_scans
@@ -1094,6 +1174,16 @@ impl ConstructionTelemetry {
 
     /// Merges another construction telemetry summary into this one.
     fn merge_from(&mut self, other: &Self) {
+        self.insertion_wall_time_nanos = self
+            .insertion_wall_time_nanos
+            .saturating_add(other.insertion_wall_time_nanos);
+        self.insertion_wall_time_calls = self
+            .insertion_wall_time_calls
+            .saturating_add(other.insertion_wall_time_calls);
+        self.insertion_wall_time_nanos_max = self
+            .insertion_wall_time_nanos_max
+            .max(other.insertion_wall_time_nanos_max);
+
         self.locate_calls = self.locate_calls.saturating_add(other.locate_calls);
         self.locate_walk_steps_total = self
             .locate_walk_steps_total
@@ -1118,6 +1208,54 @@ impl ConstructionTelemetry {
         self.conflict_region_cells_max = self
             .conflict_region_cells_max
             .max(other.conflict_region_cells_max);
+        self.conflict_region_nanos = self
+            .conflict_region_nanos
+            .saturating_add(other.conflict_region_nanos);
+        self.conflict_region_nanos_max = self
+            .conflict_region_nanos_max
+            .max(other.conflict_region_nanos_max);
+
+        self.cavity_insertion_calls = self
+            .cavity_insertion_calls
+            .saturating_add(other.cavity_insertion_calls);
+        self.cavity_insertion_nanos = self
+            .cavity_insertion_nanos
+            .saturating_add(other.cavity_insertion_nanos);
+        self.cavity_insertion_nanos_max = self
+            .cavity_insertion_nanos_max
+            .max(other.cavity_insertion_nanos_max);
+
+        self.hull_extension_calls = self
+            .hull_extension_calls
+            .saturating_add(other.hull_extension_calls);
+        self.hull_extension_nanos = self
+            .hull_extension_nanos
+            .saturating_add(other.hull_extension_nanos);
+        self.hull_extension_nanos_max = self
+            .hull_extension_nanos_max
+            .max(other.hull_extension_nanos_max);
+
+        self.topology_validation_calls = self
+            .topology_validation_calls
+            .saturating_add(other.topology_validation_calls);
+        self.topology_validation_nanos = self
+            .topology_validation_nanos
+            .saturating_add(other.topology_validation_nanos);
+        self.topology_validation_nanos_max = self
+            .topology_validation_nanos_max
+            .max(other.topology_validation_nanos_max);
+
+        self.local_repair_calls = self
+            .local_repair_calls
+            .saturating_add(other.local_repair_calls);
+        self.local_repair_nanos = self
+            .local_repair_nanos
+            .saturating_add(other.local_repair_nanos);
+        self.local_repair_nanos_max = self
+            .local_repair_nanos_max
+            .max(other.local_repair_nanos_max);
+
+        self.merge_repair_seed_accumulation_from(other);
 
         self.global_conflict_scans = self
             .global_conflict_scans
@@ -1134,6 +1272,24 @@ impl ConstructionTelemetry {
         self.global_conflict_scan_nanos = self
             .global_conflict_scan_nanos
             .saturating_add(other.global_conflict_scan_nanos);
+    }
+
+    fn merge_repair_seed_accumulation_from(&mut self, other: &Self) {
+        self.repair_seed_accumulation_calls = self
+            .repair_seed_accumulation_calls
+            .saturating_add(other.repair_seed_accumulation_calls);
+        self.repair_seed_accumulation_nanos = self
+            .repair_seed_accumulation_nanos
+            .saturating_add(other.repair_seed_accumulation_nanos);
+        self.repair_seed_accumulation_nanos_max = self
+            .repair_seed_accumulation_nanos_max
+            .max(other.repair_seed_accumulation_nanos_max);
+        self.repair_seed_cells_added_total = self
+            .repair_seed_cells_added_total
+            .saturating_add(other.repair_seed_cells_added_total);
+        self.repair_seed_cells_added_max = self
+            .repair_seed_cells_added_max
+            .max(other.repair_seed_cells_added_max);
     }
 }
 
@@ -1169,6 +1325,12 @@ pub struct ConstructionStatistics {
     /// Aggregate insertion-path telemetry.
     pub telemetry: ConstructionTelemetry,
 
+    /// Slowest transactional insertions observed during batch construction.
+    ///
+    /// This is intended for diagnosing scaling pathologies and is capped
+    /// (currently the top 8 by insertion wall time).
+    pub slow_insertions: Vec<ConstructionSlowInsertionSample>,
+
     /// A small set of representative skipped vertices recorded during batch construction.
     ///
     /// This is intended for debugging/reproduction and is capped (currently the first 8 skips).
@@ -1197,6 +1359,40 @@ pub struct ConstructionSkipSample {
     pub attempts: usize,
     /// Human-readable error message describing why the vertex was skipped.
     pub error: String,
+}
+
+/// A slow transactional insertion sample captured during batch construction.
+#[derive(Debug, Clone)]
+#[non_exhaustive]
+pub struct ConstructionSlowInsertionSample {
+    /// Index in the construction insertion order (after preprocessing and ordering).
+    pub index: usize,
+    /// UUID of the inserted or skipped vertex.
+    pub uuid: Uuid,
+    /// Number of insertion attempts for this vertex.
+    pub attempts: usize,
+    /// Final insertion result for this vertex.
+    pub result: InsertionResult,
+    /// Wall-clock nanoseconds spent in the transactional insertion call.
+    pub elapsed_nanos: u64,
+    /// Cell count immediately after the insertion attempt.
+    pub cells_after: usize,
+    /// Point-location calls performed by this insertion.
+    pub locate_calls: usize,
+    /// Facet-walk steps performed by this insertion.
+    pub locate_walk_steps_total: usize,
+    /// Local conflict-region calls performed by this insertion.
+    pub conflict_region_calls: usize,
+    /// Local conflict-region cells observed by this insertion.
+    pub conflict_region_cells_total: usize,
+    /// Cavity insertion calls performed by this insertion.
+    pub cavity_insertion_calls: usize,
+    /// Global exterior conflict scans performed by this insertion.
+    pub global_conflict_scans: usize,
+    /// Hull extension calls performed by this insertion.
+    pub hull_extension_calls: usize,
+    /// Post-insertion topology validations performed by this insertion.
+    pub topology_validation_calls: usize,
 }
 
 /// Construction error that also carries aggregate statistics collected up to the failure point.
@@ -1245,6 +1441,7 @@ impl ConstructionStatistics {
     }
 
     const MAX_SKIP_SAMPLES: usize = 8;
+    const MAX_SLOW_INSERTION_SAMPLES: usize = 8;
 
     /// Record a single insertion attempt (inserted or skipped).
     pub fn record_insertion(&mut self, stats: &InsertionStatistics) {
@@ -1263,6 +1460,22 @@ impl ConstructionStatistics {
     pub fn record_skip_sample(&mut self, sample: ConstructionSkipSample) {
         if self.skip_samples.len() < Self::MAX_SKIP_SAMPLES {
             self.skip_samples.push(sample);
+        }
+    }
+
+    /// Record a slow insertion sample, preserving the top samples by elapsed time.
+    pub fn record_slow_insertion_sample(&mut self, sample: ConstructionSlowInsertionSample) {
+        let insert_at = self
+            .slow_insertions
+            .iter()
+            .position(|existing| sample.elapsed_nanos > existing.elapsed_nanos)
+            .unwrap_or(self.slow_insertions.len());
+        if insert_at < Self::MAX_SLOW_INSERTION_SAMPLES {
+            self.slow_insertions.insert(insert_at, sample);
+            self.slow_insertions
+                .truncate(Self::MAX_SLOW_INSERTION_SAMPLES);
+        } else if self.slow_insertions.len() < Self::MAX_SLOW_INSERTION_SAMPLES {
+            self.slow_insertions.push(sample);
         }
     }
 
@@ -1300,6 +1513,10 @@ impl ConstructionStatistics {
                 break;
             }
             self.skip_samples.push(sample.clone());
+        }
+
+        for sample in &other.slow_insertions {
+            self.record_slow_insertion_sample(sample.clone());
         }
     }
 
@@ -1878,6 +2095,12 @@ fn construction_retry_trace_enabled() -> bool {
     bulk_progress_every_from_env().is_some()
         || env::var_os("DELAUNAY_DEBUG_SHUFFLE").is_some()
         || env::var_os("DELAUNAY_INSERT_TRACE").is_some()
+}
+
+/// Converts a measured duration to nanoseconds while saturating pathological
+/// values that exceed the public telemetry counter width.
+fn duration_nanos_saturating(duration: Duration) -> u64 {
+    u64::try_from(duration.as_nanos()).unwrap_or(u64::MAX)
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -3893,55 +4116,6 @@ where
         Ok(dt)
     }
 
-    /// Handle D<4 local repair non-convergence by falling back to global repair or
-    /// hard-failing to trigger shuffle retry.
-    ///
-    /// Returns `Ok(())` if global repair succeeded (caller should `continue` the
-    /// insertion loop).  Returns `Err(...)` if the caller should propagate the
-    /// construction error.
-    fn try_d_lt4_global_repair_fallback(
-        tds: &mut Tds<K::Scalar, U, V, D>,
-        kernel: &K,
-        topology: TopologyGuarantee,
-        use_global_repair_fallback: bool,
-        index: usize,
-        repair_err: &DelaunayRepairError,
-    ) -> Result<(), DelaunayTriangulationConstructionError> {
-        if use_global_repair_fallback {
-            tracing::debug!(
-                error = %repair_err,
-                idx = index,
-                "bulk D<4: local repair cycling; falling back to global repair"
-            );
-            let global_result = repair_delaunay_with_flips_k2_k3(tds, kernel, None, topology, None);
-            if let Err(global_err) = global_result {
-                tracing::debug!(
-                    error = %global_err,
-                    idx = index,
-                    "bulk D<4: global repair also failed; aborting this vertex ordering"
-                );
-                return Err(TriangulationConstructionError::GeometricDegeneracy {
-                    message: format!(
-                        "per-insertion Delaunay repair failed at index {index}: local error: {repair_err}; global fallback: {global_err}"
-                    ),
-                }
-                .into());
-            }
-            return Ok(());
-        }
-        // Global repair disabled (e.g. periodic build): hard-fail to trigger
-        // shuffle retry with a different vertex ordering.
-        tracing::debug!(
-            error = %repair_err,
-            idx = index,
-            "bulk D<4: local repair cycling (global fallback disabled); aborting"
-        );
-        Err(TriangulationConstructionError::GeometricDegeneracy {
-            message: format!("per-insertion Delaunay repair failed at index {index}: {repair_err}"),
-        }
-        .into())
-    }
-
     /// Restores positive geometric orientation after bulk repair calls the
     /// low-level TDS flip routine directly.
     fn canonicalize_after_bulk_repair(
@@ -3958,100 +4132,6 @@ where
                 ))
             })?;
         Ok(())
-    }
-
-    /// Attempt one D≥4 local-repair escalation before the soft-fail path
-    /// continues.
-    ///
-    /// Reruns `repair_delaunay_local_single_pass` with
-    /// `base_budget * LOCAL_REPAIR_ESCALATION_BUDGET_FACTOR_D_GE_4` and the
-    /// full TDS as seed set. Rate-limited by `LOCAL_REPAIR_ESCALATION_MIN_GAP`
-    /// so only every Nth insertion pays the (near-global) flip pass cost.
-    ///
-    /// Returns a typed [`LocalRepairEscalationOutcome`] so the caller can
-    /// distinguish `Skipped { reason }` (rate-limited or empty TDS) from
-    /// `Succeeded { stats }` (caller has already canonicalized and should
-    /// continue normally) from `FailedAlso { escalation_error }` (the
-    /// escalation ran but also hit its budget; the caller should fall through
-    /// to the soft-fail path, and the typed `DelaunayRepairError` is
-    /// preserved for downstream diagnostics). `Err(...)` is reserved for
-    /// hard errors the bulk loop must propagate.
-    fn try_local_repair_escalation_d_ge_4(
-        &mut self,
-        index: usize,
-        base_budget: usize,
-        last_escalation_idx: &mut Option<usize>,
-        original_err: &DelaunayRepairError,
-    ) -> Result<LocalRepairEscalationOutcome, DelaunayTriangulationConstructionError> {
-        // Rate-limit: only escalate if we have not escalated within the last
-        // LOCAL_REPAIR_ESCALATION_MIN_GAP insertions. This keeps healthy runs
-        // from paying the near-global flip pass on every insertion while still
-        // catching pathological clusters of consecutive soft-fails.
-        if let Some(last_idx) = *last_escalation_idx
-            && index.saturating_sub(last_idx) < LOCAL_REPAIR_ESCALATION_MIN_GAP
-        {
-            return Ok(LocalRepairEscalationOutcome::Skipped {
-                reason: EscalationSkipReason::RateLimited {
-                    last_escalation_idx: last_idx,
-                    min_gap: LOCAL_REPAIR_ESCALATION_MIN_GAP,
-                },
-            });
-        }
-
-        // Escalation seed set: use every current cell key. This gives the
-        // repair the broadest possible view of the local backlog without
-        // switching to a different repair entry point.
-        let full_seeds: Vec<CellKey> = self.tri.tds.cell_keys().collect();
-        if full_seeds.is_empty() {
-            return Ok(LocalRepairEscalationOutcome::Skipped {
-                reason: EscalationSkipReason::EmptyTds,
-            });
-        }
-        let escalated_budget =
-            base_budget.saturating_mul(LOCAL_REPAIR_ESCALATION_BUDGET_FACTOR_D_GE_4);
-
-        tracing::debug!(
-            idx = index,
-            seed_cells = full_seeds.len(),
-            base_budget,
-            escalated_budget,
-            original_error = %original_err,
-            "bulk D≥4: escalating local repair with full-TDS seed set"
-        );
-
-        let escalation_result = {
-            self.invalidate_repair_caches();
-            let (tds, kernel) = (&mut self.tri.tds, &self.tri.kernel);
-            repair_delaunay_local_single_pass(tds, kernel, &full_seeds, escalated_budget)
-        };
-
-        *last_escalation_idx = Some(index);
-
-        match escalation_result {
-            Ok(stats) => {
-                tracing::debug!(
-                    idx = index,
-                    flips = stats.flips_performed,
-                    max_queue = stats.max_queue_len,
-                    "bulk D≥4: escalation succeeded"
-                );
-                self.canonicalize_after_bulk_repair()?;
-                Ok(LocalRepairEscalationOutcome::Succeeded { stats })
-            }
-            Err(escalation_err) => {
-                if !Self::can_soft_fail(&escalation_err) {
-                    return Err(Self::map_hard_repair_error(index, &escalation_err));
-                }
-                tracing::debug!(
-                    idx = index,
-                    error = %escalation_err,
-                    "bulk D≥4: escalation also non-convergent; falling through to soft-fail"
-                );
-                Ok(LocalRepairEscalationOutcome::FailedAlso {
-                    escalation_error: escalation_err,
-                })
-            }
-        }
     }
 
     /// Identifies D≥4 local-repair failures that can safely try escalation and
@@ -4080,64 +4160,25 @@ where
         }
     }
 
-    fn extend_local_repair_seed_cells(
-        &self,
-        vertex_key: VertexKey,
-        extra_seed_cells: &[CellKey],
-        pending_seed_cells: &mut Vec<CellKey>,
-        pending_seen: &mut FastHashSet<CellKey>,
-    ) {
-        for cell_key in self.tri.adjacent_cells(vertex_key) {
-            if pending_seen.insert(cell_key) {
-                pending_seed_cells.push(cell_key);
-            }
-        }
-
-        for &cell_key in extra_seed_cells {
-            if self.tri.tds.contains_cell(cell_key) && pending_seen.insert(cell_key) {
-                pending_seed_cells.push(cell_key);
-            }
-        }
-    }
-
-    fn retain_live_local_repair_seed_cells(
-        &self,
-        seed_cells: &mut Vec<CellKey>,
-        seen: &mut FastHashSet<CellKey>,
-    ) {
-        seen.clear();
-        seed_cells
-            .retain(|cell_key| self.tri.tds.contains_cell(*cell_key) && seen.insert(*cell_key));
-    }
-
-    fn clear_local_repair_seed_cells(
-        seed_cells: &mut Vec<CellKey>,
-        seen: &mut FastHashSet<CellKey>,
-    ) {
-        seed_cells.clear();
-        seen.clear();
-    }
-
-    #[expect(
-        clippy::too_many_lines,
-        reason = "local repair handling keeps success, fallback, and soft-fail paths together"
-    )]
     fn repair_pending_local_seed_cells(
         &mut self,
         index: usize,
         pending_seed_cells: &mut Vec<CellKey>,
         pending_seen: &mut FastHashSet<CellKey>,
-        last_escalation_idx: &mut Option<usize>,
         soft_fail_seeds: &mut Vec<CellKey>,
+        construction_telemetry: Option<&mut ConstructionTelemetry>,
     ) -> Result<(), DelaunayTriangulationConstructionError> {
-        self.retain_live_local_repair_seed_cells(pending_seed_cells, pending_seen);
+        retain_live_cell_seeds(&self.tri.tds, pending_seed_cells, pending_seen);
         if pending_seed_cells.is_empty() {
             return Ok(());
         }
 
+        #[cfg(test)]
+        test_hooks::record_batch_local_repair_call();
+
         let max_flips = local_repair_flip_budget::<D>(pending_seed_cells.len());
         let trace_repair = batch_repair_trace_enabled();
-        let repair_started = trace_repair.then(Instant::now);
+        let repair_started = Instant::now();
         if trace_repair {
             tracing::debug!(
                 idx = index,
@@ -4158,6 +4199,10 @@ where
         } else {
             repair_result
         };
+        let repair_elapsed = repair_started.elapsed();
+        if let Some(telemetry) = construction_telemetry {
+            telemetry.record_local_repair_timing(duration_nanos_saturating(repair_elapsed));
+        }
 
         match repair_result {
             Ok(stats) => {
@@ -4168,14 +4213,14 @@ where
                         flips = stats.flips_performed,
                         checked = stats.facets_checked,
                         max_queue = stats.max_queue_len,
-                        elapsed = ?repair_started.map(|started| started.elapsed()),
+                        elapsed = ?repair_elapsed,
                         "bulk batch repair: local repair succeeded"
                     );
                 }
                 if stats.flips_performed > 0 {
                     self.canonicalize_after_bulk_repair()?;
                 }
-                Self::clear_local_repair_seed_cells(pending_seed_cells, pending_seen);
+                clear_cell_seed_set(pending_seed_cells, pending_seen);
             }
             Err(repair_err) => {
                 if trace_repair {
@@ -4183,70 +4228,22 @@ where
                         idx = index,
                         seed_cells = pending_seed_cells.len(),
                         error = %repair_err,
-                        elapsed = ?repair_started.map(|started| started.elapsed()),
+                        elapsed = ?repair_elapsed,
                         "bulk batch repair: local repair failed"
                     );
                 }
-                if D < 4 {
-                    let topology = self.tri.topology_guarantee();
-                    self.invalidate_repair_caches();
-                    Self::try_d_lt4_global_repair_fallback(
-                        &mut self.tri.tds,
-                        &self.tri.kernel,
-                        topology,
-                        self.insertion_state.use_global_repair_fallback,
-                        index,
-                        &repair_err,
-                    )?;
-                    self.canonicalize_after_bulk_repair()?;
-                    Self::clear_local_repair_seed_cells(pending_seed_cells, pending_seen);
-                    return Ok(());
-                }
-
                 if !Self::can_soft_fail(&repair_err) {
                     return Err(Self::map_hard_repair_error(index, &repair_err));
                 }
-                let outcome = self.try_local_repair_escalation_d_ge_4(
-                    index,
-                    max_flips,
-                    last_escalation_idx,
-                    &repair_err,
-                )?;
-                match outcome {
-                    LocalRepairEscalationOutcome::Succeeded { stats } => {
-                        tracing::debug!(
-                            idx = index,
-                            flips = stats.flips_performed,
-                            max_queue = stats.max_queue_len,
-                            "bulk D≥4: escalation closed the non-convergence; continuing"
-                        );
-                    }
-                    LocalRepairEscalationOutcome::Skipped { reason } => {
-                        tracing::debug!(
-                            idx = index,
-                            error = %repair_err,
-                            escalation_outcome = "skipped",
-                            skip_reason = ?reason,
-                            "bulk D≥4: batch repair non-convergent; continuing \
-                             (both_positive_artifact handled)"
-                        );
-                        self.canonicalize_after_bulk_repair()?;
-                        soft_fail_seeds.extend(pending_seed_cells.iter().copied());
-                    }
-                    LocalRepairEscalationOutcome::FailedAlso { escalation_error } => {
-                        tracing::debug!(
-                            idx = index,
-                            error = %repair_err,
-                            escalation_outcome = "failed_also",
-                            escalation_error = %escalation_error,
-                            "bulk D≥4: batch repair non-convergent; continuing \
-                             (both_positive_artifact handled)"
-                        );
-                        self.canonicalize_after_bulk_repair()?;
-                        soft_fail_seeds.extend(pending_seed_cells.iter().copied());
-                    }
-                }
-                Self::clear_local_repair_seed_cells(pending_seed_cells, pending_seen);
+                tracing::debug!(
+                    idx = index,
+                    error = %repair_err,
+                    seed_cells = pending_seed_cells.len(),
+                    "bulk batch repair: local repair soft-failed; deferring seeds to final repair"
+                );
+                self.canonicalize_after_bulk_repair()?;
+                soft_fail_seeds.extend(pending_seed_cells.iter().copied());
+                clear_cell_seed_set(pending_seed_cells, pending_seen);
             }
         }
         Ok(())
@@ -4305,10 +4302,6 @@ where
         // progress line reads `processed=N/total inserted=I skipped=S` coherently.
         let mut inserted_vertices = 0usize;
         let mut skipped_vertices = 0usize;
-        // Last insertion index at which the D≥4 local-repair escalation ran,
-        // used for `LOCAL_REPAIR_ESCALATION_MIN_GAP` rate limiting across both
-        // stats-enabled and stats-disabled arms.
-        let mut last_escalation_idx: Option<usize> = None;
         let mut pending_repair_seen: FastHashSet<CellKey> =
             pending_repair_seeds.iter().copied().collect();
 
@@ -4360,7 +4353,7 @@ where
                     match insert_result {
                         Ok((
                             InsertionOutcome::Inserted {
-                                vertex_key: v_key,
+                                vertex_key: _,
                                 hint,
                             },
                             _stats,
@@ -4386,8 +4379,8 @@ where
                                 && TopologicalOperation::FacetFlip.is_admissible_under(topology)
                                 && self.tri.tds.number_of_cells() > 0
                             {
-                                self.extend_local_repair_seed_cells(
-                                    v_key,
+                                accumulate_live_cell_seeds(
+                                    &self.tri.tds,
                                     &repair_seed_cells,
                                     pending_repair_seeds,
                                     &mut pending_repair_seen,
@@ -4404,8 +4397,8 @@ where
                                         index,
                                         pending_repair_seeds,
                                         &mut pending_repair_seen,
-                                        &mut last_escalation_idx,
                                         soft_fail_seeds,
+                                        None,
                                     )?;
                                 }
                             }
@@ -4483,7 +4476,7 @@ where
                         tracing::debug!(index, %uuid, coords = ?coords, "[bulk] start");
                     }
 
-                    let started = trace_insertion.then(Instant::now);
+                    let started = Instant::now();
                     let mut insert = || {
                         // Keep the stats and non-stats branches aligned so bulk-index-based
                         // tracing behaves the same regardless of whether the caller records
@@ -4508,7 +4501,8 @@ where
                     } else {
                         insert()
                     };
-                    let elapsed = started.map(|started| started.elapsed());
+                    let elapsed = started.elapsed();
+                    let elapsed_nanos = duration_nanos_saturating(elapsed);
                     let insert_result = insert_result.map(|detail| {
                         let repair_seed_cells = detail.repair_seed_cells;
                         (
@@ -4521,7 +4515,7 @@ where
                     match insert_result {
                         Ok((
                             InsertionOutcome::Inserted {
-                                vertex_key: v_key,
+                                vertex_key: _,
                                 hint,
                             },
                             stats,
@@ -4529,7 +4523,7 @@ where
                             telemetry,
                         )) => {
                             inserted_vertices = inserted_vertices.saturating_add(1);
-                            if trace_insertion && let Some(elapsed) = elapsed {
+                            if trace_insertion {
                                 tracing::debug!(
                                     index,
                                     %uuid,
@@ -4540,6 +4534,28 @@ where
                             }
                             construction_stats.record_insertion(&stats);
                             construction_stats.telemetry.record_insertion(&telemetry);
+                            construction_stats
+                                .telemetry
+                                .record_insertion_timing(elapsed_nanos);
+                            construction_stats.record_slow_insertion_sample(
+                                ConstructionSlowInsertionSample {
+                                    index,
+                                    uuid,
+                                    attempts: stats.attempts,
+                                    result: stats.result,
+                                    elapsed_nanos,
+                                    cells_after: self.tri.tds.number_of_cells(),
+                                    locate_calls: telemetry.locate_calls,
+                                    locate_walk_steps_total: telemetry.locate_walk_steps_total,
+                                    conflict_region_calls: telemetry.conflict_region_calls,
+                                    conflict_region_cells_total: telemetry
+                                        .conflict_region_cells_total,
+                                    cavity_insertion_calls: telemetry.cavity_insertion_calls,
+                                    global_conflict_scans: telemetry.global_conflict_scans,
+                                    hull_extension_calls: telemetry.hull_extension_calls,
+                                    topology_validation_calls: telemetry.topology_validation_calls,
+                                },
+                            );
 
                             // Cache hint for faster subsequent insertions.
                             self.insertion_state.last_inserted_cell = hint;
@@ -4554,12 +4570,19 @@ where
                                 && TopologicalOperation::FacetFlip.is_admissible_under(topology)
                                 && self.tri.tds.number_of_cells() > 0
                             {
-                                self.extend_local_repair_seed_cells(
-                                    v_key,
+                                let seed_started = Instant::now();
+                                let seed_cells_added = accumulate_live_cell_seeds(
+                                    &self.tri.tds,
                                     &repair_seed_cells,
                                     pending_repair_seeds,
                                     &mut pending_repair_seen,
                                 );
+                                construction_stats
+                                    .telemetry
+                                    .record_repair_seed_accumulation(
+                                        duration_nanos_saturating(seed_started.elapsed()),
+                                        seed_cells_added,
+                                    );
                                 if matches!(
                                     batch_repair_policy.decide(
                                         inserted_vertices,
@@ -4572,8 +4595,8 @@ where
                                         index,
                                         pending_repair_seeds,
                                         &mut pending_repair_seen,
-                                        &mut last_escalation_idx,
                                         soft_fail_seeds,
+                                        Some(&mut construction_stats.telemetry),
                                     )?;
                                 }
                             }
@@ -4595,7 +4618,7 @@ where
                             telemetry,
                         )) => {
                             skipped_vertices = skipped_vertices.saturating_add(1);
-                            if trace_insertion && let Some(elapsed) = elapsed {
+                            if trace_insertion {
                                 tracing::debug!(
                                     index,
                                     %uuid,
@@ -4607,6 +4630,28 @@ where
                             }
                             construction_stats.record_insertion(&stats);
                             construction_stats.telemetry.record_insertion(&telemetry);
+                            construction_stats
+                                .telemetry
+                                .record_insertion_timing(elapsed_nanos);
+                            construction_stats.record_slow_insertion_sample(
+                                ConstructionSlowInsertionSample {
+                                    index,
+                                    uuid,
+                                    attempts: stats.attempts,
+                                    result: stats.result,
+                                    elapsed_nanos,
+                                    cells_after: self.tri.tds.number_of_cells(),
+                                    locate_calls: telemetry.locate_calls,
+                                    locate_walk_steps_total: telemetry.locate_walk_steps_total,
+                                    conflict_region_calls: telemetry.conflict_region_calls,
+                                    conflict_region_cells_total: telemetry
+                                        .conflict_region_cells_total,
+                                    cavity_insertion_calls: telemetry.cavity_insertion_calls,
+                                    global_conflict_scans: telemetry.global_conflict_scans,
+                                    hull_extension_calls: telemetry.hull_extension_calls,
+                                    topology_validation_calls: telemetry.topology_validation_calls,
+                                },
+                            );
 
                             // Keep the first few skip samples so we have concrete reproduction anchors.
                             let (coords, coords_available) = vertex_coords_f64(vertex)
@@ -4644,7 +4689,7 @@ where
                             );
                         }
                         Err(e) => {
-                            if trace_insertion && let Some(elapsed) = elapsed {
+                            if trace_insertion {
                                 tracing::debug!(
                                     index,
                                     %uuid,
@@ -4695,34 +4740,7 @@ where
             && batch_repair_policy != DelaunayRepairPolicy::Never
             && !completion_seed_cells.is_empty()
         {
-            let seed_count = completion_seed_cells.len();
-            let max_flips = local_repair_flip_budget::<D>(seed_count);
-            tracing::debug!(
-                seed_count,
-                max_flips,
-                "post-construction: starting seeded completion Delaunay repair"
-            );
-            let repair_started = Instant::now();
-            let repair_result = {
-                self.invalidate_repair_caches();
-                let (tds, kernel) = (&mut self.tri.tds, &self.tri.kernel);
-                repair_delaunay_local_single_pass(tds, kernel, &completion_seed_cells, max_flips)
-                    .map(|_| ())
-            };
-            let repair_outcome: Result<(), DelaunayTriangulationConstructionError> =
-                match repair_result {
-                    Ok(()) => Ok(()),
-                    Err(e) => Err(TriangulationConstructionError::GeometricDegeneracy {
-                        message: format!("Delaunay repair failed after construction: {e}"),
-                    }
-                    .into()),
-                };
-            tracing::debug!(
-                elapsed = ?repair_started.elapsed(),
-                success = repair_outcome.is_ok(),
-                "post-construction: seeded completion Delaunay repair finished"
-            );
-            repair_outcome?;
+            self.run_seeded_completion_repair(&completion_seed_cells)?;
         }
 
         // Flip-based repair calls normalize_coherent_orientation() which makes all cells
@@ -4752,6 +4770,78 @@ where
         }
 
         Ok(())
+    }
+
+    fn run_seeded_completion_repair(
+        &mut self,
+        completion_seed_cells: &[CellKey],
+    ) -> Result<(), DelaunayTriangulationConstructionError> {
+        let seed_count = completion_seed_cells.len();
+        let max_flips = local_repair_flip_budget::<D>(seed_count);
+        tracing::debug!(
+            seed_count,
+            max_flips,
+            "post-construction: starting seeded completion Delaunay repair"
+        );
+        let repair_started = Instant::now();
+        let repair_result = {
+            self.invalidate_repair_caches();
+            let (tds, kernel) = (&mut self.tri.tds, &self.tri.kernel);
+            repair_delaunay_local_single_pass(tds, kernel, completion_seed_cells, max_flips)
+                .map(|_| ())
+        };
+        let repair_outcome = match repair_result {
+            Ok(()) => Ok(()),
+            Err(error) => self.try_final_global_repair_after_seeded_failure(&error),
+        };
+        tracing::debug!(
+            elapsed = ?repair_started.elapsed(),
+            success = repair_outcome.is_ok(),
+            "post-construction: seeded completion Delaunay repair finished"
+        );
+        repair_outcome
+    }
+
+    fn try_final_global_repair_after_seeded_failure(
+        &mut self,
+        seeded_error: &DelaunayRepairError,
+    ) -> Result<(), DelaunayTriangulationConstructionError> {
+        if !self.insertion_state.use_global_repair_fallback || !Self::can_soft_fail(seeded_error) {
+            let message = format!("Delaunay repair failed after construction: {seeded_error}");
+            return Err(Self::map_completion_repair_error(message, seeded_error));
+        }
+
+        tracing::debug!(
+            error = %seeded_error,
+            "post-construction: seeded completion repair soft-failed; trying final global repair"
+        );
+        self.invalidate_repair_caches();
+        let topology = self.tri.topology_guarantee();
+        let global_result = {
+            let (tds, kernel) = (&mut self.tri.tds, &self.tri.kernel);
+            repair_delaunay_with_flips_k2_k3(tds, kernel, None, topology, None)
+        };
+        match global_result {
+            Ok(_) => Ok(()),
+            Err(global_error) => {
+                let message = format!(
+                    "Delaunay repair failed after construction: seeded local error: \
+                     {seeded_error}; global fallback: {global_error}"
+                );
+                Err(Self::map_completion_repair_error(message, &global_error))
+            }
+        }
+    }
+
+    fn map_completion_repair_error(
+        message: String,
+        repair_error: &DelaunayRepairError,
+    ) -> DelaunayTriangulationConstructionError {
+        if is_geometric_repair_error(repair_error) {
+            TriangulationConstructionError::GeometricDegeneracy { message }.into()
+        } else {
+            TriangulationConstructionError::InternalInconsistency { message }.into()
+        }
     }
 
     /// Map an [`InsertionError`] from post-construction orientation canonicalization
@@ -7846,78 +7936,6 @@ mod tests {
         assert!(!seeds.contains(&stale_cell));
     }
 
-    #[test]
-    fn test_local_repair_escalation_outcome_variants_are_orthogonal() {
-        // Skipped / Succeeded / FailedAlso must each match a distinct typed
-        // pattern so callers can decide "continue" vs "fall through" without
-        // string parsing. This locks in the typed-error contract added with
-        // Fix 2 of the #204 plan.
-        let skipped_rate_limited = LocalRepairEscalationOutcome::Skipped {
-            reason: EscalationSkipReason::RateLimited {
-                last_escalation_idx: 7,
-                min_gap: LOCAL_REPAIR_ESCALATION_MIN_GAP,
-            },
-        };
-        let skipped_empty = LocalRepairEscalationOutcome::Skipped {
-            reason: EscalationSkipReason::EmptyTds,
-        };
-        let succeeded = LocalRepairEscalationOutcome::Succeeded {
-            stats: DelaunayRepairStats::default(),
-        };
-        let failed_also = LocalRepairEscalationOutcome::FailedAlso {
-            escalation_error: DelaunayRepairError::PostconditionFailed {
-                message: "unit test escalation failure".to_string(),
-            },
-        };
-
-        // Each variant matches its own pattern and only its own pattern.
-        assert!(matches!(
-            skipped_rate_limited,
-            LocalRepairEscalationOutcome::Skipped { .. }
-        ));
-        assert!(matches!(
-            skipped_empty,
-            LocalRepairEscalationOutcome::Skipped { .. }
-        ));
-        assert!(matches!(
-            succeeded,
-            LocalRepairEscalationOutcome::Succeeded { .. }
-        ));
-        assert!(matches!(
-            failed_also,
-            LocalRepairEscalationOutcome::FailedAlso { .. }
-        ));
-
-        // Skip reasons are themselves orthogonal: RateLimited carries the
-        // index/gap pair; EmptyTds is fieldless. PartialEq makes the
-        // distinction explicit so future code can `assert_eq!` on it.
-        let LocalRepairEscalationOutcome::Skipped { reason } = skipped_rate_limited else {
-            panic!("skipped_rate_limited should match Skipped");
-        };
-        assert_eq!(
-            reason,
-            EscalationSkipReason::RateLimited {
-                last_escalation_idx: 7,
-                min_gap: LOCAL_REPAIR_ESCALATION_MIN_GAP,
-            },
-        );
-        assert_ne!(reason, EscalationSkipReason::EmptyTds);
-
-        // FailedAlso preserves the typed `DelaunayRepairError` by value (no
-        // boxing, no stringification) so downstream diagnostics can pattern-
-        // match the variant chain.
-        let LocalRepairEscalationOutcome::FailedAlso {
-            escalation_error: err,
-        } = failed_also
-        else {
-            panic!("failed_also should match FailedAlso");
-        };
-        assert!(matches!(
-            err,
-            DelaunayRepairError::PostconditionFailed { .. }
-        ));
-    }
-
     struct ForceHeuristicRebuildGuard {
         prior: bool,
     }
@@ -8388,6 +8406,17 @@ mod tests {
             conflict_region_calls: 1,
             conflict_region_cells_total: 4,
             conflict_region_cells_max: 4,
+            conflict_region_nanos: 125_000,
+            conflict_region_nanos_max: 125_000,
+            cavity_insertion_calls: 1,
+            cavity_insertion_nanos: 375_000,
+            cavity_insertion_nanos_max: 375_000,
+            hull_extension_calls: 1,
+            hull_extension_nanos: 500_000,
+            hull_extension_nanos_max: 500_000,
+            topology_validation_calls: 1,
+            topology_validation_nanos: 625_000,
+            topology_validation_nanos_max: 625_000,
             global_conflict_scans: 1,
             global_conflict_cells_scanned: 12,
             global_conflict_cells_found_total: 3,
@@ -8397,8 +8426,16 @@ mod tests {
         };
 
         summary.telemetry.record_insertion(&telemetry);
+        summary.telemetry.record_insertion_timing(1_000_000);
+        summary.telemetry.record_local_repair_timing(2_000_000);
+        summary
+            .telemetry
+            .record_repair_seed_accumulation(500_000, 7);
 
         assert!(summary.telemetry.has_data());
+        assert_eq!(summary.telemetry.insertion_wall_time_calls, 1);
+        assert_eq!(summary.telemetry.insertion_wall_time_nanos, 1_000_000);
+        assert_eq!(summary.telemetry.insertion_wall_time_nanos_max, 1_000_000);
         assert_eq!(summary.telemetry.locate_calls, 2);
         assert_eq!(summary.telemetry.locate_walk_steps_total, 9);
         assert_eq!(summary.telemetry.locate_walk_steps_max, 7);
@@ -8408,6 +8445,20 @@ mod tests {
         assert_eq!(summary.telemetry.located_outside, 1);
         assert_eq!(summary.telemetry.conflict_region_calls, 1);
         assert_eq!(summary.telemetry.conflict_region_cells_total, 4);
+        assert_eq!(summary.telemetry.conflict_region_nanos, 125_000);
+        assert_eq!(summary.telemetry.conflict_region_nanos_max, 125_000);
+        assert_eq!(summary.telemetry.cavity_insertion_calls, 1);
+        assert_eq!(summary.telemetry.cavity_insertion_nanos, 375_000);
+        assert_eq!(summary.telemetry.hull_extension_calls, 1);
+        assert_eq!(summary.telemetry.hull_extension_nanos, 500_000);
+        assert_eq!(summary.telemetry.topology_validation_calls, 1);
+        assert_eq!(summary.telemetry.topology_validation_nanos, 625_000);
+        assert_eq!(summary.telemetry.local_repair_calls, 1);
+        assert_eq!(summary.telemetry.local_repair_nanos, 2_000_000);
+        assert_eq!(summary.telemetry.repair_seed_accumulation_calls, 1);
+        assert_eq!(summary.telemetry.repair_seed_accumulation_nanos, 500_000);
+        assert_eq!(summary.telemetry.repair_seed_cells_added_total, 7);
+        assert_eq!(summary.telemetry.repair_seed_cells_added_max, 7);
         assert_eq!(summary.telemetry.global_conflict_scans, 1);
         assert_eq!(summary.telemetry.global_conflict_cells_scanned, 12);
         assert_eq!(summary.telemetry.global_conflict_cells_found_total, 3);
@@ -8476,6 +8527,44 @@ mod tests {
         assert_eq!(
             summary.skip_samples.last().map(|s| s.uuid),
             Some(Uuid::from_u128(8))
+        );
+    }
+
+    #[test]
+    fn test_construction_statistics_records_slowest_insertion_samples() {
+        init_tracing();
+
+        let mut summary = ConstructionStatistics::default();
+        for index in 0..10 {
+            let sample_index_u32 = u32::try_from(index).unwrap();
+            summary.record_slow_insertion_sample(ConstructionSlowInsertionSample {
+                index,
+                uuid: Uuid::from_u128(
+                    <u128 as std::convert::From<u32>>::from(sample_index_u32) + 1,
+                ),
+                attempts: 1,
+                result: InsertionResult::Inserted,
+                elapsed_nanos: <u64 as std::convert::From<u32>>::from(sample_index_u32) * 1_000,
+                cells_after: index,
+                locate_calls: 1,
+                locate_walk_steps_total: index,
+                conflict_region_calls: 1,
+                conflict_region_cells_total: index,
+                cavity_insertion_calls: 1,
+                global_conflict_scans: 0,
+                hull_extension_calls: 0,
+                topology_validation_calls: 1,
+            });
+        }
+
+        assert_eq!(summary.slow_insertions.len(), 8);
+        assert_eq!(summary.slow_insertions.first().map(|s| s.index), Some(9));
+        assert_eq!(summary.slow_insertions.last().map(|s| s.index), Some(2));
+        assert!(
+            summary
+                .slow_insertions
+                .windows(2)
+                .all(|pair| pair[0].elapsed_nanos >= pair[1].elapsed_nanos)
         );
     }
 
@@ -10746,6 +10835,46 @@ mod tests {
         assert!(dt.validate().is_ok());
     }
 
+    /// Exercises the `EveryN` cadence through the full bulk path: vertices
+    /// accumulate `pending_repair_seeds`, trigger cadenced local repair, and
+    /// then complete through `finalize_bulk_construction`.
+    #[test]
+    fn test_batch_4d_every_n_repair_cadence_runs_with_pending_seeds() {
+        init_tracing();
+        let vertices = vec![
+            vertex!([0.0, 0.0, 0.0, 0.0]),
+            vertex!([1.0, 0.0, 0.0, 0.0]),
+            vertex!([0.0, 1.0, 0.0, 0.0]),
+            vertex!([0.0, 0.0, 1.0, 0.0]),
+            vertex!([0.0, 0.0, 0.0, 1.0]),
+            vertex!([0.2, 0.2, 0.2, 0.2]),
+            vertex!([0.35, 0.25, 0.15, 0.3]),
+        ];
+
+        test_hooks::reset_batch_local_repair_calls();
+        let _guard = ForceRepairNonconvergentGuard::enable();
+        let kernel = RobustKernel::<f64>::new();
+        let options = ConstructionOptions::default()
+            .with_batch_repair_policy(DelaunayRepairPolicy::EveryN(NonZeroUsize::new(2).unwrap()));
+        let (dt, stats) =
+            DelaunayTriangulation::<RobustKernel<f64>, (), (), 4>::with_options_and_statistics(
+                &kernel,
+                &vertices,
+                TopologyGuarantee::DEFAULT,
+                options,
+            )
+            .expect("EveryN batch repair should soft-fail forced local non-convergence and finish");
+
+        assert_eq!(dt.number_of_vertices(), vertices.len());
+        assert_eq!(stats.inserted, vertices.len());
+        assert_eq!(
+            test_hooks::batch_local_repair_calls(),
+            1,
+            "EveryN(2) should run one cadenced repair before finalize_bulk_construction"
+        );
+        assert!(dt.validate().is_ok());
+    }
+
     #[test]
     fn test_repair_soft_fail_classification() {
         let nonconvergent = test_hooks::synthetic_nonconvergent_error();
@@ -10842,151 +10971,6 @@ mod tests {
                     && message.contains("in_sphere failed")
             ),
             "verification predicate failures should remain geometric: {mapped_predicate:?}"
-        );
-    }
-
-    // =========================================================================
-    // Tests for try_d_lt4_global_repair_fallback
-    // =========================================================================
-
-    /// When `use_global_repair_fallback` is false the helper should return an error
-    /// immediately without attempting global repair.
-    #[test]
-    fn test_try_d_lt4_global_repair_fallback_disabled_returns_error() {
-        init_tracing();
-
-        let vertices = vec![
-            vertex!([0.0, 0.0, 0.0]),
-            vertex!([1.0, 0.0, 0.0]),
-            vertex!([0.0, 1.0, 0.0]),
-            vertex!([0.0, 0.0, 1.0]),
-        ];
-        let mut dt: DelaunayTriangulation<AdaptiveKernel<f64>, (), (), 3> =
-            DelaunayTriangulation::new(&vertices).unwrap();
-
-        let repair_err = DelaunayRepairError::NonConvergent {
-            max_flips: 16,
-            diagnostics: Box::new(DelaunayRepairDiagnostics {
-                facets_checked: 0,
-                flips_performed: 0,
-                max_queue_len: 0,
-                ambiguous_predicates: 0,
-                ambiguous_predicate_samples: Vec::new(),
-                predicate_failures: 0,
-                cycle_detections: 0,
-                cycle_signature_samples: Vec::new(),
-                attempt: 1,
-                queue_order: RepairQueueOrder::Fifo,
-            }),
-        };
-
-        let result =
-            DelaunayTriangulation::<AdaptiveKernel<f64>, (), (), 3>::try_d_lt4_global_repair_fallback(
-                &mut dt.tri.tds,
-                &dt.tri.kernel,
-                TopologyGuarantee::PLManifold,
-                false, // disabled
-                5,
-                &repair_err,
-            );
-
-        assert!(result.is_err());
-        let err_msg = format!("{}", result.unwrap_err());
-        assert!(
-            err_msg.contains("per-insertion Delaunay repair failed at index 5"),
-            "error should mention the index: {err_msg}"
-        );
-    }
-
-    /// When `use_global_repair_fallback` is true and the TDS is already valid,
-    /// global repair succeeds and the helper returns `Ok(())`.
-    #[test]
-    fn test_try_d_lt4_global_repair_fallback_enabled_succeeds_on_valid_tds() {
-        init_tracing();
-
-        let vertices = vec![
-            vertex!([0.0, 0.0, 0.0]),
-            vertex!([1.0, 0.0, 0.0]),
-            vertex!([0.0, 1.0, 0.0]),
-            vertex!([0.0, 0.0, 1.0]),
-            vertex!([0.3, 0.3, 0.3]),
-        ];
-        let mut dt: DelaunayTriangulation<AdaptiveKernel<f64>, (), (), 3> =
-            DelaunayTriangulation::new(&vertices).unwrap();
-
-        let repair_err = DelaunayRepairError::NonConvergent {
-            max_flips: 16,
-            diagnostics: Box::new(DelaunayRepairDiagnostics {
-                facets_checked: 0,
-                flips_performed: 0,
-                max_queue_len: 0,
-                ambiguous_predicates: 0,
-                ambiguous_predicate_samples: Vec::new(),
-                predicate_failures: 0,
-                cycle_detections: 0,
-                cycle_signature_samples: Vec::new(),
-                attempt: 1,
-                queue_order: RepairQueueOrder::Fifo,
-            }),
-        };
-
-        // TDS is valid, so global repair should succeed (nothing to fix).
-        let result =
-            DelaunayTriangulation::<AdaptiveKernel<f64>, (), (), 3>::try_d_lt4_global_repair_fallback(
-                &mut dt.tri.tds,
-                &dt.tri.kernel,
-                TopologyGuarantee::PLManifold,
-                true, // enabled
-                5,
-                &repair_err,
-            );
-
-        assert!(
-            result.is_ok(),
-            "global repair on valid TDS should succeed: {:?}",
-            result.err()
-        );
-    }
-
-    /// Verify the error message includes both local and global error details when
-    /// global repair also fails.
-    #[test]
-    fn test_try_d_lt4_global_repair_fallback_error_includes_both_messages() {
-        init_tracing();
-
-        // Build a 1D triangulation — repair_delaunay_with_flips_k2_k3 returns
-        // UnsupportedDimension for D<2, guaranteeing the global repair fails.
-        let vertices = vec![vertex!([0.0]), vertex!([1.0])];
-        let mut dt: DelaunayTriangulation<AdaptiveKernel<f64>, (), (), 1> =
-            DelaunayTriangulation::new(&vertices).unwrap();
-
-        let repair_err = DelaunayRepairError::PostconditionFailed {
-            message: "synthetic local error".to_string(),
-        };
-
-        let result =
-            DelaunayTriangulation::<AdaptiveKernel<f64>, (), (), 1>::try_d_lt4_global_repair_fallback(
-                &mut dt.tri.tds,
-                &dt.tri.kernel,
-                TopologyGuarantee::PLManifold,
-                true, // enabled — but global repair will fail (D=1)
-                7,
-                &repair_err,
-            );
-
-        assert!(result.is_err());
-        let err_msg = format!("{}", result.unwrap_err());
-        assert!(
-            err_msg.contains("local error:"),
-            "error should contain local error detail: {err_msg}"
-        );
-        assert!(
-            err_msg.contains("global fallback:"),
-            "error should contain global fallback detail: {err_msg}"
-        );
-        assert!(
-            err_msg.contains("index 7"),
-            "error should contain the index: {err_msg}"
         );
     }
 
