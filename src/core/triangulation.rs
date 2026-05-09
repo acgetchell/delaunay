@@ -119,7 +119,7 @@ use crate::core::algorithms::locate::locate;
 use crate::core::algorithms::locate::verify_conflict_region_completeness;
 use crate::core::algorithms::locate::{
     ConflictError, LocateError, LocateResult, LocateStats, extract_cavity_boundary,
-    find_conflict_region, locate_by_scan, locate_with_stats,
+    find_conflict_region, locate_by_scan, locate_with_stats, locate_with_trace,
 };
 use crate::core::cell::{Cell, CellValidationError};
 use crate::core::collections::spatial_hash_grid::HashGridIndex;
@@ -129,7 +129,9 @@ use crate::core::collections::{
     fast_hash_map_with_capacity, fast_hash_set_with_capacity,
 };
 use crate::core::edge::EdgeKey;
-use crate::core::facet::{AllFacetsIter, BoundaryFacetsIter, FacetHandle, facet_key_from_vertices};
+#[cfg(test)]
+use crate::core::facet::facet_key_from_vertices;
+use crate::core::facet::{AllFacetsIter, BoundaryFacetsIter, FacetHandle};
 use crate::core::operations::{
     InsertionOutcome, InsertionResult, InsertionStatistics, InsertionTelemetry, SuspicionFlags,
 };
@@ -138,6 +140,7 @@ use crate::core::tds::{
     TdsConstructionError, TdsError, TriangulationValidationReport, VertexKey,
 };
 use crate::core::traits::data_type::DataType;
+#[cfg(test)]
 use crate::core::util::canonical_points::sorted_cell_points;
 use crate::core::vertex::Vertex;
 use crate::geometry::kernel::Kernel;
@@ -156,6 +159,10 @@ use crate::topology::manifold::{
 use crate::topology::traits::global_topology_model::GlobalTopologyModel;
 use crate::topology::traits::topological_space::{GlobalTopology, TopologyKind};
 use crate::triangulation::delaunay::DelaunayTriangulationValidationError;
+use crate::triangulation::locality::{
+    append_live_unique_cell_seeds, collect_local_exterior_conflict_seed_cells,
+    replace_cells_and_record_removed, retain_cells_and_record_removed,
+};
 use core::ops::Div;
 use num_traits::{NumCast, One, Zero};
 use std::borrow::Cow;
@@ -368,34 +375,6 @@ fn log_cavity_reduction_event<F>(
         conflict_preview = ?conflict_preview,
         "cavity-reduction event"
     );
-}
-
-fn retain_conflict_cells_and_record_removed(
-    conflict_cells: &mut CellKeyBuffer,
-    repair_seed_cells: &mut CellKeyBuffer,
-    mut keep_cell: impl FnMut(CellKey) -> bool,
-) {
-    conflict_cells.retain(|cell_key| {
-        let keep = keep_cell(*cell_key);
-        if !keep {
-            repair_seed_cells.push(*cell_key);
-        }
-        keep
-    });
-}
-
-fn replace_conflict_cells_and_record_removed(
-    conflict_cells: &mut CellKeyBuffer,
-    repair_seed_cells: &mut CellKeyBuffer,
-    replacement: CellKeyBuffer,
-) {
-    let replacement_set: FastHashSet<CellKey> = replacement.iter().copied().collect();
-    for &cell_key in conflict_cells.iter() {
-        if !replacement_set.contains(&cell_key) {
-            repair_seed_cells.push(cell_key);
-        }
-    }
-    *conflict_cells = replacement;
 }
 
 #[expect(
@@ -871,6 +850,7 @@ enum InsertionSite<'a> {
     },
     Exterior {
         conflict_cells: Option<Cow<'a, CellKeyBuffer>>,
+        repair_seed_cells: CellKeyBuffer,
     },
 }
 
@@ -4467,8 +4447,12 @@ where
 
     /// Find all conflict cells by scanning the entire triangulation.
     ///
-    /// This is used for exterior points where the standard BFS conflict-region
-    /// search lacks a guaranteed seed cell inside the conflict region.
+    /// Test-only global conflict scanner for malformed-cell error coverage.
+    ///
+    /// Exterior production insertion deliberately avoids this path: hull
+    /// extension is the local topological mutation, and Delaunay violations are
+    /// left to the cadenced or final repair layers.
+    #[cfg(test)]
     fn find_conflict_region_global(
         &self,
         point: &Point<K::Scalar, D>,
@@ -4552,6 +4536,7 @@ where
     }
 
     /// Returns true if any conflict cell has a facet on the hull boundary.
+    #[cfg(test)]
     fn conflict_region_touches_boundary(
         &self,
         conflict_cells: &CellKeyBuffer,
@@ -4718,7 +4703,7 @@ where
                             saw_ridge_fan_shrink = true;
                             let remove_set: FastHashSet<CellKey> =
                                 extra_cells.iter().copied().collect();
-                            retain_conflict_cells_and_record_removed(
+                            retain_cells_and_record_removed(
                                 &mut conflict_cells,
                                 &mut repair_seed_cells,
                                 |cell_key| !remove_set.contains(&cell_key),
@@ -4793,7 +4778,7 @@ where
                                 );
                                 let remove_set: FastHashSet<CellKey> =
                                     disconnected_cells.iter().copied().collect();
-                                retain_conflict_cells_and_record_removed(
+                                retain_cells_and_record_removed(
                                     &mut conflict_cells,
                                     &mut repair_seed_cells,
                                     |cell_key| !remove_set.contains(&cell_key),
@@ -4826,7 +4811,7 @@ where
                                 || format!("open_boundary_shrink open_cell={open_cell:?}"),
                             );
                             let open = *open_cell;
-                            retain_conflict_cells_and_record_removed(
+                            retain_cells_and_record_removed(
                                 &mut conflict_cells,
                                 &mut repair_seed_cells,
                                 |cell_key| cell_key != open,
@@ -4907,7 +4892,7 @@ where
 
                         let mut replacement = CellKeyBuffer::new();
                         replacement.push(start_cell);
-                        replace_conflict_cells_and_record_removed(
+                        replace_cells_and_record_removed(
                             &mut conflict_cells,
                             &mut repair_seed_cells,
                             replacement,
@@ -4944,7 +4929,7 @@ where
 
             let mut replacement = CellKeyBuffer::new();
             replacement.push(start_cell);
-            replace_conflict_cells_and_record_removed(
+            replace_cells_and_record_removed(
                 &mut conflict_cells,
                 &mut repair_seed_cells,
                 replacement,
@@ -5170,11 +5155,7 @@ where
 
         // Seed follow-up Delaunay repair from the local insertion product.  Higher layers
         // use these cells to avoid rediscovering the inserted vertex star with a global scan.
-        for &cell_key in &new_cells {
-            if self.tds.contains_cell(cell_key) && seen_repair_seed_cells.insert(cell_key) {
-                repair_seed_cells.push(cell_key);
-            }
-        }
+        append_live_unique_cell_seeds(&self.tds, &new_cells, &mut repair_seed_cells);
 
         // Return hint for next insertion
         Ok((hint, total_removed, repair_seed_cells))
@@ -5314,27 +5295,6 @@ where
     }
 
     #[inline]
-    fn record_global_conflict_scan_telemetry(
-        telemetry: &mut InsertionTelemetry,
-        cells_scanned: usize,
-        cells_found: usize,
-        elapsed_nanos: u64,
-    ) {
-        telemetry.global_conflict_scans = telemetry.global_conflict_scans.saturating_add(1);
-        telemetry.global_conflict_cells_scanned = telemetry
-            .global_conflict_cells_scanned
-            .saturating_add(cells_scanned);
-        telemetry.global_conflict_cells_found_total = telemetry
-            .global_conflict_cells_found_total
-            .saturating_add(cells_found);
-        telemetry.global_conflict_cells_found_max =
-            telemetry.global_conflict_cells_found_max.max(cells_found);
-        telemetry.global_conflict_scan_nanos = telemetry
-            .global_conflict_scan_nanos
-            .saturating_add(elapsed_nanos);
-    }
-
-    #[inline]
     fn duration_nanos_saturating(duration: Duration) -> u64 {
         u64::try_from(duration.as_nanos()).unwrap_or(u64::MAX)
     }
@@ -5418,7 +5378,9 @@ where
         //
         // `locate()` delegates to `locate_with_stats()`, so collecting the stats here keeps
         // the same point-location algorithm while making release-mode batch diagnostics useful.
-        let (location, locate_stats) = locate_with_stats(&self.tds, &self.kernel, &point, hint)?;
+        let locate_trace = locate_with_trace(&self.tds, &self.kernel, &point, hint)?;
+        let location = locate_trace.result;
+        let locate_stats = locate_trace.stats;
         Self::record_locate_telemetry(telemetry, location, &locate_stats);
 
         #[cfg(debug_assertions)]
@@ -5513,63 +5475,42 @@ where
                 }
             }
             (LocateResult::Outside, None) => {
-                // 2D exterior insertions skip the global conflict-region scan and go straight to
-                // hull extension, which is cheaper and more reliable in 2D. For D>2 we attempt
-                // cavity insertion first using a global conflict scan.
-                if D == 2 {
-                    #[cfg(debug_assertions)]
+                // Exterior insertion is the hull-extension case.  Avoid the old
+                // full-TDS conflict scan here; it was O(number_of_cells) per
+                // exterior point, often only to rediscover that the hull path
+                // was required anyway.  Cadenced and final Delaunay repair own
+                // any local empty-circumsphere cleanup after the hull mutation.
+                #[cfg(debug_assertions)]
+                if std::env::var_os("DELAUNAY_DEBUG_HULL").is_some() {
                     tracing::debug!(
-                        "Outside insertion in 2D: skipping global conflict-region scan; using hull extension"
+                        "Outside insertion: skipping global conflict-region scan; using hull extension"
                     );
-                    InsertionSite::Exterior {
-                        conflict_cells: None,
-                    }
-                } else {
-                    #[cfg(debug_assertions)]
-                    if std::env::var_os("DELAUNAY_DEBUG_HULL").is_some() {
-                        tracing::debug!("Outside insertion: starting global conflict-region scan");
-                    }
-                    let cells_scanned = self.tds.number_of_cells();
-                    let global_scan_started = Instant::now();
-                    let computed = self.find_conflict_region_global(&point)?;
-                    let elapsed_nanos =
-                        u64::try_from(global_scan_started.elapsed().as_nanos()).unwrap_or(u64::MAX);
-                    Self::record_global_conflict_scan_telemetry(
+                }
+                let repair_seed_cells = if !locate_stats.fell_back_to_scan()
+                    && self.tds.contains_cell(locate_trace.terminal_cell)
+                {
+                    let conflict_started = Instant::now();
+                    let local_seed_cells = collect_local_exterior_conflict_seed_cells(
+                        &self.tds,
+                        &self.kernel,
+                        &point,
+                        locate_trace.terminal_cell,
+                    )?;
+                    Self::record_conflict_region_telemetry(
                         telemetry,
-                        cells_scanned,
-                        computed.len(),
-                        elapsed_nanos,
+                        local_seed_cells.conflict_cells_found,
                     );
-                    if computed.is_empty() {
-                        #[cfg(debug_assertions)]
-                        if std::env::var_os("DELAUNAY_DEBUG_HULL").is_some() {
-                            tracing::debug!(
-                                "Outside insertion: global conflict region empty; will use hull extension"
-                            );
-                        }
-                        InsertionSite::Exterior {
-                            conflict_cells: None,
-                        }
-                    } else if self.conflict_region_touches_boundary(&computed)? {
-                        #[cfg(debug_assertions)]
-                        tracing::debug!(
-                            "Outside insertion (D={D}) conflict region touches hull; skipping cavity insertion"
-                        );
-                        // Avoid cavity insertion when the conflict region touches the hull.
-                        // These mixed boundaries can yield ridge-link singularities in higher dimensions.
-                        InsertionSite::Exterior {
-                            conflict_cells: None,
-                        }
-                    } else {
-                        #[cfg(debug_assertions)]
-                        tracing::debug!(
-                            "Outside insertion (D={D}) using global conflict region with {} cells",
-                            computed.len()
-                        );
-                        InsertionSite::Exterior {
-                            conflict_cells: Some(Cow::Owned(computed)),
-                        }
-                    }
+                    Self::record_conflict_region_timing(
+                        telemetry,
+                        Self::duration_nanos_saturating(conflict_started.elapsed()),
+                    );
+                    local_seed_cells.seed_cells
+                } else {
+                    CellKeyBuffer::new()
+                };
+                InsertionSite::Exterior {
+                    conflict_cells: None,
+                    repair_seed_cells,
                 }
             }
             (LocateResult::Outside, Some(cells)) => {
@@ -5583,6 +5524,7 @@ where
                     }
                     InsertionSite::Exterior {
                         conflict_cells: None,
+                        repair_seed_cells: CellKeyBuffer::new(),
                     }
                 } else {
                     #[cfg(debug_assertions)]
@@ -5594,6 +5536,7 @@ where
                     }
                     InsertionSite::Exterior {
                         conflict_cells: Some(Cow::Borrowed(cells)),
+                        repair_seed_cells: cells.iter().copied().collect(),
                     }
                 }
             }
@@ -5630,7 +5573,10 @@ where
                     repair_seed_cells,
                 })
             }
-            InsertionSite::Exterior { conflict_cells } => {
+            InsertionSite::Exterior {
+                conflict_cells,
+                repair_seed_cells: exterior_repair_seed_cells,
+            } => {
                 if let Some(conflict_cells) = conflict_cells {
                     let conflict_cells = conflict_cells.into_owned();
                     #[cfg(debug_assertions)]
@@ -5981,11 +5927,13 @@ where
                 self.validate_connectedness(&new_cells)?;
 
                 // Return vertex key and hint for next insertion
-                let repair_seed_cells: CellKeyBuffer = new_cells
-                    .iter()
-                    .copied()
-                    .filter(|&cell_key| self.tds.contains_cell(cell_key))
-                    .collect();
+                let mut repair_seed_cells = CellKeyBuffer::new();
+                append_live_unique_cell_seeds(&self.tds, &new_cells, &mut repair_seed_cells);
+                append_live_unique_cell_seeds(
+                    &self.tds,
+                    &exterior_repair_seed_cells,
+                    &mut repair_seed_cells,
+                );
                 Ok(TryInsertImplOk {
                     inserted: (v_key, hint),
                     cells_removed: total_removed,
@@ -6850,45 +6798,6 @@ mod tests {
             },
         };
         assert!(cavity_conflict_error_summary(&internal).contains("internal_inconsistency site="));
-    }
-
-    #[test]
-    fn test_cavity_reduction_cell_bookkeeping_records_removed_cells() {
-        let a = CellKey::from(KeyData::from_ffi(31));
-        let b = CellKey::from(KeyData::from_ffi(32));
-        let c = CellKey::from(KeyData::from_ffi(33));
-        let d = CellKey::from(KeyData::from_ffi(34));
-
-        let mut conflict_cells: CellKeyBuffer = [a, b, c].into_iter().collect();
-        let mut repair_seed_cells = CellKeyBuffer::new();
-        retain_conflict_cells_and_record_removed(
-            &mut conflict_cells,
-            &mut repair_seed_cells,
-            |ck| ck != b,
-        );
-        assert_eq!(
-            conflict_cells.iter().copied().collect::<Vec<_>>(),
-            vec![a, c]
-        );
-        assert_eq!(
-            repair_seed_cells.iter().copied().collect::<Vec<_>>(),
-            vec![b]
-        );
-
-        let replacement: CellKeyBuffer = [c, d].into_iter().collect();
-        replace_conflict_cells_and_record_removed(
-            &mut conflict_cells,
-            &mut repair_seed_cells,
-            replacement,
-        );
-        assert_eq!(
-            conflict_cells.iter().copied().collect::<Vec<_>>(),
-            vec![c, d]
-        );
-        assert_eq!(
-            repair_seed_cells.iter().copied().collect::<Vec<_>>(),
-            vec![b, a]
-        );
     }
 
     #[test]
@@ -9513,6 +9422,50 @@ mod tests {
 
         assert_eq!(tri.number_of_vertices(), 4);
         assert_eq!(tri.number_of_cells(), 1);
+    }
+
+    #[test]
+    fn triangulation_exterior_insert_3d_uses_hull_extension_without_global_conflict_scan() {
+        let mut tri: Triangulation<FastKernel<f64>, (), (), 3> =
+            Triangulation::new_empty(FastKernel::new());
+
+        for coords in [
+            [0.0, 0.0, 0.0],
+            [1.0, 0.0, 0.0],
+            [0.0, 1.0, 0.0],
+            [0.0, 0.0, 1.0],
+        ] {
+            tri.insert_with_statistics(vertex!(coords), None, None)
+                .unwrap();
+        }
+
+        let hint = tri.cells().next().map(|(cell_key, _)| cell_key);
+        let detail = tri
+            .insert_with_statistics_seeded_indexed_detailed(
+                vertex!([2.0, 2.0, 2.0]),
+                None,
+                hint,
+                0,
+                None,
+                None,
+            )
+            .unwrap();
+
+        assert!(matches!(
+            detail.outcome,
+            InsertionOutcome::Inserted { hint: Some(_), .. }
+        ));
+        assert_eq!(detail.telemetry.global_conflict_scans, 0);
+        assert_eq!(detail.telemetry.global_conflict_cells_scanned, 0);
+        assert_eq!(detail.telemetry.global_conflict_cells_found_total, 0);
+        assert_eq!(detail.telemetry.global_conflict_scan_nanos, 0);
+        assert_eq!(detail.telemetry.cavity_insertion_calls, 0);
+        assert_eq!(detail.telemetry.hull_extension_calls, 1);
+        assert!(
+            !detail.repair_seed_cells.is_empty(),
+            "hull extension should return local repair seeds"
+        );
+        assert!(tri.is_valid().is_ok());
     }
 
     #[test]
