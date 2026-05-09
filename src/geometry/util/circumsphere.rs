@@ -87,6 +87,7 @@ pub fn circumcenter<T, const D: usize>(
 where
     T: CoordinateScalar,
 {
+    // LCOV_EXCL_START
     #[cfg(debug_assertions)]
     if std::env::var_os("DELAUNAY_DEBUG_UNUSED_IMPORTS").is_some() {
         tracing::debug!(
@@ -95,6 +96,7 @@ where
             D
         );
     }
+    // LCOV_EXCL_STOP
     if points.is_empty() {
         return Err(CircumcenterError::EmptyPointSet);
     }
@@ -162,10 +164,12 @@ where
             // near-singular, so we pay for BigRational Gaussian elimination.
             // This path is cold — well-conditioned simplices return above.
             cold_path();
+            // LCOV_EXCL_START
             #[cfg(debug_assertions)]
             if std::env::var_os("DELAUNAY_DEBUG_LU_FALLBACK").is_some() {
                 tracing::debug!("circumcenter<{D}>: LU near-singular, using solve_exact_f64");
             }
+            // LCOV_EXCL_STOP
 
             a.solve_exact_f64(b_vec)
                 .map_err(|e| CircumcenterError::MatrixInversionFailed {
