@@ -113,13 +113,11 @@ use crate::core::algorithms::incremental_insertion::{
     external_facets_for_boundary, fill_cavity, repair_neighbor_pointers,
     repair_neighbor_pointers_local, wire_cavity_neighbors,
 };
-#[cfg(debug_assertions)]
-use crate::core::algorithms::locate::locate_with_stats;
 #[cfg(feature = "diagnostics")]
 use crate::core::algorithms::locate::verify_conflict_region_completeness;
 use crate::core::algorithms::locate::{
-    ConflictError, LocateError, LocateResult, extract_cavity_boundary, find_conflict_region,
-    locate, locate_by_scan,
+    ConflictError, LocateError, LocateResult, LocateStats, extract_cavity_boundary,
+    find_conflict_region, locate, locate_by_scan, locate_with_stats,
 };
 use crate::core::cell::{Cell, CellValidationError};
 use crate::core::collections::spatial_hash_grid::HashGridIndex;
@@ -131,7 +129,7 @@ use crate::core::collections::{
 use crate::core::edge::EdgeKey;
 use crate::core::facet::{AllFacetsIter, BoundaryFacetsIter, FacetHandle, facet_key_from_vertices};
 use crate::core::operations::{
-    InsertionOutcome, InsertionResult, InsertionStatistics, SuspicionFlags,
+    InsertionOutcome, InsertionResult, InsertionStatistics, InsertionTelemetry, SuspicionFlags,
 };
 use crate::core::tds::{
     CellKey, GeometricError, InvariantError, InvariantKind, InvariantViolation, Tds,
@@ -166,6 +164,7 @@ use std::sync::{
     OnceLock,
     atomic::{AtomicBool, AtomicU64, Ordering},
 };
+use std::time::Instant;
 use thiserror::Error;
 use uuid::Uuid;
 
@@ -877,8 +876,10 @@ enum InsertionSite<'a> {
 pub(crate) struct DetailedInsertionResult {
     /// Public insertion outcome returned to higher layers.
     pub outcome: InsertionOutcome,
-    /// Telemetry collected while attempting the insertion.
+    /// Public statistics collected while attempting the insertion.
     pub stats: InsertionStatistics,
+    /// Internal path telemetry collected while attempting the insertion.
+    pub telemetry: InsertionTelemetry,
     /// Extra cells that should widen the caller's local repair seed set.
     pub repair_seed_cells: CellKeyBuffer,
 }
@@ -3608,6 +3609,7 @@ where
         bulk_index: Option<usize>,
     ) -> Result<DetailedInsertionResult, InsertionError> {
         let mut stats = InsertionStatistics::default();
+        let mut telemetry = InsertionTelemetry::default();
         let original_coords = *vertex.point().coords();
         let original_uuid = vertex.uuid();
         let mut current_vertex = vertex;
@@ -3674,6 +3676,7 @@ where
                     return Ok(DetailedInsertionResult {
                         outcome: InsertionOutcome::Skipped { error },
                         stats,
+                        telemetry,
                         repair_seed_cells: CellKeyBuffer::new(),
                     });
                 };
@@ -3721,6 +3724,7 @@ where
                 return Ok(DetailedInsertionResult {
                     outcome: InsertionOutcome::Skipped { error },
                     stats,
+                    telemetry,
                     repair_seed_cells: CellKeyBuffer::new(),
                 });
             }
@@ -3751,6 +3755,7 @@ where
                     hint,
                     attempt,
                     &tds_snapshot,
+                    &mut telemetry,
                 )
             };
             #[cfg(not(test))]
@@ -3760,6 +3765,7 @@ where
                 hint,
                 attempt,
                 &tds_snapshot,
+                &mut telemetry,
             );
 
             match result {
@@ -3790,6 +3796,7 @@ where
                     return Ok(DetailedInsertionResult {
                         outcome: InsertionOutcome::Inserted { vertex_key, hint },
                         stats,
+                        telemetry,
                         repair_seed_cells,
                     });
                 }
@@ -3805,6 +3812,7 @@ where
                         return Ok(DetailedInsertionResult {
                             outcome: InsertionOutcome::Skipped { error: e },
                             stats,
+                            telemetry,
                             repair_seed_cells: CellKeyBuffer::new(),
                         });
                     }
@@ -3861,6 +3869,7 @@ where
                         return Ok(DetailedInsertionResult {
                             outcome: InsertionOutcome::Skipped { error: e },
                             stats,
+                            telemetry,
                             // Skipped insertions do not mutate the triangulation, so any
                             // intermediate cavity-seed hints are irrelevant to callers.
                             repair_seed_cells: CellKeyBuffer::new(),
@@ -4225,8 +4234,9 @@ where
         hint: Option<CellKey>,
         attempt: usize,
         tds_snapshot: &Tds<K::Scalar, U, V, D>,
+        telemetry: &mut InsertionTelemetry,
     ) -> Result<TryInsertImplOk, InsertionError> {
-        let mut insert_ok = self.try_insert_impl(vertex, conflict_cells, hint)?;
+        let mut insert_ok = self.try_insert_impl(vertex, conflict_cells, hint, telemetry)?;
 
         if attempt > 0 {
             insert_ok.suspicion.perturbation_used = true;
@@ -4245,6 +4255,7 @@ where
                 hint,
                 attempt,
                 validation_err,
+                telemetry,
             );
         }
 
@@ -4263,9 +4274,14 @@ where
         hint: Option<CellKey>,
         attempt: usize,
         validation_err: InvariantError,
+        telemetry: &mut InsertionTelemetry,
     ) -> Result<TryInsertImplOk, InsertionError> {
         let point = *vertex.point();
-        let location = locate(&self.tds, &self.kernel, &point, hint);
+        let location =
+            locate_with_stats(&self.tds, &self.kernel, &point, hint).map(|(location, stats)| {
+                Self::record_locate_telemetry(telemetry, location, &stats);
+                location
+            });
 
         let Ok(LocateResult::InsideCell(start_cell)) = location else {
             return Err(Self::invariant_error_to_insertion_error(validation_err));
@@ -4274,7 +4290,7 @@ where
         let mut star_conflict = CellKeyBuffer::new();
         star_conflict.push(start_cell);
 
-        match self.try_insert_impl(vertex, Some(&star_conflict), Some(start_cell)) {
+        match self.try_insert_impl(vertex, Some(&star_conflict), Some(start_cell), telemetry) {
             Ok(mut fallback_ok) => {
                 fallback_ok.suspicion.fallback_star_split = true;
                 if attempt > 0 {
@@ -5194,6 +5210,69 @@ where
         Ok(())
     }
 
+    /// Records one point-location result into insertion telemetry.
+    #[inline]
+    fn record_locate_telemetry(
+        telemetry: &mut InsertionTelemetry,
+        location: LocateResult,
+        stats: &LocateStats,
+    ) {
+        telemetry.locate_calls = telemetry.locate_calls.saturating_add(1);
+        telemetry.locate_walk_steps_total = telemetry
+            .locate_walk_steps_total
+            .saturating_add(stats.walk_steps);
+        telemetry.locate_walk_steps_max = telemetry.locate_walk_steps_max.max(stats.walk_steps);
+
+        if stats.used_hint {
+            telemetry.locate_hint_uses = telemetry.locate_hint_uses.saturating_add(1);
+        }
+
+        if stats.fell_back_to_scan() {
+            telemetry.locate_scan_fallbacks = telemetry.locate_scan_fallbacks.saturating_add(1);
+        }
+
+        match location {
+            LocateResult::InsideCell(_) => {
+                telemetry.located_inside = telemetry.located_inside.saturating_add(1);
+            }
+            LocateResult::Outside => {
+                telemetry.located_outside = telemetry.located_outside.saturating_add(1);
+            }
+            LocateResult::OnFacet(_, _) | LocateResult::OnEdge(_) | LocateResult::OnVertex(_) => {
+                telemetry.located_on_boundary = telemetry.located_on_boundary.saturating_add(1);
+            }
+        }
+    }
+
+    #[inline]
+    fn record_conflict_region_telemetry(telemetry: &mut InsertionTelemetry, cells: usize) {
+        telemetry.conflict_region_calls = telemetry.conflict_region_calls.saturating_add(1);
+        telemetry.conflict_region_cells_total =
+            telemetry.conflict_region_cells_total.saturating_add(cells);
+        telemetry.conflict_region_cells_max = telemetry.conflict_region_cells_max.max(cells);
+    }
+
+    #[inline]
+    fn record_global_conflict_scan_telemetry(
+        telemetry: &mut InsertionTelemetry,
+        cells_scanned: usize,
+        cells_found: usize,
+        elapsed_nanos: u128,
+    ) {
+        telemetry.global_conflict_scans = telemetry.global_conflict_scans.saturating_add(1);
+        telemetry.global_conflict_cells_scanned = telemetry
+            .global_conflict_cells_scanned
+            .saturating_add(cells_scanned);
+        telemetry.global_conflict_cells_found_total = telemetry
+            .global_conflict_cells_found_total
+            .saturating_add(cells_found);
+        telemetry.global_conflict_cells_found_max =
+            telemetry.global_conflict_cells_found_max.max(cells_found);
+        telemetry.global_conflict_scan_nanos = telemetry
+            .global_conflict_scan_nanos
+            .saturating_add(elapsed_nanos);
+    }
+
     /// Internal implementation of insert without retry logic.
     /// Returns the result and the number of cells removed during repair.
     ///
@@ -5208,6 +5287,7 @@ where
         vertex: Vertex<K::Scalar, U, D>,
         conflict_cells: Option<&CellKeyBuffer>,
         hint: Option<CellKey>,
+        telemetry: &mut InsertionTelemetry,
     ) -> Result<TryInsertImplOk, InsertionError> {
         let mut suspicion = SuspicionFlags::default();
 
@@ -5268,51 +5348,26 @@ where
             });
         }
 
-        // 3. Locate containing cell (for vertex D+2 and beyond)
-        #[cfg(debug_assertions)]
-        let (location, locate_stats) = {
-            #[cfg(debug_assertions)]
-            {
-                let log_locate = std::env::var_os("DELAUNAY_DEBUG_HULL").is_some()
-                    || std::env::var_os("DELAUNAY_DEBUG_LOCATE").is_some();
-                if log_locate {
-                    let (location, stats) =
-                        locate_with_stats(&self.tds, &self.kernel, &point, hint)?;
-                    (location, Some(stats))
-                } else {
-                    (locate(&self.tds, &self.kernel, &point, hint)?, None)
-                }
-            }
-            #[cfg(not(debug_assertions))]
-            {
-                (locate(&self.tds, &self.kernel, &point, hint)?, None)
-            }
-        };
-
-        #[cfg(not(debug_assertions))]
-        let location = locate(&self.tds, &self.kernel, &point, hint)?;
+        // 3. Locate containing cell (for vertex D+2 and beyond).
+        //
+        // `locate()` delegates to `locate_with_stats()`, so collecting the stats here keeps
+        // the same point-location algorithm while making release-mode batch diagnostics useful.
+        let (location, locate_stats) = locate_with_stats(&self.tds, &self.kernel, &point, hint)?;
+        Self::record_locate_telemetry(telemetry, location, &locate_stats);
 
         #[cfg(debug_assertions)]
         if std::env::var_os("DELAUNAY_DEBUG_HULL").is_some()
             || std::env::var_os("DELAUNAY_DEBUG_LOCATE").is_some()
         {
-            if let Some(stats) = locate_stats {
-                tracing::debug!(
-                    point = ?point,
-                    location = ?location,
-                    start_cell = ?stats.start_cell,
-                    used_hint = stats.used_hint,
-                    walk_steps = stats.walk_steps,
-                    fallback = ?stats.fallback,
-                    "try_insert_impl: locate stats"
-                );
-            } else {
-                tracing::debug!(
-                    point = ?point,
-                    location = ?location,
-                    "try_insert_impl: locate result"
-                );
-            }
+            tracing::debug!(
+                point = ?point,
+                location = ?location,
+                start_cell = ?locate_stats.start_cell,
+                used_hint = locate_stats.used_hint,
+                walk_steps = locate_stats.walk_steps,
+                fallback = ?locate_stats.fallback,
+                "try_insert_impl: locate stats"
+            );
         }
 
         // 4. Determine the supported insertion site and any conflict cells it needs.
@@ -5333,6 +5388,7 @@ where
                 // Fallback: treat the containing cell as the conflict region, effectively performing
                 // a star-split of that cell to keep the simplicial complex connected.
                 let computed = find_conflict_region(&self.tds, &self.kernel, &point, start_cell)?;
+                Self::record_conflict_region_telemetry(telemetry, computed.len());
 
                 #[cfg(feature = "diagnostics")]
                 if std::env::var_os("DELAUNAY_DEBUG_CONFLICT_VERIFY").is_some() {
@@ -5368,6 +5424,7 @@ where
                 }
             }
             (LocateResult::InsideCell(start_cell), Some(cells)) => {
+                Self::record_conflict_region_telemetry(telemetry, cells.len());
                 // If the caller provided an empty conflict region (can happen if the Delaunay layer
                 // computes conflicts using a strict in-sphere test), we must still replace at least
                 // one cell; otherwise we'd create no cavity, no new cells, and leave a dangling
@@ -5401,7 +5458,15 @@ where
                     if std::env::var_os("DELAUNAY_DEBUG_HULL").is_some() {
                         tracing::debug!("Outside insertion: starting global conflict-region scan");
                     }
+                    let cells_scanned = self.tds.number_of_cells();
+                    let global_scan_started = Instant::now();
                     let computed = self.find_conflict_region_global(&point)?;
+                    Self::record_global_conflict_scan_telemetry(
+                        telemetry,
+                        cells_scanned,
+                        computed.len(),
+                        global_scan_started.elapsed().as_nanos(),
+                    );
                     if computed.is_empty() {
                         #[cfg(debug_assertions)]
                         if std::env::var_os("DELAUNAY_DEBUG_HULL").is_some() {
@@ -5435,6 +5500,7 @@ where
                 }
             }
             (LocateResult::Outside, Some(cells)) => {
+                Self::record_conflict_region_telemetry(telemetry, cells.len());
                 if cells.is_empty() {
                     #[cfg(debug_assertions)]
                     if std::env::var_os("DELAUNAY_DEBUG_HULL").is_some() {

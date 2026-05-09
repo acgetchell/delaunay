@@ -20,8 +20,8 @@ use crate::core::collections::{CellKeyBuffer, FastHashMap, FastHashSet, FastHash
 use crate::core::edge::EdgeKey;
 use crate::core::facet::{AllFacetsIter, BoundaryFacetsIter};
 use crate::core::operations::{
-    DelaunayInsertionState, InsertionOutcome, InsertionStatistics, RepairDecision,
-    TopologicalOperation,
+    DelaunayInsertionState, InsertionOutcome, InsertionStatistics, InsertionTelemetry,
+    RepairDecision, TopologicalOperation,
 };
 use crate::core::tds::{
     CellKey, InvariantError, InvariantKind, InvariantViolation, Tds, TdsConstructionError,
@@ -206,6 +206,10 @@ const fn local_repair_flip_budget<const D: usize>(seed_cells_len: usize) -> usiz
     };
     let raw = seed_cells_len.saturating_mul(D + 1).saturating_mul(factor);
     if raw > floor { raw } else { floor }
+}
+
+fn batch_repair_trace_enabled() -> bool {
+    env::var_os("DELAUNAY_BATCH_REPAIR_TRACE").is_some()
 }
 
 thread_local! {
@@ -859,15 +863,23 @@ impl Default for RetryPolicy {
 ///
 /// ```rust
 /// use delaunay::prelude::triangulation::{
-///     ConstructionOptions, DedupPolicy, InsertionOrderStrategy, RetryPolicy,
+///     ConstructionOptions, DedupPolicy, DelaunayRepairPolicy, InsertionOrderStrategy, RetryPolicy,
 /// };
+/// use std::num::NonZeroUsize;
 ///
 /// let options = ConstructionOptions::default()
 ///     .with_insertion_order(InsertionOrderStrategy::Hilbert)
 ///     .with_dedup_policy(DedupPolicy::Off)
+///     .with_batch_repair_policy(DelaunayRepairPolicy::EveryN(
+///         NonZeroUsize::new(4).unwrap(),
+///     ))
 ///     .with_retry_policy(RetryPolicy::Disabled);
 ///
 /// assert_eq!(options.insertion_order(), InsertionOrderStrategy::Hilbert);
+/// assert_eq!(
+///     options.batch_repair_policy(),
+///     DelaunayRepairPolicy::EveryN(NonZeroUsize::new(4).unwrap()),
+/// );
 /// ```
 #[derive(Debug, Clone, Copy, PartialEq)]
 #[non_exhaustive]
@@ -876,6 +888,7 @@ pub struct ConstructionOptions {
     dedup_policy: DedupPolicy,
     initial_simplex: InitialSimplexStrategy,
     retry_policy: RetryPolicy,
+    batch_repair_policy: DelaunayRepairPolicy,
     /// When `true` (default), D<4 per-insertion repair falls back to a global
     /// `repair_delaunay_with_flips_k2_k3` pass when the bounded local pass
     /// cycles.  Set to `false` for constructions where global repair could
@@ -890,6 +903,7 @@ impl Default for ConstructionOptions {
             dedup_policy: DedupPolicy::default(),
             initial_simplex: InitialSimplexStrategy::default(),
             retry_policy: RetryPolicy::default(),
+            batch_repair_policy: DelaunayRepairPolicy::default(),
             use_global_repair_fallback: true,
         }
     }
@@ -917,6 +931,12 @@ impl ConstructionOptions {
     #[must_use]
     pub const fn retry_policy(&self) -> RetryPolicy {
         self.retry_policy
+    }
+
+    /// Returns the local Delaunay repair cadence used during batch construction.
+    #[must_use]
+    pub const fn batch_repair_policy(&self) -> DelaunayRepairPolicy {
+        self.batch_repair_policy
     }
 
     /// Sets the input ordering strategy used for batch construction.
@@ -949,6 +969,16 @@ impl ConstructionOptions {
         self
     }
 
+    /// Sets the local Delaunay repair cadence used during batch construction.
+    #[must_use]
+    pub const fn with_batch_repair_policy(
+        mut self,
+        batch_repair_policy: DelaunayRepairPolicy,
+    ) -> Self {
+        self.batch_repair_policy = batch_repair_policy;
+        self
+    }
+
     /// Disables the D<4 global repair fallback.
     #[must_use]
     pub(crate) const fn without_global_repair_fallback(mut self) -> Self {
@@ -960,6 +990,152 @@ impl ConstructionOptions {
 // =============================================================================
 // BATCH CONSTRUCTION STATISTICS
 // =============================================================================
+
+/// Aggregate release-visible telemetry collected during batch construction.
+///
+/// These counters summarize the insertion path at a coarse level so large-scale debug runs can
+/// distinguish point-location cost, scan fallback cost, local conflict-region size, and global
+/// exterior conflict scans without enabling per-insertion tracing.
+#[derive(Debug, Default, Clone)]
+#[non_exhaustive]
+pub struct ConstructionTelemetry {
+    /// Number of point-location calls performed during construction.
+    pub locate_calls: usize,
+    /// Total facet-walk steps across all point-location calls.
+    pub locate_walk_steps_total: usize,
+    /// Maximum facet-walk steps taken by a single point-location call.
+    pub locate_walk_steps_max: usize,
+    /// Number of point-location calls that used a caller-provided hint.
+    pub locate_hint_uses: usize,
+    /// Number of point-location calls that fell back to a brute-force scan.
+    pub locate_scan_fallbacks: usize,
+    /// Number of point-location calls that ended inside a cell.
+    pub located_inside: usize,
+    /// Number of point-location calls that ended outside the convex hull.
+    pub located_outside: usize,
+    /// Number of point-location calls that ended on a lower-dimensional feature.
+    pub located_on_boundary: usize,
+
+    /// Number of local conflict-region computations observed during construction.
+    pub conflict_region_calls: usize,
+    /// Total number of cells in local conflict regions.
+    pub conflict_region_cells_total: usize,
+    /// Maximum number of cells in a single local conflict region.
+    pub conflict_region_cells_max: usize,
+
+    /// Number of global exterior-point conflict scans.
+    pub global_conflict_scans: usize,
+    /// Total cells scanned by global exterior-point conflict scans.
+    pub global_conflict_cells_scanned: usize,
+    /// Total cells found by global exterior-point conflict scans.
+    pub global_conflict_cells_found_total: usize,
+    /// Maximum cells found by a single global exterior-point conflict scan.
+    pub global_conflict_cells_found_max: usize,
+    /// Wall-clock nanoseconds spent in global exterior-point conflict scans.
+    pub global_conflict_scan_nanos: u128,
+}
+
+impl ConstructionTelemetry {
+    /// Returns true when any insertion-path telemetry was recorded.
+    #[must_use]
+    pub const fn has_data(&self) -> bool {
+        self.locate_calls > 0 || self.conflict_region_calls > 0 || self.global_conflict_scans > 0
+    }
+
+    /// Adds one insertion's telemetry into this construction summary.
+    pub(crate) fn record_insertion(&mut self, telemetry: &InsertionTelemetry) {
+        self.locate_calls = self.locate_calls.saturating_add(telemetry.locate_calls);
+        self.locate_walk_steps_total = self
+            .locate_walk_steps_total
+            .saturating_add(telemetry.locate_walk_steps_total);
+        self.locate_walk_steps_max = self
+            .locate_walk_steps_max
+            .max(telemetry.locate_walk_steps_max);
+        self.locate_hint_uses = self
+            .locate_hint_uses
+            .saturating_add(telemetry.locate_hint_uses);
+        self.locate_scan_fallbacks = self
+            .locate_scan_fallbacks
+            .saturating_add(telemetry.locate_scan_fallbacks);
+        self.located_inside = self.located_inside.saturating_add(telemetry.located_inside);
+        self.located_outside = self
+            .located_outside
+            .saturating_add(telemetry.located_outside);
+        self.located_on_boundary = self
+            .located_on_boundary
+            .saturating_add(telemetry.located_on_boundary);
+
+        self.conflict_region_calls = self
+            .conflict_region_calls
+            .saturating_add(telemetry.conflict_region_calls);
+        self.conflict_region_cells_total = self
+            .conflict_region_cells_total
+            .saturating_add(telemetry.conflict_region_cells_total);
+        self.conflict_region_cells_max = self
+            .conflict_region_cells_max
+            .max(telemetry.conflict_region_cells_max);
+
+        self.global_conflict_scans = self
+            .global_conflict_scans
+            .saturating_add(telemetry.global_conflict_scans);
+        self.global_conflict_cells_scanned = self
+            .global_conflict_cells_scanned
+            .saturating_add(telemetry.global_conflict_cells_scanned);
+        self.global_conflict_cells_found_total = self
+            .global_conflict_cells_found_total
+            .saturating_add(telemetry.global_conflict_cells_found_total);
+        self.global_conflict_cells_found_max = self
+            .global_conflict_cells_found_max
+            .max(telemetry.global_conflict_cells_found_max);
+        self.global_conflict_scan_nanos = self
+            .global_conflict_scan_nanos
+            .saturating_add(telemetry.global_conflict_scan_nanos);
+    }
+
+    /// Merges another construction telemetry summary into this one.
+    fn merge_from(&mut self, other: &Self) {
+        self.locate_calls = self.locate_calls.saturating_add(other.locate_calls);
+        self.locate_walk_steps_total = self
+            .locate_walk_steps_total
+            .saturating_add(other.locate_walk_steps_total);
+        self.locate_walk_steps_max = self.locate_walk_steps_max.max(other.locate_walk_steps_max);
+        self.locate_hint_uses = self.locate_hint_uses.saturating_add(other.locate_hint_uses);
+        self.locate_scan_fallbacks = self
+            .locate_scan_fallbacks
+            .saturating_add(other.locate_scan_fallbacks);
+        self.located_inside = self.located_inside.saturating_add(other.located_inside);
+        self.located_outside = self.located_outside.saturating_add(other.located_outside);
+        self.located_on_boundary = self
+            .located_on_boundary
+            .saturating_add(other.located_on_boundary);
+
+        self.conflict_region_calls = self
+            .conflict_region_calls
+            .saturating_add(other.conflict_region_calls);
+        self.conflict_region_cells_total = self
+            .conflict_region_cells_total
+            .saturating_add(other.conflict_region_cells_total);
+        self.conflict_region_cells_max = self
+            .conflict_region_cells_max
+            .max(other.conflict_region_cells_max);
+
+        self.global_conflict_scans = self
+            .global_conflict_scans
+            .saturating_add(other.global_conflict_scans);
+        self.global_conflict_cells_scanned = self
+            .global_conflict_cells_scanned
+            .saturating_add(other.global_conflict_cells_scanned);
+        self.global_conflict_cells_found_total = self
+            .global_conflict_cells_found_total
+            .saturating_add(other.global_conflict_cells_found_total);
+        self.global_conflict_cells_found_max = self
+            .global_conflict_cells_found_max
+            .max(other.global_conflict_cells_found_max);
+        self.global_conflict_scan_nanos = self
+            .global_conflict_scan_nanos
+            .saturating_add(other.global_conflict_scan_nanos);
+    }
+}
 
 /// Aggregate statistics collected during batch construction.
 ///
@@ -989,6 +1165,9 @@ pub struct ConstructionStatistics {
     pub cells_removed_total: usize,
     /// Maximum number of cells removed during repair for any single insertion.
     pub cells_removed_max: usize,
+
+    /// Aggregate insertion-path telemetry.
+    pub telemetry: ConstructionTelemetry,
 
     /// A small set of representative skipped vertices recorded during batch construction.
     ///
@@ -1114,6 +1293,7 @@ impl ConstructionStatistics {
             .cells_removed_total
             .saturating_add(other.cells_removed_total);
         self.cells_removed_max = self.cells_removed_max.max(other.cells_removed_max);
+        self.telemetry.merge_from(&other.telemetry);
 
         for sample in &other.skip_samples {
             if self.skip_samples.len() >= Self::MAX_SKIP_SAMPLES {
@@ -2639,6 +2819,7 @@ where
             dedup_policy,
             initial_simplex,
             retry_policy,
+            batch_repair_policy,
             use_global_repair_fallback,
         } = options;
 
@@ -2667,6 +2848,7 @@ where
                             attempts,
                             base_seed,
                             grid_cell_size,
+                            batch_repair_policy,
                             use_global_repair_fallback,
                         );
                     }
@@ -2685,6 +2867,7 @@ where
                             attempts,
                             base_seed,
                             grid_cell_size,
+                            batch_repair_policy,
                             use_global_repair_fallback,
                         );
                     }
@@ -2696,6 +2879,7 @@ where
                 vertices,
                 topology_guarantee,
                 grid_cell_size,
+                batch_repair_policy,
                 use_global_repair_fallback,
             )
         };
@@ -2740,6 +2924,7 @@ where
             dedup_policy,
             initial_simplex,
             retry_policy,
+            batch_repair_policy,
             use_global_repair_fallback,
         } = options;
 
@@ -2774,6 +2959,7 @@ where
                             attempts,
                             base_seed,
                             grid_cell_size,
+                            batch_repair_policy,
                             use_global_repair_fallback,
                         );
                     }
@@ -2792,6 +2978,7 @@ where
                             attempts,
                             base_seed,
                             grid_cell_size,
+                            batch_repair_policy,
                             use_global_repair_fallback,
                         );
                     }
@@ -2803,6 +2990,7 @@ where
                 vertices,
                 topology_guarantee,
                 grid_cell_size,
+                batch_repair_policy,
                 use_global_repair_fallback,
             )
         };
@@ -2963,6 +3151,10 @@ where
         clippy::too_many_lines,
         reason = "construction retry flow keeps seed selection, validation, and diagnostics together"
     )]
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "private construction retry helper threads orthogonal batch knobs explicitly"
+    )]
     fn build_with_shuffled_retries(
         kernel: &K,
         vertices: &[Vertex<K::Scalar, U, D>],
@@ -2970,6 +3162,7 @@ where
         attempts: NonZeroUsize,
         base_seed: Option<u64>,
         grid_cell_size: Option<K::Scalar>,
+        batch_repair_policy: DelaunayRepairPolicy,
         use_global_repair_fallback: bool,
     ) -> Result<Self, DelaunayTriangulationConstructionError> {
         let base_seed = base_seed.unwrap_or_else(|| Self::construction_shuffle_seed(vertices));
@@ -2996,6 +3189,7 @@ where
             0_u64,
             true,
             grid_cell_size,
+            batch_repair_policy,
             use_global_repair_fallback,
         ) {
             Ok(candidate) => match is_delaunay_property_only(&candidate.tri.tds) {
@@ -3066,6 +3260,7 @@ where
                 perturbation_seed,
                 true,
                 grid_cell_size,
+                batch_repair_policy,
                 use_global_repair_fallback,
             ) {
                 Ok(candidate) => match is_delaunay_property_only(&candidate.tri.tds) {
@@ -3142,6 +3337,10 @@ where
         clippy::result_large_err,
         reason = "Internal helper propagates public by-value construction-statistics error type"
     )]
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "statistics retry helper mirrors the non-statistics construction path"
+    )]
     fn build_with_shuffled_retries_with_construction_statistics(
         kernel: &K,
         vertices: &[Vertex<K::Scalar, U, D>],
@@ -3149,6 +3348,7 @@ where
         attempts: NonZeroUsize,
         base_seed: Option<u64>,
         grid_cell_size: Option<K::Scalar>,
+        batch_repair_policy: DelaunayRepairPolicy,
         use_global_repair_fallback: bool,
     ) -> Result<(Self, ConstructionStatistics), DelaunayTriangulationConstructionErrorWithStatistics>
     {
@@ -3180,6 +3380,7 @@ where
                 0_u64,
                 true,
                 grid_cell_size,
+                batch_repair_policy,
                 use_global_repair_fallback,
             ) {
                 Ok((candidate, stats)) => match is_delaunay_property_only(&candidate.tri.tds) {
@@ -3276,6 +3477,7 @@ where
                 perturbation_seed,
                 true,
                 grid_cell_size,
+                batch_repair_policy,
                 use_global_repair_fallback,
             ) {
                 Ok((candidate, stats)) => match is_delaunay_property_only(&candidate.tri.tds) {
@@ -3387,6 +3589,7 @@ where
         vertices: &[Vertex<K::Scalar, U, D>],
         topology_guarantee: TopologyGuarantee,
         grid_cell_size: Option<K::Scalar>,
+        batch_repair_policy: DelaunayRepairPolicy,
         use_global_repair_fallback: bool,
     ) -> Result<Self, DelaunayTriangulationConstructionError> {
         let dt = Self::build_with_kernel_inner_seeded(
@@ -3396,6 +3599,7 @@ where
             0,
             true,
             grid_cell_size,
+            batch_repair_policy,
             use_global_repair_fallback,
         )?;
 
@@ -3427,6 +3631,7 @@ where
         vertices: &[Vertex<K::Scalar, U, D>],
         topology_guarantee: TopologyGuarantee,
         grid_cell_size: Option<K::Scalar>,
+        batch_repair_policy: DelaunayRepairPolicy,
         use_global_repair_fallback: bool,
     ) -> Result<(Self, ConstructionStatistics), DelaunayTriangulationConstructionErrorWithStatistics>
     {
@@ -3437,6 +3642,7 @@ where
             0,
             true,
             grid_cell_size,
+            batch_repair_policy,
             use_global_repair_fallback,
         )?;
 
@@ -3469,6 +3675,10 @@ where
         clippy::result_large_err,
         reason = "Internal helper propagates public by-value construction-statistics error type"
     )]
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "seeded construction helper carries retry, repair, and validation knobs"
+    )]
     fn build_with_kernel_inner_seeded_with_construction_statistics(
         kernel: K,
         vertices: &[Vertex<K::Scalar, U, D>],
@@ -3476,6 +3686,7 @@ where
         perturbation_seed: u64,
         run_final_repair: bool,
         grid_cell_size: Option<K::Scalar>,
+        batch_repair_policy: DelaunayRepairPolicy,
         use_global_repair_fallback: bool,
     ) -> Result<(Self, ConstructionStatistics), DelaunayTriangulationConstructionErrorWithStatistics>
     {
@@ -3540,12 +3751,11 @@ where
 
         // Disable maybe_repair_after_insertion during bulk construction: its full pipeline
         // (multi-pass repair + topology validation + heuristic rebuild) is too expensive
-        // per insertion.  Instead, insert_remaining_vertices_seeded calls
-        // repair_delaunay_local_single_pass directly after each insertion (no topology
-        // check, no heuristic rebuild, soft-fail on non-convergence for D≥4).  Soft-failed
-        // insertions (D≥4 only) record their adjacent cells in soft_fail_seeds, which is
-        // used as the seed for the final seeded repair in finalize_bulk_construction.  If
-        // no soft-fails occurred the seed is empty and finalize skips the repair entirely.
+        // per insertion.  Instead, insert_remaining_vertices_seeded accumulates the local
+        // frontier touched by successful insertions and calls repair_delaunay_local_single_pass
+        // at the requested cadence (no topology check, no heuristic rebuild, soft-fail on
+        // non-convergence for D≥4).  Soft-failed repair frontiers are retained for the final
+        // seeded repair in finalize_bulk_construction.
         let original_repair_policy = dt.insertion_state.delaunay_repair_policy;
         dt.insertion_state.delaunay_repair_policy = DelaunayRepairPolicy::Never;
         dt.insertion_state.use_global_repair_fallback = use_global_repair_fallback;
@@ -3560,11 +3770,14 @@ where
         }
 
         let mut soft_fail_seeds: Vec<CellKey> = Vec::new();
+        let mut pending_repair_seeds: Vec<CellKey> = Vec::new();
         if let Err(error) = dt.insert_remaining_vertices_seeded(
             vertices,
             perturbation_seed,
             grid_cell_size,
+            batch_repair_policy,
             Some(&mut stats),
+            &mut pending_repair_seeds,
             &mut soft_fail_seeds,
         ) {
             return Err(DelaunayTriangulationConstructionErrorWithStatistics {
@@ -3577,6 +3790,8 @@ where
             original_validation_policy,
             original_repair_policy,
             run_final_repair,
+            batch_repair_policy,
+            &pending_repair_seeds,
             &soft_fail_seeds,
         ) {
             return Err(DelaunayTriangulationConstructionErrorWithStatistics {
@@ -3590,6 +3805,10 @@ where
 
     /// Implements the non-statistics seeded construction core for callers that
     /// only need the triangulation.
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "seeded construction helper carries retry, repair, and validation knobs"
+    )]
     fn build_with_kernel_inner_seeded(
         kernel: K,
         vertices: &[Vertex<K::Scalar, U, D>],
@@ -3597,6 +3816,7 @@ where
         perturbation_seed: u64,
         run_final_repair: bool,
         grid_cell_size: Option<K::Scalar>,
+        batch_repair_policy: DelaunayRepairPolicy,
         use_global_repair_fallback: bool,
     ) -> Result<Self, DelaunayTriangulationConstructionError> {
         if vertices.len() < D + 1 {
@@ -3651,17 +3871,22 @@ where
         dt.insertion_state.delaunay_repair_policy = DelaunayRepairPolicy::Never;
         dt.insertion_state.use_global_repair_fallback = use_global_repair_fallback;
         let mut soft_fail_seeds: Vec<CellKey> = Vec::new();
+        let mut pending_repair_seeds: Vec<CellKey> = Vec::new();
         dt.insert_remaining_vertices_seeded(
             vertices,
             perturbation_seed,
             grid_cell_size,
+            batch_repair_policy,
             None,
+            &mut pending_repair_seeds,
             &mut soft_fail_seeds,
         )?;
         dt.finalize_bulk_construction(
             original_validation_policy,
             original_repair_policy,
             run_final_repair,
+            batch_repair_policy,
+            &pending_repair_seeds,
             &soft_fail_seeds,
         )?;
 
@@ -3855,18 +4080,196 @@ where
         }
     }
 
+    fn extend_local_repair_seed_cells(
+        &self,
+        vertex_key: VertexKey,
+        extra_seed_cells: &[CellKey],
+        pending_seed_cells: &mut Vec<CellKey>,
+        pending_seen: &mut FastHashSet<CellKey>,
+    ) {
+        for cell_key in self.tri.adjacent_cells(vertex_key) {
+            if pending_seen.insert(cell_key) {
+                pending_seed_cells.push(cell_key);
+            }
+        }
+
+        for &cell_key in extra_seed_cells {
+            if self.tri.tds.contains_cell(cell_key) && pending_seen.insert(cell_key) {
+                pending_seed_cells.push(cell_key);
+            }
+        }
+    }
+
+    fn retain_live_local_repair_seed_cells(
+        &self,
+        seed_cells: &mut Vec<CellKey>,
+        seen: &mut FastHashSet<CellKey>,
+    ) {
+        seen.clear();
+        seed_cells
+            .retain(|cell_key| self.tri.tds.contains_cell(*cell_key) && seen.insert(*cell_key));
+    }
+
+    fn clear_local_repair_seed_cells(
+        seed_cells: &mut Vec<CellKey>,
+        seen: &mut FastHashSet<CellKey>,
+    ) {
+        seed_cells.clear();
+        seen.clear();
+    }
+
+    #[expect(
+        clippy::too_many_lines,
+        reason = "local repair handling keeps success, fallback, and soft-fail paths together"
+    )]
+    fn repair_pending_local_seed_cells(
+        &mut self,
+        index: usize,
+        pending_seed_cells: &mut Vec<CellKey>,
+        pending_seen: &mut FastHashSet<CellKey>,
+        last_escalation_idx: &mut Option<usize>,
+        soft_fail_seeds: &mut Vec<CellKey>,
+    ) -> Result<(), DelaunayTriangulationConstructionError> {
+        self.retain_live_local_repair_seed_cells(pending_seed_cells, pending_seen);
+        if pending_seed_cells.is_empty() {
+            return Ok(());
+        }
+
+        let max_flips = local_repair_flip_budget::<D>(pending_seed_cells.len());
+        let trace_repair = batch_repair_trace_enabled();
+        let repair_started = trace_repair.then(Instant::now);
+        if trace_repair {
+            tracing::debug!(
+                idx = index,
+                seed_cells = pending_seed_cells.len(),
+                max_flips,
+                "bulk batch repair: starting local repair"
+            );
+        }
+
+        let repair_result = {
+            self.invalidate_repair_caches();
+            let (tds, kernel) = (&mut self.tri.tds, &self.tri.kernel);
+            repair_delaunay_local_single_pass(tds, kernel, pending_seed_cells, max_flips)
+        };
+        #[cfg(test)]
+        let repair_result = if test_hooks::force_repair_nonconvergent_enabled() {
+            Err(test_hooks::synthetic_nonconvergent_error())
+        } else {
+            repair_result
+        };
+
+        match repair_result {
+            Ok(stats) => {
+                if trace_repair {
+                    tracing::debug!(
+                        idx = index,
+                        seed_cells = pending_seed_cells.len(),
+                        flips = stats.flips_performed,
+                        checked = stats.facets_checked,
+                        max_queue = stats.max_queue_len,
+                        elapsed = ?repair_started.map(|started| started.elapsed()),
+                        "bulk batch repair: local repair succeeded"
+                    );
+                }
+                if stats.flips_performed > 0 {
+                    self.canonicalize_after_bulk_repair()?;
+                }
+                Self::clear_local_repair_seed_cells(pending_seed_cells, pending_seen);
+            }
+            Err(repair_err) => {
+                if trace_repair {
+                    tracing::debug!(
+                        idx = index,
+                        seed_cells = pending_seed_cells.len(),
+                        error = %repair_err,
+                        elapsed = ?repair_started.map(|started| started.elapsed()),
+                        "bulk batch repair: local repair failed"
+                    );
+                }
+                if D < 4 {
+                    let topology = self.tri.topology_guarantee();
+                    self.invalidate_repair_caches();
+                    Self::try_d_lt4_global_repair_fallback(
+                        &mut self.tri.tds,
+                        &self.tri.kernel,
+                        topology,
+                        self.insertion_state.use_global_repair_fallback,
+                        index,
+                        &repair_err,
+                    )?;
+                    self.canonicalize_after_bulk_repair()?;
+                    Self::clear_local_repair_seed_cells(pending_seed_cells, pending_seen);
+                    return Ok(());
+                }
+
+                if !Self::can_soft_fail(&repair_err) {
+                    return Err(Self::map_hard_repair_error(index, &repair_err));
+                }
+                let outcome = self.try_local_repair_escalation_d_ge_4(
+                    index,
+                    max_flips,
+                    last_escalation_idx,
+                    &repair_err,
+                )?;
+                match outcome {
+                    LocalRepairEscalationOutcome::Succeeded { stats } => {
+                        tracing::debug!(
+                            idx = index,
+                            flips = stats.flips_performed,
+                            max_queue = stats.max_queue_len,
+                            "bulk D≥4: escalation closed the non-convergence; continuing"
+                        );
+                    }
+                    LocalRepairEscalationOutcome::Skipped { reason } => {
+                        tracing::debug!(
+                            idx = index,
+                            error = %repair_err,
+                            escalation_outcome = "skipped",
+                            skip_reason = ?reason,
+                            "bulk D≥4: batch repair non-convergent; continuing \
+                             (both_positive_artifact handled)"
+                        );
+                        self.canonicalize_after_bulk_repair()?;
+                        soft_fail_seeds.extend(pending_seed_cells.iter().copied());
+                    }
+                    LocalRepairEscalationOutcome::FailedAlso { escalation_error } => {
+                        tracing::debug!(
+                            idx = index,
+                            error = %repair_err,
+                            escalation_outcome = "failed_also",
+                            escalation_error = %escalation_error,
+                            "bulk D≥4: batch repair non-convergent; continuing \
+                             (both_positive_artifact handled)"
+                        );
+                        self.canonicalize_after_bulk_repair()?;
+                        soft_fail_seeds.extend(pending_seed_cells.iter().copied());
+                    }
+                }
+                Self::clear_local_repair_seed_cells(pending_seed_cells, pending_seen);
+            }
+        }
+        Ok(())
+    }
+
     /// Inserts the non-simplex vertices under a fixed perturbation seed so bulk
     /// construction retries are reproducible.
     #[expect(
         clippy::too_many_lines,
         reason = "seeded insertion loop keeps cache repair and retry diagnostics in one flow"
     )]
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "seeded insertion loop needs batch repair and construction-statistics state"
+    )]
     fn insert_remaining_vertices_seeded(
         &mut self,
         vertices: &[Vertex<K::Scalar, U, D>],
         perturbation_seed: u64,
         grid_cell_size: Option<K::Scalar>,
+        batch_repair_policy: DelaunayRepairPolicy,
         construction_stats: Option<&mut ConstructionStatistics>,
+        pending_repair_seeds: &mut Vec<CellKey>,
         soft_fail_seeds: &mut Vec<CellKey>,
     ) -> Result<(), DelaunayTriangulationConstructionError> {
         let mut grid_index = grid_cell_size.map(HashGridIndex::new);
@@ -3906,6 +4309,8 @@ where
         // used for `LOCAL_REPAIR_ESCALATION_MIN_GAP` rate limiting across both
         // stats-enabled and stats-disabled arms.
         let mut last_escalation_idx: Option<usize> = None;
+        let mut pending_repair_seen: FastHashSet<CellKey> =
+            pending_repair_seeds.iter().copied().collect();
 
         match construction_stats {
             None => {
@@ -3971,154 +4376,37 @@ where
                                 .insertion_state
                                 .delaunay_repair_insertion_count
                                 .saturating_add(1);
-                            // Per-insertion local Delaunay repair: seeded from the star of
-                            // the inserted vertex with a seed-proportional flip budget.
-                            //
-                            // For D<4: the flip graph is proven convergent (Lawson 1977 for
-                            // D=2, Rajan 1991/Joe 1991 for D=3).  On cycling (FP noise near
-                            // co-spherical configurations), roll back the insertion and retry
-                            // with perturbation to break the co-sphericity.
-                            //
-                            // For D≥4: Bowyer-Watson with the fast kernel can produce
-                            // non-Delaunay facets when the conflict region is detected
-                            // imprecisely (co-spherical configurations).  A bounded
-                            // per-insertion repair pass fixes these violations.  If repair
-                            // does not converge (e.g. co-spherical cycling suppressed by
-                            // both_positive_artifact), the soft-fail path lets construction
-                            // continue; the final is_valid() check validates the result.
+                            // Cadenced local Delaunay repair: accumulate the local frontier
+                            // touched by each successful insertion, then repair the whole
+                            // frontier when the policy fires.  This keeps EveryN semantics
+                            // local to the last N insertions rather than repairing only the
+                            // final insertion in the batch.
                             let topology = self.tri.topology_guarantee();
-                            if D >= 2
+                            if batch_repair_policy != DelaunayRepairPolicy::Never
                                 && TopologicalOperation::FacetFlip.is_admissible_under(topology)
                                 && self.tri.tds.number_of_cells() > 0
                             {
-                                let seed_cells =
-                                    self.collect_local_repair_seed_cells(v_key, &repair_seed_cells);
-                                if !seed_cells.is_empty() {
-                                    let max_flips = local_repair_flip_budget::<D>(seed_cells.len());
-                                    let repair_result = {
-                                        self.invalidate_repair_caches();
-                                        let (tds, kernel) = (&mut self.tri.tds, &self.tri.kernel);
-                                        repair_delaunay_local_single_pass(
-                                            tds,
-                                            kernel,
-                                            &seed_cells,
-                                            max_flips,
-                                        )
-                                    };
-                                    #[cfg(test)]
-                                    let repair_result =
-                                        if test_hooks::force_repair_nonconvergent_enabled() {
-                                            Err(test_hooks::synthetic_nonconvergent_error())
-                                        } else {
-                                            repair_result
-                                        };
-                                    match repair_result {
-                                        Ok(stats) => {
-                                            if stats.flips_performed > 0 {
-                                                self.canonicalize_after_bulk_repair()?;
-                                            }
-                                        }
-                                        Err(repair_err) => {
-                                            if D < 4 {
-                                                self.invalidate_repair_caches();
-                                                Self::try_d_lt4_global_repair_fallback(
-                                                    &mut self.tri.tds,
-                                                    &self.tri.kernel,
-                                                    topology,
-                                                    self.insertion_state.use_global_repair_fallback,
-                                                    index,
-                                                    &repair_err,
-                                                )?;
-                                                self.canonicalize_after_bulk_repair()?;
-                                                log_bulk_progress_if_due(
-                                                    BatchProgressSample {
-                                                        processed: offset + 1,
-                                                        inserted: inserted_vertices,
-                                                        skipped: skipped_vertices,
-                                                        cell_count: self.tri.tds.number_of_cells(),
-                                                        perturbation_seed,
-                                                    },
-                                                    &mut batch_progress,
-                                                );
-                                                continue;
-                                            }
-                                            // D≥4: try one escalation with a 4× budget and the full
-                                            // TDS as seed set before accepting the soft-fail. The
-                                            // escalation is rate-limited so healthy runs do not pay
-                                            // for it on every insertion.
-                                            if !Self::can_soft_fail(&repair_err) {
-                                                return Err(Self::map_hard_repair_error(
-                                                    index,
-                                                    &repair_err,
-                                                ));
-                                            }
-                                            let outcome = self.try_local_repair_escalation_d_ge_4(
-                                                index,
-                                                max_flips,
-                                                &mut last_escalation_idx,
-                                                &repair_err,
-                                            )?;
-                                            match outcome {
-                                                LocalRepairEscalationOutcome::Succeeded {
-                                                    stats,
-                                                } => {
-                                                    tracing::debug!(
-                                                        idx = index,
-                                                        flips = stats.flips_performed,
-                                                        max_queue = stats.max_queue_len,
-                                                        "bulk D≥4: escalation closed the \
-                                                         non-convergence; continuing"
-                                                    );
-                                                    log_bulk_progress_if_due(
-                                                        BatchProgressSample {
-                                                            processed: offset + 1,
-                                                            inserted: inserted_vertices,
-                                                            skipped: skipped_vertices,
-                                                            cell_count: self
-                                                                .tri
-                                                                .tds
-                                                                .number_of_cells(),
-                                                            perturbation_seed,
-                                                        },
-                                                        &mut batch_progress,
-                                                    );
-                                                    continue;
-                                                }
-                                                LocalRepairEscalationOutcome::Skipped {
-                                                    reason,
-                                                } => {
-                                                    tracing::debug!(
-                                                        idx = index,
-                                                        error = %repair_err,
-                                                        escalation_outcome = "skipped",
-                                                        skip_reason = ?reason,
-                                                        "bulk D≥4: per-insertion repair \
-                                                         non-convergent; continuing \
-                                                         (both_positive_artifact handled)"
-                                                    );
-                                                    self.canonicalize_after_bulk_repair()?;
-                                                    soft_fail_seeds
-                                                        .extend(seed_cells.iter().copied());
-                                                }
-                                                LocalRepairEscalationOutcome::FailedAlso {
-                                                    escalation_error,
-                                                } => {
-                                                    tracing::debug!(
-                                                        idx = index,
-                                                        error = %repair_err,
-                                                        escalation_outcome = "failed_also",
-                                                        escalation_error = %escalation_error,
-                                                        "bulk D≥4: per-insertion repair \
-                                                         non-convergent; continuing \
-                                                         (both_positive_artifact handled)"
-                                                    );
-                                                    self.canonicalize_after_bulk_repair()?;
-                                                    soft_fail_seeds
-                                                        .extend(seed_cells.iter().copied());
-                                                }
-                                            }
-                                        }
-                                    }
+                                self.extend_local_repair_seed_cells(
+                                    v_key,
+                                    &repair_seed_cells,
+                                    pending_repair_seeds,
+                                    &mut pending_repair_seen,
+                                );
+                                if matches!(
+                                    batch_repair_policy.decide(
+                                        inserted_vertices,
+                                        topology,
+                                        TopologicalOperation::FacetFlip,
+                                    ),
+                                    RepairDecision::Proceed
+                                ) {
+                                    self.repair_pending_local_seed_cells(
+                                        index,
+                                        pending_repair_seeds,
+                                        &mut pending_repair_seen,
+                                        &mut last_escalation_idx,
+                                        soft_fail_seeds,
+                                    )?;
                                 }
                             }
                             log_bulk_progress_if_due(
@@ -4223,7 +4511,12 @@ where
                     let elapsed = started.map(|started| started.elapsed());
                     let insert_result = insert_result.map(|detail| {
                         let repair_seed_cells = detail.repair_seed_cells;
-                        (detail.outcome, detail.stats, repair_seed_cells)
+                        (
+                            detail.outcome,
+                            detail.stats,
+                            repair_seed_cells,
+                            detail.telemetry,
+                        )
                     });
                     match insert_result {
                         Ok((
@@ -4233,6 +4526,7 @@ where
                             },
                             stats,
                             repair_seed_cells,
+                            telemetry,
                         )) => {
                             inserted_vertices = inserted_vertices.saturating_add(1);
                             if trace_insertion && let Some(elapsed) = elapsed {
@@ -4245,6 +4539,7 @@ where
                                 );
                             }
                             construction_stats.record_insertion(&stats);
+                            construction_stats.telemetry.record_insertion(&telemetry);
 
                             // Cache hint for faster subsequent insertions.
                             self.insertion_state.last_inserted_cell = hint;
@@ -4252,141 +4547,34 @@ where
                                 .insertion_state
                                 .delaunay_repair_insertion_count
                                 .saturating_add(1);
-                            // Per-insertion local repair: see the non-stats branch
+                            // Cadenced local repair: see the non-stats branch
                             // comment for full details.
                             let topology = self.tri.topology_guarantee();
-                            if D >= 2
+                            if batch_repair_policy != DelaunayRepairPolicy::Never
                                 && TopologicalOperation::FacetFlip.is_admissible_under(topology)
                                 && self.tri.tds.number_of_cells() > 0
                             {
-                                let seed_cells =
-                                    self.collect_local_repair_seed_cells(v_key, &repair_seed_cells);
-                                if !seed_cells.is_empty() {
-                                    let max_flips = local_repair_flip_budget::<D>(seed_cells.len());
-                                    let repair_result = {
-                                        self.invalidate_repair_caches();
-                                        let (tds, kernel) = (&mut self.tri.tds, &self.tri.kernel);
-                                        repair_delaunay_local_single_pass(
-                                            tds,
-                                            kernel,
-                                            &seed_cells,
-                                            max_flips,
-                                        )
-                                    };
-                                    #[cfg(test)]
-                                    let repair_result =
-                                        if test_hooks::force_repair_nonconvergent_enabled() {
-                                            Err(test_hooks::synthetic_nonconvergent_error())
-                                        } else {
-                                            repair_result
-                                        };
-                                    match repair_result {
-                                        Ok(stats) => {
-                                            if stats.flips_performed > 0 {
-                                                self.canonicalize_after_bulk_repair()?;
-                                            }
-                                        }
-                                        Err(repair_err) => {
-                                            if D < 4 {
-                                                self.invalidate_repair_caches();
-                                                Self::try_d_lt4_global_repair_fallback(
-                                                    &mut self.tri.tds,
-                                                    &self.tri.kernel,
-                                                    topology,
-                                                    self.insertion_state.use_global_repair_fallback,
-                                                    index,
-                                                    &repair_err,
-                                                )?;
-                                                self.canonicalize_after_bulk_repair()?;
-                                                log_bulk_progress_if_due(
-                                                    BatchProgressSample {
-                                                        processed: offset + 1,
-                                                        inserted: inserted_vertices,
-                                                        skipped: skipped_vertices,
-                                                        cell_count: self.tri.tds.number_of_cells(),
-                                                        perturbation_seed,
-                                                    },
-                                                    &mut batch_progress,
-                                                );
-                                                continue;
-                                            }
-                                            // D≥4: try one escalation with a 4× budget and the full
-                                            // TDS as seed set before accepting the soft-fail. The
-                                            // escalation is rate-limited so healthy runs do not pay
-                                            // for it on every insertion.
-                                            if !Self::can_soft_fail(&repair_err) {
-                                                return Err(Self::map_hard_repair_error(
-                                                    index,
-                                                    &repair_err,
-                                                ));
-                                            }
-                                            let outcome = self.try_local_repair_escalation_d_ge_4(
-                                                index,
-                                                max_flips,
-                                                &mut last_escalation_idx,
-                                                &repair_err,
-                                            )?;
-                                            match outcome {
-                                                LocalRepairEscalationOutcome::Succeeded {
-                                                    stats,
-                                                } => {
-                                                    tracing::debug!(
-                                                        idx = index,
-                                                        flips = stats.flips_performed,
-                                                        max_queue = stats.max_queue_len,
-                                                        "bulk D≥4: escalation closed the \
-                                                         non-convergence; continuing"
-                                                    );
-                                                    log_bulk_progress_if_due(
-                                                        BatchProgressSample {
-                                                            processed: offset + 1,
-                                                            inserted: inserted_vertices,
-                                                            skipped: skipped_vertices,
-                                                            cell_count: self
-                                                                .tri
-                                                                .tds
-                                                                .number_of_cells(),
-                                                            perturbation_seed,
-                                                        },
-                                                        &mut batch_progress,
-                                                    );
-                                                    continue;
-                                                }
-                                                LocalRepairEscalationOutcome::Skipped {
-                                                    reason,
-                                                } => {
-                                                    tracing::debug!(
-                                                        idx = index,
-                                                        error = %repair_err,
-                                                        escalation_outcome = "skipped",
-                                                        skip_reason = ?reason,
-                                                        "bulk D≥4: per-insertion repair \
-                                                         non-convergent; continuing \
-                                                         (both_positive_artifact handled)"
-                                                    );
-                                                    self.canonicalize_after_bulk_repair()?;
-                                                    soft_fail_seeds
-                                                        .extend(seed_cells.iter().copied());
-                                                }
-                                                LocalRepairEscalationOutcome::FailedAlso {
-                                                    escalation_error,
-                                                } => {
-                                                    tracing::debug!(
-                                                        idx = index,
-                                                        error = %repair_err,
-                                                        escalation_outcome = "failed_also",
-                                                        escalation_error = %escalation_error,
-                                                        "bulk D≥4: per-insertion repair \
-                                                         non-convergent; continuing \
-                                                         (both_positive_artifact handled)"
-                                                    );
-                                                    self.canonicalize_after_bulk_repair()?;
-                                                    soft_fail_seeds
-                                                        .extend(seed_cells.iter().copied());
-                                                }
-                                            }
-                                        }
-                                    }
+                                self.extend_local_repair_seed_cells(
+                                    v_key,
+                                    &repair_seed_cells,
+                                    pending_repair_seeds,
+                                    &mut pending_repair_seen,
+                                );
+                                if matches!(
+                                    batch_repair_policy.decide(
+                                        inserted_vertices,
+                                        topology,
+                                        TopologicalOperation::FacetFlip,
+                                    ),
+                                    RepairDecision::Proceed
+                                ) {
+                                    self.repair_pending_local_seed_cells(
+                                        index,
+                                        pending_repair_seeds,
+                                        &mut pending_repair_seen,
+                                        &mut last_escalation_idx,
+                                        soft_fail_seeds,
+                                    )?;
                                 }
                             }
                             log_bulk_progress_if_due(
@@ -4400,7 +4588,12 @@ where
                                 &mut batch_progress,
                             );
                         }
-                        Ok((InsertionOutcome::Skipped { error }, stats, _repair_seed_cells)) => {
+                        Ok((
+                            InsertionOutcome::Skipped { error },
+                            stats,
+                            _repair_seed_cells,
+                            telemetry,
+                        )) => {
                             skipped_vertices = skipped_vertices.saturating_add(1);
                             if trace_insertion && let Some(elapsed) = elapsed {
                                 tracing::debug!(
@@ -4413,6 +4606,7 @@ where
                                 );
                             }
                             construction_stats.record_insertion(&stats);
+                            construction_stats.telemetry.record_insertion(&telemetry);
 
                             // Keep the first few skip samples so we have concrete reproduction anchors.
                             let (coords, coords_available) = vertex_coords_f64(vertex)
@@ -4480,75 +4674,55 @@ where
         original_validation_policy: ValidationPolicy,
         original_repair_policy: DelaunayRepairPolicy,
         run_final_repair: bool,
+        batch_repair_policy: DelaunayRepairPolicy,
+        pending_repair_seeds: &[CellKey],
         soft_fail_seeds: &[CellKey],
     ) -> Result<(), DelaunayTriangulationConstructionError> {
         // Restore policies after batch construction.
         self.tri.validation_policy = original_validation_policy;
         self.insertion_state.delaunay_repair_policy = original_repair_policy;
 
-        let topology = self.tri.topology_guarantee();
-        if run_final_repair && self.should_run_delaunay_repair_for(topology, 0) {
-            // For D≥4: always run a global repair seeded from ALL cells.
-            //   BW with the fast kernel can produce non-Delaunay facets anywhere,
-            //   not only in the star of soft-failed insertions.  A small fixed
-            //   budget ensures we fail fast on cycling rather than spending minutes.
-            //   Non-convergence is a soft-fail; correctness is validated by
-            //   is_delaunay_property_only() in build_with_shuffled_retries.
-            //
-            // For D<4: repair is proven convergent; per-insertion repair now
-            //   falls back to global repair_delaunay_with_flips_k2_k3 on
-            //   local non-convergence, so soft_fail_seeds is typically empty
-            //   for D<4.  The seeded path below is kept for completeness.
-            if D >= 4 {
-                let cell_count = self.tri.tds.number_of_cells();
-                if cell_count > 0 {
-                    let all_cells: Vec<CellKey> = self.tri.tds.cell_keys().collect();
-                    tracing::debug!(
-                        cell_count,
-                        "post-construction: starting global D≥4 finalize repair"
-                    );
-                    let repair_started = Instant::now();
-                    let repair_result = {
-                        self.invalidate_repair_caches();
-                        let (tds, kernel) = (&mut self.tri.tds, &self.tri.kernel);
-                        repair_delaunay_local_single_pass(tds, kernel, &all_cells, 512).map(|_| ())
-                    };
-                    tracing::debug!(
-                        elapsed = ?repair_started.elapsed(),
-                        success = repair_result.is_ok(),
-                        "post-construction: D≥4 finalize repair completed (soft-fail)"
-                    );
-                    // Always soft-fail: is_delaunay_property_only() validates correctness.
-                }
-            } else if !soft_fail_seeds.is_empty() {
-                // D<4 seeded repair (unused in practice; kept for completeness).
-                tracing::debug!(
-                    seed_count = soft_fail_seeds.len(),
-                    "post-construction: starting seeded D<4 finalize repair"
-                );
-                let repair_started = Instant::now();
-                let max_flips = (soft_fail_seeds.len() * (D + 1) * 16).max(512);
-                let repair_result = {
-                    self.invalidate_repair_caches();
-                    let (tds, kernel) = (&mut self.tri.tds, &self.tri.kernel);
-                    repair_delaunay_local_single_pass(tds, kernel, soft_fail_seeds, max_flips)
-                        .map(|_| ())
-                };
-                let repair_outcome: Result<(), DelaunayTriangulationConstructionError> =
-                    match repair_result {
-                        Ok(()) => Ok(()),
-                        Err(e) => Err(TriangulationConstructionError::GeometricDegeneracy {
-                            message: format!("Delaunay repair failed after construction: {e}"),
-                        }
-                        .into()),
-                    };
-                tracing::debug!(
-                    elapsed = ?repair_started.elapsed(),
-                    success = repair_outcome.is_ok(),
-                    "post-construction: D<4 finalize repair completed"
-                );
-                repair_outcome?;
+        let has_cells = self.tri.tds.number_of_cells() > 0;
+        let mut completion_seed_cells = Vec::new();
+        let mut completion_seen = FastHashSet::default();
+        for &cell_key in pending_repair_seeds.iter().chain(soft_fail_seeds.iter()) {
+            if self.tri.tds.contains_cell(cell_key) && completion_seen.insert(cell_key) {
+                completion_seed_cells.push(cell_key);
             }
+        }
+        if run_final_repair
+            && has_cells
+            && batch_repair_policy != DelaunayRepairPolicy::Never
+            && !completion_seed_cells.is_empty()
+        {
+            let seed_count = completion_seed_cells.len();
+            let max_flips = local_repair_flip_budget::<D>(seed_count);
+            tracing::debug!(
+                seed_count,
+                max_flips,
+                "post-construction: starting seeded completion Delaunay repair"
+            );
+            let repair_started = Instant::now();
+            let repair_result = {
+                self.invalidate_repair_caches();
+                let (tds, kernel) = (&mut self.tri.tds, &self.tri.kernel);
+                repair_delaunay_local_single_pass(tds, kernel, &completion_seed_cells, max_flips)
+                    .map(|_| ())
+            };
+            let repair_outcome: Result<(), DelaunayTriangulationConstructionError> =
+                match repair_result {
+                    Ok(()) => Ok(()),
+                    Err(e) => Err(TriangulationConstructionError::GeometricDegeneracy {
+                        message: format!("Delaunay repair failed after construction: {e}"),
+                    }
+                    .into()),
+                };
+            tracing::debug!(
+                elapsed = ?repair_started.elapsed(),
+                success = repair_outcome.is_ok(),
+                "post-construction: seeded completion Delaunay repair finished"
+            );
+            repair_outcome?;
         }
 
         // Flip-based repair calls normalize_coherent_orientation() which makes all cells
@@ -4558,6 +4732,7 @@ where
             .normalize_and_promote_positive_orientation()
             .map_err(Self::map_orientation_canonicalization_error)?;
 
+        let topology = self.tri.topology_guarantee();
         if topology.requires_vertex_links_at_completion() {
             tracing::debug!("post-construction: starting topology validation (finalize)");
             let validation_started = Instant::now();
@@ -7479,7 +7654,7 @@ mod tests {
         CavityFillingError, HullExtensionReason, NeighborWiringError, repair_neighbor_pointers,
     };
     use crate::core::algorithms::locate::{ConflictError, LocateError};
-    use crate::core::operations::InsertionResult;
+    use crate::core::operations::{InsertionResult, InsertionTelemetry};
     use crate::core::tds::{EntityKind, GeometricError, TriangulationConstructionState};
     use crate::core::vertex::VertexBuilder;
     use crate::geometry::kernel::{AdaptiveKernel, FastKernel, RobustKernel};
@@ -7783,10 +7958,15 @@ mod tests {
         let opts = ConstructionOptions::default()
             .with_insertion_order(InsertionOrderStrategy::Input)
             .with_dedup_policy(DedupPolicy::Exact)
+            .with_batch_repair_policy(DelaunayRepairPolicy::EveryN(NonZeroUsize::new(4).unwrap()))
             .with_retry_policy(RetryPolicy::Disabled);
 
         assert_eq!(opts.insertion_order(), InsertionOrderStrategy::Input);
         assert_eq!(opts.dedup_policy(), DedupPolicy::Exact);
+        assert_eq!(
+            opts.batch_repair_policy(),
+            DelaunayRepairPolicy::EveryN(NonZeroUsize::new(4).unwrap())
+        );
         assert_eq!(opts.retry_policy(), RetryPolicy::Disabled);
     }
 
@@ -8190,6 +8370,48 @@ mod tests {
         // Borrowed API: caller retains ownership of insertion stats.
         assert_eq!(stats.attempts, 3);
         assert!(matches!(stats.result, InsertionResult::Inserted));
+    }
+
+    #[test]
+    fn test_construction_statistics_record_insertion_tracks_telemetry() {
+        init_tracing();
+
+        let mut summary = ConstructionStatistics::default();
+        let telemetry = InsertionTelemetry {
+            locate_calls: 2,
+            locate_walk_steps_total: 9,
+            locate_walk_steps_max: 7,
+            locate_hint_uses: 1,
+            locate_scan_fallbacks: 1,
+            located_inside: 1,
+            located_outside: 1,
+            conflict_region_calls: 1,
+            conflict_region_cells_total: 4,
+            conflict_region_cells_max: 4,
+            global_conflict_scans: 1,
+            global_conflict_cells_scanned: 12,
+            global_conflict_cells_found_total: 3,
+            global_conflict_cells_found_max: 3,
+            global_conflict_scan_nanos: 250_000,
+            ..InsertionTelemetry::default()
+        };
+
+        summary.telemetry.record_insertion(&telemetry);
+
+        assert!(summary.telemetry.has_data());
+        assert_eq!(summary.telemetry.locate_calls, 2);
+        assert_eq!(summary.telemetry.locate_walk_steps_total, 9);
+        assert_eq!(summary.telemetry.locate_walk_steps_max, 7);
+        assert_eq!(summary.telemetry.locate_hint_uses, 1);
+        assert_eq!(summary.telemetry.locate_scan_fallbacks, 1);
+        assert_eq!(summary.telemetry.located_inside, 1);
+        assert_eq!(summary.telemetry.located_outside, 1);
+        assert_eq!(summary.telemetry.conflict_region_calls, 1);
+        assert_eq!(summary.telemetry.conflict_region_cells_total, 4);
+        assert_eq!(summary.telemetry.global_conflict_scans, 1);
+        assert_eq!(summary.telemetry.global_conflict_cells_scanned, 12);
+        assert_eq!(summary.telemetry.global_conflict_cells_found_total, 3);
+        assert_eq!(summary.telemetry.global_conflict_scan_nanos, 250_000);
     }
 
     #[test]

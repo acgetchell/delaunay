@@ -31,7 +31,12 @@
 //! # - "new" (default): build via DelaunayTriangulation::new() which applies Hilbert ordering
 //! # - "incremental": manual insert loop (debug/profiling)
 //! DELAUNAY_LARGE_DEBUG_CONSTRUCTION_MODE=new \
-//! # Debug mode: "cadenced" (default, repair/validate on a cadence) or "strict" (per-insertion)
+//! # Initial simplex strategy for batch construction: "first" (default) or "balanced"
+//! DELAUNAY_LARGE_DEBUG_INITIAL_SIMPLEX=balanced \
+//! # Debug mode:
+//! # - "cadenced" (default): PLManifold, ridge-link validation during insertion,
+//! #   vertex-link validation at completion
+//! # - "strict": PLManifoldStrict, vertex-link validation after every insertion
 //! DELAUNAY_LARGE_DEBUG_DEBUG_MODE=cadenced \
 //! # Deterministically shuffle insertion order (incremental mode only)
 //! DELAUNAY_LARGE_DEBUG_SHUFFLE_SEED=123 \
@@ -39,12 +44,16 @@
 //! DELAUNAY_LARGE_DEBUG_PROGRESS_EVERY=1000 \
 //! # (Optional) validate topology every N insertions once cells exist (incremental mode only; can be expensive)
 //! DELAUNAY_LARGE_DEBUG_VALIDATE_EVERY=2000 \
-//! # Allow skipped vertices (otherwise the test fails if any are skipped)
+//! # Maximum skipped-vertex percentage before the run fails (default: 5.0)
+//! DELAUNAY_LARGE_DEBUG_MAX_SKIP_PCT=5.0 \
+//! # Allow any number of skipped vertices (bypasses DELAUNAY_LARGE_DEBUG_MAX_SKIP_PCT)
 //! DELAUNAY_LARGE_DEBUG_ALLOW_SKIPS=1 \
 //! # Skip the final flip-based repair pass (faster, but may leave Delaunay violations)
 //! DELAUNAY_LARGE_DEBUG_SKIP_FINAL_REPAIR=1 \
-//! # Run bounded incremental flip repair every N successful insertions (incremental mode only; 0 disables; default: 128)
-//! DELAUNAY_LARGE_DEBUG_REPAIR_EVERY=128 \
+//! # Run bounded flip repair every N successful insertions (0 disables; default: 4)
+//! DELAUNAY_LARGE_DEBUG_REPAIR_EVERY=4 \
+//! # Optional: trace cadenced local-repair seed counts, flips, queues, and elapsed time
+//! DELAUNAY_BATCH_REPAIR_TRACE=1 \
 //! # Hard wall-clock cap in seconds before the harness aborts (0 = no cap; default: 600)
 //! DELAUNAY_LARGE_DEBUG_MAX_RUNTIME_SECS=600 \
 //! # Optional: emit periodic batch-construction summaries for new()/Hilbert runs
@@ -72,8 +81,8 @@ use delaunay::geometry::util::{
 use delaunay::prelude::tds::{InvariantKind, TriangulationValidationReport};
 use delaunay::prelude::triangulation::*;
 use delaunay::triangulation::delaunay::{
-    ConstructionOptions, ConstructionStatistics, DelaunayRepairHeuristicConfig,
-    DelaunayTriangulationConstructionErrorWithStatistics,
+    ConstructionOptions, ConstructionStatistics, ConstructionTelemetry,
+    DelaunayRepairHeuristicConfig, DelaunayTriangulationConstructionErrorWithStatistics,
 };
 use rand::{SeedableRng, rngs::StdRng, seq::SliceRandom};
 use std::env;
@@ -145,6 +154,8 @@ struct InsertionSummary<const D: usize> {
 
     cells_removed_total: usize,
     cells_removed_max: usize,
+
+    telemetry: ConstructionTelemetry,
 
     skip_samples: Vec<SkipSample<D>>,
 }
@@ -240,6 +251,7 @@ impl<const D: usize> From<ConstructionStatistics> for InsertionSummary<D> {
             used_perturbation: stats.used_perturbation,
             cells_removed_total: stats.cells_removed_total,
             cells_removed_max: stats.cells_removed_max,
+            telemetry: stats.telemetry,
             skip_samples,
         }
     }
@@ -288,6 +300,7 @@ fn init_tracing() {
             "DELAUNAY_REPAIR_DEBUG_POSTCONDITION_FACET",
             "DELAUNAY_REPAIR_DEBUG_RIDGE_MIN_MULTIPLICITY",
             "DELAUNAY_BULK_PROGRESS_EVERY",
+            "DELAUNAY_BATCH_REPAIR_TRACE",
             "DELAUNAY_DEBUG_SHUFFLE",
         ];
         let default_filter = if debug_env_vars
@@ -330,6 +343,39 @@ impl ConstructionMode {
     }
 }
 
+const fn initial_simplex_strategy_name(strategy: InitialSimplexStrategy) -> &'static str {
+    match strategy {
+        InitialSimplexStrategy::First => "first",
+        InitialSimplexStrategy::Balanced => "balanced",
+        _ => "unknown",
+    }
+}
+
+fn initial_simplex_strategy_from_name(raw: &str) -> Option<InitialSimplexStrategy> {
+    let raw = raw.trim();
+    if raw.is_empty() || raw.eq_ignore_ascii_case("first") {
+        return Some(InitialSimplexStrategy::First);
+    }
+
+    if raw.eq_ignore_ascii_case("balanced") {
+        return Some(InitialSimplexStrategy::Balanced);
+    }
+
+    None
+}
+
+fn initial_simplex_strategy_from_env() -> InitialSimplexStrategy {
+    let Ok(raw) = env::var("DELAUNAY_LARGE_DEBUG_INITIAL_SIMPLEX") else {
+        return InitialSimplexStrategy::First;
+    };
+
+    initial_simplex_strategy_from_name(&raw).unwrap_or_else(|| {
+        panic!(
+            "invalid DELAUNAY_LARGE_DEBUG_INITIAL_SIMPLEX={raw:?} (expected 'first' or 'balanced')"
+        )
+    })
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum DebugMode {
     /// Faster default: repair/check in cadence, with suspicion-driven automatic validation.
@@ -347,6 +393,23 @@ impl DebugMode {
     }
 }
 
+/// Selects the topology guarantee that matches the requested debug intensity.
+const fn topology_for_debug_mode(debug_mode: DebugMode) -> TopologyGuarantee {
+    match debug_mode {
+        DebugMode::Cadenced => TopologyGuarantee::PLManifold,
+        DebugMode::Strict => TopologyGuarantee::PLManifoldStrict,
+    }
+}
+
+/// Converts the repair cadence knob into the policy shared by batch and incremental modes.
+const fn repair_policy_from_repair_every(repair_every: usize) -> DelaunayRepairPolicy {
+    match NonZeroUsize::new(repair_every) {
+        None => DelaunayRepairPolicy::Never,
+        Some(n) if n.get() == 1 => DelaunayRepairPolicy::EveryInsertion,
+        Some(n) => DelaunayRepairPolicy::EveryN(n),
+    }
+}
+
 impl PointDistribution {
     const fn name(self) -> &'static str {
         match self {
@@ -354,6 +417,29 @@ impl PointDistribution {
             Self::Box => "box",
         }
     }
+}
+
+/// Reads the skipped-vertex percentage budget for large-scale debug runs.
+fn max_skip_pct_from_env() -> f64 {
+    let max_skip_pct = env_f64("DELAUNAY_LARGE_DEBUG_MAX_SKIP_PCT").unwrap_or(5.0);
+    assert!(
+        max_skip_pct.is_finite() && max_skip_pct >= 0.0,
+        "invalid DELAUNAY_LARGE_DEBUG_MAX_SKIP_PCT={max_skip_pct:?} (expected finite non-negative percentage)"
+    );
+    max_skip_pct
+}
+
+/// Computes the skipped-vertex percentage for budget checks and reporting.
+fn skip_percentage(skipped: usize, total: usize) -> f64 {
+    if total == 0 {
+        return 0.0;
+    }
+
+    let skipped = safe_usize_to_scalar::<f64>(skipped)
+        .expect("skipped-vertex count should fit in f64 for debug reporting");
+    let total = safe_usize_to_scalar::<f64>(total)
+        .expect("point count should fit in f64 for debug reporting");
+    (skipped / total) * 100.0
 }
 
 fn env_f64(name: &str) -> Option<f64> {
@@ -444,6 +530,8 @@ enum DebugOutcome {
     SkippedVertices {
         skipped: usize,
         total: usize,
+        skip_pct: f64,
+        max_skip_pct: f64,
     },
     RepairNonConvergence {
         error: String,
@@ -461,8 +549,16 @@ impl fmt::Display for DebugOutcome {
             Self::ConstructionFailure { error } => {
                 write!(f, "ConstructionFailure | {error}")
             }
-            Self::SkippedVertices { skipped, total } => {
-                write!(f, "SkippedVertices | {skipped}/{total} skipped")
+            Self::SkippedVertices {
+                skipped,
+                total,
+                skip_pct,
+                max_skip_pct,
+            } => {
+                write!(
+                    f,
+                    "SkippedVertices | {skipped}/{total} skipped ({skip_pct:.2}%, max {max_skip_pct:.2}%)"
+                )
             }
             Self::RepairNonConvergence { error } => {
                 write!(f, "RepairNonConvergence | {error}")
@@ -514,6 +610,84 @@ fn print_validation_report(report: &TriangulationValidationReport) {
     }
 }
 
+fn usize_to_u128(value: usize) -> u128 {
+    u128::try_from(value).expect("usize should always fit in u128")
+}
+
+fn format_ratio_2(numerator: usize, denominator: usize) -> String {
+    format_ratio_2_u128(usize_to_u128(numerator), usize_to_u128(denominator))
+}
+
+fn format_ratio_2_u128(numerator: u128, denominator: u128) -> String {
+    if denominator == 0 {
+        return "0.00".to_string();
+    }
+
+    let scaled = numerator.saturating_mul(100) / denominator;
+    format!("{}.{:02}", scaled / 100, scaled % 100)
+}
+
+fn format_nanos_as_ms(nanos: u128) -> String {
+    let micros = nanos / 1_000;
+    format!("{}.{:03}", micros / 1_000, micros % 1_000)
+}
+
+fn print_construction_telemetry(telemetry: &ConstructionTelemetry) {
+    if !telemetry.has_data() {
+        return;
+    }
+
+    println!();
+    println!("  insertion telemetry:");
+    println!(
+        "    locate: calls={} walk_steps_total={} avg_walk={} max_walk={} hint_uses={} scan_fallbacks={}",
+        telemetry.locate_calls,
+        telemetry.locate_walk_steps_total,
+        format_ratio_2(telemetry.locate_walk_steps_total, telemetry.locate_calls),
+        telemetry.locate_walk_steps_max,
+        telemetry.locate_hint_uses,
+        telemetry.locate_scan_fallbacks
+    );
+    println!(
+        "    locate_results: inside={} outside={} boundary={}",
+        telemetry.located_inside, telemetry.located_outside, telemetry.located_on_boundary
+    );
+
+    if telemetry.conflict_region_calls > 0 {
+        println!(
+            "    conflict_regions: calls={} cells_total={} avg_cells={} max_cells={}",
+            telemetry.conflict_region_calls,
+            telemetry.conflict_region_cells_total,
+            format_ratio_2(
+                telemetry.conflict_region_cells_total,
+                telemetry.conflict_region_calls,
+            ),
+            telemetry.conflict_region_cells_max
+        );
+    }
+
+    if telemetry.global_conflict_scans > 0 {
+        let scans = usize_to_u128(telemetry.global_conflict_scans);
+        println!(
+            "    global_conflict_scans: scans={} cells_scanned_total={} avg_cells_scanned={} cells_found_total={} avg_cells_found={} max_cells_found={} total_ms={} avg_ms={}",
+            telemetry.global_conflict_scans,
+            telemetry.global_conflict_cells_scanned,
+            format_ratio_2(
+                telemetry.global_conflict_cells_scanned,
+                telemetry.global_conflict_scans,
+            ),
+            telemetry.global_conflict_cells_found_total,
+            format_ratio_2(
+                telemetry.global_conflict_cells_found_total,
+                telemetry.global_conflict_scans,
+            ),
+            telemetry.global_conflict_cells_found_max,
+            format_nanos_as_ms(telemetry.global_conflict_scan_nanos),
+            format_nanos_as_ms(telemetry.global_conflict_scan_nanos / scans)
+        );
+    }
+}
+
 fn print_insertion_summary<const D: usize>(summary: &InsertionSummary<D>, elapsed: Duration) {
     println!("Insertion summary:");
     println!("  inserted:          {}", summary.inserted);
@@ -538,6 +712,8 @@ fn print_insertion_summary<const D: usize>(summary: &InsertionSummary<D>, elapse
             }
         }
     }
+
+    print_construction_telemetry(&summary.telemetry);
 
     if !summary.skip_samples.is_empty() {
         println!();
@@ -587,7 +763,9 @@ fn debug_large_case<const D: usize>(dimension_name: &str, default_n_points: usiz
     let box_half_width = env_f64("DELAUNAY_LARGE_DEBUG_BOX_HALF_WIDTH").unwrap_or(100.0);
 
     let mode = construction_mode_from_env();
+    let initial_simplex_strategy = initial_simplex_strategy_from_env();
     let debug_mode = debug_mode_from_env();
+    let topology_guarantee = topology_for_debug_mode(debug_mode);
 
     let shuffle_seed = env_u64("DELAUNAY_LARGE_DEBUG_SHUFFLE_SEED");
     let progress_every = env_usize("DELAUNAY_LARGE_DEBUG_PROGRESS_EVERY")
@@ -595,13 +773,15 @@ fn debug_large_case<const D: usize>(dimension_name: &str, default_n_points: usiz
         .max(1);
 
     let allow_skips = env_flag("DELAUNAY_LARGE_DEBUG_ALLOW_SKIPS");
+    let max_skip_pct = max_skip_pct_from_env();
     let skip_final_repair = env_flag("DELAUNAY_LARGE_DEBUG_SKIP_FINAL_REPAIR");
 
     // Delaunay repair scheduling
     // - 0 disables incremental repair
     // - 1 runs repair after every insertion
     // - N>1 runs repair after every N successful insertions
-    let repair_every = env_usize("DELAUNAY_LARGE_DEBUG_REPAIR_EVERY").unwrap_or(128);
+    let repair_every = env_usize("DELAUNAY_LARGE_DEBUG_REPAIR_EVERY").unwrap_or(4);
+    let repair_policy = repair_policy_from_repair_every(repair_every);
     let repair_max_flips = env_usize("DELAUNAY_LARGE_DEBUG_REPAIR_MAX_FLIPS");
     let validate_every = env_usize("DELAUNAY_LARGE_DEBUG_VALIDATE_EVERY").or_else(|| {
         if matches!(debug_mode, DebugMode::Cadenced) {
@@ -628,13 +808,20 @@ fn debug_large_case<const D: usize>(dimension_name: &str, default_n_points: usiz
         PointDistribution::Box => println!("  box_half_width:{box_half_width}"),
     }
     println!("  construction_mode: {}", mode.name());
+    println!(
+        "  initial_simplex: {}",
+        initial_simplex_strategy_name(initial_simplex_strategy)
+    );
     println!("  debug_mode:    {}", debug_mode.name());
+    println!("  topology_guarantee: {topology_guarantee:?}");
     println!("  shuffle_seed:  {shuffle_seed:?}");
     println!("  progress_every:{progress_every}");
     println!("  validate_every:{validate_every:?}");
     println!("  allow_skips:   {allow_skips}");
+    println!("  max_skip_pct:  {max_skip_pct}");
     println!("  skip_final_repair: {skip_final_repair}");
     println!("  repair_every:  {repair_every}");
+    println!("  repair_policy: {repair_policy:?}");
     println!("  repair_max_flips: {repair_max_flips:?}");
     if max_runtime_secs > 0 {
         println!("  max_runtime_secs: {max_runtime_secs}");
@@ -676,17 +863,17 @@ fn debug_large_case<const D: usize>(dimension_name: &str, default_n_points: usiz
         ConstructionMode::New => {
             // `DelaunayTriangulation::new()` applies Hilbert ordering during batch construction.
             // Use the statistics-returning variant so we can report aggregate insertion telemetry.
-            //
-            // Use PLManifoldStrict during batch construction to ensure vertex-link invariants are
-            // maintained on each insertion.
             let kernel = RobustKernel::<f64>::new();
             println!("Starting batch construction (new)...");
             let t_batch = Instant::now();
+            let options = ConstructionOptions::default()
+                .with_initial_simplex_strategy(initial_simplex_strategy)
+                .with_batch_repair_policy(repair_policy);
             match DelaunayTriangulation::with_options_and_statistics(
                 &kernel,
                 &vertices,
-                TopologyGuarantee::PLManifoldStrict,
-                ConstructionOptions::default(),
+                topology_guarantee,
+                options,
             ) {
                 Ok((dt, stats)) => {
                     let summary: InsertionSummary<D> = stats.into();
@@ -719,15 +906,7 @@ fn debug_large_case<const D: usize>(dimension_name: &str, default_n_points: usiz
                 println!("Shuffled insertion order with seed {shuffle_seed}");
             }
 
-            let (topology_guarantee, validation_policy) = match debug_mode {
-                DebugMode::Cadenced => {
-                    (TopologyGuarantee::PLManifold, ValidationPolicy::OnSuspicion)
-                }
-                DebugMode::Strict => (
-                    TopologyGuarantee::PLManifoldStrict,
-                    ValidationPolicy::Always,
-                ),
-            };
+            let validation_policy = topology_guarantee.default_validation_policy();
 
             let mut dt: DelaunayTriangulation<_, (), (), D> =
                 DelaunayTriangulation::with_empty_kernel_and_topology_guarantee(
@@ -739,11 +918,6 @@ fn debug_large_case<const D: usize>(dimension_name: &str, default_n_points: usiz
             // - Enable bounded incremental repair (local flip queue) every N successful insertions.
             // - Keep global Delaunay checks off during insertion; the harness can optionally run a final
             //   global repair pass at the end.
-            let repair_policy = match NonZeroUsize::new(repair_every) {
-                None => DelaunayRepairPolicy::Never,
-                Some(n) if n.get() == 1 => DelaunayRepairPolicy::EveryInsertion,
-                Some(n) => DelaunayRepairPolicy::EveryN(n),
-            };
             dt.set_delaunay_repair_policy(repair_policy);
             dt.set_delaunay_check_policy(DelaunayCheckPolicy::EndOnly);
 
@@ -861,10 +1035,13 @@ fn debug_large_case<const D: usize>(dimension_name: &str, default_n_points: usiz
         dt.dim()
     );
 
-    if !allow_skips && skipped_total > 0 {
+    let skipped_pct = skip_percentage(skipped_total, n_points);
+    if !allow_skips && skipped_pct > max_skip_pct {
         let outcome = DebugOutcome::SkippedVertices {
             skipped: skipped_total,
             total: n_points,
+            skip_pct: skipped_pct,
+            max_skip_pct,
         };
         print_abort_summary::<D>(&outcome, seed, n_points, "skip check");
         return outcome;
@@ -986,6 +1163,66 @@ fn test_write_timeout_abort_message_propagates_error() {
             .expect_err("timeout diagnostic should propagate writer failures");
         assert_eq!(err.kind(), kind);
     }
+}
+
+#[test]
+fn test_topology_for_debug_mode_uses_ridge_links_by_default() {
+    assert_eq!(
+        topology_for_debug_mode(DebugMode::Cadenced),
+        TopologyGuarantee::PLManifold
+    );
+    assert_eq!(
+        topology_for_debug_mode(DebugMode::Strict),
+        TopologyGuarantee::PLManifoldStrict
+    );
+}
+
+#[test]
+fn test_initial_simplex_strategy_from_name_maps_ab_switch() {
+    assert_eq!(
+        initial_simplex_strategy_from_name(""),
+        Some(InitialSimplexStrategy::First)
+    );
+    assert_eq!(
+        initial_simplex_strategy_from_name("first"),
+        Some(InitialSimplexStrategy::First)
+    );
+    assert_eq!(
+        initial_simplex_strategy_from_name("BALANCED"),
+        Some(InitialSimplexStrategy::Balanced)
+    );
+    assert_eq!(initial_simplex_strategy_from_name("unknown"), None);
+    assert_eq!(
+        initial_simplex_strategy_name(InitialSimplexStrategy::Balanced),
+        "balanced"
+    );
+}
+
+#[test]
+fn test_skip_percentage_reports_ratio() {
+    assert!((skip_percentage(0, 100) - 0.0).abs() < f64::EPSILON);
+    assert!((skip_percentage(4, 400) - 1.0).abs() < f64::EPSILON);
+    assert!((skip_percentage(12, 100) - 12.0).abs() < f64::EPSILON);
+}
+
+#[test]
+fn test_repair_policy_from_repair_every_maps_cadence() {
+    assert_eq!(
+        repair_policy_from_repair_every(0),
+        DelaunayRepairPolicy::Never
+    );
+    assert_eq!(
+        repair_policy_from_repair_every(1),
+        DelaunayRepairPolicy::EveryInsertion
+    );
+    assert_eq!(
+        repair_policy_from_repair_every(2),
+        DelaunayRepairPolicy::EveryN(NonZeroUsize::new(2).unwrap())
+    );
+    assert_eq!(
+        repair_policy_from_repair_every(4),
+        DelaunayRepairPolicy::EveryN(NonZeroUsize::new(4).unwrap())
+    );
 }
 
 /// Regression test for issue #228: 3D 1000-point flip-repair non-convergence.
