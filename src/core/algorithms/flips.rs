@@ -9559,6 +9559,18 @@ mod tests {
         };
     }
 
+    /// Exercises the 2D k=2 roundtrip fixture under non-proptest coverage runs.
+    #[test]
+    fn test_bistellar_k2_roundtrip_smoke_2d() {
+        prop_bistellar_k2_roundtrip_for_dim::<2>(0.25, 1.0).unwrap();
+    }
+
+    /// Exercises the higher-dimensional k=2 inverse path under non-proptest coverage runs.
+    #[test]
+    fn test_bistellar_k2_roundtrip_smoke_4d() {
+        prop_bistellar_k2_roundtrip_for_dim::<4>(-0.25, 1.25).unwrap();
+    }
+
     macro_rules! gen_bistellar_k3_roundtrip_properties {
         ($($dim:literal),+ $(,)?) => {
             pastey::paste! {
@@ -9577,6 +9589,18 @@ mod tests {
                 )+
             }
         };
+    }
+
+    /// Exercises the 3D k=3 roundtrip fixture under non-proptest coverage runs.
+    #[test]
+    fn test_bistellar_k3_roundtrip_smoke_3d() {
+        prop_bistellar_k3_roundtrip_for_dim::<3>(0.25, 1.0).unwrap();
+    }
+
+    /// Exercises the higher-dimensional k=3 inverse path under non-proptest coverage runs.
+    #[test]
+    fn test_bistellar_k3_roundtrip_smoke_4d() {
+        prop_bistellar_k3_roundtrip_for_dim::<4>(-0.25, 1.25).unwrap();
     }
 
     gen_bistellar_k2_roundtrip_properties!(2, 3, 4, 5);

@@ -1,3 +1,5 @@
+#![forbid(unsafe_code)]
+
 //! Property-based tests for public bistellar flip invariants.
 //!
 //! Lower-level k=2/k=3 property fixtures live with `core::algorithms::flips`,
@@ -7,7 +9,9 @@
 //! dimensions 2D-5D.
 
 use ::uuid::Uuid;
-use delaunay::prelude::geometry::{AdaptiveKernel, Coordinate, Point};
+use delaunay::prelude::geometry::{
+    AdaptiveKernel, Coordinate, FastKernel, Kernel, Point, RobustKernel,
+};
 use delaunay::prelude::triangulation::flips::BistellarFlips;
 use delaunay::prelude::triangulation::{
     DelaunayTriangulation, TopologyGuarantee, Triangulation, Vertex,
@@ -23,14 +27,27 @@ struct TopologySnapshot {
 
 /// Generates bounded finite coordinates for stable simplex placement.
 fn finite_coordinate() -> impl Strategy<Value = f64> {
-    (-10.0..10.0).prop_filter("must be finite", |value: &f64| value.is_finite())
+    -10.0..10.0
+}
+
+/// Generates large but exactly finite coordinates for translated simplices.
+fn large_coordinate() -> impl Strategy<Value = f64> {
+    prop_oneof![-1_000_000.0..-1_000.0, 1_000.0..1_000_000.0]
+}
+
+/// Generates coordinates close to the origin boundary.
+fn near_boundary_origin() -> impl Strategy<Value = f64> {
+    -1.0e-9..1.0e-9
 }
 
 /// Generates positive edge lengths that keep test simplices well-conditioned.
 fn well_conditioned_edge_length() -> impl Strategy<Value = f64> {
-    (0.25_f64..10.0).prop_filter("must be finite and positive", |value: &f64| {
-        value.is_finite() && *value > 0.0
-    })
+    0.25_f64..10.0
+}
+
+/// Generates small positive edge lengths that stress near-degenerate simplices.
+fn near_degenerate_edge_length() -> impl Strategy<Value = f64> {
+    1.0e-4_f64..1.0e-2
 }
 
 /// Builds an axis-aligned D-simplex translated by `origin`.
@@ -160,6 +177,69 @@ fn assert_valid<const D: usize>(
     Ok(())
 }
 
+/// Checks positive exact cell orientation and fast/adaptive sign consistency.
+fn assert_positive_cell_orientations<const D: usize>(
+    triangulation: &Triangulation<AdaptiveKernel<f64>, (), (), D>,
+    context: &str,
+) -> Result<(), TestCaseError> {
+    let vertex_points: HashMap<_, _> = triangulation
+        .vertices()
+        .map(|(key, vertex)| (key, *vertex.point()))
+        .collect();
+    let fast_kernel = FastKernel::<f64>::new();
+    let robust_kernel = RobustKernel::<f64>::new();
+    let adaptive_kernel = AdaptiveKernel::<f64>::new();
+
+    for (cell_key, cell) in triangulation.cells() {
+        let mut points = Vec::with_capacity(D + 1);
+        for vertex_key in cell.vertices() {
+            let point = vertex_points.get(vertex_key).copied().ok_or_else(|| {
+                TestCaseError::fail(format!(
+                    "{context}: cell {cell_key:?} references missing vertex key {vertex_key:?}"
+                ))
+            })?;
+            points.push(point);
+        }
+
+        let exact = robust_kernel.orientation(&points).map_err(|err| {
+            TestCaseError::fail(format!(
+                "{context}: exact orientation failed for cell {cell_key:?}: {err:?}"
+            ))
+        })?;
+        let fast = fast_kernel.orientation(&points).map_err(|err| {
+            TestCaseError::fail(format!(
+                "{context}: fast orientation failed for cell {cell_key:?}: {err:?}"
+            ))
+        })?;
+        let adaptive = adaptive_kernel.orientation(&points).map_err(|err| {
+            TestCaseError::fail(format!(
+                "{context}: adaptive/SoS orientation failed for cell {cell_key:?}: {err:?}"
+            ))
+        })?;
+
+        prop_assert!(
+            exact > 0,
+            "{context}: cell {cell_key:?} must have positive non-degenerate exact orientation, got {exact}"
+        );
+        prop_assert_eq!(
+            fast,
+            adaptive,
+            "{}: fast and adaptive/SoS orientation signs disagreed for cell {:?}",
+            context,
+            cell_key,
+        );
+        prop_assert_eq!(
+            exact,
+            adaptive,
+            "{}: exact and adaptive/SoS orientation signs disagreed for cell {:?}",
+            context,
+            cell_key,
+        );
+    }
+
+    Ok(())
+}
+
 /// Verifies a public k=1 flip followed by its inverse is topology-preserving.
 fn check_k1_roundtrip<const D: usize>(
     origin: [f64; D],
@@ -179,6 +259,7 @@ fn check_k1_roundtrip<const D: usize>(
 
     let mut triangulation = simplex.as_triangulation().clone();
     assert_valid(&triangulation, "initial")?;
+    assert_positive_cell_orientations(&triangulation, "before k=1 insertion")?;
     let before = snapshot_topology(&triangulation)?;
     let before_chi = euler_characteristic(&triangulation)?;
 
@@ -193,18 +274,21 @@ fn check_k1_roundtrip<const D: usize>(
     prop_assert!(!inserted.new_cells.is_empty());
     prop_assert_eq!(euler_characteristic(&triangulation)?, before_chi);
     assert_valid(&triangulation, "after k=1 insertion")?;
+    assert_positive_cell_orientations(&triangulation, "after k=1 insertion")?;
 
     let inserted_vertex = inserted
         .inserted_face_vertices
         .first()
         .copied()
         .ok_or_else(|| TestCaseError::fail("k=1 insertion did not report an inserted vertex"))?;
+    assert_positive_cell_orientations(&triangulation, "before inverse k=1 removal")?;
     let removed = triangulation
         .flip_k1_remove(inserted_vertex)
         .map_err(|err| TestCaseError::fail(format!("inverse k=1 removal failed: {err:?}")))?;
     prop_assert!(!removed.removed_cells.is_empty());
     prop_assert_eq!(euler_characteristic(&triangulation)?, before_chi);
     assert_valid(&triangulation, "after inverse k=1 removal")?;
+    assert_positive_cell_orientations(&triangulation, "after inverse k=1 removal")?;
 
     let after = snapshot_topology(&triangulation)?;
     prop_assert_eq!(after, before);
@@ -220,8 +304,20 @@ macro_rules! gen_k1_roundtrip_properties {
 
                     #[test]
                     fn [<prop_k1_flip_roundtrip_preserves_topology_and_euler_ $dim d>](
-                        origin in prop::array::[<uniform $dim>](finite_coordinate()),
-                        edge_lengths in prop::array::[<uniform $dim>](well_conditioned_edge_length())
+                        (origin, edge_lengths) in prop_oneof![
+                            (
+                                prop::array::[<uniform $dim>](finite_coordinate()),
+                                prop::array::[<uniform $dim>](well_conditioned_edge_length()),
+                            ),
+                            (
+                                prop::array::[<uniform $dim>](large_coordinate()),
+                                prop::array::[<uniform $dim>](well_conditioned_edge_length()),
+                            ),
+                            (
+                                prop::array::[<uniform $dim>](near_boundary_origin()),
+                                prop::array::[<uniform $dim>](near_degenerate_edge_length()),
+                            ),
+                        ]
                     ) {
                         check_k1_roundtrip::<$dim>(origin, edge_lengths)?;
                     }
