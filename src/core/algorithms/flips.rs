@@ -7864,6 +7864,7 @@ mod tests {
     use crate::triangulation::delaunay::DelaunayTriangulation;
     use crate::vertex;
     use approx::assert_relative_eq;
+    use proptest::prelude::*;
     use rand::{RngExt, SeedableRng, rngs::StdRng};
     use slotmap::KeyData;
     use std::{iter::once, sync::Once};
@@ -7923,6 +7924,42 @@ mod tests {
             *coord = 0.11 * idx;
         }
         coords
+    }
+
+    /// Builds a translated and scaled simplex-basis coordinate for proptests.
+    fn translated_scaled_unit_vector<const D: usize>(
+        index: usize,
+        offset: f64,
+        scale: f64,
+    ) -> [f64; D] {
+        let mut coords = [offset; D];
+        coords[index] += scale;
+        coords
+    }
+
+    /// Creates a translated non-axis-aligned point for k=3 flip proptests.
+    fn translated_scaled_skewed_point<const D: usize>(offset: f64, scale: f64) -> [f64; D] {
+        let mut coords = [offset; D];
+        for (i, coord) in coords.iter_mut().enumerate().take(D) {
+            let idx = f64::from(u32::try_from(i + 1).expect("index fits in u32"));
+            *coord += scale * 0.11 * idx;
+        }
+        coords
+    }
+
+    /// Returns inserted-face vertices after verifying the expected flip arity.
+    fn inserted_face_vertices<const D: usize>(
+        info: &FlipInfo<D>,
+        expected: usize,
+    ) -> Result<Vec<VertexKey>, TestCaseError> {
+        let vertices: Vec<_> = info.inserted_face_vertices.iter().copied().collect();
+        if vertices.len() != expected {
+            return Err(TestCaseError::fail(format!(
+                "flip reported {} inserted-face vertices, expected {expected}",
+                vertices.len()
+            )));
+        }
+        Ok(vertices)
     }
 
     fn to_dynamic<const D: usize, const K: usize>(context: FlipContext<D, K>) -> FlipContextDyn<D> {
@@ -9234,6 +9271,316 @@ mod tests {
     }
 
     gen_trial_validation_rollback_tests!(2, 3, 4, 5);
+
+    /// Checks that a k=2 flip and its inverse preserve topology in dimension `D`.
+    #[expect(
+        clippy::too_many_lines,
+        reason = "The property fixture keeps k=2 setup, forward flip, inverse flip, and invariant checks together so failing cases shrink with full context."
+    )]
+    fn prop_bistellar_k2_roundtrip_for_dim<const D: usize>(
+        offset: f64,
+        scale: f64,
+    ) -> Result<(), TestCaseError> {
+        init_tracing();
+        let mut tds: Tds<f64, (), (), D> = Tds::empty();
+        let mut shared_vertices = Vec::with_capacity(D);
+        for i in 0..D {
+            let vertex = tds
+                .insert_vertex_with_mapping(vertex!(translated_scaled_unit_vector::<D>(
+                    i, offset, scale
+                )))
+                .map_err(|err| {
+                    TestCaseError::fail(format!("shared vertex insertion failed: {err:?}"))
+                })?;
+            shared_vertices.push(vertex);
+        }
+
+        let opposite_a = tds
+            .insert_vertex_with_mapping(vertex!([offset; D]))
+            .map_err(|err| TestCaseError::fail(format!("opposite A insertion failed: {err:?}")))?;
+        let opposite_b = tds
+            .insert_vertex_with_mapping(vertex!([offset + scale; D]))
+            .map_err(|err| TestCaseError::fail(format!("opposite B insertion failed: {err:?}")))?;
+
+        let mut vertices_with_first_opposite = shared_vertices.clone();
+        vertices_with_first_opposite.push(opposite_a);
+        let cell_a = tds
+            .insert_cell_with_mapping(
+                Cell::new(vertices_with_first_opposite, None).map_err(|err| {
+                    TestCaseError::fail(format!("cell A creation failed: {err:?}"))
+                })?,
+            )
+            .map_err(|err| TestCaseError::fail(format!("cell A insertion failed: {err:?}")))?;
+
+        let mut vertices_with_second_opposite = shared_vertices.clone();
+        vertices_with_second_opposite.push(opposite_b);
+        tds.insert_cell_with_mapping(
+            Cell::new(vertices_with_second_opposite, None)
+                .map_err(|err| TestCaseError::fail(format!("cell B creation failed: {err:?}")))?,
+        )
+        .map_err(|err| TestCaseError::fail(format!("cell B insertion failed: {err:?}")))?;
+
+        repair_neighbor_pointers(&mut tds)
+            .map_err(|err| TestCaseError::fail(format!("neighbor repair failed: {err:?}")))?;
+
+        let before = snapshot_topology(&tds);
+        let facet = FacetHandle::new(
+            cell_a,
+            u8::try_from(D).map_err(|err| {
+                TestCaseError::fail(format!("facet index conversion failed: {err:?}"))
+            })?,
+        );
+        let context = build_k2_flip_context(&tds, facet)
+            .map_err(|err| TestCaseError::fail(format!("k=2 context build failed: {err:?}")))?;
+        let info = apply_bistellar_flip_k2(&mut tds, &context)
+            .map_err(|err| TestCaseError::fail(format!("k=2 flip failed: {err:?}")))?;
+        tds.is_valid()
+            .map_err(|err| TestCaseError::fail(format!("post k=2 TDS invalid: {err:?}")))?;
+
+        if D == 2 {
+            let mut inverse_facet: Option<FacetHandle> = None;
+            for &cell_key in &info.new_cells {
+                let cell = tds
+                    .cell(cell_key)
+                    .ok_or_else(|| TestCaseError::fail("new k=2 cell missing"))?;
+                if cell.contains_vertex(opposite_a) && cell.contains_vertex(opposite_b) {
+                    let facet_index = cell
+                        .vertices()
+                        .iter()
+                        .position(|&vertex| vertex != opposite_a && vertex != opposite_b)
+                        .ok_or_else(|| TestCaseError::fail("missing inverse k=2 facet vertex"))?;
+                    inverse_facet = Some(FacetHandle::new(
+                        cell_key,
+                        u8::try_from(facet_index).map_err(|err| {
+                            TestCaseError::fail(format!(
+                                "inverse facet index conversion failed: {err:?}"
+                            ))
+                        })?,
+                    ));
+                    break;
+                }
+            }
+
+            let facet =
+                inverse_facet.ok_or_else(|| TestCaseError::fail("inverse k=2 facet not found"))?;
+            let context_back = build_k2_flip_context(&tds, facet).map_err(|err| {
+                TestCaseError::fail(format!("inverse k=2 context build failed: {err:?}"))
+            })?;
+            apply_bistellar_flip_k2(&mut tds, &context_back)
+                .map_err(|err| TestCaseError::fail(format!("inverse k=2 flip failed: {err:?}")))?;
+        } else {
+            let inserted = inserted_face_vertices(&info, 2)?;
+            let edge = match inserted.as_slice() {
+                [a, b] => EdgeKey::new(*a, *b),
+                _ => {
+                    return Err(TestCaseError::fail(
+                        "validated k=2 inserted-face arity changed",
+                    ));
+                }
+            };
+            let context_back = build_k2_flip_context_from_edge(&tds, edge).map_err(|err| {
+                TestCaseError::fail(format!("inverse k=2 context build failed: {err:?}"))
+            })?;
+            apply_bistellar_flip_dynamic(&mut tds, D, &context_back)
+                .map_err(|err| TestCaseError::fail(format!("inverse k=2 flip failed: {err:?}")))?;
+        }
+
+        tds.is_valid()
+            .map_err(|err| TestCaseError::fail(format!("post inverse k=2 TDS invalid: {err:?}")))?;
+        let after = snapshot_topology(&tds);
+        prop_assert_eq!(after.vertices, before.vertices);
+        prop_assert_eq!(after.cell_vertices, before.cell_vertices);
+        Ok(())
+    }
+
+    /// Checks that a k=3 flip and its inverse preserve topology in dimension `D`.
+    #[expect(
+        clippy::too_many_lines,
+        reason = "The property fixture keeps k=3 setup, forward flip, inverse flip, and invariant checks together so failing cases shrink with full context."
+    )]
+    fn prop_bistellar_k3_roundtrip_for_dim<const D: usize>(
+        offset: f64,
+        scale: f64,
+    ) -> Result<(), TestCaseError> {
+        init_tracing();
+        let ridge_vertex_count = D
+            .checked_sub(1)
+            .ok_or_else(|| TestCaseError::fail("k=3 fixture requires D >= 1"))?;
+        let mut tds: Tds<f64, (), (), D> = Tds::empty();
+        let mut ridge_vertices = Vec::with_capacity(ridge_vertex_count);
+        for i in 0..ridge_vertex_count {
+            let vertex = tds
+                .insert_vertex_with_mapping(vertex!(translated_scaled_unit_vector::<D>(
+                    i, offset, scale
+                )))
+                .map_err(|err| {
+                    TestCaseError::fail(format!("ridge vertex insertion failed: {err:?}"))
+                })?;
+            ridge_vertices.push(vertex);
+        }
+
+        let a = tds
+            .insert_vertex_with_mapping(vertex!([offset; D]))
+            .map_err(|err| TestCaseError::fail(format!("opposite A insertion failed: {err:?}")))?;
+        let b = tds
+            .insert_vertex_with_mapping(vertex!(translated_scaled_unit_vector::<D>(
+                ridge_vertex_count,
+                offset,
+                scale
+            )))
+            .map_err(|err| TestCaseError::fail(format!("opposite B insertion failed: {err:?}")))?;
+        let c = tds
+            .insert_vertex_with_mapping(vertex!(translated_scaled_skewed_point::<D>(offset, scale)))
+            .map_err(|err| TestCaseError::fail(format!("opposite C insertion failed: {err:?}")))?;
+
+        let mut first_vertices = ridge_vertices.clone();
+        first_vertices.push(a);
+        first_vertices.push(b);
+        let first_cell = tds
+            .insert_cell_with_mapping(
+                Cell::new(first_vertices, None).map_err(|err| {
+                    TestCaseError::fail(format!("cell A creation failed: {err:?}"))
+                })?,
+            )
+            .map_err(|err| TestCaseError::fail(format!("cell A insertion failed: {err:?}")))?;
+
+        let mut second_vertices = ridge_vertices.clone();
+        second_vertices.push(b);
+        second_vertices.push(c);
+        tds.insert_cell_with_mapping(
+            Cell::new(second_vertices, None)
+                .map_err(|err| TestCaseError::fail(format!("cell B creation failed: {err:?}")))?,
+        )
+        .map_err(|err| TestCaseError::fail(format!("cell B insertion failed: {err:?}")))?;
+
+        let mut third_vertices = ridge_vertices.clone();
+        third_vertices.push(c);
+        third_vertices.push(a);
+        tds.insert_cell_with_mapping(
+            Cell::new(third_vertices, None)
+                .map_err(|err| TestCaseError::fail(format!("cell C creation failed: {err:?}")))?,
+        )
+        .map_err(|err| TestCaseError::fail(format!("cell C insertion failed: {err:?}")))?;
+
+        repair_neighbor_pointers(&mut tds)
+            .map_err(|err| TestCaseError::fail(format!("neighbor repair failed: {err:?}")))?;
+
+        let before = snapshot_topology(&tds);
+        let ridge = RidgeHandle::new(
+            first_cell,
+            u8::try_from(ridge_vertex_count).map_err(|err| {
+                TestCaseError::fail(format!("ridge index conversion failed: {err:?}"))
+            })?,
+            u8::try_from(D).map_err(|err| {
+                TestCaseError::fail(format!("ridge index conversion failed: {err:?}"))
+            })?,
+        );
+        let context = build_k3_flip_context(&tds, ridge)
+            .map_err(|err| TestCaseError::fail(format!("k=3 context build failed: {err:?}")))?;
+        let info = apply_bistellar_flip_k3(&mut tds, &context)
+            .map_err(|err| TestCaseError::fail(format!("k=3 flip failed: {err:?}")))?;
+        tds.is_valid()
+            .map_err(|err| TestCaseError::fail(format!("post k=3 TDS invalid: {err:?}")))?;
+
+        if D == 3 {
+            let mut inverse_facet: Option<FacetHandle> = None;
+            for &cell_key in &info.new_cells {
+                let cell = tds
+                    .cell(cell_key)
+                    .ok_or_else(|| TestCaseError::fail("new k=3 cell missing"))?;
+                if cell.contains_vertex(a) && cell.contains_vertex(b) && cell.contains_vertex(c) {
+                    let facet_index = cell
+                        .vertices()
+                        .iter()
+                        .position(|&vertex| vertex != a && vertex != b && vertex != c)
+                        .ok_or_else(|| TestCaseError::fail("missing inverse k=3 facet vertex"))?;
+                    inverse_facet = Some(FacetHandle::new(
+                        cell_key,
+                        u8::try_from(facet_index).map_err(|err| {
+                            TestCaseError::fail(format!(
+                                "inverse facet index conversion failed: {err:?}"
+                            ))
+                        })?,
+                    ));
+                    break;
+                }
+            }
+
+            let facet =
+                inverse_facet.ok_or_else(|| TestCaseError::fail("inverse k=3 facet not found"))?;
+            let context_back = build_k2_flip_context(&tds, facet).map_err(|err| {
+                TestCaseError::fail(format!("inverse k=3 context build failed: {err:?}"))
+            })?;
+            apply_bistellar_flip_k2(&mut tds, &context_back)
+                .map_err(|err| TestCaseError::fail(format!("inverse k=3 flip failed: {err:?}")))?;
+        } else {
+            let inserted = inserted_face_vertices(&info, 3)?;
+            let triangle = match inserted.as_slice() {
+                [a, b, c] => TriangleHandle::new(*a, *b, *c),
+                _ => {
+                    return Err(TestCaseError::fail(
+                        "validated k=3 inserted-face arity changed",
+                    ));
+                }
+            };
+            let context_back =
+                build_k3_flip_context_from_triangle(&tds, triangle).map_err(|err| {
+                    TestCaseError::fail(format!("inverse k=3 context build failed: {err:?}"))
+                })?;
+            apply_bistellar_flip_dynamic(&mut tds, ridge_vertex_count, &context_back)
+                .map_err(|err| TestCaseError::fail(format!("inverse k=3 flip failed: {err:?}")))?;
+        }
+
+        tds.is_valid()
+            .map_err(|err| TestCaseError::fail(format!("post inverse k=3 TDS invalid: {err:?}")))?;
+        let after = snapshot_topology(&tds);
+        prop_assert_eq!(after.vertices, before.vertices);
+        prop_assert_eq!(after.cell_vertices, before.cell_vertices);
+        Ok(())
+    }
+
+    macro_rules! gen_bistellar_k2_roundtrip_properties {
+        ($($dim:literal),+ $(,)?) => {
+            pastey::paste! {
+                $(
+                    proptest! {
+                        #![proptest_config(ProptestConfig::with_cases(16))]
+
+                        #[test]
+                        fn [<prop_bistellar_k2_roundtrip_ $dim d>](
+                            offset in -2.0_f64..2.0,
+                            scale in 0.5_f64..2.0,
+                        ) {
+                            prop_bistellar_k2_roundtrip_for_dim::<$dim>(offset, scale)?;
+                        }
+                    }
+                )+
+            }
+        };
+    }
+
+    macro_rules! gen_bistellar_k3_roundtrip_properties {
+        ($($dim:literal),+ $(,)?) => {
+            pastey::paste! {
+                $(
+                    proptest! {
+                        #![proptest_config(ProptestConfig::with_cases(16))]
+
+                        #[test]
+                        fn [<prop_bistellar_k3_roundtrip_ $dim d>](
+                            offset in -2.0_f64..2.0,
+                            scale in 0.5_f64..2.0,
+                        ) {
+                            prop_bistellar_k3_roundtrip_for_dim::<$dim>(offset, scale)?;
+                        }
+                    }
+                )+
+            }
+        };
+    }
+
+    gen_bistellar_k2_roundtrip_properties!(2, 3, 4, 5);
+    gen_bistellar_k3_roundtrip_properties!(3, 4, 5);
 
     macro_rules! test_bistellar_roundtrip_dimension {
         ($dim:literal) => {

@@ -3,6 +3,7 @@
 //! This module uses proptest to verify fundamental geometric properties including:
 //! - Circumcenter equidistance (all simplex vertices equidistant from circumcenter)
 //! - Circumradius consistency (distance from circumcenter to any vertex)
+//! - Circumradius agreement between direct and precomputed-center code paths
 //! - Volume positivity for non-degenerate simplices
 //! - Distance and norm properties (triangle inequality, scaling, non-negativity)
 //! - Inradius positivity for non-degenerate simplices
@@ -21,8 +22,30 @@ fn finite_coordinate() -> impl Strategy<Value = f64> {
     (-100.0..100.0).prop_filter("must be finite", |x: &f64| x.is_finite())
 }
 
+fn well_conditioned_edge_length() -> impl Strategy<Value = f64> {
+    (0.25_f64..50.0).prop_filter("must be finite and positive", |x: &f64| {
+        x.is_finite() && *x > 0.0
+    })
+}
+
 fn nonzero_scale() -> impl Strategy<Value = f64> {
     (-90.0_f64..90.0).prop_map(|exponent| 10.0_f64.powf(exponent))
+}
+
+fn axis_aligned_simplex<const D: usize>(
+    base: [f64; D],
+    side_lengths: [f64; D],
+) -> Vec<Point<f64, D>> {
+    let mut simplex = Vec::with_capacity(D + 1);
+    simplex.push(Point::new(base));
+
+    for (axis, side_length) in side_lengths.iter().copied().enumerate() {
+        let mut coords = base;
+        coords[axis] += side_length;
+        simplex.push(Point::new(coords));
+    }
+
+    simplex
 }
 
 fn prop_assert_relative_close(actual: f64, expected: f64) -> Result<(), TestCaseError> {
@@ -92,6 +115,39 @@ macro_rules! test_geometry_properties {
                             prop_assert!((dist - radius).abs() < 1e-6 * radius.max(1.0));
                         }
                     }
+                }
+
+                /// Property: Circumradius agrees between direct and precomputed-center paths
+                #[test]
+                fn [<prop_circumradius_agrees_with_precomputed_center_ $dim d>](
+                    base in prop::array::[<uniform $dim>](finite_coordinate()),
+                    side_lengths in prop::array::[<uniform $dim>](well_conditioned_edge_length())
+                ) {
+                    let simplex = axis_aligned_simplex::<$dim>(base, side_lengths);
+                    let center = circumcenter(&simplex).map_err(|err| {
+                        TestCaseError::fail(format!(
+                            "{dim}D axis-aligned simplex should have a circumcenter: {err:?}",
+                            dim = $dim,
+                        ))
+                    })?;
+                    let direct = circumradius(&simplex).map_err(|err| {
+                        TestCaseError::fail(format!(
+                            "{dim}D axis-aligned simplex should have a direct circumradius: {err:?}",
+                            dim = $dim,
+                        ))
+                    })?;
+                    let with_center = circumradius_with_center(&simplex, &center).map_err(|err| {
+                        TestCaseError::fail(format!(
+                            "{dim}D axis-aligned simplex should have a circumradius from center: {err:?}",
+                            dim = $dim,
+                        ))
+                    })?;
+
+                    prop_assert!(direct.is_finite(), "direct radius must be finite");
+                    prop_assert!(with_center.is_finite(), "precomputed-center radius must be finite");
+                    prop_assert!(direct > 0.0, "direct radius must be positive");
+                    prop_assert!(with_center > 0.0, "precomputed-center radius must be positive");
+                    prop_assert_relative_close(with_center, direct)?;
                 }
 
                 /// Property: Volume of non-degenerate simplex is positive

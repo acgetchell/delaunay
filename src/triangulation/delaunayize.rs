@@ -51,6 +51,8 @@ pub use crate::core::algorithms::pl_manifold_repair::{
 pub use crate::core::cell::CellValidationError;
 pub use crate::triangulation::delaunay::DelaunayTriangulationConstructionError;
 
+#[cfg(test)]
+use crate::core::algorithms::flips::{DelaunayRepairDiagnostics, RepairQueueOrder};
 use crate::core::algorithms::pl_manifold_repair::{
     PlManifoldRepairConfig, repair_facet_oversharing,
 };
@@ -63,6 +65,54 @@ use crate::geometry::kernel::{ExactPredicates, Kernel};
 use crate::geometry::traits::coordinate::CoordinateScalar;
 use crate::triangulation::delaunay::{DelaunayRepairHeuristicConfig, DelaunayTriangulation};
 use thiserror::Error;
+
+#[cfg(test)]
+mod test_hooks {
+    use super::*;
+    use std::cell::Cell as ThreadCell;
+
+    thread_local! {
+        static FORCE_DELAUNAY_REPAIR_FAILURE: ThreadCell<bool> = const { ThreadCell::new(false) };
+    }
+
+    /// Enables or disables a synthetic Delaunay repair failure for branch tests.
+    pub(super) fn set_force_delaunay_repair_failure(enabled: bool) -> bool {
+        FORCE_DELAUNAY_REPAIR_FAILURE.with(|flag| {
+            let prior = flag.get();
+            flag.set(enabled);
+            prior
+        })
+    }
+
+    /// Restores the previous synthetic Delaunay repair failure state.
+    pub(super) fn restore_force_delaunay_repair_failure(prior: bool) {
+        FORCE_DELAUNAY_REPAIR_FAILURE.with(|flag| flag.set(prior));
+    }
+
+    /// Reports whether synthetic Delaunay repair failure is enabled.
+    pub(super) fn force_delaunay_repair_failure_enabled() -> bool {
+        FORCE_DELAUNAY_REPAIR_FAILURE.with(ThreadCell::get)
+    }
+
+    /// Builds the synthetic non-convergence error used by fallback branch tests.
+    pub(super) fn synthetic_repair_error() -> DelaunayRepairError {
+        DelaunayRepairError::NonConvergent {
+            max_flips: 0,
+            diagnostics: Box::new(DelaunayRepairDiagnostics {
+                facets_checked: 1,
+                flips_performed: 0,
+                max_queue_len: 1,
+                ambiguous_predicates: 0,
+                ambiguous_predicate_samples: Vec::new(),
+                predicate_failures: 0,
+                cycle_detections: 0,
+                cycle_signature_samples: Vec::new(),
+                attempt: 1,
+                queue_order: RepairQueueOrder::Fifo,
+            }),
+        }
+    }
+}
 
 // =============================================================================
 // CONFIGURATION
@@ -476,6 +526,27 @@ where
     Ok(rebuilt)
 }
 
+/// Runs the configured Delaunay repair strategy for the delaunayize workflow.
+fn run_configured_delaunay_repair<K, U, V, const D: usize>(
+    dt: &mut DelaunayTriangulation<K, U, V, D>,
+    config: DelaunayizeConfig,
+) -> Result<DelaunayRepairStats, DelaunayRepairError>
+where
+    K: Kernel<D> + ExactPredicates,
+    U: DataType,
+    V: DataType,
+{
+    if let Some(max_flips) = config.delaunay_max_flips {
+        dt.repair_delaunay_with_flips_advanced(DelaunayRepairHeuristicConfig {
+            max_flips: Some(max_flips),
+            ..DelaunayRepairHeuristicConfig::default()
+        })
+        .map(|outcome| outcome.stats)
+    } else {
+        dt.repair_delaunay_with_flips()
+    }
+}
+
 // =============================================================================
 // PUBLIC API
 // =============================================================================
@@ -580,15 +651,14 @@ where
     };
 
     // Step 2: Flip-based Delaunay repair.
-    let delaunay_result = if let Some(max_flips) = config.delaunay_max_flips {
-        dt.repair_delaunay_with_flips_advanced(DelaunayRepairHeuristicConfig {
-            max_flips: Some(max_flips),
-            ..DelaunayRepairHeuristicConfig::default()
-        })
-        .map(|outcome| outcome.stats)
+    #[cfg(test)]
+    let delaunay_result = if test_hooks::force_delaunay_repair_failure_enabled() {
+        Err(test_hooks::synthetic_repair_error())
     } else {
-        dt.repair_delaunay_with_flips()
+        run_configured_delaunay_repair(dt, config)
     };
+    #[cfg(not(test))]
+    let delaunay_result = run_configured_delaunay_repair(dt, config);
 
     match delaunay_result {
         Ok(delaunay_stats) => Ok(DelaunayizeOutcome {
@@ -639,6 +709,8 @@ mod tests {
     use super::*;
     use crate::core::{tds::VertexKey, triangulation::TriangulationConstructionError};
     use crate::geometry::kernel::AdaptiveKernel;
+    use crate::geometry::point::Point;
+    use crate::geometry::traits::coordinate::Coordinate;
     use crate::triangulation::builder::DelaunayTriangulationBuilder;
     use crate::vertex;
     use slotmap::KeyData;
@@ -658,6 +730,74 @@ mod tests {
                 message: "synthetic rebuild degeneracy".to_string(),
             },
         )
+    }
+
+    /// Builds the canonical D-simplex vertex set used by fallback rebuild tests.
+    fn unit_simplex_vertices<const D: usize>() -> Vec<Vertex<f64, (), D>> {
+        let mut points = Vec::with_capacity(D + 1);
+        points.push(Point::new([0.0; D]));
+        for axis in 0..D {
+            let mut coords = [0.0; D];
+            coords[axis] = 1.0;
+            points.push(Point::new(coords));
+        }
+        Vertex::from_points(&points)
+    }
+
+    /// Forces topology repair to fail on duplicate cells, then checks fallback rebuild.
+    fn assert_topology_repair_fallback_rebuilds_duplicate_simplex<const D: usize>() {
+        init_tracing();
+        let vertices = unit_simplex_vertices::<D>();
+        let mut dt: DelaunayTriangulation<_, (), (), D> =
+            DelaunayTriangulation::new(&vertices).unwrap();
+
+        let (_, existing_cell) = dt.cells().next().unwrap();
+        let duplicate_vertices = existing_cell.vertices().to_vec();
+        dt.tri
+            .tds
+            .insert_cell_with_mapping(Cell::new(duplicate_vertices.clone(), None).unwrap())
+            .unwrap();
+        dt.tri
+            .tds
+            .insert_cell_with_mapping(Cell::new(duplicate_vertices, None).unwrap())
+            .unwrap();
+
+        let outcome = delaunayize_by_flips(
+            &mut dt,
+            DelaunayizeConfig {
+                topology_max_cells_removed: 0,
+                fallback_rebuild: true,
+                ..DelaunayizeConfig::default()
+            },
+        )
+        .unwrap();
+
+        assert!(outcome.used_fallback_rebuild);
+        assert!(
+            !outcome.topology_repair.succeeded,
+            "fallback rebuild should not mark the failed topology repair as succeeded"
+        );
+        assert_eq!(dt.number_of_vertices(), vertices.len());
+        assert!(dt.validate().is_ok());
+    }
+
+    struct ForceDelaunayRepairFailureGuard {
+        prior: bool,
+    }
+
+    impl ForceDelaunayRepairFailureGuard {
+        /// Enables synthetic Delaunay repair failure until the guard is dropped.
+        fn enable() -> Self {
+            Self {
+                prior: test_hooks::set_force_delaunay_repair_failure(true),
+            }
+        }
+    }
+
+    impl Drop for ForceDelaunayRepairFailureGuard {
+        fn drop(&mut self) {
+            test_hooks::restore_force_delaunay_repair_failure(self.prior);
+        }
     }
 
     // =============================================================================
@@ -992,44 +1132,78 @@ mod tests {
     }
 
     #[test]
-    fn topology_repair_fallback_stats_failed() {
+    fn delaunay_repair_fallback_rebuilds_after_unsupported_dimension() {
         init_tracing();
-        let vertices = [
-            vertex!([0.0, 0.0]),
-            vertex!([1.0, 0.0]),
-            vertex!([0.0, 1.0]),
-        ];
-        let mut dt: DelaunayTriangulation<_, (), (), 2> =
+        let vertices = [vertex!([0.0]), vertex!([1.0])];
+        let mut dt: DelaunayTriangulation<_, (), (), 1> =
             DelaunayTriangulation::new(&vertices).unwrap();
-
-        let (_, existing_cell) = dt.cells().next().unwrap();
-        let duplicate_vertices = existing_cell.vertices().to_vec();
-        dt.tri
-            .tds
-            .insert_cell_with_mapping(Cell::new(duplicate_vertices.clone(), None).unwrap())
-            .unwrap();
-        dt.tri
-            .tds
-            .insert_cell_with_mapping(Cell::new(duplicate_vertices, None).unwrap())
-            .unwrap();
 
         let outcome = delaunayize_by_flips(
             &mut dt,
             DelaunayizeConfig {
-                topology_max_cells_removed: 0,
                 fallback_rebuild: true,
                 ..DelaunayizeConfig::default()
             },
         )
         .unwrap();
 
+        assert!(outcome.topology_repair.succeeded);
+        assert_eq!(outcome.topology_repair.cells_removed, 0);
+        assert_eq!(outcome.delaunay_repair.facets_checked, 0);
+        assert_eq!(outcome.delaunay_repair.flips_performed, 0);
+        assert_eq!(outcome.delaunay_repair.max_queue_len, 0);
         assert!(outcome.used_fallback_rebuild);
-        assert!(
-            !outcome.topology_repair.succeeded,
-            "fallback rebuild should not mark the failed topology repair as succeeded"
-        );
+        assert_eq!(dt.number_of_vertices(), vertices.len());
+        assert!(dt.tds().is_valid().is_ok());
+    }
+
+    #[test]
+    fn delaunay_repair_fallback_rebuilds_supported_2d_after_repair_failure() {
+        init_tracing();
+        let vertices = [
+            vertex!([0.0, 0.0]),
+            vertex!([1.0, 0.0]),
+            vertex!([0.0, 1.0]),
+            vertex!([1.0, 1.0]),
+        ];
+        let mut dt: DelaunayTriangulation<_, (), (), 2> =
+            DelaunayTriangulation::new(&vertices).unwrap();
+
+        let _guard = ForceDelaunayRepairFailureGuard::enable();
+        let outcome = delaunayize_by_flips(
+            &mut dt,
+            DelaunayizeConfig {
+                fallback_rebuild: true,
+                ..DelaunayizeConfig::default()
+            },
+        )
+        .unwrap();
+
+        assert!(outcome.topology_repair.succeeded);
+        assert!(outcome.used_fallback_rebuild);
+        assert_eq!(dt.number_of_vertices(), vertices.len());
         assert!(dt.validate().is_ok());
     }
+
+    #[test]
+    fn topology_repair_fallback_stats_failed() {
+        assert_topology_repair_fallback_rebuilds_duplicate_simplex::<2>();
+    }
+
+    macro_rules! gen_topology_repair_fallback_tests {
+        ($($dim:literal),* $(,)?) => {
+            pastey::paste! {
+                $(
+                    #[test]
+                    fn [<topology_repair_fallback_rebuilds_duplicate_simplex_ $dim d>]() {
+                        assert_topology_repair_fallback_rebuilds_duplicate_simplex::<$dim>();
+                    }
+                )*
+            }
+        };
+    }
+
+    gen_topology_repair_fallback_tests!(3, 4, 5);
 
     #[test]
     fn test_rebuild_restores_cell_data() {
