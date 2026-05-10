@@ -50,8 +50,8 @@
 //! DELAUNAY_LARGE_DEBUG_ALLOW_SKIPS=1 \
 //! # Skip the final flip-based repair pass (faster, but may leave Delaunay violations)
 //! DELAUNAY_LARGE_DEBUG_SKIP_FINAL_REPAIR=1 \
-//! # Run bounded flip repair every N successful insertions (0 disables; default: 4)
-//! DELAUNAY_LARGE_DEBUG_REPAIR_EVERY=4 \
+//! # Run bounded flip repair every N successful insertions (0 disables; default: 2)
+//! DELAUNAY_LARGE_DEBUG_REPAIR_EVERY=2 \
 //! # Optional: trace cadenced local-repair seed counts, flips, queues, and elapsed time
 //! DELAUNAY_BATCH_REPAIR_TRACE=1 \
 //! # Hard wall-clock cap in seconds before the harness aborts (0 = no cap; default: 600)
@@ -743,6 +743,41 @@ fn print_local_repair_frontier_telemetry(telemetry: &ConstructionTelemetry) {
     );
 }
 
+fn print_construction_phase_telemetry(telemetry: &ConstructionTelemetry) {
+    let outer_total_nanos = telemetry
+        .construction_preprocessing_nanos
+        .saturating_add(telemetry.construction_insert_loop_nanos)
+        .saturating_add(telemetry.construction_finalize_nanos)
+        .saturating_add(telemetry.construction_final_delaunay_validation_nanos);
+    if outer_total_nanos == 0 {
+        return;
+    }
+
+    println!(
+        "    construction_phases: preprocessing_ms={} insert_loop_ms={} finalize_ms={} final_delaunay_validation_ms={} outer_total_ms={}",
+        format_nanos_as_ms(telemetry.construction_preprocessing_nanos),
+        format_nanos_as_ms(telemetry.construction_insert_loop_nanos),
+        format_nanos_as_ms(telemetry.construction_finalize_nanos),
+        format_nanos_as_ms(telemetry.construction_final_delaunay_validation_nanos),
+        format_nanos_as_ms(outer_total_nanos)
+    );
+
+    let finalize_breakdown_nanos = telemetry
+        .construction_completion_repair_nanos
+        .saturating_add(telemetry.construction_orientation_nanos)
+        .saturating_add(telemetry.construction_topology_validation_nanos);
+    if finalize_breakdown_nanos == 0 {
+        return;
+    }
+
+    println!(
+        "    finalize_breakdown: completion_repair_ms={} orientation_ms={} topology_validation_ms={}",
+        format_nanos_as_ms(telemetry.construction_completion_repair_nanos),
+        format_nanos_as_ms(telemetry.construction_orientation_nanos),
+        format_nanos_as_ms(telemetry.construction_topology_validation_nanos)
+    );
+}
+
 fn print_construction_telemetry(telemetry: &ConstructionTelemetry) {
     if !telemetry.has_data() {
         return;
@@ -750,6 +785,7 @@ fn print_construction_telemetry(telemetry: &ConstructionTelemetry) {
 
     println!();
     println!("  insertion telemetry:");
+    print_construction_phase_telemetry(telemetry);
     print_timing_summary(
         "insertion_wall",
         telemetry.insertion_wall_time_calls,
@@ -958,7 +994,7 @@ fn debug_large_case<const D: usize>(dimension_name: &str, default_n_points: usiz
     // - 0 disables incremental repair
     // - 1 runs repair after every insertion
     // - N>1 runs repair after every N successful insertions
-    let repair_every = env_usize("DELAUNAY_LARGE_DEBUG_REPAIR_EVERY").unwrap_or(4);
+    let repair_every = env_usize("DELAUNAY_LARGE_DEBUG_REPAIR_EVERY").unwrap_or(2);
     let repair_policy = repair_policy_from_repair_every(repair_every);
     let repair_max_flips = env_usize("DELAUNAY_LARGE_DEBUG_REPAIR_MAX_FLIPS");
     let validate_every = env_usize("DELAUNAY_LARGE_DEBUG_VALIDATE_EVERY").or_else(|| {

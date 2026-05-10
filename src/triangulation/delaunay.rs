@@ -1054,6 +1054,21 @@ pub struct ConstructionTelemetry {
     /// Maximum wall-clock nanoseconds spent in one transactional insertion call.
     pub insertion_wall_time_nanos_max: u64,
 
+    /// Wall-clock nanoseconds spent preprocessing vertices before topology construction.
+    pub construction_preprocessing_nanos: u64,
+    /// Wall-clock nanoseconds spent in the bulk insertion loop, including cadenced local repair.
+    pub construction_insert_loop_nanos: u64,
+    /// Wall-clock nanoseconds spent finalizing bulk construction after the insertion loop.
+    pub construction_finalize_nanos: u64,
+    /// Wall-clock nanoseconds spent in the seeded completion repair during finalization.
+    pub construction_completion_repair_nanos: u64,
+    /// Wall-clock nanoseconds spent canonicalizing orientation during finalization.
+    pub construction_orientation_nanos: u64,
+    /// Wall-clock nanoseconds spent in final topology validation during finalization.
+    pub construction_topology_validation_nanos: u64,
+    /// Wall-clock nanoseconds spent in the final global Delaunay validation pass.
+    pub construction_final_delaunay_validation_nanos: u64,
+
     /// Number of point-location calls performed during construction.
     pub locate_calls: usize,
     /// Total facet-walk steps across all point-location calls.
@@ -1147,6 +1162,13 @@ impl ConstructionTelemetry {
     pub const fn has_data(&self) -> bool {
         self.insertion_wall_time_calls > 0
             || self.insertion_wall_time_nanos > 0
+            || self.construction_preprocessing_nanos > 0
+            || self.construction_insert_loop_nanos > 0
+            || self.construction_finalize_nanos > 0
+            || self.construction_completion_repair_nanos > 0
+            || self.construction_orientation_nanos > 0
+            || self.construction_topology_validation_nanos > 0
+            || self.construction_final_delaunay_validation_nanos > 0
             || self.locate_calls > 0
             || self.conflict_region_calls > 0
             || self.cavity_insertion_calls > 0
@@ -1164,6 +1186,58 @@ impl ConstructionTelemetry {
         self.insertion_wall_time_nanos =
             self.insertion_wall_time_nanos.saturating_add(elapsed_nanos);
         self.insertion_wall_time_nanos_max = self.insertion_wall_time_nanos_max.max(elapsed_nanos);
+    }
+
+    /// Records the wall-clock duration of construction preprocessing.
+    pub(crate) const fn record_construction_preprocessing_timing(&mut self, elapsed_nanos: u64) {
+        self.construction_preprocessing_nanos = self
+            .construction_preprocessing_nanos
+            .saturating_add(elapsed_nanos);
+    }
+
+    /// Records the wall-clock duration of the bulk insertion loop.
+    pub(crate) const fn record_construction_insert_loop_timing(&mut self, elapsed_nanos: u64) {
+        self.construction_insert_loop_nanos = self
+            .construction_insert_loop_nanos
+            .saturating_add(elapsed_nanos);
+    }
+
+    /// Records the wall-clock duration of bulk-construction finalization.
+    pub(crate) const fn record_construction_finalize_timing(&mut self, elapsed_nanos: u64) {
+        self.construction_finalize_nanos = self
+            .construction_finalize_nanos
+            .saturating_add(elapsed_nanos);
+    }
+
+    /// Records the wall-clock duration of seeded completion repair.
+    const fn record_construction_completion_repair_timing(&mut self, elapsed_nanos: u64) {
+        self.construction_completion_repair_nanos = self
+            .construction_completion_repair_nanos
+            .saturating_add(elapsed_nanos);
+    }
+
+    /// Records the wall-clock duration of orientation canonicalization.
+    const fn record_construction_orientation_timing(&mut self, elapsed_nanos: u64) {
+        self.construction_orientation_nanos = self
+            .construction_orientation_nanos
+            .saturating_add(elapsed_nanos);
+    }
+
+    /// Records the wall-clock duration of final topology validation.
+    const fn record_construction_topology_validation_timing(&mut self, elapsed_nanos: u64) {
+        self.construction_topology_validation_nanos = self
+            .construction_topology_validation_nanos
+            .saturating_add(elapsed_nanos);
+    }
+
+    /// Records the wall-clock duration of final global Delaunay validation.
+    pub(crate) const fn record_construction_final_delaunay_validation_timing(
+        &mut self,
+        elapsed_nanos: u64,
+    ) {
+        self.construction_final_delaunay_validation_nanos = self
+            .construction_final_delaunay_validation_nanos
+            .saturating_add(elapsed_nanos);
     }
 
     /// Records the wall-clock duration of one batch local repair call.
@@ -1311,6 +1385,8 @@ impl ConstructionTelemetry {
             .insertion_wall_time_nanos_max
             .max(other.insertion_wall_time_nanos_max);
 
+        self.merge_construction_phase_timings_from(other);
+
         self.locate_calls = self.locate_calls.saturating_add(other.locate_calls);
         self.locate_walk_steps_total = self
             .locate_walk_steps_total
@@ -1391,6 +1467,31 @@ impl ConstructionTelemetry {
         self.global_conflict_scan_nanos = self
             .global_conflict_scan_nanos
             .saturating_add(other.global_conflict_scan_nanos);
+    }
+
+    /// Keeps construction-phase merge accounting isolated so aggregate merges stay readable.
+    const fn merge_construction_phase_timings_from(&mut self, other: &Self) {
+        self.construction_preprocessing_nanos = self
+            .construction_preprocessing_nanos
+            .saturating_add(other.construction_preprocessing_nanos);
+        self.construction_insert_loop_nanos = self
+            .construction_insert_loop_nanos
+            .saturating_add(other.construction_insert_loop_nanos);
+        self.construction_finalize_nanos = self
+            .construction_finalize_nanos
+            .saturating_add(other.construction_finalize_nanos);
+        self.construction_completion_repair_nanos = self
+            .construction_completion_repair_nanos
+            .saturating_add(other.construction_completion_repair_nanos);
+        self.construction_orientation_nanos = self
+            .construction_orientation_nanos
+            .saturating_add(other.construction_orientation_nanos);
+        self.construction_topology_validation_nanos = self
+            .construction_topology_validation_nanos
+            .saturating_add(other.construction_topology_validation_nanos);
+        self.construction_final_delaunay_validation_nanos = self
+            .construction_final_delaunay_validation_nanos
+            .saturating_add(other.construction_final_delaunay_validation_nanos);
     }
 
     /// Keeps local-repair merge accounting isolated so the aggregate merge stays readable.
@@ -3286,6 +3387,10 @@ where
         clippy::result_large_err,
         reason = "Public API intentionally returns by-value construction statistics for compatibility"
     )]
+    #[expect(
+        clippy::too_many_lines,
+        reason = "Statistics constructor handles preprocessing, retry, and fallback aggregation"
+    )]
     pub fn with_options_and_statistics(
         kernel: &K,
         vertices: &[Vertex<K::Scalar, U, D>],
@@ -3302,18 +3407,28 @@ where
             use_global_repair_fallback,
         } = options;
 
-        let preprocessed = Self::preprocess_vertices_for_construction(
+        let preprocessing_started = Instant::now();
+        let preprocessed = match Self::preprocess_vertices_for_construction(
             vertices,
             dedup_policy,
             insertion_order,
             initial_simplex,
-        )
-        .map_err(
-            |error| DelaunayTriangulationConstructionErrorWithStatistics {
-                error,
-                statistics: ConstructionStatistics::default(),
-            },
-        )?;
+        ) {
+            Ok(preprocessed) => preprocessed,
+            Err(error) => {
+                let mut statistics = ConstructionStatistics::default();
+                statistics
+                    .telemetry
+                    .record_construction_preprocessing_timing(duration_nanos_saturating(
+                        preprocessing_started.elapsed(),
+                    ));
+                return Err(DelaunayTriangulationConstructionErrorWithStatistics {
+                    error,
+                    statistics,
+                });
+            }
+        };
+        let preprocessing_nanos = duration_nanos_saturating(preprocessing_started.elapsed());
         let grid_cell_size = preprocessed.grid_cell_size();
         let primary_vertices: &[Vertex<K::Scalar, U, D>] = preprocessed.primary_slice(vertices);
         let fallback_vertices = preprocessed.fallback_slice();
@@ -3370,9 +3485,18 @@ where
         };
 
         match build_with_vertices(primary_vertices) {
-            Ok(result) => Ok(result),
-            Err(primary_err) => {
+            Ok((dt, mut stats)) => {
+                stats
+                    .telemetry
+                    .record_construction_preprocessing_timing(preprocessing_nanos);
+                Ok((dt, stats))
+            }
+            Err(mut primary_err) => {
                 let Some(fallback) = fallback_vertices else {
+                    primary_err
+                        .statistics
+                        .telemetry
+                        .record_construction_preprocessing_timing(preprocessing_nanos);
                     return Err(primary_err);
                 };
 
@@ -3380,11 +3504,17 @@ where
                     Ok((dt, stats)) => {
                         let mut aggregate = primary_err.statistics;
                         aggregate.merge_from(&stats);
+                        aggregate
+                            .telemetry
+                            .record_construction_preprocessing_timing(preprocessing_nanos);
                         Ok((dt, aggregate))
                     }
                     Err(fallback_err) => {
                         let mut aggregate = primary_err.statistics;
                         aggregate.merge_from(&fallback_err.statistics);
+                        aggregate
+                            .telemetry
+                            .record_construction_preprocessing_timing(preprocessing_nanos);
                         Err(DelaunayTriangulationConstructionErrorWithStatistics {
                             error: fallback_err.error,
                             statistics: aggregate,
@@ -3567,7 +3697,7 @@ where
             batch_repair_policy,
             use_global_repair_fallback,
         ) {
-            Ok(candidate) => match is_delaunay_property_only(&candidate.tri.tds) {
+            Ok(candidate) => match candidate.is_delaunay_via_flips() {
                 Ok(()) => {
                     log_construction_retry_result(0, None, 0_u64, "succeeded", None, None);
                     return Ok(candidate);
@@ -3638,7 +3768,7 @@ where
                 batch_repair_policy,
                 use_global_repair_fallback,
             ) {
-                Ok(candidate) => match is_delaunay_property_only(&candidate.tri.tds) {
+                Ok(candidate) => match candidate.is_delaunay_via_flips() {
                     Ok(()) => {
                         log_construction_retry_result(
                             attempt,
@@ -3758,25 +3888,34 @@ where
                 batch_repair_policy,
                 use_global_repair_fallback,
             ) {
-                Ok((candidate, stats)) => match is_delaunay_property_only(&candidate.tri.tds) {
-                    Ok(()) => {
-                        aggregate_stats.merge_from(&stats);
-                        log_construction_retry_result(
-                            0,
-                            None,
-                            0_u64,
-                            "succeeded",
-                            None,
-                            Some(&stats),
+                Ok((candidate, mut stats)) => {
+                    let delaunay_started = Instant::now();
+                    let delaunay_result = candidate.is_delaunay_via_flips();
+                    stats
+                        .telemetry
+                        .record_construction_final_delaunay_validation_timing(
+                            duration_nanos_saturating(delaunay_started.elapsed()),
                         );
-                        return Ok((candidate, aggregate_stats));
+                    match delaunay_result {
+                        Ok(()) => {
+                            aggregate_stats.merge_from(&stats);
+                            log_construction_retry_result(
+                                0,
+                                None,
+                                0_u64,
+                                "succeeded",
+                                None,
+                                Some(&stats),
+                            );
+                            return Ok((candidate, aggregate_stats));
+                        }
+                        Err(err) => {
+                            aggregate_stats.merge_from(&stats);
+                            last_stats.replace(stats);
+                            format!("Delaunay property violated after construction: {err}")
+                        }
                     }
-                    Err(err) => {
-                        aggregate_stats.merge_from(&stats);
-                        last_stats.replace(stats);
-                        format!("Delaunay property violated after construction: {err}")
-                    }
-                },
+                }
                 Err(err) => {
                     let DelaunayTriangulationConstructionErrorWithStatistics { error, statistics } =
                         err;
@@ -3855,26 +3994,35 @@ where
                 batch_repair_policy,
                 use_global_repair_fallback,
             ) {
-                Ok((candidate, stats)) => match is_delaunay_property_only(&candidate.tri.tds) {
-                    Ok(()) => {
-                        aggregate_stats.merge_from(&stats);
-                        log_construction_retry_result(
-                            attempt,
-                            Some(attempt_seed),
-                            perturbation_seed,
-                            "succeeded",
-                            None,
-                            Some(&stats),
+                Ok((candidate, mut stats)) => {
+                    let delaunay_started = Instant::now();
+                    let delaunay_result = candidate.is_delaunay_via_flips();
+                    stats
+                        .telemetry
+                        .record_construction_final_delaunay_validation_timing(
+                            duration_nanos_saturating(delaunay_started.elapsed()),
                         );
-                        return Ok((candidate, aggregate_stats));
+                    match delaunay_result {
+                        Ok(()) => {
+                            aggregate_stats.merge_from(&stats);
+                            log_construction_retry_result(
+                                attempt,
+                                Some(attempt_seed),
+                                perturbation_seed,
+                                "succeeded",
+                                None,
+                                Some(&stats),
+                            );
+                            return Ok((candidate, aggregate_stats));
+                        }
+                        Err(err) => {
+                            aggregate_stats.merge_from(&stats);
+                            last_stats.replace(stats);
+                            last_error =
+                                format!("Delaunay property violated after construction: {err}");
+                        }
                     }
-                    Err(err) => {
-                        aggregate_stats.merge_from(&stats);
-                        last_stats.replace(stats);
-                        last_error =
-                            format!("Delaunay property violated after construction: {err}");
-                    }
-                },
+                }
                 Err(err) => {
                     let DelaunayTriangulationConstructionErrorWithStatistics { error, statistics } =
                         err;
@@ -4010,7 +4158,7 @@ where
         use_global_repair_fallback: bool,
     ) -> Result<(Self, ConstructionStatistics), DelaunayTriangulationConstructionErrorWithStatistics>
     {
-        let (dt, stats) = Self::build_with_kernel_inner_seeded_with_construction_statistics(
+        let (dt, mut stats) = Self::build_with_kernel_inner_seeded_with_construction_statistics(
             kernel,
             vertices,
             topology_guarantee,
@@ -4026,8 +4174,14 @@ where
         tracing::debug!("post-construction: starting Delaunay validation (build stats)");
         let delaunay_started = Instant::now();
         let delaunay_result = dt.is_valid();
+        let delaunay_elapsed = delaunay_started.elapsed();
+        stats
+            .telemetry
+            .record_construction_final_delaunay_validation_timing(duration_nanos_saturating(
+                delaunay_elapsed,
+            ));
         tracing::debug!(
-            elapsed = ?delaunay_started.elapsed(),
+            elapsed = ?delaunay_elapsed,
             success = delaunay_result.is_ok(),
             "post-construction: Delaunay validation (build stats) completed"
         );
@@ -4146,7 +4300,8 @@ where
 
         let mut soft_fail_seeds: Vec<CellKey> = Vec::new();
         let mut pending_repair_seeds: Vec<CellKey> = Vec::new();
-        if let Err(error) = dt.insert_remaining_vertices_seeded(
+        let insert_loop_started = Instant::now();
+        let insert_result = dt.insert_remaining_vertices_seeded(
             vertices,
             perturbation_seed,
             grid_cell_size,
@@ -4154,21 +4309,35 @@ where
             Some(&mut stats),
             &mut pending_repair_seeds,
             &mut soft_fail_seeds,
-        ) {
+        );
+        stats
+            .telemetry
+            .record_construction_insert_loop_timing(duration_nanos_saturating(
+                insert_loop_started.elapsed(),
+            ));
+        if let Err(error) = insert_result {
             return Err(DelaunayTriangulationConstructionErrorWithStatistics {
                 error,
                 statistics: stats,
             });
         }
 
-        if let Err(error) = dt.finalize_bulk_construction(
+        let finalize_started = Instant::now();
+        let finalize_result = dt.finalize_bulk_construction(
             original_validation_policy,
             original_repair_policy,
             run_final_repair,
             batch_repair_policy,
             &pending_repair_seeds,
             &soft_fail_seeds,
-        ) {
+            Some(&mut stats.telemetry),
+        );
+        stats
+            .telemetry
+            .record_construction_finalize_timing(duration_nanos_saturating(
+                finalize_started.elapsed(),
+            ));
+        if let Err(error) = finalize_result {
             return Err(DelaunayTriangulationConstructionErrorWithStatistics {
                 error,
                 statistics: stats,
@@ -4263,6 +4432,7 @@ where
             batch_repair_policy,
             &pending_repair_seeds,
             &soft_fail_seeds,
+            None,
         )?;
 
         Ok(dt)
@@ -4874,6 +5044,10 @@ where
 
     /// Restores runtime policies and performs the final repair/orientation
     /// checks that were deferred during batch insertion.
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "bulk finalization restores policies, repair state, and optional statistics telemetry"
+    )]
     fn finalize_bulk_construction(
         &mut self,
         original_validation_policy: ValidationPolicy,
@@ -4882,6 +5056,7 @@ where
         batch_repair_policy: DelaunayRepairPolicy,
         pending_repair_seeds: &[CellKey],
         soft_fail_seeds: &[CellKey],
+        mut construction_telemetry: Option<&mut ConstructionTelemetry>,
     ) -> Result<(), DelaunayTriangulationConstructionError> {
         // Restore policies after batch construction.
         self.tri.validation_policy = original_validation_policy;
@@ -4900,23 +5075,44 @@ where
             && batch_repair_policy != DelaunayRepairPolicy::Never
             && !completion_seed_cells.is_empty()
         {
-            self.run_seeded_completion_repair(&completion_seed_cells)?;
+            let repair_started = Instant::now();
+            let repair_result = self.run_seeded_completion_repair(&completion_seed_cells);
+            if let Some(telemetry) = construction_telemetry.as_mut() {
+                telemetry.record_construction_completion_repair_timing(duration_nanos_saturating(
+                    repair_started.elapsed(),
+                ));
+            }
+            repair_result?;
         }
 
         // Flip-based repair calls normalize_coherent_orientation() which makes all cells
         // combinatorially coherent but can leave the global sign negative.  Re-canonicalize
         // geometric orientation to positive before validation (#258).
-        self.tri
+        let orientation_started = Instant::now();
+        let orientation_result = self
+            .tri
             .normalize_and_promote_positive_orientation()
-            .map_err(Self::map_orientation_canonicalization_error)?;
+            .map_err(Self::map_orientation_canonicalization_error);
+        if let Some(telemetry) = construction_telemetry.as_mut() {
+            telemetry.record_construction_orientation_timing(duration_nanos_saturating(
+                orientation_started.elapsed(),
+            ));
+        }
+        orientation_result?;
 
         let topology = self.tri.topology_guarantee();
         if topology.requires_vertex_links_at_completion() {
             tracing::debug!("post-construction: starting topology validation (finalize)");
             let validation_started = Instant::now();
             let validation_result = self.tri.validate();
+            let validation_elapsed = validation_started.elapsed();
+            if let Some(telemetry) = construction_telemetry.as_mut() {
+                telemetry.record_construction_topology_validation_timing(
+                    duration_nanos_saturating(validation_elapsed),
+                );
+            }
             tracing::debug!(
-                elapsed = ?validation_started.elapsed(),
+                elapsed = ?validation_elapsed,
                 success = validation_result.is_ok(),
                 "post-construction: topology validation (finalize) completed"
             );
@@ -8688,6 +8884,10 @@ mod tests {
     }
 
     #[test]
+    #[expect(
+        clippy::too_many_lines,
+        reason = "single-field telemetry regression covers every aggregate counter"
+    )]
     fn test_construction_statistics_record_insertion_tracks_telemetry() {
         init_tracing();
 
@@ -8731,11 +8931,50 @@ mod tests {
         summary
             .telemetry
             .record_repair_seed_accumulation(500_000, 7);
+        summary
+            .telemetry
+            .record_construction_preprocessing_timing(10_000);
+        summary
+            .telemetry
+            .record_construction_insert_loop_timing(20_000);
+        summary
+            .telemetry
+            .record_construction_finalize_timing(30_000);
+        summary
+            .telemetry
+            .record_construction_completion_repair_timing(40_000);
+        summary
+            .telemetry
+            .record_construction_orientation_timing(50_000);
+        summary
+            .telemetry
+            .record_construction_topology_validation_timing(60_000);
+        summary
+            .telemetry
+            .record_construction_final_delaunay_validation_timing(70_000);
 
         assert!(summary.telemetry.has_data());
         assert_eq!(summary.telemetry.insertion_wall_time_calls, 1);
         assert_eq!(summary.telemetry.insertion_wall_time_nanos, 1_000_000);
         assert_eq!(summary.telemetry.insertion_wall_time_nanos_max, 1_000_000);
+        assert_eq!(summary.telemetry.construction_preprocessing_nanos, 10_000);
+        assert_eq!(summary.telemetry.construction_insert_loop_nanos, 20_000);
+        assert_eq!(summary.telemetry.construction_finalize_nanos, 30_000);
+        assert_eq!(
+            summary.telemetry.construction_completion_repair_nanos,
+            40_000
+        );
+        assert_eq!(summary.telemetry.construction_orientation_nanos, 50_000);
+        assert_eq!(
+            summary.telemetry.construction_topology_validation_nanos,
+            60_000
+        );
+        assert_eq!(
+            summary
+                .telemetry
+                .construction_final_delaunay_validation_nanos,
+            70_000
+        );
         assert_eq!(summary.telemetry.locate_calls, 2);
         assert_eq!(summary.telemetry.locate_walk_steps_total, 9);
         assert_eq!(summary.telemetry.locate_walk_steps_max, 7);
@@ -8774,14 +9013,20 @@ mod tests {
         let mut left = ConstructionTelemetry::default();
         left.record_local_repair_timing(10);
         left.record_local_repair_frontier(5, BatchLocalRepairTrigger::Cadence);
+        left.record_construction_insert_loop_timing(100);
+        left.record_construction_final_delaunay_validation_timing(200);
 
         let mut right = ConstructionTelemetry::default();
         right.record_local_repair_timing(30);
         right.record_local_repair_frontier(11, BatchLocalRepairTrigger::SeedBacklog);
+        right.record_construction_insert_loop_timing(300);
+        right.record_construction_final_delaunay_validation_timing(400);
 
         left.merge_from(&right);
 
         assert!(left.has_data());
+        assert_eq!(left.construction_insert_loop_nanos, 400);
+        assert_eq!(left.construction_final_delaunay_validation_nanos, 600);
         assert_eq!(left.local_repair_calls, 2);
         assert_eq!(left.local_repair_nanos, 40);
         assert_eq!(left.local_repair_nanos_max, 30);

@@ -134,7 +134,7 @@ and release builds.
 | `DELAUNAY_LARGE_DEBUG_SHUFFLE_SEED` | **value** | Vertex shuffle seed |
 | `DELAUNAY_LARGE_DEBUG_PROGRESS_EVERY` | **value** | Progress logging interval |
 | `DELAUNAY_LARGE_DEBUG_VALIDATE_EVERY` | **value** | Validation interval |
-| `DELAUNAY_LARGE_DEBUG_REPAIR_EVERY` | **value** | Batch/incremental repair interval (default: 4) |
+| `DELAUNAY_LARGE_DEBUG_REPAIR_EVERY` | **value** | Batch/incremental repair interval (default: 2) |
 | `DELAUNAY_LARGE_DEBUG_REPAIR_MAX_FLIPS` | **value** | Flip budget override |
 | `DELAUNAY_LARGE_DEBUG_MAX_RUNTIME_SECS` | **value** | Timeout (0 = no cap) |
 | `DELAUNAY_LARGE_DEBUG_MAX_SKIP_PCT` | **value** | Maximum skipped-vertex percentage before failing (default: 5.0) |
