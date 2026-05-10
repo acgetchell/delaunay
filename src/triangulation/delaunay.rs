@@ -85,6 +85,8 @@ pub(crate) const LOCAL_REPAIR_FLIP_BUDGET_FACTOR_D_GE_4: usize = 12;
 pub(crate) const LOCAL_REPAIR_FLIP_BUDGET_FLOOR_D_GE_4: usize = 96;
 pub(crate) const LOCAL_REPAIR_FLIP_BUDGET_FACTOR_D_LT_4: usize = 4;
 pub(crate) const LOCAL_REPAIR_FLIP_BUDGET_FLOOR_D_LT_4: usize = 16;
+const LOCAL_REPAIR_SEED_BACKLOG_FACTOR_D_GE_4: usize = 24;
+const LOCAL_REPAIR_SEED_BACKLOG_FACTOR_D_LT_4: usize = 16;
 const RIDGE_LINK_REPAIR_VALIDATION_MESSAGE: &str = "Topology invalid after Delaunay repair";
 
 fn ridge_link_repair_validation_error(err: ManifoldError) -> InsertionError {
@@ -144,6 +146,55 @@ const fn local_repair_flip_budget<const D: usize>(seed_cells_len: usize) -> usiz
     };
     let raw = seed_cells_len.saturating_mul(D + 1).saturating_mul(factor);
     if raw > floor { raw } else { floor }
+}
+
+/// Pending local repair frontier size that triggers an early batch repair.
+///
+/// The threshold keeps sparse repair cadences from letting a large seed
+/// frontier accumulate. 3D uses a lower threshold because the 3000-point sweep
+/// in #341 showed that repair cost rises sharply once the pending frontier
+/// grows beyond the small-batch regime.
+const fn local_repair_seed_backlog_threshold<const D: usize>() -> usize {
+    let factor = if D >= 4 {
+        LOCAL_REPAIR_SEED_BACKLOG_FACTOR_D_GE_4
+    } else {
+        LOCAL_REPAIR_SEED_BACKLOG_FACTOR_D_LT_4
+    };
+    (D + 1).saturating_mul(factor)
+}
+
+/// Reason a batch local repair pass was scheduled.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum BatchLocalRepairTrigger {
+    /// The configured [`DelaunayRepairPolicy`] cadence fired.
+    Cadence,
+    /// The pending local seed frontier exceeded the adaptive backlog threshold.
+    SeedBacklog,
+}
+
+/// Decides whether batch construction should run local Delaunay repair now.
+fn batch_local_repair_trigger<const D: usize>(
+    policy: DelaunayRepairPolicy,
+    insertion_count: usize,
+    topology: TopologyGuarantee,
+    pending_seed_cells_len: usize,
+) -> Option<BatchLocalRepairTrigger> {
+    if policy == DelaunayRepairPolicy::Never
+        || pending_seed_cells_len == 0
+        || !TopologicalOperation::FacetFlip.is_admissible_under(topology)
+    {
+        return None;
+    }
+
+    if matches!(
+        policy.decide(insertion_count, topology, TopologicalOperation::FacetFlip,),
+        RepairDecision::Proceed
+    ) {
+        return Some(BatchLocalRepairTrigger::Cadence);
+    }
+
+    (pending_seed_cells_len >= local_repair_seed_backlog_threshold::<D>())
+        .then_some(BatchLocalRepairTrigger::SeedBacklog)
 }
 
 fn batch_repair_trace_enabled() -> bool {
@@ -922,7 +973,11 @@ impl ConstructionOptions {
         self.retry_policy
     }
 
-    /// Returns the local Delaunay repair cadence used during batch construction.
+    /// Returns the automatic local Delaunay repair policy used during batch construction.
+    ///
+    /// [`DelaunayRepairPolicy::EveryN`] controls the scheduled cadence. Batch
+    /// construction may also run an earlier local repair when the accumulated
+    /// seed frontier grows large; [`DelaunayRepairPolicy::Never`] disables both.
     #[must_use]
     pub const fn batch_repair_policy(&self) -> DelaunayRepairPolicy {
         self.batch_repair_policy
@@ -958,7 +1013,11 @@ impl ConstructionOptions {
         self
     }
 
-    /// Sets the local Delaunay repair cadence used during batch construction.
+    /// Sets the automatic local Delaunay repair policy used during batch construction.
+    ///
+    /// [`DelaunayRepairPolicy::EveryN`] controls the scheduled cadence. Batch
+    /// construction may also run an earlier local repair when the accumulated
+    /// seed frontier grows large; [`DelaunayRepairPolicy::Never`] disables both.
     #[must_use]
     pub const fn with_batch_repair_policy(
         mut self,
@@ -1044,12 +1103,20 @@ pub struct ConstructionTelemetry {
     /// Maximum wall-clock nanoseconds spent in one post-insertion validation.
     pub topology_validation_nanos_max: u64,
 
-    /// Number of cadenced local Delaunay repair calls during batch construction.
+    /// Number of batch local Delaunay repair calls during construction.
     pub local_repair_calls: usize,
-    /// Wall-clock nanoseconds spent in cadenced local Delaunay repair.
+    /// Wall-clock nanoseconds spent in batch local Delaunay repair.
     pub local_repair_nanos: u64,
-    /// Maximum wall-clock nanoseconds spent in one cadenced local repair call.
+    /// Maximum wall-clock nanoseconds spent in one batch local repair call.
     pub local_repair_nanos_max: u64,
+    /// Total pending seed cells repaired by batch local repair calls.
+    pub local_repair_seed_cells_total: usize,
+    /// Maximum pending seed-cell frontier repaired by one batch local repair call.
+    pub local_repair_seed_cells_max: usize,
+    /// Number of batch local repair calls fired by the configured cadence.
+    pub local_repair_cadence_triggers: usize,
+    /// Number of batch local repair calls fired by the seed-backlog threshold.
+    pub local_repair_backlog_triggers: usize,
 
     /// Number of bulk local-repair seed accumulation calls.
     pub repair_seed_accumulation_calls: usize,
@@ -1086,6 +1153,7 @@ impl ConstructionTelemetry {
             || self.hull_extension_calls > 0
             || self.topology_validation_calls > 0
             || self.local_repair_calls > 0
+            || self.local_repair_seed_cells_total > 0
             || self.repair_seed_accumulation_calls > 0
             || self.global_conflict_scans > 0
     }
@@ -1098,11 +1166,33 @@ impl ConstructionTelemetry {
         self.insertion_wall_time_nanos_max = self.insertion_wall_time_nanos_max.max(elapsed_nanos);
     }
 
-    /// Records the wall-clock duration of one cadenced local repair call.
+    /// Records the wall-clock duration of one batch local repair call.
     pub(crate) fn record_local_repair_timing(&mut self, elapsed_nanos: u64) {
         self.local_repair_calls = self.local_repair_calls.saturating_add(1);
         self.local_repair_nanos = self.local_repair_nanos.saturating_add(elapsed_nanos);
         self.local_repair_nanos_max = self.local_repair_nanos_max.max(elapsed_nanos);
+    }
+
+    /// Records the repaired local frontier size and why the repair fired.
+    fn record_local_repair_frontier(
+        &mut self,
+        seed_cells: usize,
+        trigger: BatchLocalRepairTrigger,
+    ) {
+        self.local_repair_seed_cells_total = self
+            .local_repair_seed_cells_total
+            .saturating_add(seed_cells);
+        self.local_repair_seed_cells_max = self.local_repair_seed_cells_max.max(seed_cells);
+        match trigger {
+            BatchLocalRepairTrigger::Cadence => {
+                self.local_repair_cadence_triggers =
+                    self.local_repair_cadence_triggers.saturating_add(1);
+            }
+            BatchLocalRepairTrigger::SeedBacklog => {
+                self.local_repair_backlog_triggers =
+                    self.local_repair_backlog_triggers.saturating_add(1);
+            }
+        }
     }
 
     /// Records one bulk local-repair seed accumulation step.
@@ -1282,15 +1372,7 @@ impl ConstructionTelemetry {
             .topology_validation_nanos_max
             .max(other.topology_validation_nanos_max);
 
-        self.local_repair_calls = self
-            .local_repair_calls
-            .saturating_add(other.local_repair_calls);
-        self.local_repair_nanos = self
-            .local_repair_nanos
-            .saturating_add(other.local_repair_nanos);
-        self.local_repair_nanos_max = self
-            .local_repair_nanos_max
-            .max(other.local_repair_nanos_max);
+        self.merge_local_repair_from(other);
 
         self.merge_repair_seed_accumulation_from(other);
 
@@ -1309,6 +1391,31 @@ impl ConstructionTelemetry {
         self.global_conflict_scan_nanos = self
             .global_conflict_scan_nanos
             .saturating_add(other.global_conflict_scan_nanos);
+    }
+
+    /// Keeps local-repair merge accounting isolated so the aggregate merge stays readable.
+    fn merge_local_repair_from(&mut self, other: &Self) {
+        self.local_repair_calls = self
+            .local_repair_calls
+            .saturating_add(other.local_repair_calls);
+        self.local_repair_nanos = self
+            .local_repair_nanos
+            .saturating_add(other.local_repair_nanos);
+        self.local_repair_nanos_max = self
+            .local_repair_nanos_max
+            .max(other.local_repair_nanos_max);
+        self.local_repair_seed_cells_total = self
+            .local_repair_seed_cells_total
+            .saturating_add(other.local_repair_seed_cells_total);
+        self.local_repair_seed_cells_max = self
+            .local_repair_seed_cells_max
+            .max(other.local_repair_seed_cells_max);
+        self.local_repair_cadence_triggers = self
+            .local_repair_cadence_triggers
+            .saturating_add(other.local_repair_cadence_triggers);
+        self.local_repair_backlog_triggers = self
+            .local_repair_backlog_triggers
+            .saturating_add(other.local_repair_backlog_triggers);
     }
 
     fn merge_repair_seed_accumulation_from(&mut self, other: &Self) {
@@ -4210,9 +4317,11 @@ where
         }
     }
 
+    /// Repairs the currently accumulated batch-local seed frontier.
     fn repair_pending_local_seed_cells(
         &mut self,
         index: usize,
+        trigger: BatchLocalRepairTrigger,
         pending_seed_cells: &mut Vec<CellKey>,
         pending_seen: &mut FastHashSet<CellKey>,
         soft_fail_seeds: &mut Vec<CellKey>,
@@ -4226,14 +4335,16 @@ where
         #[cfg(test)]
         test_hooks::record_batch_local_repair_call();
 
-        let max_flips = local_repair_flip_budget::<D>(pending_seed_cells.len());
+        let seed_cells_len = pending_seed_cells.len();
+        let max_flips = local_repair_flip_budget::<D>(seed_cells_len);
         let trace_repair = batch_repair_trace_enabled();
         let repair_started = Instant::now();
         if trace_repair {
             tracing::debug!(
                 idx = index,
-                seed_cells = pending_seed_cells.len(),
+                seed_cells = seed_cells_len,
                 max_flips,
+                trigger = ?trigger,
                 "bulk batch repair: starting local repair"
             );
         }
@@ -4252,6 +4363,7 @@ where
         let repair_elapsed = repair_started.elapsed();
         if let Some(telemetry) = construction_telemetry {
             telemetry.record_local_repair_timing(duration_nanos_saturating(repair_elapsed));
+            telemetry.record_local_repair_frontier(seed_cells_len, trigger);
         }
 
         match repair_result {
@@ -4259,7 +4371,7 @@ where
                 if trace_repair {
                     tracing::debug!(
                         idx = index,
-                        seed_cells = pending_seed_cells.len(),
+                        seed_cells = seed_cells_len,
                         flips = stats.flips_performed,
                         checked = stats.facets_checked,
                         max_queue = stats.max_queue_len,
@@ -4276,7 +4388,7 @@ where
                 if trace_repair {
                     tracing::debug!(
                         idx = index,
-                        seed_cells = pending_seed_cells.len(),
+                        seed_cells = seed_cells_len,
                         error = %repair_err,
                         elapsed = ?repair_elapsed,
                         "bulk batch repair: local repair failed"
@@ -4288,7 +4400,7 @@ where
                 tracing::debug!(
                     idx = index,
                     error = %repair_err,
-                    seed_cells = pending_seed_cells.len(),
+                    seed_cells = seed_cells_len,
                     "bulk batch repair: local repair soft-failed; deferring seeds to final repair"
                 );
                 self.canonicalize_after_bulk_repair()?;
@@ -4419,11 +4531,11 @@ where
                                 .insertion_state
                                 .delaunay_repair_insertion_count
                                 .saturating_add(1);
-                            // Cadenced local Delaunay repair: accumulate the local frontier
+                            // Batch local Delaunay repair: accumulate the local frontier
                             // touched by each successful insertion, then repair the whole
-                            // frontier when the policy fires.  This keeps EveryN semantics
-                            // local to the last N insertions rather than repairing only the
-                            // final insertion in the batch.
+                            // frontier when the policy fires or the frontier grows too large.
+                            // This keeps EveryN semantics local to the recent insertion window
+                            // rather than repairing only the final insertion in the batch.
                             let topology = self.tri.topology_guarantee();
                             if batch_repair_policy != DelaunayRepairPolicy::Never
                                 && TopologicalOperation::FacetFlip.is_admissible_under(topology)
@@ -4435,16 +4547,15 @@ where
                                     pending_repair_seeds,
                                     &mut pending_repair_seen,
                                 );
-                                if matches!(
-                                    batch_repair_policy.decide(
-                                        inserted_vertices,
-                                        topology,
-                                        TopologicalOperation::FacetFlip,
-                                    ),
-                                    RepairDecision::Proceed
+                                if let Some(trigger) = batch_local_repair_trigger::<D>(
+                                    batch_repair_policy,
+                                    inserted_vertices,
+                                    topology,
+                                    pending_repair_seeds.len(),
                                 ) {
                                     self.repair_pending_local_seed_cells(
                                         index,
+                                        trigger,
                                         pending_repair_seeds,
                                         &mut pending_repair_seen,
                                         soft_fail_seeds,
@@ -4613,7 +4724,7 @@ where
                                 .insertion_state
                                 .delaunay_repair_insertion_count
                                 .saturating_add(1);
-                            // Cadenced local repair: see the non-stats branch
+                            // Batch local repair: see the non-stats branch
                             // comment for full details.
                             let topology = self.tri.topology_guarantee();
                             if batch_repair_policy != DelaunayRepairPolicy::Never
@@ -4633,16 +4744,15 @@ where
                                         duration_nanos_saturating(seed_started.elapsed()),
                                         seed_cells_added,
                                     );
-                                if matches!(
-                                    batch_repair_policy.decide(
-                                        inserted_vertices,
-                                        topology,
-                                        TopologicalOperation::FacetFlip,
-                                    ),
-                                    RepairDecision::Proceed
+                                if let Some(trigger) = batch_local_repair_trigger::<D>(
+                                    batch_repair_policy,
+                                    inserted_vertices,
+                                    topology,
+                                    pending_repair_seeds.len(),
                                 ) {
                                     self.repair_pending_local_seed_cells(
                                         index,
+                                        trigger,
                                         pending_repair_seeds,
                                         &mut pending_repair_seen,
                                         soft_fail_seeds,
@@ -7615,6 +7725,12 @@ where
 /// It is separate from any *validation-only* policy to allow checking the Delaunay
 /// property without mutating topology when needed.
 ///
+/// During batch construction, [`DelaunayRepairPolicy::EveryN`] is a scheduled
+/// cadence rather than a hard lower bound on repair frequency: construction may
+/// run an additional local repair earlier when the accumulated seed frontier
+/// grows large. [`DelaunayRepairPolicy::Never`] disables those automatic batch
+/// repairs.
+///
 /// # Examples
 ///
 /// ```rust
@@ -7925,6 +8041,104 @@ mod tests {
         LOCAL_REPAIR_FLIP_BUDGET_FLOOR_D_GE_4,
         LOCAL_REPAIR_FLIP_BUDGET_FACTOR_D_GE_4
     );
+
+    #[test]
+    fn test_local_repair_seed_backlog_threshold_uses_dimension_regimes() {
+        assert_eq!(
+            local_repair_seed_backlog_threshold::<3>(),
+            4 * LOCAL_REPAIR_SEED_BACKLOG_FACTOR_D_LT_4
+        );
+        assert_eq!(
+            local_repair_seed_backlog_threshold::<4>(),
+            5 * LOCAL_REPAIR_SEED_BACKLOG_FACTOR_D_GE_4
+        );
+    }
+
+    #[test]
+    fn test_batch_local_repair_trigger_prefers_cadence_over_backlog() {
+        let policy = DelaunayRepairPolicy::EveryN(NonZeroUsize::new(4).unwrap());
+        let threshold = local_repair_seed_backlog_threshold::<3>();
+
+        assert_eq!(
+            batch_local_repair_trigger::<3>(policy, 4, TopologyGuarantee::PLManifold, threshold),
+            Some(BatchLocalRepairTrigger::Cadence)
+        );
+    }
+
+    #[test]
+    fn test_batch_local_repair_trigger_runs_every_insertion_below_backlog() {
+        assert_eq!(
+            batch_local_repair_trigger::<3>(
+                DelaunayRepairPolicy::EveryInsertion,
+                1,
+                TopologyGuarantee::PLManifold,
+                1,
+            ),
+            Some(BatchLocalRepairTrigger::Cadence)
+        );
+        assert_eq!(
+            batch_local_repair_trigger::<3>(
+                DelaunayRepairPolicy::EveryInsertion,
+                0,
+                TopologyGuarantee::PLManifold,
+                1,
+            ),
+            None
+        );
+    }
+
+    #[test]
+    fn test_batch_local_repair_trigger_repairs_early_on_seed_backlog() {
+        let policy = DelaunayRepairPolicy::EveryN(NonZeroUsize::new(128).unwrap());
+        let threshold = local_repair_seed_backlog_threshold::<3>();
+
+        assert_eq!(
+            batch_local_repair_trigger::<3>(policy, 7, TopologyGuarantee::PLManifold, threshold),
+            Some(BatchLocalRepairTrigger::SeedBacklog)
+        );
+        assert_eq!(
+            batch_local_repair_trigger::<3>(
+                policy,
+                7,
+                TopologyGuarantee::PLManifold,
+                threshold - 1
+            ),
+            None
+        );
+    }
+
+    #[test]
+    fn test_batch_local_repair_trigger_respects_policy_and_topology() {
+        let threshold = local_repair_seed_backlog_threshold::<3>();
+
+        assert_eq!(
+            batch_local_repair_trigger::<3>(
+                DelaunayRepairPolicy::Never,
+                7,
+                TopologyGuarantee::PLManifold,
+                threshold
+            ),
+            None
+        );
+        assert_eq!(
+            batch_local_repair_trigger::<3>(
+                DelaunayRepairPolicy::EveryN(NonZeroUsize::new(128).unwrap()),
+                7,
+                TopologyGuarantee::PLManifold,
+                0
+            ),
+            None
+        );
+        assert_eq!(
+            batch_local_repair_trigger::<3>(
+                DelaunayRepairPolicy::EveryN(NonZeroUsize::new(128).unwrap()),
+                7,
+                TopologyGuarantee::Pseudomanifold,
+                threshold
+            ),
+            Some(BatchLocalRepairTrigger::SeedBacklog)
+        );
+    }
 
     #[test]
     fn test_log_bulk_progress_if_due_updates_progress_state_only_when_due() {
@@ -8513,6 +8727,9 @@ mod tests {
         summary.telemetry.record_local_repair_timing(2_000_000);
         summary
             .telemetry
+            .record_local_repair_frontier(11, BatchLocalRepairTrigger::SeedBacklog);
+        summary
+            .telemetry
             .record_repair_seed_accumulation(500_000, 7);
 
         assert!(summary.telemetry.has_data());
@@ -8538,6 +8755,10 @@ mod tests {
         assert_eq!(summary.telemetry.topology_validation_nanos, 625_000);
         assert_eq!(summary.telemetry.local_repair_calls, 1);
         assert_eq!(summary.telemetry.local_repair_nanos, 2_000_000);
+        assert_eq!(summary.telemetry.local_repair_seed_cells_total, 11);
+        assert_eq!(summary.telemetry.local_repair_seed_cells_max, 11);
+        assert_eq!(summary.telemetry.local_repair_cadence_triggers, 0);
+        assert_eq!(summary.telemetry.local_repair_backlog_triggers, 1);
         assert_eq!(summary.telemetry.repair_seed_accumulation_calls, 1);
         assert_eq!(summary.telemetry.repair_seed_accumulation_nanos, 500_000);
         assert_eq!(summary.telemetry.repair_seed_cells_added_total, 7);
@@ -8546,6 +8767,28 @@ mod tests {
         assert_eq!(summary.telemetry.global_conflict_cells_scanned, 12);
         assert_eq!(summary.telemetry.global_conflict_cells_found_total, 3);
         assert_eq!(summary.telemetry.global_conflict_scan_nanos, 250_000);
+    }
+
+    #[test]
+    fn test_construction_telemetry_merge_preserves_local_repair_frontiers() {
+        let mut left = ConstructionTelemetry::default();
+        left.record_local_repair_timing(10);
+        left.record_local_repair_frontier(5, BatchLocalRepairTrigger::Cadence);
+
+        let mut right = ConstructionTelemetry::default();
+        right.record_local_repair_timing(30);
+        right.record_local_repair_frontier(11, BatchLocalRepairTrigger::SeedBacklog);
+
+        left.merge_from(&right);
+
+        assert!(left.has_data());
+        assert_eq!(left.local_repair_calls, 2);
+        assert_eq!(left.local_repair_nanos, 40);
+        assert_eq!(left.local_repair_nanos_max, 30);
+        assert_eq!(left.local_repair_seed_cells_total, 16);
+        assert_eq!(left.local_repair_seed_cells_max, 11);
+        assert_eq!(left.local_repair_cadence_triggers, 1);
+        assert_eq!(left.local_repair_backlog_triggers, 1);
     }
 
     #[test]

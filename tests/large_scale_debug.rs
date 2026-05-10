@@ -725,6 +725,24 @@ fn print_repair_seed_accumulation_telemetry(telemetry: &ConstructionTelemetry) {
     );
 }
 
+fn print_local_repair_frontier_telemetry(telemetry: &ConstructionTelemetry) {
+    if telemetry.local_repair_calls == 0 {
+        return;
+    }
+
+    println!(
+        "    local_repair_frontiers: seed_cells_total={} avg_seed_cells={} max_seed_cells={} cadence_triggers={} backlog_triggers={}",
+        telemetry.local_repair_seed_cells_total,
+        format_ratio_2(
+            telemetry.local_repair_seed_cells_total,
+            telemetry.local_repair_calls,
+        ),
+        telemetry.local_repair_seed_cells_max,
+        telemetry.local_repair_cadence_triggers,
+        telemetry.local_repair_backlog_triggers
+    );
+}
+
 fn print_construction_telemetry(telemetry: &ConstructionTelemetry) {
     if !telemetry.has_data() {
         return;
@@ -795,6 +813,7 @@ fn print_construction_telemetry(telemetry: &ConstructionTelemetry) {
         telemetry.local_repair_nanos,
         telemetry.local_repair_nanos_max,
     );
+    print_local_repair_frontier_telemetry(telemetry);
     print_repair_seed_accumulation_telemetry(telemetry);
 
     if telemetry.global_conflict_scans > 0 {
