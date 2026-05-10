@@ -92,13 +92,15 @@ Choose the smallest prelude that matches the task:
 
 | Task | Import |
 |---|---|
-| Build, configure, insert, or remove vertices | `use delaunay::prelude::triangulation::*` |
+| Construct/configure a Delaunay triangulation | `use delaunay::prelude::triangulation::construction::*` |
 | Read-only traversal, adjacency, convex hulls, and comparison helpers | `use delaunay::prelude::query::*` |
 | Points, kernels, predicates, and geometric measures | `use delaunay::prelude::geometry::*` |
 | Random points or triangulations for examples, tests, and benchmarks | `use delaunay::prelude::generators::*` |
+| Low-level incremental insertion building blocks | `use delaunay::prelude::triangulation::insertion::*` |
 | Bistellar flips / Edit API | `use delaunay::prelude::triangulation::flips::*` |
 | Delaunay repair diagnostics and policies | `use delaunay::prelude::triangulation::repair::*` |
 | Delaunayize workflow | `use delaunay::prelude::triangulation::delaunayize::*` |
+| Construction validation cadence/policy | `use delaunay::prelude::triangulation::validation::*` |
 | Hilbert ordering and quantization utilities | `use delaunay::prelude::ordering::*` |
 | Low-level TDS cells, facets, keys, and validation reports | `use delaunay::prelude::tds::*` |
 | Collection aliases and small buffers | `use delaunay::prelude::collections::*` |
@@ -107,9 +109,11 @@ Choose the smallest prelude that matches the task:
 
 `use delaunay::prelude::*` remains available for quick experiments, but examples
 and benchmarks in this repository prefer focused preludes so imports document intent.
+The broad `delaunay::prelude::triangulation::*` import is retained for compatibility,
+but new docs and tests should prefer the narrow workflow preludes above.
 
 ```rust
-use delaunay::prelude::triangulation::*;
+use delaunay::prelude::triangulation::construction::{DelaunayTriangulation, vertex};
 
 // Create a 4D Delaunay triangulation from a set of vertices (uses AdaptiveKernel by default).
 let vertices = vec![
@@ -138,7 +142,9 @@ assert!(dt.is_valid().is_ok());
 For periodic boundary conditions, use `DelaunayTriangulationBuilder`:
 
 ```rust
-use delaunay::prelude::triangulation::*;
+use delaunay::prelude::triangulation::construction::{
+    DelaunayTriangulationBuilder, TopologyKind, vertex,
+};
 
 // Phase 1: Canonicalization (wraps coordinates into [0, 1)²)
 let vertices = vec![
@@ -196,7 +202,11 @@ The construction pipeline exposes deterministic controls for experiments and reg
 - Explicit topology/validation configuration via `TopologyGuarantee` and `ValidationPolicy`
 
 ```rust
-use delaunay::prelude::triangulation::*;
+use delaunay::prelude::triangulation::construction::{
+    ConstructionOptions, DedupPolicy, DelaunayTriangulationBuilder, InsertionOrderStrategy,
+    RetryPolicy, TopologyGuarantee, vertex,
+};
+use delaunay::prelude::triangulation::validation::ValidationPolicy;
 
 let vertices = vec![
     vertex!([0.0, 0.0]),

@@ -74,17 +74,21 @@
 #![forbid(unsafe_code)]
 
 use delaunay::core::operations::InsertionResult;
-use delaunay::core::triangulation::TopologyGuarantee;
 use delaunay::geometry::kernel::RobustKernel;
 use delaunay::geometry::util::{
     generate_random_points_in_ball_seeded, generate_random_points_seeded, safe_usize_to_scalar,
 };
 use delaunay::prelude::tds::{InvariantKind, TriangulationValidationReport};
-use delaunay::prelude::triangulation::*;
-use delaunay::triangulation::delaunay::{
-    ConstructionOptions, ConstructionStatistics, ConstructionTelemetry,
-    DelaunayRepairHeuristicConfig, DelaunayTriangulationConstructionErrorWithStatistics,
+use delaunay::prelude::triangulation::construction::{
+    ConstructionOptions, ConstructionStatistics, ConstructionTelemetry, DelaunayRepairPolicy,
+    DelaunayTriangulation, DelaunayTriangulationConstructionErrorWithStatistics,
+    InitialSimplexStrategy, TopologyGuarantee, Vertex, vertex,
 };
+use delaunay::prelude::triangulation::insertion::{InsertionOutcome, InsertionStatistics};
+use delaunay::prelude::triangulation::repair::{
+    DelaunayCheckPolicy, DelaunayRepairHeuristicConfig,
+};
+use delaunay::prelude::triangulation::validation::ValidationCadence;
 use rand::{SeedableRng, rngs::StdRng, seq::SliceRandom};
 use std::env;
 use std::fmt;
@@ -945,6 +949,7 @@ fn debug_large_case<const D: usize>(dimension_name: &str, default_n_points: usiz
             None
         }
     });
+    let validation_cadence = ValidationCadence::from_optional_every(validate_every);
 
     println!("=============================================");
     println!("Large-scale triangulation debug: {dimension_name}");
@@ -971,7 +976,7 @@ fn debug_large_case<const D: usize>(dimension_name: &str, default_n_points: usiz
     println!("  topology_guarantee: {topology_guarantee:?}");
     println!("  shuffle_seed:  {shuffle_seed:?}");
     println!("  progress_every:{progress_every}");
-    println!("  validate_every:{validate_every:?}");
+    println!("  validation_cadence: {validation_cadence:?}");
     println!("  allow_skips:   {allow_skips}");
     println!("  max_skip_pct:  {max_skip_pct}");
     println!("  skip_final_repair: {skip_final_repair}");
@@ -1134,10 +1139,8 @@ fn debug_large_case<const D: usize>(dimension_name: &str, default_n_points: usiz
                     println!("Initial simplex created at insertion {}", idx + 1);
                 }
 
-                if let Some(every) = validate_every
-                    && every > 0
-                    && had_cells
-                    && (idx + 1) % every == 0
+                if had_cells
+                    && validation_cadence.should_validate(idx + 1)
                     && let Err(e) = dt.as_triangulation().is_valid()
                 {
                     println!("Topology validation failed at idx={idx}: {e}");

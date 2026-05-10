@@ -26,8 +26,13 @@
 use delaunay::prelude::geometry::{
     CircumcenterError, Coordinate, Kernel, Point, circumcenter, hypot,
 };
+use delaunay::prelude::triangulation::construction::{
+    DelaunayTriangulation, DelaunayTriangulationBuilder, DelaunayTriangulationConstructionError,
+    vertex,
+};
 use delaunay::prelude::triangulation::flips::*;
-use delaunay::prelude::triangulation::*;
+use delaunay::prelude::triangulation::insertion::InsertionError;
+use delaunay::prelude::triangulation::validation::DelaunayTriangulationValidationError;
 use delaunay::prelude::{TdsError, VertexKey};
 
 type ExampleResult<T = ()> = Result<T, TopologyEditingExampleError>;

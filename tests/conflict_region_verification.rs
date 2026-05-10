@@ -15,7 +15,7 @@ use delaunay::prelude::algorithms::{LocateResult, find_conflict_region, locate};
 use delaunay::prelude::diagnostics::verify_conflict_region_completeness;
 use delaunay::prelude::generators::generate_random_points_in_ball_seeded;
 use delaunay::prelude::geometry::AdaptiveKernel;
-use delaunay::prelude::triangulation::*;
+use delaunay::prelude::triangulation::construction::{DelaunayTriangulation, Vertex, vertex};
 
 /// Verify that `verify_conflict_region_completeness` runs without panicking on
 /// the known-failing 3D case (35 vertices, seed 0xE30C78582376677C, ball

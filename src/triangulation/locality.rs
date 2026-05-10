@@ -8,13 +8,14 @@
 #![forbid(unsafe_code)]
 
 use crate::core::algorithms::locate::{ConflictError, find_conflict_region};
-use crate::core::collections::{CellKeyBuffer, FastHashSet};
+use crate::core::collections::{CellKeyBuffer, FastHashSet, fast_hash_set_with_capacity};
 use crate::core::tds::{CellKey, Tds};
 use crate::core::traits::data_type::DataType;
 use crate::geometry::kernel::Kernel;
 use crate::geometry::point::Point;
 
 /// Local conflict-seed collection result for exterior insertion repair.
+#[must_use]
 pub struct LocalConflictSeedCells {
     /// Live cells that should seed local Delaunay repair.
     pub seed_cells: CellKeyBuffer,
@@ -57,9 +58,13 @@ where
     U: DataType,
     V: DataType,
 {
+    let mut seen: FastHashSet<CellKey> =
+        fast_hash_set_with_capacity(seed_cells.len().saturating_add(candidate_seed_cells.len()));
+    seen.extend(seed_cells.iter().copied());
+
     let mut added = 0usize;
     for &cell_key in candidate_seed_cells {
-        if tds.contains_cell(cell_key) && !seed_cells.contains(&cell_key) {
+        if tds.contains_cell(cell_key) && seen.insert(cell_key) {
             seed_cells.push(cell_key);
             added = added.saturating_add(1);
         }

@@ -469,6 +469,15 @@ mod tests {
         assert!(matches!(decision, RepairDecision::Proceed));
 
         let decision =
+            DelaunayRepairPolicy::EveryInsertion.decide(0, TopologyGuarantee::PLManifold, op);
+        assert!(matches!(
+            decision,
+            RepairDecision::Skip {
+                reason: RepairSkipReason::PolicyDisabled
+            }
+        ));
+
+        let decision =
             DelaunayRepairPolicy::EveryInsertion.decide(1, TopologyGuarantee::Pseudomanifold, op);
         assert!(matches!(decision, RepairDecision::Proceed));
 

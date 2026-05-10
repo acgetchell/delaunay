@@ -17,10 +17,13 @@ use delaunay::prelude::diagnostics::{
 #[cfg(feature = "diagnostics")]
 use delaunay::prelude::geometry::AdaptiveKernel;
 #[cfg(feature = "diagnostics")]
-use delaunay::prelude::triangulation::{
+use delaunay::prelude::triangulation::construction::{
     DelaunayTriangulation, DelaunayTriangulationConstructionError,
-    DelaunayTriangulationValidationError, flips::*,
 };
+#[cfg(feature = "diagnostics")]
+use delaunay::prelude::triangulation::flips::*;
+#[cfg(feature = "diagnostics")]
+use delaunay::prelude::triangulation::validation::DelaunayTriangulationValidationError;
 #[cfg(feature = "diagnostics")]
 use delaunay::vertex;
 

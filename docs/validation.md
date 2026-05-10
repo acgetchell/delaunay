@@ -79,7 +79,10 @@ insertion deviates from the happy-path and trips internal **suspicion flags**, e
 ### Example: configuring validation policy
 
 ```rust
-use delaunay::prelude::triangulation::*;
+use delaunay::prelude::triangulation::construction::{
+    DelaunayTriangulation, TopologyGuarantee, Vertex, vertex,
+};
+use delaunay::prelude::triangulation::validation::ValidationPolicy;
 
 let vertices = vec![
     vertex!([0.0, 0.0, 0.0]),
@@ -121,7 +124,10 @@ PL-manifoldness. You can trigger that final certification via
 `Triangulation::validate_at_completion()` (or `Triangulation::validate()`).
 
 ```rust
-use delaunay::prelude::triangulation::*;
+use delaunay::prelude::triangulation::construction::{
+    DelaunayTriangulation, TopologyGuarantee, Vertex, vertex,
+};
+use delaunay::prelude::triangulation::validation::ValidationPolicy;
 
 let vertices = vec![
     vertex!([0.0, 0.0, 0.0]),
@@ -210,7 +216,10 @@ Validates basic data integrity of individual vertices and cells.
 ### Example
 
 ```rust
-use delaunay::prelude::triangulation::*;
+use delaunay::prelude::triangulation::construction::{
+    DelaunayTriangulation, TopologyGuarantee, Vertex, vertex,
+};
+use delaunay::prelude::triangulation::validation::ValidationPolicy;
 
 let v = vertex!([0.0, 0.0, 0.0]);
 assert!(v.is_valid().is_ok());
@@ -263,7 +272,10 @@ Validates the combinatorial structure of the Triangulation Data Structure.
 ### Example
 
 ```rust
-use delaunay::prelude::triangulation::*;
+use delaunay::prelude::triangulation::construction::{
+    DelaunayTriangulation, TopologyGuarantee, Vertex, vertex,
+};
+use delaunay::prelude::triangulation::validation::ValidationPolicy;
 
 let vertices = vec![
     vertex!([0.0, 0.0, 0.0]),
@@ -341,7 +353,10 @@ Validates that the triangulation forms a valid topological manifold.
 ### Example
 
 ```rust
-use delaunay::prelude::triangulation::*;
+use delaunay::prelude::triangulation::construction::{
+    DelaunayTriangulation, TopologyGuarantee, Vertex, vertex,
+};
+use delaunay::prelude::triangulation::validation::ValidationPolicy;
 
 let vertices = vec![
     vertex!([0.0, 0.0, 0.0]),
@@ -404,7 +419,10 @@ Validates the geometric optimality of the triangulation.
 ### Example
 
 ```rust
-use delaunay::prelude::triangulation::*;
+use delaunay::prelude::triangulation::construction::{
+    DelaunayTriangulation, TopologyGuarantee, Vertex, vertex,
+};
+use delaunay::prelude::triangulation::validation::ValidationPolicy;
 
 let vertices = vec![
     vertex!([0.0, 0.0, 0.0]),

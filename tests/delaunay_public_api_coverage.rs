@@ -7,11 +7,11 @@
 )]
 
 use delaunay::prelude::geometry::AdaptiveKernel;
-use delaunay::prelude::triangulation::{
+use delaunay::prelude::triangulation::construction::{
     ConstructionOptions, DedupPolicy, DelaunayTriangulation,
-    DelaunayTriangulationConstructionError, InsertionError, InsertionOrderStrategy, RetryPolicy,
-    TopologyGuarantee,
+    DelaunayTriangulationConstructionError, InsertionOrderStrategy, RetryPolicy, TopologyGuarantee,
 };
+use delaunay::prelude::triangulation::insertion::InsertionError;
 use delaunay::vertex;
 #[cfg(feature = "diagnostics")]
 use rand::{RngExt, SeedableRng, rngs::StdRng};

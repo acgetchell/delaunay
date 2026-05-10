@@ -258,8 +258,9 @@ impl Drop for HeuristicRebuildRecursionGuard {
 /// # Examples
 ///
 /// ```rust
-/// use delaunay::prelude::triangulation::DelaunayTriangulationConstructionError;
-/// use delaunay::prelude::triangulation::*;
+/// use delaunay::prelude::triangulation::construction::{
+///     DelaunayTriangulation, DelaunayTriangulationConstructionError, vertex,
+/// };
 ///
 /// let vertices = vec![
 ///     vertex!([0.0, 0.0, 0.0]),
@@ -298,6 +299,30 @@ impl From<TriangulationConstructionError> for DelaunayTriangulationConstructionE
     }
 }
 
+/// Construction phase that invoked flip-based Delaunay repair.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum DelaunayConstructionRepairPhase {
+    /// Cadenced local repair after a successful bulk insertion.
+    BatchLocal {
+        /// Zero-based input index that triggered the repair cadence.
+        index: usize,
+    },
+    /// Seeded or fallback repair during construction finalization.
+    Completion,
+}
+
+impl fmt::Display for DelaunayConstructionRepairPhase {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::BatchLocal { index } => {
+                write!(f, "batch local repair at input index {index}")
+            }
+            Self::Completion => f.write_str("completion repair"),
+        }
+    }
+}
+
 /// Pattern-matchable summary of a lower-layer construction failure.
 ///
 /// This is the payload for
@@ -318,11 +343,10 @@ impl From<TriangulationConstructionError> for DelaunayTriangulationConstructionE
 /// # Examples
 ///
 /// ```rust
-/// use delaunay::prelude::triangulation::{
+/// use delaunay::prelude::triangulation::construction::{
 ///     DelaunayConstructionFailure, DelaunayTriangulation,
-///     DelaunayTriangulationConstructionError,
+///     DelaunayTriangulationConstructionError, vertex,
 /// };
-/// use delaunay::vertex;
 ///
 /// let vertices = vec![vertex!([0.0, 0.0, 0.0])];
 /// let err = DelaunayTriangulation::new(&vertices).unwrap_err();
@@ -374,6 +398,16 @@ pub enum DelaunayConstructionFailure {
     InternalInconsistency {
         /// Inconsistency detail.
         message: String,
+    },
+
+    /// Flip-based Delaunay repair failed during construction.
+    #[error("Delaunay repair failed during {phase}: {source}")]
+    DelaunayRepair {
+        /// Construction phase that invoked repair.
+        phase: DelaunayConstructionRepairPhase,
+        /// Underlying typed repair failure.
+        #[source]
+        source: Box<DelaunayRepairError>,
     },
 
     /// Duplicate coordinates were detected.
@@ -544,8 +578,8 @@ impl fmt::Display for DelaunayRepairOperation {
 /// # Examples
 ///
 /// ```rust
-/// use delaunay::prelude::triangulation::DelaunayTriangulationValidationError;
-/// use delaunay::prelude::triangulation::*;
+/// use delaunay::prelude::triangulation::construction::{DelaunayTriangulation, vertex};
+/// use delaunay::prelude::triangulation::repair::DelaunayTriangulationValidationError;
 ///
 /// let vertices = vec![
 ///     vertex!([0.0, 0.0, 0.0]),
@@ -630,8 +664,9 @@ pub enum DelaunayTriangulationValidationError {
 /// # Examples
 ///
 /// ```rust
-/// use delaunay::prelude::triangulation::{ConstructionOptions, InsertionOrderStrategy};
-/// use delaunay::prelude::triangulation::*;
+/// use delaunay::prelude::triangulation::construction::{
+///     ConstructionOptions, DelaunayTriangulation, InsertionOrderStrategy, vertex,
+/// };
 ///
 /// let vertices = vec![
 ///     vertex!([0.0, 0.0, 0.0]),
@@ -686,8 +721,9 @@ pub enum InsertionOrderStrategy {
 /// # Examples
 ///
 /// ```rust
-/// use delaunay::prelude::triangulation::{ConstructionOptions, DedupPolicy};
-/// use delaunay::prelude::triangulation::*;
+/// use delaunay::prelude::triangulation::construction::{
+///     ConstructionOptions, DedupPolicy, DelaunayTriangulation, vertex,
+/// };
 ///
 /// let vertices = vec![
 ///     vertex!([0.0, 0.0, 0.0]),
@@ -748,8 +784,9 @@ pub enum InitialSimplexStrategy {
 /// # Examples
 ///
 /// ```rust
-/// use delaunay::prelude::triangulation::{ConstructionOptions, RetryPolicy};
-/// use delaunay::prelude::triangulation::*;
+/// use delaunay::prelude::triangulation::construction::{
+///     ConstructionOptions, DelaunayTriangulation, RetryPolicy, vertex,
+/// };
 ///
 /// let vertices = vec![
 ///     vertex!([0.0, 0.0, 0.0]),
@@ -813,7 +850,7 @@ impl Default for RetryPolicy {
 /// # Examples
 ///
 /// ```rust
-/// use delaunay::prelude::triangulation::{
+/// use delaunay::prelude::triangulation::construction::{
 ///     ConstructionOptions, DedupPolicy, DelaunayRepairPolicy, InsertionOrderStrategy, RetryPolicy,
 /// };
 /// use std::num::NonZeroUsize;
@@ -2414,7 +2451,7 @@ where
 /// # Examples
 ///
 /// ```rust
-/// use delaunay::prelude::triangulation::*;
+/// use delaunay::prelude::triangulation::construction::{DelaunayTriangulation, vertex};
 ///
 /// let vertices = vec![
 ///     vertex!([0.0, 0.0, 0.0]),
@@ -2457,7 +2494,9 @@ impl<const D: usize> DelaunayTriangulation<AdaptiveKernel<f64>, (), (), D> {
     /// or toroidal (periodic) triangulations, use [`DelaunayTriangulationBuilder`]:
     ///
     /// ```rust
-    /// use delaunay::prelude::triangulation::*;
+    /// use delaunay::prelude::triangulation::construction::{
+    ///     DelaunayTriangulationBuilder, TopologyGuarantee, vertex,
+    /// };
     ///
     /// let vertices = vec![
     ///     vertex!([0.0, 0.0, 0.0]),
@@ -2475,7 +2514,9 @@ impl<const D: usize> DelaunayTriangulation<AdaptiveKernel<f64>, (), (), D> {
     ///
     /// For toroidal (periodic) triangulations:
     /// ```rust
-    /// use delaunay::prelude::triangulation::*;
+    /// use delaunay::prelude::triangulation::construction::{
+    ///     DelaunayTriangulationBuilder, vertex,
+    /// };
     ///
     /// let vertices = vec![
     ///     vertex!([0.1, 0.2]),
@@ -2496,8 +2537,7 @@ impl<const D: usize> DelaunayTriangulation<AdaptiveKernel<f64>, (), (), D> {
     /// # Examples
     ///
     /// ```rust
-    /// use delaunay::prelude::DelaunayTriangulation;
-    /// use delaunay::vertex;
+    /// use delaunay::prelude::triangulation::construction::{DelaunayTriangulation, vertex};
     ///
     /// let vertices = vec![
     ///     vertex!([0.0, 0.0, 0.0]),
@@ -2530,11 +2570,10 @@ impl<const D: usize> DelaunayTriangulation<AdaptiveKernel<f64>, (), (), D> {
     /// # Examples
     ///
     /// ```rust
-    /// use delaunay::prelude::triangulation::{
+    /// use delaunay::prelude::triangulation::construction::{
     ///     DelaunayConstructionFailure, DelaunayTriangulation,
-    ///     DelaunayTriangulationConstructionError,
+    ///     DelaunayTriangulationConstructionError, vertex,
     /// };
-    /// use delaunay::vertex;
     ///
     /// let vertices = vec![
     ///     vertex!([0.0, 0.0, 0.0]),
@@ -2614,10 +2653,9 @@ impl<const D: usize> DelaunayTriangulation<AdaptiveKernel<f64>, (), (), D> {
     /// # Examples
     ///
     /// ```rust
-    /// use delaunay::prelude::triangulation::{
-    ///     ConstructionOptions, DedupPolicy, InsertionOrderStrategy,
+    /// use delaunay::prelude::triangulation::construction::{
+    ///     ConstructionOptions, DedupPolicy, DelaunayTriangulation, InsertionOrderStrategy, vertex,
     /// };
-    /// use delaunay::prelude::triangulation::*;
     ///
     /// let vertices = vec![
     ///     vertex!([0.0, 0.0, 0.0]),
@@ -2659,8 +2697,9 @@ impl<const D: usize> DelaunayTriangulation<AdaptiveKernel<f64>, (), (), D> {
     /// # Examples
     ///
     /// ```rust
-    /// use delaunay::prelude::triangulation::TopologyGuarantee;
-    /// use delaunay::prelude::triangulation::*;
+    /// use delaunay::prelude::triangulation::construction::{
+    ///     DelaunayTriangulation, TopologyGuarantee, vertex,
+    /// };
     ///
     /// let vertices = vec![
     ///     vertex!([0.0, 0.0, 0.0]),
@@ -2695,7 +2734,7 @@ impl<const D: usize> DelaunayTriangulation<AdaptiveKernel<f64>, (), (), D> {
     /// # Examples
     ///
     /// ```rust
-    /// use delaunay::prelude::triangulation::*;
+    /// use delaunay::prelude::triangulation::construction::{DelaunayTriangulation, vertex};
     ///
     /// // Start with empty triangulation
     /// let mut dt: DelaunayTriangulation<_, (), (), 3> = DelaunayTriangulation::empty();
@@ -2723,8 +2762,9 @@ impl<const D: usize> DelaunayTriangulation<AdaptiveKernel<f64>, (), (), D> {
     /// # Examples
     ///
     /// ```rust
-    /// use delaunay::prelude::triangulation::TopologyGuarantee;
-    /// use delaunay::prelude::triangulation::*;
+    /// use delaunay::prelude::triangulation::construction::{
+    ///     DelaunayTriangulation, TopologyGuarantee,
+    /// };
     ///
     /// let dt: DelaunayTriangulation<_, (), (), 3> =
     ///     DelaunayTriangulation::empty_with_topology_guarantee(TopologyGuarantee::Pseudomanifold);
@@ -2752,7 +2792,9 @@ impl<const D: usize> DelaunayTriangulation<AdaptiveKernel<f64>, (), (), D> {
     /// # Examples
     ///
     /// ```rust
-    /// use delaunay::prelude::triangulation::*;
+    /// use delaunay::prelude::triangulation::construction::{
+    ///     DelaunayTriangulation, DelaunayTriangulationBuilder, vertex,
+    /// };
     ///
     /// let vertices = vec![
     ///     vertex!([0.0, 0.0]),
@@ -2770,7 +2812,9 @@ impl<const D: usize> DelaunayTriangulation<AdaptiveKernel<f64>, (), (), D> {
     /// ## Toroidal construction
     ///
     /// ```rust
-    /// use delaunay::prelude::triangulation::*;
+    /// use delaunay::prelude::triangulation::construction::{
+    ///     DelaunayTriangulation, DelaunayTriangulationBuilder, vertex,
+    /// };
     ///
     /// // Vertices outside [0, 1)² are canonicalized before building.
     /// let vertices = vec![
@@ -2822,8 +2866,8 @@ where
     /// # Examples
     ///
     /// ```rust
-    /// use delaunay::prelude::triangulation::*;
     /// use delaunay::prelude::geometry::RobustKernel;
+    /// use delaunay::prelude::triangulation::construction::{DelaunayTriangulation, vertex};
     ///
     /// // Start with empty triangulation using robust kernel
     /// let mut dt: DelaunayTriangulation<RobustKernel<f64>, (), (), 4> =
@@ -2859,8 +2903,9 @@ where
     ///
     /// ```rust
     /// use delaunay::prelude::geometry::RobustKernel;
-    /// use delaunay::prelude::triangulation::TopologyGuarantee;
-    /// use delaunay::prelude::triangulation::*;
+    /// use delaunay::prelude::triangulation::construction::{
+    ///     DelaunayTriangulation, TopologyGuarantee, vertex,
+    /// };
     ///
     /// let dt: DelaunayTriangulation<RobustKernel<f64>, (), (), 3> =
     ///     DelaunayTriangulation::with_empty_kernel_and_topology_guarantee(
@@ -2912,8 +2957,7 @@ where
     ///
     /// ```rust
     /// use delaunay::prelude::geometry::RobustKernel;
-    /// use delaunay::prelude::triangulation::DelaunayTriangulation;
-    /// use delaunay::vertex;
+    /// use delaunay::prelude::triangulation::construction::{DelaunayTriangulation, vertex};
     ///
     /// let vertices = vec![
     ///     vertex!([0.0, 0.0, 0.0, 0.0]),
@@ -2956,8 +3000,9 @@ where
     ///
     /// ```rust
     /// use delaunay::prelude::geometry::RobustKernel;
-    /// use delaunay::prelude::triangulation::TopologyGuarantee;
-    /// use delaunay::prelude::triangulation::*;
+    /// use delaunay::prelude::triangulation::construction::{
+    ///     DelaunayTriangulation, TopologyGuarantee, vertex,
+    /// };
     ///
     /// let vertices = vec![
     ///     vertex!([0.0, 0.0, 0.0]),
@@ -3002,12 +3047,11 @@ where
     /// # Examples
     ///
     /// ```rust
-    /// use delaunay::prelude::triangulation::{
-    ///     ConstructionOptions, DedupPolicy, InsertionOrderStrategy,
-    /// };
     /// use delaunay::prelude::geometry::RobustKernel;
-    /// use delaunay::prelude::triangulation::TopologyGuarantee;
-    /// use delaunay::prelude::triangulation::*;
+    /// use delaunay::prelude::triangulation::construction::{
+    ///     ConstructionOptions, DedupPolicy, DelaunayTriangulation, InsertionOrderStrategy,
+    ///     TopologyGuarantee, vertex,
+    /// };
     ///
     /// let vertices = vec![
     ///     vertex!([0.0, 0.0, 0.0]),
@@ -3362,6 +3406,7 @@ where
                     reason: TdsConstructionFailure::DuplicateUuid { .. }
                         | TdsConstructionFailure::Validation { .. },
                 } | DelaunayConstructionFailure::InternalInconsistency { .. }
+                    | DelaunayConstructionFailure::DelaunayRepair { .. }
                     | DelaunayConstructionFailure::InsertionTopologyValidation { .. }
                     | DelaunayConstructionFailure::FinalTopologyValidation { .. },
             )
@@ -4149,14 +4194,19 @@ where
     /// topology/flip failures.
     fn map_hard_repair_error(
         index: usize,
-        repair_err: &DelaunayRepairError,
+        repair_err: DelaunayRepairError,
     ) -> DelaunayTriangulationConstructionError {
         let message =
             format!("per-insertion Delaunay repair failed at index {index}: {repair_err}");
-        if is_geometric_repair_error(repair_err) {
+        if is_geometric_repair_error(&repair_err) {
             TriangulationConstructionError::GeometricDegeneracy { message }.into()
         } else {
-            TriangulationConstructionError::InternalInconsistency { message }.into()
+            DelaunayTriangulationConstructionError::Triangulation(
+                DelaunayConstructionFailure::DelaunayRepair {
+                    phase: DelaunayConstructionRepairPhase::BatchLocal { index },
+                    source: Box::new(repair_err),
+                },
+            )
         }
     }
 
@@ -4233,7 +4283,7 @@ where
                     );
                 }
                 if !Self::can_soft_fail(&repair_err) {
-                    return Err(Self::map_hard_repair_error(index, &repair_err));
+                    return Err(Self::map_hard_repair_error(index, repair_err));
                 }
                 tracing::debug!(
                     idx = index,
@@ -4808,7 +4858,10 @@ where
     ) -> Result<(), DelaunayTriangulationConstructionError> {
         if !self.insertion_state.use_global_repair_fallback || !Self::can_soft_fail(seeded_error) {
             let message = format!("Delaunay repair failed after construction: {seeded_error}");
-            return Err(Self::map_completion_repair_error(message, seeded_error));
+            return Err(Self::map_completion_repair_error(
+                message,
+                seeded_error.clone(),
+            ));
         }
 
         tracing::debug!(
@@ -4828,19 +4881,24 @@ where
                     "Delaunay repair failed after construction: seeded local error: \
                      {seeded_error}; global fallback: {global_error}"
                 );
-                Err(Self::map_completion_repair_error(message, &global_error))
+                Err(Self::map_completion_repair_error(message, global_error))
             }
         }
     }
 
     fn map_completion_repair_error(
         message: String,
-        repair_error: &DelaunayRepairError,
+        repair_error: DelaunayRepairError,
     ) -> DelaunayTriangulationConstructionError {
-        if is_geometric_repair_error(repair_error) {
+        if is_geometric_repair_error(&repair_error) {
             TriangulationConstructionError::GeometricDegeneracy { message }.into()
         } else {
-            TriangulationConstructionError::InternalInconsistency { message }.into()
+            DelaunayTriangulationConstructionError::Triangulation(
+                DelaunayConstructionFailure::DelaunayRepair {
+                    phase: DelaunayConstructionRepairPhase::Completion,
+                    source: Box::new(repair_error),
+                },
+            )
         }
     }
 
@@ -5005,8 +5063,7 @@ where
     /// # Examples
     ///
     /// ```rust
-    /// use delaunay::prelude::triangulation::DelaunayTriangulation;
-    /// use delaunay::vertex;
+    /// use delaunay::prelude::triangulation::construction::{DelaunayTriangulation, vertex};
     ///
     /// let vertices = vec![
     ///     vertex!([0.0, 0.0, 0.0, 0.0]),
@@ -5031,8 +5088,7 @@ where
     /// # Examples
     ///
     /// ```rust
-    /// use delaunay::prelude::triangulation::DelaunayTriangulation;
-    /// use delaunay::vertex;
+    /// use delaunay::prelude::triangulation::construction::{DelaunayTriangulation, vertex};
     ///
     /// let vertices = vec![
     ///     vertex!([0.0, 0.0, 0.0, 0.0]),
@@ -5059,8 +5115,7 @@ where
     /// # Examples
     ///
     /// ```rust
-    /// use delaunay::prelude::triangulation::DelaunayTriangulation;
-    /// use delaunay::vertex;
+    /// use delaunay::prelude::triangulation::construction::{DelaunayTriangulation, vertex};
     ///
     /// let vertices = vec![
     ///     vertex!([0.0, 0.0, 0.0, 0.0]),
@@ -5157,7 +5212,9 @@ where
     /// # Examples
     ///
     /// ```
-    /// use delaunay::prelude::triangulation::*;
+    /// use delaunay::prelude::triangulation::construction::{
+    ///     DelaunayTriangulationBuilder, Vertex, vertex,
+    /// };
     ///
     /// let vertices: [Vertex<f64, i32, 2>; 3] = [
     ///     vertex!([0.0, 0.0], 10i32),
@@ -5196,7 +5253,9 @@ where
     /// # Examples
     ///
     /// ```
-    /// use delaunay::prelude::triangulation::*;
+    /// use delaunay::prelude::triangulation::construction::{
+    ///     DelaunayTriangulationBuilder, vertex,
+    /// };
     ///
     /// let vertices = [
     ///     vertex!([0.0, 0.0]),
@@ -5229,8 +5288,7 @@ where
     /// # Examples
     ///
     /// ```rust
-    /// use delaunay::prelude::triangulation::DelaunayTriangulation;
-    /// use delaunay::vertex;
+    /// use delaunay::prelude::triangulation::construction::{DelaunayTriangulation, vertex};
     ///
     /// let vertices = vec![
     ///     vertex!([0.0, 0.0, 0.0, 0.0]),
@@ -5289,8 +5347,7 @@ where
     ///
     /// ```rust
     /// use delaunay::prelude::query::ConvexHull;
-    /// use delaunay::prelude::triangulation::DelaunayTriangulation;
-    /// use delaunay::vertex;
+    /// use delaunay::prelude::triangulation::construction::{DelaunayTriangulation, vertex};
     ///
     /// let vertices: Vec<_> = vec![
     ///     vertex!([0.0, 0.0, 0.0]),
@@ -5323,7 +5380,7 @@ where
     ///
     /// ```rust
     /// #![allow(deprecated)]
-    /// use delaunay::prelude::triangulation::*;
+    /// use delaunay::prelude::triangulation::construction::{DelaunayTriangulation, vertex};
     ///
     /// let vertices = vec![
     ///     vertex!([0.0, 0.0]),
@@ -5355,7 +5412,7 @@ where
     /// # Examples
     ///
     /// ```rust
-    /// use delaunay::prelude::triangulation::*;
+    /// use delaunay::prelude::triangulation::construction::{DelaunayTriangulation, vertex};
     ///
     /// let vertices = vec![
     ///     vertex!([0.0, 0.0]),
@@ -5392,7 +5449,8 @@ where
     /// # Examples
     ///
     /// ```rust
-    /// use delaunay::prelude::triangulation::*;
+    /// use delaunay::prelude::triangulation::construction::{DelaunayTriangulation, vertex};
+    /// use delaunay::prelude::triangulation::validation::ValidationPolicy;
     ///
     /// let vertices = vec![
     ///     vertex!([0.0, 0.0]),
@@ -5403,10 +5461,10 @@ where
     /// let mut dt: DelaunayTriangulation<_, (), (), 2> =
     ///     DelaunayTriangulation::new(&vertices).unwrap();
     ///
-    /// dt.set_validation_policy(delaunay::core::triangulation::ValidationPolicy::Always);
+    /// dt.set_validation_policy(ValidationPolicy::Always);
     /// assert_eq!(
     ///     dt.validation_policy(),
-    ///     delaunay::core::triangulation::ValidationPolicy::Always
+    ///     ValidationPolicy::Always
     /// );
     /// ```
     #[inline]
@@ -5454,7 +5512,8 @@ where
     /// # Examples
     ///
     /// ```rust
-    /// use delaunay::prelude::triangulation::*;
+    /// use delaunay::prelude::triangulation::construction::{DelaunayTriangulation, vertex};
+    /// use delaunay::prelude::triangulation::repair::DelaunayRepairStats;
     ///
     /// let vertices = vec![
     ///     vertex!([0.0, 0.0, 0.0]),
@@ -5566,6 +5625,24 @@ where
         )
     }
 
+    /// Applies repair-policy and topology gates to non-insertion mutating operations.
+    ///
+    /// These operations do not have a meaningful insertion cadence, so every enabled
+    /// repair policy permits the post-mutation repair attempt.
+    fn should_run_delaunay_repair_after_mutation(&self, topology: TopologyGuarantee) -> bool {
+        if D < 2 {
+            return false;
+        }
+        if self.tri.tds.number_of_cells() == 0 {
+            return false;
+        }
+        if self.insertion_state.delaunay_repair_policy == DelaunayRepairPolicy::Never {
+            return false;
+        }
+
+        TopologicalOperation::FacetFlip.is_admissible_under(topology)
+    }
+
     /// Enables test-only repair fallback paths without exposing a public knob.
     #[cfg_attr(
         not(test),
@@ -5621,7 +5698,7 @@ where
     /// # Examples
     ///
     /// ```rust
-    /// use delaunay::prelude::triangulation::*;
+    /// use delaunay::prelude::triangulation::construction::{DelaunayTriangulation, vertex};
     /// use delaunay::prelude::triangulation::repair::DelaunayRepairHeuristicConfig;
     ///
     /// let vertices = vec![
@@ -5938,7 +6015,9 @@ where
     /// # Examples
     ///
     /// ```rust
-    /// use delaunay::prelude::triangulation::*;
+    /// use delaunay::prelude::triangulation::construction::{
+    ///     DelaunayTriangulationBuilder, TopologyGuarantee, vertex,
+    /// };
     ///
     /// let vertices = vec![vertex!([0.0, 0.0]), vertex!([1.0, 0.0]), vertex!([0.0, 1.0])];
     /// let dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>().unwrap();
@@ -5955,7 +6034,9 @@ where
     /// # Examples
     ///
     /// ```rust
-    /// use delaunay::prelude::triangulation::*;
+    /// use delaunay::prelude::triangulation::construction::{
+    ///     DelaunayTriangulationBuilder, GlobalTopology, vertex,
+    /// };
     ///
     /// let vertices = vec![vertex!([0.0, 0.0]), vertex!([1.0, 0.0]), vertex!([0.0, 1.0])];
     /// let dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>().unwrap();
@@ -5972,7 +6053,9 @@ where
     /// # Examples
     ///
     /// ```rust
-    /// use delaunay::prelude::triangulation::*;
+    /// use delaunay::prelude::triangulation::construction::{
+    ///     DelaunayTriangulationBuilder, TopologyKind, vertex,
+    /// };
     ///
     /// let vertices = vec![vertex!([0.0, 0.0]), vertex!([1.0, 0.0]), vertex!([0.0, 1.0])];
     /// let dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>().unwrap();
@@ -5989,7 +6072,9 @@ where
     /// # Examples
     ///
     /// ```rust
-    /// use delaunay::prelude::triangulation::*;
+    /// use delaunay::prelude::triangulation::construction::{
+    ///     DelaunayTriangulationBuilder, GlobalTopology, vertex,
+    /// };
     ///
     /// let vertices = vec![vertex!([0.0, 0.0]), vertex!([1.0, 0.0]), vertex!([0.0, 1.0])];
     /// let mut dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>().unwrap();
@@ -6006,8 +6091,9 @@ where
     /// # Examples
     ///
     /// ```rust
-    /// use delaunay::prelude::triangulation::TopologyGuarantee;
-    /// use delaunay::prelude::triangulation::*;
+    /// use delaunay::prelude::triangulation::construction::{
+    ///     DelaunayTriangulation, TopologyGuarantee,
+    /// };
     ///
     /// let mut dt: DelaunayTriangulation<_, (), (), 3> = DelaunayTriangulation::empty();
     /// dt.set_topology_guarantee(TopologyGuarantee::Pseudomanifold);
@@ -6031,8 +6117,7 @@ where
     /// # Examples
     ///
     /// ```rust
-    /// use delaunay::prelude::triangulation::DelaunayTriangulation;
-    /// use delaunay::vertex;
+    /// use delaunay::prelude::triangulation::construction::{DelaunayTriangulation, vertex};
     ///
     /// let vertices = vec![
     ///     vertex!([0.0, 0.0, 0.0]),
@@ -6061,8 +6146,7 @@ where
     /// # Examples
     ///
     /// ```rust
-    /// use delaunay::prelude::triangulation::DelaunayTriangulation;
-    /// use delaunay::vertex;
+    /// use delaunay::prelude::triangulation::construction::{DelaunayTriangulation, vertex};
     ///
     /// let vertices = vec![
     ///     vertex!([0.0, 0.0, 0.0]),
@@ -6430,8 +6514,7 @@ where
     /// Incremental insertion from empty triangulation:
     ///
     /// ```rust
-    /// use delaunay::prelude::DelaunayTriangulation;
-    /// use delaunay::vertex;
+    /// use delaunay::prelude::triangulation::construction::{DelaunayTriangulation, vertex};
     ///
     /// // Start with empty triangulation
     /// let mut dt: DelaunayTriangulation<_, (), (), 3> = DelaunayTriangulation::empty();
@@ -6459,8 +6542,7 @@ where
     /// Using batch construction (traditional approach):
     ///
     /// ```rust
-    /// use delaunay::prelude::triangulation::DelaunayTriangulation;
-    /// use delaunay::vertex;
+    /// use delaunay::prelude::triangulation::construction::{DelaunayTriangulation, vertex};
     ///
     /// // Create initial triangulation with 5 vertices (4-simplex)
     /// let vertices = vec![
@@ -6575,7 +6657,8 @@ where
     /// # Examples
     ///
     /// ```rust
-    /// use delaunay::prelude::triangulation::*;
+    /// use delaunay::prelude::triangulation::construction::{DelaunayTriangulation, vertex};
+    /// use delaunay::prelude::triangulation::insertion::InsertionOutcome;
     ///
     /// let mut dt: DelaunayTriangulation<_, (), (), 3> = DelaunayTriangulation::empty();
     ///
@@ -6908,7 +6991,7 @@ where
     /// # Examples
     ///
     /// ```rust
-    /// use delaunay::prelude::triangulation::*;
+    /// use delaunay::prelude::triangulation::construction::{DelaunayTriangulation, vertex};
     ///
     /// let vertices = [
     ///     vertex!([0.0, 0.0]),
@@ -6965,7 +7048,7 @@ where
             };
 
             let topology = self.tri.topology_guarantee();
-            if self.should_run_delaunay_repair_for(topology, 0) {
+            if self.should_run_delaunay_repair_after_mutation(topology) {
                 let seed_ref = seed_cells.as_deref();
                 let repair_result = {
                     self.invalidate_repair_caches();
@@ -7267,8 +7350,7 @@ where
     /// ```rust
     /// use delaunay::prelude::geometry::FastKernel;
     /// use delaunay::prelude::tds::Tds;
-    /// use delaunay::prelude::triangulation::DelaunayTriangulation;
-    /// use delaunay::vertex;
+    /// use delaunay::prelude::triangulation::construction::{DelaunayTriangulation, vertex};
     ///
     /// let vertices = vec![
     ///     vertex!([0.0, 0.0, 0.0, 0.0]),
@@ -7314,8 +7396,9 @@ where
     ///
     /// ```rust
     /// use delaunay::prelude::geometry::FastKernel;
-    /// use delaunay::prelude::triangulation::{DelaunayTriangulation, TopologyGuarantee};
-    /// use delaunay::vertex;
+    /// use delaunay::prelude::triangulation::construction::{
+    ///     DelaunayTriangulation, TopologyGuarantee, vertex,
+    /// };
     ///
     /// let vertices = vec![
     ///     vertex!([0.0, 0.0]),
@@ -7365,10 +7448,9 @@ where
     ///
     /// ```rust
     /// use delaunay::prelude::geometry::FastKernel;
-    /// use delaunay::prelude::triangulation::{
-    ///     DelaunayTriangulation, GlobalTopology, TopologyGuarantee,
+    /// use delaunay::prelude::triangulation::construction::{
+    ///     DelaunayTriangulation, GlobalTopology, TopologyGuarantee, vertex,
     /// };
-    /// use delaunay::vertex;
     ///
     /// let vertices = vec![
     ///     vertex!([0.0, 0.0]),
@@ -7493,7 +7575,7 @@ where
 /// ```rust
 /// # use delaunay::prelude::geometry::*;
 /// # use delaunay::prelude::tds::Tds;
-/// # use delaunay::prelude::triangulation::*;
+/// # use delaunay::prelude::triangulation::construction::{DelaunayTriangulation, vertex};
 /// # fn example() {
 /// // Create and serialize a triangulation
 /// let vertices = vec![
@@ -7540,6 +7622,7 @@ where
 /// use std::num::NonZeroUsize;
 ///
 /// let policy = DelaunayRepairPolicy::EveryN(NonZeroUsize::new(4).unwrap());
+/// assert!(!policy.should_repair(0));
 /// assert!(!policy.should_repair(3));
 /// assert!(policy.should_repair(4));
 /// ```
@@ -7567,8 +7650,8 @@ impl DelaunayRepairPolicy {
     pub const fn should_repair(self, insertion_count: usize) -> bool {
         match self {
             Self::Never => false,
-            Self::EveryInsertion => true,
-            Self::EveryN(n) => insertion_count.is_multiple_of(n.get()),
+            Self::EveryInsertion => insertion_count != 0,
+            Self::EveryN(n) => insertion_count != 0 && insertion_count.is_multiple_of(n.get()),
         }
     }
 }
@@ -9085,8 +9168,34 @@ mod tests {
         dt.set_delaunay_repair_policy(DelaunayRepairPolicy::EveryN(NonZeroUsize::new(2).unwrap()));
         let topology = dt.topology_guarantee();
 
+        assert!(!dt.should_run_delaunay_repair_for(topology, 0));
         assert!(!dt.should_run_delaunay_repair_for(topology, 1));
         assert!(dt.should_run_delaunay_repair_for(topology, 2));
+    }
+
+    #[test]
+    fn test_delaunay_repair_policy_zero_insertions_never_repairs() {
+        assert!(!DelaunayRepairPolicy::EveryInsertion.should_repair(0));
+        assert!(!DelaunayRepairPolicy::EveryN(NonZeroUsize::new(2).unwrap()).should_repair(0));
+    }
+
+    #[test]
+    fn test_non_insertion_mutation_repair_gate_ignores_insertion_cadence() {
+        init_tracing();
+        let vertices: Vec<Vertex<f64, (), 2>> = vec![
+            vertex!([0.0, 0.0]),
+            vertex!([1.0, 0.0]),
+            vertex!([0.0, 1.0]),
+        ];
+        let mut dt: DelaunayTriangulation<_, (), (), 2> =
+            DelaunayTriangulation::new(&vertices).unwrap();
+        let topology = dt.topology_guarantee();
+
+        dt.set_delaunay_repair_policy(DelaunayRepairPolicy::EveryN(NonZeroUsize::new(2).unwrap()));
+        assert!(dt.should_run_delaunay_repair_after_mutation(topology));
+
+        dt.set_delaunay_repair_policy(DelaunayRepairPolicy::Never);
+        assert!(!dt.should_run_delaunay_repair_after_mutation(topology));
     }
 
     #[test]
@@ -10909,20 +11018,22 @@ mod tests {
         };
         assert!(!TestDelaunay::<4>::can_soft_fail(&canonicalization_error));
 
-        let mapped_hard = TestDelaunay::<4>::map_hard_repair_error(23, &flip_error);
+        let mapped_hard = TestDelaunay::<4>::map_hard_repair_error(23, flip_error);
         assert!(
             matches!(
                 mapped_hard,
                 DelaunayTriangulationConstructionError::Triangulation(
-                    DelaunayConstructionFailure::InternalInconsistency { ref message }
-                ) if message.contains("per-insertion Delaunay repair failed at index 23")
-                    && message.contains("Bistellar flip not supported for D=1")
+                    DelaunayConstructionFailure::DelaunayRepair {
+                        phase: DelaunayConstructionRepairPhase::BatchLocal { index: 23 },
+                        ref source,
+                    }
+                ) if matches!(**source, DelaunayRepairError::Flip(FlipError::UnsupportedDimension { dimension: 1 }))
             ),
             "deterministic hard D>=4 repair failures should stop shuffled retries: {mapped_hard:?}"
         );
 
         let geometric_error = DelaunayRepairError::Flip(FlipError::DegenerateCell);
-        let mapped_geometric = TestDelaunay::<4>::map_hard_repair_error(24, &geometric_error);
+        let mapped_geometric = TestDelaunay::<4>::map_hard_repair_error(24, geometric_error);
         assert!(
             matches!(
                 mapped_geometric,
@@ -10934,14 +11045,16 @@ mod tests {
             "geometric hard D>=4 repair failures should remain retryable degeneracies: {mapped_geometric:?}"
         );
 
-        let mapped_verification = TestDelaunay::<4>::map_hard_repair_error(25, &verification_error);
+        let mapped_verification = TestDelaunay::<4>::map_hard_repair_error(25, verification_error);
         assert!(
             matches!(
                 mapped_verification,
                 DelaunayTriangulationConstructionError::Triangulation(
-                    DelaunayConstructionFailure::InternalInconsistency { ref message }
-                ) if message.contains("per-insertion Delaunay repair failed at index 25")
-                    && message.contains("removed cell frame")
+                    DelaunayConstructionFailure::DelaunayRepair {
+                        phase: DelaunayConstructionRepairPhase::BatchLocal { index: 25 },
+                        ref source,
+                    }
+                ) if matches!(**source, DelaunayRepairError::VerificationFailed { .. })
             ),
             "verification context failures should stop shuffled retries: {mapped_verification:?}"
         );
@@ -10960,8 +11073,7 @@ mod tests {
                 },
             }),
         };
-        let mapped_predicate =
-            TestDelaunay::<4>::map_hard_repair_error(26, &predicate_verification);
+        let mapped_predicate = TestDelaunay::<4>::map_hard_repair_error(26, predicate_verification);
         assert!(
             matches!(
                 mapped_predicate,

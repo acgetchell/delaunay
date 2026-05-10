@@ -88,7 +88,7 @@ The convenience constructors (`DelaunayTriangulation::new()`, `::empty()`, etc.)
 
 ```rust
 use delaunay::prelude::geometry::RobustKernel;
-use delaunay::prelude::triangulation::*;
+use delaunay::prelude::triangulation::construction::{DelaunayTriangulation, vertex};
 
 let kernel = RobustKernel::<f64>::new();
 
@@ -165,7 +165,8 @@ cases involve cavity/topology failures rather than predicate degeneracies.
 Use `insert_with_statistics()` to observe this behavior:
 
 ```rust
-use delaunay::prelude::triangulation::*;
+use delaunay::prelude::triangulation::construction::{DelaunayTriangulation, vertex};
+use delaunay::prelude::triangulation::insertion::InsertionOutcome;
 
 let mut dt: DelaunayTriangulation<_, (), (), 3> = DelaunayTriangulation::empty();
 

@@ -14,7 +14,10 @@
 
 use delaunay::prelude::query::BoundaryAnalysis;
 use delaunay::prelude::tds::Tds;
-use delaunay::prelude::triangulation::*;
+use delaunay::prelude::triangulation::construction::{
+    DelaunayTriangulation, DelaunayTriangulationConstructionError, ExplicitConstructionError,
+    TopologyGuarantee, vertex,
+};
 use delaunay::topology::characteristics::{euler, validation};
 
 // =============================================================================

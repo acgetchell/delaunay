@@ -4,7 +4,9 @@
 //! Delaunay violations, the deterministic rebuild heuristic is triggered and
 //! successfully produces a valid Delaunay triangulation.
 
-use delaunay::prelude::triangulation::*;
+use delaunay::prelude::triangulation::construction::{
+    DelaunayRepairPolicy, DelaunayTriangulation, TopologyGuarantee, vertex,
+};
 
 #[cfg(feature = "diagnostics")]
 fn init_tracing() {

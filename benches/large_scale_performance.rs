@@ -79,7 +79,7 @@
 use criterion::{BatchSize, Criterion, Throughput, criterion_group, criterion_main};
 use delaunay::prelude::generators::generate_random_points_seeded;
 use delaunay::prelude::geometry::AdaptiveKernel;
-use delaunay::prelude::triangulation::{
+use delaunay::prelude::triangulation::construction::{
     ConstructionOptions, DelaunayTriangulation, RetryPolicy, Vertex,
 };
 use delaunay::vertex;

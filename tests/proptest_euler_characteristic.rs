@@ -17,7 +17,9 @@
 //! For deterministic tests with known configurations, see `euler_characteristic.rs`.
 
 use delaunay::geometry::util::generate_random_triangulation_with_topology_guarantee;
-use delaunay::prelude::triangulation::*;
+use delaunay::prelude::triangulation::construction::{
+    DelaunayTriangulation, TopologyGuarantee, vertex,
+};
 use delaunay::topology::characteristics::{euler, validation};
 use proptest::prelude::*;
 

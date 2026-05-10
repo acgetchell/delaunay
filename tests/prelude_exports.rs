@@ -30,6 +30,10 @@ use delaunay::prelude::ordering::{
 use delaunay::prelude::query::ConvexHull;
 #[cfg(feature = "diagnostics")]
 use delaunay::prelude::tds::Tds;
+use delaunay::prelude::triangulation::construction::{
+    ConstructionOptions, DelaunayConstructionFailure, DelaunayRepairPolicy, DelaunayTriangulation,
+    DelaunayTriangulationConstructionError, InsertionOrderStrategy, Vertex,
+};
 use delaunay::prelude::triangulation::delaunayize::{
     DelaunayizeConfig, DelaunayizeError, DelaunayizeOutcome, delaunayize_by_flips,
 };
@@ -39,16 +43,12 @@ use delaunay::prelude::triangulation::insertion::{
     repair_neighbor_pointers_local,
 };
 use delaunay::prelude::triangulation::repair::{
-    DelaunayCheckPolicy, DelaunayRepairDiagnostics, DelaunayRepairError, DelaunayRepairOutcome,
-    DelaunayRepairPolicy, DelaunayRepairStats, FlipEdgeAdjacencyError, FlipError,
-    FlipTriangleAdjacencyError, FlipVertexAdjacencyError, RepairQueueOrder,
-    verify_delaunay_for_triangulation,
+    DelaunayCheckPolicy, DelaunayRepairDiagnostics, DelaunayRepairError, DelaunayRepairOperation,
+    DelaunayRepairOutcome, DelaunayRepairStats, DelaunayTriangulationValidationError,
+    FlipEdgeAdjacencyError, FlipError, FlipTriangleAdjacencyError, FlipVertexAdjacencyError,
+    RepairQueueOrder, verify_delaunay_for_triangulation,
 };
-use delaunay::prelude::triangulation::{
-    ConstructionOptions, DelaunayConstructionFailure, DelaunayRepairOperation,
-    DelaunayTriangulation, DelaunayTriangulationConstructionError,
-    DelaunayTriangulationValidationError, InsertionOrderStrategy, Vertex,
-};
+use delaunay::prelude::triangulation::validation::ValidationCadence;
 use delaunay::vertex;
 
 #[derive(Debug, thiserror::Error)]
@@ -104,6 +104,10 @@ fn preludes_cover_bench_apis() -> Result<(), PreludeExportTestError> {
         DelaunayConstructionFailure::GeometricDegeneracy { .. }
     ));
     assert!(matches!(LocateResult::Outside, LocateResult::Outside));
+    assert!(matches!(
+        ValidationCadence::from_optional_every(Some(128)),
+        ValidationCadence::EveryN(every) if every.get() == 128
+    ));
     assert_send_sync_unpin::<TdsMutationError>();
     assert_send_sync_unpin::<NeighborRebuildError>();
     Ok(())

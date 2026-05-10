@@ -220,7 +220,10 @@ delaunay/
 │   │   ├── builder.rs
 │   │   ├── delaunay.rs
 │   │   ├── delaunayize.rs
-│   │   └── flips.rs
+│   │   ├── flips.rs
+│   │   ├── locality.rs
+│   │   └── validation.rs
+│   ├── triangulation.rs
 │   └── lib.rs
 ├── tests/
 │   ├── semgrep/
@@ -431,6 +434,12 @@ The `benchmark-utils` CLI provides integrated benchmark workflow functionality, 
 - `delaunayize.rs` - End-to-end "repair then delaunayize" workflow (`delaunayize_by_flips`);
   bounded topology repair + flip-based Delaunay repair + optional fallback rebuild
 - `flips.rs` - High-level bistellar flip (Pachner move) trait and supporting public types; delegates to `core::algorithms::flips`
+- `locality.rs` - Local seed/frontier helpers for Hilbert-local construction and repair
+- `validation.rs` - Construction validation cadence and scheduling helpers
+
+**`src/triangulation.rs`** - Public facade for triangulation-facing workflows.
+It keeps the module namespace stable while the implementation is split across
+orthogonal files under `src/triangulation/`.
 
 **`src/topology/`** - Topology analysis and validation:
 
