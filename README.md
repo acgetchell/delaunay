@@ -390,3 +390,4 @@ Portions of this library were developed with the assistance of these AI tools:
 [Delaunay repair]: https://link.springer.com/article/10.1007/BF01975867
 [Pachner moves]: https://en.wikipedia.org/wiki/Pachner_move
 [`DelaunayTriangulationBuilder`]: https://docs.rs/delaunay/latest/delaunay/triangulation/builder/struct.DelaunayTriangulationBuilder.html
+
