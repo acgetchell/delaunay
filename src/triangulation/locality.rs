@@ -16,17 +16,17 @@ use crate::geometry::point::Point;
 
 /// Local conflict-seed collection result for exterior insertion repair.
 #[must_use]
-pub struct LocalConflictSeedCells {
+pub(crate) struct LocalConflictSeedCells {
     /// Live cells that should seed local Delaunay repair.
-    pub seed_cells: CellKeyBuffer,
+    pub(crate) seed_cells: CellKeyBuffer,
     /// Number of cells returned by the local conflict-region search before any fallback seed.
-    pub conflict_cells_found: usize,
+    pub(crate) conflict_cells_found: usize,
 }
 
 /// Adds live, deduplicated candidate cells to a pending local repair frontier.
 ///
 /// Returns the number of cells newly appended to `pending_seed_cells`.
-pub fn accumulate_live_cell_seeds<T, U, V, const D: usize>(
+pub(crate) fn accumulate_live_cell_seeds<T, U, V, const D: usize>(
     tds: &Tds<T, U, V, D>,
     candidate_seed_cells: &[CellKey],
     pending_seed_cells: &mut Vec<CellKey>,
@@ -49,7 +49,7 @@ where
 /// Adds live, deduplicated candidate cells to a compact repair seed buffer.
 ///
 /// Returns the number of cells newly appended to `seed_cells`.
-pub fn append_live_unique_cell_seeds<T, U, V, const D: usize>(
+pub(crate) fn append_live_unique_cell_seeds<T, U, V, const D: usize>(
     tds: &Tds<T, U, V, D>,
     candidate_seed_cells: &[CellKey],
     seed_cells: &mut CellKeyBuffer,
@@ -73,7 +73,7 @@ where
 }
 
 /// Retains only live, deduplicated cells in a pending local repair frontier.
-pub fn retain_live_cell_seeds<T, U, V, const D: usize>(
+pub(crate) fn retain_live_cell_seeds<T, U, V, const D: usize>(
     tds: &Tds<T, U, V, D>,
     seed_cells: &mut Vec<CellKey>,
     seen: &mut FastHashSet<CellKey>,
@@ -86,13 +86,13 @@ pub fn retain_live_cell_seeds<T, U, V, const D: usize>(
 }
 
 /// Clears a local repair frontier and its deduplication set together.
-pub fn clear_cell_seed_set(seed_cells: &mut Vec<CellKey>, seen: &mut FastHashSet<CellKey>) {
+pub(crate) fn clear_cell_seed_set(seed_cells: &mut Vec<CellKey>, seen: &mut FastHashSet<CellKey>) {
     seed_cells.clear();
     seen.clear();
 }
 
 /// Retains conflict cells and records removed cells as local repair seeds.
-pub fn retain_cells_and_record_removed(
+pub(crate) fn retain_cells_and_record_removed(
     conflict_cells: &mut CellKeyBuffer,
     repair_seed_cells: &mut CellKeyBuffer,
     mut keep_cell: impl FnMut(CellKey) -> bool,
@@ -107,7 +107,7 @@ pub fn retain_cells_and_record_removed(
 }
 
 /// Replaces conflict cells and records cells missing from the replacement.
-pub fn replace_cells_and_record_removed(
+pub(crate) fn replace_cells_and_record_removed(
     conflict_cells: &mut CellKeyBuffer,
     repair_seed_cells: &mut CellKeyBuffer,
     replacement: CellKeyBuffer,
@@ -127,7 +127,7 @@ pub fn replace_cells_and_record_removed(
 /// BFS conflict search from it gives a bounded local frontier without scanning the
 /// entire triangulation. If no circumsphere conflict is found, the terminal cell
 /// itself is still a useful local seed.
-pub fn collect_local_exterior_conflict_seed_cells<K, U, V, const D: usize>(
+pub(crate) fn collect_local_exterior_conflict_seed_cells<K, U, V, const D: usize>(
     tds: &Tds<K::Scalar, U, V, D>,
     kernel: &K,
     point: &Point<K::Scalar, D>,

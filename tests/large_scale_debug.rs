@@ -73,7 +73,6 @@
 
 #![forbid(unsafe_code)]
 
-use delaunay::core::operations::InsertionResult;
 use delaunay::geometry::kernel::RobustKernel;
 use delaunay::geometry::util::{
     generate_random_points_in_ball_seeded, generate_random_points_seeded, safe_usize_to_scalar,
@@ -84,7 +83,9 @@ use delaunay::prelude::triangulation::construction::{
     DelaunayTriangulation, DelaunayTriangulationConstructionErrorWithStatistics,
     InitialSimplexStrategy, TopologyGuarantee, Vertex, vertex,
 };
-use delaunay::prelude::triangulation::insertion::{InsertionOutcome, InsertionStatistics};
+use delaunay::prelude::triangulation::insertion::{
+    InsertionOutcome, InsertionResult, InsertionStatistics,
+};
 use delaunay::prelude::triangulation::repair::{
     DelaunayCheckPolicy, DelaunayRepairHeuristicConfig,
 };
@@ -236,7 +237,7 @@ impl<const D: usize> From<ConstructionStatistics> for InsertionSummary<D> {
     fn from(stats: ConstructionStatistics) -> Self {
         let slow_insertions = stats
             .slow_insertions
-            .iter()
+            .into_iter()
             .map(|sample| SlowInsertionSample {
                 index: sample.index,
                 uuid: sample.uuid,
@@ -256,7 +257,7 @@ impl<const D: usize> From<ConstructionStatistics> for InsertionSummary<D> {
             .collect();
         let skip_samples: Vec<SkipSample<D>> = stats
             .skip_samples
-            .iter()
+            .into_iter()
             .map(|s| {
                 let coords = if s.coords_available {
                     s.coords.as_slice().try_into().map_or_else(
@@ -280,7 +281,7 @@ impl<const D: usize> From<ConstructionStatistics> for InsertionSummary<D> {
                     uuid: s.uuid,
                     coords,
                     attempts: s.attempts,
-                    error: s.error.clone(),
+                    error: s.error,
                 }
             })
             .collect();

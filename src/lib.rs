@@ -1020,7 +1020,8 @@ pub mod prelude {
                 DelaunayTriangulationBuilder, ExplicitConstructionError,
             };
             pub use crate::triangulation::delaunay::{
-                ConstructionOptions, ConstructionStatistics, ConstructionTelemetry, DedupPolicy,
+                ConstructionOptions, ConstructionSkipSample, ConstructionSlowInsertionSample,
+                ConstructionStatistics, ConstructionTelemetry, DedupPolicy,
                 DelaunayConstructionFailure, DelaunayConstructionRepairPhase, DelaunayRepairPolicy,
                 DelaunayTriangulation, DelaunayTriangulationConstructionError,
                 DelaunayTriangulationConstructionErrorWithStatistics, InitialSimplexStrategy,

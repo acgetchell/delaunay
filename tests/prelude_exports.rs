@@ -31,7 +31,8 @@ use delaunay::prelude::query::ConvexHull;
 #[cfg(feature = "diagnostics")]
 use delaunay::prelude::tds::Tds;
 use delaunay::prelude::triangulation::construction::{
-    ConstructionOptions, DelaunayConstructionFailure, DelaunayRepairPolicy, DelaunayTriangulation,
+    ConstructionOptions, ConstructionSkipSample, ConstructionSlowInsertionSample,
+    DelaunayConstructionFailure, DelaunayRepairPolicy, DelaunayTriangulation,
     DelaunayTriangulationConstructionError, InsertionOrderStrategy, Vertex,
 };
 use delaunay::prelude::triangulation::delaunayize::{
@@ -84,6 +85,10 @@ fn preludes_cover_bench_apis() -> Result<(), PreludeExportTestError> {
     ];
     let options =
         ConstructionOptions::default().with_insertion_order(InsertionOrderStrategy::Input);
+    assert!(matches!(
+        options.batch_repair_policy(),
+        DelaunayRepairPolicy::EveryN(every) if every.get() == 2
+    ));
     let dt = DelaunayTriangulation::new_with_options(&vertices, options)?;
 
     assert_eq!(dt.topology_guarantee(), TopologyGuarantee::PLManifold);
@@ -110,6 +115,8 @@ fn preludes_cover_bench_apis() -> Result<(), PreludeExportTestError> {
     ));
     assert_send_sync_unpin::<TdsMutationError>();
     assert_send_sync_unpin::<NeighborRebuildError>();
+    assert_send_sync_unpin::<ConstructionSkipSample>();
+    assert_send_sync_unpin::<ConstructionSlowInsertionSample>();
     Ok(())
 }
 

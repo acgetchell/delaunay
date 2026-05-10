@@ -4294,11 +4294,13 @@ where
         telemetry: &mut InsertionTelemetry,
     ) -> Result<TryInsertImplOk, InsertionError> {
         let point = *vertex.point();
-        let location =
-            locate_with_stats(&self.tds, &self.kernel, &point, hint).map(|(location, stats)| {
+        let location = match locate_with_stats(&self.tds, &self.kernel, &point, hint) {
+            Ok((location, stats)) => {
                 Self::record_locate_telemetry(telemetry, location, &stats);
-                location
-            });
+                Ok(location)
+            }
+            Err(error) => Err(error),
+        };
 
         let Ok(LocateResult::InsideCell(start_cell)) = location else {
             return Err(Self::invariant_error_to_insertion_error(validation_err));
@@ -5539,7 +5541,7 @@ where
                 // was required anyway.  Cadenced and final Delaunay repair own
                 // any local empty-circumsphere cleanup after the hull mutation.
                 #[cfg(debug_assertions)]
-                if std::env::var_os("DELAUNAY_DEBUG_HULL").is_some() {
+                if env::var_os("DELAUNAY_DEBUG_HULL").is_some() {
                     tracing::debug!(
                         "Outside insertion: skipping global conflict-region scan; using hull extension"
                     );

@@ -19,7 +19,7 @@ use delaunay::prelude::triangulation::construction::{
     ConstructionOptions, DelaunayTriangulationConstructionError, InsertionOrderStrategy, Vertex,
 };
 use delaunay::prelude::triangulation::flips::*;
-use delaunay::prelude::triangulation::repair::DelaunayTriangulationValidationError;
+use delaunay::prelude::triangulation::validation::DelaunayTriangulationValidationError;
 use std::time::Instant;
 
 type Dt4 = DelaunayTriangulation<RobustKernel<f64>, (), (), 4>;

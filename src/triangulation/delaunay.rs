@@ -172,6 +172,20 @@ enum BatchLocalRepairTrigger {
     SeedBacklog,
 }
 
+/// Default local-repair cadence for batch construction.
+///
+/// Direct incremental insertion keeps [`DelaunayRepairPolicy::default`] at
+/// [`DelaunayRepairPolicy::EveryInsertion`]. Batch construction instead uses
+/// `EveryN(2)`, the best current cadence from the 500/3000-point #341 proxy
+/// sweeps, while final repair and validation still enforce Delaunay correctness.
+const fn default_batch_repair_policy() -> DelaunayRepairPolicy {
+    if let Some(every) = NonZeroUsize::new(2) {
+        DelaunayRepairPolicy::EveryN(every)
+    } else {
+        DelaunayRepairPolicy::EveryInsertion
+    }
+}
+
 /// Decides whether batch construction should run local Delaunay repair now.
 fn batch_local_repair_trigger<const D: usize>(
     policy: DelaunayRepairPolicy,
@@ -351,12 +365,16 @@ impl From<TriangulationConstructionError> for DelaunayTriangulationConstructionE
 }
 
 /// Construction phase that invoked flip-based Delaunay repair.
+///
+/// Batch construction can run local repair at the configured cadence or earlier
+/// when the pending seed frontier grows too large. Both cases are reported as
+/// [`Self::BatchLocal`].
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum DelaunayConstructionRepairPhase {
-    /// Cadenced local repair after a successful bulk insertion.
+    /// Local repair during the bulk insertion loop.
     BatchLocal {
-        /// Zero-based input index that triggered the repair cadence.
+        /// Zero-based input index whose insertion triggered the repair.
         index: usize,
     },
     /// Seeded or fallback repair during construction finalization.
@@ -592,7 +610,7 @@ impl From<TriangulationConstructionError> for DelaunayConstructionFailure {
 /// # Examples
 ///
 /// ```rust
-/// use delaunay::prelude::triangulation::DelaunayRepairOperation;
+/// use delaunay::prelude::triangulation::repair::DelaunayRepairOperation;
 ///
 /// assert_eq!(DelaunayRepairOperation::VertexRemoval.to_string(), "vertex removal");
 /// ```
@@ -630,7 +648,7 @@ impl fmt::Display for DelaunayRepairOperation {
 ///
 /// ```rust
 /// use delaunay::prelude::triangulation::construction::{DelaunayTriangulation, vertex};
-/// use delaunay::prelude::triangulation::repair::DelaunayTriangulationValidationError;
+/// use delaunay::prelude::triangulation::validation::DelaunayTriangulationValidationError;
 ///
 /// let vertices = vec![
 ///     vertex!([0.0, 0.0, 0.0]),
@@ -943,7 +961,7 @@ impl Default for ConstructionOptions {
             dedup_policy: DedupPolicy::default(),
             initial_simplex: InitialSimplexStrategy::default(),
             retry_policy: RetryPolicy::default(),
-            batch_repair_policy: DelaunayRepairPolicy::default(),
+            batch_repair_policy: default_batch_repair_policy(),
             use_global_repair_fallback: true,
         }
     }
@@ -978,6 +996,20 @@ impl ConstructionOptions {
     /// [`DelaunayRepairPolicy::EveryN`] controls the scheduled cadence. Batch
     /// construction may also run an earlier local repair when the accumulated
     /// seed frontier grows large; [`DelaunayRepairPolicy::Never`] disables both.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use delaunay::prelude::triangulation::construction::{
+    ///     ConstructionOptions, DelaunayRepairPolicy,
+    /// };
+    /// use std::num::NonZeroUsize;
+    ///
+    /// assert_eq!(
+    ///     ConstructionOptions::default().batch_repair_policy(),
+    ///     DelaunayRepairPolicy::EveryN(NonZeroUsize::new(2).unwrap()),
+    /// );
+    /// ```
     #[must_use]
     pub const fn batch_repair_policy(&self) -> DelaunayRepairPolicy {
         self.batch_repair_policy
@@ -1018,6 +1050,24 @@ impl ConstructionOptions {
     /// [`DelaunayRepairPolicy::EveryN`] controls the scheduled cadence. Batch
     /// construction may also run an earlier local repair when the accumulated
     /// seed frontier grows large; [`DelaunayRepairPolicy::Never`] disables both.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use delaunay::prelude::triangulation::construction::{
+    ///     ConstructionOptions, DelaunayRepairPolicy,
+    /// };
+    /// use std::num::NonZeroUsize;
+    ///
+    /// let repair_every = NonZeroUsize::new(2).expect("literal 2 is nonzero");
+    /// let options = ConstructionOptions::default()
+    ///     .with_batch_repair_policy(DelaunayRepairPolicy::EveryN(repair_every));
+    ///
+    /// assert_eq!(
+    ///     options.batch_repair_policy(),
+    ///     DelaunayRepairPolicy::EveryN(repair_every),
+    /// );
+    /// ```
     #[must_use]
     pub const fn with_batch_repair_policy(
         mut self,
@@ -1041,9 +1091,10 @@ impl ConstructionOptions {
 
 /// Aggregate release-visible telemetry collected during batch construction.
 ///
-/// These counters summarize the insertion path at a coarse level so large-scale debug runs can
-/// distinguish point-location cost, scan fallback cost, local conflict-region size, and global
-/// exterior conflict scans without enabling per-insertion tracing.
+/// These counters summarize batch construction at a coarse level so large-scale
+/// debug runs can separate construction phases, per-insertion primitive costs,
+/// batch-local repair work, and global exterior conflict scans without enabling
+/// per-insertion tracing.
 #[derive(Debug, Default, Clone)]
 #[non_exhaustive]
 pub struct ConstructionTelemetry {
@@ -1056,7 +1107,7 @@ pub struct ConstructionTelemetry {
 
     /// Wall-clock nanoseconds spent preprocessing vertices before topology construction.
     pub construction_preprocessing_nanos: u64,
-    /// Wall-clock nanoseconds spent in the bulk insertion loop, including cadenced local repair.
+    /// Wall-clock nanoseconds spent in the bulk insertion loop, including batch local repair.
     pub construction_insert_loop_nanos: u64,
     /// Wall-clock nanoseconds spent finalizing bulk construction after the insertion loop.
     pub construction_finalize_nanos: u64,
@@ -1157,7 +1208,19 @@ pub struct ConstructionTelemetry {
 }
 
 impl ConstructionTelemetry {
-    /// Returns true when any insertion-path telemetry was recorded.
+    /// Returns true when any construction telemetry was recorded.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use delaunay::prelude::triangulation::construction::ConstructionTelemetry;
+    ///
+    /// let mut telemetry = ConstructionTelemetry::default();
+    /// assert!(!telemetry.has_data());
+    ///
+    /// telemetry.construction_insert_loop_nanos = 1;
+    /// assert!(telemetry.has_data());
+    /// ```
     #[must_use]
     pub const fn has_data(&self) -> bool {
         self.insertion_wall_time_calls > 0
@@ -1567,7 +1630,7 @@ pub struct ConstructionStatistics {
     /// Maximum number of cells removed during repair for any single insertion.
     pub cells_removed_max: usize,
 
-    /// Aggregate insertion-path telemetry.
+    /// Aggregate batch-construction telemetry.
     pub telemetry: ConstructionTelemetry,
 
     /// Slowest transactional insertions observed during batch construction.
@@ -1709,19 +1772,48 @@ impl ConstructionStatistics {
     }
 
     /// Record a slow insertion sample, preserving the top samples by elapsed time.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use delaunay::prelude::triangulation::construction::{
+    ///     ConstructionStatistics, DelaunayTriangulation, vertex,
+    /// };
+    ///
+    /// let vertices = vec![
+    ///     vertex!([0.0, 0.0]),
+    ///     vertex!([1.0, 0.0]),
+    ///     vertex!([0.0, 1.0]),
+    ///     vertex!([0.25, 0.25]),
+    /// ];
+    /// let (_, stats) =
+    ///     DelaunayTriangulation::<_, (), (), 2>::new_with_construction_statistics(&vertices)
+    ///         .unwrap();
+    /// let sample = stats
+    ///     .slow_insertions
+    ///     .first()
+    ///     .cloned()
+    ///     .expect("one non-simplex vertex produces a slow-insertion sample");
+    ///
+    /// let mut summary = ConstructionStatistics::default();
+    /// summary.record_slow_insertion_sample(sample.clone());
+    ///
+    /// assert_eq!(summary.slow_insertions.len(), 1);
+    /// assert_eq!(summary.slow_insertions[0].index, sample.index);
+    /// ```
     pub fn record_slow_insertion_sample(&mut self, sample: ConstructionSlowInsertionSample) {
         let insert_at = self
             .slow_insertions
             .iter()
             .position(|existing| sample.elapsed_nanos > existing.elapsed_nanos)
             .unwrap_or(self.slow_insertions.len());
-        if insert_at < Self::MAX_SLOW_INSERTION_SAMPLES {
-            self.slow_insertions.insert(insert_at, sample);
-            self.slow_insertions
-                .truncate(Self::MAX_SLOW_INSERTION_SAMPLES);
-        } else if self.slow_insertions.len() < Self::MAX_SLOW_INSERTION_SAMPLES {
-            self.slow_insertions.push(sample);
+        if insert_at >= Self::MAX_SLOW_INSERTION_SAMPLES {
+            return;
         }
+
+        self.slow_insertions.insert(insert_at, sample);
+        self.slow_insertions
+            .truncate(Self::MAX_SLOW_INSERTION_SAMPLES);
     }
 
     /// Merges attempt-level statistics from another construction pass.
@@ -1783,11 +1875,7 @@ struct PreprocessVertices<T, U, const D: usize> {
     grid_cell_size: Option<T>,
 }
 
-impl<T, U, const D: usize> PreprocessVertices<T, U, D>
-where
-    T: CoordinateScalar,
-    U: DataType,
-{
+impl<T, U, const D: usize> PreprocessVertices<T, U, D> {
     /// Borrows the preprocessed vertex order when one exists, avoiding a clone
     /// for policies that leave the input unchanged.
     fn primary_slice<'a>(&'a self, input: &'a [Vertex<T, U, D>]) -> &'a [Vertex<T, U, D>] {
@@ -1802,7 +1890,10 @@ where
 
     /// Carries the dedup grid size forward so incremental insertion can reuse a
     /// compatible spatial index.
-    const fn grid_cell_size(&self) -> Option<T> {
+    const fn grid_cell_size(&self) -> Option<T>
+    where
+        T: Copy,
+    {
         self.grid_cell_size
     }
 }
@@ -1814,7 +1905,6 @@ type PreprocessVerticesResult<T, U, const D: usize> =
 fn vertex_coordinate_hash<T, U, const D: usize>(vertex: &Vertex<T, U, D>) -> u64
 where
     T: CoordinateScalar,
-    U: DataType,
 {
     let mut hasher = FastHasher::default();
     vertex.hash(&mut hasher);
@@ -1828,7 +1918,6 @@ fn order_vertices_lexicographic<T, U, const D: usize>(
 ) -> Vec<Vertex<T, U, D>>
 where
     T: CoordinateScalar,
-    U: DataType,
 {
     let mut keyed: Vec<(Vertex<T, U, D>, u64, usize)> = vertices
         .into_iter()
@@ -1860,7 +1949,6 @@ fn order_vertices_by_strategy<T, U, const D: usize>(
 ) -> Vec<Vertex<T, U, D>>
 where
     T: CoordinateScalar,
-    U: DataType,
 {
     match insertion_order {
         InsertionOrderStrategy::Input => vertices,
@@ -1882,7 +1970,6 @@ fn hash_grid_usable_for_vertices<T, U, const D: usize>(
 ) -> bool
 where
     T: CoordinateScalar,
-    U: DataType,
 {
     if !grid.is_usable() {
         return false;
@@ -1899,7 +1986,6 @@ fn dedup_vertices_exact_sorted<T, U, const D: usize>(
 ) -> Vec<Vertex<T, U, D>>
 where
     T: CoordinateScalar,
-    U: DataType,
 {
     let ordered = order_vertices_lexicographic(vertices);
     let mut unique: Vec<Vertex<T, U, D>> = Vec::with_capacity(ordered.len());
@@ -1926,7 +2012,6 @@ fn dedup_vertices_exact_hash_grid<T, U, const D: usize>(
 ) -> Vec<Vertex<T, U, D>>
 where
     T: CoordinateScalar,
-    U: DataType,
 {
     if !hash_grid_usable_for_vertices(grid, &vertices) {
         return dedup_vertices_exact_sorted(vertices);
@@ -1935,13 +2020,13 @@ where
     let mut unique: Vec<Vertex<T, U, D>> = Vec::with_capacity(vertices.len());
 
     for v in vertices {
-        let coords = v.point().coords();
+        let coords = *v.point().coords();
         let mut duplicate = false;
         let mut candidate_count = 0usize;
-        let used_index = grid.for_each_candidate_vertex_key(coords, |idx| {
+        let used_index = grid.for_each_candidate_vertex_key(&coords, |idx| {
             candidate_count = candidate_count.saturating_add(1);
             let existing_coords = unique[idx].point().coords();
-            if coords_equal_exact(coords, existing_coords) {
+            if coords_equal_exact(&coords, existing_coords) {
                 duplicate = true;
                 return false;
             }
@@ -1953,7 +2038,7 @@ where
         if !duplicate {
             let idx = unique.len();
             unique.push(v);
-            grid.insert_vertex(idx, coords);
+            grid.insert_vertex(idx, &coords);
         }
     }
 
@@ -2021,7 +2106,6 @@ fn dedup_vertices_epsilon_n2<T, U, const D: usize>(
 ) -> Vec<Vertex<T, U, D>>
 where
     T: CoordinateScalar,
-    U: DataType,
 {
     let mut unique: Vec<Vertex<T, U, D>> = Vec::with_capacity(vertices.len());
     for v in vertices {
@@ -2048,7 +2132,6 @@ fn dedup_vertices_epsilon_quantized<T, U, const D: usize>(
 ) -> Vec<Vertex<T, U, D>>
 where
     T: CoordinateScalar,
-    U: DataType,
 {
     if D > BATCH_DEDUP_MAX_DIMENSION {
         return dedup_vertices_epsilon_n2(vertices, epsilon);
@@ -2119,7 +2202,6 @@ fn dedup_vertices_epsilon_hash_grid<T, U, const D: usize>(
 ) -> Vec<Vertex<T, U, D>>
 where
     T: CoordinateScalar,
-    U: DataType,
 {
     if !hash_grid_usable_for_vertices(grid, &vertices) {
         return dedup_vertices_epsilon_quantized(vertices, epsilon);
@@ -2129,10 +2211,10 @@ where
 
     let epsilon_sq = epsilon * epsilon;
     for v in vertices {
-        let coords = v.point().coords();
+        let coords = *v.point().coords();
         let mut duplicate = false;
         let mut candidate_count = 0usize;
-        let used_index = grid.for_each_candidate_vertex_key(coords, |idx| {
+        let used_index = grid.for_each_candidate_vertex_key(&coords, |idx| {
             candidate_count = candidate_count.saturating_add(1);
             let existing_coords = unique[idx].point().coords();
             let mut dist_sq = T::zero();
@@ -2152,7 +2234,7 @@ where
         if !duplicate {
             let idx = unique.len();
             unique.push(v);
-            grid.insert_vertex(idx, coords);
+            grid.insert_vertex(idx, &coords);
         }
     }
 
@@ -2166,7 +2248,6 @@ fn select_balanced_simplex_indices<T, U, const D: usize>(
 ) -> Option<Vec<usize>>
 where
     T: CoordinateScalar,
-    U: DataType,
 {
     if vertices.len() < D + 1 {
         return None;
@@ -2268,8 +2349,8 @@ fn reorder_vertices_for_simplex<T, U, const D: usize>(
     simplex_indices: &[usize],
 ) -> Option<Vec<Vertex<T, U, D>>>
 where
-    T: CoordinateScalar,
-    U: DataType,
+    T: Copy,
+    U: Copy,
 {
     if simplex_indices.len() != D + 1 {
         return None;
@@ -2489,7 +2570,6 @@ fn log_construction_retry_result(
 fn vertex_coords_f64<T, U, const D: usize>(vertex: &Vertex<T, U, D>) -> Option<Vec<f64>>
 where
     T: CoordinateScalar,
-    U: DataType,
 {
     vertex
         .point()
@@ -2510,7 +2590,6 @@ fn order_vertices_hilbert<T, U, const D: usize>(
 ) -> Vec<Vertex<T, U, D>>
 where
     T: CoordinateScalar,
-    U: DataType,
 {
     if vertices.is_empty() || D == 0 {
         return vertices;
@@ -5144,10 +5223,9 @@ where
             self.invalidate_repair_caches();
             let (tds, kernel) = (&mut self.tri.tds, &self.tri.kernel);
             repair_delaunay_local_single_pass(tds, kernel, completion_seed_cells, max_flips)
-                .map(|_| ())
         };
         let repair_outcome = match repair_result {
-            Ok(()) => Ok(()),
+            Ok(_) => Ok(()),
             Err(error) => self.try_final_global_repair_after_seeded_failure(&error),
         };
         tracing::debug!(
@@ -8461,6 +8539,19 @@ mod tests {
         fn drop(&mut self) {
             test_hooks::restore_force_repair_nonconvergent(self.prior);
         }
+    }
+
+    #[test]
+    fn test_construction_options_default_uses_batch_repair_cadence() {
+        init_tracing();
+        assert_eq!(
+            ConstructionOptions::default().batch_repair_policy(),
+            DelaunayRepairPolicy::EveryN(NonZeroUsize::new(2).unwrap())
+        );
+        assert_eq!(
+            DelaunayRepairPolicy::default(),
+            DelaunayRepairPolicy::EveryInsertion
+        );
     }
 
     #[test]
