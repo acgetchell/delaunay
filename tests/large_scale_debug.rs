@@ -794,6 +794,33 @@ fn print_local_repair_work_telemetry(telemetry: &ConstructionTelemetry) {
 }
 
 #[cfg(feature = "diagnostics")]
+fn print_local_repair_slow_samples(telemetry: &ConstructionTelemetry) {
+    if telemetry.local_repair_slow_samples.is_empty() {
+        return;
+    }
+
+    println!(
+        "    local_repair_slow_samples (top {}):",
+        telemetry.local_repair_slow_samples.len()
+    );
+    for sample in &telemetry.local_repair_slow_samples {
+        println!(
+            "      idx={} trigger={:?} seed_cells={} elapsed_ms={} checked={} flips={} max_queue={} facet_ms={} ridge_ms={} postcondition_ms={}",
+            sample.index,
+            sample.trigger,
+            sample.seed_cells,
+            format_nanos_as_ms(sample.elapsed_nanos),
+            sample.items_checked,
+            sample.flips_performed,
+            sample.max_queue_len,
+            format_nanos_as_ms(sample.facet_nanos),
+            format_nanos_as_ms(sample.ridge_nanos),
+            format_nanos_as_ms(sample.postcondition_nanos)
+        );
+    }
+}
+
+#[cfg(feature = "diagnostics")]
 fn print_local_repair_phase_telemetry(telemetry: &ConstructionTelemetry) {
     let phase_total = telemetry
         .local_repair_snapshot_nanos
@@ -978,6 +1005,7 @@ fn print_construction_telemetry(telemetry: &ConstructionTelemetry) {
         print_local_repair_phase_telemetry(telemetry);
         print_local_repair_frontier_telemetry(telemetry);
         print_local_repair_work_telemetry(telemetry);
+        print_local_repair_slow_samples(telemetry);
         print_repair_seed_accumulation_telemetry(telemetry);
 
         if telemetry.global_conflict_scans > 0 {

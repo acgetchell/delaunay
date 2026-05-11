@@ -14,13 +14,43 @@
 use crate::core::algorithms::flips::LocalRepairPhaseTiming;
 use crate::core::operations::InsertionTelemetry;
 
+const LOCAL_REPAIR_SAMPLE_LIMIT: usize = 8;
+
 /// Reason a batch local repair pass was scheduled.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(crate) enum BatchLocalRepairTrigger {
+pub enum BatchLocalRepairTrigger {
     /// The configured repair cadence fired.
     Cadence,
     /// The pending repair seed frontier exceeded the backlog threshold.
     SeedBacklog,
+}
+
+/// One slow batch-local repair sample retained for performance diagnostics.
+///
+/// Samples are kept in descending wall-clock order and capped so construction
+/// telemetry stays bounded even in large debug runs.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct LocalRepairSample {
+    /// Vertex insertion index at which the repair ran.
+    pub index: usize,
+    /// Reason this repair pass was scheduled.
+    pub trigger: BatchLocalRepairTrigger,
+    /// Number of pending seed cells repaired by this pass.
+    pub seed_cells: usize,
+    /// Wall-clock nanoseconds spent in this local repair call.
+    pub elapsed_nanos: u64,
+    /// Number of queued repair items checked by this pass.
+    pub items_checked: usize,
+    /// Number of flips performed by this pass.
+    pub flips_performed: usize,
+    /// Maximum aggregate queue length reached by this pass.
+    pub max_queue_len: usize,
+    /// Wall-clock nanoseconds spent processing k=2 facet queue items.
+    pub facet_nanos: u64,
+    /// Wall-clock nanoseconds spent processing k=3 ridge queue items.
+    pub ridge_nanos: u64,
+    /// Wall-clock nanoseconds spent checking the local postcondition.
+    pub postcondition_nanos: u64,
 }
 
 /// Aggregate release-visible telemetry collected during batch construction.
@@ -163,6 +193,8 @@ pub struct ConstructionTelemetry {
     pub local_repair_queue_len_max: usize,
     /// Number of successful batch local repair calls that performed no flips.
     pub local_repair_no_flip_calls: usize,
+    /// Slowest successful batch-local repair samples, sorted by descending wall time.
+    pub local_repair_slow_samples: Vec<LocalRepairSample>,
 
     /// Number of bulk local-repair seed accumulation calls.
     pub repair_seed_accumulation_calls: usize,
@@ -231,6 +263,7 @@ impl ConstructionTelemetry {
             || self.local_repair_items_checked_total > 0
             || self.local_repair_flips_total > 0
             || self.local_repair_no_flip_calls > 0
+            || !self.local_repair_slow_samples.is_empty()
             || self.repair_seed_accumulation_calls > 0
             || self.global_conflict_scans > 0
     }
@@ -406,6 +439,23 @@ impl ConstructionTelemetry {
         if flips_performed == 0 {
             self.local_repair_no_flip_calls = self.local_repair_no_flip_calls.saturating_add(1);
         }
+    }
+
+    /// Retains one slow local-repair sample if it belongs in the bounded top list.
+    pub(crate) fn record_local_repair_sample(&mut self, sample: LocalRepairSample) {
+        if self.local_repair_slow_samples.len() < LOCAL_REPAIR_SAMPLE_LIMIT {
+            self.local_repair_slow_samples.push(sample);
+        } else if let Some((slowest_kept_idx, _)) = self
+            .local_repair_slow_samples
+            .iter()
+            .enumerate()
+            .min_by_key(|(_idx, kept)| kept.elapsed_nanos)
+            && sample.elapsed_nanos > self.local_repair_slow_samples[slowest_kept_idx].elapsed_nanos
+        {
+            self.local_repair_slow_samples[slowest_kept_idx] = sample;
+        }
+        self.local_repair_slow_samples
+            .sort_unstable_by_key(|sample| core::cmp::Reverse(sample.elapsed_nanos));
     }
 
     /// Records one bulk local-repair seed accumulation step.
@@ -725,6 +775,9 @@ impl ConstructionTelemetry {
         self.local_repair_no_flip_calls = self
             .local_repair_no_flip_calls
             .saturating_add(other.local_repair_no_flip_calls);
+        for sample in &other.local_repair_slow_samples {
+            self.record_local_repair_sample(*sample);
+        }
     }
 
     /// Keeps seed-accumulation merge accounting isolated from the aggregate merge body.
@@ -804,6 +857,18 @@ mod tests {
         });
         summary.record_local_repair_frontier(11, BatchLocalRepairTrigger::SeedBacklog);
         summary.record_local_repair_work(123, 5, 17);
+        summary.record_local_repair_sample(LocalRepairSample {
+            index: 42,
+            trigger: BatchLocalRepairTrigger::SeedBacklog,
+            seed_cells: 11,
+            elapsed_nanos: 2_000_000,
+            items_checked: 123,
+            flips_performed: 5,
+            max_queue_len: 17,
+            facet_nanos: 750_000,
+            ridge_nanos: 450_000,
+            postcondition_nanos: 500_000,
+        });
         summary.record_repair_seed_accumulation(500_000, 7);
         summary.record_construction_preprocessing_timing(10_000);
         summary.record_construction_insert_loop_timing(20_000);
@@ -870,6 +935,21 @@ mod tests {
         assert_eq!(summary.local_repair_flips_max, 5);
         assert_eq!(summary.local_repair_queue_len_max, 17);
         assert_eq!(summary.local_repair_no_flip_calls, 0);
+        assert_eq!(
+            summary.local_repair_slow_samples,
+            vec![LocalRepairSample {
+                index: 42,
+                trigger: BatchLocalRepairTrigger::SeedBacklog,
+                seed_cells: 11,
+                elapsed_nanos: 2_000_000,
+                items_checked: 123,
+                flips_performed: 5,
+                max_queue_len: 17,
+                facet_nanos: 750_000,
+                ridge_nanos: 450_000,
+                postcondition_nanos: 500_000,
+            }]
+        );
         assert_eq!(summary.repair_seed_accumulation_calls, 1);
         assert_eq!(summary.repair_seed_accumulation_nanos, 500_000);
         assert_eq!(summary.repair_seed_cells_added_total, 7);
@@ -897,6 +977,18 @@ mod tests {
         });
         left.record_local_repair_frontier(5, BatchLocalRepairTrigger::Cadence);
         left.record_local_repair_work(10, 0, 5);
+        left.record_local_repair_sample(LocalRepairSample {
+            index: 1,
+            trigger: BatchLocalRepairTrigger::Cadence,
+            seed_cells: 5,
+            elapsed_nanos: 10,
+            items_checked: 10,
+            flips_performed: 0,
+            max_queue_len: 5,
+            facet_nanos: 4,
+            ridge_nanos: 5,
+            postcondition_nanos: 3,
+        });
         left.record_construction_insert_loop_timing(100);
         left.record_construction_final_delaunay_validation_timing(200);
 
@@ -915,6 +1007,18 @@ mod tests {
         });
         right.record_local_repair_frontier(11, BatchLocalRepairTrigger::SeedBacklog);
         right.record_local_repair_work(30, 4, 12);
+        right.record_local_repair_sample(LocalRepairSample {
+            index: 3,
+            trigger: BatchLocalRepairTrigger::SeedBacklog,
+            seed_cells: 11,
+            elapsed_nanos: 30,
+            items_checked: 30,
+            flips_performed: 4,
+            max_queue_len: 12,
+            facet_nanos: 40,
+            ridge_nanos: 50,
+            postcondition_nanos: 30,
+        });
         right.record_construction_insert_loop_timing(300);
         right.record_construction_final_delaunay_validation_timing(400);
 
@@ -953,5 +1057,8 @@ mod tests {
         assert_eq!(left.local_repair_flips_max, 4);
         assert_eq!(left.local_repair_queue_len_max, 12);
         assert_eq!(left.local_repair_no_flip_calls, 1);
+        assert_eq!(left.local_repair_slow_samples.len(), 2);
+        assert_eq!(left.local_repair_slow_samples[0].elapsed_nanos, 30);
+        assert_eq!(left.local_repair_slow_samples[1].elapsed_nanos, 10);
     }
 }

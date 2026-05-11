@@ -46,7 +46,9 @@ use crate::geometry::util::{safe_coords_to_f64, safe_usize_to_scalar, simplex_vo
 use crate::topology::manifold::{ManifoldError, validate_ridge_links_for_cells};
 use crate::topology::traits::topological_space::{GlobalTopology, TopologyKind};
 use crate::triangulation::builder::DelaunayTriangulationBuilder;
-use crate::triangulation::diagnostics::{BatchLocalRepairTrigger, ConstructionTelemetry};
+use crate::triangulation::diagnostics::{
+    BatchLocalRepairTrigger, ConstructionTelemetry, LocalRepairSample,
+};
 use crate::triangulation::locality::{
     accumulate_live_cell_seeds, clear_cell_seed_set, retain_live_cell_seeds,
 };
@@ -4362,7 +4364,54 @@ where
         }
     }
 
+    /// Records successful local-repair telemetry in one place so the repair loop
+    /// stays focused on control flow.
+    fn record_successful_local_repair_telemetry(
+        telemetry: &mut ConstructionTelemetry,
+        index: usize,
+        trigger: BatchLocalRepairTrigger,
+        seed_cells_len: usize,
+        repair_elapsed: Duration,
+        phase_timing: &LocalRepairPhaseTiming,
+        stats: &DelaunayRepairStats,
+    ) {
+        telemetry.record_local_repair_work(
+            stats.facets_checked,
+            stats.flips_performed,
+            stats.max_queue_len,
+        );
+        telemetry.record_local_repair_sample(LocalRepairSample {
+            index,
+            trigger,
+            seed_cells: seed_cells_len,
+            elapsed_nanos: duration_nanos_saturating(repair_elapsed),
+            items_checked: stats.facets_checked,
+            flips_performed: stats.flips_performed,
+            max_queue_len: stats.max_queue_len,
+            facet_nanos: phase_timing.attempt_facet_nanos,
+            ridge_nanos: phase_timing.attempt_ridge_nanos,
+            postcondition_nanos: phase_timing.postcondition_nanos,
+        });
+    }
+
+    /// Records timing and frontier telemetry for one local-repair attempt.
+    fn record_local_repair_attempt_telemetry(
+        telemetry: &mut ConstructionTelemetry,
+        repair_elapsed: Duration,
+        phase_timing: &LocalRepairPhaseTiming,
+        seed_cells_len: usize,
+        trigger: BatchLocalRepairTrigger,
+    ) {
+        telemetry.record_local_repair_timing(duration_nanos_saturating(repair_elapsed));
+        telemetry.record_local_repair_phase_timing(phase_timing);
+        telemetry.record_local_repair_frontier(seed_cells_len, trigger);
+    }
+
     /// Repairs the currently accumulated batch-local seed frontier.
+    #[expect(
+        clippy::too_many_lines,
+        reason = "local repair control flow keeps telemetry, rollback, and soft-fail handling together"
+    )]
     fn repair_pending_local_seed_cells(
         &mut self,
         index: usize,
@@ -4420,19 +4469,26 @@ where
         };
         let repair_elapsed = repair_started.map(|started| started.elapsed());
         if let Some(telemetry) = construction_telemetry.as_mut() {
-            let repair_elapsed = repair_elapsed.unwrap_or_default();
-            telemetry.record_local_repair_timing(duration_nanos_saturating(repair_elapsed));
-            telemetry.record_local_repair_phase_timing(&phase_timing);
-            telemetry.record_local_repair_frontier(seed_cells_len, trigger);
+            Self::record_local_repair_attempt_telemetry(
+                telemetry,
+                repair_elapsed.unwrap_or_default(),
+                &phase_timing,
+                seed_cells_len,
+                trigger,
+            );
         }
 
         match repair_result {
             Ok(stats) => {
                 if let Some(telemetry) = construction_telemetry.as_mut() {
-                    telemetry.record_local_repair_work(
-                        stats.facets_checked,
-                        stats.flips_performed,
-                        stats.max_queue_len,
+                    Self::record_successful_local_repair_telemetry(
+                        telemetry,
+                        index,
+                        trigger,
+                        seed_cells_len,
+                        repair_elapsed.unwrap_or_default(),
+                        &phase_timing,
+                        &stats,
                     );
                 }
                 if trace_repair {

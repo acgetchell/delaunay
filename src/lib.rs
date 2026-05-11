@@ -1120,7 +1120,9 @@ pub mod prelude {
         /// assert!(!telemetry.has_data());
         /// ```
         pub mod diagnostics {
-            pub use crate::triangulation::diagnostics::ConstructionTelemetry;
+            pub use crate::triangulation::diagnostics::{
+                BatchLocalRepairTrigger, ConstructionTelemetry, LocalRepairSample,
+            };
         }
 
         /// Validation scheduling helpers for construction diagnostics.
