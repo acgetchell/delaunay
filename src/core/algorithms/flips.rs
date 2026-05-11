@@ -1885,6 +1885,9 @@ pub enum FlipFailureKind {
     /// Missing neighbor.
     #[error("missing neighbor")]
     MissingNeighbor,
+    /// Dangling ridge-neighbor reference.
+    #[error("dangling ridge neighbor")]
+    DanglingRidgeNeighbor,
     /// Invalid facet adjacency.
     #[error("invalid facet adjacency")]
     InvalidFacetAdjacency,
@@ -2554,6 +2557,14 @@ pub enum FlipError {
         /// Missing neighbor key.
         neighbor_key: CellKey,
     },
+    /// Ridge adjacency references a neighbor cell key that is no longer live.
+    #[error("Ridge adjacency from cell {cell_key:?} references missing neighbor {neighbor_key:?}")]
+    DanglingRidgeNeighbor {
+        /// Cell whose neighbor table contains the dangling key.
+        cell_key: CellKey,
+        /// Missing neighbor cell key.
+        neighbor_key: CellKey,
+    },
     /// Facet adjacency information is inconsistent.
     #[error("Facet adjacency mismatch between cell {cell_key:?} and neighbor {neighbor_key:?}")]
     InvalidFacetAdjacency {
@@ -2739,6 +2750,7 @@ impl From<&FlipError> for FlipFailureKind {
             FlipError::MissingCell { .. } => Self::MissingCell,
             FlipError::MissingVertex { .. } => Self::MissingVertex,
             FlipError::MissingNeighbor { .. } => Self::MissingNeighbor,
+            FlipError::DanglingRidgeNeighbor { .. } => Self::DanglingRidgeNeighbor,
             FlipError::InvalidFacetAdjacency { .. } => Self::InvalidFacetAdjacency,
             FlipError::InvalidFacetIndex { .. } => Self::InvalidFacetIndex,
             FlipError::InvalidRidgeIndex { .. } => Self::InvalidRidgeIndex,
@@ -7378,7 +7390,10 @@ where
             for &omit_idx in &omit_indices {
                 if let Some(neighbor_key) = neighbors.get(omit_idx).copied().flatten() {
                     let Some(neighbor_cell) = tds.cell(neighbor_key) else {
-                        continue;
+                        return Err(FlipError::DanglingRidgeNeighbor {
+                            cell_key,
+                            neighbor_key,
+                        });
                     };
                     if !ridge.iter().all(|v| neighbor_cell.contains_vertex(*v)) {
                         return Err(FlipError::InvalidRidgeAdjacency { cell_key });
@@ -10836,6 +10851,62 @@ mod tests {
     }
 
     #[test]
+    fn test_flip_k3_reports_dangling_ridge_neighbor_3d() {
+        init_tracing();
+        let mut tds: Tds<f64, (), (), 3> = Tds::empty();
+        let ridge_start = tds
+            .insert_vertex_with_mapping(vertex!([0.0, 0.0, 0.0]))
+            .unwrap();
+        let ridge_end = tds
+            .insert_vertex_with_mapping(vertex!([1.0, 0.0, 0.0]))
+            .unwrap();
+        let first_opposite = tds
+            .insert_vertex_with_mapping(vertex!([0.0, 1.0, 0.0]))
+            .unwrap();
+        let second_opposite = tds
+            .insert_vertex_with_mapping(vertex!([0.0, 0.0, 1.0]))
+            .unwrap();
+        let dangling_opposite = tds
+            .insert_vertex_with_mapping(vertex!([1.0, 1.0, 1.0]))
+            .unwrap();
+        let cell = tds
+            .insert_cell_with_mapping(
+                Cell::new(
+                    vec![ridge_start, ridge_end, first_opposite, second_opposite],
+                    None,
+                )
+                .unwrap(),
+            )
+            .unwrap();
+        let dangling_neighbor = tds
+            .insert_cell_with_mapping(
+                Cell::new(
+                    vec![ridge_start, ridge_end, first_opposite, dangling_opposite],
+                    None,
+                )
+                .unwrap(),
+            )
+            .unwrap();
+
+        assert!(tds.cells_mut().remove(dangling_neighbor).is_some());
+        let neighbors = tds
+            .cell_mut(cell)
+            .expect("test cell should exist")
+            .ensure_neighbors_buffer_mut();
+        neighbors[0] = Some(dangling_neighbor);
+
+        let ridge = RidgeHandle::new(cell, 0, 1);
+        let err = build_k3_flip_context(&tds, ridge).unwrap_err();
+        assert_eq!(
+            err,
+            FlipError::DanglingRidgeNeighbor {
+                cell_key: cell,
+                neighbor_key: dangling_neighbor,
+            }
+        );
+    }
+
+    #[test]
     fn test_flip_k2_inverse_invalid_edge_multiplicity_4d() {
         init_tracing();
         let mut tds: Tds<f64, (), (), 4> = Tds::empty();
@@ -11851,6 +11922,15 @@ mod tests {
         assert_eq!(
             FlipFailureKind::from(&wiring_repair),
             FlipFailureKind::DelaunayRepairFailed
+        );
+
+        let dangling_ridge_neighbor = FlipError::DanglingRidgeNeighbor {
+            cell_key: CellKey::from(KeyData::from_ffi(1)),
+            neighbor_key: CellKey::from(KeyData::from_ffi(2)),
+        };
+        assert_eq!(
+            FlipFailureKind::from(&dangling_ridge_neighbor),
+            FlipFailureKind::DanglingRidgeNeighbor
         );
     }
 

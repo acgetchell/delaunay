@@ -84,9 +84,9 @@ use delaunay::prelude::triangulation::construction::{
     TopologyGuarantee, Vertex, vertex,
 };
 use delaunay::prelude::triangulation::diagnostics::ConstructionTelemetry;
-use delaunay::prelude::triangulation::insertion::{
-    InsertionOutcome, InsertionResult, InsertionStatistics,
-};
+#[cfg(feature = "diagnostics")]
+use delaunay::prelude::triangulation::insertion::InsertionResult;
+use delaunay::prelude::triangulation::insertion::{InsertionOutcome, InsertionStatistics};
 use delaunay::prelude::triangulation::repair::{
     DelaunayCheckPolicy, DelaunayRepairHeuristicConfig,
 };
@@ -148,6 +148,7 @@ struct SkipSample<const D: usize> {
 }
 
 #[derive(Debug, Clone)]
+#[cfg(feature = "diagnostics")]
 struct SlowInsertionSample {
     index: usize,
     uuid: uuid::Uuid,
@@ -182,6 +183,7 @@ struct InsertionSummary<const D: usize> {
 
     telemetry: ConstructionTelemetry,
 
+    #[cfg(feature = "diagnostics")]
     slow_insertions: Vec<SlowInsertionSample>,
     skip_samples: Vec<SkipSample<D>>,
 }
@@ -236,6 +238,7 @@ impl<const D: usize> InsertionSummary<D> {
 
 impl<const D: usize> From<ConstructionStatistics> for InsertionSummary<D> {
     fn from(stats: ConstructionStatistics) -> Self {
+        #[cfg(feature = "diagnostics")]
         let slow_insertions = stats
             .slow_insertions
             .into_iter()
@@ -298,6 +301,7 @@ impl<const D: usize> From<ConstructionStatistics> for InsertionSummary<D> {
             cells_removed_total: stats.cells_removed_total,
             cells_removed_max: stats.cells_removed_max,
             telemetry: stats.telemetry,
+            #[cfg(feature = "diagnostics")]
             slow_insertions,
             skip_samples,
         }
@@ -672,14 +676,17 @@ fn print_validation_report(report: &TriangulationValidationReport) {
     }
 }
 
+#[cfg(feature = "diagnostics")]
 fn usize_to_u128(value: usize) -> u128 {
     u128::try_from(value).expect("usize should always fit in u128")
 }
 
+#[cfg(feature = "diagnostics")]
 fn format_ratio_2(numerator: usize, denominator: usize) -> String {
     format_ratio_2_u128(usize_to_u128(numerator), usize_to_u128(denominator))
 }
 
+#[cfg(feature = "diagnostics")]
 fn format_ratio_2_u128(numerator: u128, denominator: u128) -> String {
     if denominator == 0 {
         return "0.00".to_string();
@@ -689,11 +696,13 @@ fn format_ratio_2_u128(numerator: u128, denominator: u128) -> String {
     format!("{}.{:02}", scaled / 100, scaled % 100)
 }
 
+#[cfg(feature = "diagnostics")]
 fn format_nanos_as_ms(nanos: u64) -> String {
     let micros = u128::from(nanos) / 1_000;
     format!("{}.{:03}", micros / 1_000, micros % 1_000)
 }
 
+#[cfg(feature = "diagnostics")]
 fn format_avg_nanos_as_ms(total_nanos: u64, count: usize) -> String {
     if count == 0 {
         return "0.000".to_string();
@@ -703,6 +712,7 @@ fn format_avg_nanos_as_ms(total_nanos: u64, count: usize) -> String {
     format_nanos_as_ms(total_nanos / count)
 }
 
+#[cfg(feature = "diagnostics")]
 fn print_timing_summary(label: &str, calls: usize, total_nanos: u64, max_nanos: u64) {
     if calls == 0 {
         return;
@@ -716,6 +726,7 @@ fn print_timing_summary(label: &str, calls: usize, total_nanos: u64, max_nanos: 
     );
 }
 
+#[cfg(feature = "diagnostics")]
 fn print_repair_seed_accumulation_telemetry(telemetry: &ConstructionTelemetry) {
     if telemetry.repair_seed_accumulation_calls == 0 {
         return;
@@ -739,6 +750,7 @@ fn print_repair_seed_accumulation_telemetry(telemetry: &ConstructionTelemetry) {
     );
 }
 
+#[cfg(feature = "diagnostics")]
 fn print_local_repair_frontier_telemetry(telemetry: &ConstructionTelemetry) {
     if telemetry.local_repair_calls == 0 {
         return;
@@ -757,6 +769,7 @@ fn print_local_repair_frontier_telemetry(telemetry: &ConstructionTelemetry) {
     );
 }
 
+#[cfg(feature = "diagnostics")]
 fn print_local_repair_work_telemetry(telemetry: &ConstructionTelemetry) {
     if telemetry.local_repair_calls == 0 {
         return;
@@ -780,6 +793,7 @@ fn print_local_repair_work_telemetry(telemetry: &ConstructionTelemetry) {
     );
 }
 
+#[cfg(feature = "diagnostics")]
 fn print_local_repair_phase_telemetry(telemetry: &ConstructionTelemetry) {
     let phase_total = telemetry
         .local_repair_snapshot_nanos
@@ -846,6 +860,7 @@ fn print_local_repair_phase_telemetry(telemetry: &ConstructionTelemetry) {
     );
 }
 
+#[cfg(feature = "diagnostics")]
 fn print_construction_phase_telemetry(telemetry: &ConstructionTelemetry) {
     let outer_total_nanos = telemetry
         .construction_preprocessing_nanos
@@ -881,106 +896,119 @@ fn print_construction_phase_telemetry(telemetry: &ConstructionTelemetry) {
     );
 }
 
+#[cfg_attr(
+    not(feature = "diagnostics"),
+    expect(
+        clippy::missing_const_for_fn,
+        reason = "the diagnostics build of this helper emits detailed output"
+    )
+)]
 fn print_construction_telemetry(telemetry: &ConstructionTelemetry) {
-    if !telemetry.has_data() {
-        return;
-    }
+    #[cfg(not(feature = "diagnostics"))]
+    let _ = telemetry.has_data();
 
-    println!();
-    println!("  insertion telemetry:");
-    print_construction_phase_telemetry(telemetry);
-    print_timing_summary(
-        "insertion_wall",
-        telemetry.insertion_wall_time_calls,
-        telemetry.insertion_wall_time_nanos,
-        telemetry.insertion_wall_time_nanos_max,
-    );
-    println!(
-        "    locate: calls={} walk_steps_total={} avg_walk={} max_walk={} hint_uses={} scan_fallbacks={}",
-        telemetry.locate_calls,
-        telemetry.locate_walk_steps_total,
-        format_ratio_2(telemetry.locate_walk_steps_total, telemetry.locate_calls),
-        telemetry.locate_walk_steps_max,
-        telemetry.locate_hint_uses,
-        telemetry.locate_scan_fallbacks
-    );
-    println!(
-        "    locate_results: inside={} outside={} boundary={}",
-        telemetry.located_inside, telemetry.located_outside, telemetry.located_on_boundary
-    );
-
-    if telemetry.conflict_region_calls > 0 {
+    #[cfg(feature = "diagnostics")]
+    if telemetry.has_data() {
+        println!();
+        println!("  insertion telemetry:");
+        print_construction_phase_telemetry(telemetry);
+        print_timing_summary(
+            "insertion_wall",
+            telemetry.insertion_wall_time_calls,
+            telemetry.insertion_wall_time_nanos,
+            telemetry.insertion_wall_time_nanos_max,
+        );
         println!(
-            "    conflict_regions: calls={} cells_total={} avg_cells={} max_cells={} total_ms={} avg_ms={} max_ms={}",
-            telemetry.conflict_region_calls,
-            telemetry.conflict_region_cells_total,
-            format_ratio_2(
+            "    locate: calls={} walk_steps_total={} avg_walk={} max_walk={} hint_uses={} scan_fallbacks={}",
+            telemetry.locate_calls,
+            telemetry.locate_walk_steps_total,
+            format_ratio_2(telemetry.locate_walk_steps_total, telemetry.locate_calls),
+            telemetry.locate_walk_steps_max,
+            telemetry.locate_hint_uses,
+            telemetry.locate_scan_fallbacks
+        );
+        println!(
+            "    locate_results: inside={} outside={} boundary={}",
+            telemetry.located_inside, telemetry.located_outside, telemetry.located_on_boundary
+        );
+
+        if telemetry.conflict_region_calls > 0 {
+            println!(
+                "    conflict_regions: calls={} cells_total={} avg_cells={} max_cells={} total_ms={} avg_ms={} max_ms={}",
+                telemetry.conflict_region_calls,
                 telemetry.conflict_region_cells_total,
-                telemetry.conflict_region_calls,
-            ),
-            telemetry.conflict_region_cells_max,
-            format_nanos_as_ms(telemetry.conflict_region_nanos),
-            format_avg_nanos_as_ms(
-                telemetry.conflict_region_nanos,
-                telemetry.conflict_region_calls,
-            ),
-            format_nanos_as_ms(telemetry.conflict_region_nanos_max)
+                format_ratio_2(
+                    telemetry.conflict_region_cells_total,
+                    telemetry.conflict_region_calls,
+                ),
+                telemetry.conflict_region_cells_max,
+                format_nanos_as_ms(telemetry.conflict_region_nanos),
+                format_avg_nanos_as_ms(
+                    telemetry.conflict_region_nanos,
+                    telemetry.conflict_region_calls,
+                ),
+                format_nanos_as_ms(telemetry.conflict_region_nanos_max)
+            );
+        }
+
+        print_timing_summary(
+            "cavity_insertions",
+            telemetry.cavity_insertion_calls,
+            telemetry.cavity_insertion_nanos,
+            telemetry.cavity_insertion_nanos_max,
         );
-    }
+        print_timing_summary(
+            "hull_extensions",
+            telemetry.hull_extension_calls,
+            telemetry.hull_extension_nanos,
+            telemetry.hull_extension_nanos_max,
+        );
+        print_timing_summary(
+            "topology_validations",
+            telemetry.topology_validation_calls,
+            telemetry.topology_validation_nanos,
+            telemetry.topology_validation_nanos_max,
+        );
+        print_timing_summary(
+            "local_repairs",
+            telemetry.local_repair_calls,
+            telemetry.local_repair_nanos,
+            telemetry.local_repair_nanos_max,
+        );
+        print_local_repair_phase_telemetry(telemetry);
+        print_local_repair_frontier_telemetry(telemetry);
+        print_local_repair_work_telemetry(telemetry);
+        print_repair_seed_accumulation_telemetry(telemetry);
 
-    print_timing_summary(
-        "cavity_insertions",
-        telemetry.cavity_insertion_calls,
-        telemetry.cavity_insertion_nanos,
-        telemetry.cavity_insertion_nanos_max,
-    );
-    print_timing_summary(
-        "hull_extensions",
-        telemetry.hull_extension_calls,
-        telemetry.hull_extension_nanos,
-        telemetry.hull_extension_nanos_max,
-    );
-    print_timing_summary(
-        "topology_validations",
-        telemetry.topology_validation_calls,
-        telemetry.topology_validation_nanos,
-        telemetry.topology_validation_nanos_max,
-    );
-    print_timing_summary(
-        "local_repairs",
-        telemetry.local_repair_calls,
-        telemetry.local_repair_nanos,
-        telemetry.local_repair_nanos_max,
-    );
-    print_local_repair_phase_telemetry(telemetry);
-    print_local_repair_frontier_telemetry(telemetry);
-    print_local_repair_work_telemetry(telemetry);
-    print_repair_seed_accumulation_telemetry(telemetry);
-
-    if telemetry.global_conflict_scans > 0 {
-        let scans = u64::try_from(telemetry.global_conflict_scans)
-            .expect("scan count should fit in u64 for debug reporting");
-        println!(
-            "    global_conflict_scans: scans={} cells_scanned_total={} avg_cells_scanned={} cells_found_total={} avg_cells_found={} max_cells_found={} total_ms={} avg_ms={}",
-            telemetry.global_conflict_scans,
-            telemetry.global_conflict_cells_scanned,
-            format_ratio_2(
+        if telemetry.global_conflict_scans > 0 {
+            let scans = u64::try_from(telemetry.global_conflict_scans)
+                .expect("scan count should fit in u64 for debug reporting");
+            println!(
+                "    global_conflict_scans: scans={} cells_scanned_total={} avg_cells_scanned={} cells_found_total={} avg_cells_found={} max_cells_found={} total_ms={} avg_ms={}",
+                telemetry.global_conflict_scans,
                 telemetry.global_conflict_cells_scanned,
-                telemetry.global_conflict_scans,
-            ),
-            telemetry.global_conflict_cells_found_total,
-            format_ratio_2(
+                format_ratio_2(
+                    telemetry.global_conflict_cells_scanned,
+                    telemetry.global_conflict_scans,
+                ),
                 telemetry.global_conflict_cells_found_total,
-                telemetry.global_conflict_scans,
-            ),
-            telemetry.global_conflict_cells_found_max,
-            format_nanos_as_ms(telemetry.global_conflict_scan_nanos),
-            format_nanos_as_ms(telemetry.global_conflict_scan_nanos / scans)
-        );
+                format_ratio_2(
+                    telemetry.global_conflict_cells_found_total,
+                    telemetry.global_conflict_scans,
+                ),
+                telemetry.global_conflict_cells_found_max,
+                format_nanos_as_ms(telemetry.global_conflict_scan_nanos),
+                format_nanos_as_ms(telemetry.global_conflict_scan_nanos / scans)
+            );
+        }
     }
 }
 
-fn print_insertion_summary<const D: usize>(summary: &InsertionSummary<D>, elapsed: Duration) {
+fn print_insertion_summary<const D: usize>(
+    summary: &InsertionSummary<D>,
+    elapsed: Duration,
+    include_batch_diagnostics: bool,
+) {
     println!("Insertion summary:");
     println!("  inserted:          {}", summary.inserted);
     println!("  skipped_duplicate: {}", summary.skipped_duplicate);
@@ -1005,9 +1033,12 @@ fn print_insertion_summary<const D: usize>(summary: &InsertionSummary<D>, elapse
         }
     }
 
-    print_construction_telemetry(&summary.telemetry);
+    if include_batch_diagnostics {
+        print_construction_telemetry(&summary.telemetry);
+    }
 
-    if !summary.slow_insertions.is_empty() {
+    #[cfg(feature = "diagnostics")]
+    if include_batch_diagnostics && !summary.slow_insertions.is_empty() {
         println!();
         println!(
             "  slow_insertions (top {} by transactional insertion wall time):",
@@ -1197,7 +1228,7 @@ fn debug_large_case<const D: usize>(dimension_name: &str, default_n_points: usiz
             ) {
                 Ok((dt, stats)) => {
                     let summary: InsertionSummary<D> = stats.into();
-                    print_insertion_summary(&summary, t_insert.elapsed());
+                    print_insertion_summary(&summary, t_insert.elapsed(), true);
                     println!("Batch construction completed in {:?}", t_batch.elapsed());
                     dt
                 }
@@ -1208,7 +1239,7 @@ fn debug_large_case<const D: usize>(dimension_name: &str, default_n_points: usiz
                         ..
                     } = e;
                     let summary: InsertionSummary<D> = statistics.into();
-                    print_insertion_summary(&summary, t_insert.elapsed());
+                    print_insertion_summary(&summary, t_insert.elapsed(), true);
                     println!("Batch construction failed after {:?}", t_batch.elapsed());
                     println!("construction failed: {error}");
                     let outcome = DebugOutcome::ConstructionFailure {
@@ -1340,7 +1371,7 @@ fn debug_large_case<const D: usize>(dimension_name: &str, default_n_points: usiz
                 }
             }
 
-            print_insertion_summary(&summary, t_insert.elapsed());
+            print_insertion_summary(&summary, t_insert.elapsed(), false);
 
             dt
         }

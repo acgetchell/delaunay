@@ -5508,7 +5508,6 @@ where
         }
 
         // 4. Determine the supported insertion site and any conflict cells it needs.
-        let caller_provided_conflict_cells = conflict_cells.is_some();
         let insertion_site = match (location, conflict_cells) {
             (LocateResult::InsideCell(start_cell), None) => {
                 // Interior point: compute conflict region automatically.
@@ -5669,8 +5668,7 @@ where
                     cells_removed: outcome.cells_removed,
                     suspicion,
                     repair_seed_cells: outcome.repair_seed_cells,
-                    delaunay_repair_required: outcome.delaunay_repair_required
-                        || caller_provided_conflict_cells,
+                    delaunay_repair_required: outcome.delaunay_repair_required,
                 })
             }
             InsertionSite::Exterior {
@@ -9628,6 +9626,40 @@ mod tests {
         assert!(
             !detail.repair_seed_cells.is_empty(),
             "empty caller conflicts should still use terminal-cell local repair seeds"
+        );
+        assert!(tri.is_valid().is_ok());
+    }
+
+    #[test]
+    fn triangulation_caller_conflicts_do_not_force_delaunay_repair() {
+        let vertices = vec![
+            vertex!([0.0, 0.0]),
+            vertex!([1.0, 0.0]),
+            vertex!([0.0, 1.0]),
+        ];
+        let tds =
+            Triangulation::<FastKernel<f64>, (), (), 2>::build_initial_simplex(&vertices).unwrap();
+        let mut tri =
+            Triangulation::<FastKernel<f64>, (), (), 2>::new_with_tds(FastKernel::new(), tds);
+
+        let start_cell = tri.cells().next().map(|(cell_key, _)| cell_key).unwrap();
+        let mut conflict_cells = CellKeyBuffer::new();
+        conflict_cells.push(start_cell);
+        let detail = tri
+            .insert_with_statistics_seeded_indexed_detailed(
+                vertex!([0.25, 0.25]),
+                Some(&conflict_cells),
+                Some(start_cell),
+                0,
+                None,
+                None,
+            )
+            .unwrap();
+
+        assert!(matches!(detail.outcome, InsertionOutcome::Inserted { .. }));
+        assert!(
+            !detail.delaunay_repair_required,
+            "caller-provided conflict cells should preserve the cavity insertion repair flag"
         );
         assert!(tri.is_valid().is_ok());
     }
