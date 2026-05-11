@@ -19,29 +19,55 @@ cadence. Because of that, the next performance work should not optimize around
 the `N=2` slowdown directly unless it exposes the same hotspot that affects the
 default path.
 
+The local flip-repair path has already been improved enough that it is no
+longer the dominant 10K cost. The next performance target is the topology
+validation layer reached after insertion, especially ridge-link validation,
+which currently rebuilds/checks more global structure than the local mutation
+appears to require.
+
+## Latest Measurements
+
+### 3K 3D, `N=1`
+
+- Result: valid Delaunay triangulation, no skipped vertices.
+- Total wall time: 54.571s.
+- Insertion wall time: 52.908s.
+- Local repairs: 485 calls, 5.499s total, 74.848ms max.
+- Final repair: 1.082s, 0 flips.
+- Final validation report: 580.243ms, OK.
+
+### 10K 3D, `N=1`
+
+- Result: valid Delaunay triangulation, no skipped vertices.
+- Total wall time: 630.582s.
+- Insertion loop: 622.605s.
+- Local repairs: 1037 calls, 35.162s total, 384.335ms max.
+- Final repair: 3.784s, 0 flips.
+- Final validation report: 2.004s, OK.
+- Sampling showed the current hotspot in `validate_after_insertion`, especially
+  `validate_ridge_links`, ridge-link graph construction, and temporary
+  facet/ridge key work.
+
 ## Plan
 
-1. Capture a fresh 3K 3D baseline with the default `N=1` repair policy and
-   existing telemetry. Confirm wall time, skipped vertices, local repair calls,
-   max queue, facet/ridge timing, and final validity.
-2. Add diagnostics only if existing telemetry cannot identify the hotspot. Keep
-   any new diagnostics narrow and focused on slow local repair samples:
-   insertion index, trigger, seed-cell count, checked items, flips, max queue,
-   elapsed time, and phase timing.
-3. Optimize the contents of a single local repair pass. Since `N=1` avoids
-   intentional seed backlog, focus inside the repair queue rather than batching
-   pending seed frontiers. Candidate targets include redundant facet/ridge/edge
-   queue entries, stale unchanged handles, and cheaper facet-first processing
-   before ridge escalation where correctness allows.
-4. Keep safety nets unchanged: final seeded repair, final global fallback,
-   orientation canonicalization, and final validation must remain enabled.
-5. Validate after each patch with focused flip/repair tests, large-scale debug
-   tests, and repository checks.
-6. Scale from 3K to 10K once the default `N=1` path is stable and measurably
-   better. Reconsider #364 only if profiling shows snapshot/rollback or
-   postcondition replay dominates after queue-content optimizations.
+1. Preserve the correctness model: every mutation must remain locally
+   topology-safe, and final seeded repair, final global fallback, orientation
+   canonicalization, and final validation must remain enabled.
+2. Replace the expensive post-insertion global topology check with a scoped
+   topology validation path that checks only the changed cavity and its
+   immediate boundary where correctness permits.
+3. Keep full validation available for final validation, explicit public
+   validation, and any path where the mutation scope cannot be represented
+   precisely.
+4. Validate the scoped topology checker against the existing full checker in
+   focused tests, including interior insertions and hull extensions.
+5. Re-run the 3K and 10K large-scale debug cases with `N=1`, then compare
+   insertion wall time, local repair time, final repair, and final validation.
+6. Reconsider #364 only if profiling shows snapshot/rollback or postcondition
+   replay dominates after topology validation is scoped.
 
 ## Immediate Next Step
 
-Run a fresh 3K 3D baseline with `N=1` and inspect whether the existing local
-repair telemetry is enough to identify the dominant cost.
+Implement a narrow scoped topology validation path for post-insertion checks,
+then validate it against the full topology checker before rerunning the 10K
+benchmark.

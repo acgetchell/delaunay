@@ -335,6 +335,10 @@ where
 
 /// Apply a bistellar flip using explicit k and vertex/cell slices.
 #[expect(
+    clippy::too_many_arguments,
+    reason = "Flip mutation needs explicit move, cavity, policy, and validation inputs"
+)]
+#[expect(
     clippy::too_many_lines,
     reason = "Keep flip construction, validation, and wiring together for clarity"
 )]
@@ -346,6 +350,7 @@ fn apply_bistellar_flip_with_k<T, U, V, const D: usize>(
     removed_cells: &CellKeyBuffer,
     direction: FlipDirection,
     orientation_policy: ReplacementOrientationPolicy,
+    validation_scope: FlipValidationScope,
 ) -> Result<AppliedFlip<D>, FlipError>
 where
     T: CoordinateScalar,
@@ -531,14 +536,19 @@ where
 
     trial.remove_cells_by_keys(removed_cells);
 
-    if let Err(source) = trial.is_valid() {
-        return Err(FlipMutationError::TrialValidation {
+    let validation_result = match validation_scope {
+        FlipValidationScope::FullTds => trial.is_valid().map_err(TdsValidationFailure::from),
+        FlipValidationScope::LocalCavity => {
+            validate_flip_trial_cavity(&trial, &new_cells, &external_facets, removed_cells)
+        }
+    };
+    validation_result.map_err(|source| {
+        FlipError::from(FlipMutationError::TrialValidation {
             k_move,
             direction,
-            source: source.into(),
-        }
-        .into());
-    }
+            source,
+        })
+    })?;
 
     debug_assert!(
         trial.is_coherently_oriented(),
@@ -567,6 +577,422 @@ enum ReplacementOrientationPolicy {
     AllowSigned,
     /// Require replacement cells to stay in positive canonical orientation.
     RequirePositive,
+}
+
+/// Selects the amount of TDS structure checked before committing a flip.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum FlipValidationScope {
+    /// Validate the whole triangulation data structure.
+    FullTds,
+    /// Validate only the cells whose adjacency can change during a cavity flip.
+    LocalCavity,
+}
+
+/// Checks the flip cavity after mutation without rescanning the full TDS.
+fn validate_flip_trial_cavity<T, U, V, const D: usize>(
+    tds: &Tds<T, U, V, D>,
+    new_cells: &[CellKey],
+    external_facets: &[FacetHandle],
+    removed_cells: &[CellKey],
+) -> Result<(), TdsValidationFailure>
+where
+    U: DataType,
+    V: DataType,
+{
+    for &cell_key in removed_cells {
+        if tds.contains_cell(cell_key) {
+            return Err(TdsValidationFailure::InconsistentDataStructure {
+                message: format!("flip trial still contains removed cell {cell_key:?}"),
+            });
+        }
+        if tds.cell_uuid_from_key(cell_key).is_some() {
+            return Err(TdsValidationFailure::MappingInconsistency {
+                entity: EntityKind::Cell,
+                message: format!("flip trial still maps removed cell key {cell_key:?}"),
+            });
+        }
+    }
+
+    let mut affected_cells = CellKeyBuffer::new();
+    let mut affected_set = FastHashSet::default();
+    for &cell_key in new_cells {
+        push_unique_cell_key(cell_key, &mut affected_cells, &mut affected_set);
+    }
+    for facet in external_facets {
+        push_unique_cell_key(facet.cell_key(), &mut affected_cells, &mut affected_set);
+    }
+
+    validate_flip_trial_local_facet_sharing(tds, &affected_cells)?;
+
+    for &cell_key in &affected_cells {
+        validate_flip_trial_cell(tds, cell_key, removed_cells)?;
+    }
+
+    Ok(())
+}
+
+/// Adds a cell to a small worklist while preserving first-seen order.
+fn push_unique_cell_key(
+    cell_key: CellKey,
+    cells: &mut CellKeyBuffer,
+    seen: &mut FastHashSet<CellKey>,
+) {
+    if seen.insert(cell_key) {
+        cells.push(cell_key);
+    }
+}
+
+/// Ensures affected replacement cells agree on shared facets and multiplicity.
+fn validate_flip_trial_local_facet_sharing<T, U, V, const D: usize>(
+    tds: &Tds<T, U, V, D>,
+    affected_cells: &[CellKey],
+) -> Result<(), TdsValidationFailure>
+where
+    U: DataType,
+    V: DataType,
+{
+    type FacetIncidents = SmallBuffer<(CellKey, u8), 2>;
+    let mut facet_to_cells: FastHashMap<u64, FacetIncidents> = FastHashMap::default();
+
+    for &cell_key in affected_cells {
+        let cell = tds
+            .cell(cell_key)
+            .ok_or_else(|| TdsValidationFailure::CellNotFound {
+                cell_key,
+                context: "flip trial local facet sharing".to_string(),
+            })?;
+        if cell.number_of_vertices() != D + 1 {
+            return Err(TdsValidationFailure::DimensionMismatch {
+                expected: D + 1,
+                actual: cell.number_of_vertices(),
+                context: format!("flip trial cell {cell_key:?} arity"),
+            });
+        }
+
+        for facet_idx in 0..cell.number_of_vertices() {
+            let facet_vertices = facet_vertices_from_cell(cell, facet_idx);
+            let facet_idx_u8 =
+                u8::try_from(facet_idx).map_err(|_| TdsValidationFailure::IndexOutOfBounds {
+                    index: facet_idx,
+                    bound: usize::from(u8::MAX),
+                    context: "flip trial facet index".to_string(),
+                })?;
+            facet_to_cells
+                .entry(facet_key_from_vertices(&facet_vertices))
+                .or_default()
+                .push((cell_key, facet_idx_u8));
+        }
+    }
+
+    for (facet_key, incidents) in facet_to_cells {
+        match incidents.as_slice() {
+            [_] => {}
+            [(cell_a, facet_a), (cell_b, facet_b)] => {
+                validate_flip_trial_mutual_facet_neighbors(
+                    tds,
+                    facet_key,
+                    *cell_a,
+                    usize::from(*facet_a),
+                    *cell_b,
+                    usize::from(*facet_b),
+                )?;
+            }
+            _ => {
+                return Err(TdsValidationFailure::Facet {
+                    message: format!(
+                        "flip trial facet {facet_key} is shared by {} affected cells",
+                        incidents.len()
+                    ),
+                });
+            }
+        }
+    }
+
+    Ok(())
+}
+
+/// Checks one affected cell's local references after a flip mutation.
+fn validate_flip_trial_cell<T, U, V, const D: usize>(
+    tds: &Tds<T, U, V, D>,
+    cell_key: CellKey,
+    removed_cells: &[CellKey],
+) -> Result<(), TdsValidationFailure>
+where
+    U: DataType,
+    V: DataType,
+{
+    let cell = tds
+        .cell(cell_key)
+        .ok_or_else(|| TdsValidationFailure::CellNotFound {
+            cell_key,
+            context: "flip trial local cell validation".to_string(),
+        })?;
+    if tds.cell_uuid_from_key(cell_key) != Some(cell.uuid()) {
+        return Err(TdsValidationFailure::MappingInconsistency {
+            entity: EntityKind::Cell,
+            message: format!(
+                "missing or inconsistent UUID mapping for flip trial cell {cell_key:?}"
+            ),
+        });
+    }
+
+    if cell.number_of_vertices() != D + 1 {
+        return Err(TdsValidationFailure::DimensionMismatch {
+            expected: D + 1,
+            actual: cell.number_of_vertices(),
+            context: format!("flip trial cell {cell_key:?} arity"),
+        });
+    }
+
+    validate_flip_trial_cell_vertices(tds, cell_key, cell)?;
+    validate_flip_trial_cell_neighbors(tds, cell_key, cell, removed_cells)
+}
+
+/// Verifies that affected cells reference existing vertices with valid incidence.
+fn validate_flip_trial_cell_vertices<T, U, V, const D: usize>(
+    tds: &Tds<T, U, V, D>,
+    cell_key: CellKey,
+    cell: &Cell<T, U, V, D>,
+) -> Result<(), TdsValidationFailure>
+where
+    U: DataType,
+    V: DataType,
+{
+    let mut seen_vertices: SmallBuffer<VertexKey, MAX_PRACTICAL_DIMENSION_SIZE> =
+        SmallBuffer::with_capacity(cell.number_of_vertices());
+    for &vertex_key in cell.vertices() {
+        if seen_vertices.contains(&vertex_key) {
+            return Err(TdsValidationFailure::InconsistentDataStructure {
+                message: format!("flip trial cell {cell_key:?} repeats vertex {vertex_key:?}"),
+            });
+        }
+        seen_vertices.push(vertex_key);
+
+        let vertex =
+            tds.vertex(vertex_key)
+                .ok_or_else(|| TdsValidationFailure::VertexNotFound {
+                    vertex_key,
+                    context: format!("flip trial cell {cell_key:?} vertex reference"),
+                })?;
+        if tds.vertex_uuid_from_key(vertex_key) != Some(vertex.uuid()) {
+            return Err(TdsValidationFailure::MappingInconsistency {
+                entity: EntityKind::Vertex,
+                message: format!(
+                    "missing or inconsistent UUID mapping for flip trial vertex {vertex_key:?}"
+                ),
+            });
+        }
+        let Some(incident_cell_key) = vertex.incident_cell else {
+            continue;
+        };
+        let incident_cell =
+            tds.cell(incident_cell_key)
+                .ok_or_else(|| TdsValidationFailure::CellNotFound {
+                    cell_key: incident_cell_key,
+                    context: format!("dangling incident_cell pointer from vertex {vertex_key:?}"),
+                })?;
+        if !incident_cell.contains_vertex(vertex_key) {
+            return Err(TdsValidationFailure::InconsistentDataStructure {
+                message: format!(
+                    "Vertex {vertex_key:?} incident_cell {incident_cell_key:?} does not contain the vertex"
+                ),
+            });
+        }
+    }
+
+    Ok(())
+}
+
+/// Verifies affected-cell neighbor links, mirror facets, and orientation parity.
+fn validate_flip_trial_cell_neighbors<T, U, V, const D: usize>(
+    tds: &Tds<T, U, V, D>,
+    cell_key: CellKey,
+    cell: &Cell<T, U, V, D>,
+    removed_cells: &[CellKey],
+) -> Result<(), TdsValidationFailure>
+where
+    U: DataType,
+    V: DataType,
+{
+    let Some(neighbors) = cell.neighbors() else {
+        return Ok(());
+    };
+    if neighbors.len() != D + 1 {
+        return Err(TdsValidationFailure::InvalidNeighbors {
+            message: format!(
+                "Neighbor vector length {} != D+1 ({})",
+                neighbors.len(),
+                D + 1
+            ),
+        });
+    }
+
+    for (facet_idx, neighbor_key_opt) in neighbors.iter().enumerate() {
+        let Some(neighbor_key) = neighbor_key_opt else {
+            continue;
+        };
+        if removed_cells.contains(neighbor_key) {
+            return Err(TdsValidationFailure::InvalidNeighbors {
+                message: format!(
+                    "Cell {cell_key:?} still references removed neighbor {neighbor_key:?}"
+                ),
+            });
+        }
+        if *neighbor_key == cell_key {
+            if cell_allows_periodic_self_neighbor(cell) {
+                continue;
+            }
+            return Err(TdsValidationFailure::InvalidNeighbors {
+                message: format!(
+                    "Cell {:?} has non-periodic self-neighbor at facet index {facet_idx}",
+                    cell.uuid()
+                ),
+            });
+        }
+
+        let neighbor_cell =
+            tds.cell(*neighbor_key)
+                .ok_or_else(|| TdsValidationFailure::InvalidNeighbors {
+                    message: format!("Neighbor cell {neighbor_key:?} not found"),
+                })?;
+        let mirror_idx = cell
+            .mirror_facet_index(facet_idx, neighbor_cell)
+            .ok_or_else(|| TdsValidationFailure::InvalidNeighbors {
+                message: format!(
+                    "Cell {:?} facet {facet_idx} does not share a valid mirror facet with neighbor {:?}",
+                    cell.uuid(),
+                    neighbor_cell.uuid()
+                ),
+            })?;
+        validate_flip_trial_mutual_facet_neighbors(
+            tds,
+            facet_key_from_vertices(&facet_vertices_from_cell(cell, facet_idx)),
+            cell_key,
+            facet_idx,
+            *neighbor_key,
+            mirror_idx,
+        )?;
+        validate_flip_trial_neighbor_orientation(
+            cell_key,
+            cell,
+            facet_idx,
+            *neighbor_key,
+            neighbor_cell,
+            mirror_idx,
+        )?;
+    }
+
+    Ok(())
+}
+
+/// Mirrors TDS validation's periodic self-neighbor allowance locally.
+fn cell_allows_periodic_self_neighbor<T, U, V, const D: usize>(cell: &Cell<T, U, V, D>) -> bool
+where
+    U: DataType,
+    V: DataType,
+{
+    let Some(offsets) = cell.periodic_vertex_offsets() else {
+        return false;
+    };
+    !offsets.is_empty() && offsets.len() == cell.number_of_vertices()
+}
+
+/// Requires two cells sharing an affected facet to point back to each other.
+fn validate_flip_trial_mutual_facet_neighbors<T, U, V, const D: usize>(
+    tds: &Tds<T, U, V, D>,
+    facet_key: u64,
+    source_cell_key: CellKey,
+    source_facet: usize,
+    target_cell_key: CellKey,
+    target_facet: usize,
+) -> Result<(), TdsValidationFailure>
+where
+    U: DataType,
+    V: DataType,
+{
+    let source_cell =
+        tds.cell(source_cell_key)
+            .ok_or_else(|| TdsValidationFailure::CellNotFound {
+                cell_key: source_cell_key,
+                context: "flip trial mutual neighbor validation".to_string(),
+            })?;
+    let target_cell =
+        tds.cell(target_cell_key)
+            .ok_or_else(|| TdsValidationFailure::CellNotFound {
+                cell_key: target_cell_key,
+                context: "flip trial mutual neighbor validation".to_string(),
+            })?;
+
+    let source_neighbor = source_cell
+        .neighbors()
+        .and_then(|neighbors| neighbors.get(source_facet).copied().flatten());
+    let target_neighbor = target_cell
+        .neighbors()
+        .and_then(|neighbors| neighbors.get(target_facet).copied().flatten());
+
+    if source_neighbor != Some(target_cell_key) || target_neighbor != Some(source_cell_key) {
+        return Err(TdsValidationFailure::InvalidNeighbors {
+            message: format!(
+                "Interior facet {facet_key} has inconsistent neighbor pointers: {}[{source_facet}] -> {source_neighbor:?}, {}[{target_facet}] -> {target_neighbor:?}",
+                source_cell.uuid(),
+                target_cell.uuid()
+            ),
+        });
+    }
+
+    Ok(())
+}
+
+/// Checks coherent orientation across one locally affected neighbor pair.
+fn validate_flip_trial_neighbor_orientation<T, U, V, const D: usize>(
+    cell_key: CellKey,
+    cell: &Cell<T, U, V, D>,
+    facet_idx: usize,
+    neighbor_key: CellKey,
+    neighbor_cell: &Cell<T, U, V, D>,
+    mirror_idx: usize,
+) -> Result<(), TdsValidationFailure>
+where
+    U: DataType,
+    V: DataType,
+{
+    let source_order = facet_order(cell.vertices(), facet_idx).map_err(|err| {
+        TdsValidationFailure::InvalidNeighbors {
+            message: format!("Could not build source facet order for local flip validation: {err}"),
+        }
+    })?;
+    let target_order = facet_order(neighbor_cell.vertices(), mirror_idx).map_err(|err| {
+        TdsValidationFailure::InvalidNeighbors {
+            message: format!("Could not build target facet order for local flip validation: {err}"),
+        }
+    })?;
+    let observed_odd_permutation =
+        permutation_odd(&source_order, &target_order).ok_or_else(|| {
+            TdsValidationFailure::InconsistentDataStructure {
+                message: format!(
+                    "Could not derive facet-order permutation parity between cells {:?} and {:?}",
+                    cell.uuid(),
+                    neighbor_cell.uuid()
+                ),
+            }
+        })?;
+    let expected_odd_permutation = (facet_idx + mirror_idx).is_multiple_of(2);
+    if observed_odd_permutation != expected_odd_permutation {
+        return Err(TdsValidationFailure::OrientationViolation {
+            cell1_key: cell_key,
+            cell1_uuid: cell.uuid(),
+            cell2_key: neighbor_key,
+            cell2_uuid: neighbor_cell.uuid(),
+            cell1_facet_index: facet_idx,
+            cell2_facet_index: mirror_idx,
+            facet_vertex_count: source_order.len(),
+            cell2_facet_vertex_count: target_order.len(),
+            observed_odd_permutation,
+            expected_odd_permutation,
+        });
+    }
+
+    Ok(())
 }
 
 /// Detects replacement simplices that already exist outside the flip cavity so
@@ -1286,6 +1712,7 @@ where
         &context.removed_cells,
         context.direction,
         ReplacementOrientationPolicy::AllowSigned,
+        FlipValidationScope::FullTds,
     )?
     .info)
 }
@@ -1315,6 +1742,7 @@ where
         &context.removed_cells,
         context.direction,
         ReplacementOrientationPolicy::AllowSigned,
+        FlipValidationScope::FullTds,
     )?
     .info)
 }
@@ -1337,6 +1765,7 @@ where
         &context.removed_cells,
         context.direction,
         ReplacementOrientationPolicy::RequirePositive,
+        FlipValidationScope::LocalCavity,
     )
 }
 
@@ -1358,6 +1787,7 @@ where
         &context.removed_cells,
         context.direction,
         ReplacementOrientationPolicy::RequirePositive,
+        FlipValidationScope::LocalCavity,
     )
 }
 
@@ -1380,6 +1810,7 @@ where
         &context.removed_cells,
         context.direction,
         ReplacementOrientationPolicy::RequirePositive,
+        FlipValidationScope::LocalCavity,
     )
 }
 
@@ -7260,7 +7691,6 @@ fn facet_vertices_from_cell<T, U, V, const D: usize>(
     facet_index: usize,
 ) -> SmallBuffer<VertexKey, MAX_PRACTICAL_DIMENSION_SIZE>
 where
-    T: CoordinateScalar,
     U: DataType,
     V: DataType,
 {
