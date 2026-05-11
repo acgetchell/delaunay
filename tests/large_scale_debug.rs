@@ -31,8 +31,8 @@
 //! # - "new" (default): build via DelaunayTriangulation::new() which applies Hilbert ordering
 //! # - "incremental": manual insert loop (debug/profiling)
 //! DELAUNAY_LARGE_DEBUG_CONSTRUCTION_MODE=new \
-//! # Initial simplex strategy for batch construction: "first" (default) or "balanced"
-//! DELAUNAY_LARGE_DEBUG_INITIAL_SIMPLEX=balanced \
+//! # Initial simplex strategy for batch construction: "max-volume" (default), "balanced", or "first"
+//! DELAUNAY_LARGE_DEBUG_INITIAL_SIMPLEX=max-volume \
 //! # Debug mode:
 //! # - "cadenced" (default): PLManifold, ridge-link validation during insertion,
 //! #   vertex-link validation at completion
@@ -50,8 +50,8 @@
 //! DELAUNAY_LARGE_DEBUG_ALLOW_SKIPS=1 \
 //! # Skip the final flip-based repair pass (faster, but may leave Delaunay violations)
 //! DELAUNAY_LARGE_DEBUG_SKIP_FINAL_REPAIR=1 \
-//! # Run bounded flip repair every N successful insertions (0 disables; default: 2)
-//! DELAUNAY_LARGE_DEBUG_REPAIR_EVERY=2 \
+//! # Run bounded flip repair every N successful insertions (0 disables; default: 1)
+//! DELAUNAY_LARGE_DEBUG_REPAIR_EVERY=1 \
 //! # Optional: trace cadenced local-repair seed counts, flips, queues, and elapsed time
 //! DELAUNAY_BATCH_REPAIR_TRACE=1 \
 //! # Hard wall-clock cap in seconds before the harness aborts (0 = no cap; default: 600)
@@ -79,10 +79,11 @@ use delaunay::geometry::util::{
 };
 use delaunay::prelude::tds::{InvariantKind, TriangulationValidationReport};
 use delaunay::prelude::triangulation::construction::{
-    ConstructionOptions, ConstructionStatistics, ConstructionTelemetry, DelaunayRepairPolicy,
-    DelaunayTriangulation, DelaunayTriangulationConstructionErrorWithStatistics,
-    InitialSimplexStrategy, TopologyGuarantee, Vertex, vertex,
+    ConstructionOptions, ConstructionStatistics, DelaunayRepairPolicy, DelaunayTriangulation,
+    DelaunayTriangulationConstructionErrorWithStatistics, InitialSimplexStrategy,
+    TopologyGuarantee, Vertex, vertex,
 };
+use delaunay::prelude::triangulation::diagnostics::ConstructionTelemetry;
 use delaunay::prelude::triangulation::insertion::{
     InsertionOutcome, InsertionResult, InsertionStatistics,
 };
@@ -393,6 +394,7 @@ fn initial_simplex_strategy_name(strategy: InitialSimplexStrategy) -> &'static s
     match strategy {
         InitialSimplexStrategy::First => "first",
         InitialSimplexStrategy::Balanced => "balanced",
+        InitialSimplexStrategy::MaxVolume => "max-volume",
         _ => {
             tracing::debug!(?strategy, "unknown initial simplex strategy");
             "unknown"
@@ -402,7 +404,11 @@ fn initial_simplex_strategy_name(strategy: InitialSimplexStrategy) -> &'static s
 
 fn initial_simplex_strategy_from_name(raw: &str) -> Option<InitialSimplexStrategy> {
     let raw = raw.trim();
-    if raw.is_empty() || raw.eq_ignore_ascii_case("first") {
+    if raw.is_empty() {
+        return Some(InitialSimplexStrategy::MaxVolume);
+    }
+
+    if raw.eq_ignore_ascii_case("first") {
         return Some(InitialSimplexStrategy::First);
     }
 
@@ -410,17 +416,24 @@ fn initial_simplex_strategy_from_name(raw: &str) -> Option<InitialSimplexStrateg
         return Some(InitialSimplexStrategy::Balanced);
     }
 
+    if raw.eq_ignore_ascii_case("max-volume")
+        || raw.eq_ignore_ascii_case("max_volume")
+        || raw.eq_ignore_ascii_case("maxvolume")
+    {
+        return Some(InitialSimplexStrategy::MaxVolume);
+    }
+
     None
 }
 
 fn initial_simplex_strategy_from_env() -> InitialSimplexStrategy {
     let Ok(raw) = env::var("DELAUNAY_LARGE_DEBUG_INITIAL_SIMPLEX") else {
-        return InitialSimplexStrategy::First;
+        return InitialSimplexStrategy::MaxVolume;
     };
 
     initial_simplex_strategy_from_name(&raw).unwrap_or_else(|| {
         panic!(
-            "invalid DELAUNAY_LARGE_DEBUG_INITIAL_SIMPLEX={raw:?} (expected 'first' or 'balanced')"
+            "invalid DELAUNAY_LARGE_DEBUG_INITIAL_SIMPLEX={raw:?} (expected 'max-volume', 'balanced', or 'first')"
         )
     })
 }
@@ -744,6 +757,95 @@ fn print_local_repair_frontier_telemetry(telemetry: &ConstructionTelemetry) {
     );
 }
 
+fn print_local_repair_work_telemetry(telemetry: &ConstructionTelemetry) {
+    if telemetry.local_repair_calls == 0 {
+        return;
+    }
+
+    println!(
+        "    local_repair_work: checked_total={} avg_checked={} flips_total={} avg_flips={} max_flips={} max_queue={} no_flip_calls={}",
+        telemetry.local_repair_items_checked_total,
+        format_ratio_2(
+            telemetry.local_repair_items_checked_total,
+            telemetry.local_repair_calls,
+        ),
+        telemetry.local_repair_flips_total,
+        format_ratio_2(
+            telemetry.local_repair_flips_total,
+            telemetry.local_repair_calls
+        ),
+        telemetry.local_repair_flips_max,
+        telemetry.local_repair_queue_len_max,
+        telemetry.local_repair_no_flip_calls
+    );
+}
+
+fn print_local_repair_phase_telemetry(telemetry: &ConstructionTelemetry) {
+    let phase_total = telemetry
+        .local_repair_snapshot_nanos
+        .saturating_add(telemetry.local_repair_attempt_nanos)
+        .saturating_add(telemetry.local_repair_postcondition_nanos)
+        .saturating_add(telemetry.local_repair_restore_nanos);
+    if phase_total == 0 {
+        return;
+    }
+
+    print_timing_summary(
+        "local_repair_snapshot",
+        telemetry.local_repair_calls,
+        telemetry.local_repair_snapshot_nanos,
+        telemetry.local_repair_snapshot_nanos_max,
+    );
+    print_timing_summary(
+        "local_repair_attempts",
+        telemetry.local_repair_calls,
+        telemetry.local_repair_attempt_nanos,
+        telemetry.local_repair_attempt_nanos_max,
+    );
+    print_timing_summary(
+        "local_repair_attempt_seed",
+        telemetry.local_repair_calls,
+        telemetry.local_repair_attempt_seed_nanos,
+        telemetry.local_repair_attempt_seed_nanos_max,
+    );
+    print_timing_summary(
+        "local_repair_attempt_facets",
+        telemetry.local_repair_calls,
+        telemetry.local_repair_attempt_facet_nanos,
+        telemetry.local_repair_attempt_facet_nanos_max,
+    );
+    print_timing_summary(
+        "local_repair_attempt_ridges",
+        telemetry.local_repair_calls,
+        telemetry.local_repair_attempt_ridge_nanos,
+        telemetry.local_repair_attempt_ridge_nanos_max,
+    );
+    print_timing_summary(
+        "local_repair_attempt_edges",
+        telemetry.local_repair_calls,
+        telemetry.local_repair_attempt_edge_nanos,
+        telemetry.local_repair_attempt_edge_nanos_max,
+    );
+    print_timing_summary(
+        "local_repair_attempt_triangles",
+        telemetry.local_repair_calls,
+        telemetry.local_repair_attempt_triangle_nanos,
+        telemetry.local_repair_attempt_triangle_nanos_max,
+    );
+    print_timing_summary(
+        "local_repair_postconditions",
+        telemetry.local_repair_calls,
+        telemetry.local_repair_postcondition_nanos,
+        telemetry.local_repair_postcondition_nanos_max,
+    );
+    print_timing_summary(
+        "local_repair_restores",
+        telemetry.local_repair_calls,
+        telemetry.local_repair_restore_nanos,
+        telemetry.local_repair_restore_nanos_max,
+    );
+}
+
 fn print_construction_phase_telemetry(telemetry: &ConstructionTelemetry) {
     let outer_total_nanos = telemetry
         .construction_preprocessing_nanos
@@ -850,7 +952,9 @@ fn print_construction_telemetry(telemetry: &ConstructionTelemetry) {
         telemetry.local_repair_nanos,
         telemetry.local_repair_nanos_max,
     );
+    print_local_repair_phase_telemetry(telemetry);
     print_local_repair_frontier_telemetry(telemetry);
+    print_local_repair_work_telemetry(telemetry);
     print_repair_seed_accumulation_telemetry(telemetry);
 
     if telemetry.global_conflict_scans > 0 {
@@ -995,7 +1099,7 @@ fn debug_large_case<const D: usize>(dimension_name: &str, default_n_points: usiz
     // - 0 disables incremental repair
     // - 1 runs repair after every insertion
     // - N>1 runs repair after every N successful insertions
-    let repair_every = env_usize("DELAUNAY_LARGE_DEBUG_REPAIR_EVERY").unwrap_or(2);
+    let repair_every = env_usize("DELAUNAY_LARGE_DEBUG_REPAIR_EVERY").unwrap_or(1);
     let repair_policy = repair_policy_from_repair_every(repair_every);
     let repair_max_flips = env_usize("DELAUNAY_LARGE_DEBUG_REPAIR_MAX_FLIPS");
     let validate_every = env_usize("DELAUNAY_LARGE_DEBUG_VALIDATE_EVERY").or_else(|| {
@@ -1395,10 +1499,10 @@ fn test_topology_for_debug_mode_uses_ridge_links_by_default() {
 }
 
 #[test]
-fn test_initial_simplex_strategy_from_name_maps_ab_switch() {
+fn test_initial_simplex_strategy_from_name_maps_supported_values() {
     assert_eq!(
         initial_simplex_strategy_from_name(""),
-        Some(InitialSimplexStrategy::First)
+        Some(InitialSimplexStrategy::MaxVolume)
     );
     assert_eq!(
         initial_simplex_strategy_from_name("first"),
@@ -1408,10 +1512,22 @@ fn test_initial_simplex_strategy_from_name_maps_ab_switch() {
         initial_simplex_strategy_from_name("BALANCED"),
         Some(InitialSimplexStrategy::Balanced)
     );
+    assert_eq!(
+        initial_simplex_strategy_from_name("max-volume"),
+        Some(InitialSimplexStrategy::MaxVolume)
+    );
+    assert_eq!(
+        initial_simplex_strategy_from_name("MAX_VOLUME"),
+        Some(InitialSimplexStrategy::MaxVolume)
+    );
     assert_eq!(initial_simplex_strategy_from_name("unknown"), None);
     assert_eq!(
         initial_simplex_strategy_name(InitialSimplexStrategy::Balanced),
         "balanced"
+    );
+    assert_eq!(
+        initial_simplex_strategy_name(InitialSimplexStrategy::MaxVolume),
+        "max-volume"
     );
 }
 

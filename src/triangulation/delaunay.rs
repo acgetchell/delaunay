@@ -7,21 +7,23 @@
 
 use crate::core::adjacency::{AdjacencyIndex, AdjacencyIndexBuildError};
 use crate::core::algorithms::flips::{
-    DelaunayRepairError, DelaunayRepairRun, DelaunayRepairStats, FlipError,
+    DelaunayRepairError, DelaunayRepairRun, DelaunayRepairStats, FlipError, LocalRepairPhaseTiming,
     apply_bistellar_flip_k1_inverse, repair_delaunay_local_single_pass,
-    repair_delaunay_with_flips_k2_k3, repair_delaunay_with_flips_k2_k3_run,
-    verify_delaunay_for_triangulation,
+    repair_delaunay_local_single_pass_timed, repair_delaunay_with_flips_k2_k3,
+    repair_delaunay_with_flips_k2_k3_run, verify_delaunay_for_triangulation,
 };
 use crate::core::algorithms::incremental_insertion::{InsertionError, TdsConstructionFailure};
 use crate::core::algorithms::locate::LocateError;
 use crate::core::cell::{Cell, CellValidationError};
 use crate::core::collections::spatial_hash_grid::HashGridIndex;
-use crate::core::collections::{CellKeyBuffer, FastHashMap, FastHashSet, FastHasher, SmallBuffer};
+use crate::core::collections::{
+    CellKeyBuffer, FastHashMap, FastHashSet, FastHasher, MAX_PRACTICAL_DIMENSION_SIZE, SmallBuffer,
+};
 use crate::core::edge::EdgeKey;
 use crate::core::facet::{AllFacetsIter, BoundaryFacetsIter};
 use crate::core::operations::{
-    DelaunayInsertionState, InsertionOutcome, InsertionResult, InsertionStatistics,
-    InsertionTelemetry, RepairDecision, TopologicalOperation,
+    DelaunayInsertionState, InsertionOutcome, InsertionResult, InsertionStatistics, RepairDecision,
+    TopologicalOperation,
 };
 use crate::core::tds::{
     CellKey, InvariantError, InvariantKind, InvariantViolation, Tds, TdsConstructionError,
@@ -38,11 +40,13 @@ use crate::core::util::{
 };
 use crate::core::vertex::Vertex;
 use crate::geometry::kernel::{AdaptiveKernel, ExactPredicates, Kernel, RobustKernel};
-use crate::geometry::traits::coordinate::CoordinateScalar;
-use crate::geometry::util::safe_usize_to_scalar;
+use crate::geometry::point::Point;
+use crate::geometry::traits::coordinate::{Coordinate, CoordinateScalar};
+use crate::geometry::util::{safe_coords_to_f64, safe_usize_to_scalar, simplex_volume};
 use crate::topology::manifold::{ManifoldError, validate_ridge_links_for_cells};
 use crate::topology::traits::topological_space::{GlobalTopology, TopologyKind};
 use crate::triangulation::builder::DelaunayTriangulationBuilder;
+use crate::triangulation::diagnostics::{BatchLocalRepairTrigger, ConstructionTelemetry};
 use crate::triangulation::locality::{
     accumulate_live_cell_seeds, clear_cell_seed_set, retain_live_cell_seeds,
 };
@@ -61,6 +65,7 @@ use uuid::Uuid;
 
 const DELAUNAY_SHUFFLE_ATTEMPTS: usize = 6;
 const DELAUNAY_SHUFFLE_SEED_SALT: u64 = 0x9E37_79B9_7F4A_7C15;
+const INITIAL_SIMPLEX_MAX_VOLUME_CANDIDATE_CAP: usize = 18;
 
 // Heuristic rebuild attempts must be consistent across build profiles to avoid
 // release-only construction failures (see #306).
@@ -163,27 +168,14 @@ const fn local_repair_seed_backlog_threshold<const D: usize>() -> usize {
     (D + 1).saturating_mul(factor)
 }
 
-/// Reason a batch local repair pass was scheduled.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum BatchLocalRepairTrigger {
-    /// The configured [`DelaunayRepairPolicy`] cadence fired.
-    Cadence,
-    /// The pending local seed frontier exceeded the adaptive backlog threshold.
-    SeedBacklog,
-}
-
 /// Default local-repair cadence for batch construction.
 ///
 /// Direct incremental insertion keeps [`DelaunayRepairPolicy::default`] at
-/// [`DelaunayRepairPolicy::EveryInsertion`]. Batch construction instead uses
-/// `EveryN(2)`, the best current cadence from the 500/3000-point #341 proxy
-/// sweeps, while final repair and validation still enforce Delaunay correctness.
+/// [`DelaunayRepairPolicy::EveryInsertion`]. Batch construction uses the same
+/// default because the #341 1000/3000-point proxy sweeps showed every-insertion
+/// repair preserved all vertices and was slightly faster than the N=2 cadence.
 const fn default_batch_repair_policy() -> DelaunayRepairPolicy {
-    if let Some(every) = NonZeroUsize::new(2) {
-        DelaunayRepairPolicy::EveryN(every)
-    } else {
-        DelaunayRepairPolicy::EveryInsertion
-    }
+    DelaunayRepairPolicy::EveryInsertion
 }
 
 /// Decides whether batch construction should run local Delaunay repair now.
@@ -829,17 +821,49 @@ pub enum DedupPolicy {
 
 /// Strategy controlling how the initial D+1 simplex vertices are selected during batch construction.
 ///
-/// The default (`First`) preserves current behavior by taking the first D+1 vertices after
-/// preprocessing and insertion-ordering. The balanced strategy is opt-in and chooses a more
-/// spread-out simplex using a deterministic farthest-point heuristic.
+/// The default ([`MaxVolume`](Self::MaxVolume)) searches a bounded pool of real extreme vertices
+/// for the largest nondegenerate simplex before construction. The
+/// [`Balanced`](Self::Balanced) strategy chooses a spread-out simplex using a deterministic
+/// farthest-point heuristic. The [`First`](Self::First) strategy preserves legacy behavior by
+/// taking the first D+1 vertices after preprocessing and insertion-ordering.
+///
+/// These strategies only change construction order. They never introduce synthetic vertices,
+/// relax topology checks, or bypass final Delaunay validation. If a strategy that reorders
+/// vertices cannot select a usable initial simplex, preprocessing falls back to the existing vertex
+/// order and the normal construction error path decides whether the input is valid.
+///
+/// # Examples
+///
+/// ```rust
+/// use delaunay::prelude::triangulation::construction::{
+///     ConstructionOptions, InitialSimplexStrategy,
+/// };
+///
+/// let options = ConstructionOptions::default();
+///
+/// assert_eq!(
+///     options.initial_simplex_strategy(),
+///     InitialSimplexStrategy::MaxVolume,
+/// );
+/// ```
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 #[non_exhaustive]
 pub enum InitialSimplexStrategy {
-    /// Use the first D+1 vertices after preprocessing (legacy behavior).
-    #[default]
+    /// Use the first D+1 vertices after preprocessing.
+    ///
+    /// This preserves the legacy construction order and is useful when callers need exact
+    /// compatibility with an explicitly supplied insertion sequence.
     First,
     /// Choose a better-conditioned simplex using a deterministic farthest-point heuristic.
     Balanced,
+    /// Choose the largest-volume simplex from a bounded real-vertex candidate pool.
+    ///
+    /// This is the default because a larger real starting simplex can reduce early convex-hull
+    /// insertions and their associated local repair work, especially for large 3D point clouds.
+    /// Candidate scoring is a deterministic preprocessing heuristic; correctness still comes from
+    /// the ordinary construction, repair, and validation pipeline.
+    #[default]
+    MaxVolume,
 }
 
 /// Policy controlling deterministic "retry with alternative insertion orders" during batch
@@ -1003,11 +1027,10 @@ impl ConstructionOptions {
     /// use delaunay::prelude::triangulation::construction::{
     ///     ConstructionOptions, DelaunayRepairPolicy,
     /// };
-    /// use std::num::NonZeroUsize;
     ///
     /// assert_eq!(
     ///     ConstructionOptions::default().batch_repair_policy(),
-    ///     DelaunayRepairPolicy::EveryN(NonZeroUsize::new(2).unwrap()),
+    ///     DelaunayRepairPolicy::EveryInsertion,
     /// );
     /// ```
     #[must_use]
@@ -1029,6 +1052,28 @@ impl ConstructionOptions {
         self
     }
     /// Sets the initial simplex selection strategy.
+    ///
+    /// Use this as a construction-ordering performance knob. The strategy selects real input
+    /// vertices for the starting simplex and does not change repair policy, topology guarantees,
+    /// or final validation. Call this with [`InitialSimplexStrategy::Balanced`] or
+    /// [`InitialSimplexStrategy::First`] to opt out of the default
+    /// [`InitialSimplexStrategy::MaxVolume`] heuristic.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use delaunay::prelude::triangulation::construction::{
+    ///     ConstructionOptions, InitialSimplexStrategy,
+    /// };
+    ///
+    /// let options = ConstructionOptions::default()
+    ///     .with_initial_simplex_strategy(InitialSimplexStrategy::Balanced);
+    ///
+    /// assert_eq!(
+    ///     options.initial_simplex_strategy(),
+    ///     InitialSimplexStrategy::Balanced,
+    /// );
+    /// ```
     #[must_use]
     pub const fn with_initial_simplex_strategy(
         mut self,
@@ -1082,522 +1127,6 @@ impl ConstructionOptions {
     pub(crate) const fn without_global_repair_fallback(mut self) -> Self {
         self.use_global_repair_fallback = false;
         self
-    }
-}
-
-// =============================================================================
-// BATCH CONSTRUCTION STATISTICS
-// =============================================================================
-
-/// Aggregate release-visible telemetry collected during batch construction.
-///
-/// These counters summarize batch construction at a coarse level so large-scale
-/// debug runs can separate construction phases, per-insertion primitive costs,
-/// batch-local repair work, and global exterior conflict scans without enabling
-/// per-insertion tracing.
-#[derive(Debug, Default, Clone)]
-#[non_exhaustive]
-pub struct ConstructionTelemetry {
-    /// Number of transactional insertion calls with wall-clock timing.
-    pub insertion_wall_time_calls: usize,
-    /// Wall-clock nanoseconds spent in transactional insertion calls.
-    pub insertion_wall_time_nanos: u64,
-    /// Maximum wall-clock nanoseconds spent in one transactional insertion call.
-    pub insertion_wall_time_nanos_max: u64,
-
-    /// Wall-clock nanoseconds spent preprocessing vertices before topology construction.
-    pub construction_preprocessing_nanos: u64,
-    /// Wall-clock nanoseconds spent in the bulk insertion loop, including batch local repair.
-    pub construction_insert_loop_nanos: u64,
-    /// Wall-clock nanoseconds spent finalizing bulk construction after the insertion loop.
-    pub construction_finalize_nanos: u64,
-    /// Wall-clock nanoseconds spent in the seeded completion repair during finalization.
-    pub construction_completion_repair_nanos: u64,
-    /// Wall-clock nanoseconds spent canonicalizing orientation during finalization.
-    pub construction_orientation_nanos: u64,
-    /// Wall-clock nanoseconds spent in final topology validation during finalization.
-    pub construction_topology_validation_nanos: u64,
-    /// Wall-clock nanoseconds spent in the final global Delaunay validation pass.
-    pub construction_final_delaunay_validation_nanos: u64,
-
-    /// Number of point-location calls performed during construction.
-    pub locate_calls: usize,
-    /// Total facet-walk steps across all point-location calls.
-    pub locate_walk_steps_total: usize,
-    /// Maximum facet-walk steps taken by a single point-location call.
-    pub locate_walk_steps_max: usize,
-    /// Number of point-location calls that used a caller-provided hint.
-    pub locate_hint_uses: usize,
-    /// Number of point-location calls that fell back to a brute-force scan.
-    pub locate_scan_fallbacks: usize,
-    /// Number of point-location calls that ended inside a cell.
-    pub located_inside: usize,
-    /// Number of point-location calls that ended outside the convex hull.
-    pub located_outside: usize,
-    /// Number of point-location calls that ended on a lower-dimensional feature.
-    pub located_on_boundary: usize,
-
-    /// Number of local conflict-region computations observed during construction.
-    pub conflict_region_calls: usize,
-    /// Total number of cells in local conflict regions.
-    pub conflict_region_cells_total: usize,
-    /// Maximum number of cells in a single local conflict region.
-    pub conflict_region_cells_max: usize,
-    /// Wall-clock nanoseconds spent computing local conflict regions.
-    pub conflict_region_nanos: u64,
-    /// Maximum wall-clock nanoseconds spent computing one local conflict region.
-    pub conflict_region_nanos_max: u64,
-
-    /// Number of cavity insertion attempts observed during construction.
-    pub cavity_insertion_calls: usize,
-    /// Wall-clock nanoseconds spent filling cavities and wiring neighbors.
-    pub cavity_insertion_nanos: u64,
-    /// Maximum wall-clock nanoseconds spent in one cavity insertion attempt.
-    pub cavity_insertion_nanos_max: u64,
-
-    /// Number of hull extension attempts observed during construction.
-    pub hull_extension_calls: usize,
-    /// Wall-clock nanoseconds spent extending the convex hull.
-    pub hull_extension_nanos: u64,
-    /// Maximum wall-clock nanoseconds spent in one hull extension attempt.
-    pub hull_extension_nanos_max: u64,
-
-    /// Number of post-insertion topology validations observed during construction.
-    pub topology_validation_calls: usize,
-    /// Wall-clock nanoseconds spent in post-insertion topology validation.
-    pub topology_validation_nanos: u64,
-    /// Maximum wall-clock nanoseconds spent in one post-insertion validation.
-    pub topology_validation_nanos_max: u64,
-
-    /// Number of batch local Delaunay repair calls during construction.
-    pub local_repair_calls: usize,
-    /// Wall-clock nanoseconds spent in batch local Delaunay repair.
-    pub local_repair_nanos: u64,
-    /// Maximum wall-clock nanoseconds spent in one batch local repair call.
-    pub local_repair_nanos_max: u64,
-    /// Total pending seed cells repaired by batch local repair calls.
-    pub local_repair_seed_cells_total: usize,
-    /// Maximum pending seed-cell frontier repaired by one batch local repair call.
-    pub local_repair_seed_cells_max: usize,
-    /// Number of batch local repair calls fired by the configured cadence.
-    pub local_repair_cadence_triggers: usize,
-    /// Number of batch local repair calls fired by the seed-backlog threshold.
-    pub local_repair_backlog_triggers: usize,
-
-    /// Number of bulk local-repair seed accumulation calls.
-    pub repair_seed_accumulation_calls: usize,
-    /// Wall-clock nanoseconds spent accumulating bulk local-repair seeds.
-    pub repair_seed_accumulation_nanos: u64,
-    /// Maximum wall-clock nanoseconds spent in one bulk seed accumulation call.
-    pub repair_seed_accumulation_nanos_max: u64,
-    /// Total live seed cells added to pending bulk local-repair frontiers.
-    pub repair_seed_cells_added_total: usize,
-    /// Maximum live seed cells added by one bulk seed accumulation call.
-    pub repair_seed_cells_added_max: usize,
-
-    /// Number of global exterior-point conflict scans.
-    pub global_conflict_scans: usize,
-    /// Total cells scanned by global exterior-point conflict scans.
-    pub global_conflict_cells_scanned: usize,
-    /// Total cells found by global exterior-point conflict scans.
-    pub global_conflict_cells_found_total: usize,
-    /// Maximum cells found by a single global exterior-point conflict scan.
-    pub global_conflict_cells_found_max: usize,
-    /// Wall-clock nanoseconds spent in global exterior-point conflict scans.
-    pub global_conflict_scan_nanos: u64,
-}
-
-impl ConstructionTelemetry {
-    /// Returns true when any construction telemetry was recorded.
-    ///
-    /// # Examples
-    ///
-    /// ```rust
-    /// use delaunay::prelude::triangulation::construction::ConstructionTelemetry;
-    ///
-    /// let mut telemetry = ConstructionTelemetry::default();
-    /// assert!(!telemetry.has_data());
-    ///
-    /// telemetry.construction_insert_loop_nanos = 1;
-    /// assert!(telemetry.has_data());
-    /// ```
-    #[must_use]
-    pub const fn has_data(&self) -> bool {
-        self.insertion_wall_time_calls > 0
-            || self.insertion_wall_time_nanos > 0
-            || self.construction_preprocessing_nanos > 0
-            || self.construction_insert_loop_nanos > 0
-            || self.construction_finalize_nanos > 0
-            || self.construction_completion_repair_nanos > 0
-            || self.construction_orientation_nanos > 0
-            || self.construction_topology_validation_nanos > 0
-            || self.construction_final_delaunay_validation_nanos > 0
-            || self.locate_calls > 0
-            || self.conflict_region_calls > 0
-            || self.cavity_insertion_calls > 0
-            || self.hull_extension_calls > 0
-            || self.topology_validation_calls > 0
-            || self.local_repair_calls > 0
-            || self.local_repair_seed_cells_total > 0
-            || self.repair_seed_accumulation_calls > 0
-            || self.global_conflict_scans > 0
-    }
-
-    /// Records the wall-clock duration of one transactional insertion call.
-    pub(crate) fn record_insertion_timing(&mut self, elapsed_nanos: u64) {
-        self.insertion_wall_time_calls = self.insertion_wall_time_calls.saturating_add(1);
-        self.insertion_wall_time_nanos =
-            self.insertion_wall_time_nanos.saturating_add(elapsed_nanos);
-        self.insertion_wall_time_nanos_max = self.insertion_wall_time_nanos_max.max(elapsed_nanos);
-    }
-
-    /// Records the wall-clock duration of construction preprocessing.
-    pub(crate) const fn record_construction_preprocessing_timing(&mut self, elapsed_nanos: u64) {
-        self.construction_preprocessing_nanos = self
-            .construction_preprocessing_nanos
-            .saturating_add(elapsed_nanos);
-    }
-
-    /// Records the wall-clock duration of the bulk insertion loop.
-    pub(crate) const fn record_construction_insert_loop_timing(&mut self, elapsed_nanos: u64) {
-        self.construction_insert_loop_nanos = self
-            .construction_insert_loop_nanos
-            .saturating_add(elapsed_nanos);
-    }
-
-    /// Records the wall-clock duration of bulk-construction finalization.
-    pub(crate) const fn record_construction_finalize_timing(&mut self, elapsed_nanos: u64) {
-        self.construction_finalize_nanos = self
-            .construction_finalize_nanos
-            .saturating_add(elapsed_nanos);
-    }
-
-    /// Records the wall-clock duration of seeded completion repair.
-    const fn record_construction_completion_repair_timing(&mut self, elapsed_nanos: u64) {
-        self.construction_completion_repair_nanos = self
-            .construction_completion_repair_nanos
-            .saturating_add(elapsed_nanos);
-    }
-
-    /// Records the wall-clock duration of orientation canonicalization.
-    const fn record_construction_orientation_timing(&mut self, elapsed_nanos: u64) {
-        self.construction_orientation_nanos = self
-            .construction_orientation_nanos
-            .saturating_add(elapsed_nanos);
-    }
-
-    /// Records the wall-clock duration of final topology validation.
-    const fn record_construction_topology_validation_timing(&mut self, elapsed_nanos: u64) {
-        self.construction_topology_validation_nanos = self
-            .construction_topology_validation_nanos
-            .saturating_add(elapsed_nanos);
-    }
-
-    /// Records the wall-clock duration of final global Delaunay validation.
-    pub(crate) const fn record_construction_final_delaunay_validation_timing(
-        &mut self,
-        elapsed_nanos: u64,
-    ) {
-        self.construction_final_delaunay_validation_nanos = self
-            .construction_final_delaunay_validation_nanos
-            .saturating_add(elapsed_nanos);
-    }
-
-    /// Records the wall-clock duration of one batch local repair call.
-    pub(crate) fn record_local_repair_timing(&mut self, elapsed_nanos: u64) {
-        self.local_repair_calls = self.local_repair_calls.saturating_add(1);
-        self.local_repair_nanos = self.local_repair_nanos.saturating_add(elapsed_nanos);
-        self.local_repair_nanos_max = self.local_repair_nanos_max.max(elapsed_nanos);
-    }
-
-    /// Records the repaired local frontier size and why the repair fired.
-    fn record_local_repair_frontier(
-        &mut self,
-        seed_cells: usize,
-        trigger: BatchLocalRepairTrigger,
-    ) {
-        self.local_repair_seed_cells_total = self
-            .local_repair_seed_cells_total
-            .saturating_add(seed_cells);
-        self.local_repair_seed_cells_max = self.local_repair_seed_cells_max.max(seed_cells);
-        match trigger {
-            BatchLocalRepairTrigger::Cadence => {
-                self.local_repair_cadence_triggers =
-                    self.local_repair_cadence_triggers.saturating_add(1);
-            }
-            BatchLocalRepairTrigger::SeedBacklog => {
-                self.local_repair_backlog_triggers =
-                    self.local_repair_backlog_triggers.saturating_add(1);
-            }
-        }
-    }
-
-    /// Records one bulk local-repair seed accumulation step.
-    pub(crate) fn record_repair_seed_accumulation(
-        &mut self,
-        elapsed_nanos: u64,
-        cells_added: usize,
-    ) {
-        self.repair_seed_accumulation_calls = self.repair_seed_accumulation_calls.saturating_add(1);
-        self.repair_seed_accumulation_nanos = self
-            .repair_seed_accumulation_nanos
-            .saturating_add(elapsed_nanos);
-        self.repair_seed_accumulation_nanos_max =
-            self.repair_seed_accumulation_nanos_max.max(elapsed_nanos);
-        self.repair_seed_cells_added_total = self
-            .repair_seed_cells_added_total
-            .saturating_add(cells_added);
-        self.repair_seed_cells_added_max = self.repair_seed_cells_added_max.max(cells_added);
-    }
-
-    /// Adds one insertion's telemetry into this construction summary.
-    pub(crate) fn record_insertion(&mut self, telemetry: &InsertionTelemetry) {
-        self.locate_calls = self.locate_calls.saturating_add(telemetry.locate_calls);
-        self.locate_walk_steps_total = self
-            .locate_walk_steps_total
-            .saturating_add(telemetry.locate_walk_steps_total);
-        self.locate_walk_steps_max = self
-            .locate_walk_steps_max
-            .max(telemetry.locate_walk_steps_max);
-        self.locate_hint_uses = self
-            .locate_hint_uses
-            .saturating_add(telemetry.locate_hint_uses);
-        self.locate_scan_fallbacks = self
-            .locate_scan_fallbacks
-            .saturating_add(telemetry.locate_scan_fallbacks);
-        self.located_inside = self.located_inside.saturating_add(telemetry.located_inside);
-        self.located_outside = self
-            .located_outside
-            .saturating_add(telemetry.located_outside);
-        self.located_on_boundary = self
-            .located_on_boundary
-            .saturating_add(telemetry.located_on_boundary);
-
-        self.conflict_region_calls = self
-            .conflict_region_calls
-            .saturating_add(telemetry.conflict_region_calls);
-        self.conflict_region_cells_total = self
-            .conflict_region_cells_total
-            .saturating_add(telemetry.conflict_region_cells_total);
-        self.conflict_region_cells_max = self
-            .conflict_region_cells_max
-            .max(telemetry.conflict_region_cells_max);
-        self.conflict_region_nanos = self
-            .conflict_region_nanos
-            .saturating_add(telemetry.conflict_region_nanos);
-        self.conflict_region_nanos_max = self
-            .conflict_region_nanos_max
-            .max(telemetry.conflict_region_nanos_max);
-
-        self.cavity_insertion_calls = self
-            .cavity_insertion_calls
-            .saturating_add(telemetry.cavity_insertion_calls);
-        self.cavity_insertion_nanos = self
-            .cavity_insertion_nanos
-            .saturating_add(telemetry.cavity_insertion_nanos);
-        self.cavity_insertion_nanos_max = self
-            .cavity_insertion_nanos_max
-            .max(telemetry.cavity_insertion_nanos_max);
-
-        self.hull_extension_calls = self
-            .hull_extension_calls
-            .saturating_add(telemetry.hull_extension_calls);
-        self.hull_extension_nanos = self
-            .hull_extension_nanos
-            .saturating_add(telemetry.hull_extension_nanos);
-        self.hull_extension_nanos_max = self
-            .hull_extension_nanos_max
-            .max(telemetry.hull_extension_nanos_max);
-
-        self.topology_validation_calls = self
-            .topology_validation_calls
-            .saturating_add(telemetry.topology_validation_calls);
-        self.topology_validation_nanos = self
-            .topology_validation_nanos
-            .saturating_add(telemetry.topology_validation_nanos);
-        self.topology_validation_nanos_max = self
-            .topology_validation_nanos_max
-            .max(telemetry.topology_validation_nanos_max);
-
-        self.global_conflict_scans = self
-            .global_conflict_scans
-            .saturating_add(telemetry.global_conflict_scans);
-        self.global_conflict_cells_scanned = self
-            .global_conflict_cells_scanned
-            .saturating_add(telemetry.global_conflict_cells_scanned);
-        self.global_conflict_cells_found_total = self
-            .global_conflict_cells_found_total
-            .saturating_add(telemetry.global_conflict_cells_found_total);
-        self.global_conflict_cells_found_max = self
-            .global_conflict_cells_found_max
-            .max(telemetry.global_conflict_cells_found_max);
-        self.global_conflict_scan_nanos = self
-            .global_conflict_scan_nanos
-            .saturating_add(telemetry.global_conflict_scan_nanos);
-    }
-
-    /// Merges another construction telemetry summary into this one.
-    fn merge_from(&mut self, other: &Self) {
-        self.insertion_wall_time_nanos = self
-            .insertion_wall_time_nanos
-            .saturating_add(other.insertion_wall_time_nanos);
-        self.insertion_wall_time_calls = self
-            .insertion_wall_time_calls
-            .saturating_add(other.insertion_wall_time_calls);
-        self.insertion_wall_time_nanos_max = self
-            .insertion_wall_time_nanos_max
-            .max(other.insertion_wall_time_nanos_max);
-
-        self.merge_construction_phase_timings_from(other);
-
-        self.locate_calls = self.locate_calls.saturating_add(other.locate_calls);
-        self.locate_walk_steps_total = self
-            .locate_walk_steps_total
-            .saturating_add(other.locate_walk_steps_total);
-        self.locate_walk_steps_max = self.locate_walk_steps_max.max(other.locate_walk_steps_max);
-        self.locate_hint_uses = self.locate_hint_uses.saturating_add(other.locate_hint_uses);
-        self.locate_scan_fallbacks = self
-            .locate_scan_fallbacks
-            .saturating_add(other.locate_scan_fallbacks);
-        self.located_inside = self.located_inside.saturating_add(other.located_inside);
-        self.located_outside = self.located_outside.saturating_add(other.located_outside);
-        self.located_on_boundary = self
-            .located_on_boundary
-            .saturating_add(other.located_on_boundary);
-
-        self.conflict_region_calls = self
-            .conflict_region_calls
-            .saturating_add(other.conflict_region_calls);
-        self.conflict_region_cells_total = self
-            .conflict_region_cells_total
-            .saturating_add(other.conflict_region_cells_total);
-        self.conflict_region_cells_max = self
-            .conflict_region_cells_max
-            .max(other.conflict_region_cells_max);
-        self.conflict_region_nanos = self
-            .conflict_region_nanos
-            .saturating_add(other.conflict_region_nanos);
-        self.conflict_region_nanos_max = self
-            .conflict_region_nanos_max
-            .max(other.conflict_region_nanos_max);
-
-        self.cavity_insertion_calls = self
-            .cavity_insertion_calls
-            .saturating_add(other.cavity_insertion_calls);
-        self.cavity_insertion_nanos = self
-            .cavity_insertion_nanos
-            .saturating_add(other.cavity_insertion_nanos);
-        self.cavity_insertion_nanos_max = self
-            .cavity_insertion_nanos_max
-            .max(other.cavity_insertion_nanos_max);
-
-        self.hull_extension_calls = self
-            .hull_extension_calls
-            .saturating_add(other.hull_extension_calls);
-        self.hull_extension_nanos = self
-            .hull_extension_nanos
-            .saturating_add(other.hull_extension_nanos);
-        self.hull_extension_nanos_max = self
-            .hull_extension_nanos_max
-            .max(other.hull_extension_nanos_max);
-
-        self.topology_validation_calls = self
-            .topology_validation_calls
-            .saturating_add(other.topology_validation_calls);
-        self.topology_validation_nanos = self
-            .topology_validation_nanos
-            .saturating_add(other.topology_validation_nanos);
-        self.topology_validation_nanos_max = self
-            .topology_validation_nanos_max
-            .max(other.topology_validation_nanos_max);
-
-        self.merge_local_repair_from(other);
-
-        self.merge_repair_seed_accumulation_from(other);
-
-        self.global_conflict_scans = self
-            .global_conflict_scans
-            .saturating_add(other.global_conflict_scans);
-        self.global_conflict_cells_scanned = self
-            .global_conflict_cells_scanned
-            .saturating_add(other.global_conflict_cells_scanned);
-        self.global_conflict_cells_found_total = self
-            .global_conflict_cells_found_total
-            .saturating_add(other.global_conflict_cells_found_total);
-        self.global_conflict_cells_found_max = self
-            .global_conflict_cells_found_max
-            .max(other.global_conflict_cells_found_max);
-        self.global_conflict_scan_nanos = self
-            .global_conflict_scan_nanos
-            .saturating_add(other.global_conflict_scan_nanos);
-    }
-
-    /// Keeps construction-phase merge accounting isolated so aggregate merges stay readable.
-    const fn merge_construction_phase_timings_from(&mut self, other: &Self) {
-        self.construction_preprocessing_nanos = self
-            .construction_preprocessing_nanos
-            .saturating_add(other.construction_preprocessing_nanos);
-        self.construction_insert_loop_nanos = self
-            .construction_insert_loop_nanos
-            .saturating_add(other.construction_insert_loop_nanos);
-        self.construction_finalize_nanos = self
-            .construction_finalize_nanos
-            .saturating_add(other.construction_finalize_nanos);
-        self.construction_completion_repair_nanos = self
-            .construction_completion_repair_nanos
-            .saturating_add(other.construction_completion_repair_nanos);
-        self.construction_orientation_nanos = self
-            .construction_orientation_nanos
-            .saturating_add(other.construction_orientation_nanos);
-        self.construction_topology_validation_nanos = self
-            .construction_topology_validation_nanos
-            .saturating_add(other.construction_topology_validation_nanos);
-        self.construction_final_delaunay_validation_nanos = self
-            .construction_final_delaunay_validation_nanos
-            .saturating_add(other.construction_final_delaunay_validation_nanos);
-    }
-
-    /// Keeps local-repair merge accounting isolated so the aggregate merge stays readable.
-    fn merge_local_repair_from(&mut self, other: &Self) {
-        self.local_repair_calls = self
-            .local_repair_calls
-            .saturating_add(other.local_repair_calls);
-        self.local_repair_nanos = self
-            .local_repair_nanos
-            .saturating_add(other.local_repair_nanos);
-        self.local_repair_nanos_max = self
-            .local_repair_nanos_max
-            .max(other.local_repair_nanos_max);
-        self.local_repair_seed_cells_total = self
-            .local_repair_seed_cells_total
-            .saturating_add(other.local_repair_seed_cells_total);
-        self.local_repair_seed_cells_max = self
-            .local_repair_seed_cells_max
-            .max(other.local_repair_seed_cells_max);
-        self.local_repair_cadence_triggers = self
-            .local_repair_cadence_triggers
-            .saturating_add(other.local_repair_cadence_triggers);
-        self.local_repair_backlog_triggers = self
-            .local_repair_backlog_triggers
-            .saturating_add(other.local_repair_backlog_triggers);
-    }
-
-    fn merge_repair_seed_accumulation_from(&mut self, other: &Self) {
-        self.repair_seed_accumulation_calls = self
-            .repair_seed_accumulation_calls
-            .saturating_add(other.repair_seed_accumulation_calls);
-        self.repair_seed_accumulation_nanos = self
-            .repair_seed_accumulation_nanos
-            .saturating_add(other.repair_seed_accumulation_nanos);
-        self.repair_seed_accumulation_nanos_max = self
-            .repair_seed_accumulation_nanos_max
-            .max(other.repair_seed_accumulation_nanos_max);
-        self.repair_seed_cells_added_total = self
-            .repair_seed_cells_added_total
-            .saturating_add(other.repair_seed_cells_added_total);
-        self.repair_seed_cells_added_max = self
-            .repair_seed_cells_added_max
-            .max(other.repair_seed_cells_added_max);
     }
 }
 
@@ -2241,6 +1770,200 @@ where
     unique
 }
 
+/// Converts candidate simplex vertices to f64 coordinates for deterministic
+/// preprocessing heuristics without hiding non-finite inputs.
+fn vertices_coords_f64<T, U, const D: usize>(vertices: &[Vertex<T, U, D>]) -> Option<Vec<[f64; D]>>
+where
+    T: CoordinateScalar,
+{
+    let mut coords_f64: Vec<[f64; D]> = Vec::with_capacity(vertices.len());
+    for v in vertices {
+        let coords = safe_coords_to_f64(v.point().coords()).ok()?;
+        if coords.iter().any(|coord| !coord.is_finite()) {
+            return None;
+        }
+        coords_f64.push(coords);
+    }
+    Some(coords_f64)
+}
+
+/// Computes squared Euclidean distance for initial-simplex selection
+/// heuristics that only need deterministic ordering.
+fn squared_distance<const D: usize>(a: &[f64; D], b: &[f64; D]) -> f64 {
+    a.iter()
+        .zip(b.iter())
+        .map(|(lhs, rhs)| {
+            let diff = lhs - rhs;
+            diff * diff
+        })
+        .sum::<f64>()
+}
+
+/// Appends an index once so candidate pools remain small and deterministic.
+fn push_unique_index(indices: &mut Vec<usize>, idx: usize) {
+    if !indices.contains(&idx) {
+        indices.push(idx);
+    }
+}
+
+/// Computes the bounded candidate-pool size for max-volume simplex search.
+const fn initial_simplex_candidate_cap<const D: usize>(point_count: usize) -> usize {
+    let minimum = D.saturating_add(1);
+    let bounded_cap = if INITIAL_SIMPLEX_MAX_VOLUME_CANDIDATE_CAP > minimum {
+        INITIAL_SIMPLEX_MAX_VOLUME_CANDIDATE_CAP
+    } else {
+        minimum
+    };
+    let requested = D.saturating_add(1).saturating_mul(2).saturating_add(4);
+    let target = if requested < bounded_cap {
+        requested
+    } else {
+        bounded_cap
+    };
+    if point_count < target {
+        point_count
+    } else {
+        target
+    }
+}
+
+/// Finds the deterministic lexicographic anchor for a candidate pool.
+fn lexicographic_min_index<const D: usize>(coords_f64: &[[f64; D]]) -> Option<usize> {
+    if coords_f64.is_empty() {
+        return None;
+    }
+    let mut lexicographic_min = 0usize;
+    for idx in 1..coords_f64.len() {
+        if coords_f64[idx].partial_cmp(&coords_f64[lexicographic_min]) == Some(Ordering::Less) {
+            lexicographic_min = idx;
+        }
+    }
+    Some(lexicographic_min)
+}
+
+/// Adds per-axis coordinate extrema to the candidate pool.
+fn append_axis_extrema<const D: usize>(coords_f64: &[[f64; D]], candidates: &mut Vec<usize>) {
+    for axis in 0..D {
+        let mut min_idx = 0usize;
+        let mut max_idx = 0usize;
+        for idx in 1..coords_f64.len() {
+            let coord = coords_f64[idx][axis];
+            let min_coord = coords_f64[min_idx][axis];
+            let max_coord = coords_f64[max_idx][axis];
+
+            match coord.partial_cmp(&min_coord) {
+                Some(Ordering::Less) => min_idx = idx,
+                Some(Ordering::Equal)
+                    if coords_f64[idx].partial_cmp(&coords_f64[min_idx])
+                        == Some(Ordering::Less) =>
+                {
+                    min_idx = idx;
+                }
+                _ => {}
+            }
+            match coord.partial_cmp(&max_coord) {
+                Some(Ordering::Greater) => max_idx = idx,
+                Some(Ordering::Equal)
+                    if coords_f64[idx].partial_cmp(&coords_f64[max_idx])
+                        == Some(Ordering::Less) =>
+                {
+                    max_idx = idx;
+                }
+                _ => {}
+            }
+        }
+        push_unique_index(candidates, min_idx);
+        push_unique_index(candidates, max_idx);
+    }
+}
+
+/// Extends the candidate pool with farthest-point samples until it reaches the
+/// configured cap or exhausts usable points.
+fn extend_candidate_pool_by_farthest_points<const D: usize>(
+    coords_f64: &[[f64; D]],
+    candidates: &mut Vec<usize>,
+    candidate_cap: usize,
+) {
+    let mut selected_mask = vec![false; coords_f64.len()];
+    for &idx in candidates.iter() {
+        selected_mask[idx] = true;
+    }
+
+    let mut min_dist_sq = vec![f64::INFINITY; coords_f64.len()];
+    for idx in 0..coords_f64.len() {
+        if selected_mask[idx] {
+            min_dist_sq[idx] = 0.0;
+            continue;
+        }
+        for &candidate_idx in candidates.iter() {
+            let dist = squared_distance(&coords_f64[idx], &coords_f64[candidate_idx]);
+            if dist < min_dist_sq[idx] {
+                min_dist_sq[idx] = dist;
+            }
+        }
+    }
+
+    while candidates.len() < candidate_cap {
+        let mut best_idx: Option<usize> = None;
+        let mut best_dist = -1.0_f64;
+
+        for idx in 0..coords_f64.len() {
+            if selected_mask[idx] {
+                continue;
+            }
+            let dist = min_dist_sq[idx];
+            if !dist.is_finite() {
+                continue;
+            }
+            let replace = best_idx.is_none_or(|best_idx_val| match dist.partial_cmp(&best_dist) {
+                Some(Ordering::Greater) => true,
+                Some(Ordering::Equal) => {
+                    coords_f64[idx].partial_cmp(&coords_f64[best_idx_val]) == Some(Ordering::Less)
+                }
+                _ => false,
+            });
+            if replace {
+                best_idx = Some(idx);
+                best_dist = dist;
+            }
+        }
+
+        let Some(best_idx) = best_idx else {
+            break;
+        };
+        push_unique_index(candidates, best_idx);
+        selected_mask[best_idx] = true;
+
+        for idx in 0..coords_f64.len() {
+            if selected_mask[idx] {
+                continue;
+            }
+            let dist = squared_distance(&coords_f64[idx], &coords_f64[best_idx]);
+            if dist < min_dist_sq[idx] {
+                min_dist_sq[idx] = dist;
+            }
+        }
+    }
+}
+
+/// Chooses a bounded pool of real extreme vertices for max-volume simplex
+/// search.
+fn initial_simplex_candidate_pool_indices<const D: usize>(coords_f64: &[[f64; D]]) -> Vec<usize> {
+    let candidate_cap = initial_simplex_candidate_cap::<D>(coords_f64.len());
+    if candidate_cap == 0 {
+        return Vec::new();
+    }
+
+    let mut candidates = Vec::with_capacity(candidate_cap);
+    if let Some(lexicographic_min) = lexicographic_min_index(coords_f64) {
+        push_unique_index(&mut candidates, lexicographic_min);
+    }
+    append_axis_extrema(coords_f64, &mut candidates);
+    extend_candidate_pool_by_farthest_points(coords_f64, &mut candidates, candidate_cap);
+
+    candidates
+}
+
 /// Chooses a well-spread initial simplex to reduce early degeneracy in
 /// incremental construction.
 fn select_balanced_simplex_indices<T, U, const D: usize>(
@@ -2253,27 +1976,7 @@ where
         return None;
     }
 
-    let mut coords_f64: Vec<[f64; D]> = Vec::with_capacity(vertices.len());
-    for v in vertices {
-        let mut coords = [0.0_f64; D];
-        for (axis, coord) in v.point().coords().iter().enumerate() {
-            let c = coord.to_f64()?;
-            if !c.is_finite() {
-                return None;
-            }
-            coords[axis] = c;
-        }
-        coords_f64.push(coords);
-    }
-    let dist_sq = |a: &[f64; D], b: &[f64; D]| {
-        a.iter()
-            .zip(b.iter())
-            .map(|(lhs, rhs)| {
-                let diff = lhs - rhs;
-                diff * diff
-            })
-            .sum::<f64>()
-    };
+    let coords_f64 = vertices_coords_f64(vertices)?;
 
     let mut seed_idx = 0usize;
     for i in 1..coords_f64.len() {
@@ -2289,7 +1992,7 @@ where
 
     let mut min_dist_sq = vec![f64::INFINITY; coords_f64.len()];
     for i in 0..coords_f64.len() {
-        min_dist_sq[i] = dist_sq(&coords_f64[i], &coords_f64[seed_idx]);
+        min_dist_sq[i] = squared_distance(&coords_f64[i], &coords_f64[seed_idx]);
     }
     min_dist_sq[seed_idx] = 0.0;
 
@@ -2328,7 +2031,7 @@ where
             if selected_mask[i] {
                 continue;
             }
-            let dist_sq = dist_sq(&coords_f64[i], &coords_f64[best_idx]);
+            let dist_sq = squared_distance(&coords_f64[i], &coords_f64[best_idx]);
             if dist_sq < min_dist_sq[i] {
                 min_dist_sq[i] = dist_sq;
             }
@@ -2340,6 +2043,87 @@ where
     } else {
         None
     }
+}
+
+/// Advances a lexicographic combination in place so max-volume search can
+/// enumerate bounded candidate pools without recursion.
+fn advance_combination(indices: &mut [usize], upper: usize) -> bool {
+    let len = indices.len();
+    if len > upper {
+        return false;
+    }
+    for pos in (0..len).rev() {
+        if indices[pos] < pos + upper - len {
+            indices[pos] += 1;
+            for next in pos + 1..len {
+                indices[next] = indices[next - 1] + 1;
+            }
+            return true;
+        }
+    }
+    false
+}
+
+/// Scores a candidate simplex by f64 volume and rejects degenerate choices.
+fn simplex_volume_for_indices<const D: usize>(
+    coords_f64: &[[f64; D]],
+    simplex_indices: &[usize],
+) -> Option<f64> {
+    if simplex_indices.len() != D + 1 {
+        return None;
+    }
+
+    let mut points: SmallBuffer<Point<f64, D>, MAX_PRACTICAL_DIMENSION_SIZE> =
+        SmallBuffer::with_capacity(simplex_indices.len());
+    for &idx in simplex_indices {
+        points.push(Point::new(coords_f64[idx]));
+    }
+    simplex_volume(&points)
+        .ok()
+        .filter(|volume| volume.is_finite() && *volume > 0.0)
+}
+
+/// Chooses the largest-volume nondegenerate real simplex from a bounded
+/// extreme-vertex candidate pool.
+fn select_max_volume_simplex_indices<T, U, const D: usize>(
+    vertices: &[Vertex<T, U, D>],
+) -> Option<Vec<usize>>
+where
+    T: CoordinateScalar,
+{
+    if vertices.len() < D + 1 {
+        return None;
+    }
+
+    let coords_f64 = vertices_coords_f64(vertices)?;
+    let candidates = initial_simplex_candidate_pool_indices(&coords_f64);
+    if candidates.len() < D + 1 {
+        return None;
+    }
+
+    let simplex_len = D + 1;
+    let mut combination: Vec<usize> = (0..simplex_len).collect();
+    let mut best_volume = 0.0_f64;
+    let mut best_indices: Option<Vec<usize>> = None;
+
+    loop {
+        let simplex_indices: SmallBuffer<usize, MAX_PRACTICAL_DIMENSION_SIZE> = combination
+            .iter()
+            .map(|&candidate_idx| candidates[candidate_idx])
+            .collect();
+        if let Some(volume) = simplex_volume_for_indices(&coords_f64, &simplex_indices)
+            && volume > best_volume
+        {
+            best_volume = volume;
+            best_indices = Some(simplex_indices.iter().copied().collect());
+        }
+
+        if !advance_combination(&mut combination, candidates.len()) {
+            break;
+        }
+    }
+
+    best_indices
 }
 
 /// Places the selected simplex first while preserving every remaining input
@@ -3694,6 +3478,18 @@ where
                     (Some(base), None)
                 }
             }
+            InitialSimplexStrategy::MaxVolume => {
+                let base = owned_vertices.unwrap_or_else(|| vertices.to_vec());
+                if let Some(indices) = select_max_volume_simplex_indices(&base) {
+                    if let Some(reordered) = reorder_vertices_for_simplex(&base, &indices) {
+                        (Some(reordered), Some(base))
+                    } else {
+                        (Some(base), None)
+                    }
+                } else {
+                    (Some(base), None)
+                }
+            }
         };
 
         let final_slice = primary.as_deref().unwrap_or(vertices);
@@ -4574,7 +4370,7 @@ where
         pending_seed_cells: &mut Vec<CellKey>,
         pending_seen: &mut FastHashSet<CellKey>,
         soft_fail_seeds: &mut Vec<CellKey>,
-        construction_telemetry: Option<&mut ConstructionTelemetry>,
+        mut construction_telemetry: Option<&mut ConstructionTelemetry>,
     ) -> Result<(), DelaunayTriangulationConstructionError> {
         retain_live_cell_seeds(&self.tri.tds, pending_seed_cells, pending_seen);
         if pending_seed_cells.is_empty() {
@@ -4587,7 +4383,7 @@ where
         let seed_cells_len = pending_seed_cells.len();
         let max_flips = local_repair_flip_budget::<D>(seed_cells_len);
         let trace_repair = batch_repair_trace_enabled();
-        let repair_started = Instant::now();
+        let mut phase_timing = LocalRepairPhaseTiming::default();
         if trace_repair {
             tracing::debug!(
                 idx = index,
@@ -4597,11 +4393,24 @@ where
                 "bulk batch repair: starting local repair"
             );
         }
+        let collect_telemetry = construction_telemetry.is_some();
+        let repair_started = (collect_telemetry || trace_repair).then(Instant::now);
 
         let repair_result = {
             self.invalidate_repair_caches();
             let (tds, kernel) = (&mut self.tri.tds, &self.tri.kernel);
-            repair_delaunay_local_single_pass(tds, kernel, pending_seed_cells, max_flips)
+            let timing = if collect_telemetry {
+                Some(&mut phase_timing)
+            } else {
+                None
+            };
+            repair_delaunay_local_single_pass_timed(
+                tds,
+                kernel,
+                pending_seed_cells,
+                max_flips,
+                timing,
+            )
         };
         #[cfg(test)]
         let repair_result = if test_hooks::force_repair_nonconvergent_enabled() {
@@ -4609,14 +4418,23 @@ where
         } else {
             repair_result
         };
-        let repair_elapsed = repair_started.elapsed();
-        if let Some(telemetry) = construction_telemetry {
+        let repair_elapsed = repair_started.map(|started| started.elapsed());
+        if let Some(telemetry) = construction_telemetry.as_mut() {
+            let repair_elapsed = repair_elapsed.unwrap_or_default();
             telemetry.record_local_repair_timing(duration_nanos_saturating(repair_elapsed));
+            telemetry.record_local_repair_phase_timing(&phase_timing);
             telemetry.record_local_repair_frontier(seed_cells_len, trigger);
         }
 
         match repair_result {
             Ok(stats) => {
+                if let Some(telemetry) = construction_telemetry.as_mut() {
+                    telemetry.record_local_repair_work(
+                        stats.facets_checked,
+                        stats.flips_performed,
+                        stats.max_queue_len,
+                    );
+                }
                 if trace_repair {
                     tracing::debug!(
                         idx = index,
@@ -4624,7 +4442,7 @@ where
                         flips = stats.flips_performed,
                         checked = stats.facets_checked,
                         max_queue = stats.max_queue_len,
-                        elapsed = ?repair_elapsed,
+                        elapsed = ?repair_elapsed.unwrap_or_default(),
                         "bulk batch repair: local repair succeeded"
                     );
                 }
@@ -4639,7 +4457,7 @@ where
                         idx = index,
                         seed_cells = seed_cells_len,
                         error = %repair_err,
-                        elapsed = ?repair_elapsed,
+                        elapsed = ?repair_elapsed.unwrap_or_default(),
                         "bulk batch repair: local repair failed"
                     );
                 }
@@ -4759,7 +4577,12 @@ where
                     let elapsed = started.map(|started| started.elapsed());
                     let insert_result = insert_result.map(|detail| {
                         let repair_seed_cells = detail.repair_seed_cells;
-                        (detail.outcome, detail.stats, repair_seed_cells)
+                        (
+                            detail.outcome,
+                            detail.stats,
+                            repair_seed_cells,
+                            detail.delaunay_repair_required,
+                        )
                     });
                     match insert_result {
                         Ok((
@@ -4769,6 +4592,7 @@ where
                             },
                             _stats,
                             repair_seed_cells,
+                            delaunay_repair_required,
                         )) => {
                             inserted_vertices = inserted_vertices.saturating_add(1);
                             if trace_insertion && let Some(elapsed) = elapsed {
@@ -4786,7 +4610,8 @@ where
                             // This keeps EveryN semantics local to the recent insertion window
                             // rather than repairing only the final insertion in the batch.
                             let topology = self.tri.topology_guarantee();
-                            if batch_repair_policy != DelaunayRepairPolicy::Never
+                            if delaunay_repair_required
+                                && batch_repair_policy != DelaunayRepairPolicy::Never
                                 && TopologicalOperation::FacetFlip.is_admissible_under(topology)
                                 && self.tri.tds.number_of_cells() > 0
                             {
@@ -4823,7 +4648,12 @@ where
                                 &mut batch_progress,
                             );
                         }
-                        Ok((InsertionOutcome::Skipped { error }, stats, _repair_seed_cells)) => {
+                        Ok((
+                            InsertionOutcome::Skipped { error },
+                            stats,
+                            _repair_seed_cells,
+                            _delaunay_repair_required,
+                        )) => {
                             skipped_vertices = skipped_vertices.saturating_add(1);
                             if trace_insertion && let Some(elapsed) = elapsed {
                                 tracing::debug!(
@@ -4919,6 +4749,7 @@ where
                             detail.outcome,
                             detail.stats,
                             repair_seed_cells,
+                            detail.delaunay_repair_required,
                             detail.telemetry,
                         )
                     });
@@ -4930,6 +4761,7 @@ where
                             },
                             stats,
                             repair_seed_cells,
+                            delaunay_repair_required,
                             telemetry,
                         )) => {
                             inserted_vertices = inserted_vertices.saturating_add(1);
@@ -4976,7 +4808,8 @@ where
                             // Batch local repair: see the non-stats branch
                             // comment for full details.
                             let topology = self.tri.topology_guarantee();
-                            if batch_repair_policy != DelaunayRepairPolicy::Never
+                            if delaunay_repair_required
+                                && batch_repair_policy != DelaunayRepairPolicy::Never
                                 && TopologicalOperation::FacetFlip.is_admissible_under(topology)
                                 && self.tri.tds.number_of_cells() > 0
                             {
@@ -5024,6 +4857,7 @@ where
                             InsertionOutcome::Skipped { error },
                             stats,
                             _repair_seed_cells,
+                            _delaunay_repair_required,
                             telemetry,
                         )) => {
                             skipped_vertices = skipped_vertices.saturating_add(1);
@@ -6264,6 +6098,7 @@ where
                         })?
                     };
                     let repair_seed_cells = insert_detail.repair_seed_cells;
+                    let delaunay_repair_required = insert_detail.delaunay_repair_required;
 
                     match insert_detail.outcome {
                         InsertionOutcome::Inserted { vertex_key, hint } => {
@@ -6273,18 +6108,20 @@ where
                                 .delaunay_repair_insertion_count
                                 .saturating_add(1);
 
-                            candidate
-                                .maybe_repair_after_insertion_capped(
-                                    vertex_key,
-                                    hint,
-                                    &repair_seed_cells,
-                                    max_flips_override,
-                                )
-                                .map_err(|e| DelaunayRepairError::HeuristicRebuildFailed {
-                                    message: format!(
-                                        "heuristic rebuild repair failed at idx={idx} uuid={uuid} coords={coords:?}: {e}"
-                                    ),
-                                })?;
+                            if delaunay_repair_required {
+                                candidate
+                                    .maybe_repair_after_insertion_capped(
+                                        vertex_key,
+                                        hint,
+                                        &repair_seed_cells,
+                                        max_flips_override,
+                                    )
+                                    .map_err(|e| DelaunayRepairError::HeuristicRebuildFailed {
+                                        message: format!(
+                                            "heuristic rebuild repair failed at idx={idx} uuid={uuid} coords={coords:?}: {e}"
+                                        ),
+                                    })?;
+                            }
 
                             candidate
                                 .maybe_check_after_insertion()
@@ -6995,6 +6832,7 @@ where
                 )?
             };
             let repair_seed_cells = insert_detail.repair_seed_cells;
+            let delaunay_repair_required = insert_detail.delaunay_repair_required;
 
             match insert_detail.outcome {
                 InsertionOutcome::Inserted {
@@ -7006,7 +6844,9 @@ where
                         .insertion_state
                         .delaunay_repair_insertion_count
                         .saturating_add(1);
-                    self.maybe_repair_after_insertion(v_key, hint, &repair_seed_cells)?;
+                    if delaunay_repair_required {
+                        self.maybe_repair_after_insertion(v_key, hint, &repair_seed_cells)?;
+                    }
                     self.maybe_check_after_insertion()?;
                     Ok(v_key)
                 }
@@ -7096,6 +6936,7 @@ where
             };
             let stats = insert_detail.stats;
             let repair_seed_cells = insert_detail.repair_seed_cells;
+            let delaunay_repair_required = insert_detail.delaunay_repair_required;
 
             let outcome = match insert_detail.outcome {
                 InsertionOutcome::Inserted { vertex_key, hint } => {
@@ -7104,7 +6945,9 @@ where
                         .insertion_state
                         .delaunay_repair_insertion_count
                         .saturating_add(1);
-                    self.maybe_repair_after_insertion(vertex_key, hint, &repair_seed_cells)?;
+                    if delaunay_repair_required {
+                        self.maybe_repair_after_insertion(vertex_key, hint, &repair_seed_cells)?;
+                    }
                     self.maybe_check_after_insertion()?;
                     InsertionOutcome::Inserted { vertex_key, hint }
                 }
@@ -8217,13 +8060,12 @@ mod tests {
         CavityFillingError, HullExtensionReason, NeighborWiringError, repair_neighbor_pointers,
     };
     use crate::core::algorithms::locate::{ConflictError, LocateError};
-    use crate::core::operations::{InsertionResult, InsertionTelemetry};
+    use crate::core::operations::InsertionResult;
     use crate::core::tds::{EntityKind, GeometricError, TriangulationConstructionState};
     use crate::core::vertex::VertexBuilder;
     use crate::geometry::kernel::{AdaptiveKernel, FastKernel, RobustKernel};
     use crate::geometry::point::Point;
-    use crate::geometry::traits::coordinate::Coordinate;
-    use crate::geometry::traits::coordinate::CoordinateConversionError;
+    use crate::geometry::traits::coordinate::{Coordinate, CoordinateConversionError};
     use crate::topology::characteristics::euler::TopologyClassification;
     use crate::topology::traits::topological_space::ToroidalConstructionMode;
     use crate::triangulation::flips::BistellarFlips;
@@ -8545,8 +8387,12 @@ mod tests {
     fn test_construction_options_default_uses_batch_repair_cadence() {
         init_tracing();
         assert_eq!(
+            ConstructionOptions::default().initial_simplex_strategy(),
+            InitialSimplexStrategy::MaxVolume
+        );
+        assert_eq!(
             ConstructionOptions::default().batch_repair_policy(),
-            DelaunayRepairPolicy::EveryN(NonZeroUsize::new(2).unwrap())
+            DelaunayRepairPolicy::EveryInsertion
         );
         assert_eq!(
             DelaunayRepairPolicy::default(),
@@ -8975,159 +8821,6 @@ mod tests {
     }
 
     #[test]
-    #[expect(
-        clippy::too_many_lines,
-        reason = "single-field telemetry regression covers every aggregate counter"
-    )]
-    fn test_construction_statistics_record_insertion_tracks_telemetry() {
-        init_tracing();
-
-        let mut summary = ConstructionStatistics::default();
-        let telemetry = InsertionTelemetry {
-            locate_calls: 2,
-            locate_walk_steps_total: 9,
-            locate_walk_steps_max: 7,
-            locate_hint_uses: 1,
-            locate_scan_fallbacks: 1,
-            located_inside: 1,
-            located_outside: 1,
-            conflict_region_calls: 1,
-            conflict_region_cells_total: 4,
-            conflict_region_cells_max: 4,
-            conflict_region_nanos: 125_000,
-            conflict_region_nanos_max: 125_000,
-            cavity_insertion_calls: 1,
-            cavity_insertion_nanos: 375_000,
-            cavity_insertion_nanos_max: 375_000,
-            hull_extension_calls: 1,
-            hull_extension_nanos: 500_000,
-            hull_extension_nanos_max: 500_000,
-            topology_validation_calls: 1,
-            topology_validation_nanos: 625_000,
-            topology_validation_nanos_max: 625_000,
-            global_conflict_scans: 1,
-            global_conflict_cells_scanned: 12,
-            global_conflict_cells_found_total: 3,
-            global_conflict_cells_found_max: 3,
-            global_conflict_scan_nanos: 250_000,
-            ..InsertionTelemetry::default()
-        };
-
-        summary.telemetry.record_insertion(&telemetry);
-        summary.telemetry.record_insertion_timing(1_000_000);
-        summary.telemetry.record_local_repair_timing(2_000_000);
-        summary
-            .telemetry
-            .record_local_repair_frontier(11, BatchLocalRepairTrigger::SeedBacklog);
-        summary
-            .telemetry
-            .record_repair_seed_accumulation(500_000, 7);
-        summary
-            .telemetry
-            .record_construction_preprocessing_timing(10_000);
-        summary
-            .telemetry
-            .record_construction_insert_loop_timing(20_000);
-        summary
-            .telemetry
-            .record_construction_finalize_timing(30_000);
-        summary
-            .telemetry
-            .record_construction_completion_repair_timing(40_000);
-        summary
-            .telemetry
-            .record_construction_orientation_timing(50_000);
-        summary
-            .telemetry
-            .record_construction_topology_validation_timing(60_000);
-        summary
-            .telemetry
-            .record_construction_final_delaunay_validation_timing(70_000);
-
-        assert!(summary.telemetry.has_data());
-        assert_eq!(summary.telemetry.insertion_wall_time_calls, 1);
-        assert_eq!(summary.telemetry.insertion_wall_time_nanos, 1_000_000);
-        assert_eq!(summary.telemetry.insertion_wall_time_nanos_max, 1_000_000);
-        assert_eq!(summary.telemetry.construction_preprocessing_nanos, 10_000);
-        assert_eq!(summary.telemetry.construction_insert_loop_nanos, 20_000);
-        assert_eq!(summary.telemetry.construction_finalize_nanos, 30_000);
-        assert_eq!(
-            summary.telemetry.construction_completion_repair_nanos,
-            40_000
-        );
-        assert_eq!(summary.telemetry.construction_orientation_nanos, 50_000);
-        assert_eq!(
-            summary.telemetry.construction_topology_validation_nanos,
-            60_000
-        );
-        assert_eq!(
-            summary
-                .telemetry
-                .construction_final_delaunay_validation_nanos,
-            70_000
-        );
-        assert_eq!(summary.telemetry.locate_calls, 2);
-        assert_eq!(summary.telemetry.locate_walk_steps_total, 9);
-        assert_eq!(summary.telemetry.locate_walk_steps_max, 7);
-        assert_eq!(summary.telemetry.locate_hint_uses, 1);
-        assert_eq!(summary.telemetry.locate_scan_fallbacks, 1);
-        assert_eq!(summary.telemetry.located_inside, 1);
-        assert_eq!(summary.telemetry.located_outside, 1);
-        assert_eq!(summary.telemetry.conflict_region_calls, 1);
-        assert_eq!(summary.telemetry.conflict_region_cells_total, 4);
-        assert_eq!(summary.telemetry.conflict_region_nanos, 125_000);
-        assert_eq!(summary.telemetry.conflict_region_nanos_max, 125_000);
-        assert_eq!(summary.telemetry.cavity_insertion_calls, 1);
-        assert_eq!(summary.telemetry.cavity_insertion_nanos, 375_000);
-        assert_eq!(summary.telemetry.hull_extension_calls, 1);
-        assert_eq!(summary.telemetry.hull_extension_nanos, 500_000);
-        assert_eq!(summary.telemetry.topology_validation_calls, 1);
-        assert_eq!(summary.telemetry.topology_validation_nanos, 625_000);
-        assert_eq!(summary.telemetry.local_repair_calls, 1);
-        assert_eq!(summary.telemetry.local_repair_nanos, 2_000_000);
-        assert_eq!(summary.telemetry.local_repair_seed_cells_total, 11);
-        assert_eq!(summary.telemetry.local_repair_seed_cells_max, 11);
-        assert_eq!(summary.telemetry.local_repair_cadence_triggers, 0);
-        assert_eq!(summary.telemetry.local_repair_backlog_triggers, 1);
-        assert_eq!(summary.telemetry.repair_seed_accumulation_calls, 1);
-        assert_eq!(summary.telemetry.repair_seed_accumulation_nanos, 500_000);
-        assert_eq!(summary.telemetry.repair_seed_cells_added_total, 7);
-        assert_eq!(summary.telemetry.repair_seed_cells_added_max, 7);
-        assert_eq!(summary.telemetry.global_conflict_scans, 1);
-        assert_eq!(summary.telemetry.global_conflict_cells_scanned, 12);
-        assert_eq!(summary.telemetry.global_conflict_cells_found_total, 3);
-        assert_eq!(summary.telemetry.global_conflict_scan_nanos, 250_000);
-    }
-
-    #[test]
-    fn test_construction_telemetry_merge_preserves_local_repair_frontiers() {
-        let mut left = ConstructionTelemetry::default();
-        left.record_local_repair_timing(10);
-        left.record_local_repair_frontier(5, BatchLocalRepairTrigger::Cadence);
-        left.record_construction_insert_loop_timing(100);
-        left.record_construction_final_delaunay_validation_timing(200);
-
-        let mut right = ConstructionTelemetry::default();
-        right.record_local_repair_timing(30);
-        right.record_local_repair_frontier(11, BatchLocalRepairTrigger::SeedBacklog);
-        right.record_construction_insert_loop_timing(300);
-        right.record_construction_final_delaunay_validation_timing(400);
-
-        left.merge_from(&right);
-
-        assert!(left.has_data());
-        assert_eq!(left.construction_insert_loop_nanos, 400);
-        assert_eq!(left.construction_final_delaunay_validation_nanos, 600);
-        assert_eq!(left.local_repair_calls, 2);
-        assert_eq!(left.local_repair_nanos, 40);
-        assert_eq!(left.local_repair_nanos_max, 30);
-        assert_eq!(left.local_repair_seed_cells_total, 16);
-        assert_eq!(left.local_repair_seed_cells_max, 11);
-        assert_eq!(left.local_repair_cadence_triggers, 1);
-        assert_eq!(left.local_repair_backlog_triggers, 1);
-    }
-
-    #[test]
     fn test_construction_statistics_record_insertion_tracks_skipped_variants() {
         init_tracing();
 
@@ -9257,6 +8950,107 @@ mod tests {
         assert!(result.is_none());
     }
 
+    macro_rules! max_volume_axis_simplex_test {
+        ($test_name:ident, $dimension:literal, [$($coords:expr),+ $(,)?], [$($expected_idx:expr),+ $(,)?]) => {
+            #[test]
+            fn $test_name() {
+                init_tracing();
+                let vertices: Vec<Vertex<f64, (), $dimension>> = vec![$(vertex!($coords)),+];
+
+                let result = select_max_volume_simplex_indices(&vertices)
+                    .expect("max-volume simplex selection failed");
+                let expected_indices = [$($expected_idx),+];
+
+                assert_eq!(result.len(), expected_indices.len());
+                for expected_idx in expected_indices {
+                    assert!(
+                        result.contains(&expected_idx),
+                        "expected selected simplex {result:?} to contain vertex index {expected_idx}"
+                    );
+                }
+            }
+        };
+    }
+
+    max_volume_axis_simplex_test!(
+        test_select_max_volume_simplex_indices_prefers_largest_triangle_2d,
+        2,
+        [
+            [0.0, 0.0],
+            [1.0, 0.0],
+            [0.0, 1.0],
+            [10.0, 0.0],
+            [0.0, 10.0],
+            [1.0, 1.0],
+        ],
+        [0, 3, 4]
+    );
+
+    max_volume_axis_simplex_test!(
+        test_select_max_volume_simplex_indices_prefers_largest_tetrahedron,
+        3,
+        [
+            [0.0, 0.0, 0.0],
+            [1.0, 0.0, 0.0],
+            [0.0, 1.0, 0.0],
+            [0.0, 0.0, 1.0],
+            [10.0, 0.0, 0.0],
+            [0.0, 10.0, 0.0],
+            [0.0, 0.0, 10.0],
+        ],
+        [0, 4, 5, 6]
+    );
+
+    max_volume_axis_simplex_test!(
+        test_select_max_volume_simplex_indices_prefers_largest_simplex_4d,
+        4,
+        [
+            [0.0, 0.0, 0.0, 0.0],
+            [1.0, 0.0, 0.0, 0.0],
+            [0.0, 1.0, 0.0, 0.0],
+            [0.0, 0.0, 1.0, 0.0],
+            [0.0, 0.0, 0.0, 1.0],
+            [10.0, 0.0, 0.0, 0.0],
+            [0.0, 10.0, 0.0, 0.0],
+            [0.0, 0.0, 10.0, 0.0],
+            [0.0, 0.0, 0.0, 10.0],
+        ],
+        [0, 5, 6, 7, 8]
+    );
+
+    max_volume_axis_simplex_test!(
+        test_select_max_volume_simplex_indices_prefers_largest_simplex_5d,
+        5,
+        [
+            [0.0, 0.0, 0.0, 0.0, 0.0],
+            [1.0, 0.0, 0.0, 0.0, 0.0],
+            [0.0, 1.0, 0.0, 0.0, 0.0],
+            [0.0, 0.0, 1.0, 0.0, 0.0],
+            [0.0, 0.0, 0.0, 1.0, 0.0],
+            [0.0, 0.0, 0.0, 0.0, 1.0],
+            [10.0, 0.0, 0.0, 0.0, 0.0],
+            [0.0, 10.0, 0.0, 0.0, 0.0],
+            [0.0, 0.0, 10.0, 0.0, 0.0],
+            [0.0, 0.0, 0.0, 10.0, 0.0],
+            [0.0, 0.0, 0.0, 0.0, 10.0],
+        ],
+        [0, 6, 7, 8, 9, 10]
+    );
+
+    #[test]
+    fn test_select_max_volume_simplex_indices_rejects_degenerate_pool() {
+        init_tracing();
+        let vertices: Vec<Vertex<f64, (), 3>> = vec![
+            vertex!([0.0, 0.0, 0.0]),
+            vertex!([1.0, 0.0, 0.0]),
+            vertex!([2.0, 0.0, 0.0]),
+            vertex!([3.0, 0.0, 0.0]),
+        ];
+
+        let result = select_max_volume_simplex_indices(&vertices);
+        assert!(result.is_none());
+    }
+
     #[test]
     fn test_reorder_vertices_for_simplex_valid_and_invalid() {
         init_tracing();
@@ -9314,6 +9108,53 @@ mod tests {
         assert_eq!(preprocess.primary_slice(&vertices).len(), vertices.len());
         assert_eq!(preprocess.fallback_slice().unwrap().len(), vertices.len());
         assert!(preprocess.grid_cell_size().is_some());
+    }
+
+    #[test]
+    fn test_preprocess_vertices_for_construction_max_volume_sets_largest_simplex_first() {
+        init_tracing();
+        let vertices: Vec<Vertex<f64, (), 3>> = vec![
+            vertex!([0.0, 0.0, 0.0]),
+            vertex!([1.0, 0.0, 0.0]),
+            vertex!([0.0, 1.0, 0.0]),
+            vertex!([0.0, 0.0, 1.0]),
+            vertex!([10.0, 0.0, 0.0]),
+            vertex!([0.0, 10.0, 0.0]),
+            vertex!([0.0, 0.0, 10.0]),
+        ];
+
+        let preprocess = DelaunayTriangulation::<
+            AdaptiveKernel<f64>,
+            (),
+            (),
+            3,
+        >::preprocess_vertices_for_construction(
+            &vertices,
+            DedupPolicy::Off,
+            InsertionOrderStrategy::Input,
+            InitialSimplexStrategy::MaxVolume,
+        )
+        .expect("preprocess failed");
+
+        let primary = preprocess.primary_slice(&vertices);
+        assert!(primary.len() >= 4);
+        let first_simplex = &primary[..4];
+        let first_simplex_contains = |expected_coords: [f64; 3]| {
+            first_simplex.iter().any(|vertex| {
+                vertex
+                    .point()
+                    .coords()
+                    .iter()
+                    .zip(expected_coords)
+                    .all(|(actual, expected)| (*actual - expected).abs() <= f64::EPSILON)
+            })
+        };
+
+        assert!(preprocess.fallback_slice().is_some());
+        assert!(first_simplex_contains([0.0, 0.0, 0.0]));
+        assert!(first_simplex_contains([10.0, 0.0, 0.0]));
+        assert!(first_simplex_contains([0.0, 10.0, 0.0]));
+        assert!(first_simplex_contains([0.0, 0.0, 10.0]));
     }
 
     #[test]

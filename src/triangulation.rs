@@ -6,7 +6,7 @@
 //! - [`crate::core::triangulation`] owns the generic `Triangulation` container
 //!   and low-level mutation invariants.
 //! - [`crate::triangulation`] owns higher-level construction, Delaunay repair,
-//!   validation scheduling, editing, and builder workflows.
+//!   diagnostics, validation scheduling, editing, and builder workflows.
 //! - Submodules under this namespace keep those concerns separate while this
 //!   facade preserves the stable public import surface.
 //!
@@ -42,6 +42,8 @@ pub mod builder;
 pub mod delaunay;
 /// End-to-end "repair then delaunayize" workflow.
 pub mod delaunayize;
+/// Construction and performance diagnostics.
+pub mod diagnostics;
 /// Triangulation editing operations (bistellar flips).
 pub mod flips;
 pub(crate) mod locality;

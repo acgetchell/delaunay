@@ -59,6 +59,7 @@
 //! | Bistellar flips (Pachner moves) | `use delaunay::prelude::triangulation::flips::*` |
 //! | Delaunay repair and flip-based Level 4 validation | `use delaunay::prelude::triangulation::repair::*` |
 //! | Delaunayize workflow (repair + flip) | `use delaunay::prelude::triangulation::delaunayize::*` |
+//! | Construction telemetry diagnostics | `use delaunay::prelude::triangulation::diagnostics::*` |
 //! | Construction validation cadence/policy | `use delaunay::prelude::triangulation::validation::*` |
 //! | Topology validation, Euler characteristic | `use delaunay::prelude::topology::validation::*` |
 //! | Topological spaces and topology traits | `use delaunay::prelude::topology::spaces::*` |
@@ -353,8 +354,10 @@
 //! - **Explicit verification**: Use `dt.validate()` for cumulative verification (Levels 1–4), or
 //!   `dt.is_valid()` for Level 4 only.
 
-// Allow multiple crate versions due to transitive dependencies
-#![expect(clippy::multiple_crate_versions)]
+#![expect(
+    clippy::multiple_crate_versions,
+    reason = "transitive dependency versions are controlled by upstream crates"
+)]
 // Temporarily allow deprecated warnings during API migrations.
 // - Historical Facet -> FacetView and Tds construction migrations
 // - DelaunayTriangulation::as_triangulation_mut() removal planned for v0.8.0
@@ -1021,13 +1024,12 @@ pub mod prelude {
             };
             pub use crate::triangulation::delaunay::{
                 ConstructionOptions, ConstructionSkipSample, ConstructionSlowInsertionSample,
-                ConstructionStatistics, ConstructionTelemetry, DedupPolicy,
-                DelaunayConstructionFailure, DelaunayConstructionRepairPhase, DelaunayRepairPolicy,
-                DelaunayTriangulation, DelaunayTriangulationConstructionError,
+                ConstructionStatistics, DedupPolicy, DelaunayConstructionFailure,
+                DelaunayConstructionRepairPhase, DelaunayRepairPolicy, DelaunayTriangulation,
+                DelaunayTriangulationConstructionError,
                 DelaunayTriangulationConstructionErrorWithStatistics, InitialSimplexStrategy,
                 InsertionOrderStrategy, RetryPolicy,
             };
-
             // Convenience macro (commonly used in docs/examples).
             pub use crate::vertex;
         }
@@ -1105,6 +1107,20 @@ pub mod prelude {
 
             // Convenience macro (commonly used in docs/examples).
             pub use crate::vertex;
+        }
+
+        /// Construction telemetry diagnostics.
+        ///
+        /// # Examples
+        ///
+        /// ```rust
+        /// use delaunay::prelude::triangulation::diagnostics::ConstructionTelemetry;
+        ///
+        /// let telemetry = ConstructionTelemetry::default();
+        /// assert!(!telemetry.has_data());
+        /// ```
+        pub mod diagnostics {
+            pub use crate::triangulation::diagnostics::ConstructionTelemetry;
         }
 
         /// Validation scheduling helpers for construction diagnostics.

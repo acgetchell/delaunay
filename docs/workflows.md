@@ -69,8 +69,8 @@ levels.
 
 The Builder API is designed to construct Delaunay triangulations, and (by default) schedules local
 flip-based repair passes during construction. Batch construction uses `ConstructionOptions`, whose
-default repair cadence is `DelaunayRepairPolicy::EveryN(2)` plus final repair/validation. That
-cadence reflects the current #341 proxy sweeps at 500 and 3000 vertices; 10000-vertex runs remain
+default repair cadence is `DelaunayRepairPolicy::EveryInsertion` plus final repair/validation. That
+cadence reflects the current #341 proxy sweeps at 1000 and 3000 vertices; 10000-vertex runs remain
 the scalability acceptance check. Direct incremental insertion keeps the lower-level
 `DelaunayRepairPolicy` default at `EveryInsertion`.
 The explicit repair methods (`repair_delaunay_with_flips`, `repair_delaunay_with_flips_advanced`,

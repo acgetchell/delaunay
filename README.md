@@ -100,6 +100,7 @@ Choose the smallest prelude that matches the task:
 | Bistellar flips / Edit API | `use delaunay::prelude::triangulation::flips::*` |
 | Delaunay repair diagnostics and policies | `use delaunay::prelude::triangulation::repair::*` |
 | Delaunayize workflow | `use delaunay::prelude::triangulation::delaunayize::*` |
+| Construction telemetry diagnostics | `use delaunay::prelude::triangulation::diagnostics::*` |
 | Construction validation cadence/policy | `use delaunay::prelude::triangulation::validation::*` |
 | Hilbert ordering and quantization utilities | `use delaunay::prelude::ordering::*` |
 | Low-level TDS cells, facets, keys, and validation reports | `use delaunay::prelude::tds::*` |
