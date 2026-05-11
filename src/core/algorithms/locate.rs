@@ -1,3 +1,5 @@
+#![forbid(unsafe_code)]
+
 //! Point location algorithms for triangulations.
 //!
 //! Implements facet-walking point location for finding the cell containing

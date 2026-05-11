@@ -1157,9 +1157,10 @@ fn debug_large_case<const D: usize>(dimension_name: &str, default_n_points: usiz
                 let coords = *vertex.point().coords();
                 let uuid = vertex.uuid();
 
-                match dt.insert_with_statistics(vertex) {
+                let inserted_this_loop = match dt.insert_with_statistics(vertex) {
                     Ok((InsertionOutcome::Inserted { .. }, stats)) => {
                         summary.record_inserted(stats);
+                        true
                     }
                     Ok((InsertionOutcome::Skipped { error }, stats)) => {
                         let sample = SkipSample {
@@ -1170,6 +1171,7 @@ fn debug_large_case<const D: usize>(dimension_name: &str, default_n_points: usiz
                             error: error.to_string(),
                         };
                         summary.record_skipped(sample, stats);
+                        false
                     }
                     Err(err) => {
                         println!(
@@ -1188,15 +1190,16 @@ fn debug_large_case<const D: usize>(dimension_name: &str, default_n_points: usiz
                         print_abort_summary::<D>(&outcome, seed, n_points, "incremental insertion");
                         return outcome;
                     }
-                }
+                };
 
                 if !had_cells && dt.number_of_cells() > 0 {
                     had_cells = true;
                     println!("Initial simplex created at insertion {}", idx + 1);
                 }
 
-                if had_cells
-                    && validation_cadence.should_validate(idx + 1)
+                if inserted_this_loop
+                    && had_cells
+                    && validation_cadence.should_validate(summary.inserted)
                     && let Err(e) = dt.as_triangulation().is_valid()
                 {
                     println!("Topology validation failed at idx={idx}: {e}");

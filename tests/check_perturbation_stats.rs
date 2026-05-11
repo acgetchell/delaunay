@@ -1,3 +1,5 @@
+#![forbid(unsafe_code)]
+
 //! Regression: in `TopologyGuarantee::PLManifold` mode, incremental insertion must
 //! never commit a triangulation with invalid vertex links, independent of
 //! `ValidationPolicy`.

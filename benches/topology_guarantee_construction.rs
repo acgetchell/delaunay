@@ -1,3 +1,5 @@
+#![forbid(unsafe_code)]
+
 //! Benchmark: construction cost vs topology guarantee (2D–5D)
 //!
 //! This benchmark compares `TopologyGuarantee::Pseudomanifold`, `TopologyGuarantee::PLManifold`

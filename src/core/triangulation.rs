@@ -4149,10 +4149,6 @@ where
         }
     }
 
-    fn validation_after_insertion_will_run(&self, suspicion: SuspicionFlags) -> bool {
-        self.validation_after_insertion_work(suspicion).is_some()
-    }
-
     fn validate_after_insertion(&self, suspicion: SuspicionFlags) -> Result<(), InvariantError> {
         let Some(work) = self.validation_after_insertion_work(suspicion) else {
             return Ok(());
@@ -4254,11 +4250,12 @@ where
             return Ok(insert_ok);
         }
 
-        let validation_started = self
-            .validation_after_insertion_will_run(insert_ok.suspicion)
-            .then(Instant::now);
+        let validation_work = self.validation_after_insertion_work(insert_ok.suspicion);
+        let validation_started = validation_work.map(|_| Instant::now());
         let validation_result = self.validate_after_insertion(insert_ok.suspicion);
-        if let Some(validation_started) = validation_started {
+        if let (Some(InsertionValidationWork::FullValidation), Some(validation_started)) =
+            (validation_work, validation_started)
+        {
             Self::record_topology_validation_telemetry(
                 telemetry,
                 Self::duration_nanos_saturating(validation_started.elapsed()),
@@ -4316,11 +4313,12 @@ where
                     fallback_ok.suspicion.perturbation_used = true;
                 }
 
-                let validation_started = self
-                    .validation_after_insertion_will_run(fallback_ok.suspicion)
-                    .then(Instant::now);
+                let validation_work = self.validation_after_insertion_work(fallback_ok.suspicion);
+                let validation_started = validation_work.map(|_| Instant::now());
                 let validation_result = self.validate_after_insertion(fallback_ok.suspicion);
-                if let Some(validation_started) = validation_started {
+                if let (Some(InsertionValidationWork::FullValidation), Some(validation_started)) =
+                    (validation_work, validation_started)
+                {
                     Self::record_topology_validation_telemetry(
                         telemetry,
                         Self::duration_nanos_saturating(validation_started.elapsed()),
@@ -5517,7 +5515,6 @@ where
                 }
             }
             (LocateResult::InsideCell(start_cell), Some(cells)) => {
-                Self::record_conflict_region_telemetry(telemetry, cells.len());
                 // If the caller provided an empty conflict region (can happen if the Delaunay layer
                 // computes conflicts using a strict in-sphere test), we must still replace at least
                 // one cell; otherwise we'd create no cavity, no new cells, and leave a dangling
@@ -5576,7 +5573,6 @@ where
                         repair_seed_cells,
                     }
                 } else {
-                    Self::record_conflict_region_telemetry(telemetry, cells.len());
                     #[cfg(debug_assertions)]
                     if std::env::var_os("DELAUNAY_DEBUG_HULL").is_some() {
                         tracing::debug!(
@@ -7330,10 +7326,16 @@ mod tests {
 
         tri.set_validation_policy(ValidationPolicy::OnSuspicion);
         tri.set_topology_guarantee(TopologyGuarantee::Pseudomanifold);
-        assert!(!tri.validation_after_insertion_will_run(SuspicionFlags::default()));
+        assert_eq!(
+            tri.validation_after_insertion_work(SuspicionFlags::default()),
+            None
+        );
 
         tri.set_topology_guarantee(TopologyGuarantee::PLManifold);
-        assert!(tri.validation_after_insertion_will_run(SuspicionFlags::default()));
+        assert_eq!(
+            tri.validation_after_insertion_work(SuspicionFlags::default()),
+            Some(InsertionValidationWork::RequiredTopologyLinks)
+        );
     }
 
     #[test]

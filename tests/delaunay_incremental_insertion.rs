@@ -1,3 +1,5 @@
+#![forbid(unsafe_code)]
+
 //! Integration tests for `DelaunayTriangulation` incremental insertion.
 //!
 //! These tests focus on the incremental insertion workflow and features

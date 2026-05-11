@@ -101,10 +101,12 @@ where
 {
     let tds_orig = dt_orig.tds();
     let tds_transformed = dt_transformed.tds();
+    let mut cells_considered = 0usize;
     let mut matched_cells = 0usize;
 
     // Iterate through all cells in original triangulation
     for orig_key in tds_orig.cell_keys() {
+        cells_considered += 1;
         prop_assert!(
             tds_orig.cell(orig_key).is_some(),
             "original cell key from iterator should exist: {orig_key:?}"
@@ -144,7 +146,8 @@ where
         }
     }
 
-    prop_assume!(matched_cells > 0);
+    prop_assume!(cells_considered > 1);
+    prop_assume!(matched_cells >= 2);
 
     Ok(())
 }

@@ -1,3 +1,5 @@
+#![forbid(unsafe_code)]
+
 //! # Numerical Robustness Example
 //!
 //! This example accompanies `docs/numerical_robustness_guide.md`.

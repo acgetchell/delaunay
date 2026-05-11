@@ -1,3 +1,5 @@
+#![forbid(unsafe_code)]
+
 //! # Delaunayize-by-Flips Repair Example
 //!
 //! This example demonstrates the **delaunayize-by-flips** workflow that

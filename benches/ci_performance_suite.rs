@@ -1,3 +1,5 @@
+#![forbid(unsafe_code)]
+
 //! CI Performance Suite - optimized performance regression testing for CI/CD
 //!
 //! This benchmark is the small, durable performance contract for the delaunay

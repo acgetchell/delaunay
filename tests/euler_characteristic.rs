@@ -1,3 +1,5 @@
+#![forbid(unsafe_code)]
+
 //! Deterministic integration tests for Euler characteristic computation.
 //!
 //! This module tests the topology module's Euler characteristic calculation
