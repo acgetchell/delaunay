@@ -1018,6 +1018,15 @@ PRs are evaluated on:
 - **Style**: Does the code follow project conventions?
 - **Mathematical Accuracy**: Are geometric algorithms correct?
 
+### Non-Substantive Changes
+
+PRs that only introduce whitespace churn, blank-line changes, formatting noise, or other
+non-substantive edits may be declined unless they are part of a clearly justified cleanup or
+required by project tooling.
+
+Accepted contributions should materially improve correctness, numerical robustness, topology
+invariants, performance, documentation clarity, tests, maintainability, or user-facing behavior.
+
 ### Handling Feedback
 
 - **Respond to all comments**: Address each piece of feedback

@@ -72,8 +72,7 @@ fn finite_coordinate() -> impl Strategy<Value = f64> {
 ///   Returns `Ok(())` if metrics match within tolerance, `Err(TestCaseError)` otherwise.
 ///
 /// # Returns
-/// * `Ok(true)` - At least one cell was successfully matched and compared
-/// * `Ok(false)` - No cells could be matched (topology changed too much)
+/// * `Ok(())` - At least one cell was successfully matched and compared
 /// * `Err(TestCaseError)` - A metric comparison failed
 ///
 /// # Purpose
@@ -84,7 +83,11 @@ fn finite_coordinate() -> impl Strategy<Value = f64> {
 /// 2. Map their vertex UUIDs to transformed triangulation
 /// 3. Find matching cell in transformed triangulation
 /// 4. Compare quality metrics between matched cells
-/// 5. Assert every original cell has a transformed counterpart.
+///
+/// Degenerate Delaunay inputs can have more than one valid cell set, so an
+/// independently constructed transformed triangulation may choose a different
+/// valid tessellation. Unmatched cells are skipped; cases with no comparable
+/// cells are rejected rather than treated as metric failures.
 fn compare_transformed_cells<const D: usize, F>(
     dt_orig: &DelaunayTriangulation<AdaptiveKernel<f64>, (), (), D>,
     dt_transformed: &DelaunayTriangulation<AdaptiveKernel<f64>, (), (), D>,
@@ -98,6 +101,7 @@ where
 {
     let tds_orig = dt_orig.tds();
     let tds_transformed = dt_transformed.tds();
+    let mut matched_cells = 0usize;
 
     // Iterate through all cells in original triangulation
     for orig_key in tds_orig.cell_keys() {
@@ -118,7 +122,6 @@ where
             "all original cell UUIDs should map to transformed UUIDs"
         );
 
-        let mut found_match = false;
         for trans_key in tds_transformed.cell_keys() {
             prop_assert!(
                 tds_transformed.cell(trans_key).is_some(),
@@ -134,16 +137,14 @@ where
                 {
                     // Found matching cell - compare quality metrics
                     compare_fn(orig_key, trans_key)?;
-                    found_match = true;
+                    matched_cells += 1;
                     break; // Found the match, no need to check other cells
                 }
             }
         }
-        prop_assert!(
-            found_match,
-            "no transformed cell matched original cell {orig_key:?}"
-        );
     }
+
+    prop_assume!(matched_cells > 0);
 
     Ok(())
 }
