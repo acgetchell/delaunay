@@ -87,79 +87,111 @@
 
 use crate::core::{
     collections::{
-        CellKeySet, FacetToCellsMap, FastHashMap, FastHashSet, SmallBuffer, VertexKeyBuffer,
-        fast_hash_map_with_capacity, fast_hash_set_with_capacity,
+        CellKeySet, FacetToCellsMap, FastHashMap, FastHashSet, FastHasher, SmallBuffer,
+        VertexKeyBuffer, fast_hash_map_with_capacity, fast_hash_set_with_capacity,
     },
-    edge::EdgeKey,
     facet::{FacetHandle, facet_key_from_vertices},
     tds::{CellKey, Tds, TdsError, VertexKey},
     traits::DataType,
-    util::hashing::stable_hash_u64_slice,
 };
 use crate::topology::characteristics::euler::{
     triangulated_surface_boundary_component_count, triangulated_surface_euler_characteristic,
 };
-use slotmap::{Key, KeyData};
+use slotmap::Key;
+use std::{
+    cmp::Ordering,
+    hash::{Hash, Hasher},
+};
 use thiserror::Error;
 
 // =============================================================================
 // Periodic-aware vertex identity
 // =============================================================================
 
-/// Creates a deterministic synthetic `VertexKey` that encodes both the vertex
-/// key and its periodic lattice offset.
+/// Vertex identity in a periodic covering space.
 ///
-/// For an all-zero (or empty) offset the original key is returned, preserving
-/// compatibility with non-periodic triangulations.  For non-zero offsets a
-/// hash-based synthetic key is produced so that the same `VertexKey` at
-/// different periodic positions is treated as a distinct vertex in link/ridge
-/// graph computations.
-///
-/// # Safety contract
-///
-/// The returned key is **not** backed by a real slot in the TDS.  It must only
-/// be used for graph-topology checks (equality, hashing, adjacency) — never
-/// for vertex-data lookups.
-fn lifted_vertex_id(vk: VertexKey, offset: &[i8]) -> VertexKey {
-    if offset.is_empty() || offset.iter().all(|&o| o == 0) {
-        return vk;
-    }
-    let base = vk.data().as_ffi();
-    // Mix each offset component into the hash.  We use a different prime per
-    // position to avoid collisions between permuted offsets.
-    let mut h: u64 = base;
-    for (i, &o) in offset.iter().enumerate() {
-        // Shift the byte into a unique lane, then fold.
-        #[expect(
-            clippy::cast_possible_truncation,
-            reason = "Dimension index always fits in u32"
-        )]
-        let lane = (i as u32).wrapping_mul(8);
-        #[expect(
-            clippy::cast_sign_loss,
-            reason = "Intentional: offset byte reinterpreted as bit pattern for hashing"
-        )]
-        let shifted = (o as u64).rotate_left(lane);
-        h = h.wrapping_mul(0x517c_c1b7_2722_0a95).wrapping_add(shifted);
-    }
-    // Avalanche – ensure all bits depend on all inputs.
-    h ^= base;
-    h ^= h >> 33;
-    h = h.wrapping_mul(0xff51_afd7_ed55_8ccd);
-    h ^= h >> 33;
-    // Slotmap treats ffi value 0 as null; ensure we never produce it.
-    VertexKey::from(KeyData::from_ffi(h | 1))
+/// This deliberately is not a `VertexKey`: lifted periodic images are graph
+/// identities used by topology validators, not entries in the TDS vertex store.
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct LiftedVertexId {
+    vertex_key: VertexKey,
+    offset: SmallBuffer<i8, 8>,
 }
 
-/// Computes a periodic-aware ridge key from lifted vertex IDs.
-///
-/// The caller passes already-lifted `VertexKey`s; this function sorts them
-/// and hashes via the same stable hash used by `facet_key_from_vertices`,
-/// producing a key that correctly distinguishes periodic images.
-fn periodic_ridge_key(lifted_vertices: &[VertexKey]) -> u64 {
-    let mut keys: SmallBuffer<u64, 8> = lifted_vertices.iter().map(|k| k.data().as_ffi()).collect();
+type LiftedVertexBuffer = SmallBuffer<LiftedVertexId, 8>;
+type LinkSimplexBuffer = SmallBuffer<LiftedVertexBuffer, 8>;
+
+impl LiftedVertexId {
+    fn base(vertex_key: VertexKey) -> Self {
+        Self {
+            vertex_key,
+            offset: SmallBuffer::new(),
+        }
+    }
+
+    fn is_base(&self) -> bool {
+        self.offset.is_empty()
+    }
+}
+
+impl Ord for LiftedVertexId {
+    fn cmp(&self, other: &Self) -> Ordering {
+        self.vertex_key
+            .data()
+            .as_ffi()
+            .cmp(&other.vertex_key.data().as_ffi())
+            .then_with(|| self.offset.as_slice().cmp(other.offset.as_slice()))
+    }
+}
+
+impl PartialOrd for LiftedVertexId {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl Hash for LiftedVertexId {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        self.vertex_key.data().as_ffi().hash(state);
+        self.offset.as_slice().hash(state);
+    }
+}
+
+/// Creates a lifted vertex identity from a real TDS vertex key and periodic
+/// lattice offset.
+fn lifted_vertex_id(vk: VertexKey, offset: &[i8]) -> LiftedVertexId {
+    if offset.is_empty() || offset.iter().all(|&o| o == 0) {
+        return LiftedVertexId::base(vk);
+    }
+    LiftedVertexId {
+        vertex_key: vk,
+        offset: offset.iter().copied().collect(),
+    }
+}
+
+/// Computes a periodic-aware simplex key from lifted vertex IDs.
+fn periodic_simplex_key(lifted_vertices: &[LiftedVertexId]) -> u64 {
+    if lifted_vertices.iter().all(LiftedVertexId::is_base) {
+        let bare_vertices: VertexKeyBuffer =
+            lifted_vertices.iter().map(|id| id.vertex_key).collect();
+        return facet_key_from_vertices(&bare_vertices);
+    }
+
+    let mut keys: LiftedVertexBuffer = lifted_vertices.iter().cloned().collect();
     keys.sort_unstable();
-    stable_hash_u64_slice(&keys)
+    let mut hasher = FastHasher::default();
+    for key in &keys {
+        key.hash(&mut hasher);
+    }
+    hasher.finish()
+}
+
+fn ordered_lifted_edge(a: &LiftedVertexId, b: &LiftedVertexId) -> (LiftedVertexId, LiftedVertexId) {
+    if b < a {
+        (b.clone(), a.clone())
+    } else {
+        (a.clone(), b.clone())
+    }
 }
 
 /// Errors that can occur during manifold (topology) validation.
@@ -475,13 +507,14 @@ where
     for &cell_key in cells {
         let cell_vertices = tds.cell_vertices(cell_key)?;
         for facet_index in 0..cell_vertices.len() {
-            let facet_key = tds.facet_key_for_cell_facet(cell_key, facet_index)?;
+            let (facet_vertices, facet_vertices_bare) =
+                cell_facet_vertex_ids(tds, cell_key, facet_index)?;
+            let facet_key = periodic_simplex_key(&facet_vertices);
             if !seen_facets.insert(facet_key) {
                 continue;
             }
 
-            let facet_vertices = cell_facet_vertices(&cell_vertices, facet_index)?;
-            let incident = facet_incident_handles(tds, facet_key, &facet_vertices)?;
+            let incident = facet_incident_handles(tds, facet_key, &facet_vertices_bare)?;
             facet_to_cells.insert(facet_key, incident);
         }
     }
@@ -489,47 +522,68 @@ where
     Ok(facet_to_cells)
 }
 
-/// Returns the vertices of one cell facet by omitting `facet_index`.
-fn cell_facet_vertices(
-    cell_vertices: &[VertexKey],
+/// Returns lifted and bare vertices of one cell facet by omitting `facet_index`.
+fn cell_facet_vertex_ids<T, U, V, const D: usize>(
+    tds: &Tds<T, U, V, D>,
+    cell_key: CellKey,
     facet_index: usize,
-) -> Result<VertexKeyBuffer, ManifoldError> {
+) -> Result<(LiftedVertexBuffer, VertexKeyBuffer), ManifoldError>
+where
+    U: DataType,
+    V: DataType,
+{
+    let cell_vertices = tds.cell_vertices(cell_key)?;
     if facet_index >= cell_vertices.len() {
         return Err(TdsError::IndexOutOfBounds {
             index: facet_index,
             bound: cell_vertices.len(),
-            context: "local facet vertex extraction".to_string(),
+            context: "local lifted facet vertex extraction".to_string(),
         }
         .into());
     }
 
-    let mut facet_vertices = VertexKeyBuffer::with_capacity(cell_vertices.len().saturating_sub(1));
+    let offsets = tds
+        .cell(cell_key)
+        .and_then(|cell| cell.periodic_vertex_offsets());
+    let mut lifted_vertices =
+        LiftedVertexBuffer::with_capacity(cell_vertices.len().saturating_sub(1));
+    let mut bare_vertices = VertexKeyBuffer::with_capacity(cell_vertices.len().saturating_sub(1));
+
     for (idx, &vertex_key) in cell_vertices.iter().enumerate() {
-        if idx != facet_index {
-            facet_vertices.push(vertex_key);
+        if idx == facet_index {
+            continue;
         }
+        bare_vertices.push(vertex_key);
+        let lifted = offsets.map_or_else(
+            || LiftedVertexId::base(vertex_key),
+            |cell_offsets| lifted_vertex_id(vertex_key, &cell_offsets[idx]),
+        );
+        lifted_vertices.push(lifted);
     }
-    Ok(facet_vertices)
+
+    Ok((lifted_vertices, bare_vertices))
 }
 
 /// Finds all cell/facet handles whose facet has the requested key.
 fn facet_incident_handles<T, U, V, const D: usize>(
     tds: &Tds<T, U, V, D>,
     facet_key: u64,
-    facet_vertices: &[VertexKey],
+    facet_vertices_bare: &[VertexKey],
 ) -> Result<SmallBuffer<FacetHandle, 2>, ManifoldError>
 where
     U: DataType,
     V: DataType,
 {
-    let candidate_cells = simplex_star_cells(tds, facet_vertices)?;
+    let candidate_cells = simplex_star_cells(tds, facet_vertices_bare)?;
     let mut handles: SmallBuffer<FacetHandle, 2> =
         SmallBuffer::with_capacity(candidate_cells.len().max(1));
 
     for cell_key in candidate_cells {
         let cell_vertices = tds.cell_vertices(cell_key)?;
         for candidate_facet_index in 0..cell_vertices.len() {
-            if tds.facet_key_for_cell_facet(cell_key, candidate_facet_index)? != facet_key {
+            let (candidate_vertices, _candidate_vertices_bare) =
+                cell_facet_vertex_ids(tds, cell_key, candidate_facet_index)?;
+            if periodic_simplex_key(&candidate_vertices) != facet_key {
                 continue;
             }
             let Ok(facet_index) = u8::try_from(candidate_facet_index) else {
@@ -566,14 +620,17 @@ where
             continue;
         };
 
-        let cell_vertices = tds.cell_vertices(handle.cell_key())?;
-        let facet_vertices = cell_facet_vertices(&cell_vertices, handle.facet_index() as usize)?;
-        for ridge_vertices in ridge_vertices_for_facet::<D>(&facet_vertices)? {
-            let ridge_key = facet_key_from_vertices(&ridge_vertices);
+        let (facet_vertices, facet_vertices_bare) =
+            cell_facet_vertex_ids(tds, handle.cell_key(), handle.facet_index() as usize)?;
+        for (ridge_vertices, ridge_vertices_bare) in
+            ridge_vertices_for_facet::<D>(&facet_vertices, &facet_vertices_bare)?
+        {
+            let ridge_key = periodic_simplex_key(&ridge_vertices);
             if !checked_ridges.insert(ridge_key) {
                 continue;
             }
-            let boundary_facet_count = boundary_facet_count_for_ridge(tds, &ridge_vertices)?;
+            let boundary_facet_count =
+                boundary_facet_count_for_ridge(tds, &ridge_vertices, &ridge_vertices_bare)?;
             if boundary_facet_count != 2 {
                 return Err(ManifoldError::BoundaryRidgeMultiplicity {
                     ridge_key,
@@ -588,8 +645,9 @@ where
 
 /// Enumerates all ridges of a boundary facet.
 fn ridge_vertices_for_facet<const D: usize>(
-    facet_vertices: &[VertexKey],
-) -> Result<SmallBuffer<VertexKeyBuffer, 8>, ManifoldError> {
+    facet_vertices: &[LiftedVertexId],
+    facet_vertices_bare: &[VertexKey],
+) -> Result<SmallBuffer<(LiftedVertexBuffer, VertexKeyBuffer), 8>, ManifoldError> {
     if facet_vertices.len() != D {
         return Err(TdsError::DimensionMismatch {
             expected: D,
@@ -598,16 +656,27 @@ fn ridge_vertices_for_facet<const D: usize>(
         }
         .into());
     }
+    if facet_vertices_bare.len() != D {
+        return Err(TdsError::DimensionMismatch {
+            expected: D,
+            actual: facet_vertices_bare.len(),
+            context: "local boundary facet bare vertex count".to_string(),
+        }
+        .into());
+    }
 
-    let mut ridges: SmallBuffer<VertexKeyBuffer, 8> = SmallBuffer::with_capacity(D);
+    let mut ridges: SmallBuffer<(LiftedVertexBuffer, VertexKeyBuffer), 8> =
+        SmallBuffer::with_capacity(D);
     for omit in 0..facet_vertices.len() {
-        let mut ridge_vertices = VertexKeyBuffer::with_capacity(D.saturating_sub(1));
-        for (idx, &vertex_key) in facet_vertices.iter().enumerate() {
+        let mut ridge_vertices = LiftedVertexBuffer::with_capacity(D.saturating_sub(1));
+        let mut ridge_vertices_bare = VertexKeyBuffer::with_capacity(D.saturating_sub(1));
+        for (idx, vertex_key) in facet_vertices.iter().enumerate() {
             if idx != omit {
-                ridge_vertices.push(vertex_key);
+                ridge_vertices.push(vertex_key.clone());
+                ridge_vertices_bare.push(facet_vertices_bare[idx]);
             }
         }
-        ridges.push(ridge_vertices);
+        ridges.push((ridge_vertices, ridge_vertices_bare));
     }
     Ok(ridges)
 }
@@ -615,20 +684,22 @@ fn ridge_vertices_for_facet<const D: usize>(
 /// Counts boundary facets in the full star of a ridge.
 fn boundary_facet_count_for_ridge<T, U, V, const D: usize>(
     tds: &Tds<T, U, V, D>,
-    ridge_vertices: &[VertexKey],
+    ridge_vertices: &[LiftedVertexId],
+    ridge_vertices_bare: &[VertexKey],
 ) -> Result<usize, ManifoldError>
 where
     U: DataType,
     V: DataType,
 {
-    let star_cells = simplex_star_cells(tds, ridge_vertices)?;
+    let star_cells = simplex_star_cells(tds, ridge_vertices_bare)?;
     let mut count = 0usize;
     let mut seen_boundary_facets: FastHashSet<u64> = FastHashSet::default();
 
     for cell_key in star_cells {
         let cell_vertices = tds.cell_vertices(cell_key)?;
         for facet_index in 0..cell_vertices.len() {
-            let facet_vertices = cell_facet_vertices(&cell_vertices, facet_index)?;
+            let (facet_vertices, facet_vertices_bare) =
+                cell_facet_vertex_ids(tds, cell_key, facet_index)?;
             if !ridge_vertices
                 .iter()
                 .all(|ridge_vertex| facet_vertices.contains(ridge_vertex))
@@ -636,11 +707,11 @@ where
                 continue;
             }
 
-            let facet_key = tds.facet_key_for_cell_facet(cell_key, facet_index)?;
+            let facet_key = periodic_simplex_key(&facet_vertices);
             if !seen_boundary_facets.insert(facet_key) {
                 continue;
             }
-            let handles = facet_incident_handles(tds, facet_key, &facet_vertices)?;
+            let handles = facet_incident_handles(tds, facet_key, &facet_vertices_bare)?;
             match handles.len() {
                 1 => count = count.saturating_add(1),
                 2 => {}
@@ -720,7 +791,7 @@ fn simplex_link_simplices_from_star<T, U, V, const D: usize>(
     tds: &Tds<T, U, V, D>,
     simplex_vertices: &[VertexKey],
     star_cells: &[CellKey],
-) -> Result<SmallBuffer<VertexKeyBuffer, 8>, ManifoldError>
+) -> Result<LinkSimplexBuffer, ManifoldError>
 where
     U: DataType,
     V: DataType,
@@ -734,8 +805,7 @@ where
 
     let expected_link_vertices = (D + 1).saturating_sub(simplex_vertices.len());
 
-    let mut link_simplices: SmallBuffer<VertexKeyBuffer, 8> =
-        SmallBuffer::with_capacity(star_cells.len());
+    let mut link_simplices: LinkSimplexBuffer = SmallBuffer::with_capacity(star_cells.len());
 
     for &cell_key in star_cells {
         let cell_vertices = tds.cell_vertices(cell_key)?;
@@ -752,8 +822,8 @@ where
                 .position(|cv| simplex_vertices.contains(cv))
         });
 
-        let mut link_vertices: VertexKeyBuffer =
-            VertexKeyBuffer::with_capacity(expected_link_vertices);
+        let mut link_vertices: LiftedVertexBuffer =
+            LiftedVertexBuffer::with_capacity(expected_link_vertices);
         for (i, &vk) in cell_vertices.iter().enumerate() {
             // Membership test on bare key: the input simplex (e.g. a single
             // vertex) IS the same vertex regardless of periodic offset.
@@ -768,7 +838,7 @@ where
                             .collect();
                         lifted_vertex_id(vk, &rel)
                     }
-                    _ => vk,
+                    _ => LiftedVertexId::base(vk),
                 };
                 link_vertices.push(lifted);
             }
@@ -829,11 +899,11 @@ where
     simplex_star_cells(tds, ridge_vertices)
 }
 
-pub(crate) fn ridge_link_edges_from_star<T, U, V, const D: usize>(
+fn ridge_link_edges_from_star<T, U, V, const D: usize>(
     tds: &Tds<T, U, V, D>,
-    ridge_vertices: &[VertexKey],
+    ridge_vertices: &[LiftedVertexId],
     star_cells: &[CellKey],
-) -> Result<SmallBuffer<(VertexKey, VertexKey), 8>, ManifoldError>
+) -> Result<SmallBuffer<(LiftedVertexId, LiftedVertexId), 8>, ManifoldError>
 where
     U: DataType,
     V: DataType,
@@ -853,10 +923,10 @@ where
         .into());
     }
 
-    let mut link_edges: SmallBuffer<(VertexKey, VertexKey), 8> =
+    let mut link_edges: SmallBuffer<(LiftedVertexId, LiftedVertexId), 8> =
         SmallBuffer::with_capacity(star_cells.len());
 
-    let mut link_vertices: VertexKeyBuffer = VertexKeyBuffer::with_capacity(2);
+    let mut link_vertices: LiftedVertexBuffer = LiftedVertexBuffer::with_capacity(2);
 
     for &cell_key in star_cells {
         let cell_vertices = tds.cell_vertices(cell_key)?;
@@ -879,7 +949,10 @@ where
         for (i, &vk) in cell_vertices.iter().enumerate() {
             // Lift with absolute offsets for ridge membership test (ridge
             // vertices in `ridge_vertices` use absolute lifted IDs).
-            let abs_lifted = offsets.map_or(vk, |offs| lifted_vertex_id(vk, &offs[i]));
+            let abs_lifted = offsets.map_or_else(
+                || LiftedVertexId::base(vk),
+                |offs| lifted_vertex_id(vk, &offs[i]),
+            );
             if !ridge_vertices.contains(&abs_lifted) {
                 // Lift link vertices with *relative* offsets so adjacent
                 // cells agree on shared vertex identity.
@@ -893,7 +966,7 @@ where
                             .collect();
                         lifted_vertex_id(vk, &rel)
                     }
-                    _ => vk,
+                    _ => LiftedVertexId::base(vk),
                 };
                 link_vertices.push(rel_lifted);
             }
@@ -912,13 +985,13 @@ where
             return Err(TdsError::InconsistentDataStructure {
                 message: format!(
                     "Ridge link edge is a self-loop: link vertex {vk:?} repeated (cell_key={cell_key:?})",
-                    vk = link_vertices[0],
+                    vk = &link_vertices[0],
                 ),
             }
             .into());
         }
 
-        link_edges.push((link_vertices[0], link_vertices[1]));
+        link_edges.push((link_vertices[0].clone(), link_vertices[1].clone()));
     }
 
     Ok(link_edges)
@@ -926,7 +999,7 @@ where
 
 #[derive(Clone, Debug)]
 struct RidgeStar {
-    ridge_vertices: VertexKeyBuffer,
+    ridge_vertices: LiftedVertexBuffer,
     star_cells: SmallBuffer<CellKey, 8>,
 }
 
@@ -965,7 +1038,8 @@ where
     let mut ridge_to_star: FastHashMap<u64, RidgeStar> =
         fast_hash_map_with_capacity(estimated_unique_ridges);
 
-    let mut ridge_vertices: VertexKeyBuffer = VertexKeyBuffer::with_capacity(D.saturating_sub(1));
+    let mut ridge_vertices: LiftedVertexBuffer =
+        LiftedVertexBuffer::with_capacity(D.saturating_sub(1));
 
     for (cell_key, cell) in tds.cells() {
         let cell_vertices = tds.cell_vertices(cell_key)?;
@@ -989,7 +1063,10 @@ where
                         continue;
                     }
                     // Use lifted vertex ID when periodic offsets are present.
-                    let lifted = offsets.map_or(vk, |offs| lifted_vertex_id(vk, &offs[i]));
+                    let lifted = offsets.map_or_else(
+                        || LiftedVertexId::base(vk),
+                        |offs| lifted_vertex_id(vk, &offs[i]),
+                    );
                     ridge_vertices.push(lifted);
                 }
 
@@ -1004,11 +1081,7 @@ where
 
                 // Periodic-aware key: lifted vertex IDs produce distinct
                 // ridge keys for different offset images.
-                let ridge_key = if offsets.is_some() {
-                    periodic_ridge_key(&ridge_vertices)
-                } else {
-                    facet_key_from_vertices(&ridge_vertices)
-                };
+                let ridge_key = periodic_simplex_key(&ridge_vertices);
                 let star = ridge_to_star.entry(ridge_key).or_insert_with(|| RidgeStar {
                     ridge_vertices: ridge_vertices.clone(),
                     star_cells: SmallBuffer::new(),
@@ -1045,13 +1118,13 @@ where
     // For periodic cells we store both lifted vertices (for ridge identity and
     // downstream link computation) and bare vertices (for `simplex_star_cells`
     // which looks up real TDS vertex keys).
-    let mut ridge_to_vertices: FastHashMap<u64, (VertexKeyBuffer, VertexKeyBuffer)> =
+    let mut ridge_to_vertices: FastHashMap<u64, (LiftedVertexBuffer, VertexKeyBuffer)> =
         fast_hash_map_with_capacity(estimated_unique_ridges);
 
     let mut ridge_vertices_bare: VertexKeyBuffer =
         VertexKeyBuffer::with_capacity(D.saturating_sub(1));
-    let mut ridge_vertices_lifted: VertexKeyBuffer =
-        VertexKeyBuffer::with_capacity(D.saturating_sub(1));
+    let mut ridge_vertices_lifted: LiftedVertexBuffer =
+        LiftedVertexBuffer::with_capacity(D.saturating_sub(1));
 
     for &cell_key in cells {
         if !tds.contains_cell(cell_key) {
@@ -1081,7 +1154,10 @@ where
                     }
                     ridge_vertices_bare.push(vk);
                     // Use lifted vertex ID when periodic offsets are present.
-                    let lifted = offsets.map_or(vk, |offs| lifted_vertex_id(vk, &offs[i]));
+                    let lifted = offsets.map_or_else(
+                        || LiftedVertexId::base(vk),
+                        |offs| lifted_vertex_id(vk, &offs[i]),
+                    );
                     ridge_vertices_lifted.push(lifted);
                 }
 
@@ -1096,11 +1172,7 @@ where
 
                 // Periodic-aware key: lifted vertex IDs produce distinct
                 // ridge keys for different offset images.
-                let ridge_key = if offsets.is_some() {
-                    periodic_ridge_key(&ridge_vertices_lifted)
-                } else {
-                    facet_key_from_vertices(&ridge_vertices_bare)
-                };
+                let ridge_key = periodic_simplex_key(&ridge_vertices_lifted);
                 ridge_to_vertices.entry(ridge_key).or_insert_with(|| {
                     (ridge_vertices_lifted.clone(), ridge_vertices_bare.clone())
                 });
@@ -1148,7 +1220,7 @@ where
 fn periodic_aware_ridge_star<T, U, V, const D: usize>(
     tds: &Tds<T, U, V, D>,
     ridge_key: u64,
-    lifted_vertices: &VertexKeyBuffer,
+    lifted_vertices: &[LiftedVertexId],
     bare_vertices: &VertexKeyBuffer,
 ) -> Result<SmallBuffer<CellKey, 8>, ManifoldError>
 where
@@ -1169,9 +1241,10 @@ where
             Some(offs) => {
                 let cv = tds.cell_vertices(ck)?;
                 lifted_vertices.iter().all(|lv| {
-                    cv.iter()
-                        .enumerate()
-                        .any(|(i, &vk)| lifted_vertex_id(vk, &offs[i]) == *lv)
+                    cv.iter().enumerate().any(|(i, &vk)| {
+                        let lifted = lifted_vertex_id(vk, &offs[i]);
+                        &lifted == lv
+                    })
                 })
             }
         };
@@ -1508,13 +1581,13 @@ where
 fn validate_vertex_link_d1(
     vertex_key: VertexKey,
     interior_vertex: bool,
-    link_simplices: &SmallBuffer<VertexKeyBuffer, 8>,
+    link_simplices: &LinkSimplexBuffer,
 ) -> Result<(), ManifoldError> {
-    let mut link_vertices: FastHashSet<VertexKey> =
+    let mut link_vertices: FastHashSet<LiftedVertexId> =
         fast_hash_set_with_capacity(link_simplices.len().max(1));
     for simplex in link_simplices {
-        for &vk in simplex {
-            link_vertices.insert(vk);
+        for vk in simplex {
+            link_vertices.insert(vk.clone());
         }
     }
 
@@ -1547,7 +1620,7 @@ fn validate_vertex_link_d1(
 fn validate_vertex_link_d2(
     vertex_key: VertexKey,
     interior_vertex: bool,
-    link_simplices: &SmallBuffer<VertexKeyBuffer, 8>,
+    link_simplices: &LinkSimplexBuffer,
     link_vertex_count: usize,
     link_cell_count: usize,
 ) -> Result<(), ManifoldError> {
@@ -1621,12 +1694,12 @@ where
         return validate_vertex_link_d1(vertex_key, interior_vertex, &link_simplices);
     }
 
-    let mut link_vertex_set: FastHashSet<VertexKey> =
+    let mut link_vertex_set: FastHashSet<LiftedVertexId> =
         fast_hash_set_with_capacity(link_simplices.len().saturating_mul(D).max(1));
 
     for simplex in &link_simplices {
-        for &vk in simplex {
-            link_vertex_set.insert(vk);
+        for vk in simplex {
+            link_vertex_set.insert(vk.clone());
         }
     }
 
@@ -1657,8 +1730,18 @@ where
     // For D>=4, Euler characteristic is not sufficient to distinguish spheres from other
     // closed manifolds in general, so we fall back to manifoldness-only checks.
     let link_topology_ok = if D == 3 {
-        let chi = triangulated_surface_euler_characteristic(&link_simplices);
-        let boundary_components = triangulated_surface_boundary_component_count(&link_simplices);
+        let (chi, boundary_components) = if link_simplices_are_base(&link_simplices) {
+            let bare_simplices = bare_link_simplices(&link_simplices);
+            (
+                triangulated_surface_euler_characteristic(&bare_simplices),
+                triangulated_surface_boundary_component_count(&bare_simplices),
+            )
+        } else {
+            (
+                triangulated_surface_euler_characteristic_for_link(&link_simplices),
+                triangulated_surface_boundary_component_count_for_link(&link_simplices),
+            )
+        };
         if interior_vertex {
             chi == 2 && boundary_components == 0
         } else {
@@ -1685,32 +1768,30 @@ where
     }
 }
 
-fn link_1_skeleton_connectivity_and_max_degree(
-    link_cells: &SmallBuffer<VertexKeyBuffer, 8>,
-) -> (bool, usize) {
+fn link_1_skeleton_connectivity_and_max_degree(link_cells: &LinkSimplexBuffer) -> (bool, usize) {
     // Build adjacency from the 1-skeleton of the link.
-    let mut unique_edges: FastHashSet<EdgeKey> =
+    let mut unique_edges: FastHashSet<(LiftedVertexId, LiftedVertexId)> =
         fast_hash_set_with_capacity(link_cells.len().max(1));
-    let mut adjacency: FastHashMap<VertexKey, SmallBuffer<VertexKey, 8>> =
+    let mut adjacency: FastHashMap<LiftedVertexId, LiftedVertexBuffer> =
         fast_hash_map_with_capacity(link_cells.len().saturating_mul(2).max(1));
 
     for simplex in link_cells {
         // Add all edges in the simplex.
         for i in 0..simplex.len() {
             for j in (i + 1)..simplex.len() {
-                let e = EdgeKey::new(simplex[i], simplex[j]);
-                if !unique_edges.insert(e) {
+                let edge = ordered_lifted_edge(&simplex[i], &simplex[j]);
+                if !unique_edges.insert(edge.clone()) {
                     continue;
                 }
-                let (a, b) = e.endpoints();
-                adjacency.entry(a).or_default().push(b);
+                let (a, b) = edge;
+                adjacency.entry(a.clone()).or_default().push(b.clone());
                 adjacency.entry(b).or_default().push(a);
             }
         }
 
         // Ensure isolated vertices are present in adjacency.
-        for &vk in simplex {
-            adjacency.entry(vk).or_default();
+        for vk in simplex {
+            adjacency.entry(vk.clone()).or_default();
         }
     }
 
@@ -1722,22 +1803,23 @@ fn link_1_skeleton_connectivity_and_max_degree(
     // Connectivity check.
     let connected = match adjacency.iter().next() {
         None => true,
-        Some((&start, _)) => {
-            let mut visited: FastHashSet<VertexKey> =
+        Some((start, _)) => {
+            let mut visited: FastHashSet<LiftedVertexId> =
                 fast_hash_set_with_capacity(adjacency.len().max(1));
-            let mut stack: VertexKeyBuffer = VertexKeyBuffer::with_capacity(adjacency.len().max(1));
-            stack.push(start);
+            let mut stack: LiftedVertexBuffer =
+                LiftedVertexBuffer::with_capacity(adjacency.len().max(1));
+            stack.push(start.clone());
 
             while let Some(v) = stack.pop() {
-                if !visited.insert(v) {
+                if !visited.insert(v.clone()) {
                     continue;
                 }
                 let Some(neigh) = adjacency.get(&v) else {
                     continue;
                 };
-                for &n in neigh {
-                    if !visited.contains(&n) {
-                        stack.push(n);
+                for n in neigh {
+                    if !visited.contains(n) {
+                        stack.push(n.clone());
                     }
                 }
             }
@@ -1749,29 +1831,27 @@ fn link_1_skeleton_connectivity_and_max_degree(
     (connected, max_degree)
 }
 
-fn link_1d_graph_stats(
-    link_cells: &SmallBuffer<VertexKeyBuffer, 8>,
-) -> Option<(bool, usize, usize, usize)> {
+fn link_1d_graph_stats(link_cells: &LinkSimplexBuffer) -> Option<(bool, usize, usize, usize)> {
     // In D=2, link cells are edges (2 vertices). Build an undirected graph and compute:
     // - connectivity
     // - max degree
     // - number of degree-1 vertices
     // - vertex count
-    let mut unique_edges: FastHashSet<EdgeKey> =
+    let mut unique_edges: FastHashSet<(LiftedVertexId, LiftedVertexId)> =
         fast_hash_set_with_capacity(link_cells.len().max(1));
-    let mut adjacency: FastHashMap<VertexKey, SmallBuffer<VertexKey, 2>> =
+    let mut adjacency: FastHashMap<LiftedVertexId, SmallBuffer<LiftedVertexId, 2>> =
         fast_hash_map_with_capacity(link_cells.len().saturating_mul(2).max(1));
 
     for e in link_cells {
         if e.len() != 2 {
             return None;
         }
-        let edge = EdgeKey::new(e[0], e[1]);
-        if !unique_edges.insert(edge) {
+        let edge = ordered_lifted_edge(&e[0], &e[1]);
+        if !unique_edges.insert(edge.clone()) {
             continue;
         }
-        let (a, b) = edge.endpoints();
-        adjacency.entry(a).or_default().push(b);
+        let (a, b) = edge;
+        adjacency.entry(a.clone()).or_default().push(b.clone());
         adjacency.entry(b).or_default().push(a);
     }
 
@@ -1792,21 +1872,22 @@ fn link_1d_graph_stats(
     // Connectivity.
     let connected = match adjacency.iter().next() {
         None => true,
-        Some((&start, _)) => {
-            let mut visited: FastHashSet<VertexKey> = fast_hash_set_with_capacity(vertex_count);
-            let mut stack: VertexKeyBuffer = VertexKeyBuffer::with_capacity(vertex_count);
-            stack.push(start);
+        Some((start, _)) => {
+            let mut visited: FastHashSet<LiftedVertexId> =
+                fast_hash_set_with_capacity(vertex_count);
+            let mut stack: LiftedVertexBuffer = LiftedVertexBuffer::with_capacity(vertex_count);
+            stack.push(start.clone());
 
             while let Some(v) = stack.pop() {
-                if !visited.insert(v) {
+                if !visited.insert(v.clone()) {
                     continue;
                 }
                 let Some(neigh) = adjacency.get(&v) else {
                     continue;
                 };
-                for &n in neigh {
-                    if !visited.contains(&n) {
-                        stack.push(n);
+                for n in neigh {
+                    if !visited.contains(n) {
+                        stack.push(n.clone());
                     }
                 }
             }
@@ -1819,7 +1900,7 @@ fn link_1d_graph_stats(
 }
 
 fn validate_link_facets_and_boundary<const D: usize>(
-    link_cells: &SmallBuffer<VertexKeyBuffer, 8>,
+    link_cells: &LinkSimplexBuffer,
     interior_vertex: bool,
 ) -> (usize, bool) {
     // For a vertex link in D>=3, the link dimension is (D-1) >= 2.
@@ -1828,14 +1909,15 @@ fn validate_link_facets_and_boundary<const D: usize>(
 
     #[derive(Clone, Debug)]
     struct FacetInfo {
-        vertices: VertexKeyBuffer,
+        vertices: LiftedVertexBuffer,
         count: usize,
     }
 
     let mut facet_map: FastHashMap<u64, FacetInfo> =
         fast_hash_map_with_capacity(link_cells.len().saturating_mul(D).max(1));
 
-    let mut facet_vertices: VertexKeyBuffer = VertexKeyBuffer::with_capacity(D.saturating_sub(1));
+    let mut facet_vertices: LiftedVertexBuffer =
+        LiftedVertexBuffer::with_capacity(D.saturating_sub(1));
 
     for simplex in link_cells {
         if simplex.len() != D {
@@ -1844,18 +1926,18 @@ fn validate_link_facets_and_boundary<const D: usize>(
 
         for omit in 0..simplex.len() {
             facet_vertices.clear();
-            for (j, &vk) in simplex.iter().enumerate() {
+            for (j, vk) in simplex.iter().enumerate() {
                 if j == omit {
                     continue;
                 }
-                facet_vertices.push(vk);
+                facet_vertices.push(vk.clone());
             }
 
             if facet_vertices.len() != D.saturating_sub(1) {
                 return (0, false);
             }
 
-            let key = facet_key_from_vertices(&facet_vertices);
+            let key = periodic_simplex_key(&facet_vertices);
             let entry = facet_map.entry(key).or_insert_with(|| FacetInfo {
                 vertices: facet_vertices.clone(),
                 count: 0,
@@ -1888,8 +1970,8 @@ fn validate_link_facets_and_boundary<const D: usize>(
                 .max(1),
         );
 
-        let mut ridge_vertices: VertexKeyBuffer =
-            VertexKeyBuffer::with_capacity(D.saturating_sub(2));
+        let mut ridge_vertices: LiftedVertexBuffer =
+            LiftedVertexBuffer::with_capacity(D.saturating_sub(2));
 
         for info in facet_map.values() {
             if info.count != 1 {
@@ -1899,16 +1981,16 @@ fn validate_link_facets_and_boundary<const D: usize>(
             let f = &info.vertices;
             for omit in 0..f.len() {
                 ridge_vertices.clear();
-                for (j, &vk) in f.iter().enumerate() {
+                for (j, vk) in f.iter().enumerate() {
                     if j == omit {
                         continue;
                     }
-                    ridge_vertices.push(vk);
+                    ridge_vertices.push(vk.clone());
                 }
                 if ridge_vertices.len() != D.saturating_sub(2) {
                     return (boundary_facet_count, false);
                 }
-                let ridge_key = facet_key_from_vertices(&ridge_vertices);
+                let ridge_key = periodic_simplex_key(&ridge_vertices);
                 *ridge_map.entry(ridge_key).or_insert(0) += 1;
             }
         }
@@ -1923,35 +2005,133 @@ fn validate_link_facets_and_boundary<const D: usize>(
     (boundary_facet_count, true)
 }
 
+fn link_simplices_are_base(link_cells: &LinkSimplexBuffer) -> bool {
+    link_cells
+        .iter()
+        .flat_map(|simplex| simplex.iter())
+        .all(LiftedVertexId::is_base)
+}
+
+fn bare_link_simplices(link_cells: &LinkSimplexBuffer) -> SmallBuffer<VertexKeyBuffer, 8> {
+    link_cells
+        .iter()
+        .map(|simplex| {
+            simplex
+                .iter()
+                .map(|vertex| vertex.vertex_key)
+                .collect::<VertexKeyBuffer>()
+        })
+        .collect()
+}
+
+fn triangulated_surface_euler_characteristic_for_link(link_cells: &LinkSimplexBuffer) -> isize {
+    let mut vertices: FastHashSet<LiftedVertexId> =
+        fast_hash_set_with_capacity(link_cells.len().saturating_mul(3).max(1));
+    let mut edges: FastHashSet<(LiftedVertexId, LiftedVertexId)> =
+        fast_hash_set_with_capacity(link_cells.len().saturating_mul(3).max(1));
+
+    for simplex in link_cells {
+        for vertex in simplex {
+            vertices.insert(vertex.clone());
+        }
+        for i in 0..simplex.len() {
+            for j in (i + 1)..simplex.len() {
+                edges.insert(ordered_lifted_edge(&simplex[i], &simplex[j]));
+            }
+        }
+    }
+
+    vertices.len().cast_signed() - edges.len().cast_signed() + link_cells.len().cast_signed()
+}
+
+fn triangulated_surface_boundary_component_count_for_link(link_cells: &LinkSimplexBuffer) -> usize {
+    let mut edge_counts: FastHashMap<(LiftedVertexId, LiftedVertexId), usize> =
+        fast_hash_map_with_capacity(link_cells.len().saturating_mul(3).max(1));
+
+    for simplex in link_cells {
+        if simplex.len() < 2 {
+            continue;
+        }
+        for i in 0..simplex.len() {
+            for j in (i + 1)..simplex.len() {
+                *edge_counts
+                    .entry(ordered_lifted_edge(&simplex[i], &simplex[j]))
+                    .or_insert(0) += 1;
+            }
+        }
+    }
+
+    let boundary_edges: SmallBuffer<(LiftedVertexId, LiftedVertexId), 8> = edge_counts
+        .into_iter()
+        .filter_map(|(edge, count)| (count == 1).then_some(edge))
+        .collect();
+    if boundary_edges.is_empty() {
+        return 0;
+    }
+
+    let mut adjacency: FastHashMap<LiftedVertexId, LiftedVertexBuffer> =
+        fast_hash_map_with_capacity(boundary_edges.len().saturating_mul(2));
+    for (a, b) in boundary_edges {
+        adjacency.entry(a.clone()).or_default().push(b.clone());
+        adjacency.entry(b).or_default().push(a);
+    }
+
+    let mut visited: FastHashSet<LiftedVertexId> = fast_hash_set_with_capacity(adjacency.len());
+    let mut components = 0usize;
+    for start in adjacency.keys() {
+        if visited.contains(start) {
+            continue;
+        }
+        components += 1;
+        let mut stack: LiftedVertexBuffer = LiftedVertexBuffer::with_capacity(adjacency.len());
+        stack.push(start.clone());
+        while let Some(vertex) = stack.pop() {
+            if !visited.insert(vertex.clone()) {
+                continue;
+            }
+            let Some(neighbors) = adjacency.get(&vertex) else {
+                continue;
+            };
+            for neighbor in neighbors {
+                if !visited.contains(neighbor) {
+                    stack.push(neighbor.clone());
+                }
+            }
+        }
+    }
+
+    components
+}
+
 fn validate_ridge_link_graph(
     ridge_key: u64,
-    link_edges: &[(VertexKey, VertexKey)],
+    link_edges: &[(LiftedVertexId, LiftedVertexId)],
 ) -> Result<(), ManifoldError> {
     // De-duplicate parallel edges defensively: if the underlying TDS contains duplicate
     // cells/edges, the ridge link can contain repeated edges which would otherwise inflate
     // degrees and edge counts.
-    let mut unique_edges: FastHashSet<EdgeKey> =
+    let mut unique_edges: FastHashSet<(LiftedVertexId, LiftedVertexId)> =
         fast_hash_set_with_capacity(link_edges.len().max(1));
 
     // Build adjacency lists for the (simple) link graph.
     let estimated_link_vertices = link_edges.len().saturating_mul(2).max(1);
-    let mut adjacency: FastHashMap<VertexKey, SmallBuffer<VertexKey, 2>> =
+    let mut adjacency: FastHashMap<LiftedVertexId, SmallBuffer<LiftedVertexId, 2>> =
         fast_hash_map_with_capacity(estimated_link_vertices);
 
     let mut max_degree = 0usize;
     let mut link_edge_count = 0usize;
 
-    for &(a, b) in link_edges {
-        let edge = EdgeKey::new(a, b);
-        if !unique_edges.insert(edge) {
+    for (a, b) in link_edges {
+        let edge = ordered_lifted_edge(a, b);
+        if !unique_edges.insert(edge.clone()) {
             continue;
         }
         link_edge_count += 1;
 
-        let (a, b) = edge.endpoints();
+        let (a, b) = edge;
 
-        let a_neighbors = adjacency.entry(a).or_default();
-        a_neighbors.push(b);
+        let a_neighbors = adjacency.entry(a.clone()).or_default();
+        a_neighbors.push(b.clone());
         max_degree = max_degree.max(a_neighbors.len());
 
         let b_neighbors = adjacency.entry(b).or_default();
@@ -1966,14 +2146,15 @@ fn validate_ridge_link_graph(
     // Connectivity check: traverse the link graph.
     let connected = match adjacency.iter().next() {
         None => true,
-        Some((&start, _)) => {
-            let mut visited: FastHashSet<VertexKey> =
+        Some((start, _)) => {
+            let mut visited: FastHashSet<LiftedVertexId> =
                 fast_hash_set_with_capacity(link_vertex_count);
-            let mut stack: VertexKeyBuffer = VertexKeyBuffer::with_capacity(link_vertex_count);
-            stack.push(start);
+            let mut stack: LiftedVertexBuffer =
+                LiftedVertexBuffer::with_capacity(link_vertex_count);
+            stack.push(start.clone());
 
             while let Some(v) = stack.pop() {
-                if !visited.insert(v) {
+                if !visited.insert(v.clone()) {
                     continue;
                 }
 
@@ -1981,9 +2162,9 @@ fn validate_ridge_link_graph(
                     continue;
                 };
 
-                for &n in neighbors {
-                    if !visited.contains(&n) {
-                        stack.push(n);
+                for n in neighbors {
+                    if !visited.contains(n) {
+                        stack.push(n.clone());
                     }
                 }
             }
@@ -2027,9 +2208,9 @@ mod tests {
         VertexKey::from(KeyData::from_ffi(id))
     }
 
-    fn simplex(vertices: &[VertexKey]) -> VertexKeyBuffer {
-        let mut s: VertexKeyBuffer = VertexKeyBuffer::with_capacity(vertices.len());
-        s.extend(vertices.iter().copied());
+    fn simplex(vertices: &[VertexKey]) -> LiftedVertexBuffer {
+        let mut s: LiftedVertexBuffer = LiftedVertexBuffer::with_capacity(vertices.len());
+        s.extend(vertices.iter().copied().map(LiftedVertexId::base));
         s
     }
 
@@ -2241,7 +2422,7 @@ mod tests {
     fn test_validate_vertex_link_d1_accepts_interior_vertex_with_two_neighbors() {
         let vertex_key = vk(0);
 
-        let mut link_simplices: SmallBuffer<VertexKeyBuffer, 8> = SmallBuffer::new();
+        let mut link_simplices: LinkSimplexBuffer = SmallBuffer::new();
         link_simplices.push(simplex(&[vk(1)]));
         link_simplices.push(simplex(&[vk(2)]));
 
@@ -2252,7 +2433,7 @@ mod tests {
     fn test_validate_vertex_link_d1_rejects_interior_vertex_with_one_neighbor() {
         let vertex_key = vk(0);
 
-        let mut link_simplices: SmallBuffer<VertexKeyBuffer, 8> = SmallBuffer::new();
+        let mut link_simplices: LinkSimplexBuffer = SmallBuffer::new();
         link_simplices.push(simplex(&[vk(1)]));
 
         match validate_vertex_link_d1(vertex_key, true, &link_simplices) {
@@ -2278,7 +2459,7 @@ mod tests {
     fn test_validate_vertex_link_d1_accepts_boundary_vertex_with_one_neighbor() {
         let vertex_key = vk(0);
 
-        let mut link_simplices: SmallBuffer<VertexKeyBuffer, 8> = SmallBuffer::new();
+        let mut link_simplices: LinkSimplexBuffer = SmallBuffer::new();
         link_simplices.push(simplex(&[vk(1)]));
 
         validate_vertex_link_d1(vertex_key, false, &link_simplices).unwrap();
@@ -2288,7 +2469,7 @@ mod tests {
     fn test_validate_vertex_link_d1_rejects_boundary_vertex_with_two_neighbors() {
         let vertex_key = vk(0);
 
-        let mut link_simplices: SmallBuffer<VertexKeyBuffer, 8> = SmallBuffer::new();
+        let mut link_simplices: LinkSimplexBuffer = SmallBuffer::new();
         link_simplices.push(simplex(&[vk(1)]));
         link_simplices.push(simplex(&[vk(2)]));
 
@@ -2318,7 +2499,7 @@ mod tests {
         let b = vk(2);
         let c = vk(3);
 
-        let mut link_simplices: SmallBuffer<VertexKeyBuffer, 8> = SmallBuffer::new();
+        let mut link_simplices: LinkSimplexBuffer = SmallBuffer::new();
         link_simplices.push(simplex(&[a, b]));
         link_simplices.push(simplex(&[b, c]));
         link_simplices.push(simplex(&[c, a]));
@@ -2333,7 +2514,7 @@ mod tests {
         let b = vk(2);
         let c = vk(3);
 
-        let mut link_simplices: SmallBuffer<VertexKeyBuffer, 8> = SmallBuffer::new();
+        let mut link_simplices: LinkSimplexBuffer = SmallBuffer::new();
         link_simplices.push(simplex(&[a, b]));
         link_simplices.push(simplex(&[b, c]));
 
@@ -2347,7 +2528,7 @@ mod tests {
         let b = vk(2);
         let c = vk(3);
 
-        let mut link_simplices: SmallBuffer<VertexKeyBuffer, 8> = SmallBuffer::new();
+        let mut link_simplices: LinkSimplexBuffer = SmallBuffer::new();
         link_simplices.push(simplex(&[a, b]));
         link_simplices.push(simplex(&[b, c]));
 
@@ -2380,7 +2561,7 @@ mod tests {
         let b = vk(2);
         let c = vk(3);
 
-        let mut link_simplices: SmallBuffer<VertexKeyBuffer, 8> = SmallBuffer::new();
+        let mut link_simplices: LinkSimplexBuffer = SmallBuffer::new();
         link_simplices.push(simplex(&[a, b]));
         link_simplices.push(simplex(&[b, c]));
         link_simplices.push(simplex(&[c, a]));
@@ -2395,7 +2576,7 @@ mod tests {
     fn test_validate_vertex_link_d2_rejects_non_edge_link_simplices() {
         let vertex_key = vk(0);
 
-        let mut link_simplices: SmallBuffer<VertexKeyBuffer, 8> = SmallBuffer::new();
+        let mut link_simplices: LinkSimplexBuffer = SmallBuffer::new();
         link_simplices.push(simplex(&[vk(1)]));
 
         assert!(matches!(
@@ -2714,7 +2895,7 @@ mod tests {
             .unwrap();
 
         // In 3D, ridges are edges (2 vertices). Passing a single vertex is invalid.
-        match ridge_link_edges_from_star(&tds, &[v0], &[cell_key]) {
+        match ridge_link_edges_from_star(&tds, &simplex(&[v0]), &[cell_key]) {
             Err(ManifoldError::Tds(TdsError::DimensionMismatch {
                 expected: 2,
                 actual: 1,
@@ -2791,7 +2972,7 @@ mod tests {
         }
 
         // For ridge (vertex) v0, the link edge becomes (v1, v1), which is not a simplicial edge.
-        match ridge_link_edges_from_star(&tds, &[v0], &[cell_key]) {
+        match ridge_link_edges_from_star(&tds, &simplex(&[v0]), &[cell_key]) {
             Err(ManifoldError::Tds(TdsError::InconsistentDataStructure { message })) => {
                 assert!(
                     message.contains("self-loop"),
@@ -2809,7 +2990,12 @@ mod tests {
         let b = VertexKey::from(KeyData::from_ffi(2));
         let c = VertexKey::from(KeyData::from_ffi(3));
 
-        let edges = vec![(a, b), (b, c), (c, a), (a, b)];
+        let edges = vec![
+            (LiftedVertexId::base(a), LiftedVertexId::base(b)),
+            (LiftedVertexId::base(b), LiftedVertexId::base(c)),
+            (LiftedVertexId::base(c), LiftedVertexId::base(a)),
+            (LiftedVertexId::base(a), LiftedVertexId::base(b)),
+        ];
         assert!(validate_ridge_link_graph(0_u64, &edges).is_ok());
     }
 
@@ -3137,7 +3323,7 @@ mod tests {
                 .expect("expected ridge key in local ridge-star map");
 
             // RidgeStar stores the ridge vertices; ensure its canonical key matches the map key.
-            assert_eq!(facet_key_from_vertices(&star.ridge_vertices), key);
+            assert_eq!(periodic_simplex_key(&star.ridge_vertices), key);
             assert_eq!(star.ridge_vertices.len(), 2);
 
             star.star_cells.iter().copied().collect()
@@ -3627,8 +3813,8 @@ mod tests {
         // Bare [v0] finds c1, but lifted_vertex_id(v0, [99,99]) won't match
         // c1's lifted v0 (which is bare v0 since offset is [0,0]).
         let synthetic = lifted_vertex_id(v0, &[99, 99]);
-        let bare = simplex(&[v0]);
-        let lifted = simplex(&[synthetic]);
+        let bare: VertexKeyBuffer = std::iter::once(v0).collect();
+        let lifted: LiftedVertexBuffer = std::iter::once(synthetic).collect();
 
         match periodic_aware_ridge_star(&tds, 0x42, &lifted, &bare) {
             Err(ManifoldError::Tds(TdsError::InconsistentDataStructure { ref message })) => {

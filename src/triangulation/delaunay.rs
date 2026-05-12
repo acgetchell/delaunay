@@ -7146,9 +7146,10 @@ where
 
     /// Validates PL ridge links after a repair pass that actually performed flips.
     ///
-    /// `repair_delaunay_with_flips_k2_k3_run` reports whether the final attempt
-    /// used a full-TDS reseed.  Full reseeds validate every current cell; local
-    /// repairs validate only cells created by flips in the final attempt.
+    /// Ridge-link topology only changes where flips created replacement cells,
+    /// so validation follows that mutation frontier even if the repair queues
+    /// were seeded from the full triangulation.  If a repair reports flips
+    /// without a mutation frontier, fall back to a full cell list defensively.
     fn validate_ridge_links_after_repair(
         &self,
         topology: TopologyGuarantee,
@@ -7166,7 +7167,13 @@ where
                 .map_err(ridge_link_repair_validation_error)
         };
 
-        if !run.used_full_reseed && !run.touched_cells.is_empty() {
+        if !run.touched_cells.is_empty() {
+            if run.used_full_reseed && env::var_os("DELAUNAY_REPAIR_TRACE").is_some() {
+                tracing::debug!(
+                    "[repair] validating ridge links on {} flip-created cells after full reseed",
+                    run.touched_cells.len()
+                );
+            }
             return validate_cells(&run.touched_cells);
         }
 
@@ -8143,6 +8150,55 @@ mod tests {
         });
     }
 
+    fn wedge_two_spheres_share_vertex_tds_2d() -> (Tds<f64, (), (), 2>, CellKey, CellKey) {
+        // Two closed 2D spheres (boundaries of tetrahedra) sharing one vertex are
+        // pseudomanifold but not PL-manifold: the shared vertex has a disconnected link.
+        let mut tds: Tds<f64, (), (), 2> = Tds::empty();
+
+        let v0 = tds.insert_vertex_with_mapping(vertex!([0.0, 0.0])).unwrap();
+        let v1 = tds.insert_vertex_with_mapping(vertex!([1.0, 0.0])).unwrap();
+        let v2 = tds.insert_vertex_with_mapping(vertex!([0.0, 1.0])).unwrap();
+        let v3 = tds.insert_vertex_with_mapping(vertex!([1.0, 1.0])).unwrap();
+
+        let incident = tds
+            .insert_cell_with_mapping(Cell::new(vec![v0, v1, v2], None).unwrap())
+            .unwrap();
+        let _ = tds
+            .insert_cell_with_mapping(Cell::new(vec![v0, v1, v3], None).unwrap())
+            .unwrap();
+        let _ = tds
+            .insert_cell_with_mapping(Cell::new(vec![v0, v2, v3], None).unwrap())
+            .unwrap();
+        let nonincident = tds
+            .insert_cell_with_mapping(Cell::new(vec![v1, v2, v3], None).unwrap())
+            .unwrap();
+
+        let v4 = tds
+            .insert_vertex_with_mapping(vertex!([10.0, 10.0]))
+            .unwrap();
+        let v5 = tds
+            .insert_vertex_with_mapping(vertex!([11.0, 10.0]))
+            .unwrap();
+        let v6 = tds
+            .insert_vertex_with_mapping(vertex!([10.0, 11.0]))
+            .unwrap();
+
+        let _ = tds
+            .insert_cell_with_mapping(Cell::new(vec![v0, v4, v5], None).unwrap())
+            .unwrap();
+        let _ = tds
+            .insert_cell_with_mapping(Cell::new(vec![v0, v4, v6], None).unwrap())
+            .unwrap();
+        let _ = tds
+            .insert_cell_with_mapping(Cell::new(vec![v0, v5, v6], None).unwrap())
+            .unwrap();
+        let _ = tds
+            .insert_cell_with_mapping(Cell::new(vec![v4, v5, v6], None).unwrap())
+            .unwrap();
+
+        (tds, incident, nonincident)
+    }
+
     #[test]
     fn test_ridge_link_repair_validation_error_routes_tds_errors_to_tds_layer() {
         let tds_err = TdsError::InvalidNeighbors {
@@ -8403,6 +8459,44 @@ mod tests {
         assert_eq!(&seeds[..adjacent.len()], adjacent.as_slice());
         assert_eq!(seeds[adjacent.len()], extra_cell);
         assert!(!seeds.contains(&stale_cell));
+    }
+
+    #[test]
+    fn test_validate_ridge_links_after_full_reseed_repair_uses_mutation_frontier() {
+        init_tracing();
+        let (tds, incident_to_invalid_ridge, nonincident) = wedge_two_spheres_share_vertex_tds_2d();
+        let dt = DelaunayTriangulation::from_tds_with_topology_guarantee(
+            tds,
+            AdaptiveKernel::new(),
+            TopologyGuarantee::PLManifold,
+        );
+        let stats = DelaunayRepairStats {
+            flips_performed: 1,
+            ..DelaunayRepairStats::default()
+        };
+
+        let local_run = DelaunayRepairRun {
+            stats: stats.clone(),
+            touched_cells: std::iter::once(nonincident).collect(),
+            used_full_reseed: true,
+        };
+        assert!(
+            dt.validate_ridge_links_after_repair(TopologyGuarantee::PLManifold, &local_run)
+                .is_ok()
+        );
+
+        let invalid_scope_run = DelaunayRepairRun {
+            stats,
+            touched_cells: std::iter::once(incident_to_invalid_ridge).collect(),
+            used_full_reseed: true,
+        };
+        assert!(
+            dt.validate_ridge_links_after_repair(
+                TopologyGuarantee::PLManifold,
+                &invalid_scope_run,
+            )
+            .is_err()
+        );
     }
 
     struct ForceHeuristicRebuildGuard {

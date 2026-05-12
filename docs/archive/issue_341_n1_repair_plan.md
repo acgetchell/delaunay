@@ -23,8 +23,11 @@ The local flip-repair path has already been improved enough that it is no
 longer the dominant 10K cost. The post-insertion topology validation path has
 also been scoped to the cells touched by each ordinary insertion. The hot
 insertion path now avoids full-TDS orientation normalization when the local
-mutation scope is known. The remaining dominant costs are local repair, hull
-extension, and ordinary insertion overhead.
+mutation scope is known. Repair-side ridge-link validation also follows the
+flip-created mutation frontier, even when a repair attempt used full-TDS queue
+seeding; final full validation and defensive full fallbacks remain enabled. The
+remaining dominant costs are local repair, hull extension, and ordinary
+insertion overhead.
 
 ## Latest Measurements
 
@@ -32,6 +35,13 @@ extension, and ordinary insertion overhead.
 
 #### Before Scoped Post-Insertion Topology Validation
 
+- Metadata: commit `34b4bfb9`; hardware `Apple M4 Max`; build profile
+  `cargo test --release`; command
+  `PATH=/opt/homebrew/bin:$PATH just debug-large-scale-3d 3000 1`; env
+  `DELAUNAY_BULK_PROGRESS_EVERY=100`,
+  `DELAUNAY_LARGE_DEBUG_MAX_RUNTIME_SECS=1800`,
+  `DELAUNAY_LARGE_DEBUG_N_3D=3000`,
+  `DELAUNAY_LARGE_DEBUG_REPAIR_EVERY=1`, `OMP_NUM_THREADS` unset.
 - Result: valid Delaunay triangulation, no skipped vertices.
 - Total wall time: 54.571s.
 - Insertion wall time: 52.908s.
@@ -41,6 +51,13 @@ extension, and ordinary insertion overhead.
 
 #### After Scoped Post-Insertion Topology Validation
 
+- Metadata: commit `55be4ddb`; hardware `Apple M4 Max`; build profile
+  `cargo test --release`; command
+  `PATH=/opt/homebrew/bin:$PATH just debug-large-scale-3d 3000 1`; env
+  `DELAUNAY_BULK_PROGRESS_EVERY=100`,
+  `DELAUNAY_LARGE_DEBUG_MAX_RUNTIME_SECS=1800`,
+  `DELAUNAY_LARGE_DEBUG_N_3D=3000`,
+  `DELAUNAY_LARGE_DEBUG_REPAIR_EVERY=1`, `OMP_NUM_THREADS` unset.
 - Result: valid Delaunay triangulation, no skipped vertices.
 - Total wall time: 27.991s.
 - Insertion wall time: 26.356s.
@@ -50,6 +67,13 @@ extension, and ordinary insertion overhead.
 
 #### After Local Insertion Orientation Validation
 
+- Metadata: base commit `55be4ddb` with branch-local orientation patch;
+  hardware `Apple M4 Max`; build profile `cargo test --release`; command
+  `PATH=/opt/homebrew/bin:$PATH just debug-large-scale-3d 3000 1`; env
+  `DELAUNAY_BULK_PROGRESS_EVERY=100`,
+  `DELAUNAY_LARGE_DEBUG_MAX_RUNTIME_SECS=1800`,
+  `DELAUNAY_LARGE_DEBUG_N_3D=3000`,
+  `DELAUNAY_LARGE_DEBUG_REPAIR_EVERY=1`, `OMP_NUM_THREADS` unset.
 - Result: valid Delaunay triangulation, no skipped vertices.
 - Total wall time: 14.599s.
 - Insertion wall time: 12.950s.
@@ -58,10 +82,32 @@ extension, and ordinary insertion overhead.
 - Final repair: 1.072s, 0 flips.
 - Final validation report: 576.049ms, OK.
 
+#### After Scoped Repair Ridge-Link Validation
+
+- Metadata: base commit `55be4ddb` with branch-local scoped-repair patch;
+  hardware `Apple M4 Max`; build profile `cargo test --release`; command
+  `PATH=/opt/homebrew/bin:$PATH just debug-large-scale-3d 3000 1`; env
+  `DELAUNAY_BULK_PROGRESS_EVERY=100`,
+  `DELAUNAY_LARGE_DEBUG_MAX_RUNTIME_SECS=1800`,
+  `DELAUNAY_LARGE_DEBUG_N_3D=3000`,
+  `DELAUNAY_LARGE_DEBUG_REPAIR_EVERY=1`, `OMP_NUM_THREADS` unset.
+- Result: valid Delaunay triangulation, no skipped vertices.
+- Total wall time: 14.493s.
+- Insertion wall time: 12.876s.
+- Final repair: 1.056s, 0 flips.
+- Final validation report: 560.835ms, OK.
+
 ### 10K 3D, `N=1`
 
 #### Before Scoped Post-Insertion Topology Validation
 
+- Metadata: commit `34b4bfb9`; hardware `Apple M4 Max`; build profile
+  `cargo test --release`; command
+  `PATH=/opt/homebrew/bin:$PATH just debug-large-scale-3d 10000 1`; env
+  `DELAUNAY_BULK_PROGRESS_EVERY=100`,
+  `DELAUNAY_LARGE_DEBUG_MAX_RUNTIME_SECS=1800`,
+  `DELAUNAY_LARGE_DEBUG_N_3D=10000`,
+  `DELAUNAY_LARGE_DEBUG_REPAIR_EVERY=1`, `OMP_NUM_THREADS` unset.
 - Result: valid Delaunay triangulation, no skipped vertices.
 - Total wall time: 630.582s.
 - Insertion loop: 622.605s.
@@ -74,6 +120,13 @@ extension, and ordinary insertion overhead.
 
 #### After Scoped Post-Insertion Topology Validation
 
+- Metadata: commit `55be4ddb`; hardware `Apple M4 Max`; build profile
+  `cargo test --release`; command
+  `PATH=/opt/homebrew/bin:$PATH just debug-large-scale-3d 10000 1`; env
+  `DELAUNAY_BULK_PROGRESS_EVERY=100`,
+  `DELAUNAY_LARGE_DEBUG_MAX_RUNTIME_SECS=1800`,
+  `DELAUNAY_LARGE_DEBUG_N_3D=10000`,
+  `DELAUNAY_LARGE_DEBUG_REPAIR_EVERY=1`, `OMP_NUM_THREADS` unset.
 - Result: valid Delaunay triangulation, no skipped vertices.
 - Total wall time: 261.368s.
 - Insertion loop: 253.540s.
@@ -86,6 +139,13 @@ extension, and ordinary insertion overhead.
 
 #### After Local Insertion Orientation Validation
 
+- Metadata: base commit `55be4ddb` with branch-local orientation patch;
+  hardware `Apple M4 Max`; build profile `cargo test --release`; command
+  `PATH=/opt/homebrew/bin:$PATH just debug-large-scale-3d 10000 1`; env
+  `DELAUNAY_BULK_PROGRESS_EVERY=100`,
+  `DELAUNAY_LARGE_DEBUG_MAX_RUNTIME_SECS=1800`,
+  `DELAUNAY_LARGE_DEBUG_N_3D=10000`,
+  `DELAUNAY_LARGE_DEBUG_REPAIR_EVERY=1`, `OMP_NUM_THREADS` unset.
 - Result: valid Delaunay triangulation, no skipped vertices.
 - Total wall time: 99.466s.
 - Insertion loop: 91.593s.
@@ -95,6 +155,30 @@ extension, and ordinary insertion overhead.
 - Local repairs: 1037 calls, 45.478s total, 370.416ms max.
 - Final repair: 3.713s, 0 flips.
 - Final validation report: 2.015s, OK.
+
+#### After Scoped Repair Ridge-Link Validation
+
+- Metadata: base commit `55be4ddb` with branch-local scoped-repair patch;
+  hardware `Apple M4 Max`; build profile `cargo test --release`; command
+  `PATH=/opt/homebrew/bin:$PATH just debug-large-scale-3d 10000 1`; env
+  `DELAUNAY_BULK_PROGRESS_EVERY=100`,
+  `DELAUNAY_LARGE_DEBUG_MAX_RUNTIME_SECS=1800`,
+  `DELAUNAY_LARGE_DEBUG_N_3D=10000`,
+  `DELAUNAY_LARGE_DEBUG_REPAIR_EVERY=1`, `OMP_NUM_THREADS` unset.
+- Result: valid Delaunay triangulation, no skipped vertices.
+- Total wall time: 99.827s.
+- Insertion wall time: 94.102s.
+- Final repair: 3.708s, 0 flips.
+- Final validation report: 2.016s, OK.
+- This did not materially change the 10K wall time, which suggests full-reseed
+  repair ridge-link validation is not a dominant cost for this path.
+
+### Rejected Experiments
+
+- Facet-first repair queue scheduling reduced diagnostics-mode local repair
+  time, but the clean 10K run regressed to 100.514s total wall time. The change
+  was backed out; keep the alternating facet/ridge schedule unless a broader
+  benchmark shows a consistent win.
 
 ## Plan
 
@@ -115,6 +199,7 @@ extension, and ordinary insertion overhead.
 
 ## Immediate Next Step
 
-Decide whether the ~99s 10K result is sufficient for #341. If not, profile the
-local repair facet/ridge queues at 10K scale and reduce repeated checks without
-weakening the final repair or final validation safety nets.
+Profile the local repair facet/ridge queues at 10K scale with diagnostics
+enabled, then reduce repeated checks without weakening the final repair or final
+validation safety nets. If repair queue work is no longer dominant, inspect hull
+extension timing next.

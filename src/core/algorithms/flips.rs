@@ -3551,9 +3551,10 @@ pub(crate) struct DelaunayRepairRun {
     pub stats: DelaunayRepairStats,
     /// Cells to validate after the final repair attempt.
     ///
-    /// Local attempts contain cells created by successful flips. Full-reseed
-    /// attempts contain every current cell because the repair frontier was the
-    /// whole triangulation.
+    /// This records the cells created by successful flips, regardless of
+    /// whether the repair queues were seeded locally or from the full TDS.  The
+    /// queue frontier controls Delaunay postcondition replay; ridge-link
+    /// topology validation only needs the cells whose incidence changed.
     pub touched_cells: CellKeyBuffer,
     /// Whether the final attempt used full-TDS queue seeding.
     pub used_full_reseed: bool,
@@ -3609,21 +3610,13 @@ fn local_postcondition_frontier(
 }
 
 /// Converts an attempt outcome into the crate-private repair run result.
-fn repair_run_from_attempt(
-    outcome: RepairAttemptOutcome,
-    current_cells: impl IntoIterator<Item = CellKey>,
-) -> DelaunayRepairRun {
+fn repair_run_from_attempt(outcome: RepairAttemptOutcome) -> DelaunayRepairRun {
     let RepairAttemptOutcome {
         stats,
         touched_cells,
         used_full_reseed,
         ..
     } = outcome;
-    let touched_cells = if used_full_reseed {
-        current_cells.into_iter().collect()
-    } else {
-        touched_cells
-    };
 
     DelaunayRepairRun {
         stats,
@@ -5118,7 +5111,7 @@ where
             retry_seed_cells,
             outcome.last_applied_flip.as_ref(),
         ) {
-            Ok(()) => Ok(repair_run_from_attempt(outcome, tds.cell_keys())),
+            Ok(()) => Ok(repair_run_from_attempt(outcome)),
             Err(err) => {
                 *tds = snapshot;
                 Err(err)
@@ -5197,7 +5190,7 @@ where
             )
             .is_ok()
             {
-                return Ok(repair_run_from_attempt(outcome, tds.cell_keys()));
+                return Ok(repair_run_from_attempt(outcome));
             }
             if repair_trace_enabled() {
                 tracing::debug!(
@@ -13104,7 +13097,7 @@ mod tests {
     }
 
     #[test]
-    fn test_repair_run_full_reseed_frontier_covers_all_cells() {
+    fn test_repair_run_full_reseed_preserves_mutation_frontier() {
         init_tracing();
         let vertices = vec![
             vertex!([0.0, 0.0]),
@@ -13124,20 +13117,15 @@ mod tests {
             used_full_reseed: true,
         };
 
-        let run = repair_run_from_attempt(outcome, tds.cell_keys());
-        let expected_cells: Vec<CellKey> = tds.cell_keys().collect();
+        let run = repair_run_from_attempt(outcome);
 
         assert!(run.used_full_reseed);
         assert!(
-            expected_cells.len() > 1,
+            tds.cell_keys().count() > 1,
             "fixture should distinguish local and full frontiers"
         );
-        assert_eq!(run.touched_cells.len(), expected_cells.len());
-        assert!(
-            expected_cells
-                .iter()
-                .all(|expected| { run.touched_cells.iter().any(|touched| touched == expected) })
-        );
+        assert_eq!(run.touched_cells.len(), 1);
+        assert_eq!(run.touched_cells[0], local_cell);
     }
 
     #[test]

@@ -4375,8 +4375,13 @@ where
             insert_ok.suspicion,
             Some(&insert_ok.repair_seed_cells),
         );
-        if let (Some(InsertionValidationWork::FullValidation), Some(validation_started)) =
-            (validation_work, validation_started)
+        if let (
+            Some(
+                InsertionValidationWork::FullValidation
+                | InsertionValidationWork::RequiredTopologyLinks,
+            ),
+            Some(validation_started),
+        ) = (validation_work, validation_started)
         {
             Self::record_topology_validation_telemetry(
                 telemetry,
@@ -4442,8 +4447,13 @@ where
                     fallback_ok.suspicion,
                     Some(&fallback_ok.repair_seed_cells),
                 );
-                if let (Some(InsertionValidationWork::FullValidation), Some(validation_started)) =
-                    (validation_work, validation_started)
+                if let (
+                    Some(
+                        InsertionValidationWork::FullValidation
+                        | InsertionValidationWork::RequiredTopologyLinks,
+                    ),
+                    Some(validation_started),
+                ) = (validation_work, validation_started)
                 {
                     Self::record_topology_validation_telemetry(
                         telemetry,
@@ -5331,6 +5341,7 @@ where
         // Seed follow-up Delaunay repair from the local insertion product.  Higher layers
         // use these cells to avoid rediscovering the inserted vertex star with a global scan.
         append_live_unique_cell_seeds(&self.tds, &new_cells, &mut repair_seed_cells);
+        append_live_unique_cell_seeds(&self.tds, &neighbor_repair_frontier, &mut repair_seed_cells);
 
         // Return hint for next insertion
         Ok(CavityInsertionOutcome {
@@ -6136,6 +6147,11 @@ where
                 // Return vertex key and hint for next insertion
                 let mut repair_seed_cells = CellKeyBuffer::new();
                 append_live_unique_cell_seeds(&self.tds, &new_cells, &mut repair_seed_cells);
+                append_live_unique_cell_seeds(
+                    &self.tds,
+                    &neighbor_repair_frontier,
+                    &mut repair_seed_cells,
+                );
                 append_live_unique_cell_seeds(
                     &self.tds,
                     &exterior_repair_seed_cells,

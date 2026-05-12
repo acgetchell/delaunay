@@ -3611,6 +3611,19 @@ where
                         ),
                     },
                 )?;
+                let has_back_reference = neighbor_cell
+                    .neighbors()
+                    .and_then(|neighbors| neighbors.get(mirror_idx))
+                    .is_some_and(|back_ref| *back_ref == Some(cell_key));
+                if !has_back_reference {
+                    return Err(TdsError::InvalidNeighbors {
+                        message: format!(
+                            "Cell {:?}[{facet_idx}] neighbor {:?}[{mirror_idx}] does not reference back to the cell during local orientation validation",
+                            cell.uuid(),
+                            neighbor_cell.uuid(),
+                        ),
+                    });
+                }
 
                 let cell1_facet_vertices = Self::facet_vertices_in_cell_order(cell, facet_idx)?;
                 let cell2_facet_vertices =
