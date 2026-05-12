@@ -43,7 +43,7 @@ Use `delaunay_violation_report` when you want data instead of only log output:
 
 ```rust
 use delaunay::prelude::diagnostics::delaunay_violation_report;
-use delaunay::prelude::triangulation::*;
+use delaunay::prelude::triangulation::construction::{DelaunayTriangulation, vertex};
 
 let vertices = vec![
     vertex!([0.0, 0.0, 0.0]),

@@ -129,15 +129,18 @@ and release builds.
 | `DELAUNAY_LARGE_DEBUG_BALL_RADIUS` | **value** | Radius for ball distribution |
 | `DELAUNAY_LARGE_DEBUG_BOX_HALF_WIDTH` | **value** | Half-width for box distribution |
 | `DELAUNAY_LARGE_DEBUG_CONSTRUCTION_MODE` | **value** | `new` (batch) or `incremental` |
-| `DELAUNAY_LARGE_DEBUG_DEBUG_MODE` | **value** | `cadenced` or `strict` |
+| `DELAUNAY_LARGE_DEBUG_INITIAL_SIMPLEX` | **value** | Batch initial simplex strategy: `max-volume` (default), `balanced`, or `first` |
+| `DELAUNAY_LARGE_DEBUG_DEBUG_MODE` | **value** | `cadenced` (ridge-link) or `strict` (per-insertion vertex-link) |
 | `DELAUNAY_LARGE_DEBUG_SHUFFLE_SEED` | **value** | Vertex shuffle seed |
 | `DELAUNAY_LARGE_DEBUG_PROGRESS_EVERY` | **value** | Progress logging interval |
 | `DELAUNAY_LARGE_DEBUG_VALIDATE_EVERY` | **value** | Validation interval |
-| `DELAUNAY_LARGE_DEBUG_REPAIR_EVERY` | **value** | Repair interval |
+| `DELAUNAY_LARGE_DEBUG_REPAIR_EVERY` | **value** | Batch/incremental repair interval (default: 1) |
 | `DELAUNAY_LARGE_DEBUG_REPAIR_MAX_FLIPS` | **value** | Flip budget override |
 | `DELAUNAY_LARGE_DEBUG_MAX_RUNTIME_SECS` | **value** | Timeout (0 = no cap) |
-| `DELAUNAY_LARGE_DEBUG_ALLOW_SKIPS` | presence | Allow vertex insertion skips |
+| `DELAUNAY_LARGE_DEBUG_MAX_SKIP_PCT` | **value** | Maximum skipped-vertex percentage before failing (default: 5.0) |
+| `DELAUNAY_LARGE_DEBUG_ALLOW_SKIPS` | presence | Allow any number of vertex insertion skips |
 | `DELAUNAY_LARGE_DEBUG_SKIP_FINAL_REPAIR` | presence | Skip final global repair pass |
+| `DELAUNAY_BATCH_REPAIR_TRACE` | presence | Trace cadenced batch-repair seed counts, flips, queues, and elapsed time |
 | `DELAUNAY_LARGE_DEBUG_PREFIX_TOTAL` | **value** | Total prefix probes for bisect mode |
 | `DELAUNAY_LARGE_DEBUG_PREFIX_MAX_PROBES` | **value** | Max probes per bisect run |
 | `DELAUNAY_LARGE_DEBUG_PREFIX_MAX_RUNTIME_SECS` | **value** | Bisect probe timeout |

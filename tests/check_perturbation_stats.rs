@@ -1,10 +1,16 @@
+#![forbid(unsafe_code)]
+
 //! Regression: in `TopologyGuarantee::PLManifold` mode, incremental insertion must
 //! never commit a triangulation with invalid vertex links, independent of
 //! `ValidationPolicy`.
 
 use delaunay::core::vertex::VertexBuilder;
 use delaunay::geometry::util::generate_random_points_seeded;
-use delaunay::prelude::triangulation::*;
+use delaunay::prelude::triangulation::construction::{
+    DelaunayRepairPolicy, DelaunayTriangulation, TopologyGuarantee,
+};
+use delaunay::prelude::triangulation::insertion::InsertionOutcome;
+use delaunay::prelude::triangulation::validation::ValidationPolicy;
 
 #[test]
 fn pl_manifold_insertion_is_non_negotiable_under_validation_policy_never() {

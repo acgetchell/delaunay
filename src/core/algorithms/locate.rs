@@ -1,3 +1,5 @@
+#![forbid(unsafe_code)]
+
 //! Point location algorithms for triangulations.
 //!
 //! Implements facet-walking point location for finding the cell containing
@@ -661,6 +663,21 @@ impl LocateStats {
     }
 }
 
+/// Internal locate result that also records the final cell reached by the walk.
+///
+/// Exterior insertion uses `terminal_cell` as a local conflict-region seed so it
+/// can avoid a full triangulation scan while still repairing cells near the hull
+/// facet where point location exited the triangulation.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct LocateTrace {
+    /// Public location classification.
+    pub(crate) result: LocateResult,
+    /// Public locate diagnostics.
+    pub(crate) stats: LocateStats,
+    /// Last cell visited by the facet walk before returning or falling back.
+    pub(crate) terminal_cell: CellKey,
+}
+
 /// Locate a point in the triangulation using facet walking (correctness-first).
 ///
 /// This function attempts a fast facet-walking traversal starting from `hint` (when provided).
@@ -807,6 +824,26 @@ where
     U: DataType,
     V: DataType,
 {
+    let trace = locate_with_trace(tds, kernel, point, hint)?;
+    Ok((trace.result, trace.stats))
+}
+
+/// Locate a point and keep the final walked cell for local exterior repair.
+///
+/// This mirrors [`locate_with_stats`] but also exposes the last facet-walk cell
+/// before the algorithm concluded.  For [`LocateResult::Outside`] without a scan
+/// fallback, that cell is adjacent to the hull facet crossed by the query point.
+pub(crate) fn locate_with_trace<K, U, V, const D: usize>(
+    tds: &Tds<K::Scalar, U, V, D>,
+    kernel: &K,
+    point: &Point<K::Scalar, D>,
+    hint: Option<CellKey>,
+) -> Result<LocateTrace, LocateError>
+where
+    K: Kernel<D>,
+    U: DataType,
+    V: DataType,
+{
     const MAX_STEPS: usize = 10000;
 
     if tds.number_of_cells() == 0 {
@@ -842,7 +879,11 @@ where
                 steps: stats.walk_steps,
             });
             let result = locate_by_scan(tds, kernel, point)?;
-            return Ok((result, stats));
+            return Ok(LocateTrace {
+                result,
+                stats,
+                terminal_cell: current_cell,
+            });
         }
 
         let cell = tds.cell(current_cell).ok_or(LocateError::InvalidCell {
@@ -863,12 +904,20 @@ where
                     found_outside_facet = true;
                     break;
                 }
-                return Ok((LocateResult::Outside, stats));
+                return Ok(LocateTrace {
+                    result: LocateResult::Outside,
+                    stats,
+                    terminal_cell: current_cell,
+                });
             }
         }
 
         if !found_outside_facet {
-            return Ok((LocateResult::InsideCell(current_cell), stats));
+            return Ok(LocateTrace {
+                result: LocateResult::InsideCell(current_cell),
+                stats,
+                terminal_cell: current_cell,
+            });
         }
     }
 
@@ -877,7 +926,11 @@ where
         steps: stats.walk_steps,
     });
     let result = locate_by_scan(tds, kernel, point)?;
-    Ok((result, stats))
+    Ok(LocateTrace {
+        result,
+        stats,
+        terminal_cell: current_cell,
+    })
 }
 
 pub(crate) fn locate_by_scan<K, U, V, const D: usize>(

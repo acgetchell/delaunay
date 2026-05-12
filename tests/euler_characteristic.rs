@@ -1,3 +1,5 @@
+#![forbid(unsafe_code)]
+
 //! Deterministic integration tests for Euler characteristic computation.
 //!
 //! This module tests the topology module's Euler characteristic calculation
@@ -14,7 +16,10 @@
 
 use delaunay::prelude::query::BoundaryAnalysis;
 use delaunay::prelude::tds::Tds;
-use delaunay::prelude::triangulation::*;
+use delaunay::prelude::triangulation::construction::{
+    DelaunayTriangulation, DelaunayTriangulationConstructionError, ExplicitConstructionError,
+    TopologyGuarantee, vertex,
+};
 use delaunay::topology::characteristics::{euler, validation};
 
 // =============================================================================

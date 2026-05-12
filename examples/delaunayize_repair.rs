@@ -1,3 +1,5 @@
+#![forbid(unsafe_code)]
+
 //! # Delaunayize-by-Flips Repair Example
 //!
 //! This example demonstrates the **delaunayize-by-flips** workflow that
@@ -18,11 +20,10 @@
 //! cargo run --example delaunayize_repair
 //! ```
 
+use delaunay::prelude::triangulation::construction::DelaunayTriangulationConstructionError;
 use delaunay::prelude::triangulation::delaunayize::*;
 use delaunay::prelude::triangulation::flips::*;
-use delaunay::prelude::triangulation::{
-    DelaunayTriangulationConstructionError, DelaunayTriangulationValidationError,
-};
+use delaunay::prelude::triangulation::validation::DelaunayTriangulationValidationError;
 
 // For the generic print_outcome helper.
 use delaunay::prelude::DataType;

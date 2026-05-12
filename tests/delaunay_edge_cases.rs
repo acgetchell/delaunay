@@ -12,7 +12,10 @@
 use delaunay::prelude::diagnostics::debug_print_first_delaunay_violation;
 use delaunay::prelude::generators::generate_random_points_in_ball_seeded;
 use delaunay::prelude::geometry::RobustKernel;
-use delaunay::prelude::triangulation::*;
+use delaunay::prelude::triangulation::construction::{
+    DelaunayConstructionFailure, DelaunayTriangulation, DelaunayTriangulationConstructionError,
+    TopologyGuarantee, Vertex, vertex,
+};
 use rand::SeedableRng;
 use rand::seq::SliceRandom;
 fn init_tracing() {

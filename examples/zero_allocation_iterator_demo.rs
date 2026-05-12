@@ -7,7 +7,7 @@
 
 use delaunay::prelude::generators::generate_random_triangulation;
 use delaunay::prelude::tds::CellValidationError;
-use delaunay::prelude::triangulation::{
+use delaunay::prelude::triangulation::construction::{
     DelaunayTriangulation, DelaunayTriangulationConstructionError,
 };
 use std::hint::black_box;

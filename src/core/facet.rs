@@ -1123,7 +1123,12 @@ pub fn facet_key_from_vertices(vertices: &[VertexKey]) -> u64 {
 mod tests {
     use super::*;
     use crate::core::tds::VertexKey;
-    use crate::triangulation::delaunay::DelaunayTriangulation;
+    use crate::core::triangulation::TopologyGuarantee;
+    use crate::core::vertex::Vertex;
+    use crate::geometry::kernel::AdaptiveKernel;
+    use crate::triangulation::delaunay::{
+        ConstructionOptions, DelaunayTriangulation, InitialSimplexStrategy, InsertionOrderStrategy,
+    };
     use crate::vertex;
 
     // =============================================================================
@@ -1371,16 +1376,23 @@ mod tests {
     #[test]
     fn facet_with_typed_data() {
         // Create 3D triangulation with typed vertex data
-        use crate::core::vertex::Vertex;
-        use crate::geometry::kernel::AdaptiveKernel;
         let vertices: Vec<Vertex<f64, i32, 3>> = vec![
             vertex!([0.0, 0.0, 0.0], 1),
             vertex!([1.0, 0.0, 0.0], 2),
             vertex!([0.0, 1.0, 0.0], 3),
             vertex!([0.0, 0.0, 1.0], 4),
         ];
+        let options = ConstructionOptions::default()
+            .with_insertion_order(InsertionOrderStrategy::Input)
+            .with_initial_simplex_strategy(InitialSimplexStrategy::First);
         let dt: DelaunayTriangulation<AdaptiveKernel<f64>, i32, (), 3> =
-            DelaunayTriangulation::with_kernel(&AdaptiveKernel::new(), &vertices).unwrap();
+            DelaunayTriangulation::with_topology_guarantee_and_options(
+                &AdaptiveKernel::new(),
+                &vertices,
+                TopologyGuarantee::DEFAULT,
+                options,
+            )
+            .unwrap();
         let cell_key = dt.cells().next().unwrap().0;
 
         // Create facet view for facet 0 (excludes vertex 0)
@@ -1388,9 +1400,14 @@ mod tests {
 
         let facet_vertices: Vec<_> = facet.vertices().unwrap().collect();
         assert_eq!(facet_vertices.len(), 3); // 3D facet should have 3 vertices (D)
-        assert!(facet_vertices.iter().any(|v| v.data == Some(2)));
-        assert!(facet_vertices.iter().any(|v| v.data == Some(3)));
-        assert!(facet_vertices.iter().any(|v| v.data == Some(4)));
+        let cell = dt.tds().cell(cell_key).expect("cell exists");
+        for &vertex_key in cell.vertices().iter().skip(1) {
+            let expected_data = dt.tds().vertex(vertex_key).unwrap().data;
+            assert!(
+                facet_vertices.iter().any(|v| v.data == expected_data),
+                "Expected facet vertex data {expected_data:?} not found"
+            );
+        }
     }
 
     /// Macro to generate dimension-specific facet tests for dimensions 2D-5D.
@@ -1525,7 +1542,10 @@ mod tests {
     fn facet_1d_edge() {
         // Create 1D triangulation (edge with 2 vertices)
         let vertices = vec![vertex!([0.0]), vertex!([1.0])];
-        let dt = DelaunayTriangulation::new(&vertices).unwrap();
+        let options = ConstructionOptions::default()
+            .with_insertion_order(InsertionOrderStrategy::Input)
+            .with_initial_simplex_strategy(InitialSimplexStrategy::First);
+        let dt = DelaunayTriangulation::new_with_options(&vertices, options).unwrap();
         let cell_key = dt.cells().next().unwrap().0;
 
         // Create facet view for facet 0 (excludes vertex 0)
@@ -1770,9 +1790,11 @@ mod tests {
         let facet_vertices: Vec<_> = facet_view.vertices().unwrap().collect();
         assert_eq!(facet_vertices.len(), 3);
 
-        // Get original vertices for comparison
-        let original_vertices = vertices;
-        let opposite_vertex = &original_vertices[0];
+        let cell = dt.tds().cell(cell_key).expect("cell exists");
+        let opposite_vertex = dt
+            .tds()
+            .vertex(cell.vertices()[0])
+            .expect("opposite vertex exists");
 
         // Facet vertices should not include the opposite vertex
         assert!(

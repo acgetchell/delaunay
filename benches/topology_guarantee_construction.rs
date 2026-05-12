@@ -1,3 +1,5 @@
+#![forbid(unsafe_code)]
+
 //! Benchmark: construction cost vs topology guarantee (2D–5D)
 //!
 //! This benchmark compares `TopologyGuarantee::Pseudomanifold`, `TopologyGuarantee::PLManifold`
@@ -14,9 +16,9 @@
 
 use criterion::{BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
 use delaunay::prelude::generators::generate_random_points_seeded;
-use delaunay::prelude::triangulation::{
-    DelaunayRepairPolicy, DelaunayTriangulation, TopologyGuarantee, ValidationPolicy,
-};
+use delaunay::prelude::triangulation::construction::{DelaunayTriangulation, TopologyGuarantee};
+use delaunay::prelude::triangulation::repair::DelaunayRepairPolicy;
+use delaunay::prelude::triangulation::validation::ValidationPolicy;
 use delaunay::vertex;
 use std::hint::black_box;
 use std::time::Duration;

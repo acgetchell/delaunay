@@ -14,7 +14,7 @@ For the theoretical background and rationale behind the invariants, see [`invari
 For most use cases, construction is a single call:
 
 ```rust
-use delaunay::prelude::triangulation::*;
+use delaunay::prelude::triangulation::construction::{DelaunayTriangulation, vertex};
 
 let vertices = vec![
     vertex!([0.0, 0.0, 0.0]),
@@ -39,7 +39,8 @@ Two knobs are commonly used for insertion-time safety vs performance:
 See [`validation.md`](validation.md) for details.
 
 ```rust
-use delaunay::prelude::triangulation::*;
+use delaunay::prelude::triangulation::construction::{DelaunayTriangulation, TopologyGuarantee};
+use delaunay::prelude::triangulation::validation::ValidationPolicy;
 
 let mut dt: DelaunayTriangulation<_, (), (), 3> = DelaunayTriangulation::empty();
 
@@ -67,16 +68,18 @@ levels.
 ## Builder API: flip-based Delaunay repair (details)
 
 The Builder API is designed to construct Delaunay triangulations, and (by default) schedules local
-flip-based repair passes after insertions.
-
-Automatic repair scheduling is controlled by `DelaunayRepairPolicy` (default: `EveryInsertion`).
+flip-based repair passes during construction. Batch construction uses `ConstructionOptions`, whose
+default repair cadence is `DelaunayRepairPolicy::EveryInsertion` plus final repair/validation. That
+cadence reflects the current #341 proxy sweeps at 1000 and 3000 vertices; 10000-vertex runs remain
+the scalability acceptance check. Direct incremental insertion keeps the lower-level
+`DelaunayRepairPolicy` default at `EveryInsertion`.
 The explicit repair methods (`repair_delaunay_with_flips`, `repair_delaunay_with_flips_advanced`,
 `rebuild_with_heuristic`) require `K: ExactPredicates` at compile time. `AdaptiveKernel` and
 `RobustKernel` implement this trait; `FastKernel` does not. See
 [`numerical_robustness_guide.md`](numerical_robustness_guide.md) for kernel selection guidance.
 
 ```rust
-use delaunay::prelude::triangulation::*;
+use delaunay::prelude::triangulation::construction::{DelaunayRepairPolicy, DelaunayTriangulation};
 
 let mut dt: DelaunayTriangulation<_, (), (), 3> = DelaunayTriangulation::empty();
 
@@ -90,7 +93,7 @@ dt.set_delaunay_repair_policy(DelaunayRepairPolicy::Never);
 You can also run a global repair pass manually:
 
 ```rust
-use delaunay::prelude::triangulation::*;
+use delaunay::prelude::triangulation::construction::{DelaunayTriangulation, vertex};
 
 let vertices = vec![
     vertex!([0.0, 0.0, 0.0]),
@@ -137,8 +140,8 @@ If repair fails to converge within the flip budget, you get
 detections, etc.).
 
 ```rust
+use delaunay::prelude::triangulation::construction::{DelaunayTriangulation, vertex};
 use delaunay::prelude::triangulation::repair::DelaunayRepairError;
-use delaunay::prelude::triangulation::*;
 
 let vertices = vec![
     vertex!([0.0, 0.0, 0.0]),
@@ -178,7 +181,7 @@ You can provide explicit seeds for reproducibility; otherwise deterministic defa
 from the current vertex set.
 
 ```rust
-use delaunay::prelude::triangulation::*;
+use delaunay::prelude::triangulation::construction::{DelaunayTriangulation, vertex};
 use delaunay::prelude::triangulation::repair::DelaunayRepairHeuristicConfig;
 
 let vertices = vec![
@@ -205,7 +208,7 @@ Toroidal triangulations handle periodic boundary conditions. Use
 `DelaunayTriangulationBuilder` to construct them:
 
 ```rust
-use delaunay::prelude::triangulation::*;
+use delaunay::prelude::triangulation::construction::{DelaunayTriangulationBuilder, vertex};
 
 // 2D periodic triangulation with unit square domain
 let vertices = vec![
@@ -243,7 +246,9 @@ Data is attached at construction time via `VertexBuilder::data()`, read via the 
 and modified post-construction via `set_vertex_data` / `set_cell_data`.
 
 ```rust
-use delaunay::prelude::triangulation::*;
+use delaunay::prelude::triangulation::construction::{
+    DelaunayTriangulationBuilder, Vertex, vertex,
+};
 
 // Attach integer labels at construction time
 let vertices: [Vertex<f64, i32, 2>; 3] = [
@@ -280,7 +285,8 @@ If you need observability (or you want to handle skipped vertices explicitly), u
 `insert_with_statistics()`.
 
 ```rust
-use delaunay::prelude::triangulation::*;
+use delaunay::prelude::triangulation::construction::{DelaunayTriangulation, vertex};
+use delaunay::prelude::triangulation::insertion::InsertionOutcome;
 
 let mut dt: DelaunayTriangulation<_, (), (), 3> = DelaunayTriangulation::empty();
 
@@ -311,7 +317,7 @@ possible and fan retriangulation otherwise, then runs flip-based Delaunay repair
 the operation rolls back to the pre-removal triangulation.
 
 ```rust
-use delaunay::prelude::triangulation::*;
+use delaunay::prelude::triangulation::construction::{DelaunayTriangulation, vertex};
 
 let vertices = vec![
     vertex!([0.0, 0.0, 0.0]),
@@ -354,7 +360,7 @@ After using flips, you typically:
 See [`api_design.md`](api_design.md) for the full Builder vs Edit API design.
 
 ```rust
-use delaunay::prelude::triangulation::*;
+use delaunay::prelude::triangulation::construction::{DelaunayTriangulation, vertex};
 use delaunay::prelude::triangulation::flips::*;
 
 let vertices = vec![

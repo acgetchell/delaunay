@@ -1,3 +1,5 @@
+#![forbid(unsafe_code)]
+
 //! Integration tests for `DelaunayTriangulation` incremental insertion.
 //!
 //! These tests focus on the incremental insertion workflow and features
@@ -12,7 +14,9 @@ use delaunay::prelude::algorithms::{LocateResult, find_conflict_region, locate};
 use delaunay::prelude::collections::MAX_PRACTICAL_DIMENSION_SIZE;
 use delaunay::prelude::geometry::{AdaptiveKernel, Coordinate, Point};
 use delaunay::prelude::tds::{Cell, CellKey, SmallBuffer, VertexKey, facet_key_from_vertices};
-use delaunay::prelude::triangulation::*;
+use delaunay::prelude::triangulation::construction::{
+    ConstructionOptions, DedupPolicy, DelaunayTriangulation, TopologyGuarantee, vertex,
+};
 
 /// Build the canonical facet key used to compare neighbor mirror facets in tests.
 fn facet_key_for_cell<const D: usize>(cell: &Cell<f64, (), (), D>, facet_idx: usize) -> u64 {

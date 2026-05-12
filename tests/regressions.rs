@@ -9,7 +9,10 @@ use delaunay::prelude::diagnostics::debug_print_first_delaunay_violation;
 use delaunay::prelude::generators::generate_random_points_in_ball_seeded;
 use delaunay::prelude::geometry::{Point, RobustKernel};
 use delaunay::prelude::ordering::{hilbert_indices_prequantized, hilbert_quantize};
-use delaunay::prelude::triangulation::*;
+use delaunay::prelude::triangulation::construction::{
+    ConstructionOptions, DelaunayTriangulation, InsertionOrderStrategy, RetryPolicy,
+    TopologyGuarantee, Vertex, vertex,
+};
 
 /// Replays a full Hilbert ordering while keeping only the prefix that first
 /// exposed issue #307, so the regression stays fast and deterministic.

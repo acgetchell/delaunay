@@ -32,10 +32,9 @@
 //! ## Standard Euclidean construction
 //!
 //! ```rust
-//! use delaunay::prelude::triangulation::DelaunayTriangulationBuilder;
-//! use delaunay::vertex;
+//! use delaunay::prelude::triangulation::construction::{DelaunayTriangulationBuilder, vertex};
 //!
-//! # fn main() -> Result<(), delaunay::prelude::triangulation::DelaunayTriangulationConstructionError> {
+//! # fn main() -> Result<(), delaunay::prelude::triangulation::construction::DelaunayTriangulationConstructionError> {
 //! let vertices = vec![
 //!     vertex!([0.0, 0.0]),
 //!     vertex!([1.0, 0.0]),
@@ -53,10 +52,9 @@
 //! ## Toroidal construction (Phase 1: canonicalization only)
 //!
 //! ```rust
-//! use delaunay::prelude::triangulation::DelaunayTriangulationBuilder;
-//! use delaunay::vertex;
+//! use delaunay::prelude::triangulation::construction::{DelaunayTriangulationBuilder, vertex};
 //!
-//! # fn main() -> Result<(), delaunay::prelude::triangulation::DelaunayTriangulationConstructionError> {
+//! # fn main() -> Result<(), delaunay::prelude::triangulation::construction::DelaunayTriangulationConstructionError> {
 //! // Vertices that fall outside [0, 1)² are wrapped before triangulation.
 //! let vertices = vec![
 //!     vertex!([0.2, 0.3]),
@@ -81,10 +79,9 @@
 //!
 //! ```rust,no_run
 //! use delaunay::prelude::geometry::RobustKernel;
-//! use delaunay::prelude::triangulation::DelaunayTriangulationBuilder;
-//! use delaunay::vertex;
+//! use delaunay::prelude::triangulation::construction::{DelaunayTriangulationBuilder, vertex};
 //!
-//! # fn main() -> Result<(), delaunay::prelude::triangulation::DelaunayTriangulationConstructionError> {
+//! # fn main() -> Result<(), delaunay::prelude::triangulation::construction::DelaunayTriangulationConstructionError> {
 //! let vertices = vec![
 //!     vertex!([0.1, 0.2]),
 //!     vertex!([0.4, 0.7]),
@@ -304,11 +301,10 @@ fn search_closed_2d_selection(
 /// # Examples
 ///
 /// ```rust
-/// use delaunay::prelude::triangulation::{
+/// use delaunay::prelude::triangulation::construction::{
 ///     DelaunayTriangulationBuilder, DelaunayTriangulationConstructionError,
-///     ExplicitConstructionError,
+///     ExplicitConstructionError, vertex,
 /// };
-/// use delaunay::vertex;
 ///
 /// let vertices = vec![vertex!([0.0, 0.0]), vertex!([1.0, 0.0]), vertex!([0.0, 1.0])];
 /// let cells = vec![vec![0, 1]]; // Wrong arity for 2D (needs 3 vertices)
@@ -402,12 +398,11 @@ pub enum ExplicitConstructionError {
 /// # Examples
 ///
 /// ```rust
-/// use delaunay::prelude::triangulation::{
-///     ConstructionOptions, DelaunayTriangulationBuilder, TopologyGuarantee,
+/// use delaunay::prelude::triangulation::construction::{
+///     ConstructionOptions, DelaunayTriangulationBuilder, TopologyGuarantee, vertex,
 /// };
-/// use delaunay::vertex;
 ///
-/// # fn main() -> Result<(), delaunay::prelude::triangulation::DelaunayTriangulationConstructionError> {
+/// # fn main() -> Result<(), delaunay::prelude::triangulation::construction::DelaunayTriangulationConstructionError> {
 /// let vertices = vec![
 ///     vertex!([0.0, 0.0, 0.0]),
 ///     vertex!([1.0, 0.0, 0.0]),
@@ -480,9 +475,11 @@ where
     /// # Examples
     ///
     /// ```rust
-    /// use delaunay::prelude::triangulation::*;
+    /// use delaunay::prelude::triangulation::construction::{
+    ///     DelaunayTriangulationBuilder, DelaunayTriangulationConstructionError, Vertex, vertex,
+    /// };
     ///
-    /// # fn main() -> Result<(), delaunay::prelude::triangulation::DelaunayTriangulationConstructionError> {
+    /// # fn main() -> Result<(), DelaunayTriangulationConstructionError> {
     /// // No vertex data (U = () inferred)
     /// let vertices = vec![vertex!([0.0, 0.0]), vertex!([1.0, 0.0]), vertex!([0.0, 1.0])];
     /// let _dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
@@ -529,13 +526,12 @@ where
     /// # Examples
     ///
     /// ```rust
-    /// use delaunay::prelude::triangulation::{
+    /// use delaunay::prelude::triangulation::construction::{
     ///     DelaunayTriangulationBuilder, DelaunayTriangulationConstructionError,
-    ///     ExplicitConstructionError,
+    ///     ExplicitConstructionError, vertex,
     /// };
-    /// use delaunay::vertex;
     ///
-    /// # fn main() -> Result<(), delaunay::prelude::triangulation::DelaunayTriangulationConstructionError> {
+    /// # fn main() -> Result<(), DelaunayTriangulationConstructionError> {
     /// let vertices = vec![
     ///     vertex!([0.0, 0.0]),
     ///     vertex!([1.0, 0.0]),
@@ -598,14 +594,16 @@ where
     ///
     /// ```rust
     /// use delaunay::prelude::geometry::{Coordinate, Point};
-    /// use delaunay::prelude::triangulation::{DelaunayTriangulationBuilder, Vertex, VertexBuilder};
+    /// use delaunay::prelude::triangulation::construction::{
+    ///     DelaunayTriangulationBuilder, Vertex, VertexBuilder,
+    /// };
     ///
     /// # #[derive(Debug, thiserror::Error)]
     /// # enum ExampleError {
     /// #     #[error(transparent)]
-    /// #     Vertex(#[from] delaunay::prelude::triangulation::VertexBuilderError),
+    /// #     Vertex(#[from] delaunay::prelude::triangulation::construction::VertexBuilderError),
     /// #     #[error(transparent)]
-    /// #     Construction(#[from] delaunay::prelude::triangulation::DelaunayTriangulationConstructionError),
+    /// #     Construction(#[from] delaunay::prelude::triangulation::construction::DelaunayTriangulationConstructionError),
     /// # }
     /// # fn main() -> Result<(), ExampleError> {
     /// let vertices: Vec<Vertex<f32, (), 2>> = vec![
@@ -649,14 +647,16 @@ where
     ///
     /// ```rust
     /// use delaunay::prelude::geometry::{Coordinate, Point};
-    /// use delaunay::prelude::triangulation::{DelaunayTriangulationBuilder, Vertex, VertexBuilder};
+    /// use delaunay::prelude::triangulation::construction::{
+    ///     DelaunayTriangulationBuilder, Vertex, VertexBuilder,
+    /// };
     ///
     /// # #[derive(Debug, thiserror::Error)]
     /// # enum ExampleError {
     /// #     #[error(transparent)]
-    /// #     Vertex(#[from] delaunay::prelude::triangulation::VertexBuilderError),
+    /// #     Vertex(#[from] delaunay::prelude::triangulation::construction::VertexBuilderError),
     /// #     #[error(transparent)]
-    /// #     Construction(#[from] delaunay::prelude::triangulation::DelaunayTriangulationConstructionError),
+    /// #     Construction(#[from] delaunay::prelude::triangulation::construction::DelaunayTriangulationConstructionError),
     /// # }
     /// # fn main() -> Result<(), ExampleError> {
     /// // f32 vertices — new() is f64-only, so from_vertices is required here.
@@ -701,10 +701,11 @@ where
     /// # Examples
     ///
     /// ```rust
-    /// use delaunay::prelude::triangulation::DelaunayTriangulationBuilder;
-    /// use delaunay::vertex;
+    /// use delaunay::prelude::triangulation::construction::{
+    ///     DelaunayTriangulationBuilder, vertex,
+    /// };
     ///
-    /// # fn main() -> Result<(), delaunay::prelude::triangulation::DelaunayTriangulationConstructionError> {
+    /// # fn main() -> Result<(), delaunay::prelude::triangulation::construction::DelaunayTriangulationConstructionError> {
     /// let vertices = vec![
     ///     vertex!([0.2, 0.3]),
     ///     vertex!([0.8, 0.1]),
@@ -751,10 +752,11 @@ where
     ///
     /// ```rust,no_run
     /// use delaunay::prelude::geometry::RobustKernel;
-    /// use delaunay::prelude::triangulation::DelaunayTriangulationBuilder;
-    /// use delaunay::vertex;
+    /// use delaunay::prelude::triangulation::construction::{
+    ///     DelaunayTriangulationBuilder, vertex,
+    /// };
     ///
-    /// # fn main() -> Result<(), delaunay::prelude::triangulation::DelaunayTriangulationConstructionError> {
+    /// # fn main() -> Result<(), delaunay::prelude::triangulation::construction::DelaunayTriangulationConstructionError> {
     /// let vertices = vec![
     ///     vertex!([0.1, 0.2]),
     ///     vertex!([0.4, 0.7]),
@@ -789,10 +791,11 @@ where
     /// # Examples
     ///
     /// ```rust
-    /// use delaunay::prelude::triangulation::{DelaunayTriangulationBuilder, TopologyGuarantee};
-    /// use delaunay::vertex;
+    /// use delaunay::prelude::triangulation::construction::{
+    ///     DelaunayTriangulationBuilder, TopologyGuarantee, vertex,
+    /// };
     ///
-    /// # fn main() -> Result<(), delaunay::prelude::triangulation::DelaunayTriangulationConstructionError> {
+    /// # fn main() -> Result<(), delaunay::prelude::triangulation::construction::DelaunayTriangulationConstructionError> {
     /// let vertices = vec![
     ///     vertex!([0.0, 0.0]),
     ///     vertex!([1.0, 0.0]),
@@ -832,10 +835,9 @@ where
     /// # Examples
     ///
     /// ```rust
-    /// use delaunay::prelude::triangulation::{
-    ///     DelaunayTriangulationBuilder, GlobalTopology, ToroidalConstructionMode,
+    /// use delaunay::prelude::triangulation::construction::{
+    ///     DelaunayTriangulationBuilder, GlobalTopology, ToroidalConstructionMode, vertex,
     /// };
-    /// use delaunay::vertex;
     ///
     /// let vertices = vec![
     ///     vertex!([0.0, 0.0]),
@@ -866,12 +868,11 @@ where
     /// # Examples
     ///
     /// ```rust
-    /// use delaunay::prelude::triangulation::{
-    ///     ConstructionOptions, DelaunayTriangulationBuilder, InsertionOrderStrategy,
+    /// use delaunay::prelude::triangulation::construction::{
+    ///     ConstructionOptions, DelaunayTriangulationBuilder, InsertionOrderStrategy, vertex,
     /// };
-    /// use delaunay::vertex;
     ///
-    /// # fn main() -> Result<(), delaunay::prelude::triangulation::DelaunayTriangulationConstructionError> {
+    /// # fn main() -> Result<(), delaunay::prelude::triangulation::construction::DelaunayTriangulationConstructionError> {
     /// let vertices = vec![
     ///     vertex!([0.0, 0.0]),
     ///     vertex!([1.0, 0.0]),
@@ -1054,10 +1055,11 @@ where
     /// # Examples
     ///
     /// ```rust
-    /// use delaunay::prelude::triangulation::DelaunayTriangulationBuilder;
-    /// use delaunay::vertex;
+    /// use delaunay::prelude::triangulation::construction::{
+    ///     DelaunayTriangulationBuilder, vertex,
+    /// };
     ///
-    /// # fn main() -> Result<(), delaunay::prelude::triangulation::DelaunayTriangulationConstructionError> {
+    /// # fn main() -> Result<(), delaunay::prelude::triangulation::construction::DelaunayTriangulationConstructionError> {
     /// let vertices = vec![
     ///     vertex!([0.0, 0.0, 0.0]),
     ///     vertex!([1.0, 0.0, 0.0]),
@@ -1107,10 +1109,11 @@ where
     ///
     /// ```rust
     /// use delaunay::prelude::geometry::RobustKernel;
-    /// use delaunay::prelude::triangulation::DelaunayTriangulationBuilder;
-    /// use delaunay::vertex;
+    /// use delaunay::prelude::triangulation::construction::{
+    ///     DelaunayTriangulationBuilder, vertex,
+    /// };
     ///
-    /// # fn main() -> Result<(), delaunay::prelude::triangulation::DelaunayTriangulationConstructionError> {
+    /// # fn main() -> Result<(), delaunay::prelude::triangulation::construction::DelaunayTriangulationConstructionError> {
     /// let vertices = vec![
     ///     vertex!([0.0, 0.0, 0.0]),
     ///     vertex!([1.0, 0.0, 0.0]),

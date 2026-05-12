@@ -1,3 +1,5 @@
+#![forbid(unsafe_code)]
+
 //! # Numerical Robustness Example
 //!
 //! This example accompanies `docs/numerical_robustness_guide.md`.
@@ -9,10 +11,10 @@ use delaunay::prelude::geometry::{
     AdaptiveKernel, CircumcenterError, Coordinate, CoordinateConversionError, FastKernel, Kernel,
     Point, RobustKernel, robust_insphere, robust_orientation,
 };
-use delaunay::prelude::triangulation::{
+use delaunay::prelude::triangulation::construction::{
     DelaunayTriangulation, DelaunayTriangulationConstructionError,
-    DelaunayTriangulationValidationError,
 };
+use delaunay::prelude::triangulation::validation::DelaunayTriangulationValidationError;
 use delaunay::vertex;
 
 #[derive(Debug, thiserror::Error)]

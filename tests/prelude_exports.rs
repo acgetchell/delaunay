@@ -30,25 +30,27 @@ use delaunay::prelude::ordering::{
 use delaunay::prelude::query::ConvexHull;
 #[cfg(feature = "diagnostics")]
 use delaunay::prelude::tds::Tds;
+use delaunay::prelude::triangulation::construction::{
+    ConstructionOptions, ConstructionSkipSample, ConstructionSlowInsertionSample,
+    DelaunayConstructionFailure, DelaunayRepairPolicy, DelaunayTriangulation,
+    DelaunayTriangulationConstructionError, InsertionOrderStrategy, Vertex,
+};
 use delaunay::prelude::triangulation::delaunayize::{
     DelaunayizeConfig, DelaunayizeError, DelaunayizeOutcome, delaunayize_by_flips,
 };
+use delaunay::prelude::triangulation::diagnostics::ConstructionTelemetry;
 use delaunay::prelude::triangulation::flips::{BistellarFlips, TopologyGuarantee};
 use delaunay::prelude::triangulation::insertion::{
     InsertionError, NeighborRebuildError, Tds as InsertionTds, TdsMutationError,
     repair_neighbor_pointers_local,
 };
 use delaunay::prelude::triangulation::repair::{
-    DelaunayCheckPolicy, DelaunayRepairDiagnostics, DelaunayRepairError, DelaunayRepairOutcome,
-    DelaunayRepairPolicy, DelaunayRepairStats, FlipEdgeAdjacencyError, FlipError,
-    FlipTriangleAdjacencyError, FlipVertexAdjacencyError, RepairQueueOrder,
-    verify_delaunay_for_triangulation,
+    DelaunayCheckPolicy, DelaunayRepairDiagnostics, DelaunayRepairError, DelaunayRepairOperation,
+    DelaunayRepairOutcome, DelaunayRepairStats, DelaunayTriangulationValidationError,
+    FlipEdgeAdjacencyError, FlipError, FlipTriangleAdjacencyError, FlipVertexAdjacencyError,
+    RepairQueueOrder, verify_delaunay_for_triangulation,
 };
-use delaunay::prelude::triangulation::{
-    ConstructionOptions, DelaunayConstructionFailure, DelaunayRepairOperation,
-    DelaunayTriangulation, DelaunayTriangulationConstructionError,
-    DelaunayTriangulationValidationError, InsertionOrderStrategy, Vertex,
-};
+use delaunay::prelude::triangulation::validation::ValidationCadence;
 use delaunay::vertex;
 
 #[derive(Debug, thiserror::Error)]
@@ -84,6 +86,10 @@ fn preludes_cover_bench_apis() -> Result<(), PreludeExportTestError> {
     ];
     let options =
         ConstructionOptions::default().with_insertion_order(InsertionOrderStrategy::Input);
+    assert!(matches!(
+        options.batch_repair_policy(),
+        DelaunayRepairPolicy::EveryInsertion
+    ));
     let dt = DelaunayTriangulation::new_with_options(&vertices, options)?;
 
     assert_eq!(dt.topology_guarantee(), TopologyGuarantee::PLManifold);
@@ -104,8 +110,16 @@ fn preludes_cover_bench_apis() -> Result<(), PreludeExportTestError> {
         DelaunayConstructionFailure::GeometricDegeneracy { .. }
     ));
     assert!(matches!(LocateResult::Outside, LocateResult::Outside));
+    assert!(matches!(
+        ValidationCadence::from_optional_every(Some(128)),
+        ValidationCadence::EveryN(every) if every.get() == 128
+    ));
     assert_send_sync_unpin::<TdsMutationError>();
     assert_send_sync_unpin::<NeighborRebuildError>();
+    assert_send_sync_unpin::<ConstructionSkipSample>();
+    assert_send_sync_unpin::<ConstructionSlowInsertionSample>();
+    let telemetry = ConstructionTelemetry::default();
+    assert!(!telemetry.has_data());
     Ok(())
 }
 

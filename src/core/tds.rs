@@ -3556,6 +3556,100 @@ where
         Ok(())
     }
 
+    /// Validates coherent orientation for cells touched by a local mutation.
+    ///
+    /// This checks every adjacency owned by `cells`, including adjacencies to
+    /// cells outside the supplied slice. It is intended for insertion and local
+    /// repair paths that already know the mutation frontier and want Level-2
+    /// orientation safety without a full-TDS traversal.
+    pub(crate) fn validate_coherent_orientation_for_cells(
+        &self,
+        cells: &[CellKey],
+    ) -> Result<(), TdsError> {
+        for &cell_key in cells {
+            let cell = self
+                .cells
+                .get(cell_key)
+                .ok_or_else(|| TdsError::CellNotFound {
+                    cell_key,
+                    context: "local orientation validation scope".to_string(),
+                })?;
+            let Some(neighbors) = cell.neighbors() else {
+                continue;
+            };
+
+            for (facet_idx, neighbor_key_opt) in neighbors.iter().enumerate() {
+                let Some(neighbor_key) = *neighbor_key_opt else {
+                    continue;
+                };
+                if neighbor_key == cell_key && Self::allows_periodic_self_neighbor(cell) {
+                    continue;
+                }
+
+                let neighbor_cell =
+                    self.cells
+                        .get(neighbor_key)
+                        .ok_or_else(|| TdsError::CellNotFound {
+                            cell_key: neighbor_key,
+                            context: format!(
+                                "neighbor of cell {cell_key:?} during local orientation validation",
+                            ),
+                        })?;
+
+                if cell.periodic_vertex_offsets().is_some()
+                    || neighbor_cell.periodic_vertex_offsets().is_some()
+                {
+                    continue;
+                }
+
+                let mirror_idx = cell.mirror_facet_index(facet_idx, neighbor_cell).ok_or_else(
+                    || TdsError::InvalidNeighbors {
+                        message: format!(
+                            "Could not determine mirror facet while validating local orientation: cell {:?}[{facet_idx}] -> neighbor {:?}",
+                            cell.uuid(),
+                            neighbor_cell.uuid(),
+                        ),
+                    },
+                )?;
+                let has_back_reference = neighbor_cell
+                    .neighbors()
+                    .and_then(|neighbors| neighbors.get(mirror_idx))
+                    .is_some_and(|back_ref| *back_ref == Some(cell_key));
+                if !has_back_reference {
+                    return Err(TdsError::InvalidNeighbors {
+                        message: format!(
+                            "Cell {:?}[{facet_idx}] neighbor {:?}[{mirror_idx}] does not reference back to the cell during local orientation validation",
+                            cell.uuid(),
+                            neighbor_cell.uuid(),
+                        ),
+                    });
+                }
+
+                let cell1_facet_vertices = Self::facet_vertices_in_cell_order(cell, facet_idx)?;
+                let cell2_facet_vertices =
+                    Self::facet_vertices_in_cell_order(neighbor_cell, mirror_idx)?;
+                let (coherent, observed_odd_permutation, expected_odd_permutation) =
+                    Self::facet_permutation_parity(cell, facet_idx, neighbor_cell, mirror_idx)?;
+                if !coherent {
+                    return Err(TdsError::OrientationViolation {
+                        cell1_key: cell_key,
+                        cell1_uuid: cell.uuid(),
+                        cell2_key: neighbor_key,
+                        cell2_uuid: neighbor_cell.uuid(),
+                        cell1_facet_index: facet_idx,
+                        cell2_facet_index: mirror_idx,
+                        facet_vertices: cell1_facet_vertices.into_iter().collect(),
+                        cell2_facet_vertices: cell2_facet_vertices.into_iter().collect(),
+                        observed_odd_permutation,
+                        expected_odd_permutation,
+                    });
+                }
+            }
+        }
+
+        Ok(())
+    }
+
     /// Builds a `FacetToCellsMap` with strict error handling.
     ///
     /// This method returns an error if any cell has missing vertex keys, ensuring
@@ -7079,6 +7173,54 @@ mod tests {
             TdsError::InvalidNeighbors { message } if message.contains("expected back-reference")
         ));
         assert!(!tds.is_coherently_oriented());
+    }
+
+    #[test]
+    fn test_local_orientation_validation_checks_neighbors_outside_scope() {
+        let mut tds: Tds<f64, (), (), 2> = Tds::empty();
+
+        let v0 = tds.insert_vertex_with_mapping(vertex!([1.0, 0.0])).unwrap();
+        let v1 = tds.insert_vertex_with_mapping(vertex!([0.0, 1.0])).unwrap();
+        let v2 = tds.insert_vertex_with_mapping(vertex!([2.0, 2.0])).unwrap();
+        let v3 = tds.insert_vertex_with_mapping(vertex!([3.0, 3.0])).unwrap();
+
+        let cell1_key = tds
+            .insert_cell_with_mapping(Cell::new(vec![v0, v1, v2], None).unwrap())
+            .unwrap();
+        let _ = tds
+            .insert_cell_with_mapping(Cell::new(vec![v0, v1, v3], None).unwrap())
+            .unwrap();
+        tds.assign_neighbors().unwrap();
+
+        let err = tds
+            .validate_coherent_orientation_for_cells(&[cell1_key])
+            .unwrap_err();
+        assert!(matches!(err, TdsError::OrientationViolation { .. }));
+    }
+
+    #[test]
+    fn test_local_orientation_validation_errors_on_missing_scope_cell() {
+        let mut tds: Tds<f64, (), (), 2> = Tds::empty();
+
+        let v0 = tds.insert_vertex_with_mapping(vertex!([0.0, 0.0])).unwrap();
+        let v1 = tds.insert_vertex_with_mapping(vertex!([1.0, 0.0])).unwrap();
+        let v2 = tds.insert_vertex_with_mapping(vertex!([0.0, 1.0])).unwrap();
+
+        let cell_key = tds
+            .insert_cell_with_mapping(Cell::new(vec![v0, v1, v2], None).unwrap())
+            .unwrap();
+        assert_eq!(tds.remove_cells_by_keys(&[cell_key]), 1);
+
+        let err = tds
+            .validate_coherent_orientation_for_cells(&[cell_key])
+            .unwrap_err();
+        assert!(matches!(
+            err,
+            TdsError::CellNotFound {
+                cell_key: missing_key,
+                ..
+            } if missing_key == cell_key
+        ));
     }
 
     macro_rules! test_normalize_repairs_incoherent_adjacent_pair {

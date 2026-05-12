@@ -245,9 +245,11 @@ identifying *visible* boundary facets and retriangulating the visible region.
 
 ### Degenerate input and initial simplex construction
 
-Construction begins by creating an initial simplex from the first `D+1` affinely independent
-vertices. If no non-degenerate simplex can be formed (e.g., collinear points in 2D, coplanar in 3D),
-construction fails with a geometric degeneracy error.
+Construction begins by creating an initial simplex from `D+1` affinely independent real input
+vertices. The default batch constructor searches a bounded pool of extreme vertices for a
+large-volume simplex before falling back to the selected insertion order. If no non-degenerate
+simplex can be formed (e.g., collinear points in 2D, coplanar in 3D), construction fails with a
+geometric degeneracy error.
 
 This early degeneracy detection is intentional: it prevents building a combinatorial structure whose
 geometric interpretation is undefined.
