@@ -88,7 +88,7 @@ The convenience constructors (`DelaunayTriangulation::new()`, `::empty()`, etc.)
 
 ```rust
 use delaunay::prelude::geometry::RobustKernel;
-use delaunay::prelude::triangulation::*;
+use delaunay::prelude::triangulation::construction::{DelaunayTriangulation, vertex};
 
 let kernel = RobustKernel::<f64>::new();
 
@@ -165,7 +165,8 @@ cases involve cavity/topology failures rather than predicate degeneracies.
 Use `insert_with_statistics()` to observe this behavior:
 
 ```rust
-use delaunay::prelude::triangulation::*;
+use delaunay::prelude::triangulation::construction::{DelaunayTriangulation, vertex};
+use delaunay::prelude::triangulation::insertion::InsertionOutcome;
 
 let mut dt: DelaunayTriangulation<_, (), (), 3> = DelaunayTriangulation::empty();
 
@@ -319,10 +320,12 @@ and per-insertion checks handle any remaining cases.
   This handles near-degenerate configurations correctly out of the box.
 - If you need explicit `BOUNDARY`/`DEGENERATE` signals (e.g. to detect and handle cospherical
   configurations yourself), switch to `RobustKernel`.
-- If you use `FastKernel` for 2D performance, consider setting
-  `DelaunayRepairPolicy::EveryN(n)` (e.g. `n = 10`) instead of the default `EveryInsertion`.
-  This reduces the frequency of the automatic robust-fallback repair pass while still
-  maintaining the Delaunay property periodically. Note that the explicit repair methods
+- If you use `FastKernel` for direct incremental insertion, consider setting
+  `DelaunayRepairPolicy::EveryN(n)` (e.g. `n = 10`) instead of the incremental default
+  `EveryInsertion`. Batch construction already uses a cadenced `ConstructionOptions`
+  repair default with final repair/validation. This reduces the frequency of the automatic
+  robust-fallback repair pass while still maintaining the Delaunay property periodically.
+  Note that the explicit repair methods
   (`repair_delaunay_with_flips`, etc.) are not available with `FastKernel` — use
   `AdaptiveKernel` or `RobustKernel` if you need manual repair control.
 - If you see retryable insertion errors, frequent perturbation retries, or skipped vertices,

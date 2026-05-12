@@ -233,8 +233,8 @@ coverage-ci: _ensure-cargo-llvm-cov
     mkdir -p coverage
     cargo llvm-cov {{_coverage_base_args}} --cobertura --output-path coverage/cobertura.xml -- --skip prop_
 
-debug-large-scale-3d n="10000":
-    DELAUNAY_BULK_PROGRESS_EVERY=100 DELAUNAY_LARGE_DEBUG_MAX_RUNTIME_SECS=1800 DELAUNAY_LARGE_DEBUG_N_3D={{n}} cargo test --release --test large_scale_debug debug_large_scale_3d -- --ignored --exact --nocapture
+debug-large-scale-3d n="10000" repair_every="1":
+    DELAUNAY_BULK_PROGRESS_EVERY=100 DELAUNAY_LARGE_DEBUG_MAX_RUNTIME_SECS=1800 DELAUNAY_LARGE_DEBUG_N_3D={{n}} DELAUNAY_LARGE_DEBUG_REPAIR_EVERY={{repair_every}} cargo test --release --test large_scale_debug debug_large_scale_3d -- --ignored --exact --nocapture
 
 debug-large-scale-4d n="3000":
     DELAUNAY_BULK_PROGRESS_EVERY=100 DELAUNAY_LARGE_DEBUG_MAX_RUNTIME_SECS=1800 DELAUNAY_LARGE_DEBUG_N_4D={{n}} cargo test --release --test large_scale_debug debug_large_scale_4d -- --ignored --exact --nocapture
@@ -281,7 +281,7 @@ help-workflows:
     @echo "Active large-scale debugging:"
     @echo "  just test-diagnostics      # Run diagnostics tools with output"
     @echo "  just debug-large-scale-4d [n] # Issue #340: 4D large-scale runtime (default n=3000)"
-    @echo "  just debug-large-scale-3d [n] # Issue #341: 3D scalability (default n=10000)"
+    @echo "  just debug-large-scale-3d [n] [repair_every] # Issue #341: 3D scalability (defaults n=10000, repair_every=1)"
     @echo "  just debug-large-scale-5d [n] # Issue #342: 5D feasibility (default n=1000)"
     @echo ""
     @echo "Benchmark workflows:"

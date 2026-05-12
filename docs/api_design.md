@@ -60,7 +60,7 @@ The library provides two distinct APIs for different use cases:
 For most use cases, the simple constructor is sufficient:
 
 ```rust
-use delaunay::prelude::triangulation::*;
+use delaunay::prelude::triangulation::construction::{DelaunayTriangulation, vertex};
 
 // Simple construction from vertices (Euclidean space, default options)
 let vertices = vec![
@@ -87,7 +87,7 @@ For advanced configuration (toroidal topology, custom validation policies, etc.)
 use `DelaunayTriangulationBuilder`:
 
 ```rust
-use delaunay::prelude::triangulation::*;
+use delaunay::prelude::triangulation::construction::{DelaunayTriangulationBuilder, vertex};
 
 // Toroidal (periodic) triangulation in 2D
 let vertices = vec![
@@ -148,7 +148,7 @@ for topology guarantee and validation policy details.
 The Edit API is exposed through the `BistellarFlips` trait in `prelude::triangulation::flips`:
 
 ```rust
-use delaunay::prelude::triangulation::*;
+use delaunay::prelude::triangulation::construction::{DelaunayTriangulation, vertex};
 use delaunay::prelude::triangulation::flips::*;
 
 // Start with a valid triangulation
@@ -257,7 +257,7 @@ After applying flips, you should:
 You can mix both APIs in the same workflow:
 
 ```rust
-use delaunay::prelude::triangulation::*;
+use delaunay::prelude::triangulation::construction::{DelaunayTriangulation, vertex};
 use delaunay::prelude::triangulation::flips::*;
 
 // 1. Build initial triangulation (Builder API)

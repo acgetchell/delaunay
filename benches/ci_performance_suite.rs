@@ -1,3 +1,5 @@
+#![forbid(unsafe_code)]
+
 //! CI Performance Suite - optimized performance regression testing for CI/CD
 //!
 //! This benchmark is the small, durable performance contract for the delaunay
@@ -36,11 +38,11 @@ use delaunay::prelude::geometry::{
     AdaptiveKernel, Coordinate, Point, RobustKernel, simplex_volume,
 };
 use delaunay::prelude::query::ConvexHull;
+use delaunay::prelude::triangulation::construction::{
+    ConstructionOptions, DelaunayTriangulation, InsertionOrderStrategy, RetryPolicy, Vertex,
+};
 use delaunay::prelude::triangulation::flips::{
     BistellarFlips, CellKey, EdgeKey, FacetHandle, RidgeHandle, TopologyGuarantee, TriangleHandle,
-};
-use delaunay::prelude::triangulation::{
-    ConstructionOptions, DelaunayTriangulation, InsertionOrderStrategy, RetryPolicy, Vertex,
 };
 use delaunay::vertex;
 use std::{env, hint::black_box, num::NonZeroUsize, sync::Once};

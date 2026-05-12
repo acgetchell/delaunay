@@ -49,7 +49,7 @@
 //!
 //! | Task | Import |
 //! |---|---|
-//! | Build a triangulation, insert/remove vertices | `use delaunay::prelude::triangulation::*` |
+//! | Construct/configure a Delaunay triangulation | `use delaunay::prelude::triangulation::construction::*` |
 //! | Low-level incremental insertion building blocks | `use delaunay::prelude::triangulation::insertion::*` |
 //! | Read-only queries, traversal, convex hull | `use delaunay::prelude::query::*` |
 //! | Point location and conflict-region algorithms | `use delaunay::prelude::algorithms::*` |
@@ -59,10 +59,13 @@
 //! | Bistellar flips (Pachner moves) | `use delaunay::prelude::triangulation::flips::*` |
 //! | Delaunay repair and flip-based Level 4 validation | `use delaunay::prelude::triangulation::repair::*` |
 //! | Delaunayize workflow (repair + flip) | `use delaunay::prelude::triangulation::delaunayize::*` |
+//! | Construction telemetry diagnostics | `use delaunay::prelude::triangulation::diagnostics::*` |
+//! | Construction validation cadence/policy | `use delaunay::prelude::triangulation::validation::*` |
 //! | Topology validation, Euler characteristic | `use delaunay::prelude::topology::validation::*` |
 //! | Topological spaces and topology traits | `use delaunay::prelude::topology::spaces::*` |
 //! | Low-level TDS cells, facets, keys | `use delaunay::prelude::tds::*` |
 //! | Collection types (`FastHashMap`, etc.) | `use delaunay::prelude::collections::*` |
+//! | Legacy broad triangulation import | `use delaunay::prelude::triangulation::*` |
 //! | Everything (kitchen sink) | `use delaunay::prelude::*` |
 //!
 //! ## Examples (contract-oriented)
@@ -70,7 +73,10 @@
 //! ### Validation hierarchy (Levels 1–4)
 //!
 //! ```rust
-//! use delaunay::prelude::triangulation::*;
+//! use delaunay::prelude::triangulation::construction::{
+//!     DelaunayTriangulationBuilder, DelaunayTriangulationConstructionError, vertex,
+//! };
+//! use delaunay::prelude::triangulation::insertion::InsertionError;
 //!
 //! # fn main() -> Result<(), DelaunayTriangulationConstructionError> {
 //! let vertices = vec![
@@ -99,7 +105,11 @@
 //! ### Topology guarantees and insertion-time validation (`TopologyGuarantee`, `ValidationPolicy`)
 //!
 //! ```rust
-//! use delaunay::prelude::triangulation::*;
+//! use delaunay::prelude::triangulation::construction::{
+//!     DelaunayTriangulationBuilder, DelaunayTriangulationConstructionError, TopologyGuarantee,
+//!     vertex,
+//! };
+//! use delaunay::prelude::triangulation::validation::ValidationPolicy;
 //!
 //! # fn main() -> Result<(), DelaunayTriangulationConstructionError> {
 //! let vertices = vec![
@@ -125,7 +135,10 @@
 //! ### Transactional operations and duplicate rejection
 //!
 //! ```rust
-//! use delaunay::prelude::triangulation::*;
+//! use delaunay::prelude::triangulation::construction::{
+//!     DelaunayTriangulationBuilder, DelaunayTriangulationConstructionError, vertex,
+//! };
+//! use delaunay::prelude::triangulation::insertion::InsertionError;
 //!
 //! # fn main() -> Result<(), DelaunayTriangulationConstructionError> {
 //! let vertices = vec![
@@ -227,7 +240,11 @@
 //! This automatic pass only runs Level 3 (`Triangulation::is_valid()`). It does **not** run Level 4.
 //!
 //! ```rust
-//! use delaunay::prelude::triangulation::*;
+//! use delaunay::prelude::triangulation::construction::{
+//!     DelaunayTriangulation, DelaunayTriangulationConstructionError, vertex,
+//! };
+//! use delaunay::prelude::triangulation::insertion::InsertionError;
+//! use delaunay::prelude::triangulation::validation::ValidationPolicy;
 //!
 //! # #[derive(Debug, thiserror::Error)]
 //! # enum ExampleError {
@@ -281,7 +298,9 @@
 //!   you may want to validate the Delaunay property explicitly for near-degenerate inputs.
 //!
 //! ```rust
-//! use delaunay::prelude::triangulation::*;
+//! use delaunay::prelude::triangulation::construction::{
+//!     DelaunayTriangulationBuilder, DelaunayTriangulationConstructionError, vertex,
+//! };
 //!
 //! # fn main() -> Result<(), DelaunayTriangulationConstructionError> {
 //! let vertices = vec![
@@ -300,7 +319,9 @@
 //! ```
 //!
 //! ```rust
-//! use delaunay::prelude::triangulation::*;
+//! use delaunay::prelude::triangulation::construction::{
+//!     DelaunayTriangulationBuilder, DelaunayTriangulationConstructionError, vertex,
+//! };
 //!
 //! # fn main() -> Result<(), DelaunayTriangulationConstructionError> {
 //! let vertices = vec![
@@ -333,8 +354,10 @@
 //! - **Explicit verification**: Use `dt.validate()` for cumulative verification (Levels 1–4), or
 //!   `dt.is_valid()` for Level 4 only.
 
-// Allow multiple crate versions due to transitive dependencies
-#![expect(clippy::multiple_crate_versions)]
+#![expect(
+    clippy::multiple_crate_versions,
+    reason = "transitive dependency versions are controlled by upstream crates"
+)]
 // Temporarily allow deprecated warnings during API migrations.
 // - Historical Facet -> FacetView and Tds construction migrations
 // - DelaunayTriangulation::as_triangulation_mut() removal planned for v0.8.0
@@ -782,25 +805,7 @@ pub mod geometry {
     pub use util::*;
 }
 
-/// Triangulation-facing APIs.
-///
-/// This module groups public APIs that operate on triangulations, such as explicit
-/// bistellar (Pachner) flip operations.
-pub mod triangulation {
-    /// Fluent builder for [`DelaunayTriangulation`] with optional toroidal topology.
-    pub mod builder;
-    /// Delaunay triangulation layer with incremental insertion.
-    pub mod delaunay;
-    /// End-to-end "repair then delaunayize" workflow.
-    pub mod delaunayize;
-    /// Triangulation editing operations (bistellar flips).
-    pub mod flips;
-
-    // Re-export commonly used triangulation types for discoverability.
-    pub use crate::core::triangulation::Triangulation;
-    pub use crate::triangulation::builder::DelaunayTriangulationBuilder;
-    pub use crate::triangulation::delaunay::DelaunayTriangulation;
-}
+pub mod triangulation;
 
 /// Topology analysis and validation for triangulated spaces.
 ///
@@ -823,7 +828,9 @@ pub mod triangulation {
 /// # Example
 ///
 /// ```rust
-/// use delaunay::prelude::triangulation::*;
+/// use delaunay::prelude::triangulation::construction::{
+///     DelaunayTriangulation, DelaunayTriangulationConstructionError, vertex,
+/// };
 /// use delaunay::prelude::topology::validation;
 ///
 /// # #[derive(Debug, thiserror::Error)]
@@ -976,6 +983,57 @@ pub mod prelude {
         pub use crate::triangulation::builder::*;
         pub use crate::triangulation::delaunay::*;
 
+        /// Batch construction options, builders, and construction errors.
+        ///
+        /// This focused prelude is for callers configuring Delaunay construction
+        /// without importing the broader triangulation editing and repair
+        /// surface.
+        ///
+        /// # Examples
+        ///
+        /// ```rust
+        /// use delaunay::prelude::triangulation::construction::{
+        ///     DelaunayTriangulationBuilder, DelaunayTriangulationConstructionError, vertex,
+        /// };
+        ///
+        /// # fn main() -> Result<(), DelaunayTriangulationConstructionError> {
+        /// let vertices = vec![
+        ///     vertex!([0.0, 0.0]),
+        ///     vertex!([1.0, 0.0]),
+        ///     vertex!([0.0, 1.0]),
+        /// ];
+        /// let triangulation = DelaunayTriangulationBuilder::new(&vertices)
+        ///     .build::<()>()?;
+        ///
+        /// assert_eq!(triangulation.number_of_vertices(), 3);
+        /// # Ok(())
+        /// # }
+        /// ```
+        pub mod construction {
+            pub use crate::core::triangulation::{
+                TopologyGuarantee, Triangulation, TriangulationConstructionError,
+            };
+            pub use crate::core::vertex::{
+                Vertex, VertexBuilder, VertexBuilderError, VertexValidationError,
+            };
+            pub use crate::topology::traits::{
+                GlobalTopology, TopologyKind, ToroidalConstructionMode,
+            };
+            pub use crate::triangulation::builder::{
+                DelaunayTriangulationBuilder, ExplicitConstructionError,
+            };
+            pub use crate::triangulation::delaunay::{
+                ConstructionOptions, ConstructionSkipSample, ConstructionSlowInsertionSample,
+                ConstructionStatistics, DedupPolicy, DelaunayConstructionFailure,
+                DelaunayConstructionRepairPhase, DelaunayRepairPolicy, DelaunayTriangulation,
+                DelaunayTriangulationConstructionError,
+                DelaunayTriangulationConstructionErrorWithStatistics, InitialSimplexStrategy,
+                InsertionOrderStrategy, RetryPolicy,
+            };
+            // Convenience macro (commonly used in docs/examples).
+            pub use crate::vertex;
+        }
+
         /// Bistellar (Pachner) flips for explicit triangulation editing.
         pub mod flips {
             pub use crate::core::algorithms::flips::*;
@@ -1027,7 +1085,8 @@ pub mod prelude {
             pub use crate::core::util::{DelaunayValidationError, find_delaunay_violations};
             pub use crate::triangulation::delaunay::{
                 DelaunayCheckPolicy, DelaunayRepairHeuristicConfig, DelaunayRepairHeuristicSeeds,
-                DelaunayRepairOutcome, DelaunayRepairPolicy, DelaunayTriangulation,
+                DelaunayRepairOperation, DelaunayRepairOutcome, DelaunayRepairPolicy,
+                DelaunayTriangulation, DelaunayTriangulationValidationError,
             };
 
             // Convenience macro (commonly used in docs/examples).
@@ -1048,6 +1107,39 @@ pub mod prelude {
 
             // Convenience macro (commonly used in docs/examples).
             pub use crate::vertex;
+        }
+
+        /// Construction telemetry diagnostics.
+        ///
+        /// # Examples
+        ///
+        /// ```rust
+        /// use delaunay::prelude::triangulation::diagnostics::ConstructionTelemetry;
+        ///
+        /// let telemetry = ConstructionTelemetry::default();
+        /// assert!(!telemetry.has_data());
+        /// ```
+        pub mod diagnostics {
+            pub use crate::triangulation::diagnostics::{
+                BatchLocalRepairTrigger, ConstructionTelemetry, LocalRepairSample,
+            };
+        }
+
+        /// Validation scheduling helpers for construction diagnostics.
+        ///
+        /// # Examples
+        ///
+        /// ```rust
+        /// use delaunay::prelude::triangulation::validation::ValidationCadence;
+        ///
+        /// let cadence = ValidationCadence::from_optional_every(Some(32));
+        /// assert!(!cadence.should_validate(31));
+        /// assert!(cadence.should_validate(32));
+        /// ```
+        pub mod validation {
+            pub use crate::core::triangulation::{TriangulationValidationError, ValidationPolicy};
+            pub use crate::triangulation::delaunay::DelaunayTriangulationValidationError;
+            pub use crate::triangulation::validation::*;
         }
 
         pub use crate::core::algorithms::incremental_insertion::{

@@ -12,8 +12,10 @@
 
 use delaunay::core::tds::{Tds, TdsError};
 use delaunay::prelude::geometry::*;
-use delaunay::prelude::triangulation::*;
-use delaunay::triangulation::delaunay::DelaunayTriangulation;
+use delaunay::prelude::triangulation::construction::{
+    DelaunayTriangulation, TopologyGuarantee, Vertex,
+};
+use delaunay::prelude::triangulation::insertion::InsertionOutcome;
 use proptest::prelude::*;
 
 /// Strategy for generating finite `f64` coordinates in a reasonable range.

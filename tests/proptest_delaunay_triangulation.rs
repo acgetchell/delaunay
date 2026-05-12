@@ -33,7 +33,12 @@
 
 use delaunay::geometry::kernel::{AdaptiveKernel, RobustKernel};
 use delaunay::prelude::geometry::*;
-use delaunay::prelude::triangulation::*;
+use delaunay::prelude::triangulation::construction::{
+    ConstructionOptions, DedupPolicy, DelaunayRepairPolicy, DelaunayTriangulation,
+    TopologyGuarantee, Vertex, vertex,
+};
+use delaunay::prelude::triangulation::insertion::InsertionOutcome;
+use delaunay::prelude::triangulation::validation::ValidationPolicy;
 use proptest::prelude::*;
 use rand::{SeedableRng, seq::SliceRandom};
 

@@ -191,6 +191,14 @@ just check
 just ci
 ```
 
+Codex sandbox shells may not include Homebrew on `PATH`. When a validation
+recipe or direct tooling command needs `uv`, prefer:
+
+```bash
+PATH=/opt/homebrew/bin:$PATH just check
+/opt/homebrew/bin/uv run pytest scripts/tests
+```
+
 Refer to `docs/dev/commands.md` for full details.
 
 For tooling-alignment work, update `docs/dev/tooling-alignment.md` with the

@@ -230,6 +230,74 @@ impl InsertionStatistics {
     }
 }
 
+/// Release-visible telemetry for one transactional insertion.
+///
+/// These counters are intended for aggregate diagnostics rather than stable performance
+/// benchmarking. They let batch construction report whether insertion time is dominated by
+/// point location, scan fallbacks, local conflict regions, or global exterior-point scans.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub(crate) struct InsertionTelemetry {
+    /// Number of point-location calls performed for this insertion.
+    pub locate_calls: usize,
+    /// Total facet-walk steps across all point-location calls.
+    pub locate_walk_steps_total: usize,
+    /// Maximum facet-walk steps taken by a single point-location call.
+    pub locate_walk_steps_max: usize,
+    /// Number of point-location calls that used the caller-provided hint.
+    pub locate_hint_uses: usize,
+    /// Number of point-location calls that fell back to a brute-force scan.
+    pub locate_scan_fallbacks: usize,
+    /// Number of point-location calls that ended inside a cell.
+    pub located_inside: usize,
+    /// Number of point-location calls that ended outside the convex hull.
+    pub located_outside: usize,
+    /// Number of point-location calls that ended on a lower-dimensional feature.
+    pub located_on_boundary: usize,
+
+    /// Number of local conflict-region computations observed by insertion.
+    pub conflict_region_calls: usize,
+    /// Total number of cells in local conflict regions.
+    pub conflict_region_cells_total: usize,
+    /// Maximum number of cells in a single local conflict region.
+    pub conflict_region_cells_max: usize,
+    /// Wall-clock nanoseconds spent computing local conflict regions.
+    pub conflict_region_nanos: u64,
+    /// Maximum wall-clock nanoseconds spent computing one local conflict region.
+    pub conflict_region_nanos_max: u64,
+
+    /// Number of cavity insertion attempts observed by insertion.
+    pub cavity_insertion_calls: usize,
+    /// Wall-clock nanoseconds spent filling cavities and wiring neighbors.
+    pub cavity_insertion_nanos: u64,
+    /// Maximum wall-clock nanoseconds spent in one cavity insertion attempt.
+    pub cavity_insertion_nanos_max: u64,
+
+    /// Number of hull extension attempts observed by insertion.
+    pub hull_extension_calls: usize,
+    /// Wall-clock nanoseconds spent extending the convex hull.
+    pub hull_extension_nanos: u64,
+    /// Maximum wall-clock nanoseconds spent in one hull extension attempt.
+    pub hull_extension_nanos_max: u64,
+
+    /// Number of post-insertion topology validations observed by insertion.
+    pub topology_validation_calls: usize,
+    /// Wall-clock nanoseconds spent in post-insertion topology validation.
+    pub topology_validation_nanos: u64,
+    /// Maximum wall-clock nanoseconds spent in one post-insertion validation.
+    pub topology_validation_nanos_max: u64,
+
+    /// Number of global exterior-point conflict scans.
+    pub global_conflict_scans: usize,
+    /// Total cells scanned by global exterior-point conflict scans.
+    pub global_conflict_cells_scanned: usize,
+    /// Total cells found by global exterior-point conflict scans.
+    pub global_conflict_cells_found_total: usize,
+    /// Maximum cells found by a single global exterior-point conflict scan.
+    pub global_conflict_cells_found_max: usize,
+    /// Wall-clock nanoseconds spent in global exterior-point conflict scans.
+    pub global_conflict_scan_nanos: u64,
+}
+
 /// Ephemeral insertion state used by Delaunay triangulations.
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct DelaunayInsertionState {
@@ -399,6 +467,15 @@ mod tests {
         let decision =
             DelaunayRepairPolicy::EveryInsertion.decide(1, TopologyGuarantee::PLManifold, op);
         assert!(matches!(decision, RepairDecision::Proceed));
+
+        let decision =
+            DelaunayRepairPolicy::EveryInsertion.decide(0, TopologyGuarantee::PLManifold, op);
+        assert!(matches!(
+            decision,
+            RepairDecision::Skip {
+                reason: RepairSkipReason::PolicyDisabled
+            }
+        ));
 
         let decision =
             DelaunayRepairPolicy::EveryInsertion.decide(1, TopologyGuarantee::Pseudomanifold, op);

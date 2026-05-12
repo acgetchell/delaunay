@@ -1648,20 +1648,23 @@ impl<T, U, V, const D: usize> Hash for Cell<T, U, V, D> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::core::triangulation::TopologyGuarantee;
     use crate::core::vertex::vertex;
+    use crate::geometry::kernel::AdaptiveKernel;
     use crate::geometry::point::Point;
     use crate::geometry::predicates::insphere;
     use crate::geometry::util::{circumcenter, circumradius, circumradius_with_center};
+    use crate::prelude::DelaunayTriangulation;
+    use crate::triangulation::builder::DelaunayTriangulationBuilder;
+    use crate::triangulation::delaunay::{
+        ConstructionOptions, InitialSimplexStrategy, InsertionOrderStrategy,
+    };
     use approx::assert_relative_eq;
     use std::{cmp, collections::hash_map::DefaultHasher, hash::Hasher};
 
     // Type aliases for commonly used types to reduce repetition
     type TestVertex3D = Vertex<f64, (), 3>;
     type TestVertex2D = Vertex<f64, (), 2>;
-
-    use crate::geometry::kernel::AdaptiveKernel;
-    use crate::prelude::DelaunayTriangulation;
-    use crate::triangulation::builder::DelaunayTriangulationBuilder;
 
     struct NonDataType(String);
 
@@ -2546,8 +2549,17 @@ mod tests {
 
         // Note: DelaunayTriangulation::new() creates AdaptiveKernel<f64> by default;
         // use with_kernel to get AdaptiveKernel<f32> for f32 vertices
+        let options = ConstructionOptions::default()
+            .with_insertion_order(InsertionOrderStrategy::Input)
+            .with_initial_simplex_strategy(InitialSimplexStrategy::First);
         let dt: DelaunayTriangulation<AdaptiveKernel<f32>, (), (), 3> =
-            DelaunayTriangulation::with_kernel(&AdaptiveKernel::new(), &vertices).unwrap();
+            DelaunayTriangulation::with_topology_guarantee_and_options(
+                &AdaptiveKernel::new(),
+                &vertices,
+                TopologyGuarantee::DEFAULT,
+                options,
+            )
+            .unwrap();
         let cell_key = dt.cells().next().unwrap().0;
         let cell = &dt.tds().cell(cell_key).unwrap();
 
@@ -2555,14 +2567,27 @@ mod tests {
         let vertex_uuids = cell.vertex_uuids(dt.tds()).unwrap();
         assert_eq!(cell.vertex_uuid_iter(dt.tds()).count(), 4);
 
-        // Verify coordinate type is preserved
-        let first_vertex_key = cell.vertices()[0];
-        let first_vertex = &dt.tds().vertex(first_vertex_key).unwrap();
-        assert_relative_eq!(
-            first_vertex.point().coords()[0],
-            0.0f32,
-            epsilon = f32::EPSILON
-        );
+        // Verify coordinate type is preserved without assuming cell-internal vertex order.
+        for expected_coords in [
+            [0.0f32, 0.0f32, 0.0f32],
+            [1.0f32, 0.0f32, 0.0f32],
+            [0.0f32, 1.0f32, 0.0f32],
+            [0.0f32, 0.0f32, 1.0f32],
+        ] {
+            assert!(
+                cell.vertices().iter().any(|&vertex_key| {
+                    dt.tds()
+                        .vertex(vertex_key)
+                        .unwrap()
+                        .point()
+                        .coords()
+                        .iter()
+                        .zip(expected_coords)
+                        .all(|(actual, expected)| (*actual - expected).abs() <= f32::EPSILON)
+                }),
+                "Expected cell coordinates {expected_coords:?} not found"
+            );
+        }
 
         // Verify UUIDs match the cell's vertices using iterator
         for (expected_uuid, returned_uuid) in

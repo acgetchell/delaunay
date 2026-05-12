@@ -7,7 +7,9 @@
 #[cfg(feature = "count-allocations")]
 use allocation_counter::measure;
 use delaunay::prelude::geometry::*;
-use delaunay::prelude::triangulation::*;
+use delaunay::prelude::triangulation::construction::{
+    DelaunayTriangulation, DelaunayTriangulationConstructionError, TopologyGuarantee, vertex,
+};
 
 use delaunay::geometry::kernel::AdaptiveKernel;
 

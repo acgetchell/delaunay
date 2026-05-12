@@ -64,7 +64,7 @@ use delaunay::prelude::generators::{
 };
 use delaunay::prelude::geometry::{Coordinate, safe_usize_to_scalar};
 use delaunay::prelude::query::*;
-use delaunay::prelude::triangulation::{
+use delaunay::prelude::triangulation::construction::{
     ConstructionOptions, DelaunayTriangulationBuilder, RetryPolicy,
 };
 use delaunay::vertex;
