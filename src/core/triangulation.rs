@@ -153,7 +153,8 @@ use crate::geometry::util::safe_scalar_to_f64;
 use crate::topology::characteristics::euler::{TopologyClassification, expected_chi_for};
 use crate::topology::characteristics::validation::validate_triangulation_euler_with_facet_to_cells_map;
 use crate::topology::manifold::{
-    ManifoldError, validate_closed_boundary, validate_facet_degree, validate_ridge_links,
+    ManifoldError, validate_closed_boundary, validate_facet_degree,
+    validate_local_pseudomanifold_for_cells, validate_ridge_links, validate_ridge_links_for_cells,
     validate_vertex_links,
 };
 use crate::topology::traits::global_topology_model::GlobalTopologyModel;
@@ -2588,6 +2589,58 @@ where
         Ok(())
     }
 
+    /// Validates geometric orientation for a local set of cells.
+    fn validate_geometric_cell_orientation_for_cells(
+        &self,
+        cells: &[CellKey],
+    ) -> Result<(), TdsError> {
+        for &cell_key in cells {
+            let cell = self
+                .tds
+                .cell(cell_key)
+                .ok_or_else(|| TdsError::CellNotFound {
+                    cell_key,
+                    context: "local geometric orientation validation scope".to_string(),
+                })?;
+            let orientation = self.evaluate_cell_orientation_for_context(
+                cell_key,
+                cell,
+                "local geometric orientation validation",
+                "Geometric orientation predicate failed for local cell",
+            )?;
+            if orientation < 0 {
+                let vertex_keys: SmallBuffer<VertexKey, MAX_PRACTICAL_DIMENSION_SIZE> =
+                    cell.vertices().iter().copied().collect();
+                tracing::debug!(
+                    cell_uuid = %cell.uuid(),
+                    ?cell_key,
+                    ?vertex_keys,
+                    orientation,
+                    "negative geometric orientation detected during local validation",
+                );
+
+                return Err(TdsError::Geometric(GeometricError::NegativeOrientation {
+                    message: format!(
+                        "Cell {:?} (key {cell_key:?}, vertices {vertex_keys:?}) has negative geometric orientation; expected positive canonical orientation",
+                        cell.uuid(),
+                    ),
+                }));
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Validates local orientation invariants for cells changed by insertion.
+    fn validate_local_orientation_for_cells(
+        &self,
+        cells: &[CellKey],
+    ) -> Result<(), InsertionError> {
+        self.tds.validate_coherent_orientation_for_cells(cells)?;
+        self.validate_geometric_cell_orientation_for_cells(cells)?;
+        Ok(())
+    }
+
     /// Flip all negatively oriented cells to positive orientation.
     ///
     /// This applies to both Euclidean cells and periodic-lifted cells (when present).
@@ -4153,6 +4206,37 @@ where
         Ok(())
     }
 
+    /// Runs mandatory topology checks over the local cells touched by insertion.
+    ///
+    /// This preserves the same local codimension and ridge-link invariants as
+    /// [`validate_required_topology_links`](Self::validate_required_topology_links)
+    /// without rebuilding global facet/ridge maps on every ordinary insertion.
+    fn validate_required_topology_links_for_cells(
+        &self,
+        cells: &[CellKey],
+    ) -> Result<(), InvariantError> {
+        if self.tds.number_of_cells() == 0 {
+            return Ok(());
+        }
+
+        if cells.is_empty()
+            || self
+                .topology_guarantee
+                .requires_vertex_links_during_insertion()
+        {
+            return self.validate_required_topology_links();
+        }
+
+        if self.topology_guarantee.requires_ridge_links() {
+            self.tds.validate_coherent_orientation_for_cells(cells)?;
+            validate_local_pseudomanifold_for_cells(&self.tds, cells)?;
+            validate_ridge_links_for_cells(&self.tds, cells)?;
+            self.validate_geometric_cell_orientation_for_cells(cells)?;
+        }
+
+        Ok(())
+    }
+
     fn validation_after_insertion_work(
         &self,
         suspicion: SuspicionFlags,
@@ -4176,7 +4260,11 @@ where
         }
     }
 
-    fn validate_after_insertion(&self, suspicion: SuspicionFlags) -> Result<(), InvariantError> {
+    fn validate_after_insertion_with_scope(
+        &self,
+        suspicion: SuspicionFlags,
+        local_cells: Option<&[CellKey]>,
+    ) -> Result<(), InvariantError> {
         let Some(work) = self.validation_after_insertion_work(suspicion) else {
             return Ok(());
         };
@@ -4184,9 +4272,10 @@ where
         self.log_validation_trigger_if_enabled(suspicion);
         match work {
             InsertionValidationWork::FullValidation => self.is_valid(),
-            InsertionValidationWork::RequiredTopologyLinks => {
-                self.validate_required_topology_links()
-            }
+            InsertionValidationWork::RequiredTopologyLinks => local_cells.map_or_else(
+                || self.validate_required_topology_links(),
+                |cells| self.validate_required_topology_links_for_cells(cells),
+            ),
         }
     }
 
@@ -4282,7 +4371,10 @@ where
 
         let validation_work = self.validation_after_insertion_work(insert_ok.suspicion);
         let validation_started = validation_work.map(|_| Instant::now());
-        let validation_result = self.validate_after_insertion(insert_ok.suspicion);
+        let validation_result = self.validate_after_insertion_with_scope(
+            insert_ok.suspicion,
+            Some(&insert_ok.repair_seed_cells),
+        );
         if let (Some(InsertionValidationWork::FullValidation), Some(validation_started)) =
             (validation_work, validation_started)
         {
@@ -4346,7 +4438,10 @@ where
 
                 let validation_work = self.validation_after_insertion_work(fallback_ok.suspicion);
                 let validation_started = validation_work.map(|_| Instant::now());
-                let validation_result = self.validate_after_insertion(fallback_ok.suspicion);
+                let validation_result = self.validate_after_insertion_with_scope(
+                    fallback_ok.suspicion,
+                    Some(&fallback_ok.repair_seed_cells),
+                );
                 if let (Some(InsertionValidationWork::FullValidation), Some(validation_started)) =
                     (validation_work, validation_started)
                 {
@@ -5184,8 +5279,12 @@ where
             delaunay_repair_required = true;
         }
 
-        // Canonicalize cell ordering and geometric orientation invariants.
-        self.normalize_and_promote_positive_orientation()?;
+        // New cavity cells were canonicalized on creation; validate the local
+        // orientation frontier without scanning the whole triangulation.
+        let mut orientation_cells = CellKeyBuffer::new();
+        append_live_unique_cell_seeds(&self.tds, &new_cells, &mut orientation_cells);
+        append_live_unique_cell_seeds(&self.tds, &neighbor_repair_frontier, &mut orientation_cells);
+        self.validate_local_orientation_for_cells(&orientation_cells)?;
 
         // Assign an incident cell for the inserted vertex without a global rebuild.
         let hint = new_cells.iter().copied().find(|&ck| {
@@ -5986,8 +6085,16 @@ where
                     suspicion.neighbor_pointers_rebuilt = repaired > 0;
                 }
 
-                // Canonicalize cell ordering and geometric orientation invariants.
-                self.normalize_and_promote_positive_orientation()?;
+                // New hull cells were canonicalized on creation; validate the
+                // local orientation frontier without scanning the whole TDS.
+                let mut orientation_cells = CellKeyBuffer::new();
+                append_live_unique_cell_seeds(&self.tds, &new_cells, &mut orientation_cells);
+                append_live_unique_cell_seeds(
+                    &self.tds,
+                    &neighbor_repair_frontier,
+                    &mut orientation_cells,
+                );
+                self.validate_local_orientation_for_cells(&orientation_cells)?;
 
                 // Assign an incident cell for the inserted vertex without a global rebuild.
                 let hint = new_cells.iter().copied().find(|&ck| {
@@ -7174,6 +7281,45 @@ mod tests {
         (tds, v0)
     }
 
+    fn build_invalid_vertex_link_tds_3d() -> (Tds<f64, (), (), 3>, VertexKey) {
+        // Two tetrahedra sharing only a single vertex pass facet/ridge checks
+        // locally but have a disconnected vertex link at the shared vertex.
+        let mut tds: Tds<f64, (), (), 3> = Tds::empty();
+
+        let v0 = tds
+            .insert_vertex_with_mapping(vertex!([0.0, 0.0, 0.0]))
+            .unwrap();
+        let v1 = tds
+            .insert_vertex_with_mapping(vertex!([1.0, 0.0, 0.0]))
+            .unwrap();
+        let v2 = tds
+            .insert_vertex_with_mapping(vertex!([0.0, 1.0, 0.0]))
+            .unwrap();
+        let v3 = tds
+            .insert_vertex_with_mapping(vertex!([0.0, 0.0, 1.0]))
+            .unwrap();
+        let v4 = tds
+            .insert_vertex_with_mapping(vertex!([10.0, 0.0, 0.0]))
+            .unwrap();
+        let v5 = tds
+            .insert_vertex_with_mapping(vertex!([10.0, 1.0, 0.0]))
+            .unwrap();
+        let v6 = tds
+            .insert_vertex_with_mapping(vertex!([10.0, 0.0, 1.0]))
+            .unwrap();
+
+        let _ = tds
+            .insert_cell_with_mapping(Cell::new(vec![v0, v1, v2, v3], None).unwrap())
+            .unwrap();
+        let _ = tds
+            .insert_cell_with_mapping(Cell::new(vec![v0, v4, v5, v6], None).unwrap())
+            .unwrap();
+
+        tds.assign_incident_cells().unwrap();
+
+        (tds, v0)
+    }
+
     #[test]
     fn test_validate_at_completion_reports_invalid_vertex_link() {
         let (tds, v0) = build_invalid_vertex_link_tds_2d();
@@ -7303,7 +7449,7 @@ mod tests {
             .unwrap();
         assert_eq!(tri.number_of_cells(), 0);
 
-        tri.validate_after_insertion(SuspicionFlags::default())
+        tri.validate_after_insertion_with_scope(SuspicionFlags::default(), None)
             .unwrap();
     }
 
@@ -7315,7 +7461,7 @@ mod tests {
 
         tri.set_validation_policy(ValidationPolicy::Always);
 
-        match tri.validate_after_insertion(SuspicionFlags::default()) {
+        match tri.validate_after_insertion_with_scope(SuspicionFlags::default(), None) {
             Err(InvariantError::Triangulation(TriangulationValidationError::Disconnected {
                 ..
             })) => {}
@@ -7335,7 +7481,7 @@ mod tests {
         // The triangulation is invalid (disconnected), but the required PL-manifold link
         // checks are still satisfied.
         assert!(tri.is_valid().is_err());
-        tri.validate_after_insertion(SuspicionFlags::default())
+        tri.validate_after_insertion_with_scope(SuspicionFlags::default(), None)
             .unwrap();
     }
 
@@ -7348,7 +7494,7 @@ mod tests {
         tri.set_validation_policy(ValidationPolicy::OnSuspicion);
         tri.set_topology_guarantee(TopologyGuarantee::PLManifold);
 
-        match tri.validate_after_insertion(SuspicionFlags::default()) {
+        match tri.validate_after_insertion_with_scope(SuspicionFlags::default(), None) {
             Err(InvariantError::Triangulation(
                 TriangulationValidationError::ManifoldFacetMultiplicity { cell_count, .. },
             )) => {
@@ -7356,6 +7502,113 @@ mod tests {
             }
             other => panic!("Expected ManifoldFacetMultiplicity, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn test_scoped_validation_catches_touched_over_shared_facet() {
+        let tds = build_three_triangles_sharing_edge_tds_2d();
+        let mut tri =
+            Triangulation::<FastKernel<f64>, (), (), 2>::new_with_tds(FastKernel::new(), tds);
+        let scope: CellKeyBuffer = tri.tds.cell_keys().take(1).collect();
+
+        tri.set_validation_policy(ValidationPolicy::OnSuspicion);
+        tri.set_topology_guarantee(TopologyGuarantee::PLManifold);
+
+        match tri.validate_after_insertion_with_scope(SuspicionFlags::default(), Some(&scope)) {
+            Err(InvariantError::Triangulation(
+                TriangulationValidationError::ManifoldFacetMultiplicity { cell_count, .. },
+            )) => {
+                assert_eq!(cell_count, 3);
+            }
+            other => panic!("Expected ManifoldFacetMultiplicity, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn test_scoped_strict_validation_falls_back_to_global_vertex_links() {
+        let (tds, expected_vertex_key) = build_invalid_vertex_link_tds_3d();
+        let mut tri =
+            Triangulation::<FastKernel<f64>, (), (), 3>::new_with_tds(FastKernel::new(), tds);
+        let scope: CellKeyBuffer = tri.tds.cell_keys().take(1).collect();
+        assert!(!scope.is_empty());
+
+        // Direct field assignment keeps this internal test focused on insertion-time
+        // strict fallback behavior even though the fixture is intentionally invalid.
+        tri.validation_policy = ValidationPolicy::OnSuspicion;
+        tri.topology_guarantee = TopologyGuarantee::PLManifoldStrict;
+
+        match tri.validate_after_insertion_with_scope(SuspicionFlags::default(), Some(&scope)) {
+            Err(InvariantError::Triangulation(
+                TriangulationValidationError::VertexLinkNotManifold { vertex_key, .. },
+            )) => {
+                assert_eq!(vertex_key, expected_vertex_key);
+            }
+            other => panic!("Expected VertexLinkNotManifold, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn test_local_geometric_orientation_validation_errors_on_missing_scope_cell() {
+        let vertices = vec![
+            vertex!([0.0, 0.0, 0.0]),
+            vertex!([1.0, 0.0, 0.0]),
+            vertex!([0.0, 1.0, 0.0]),
+            vertex!([0.0, 0.0, 1.0]),
+        ];
+        let tds =
+            Triangulation::<FastKernel<f64>, (), (), 3>::build_initial_simplex(&vertices).unwrap();
+        let mut tri =
+            Triangulation::<FastKernel<f64>, (), (), 3>::new_with_tds(FastKernel::new(), tds);
+        let cell_key = tri.tds.cell_keys().next().unwrap();
+        assert_eq!(tri.tds.remove_cells_by_keys(&[cell_key]), 1);
+
+        match tri.validate_geometric_cell_orientation_for_cells(&[cell_key]) {
+            Err(TdsError::CellNotFound {
+                cell_key: missing_key,
+                ..
+            }) => assert_eq!(missing_key, cell_key),
+            other => panic!("Expected CellNotFound, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn test_insertion_scoped_validation_preserves_full_validity() {
+        let vertices = vec![
+            vertex!([0.0, 0.0, 0.0]),
+            vertex!([1.0, 0.0, 0.0]),
+            vertex!([0.0, 1.0, 0.0]),
+            vertex!([0.0, 0.0, 1.0]),
+        ];
+        let tds =
+            Triangulation::<FastKernel<f64>, (), (), 3>::build_initial_simplex(&vertices).unwrap();
+        let mut tri =
+            Triangulation::<FastKernel<f64>, (), (), 3>::new_with_tds(FastKernel::new(), tds);
+
+        tri.set_validation_policy(ValidationPolicy::OnSuspicion);
+        tri.set_topology_guarantee(TopologyGuarantee::PLManifold);
+
+        let detail = tri
+            .insert_with_statistics_seeded_indexed_detailed(
+                vertex!([0.2, 0.2, 0.2]),
+                None,
+                None,
+                0,
+                None,
+                None,
+            )
+            .unwrap();
+
+        assert!(matches!(
+            detail.outcome,
+            InsertionOutcome::Inserted {
+                vertex_key: _,
+                hint: _
+            }
+        ));
+        assert!(!detail.repair_seed_cells.is_empty());
+        tri.validate_required_topology_links_for_cells(&detail.repair_seed_cells)
+            .unwrap();
+        tri.is_valid().unwrap();
     }
 
     #[test]
@@ -7369,7 +7622,7 @@ mod tests {
         tri.set_topology_guarantee(TopologyGuarantee::Pseudomanifold);
 
         assert!(tri.is_valid().is_err());
-        tri.validate_after_insertion(SuspicionFlags::default())
+        tri.validate_after_insertion_with_scope(SuspicionFlags::default(), None)
             .unwrap();
     }
 
@@ -10833,7 +11086,7 @@ mod tests {
         let mut tri: Triangulation<FastKernel<f64>, (), (), 2> =
             Triangulation::new_empty(FastKernel::new());
 
-        let points = [[0.0, 0.0], [1.0, 0.0], [0.0, 1.0], [0.5, 0.5]];
+        let points = [[0.0, 0.0], [1.0, 0.0], [0.0, 1.0], [0.25, 0.25]];
         for coords in &points {
             let (outcome, stats) = tri
                 .insert_with_statistics(vertex!(*coords), None, None)
@@ -11288,7 +11541,10 @@ mod tests {
             ..Default::default()
         };
         // With Always policy and a suspicious flag, validation should still pass.
-        assert!(tri.validate_after_insertion(suspicion).is_ok());
+        assert!(
+            tri.validate_after_insertion_with_scope(suspicion, None)
+                .is_ok()
+        );
     }
 
     // =========================================================================

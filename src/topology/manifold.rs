@@ -91,12 +91,11 @@ use crate::core::{
         fast_hash_map_with_capacity, fast_hash_set_with_capacity,
     },
     edge::EdgeKey,
-    facet::facet_key_from_vertices,
+    facet::{FacetHandle, facet_key_from_vertices},
     tds::{CellKey, Tds, TdsError, VertexKey},
     traits::DataType,
     util::hashing::stable_hash_u64_slice,
 };
-use crate::geometry::traits::coordinate::CoordinateScalar;
 use crate::topology::characteristics::euler::{
     triangulated_surface_boundary_component_count, triangulated_surface_euler_characteristic,
 };
@@ -338,7 +337,6 @@ pub fn validate_closed_boundary<T, U, V, const D: usize>(
     facet_to_cells: &FacetToCellsMap,
 ) -> Result<(), ManifoldError>
 where
-    T: CoordinateScalar,
     U: DataType,
     V: DataType,
 {
@@ -437,6 +435,228 @@ where
     Ok(())
 }
 
+/// Validates pseudomanifold conditions for facets and boundary ridges touched
+/// by `cells`.
+///
+/// This is the local counterpart to [`validate_facet_degree`] plus
+/// [`validate_closed_boundary`]. It expands each touched facet to its full
+/// incident-cell star, then checks only boundary ridges incident to those
+/// touched facets. This keeps post-insertion checks local while preserving the
+/// same codimension-1 and codimension-2 invariants for the mutated region.
+pub(crate) fn validate_local_pseudomanifold_for_cells<T, U, V, const D: usize>(
+    tds: &Tds<T, U, V, D>,
+    cells: &[CellKey],
+) -> Result<(), ManifoldError>
+where
+    U: DataType,
+    V: DataType,
+{
+    if D == 0 || cells.is_empty() {
+        return Ok(());
+    }
+
+    let facet_to_cells = build_local_facet_star_map(tds, cells)?;
+    validate_facet_degree(&facet_to_cells)?;
+    validate_closed_boundary_for_local_facets(tds, &facet_to_cells)
+}
+
+/// Builds full facet-incidence entries for facets owned by the supplied cells.
+fn build_local_facet_star_map<T, U, V, const D: usize>(
+    tds: &Tds<T, U, V, D>,
+    cells: &[CellKey],
+) -> Result<FacetToCellsMap, ManifoldError>
+where
+    U: DataType,
+    V: DataType,
+{
+    let mut facet_to_cells = FacetToCellsMap::default();
+    let mut seen_facets: FastHashSet<u64> = FastHashSet::default();
+
+    for &cell_key in cells {
+        let cell_vertices = tds.cell_vertices(cell_key)?;
+        for facet_index in 0..cell_vertices.len() {
+            let facet_key = tds.facet_key_for_cell_facet(cell_key, facet_index)?;
+            if !seen_facets.insert(facet_key) {
+                continue;
+            }
+
+            let facet_vertices = cell_facet_vertices(&cell_vertices, facet_index)?;
+            let incident = facet_incident_handles(tds, facet_key, &facet_vertices)?;
+            facet_to_cells.insert(facet_key, incident);
+        }
+    }
+
+    Ok(facet_to_cells)
+}
+
+/// Returns the vertices of one cell facet by omitting `facet_index`.
+fn cell_facet_vertices(
+    cell_vertices: &[VertexKey],
+    facet_index: usize,
+) -> Result<VertexKeyBuffer, ManifoldError> {
+    if facet_index >= cell_vertices.len() {
+        return Err(TdsError::IndexOutOfBounds {
+            index: facet_index,
+            bound: cell_vertices.len(),
+            context: "local facet vertex extraction".to_string(),
+        }
+        .into());
+    }
+
+    let mut facet_vertices = VertexKeyBuffer::with_capacity(cell_vertices.len().saturating_sub(1));
+    for (idx, &vertex_key) in cell_vertices.iter().enumerate() {
+        if idx != facet_index {
+            facet_vertices.push(vertex_key);
+        }
+    }
+    Ok(facet_vertices)
+}
+
+/// Finds all cell/facet handles whose facet has the requested key.
+fn facet_incident_handles<T, U, V, const D: usize>(
+    tds: &Tds<T, U, V, D>,
+    facet_key: u64,
+    facet_vertices: &[VertexKey],
+) -> Result<SmallBuffer<FacetHandle, 2>, ManifoldError>
+where
+    U: DataType,
+    V: DataType,
+{
+    let candidate_cells = simplex_star_cells(tds, facet_vertices)?;
+    let mut handles: SmallBuffer<FacetHandle, 2> =
+        SmallBuffer::with_capacity(candidate_cells.len().max(1));
+
+    for cell_key in candidate_cells {
+        let cell_vertices = tds.cell_vertices(cell_key)?;
+        for candidate_facet_index in 0..cell_vertices.len() {
+            if tds.facet_key_for_cell_facet(cell_key, candidate_facet_index)? != facet_key {
+                continue;
+            }
+            let Ok(facet_index) = u8::try_from(candidate_facet_index) else {
+                return Err(TdsError::IndexOutOfBounds {
+                    index: candidate_facet_index,
+                    bound: u8::MAX as usize + 1,
+                    context: "local facet incident handle".to_string(),
+                }
+                .into());
+            };
+            handles.push(FacetHandle::new(cell_key, facet_index));
+        }
+    }
+
+    Ok(handles)
+}
+
+/// Validates boundary closure for boundary facets present in a local facet map.
+fn validate_closed_boundary_for_local_facets<T, U, V, const D: usize>(
+    tds: &Tds<T, U, V, D>,
+    facet_to_cells: &FacetToCellsMap,
+) -> Result<(), ManifoldError>
+where
+    U: DataType,
+    V: DataType,
+{
+    if D < 2 {
+        return Ok(());
+    }
+
+    let mut checked_ridges: FastHashSet<u64> = FastHashSet::default();
+    for cell_facet_pairs in facet_to_cells.values() {
+        let [handle] = cell_facet_pairs.as_slice() else {
+            continue;
+        };
+
+        let cell_vertices = tds.cell_vertices(handle.cell_key())?;
+        let facet_vertices = cell_facet_vertices(&cell_vertices, handle.facet_index() as usize)?;
+        for ridge_vertices in ridge_vertices_for_facet::<D>(&facet_vertices)? {
+            let ridge_key = facet_key_from_vertices(&ridge_vertices);
+            if !checked_ridges.insert(ridge_key) {
+                continue;
+            }
+            let boundary_facet_count = boundary_facet_count_for_ridge(tds, &ridge_vertices)?;
+            if boundary_facet_count != 2 {
+                return Err(ManifoldError::BoundaryRidgeMultiplicity {
+                    ridge_key,
+                    boundary_facet_count,
+                });
+            }
+        }
+    }
+
+    Ok(())
+}
+
+/// Enumerates all ridges of a boundary facet.
+fn ridge_vertices_for_facet<const D: usize>(
+    facet_vertices: &[VertexKey],
+) -> Result<SmallBuffer<VertexKeyBuffer, 8>, ManifoldError> {
+    if facet_vertices.len() != D {
+        return Err(TdsError::DimensionMismatch {
+            expected: D,
+            actual: facet_vertices.len(),
+            context: "local boundary facet vertex count".to_string(),
+        }
+        .into());
+    }
+
+    let mut ridges: SmallBuffer<VertexKeyBuffer, 8> = SmallBuffer::with_capacity(D);
+    for omit in 0..facet_vertices.len() {
+        let mut ridge_vertices = VertexKeyBuffer::with_capacity(D.saturating_sub(1));
+        for (idx, &vertex_key) in facet_vertices.iter().enumerate() {
+            if idx != omit {
+                ridge_vertices.push(vertex_key);
+            }
+        }
+        ridges.push(ridge_vertices);
+    }
+    Ok(ridges)
+}
+
+/// Counts boundary facets in the full star of a ridge.
+fn boundary_facet_count_for_ridge<T, U, V, const D: usize>(
+    tds: &Tds<T, U, V, D>,
+    ridge_vertices: &[VertexKey],
+) -> Result<usize, ManifoldError>
+where
+    U: DataType,
+    V: DataType,
+{
+    let star_cells = simplex_star_cells(tds, ridge_vertices)?;
+    let mut count = 0usize;
+    let mut seen_boundary_facets: FastHashSet<u64> = FastHashSet::default();
+
+    for cell_key in star_cells {
+        let cell_vertices = tds.cell_vertices(cell_key)?;
+        for facet_index in 0..cell_vertices.len() {
+            let facet_vertices = cell_facet_vertices(&cell_vertices, facet_index)?;
+            if !ridge_vertices
+                .iter()
+                .all(|ridge_vertex| facet_vertices.contains(ridge_vertex))
+            {
+                continue;
+            }
+
+            let facet_key = tds.facet_key_for_cell_facet(cell_key, facet_index)?;
+            if !seen_boundary_facets.insert(facet_key) {
+                continue;
+            }
+            let handles = facet_incident_handles(tds, facet_key, &facet_vertices)?;
+            match handles.len() {
+                1 => count = count.saturating_add(1),
+                2 => {}
+                other => {
+                    return Err(ManifoldError::ManifoldFacetMultiplicity {
+                        facet_key,
+                        cell_count: other,
+                    });
+                }
+            }
+        }
+    }
+
+    Ok(count)
+}
+
 /// Computes the star of a simplex (a set of vertices) as the set of incident D-cells.
 ///
 /// This is a local combinatorial query intended for reuse by topology validation and
@@ -449,7 +669,6 @@ fn simplex_star_cells<T, U, V, const D: usize>(
     simplex_vertices: &[VertexKey],
 ) -> Result<SmallBuffer<CellKey, 8>, ManifoldError>
 where
-    T: CoordinateScalar,
     U: DataType,
     V: DataType,
 {
@@ -503,7 +722,6 @@ fn simplex_link_simplices_from_star<T, U, V, const D: usize>(
     star_cells: &[CellKey],
 ) -> Result<SmallBuffer<VertexKeyBuffer, 8>, ManifoldError>
 where
-    T: CoordinateScalar,
     U: DataType,
     V: DataType,
 {
@@ -590,7 +808,6 @@ pub(crate) fn ridge_star_cells<T, U, V, const D: usize>(
     ridge_vertices: &[VertexKey],
 ) -> Result<SmallBuffer<CellKey, 8>, ManifoldError>
 where
-    T: CoordinateScalar,
     U: DataType,
     V: DataType,
 {
@@ -618,7 +835,6 @@ pub(crate) fn ridge_link_edges_from_star<T, U, V, const D: usize>(
     star_cells: &[CellKey],
 ) -> Result<SmallBuffer<(VertexKey, VertexKey), 8>, ManifoldError>
 where
-    T: CoordinateScalar,
     U: DataType,
     V: DataType,
 {
@@ -727,7 +943,6 @@ fn build_ridge_star_map<T, U, V, const D: usize>(
     tds: &Tds<T, U, V, D>,
 ) -> Result<FastHashMap<u64, RidgeStar>, ManifoldError>
 where
-    T: CoordinateScalar,
     U: DataType,
     V: DataType,
 {
@@ -811,7 +1026,6 @@ fn build_ridge_star_map_for_cells<T, U, V, const D: usize>(
     cells: &[CellKey],
 ) -> Result<FastHashMap<u64, RidgeStar>, ManifoldError>
 where
-    T: CoordinateScalar,
     U: DataType,
     V: DataType,
 {
@@ -938,7 +1152,6 @@ fn periodic_aware_ridge_star<T, U, V, const D: usize>(
     bare_vertices: &VertexKeyBuffer,
 ) -> Result<SmallBuffer<CellKey, 8>, ManifoldError>
 where
-    T: CoordinateScalar,
     U: DataType,
     V: DataType,
 {
@@ -1040,7 +1253,6 @@ pub fn validate_ridge_links<T, U, V, const D: usize>(
     tds: &Tds<T, U, V, D>,
 ) -> Result<(), ManifoldError>
 where
-    T: CoordinateScalar,
     U: DataType,
     V: DataType,
 {
@@ -1122,7 +1334,6 @@ pub fn validate_ridge_links_for_cells<T, U, V, const D: usize>(
     cells: &[CellKey],
 ) -> Result<(), ManifoldError>
 where
-    T: CoordinateScalar,
     U: DataType,
     V: DataType,
 {
@@ -1216,7 +1427,6 @@ pub fn validate_vertex_links<T, U, V, const D: usize>(
     facet_to_cells: &FacetToCellsMap,
 ) -> Result<(), ManifoldError>
 where
-    T: CoordinateScalar,
     U: DataType,
     V: DataType,
 {
@@ -1244,7 +1454,6 @@ fn build_boundary_vertex_set<T, U, V, const D: usize>(
     facet_to_cells: &FacetToCellsMap,
 ) -> Result<FastHashSet<VertexKey>, ManifoldError>
 where
-    T: CoordinateScalar,
     U: DataType,
     V: DataType,
 {
@@ -1387,7 +1596,6 @@ fn validate_single_vertex_link<T, U, V, const D: usize>(
     interior_vertex: bool,
 ) -> Result<(), ManifoldError>
 where
-    T: CoordinateScalar,
     U: DataType,
     V: DataType,
 {
@@ -1840,6 +2048,46 @@ mod tests {
         }
 
         (tds, [v0, v1, v2, v3])
+    }
+
+    fn build_non_manifold_boundary_ridge_tds_3d() -> (Tds<f64, (), (), 3>, CellKey, u64) {
+        // Two tetrahedra that share an edge but not a facet create a non-manifold boundary:
+        // the shared edge is incident to 4 boundary triangles.
+        let mut tds: Tds<f64, (), (), 3> = Tds::empty();
+
+        let shared_edge_v0 = tds
+            .insert_vertex_with_mapping(vertex!([0.0, 0.0, 0.0]))
+            .unwrap();
+        let shared_edge_v1 = tds
+            .insert_vertex_with_mapping(vertex!([1.0, 0.0, 0.0]))
+            .unwrap();
+
+        let tet1_v2 = tds
+            .insert_vertex_with_mapping(vertex!([0.0, 1.0, 0.0]))
+            .unwrap();
+        let tet1_v3 = tds
+            .insert_vertex_with_mapping(vertex!([0.0, 0.0, 1.0]))
+            .unwrap();
+        let tet2_v2 = tds
+            .insert_vertex_with_mapping(vertex!([0.0, -1.0, 0.0]))
+            .unwrap();
+        let tet2_v3 = tds
+            .insert_vertex_with_mapping(vertex!([0.0, 0.0, -1.0]))
+            .unwrap();
+
+        let touched_cell = tds
+            .insert_cell_with_mapping(
+                Cell::new(vec![shared_edge_v0, shared_edge_v1, tet1_v2, tet1_v3], None).unwrap(),
+            )
+            .unwrap();
+        let _ = tds
+            .insert_cell_with_mapping(
+                Cell::new(vec![shared_edge_v0, shared_edge_v1, tet2_v2, tet2_v3], None).unwrap(),
+            )
+            .unwrap();
+
+        let expected_ridge_key = facet_key_from_vertices(&[shared_edge_v0, shared_edge_v1]);
+        (tds, touched_cell, expected_ridge_key)
     }
 
     #[test]
@@ -2606,49 +2854,8 @@ mod tests {
 
     #[test]
     fn test_validate_closed_boundary_errors_on_non_manifold_boundary_ridge() {
-        // Two tetrahedra that share an edge but not a facet create a non-manifold boundary:
-        // the shared edge is incident to 4 boundary triangles.
-        let mut tds: Tds<f64, (), (), 3> = Tds::empty();
-
-        // Shared edge
-        let shared_edge_v0 = tds
-            .insert_vertex_with_mapping(vertex!([0.0, 0.0, 0.0]))
-            .unwrap();
-        let shared_edge_v1 = tds
-            .insert_vertex_with_mapping(vertex!([1.0, 0.0, 0.0]))
-            .unwrap();
-
-        // First tetrahedron
-        let tet1_v2 = tds
-            .insert_vertex_with_mapping(vertex!([0.0, 1.0, 0.0]))
-            .unwrap();
-        let tet1_v3 = tds
-            .insert_vertex_with_mapping(vertex!([0.0, 0.0, 1.0]))
-            .unwrap();
-
-        // Second tetrahedron
-        let tet2_v2 = tds
-            .insert_vertex_with_mapping(vertex!([0.0, -1.0, 0.0]))
-            .unwrap();
-        let tet2_v3 = tds
-            .insert_vertex_with_mapping(vertex!([0.0, 0.0, -1.0]))
-            .unwrap();
-
-        let _ = tds
-            .insert_cell_with_mapping(
-                Cell::new(vec![shared_edge_v0, shared_edge_v1, tet1_v2, tet1_v3], None).unwrap(),
-            )
-            .unwrap();
-        let _ = tds
-            .insert_cell_with_mapping(
-                Cell::new(vec![shared_edge_v0, shared_edge_v1, tet2_v2, tet2_v3], None).unwrap(),
-            )
-            .unwrap();
-
+        let (tds, _touched_cell, expected_ridge_key) = build_non_manifold_boundary_ridge_tds_3d();
         let facet_to_cells = tds.build_facet_to_cells_map().unwrap();
-
-        // The shared edge should appear in 4 boundary facets.
-        let expected_ridge_key = facet_key_from_vertices(&[shared_edge_v0, shared_edge_v1]);
 
         match validate_closed_boundary(&tds, &facet_to_cells) {
             Err(ManifoldError::BoundaryRidgeMultiplicity {
@@ -2659,6 +2866,44 @@ mod tests {
                 assert_eq!(boundary_facet_count, 4);
             }
             other => panic!("Expected BoundaryRidgeMultiplicity, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn test_validate_local_pseudomanifold_for_cells_errors_on_non_manifold_boundary_ridge() {
+        let (tds, touched_cell, expected_ridge_key) = build_non_manifold_boundary_ridge_tds_3d();
+
+        match validate_local_pseudomanifold_for_cells(&tds, &[touched_cell]) {
+            Err(ManifoldError::BoundaryRidgeMultiplicity {
+                ridge_key,
+                boundary_facet_count,
+            }) => {
+                assert_eq!(ridge_key, expected_ridge_key);
+                assert_eq!(boundary_facet_count, 4);
+            }
+            other => panic!("Expected BoundaryRidgeMultiplicity, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn test_validate_local_pseudomanifold_for_cells_errors_on_missing_scope_cell() {
+        let vertices = vec![
+            vertex!([0.0, 0.0, 0.0]),
+            vertex!([1.0, 0.0, 0.0]),
+            vertex!([0.0, 1.0, 0.0]),
+            vertex!([0.0, 0.0, 1.0]),
+        ];
+        let mut tds =
+            Triangulation::<FastKernel<f64>, (), (), 3>::build_initial_simplex(&vertices).unwrap();
+        let cell_key = tds.cell_keys().next().unwrap();
+        assert_eq!(tds.remove_cells_by_keys(&[cell_key]), 1);
+
+        match validate_local_pseudomanifold_for_cells(&tds, &[cell_key]) {
+            Err(ManifoldError::Tds(TdsError::CellNotFound {
+                cell_key: missing_key,
+                ..
+            })) => assert_eq!(missing_key, cell_key),
+            other => panic!("Expected CellNotFound, got {other:?}"),
         }
     }
 
