@@ -3764,7 +3764,8 @@ mod tests {
             .unwrap();
         tds.cell_mut(c1)
             .unwrap()
-            .set_periodic_vertex_offsets(vec![[0, 0], [0, 0], [0, 0]]);
+            .set_periodic_vertex_offsets(vec![[0, 0], [0, 0], [0, 0]])
+            .unwrap();
 
         // c2: v0 at periodic image [1,0]; v1 and v2 at base image.
         let c2 = tds
@@ -3772,7 +3773,8 @@ mod tests {
             .unwrap();
         tds.cell_mut(c2)
             .unwrap()
-            .set_periodic_vertex_offsets(vec![[1, 0], [0, 0], [0, 0]]);
+            .set_periodic_vertex_offsets(vec![[1, 0], [0, 0], [0, 0]])
+            .unwrap();
 
         let map = build_ridge_star_map_for_cells(&tds, &[c1, c2]).unwrap();
 
@@ -3808,7 +3810,8 @@ mod tests {
             .unwrap();
         tds.cell_mut(c1)
             .unwrap()
-            .set_periodic_vertex_offsets(vec![[0, 0], [0, 0], [0, 0]]);
+            .set_periodic_vertex_offsets(vec![[0, 0], [0, 0], [0, 0]])
+            .unwrap();
 
         // Bare [v0] finds c1, but lifted_vertex_id(v0, [99,99]) won't match
         // c1's lifted v0 (which is bare v0 since offset is [0,0]).
@@ -3841,14 +3844,16 @@ mod tests {
             .unwrap();
         tds.cell_mut(c1)
             .unwrap()
-            .set_periodic_vertex_offsets(vec![[0, 0], [0, 0], [0, 0]]);
+            .set_periodic_vertex_offsets(vec![[0, 0], [0, 0], [0, 0]])
+            .unwrap();
 
         let c2 = tds
             .insert_cell_with_mapping(Cell::new(vec![v0, v1, v2], None).unwrap())
             .unwrap();
         tds.cell_mut(c2)
             .unwrap()
-            .set_periodic_vertex_offsets(vec![[1, 0], [0, 0], [0, 0]]);
+            .set_periodic_vertex_offsets(vec![[1, 0], [0, 0], [0, 0]])
+            .unwrap();
 
         // All ridge links should be valid paths (boundary ridges with 2 degree-1 vertices).
         validate_ridge_links_for_cells(&tds, &[c1, c2]).unwrap();

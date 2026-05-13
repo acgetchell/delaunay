@@ -56,7 +56,7 @@ jobs:
           fi
 
           if [ "${installed_version}" != "${CARGO_LLVM_COV_VERSION}" ]; then
-            cargo install cargo-llvm-cov --locked --version "${CARGO_LLVM_COV_VERSION}"
+            cargo install cargo-llvm-cov --locked --force --version "${CARGO_LLVM_COV_VERSION}"
           fi
 
       - name: Install just

@@ -727,6 +727,13 @@ pub enum NeighborValidationError {
         /// Neighbor pointer observed in the second cell.
         second_neighbor: Option<CellKey>,
     },
+    /// Bistellar flip neighbor wiring failed while preserving TDS invariants.
+    #[error("Flip neighbor wiring failed: {reason}")]
+    FlipNeighborWiring {
+        /// Structured flip wiring failure.
+        #[source]
+        reason: Box<crate::core::algorithms::flips::FlipNeighborWiringError>,
+    },
     /// Neighbor validation failed in a context that is still being migrated to structured fields.
     #[error("{message}")]
     Other {
@@ -1245,6 +1252,7 @@ pub enum InvariantErrorSummaryDetail {
 ///     InvariantErrorSummaryDetail::Tds(TdsErrorKind::InconsistentDataStructure),
 /// );
 /// ```
+#[must_use]
 #[derive(Clone, Debug, Error, PartialEq, Eq)]
 #[error("{message}")]
 pub struct InvariantErrorSummary {
@@ -6565,7 +6573,8 @@ mod tests {
             .unwrap();
         tds.cell_mut(cell_key)
             .unwrap()
-            .set_periodic_vertex_offsets(vec![[-128_i8, 0_i8], [127_i8, 0_i8], [0_i8, 0_i8]]);
+            .set_periodic_vertex_offsets(vec![[-128_i8, 0_i8], [127_i8, 0_i8], [0_i8, 0_i8]])
+            .unwrap();
 
         let err = tds.facet_key_for_cell_facet(cell_key, 2).unwrap_err();
         assert!(matches!(
@@ -6592,7 +6601,8 @@ mod tests {
         {
             let cell = tds.cell_mut(cell_key).unwrap();
             cell.push_vertex_key(v_a);
-            cell.set_periodic_vertex_offsets(vec![[5, 0], [9, 0], [8, 0], [1, 0]]);
+            cell.set_periodic_vertex_offsets(vec![[5, 0], [9, 0], [8, 0], [1, 0]])
+                .unwrap();
         }
 
         let cell = tds.cell(cell_key).unwrap();
@@ -8166,7 +8176,8 @@ mod tests {
         {
             let cell = tds.cell_mut(cell_key).unwrap();
             cell.neighbors = Some(vec![Some(cell_key), None, None].into());
-            cell.set_periodic_vertex_offsets(vec![[0, 0], [0, 0], [0, 0]]);
+            cell.set_periodic_vertex_offsets(vec![[0, 0], [0, 0], [0, 0]])
+                .unwrap();
         }
 
         let cell = tds.cell(cell_key).unwrap();

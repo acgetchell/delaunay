@@ -9073,7 +9073,8 @@ mod tests {
         let cell_key = tds.cell_keys().next().unwrap();
         {
             let cell = tds.cell_mut(cell_key).unwrap();
-            cell.set_periodic_vertex_offsets(vec![[0, 0], [0, 0], [1, 0]]);
+            cell.set_periodic_vertex_offsets(vec![[0, 0], [0, 0], [1, 0]])
+                .unwrap();
         }
 
         let mut tri =
@@ -9111,7 +9112,8 @@ mod tests {
         let cell_key = tds.cell_keys().next().unwrap();
         {
             let cell = tds.cell_mut(cell_key).unwrap();
-            cell.set_periodic_vertex_offsets(vec![[0, 0], [0, 0], [1, 0]]);
+            cell.set_periodic_vertex_offsets(vec![[0, 0], [0, 0], [1, 0]])
+                .unwrap();
         }
 
         let tri = Triangulation::<FastKernel<f64>, (), (), 2>::new_with_tds(FastKernel::new(), tds);
@@ -9160,7 +9162,8 @@ mod tests {
         let cell_key = tds.cell_keys().next().unwrap();
         tds.cell_mut(cell_key)
             .unwrap()
-            .set_periodic_vertex_offsets(vec![[0, 0], [0, 0], [1, 0]]);
+            .set_periodic_vertex_offsets(vec![[0, 0], [0, 0], [1, 0]])
+            .unwrap();
 
         let mut tri =
             Triangulation::<FastKernel<f64>, (), (), 2>::new_with_tds(FastKernel::new(), tds);

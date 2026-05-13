@@ -10,8 +10,9 @@
 //!   at the type level, but geometric operations, validation, and serialization are only
 //!   available when `T: CoordinateScalar` (e.g. `f32`, `f64`)
 //! - **Unique Identification**: Each vertex has a UUID for consistent identification
-//! - **Optional Data Storage**: Supports attaching user data of any type `U` that implements
-//!   [`DataType`](crate::core::traits::DataType), or use `()` for no data
+//! - **Optional Data Storage**: [`Vertex`] and [`VertexBuilder`] support arbitrary
+//!   user data `U`; serialization adds [`DataSerialize`] / [`DataDeserialize`]
+//!   bounds when needed
 //! - **Incident Cell Tracking**: Maintains references to containing cells
 //! - **Serialization Support**: Serde support for persistence (`incident_cell` is reconstructed by TDS)
 //! - **Builder Pattern**: Convenient vertex construction using `VertexBuilder`
@@ -122,7 +123,9 @@ pub enum VertexBuilderError {
 /// # Generic Parameters
 ///
 /// * `T` - The coordinate scalar type
-/// * `U` - User data type that implements [`DataType`](crate::core::traits::DataType)
+/// * `U` - User data type. [`VertexBuilder`] accepts arbitrary metadata; serialization
+///   requires [`DataSerialize`] / [`DataDeserialize`] when serializing or deserializing
+///   a [`Vertex`].
 /// * `D` - The spatial dimension (compile-time constant)
 ///
 /// # Examples
@@ -282,10 +285,10 @@ pub use crate::vertex;
 ///
 /// - `T` must implement `CoordinateScalar` for geometric operations, validation, and serialization
 ///   (the struct itself does not require it, enabling purely combinatorial use)
-/// - `U` only needs [`DataType`](crate::core::traits::DataType) when the vertex is stored in
-///   a triangulation,
-///   serialized, compared, or hashed. Standalone construction and accessors
-///   accept arbitrary metadata types.
+/// - `U` has no bound for standalone [`Vertex`] and [`VertexBuilder`] construction
+///   or access. Serialization uses [`DataSerialize`] / [`DataDeserialize`]; TDS and
+///   triangulation algorithms add [`DataType`](crate::core::traits::DataType) only
+///   where they need copy/debug/serde metadata behavior.
 ///
 /// # Usage
 ///

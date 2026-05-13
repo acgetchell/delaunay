@@ -141,6 +141,14 @@ pub enum CellValidationError {
         /// The dimension D.
         dimension: usize,
     },
+    /// The periodic offset list is not aligned with the cell's vertex list.
+    #[error("Periodic offset length mismatch: got {found}, expected {expected}")]
+    PeriodicOffsetLengthMismatch {
+        /// The expected number of offsets (= number of vertices).
+        expected: usize,
+        /// The observed number of offsets.
+        found: usize,
+    },
     /// A vertex key referenced by the cell was not found in the TDS.
     #[error("Vertex key {key:?} not found in TDS (indicates TDS corruption or inconsistency)")]
     VertexKeyNotFound {
@@ -155,6 +163,14 @@ impl From<StackMatrixDispatchError> for CellValidationError {
     }
 }
 
+fn total_cmp_for_coordinate<T>(left: &T, right: &T) -> cmp::Ordering
+where
+    T: CoordinateScalar,
+{
+    left.ordered_partial_cmp(right)
+        .expect("CoordinateScalar::ordered_partial_cmp must define a total order")
+}
+
 fn compare_vertices_by_coordinates<T, U, const D: usize>(
     left: &Vertex<T, U, D>,
     right: &Vertex<T, U, D>,
@@ -162,16 +178,13 @@ fn compare_vertices_by_coordinates<T, U, const D: usize>(
 where
     T: CoordinateScalar,
 {
-    left.partial_cmp(right).map_or_else(
-        || {
-            debug_assert!(
-                left.partial_cmp(right).is_some(),
-                "CoordinateScalar vertex ordering should be total, including NaN values"
-            );
-            cmp::Ordering::Equal
-        },
-        core::convert::identity,
-    )
+    for (left_coord, right_coord) in left.point().coords().iter().zip(right.point().coords()) {
+        let ordering = total_cmp_for_coordinate(left_coord, right_coord);
+        if ordering != cmp::Ordering::Equal {
+            return ordering;
+        }
+    }
+    cmp::Ordering::Equal
 }
 
 // =============================================================================
@@ -639,16 +652,15 @@ impl<T, U, V, const D: usize> Cell<T, U, V, D> {
     pub(crate) fn set_periodic_vertex_offsets(
         &mut self,
         offsets: impl Into<PeriodicOffsetBuffer<D>>,
-    ) {
+    ) -> Result<(), CellValidationError> {
         let offsets = offsets.into();
-        assert_eq!(
-            offsets.len(),
-            self.vertices.len(),
-            "set_periodic_vertex_offsets: offsets.len() ({}) must match self.vertices.len() ({}); refusing to update self.periodic_vertex_offsets",
-            offsets.len(),
-            self.vertices.len(),
-        );
+        let found = offsets.len();
+        let expected = self.vertices.len();
+        if found != expected {
+            return Err(CellValidationError::PeriodicOffsetLengthMismatch { expected, found });
+        }
         self.periodic_vertex_offsets = Some(offsets);
+        Ok(())
     }
 
     /// Find the facet index in `neighbor_cell` that corresponds to the shared facet.
@@ -3511,7 +3523,8 @@ mod tests {
 
         let mut cell = cell_ref.clone();
         cell.neighbors = Some(vec![Some(cell_key), None, Some(cell_key)].into());
-        cell.set_periodic_vertex_offsets(vec![[1, 0], [2, 0], [3, 0]]);
+        cell.set_periodic_vertex_offsets(vec![[1, 0], [2, 0], [3, 0]])
+            .unwrap();
 
         let before_vertices = cell.vertices().to_vec();
         let before_neighbors = cell.neighbors().unwrap().to_vec();

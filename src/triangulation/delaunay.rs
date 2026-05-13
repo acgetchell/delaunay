@@ -663,11 +663,11 @@ impl fmt::Display for DelaunayRepairOperation {
 pub enum DelaunayTriangulationValidationError {
     /// Lower-layer element or TDS structural validation error (Levels 1–2).
     #[error(transparent)]
-    Tds(#[from] TdsError),
+    Tds(Box<TdsError>),
 
     /// Lower-layer topology validation error (Level 3).
     #[error(transparent)]
-    Triangulation(#[from] TriangulationValidationError),
+    Triangulation(Box<TriangulationValidationError>),
 
     /// Flip-based Delaunay verification detected a violation.
     ///
@@ -711,8 +711,20 @@ pub enum DelaunayTriangulationValidationError {
         operation: DelaunayRepairOperation,
         /// Underlying flip-repair failure.
         #[source]
-        source: DelaunayRepairError,
+        source: Box<DelaunayRepairError>,
     },
+}
+
+impl From<TdsError> for DelaunayTriangulationValidationError {
+    fn from(source: TdsError) -> Self {
+        Self::Tds(Box::new(source))
+    }
+}
+
+impl From<TriangulationValidationError> for DelaunayTriangulationValidationError {
+    fn from(source: TriangulationValidationError) -> Self {
+        Self::Triangulation(Box::new(source))
+    }
 }
 
 // =============================================================================
@@ -1445,6 +1457,14 @@ where
     hasher.finish()
 }
 
+fn total_cmp_for_coordinate<T>(left: &T, right: &T) -> Ordering
+where
+    T: CoordinateScalar,
+{
+    left.ordered_partial_cmp(right)
+        .expect("CoordinateScalar::ordered_partial_cmp must define a total order")
+}
+
 fn compare_vertices_by_coordinates<T, U, const D: usize>(
     left: &Vertex<T, U, D>,
     right: &Vertex<T, U, D>,
@@ -1452,16 +1472,13 @@ fn compare_vertices_by_coordinates<T, U, const D: usize>(
 where
     T: CoordinateScalar,
 {
-    left.partial_cmp(right).map_or_else(
-        || {
-            debug_assert!(
-                left.partial_cmp(right).is_some(),
-                "CoordinateScalar vertex ordering should be total, including NaN values"
-            );
-            Ordering::Equal
-        },
-        core::convert::identity,
-    )
+    for (left_coord, right_coord) in left.point().coords().iter().zip(right.point().coords()) {
+        let ordering = total_cmp_for_coordinate(left_coord, right_coord);
+        if ordering != Ordering::Equal {
+            return ordering;
+        }
+    }
+    Ordering::Equal
 }
 
 /// Produces a stable construction order when Hilbert ordering is unavailable or
@@ -7139,7 +7156,7 @@ where
                     .map_err(|robust_err| InsertionError::DelaunayRepairFailed {
                         source: Box::new(robust_err),
                         context: DelaunayRepairFailureContext::LocalRepairRobustFallback {
-                            initial: Box::new(DelaunayRepairErrorSummary::from(&e)),
+                            initial: DelaunayRepairErrorSummary::from(&e),
                         },
                     })?;
                 self.validate_ridge_links_after_repair(topology, &robust_run)?;
@@ -7345,10 +7362,8 @@ where
                 }
                 Err(FlipError::NeighborWiring { reason }) => {
                     return Err(TdsError::InvalidNeighbors {
-                        reason: NeighborValidationError::Other {
-                            message: format!(
-                                "inverse k=1 flip failed during remove_vertex: {reason}"
-                            ),
+                        reason: NeighborValidationError::FlipNeighborWiring {
+                            reason: Box::new(reason),
                         },
                     }
                     .into());
@@ -7376,7 +7391,7 @@ where
                     InvariantError::Delaunay(
                         DelaunayTriangulationValidationError::RepairOperationFailed {
                             operation: DelaunayRepairOperation::VertexRemoval,
-                            source,
+                            source: Box::new(source),
                         },
                     )
                 })?;
@@ -7535,10 +7550,8 @@ where
     /// ```
     pub fn validate(&self) -> Result<(), DelaunayTriangulationValidationError> {
         self.tri.validate().map_err(|e| match e {
-            InvariantError::Tds(tds_err) => DelaunayTriangulationValidationError::Tds(tds_err),
-            InvariantError::Triangulation(tri_err) => {
-                DelaunayTriangulationValidationError::Triangulation(tri_err)
-            }
+            InvariantError::Tds(tds_err) => tds_err.into(),
+            InvariantError::Triangulation(tri_err) => tri_err.into(),
             InvariantError::Delaunay(dt_err) => dt_err,
         })?;
         self.is_valid()
@@ -7798,10 +7811,8 @@ where
         let mut candidate = Self::from_tds_with_topology_guarantee(tds, kernel, topology_guarantee);
         candidate.set_global_topology(global_topology);
         candidate.tri.validate().map_err(|e| match e {
-            InvariantError::Tds(tds_err) => DelaunayTriangulationValidationError::Tds(tds_err),
-            InvariantError::Triangulation(tri_err) => {
-                DelaunayTriangulationValidationError::Triangulation(tri_err)
-            }
+            InvariantError::Tds(tds_err) => tds_err.into(),
+            InvariantError::Triangulation(tri_err) => tri_err.into(),
             InvariantError::Delaunay(dt_err) => dt_err,
         })?;
 
@@ -10140,9 +10151,13 @@ mod tests {
             InvariantError::Delaunay(
                 DelaunayTriangulationValidationError::RepairOperationFailed {
                     operation: DelaunayRepairOperation::VertexRemoval,
-                    source: DelaunayRepairError::NonConvergent { max_flips: 0, .. },
+                    source,
                 },
-            ) => {
+            ) if matches!(
+                source.as_ref(),
+                DelaunayRepairError::NonConvergent { max_flips: 0, .. }
+            ) =>
+            {
                 // Expected forced path.
             }
             other => panic!(
@@ -12211,7 +12226,7 @@ mod tests {
         };
         let err = DelaunayTriangulationValidationError::RepairOperationFailed {
             operation: DelaunayRepairOperation::VertexRemoval,
-            source,
+            source: Box::new(source),
         };
 
         let msg = err.to_string();
@@ -12219,8 +12234,11 @@ mod tests {
         match &err {
             DelaunayTriangulationValidationError::RepairOperationFailed {
                 operation: DelaunayRepairOperation::VertexRemoval,
-                source: DelaunayRepairError::NonConvergent { max_flips: 7, .. },
-            } => {}
+                source,
+            } if matches!(
+                source.as_ref(),
+                DelaunayRepairError::NonConvergent { max_flips: 7, .. }
+            ) => {}
             other => panic!("expected typed vertex-removal repair source, got {other:?}"),
         }
         let chained = err
@@ -12269,9 +12287,8 @@ mod tests {
         dt.tds_mut().uuid_to_vertex_key.remove(&uuid);
 
         match dt.validate() {
-            Err(DelaunayTriangulationValidationError::Tds(TdsError::MappingInconsistency {
-                ..
-            })) => {}
+            Err(DelaunayTriangulationValidationError::Tds(source))
+                if matches!(source.as_ref(), TdsError::MappingInconsistency { .. }) => {}
             other => panic!(
                 "Expected DelaunayTriangulationValidationError::Tds(MappingInconsistency), got {other:?}"
             ),
@@ -12297,9 +12314,11 @@ mod tests {
             .unwrap();
 
         match dt.validate() {
-            Err(DelaunayTriangulationValidationError::Triangulation(
-                TriangulationValidationError::IsolatedVertex { .. },
-            )) => {}
+            Err(DelaunayTriangulationValidationError::Triangulation(source))
+                if matches!(
+                    source.as_ref(),
+                    TriangulationValidationError::IsolatedVertex { .. }
+                ) => {}
             other => panic!(
                 "Expected DelaunayTriangulationValidationError::Triangulation(IsolatedVertex), got {other:?}"
             ),

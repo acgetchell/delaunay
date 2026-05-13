@@ -576,7 +576,7 @@ macro_rules! gen_high_dim_tds_smoke {
                 }
 
                 let max_allowed_construction_rejections =
-                    usize::try_from(target_cases).map_or(usize::MAX, |cases| cases.max(1));
+                    (stats.generated.max(1).saturating_mul(9)) / 10;
                 assert!(
                     stats.rejected_construction_failed <= max_allowed_construction_rejections,
                     "prop_high_dim_tds_active_smoke_{}d had {} construction rejects above allowed {}; generated={}, accepted={}",

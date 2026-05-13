@@ -1011,7 +1011,7 @@ fn bench_bottlenecks(c: &mut Criterion) {
                                     "convex hull extraction failed: {error}"
                                 )),
                             };
-                            black_box(hull);
+                            let _ = black_box(hull);
                         }
                     },
                     BatchSize::LargeInput,

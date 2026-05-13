@@ -168,10 +168,10 @@ fn diagnostic_preludes_cover_repair_apis() -> Result<(), PreludeExportTestError>
     assert_send_sync_unpin::<FlipVertexAdjacencyError>();
     let validation_error = DelaunayTriangulationValidationError::RepairOperationFailed {
         operation: DelaunayRepairOperation::VertexRemoval,
-        source: DelaunayRepairError::VerificationFailed {
+        source: Box::new(DelaunayRepairError::VerificationFailed {
             context: DelaunayRepairVerificationContext::StrictValidation,
             source: Box::new(FlipError::DegenerateCell),
-        },
+        }),
     };
     assert!(validation_error.to_string().contains("vertex removal"));
 

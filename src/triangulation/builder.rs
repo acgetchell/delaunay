@@ -354,6 +354,7 @@ pub enum ExplicitTdsErrorKind {
 ///
 /// assert_eq!(summary.kind, ExplicitTdsErrorKind::InconsistentDataStructure);
 /// ```
+#[must_use]
 #[derive(Clone, Debug, Error, PartialEq, Eq)]
 #[error("{message}")]
 pub struct ExplicitTdsError {
@@ -452,6 +453,7 @@ pub enum ExplicitInsertionErrorKind {
 /// assert_eq!(summary.kind, ExplicitInsertionErrorKind::DuplicateCoordinates);
 /// assert!(summary.source_kind.is_none());
 /// ```
+#[must_use]
 #[derive(Clone, Debug, Error, PartialEq, Eq)]
 #[error("{message}")]
 pub struct ExplicitInsertionError {
@@ -554,6 +556,7 @@ pub enum ExplicitInvariantErrorKind {
 ///     InvariantErrorSummaryDetail::Tds(TdsErrorKind::InconsistentDataStructure),
 /// );
 /// ```
+#[must_use]
 #[derive(Clone, Debug, Error, PartialEq, Eq)]
 #[error("{message}")]
 pub struct ExplicitInvariantError {
@@ -647,6 +650,7 @@ pub enum ExplicitDelaunayValidationSourceKind {
 /// );
 /// assert!(summary.source_kind.is_none());
 /// ```
+#[must_use]
 #[derive(Clone, Debug, Error, PartialEq, Eq)]
 #[error("{message}")]
 pub struct ExplicitDelaunayValidationError {
@@ -678,15 +682,15 @@ impl From<DelaunayTriangulationValidationError> for ExplicitDelaunayValidationEr
             }
         };
         let source_kind = match &source {
-            DelaunayTriangulationValidationError::Tds(source) => {
-                Some(ExplicitDelaunayValidationSourceKind::Tds(source.into()))
-            }
-            DelaunayTriangulationValidationError::Triangulation(source) => Some(
-                ExplicitDelaunayValidationSourceKind::Triangulation(source.into()),
+            DelaunayTriangulationValidationError::Tds(source) => Some(
+                ExplicitDelaunayValidationSourceKind::Tds(source.as_ref().into()),
             ),
-            DelaunayTriangulationValidationError::RepairOperationFailed { source, .. } => {
-                Some(ExplicitDelaunayValidationSourceKind::Repair(source.into()))
-            }
+            DelaunayTriangulationValidationError::Triangulation(source) => Some(
+                ExplicitDelaunayValidationSourceKind::Triangulation(source.as_ref().into()),
+            ),
+            DelaunayTriangulationValidationError::RepairOperationFailed { source, .. } => Some(
+                ExplicitDelaunayValidationSourceKind::Repair(source.as_ref().into()),
+            ),
             DelaunayTriangulationValidationError::VerificationFailed { .. }
             | DelaunayTriangulationValidationError::RepairFailed { .. } => None,
         };
@@ -2740,7 +2744,11 @@ where
             })?;
             let offsets: PeriodicOffsetBuffer<D> =
                 lifted_vertices.iter().map(|(_, offset)| *offset).collect();
-            cell.set_periodic_vertex_offsets(offsets);
+            cell.set_periodic_vertex_offsets(offsets).map_err(|e| {
+                TriangulationConstructionError::GeometricDegeneracy {
+                    message: format!("Failed to set quotient periodic offsets: {e}"),
+                }
+            })?;
             let ck = tds_mut.insert_cell_with_mapping(cell).map_err(|e| {
                 TriangulationConstructionError::GeometricDegeneracy {
                     message: format!("Failed to insert quotient periodic cell: {e}"),
@@ -3031,9 +3039,9 @@ mod tests {
         let delaunay = ExplicitDelaunayValidationError::from(
             DelaunayTriangulationValidationError::RepairOperationFailed {
                 operation: DelaunayRepairOperation::VertexRemoval,
-                source: DelaunayRepairError::HeuristicRebuildFailed {
+                source: Box::new(DelaunayRepairError::HeuristicRebuildFailed {
                     message: "rebuild failed".to_string(),
-                },
+                }),
             },
         );
         assert_eq!(
@@ -3044,7 +3052,7 @@ mod tests {
         );
 
         let delaunay_tds = ExplicitDelaunayValidationError::from(
-            DelaunayTriangulationValidationError::Tds(TdsError::InconsistentDataStructure {
+            DelaunayTriangulationValidationError::from(TdsError::InconsistentDataStructure {
                 message: "dangling cell".to_string(),
             }),
         );
@@ -3056,11 +3064,10 @@ mod tests {
             ))
         );
 
-        let delaunay_topology = ExplicitDelaunayValidationError::from(
-            DelaunayTriangulationValidationError::Triangulation(
+        let delaunay_topology =
+            ExplicitDelaunayValidationError::from(DelaunayTriangulationValidationError::from(
                 TriangulationValidationError::Disconnected { cell_count: 2 },
-            ),
-        );
+            ));
         assert_eq!(
             delaunay_topology.kind,
             ExplicitDelaunayValidationErrorKind::Triangulation,

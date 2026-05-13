@@ -124,6 +124,18 @@ pub enum ConvexHullValidationError {
         /// The current generation counter of the TDS.
         tds_generation: u64,
     },
+    /// Convex hull validation failed because the hull belongs to a different TDS identity.
+    #[error(
+        "ConvexHull validation failed: hull belongs to TDS identity {hull_identity}, \
+         but was validated against TDS identity {tds_identity}. Create a new ConvexHull \
+         by calling from_triangulation()."
+    )]
+    IdentityMismatch {
+        /// Runtime identity of the TDS that produced the hull.
+        hull_identity: uuid::Uuid,
+        /// Runtime identity of the TDS supplied for validation.
+        tds_identity: uuid::Uuid,
+    },
 }
 
 /// Errors that can occur during convex hull construction.
@@ -213,6 +225,17 @@ pub enum ConvexHullConstructionError {
         hull_generation: u64,
         /// The current generation counter of the TDS.
         tds_generation: u64,
+    },
+    /// Convex hull used with a different triangulation identity.
+    #[error(
+        "ConvexHull belongs to TDS identity {hull_identity}, but was used with TDS identity \
+         {tds_identity}. Create a new ConvexHull by calling from_triangulation()."
+    )]
+    IdentityMismatch {
+        /// Runtime identity of the TDS that produced the hull.
+        hull_identity: uuid::Uuid,
+        /// Runtime identity of the TDS supplied to the operation.
+        tds_identity: uuid::Uuid,
     },
 }
 
@@ -369,6 +392,7 @@ pub enum ConvexHullConstructionError {
 ///   no. 4 (1993): 377-409. DOI: [10.1007/BF02573985](https://doi.org/10.1007/BF02573985)
 /// - Seidel, R. "The Upper Bound Theorem for Polytopes: An Easy Proof of Its Asymptotic Version."
 ///   *Computational Geometry* 5, no. 2 (1995): 115-116. DOI: [10.1016/0925-7721(95)00013-Y](https://doi.org/10.1016/0925-7721(95)00013-Y)
+#[must_use]
 #[derive(Debug)]
 pub struct ConvexHull<K, U, V, const D: usize> {
     /// The boundary facets that form the convex hull
@@ -719,6 +743,16 @@ where
             && Arc::ptr_eq(creation_identity, tri.tds.identity())
     }
 
+    fn hull_identity_uuid(&self) -> uuid::Uuid {
+        self.creation_identity
+            .get()
+            .map_or_else(uuid::Uuid::nil, |identity| *identity.as_ref())
+    }
+
+    fn tds_identity_uuid(tri: &Triangulation<K, U, V, D>) -> uuid::Uuid {
+        *tri.tds.identity().as_ref()
+    }
+
     /// Helper to construct a `StaleHull` error with generation info
     ///
     /// Centralizes the error construction pattern to avoid duplication.
@@ -727,6 +761,17 @@ where
         ConvexHullValidationError::StaleHull {
             hull_generation: self.creation_generation.get().copied().unwrap_or(0),
             tds_generation: tri.tds.generation(),
+        }
+    }
+
+    #[inline]
+    fn identity_mismatch_error(
+        &self,
+        tri: &Triangulation<K, U, V, D>,
+    ) -> ConvexHullValidationError {
+        ConvexHullValidationError::IdentityMismatch {
+            hull_identity: self.hull_identity_uuid(),
+            tds_identity: Self::tds_identity_uuid(tri),
         }
     }
 
@@ -742,6 +787,57 @@ where
             hull_generation: self.creation_generation.get().copied().unwrap_or(0),
             tds_generation: tri.tds.generation(),
         }
+    }
+
+    #[inline]
+    fn identity_mismatch_construction_error(
+        &self,
+        tri: &Triangulation<K, U, V, D>,
+    ) -> ConvexHullConstructionError {
+        ConvexHullConstructionError::IdentityMismatch {
+            hull_identity: self.hull_identity_uuid(),
+            tds_identity: Self::tds_identity_uuid(tri),
+        }
+    }
+
+    fn ensure_current_for_construction(
+        &self,
+        tri: &Triangulation<K, U, V, D>,
+    ) -> Result<(), ConvexHullConstructionError> {
+        if self.is_empty() && self.creation_generation.get().is_none() {
+            return Ok(());
+        }
+        let creation_generation = self.creation_generation.get().copied().unwrap_or(0);
+        if creation_generation != tri.tds.generation() {
+            return Err(self.stale_hull_construction_error(tri));
+        }
+        let Some(creation_identity) = self.creation_identity.get() else {
+            return Err(self.identity_mismatch_construction_error(tri));
+        };
+        if !Arc::ptr_eq(creation_identity, tri.tds.identity()) {
+            return Err(self.identity_mismatch_construction_error(tri));
+        }
+        Ok(())
+    }
+
+    fn ensure_current_for_validation(
+        &self,
+        tri: &Triangulation<K, U, V, D>,
+    ) -> Result<(), ConvexHullValidationError> {
+        if self.is_empty() && self.creation_generation.get().is_none() {
+            return Ok(());
+        }
+        let creation_generation = self.creation_generation.get().copied().unwrap_or(0);
+        if creation_generation != tri.tds.generation() {
+            return Err(self.stale_hull_error(tri));
+        }
+        let Some(creation_identity) = self.creation_identity.get() else {
+            return Err(self.identity_mismatch_error(tri));
+        };
+        if !Arc::ptr_eq(creation_identity, tri.tds.identity()) {
+            return Err(self.identity_mismatch_error(tri));
+        }
+        Ok(())
     }
 }
 
@@ -1048,18 +1144,7 @@ where
         let tds = &tri.tds;
 
         // Staleness guard: fail fast before any cache work
-        let creation_gen = self.creation_generation.get().copied().unwrap_or(0);
-        let tds_gen = tds.generation();
-        let identity_matches = self
-            .creation_identity
-            .get()
-            .is_some_and(|identity| Arc::ptr_eq(identity, tds.identity()));
-        if creation_gen != tds_gen || !identity_matches {
-            return Err(ConvexHullConstructionError::StaleHull {
-                hull_generation: creation_gen,
-                tds_generation: tds_gen,
-            });
-        }
+        self.ensure_current_for_construction(tri)?;
 
         // Get or build the cached facet-to-cells mapping
         let facet_to_cells_arc = self
@@ -1123,12 +1208,7 @@ where
         );
 
         // Production build: always check creation_generation for stale detection
-        if creation_gen != tds_gen || !identity_matches {
-            return Err(ConvexHullConstructionError::StaleHull {
-                hull_generation: creation_gen,
-                tds_generation: tds_gen,
-            });
-        }
+        self.ensure_current_for_construction(tri)?;
 
         // Phase 3A: Derive facet vertex keys directly from the cell to avoid UUID↔key roundtrips.
         // This eliminates the need to convert vertex UUIDs back to keys later.
@@ -1453,9 +1533,7 @@ where
         let tds = &tri.tds;
 
         // Fail fast if hull is stale relative to this TDS (using immutable creation_generation)
-        if !self.is_valid_for_triangulation(tri) {
-            return Err(self.stale_hull_construction_error(tri));
-        }
+        self.ensure_current_for_construction(tri)?;
 
         // Optimization: Load cache once before the loop to avoid redundant atomic loads
         let facet_cache_arc = self
@@ -1546,9 +1624,7 @@ where
         let tds = &tri.tds;
 
         // Fail fast if hull is stale relative to this TDS (using immutable creation_generation)
-        if !self.is_valid_for_triangulation(tri) {
-            return Err(self.stale_hull_construction_error(tri));
-        }
+        self.ensure_current_for_construction(tri)?;
 
         let visible_facets = self.find_visible_facets(point, tri)?;
 
@@ -1736,9 +1812,7 @@ where
         // Check staleness first - validate() should explicitly fail on stale hulls
         // This makes the test behavior robust: validate() fails due to staleness check,
         // not because facet handles happen to point to removed cells
-        if !self.is_valid_for_triangulation(tri) {
-            return Err(self.stale_hull_error(tri));
-        }
+        self.ensure_current_for_validation(tri)?;
 
         // Check that all facets have exactly D vertices (for D-dimensional triangulation,
         // facets are (D-1)-dimensional and have D vertices)
@@ -6976,7 +7050,11 @@ mod tests {
         );
         assert!(matches!(
             visibility,
-            Err(ConvexHullConstructionError::StaleHull { .. })
+            Err(ConvexHullConstructionError::IdentityMismatch { .. })
+        ));
+        assert!(matches!(
+            hull.validate(dt2.as_triangulation()),
+            Err(ConvexHullValidationError::IdentityMismatch { .. })
         ));
     }
 
@@ -7012,7 +7090,11 @@ mod tests {
         );
         assert!(matches!(
             visibility,
-            Err(ConvexHullConstructionError::StaleHull { .. })
+            Err(ConvexHullConstructionError::IdentityMismatch { .. })
+        ));
+        assert!(matches!(
+            hull.validate(dt2.as_triangulation()),
+            Err(ConvexHullValidationError::IdentityMismatch { .. })
         ));
     }
 

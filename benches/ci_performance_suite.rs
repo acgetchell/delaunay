@@ -1005,7 +1005,7 @@ fn bench_hull_case<const D: usize>(
                         "convex hull extraction should succeed: {error}"
                     )),
                 };
-                black_box(hull);
+                let _ = black_box(hull);
             });
         },
     );

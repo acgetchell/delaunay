@@ -37,8 +37,8 @@ use crate::core::collections::{
 };
 use crate::core::facet::{FacetError, FacetHandle};
 use crate::core::tds::{
-    CellKey, DelaunayValidationErrorKind, EntityKind, GeometricError, Tds, TdsConstructionError,
-    TdsError, TdsErrorKind, TriangulationValidationErrorKind, VertexKey,
+    CellKey, DelaunayValidationErrorKind, EntityKind, GeometricError, NeighborValidationError, Tds,
+    TdsConstructionError, TdsError, TdsErrorKind, TriangulationValidationErrorKind, VertexKey,
 };
 use crate::core::traits::boundary_analysis::BoundaryAnalysis;
 use crate::core::traits::data_type::DataType;
@@ -137,10 +137,11 @@ pub enum TdsValidationFailure {
     },
 
     /// Neighbor relationships are invalid.
-    #[error("invalid neighbor relationships: {message}")]
+    #[error("invalid neighbor relationships: {reason}")]
     InvalidNeighbors {
         /// Neighbor validation failure detail.
-        message: String,
+        #[source]
+        reason: NeighborValidationError,
     },
 
     /// Coherent orientation was violated between adjacent cells.
@@ -294,9 +295,7 @@ impl From<TdsError> for TdsValidationFailure {
                 Self::InvalidVertex { vertex_id, source }
             }
             TdsError::InvalidCell { cell_id, source } => Self::InvalidCell { cell_id, source },
-            TdsError::InvalidNeighbors { reason } => Self::InvalidNeighbors {
-                message: reason.to_string(),
-            },
+            TdsError::InvalidNeighbors { reason } => Self::InvalidNeighbors { reason },
             TdsError::OrientationViolation {
                 cell1_key,
                 cell1_uuid,
@@ -605,7 +604,8 @@ impl From<&DelaunayRepairError> for DelaunayRepairErrorKind {
 /// assert_eq!(summary.kind, DelaunayRepairErrorKind::PostconditionFailed);
 /// assert!(summary.message.contains("remaining non-Delaunay facet"));
 /// ```
-#[derive(Debug, Clone, thiserror::Error, PartialEq, Eq)]
+#[must_use]
+#[derive(Debug, Clone, thiserror::Error)]
 #[error("{message}")]
 pub struct DelaunayRepairErrorSummary {
     /// Structured repair failure category.
@@ -613,6 +613,14 @@ pub struct DelaunayRepairErrorSummary {
     /// Full diagnostic text from the original repair error.
     pub message: String,
 }
+
+impl PartialEq for DelaunayRepairErrorSummary {
+    fn eq(&self, other: &Self) -> bool {
+        self.kind == other.kind
+    }
+}
+
+impl Eq for DelaunayRepairErrorSummary {}
 
 impl From<&DelaunayRepairError> for DelaunayRepairErrorSummary {
     fn from(source: &DelaunayRepairError) -> Self {
@@ -706,7 +714,8 @@ pub enum InsertionErrorSourceKind {
 ///     )),
 /// );
 /// ```
-#[derive(Debug, Clone, thiserror::Error, PartialEq, Eq)]
+#[must_use]
+#[derive(Debug, Clone, thiserror::Error)]
 #[error("{message}")]
 pub struct InsertionErrorSummary {
     /// Structured insertion failure category.
@@ -716,6 +725,14 @@ pub struct InsertionErrorSummary {
     /// Full diagnostic text from the original insertion error.
     pub message: String,
 }
+
+impl PartialEq for InsertionErrorSummary {
+    fn eq(&self, other: &Self) -> bool {
+        self.kind == other.kind && self.source_kind == other.source_kind
+    }
+}
+
+impl Eq for InsertionErrorSummary {}
 
 impl From<InsertionError> for InsertionErrorSummary {
     fn from(source: InsertionError) -> Self {
@@ -767,7 +784,7 @@ pub enum DelaunayRepairFailureContext {
     /// Local repair failed and the robust-kernel fallback also failed.
     LocalRepairRobustFallback {
         /// Original local repair failure that triggered the robust fallback.
-        initial: Box<DelaunayRepairErrorSummary>,
+        initial: DelaunayRepairErrorSummary,
     },
     /// Local repair failed with a non-recoverable repair error.
     LocalRepairNonRecoverable,
@@ -4686,7 +4703,7 @@ mod tests {
             message: "local predicate violation".to_string(),
         };
         let context = DelaunayRepairFailureContext::LocalRepairRobustFallback {
-            initial: Box::new(DelaunayRepairErrorSummary::from(&initial)),
+            initial: DelaunayRepairErrorSummary::from(&initial),
         };
 
         let msg = context.to_string();

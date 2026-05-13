@@ -40,7 +40,7 @@ use crate::core::collections::{
 use crate::core::edge::EdgeKey;
 use crate::core::facet::{AllFacetsIter, FacetError, FacetHandle, facet_key_from_vertices};
 use crate::core::operations::TopologicalOperation;
-use crate::core::tds::{CellKey, EntityKind, Tds, VertexKey};
+use crate::core::tds::{CellKey, EntityKind, NeighborValidationError, Tds, VertexKey};
 use crate::core::traits::data_type::DataType;
 use crate::core::triangulation::{TopologyGuarantee, Triangulation, TriangulationValidationError};
 use crate::core::util::stable_hash_u64_slice;
@@ -822,11 +822,13 @@ where
     };
     if neighbors.len() != D + 1 {
         return Err(TdsValidationFailure::InvalidNeighbors {
-            message: format!(
-                "Neighbor vector length {} != D+1 ({})",
-                neighbors.len(),
-                D + 1
-            ),
+            reason: NeighborValidationError::Other {
+                message: format!(
+                    "Neighbor vector length {} != D+1 ({})",
+                    neighbors.len(),
+                    D + 1
+                ),
+            },
         });
     }
 
@@ -836,9 +838,11 @@ where
         };
         if removed_cells.contains(neighbor_key) {
             return Err(TdsValidationFailure::InvalidNeighbors {
-                message: format!(
-                    "Cell {cell_key:?} still references removed neighbor {neighbor_key:?}"
-                ),
+                reason: NeighborValidationError::Other {
+                    message: format!(
+                        "Cell {cell_key:?} still references removed neighbor {neighbor_key:?}"
+                    ),
+                },
             });
         }
         if *neighbor_key == cell_key {
@@ -846,26 +850,32 @@ where
                 continue;
             }
             return Err(TdsValidationFailure::InvalidNeighbors {
-                message: format!(
-                    "Cell {:?} has non-periodic self-neighbor at facet index {facet_idx}",
-                    cell.uuid()
-                ),
+                reason: NeighborValidationError::Other {
+                    message: format!(
+                        "Cell {:?} has non-periodic self-neighbor at facet index {facet_idx}",
+                        cell.uuid()
+                    ),
+                },
             });
         }
 
         let neighbor_cell =
             tds.cell(*neighbor_key)
                 .ok_or_else(|| TdsValidationFailure::InvalidNeighbors {
-                    message: format!("Neighbor cell {neighbor_key:?} not found"),
+                    reason: NeighborValidationError::Other {
+                        message: format!("Neighbor cell {neighbor_key:?} not found"),
+                    },
                 })?;
         let mirror_idx = cell
             .mirror_facet_index(facet_idx, neighbor_cell)
             .ok_or_else(|| TdsValidationFailure::InvalidNeighbors {
-                message: format!(
-                    "Cell {:?} facet {facet_idx} does not share a valid mirror facet with neighbor {:?}",
-                    cell.uuid(),
-                    neighbor_cell.uuid()
-                ),
+                reason: NeighborValidationError::Other {
+                    message: format!(
+                        "Cell {:?} facet {facet_idx} does not share a valid mirror facet with neighbor {:?}",
+                        cell.uuid(),
+                        neighbor_cell.uuid()
+                    ),
+                },
             })?;
         validate_flip_trial_mutual_facet_neighbors(
             tds,
@@ -935,11 +945,13 @@ where
 
     if source_neighbor != Some(target_cell_key) || target_neighbor != Some(source_cell_key) {
         return Err(TdsValidationFailure::InvalidNeighbors {
-            message: format!(
-                "Interior facet {facet_key} has inconsistent neighbor pointers: {}[{source_facet}] -> {source_neighbor:?}, {}[{target_facet}] -> {target_neighbor:?}",
-                source_cell.uuid(),
-                target_cell.uuid()
-            ),
+            reason: NeighborValidationError::Other {
+                message: format!(
+                    "Interior facet {facet_key} has inconsistent neighbor pointers: {}[{source_facet}] -> {source_neighbor:?}, {}[{target_facet}] -> {target_neighbor:?}",
+                    source_cell.uuid(),
+                    target_cell.uuid()
+                ),
+            },
         });
     }
 
@@ -961,12 +973,20 @@ where
 {
     let source_order = facet_order(cell.vertices(), facet_idx).map_err(|err| {
         TdsValidationFailure::InvalidNeighbors {
-            message: format!("Could not build source facet order for local flip validation: {err}"),
+            reason: NeighborValidationError::Other {
+                message: format!(
+                    "Could not build source facet order for local flip validation: {err}"
+                ),
+            },
         }
     })?;
     let target_order = facet_order(neighbor_cell.vertices(), mirror_idx).map_err(|err| {
         TdsValidationFailure::InvalidNeighbors {
-            message: format!("Could not build target facet order for local flip validation: {err}"),
+            reason: NeighborValidationError::Other {
+                message: format!(
+                    "Could not build target facet order for local flip validation: {err}"
+                ),
+            },
         }
     })?;
     let observed_odd_permutation =
@@ -9587,7 +9607,7 @@ mod tests {
                     let simplex_vertices = insert_standard_simplex_vertices(&mut tds);
 
                     let mut external_cell = Cell::new(simplex_vertices.clone(), None).unwrap();
-                    external_cell.set_periodic_vertex_offsets(vec![[0_i8; $dim]; $dim + 1]);
+                    external_cell.set_periodic_vertex_offsets(vec![[0_i8; $dim]; $dim + 1]).unwrap();
                     let external_cell_key = tds.insert_cell_with_mapping(external_cell).unwrap();
 
                     let mut replacement_cells = vec![vertex_key_buffer(&simplex_vertices)];
@@ -12356,7 +12376,9 @@ mod tests {
 
     fn sample_tds_validation_failure() -> TdsValidationFailure {
         TdsValidationFailure::InvalidNeighbors {
-            message: "synthetic neighbor mismatch".to_string(),
+            reason: NeighborValidationError::Other {
+                message: "synthetic neighbor mismatch".to_string(),
+            },
         }
     }
 
@@ -12458,11 +12480,11 @@ mod tests {
         let validation_kind = FlipNeighborDelaunayValidationFailureKind::from(
             &DelaunayTriangulationValidationError::RepairOperationFailed {
                 operation: DelaunayRepairOperation::VertexRemoval,
-                source: DelaunayRepairError::InvalidTopology {
+                source: Box::new(DelaunayRepairError::InvalidTopology {
                     required: TopologyGuarantee::PLManifold,
                     found: TopologyGuarantee::Pseudomanifold,
                     message: "repair requires PL topology",
-                },
+                }),
             },
         );
         assert_eq!(
@@ -12756,7 +12778,7 @@ mod tests {
             offsets[index][0] = 1;
         }
         let mut cell = Cell::new(vertices, None).unwrap();
-        cell.set_periodic_vertex_offsets(offsets);
+        cell.set_periodic_vertex_offsets(offsets).unwrap();
         tds.insert_cell_with_mapping(cell).unwrap()
     }
 
@@ -12766,7 +12788,7 @@ mod tests {
         offsets: Vec<[i8; D]>,
     ) -> CellKey {
         let mut cell = Cell::new(vertices, None).unwrap();
-        cell.set_periodic_vertex_offsets(offsets);
+        cell.set_periodic_vertex_offsets(offsets).unwrap();
         tds.insert_cell_with_mapping(cell).unwrap()
     }
 
