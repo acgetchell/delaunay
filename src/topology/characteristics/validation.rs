@@ -128,7 +128,6 @@ impl TopologyCheckResult {
 /// # Errors
 ///
 /// Returns [`TopologyError`] if topology validation support data cannot be built.
-/// if the underlying operations fail.
 pub fn validate_triangulation_euler<T, U, V, const D: usize>(
     tds: &Tds<T, U, V, D>,
 ) -> Result<TopologyCheckResult, TopologyError> {

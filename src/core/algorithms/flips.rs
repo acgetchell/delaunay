@@ -822,12 +822,10 @@ where
     };
     if neighbors.len() != D + 1 {
         return Err(TdsValidationFailure::InvalidNeighbors {
-            reason: NeighborValidationError::Other {
-                message: format!(
-                    "Neighbor vector length {} != D+1 ({})",
-                    neighbors.len(),
-                    D + 1
-                ),
+            reason: NeighborValidationError::LengthMismatch {
+                actual: neighbors.len(),
+                expected: D + 1,
+                context: "flip trial neighbor validation".to_string(),
             },
         });
     }
@@ -838,10 +836,11 @@ where
         };
         if removed_cells.contains(neighbor_key) {
             return Err(TdsValidationFailure::InvalidNeighbors {
-                reason: NeighborValidationError::Other {
-                    message: format!(
-                        "Cell {cell_key:?} still references removed neighbor {neighbor_key:?}"
-                    ),
+                reason: NeighborValidationError::ReferencedRemovedNeighbor {
+                    cell_key,
+                    cell_uuid: cell.uuid(),
+                    facet_index: facet_idx,
+                    neighbor_key: *neighbor_key,
                 },
             });
         }
@@ -850,11 +849,10 @@ where
                 continue;
             }
             return Err(TdsValidationFailure::InvalidNeighbors {
-                reason: NeighborValidationError::Other {
-                    message: format!(
-                        "Cell {:?} has non-periodic self-neighbor at facet index {facet_idx}",
-                        cell.uuid()
-                    ),
+                reason: NeighborValidationError::NonPeriodicSelfNeighbor {
+                    cell_key,
+                    cell_uuid: cell.uuid(),
+                    facet_index: facet_idx,
                 },
             });
         }
@@ -862,19 +860,22 @@ where
         let neighbor_cell =
             tds.cell(*neighbor_key)
                 .ok_or_else(|| TdsValidationFailure::InvalidNeighbors {
-                    reason: NeighborValidationError::Other {
-                        message: format!("Neighbor cell {neighbor_key:?} not found"),
+                    reason: NeighborValidationError::MissingNeighborCell {
+                        cell_key,
+                        cell_uuid: cell.uuid(),
+                        facet_index: facet_idx,
+                        neighbor_key: *neighbor_key,
+                        context: "flip trial neighbor validation".to_string(),
                     },
                 })?;
         let mirror_idx = cell
             .mirror_facet_index(facet_idx, neighbor_cell)
             .ok_or_else(|| TdsValidationFailure::InvalidNeighbors {
-                reason: NeighborValidationError::Other {
-                    message: format!(
-                        "Cell {:?} facet {facet_idx} does not share a valid mirror facet with neighbor {:?}",
-                        cell.uuid(),
-                        neighbor_cell.uuid()
-                    ),
+                reason: NeighborValidationError::MirrorFacetMissing {
+                    cell_uuid: cell.uuid(),
+                    facet_index: facet_idx,
+                    neighbor_uuid: neighbor_cell.uuid(),
+                    context: "flip trial neighbor validation".to_string(),
                 },
             })?;
         validate_flip_trial_mutual_facet_neighbors(
@@ -945,12 +946,16 @@ where
 
     if source_neighbor != Some(target_cell_key) || target_neighbor != Some(source_cell_key) {
         return Err(TdsValidationFailure::InvalidNeighbors {
-            reason: NeighborValidationError::Other {
-                message: format!(
-                    "Interior facet {facet_key} has inconsistent neighbor pointers: {}[{source_facet}] -> {source_neighbor:?}, {}[{target_facet}] -> {target_neighbor:?}",
-                    source_cell.uuid(),
-                    target_cell.uuid()
-                ),
+            reason: NeighborValidationError::InteriorFacetNeighborMismatch {
+                facet_key,
+                first_cell_key: source_cell_key,
+                first_cell_uuid: source_cell.uuid(),
+                first_facet_index: source_facet,
+                first_neighbor: source_neighbor,
+                second_cell_key: target_cell_key,
+                second_cell_uuid: target_cell.uuid(),
+                second_facet_index: target_facet,
+                second_neighbor: target_neighbor,
             },
         });
     }
@@ -973,19 +978,23 @@ where
 {
     let source_order = facet_order(cell.vertices(), facet_idx).map_err(|err| {
         TdsValidationFailure::InvalidNeighbors {
-            reason: NeighborValidationError::Other {
-                message: format!(
-                    "Could not build source facet order for local flip validation: {err}"
-                ),
+            reason: NeighborValidationError::FacetOrderUnavailable {
+                cell_key,
+                cell_uuid: cell.uuid(),
+                facet_index: facet_idx,
+                context: "source facet in local flip validation".to_string(),
+                source: Box::new(err),
             },
         }
     })?;
     let target_order = facet_order(neighbor_cell.vertices(), mirror_idx).map_err(|err| {
         TdsValidationFailure::InvalidNeighbors {
-            reason: NeighborValidationError::Other {
-                message: format!(
-                    "Could not build target facet order for local flip validation: {err}"
-                ),
+            reason: NeighborValidationError::FacetOrderUnavailable {
+                cell_key: neighbor_key,
+                cell_uuid: neighbor_cell.uuid(),
+                facet_index: mirror_idx,
+                context: "target facet in local flip validation".to_string(),
+                source: Box::new(err),
             },
         }
     })?;

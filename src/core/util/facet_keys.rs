@@ -138,22 +138,27 @@ pub(crate) fn periodic_facet_key_from_lifted_vertices<const D: usize>(
         });
     }
 
-    let mut lifted_facet: Vec<(u64, [i8; D])> =
-        Vec::with_capacity(lifted_vertices.len().saturating_sub(1));
+    let mut lifted_facet: SmallBuffer<(u64, [i8; D]), MAX_PRACTICAL_DIMENSION_SIZE> =
+        SmallBuffer::new();
     for (idx, (vertex_key, offset)) in lifted_vertices.iter().enumerate() {
         if idx != facet_index {
             lifted_facet.push((vertex_key.data().as_ffi(), *offset));
         }
     }
     // Sort by (vertex_key_value, offset) to make ordering deterministic when keys are equal
-    lifted_facet.sort_unstable_by(|(key_a, offset_a), (key_b, offset_b)| {
-        key_a.cmp(key_b).then_with(|| offset_a.cmp(offset_b))
-    });
+    lifted_facet
+        .as_mut_slice()
+        .sort_unstable_by(|(key_a, offset_a), (key_b, offset_b)| {
+            key_a.cmp(key_b).then_with(|| offset_a.cmp(offset_b))
+        });
     let facet_anchor_offset = lifted_facet
         .first()
         .map_or([0_i8; D], |(_, offset)| *offset);
 
-    let mut packed_signature: Vec<u64> = Vec::with_capacity(lifted_facet.len() * (D + 1));
+    let mut packed_signature: SmallBuffer<
+        u64,
+        { MAX_PRACTICAL_DIMENSION_SIZE * MAX_PRACTICAL_DIMENSION_SIZE },
+    > = SmallBuffer::new();
     for (vertex_key_value, offset) in lifted_facet {
         packed_signature.push(vertex_key_value);
         for axis in 0..D {
@@ -169,7 +174,7 @@ pub(crate) fn periodic_facet_key_from_lifted_vertices<const D: usize>(
         }
     }
 
-    Ok(stable_hash_u64_slice(&packed_signature))
+    Ok(stable_hash_u64_slice(packed_signature.as_slice()))
 }
 
 /// Verifies facet index consistency between two neighboring cells.
@@ -195,9 +200,8 @@ pub(crate) fn periodic_facet_key_from_lifted_vertices<const D: usize>(
 ///
 /// Returns `FacetError` if:
 /// - Either cell cannot be found in the TDS
-/// - Facet views cannot be created from the cells
-/// - Facet vertices cannot be accessed
 /// - The facet index is out of bounds
+/// - Either cell has malformed simplex arity for dimension `D`
 ///
 /// # Examples
 ///
@@ -254,11 +258,11 @@ pub fn verify_facet_index_consistency<T, U, V, const D: usize>(
     }
 
     // Get the facet from cell1 and compute its key
-    let cell1_key_value = cell_facet_key(cell1.vertices(), facet_idx)?;
+    let cell1_key_value = cell_facet_key::<D>(cell1.vertices(), facet_idx)?;
 
     // Find matching facet in cell2
     for cell2_facet_idx in 0..cell2.number_of_vertices() {
-        if cell1_key_value == cell_facet_key(cell2.vertices(), cell2_facet_idx)? {
+        if cell1_key_value == cell_facet_key::<D>(cell2.vertices(), cell2_facet_idx)? {
             return Ok(true);
         }
     }
@@ -266,7 +270,19 @@ pub fn verify_facet_index_consistency<T, U, V, const D: usize>(
     Ok(false) // No matching facet found
 }
 
-fn cell_facet_key(vertices: &[VertexKey], omit_idx: usize) -> Result<u64, FacetError> {
+fn cell_facet_key<const D: usize>(
+    vertices: &[VertexKey],
+    omit_idx: usize,
+) -> Result<u64, FacetError> {
+    let expected_vertices = D + 1;
+    if vertices.len() != expected_vertices {
+        return Err(FacetError::InsufficientVertices {
+            expected: expected_vertices,
+            actual: vertices.len(),
+            dimension: D,
+        });
+    }
+
     if omit_idx >= vertices.len() {
         return Err(facet_index_error(omit_idx, vertices.len()));
     }
@@ -278,7 +294,7 @@ fn cell_facet_key(vertices: &[VertexKey], omit_idx: usize) -> Result<u64, FacetE
             facet_vertices.push(vertex_key);
         }
     }
-    Ok(facet_key_from_vertices(&facet_vertices))
+    checked_facet_key_from_vertex_keys::<D>(facet_vertices.as_slice())
 }
 
 fn facet_index_error(index: usize, facet_count: usize) -> FacetError {

@@ -10,8 +10,11 @@ use delaunay::prelude::generators::generate_random_points_in_ball_seeded;
 use delaunay::prelude::geometry::{Point, RobustKernel};
 use delaunay::prelude::ordering::{hilbert_indices_prequantized, hilbert_quantize};
 use delaunay::prelude::triangulation::construction::{
-    ConstructionOptions, DelaunayTriangulation, InsertionOrderStrategy, RetryPolicy,
-    TopologyGuarantee, Vertex, vertex,
+    ConstructionOptions, DelaunayTriangulation, DelaunayTriangulationBuilder,
+    InsertionOrderStrategy, RetryPolicy, TopologyGuarantee, Vertex, vertex,
+};
+use delaunay::prelude::triangulation::insertion::{
+    HullExtensionReason, InsertionError, InsertionErrorKind, InsertionErrorSummary,
 };
 
 /// Replays a full Hilbert ordering while keeping only the prefix that first
@@ -130,6 +133,55 @@ fn regression_issue_120_minimal_failing_input_2d() {
         debug_print_first_delaunay_violation(dt.tds(), None);
         panic!("Issue #120 2D regression must validate Levels 1-4: {err}");
     }
+}
+
+#[test]
+fn regression_insertion_error_summary_preserves_top_level_retryability() {
+    let source = InsertionError::HullExtension {
+        reason: HullExtensionReason::NoVisibleFacets,
+    };
+    assert!(source.is_retryable());
+
+    let summary = InsertionErrorSummary::from(source);
+    assert_eq!(summary.kind, InsertionErrorKind::HullExtension);
+    assert!(summary.retryable);
+    assert!(summary.is_retryable());
+
+    let mut non_retryable = summary.clone();
+    non_retryable.retryable = false;
+    assert_ne!(
+        summary, non_retryable,
+        "summary equality must include retryability so compact retry paths preserve behavior"
+    );
+}
+
+#[test]
+fn regression_periodic_neighbor_validation_uses_lifted_vertex_offsets() {
+    let vertices: Vec<Vertex<f64, (), 2>> = (0..7)
+        .map(|index| {
+            let index_f64 = f64::from(u32::try_from(index).expect("test index fits in u32"));
+            vertex!([
+                0.9_f64.mul_add(((index_f64 + 1.0) * 0.618_033_988_749_894_8).fract(), 0.05),
+                0.9_f64.mul_add(((index_f64 + 1.0) * 0.414_213_562_373_095_03).fract(), 0.05),
+            ])
+        })
+        .collect();
+    let kernel = RobustKernel::<f64>::new();
+
+    let dt = DelaunayTriangulationBuilder::new(&vertices)
+        .toroidal_periodic([1.0_f64; 2])
+        .build_with_kernel::<_, ()>(&kernel)
+        .expect("periodic 2D build should succeed");
+
+    assert!(
+        dt.cells()
+            .any(|(_, cell)| cell.periodic_vertex_offsets().is_some()),
+        "periodic image-point construction should populate lifted per-cell offsets"
+    );
+    assert!(
+        dt.tds().is_valid().is_ok(),
+        "neighbor validation must compare lifted (vertex, offset) identities"
+    );
 }
 
 /// The 35-vertex 3D seed `0xE30C78582376677C` produces a Hilbert-ordered

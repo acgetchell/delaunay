@@ -685,16 +685,21 @@ pub enum InsertionErrorSourceKind {
 ///
 /// The conversion preserves the top-level [`InsertionErrorKind`], an optional
 /// nested [`InsertionErrorSourceKind`] for wrapped validation or repair errors,
-/// and the rendered diagnostic text. It intentionally drops bulky typed payloads
-/// and source chains; keep the original [`InsertionError`] when callers need the
-/// full structured context.
+/// the original retryability decision, and the rendered diagnostic text. It
+/// intentionally drops bulky typed payloads and source chains; keep the original
+/// [`InsertionError`] when callers need the full structured context.
+///
+/// Equality compares the structured kind, nested source kind, and retryability
+/// flag while ignoring [`Self::message`], so summary comparisons remain stable
+/// across display-text changes.
 ///
 /// # Examples
 ///
 /// ```rust
 /// use delaunay::prelude::triangulation::insertion::{
-///     DelaunayRepairErrorKind, DelaunayRepairFailureContext, InsertionError,
-///     InsertionErrorKind, InsertionErrorSourceKind, InsertionErrorSummary,
+///     DelaunayRepairErrorKind, DelaunayRepairFailureContext, HullExtensionReason,
+///     InsertionError, InsertionErrorKind, InsertionErrorSourceKind,
+///     InsertionErrorSummary,
 /// };
 /// use delaunay::prelude::triangulation::repair::DelaunayRepairError;
 ///
@@ -713,6 +718,12 @@ pub enum InsertionErrorSourceKind {
 ///         DelaunayRepairErrorKind::PostconditionFailed,
 ///     )),
 /// );
+/// assert!(!summary.retryable);
+///
+/// let retryable = InsertionErrorSummary::from(InsertionError::HullExtension {
+///     reason: HullExtensionReason::NoVisibleFacets,
+/// });
+/// assert!(retryable.retryable);
 /// ```
 #[must_use]
 #[derive(Debug, Clone, thiserror::Error)]
@@ -722,26 +733,24 @@ pub struct InsertionErrorSummary {
     pub kind: InsertionErrorKind,
     /// Nested structured source kind when the insertion error wraps another layer.
     pub source_kind: Option<InsertionErrorSourceKind>,
+    /// Whether the original insertion error was retryable via perturbation.
+    pub retryable: bool,
     /// Full diagnostic text from the original insertion error.
     pub message: String,
 }
 
 impl PartialEq for InsertionErrorSummary {
     fn eq(&self, other: &Self) -> bool {
-        self.kind == other.kind && self.source_kind == other.source_kind
+        self.kind == other.kind
+            && self.source_kind == other.source_kind
+            && self.retryable == other.retryable
     }
 }
 
 impl Eq for InsertionErrorSummary {}
 
 impl InsertionErrorSummary {
-    /// Returns true when the compact summary still identifies a retryable geometry-sensitive
-    /// insertion failure.
-    ///
-    /// This is a discriminant-based approximation for small summary payloads. It treats
-    /// TDS geometric/orientation failures, local topology manifold/link failures, isolated
-    /// vertices, and top-level non-manifold topology as retryable. It does not reconstruct
-    /// the original source chain or parse [`Self::message`].
+    /// Returns true when the original insertion failure was retryable via perturbation.
     ///
     /// # Examples
     ///
@@ -756,6 +765,7 @@ impl InsertionErrorSummary {
     ///     source_kind: Some(InsertionErrorSourceKind::Triangulation(
     ///         TriangulationValidationErrorKind::ManifoldFacetMultiplicity,
     ///     )),
+    ///     retryable: true,
     ///     message: "facet shared by too many cells".to_string(),
     /// };
     /// assert!(retryable.is_retryable());
@@ -765,35 +775,20 @@ impl InsertionErrorSummary {
     ///     source_kind: Some(InsertionErrorSourceKind::Triangulation(
     ///         TriangulationValidationErrorKind::Disconnected,
     ///     )),
+    ///     retryable: false,
     ///     message: "cell graph disconnected".to_string(),
     /// };
     /// assert!(!structural.is_retryable());
     /// ```
     #[must_use]
     pub const fn is_retryable(&self) -> bool {
-        match self.source_kind {
-            Some(InsertionErrorSourceKind::Tds(kind)) => matches!(
-                kind,
-                TdsErrorKind::Geometric | TdsErrorKind::OrientationViolation
-            ),
-            Some(InsertionErrorSourceKind::Triangulation(kind)) => matches!(
-                kind,
-                TriangulationValidationErrorKind::ManifoldFacetMultiplicity
-                    | TriangulationValidationErrorKind::BoundaryRidgeMultiplicity
-                    | TriangulationValidationErrorKind::RidgeLinkNotManifold
-                    | TriangulationValidationErrorKind::VertexLinkNotManifold
-                    | TriangulationValidationErrorKind::IsolatedVertex
-            ),
-            Some(
-                InsertionErrorSourceKind::Delaunay(_) | InsertionErrorSourceKind::DelaunayRepair(_),
-            )
-            | None => matches!(self.kind, InsertionErrorKind::NonManifoldTopology),
-        }
+        self.retryable
     }
 }
 
 impl From<InsertionError> for InsertionErrorSummary {
     fn from(source: InsertionError) -> Self {
+        let retryable = source.is_retryable();
         let kind = match &source {
             InsertionError::ConflictRegion(_) => InsertionErrorKind::ConflictRegion,
             InsertionError::Location(_) => InsertionErrorKind::Location,
@@ -830,6 +825,7 @@ impl From<InsertionError> for InsertionErrorSummary {
         Self {
             kind,
             source_kind,
+            retryable,
             message: source.to_string(),
         }
     }
@@ -2435,6 +2431,11 @@ where
 /// Uses [`FastHasher`] for deterministic hashing consistent with other
 /// internal collections ([`FastHashMap`], [`FastHashSet`]).
 fn facet_hash_from_sorted_vertices(sorted_vkeys: &[VertexKey]) -> u64 {
+    debug_assert!(
+        sorted_vkeys.windows(2).all(|pair| pair[0] <= pair[1]),
+        "facet_hash_from_sorted_vertices: input must be sorted"
+    );
+
     let mut hasher = FastHasher::default();
     for &vkey in sorted_vkeys {
         vkey.hash(&mut hasher);
@@ -4759,6 +4760,7 @@ mod tests {
         let geometric = InsertionErrorSummary {
             kind: InsertionErrorKind::TopologyValidation,
             source_kind: Some(InsertionErrorSourceKind::Tds(TdsErrorKind::Geometric)),
+            retryable: true,
             message: String::new(),
         };
         let orientation = InsertionErrorSummary {
@@ -4766,6 +4768,7 @@ mod tests {
             source_kind: Some(InsertionErrorSourceKind::Tds(
                 TdsErrorKind::OrientationViolation,
             )),
+            retryable: true,
             message: String::new(),
         };
         let structural = InsertionErrorSummary {
@@ -4773,6 +4776,7 @@ mod tests {
             source_kind: Some(InsertionErrorSourceKind::Tds(
                 TdsErrorKind::InconsistentDataStructure,
             )),
+            retryable: false,
             message: String::new(),
         };
 

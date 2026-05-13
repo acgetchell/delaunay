@@ -238,6 +238,7 @@ use super::{
     },
     vertex::{Vertex, VertexValidationError},
 };
+use crate::core::algorithms::flips::FlipError;
 use crate::core::collections::{
     CellKeySet, CellRemovalBuffer, CellVerticesMap, Entry, FacetToCellsMap, FastHashMap,
     MAX_PRACTICAL_DIMENSION_SIZE, NeighborBuffer, SmallBuffer, StorageMap, UuidToCellKeyMap,
@@ -468,6 +469,20 @@ pub enum NeighborValidationError {
         neighbor_key: CellKey,
         /// Validation context.
         context: String,
+    },
+    /// A neighbor pointer references a cell removed by the current local edit.
+    #[error(
+        "Cell {cell_uuid} (key {cell_key:?}) facet {facet_index} references removed neighbor {neighbor_key:?}"
+    )]
+    ReferencedRemovedNeighbor {
+        /// Cell containing the stale local-edit neighbor pointer.
+        cell_key: CellKey,
+        /// UUID of the cell containing the stale local-edit neighbor pointer.
+        cell_uuid: Uuid,
+        /// Facet slot containing the removed neighbor pointer.
+        facet_index: usize,
+        /// Removed neighbor key.
+        neighbor_key: CellKey,
     },
     /// A neighbor pair does not share exactly the facet opposite the slot.
     #[error(
@@ -726,6 +741,23 @@ pub enum NeighborValidationError {
         second_facet_index: usize,
         /// Neighbor pointer observed in the second cell.
         second_neighbor: Option<CellKey>,
+    },
+    /// A facet's vertex order could not be built for neighbor validation.
+    #[error(
+        "Could not build facet order during {context}: cell {cell_uuid} (key {cell_key:?}) facet {facet_index}: {source}"
+    )]
+    FacetOrderUnavailable {
+        /// Cell whose facet order could not be built.
+        cell_key: CellKey,
+        /// UUID of the cell whose facet order could not be built.
+        cell_uuid: Uuid,
+        /// Facet index whose order could not be built.
+        facet_index: usize,
+        /// Validation context.
+        context: String,
+        /// Underlying [`FlipError`] raised while deriving the facet order.
+        #[source]
+        source: Box<FlipError>,
     },
     /// Bistellar flip neighbor wiring failed while preserving TDS invariants.
     #[error("Flip neighbor wiring failed: {reason}")]
@@ -1642,6 +1674,59 @@ impl<T, U, V, const D: usize> Tds<T, U, V, D> {
         vertex_uuid_offsets.sort_unstable();
 
         Ok(vertex_uuid_offsets)
+    }
+
+    fn lifted_vertex_identities(
+        cell_key: CellKey,
+        cell: &Cell<T, U, V, D>,
+    ) -> Result<SmallBuffer<(VertexKey, [i8; D]), MAX_PRACTICAL_DIMENSION_SIZE>, TdsError> {
+        let vertices = cell.vertices();
+        let periodic_offsets = cell.periodic_vertex_offsets();
+        if let Some(offsets) = periodic_offsets
+            && offsets.len() != vertices.len()
+        {
+            return Err(TdsError::DimensionMismatch {
+                expected: vertices.len(),
+                actual: offsets.len(),
+                context: format!(
+                    "cell {cell_key:?} periodic offset count vs vertex count in neighbor topology validation"
+                ),
+            });
+        }
+
+        let mut lifted_vertices: SmallBuffer<(VertexKey, [i8; D]), MAX_PRACTICAL_DIMENSION_SIZE> =
+            SmallBuffer::new();
+        for (vertex_idx, &vertex_key) in vertices.iter().enumerate() {
+            let offset = periodic_offsets.map_or([0_i8; D], |offsets| offsets[vertex_idx]);
+            lifted_vertices.push((vertex_key, offset));
+        }
+
+        Ok(lifted_vertices)
+    }
+
+    fn matching_lifted_facet_index(
+        cell: &Cell<T, U, V, D>,
+        neighbor: &Cell<T, U, V, D>,
+    ) -> Result<Option<usize>, TdsError> {
+        let cell_vertices = cell.vertices();
+        let neighbor_vertices = neighbor.vertices();
+
+        for cell_facet_index in 0..cell_vertices.len() {
+            let cell_facet_key =
+                Self::periodic_facet_key_from_cell_vertices(cell, cell_vertices, cell_facet_index)?;
+            for neighbor_facet_index in 0..neighbor_vertices.len() {
+                let neighbor_facet_key = Self::periodic_facet_key_from_cell_vertices(
+                    neighbor,
+                    neighbor_vertices,
+                    neighbor_facet_index,
+                )?;
+                if cell_facet_key == neighbor_facet_key {
+                    return Ok(Some(cell_facet_index));
+                }
+            }
+        }
+
+        Ok(None)
     }
 
     pub(crate) fn facet_key_for_cell_facet(
@@ -3653,7 +3738,7 @@ impl<T, U, V, const D: usize> Tds<T, U, V, D> {
                 context: "validate_neighbor_topology".to_string(),
             })?;
 
-        let cell_vertices = cell.vertices();
+        let cell_lifted_vertices = Self::lifted_vertex_identities(cell_key, cell)?;
 
         for (i, neighbor_key_opt) in neighbors.iter().enumerate() {
             if let Some(neighbor_key) = neighbor_key_opt {
@@ -3686,19 +3771,36 @@ impl<T, U, V, const D: usize> Tds<T, U, V, D> {
                             },
                         })?;
 
-                let neighbor_vertices = neighbor.vertices();
+                let uses_periodic_offsets = cell.periodic_vertex_offsets().is_some()
+                    || neighbor.periodic_vertex_offsets().is_some();
+                let (shared_count, missing_vertex_idx) = if uses_periodic_offsets {
+                    // Periodic quotient cells may be represented in different translated
+                    // frames. Compare normalized lifted facet identities so offset-distinct
+                    // vertices remain distinct while globally translated representatives match.
+                    let matching_facet_index = Self::matching_lifted_facet_index(cell, neighbor)?;
+                    (matching_facet_index.map_or(0, |_| D), matching_facet_index)
+                } else {
+                    let neighbor_lifted_vertices =
+                        Self::lifted_vertex_identities(*neighbor_key, neighbor)?;
 
-                // Count shared vertices and find missing vertex
-                let mut shared_count = 0;
-                let mut missing_vertex_idx = None;
+                    // Count shared vertices and find missing vertex
+                    let mut shared_count = 0;
+                    let mut missing_vertex_idx = None;
 
-                for (idx, &vkey) in cell_vertices.iter().enumerate() {
-                    if neighbor_vertices.contains(&vkey) {
-                        shared_count += 1;
-                    } else if missing_vertex_idx.is_none() {
-                        missing_vertex_idx = Some(idx);
+                    for (idx, cell_vertex_identity) in cell_lifted_vertices.iter().enumerate() {
+                        if neighbor_lifted_vertices
+                            .iter()
+                            .any(|neighbor_vertex_identity| {
+                                neighbor_vertex_identity == cell_vertex_identity
+                            })
+                        {
+                            shared_count += 1;
+                        } else if missing_vertex_idx.is_none() {
+                            missing_vertex_idx = Some(idx);
+                        }
                     }
-                }
+                    (shared_count, missing_vertex_idx)
+                };
 
                 // Validate the topological invariant
                 if shared_count != D {

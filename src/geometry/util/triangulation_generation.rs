@@ -771,9 +771,11 @@ mod tests {
         assert!(valid_seeded.is_ok());
 
         let valid_different_seed = triangulation_different_seed.is_valid();
+        #[cfg(feature = "diagnostics")]
         if let Err(e) = &valid_different_seed {
-            println!(
-                "test_generate_random_triangulation_basic (second seeded 2D): TDS invalid: {e}"
+            tracing::debug!(
+                error = %e,
+                "test_generate_random_triangulation_basic (second seeded 2D): TDS invalid"
             );
         }
         assert!(valid_different_seed.is_ok());
