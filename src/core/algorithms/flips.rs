@@ -166,7 +166,7 @@ where
         if prefer_secondary {
             let processed_ridge = timed_step!(
                 record_attempt_ridge,
-                process_ridge_queue_step(
+                run_next_ridge_repair_step(
                     tds,
                     kernel,
                     &mut queues,
@@ -182,7 +182,7 @@ where
             let processed_edge = !processed_ridge
                 && timed_step!(
                     record_attempt_edge,
-                    process_edge_queue_step(
+                    run_next_edge_repair_step(
                         tds,
                         kernel,
                         &mut queues,
@@ -199,7 +199,7 @@ where
                 && !processed_edge
                 && timed_step!(
                     record_attempt_triangle,
-                    process_triangle_queue_step(
+                    run_next_triangle_repair_step(
                         tds,
                         kernel,
                         &mut queues,
@@ -220,7 +220,7 @@ where
 
         if timed_step!(
             record_attempt_facet,
-            process_facet_queue_step(
+            run_next_facet_repair_step(
                 tds,
                 kernel,
                 &mut queues,
@@ -239,7 +239,7 @@ where
 
         let processed_ridge = timed_step!(
             record_attempt_ridge,
-            process_ridge_queue_step(
+            run_next_ridge_repair_step(
                 tds,
                 kernel,
                 &mut queues,
@@ -255,7 +255,7 @@ where
         let processed_edge = !processed_ridge
             && timed_step!(
                 record_attempt_edge,
-                process_edge_queue_step(
+                run_next_edge_repair_step(
                     tds,
                     kernel,
                     &mut queues,
@@ -272,7 +272,7 @@ where
             && !processed_edge
             && timed_step!(
                 record_attempt_triangle,
-                process_triangle_queue_step(
+                run_next_triangle_repair_step(
                     tds,
                     kernel,
                     &mut queues,
@@ -5810,7 +5810,7 @@ where
 
 /// Centralizes Strict/Repair handling so inconclusive predicates fail validation
 /// while remaining skippable during best-effort repair passes.
-fn handle_postcondition_predicate_failure(
+fn resolve_postcondition_predicate_failure(
     mode: PostconditionMode,
     context: DelaunayRepairVerificationContext,
     error: &FlipError,
@@ -5862,7 +5862,7 @@ where
                 let flip_degenerate = match k2_flip_would_create_degenerate_cell(tds, &context) {
                     Ok(degenerate) => degenerate,
                     Err(error @ FlipError::PredicateFailure { .. }) => {
-                        handle_postcondition_predicate_failure(
+                        resolve_postcondition_predicate_failure(
                             mode,
                             DelaunayRepairVerificationContext::LocalK2DegeneracyVerification,
                             &error,
@@ -5920,7 +5920,7 @@ where
                 // No violation detected.
             }
             Err(error @ FlipError::PredicateFailure { .. }) => {
-                handle_postcondition_predicate_failure(
+                resolve_postcondition_predicate_failure(
                     mode,
                     DelaunayRepairVerificationContext::LocalK2PostconditionVerification,
                     &error,
@@ -5982,7 +5982,7 @@ where
                 ) {
                     Ok(degenerate) => degenerate,
                     Err(error @ FlipError::PredicateFailure { .. }) => {
-                        handle_postcondition_predicate_failure(
+                        resolve_postcondition_predicate_failure(
                             mode,
                             DelaunayRepairVerificationContext::LocalK3DegeneracyVerification,
                             &error,
@@ -6023,7 +6023,7 @@ where
                 // No violation detected.
             }
             Err(error @ FlipError::PredicateFailure { .. }) => {
-                handle_postcondition_predicate_failure(
+                resolve_postcondition_predicate_failure(
                     mode,
                     DelaunayRepairVerificationContext::LocalK3PostconditionVerification,
                     &error,
@@ -6092,7 +6092,7 @@ where
         ) {
             Ok(violates) => violates,
             Err(error @ FlipError::PredicateFailure { .. }) => {
-                handle_postcondition_predicate_failure(
+                resolve_postcondition_predicate_failure(
                     mode,
                     DelaunayRepairVerificationContext::LocalInverseK2PostconditionVerification,
                     &error,
@@ -6176,7 +6176,7 @@ where
         ) {
             Ok(violates) => violates,
             Err(error @ FlipError::PredicateFailure { .. }) => {
-                handle_postcondition_predicate_failure(
+                resolve_postcondition_predicate_failure(
                     mode,
                     DelaunayRepairVerificationContext::LocalInverseK3PostconditionVerification,
                     &error,
@@ -7005,7 +7005,7 @@ where
     Ok(())
 }
 
-/// Processes one queued ridge because k=3 moves are only meaningful in D>=3 and
+/// Runs one queued ridge repair because k=3 moves are only meaningful in D>=3 and
 /// need their own adjacency validation.
 #[expect(
     clippy::too_many_arguments,
@@ -7015,7 +7015,7 @@ where
     clippy::too_many_lines,
     reason = "Repair step contains inline tracing and queue handling for diagnostics"
 )]
-fn process_ridge_queue_step<K, U, V, const D: usize>(
+fn run_next_ridge_repair_step<K, U, V, const D: usize>(
     tds: &mut Tds<K::Scalar, U, V, D>,
     kernel: &K,
     queues: &mut RepairQueues,
@@ -7203,7 +7203,7 @@ where
     Ok(true)
 }
 
-/// Processes one queued edge for inverse k=2 moves so higher-dimensional repair
+/// Runs one queued edge repair for inverse k=2 moves so higher-dimensional repair
 /// can collapse locally Delaunay edge stars.
 #[expect(
     clippy::too_many_arguments,
@@ -7213,7 +7213,7 @@ where
     clippy::too_many_lines,
     reason = "Repair step contains inline tracing and queue handling for diagnostics"
 )]
-fn process_edge_queue_step<K, U, V, const D: usize>(
+fn run_next_edge_repair_step<K, U, V, const D: usize>(
     tds: &mut Tds<K::Scalar, U, V, D>,
     kernel: &K,
     queues: &mut RepairQueues,
@@ -7395,7 +7395,7 @@ where
     Ok(true)
 }
 
-/// Processes one queued triangle for inverse k=3 moves, which only appear once
+/// Runs one queued triangle repair for inverse k=3 moves, which only appear once
 /// D is high enough for a triangle star to be replaced.
 #[expect(
     clippy::too_many_arguments,
@@ -7405,7 +7405,7 @@ where
     clippy::too_many_lines,
     reason = "Repair step contains inline tracing and queue handling for diagnostics"
 )]
-fn process_triangle_queue_step<K, U, V, const D: usize>(
+fn run_next_triangle_repair_step<K, U, V, const D: usize>(
     tds: &mut Tds<K::Scalar, U, V, D>,
     kernel: &K,
     queues: &mut RepairQueues,
@@ -7578,7 +7578,7 @@ where
     Ok(true)
 }
 
-/// Processes one queued facet because k=2 facet flips are the primary local
+/// Runs one queued facet repair because k=2 facet flips are the primary local
 /// repair move across supported dimensions.
 #[expect(
     clippy::too_many_arguments,
@@ -7588,7 +7588,7 @@ where
     clippy::too_many_lines,
     reason = "Repair step contains inline tracing and queue handling for diagnostics"
 )]
-fn process_facet_queue_step<K, U, V, const D: usize>(
+fn run_next_facet_repair_step<K, U, V, const D: usize>(
     tds: &mut Tds<K::Scalar, U, V, D>,
     kernel: &K,
     queues: &mut RepairQueues,
@@ -11774,7 +11774,7 @@ mod tests {
 
     /// 3D variant of the `max_flips` cap test.
     ///
-    /// Exercises `process_facet_queue_step` and `process_ridge_queue_step` (only
+    /// Exercises `run_next_facet_repair_step` and `run_next_ridge_repair_step` (only
     /// reached for D≥3) to verify the pre-flip budget guard works in the
     /// multi-queue repair loop.
     #[test]

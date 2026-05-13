@@ -77,10 +77,7 @@ pub struct Point<T, const D: usize> {
 // PUBLIC API
 // =============================================================================
 
-impl<T, const D: usize> Point<T, D>
-where
-    T: CoordinateScalar,
-{
+impl<T, const D: usize> Point<T, D> {
     /// Returns a reference to the point's coordinates as an array.
     ///
     /// This method provides read-only access to the internal coordinate array
@@ -395,10 +392,7 @@ where
 }
 
 /// Enable conversions from Point to coordinate arrays - using Coordinate trait
-impl<T, const D: usize> From<Point<T, D>> for [T; D]
-where
-    T: CoordinateScalar,
-{
+impl<T, const D: usize> From<Point<T, D>> for [T; D] {
     /// # Example
     ///
     /// ```rust
@@ -410,13 +404,13 @@ where
     /// ```
     #[inline]
     fn from(point: Point<T, D>) -> [T; D] {
-        point.to_array()
+        point.coords
     }
 }
 
 impl<T, const D: usize> From<&Point<T, D>> for [T; D]
 where
-    T: CoordinateScalar,
+    T: Copy,
 {
     /// # Example
     ///
@@ -429,7 +423,7 @@ where
     /// ```
     #[inline]
     fn from(point: &Point<T, D>) -> [T; D] {
-        point.to_array()
+        point.coords
     }
 }
 
@@ -443,8 +437,8 @@ mod tests {
     use std::hash::{Hash, Hasher};
     use std::mem;
 
-    // Helper function to get hash value for any hashable type
-    fn get_hash<T: Hash>(value: &T) -> u64 {
+    // Helper function to hash any hashable value with the default hasher.
+    fn hash_of<T: Hash>(value: &T) -> u64 {
         let mut hasher = DefaultHasher::new();
         value.hash(&mut hasher);
         hasher.finish()
@@ -461,7 +455,7 @@ mod tests {
     {
         if should_be_equal {
             assert_eq!(point1, point2);
-            assert_eq!(get_hash(&point1), get_hash(&point2));
+            assert_eq!(hash_of(&point1), hash_of(&point2));
         } else {
             assert_ne!(point1, point2);
             // Note: Different points may still hash to same value (hash collisions)
@@ -551,22 +545,22 @@ mod tests {
                 // 2D
                 let p2d_a = Point::new([1.0, 2.0]);
                 let p2d_b = Point::new([1.0, 2.0]);
-                assert_eq!(get_hash(&p2d_a), get_hash(&p2d_b));
+                assert_eq!(hash_of(&p2d_a), hash_of(&p2d_b));
 
                 // 3D
                 let p3d_a = Point::new([1.0, 2.0, 3.0]);
                 let p3d_b = Point::new([1.0, 2.0, 3.0]);
-                assert_eq!(get_hash(&p3d_a), get_hash(&p3d_b));
+                assert_eq!(hash_of(&p3d_a), hash_of(&p3d_b));
 
                 // 4D
                 let p4d_a = Point::new([1.0, 2.0, 3.0, 4.0]);
                 let p4d_b = Point::new([1.0, 2.0, 3.0, 4.0]);
-                assert_eq!(get_hash(&p4d_a), get_hash(&p4d_b));
+                assert_eq!(hash_of(&p4d_a), hash_of(&p4d_b));
 
                 // 5D
                 let p5d_a = Point::new([1.0, 2.0, 3.0, 4.0, 5.0]);
                 let p5d_b = Point::new([1.0, 2.0, 3.0, 4.0, 5.0]);
-                assert_eq!(get_hash(&p5d_a), get_hash(&p5d_b));
+                assert_eq!(hash_of(&p5d_a), hash_of(&p5d_b));
             }
         };
 
@@ -1240,19 +1234,19 @@ mod tests {
         // Test NaN hash consistency
         let point_nan1 = Point::new([f64::NAN, 2.0]);
         let point_nan2 = Point::new([f64::NAN, 2.0]);
-        assert_eq!(get_hash(&point_nan1), get_hash(&point_nan2));
+        assert_eq!(hash_of(&point_nan1), hash_of(&point_nan2));
 
         // Test infinity hash consistency
         let point_pos_inf1 = Point::new([f64::INFINITY, 2.0]);
         let point_pos_inf2 = Point::new([f64::INFINITY, 2.0]);
-        assert_eq!(get_hash(&point_pos_inf1), get_hash(&point_pos_inf2));
+        assert_eq!(hash_of(&point_pos_inf1), hash_of(&point_pos_inf2));
 
         let point_neg_inf1 = Point::new([f64::NEG_INFINITY, 2.0]);
         let point_neg_inf2 = Point::new([f64::NEG_INFINITY, 2.0]);
-        assert_eq!(get_hash(&point_neg_inf1), get_hash(&point_neg_inf2));
+        assert_eq!(hash_of(&point_neg_inf1), hash_of(&point_neg_inf2));
 
         // Positive and negative infinity should hash differently
-        assert_ne!(get_hash(&point_pos_inf1), get_hash(&point_neg_inf1));
+        assert_ne!(hash_of(&point_pos_inf1), hash_of(&point_neg_inf1));
 
         // Test HashMap usage with special values
         let mut map: HashMap<Point<f64, 2>, i32> = HashMap::new();
@@ -1270,7 +1264,7 @@ mod tests {
         // Test with f32 types
         let point_f32_nan1 = Point::new([f32::NAN, 1.0f32]);
         let point_f32_nan2 = Point::new([f32::NAN, 1.0f32]);
-        assert_eq!(get_hash(&point_f32_nan1), get_hash(&point_f32_nan2));
+        assert_eq!(hash_of(&point_f32_nan1), hash_of(&point_f32_nan2));
     }
 
     #[test]
@@ -1804,8 +1798,8 @@ mod tests {
         assert_eq!(point_0d, point_0d_2);
 
         // Test hashing for 0D points
-        let hash_0d = get_hash(&point_0d);
-        let hash_0d_2 = get_hash(&point_0d_2);
+        let hash_0d = hash_of(&point_0d);
+        let hash_0d_2 = hash_of(&point_0d_2);
         assert_eq!(hash_0d, hash_0d_2);
 
         // Test origin for 0D
@@ -2272,7 +2266,7 @@ mod tests {
         // Generate a variety of points and collect their hashes
         for i in 0..100 {
             let point = Point::new([f64::from(i), f64::from(i * 2)]);
-            let hash = get_hash(&point);
+            let hash = hash_of(&point);
             hashes.insert(hash);
         }
 
@@ -2286,7 +2280,7 @@ mod tests {
         // Test with negative values
         for i in -50..50 {
             let point = Point::new([f64::from(i), f64::from(i * 3), f64::from(i * 5)]);
-            let hash = get_hash(&point);
+            let hash = hash_of(&point);
             hashes.insert(hash);
         }
 
@@ -2867,8 +2861,8 @@ mod tests {
         assert_ne!(point, point3);
 
         // Hashing
-        assert_eq!(get_hash(&point), get_hash(&point2));
-        assert_ne!(get_hash(&point), get_hash(&point3));
+        assert_eq!(hash_of(&point), hash_of(&point2));
+        assert_ne!(hash_of(&point), hash_of(&point3));
 
         // Ordering
         assert!(point < point3);
@@ -3038,10 +3032,10 @@ mod tests {
         assert_eq!(point_mixed_zero, point_mixed_zero2);
 
         // Test hashing consistency
-        let hash_pos = get_hash(&point_pos_zero);
-        let hash_neg = get_hash(&point_neg_zero);
-        let hash_mixed1 = get_hash(&point_mixed_zero);
-        let hash_mixed2 = get_hash(&point_mixed_zero2);
+        let hash_pos = hash_of(&point_pos_zero);
+        let hash_neg = hash_of(&point_neg_zero);
+        let hash_mixed1 = hash_of(&point_mixed_zero);
+        let hash_mixed2 = hash_of(&point_mixed_zero2);
 
         assert_eq!(hash_pos, hash_neg);
         assert_eq!(hash_pos, hash_mixed1);
@@ -3064,9 +3058,9 @@ mod tests {
         assert_eq!(point_nan_variant1, point_nan_variant3);
 
         // Test hash consistency
-        let hash1 = get_hash(&point_nan_variant1);
-        let hash2 = get_hash(&point_nan_variant2);
-        let hash3 = get_hash(&point_nan_variant3);
+        let hash1 = hash_of(&point_nan_variant1);
+        let hash2 = hash_of(&point_nan_variant2);
+        let hash3 = hash_of(&point_nan_variant3);
 
         assert_eq!(hash1, hash2);
         assert_eq!(hash2, hash3);

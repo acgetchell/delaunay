@@ -348,7 +348,10 @@ impl AdjacencyIndex {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::triangulation::delaunay::DelaunayTriangulation;
+    use crate::vertex;
     use slotmap::SlotMap;
+    use std::collections::HashSet;
 
     #[test]
     fn adjacency_index_build_error_display_is_informative() {
@@ -381,9 +384,6 @@ mod tests {
 
     #[test]
     fn adjacency_index_query_helpers_are_consistent() {
-        use crate::triangulation::delaunay::DelaunayTriangulation;
-        use crate::vertex;
-
         // Two tetrahedra sharing a triangular facet.
         let vertices: Vec<_> = vec![
             // Shared triangle
@@ -428,7 +428,7 @@ mod tests {
         }
 
         // Global edges view is consistent.
-        let edges: std::collections::HashSet<_> = index.edges().collect();
+        let edges: HashSet<_> = index.edges().collect();
         assert_eq!(edges.len(), index.number_of_edges());
         assert!(edges.iter().all(|e| e.v0() <= e.v1()));
 

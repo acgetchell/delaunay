@@ -1948,6 +1948,7 @@ where
 mod tests {
     use super::*;
     use crate::core::cell::Cell;
+    use crate::core::collections::NeighborBuffer;
     use crate::geometry::kernel::{FastKernel, RobustKernel};
     use crate::geometry::traits::coordinate::Coordinate;
     use crate::prelude::DelaunayTriangulation;
@@ -2350,7 +2351,7 @@ mod tests {
 
         // ⚠️ Dangerous test-only mutation: create a neighbor self-loop on every facet.
         let cell = dt.tds_mut().cell_mut(cell_key).unwrap();
-        let mut neighbors = crate::core::collections::NeighborBuffer::<Option<CellKey>>::new();
+        let mut neighbors = NeighborBuffer::<Option<CellKey>>::new();
         neighbors.resize(3, Some(cell_key));
         cell.neighbors = Some(neighbors);
 

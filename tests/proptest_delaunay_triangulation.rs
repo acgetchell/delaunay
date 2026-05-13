@@ -43,6 +43,7 @@ use proptest::prelude::*;
 use proptest::test_runner::{Config, TestCaseError, TestRunner};
 use rand::{SeedableRng, seq::SliceRandom};
 use std::cell::RefCell;
+use std::collections::HashSet;
 
 fn init_tracing() {
     static INIT: std::sync::Once = std::sync::Once::new();
@@ -653,13 +654,23 @@ proptest! {
         let mut dt = dt.unwrap();
         prop_assert_levels_1_to_3_valid!(3, &dt, "initial triangulation");
 
-        if let Ok((InsertionOutcome::Inserted { .. }, stats)) =
-            dt.insert_with_statistics(additional_vertex)
+        let insert_result = dt.insert_with_statistics(additional_vertex);
+        if let Err(e) = &insert_result
+            && std::env::var_os("DELAUNAY_PROPTEST_INSERT_ERRORS").is_some()
         {
-            // Reject cases that required perturbation retries; those are handled in dedicated suites.
-            prop_assume!(stats.attempts == 1);
-            prop_assert_levels_1_to_3_valid!(3, &dt, "after insertion");
+            tracing::warn!("3D: incremental insertion error (treated as rejection): {e}");
         }
+        prop_assume!(insert_result.is_ok());
+        let (outcome, stats) = insert_result.unwrap();
+        if let InsertionOutcome::Skipped { error } = &outcome
+            && std::env::var_os("DELAUNAY_PROPTEST_INSERT_ERRORS").is_some()
+        {
+            tracing::warn!("3D: incremental insertion skipped (treated as rejection): {error}");
+        }
+        prop_assume!(matches!(outcome, InsertionOutcome::Inserted { .. }));
+        // Reject cases that required perturbation retries; those are handled in dedicated suites.
+        prop_assume!(stats.attempts == 1);
+        prop_assert_levels_1_to_3_valid!(3, &dt, "after insertion");
     }
 }
 gen_incremental_insertion_validity!(4, 5, 7);
@@ -1754,7 +1765,6 @@ gen_insertion_order_robustness_high_dim!(5, 7, 12, #[ignore = "Slow (>60s) in te
 /// Count unique coordinate tuples using bitwise equality.
 /// Used to ensure at least D+1 distinct points before attempting triangulation.
 fn count_unique_coords_by_bits<const D: usize>(pts: &[Point<f64, D>]) -> usize {
-    use std::collections::HashSet;
     let mut set: HashSet<Vec<u64>> = HashSet::with_capacity(pts.len());
     for p in pts {
         let coords = *p.coords();

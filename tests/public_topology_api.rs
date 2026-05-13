@@ -9,6 +9,7 @@
 use delaunay::prelude::TopologyGuarantee;
 use delaunay::prelude::query::*;
 use delaunay::prelude::triangulation::DelaunayTriangulationConstructionError;
+use std::collections::HashSet;
 
 #[derive(Debug, thiserror::Error)]
 enum PublicTopologyApiTestError {
@@ -49,11 +50,11 @@ fn edges_and_incident_edges_on_single_tetrahedron() -> Result<(), PublicTopology
     let edge_count = dt.edges().count();
     assert_eq!(edge_count, 6);
 
-    let edges: std::collections::HashSet<_> = dt.edges().collect();
+    let edges: HashSet<_> = dt.edges().collect();
     assert_eq!(edges.len(), 6);
 
     let index = tri.build_adjacency_index()?;
-    let edges_with_index: std::collections::HashSet<_> = dt.edges_with_index(&index).collect();
+    let edges_with_index: HashSet<_> = dt.edges_with_index(&index).collect();
     assert_eq!(edges_with_index, edges);
 
     // Pick an arbitrary vertex; in a tetrahedron its degree is 3.
@@ -65,7 +66,7 @@ fn edges_and_incident_edges_on_single_tetrahedron() -> Result<(), PublicTopology
     assert_eq!(dt.incident_edges(v0).count(), 3);
     assert_eq!(dt.incident_edges_with_index(&index, v0).count(), 3);
 
-    let incident: std::collections::HashSet<_> = dt.incident_edges(v0).collect();
+    let incident: HashSet<_> = dt.incident_edges(v0).collect();
     assert_eq!(incident.len(), 3);
 
     // A single tetrahedron has no cell neighbors.
@@ -167,7 +168,7 @@ fn adjacency_index_on_double_tetrahedron() -> Result<(), PublicTopologyApiTestEr
     assert!(incident_edges.iter().all(|e| e.v0() <= e.v1()));
 
     // Triangulation-level with_index helper should match index-based incident edges.
-    let incident_edges_with_index: std::collections::HashSet<_> = dt
+    let incident_edges_with_index: HashSet<_> = dt
         .incident_edges_with_index(&index, shared_vertex_key)
         .collect();
     assert_eq!(incident_edges_with_index.len(), incident_edges.len());
@@ -179,11 +180,11 @@ fn adjacency_index_on_double_tetrahedron() -> Result<(), PublicTopologyApiTestEr
     }
 
     // Global edge iterator should yield each edge exactly once.
-    let edges: std::collections::HashSet<_> = index.edges().collect();
+    let edges: HashSet<_> = index.edges().collect();
     assert_eq!(edges.len(), tri.number_of_edges());
 
     // Triangulation-level edges_with_index should match the index edges().
-    let edges_via_tri: std::collections::HashSet<_> = tri.edges_with_index(&index).collect();
+    let edges_via_tri: HashSet<_> = tri.edges_with_index(&index).collect();
     assert_eq!(edges_via_tri, edges);
 
     // Missing keys should yield empty iterators.

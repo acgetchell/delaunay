@@ -183,6 +183,7 @@ impl From<(VertexKey, VertexKey)> for EdgeKey {
 mod tests {
     use super::*;
     use slotmap::SlotMap;
+    use std::collections::{BTreeSet, HashSet};
 
     #[test]
     fn edge_key_is_canonical() {
@@ -222,13 +223,13 @@ mod tests {
         let b = vertices.insert(());
         let c = vertices.insert(());
 
-        let mut hash_set: std::collections::HashSet<EdgeKey> = std::collections::HashSet::new();
+        let mut hash_set: HashSet<EdgeKey> = HashSet::new();
         hash_set.insert(EdgeKey::new(a, b));
         hash_set.insert(EdgeKey::new(b, a));
         hash_set.insert(EdgeKey::new(a, c));
         assert_eq!(hash_set.len(), 2);
 
-        let mut btree_set: std::collections::BTreeSet<EdgeKey> = std::collections::BTreeSet::new();
+        let mut btree_set: BTreeSet<EdgeKey> = BTreeSet::new();
         btree_set.insert(EdgeKey::new(a, b));
         btree_set.insert(EdgeKey::new(b, a));
         btree_set.insert(EdgeKey::new(a, c));

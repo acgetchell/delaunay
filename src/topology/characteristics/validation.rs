@@ -5,8 +5,7 @@
 
 #![forbid(unsafe_code)]
 
-use crate::core::{collections::FacetToCellsMap, tds::Tds, traits::DataType};
-use crate::geometry::traits::coordinate::CoordinateScalar;
+use crate::core::{collections::FacetToCellsMap, tds::Tds};
 use crate::topology::{
     characteristics::euler::{
         FVector, TopologyClassification, count_simplices_with_facet_to_cells_map,
@@ -132,12 +131,7 @@ impl TopologyCheckResult {
 /// if the underlying operations fail.
 pub fn validate_triangulation_euler<T, U, V, const D: usize>(
     tds: &Tds<T, U, V, D>,
-) -> Result<TopologyCheckResult, TopologyError>
-where
-    T: CoordinateScalar,
-    U: DataType,
-    V: DataType,
-{
+) -> Result<TopologyCheckResult, TopologyError> {
     // Precompute the facet map once and reuse it for both counting and classification.
     //
     // Avoid building the map for empty triangulations.
@@ -157,12 +151,7 @@ where
 pub(crate) fn validate_triangulation_euler_with_facet_to_cells_map<T, U, V, const D: usize>(
     tds: &Tds<T, U, V, D>,
     facet_to_cells: &FacetToCellsMap,
-) -> TopologyCheckResult
-where
-    T: CoordinateScalar,
-    U: DataType,
-    V: DataType,
-{
+) -> TopologyCheckResult {
     let counts = count_simplices_with_facet_to_cells_map(tds, facet_to_cells);
     let chi = euler_characteristic(&counts);
 

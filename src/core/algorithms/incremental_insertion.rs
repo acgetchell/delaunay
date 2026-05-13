@@ -734,6 +734,64 @@ impl PartialEq for InsertionErrorSummary {
 
 impl Eq for InsertionErrorSummary {}
 
+impl InsertionErrorSummary {
+    /// Returns true when the compact summary still identifies a retryable geometry-sensitive
+    /// insertion failure.
+    ///
+    /// This is a discriminant-based approximation for small summary payloads. It treats
+    /// TDS geometric/orientation failures, local topology manifold/link failures, isolated
+    /// vertices, and top-level non-manifold topology as retryable. It does not reconstruct
+    /// the original source chain or parse [`Self::message`].
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use delaunay::prelude::tds::TriangulationValidationErrorKind;
+    /// use delaunay::prelude::triangulation::insertion::{
+    ///     InsertionErrorKind, InsertionErrorSourceKind, InsertionErrorSummary,
+    /// };
+    ///
+    /// let retryable = InsertionErrorSummary {
+    ///     kind: InsertionErrorKind::TopologyValidationFailed,
+    ///     source_kind: Some(InsertionErrorSourceKind::Triangulation(
+    ///         TriangulationValidationErrorKind::ManifoldFacetMultiplicity,
+    ///     )),
+    ///     message: "facet shared by too many cells".to_string(),
+    /// };
+    /// assert!(retryable.is_retryable());
+    ///
+    /// let structural = InsertionErrorSummary {
+    ///     kind: InsertionErrorKind::TopologyValidationFailed,
+    ///     source_kind: Some(InsertionErrorSourceKind::Triangulation(
+    ///         TriangulationValidationErrorKind::Disconnected,
+    ///     )),
+    ///     message: "cell graph disconnected".to_string(),
+    /// };
+    /// assert!(!structural.is_retryable());
+    /// ```
+    #[must_use]
+    pub const fn is_retryable(&self) -> bool {
+        match self.source_kind {
+            Some(InsertionErrorSourceKind::Tds(kind)) => matches!(
+                kind,
+                TdsErrorKind::Geometric | TdsErrorKind::OrientationViolation
+            ),
+            Some(InsertionErrorSourceKind::Triangulation(kind)) => matches!(
+                kind,
+                TriangulationValidationErrorKind::ManifoldFacetMultiplicity
+                    | TriangulationValidationErrorKind::BoundaryRidgeMultiplicity
+                    | TriangulationValidationErrorKind::RidgeLinkNotManifold
+                    | TriangulationValidationErrorKind::VertexLinkNotManifold
+                    | TriangulationValidationErrorKind::IsolatedVertex
+            ),
+            Some(
+                InsertionErrorSourceKind::Delaunay(_) | InsertionErrorSourceKind::DelaunayRepair(_),
+            )
+            | None => matches!(self.kind, InsertionErrorKind::NonManifoldTopology),
+        }
+    }
+}
+
 impl From<InsertionError> for InsertionErrorSummary {
     fn from(source: InsertionError) -> Self {
         let kind = match &source {
@@ -1485,9 +1543,8 @@ impl InsertionError {
                 NeighborRebuildError::TopologyValidation { reason } => {
                     Self::is_tds_validation_failure_retryable(reason)
                 }
-                NeighborRebuildError::Wiring { .. } | NeighborRebuildError::Unexpected { .. } => {
-                    false
-                }
+                NeighborRebuildError::Unexpected { source } => source.is_retryable(),
+                NeighborRebuildError::Wiring { .. } => false,
             },
             CavityFillingError::MissingBoundaryCell { .. }
             | CavityFillingError::MissingInsertedVertex { .. }
@@ -1628,7 +1685,7 @@ where
                     }
                 }
                 facet_vkeys.sort_unstable();
-                let facet_hash = compute_facet_hash(&facet_vkeys);
+                let facet_hash = facet_hash_from_sorted_vertices(&facet_vkeys);
                 seen_facets
                     .entry(facet_hash)
                     .or_default()
@@ -1692,7 +1749,7 @@ where
                         }
                     }
                     ridge_vertices.sort_unstable();
-                    let ridge_hash = compute_facet_hash(&ridge_vertices);
+                    let ridge_hash = facet_hash_from_sorted_vertices(&ridge_vertices);
                     *ridge_counts.entry(ridge_hash).or_insert(0) += 1;
                     ridge_vertices_map
                         .entry(ridge_hash)
@@ -1950,7 +2007,7 @@ where
             }
 
             facet_vkeys.sort_unstable();
-            let facet_key = compute_facet_hash(&facet_vkeys);
+            let facet_key = facet_hash_from_sorted_vertices(&facet_vkeys);
 
             let facet_idx_u8 =
                 u8::try_from(facet_idx).map_err(|_| NeighborWiringError::FacetIndexOverflow {
@@ -1991,7 +2048,7 @@ where
             }
         }
         facet_vkeys.sort_unstable();
-        let facet_key = compute_facet_hash(&facet_vkeys);
+        let facet_key = facet_hash_from_sorted_vertices(&facet_vkeys);
 
         let Some(incidents) = facet_map.get_mut(&facet_key) else {
             return Err(NeighborWiringError::ExternalFacetNotFound {
@@ -2291,7 +2348,7 @@ where
             }
         }
         facet_vkeys.sort_unstable();
-        boundary_hashes.insert(compute_facet_hash(&facet_vkeys));
+        boundary_hashes.insert(facet_hash_from_sorted_vertices(&facet_vkeys));
     }
 
     // Candidate external cells are those reachable via neighbor pointers from the internal set.
@@ -2329,7 +2386,7 @@ where
                 }
             }
             facet_vkeys.sort_unstable();
-            let facet_hash = compute_facet_hash(&facet_vkeys);
+            let facet_hash = facet_hash_from_sorted_vertices(&facet_vkeys);
 
             if !boundary_hashes.contains(&facet_hash) {
                 continue;
@@ -2373,11 +2430,11 @@ where
     Ok(())
 }
 
-/// Compute a hash for a facet from sorted vertex keys.
+/// Hash a facet from sorted vertex keys.
 ///
 /// Uses [`FastHasher`] for deterministic hashing consistent with other
 /// internal collections ([`FastHashMap`], [`FastHashSet`]).
-fn compute_facet_hash(sorted_vkeys: &[VertexKey]) -> u64 {
+fn facet_hash_from_sorted_vertices(sorted_vkeys: &[VertexKey]) -> u64 {
     let mut hasher = FastHasher::default();
     for &vkey in sorted_vkeys {
         vkey.hash(&mut hasher);
@@ -2399,7 +2456,7 @@ where
         }
     }
     facet_vkeys.sort_unstable();
-    compute_facet_hash(&facet_vkeys)
+    facet_hash_from_sorted_vertices(&facet_vkeys)
 }
 
 /// Return whether `neighbor_key` is the cell incident across `cell`'s `facet_idx`.
@@ -2794,7 +2851,7 @@ where
                 }
             }
             facet_vkeys.sort_unstable();
-            let facet_hash = compute_facet_hash(&facet_vkeys);
+            let facet_hash = facet_hash_from_sorted_vertices(&facet_vkeys);
 
             let facet_idx_u8 =
                 u8::try_from(facet_idx).map_err(|_| NeighborWiringError::FacetIndexOverflow {
@@ -3649,7 +3706,7 @@ where
                     }
                 }
                 ridge_vertices.sort_unstable();
-                let ridge_hash = compute_facet_hash(&ridge_vertices);
+                let ridge_hash = facet_hash_from_sorted_vertices(&ridge_vertices);
                 ridge_to_facets
                     .entry(ridge_hash)
                     .or_default()
@@ -3726,7 +3783,7 @@ where
                         }
                     }
                     subface_vertices.sort_unstable();
-                    let subface_hash = compute_facet_hash(&subface_vertices);
+                    let subface_hash = facet_hash_from_sorted_vertices(&subface_vertices);
                     face_to_ridges.entry(subface_hash).or_default().push(idx);
                     subface_vertices_map
                         .entry(subface_hash)
@@ -4698,6 +4755,33 @@ mod tests {
     }
 
     #[test]
+    fn test_insertion_error_summary_retryability_covers_tds_source_kinds() {
+        let geometric = InsertionErrorSummary {
+            kind: InsertionErrorKind::TopologyValidation,
+            source_kind: Some(InsertionErrorSourceKind::Tds(TdsErrorKind::Geometric)),
+            message: String::new(),
+        };
+        let orientation = InsertionErrorSummary {
+            kind: InsertionErrorKind::TopologyValidation,
+            source_kind: Some(InsertionErrorSourceKind::Tds(
+                TdsErrorKind::OrientationViolation,
+            )),
+            message: String::new(),
+        };
+        let structural = InsertionErrorSummary {
+            kind: InsertionErrorKind::TopologyValidation,
+            source_kind: Some(InsertionErrorSourceKind::Tds(
+                TdsErrorKind::InconsistentDataStructure,
+            )),
+            message: String::new(),
+        };
+
+        assert!(geometric.is_retryable());
+        assert!(orientation.is_retryable());
+        assert!(!structural.is_retryable());
+    }
+
+    #[test]
     fn test_robust_fallback_context_preserves_initial_repair_summary() {
         let initial = DelaunayRepairError::PostconditionFailed {
             message: "local predicate violation".to_string(),
@@ -4759,6 +4843,31 @@ mod tests {
                     reason: InitialSimplexConstructionError::GeometricDegeneracy {
                         message: "coplanar bootstrap".to_string(),
                     },
+                },
+            }
+            .is_retryable()
+        );
+        assert!(
+            InsertionError::CavityFilling {
+                reason: CavityFillingError::NeighborRebuild {
+                    reason: NeighborRebuildError::from(InsertionError::TopologyValidationFailed {
+                        message: "local topology validation failed".to_string(),
+                        source: TriangulationValidationError::ManifoldFacetMultiplicity {
+                            facet_key: 0x1234,
+                            cell_count: 3,
+                        },
+                    }),
+                },
+            }
+            .is_retryable()
+        );
+        assert!(
+            !InsertionError::CavityFilling {
+                reason: CavityFillingError::NeighborRebuild {
+                    reason: NeighborRebuildError::from(InsertionError::TopologyValidationFailed {
+                        message: "structural topology validation failed".to_string(),
+                        source: TriangulationValidationError::Disconnected { cell_count: 2 },
+                    }),
                 },
             }
             .is_retryable()

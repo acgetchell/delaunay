@@ -31,9 +31,8 @@ use crate::core::{
     },
     edge::EdgeKey,
     tds::{Tds, VertexKey},
-    traits::{BoundaryAnalysis, DataType},
+    traits::BoundaryAnalysis,
 };
-use crate::geometry::traits::coordinate::CoordinateScalar;
 use crate::topology::traits::topological_space::TopologyError;
 
 /// Counts of k-simplices for all dimensions 0 ≤ k ≤ D.
@@ -211,12 +210,7 @@ pub enum TopologyClassification {
 /// Returns [`TopologyError::FacetMapBuild`] if simplex enumeration fails.
 pub fn count_simplices<T, U, V, const D: usize>(
     tds: &Tds<T, U, V, D>,
-) -> Result<FVector, TopologyError>
-where
-    T: CoordinateScalar,
-    U: DataType,
-    V: DataType,
-{
+) -> Result<FVector, TopologyError> {
     // Handle empty triangulation without building any facet map.
     let mut by_dim = vec![0usize; D + 1];
     by_dim[0] = tds.number_of_vertices();
@@ -239,12 +233,7 @@ where
 pub(crate) fn count_simplices_with_facet_to_cells_map<T, U, V, const D: usize>(
     tds: &Tds<T, U, V, D>,
     facet_to_cells: &FacetToCellsMap,
-) -> FVector
-where
-    T: CoordinateScalar,
-    U: DataType,
-    V: DataType,
-{
+) -> FVector {
     let mut by_dim = vec![0usize; D + 1];
 
     // f₀: vertices (O(1))
@@ -402,12 +391,7 @@ fn insert_simplices_of_size(
 /// [`TopologyError::BoundaryFacetCellAccess`] if boundary enumeration fails.
 pub fn count_boundary_simplices<T, U, V, const D: usize>(
     tds: &Tds<T, U, V, D>,
-) -> Result<FVector, TopologyError>
-where
-    T: CoordinateScalar,
-    U: DataType,
-    V: DataType,
-{
+) -> Result<FVector, TopologyError> {
     // Get boundary facets
     let boundary_facets: Vec<_> = tds
         .boundary_facets()
@@ -682,12 +666,7 @@ pub(crate) fn triangulated_surface_boundary_component_count(
 /// Returns [`TopologyError::BoundaryFacetCount`] if boundary detection fails.
 pub fn classify_triangulation<T, U, V, const D: usize>(
     tds: &Tds<T, U, V, D>,
-) -> Result<TopologyClassification, TopologyError>
-where
-    T: CoordinateScalar,
-    U: DataType,
-    V: DataType,
-{
+) -> Result<TopologyClassification, TopologyError> {
     let num_cells = tds.number_of_cells();
 
     // Empty triangulation
@@ -757,7 +736,9 @@ pub fn expected_chi_for(classification: &TopologyClassification) -> Option<isize
 mod tests {
     use super::*;
 
-    use slotmap::KeyData;
+    use crate::core::cell::Cell;
+    use crate::vertex;
+    use slotmap::{KeyData, SlotMap};
 
     #[test]
     fn test_simplex_counts() {
@@ -774,8 +755,6 @@ mod tests {
 
     #[test]
     fn test_insert_simplices_of_size() {
-        use slotmap::SlotMap;
-
         let mut vertex_slots: SlotMap<VertexKey, ()> = SlotMap::default();
         let v0 = vertex_slots.insert(());
         let v1 = vertex_slots.insert(());
@@ -997,9 +976,6 @@ mod tests {
     }
 
     fn build_closed_2d_surface_tds() -> Tds<f64, (), (), 2> {
-        use crate::core::cell::Cell;
-        use crate::vertex;
-
         // Build the boundary of a tetrahedron as a 2D simplicial complex (a closed S^2):
         // 4 triangles on 4 vertices, with every edge shared by exactly 2 triangles.
         let mut tds: Tds<f64, (), (), 2> = Tds::empty();

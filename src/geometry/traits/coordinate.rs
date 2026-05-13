@@ -872,7 +872,8 @@ mod tests {
     use super::*;
     use crate::geometry::point::Point;
     use approx::assert_relative_eq;
-    use std::collections::hash_map::DefaultHasher;
+    use std::collections::{HashSet, hash_map::DefaultHasher};
+    use std::error::Error;
     use std::hash::Hasher;
 
     // Use the global tolerance constants
@@ -1230,7 +1231,6 @@ mod tests {
     #[test]
     fn coordinate_trait_hash_collision_resistance() {
         // Test that different coordinates produce different hashes (basic collision resistance)
-        use std::collections::HashSet;
         let mut hashes = HashSet::new();
 
         // Generate diverse coordinates to test hash distribution
@@ -1305,8 +1305,6 @@ mod tests {
     #[test]
     fn coordinate_validation_error_source_trait() {
         // Test that CoordinateValidationError implements source() from std::error::Error
-        use std::error::Error;
-
         let error = CoordinateValidationError::InvalidCoordinate {
             coordinate_index: 1,
             coordinate_value: "NaN".to_string(),

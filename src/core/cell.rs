@@ -1671,9 +1671,11 @@ impl<T, U, V, const D: usize> Hash for Cell<T, U, V, D> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::core::facet::FacetError;
     use crate::core::triangulation::TopologyGuarantee;
     use crate::core::vertex::vertex;
     use crate::geometry::kernel::AdaptiveKernel;
+    use crate::geometry::matrix::MAX_STACK_MATRIX_DIM;
     use crate::geometry::point::Point;
     use crate::geometry::predicates::insphere;
     use crate::geometry::util::{circumcenter, circumradius, circumradius_with_center};
@@ -1683,7 +1685,13 @@ mod tests {
         ConstructionOptions, InitialSimplexStrategy, InsertionOrderStrategy,
     };
     use approx::assert_relative_eq;
-    use std::{cmp, collections::hash_map::DefaultHasher, hash::Hasher};
+    use std::{
+        cmp,
+        collections::{HashSet, hash_map::DefaultHasher},
+        hash::Hasher,
+    };
+    #[cfg(feature = "bench")]
+    use std::{mem, time::Instant};
 
     // Type aliases for commonly used types to reduce repetition
     type TestVertex3D = Vertex<f64, (), 3>;
@@ -2445,7 +2453,7 @@ mod tests {
         }
 
         // Verify all UUIDs are unique
-        let unique_uuids: std::collections::HashSet<_> = vertex_uuids.iter().collect();
+        let unique_uuids: HashSet<_> = vertex_uuids.iter().collect();
         assert_eq!(unique_uuids.len(), vertex_uuids.len());
 
         // Verify no nil UUIDs using iterator
@@ -2496,7 +2504,7 @@ mod tests {
         }
 
         // Verify all UUIDs are unique
-        let unique_uuids: std::collections::HashSet<_> = vertex_uuids.iter().collect();
+        let unique_uuids: HashSet<_> = vertex_uuids.iter().collect();
         assert_eq!(unique_uuids.len(), vertex_uuids.len());
 
         // Verify no nil UUIDs using iterator
@@ -2535,7 +2543,7 @@ mod tests {
         }
 
         // Verify all UUIDs are unique
-        let unique_uuids: std::collections::HashSet<_> = vertex_uuids.iter().collect();
+        let unique_uuids: HashSet<_> = vertex_uuids.iter().collect();
         assert_eq!(unique_uuids.len(), vertex_uuids.len());
 
         // Verify all expected vertex data values exist (order-independent)
@@ -2620,7 +2628,7 @@ mod tests {
         }
 
         // Verify all UUIDs are unique
-        let unique_uuids: std::collections::HashSet<_> = vertex_uuids.iter().collect();
+        let unique_uuids: HashSet<_> = vertex_uuids.iter().collect();
         assert_eq!(unique_uuids.len(), vertex_uuids.len());
 
         // Verify no nil UUIDs using iterator
@@ -3206,10 +3214,7 @@ mod tests {
             );
 
             // Verify all facet vertices are unique
-            let unique_count = facet_vertex_keys
-                .iter()
-                .collect::<std::collections::HashSet<_>>()
-                .len();
+            let unique_count = facet_vertex_keys.iter().collect::<HashSet<_>>().len();
             assert_eq!(
                 unique_count,
                 facet_vertex_keys.len(),
@@ -3562,8 +3567,6 @@ mod tests {
 
     #[test]
     fn cell_facet_view_helpers_reject_excessive_vertex_count() {
-        use crate::core::facet::FacetError;
-
         let vertices = vec![
             vertex!([0.0, 0.0, 0.0]),
             vertex!([1.0, 0.0, 0.0]),
@@ -3652,8 +3655,6 @@ mod tests {
 
     #[test]
     fn cell_validation_error_from_stack_matrix_dispatch_error_maps_to_coordinate_conversion() {
-        use crate::geometry::matrix::{MAX_STACK_MATRIX_DIM, StackMatrixDispatchError};
-
         let err = StackMatrixDispatchError::UnsupportedDim {
             k: MAX_STACK_MATRIX_DIM + 1,
             max: MAX_STACK_MATRIX_DIM,
@@ -3769,9 +3770,6 @@ mod tests {
     fn test_vertex_uuid_iter_by_value_vs_by_reference_analysis() {
         // Comprehensive analysis of whether vertex_uuid_iter should return
         // Uuid by value (current) vs &Uuid by reference (proposed)
-        use std::{collections::HashSet, mem, time::Instant};
-        use uuid::Uuid;
-
         println!("\n=== UUID Performance Analysis: By Value vs By Reference ===");
 
         // Memory layout analysis

@@ -21,6 +21,7 @@
 //!
 //! All tests use `dt.tds().is_valid()` (Level 2 structural validation).
 
+use delaunay::core::collections::{CellVertexBuffer, SimplexVertexBuffer};
 use delaunay::core::tds::Tds;
 use delaunay::core::util::jaccard::jaccard_index;
 use delaunay::prelude::query::*;
@@ -188,7 +189,6 @@ macro_rules! gen_neighbor_index_semantics {
                 #[test]
                 fn [<prop_neighbor_index_semantics_ $dim d>](vertices in [<small_vertex_set_ $dim d>]()) {
                     // Use stack-allocated buffer for D facet vertices (D ≤ 7 typical)
-                    use delaunay::core::collections::SimplexVertexBuffer;
                     if let Ok(dt) = DelaunayTriangulation::<_, (), (), $dim>::new(&vertices) {
                         prop_assume!(dt.tds().is_valid().is_ok());
                         let tds = dt.tds();
@@ -234,7 +234,6 @@ macro_rules! gen_cell_vertices_exist_in_tds {
                 $(#[$attr])*
                 #[test]
                 fn [<prop_cell_vertices_exist_in_tds_ $dim d>](vertices in [<small_vertex_set_ $dim d>]()) {
-                    use std::collections::HashSet;
                     if let Ok(dt) = DelaunayTriangulation::<_, (), (), $dim>::new(&vertices) {
                         let all_vertex_keys: HashSet<_> = dt.tds().vertex_keys().collect();
                         for (_cell_key, cell) in dt.cells() {
@@ -257,8 +256,6 @@ macro_rules! gen_no_duplicate_cells {
                 $(#[$attr])*
                 #[test]
                 fn [<prop_no_duplicate_cells_ $dim d>](vertices in [<small_vertex_set_ $dim d>]()) {
-                    use std::collections::HashSet;
-                    use delaunay::core::collections::CellVertexBuffer;
                     if let Ok(dt) = DelaunayTriangulation::<_, (), (), $dim>::new(&vertices) {
                         let mut seen = HashSet::new();
                         for (_cell_key, cell) in dt.cells() {

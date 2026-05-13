@@ -426,7 +426,6 @@ macro_rules! gen_toroidal_periodic_validation_test {
 
 gen_toroidal_periodic_validation_test!(2, levels_1_to_4, true);
 #[test]
-#[ignore = "Slow (>60s): periodic 3D Level 4 scans image-point quotient cells"]
 fn test_builder_periodic_topology_level4_smoke_3d() {
     let vertices = vec![
         vertex!([0.2_f64, 0.3, 0.4]),

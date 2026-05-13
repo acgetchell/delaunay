@@ -2943,8 +2943,19 @@ where
 mod tests {
     use super::*;
     use crate::core::algorithms::flips::DelaunayRepairError;
+    use crate::core::algorithms::incremental_insertion::{
+        CavityFillingError, DelaunayRepairFailureContext, HullExtensionReason, NeighborWiringError,
+    };
+    use crate::core::algorithms::locate::{ConflictError, LocateError};
+    use crate::core::cell::CellValidationError;
+    use crate::core::facet::FacetError;
+    use crate::core::tds::{
+        DelaunayValidationErrorKind, EntityKind, GeometricError, NeighborValidationError,
+    };
     use crate::core::triangulation::TriangulationValidationError;
+    use crate::core::util::uuid::UuidValidationError;
     use crate::core::vertex::VertexBuilder;
+    use crate::core::vertex::VertexValidationError;
     use crate::geometry::kernel::RobustKernel;
     use crate::topology::traits::global_topology_model::{
         EuclideanModel, GlobalTopologyModel, GlobalTopologyModelError, ToroidalModel,
@@ -2957,7 +2968,7 @@ mod tests {
     };
     use crate::vertex;
     use approx::assert_relative_eq;
-    use slotmap::Key;
+    use slotmap::{Key, KeyData};
 
     #[derive(Clone, Copy, Debug)]
     struct ValidationFailureModel;
@@ -3077,6 +3088,282 @@ mod tests {
             Some(ExplicitDelaunayValidationSourceKind::Triangulation(
                 TriangulationValidationErrorKind::Disconnected,
             ))
+        );
+    }
+
+    fn assert_explicit_tds_error_kind(source: TdsError, expected_kind: ExplicitTdsErrorKind) {
+        let summary = ExplicitTdsError::from(source);
+        assert_eq!(summary.kind, expected_kind);
+        assert!(!summary.message.is_empty());
+    }
+
+    #[test]
+    fn explicit_tds_error_preserves_validation_error_kinds() {
+        let cell_key = CellKey::from(KeyData::from_ffi(1));
+        let other_cell_key = CellKey::from(KeyData::from_ffi(2));
+        let vertex_key = VertexKey::from(KeyData::from_ffi(3));
+        let uuid = Uuid::new_v4();
+
+        assert_explicit_tds_error_kind(
+            TdsError::InvalidVertex {
+                vertex_id: uuid,
+                source: VertexValidationError::InvalidUuid {
+                    source: UuidValidationError::NilUuid,
+                },
+            },
+            ExplicitTdsErrorKind::InvalidVertex,
+        );
+        assert_explicit_tds_error_kind(
+            TdsError::InvalidCell {
+                cell_id: uuid,
+                source: CellValidationError::DuplicateVertices,
+            },
+            ExplicitTdsErrorKind::InvalidCell,
+        );
+        assert_explicit_tds_error_kind(
+            TdsError::InvalidNeighbors {
+                reason: NeighborValidationError::Other {
+                    message: "neighbor invariant failed".to_string(),
+                },
+            },
+            ExplicitTdsErrorKind::InvalidNeighbors,
+        );
+        assert_explicit_tds_error_kind(
+            TdsError::OrientationViolation {
+                cell1_key: cell_key,
+                cell1_uuid: uuid,
+                cell2_key: other_cell_key,
+                cell2_uuid: Uuid::new_v4(),
+                cell1_facet_index: 0,
+                cell2_facet_index: 1,
+                facet_vertices: vec![vertex_key],
+                cell2_facet_vertices: vec![vertex_key],
+                observed_odd_permutation: false,
+                expected_odd_permutation: true,
+            },
+            ExplicitTdsErrorKind::OrientationViolation,
+        );
+        assert_explicit_tds_error_kind(
+            TdsError::Geometric(GeometricError::DegenerateOrientation {
+                message: "zero determinant".to_string(),
+            }),
+            ExplicitTdsErrorKind::Geometric,
+        );
+        assert_explicit_tds_error_kind(
+            TdsError::FacetError(FacetError::InvalidFacetIndex {
+                index: 4,
+                facet_count: 4,
+            }),
+            ExplicitTdsErrorKind::FacetError,
+        );
+        assert_explicit_tds_error_kind(
+            TdsError::DuplicateCoordinatesInCell {
+                cell_id: uuid,
+                message: "two vertices share coordinates".to_string(),
+            },
+            ExplicitTdsErrorKind::DuplicateCoordinatesInCell,
+        );
+    }
+
+    #[test]
+    fn explicit_tds_error_preserves_lookup_and_operation_error_kinds() {
+        let cell_key = CellKey::from(KeyData::from_ffi(1));
+        let vertex_key = VertexKey::from(KeyData::from_ffi(3));
+        let uuid = Uuid::new_v4();
+
+        assert_explicit_tds_error_kind(
+            TdsError::DuplicateCells {
+                message: "duplicate cell vertex set".to_string(),
+            },
+            ExplicitTdsErrorKind::DuplicateCells,
+        );
+        assert_explicit_tds_error_kind(
+            TdsError::FailedToCreateCell {
+                message: "cell validation failed".to_string(),
+            },
+            ExplicitTdsErrorKind::FailedToCreateCell,
+        );
+        assert_explicit_tds_error_kind(
+            TdsError::NotNeighbors {
+                cell1: uuid,
+                cell2: Uuid::new_v4(),
+            },
+            ExplicitTdsErrorKind::NotNeighbors,
+        );
+        assert_explicit_tds_error_kind(
+            TdsError::MappingInconsistency {
+                entity: EntityKind::Cell,
+                message: "uuid mapping was stale".to_string(),
+            },
+            ExplicitTdsErrorKind::MappingInconsistency,
+        );
+        assert_explicit_tds_error_kind(
+            TdsError::VertexKeyRetrievalFailed {
+                cell_id: uuid,
+                message: "cell vertices unavailable".to_string(),
+            },
+            ExplicitTdsErrorKind::VertexKeyRetrievalFailed,
+        );
+        assert_explicit_tds_error_kind(
+            TdsError::CellNotFound {
+                cell_key,
+                context: "cell lookup".to_string(),
+            },
+            ExplicitTdsErrorKind::CellNotFound,
+        );
+        assert_explicit_tds_error_kind(
+            TdsError::VertexNotFound {
+                vertex_key,
+                context: "vertex lookup".to_string(),
+            },
+            ExplicitTdsErrorKind::VertexNotFound,
+        );
+        assert_explicit_tds_error_kind(
+            TdsError::DimensionMismatch {
+                expected: 4,
+                actual: 3,
+                context: "simplex arity".to_string(),
+            },
+            ExplicitTdsErrorKind::DimensionMismatch,
+        );
+        assert_explicit_tds_error_kind(
+            TdsError::IndexOutOfBounds {
+                index: 4,
+                bound: 4,
+                context: "facet index".to_string(),
+            },
+            ExplicitTdsErrorKind::IndexOutOfBounds,
+        );
+        assert_explicit_tds_error_kind(
+            TdsError::InconsistentDataStructure {
+                message: "dangling neighbor".to_string(),
+            },
+            ExplicitTdsErrorKind::InconsistentDataStructure,
+        );
+    }
+
+    fn assert_explicit_insertion_error(
+        source: InsertionError,
+        expected_kind: ExplicitInsertionErrorKind,
+        expected_source_kind: Option<InsertionErrorSourceKind>,
+    ) {
+        let summary = ExplicitInsertionError::from(source);
+        assert_eq!(summary.kind, expected_kind);
+        assert_eq!(summary.source_kind, expected_source_kind);
+        assert!(!summary.message.is_empty());
+    }
+
+    #[test]
+    fn explicit_insertion_error_preserves_stage_kinds_without_nested_sources() {
+        let cell_key = CellKey::from(KeyData::from_ffi(1));
+        let uuid = Uuid::new_v4();
+
+        assert_explicit_insertion_error(
+            InsertionError::ConflictRegion(ConflictError::InvalidStartCell { cell_key }),
+            ExplicitInsertionErrorKind::ConflictRegion,
+            None,
+        );
+        assert_explicit_insertion_error(
+            InsertionError::Location(LocateError::EmptyTriangulation),
+            ExplicitInsertionErrorKind::Location,
+            None,
+        );
+        assert_explicit_insertion_error(
+            InsertionError::CavityFilling {
+                reason: CavityFillingError::MissingBoundaryCell { cell_key },
+            },
+            ExplicitInsertionErrorKind::CavityFilling,
+            None,
+        );
+        assert_explicit_insertion_error(
+            InsertionError::NeighborWiring {
+                reason: NeighborWiringError::MissingCell { cell_key },
+            },
+            ExplicitInsertionErrorKind::NeighborWiring,
+            None,
+        );
+        assert_explicit_insertion_error(
+            InsertionError::NonManifoldTopology {
+                facet_hash: 0xabc,
+                cell_count: 3,
+            },
+            ExplicitInsertionErrorKind::NonManifoldTopology,
+            None,
+        );
+        assert_explicit_insertion_error(
+            InsertionError::HullExtension {
+                reason: HullExtensionReason::NoVisibleFacets,
+            },
+            ExplicitInsertionErrorKind::HullExtension,
+            None,
+        );
+        assert_explicit_insertion_error(
+            InsertionError::DuplicateCoordinates {
+                coordinates: "[0.0, 0.0]".to_string(),
+            },
+            ExplicitInsertionErrorKind::DuplicateCoordinates,
+            None,
+        );
+        assert_explicit_insertion_error(
+            InsertionError::DuplicateUuid {
+                entity: EntityKind::Vertex,
+                uuid,
+            },
+            ExplicitInsertionErrorKind::DuplicateUuid,
+            None,
+        );
+    }
+
+    #[test]
+    fn explicit_insertion_error_preserves_nested_validation_source_kinds() {
+        assert_explicit_insertion_error(
+            InsertionError::DelaunayValidationFailed {
+                source: DelaunayTriangulationValidationError::VerificationFailed {
+                    message: "non-Delaunay facet".to_string(),
+                },
+            },
+            ExplicitInsertionErrorKind::DelaunayValidationFailed,
+            Some(InsertionErrorSourceKind::Delaunay(
+                DelaunayValidationErrorKind::VerificationFailed,
+            )),
+        );
+        assert_explicit_insertion_error(
+            InsertionError::DelaunayRepairFailed {
+                source: Box::new(DelaunayRepairError::PostconditionFailed {
+                    message: "remaining violation".to_string(),
+                }),
+                context: DelaunayRepairFailureContext::LocalRepair,
+            },
+            ExplicitInsertionErrorKind::DelaunayRepairFailed,
+            Some(InsertionErrorSourceKind::DelaunayRepair(
+                DelaunayRepairErrorKind::PostconditionFailed,
+            )),
+        );
+        assert_explicit_insertion_error(
+            InsertionError::TopologyValidation(TdsError::Geometric(
+                GeometricError::DegenerateOrientation {
+                    message: "zero determinant".to_string(),
+                },
+            )),
+            ExplicitInsertionErrorKind::TopologyValidation,
+            Some(InsertionErrorSourceKind::Tds(TdsErrorKind::Geometric)),
+        );
+        assert_explicit_insertion_error(
+            InsertionError::TopologyValidationFailed {
+                source: TriangulationValidationError::RidgeLinkNotManifold {
+                    ridge_key: 0xdef,
+                    link_vertex_count: 4,
+                    link_edge_count: 2,
+                    max_degree: 3,
+                    degree_one_vertices: 1,
+                    connected: false,
+                },
+                message: "scoped topology validation".to_string(),
+            },
+            ExplicitInsertionErrorKind::TopologyValidationFailed,
+            Some(InsertionErrorSourceKind::Triangulation(
+                TriangulationValidationErrorKind::RidgeLinkNotManifold,
+            )),
         );
     }
 

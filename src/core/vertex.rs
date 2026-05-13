@@ -831,13 +831,10 @@ where
 
 /// Enable implicit conversion from Vertex to coordinate array
 /// This allows using `Into` to convert from `Vertex` to `[T; D]`
-impl<T, U, const D: usize> From<Vertex<T, U, D>> for [T; D]
-where
-    T: CoordinateScalar,
-{
+impl<T, U, const D: usize> From<Vertex<T, U, D>> for [T; D] {
     #[inline]
     fn from(vertex: Vertex<T, U, D>) -> [T; D] {
-        *vertex.point().coords()
+        vertex.point.into()
     }
 }
 
@@ -845,11 +842,11 @@ where
 /// This allows `&vertex` to be implicitly converted to `[T; D]` for coordinate access
 impl<T, U, const D: usize> From<&Vertex<T, U, D>> for [T; D]
 where
-    T: CoordinateScalar,
+    T: Copy,
 {
     #[inline]
     fn from(vertex: &Vertex<T, U, D>) -> [T; D] {
-        *vertex.point().coords()
+        vertex.point().into()
     }
 }
 
@@ -857,11 +854,11 @@ where
 /// This allows `&vertex` to be implicitly converted to `Point<T, D>`
 impl<T, U, const D: usize> From<&Vertex<T, U, D>> for Point<T, D>
 where
-    T: CoordinateScalar,
+    T: Clone,
 {
     #[inline]
     fn from(vertex: &Vertex<T, U, D>) -> Self {
-        *vertex.point()
+        vertex.point().clone()
     }
 }
 

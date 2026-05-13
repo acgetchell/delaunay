@@ -1070,6 +1070,8 @@ mod tests {
         ConstructionOptions, DelaunayTriangulation, InitialSimplexStrategy, InsertionOrderStrategy,
     };
     use crate::vertex;
+    use slotmap::SlotMap;
+    use std::{collections::HashSet, mem};
 
     // =============================================================================
     // UNIT TESTS FOR HELPER FUNCTIONS
@@ -1432,7 +1434,7 @@ mod tests {
 
                         // D+1 dimensional cell should have D+1 facets (one opposite each vertex)
                         let expected_facets = $dim + 1;
-                        let mut facet_keys = std::collections::HashSet::new();
+                        let mut facet_keys = HashSet::new();
 
                         for i in 0..expected_facets {
                             let facet = FacetView::new(dt.tds(), cell_key, u8::try_from(i).unwrap()).unwrap();
@@ -1649,7 +1651,6 @@ mod tests {
     #[test]
     fn test_facet_key_from_vertices() {
         // Create a temporary SlotMap to generate valid VertexKeys
-        use slotmap::SlotMap;
         let mut temp_vertices: SlotMap<VertexKey, ()> = SlotMap::with_key();
         let vertices = vec![
             temp_vertices.insert(()),
@@ -1858,8 +1859,6 @@ mod tests {
 
     #[test]
     fn test_facet_view_memory_efficiency() {
-        use std::mem;
-
         // This test demonstrates the memory efficiency of FacetView
         // The deprecated heavyweight Facet struct has been removed.
         let lightweight_size = mem::size_of::<FacetView<f64, (), (), 3>>();

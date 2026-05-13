@@ -641,6 +641,12 @@ impl fmt::Display for DelaunayRepairOperation {
 /// `is_valid()`. They are produced by mutating operations that invoke
 /// flip-based repair internally (e.g. [`DelaunayTriangulation::remove_vertex`]).
 ///
+/// When manually forwarding lower-layer validation errors, prefer
+/// `DelaunayTriangulationValidationError::from(tds_error)` or `.into()` for
+/// [`TdsError`] and [`TriangulationValidationError`]. The enum stores those
+/// sources behind `Box` to keep `Result<_, DelaunayTriangulationValidationError>`
+/// compact while preserving typed error inspection.
+///
 /// # Examples
 ///
 /// ```rust
@@ -5357,8 +5363,6 @@ where
 impl<K, U, V, const D: usize> DelaunayTriangulation<K, U, V, D>
 where
     K: Kernel<D>,
-    U: DataType,
-    V: DataType,
 {
     // -------------------------------------------------------------------------
     // QUERY / ACCESSORS
@@ -5835,6 +5839,8 @@ where
     pub fn repair_delaunay_with_flips(&mut self) -> Result<DelaunayRepairStats, DelaunayRepairError>
     where
         K: ExactPredicates<D>,
+        U: DataType,
+        V: DataType,
     {
         self.repair_delaunay_with_flips_capped(None)
     }
@@ -5847,6 +5853,8 @@ where
     ) -> Result<DelaunayRepairStats, DelaunayRepairError>
     where
         K: ExactPredicates<D>,
+        U: DataType,
+        V: DataType,
     {
         #[cfg(test)]
         if test_hooks::force_repair_nonconvergent_enabled() {
@@ -5874,7 +5882,11 @@ where
 
     /// Canonicalize geometric orientation to the positive sign, preserving
     /// canonicalization failures as their own repair error variant.
-    fn ensure_positive_orientation(&mut self) -> Result<(), DelaunayRepairError> {
+    fn ensure_positive_orientation(&mut self) -> Result<(), DelaunayRepairError>
+    where
+        U: DataType,
+        V: DataType,
+    {
         self.tri
             .normalize_and_promote_positive_orientation()
             .map_err(|e| DelaunayRepairError::OrientationCanonicalizationFailed {
@@ -5888,7 +5900,11 @@ where
         &mut self,
         seed_cells: Option<&[CellKey]>,
         max_flips: Option<usize>,
-    ) -> Result<DelaunayRepairStats, DelaunayRepairError> {
+    ) -> Result<DelaunayRepairStats, DelaunayRepairError>
+    where
+        U: DataType,
+        V: DataType,
+    {
         self.repair_delaunay_with_flips_robust_run(seed_cells, max_flips)
             .map(|run| run.stats)
     }
@@ -5898,7 +5914,11 @@ where
         &mut self,
         seed_cells: Option<&[CellKey]>,
         max_flips: Option<usize>,
-    ) -> Result<DelaunayRepairRun, DelaunayRepairError> {
+    ) -> Result<DelaunayRepairRun, DelaunayRepairError>
+    where
+        U: DataType,
+        V: DataType,
+    {
         let topology = self.tri.topology_guarantee();
         let kernel = RobustKernel::<K::Scalar>::new();
         self.invalidate_repair_caches();
@@ -8164,7 +8184,7 @@ mod tests {
     use crate::triangulation::flips::BistellarFlips;
     use crate::vertex;
     use slotmap::KeyData;
-    use std::{error::Error as StdError, sync::Once};
+    use std::{collections::HashSet, error::Error as StdError, sync::Once};
 
     type TestDelaunay<const D: usize> = DelaunayTriangulation<AdaptiveKernel<f64>, (), (), D>;
 
@@ -11431,27 +11451,25 @@ mod tests {
             DelaunayTriangulation::new(&vertices).unwrap();
         let tri = dt.as_triangulation();
 
-        let edges_dt: std::collections::HashSet<_> = dt.edges().collect();
-        let edges_tri: std::collections::HashSet<_> = tri.edges().collect();
+        let edges_dt: HashSet<_> = dt.edges().collect();
+        let edges_tri: HashSet<_> = tri.edges().collect();
         assert_eq!(edges_dt, edges_tri);
         assert_eq!(edges_dt.len(), 6);
 
         let index = dt.build_adjacency_index().unwrap();
-        let edges_dt_index: std::collections::HashSet<_> = dt.edges_with_index(&index).collect();
-        let edges_tri_index: std::collections::HashSet<_> = tri.edges_with_index(&index).collect();
+        let edges_dt_index: HashSet<_> = dt.edges_with_index(&index).collect();
+        let edges_tri_index: HashSet<_> = tri.edges_with_index(&index).collect();
         assert_eq!(edges_dt_index, edges_tri_index);
         assert_eq!(edges_dt_index, edges_dt);
 
         let v0 = dt.vertices().next().unwrap().0;
-        let incident_dt: std::collections::HashSet<_> = dt.incident_edges(v0).collect();
-        let incident_tri: std::collections::HashSet<_> = tri.incident_edges(v0).collect();
+        let incident_dt: HashSet<_> = dt.incident_edges(v0).collect();
+        let incident_tri: HashSet<_> = tri.incident_edges(v0).collect();
         assert_eq!(incident_dt, incident_tri);
         assert_eq!(incident_dt.len(), 3);
 
-        let incident_dt_index: std::collections::HashSet<_> =
-            dt.incident_edges_with_index(&index, v0).collect();
-        let incident_tri_index: std::collections::HashSet<_> =
-            tri.incident_edges_with_index(&index, v0).collect();
+        let incident_dt_index: HashSet<_> = dt.incident_edges_with_index(&index, v0).collect();
+        let incident_tri_index: HashSet<_> = tri.incident_edges_with_index(&index, v0).collect();
         assert_eq!(incident_dt_index, incident_tri_index);
         assert_eq!(incident_dt_index, incident_dt);
 

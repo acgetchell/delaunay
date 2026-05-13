@@ -11,6 +11,7 @@
 use delaunay::prelude::geometry::*;
 use proptest::prelude::*;
 use rustc_hash::FxHasher;
+use std::cmp::Ordering;
 use std::collections::HashMap;
 use std::hash::{Hash, Hasher};
 
@@ -270,7 +271,6 @@ macro_rules! gen_ordering_antisymmetric {
             proptest! {
                 #[test]
                 fn [<prop_ordering_antisymmetric_ $dim d>](p1 in [<point_ $dim d>](), p2 in [<point_ $dim d>]()) {
-                    use std::cmp::Ordering;
                     match (p1.partial_cmp(&p2), p2.partial_cmp(&p1)) {
                         (Some(Ordering::Less), Some(Ordering::Greater))
                         | (Some(Ordering::Greater), Some(Ordering::Less))
@@ -289,7 +289,6 @@ macro_rules! gen_ordering_transitive {
             proptest! {
                 #[test]
                 fn [<prop_ordering_transitive_ $dim d>](p1 in [<point_ $dim d>](), p2 in [<point_ $dim d>](), p3 in [<point_ $dim d>]()) {
-                    use std::cmp::Ordering;
                     if p1.partial_cmp(&p2) == Some(Ordering::Less) && p2.partial_cmp(&p3) == Some(Ordering::Less) {
                         prop_assert_eq!(p1.partial_cmp(&p3), Some(Ordering::Less));
                     }

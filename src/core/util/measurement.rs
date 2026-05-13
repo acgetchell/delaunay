@@ -77,6 +77,7 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::atomic::{AtomicUsize, Ordering};
 
     #[cfg(feature = "count-allocations")]
     fn non_negative(value: i64) -> u64 {
@@ -131,8 +132,6 @@ mod tests {
 
     #[test]
     fn test_measure_with_result_executes_once() {
-        use std::sync::atomic::{AtomicUsize, Ordering};
-
         let calls = AtomicUsize::new(0);
         let (result, _alloc_info) = measure_with_result(|| {
             calls.fetch_add(1, Ordering::SeqCst);

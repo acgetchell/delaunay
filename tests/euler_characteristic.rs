@@ -14,6 +14,7 @@
 //!
 //! For property-based tests with random triangulations, see `proptest_euler_characteristic.rs`.
 
+use delaunay::prelude::geometry::AdaptiveKernel;
 use delaunay::prelude::query::BoundaryAnalysis;
 use delaunay::prelude::tds::Tds;
 use delaunay::prelude::triangulation::construction::{
@@ -376,7 +377,6 @@ macro_rules! test_complex_with_interior {
     ($test_name:ident, $dim:expr, $vertices:expr, $expected_boundary_chi:expr) => {
         #[test]
         fn $test_name() {
-            use delaunay::geometry::kernel::AdaptiveKernel;
             type DT = DelaunayTriangulation<AdaptiveKernel<f64>, (), (), $dim>;
             let dt =
                 DT::new_with_topology_guarantee($vertices, TopologyGuarantee::PLManifold).unwrap();

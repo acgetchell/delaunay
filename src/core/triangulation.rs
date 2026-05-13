@@ -1132,8 +1132,6 @@ pub struct Triangulation<K: Kernel<D>, U, V, const D: usize> {
 impl<K, U, V, const D: usize> Triangulation<K, U, V, D>
 where
     K: Kernel<D>,
-    U: DataType,
-    V: DataType,
 {
     /// Traverses the cell neighbor graph starting at `start` and returns the set of visited cells.
     ///
@@ -1200,8 +1198,6 @@ where
 impl<K, U, V, const D: usize> Triangulation<K, U, V, D>
 where
     K: Kernel<D>,
-    U: DataType,
-    V: DataType,
 {
     /// Create an empty triangulation with the given kernel.
     ///
@@ -3231,7 +3227,11 @@ where
     /// // Levels 1–3: elements + TDS structure + topology
     /// assert!(dt.as_triangulation().validate().is_ok());
     /// ```
-    pub fn validate(&self) -> Result<(), InvariantError> {
+    pub fn validate(&self) -> Result<(), InvariantError>
+    where
+        U: DataType,
+        V: DataType,
+    {
         self.tds.validate()?;
         self.validate_global_connectedness()?;
         let facet_to_cells: FacetToCellsMap = self.tds.build_facet_to_cells_map()?;
@@ -3255,7 +3255,11 @@ where
     /// # Errors
     ///
     /// Returns `Err(TriangulationValidationReport)` containing all invariant violations.
-    pub(crate) fn validation_report(&self) -> Result<(), TriangulationValidationReport> {
+    pub(crate) fn validation_report(&self) -> Result<(), TriangulationValidationReport>
+    where
+        U: DataType,
+        V: DataType,
+    {
         let mut violations: Vec<InvariantViolation> = Vec::new();
 
         // Level 2 (structural): reuse the TDS report.
@@ -6778,12 +6782,14 @@ mod tests {
     use crate::geometry::traits::coordinate::{
         Coordinate, CoordinateConversionError, CoordinateScalar,
     };
+    use crate::geometry::util::generate_random_points_seeded;
     use crate::topology::characteristics::validation::validate_triangulation_euler;
     use crate::topology::traits::topological_space::{GlobalTopology, ToroidalConstructionMode};
-    use crate::triangulation::delaunay::DelaunayTriangulation;
+    use crate::triangulation::delaunay::{DelaunayRepairPolicy, DelaunayTriangulation};
     use crate::vertex;
 
     use slotmap::KeyData;
+    use std::collections::HashSet;
 
     /// Helper: build a minimal 3D triangulation with one tetrahedron and valid
     /// incident-cell pointers for all four vertices.
@@ -7871,18 +7877,13 @@ mod tests {
         // This test is intentionally small and validates after *each* insertion to ensure
         // we never commit an invalid PL-manifold state, even when the user disables
         // automatic validation via `ValidationPolicy::Never`.
-        let points = crate::geometry::util::generate_random_points_seeded::<f64, 3>(
-            25,
-            (-100.0, 100.0),
-            123,
-        )
-        .unwrap();
+        let points = generate_random_points_seeded::<f64, 3>(25, (-100.0, 100.0), 123).unwrap();
 
         let mut dt: DelaunayTriangulation<_, (), (), 3> =
             DelaunayTriangulation::empty_with_topology_guarantee(TopologyGuarantee::PLManifold);
 
         dt.set_validation_policy(ValidationPolicy::Never);
-        dt.set_delaunay_repair_policy(crate::triangulation::delaunay::DelaunayRepairPolicy::Never);
+        dt.set_delaunay_repair_policy(DelaunayRepairPolicy::Never);
 
         for (i, point) in points.into_iter().enumerate() {
             let vertex = VertexBuilder::default().point(point).build().unwrap();
@@ -8593,7 +8594,7 @@ mod tests {
 
         // Invalidate: boundary facet has a neighbor pointer.
         let first_cell = tds.cell_mut(first_cell_key).unwrap();
-        let mut neighbors = crate::core::collections::NeighborBuffer::<Option<CellKey>>::new();
+        let mut neighbors = NeighborBuffer::<Option<CellKey>>::new();
         neighbors.resize(4, None);
         neighbors[0] = Some(second_cell_key);
         first_cell.neighbors = Some(neighbors);
@@ -8760,7 +8761,7 @@ mod tests {
         // Corrupt one cell locally: neighbors buffer with the wrong length.
         let cell_key = tri.tds.cell_keys().next().unwrap();
         let cell = tri.tds.cell_mut(cell_key).unwrap();
-        let mut bad_neighbors = crate::core::collections::NeighborBuffer::<Option<CellKey>>::new();
+        let mut bad_neighbors = NeighborBuffer::<Option<CellKey>>::new();
         bad_neighbors.resize(3, None); // expected D+1 = 4
         cell.neighbors = Some(bad_neighbors);
 
@@ -9495,11 +9496,11 @@ mod tests {
         assert_eq!(tri.number_of_vertices(), 3);
         assert_eq!(tri.number_of_edges(), 3);
 
-        let edges: std::collections::HashSet<_> = tri.edges().collect();
+        let edges: HashSet<_> = tri.edges().collect();
         assert_eq!(edges.len(), 3);
 
         let index = tri.build_adjacency_index().unwrap();
-        let edges_with_index: std::collections::HashSet<_> = tri.edges_with_index(&index).collect();
+        let edges_with_index: HashSet<_> = tri.edges_with_index(&index).collect();
         assert_eq!(edges_with_index, edges);
         assert_eq!(tri.number_of_edges_with_index(&index), 3);
 
@@ -10877,7 +10878,7 @@ mod tests {
 
         // edges()
         let edge_count = tri.number_of_edges();
-        let edges_collected: std::collections::HashSet<_> = tri.edges().collect();
+        let edges_collected: HashSet<_> = tri.edges().collect();
         assert_eq!(edges_collected.len(), edge_count);
         assert!(edge_count >= 6); // at least a tetrahedron's worth
 
@@ -10933,8 +10934,8 @@ mod tests {
         let index = tri.build_adjacency_index().unwrap();
 
         // edges_with_index matches edges()
-        let idx_edges: std::collections::HashSet<_> = tri.edges_with_index(&index).collect();
-        let direct_edges: std::collections::HashSet<_> = tri.edges().collect();
+        let idx_edges: HashSet<_> = tri.edges_with_index(&index).collect();
+        let direct_edges: HashSet<_> = tri.edges().collect();
         assert_eq!(idx_edges, direct_edges);
         assert_eq!(
             tri.number_of_edges_with_index(&index),
@@ -10944,9 +10945,8 @@ mod tests {
         let v0 = tri.vertices().next().unwrap().0;
 
         // adjacent_cells_with_index
-        let idx_adj: std::collections::HashSet<_> =
-            tri.adjacent_cells_with_index(&index, v0).collect();
-        let direct_adj: std::collections::HashSet<_> = tri.adjacent_cells(v0).collect();
+        let idx_adj: HashSet<_> = tri.adjacent_cells_with_index(&index, v0).collect();
+        let direct_adj: HashSet<_> = tri.adjacent_cells(v0).collect();
         assert_eq!(idx_adj, direct_adj);
         assert_eq!(
             tri.number_of_adjacent_cells_with_index(&index, v0),
@@ -10966,9 +10966,8 @@ mod tests {
         );
 
         // incident_edges_with_index
-        let idx_inc: std::collections::HashSet<_> =
-            tri.incident_edges_with_index(&index, v0).collect();
-        let direct_inc: std::collections::HashSet<_> = tri.incident_edges(v0).collect();
+        let idx_inc: HashSet<_> = tri.incident_edges_with_index(&index, v0).collect();
+        let direct_inc: HashSet<_> = tri.incident_edges(v0).collect();
         assert_eq!(idx_inc, direct_inc);
         assert_eq!(
             tri.number_of_incident_edges_with_index(&index, v0),
@@ -11815,8 +11814,6 @@ mod tests {
     /// and exercise the perturbation retry path with a near-degenerate simplex.
     #[test]
     fn test_perturbation_epsilon_selection_and_retry() {
-        use crate::geometry::traits::coordinate::CoordinateScalar;
-
         // Assert the mantissa-digits → epsilon branching for each scalar type.
         // insert_transactional uses: `if K::Scalar::mantissa_digits() <= 24 { 1e-4 } else { 1e-8 }`
         assert_eq!(

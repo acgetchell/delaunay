@@ -36,7 +36,6 @@
 use crate::core::{
     collections::{MAX_PRACTICAL_DIMENSION_SIZE, SmallBuffer},
     tds::{CellKey, TdsError, VertexKey},
-    traits::data_type::DataType,
     triangulation::Triangulation,
 };
 use crate::geometry::{
@@ -222,8 +221,6 @@ fn cell_points<K, U, V, const D: usize>(
 ) -> Result<SmallBuffer<Point<K::Scalar, D>, MAX_PRACTICAL_DIMENSION_SIZE>, QualityError>
 where
     K: Kernel<D>,
-    U: DataType,
-    V: DataType,
 {
     let vertex_keys =
         tri.tds
@@ -246,7 +243,7 @@ where
     Ok(points)
 }
 
-/// Computes scale-aware epsilon and average edge length for degeneracy detection.
+/// Returns the scale-aware epsilon and average edge length for degeneracy detection.
 ///
 /// This helper centralizes the epsilon calculation logic used by both `radius_ratio`
 /// and `normalized_volume` to ensure consistent degeneracy detection across metrics.
@@ -264,7 +261,7 @@ where
 /// # Errors
 ///
 /// Returns `QualityError` if edge count conversion or epsilon conversion fails.
-fn compute_scale_aware_epsilon<T, const D: usize>(
+fn scale_aware_epsilon<T, const D: usize>(
     points: &SmallBuffer<Point<T, D>, MAX_PRACTICAL_DIMENSION_SIZE>,
 ) -> Result<(T, T), QualityError>
 where
@@ -364,8 +361,6 @@ pub fn radius_ratio<K, U, V, const D: usize>(
 where
     K: Kernel<D>,
     K::Scalar: Div<Output = K::Scalar>,
-    U: DataType,
-    V: DataType,
 {
     // Extract cell points using helper
     let points = cell_points(tri, cell_key)?;
@@ -387,7 +382,7 @@ where
         simplex_inradius(&points).map_err(|source| QualityError::Inradius { source })?;
 
     // Check for near-zero inradius (degenerate cell) using scale-aware tolerance
-    let (avg_edge_length, epsilon) = compute_scale_aware_epsilon(&points)?;
+    let (avg_edge_length, epsilon) = scale_aware_epsilon(&points)?;
 
     if inradius_val < epsilon {
         return Err(QualityError::DegenerateCell {
@@ -457,8 +452,6 @@ pub fn normalized_volume<K, U, V, const D: usize>(
 where
     K: Kernel<D>,
     K::Scalar: Div<Output = K::Scalar>,
-    U: DataType,
-    V: DataType,
 {
     // Extract cell points using helper
     let points = cell_points(tri, cell_key)?;
@@ -475,7 +468,7 @@ where
     let volume = simplex_volume(&points).map_err(|source| QualityError::Volume { source })?;
 
     // Compute scale-aware epsilon and average edge length
-    let (avg_edge_length, epsilon) = compute_scale_aware_epsilon(&points)?;
+    let (avg_edge_length, epsilon) = scale_aware_epsilon(&points)?;
 
     // Check for degenerate cell (volume too small)
     if volume < epsilon {
@@ -739,6 +732,57 @@ let key_translated = dt_translated.cells().next().unwrap().0;
     // =============================================================================
     // ERROR HANDLING TESTS
     // =============================================================================
+
+    #[test]
+    fn quality_cell_vertices_error_preserves_specific_tds_lookup_failures() {
+        let cell_key = CellKey::from(KeyData::from_ffi(0xCAFE));
+        let vertex_key = VertexKey::from(KeyData::from_ffi(0xBEEF));
+
+        let missing_cell = QualityCellVerticesError::from(TdsError::CellNotFound {
+            cell_key,
+            context: "quality metric cell lookup".to_string(),
+        });
+        assert!(matches!(
+            missing_cell,
+            QualityCellVerticesError::CellNotFound {
+                cell_key: observed,
+                context
+            } if observed == cell_key && context == "quality metric cell lookup"
+        ));
+
+        let missing_vertex = QualityCellVerticesError::from(TdsError::VertexNotFound {
+            vertex_key,
+            context: "quality metric vertex lookup".to_string(),
+        });
+        assert!(matches!(
+            missing_vertex,
+            QualityCellVerticesError::ReferencedVertexNotFound {
+                vertex_key: observed,
+                context
+            } if observed == vertex_key && context == "quality metric vertex lookup"
+        ));
+
+        let unexpected = QualityCellVerticesError::from(TdsError::DuplicateCells {
+            message: "same vertex set appears twice".to_string(),
+        });
+        assert!(matches!(
+            unexpected,
+            QualityCellVerticesError::UnexpectedTdsFailure { message }
+                if message.contains("Duplicate cells")
+                    && message.contains("same vertex set appears twice")
+        ));
+    }
+
+    #[test]
+    fn scale_aware_epsilon_uses_floor_when_point_set_has_no_edges() {
+        let mut points = SmallBuffer::new();
+        points.push(Point::<f64, 0>::new([]));
+
+        let (avg_edge_length, epsilon) = scale_aware_epsilon(&points).unwrap();
+
+        assert_relative_eq!(avg_edge_length, 0.0);
+        assert_relative_eq!(epsilon, 1e-12);
+    }
 
     #[test]
     fn test_quality_error_display() {
@@ -1227,14 +1271,14 @@ let cell_key = dt.cells().next().unwrap().0;
     }
 
     #[test]
-    fn test_compute_scale_aware_epsilon_2d() {
+    fn test_scale_aware_epsilon_2d() {
         // Test epsilon computation for 2D simplex
         let mut points = SmallBuffer::new();
         points.push(Point::new([0.0, 0.0]));
         points.push(Point::new([1.0, 0.0]));
         points.push(Point::new([0.5, 0.866_025]));
 
-        let (avg_edge_length, epsilon) = compute_scale_aware_epsilon(&points).unwrap();
+        let (avg_edge_length, epsilon) = scale_aware_epsilon(&points).unwrap();
         assert!(
             avg_edge_length > 0.0,
             "Average edge length should be positive"
@@ -1244,35 +1288,35 @@ let cell_key = dt.cells().next().unwrap().0;
     }
 
     #[test]
-    fn test_compute_scale_aware_epsilon_tiny_simplex() {
+    fn test_scale_aware_epsilon_tiny_simplex() {
         // Test epsilon computation with very small coordinates
         let mut points = SmallBuffer::new();
         points.push(Point::new([0.0, 0.0]));
         points.push(Point::new([1e-10, 0.0]));
         points.push(Point::new([0.5e-10, 0.866_025e-10]));
 
-        let (avg_edge_length, epsilon) = compute_scale_aware_epsilon(&points).unwrap();
+        let (avg_edge_length, epsilon) = scale_aware_epsilon(&points).unwrap();
         // For tiny simplices, epsilon should use the floor (1e-12)
         assert!(epsilon >= 1e-12);
         assert!(avg_edge_length > 0.0);
     }
 
     #[test]
-    fn test_compute_scale_aware_epsilon_large_simplex() {
+    fn test_scale_aware_epsilon_large_simplex() {
         // Test epsilon computation with large coordinates
         let mut points = SmallBuffer::new();
         points.push(Point::new([0.0, 0.0]));
         points.push(Point::new([1e6, 0.0]));
         points.push(Point::new([0.5e6, 0.866_025e6]));
 
-        let (avg_edge_length, epsilon) = compute_scale_aware_epsilon(&points).unwrap();
+        let (avg_edge_length, epsilon) = scale_aware_epsilon(&points).unwrap();
         // For large simplices, epsilon scales with average edge length
         assert!(epsilon > 1e-12);
         assert!(avg_edge_length > 1e5);
     }
 
     #[test]
-    fn test_compute_scale_aware_epsilon_3d() {
+    fn test_scale_aware_epsilon_3d() {
         // Test epsilon computation for 3D simplex
         let mut points = SmallBuffer::new();
         points.push(Point::new([0.0, 0.0, 0.0]));
@@ -1280,7 +1324,7 @@ let cell_key = dt.cells().next().unwrap().0;
         points.push(Point::new([0.0, 1.0, 0.0]));
         points.push(Point::new([0.0, 0.0, 1.0]));
 
-        let (avg_edge_length, epsilon) = compute_scale_aware_epsilon(&points).unwrap();
+        let (avg_edge_length, epsilon) = scale_aware_epsilon(&points).unwrap();
         assert!(avg_edge_length > 0.0);
         assert!(epsilon > 0.0);
     }

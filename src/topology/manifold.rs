@@ -92,7 +92,6 @@ use crate::core::{
     },
     facet::{FacetHandle, facet_key_from_vertices},
     tds::{CellKey, Tds, TdsError, VertexKey},
-    traits::DataType,
 };
 use crate::topology::characteristics::euler::{
     triangulated_surface_boundary_component_count, triangulated_surface_euler_characteristic,
@@ -367,11 +366,7 @@ pub fn validate_facet_degree(facet_to_cells: &FacetToCellsMap) -> Result<(), Man
 pub fn validate_closed_boundary<T, U, V, const D: usize>(
     tds: &Tds<T, U, V, D>,
     facet_to_cells: &FacetToCellsMap,
-) -> Result<(), ManifoldError>
-where
-    U: DataType,
-    V: DataType,
-{
+) -> Result<(), ManifoldError> {
     // The boundary is a (D-1)-complex. Codimension-2 manifoldness is only meaningful for D>=2.
     if D < 2 {
         return Ok(());
@@ -478,11 +473,7 @@ where
 pub(crate) fn validate_local_pseudomanifold_for_cells<T, U, V, const D: usize>(
     tds: &Tds<T, U, V, D>,
     cells: &[CellKey],
-) -> Result<(), ManifoldError>
-where
-    U: DataType,
-    V: DataType,
-{
+) -> Result<(), ManifoldError> {
     if D == 0 || cells.is_empty() {
         return Ok(());
     }
@@ -496,11 +487,7 @@ where
 fn build_local_facet_star_map<T, U, V, const D: usize>(
     tds: &Tds<T, U, V, D>,
     cells: &[CellKey],
-) -> Result<FacetToCellsMap, ManifoldError>
-where
-    U: DataType,
-    V: DataType,
-{
+) -> Result<FacetToCellsMap, ManifoldError> {
     let mut facet_to_cells = FacetToCellsMap::default();
     let mut seen_facets: FastHashSet<u64> = FastHashSet::default();
 
@@ -527,11 +514,7 @@ fn cell_facet_vertex_ids<T, U, V, const D: usize>(
     tds: &Tds<T, U, V, D>,
     cell_key: CellKey,
     facet_index: usize,
-) -> Result<(LiftedVertexBuffer, VertexKeyBuffer), ManifoldError>
-where
-    U: DataType,
-    V: DataType,
-{
+) -> Result<(LiftedVertexBuffer, VertexKeyBuffer), ManifoldError> {
     let cell_vertices = tds.cell_vertices(cell_key)?;
     if facet_index >= cell_vertices.len() {
         return Err(TdsError::IndexOutOfBounds {
@@ -569,11 +552,7 @@ fn facet_incident_handles<T, U, V, const D: usize>(
     tds: &Tds<T, U, V, D>,
     facet_key: u64,
     facet_vertices_bare: &[VertexKey],
-) -> Result<SmallBuffer<FacetHandle, 2>, ManifoldError>
-where
-    U: DataType,
-    V: DataType,
-{
+) -> Result<SmallBuffer<FacetHandle, 2>, ManifoldError> {
     let candidate_cells = simplex_star_cells(tds, facet_vertices_bare)?;
     let mut handles: SmallBuffer<FacetHandle, 2> =
         SmallBuffer::with_capacity(candidate_cells.len().max(1));
@@ -605,11 +584,7 @@ where
 fn validate_closed_boundary_for_local_facets<T, U, V, const D: usize>(
     tds: &Tds<T, U, V, D>,
     facet_to_cells: &FacetToCellsMap,
-) -> Result<(), ManifoldError>
-where
-    U: DataType,
-    V: DataType,
-{
+) -> Result<(), ManifoldError> {
     if D < 2 {
         return Ok(());
     }
@@ -686,11 +661,7 @@ fn boundary_facet_count_for_ridge<T, U, V, const D: usize>(
     tds: &Tds<T, U, V, D>,
     ridge_vertices: &[LiftedVertexId],
     ridge_vertices_bare: &[VertexKey],
-) -> Result<usize, ManifoldError>
-where
-    U: DataType,
-    V: DataType,
-{
+) -> Result<usize, ManifoldError> {
     let star_cells = simplex_star_cells(tds, ridge_vertices_bare)?;
     let mut count = 0usize;
     let mut seen_boundary_facets: FastHashSet<u64> = FastHashSet::default();
@@ -738,11 +709,7 @@ where
 fn simplex_star_cells<T, U, V, const D: usize>(
     tds: &Tds<T, U, V, D>,
     simplex_vertices: &[VertexKey],
-) -> Result<SmallBuffer<CellKey, 8>, ManifoldError>
-where
-    U: DataType,
-    V: DataType,
-{
+) -> Result<SmallBuffer<CellKey, 8>, ManifoldError> {
     if simplex_vertices.is_empty() {
         return Err(TdsError::InconsistentDataStructure {
             message: "simplex_star_cells requires at least one vertex".to_string(),
@@ -791,11 +758,7 @@ fn simplex_link_simplices_from_star<T, U, V, const D: usize>(
     tds: &Tds<T, U, V, D>,
     simplex_vertices: &[VertexKey],
     star_cells: &[CellKey],
-) -> Result<LinkSimplexBuffer, ManifoldError>
-where
-    U: DataType,
-    V: DataType,
-{
+) -> Result<LinkSimplexBuffer, ManifoldError> {
     if simplex_vertices.is_empty() {
         return Err(TdsError::InconsistentDataStructure {
             message: "simplex_link_simplices_from_star requires at least one vertex".to_string(),
@@ -876,11 +839,7 @@ where
 pub(crate) fn ridge_star_cells<T, U, V, const D: usize>(
     tds: &Tds<T, U, V, D>,
     ridge_vertices: &[VertexKey],
-) -> Result<SmallBuffer<CellKey, 8>, ManifoldError>
-where
-    U: DataType,
-    V: DataType,
-{
+) -> Result<SmallBuffer<CellKey, 8>, ManifoldError> {
     // Ridge stars are only meaningful for D>=2.
     if D < 2 {
         return Ok(SmallBuffer::new());
@@ -903,11 +862,7 @@ fn ridge_link_edges_from_star<T, U, V, const D: usize>(
     tds: &Tds<T, U, V, D>,
     ridge_vertices: &[LiftedVertexId],
     star_cells: &[CellKey],
-) -> Result<SmallBuffer<(LiftedVertexId, LiftedVertexId), 8>, ManifoldError>
-where
-    U: DataType,
-    V: DataType,
-{
+) -> Result<SmallBuffer<(LiftedVertexId, LiftedVertexId), 8>, ManifoldError> {
     // Ridge links are only meaningful for D>=2.
     if D < 2 {
         return Ok(SmallBuffer::new());
@@ -1014,11 +969,7 @@ struct RidgeStar {
 // for extremely large triangulations (e.g., millions of cells) or higher-dimensional complexes.
 fn build_ridge_star_map<T, U, V, const D: usize>(
     tds: &Tds<T, U, V, D>,
-) -> Result<FastHashMap<u64, RidgeStar>, ManifoldError>
-where
-    U: DataType,
-    V: DataType,
-{
+) -> Result<FastHashMap<u64, RidgeStar>, ManifoldError> {
     let cell_count = tds.number_of_cells();
     if cell_count == 0 {
         return Ok(FastHashMap::default());
@@ -1097,11 +1048,7 @@ where
 fn build_ridge_star_map_for_cells<T, U, V, const D: usize>(
     tds: &Tds<T, U, V, D>,
     cells: &[CellKey],
-) -> Result<FastHashMap<u64, RidgeStar>, ManifoldError>
-where
-    U: DataType,
-    V: DataType,
-{
+) -> Result<FastHashMap<u64, RidgeStar>, ManifoldError> {
     if D < 2 {
         return Ok(FastHashMap::default());
     }
@@ -1222,11 +1169,7 @@ fn periodic_aware_ridge_star<T, U, V, const D: usize>(
     ridge_key: u64,
     lifted_vertices: &[LiftedVertexId],
     bare_vertices: &VertexKeyBuffer,
-) -> Result<SmallBuffer<CellKey, 8>, ManifoldError>
-where
-    U: DataType,
-    V: DataType,
-{
+) -> Result<SmallBuffer<CellKey, 8>, ManifoldError> {
     let all_star_cells = simplex_star_cells(tds, bare_vertices)?;
 
     // For periodic cells, keep only cells whose lifted ridge vertices agree
@@ -1324,11 +1267,7 @@ where
 /// ```
 pub fn validate_ridge_links<T, U, V, const D: usize>(
     tds: &Tds<T, U, V, D>,
-) -> Result<(), ManifoldError>
-where
-    U: DataType,
-    V: DataType,
-{
+) -> Result<(), ManifoldError> {
     // Ridge links are only meaningful for D>=2.
     if D < 2 {
         return Ok(());
@@ -1405,11 +1344,7 @@ where
 pub fn validate_ridge_links_for_cells<T, U, V, const D: usize>(
     tds: &Tds<T, U, V, D>,
     cells: &[CellKey],
-) -> Result<(), ManifoldError>
-where
-    U: DataType,
-    V: DataType,
-{
+) -> Result<(), ManifoldError> {
     // Ridge links are only meaningful for D>=2.
     if D < 2 {
         return Ok(());
@@ -1498,11 +1433,7 @@ where
 pub fn validate_vertex_links<T, U, V, const D: usize>(
     tds: &Tds<T, U, V, D>,
     facet_to_cells: &FacetToCellsMap,
-) -> Result<(), ManifoldError>
-where
-    U: DataType,
-    V: DataType,
-{
+) -> Result<(), ManifoldError> {
     // Vertex links are only meaningful for D>=1.
     if D < 1 {
         return Ok(());
@@ -1525,11 +1456,7 @@ where
 fn build_boundary_vertex_set<T, U, V, const D: usize>(
     tds: &Tds<T, U, V, D>,
     facet_to_cells: &FacetToCellsMap,
-) -> Result<FastHashSet<VertexKey>, ManifoldError>
-where
-    U: DataType,
-    V: DataType,
-{
+) -> Result<FastHashSet<VertexKey>, ManifoldError> {
     // Single pass: collect all vertices that appear on a boundary facet (a facet incident to exactly 1 D-cell).
     //
     // NOTE: We intentionally avoid a pre-count pass over `facet_to_cells` since Level-3 validation is already
@@ -1667,11 +1594,7 @@ fn validate_single_vertex_link<T, U, V, const D: usize>(
     tds: &Tds<T, U, V, D>,
     vertex_key: VertexKey,
     interior_vertex: bool,
-) -> Result<(), ManifoldError>
-where
-    U: DataType,
-    V: DataType,
-{
+) -> Result<(), ManifoldError> {
     // Collect the star of the vertex.
     let star_cells = simplex_star_cells(tds, &[vertex_key])?;
     if star_cells.is_empty() {
@@ -2198,6 +2121,7 @@ mod tests {
     use super::*;
 
     use crate::core::cell::Cell;
+    use crate::core::facet::FacetHandle;
     use crate::core::triangulation::Triangulation;
     use crate::geometry::kernel::FastKernel;
     use crate::vertex;
@@ -2403,8 +2327,8 @@ mod tests {
 
         // Synthesize an invalid boundary facet handle: facet indices must be < D+1.
         let mut facet_to_cells: FacetToCellsMap = FacetToCellsMap::default();
-        let mut handles: SmallBuffer<crate::core::facet::FacetHandle, 2> = SmallBuffer::new();
-        handles.push(crate::core::facet::FacetHandle::new(cell_key, u8::MAX));
+        let mut handles: SmallBuffer<FacetHandle, 2> = SmallBuffer::new();
+        handles.push(FacetHandle::new(cell_key, u8::MAX));
         facet_to_cells.insert(0_u64, handles);
 
         match validate_closed_boundary(&tds, &facet_to_cells) {
@@ -3657,8 +3581,8 @@ mod tests {
         }
 
         let mut facet_to_cells: FacetToCellsMap = FacetToCellsMap::default();
-        let mut handles: SmallBuffer<crate::core::facet::FacetHandle, 2> = SmallBuffer::new();
-        handles.push(crate::core::facet::FacetHandle::new(cell_key, 0));
+        let mut handles: SmallBuffer<FacetHandle, 2> = SmallBuffer::new();
+        handles.push(FacetHandle::new(cell_key, 0));
         facet_to_cells.insert(0_u64, handles);
 
         match validate_closed_boundary(&tds, &facet_to_cells) {

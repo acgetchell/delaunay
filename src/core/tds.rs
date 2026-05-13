@@ -2303,11 +2303,7 @@ impl<T, U, V, const D: usize> Tds<T, U, V, D> {
     }
 }
 
-impl<T, U, V, const D: usize> Tds<T, U, V, D>
-where
-    U: DataType,
-    V: DataType,
-{
+impl<T, U, V, const D: usize> Tds<T, U, V, D> {
     // =========================================================================
     // QUERY OPERATIONS
     // =========================================================================
@@ -3056,11 +3052,7 @@ impl<T, U, V, const D: usize> Tds<T, U, V, D> {
     }
 }
 
-impl<T, U, V, const D: usize> Tds<T, U, V, D>
-where
-    U: DataType,
-    V: DataType,
-{
+impl<T, U, V, const D: usize> Tds<T, U, V, D> {
     /// Removes multiple cells by their keys in a batch operation.
     ///
     /// This method performs a **local** topology update:
@@ -4576,7 +4568,9 @@ where
 
         Ok(())
     }
+}
 
+impl<T, U, V, const D: usize> Tds<T, U, V, D> {
     /// Builds a `FacetToCellsMap` with strict error handling.
     ///
     /// This method returns an error if any cell has missing vertex keys, ensuring
@@ -4652,7 +4646,9 @@ where
 
         Ok(facet_to_cells)
     }
+}
 
+impl<T, U, V, const D: usize> Tds<T, U, V, D> {
     /// Removes duplicate cells with identical vertex sets.
     ///
     /// Returns the number of duplicate cells that were removed.
@@ -4665,8 +4661,8 @@ where
     /// When duplicates are present, the rollback guarantee is implemented by
     /// cloning the current [`Tds`] before removal. This keeps failed mutations
     /// atomic, but the snapshot cost is linear in the size of the stored
-    /// topology. The method therefore requires `T: Clone` so vertex coordinates
-    /// can be preserved in the trial structure.
+    /// topology. The method therefore requires the stored coordinates and
+    /// payloads to be cloneable so the trial structure can preserve them.
     ///
     /// # Errors
     ///
@@ -4690,7 +4686,7 @@ where
     /// ```
     pub fn remove_duplicate_cells(&mut self) -> Result<usize, TdsMutationError>
     where
-        T: Clone,
+        Self: Clone,
     {
         let mut unique_cells = FastHashMap::default();
         let mut cells_to_remove = CellRemovalBuffer::new();
@@ -5952,7 +5948,7 @@ where
                     neighbor_vertices,
                 )?;
 
-                let mirror_idx = Self::compute_and_verify_mirror_facet(
+                let mirror_idx = Self::verified_mirror_facet_index(
                     cell,
                     facet_idx,
                     neighbor_cell,
@@ -6017,7 +6013,7 @@ where
         Ok(())
     }
 
-    fn compute_and_verify_mirror_facet(
+    fn verified_mirror_facet_index(
         cell: &Cell<T, U, V, D>,
         facet_idx: usize,
         neighbor_cell: &Cell<T, U, V, D>,
@@ -6040,7 +6036,7 @@ where
         // If validation ever becomes performance-sensitive, this is a good candidate to
         // gate behind a "strict validation" option/flag.
         let expected_mirror_idx =
-            Self::compute_expected_mirror_facet_index(cell, neighbor_cell, this_vertices)?;
+            Self::expected_mirror_facet_index(cell, neighbor_cell, this_vertices)?;
 
         if mirror_idx != expected_mirror_idx {
             return Err(TdsError::InvalidNeighbors {
@@ -6057,7 +6053,7 @@ where
         Ok(mirror_idx)
     }
 
-    fn compute_expected_mirror_facet_index(
+    fn expected_mirror_facet_index(
         cell: &Cell<T, U, V, D>,
         neighbor_cell: &Cell<T, U, V, D>,
         this_vertices: &VertexKeySet,
@@ -6502,16 +6498,20 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::core::algorithms::flips::DelaunayRepairError;
     use crate::core::algorithms::incremental_insertion::InsertionError;
     use crate::core::cell::Cell;
+    use crate::core::collections::NeighborBuffer;
+    use crate::core::facet::FacetError;
     use crate::core::triangulation::TriangulationValidationError;
+    use crate::core::util::uuid::UuidValidationError;
     use crate::core::vertex::VertexBuilder;
     use crate::geometry::point::Point;
     use crate::geometry::traits::coordinate::Coordinate;
     use crate::topology::characteristics::euler::TopologyClassification;
     use crate::triangulation::builder::DelaunayTriangulationBuilder;
     use crate::triangulation::delaunay::{
-        DelaunayTriangulation, DelaunayTriangulationValidationError,
+        DelaunayRepairOperation, DelaunayTriangulation, DelaunayTriangulationValidationError,
     };
     use crate::vertex;
     use slotmap::KeyData;
@@ -6520,10 +6520,10 @@ mod tests {
     // TEST HELPER FUNCTIONS
     // =============================================================================
 
-    /// Test helper to create a vertex with a specific UUID for collision testing.
+    /// Test helper for a vertex with a specific UUID for collision testing.
     /// This is only used in tests to create specific scenarios.
     #[cfg(test)]
-    fn create_vertex_with_uuid<T, U, const D: usize>(
+    fn vertex_with_uuid<T, U, const D: usize>(
         point: Point<T, D>,
         uuid: Uuid,
         data: Option<U>,
@@ -6559,6 +6559,265 @@ mod tests {
             vertex!([0.0, 1.0, 0.0]),
             vertex!([0.0, 0.0, 1.0]),
         ]
+    }
+
+    fn assert_tds_error_kind(source: &TdsError, expected: TdsErrorKind) {
+        assert_eq!(TdsErrorKind::from(source), expected);
+    }
+
+    #[test]
+    fn tds_error_kind_from_error_preserves_validation_variants() {
+        let cell_key = CellKey::from(KeyData::from_ffi(1));
+        let other_cell_key = CellKey::from(KeyData::from_ffi(2));
+        let vertex_key = VertexKey::from(KeyData::from_ffi(3));
+        let uuid = Uuid::new_v4();
+
+        assert_tds_error_kind(
+            &TdsError::InvalidVertex {
+                vertex_id: uuid,
+                source: VertexValidationError::InvalidUuid {
+                    source: UuidValidationError::NilUuid,
+                },
+            },
+            TdsErrorKind::InvalidVertex,
+        );
+        assert_tds_error_kind(
+            &TdsError::InvalidCell {
+                cell_id: uuid,
+                source: CellValidationError::DuplicateVertices,
+            },
+            TdsErrorKind::InvalidCell,
+        );
+        assert_tds_error_kind(
+            &TdsError::InvalidNeighbors {
+                reason: NeighborValidationError::Other {
+                    message: "neighbor invariant failed".to_string(),
+                },
+            },
+            TdsErrorKind::InvalidNeighbors,
+        );
+        assert_tds_error_kind(
+            &TdsError::OrientationViolation {
+                cell1_key: cell_key,
+                cell1_uuid: uuid,
+                cell2_key: other_cell_key,
+                cell2_uuid: Uuid::new_v4(),
+                cell1_facet_index: 0,
+                cell2_facet_index: 1,
+                facet_vertices: vec![vertex_key],
+                cell2_facet_vertices: vec![vertex_key],
+                observed_odd_permutation: false,
+                expected_odd_permutation: true,
+            },
+            TdsErrorKind::OrientationViolation,
+        );
+        assert_tds_error_kind(
+            &TdsError::Geometric(GeometricError::DegenerateOrientation {
+                message: "zero determinant".to_string(),
+            }),
+            TdsErrorKind::Geometric,
+        );
+        assert_tds_error_kind(
+            &TdsError::FacetError(FacetError::InvalidFacetIndex {
+                index: 4,
+                facet_count: 4,
+            }),
+            TdsErrorKind::FacetError,
+        );
+        assert_tds_error_kind(
+            &TdsError::DuplicateCoordinatesInCell {
+                cell_id: uuid,
+                message: "two vertices share coordinates".to_string(),
+            },
+            TdsErrorKind::DuplicateCoordinatesInCell,
+        );
+    }
+
+    #[test]
+    fn tds_error_kind_from_error_preserves_lookup_and_operation_variants() {
+        let cell_key = CellKey::from(KeyData::from_ffi(1));
+        let vertex_key = VertexKey::from(KeyData::from_ffi(3));
+        let uuid = Uuid::new_v4();
+
+        assert_tds_error_kind(
+            &TdsError::DuplicateCells {
+                message: "duplicate cell vertex set".to_string(),
+            },
+            TdsErrorKind::DuplicateCells,
+        );
+        assert_tds_error_kind(
+            &TdsError::FailedToCreateCell {
+                message: "cell validation failed".to_string(),
+            },
+            TdsErrorKind::FailedToCreateCell,
+        );
+        assert_tds_error_kind(
+            &TdsError::NotNeighbors {
+                cell1: uuid,
+                cell2: Uuid::new_v4(),
+            },
+            TdsErrorKind::NotNeighbors,
+        );
+        assert_tds_error_kind(
+            &TdsError::MappingInconsistency {
+                entity: EntityKind::Cell,
+                message: "uuid mapping was stale".to_string(),
+            },
+            TdsErrorKind::MappingInconsistency,
+        );
+        assert_tds_error_kind(
+            &TdsError::VertexKeyRetrievalFailed {
+                cell_id: uuid,
+                message: "cell vertices unavailable".to_string(),
+            },
+            TdsErrorKind::VertexKeyRetrievalFailed,
+        );
+        assert_tds_error_kind(
+            &TdsError::CellNotFound {
+                cell_key,
+                context: "cell lookup".to_string(),
+            },
+            TdsErrorKind::CellNotFound,
+        );
+        assert_tds_error_kind(
+            &TdsError::VertexNotFound {
+                vertex_key,
+                context: "vertex lookup".to_string(),
+            },
+            TdsErrorKind::VertexNotFound,
+        );
+        assert_tds_error_kind(
+            &TdsError::DimensionMismatch {
+                expected: 4,
+                actual: 3,
+                context: "simplex arity".to_string(),
+            },
+            TdsErrorKind::DimensionMismatch,
+        );
+        assert_tds_error_kind(
+            &TdsError::IndexOutOfBounds {
+                index: 4,
+                bound: 4,
+                context: "facet index".to_string(),
+            },
+            TdsErrorKind::IndexOutOfBounds,
+        );
+        assert_tds_error_kind(
+            &TdsError::InconsistentDataStructure {
+                message: "dangling neighbor".to_string(),
+            },
+            TdsErrorKind::InconsistentDataStructure,
+        );
+    }
+
+    #[test]
+    fn triangulation_validation_error_kind_from_error_preserves_all_variants() {
+        let vertex_key = VertexKey::from(KeyData::from_ffi(3));
+        let cases = [
+            (
+                TriangulationValidationError::ManifoldFacetMultiplicity {
+                    facet_key: 0xabc,
+                    cell_count: 3,
+                },
+                TriangulationValidationErrorKind::ManifoldFacetMultiplicity,
+            ),
+            (
+                TriangulationValidationError::BoundaryRidgeMultiplicity {
+                    ridge_key: 0xdef,
+                    boundary_facet_count: 3,
+                },
+                TriangulationValidationErrorKind::BoundaryRidgeMultiplicity,
+            ),
+            (
+                TriangulationValidationError::RidgeLinkNotManifold {
+                    ridge_key: 0x123,
+                    link_vertex_count: 4,
+                    link_edge_count: 2,
+                    max_degree: 3,
+                    degree_one_vertices: 1,
+                    connected: false,
+                },
+                TriangulationValidationErrorKind::RidgeLinkNotManifold,
+            ),
+            (
+                TriangulationValidationError::VertexLinkNotManifold {
+                    vertex_key,
+                    link_vertex_count: 4,
+                    link_cell_count: 2,
+                    boundary_facet_count: 1,
+                    max_degree: 3,
+                    connected: false,
+                    interior_vertex: true,
+                },
+                TriangulationValidationErrorKind::VertexLinkNotManifold,
+            ),
+            (
+                TriangulationValidationError::EulerCharacteristicMismatch {
+                    computed: 0,
+                    expected: 1,
+                    classification: TopologyClassification::Ball(3),
+                },
+                TriangulationValidationErrorKind::EulerCharacteristicMismatch,
+            ),
+            (
+                TriangulationValidationError::IsolatedVertex {
+                    vertex_key,
+                    vertex_uuid: Uuid::new_v4(),
+                },
+                TriangulationValidationErrorKind::IsolatedVertex,
+            ),
+            (
+                TriangulationValidationError::Disconnected { cell_count: 2 },
+                TriangulationValidationErrorKind::Disconnected,
+            ),
+        ];
+
+        for (source, expected) in cases {
+            assert_eq!(TriangulationValidationErrorKind::from(&source), expected);
+        }
+    }
+
+    #[test]
+    fn delaunay_validation_error_kind_from_error_preserves_all_variants() {
+        let cases = [
+            (
+                DelaunayTriangulationValidationError::from(TdsError::InconsistentDataStructure {
+                    message: "dangling cell".to_string(),
+                }),
+                DelaunayValidationErrorKind::Tds,
+            ),
+            (
+                DelaunayTriangulationValidationError::from(
+                    TriangulationValidationError::Disconnected { cell_count: 2 },
+                ),
+                DelaunayValidationErrorKind::Triangulation,
+            ),
+            (
+                DelaunayTriangulationValidationError::VerificationFailed {
+                    message: "non-Delaunay facet".to_string(),
+                },
+                DelaunayValidationErrorKind::VerificationFailed,
+            ),
+            (
+                DelaunayTriangulationValidationError::RepairFailed {
+                    message: "repair did not converge".to_string(),
+                },
+                DelaunayValidationErrorKind::RepairFailed,
+            ),
+            (
+                DelaunayTriangulationValidationError::RepairOperationFailed {
+                    operation: DelaunayRepairOperation::VertexRemoval,
+                    source: Box::new(DelaunayRepairError::PostconditionFailed {
+                        message: "remaining violation".to_string(),
+                    }),
+                },
+                DelaunayValidationErrorKind::RepairOperationFailed,
+            ),
+        ];
+
+        for (source, expected) in cases {
+            assert_eq!(DelaunayValidationErrorKind::from(&source), expected);
+        }
     }
 
     #[test]
@@ -6745,7 +7004,7 @@ mod tests {
         // Inject a dangling neighbor pointer using cells_mut() (violates invariants deliberately).
         {
             let bad_cell_mut = tds.cells_mut().get_mut(bad_cell_key).unwrap();
-            let mut neighbors = crate::core::collections::NeighborBuffer::new();
+            let mut neighbors = NeighborBuffer::new();
             neighbors.push(Some(removed_target_key));
             neighbors.push(None);
             neighbors.push(None);
@@ -6806,7 +7065,7 @@ mod tests {
         let uuid1 = vertex1.uuid();
         dt.insert(vertex1).unwrap();
 
-        let vertex2 = create_vertex_with_uuid(Point::new([4.0, 5.0, 6.0]), uuid1, None);
+        let vertex2 = vertex_with_uuid(Point::new([4.0, 5.0, 6.0]), uuid1, None);
         let result = dt.insert(vertex2);
         assert!(
             matches!(
@@ -7704,7 +7963,7 @@ mod tests {
     }
 
     #[test]
-    fn test_compute_expected_mirror_facet_index_returns_unique_vertex_index() {
+    fn test_expected_mirror_facet_index_returns_unique_vertex_index() {
         let mut tds: Tds<f64, (), (), 2> = Tds::empty();
 
         let v_a = tds.insert_vertex_with_mapping(vertex!([0.0, 0.0])).unwrap();
@@ -7725,12 +7984,12 @@ mod tests {
 
         let this_vertices: VertexKeySet = [v_a, v_b, v_c].into_iter().collect();
 
-        let idx = Tds::compute_expected_mirror_facet_index(cell1, cell2, &this_vertices).unwrap();
+        let idx = Tds::expected_mirror_facet_index(cell1, cell2, &this_vertices).unwrap();
         assert_eq!(idx, 0);
     }
 
     #[test]
-    fn test_compute_expected_mirror_facet_index_errors_when_ambiguous() {
+    fn test_expected_mirror_facet_index_errors_when_ambiguous() {
         let mut tds: Tds<f64, (), (), 2> = Tds::empty();
 
         let v_a = tds.insert_vertex_with_mapping(vertex!([0.0, 0.0])).unwrap();
@@ -7752,8 +8011,7 @@ mod tests {
 
         let this_vertices: VertexKeySet = [v_a, v_b, v_c].into_iter().collect();
 
-        let err =
-            Tds::compute_expected_mirror_facet_index(cell1, cell2, &this_vertices).unwrap_err();
+        let err = Tds::expected_mirror_facet_index(cell1, cell2, &this_vertices).unwrap_err();
 
         assert!(matches!(
             err,
@@ -7764,7 +8022,7 @@ mod tests {
     }
 
     #[test]
-    fn test_compute_expected_mirror_facet_index_errors_when_duplicate_cells() {
+    fn test_expected_mirror_facet_index_errors_when_duplicate_cells() {
         let mut tds: Tds<f64, (), (), 2> = Tds::empty();
 
         let v_a = tds.insert_vertex_with_mapping(vertex!([0.0, 0.0])).unwrap();
@@ -7784,8 +8042,7 @@ mod tests {
 
         let this_vertices: VertexKeySet = [v_a, v_b, v_c].into_iter().collect();
 
-        let err =
-            Tds::compute_expected_mirror_facet_index(cell1, cell2, &this_vertices).unwrap_err();
+        let err = Tds::expected_mirror_facet_index(cell1, cell2, &this_vertices).unwrap_err();
 
         assert!(matches!(
             err,
@@ -7796,7 +8053,7 @@ mod tests {
     }
 
     #[test]
-    fn test_compute_and_verify_mirror_facet_ok() {
+    fn test_verified_mirror_facet_index_ok() {
         let mut tds: Tds<f64, (), (), 2> = Tds::empty();
 
         let v_a = tds.insert_vertex_with_mapping(vertex!([0.0, 0.0])).unwrap();
@@ -7817,13 +8074,12 @@ mod tests {
         let this_vertices: VertexKeySet = [v_a, v_b, v_c].into_iter().collect();
 
         // Shared edge is (v_a, v_b). In cell1, that's opposite vertex index 2 (v_c).
-        let mirror_idx =
-            Tds::compute_and_verify_mirror_facet(cell1, 2, cell2, &this_vertices).unwrap();
+        let mirror_idx = Tds::verified_mirror_facet_index(cell1, 2, cell2, &this_vertices).unwrap();
         assert_eq!(mirror_idx, 2);
     }
 
     #[test]
-    fn test_compute_and_verify_mirror_facet_errors_when_no_shared_facet() {
+    fn test_verified_mirror_facet_index_errors_when_no_shared_facet() {
         let mut tds: Tds<f64, (), (), 2> = Tds::empty();
 
         let v_a = tds.insert_vertex_with_mapping(vertex!([0.0, 0.0])).unwrap();
@@ -7844,8 +8100,7 @@ mod tests {
         let this_vertices: VertexKeySet = [v_a, v_b, v_c].into_iter().collect();
 
         // facet_idx=0 corresponds to edge (v_b, v_c) in cell1, which is not shared with cell2.
-        let err =
-            Tds::compute_and_verify_mirror_facet(cell1, 0, cell2, &this_vertices).unwrap_err();
+        let err = Tds::verified_mirror_facet_index(cell1, 0, cell2, &this_vertices).unwrap_err();
 
         assert!(matches!(
             err,
@@ -7856,7 +8111,7 @@ mod tests {
     }
 
     #[test]
-    fn test_compute_and_verify_mirror_facet_errors_on_mismatch_with_cross_check() {
+    fn test_verified_mirror_facet_index_errors_on_mismatch_with_cross_check() {
         let mut tds: Tds<f64, (), (), 2> = Tds::empty();
 
         let v_a = tds.insert_vertex_with_mapping(vertex!([0.0, 0.0])).unwrap();
@@ -7878,8 +8133,8 @@ mod tests {
         // This is a unit-level test of the helper's defensive cross-check behavior.
         let this_vertices_wrong: VertexKeySet = [v_a, v_c, v_d].into_iter().collect();
 
-        let err = Tds::compute_and_verify_mirror_facet(cell1, 2, cell2, &this_vertices_wrong)
-            .unwrap_err();
+        let err =
+            Tds::verified_mirror_facet_index(cell1, 2, cell2, &this_vertices_wrong).unwrap_err();
 
         assert!(matches!(
             err,
