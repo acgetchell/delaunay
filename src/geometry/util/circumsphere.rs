@@ -7,7 +7,7 @@
 
 use super::conversions::{safe_coords_to_f64, safe_scalar_from_f64, safe_scalar_to_f64};
 use super::norms::{hypot, squared_norm};
-use crate::geometry::matrix::matrix_set;
+use crate::geometry::matrix::{Matrix, matrix_set};
 use crate::geometry::point::Point;
 use crate::geometry::traits::coordinate::{Coordinate, CoordinateScalar};
 use core::hint::cold_path;
@@ -118,7 +118,7 @@ where
     // Use safe coordinate conversion
     let coords_0_f64: [f64; D] = safe_coords_to_f64(coords_0)?;
 
-    let mut a = crate::geometry::matrix::Matrix::<D>::zero();
+    let mut a = Matrix::<D>::zero();
     let mut b_arr = [0.0f64; D];
 
     for i in 0..D {

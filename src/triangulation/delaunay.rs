@@ -12,7 +12,10 @@ use crate::core::algorithms::flips::{
     repair_delaunay_local_single_pass_timed, repair_delaunay_with_flips_k2_k3,
     repair_delaunay_with_flips_k2_k3_run, verify_delaunay_for_triangulation,
 };
-use crate::core::algorithms::incremental_insertion::{InsertionError, TdsConstructionFailure};
+use crate::core::algorithms::incremental_insertion::{
+    DelaunayRepairErrorSummary, DelaunayRepairFailureContext, InsertionError,
+    TdsConstructionFailure,
+};
 use crate::core::algorithms::locate::LocateError;
 use crate::core::cell::{Cell, CellValidationError};
 use crate::core::collections::spatial_hash_grid::HashGridIndex;
@@ -26,8 +29,8 @@ use crate::core::operations::{
     TopologicalOperation,
 };
 use crate::core::tds::{
-    CellKey, InvariantError, InvariantKind, InvariantViolation, Tds, TdsConstructionError,
-    TdsError, TriangulationValidationReport, VertexKey,
+    CellKey, InvariantError, InvariantKind, InvariantViolation, NeighborValidationError, Tds,
+    TdsConstructionError, TdsError, TriangulationValidationReport, VertexKey,
 };
 use crate::core::traits::data_type::DataType;
 use crate::core::triangulation::{
@@ -100,7 +103,7 @@ fn ridge_link_repair_validation_error(err: ManifoldError) -> InsertionError {
     match TriangulationValidationError::try_from(err) {
         Ok(source) => InsertionError::TopologyValidationFailed {
             message: RIDGE_LINK_REPAIR_VALIDATION_MESSAGE.to_string(),
-            source: Box::new(source),
+            source,
         },
         Err(source) => InsertionError::TopologyValidation(source),
     }
@@ -537,7 +540,7 @@ pub enum DelaunayConstructionFailure {
         message: String,
         /// Underlying validation error.
         #[source]
-        source: Box<InvariantError>,
+        source: crate::core::tds::InvariantErrorSummary,
     },
 }
 
@@ -638,6 +641,12 @@ impl fmt::Display for DelaunayRepairOperation {
 /// `is_valid()`. They are produced by mutating operations that invoke
 /// flip-based repair internally (e.g. [`DelaunayTriangulation::remove_vertex`]).
 ///
+/// When manually forwarding lower-layer validation errors, prefer
+/// `DelaunayTriangulationValidationError::from(tds_error)` or `.into()` for
+/// [`TdsError`] and [`TriangulationValidationError`]. The enum stores those
+/// sources behind `Box` to keep `Result<_, DelaunayTriangulationValidationError>`
+/// compact while preserving typed error inspection.
+///
 /// # Examples
 ///
 /// ```rust
@@ -660,11 +669,11 @@ impl fmt::Display for DelaunayRepairOperation {
 pub enum DelaunayTriangulationValidationError {
     /// Lower-layer element or TDS structural validation error (Levels 1–2).
     #[error(transparent)]
-    Tds(#[from] TdsError),
+    Tds(Box<TdsError>),
 
     /// Lower-layer topology validation error (Level 3).
     #[error(transparent)]
-    Triangulation(#[from] TriangulationValidationError),
+    Triangulation(Box<TriangulationValidationError>),
 
     /// Flip-based Delaunay verification detected a violation.
     ///
@@ -710,6 +719,18 @@ pub enum DelaunayTriangulationValidationError {
         #[source]
         source: Box<DelaunayRepairError>,
     },
+}
+
+impl From<TdsError> for DelaunayTriangulationValidationError {
+    fn from(source: TdsError) -> Self {
+        Self::Tds(Box::new(source))
+    }
+}
+
+impl From<TriangulationValidationError> for DelaunayTriangulationValidationError {
+    fn from(source: TriangulationValidationError) -> Self {
+        Self::Triangulation(Box::new(source))
+    }
 }
 
 // =============================================================================
@@ -1442,6 +1463,30 @@ where
     hasher.finish()
 }
 
+fn total_cmp_for_coordinate<T>(left: &T, right: &T) -> Ordering
+where
+    T: CoordinateScalar,
+{
+    left.ordered_partial_cmp(right)
+        .expect("CoordinateScalar::ordered_partial_cmp must define a total order")
+}
+
+fn compare_vertices_by_coordinates<T, U, const D: usize>(
+    left: &Vertex<T, U, D>,
+    right: &Vertex<T, U, D>,
+) -> Ordering
+where
+    T: CoordinateScalar,
+{
+    for (left_coord, right_coord) in left.point().coords().iter().zip(right.point().coords()) {
+        let ordering = total_cmp_for_coordinate(left_coord, right_coord);
+        if ordering != Ordering::Equal {
+            return ordering;
+        }
+    }
+    Ordering::Equal
+}
+
 /// Produces a stable construction order when Hilbert ordering is unavailable or
 /// unsuitable.
 fn order_vertices_lexicographic<T, U, const D: usize>(
@@ -1460,8 +1505,7 @@ where
         .collect();
 
     keyed.sort_by(|(a, a_hash, a_idx), (b, b_hash, b_idx)| {
-        a.partial_cmp(b)
-            .unwrap_or(Ordering::Equal)
+        compare_vertices_by_coordinates(a, b)
             .then_with(|| a_hash.cmp(b_hash))
             .then_with(|| a_idx.cmp(b_idx))
     });
@@ -2447,7 +2491,7 @@ where
             a_idx
                 .cmp(b_idx)
                 .then_with(|| a_q.cmp(b_q))
-                .then_with(|| a_vertex.partial_cmp(b_vertex).unwrap_or(Ordering::Equal))
+                .then_with(|| compare_vertices_by_coordinates(a_vertex, b_vertex))
                 .then_with(|| a_in.cmp(b_in))
         },
     );
@@ -5069,29 +5113,26 @@ where
         }
         orientation_result?;
 
-        let topology = self.tri.topology_guarantee();
-        if topology.requires_vertex_links_at_completion() {
-            tracing::debug!("post-construction: starting topology validation (finalize)");
-            let validation_started = Instant::now();
-            let validation_result = self.tri.validate();
-            let validation_elapsed = validation_started.elapsed();
-            if let Some(telemetry) = construction_telemetry.as_mut() {
-                telemetry.record_construction_topology_validation_timing(
-                    duration_nanos_saturating(validation_elapsed),
-                );
+        tracing::debug!("post-construction: starting topology validation (finalize)");
+        let validation_started = Instant::now();
+        let validation_result = self.tri.validate();
+        let validation_elapsed = validation_started.elapsed();
+        if let Some(telemetry) = construction_telemetry.as_mut() {
+            telemetry.record_construction_topology_validation_timing(duration_nanos_saturating(
+                validation_elapsed,
+            ));
+        }
+        tracing::debug!(
+            elapsed = ?validation_elapsed,
+            success = validation_result.is_ok(),
+            "post-construction: topology validation (finalize) completed"
+        );
+        if let Err(err) = validation_result {
+            return Err(TriangulationConstructionError::FinalTopologyValidation {
+                message: "topology validation failed after construction".to_string(),
+                source: err.into(),
             }
-            tracing::debug!(
-                elapsed = ?validation_elapsed,
-                success = validation_result.is_ok(),
-                "post-construction: topology validation (finalize) completed"
-            );
-            if let Err(err) = validation_result {
-                return Err(TriangulationConstructionError::FinalTopologyValidation {
-                    message: "PL-manifold validation failed after construction".to_string(),
-                    source: Box::new(err),
-                }
-                .into());
-            }
+            .into());
         }
 
         Ok(())
@@ -5300,13 +5341,10 @@ where
                 TriangulationConstructionError::InsertionHullExtension { reason }
             }
             InsertionError::DelaunayValidationFailed { source } => {
-                TriangulationConstructionError::InsertionDelaunayValidation { source: *source }
+                TriangulationConstructionError::InsertionDelaunayValidation { source }
             }
             InsertionError::TopologyValidationFailed { message, source } => {
-                TriangulationConstructionError::InsertionTopologyValidation {
-                    message,
-                    source: *source,
-                }
+                TriangulationConstructionError::InsertionTopologyValidation { message, source }
             }
         }
     }
@@ -5325,8 +5363,6 @@ where
 impl<K, U, V, const D: usize> DelaunayTriangulation<K, U, V, D>
 where
     K: Kernel<D>,
-    U: DataType,
-    V: DataType,
 {
     // -------------------------------------------------------------------------
     // QUERY / ACCESSORS
@@ -5802,7 +5838,9 @@ where
     /// ```
     pub fn repair_delaunay_with_flips(&mut self) -> Result<DelaunayRepairStats, DelaunayRepairError>
     where
-        K: ExactPredicates,
+        K: ExactPredicates<D>,
+        U: DataType,
+        V: DataType,
     {
         self.repair_delaunay_with_flips_capped(None)
     }
@@ -5814,7 +5852,9 @@ where
         max_flips: Option<usize>,
     ) -> Result<DelaunayRepairStats, DelaunayRepairError>
     where
-        K: ExactPredicates,
+        K: ExactPredicates<D>,
+        U: DataType,
+        V: DataType,
     {
         #[cfg(test)]
         if test_hooks::force_repair_nonconvergent_enabled() {
@@ -5842,7 +5882,11 @@ where
 
     /// Canonicalize geometric orientation to the positive sign, preserving
     /// canonicalization failures as their own repair error variant.
-    fn ensure_positive_orientation(&mut self) -> Result<(), DelaunayRepairError> {
+    fn ensure_positive_orientation(&mut self) -> Result<(), DelaunayRepairError>
+    where
+        U: DataType,
+        V: DataType,
+    {
         self.tri
             .normalize_and_promote_positive_orientation()
             .map_err(|e| DelaunayRepairError::OrientationCanonicalizationFailed {
@@ -5856,7 +5900,11 @@ where
         &mut self,
         seed_cells: Option<&[CellKey]>,
         max_flips: Option<usize>,
-    ) -> Result<DelaunayRepairStats, DelaunayRepairError> {
+    ) -> Result<DelaunayRepairStats, DelaunayRepairError>
+    where
+        U: DataType,
+        V: DataType,
+    {
         self.repair_delaunay_with_flips_robust_run(seed_cells, max_flips)
             .map(|run| run.stats)
     }
@@ -5866,7 +5914,11 @@ where
         &mut self,
         seed_cells: Option<&[CellKey]>,
         max_flips: Option<usize>,
-    ) -> Result<DelaunayRepairRun, DelaunayRepairError> {
+    ) -> Result<DelaunayRepairRun, DelaunayRepairError>
+    where
+        U: DataType,
+        V: DataType,
+    {
         let topology = self.tri.topology_guarantee();
         let kernel = RobustKernel::<K::Scalar>::new();
         self.invalidate_repair_caches();
@@ -5993,7 +6045,7 @@ where
         config: DelaunayRepairHeuristicConfig,
     ) -> Result<DelaunayRepairOutcome, DelaunayRepairError>
     where
-        K: ExactPredicates,
+        K: ExactPredicates<D>,
     {
         if Self::force_heuristic_rebuild_enabled() {
             let base_seed = self.heuristic_rebuild_base_seed();
@@ -6068,7 +6120,7 @@ where
         max_flips_override: Option<usize>,
     ) -> Result<(Self, DelaunayRepairStats, DelaunayRepairHeuristicSeeds), DelaunayRepairError>
     where
-        K: ExactPredicates,
+        K: ExactPredicates<D>,
     {
         let base_vertices = self.collect_vertices_for_rebuild();
 
@@ -7123,14 +7175,16 @@ where
                     .repair_delaunay_with_flips_robust_run(seed_ref, max_flips)
                     .map_err(|robust_err| InsertionError::DelaunayRepairFailed {
                         source: Box::new(robust_err),
-                        context: format!("local repair failed ({e}); robust fallback also failed"),
+                        context: DelaunayRepairFailureContext::LocalRepairRobustFallback {
+                            initial: DelaunayRepairErrorSummary::from(&e),
+                        },
                     })?;
                 self.validate_ridge_links_after_repair(topology, &robust_run)?;
             }
             Err(e) => {
                 return Err(InsertionError::DelaunayRepairFailed {
                     source: Box::new(e),
-                    context: "Delaunay repair failed (non-recoverable)".to_string(),
+                    context: DelaunayRepairFailureContext::LocalRepairNonRecoverable,
                 });
             }
         }
@@ -7224,9 +7278,7 @@ where
         }
 
         self.is_valid()
-            .map_err(|e| InsertionError::DelaunayValidationFailed {
-                source: Box::new(e),
-            })
+            .map_err(|e| InsertionError::DelaunayValidationFailed { source: e })
     }
 
     /// Removes a vertex and retriangulates the resulting cavity using fan triangulation.
@@ -7330,7 +7382,9 @@ where
                 }
                 Err(FlipError::NeighborWiring { reason }) => {
                     return Err(TdsError::InvalidNeighbors {
-                        message: format!("inverse k=1 flip failed during remove_vertex: {reason}"),
+                        reason: NeighborValidationError::FlipNeighborWiring {
+                            reason: Box::new(reason),
+                        },
                     }
                     .into());
                 }
@@ -7516,10 +7570,8 @@ where
     /// ```
     pub fn validate(&self) -> Result<(), DelaunayTriangulationValidationError> {
         self.tri.validate().map_err(|e| match e {
-            InvariantError::Tds(tds_err) => DelaunayTriangulationValidationError::Tds(tds_err),
-            InvariantError::Triangulation(tri_err) => {
-                DelaunayTriangulationValidationError::Triangulation(tri_err)
-            }
+            InvariantError::Tds(tds_err) => tds_err.into(),
+            InvariantError::Triangulation(tri_err) => tri_err.into(),
             InvariantError::Delaunay(dt_err) => dt_err,
         })?;
         self.is_valid()
@@ -7779,10 +7831,8 @@ where
         let mut candidate = Self::from_tds_with_topology_guarantee(tds, kernel, topology_guarantee);
         candidate.set_global_topology(global_topology);
         candidate.tri.validate().map_err(|e| match e {
-            InvariantError::Tds(tds_err) => DelaunayTriangulationValidationError::Tds(tds_err),
-            InvariantError::Triangulation(tri_err) => {
-                DelaunayTriangulationValidationError::Triangulation(tri_err)
-            }
+            InvariantError::Tds(tds_err) => tds_err.into(),
+            InvariantError::Triangulation(tri_err) => tri_err.into(),
             InvariantError::Delaunay(dt_err) => dt_err,
         })?;
 
@@ -8115,8 +8165,8 @@ impl DelaunayCheckPolicy {
 mod tests {
     use super::*;
     use crate::core::algorithms::flips::{
-        DelaunayRepairDiagnostics, DelaunayRepairError, FlipContextError, FlipError,
-        FlipPredicateError, FlipPredicateOperation, RepairQueueOrder,
+        DelaunayRepairDiagnostics, DelaunayRepairError, DelaunayRepairVerificationContext,
+        FlipContextError, FlipError, FlipPredicateError, FlipPredicateOperation, RepairQueueOrder,
         verify_delaunay_via_flip_predicates,
     };
     use crate::core::algorithms::incremental_insertion::{
@@ -8134,7 +8184,7 @@ mod tests {
     use crate::triangulation::flips::BistellarFlips;
     use crate::vertex;
     use slotmap::KeyData;
-    use std::{error::Error as StdError, sync::Once};
+    use std::{collections::HashSet, error::Error as StdError, sync::Once};
 
     type TestDelaunay<const D: usize> = DelaunayTriangulation<AdaptiveKernel<f64>, (), (), D>;
 
@@ -8202,7 +8252,9 @@ mod tests {
     #[test]
     fn test_ridge_link_repair_validation_error_routes_tds_errors_to_tds_layer() {
         let tds_err = TdsError::InvalidNeighbors {
-            message: "unit test".to_string(),
+            reason: NeighborValidationError::Other {
+                message: "unit test".to_string(),
+            },
         };
 
         match ridge_link_repair_validation_error(ManifoldError::Tds(tds_err.clone())) {
@@ -8223,7 +8275,7 @@ mod tests {
             InsertionError::TopologyValidationFailed { message, source } => {
                 assert_eq!(message, RIDGE_LINK_REPAIR_VALIDATION_MESSAGE);
                 assert!(matches!(
-                    *source,
+                    source,
                     TriangulationValidationError::BoundaryRidgeMultiplicity {
                         ridge_key: observed_ridge_key,
                         boundary_facet_count: 3
@@ -9651,6 +9703,47 @@ mod tests {
             .unwrap();
 
         assert_eq!(dt.topology_guarantee(), TopologyGuarantee::PLManifold);
+    }
+
+    #[test]
+    fn test_finalize_bulk_construction_validates_pseudomanifold_topology() {
+        init_tracing();
+        let vertices: Vec<Vertex<f64, (), 2>> = vec![
+            vertex!([0.0, 0.0]),
+            vertex!([2.0, 0.0]),
+            vertex!([0.0, 2.0]),
+            vertex!([2.0, 1.0]),
+        ];
+        let mut dt = DelaunayTriangulation::new_with_topology_guarantee(
+            &vertices,
+            TopologyGuarantee::Pseudomanifold,
+        )
+        .unwrap();
+        assert!(
+            dt.tri.tds.number_of_cells() > 1,
+            "regression setup needs an interior facet"
+        );
+
+        dt.tri.tds.clear_all_neighbors();
+
+        let err = dt
+            .finalize_bulk_construction(
+                ValidationPolicy::OnSuspicion,
+                DelaunayRepairPolicy::Never,
+                false,
+                DelaunayRepairPolicy::Never,
+                &[],
+                &[],
+                None,
+            )
+            .unwrap_err();
+
+        assert!(matches!(
+            err,
+            DelaunayTriangulationConstructionError::Triangulation(
+                DelaunayConstructionFailure::FinalTopologyValidation { .. }
+            )
+        ));
     }
 
     #[test]
@@ -11358,27 +11451,25 @@ mod tests {
             DelaunayTriangulation::new(&vertices).unwrap();
         let tri = dt.as_triangulation();
 
-        let edges_dt: std::collections::HashSet<_> = dt.edges().collect();
-        let edges_tri: std::collections::HashSet<_> = tri.edges().collect();
+        let edges_dt: HashSet<_> = dt.edges().collect();
+        let edges_tri: HashSet<_> = tri.edges().collect();
         assert_eq!(edges_dt, edges_tri);
         assert_eq!(edges_dt.len(), 6);
 
         let index = dt.build_adjacency_index().unwrap();
-        let edges_dt_index: std::collections::HashSet<_> = dt.edges_with_index(&index).collect();
-        let edges_tri_index: std::collections::HashSet<_> = tri.edges_with_index(&index).collect();
+        let edges_dt_index: HashSet<_> = dt.edges_with_index(&index).collect();
+        let edges_tri_index: HashSet<_> = tri.edges_with_index(&index).collect();
         assert_eq!(edges_dt_index, edges_tri_index);
         assert_eq!(edges_dt_index, edges_dt);
 
         let v0 = dt.vertices().next().unwrap().0;
-        let incident_dt: std::collections::HashSet<_> = dt.incident_edges(v0).collect();
-        let incident_tri: std::collections::HashSet<_> = tri.incident_edges(v0).collect();
+        let incident_dt: HashSet<_> = dt.incident_edges(v0).collect();
+        let incident_tri: HashSet<_> = tri.incident_edges(v0).collect();
         assert_eq!(incident_dt, incident_tri);
         assert_eq!(incident_dt.len(), 3);
 
-        let incident_dt_index: std::collections::HashSet<_> =
-            dt.incident_edges_with_index(&index, v0).collect();
-        let incident_tri_index: std::collections::HashSet<_> =
-            tri.incident_edges_with_index(&index, v0).collect();
+        let incident_dt_index: HashSet<_> = dt.incident_edges_with_index(&index, v0).collect();
+        let incident_tri_index: HashSet<_> = tri.incident_edges_with_index(&index, v0).collect();
         assert_eq!(incident_dt_index, incident_tri_index);
         assert_eq!(incident_dt_index, incident_dt);
 
@@ -11576,7 +11667,7 @@ mod tests {
         assert!(!TestDelaunay::<4>::can_soft_fail(&topology_error));
 
         let verification_error = DelaunayRepairError::VerificationFailed {
-            context: "local k=3 postcondition verification",
+            context: DelaunayRepairVerificationContext::LocalK3PostconditionVerification,
             source: Box::new(FlipError::InvalidFlipContext {
                 reason: FlipContextError::MissingRemovedCellFrame,
             }),
@@ -11630,7 +11721,7 @@ mod tests {
         );
 
         let predicate_verification = DelaunayRepairError::VerificationFailed {
-            context: "strict validation",
+            context: DelaunayRepairVerificationContext::StrictValidation,
             source: Box::new(FlipError::PredicateFailure {
                 reason: FlipPredicateError::CoordinateConversion {
                     operation: FlipPredicateOperation::K2CellAInSphere,
@@ -11727,10 +11818,10 @@ mod tests {
     fn test_map_orientation_canonicalization_error_isolated_vertex_is_internal() {
         let error = InsertionError::TopologyValidationFailed {
             message: "test".to_string(),
-            source: Box::new(TriangulationValidationError::IsolatedVertex {
+            source: TriangulationValidationError::IsolatedVertex {
                 vertex_key: VertexKey::from(slotmap::KeyData::from_ffi(1)),
                 vertex_uuid: Uuid::nil(),
-            }),
+            },
         };
         let mapped =
             DelaunayTriangulation::<AdaptiveKernel<f64>, (), (), 3>::map_orientation_canonicalization_error(error);
@@ -11747,11 +11838,11 @@ mod tests {
     fn test_map_orientation_canonicalization_error_topology_validation_failed_is_internal() {
         let error = InsertionError::TopologyValidationFailed {
             message: "post-insertion".to_string(),
-            source: Box::new(TriangulationValidationError::EulerCharacteristicMismatch {
+            source: TriangulationValidationError::EulerCharacteristicMismatch {
                 computed: 3,
                 expected: 2,
                 classification: TopologyClassification::Ball(3),
-            }),
+            },
         };
         let mapped =
             DelaunayTriangulation::<AdaptiveKernel<f64>, (), (), 3>::map_orientation_canonicalization_error(error);
@@ -11818,15 +11909,15 @@ mod tests {
                 reason: HullExtensionReason::NoVisibleFacets,
             },
             InsertionError::DelaunayValidationFailed {
-                source: Box::new(DelaunayTriangulationValidationError::VerificationFailed {
+                source: DelaunayTriangulationValidationError::VerificationFailed {
                     message: "test".to_string(),
-                }),
+                },
             },
             InsertionError::DelaunayRepairFailed {
                 source: Box::new(DelaunayRepairError::PostconditionFailed {
                     message: "test".to_string(),
                 }),
-                context: "test".to_string(),
+                context: DelaunayRepairFailureContext::LocalRepair,
             },
             InsertionError::DuplicateCoordinates {
                 coordinates: "[0,0,0]".to_string(),
@@ -11850,12 +11941,12 @@ mod tests {
     fn test_map_orientation_canonicalization_error_hard_repair_is_internal() {
         let error = InsertionError::DelaunayRepairFailed {
             source: Box::new(DelaunayRepairError::VerificationFailed {
-                context: "local k=3 postcondition verification",
+                context: DelaunayRepairVerificationContext::LocalK3PostconditionVerification,
                 source: Box::new(FlipError::InvalidFlipContext {
                     reason: FlipContextError::MissingRemovedCellFrame,
                 }),
             }),
-            context: "orientation canonicalization".to_string(),
+            context: DelaunayRepairFailureContext::OrientationCanonicalization,
         };
         let mapped =
             DelaunayTriangulation::<AdaptiveKernel<f64>, (), (), 3>::map_orientation_canonicalization_error(error);
@@ -12003,9 +12094,9 @@ mod tests {
         ));
 
         let delaunay = InsertionError::DelaunayValidationFailed {
-            source: Box::new(DelaunayTriangulationValidationError::VerificationFailed {
+            source: DelaunayTriangulationValidationError::VerificationFailed {
                 message: "test".to_string(),
-            }),
+            },
         };
         let mapped =
             DelaunayTriangulation::<AdaptiveKernel<f64>, (), (), 3>::map_insertion_error(delaunay);
@@ -12016,11 +12107,11 @@ mod tests {
 
         let topology = InsertionError::TopologyValidationFailed {
             message: "test".to_string(),
-            source: Box::new(TriangulationValidationError::EulerCharacteristicMismatch {
+            source: TriangulationValidationError::EulerCharacteristicMismatch {
                 computed: 3,
                 expected: 2,
                 classification: TopologyClassification::Ball(3),
-            }),
+            },
         };
         let mapped =
             DelaunayTriangulation::<AdaptiveKernel<f64>, (), (), 3>::map_insertion_error(topology);
@@ -12036,7 +12127,7 @@ mod tests {
             source: Box::new(DelaunayRepairError::Flip(FlipError::UnsupportedDimension {
                 dimension: 1,
             })),
-            context: "local repair".to_string(),
+            context: DelaunayRepairFailureContext::LocalRepair,
         };
         let mapped =
             DelaunayTriangulation::<AdaptiveKernel<f64>, (), (), 3>::map_insertion_error(error);
@@ -12083,10 +12174,10 @@ mod tests {
     fn test_is_retryable_isolated_vertex_is_retryable() {
         let error = InsertionError::TopologyValidationFailed {
             message: "test".to_string(),
-            source: Box::new(TriangulationValidationError::IsolatedVertex {
+            source: TriangulationValidationError::IsolatedVertex {
                 vertex_key: VertexKey::from(slotmap::KeyData::from_ffi(1)),
                 vertex_uuid: Uuid::nil(),
-            }),
+            },
         };
         assert!(
             error.is_retryable(),
@@ -12214,9 +12305,8 @@ mod tests {
         dt.tds_mut().uuid_to_vertex_key.remove(&uuid);
 
         match dt.validate() {
-            Err(DelaunayTriangulationValidationError::Tds(TdsError::MappingInconsistency {
-                ..
-            })) => {}
+            Err(DelaunayTriangulationValidationError::Tds(source))
+                if matches!(source.as_ref(), TdsError::MappingInconsistency { .. }) => {}
             other => panic!(
                 "Expected DelaunayTriangulationValidationError::Tds(MappingInconsistency), got {other:?}"
             ),
@@ -12242,9 +12332,11 @@ mod tests {
             .unwrap();
 
         match dt.validate() {
-            Err(DelaunayTriangulationValidationError::Triangulation(
-                TriangulationValidationError::IsolatedVertex { .. },
-            )) => {}
+            Err(DelaunayTriangulationValidationError::Triangulation(source))
+                if matches!(
+                    source.as_ref(),
+                    TriangulationValidationError::IsolatedVertex { .. }
+                ) => {}
             other => panic!(
                 "Expected DelaunayTriangulationValidationError::Triangulation(IsolatedVertex), got {other:?}"
             ),
@@ -12386,12 +12478,13 @@ mod tests {
         let final_err: DelaunayTriangulationConstructionError =
             TriangulationConstructionError::FinalTopologyValidation {
                 message: "test".to_string(),
-                source: Box::new(InvariantError::Triangulation(
+                source: InvariantError::Triangulation(
                     TriangulationValidationError::IsolatedVertex {
                         vertex_key,
                         vertex_uuid: Uuid::nil(),
                     },
-                )),
+                )
+                .into(),
             }
             .into();
 

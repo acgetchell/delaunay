@@ -57,7 +57,7 @@ use crate::core::algorithms::pl_manifold_repair::{
     PlManifoldRepairConfig, repair_facet_oversharing,
 };
 use crate::core::cell::Cell;
-use crate::core::collections::{Entry, FastHashMap, Uuid};
+use crate::core::collections::{CellVertexUuidBuffer, Entry, FastHashMap};
 use crate::core::tds::{CellKey, Tds};
 use crate::core::traits::data_type::DataType;
 use crate::core::vertex::Vertex;
@@ -359,7 +359,7 @@ enum CellDataMatch<V> {
     Ambiguous,
 }
 
-type CellDataByVertexUuids<V> = FastHashMap<Vec<Uuid>, CellDataMatch<V>>;
+type CellDataByVertexUuids<V> = FastHashMap<CellVertexUuidBuffer, CellDataMatch<V>>;
 type FallbackRebuildState<T, U, V, const D: usize> =
     (Vec<Vertex<T, U, D>>, CellDataByVertexUuids<V>);
 
@@ -410,14 +410,14 @@ where
 fn cell_vertex_uuids<T, U, V, const D: usize>(
     tds: &Tds<T, U, V, D>,
     cell: &Cell<T, U, V, D>,
-) -> Result<Vec<Uuid>, CellValidationError>
+) -> Result<CellVertexUuidBuffer, CellValidationError>
 where
     U: DataType,
     V: DataType,
 {
     let mut vertex_uuids = cell
         .vertex_uuid_iter(tds)
-        .collect::<Result<Vec<_>, CellValidationError>>()?;
+        .collect::<Result<CellVertexUuidBuffer, CellValidationError>>()?;
     vertex_uuids.sort_unstable();
     Ok(vertex_uuids)
 }
@@ -517,7 +517,7 @@ fn rebuild_preserving_data<K, U, V, const D: usize>(
     original_cell_data: &CellDataByVertexUuids<V>,
 ) -> Result<DelaunayTriangulation<K, U, V, D>, FallbackRebuildError>
 where
-    K: Kernel<D> + ExactPredicates,
+    K: ExactPredicates<D>,
     U: DataType,
     V: DataType,
 {
@@ -532,7 +532,7 @@ fn run_configured_delaunay_repair<K, U, V, const D: usize>(
     config: DelaunayizeConfig,
 ) -> Result<DelaunayRepairStats, DelaunayRepairError>
 where
-    K: Kernel<D> + ExactPredicates,
+    K: ExactPredicates<D>,
     U: DataType,
     V: DataType,
 {
@@ -611,7 +611,7 @@ pub fn delaunayize_by_flips<K, U, V, const D: usize>(
     config: DelaunayizeConfig,
 ) -> Result<DelaunayizeOutcome<K::Scalar, U, V, D>, DelaunayizeError>
 where
-    K: Kernel<D> + ExactPredicates,
+    K: ExactPredicates<D>,
     U: DataType,
     V: DataType,
 {
@@ -745,7 +745,10 @@ mod tests {
     }
 
     /// Forces topology repair to fail on duplicate cells, then checks fallback rebuild.
-    fn assert_topology_repair_fallback_rebuilds_duplicate_simplex<const D: usize>() {
+    fn assert_topology_repair_fallback_rebuilds_duplicate_simplex<const D: usize>()
+    where
+        AdaptiveKernel<f64>: ExactPredicates<D>,
+    {
         init_tracing();
         let vertices = unit_simplex_vertices::<D>();
         let mut dt: DelaunayTriangulation<_, (), (), D> =

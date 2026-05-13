@@ -323,7 +323,6 @@ test_regression_config!(
 /// - construct a valid manifold ball (Levels 1–3 pass), or
 /// - reject/skip degeneracies without leaving the structure topologically invalid.
 #[test]
-#[ignore = "Regression test for 4D Euler characteristic mismatch"]
 fn test_regression_proptest_insertion_order_4d_euler_mismatch() {
     let vertices = vec![
         vertex!([
@@ -489,7 +488,6 @@ test_regression_config!(
 /// - Seed: 123 (from `benchmark_tds_new_dimension!(3, benchmark_tds_new_3d, 123)`)
 /// - Bounds: (-100.0, 100.0)
 #[test]
-#[ignore = "Regression test for specific CI benchmark failure"]
 fn test_regression_non_manifold_3d_seed123_50pts() {
     // Exact configuration from CI failure (matches ci_performance_suite.rs)
     let n_points = 50;
@@ -832,8 +830,6 @@ fn test_negative_coordinates_2d() {
 
 #[test]
 fn test_robust_kernel_with_edge_case() {
-    use delaunay::geometry::kernel::RobustKernel;
-
     // Configuration that might benefit from robust predicates
     let vertices = vec![
         vertex!([0.0, 0.0]),

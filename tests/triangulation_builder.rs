@@ -8,14 +8,21 @@
 use std::collections::HashMap;
 use std::f64::consts::TAU;
 
+use delaunay::core::tds::{InvariantErrorSummaryDetail, TriangulationValidationErrorKind};
 use delaunay::core::vertex::{Vertex, VertexBuilder};
 use delaunay::geometry::kernel::RobustKernel;
 use delaunay::geometry::point::Point;
 use delaunay::geometry::traits::coordinate::Coordinate;
 use delaunay::prelude::triangulation::repair::{DelaunayRepairError, TopologyGuarantee};
 use delaunay::topology::characteristics::euler::{count_simplices, euler_characteristic};
-use delaunay::topology::traits::topological_space::{GlobalTopology, ToroidalConstructionMode};
-use delaunay::triangulation::builder::{DelaunayTriangulationBuilder, ExplicitConstructionError};
+use delaunay::topology::traits::topological_space::{
+    GlobalTopology, TopologyKind, ToroidalConstructionMode,
+};
+use delaunay::triangulation::builder::{
+    DelaunayTriangulationBuilder, ExplicitConstructionError, ExplicitInsertionError,
+    ExplicitInsertionErrorKind, ExplicitInvariantError, ExplicitInvariantErrorKind,
+    ExplicitTdsErrorKind,
+};
 use delaunay::triangulation::delaunay::{
     ConstructionOptions, DelaunayTriangulation, DelaunayTriangulationConstructionError,
     InsertionOrderStrategy,
@@ -419,7 +426,6 @@ macro_rules! gen_toroidal_periodic_validation_test {
 
 gen_toroidal_periodic_validation_test!(2, levels_1_to_4, true);
 #[test]
-#[ignore = "Slow (>60s): periodic 3D Level 4 scans image-point quotient cells"]
 fn test_builder_periodic_topology_level4_smoke_3d() {
     let vertices = vec![
         vertex!([0.2_f64, 0.3, 0.4]),
@@ -521,11 +527,8 @@ fn test_explicit_toroidal_heawood_torus_rejected() {
 
     match err {
         DelaunayTriangulationConstructionError::ExplicitConstruction(
-            ExplicitConstructionError::ValidationFailed { message },
-        ) => assert!(
-            message.contains("Explicit non-Euclidean connectivity is not supported"),
-            "unexpected validation message: {message}"
-        ),
+            ExplicitConstructionError::UnsupportedExplicitTopology { topology },
+        ) => assert_eq!(topology, TopologyKind::Toroidal),
         other => panic!("expected explicit construction validation failure, got {other:?}"),
     }
 }
@@ -553,11 +556,21 @@ fn test_explicit_toroidal_torus_euler_mismatch_without_override() {
     let err = DelaunayTriangulationBuilder::from_vertices_and_cells(&vertices, &cells)
         .build::<()>()
         .expect_err("explicit torus without Toroidal metadata should fail Euler validation");
-    let msg = err.to_string();
-    assert!(
-        msg.contains("Euler characteristic") || msg.contains("topology validation failed"),
-        "Error should mention topology/Euler failure: {msg}"
-    );
+
+    match err {
+        DelaunayTriangulationConstructionError::ExplicitConstruction(
+            ExplicitConstructionError::TopologyValidation { source },
+        ) => {
+            assert_eq!(source.kind, ExplicitInvariantErrorKind::Triangulation);
+            assert_eq!(
+                source.detail,
+                InvariantErrorSummaryDetail::Triangulation(
+                    TriangulationValidationErrorKind::EulerCharacteristicMismatch,
+                ),
+            );
+        }
+        other => panic!("expected explicit topology validation failure, got {other:?}"),
+    }
 }
 
 /// `toroidal_periodic` in 3D builds a valid periodic triangulation.
@@ -972,7 +985,7 @@ fn test_explicit_non_delaunay_mesh() {
         matches!(
             err,
             DelaunayTriangulationConstructionError::ExplicitConstruction(
-                ExplicitConstructionError::ValidationFailed { .. }
+                ExplicitConstructionError::DelaunayValidation { .. }
             )
         ),
         "expected explicit validation failure, got {err:?}"
@@ -1079,10 +1092,10 @@ fn test_explicit_unreferenced_vertices_rejected() {
         matches!(
             err,
             DelaunayTriangulationConstructionError::ExplicitConstruction(
-                ExplicitConstructionError::ValidationFailed { .. }
+                ExplicitConstructionError::TopologyValidation { .. }
             )
         ),
-        "Unreferenced vertices should produce ValidationFailed, got: {err}"
+        "Unreferenced vertices should produce TopologyValidation, got: {err}"
     );
 }
 
@@ -1136,7 +1149,7 @@ fn test_explicit_error_variant_wrong_arity() {
     );
 }
 
-/// Error variant: non-manifold facet sharing returns ExplicitConstruction(ValidationFailed { .. }).
+/// Error variant: non-manifold facet sharing returns `ExplicitConstruction(NeighborAssignment { .. })`.
 #[test]
 fn test_explicit_error_variant_non_manifold_facet() {
     // Three triangles sharing the same edge (0,1) — facet shared by 3 cells
@@ -1158,10 +1171,10 @@ fn test_explicit_error_variant_non_manifold_facet() {
         matches!(
             err,
             DelaunayTriangulationConstructionError::ExplicitConstruction(
-                ExplicitConstructionError::ValidationFailed { .. }
+                ExplicitConstructionError::NeighborAssignment { .. }
             )
         ),
-        "Expected ExplicitConstruction(ValidationFailed), got: {err}"
+        "Expected ExplicitConstruction(NeighborAssignment), got: {err}"
     );
 }
 
@@ -1214,6 +1227,125 @@ fn test_explicit_error_variant_incompatible_topology() {
         ),
         "Expected IncompatibleTopology, got: {err}"
     );
+}
+
+/// Error variant: explicit connectivity rejects point-insertion-only construction options.
+#[test]
+fn test_explicit_error_variant_unsupported_construction_options() {
+    let vertices = vec![
+        vertex!([0.0_f64, 0.0]),
+        vertex!([1.0, 0.0]),
+        vertex!([0.0, 1.0]),
+    ];
+    let cells = vec![vec![0, 1, 2]];
+
+    let err = DelaunayTriangulationBuilder::from_vertices_and_cells(&vertices, &cells)
+        .construction_options(
+            ConstructionOptions::default().with_insertion_order(InsertionOrderStrategy::Input),
+        )
+        .build::<()>()
+        .unwrap_err();
+
+    assert!(
+        matches!(
+            err,
+            DelaunayTriangulationConstructionError::ExplicitConstruction(
+                ExplicitConstructionError::UnsupportedConstructionOptions
+            )
+        ),
+        "Expected UnsupportedConstructionOptions, got: {err}"
+    );
+}
+
+/// Error variant: duplicate maximal cells fail the post-assembly structural pass.
+#[test]
+fn test_explicit_error_variant_duplicate_cells_structural_validation() {
+    let vertices = vec![
+        vertex!([0.0_f64, 0.0]),
+        vertex!([1.0, 0.0]),
+        vertex!([0.0, 1.0]),
+    ];
+    let cells = vec![vec![0, 1, 2], vec![0, 1, 2]];
+
+    let err = DelaunayTriangulationBuilder::from_vertices_and_cells(&vertices, &cells)
+        .build::<()>()
+        .unwrap_err();
+
+    match err {
+        DelaunayTriangulationConstructionError::ExplicitConstruction(
+            ExplicitConstructionError::StructuralValidation { source },
+        ) => assert_eq!(source.kind, ExplicitTdsErrorKind::DuplicateCells),
+        other => panic!("expected explicit structural validation failure, got {other:?}"),
+    }
+}
+
+/// Error variant: degenerate explicit cells fail geometric nondegeneracy validation.
+#[test]
+fn test_explicit_error_variant_geometric_nondegeneracy() {
+    let vertices = vec![
+        vertex!([0.0_f64, 0.0]),
+        vertex!([1.0, 0.0]),
+        vertex!([2.0, 0.0]),
+    ];
+    let cells = vec![vec![0, 1, 2]];
+
+    let err = DelaunayTriangulationBuilder::from_vertices_and_cells(&vertices, &cells)
+        .build::<()>()
+        .unwrap_err();
+
+    match err {
+        DelaunayTriangulationConstructionError::ExplicitConstruction(
+            ExplicitConstructionError::GeometricNondegeneracy { source },
+        ) => assert_eq!(source.kind, ExplicitTdsErrorKind::Geometric),
+        other => panic!("expected explicit geometric nondegeneracy failure, got {other:?}"),
+    }
+}
+
+/// Error variant: completion-time PL validation preserves vertex-link summaries.
+#[test]
+fn test_explicit_error_variant_completion_validation_summary() {
+    let err = ExplicitConstructionError::CompletionValidation {
+        source: ExplicitInvariantError {
+            kind: ExplicitInvariantErrorKind::Triangulation,
+            detail: InvariantErrorSummaryDetail::Triangulation(
+                TriangulationValidationErrorKind::VertexLinkNotManifold,
+            ),
+            message: "vertex link is disconnected".to_string(),
+        },
+    };
+
+    match err {
+        ExplicitConstructionError::CompletionValidation { source } => {
+            assert_eq!(source.kind, ExplicitInvariantErrorKind::Triangulation);
+            assert_eq!(
+                source.detail,
+                InvariantErrorSummaryDetail::Triangulation(
+                    TriangulationValidationErrorKind::VertexLinkNotManifold,
+                ),
+            );
+        }
+        other => panic!("expected explicit completion validation failure, got {other:?}"),
+    }
+}
+
+/// Error variant: orientation-normalization failures preserve typed insertion summaries.
+#[test]
+fn test_explicit_error_variant_orientation_normalization_summary() {
+    let source = ExplicitConstructionError::OrientationNormalization {
+        source: ExplicitInsertionError {
+            kind: ExplicitInsertionErrorKind::TopologyValidation,
+            source_kind: None,
+            message: "orientation normalization could not establish coherent cells".to_string(),
+        },
+    };
+
+    match source {
+        ExplicitConstructionError::OrientationNormalization { source } => {
+            assert_eq!(source.kind, ExplicitInsertionErrorKind::TopologyValidation);
+            assert!(source.to_string().contains("coherent cells"));
+        }
+        other => panic!("expected orientation-normalization variant, got {other:?}"),
+    }
 }
 
 /// Error variant: out-of-bounds returns ExplicitConstruction(IndexOutOfBounds { .. }).

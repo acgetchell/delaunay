@@ -31,9 +31,8 @@ use crate::core::{
     },
     edge::EdgeKey,
     tds::{Tds, VertexKey},
-    traits::{BoundaryAnalysis, DataType},
+    traits::BoundaryAnalysis,
 };
-use crate::geometry::traits::coordinate::CoordinateScalar;
 use crate::topology::traits::topological_space::TopologyError;
 
 /// Counts of k-simplices for all dimensions 0 ≤ k ≤ D.
@@ -208,15 +207,10 @@ pub enum TopologyClassification {
 ///
 /// # Errors
 ///
-/// Returns `TopologyError::Counting` if simplex enumeration fails.
+/// Returns [`TopologyError::FacetMapBuild`] if simplex enumeration fails.
 pub fn count_simplices<T, U, V, const D: usize>(
     tds: &Tds<T, U, V, D>,
-) -> Result<FVector, TopologyError>
-where
-    T: CoordinateScalar,
-    U: DataType,
-    V: DataType,
-{
+) -> Result<FVector, TopologyError> {
     // Handle empty triangulation without building any facet map.
     let mut by_dim = vec![0usize; D + 1];
     by_dim[0] = tds.number_of_vertices();
@@ -228,7 +222,7 @@ where
     // Build the facet map once, then compute counts from it.
     let facet_to_cells = tds
         .build_facet_to_cells_map()
-        .map_err(|e| TopologyError::Counting(format!("Failed to build facet map: {e}")))?;
+        .map_err(|source| TopologyError::FacetMapBuild { source })?;
 
     Ok(count_simplices_with_facet_to_cells_map(
         tds,
@@ -239,12 +233,7 @@ where
 pub(crate) fn count_simplices_with_facet_to_cells_map<T, U, V, const D: usize>(
     tds: &Tds<T, U, V, D>,
     facet_to_cells: &FacetToCellsMap,
-) -> FVector
-where
-    T: CoordinateScalar,
-    U: DataType,
-    V: DataType,
-{
+) -> FVector {
     let mut by_dim = vec![0usize; D + 1];
 
     // f₀: vertices (O(1))
@@ -398,19 +387,15 @@ fn insert_simplices_of_size(
 ///
 /// # Errors
 ///
-/// Returns `TopologyError::Counting` if boundary enumeration fails.
+/// Returns [`TopologyError::BoundaryFacetEnumeration`] or
+/// [`TopologyError::BoundaryFacetCellAccess`] if boundary enumeration fails.
 pub fn count_boundary_simplices<T, U, V, const D: usize>(
     tds: &Tds<T, U, V, D>,
-) -> Result<FVector, TopologyError>
-where
-    T: CoordinateScalar,
-    U: DataType,
-    V: DataType,
-{
+) -> Result<FVector, TopologyError> {
     // Get boundary facets
     let boundary_facets: Vec<_> = tds
         .boundary_facets()
-        .map_err(|e| TopologyError::Counting(format!("Failed to get boundary facets: {e}")))?
+        .map_err(|source| TopologyError::BoundaryFacetEnumeration { source })?
         .collect();
 
     if boundary_facets.is_empty() {
@@ -423,7 +408,7 @@ where
     for facet in &boundary_facets {
         let cell = facet
             .cell()
-            .map_err(|e| TopologyError::Counting(format!("Failed to get facet cell: {e}")))?;
+            .map_err(|source| TopologyError::BoundaryFacetCellAccess { source })?;
         let facet_index = usize::from(facet.facet_index());
 
         // Add all vertex keys except the opposite vertex
@@ -457,7 +442,7 @@ where
         for facet in &boundary_facets {
             let cell = facet
                 .cell()
-                .map_err(|e| TopologyError::Counting(format!("Failed to get facet cell: {e}")))?;
+                .map_err(|source| TopologyError::BoundaryFacetCellAccess { source })?;
             let facet_index = usize::from(facet.facet_index());
 
             // Collect vertex keys for this facet (excluding opposite vertex).
@@ -678,15 +663,10 @@ pub(crate) fn triangulated_surface_boundary_component_count(
 ///
 /// # Errors
 ///
-/// Returns `TopologyError::Classification` if boundary detection fails.
+/// Returns [`TopologyError::BoundaryFacetCount`] if boundary detection fails.
 pub fn classify_triangulation<T, U, V, const D: usize>(
     tds: &Tds<T, U, V, D>,
-) -> Result<TopologyClassification, TopologyError>
-where
-    T: CoordinateScalar,
-    U: DataType,
-    V: DataType,
-{
+) -> Result<TopologyClassification, TopologyError> {
     let num_cells = tds.number_of_cells();
 
     // Empty triangulation
@@ -702,7 +682,7 @@ where
     // Check boundary
     let has_boundary = tds
         .number_of_boundary_facets()
-        .map_err(|e| TopologyError::Classification(format!("Failed to count boundary: {e}")))?
+        .map_err(|source| TopologyError::BoundaryFacetCount { source })?
         > 0;
 
     if has_boundary {
@@ -756,7 +736,9 @@ pub fn expected_chi_for(classification: &TopologyClassification) -> Option<isize
 mod tests {
     use super::*;
 
-    use slotmap::KeyData;
+    use crate::core::cell::Cell;
+    use crate::vertex;
+    use slotmap::{KeyData, SlotMap};
 
     #[test]
     fn test_simplex_counts() {
@@ -773,8 +755,6 @@ mod tests {
 
     #[test]
     fn test_insert_simplices_of_size() {
-        use slotmap::SlotMap;
-
         let mut vertex_slots: SlotMap<VertexKey, ()> = SlotMap::default();
         let v0 = vertex_slots.insert(());
         let v1 = vertex_slots.insert(());
@@ -996,9 +976,6 @@ mod tests {
     }
 
     fn build_closed_2d_surface_tds() -> Tds<f64, (), (), 2> {
-        use crate::core::cell::Cell;
-        use crate::vertex;
-
         // Build the boundary of a tetrahedron as a 2D simplicial complex (a closed S^2):
         // 4 triangles on 4 vertices, with every edge shared by exactly 2 triangles.
         let mut tds: Tds<f64, (), (), 2> = Tds::empty();

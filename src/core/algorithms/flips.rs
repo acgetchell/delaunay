@@ -38,9 +38,9 @@ use crate::core::collections::{
     CellKeyBuffer, FastHashMap, FastHashSet, FastHasher, MAX_PRACTICAL_DIMENSION_SIZE, SmallBuffer,
 };
 use crate::core::edge::EdgeKey;
-use crate::core::facet::{AllFacetsIter, FacetHandle, facet_key_from_vertices};
+use crate::core::facet::{AllFacetsIter, FacetError, FacetHandle, facet_key_from_vertices};
 use crate::core::operations::TopologicalOperation;
-use crate::core::tds::{CellKey, EntityKind, Tds, VertexKey};
+use crate::core::tds::{CellKey, EntityKind, NeighborValidationError, Tds, VertexKey};
 use crate::core::traits::data_type::DataType;
 use crate::core::triangulation::{TopologyGuarantee, Triangulation, TriangulationValidationError};
 use crate::core::util::stable_hash_u64_slice;
@@ -49,11 +49,14 @@ use crate::geometry::kernel::Kernel;
 use crate::geometry::point::Point;
 use crate::geometry::predicates::Orientation;
 use crate::geometry::robust_predicates::robust_orientation;
-use crate::geometry::traits::coordinate::{Coordinate, CoordinateScalar};
+use crate::geometry::traits::coordinate::{
+    Coordinate, CoordinateConversionError, CoordinateScalar,
+};
 use crate::topology::traits::global_topology_model::{
     GlobalTopologyModel, GlobalTopologyModelAdapter,
 };
 use crate::topology::traits::topological_space::GlobalTopology;
+use crate::triangulation::delaunay::DelaunayTriangulationValidationError;
 use slotmap::Key;
 use std::borrow::Cow;
 use std::collections::VecDeque;
@@ -163,7 +166,7 @@ where
         if prefer_secondary {
             let processed_ridge = timed_step!(
                 record_attempt_ridge,
-                process_ridge_queue_step(
+                run_next_ridge_repair_step(
                     tds,
                     kernel,
                     &mut queues,
@@ -179,7 +182,7 @@ where
             let processed_edge = !processed_ridge
                 && timed_step!(
                     record_attempt_edge,
-                    process_edge_queue_step(
+                    run_next_edge_repair_step(
                         tds,
                         kernel,
                         &mut queues,
@@ -196,7 +199,7 @@ where
                 && !processed_edge
                 && timed_step!(
                     record_attempt_triangle,
-                    process_triangle_queue_step(
+                    run_next_triangle_repair_step(
                         tds,
                         kernel,
                         &mut queues,
@@ -217,7 +220,7 @@ where
 
         if timed_step!(
             record_attempt_facet,
-            process_facet_queue_step(
+            run_next_facet_repair_step(
                 tds,
                 kernel,
                 &mut queues,
@@ -236,7 +239,7 @@ where
 
         let processed_ridge = timed_step!(
             record_attempt_ridge,
-            process_ridge_queue_step(
+            run_next_ridge_repair_step(
                 tds,
                 kernel,
                 &mut queues,
@@ -252,7 +255,7 @@ where
         let processed_edge = !processed_ridge
             && timed_step!(
                 record_attempt_edge,
-                process_edge_queue_step(
+                run_next_edge_repair_step(
                     tds,
                     kernel,
                     &mut queues,
@@ -269,7 +272,7 @@ where
             && !processed_edge
             && timed_step!(
                 record_attempt_triangle,
-                process_triangle_queue_step(
+                run_next_triangle_repair_step(
                     tds,
                     kernel,
                     &mut queues,
@@ -699,10 +702,10 @@ where
             }
             _ => {
                 return Err(TdsValidationFailure::Facet {
-                    message: format!(
-                        "flip trial facet {facet_key} is shared by {} affected cells",
-                        incidents.len()
-                    ),
+                    source: FacetError::InvalidFacetMultiplicity {
+                        facet_key,
+                        found: incidents.len(),
+                    },
                 });
             }
         }
@@ -819,11 +822,11 @@ where
     };
     if neighbors.len() != D + 1 {
         return Err(TdsValidationFailure::InvalidNeighbors {
-            message: format!(
-                "Neighbor vector length {} != D+1 ({})",
-                neighbors.len(),
-                D + 1
-            ),
+            reason: NeighborValidationError::LengthMismatch {
+                actual: neighbors.len(),
+                expected: D + 1,
+                context: "flip trial neighbor validation".to_string(),
+            },
         });
     }
 
@@ -833,9 +836,12 @@ where
         };
         if removed_cells.contains(neighbor_key) {
             return Err(TdsValidationFailure::InvalidNeighbors {
-                message: format!(
-                    "Cell {cell_key:?} still references removed neighbor {neighbor_key:?}"
-                ),
+                reason: NeighborValidationError::ReferencedRemovedNeighbor {
+                    cell_key,
+                    cell_uuid: cell.uuid(),
+                    facet_index: facet_idx,
+                    neighbor_key: *neighbor_key,
+                },
             });
         }
         if *neighbor_key == cell_key {
@@ -843,26 +849,34 @@ where
                 continue;
             }
             return Err(TdsValidationFailure::InvalidNeighbors {
-                message: format!(
-                    "Cell {:?} has non-periodic self-neighbor at facet index {facet_idx}",
-                    cell.uuid()
-                ),
+                reason: NeighborValidationError::NonPeriodicSelfNeighbor {
+                    cell_key,
+                    cell_uuid: cell.uuid(),
+                    facet_index: facet_idx,
+                },
             });
         }
 
         let neighbor_cell =
             tds.cell(*neighbor_key)
                 .ok_or_else(|| TdsValidationFailure::InvalidNeighbors {
-                    message: format!("Neighbor cell {neighbor_key:?} not found"),
+                    reason: NeighborValidationError::MissingNeighborCell {
+                        cell_key,
+                        cell_uuid: cell.uuid(),
+                        facet_index: facet_idx,
+                        neighbor_key: *neighbor_key,
+                        context: "flip trial neighbor validation".to_string(),
+                    },
                 })?;
         let mirror_idx = cell
             .mirror_facet_index(facet_idx, neighbor_cell)
             .ok_or_else(|| TdsValidationFailure::InvalidNeighbors {
-                message: format!(
-                    "Cell {:?} facet {facet_idx} does not share a valid mirror facet with neighbor {:?}",
-                    cell.uuid(),
-                    neighbor_cell.uuid()
-                ),
+                reason: NeighborValidationError::MirrorFacetMissing {
+                    cell_uuid: cell.uuid(),
+                    facet_index: facet_idx,
+                    neighbor_uuid: neighbor_cell.uuid(),
+                    context: "flip trial neighbor validation".to_string(),
+                },
             })?;
         validate_flip_trial_mutual_facet_neighbors(
             tds,
@@ -932,11 +946,17 @@ where
 
     if source_neighbor != Some(target_cell_key) || target_neighbor != Some(source_cell_key) {
         return Err(TdsValidationFailure::InvalidNeighbors {
-            message: format!(
-                "Interior facet {facet_key} has inconsistent neighbor pointers: {}[{source_facet}] -> {source_neighbor:?}, {}[{target_facet}] -> {target_neighbor:?}",
-                source_cell.uuid(),
-                target_cell.uuid()
-            ),
+            reason: NeighborValidationError::InteriorFacetNeighborMismatch {
+                facet_key,
+                first_cell_key: source_cell_key,
+                first_cell_uuid: source_cell.uuid(),
+                first_facet_index: source_facet,
+                first_neighbor: source_neighbor,
+                second_cell_key: target_cell_key,
+                second_cell_uuid: target_cell.uuid(),
+                second_facet_index: target_facet,
+                second_neighbor: target_neighbor,
+            },
         });
     }
 
@@ -958,12 +978,24 @@ where
 {
     let source_order = facet_order(cell.vertices(), facet_idx).map_err(|err| {
         TdsValidationFailure::InvalidNeighbors {
-            message: format!("Could not build source facet order for local flip validation: {err}"),
+            reason: NeighborValidationError::FacetOrderUnavailable {
+                cell_key,
+                cell_uuid: cell.uuid(),
+                facet_index: facet_idx,
+                context: "source facet in local flip validation".to_string(),
+                source: Box::new(err),
+            },
         }
     })?;
     let target_order = facet_order(neighbor_cell.vertices(), mirror_idx).map_err(|err| {
         TdsValidationFailure::InvalidNeighbors {
-            message: format!("Could not build target facet order for local flip validation: {err}"),
+            reason: NeighborValidationError::FacetOrderUnavailable {
+                cell_key: neighbor_key,
+                cell_uuid: neighbor_cell.uuid(),
+                facet_index: mirror_idx,
+                context: "target facet in local flip validation".to_string(),
+                source: Box::new(err),
+            },
         }
     })?;
     let observed_odd_permutation =
@@ -2116,7 +2148,7 @@ pub enum FlipPredicateError {
         operation: FlipPredicateOperation,
         /// Underlying coordinate conversion failure.
         #[source]
-        source: crate::geometry::traits::coordinate::CoordinateConversionError,
+        source: CoordinateConversionError,
     },
     /// A topology model failed to lift a periodic vertex for predicate evaluation.
     #[error("failed to lift vertex {vertex_key:?} for periodic predicate: {details}")]
@@ -2132,7 +2164,7 @@ pub enum FlipPredicateError {
 impl FlipPredicateError {
     const fn coordinate_conversion(
         operation: FlipPredicateOperation,
-        source: crate::geometry::traits::coordinate::CoordinateConversionError,
+        source: CoordinateConversionError,
     ) -> Self {
         Self::CoordinateConversion { operation, source }
     }
@@ -2540,34 +2572,24 @@ pub enum FlipNeighborDelaunayValidationFailureKind {
     RepairOperationFailed,
 }
 
-impl From<&crate::triangulation::delaunay::DelaunayTriangulationValidationError>
-    for FlipNeighborDelaunayValidationFailureKind
-{
-    fn from(source: &crate::triangulation::delaunay::DelaunayTriangulationValidationError) -> Self {
+impl From<&DelaunayTriangulationValidationError> for FlipNeighborDelaunayValidationFailureKind {
+    fn from(source: &DelaunayTriangulationValidationError) -> Self {
         match source {
-            crate::triangulation::delaunay::DelaunayTriangulationValidationError::Tds(_) => {
-                Self::Tds
+            DelaunayTriangulationValidationError::Tds(_) => Self::Tds,
+            DelaunayTriangulationValidationError::Triangulation(_) => Self::Triangulation,
+            DelaunayTriangulationValidationError::VerificationFailed { .. } => {
+                Self::VerificationFailed
             }
-            crate::triangulation::delaunay::DelaunayTriangulationValidationError::Triangulation(
-                _,
-            ) => Self::Triangulation,
-            crate::triangulation::delaunay::DelaunayTriangulationValidationError::VerificationFailed {
-                ..
-            } => Self::VerificationFailed,
-            crate::triangulation::delaunay::DelaunayTriangulationValidationError::RepairFailed {
-                ..
-            } => Self::RepairFailed,
-            crate::triangulation::delaunay::DelaunayTriangulationValidationError::RepairOperationFailed {
-                ..
-            } => Self::RepairOperationFailed,
+            DelaunayTriangulationValidationError::RepairFailed { .. } => Self::RepairFailed,
+            DelaunayTriangulationValidationError::RepairOperationFailed { .. } => {
+                Self::RepairOperationFailed
+            }
         }
     }
 }
 
-impl From<crate::triangulation::delaunay::DelaunayTriangulationValidationError>
-    for FlipNeighborDelaunayValidationFailureKind
-{
-    fn from(source: crate::triangulation::delaunay::DelaunayTriangulationValidationError) -> Self {
+impl From<DelaunayTriangulationValidationError> for FlipNeighborDelaunayValidationFailureKind {
+    fn from(source: DelaunayTriangulationValidationError) -> Self {
         Self::from(&source)
     }
 }
@@ -2647,7 +2669,7 @@ pub enum FlipNeighborRepairFailure {
     #[error("repair verification failed during {context}: {source_kind}")]
     VerificationFailed {
         /// Verification phase that failed.
-        context: &'static str,
+        context: DelaunayRepairVerificationContext,
         /// Non-recursive class of the underlying flip error.
         source_kind: FlipFailureKind,
     },
@@ -2801,7 +2823,7 @@ impl From<InsertionError> for FlipNeighborWiringError {
                 reason: reason.into(),
             },
             InsertionError::DelaunayValidationFailed { source } => Self::DelaunayValidation {
-                reason: (*source).into(),
+                reason: source.into(),
             },
             InsertionError::DelaunayRepairFailed { source, context: _ } => Self::DelaunayRepair {
                 reason: FlipNeighborRepairFailure::from(*source),
@@ -2811,10 +2833,7 @@ impl From<InsertionError> for FlipNeighborWiringError {
             }
             InsertionError::DuplicateUuid { entity, uuid } => Self::DuplicateUuid { entity, uuid },
             InsertionError::TopologyValidationFailed { message, source } => {
-                Self::TopologyValidationFailed {
-                    message,
-                    source: *source,
-                }
+                Self::TopologyValidationFailed { message, source }
             }
         }
     }
@@ -3709,6 +3728,76 @@ impl fmt::Display for DelaunayRepairDiagnostics {
     }
 }
 
+/// Verification phase that failed during flip-based Delaunay repair.
+///
+/// This context is carried by [`DelaunayRepairError::VerificationFailed`] so
+/// callers can distinguish generic post-repair validation from local k=2/k=3
+/// postcondition checks without parsing the display message.
+///
+/// # Examples
+///
+/// ```rust
+/// use delaunay::prelude::triangulation::repair::{
+///     DelaunayRepairError, DelaunayRepairVerificationContext, FlipError,
+/// };
+///
+/// let err = DelaunayRepairError::VerificationFailed {
+///     context: DelaunayRepairVerificationContext::StrictValidation,
+///     source: Box::new(FlipError::DegenerateCell),
+/// };
+///
+/// assert!(matches!(
+///     err,
+///     DelaunayRepairError::VerificationFailed {
+///         context: DelaunayRepairVerificationContext::StrictValidation,
+///         ..
+///     },
+/// ));
+/// ```
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum DelaunayRepairVerificationContext {
+    /// Generic post-repair verification.
+    PostRepairVerification,
+    /// Strict validation pass.
+    StrictValidation,
+    /// Local k=2 degeneracy verification.
+    LocalK2DegeneracyVerification,
+    /// Local k=2 postcondition verification.
+    LocalK2PostconditionVerification,
+    /// Local k=3 degeneracy verification.
+    LocalK3DegeneracyVerification,
+    /// Local k=3 postcondition verification.
+    LocalK3PostconditionVerification,
+    /// Local inverse k=2 postcondition verification.
+    LocalInverseK2PostconditionVerification,
+    /// Local inverse k=3 postcondition verification.
+    LocalInverseK3PostconditionVerification,
+}
+
+impl fmt::Display for DelaunayRepairVerificationContext {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::PostRepairVerification => f.write_str("post-repair verification"),
+            Self::StrictValidation => f.write_str("strict validation"),
+            Self::LocalK2DegeneracyVerification => f.write_str("local k=2 degeneracy verification"),
+            Self::LocalK2PostconditionVerification => {
+                f.write_str("local k=2 postcondition verification")
+            }
+            Self::LocalK3DegeneracyVerification => f.write_str("local k=3 degeneracy verification"),
+            Self::LocalK3PostconditionVerification => {
+                f.write_str("local k=3 postcondition verification")
+            }
+            Self::LocalInverseK2PostconditionVerification => {
+                f.write_str("local inverse k=2 postcondition verification")
+            }
+            Self::LocalInverseK3PostconditionVerification => {
+                f.write_str("local inverse k=3 postcondition verification")
+            }
+        }
+    }
+}
+
 /// Errors that can occur during flip-based Delaunay repair.
 ///
 /// # Examples
@@ -3745,7 +3834,7 @@ pub enum DelaunayRepairError {
     #[error("Delaunay repair verification failed during {context}: {source}")]
     VerificationFailed {
         /// Verification phase that failed.
-        context: &'static str,
+        context: DelaunayRepairVerificationContext,
         /// Underlying flip or predicate error.
         #[source]
         source: Box<FlipError>,
@@ -5592,7 +5681,10 @@ enum ConnectivityPostcondition {
 }
 
 /// Builds a verification failure that preserves the structured flip error.
-fn verification_failed(context: &'static str, source: FlipError) -> DelaunayRepairError {
+fn verification_failed(
+    context: DelaunayRepairVerificationContext,
+    source: FlipError,
+) -> DelaunayRepairError {
     DelaunayRepairError::VerificationFailed {
         context,
         source: Box::new(source),
@@ -5727,9 +5819,9 @@ where
 
 /// Centralizes Strict/Repair handling so inconclusive predicates fail validation
 /// while remaining skippable during best-effort repair passes.
-fn handle_postcondition_predicate_failure(
+fn resolve_postcondition_predicate_failure(
     mode: PostconditionMode,
-    context: &'static str,
+    context: DelaunayRepairVerificationContext,
     error: &FlipError,
 ) -> Result<(), DelaunayRepairError> {
     match mode {
@@ -5779,15 +5871,18 @@ where
                 let flip_degenerate = match k2_flip_would_create_degenerate_cell(tds, &context) {
                     Ok(degenerate) => degenerate,
                     Err(error @ FlipError::PredicateFailure { .. }) => {
-                        handle_postcondition_predicate_failure(
+                        resolve_postcondition_predicate_failure(
                             mode,
-                            "local k=2 degeneracy verification",
+                            DelaunayRepairVerificationContext::LocalK2DegeneracyVerification,
                             &error,
                         )?;
                         continue;
                     }
                     Err(e) => {
-                        return Err(verification_failed("local k=2 degeneracy verification", e));
+                        return Err(verification_failed(
+                            DelaunayRepairVerificationContext::LocalK2DegeneracyVerification,
+                            e,
+                        ));
                     }
                 };
 
@@ -5834,15 +5929,15 @@ where
                 // No violation detected.
             }
             Err(error @ FlipError::PredicateFailure { .. }) => {
-                handle_postcondition_predicate_failure(
+                resolve_postcondition_predicate_failure(
                     mode,
-                    "local k=2 postcondition verification",
+                    DelaunayRepairVerificationContext::LocalK2PostconditionVerification,
                     &error,
                 )?;
             }
             Err(e) => {
                 return Err(verification_failed(
-                    "local k=2 postcondition verification",
+                    DelaunayRepairVerificationContext::LocalK2PostconditionVerification,
                     e,
                 ));
             }
@@ -5896,15 +5991,18 @@ where
                 ) {
                     Ok(degenerate) => degenerate,
                     Err(error @ FlipError::PredicateFailure { .. }) => {
-                        handle_postcondition_predicate_failure(
+                        resolve_postcondition_predicate_failure(
                             mode,
-                            "local k=3 degeneracy verification",
+                            DelaunayRepairVerificationContext::LocalK3DegeneracyVerification,
                             &error,
                         )?;
                         continue;
                     }
                     Err(e) => {
-                        return Err(verification_failed("local k=3 degeneracy verification", e));
+                        return Err(verification_failed(
+                            DelaunayRepairVerificationContext::LocalK3DegeneracyVerification,
+                            e,
+                        ));
                     }
                 };
 
@@ -5934,15 +6032,15 @@ where
                 // No violation detected.
             }
             Err(error @ FlipError::PredicateFailure { .. }) => {
-                handle_postcondition_predicate_failure(
+                resolve_postcondition_predicate_failure(
                     mode,
-                    "local k=3 postcondition verification",
+                    DelaunayRepairVerificationContext::LocalK3PostconditionVerification,
                     &error,
                 )?;
             }
             Err(e) => {
                 return Err(verification_failed(
-                    "local k=3 postcondition verification",
+                    DelaunayRepairVerificationContext::LocalK3PostconditionVerification,
                     e,
                 ));
             }
@@ -6003,16 +6101,16 @@ where
         ) {
             Ok(violates) => violates,
             Err(error @ FlipError::PredicateFailure { .. }) => {
-                handle_postcondition_predicate_failure(
+                resolve_postcondition_predicate_failure(
                     mode,
-                    "local inverse k=2 postcondition verification",
+                    DelaunayRepairVerificationContext::LocalInverseK2PostconditionVerification,
                     &error,
                 )?;
                 continue;
             }
             Err(e) => {
                 return Err(verification_failed(
-                    "local inverse k=2 postcondition verification",
+                    DelaunayRepairVerificationContext::LocalInverseK2PostconditionVerification,
                     e,
                 ));
             }
@@ -6087,16 +6185,16 @@ where
         ) {
             Ok(violates) => violates,
             Err(error @ FlipError::PredicateFailure { .. }) => {
-                handle_postcondition_predicate_failure(
+                resolve_postcondition_predicate_failure(
                     mode,
-                    "local inverse k=3 postcondition verification",
+                    DelaunayRepairVerificationContext::LocalInverseK3PostconditionVerification,
                     &error,
                 )?;
                 continue;
             }
             Err(e) => {
                 return Err(verification_failed(
-                    "local inverse k=3 postcondition verification",
+                    DelaunayRepairVerificationContext::LocalInverseK3PostconditionVerification,
                     e,
                 ));
             }
@@ -6916,7 +7014,7 @@ where
     Ok(())
 }
 
-/// Processes one queued ridge because k=3 moves are only meaningful in D>=3 and
+/// Runs one queued ridge repair because k=3 moves are only meaningful in D>=3 and
 /// need their own adjacency validation.
 #[expect(
     clippy::too_many_arguments,
@@ -6926,7 +7024,7 @@ where
     clippy::too_many_lines,
     reason = "Repair step contains inline tracing and queue handling for diagnostics"
 )]
-fn process_ridge_queue_step<K, U, V, const D: usize>(
+fn run_next_ridge_repair_step<K, U, V, const D: usize>(
     tds: &mut Tds<K::Scalar, U, V, D>,
     kernel: &K,
     queues: &mut RepairQueues,
@@ -7114,7 +7212,7 @@ where
     Ok(true)
 }
 
-/// Processes one queued edge for inverse k=2 moves so higher-dimensional repair
+/// Runs one queued edge repair for inverse k=2 moves so higher-dimensional repair
 /// can collapse locally Delaunay edge stars.
 #[expect(
     clippy::too_many_arguments,
@@ -7124,7 +7222,7 @@ where
     clippy::too_many_lines,
     reason = "Repair step contains inline tracing and queue handling for diagnostics"
 )]
-fn process_edge_queue_step<K, U, V, const D: usize>(
+fn run_next_edge_repair_step<K, U, V, const D: usize>(
     tds: &mut Tds<K::Scalar, U, V, D>,
     kernel: &K,
     queues: &mut RepairQueues,
@@ -7306,7 +7404,7 @@ where
     Ok(true)
 }
 
-/// Processes one queued triangle for inverse k=3 moves, which only appear once
+/// Runs one queued triangle repair for inverse k=3 moves, which only appear once
 /// D is high enough for a triangle star to be replaced.
 #[expect(
     clippy::too_many_arguments,
@@ -7316,7 +7414,7 @@ where
     clippy::too_many_lines,
     reason = "Repair step contains inline tracing and queue handling for diagnostics"
 )]
-fn process_triangle_queue_step<K, U, V, const D: usize>(
+fn run_next_triangle_repair_step<K, U, V, const D: usize>(
     tds: &mut Tds<K::Scalar, U, V, D>,
     kernel: &K,
     queues: &mut RepairQueues,
@@ -7489,7 +7587,7 @@ where
     Ok(true)
 }
 
-/// Processes one queued facet because k=2 facet flips are the primary local
+/// Runs one queued facet repair because k=2 facet flips are the primary local
 /// repair move across supported dimensions.
 #[expect(
     clippy::too_many_arguments,
@@ -7499,7 +7597,7 @@ where
     clippy::too_many_lines,
     reason = "Repair step contains inline tracing and queue handling for diagnostics"
 )]
-fn process_facet_queue_step<K, U, V, const D: usize>(
+fn run_next_facet_repair_step<K, U, V, const D: usize>(
     tds: &mut Tds<K::Scalar, U, V, D>,
     kernel: &K,
     queues: &mut RepairQueues,
@@ -8764,12 +8862,15 @@ fn enqueue_ridge<T, U, V, const D: usize>(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::core::algorithms::incremental_insertion::repair_neighbor_pointers;
+    use crate::core::algorithms::incremental_insertion::{
+        DelaunayRepairFailureContext, repair_neighbor_pointers,
+    };
+    use crate::core::algorithms::locate::LocateResult;
     use crate::core::collections::Uuid;
     use crate::core::triangulation::TopologyGuarantee;
     use crate::geometry::kernel::{AdaptiveKernel, FastKernel};
     use crate::topology::traits::topological_space::ToroidalConstructionMode;
-    use crate::triangulation::delaunay::DelaunayTriangulation;
+    use crate::triangulation::delaunay::{DelaunayRepairOperation, DelaunayTriangulation};
     use crate::vertex;
     use approx::assert_relative_eq;
     use proptest::prelude::*;
@@ -9515,7 +9616,7 @@ mod tests {
                     let simplex_vertices = insert_standard_simplex_vertices(&mut tds);
 
                     let mut external_cell = Cell::new(simplex_vertices.clone(), None).unwrap();
-                    external_cell.set_periodic_vertex_offsets(vec![[0_i8; $dim]; $dim + 1]);
+                    external_cell.set_periodic_vertex_offsets(vec![[0_i8; $dim]; $dim + 1]).unwrap();
                     let external_cell_key = tds.insert_cell_with_mapping(external_cell).unwrap();
 
                     let mut replacement_cells = vec![vertex_key_buffer(&simplex_vertices)];
@@ -11682,7 +11783,7 @@ mod tests {
 
     /// 3D variant of the `max_flips` cap test.
     ///
-    /// Exercises `process_facet_queue_step` and `process_ridge_queue_step` (only
+    /// Exercises `run_next_facet_repair_step` and `run_next_ridge_repair_step` (only
     /// reached for D≥3) to verify the pre-flip budget guard works in the
     /// multi-queue repair loop.
     #[test]
@@ -12284,7 +12385,9 @@ mod tests {
 
     fn sample_tds_validation_failure() -> TdsValidationFailure {
         TdsValidationFailure::InvalidNeighbors {
-            message: "synthetic neighbor mismatch".to_string(),
+            reason: NeighborValidationError::Other {
+                message: "synthetic neighbor mismatch".to_string(),
+            },
         }
     }
 
@@ -12325,7 +12428,7 @@ mod tests {
 
         let repair_reason =
             FlipNeighborRepairFailure::from(DelaunayRepairError::VerificationFailed {
-                context: "post-repair verification",
+                context: DelaunayRepairVerificationContext::PostRepairVerification,
                 source: Box::new(trial_error),
             });
         match &repair_reason {
@@ -12333,7 +12436,10 @@ mod tests {
                 context,
                 source_kind,
             } => {
-                assert_eq!(*context, "post-repair verification");
+                assert_eq!(
+                    *context,
+                    DelaunayRepairVerificationContext::PostRepairVerification
+                );
                 assert_eq!(*source_kind, FlipFailureKind::TrialValidation);
             }
             other => panic!("expected verification failure, got {other:?}"),
@@ -12361,7 +12467,7 @@ mod tests {
     fn test_flip_neighbor_conversion_kinds_cover_insertion_suberrors() {
         let cavity_kind = FlipNeighborCavityFailureKind::from(
             &CavityFillingError::UnsupportedDegenerateLocation {
-                location: crate::core::algorithms::locate::LocateResult::Outside,
+                location: LocateResult::Outside,
             },
         );
         assert_eq!(
@@ -12381,8 +12487,8 @@ mod tests {
         assert_eq!(hull_kind.to_string(), "invalid patch");
 
         let validation_kind = FlipNeighborDelaunayValidationFailureKind::from(
-            &crate::triangulation::delaunay::DelaunayTriangulationValidationError::RepairOperationFailed {
-                operation: crate::triangulation::delaunay::DelaunayRepairOperation::VertexRemoval,
+            &DelaunayTriangulationValidationError::RepairOperationFailed {
+                operation: DelaunayRepairOperation::VertexRemoval,
                 source: Box::new(DelaunayRepairError::InvalidTopology {
                     required: TopologyGuarantee::PLManifold,
                     found: TopologyGuarantee::Pseudomanifold,
@@ -12402,7 +12508,7 @@ mod tests {
                 found: TopologyGuarantee::Pseudomanifold,
                 message: "repair requires PL topology",
             }),
-            context: "post-insertion repair".to_string(),
+            context: DelaunayRepairFailureContext::PostInsertionRepair,
         });
         match repair_wiring {
             FlipNeighborWiringError::DelaunayRepair {
@@ -12473,15 +12579,15 @@ mod tests {
         assert_ne!(post_test, post_other);
 
         let verification_err = DelaunayRepairError::VerificationFailed {
-            context: "strict validation",
+            context: DelaunayRepairVerificationContext::StrictValidation,
             source: Box::new(FlipError::DegenerateCell),
         };
         let verification_err_copy = DelaunayRepairError::VerificationFailed {
-            context: "strict validation",
+            context: DelaunayRepairVerificationContext::StrictValidation,
             source: Box::new(FlipError::DegenerateCell),
         };
         let verification_other = DelaunayRepairError::VerificationFailed {
-            context: "strict validation",
+            context: DelaunayRepairVerificationContext::StrictValidation,
             source: Box::new(FlipError::DuplicateCell),
         };
         assert_eq!(verification_err, verification_err_copy);
@@ -12515,6 +12621,59 @@ mod tests {
         assert_ne!(post_test, topo_err);
         assert_ne!(post_test, verification_err);
         assert_ne!(post_test, canonicalization_err);
+    }
+
+    #[test]
+    fn test_delaunay_repair_verification_context_display_covers_all_variants() {
+        let cases = [
+            (
+                DelaunayRepairVerificationContext::PostRepairVerification,
+                "post-repair verification",
+            ),
+            (
+                DelaunayRepairVerificationContext::StrictValidation,
+                "strict validation",
+            ),
+            (
+                DelaunayRepairVerificationContext::LocalK2DegeneracyVerification,
+                "local k=2 degeneracy verification",
+            ),
+            (
+                DelaunayRepairVerificationContext::LocalK2PostconditionVerification,
+                "local k=2 postcondition verification",
+            ),
+            (
+                DelaunayRepairVerificationContext::LocalK3DegeneracyVerification,
+                "local k=3 degeneracy verification",
+            ),
+            (
+                DelaunayRepairVerificationContext::LocalK3PostconditionVerification,
+                "local k=3 postcondition verification",
+            ),
+            (
+                DelaunayRepairVerificationContext::LocalInverseK2PostconditionVerification,
+                "local inverse k=2 postcondition verification",
+            ),
+            (
+                DelaunayRepairVerificationContext::LocalInverseK3PostconditionVerification,
+                "local inverse k=3 postcondition verification",
+            ),
+        ];
+
+        for (context, expected_display) in cases {
+            assert_eq!(context.to_string(), expected_display);
+            let err = DelaunayRepairError::VerificationFailed {
+                context,
+                source: Box::new(FlipError::DegenerateCell),
+            };
+
+            match err {
+                DelaunayRepairError::VerificationFailed {
+                    context: observed, ..
+                } => assert_eq!(observed, context),
+                other => panic!("expected verification failure, got {other:?}"),
+            }
+        }
     }
 
     macro_rules! gen_align_periodic_offset_tests {
@@ -12628,7 +12787,7 @@ mod tests {
             offsets[index][0] = 1;
         }
         let mut cell = Cell::new(vertices, None).unwrap();
-        cell.set_periodic_vertex_offsets(offsets);
+        cell.set_periodic_vertex_offsets(offsets).unwrap();
         tds.insert_cell_with_mapping(cell).unwrap()
     }
 
@@ -12638,7 +12797,7 @@ mod tests {
         offsets: Vec<[i8; D]>,
     ) -> CellKey {
         let mut cell = Cell::new(vertices, None).unwrap();
-        cell.set_periodic_vertex_offsets(offsets);
+        cell.set_periodic_vertex_offsets(offsets).unwrap();
         tds.insert_cell_with_mapping(cell).unwrap()
     }
 

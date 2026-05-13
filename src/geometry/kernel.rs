@@ -22,11 +22,12 @@
 
 #![forbid(unsafe_code)]
 
+use crate::core::cell::CellValidationError;
 use crate::geometry::matrix::{matrix_get, matrix_set, matrix_zero_like};
 use crate::geometry::point::Point;
 use crate::geometry::predicates::{InSphere, Orientation, insphere_lifted, simplex_orientation};
 use crate::geometry::robust_predicates::{robust_insphere, robust_orientation};
-use crate::geometry::sos::exact_det_sign;
+use crate::geometry::sos::{exact_det_sign, sos_insphere_sign, sos_orientation_sign};
 use crate::geometry::traits::coordinate::{
     Coordinate, CoordinateConversionError, CoordinateScalar,
 };
@@ -62,7 +63,7 @@ use core::marker::PhantomData;
 /// let result = kernel.in_sphere(&points, &test_point).unwrap();
 /// assert_eq!(result, 1); // Inside
 /// ```
-pub trait Kernel<const D: usize>: Clone + Default {
+pub trait Kernel<const D: usize>: Clone {
     /// The scalar type used for coordinates.
     type Scalar: CoordinateScalar;
 
@@ -181,9 +182,13 @@ pub trait Kernel<const D: usize>: Clone + Default {
 ///
 /// Exact-predicate kernels guarantee that [`Kernel::orientation`] and
 /// [`Kernel::in_sphere`] return the mathematically correct sign for all
-/// inputs, including near-degenerate configurations.  This eliminates
-/// the silent misclassification that can occur with floating-point-only
-/// kernels like [`FastKernel`].
+/// inputs in the supported dimension `D`, including near-degenerate configurations. This
+/// eliminates the silent misclassification that can occur with floating-point-only kernels like
+/// [`FastKernel`].
+///
+/// The exact stack-matrix path currently supports insphere predicates through `D <= 5`.
+/// Higher dimensions can still use deterministic robust fallbacks, but they do not implement this
+/// marker because flip repair uses it as a compile-time exactness gate.
 ///
 /// # Implementors
 ///
@@ -198,14 +203,15 @@ pub trait Kernel<const D: usize>: Clone + Default {
 ///
 /// # Usage
 ///
-/// Functions that require predicate correctness for safety — such as
-/// flip-based Delaunay repair — should bound their kernel parameter
-/// with this trait:
+/// This marker inherits [`Kernel`] so exactness and kernel usability remain one
+/// contract. Functions that require predicate correctness for safety — such as
+/// flip-based Delaunay repair — should bound their kernel parameter with this
+/// trait:
 ///
 /// ```rust,ignore
 /// fn repair<K, const D: usize>(kernel: &K)
 /// where
-///     K: Kernel<D> + ExactPredicates,
+///     K: ExactPredicates<D>,
 /// { /* ... */ }
 /// ```
 ///
@@ -215,13 +221,29 @@ pub trait Kernel<const D: usize>: Clone + Default {
 ///
 /// ```compile_fail
 /// use delaunay::prelude::geometry::{ExactPredicates, FastKernel};
-/// fn requires_exact<T: ExactPredicates>() {}
+/// fn requires_exact<T: ExactPredicates<3>>() {}
 /// requires_exact::<FastKernel<f64>>(); // ERROR: FastKernel doesn't implement ExactPredicates
 /// ```
-pub trait ExactPredicates {}
+///
+/// Dimension-bound exactness is also enforced:
+///
+/// ```compile_fail
+/// use delaunay::prelude::geometry::{AdaptiveKernel, ExactPredicates};
+/// fn requires_exact<T: ExactPredicates<6>>() {}
+/// requires_exact::<AdaptiveKernel<f64>>(); // ERROR: exact insphere is not available for D=6
+/// ```
+pub trait ExactPredicates<const D: usize>: Kernel<D> {}
 
-impl<T: CoordinateScalar> ExactPredicates for RobustKernel<T> {}
-impl<T: CoordinateScalar> ExactPredicates for AdaptiveKernel<T> {}
+macro_rules! impl_exact_predicates_for_supported_dims {
+    ($($dim:literal),* $(,)?) => {
+        $(
+            impl<T: CoordinateScalar> ExactPredicates<$dim> for RobustKernel<T> {}
+            impl<T: CoordinateScalar> ExactPredicates<$dim> for AdaptiveKernel<T> {}
+        )*
+    };
+}
+
+impl_exact_predicates_for_supported_dims!(0, 1, 2, 3, 4, 5);
 
 /// Fast floating-point kernel.
 ///
@@ -276,11 +298,11 @@ impl<T: CoordinateScalar> ExactPredicates for AdaptiveKernel<T> {}
 /// assert_eq!(result, 1); // Inside circumcircle
 /// ```
 #[derive(Clone, Default, Debug)]
-pub struct FastKernel<T: CoordinateScalar> {
+pub struct FastKernel<T> {
     _phantom: PhantomData<T>,
 }
 
-impl<T: CoordinateScalar> FastKernel<T> {
+impl<T> FastKernel<T> {
     /// Create a new fast kernel.
     ///
     /// # Examples
@@ -325,7 +347,7 @@ where
         let result = insphere_lifted(simplex_points, *test_point).map_err(|e| {
             // Preserve original CoordinateConversionError if present
             match e {
-                crate::core::cell::CellValidationError::CoordinateConversion { source } => source,
+                CellValidationError::CoordinateConversion { source } => source,
                 _ => CoordinateConversionError::ConversionFailed {
                     coordinate_index: 0,
                     coordinate_value: format!("{e}"),
@@ -384,11 +406,11 @@ where
 /// assert_eq!(result, 1); // Inside circumsphere
 /// ```
 #[derive(Clone, Default, Debug)]
-pub struct RobustKernel<T: CoordinateScalar> {
+pub struct RobustKernel<T> {
     _phantom: PhantomData<T>,
 }
 
-impl<T: CoordinateScalar> RobustKernel<T> {
+impl<T> RobustKernel<T> {
     /// Create a new robust kernel.
     ///
     /// # Examples
@@ -490,11 +512,11 @@ where
 /// assert!(orientation == 1 || orientation == -1); // SoS: always non-zero
 /// ```
 #[derive(Clone, Default, Debug)]
-pub struct AdaptiveKernel<T: CoordinateScalar> {
+pub struct AdaptiveKernel<T> {
     _phantom: PhantomData<T>,
 }
 
-impl<T: CoordinateScalar> AdaptiveKernel<T> {
+impl<T> AdaptiveKernel<T> {
     /// Create a new adaptive kernel.
     ///
     /// # Examples
@@ -553,7 +575,7 @@ where
         // representation — a true degeneracy that cannot be resolved
         // symbolically.  Return 0 so callers' existing degenerate-
         // orientation handling applies.
-        crate::geometry::sos::sos_orientation_sign(&f64_points).map_or(Ok(0), Ok)
+        sos_orientation_sign(&f64_points).map_or(Ok(0), Ok)
     }
 
     fn in_sphere(
@@ -647,7 +669,7 @@ where
                 // Orientation degenerate → SoS gives absolute orientation sign.
                 // rel_orient = (-1)^D × abs_orient
                 // orient_factor = -rel_orient = (-1)^(D+1) × abs_orient
-                let sos_abs = crate::geometry::sos::sos_orientation_sign(&f64_simplex)?;
+                let sos_abs = sos_orientation_sign(&f64_simplex)?;
                 if D.is_multiple_of(2) {
                     -sos_abs
                 } else {
@@ -659,7 +681,7 @@ where
             let insphere_effective: i32 = if insphere_det_sign != 0 {
                 insphere_det_sign
             } else {
-                crate::geometry::sos::sos_insphere_sign(&f64_simplex, &f64_test)?
+                sos_insphere_sign(&f64_simplex, &f64_test)?
             };
 
             Ok((insphere_effective * orient_factor).signum())
@@ -1127,20 +1149,28 @@ mod tests {
     // ExactPredicates MARKER TRAIT — COMPILE-TIME ASSERTIONS
     // =========================================================================
 
-    /// Helper that requires `T: ExactPredicates` — compilation succeeds only
-    /// for types that implement the marker trait.
-    const fn assert_exact_predicates<T: ExactPredicates>() {}
+    /// Helper that requires `T: ExactPredicates<D>` — compilation succeeds only
+    /// for types that implement the marker trait in the requested dimension.
+    const fn assert_exact_predicates<T, const D: usize>()
+    where
+        T: ExactPredicates<D>,
+    {
+    }
 
     #[test]
     fn test_adaptive_kernel_implements_exact_predicates() {
-        assert_exact_predicates::<AdaptiveKernel<f64>>();
-        assert_exact_predicates::<AdaptiveKernel<f32>>();
+        assert_exact_predicates::<AdaptiveKernel<f64>, 2>();
+        assert_exact_predicates::<AdaptiveKernel<f64>, 5>();
+        assert_exact_predicates::<AdaptiveKernel<f32>, 2>();
+        assert_exact_predicates::<AdaptiveKernel<f32>, 5>();
     }
 
     #[test]
     fn test_robust_kernel_implements_exact_predicates() {
-        assert_exact_predicates::<RobustKernel<f64>>();
-        assert_exact_predicates::<RobustKernel<f32>>();
+        assert_exact_predicates::<RobustKernel<f64>, 2>();
+        assert_exact_predicates::<RobustKernel<f64>, 5>();
+        assert_exact_predicates::<RobustKernel<f32>, 2>();
+        assert_exact_predicates::<RobustKernel<f32>, 5>();
     }
 
     /// Negative compile-time assertion: `FastKernel` must NOT implement
@@ -1152,7 +1182,7 @@ mod tests {
         // If `FastKernel` ever gains an `ExactPredicates` impl, the
         // compile_fail doctest will break.  This test serves as a
         // human-readable reminder of the design invariant.
-        fn _requires_exact<T: ExactPredicates>() {}
+        fn _requires_exact<T: ExactPredicates<3>>() {}
         // Uncomment the next line to verify it fails to compile:
         // _requires_exact::<FastKernel<f64>>();
     }

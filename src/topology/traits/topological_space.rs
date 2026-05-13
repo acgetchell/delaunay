@@ -6,6 +6,7 @@
 //! Topology-specific behavior is delegated through the internal
 //! `global_topology_model` adapter layer.
 
+use crate::core::{facet::FacetError, tds::TdsError};
 use thiserror::Error;
 
 /// Errors that can occur during topology computation or validation.
@@ -17,20 +18,49 @@ use thiserror::Error;
 ///
 /// ```rust
 /// use delaunay::prelude::topology::spaces::TopologyError;
+/// use delaunay::prelude::tds::TdsError;
 ///
-/// let error = TopologyError::Counting("Failed to enumerate edges".to_string());
-/// assert_eq!(error.to_string(), "Failed to count simplices: Failed to enumerate edges");
+/// let error = TopologyError::FacetMapBuild {
+///     source: TdsError::InconsistentDataStructure {
+///         message: "facet map invariant failed".to_string(),
+///     },
+/// };
+/// assert!(matches!(error, TopologyError::FacetMapBuild { .. }));
 /// ```
 #[derive(Clone, Debug, Error, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum TopologyError {
-    /// Failed to count simplices during topology analysis.
-    #[error("Failed to count simplices: {0}")]
-    Counting(String),
+    /// Failed to build the facet-to-cells incidence map.
+    #[error("Failed to build facet incidence map during topology analysis: {source}")]
+    FacetMapBuild {
+        /// Underlying TDS failure.
+        #[source]
+        source: TdsError,
+    },
 
-    /// Failed to classify the triangulation's topology.
-    #[error("Failed to classify triangulation: {0}")]
-    Classification(String),
+    /// Failed to enumerate boundary facets.
+    #[error("Failed to enumerate boundary facets during topology analysis: {source}")]
+    BoundaryFacetEnumeration {
+        /// Underlying TDS failure.
+        #[source]
+        source: TdsError,
+    },
+
+    /// Failed to access the cell for a boundary facet.
+    #[error("Failed to access boundary facet cell during topology analysis: {source}")]
+    BoundaryFacetCellAccess {
+        /// Underlying facet failure.
+        #[source]
+        source: FacetError,
+    },
+
+    /// Failed to count boundary facets while classifying topology.
+    #[error("Failed to count boundary facets during topology classification: {source}")]
+    BoundaryFacetCount {
+        /// Underlying TDS failure.
+        #[source]
+        source: TdsError,
+    },
 
     /// Euler characteristic does not match expected value.
     ///
@@ -431,16 +461,24 @@ mod tests {
 
     #[test]
     fn test_topology_error_display() {
-        let counting = TopologyError::Counting("test message".to_string());
+        let counting = TopologyError::FacetMapBuild {
+            source: TdsError::InconsistentDataStructure {
+                message: "test message".to_string(),
+            },
+        };
         assert_eq!(
             counting.to_string(),
-            "Failed to count simplices: test message"
+            "Failed to build facet incidence map during topology analysis: Internal data structure inconsistency: test message"
         );
 
-        let classification = TopologyError::Classification("another test".to_string());
+        let classification = TopologyError::BoundaryFacetCount {
+            source: TdsError::InconsistentDataStructure {
+                message: "another test".to_string(),
+            },
+        };
         assert_eq!(
             classification.to_string(),
-            "Failed to classify triangulation: another test"
+            "Failed to count boundary facets during topology classification: Internal data structure inconsistency: another test"
         );
 
         let euler = TopologyError::EulerMismatch {
@@ -456,13 +494,32 @@ mod tests {
 
     #[test]
     fn test_topology_error_equality() {
-        let err1 = TopologyError::Counting("msg".to_string());
-        let err2 = TopologyError::Counting("msg".to_string());
-        let err3 = TopologyError::Counting("different".to_string());
+        let err1 = TopologyError::FacetMapBuild {
+            source: TdsError::InconsistentDataStructure {
+                message: "msg".to_string(),
+            },
+        };
+        let err2 = TopologyError::FacetMapBuild {
+            source: TdsError::InconsistentDataStructure {
+                message: "msg".to_string(),
+            },
+        };
+        let err3 = TopologyError::FacetMapBuild {
+            source: TdsError::InconsistentDataStructure {
+                message: "different".to_string(),
+            },
+        };
 
         assert_eq!(err1, err2);
         assert_ne!(err1, err3);
-        assert_ne!(err1, TopologyError::Classification("msg".to_string()));
+        assert_ne!(
+            err1,
+            TopologyError::BoundaryFacetCount {
+                source: TdsError::InconsistentDataStructure {
+                    message: "msg".to_string(),
+                },
+            }
+        );
     }
 
     #[test]

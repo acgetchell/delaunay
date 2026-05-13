@@ -45,13 +45,17 @@
 
 use super::vertex::Vertex;
 use super::{
-    facet::FacetError,
+    facet::{FacetError, FacetView},
     tds::{CellKey, Tds, VertexKey},
-    traits::DataType,
-    util::{UuidValidationError, make_uuid, validate_uuid},
+    traits::{DataDeserialize, DataSerialize, DataType},
+    util::{UuidValidationError, make_uuid, usize_to_u8, validate_uuid},
     vertex::VertexValidationError,
 };
-use crate::core::collections::{CellVertexBuffer, FastHashMap, FastHashSet, NeighborBuffer};
+use crate::core::collections::{
+    CellVertexBuffer, CellVertexUuidBuffer, FastHashMap, FastHashSet, NeighborBuffer,
+    PeriodicOffsetBuffer,
+};
+use crate::geometry::matrix::StackMatrixDispatchError;
 use crate::geometry::traits::coordinate::{CoordinateConversionError, CoordinateScalar};
 use serde::{
     Deserialize, Deserializer, Serialize,
@@ -137,6 +141,14 @@ pub enum CellValidationError {
         /// The dimension D.
         dimension: usize,
     },
+    /// The periodic offset list is not aligned with the cell's vertex list.
+    #[error("Periodic offset length mismatch: got {found}, expected {expected}")]
+    PeriodicOffsetLengthMismatch {
+        /// The expected number of offsets (= number of vertices).
+        expected: usize,
+        /// The observed number of offsets.
+        found: usize,
+    },
     /// A vertex key referenced by the cell was not found in the TDS.
     #[error("Vertex key {key:?} not found in TDS (indicates TDS corruption or inconsistency)")]
     VertexKeyNotFound {
@@ -145,10 +157,34 @@ pub enum CellValidationError {
     },
 }
 
-impl From<crate::geometry::matrix::StackMatrixDispatchError> for CellValidationError {
-    fn from(source: crate::geometry::matrix::StackMatrixDispatchError) -> Self {
+impl From<StackMatrixDispatchError> for CellValidationError {
+    fn from(source: StackMatrixDispatchError) -> Self {
         CoordinateConversionError::from(source).into()
     }
+}
+
+fn total_cmp_for_coordinate<T>(left: &T, right: &T) -> cmp::Ordering
+where
+    T: CoordinateScalar,
+{
+    left.ordered_partial_cmp(right)
+        .expect("CoordinateScalar::ordered_partial_cmp must define a total order")
+}
+
+fn compare_vertices_by_coordinates<T, U, const D: usize>(
+    left: &Vertex<T, U, D>,
+    right: &Vertex<T, U, D>,
+) -> cmp::Ordering
+where
+    T: CoordinateScalar,
+{
+    for (left_coord, right_coord) in left.point().coords().iter().zip(right.point().coords()) {
+        let ordering = total_cmp_for_coordinate(left_coord, right_coord);
+        if ordering != cmp::Ordering::Equal {
+            return ordering;
+        }
+    }
+    cmp::Ordering::Equal
 }
 
 // =============================================================================
@@ -236,10 +272,10 @@ pub struct Cell<T, U, V, const D: usize> {
 
     /// Optional per-vertex periodic lattice offsets for quotient-cell reconstruction.
     ///
-    /// When present, this vector is aligned with `vertices` by index:
+    /// When present, this buffer is aligned with `vertices` by index:
     /// `periodic_vertex_offsets[i]` corresponds to `vertices[i]`.
     /// Offsets are omitted from serialization and are reconstructed by periodic builders.
-    pub(crate) periodic_vertex_offsets: Option<Vec<[i8; D]>>,
+    pub(crate) periodic_vertex_offsets: Option<PeriodicOffsetBuffer<D>>,
 
     /// Phantom data to maintain type parameters T and U for coordinate and vertex data types.
     /// These are needed because cells store keys to vertices, not the vertices themselves.
@@ -262,8 +298,7 @@ pub struct Cell<T, U, V, const D: usize> {
 /// serialize "data": null, but tests explicitly verify the field is omitted when None.
 impl<T, U, V, const D: usize> Serialize for Cell<T, U, V, D>
 where
-    U: DataType,
-    V: DataType,
+    V: DataSerialize,
 {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
     where
@@ -287,8 +322,7 @@ where
 /// Manual implementation of Deserialize for Cell
 impl<'de, T, U, V, const D: usize> Deserialize<'de> for Cell<T, U, V, D>
 where
-    U: DataType,
-    V: DataType,
+    V: DataDeserialize,
 {
     fn deserialize<De>(deserializer: De) -> Result<Self, De::Error>
     where
@@ -296,16 +330,14 @@ where
     {
         struct CellVisitor<T, U, V, const D: usize>
         where
-            U: DataType,
-            V: DataType,
+            V: DataDeserialize,
         {
             _phantom: PhantomData<(T, U, V)>,
         }
 
         impl<'de, T, U, V, const D: usize> Visitor<'de> for CellVisitor<T, U, V, D>
         where
-            U: DataType,
-            V: DataType,
+            V: DataDeserialize,
         {
             type Value = Cell<T, U, V, D>;
 
@@ -343,7 +375,7 @@ where
                 }
 
                 let uuid: Uuid = uuid.ok_or_else(|| de::Error::missing_field("uuid"))?;
-                crate::core::util::validate_uuid(&uuid)
+                validate_uuid(&uuid)
                     .map_err(|e| de::Error::custom(format!("invalid uuid: {e}")))?;
                 // data is Option<Option<V>>: None if field missing, Some(inner) if present
                 // flatten() converts None -> None and Some(inner) -> inner
@@ -382,11 +414,7 @@ where
 // =============================================================================
 
 // Minimal trait bounds impl block
-impl<T, U, V, const D: usize> Cell<T, U, V, D>
-where
-    U: DataType,
-    V: DataType,
-{
+impl<T, U, V, const D: usize> Cell<T, U, V, D> {
     /// Internal constructor for TDS use only.
     ///
     /// Creates a Cell with the given vertex keys and optional data.
@@ -621,15 +649,18 @@ where
 
     /// Sets periodic lattice offsets aligned with `vertices`.
     #[inline]
-    pub(crate) fn set_periodic_vertex_offsets(&mut self, offsets: Vec<[i8; D]>) {
-        assert_eq!(
-            offsets.len(),
-            self.vertices.len(),
-            "set_periodic_vertex_offsets: offsets.len() ({}) must match self.vertices.len() ({}); refusing to update self.periodic_vertex_offsets",
-            offsets.len(),
-            self.vertices.len(),
-        );
+    pub(crate) fn set_periodic_vertex_offsets(
+        &mut self,
+        offsets: impl Into<PeriodicOffsetBuffer<D>>,
+    ) -> Result<(), CellValidationError> {
+        let offsets = offsets.into();
+        let found = offsets.len();
+        let expected = self.vertices.len();
+        if found != expected {
+            return Err(CellValidationError::PeriodicOffsetLengthMismatch { expected, found });
+        }
         self.periodic_vertex_offsets = Some(offsets);
+        Ok(())
     }
 
     /// Find the facet index in `neighbor_cell` that corresponds to the shared facet.
@@ -780,12 +811,8 @@ where
     }
 }
 
-// Standard trait bounds impl block
-impl<T, U, V, const D: usize> Cell<T, U, V, D>
-where
-    U: DataType,
-    V: DataType,
-{
+// Standard read-only and validation impl block
+impl<T, U, V, const D: usize> Cell<T, U, V, D> {
     /// The function returns the number of vertices in the [Cell].
     ///
     /// # Returns
@@ -966,7 +993,7 @@ where
     pub fn vertex_uuids(
         &self,
         tds: &Tds<T, U, V, D>,
-    ) -> Result<crate::core::collections::CellVertexUuidBuffer, CellValidationError> {
+    ) -> Result<CellVertexUuidBuffer, CellValidationError> {
         self.vertices
             .iter()
             .map(|&vkey| {
@@ -1214,7 +1241,7 @@ where
 // Advanced implementation block for Cell methods
 impl<T, U, V, const D: usize> Cell<T, U, V, D>
 where
-    T: CoordinateScalar + PartialEq + PartialOrd,
+    T: CoordinateScalar,
     U: DataType,
     V: DataType,
 {
@@ -1322,7 +1349,7 @@ where
     pub fn facet_views_from_tds(
         tds: &Tds<T, U, V, D>,
         cell_key: CellKey,
-    ) -> Result<Vec<crate::core::facet::FacetView<'_, T, U, V, D>>, FacetError> {
+    ) -> Result<Vec<FacetView<'_, T, U, V, D>>, FacetError> {
         // Get the cell from the TDS using the key
         let cell = tds
             .cell(cell_key)
@@ -1338,12 +1365,8 @@ where
 
         let mut facet_views = Vec::with_capacity(vertex_count);
         for idx in 0..vertex_count {
-            let facet_index = crate::core::util::usize_to_u8(idx, vertex_count)?;
-            facet_views.push(crate::core::facet::FacetView::new(
-                tds,
-                cell_key,
-                facet_index,
-            )?);
+            let facet_index = usize_to_u8(idx, vertex_count)?;
+            facet_views.push(FacetView::new(tds, cell_key, facet_index)?);
         }
         Ok(facet_views)
     }
@@ -1441,8 +1464,8 @@ where
 
         // Sort vertices for order-independent comparison (matches Cell::PartialEq semantics)
         // Use Vertex::PartialOrd which compares coordinates
-        self_vertices.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
-        other_vertices.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+        self_vertices.sort_by(|a, b| compare_vertices_by_coordinates(a, b));
+        other_vertices.sort_by(|a, b| compare_vertices_by_coordinates(a, b));
 
         // Compare using Vertex::PartialEq (coordinate-based)
         self_vertices == other_vertices
@@ -1528,7 +1551,7 @@ where
         tds: &Tds<T, U, V, D>,
         cell_key: CellKey,
     ) -> Result<
-        impl ExactSizeIterator<Item = Result<crate::core::facet::FacetView<'_, T, U, V, D>, FacetError>>,
+        impl ExactSizeIterator<Item = Result<FacetView<'_, T, U, V, D>, FacetError>>,
         FacetError,
     > {
         // Get the cell from the TDS using the key
@@ -1546,8 +1569,8 @@ where
 
         // Return a simple range-based iterator that maps indices to FacetView creation
         Ok((0..vertex_count).map(move |idx| {
-            let facet_index = crate::core::util::usize_to_u8(idx, vertex_count)?;
-            crate::core::facet::FacetView::new(tds, cell_key, facet_index)
+            let facet_index = usize_to_u8(idx, vertex_count)?;
+            FacetView::new(tds, cell_key, facet_index)
         }))
     }
 }
@@ -1648,9 +1671,11 @@ impl<T, U, V, const D: usize> Hash for Cell<T, U, V, D> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::core::facet::FacetError;
     use crate::core::triangulation::TopologyGuarantee;
     use crate::core::vertex::vertex;
     use crate::geometry::kernel::AdaptiveKernel;
+    use crate::geometry::matrix::MAX_STACK_MATRIX_DIM;
     use crate::geometry::point::Point;
     use crate::geometry::predicates::insphere;
     use crate::geometry::util::{circumcenter, circumradius, circumradius_with_center};
@@ -1660,7 +1685,13 @@ mod tests {
         ConstructionOptions, InitialSimplexStrategy, InsertionOrderStrategy,
     };
     use approx::assert_relative_eq;
-    use std::{cmp, collections::hash_map::DefaultHasher, hash::Hasher};
+    use std::{
+        cmp,
+        collections::{HashSet, hash_map::DefaultHasher},
+        hash::Hasher,
+    };
+    #[cfg(feature = "bench")]
+    use std::{mem, time::Instant};
 
     // Type aliases for commonly used types to reduce repetition
     type TestVertex3D = Vertex<f64, (), 3>;
@@ -2422,7 +2453,7 @@ mod tests {
         }
 
         // Verify all UUIDs are unique
-        let unique_uuids: std::collections::HashSet<_> = vertex_uuids.iter().collect();
+        let unique_uuids: HashSet<_> = vertex_uuids.iter().collect();
         assert_eq!(unique_uuids.len(), vertex_uuids.len());
 
         // Verify no nil UUIDs using iterator
@@ -2473,7 +2504,7 @@ mod tests {
         }
 
         // Verify all UUIDs are unique
-        let unique_uuids: std::collections::HashSet<_> = vertex_uuids.iter().collect();
+        let unique_uuids: HashSet<_> = vertex_uuids.iter().collect();
         assert_eq!(unique_uuids.len(), vertex_uuids.len());
 
         // Verify no nil UUIDs using iterator
@@ -2512,7 +2543,7 @@ mod tests {
         }
 
         // Verify all UUIDs are unique
-        let unique_uuids: std::collections::HashSet<_> = vertex_uuids.iter().collect();
+        let unique_uuids: HashSet<_> = vertex_uuids.iter().collect();
         assert_eq!(unique_uuids.len(), vertex_uuids.len());
 
         // Verify all expected vertex data values exist (order-independent)
@@ -2597,7 +2628,7 @@ mod tests {
         }
 
         // Verify all UUIDs are unique
-        let unique_uuids: std::collections::HashSet<_> = vertex_uuids.iter().collect();
+        let unique_uuids: HashSet<_> = vertex_uuids.iter().collect();
         assert_eq!(unique_uuids.len(), vertex_uuids.len());
 
         // Verify no nil UUIDs using iterator
@@ -3183,10 +3214,7 @@ mod tests {
             );
 
             // Verify all facet vertices are unique
-            let unique_count = facet_vertex_keys
-                .iter()
-                .collect::<std::collections::HashSet<_>>()
-                .len();
+            let unique_count = facet_vertex_keys.iter().collect::<HashSet<_>>().len();
             assert_eq!(
                 unique_count,
                 facet_vertex_keys.len(),
@@ -3500,7 +3528,8 @@ mod tests {
 
         let mut cell = cell_ref.clone();
         cell.neighbors = Some(vec![Some(cell_key), None, Some(cell_key)].into());
-        cell.set_periodic_vertex_offsets(vec![[1, 0], [2, 0], [3, 0]]);
+        cell.set_periodic_vertex_offsets(vec![[1, 0], [2, 0], [3, 0]])
+            .unwrap();
 
         let before_vertices = cell.vertices().to_vec();
         let before_neighbors = cell.neighbors().unwrap().to_vec();
@@ -3538,8 +3567,6 @@ mod tests {
 
     #[test]
     fn cell_facet_view_helpers_reject_excessive_vertex_count() {
-        use crate::core::facet::FacetError;
-
         let vertices = vec![
             vertex!([0.0, 0.0, 0.0]),
             vertex!([1.0, 0.0, 0.0]),
@@ -3628,8 +3655,6 @@ mod tests {
 
     #[test]
     fn cell_validation_error_from_stack_matrix_dispatch_error_maps_to_coordinate_conversion() {
-        use crate::geometry::matrix::{MAX_STACK_MATRIX_DIM, StackMatrixDispatchError};
-
         let err = StackMatrixDispatchError::UnsupportedDim {
             k: MAX_STACK_MATRIX_DIM + 1,
             max: MAX_STACK_MATRIX_DIM,
@@ -3745,9 +3770,6 @@ mod tests {
     fn test_vertex_uuid_iter_by_value_vs_by_reference_analysis() {
         // Comprehensive analysis of whether vertex_uuid_iter should return
         // Uuid by value (current) vs &Uuid by reference (proposed)
-        use std::{collections::HashSet, mem, time::Instant};
-        use uuid::Uuid;
-
         println!("\n=== UUID Performance Analysis: By Value vs By Reference ===");
 
         // Memory layout analysis

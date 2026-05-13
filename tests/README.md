@@ -135,11 +135,11 @@ Property-based tests for `DelaunayTriangulation` invariants (all Delaunay-specif
   - Incremental insertion maintains validity after each insertion
   - Duplicate coordinate rejection (geometric duplicate detection at insertion time)
 - **Delaunay Property (Fast O(N) via Flip Predicates)**:
-  - Empty circumsphere condition - No vertex lies strictly inside any cell's circumsphere (2D-5D) ✅ **PASSING**
-  - Insertion-order robustness - Levels 1–3 validity across insertion orders (2D-5D)
-  - Duplicate cloud integration - Full pipeline with messy real-world inputs (2D-5D: duplicates + near-duplicates) ✅ **PASSING**
+  - Empty circumsphere condition - No vertex lies strictly inside any cell's circumsphere (2D-3D active; 4D-5D slow variants retained under `--ignored`)
+  - Insertion-order robustness - Levels 1–3 validity across insertion orders (2D-4D active; 5D retained under `--ignored`)
+  - Duplicate cloud integration - Full pipeline with messy real-world inputs (2D-3D active; 4D-5D slow variants retained under `--ignored`)
 
-**Status:** ✅ All Delaunay property tests are enabled and passing (as of v0.7.0+)
+**Status:** ✅ Fast Delaunay property tests are enabled and passing in the default suite; slow high-dimensional variants are available with `--ignored`.
 
 **Implementation:** Bistellar flips (k=2 facets, k=3 ridges) with automatic Delaunay repair:
 
@@ -148,12 +148,14 @@ Property-based tests for `DelaunayTriangulation` invariants (all Delaunay-specif
 - Inverse edge/triangle queues for 4D/5D repair
 - See `src/core/algorithms/flips.rs` for implementation
 
-**Remaining ignored tests** (separate from Issue #120):
+**Remaining ignored high-dimensional variants**:
 
-- `prop_incremental_insertion_maintains_validity_4d/5d` - RidgeLinkNotManifold topology issues (see new plan)
-- `prop_duplicate_coordinates_rejected_3d/4d/5d` - Slow tests (>60s), ignored for performance
+- `prop_incremental_insertion_maintains_validity_5d` - Slow (>60s even in release mode)
+- `prop_duplicate_coordinates_rejected_4d/5d` - Slow (>60s), ignored for performance
+- `prop_empty_circumsphere_4d/5d` - Slow (>60s), ignored for performance
+- `prop_cloud_with_duplicates_is_delaunay_4d/5d` - Slow (>60s), ignored for performance
 
-**Dimensions Tested:** 2D-5D
+**Dimensions Tested:** 2D-5D, with the slow 4D/5D variants run explicitly under `--ignored`.
 
 **Run with:** `cargo test --test proptest_delaunay_triangulation` or included in `just test`
 
@@ -372,6 +374,11 @@ or one of the active large-scale helpers:
 - `just debug-large-scale-4d [n]` — issue #340, default `n=3000`
 - `just debug-large-scale-3d [n]` — issue #341, default `n=10000`
 - `just debug-large-scale-5d [n]` — issue #342, default `n=1000`
+
+The default 3D helper is the current 10,000-vertex release-mode acceptance run:
+it should insert all vertices with zero skips, run final repair, and pass
+`validation_report` for Levels 1–4. Expect timings around 100 seconds on
+maintainer Apple M4 Max hardware, with normal hardware/load variation.
 
 **Note:** Use `--release` for runs above roughly 30 vertices; debug-mode
 overhead makes large 3D/4D cases look hung even when the algorithm is making

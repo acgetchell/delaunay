@@ -184,6 +184,18 @@ cargo bench --profile perf --bench large_scale_performance -- "iteration/vertice
 **Note:** `large_scale_performance.rs` measures iteration speed, memory usage,
 query performance, and validation across 2D-5D.
 
+For the 3D correctness acceptance path at 10,000 vertices, use the release-mode
+debug harness rather than Criterion:
+
+```bash
+just debug-large-scale-3d 10000 1
+```
+
+That path should insert all vertices with zero skips, run a clean final repair,
+and pass `validation_report` for Levels 1–4. On maintainer Apple M4 Max hardware
+it sits around the 100-second mark; use the harness output for exact local
+timing.
+
 ### Profiling Suite (`profiling_suite.rs`) (comprehensive)
 
 ```bash

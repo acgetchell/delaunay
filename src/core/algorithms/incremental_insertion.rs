@@ -26,6 +26,7 @@
 
 #![forbid(unsafe_code)]
 
+use crate::core::algorithms::flips::DelaunayRepairError;
 use crate::core::algorithms::locate::{
     ConflictError, LocateError, LocateResult, extract_cavity_boundary,
 };
@@ -34,9 +35,10 @@ use crate::core::collections::{
     CellKeyBuffer, FastHashMap, FastHashSet, FastHasher, MAX_PRACTICAL_DIMENSION_SIZE, SmallBuffer,
     VertexKeyBuffer,
 };
-use crate::core::facet::FacetHandle;
+use crate::core::facet::{FacetError, FacetHandle};
 use crate::core::tds::{
-    CellKey, EntityKind, GeometricError, Tds, TdsConstructionError, TdsError, VertexKey,
+    CellKey, DelaunayValidationErrorKind, EntityKind, GeometricError, NeighborValidationError, Tds,
+    TdsConstructionError, TdsError, TdsErrorKind, TriangulationValidationErrorKind, VertexKey,
 };
 use crate::core::traits::boundary_analysis::BoundaryAnalysis;
 use crate::core::traits::data_type::DataType;
@@ -48,6 +50,8 @@ use crate::geometry::point::Point;
 use crate::geometry::predicates::Orientation;
 use crate::geometry::robust_predicates::robust_orientation;
 use crate::geometry::traits::coordinate::{CoordinateConversionError, CoordinateScalar};
+use crate::triangulation::delaunay::DelaunayTriangulationValidationError;
+use std::fmt;
 use std::hash::{Hash, Hasher};
 
 pub use crate::core::operations::{InsertionOutcome, InsertionResult, InsertionStatistics};
@@ -89,8 +93,8 @@ pub enum HullExtensionReason {
     },
 }
 
-impl std::fmt::Display for HullExtensionReason {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+impl fmt::Display for HullExtensionReason {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::NoVisibleFacets => f.write_str(
                 "No visible boundary facets found for exterior vertex (may be coplanar with hull surface)",
@@ -133,10 +137,11 @@ pub enum TdsValidationFailure {
     },
 
     /// Neighbor relationships are invalid.
-    #[error("invalid neighbor relationships: {message}")]
+    #[error("invalid neighbor relationships: {reason}")]
     InvalidNeighbors {
         /// Neighbor validation failure detail.
-        message: String,
+        #[source]
+        reason: NeighborValidationError,
     },
 
     /// Coherent orientation was violated between adjacent cells.
@@ -266,10 +271,11 @@ pub enum TdsValidationFailure {
     },
 
     /// Facet validation failed.
-    #[error("facet validation failed: {message}")]
+    #[error("facet validation failed: {source}")]
     Facet {
-        /// Facet failure detail.
-        message: String,
+        /// Structured facet failure.
+        #[source]
+        source: FacetError,
     },
 
     /// A cell contains duplicate coordinates.
@@ -289,7 +295,7 @@ impl From<TdsError> for TdsValidationFailure {
                 Self::InvalidVertex { vertex_id, source }
             }
             TdsError::InvalidCell { cell_id, source } => Self::InvalidCell { cell_id, source },
-            TdsError::InvalidNeighbors { message } => Self::InvalidNeighbors { message },
+            TdsError::InvalidNeighbors { reason } => Self::InvalidNeighbors { reason },
             TdsError::OrientationViolation {
                 cell1_key,
                 cell1_uuid,
@@ -354,9 +360,7 @@ impl From<TdsError> for TdsValidationFailure {
                 Self::InconsistentDataStructure { message }
             }
             TdsError::Geometric(source) => Self::Geometric { source },
-            TdsError::FacetError(source) => Self::Facet {
-                message: source.to_string(),
-            },
+            TdsError::FacetError(source) => Self::Facet { source },
             TdsError::DuplicateCoordinatesInCell { cell_id, message } => {
                 Self::DuplicateCoordinatesInCell { cell_id, message }
             }
@@ -542,6 +546,326 @@ impl From<TriangulationConstructionError> for InitialSimplexConstructionError {
     }
 }
 
+/// Flip-repair failure category used by compact error summaries.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum DelaunayRepairErrorKind {
+    /// Repair exhausted its flip budget.
+    NonConvergent,
+    /// Repair completed but left a Delaunay violation.
+    PostconditionFailed,
+    /// Repair verification failed.
+    VerificationFailed,
+    /// Orientation canonicalization failed after repair.
+    OrientationCanonicalizationFailed,
+    /// Repair was not admissible under the topology guarantee.
+    InvalidTopology,
+    /// Heuristic topology rebuild failed during advanced repair.
+    HeuristicRebuildFailed,
+    /// A lower-level flip operation failed.
+    Flip,
+}
+
+impl From<&DelaunayRepairError> for DelaunayRepairErrorKind {
+    fn from(source: &DelaunayRepairError) -> Self {
+        match source {
+            DelaunayRepairError::NonConvergent { .. } => Self::NonConvergent,
+            DelaunayRepairError::PostconditionFailed { .. } => Self::PostconditionFailed,
+            DelaunayRepairError::VerificationFailed { .. } => Self::VerificationFailed,
+            DelaunayRepairError::OrientationCanonicalizationFailed { .. } => {
+                Self::OrientationCanonicalizationFailed
+            }
+            DelaunayRepairError::InvalidTopology { .. } => Self::InvalidTopology,
+            DelaunayRepairError::HeuristicRebuildFailed { .. } => Self::HeuristicRebuildFailed,
+            DelaunayRepairError::Flip(_) => Self::Flip,
+        }
+    }
+}
+
+/// Compact summary of a [`DelaunayRepairError`] for small by-value error payloads.
+///
+/// The conversion preserves the top-level [`DelaunayRepairErrorKind`] and the
+/// rendered diagnostic text. It intentionally drops bulky typed payloads, source
+/// chains, and repair diagnostics; keep the original [`DelaunayRepairError`]
+/// when callers need to inspect that data.
+///
+/// # Examples
+///
+/// ```rust
+/// use delaunay::prelude::triangulation::repair::{
+///     DelaunayRepairError, DelaunayRepairErrorKind, DelaunayRepairErrorSummary,
+/// };
+///
+/// let source = DelaunayRepairError::PostconditionFailed {
+///     message: "remaining non-Delaunay facet".to_string(),
+/// };
+/// let summary = DelaunayRepairErrorSummary::from(&source);
+///
+/// assert_eq!(summary.kind, DelaunayRepairErrorKind::PostconditionFailed);
+/// assert!(summary.message.contains("remaining non-Delaunay facet"));
+/// ```
+#[must_use]
+#[derive(Debug, Clone, thiserror::Error)]
+#[error("{message}")]
+pub struct DelaunayRepairErrorSummary {
+    /// Structured repair failure category.
+    pub kind: DelaunayRepairErrorKind,
+    /// Full diagnostic text from the original repair error.
+    pub message: String,
+}
+
+impl PartialEq for DelaunayRepairErrorSummary {
+    fn eq(&self, other: &Self) -> bool {
+        self.kind == other.kind
+    }
+}
+
+impl Eq for DelaunayRepairErrorSummary {}
+
+impl From<&DelaunayRepairError> for DelaunayRepairErrorSummary {
+    fn from(source: &DelaunayRepairError) -> Self {
+        Self {
+            kind: source.into(),
+            message: source.to_string(),
+        }
+    }
+}
+
+impl From<DelaunayRepairError> for DelaunayRepairErrorSummary {
+    fn from(source: DelaunayRepairError) -> Self {
+        Self::from(&source)
+    }
+}
+
+/// Insertion failure category used by compact error summaries.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum InsertionErrorKind {
+    /// Conflict-region search failed.
+    ConflictRegion,
+    /// Point location failed.
+    Location,
+    /// Cavity filling failed.
+    CavityFilling,
+    /// Neighbor wiring failed.
+    NeighborWiring,
+    /// Non-manifold topology was detected.
+    NonManifoldTopology,
+    /// Hull extension failed.
+    HullExtension,
+    /// Delaunay validation failed after insertion.
+    DelaunayValidationFailed,
+    /// Flip-based Delaunay repair failed.
+    DelaunayRepairFailed,
+    /// Duplicate coordinates were supplied.
+    DuplicateCoordinates,
+    /// Duplicate UUID was supplied.
+    DuplicateUuid,
+    /// TDS topology validation failed.
+    TopologyValidation,
+    /// Triangulation-layer topology validation failed.
+    TopologyValidationFailed,
+}
+
+/// Nested discriminant preserved by an [`InsertionErrorSummary`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum InsertionErrorSourceKind {
+    /// TDS-layer topology validation failed.
+    Tds(TdsErrorKind),
+    /// Triangulation-layer topology validation failed.
+    Triangulation(TriangulationValidationErrorKind),
+    /// Level 4 Delaunay validation failed.
+    Delaunay(DelaunayValidationErrorKind),
+    /// Flip repair failed.
+    DelaunayRepair(DelaunayRepairErrorKind),
+}
+
+/// Compact summary of an [`InsertionError`] for small by-value error payloads.
+///
+/// The conversion preserves the top-level [`InsertionErrorKind`], an optional
+/// nested [`InsertionErrorSourceKind`] for wrapped validation or repair errors,
+/// the original retryability decision, and the rendered diagnostic text. It
+/// intentionally drops bulky typed payloads and source chains; keep the original
+/// [`InsertionError`] when callers need the full structured context.
+///
+/// Equality compares the structured kind, nested source kind, and retryability
+/// flag while ignoring [`Self::message`], so summary comparisons remain stable
+/// across display-text changes.
+///
+/// # Examples
+///
+/// ```rust
+/// use delaunay::prelude::triangulation::insertion::{
+///     DelaunayRepairErrorKind, DelaunayRepairFailureContext, HullExtensionReason,
+///     InsertionError, InsertionErrorKind, InsertionErrorSourceKind,
+///     InsertionErrorSummary,
+/// };
+/// use delaunay::prelude::triangulation::repair::DelaunayRepairError;
+///
+/// let source = InsertionError::DelaunayRepairFailed {
+///     source: Box::new(DelaunayRepairError::PostconditionFailed {
+///         message: "remaining non-Delaunay facet".to_string(),
+///     }),
+///     context: DelaunayRepairFailureContext::LocalRepair,
+/// };
+/// let summary = InsertionErrorSummary::from(source);
+///
+/// assert_eq!(summary.kind, InsertionErrorKind::DelaunayRepairFailed);
+/// assert_eq!(
+///     summary.source_kind,
+///     Some(InsertionErrorSourceKind::DelaunayRepair(
+///         DelaunayRepairErrorKind::PostconditionFailed,
+///     )),
+/// );
+/// assert!(!summary.retryable);
+///
+/// let retryable = InsertionErrorSummary::from(InsertionError::HullExtension {
+///     reason: HullExtensionReason::NoVisibleFacets,
+/// });
+/// assert!(retryable.retryable);
+/// ```
+#[must_use]
+#[derive(Debug, Clone, thiserror::Error)]
+#[error("{message}")]
+pub struct InsertionErrorSummary {
+    /// Structured insertion failure category.
+    pub kind: InsertionErrorKind,
+    /// Nested structured source kind when the insertion error wraps another layer.
+    pub source_kind: Option<InsertionErrorSourceKind>,
+    /// Whether the original insertion error was retryable via perturbation.
+    pub retryable: bool,
+    /// Full diagnostic text from the original insertion error.
+    pub message: String,
+}
+
+impl PartialEq for InsertionErrorSummary {
+    fn eq(&self, other: &Self) -> bool {
+        self.kind == other.kind
+            && self.source_kind == other.source_kind
+            && self.retryable == other.retryable
+    }
+}
+
+impl Eq for InsertionErrorSummary {}
+
+impl InsertionErrorSummary {
+    /// Returns true when the original insertion failure was retryable via perturbation.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use delaunay::prelude::tds::TriangulationValidationErrorKind;
+    /// use delaunay::prelude::triangulation::insertion::{
+    ///     InsertionErrorKind, InsertionErrorSourceKind, InsertionErrorSummary,
+    /// };
+    ///
+    /// let retryable = InsertionErrorSummary {
+    ///     kind: InsertionErrorKind::TopologyValidationFailed,
+    ///     source_kind: Some(InsertionErrorSourceKind::Triangulation(
+    ///         TriangulationValidationErrorKind::ManifoldFacetMultiplicity,
+    ///     )),
+    ///     retryable: true,
+    ///     message: "facet shared by too many cells".to_string(),
+    /// };
+    /// assert!(retryable.is_retryable());
+    ///
+    /// let structural = InsertionErrorSummary {
+    ///     kind: InsertionErrorKind::TopologyValidationFailed,
+    ///     source_kind: Some(InsertionErrorSourceKind::Triangulation(
+    ///         TriangulationValidationErrorKind::Disconnected,
+    ///     )),
+    ///     retryable: false,
+    ///     message: "cell graph disconnected".to_string(),
+    /// };
+    /// assert!(!structural.is_retryable());
+    /// ```
+    #[must_use]
+    pub const fn is_retryable(&self) -> bool {
+        self.retryable
+    }
+}
+
+impl From<InsertionError> for InsertionErrorSummary {
+    fn from(source: InsertionError) -> Self {
+        let retryable = source.is_retryable();
+        let kind = match &source {
+            InsertionError::ConflictRegion(_) => InsertionErrorKind::ConflictRegion,
+            InsertionError::Location(_) => InsertionErrorKind::Location,
+            InsertionError::CavityFilling { .. } => InsertionErrorKind::CavityFilling,
+            InsertionError::NeighborWiring { .. } => InsertionErrorKind::NeighborWiring,
+            InsertionError::NonManifoldTopology { .. } => InsertionErrorKind::NonManifoldTopology,
+            InsertionError::HullExtension { .. } => InsertionErrorKind::HullExtension,
+            InsertionError::DelaunayValidationFailed { .. } => {
+                InsertionErrorKind::DelaunayValidationFailed
+            }
+            InsertionError::DelaunayRepairFailed { .. } => InsertionErrorKind::DelaunayRepairFailed,
+            InsertionError::DuplicateCoordinates { .. } => InsertionErrorKind::DuplicateCoordinates,
+            InsertionError::DuplicateUuid { .. } => InsertionErrorKind::DuplicateUuid,
+            InsertionError::TopologyValidation(_) => InsertionErrorKind::TopologyValidation,
+            InsertionError::TopologyValidationFailed { .. } => {
+                InsertionErrorKind::TopologyValidationFailed
+            }
+        };
+        let source_kind = match &source {
+            InsertionError::DelaunayValidationFailed { source } => {
+                Some(InsertionErrorSourceKind::Delaunay(source.into()))
+            }
+            InsertionError::DelaunayRepairFailed { source, .. } => Some(
+                InsertionErrorSourceKind::DelaunayRepair(source.as_ref().into()),
+            ),
+            InsertionError::TopologyValidation(source) => {
+                Some(InsertionErrorSourceKind::Tds(source.into()))
+            }
+            InsertionError::TopologyValidationFailed { source, .. } => {
+                Some(InsertionErrorSourceKind::Triangulation(source.into()))
+            }
+            _ => None,
+        };
+        Self {
+            kind,
+            source_kind,
+            retryable,
+            message: source.to_string(),
+        }
+    }
+}
+
+/// Insertion-stage context for flip-based Delaunay repair failures.
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum DelaunayRepairFailureContext {
+    /// Local repair failed and the robust-kernel fallback also failed.
+    LocalRepairRobustFallback {
+        /// Original local repair failure that triggered the robust fallback.
+        initial: DelaunayRepairErrorSummary,
+    },
+    /// Local repair failed with a non-recoverable repair error.
+    LocalRepairNonRecoverable,
+    /// Repair failed while canonicalizing orientation after insertion.
+    OrientationCanonicalization,
+    /// General local repair path.
+    LocalRepair,
+    /// Post-insertion repair path.
+    PostInsertionRepair,
+}
+
+impl fmt::Display for DelaunayRepairFailureContext {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::LocalRepairRobustFallback { initial } => {
+                f.write_str("local repair failed (")?;
+                initial.fmt(f)?;
+                f.write_str("); robust fallback also failed")
+            }
+            Self::LocalRepairNonRecoverable => f.write_str("local repair failed (non-recoverable)"),
+            Self::OrientationCanonicalization => f.write_str("orientation canonicalization"),
+            Self::LocalRepair => f.write_str("local repair"),
+            Self::PostInsertionRepair => f.write_str("post-insertion repair"),
+        }
+    }
+}
+
 /// Structured reason why neighbor repair failed after cavity repair.
 ///
 /// # Examples
@@ -594,7 +918,7 @@ pub enum NeighborRebuildError {
     Unexpected {
         /// Insertion-layer error that did not map to a neighbor repair category.
         #[source]
-        source: Box<InsertionError>,
+        source: InsertionErrorSummary,
     },
 }
 
@@ -760,8 +1084,8 @@ pub enum CavityRepairStage {
     FanTriangulation,
 }
 
-impl std::fmt::Display for CavityRepairStage {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+impl fmt::Display for CavityRepairStage {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::PrimaryInsertion => f.write_str("primary insertion"),
             Self::FanTriangulation => f.write_str("fan triangulation"),
@@ -966,22 +1290,22 @@ pub enum InsertionError {
     DelaunayValidationFailed {
         /// The structured Level 4 validation error.
         #[source]
-        source: Box<crate::triangulation::delaunay::DelaunayTriangulationValidationError>,
+        source: DelaunayTriangulationValidationError,
     },
 
     /// Flip-based Delaunay repair failed.
     ///
     /// This variant is used when a Delaunay repair pass (local or fallback)
     /// cannot converge or otherwise fails. It preserves the structured
-    /// [`DelaunayRepairError`](crate::core::algorithms::flips::DelaunayRepairError)
+    /// [`DelaunayRepairError`]
     /// rather than collapsing it into a string.
     #[error("Delaunay repair failed ({context}): {source}")]
     DelaunayRepairFailed {
         /// The underlying repair error.
         #[source]
-        source: Box<crate::core::algorithms::flips::DelaunayRepairError>,
+        source: Box<DelaunayRepairError>,
         /// Operational context describing the repair path that failed.
-        context: String,
+        context: DelaunayRepairFailureContext,
     },
 
     /// Attempted to insert a vertex with coordinates that already exist.
@@ -1018,7 +1342,7 @@ pub enum InsertionError {
 
         /// The underlying Level 3 validation error.
         #[source]
-        source: Box<TriangulationValidationError>,
+        source: TriangulationValidationError,
     },
 }
 
@@ -1068,7 +1392,7 @@ impl From<InsertionError> for NeighborRebuildError {
                 reason: source.into(),
             },
             other => Self::Unexpected {
-                source: Box::new(other),
+                source: other.into(),
             },
         }
     }
@@ -1110,7 +1434,7 @@ impl InsertionError {
     /// assert!(hull.is_retryable());
     /// ```
     #[must_use]
-    pub fn is_retryable(&self) -> bool {
+    pub const fn is_retryable(&self) -> bool {
         match self {
             // Non-manifold topology detected during wiring is retryable (geometry degeneracy).
             Self::NonManifoldTopology { .. } => true,
@@ -1215,9 +1539,8 @@ impl InsertionError {
                 NeighborRebuildError::TopologyValidation { reason } => {
                     Self::is_tds_validation_failure_retryable(reason)
                 }
-                NeighborRebuildError::Wiring { .. } | NeighborRebuildError::Unexpected { .. } => {
-                    false
-                }
+                NeighborRebuildError::Unexpected { source } => source.is_retryable(),
+                NeighborRebuildError::Wiring { .. } => false,
             },
             CavityFillingError::MissingBoundaryCell { .. }
             | CavityFillingError::MissingInsertedVertex { .. }
@@ -1358,7 +1681,7 @@ where
                     }
                 }
                 facet_vkeys.sort_unstable();
-                let facet_hash = compute_facet_hash(&facet_vkeys);
+                let facet_hash = facet_hash_from_sorted_vertices(&facet_vkeys);
                 seen_facets
                     .entry(facet_hash)
                     .or_default()
@@ -1422,7 +1745,7 @@ where
                         }
                     }
                     ridge_vertices.sort_unstable();
-                    let ridge_hash = compute_facet_hash(&ridge_vertices);
+                    let ridge_hash = facet_hash_from_sorted_vertices(&ridge_vertices);
                     *ridge_counts.entry(ridge_hash).or_insert(0) += 1;
                     ridge_vertices_map
                         .entry(ridge_hash)
@@ -1680,7 +2003,7 @@ where
             }
 
             facet_vkeys.sort_unstable();
-            let facet_key = compute_facet_hash(&facet_vkeys);
+            let facet_key = facet_hash_from_sorted_vertices(&facet_vkeys);
 
             let facet_idx_u8 =
                 u8::try_from(facet_idx).map_err(|_| NeighborWiringError::FacetIndexOverflow {
@@ -1721,7 +2044,7 @@ where
             }
         }
         facet_vkeys.sort_unstable();
-        let facet_key = compute_facet_hash(&facet_vkeys);
+        let facet_key = facet_hash_from_sorted_vertices(&facet_vkeys);
 
         let Some(incidents) = facet_map.get_mut(&facet_key) else {
             return Err(NeighborWiringError::ExternalFacetNotFound {
@@ -2021,7 +2344,7 @@ where
             }
         }
         facet_vkeys.sort_unstable();
-        boundary_hashes.insert(compute_facet_hash(&facet_vkeys));
+        boundary_hashes.insert(facet_hash_from_sorted_vertices(&facet_vkeys));
     }
 
     // Candidate external cells are those reachable via neighbor pointers from the internal set.
@@ -2059,7 +2382,7 @@ where
                 }
             }
             facet_vkeys.sort_unstable();
-            let facet_hash = compute_facet_hash(&facet_vkeys);
+            let facet_hash = facet_hash_from_sorted_vertices(&facet_vkeys);
 
             if !boundary_hashes.contains(&facet_hash) {
                 continue;
@@ -2103,11 +2426,16 @@ where
     Ok(())
 }
 
-/// Compute a hash for a facet from sorted vertex keys.
+/// Hash a facet from sorted vertex keys.
 ///
 /// Uses [`FastHasher`] for deterministic hashing consistent with other
 /// internal collections ([`FastHashMap`], [`FastHashSet`]).
-fn compute_facet_hash(sorted_vkeys: &[VertexKey]) -> u64 {
+fn facet_hash_from_sorted_vertices(sorted_vkeys: &[VertexKey]) -> u64 {
+    debug_assert!(
+        sorted_vkeys.windows(2).all(|pair| pair[0] <= pair[1]),
+        "facet_hash_from_sorted_vertices: input must be sorted"
+    );
+
     let mut hasher = FastHasher::default();
     for &vkey in sorted_vkeys {
         vkey.hash(&mut hasher);
@@ -2129,7 +2457,7 @@ where
         }
     }
     facet_vkeys.sort_unstable();
-    compute_facet_hash(&facet_vkeys)
+    facet_hash_from_sorted_vertices(&facet_vkeys)
 }
 
 /// Return whether `neighbor_key` is the cell incident across `cell`'s `facet_idx`.
@@ -2219,19 +2547,10 @@ where
 ///     })
 ///     .expect("test triangulation should contain adjacent cells");
 ///
-/// let mut neighbors: Vec<_> = tds
-///     .cell(cell_key)
-///     .expect("cell key came from the TDS")
-///     .neighbors()
-///     .expect("neighbor slot exists")
-///     .iter()
-///     .copied()
-///     .collect();
-/// neighbors[facet_idx] = None;
-/// tds.set_neighbors_by_key(cell_key, &neighbors)?;
+/// tds.clear_all_neighbors();
 ///
 /// let repaired = repair_neighbor_pointers_local(&mut tds, &[cell_key], Some(&[neighbor_key]))?;
-/// assert_eq!(repaired, 1);
+/// assert!(repaired >= 2);
 /// assert_eq!(
 ///     tds.cell(cell_key)
 ///         .and_then(|cell| cell.neighbors())
@@ -2448,6 +2767,36 @@ where
 /// # Errors
 /// Returns [`InsertionError::NonManifoldTopology`] if any facet is shared by more than
 /// 2 cells, since neighbor pointers are not well-defined in that case.
+///
+/// # Examples
+///
+/// ```rust
+/// use delaunay::prelude::triangulation::construction::{
+///     DelaunayTriangulation, DelaunayTriangulationConstructionError, vertex,
+/// };
+/// use delaunay::prelude::triangulation::insertion::{InsertionError, repair_neighbor_pointers};
+///
+/// # #[derive(Debug, thiserror::Error)]
+/// # enum ExampleError {
+/// #     #[error(transparent)]
+/// #     Construction(#[from] DelaunayTriangulationConstructionError),
+/// #     #[error(transparent)]
+/// #     Insertion(#[from] InsertionError),
+/// # }
+/// # fn main() -> Result<(), ExampleError> {
+/// let vertices = vec![
+///     vertex!([0.0, 0.0]),
+///     vertex!([1.0, 0.0]),
+///     vertex!([0.0, 1.0]),
+/// ];
+/// let dt: DelaunayTriangulation<_, (), (), 2> = DelaunayTriangulation::new(&vertices)?;
+/// let mut tds = dt.tds().clone();
+///
+/// let _changed_slots = repair_neighbor_pointers(&mut tds)?;
+/// assert!(tds.is_valid().is_ok());
+/// # Ok(())
+/// # }
+/// ```
 #[expect(
     clippy::too_many_lines,
     reason = "Neighbor rebuild keeps facet indexing + wiring + application cohesive; prefer correctness and debuggability"
@@ -2503,7 +2852,7 @@ where
                 }
             }
             facet_vkeys.sort_unstable();
-            let facet_hash = compute_facet_hash(&facet_vkeys);
+            let facet_hash = facet_hash_from_sorted_vertices(&facet_vkeys);
 
             let facet_idx_u8 =
                 u8::try_from(facet_idx).map_err(|_| NeighborWiringError::FacetIndexOverflow {
@@ -3358,7 +3707,7 @@ where
                     }
                 }
                 ridge_vertices.sort_unstable();
-                let ridge_hash = compute_facet_hash(&ridge_vertices);
+                let ridge_hash = facet_hash_from_sorted_vertices(&ridge_vertices);
                 ridge_to_facets
                     .entry(ridge_hash)
                     .or_default()
@@ -3435,7 +3784,7 @@ where
                         }
                     }
                     subface_vertices.sort_unstable();
-                    let subface_hash = compute_facet_hash(&subface_vertices);
+                    let subface_hash = facet_hash_from_sorted_vertices(&subface_vertices);
                     face_to_ridges.entry(subface_hash).or_default().push(idx);
                     subface_vertices_map
                         .entry(subface_hash)
@@ -3664,9 +4013,13 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::core::algorithms::flips::{
+        DelaunayRepairDiagnostics, DelaunayRepairVerificationContext, FlipError, RepairQueueOrder,
+    };
     use crate::core::algorithms::locate::InternalInconsistencySite;
     use crate::core::collections::CellKeyBuffer;
     use crate::core::tds::GeometricError;
+    use crate::core::triangulation::TopologyGuarantee;
     use crate::geometry::kernel::FastKernel;
     use crate::geometry::traits::coordinate::{Coordinate, CoordinateConversionError};
     use crate::topology::characteristics::euler::TopologyClassification;
@@ -4259,7 +4612,7 @@ mod tests {
     }
 
     #[test]
-    fn test_neighbor_rebuild_error_unexpected_preserves_source_error() {
+    fn test_neighbor_rebuild_error_unexpected_preserves_source_summary() {
         let source = InsertionError::DuplicateCoordinates {
             coordinates: "[0.0, 0.0]".to_string(),
         };
@@ -4267,11 +4620,184 @@ mod tests {
         let err = NeighborRebuildError::from(source.clone());
 
         match err {
-            NeighborRebuildError::Unexpected { source: boxed } => {
-                assert_eq!(*boxed, source);
+            NeighborRebuildError::Unexpected { source: summary } => {
+                assert_eq!(summary.kind, InsertionErrorKind::DuplicateCoordinates);
+                assert_eq!(summary.source_kind, None);
+                assert_eq!(summary.message, source.to_string());
             }
             other => panic!("expected unexpected neighbor repair error, got {other:?}"),
         }
+    }
+
+    fn sample_delaunay_repair_diagnostics_for_summary() -> DelaunayRepairDiagnostics {
+        DelaunayRepairDiagnostics {
+            facets_checked: 7,
+            flips_performed: 3,
+            max_queue_len: 5,
+            ambiguous_predicates: 2,
+            ambiguous_predicate_samples: vec![11, 13],
+            predicate_failures: 1,
+            cycle_detections: 4,
+            cycle_signature_samples: vec![17, 19],
+            attempt: 2,
+            queue_order: RepairQueueOrder::Lifo,
+        }
+    }
+
+    #[test]
+    fn test_delaunay_repair_error_summary_covers_all_kinds() {
+        let cases = [
+            (
+                DelaunayRepairError::NonConvergent {
+                    max_flips: 42,
+                    diagnostics: Box::new(sample_delaunay_repair_diagnostics_for_summary()),
+                },
+                DelaunayRepairErrorKind::NonConvergent,
+            ),
+            (
+                DelaunayRepairError::PostconditionFailed {
+                    message: "remaining non-Delaunay facet".to_string(),
+                },
+                DelaunayRepairErrorKind::PostconditionFailed,
+            ),
+            (
+                DelaunayRepairError::VerificationFailed {
+                    context: DelaunayRepairVerificationContext::StrictValidation,
+                    source: Box::new(FlipError::DegenerateCell),
+                },
+                DelaunayRepairErrorKind::VerificationFailed,
+            ),
+            (
+                DelaunayRepairError::OrientationCanonicalizationFailed {
+                    message: "orientation pass failed".to_string(),
+                },
+                DelaunayRepairErrorKind::OrientationCanonicalizationFailed,
+            ),
+            (
+                DelaunayRepairError::InvalidTopology {
+                    required: TopologyGuarantee::PLManifold,
+                    found: TopologyGuarantee::Pseudomanifold,
+                    message: "repair requires PL topology",
+                },
+                DelaunayRepairErrorKind::InvalidTopology,
+            ),
+            (
+                DelaunayRepairError::HeuristicRebuildFailed {
+                    message: "fallback rebuild failed".to_string(),
+                },
+                DelaunayRepairErrorKind::HeuristicRebuildFailed,
+            ),
+            (
+                DelaunayRepairError::Flip(FlipError::DegenerateCell),
+                DelaunayRepairErrorKind::Flip,
+            ),
+        ];
+
+        for (source, expected_kind) in cases {
+            let summary = DelaunayRepairErrorSummary::from(&source);
+            assert_eq!(summary.kind, expected_kind);
+            assert_eq!(summary.message, source.to_string());
+        }
+    }
+
+    #[test]
+    fn test_insertion_error_summary_preserves_nested_source_kind() {
+        let cases = [
+            (
+                InsertionError::TopologyValidation(TdsError::InconsistentDataStructure {
+                    message: "dangling neighbor".to_string(),
+                }),
+                InsertionErrorKind::TopologyValidation,
+                Some(InsertionErrorSourceKind::Tds(
+                    TdsErrorKind::InconsistentDataStructure,
+                )),
+            ),
+            (
+                InsertionError::TopologyValidationFailed {
+                    message: "post-insertion topology validation failed".to_string(),
+                    source: TriangulationValidationError::Disconnected { cell_count: 2 },
+                },
+                InsertionErrorKind::TopologyValidationFailed,
+                Some(InsertionErrorSourceKind::Triangulation(
+                    TriangulationValidationErrorKind::Disconnected,
+                )),
+            ),
+            (
+                InsertionError::DelaunayValidationFailed {
+                    source: DelaunayTriangulationValidationError::VerificationFailed {
+                        message: "non-Delaunay facet".to_string(),
+                    },
+                },
+                InsertionErrorKind::DelaunayValidationFailed,
+                Some(InsertionErrorSourceKind::Delaunay(
+                    DelaunayValidationErrorKind::VerificationFailed,
+                )),
+            ),
+            (
+                InsertionError::DelaunayRepairFailed {
+                    source: Box::new(DelaunayRepairError::HeuristicRebuildFailed {
+                        message: "rebuild could not restore topology".to_string(),
+                    }),
+                    context: DelaunayRepairFailureContext::LocalRepair,
+                },
+                InsertionErrorKind::DelaunayRepairFailed,
+                Some(InsertionErrorSourceKind::DelaunayRepair(
+                    DelaunayRepairErrorKind::HeuristicRebuildFailed,
+                )),
+            ),
+        ];
+
+        for (source, expected_kind, expected_source_kind) in cases {
+            let summary = InsertionErrorSummary::from(source.clone());
+            assert_eq!(summary.kind, expected_kind);
+            assert_eq!(summary.source_kind, expected_source_kind);
+            assert_eq!(summary.message, source.to_string());
+        }
+    }
+
+    #[test]
+    fn test_insertion_error_summary_retryability_covers_tds_source_kinds() {
+        let geometric = InsertionErrorSummary {
+            kind: InsertionErrorKind::TopologyValidation,
+            source_kind: Some(InsertionErrorSourceKind::Tds(TdsErrorKind::Geometric)),
+            retryable: true,
+            message: String::new(),
+        };
+        let orientation = InsertionErrorSummary {
+            kind: InsertionErrorKind::TopologyValidation,
+            source_kind: Some(InsertionErrorSourceKind::Tds(
+                TdsErrorKind::OrientationViolation,
+            )),
+            retryable: true,
+            message: String::new(),
+        };
+        let structural = InsertionErrorSummary {
+            kind: InsertionErrorKind::TopologyValidation,
+            source_kind: Some(InsertionErrorSourceKind::Tds(
+                TdsErrorKind::InconsistentDataStructure,
+            )),
+            retryable: false,
+            message: String::new(),
+        };
+
+        assert!(geometric.is_retryable());
+        assert!(orientation.is_retryable());
+        assert!(!structural.is_retryable());
+    }
+
+    #[test]
+    fn test_robust_fallback_context_preserves_initial_repair_summary() {
+        let initial = DelaunayRepairError::PostconditionFailed {
+            message: "local predicate violation".to_string(),
+        };
+        let context = DelaunayRepairFailureContext::LocalRepairRobustFallback {
+            initial: DelaunayRepairErrorSummary::from(&initial),
+        };
+
+        let msg = context.to_string();
+        assert!(msg.contains("local repair failed"));
+        assert!(msg.contains("local predicate violation"));
+        assert!(msg.contains("robust fallback also failed"));
     }
 
     #[test]
@@ -4321,6 +4847,31 @@ mod tests {
                     reason: InitialSimplexConstructionError::GeometricDegeneracy {
                         message: "coplanar bootstrap".to_string(),
                     },
+                },
+            }
+            .is_retryable()
+        );
+        assert!(
+            InsertionError::CavityFilling {
+                reason: CavityFillingError::NeighborRebuild {
+                    reason: NeighborRebuildError::from(InsertionError::TopologyValidationFailed {
+                        message: "local topology validation failed".to_string(),
+                        source: TriangulationValidationError::ManifoldFacetMultiplicity {
+                            facet_key: 0x1234,
+                            cell_count: 3,
+                        },
+                    }),
+                },
+            }
+            .is_retryable()
+        );
+        assert!(
+            !InsertionError::CavityFilling {
+                reason: CavityFillingError::NeighborRebuild {
+                    reason: NeighborRebuildError::from(InsertionError::TopologyValidationFailed {
+                        message: "structural topology validation failed".to_string(),
+                        source: TriangulationValidationError::Disconnected { cell_count: 2 },
+                    }),
                 },
             }
             .is_retryable()
@@ -4389,10 +4940,10 @@ mod tests {
         assert!(
             InsertionError::TopologyValidationFailed {
                 message: "test".to_string(),
-                source: Box::new(TriangulationValidationError::IsolatedVertex {
+                source: TriangulationValidationError::IsolatedVertex {
                     vertex_key: VertexKey::from(KeyData::from_ffi(1)),
                     vertex_uuid: uuid::Uuid::nil(),
-                }),
+                },
             }
             .is_retryable()
         );
@@ -4401,11 +4952,11 @@ mod tests {
         assert!(
             !InsertionError::TopologyValidationFailed {
                 message: "test".to_string(),
-                source: Box::new(TriangulationValidationError::EulerCharacteristicMismatch {
+                source: TriangulationValidationError::EulerCharacteristicMismatch {
                     computed: 3,
                     expected: 2,
                     classification: TopologyClassification::Ball(3),
-                }),
+                },
             }
             .is_retryable()
         );
@@ -4418,7 +4969,7 @@ mod tests {
         assert!(
             InsertionError::TopologyValidationFailed {
                 message: "test".to_string(),
-                source: Box::new(geometry_l3),
+                source: geometry_l3,
             }
             .is_retryable()
         );
@@ -4427,10 +4978,10 @@ mod tests {
         assert!(
             InsertionError::TopologyValidationFailed {
                 message: "test".to_string(),
-                source: Box::new(TriangulationValidationError::BoundaryRidgeMultiplicity {
+                source: TriangulationValidationError::BoundaryRidgeMultiplicity {
                     ridge_key: 0xab,
                     boundary_facet_count: 3,
-                }),
+                },
             }
             .is_retryable()
         );
@@ -4438,14 +4989,14 @@ mod tests {
         assert!(
             InsertionError::TopologyValidationFailed {
                 message: "test".to_string(),
-                source: Box::new(TriangulationValidationError::RidgeLinkNotManifold {
+                source: TriangulationValidationError::RidgeLinkNotManifold {
                     ridge_key: 0xcd,
                     link_vertex_count: 4,
                     link_edge_count: 5,
                     max_degree: 3,
                     degree_one_vertices: 1,
                     connected: false,
-                }),
+                },
             }
             .is_retryable()
         );
@@ -4453,7 +5004,7 @@ mod tests {
         assert!(
             InsertionError::TopologyValidationFailed {
                 message: "test".to_string(),
-                source: Box::new(TriangulationValidationError::VertexLinkNotManifold {
+                source: TriangulationValidationError::VertexLinkNotManifold {
                     vertex_key: VertexKey::from(KeyData::from_ffi(1)),
                     link_vertex_count: 3,
                     link_cell_count: 4,
@@ -4461,7 +5012,7 @@ mod tests {
                     max_degree: 2,
                     connected: false,
                     interior_vertex: true,
-                }),
+                },
             }
             .is_retryable()
         );
@@ -4470,11 +5021,11 @@ mod tests {
         assert!(
             !InsertionError::TopologyValidationFailed {
                 message: "test".to_string(),
-                source: Box::new(TriangulationValidationError::EulerCharacteristicMismatch {
+                source: TriangulationValidationError::EulerCharacteristicMismatch {
                     computed: 3,
                     expected: 2,
                     classification: TopologyClassification::Ball(3),
-                }),
+                },
             }
             .is_retryable()
         );

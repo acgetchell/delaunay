@@ -3,9 +3,7 @@
 use crate::core::{
     facet::{BoundaryFacetsIter, FacetView},
     tds::TdsError,
-    traits::data_type::DataType,
 };
-use crate::geometry::traits::coordinate::CoordinateScalar;
 
 /// Trait for boundary analysis operations on triangulations.
 ///
@@ -36,12 +34,7 @@ use crate::geometry::traits::coordinate::CoordinateScalar;
 /// let count = tds.number_of_boundary_facets();
 /// assert_eq!(count, Ok(4));
 /// ```
-pub trait BoundaryAnalysis<T, U, V, const D: usize>
-where
-    T: CoordinateScalar,
-    U: DataType,
-    V: DataType,
-{
+pub trait BoundaryAnalysis<T, U, V, const D: usize> {
     /// Identifies all boundary facets in the triangulation.
     ///
     /// A boundary facet is a facet that belongs to only one cell, meaning it lies on the

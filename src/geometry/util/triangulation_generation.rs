@@ -6,10 +6,11 @@
 #![forbid(unsafe_code)]
 
 use super::point_generation::{generate_random_points, generate_random_points_seeded};
+use crate::core::cell::CellValidationError;
 use crate::core::traits::data_type::DataType;
 use crate::core::triangulation::{TopologyGuarantee, TriangulationConstructionError};
 use crate::core::vertex::Vertex;
-use crate::geometry::kernel::AdaptiveKernel;
+use crate::geometry::kernel::{AdaptiveKernel, Kernel};
 use crate::geometry::point::Point;
 use crate::geometry::traits::coordinate::CoordinateScalar;
 use crate::triangulation::delaunay::{
@@ -29,7 +30,7 @@ fn validate_random_triangulation<K, U, V, const D: usize>(
     dt: DelaunayTriangulation<K, U, V, D>,
 ) -> Result<DelaunayTriangulation<K, U, V, D>, DelaunayTriangulationConstructionError>
 where
-    K: crate::geometry::kernel::Kernel<D>,
+    K: Kernel<D>,
     U: DataType,
     V: DataType,
 {
@@ -46,7 +47,7 @@ fn random_triangulation_is_acceptable<K, U, V, const D: usize>(
     min_vertices: usize,
 ) -> bool
 where
-    K: crate::geometry::kernel::Kernel<D>,
+    K: Kernel<D>,
     U: DataType,
     V: DataType,
 {
@@ -60,7 +61,7 @@ fn random_triangulation_try_build<K, T, U, V, const D: usize>(
     topology_guarantee: TopologyGuarantee,
 ) -> Option<DelaunayTriangulation<K, U, V, D>>
 where
-    K: crate::geometry::kernel::Kernel<D, Scalar = T>,
+    K: Kernel<D, Scalar = T>,
     T: CoordinateScalar,
     U: DataType,
     V: DataType,
@@ -366,7 +367,7 @@ where
     if n_points < D + 1 {
         return Err(TriangulationConstructionError::InsufficientVertices {
             dimension: D,
-            source: crate::core::cell::CellValidationError::InsufficientVertices {
+            source: CellValidationError::InsufficientVertices {
                 actual: n_points,
                 expected: D + 1,
                 dimension: D,
@@ -489,10 +490,7 @@ pub struct RandomTriangulationBuilder<T> {
     construction_options: ConstructionOptions,
 }
 
-impl<T> RandomTriangulationBuilder<T>
-where
-    T: CoordinateScalar + SampleUniform,
-{
+impl<T> RandomTriangulationBuilder<T> {
     /// Creates a new builder with the specified number of points and coordinate bounds.
     ///
     /// # Arguments
@@ -571,7 +569,12 @@ where
         self.construction_options = options;
         self
     }
+}
 
+impl<T> RandomTriangulationBuilder<T>
+where
+    T: CoordinateScalar + SampleUniform,
+{
     /// Builds the random triangulation with the configured options.
     ///
     /// # Type Parameters
@@ -657,7 +660,7 @@ where
         if self.n_points < D + 1 {
             return Err(TriangulationConstructionError::InsufficientVertices {
                 dimension: D,
-                source: crate::core::cell::CellValidationError::InsufficientVertices {
+                source: CellValidationError::InsufficientVertices {
                     actual: self.n_points,
                     expected: D + 1,
                     dimension: D,
@@ -716,7 +719,6 @@ mod tests {
     // =============================================================================
 
     #[test]
-    #[ignore = "Flaky: unseeded random generation occasionally fails with cavity filling errors - needs investigation"]
     fn test_generate_random_triangulation_basic() {
         // Test 2D triangulation creation
         let triangulation_2d =
@@ -752,13 +754,14 @@ mod tests {
         }
         assert!(valid_3d.is_ok());
 
-        // Test seeded vs unseeded (should get different results)
+        // Exercise repeatable construction with two deterministic seeds.
         let triangulation_seeded =
             generate_random_triangulation::<f64, (), (), 2>(5, (-1.0, 1.0), None, Some(789))
                 .unwrap();
 
-        let triangulation_unseeded =
-            generate_random_triangulation::<f64, (), (), 2>(5, (-1.0, 1.0), None, None).unwrap();
+        let triangulation_different_seed =
+            generate_random_triangulation::<f64, (), (), 2>(5, (-1.0, 1.0), None, Some(790))
+                .unwrap();
 
         // Both should be valid
         let valid_seeded = triangulation_seeded.is_valid();
@@ -767,20 +770,24 @@ mod tests {
         }
         assert!(valid_seeded.is_ok());
 
-        let valid_unseeded = triangulation_unseeded.is_valid();
-        if let Err(e) = &valid_unseeded {
-            println!("test_generate_random_triangulation_basic (unseeded 2D): TDS invalid: {e}");
+        let valid_different_seed = triangulation_different_seed.is_valid();
+        #[cfg(feature = "diagnostics")]
+        if let Err(e) = &valid_different_seed {
+            tracing::debug!(
+                error = %e,
+                "test_generate_random_triangulation_basic (second seeded 2D): TDS invalid"
+            );
         }
-        assert!(valid_unseeded.is_ok());
+        assert!(valid_different_seed.is_ok());
         assert!(
             triangulation_seeded.number_of_vertices() >= 3,
             "Expected at least 3 vertices in seeded 2D triangulation, got {}",
             triangulation_seeded.number_of_vertices()
         );
         assert!(
-            triangulation_unseeded.number_of_vertices() >= 3,
-            "Expected at least 3 vertices in unseeded 2D triangulation, got {}",
-            triangulation_unseeded.number_of_vertices()
+            triangulation_different_seed.number_of_vertices() >= 3,
+            "Expected at least 3 vertices in second seeded 2D triangulation, got {}",
+            triangulation_different_seed.number_of_vertices()
         );
     }
 
@@ -847,7 +854,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "High-dimensional random triangulations occasionally hit cavity filling errors in CI - needs robust predicate investigation"]
     fn test_generate_random_triangulation_dimensions() {
         // Test different dimensional triangulations with parameter sets that are
         // also reused by examples. These (n_points, bounds, seed) triples have been

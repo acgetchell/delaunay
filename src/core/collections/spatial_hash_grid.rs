@@ -83,7 +83,6 @@ pub struct HashGridIndexSnapshot {
 impl<T, const D: usize, K> HashGridIndex<T, D, K>
 where
     T: CoordinateScalar,
-    K: Copy,
 {
     /// Create a new grid index with the given cell size.
     pub fn new(cell_size: T) -> Self {
@@ -154,6 +153,7 @@ where
     /// candidates). Returns `false` if the index was unusable for this query.
     pub fn for_each_candidate_vertex_key<F>(&self, coords: &[T; D], mut f: F) -> bool
     where
+        K: Copy,
         F: FnMut(K) -> bool,
     {
         if !self.usable {

@@ -6,22 +6,17 @@
 #![forbid(unsafe_code)]
 
 use super::{
+    collections::FacetToCellsMap,
     facet::{BoundaryFacetsIter, FacetView},
     tds::{Tds, TdsError},
-    traits::{boundary_analysis::BoundaryAnalysis, data_type::DataType},
+    traits::boundary_analysis::BoundaryAnalysis,
 };
-use crate::prelude::CoordinateScalar;
 
 /// Implementation of `BoundaryAnalysis` trait for `Tds`.
 ///
 /// This implementation provides efficient boundary facet identification and analysis
 /// for d-dimensional triangulations using the triangulation data structure.
-impl<T, U, V, const D: usize> BoundaryAnalysis<T, U, V, D> for Tds<T, U, V, D>
-where
-    T: CoordinateScalar,
-    U: DataType,
-    V: DataType,
-{
+impl<T, U, V, const D: usize> BoundaryAnalysis<T, U, V, D> for Tds<T, U, V, D> {
     /// Identifies all boundary facets in the triangulation.
     ///
     /// A boundary facet is a facet that belongs to only one cell, meaning it lies on the
@@ -167,7 +162,7 @@ where
     fn is_boundary_facet_with_map(
         &self,
         facet: &FacetView<'_, T, U, V, D>,
-        facet_to_cells: &crate::core::collections::FacetToCellsMap,
+        facet_to_cells: &FacetToCellsMap,
     ) -> Result<bool, TdsError> {
         // Use FacetView's key() method which is more efficient
         let facet_key = facet.key().map_err(TdsError::FacetError)?;

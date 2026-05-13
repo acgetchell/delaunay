@@ -14,6 +14,7 @@
 //!
 //! For property-based tests with random triangulations, see `proptest_euler_characteristic.rs`.
 
+use delaunay::prelude::geometry::AdaptiveKernel;
 use delaunay::prelude::query::BoundaryAnalysis;
 use delaunay::prelude::tds::Tds;
 use delaunay::prelude::triangulation::construction::{
@@ -21,6 +22,10 @@ use delaunay::prelude::triangulation::construction::{
     TopologyGuarantee, vertex,
 };
 use delaunay::topology::characteristics::{euler, validation};
+use delaunay::topology::traits::topological_space::{
+    GlobalTopology, TopologyKind, ToroidalConstructionMode,
+};
+use delaunay::triangulation::builder::DelaunayTriangulationBuilder;
 
 // =============================================================================
 // DETERMINISTIC TESTS - KNOWN CONFIGURATIONS
@@ -226,9 +231,6 @@ fn test_5d_single_simplex() {
 
 #[test]
 fn test_2d_toroidal_explicit_construction_rejected() {
-    use delaunay::topology::traits::topological_space::{GlobalTopology, ToroidalConstructionMode};
-    use delaunay::triangulation::builder::DelaunayTriangulationBuilder;
-
     // 3×3 periodic grid torus (T²): 9 vertices, 18 triangles.
     // Each quad (i,j) is split into two triangles with periodic wrapping.
     // Vertex layout: v(row, col) = row * 3 + col.
@@ -271,20 +273,14 @@ fn test_2d_toroidal_explicit_construction_rejected() {
 
     match err {
         DelaunayTriangulationConstructionError::ExplicitConstruction(
-            ExplicitConstructionError::ValidationFailed { message },
-        ) => assert!(
-            message.contains("Explicit non-Euclidean connectivity is not supported"),
-            "unexpected validation message: {message}"
-        ),
+            ExplicitConstructionError::UnsupportedExplicitTopology { topology },
+        ) => assert_eq!(topology, TopologyKind::Toroidal),
         other => panic!("expected explicit construction validation failure, got {other:?}"),
     }
 }
 
 #[test]
 fn test_3d_toroidal_explicit_construction_rejected() {
-    use delaunay::topology::traits::topological_space::{GlobalTopology, ToroidalConstructionMode};
-    use delaunay::triangulation::builder::DelaunayTriangulationBuilder;
-
     // 3×3×3 periodic Freudenthal triangulation of T³.
     //
     // The Freudenthal (Kuhn) triangulation decomposes each unit cube into D! = 6
@@ -359,11 +355,8 @@ fn test_3d_toroidal_explicit_construction_rejected() {
 
     match err {
         DelaunayTriangulationConstructionError::ExplicitConstruction(
-            ExplicitConstructionError::ValidationFailed { message },
-        ) => assert!(
-            message.contains("Explicit non-Euclidean connectivity is not supported"),
-            "unexpected validation message: {message}"
-        ),
+            ExplicitConstructionError::UnsupportedExplicitTopology { topology },
+        ) => assert_eq!(topology, TopologyKind::Toroidal),
         other => panic!("expected explicit construction validation failure, got {other:?}"),
     }
 }
@@ -384,7 +377,6 @@ macro_rules! test_complex_with_interior {
     ($test_name:ident, $dim:expr, $vertices:expr, $expected_boundary_chi:expr) => {
         #[test]
         fn $test_name() {
-            use delaunay::geometry::kernel::AdaptiveKernel;
             type DT = DelaunayTriangulation<AdaptiveKernel<f64>, (), (), $dim>;
             let dt =
                 DT::new_with_topology_guarantee($vertices, TopologyGuarantee::PLManifold).unwrap();

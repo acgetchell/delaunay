@@ -7,6 +7,9 @@
 use delaunay::prelude::triangulation::construction::{
     DelaunayRepairPolicy, DelaunayTriangulation, TopologyGuarantee, vertex,
 };
+use delaunay::prelude::triangulation::flips::BistellarFlips;
+use delaunay::prelude::triangulation::repair::DelaunayRepairHeuristicConfig;
+use delaunay::triangulation::flips::FacetHandle;
 
 #[cfg(feature = "diagnostics")]
 fn init_tracing() {
@@ -38,63 +41,55 @@ macro_rules! test_debug_info {
     }};
 }
 
-/// Test that construction succeeds even when flip-based repair might struggle.
-///
-/// This test uses a configuration that historically triggered repair challenges,
-/// verifying that the fallback rebuild heuristic produces a valid result.
-///
-/// FIXME(#207, #204): This test is temporarily disabled because the Hilbert quantization
-/// rounding change in issue #207 alters the insertion order, which exposes a latent
-/// issue where this specific point set becomes degenerate under the new ordering.
-/// The failure is: "Degenerate initial simplex: vertices are collinear/coplanar in 3D space."
-/// This is not a bug in the Hilbert implementation, but rather reveals that the
-/// triangulation construction is sensitive to insertion order and can encounter
-/// degenerate configurations. This degeneracy issue should be investigated as part
-/// of issue #204 (Debug large-scale 3D/4D runs), which is focused on geometric
-/// degeneracy handling.
-///
-/// See: <https://github.com/acgetchell/delaunay/issues/207>
-/// See: <https://github.com/acgetchell/delaunay/issues/204>
+/// Test that the public advanced repair API exercises heuristic rebuild fallback.
 #[test]
-#[ignore = "Temporarily disabled due to Hilbert rounding change affecting insertion order - see issue #207"]
 fn repair_fallback_produces_valid_triangulation() {
-    // This configuration has been observed to sometimes require multiple repair attempts
-    // or trigger the fallback path, making it a good test case for the fallback mechanism.
+    init_tracing();
     let vertices = vec![
-        vertex!([0.0, 0.0, 0.0]),
-        vertex!([1.0, 0.0, 0.0]),
-        vertex!([0.5, 1.0, 0.0]),
-        vertex!([0.5, 0.5, 1.0]),
-        vertex!([0.5, 0.5, 0.3]),
-        vertex!([0.3, 0.3, 0.5]),
-        vertex!([0.7, 0.7, 0.5]),
+        vertex!([0.0, 0.0]),
+        vertex!([4.0, 0.0]),
+        vertex!([4.0, 2.0]),
+        vertex!([1.0, 2.0]),
     ];
-
-    // Construct with PLManifold guarantee and automatic repair enabled (default)
-    let dt: DelaunayTriangulation<_, (), (), 3> =
+    let mut dt: DelaunayTriangulation<_, (), (), 2> =
         DelaunayTriangulation::new_with_topology_guarantee(
             &vertices,
             TopologyGuarantee::PLManifold,
         )
-        .expect("Construction should succeed even if fallback is needed");
+        .expect("fixture construction should succeed");
 
-    // Verify full validation (Levels 1-4)
-    dt.validate()
-        .expect("Triangulation should be fully valid after construction with fallback");
+    let mut candidate_facets = Vec::new();
+    for (cell_key, cell) in dt.cells() {
+        if let Some(neighbors) = cell.neighbors() {
+            for (index, neighbor) in neighbors.iter().enumerate() {
+                if neighbor.is_some() {
+                    let facet_index = u8::try_from(index).expect("2D facet index fits in u8");
+                    candidate_facets.push(FacetHandle::new(cell_key, facet_index));
+                }
+            }
+        }
+    }
 
-    // Verify we got all vertices (none were skipped)
-    assert_eq!(
-        dt.number_of_vertices(),
-        vertices.len(),
-        "All vertices should be inserted"
-    );
+    let flipped = candidate_facets
+        .into_iter()
+        .any(|facet| dt.flip_k2(facet).is_ok());
+    assert!(flipped, "fixture should contain a flippable interior facet");
 
-    // Verify we have a valid 3D triangulation
-    assert_eq!(dt.dim(), 3, "Should be a full 3D triangulation");
+    let mut config = DelaunayRepairHeuristicConfig::default();
+    config.max_flips = Some(0);
+    let outcome = dt
+        .repair_delaunay_with_flips_advanced(config)
+        .expect("heuristic rebuild fallback should repair the non-Delaunay fixture");
     assert!(
-        dt.number_of_cells() > 0,
-        "Should have at least one tetrahedron"
+        outcome.used_heuristic(),
+        "zero flip budget should force heuristic rebuild fallback"
     );
+
+    dt.validate()
+        .expect("Triangulation should be fully valid after heuristic fallback");
+    assert_eq!(dt.number_of_vertices(), vertices.len());
+    assert_eq!(dt.dim(), 2, "Should be a full 2D triangulation");
+    assert!(dt.number_of_cells() > 0, "Should have at least one cell");
 }
 
 /// Test incremental insertion with repair fallback.

@@ -9,8 +9,9 @@ use super::conversions::safe_usize_to_scalar;
 use super::norms::hypot;
 use crate::geometry::point::Point;
 use crate::geometry::traits::coordinate::{Coordinate, CoordinateScalar};
-use rand::RngExt;
 use rand::distr::uniform::SampleUniform;
+use rand::rngs::StdRng;
+use rand::{RngExt, SeedableRng};
 
 // Re-export error type
 pub use super::RandomPointGenerationError;
@@ -227,8 +228,6 @@ pub fn generate_random_points_seeded<T: CoordinateScalar + SampleUniform, const 
     range: (T, T),
     seed: u64,
 ) -> Result<Vec<Point<T, D>>, RandomPointGenerationError> {
-    use rand::SeedableRng;
-
     #[cfg(debug_assertions)]
     if std::env::var_os("DELAUNAY_DEBUG_UNUSED_IMPORTS").is_some() {
         tracing::debug!(
@@ -247,7 +246,7 @@ pub fn generate_random_points_seeded<T: CoordinateScalar + SampleUniform, const 
         });
     }
 
-    let mut rng = rand::rngs::StdRng::seed_from_u64(seed);
+    let mut rng = StdRng::seed_from_u64(seed);
     let mut points = Vec::with_capacity(n_points);
 
     for _ in 0..n_points {
@@ -296,8 +295,6 @@ pub fn generate_random_points_periodic<T: CoordinateScalar + SampleUniform, cons
     domain: [T; D],
     seed: u64,
 ) -> Result<Vec<Point<T, D>>, RandomPointGenerationError> {
-    use rand::SeedableRng;
-
     // Validate domain: each dimension must be positive.
     for period in domain {
         if period <= T::zero() {
@@ -308,7 +305,7 @@ pub fn generate_random_points_periodic<T: CoordinateScalar + SampleUniform, cons
         }
     }
 
-    let mut rng = rand::rngs::StdRng::seed_from_u64(seed);
+    let mut rng = StdRng::seed_from_u64(seed);
     let mut points = Vec::with_capacity(n_points);
 
     for _ in 0..n_points {
@@ -427,9 +424,7 @@ pub fn generate_random_points_in_ball_seeded<
     radius: T,
     seed: u64,
 ) -> Result<Vec<Point<T, D>>, RandomPointGenerationError> {
-    use rand::SeedableRng;
-
-    let mut rng = rand::rngs::StdRng::seed_from_u64(seed);
+    let mut rng = StdRng::seed_from_u64(seed);
     generate_random_points_in_ball_with_rng(n_points, radius, &mut rng)
 }
 
@@ -600,9 +595,6 @@ pub fn generate_poisson_points<T: CoordinateScalar + SampleUniform, const D: usi
     min_distance: T,
     seed: u64,
 ) -> Result<Vec<Point<T, D>>, RandomPointGenerationError> {
-    use rand::RngExt;
-    use rand::SeedableRng;
-
     // Validate bounds
     if bounds.0 >= bounds.1 {
         return Err(RandomPointGenerationError::InvalidRange {
@@ -615,7 +607,7 @@ pub fn generate_poisson_points<T: CoordinateScalar + SampleUniform, const D: usi
         return Ok(Vec::new());
     }
 
-    let mut rng = rand::rngs::StdRng::seed_from_u64(seed);
+    let mut rng = StdRng::seed_from_u64(seed);
 
     // Early validation: if min_distance is non-positive, skip spacing constraints
     if min_distance <= T::zero() {

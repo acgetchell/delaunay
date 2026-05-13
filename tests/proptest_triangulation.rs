@@ -41,6 +41,8 @@ use delaunay::prelude::triangulation::construction::{
     DelaunayTriangulation, TopologyGuarantee, Vertex, vertex,
 };
 use proptest::prelude::*;
+use proptest::test_runner::{Config, TestCaseError, TestRunner};
+use std::cell::RefCell;
 use std::collections::HashMap;
 
 // =============================================================================
@@ -784,3 +786,120 @@ test_facet_topology_invariant!(2, 4, 10);
 test_facet_topology_invariant!(3, 5, 12);
 test_facet_topology_invariant!(4, 6, 14, #[ignore = "Slow (>60s) in test-integration"]);
 test_facet_topology_invariant!(5, 7, 16, #[ignore = "Slow (>60s) in test-integration"]);
+
+// =============================================================================
+// FAST HIGH-DIMENSIONAL FACET TOPOLOGY SMOKE TESTS
+// =============================================================================
+
+macro_rules! gen_high_dim_facet_topology_smoke {
+    ($dim:literal, $min_vertices:literal, $max_vertices:literal) => {
+        pastey::paste! {
+            #[test]
+            fn [<prop_high_dim_facet_topology_active_smoke_ $dim d>]() {
+                #[derive(Debug, Default)]
+                struct SmokeStats {
+                    generated: usize,
+                    accepted: usize,
+                    rejected_construction_failed: usize,
+                }
+
+                let config = Config {
+                    cases: 6,
+                    max_shrink_iters: 16,
+                    ..Config::default()
+                };
+                let target_cases = config.cases;
+                let mut runner = TestRunner::new(config);
+                let strategy = prop::collection::vec(
+                    prop::array::[<uniform $dim>](finite_coordinate()).prop_map(|coords| vertex!(coords)),
+                    $min_vertices..=$max_vertices,
+                );
+                let stats = RefCell::new(SmokeStats::default());
+
+                let run_result = runner.run(&strategy, |vertices| {
+                    let mut stats = stats.borrow_mut();
+                    stats.generated += 1;
+
+                    let dt = match DelaunayTriangulation::new_with_topology_guarantee(
+                        &vertices,
+                        TopologyGuarantee::PLManifold,
+                    ) {
+                        Ok(dt) => dt,
+                        Err(err) => {
+                            stats.rejected_construction_failed += 1;
+                            return Err(TestCaseError::reject(format!(
+                                "{}D: construction failed in active facet-topology smoke test: {err}",
+                                $dim
+                            )));
+                        }
+                    };
+
+                    let tri = dt.as_triangulation();
+                    let cell_keys: Vec<_> = tri.cells().map(|(key, _)| key).collect();
+                    let issues = tri.detect_local_facet_issues(&cell_keys)?;
+                    prop_assert!(
+                        issues.is_none(),
+                        "{}D active facet-topology smoke should have no over-shared facets: {:?}",
+                        $dim,
+                        issues
+                    );
+
+                    let empty_issues = tri.detect_local_facet_issues(&[])?;
+                    prop_assert!(
+                        empty_issues.is_none(),
+                        "{}D active facet-topology smoke empty scope should have no issues",
+                        $dim
+                    );
+
+                    stats.accepted += 1;
+                    Ok(())
+                });
+
+                let stats = stats.into_inner();
+                let generated = stats.generated.max(1);
+                let acceptance_rate_percent_x100: u128 =
+                    (stats.accepted as u128 * 10_000u128) / (generated as u128);
+                let acceptance_rate_whole = acceptance_rate_percent_x100 / 100;
+                let acceptance_rate_frac = acceptance_rate_percent_x100 % 100;
+                let print_stats =
+                    std::env::var_os("DELAUNAY_PROPTEST_REJECT_STATS").is_some() || run_result.is_err();
+
+                if print_stats {
+                    let rejected_total = stats.generated.saturating_sub(stats.accepted);
+                    tracing::warn!(
+                        "prop_high_dim_facet_topology_active_smoke_{}d reject stats: target_cases={target_cases} generated={} accepted={} acceptance_rate={}.{:02}% rejected_total={} construction_failed={}",
+                        $dim,
+                        stats.generated,
+                        stats.accepted,
+                        acceptance_rate_whole,
+                        acceptance_rate_frac,
+                        rejected_total,
+                        stats.rejected_construction_failed
+                    );
+                }
+
+                let max_allowed_construction_rejections =
+                    usize::try_from(target_cases).map_or(usize::MAX, |cases| cases.max(1));
+                assert!(
+                    stats.rejected_construction_failed <= max_allowed_construction_rejections,
+                    "prop_high_dim_facet_topology_active_smoke_{}d had {} construction rejects above allowed {}; generated={}, accepted={}",
+                    $dim,
+                    stats.rejected_construction_failed,
+                    max_allowed_construction_rejections,
+                    stats.generated,
+                    stats.accepted
+                );
+
+                assert!(
+                    stats.accepted > 0,
+                    "prop_high_dim_facet_topology_active_smoke_{}d should accept at least one case",
+                    $dim
+                );
+                run_result.unwrap();
+            }
+        }
+    };
+}
+
+gen_high_dim_facet_topology_smoke!(4, 6, 8);
+gen_high_dim_facet_topology_smoke!(5, 7, 9);

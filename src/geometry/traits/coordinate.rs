@@ -62,6 +62,7 @@
 
 #![forbid(unsafe_code)]
 
+use crate::geometry::matrix::StackMatrixDispatchError;
 use la_stack::LaError;
 use num_traits::{Float, Zero};
 use ordered_float::OrderedFloat;
@@ -138,15 +139,13 @@ pub enum CoordinateConversionError {
     LinearAlgebraFailure(#[from] LaError),
 }
 
-impl From<crate::geometry::matrix::StackMatrixDispatchError> for CoordinateConversionError {
-    fn from(source: crate::geometry::matrix::StackMatrixDispatchError) -> Self {
+impl From<StackMatrixDispatchError> for CoordinateConversionError {
+    fn from(source: StackMatrixDispatchError) -> Self {
         match source {
-            crate::geometry::matrix::StackMatrixDispatchError::UnsupportedDim { k, max } => {
+            StackMatrixDispatchError::UnsupportedDim { k, max } => {
                 Self::UnsupportedMatrixDimension { requested: k, max }
             }
-            crate::geometry::matrix::StackMatrixDispatchError::La(source) => {
-                Self::LinearAlgebraFailure(source)
-            }
+            StackMatrixDispatchError::La(source) => Self::LinearAlgebraFailure(source),
         }
     }
 }
@@ -644,6 +643,29 @@ impl CoordinateScalar for f64 {
     }
 }
 
+/// Storage and formatting requirements for coordinate container types.
+///
+/// This names the representation contract separately from geometric scalar
+/// arithmetic, so APIs that only store, copy, or serialize coordinates can use
+/// a narrower bound than the full [`Coordinate`] interface.
+pub trait CoordinateRepresentation:
+    Copy + Default + Debug + Serialize + DeserializeOwned + Sized
+{
+}
+
+impl<T> CoordinateRepresentation for T where
+    T: Copy + Default + Debug + Serialize + DeserializeOwned + Sized
+{
+}
+
+/// Identity and ordering requirements for coordinate container types.
+///
+/// This names the comparison/hash contract separately from validation and
+/// arithmetic, which keeps map/set requirements explicit at call sites.
+pub trait CoordinateIdentity: Eq + Hash + PartialOrd {}
+
+impl<T> CoordinateIdentity for T where T: Eq + Hash + PartialOrd {}
+
 /// A comprehensive trait that encapsulates all coordinate functionality.
 ///
 /// This trait combines all the necessary traits for coordinate types used in
@@ -661,10 +683,9 @@ impl CoordinateScalar for f64 {
 ///
 /// The trait requires implementors to support:
 /// - Floating-point arithmetic operations
-/// - Ordered equality comparison (NaN-aware)
-/// - Hashing for use in collections
+/// - [`CoordinateRepresentation`] for copyable, default, debug, and serde support
+/// - [`CoordinateIdentity`] for NaN-aware equality, hashing, and partial ordering
 /// - Validation of coordinate values
-/// - Serialization/deserialization
 /// - Coordinate access and manipulation
 /// - Zero/origin creation
 ///
@@ -707,20 +728,9 @@ impl CoordinateScalar for f64 {
 /// // Future implementations could use other storage types
 /// // while maintaining the same Coordinate trait interface
 /// ```
-pub trait Coordinate<T, const D: usize>
+pub trait Coordinate<T, const D: usize>: CoordinateRepresentation + CoordinateIdentity
 where
     T: CoordinateScalar,
-    Self: Copy
-        + Clone
-        + Default
-        + Debug
-        + PartialEq
-        + Eq
-        + Hash
-        + PartialOrd
-        + Serialize
-        + DeserializeOwned
-        + Sized,
 {
     /// Get the dimensionality of the coordinate system.
     ///
@@ -862,7 +872,8 @@ mod tests {
     use super::*;
     use crate::geometry::point::Point;
     use approx::assert_relative_eq;
-    use std::collections::hash_map::DefaultHasher;
+    use std::collections::{HashSet, hash_map::DefaultHasher};
+    use std::error::Error;
     use std::hash::Hasher;
 
     // Use the global tolerance constants
@@ -1220,7 +1231,6 @@ mod tests {
     #[test]
     fn coordinate_trait_hash_collision_resistance() {
         // Test that different coordinates produce different hashes (basic collision resistance)
-        use std::collections::HashSet;
         let mut hashes = HashSet::new();
 
         // Generate diverse coordinates to test hash distribution
@@ -1295,8 +1305,6 @@ mod tests {
     #[test]
     fn coordinate_validation_error_source_trait() {
         // Test that CoordinateValidationError implements source() from std::error::Error
-        use std::error::Error;
-
         let error = CoordinateValidationError::InvalidCoordinate {
             coordinate_index: 1,
             coordinate_value: "NaN".to_string(),

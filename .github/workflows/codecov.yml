@@ -21,8 +21,8 @@ jobs:
     name: Code Coverage
     runs-on: ubuntu-latest
     env:
-      CARGO_LLVM_COV_VERSION: "0.8.5"
-      JUST_VERSION: "1.50.0"
+      CARGO_LLVM_COV_VERSION: "0.8.6"
+      JUST_VERSION: "1.51.0"
       NEXTEST_VERSION: "0.9.133"
     steps:
       - name: Checkout repository
@@ -56,7 +56,7 @@ jobs:
           fi
 
           if [ "${installed_version}" != "${CARGO_LLVM_COV_VERSION}" ]; then
-            cargo install cargo-llvm-cov --locked --version "${CARGO_LLVM_COV_VERSION}"
+            cargo install cargo-llvm-cov --locked --force --version "${CARGO_LLVM_COV_VERSION}"
           fi
 
       - name: Install just

@@ -169,6 +169,7 @@ rules:
         - "/src/geometry/**/*.rs"
         - "/src/topology/**/*.rs"
         - "/src/triangulation/**/*.rs"
+        - "/src/project_rules/**/*.rs"
     patterns:
       - pattern-either:
           - pattern: NumCast::from($VALUE).unwrap_or($FALLBACK)
@@ -182,6 +183,141 @@ rules:
                   regex: safe_[A-Za-z0-9_]+
       - pattern-not-inside: |
           mod tests {
+              ...
+          }
+
+  - id: delaunay.rust.no-silent-conversion-fallbacks-in-public-samples
+    languages:
+      - rust
+    severity: WARNING
+    message: >-
+      Handle numeric conversion failures explicitly in public samples instead of
+      hiding them behind unwrap_or fallbacks.
+    metadata:
+      category: correctness
+      rationale: >-
+        Examples, benchmarks, and public API tests are copied by users. They
+        should model explicit conversion-failure handling instead of silently
+        substituting sentinel values.
+    paths:
+      include:
+        - "/examples/**/*.rs"
+        - "/benches/**/*.rs"
+        - "/tests/allocation_api.rs"
+        - "/tests/delaunay_public_api_coverage.rs"
+        - "/tests/prelude_exports.rs"
+        - "/tests/public_*.rs"
+        - "/src/project_rules/**/*.rs"
+      exclude:
+        - "/tests/semgrep/**"
+    patterns:
+      - pattern-either:
+          - pattern: NumCast::from($VALUE).unwrap_or($FALLBACK)
+          - pattern: NumCast::from($VALUE).unwrap_or_else($FALLBACK)
+          - pattern: num_traits::NumCast::from($VALUE).unwrap_or($FALLBACK)
+          - pattern: num_traits::NumCast::from($VALUE).unwrap_or_else($FALLBACK)
+          - pattern: cast::<$FROM, $TO>($VALUE).unwrap_or($FALLBACK)
+          - pattern: cast::<$FROM, $TO>($VALUE).unwrap_or_else($FALLBACK)
+          - pattern: num_traits::cast::<$FROM, $TO>($VALUE).unwrap_or($FALLBACK)
+          - pattern: num_traits::cast::<$FROM, $TO>($VALUE).unwrap_or_else($FALLBACK)
+          - patterns:
+              - pattern: $SAFE(...).unwrap_or($FALLBACK)
+              - metavariable-regex:
+                  metavariable: $SAFE
+                  regex: safe_[A-Za-z0-9_]+
+
+  - id: delaunay.rust.no-partial-cmp-ordering-defaults
+    languages:
+      - rust
+    severity: WARNING
+    message: "Handle incomparable partial_cmp results explicitly instead of defaulting to an Ordering."
+    metadata:
+      category: correctness
+      rationale: >-
+        Geometry ordering code should document the impossible/incomparable
+        branch instead of silently folding it into Equal, Less, or Greater.
+    paths:
+      include:
+        - "/src/**/*.rs"
+    patterns:
+      - pattern-either:
+          - pattern: $LEFT.partial_cmp($RIGHT).unwrap_or(Ordering::$ORDER)
+          - pattern: $LEFT.partial_cmp($RIGHT).unwrap_or(std::cmp::Ordering::$ORDER)
+          - pattern: $LEFT.partial_cmp($RIGHT).unwrap_or_else($FALLBACK)
+      - pattern-not-inside: |
+          mod tests {
+              ...
+          }
+
+  - id: delaunay.rust.no-function-local-use-in-src
+    languages:
+      - rust
+    severity: WARNING
+    message: "Move source imports to module scope instead of declaring use items inside functions."
+    metadata:
+      category: maintainability
+      rationale: >-
+        Function-local imports obscure dependency shape and make it easier for
+        examples, tests, and production code to drift into different styles.
+    paths:
+      include:
+        - "/src/**/*.rs"
+    patterns:
+      - pattern: use $PATH;
+      - pattern-inside: |
+          fn $FUNC(...) {
+              ...
+          }
+      - pattern-not-inside: |
+          mod tests {
+              ...
+          }
+      - pattern-not-inside: |
+          #[cfg(test)]
+          mod $MOD {
+              ...
+          }
+      - pattern-not-inside: |
+          #[cfg(any(test, ...))]
+          mod $MOD {
+              ...
+          }
+
+  - id: delaunay.rust.no-deep-crate-paths-in-functions
+    languages:
+      - rust
+    severity: WARNING
+    message: "Import long crate paths at module scope instead of spelling deep crate:: paths inside function bodies."
+    metadata:
+      category: maintainability
+      rationale: >-
+        Deep function-body paths make control flow harder to scan and often
+        indicate a missing focused import or overly coupled helper.
+    paths:
+      include:
+        - "/src/core/**/*.rs"
+        - "/src/geometry/**/*.rs"
+        - "/src/topology/**/*.rs"
+        - "/src/triangulation/**/*.rs"
+    patterns:
+      - pattern-regex: '\bcrate::(?:core|geometry|topology|triangulation)::[A-Za-z0-9_]+(?:::[A-Za-z0-9_]+){1,}\b'
+      - pattern-inside: |
+          fn $FUNC(...) {
+              ...
+          }
+      - pattern-not-regex: '^\s*(//|///|/\*|\*)'
+      - pattern-not-inside: |
+          mod tests {
+              ...
+          }
+      - pattern-not-inside: |
+          #[cfg(test)]
+          mod $MOD {
+              ...
+          }
+      - pattern-not-inside: |
+          #[cfg(any(test, ...))]
+          mod $MOD {
               ...
           }
 

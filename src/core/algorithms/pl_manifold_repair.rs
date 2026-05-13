@@ -37,7 +37,6 @@ use crate::geometry::util::norms::hypot;
 use crate::topology::manifold::validate_facet_degree;
 use num_traits::NumCast;
 use slotmap::Key;
-use std::cmp::Ordering;
 use thiserror::Error;
 use uuid::Uuid;
 
@@ -424,8 +423,7 @@ where
     // Worst quality first, then vertex keys, then UUID.
     candidates.sort_by(|a, b| {
         b.score
-            .partial_cmp(&a.score)
-            .unwrap_or(Ordering::Equal)
+            .total_cmp(&a.score)
             .then_with(|| a.vertex_keys.cmp(&b.vertex_keys))
             .then_with(|| a.uuid.cmp(&b.uuid))
     });

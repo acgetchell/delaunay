@@ -2,11 +2,10 @@
 
 #![forbid(unsafe_code)]
 
-use crate::core::facet::FacetError;
+use crate::core::collections::{MAX_PRACTICAL_DIMENSION_SIZE, SmallBuffer};
+use crate::core::facet::{FacetError, facet_key_from_vertices};
 use crate::core::tds::{CellKey, Tds, VertexKey};
-use crate::core::traits::data_type::DataType;
 use crate::core::util::hashing::stable_hash_u64_slice;
-use crate::geometry::traits::coordinate::CoordinateScalar;
 use slotmap::Key;
 use thiserror::Error;
 
@@ -66,8 +65,6 @@ use thiserror::Error;
 pub fn checked_facet_key_from_vertex_keys<const D: usize>(
     facet_vertex_keys: &[VertexKey],
 ) -> Result<u64, FacetError> {
-    use crate::core::facet::facet_key_from_vertices;
-
     // Validate that the number of vertex keys matches the expected dimension
     // In a D-dimensional triangulation, a facet should have exactly D vertices
     if facet_vertex_keys.len() != D {
@@ -141,22 +138,27 @@ pub(crate) fn periodic_facet_key_from_lifted_vertices<const D: usize>(
         });
     }
 
-    let mut lifted_facet: Vec<(u64, [i8; D])> =
-        Vec::with_capacity(lifted_vertices.len().saturating_sub(1));
+    let mut lifted_facet: SmallBuffer<(u64, [i8; D]), MAX_PRACTICAL_DIMENSION_SIZE> =
+        SmallBuffer::new();
     for (idx, (vertex_key, offset)) in lifted_vertices.iter().enumerate() {
         if idx != facet_index {
             lifted_facet.push((vertex_key.data().as_ffi(), *offset));
         }
     }
     // Sort by (vertex_key_value, offset) to make ordering deterministic when keys are equal
-    lifted_facet.sort_unstable_by(|(key_a, offset_a), (key_b, offset_b)| {
-        key_a.cmp(key_b).then_with(|| offset_a.cmp(offset_b))
-    });
+    lifted_facet
+        .as_mut_slice()
+        .sort_unstable_by(|(key_a, offset_a), (key_b, offset_b)| {
+            key_a.cmp(key_b).then_with(|| offset_a.cmp(offset_b))
+        });
     let facet_anchor_offset = lifted_facet
         .first()
         .map_or([0_i8; D], |(_, offset)| *offset);
 
-    let mut packed_signature: Vec<u64> = Vec::with_capacity(lifted_facet.len() * (D + 1));
+    let mut packed_signature: SmallBuffer<
+        u64,
+        { MAX_PRACTICAL_DIMENSION_SIZE * MAX_PRACTICAL_DIMENSION_SIZE },
+    > = SmallBuffer::new();
     for (vertex_key_value, offset) in lifted_facet {
         packed_signature.push(vertex_key_value);
         for axis in 0..D {
@@ -172,7 +174,7 @@ pub(crate) fn periodic_facet_key_from_lifted_vertices<const D: usize>(
         }
     }
 
-    Ok(stable_hash_u64_slice(&packed_signature))
+    Ok(stable_hash_u64_slice(packed_signature.as_slice()))
 }
 
 /// Verifies facet index consistency between two neighboring cells.
@@ -198,19 +200,17 @@ pub(crate) fn periodic_facet_key_from_lifted_vertices<const D: usize>(
 ///
 /// Returns `FacetError` if:
 /// - Either cell cannot be found in the TDS
-/// - Facet views cannot be created from the cells
-/// - Facet vertices cannot be accessed
 /// - The facet index is out of bounds
+/// - Either cell has malformed simplex arity for dimension `D`
 ///
 /// # Examples
 ///
 /// ```rust,no_run
-/// use delaunay::prelude::tds::verify_facet_index_consistency;
-/// use delaunay::prelude::tds::Tds;
+/// use delaunay::prelude::tds::{FacetError, Tds, verify_facet_index_consistency};
 ///
 /// fn validate_neighbor_consistency(
 ///     tds: &Tds<f64, (), (), 3>,
-/// ) -> Result<(), String> {
+/// ) -> Result<bool, FacetError> {
 ///     // Get two neighboring cell keys
 ///     let cell_keys: Vec<_> = tds.cell_keys().take(2).collect();
 ///     if cell_keys.len() >= 2 {
@@ -220,17 +220,16 @@ pub(crate) fn periodic_facet_key_from_lifted_vertices<const D: usize>(
 ///             cell_keys[0],
 ///             cell_keys[1],
 ///             0,
-///         )
-///         .map_err(|e| format!("Facet error: {}", e))?;
+///         )?;
 ///
 ///         if consistent {
 ///             println!("Facet indices are consistent");
-///             Ok(())
+///             Ok(true)
 ///         } else {
-///             Err("No matching facet found in neighbor".to_string())
+///             Ok(false)
 ///         }
 ///     } else {
-///         Ok(())
+///         Ok(true)
 ///     }
 /// }
 /// ```
@@ -239,38 +238,73 @@ pub(crate) fn periodic_facet_key_from_lifted_vertices<const D: usize>(
 ///
 /// - Time Complexity: O(D²) where D is the dimension (iterates over facets and vertices)
 /// - Space Complexity: O(D) for temporary vertex buffers
-pub fn verify_facet_index_consistency<const D: usize>(
-    tds: &Tds<impl CoordinateScalar, impl DataType, impl DataType, D>,
+pub fn verify_facet_index_consistency<T, U, V, const D: usize>(
+    tds: &Tds<T, U, V, D>,
     cell1_key: CellKey,
     cell2_key: CellKey,
     facet_idx: usize,
 ) -> Result<bool, FacetError> {
-    // Get facet views from both cells (validates cells exist)
-    let cell1_facets = crate::core::cell::Cell::facet_views_from_tds(tds, cell1_key)?;
-    let cell2_facets = crate::core::cell::Cell::facet_views_from_tds(tds, cell2_key)?;
+    let cell1 = tds
+        .cell(cell1_key)
+        .ok_or(FacetError::CellNotFoundInTriangulation)?;
+    let cell2 = tds
+        .cell(cell2_key)
+        .ok_or(FacetError::CellNotFoundInTriangulation)?;
 
     // Check facet index bounds
-    if facet_idx >= cell1_facets.len() {
-        // Saturate to u8::MAX for error reporting if index overflows u8
-        let idx_u8 = u8::try_from(facet_idx).unwrap_or(u8::MAX);
-        return Err(FacetError::InvalidFacetIndex {
-            index: idx_u8,
-            facet_count: cell1_facets.len(),
-        });
+    let cell1_facet_count = cell1.number_of_vertices();
+    if facet_idx >= cell1_facet_count {
+        return Err(facet_index_error(facet_idx, cell1_facet_count));
     }
 
     // Get the facet from cell1 and compute its key
-    let cell1_facet = &cell1_facets[facet_idx];
-    let cell1_key_value = cell1_facet.key()?;
+    let cell1_key_value = cell_facet_key::<D>(cell1.vertices(), facet_idx)?;
 
     // Find matching facet in cell2
-    for cell2_facet in &cell2_facets {
-        if cell1_key_value == cell2_facet.key()? {
+    for cell2_facet_idx in 0..cell2.number_of_vertices() {
+        if cell1_key_value == cell_facet_key::<D>(cell2.vertices(), cell2_facet_idx)? {
             return Ok(true);
         }
     }
 
     Ok(false) // No matching facet found
+}
+
+fn cell_facet_key<const D: usize>(
+    vertices: &[VertexKey],
+    omit_idx: usize,
+) -> Result<u64, FacetError> {
+    let expected_vertices = D + 1;
+    if vertices.len() != expected_vertices {
+        return Err(FacetError::InsufficientVertices {
+            expected: expected_vertices,
+            actual: vertices.len(),
+            dimension: D,
+        });
+    }
+
+    if omit_idx >= vertices.len() {
+        return Err(facet_index_error(omit_idx, vertices.len()));
+    }
+
+    let mut facet_vertices: SmallBuffer<VertexKey, MAX_PRACTICAL_DIMENSION_SIZE> =
+        SmallBuffer::with_capacity(vertices.len().saturating_sub(1));
+    for (idx, &vertex_key) in vertices.iter().enumerate() {
+        if idx != omit_idx {
+            facet_vertices.push(vertex_key);
+        }
+    }
+    checked_facet_key_from_vertex_keys::<D>(facet_vertices.as_slice())
+}
+
+fn facet_index_error(index: usize, facet_count: usize) -> FacetError {
+    u8::try_from(index).map_or_else(
+        |_| FacetError::InvalidFacetIndexOverflow {
+            original_index: index,
+            facet_count,
+        },
+        |index| FacetError::InvalidFacetIndex { index, facet_count },
+    )
 }
 
 /// Helper function to safely convert usize to u8 for facet indices.
@@ -317,7 +351,9 @@ pub fn usize_to_u8(idx: usize, facet_count: usize) -> Result<u8, FacetError> {
 mod tests {
     use super::*;
 
+    use crate::core::cell::Cell;
     use crate::core::util::measure_with_result;
+    use crate::triangulation::delaunay::DelaunayTriangulation;
     use crate::vertex;
 
     use std::thread;
@@ -425,7 +461,7 @@ mod tests {
             vertex!([0.0, 1.0, 0.0]),
             vertex!([0.0, 0.0, 1.0]),
         ];
-        let dt = crate::triangulation::delaunay::DelaunayTriangulation::new(&vertices).unwrap();
+        let dt = DelaunayTriangulation::new(&vertices).unwrap();
         let tds = &dt.as_triangulation().tds;
 
         // Test 1: Basic functionality - successful key derivation
@@ -565,7 +601,7 @@ mod tests {
             vertex!([0.0, 1.0, 0.0]),
             vertex!([0.0, 0.0, 1.0]),
         ];
-        let dt = crate::triangulation::delaunay::DelaunayTriangulation::new(&vertices).unwrap();
+        let dt = DelaunayTriangulation::new(&vertices).unwrap();
         let tds = &dt.as_triangulation().tds;
         let cell_key = tds.cell_keys().next().unwrap();
         assert!(verify_facet_index_consistency(tds, cell_key, cell_key, 0).unwrap());
@@ -577,7 +613,10 @@ mod tests {
         // Logging: demonstrate behavior for large out-of-bounds facet index
         let err_large = verify_facet_index_consistency(tds, cell_key, cell_key, 300).unwrap_err();
         println!("    Large facet_idx=300 error: {err_large:?}");
-        assert!(matches!(err_large, FacetError::InvalidFacetIndex { .. }));
+        assert!(matches!(
+            err_large,
+            FacetError::InvalidFacetIndexOverflow { .. }
+        ));
 
         // False case: two disjoint triangles in the same TDS share no facet keys.
         let mut tds2: Tds<f64, (), (), 2> = Tds::empty();
@@ -601,14 +640,10 @@ mod tests {
             .unwrap();
 
         let c1 = tds2
-            .insert_cell_with_mapping(
-                crate::core::cell::Cell::new(vec![v_a, v_b, v_c], None).unwrap(),
-            )
+            .insert_cell_with_mapping(Cell::new(vec![v_a, v_b, v_c], None).unwrap())
             .unwrap();
         let c2 = tds2
-            .insert_cell_with_mapping(
-                crate::core::cell::Cell::new(vec![v_d, v_e, v_f], None).unwrap(),
-            )
+            .insert_cell_with_mapping(Cell::new(vec![v_d, v_e, v_f], None).unwrap())
             .unwrap();
 
         assert!(!verify_facet_index_consistency(&tds2, c1, c2, 0).unwrap());

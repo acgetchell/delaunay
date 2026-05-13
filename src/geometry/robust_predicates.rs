@@ -10,8 +10,9 @@
 
 use super::predicates::{InSphere, Orientation};
 use super::util::{safe_coords_to_f64, safe_scalar_to_f64, squared_norm};
-use crate::geometry::matrix::matrix_set;
+use crate::geometry::matrix::{Matrix, matrix_set};
 use crate::geometry::point::Point;
+use crate::geometry::sos::{sos_insphere_sign, sos_orientation_sign};
 use crate::geometry::traits::coordinate::{
     Coordinate, CoordinateConversionError, CoordinateScalar,
 };
@@ -223,9 +224,9 @@ where
     let abs_orient: i32 = match robust_orientation(simplex_points) {
         Ok(Orientation::POSITIVE) => 1,
         Ok(Orientation::NEGATIVE) => -1,
-        _ => crate::geometry::sos::sos_orientation_sign(&f64_simplex)?,
+        _ => sos_orientation_sign(&f64_simplex)?,
     };
-    let raw_insphere = crate::geometry::sos::sos_insphere_sign(&f64_simplex, &f64_test)?;
+    let raw_insphere = sos_insphere_sign(&f64_simplex, &f64_test)?;
 
     // Apply the same parity-aware normalization as AdaptiveKernel:
     // orient_factor = (-1)^(D+1) × abs_orient, because the insphere
@@ -247,7 +248,7 @@ where
 
 #[inline]
 fn fill_insphere_predicate_matrix<T, const D: usize, const K: usize>(
-    matrix: &mut crate::geometry::matrix::Matrix<K>,
+    matrix: &mut Matrix<K>,
     simplex_points: &[Point<T, D>],
     test_point: &Point<T, D>,
 ) -> Result<(), CoordinateConversionError>

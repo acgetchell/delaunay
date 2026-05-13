@@ -10,6 +10,8 @@
 //! - Different kernels (Fast vs Robust)
 
 use approx::assert_relative_eq;
+use delaunay::core::vertex::Vertex;
+use delaunay::geometry::kernel::RobustKernel;
 use delaunay::prelude::algorithms::{LocateResult, find_conflict_region, locate};
 use delaunay::prelude::collections::MAX_PRACTICAL_DIMENSION_SIZE;
 use delaunay::prelude::geometry::{AdaptiveKernel, Coordinate, Point};
@@ -17,6 +19,7 @@ use delaunay::prelude::tds::{Cell, CellKey, SmallBuffer, VertexKey, facet_key_fr
 use delaunay::prelude::triangulation::construction::{
     ConstructionOptions, DedupPolicy, DelaunayTriangulation, TopologyGuarantee, vertex,
 };
+use uuid::Uuid;
 
 /// Build the canonical facet key used to compare neighbor mirror facets in tests.
 fn facet_key_for_cell<const D: usize>(cell: &Cell<f64, (), (), D>, facet_idx: usize) -> u64 {
@@ -389,8 +392,6 @@ test_local_neighbor_repair_guardrails!(
 
 #[test]
 fn test_adaptive_kernel_vs_robust_kernel_2d() {
-    use delaunay::geometry::kernel::{AdaptiveKernel, RobustKernel};
-
     let vertices = vec![
         vertex!([0.0, 0.0]),
         vertex!([1.0, 0.0]),
@@ -428,8 +429,6 @@ fn test_adaptive_kernel_vs_robust_kernel_2d() {
 
 #[test]
 fn test_robust_kernel_incremental_insertion() {
-    use delaunay::geometry::kernel::RobustKernel;
-
     let vertices = vec![
         vertex!([0.0, 0.0]),
         vertex!([1.0, 0.0]),
@@ -637,8 +636,6 @@ fn test_minimal_simplex_then_insert() {
 
 #[test]
 fn test_f32_coordinates() {
-    use delaunay::geometry::kernel::AdaptiveKernel;
-
     let vertices = vec![
         vertex!([0.0f32, 0.0f32]),
         vertex!([1.0f32, 0.0f32]),
@@ -769,10 +766,6 @@ test_bootstrap_key_stability!(
 /// old TDS and lookups would fail or return wrong data.
 #[test]
 fn test_bootstrap_returns_valid_key_after_tds_rebuild() {
-    use ::uuid::Uuid;
-    use delaunay::core::vertex::Vertex;
-    use delaunay::geometry::point::Point;
-
     // Create vertices with explicit UUIDs so we can track them
     let uuid1 = Uuid::new_v4();
     let uuid2 = Uuid::new_v4();

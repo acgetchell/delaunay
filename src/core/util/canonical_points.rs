@@ -120,6 +120,8 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::core::vertex::VertexBuilder;
+    use crate::geometry::kernel::{AdaptiveKernel, Kernel};
     use crate::geometry::traits::coordinate::Coordinate;
 
     // =========================================================================
@@ -134,7 +136,7 @@ mod tests {
         let mut tds = Tds::<f64, (), (), D>::empty();
         let mut keys = Vec::with_capacity(coords.len());
         for c in coords {
-            let v = crate::core::vertex::VertexBuilder::<_, (), _>::default()
+            let v = VertexBuilder::<_, (), _>::default()
                 .point(Point::new(*c))
                 .build()
                 .expect("vertex build should succeed");
@@ -240,8 +242,6 @@ mod tests {
     /// cell vertex storage order, when canonical sorting is applied.
     #[test]
     fn test_canonical_insphere_permutation_invariant_2d() {
-        use crate::geometry::kernel::{AdaptiveKernel, Kernel};
-
         // 3 points forming a right triangle + a cospherical test point.
         // The circumcircle of (0,0),(1,0),(0,1) passes through (1,1).
         let (mut tds, keys) = build_tds_with_points(&[[0.0, 0.0], [1.0, 0.0], [0.0, 1.0]]);
@@ -286,8 +286,6 @@ mod tests {
     /// permutations of a co-spherical 3D simplex.
     #[test]
     fn test_canonical_insphere_permutation_invariant_3d() {
-        use crate::geometry::kernel::{AdaptiveKernel, Kernel};
-
         // Standard 3D simplex + cospherical test point (1,1,1)
         let (mut tds, keys) = build_tds_with_points(&[
             [0.0, 0.0, 0.0],

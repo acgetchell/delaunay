@@ -47,7 +47,7 @@ enum Triangulation3dExampleError {
     TriangulationConstruction {
         seed_candidates: Vec<u64>,
         #[source]
-        source: DelaunayTriangulationConstructionError,
+        source: Box<DelaunayTriangulationConstructionError>,
     },
     #[error(
         "failed to create triangulation because no seed candidates were available: {seed_candidates:?}"
@@ -98,7 +98,7 @@ fn main() -> Result<(), Triangulation3dExampleError> {
         };
         return Err(Triangulation3dExampleError::TriangulationConstruction {
             seed_candidates,
-            source,
+            source: Box::new(source),
         });
     };
     let construction_time = start.elapsed();

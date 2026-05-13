@@ -63,6 +63,15 @@ reproducers have been rechecked and fixed. Their details are archived in
 [`archive/known_issues_4d_2026-04-23.md`](archive/known_issues_4d_2026-04-23.md)
 and [`archive/issue_204_investigation.md`](archive/issue_204_investigation.md).
 
+Current 3D scale envelope:
+
+- `just debug-large-scale-3d 10000 1` is the current release-mode acceptance
+  harness for the 10,000-vertex 3D path.
+- Recent maintainer-hardware runs insert all 10,000 vertices with zero skips,
+  run a clean final flip repair, and pass `validation_report` for Levels 1–4.
+- Wall time is hardware- and load-sensitive. Treat "around 100 seconds" as the
+  Apple M4 Max-class local envelope rather than a portable guarantee.
+
 Remaining large-scale caution:
 
 - 4D batch construction at thousands of points can be expensive to investigate.

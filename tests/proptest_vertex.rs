@@ -35,8 +35,8 @@ fn non_finite_coordinate() -> impl Strategy<Value = f64> {
 // HELPER FUNCTIONS
 // =============================================================================
 
-/// Compute hash of a vertex for testing hash consistency
-fn compute_hash<T: Hash>(value: &T) -> u64 {
+/// Hash a vertex for testing hash consistency.
+fn hash_of<T: Hash>(value: &T) -> u64 {
     let mut hasher = std::collections::hash_map::DefaultHasher::new();
     value.hash(&mut hasher);
     hasher.finish()
@@ -87,8 +87,8 @@ macro_rules! test_vertex_properties {
 
                     prop_assert_eq!(v1, v2, "{}D: Vertices should be equal", $dim);
 
-                    let hash1 = compute_hash(&v1);
-                    let hash2 = compute_hash(&v2);
+                    let hash1 = hash_of(&v1);
+                    let hash2 = hash_of(&v2);
                     prop_assert_eq!(
                         hash1, hash2,
                         "{}D: Equal vertices must have equal hashes", $dim

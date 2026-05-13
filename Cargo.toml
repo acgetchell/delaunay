@@ -12,6 +12,24 @@ license = "BSD-3-Clause"
 keywords = [ "delaunay", "triangulation", "geometry", "convex-hull", "simplicial-complex" ]
 categories = [ "algorithms", "mathematics", "science" ]
 readme = "README.md"
+include = [
+    "/Cargo.lock",
+    "/Cargo.toml",
+    "/CITATION.cff",
+    "/LICENSE",
+    "/README.md",
+    "/REFERENCES.md",
+    "/benches/**/*.rs",
+    "/benches/README.md",
+    "/docs/*.md",
+    "/examples/**/*.rs",
+    "/examples/README.md",
+    "/src/**/*.rs",
+    "/tests/*.proptest-regressions",
+    "/tests/*.rs",
+    "/tests/COVERAGE.md",
+    "/tests/README.md",
+]
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
@@ -23,7 +41,7 @@ rustdoc-args = [ "--cfg", "docsrs" ]
 allocation-counter = { version = "0.8.1", optional = true } # for memory profiling
 arc-swap = "1.9.1"
 la-stack = { version = "0.4.1", features = [ "exact" ] }
-tracing = "0.1.44"
+tracing = { version = "0.1.44", default-features = false, features = [ "std" ] }
 rustc-hash = "2.1.2" # Fast non-cryptographic hashing for performance
 smallvec = { version = "1.15.1", features = [ "serde" ] } # Stack allocation for small collections
 num-traits = "0.2.19"
@@ -97,7 +115,7 @@ harness = false
 warnings = { level = "deny", priority = -1 }
 unsafe_code = "forbid"
 dead_code = { level = "warn", priority = 0 }
-missing_docs = { level = "warn", priority = 0 }
+missing_docs = { level = "deny", priority = 0 }
 unexpected_cfgs = { level = "warn", check-cfg = [ "cfg(docsrs)" ] }
 
 [lints.rustdoc]

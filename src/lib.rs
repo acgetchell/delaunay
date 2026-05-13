@@ -364,10 +364,19 @@
 // Forbid unsafe code throughout the entire crate
 #![forbid(unsafe_code)]
 
-/// The `core` module contains the primary data structures and algorithms for building and manipulating Delaunay triangulations.
+/// The `core` module contains the primary data structures and algorithms for
+/// building and manipulating triangulations.
 ///
-/// It includes the `Tds` struct, which represents the triangulation, as well as `Cell`, `Facet`, and `Vertex` components.
-/// This module provides traits for customizing vertex and cell data. The crate also includes a `prelude` module for convenient access to commonly used types.
+/// It includes the [`Tds`](crate::core::tds::Tds) struct, which represents the
+/// triangulation data structure, as well as [`Cell`](crate::core::cell::Cell),
+/// [`FacetView`](crate::core::facet::FacetView), and
+/// [`Vertex`](crate::core::vertex::Vertex) components. High-level Delaunay
+/// construction and builder APIs live under [`crate::triangulation`] and the
+/// focused preludes, not under `core`.
+///
+/// ```compile_fail
+/// delaunay::core::DelaunayTriangulation::empty();
+/// ```
 pub mod core {
     /// Triangulation algorithms for construction, maintenance, and querying.
     pub mod algorithms {
@@ -543,9 +552,7 @@ pub mod core {
         pub use facet_cache::*;
     }
 
-    // Re-export the `core` modules.
-    pub use crate::triangulation::builder::*;
-    pub use crate::triangulation::delaunay::*;
+    // Re-export the low-level `core` modules.
     pub use adjacency::*;
     pub use cell::*;
     pub use edge::*;
@@ -937,18 +944,19 @@ pub mod prelude {
 
     // Re-export incremental insertion types
     pub use crate::core::algorithms::incremental_insertion::{
-        CavityFillingError, CavityRepairStage, HullExtensionReason,
-        InitialSimplexConstructionError, InsertionError, NeighborRebuildError, NeighborWiringError,
-        TdsConstructionFailure, TdsValidationFailure,
+        CavityFillingError, CavityRepairStage, DelaunayRepairErrorKind, DelaunayRepairErrorSummary,
+        DelaunayRepairFailureContext, HullExtensionReason, InitialSimplexConstructionError,
+        InsertionError, InsertionErrorKind, InsertionErrorSourceKind, InsertionErrorSummary,
+        NeighborRebuildError, NeighborWiringError, TdsConstructionFailure, TdsValidationFailure,
     };
     pub use crate::core::operations::{InsertionOutcome, InsertionStatistics, SuspicionFlags};
 
     // Re-export diagnostic types for scientific analysis of construction and repair
     pub use crate::core::algorithms::flips::{
-        DelaunayRepairDiagnostics, DelaunayRepairError, DelaunayRepairStats, FlipContextError,
-        FlipEdgeAdjacencyError, FlipError, FlipMutationError, FlipNeighborWiringError,
-        FlipPredicateError, FlipPredicateOperation, FlipTriangleAdjacencyError,
-        FlipVertexAdjacencyError, RepairQueueOrder,
+        DelaunayRepairDiagnostics, DelaunayRepairError, DelaunayRepairStats,
+        DelaunayRepairVerificationContext, FlipContextError, FlipEdgeAdjacencyError, FlipError,
+        FlipMutationError, FlipNeighborWiringError, FlipPredicateError, FlipPredicateOperation,
+        FlipTriangleAdjacencyError, FlipVertexAdjacencyError, RepairQueueOrder,
     };
 
     // Re-export commonly used collection types from core::collections
@@ -968,7 +976,9 @@ pub mod prelude {
     /// Focused exports for triangulation construction and mutation.
     pub mod triangulation {
         pub use crate::core::operations::{InsertionOutcome, InsertionStatistics, SuspicionFlags};
-        pub use crate::core::traits::data_type::DataType;
+        pub use crate::core::traits::data_type::{
+            DataCopy, DataDebug, DataDeserialize, DataIdentity, DataSerde, DataSerialize, DataType,
+        };
         pub use crate::core::triangulation::{
             DuplicateDetectionMetrics, TopologyGuarantee, Triangulation,
             TriangulationConstructionError, TriangulationValidationError, ValidationPolicy,
@@ -1035,8 +1045,15 @@ pub mod prelude {
         }
 
         /// Bistellar (Pachner) flips for explicit triangulation editing.
+        ///
+        /// Repair-only diagnostics and validation helpers are intentionally
+        /// excluded; use [`crate::prelude::triangulation::repair`] for those.
+        ///
+        /// ```compile_fail
+        /// use delaunay::prelude::triangulation::flips::DelaunayRepairError;
+        /// ```
         pub mod flips {
-            pub use crate::core::algorithms::flips::*;
+            pub use crate::core::algorithms::flips::{BistellarMove, ConstK};
             pub use crate::core::collections::{
                 CellKeyBuffer, MAX_PRACTICAL_DIMENSION_SIZE, SmallBuffer,
             };
@@ -1050,12 +1067,22 @@ pub mod prelude {
         }
 
         /// Incremental insertion building blocks and diagnostics.
+        ///
+        /// Includes compact [`InsertionErrorSummary`] and [`InsertionErrorKind`]
+        /// exports for callers that need small by-value diagnostics instead of full insertion
+        /// error payloads.
+        ///
+        /// [`InsertionErrorSummary`]: crate::core::algorithms::incremental_insertion::InsertionErrorSummary
+        /// [`InsertionErrorKind`]: crate::core::algorithms::incremental_insertion::InsertionErrorKind
         pub mod insertion {
             pub use crate::core::algorithms::incremental_insertion::{
-                CavityFillingError, CavityRepairStage, HullExtensionReason,
-                InitialSimplexConstructionError, InsertionError, NeighborRebuildError,
+                CavityFillingError, CavityRepairStage, DelaunayRepairErrorKind,
+                DelaunayRepairErrorSummary, DelaunayRepairFailureContext, HullExtensionReason,
+                InitialSimplexConstructionError, InsertionError, InsertionErrorKind,
+                InsertionErrorSourceKind, InsertionErrorSummary, NeighborRebuildError,
                 NeighborWiringError, TdsConstructionFailure, TdsValidationFailure, extend_hull,
-                fill_cavity, repair_neighbor_pointers_local, wire_cavity_neighbors,
+                fill_cavity, repair_neighbor_pointers, repair_neighbor_pointers_local,
+                wire_cavity_neighbors,
             };
             pub use crate::core::collections::CellKeyBuffer;
             pub use crate::core::facet::FacetHandle;
@@ -1071,13 +1098,24 @@ pub mod prelude {
         }
 
         /// Flip-based Delaunay repair, diagnostics, and Level 4 validation.
+        ///
+        /// Includes compact [`DelaunayRepairErrorSummary`] and [`DelaunayRepairErrorKind`]
+        /// exports for APIs that need repair categories without retaining full repair
+        /// diagnostics.
+        ///
+        /// [`DelaunayRepairErrorSummary`]: crate::core::algorithms::incremental_insertion::DelaunayRepairErrorSummary
+        /// [`DelaunayRepairErrorKind`]: crate::core::algorithms::incremental_insertion::DelaunayRepairErrorKind
         pub mod repair {
             pub use crate::core::algorithms::flips::{
                 DelaunayRepairDiagnostics, DelaunayRepairError, DelaunayRepairStats,
-                FlipContextError, FlipEdgeAdjacencyError, FlipError, FlipMutationError,
-                FlipNeighborWiringError, FlipPredicateError, FlipPredicateOperation,
-                FlipTriangleAdjacencyError, FlipVertexAdjacencyError, RepairQueueOrder,
-                verify_delaunay_for_triangulation, verify_delaunay_via_flip_predicates,
+                DelaunayRepairVerificationContext, FlipContextError, FlipEdgeAdjacencyError,
+                FlipError, FlipMutationError, FlipNeighborWiringError, FlipPredicateError,
+                FlipPredicateOperation, FlipTriangleAdjacencyError, FlipVertexAdjacencyError,
+                RepairQueueOrder, verify_delaunay_for_triangulation,
+                verify_delaunay_via_flip_predicates,
+            };
+            pub use crate::core::algorithms::incremental_insertion::{
+                DelaunayRepairErrorKind, DelaunayRepairErrorSummary,
             };
             pub use crate::core::triangulation::{
                 TopologyGuarantee, Triangulation, ValidationPolicy,
@@ -1143,7 +1181,9 @@ pub mod prelude {
         }
 
         pub use crate::core::algorithms::incremental_insertion::{
-            CavityFillingError, CavityRepairStage, HullExtensionReason, InsertionError,
+            CavityFillingError, CavityRepairStage, DelaunayRepairErrorKind,
+            DelaunayRepairErrorSummary, DelaunayRepairFailureContext, HullExtensionReason,
+            InsertionError, InsertionErrorKind, InsertionErrorSourceKind, InsertionErrorSummary,
             NeighborWiringError,
         };
         // Convenience macro (commonly used in docs/tests/examples).
@@ -1151,8 +1191,41 @@ pub mod prelude {
     }
 
     /// Focused exports for collection types used throughout the crate.
+    ///
+    /// This prelude keeps common map, set, key-map, and small-buffer aliases
+    /// convenient without importing every algorithm-specific scratch buffer.
+    /// Expert-only buffers remain available from [`crate::core::collections`]
+    /// or the nested [`crate::prelude::collections::algorithm_buffers`] module.
+    ///
+    /// ```compile_fail
+    /// use delaunay::prelude::collections::CellRemovalBuffer;
+    /// ```
     pub mod collections {
-        pub use crate::core::collections::*;
+        pub use crate::core::collections::{
+            CellKeyBuffer, CellKeySet, CellNeighborsMap, CellSecondaryMap, CellToVertexUuidsMap,
+            CellVertexBuffer, CellVertexKeysMap, CellVertexUuidBuffer, CellVerticesMap, Entry,
+            FacetIndex, FacetIssuesMap, FacetSharingCellsBuffer, FacetToCellsMap, FastBuildHasher,
+            FastHashMap, FastHashSet, FastHasher, KeyBasedCellMap, KeyBasedVertexMap,
+            MAX_PRACTICAL_DIMENSION_SIZE, NeighborBuffer, PeriodicOffsetBuffer,
+            SimplexVertexBuffer, SmallBuffer, Uuid, UuidToCellKeyMap, UuidToVertexKeyMap,
+            VertexKeyBuffer, VertexKeySet, VertexSecondaryMap, VertexToCellsMap, VertexUuidBuffer,
+            VertexUuidSet, fast_hash_map_with_capacity, fast_hash_set_with_capacity,
+            small_buffer_with_capacity_2, small_buffer_with_capacity_8,
+            small_buffer_with_capacity_16,
+        };
+
+        /// Expert aliases for algorithm-local scratch buffers.
+        ///
+        /// These remain public for advanced users and for APIs that expose their
+        /// exact buffer shapes, but they are separated from the common
+        /// collections prelude to avoid accidental broad imports.
+        pub mod algorithm_buffers {
+            pub use crate::core::collections::{
+                BadCellBuffer, CLEANUP_OPERATION_BUFFER_SIZE, CavityBoundaryBuffer,
+                CellRemovalBuffer, FacetInfoBuffer, GeometricPointBuffer, PointBuffer,
+                ValidCellsBuffer, ViolationBuffer,
+            };
+        }
     }
 
     /// Focused exports for low-level topology data structures.
@@ -1160,7 +1233,8 @@ pub mod prelude {
         pub use crate::core::adjacency::*;
         pub use crate::core::cell::*;
         pub use crate::core::collections::{
-            CellKeyBuffer, FacetIndex, FastHashMap, FastHashSet, NeighborBuffer, SmallBuffer, Uuid,
+            CellKeyBuffer, FacetIndex, FastHashMap, FastHashSet, NeighborBuffer,
+            PeriodicOffsetBuffer, SmallBuffer, Uuid,
         };
         pub use crate::core::edge::*;
         pub use crate::core::facet::*;
@@ -1168,9 +1242,9 @@ pub mod prelude {
         pub use crate::core::traits::facet_cache::*;
         pub use crate::core::util::{
             UuidValidationError, checked_facet_key_from_vertex_keys, facet_view_to_vertices,
-            facet_views_are_adjacent, format_jaccard_report, generate_combinations,
-            jaccard_distance, jaccard_index, make_uuid, measure_with_result, stable_hash_u64_slice,
-            usize_to_u8, validate_uuid, verify_facet_index_consistency,
+            facet_views_are_adjacent, format_jaccard_report, jaccard_distance, jaccard_index,
+            make_uuid, measure_with_result, stable_hash_u64_slice, usize_to_u8, validate_uuid,
+            verify_facet_index_consistency,
         };
         pub use crate::core::vertex::*;
     }
@@ -1239,7 +1313,9 @@ pub mod prelude {
         // Common input/output types (kept intentionally small)
         pub use crate::core::facet::FacetView;
         pub use crate::core::traits::boundary_analysis::BoundaryAnalysis;
-        pub use crate::core::traits::data_type::DataType;
+        pub use crate::core::traits::data_type::{
+            DataCopy, DataDebug, DataDeserialize, DataIdentity, DataSerde, DataSerialize, DataType,
+        };
         pub use crate::core::{Cell, Vertex};
         pub use crate::geometry::Point;
         pub use crate::geometry::kernel::{

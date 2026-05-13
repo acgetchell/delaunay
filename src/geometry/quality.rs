@@ -35,52 +35,179 @@
 
 use crate::core::{
     collections::{MAX_PRACTICAL_DIMENSION_SIZE, SmallBuffer},
-    tds::CellKey,
-    traits::data_type::DataType,
+    tds::{CellKey, TdsError, VertexKey},
     triangulation::Triangulation,
 };
 use crate::geometry::{
     kernel::Kernel,
     point::Point,
     traits::coordinate::CoordinateScalar,
-    util::{circumradius, hypot, inradius as simplex_inradius, simplex_volume},
+    util::{CircumcenterError, circumradius, hypot, inradius as simplex_inradius, simplex_volume},
 };
 use num_traits::{NumCast, One};
 use std::ops::{AddAssign, Div};
 use thiserror::Error;
+
+/// Numeric operation being performed when quality metric computation failed.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum QualityNumericOperation {
+    /// Converting the absolute epsilon floor.
+    EpsilonFloorConversion,
+    /// Converting the edge count to the coordinate scalar.
+    EdgeCountConversion,
+    /// Converting the relative epsilon factor.
+    RelativeFactorConversion,
+    /// Circumradius computation.
+    Circumradius,
+    /// Inradius computation.
+    Inradius,
+    /// Simplex volume computation.
+    Volume,
+}
+
+/// Geometric quantity that revealed a degenerate cell.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum QualityDegeneracyMeasure {
+    /// Inradius was below the scale-aware epsilon.
+    Inradius,
+    /// Volume was below the scale-aware epsilon.
+    Volume,
+    /// Average edge length was below the scale-aware epsilon.
+    AverageEdgeLength,
+    /// Average edge length raised to the dimension underflowed below epsilon.
+    EdgeLengthPower,
+}
+
+/// Failure while extracting cell vertices for quality metric evaluation.
+#[derive(Debug, Clone, PartialEq, Eq, Error)]
+#[non_exhaustive]
+pub enum QualityCellVerticesError {
+    /// The requested cell key was not present in the TDS.
+    #[error("Cell key {cell_key:?} not found: {context}")]
+    CellNotFound {
+        /// Missing cell key.
+        cell_key: CellKey,
+        /// Lookup context provided by the TDS.
+        context: String,
+    },
+    /// A cell referenced a vertex key that was not present in the TDS.
+    #[error("Vertex key {vertex_key:?} referenced by the cell was not found: {context}")]
+    ReferencedVertexNotFound {
+        /// Missing vertex key.
+        vertex_key: VertexKey,
+        /// Lookup context provided by the TDS.
+        context: String,
+    },
+    /// The TDS reported an unexpected lookup failure.
+    #[error("{message}")]
+    UnexpectedTdsFailure {
+        /// Full TDS diagnostic text.
+        message: String,
+    },
+}
+
+impl From<TdsError> for QualityCellVerticesError {
+    fn from(source: TdsError) -> Self {
+        match source {
+            TdsError::CellNotFound { cell_key, context } => {
+                Self::CellNotFound { cell_key, context }
+            }
+            TdsError::VertexNotFound {
+                vertex_key,
+                context,
+            } => Self::ReferencedVertexNotFound {
+                vertex_key,
+                context,
+            },
+            other => Self::UnexpectedTdsFailure {
+                message: other.to_string(),
+            },
+        }
+    }
+}
 
 /// Errors that can occur during quality metric computation.
 ///
 /// # Examples
 ///
 /// ```rust
-/// use delaunay::prelude::geometry::QualityError;
+/// use delaunay::prelude::geometry::{QualityError, QualityNumericOperation};
 ///
-/// let err = QualityError::NumericalError {
-///     message: "overflow".to_string(),
+/// let err = QualityError::NumericConversion {
+///     operation: QualityNumericOperation::EdgeCountConversion,
 /// };
-/// assert!(matches!(err, QualityError::NumericalError { .. }));
+/// assert!(matches!(err, QualityError::NumericConversion { .. }));
 /// ```
 #[derive(Debug, Clone, PartialEq, Eq, Error)]
 #[non_exhaustive]
 pub enum QualityError {
-    /// Cell has invalid or missing vertex keys
-    #[error("Invalid cell: {message}")]
-    InvalidCell {
-        /// Description of the error
-        message: String,
+    /// Failed to fetch a cell's vertex keys from the TDS.
+    #[error("Failed to fetch vertices for cell {cell_key:?}: {source}")]
+    CellVertices {
+        /// Cell whose vertex keys could not be retrieved.
+        cell_key: CellKey,
+        /// Underlying TDS error.
+        #[source]
+        source: QualityCellVerticesError,
     },
-    /// Cell is degenerate (zero or near-zero volume)
-    #[error("Degenerate cell: {detail}")]
+    /// A vertex key referenced by the cell was missing from the triangulation.
+    #[error("Vertex {vertex_key:?} referenced by a quality metric cell was not found")]
+    VertexNotFound {
+        /// Missing vertex key.
+        vertex_key: VertexKey,
+    },
+    /// Extracted cell arity did not match `D + 1`.
+    #[error("Cell has {actual} vertices, expected {expected} for dimension {dimension}")]
+    InvalidCellArity {
+        /// Observed vertex count.
+        actual: usize,
+        /// Expected vertex count.
+        expected: usize,
+        /// Triangulation dimension.
+        dimension: usize,
+    },
+    /// Conversion of a numeric constant or count into the coordinate scalar failed.
+    #[error("Numeric conversion failed during {operation:?}")]
+    NumericConversion {
+        /// Operation whose scalar conversion failed.
+        operation: QualityNumericOperation,
+    },
+    /// Circumradius computation failed.
+    #[error("Circumradius computation failed: {source}")]
+    Circumradius {
+        /// Underlying geometry error.
+        #[source]
+        source: CircumcenterError,
+    },
+    /// Inradius computation failed.
+    #[error("Inradius computation failed: {source}")]
+    Inradius {
+        /// Underlying geometry error.
+        #[source]
+        source: CircumcenterError,
+    },
+    /// Simplex volume computation failed.
+    #[error("Volume computation failed: {source}")]
+    Volume {
+        /// Underlying geometry error.
+        #[source]
+        source: CircumcenterError,
+    },
+    /// Cell is degenerate (zero or near-zero volume).
+    #[error(
+        "Degenerate cell: {measure:?} observed={observed}, epsilon={epsilon}, avg_edge_length={avg_edge_length:?}"
+    )]
     DegenerateCell {
-        /// Measure/context of degeneracy (e.g., "volume=…", "inradius=…")
-        detail: String,
-    },
-    /// Numerical computation failed
-    #[error("Numerical error: {message}")]
-    NumericalError {
-        /// Description of the numerical issue
-        message: String,
+        /// Quantity that failed the degeneracy threshold.
+        measure: QualityDegeneracyMeasure,
+        /// Observed quantity value.
+        observed: String,
+        /// Scale-aware epsilon used for comparison.
+        epsilon: String,
+        /// Average edge length context, when applicable.
+        avg_edge_length: Option<String>,
     },
 }
 
@@ -94,32 +221,29 @@ fn cell_points<K, U, V, const D: usize>(
 ) -> Result<SmallBuffer<Point<K::Scalar, D>, MAX_PRACTICAL_DIMENSION_SIZE>, QualityError>
 where
     K: Kernel<D>,
-    U: DataType,
-    V: DataType,
 {
-    let vertex_keys = tri
-        .tds
-        .cell_vertices(cell_key)
-        .map_err(|e| QualityError::InvalidCell {
-            message: format!("Failed to get cell vertices: {e}"),
-        })?;
+    let vertex_keys =
+        tri.tds
+            .cell_vertices(cell_key)
+            .map_err(|source| QualityError::CellVertices {
+                cell_key,
+                source: source.into(),
+            })?;
 
     // Use SmallBuffer to avoid heap allocation (cells have D+1 vertices, D ≤ MAX_PRACTICAL_DIMENSION_SIZE)
     let mut points = SmallBuffer::new();
     for &vkey in &vertex_keys {
-        let point =
-            tri.tds
-                .vertex(vkey)
-                .map(|v| *v.point())
-                .ok_or_else(|| QualityError::InvalidCell {
-                    message: format!("Vertex {vkey:?} not found in triangulation"),
-                })?;
+        let point = tri
+            .tds
+            .vertex(vkey)
+            .map(|v| *v.point())
+            .ok_or(QualityError::VertexNotFound { vertex_key: vkey })?;
         points.push(point);
     }
     Ok(points)
 }
 
-/// Computes scale-aware epsilon and average edge length for degeneracy detection.
+/// Returns the scale-aware epsilon and average edge length for degeneracy detection.
 ///
 /// This helper centralizes the epsilon calculation logic used by both `radius_ratio`
 /// and `normalized_volume` to ensure consistent degeneracy detection across metrics.
@@ -137,7 +261,7 @@ where
 /// # Errors
 ///
 /// Returns `QualityError` if edge count conversion or epsilon conversion fails.
-fn compute_scale_aware_epsilon<T, const D: usize>(
+fn scale_aware_epsilon<T, const D: usize>(
     points: &SmallBuffer<Point<T, D>, MAX_PRACTICAL_DIMENSION_SIZE>,
 ) -> Result<(T, T), QualityError>
 where
@@ -160,22 +284,22 @@ where
 
     // If there are no edges (e.g., D == 0), fall back to floor epsilon.
     if edge_count == 0 {
-        let floor: T = NumCast::from(1e-12).ok_or_else(|| QualityError::NumericalError {
-            message: "Failed to convert floor epsilon (1e-12) to coordinate type".to_string(),
+        let floor: T = NumCast::from(1e-12).ok_or(QualityError::NumericConversion {
+            operation: QualityNumericOperation::EpsilonFloorConversion,
         })?;
         return Ok((T::zero(), floor));
     }
 
-    let edge_count_t = NumCast::from(edge_count).ok_or_else(|| QualityError::NumericalError {
-        message: "Failed to convert edge count to type T".to_string(),
+    let edge_count_t = NumCast::from(edge_count).ok_or(QualityError::NumericConversion {
+        operation: QualityNumericOperation::EdgeCountConversion,
     })?;
     let avg_edge_length = total_edge_length / edge_count_t;
 
-    let floor: T = NumCast::from(1e-12).ok_or_else(|| QualityError::NumericalError {
-        message: "Failed to convert floor epsilon (1e-12) to coordinate type".to_string(),
+    let floor: T = NumCast::from(1e-12).ok_or(QualityError::NumericConversion {
+        operation: QualityNumericOperation::EpsilonFloorConversion,
     })?;
-    let relative_factor: T = NumCast::from(1e-8).ok_or_else(|| QualityError::NumericalError {
-        message: "Failed to convert relative factor (1e-8) to coordinate type".to_string(),
+    let relative_factor: T = NumCast::from(1e-8).ok_or(QualityError::NumericConversion {
+        operation: QualityNumericOperation::RelativeFactorConversion,
     })?;
     let epsilon = floor.max(avg_edge_length * relative_factor);
 
@@ -237,40 +361,35 @@ pub fn radius_ratio<K, U, V, const D: usize>(
 where
     K: Kernel<D>,
     K::Scalar: Div<Output = K::Scalar>,
-    U: DataType,
-    V: DataType,
 {
     // Extract cell points using helper
     let points = cell_points(tri, cell_key)?;
 
     if points.len() != D + 1 {
-        return Err(QualityError::InvalidCell {
-            message: format!(
-                "Cell has {} vertices, expected {} for dimension {D}",
-                points.len(),
-                D + 1
-            ),
+        return Err(QualityError::InvalidCellArity {
+            actual: points.len(),
+            expected: D + 1,
+            dimension: D,
         });
     }
 
     // Compute circumradius using utility function
-    let circumradius_val = circumradius(&points).map_err(|e| QualityError::NumericalError {
-        message: format!("Circumradius computation failed: {e}"),
-    })?;
+    let circumradius_val =
+        circumradius(&points).map_err(|source| QualityError::Circumradius { source })?;
 
     // Compute inradius using utility function
-    let inradius_val = simplex_inradius(&points).map_err(|e| QualityError::NumericalError {
-        message: format!("Inradius computation failed: {e}"),
-    })?;
+    let inradius_val =
+        simplex_inradius(&points).map_err(|source| QualityError::Inradius { source })?;
 
     // Check for near-zero inradius (degenerate cell) using scale-aware tolerance
-    let (avg_edge_length, epsilon) = compute_scale_aware_epsilon(&points)?;
+    let (avg_edge_length, epsilon) = scale_aware_epsilon(&points)?;
 
     if inradius_val < epsilon {
         return Err(QualityError::DegenerateCell {
-            detail: format!(
-                "inradius={inradius_val:?}, epsilon={epsilon:?}, avg_edge_length={avg_edge_length:?}"
-            ),
+            measure: QualityDegeneracyMeasure::Inradius,
+            observed: format!("{inradius_val:?}"),
+            epsilon: format!("{epsilon:?}"),
+            avg_edge_length: Some(format!("{avg_edge_length:?}")),
         });
     }
 
@@ -333,43 +452,41 @@ pub fn normalized_volume<K, U, V, const D: usize>(
 where
     K: Kernel<D>,
     K::Scalar: Div<Output = K::Scalar>,
-    U: DataType,
-    V: DataType,
 {
     // Extract cell points using helper
     let points = cell_points(tri, cell_key)?;
 
     if points.len() != D + 1 {
-        return Err(QualityError::InvalidCell {
-            message: format!(
-                "Cell has {} vertices, expected {} for dimension {D}",
-                points.len(),
-                D + 1
-            ),
+        return Err(QualityError::InvalidCellArity {
+            actual: points.len(),
+            expected: D + 1,
+            dimension: D,
         });
     }
 
     // Compute volume using utility function
-    let volume = simplex_volume(&points).map_err(|e| QualityError::NumericalError {
-        message: format!("Volume computation failed: {e}"),
-    })?;
+    let volume = simplex_volume(&points).map_err(|source| QualityError::Volume { source })?;
 
     // Compute scale-aware epsilon and average edge length
-    let (avg_edge_length, epsilon) = compute_scale_aware_epsilon(&points)?;
+    let (avg_edge_length, epsilon) = scale_aware_epsilon(&points)?;
 
     // Check for degenerate cell (volume too small)
     if volume < epsilon {
         return Err(QualityError::DegenerateCell {
-            detail: format!(
-                "volume={volume:?}, epsilon={epsilon:?}, avg_edge_length={avg_edge_length:?}"
-            ),
+            measure: QualityDegeneracyMeasure::Volume,
+            observed: format!("{volume:?}"),
+            epsilon: format!("{epsilon:?}"),
+            avg_edge_length: Some(format!("{avg_edge_length:?}")),
         });
     }
 
     // Check avg_edge_length using the same scale-aware epsilon
     if avg_edge_length < epsilon {
         return Err(QualityError::DegenerateCell {
-            detail: format!("avg_edge_length={avg_edge_length:?}, epsilon={epsilon:?}"),
+            measure: QualityDegeneracyMeasure::AverageEdgeLength,
+            observed: format!("{avg_edge_length:?}"),
+            epsilon: format!("{epsilon:?}"),
+            avg_edge_length: Some(format!("{avg_edge_length:?}")),
         });
     }
 
@@ -385,7 +502,10 @@ where
     // This catches numerical precision loss during exponentiation.
     if edge_length_power < epsilon {
         return Err(QualityError::DegenerateCell {
-            detail: format!("edge_length_power={edge_length_power:?}, epsilon={epsilon:?}"),
+            measure: QualityDegeneracyMeasure::EdgeLengthPower,
+            observed: format!("{edge_length_power:?}"),
+            epsilon: format!("{epsilon:?}"),
+            avg_edge_length: Some(format!("{avg_edge_length:?}")),
         });
     }
 
@@ -400,7 +520,7 @@ mod tests {
     use crate::geometry::kernel::AdaptiveKernel;
     use crate::geometry::traits::coordinate::Coordinate;
     use crate::triangulation::delaunay::{
-        DelaunayTriangulation, DelaunayTriangulationConstructionError,
+        DelaunayConstructionFailure, DelaunayTriangulation, DelaunayTriangulationConstructionError,
     };
     use crate::vertex;
     use approx::assert_relative_eq;
@@ -449,11 +569,11 @@ let cell_key = dt.cells().next().unwrap().0;
                         let dt_base: DelaunayTriangulation<_, (), (), $dim> = DelaunayTriangulation::new(&vertices_base).unwrap();
 let key_base = dt_base.cells().next().unwrap().0;
 
-                        // Scale by 10x
-                        let vertices_scaled: Vec<_> = vertices_base.iter().map(|v| {
-                            let coords: [f64; $dim] = v.point().coords().iter().map(|&c| c * 10.0).collect::<Vec<_>>().try_into().unwrap();
-                            vertex!(coords)
-                        }).collect();
+	                        // Scale by 10x
+	                        let vertices_scaled: Vec<_> = vertices_base.iter().map(|v| {
+	                            let coords: [f64; $dim] = std::array::from_fn(|idx| v.point().coords()[idx] * 10.0);
+	                            vertex!(coords)
+	                        }).collect();
                         let dt_scaled: DelaunayTriangulation<_, (), (), $dim> = DelaunayTriangulation::new(&vertices_scaled).unwrap();
 let key_scaled = dt_scaled.cells().next().unwrap().0;
 
@@ -473,11 +593,11 @@ let key_scaled = dt_scaled.cells().next().unwrap().0;
                         let dt_base: DelaunayTriangulation<_, (), (), $dim> = DelaunayTriangulation::new(&vertices_base).unwrap();
 let key_base = dt_base.cells().next().unwrap().0;
 
-                        // Translate by [5.0, 5.0, ...]
-                        let vertices_translated: Vec<_> = vertices_base.iter().map(|v| {
-                            let coords: [f64; $dim] = v.point().coords().iter().map(|&c| c + 5.0).collect::<Vec<_>>().try_into().unwrap();
-                            vertex!(coords)
-                        }).collect();
+	                        // Translate by [5.0, 5.0, ...]
+	                        let vertices_translated: Vec<_> = vertices_base.iter().map(|v| {
+	                            let coords: [f64; $dim] = std::array::from_fn(|idx| v.point().coords()[idx] + 5.0);
+	                            vertex!(coords)
+	                        }).collect();
                         let dt_translated: DelaunayTriangulation<_, (), (), $dim> = DelaunayTriangulation::new(&vertices_translated).unwrap();
 let key_translated = dt_translated.cells().next().unwrap().0;
 
@@ -614,25 +734,79 @@ let key_translated = dt_translated.cells().next().unwrap().0;
     // =============================================================================
 
     #[test]
+    fn quality_cell_vertices_error_preserves_specific_tds_lookup_failures() {
+        let cell_key = CellKey::from(KeyData::from_ffi(0xCAFE));
+        let vertex_key = VertexKey::from(KeyData::from_ffi(0xBEEF));
+
+        let missing_cell = QualityCellVerticesError::from(TdsError::CellNotFound {
+            cell_key,
+            context: "quality metric cell lookup".to_string(),
+        });
+        assert!(matches!(
+            missing_cell,
+            QualityCellVerticesError::CellNotFound {
+                cell_key: observed,
+                context
+            } if observed == cell_key && context == "quality metric cell lookup"
+        ));
+
+        let missing_vertex = QualityCellVerticesError::from(TdsError::VertexNotFound {
+            vertex_key,
+            context: "quality metric vertex lookup".to_string(),
+        });
+        assert!(matches!(
+            missing_vertex,
+            QualityCellVerticesError::ReferencedVertexNotFound {
+                vertex_key: observed,
+                context
+            } if observed == vertex_key && context == "quality metric vertex lookup"
+        ));
+
+        let unexpected = QualityCellVerticesError::from(TdsError::DuplicateCells {
+            message: "same vertex set appears twice".to_string(),
+        });
+        assert!(matches!(
+            unexpected,
+            QualityCellVerticesError::UnexpectedTdsFailure { message }
+                if message.contains("Duplicate cells")
+                    && message.contains("same vertex set appears twice")
+        ));
+    }
+
+    #[test]
+    fn scale_aware_epsilon_uses_floor_when_point_set_has_no_edges() {
+        let mut points = SmallBuffer::new();
+        points.push(Point::<f64, 0>::new([]));
+
+        let (avg_edge_length, epsilon) = scale_aware_epsilon(&points).unwrap();
+
+        assert_relative_eq!(avg_edge_length, 0.0);
+        assert_relative_eq!(epsilon, 1e-12);
+    }
+
+    #[test]
     fn test_quality_error_display() {
         // Test that error messages format correctly
-        let err = QualityError::InvalidCell {
-            message: "test message".to_string(),
+        let err = QualityError::InvalidCellArity {
+            actual: 2,
+            expected: 3,
+            dimension: 2,
         };
-        assert!(format!("{err}").contains("Invalid cell"));
-        assert!(format!("{err}").contains("test message"));
+        assert!(format!("{err}").contains("expected 3"));
 
         let err = QualityError::DegenerateCell {
-            detail: "volume=0.0".to_string(),
+            measure: QualityDegeneracyMeasure::Volume,
+            observed: "0.0".to_string(),
+            epsilon: "1e-12".to_string(),
+            avg_edge_length: Some("1.0".to_string()),
         };
         assert!(format!("{err}").contains("Degenerate"));
-        assert!(format!("{err}").contains("volume=0.0"));
+        assert!(format!("{err}").contains("0.0"));
 
-        let err = QualityError::NumericalError {
-            message: "test error".to_string(),
+        let err = QualityError::NumericConversion {
+            operation: QualityNumericOperation::EdgeCountConversion,
         };
-        assert!(format!("{err}").contains("Numerical error"));
-        assert!(format!("{err}").contains("test error"));
+        assert!(format!("{err}").contains("Numeric conversion failed"));
     }
 
     // =============================================================================
@@ -899,29 +1073,34 @@ let cell_key = dt.cells().next().unwrap().0;
         let invalid_key = CellKey::from(KeyData::from_ffi(u64::MAX));
 
         let result = radius_ratio(dt.as_triangulation(), invalid_key);
-        assert!(matches!(result, Err(QualityError::InvalidCell { .. })));
+        assert!(matches!(result, Err(QualityError::CellVertices { .. })));
 
         let result = normalized_volume(dt.as_triangulation(), invalid_key);
-        assert!(matches!(result, Err(QualityError::InvalidCell { .. })));
+        assert!(matches!(result, Err(QualityError::CellVertices { .. })));
     }
 
     #[test]
     fn test_quality_error_clone_eq() {
         // Test that QualityError implements Clone and PartialEq correctly
-        let err1 = QualityError::InvalidCell {
-            message: "test".to_string(),
+        let err1 = QualityError::InvalidCellArity {
+            actual: 2,
+            expected: 3,
+            dimension: 2,
         };
         let err2 = err1.clone();
         assert_eq!(err1, err2);
 
         let err3 = QualityError::DegenerateCell {
-            detail: "volume=0".to_string(),
+            measure: QualityDegeneracyMeasure::Volume,
+            observed: "0".to_string(),
+            epsilon: "1e-12".to_string(),
+            avg_edge_length: None,
         };
         let err4 = err3.clone();
         assert_eq!(err3, err4);
 
-        let err5 = QualityError::NumericalError {
-            message: "overflow".to_string(),
+        let err5 = QualityError::NumericConversion {
+            operation: QualityNumericOperation::EdgeCountConversion,
         };
         let err6 = err5.clone();
         assert_eq!(err5, err6);
@@ -1088,18 +1267,18 @@ let cell_key = dt.cells().next().unwrap().0;
         let invalid_key = CellKey::from(KeyData::from_ffi(u64::MAX));
 
         let result = cell_points(dt.as_triangulation(), invalid_key);
-        assert!(matches!(result, Err(QualityError::InvalidCell { .. })));
+        assert!(matches!(result, Err(QualityError::CellVertices { .. })));
     }
 
     #[test]
-    fn test_compute_scale_aware_epsilon_2d() {
+    fn test_scale_aware_epsilon_2d() {
         // Test epsilon computation for 2D simplex
         let mut points = SmallBuffer::new();
         points.push(Point::new([0.0, 0.0]));
         points.push(Point::new([1.0, 0.0]));
         points.push(Point::new([0.5, 0.866_025]));
 
-        let (avg_edge_length, epsilon) = compute_scale_aware_epsilon(&points).unwrap();
+        let (avg_edge_length, epsilon) = scale_aware_epsilon(&points).unwrap();
         assert!(
             avg_edge_length > 0.0,
             "Average edge length should be positive"
@@ -1109,35 +1288,35 @@ let cell_key = dt.cells().next().unwrap().0;
     }
 
     #[test]
-    fn test_compute_scale_aware_epsilon_tiny_simplex() {
+    fn test_scale_aware_epsilon_tiny_simplex() {
         // Test epsilon computation with very small coordinates
         let mut points = SmallBuffer::new();
         points.push(Point::new([0.0, 0.0]));
         points.push(Point::new([1e-10, 0.0]));
         points.push(Point::new([0.5e-10, 0.866_025e-10]));
 
-        let (avg_edge_length, epsilon) = compute_scale_aware_epsilon(&points).unwrap();
+        let (avg_edge_length, epsilon) = scale_aware_epsilon(&points).unwrap();
         // For tiny simplices, epsilon should use the floor (1e-12)
         assert!(epsilon >= 1e-12);
         assert!(avg_edge_length > 0.0);
     }
 
     #[test]
-    fn test_compute_scale_aware_epsilon_large_simplex() {
+    fn test_scale_aware_epsilon_large_simplex() {
         // Test epsilon computation with large coordinates
         let mut points = SmallBuffer::new();
         points.push(Point::new([0.0, 0.0]));
         points.push(Point::new([1e6, 0.0]));
         points.push(Point::new([0.5e6, 0.866_025e6]));
 
-        let (avg_edge_length, epsilon) = compute_scale_aware_epsilon(&points).unwrap();
+        let (avg_edge_length, epsilon) = scale_aware_epsilon(&points).unwrap();
         // For large simplices, epsilon scales with average edge length
         assert!(epsilon > 1e-12);
         assert!(avg_edge_length > 1e5);
     }
 
     #[test]
-    fn test_compute_scale_aware_epsilon_3d() {
+    fn test_scale_aware_epsilon_3d() {
         // Test epsilon computation for 3D simplex
         let mut points = SmallBuffer::new();
         points.push(Point::new([0.0, 0.0, 0.0]));
@@ -1145,7 +1324,7 @@ let cell_key = dt.cells().next().unwrap().0;
         points.push(Point::new([0.0, 1.0, 0.0]));
         points.push(Point::new([0.0, 0.0, 1.0]));
 
-        let (avg_edge_length, epsilon) = compute_scale_aware_epsilon(&points).unwrap();
+        let (avg_edge_length, epsilon) = scale_aware_epsilon(&points).unwrap();
         assert!(avg_edge_length > 0.0);
         assert!(epsilon > 0.0);
     }
@@ -1211,13 +1390,13 @@ let cell_key = dt.cells().next().unwrap().0;
                 assert!(
                     result.is_ok()
                         || matches!(result, Err(QualityError::DegenerateCell { .. }))
-                        || matches!(result, Err(QualityError::NumericalError { .. }))
+                        || matches!(result, Err(QualityError::NumericConversion { .. }))
+                        || matches!(result, Err(QualityError::Circumradius { .. }))
+                        || matches!(result, Err(QualityError::Inradius { .. }))
                 );
             }
             Err(DelaunayTriangulationConstructionError::Triangulation(
-                crate::triangulation::delaunay::DelaunayConstructionFailure::GeometricDegeneracy {
-                    ..
-                },
+                DelaunayConstructionFailure::GeometricDegeneracy { .. },
             )) => {
                 // For sufficiently extreme configurations, the robust initial simplex
                 // search may reject the input up-front as geometrically degenerate.
@@ -1250,16 +1429,13 @@ let cell_key = dt.cells().next().unwrap().0;
                 assert!(
                     result.is_ok()
                         || matches!(result, Err(QualityError::DegenerateCell { .. }))
-                        || matches!(result, Err(QualityError::NumericalError { .. }))
+                        || matches!(result, Err(QualityError::NumericConversion { .. }))
+                        || matches!(result, Err(QualityError::Volume { .. }))
                 );
             }
             Err(DelaunayTriangulationConstructionError::Triangulation(
-                crate::triangulation::delaunay::DelaunayConstructionFailure::GeometricDegeneracy {
-                    ..
-                }
-                | crate::triangulation::delaunay::DelaunayConstructionFailure::InsufficientVertices {
-                    ..
-                },
+                DelaunayConstructionFailure::GeometricDegeneracy { .. }
+                | DelaunayConstructionFailure::InsufficientVertices { .. },
             )) => {
                 // Extremely flat/near-degenerate configurations may now be rejected
                 // up-front by the initial simplex search, or Hilbert-sort dedup may
@@ -1275,11 +1451,11 @@ let cell_key = dt.cells().next().unwrap().0;
     #[test]
     fn test_quality_error_source_trait() {
         // Test that QualityError implements std::error::Error properly
-        let err = QualityError::InvalidCell {
-            message: "test".to_string(),
+        let err = QualityError::NumericConversion {
+            operation: QualityNumericOperation::EdgeCountConversion,
         };
         assert!(std::error::Error::source(&err).is_none());
-        assert!(format!("{err}").contains("test"));
+        assert!(format!("{err}").contains("Numeric conversion failed"));
     }
 
     #[test]
@@ -1300,15 +1476,23 @@ let cell_key = dt.cells().next().unwrap().0;
                 let cell_key = dt.cells().next().unwrap().0;
 
                 let result = radius_ratio(dt.as_triangulation(), cell_key);
-                if let Err(QualityError::DegenerateCell { detail }) = result {
+                if let Err(QualityError::DegenerateCell {
+                    measure, observed, ..
+                }) = result
+                {
                     // Should include numeric information when we surface a degenerate cell
-                    assert!(detail.contains("inradius") || detail.contains("volume"));
+                    assert!(matches!(
+                        measure,
+                        QualityDegeneracyMeasure::Inradius
+                            | QualityDegeneracyMeasure::Volume
+                            | QualityDegeneracyMeasure::AverageEdgeLength
+                            | QualityDegeneracyMeasure::EdgeLengthPower
+                    ));
+                    assert!(!observed.is_empty());
                 }
             }
             Err(DelaunayTriangulationConstructionError::Triangulation(
-                crate::triangulation::delaunay::DelaunayConstructionFailure::GeometricDegeneracy {
-                    ..
-                },
+                DelaunayConstructionFailure::GeometricDegeneracy { .. },
             )) => {
                 // In some numeric regimes, degeneracy is now detected at construction
                 // time instead of by the quality metrics. That is still acceptable
