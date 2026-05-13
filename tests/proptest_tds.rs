@@ -25,6 +25,8 @@ use delaunay::core::tds::Tds;
 use delaunay::core::util::jaccard::jaccard_index;
 use delaunay::prelude::query::*;
 use proptest::prelude::*;
+use proptest::test_runner::{Config, TestCaseError, TestRunner};
+use std::cell::RefCell;
 use std::collections::HashSet;
 
 #[test]
@@ -456,3 +458,145 @@ gen_is_connected!(3);
 gen_is_connected!(4, #[ignore = "Slow (>60s) in test-integration"]);
 
 gen_is_connected!(5, #[ignore = "Slow (>60s) in test-integration"]);
+
+// =============================================================================
+// FAST HIGH-DIMENSIONAL CI SMOKE TESTS
+// =============================================================================
+
+macro_rules! gen_high_dim_tds_smoke {
+    ($dim:literal) => {
+        pastey::paste! {
+            #[test]
+            #[expect(
+                clippy::too_many_lines,
+                reason = "Smoke test intentionally samples several TDS invariants with rejection telemetry"
+            )]
+            fn [<prop_high_dim_tds_active_smoke_ $dim d>]() {
+                #[derive(Debug, Default)]
+                struct SmokeStats {
+                    generated: usize,
+                    accepted: usize,
+                    rejected_construction_failed: usize,
+                }
+
+                let config = Config {
+                    cases: 6,
+                    max_shrink_iters: 16,
+                    ..Config::default()
+                };
+                let target_cases = config.cases;
+                let mut runner = TestRunner::new(config);
+                let stats = RefCell::new(SmokeStats::default());
+
+                let run_result = runner.run(&[<small_vertex_set_ $dim d>](), |vertices| {
+                    let mut stats = stats.borrow_mut();
+                    stats.generated += 1;
+
+                    let dt = match DelaunayTriangulation::<_, (), (), $dim>::new(&vertices) {
+                        Ok(dt) => dt,
+                        Err(err) => {
+                            stats.rejected_construction_failed += 1;
+                            return Err(TestCaseError::reject(format!(
+                                "{}D: construction failed in active TDS smoke test: {err}",
+                                $dim
+                            )));
+                        }
+                    };
+
+                    let tds = dt.tds();
+                    prop_assert!(
+                        tds.is_valid().is_ok(),
+                        "{}D active TDS smoke should pass structural validation: {:?}",
+                        $dim,
+                        tds.is_valid().err()
+                    );
+                    prop_assert!(
+                        tds.is_connected(),
+                        "{}D active TDS smoke should be connected",
+                        $dim
+                    );
+                    prop_assert_eq!(
+                        dt.dim(),
+                        $dim,
+                        "{}D active TDS smoke should report the expected dimension",
+                        $dim
+                    );
+                    prop_assert_eq!(
+                        tds.number_of_vertices(),
+                        tds.vertex_keys().count(),
+                        "{}D active TDS smoke vertex count should match key iteration",
+                        $dim
+                    );
+
+                    for (cell_key, cell) in dt.cells() {
+                        if let Some(neighbors) = cell.neighbors() {
+                            for neighbor_key in neighbors.iter().flatten() {
+                                let reciprocal = tds
+                                    .cell(*neighbor_key)
+                                    .and_then(|neighbor| neighbor.neighbors())
+                                    .is_some_and(|neighbor_neighbors| {
+                                        neighbor_neighbors.iter().any(|entry| entry == &Some(cell_key))
+                                    });
+                                prop_assert!(
+                                    reciprocal,
+                                    "{}D active TDS smoke neighbor {:?} should point back to {:?}",
+                                    $dim,
+                                    neighbor_key,
+                                    cell_key
+                                );
+                            }
+                        }
+                    }
+
+                    stats.accepted += 1;
+                    Ok(())
+                });
+
+                let stats = stats.into_inner();
+                let generated = stats.generated.max(1);
+                let acceptance_rate_percent_x100: u128 =
+                    (stats.accepted as u128 * 10_000u128) / (generated as u128);
+                let acceptance_rate_whole = acceptance_rate_percent_x100 / 100;
+                let acceptance_rate_frac = acceptance_rate_percent_x100 % 100;
+                let print_stats =
+                    std::env::var_os("DELAUNAY_PROPTEST_REJECT_STATS").is_some() || run_result.is_err();
+
+                if print_stats {
+                    let rejected_total = stats.generated.saturating_sub(stats.accepted);
+                    tracing::warn!(
+                        "prop_high_dim_tds_active_smoke_{}d reject stats: target_cases={target_cases} generated={} accepted={} acceptance_rate={}.{:02}% rejected_total={} construction_failed={}",
+                        $dim,
+                        stats.generated,
+                        stats.accepted,
+                        acceptance_rate_whole,
+                        acceptance_rate_frac,
+                        rejected_total,
+                        stats.rejected_construction_failed
+                    );
+                }
+
+                let max_allowed_construction_rejections =
+                    usize::try_from(target_cases).map_or(usize::MAX, |cases| cases.max(1));
+                assert!(
+                    stats.rejected_construction_failed <= max_allowed_construction_rejections,
+                    "prop_high_dim_tds_active_smoke_{}d had {} construction rejects above allowed {}; generated={}, accepted={}",
+                    $dim,
+                    stats.rejected_construction_failed,
+                    max_allowed_construction_rejections,
+                    stats.generated,
+                    stats.accepted
+                );
+
+                assert!(
+                    stats.accepted > 0,
+                    "prop_high_dim_tds_active_smoke_{}d should accept at least one case",
+                    $dim
+                );
+                run_result.unwrap();
+            }
+        }
+    };
+}
+
+gen_high_dim_tds_smoke!(4);
+gen_high_dim_tds_smoke!(5);

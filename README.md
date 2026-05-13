@@ -31,6 +31,8 @@ Use this crate when you want:
 - Exact predicates and deterministic handling of degenerate inputs.
 - Validation reports that separate element, structure, topology, and Delaunay
   failures.
+- Release-mode 3D construction at 10,000 vertices with final Levels 1–4
+  validation in the current large-scale acceptance harness.
 - PL-manifold-aware editing via bistellar flips.
 
 This is not a replacement for full meshing packages such as CGAL, TetGen, or
@@ -70,6 +72,9 @@ combinatorial and geometric checks.
 - [x]  Coherent combinatorial orientation validation/normalization for cells, maintaining oriented simplicial complexes
 - [x]  The complete set of [Pachner moves] up to 5D implemented as bistellar k-flips for k = 1, 2, 3 plus inverse moves
 - [x]  [Delaunay repair] using bistellar flips for k=2/k=3 with inverse edge/triangle queues in 4D/5D
+- [x]  10,000-vertex 3D large-scale acceptance run: zero skipped vertices,
+  final flip repair clean, and `validation_report` OK for Levels 1–4 in roughly
+  100 seconds on maintainer Apple M4 Max hardware
 - [x]  Safe Rust: `#![forbid(unsafe_code)]`
 
 See [CHANGELOG.md](CHANGELOG.md) for details. Older releases are archived under
@@ -241,6 +246,9 @@ For reproducible checks in CI/local runs, use `just check`, `just test`, `just d
   determinant exceeds the stack matrix limit.
 - **Large 4D+ batches:** thousands of 4D points can be expensive to investigate.
   Use release mode and the large-scale debug harness for characterization.
+- **3D scale:** the default 10,000-vertex 3D release-mode harness is now an
+  acceptance case for full Levels 1–4 validity. Its wall time is hardware- and
+  load-sensitive; use `just debug-large-scale-3d 10000 1` for local numbers.
 - **Feature gaps:** [Constrained Delaunay triangulations], [Voronoi diagrams],
   built-in visualization, GPU/parallel meshing, and out-of-core construction are
   out of scope today.

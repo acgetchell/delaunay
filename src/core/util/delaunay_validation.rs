@@ -92,6 +92,7 @@ pub enum DelaunayValidationError {
 /// assert!(report.is_valid());
 /// ```
 #[cfg(any(test, feature = "diagnostics"))]
+#[cfg_attr(docsrs, doc(cfg(feature = "diagnostics")))]
 #[derive(Clone, Debug, PartialEq, Eq)]
 #[must_use]
 pub struct DelaunayViolationReport {
@@ -142,6 +143,7 @@ impl DelaunayViolationReport {
 /// [`offending_vertex`](Self::offending_vertex) to recover full vertex or cell
 /// records from the source [`Tds`].
 #[cfg(any(test, feature = "diagnostics"))]
+#[cfg_attr(docsrs, doc(cfg(feature = "diagnostics")))]
 #[derive(Clone, Debug, PartialEq, Eq)]
 #[must_use]
 pub struct DelaunayViolationDetail {
@@ -501,6 +503,7 @@ where
 /// assert!(report.violating_cells.is_empty());
 /// ```
 #[cfg(any(test, feature = "diagnostics"))]
+#[cfg_attr(docsrs, doc(cfg(feature = "diagnostics")))]
 pub fn delaunay_violation_report<T, U, V, const D: usize>(
     tds: &Tds<T, U, V, D>,
     cells_to_check: Option<&[CellKey]>,
@@ -593,6 +596,7 @@ where
 /// debug_print_first_delaunay_violation(&tds, None);
 /// ```
 #[cfg(any(test, feature = "diagnostics"))]
+#[cfg_attr(docsrs, doc(cfg(feature = "diagnostics")))]
 #[expect(
     clippy::too_many_lines,
     reason = "Debug-only helper with intentionally verbose logging"

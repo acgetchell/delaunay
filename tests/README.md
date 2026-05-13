@@ -373,6 +373,11 @@ or one of the active large-scale helpers:
 - `just debug-large-scale-3d [n]` — issue #341, default `n=10000`
 - `just debug-large-scale-5d [n]` — issue #342, default `n=1000`
 
+The default 3D helper is the current 10,000-vertex release-mode acceptance run:
+it should insert all vertices with zero skips, run final repair, and pass
+`validation_report` for Levels 1–4. Expect timings around 100 seconds on
+maintainer Apple M4 Max hardware, with normal hardware/load variation.
+
 **Note:** Use `--release` for runs above roughly 30 vertices; debug-mode
 overhead makes large 3D/4D cases look hung even when the algorithm is making
 progress. For the `new`/batch path, set

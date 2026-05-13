@@ -21,7 +21,7 @@ pub fn nonfinite_defaults(value: Option<f64>) -> f64 {
 }
 
 pub fn silent_conversion_fallback(value: u64) -> f64 {
-    // ruleid: delaunay.rust.no-silent-conversion-fallbacks
+    // ruleid: delaunay.rust.no-silent-conversion-fallbacks, delaunay.rust.no-silent-conversion-fallbacks-in-public-samples
     NumCast::from(value).unwrap_or(0.0)
 }
 
@@ -30,8 +30,30 @@ fn safe_f64(_value: u64) -> Option<f64> {
 }
 
 pub fn safe_conversion_fallback(value: u64) -> f64 {
-    // ruleid: delaunay.rust.no-silent-conversion-fallbacks
+    // ruleid: delaunay.rust.no-silent-conversion-fallbacks, delaunay.rust.no-silent-conversion-fallbacks-in-public-samples
     safe_f64(value).unwrap_or(0.0)
+}
+
+pub fn public_sample_silent_conversion_fallback(value: u64) -> f64 {
+    // ruleid: delaunay.rust.no-silent-conversion-fallbacks, delaunay.rust.no-silent-conversion-fallbacks-in-public-samples
+    NumCast::from(value).unwrap_or(0.0)
+}
+
+pub fn partial_cmp_ordering_default(left: f64, right: f64) -> std::cmp::Ordering {
+    // ruleid: delaunay.rust.no-partial-cmp-ordering-defaults
+    left.partial_cmp(&right).unwrap_or(std::cmp::Ordering::Equal)
+}
+
+pub fn function_local_use_fixture() {
+    // ruleid: delaunay.rust.no-function-local-use-in-src
+    use std::cmp::Ordering;
+
+    let _ordering = Ordering::Equal;
+}
+
+pub fn deep_crate_path_fixture() {
+    // ruleid: delaunay.rust.no-deep-crate-paths-in-functions
+    let _buffer = crate::core::collections::CellKeyBuffer::new();
 }
 
 pub fn public_unwrap_bypass(value: Option<u8>) -> u8 {

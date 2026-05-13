@@ -72,7 +72,7 @@ pub type CellKeyBuffer = SmallBuffer<CellKey, CLEANUP_OPERATION_BUFFER_SIZE>;
 /// # Examples
 ///
 /// ```rust
-/// use delaunay::prelude::collections::BadCellBuffer;
+/// use delaunay::prelude::collections::algorithm_buffers::BadCellBuffer;
 ///
 /// // Accumulate bad cells during insertion
 /// let mut bad_cells: BadCellBuffer = BadCellBuffer::new();
@@ -214,6 +214,13 @@ pub type CellVertexBuffer = SmallBuffer<VertexKey, MAX_PRACTICAL_DIMENSION_SIZE>
 /// - **Performance**: Avoids allocation for temporary UUID collections
 /// - **Memory Efficiency**: For D=7, D+1=8 UUIDs → 16 bytes × 8 = 128 bytes on stack
 pub type CellVertexUuidBuffer = SmallBuffer<Uuid, MAX_PRACTICAL_DIMENSION_SIZE>;
+
+/// Buffer for periodic lattice offsets aligned with a cell's vertex slots.
+///
+/// Periodic cells store one offset per simplex vertex, so the inline capacity
+/// matches [`CellVertexBuffer`] and avoids a heap allocation for supported
+/// small-to-medium dimensions.
+pub type PeriodicOffsetBuffer<const D: usize> = SmallBuffer<[i8; D], MAX_PRACTICAL_DIMENSION_SIZE>;
 
 /// Buffer sized for Point collections in geometric operations.
 /// Generic over coordinate type T and dimension D, with practical size limit.

@@ -6,10 +6,11 @@
 #![forbid(unsafe_code)]
 
 use super::point_generation::{generate_random_points, generate_random_points_seeded};
+use crate::core::cell::CellValidationError;
 use crate::core::traits::data_type::DataType;
 use crate::core::triangulation::{TopologyGuarantee, TriangulationConstructionError};
 use crate::core::vertex::Vertex;
-use crate::geometry::kernel::AdaptiveKernel;
+use crate::geometry::kernel::{AdaptiveKernel, Kernel};
 use crate::geometry::point::Point;
 use crate::geometry::traits::coordinate::CoordinateScalar;
 use crate::triangulation::delaunay::{
@@ -29,7 +30,7 @@ fn validate_random_triangulation<K, U, V, const D: usize>(
     dt: DelaunayTriangulation<K, U, V, D>,
 ) -> Result<DelaunayTriangulation<K, U, V, D>, DelaunayTriangulationConstructionError>
 where
-    K: crate::geometry::kernel::Kernel<D>,
+    K: Kernel<D>,
     U: DataType,
     V: DataType,
 {
@@ -46,7 +47,7 @@ fn random_triangulation_is_acceptable<K, U, V, const D: usize>(
     min_vertices: usize,
 ) -> bool
 where
-    K: crate::geometry::kernel::Kernel<D>,
+    K: Kernel<D>,
     U: DataType,
     V: DataType,
 {
@@ -60,7 +61,7 @@ fn random_triangulation_try_build<K, T, U, V, const D: usize>(
     topology_guarantee: TopologyGuarantee,
 ) -> Option<DelaunayTriangulation<K, U, V, D>>
 where
-    K: crate::geometry::kernel::Kernel<D, Scalar = T>,
+    K: Kernel<D, Scalar = T>,
     T: CoordinateScalar,
     U: DataType,
     V: DataType,
@@ -366,7 +367,7 @@ where
     if n_points < D + 1 {
         return Err(TriangulationConstructionError::InsufficientVertices {
             dimension: D,
-            source: crate::core::cell::CellValidationError::InsufficientVertices {
+            source: CellValidationError::InsufficientVertices {
                 actual: n_points,
                 expected: D + 1,
                 dimension: D,
@@ -489,10 +490,7 @@ pub struct RandomTriangulationBuilder<T> {
     construction_options: ConstructionOptions,
 }
 
-impl<T> RandomTriangulationBuilder<T>
-where
-    T: CoordinateScalar + SampleUniform,
-{
+impl<T> RandomTriangulationBuilder<T> {
     /// Creates a new builder with the specified number of points and coordinate bounds.
     ///
     /// # Arguments
@@ -571,7 +569,12 @@ where
         self.construction_options = options;
         self
     }
+}
 
+impl<T> RandomTriangulationBuilder<T>
+where
+    T: CoordinateScalar + SampleUniform,
+{
     /// Builds the random triangulation with the configured options.
     ///
     /// # Type Parameters
@@ -657,7 +660,7 @@ where
         if self.n_points < D + 1 {
             return Err(TriangulationConstructionError::InsufficientVertices {
                 dimension: D,
-                source: crate::core::cell::CellValidationError::InsufficientVertices {
+                source: CellValidationError::InsufficientVertices {
                     actual: self.n_points,
                     expected: D + 1,
                     dimension: D,

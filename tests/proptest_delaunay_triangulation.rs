@@ -40,7 +40,9 @@ use delaunay::prelude::triangulation::construction::{
 use delaunay::prelude::triangulation::insertion::InsertionOutcome;
 use delaunay::prelude::triangulation::validation::ValidationPolicy;
 use proptest::prelude::*;
+use proptest::test_runner::{Config, TestCaseError, TestRunner};
 use rand::{SeedableRng, seq::SliceRandom};
+use std::cell::RefCell;
 
 fn init_tracing() {
     static INIT: std::sync::Once = std::sync::Once::new();
@@ -863,6 +865,226 @@ test_empty_circumsphere!(4, 6, 12, #[ignore = "Slow (>60s) in test-integration"]
 test_empty_circumsphere!(5, 7, 12, #[ignore = "Slow (>60s) in test-integration"]);
 
 // =============================================================================
+// FAST HIGH-DIMENSIONAL CI SMOKE TESTS
+// =============================================================================
+
+macro_rules! gen_high_dim_delaunay_smoke {
+    ($dim:literal, $min_vertices:literal, $max_vertices:literal) => {
+        pastey::paste! {
+            #[test]
+            #[expect(
+                clippy::too_many_lines,
+                reason = "Smoke test intentionally covers construction, duplicate handling, and validation telemetry together"
+            )]
+            fn [<prop_high_dim_delaunay_active_smoke_ $dim d>]() {
+                #[derive(Debug, Default)]
+                struct SmokeStats {
+                    generated: usize,
+                    accepted: usize,
+                    rejected_too_few_unique: usize,
+                    rejected_coordinate_hyperplane: usize,
+                    rejected_construction_failed: usize,
+                    rejected_duplicate_cloud_failed: usize,
+                }
+
+                init_tracing();
+
+                let config = Config {
+                    cases: 6,
+                    max_shrink_iters: 16,
+                    ..Config::default()
+                };
+                let target_cases = config.cases;
+                let mut runner = TestRunner::new(config);
+                let strategy = prop::collection::vec(
+                    [<vertex_ $dim d>](),
+                    $min_vertices..=$max_vertices,
+                )
+                .prop_map(|pts| dedup_vertices_by_coords::<$dim>(Vertex::from_points(&pts)));
+                let stats = RefCell::new(SmokeStats::default());
+
+                let run_result = runner.run(&strategy, |vertices| {
+                    let mut stats = stats.borrow_mut();
+                    stats.generated += 1;
+
+                    if vertices.len() <= $dim {
+                        stats.rejected_too_few_unique += 1;
+                        return Err(TestCaseError::reject(format!(
+                            "{}D: fewer than {} unique vertices after deduplication",
+                            $dim,
+                            $dim + 1
+                        )));
+                    }
+
+                    if !has_no_coordinate_hyperplane_degeneracy(&vertices) {
+                        stats.rejected_coordinate_hyperplane += 1;
+                        return Err(TestCaseError::reject(format!(
+                            "{}D: coordinate-hyperplane degeneracy present",
+                            $dim
+                        )));
+                    }
+
+                    let mut dt = match DelaunayTriangulation::<_, (), (), $dim>::new_with_topology_guarantee(
+                        &vertices,
+                        TopologyGuarantee::PLManifold,
+                    ) {
+                        Ok(dt) => dt,
+                        Err(err) => {
+                            stats.rejected_construction_failed += 1;
+                            return Err(TestCaseError::reject(format!(
+                                "{}D: construction failed in active smoke test: {err}",
+                                $dim
+                            )));
+                        }
+                    };
+                    prop_assert_levels_1_to_3_valid!($dim, &dt, "active smoke construction");
+
+                    let delaunay_result = dt.is_delaunay_via_flips();
+                    prop_assert!(
+                        delaunay_result.is_ok(),
+                        "{}D active smoke triangulation should satisfy Level 4 Delaunay validation: {:?}",
+                        $dim,
+                        delaunay_result.err()
+                    );
+
+                    let (_, existing_vertex) = dt
+                        .vertices()
+                        .next()
+                        .expect("successfully constructed triangulation should contain vertices");
+                    let duplicate = Vertex::from_points(&[*existing_vertex.point()])[0];
+                    let duplicate_result = dt.insert(duplicate);
+                    prop_assert!(
+                        duplicate_result.is_err(),
+                        "{}D active smoke should reject duplicate coordinate insertion",
+                        $dim
+                    );
+
+                    let mut cloud_points: Vec<Point<f64, $dim>> =
+                        vertices.iter().map(|v| *v.point()).collect();
+                    if cloud_points.len() >= 2 {
+                        cloud_points.push(cloud_points[0]);
+                        let mut jittered = *cloud_points[1].coords();
+                        for coord in &mut jittered {
+                            *coord += 1e-7;
+                        }
+                        cloud_points.push(Point::new(jittered));
+                    }
+
+                    let cloud_vertices = Vertex::from_points(&cloud_points);
+                    let options = ConstructionOptions::default()
+                        .with_dedup_policy(DedupPolicy::Epsilon { tolerance: 1e-6 });
+                    let cloud_dt = match DelaunayTriangulation::<_, (), (), $dim>::new_with_options(
+                        &cloud_vertices,
+                        options,
+                    ) {
+                        Ok(dt) => dt,
+                        Err(err) => {
+                            stats.rejected_duplicate_cloud_failed += 1;
+                            return Err(TestCaseError::reject(format!(
+                                "{}D: duplicate-cloud construction failed in active smoke test: {err}",
+                                $dim
+                            )));
+                        }
+                    };
+                    prop_assert_levels_1_to_3_valid!(
+                        $dim,
+                        &cloud_dt,
+                        "active smoke duplicate-cloud construction"
+                    );
+                    let cloud_delaunay = cloud_dt.is_valid();
+                    prop_assert!(
+                        cloud_delaunay.is_ok(),
+                        "{}D active smoke duplicate cloud should be globally Delaunay: {:?}",
+                        $dim,
+                        cloud_delaunay.err()
+                    );
+
+                    stats.accepted += 1;
+                    Ok(())
+                });
+
+                let stats = stats.into_inner();
+                let generated = stats.generated.max(1);
+                let acceptance_rate_percent_x100: u128 =
+                    (stats.accepted as u128 * 10_000u128) / (generated as u128);
+                let acceptance_rate_whole = acceptance_rate_percent_x100 / 100;
+                let acceptance_rate_frac = acceptance_rate_percent_x100 % 100;
+
+                let min_acceptance_pct_str =
+                    std::env::var(format!("DELAUNAY_PROPTEST_MIN_ACCEPTANCE_PCT_{}D", $dim))
+                        .ok()
+                        .or_else(|| std::env::var("DELAUNAY_PROPTEST_MIN_ACCEPTANCE_PCT").ok());
+                if let Some(min_acceptance_pct_str) = min_acceptance_pct_str {
+                    if let Ok(min_acceptance_pct) = min_acceptance_pct_str.parse::<u128>() {
+                        let min_acceptance_pct_x100 = min_acceptance_pct * 100;
+                        assert!(
+                            acceptance_rate_percent_x100 >= min_acceptance_pct_x100,
+                            "prop_high_dim_delaunay_active_smoke_{}d acceptance rate {}.{:02}% below required {min_acceptance_pct}% (generated={}, accepted={})",
+                            $dim,
+                            acceptance_rate_whole,
+                            acceptance_rate_frac,
+                            stats.generated,
+                            stats.accepted
+                        );
+                    } else {
+                        tracing::warn!(
+                            "prop_high_dim_delaunay_active_smoke_{}d: invalid DELAUNAY_PROPTEST_MIN_ACCEPTANCE_PCT value {min_acceptance_pct_str:?} (expected integer percent, e.g. 10)",
+                            $dim
+                        );
+                    }
+                }
+
+                let print_stats =
+                    std::env::var_os("DELAUNAY_PROPTEST_REJECT_STATS").is_some() || run_result.is_err();
+                if print_stats {
+                    let rejected_total = stats.generated.saturating_sub(stats.accepted);
+                    tracing::warn!(
+                        "prop_high_dim_delaunay_active_smoke_{}d reject stats: target_cases={target_cases} generated={} accepted={} acceptance_rate={}.{:02}% rejected_total={} too_few_unique={} coord_hyperplane={} construction_failed={} duplicate_cloud_failed={}",
+                        $dim,
+                        stats.generated,
+                        stats.accepted,
+                        acceptance_rate_whole,
+                        acceptance_rate_frac,
+                        rejected_total,
+                        stats.rejected_too_few_unique,
+                        stats.rejected_coordinate_hyperplane,
+                        stats.rejected_construction_failed,
+                        stats.rejected_duplicate_cloud_failed
+                    );
+                }
+
+                let construction_rejections = stats
+                    .rejected_construction_failed
+                    .saturating_add(stats.rejected_duplicate_cloud_failed);
+                let max_allowed_construction_rejections =
+                    usize::try_from(target_cases).map_or(usize::MAX, |cases| cases.max(1));
+                assert!(
+                    construction_rejections <= max_allowed_construction_rejections,
+                    "prop_high_dim_delaunay_active_smoke_{}d had {} construction rejects (primary={}, duplicate_cloud={}) above allowed {}; generated={}, accepted={}",
+                    $dim,
+                    construction_rejections,
+                    stats.rejected_construction_failed,
+                    stats.rejected_duplicate_cloud_failed,
+                    max_allowed_construction_rejections,
+                    stats.generated,
+                    stats.accepted
+                );
+
+                assert!(
+                    stats.accepted > 0,
+                    "prop_high_dim_delaunay_active_smoke_{}d should accept at least one case",
+                    $dim
+                );
+                run_result.unwrap();
+            }
+        }
+    };
+}
+
+gen_high_dim_delaunay_smoke!(4, 6, 8);
+gen_high_dim_delaunay_smoke!(5, 7, 9);
+
+// =============================================================================
 // INSERTION-ORDER INVARIANCE (2D-5D)
 // =============================================================================
 
@@ -992,9 +1214,6 @@ gen_insertion_order_robustness_test!(2, 6, 10);
     reason = "Large property-based test with extensive rejection tracking and diagnostics"
 )]
 fn prop_insertion_order_robustness_3d() {
-    use proptest::test_runner::{Config, TestCaseError, TestRunner};
-    use std::cell::RefCell;
-
     /// Rejection-rate tracking for the specialized 3D insertion-order property.
     ///
     /// By default this is *metrics-only* (no hard thresholds) because:
@@ -1319,9 +1538,6 @@ macro_rules! gen_insertion_order_robustness_high_dim_impl {
                 reason = "Large property-based test with rejection tracking and diagnostics"
             )]
             fn [<prop_insertion_order_robustness_ $dim d>]() {
-                use proptest::test_runner::{Config, TestCaseError, TestRunner};
-                use std::cell::RefCell;
-
                 /// Rejection-rate tracking for the high-dimensional insertion-order property.
                 ///
                 /// To print the summary (captured unless `cargo test -- --nocapture`):

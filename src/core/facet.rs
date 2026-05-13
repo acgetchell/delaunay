@@ -56,15 +56,14 @@
 
 #![forbid(unsafe_code)]
 
-use super::collections::{MAX_PRACTICAL_DIMENSION_SIZE, SmallBuffer};
-use super::traits::data_type::DataType;
+use super::collections::{FacetToCellsMap, MAX_PRACTICAL_DIMENSION_SIZE, SmallBuffer};
 use super::util::{stable_hash_u64_slice, usize_to_u8};
 use super::{
     cell::Cell,
     tds::{CellKey, Tds, TdsError, VertexKey},
     vertex::Vertex,
 };
-use crate::geometry::traits::coordinate::CoordinateScalar;
+use crate::geometry::traits::coordinate::CoordinateConversionError;
 use slotmap::Key;
 use std::fmt::{self, Debug};
 use std::sync::Arc;
@@ -136,10 +135,13 @@ pub enum FacetError {
     #[error("Could not find inside vertex for boundary facet")]
     InsideVertexNotFound,
     /// Failed to compute geometric orientation.
-    #[error("Failed to compute orientation: {details}")]
+    #[error("Failed to compute orientation during {context}: {source}")]
     OrientationComputationFailed {
-        /// Details about the orientation computation failure.
-        details: String,
+        /// Orientation-computation context.
+        context: String,
+        /// Underlying coordinate conversion or predicate setup failure.
+        #[source]
+        source: CoordinateConversionError,
     },
     /// Invalid facet index for a cell.
     #[error("Invalid facet index {index} for cell with {facet_count} facets")]
@@ -395,12 +397,7 @@ pub struct FacetView<'tds, T, U, V, const D: usize> {
     facet_index: u8,
 }
 
-impl<'tds, T, U, V, const D: usize> FacetView<'tds, T, U, V, D>
-where
-    T: CoordinateScalar,
-    U: DataType,
-    V: DataType,
-{
+impl<'tds, T, U, V, const D: usize> FacetView<'tds, T, U, V, D> {
     /// Returns the cell key for this facet.
     #[inline]
     #[must_use]
@@ -421,7 +418,9 @@ where
     pub const fn tds(&self) -> &'tds Tds<T, U, V, D> {
         self.tds
     }
+}
 
+impl<'tds, T, U, V, const D: usize> FacetView<'tds, T, U, V, D> {
     /// Creates a new `FacetView` for the specified facet of a cell.
     ///
     /// # Arguments
@@ -489,8 +488,8 @@ where
     /// The facet vertices are all vertices of the containing cell except
     /// the opposite vertex (at `facet_index`).
     ///
-    /// This method is available with minimal trait bounds (only `CoordinateScalar`),
-    /// enabling usage in lightweight operations that don't require arithmetic.
+    /// This method is available without coordinate or payload trait bounds,
+    /// enabling usage in lightweight operations that only inspect topology.
     ///
     /// # Returns
     ///
@@ -681,12 +680,7 @@ where
 }
 
 // Trait implementations for FacetView
-impl<T, U, V, const D: usize> Debug for FacetView<'_, T, U, V, D>
-where
-    T: CoordinateScalar,
-    U: DataType,
-    V: DataType,
-{
+impl<T, U, V, const D: usize> Debug for FacetView<'_, T, U, V, D> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("FacetView")
             .field("cell_key", &self.cell_key)
@@ -697,19 +691,10 @@ where
 }
 
 #[expect(
-    clippy::expl_impl_clone_on_copy,
-    reason = "manual clone implementation documents facet identity semantics"
-)]
-#[expect(
     clippy::non_canonical_clone_impl,
     reason = "facet clone intentionally preserves cached view fields"
 )]
-impl<T, U, V, const D: usize> Clone for FacetView<'_, T, U, V, D>
-where
-    T: CoordinateScalar,
-    U: DataType,
-    V: DataType,
-{
+impl<T, U, V, const D: usize> Clone for FacetView<'_, T, U, V, D> {
     fn clone(&self) -> Self {
         Self {
             tds: self.tds,
@@ -719,20 +704,9 @@ where
     }
 }
 
-impl<T, U, V, const D: usize> Copy for FacetView<'_, T, U, V, D>
-where
-    T: CoordinateScalar,
-    U: DataType,
-    V: DataType,
-{
-}
+impl<T, U, V, const D: usize> Copy for FacetView<'_, T, U, V, D> {}
 
-impl<T, U, V, const D: usize> PartialEq for FacetView<'_, T, U, V, D>
-where
-    T: CoordinateScalar,
-    U: DataType,
-    V: DataType,
-{
+impl<T, U, V, const D: usize> PartialEq for FacetView<'_, T, U, V, D> {
     fn eq(&self, other: &Self) -> bool {
         // Two facet views are equal if they reference the same facet
         std::ptr::eq(self.tds, other.tds)
@@ -741,13 +715,7 @@ where
     }
 }
 
-impl<T, U, V, const D: usize> Eq for FacetView<'_, T, U, V, D>
-where
-    T: CoordinateScalar,
-    U: DataType,
-    V: DataType,
-{
-}
+impl<T, U, V, const D: usize> Eq for FacetView<'_, T, U, V, D> {}
 
 /// Utility function to create multiple `FacetView`s for all facets of a cell.
 ///
@@ -790,12 +758,7 @@ where
 pub fn all_facets_for_cell<T, U, V, const D: usize>(
     tds: &Tds<T, U, V, D>,
     cell_key: CellKey,
-) -> Result<Vec<FacetView<'_, T, U, V, D>>, FacetError>
-where
-    T: CoordinateScalar,
-    U: DataType,
-    V: DataType,
-{
+) -> Result<Vec<FacetView<'_, T, U, V, D>>, FacetError> {
     let cell = tds
         .cell(cell_key)
         .ok_or(FacetError::CellNotFoundInTriangulation)?;
@@ -844,12 +807,7 @@ pub struct AllFacetsIter<'tds, T, U, V, const D: usize> {
     current_cell_facet_count: usize,
 }
 
-impl<'tds, T, U, V, const D: usize> AllFacetsIter<'tds, T, U, V, D>
-where
-    T: CoordinateScalar,
-    U: DataType,
-    V: DataType,
-{
+impl<'tds, T, U, V, const D: usize> AllFacetsIter<'tds, T, U, V, D> {
     /// Creates a new iterator over all facets in the TDS.
     ///
     /// # Panics
@@ -898,12 +856,7 @@ where
     }
 }
 
-impl<'tds, T, U, V, const D: usize> Iterator for AllFacetsIter<'tds, T, U, V, D>
-where
-    T: CoordinateScalar,
-    U: DataType,
-    V: DataType,
-{
+impl<'tds, T, U, V, const D: usize> Iterator for AllFacetsIter<'tds, T, U, V, D> {
     type Item = FacetView<'tds, T, U, V, D>;
 
     fn next(&mut self) -> Option<Self::Item> {
@@ -973,12 +926,7 @@ pub struct BoundaryFacetsIter<'tds, T, U, V, const D: usize> {
     facet_to_cells_map: crate::core::collections::FacetToCellsMap,
 }
 
-impl<'tds, T, U, V, const D: usize> BoundaryFacetsIter<'tds, T, U, V, D>
-where
-    T: CoordinateScalar,
-    U: DataType,
-    V: DataType,
-{
+impl<'tds, T, U, V, const D: usize> BoundaryFacetsIter<'tds, T, U, V, D> {
     /// Creates a new iterator over boundary facets.
     ///
     /// # Examples
@@ -1000,10 +948,7 @@ where
     /// assert!(iter.next().is_some());
     /// ```
     #[must_use]
-    pub fn new(
-        tds: &'tds Tds<T, U, V, D>,
-        facet_to_cells_map: crate::core::collections::FacetToCellsMap,
-    ) -> Self {
+    pub fn new(tds: &'tds Tds<T, U, V, D>, facet_to_cells_map: FacetToCellsMap) -> Self {
         Self {
             all_facets: AllFacetsIter::new(tds),
             facet_to_cells_map,
@@ -1011,12 +956,7 @@ where
     }
 }
 
-impl<'tds, T, U, V, const D: usize> Iterator for BoundaryFacetsIter<'tds, T, U, V, D>
-where
-    T: CoordinateScalar,
-    U: DataType,
-    V: DataType,
-{
+impl<'tds, T, U, V, const D: usize> Iterator for BoundaryFacetsIter<'tds, T, U, V, D> {
     type Item = FacetView<'tds, T, U, V, D>;
 
     fn next(&mut self) -> Option<Self::Item> {

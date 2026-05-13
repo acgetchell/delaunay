@@ -167,8 +167,8 @@ fn is_dev_mode() -> bool {
     })
 }
 
-/// Get appropriate point counts based on environment
-fn get_profiling_counts() -> &'static [usize] {
+/// Select appropriate point counts based on environment.
+fn profiling_counts() -> &'static [usize] {
     if is_dev_mode() {
         PROFILING_COUNTS_DEVELOPMENT
     } else {
@@ -246,13 +246,25 @@ fn gen_points<const D: usize>(
         .collect(),
         PointDistribution::Grid => {
             // Calculate points per dimension to get approximately `count` points total
-            let count_f64 = safe_usize_to_scalar::<f64>(count).unwrap_or(2.0);
-            let d_f64 = safe_usize_to_scalar::<f64>(D).unwrap_or(1.0);
+            let count_f64 = bench_result(
+                safe_usize_to_scalar::<f64>(count),
+                "point count should fit in f64",
+            );
+            let d_f64 = bench_result(
+                safe_usize_to_scalar::<f64>(D),
+                "dimension should fit in f64",
+            );
             let raw = count_f64.powf(1.0 / d_f64).ceil();
 
             let points_per_dim = if raw.is_finite() && raw >= 2.0 {
-                // Saturate instead of shrinking to 2 on cast failure
-                cast::<f64, usize>(raw).unwrap_or(usize::MAX).max(2)
+                cast::<f64, usize>(raw).map_or_else(
+                    || {
+                        abort_benchmark(format_args!(
+                            "Grid side length {raw} does not fit in usize for D={D}, count={count}"
+                        ))
+                    },
+                    |value| value.max(2),
+                )
             } else {
                 2
             };
@@ -296,7 +308,7 @@ fn gen_points<const D: usize>(
     reason = "profiling setup keeps benchmark state lifetimes and measurement branches visible"
 )]
 fn bench_scaling(c: &mut Criterion) {
-    let counts = get_profiling_counts();
+    let counts = profiling_counts();
     let distributions = [
         PointDistribution::Random,
         PointDistribution::Grid,
@@ -510,9 +522,9 @@ fn percentile_label(percentile: usize) -> String {
     format!("{percentile}{suffix}")
 }
 
-/// Calculate percentile from a slice of values using nearest-rank method.
+/// Return percentile from a slice of values using nearest-rank method.
 #[cfg(all(feature = "count-allocations", feature = "bench-logging"))]
-fn calculate_percentile(values: &mut [u64], percentile: usize) -> u64 {
+fn percentile_nearest_rank(values: &mut [u64], percentile: usize) -> u64 {
     if values.is_empty() {
         return 0;
     }
@@ -616,7 +628,7 @@ fn print_alloc_summary_from_samples<const D: usize>(
 
     let mut bytes_max_values: Vec<u64> = allocation_infos.iter().map(|i| i.bytes_max).collect();
     let percentile = configured_percentile();
-    let percentile_value = calculate_percentile(&mut bytes_max_values, percentile);
+    let percentile_value = percentile_nearest_rank(&mut bytes_max_values, percentile);
 
     print_alloc_summary(
         &avg_info,

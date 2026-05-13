@@ -10,7 +10,8 @@
 //!   at the type level, but geometric operations, validation, and serialization are only
 //!   available when `T: CoordinateScalar` (e.g. `f32`, `f64`)
 //! - **Unique Identification**: Each vertex has a UUID for consistent identification
-//! - **Optional Data Storage**: Supports attaching user data of any type `U` that implements [`DataType`], or use `()` for no data
+//! - **Optional Data Storage**: Supports attaching user data of any type `U` that implements
+//!   [`DataType`](crate::core::traits::DataType), or use `()` for no data
 //! - **Incident Cell Tracking**: Maintains references to containing cells
 //! - **Serialization Support**: Serde support for persistence (`incident_cell` is reconstructed by TDS)
 //! - **Builder Pattern**: Convenient vertex construction using `VertexBuilder`
@@ -32,7 +33,7 @@
 
 use super::{
     tds::CellKey,
-    traits::DataType,
+    traits::{DataDeserialize, DataSerialize},
     util::{UuidValidationError, make_uuid, validate_uuid},
 };
 use crate::geometry::{
@@ -121,7 +122,7 @@ pub enum VertexBuilderError {
 /// # Generic Parameters
 ///
 /// * `T` - The coordinate scalar type
-/// * `U` - User data type that implements [`DataType`]
+/// * `U` - User data type that implements [`DataType`](crate::core::traits::DataType)
 /// * `D` - The spatial dimension (compile-time constant)
 ///
 /// # Examples
@@ -281,7 +282,8 @@ pub use crate::vertex;
 ///
 /// - `T` must implement `CoordinateScalar` for geometric operations, validation, and serialization
 ///   (the struct itself does not require it, enabling purely combinatorial use)
-/// - `U` only needs [`DataType`] when the vertex is stored in a triangulation,
+/// - `U` only needs [`DataType`](crate::core::traits::DataType) when the vertex is stored in
+///   a triangulation,
 ///   serialized, compared, or hashed. Standalone construction and accessors
 ///   accept arbitrary metadata types.
 ///
@@ -379,7 +381,7 @@ impl<T, U, const D: usize> Vertex<T, U, D> {
 impl<T, U, const D: usize> Serialize for Vertex<T, U, D>
 where
     T: CoordinateScalar,
-    U: DataType,
+    U: DataSerialize,
 {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
     where
@@ -407,7 +409,7 @@ where
 impl<'de, T, U, const D: usize> Deserialize<'de> for Vertex<T, U, D>
 where
     T: CoordinateScalar,
-    U: DataType,
+    U: DataDeserialize,
 {
     fn deserialize<De>(deserializer: De) -> Result<Self, De::Error>
     where
@@ -416,7 +418,7 @@ where
         struct VertexVisitor<T, U, const D: usize>
         where
             T: CoordinateScalar,
-            U: DataType,
+            U: DataDeserialize,
         {
             _phantom: PhantomData<(T, U)>,
         }
@@ -424,7 +426,7 @@ where
         impl<'de, T, U, const D: usize> Visitor<'de> for VertexVisitor<T, U, D>
         where
             T: CoordinateScalar,
-            U: DataType,
+            U: DataDeserialize,
         {
             type Value = Vertex<T, U, D>;
 
@@ -741,7 +743,6 @@ impl<T, U, const D: usize> Vertex<T, U, D> {
     pub fn is_valid(&self) -> Result<(), VertexValidationError>
     where
         T: CoordinateScalar,
-        Point<T, D>: Coordinate<T, D>,
     {
         // Check if the point is valid using the Coordinate trait validation
         self.point
@@ -899,6 +900,7 @@ mod tests {
     use super::*;
     use crate::core::collections::{FastHashMap, FastHashSet};
     use crate::core::tds::CellKey;
+    use crate::core::traits::DataType;
     use crate::core::util::{UuidValidationError, make_uuid, usize_to_u8};
     use crate::geometry::point::Point;
     use crate::geometry::traits::coordinate::Coordinate;

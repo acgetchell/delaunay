@@ -2,7 +2,8 @@
 
 #![forbid(unsafe_code)]
 
-use crate::core::facet::FacetError;
+use crate::core::cell::Cell;
+use crate::core::facet::{FacetError, facet_key_from_vertices};
 use crate::core::tds::{CellKey, Tds, VertexKey};
 use crate::core::traits::data_type::DataType;
 use crate::core::util::hashing::stable_hash_u64_slice;
@@ -66,8 +67,6 @@ use thiserror::Error;
 pub fn checked_facet_key_from_vertex_keys<const D: usize>(
     facet_vertex_keys: &[VertexKey],
 ) -> Result<u64, FacetError> {
-    use crate::core::facet::facet_key_from_vertices;
-
     // Validate that the number of vertex keys matches the expected dimension
     // In a D-dimensional triangulation, a facet should have exactly D vertices
     if facet_vertex_keys.len() != D {
@@ -205,12 +204,11 @@ pub(crate) fn periodic_facet_key_from_lifted_vertices<const D: usize>(
 /// # Examples
 ///
 /// ```rust,no_run
-/// use delaunay::prelude::tds::verify_facet_index_consistency;
-/// use delaunay::prelude::tds::Tds;
+/// use delaunay::prelude::tds::{FacetError, Tds, verify_facet_index_consistency};
 ///
 /// fn validate_neighbor_consistency(
 ///     tds: &Tds<f64, (), (), 3>,
-/// ) -> Result<(), String> {
+/// ) -> Result<bool, FacetError> {
 ///     // Get two neighboring cell keys
 ///     let cell_keys: Vec<_> = tds.cell_keys().take(2).collect();
 ///     if cell_keys.len() >= 2 {
@@ -220,17 +218,16 @@ pub(crate) fn periodic_facet_key_from_lifted_vertices<const D: usize>(
 ///             cell_keys[0],
 ///             cell_keys[1],
 ///             0,
-///         )
-///         .map_err(|e| format!("Facet error: {}", e))?;
+///         )?;
 ///
 ///         if consistent {
 ///             println!("Facet indices are consistent");
-///             Ok(())
+///             Ok(true)
 ///         } else {
-///             Err("No matching facet found in neighbor".to_string())
+///             Ok(false)
 ///         }
 ///     } else {
-///         Ok(())
+///         Ok(true)
 ///     }
 /// }
 /// ```
@@ -246,8 +243,8 @@ pub fn verify_facet_index_consistency<const D: usize>(
     facet_idx: usize,
 ) -> Result<bool, FacetError> {
     // Get facet views from both cells (validates cells exist)
-    let cell1_facets = crate::core::cell::Cell::facet_views_from_tds(tds, cell1_key)?;
-    let cell2_facets = crate::core::cell::Cell::facet_views_from_tds(tds, cell2_key)?;
+    let cell1_facets = Cell::facet_views_from_tds(tds, cell1_key)?;
+    let cell2_facets = Cell::facet_views_from_tds(tds, cell2_key)?;
 
     // Check facet index bounds
     if facet_idx >= cell1_facets.len() {
@@ -601,14 +598,10 @@ mod tests {
             .unwrap();
 
         let c1 = tds2
-            .insert_cell_with_mapping(
-                crate::core::cell::Cell::new(vec![v_a, v_b, v_c], None).unwrap(),
-            )
+            .insert_cell_with_mapping(Cell::new(vec![v_a, v_b, v_c], None).unwrap())
             .unwrap();
         let c2 = tds2
-            .insert_cell_with_mapping(
-                crate::core::cell::Cell::new(vec![v_d, v_e, v_f], None).unwrap(),
-            )
+            .insert_cell_with_mapping(Cell::new(vec![v_d, v_e, v_f], None).unwrap())
             .unwrap();
 
         assert!(!verify_facet_index_consistency(&tds2, c1, c2, 0).unwrap());

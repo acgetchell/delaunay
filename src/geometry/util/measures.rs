@@ -278,7 +278,7 @@ where
     let p0_coords = points[0].coords();
     let p0_f64 = safe_coords_to_f64(p0_coords)?;
 
-    let mut edge_matrix = crate::geometry::matrix::Matrix::<D>::zero();
+    let mut edge_matrix = Matrix::<D>::zero();
     for (row, point) in points.iter().skip(1).enumerate() {
         let point_f64 = safe_coords_to_f64(point.coords())?;
 
@@ -288,7 +288,7 @@ where
     }
 
     // Compute Gram matrix G where G[i,j] = edge_i · edge_j
-    let mut gram_matrix = crate::geometry::matrix::Matrix::<D>::zero();
+    let mut gram_matrix = Matrix::<D>::zero();
     for i in 0..D {
         for j in 0..D {
             let mut dot_product = 0.0;

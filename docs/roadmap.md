@@ -14,8 +14,9 @@ snapshots live in [`archive/`](archive/).
 
 ## Performance
 
-- **3D construction profiling (#310):** profile construction and query hot paths
-  before making targeted optimizations.
+- **3D 10K monitoring (#310/#341):** keep the release-mode 10,000-vertex
+  acceptance harness near the around-100-second maintainer-hardware envelope,
+  and profile before making further targeted hot-path changes.
 - **4D large-scale characterization (#204):** characterize the 3000-point
   release-mode debug harness and decide whether that scenario belongs in
   automated regression coverage or remains a manual investigation recipe.

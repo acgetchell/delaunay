@@ -106,10 +106,16 @@
 
 #![forbid(unsafe_code)]
 
+use crate::core::algorithms::incremental_insertion::{
+    DelaunayRepairErrorKind, InsertionError, InsertionErrorSourceKind,
+};
 use crate::core::cell::Cell;
-use crate::core::collections::{FastHashMap, Uuid, VertexKeySet};
+use crate::core::collections::{FastHashMap, PeriodicOffsetBuffer, Uuid, VertexKeySet};
 use crate::core::operations::InsertionOutcome;
-use crate::core::tds::{CellKey, Tds, TriangulationConstructionState, VertexKey};
+use crate::core::tds::{
+    CellKey, InvariantError, InvariantErrorSummaryDetail, Tds, TdsError, TdsErrorKind,
+    TriangulationConstructionState, TriangulationValidationErrorKind, VertexKey,
+};
 use crate::core::traits::data_type::DataType;
 use crate::core::triangulation::{TopologyGuarantee, TriangulationConstructionError};
 use crate::core::util::periodic_facet_key_from_lifted_vertices;
@@ -121,10 +127,13 @@ use crate::topology::spaces::toroidal::ToroidalSpace;
 use crate::topology::traits::global_topology_model::{
     GlobalTopologyModel, GlobalTopologyModelError,
 };
-use crate::topology::traits::topological_space::{GlobalTopology, ToroidalConstructionMode};
+use crate::topology::traits::topological_space::{
+    GlobalTopology, TopologyKind, ToroidalConstructionMode,
+};
 use crate::triangulation::delaunay::{
     ConstructionOptions, DelaunayRepairPolicy, DelaunayTriangulation,
-    DelaunayTriangulationConstructionError, InitialSimplexStrategy, RetryPolicy,
+    DelaunayTriangulationConstructionError, DelaunayTriangulationValidationError,
+    InitialSimplexStrategy, RetryPolicy,
 };
 use num_traits::ToPrimitive;
 use rand::SeedableRng;
@@ -284,6 +293,411 @@ fn search_closed_2d_selection(
 // ERROR TYPES
 // =============================================================================
 
+/// TDS failure category preserved by explicit construction without retaining a
+/// large by-value source error.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[non_exhaustive]
+pub enum ExplicitTdsErrorKind {
+    /// A vertex failed validation.
+    InvalidVertex,
+    /// A cell failed validation.
+    InvalidCell,
+    /// Neighbor relationships were invalid.
+    InvalidNeighbors,
+    /// Adjacent cells violated coherent orientation.
+    OrientationViolation,
+    /// Duplicate maximal cells were detected.
+    DuplicateCells,
+    /// Cell creation failed.
+    FailedToCreateCell,
+    /// Expected neighbor relation was absent.
+    NotNeighbors,
+    /// UUID-to-key mapping was inconsistent.
+    MappingInconsistency,
+    /// Cell vertex-key lookup failed.
+    VertexKeyRetrievalFailed,
+    /// A referenced cell key was missing.
+    CellNotFound,
+    /// A referenced vertex key was missing.
+    VertexNotFound,
+    /// A dimension/count invariant was violated.
+    DimensionMismatch,
+    /// An index exceeded its valid bound.
+    IndexOutOfBounds,
+    /// Internal TDS state was inconsistent.
+    InconsistentDataStructure,
+    /// A geometric validation failure occurred.
+    Geometric,
+    /// A facet operation failed.
+    FacetError,
+    /// A cell contained duplicate coordinates.
+    DuplicateCoordinatesInCell,
+}
+
+/// Compact summary of a [`TdsError`] used by explicit construction.
+///
+/// The conversion preserves the [`ExplicitTdsErrorKind`] and rendered
+/// diagnostic text while dropping the full typed payload. Use this type when
+/// explicit construction needs a small source error; keep the original
+/// [`TdsError`] when callers need source-chain or payload inspection.
+///
+/// # Examples
+///
+/// ```rust
+/// use delaunay::prelude::tds::TdsError;
+/// use delaunay::prelude::triangulation::{ExplicitTdsError, ExplicitTdsErrorKind};
+///
+/// let source = TdsError::InconsistentDataStructure {
+///     message: "dangling cell key".to_string(),
+/// };
+/// let summary = ExplicitTdsError::from(source);
+///
+/// assert_eq!(summary.kind, ExplicitTdsErrorKind::InconsistentDataStructure);
+/// ```
+#[derive(Clone, Debug, Error, PartialEq, Eq)]
+#[error("{message}")]
+pub struct ExplicitTdsError {
+    /// Structured TDS failure category.
+    pub kind: ExplicitTdsErrorKind,
+    /// Full diagnostic text from the original TDS error.
+    pub message: String,
+}
+
+impl From<TdsError> for ExplicitTdsError {
+    fn from(source: TdsError) -> Self {
+        let kind = match &source {
+            TdsError::InvalidVertex { .. } => ExplicitTdsErrorKind::InvalidVertex,
+            TdsError::InvalidCell { .. } => ExplicitTdsErrorKind::InvalidCell,
+            TdsError::InvalidNeighbors { .. } => ExplicitTdsErrorKind::InvalidNeighbors,
+            TdsError::OrientationViolation { .. } => ExplicitTdsErrorKind::OrientationViolation,
+            TdsError::DuplicateCells { .. } => ExplicitTdsErrorKind::DuplicateCells,
+            TdsError::FailedToCreateCell { .. } => ExplicitTdsErrorKind::FailedToCreateCell,
+            TdsError::NotNeighbors { .. } => ExplicitTdsErrorKind::NotNeighbors,
+            TdsError::MappingInconsistency { .. } => ExplicitTdsErrorKind::MappingInconsistency,
+            TdsError::VertexKeyRetrievalFailed { .. } => {
+                ExplicitTdsErrorKind::VertexKeyRetrievalFailed
+            }
+            TdsError::CellNotFound { .. } => ExplicitTdsErrorKind::CellNotFound,
+            TdsError::VertexNotFound { .. } => ExplicitTdsErrorKind::VertexNotFound,
+            TdsError::DimensionMismatch { .. } => ExplicitTdsErrorKind::DimensionMismatch,
+            TdsError::IndexOutOfBounds { .. } => ExplicitTdsErrorKind::IndexOutOfBounds,
+            TdsError::InconsistentDataStructure { .. } => {
+                ExplicitTdsErrorKind::InconsistentDataStructure
+            }
+            TdsError::Geometric(_) => ExplicitTdsErrorKind::Geometric,
+            TdsError::FacetError(_) => ExplicitTdsErrorKind::FacetError,
+            TdsError::DuplicateCoordinatesInCell { .. } => {
+                ExplicitTdsErrorKind::DuplicateCoordinatesInCell
+            }
+        };
+        Self {
+            kind,
+            message: source.to_string(),
+        }
+    }
+}
+
+/// Incremental-insertion failure category preserved by explicit construction
+/// without retaining a large by-value source error.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[non_exhaustive]
+pub enum ExplicitInsertionErrorKind {
+    /// Conflict-region search failed.
+    ConflictRegion,
+    /// Point location failed.
+    Location,
+    /// Cavity filling failed.
+    CavityFilling,
+    /// Neighbor wiring failed.
+    NeighborWiring,
+    /// Non-manifold topology was detected.
+    NonManifoldTopology,
+    /// Hull extension failed.
+    HullExtension,
+    /// Delaunay validation failed after insertion.
+    DelaunayValidationFailed,
+    /// Flip-based Delaunay repair failed.
+    DelaunayRepairFailed,
+    /// Duplicate coordinates were supplied.
+    DuplicateCoordinates,
+    /// Duplicate UUID was supplied.
+    DuplicateUuid,
+    /// TDS topology validation failed.
+    TopologyValidation,
+    /// Triangulation-layer topology validation failed.
+    TopologyValidationFailed,
+}
+
+/// Compact summary of an [`InsertionError`] used by explicit construction.
+///
+/// The conversion preserves the [`ExplicitInsertionErrorKind`], an optional
+/// nested [`InsertionErrorSourceKind`] for wrapped validation or repair errors,
+/// and rendered diagnostic text. It intentionally drops bulky typed payloads and
+/// source chains; keep the original [`InsertionError`] when callers need full
+/// structured insertion context.
+///
+/// # Examples
+///
+/// ```rust
+/// use delaunay::prelude::triangulation::{
+///     ExplicitInsertionError, ExplicitInsertionErrorKind,
+/// };
+/// use delaunay::prelude::triangulation::insertion::InsertionError;
+///
+/// let source = InsertionError::DuplicateCoordinates {
+///     coordinates: "[0.0, 0.0]".to_string(),
+/// };
+/// let summary = ExplicitInsertionError::from(source);
+///
+/// assert_eq!(summary.kind, ExplicitInsertionErrorKind::DuplicateCoordinates);
+/// assert!(summary.source_kind.is_none());
+/// ```
+#[derive(Clone, Debug, Error, PartialEq, Eq)]
+#[error("{message}")]
+pub struct ExplicitInsertionError {
+    /// Structured insertion failure category.
+    pub kind: ExplicitInsertionErrorKind,
+    /// Nested structured source kind when insertion wraps another validation layer.
+    pub source_kind: Option<InsertionErrorSourceKind>,
+    /// Full diagnostic text from the original insertion error.
+    pub message: String,
+}
+
+impl From<InsertionError> for ExplicitInsertionError {
+    fn from(source: InsertionError) -> Self {
+        let kind = match &source {
+            InsertionError::ConflictRegion(_) => ExplicitInsertionErrorKind::ConflictRegion,
+            InsertionError::Location(_) => ExplicitInsertionErrorKind::Location,
+            InsertionError::CavityFilling { .. } => ExplicitInsertionErrorKind::CavityFilling,
+            InsertionError::NeighborWiring { .. } => ExplicitInsertionErrorKind::NeighborWiring,
+            InsertionError::NonManifoldTopology { .. } => {
+                ExplicitInsertionErrorKind::NonManifoldTopology
+            }
+            InsertionError::HullExtension { .. } => ExplicitInsertionErrorKind::HullExtension,
+            InsertionError::DelaunayValidationFailed { .. } => {
+                ExplicitInsertionErrorKind::DelaunayValidationFailed
+            }
+            InsertionError::DelaunayRepairFailed { .. } => {
+                ExplicitInsertionErrorKind::DelaunayRepairFailed
+            }
+            InsertionError::DuplicateCoordinates { .. } => {
+                ExplicitInsertionErrorKind::DuplicateCoordinates
+            }
+            InsertionError::DuplicateUuid { .. } => ExplicitInsertionErrorKind::DuplicateUuid,
+            InsertionError::TopologyValidation(_) => ExplicitInsertionErrorKind::TopologyValidation,
+            InsertionError::TopologyValidationFailed { .. } => {
+                ExplicitInsertionErrorKind::TopologyValidationFailed
+            }
+        };
+        let source_kind = match &source {
+            InsertionError::DelaunayValidationFailed { source } => {
+                Some(InsertionErrorSourceKind::Delaunay(source.into()))
+            }
+            InsertionError::DelaunayRepairFailed { source, .. } => Some(
+                InsertionErrorSourceKind::DelaunayRepair(source.as_ref().into()),
+            ),
+            InsertionError::TopologyValidation(source) => {
+                Some(InsertionErrorSourceKind::Tds(source.into()))
+            }
+            InsertionError::TopologyValidationFailed { source, .. } => {
+                Some(InsertionErrorSourceKind::Triangulation(source.into()))
+            }
+            _ => None,
+        };
+        Self {
+            kind,
+            source_kind,
+            message: source.to_string(),
+        }
+    }
+}
+
+/// Validation-layer category preserved by explicit construction without
+/// retaining a large by-value source error.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[non_exhaustive]
+pub enum ExplicitInvariantErrorKind {
+    /// Level 1-2 TDS validation failed.
+    Tds,
+    /// Level 3 triangulation topology validation failed.
+    Triangulation,
+    /// Level 4 Delaunay validation failed.
+    Delaunay,
+}
+
+/// Compact summary of an [`InvariantError`] used by explicit construction.
+///
+/// The conversion preserves the validation layer in
+/// [`ExplicitInvariantErrorKind`], the nested typed discriminant in
+/// [`InvariantErrorSummaryDetail`], and rendered diagnostic text. It
+/// intentionally drops bulky typed payloads and source chains; keep the original
+/// [`InvariantError`] when callers need full validation context.
+///
+/// # Examples
+///
+/// ```rust
+/// use delaunay::prelude::tds::{
+///     InvariantError, InvariantErrorSummaryDetail, TdsError, TdsErrorKind,
+/// };
+/// use delaunay::prelude::triangulation::{
+///     ExplicitInvariantError, ExplicitInvariantErrorKind,
+/// };
+///
+/// let source = InvariantError::Tds(TdsError::InconsistentDataStructure {
+///     message: "dangling cell key".to_string(),
+/// });
+/// let summary = ExplicitInvariantError::from(source);
+///
+/// assert_eq!(summary.kind, ExplicitInvariantErrorKind::Tds);
+/// assert_eq!(
+///     summary.detail,
+///     InvariantErrorSummaryDetail::Tds(TdsErrorKind::InconsistentDataStructure),
+/// );
+/// ```
+#[derive(Clone, Debug, Error, PartialEq, Eq)]
+#[error("{message}")]
+pub struct ExplicitInvariantError {
+    /// Structured validation-layer category.
+    pub kind: ExplicitInvariantErrorKind,
+    /// Nested structured validation error kind.
+    pub detail: InvariantErrorSummaryDetail,
+    /// Full diagnostic text from the original invariant error.
+    pub message: String,
+}
+
+impl From<InvariantError> for ExplicitInvariantError {
+    fn from(source: InvariantError) -> Self {
+        let kind = match &source {
+            InvariantError::Tds(_) => ExplicitInvariantErrorKind::Tds,
+            InvariantError::Triangulation(_) => ExplicitInvariantErrorKind::Triangulation,
+            InvariantError::Delaunay(_) => ExplicitInvariantErrorKind::Delaunay,
+        };
+        let detail = match &source {
+            InvariantError::Tds(source) => InvariantErrorSummaryDetail::Tds(source.into()),
+            InvariantError::Triangulation(source) => {
+                InvariantErrorSummaryDetail::Triangulation(source.into())
+            }
+            InvariantError::Delaunay(source) => {
+                InvariantErrorSummaryDetail::Delaunay(source.into())
+            }
+        };
+        Self {
+            kind,
+            detail,
+            message: source.to_string(),
+        }
+    }
+}
+
+/// Delaunay validation category preserved by explicit construction without
+/// retaining a large by-value source error.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[non_exhaustive]
+pub enum ExplicitDelaunayValidationErrorKind {
+    /// Lower-layer TDS validation failed.
+    Tds,
+    /// Lower-layer topology validation failed.
+    Triangulation,
+    /// Level 4 Delaunay verification failed.
+    VerificationFailed,
+    /// Legacy string-only repair validation failed.
+    RepairFailed,
+    /// Typed repair validation failed.
+    RepairOperationFailed,
+}
+
+/// Nested source category preserved by explicit Delaunay validation summaries.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[non_exhaustive]
+pub enum ExplicitDelaunayValidationSourceKind {
+    /// Lower-layer TDS validation failed.
+    Tds(TdsErrorKind),
+    /// Lower-layer topology validation failed.
+    Triangulation(TriangulationValidationErrorKind),
+    /// Typed flip repair failed during a mutating operation.
+    Repair(DelaunayRepairErrorKind),
+}
+
+/// Compact summary of a [`DelaunayTriangulationValidationError`] used by
+/// explicit construction.
+///
+/// The conversion preserves the [`ExplicitDelaunayValidationErrorKind`], an
+/// optional nested [`ExplicitDelaunayValidationSourceKind`] for wrapped
+/// validation or repair errors, and rendered diagnostic text. It intentionally
+/// drops bulky typed payloads and source chains; keep the original
+/// [`DelaunayTriangulationValidationError`] when callers need full validation
+/// context.
+///
+/// # Examples
+///
+/// ```rust
+/// use delaunay::prelude::triangulation::{
+///     DelaunayTriangulationValidationError, ExplicitDelaunayValidationError,
+///     ExplicitDelaunayValidationErrorKind,
+/// };
+///
+/// let source = DelaunayTriangulationValidationError::VerificationFailed {
+///     message: "non-Delaunay facet".to_string(),
+/// };
+/// let summary = ExplicitDelaunayValidationError::from(source);
+///
+/// assert_eq!(
+///     summary.kind,
+///     ExplicitDelaunayValidationErrorKind::VerificationFailed,
+/// );
+/// assert!(summary.source_kind.is_none());
+/// ```
+#[derive(Clone, Debug, Error, PartialEq, Eq)]
+#[error("{message}")]
+pub struct ExplicitDelaunayValidationError {
+    /// Structured Delaunay validation category.
+    pub kind: ExplicitDelaunayValidationErrorKind,
+    /// Nested structured source kind when validation wraps another layer.
+    pub source_kind: Option<ExplicitDelaunayValidationSourceKind>,
+    /// Full diagnostic text from the original Delaunay validation error.
+    pub message: String,
+}
+
+impl From<DelaunayTriangulationValidationError> for ExplicitDelaunayValidationError {
+    fn from(source: DelaunayTriangulationValidationError) -> Self {
+        let kind = match &source {
+            DelaunayTriangulationValidationError::Tds(_) => {
+                ExplicitDelaunayValidationErrorKind::Tds
+            }
+            DelaunayTriangulationValidationError::Triangulation(_) => {
+                ExplicitDelaunayValidationErrorKind::Triangulation
+            }
+            DelaunayTriangulationValidationError::VerificationFailed { .. } => {
+                ExplicitDelaunayValidationErrorKind::VerificationFailed
+            }
+            DelaunayTriangulationValidationError::RepairFailed { .. } => {
+                ExplicitDelaunayValidationErrorKind::RepairFailed
+            }
+            DelaunayTriangulationValidationError::RepairOperationFailed { .. } => {
+                ExplicitDelaunayValidationErrorKind::RepairOperationFailed
+            }
+        };
+        let source_kind = match &source {
+            DelaunayTriangulationValidationError::Tds(source) => {
+                Some(ExplicitDelaunayValidationSourceKind::Tds(source.into()))
+            }
+            DelaunayTriangulationValidationError::Triangulation(source) => Some(
+                ExplicitDelaunayValidationSourceKind::Triangulation(source.into()),
+            ),
+            DelaunayTriangulationValidationError::RepairOperationFailed { source, .. } => {
+                Some(ExplicitDelaunayValidationSourceKind::Repair(source.into()))
+            }
+            DelaunayTriangulationValidationError::VerificationFailed { .. }
+            | DelaunayTriangulationValidationError::RepairFailed { .. } => None,
+        };
+        Self {
+            kind,
+            source_kind,
+            message: source.to_string(),
+        }
+    }
+}
+
 /// Errors from explicit triangulation construction.
 ///
 /// Input validation errors (wrong arity, out-of-bounds indices, duplicate vertices,
@@ -365,16 +779,62 @@ pub enum ExplicitConstructionError {
          and must be left at their default values"
     )]
     UnsupportedConstructionOptions,
-    /// The assembled TDS failed post-assembly validation.
-    ///
-    /// The caller-provided cells passed input validation but the resulting
-    /// triangulation violates structural or topological invariants (e.g.,
-    /// non-manifold facet sharing, disconnected components, orientation
-    /// contradictions, isolated vertices, Euler characteristic mismatch).
-    #[error("Validation failed: {message}")]
-    ValidationFailed {
-        /// Human-readable description of the validation failure.
-        message: String,
+    /// Neighbor assignment failed while assembling explicit connectivity.
+    #[error("Neighbor assignment failed during explicit construction: {source}")]
+    NeighborAssignment {
+        /// Underlying TDS validation error.
+        #[source]
+        source: ExplicitTdsError,
+    },
+    /// Orientation normalization or positive-orientation promotion failed.
+    #[error("Orientation normalization failed during explicit construction: {source}")]
+    OrientationNormalization {
+        /// Underlying insertion/orientation error.
+        #[source]
+        source: ExplicitInsertionError,
+    },
+    /// Level 1–2 TDS structural validation failed after assembly.
+    #[error("Structural validation failed during explicit construction: {source}")]
+    StructuralValidation {
+        /// Underlying TDS validation error.
+        #[source]
+        source: ExplicitTdsError,
+    },
+    /// Level 3 topology validation failed after assembly.
+    #[error("Topology validation failed during explicit construction: {source}")]
+    TopologyValidation {
+        /// Underlying cumulative validation error.
+        #[source]
+        source: ExplicitInvariantError,
+    },
+    /// Completion-time PL-manifold validation failed after assembly.
+    #[error("PL-manifold completion validation failed during explicit construction: {source}")]
+    CompletionValidation {
+        /// Underlying cumulative validation error.
+        #[source]
+        source: ExplicitInvariantError,
+    },
+    /// Geometric nondegeneracy validation failed after assembly.
+    #[error("Geometric nondegeneracy validation failed during explicit construction: {source}")]
+    GeometricNondegeneracy {
+        /// Underlying TDS/geometric validation error.
+        #[source]
+        source: ExplicitTdsError,
+    },
+    /// Level 4 Delaunay validation failed before returning the wrapper.
+    #[error("Delaunay validation failed during explicit construction: {source}")]
+    DelaunayValidation {
+        /// Underlying Delaunay validation error.
+        #[source]
+        source: ExplicitDelaunayValidationError,
+    },
+    /// Explicit quotient connectivity is not supported for the requested topology.
+    #[error(
+        "Explicit non-Euclidean connectivity is not supported for {topology:?}; Level 4 quotient validation is required"
+    )]
+    UnsupportedExplicitTopology {
+        /// Requested global topology metadata.
+        topology: TopologyKind,
     },
 }
 
@@ -460,10 +920,7 @@ pub struct DelaunayTriangulationBuilder<'v, T, U, const D: usize> {
 //
 // =============================================================================
 
-impl<'v, U, const D: usize> DelaunayTriangulationBuilder<'v, f64, U, D>
-where
-    U: DataType,
-{
+impl<'v, U, const D: usize> DelaunayTriangulationBuilder<'v, f64, U, D> {
     /// Creates a builder for `f64` vertices with any user data type `U`.
     ///
     /// `U` is inferred from the vertex slice — no explicit type annotations needed
@@ -569,11 +1026,7 @@ where
 // GENERIC IMPL — any scalar T, any vertex data U
 // =============================================================================
 
-impl<'v, T, U, const D: usize> DelaunayTriangulationBuilder<'v, T, U, D>
-where
-    T: CoordinateScalar,
-    U: DataType,
-{
+impl<'v, T, U, const D: usize> DelaunayTriangulationBuilder<'v, T, U, D> {
     /// Creates a builder from explicit vertex and cell specifications.
     ///
     /// This constructs a triangulation from the given connectivity without
@@ -895,7 +1348,13 @@ where
         self.construction_options = construction_options;
         self
     }
+}
 
+impl<T, U, const D: usize> DelaunayTriangulationBuilder<'_, T, U, D>
+where
+    T: CoordinateScalar,
+    U: DataType,
+{
     // -------------------------------------------------------------------------
     // Internal helpers
     // -------------------------------------------------------------------------
@@ -1265,41 +1724,10 @@ where
         K: Kernel<D, Scalar = T>,
         V: DataType,
     {
-        // --- Input validation ---
-        if cells.is_empty() {
-            return Err(ExplicitConstructionError::EmptyCells.into());
-        }
+        Self::validate_explicit_cell_specs(vertices.len(), cells)?;
         Self::reject_explicit_non_euclidean_topology(global_topology)?;
 
         let vertex_count = vertices.len();
-        for (cell_idx, cell_spec) in cells.iter().enumerate() {
-            if cell_spec.len() != D + 1 {
-                return Err(ExplicitConstructionError::InvalidCellArity {
-                    cell_index: cell_idx,
-                    actual: cell_spec.len(),
-                    expected: D + 1,
-                }
-                .into());
-            }
-            for (i, &vi) in cell_spec.iter().enumerate() {
-                if vi >= vertex_count {
-                    return Err(ExplicitConstructionError::IndexOutOfBounds {
-                        cell_index: cell_idx,
-                        vertex_index: vi,
-                        bound: vertex_count,
-                    }
-                    .into());
-                }
-                for &vj in &cell_spec[i + 1..] {
-                    if vi == vj {
-                        return Err(ExplicitConstructionError::DuplicateVertexInCell {
-                            cell_index: cell_idx,
-                        }
-                        .into());
-                    }
-                }
-            }
-        }
 
         // --- Build TDS ---
         let mut tds: Tds<T, U, V, D> = Tds::empty();
@@ -1331,8 +1759,8 @@ where
 
         // --- Compute adjacency ---
         tds.assign_neighbors()
-            .map_err(|e| ExplicitConstructionError::ValidationFailed {
-                message: format!("neighbor assignment failed: {e}"),
+            .map_err(|source| ExplicitConstructionError::NeighborAssignment {
+                source: source.into(),
             })?;
 
         // --- Assign incident cells ---
@@ -1368,17 +1796,18 @@ where
         // matching the invariant expected by validate_geometric_cell_orientation.
         dt.tri
             .normalize_and_promote_positive_orientation()
-            .map_err(|e| ExplicitConstructionError::ValidationFailed {
-                message: format!("orientation normalization/promotion failed: {e}"),
-            })?;
+            .map_err(
+                |source| ExplicitConstructionError::OrientationNormalization {
+                    source: source.into(),
+                },
+            )?;
 
         // Level 1–2: TDS structural validation (mappings, neighbors, facet
         // sharing, coherent orientation, etc.).
         if let Err(e) = dt.tri.tds.validate() {
-            return Err(ExplicitConstructionError::ValidationFailed {
-                message: format!("structural validation failed: {e}"),
-            }
-            .into());
+            return Err(
+                ExplicitConstructionError::StructuralValidation { source: e.into() }.into(),
+            );
         }
 
         // Level 3 (topology, excluding geometric orientation): connectedness,
@@ -1388,18 +1817,14 @@ where
         // the only check we intentionally omit is
         // `validate_geometric_cell_orientation`.
         if let Err(e) = dt.tri.is_valid_topology_only() {
-            return Err(ExplicitConstructionError::ValidationFailed {
-                message: format!("topology validation failed: {e}"),
-            }
-            .into());
+            return Err(ExplicitConstructionError::TopologyValidation { source: e.into() }.into());
         }
 
         // Completion-time PL-manifold check (vertex links) if required.
         if let Err(e) = dt.tri.validate_at_completion() {
-            return Err(ExplicitConstructionError::ValidationFailed {
-                message: format!("PL-manifold completion validation failed: {e}"),
-            }
-            .into());
+            return Err(
+                ExplicitConstructionError::CompletionValidation { source: e.into() }.into(),
+            );
         }
 
         // --- Geometric nondegeneracy ---
@@ -1410,15 +1835,52 @@ where
         // explicit construction should not silently accept geometrically
         // collapsed cells supplied by the user.
         if let Err(e) = dt.tri.validate_geometric_nondegeneracy() {
-            return Err(ExplicitConstructionError::ValidationFailed {
-                message: format!("geometric nondegeneracy check failed: {e}"),
-            }
-            .into());
+            return Err(
+                ExplicitConstructionError::GeometricNondegeneracy { source: e.into() }.into(),
+            );
         }
 
         Self::enforce_explicit_delaunay_property(&dt)?;
 
         Ok(dt)
+    }
+
+    /// Validates explicit cell specifications before constructing a TDS.
+    fn validate_explicit_cell_specs(
+        vertex_count: usize,
+        cells: &[Vec<usize>],
+    ) -> Result<(), ExplicitConstructionError> {
+        if cells.is_empty() {
+            return Err(ExplicitConstructionError::EmptyCells);
+        }
+
+        for (cell_idx, cell_spec) in cells.iter().enumerate() {
+            if cell_spec.len() != D + 1 {
+                return Err(ExplicitConstructionError::InvalidCellArity {
+                    cell_index: cell_idx,
+                    actual: cell_spec.len(),
+                    expected: D + 1,
+                });
+            }
+            for (i, &vi) in cell_spec.iter().enumerate() {
+                if vi >= vertex_count {
+                    return Err(ExplicitConstructionError::IndexOutOfBounds {
+                        cell_index: cell_idx,
+                        vertex_index: vi,
+                        bound: vertex_count,
+                    });
+                }
+                for &vj in &cell_spec[i + 1..] {
+                    if vi == vj {
+                        return Err(ExplicitConstructionError::DuplicateVertexInCell {
+                            cell_index: cell_idx,
+                        });
+                    }
+                }
+            }
+        }
+
+        Ok(())
     }
 
     /// Enforces Level 4 validation before returning the Delaunay wrapper.
@@ -1434,9 +1896,9 @@ where
         K: Kernel<D, Scalar = T>,
         V: DataType,
     {
-        dt.is_valid().map_err(|e| {
-            ExplicitConstructionError::ValidationFailed {
-                message: format!("Delaunay validation failed: {e}"),
+        dt.is_valid().map_err(|source| {
+            ExplicitConstructionError::DelaunayValidation {
+                source: source.into(),
             }
             .into()
         })
@@ -1450,8 +1912,8 @@ where
             return Ok(());
         }
 
-        Err(ExplicitConstructionError::ValidationFailed {
-            message: "Explicit non-Euclidean connectivity is not supported for construction; Level 4 validator required".to_string(),
+        Err(ExplicitConstructionError::UnsupportedExplicitTopology {
+            topology: global_topology.kind(),
         }
         .into())
     }
@@ -2276,12 +2738,9 @@ where
                     message: format!("Failed to create quotient periodic cell: {e}"),
                 }
             })?;
-            cell.set_periodic_vertex_offsets(
-                lifted_vertices
-                    .iter()
-                    .map(|(_, offset)| *offset)
-                    .collect::<Vec<_>>(),
-            );
+            let offsets: PeriodicOffsetBuffer<D> =
+                lifted_vertices.iter().map(|(_, offset)| *offset).collect();
+            cell.set_periodic_vertex_offsets(offsets);
             let ck = tds_mut.insert_cell_with_mapping(cell).map_err(|e| {
                 TriangulationConstructionError::GeometricDegeneracy {
                     message: format!("Failed to insert quotient periodic cell: {e}"),
@@ -2475,6 +2934,8 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::core::algorithms::flips::DelaunayRepairError;
+    use crate::core::triangulation::TriangulationValidationError;
     use crate::core::vertex::VertexBuilder;
     use crate::geometry::kernel::RobustKernel;
     use crate::topology::traits::global_topology_model::{
@@ -2483,7 +2944,9 @@ mod tests {
     use crate::topology::traits::topological_space::{
         GlobalTopology, TopologyKind, ToroidalConstructionMode,
     };
-    use crate::triangulation::delaunay::{DelaunayConstructionFailure, InsertionOrderStrategy};
+    use crate::triangulation::delaunay::{
+        DelaunayConstructionFailure, DelaunayRepairOperation, InsertionOrderStrategy,
+    };
     use crate::vertex;
     use approx::assert_relative_eq;
     use slotmap::Key;
@@ -2532,6 +2995,82 @@ mod tests {
             }
             Ok(coords)
         }
+    }
+
+    #[test]
+    fn explicit_error_summaries_preserve_nested_source_kinds() {
+        let tds = ExplicitTdsError::from(TdsError::DuplicateCells {
+            message: "same vertex set appears twice".to_string(),
+        });
+        assert_eq!(tds.kind, ExplicitTdsErrorKind::DuplicateCells);
+        assert!(tds.message.contains("Duplicate cells"));
+
+        let insertion = ExplicitInsertionError::from(InsertionError::TopologyValidation(
+            TdsError::InconsistentDataStructure {
+                message: "dangling neighbor".to_string(),
+            },
+        ));
+        assert_eq!(
+            insertion.source_kind,
+            Some(InsertionErrorSourceKind::Tds(
+                TdsErrorKind::InconsistentDataStructure,
+            ))
+        );
+
+        let invariant = ExplicitInvariantError::from(InvariantError::Triangulation(
+            TriangulationValidationError::Disconnected { cell_count: 2 },
+        ));
+        assert_eq!(invariant.kind, ExplicitInvariantErrorKind::Triangulation);
+        assert_eq!(
+            invariant.detail,
+            InvariantErrorSummaryDetail::Triangulation(
+                TriangulationValidationErrorKind::Disconnected,
+            )
+        );
+
+        let delaunay = ExplicitDelaunayValidationError::from(
+            DelaunayTriangulationValidationError::RepairOperationFailed {
+                operation: DelaunayRepairOperation::VertexRemoval,
+                source: DelaunayRepairError::HeuristicRebuildFailed {
+                    message: "rebuild failed".to_string(),
+                },
+            },
+        );
+        assert_eq!(
+            delaunay.source_kind,
+            Some(ExplicitDelaunayValidationSourceKind::Repair(
+                DelaunayRepairErrorKind::HeuristicRebuildFailed,
+            ))
+        );
+
+        let delaunay_tds = ExplicitDelaunayValidationError::from(
+            DelaunayTriangulationValidationError::Tds(TdsError::InconsistentDataStructure {
+                message: "dangling cell".to_string(),
+            }),
+        );
+        assert_eq!(delaunay_tds.kind, ExplicitDelaunayValidationErrorKind::Tds);
+        assert_eq!(
+            delaunay_tds.source_kind,
+            Some(ExplicitDelaunayValidationSourceKind::Tds(
+                TdsErrorKind::InconsistentDataStructure,
+            ))
+        );
+
+        let delaunay_topology = ExplicitDelaunayValidationError::from(
+            DelaunayTriangulationValidationError::Triangulation(
+                TriangulationValidationError::Disconnected { cell_count: 2 },
+            ),
+        );
+        assert_eq!(
+            delaunay_topology.kind,
+            ExplicitDelaunayValidationErrorKind::Triangulation,
+        );
+        assert_eq!(
+            delaunay_topology.source_kind,
+            Some(ExplicitDelaunayValidationSourceKind::Triangulation(
+                TriangulationValidationErrorKind::Disconnected,
+            ))
+        );
     }
 
     #[derive(Clone, Copy, Debug)]

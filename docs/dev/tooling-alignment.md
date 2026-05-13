@@ -74,6 +74,20 @@ Some causal-triangulations tooling remains project-specific and was not ported:
   detailed benchmark-profile guidance because it documents the `perf` profile,
   backend compatibility canary, and release benchmark summary workflow.
 
+## Cargo Packaging And Toolchain Hygiene
+
+The Delaunay crate uses an explicit Cargo package allowlist so crates.io
+artifacts carry the public library surface, examples, benchmarks, integration
+tests, and active documentation without bundling CI-only tooling, Semgrep
+fixtures, Python automation, or archived design notes. Keep this allowlist
+aligned with files needed by `cargo publish --dry-run`, docs.rs, examples,
+benchmarks, and Cargo's package target discovery.
+
+The pinned Rust toolchain intentionally uses the `minimal` profile plus only
+the repository-required components (`clippy`, `rustfmt`, and `rust-src`).
+Cross-target standard libraries and IDE-only components should be installed by
+the workflows or local developers that need them, rather than by every checkout.
+
 ## Activated Deferred Updates
 
 The following previously deferred checks are now repository-owned Semgrep rules:
@@ -84,6 +98,17 @@ The following previously deferred checks are now repository-owned Semgrep rules:
 - `delaunay.rust.no-production-unwrap-panic` blocks bare `unwrap()` and
   `panic!` in non-test `src/` code, with narrowly scoped `expect(...)` matches
   for reviewed public-API panic messages that should become typed errors.
+- `delaunay.rust.no-partial-cmp-ordering-defaults` requires source ordering
+  code to spell the incomparable branch explicitly instead of silently mapping
+  `partial_cmp` failures to an arbitrary `Ordering`.
+- `delaunay.rust.no-function-local-use-in-src` keeps non-test source imports at
+  module scope so dependency shape is visible during review.
+- `delaunay.rust.no-deep-crate-paths-in-functions` keeps long internal module
+  paths out of function bodies; use focused imports or a local helper when the
+  path is part of the implementation.
+- `delaunay.rust.no-silent-conversion-fallbacks-in-public-samples` extends the
+  existing source conversion-fallback check to examples, benchmarks, and public
+  API tests so copied usage does not hide numeric conversion failures.
 
 ## Public Sample Error Handling
 
@@ -104,7 +129,10 @@ This is now enforced by `delaunay.rust.no-public-surface-unwrap-panic` for:
 
 The doctest migration remains intentionally separate because Rust doc comments
 still have an existing `.unwrap()`/`.expect(...)` baseline that should be
-converted with hidden `Result` wrappers in a focused documentation pass.
+converted with hidden `Result` wrappers in a focused documentation pass. A
+broad no-doctest-unwrap Semgrep rule should only be enabled after that baseline
+is removed, otherwise `just semgrep` becomes noisy enough to hide actionable
+source and public-sample findings.
 
 ```bash
 just verify-expect-counts

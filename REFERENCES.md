@@ -123,6 +123,13 @@ This section contains the foundational algorithms and data structures that form 
   *European Journal of Combinatorics* 12, no. 2 (1991): 129-145.
   DOI: [10.1016/S0195-6698(13)80080-7](https://doi.org/10.1016/S0195-6698(13)80080-7)
 
+### Scoped Local Validation and Flips
+
+1. Edelsbrunner, H., and Shah, N. R. "Incremental Topological Flipping Works for Regular Triangulations."
+   *Algorithmica* 15, no. 3 (1996): 223-241. DOI: [10.1007/BF01975867](https://doi.org/10.1007/BF01975867)
+   Local flip neighborhoods support scoped validation when the mutation frontier is complete; global
+   PL vertex-link obligations still require full-link validation.
+
 ### Data Structures and Implementation References
 
 - Blandford, D.K., Blelloch, G.E., and Kadow, C. "Engineering a Compact Parallel Delaunay Algorithm in 3D."

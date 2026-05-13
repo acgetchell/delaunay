@@ -31,7 +31,7 @@ use crate::geometry::kernel::Kernel;
 use crate::geometry::point::Point;
 use crate::geometry::traits::coordinate::{CoordinateConversionError, CoordinateScalar};
 use std::env;
-use std::fmt;
+use std::fmt::{self, Write as _};
 use std::hash::{Hash, Hasher};
 use std::sync::OnceLock;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -413,17 +413,18 @@ where
     U: DataType,
     V: DataType,
 {
-    vertex_keys
-        .iter()
-        .map(|&vertex_key| {
-            let uuid = tds.vertex(vertex_key).map_or_else(
-                || String::from("missing"),
-                |vertex| vertex.uuid().to_string(),
-            );
-            format!("{vertex_key:?}/{uuid}")
-        })
-        .collect::<Vec<_>>()
-        .join(", ")
+    let mut refs = String::new();
+    for (idx, &vertex_key) in vertex_keys.iter().enumerate() {
+        if idx != 0 {
+            refs.push_str(", ");
+        }
+        let uuid = tds.vertex(vertex_key).map_or_else(
+            || String::from("missing"),
+            |vertex| vertex.uuid().to_string(),
+        );
+        let _ = write!(&mut refs, "{vertex_key:?}/{uuid}");
+    }
+    refs
 }
 
 fn format_facet_vertices<T, U, V, const D: usize>(
@@ -1310,7 +1311,33 @@ where
 /// Activated by setting `DELAUNAY_DEBUG_CONFLICT_VERIFY=1`.
 ///
 /// Returns the number of missed cells (0 means the BFS result is complete).
+///
+/// # Examples
+///
+/// ```rust
+/// # #[cfg(feature = "diagnostics")]
+/// # {
+/// use delaunay::prelude::collections::CellKeyBuffer;
+/// use delaunay::prelude::diagnostics::verify_conflict_region_completeness;
+/// use delaunay::prelude::geometry::{AdaptiveKernel, Point};
+/// use delaunay::prelude::tds::Tds;
+///
+/// let tds: Tds<f64, (), (), 2> = Tds::empty();
+/// let kernel = AdaptiveKernel::<f64>::new();
+/// let point = Point::new([0.25, 0.25]);
+/// let bfs_conflicts = CellKeyBuffer::new();
+///
+/// let missed = verify_conflict_region_completeness(
+///     &tds,
+///     &kernel,
+///     &point,
+///     &bfs_conflicts,
+/// );
+/// assert_eq!(missed, 0);
+/// # }
+/// ```
 #[cfg(any(test, feature = "diagnostics"))]
+#[cfg_attr(docsrs, doc(cfg(feature = "diagnostics")))]
 pub fn verify_conflict_region_completeness<K, U, V, const D: usize>(
     tds: &Tds<K::Scalar, U, V, D>,
     kernel: &K,

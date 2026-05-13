@@ -133,8 +133,8 @@ struct MemoryInfo {
     tds_delta: i64,
 }
 
-/// Get current process memory usage in KiB
-fn get_memory_usage() -> u64 {
+/// Return current process memory usage in KiB.
+fn memory_usage_kib() -> u64 {
     static SYS: OnceLock<Mutex<System>> = OnceLock::new();
     static UNIT_LOGGED: Once = Once::new();
 
@@ -160,11 +160,11 @@ fn get_memory_usage() -> u64 {
         .map_or(0, |process| process.memory() / 1024) // bytes → KiB
 }
 
-/// Get the deterministic base seed for random point generation.
+/// Return the deterministic base seed for random point generation.
 /// Reads `DELAUNAY_BENCH_SEED` (decimal or 0x-hex). Defaults to 42.
 /// Logs the resolved seed once on first use if `PRINT_BENCH_SEED` is set and
 /// the `bench-logging` feature is enabled.
-fn get_benchmark_seed() -> u64 {
+fn benchmark_seed() -> u64 {
     static SEED: OnceLock<u64> = OnceLock::new();
     *SEED.get_or_init(|| {
         let seed = std::env::var("DELAUNAY_BENCH_SEED")
@@ -204,7 +204,7 @@ fn benchmark_retry_attempts() -> NonZeroUsize {
 fn seed_for_case<const D: usize>(n_points: usize) -> u64 {
     const SEED_SALT: u64 = 0x9E37_79B9_7F4A_7C15;
 
-    let base_seed = get_benchmark_seed();
+    let base_seed = benchmark_seed();
     base_seed
         .wrapping_add((n_points as u64).wrapping_mul(SEED_SALT))
         .wrapping_add((D as u64).wrapping_mul(SEED_SALT.rotate_left(17)))
@@ -232,7 +232,7 @@ fn construct_triangulation<const D: usize>(
 
 /// Measure memory delta during triangulation construction
 fn measure_construction_with_memory<const D: usize>(n_points: usize, seed: u64) -> MemoryInfo {
-    let mem_before = get_memory_usage();
+    let mem_before = memory_usage_kib();
 
     // Generate points and vertices (setup overhead)
     let points = bench_result(
@@ -242,11 +242,11 @@ fn measure_construction_with_memory<const D: usize>(n_points: usize, seed: u64) 
     let vertices: Vec<_> = points.into_iter().map(|p| vertex!(p)).collect();
 
     // Measure memory before triangulation construction to isolate allocation
-    let mem_before_tds = get_memory_usage();
+    let mem_before_tds = memory_usage_kib();
 
     let dt = construct_triangulation::<D>(&vertices, seed);
 
-    let mem_after = get_memory_usage();
+    let mem_after = memory_usage_kib();
 
     // Keep dt alive for accurate memory measurement
     black_box(&dt);
@@ -342,7 +342,7 @@ fn bench_memory_usage<const D: usize>(c: &mut Criterion, dimension_name: &str, n
     }
 
     // Prime the one-time memory-unit log outside Criterion's measured closure.
-    let _ = get_memory_usage();
+    let _ = memory_usage_kib();
 
     group.bench_function("construction_memory_delta", |b| {
         b.iter(|| {

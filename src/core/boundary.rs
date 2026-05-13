@@ -6,6 +6,7 @@
 #![forbid(unsafe_code)]
 
 use super::{
+    collections::FacetToCellsMap,
     facet::{BoundaryFacetsIter, FacetView},
     tds::{Tds, TdsError},
     traits::{boundary_analysis::BoundaryAnalysis, data_type::DataType},
@@ -167,7 +168,7 @@ where
     fn is_boundary_facet_with_map(
         &self,
         facet: &FacetView<'_, T, U, V, D>,
-        facet_to_cells: &crate::core::collections::FacetToCellsMap,
+        facet_to_cells: &FacetToCellsMap,
     ) -> Result<bool, TdsError> {
         // Use FacetView's key() method which is more efficient
         let facet_key = facet.key().map_err(TdsError::FacetError)?;

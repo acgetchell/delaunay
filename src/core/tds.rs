@@ -13,9 +13,9 @@
 //! # Key Features
 //!
 //! - **CGAL-style layering**: topology in `Tds`, geometry/predicates in higher layers
-//! - **Relaxed coordinate bounds**: most `Tds` methods require only `U: DataType` and
-//!   `V: DataType`; methods that validate or serialize geometric values are gated behind
-//!   `T: CoordinateScalar`
+//! - **Relaxed access bounds**: read-only topology accessors and cache identity helpers do
+//!   not require coordinate or payload trait bounds; mutation, validation, and serde paths
+//!   add only the bounds they need
 //! - **Arbitrary Dimensions**: Supports triangulations in any dimension D ≥ 1
 //! - **Hierarchical Cell Structure**: Stores maximal D-dimensional cells and infers lower-dimensional
 //!   simplices (vertices, edges, facets) from the maximal cells
@@ -233,7 +233,9 @@ use super::{
     cell::{Cell, CellValidationError},
     facet::{FacetHandle, facet_key_from_vertices},
     traits::data_type::DataType,
-    util::{periodic_facet_key_from_lifted_vertices, usize_to_u8},
+    util::{
+        deduplication::coords_equal_exact, periodic_facet_key_from_lifted_vertices, usize_to_u8,
+    },
     vertex::{Vertex, VertexValidationError},
 };
 use crate::core::collections::{
@@ -243,6 +245,7 @@ use crate::core::collections::{
 };
 use crate::core::triangulation::TriangulationValidationError;
 use crate::geometry::traits::coordinate::CoordinateScalar;
+use crate::triangulation::delaunay::DelaunayTriangulationValidationError;
 use serde::{
     Deserialize, Deserializer, Serialize,
     de::{self, MapAccess, Visitor},
@@ -414,6 +417,324 @@ pub enum GeometricError {
 /// assert!(dt.is_valid().is_ok());
 /// ```
 ///
+/// Which side of a neighbor relationship is missing a shared-facet vertex.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum SharedFacetMismatchSide {
+    /// The source cell's facet vertex is missing from the neighbor.
+    SourceFacet,
+    /// The neighbor cell's facet vertex is missing from the source cell.
+    NeighborFacet,
+}
+
+/// Structured reason why neighbor relationships failed validation.
+#[derive(Clone, Debug, Error, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum NeighborValidationError {
+    /// A neighbor buffer has the wrong arity for the triangulation dimension.
+    #[error("Neighbor vector length {actual} != expected {expected} during {context}")]
+    LengthMismatch {
+        /// Observed number of neighbor slots.
+        actual: usize,
+        /// Expected number of neighbor slots.
+        expected: usize,
+        /// Validation context.
+        context: String,
+    },
+    /// A non-periodic cell points to itself as a neighbor.
+    #[error(
+        "Cell {cell_uuid} (key {cell_key:?}) has non-periodic self-neighbor at facet {facet_index}"
+    )]
+    NonPeriodicSelfNeighbor {
+        /// Cell whose neighbor pointer references itself.
+        cell_key: CellKey,
+        /// UUID of the cell whose neighbor pointer references itself.
+        cell_uuid: Uuid,
+        /// Facet slot containing the self-neighbor.
+        facet_index: usize,
+    },
+    /// A neighbor pointer references a missing cell key.
+    #[error(
+        "Cell {cell_uuid} (key {cell_key:?}) facet {facet_index} references missing neighbor {neighbor_key:?} during {context}"
+    )]
+    MissingNeighborCell {
+        /// Cell containing the stale neighbor pointer.
+        cell_key: CellKey,
+        /// UUID of the cell containing the stale neighbor pointer.
+        cell_uuid: Uuid,
+        /// Facet slot containing the stale neighbor pointer.
+        facet_index: usize,
+        /// Missing neighbor key.
+        neighbor_key: CellKey,
+        /// Validation context.
+        context: String,
+    },
+    /// A neighbor pair does not share exactly the facet opposite the slot.
+    #[error(
+        "Cell {cell_uuid} (key {cell_key:?}) facet {facet_index} shares {shared_count} vertices with neighbor, expected {expected}"
+    )]
+    SharedVertexCountMismatch {
+        /// Cell containing the invalid neighbor pointer.
+        cell_key: CellKey,
+        /// UUID of the cell containing the invalid neighbor pointer.
+        cell_uuid: Uuid,
+        /// Facet slot being checked.
+        facet_index: usize,
+        /// Number of shared vertices observed.
+        shared_count: usize,
+        /// Expected number of shared vertices.
+        expected: usize,
+    },
+    /// A neighbor is opposite a different vertex slot than the pointer position.
+    #[error(
+        "Cell {cell_uuid} (key {cell_key:?}) neighbor at facet {facet_index} is opposite {observed_opposite:?}, expected {expected_opposite}"
+    )]
+    OppositeVertexMismatch {
+        /// Cell containing the invalid neighbor pointer.
+        cell_key: CellKey,
+        /// UUID of the cell containing the invalid neighbor pointer.
+        cell_uuid: Uuid,
+        /// Facet slot being checked.
+        facet_index: usize,
+        /// Observed opposite vertex slot.
+        observed_opposite: Option<usize>,
+        /// Expected opposite vertex slot.
+        expected_opposite: usize,
+    },
+    /// The facet incidence map is missing a facet implied by a cell.
+    #[error(
+        "Cell {cell_uuid} (key {cell_key:?}) facet {facet_index} key {facet_key} is missing from facet incidence"
+    )]
+    FacetIncidenceMissing {
+        /// Cell whose facet was missing from the incidence map.
+        cell_key: CellKey,
+        /// UUID of the cell whose facet was missing from the incidence map.
+        cell_uuid: Uuid,
+        /// Facet index.
+        facet_index: usize,
+        /// Canonical facet key.
+        facet_key: u64,
+    },
+    /// A facet incidence entry exists but does not include the edited cell/facet.
+    #[error(
+        "Cell {cell_uuid} (key {cell_key:?}) facet {facet_index} key {facet_key} does not reference the edited facet"
+    )]
+    FacetIncidenceDoesNotReferenceCell {
+        /// Cell being edited.
+        cell_key: CellKey,
+        /// UUID of the cell being edited.
+        cell_uuid: Uuid,
+        /// Facet index being edited.
+        facet_index: usize,
+        /// Canonical facet key.
+        facet_key: u64,
+    },
+    /// A facet incidence entry has non-manifold multiplicity.
+    #[error(
+        "Cell {cell_uuid} (key {cell_key:?}) facet {facet_index} key {facet_key} is shared by {cell_count} cells"
+    )]
+    FacetIncidenceMultiplicity {
+        /// Cell being edited.
+        cell_key: CellKey,
+        /// UUID of the cell being edited.
+        cell_uuid: Uuid,
+        /// Facet index being edited.
+        facet_index: usize,
+        /// Canonical facet key.
+        facet_key: u64,
+        /// Number of cells incident to the facet.
+        cell_count: usize,
+    },
+    /// A proposed neighbor pointer disagrees with facet incidence.
+    #[error(
+        "Cell {cell_uuid} (key {cell_key:?}) facet {facet_index} proposed neighbor {proposed_neighbor:?} does not match expected {expected_neighbor:?}"
+    )]
+    NeighborIncidenceMismatch {
+        /// Cell being edited.
+        cell_key: CellKey,
+        /// UUID of the cell being edited.
+        cell_uuid: Uuid,
+        /// Facet index being edited.
+        facet_index: usize,
+        /// Proposed neighbor pointer.
+        proposed_neighbor: Option<CellKey>,
+        /// Neighbor expected from facet incidence.
+        expected_neighbor: Option<CellKey>,
+    },
+    /// A facet slot index is outside the neighbor buffer.
+    #[error("Neighbor facet index {facet_index} out of bounds for {slot_count} neighbor slots")]
+    NeighborSlotOutOfBounds {
+        /// Invalid facet index.
+        facet_index: usize,
+        /// Number of available neighbor slots.
+        slot_count: usize,
+    },
+    /// The mirror facet could not be found between adjacent cells.
+    #[error(
+        "Could not determine mirror facet during {context}: cell {cell_uuid}[{facet_index}] -> neighbor {neighbor_uuid}"
+    )]
+    MirrorFacetMissing {
+        /// UUID of the source cell.
+        cell_uuid: Uuid,
+        /// Facet index in the source cell.
+        facet_index: usize,
+        /// UUID of the neighbor cell.
+        neighbor_uuid: Uuid,
+        /// Validation context.
+        context: String,
+    },
+    /// Shared-vertex analysis found more than one possible mirror facet.
+    #[error(
+        "Mirror facet is ambiguous: cell {cell_uuid} and neighbor {neighbor_uuid} differ by more than one vertex"
+    )]
+    MirrorFacetAmbiguous {
+        /// UUID of the source cell.
+        cell_uuid: Uuid,
+        /// UUID of the neighbor cell.
+        neighbor_uuid: Uuid,
+    },
+    /// Shared-vertex analysis found that two cells share every vertex.
+    #[error(
+        "Mirror facet could not be determined: cell {cell_uuid} and neighbor {neighbor_uuid} share all vertices"
+    )]
+    MirrorFacetDuplicateCells {
+        /// UUID of the source cell.
+        cell_uuid: Uuid,
+        /// UUID of the neighbor cell.
+        neighbor_uuid: Uuid,
+    },
+    /// A computed mirror facet disagrees with shared-vertex analysis.
+    #[error(
+        "Mirror facet index mismatch: cell {cell_uuid}[{facet_index}] -> neighbor {neighbor_uuid}; observed {observed_mirror_index}, expected {expected_mirror_index}"
+    )]
+    MirrorFacetIndexMismatch {
+        /// UUID of the source cell.
+        cell_uuid: Uuid,
+        /// Facet index in the source cell.
+        facet_index: usize,
+        /// UUID of the neighbor cell.
+        neighbor_uuid: Uuid,
+        /// Mirror index returned by cell logic.
+        observed_mirror_index: usize,
+        /// Mirror index implied by shared-vertex analysis.
+        expected_mirror_index: usize,
+    },
+    /// A shared facet is missing a vertex on one side of a neighbor pair.
+    #[error(
+        "Shared facet mismatch ({side:?}): cell {cell_uuid}[{facet_index}] and neighbor {neighbor_uuid}[{mirror_index}] are missing vertex {missing_vertex:?}"
+    )]
+    SharedFacetMissingVertex {
+        /// Which side exposed the missing vertex.
+        side: SharedFacetMismatchSide,
+        /// UUID of the source cell.
+        cell_uuid: Uuid,
+        /// Facet index in the source cell.
+        facet_index: usize,
+        /// UUID of the neighbor cell.
+        neighbor_uuid: Uuid,
+        /// Mirror facet index in the neighbor cell.
+        mirror_index: usize,
+        /// Missing vertex key.
+        missing_vertex: VertexKey,
+    },
+    /// A neighbor does not carry the required reciprocal pointer.
+    #[error(
+        "Neighbor back-reference mismatch during {context}: cell {cell_uuid}[{facet_index}] -> {neighbor_key:?} should be mirrored by {neighbor_uuid}[{mirror_index}] -> {cell_key:?}, found {observed:?}"
+    )]
+    BackReferenceMismatch {
+        /// Source cell key.
+        cell_key: CellKey,
+        /// Source cell UUID.
+        cell_uuid: Uuid,
+        /// Source facet index.
+        facet_index: usize,
+        /// Neighbor cell key.
+        neighbor_key: CellKey,
+        /// Neighbor cell UUID.
+        neighbor_uuid: Uuid,
+        /// Mirror facet index in the neighbor.
+        mirror_index: usize,
+        /// Observed back-reference, or `None` if absent.
+        observed: Option<CellKey>,
+        /// Validation context.
+        context: String,
+    },
+    /// A reciprocal update would overwrite another back-reference.
+    #[error(
+        "Neighbor cell {neighbor_uuid}[{mirror_index}] already references {existing_back_ref:?}; refusing to overwrite with {requested_back_ref:?}"
+    )]
+    ExistingBackReferenceConflict {
+        /// Neighbor UUID.
+        neighbor_uuid: Uuid,
+        /// Mirror facet index in the neighbor.
+        mirror_index: usize,
+        /// Existing back-reference.
+        existing_back_ref: CellKey,
+        /// Requested back-reference.
+        requested_back_ref: CellKey,
+    },
+    /// A boundary facet has a neighbor pointer.
+    #[error(
+        "Boundary facet {facet_key} unexpectedly has neighbor {neighbor_key:?} across cell {cell_uuid}[{facet_index}]"
+    )]
+    BoundaryFacetHasNeighbor {
+        /// Boundary facet key.
+        facet_key: u64,
+        /// Cell containing the boundary facet.
+        cell_key: CellKey,
+        /// UUID of the cell containing the boundary facet.
+        cell_uuid: Uuid,
+        /// Facet index in the cell.
+        facet_index: usize,
+        /// Unexpected neighbor key.
+        neighbor_key: CellKey,
+    },
+    /// A boundary facet has inadmissible self-adjacency.
+    #[error(
+        "Boundary facet {facet_key} has non-periodic self-neighbor across cell {cell_uuid}[{facet_index}]"
+    )]
+    BoundaryFacetHasNonPeriodicSelfNeighbor {
+        /// Boundary facet key.
+        facet_key: u64,
+        /// Cell containing the boundary facet.
+        cell_key: CellKey,
+        /// UUID of the cell containing the boundary facet.
+        cell_uuid: Uuid,
+        /// Facet index in the cell.
+        facet_index: usize,
+    },
+    /// An interior facet's two incident cells do not point to each other.
+    #[error(
+        "Interior facet {facet_key} has inconsistent neighbor pointers: {first_cell_uuid}[{first_facet_index}] -> {first_neighbor:?}, {second_cell_uuid}[{second_facet_index}] -> {second_neighbor:?}"
+    )]
+    InteriorFacetNeighborMismatch {
+        /// Interior facet key.
+        facet_key: u64,
+        /// First incident cell key.
+        first_cell_key: CellKey,
+        /// First incident cell UUID.
+        first_cell_uuid: Uuid,
+        /// Facet index in the first cell.
+        first_facet_index: usize,
+        /// Neighbor pointer observed in the first cell.
+        first_neighbor: Option<CellKey>,
+        /// Second incident cell key.
+        second_cell_key: CellKey,
+        /// Second incident cell UUID.
+        second_cell_uuid: Uuid,
+        /// Facet index in the second cell.
+        second_facet_index: usize,
+        /// Neighbor pointer observed in the second cell.
+        second_neighbor: Option<CellKey>,
+    },
+    /// Neighbor validation failed in a context that is still being migrated to structured fields.
+    #[error("{message}")]
+    Other {
+        /// Diagnostic detail.
+        message: String,
+    },
+}
+
 /// Errors that can occur during triangulation validation (post-construction).
 #[derive(Clone, Debug, Error, PartialEq, Eq)]
 #[non_exhaustive]
@@ -435,10 +756,11 @@ pub enum TdsError {
         source: CellValidationError,
     },
     /// Neighbor relationships are invalid.
-    #[error("Invalid neighbor relationships: {message}")]
+    #[error("Invalid neighbor relationships: {reason}")]
     InvalidNeighbors {
-        /// Description of the neighbor validation failure.
-        message: String,
+        /// Structured neighbor validation failure.
+        #[source]
+        reason: NeighborValidationError,
     },
     /// Coherent orientation invariant violated between adjacent cells.
     #[error(
@@ -589,6 +911,70 @@ pub enum TdsError {
     },
 }
 
+/// Discriminant for compact [`TdsError`] summaries.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[non_exhaustive]
+pub enum TdsErrorKind {
+    /// A vertex failed validation.
+    InvalidVertex,
+    /// A cell failed validation.
+    InvalidCell,
+    /// Neighbor relationships were invalid.
+    InvalidNeighbors,
+    /// Adjacent cells violated coherent orientation.
+    OrientationViolation,
+    /// Duplicate maximal cells were detected.
+    DuplicateCells,
+    /// Cell creation failed.
+    FailedToCreateCell,
+    /// Expected neighbor relation was absent.
+    NotNeighbors,
+    /// UUID-to-key mapping was inconsistent.
+    MappingInconsistency,
+    /// Cell vertex-key lookup failed.
+    VertexKeyRetrievalFailed,
+    /// A referenced cell key was missing.
+    CellNotFound,
+    /// A referenced vertex key was missing.
+    VertexNotFound,
+    /// A dimension/count invariant was violated.
+    DimensionMismatch,
+    /// An index exceeded its valid bound.
+    IndexOutOfBounds,
+    /// Internal TDS state was inconsistent.
+    InconsistentDataStructure,
+    /// A geometric validation failure occurred.
+    Geometric,
+    /// A facet operation failed.
+    FacetError,
+    /// A cell contained duplicate coordinates.
+    DuplicateCoordinatesInCell,
+}
+
+impl From<&TdsError> for TdsErrorKind {
+    fn from(source: &TdsError) -> Self {
+        match source {
+            TdsError::InvalidVertex { .. } => Self::InvalidVertex,
+            TdsError::InvalidCell { .. } => Self::InvalidCell,
+            TdsError::InvalidNeighbors { .. } => Self::InvalidNeighbors,
+            TdsError::OrientationViolation { .. } => Self::OrientationViolation,
+            TdsError::DuplicateCells { .. } => Self::DuplicateCells,
+            TdsError::FailedToCreateCell { .. } => Self::FailedToCreateCell,
+            TdsError::NotNeighbors { .. } => Self::NotNeighbors,
+            TdsError::MappingInconsistency { .. } => Self::MappingInconsistency,
+            TdsError::VertexKeyRetrievalFailed { .. } => Self::VertexKeyRetrievalFailed,
+            TdsError::CellNotFound { .. } => Self::CellNotFound,
+            TdsError::VertexNotFound { .. } => Self::VertexNotFound,
+            TdsError::DimensionMismatch { .. } => Self::DimensionMismatch,
+            TdsError::IndexOutOfBounds { .. } => Self::IndexOutOfBounds,
+            TdsError::InconsistentDataStructure { .. } => Self::InconsistentDataStructure,
+            TdsError::Geometric(_) => Self::Geometric,
+            TdsError::FacetError(_) => Self::FacetError,
+            TdsError::DuplicateCoordinatesInCell { .. } => Self::DuplicateCoordinatesInCell,
+        }
+    }
+}
+
 /// Errors that can occur during TDS mutation operations.
 ///
 /// This error is a thin wrapper around [`TdsError`]. Mutation operations can fail
@@ -613,10 +999,12 @@ pub enum TdsError {
 /// # Examples
 ///
 /// ```
-/// use delaunay::prelude::tds::{TdsError, TdsMutationError};
+/// use delaunay::prelude::tds::{NeighborValidationError, TdsError, TdsMutationError};
 ///
 /// let err = TdsError::InvalidNeighbors {
-///     message: "bad neighbors".to_string(),
+///     reason: NeighborValidationError::Other {
+///         message: "bad neighbors".to_string(),
+///     },
 /// };
 /// let mutation: TdsMutationError = err.clone().into();
 /// let round_trip: TdsError = mutation.clone().into();
@@ -703,10 +1091,12 @@ pub enum InvariantKind {
 /// # Examples
 ///
 /// ```
-/// use delaunay::prelude::tds::{InvariantError, TdsError};
+/// use delaunay::prelude::tds::{InvariantError, NeighborValidationError, TdsError};
 ///
 /// let err = InvariantError::Tds(TdsError::InvalidNeighbors {
-///     message: "bad neighbors".to_string(),
+///     reason: NeighborValidationError::Other {
+///         message: "bad neighbors".to_string(),
+///     },
 /// });
 /// assert!(matches!(err, InvariantError::Tds(_)));
 /// ```
@@ -727,7 +1117,167 @@ pub enum InvariantError {
 
     /// Level 4 (Delaunay property).
     #[error(transparent)]
-    Delaunay(#[from] crate::triangulation::delaunay::DelaunayTriangulationValidationError),
+    Delaunay(#[from] DelaunayTriangulationValidationError),
+}
+
+/// Validation layer reported by an [`InvariantErrorSummary`].
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[non_exhaustive]
+pub enum InvariantErrorSummaryKind {
+    /// Level 1-2 TDS validation failed.
+    Tds,
+    /// Level 3 topology validation failed.
+    Triangulation,
+    /// Level 4 Delaunay validation failed.
+    Delaunay,
+}
+
+/// Discriminant for compact Level 3 topology-validation summaries.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[non_exhaustive]
+pub enum TriangulationValidationErrorKind {
+    /// A facet had invalid manifold multiplicity.
+    ManifoldFacetMultiplicity,
+    /// A boundary ridge had invalid boundary-facet multiplicity.
+    BoundaryRidgeMultiplicity,
+    /// A ridge link failed PL-manifold validation.
+    RidgeLinkNotManifold,
+    /// A vertex link failed PL-manifold validation.
+    VertexLinkNotManifold,
+    /// Euler characteristic did not match the expected classification.
+    EulerCharacteristicMismatch,
+    /// A vertex was not incident to any cell.
+    IsolatedVertex,
+    /// The cell-neighbor graph was disconnected.
+    Disconnected,
+}
+
+impl From<&TriangulationValidationError> for TriangulationValidationErrorKind {
+    fn from(source: &TriangulationValidationError) -> Self {
+        match source {
+            TriangulationValidationError::ManifoldFacetMultiplicity { .. } => {
+                Self::ManifoldFacetMultiplicity
+            }
+            TriangulationValidationError::BoundaryRidgeMultiplicity { .. } => {
+                Self::BoundaryRidgeMultiplicity
+            }
+            TriangulationValidationError::RidgeLinkNotManifold { .. } => Self::RidgeLinkNotManifold,
+            TriangulationValidationError::VertexLinkNotManifold { .. } => {
+                Self::VertexLinkNotManifold
+            }
+            TriangulationValidationError::EulerCharacteristicMismatch { .. } => {
+                Self::EulerCharacteristicMismatch
+            }
+            TriangulationValidationError::IsolatedVertex { .. } => Self::IsolatedVertex,
+            TriangulationValidationError::Disconnected { .. } => Self::Disconnected,
+        }
+    }
+}
+
+/// Discriminant for compact Level 4 Delaunay-validation summaries.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[non_exhaustive]
+pub enum DelaunayValidationErrorKind {
+    /// Lower-layer TDS validation failed.
+    Tds,
+    /// Lower-layer topology validation failed.
+    Triangulation,
+    /// Delaunay verification failed.
+    VerificationFailed,
+    /// Legacy string-only repair validation failed.
+    RepairFailed,
+    /// Typed repair validation failed.
+    RepairOperationFailed,
+}
+
+impl From<&DelaunayTriangulationValidationError> for DelaunayValidationErrorKind {
+    fn from(source: &DelaunayTriangulationValidationError) -> Self {
+        match source {
+            DelaunayTriangulationValidationError::Tds(_) => Self::Tds,
+            DelaunayTriangulationValidationError::Triangulation(_) => Self::Triangulation,
+            DelaunayTriangulationValidationError::VerificationFailed { .. } => {
+                Self::VerificationFailed
+            }
+            DelaunayTriangulationValidationError::RepairFailed { .. } => Self::RepairFailed,
+            DelaunayTriangulationValidationError::RepairOperationFailed { .. } => {
+                Self::RepairOperationFailed
+            }
+        }
+    }
+}
+
+/// Nested discriminant preserved by an [`InvariantErrorSummary`].
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[non_exhaustive]
+pub enum InvariantErrorSummaryDetail {
+    /// Level 1-2 TDS validation failed with the given kind.
+    Tds(TdsErrorKind),
+    /// Level 3 topology validation failed with the given kind.
+    Triangulation(TriangulationValidationErrorKind),
+    /// Level 4 Delaunay validation failed with the given kind.
+    Delaunay(DelaunayValidationErrorKind),
+}
+
+/// Compact summary of an [`InvariantError`] for small by-value error payloads.
+///
+/// The conversion preserves the validation layer in
+/// [`InvariantErrorSummaryKind`], the nested typed discriminant in
+/// [`InvariantErrorSummaryDetail`], and the rendered diagnostic text. It
+/// intentionally drops bulky typed payloads and source chains; keep the original
+/// [`InvariantError`] when callers need the full structured validation context.
+///
+/// # Examples
+///
+/// ```rust
+/// use delaunay::prelude::tds::{
+///     InvariantError, InvariantErrorSummary, InvariantErrorSummaryDetail,
+///     InvariantErrorSummaryKind, TdsError, TdsErrorKind,
+/// };
+///
+/// let source = InvariantError::Tds(TdsError::InconsistentDataStructure {
+///     message: "dangling cell key".to_string(),
+/// });
+/// let summary = InvariantErrorSummary::from(source);
+///
+/// assert_eq!(summary.kind, InvariantErrorSummaryKind::Tds);
+/// assert_eq!(
+///     summary.detail,
+///     InvariantErrorSummaryDetail::Tds(TdsErrorKind::InconsistentDataStructure),
+/// );
+/// ```
+#[derive(Clone, Debug, Error, PartialEq, Eq)]
+#[error("{message}")]
+pub struct InvariantErrorSummary {
+    /// Validation layer that produced the failure.
+    pub kind: InvariantErrorSummaryKind,
+    /// Nested structured error kind.
+    pub detail: InvariantErrorSummaryDetail,
+    /// Full diagnostic text from the original invariant error.
+    pub message: String,
+}
+
+impl From<InvariantError> for InvariantErrorSummary {
+    fn from(source: InvariantError) -> Self {
+        let kind = match &source {
+            InvariantError::Tds(_) => InvariantErrorSummaryKind::Tds,
+            InvariantError::Triangulation(_) => InvariantErrorSummaryKind::Triangulation,
+            InvariantError::Delaunay(_) => InvariantErrorSummaryKind::Delaunay,
+        };
+        let detail = match &source {
+            InvariantError::Tds(source) => InvariantErrorSummaryDetail::Tds(source.into()),
+            InvariantError::Triangulation(source) => {
+                InvariantErrorSummaryDetail::Triangulation(source.into())
+            }
+            InvariantError::Delaunay(source) => {
+                InvariantErrorSummaryDetail::Delaunay(source.into())
+            }
+        };
+        Self {
+            kind,
+            detail,
+            message: source.to_string(),
+        }
+    }
 }
 
 /// A single invariant violation recorded during validation diagnostics.
@@ -735,12 +1285,16 @@ pub enum InvariantError {
 /// # Examples
 ///
 /// ```
-/// use delaunay::prelude::tds::{InvariantError, InvariantKind, InvariantViolation, TdsError};
+/// use delaunay::prelude::tds::{
+///     InvariantError, InvariantKind, InvariantViolation, NeighborValidationError, TdsError,
+/// };
 ///
 /// let violation = InvariantViolation {
 ///     kind: InvariantKind::Topology,
 ///     error: InvariantError::Tds(TdsError::InvalidNeighbors {
-///         message: "bad neighbors".to_string(),
+///         reason: NeighborValidationError::Other {
+///             message: "bad neighbors".to_string(),
+///         },
 ///     }),
 /// };
 /// assert_eq!(violation.kind, InvariantKind::Topology);
@@ -840,7 +1394,7 @@ new_key_type! {
     pub struct CellKey;
 }
 
-#[derive(Clone, Debug)]
+#[derive(Debug)]
 /// The `Tds` struct represents a triangulation data structure with vertices
 /// and cells, where the vertices and cells are identified by UUIDs.
 ///
@@ -939,6 +1493,33 @@ pub struct Tds<T, U, V, const D: usize> {
     ///
     /// Note: Not serialized - generation is runtime-only.
     generation: Arc<AtomicU64>,
+
+    /// Runtime identity for cache/handle provenance checks.
+    ///
+    /// Cloning or deserializing a `Tds` creates a fresh identity so handles cached
+    /// from another storage snapshot cannot be reused against the reconstructed
+    /// storage by generation alone.
+    ///
+    /// Note: Not serialized - identity is runtime-only.
+    identity: Arc<Uuid>,
+}
+
+impl<T, U, V, const D: usize> Clone for Tds<T, U, V, D>
+where
+    Vertex<T, U, D>: Clone,
+    Cell<T, U, V, D>: Clone,
+{
+    fn clone(&self) -> Self {
+        Self {
+            vertices: self.vertices.clone(),
+            cells: self.cells.clone(),
+            uuid_to_vertex_key: self.uuid_to_vertex_key.clone(),
+            uuid_to_cell_key: self.uuid_to_cell_key.clone(),
+            construction_state: self.construction_state.clone(),
+            generation: Arc::new(AtomicU64::new(self.generation.load(Ordering::Relaxed))),
+            identity: Arc::new(Uuid::new_v4()),
+        }
+    }
 }
 
 // =============================================================================
@@ -955,11 +1536,7 @@ pub struct Tds<T, U, V, const D: usize> {
 // Following CGAL's Triangulation_data_structure pattern, these methods operate
 // on topology independently of geometry.
 //
-impl<T, U, V, const D: usize> Tds<T, U, V, D>
-where
-    U: DataType,
-    V: DataType,
-{
+impl<T, U, V, const D: usize> Tds<T, U, V, D> {
     #[inline]
     fn allows_periodic_self_neighbor(cell: &Cell<T, U, V, D>) -> bool {
         let Some(offsets) = cell.periodic_vertex_offsets() else {
@@ -1702,6 +2279,12 @@ where
         self.generation.load(Ordering::Relaxed)
     }
 
+    /// Returns the runtime identity used by cache owners to reject handles from another TDS.
+    #[inline]
+    pub(crate) const fn identity(&self) -> &Arc<Uuid> {
+        &self.identity
+    }
+
     /// Marks the triangulation topology as modified and invalidates generation-keyed caches.
     ///
     /// This is intended for crate-internal mutation paths that adjust cell slot ordering
@@ -1710,7 +2293,13 @@ where
     pub(crate) fn mark_topology_modified(&self) {
         self.bump_generation();
     }
+}
 
+impl<T, U, V, const D: usize> Tds<T, U, V, D>
+where
+    U: DataType,
+    V: DataType,
+{
     // =========================================================================
     // QUERY OPERATIONS
     // =========================================================================
@@ -1869,7 +2458,9 @@ where
             }
         }
     }
+}
 
+impl<T, U, V, const D: usize> Tds<T, U, V, D> {
     /// Gets vertex keys for a cell.
     ///
     /// **Phase 3A**: Cells now store `VertexKey` directly. This method performs O(D) validation
@@ -2455,7 +3046,13 @@ where
     pub fn contains_vertex_key(&self, vertex_key: VertexKey) -> bool {
         self.vertices.contains_key(vertex_key)
     }
+}
 
+impl<T, U, V, const D: usize> Tds<T, U, V, D>
+where
+    U: DataType,
+    V: DataType,
+{
     /// Removes multiple cells by their keys in a batch operation.
     ///
     /// This method performs a **local** topology update:
@@ -3040,11 +3637,11 @@ where
     ) -> Result<(), TdsError> {
         if neighbors.len() != D + 1 {
             return Err(TdsError::InvalidNeighbors {
-                message: format!(
-                    "Neighbor vector length {} != D+1 ({})",
-                    neighbors.len(),
-                    D + 1
-                ),
+                reason: NeighborValidationError::LengthMismatch {
+                    actual: neighbors.len(),
+                    expected: D + 1,
+                    context: "neighbor topology validation".to_string(),
+                },
             });
         }
 
@@ -3068,20 +3665,26 @@ where
                         continue;
                     }
                     return Err(TdsError::InvalidNeighbors {
-                        message: format!(
-                            "Cell {:?} has non-periodic self-neighbor at position {i}; self-adjacency is only valid for explicitly periodic cells",
-                            cell.uuid(),
-                        ),
+                        reason: NeighborValidationError::NonPeriodicSelfNeighbor {
+                            cell_key,
+                            cell_uuid: cell.uuid(),
+                            facet_index: i,
+                        },
                     });
                 }
 
-                let neighbor = self.cells.get(*neighbor_key).ok_or_else(|| {
-                    TdsError::InvalidNeighbors {
-                        message: format!(
-                            "Neighbor at position {i} references non-existent cell {neighbor_key:?}"
-                        ),
-                    }
-                })?;
+                let neighbor =
+                    self.cells
+                        .get(*neighbor_key)
+                        .ok_or_else(|| TdsError::InvalidNeighbors {
+                            reason: NeighborValidationError::MissingNeighborCell {
+                                cell_key,
+                                cell_uuid: cell.uuid(),
+                                facet_index: i,
+                                neighbor_key: *neighbor_key,
+                                context: "neighbor topology validation".to_string(),
+                            },
+                        })?;
 
                 let neighbor_vertices = neighbor.vertices();
 
@@ -3100,25 +3703,322 @@ where
                 // Validate the topological invariant
                 if shared_count != D {
                     return Err(TdsError::InvalidNeighbors {
-                        message: format!(
-                            "Cell {:?} neighbor at position {i} shares {shared_count} vertices, expected {D}. \
-                            Invariant: neighbor[{i}] must share facet opposite vertex[{i}] (all vertices except vertex {i})",
-                            cell.uuid()
-                        ),
+                        reason: NeighborValidationError::SharedVertexCountMismatch {
+                            cell_key,
+                            cell_uuid: cell.uuid(),
+                            facet_index: i,
+                            shared_count,
+                            expected: D,
+                        },
                     });
                 }
 
                 if missing_vertex_idx != Some(i) {
                     return Err(TdsError::InvalidNeighbors {
-                        message: format!(
-                            "Cell {:?} neighbor at position {i} is opposite vertex {:?}, expected {i}. \
-                            Invariant: neighbor[{i}] must be opposite vertex[{i}]",
-                            cell.uuid(),
-                            missing_vertex_idx
-                        ),
+                        reason: NeighborValidationError::OppositeVertexMismatch {
+                            cell_key,
+                            cell_uuid: cell.uuid(),
+                            facet_index: i,
+                            observed_opposite: missing_vertex_idx,
+                            expected_opposite: i,
+                        },
                     });
                 }
             }
+        }
+
+        Ok(())
+    }
+
+    fn validate_neighbor_update_matches_facet_incidence(
+        &self,
+        cell_key: CellKey,
+        neighbors: &[Option<CellKey>],
+    ) -> Result<(), TdsError> {
+        let cell = self
+            .cells
+            .get(cell_key)
+            .ok_or_else(|| TdsError::CellNotFound {
+                cell_key,
+                context: "validate_neighbor_update_matches_facet_incidence".to_string(),
+            })?;
+
+        let facet_to_cells = self.build_facet_to_cells_map()?;
+        for (facet_idx, proposed_neighbor) in neighbors.iter().copied().enumerate() {
+            let facet_key = self.facet_key_for_cell_facet(cell_key, facet_idx)?;
+            let Some(cell_facet_pairs) = facet_to_cells.get(&facet_key) else {
+                return Err(TdsError::InvalidNeighbors {
+                    reason: NeighborValidationError::FacetIncidenceMissing {
+                        cell_key,
+                        cell_uuid: cell.uuid(),
+                        facet_index: facet_idx,
+                        facet_key,
+                    },
+                });
+            };
+
+            let expected_neighbor = match cell_facet_pairs.as_slice() {
+                [_] => None,
+                [a, b] => {
+                    if a.cell_key() == cell_key && a.facet_index() as usize == facet_idx {
+                        Some(b.cell_key())
+                    } else if b.cell_key() == cell_key && b.facet_index() as usize == facet_idx {
+                        Some(a.cell_key())
+                    } else {
+                        return Err(TdsError::InvalidNeighbors {
+                            reason: NeighborValidationError::FacetIncidenceDoesNotReferenceCell {
+                                cell_key,
+                                cell_uuid: cell.uuid(),
+                                facet_index: facet_idx,
+                                facet_key,
+                            },
+                        });
+                    }
+                }
+                _ => {
+                    return Err(TdsError::InvalidNeighbors {
+                        reason: NeighborValidationError::FacetIncidenceMultiplicity {
+                            cell_key,
+                            cell_uuid: cell.uuid(),
+                            facet_index: facet_idx,
+                            facet_key,
+                            cell_count: cell_facet_pairs.len(),
+                        },
+                    });
+                }
+            };
+
+            if proposed_neighbor == Some(cell_key)
+                && expected_neighbor.is_none()
+                && Self::allows_periodic_self_neighbor(cell)
+            {
+                continue;
+            }
+
+            if proposed_neighbor != expected_neighbor {
+                return Err(TdsError::InvalidNeighbors {
+                    reason: NeighborValidationError::NeighborIncidenceMismatch {
+                        cell_key,
+                        cell_uuid: cell.uuid(),
+                        facet_index: facet_idx,
+                        proposed_neighbor,
+                        expected_neighbor,
+                    },
+                });
+            }
+        }
+
+        Ok(())
+    }
+
+    fn normalized_neighbor_buffer(
+        neighbors: &[Option<CellKey>],
+    ) -> Option<SmallBuffer<Option<CellKey>, MAX_PRACTICAL_DIMENSION_SIZE>> {
+        if neighbors.iter().all(Option::is_none) {
+            None
+        } else {
+            let mut neighbor_buffer = SmallBuffer::new();
+            neighbor_buffer.extend(neighbors.iter().copied());
+            Some(neighbor_buffer)
+        }
+    }
+
+    fn set_cell_neighbors_normalized(cell: &mut Cell<T, U, V, D>, neighbors: &[Option<CellKey>]) {
+        cell.neighbors = Self::normalized_neighbor_buffer(neighbors);
+    }
+
+    fn ensure_neighbor_buffer(
+        cell: &mut Cell<T, U, V, D>,
+    ) -> Result<&mut SmallBuffer<Option<CellKey>, MAX_PRACTICAL_DIMENSION_SIZE>, TdsError> {
+        if cell.neighbors.is_none() {
+            let mut neighbors = SmallBuffer::with_capacity(D + 1);
+            neighbors.resize(D + 1, None);
+            cell.neighbors = Some(neighbors);
+        }
+
+        let neighbors =
+            cell.neighbors
+                .as_mut()
+                .ok_or_else(|| TdsError::InconsistentDataStructure {
+                    message: "neighbor buffer missing after initialization".to_string(),
+                })?;
+        if neighbors.len() != D + 1 {
+            return Err(TdsError::InvalidNeighbors {
+                reason: NeighborValidationError::LengthMismatch {
+                    actual: neighbors.len(),
+                    expected: D + 1,
+                    context: "reciprocal neighbor update".to_string(),
+                },
+            });
+        }
+        Ok(neighbors)
+    }
+
+    fn set_neighbor_slot(
+        cell: &mut Cell<T, U, V, D>,
+        facet_idx: usize,
+        neighbor: Option<CellKey>,
+    ) -> Result<(), TdsError> {
+        let neighbors = Self::ensure_neighbor_buffer(cell)?;
+        let Some(slot) = neighbors.get_mut(facet_idx) else {
+            return Err(TdsError::InvalidNeighbors {
+                reason: NeighborValidationError::NeighborSlotOutOfBounds {
+                    facet_index: facet_idx,
+                    slot_count: neighbors.len(),
+                },
+            });
+        };
+        *slot = neighbor;
+        if neighbors.iter().all(Option::is_none) {
+            cell.neighbors = None;
+        }
+        Ok(())
+    }
+
+    fn reciprocal_neighbor_updates_for_neighbor_update(
+        &self,
+        cell_key: CellKey,
+        neighbors: &[Option<CellKey>],
+    ) -> Result<Vec<(CellKey, usize, Option<CellKey>)>, TdsError> {
+        let cell = self
+            .cells
+            .get(cell_key)
+            .ok_or_else(|| TdsError::CellNotFound {
+                cell_key,
+                context: "set_neighbors_by_key".to_string(),
+            })?;
+        let old_neighbors: Vec<Option<CellKey>> = cell
+            .neighbors()
+            .map_or_else(|| vec![None; D + 1], |old| old.iter().copied().collect());
+
+        let mut reciprocal_updates = Vec::new();
+        self.collect_stale_reciprocal_neighbor_updates(
+            cell_key,
+            cell,
+            &old_neighbors,
+            neighbors,
+            &mut reciprocal_updates,
+        )?;
+        self.collect_new_reciprocal_neighbor_updates(
+            cell_key,
+            cell,
+            neighbors,
+            &mut reciprocal_updates,
+        )?;
+        Ok(reciprocal_updates)
+    }
+
+    fn collect_stale_reciprocal_neighbor_updates(
+        &self,
+        cell_key: CellKey,
+        cell: &Cell<T, U, V, D>,
+        old_neighbors: &[Option<CellKey>],
+        new_neighbors: &[Option<CellKey>],
+        reciprocal_updates: &mut Vec<(CellKey, usize, Option<CellKey>)>,
+    ) -> Result<(), TdsError> {
+        for (facet_idx, old_neighbor_key) in old_neighbors.iter().copied().enumerate() {
+            let Some(old_neighbor_key) = old_neighbor_key else {
+                continue;
+            };
+            if old_neighbor_key == cell_key
+                || new_neighbors
+                    .iter()
+                    .copied()
+                    .any(|neighbor_key| neighbor_key == Some(old_neighbor_key))
+            {
+                continue;
+            }
+
+            let old_neighbor_cell =
+                self.cells
+                    .get(old_neighbor_key)
+                    .ok_or_else(|| TdsError::InvalidNeighbors {
+                        reason: NeighborValidationError::MissingNeighborCell {
+                            cell_key,
+                            cell_uuid: cell.uuid(),
+                            facet_index: facet_idx,
+                            neighbor_key: old_neighbor_key,
+                            context: "clearing stale reciprocal neighbor".to_string(),
+                        },
+                    })?;
+            let mirror_idx = cell
+                .mirror_facet_index(facet_idx, old_neighbor_cell)
+                .ok_or_else(|| TdsError::InvalidNeighbors {
+                    reason: NeighborValidationError::MirrorFacetMissing {
+                        cell_uuid: cell.uuid(),
+                        facet_index: facet_idx,
+                        neighbor_uuid: old_neighbor_cell.uuid(),
+                        context: "clearing old back-reference".to_string(),
+                    },
+                })?;
+            let back_ref = old_neighbor_cell
+                .neighbors()
+                .and_then(|neighbor_neighbors| neighbor_neighbors.get(mirror_idx))
+                .copied()
+                .flatten();
+            if back_ref == Some(cell_key) {
+                reciprocal_updates.push((old_neighbor_key, mirror_idx, None));
+            }
+        }
+
+        Ok(())
+    }
+
+    fn collect_new_reciprocal_neighbor_updates(
+        &self,
+        cell_key: CellKey,
+        cell: &Cell<T, U, V, D>,
+        neighbors: &[Option<CellKey>],
+        reciprocal_updates: &mut Vec<(CellKey, usize, Option<CellKey>)>,
+    ) -> Result<(), TdsError> {
+        for (facet_idx, neighbor_key) in neighbors.iter().copied().enumerate() {
+            let Some(neighbor_key) = neighbor_key else {
+                continue;
+            };
+            if neighbor_key == cell_key {
+                continue;
+            }
+
+            let neighbor_cell =
+                self.cells
+                    .get(neighbor_key)
+                    .ok_or_else(|| TdsError::InvalidNeighbors {
+                        reason: NeighborValidationError::MissingNeighborCell {
+                            cell_key,
+                            cell_uuid: cell.uuid(),
+                            facet_index: facet_idx,
+                            neighbor_key,
+                            context: "setting reciprocal neighbor".to_string(),
+                        },
+                    })?;
+            let mirror_idx = cell
+                .mirror_facet_index(facet_idx, neighbor_cell)
+                .ok_or_else(|| TdsError::InvalidNeighbors {
+                    reason: NeighborValidationError::MirrorFacetMissing {
+                        cell_uuid: cell.uuid(),
+                        facet_index: facet_idx,
+                        neighbor_uuid: neighbor_cell.uuid(),
+                        context: "setting back-reference".to_string(),
+                    },
+                })?;
+            let existing_back_ref = neighbor_cell
+                .neighbors()
+                .and_then(|neighbor_neighbors| neighbor_neighbors.get(mirror_idx))
+                .copied()
+                .flatten();
+            if let Some(existing_back_ref) = existing_back_ref
+                && existing_back_ref != cell_key
+            {
+                return Err(TdsError::InvalidNeighbors {
+                    reason: NeighborValidationError::ExistingBackReferenceConflict {
+                        neighbor_uuid: neighbor_cell.uuid(),
+                        mirror_index: mirror_idx,
+                        existing_back_ref,
+                        requested_back_ref: cell_key,
+                    },
+                });
+            }
+            reciprocal_updates.push((neighbor_key, mirror_idx, Some(cell_key)));
         }
 
         Ok(())
@@ -3186,26 +4086,36 @@ where
         // Validate the topological invariant before applying changes
         // (includes length check: neighbors.len() == D+1)
         self.validate_neighbor_topology(cell_key, neighbors)?;
+        self.validate_neighbor_update_matches_facet_incidence(cell_key, neighbors)?;
+        let reciprocal_updates =
+            self.reciprocal_neighbor_updates_for_neighbor_update(cell_key, neighbors)?;
 
-        // Phase 3A: Store CellKeys directly, no UUID conversion needed
-        let neighbors_vec = neighbors;
+        let cell_uuid = {
+            let cell = self
+                .cell_mut(cell_key)
+                .ok_or_else(|| TdsError::CellNotFound {
+                    cell_key,
+                    context: "set_neighbors_by_key".to_string(),
+                })?;
+            let cell_uuid = cell.uuid();
+            Self::set_cell_neighbors_normalized(cell, neighbors);
+            cell_uuid
+        };
 
-        // Get mutable reference and update, or return error if not found
-        let cell = self
-            .cell_mut(cell_key)
-            .ok_or_else(|| TdsError::CellNotFound {
-                cell_key,
-                context: "set_neighbors_by_key".to_string(),
-            })?;
-
-        // Phase 3A: Store neighbor keys directly in SmallBuffer
-        // Normalize: if all neighbors are None, set cell.neighbors to None
-        if neighbors_vec.iter().all(Option::is_none) {
-            cell.neighbors = None;
-        } else {
-            let mut neighbor_buffer = SmallBuffer::new();
-            neighbor_buffer.extend(neighbors_vec.iter().copied());
-            cell.neighbors = Some(neighbor_buffer);
+        for (neighbor_key, mirror_idx, back_reference) in reciprocal_updates {
+            let neighbor_cell =
+                self.cells
+                    .get_mut(neighbor_key)
+                    .ok_or_else(|| TdsError::InvalidNeighbors {
+                        reason: NeighborValidationError::MissingNeighborCell {
+                            cell_key,
+                            cell_uuid,
+                            facet_index: mirror_idx,
+                            neighbor_key,
+                            context: "applying reciprocal neighbor update".to_string(),
+                        },
+                    })?;
+            Self::set_neighbor_slot(neighbor_cell, mirror_idx, back_reference)?;
         }
 
         // Topology changed; invalidate caches
@@ -3381,6 +4291,7 @@ where
             uuid_to_cell_key: UuidToCellKeyMap::default(),
             construction_state: TriangulationConstructionState::Incomplete(0),
             generation: Arc::new(AtomicU64::new(0)),
+            identity: Arc::new(Uuid::new_v4()),
         }
     }
 
@@ -3497,15 +4408,16 @@ where
                     {
                         continue;
                     }
-                    let mirror_idx = cell.mirror_facet_index(facet_idx, neighbor_cell).ok_or_else(
-                        || TdsError::InvalidNeighbors {
-                            message: format!(
-                                "Could not determine mirror facet while normalizing orientation: cell {:?}[{facet_idx}] -> neighbor {:?}",
-                                cell.uuid(),
-                                neighbor_cell.uuid(),
-                            ),
-                        },
-                    )?;
+                    let mirror_idx = cell
+                        .mirror_facet_index(facet_idx, neighbor_cell)
+                        .ok_or_else(|| TdsError::InvalidNeighbors {
+                            reason: NeighborValidationError::MirrorFacetMissing {
+                                cell_uuid: cell.uuid(),
+                                facet_index: facet_idx,
+                                neighbor_uuid: neighbor_cell.uuid(),
+                                context: "orientation normalization".to_string(),
+                            },
+                        })?;
 
                     let (currently_coherent, _, _) =
                         Self::facet_permutation_parity(cell, facet_idx, neighbor_cell, mirror_idx)?;
@@ -3602,26 +4514,33 @@ where
                     continue;
                 }
 
-                let mirror_idx = cell.mirror_facet_index(facet_idx, neighbor_cell).ok_or_else(
-                    || TdsError::InvalidNeighbors {
-                        message: format!(
-                            "Could not determine mirror facet while validating local orientation: cell {:?}[{facet_idx}] -> neighbor {:?}",
-                            cell.uuid(),
-                            neighbor_cell.uuid(),
-                        ),
-                    },
-                )?;
-                let has_back_reference = neighbor_cell
+                let mirror_idx = cell
+                    .mirror_facet_index(facet_idx, neighbor_cell)
+                    .ok_or_else(|| TdsError::InvalidNeighbors {
+                        reason: NeighborValidationError::MirrorFacetMissing {
+                            cell_uuid: cell.uuid(),
+                            facet_index: facet_idx,
+                            neighbor_uuid: neighbor_cell.uuid(),
+                            context: "local orientation validation".to_string(),
+                        },
+                    })?;
+                let observed_back_reference = neighbor_cell
                     .neighbors()
                     .and_then(|neighbors| neighbors.get(mirror_idx))
-                    .is_some_and(|back_ref| *back_ref == Some(cell_key));
-                if !has_back_reference {
+                    .copied()
+                    .flatten();
+                if observed_back_reference != Some(cell_key) {
                     return Err(TdsError::InvalidNeighbors {
-                        message: format!(
-                            "Cell {:?}[{facet_idx}] neighbor {:?}[{mirror_idx}] does not reference back to the cell during local orientation validation",
-                            cell.uuid(),
-                            neighbor_cell.uuid(),
-                        ),
+                        reason: NeighborValidationError::BackReferenceMismatch {
+                            cell_key,
+                            cell_uuid: cell.uuid(),
+                            facet_index: facet_idx,
+                            neighbor_key,
+                            neighbor_uuid: neighbor_cell.uuid(),
+                            mirror_index: mirror_idx,
+                            observed: observed_back_reference,
+                            context: "local orientation validation".to_string(),
+                        },
                     });
                 }
 
@@ -4043,7 +4962,7 @@ where
         // Include periodic per-vertex offsets in the duplicate key so periodic quotient cells
         // with identical vertex sets but distinct lattice offsets are not collapsed.
         let mut unique_cells: FastHashMap<Vec<(Uuid, [i8; D])>, CellKey> =
-            crate::core::collections::fast_hash_map_with_capacity(self.cells.len());
+            fast_hash_map_with_capacity(self.cells.len());
         let mut duplicates = Vec::new();
 
         for (cell_key, _cell) in &self.cells {
@@ -4112,10 +5031,7 @@ where
                     let Some(vj) = self.vertex(vkeys[j]) else {
                         continue;
                     };
-                    if crate::core::util::deduplication::coords_equal_exact(
-                        vi.point().coords(),
-                        vj.point().coords(),
-                    ) {
+                    if coords_equal_exact(vi.point().coords(), vj.point().coords()) {
                         return Err(TdsError::DuplicateCoordinatesInCell {
                             cell_id: cell.uuid(),
                             message: format!(
@@ -4163,6 +5079,26 @@ where
     /// It does not evaluate geometric predicates.
     ///
     /// Returns `false` on the first detected inconsistency or data-structure error.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use delaunay::prelude::triangulation::construction::{
+    ///     DelaunayTriangulation, DelaunayTriangulationConstructionError, vertex,
+    /// };
+    ///
+    /// # fn main() -> Result<(), DelaunayTriangulationConstructionError> {
+    /// let vertices = vec![
+    ///     vertex!([0.0, 0.0]),
+    ///     vertex!([1.0, 0.0]),
+    ///     vertex!([0.0, 1.0]),
+    /// ];
+    /// let dt: DelaunayTriangulation<_, (), (), 2> = DelaunayTriangulation::new(&vertices)?;
+    ///
+    /// assert!(dt.tds().is_coherently_oriented());
+    /// # Ok(())
+    /// # }
+    /// ```
     #[must_use]
     pub fn is_coherently_oriented(&self) -> bool {
         self.validate_coherent_orientation().is_ok()
@@ -4210,39 +5146,45 @@ where
                             ),
                         })?;
 
-                let mirror_idx = cell.mirror_facet_index(facet_idx, neighbor_cell).ok_or_else(
-                    || TdsError::InvalidNeighbors {
-                        message: format!(
-                            "Could not determine mirror facet: cell {:?}[{facet_idx}] -> neighbor {:?}",
-                            cell.uuid(),
-                            neighbor_cell.uuid(),
-                        ),
-                    },
-                )?;
+                let mirror_idx = cell
+                    .mirror_facet_index(facet_idx, neighbor_cell)
+                    .ok_or_else(|| TdsError::InvalidNeighbors {
+                        reason: NeighborValidationError::MirrorFacetMissing {
+                            cell_uuid: cell.uuid(),
+                            facet_index: facet_idx,
+                            neighbor_uuid: neighbor_cell.uuid(),
+                            context: "orientation validation".to_string(),
+                        },
+                    })?;
                 let back_neighbor = neighbor_cell
                     .neighbors()
                     .and_then(|neighbor_neighbors| {
                         neighbor_neighbors.get(mirror_idx).copied().flatten()
                     })
                     .ok_or_else(|| TdsError::InvalidNeighbors {
-                        message: format!(
-                            "Orientation validation expected back-reference: cell {:?}[{facet_idx}] -> {:?} should be mirrored by cell {:?}[{mirror_idx}] -> {:?}, found None",
-                            cell.uuid(),
-                            neighbor_key,
-                            neighbor_cell.uuid(),
+                        reason: NeighborValidationError::BackReferenceMismatch {
                             cell_key,
-                        ),
+                            cell_uuid: cell.uuid(),
+                            facet_index: facet_idx,
+                            neighbor_key,
+                            neighbor_uuid: neighbor_cell.uuid(),
+                            mirror_index: mirror_idx,
+                            observed: None,
+                            context: "orientation validation".to_string(),
+                        },
                     })?;
                 if back_neighbor != cell_key {
                     return Err(TdsError::InvalidNeighbors {
-                        message: format!(
-                            "Orientation validation expected back-reference: cell {:?}[{facet_idx}] -> {:?} should be mirrored by cell {:?}[{mirror_idx}] -> {:?}, found {:?}",
-                            cell.uuid(),
-                            neighbor_key,
-                            neighbor_cell.uuid(),
+                        reason: NeighborValidationError::BackReferenceMismatch {
                             cell_key,
-                            back_neighbor,
-                        ),
+                            cell_uuid: cell.uuid(),
+                            facet_index: facet_idx,
+                            neighbor_key,
+                            neighbor_uuid: neighbor_cell.uuid(),
+                            mirror_index: mirror_idx,
+                            observed: Some(back_neighbor),
+                            context: "orientation validation".to_string(),
+                        },
                     });
                 }
 
@@ -4844,17 +5786,23 @@ where
                                     continue;
                                 }
                                 return Err(TdsError::InvalidNeighbors {
-                                    message: format!(
-                                        "Boundary facet {facet_key} has non-periodic self-neighbor across cell {}[{facet_index}]",
-                                        cell.uuid(),
-                                    ),
+                                    reason:
+                                        NeighborValidationError::BoundaryFacetHasNonPeriodicSelfNeighbor {
+                                            facet_key: *facet_key,
+                                            cell_key,
+                                            cell_uuid: cell.uuid(),
+                                            facet_index,
+                                        },
                                 });
                             }
                             return Err(TdsError::InvalidNeighbors {
-                                message: format!(
-                                    "Boundary facet {facet_key} unexpectedly has a neighbor across cell {}[{facet_index}] -> {neighbor_key:?}",
-                                    cell.uuid(),
-                                ),
+                                reason: NeighborValidationError::BoundaryFacetHasNeighbor {
+                                    facet_key: *facet_key,
+                                    cell_key,
+                                    cell_uuid: cell.uuid(),
+                                    facet_index,
+                                    neighbor_key,
+                                },
                             });
                         }
                     }
@@ -4896,11 +5844,17 @@ where
                         || second_neighbor != Some(first_cell_key)
                     {
                         return Err(TdsError::InvalidNeighbors {
-                            message: format!(
-                                "Interior facet {facet_key} has inconsistent neighbor pointers: {}[{first_facet_index}] -> {first_neighbor:?}, {}[{second_facet_index}] -> {second_neighbor:?}",
-                                first_cell.uuid(),
-                                second_cell.uuid(),
-                            ),
+                            reason: NeighborValidationError::InteriorFacetNeighborMismatch {
+                                facet_key: *facet_key,
+                                first_cell_key,
+                                first_cell_uuid: first_cell.uuid(),
+                                first_facet_index,
+                                first_neighbor,
+                                second_cell_key,
+                                second_cell_uuid: second_cell.uuid(),
+                                second_facet_index,
+                                second_neighbor,
+                            },
                         });
                     }
                 }
@@ -4953,17 +5907,24 @@ where
                         continue;
                     }
                     return Err(TdsError::InvalidNeighbors {
-                        message: format!(
-                            "Cell {:?} has non-periodic self-neighbor at facet index {facet_idx}",
-                            cell.uuid(),
-                        ),
+                        reason: NeighborValidationError::NonPeriodicSelfNeighbor {
+                            cell_key,
+                            cell_uuid: cell.uuid(),
+                            facet_index: facet_idx,
+                        },
                     });
                 }
 
                 // Early termination: check if neighbor exists
                 let Some(neighbor_cell) = self.cells.get(*neighbor_key) else {
                     return Err(TdsError::InvalidNeighbors {
-                        message: format!("Neighbor cell {neighbor_key:?} not found"),
+                        reason: NeighborValidationError::MissingNeighborCell {
+                            cell_key,
+                            cell_uuid: cell.uuid(),
+                            facet_index: facet_idx,
+                            neighbor_key: *neighbor_key,
+                            context: "precomputed neighbor validation".to_string(),
+                        },
                     });
                 };
 
@@ -5003,6 +5964,7 @@ where
                     cell_key,
                     cell,
                     facet_idx,
+                    *neighbor_key,
                     neighbor_cell,
                     mirror_idx,
                 )?;
@@ -5056,11 +6018,12 @@ where
         let mirror_idx = cell
             .mirror_facet_index(facet_idx, neighbor_cell)
             .ok_or_else(|| TdsError::InvalidNeighbors {
-                message: format!(
-                    "Could not find mirror facet: cell {:?}[{facet_idx}] -> neighbor {:?}",
-                    cell.uuid(),
-                    neighbor_cell.uuid()
-                ),
+                reason: NeighborValidationError::MirrorFacetMissing {
+                    cell_uuid: cell.uuid(),
+                    facet_index: facet_idx,
+                    neighbor_uuid: neighbor_cell.uuid(),
+                    context: "neighbor validation".to_string(),
+                },
             })?;
 
         // Defensive cross-check: verify the mirror index against shared-vertex analysis.
@@ -5073,11 +6036,13 @@ where
 
         if mirror_idx != expected_mirror_idx {
             return Err(TdsError::InvalidNeighbors {
-                message: format!(
-                    "Mirror facet index mismatch: cell {:?}[{facet_idx}] -> neighbor {:?}; mirror_facet_index returned {mirror_idx} but shared-vertex analysis implies {expected_mirror_idx}",
-                    cell.uuid(),
-                    neighbor_cell.uuid()
-                ),
+                reason: NeighborValidationError::MirrorFacetIndexMismatch {
+                    cell_uuid: cell.uuid(),
+                    facet_index: facet_idx,
+                    neighbor_uuid: neighbor_cell.uuid(),
+                    observed_mirror_index: mirror_idx,
+                    expected_mirror_index: expected_mirror_idx,
+                },
             });
         }
 
@@ -5095,11 +6060,10 @@ where
             if !this_vertices.contains(&neighbor_vkey) {
                 if expected_mirror_idx.is_some() {
                     return Err(TdsError::InvalidNeighbors {
-                        message: format!(
-                            "Mirror facet is ambiguous: cell {:?} and neighbor {:?} differ by more than one vertex",
-                            cell.uuid(),
-                            neighbor_cell.uuid()
-                        ),
+                        reason: NeighborValidationError::MirrorFacetAmbiguous {
+                            cell_uuid: cell.uuid(),
+                            neighbor_uuid: neighbor_cell.uuid(),
+                        },
                     });
                 }
                 expected_mirror_idx = Some(idx);
@@ -5107,11 +6071,10 @@ where
         }
 
         expected_mirror_idx.ok_or_else(|| TdsError::InvalidNeighbors {
-            message: format!(
-                "Mirror facet could not be determined: cell {:?} and neighbor {:?} appear to share all vertices (duplicate cells?)",
-                cell.uuid(),
-                neighbor_cell.uuid()
-            ),
+            reason: NeighborValidationError::MirrorFacetDuplicateCells {
+                cell_uuid: cell.uuid(),
+                neighbor_uuid: neighbor_cell.uuid(),
+            },
         })
     }
 
@@ -5129,11 +6092,14 @@ where
             }
             if !neighbor_vertices.contains(&vkey) {
                 return Err(TdsError::InvalidNeighbors {
-                    message: format!(
-                        "Shared facet mismatch: cell {:?}[{facet_idx}] -> neighbor {:?}[{mirror_idx}] is missing vertex {vkey:?} from the shared facet",
-                        cell.uuid(),
-                        neighbor_cell.uuid(),
-                    ),
+                    reason: NeighborValidationError::SharedFacetMissingVertex {
+                        side: SharedFacetMismatchSide::SourceFacet,
+                        cell_uuid: cell.uuid(),
+                        facet_index: facet_idx,
+                        neighbor_uuid: neighbor_cell.uuid(),
+                        mirror_index: mirror_idx,
+                        missing_vertex: vkey,
+                    },
                 });
             }
         }
@@ -5144,11 +6110,14 @@ where
             }
             if !this_vertices.contains(&vkey) {
                 return Err(TdsError::InvalidNeighbors {
-                    message: format!(
-                        "Shared facet mismatch: neighbor {:?}[{mirror_idx}] -> cell {:?}[{facet_idx}] is missing vertex {vkey:?} from the shared facet",
-                        neighbor_cell.uuid(),
-                        cell.uuid(),
-                    ),
+                    reason: NeighborValidationError::SharedFacetMissingVertex {
+                        side: SharedFacetMismatchSide::NeighborFacet,
+                        cell_uuid: cell.uuid(),
+                        facet_index: facet_idx,
+                        neighbor_uuid: neighbor_cell.uuid(),
+                        mirror_index: mirror_idx,
+                        missing_vertex: vkey,
+                    },
                 });
             }
         }
@@ -5160,27 +6129,38 @@ where
         cell_key: CellKey,
         cell: &Cell<T, U, V, D>,
         facet_idx: usize,
+        neighbor_key: CellKey,
         neighbor_cell: &Cell<T, U, V, D>,
         mirror_idx: usize,
     ) -> Result<(), TdsError> {
         let Some(neighbor_neighbors) = &neighbor_cell.neighbors else {
             return Err(TdsError::InvalidNeighbors {
-                message: format!(
-                    "Neighbor relationship not mutual: {:?}[{facet_idx}] -> {:?} (neighbor has no neighbors)",
-                    cell.uuid(),
-                    neighbor_cell.uuid()
-                ),
+                reason: NeighborValidationError::BackReferenceMismatch {
+                    cell_key,
+                    cell_uuid: cell.uuid(),
+                    facet_index: facet_idx,
+                    neighbor_key,
+                    neighbor_uuid: neighbor_cell.uuid(),
+                    mirror_index: mirror_idx,
+                    observed: None,
+                    context: "neighbor validation; neighbor has no neighbor buffer".to_string(),
+                },
             });
         };
 
         let back_ref = neighbor_neighbors.get(mirror_idx).copied().flatten();
         if back_ref != Some(cell_key) {
             return Err(TdsError::InvalidNeighbors {
-                message: format!(
-                    "Neighbor relationship not mutual: {:?}[{facet_idx}] -> {:?}[{mirror_idx}] (expected back-reference)",
-                    cell.uuid(),
-                    neighbor_cell.uuid()
-                ),
+                reason: NeighborValidationError::BackReferenceMismatch {
+                    cell_key,
+                    cell_uuid: cell.uuid(),
+                    facet_index: facet_idx,
+                    neighbor_key,
+                    neighbor_uuid: neighbor_cell.uuid(),
+                    mirror_index: mirror_idx,
+                    observed: back_ref,
+                    context: "neighbor validation".to_string(),
+                },
             });
         }
 
@@ -5483,6 +6463,7 @@ where
                     // This ensures cached data from before serialization is not incorrectly
                     // considered valid after deserialization.
                     generation: Arc::new(AtomicU64::new(0)),
+                    identity: Arc::new(Uuid::new_v4()),
                 };
 
                 // Rebuild topology; fail fast on any inconsistency.
@@ -6537,13 +7518,65 @@ mod tests {
 
         // A true facet-neighbor (shares {v_a,v_b}) placed at the wrong facet index.
         let cell2 = tds
-            .insert_cell_with_mapping(Cell::new(vec![v_a, v_b, v_d], None).unwrap())
+            .insert_cell_with_mapping(Cell::new(vec![v_b, v_a, v_d], None).unwrap())
             .unwrap();
         let err = tds
             .set_neighbors_by_key(cell1, &[Some(cell2), None, None])
             .unwrap_err()
             .0;
         assert!(matches!(err, TdsError::InvalidNeighbors { .. }));
+    }
+
+    #[test]
+    fn test_set_neighbors_by_key_updates_reciprocal_back_reference() {
+        let mut tds: Tds<f64, (), (), 2> = Tds::empty();
+
+        let v_a = tds.insert_vertex_with_mapping(vertex!([0.0, 0.0])).unwrap();
+        let v_b = tds.insert_vertex_with_mapping(vertex!([1.0, 0.0])).unwrap();
+        let v_c = tds.insert_vertex_with_mapping(vertex!([0.0, 1.0])).unwrap();
+        let v_d = tds.insert_vertex_with_mapping(vertex!([1.0, 1.0])).unwrap();
+
+        let cell1 = tds
+            .insert_cell_with_mapping(Cell::new(vec![v_a, v_b, v_c], None).unwrap())
+            .unwrap();
+        let cell2 = tds
+            .insert_cell_with_mapping(Cell::new(vec![v_a, v_b, v_d], None).unwrap())
+            .unwrap();
+
+        tds.set_neighbors_by_key(cell1, &[None, None, Some(cell2)])
+            .unwrap();
+
+        let cell1_neighbors = tds.cell(cell1).unwrap().neighbors().unwrap();
+        let cell2_neighbors = tds.cell(cell2).unwrap().neighbors().unwrap();
+        assert_eq!(cell1_neighbors[2], Some(cell2));
+        assert_eq!(cell2_neighbors[2], Some(cell1));
+        let facet_to_cells = tds.build_facet_to_cells_map().unwrap();
+        tds.validate_neighbors_with_facet_to_cells_map(&facet_to_cells)
+            .unwrap();
+    }
+
+    #[test]
+    fn test_set_neighbors_by_key_rejects_unpaired_interior_facet() {
+        let mut tds: Tds<f64, (), (), 2> = Tds::empty();
+
+        let v_a = tds.insert_vertex_with_mapping(vertex!([0.0, 0.0])).unwrap();
+        let v_b = tds.insert_vertex_with_mapping(vertex!([1.0, 0.0])).unwrap();
+        let v_c = tds.insert_vertex_with_mapping(vertex!([0.0, 1.0])).unwrap();
+        let v_d = tds.insert_vertex_with_mapping(vertex!([1.0, 1.0])).unwrap();
+
+        let cell1 = tds
+            .insert_cell_with_mapping(Cell::new(vec![v_a, v_b, v_c], None).unwrap())
+            .unwrap();
+        tds.insert_cell_with_mapping(Cell::new(vec![v_b, v_a, v_d], None).unwrap())
+            .unwrap();
+        tds.assign_neighbors().unwrap();
+
+        let err = tds
+            .set_neighbors_by_key(cell1, &[None, None, None])
+            .unwrap_err()
+            .0;
+        assert!(matches!(err, TdsError::InvalidNeighbors { .. }));
+        assert!(tds.is_valid().is_ok());
     }
 
     // =============================================================================
@@ -6714,7 +7747,9 @@ mod tests {
 
         assert!(matches!(
             err,
-            TdsError::InvalidNeighbors { message } if message.contains("ambiguous")
+            TdsError::InvalidNeighbors {
+                reason: NeighborValidationError::MirrorFacetAmbiguous { .. },
+            }
         ));
     }
 
@@ -6744,7 +7779,9 @@ mod tests {
 
         assert!(matches!(
             err,
-            TdsError::InvalidNeighbors { message } if message.contains("share all vertices")
+            TdsError::InvalidNeighbors {
+                reason: NeighborValidationError::MirrorFacetDuplicateCells { .. },
+            }
         ));
     }
 
@@ -6802,7 +7839,9 @@ mod tests {
 
         assert!(matches!(
             err,
-            TdsError::InvalidNeighbors { message } if message.contains("Could not find mirror facet")
+            TdsError::InvalidNeighbors {
+                reason: NeighborValidationError::MirrorFacetMissing { .. },
+            }
         ));
     }
 
@@ -6834,7 +7873,9 @@ mod tests {
 
         assert!(matches!(
             err,
-            TdsError::InvalidNeighbors { message } if message.contains("index mismatch")
+            TdsError::InvalidNeighbors {
+                reason: NeighborValidationError::MirrorFacetIndexMismatch { .. },
+            }
         ));
     }
 
@@ -6881,7 +7922,9 @@ mod tests {
 
         assert!(matches!(
             err,
-            TdsError::InvalidNeighbors { message } if message.contains("index mismatch")
+            TdsError::InvalidNeighbors {
+                reason: NeighborValidationError::MirrorFacetIndexMismatch { .. },
+            }
         ));
     }
 
@@ -6956,7 +7999,9 @@ mod tests {
 
         assert!(matches!(
             err,
-            TdsError::InvalidNeighbors { message } if message.contains("Shared facet mismatch")
+            TdsError::InvalidNeighbors {
+                reason: NeighborValidationError::SharedFacetMissingVertex { .. },
+            }
         ));
     }
 
@@ -6985,7 +8030,7 @@ mod tests {
         assert!(
             Tds::validate_mutual_neighbor_back_reference(
                 cell1_key, cell1, 2, // opposite v_c => shared edge {v_a,v_b}
-                cell2, 2, // opposite v_d => shared edge {v_a,v_b}
+                cell2_key, cell2, 2, // opposite v_d => shared edge {v_a,v_b}
             )
             .is_ok()
         );
@@ -7011,12 +8056,15 @@ mod tests {
         let cell1 = tds.cell(cell1_key).unwrap();
         let cell2 = tds.cell(cell2_key).unwrap();
 
-        let err = Tds::validate_mutual_neighbor_back_reference(cell1_key, cell1, 2, cell2, 2)
-            .unwrap_err();
+        let err =
+            Tds::validate_mutual_neighbor_back_reference(cell1_key, cell1, 2, cell2_key, cell2, 2)
+                .unwrap_err();
 
         assert!(matches!(
             err,
-            TdsError::InvalidNeighbors { message } if message.contains("neighbor has no neighbors")
+            TdsError::InvalidNeighbors {
+                reason: NeighborValidationError::BackReferenceMismatch { observed: None, .. },
+            }
         ));
     }
 
@@ -7052,12 +8100,15 @@ mod tests {
         let cell1 = tds.cell(cell1_key).unwrap();
         let cell2 = tds.cell(cell2_key).unwrap();
 
-        let err = Tds::validate_mutual_neighbor_back_reference(cell1_key, cell1, 2, cell2, 2)
-            .unwrap_err();
+        let err =
+            Tds::validate_mutual_neighbor_back_reference(cell1_key, cell1, 2, cell2_key, cell2, 2)
+                .unwrap_err();
 
         assert!(matches!(
             err,
-            TdsError::InvalidNeighbors { message } if message.contains("expected back-reference")
+            TdsError::InvalidNeighbors {
+                reason: NeighborValidationError::BackReferenceMismatch { observed: None, .. },
+            }
         ));
     }
 
@@ -7170,7 +8221,9 @@ mod tests {
         let err = tds.validate_coherent_orientation().unwrap_err();
         assert!(matches!(
             err,
-            TdsError::InvalidNeighbors { message } if message.contains("expected back-reference")
+            TdsError::InvalidNeighbors {
+                reason: NeighborValidationError::BackReferenceMismatch { observed: None, .. },
+            }
         ));
         assert!(!tds.is_coherently_oriented());
     }
@@ -7468,7 +8521,9 @@ mod tests {
     #[test]
     fn test_tds_mutation_error_accessors() {
         let inner = TdsError::InvalidNeighbors {
-            message: "test".to_string(),
+            reason: NeighborValidationError::Other {
+                message: "test".to_string(),
+            },
         };
         let mutation = TdsMutationError::from(inner.clone());
 
@@ -7507,6 +8562,43 @@ mod tests {
     }
 
     #[test]
+    fn test_invariant_error_summary_covers_validation_layers() {
+        let cases = [
+            (
+                InvariantError::from(TdsError::InconsistentDataStructure {
+                    message: "dangling cell".to_string(),
+                }),
+                InvariantErrorSummaryKind::Tds,
+                InvariantErrorSummaryDetail::Tds(TdsErrorKind::InconsistentDataStructure),
+            ),
+            (
+                InvariantError::from(TriangulationValidationError::Disconnected { cell_count: 2 }),
+                InvariantErrorSummaryKind::Triangulation,
+                InvariantErrorSummaryDetail::Triangulation(
+                    TriangulationValidationErrorKind::Disconnected,
+                ),
+            ),
+            (
+                InvariantError::from(DelaunayTriangulationValidationError::VerificationFailed {
+                    message: "non-Delaunay facet".to_string(),
+                }),
+                InvariantErrorSummaryKind::Delaunay,
+                InvariantErrorSummaryDetail::Delaunay(
+                    DelaunayValidationErrorKind::VerificationFailed,
+                ),
+            ),
+        ];
+
+        for (source, expected_kind, expected_detail) in cases {
+            let expected_message = source.to_string();
+            let summary = InvariantErrorSummary::from(source);
+            assert_eq!(summary.kind, expected_kind);
+            assert_eq!(summary.detail, expected_detail);
+            assert_eq!(summary.message, expected_message);
+        }
+    }
+
+    #[test]
     fn test_invariant_kind_all_variants_are_distinct() {
         let kinds = [
             InvariantKind::VertexValidity,
@@ -7538,7 +8630,9 @@ mod tests {
         let violation = InvariantViolation {
             kind: InvariantKind::NeighborConsistency,
             error: InvariantError::Tds(TdsError::InvalidNeighbors {
-                message: "test".to_string(),
+                reason: NeighborValidationError::Other {
+                    message: "test".to_string(),
+                },
             }),
         };
         assert_eq!(violation.kind, InvariantKind::NeighborConsistency);

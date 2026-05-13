@@ -389,6 +389,12 @@ pub struct ConvexHull<K, U, V, const D: usize> {
     /// Set once in `from_triangulation()` and never modified. Used to detect stale hulls.
     /// Uses `OnceLock` to express the "set once, read many" semantic contract.
     creation_generation: OnceLock<u64>,
+    /// Runtime identity of the TDS that produced the hull.
+    ///
+    /// Generation counters are only meaningful within a single TDS identity. This prevents hull
+    /// facet handles from being accepted against a different triangulation whose generation happens
+    /// to match.
+    creation_identity: OnceLock<Arc<uuid::Uuid>>,
     /// Cache generation counter, updated when cache is rebuilt.
     /// Can be reset to 0 by `invalidate_cache()` to force cache rebuild.
     /// Uses `Arc<AtomicU64>` for consistent tracking across cloned `ConvexHull` instances.
@@ -398,12 +404,7 @@ pub struct ConvexHull<K, U, V, const D: usize> {
 }
 
 // Minimal impl block for simple accessor methods that don't require arithmetic operations
-impl<K, U, V, const D: usize> ConvexHull<K, U, V, D>
-where
-    K: Kernel<D>,
-    U: DataType,
-    V: DataType,
-{
+impl<K, U, V, const D: usize> ConvexHull<K, U, V, D> {
     /// Returns the number of hull facets
     ///
     /// # Examples
@@ -645,7 +646,12 @@ where
     pub const fn dimension(&self) -> usize {
         D
     }
+}
 
+impl<K, U, V, const D: usize> ConvexHull<K, U, V, D>
+where
+    K: Kernel<D>,
+{
     /// Checks if this convex hull is valid for the given triangulation
     ///
     /// Returns `true` if the hull's creation generation matches the triangulation generation,
@@ -703,9 +709,14 @@ where
     pub fn is_valid_for_triangulation(&self, tri: &Triangulation<K, U, V, D>) -> bool {
         // Use creation_generation (immutable) for validity check, not cached_generation (mutable)
         // Empty hull (with creation_generation unset) is always valid - it has no facets to be stale
-        self.creation_generation
-            .get()
-            .map_or(self.is_empty(), |&g| g == tri.tds.generation())
+        let Some(&creation_generation) = self.creation_generation.get() else {
+            return self.is_empty();
+        };
+        let Some(creation_identity) = self.creation_identity.get() else {
+            return false;
+        };
+        creation_generation == tri.tds.generation()
+            && Arc::ptr_eq(creation_identity, tri.tds.identity())
     }
 
     /// Helper to construct a `StaleHull` error with generation info
@@ -732,7 +743,9 @@ where
             tds_generation: tri.tds.generation(),
         }
     }
+}
 
+impl<K, U, V, const D: usize> ConvexHull<K, U, V, D> {
     /// Invalidates the internal facet-to-cells cache and resets the cached generation counter
     ///
     /// This method forces the cache to be rebuilt on the next visibility test.
@@ -920,6 +933,7 @@ where
             facet_to_cells_cache: ArcSwapOption::empty(),
             // Immutable snapshot of triangulation generation at creation - never changes
             creation_generation: OnceLock::from(tds_gen),
+            creation_identity: OnceLock::from(Arc::clone(tds.identity())),
             // Mutable cache generation - can be reset by invalidate_cache()
             cached_generation: Arc::new(AtomicU64::new(tds_gen)),
             _phantom: PhantomData,
@@ -1036,7 +1050,11 @@ where
         // Staleness guard: fail fast before any cache work
         let creation_gen = self.creation_generation.get().copied().unwrap_or(0);
         let tds_gen = tds.generation();
-        if creation_gen != tds_gen {
+        let identity_matches = self
+            .creation_identity
+            .get()
+            .is_some_and(|identity| Arc::ptr_eq(identity, tds.identity()));
+        if creation_gen != tds_gen || !identity_matches {
             return Err(ConvexHullConstructionError::StaleHull {
                 hull_generation: creation_gen,
                 tds_generation: tds_gen,
@@ -1094,14 +1112,18 @@ where
         // - cached_generation: Can be reset to 0 by invalidate_cache() to force cache rebuild.
         let creation_gen = self.creation_generation.get().copied().unwrap_or(0);
         let tds_gen = tds.generation();
+        let identity_matches = self
+            .creation_identity
+            .get()
+            .is_some_and(|identity| Arc::ptr_eq(identity, tds.identity()));
 
         debug_assert!(
-            creation_gen == tds_gen,
-            "ConvexHull used with a modified TDS; rebuild the hull (creation_gen={creation_gen}, tds_gen={tds_gen})"
+            creation_gen == tds_gen && identity_matches,
+            "ConvexHull used with a modified or different TDS; rebuild the hull (creation_gen={creation_gen}, tds_gen={tds_gen}, identity_matches={identity_matches})"
         );
 
         // Production build: always check creation_generation for stale detection
-        if creation_gen != tds_gen {
+        if creation_gen != tds_gen || !identity_matches {
             return Err(ConvexHullConstructionError::StaleHull {
                 hull_generation: creation_gen,
                 tds_generation: tds_gen,
@@ -1241,17 +1263,19 @@ where
         simplex_with_test.push(*point);
 
         // Get orientations using geometric predicates
-        let orientation_inside = simplex_orientation(&simplex_with_inside).map_err(|e| {
+        let orientation_inside = simplex_orientation(&simplex_with_inside).map_err(|source| {
             ConvexHullConstructionError::VisibilityCheckFailed {
                 source: FacetError::OrientationComputationFailed {
-                    details: format!("Failed to compute orientation with inside vertex: {e}"),
+                    context: "inside vertex visibility test".to_string(),
+                    source,
                 },
             }
         })?;
-        let orientation_test = simplex_orientation(&simplex_with_test).map_err(|e| {
+        let orientation_test = simplex_orientation(&simplex_with_test).map_err(|source| {
             ConvexHullConstructionError::VisibilityCheckFailed {
                 source: FacetError::OrientationComputationFailed {
-                    details: format!("Failed to compute orientation with test point: {e}"),
+                    context: "test point visibility test".to_string(),
+                    source,
                 },
             }
         })?;
@@ -1801,17 +1825,13 @@ where
     }
 }
 
-impl<K, U, V, const D: usize> Default for ConvexHull<K, U, V, D>
-where
-    K: Kernel<D>,
-    U: DataType,
-    V: DataType,
-{
+impl<K, U, V, const D: usize> Default for ConvexHull<K, U, V, D> {
     fn default() -> Self {
         Self {
             hull_facets: Vec::new(),
             facet_to_cells_cache: ArcSwapOption::empty(),
             creation_generation: OnceLock::new(), // Empty - indicates invalid/uninitialized hull
+            creation_identity: OnceLock::new(),
             cached_generation: Arc::new(AtomicU64::new(0)),
             _phantom: PhantomData,
         }
@@ -5236,7 +5256,13 @@ mod tests {
 
         // Test complex error source chain
         let facet_error = FacetError::OrientationComputationFailed {
-            details: "Degenerate simplex detected".to_string(),
+            context: "visibility test".to_string(),
+            source: CoordinateConversionError::ConversionFailed {
+                coordinate_index: 0,
+                coordinate_value: "degenerate simplex".to_string(),
+                from_type: "predicate",
+                to_type: "orientation",
+            },
         };
         let chained_visibility_error = ConvexHullConstructionError::VisibilityCheckFailed {
             source: facet_error,
@@ -6915,6 +6941,79 @@ mod tests {
         test_debug!(
             "  ✓ Regression test passed: stale hull detection works correctly after invalidate_cache()"
         );
+    }
+
+    #[test]
+    fn test_hull_rejects_different_tds_with_same_generation() {
+        let vertices = [
+            vertex!([0.0, 0.0, 0.0]),
+            vertex!([1.0, 0.0, 0.0]),
+            vertex!([0.0, 1.0, 0.0]),
+            vertex!([0.0, 0.0, 1.0]),
+        ];
+        let dt1: DelaunayTriangulation<_, (), (), 3> =
+            DelaunayTriangulation::new(&vertices).unwrap();
+        let dt2: DelaunayTriangulation<_, (), (), 3> =
+            DelaunayTriangulation::new(&vertices).unwrap();
+        assert_eq!(
+            dt1.as_triangulation().tds.generation(),
+            dt2.as_triangulation().tds.generation(),
+            "regression setup needs matching generation counters"
+        );
+
+        let hull = ConvexHull::from_triangulation(dt1.as_triangulation()).unwrap();
+        assert!(hull.is_valid_for_triangulation(dt1.as_triangulation()));
+        assert!(
+            !hull.is_valid_for_triangulation(dt2.as_triangulation()),
+            "hull handles from one TDS must not validate against another TDS"
+        );
+
+        let facet = hull.facet(0).expect("tetrahedron hull should have facets");
+        let visibility = hull.is_facet_visible_from_point(
+            facet,
+            &Point::new([2.0, 2.0, 2.0]),
+            dt2.as_triangulation(),
+        );
+        assert!(matches!(
+            visibility,
+            Err(ConvexHullConstructionError::StaleHull { .. })
+        ));
+    }
+
+    #[test]
+    fn test_hull_rejects_cloned_tds_with_same_generation() {
+        let vertices = [
+            vertex!([0.0, 0.0, 0.0]),
+            vertex!([1.0, 0.0, 0.0]),
+            vertex!([0.0, 1.0, 0.0]),
+            vertex!([0.0, 0.0, 1.0]),
+        ];
+        let dt1: DelaunayTriangulation<_, (), (), 3> =
+            DelaunayTriangulation::new(&vertices).unwrap();
+        let dt2 = dt1.clone();
+        assert_eq!(
+            dt1.as_triangulation().tds.generation(),
+            dt2.as_triangulation().tds.generation(),
+            "regression setup needs matching generation counters"
+        );
+
+        let hull = ConvexHull::from_triangulation(dt1.as_triangulation()).unwrap();
+        assert!(hull.is_valid_for_triangulation(dt1.as_triangulation()));
+        assert!(
+            !hull.is_valid_for_triangulation(dt2.as_triangulation()),
+            "cloned TDS snapshots must have distinct handle provenance"
+        );
+
+        let facet = hull.facet(0).expect("tetrahedron hull should have facets");
+        let visibility = hull.is_facet_visible_from_point(
+            facet,
+            &Point::new([2.0, 2.0, 2.0]),
+            dt2.as_triangulation(),
+        );
+        assert!(matches!(
+            visibility,
+            Err(ConvexHullConstructionError::StaleHull { .. })
+        ));
     }
 
     // ============================================================================

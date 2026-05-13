@@ -7,7 +7,7 @@
 #![forbid(unsafe_code)]
 
 use crate::core::cell::CellValidationError;
-use crate::geometry::matrix::{matrix_get, matrix_set, matrix_zero_like};
+use crate::geometry::matrix::{Matrix, matrix_get, matrix_set, matrix_zero_like};
 use crate::geometry::point::Point;
 use crate::geometry::traits::coordinate::{CoordinateConversionError, CoordinateScalar};
 use crate::geometry::util::{
@@ -58,7 +58,7 @@ const fn sign_to_insphere(det_sign: i8, orient_sign: i8) -> InSphere {
 ///   or lifted insphere with POSITIVE relative orientation)
 #[inline]
 pub(crate) fn insphere_from_matrix<const N: usize>(
-    matrix: &crate::geometry::matrix::Matrix<N>,
+    matrix: &Matrix<N>,
     k: usize,
     orient_sign: i8,
 ) -> InSphere {
@@ -113,10 +113,7 @@ pub(crate) fn insphere_from_matrix<const N: usize>(
 ///
 /// `k` must equal the number of rows/columns actually used in `matrix`.
 #[inline]
-pub(crate) fn orientation_from_matrix<const N: usize>(
-    matrix: &crate::geometry::matrix::Matrix<N>,
-    k: usize,
-) -> Orientation {
+pub(crate) fn orientation_from_matrix<const N: usize>(matrix: &Matrix<N>, k: usize) -> Orientation {
     debug_assert_eq!(k, N, "k ({k}) must equal matrix dimension N ({N})");
 
     // Stage 1: provable f64 fast filter for D ≤ 4.

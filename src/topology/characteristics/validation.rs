@@ -128,7 +128,7 @@ impl TopologyCheckResult {
 ///
 /// # Errors
 ///
-/// Returns `TopologyError::Counting` or `TopologyError::Classification`
+/// Returns [`TopologyError`] if topology validation support data cannot be built.
 /// if the underlying operations fail.
 pub fn validate_triangulation_euler<T, U, V, const D: usize>(
     tds: &Tds<T, U, V, D>,
@@ -145,7 +145,7 @@ where
         FacetToCellsMap::default()
     } else {
         tds.build_facet_to_cells_map()
-            .map_err(|e| TopologyError::Counting(format!("Failed to build facet map: {e}")))?
+            .map_err(|source| TopologyError::FacetMapBuild { source })?
     };
 
     Ok(validate_triangulation_euler_with_facet_to_cells_map(

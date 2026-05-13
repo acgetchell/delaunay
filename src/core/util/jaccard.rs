@@ -4,11 +4,16 @@
 
 use crate::core::facet::{FacetError, FacetView};
 use crate::core::tds::Tds;
+use crate::core::traits::boundary_analysis::BoundaryAnalysis;
 use crate::core::traits::data_type::DataType;
+use crate::core::triangulation::Triangulation;
 use crate::geometry::algorithms::convex_hull::ConvexHull;
+use crate::geometry::kernel::Kernel;
 use crate::geometry::point::Point;
 use crate::geometry::traits::coordinate::CoordinateScalar;
 use std::collections::HashSet;
+use std::fmt::Debug;
+use std::hash::{BuildHasher, Hash};
 use thiserror::Error;
 
 /// Errors that can occur during Jaccard similarity computation.
@@ -51,13 +56,10 @@ pub enum JaccardComputationError {
 ///
 /// This is an internal helper used by `jaccard_index` and `format_jaccard_report`.
 /// The function iterates over the smaller set for optimal performance.
-fn compute_set_metrics<T, S>(
-    a: &std::collections::HashSet<T, S>,
-    b: &std::collections::HashSet<T, S>,
-) -> (usize, usize)
+fn intersection_union_sizes<T, S>(a: &HashSet<T, S>, b: &HashSet<T, S>) -> (usize, usize)
 where
-    T: Eq + std::hash::Hash,
-    S: std::hash::BuildHasher,
+    T: Eq + Hash,
+    S: BuildHasher,
 {
     // Optimize: iterate over smaller set for intersection count
     let (small, large) = if a.len() <= b.len() { (a, b) } else { (b, a) };
@@ -99,12 +101,12 @@ where
 /// Returns `JaccardComputationError::SetSizeTooLarge` if set sizes exceed 2^53,
 /// which would cause precision loss in f64 conversion.
 pub fn jaccard_index<T, S>(
-    a: &std::collections::HashSet<T, S>,
-    b: &std::collections::HashSet<T, S>,
+    a: &HashSet<T, S>,
+    b: &HashSet<T, S>,
 ) -> Result<f64, JaccardComputationError>
 where
-    T: Eq + std::hash::Hash,
-    S: std::hash::BuildHasher,
+    T: Eq + Hash,
+    S: BuildHasher,
 {
     // f64 can exactly represent integers up to 2^53
     // Use u128 for portability to 32-bit platforms where usize << 53 would overflow
@@ -114,7 +116,7 @@ where
         return Ok(1.0);
     }
 
-    let (intersection, union) = compute_set_metrics(a, b);
+    let (intersection, union) = intersection_union_sizes(a, b);
 
     // Check for safe conversion before casting
     if (intersection as u128) > MAX_SAFE_INT_U128 || (union as u128) > MAX_SAFE_INT_U128 {
@@ -163,12 +165,12 @@ where
 /// which would cause precision loss in f64 conversion.
 #[inline]
 pub fn jaccard_distance<T, S>(
-    a: &std::collections::HashSet<T, S>,
-    b: &std::collections::HashSet<T, S>,
+    a: &HashSet<T, S>,
+    b: &HashSet<T, S>,
 ) -> Result<f64, JaccardComputationError>
 where
-    T: Eq + std::hash::Hash,
-    S: std::hash::BuildHasher,
+    T: Eq + Hash,
+    S: BuildHasher,
 {
     Ok(1.0 - jaccard_index(a, b)?)
 }
@@ -346,8 +348,6 @@ where
     U: DataType,
     V: DataType,
 {
-    use crate::core::traits::boundary_analysis::BoundaryAnalysis;
-
     let mut facet_ids = HashSet::new();
 
     // boundary_facets() returns Result<impl Iterator, TriangulationValidationError>
@@ -408,10 +408,10 @@ where
 /// ```
 pub fn extract_hull_facet_set<K, U, V, const D: usize>(
     hull: &ConvexHull<K, U, V, D>,
-    tri: &crate::core::triangulation::Triangulation<K, U, V, D>,
+    tri: &Triangulation<K, U, V, D>,
 ) -> Result<HashSet<u64>, FacetError>
 where
-    K: crate::geometry::kernel::Kernel<D>,
+    K: Kernel<D>,
     U: DataType,
     V: DataType,
 {
@@ -476,8 +476,8 @@ pub fn format_jaccard_report<T, S>(
     label_b: &str,
 ) -> Result<String, JaccardComputationError>
 where
-    T: Eq + std::hash::Hash + std::fmt::Debug,
-    S: std::hash::BuildHasher,
+    T: Eq + Hash + Debug,
+    S: BuildHasher,
 {
     // f64 can exactly represent integers up to 2^53
     // Use u128 for portability to 32-bit platforms where usize << 53 would overflow
@@ -487,7 +487,7 @@ where
     let size_b = b.len();
 
     // Compute intersection and union using shared helper
-    let (intersection, union) = compute_set_metrics(a, b);
+    let (intersection, union) = intersection_union_sizes(a, b);
 
     // Compute Jaccard index using safe conversion
     let jaccard = if union == 0 {
@@ -603,6 +603,7 @@ mod tests {
 
     use crate::core::tds::{Tds, VertexKey};
     use crate::geometry::traits::coordinate::Coordinate;
+    use crate::triangulation::delaunay::DelaunayTriangulation;
     use crate::vertex;
     use approx::assert_relative_eq;
     use slotmap::KeyData;
@@ -612,7 +613,6 @@ mod tests {
         ($name:ident, $dim:literal) => {
             #[test]
             fn $name() {
-                use std::collections::HashSet;
                 let empty: HashSet<[i32; $dim]> = HashSet::new();
                 assert_relative_eq!(jaccard_index(&empty, &empty).unwrap(), 1.0, epsilon = 1e-12);
                 assert_relative_eq!(
@@ -665,7 +665,7 @@ mod tests {
             vertex!([0.0, 1.0, 0.0]),
             vertex!([0.0, 0.0, 1.0]),
         ];
-        let dt = crate::triangulation::delaunay::DelaunayTriangulation::new(&vertices).unwrap();
+        let dt = DelaunayTriangulation::new(&vertices).unwrap();
         let tds = &dt.as_triangulation().tds;
 
         // Sub-test: Vertex coordinate extraction
@@ -685,8 +685,7 @@ mod tests {
         assert_eq!(facet_set.len(), 4, "Tetrahedron should have 4 facets");
 
         // Sub-test: Hull facet extraction
-        let dt_hull =
-            crate::triangulation::delaunay::DelaunayTriangulation::new(&vertices).unwrap();
+        let dt_hull = DelaunayTriangulation::new(&vertices).unwrap();
         let tri = dt_hull.as_triangulation();
         let hull = ConvexHull::from_triangulation(tri).unwrap();
         let hull_facet_set = extract_hull_facet_set(&hull, tri).unwrap();
@@ -695,15 +694,13 @@ mod tests {
 
     #[test]
     fn test_extract_edge_set_errors_on_missing_vertex_key() {
-        use crate::core::facet::FacetError;
-
         let vertices = vec![
             vertex!([0.0, 0.0, 0.0]),
             vertex!([1.0, 0.0, 0.0]),
             vertex!([0.0, 1.0, 0.0]),
             vertex!([0.0, 0.0, 1.0]),
         ];
-        let mut dt = crate::triangulation::delaunay::DelaunayTriangulation::new(&vertices).unwrap();
+        let mut dt = DelaunayTriangulation::new(&vertices).unwrap();
 
         let cell_key = dt.as_triangulation().tds.cell_keys().next().unwrap();
         let invalid_vkey = VertexKey::from(KeyData::from_ffi(u64::MAX));
@@ -722,15 +719,13 @@ mod tests {
 
     #[test]
     fn test_extract_facet_identifier_set_errors_on_boundary_facet_retrieval_failure() {
-        use crate::core::facet::FacetError;
-
         let vertices = vec![
             vertex!([0.0, 0.0, 0.0]),
             vertex!([1.0, 0.0, 0.0]),
             vertex!([0.0, 1.0, 0.0]),
             vertex!([0.0, 0.0, 1.0]),
         ];
-        let mut dt = crate::triangulation::delaunay::DelaunayTriangulation::new(&vertices).unwrap();
+        let mut dt = DelaunayTriangulation::new(&vertices).unwrap();
 
         let cell_key = dt.as_triangulation().tds.cell_keys().next().unwrap();
         let invalid_vkey = VertexKey::from(KeyData::from_ffi(u64::MAX));
@@ -749,8 +744,6 @@ mod tests {
 
     #[test]
     fn test_format_jaccard_report_includes_metrics_and_handles_empty_sets() {
-        use std::collections::HashSet;
-
         let empty: HashSet<i32> = HashSet::new();
         let report = format_jaccard_report(&empty, &empty, "A", "B").unwrap();
         assert!(report.contains("A: 0 elements"));
@@ -774,7 +767,7 @@ mod tests {
             vertex!([0.0, 1.0, 0.0]),
             vertex!([0.0, 0.0, 1.0]),
         ];
-        let dt = crate::triangulation::delaunay::DelaunayTriangulation::new(&vertices).unwrap();
+        let dt = DelaunayTriangulation::new(&vertices).unwrap();
         let tri = dt.as_triangulation();
         let hull = ConvexHull::from_triangulation(tri).unwrap();
 

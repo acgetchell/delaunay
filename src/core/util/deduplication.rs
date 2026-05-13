@@ -158,6 +158,28 @@ where
 /// Returns [`DeduplicationError::NegativeEpsilon`] when `epsilon` is negative.
 /// Returns [`DeduplicationError::NonFiniteEpsilon`] when `epsilon` is NaN or
 /// infinite.
+///
+/// # Examples
+///
+/// ```rust
+/// use delaunay::prelude::{DeduplicationError, try_dedup_vertices_epsilon};
+/// use delaunay::prelude::triangulation::construction::vertex;
+///
+/// # fn main() -> Result<(), DeduplicationError> {
+/// let vertices = vec![
+///     vertex!([0.0, 0.0]),
+///     vertex!([0.0, 0.0]),
+///     vertex!([1.0, 0.0]),
+/// ];
+///
+/// let deduped = try_dedup_vertices_epsilon(&vertices, 1e-9)?;
+/// assert_eq!(deduped.len(), 2);
+///
+/// let err = try_dedup_vertices_epsilon(&vertices, f64::NAN).unwrap_err();
+/// assert_eq!(err, DeduplicationError::NonFiniteEpsilon);
+/// # Ok(())
+/// # }
+/// ```
 pub fn try_dedup_vertices_epsilon<T, U, const D: usize>(
     vertices: &[Vertex<T, U, D>],
     epsilon: T,

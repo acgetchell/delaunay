@@ -2,6 +2,7 @@
 
 #![forbid(unsafe_code)]
 
+use crate::core::collections::VertexUuidBuffer;
 use crate::core::facet::{FacetError, FacetView};
 use crate::core::traits::data_type::DataType;
 use crate::core::vertex::Vertex;
@@ -66,20 +67,25 @@ where
     U: DataType,
     V: DataType,
 {
-    use crate::core::collections::FastHashSet;
-
-    // Compare facets by their vertex UUIDs for semantic correctness
-    // This works across different TDS instances with the same coordinates
-    let vertices1: FastHashSet<_> = facet1
-        .vertices()?
-        .map(crate::core::vertex::Vertex::uuid)
-        .collect();
-    let vertices2: FastHashSet<_> = facet2
-        .vertices()?
-        .map(crate::core::vertex::Vertex::uuid)
-        .collect();
+    let vertices1 = sorted_facet_vertex_uuids(facet1)?;
+    let vertices2 = sorted_facet_vertex_uuids(facet2)?;
 
     Ok(vertices1 == vertices2)
+}
+
+/// Canonicalizes facet vertex UUIDs so facet comparison stays allocation-light
+/// while remaining independent of local vertex order.
+fn sorted_facet_vertex_uuids<T, U, V, const D: usize>(
+    facet: &FacetView<'_, T, U, V, D>,
+) -> Result<VertexUuidBuffer, FacetError>
+where
+    T: CoordinateScalar,
+    U: DataType,
+    V: DataType,
+{
+    let mut vertices: VertexUuidBuffer = facet.vertices()?.map(Vertex::uuid).collect();
+    vertices.sort_unstable();
+    Ok(vertices)
 }
 
 /// Extracts owned vertices from a `FacetView` as a `Vec<Vertex>`.
@@ -138,44 +144,18 @@ where
     Ok(facet_view.vertices()?.copied().collect())
 }
 
-/// Generates all unique combinations of `k` items from a given slice.
+/// Generates all unique combinations of `k` vertices for local regression tests.
 ///
-/// This function is used to generate vertex combinations for creating k-simplices
-/// (e.g., edges, triangles, tetrahedra) from a set of vertices.
+/// Keeping this helper test-only avoids exposing a nested-`Vec` API for a
+/// simplex-sized operation that production code models with small buffers.
 ///
 /// # Arguments
 ///
 /// * `vertices` - A slice of vertices from which to generate combinations.
 /// * `k` - The size of each combination.
 ///
-/// # Returns
-///
-/// A vector of vectors, where each inner vector is a unique combination of `k` vertices.
-///
-/// # Examples
-///
-/// This function is made public for testing purposes.
-///
-/// ```
-/// use delaunay::prelude::tds::generate_combinations;
-/// use delaunay::prelude::triangulation::Vertex;
-/// use delaunay::vertex;
-///
-/// let vertices: Vec<Vertex<f64, (), 1>> = vec![
-///     vertex!([0.0]),
-///     vertex!([1.0]),
-///     vertex!([2.0]),
-/// ];
-///
-/// // Generate all 2-vertex combinations (edges)
-/// let combinations = generate_combinations(&vertices, 2);
-///
-/// assert_eq!(combinations.len(), 3);
-/// assert!(combinations.contains(&vec![vertices[0], vertices[1]]));
-/// assert!(combinations.contains(&vec![vertices[0], vertices[2]]));
-/// assert!(combinations.contains(&vec![vertices[1], vertices[2]]));
-/// ```
-pub fn generate_combinations<T, U, const D: usize>(
+#[cfg(test)]
+fn generate_combinations<T, U, const D: usize>(
     vertices: &[Vertex<T, U, D>],
     k: usize,
 ) -> Vec<Vec<Vertex<T, U, D>>>

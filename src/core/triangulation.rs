@@ -135,9 +135,12 @@ use crate::core::facet::{AllFacetsIter, BoundaryFacetsIter, FacetHandle};
 use crate::core::operations::{
     InsertionOutcome, InsertionResult, InsertionStatistics, InsertionTelemetry, SuspicionFlags,
 };
+#[cfg(test)]
+use crate::core::tds::NeighborValidationError;
 use crate::core::tds::{
-    CellKey, GeometricError, InvariantError, InvariantKind, InvariantViolation, Tds,
-    TdsConstructionError, TdsError, TriangulationValidationReport, VertexKey,
+    CellKey, GeometricError, InvariantError, InvariantErrorSummary, InvariantKind,
+    InvariantViolation, Tds, TdsConstructionError, TdsError, TriangulationValidationReport,
+    VertexKey,
 };
 use crate::core::traits::data_type::DataType;
 #[cfg(test)]
@@ -167,8 +170,10 @@ use crate::triangulation::locality::{
 use core::ops::Div;
 use num_traits::{NumCast, One, Zero};
 use std::borrow::Cow;
+#[cfg(all(test, debug_assertions))]
 use std::cmp::Ordering as CmpOrdering;
 use std::env;
+use std::fmt::Write as _;
 use std::hash::{Hash, Hasher};
 use std::sync::{
     OnceLock,
@@ -462,7 +467,7 @@ pub(crate) fn record_duplicate_detection_metrics(
 /// structured error information across all layers.
 ///
 /// - `TopologyValidation(source)` → `InvariantError::Tds(source)` (Level 1–2 preserved)
-/// - `TopologyValidationFailed { source }` → `InvariantError::Triangulation(*source)` (Level 3 preserved)
+/// - `TopologyValidationFailed { source }` → `InvariantError::Triangulation(source)` (Level 3 preserved)
 /// - All other variants → `InvariantError::Tds(InconsistentDataStructure { .. })` with `context`
 pub(crate) fn insertion_error_to_invariant_error(
     error: InsertionError,
@@ -471,7 +476,7 @@ pub(crate) fn insertion_error_to_invariant_error(
     match error {
         InsertionError::TopologyValidation(source) => InvariantError::Tds(source),
         InsertionError::TopologyValidationFailed { source, .. } => {
-            InvariantError::Triangulation(*source)
+            InvariantError::Triangulation(source)
         }
         other => InvariantError::Tds(TdsError::InconsistentDataStructure {
             message: format!("{context}: {other}"),
@@ -589,7 +594,7 @@ pub enum TriangulationConstructionError {
         message: String,
         /// Underlying validation error.
         #[source]
-        source: Box<InvariantError>,
+        source: InvariantErrorSummary,
     },
 
     /// Attempted to insert a vertex with coordinates that already exist.
@@ -3071,11 +3076,18 @@ where
         //
         // Build the facet map once and reuse it for manifold validation and Euler counting.
         let facet_to_cells: FacetToCellsMap = self.tds.build_facet_to_cells_map()?;
-        validate_facet_degree(&facet_to_cells)?;
+        self.validate_topology_core_with_facet_to_cells_map(&facet_to_cells)
+    }
+
+    fn validate_topology_core_with_facet_to_cells_map(
+        &self,
+        facet_to_cells: &FacetToCellsMap,
+    ) -> Result<(), InvariantError> {
+        validate_facet_degree(facet_to_cells)?;
 
         // 2b. Boundary manifoldness in codimension 2: the boundary must be "closed"
         // (i.e., its ridges must have degree 2 within boundary facets).
-        validate_closed_boundary(&self.tds, &facet_to_cells)?;
+        validate_closed_boundary(&self.tds, facet_to_cells)?;
 
         // 2c. Ridge-link validation for PLManifold/PLManifoldStrict (fast, catches many PL issues).
         if self.topology_guarantee.requires_ridge_links() {
@@ -3086,7 +3098,7 @@ where
             .topology_guarantee
             .requires_vertex_links_during_insertion()
         {
-            validate_vertex_links(&self.tds, &facet_to_cells)?;
+            validate_vertex_links(&self.tds, facet_to_cells)?;
         }
 
         // 3. Vertex incidence (manifold invariant): every vertex must be incident to at least one cell.
@@ -3094,7 +3106,7 @@ where
 
         // 4. Euler characteristic using the topology module
         let topology_result =
-            validate_triangulation_euler_with_facet_to_cells_map(&self.tds, &facet_to_cells);
+            validate_triangulation_euler_with_facet_to_cells_map(&self.tds, facet_to_cells);
 
         // Override the heuristic classification when the caller has declared a
         // non-Euclidean global topology.  The heuristic classifies any closed
@@ -3164,9 +3176,29 @@ where
         }
 
         let facet_to_cells: FacetToCellsMap = self.tds.build_facet_to_cells_map()?;
-        validate_vertex_links(&self.tds, &facet_to_cells)?;
+        self.validate_at_completion_with_facet_to_cells_map(&facet_to_cells)?;
         Ok(())
     }
+
+    fn validate_at_completion_with_facet_to_cells_map(
+        &self,
+        facet_to_cells: &FacetToCellsMap,
+    ) -> Result<(), InvariantError> {
+        if !self
+            .topology_guarantee
+            .requires_vertex_links_at_completion()
+        {
+            return Ok(());
+        }
+
+        if self.tds.number_of_cells() == 0 {
+            return Ok(());
+        }
+
+        validate_vertex_links(&self.tds, facet_to_cells)?;
+        Ok(())
+    }
+
     /// Performs cumulative validation for Levels 1–3.
     ///
     /// This validates:
@@ -3201,8 +3233,13 @@ where
     /// ```
     pub fn validate(&self) -> Result<(), InvariantError> {
         self.tds.validate()?;
-        self.is_valid()?;
-        self.validate_at_completion()
+        self.validate_global_connectedness()?;
+        let facet_to_cells: FacetToCellsMap = self.tds.build_facet_to_cells_map()?;
+        self.validate_topology_core_with_facet_to_cells_map(&facet_to_cells)?;
+        // Check geometric orientation after manifold/link checks so topology-specific
+        // diagnostics surface first when multiple invariants are violated.
+        self.validate_geometric_cell_orientation()?;
+        self.validate_at_completion_with_facet_to_cells_map(&facet_to_cells)
     }
 
     /// Generate a comprehensive validation report for Levels 1–3.
@@ -3393,7 +3430,7 @@ where
         if vertices.len() != D + 1 {
             return Err(TriangulationConstructionError::InsufficientVertices {
                 dimension: D,
-                source: crate::core::cell::CellValidationError::InsufficientVertices {
+                source: CellValidationError::InsufficientVertices {
                     actual: vertices.len(),
                     expected: D + 1,
                     dimension: D,
@@ -4008,14 +4045,15 @@ where
     ) -> Option<InsertionError> {
         let mut duplicate_found = false;
         let make_duplicate_error = || {
-            let coord_str = coords
-                .iter()
-                .map(|c| format!("{c:?}"))
-                .collect::<Vec<_>>()
-                .join(", ");
-            InsertionError::DuplicateCoordinates {
-                coordinates: format!("[{coord_str}]"),
+            let mut coordinates = String::from("[");
+            for (idx, coord) in coords.iter().enumerate() {
+                if idx != 0 {
+                    coordinates.push_str(", ");
+                }
+                let _ = write!(&mut coordinates, "{coord:?}");
             }
+            coordinates.push(']');
+            InsertionError::DuplicateCoordinates { coordinates }
         };
 
         if let Some(index) = index {
@@ -4162,11 +4200,11 @@ where
             InvariantError::Tds(tds_err) => InsertionError::TopologyValidation(tds_err),
             InvariantError::Triangulation(tri_err) => InsertionError::TopologyValidationFailed {
                 message: "Topology validation failed".to_string(),
-                source: Box::new(tri_err),
+                source: tri_err,
             },
-            InvariantError::Delaunay(dt_err) => InsertionError::DelaunayValidationFailed {
-                source: Box::new(dt_err),
-            },
+            InvariantError::Delaunay(dt_err) => {
+                InsertionError::DelaunayValidationFailed { source: dt_err }
+            }
         }
     }
 
@@ -4208,9 +4246,14 @@ where
 
     /// Runs mandatory topology checks over the local cells touched by insertion.
     ///
-    /// This preserves the same local codimension and ridge-link invariants as
-    /// [`validate_required_topology_links`](Self::validate_required_topology_links)
-    /// without rebuilding global facet/ridge maps on every ordinary insertion.
+    /// Soundness boundary: the scoped path checks coherent orientation, local
+    /// pseudomanifold facet incidence, ridge links, and geometric cell
+    /// orientation. Those local checks are sufficient only when `cells` is
+    /// non-empty and `topology_guarantee` does not require vertex-link checks
+    /// during insertion; otherwise this explicitly falls back to
+    /// [`validate_required_topology_links`](Self::validate_required_topology_links).
+    /// See `REFERENCES.md`, "Scoped Local Validation and Flips" \[1\], for the
+    /// local-vs-global validation tradeoff and geometric conditioning context.
     fn validate_required_topology_links_for_cells(
         &self,
         cells: &[CellKey],
@@ -5393,10 +5436,10 @@ where
                 return Err(InsertionError::TopologyValidationFailed {
                     message: "Truly isolated vertex detected during stale incident-cell repair"
                         .to_string(),
-                    source: Box::new(TriangulationValidationError::IsolatedVertex {
+                    source: TriangulationValidationError::IsolatedVertex {
                         vertex_key: vk,
                         vertex_uuid: uuid,
-                    }),
+                    },
                 });
             }
         }
@@ -6569,11 +6612,7 @@ where
             // Quality-based selection: keep 2 best, remove rest
             // Note: cell_qualities always has all involved_cells at this point since
             // any quality computation failure results in an early error return above
-            cell_qualities.sort_unstable_by(|a, b| {
-                a.1.partial_cmp(&b.1)
-                    .unwrap_or(CmpOrdering::Equal)
-                    .then_with(|| a.2.cmp(&b.2))
-            });
+            cell_qualities.sort_unstable_by(|a, b| a.1.total_cmp(&b.1).then_with(|| a.2.cmp(&b.2)));
 
             // Mark cells beyond the top 2 for removal
             for (cell_key, _, _) in cell_qualities.iter().skip(2) {
@@ -6805,7 +6844,9 @@ mod tests {
     #[test]
     fn test_triangulation_validation_error_try_from_manifold_error_preserves_detail() {
         let tds_err = TdsError::InvalidNeighbors {
-            message: "unit test".to_string(),
+            reason: NeighborValidationError::Other {
+                message: "unit test".to_string(),
+            },
         };
 
         // ManifoldError::Tds belongs to the lower TDS layer, not TriangulationValidationError.
@@ -7271,69 +7312,78 @@ mod tests {
         );
     }
 
-    fn build_invalid_vertex_link_tds_2d() -> (Tds<f64, (), (), 2>, VertexKey) {
-        // Two triangles sharing only a single vertex produce a disconnected vertex link.
-        let mut tds: Tds<f64, (), (), 2> = Tds::empty();
-
-        let v0 = tds.insert_vertex_with_mapping(vertex!([0.0, 0.0])).unwrap();
-        let v1 = tds.insert_vertex_with_mapping(vertex!([1.0, 0.0])).unwrap();
-        let v2 = tds.insert_vertex_with_mapping(vertex!([0.0, 1.0])).unwrap();
-        let v3 = tds
-            .insert_vertex_with_mapping(vertex!([10.0, 0.0]))
-            .unwrap();
-        let v4 = tds
-            .insert_vertex_with_mapping(vertex!([10.0, 1.0]))
-            .unwrap();
-
-        let _ = tds
-            .insert_cell_with_mapping(Cell::new(vec![v0, v1, v2], None).unwrap())
-            .unwrap();
-        let _ = tds
-            .insert_cell_with_mapping(Cell::new(vec![v0, v3, v4], None).unwrap())
-            .unwrap();
-
-        tds.assign_incident_cells().unwrap();
-
-        (tds, v0)
+    fn insert_test_vertex_with_coords<const D: usize>(
+        tds: &mut Tds<f64, (), (), D>,
+        entries: &[(usize, f64)],
+    ) -> VertexKey {
+        let mut coords = [0.0_f64; D];
+        for &(axis, value) in entries {
+            coords[axis] = value;
+        }
+        tds.insert_vertex_with_mapping(vertex!(coords)).unwrap()
     }
 
-    fn build_invalid_vertex_link_tds_3d() -> (Tds<f64, (), (), 3>, VertexKey) {
-        // Two tetrahedra sharing only a single vertex pass facet/ridge checks
-        // locally but have a disconnected vertex link at the shared vertex.
-        let mut tds: Tds<f64, (), (), 3> = Tds::empty();
+    fn build_invalid_vertex_link_tds<const D: usize>() -> (Tds<f64, (), (), D>, VertexKey) {
+        // Two disjoint stars sharing only one apex produce a disconnected vertex link.
+        let mut tds: Tds<f64, (), (), D> = Tds::empty();
+        let shared = insert_test_vertex_with_coords(&mut tds, &[]);
 
-        let v0 = tds
-            .insert_vertex_with_mapping(vertex!([0.0, 0.0, 0.0]))
-            .unwrap();
-        let v1 = tds
-            .insert_vertex_with_mapping(vertex!([1.0, 0.0, 0.0]))
-            .unwrap();
-        let v2 = tds
-            .insert_vertex_with_mapping(vertex!([0.0, 1.0, 0.0]))
-            .unwrap();
-        let v3 = tds
-            .insert_vertex_with_mapping(vertex!([0.0, 0.0, 1.0]))
-            .unwrap();
-        let v4 = tds
-            .insert_vertex_with_mapping(vertex!([10.0, 0.0, 0.0]))
-            .unwrap();
-        let v5 = tds
-            .insert_vertex_with_mapping(vertex!([10.0, 1.0, 0.0]))
-            .unwrap();
-        let v6 = tds
-            .insert_vertex_with_mapping(vertex!([10.0, 0.0, 1.0]))
-            .unwrap();
+        if D == 2 {
+            // Two cone cycles keep the 1D boundary closed, so strict validation reaches
+            // the disconnected vertex-link diagnostic instead of stopping at ridge degree.
+            let first_a = insert_test_vertex_with_coords(&mut tds, &[(0, 1.0)]);
+            let first_b = insert_test_vertex_with_coords(&mut tds, &[(1, 1.0)]);
+            let first_c = insert_test_vertex_with_coords(&mut tds, &[(0, -1.0)]);
+            let second_a = insert_test_vertex_with_coords(&mut tds, &[(0, 10.0)]);
+            let second_b = insert_test_vertex_with_coords(&mut tds, &[(0, 11.0), (1, 1.0)]);
+            let second_c = insert_test_vertex_with_coords(&mut tds, &[(0, 9.0), (1, 1.0)]);
+
+            for cell_vertices in [
+                vec![shared, first_a, first_b],
+                vec![shared, first_b, first_c],
+                vec![shared, first_c, first_a],
+                vec![shared, second_a, second_b],
+                vec![shared, second_b, second_c],
+                vec![shared, second_c, second_a],
+            ] {
+                let _ = tds
+                    .insert_cell_with_mapping(Cell::new(cell_vertices, None).unwrap())
+                    .unwrap();
+            }
+
+            tds.assign_incident_cells().unwrap();
+            return (tds, shared);
+        }
+
+        let mut first_cell_vertices = vec![shared];
+        for axis in 0..D {
+            let mut coords = [0.0_f64; D];
+            coords[axis] = 1.0;
+            first_cell_vertices.push(tds.insert_vertex_with_mapping(vertex!(coords)).unwrap());
+        }
+
+        let mut second_cell_vertices = vec![shared];
+        for axis in 0..D {
+            let mut coords = [0.0_f64; D];
+            coords[0] = 10.0;
+            coords[axis] += 1.0;
+            second_cell_vertices.push(tds.insert_vertex_with_mapping(vertex!(coords)).unwrap());
+        }
 
         let _ = tds
-            .insert_cell_with_mapping(Cell::new(vec![v0, v1, v2, v3], None).unwrap())
+            .insert_cell_with_mapping(Cell::new(first_cell_vertices, None).unwrap())
             .unwrap();
         let _ = tds
-            .insert_cell_with_mapping(Cell::new(vec![v0, v4, v5, v6], None).unwrap())
+            .insert_cell_with_mapping(Cell::new(second_cell_vertices, None).unwrap())
             .unwrap();
 
         tds.assign_incident_cells().unwrap();
 
-        (tds, v0)
+        (tds, shared)
+    }
+
+    fn build_invalid_vertex_link_tds_2d() -> (Tds<f64, (), (), 2>, VertexKey) {
+        build_invalid_vertex_link_tds::<2>()
     }
 
     #[test]
@@ -7540,28 +7590,62 @@ mod tests {
         }
     }
 
-    #[test]
-    fn test_scoped_strict_validation_falls_back_to_global_vertex_links() {
-        let (tds, expected_vertex_key) = build_invalid_vertex_link_tds_3d();
-        let mut tri =
-            Triangulation::<FastKernel<f64>, (), (), 3>::new_with_tds(FastKernel::new(), tds);
-        let scope: CellKeyBuffer = tri.tds.cell_keys().take(1).collect();
-        assert!(!scope.is_empty());
-
-        // Direct field assignment keeps this internal test focused on insertion-time
-        // strict fallback behavior even though the fixture is intentionally invalid.
-        tri.validation_policy = ValidationPolicy::OnSuspicion;
-        tri.topology_guarantee = TopologyGuarantee::PLManifoldStrict;
-
-        match tri.validate_after_insertion_with_scope(SuspicionFlags::default(), Some(&scope)) {
-            Err(InvariantError::Triangulation(
-                TriangulationValidationError::VertexLinkNotManifold { vertex_key, .. },
-            )) => {
-                assert_eq!(vertex_key, expected_vertex_key);
-            }
-            other => panic!("Expected VertexLinkNotManifold, got {other:?}"),
+    fn unit_simplex_vertices<const D: usize>() -> Vec<Vertex<f64, (), D>> {
+        let mut vertices = Vec::with_capacity(D + 1);
+        vertices.push(vertex!([0.0_f64; D]));
+        for axis in 0..D {
+            let mut coords = [0.0_f64; D];
+            coords[axis] = 1.0;
+            vertices.push(vertex!(coords));
         }
+        vertices
     }
+
+    fn unit_simplex_interior_vertex<const D: usize>() -> Vertex<f64, (), D> {
+        vertex!([0.125_f64; D])
+    }
+
+    macro_rules! test_scoped_strict_validation_falls_back_to_global_vertex_links {
+        ($($dim:expr),+ $(,)?) => {
+            pastey::paste! {
+                $(
+                    #[test]
+                    fn [<test_scoped_strict_validation_falls_back_to_global_vertex_links_ $dim d>]() {
+                        let (tds, expected_vertex_key) = build_invalid_vertex_link_tds::<$dim>();
+                        let mut tri =
+                            Triangulation::<FastKernel<f64>, (), (), $dim>::new_with_tds(FastKernel::new(), tds);
+                        let scope: CellKeyBuffer = tri.tds.cell_keys().take(1).collect();
+                        assert!(!scope.is_empty());
+
+                        // Direct field assignment keeps this internal test focused on insertion-time
+                        // strict fallback behavior even though the fixture is intentionally invalid.
+                        tri.validation_policy = ValidationPolicy::OnSuspicion;
+                        tri.topology_guarantee = TopologyGuarantee::PLManifoldStrict;
+
+                        match tri.validate_after_insertion_with_scope(SuspicionFlags::default(), Some(&scope)) {
+                            Err(InvariantError::Triangulation(
+                                TriangulationValidationError::RidgeLinkNotManifold {
+                                    connected: false,
+                                    ..
+                                },
+                            )) if $dim == 2 => {
+                                // In 2D, ridges are vertices, so the global strict path
+                                // reports the disconnected apex link at the ridge layer first.
+                            }
+                            Err(InvariantError::Triangulation(
+                                TriangulationValidationError::VertexLinkNotManifold { vertex_key, .. },
+                            )) => {
+                                assert_eq!(vertex_key, expected_vertex_key);
+                            }
+                            other => panic!("Expected VertexLinkNotManifold, got {other:?}"),
+                        }
+                    }
+                )+
+            }
+        };
+    }
+
+    test_scoped_strict_validation_falls_back_to_global_vertex_links!(2, 3, 4, 5);
 
     #[test]
     fn test_local_geometric_orientation_validation_errors_on_missing_scope_cell() {
@@ -7587,45 +7671,54 @@ mod tests {
         }
     }
 
-    #[test]
-    fn test_insertion_scoped_validation_preserves_full_validity() {
-        let vertices = vec![
-            vertex!([0.0, 0.0, 0.0]),
-            vertex!([1.0, 0.0, 0.0]),
-            vertex!([0.0, 1.0, 0.0]),
-            vertex!([0.0, 0.0, 1.0]),
-        ];
-        let tds =
-            Triangulation::<FastKernel<f64>, (), (), 3>::build_initial_simplex(&vertices).unwrap();
-        let mut tri =
-            Triangulation::<FastKernel<f64>, (), (), 3>::new_with_tds(FastKernel::new(), tds);
+    macro_rules! test_insertion_scoped_validation_preserves_full_validity {
+        ($($dim:expr),+ $(,)?) => {
+            pastey::paste! {
+                $(
+                    #[test]
+                    fn [<test_insertion_scoped_validation_preserves_full_validity_ $dim d>]() {
+                        let vertices = unit_simplex_vertices::<$dim>();
+                        let tds =
+                            Triangulation::<FastKernel<f64>, (), (), $dim>::build_initial_simplex(&vertices)
+                                .unwrap();
+                        let mut tri =
+                            Triangulation::<FastKernel<f64>, (), (), $dim>::new_with_tds(FastKernel::new(), tds);
 
-        tri.set_validation_policy(ValidationPolicy::OnSuspicion);
-        tri.set_topology_guarantee(TopologyGuarantee::PLManifold);
+                        tri.set_validation_policy(ValidationPolicy::OnSuspicion);
+                        tri.set_topology_guarantee(TopologyGuarantee::PLManifoldStrict);
 
-        let detail = tri
-            .insert_with_statistics_seeded_indexed_detailed(
-                vertex!([0.2, 0.2, 0.2]),
-                None,
-                None,
-                0,
-                None,
-                None,
-            )
-            .unwrap();
+                        let detail = tri
+                            .insert_with_statistics_seeded_indexed_detailed(
+                                unit_simplex_interior_vertex::<$dim>(),
+                                None,
+                                None,
+                                0,
+                                None,
+                                None,
+                            )
+                            .unwrap();
 
-        assert!(matches!(
-            detail.outcome,
-            InsertionOutcome::Inserted {
-                vertex_key: _,
-                hint: _
+                        assert!(matches!(
+                            detail.outcome,
+                            InsertionOutcome::Inserted {
+                                vertex_key: _,
+                                hint: _
+                            }
+                        ));
+                        assert!(!detail.repair_seed_cells.is_empty());
+                        tri.validate_after_insertion_with_scope(
+                            SuspicionFlags::default(),
+                            Some(&detail.repair_seed_cells),
+                        )
+                        .unwrap();
+                        tri.is_valid().unwrap();
+                    }
+                )+
             }
-        ));
-        assert!(!detail.repair_seed_cells.is_empty());
-        tri.validate_required_topology_links_for_cells(&detail.repair_seed_cells)
-            .unwrap();
-        tri.is_valid().unwrap();
+        };
     }
+
+    test_insertion_scoped_validation_preserves_full_validity!(2, 3, 4, 5);
 
     #[test]
     fn test_validate_after_insertion_skips_when_policy_does_not_trigger_and_no_required_link_checks()
@@ -8506,15 +8599,10 @@ mod tests {
         first_cell.neighbors = Some(neighbors);
 
         match tds.is_valid() {
-            Err(TdsError::InvalidNeighbors { message }) => {
-                assert!(
-                    message.contains("Boundary facet"),
-                    "Unexpected message: {message}"
-                );
-                assert!(
-                    message.contains(&format!("{second_cell_key:?}")),
-                    "Expected message to reference {second_cell_key:?}, got: {message}"
-                );
+            Err(TdsError::InvalidNeighbors {
+                reason: NeighborValidationError::BoundaryFacetHasNeighbor { neighbor_key, .. },
+            }) => {
+                assert_eq!(neighbor_key, second_cell_key);
             }
             other => panic!("Expected InvalidNeighbors, got {other:?}"),
         }
@@ -8547,16 +8635,9 @@ mod tests {
         let _ = tds.insert_cell_with_mapping(cell_2).unwrap();
 
         match tds.is_valid() {
-            Err(TdsError::InvalidNeighbors { message }) => {
-                assert!(
-                    message.contains("Interior facet"),
-                    "Unexpected message: {message}"
-                );
-                assert!(
-                    message.contains("inconsistent neighbor pointers"),
-                    "Unexpected message: {message}"
-                );
-            }
+            Err(TdsError::InvalidNeighbors {
+                reason: NeighborValidationError::InteriorFacetNeighborMismatch { .. },
+            }) => {}
             other => panic!("Expected InvalidNeighbors, got {other:?}"),
         }
     }
@@ -9053,7 +9134,7 @@ mod tests {
         let mut tds =
             Triangulation::<FastKernel<f64>, (), (), 2>::build_initial_simplex(&vertices).unwrap();
         let cell_key = tds.cell_keys().next().unwrap();
-        tds.cell_mut(cell_key).unwrap().periodic_vertex_offsets = Some(vec![[0, 0], [1, 0]]);
+        tds.cell_mut(cell_key).unwrap().periodic_vertex_offsets = Some(vec![[0, 0], [1, 0]].into());
 
         let tri = Triangulation::<FastKernel<f64>, (), (), 2>::new_with_tds(FastKernel::new(), tds);
         let err = tri.validate_geometric_cell_orientation().unwrap_err();
@@ -9961,6 +10042,31 @@ mod tests {
 
         assert!(matches!(detail.outcome, InsertionOutcome::Inserted { .. }));
         assert_eq!(detail.telemetry.topology_validation_calls, 0);
+
+        let tds =
+            Triangulation::<FastKernel<f64>, (), (), 2>::build_initial_simplex(&vertices).unwrap();
+        let mut tri =
+            Triangulation::<FastKernel<f64>, (), (), 2>::new_with_tds(FastKernel::new(), tds);
+        tri.set_validation_policy(ValidationPolicy::OnSuspicion);
+        tri.set_topology_guarantee(TopologyGuarantee::PLManifold);
+
+        let hint = tri.cells().next().map(|(cell_key, _)| cell_key);
+        let detail = tri
+            .insert_with_statistics_seeded_indexed_detailed(
+                vertex!([0.25, 0.25]),
+                None,
+                hint,
+                0,
+                None,
+                None,
+            )
+            .unwrap();
+
+        assert!(matches!(detail.outcome, InsertionOutcome::Inserted { .. }));
+        assert!(
+            detail.telemetry.topology_validation_calls > 0,
+            "PLManifold insertion should record RequiredTopologyLinks validation"
+        );
     }
 
     #[test]
@@ -10497,7 +10603,7 @@ mod tests {
         };
         let error = InsertionError::TopologyValidationFailed {
             message: "outer".to_string(),
-            source: Box::new(inner.clone()),
+            source: inner.clone(),
         };
         let result = insertion_error_to_invariant_error(error, "ctx");
         assert_eq!(result, InvariantError::Triangulation(inner));
@@ -10739,7 +10845,7 @@ mod tests {
                 Err(InsertionError::TopologyValidationFailed {
                     source, ..
                 }) if matches!(
-                    source.as_ref(),
+                    source,
                     TriangulationValidationError::IsolatedVertex { vertex_key, .. }
                         if *vertex_key == iso
                 )
@@ -11571,7 +11677,9 @@ mod tests {
     fn test_invariant_error_to_insertion_error_all_arms() {
         // Tds arm
         let tds_err = InvariantError::Tds(TdsError::InvalidNeighbors {
-            message: "test".into(),
+            reason: NeighborValidationError::Other {
+                message: "test".into(),
+            },
         });
         let ie = Triangulation::<FastKernel<f64>, (), (), 2>::invariant_error_to_insertion_error(
             tds_err,

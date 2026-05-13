@@ -13,6 +13,12 @@
 //! cargo test --release --test large_scale_debug debug_large_scale_3d -- --ignored --nocapture
 //! ```
 //!
+//! The default 3D helper (`just debug-large-scale-3d 10000 1`) is the current
+//! release-mode 10,000-vertex acceptance case: it should insert all vertices
+//! with zero skips, run final repair, and pass `validation_report` for
+//! Levels 1–4. On maintainer Apple M4 Max hardware this sits around the
+//! 100-second mark; use local harness output for exact timing.
+//!
 //! Override defaults via environment variables:
 //! ```bash
 //! # Base RNG seed (decimal or 0x-hex)
@@ -73,7 +79,7 @@
 
 #![forbid(unsafe_code)]
 
-use delaunay::geometry::kernel::RobustKernel;
+use delaunay::geometry::kernel::{ExactPredicates, Kernel, RobustKernel};
 use delaunay::geometry::util::{
     generate_random_points_in_ball_seeded, generate_random_points_seeded, safe_usize_to_scalar,
 };
@@ -1116,7 +1122,10 @@ fn print_insertion_summary<const D: usize>(
     clippy::too_many_lines,
     reason = "Intentional debug harness; kept as a single flow for manual inspection"
 )]
-fn debug_large_case<const D: usize>(dimension_name: &str, default_n_points: usize) -> DebugOutcome {
+fn debug_large_case<const D: usize>(dimension_name: &str, default_n_points: usize) -> DebugOutcome
+where
+    RobustKernel<f64>: ExactPredicates<D> + Kernel<D, Scalar = f64>,
+{
     init_tracing();
 
     // Install a hard wall-clock cap so the harness doesn't hang indefinitely.

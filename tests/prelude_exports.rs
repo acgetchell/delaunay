@@ -46,9 +46,10 @@ use delaunay::prelude::triangulation::insertion::{
 };
 use delaunay::prelude::triangulation::repair::{
     DelaunayCheckPolicy, DelaunayRepairDiagnostics, DelaunayRepairError, DelaunayRepairOperation,
-    DelaunayRepairOutcome, DelaunayRepairStats, DelaunayTriangulationValidationError,
-    FlipEdgeAdjacencyError, FlipError, FlipTriangleAdjacencyError, FlipVertexAdjacencyError,
-    RepairQueueOrder, verify_delaunay_for_triangulation,
+    DelaunayRepairOutcome, DelaunayRepairStats, DelaunayRepairVerificationContext,
+    DelaunayTriangulationValidationError, FlipEdgeAdjacencyError, FlipError,
+    FlipTriangleAdjacencyError, FlipVertexAdjacencyError, RepairQueueOrder,
+    verify_delaunay_for_triangulation,
 };
 use delaunay::prelude::triangulation::validation::ValidationCadence;
 use delaunay::vertex;
@@ -167,7 +168,10 @@ fn diagnostic_preludes_cover_repair_apis() -> Result<(), PreludeExportTestError>
     assert_send_sync_unpin::<FlipVertexAdjacencyError>();
     let validation_error = DelaunayTriangulationValidationError::RepairOperationFailed {
         operation: DelaunayRepairOperation::VertexRemoval,
-        source: Box::new(DelaunayRepairError::Flip(FlipError::DegenerateCell)),
+        source: DelaunayRepairError::VerificationFailed {
+            context: DelaunayRepairVerificationContext::StrictValidation,
+            source: Box::new(FlipError::DegenerateCell),
+        },
     };
     assert!(validation_error.to_string().contains("vertex removal"));
 
