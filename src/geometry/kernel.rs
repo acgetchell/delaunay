@@ -23,15 +23,18 @@
 #![forbid(unsafe_code)]
 
 use crate::core::cell::CellValidationError;
-use crate::geometry::matrix::{matrix_get, matrix_set, matrix_zero_like};
+use crate::core::collections::{MAX_PRACTICAL_DIMENSION_SIZE, SmallBuffer};
 use crate::geometry::point::Point;
-use crate::geometry::predicates::{InSphere, Orientation, insphere_lifted, simplex_orientation};
-use crate::geometry::robust_predicates::{robust_insphere, robust_orientation};
-use crate::geometry::sos::{exact_det_sign, sos_insphere_sign, sos_orientation_sign};
-use crate::geometry::traits::coordinate::{
-    Coordinate, CoordinateConversionError, CoordinateScalar,
+use crate::geometry::predicates::{
+    InSphere, Orientation, insphere_lifted, relative_insphere_effective_sign,
+    relative_insphere_signs, simplex_orientation,
 };
-use crate::geometry::util::{safe_coords_to_f64, safe_scalar_to_f64, squared_norm};
+use crate::geometry::robust_predicates::{robust_insphere, robust_orientation};
+use crate::geometry::sos::{sos_insphere_sign, sos_orientation_sign};
+use crate::geometry::traits::coordinate::{
+    Coordinate, CoordinateConversionError, CoordinateScalar, DegenerateSimplexReason,
+};
+use crate::geometry::util::safe_coords_to_f64;
 use core::marker::PhantomData;
 
 /// Geometric kernel trait defining predicates for triangulation algorithms.
@@ -348,6 +351,21 @@ where
             // Preserve original CoordinateConversionError if present
             match e {
                 CellValidationError::CoordinateConversion { source } => source,
+                CellValidationError::InsufficientVertices {
+                    actual,
+                    expected,
+                    dimension,
+                } => CoordinateConversionError::InvalidSimplexPointCount {
+                    actual,
+                    expected,
+                    dimension,
+                },
+                CellValidationError::DegenerateSimplex => {
+                    CoordinateConversionError::DegenerateSimplex {
+                        dimension: D,
+                        reason: DegenerateSimplexReason::ZeroOrientation,
+                    }
+                }
                 _ => CoordinateConversionError::ConversionFailed {
                     coordinate_index: 0,
                     coordinate_value: format!("{e}"),
@@ -545,11 +563,10 @@ where
         points: &[Point<Self::Scalar, D>],
     ) -> Result<i32, CoordinateConversionError> {
         if points.len() != D + 1 {
-            return Err(CoordinateConversionError::ConversionFailed {
-                coordinate_index: 0,
-                coordinate_value: format!("Expected {} points, got {}", D + 1, points.len()),
-                from_type: "point count",
-                to_type: "valid simplex",
+            return Err(CoordinateConversionError::InvalidSimplexPointCount {
+                actual: points.len(),
+                expected: D + 1,
+                dimension: D,
             });
         }
 
@@ -565,10 +582,11 @@ where
 
         // Layer 3: SoS tie-breaking for truly degenerate orientation.
         // Same pattern as in_sphere() — convert to f64 points for SoS.
-        let f64_points: Vec<Point<f64, D>> = points
-            .iter()
-            .map(|p| safe_coords_to_f64(p.coords()).map(Point::new))
-            .collect::<Result<_, _>>()?;
+        let mut f64_points: SmallBuffer<Point<f64, D>, MAX_PRACTICAL_DIMENSION_SIZE> =
+            SmallBuffer::with_capacity(points.len());
+        for point in points {
+            f64_points.push(Point::new(safe_coords_to_f64(point.coords())?));
+        }
 
         // SoS guarantees a non-zero sign for distinct points.  If SoS
         // fails (all cofactors vanish) the points are identical in f64
@@ -584,108 +602,53 @@ where
         test_point: &Point<Self::Scalar, D>,
     ) -> Result<i32, CoordinateConversionError> {
         if simplex_points.len() != D + 1 {
-            return Err(CoordinateConversionError::ConversionFailed {
-                coordinate_index: 0,
-                coordinate_value: format!(
-                    "Expected {} points, got {}",
-                    D + 1,
-                    simplex_points.len()
-                ),
-                from_type: "point count",
-                to_type: "valid simplex",
+            return Err(CoordinateConversionError::InvalidSimplexPointCount {
+                actual: simplex_points.len(),
+                expected: D + 1,
+                dimension: D,
             });
         }
 
-        let k = D + 1;
+        let signs = relative_insphere_signs(simplex_points, test_point)?;
+        let rel_orient_sign = signs.relative_orientation;
+        let insphere_det_sign = signs.insphere_determinant;
 
-        try_with_la_stack_matrix!(k, |matrix| {
-            // Build (D+1)×(D+1) lifted insphere matrix using relative
-            // coordinates centered on simplex_points[0].
-            let ref_coords = simplex_points[0].coords();
+        // Fast path: both non-degenerate.
+        if rel_orient_sign != 0 && insphere_det_sign != 0 {
+            return Ok(relative_insphere_effective_sign(signs));
+        }
 
-            for (row, point) in simplex_points.iter().skip(1).enumerate() {
-                let coords = point.coords();
-                let mut rel_t: [T; D] = [T::zero(); D];
-                for (dst, (p, r)) in rel_t.iter_mut().zip(coords.iter().zip(ref_coords.iter())) {
-                    *dst = *p - *r;
-                }
-                let rel_f64: [f64; D] = safe_coords_to_f64(&rel_t)?;
-                for (j, &v) in rel_f64.iter().enumerate() {
-                    matrix_set(&mut matrix, row, j, v);
-                }
-                let sq_norm = squared_norm(&rel_t);
-                let sq_f64 = safe_scalar_to_f64(sq_norm)?;
-                matrix_set(&mut matrix, row, D, sq_f64);
-            }
+        // At least one predicate needs SoS → convert to f64 points.
+        let mut f64_simplex: SmallBuffer<Point<f64, D>, MAX_PRACTICAL_DIMENSION_SIZE> =
+            SmallBuffer::with_capacity(simplex_points.len());
+        for point in simplex_points {
+            f64_simplex.push(Point::new(safe_coords_to_f64(point.coords())?));
+        }
+        let f64_test = Point::new(safe_coords_to_f64(test_point.coords())?);
 
-            // Test point row.
-            let test_coords = test_point.coords();
-            let mut test_rel_t: [T; D] = [T::zero(); D];
-            for (dst, (p, r)) in test_rel_t
-                .iter_mut()
-                .zip(test_coords.iter().zip(ref_coords.iter()))
-            {
-                *dst = *p - *r;
-            }
-            let test_rel_f64: [f64; D] = safe_coords_to_f64(&test_rel_t)?;
-            for (j, &v) in test_rel_f64.iter().enumerate() {
-                matrix_set(&mut matrix, D, j, v);
-            }
-            let test_sq = squared_norm(&test_rel_t);
-            let test_sq_f64 = safe_scalar_to_f64(test_sq)?;
-            matrix_set(&mut matrix, D, D, test_sq_f64);
-
-            // Compute relative orientation from D×D coordinate block
-            // (same embedding as insphere_lifted).
-            let mut orient_matrix = matrix_zero_like(&matrix);
-            for i in 0..D {
-                for j in 0..D {
-                    matrix_set(&mut orient_matrix, i, j, matrix_get(&matrix, i, j));
-                }
-            }
-            matrix_set(&mut orient_matrix, D, D, 1.0);
-
-            // Layer 1 + 2 for both predicates.
-            let rel_orient_sign = exact_det_sign(&orient_matrix);
-            let insphere_det_sign = exact_det_sign(&matrix);
-
-            // Fast path: both non-degenerate.
-            if rel_orient_sign != 0 && insphere_det_sign != 0 {
-                let orient_factor = -rel_orient_sign;
-                return Ok((insphere_det_sign * orient_factor).signum());
-            }
-
-            // At least one predicate needs SoS → convert to f64 points.
-            let f64_simplex: Vec<Point<f64, D>> = simplex_points
-                .iter()
-                .map(|p| safe_coords_to_f64(p.coords()).map(Point::new))
-                .collect::<Result<_, _>>()?;
-            let f64_test = Point::new(safe_coords_to_f64(test_point.coords())?);
-
-            // Resolve orientation factor.
-            let orient_factor: i32 = if rel_orient_sign != 0 {
-                -rel_orient_sign
+        // Resolve orientation factor.
+        let orient_factor: i32 = if rel_orient_sign != 0 {
+            -rel_orient_sign
+        } else {
+            // Orientation degenerate → SoS gives absolute orientation sign.
+            // rel_orient = (-1)^D × abs_orient
+            // orient_factor = -rel_orient = (-1)^(D+1) × abs_orient
+            let sos_abs = sos_orientation_sign(&f64_simplex)?;
+            if D.is_multiple_of(2) {
+                -sos_abs
             } else {
-                // Orientation degenerate → SoS gives absolute orientation sign.
-                // rel_orient = (-1)^D × abs_orient
-                // orient_factor = -rel_orient = (-1)^(D+1) × abs_orient
-                let sos_abs = sos_orientation_sign(&f64_simplex)?;
-                if D.is_multiple_of(2) {
-                    -sos_abs
-                } else {
-                    sos_abs
-                }
-            };
+                sos_abs
+            }
+        };
 
-            // Resolve insphere sign.
-            let insphere_effective: i32 = if insphere_det_sign != 0 {
-                insphere_det_sign
-            } else {
-                sos_insphere_sign(&f64_simplex, &f64_test)?
-            };
+        // Resolve insphere sign.
+        let insphere_effective: i32 = if insphere_det_sign != 0 {
+            insphere_det_sign
+        } else {
+            sos_insphere_sign(&f64_simplex, &f64_test)?
+        };
 
-            Ok((insphere_effective * orient_factor).signum())
-        })
+        Ok((insphere_effective * orient_factor).signum())
     }
 }
 
@@ -900,18 +863,25 @@ mod tests {
 
     #[test]
     fn test_fast_kernel_in_sphere_insufficient_vertices() {
-        // Exercises the non-CoordinateConversion error path (InsufficientVertices)
+        // Exercises the CellValidationError::InsufficientVertices mapping.
         let kernel = FastKernel::<f64>::new();
         let simplex: [Point<f64, 3>; 2] =
             [Point::new([0.0, 0.0, 0.0]), Point::new([1.0, 0.0, 0.0])];
         let test_point = Point::new([0.5, 0.5, 0.5]);
         let result = kernel.in_sphere(&simplex, &test_point);
-        assert!(result.is_err(), "Should error with insufficient vertices");
+        assert_eq!(
+            result,
+            Err(CoordinateConversionError::InvalidSimplexPointCount {
+                actual: 2,
+                expected: 4,
+                dimension: 3,
+            })
+        );
     }
 
     #[test]
     fn test_fast_kernel_in_sphere_degenerate_simplex() {
-        // Exercises the DegenerateSimplex error → CoordinateConversion path
+        // Exercises the CellValidationError::DegenerateSimplex mapping.
         let kernel = FastKernel::<f64>::new();
         let simplex = [
             Point::new([0.0, 0.0, 0.0]),
@@ -921,7 +891,13 @@ mod tests {
         ];
         let test_point = Point::new([0.5, 0.5, 0.5]);
         let result = kernel.in_sphere(&simplex, &test_point);
-        assert!(result.is_err(), "Should error with degenerate simplex");
+        assert_eq!(
+            result,
+            Err(CoordinateConversionError::DegenerateSimplex {
+                dimension: 3,
+                reason: DegenerateSimplexReason::ZeroOrientation,
+            })
+        );
     }
 
     // =========================================================================

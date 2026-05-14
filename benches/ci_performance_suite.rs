@@ -39,10 +39,11 @@ use delaunay::prelude::geometry::{
 };
 use delaunay::prelude::query::ConvexHull;
 use delaunay::prelude::triangulation::construction::{
-    ConstructionOptions, DelaunayTriangulation, InsertionOrderStrategy, RetryPolicy, Vertex,
+    ConstructionOptions, DelaunayTriangulation, InsertionOrderStrategy, RetryPolicy,
+    TopologyGuarantee, Vertex,
 };
 use delaunay::prelude::triangulation::flips::{
-    BistellarFlips, CellKey, EdgeKey, FacetHandle, RidgeHandle, TopologyGuarantee, TriangleHandle,
+    BistellarFlips, CellKey, EdgeKey, FacetHandle, RidgeHandle, TriangleHandle,
 };
 use delaunay::vertex;
 use std::{env, hint::black_box, num::NonZeroUsize, sync::Once};

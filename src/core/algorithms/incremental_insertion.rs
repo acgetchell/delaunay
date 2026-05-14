@@ -1843,7 +1843,7 @@ where
         // Create and insert the new cell
         let new_cell = Cell::new(new_cell_vertices, None).map_err(CavityFillingError::from)?;
         let cell_key = tds
-            .insert_cell_with_mapping(new_cell)
+            .insert_cell_with_mapping_trusted_vertices(new_cell)
             .map_err(CavityFillingError::from)?;
 
         // Cell creation provenance: log each newly created cell with its

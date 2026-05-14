@@ -68,11 +68,31 @@ use num_traits::{Float, Zero};
 use ordered_float::OrderedFloat;
 use serde::{Serialize, de::DeserializeOwned};
 use std::{
-    fmt::Debug,
+    fmt::{self, Debug},
     hash::{Hash, Hasher},
     iter::Sum,
     ops::{AddAssign, SubAssign},
 };
+
+/// Structured reason why a simplex is geometrically degenerate.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum DegenerateSimplexReason {
+    /// The simplex orientation determinant is exactly zero.
+    ZeroOrientation,
+    /// All symbolic-perturbation cofactors vanished, usually because the input
+    /// points are identical in the evaluated coordinate representation.
+    VanishingSosCofactors,
+}
+
+impl fmt::Display for DegenerateSimplexReason {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::ZeroOrientation => f.write_str("zero orientation"),
+            Self::VanishingSosCofactors => f.write_str("vanishing SoS cofactors"),
+        }
+    }
+}
 
 /// Errors that can occur during coordinate conversion in geometric predicates.
 ///
@@ -116,6 +136,26 @@ pub enum CoordinateConversionError {
         /// String representation of the non-finite coordinate value
         coordinate_value: String,
     },
+    /// A predicate received the wrong number of points for a D-dimensional simplex.
+    #[error(
+        "Invalid simplex point count for dimension {dimension}: expected {expected}, got {actual}"
+    )]
+    InvalidSimplexPointCount {
+        /// Number of points provided.
+        actual: usize,
+        /// Number of points required to form a D-dimensional simplex.
+        expected: usize,
+        /// Dimension of the simplex.
+        dimension: usize,
+    },
+    /// A predicate received a simplex whose geometry cannot determine a sign.
+    #[error("Degenerate simplex in dimension {dimension}: {reason}")]
+    DegenerateSimplex {
+        /// Dimension of the degenerate simplex.
+        dimension: usize,
+        /// Structured reason the simplex was classified as degenerate.
+        reason: DegenerateSimplexReason,
+    },
     /// Strict robust-insphere consistency check failed.
     #[error("Insphere consistency check failed: {details}")]
     InsphereInconsistency {
@@ -134,9 +174,27 @@ pub enum CoordinateConversionError {
         /// Maximum supported matrix dimension.
         max: usize,
     },
+    /// Internal matrix dispatch requested an active block whose size does not
+    /// match the concrete stack matrix.
+    ///
+    /// Public predicate APIs surface this as a typed error rather than silently
+    /// classifying structurally invalid predicate state as degenerate geometry.
+    #[error(
+        "Active matrix block size {active} does not match concrete matrix dimension {matrix_dimension}"
+    )]
+    MatrixDimensionMismatch {
+        /// Requested active matrix dimension.
+        active: usize,
+        /// Concrete matrix dimension.
+        matrix_dimension: usize,
+    },
     /// A linear algebra backend operation failed.
-    #[error("Linear algebra failure: {0}")]
-    LinearAlgebraFailure(#[from] LaError),
+    #[error("Linear algebra failure: {source}")]
+    LinearAlgebraFailure {
+        /// Typed source error from the linear algebra backend.
+        #[from]
+        source: LaError,
+    },
 }
 
 impl From<StackMatrixDispatchError> for CoordinateConversionError {
@@ -145,7 +203,13 @@ impl From<StackMatrixDispatchError> for CoordinateConversionError {
             StackMatrixDispatchError::UnsupportedDim { k, max } => {
                 Self::UnsupportedMatrixDimension { requested: k, max }
             }
-            StackMatrixDispatchError::La(source) => Self::LinearAlgebraFailure(source),
+            StackMatrixDispatchError::ActiveBlockDimensionMismatch { k, dim } => {
+                Self::MatrixDimensionMismatch {
+                    active: k,
+                    matrix_dimension: dim,
+                }
+            }
+            StackMatrixDispatchError::La { source } => Self::LinearAlgebraFailure { source },
         }
     }
 }

@@ -33,6 +33,7 @@ use crate::triangulation::delaunay::DelaunayTriangulation;
 /// # Example
 ///
 /// ```rust
+/// use delaunay::prelude::triangulation::construction::TopologyGuarantee;
 /// use delaunay::prelude::triangulation::flips::*;
 ///
 /// let vertices = vec![
@@ -69,6 +70,7 @@ where
     /// # Example
     ///
     /// ```rust
+    /// use delaunay::prelude::triangulation::construction::TopologyGuarantee;
     /// use delaunay::prelude::triangulation::flips::*;
     ///
     /// let vertices = vec![
@@ -105,6 +107,7 @@ where
     /// # Example
     ///
     /// ```rust
+    /// use delaunay::prelude::triangulation::construction::TopologyGuarantee;
     /// use delaunay::prelude::triangulation::flips::*;
     ///
     /// let vertices = vec![
@@ -299,7 +302,7 @@ where
     fn flip_k2(&mut self, facet: FacetHandle) -> Result<FlipInfo<D>, FlipError> {
         let result = self.tri.flip_k2(facet);
         if result.is_ok() {
-            self.invalidate_repair_caches();
+            self.invalidate_locate_hint_cache();
         }
         result
     }
@@ -307,7 +310,7 @@ where
     fn flip_k3(&mut self, ridge: RidgeHandle) -> Result<FlipInfo<D>, FlipError> {
         let result = self.tri.flip_k3(ridge);
         if result.is_ok() {
-            self.invalidate_repair_caches();
+            self.invalidate_locate_hint_cache();
         }
         result
     }
@@ -315,7 +318,7 @@ where
     fn flip_k2_inverse_from_edge(&mut self, edge: EdgeKey) -> Result<FlipInfo<D>, FlipError> {
         let result = self.tri.flip_k2_inverse_from_edge(edge);
         if result.is_ok() {
-            self.invalidate_repair_caches();
+            self.invalidate_locate_hint_cache();
         }
         result
     }
@@ -326,7 +329,7 @@ where
     ) -> Result<FlipInfo<D>, FlipError> {
         let result = self.tri.flip_k3_inverse_from_triangle(triangle);
         if result.is_ok() {
-            self.invalidate_repair_caches();
+            self.invalidate_locate_hint_cache();
         }
         result
     }

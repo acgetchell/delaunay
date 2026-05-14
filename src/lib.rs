@@ -346,8 +346,8 @@
 //! - **Transactional mutations**: Construction and incremental operations are designed to be
 //!   all-or-nothing. If an operation returns `Err(_)`, the triangulation is rolled back to its
 //!   previous state.
-//! - **Duplicate detection**: Near-duplicate coordinates are rejected using a small Euclidean
-//!   tolerance (currently `1e-10` for the default floating-point scalars), returning
+//! - **Duplicate detection**: Near-duplicate coordinates are rejected using a scale-aware
+//!   Euclidean tolerance based on nearby geometry and floating-point resolution, returning
 //!   [`InsertionError::DuplicateCoordinates`](core::algorithms::incremental_insertion::InsertionError::DuplicateCoordinates).
 //!   Duplicate UUIDs return
 //!   [`InsertionError::DuplicateUuid`](core::algorithms::incremental_insertion::InsertionError::DuplicateUuid).
@@ -410,10 +410,13 @@ pub mod core {
     /// - **FastHashMap/FastHashSet**: Uses `FastHasher`, a non-cryptographic hasher
     ///   that is 2-3x faster than `SipHash` for trusted data. Perfect for internal data
     ///   where collision resistance against adversarial input is not required.
+    /// - **`SecureHashMap`**: Uses Rust's randomized default hasher for maps whose
+    ///   keys are derived from public coordinate input or other caller-controlled
+    ///   values.
     ///
     /// ### ⚠️ Security Warning: `DoS` Resistance
     ///
-    /// **The hasher used in these collections is NOT DoS-resistant.** It should only be
+    /// **The hasher used by `FastHashMap`/`FastHashSet` is NOT DoS-resistant.** It should only be
     /// used with trusted input data. Do not use `FastHashMap` or `FastHashSet` with
     /// attacker-controlled keys, as this could lead to hash collision attacks that
     /// degrade performance to O(n) worst-case behavior.
@@ -427,6 +430,8 @@ pub mod core {
     /// - Processing untrusted coordinate data from external sources
     /// - Using user-provided keys without validation
     /// - Network-facing applications with external input
+    ///
+    /// Use [`SecureHashMap`](crate::core::collections::SecureHashMap) when keys are derived from public input.
     ///
     /// ## Small Collections
     ///
@@ -498,7 +503,7 @@ pub mod core {
         pub(crate) use aliases::StorageMap;
         pub use aliases::{
             Entry, FacetIndex, FastBuildHasher, FastHashMap, FastHashSet, FastHasher,
-            MAX_PRACTICAL_DIMENSION_SIZE, SmallBuffer, Uuid,
+            MAX_PRACTICAL_DIMENSION_SIZE, SecureHashMap, SmallBuffer, Uuid,
         };
 
         pub use buffers::*;
@@ -722,13 +727,36 @@ pub mod geometry {
                 max: usize,
             },
 
+            /// Internal matrix dispatch requested an active block whose size does not
+            /// match the concrete stack matrix.
+            ///
+            /// Public geometry APIs surface this as a typed error rather than silently
+            /// classifying structurally invalid predicate state as degenerate geometry.
+            #[error(
+                "Active matrix block size {active} does not match concrete matrix dimension {matrix_dimension}"
+            )]
+            MatrixDimensionMismatch {
+                /// Requested active matrix dimension.
+                active: usize,
+                /// Concrete matrix dimension.
+                matrix_dimension: usize,
+            },
+
             /// Linear algebra backend operation failed.
-            #[error("Linear algebra failure: {0}")]
-            LinearAlgebraFailure(#[from] LaError),
+            #[error("Linear algebra failure: {source}")]
+            LinearAlgebraFailure {
+                /// Typed source error from the linear algebra backend.
+                #[from]
+                source: LaError,
+            },
 
             /// Matrix operation error
-            #[error("Matrix error: {0}")]
-            MatrixError(#[from] MatrixError),
+            #[error("Matrix error: {source}")]
+            MatrixError {
+                /// Typed source error from matrix operations.
+                #[from]
+                source: MatrixError,
+            },
 
             /// Array conversion failed
             #[error("Array conversion failed: {details}")]
@@ -738,12 +766,20 @@ pub mod geometry {
             },
 
             /// Coordinate conversion error
-            #[error("Coordinate conversion error: {0}")]
-            CoordinateConversion(#[from] CoordinateConversionError),
+            #[error("Coordinate conversion error: {source}")]
+            CoordinateConversion {
+                /// Typed source error from coordinate conversion.
+                #[from]
+                source: CoordinateConversionError,
+            },
 
             /// Value conversion error
-            #[error("Value conversion error: {0}")]
-            ValueConversion(#[from] ValueConversionError),
+            #[error("Value conversion error: {source}")]
+            ValueConversion {
+                /// Typed source error from value conversion.
+                #[from]
+                source: ValueConversionError,
+            },
         }
 
         impl From<StackMatrixDispatchError> for CircumcenterError {
@@ -752,7 +788,15 @@ pub mod geometry {
                     StackMatrixDispatchError::UnsupportedDim { k, max } => {
                         Self::UnsupportedMatrixDimension { requested: k, max }
                     }
-                    StackMatrixDispatchError::La(source) => Self::LinearAlgebraFailure(source),
+                    StackMatrixDispatchError::ActiveBlockDimensionMismatch { k, dim } => {
+                        Self::MatrixDimensionMismatch {
+                            active: k,
+                            matrix_dimension: dim,
+                        }
+                    }
+                    StackMatrixDispatchError::La { source } => {
+                        Self::LinearAlgebraFailure { source }
+                    }
                 }
             }
         }
@@ -1052,13 +1096,17 @@ pub mod prelude {
         /// ```compile_fail
         /// use delaunay::prelude::triangulation::flips::DelaunayRepairError;
         /// ```
+        ///
+        /// ```compile_fail
+        /// use delaunay::prelude::triangulation::flips::TopologyGuarantee;
+        /// ```
         pub mod flips {
             pub use crate::core::algorithms::flips::{BistellarMove, ConstK};
             pub use crate::core::collections::{
                 CellKeyBuffer, MAX_PRACTICAL_DIMENSION_SIZE, SmallBuffer,
             };
             pub use crate::core::tds::{CellKey, VertexKey};
-            pub use crate::core::triangulation::{TopologyGuarantee, Triangulation};
+            pub use crate::core::triangulation::Triangulation;
             pub use crate::triangulation::delaunay::DelaunayTriangulation;
             pub use crate::triangulation::flips::*;
 
@@ -1126,9 +1174,6 @@ pub mod prelude {
                 DelaunayRepairOperation, DelaunayRepairOutcome, DelaunayRepairPolicy,
                 DelaunayTriangulation, DelaunayTriangulationValidationError,
             };
-
-            // Convenience macro (commonly used in docs/examples).
-            pub use crate::vertex;
         }
 
         /// End-to-end "repair then delaunayize" workflow.
@@ -1206,7 +1251,7 @@ pub mod prelude {
             CellVertexBuffer, CellVertexKeysMap, CellVertexUuidBuffer, CellVerticesMap, Entry,
             FacetIndex, FacetIssuesMap, FacetSharingCellsBuffer, FacetToCellsMap, FastBuildHasher,
             FastHashMap, FastHashSet, FastHasher, KeyBasedCellMap, KeyBasedVertexMap,
-            MAX_PRACTICAL_DIMENSION_SIZE, NeighborBuffer, PeriodicOffsetBuffer,
+            MAX_PRACTICAL_DIMENSION_SIZE, NeighborBuffer, PeriodicOffsetBuffer, SecureHashMap,
             SimplexVertexBuffer, SmallBuffer, Uuid, UuidToCellKeyMap, UuidToVertexKeyMap,
             VertexKeyBuffer, VertexKeySet, VertexSecondaryMap, VertexToCellsMap, VertexUuidBuffer,
             VertexUuidSet, fast_hash_map_with_capacity, fast_hash_set_with_capacity,
@@ -1252,9 +1297,32 @@ pub mod prelude {
     /// Focused exports for geometry types, predicates, and helpers.
     pub mod geometry {
         pub use crate::geometry::{
-            kernel::*, matrix::*, point::*, predicates::*, quality::*, robust_predicates::*,
-            traits::coordinate::*, util::circumsphere::*, util::conversions::*, util::measures::*,
-            util::norms::*,
+            kernel::{AdaptiveKernel, ExactPredicates, FastKernel, Kernel, RobustKernel},
+            matrix::{Matrix, MatrixError, determinant},
+            point::Point,
+            predicates::{
+                InSphere, Orientation, insphere, insphere_distance, insphere_lifted,
+                simplex_orientation,
+            },
+            quality::{
+                QualityCellVerticesError, QualityDegeneracyMeasure, QualityError,
+                QualityNumericOperation, normalized_volume, radius_ratio,
+            },
+            robust_predicates::{
+                ConsistencyResult, InsphereConsistencyError, robust_insphere, robust_orientation,
+            },
+            traits::coordinate::{
+                Coordinate, CoordinateConversionError, CoordinateIdentity,
+                CoordinateRepresentation, CoordinateScalar, CoordinateValidationError,
+                DEFAULT_TOLERANCE_F32, DEFAULT_TOLERANCE_F64, DegenerateSimplexReason, FiniteCheck,
+                HashCoordinate, OrderedCmp, OrderedEq,
+            },
+            util::{
+                CircumcenterError, SurfaceMeasureError, ValueConversionError, circumcenter,
+                circumradius, circumradius_with_center, facet_measure, hypot, inradius,
+                safe_coords_from_f64, safe_coords_to_f64, safe_scalar_from_f64, safe_scalar_to_f64,
+                safe_usize_to_scalar, simplex_volume, squared_norm, surface_measure,
+            },
         };
     }
 
@@ -1461,10 +1529,11 @@ mod tests {
             DelaunayCheckPolicy, DelaunayRepairError, DelaunayRepairOutcome, DelaunayRepairPolicy,
             DelaunayRepairStats, DelaunayTriangulation as RepairDelaunayTriangulation, FlipError,
             RepairQueueOrder, TopologyGuarantee, verify_delaunay_for_triangulation,
-            verify_delaunay_via_flip_predicates, vertex,
+            verify_delaunay_via_flip_predicates,
         },
         prelude::*,
         triangulation::delaunay::DelaunayTriangulation,
+        vertex,
     };
 
     #[cfg(feature = "count-allocations")]

@@ -39,7 +39,7 @@ pub enum MatrixError {
 }
 
 /// Error type for stack-matrix dispatch.
-#[derive(Debug, Error)]
+#[derive(Clone, Debug, Error, PartialEq, Eq)]
 pub(crate) enum StackMatrixDispatchError {
     /// The requested matrix size is not supported by the stack-matrix dispatcher.
     #[error("unsupported stack matrix size: {k} (max {max})")]
@@ -49,9 +49,21 @@ pub(crate) enum StackMatrixDispatchError {
         /// Maximum supported matrix dimension.
         max: usize,
     },
+    /// The requested active block size does not match the concrete matrix type.
+    #[error("active matrix block size {k} does not match concrete matrix dimension {dim}")]
+    ActiveBlockDimensionMismatch {
+        /// Requested active matrix dimension.
+        k: usize,
+        /// Concrete matrix dimension.
+        dim: usize,
+    },
     /// A linear algebra error originating from `la-stack`.
     #[error(transparent)]
-    La(#[from] LaError),
+    La {
+        /// Typed source error from the linear algebra backend.
+        #[from]
+        source: LaError,
+    },
 }
 
 /// Default tolerance for matrix singularity checks.
@@ -60,45 +72,85 @@ pub(crate) enum StackMatrixDispatchError {
 /// while being large enough to handle floating-point precision issues.
 pub const SINGULARITY_TOLERANCE: f64 = 1e-12;
 
-/// Dispatch a runtime `k` (matrix dimension) to a stack-allocated `la_stack::Matrix<k>`.
-///
-/// This is used to bridge the gap between const-generic sizes and `D+1`/`D+2` shapes,
-/// which are not available as stable const-generic expressions.
-///
-/// # Panics
-///
-/// Panics if `k` exceeds [`MAX_STACK_MATRIX_DIM`] (7).
-macro_rules! with_la_stack_matrix {
-    ($k:expr, |$m:ident| $body:block) => {{
-        with_la_stack_matrix!(@dispatch $k, $m, $body,
-            0, 1, 2, 3, 4, 5, 6, 7)
-    }};
-    (@dispatch $k:expr, $m:ident, $body:block, $($n:literal),+) => {{
+/// Internal dispatch shared by fallible production matrix creation and tests.
+macro_rules! dispatch_la_stack_matrix {
+    ($k:expr, |$m:ident| $body:block, $unsupported:expr) => {{
         match $k {
-            $(
-                $n => {
-                    #[allow(unused_mut)]
-                    let mut $m = $crate::geometry::matrix::Matrix::<$n>::zero();
-                    $body
-                }
-            )+
-            _ => panic!(
-                "unsupported stack matrix size: {k} (max {max})",
-                k = $k,
-                max = $crate::geometry::matrix::MAX_STACK_MATRIX_DIM
-            ),
+            0 => {
+                #[allow(unused_mut)]
+                let mut $m = $crate::geometry::matrix::Matrix::<0>::zero();
+                $body
+            }
+            1 => {
+                #[allow(unused_mut)]
+                let mut $m = $crate::geometry::matrix::Matrix::<1>::zero();
+                $body
+            }
+            2 => {
+                #[allow(unused_mut)]
+                let mut $m = $crate::geometry::matrix::Matrix::<2>::zero();
+                $body
+            }
+            3 => {
+                #[allow(unused_mut)]
+                let mut $m = $crate::geometry::matrix::Matrix::<3>::zero();
+                $body
+            }
+            4 => {
+                #[allow(unused_mut)]
+                let mut $m = $crate::geometry::matrix::Matrix::<4>::zero();
+                $body
+            }
+            5 => {
+                #[allow(unused_mut)]
+                let mut $m = $crate::geometry::matrix::Matrix::<5>::zero();
+                $body
+            }
+            6 => {
+                #[allow(unused_mut)]
+                let mut $m = $crate::geometry::matrix::Matrix::<6>::zero();
+                $body
+            }
+            7 => {
+                #[allow(unused_mut)]
+                let mut $m = $crate::geometry::matrix::Matrix::<7>::zero();
+                $body
+            }
+            _ => $unsupported,
         }
     }};
 }
 
-/// Fallible variant of [`with_la_stack_matrix!`] that returns an error instead of panicking.
+/// Dispatch a runtime `k` (matrix dimension) to a stack-allocated `la_stack::Matrix<k>`.
+///
+/// This test-only macro is used for concise matrix unit tests. Production code
+/// must use [`try_with_la_stack_matrix!`] so unsupported dimensions are reported
+/// as typed errors at API boundaries.
+#[cfg(test)]
+macro_rules! with_la_stack_matrix {
+    ($k:expr, |$m:ident| $body:block) => {{
+        dispatch_la_stack_matrix!(
+            $k,
+            |$m| $body,
+            panic!(
+                "unsupported stack matrix size: {k} (max {max})",
+                k = $k,
+                max = $crate::geometry::matrix::MAX_STACK_MATRIX_DIM
+            )
+        )
+    }};
+}
+
+/// Dispatch a runtime matrix dimension to a stack matrix, returning an error if unsupported.
 ///
 /// The provided block must evaluate to `Result<_, E>`, where `E` can be constructed from
 /// [`StackMatrixDispatchError`].
 macro_rules! try_with_la_stack_matrix {
     ($k:expr, |$m:ident| $body:block) => {{
         let k = $k;
-        if k > $crate::geometry::matrix::MAX_STACK_MATRIX_DIM {
+        dispatch_la_stack_matrix!(
+            k,
+            |$m| $body,
             Err(
                 $crate::geometry::matrix::StackMatrixDispatchError::UnsupportedDim {
                     k,
@@ -106,9 +158,7 @@ macro_rules! try_with_la_stack_matrix {
                 }
                 .into(),
             )
-        } else {
-            with_la_stack_matrix!(k, |$m| $body)
-        }
+        )
     }};
 }
 
@@ -124,14 +174,16 @@ pub(crate) fn matrix_zero_like<const D: usize>(_template: &Matrix<D>) -> Matrix<
 
 #[inline]
 pub(crate) fn matrix_get<const D: usize>(m: &Matrix<D>, r: usize, c: usize) -> f64 {
-    m.get(r, c)
-        .unwrap_or_else(|| unreachable!("matrix index out of bounds: ({r}, {c}) for {D}x{D}"))
+    m.get(r, c).unwrap_or_else(|| {
+        debug_assert!(false, "matrix index out of bounds: ({r}, {c}) for {D}x{D}");
+        0.0
+    })
 }
 
 #[inline]
 pub(crate) fn matrix_set<const D: usize>(m: &mut Matrix<D>, r: usize, c: usize, value: f64) {
     let ok = m.set(r, c, value);
-    assert!(ok, "matrix index out of bounds: ({r}, {c}) for {D}x{D}");
+    debug_assert!(ok, "matrix index out of bounds: ({r}, {c}) for {D}x{D}");
 }
 
 /// Compute an LU-based determinant, returning 0.0 for singular matrices.
@@ -214,5 +266,21 @@ mod tests {
                 assert_relative_eq!(matrix_get(&zero, k - 1, k - 1), 0.0);
             });
         }
+    }
+
+    #[cfg(debug_assertions)]
+    #[test]
+    #[should_panic(expected = "matrix index out of bounds")]
+    fn matrix_get_debug_asserts_on_out_of_bounds_index() {
+        let matrix = Matrix::<2>::zero();
+        let _ = matrix_get(&matrix, 2, 0);
+    }
+
+    #[cfg(debug_assertions)]
+    #[test]
+    #[should_panic(expected = "matrix index out of bounds")]
+    fn matrix_set_debug_asserts_on_out_of_bounds_index() {
+        let mut matrix = Matrix::<2>::zero();
+        matrix_set(&mut matrix, 0, 2, 1.0);
     }
 }

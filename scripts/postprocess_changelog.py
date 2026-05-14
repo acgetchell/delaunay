@@ -158,6 +158,11 @@ def _is_isolated_body_heading(lines: list[str], idx: int) -> bool:
     return prev_is_blank and next_is_blank
 
 
+def _is_squash_heading_candidate(lines: list[str], idx: int) -> bool:
+    """Return true when an original body line will become bold prose."""
+    return _squash_heading_parts(lines[idx]) is not None and _is_isolated_body_heading(lines, idx)
+
+
 def _max_pr_number(entry: str) -> int:
     """
     Get the largest pull request number referenced in the given changelog entry.
@@ -371,6 +376,8 @@ def _deindent_orphan(line: str, lines: list[str], idx: int) -> str:
         if prev.startswith(" "):
             prev_stripped = prev.lstrip()
             if prev_stripped.startswith(("- ", "* ")):
+                if _is_squash_heading_candidate(lines, j):
+                    continue
                 parent_indent = len(prev) - len(prev_stripped)
                 if our_indent > parent_indent and nearest_parent_indent is None:
                     nearest_parent_indent = parent_indent
@@ -484,10 +491,8 @@ def _normalize_body_line(line: str, lines: list[str], idx: int, result: list[str
     return _reflow_line(line) if len(line) > MAX_LINE_WIDTH else line
 
 
-def postprocess(path: Path) -> None:
-    """Read *path*, apply hygiene fixes, and write it back."""
-    text = path.read_text(encoding="utf-8")
-
+def postprocess_text(text: str) -> str:
+    """Apply changelog markdown hygiene transforms to *text*."""
     # Inject PR / breaking-change summary sections before reflow.
     text = _inject_summary_sections(text)
 
@@ -537,7 +542,13 @@ def postprocess(path: Path) -> None:
 
     # 1. Reassemble and strip trailing blank lines.
     text = "\n".join(result)
-    text = text.rstrip("\n") + "\n"
+    return text.rstrip("\n") + "\n"
+
+
+def postprocess(path: Path) -> None:
+    """Read *path*, apply hygiene fixes, and write it back."""
+    text = path.read_text(encoding="utf-8")
+    text = postprocess_text(text)
 
     path.write_text(text, encoding="utf-8")
 

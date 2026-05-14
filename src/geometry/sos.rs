@@ -33,9 +33,10 @@
 
 #![forbid(unsafe_code)]
 
+use crate::core::collections::{GeometricPointBuffer, MAX_PRACTICAL_DIMENSION_SIZE, SmallBuffer};
 use crate::geometry::matrix::{Matrix, matrix_set};
 use crate::geometry::point::Point;
-use crate::geometry::traits::coordinate::CoordinateConversionError;
+use crate::geometry::traits::coordinate::{CoordinateConversionError, DegenerateSimplexReason};
 
 // =============================================================================
 // PUBLIC API
@@ -75,23 +76,20 @@ use crate::geometry::traits::coordinate::CoordinateConversionError;
 ///
 /// # Errors
 ///
-/// - [`CoordinateConversionError::ConversionFailed`] if
-///   `points.len() != D + 1`, or if all cofactors vanish (identical points).
+/// - [`CoordinateConversionError::InvalidSimplexPointCount`] if
+///   `points.len() != D + 1`.
+/// - [`CoordinateConversionError::DegenerateSimplex`] if all cofactors vanish
+///   (usually identical points).
 /// - [`CoordinateConversionError::NonFiniteValue`] if any coordinate is
 ///   NaN or infinite.
 pub fn sos_orientation_sign<const D: usize>(
     points: &[Point<f64, D>],
 ) -> Result<i32, CoordinateConversionError> {
     if points.len() != D + 1 {
-        return Err(CoordinateConversionError::ConversionFailed {
-            coordinate_index: 0,
-            coordinate_value: format!(
-                "SoS orientation requires exactly D+1 = {} points, got {}",
-                D + 1,
-                points.len()
-            ),
-            from_type: "point count",
-            to_type: "valid simplex",
+        return Err(CoordinateConversionError::InvalidSimplexPointCount {
+            actual: points.len(),
+            expected: D + 1,
+            dimension: D,
         });
     }
 
@@ -116,7 +114,7 @@ pub fn sos_orientation_sign<const D: usize>(
     //
     // The constant "1" column is NOT symbolically perturbed, so the SoS
     // expansion only iterates over coordinate columns (j = 0..D-1).
-    let coords: Vec<[f64; D]> = points.iter().map(|p| *p.coords()).collect();
+    let coords: GeometricPointBuffer<f64, D> = points.iter().map(|p| *p.coords()).collect();
 
     // Edelsbrunner & Mücke SoS expansion: iterate (row, coord_col) in reverse
     // order.  The first non-zero cofactor determines the sign.
@@ -142,12 +140,9 @@ pub fn sos_orientation_sign<const D: usize>(
     // All first-order cofactors vanished.  The Edelsbrunner & Mücke SoS
     // perturbation guarantees a non-zero cofactor for *distinct* points,
     // so this can only happen when points are identical — an invalid input.
-    Err(CoordinateConversionError::ConversionFailed {
-        coordinate_index: 0,
-        coordinate_value: "all SoS orientation cofactors vanished (points may be identical)"
-            .to_string(),
-        from_type: "SoS orientation",
-        to_type: "non-zero sign",
+    Err(CoordinateConversionError::DegenerateSimplex {
+        dimension: D,
+        reason: DegenerateSimplexReason::VanishingSosCofactors,
     })
 }
 
@@ -193,8 +188,10 @@ pub fn sos_orientation_sign<const D: usize>(
 ///
 /// # Errors
 ///
-/// - [`CoordinateConversionError::ConversionFailed`] if
-///   `simplex.len() != D + 1`, or if all cofactors vanish (identical points).
+/// - [`CoordinateConversionError::InvalidSimplexPointCount`] if
+///   `simplex.len() != D + 1`.
+/// - [`CoordinateConversionError::DegenerateSimplex`] if all cofactors vanish
+///   (usually identical points).
 /// - [`CoordinateConversionError::NonFiniteValue`] if any coordinate is
 ///   NaN or infinite.
 pub fn sos_insphere_sign<const D: usize>(
@@ -202,15 +199,10 @@ pub fn sos_insphere_sign<const D: usize>(
     test: &Point<f64, D>,
 ) -> Result<i32, CoordinateConversionError> {
     if simplex.len() != D + 1 {
-        return Err(CoordinateConversionError::ConversionFailed {
-            coordinate_index: 0,
-            coordinate_value: format!(
-                "SoS insphere requires exactly D+1 = {} simplex points, got {}",
-                D + 1,
-                simplex.len()
-            ),
-            from_type: "point count",
-            to_type: "valid simplex",
+        return Err(CoordinateConversionError::InvalidSimplexPointCount {
+            actual: simplex.len(),
+            expected: D + 1,
+            dimension: D,
         });
     }
 
@@ -241,8 +233,9 @@ pub fn sos_insphere_sign<const D: usize>(
     // Columns: [Δcoords (D cols), ‖Δp‖² (1 col)] = D+1 columns total.
     let base_coords = simplex[0].coords();
 
-    let mut rel_coords: Vec<[f64; D]> = Vec::with_capacity(n);
-    let mut lifted_col: Vec<f64> = Vec::with_capacity(n);
+    let mut rel_coords: GeometricPointBuffer<f64, D> = SmallBuffer::with_capacity(n);
+    let mut lifted_col: SmallBuffer<f64, MAX_PRACTICAL_DIMENSION_SIZE> =
+        SmallBuffer::with_capacity(n);
 
     for point in simplex.iter().skip(1) {
         let mut rel = [0.0f64; D];
@@ -283,12 +276,9 @@ pub fn sos_insphere_sign<const D: usize>(
     }
 
     // All cofactors vanished — same reasoning as `sos_orientation_sign`.
-    Err(CoordinateConversionError::ConversionFailed {
-        coordinate_index: 0,
-        coordinate_value: "all SoS insphere cofactors vanished (points may be identical)"
-            .to_string(),
-        from_type: "SoS insphere",
-        to_type: "non-zero sign",
+    Err(CoordinateConversionError::DegenerateSimplex {
+        dimension: D,
+        reason: DegenerateSimplexReason::VanishingSosCofactors,
     })
 }
 
@@ -551,9 +541,12 @@ mod tests {
                 #[test]
                 fn [<test_sos_orientation_ $dim d_all_identical_returns_err>]() {
                     let points = vec![Point::new([0.0; $dim]); $dim + 1];
-                    assert!(
-                        sos_orientation_sign(&points).is_err(),
-                        "All-identical points must return Err"
+                    assert_eq!(
+                        sos_orientation_sign(&points),
+                        Err(CoordinateConversionError::DegenerateSimplex {
+                            dimension: $dim,
+                            reason: DegenerateSimplexReason::VanishingSosCofactors,
+                        })
                     );
                 }
 
@@ -561,9 +554,12 @@ mod tests {
                 fn [<test_sos_insphere_ $dim d_all_identical_returns_err>]() {
                     let simplex = vec![Point::new([1.0; $dim]); $dim + 1];
                     let test_pt = Point::new([1.0; $dim]);
-                    assert!(
-                        sos_insphere_sign(&simplex, &test_pt).is_err(),
-                        "All-identical insphere must return Err"
+                    assert_eq!(
+                        sos_insphere_sign(&simplex, &test_pt),
+                        Err(CoordinateConversionError::DegenerateSimplex {
+                            dimension: $dim,
+                            reason: DegenerateSimplexReason::VanishingSosCofactors,
+                        })
                     );
                 }
             }
@@ -602,7 +598,14 @@ mod tests {
     fn test_sos_orientation_wrong_point_count_returns_error() {
         let points = vec![Point::new([0.0, 0.0]), Point::new([1.0, 0.0])];
         let result = sos_orientation_sign(&points);
-        assert!(result.is_err(), "Should return Err for wrong point count");
+        assert_eq!(
+            result,
+            Err(CoordinateConversionError::InvalidSimplexPointCount {
+                actual: 2,
+                expected: 3,
+                dimension: 2,
+            })
+        );
     }
 
     #[test]
@@ -610,7 +613,14 @@ mod tests {
         let simplex = vec![Point::new([0.0, 0.0]), Point::new([1.0, 0.0])];
         let test = Point::new([0.5, 0.5]);
         let result = sos_insphere_sign(&simplex, &test);
-        assert!(result.is_err(), "Should return Err for wrong simplex count");
+        assert_eq!(
+            result,
+            Err(CoordinateConversionError::InvalidSimplexPointCount {
+                actual: 2,
+                expected: 3,
+                dimension: 2,
+            })
+        );
     }
 
     // =========================================================================

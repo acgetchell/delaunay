@@ -89,6 +89,32 @@ pub type StorageMap<K, V> = DenseSlotMap<K, V>;
 /// ```
 pub type FastHashMap<K, V> = FxHashMap<K, V>;
 
+/// DoS-resistant `HashMap` for keys derived from caller-provided data.
+///
+/// Use this for hash maps whose keys are directly derived from public input
+/// coordinates or other attacker-controlled values. It intentionally keeps
+/// Rust's randomized [`std::collections::hash_map::RandomState`] hasher instead
+/// of [`FastHasher`].
+///
+/// # Security
+///
+/// Prefer [`FastHashMap`] for trusted internal keys such as slotmap keys,
+/// UUID-derived identities, or facet hashes built from slotmap keys. Use
+/// `SecureHashMap` when a caller can influence the hash keys directly.
+///
+/// # Examples
+///
+/// ```rust
+/// use delaunay::prelude::collections::SecureHashMap;
+///
+/// let mut buckets: SecureHashMap<[u64; 2], usize> = SecureHashMap::default();
+/// buckets.insert([12, 34], 1);
+///
+/// assert_eq!(buckets.get(&[12, 34]), Some(&1));
+/// ```
+pub type SecureHashMap<K, V> =
+    std::collections::HashMap<K, V, std::collections::hash_map::RandomState>;
+
 /// Fast non-cryptographic hasher alias for internal collections.
 ///
 /// Wraps [`rustc_hash::FxHasher`] to ensure consistent hashing behavior
@@ -226,6 +252,11 @@ mod tests {
         assert_eq!(set.len(), 2);
         assert!(set.contains(&456));
         assert!(!set.contains(&999));
+
+        // Test SecureHashMap basic operations for input-derived keys.
+        let mut secure_map: SecureHashMap<u64, usize> = SecureHashMap::default();
+        secure_map.insert(123, 456);
+        assert_eq!(secure_map.get(&123), Some(&456));
     }
 
     #[test]

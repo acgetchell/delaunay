@@ -27,7 +27,7 @@ fn degeneracy_tolerance<T: CoordinateScalar>(scale: T) -> Result<T, Circumcenter
     }
 
     let factor = safe_scalar_from_f64(DEGENERACY_EPSILON_FACTOR)
-        .map_err(CircumcenterError::CoordinateConversion)?;
+        .map_err(|source| CircumcenterError::CoordinateConversion { source })?;
     Ok(scale * factor * T::epsilon())
 }
 
@@ -307,20 +307,22 @@ where
         // Compute D! in f64 to avoid usize overflow/precision issues
         let mut d_fact = 1.0f64;
         for k in 2..=D {
-            let k_f64 = safe_usize_to_scalar::<f64>(k).map_err(|e| {
-                CircumcenterError::ValueConversion(ValueConversionError::ConversionFailed {
-                    value: k.to_string(),
-                    from_type: "usize",
-                    to_type: "f64",
-                    details: e.to_string(),
-                })
-            })?;
+            let k_f64 =
+                safe_usize_to_scalar::<f64>(k).map_err(|e| CircumcenterError::ValueConversion {
+                    source: ValueConversionError::ConversionFailed {
+                        value: k.to_string(),
+                        from_type: "usize",
+                        to_type: "f64",
+                        details: e.to_string(),
+                    },
+                })?;
             d_fact *= k_f64;
         }
         sqrt_det / d_fact
     };
 
-    safe_scalar_from_f64(volume_f64).map_err(CircumcenterError::CoordinateConversion)
+    safe_scalar_from_f64(volume_f64)
+        .map_err(|source| CircumcenterError::CoordinateConversion { source })
 }
 
 /// Calculate the inradius of a D-dimensional simplex.
@@ -419,13 +421,13 @@ where
     }
 
     // inradius = D * volume / surface_area
-    let d_scalar = T::from(D).ok_or_else(|| {
-        CircumcenterError::ValueConversion(ValueConversionError::ConversionFailed {
+    let d_scalar = T::from(D).ok_or_else(|| CircumcenterError::ValueConversion {
+        source: ValueConversionError::ConversionFailed {
             value: D.to_string(),
             from_type: "usize",
             to_type: std::any::type_name::<T>(),
             details: "Failed to convert dimension to coordinate type".to_string(),
-        })
+        },
     })?;
 
     let inradius = (d_scalar * volume) / surface_area;
@@ -657,20 +659,22 @@ where
         // Compute (D-1)! in f64 using safe conversion
         let mut d_fact = 1.0f64;
         for k in 2..D {
-            let k_f64 = safe_usize_to_scalar::<f64>(k).map_err(|e| {
-                CircumcenterError::ValueConversion(ValueConversionError::ConversionFailed {
-                    value: k.to_string(),
-                    from_type: "usize",
-                    to_type: "f64",
-                    details: e.to_string(),
-                })
-            })?;
+            let k_f64 =
+                safe_usize_to_scalar::<f64>(k).map_err(|e| CircumcenterError::ValueConversion {
+                    source: ValueConversionError::ConversionFailed {
+                        value: k.to_string(),
+                        from_type: "usize",
+                        to_type: "f64",
+                        details: e.to_string(),
+                    },
+                })?;
             d_fact *= k_f64;
         }
         sqrt_det / d_fact
     };
 
-    safe_scalar_from_f64(volume_f64).map_err(CircumcenterError::CoordinateConversion)
+    safe_scalar_from_f64(volume_f64)
+        .map_err(|source| CircumcenterError::CoordinateConversion { source })
 }
 
 /// Calculate the surface area of a triangulated boundary by summing facet measures.

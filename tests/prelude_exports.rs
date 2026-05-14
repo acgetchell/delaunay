@@ -22,7 +22,9 @@ use delaunay::prelude::diagnostics::{
 use delaunay::prelude::generators::{RandomPointGenerationError, generate_random_points_seeded};
 #[cfg(feature = "diagnostics")]
 use delaunay::prelude::geometry::Coordinate;
-use delaunay::prelude::geometry::{AdaptiveKernel, Point};
+use delaunay::prelude::geometry::{
+    AdaptiveKernel, CoordinateConversionError, DegenerateSimplexReason, Point,
+};
 use delaunay::prelude::ordering::{
     HilbertError, hilbert_index, hilbert_indices_prequantized, hilbert_quantize,
     hilbert_sort_by_stable, hilbert_sort_by_unstable, hilbert_sorted_indices,
@@ -33,13 +35,13 @@ use delaunay::prelude::tds::Tds;
 use delaunay::prelude::triangulation::construction::{
     ConstructionOptions, ConstructionSkipSample, ConstructionSlowInsertionSample,
     DelaunayConstructionFailure, DelaunayRepairPolicy, DelaunayTriangulation,
-    DelaunayTriangulationConstructionError, InsertionOrderStrategy, Vertex,
+    DelaunayTriangulationConstructionError, InsertionOrderStrategy, TopologyGuarantee, Vertex,
 };
 use delaunay::prelude::triangulation::delaunayize::{
     DelaunayizeConfig, DelaunayizeError, DelaunayizeOutcome, delaunayize_by_flips,
 };
 use delaunay::prelude::triangulation::diagnostics::ConstructionTelemetry;
-use delaunay::prelude::triangulation::flips::{BistellarFlips, TopologyGuarantee};
+use delaunay::prelude::triangulation::flips::BistellarFlips;
 use delaunay::prelude::triangulation::insertion::{
     InsertionError, NeighborRebuildError, Tds as InsertionTds, TdsMutationError,
     repair_neighbor_pointers_local,
@@ -119,6 +121,12 @@ fn preludes_cover_bench_apis() -> Result<(), PreludeExportTestError> {
     assert_send_sync_unpin::<NeighborRebuildError>();
     assert_send_sync_unpin::<ConstructionSkipSample>();
     assert_send_sync_unpin::<ConstructionSlowInsertionSample>();
+    assert_send_sync_unpin::<CoordinateConversionError>();
+    assert_send_sync_unpin::<DegenerateSimplexReason>();
+    assert_eq!(
+        DegenerateSimplexReason::ZeroOrientation.to_string(),
+        "zero orientation"
+    );
     let telemetry = ConstructionTelemetry::default();
     assert!(!telemetry.has_data());
     Ok(())

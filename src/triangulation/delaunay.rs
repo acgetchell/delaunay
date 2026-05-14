@@ -20,13 +20,14 @@ use crate::core::algorithms::locate::LocateError;
 use crate::core::cell::{Cell, CellValidationError};
 use crate::core::collections::spatial_hash_grid::HashGridIndex;
 use crate::core::collections::{
-    CellKeyBuffer, FastHashMap, FastHashSet, FastHasher, MAX_PRACTICAL_DIMENSION_SIZE, SmallBuffer,
+    CellKeyBuffer, FastHashSet, FastHasher, MAX_PRACTICAL_DIMENSION_SIZE, SecureHashMap,
+    SmallBuffer,
 };
 use crate::core::edge::EdgeKey;
 use crate::core::facet::{AllFacetsIter, BoundaryFacetsIter};
 use crate::core::operations::{
-    DelaunayInsertionState, InsertionOutcome, InsertionResult, InsertionStatistics, RepairDecision,
-    TopologicalOperation,
+    DelaunayInsertionState, InsertionOutcome, InsertionResult, InsertionStatistics,
+    InsertionTelemetryMode, RepairDecision, TopologicalOperation,
 };
 use crate::core::tds::{
     CellKey, InvariantError, InvariantKind, InvariantViolation, NeighborValidationError, Tds,
@@ -1720,10 +1721,12 @@ where
     }
 
     let inv_cell = 1.0 / eps_f64;
-    let mut buckets: FastHashMap<
+    // Quantized keys are derived directly from public coordinate input, so use
+    // randomized hashing instead of `FastHashMap`.
+    let mut buckets: SecureHashMap<
         QuantizedKey<D>,
         SmallBuffer<usize, BATCH_DEDUP_BUCKET_INLINE_CAPACITY>,
-    > = FastHashMap::default();
+    > = SecureHashMap::default();
     let mut unique: Vec<Vertex<T, U, D>> = Vec::with_capacity(vertices.len());
     let mut iter = vertices.into_iter();
     while let Some(v) = iter.next() {
@@ -2590,6 +2593,9 @@ pub struct DelaunayTriangulation<K: Kernel<D>, U, V, const D: usize> {
     /// selection during incremental insertion.
     ///
     /// This is a performance-only cache and is not serialized; it may be rebuilt lazily.
+    /// Query paths validate returned vertex keys against the live TDS, so the
+    /// cache can survive transactional rollbacks even if they leave behind stale
+    /// keys from an insertion that did not commit.
     spatial_index: Option<HashGridIndex<K::Scalar, D>>,
 }
 
@@ -4490,7 +4496,7 @@ where
         let repair_started = (collect_telemetry || trace_repair).then(Instant::now);
 
         let repair_result = {
-            self.invalidate_repair_caches();
+            self.invalidate_locate_hint_cache();
             let (tds, kernel) = (&mut self.tri.tds, &self.tri.kernel);
             let timing = if collect_telemetry {
                 Some(&mut phase_timing)
@@ -4821,14 +4827,16 @@ where
                         // Keep the stats and non-stats branches aligned so bulk-index-based
                         // tracing behaves the same regardless of whether the caller records
                         // construction statistics.
-                        self.tri.insert_with_statistics_seeded_indexed_detailed(
-                            *vertex,
-                            None,
-                            self.insertion_state.last_inserted_cell,
-                            perturbation_seed,
-                            grid_index.as_mut(),
-                            Some(index),
-                        )
+                        self.tri
+                            .insert_with_statistics_seeded_indexed_detailed_with_telemetry(
+                                *vertex,
+                                None,
+                                self.insertion_state.last_inserted_cell,
+                                perturbation_seed,
+                                grid_index.as_mut(),
+                                Some(index),
+                                InsertionTelemetryMode::CountsAndTimings,
+                            )
                     };
                     let insert_result = if trace_insertion {
                         let span = tracing::warn_span!(
@@ -5151,7 +5159,7 @@ where
         );
         let repair_started = Instant::now();
         let repair_result = {
-            self.invalidate_repair_caches();
+            self.invalidate_locate_hint_cache();
             let (tds, kernel) = (&mut self.tri.tds, &self.tri.kernel);
             repair_delaunay_local_single_pass(tds, kernel, completion_seed_cells, max_flips)
         };
@@ -5183,7 +5191,7 @@ where
             error = %seeded_error,
             "post-construction: seeded completion repair soft-failed; trying final global repair"
         );
-        self.invalidate_repair_caches();
+        self.invalidate_locate_hint_cache();
         let topology = self.tri.topology_guarantee();
         let global_result = {
             let (tds, kernel) = (&mut self.tri.tds, &self.tri.kernel);
@@ -5634,8 +5642,12 @@ where
         &mut self.tri.tds
     }
 
-    pub(crate) fn invalidate_repair_caches(&mut self) {
+    pub(crate) const fn invalidate_locate_hint_cache(&mut self) {
         self.insertion_state.last_inserted_cell = None;
+    }
+
+    pub(crate) fn invalidate_repair_caches(&mut self) {
+        self.invalidate_locate_hint_cache();
         self.spatial_index = None;
     }
 
@@ -5869,7 +5881,7 @@ where
                 message: "Bistellar flips require a PL-manifold (vertex-link validation)",
             });
         }
-        self.invalidate_repair_caches();
+        self.invalidate_locate_hint_cache();
         let (tds, kernel) = (&mut self.tri.tds, &self.tri.kernel);
         let stats = repair_delaunay_with_flips_k2_k3(tds, kernel, None, topology, max_flips)?;
 
@@ -5921,7 +5933,7 @@ where
     {
         let topology = self.tri.topology_guarantee();
         let kernel = RobustKernel::<K::Scalar>::new();
-        self.invalidate_repair_caches();
+        self.invalidate_locate_hint_cache();
         let (tds, kernel) = (&mut self.tri.tds, &kernel);
         repair_delaunay_with_flips_k2_k3_run(tds, kernel, seed_cells, topology, max_flips)
     }
@@ -6262,7 +6274,7 @@ where
                 let _ = (rebuild_repair_policy, rebuild_check_policy);
 
                 let topology = candidate.tri.topology_guarantee();
-                candidate.invalidate_repair_caches();
+                candidate.invalidate_locate_hint_cache();
                 let (tds, kernel) = (&mut candidate.tri.tds, &candidate.tri.kernel);
                 let stats = repair_delaunay_with_flips_k2_k3(
                     tds,
@@ -6918,13 +6930,8 @@ where
                     .insertion_state
                     .delaunay_check_policy
                     .should_check(next_insertion_count));
-        let snapshot = snapshot_needed.then(|| {
-            (
-                self.tri.tds.clone(),
-                self.insertion_state,
-                self.spatial_index.clone(),
-            )
-        });
+        let snapshot =
+            snapshot_needed.then(|| (self.tri.tds.clone_for_rollback(), self.insertion_state));
 
         let insertion_result = (|| {
             let hint = self.insertion_state.last_inserted_cell;
@@ -6965,10 +6972,9 @@ where
         match insertion_result {
             Ok(v_key) => Ok(v_key),
             Err(err) => {
-                if let Some((tds, insertion_state, spatial_index)) = snapshot {
+                if let Some((tds, insertion_state)) = snapshot {
                     self.tri.tds = tds;
                     self.insertion_state = insertion_state;
-                    self.spatial_index = spatial_index;
                 }
                 Err(err)
             }
@@ -7021,13 +7027,8 @@ where
                     .insertion_state
                     .delaunay_check_policy
                     .should_check(next_insertion_count));
-        let snapshot = snapshot_needed.then(|| {
-            (
-                self.tri.tds.clone(),
-                self.insertion_state,
-                self.spatial_index.clone(),
-            )
-        });
+        let snapshot =
+            snapshot_needed.then(|| (self.tri.tds.clone_for_rollback(), self.insertion_state));
 
         let insertion_result = (|| {
             let hint = self.insertion_state.last_inserted_cell;
@@ -7068,10 +7069,9 @@ where
         match insertion_result {
             Ok((outcome, stats)) => Ok((outcome, stats)),
             Err(err) => {
-                if let Some((tds, insertion_state, spatial_index)) = snapshot {
+                if let Some((tds, insertion_state)) = snapshot {
                     self.tri.tds = tds;
                     self.insertion_state = insertion_state;
-                    self.spatial_index = spatial_index;
                 }
                 Err(err)
             }
@@ -7145,7 +7145,7 @@ where
         };
 
         let repair_result = {
-            self.invalidate_repair_caches();
+            self.invalidate_locate_hint_cache();
             let (tds, kernel) = (&mut self.tri.tds, &self.tri.kernel);
             repair_delaunay_with_flips_k2_k3_run(tds, kernel, seed_ref, topology, max_flips)
         };
@@ -7300,10 +7300,12 @@ where
     /// repair pass is run automatically after removal.
     ///
     /// The post-removal repair and orientation canonicalization steps are
-    /// transactional: if either step fails, this method restores the triangulation,
-    /// insertion state, and spatial index to their pre-removal state before
-    /// returning the error. On successful removal, topology-dependent caches
-    /// (`last_inserted_cell` and the spatial index) are invalidated.
+    /// transactional: if either step fails, this method restores the triangulation
+    /// and insertion state to their pre-removal state before returning the error.
+    /// The spatial index is retained across rollback because its keys are
+    /// validated against the live TDS before use. On successful removal,
+    /// topology-dependent locate hints are invalidated and the removed vertex key
+    /// is pruned from the spatial index.
     ///
     /// **Future Enhancement**: Delaunay-aware cavity retriangulation will be added for
     /// removals. For now, occasional Delaunay violations after removal are expected and
@@ -7335,21 +7337,20 @@ where
     /// ```rust
     /// use delaunay::prelude::triangulation::construction::{DelaunayTriangulation, vertex};
     ///
+    /// let interior = vertex!([0.3, 0.3]);
+    /// let interior_uuid = interior.uuid();
     /// let vertices = [
     ///     vertex!([0.0, 0.0]),
     ///     vertex!([1.0, 0.0]),
     ///     vertex!([0.0, 1.0]),
-    ///     vertex!([0.3, 0.3]), // interior vertex
+    ///     interior,
     /// ];
     /// let mut dt = DelaunayTriangulation::new(&vertices).unwrap();
     ///
     /// // Find the key of a known interior vertex.
     /// let vertex_key = dt
     ///     .vertices()
-    ///     .find(|(_, v)| {
-    ///         let coords = v.point().coords();
-    ///         (coords[0] - 0.3).abs() < 1e-10 && (coords[1] - 0.3).abs() < 1e-10
-    ///     })
+    ///     .find(|(_, v)| v.uuid() == interior_uuid)
     ///     .map(|(k, _)| k)
     ///     .unwrap();
     ///
@@ -7361,15 +7362,11 @@ where
     /// assert!(dt.as_triangulation().validate().is_ok());
     /// ```
     pub fn remove_vertex(&mut self, vertex_key: VertexKey) -> Result<usize, InvariantError> {
-        if self.tri.tds.vertex(vertex_key).is_none() {
+        let Some(removed_vertex) = self.tri.tds.vertex(vertex_key) else {
             return Ok(0);
-        }
-
-        let snapshot = (
-            self.tri.tds.clone(),
-            self.insertion_state,
-            self.spatial_index.clone(),
-        );
+        };
+        let removed_vertex_coords = *removed_vertex.point().coords();
+        let snapshot = (self.tri.tds.clone_for_rollback(), self.insertion_state);
 
         let result = (|| {
             // Fast path: inverse k=1 flip when the vertex star is a simplex.
@@ -7395,7 +7392,7 @@ where
             if self.should_run_delaunay_repair_after_mutation(topology) {
                 let seed_ref = seed_cells.as_deref();
                 let repair_result = {
-                    self.invalidate_repair_caches();
+                    self.invalidate_locate_hint_cache();
                     let (tds, kernel) = (&mut self.tri.tds, &self.tri.kernel);
                     repair_delaunay_with_flips_k2_k3(tds, kernel, seed_ref, topology, None)
                 };
@@ -7434,14 +7431,15 @@ where
         match result {
             Ok(cells_removed) => {
                 self.insertion_state.last_inserted_cell = None;
-                self.spatial_index = None;
+                if let Some(index) = self.spatial_index.as_mut() {
+                    index.remove_vertex(&vertex_key, &removed_vertex_coords);
+                }
                 Ok(cells_removed)
             }
             Err(err) => {
-                let (tds, insertion_state, spatial_index) = snapshot;
+                let (tds, insertion_state) = snapshot;
                 self.tri.tds = tds;
                 self.insertion_state = insertion_state;
-                self.spatial_index = spatial_index;
                 Err(err)
             }
         }
@@ -9979,7 +9977,7 @@ mod tests {
     }
 
     #[test]
-    fn remove_vertex_invalidates_caches() {
+    fn remove_vertex_invalidates_locate_hint_and_prunes_spatial_index() {
         init_tracing();
         let vertices: Vec<Vertex<f64, (), 2>> = vec![
             vertex!([0.0, 0.0]),
@@ -10005,7 +10003,18 @@ mod tests {
 
         assert!(removed_cells > 0);
         assert!(dt.insertion_state.last_inserted_cell.is_none());
-        assert!(dt.spatial_index.is_none());
+        let spatial_index = dt
+            .spatial_index
+            .as_ref()
+            .expect("successful vertex removal should retain the spatial index");
+        let mut found_removed_key = false;
+        assert!(
+            spatial_index.for_each_candidate_vertex_key(&[0.25, 0.25], |candidate| {
+                found_removed_key |= candidate == vertex_key;
+                true
+            })
+        );
+        assert!(!found_removed_key);
         assert!(dt.as_triangulation().validate().is_ok());
     }
 
@@ -10341,10 +10350,26 @@ mod tests {
 
         let _guard = ForceRepairNonconvergentGuard::enable();
         let result = dt.insert(vertex!([0.5, 0.5]));
+        let inserted_key = result
+            .as_ref()
+            .copied()
+            .expect("Insertion should succeed via robust fallback");
         assert!(
             result.is_ok(),
             "Insertion should succeed via robust fallback: {result:?}"
         );
+        let spatial_index = dt
+            .spatial_index
+            .as_ref()
+            .expect("topology-only repair should preserve the duplicate-detection index");
+        let mut found_inserted_key = false;
+        assert!(
+            spatial_index.for_each_candidate_vertex_key(&[0.5, 0.5], |candidate| {
+                found_inserted_key |= candidate == inserted_key;
+                true
+            })
+        );
+        assert!(found_inserted_key);
         assert!(dt.validate().is_ok());
     }
 

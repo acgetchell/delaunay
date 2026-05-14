@@ -7,9 +7,14 @@
 #![forbid(unsafe_code)]
 
 use crate::core::cell::CellValidationError;
-use crate::geometry::matrix::{Matrix, matrix_get, matrix_set, matrix_zero_like};
+use crate::geometry::matrix::{
+    Matrix, StackMatrixDispatchError, matrix_get, matrix_set, matrix_zero_like,
+};
 use crate::geometry::point::Point;
-use crate::geometry::traits::coordinate::{CoordinateConversionError, CoordinateScalar};
+use crate::geometry::sos::exact_det_sign;
+use crate::geometry::traits::coordinate::{
+    CoordinateConversionError, CoordinateScalar, DegenerateSimplexReason,
+};
 use crate::geometry::util::{
     circumcenter, circumradius_with_center, hypot, safe_coords_to_f64, safe_scalar_to_f64,
     squared_norm,
@@ -46,6 +51,166 @@ const fn sign_to_insphere(det_sign: i8, orient_sign: i8) -> InSphere {
     }
 }
 
+/// Verifies that the active matrix block matches the concrete matrix type.
+fn validate_active_matrix_dimension<const N: usize>(
+    k: usize,
+) -> Result<(), StackMatrixDispatchError> {
+    if k == N {
+        return Ok(());
+    }
+
+    Err(StackMatrixDispatchError::ActiveBlockDimensionMismatch { k, dim: N })
+}
+
+/// Verifies that the active matrix block is structurally present and finite.
+fn active_matrix_block_is_finite<const N: usize>(
+    matrix: &Matrix<N>,
+    k: usize,
+) -> Result<bool, StackMatrixDispatchError> {
+    validate_active_matrix_dimension::<N>(k)?;
+
+    for i in 0..k {
+        for j in 0..k {
+            let Some(entry) = matrix.get(i, j) else {
+                debug_assert!(
+                    false,
+                    "matrix entry ({i}, {j}) missing from active {k}x{k} block in Matrix<{N}>"
+                );
+                return Err(StackMatrixDispatchError::ActiveBlockDimensionMismatch { k, dim: N });
+            };
+            if !entry.is_finite() {
+                return Ok(false);
+            }
+        }
+    }
+
+    Ok(true)
+}
+
+/// Exact determinant signs for the relative-coordinate lifted insphere matrix.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct RelativeInsphereSigns {
+    /// Sign of the relative simplex orientation determinant.
+    pub(crate) relative_orientation: i32,
+    /// Raw sign of the lifted insphere determinant.
+    pub(crate) insphere_determinant: i32,
+}
+
+/// Convert relative-coordinate lifted determinant signs into a normalized sign.
+#[inline]
+pub(crate) const fn relative_insphere_effective_sign(signs: RelativeInsphereSigns) -> i32 {
+    let effective = signs.insphere_determinant * -signs.relative_orientation;
+    if effective > 0 {
+        1
+    } else if effective < 0 {
+        -1
+    } else {
+        0
+    }
+}
+
+/// Convert relative-coordinate lifted determinant signs into an [`InSphere`] result.
+#[inline]
+pub(crate) const fn relative_insphere_classification(signs: RelativeInsphereSigns) -> InSphere {
+    let sign = relative_insphere_effective_sign(signs);
+    if sign > 0 {
+        InSphere::INSIDE
+    } else if sign < 0 {
+        InSphere::OUTSIDE
+    } else {
+        InSphere::BOUNDARY
+    }
+}
+
+/// Fill the lifted relative-coordinate insphere matrix for exact determinant evaluation.
+#[inline]
+fn fill_relative_insphere_matrix<T, const D: usize, const K: usize>(
+    matrix: &mut Matrix<K>,
+    simplex_points: &[Point<T, D>],
+    test_point: &Point<T, D>,
+) -> Result<(), CoordinateConversionError>
+where
+    T: CoordinateScalar,
+{
+    debug_assert_eq!(K, D + 1);
+    debug_assert_eq!(simplex_points.len(), D + 1);
+
+    let reference_coords = simplex_points[0].coords();
+
+    for (row, point) in simplex_points.iter().skip(1).enumerate() {
+        let mut relative_coords: [T; D] = [T::zero(); D];
+        for (dst, (point_coord, reference_coord)) in relative_coords
+            .iter_mut()
+            .zip(point.coords().iter().zip(reference_coords.iter()))
+        {
+            *dst = *point_coord - *reference_coord;
+        }
+
+        let relative_coords_f64 = safe_coords_to_f64(&relative_coords)?;
+        for (column, &value) in relative_coords_f64.iter().enumerate() {
+            matrix_set(matrix, row, column, value);
+        }
+
+        let squared_norm_f64 = safe_scalar_to_f64(squared_norm(&relative_coords))?;
+        matrix_set(matrix, row, D, squared_norm_f64);
+    }
+
+    let mut test_relative_coords: [T; D] = [T::zero(); D];
+    for (dst, (point_coord, reference_coord)) in test_relative_coords
+        .iter_mut()
+        .zip(test_point.coords().iter().zip(reference_coords.iter()))
+    {
+        *dst = *point_coord - *reference_coord;
+    }
+
+    let test_relative_coords_f64 = safe_coords_to_f64(&test_relative_coords)?;
+    for (column, &value) in test_relative_coords_f64.iter().enumerate() {
+        matrix_set(matrix, D, column, value);
+    }
+
+    let test_squared_norm_f64 = safe_scalar_to_f64(squared_norm(&test_relative_coords))?;
+    matrix_set(matrix, D, D, test_squared_norm_f64);
+
+    Ok(())
+}
+
+/// Compute exact signs for the relative-coordinate lifted insphere formulation.
+#[inline]
+pub(crate) fn relative_insphere_signs<T, const D: usize>(
+    simplex_points: &[Point<T, D>],
+    test_point: &Point<T, D>,
+) -> Result<RelativeInsphereSigns, CoordinateConversionError>
+where
+    T: CoordinateScalar,
+{
+    if simplex_points.len() != D + 1 {
+        return Err(CoordinateConversionError::InvalidSimplexPointCount {
+            actual: simplex_points.len(),
+            expected: D + 1,
+            dimension: D,
+        });
+    }
+
+    let k = D + 1;
+
+    try_with_la_stack_matrix!(k, |matrix| {
+        fill_relative_insphere_matrix(&mut matrix, simplex_points, test_point)?;
+
+        let mut orientation_matrix = matrix_zero_like(&matrix);
+        for i in 0..D {
+            for j in 0..D {
+                matrix_set(&mut orientation_matrix, i, j, matrix_get(&matrix, i, j));
+            }
+        }
+        matrix_set(&mut orientation_matrix, D, D, 1.0);
+
+        Ok(RelativeInsphereSigns {
+            relative_orientation: exact_det_sign(&orientation_matrix),
+            insphere_determinant: exact_det_sign(&matrix),
+        })
+    })
+}
+
 /// Compute insphere classification from a pre-populated insphere matrix.
 ///
 /// Uses [`la_stack::Matrix::det_sign_exact`] for provably correct results when
@@ -57,16 +222,16 @@ const fn sign_to_insphere(det_sign: i8, orient_sign: i8) -> InSphere {
 /// - `-1`: positive det → OUTSIDE (e.g. standard insphere with NEGATIVE orientation,
 ///   or lifted insphere with POSITIVE relative orientation)
 #[inline]
-pub(crate) fn insphere_from_matrix<const N: usize>(
+pub(crate) fn try_insphere_from_matrix<const N: usize>(
     matrix: &Matrix<N>,
     k: usize,
     orient_sign: i8,
-) -> InSphere {
+) -> Result<InSphere, StackMatrixDispatchError> {
     // `det_sign_exact()` and `det_direct()` operate on the full N×N matrix,
     // so callers must ensure k == N.  All production call sites satisfy this
     // because `try_with_la_stack_matrix!(k, ...)` creates a Matrix<K> where
     // K == k at compile time.
-    debug_assert_eq!(k, N, "k ({k}) must equal matrix dimension N ({N})");
+    validate_active_matrix_dimension::<N>(k)?;
 
     // Stage 1: provable f64 fast filter for D ≤ 4.
     // `det_errbound()` returns a Shewchuk-style error bound derived from the
@@ -80,10 +245,10 @@ pub(crate) fn insphere_from_matrix<const N: usize>(
     {
         let det_norm = det * f64::from(orient_sign);
         if det_norm > errbound {
-            return InSphere::INSIDE;
+            return Ok(InSphere::INSIDE);
         }
         if det_norm < -errbound {
-            return InSphere::OUTSIDE;
+            return Ok(InSphere::OUTSIDE);
         }
     }
 
@@ -92,16 +257,16 @@ pub(crate) fn insphere_from_matrix<const N: usize>(
     // keep Stage 1 lean; for D ≤ 4 with well-separated inputs, the vast
     // majority of calls return before reaching this point.
     cold_path();
-    let exact_is_safe = det_direct.is_some_and(f64::is_finite)
-        || (0..k).all(|i| (0..k).all(|j| matrix.get(i, j).is_some_and(f64::is_finite)));
+    let exact_is_safe =
+        det_direct.is_some_and(f64::is_finite) || active_matrix_block_is_finite(matrix, k)?;
     if exact_is_safe && let Ok(sign) = matrix.det_sign_exact() {
-        return sign_to_insphere(sign, orient_sign);
+        return Ok(sign_to_insphere(sign, orient_sign));
     }
 
     // Stage 3: sign is unresolvable (non-finite entries prevent exact
     // arithmetic from running).
     cold_path();
-    InSphere::BOUNDARY
+    Ok(InSphere::BOUNDARY)
 }
 
 /// Compute orientation from a pre-populated orientation matrix.
@@ -113,8 +278,11 @@ pub(crate) fn insphere_from_matrix<const N: usize>(
 ///
 /// `k` must equal the number of rows/columns actually used in `matrix`.
 #[inline]
-pub(crate) fn orientation_from_matrix<const N: usize>(matrix: &Matrix<N>, k: usize) -> Orientation {
-    debug_assert_eq!(k, N, "k ({k}) must equal matrix dimension N ({N})");
+pub(crate) fn try_orientation_from_matrix<const N: usize>(
+    matrix: &Matrix<N>,
+    k: usize,
+) -> Result<Orientation, StackMatrixDispatchError> {
+    validate_active_matrix_dimension::<N>(k)?;
 
     // Stage 1: provable f64 fast filter for D ≤ 4.
     // See `insphere_from_matrix` for detailed explanation of the error bound.
@@ -123,10 +291,10 @@ pub(crate) fn orientation_from_matrix<const N: usize>(matrix: &Matrix<N>, k: usi
         && det.is_finite()
     {
         if det > errbound {
-            return Orientation::POSITIVE;
+            return Ok(Orientation::POSITIVE);
         }
         if det < -errbound {
-            return Orientation::NEGATIVE;
+            return Ok(Orientation::NEGATIVE);
         }
     }
 
@@ -134,15 +302,15 @@ pub(crate) fn orientation_from_matrix<const N: usize>(matrix: &Matrix<N>, k: usi
     // (D ≤ 4) or always for D ≥ 5.  See `insphere_from_matrix` for why this
     // is annotated cold.
     cold_path();
-    let exact_is_safe = det_direct.is_some_and(f64::is_finite)
-        || (0..k).all(|i| (0..k).all(|j| matrix.get(i, j).is_some_and(f64::is_finite)));
+    let exact_is_safe =
+        det_direct.is_some_and(f64::is_finite) || active_matrix_block_is_finite(matrix, k)?;
     if exact_is_safe && let Ok(sign) = matrix.det_sign_exact() {
-        return sign_to_orientation(sign);
+        return Ok(sign_to_orientation(sign));
     }
 
     // Stage 3: sign is unresolvable (same reasoning as insphere_from_matrix).
     cold_path();
-    Orientation::DEGENERATE
+    Ok(Orientation::DEGENERATE)
 }
 
 /// Represents the position of a point relative to a circumsphere.
@@ -269,11 +437,10 @@ where
     T: CoordinateScalar,
 {
     if simplex_points.len() != D + 1 {
-        return Err(CoordinateConversionError::ConversionFailed {
-            coordinate_index: 0,
-            coordinate_value: format!("Expected {} points, got {}", D + 1, simplex_points.len()),
-            from_type: "point count",
-            to_type: "valid simplex",
+        return Err(CoordinateConversionError::InvalidSimplexPointCount {
+            actual: simplex_points.len(),
+            expected: D + 1,
+            dimension: D,
         });
     }
 
@@ -292,7 +459,7 @@ where
             matrix_set(&mut matrix, i, D, 1.0);
         }
 
-        Ok(orientation_from_matrix(&matrix, k))
+        Ok(try_orientation_from_matrix(&matrix, k)?)
     })
 }
 
@@ -527,11 +694,10 @@ where
     T: CoordinateScalar,
 {
     if simplex_points.len() != D + 1 {
-        return Err(CoordinateConversionError::ConversionFailed {
-            coordinate_index: 0,
-            coordinate_value: format!("Expected {} points, got {}", D + 1, simplex_points.len()),
-            from_type: "point count",
-            to_type: "valid simplex",
+        return Err(CoordinateConversionError::InvalidSimplexPointCount {
+            actual: simplex_points.len(),
+            expected: D + 1,
+            dimension: D,
         });
     }
 
@@ -589,14 +755,12 @@ where
         }
         matrix_set(&mut orient_matrix, D + 1, D + 1, 1.0);
 
-        let orientation = orientation_from_matrix(&orient_matrix, k);
+        let orientation = try_orientation_from_matrix(&orient_matrix, k)?;
 
         match orientation {
-            Orientation::DEGENERATE => Err(CoordinateConversionError::ConversionFailed {
-                coordinate_index: 0,
-                coordinate_value: "degenerate simplex".to_string(),
-                from_type: "simplex",
-                to_type: "circumsphere containment",
+            Orientation::DEGENERATE => Err(CoordinateConversionError::DegenerateSimplex {
+                dimension: D,
+                reason: DegenerateSimplexReason::ZeroOrientation,
             }),
             Orientation::POSITIVE | Orientation::NEGATIVE => {
                 let orient_sign: i8 = if matches!(orientation, Orientation::POSITIVE) {
@@ -604,7 +768,7 @@ where
                 } else {
                     -1
                 };
-                Ok(insphere_from_matrix(&matrix, k, orient_sign))
+                Ok(try_insphere_from_matrix(&matrix, k, orient_sign)?)
             }
         }
     })
@@ -738,113 +902,13 @@ where
         });
     }
 
-    // Get the reference point (first point of the simplex)
-    let ref_point_coords = simplex_points[0].coords();
-
-    let k = D + 1;
-
-    try_with_la_stack_matrix!(k, |matrix| {
-        // Populate rows with the coordinates relative to the reference point.
-        for (row, point) in simplex_points.iter().skip(1).enumerate() {
-            let point_coords = point.coords();
-
-            // Calculate relative coordinates using generic arithmetic on T
-            let mut relative_coords_t: [T; D] = [T::zero(); D];
-            for (dst, (p, r)) in relative_coords_t
-                .iter_mut()
-                .zip(point_coords.iter().zip(ref_point_coords.iter()))
-            {
-                *dst = *p - *r;
-            }
-
-            // Convert to f64 for matrix operations using safe conversion
-            let relative_coords_f64: [f64; D] = safe_coords_to_f64(&relative_coords_t)
-                .map_err(|e| CellValidationError::CoordinateConversion { source: e })?;
-
-            // Fill matrix row
-            for (j, &v) in relative_coords_f64.iter().enumerate() {
-                matrix_set(&mut matrix, row, j, v);
-            }
-
-            // Calculate squared norm using generic arithmetic on T
-            let squared_norm_t = squared_norm(&relative_coords_t);
-            let squared_norm_f64: f64 = safe_scalar_to_f64(squared_norm_t)
-                .map_err(|e| CellValidationError::CoordinateConversion { source: e })?;
-
-            // Add squared norm to the last column
-            matrix_set(&mut matrix, row, D, squared_norm_f64);
-        }
-
-        // Add the test point to the last row
-        let test_point_coords = test_point.coords();
-
-        // Calculate relative coordinates for test point using generic arithmetic on T
-        let mut test_relative_coords_t: [T; D] = [T::zero(); D];
-        for (dst, (p, r)) in test_relative_coords_t
-            .iter_mut()
-            .zip(test_point_coords.iter().zip(ref_point_coords.iter()))
-        {
-            *dst = *p - *r;
-        }
-
-        // Convert to f64 for matrix operations using safe conversion
-        let test_relative_coords_f64: [f64; D] = safe_coords_to_f64(&test_relative_coords_t)
-            .map_err(|e| CellValidationError::CoordinateConversion { source: e })?;
-
-        // Fill matrix row
-        for (j, &v) in test_relative_coords_f64.iter().enumerate() {
-            matrix_set(&mut matrix, D, j, v);
-        }
-
-        // Calculate squared norm using generic arithmetic on T
-        let test_squared_norm_t = squared_norm(&test_relative_coords_t);
-        let test_squared_norm_f64: f64 = safe_scalar_to_f64(test_squared_norm_t)
-            .map_err(|e| CellValidationError::CoordinateConversion { source: e })?;
-
-        // Add squared norm to the last column
-        matrix_set(&mut matrix, D, D, test_squared_norm_f64);
-
-        // Compute the simplex orientation by reusing the relative coordinates
-        // already present in the lifted matrix (rows 0..D, cols 0..D), avoiding
-        // redundant coordinate conversions of all D+1 simplex points.
-        //
-        // Mathematical basis: the standard orientation matrix (absolute coords
-        // with a column of 1s) row-reduces to:
-        //
-        //   det(orient) = (-1)^D × det(D×D relative-coordinate block)
-        //
-        // We embed the D×D block into a (D+1)×(D+1) matrix with entry (D,D)=1
-        // so that `orientation_from_matrix` computes det(D×D block) via cofactor
-        // expansion. The (-1)^D factor combines with the dimension-parity sign
-        // from the lifted insphere formula, simplifying to:
-        //
-        //   det_norm = −det(lifted) × sign(D×D block)
-        let mut orient_matrix = matrix_zero_like(&matrix);
-        for i in 0..D {
-            for j in 0..D {
-                matrix_set(&mut orient_matrix, i, j, matrix_get(&matrix, i, j));
-            }
-        }
-        matrix_set(&mut orient_matrix, D, D, 1.0);
-
-        let relative_orientation = orientation_from_matrix(&orient_matrix, k);
-
-        match relative_orientation {
-            Orientation::DEGENERATE => Err(CellValidationError::DegenerateSimplex),
-            Orientation::POSITIVE | Orientation::NEGATIVE => {
-                // The lifted insphere formula requires both dimension parity
-                // and orientation sign.  With relative coordinates the two
-                // factors combine to: det_norm = −det × sign(relative).
-                // So orient_sign for the helper is −rel_sign.
-                let orient_sign: i8 = if matches!(relative_orientation, Orientation::POSITIVE) {
-                    -1
-                } else {
-                    1
-                };
-                Ok(insphere_from_matrix(&matrix, k, orient_sign))
-            }
-        }
-    })
+    let signs = relative_insphere_signs(simplex_points, &test_point)
+        .map_err(|source| CellValidationError::CoordinateConversion { source })?;
+    if signs.relative_orientation == 0 {
+        Err(CellValidationError::DegenerateSimplex)
+    } else {
+        Ok(relative_insphere_classification(signs))
+    }
 }
 
 #[cfg(test)]
@@ -1382,21 +1446,15 @@ mod tests {
         ];
         let test_point = Point::new([0.5, 0.5, 0.5]);
 
-        // Test that insphere errors with degenerate simplex
+        // Test that insphere errors with a typed degenerate-simplex variant.
         let result = insphere(&degenerate_simplex, test_point);
-        assert!(
-            result.is_err(),
-            "insphere should error with degenerate simplex"
+        assert_eq!(
+            result,
+            Err(CoordinateConversionError::DegenerateSimplex {
+                dimension: 3,
+                reason: DegenerateSimplexReason::ZeroOrientation,
+            })
         );
-
-        // Verify the error message mentions degeneracy
-        if let Err(err) = result {
-            let err_str = err.to_string();
-            assert!(
-                err_str.contains("degenerate"),
-                "Error should mention degeneracy: {err_str}"
-            );
-        }
 
         // Test that insphere_lifted errors with degenerate simplex
         let result_lifted = insphere_lifted(&degenerate_simplex, test_point);
@@ -1945,7 +2003,10 @@ mod tests {
             matrix_set(&mut m, 2, 1, 1.0);
             matrix_set(&mut m, 2, 2, 1.0);
 
-            assert_eq!(orientation_from_matrix(&m, k), Orientation::POSITIVE);
+            assert_eq!(
+                try_orientation_from_matrix(&m, k).unwrap(),
+                Orientation::POSITIVE
+            );
         });
     }
 
@@ -1967,7 +2028,10 @@ mod tests {
             matrix_set(&mut m, 2, 1, 0.0);
             matrix_set(&mut m, 2, 2, 1.0);
 
-            assert_eq!(orientation_from_matrix(&m, k), Orientation::NEGATIVE);
+            assert_eq!(
+                try_orientation_from_matrix(&m, k).unwrap(),
+                Orientation::NEGATIVE
+            );
         });
     }
 
@@ -1987,7 +2051,10 @@ mod tests {
             matrix_set(&mut m, 2, 1, 0.0);
             matrix_set(&mut m, 2, 2, 1.0);
 
-            assert_eq!(orientation_from_matrix(&m, k), Orientation::DEGENERATE);
+            assert_eq!(
+                try_orientation_from_matrix(&m, k).unwrap(),
+                Orientation::DEGENERATE
+            );
         });
     }
 
@@ -2009,7 +2076,7 @@ mod tests {
             matrix_set(&mut m, 2, 1, big);
             matrix_set(&mut m, 2, 2, 1.0);
 
-            let result = orientation_from_matrix(&m, k);
+            let result = try_orientation_from_matrix(&m, k).unwrap();
             assert_eq!(
                 result,
                 Orientation::POSITIVE,
@@ -2039,13 +2106,24 @@ mod tests {
             // NaN inside the k×k block.
             matrix_set(&mut m, 3, 3, f64::NAN);
 
-            let result = orientation_from_matrix(&m, k);
+            let result = try_orientation_from_matrix(&m, k).unwrap();
             assert_eq!(
                 result,
                 Orientation::DEGENERATE,
                 "non-finite entry in matrix should fall to Stage 3 → DEGENERATE"
             );
         });
+    }
+
+    #[test]
+    fn test_try_orientation_from_matrix_rejects_dimension_mismatch() {
+        let matrix = Matrix::<3>::zero();
+        let err = try_orientation_from_matrix(&matrix, 4).unwrap_err();
+
+        assert!(matches!(
+            err,
+            StackMatrixDispatchError::ActiveBlockDimensionMismatch { k: 4, dim: 3 }
+        ));
     }
 
     #[test]
@@ -2105,9 +2183,15 @@ mod tests {
             matrix_set(&mut m, 3, 3, big);
 
             // Positive exact sign + orient_sign = 1 → INSIDE
-            assert_eq!(insphere_from_matrix(&m, k, 1), InSphere::INSIDE);
+            assert_eq!(
+                try_insphere_from_matrix(&m, k, 1).unwrap(),
+                InSphere::INSIDE
+            );
             // Positive exact sign + orient_sign = -1 → OUTSIDE
-            assert_eq!(insphere_from_matrix(&m, k, -1), InSphere::OUTSIDE);
+            assert_eq!(
+                try_insphere_from_matrix(&m, k, -1).unwrap(),
+                InSphere::OUTSIDE
+            );
         });
     }
 
@@ -2126,7 +2210,10 @@ mod tests {
             matrix_set(&mut m, 1, 1, 1.0 + eps);
             matrix_set(&mut m, 2, 2, 1.0);
 
-            assert_eq!(insphere_from_matrix(&m, k, 1), InSphere::INSIDE);
+            assert_eq!(
+                try_insphere_from_matrix(&m, k, 1).unwrap(),
+                InSphere::INSIDE
+            );
         });
     }
 
@@ -2146,7 +2233,10 @@ mod tests {
             matrix_set(&mut m, 2, 1, 5.0);
             matrix_set(&mut m, 2, 2, 6.0);
 
-            assert_eq!(insphere_from_matrix(&m, k, 1), InSphere::BOUNDARY);
+            assert_eq!(
+                try_insphere_from_matrix(&m, k, 1).unwrap(),
+                InSphere::BOUNDARY
+            );
         });
     }
 
@@ -2160,8 +2250,22 @@ mod tests {
             matrix_set(&mut m, 1, 1, 1.0);
             matrix_set(&mut m, 2, 2, f64::NAN);
 
-            assert_eq!(insphere_from_matrix(&m, k, 1), InSphere::BOUNDARY);
+            assert_eq!(
+                try_insphere_from_matrix(&m, k, 1).unwrap(),
+                InSphere::BOUNDARY
+            );
         });
+    }
+
+    #[test]
+    fn test_try_insphere_from_matrix_rejects_dimension_mismatch() {
+        let matrix = Matrix::<3>::zero();
+        let err = try_insphere_from_matrix(&matrix, 2, 1).unwrap_err();
+
+        assert!(matches!(
+            err,
+            StackMatrixDispatchError::ActiveBlockDimensionMismatch { k: 2, dim: 3 }
+        ));
     }
 
     // =======================================================================

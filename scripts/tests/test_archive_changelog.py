@@ -240,6 +240,23 @@ class TestWriteArchive:
         assert "[unreleased]:" not in content
         assert "[0.2.0]:" not in content
 
+    def test_postprocesses_archived_blocks(self, tmp_path: Path) -> None:
+        block = (
+            "## [0.5.0] - 2025-01-01\n\n"
+            "### Fixed\n\n"
+            "- Fix remove_vertex topology consistency [#124](https://github.com/acgetchell/delaunay/pull/124)\n"
+            "  [`da473c8`](https://github.com/acgetchell/delaunay/commit/da473c8deadbeef)\n\n"
+            "  This commit addresses three critical issues:\n\n"
+            "  1. **Fix remove_vertex to maintain topology consistency**\n\n"
+            "    - Added logic to clear dangling neighbor references\n"
+        )
+
+        path = write_archive(tmp_path, "0.5", [("0.5.0", block)])
+        content = path.read_text(encoding="utf-8")
+
+        assert "\n  - Added logic to clear dangling neighbor references\n" in content
+        assert "\n    - Added logic to clear dangling neighbor references\n" not in content
+
 
 class TestBuildRoot:
     def test_includes_active_and_archives(self) -> None:

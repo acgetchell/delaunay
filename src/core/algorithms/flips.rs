@@ -517,15 +517,15 @@ where
     // traces (see #204 investigation).
     let removed_cell_vertices = snapshot_removed_cell_vertices(tds, removed_cells)?;
 
-    let mut trial = tds.clone();
+    let mut trial = tds.clone_for_rollback();
 
     for vertices in new_cell_vertices {
         let cell = Cell::new(vertices, None)?;
-        let cell_key = trial.insert_cell_with_mapping(cell).map_err(|source| {
-            FlipMutationError::CellInsertion {
+        let cell_key = trial
+            .insert_cell_with_mapping_trusted_vertices(cell)
+            .map_err(|source| FlipMutationError::CellInsertion {
                 source: source.into(),
-            }
-        })?;
+            })?;
         new_cells.push(cell_key);
     }
 
@@ -5261,7 +5261,7 @@ where
     };
 
     // Snapshot the pre-repair state so a failed attempt doesn't poison retries.
-    let tds_snapshot = tds.clone();
+    let tds_snapshot = tds.clone_for_rollback();
 
     let attempt1_result = if D == 2 {
         repair_delaunay_with_flips_k2_attempt(tds, kernel, seed_cells, &attempt1)
@@ -5380,7 +5380,7 @@ where
     };
     // Snapshot so a failed attempt does not leave the TDS in a partially-modified state.
     let snapshot_started = Instant::now();
-    let tds_snapshot = tds.clone();
+    let tds_snapshot = tds.clone_for_rollback();
     phase_timing.record_snapshot(snapshot_started.elapsed());
 
     let attempt_started = Instant::now();
@@ -5435,7 +5435,7 @@ where
         }
     }
     let restore_started = Instant::now();
-    *tds = tds_snapshot.clone();
+    *tds = tds_snapshot.clone_for_rollback();
     phase_timing.record_restore(restore_started.elapsed());
 
     let attempt_started = Instant::now();
@@ -11412,7 +11412,7 @@ mod tests {
             )
             .unwrap();
 
-        assert!(tds.cells_mut().remove(dangling_neighbor).is_some());
+        assert_eq!(tds.remove_cells_by_keys(&[dangling_neighbor]), 1);
         let neighbors = tds
             .cell_mut(cell)
             .expect("test cell should exist")
