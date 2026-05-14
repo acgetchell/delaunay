@@ -5185,7 +5185,7 @@ where
     U: DataType,
     V: DataType,
 {
-    *tds = snapshot.clone();
+    *tds = snapshot.clone_for_rollback();
     let retry_seed_cells = None;
     let attempt_result = if D == 2 {
         repair_delaunay_with_flips_k2_attempt(tds, kernel, retry_seed_cells, config)

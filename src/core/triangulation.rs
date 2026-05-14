@@ -4163,6 +4163,7 @@ where
         let mut axis_max = *coords;
         let mut magnitude_scale = K::Scalar::zero();
         let mut saw_reference = false;
+        let mut local_feature_scale = None;
 
         for coord in coords {
             let abs = (*coord).abs();
@@ -4188,24 +4189,23 @@ where
         }
 
         if !saw_reference {
-            for (_, vertex) in self.tds.vertices() {
-                Self::include_duplicate_scale_reference(
-                    vertex.point().coords(),
-                    &mut axis_min,
-                    &mut axis_max,
-                    &mut magnitude_scale,
-                    &mut saw_reference,
-                );
+            let local_scale = self.estimate_local_perturbation_scale(coords, None);
+            if local_scale.is_finite() && local_scale > K::Scalar::zero() {
+                if local_scale > magnitude_scale {
+                    magnitude_scale = local_scale;
+                }
+                local_feature_scale = Some(local_scale);
             }
         }
 
-        let mut span_sq = K::Scalar::zero();
-        for i in 0..D {
-            let span = axis_max[i] - axis_min[i];
-            span_sq += span * span;
-        }
-
-        let feature_scale = span_sq.sqrt();
+        let feature_scale = local_feature_scale.unwrap_or_else(|| {
+            let mut span_sq = K::Scalar::zero();
+            for i in 0..D {
+                let span = axis_max[i] - axis_min[i];
+                span_sq += span * span;
+            }
+            span_sq.sqrt()
+        });
         let relative_tolerance = Self::duplicate_relative_tolerance() * feature_scale;
         let ulp_factor = <K::Scalar as NumCast>::from(16.0_f64).unwrap_or_else(K::Scalar::one);
         let ulp_tolerance = K::Scalar::epsilon() * ulp_factor * magnitude_scale;
@@ -7893,6 +7893,25 @@ mod tests {
         vertex!([0.125_f64; D])
     }
 
+    /// Build a simplex whose feature length is controlled by one shared axis scale.
+    fn axis_scaled_simplex_vertices<const D: usize>(scale: f64) -> Vec<Vertex<f64, (), D>> {
+        let mut vertices = Vec::with_capacity(D + 1);
+        vertices.push(vertex!([0.0_f64; D]));
+        for axis in 0..D {
+            let mut coords = [0.0_f64; D];
+            coords[axis] = scale;
+            vertices.push(vertex!(coords));
+        }
+        vertices
+    }
+
+    /// Build coordinates with only the first component set for tolerance-scale tests.
+    fn coords_with_first<const D: usize>(first: f64) -> [f64; D] {
+        let mut coords = [0.0_f64; D];
+        coords[0] = first;
+        coords
+    }
+
     macro_rules! test_scoped_strict_validation_falls_back_to_global_vertex_links {
         ($($dim:expr),+ $(,)?) => {
             pastey::paste! {
@@ -8121,16 +8140,15 @@ mod tests {
         ));
     }
 
-    #[test]
-    fn test_duplicate_coordinate_tolerance_scales_down_for_small_features() {
-        let mut tri: Triangulation<FastKernel<f64>, (), (), 2> =
+    fn duplicate_coordinate_tolerance_scales_down_for_small_features<const D: usize>() {
+        let mut tri: Triangulation<FastKernel<f64>, (), (), D> =
             Triangulation::new_empty(FastKernel::new());
         let _ = tri
             .tds
-            .insert_vertex_with_mapping(vertex!([1.0e-6, 0.0]))
+            .insert_vertex_with_mapping(vertex!(coords_with_first::<D>(1.0e-6)))
             .unwrap();
 
-        let candidate = [1.0e-6 + 1.0e-11, 0.0];
+        let candidate = coords_with_first::<D>(1.0e-6 + 1.0e-11);
         let tolerance = tri.estimate_duplicate_coordinate_tolerance(&candidate, None);
 
         assert!(
@@ -8144,18 +8162,13 @@ mod tests {
         );
     }
 
-    #[test]
-    fn test_duplicate_coordinate_tolerance_uses_hint_cell_span() {
-        let vertices = vec![
-            vertex!([0.0, 0.0]),
-            vertex!([1.0, 0.0]),
-            vertex!([0.0, 1.0]),
-        ];
+    fn duplicate_coordinate_tolerance_uses_hint_cell_span<const D: usize>() {
+        let vertices = unit_simplex_vertices::<D>();
         let tds =
-            Triangulation::<FastKernel<f64>, (), (), 2>::build_initial_simplex(&vertices).unwrap();
-        let tri = Triangulation::<FastKernel<f64>, (), (), 2>::new_with_tds(FastKernel::new(), tds);
+            Triangulation::<FastKernel<f64>, (), (), D>::build_initial_simplex(&vertices).unwrap();
+        let tri = Triangulation::<FastKernel<f64>, (), (), D>::new_with_tds(FastKernel::new(), tds);
         let hint = tri.tds.cell_keys().next();
-        let candidate = [5.0e-11, 0.0];
+        let candidate = coords_with_first::<D>(5.0e-11);
         let tolerance = tri.estimate_duplicate_coordinate_tolerance(&candidate, hint);
 
         assert!(
@@ -8168,19 +8181,15 @@ mod tests {
         ));
     }
 
-    #[test]
-    fn test_duplicate_index_rebuilds_when_tolerance_exceeds_cell_size() {
-        let vertices = vec![
-            vertex!([0.0, 0.0]),
-            vertex!([1.0e6, 0.0]),
-            vertex!([0.0, 1.0e6]),
-        ];
+    fn duplicate_index_rebuilds_when_tolerance_exceeds_cell_size<const D: usize>() {
+        let vertices = axis_scaled_simplex_vertices::<D>(1.0e6);
         let tds =
-            Triangulation::<FastKernel<f64>, (), (), 2>::build_initial_simplex(&vertices).unwrap();
-        let tri = Triangulation::<FastKernel<f64>, (), (), 2>::new_with_tds(FastKernel::new(), tds);
+            Triangulation::<FastKernel<f64>, (), (), D>::build_initial_simplex(&vertices).unwrap();
+        let tri = Triangulation::<FastKernel<f64>, (), (), D>::new_with_tds(FastKernel::new(), tds);
         let hint = tri.tds.cell_keys().next();
-        let tolerance = tri.estimate_duplicate_coordinate_tolerance(&[1.0, 1.0], hint);
-        let mut index: HashGridIndex<f64, 2> = HashGridIndex::new(1.0e-10);
+        let candidate = [1.0_f64; D];
+        let tolerance = tri.estimate_duplicate_coordinate_tolerance(&candidate, hint);
+        let mut index: HashGridIndex<f64, D> = HashGridIndex::new(1.0e-10);
         for (vkey, vertex) in tri.tds.vertices() {
             index.insert_vertex(vkey, vertex.point().coords());
         }
@@ -8189,10 +8198,51 @@ mod tests {
 
         approx::assert_abs_diff_eq!(index.cell_size(), tolerance, epsilon = f64::EPSILON);
         assert!(
-            index.for_each_candidate_vertex_key(&[1.0, 1.0], |_| false),
+            index.for_each_candidate_vertex_key(&candidate, |_| false),
             "rebuilt duplicate index should remain queryable"
         );
     }
+
+    #[test]
+    fn test_duplicate_distance_within_tolerance_handles_overflowed_tolerance_square() {
+        assert!(
+            Triangulation::<FastKernel<f64>, (), (), 2>::duplicate_distance_within_tolerance(
+                f64::MAX,
+                f64::MAX
+            )
+        );
+        assert!(
+            !Triangulation::<FastKernel<f64>, (), (), 2>::duplicate_distance_within_tolerance(
+                f64::MAX,
+                1.0
+            )
+        );
+    }
+
+    macro_rules! test_duplicate_tolerance_dimensions {
+        ($($dim:expr),+ $(,)?) => {
+            pastey::paste! {
+                $(
+                    #[test]
+                    fn [<test_duplicate_coordinate_tolerance_scales_down_for_small_features_ $dim d>]() {
+                        duplicate_coordinate_tolerance_scales_down_for_small_features::<$dim>();
+                    }
+
+                    #[test]
+                    fn [<test_duplicate_coordinate_tolerance_uses_hint_cell_span_ $dim d>]() {
+                        duplicate_coordinate_tolerance_uses_hint_cell_span::<$dim>();
+                    }
+
+                    #[test]
+                    fn [<test_duplicate_index_rebuilds_when_tolerance_exceeds_cell_size_ $dim d>]() {
+                        duplicate_index_rebuilds_when_tolerance_exceeds_cell_size::<$dim>();
+                    }
+                )+
+            }
+        };
+    }
+
+    test_duplicate_tolerance_dimensions!(2, 3, 4, 5);
 
     #[test]
     fn test_estimate_local_perturbation_scale_uses_hint_cell_vertices() {
@@ -9220,6 +9270,21 @@ mod tests {
             Err(TriangulationConstructionError::InsufficientVertices { .. }) => {}
             _ => panic!("Expected InsufficientVertices error for wrong count"),
         }
+    }
+
+    #[test]
+    fn test_build_initial_simplex_rejects_invalid_vertex() {
+        let invalid = Vertex::new_with_uuid(Point::new([0.0, f64::NAN]), Uuid::new_v4(), None);
+        let vertices = vec![vertex!([0.0, 0.0]), invalid, vertex!([0.0, 1.0])];
+
+        let result = Triangulation::<FastKernel<f64>, (), (), 2>::build_initial_simplex(&vertices);
+
+        assert!(matches!(
+            result,
+            Err(TriangulationConstructionError::Tds(
+                TdsConstructionError::ValidationError(TdsError::InvalidVertex { .. })
+            ))
+        ));
     }
 
     #[test]

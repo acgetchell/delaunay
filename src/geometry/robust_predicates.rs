@@ -348,11 +348,11 @@ where
             // Add coordinates using safe conversion
             let coords_f64 = safe_coords_to_f64(coords)?;
             for (j, &v) in coords_f64.iter().enumerate() {
-                matrix_set(&mut matrix, i, j, v);
+                matrix_set(&mut matrix, i, j, v)?;
             }
 
             // Add constant term
-            matrix_set(&mut matrix, i, D, 1.0);
+            matrix_set(&mut matrix, i, D, 1.0)?;
         }
 
         // Route through the exact-sign orientation helper for provably correct
@@ -432,12 +432,16 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::geometry::matrix::matrix_get;
+    use crate::geometry::matrix::{Matrix, matrix_get};
     use crate::geometry::point::Point;
     use crate::geometry::predicates;
     use crate::geometry::util::squared_norm;
     use num_traits::NumCast;
     use rand::{RngExt, SeedableRng};
+
+    fn matrix_block_is_finite<const N: usize>(matrix: &Matrix<N>, k: usize) -> bool {
+        (0..k).all(|row| (0..k).all(|column| matrix_get(matrix, row, column).unwrap().is_finite()))
+    }
 
     #[test]
     fn test_robust_insphere_general() {
@@ -1139,21 +1143,21 @@ mod tests {
 
         // Test matrix with very small elements
         let scale_small = with_la_stack_matrix!(3, |m| {
-            matrix_set(&mut m, 0, 0, 1e-100);
-            matrix_set(&mut m, 1, 1, 1e-99);
-            matrix_set(&mut m, 2, 2, 1e-98);
+            matrix_set(&mut m, 0, 0, 1e-100).unwrap();
+            matrix_set(&mut m, 1, 1, 1e-99).unwrap();
+            matrix_set(&mut m, 2, 2, 1e-98).unwrap();
 
             let mut scale_factor = 1.0_f64;
             for i in 0..3 {
                 let mut max_element = 0.0_f64;
                 for j in 0..3 {
-                    max_element = max_element.max(matrix_get(&m, i, j).abs());
+                    max_element = max_element.max(matrix_get(&m, i, j).unwrap().abs());
                 }
 
                 if max_element > 1e-100 {
                     for j in 0..3 {
-                        let v = matrix_get(&m, i, j) / max_element;
-                        matrix_set(&mut m, i, j, v);
+                        let v = matrix_get(&m, i, j).unwrap() / max_element;
+                        matrix_set(&mut m, i, j, v).unwrap();
                     }
                     scale_factor *= max_element;
                 }
@@ -1161,7 +1165,7 @@ mod tests {
 
             for i in 0..3 {
                 for j in 0..3 {
-                    assert!(matrix_get(&m, i, j).is_finite());
+                    assert!(matrix_get(&m, i, j).unwrap().is_finite());
                 }
             }
 
@@ -1171,23 +1175,23 @@ mod tests {
 
         // Test matrix with mixed large and small elements
         let scale_mixed = with_la_stack_matrix!(3, |m| {
-            matrix_set(&mut m, 0, 0, 1e10);
-            matrix_set(&mut m, 0, 1, 1e-10);
-            matrix_set(&mut m, 1, 0, 1e5);
-            matrix_set(&mut m, 1, 1, 1e-5);
-            matrix_set(&mut m, 2, 2, 1.0);
+            matrix_set(&mut m, 0, 0, 1e10).unwrap();
+            matrix_set(&mut m, 0, 1, 1e-10).unwrap();
+            matrix_set(&mut m, 1, 0, 1e5).unwrap();
+            matrix_set(&mut m, 1, 1, 1e-5).unwrap();
+            matrix_set(&mut m, 2, 2, 1.0).unwrap();
 
             let mut scale_factor = 1.0_f64;
             for i in 0..3 {
                 let mut max_element = 0.0_f64;
                 for j in 0..3 {
-                    max_element = max_element.max(matrix_get(&m, i, j).abs());
+                    max_element = max_element.max(matrix_get(&m, i, j).unwrap().abs());
                 }
 
                 if max_element > 1e-100 {
                     for j in 0..3 {
-                        let v = matrix_get(&m, i, j) / max_element;
-                        matrix_set(&mut m, i, j, v);
+                        let v = matrix_get(&m, i, j).unwrap() / max_element;
+                        matrix_set(&mut m, i, j, v).unwrap();
                     }
                     scale_factor *= max_element;
                 }
@@ -1195,7 +1199,7 @@ mod tests {
 
             for i in 0..3 {
                 for j in 0..3 {
-                    assert!(matrix_get(&m, i, j).is_finite());
+                    assert!(matrix_get(&m, i, j).unwrap().is_finite());
                 }
             }
 
@@ -1205,21 +1209,21 @@ mod tests {
 
         // Test matrix with some zero elements
         let scale_zero = with_la_stack_matrix!(3, |m| {
-            matrix_set(&mut m, 0, 0, 1.0);
-            matrix_set(&mut m, 1, 1, 0.0); // This row will not be scaled
-            matrix_set(&mut m, 2, 2, 2.0);
+            matrix_set(&mut m, 0, 0, 1.0).unwrap();
+            matrix_set(&mut m, 1, 1, 0.0).unwrap(); // This row will not be scaled
+            matrix_set(&mut m, 2, 2, 2.0).unwrap();
 
             let mut scale_factor = 1.0_f64;
             for i in 0..3 {
                 let mut max_element = 0.0_f64;
                 for j in 0..3 {
-                    max_element = max_element.max(matrix_get(&m, i, j).abs());
+                    max_element = max_element.max(matrix_get(&m, i, j).unwrap().abs());
                 }
 
                 if max_element > 1e-100 {
                     for j in 0..3 {
-                        let v = matrix_get(&m, i, j) / max_element;
-                        matrix_set(&mut m, i, j, v);
+                        let v = matrix_get(&m, i, j).unwrap() / max_element;
+                        matrix_set(&mut m, i, j, v).unwrap();
                     }
                     scale_factor *= max_element;
                 }
@@ -1227,7 +1231,7 @@ mod tests {
 
             for i in 0..3 {
                 for j in 0..3 {
-                    assert!(matrix_get(&m, i, j).is_finite());
+                    assert!(matrix_get(&m, i, j).unwrap().is_finite());
                 }
             }
 
@@ -1470,26 +1474,20 @@ mod tests {
             for (i, point) in zero_points.iter().enumerate() {
                 let coords = point.coords();
                 for (j, &v) in coords.iter().enumerate() {
-                    matrix_set(&mut matrix, i, j, v);
+                    matrix_set(&mut matrix, i, j, v).unwrap();
                 }
-                matrix_set(&mut matrix, i, 3, squared_norm(coords));
-                matrix_set(&mut matrix, i, 4, 1.0);
+                matrix_set(&mut matrix, i, 3, squared_norm(coords)).unwrap();
+                matrix_set(&mut matrix, i, 4, 1.0).unwrap();
             }
 
             let test_coords = zero_test.coords();
             for (j, &v) in test_coords.iter().enumerate() {
-                matrix_set(&mut matrix, 4, j, v);
+                matrix_set(&mut matrix, 4, j, v).unwrap();
             }
-            matrix_set(&mut matrix, 4, 3, squared_norm(test_coords));
-            matrix_set(&mut matrix, 4, 4, 1.0);
+            matrix_set(&mut matrix, 4, 3, squared_norm(test_coords)).unwrap();
+            matrix_set(&mut matrix, 4, 4, 1.0).unwrap();
 
-            let mut ok = true;
-            for r in 0..5 {
-                for c in 0..5 {
-                    ok &= matrix_get(&matrix, r, c).is_finite();
-                }
-            }
-            ok
+            matrix_block_is_finite(&matrix, 5)
         });
         assert!(all_finite_insphere_3d);
 
@@ -1497,18 +1495,12 @@ mod tests {
             for (i, point) in zero_points.iter().enumerate() {
                 let coords = point.coords();
                 for (j, &v) in coords.iter().enumerate() {
-                    matrix_set(&mut matrix, i, j, v);
+                    matrix_set(&mut matrix, i, j, v).unwrap();
                 }
-                matrix_set(&mut matrix, i, 3, 1.0);
+                matrix_set(&mut matrix, i, 3, 1.0).unwrap();
             }
 
-            let mut ok = true;
-            for r in 0..4 {
-                for c in 0..4 {
-                    ok &= matrix_get(&matrix, r, c).is_finite();
-                }
-            }
-            ok
+            matrix_block_is_finite(&matrix, 4)
         });
         assert!(all_finite_orientation_3d);
 
@@ -1524,26 +1516,20 @@ mod tests {
             for (i, point) in large_points.iter().enumerate() {
                 let coords = point.coords();
                 for (j, &v) in coords.iter().enumerate() {
-                    matrix_set(&mut matrix, i, j, v);
+                    matrix_set(&mut matrix, i, j, v).unwrap();
                 }
-                matrix_set(&mut matrix, i, 2, squared_norm(coords));
-                matrix_set(&mut matrix, i, 3, 1.0);
+                matrix_set(&mut matrix, i, 2, squared_norm(coords)).unwrap();
+                matrix_set(&mut matrix, i, 3, 1.0).unwrap();
             }
 
             let test_coords = large_test.coords();
             for (j, &v) in test_coords.iter().enumerate() {
-                matrix_set(&mut matrix, 3, j, v);
+                matrix_set(&mut matrix, 3, j, v).unwrap();
             }
-            matrix_set(&mut matrix, 3, 2, squared_norm(test_coords));
-            matrix_set(&mut matrix, 3, 3, 1.0);
+            matrix_set(&mut matrix, 3, 2, squared_norm(test_coords)).unwrap();
+            matrix_set(&mut matrix, 3, 3, 1.0).unwrap();
 
-            let mut ok = true;
-            for r in 0..4 {
-                for c in 0..4 {
-                    ok &= matrix_get(&matrix, r, c).is_finite();
-                }
-            }
-            ok
+            matrix_block_is_finite(&matrix, 4)
         });
         assert!(all_finite_insphere_2d);
     }

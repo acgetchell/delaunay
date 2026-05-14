@@ -71,13 +71,7 @@ fn active_matrix_block_is_finite<const N: usize>(
 
     for i in 0..k {
         for j in 0..k {
-            let Some(entry) = matrix.get(i, j) else {
-                debug_assert!(
-                    false,
-                    "matrix entry ({i}, {j}) missing from active {k}x{k} block in Matrix<{N}>"
-                );
-                return Err(StackMatrixDispatchError::ActiveBlockDimensionMismatch { k, dim: N });
-            };
+            let entry = matrix_get(matrix, i, j)?;
             if !entry.is_finite() {
                 return Ok(false);
             }
@@ -148,11 +142,11 @@ where
 
         let relative_coords_f64 = safe_coords_to_f64(&relative_coords)?;
         for (column, &value) in relative_coords_f64.iter().enumerate() {
-            matrix_set(matrix, row, column, value);
+            matrix_set(matrix, row, column, value)?;
         }
 
         let squared_norm_f64 = safe_scalar_to_f64(squared_norm(&relative_coords))?;
-        matrix_set(matrix, row, D, squared_norm_f64);
+        matrix_set(matrix, row, D, squared_norm_f64)?;
     }
 
     let mut test_relative_coords: [T; D] = [T::zero(); D];
@@ -165,11 +159,11 @@ where
 
     let test_relative_coords_f64 = safe_coords_to_f64(&test_relative_coords)?;
     for (column, &value) in test_relative_coords_f64.iter().enumerate() {
-        matrix_set(matrix, D, column, value);
+        matrix_set(matrix, D, column, value)?;
     }
 
     let test_squared_norm_f64 = safe_scalar_to_f64(squared_norm(&test_relative_coords))?;
-    matrix_set(matrix, D, D, test_squared_norm_f64);
+    matrix_set(matrix, D, D, test_squared_norm_f64)?;
 
     Ok(())
 }
@@ -199,10 +193,10 @@ where
         let mut orientation_matrix = matrix_zero_like(&matrix);
         for i in 0..D {
             for j in 0..D {
-                matrix_set(&mut orientation_matrix, i, j, matrix_get(&matrix, i, j));
+                matrix_set(&mut orientation_matrix, i, j, matrix_get(&matrix, i, j)?)?;
             }
         }
-        matrix_set(&mut orientation_matrix, D, D, 1.0);
+        matrix_set(&mut orientation_matrix, D, D, 1.0)?;
 
         Ok(RelativeInsphereSigns {
             relative_orientation: exact_det_sign(&orientation_matrix),
@@ -452,11 +446,11 @@ where
             let point_coords_f64 = safe_coords_to_f64(p.coords())?;
 
             for (j, &v) in point_coords_f64.iter().enumerate() {
-                matrix_set(&mut matrix, i, j, v);
+                matrix_set(&mut matrix, i, j, v)?;
             }
 
             // Add one to the last column
-            matrix_set(&mut matrix, i, D, 1.0);
+            matrix_set(&mut matrix, i, D, 1.0)?;
         }
 
         Ok(try_orientation_from_matrix(&matrix, k)?)
@@ -714,18 +708,18 @@ where
             let point_coords_f64 = safe_coords_to_f64(point_coords)?;
 
             for (j, &v) in point_coords_f64.iter().enumerate() {
-                matrix_set(&mut matrix, i, j, v);
+                matrix_set(&mut matrix, i, j, v)?;
             }
 
             let squared_norm_t = squared_norm(point_coords);
-            matrix_set(&mut matrix, i, D, safe_scalar_to_f64(squared_norm_t)?);
-            matrix_set(&mut matrix, i, D + 1, 1.0);
+            matrix_set(&mut matrix, i, D, safe_scalar_to_f64(squared_norm_t)?)?;
+            matrix_set(&mut matrix, i, D + 1, 1.0)?;
         }
 
         let test_point_coords = test_point.coords();
         let test_point_coords_f64 = safe_coords_to_f64(test_point_coords)?;
         for (j, &v) in test_point_coords_f64.iter().enumerate() {
-            matrix_set(&mut matrix, D + 1, j, v);
+            matrix_set(&mut matrix, D + 1, j, v)?;
         }
 
         let test_squared_norm_t = squared_norm(test_point_coords);
@@ -734,8 +728,8 @@ where
             D + 1,
             D,
             safe_scalar_to_f64(test_squared_norm_t)?,
-        );
-        matrix_set(&mut matrix, D + 1, D + 1, 1.0);
+        )?;
+        matrix_set(&mut matrix, D + 1, D + 1, 1.0)?;
 
         // Extract simplex orientation from the insphere matrix, avoiding a
         // redundant simplex_orientation() call that rebuilds the coordinate
@@ -749,11 +743,11 @@ where
         let mut orient_matrix = matrix_zero_like(&matrix);
         for i in 0..=D {
             for j in 0..D {
-                matrix_set(&mut orient_matrix, i, j, matrix_get(&matrix, i, j));
+                matrix_set(&mut orient_matrix, i, j, matrix_get(&matrix, i, j)?)?;
             }
-            matrix_set(&mut orient_matrix, i, D, 1.0);
+            matrix_set(&mut orient_matrix, i, D, 1.0)?;
         }
-        matrix_set(&mut orient_matrix, D + 1, D + 1, 1.0);
+        matrix_set(&mut orient_matrix, D + 1, D + 1, 1.0)?;
 
         let orientation = try_orientation_from_matrix(&orient_matrix, k)?;
 
@@ -914,10 +908,21 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::geometry::matrix::matrix_set as try_matrix_set;
     use crate::geometry::traits::coordinate::Coordinate;
     use crate::prelude::circumradius;
     use approx::assert_relative_eq;
     use std::collections::HashMap;
+
+    /// Populate a test matrix while keeping production matrix errors loud.
+    fn set_test_matrix_entry<const N: usize>(
+        matrix: &mut Matrix<N>,
+        row: usize,
+        column: usize,
+        value: f64,
+    ) {
+        try_matrix_set(matrix, row, column, value).unwrap();
+    }
 
     #[test]
     fn test_enum_display_and_debug_implementations() {
@@ -1991,17 +1996,17 @@ mod tests {
         let k = 3;
         with_la_stack_matrix!(k, |m| {
             // Row 0: (0, 0, 1)
-            matrix_set(&mut m, 0, 0, 0.0);
-            matrix_set(&mut m, 0, 1, 0.0);
-            matrix_set(&mut m, 0, 2, 1.0);
+            set_test_matrix_entry(&mut m, 0, 0, 0.0);
+            set_test_matrix_entry(&mut m, 0, 1, 0.0);
+            set_test_matrix_entry(&mut m, 0, 2, 1.0);
             // Row 1: (1, 0, 1)
-            matrix_set(&mut m, 1, 0, 1.0);
-            matrix_set(&mut m, 1, 1, 0.0);
-            matrix_set(&mut m, 1, 2, 1.0);
+            set_test_matrix_entry(&mut m, 1, 0, 1.0);
+            set_test_matrix_entry(&mut m, 1, 1, 0.0);
+            set_test_matrix_entry(&mut m, 1, 2, 1.0);
             // Row 2: (0, 1, 1)
-            matrix_set(&mut m, 2, 0, 0.0);
-            matrix_set(&mut m, 2, 1, 1.0);
-            matrix_set(&mut m, 2, 2, 1.0);
+            set_test_matrix_entry(&mut m, 2, 0, 0.0);
+            set_test_matrix_entry(&mut m, 2, 1, 1.0);
+            set_test_matrix_entry(&mut m, 2, 2, 1.0);
 
             assert_eq!(
                 try_orientation_from_matrix(&m, k).unwrap(),
@@ -2016,17 +2021,17 @@ mod tests {
         let k = 3;
         with_la_stack_matrix!(k, |m| {
             // Row 0: (0, 1, 1)  — swapped with row 2 from positive test
-            matrix_set(&mut m, 0, 0, 0.0);
-            matrix_set(&mut m, 0, 1, 1.0);
-            matrix_set(&mut m, 0, 2, 1.0);
+            set_test_matrix_entry(&mut m, 0, 0, 0.0);
+            set_test_matrix_entry(&mut m, 0, 1, 1.0);
+            set_test_matrix_entry(&mut m, 0, 2, 1.0);
             // Row 1: (1, 0, 1)
-            matrix_set(&mut m, 1, 0, 1.0);
-            matrix_set(&mut m, 1, 1, 0.0);
-            matrix_set(&mut m, 1, 2, 1.0);
+            set_test_matrix_entry(&mut m, 1, 0, 1.0);
+            set_test_matrix_entry(&mut m, 1, 1, 0.0);
+            set_test_matrix_entry(&mut m, 1, 2, 1.0);
             // Row 2: (0, 0, 1)
-            matrix_set(&mut m, 2, 0, 0.0);
-            matrix_set(&mut m, 2, 1, 0.0);
-            matrix_set(&mut m, 2, 2, 1.0);
+            set_test_matrix_entry(&mut m, 2, 0, 0.0);
+            set_test_matrix_entry(&mut m, 2, 1, 0.0);
+            set_test_matrix_entry(&mut m, 2, 2, 1.0);
 
             assert_eq!(
                 try_orientation_from_matrix(&m, k).unwrap(),
@@ -2041,15 +2046,15 @@ mod tests {
         let k = 3;
         with_la_stack_matrix!(k, |m| {
             // (0,0,1), (1,0,1), (2,0,1)
-            matrix_set(&mut m, 0, 0, 0.0);
-            matrix_set(&mut m, 0, 1, 0.0);
-            matrix_set(&mut m, 0, 2, 1.0);
-            matrix_set(&mut m, 1, 0, 1.0);
-            matrix_set(&mut m, 1, 1, 0.0);
-            matrix_set(&mut m, 1, 2, 1.0);
-            matrix_set(&mut m, 2, 0, 2.0);
-            matrix_set(&mut m, 2, 1, 0.0);
-            matrix_set(&mut m, 2, 2, 1.0);
+            set_test_matrix_entry(&mut m, 0, 0, 0.0);
+            set_test_matrix_entry(&mut m, 0, 1, 0.0);
+            set_test_matrix_entry(&mut m, 0, 2, 1.0);
+            set_test_matrix_entry(&mut m, 1, 0, 1.0);
+            set_test_matrix_entry(&mut m, 1, 1, 0.0);
+            set_test_matrix_entry(&mut m, 1, 2, 1.0);
+            set_test_matrix_entry(&mut m, 2, 0, 2.0);
+            set_test_matrix_entry(&mut m, 2, 1, 0.0);
+            set_test_matrix_entry(&mut m, 2, 2, 1.0);
 
             assert_eq!(
                 try_orientation_from_matrix(&m, k).unwrap(),
@@ -2066,15 +2071,15 @@ mod tests {
         let k = 3;
         let big = f64::MAX / 2.0;
         with_la_stack_matrix!(k, |m| {
-            matrix_set(&mut m, 0, 0, 0.0);
-            matrix_set(&mut m, 0, 1, 0.0);
-            matrix_set(&mut m, 0, 2, 1.0);
-            matrix_set(&mut m, 1, 0, big);
-            matrix_set(&mut m, 1, 1, 0.0);
-            matrix_set(&mut m, 1, 2, 1.0);
-            matrix_set(&mut m, 2, 0, 0.0);
-            matrix_set(&mut m, 2, 1, big);
-            matrix_set(&mut m, 2, 2, 1.0);
+            set_test_matrix_entry(&mut m, 0, 0, 0.0);
+            set_test_matrix_entry(&mut m, 0, 1, 0.0);
+            set_test_matrix_entry(&mut m, 0, 2, 1.0);
+            set_test_matrix_entry(&mut m, 1, 0, big);
+            set_test_matrix_entry(&mut m, 1, 1, 0.0);
+            set_test_matrix_entry(&mut m, 1, 2, 1.0);
+            set_test_matrix_entry(&mut m, 2, 0, 0.0);
+            set_test_matrix_entry(&mut m, 2, 1, big);
+            set_test_matrix_entry(&mut m, 2, 2, 1.0);
 
             let result = try_orientation_from_matrix(&m, k).unwrap();
             assert_eq!(
@@ -2093,18 +2098,18 @@ mod tests {
         // Falls through to Stage 3 → DEGENERATE.
         let k = 4;
         with_la_stack_matrix!(k, |m| {
-            matrix_set(&mut m, 0, 0, 0.0);
-            matrix_set(&mut m, 0, 1, 0.0);
-            matrix_set(&mut m, 0, 2, 1.0);
-            matrix_set(&mut m, 1, 0, 1.0);
-            matrix_set(&mut m, 1, 1, 0.0);
-            matrix_set(&mut m, 1, 2, 1.0);
-            matrix_set(&mut m, 2, 0, 0.0);
-            matrix_set(&mut m, 2, 1, 1.0);
-            matrix_set(&mut m, 2, 2, 1.0);
+            set_test_matrix_entry(&mut m, 0, 0, 0.0);
+            set_test_matrix_entry(&mut m, 0, 1, 0.0);
+            set_test_matrix_entry(&mut m, 0, 2, 1.0);
+            set_test_matrix_entry(&mut m, 1, 0, 1.0);
+            set_test_matrix_entry(&mut m, 1, 1, 0.0);
+            set_test_matrix_entry(&mut m, 1, 2, 1.0);
+            set_test_matrix_entry(&mut m, 2, 0, 0.0);
+            set_test_matrix_entry(&mut m, 2, 1, 1.0);
+            set_test_matrix_entry(&mut m, 2, 2, 1.0);
 
             // NaN inside the k×k block.
-            matrix_set(&mut m, 3, 3, f64::NAN);
+            set_test_matrix_entry(&mut m, 3, 3, f64::NAN);
 
             let result = try_orientation_from_matrix(&m, k).unwrap();
             assert_eq!(
@@ -2177,10 +2182,10 @@ mod tests {
         let big = 1e100;
         with_la_stack_matrix!(k, |m| {
             // Diagonal matrix: det = big^4, which overflows f64.
-            matrix_set(&mut m, 0, 0, big);
-            matrix_set(&mut m, 1, 1, big);
-            matrix_set(&mut m, 2, 2, big);
-            matrix_set(&mut m, 3, 3, big);
+            set_test_matrix_entry(&mut m, 0, 0, big);
+            set_test_matrix_entry(&mut m, 1, 1, big);
+            set_test_matrix_entry(&mut m, 2, 2, big);
+            set_test_matrix_entry(&mut m, 3, 3, big);
 
             // Positive exact sign + orient_sign = 1 → INSIDE
             assert_eq!(
@@ -2204,11 +2209,11 @@ mod tests {
         let eps = f64::EPSILON;
         with_la_stack_matrix!(k, |m| {
             // Near-singular: det = eps, permanent ≈ 2 → errbound ≫ eps.
-            matrix_set(&mut m, 0, 0, 1.0);
-            matrix_set(&mut m, 0, 1, 1.0);
-            matrix_set(&mut m, 1, 0, 1.0);
-            matrix_set(&mut m, 1, 1, 1.0 + eps);
-            matrix_set(&mut m, 2, 2, 1.0);
+            set_test_matrix_entry(&mut m, 0, 0, 1.0);
+            set_test_matrix_entry(&mut m, 0, 1, 1.0);
+            set_test_matrix_entry(&mut m, 1, 0, 1.0);
+            set_test_matrix_entry(&mut m, 1, 1, 1.0 + eps);
+            set_test_matrix_entry(&mut m, 2, 2, 1.0);
 
             assert_eq!(
                 try_insphere_from_matrix(&m, k, 1).unwrap(),
@@ -2223,15 +2228,15 @@ mod tests {
         let k = 3;
         with_la_stack_matrix!(k, |m| {
             // Two identical rows → det = 0.
-            matrix_set(&mut m, 0, 0, 1.0);
-            matrix_set(&mut m, 0, 1, 2.0);
-            matrix_set(&mut m, 0, 2, 3.0);
-            matrix_set(&mut m, 1, 0, 1.0);
-            matrix_set(&mut m, 1, 1, 2.0);
-            matrix_set(&mut m, 1, 2, 3.0);
-            matrix_set(&mut m, 2, 0, 4.0);
-            matrix_set(&mut m, 2, 1, 5.0);
-            matrix_set(&mut m, 2, 2, 6.0);
+            set_test_matrix_entry(&mut m, 0, 0, 1.0);
+            set_test_matrix_entry(&mut m, 0, 1, 2.0);
+            set_test_matrix_entry(&mut m, 0, 2, 3.0);
+            set_test_matrix_entry(&mut m, 1, 0, 1.0);
+            set_test_matrix_entry(&mut m, 1, 1, 2.0);
+            set_test_matrix_entry(&mut m, 1, 2, 3.0);
+            set_test_matrix_entry(&mut m, 2, 0, 4.0);
+            set_test_matrix_entry(&mut m, 2, 1, 5.0);
+            set_test_matrix_entry(&mut m, 2, 2, 6.0);
 
             assert_eq!(
                 try_insphere_from_matrix(&m, k, 1).unwrap(),
@@ -2246,9 +2251,9 @@ mod tests {
         // (exact_is_safe = false).  Falls through to Stage 3 → BOUNDARY.
         let k = 3;
         with_la_stack_matrix!(k, |m| {
-            matrix_set(&mut m, 0, 0, 1.0);
-            matrix_set(&mut m, 1, 1, 1.0);
-            matrix_set(&mut m, 2, 2, f64::NAN);
+            set_test_matrix_entry(&mut m, 0, 0, 1.0);
+            set_test_matrix_entry(&mut m, 1, 1, 1.0);
+            set_test_matrix_entry(&mut m, 2, 2, f64::NAN);
 
             assert_eq!(
                 try_insphere_from_matrix(&m, k, 1).unwrap(),

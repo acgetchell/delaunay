@@ -88,6 +88,13 @@ the repository-required components (`clippy`, `rustfmt`, and `rust-src`).
 Cross-target standard libraries and IDE-only components should be installed by
 the workflows or local developers that need them, rather than by every checkout.
 
+GitHub Actions jobs that use `actions-rust-lang/setup-rust-toolchain` keep
+dependency and target caching enabled, but explicitly set `cache-bin: false`.
+The action restores cache entries after printing the installed Cargo version,
+so caching `${CARGO_HOME}/bin` can overwrite rustup's `cargo` shim with a stale
+or host-incompatible binary. This is especially visible on macOS, where a
+poisoned cache can make `cargo fmt` invoke `rustup-init` instead of Cargo.
+
 ## Activated Deferred Updates
 
 The following previously deferred checks are now repository-owned Semgrep rules:

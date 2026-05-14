@@ -2497,39 +2497,31 @@ impl<T, U, V, const D: usize> Tds<T, U, V, D> {
         &mut self,
         cell: Cell<T, U, V, D>,
     ) -> Result<CellKey, TdsConstructionError> {
-        self.insert_cell_with_mapping_impl::<true>(cell)
+        self.insert_cell_with_mapping_impl(cell)
     }
 
-    /// Atomically inserts a cell after the caller has proved vertex provenance.
+    /// Atomically inserts a cell after validating vertex provenance.
     ///
-    /// This is the release-mode hot path for cavity filling, flips, and explicit
-    /// construction: callers must build `cell` only from vertex keys that came
-    /// from this TDS and are still live. Debug builds still run the checked path
-    /// and return a typed error if that invariant is violated; release builds
-    /// skip the O(D) vertex-key existence scan.
+    /// Cavity filling, flips, and explicit construction should only build
+    /// `cell` from vertex keys that came from this TDS and are still live. This
+    /// method still verifies that invariant in every build mode so stale keys
+    /// fail with a typed error instead of corrupting TDS invariants.
     ///
     /// # Errors
     ///
     /// Returns [`TdsConstructionError::DuplicateUuid`] if a cell with the same
     /// UUID already exists, [`TdsConstructionError::ValidationError`] if the
-    /// arity is wrong, and in debug builds also returns
-    /// [`TdsConstructionError::ValidationError`] if the provenance precondition
-    /// is violated.
+    /// arity is wrong, or [`TdsConstructionError::ValidationError`] if any
+    /// referenced vertex key is not present in this TDS.
     pub(crate) fn insert_cell_with_mapping_trusted_vertices(
         &mut self,
         cell: Cell<T, U, V, D>,
     ) -> Result<CellKey, TdsConstructionError> {
-        #[cfg(debug_assertions)]
-        {
-            self.insert_cell_with_mapping_impl::<true>(cell)
-        }
-        #[cfg(not(debug_assertions))]
-        {
-            self.insert_cell_with_mapping_impl::<false>(cell)
-        }
+        self.insert_cell_with_mapping_impl(cell)
     }
 
-    fn insert_cell_with_mapping_impl<const VALIDATE_VERTICES: bool>(
+    /// Shared checked cell-insertion path used by public and trusted internal wrappers.
+    fn insert_cell_with_mapping_impl(
         &mut self,
         cell: Cell<T, U, V, D>,
     ) -> Result<CellKey, TdsConstructionError> {
@@ -2543,9 +2535,7 @@ impl<T, U, V, const D: usize> Tds<T, U, V, D> {
             ));
         }
 
-        if VALIDATE_VERTICES {
-            self.validate_cell_vertices_exist(&cell)?;
-        }
+        self.validate_cell_vertices_exist(&cell)?;
 
         let cell_uuid = cell.uuid();
 
@@ -2565,6 +2555,7 @@ impl<T, U, V, const D: usize> Tds<T, U, V, D> {
         }
     }
 
+    /// Verifies every vertex key referenced by `cell` is live in this TDS.
     fn validate_cell_vertices_exist(
         &self,
         cell: &Cell<T, U, V, D>,
@@ -9575,8 +9566,7 @@ mod tests {
     }
 
     #[test]
-    #[cfg(debug_assertions)]
-    fn test_insert_cell_with_mapping_trusted_vertices_debug_rejects_missing_vertex() {
+    fn test_insert_cell_with_mapping_trusted_vertices_rejects_missing_vertex() {
         let mut tds: Tds<f64, (), (), 2> = Tds::empty();
         let v0 = tds.insert_vertex_with_mapping(vertex!([0.0, 0.0])).unwrap();
         let v1 = tds.insert_vertex_with_mapping(vertex!([1.0, 0.0])).unwrap();

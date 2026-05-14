@@ -242,6 +242,24 @@ fn validate_gram_determinant(det: f64) -> Result<f64, CircumcenterError> {
     Ok(det)
 }
 
+/// Computes `n!` in `f64` while preserving typed conversion failures.
+fn factorial_f64(n: usize) -> Result<f64, CircumcenterError> {
+    let mut value = 1.0f64;
+    for k in 2..=n {
+        let k_f64 =
+            safe_usize_to_scalar::<f64>(k).map_err(|e| CircumcenterError::ValueConversion {
+                source: ValueConversionError::ConversionFailed {
+                    value: k.to_string(),
+                    from_type: "usize",
+                    to_type: "f64",
+                    details: e.to_string(),
+                },
+            })?;
+        value *= k_f64;
+    }
+    Ok(value)
+}
+
 /// Compute a Gram determinant using la-stack's stack-allocated LDLT factorization.
 ///
 /// This mirrors the existing `crate::geometry::matrix::determinant` behavior:
@@ -283,7 +301,7 @@ where
         let point_f64 = safe_coords_to_f64(point.coords())?;
 
         for (j, (&p, &p0)) in point_f64.iter().zip(p0_f64.iter()).enumerate() {
-            matrix_set(&mut edge_matrix, row, j, p - p0);
+            matrix_set(&mut edge_matrix, row, j, p - p0)?;
         }
     }
 
@@ -293,9 +311,9 @@ where
         for j in 0..D {
             let mut dot_product = 0.0;
             for k in 0..D {
-                dot_product += matrix_get(&edge_matrix, i, k) * matrix_get(&edge_matrix, j, k);
+                dot_product += matrix_get(&edge_matrix, i, k)? * matrix_get(&edge_matrix, j, k)?;
             }
-            matrix_set(&mut gram_matrix, i, j, dot_product);
+            matrix_set(&mut gram_matrix, i, j, dot_product)?;
         }
     }
 
@@ -304,20 +322,7 @@ where
 
     let volume_f64 = {
         let sqrt_det = det.sqrt();
-        // Compute D! in f64 to avoid usize overflow/precision issues
-        let mut d_fact = 1.0f64;
-        for k in 2..=D {
-            let k_f64 =
-                safe_usize_to_scalar::<f64>(k).map_err(|e| CircumcenterError::ValueConversion {
-                    source: ValueConversionError::ConversionFailed {
-                        value: k.to_string(),
-                        from_type: "usize",
-                        to_type: "f64",
-                        details: e.to_string(),
-                    },
-                })?;
-            d_fact *= k_f64;
-        }
+        let d_fact = factorial_f64(D)?;
         sqrt_det / d_fact
     };
 
@@ -647,7 +652,7 @@ where
                     let dj = aj - a0;
                     dot_product += di * dj;
                 }
-                matrix_set(&mut gram_matrix, i, j, dot_product);
+                matrix_set(&mut gram_matrix, i, j, dot_product)?;
             }
         }
 
@@ -656,20 +661,7 @@ where
 
     let volume_f64 = {
         let sqrt_det = det.sqrt();
-        // Compute (D-1)! in f64 using safe conversion
-        let mut d_fact = 1.0f64;
-        for k in 2..D {
-            let k_f64 =
-                safe_usize_to_scalar::<f64>(k).map_err(|e| CircumcenterError::ValueConversion {
-                    source: ValueConversionError::ConversionFailed {
-                        value: k.to_string(),
-                        from_type: "usize",
-                        to_type: "f64",
-                        details: e.to_string(),
-                    },
-                })?;
-            d_fact *= k_f64;
-        }
+        let d_fact = factorial_f64(D - 1)?;
         sqrt_det / d_fact
     };
 
@@ -1008,7 +1000,7 @@ mod tests {
                     for (&a, &b) in edges[i].iter().zip(edges[j].iter()) {
                         dot_product += a * b;
                     }
-                    matrix_set(&mut gram_matrix, i, j, dot_product);
+                    matrix_set(&mut gram_matrix, i, j, dot_product)?;
                 }
             }
 

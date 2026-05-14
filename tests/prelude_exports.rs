@@ -14,6 +14,9 @@ use delaunay::prelude::DelaunayValidationError;
 use delaunay::prelude::algorithms::LocateResult;
 #[cfg(feature = "diagnostics")]
 use delaunay::prelude::collections::CellKeyBuffer;
+use delaunay::prelude::collections::{
+    SecureHashMap as ScopedSecureHashMap, SecureHashSet as ScopedSecureHashSet,
+};
 #[cfg(feature = "diagnostics")]
 use delaunay::prelude::diagnostics::{
     DelaunayViolationDetail, DelaunayViolationReport, debug_print_first_delaunay_violation,
@@ -23,7 +26,7 @@ use delaunay::prelude::generators::{RandomPointGenerationError, generate_random_
 #[cfg(feature = "diagnostics")]
 use delaunay::prelude::geometry::Coordinate;
 use delaunay::prelude::geometry::{
-    AdaptiveKernel, CoordinateConversionError, DegenerateSimplexReason, Point,
+    AdaptiveKernel, CoordinateConversionError, DegenerateSimplexReason, MatrixError, Point,
 };
 use delaunay::prelude::ordering::{
     HilbertError, hilbert_index, hilbert_indices_prequantized, hilbert_quantize,
@@ -54,6 +57,7 @@ use delaunay::prelude::triangulation::repair::{
     verify_delaunay_for_triangulation,
 };
 use delaunay::prelude::triangulation::validation::ValidationCadence;
+use delaunay::prelude::{SecureHashMap, SecureHashSet};
 use delaunay::vertex;
 
 #[derive(Debug, thiserror::Error)]
@@ -123,10 +127,37 @@ fn preludes_cover_bench_apis() -> Result<(), PreludeExportTestError> {
     assert_send_sync_unpin::<ConstructionSlowInsertionSample>();
     assert_send_sync_unpin::<CoordinateConversionError>();
     assert_send_sync_unpin::<DegenerateSimplexReason>();
+    assert_send_sync_unpin::<MatrixError>();
     assert_eq!(
         DegenerateSimplexReason::ZeroOrientation.to_string(),
         "zero orientation"
     );
+    assert!(matches!(
+        MatrixError::OutOfBounds {
+            row: 1,
+            column: 2,
+            dimension: 3
+        },
+        MatrixError::OutOfBounds { .. }
+    ));
+
+    let mut root_secure_map: SecureHashMap<[u64; 2], usize> = SecureHashMap::default();
+    root_secure_map.insert([1, 2], 3);
+    assert_eq!(root_secure_map.get(&[1, 2]), Some(&3));
+
+    let mut root_secure_set: SecureHashSet<[u64; 2]> = SecureHashSet::default();
+    root_secure_set.insert([1, 2]);
+    assert!(root_secure_set.contains(&[1, 2]));
+
+    let mut scoped_secure_map: ScopedSecureHashMap<[u64; 2], usize> =
+        ScopedSecureHashMap::default();
+    scoped_secure_map.insert([3, 4], 5);
+    assert_eq!(scoped_secure_map.get(&[3, 4]), Some(&5));
+
+    let mut scoped_secure_set: ScopedSecureHashSet<[u64; 2]> = ScopedSecureHashSet::default();
+    scoped_secure_set.insert([3, 4]);
+    assert!(scoped_secure_set.contains(&[3, 4]));
+
     let telemetry = ConstructionTelemetry::default();
     assert!(!telemetry.has_data());
     Ok(())

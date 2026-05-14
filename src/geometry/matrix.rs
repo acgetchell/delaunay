@@ -36,10 +36,21 @@ pub enum MatrixError {
     /// Matrix is singular.
     #[error("Matrix is singular!")]
     SingularMatrix,
+    /// Matrix row or column index is outside the concrete stack matrix.
+    #[error("matrix index out of bounds: ({row}, {column}) for {dimension}x{dimension}")]
+    OutOfBounds {
+        /// Requested row index.
+        row: usize,
+        /// Requested column index.
+        column: usize,
+        /// Concrete matrix dimension.
+        dimension: usize,
+    },
 }
 
-/// Error type for stack-matrix dispatch.
+/// Error type for stack-matrix dispatch and active-block access.
 #[derive(Clone, Debug, Error, PartialEq, Eq)]
+#[non_exhaustive]
 pub(crate) enum StackMatrixDispatchError {
     /// The requested matrix size is not supported by the stack-matrix dispatcher.
     #[error("unsupported stack matrix size: {k} (max {max})")]
@@ -63,6 +74,13 @@ pub(crate) enum StackMatrixDispatchError {
         /// Typed source error from the linear algebra backend.
         #[from]
         source: LaError,
+    },
+    /// A matrix access failed inside a dispatched stack-matrix operation.
+    #[error(transparent)]
+    Matrix {
+        /// Typed source error from matrix operations.
+        #[from]
+        source: MatrixError,
     },
 }
 
@@ -173,17 +191,34 @@ pub(crate) fn matrix_zero_like<const D: usize>(_template: &Matrix<D>) -> Matrix<
 }
 
 #[inline]
-pub(crate) fn matrix_get<const D: usize>(m: &Matrix<D>, r: usize, c: usize) -> f64 {
-    m.get(r, c).unwrap_or_else(|| {
-        debug_assert!(false, "matrix index out of bounds: ({r}, {c}) for {D}x{D}");
-        0.0
+pub(crate) fn matrix_get<const D: usize>(
+    m: &Matrix<D>,
+    row: usize,
+    column: usize,
+) -> Result<f64, MatrixError> {
+    m.get(row, column).ok_or(MatrixError::OutOfBounds {
+        row,
+        column,
+        dimension: D,
     })
 }
 
 #[inline]
-pub(crate) fn matrix_set<const D: usize>(m: &mut Matrix<D>, r: usize, c: usize, value: f64) {
-    let ok = m.set(r, c, value);
-    debug_assert!(ok, "matrix index out of bounds: ({r}, {c}) for {D}x{D}");
+pub(crate) fn matrix_set<const D: usize>(
+    m: &mut Matrix<D>,
+    row: usize,
+    column: usize,
+    value: f64,
+) -> Result<(), MatrixError> {
+    if m.set(row, column, value) {
+        return Ok(());
+    }
+
+    Err(MatrixError::OutOfBounds {
+        row,
+        column,
+        dimension: D,
+    })
 }
 
 /// Compute an LU-based determinant, returning 0.0 for singular matrices.
@@ -231,7 +266,7 @@ mod tests {
             let mut val = 1.0_f64;
             for i in 0..k {
                 for j in 0..k {
-                    matrix_set(&mut original, i, j, val);
+                    matrix_set(&mut original, i, j, val).unwrap();
                     val += 1.0;
                 }
             }
@@ -241,7 +276,7 @@ mod tests {
             // All entries must be zero.
             for i in 0..k {
                 for j in 0..k {
-                    assert_relative_eq!(matrix_get(&zero, i, j), 0.0);
+                    assert_relative_eq!(matrix_get(&zero, i, j).unwrap(), 0.0);
                 }
             }
 
@@ -249,7 +284,7 @@ mod tests {
             let mut expected = 1.0_f64;
             for i in 0..k {
                 for j in 0..k {
-                    assert_relative_eq!(matrix_get(&original, i, j), expected);
+                    assert_relative_eq!(matrix_get(&original, i, j).unwrap(), expected);
                     expected += 1.0;
                 }
             }
@@ -262,25 +297,37 @@ mod tests {
         for &k in &[2_usize, 3, 6, MAX_STACK_MATRIX_DIM] {
             with_la_stack_matrix!(k, |m| {
                 let zero = matrix_zero_like(&m);
-                assert_relative_eq!(matrix_get(&zero, 0, 0), 0.0);
-                assert_relative_eq!(matrix_get(&zero, k - 1, k - 1), 0.0);
+                assert_relative_eq!(matrix_get(&zero, 0, 0).unwrap(), 0.0);
+                assert_relative_eq!(matrix_get(&zero, k - 1, k - 1).unwrap(), 0.0);
             });
         }
     }
 
-    #[cfg(debug_assertions)]
     #[test]
-    #[should_panic(expected = "matrix index out of bounds")]
-    fn matrix_get_debug_asserts_on_out_of_bounds_index() {
+    fn matrix_get_returns_error_on_out_of_bounds_index() {
         let matrix = Matrix::<2>::zero();
-        let _ = matrix_get(&matrix, 2, 0);
+        let err = matrix_get(&matrix, 2, 0).unwrap_err();
+        assert_eq!(
+            err,
+            MatrixError::OutOfBounds {
+                row: 2,
+                column: 0,
+                dimension: 2,
+            }
+        );
     }
 
-    #[cfg(debug_assertions)]
     #[test]
-    #[should_panic(expected = "matrix index out of bounds")]
-    fn matrix_set_debug_asserts_on_out_of_bounds_index() {
+    fn matrix_set_returns_error_on_out_of_bounds_index() {
         let mut matrix = Matrix::<2>::zero();
-        matrix_set(&mut matrix, 0, 2, 1.0);
+        let err = matrix_set(&mut matrix, 0, 2, 1.0).unwrap_err();
+        assert_eq!(
+            err,
+            MatrixError::OutOfBounds {
+                row: 0,
+                column: 2,
+                dimension: 2,
+            }
+        );
     }
 }

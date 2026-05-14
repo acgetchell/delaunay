@@ -6973,6 +6973,7 @@ where
             Ok(v_key) => Ok(v_key),
             Err(err) => {
                 if let Some((tds, insertion_state)) = snapshot {
+                    self.spatial_index = None;
                     self.tri.tds = tds;
                     self.insertion_state = insertion_state;
                 }
@@ -7070,6 +7071,7 @@ where
             Ok((outcome, stats)) => Ok((outcome, stats)),
             Err(err) => {
                 if let Some((tds, insertion_state)) = snapshot {
+                    self.spatial_index = None;
                     self.tri.tds = tds;
                     self.insertion_state = insertion_state;
                 }

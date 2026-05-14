@@ -58,6 +58,7 @@ jobs:
         with:
           target: ${{ matrix.target }}
           cache: true # Built-in caching
+          cache-bin: false # Avoid restoring stale rustup/cargo shims from cache.
           # toolchain, components, etc. are specified in rust-toolchain.toml
 
       - name: Install just

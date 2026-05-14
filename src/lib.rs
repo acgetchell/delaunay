@@ -410,9 +410,9 @@ pub mod core {
     /// - **FastHashMap/FastHashSet**: Uses `FastHasher`, a non-cryptographic hasher
     ///   that is 2-3x faster than `SipHash` for trusted data. Perfect for internal data
     ///   where collision resistance against adversarial input is not required.
-    /// - **`SecureHashMap`**: Uses Rust's randomized default hasher for maps whose
-    ///   keys are derived from public coordinate input or other caller-controlled
-    ///   values.
+    /// - **`SecureHashMap`/`SecureHashSet`**: Use Rust's randomized default
+    ///   hasher for collections whose keys are derived from public coordinate
+    ///   input or other caller-controlled values.
     ///
     /// ### ⚠️ Security Warning: `DoS` Resistance
     ///
@@ -431,7 +431,9 @@ pub mod core {
     /// - Using user-provided keys without validation
     /// - Network-facing applications with external input
     ///
-    /// Use [`SecureHashMap`](crate::core::collections::SecureHashMap) when keys are derived from public input.
+    /// Use [`SecureHashMap`](crate::core::collections::SecureHashMap) or
+    /// [`SecureHashSet`](crate::core::collections::SecureHashSet) when keys
+    /// are derived from public input.
     ///
     /// ## Small Collections
     ///
@@ -503,7 +505,7 @@ pub mod core {
         pub(crate) use aliases::StorageMap;
         pub use aliases::{
             Entry, FacetIndex, FastBuildHasher, FastHashMap, FastHashSet, FastHasher,
-            MAX_PRACTICAL_DIMENSION_SIZE, SecureHashMap, SmallBuffer, Uuid,
+            MAX_PRACTICAL_DIMENSION_SIZE, SecureHashMap, SecureHashSet, SmallBuffer, Uuid,
         };
 
         pub use buffers::*;
@@ -750,7 +752,7 @@ pub mod geometry {
                 source: LaError,
             },
 
-            /// Matrix operation error
+            /// Matrix operation failed while building or solving a geometry helper matrix.
             #[error("Matrix error: {source}")]
             MatrixError {
                 /// Typed source error from matrix operations.
@@ -765,7 +767,7 @@ pub mod geometry {
                 details: String,
             },
 
-            /// Coordinate conversion error
+            /// Coordinate conversion failed while preparing predicate or measure inputs.
             #[error("Coordinate conversion error: {source}")]
             CoordinateConversion {
                 /// Typed source error from coordinate conversion.
@@ -773,7 +775,7 @@ pub mod geometry {
                 source: CoordinateConversionError,
             },
 
-            /// Value conversion error
+            /// Scalar value conversion failed while converting dimensions or derived measures.
             #[error("Value conversion error: {source}")]
             ValueConversion {
                 /// Typed source error from value conversion.
@@ -797,6 +799,7 @@ pub mod geometry {
                     StackMatrixDispatchError::La { source } => {
                         Self::LinearAlgebraFailure { source }
                     }
+                    StackMatrixDispatchError::Matrix { source } => Self::MatrixError { source },
                 }
             }
         }
@@ -1006,9 +1009,9 @@ pub mod prelude {
     // Re-export commonly used collection types from core::collections
     // These are frequently used in advanced examples and downstream code
     pub use crate::core::collections::{
-        CellNeighborsMap, CellSecondaryMap, FacetToCellsMap, FastHashMap, FastHashSet, SmallBuffer,
-        VertexSecondaryMap, VertexToCellsMap, fast_hash_map_with_capacity,
-        fast_hash_set_with_capacity,
+        CellNeighborsMap, CellSecondaryMap, FacetToCellsMap, FastHashMap, FastHashSet,
+        SecureHashMap, SecureHashSet, SmallBuffer, VertexSecondaryMap, VertexToCellsMap,
+        fast_hash_map_with_capacity, fast_hash_set_with_capacity,
     };
 
     // Re-export from geometry
@@ -1097,15 +1100,20 @@ pub mod prelude {
         /// use delaunay::prelude::triangulation::flips::DelaunayRepairError;
         /// ```
         ///
-        /// ```compile_fail
-        /// use delaunay::prelude::triangulation::flips::TopologyGuarantee;
-        /// ```
         pub mod flips {
             pub use crate::core::algorithms::flips::{BistellarMove, ConstK};
             pub use crate::core::collections::{
                 CellKeyBuffer, MAX_PRACTICAL_DIMENSION_SIZE, SmallBuffer,
             };
             pub use crate::core::tds::{CellKey, VertexKey};
+            #[deprecated(
+                since = "0.7.7",
+                note = "import TopologyGuarantee from delaunay::prelude::triangulation or delaunay::prelude::triangulation::repair"
+            )]
+            /// Deprecated compatibility re-export; prefer
+            /// [`crate::prelude::triangulation::TopologyGuarantee`] or
+            /// [`crate::prelude::triangulation::repair::TopologyGuarantee`].
+            pub use crate::core::triangulation::TopologyGuarantee;
             pub use crate::core::triangulation::Triangulation;
             pub use crate::triangulation::delaunay::DelaunayTriangulation;
             pub use crate::triangulation::flips::*;
@@ -1252,11 +1260,11 @@ pub mod prelude {
             FacetIndex, FacetIssuesMap, FacetSharingCellsBuffer, FacetToCellsMap, FastBuildHasher,
             FastHashMap, FastHashSet, FastHasher, KeyBasedCellMap, KeyBasedVertexMap,
             MAX_PRACTICAL_DIMENSION_SIZE, NeighborBuffer, PeriodicOffsetBuffer, SecureHashMap,
-            SimplexVertexBuffer, SmallBuffer, Uuid, UuidToCellKeyMap, UuidToVertexKeyMap,
-            VertexKeyBuffer, VertexKeySet, VertexSecondaryMap, VertexToCellsMap, VertexUuidBuffer,
-            VertexUuidSet, fast_hash_map_with_capacity, fast_hash_set_with_capacity,
-            small_buffer_with_capacity_2, small_buffer_with_capacity_8,
-            small_buffer_with_capacity_16,
+            SecureHashSet, SimplexVertexBuffer, SmallBuffer, Uuid, UuidToCellKeyMap,
+            UuidToVertexKeyMap, VertexKeyBuffer, VertexKeySet, VertexSecondaryMap,
+            VertexToCellsMap, VertexUuidBuffer, VertexUuidSet, fast_hash_map_with_capacity,
+            fast_hash_set_with_capacity, small_buffer_with_capacity_2,
+            small_buffer_with_capacity_8, small_buffer_with_capacity_16,
         };
 
         /// Expert aliases for algorithm-local scratch buffers.

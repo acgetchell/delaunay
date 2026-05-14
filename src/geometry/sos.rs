@@ -124,7 +124,7 @@ pub fn sos_orientation_sign<const D: usize>(
     // is always retained, the minor's determinant is translation-invariant.
     for remove_row in (0..n).rev() {
         for remove_col in (0..D).rev() {
-            let minor_sign = orientation_cofactor_det::<D>(&coords, remove_row, remove_col);
+            let minor_sign = orientation_cofactor_det::<D>(&coords, remove_row, remove_col)?;
 
             if minor_sign != 0 {
                 let cofactor_sign = if (remove_row + remove_col).is_multiple_of(2) {
@@ -262,7 +262,7 @@ pub fn sos_insphere_sign<const D: usize>(
     for remove_row in (0..n).rev() {
         for remove_col in (0..n).rev() {
             let minor_sign =
-                insphere_cofactor_det::<D>(&rel_coords, &lifted_col, remove_row, remove_col);
+                insphere_cofactor_det::<D>(&rel_coords, &lifted_col, remove_row, remove_col)?;
 
             if minor_sign != 0 {
                 let cofactor_sign = if (remove_row + remove_col).is_multiple_of(2) {
@@ -298,9 +298,9 @@ fn orientation_cofactor_det<const D: usize>(
     coords: &[[f64; D]],
     remove_row: usize,
     remove_col: usize,
-) -> i32 {
+) -> Result<i32, CoordinateConversionError> {
     if D == 0 {
-        return 1; // 0×0 determinant = 1
+        return Ok(1); // 0×0 determinant = 1
     }
 
     // D is a const generic, so we use Matrix::<D>::zero() directly instead
@@ -317,15 +317,15 @@ fn orientation_cofactor_det<const D: usize>(
             if j == remove_col {
                 continue;
             }
-            matrix_set(&mut matrix, r, c, val);
+            matrix_set(&mut matrix, r, c, val)?;
             c += 1;
         }
         // Constant "1" column (always present in the minor).
-        matrix_set(&mut matrix, r, c, 1.0);
+        matrix_set(&mut matrix, r, c, 1.0)?;
         r += 1;
     }
 
-    exact_det_sign(&matrix)
+    Ok(exact_det_sign(&matrix))
 }
 
 /// Compute the sign of the D×D minor from the (D+1)×(D+1) lifted insphere
@@ -338,9 +338,9 @@ fn insphere_cofactor_det<const D: usize>(
     lifted_col: &[f64],
     remove_row: usize,
     remove_col: usize,
-) -> i32 {
+) -> Result<i32, CoordinateConversionError> {
     if D == 0 {
-        return 1;
+        return Ok(1);
     }
 
     let num_rows = D + 1;
@@ -369,13 +369,13 @@ fn insphere_cofactor_det<const D: usize>(
             } else {
                 lifted_col[i]
             };
-            matrix_set(&mut matrix, r, c, val);
+            matrix_set(&mut matrix, r, c, val)?;
             c += 1;
         }
         r += 1;
     }
 
-    exact_det_sign(&matrix)
+    Ok(exact_det_sign(&matrix))
 }
 
 /// Compute the exact sign of a matrix determinant

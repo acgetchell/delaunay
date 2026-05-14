@@ -62,7 +62,7 @@
 
 #![forbid(unsafe_code)]
 
-use crate::geometry::matrix::StackMatrixDispatchError;
+use crate::geometry::matrix::{MatrixError, StackMatrixDispatchError};
 use la_stack::LaError;
 use num_traits::{Float, Zero};
 use ordered_float::OrderedFloat;
@@ -74,7 +74,20 @@ use std::{
     ops::{AddAssign, SubAssign},
 };
 
-/// Structured reason why a simplex is geometrically degenerate.
+/// Structured reason why a predicate classified a simplex as geometrically degenerate.
+///
+/// Values of this enum appear in
+/// [`CoordinateConversionError::DegenerateSimplex`] so callers can distinguish
+/// an exactly zero orientation determinant from a symbolic-perturbation tie.
+///
+/// # Examples
+///
+/// ```rust
+/// use delaunay::prelude::geometry::DegenerateSimplexReason;
+///
+/// let reason = DegenerateSimplexReason::ZeroOrientation;
+/// assert_eq!(reason.to_string(), "zero orientation");
+/// ```
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum DegenerateSimplexReason {
@@ -195,6 +208,13 @@ pub enum CoordinateConversionError {
         #[from]
         source: LaError,
     },
+    /// Matrix operation failed while building or inspecting a predicate matrix.
+    #[error("Matrix error: {source}")]
+    MatrixError {
+        /// Typed source error from matrix operations.
+        #[from]
+        source: MatrixError,
+    },
 }
 
 impl From<StackMatrixDispatchError> for CoordinateConversionError {
@@ -210,6 +230,7 @@ impl From<StackMatrixDispatchError> for CoordinateConversionError {
                 }
             }
             StackMatrixDispatchError::La { source } => Self::LinearAlgebraFailure { source },
+            StackMatrixDispatchError::Matrix { source } => Self::MatrixError { source },
         }
     }
 }
@@ -941,6 +962,78 @@ mod tests {
     use std::hash::Hasher;
 
     // Use the global tolerance constants
+
+    #[test]
+    fn coordinate_conversion_error_preserves_matrix_error_sources() {
+        let matrix_error = MatrixError::OutOfBounds {
+            row: 2,
+            column: 1,
+            dimension: 2,
+        };
+        let converted = CoordinateConversionError::from(matrix_error.clone());
+
+        assert_eq!(
+            converted,
+            CoordinateConversionError::MatrixError {
+                source: matrix_error
+            }
+        );
+        assert!(converted.source().is_some());
+    }
+
+    #[test]
+    fn stack_matrix_dispatch_errors_map_to_coordinate_conversion_errors() {
+        let unsupported =
+            CoordinateConversionError::from(StackMatrixDispatchError::UnsupportedDim {
+                k: 8,
+                max: 7,
+            });
+        assert_eq!(
+            unsupported,
+            CoordinateConversionError::UnsupportedMatrixDimension {
+                requested: 8,
+                max: 7,
+            }
+        );
+
+        let mismatch = CoordinateConversionError::from(
+            StackMatrixDispatchError::ActiveBlockDimensionMismatch { k: 4, dim: 3 },
+        );
+        assert_eq!(
+            mismatch,
+            CoordinateConversionError::MatrixDimensionMismatch {
+                active: 4,
+                matrix_dimension: 3,
+            }
+        );
+
+        let matrix_error = MatrixError::OutOfBounds {
+            row: 3,
+            column: 1,
+            dimension: 3,
+        };
+        let converted = CoordinateConversionError::from(StackMatrixDispatchError::Matrix {
+            source: matrix_error.clone(),
+        });
+        assert_eq!(
+            converted,
+            CoordinateConversionError::MatrixError {
+                source: matrix_error
+            }
+        );
+    }
+
+    #[test]
+    fn degenerate_simplex_reason_display_covers_all_variants() {
+        assert_eq!(
+            DegenerateSimplexReason::ZeroOrientation.to_string(),
+            "zero orientation"
+        );
+        assert_eq!(
+            DegenerateSimplexReason::VanishingSosCofactors.to_string(),
+            "vanishing SoS cofactors"
+        );
+    }
 
     #[test]
     fn coordinate_trait_basic_functionality() {
