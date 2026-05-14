@@ -129,7 +129,7 @@ where
 
         // Fill matrix row
         for j in 0..D {
-            matrix_set(&mut a, i, j, coords_point_f64[j] - coords_0_f64[j]);
+            matrix_set(&mut a, i, j, coords_point_f64[j] - coords_0_f64[j])?;
         }
 
         // Calculate squared distance using squared_norm for consistency

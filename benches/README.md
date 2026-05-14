@@ -16,6 +16,7 @@ This directory contains performance benchmarks for the delaunay library, organiz
 | `circumsphere_containment.rs` | Predicate algorithm comparison | Random queries | ~5 min | Performance summary predicate subsection |
 | `large_scale_performance.rs` | Throughput and memory scaling | 1k–10k vertices | ~10-30 min; ~2-3 hours with `BENCH_LARGE_SCALE=1` | Manual |
 | `profiling_suite.rs` | Comprehensive profiling | 10³–10⁶ vertices | 1-2 hours | Monthly profiling, manual |
+| `tds_clone.rs` | TDS clone snapshot scaling | 2D–5D (small/medium point counts) | ~1-3 min | Manual rollback redesign baseline |
 | `topology_guarantee_construction.rs` | Topology guarantee construction overhead | 2D–5D (small/medium point counts) | ~5–15 min | Manual |
 | ~~`triangulation_creation.rs`~~ | ~~Simple construction~~ | ~~1000 vertices~~ | ~~N/A~~ | **DEPRECATED / REMOVED** |
 
@@ -31,6 +32,7 @@ This directory contains performance benchmarks for the delaunay library, organiz
 | Memory analysis | `profiling_suite.rs` (memory groups) | `cargo bench --profile perf --bench profiling_suite -- memory_profiling` |
 | Validation layer diagnostics | `profiling_suite.rs` (validation components) | `cargo bench --profile perf --bench profiling_suite -- validation_components` |
 | Algorithm comparison | `circumsphere_containment.rs` | `cargo bench --profile perf --bench circumsphere_containment` |
+| Rollback snapshot baseline | `tds_clone.rs` | `cargo bench --profile perf --bench tds_clone` |
 | Topology guarantee overhead | `topology_guarantee_construction.rs` | See section below |
 
 ## Running Benchmarks
@@ -271,6 +273,18 @@ The **Profiling Suite** provides comprehensive performance analysis for optimiza
 2. **Optimization Work**: Trigger Profiling Suite manually in development mode
 3. **Release Preparation**: Full profiling suite runs automatically on version tags
 4. **Performance Monitoring**: Monthly automated runs track long-term trends
+
+### TDS Clone (`tds_clone.rs`) (manual)
+
+```bash
+cargo bench --profile perf --bench tds_clone
+```
+
+This benchmark prebuilds deterministic 2D-5D triangulations at several point
+counts and measures only `Tds::clone()` on the resulting topology snapshots.
+Use it as the baseline for rollback work: current full-snapshot behavior should
+be measured here before comparing a future journaled or localized rollback
+implementation.
 
 ### Topology Guarantee Construction (`topology_guarantee_construction.rs`) (manual)
 

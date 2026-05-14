@@ -2749,11 +2749,11 @@ where
                     message: format!("Failed to set quotient periodic offsets: {e}"),
                 }
             })?;
-            let ck = tds_mut.insert_cell_with_mapping(cell).map_err(|e| {
-                TriangulationConstructionError::GeometricDegeneracy {
+            let ck = tds_mut
+                .insert_cell_with_mapping_trusted_vertices(cell)
+                .map_err(|e| TriangulationConstructionError::GeometricDegeneracy {
                     message: format!("Failed to insert quotient periodic cell: {e}"),
-                }
-            })?;
+                })?;
             inserted_cell_keys.push(ck);
             rep_lifted_by_key.insert(ck, lifted_vertices.clone());
         }

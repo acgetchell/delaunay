@@ -1562,6 +1562,26 @@ where
     }
 }
 
+impl<T, U, V, const D: usize> Tds<T, U, V, D>
+where
+    Vertex<T, U, D>: Clone,
+    Cell<T, U, V, D>: Clone,
+{
+    /// Clones storage for an internal transactional snapshot while preserving
+    /// the runtime identity promised to cache and handle provenance checks.
+    pub(crate) fn clone_for_rollback(&self) -> Self {
+        Self {
+            vertices: self.vertices.clone(),
+            cells: self.cells.clone(),
+            uuid_to_vertex_key: self.uuid_to_vertex_key.clone(),
+            uuid_to_cell_key: self.uuid_to_cell_key.clone(),
+            construction_state: self.construction_state.clone(),
+            generation: Arc::new(AtomicU64::new(self.generation.load(Ordering::Relaxed))),
+            identity: Arc::clone(&self.identity),
+        }
+    }
+}
+
 // =============================================================================
 // CORE FUNCTIONALITY
 // =============================================================================
@@ -2393,34 +2413,6 @@ impl<T, U, V, const D: usize> Tds<T, U, V, D> {
     // QUERY OPERATIONS
     // =========================================================================
 
-    /// Returns a mutable reference to the internal cells storage.
-    ///
-    /// # ⚠️ Warning: Dangerous Internal API
-    ///
-    /// This method exposes the concrete storage backend and **WILL BREAK TRIANGULATION INVARIANTS**
-    /// if used incorrectly. It is intended **ONLY** for:
-    /// - Internal crate implementation
-    /// - Performance benchmarks that need to violate invariants deliberately
-    /// - Targeted invariant and mutation tests
-    ///
-    /// **DO NOT** use this in production code. Modifying cells through this method bypasses
-    /// all safety checks and can leave the triangulation in an inconsistent state.
-    ///
-    /// # Returns
-    ///
-    /// A mutable reference to the storage map containing all cells.
-    #[doc(hidden)]
-    #[cfg_attr(
-        not(test),
-        expect(
-            dead_code,
-            reason = "Dangerous internal API used only in tests to intentionally violate invariants",
-        )
-    )]
-    pub(crate) const fn cells_mut(&mut self) -> &mut StorageMap<CellKey, Cell<T, U, V, D>> {
-        &mut self.cells
-    }
-
     /// Atomically inserts a vertex and creates the UUID-to-key mapping.
     ///
     /// This method ensures that both the vertex insertion and UUID mapping are
@@ -2478,8 +2470,8 @@ impl<T, U, V, const D: usize> Tds<T, U, V, D> {
     ///
     /// This method ensures that both the cell insertion and UUID mapping are
     /// performed together, maintaining data structure invariants. This is preferred
-    /// over separate `cells_mut().insert()` + `uuid_to_cell_key.insert()` calls
-    /// which can leave the data structure in an inconsistent state if interrupted.
+    /// over separate raw storage insertion plus `uuid_to_cell_key.insert()` calls, which can
+    /// leave the data structure in an inconsistent state if interrupted.
     ///
     /// # Arguments
     ///
@@ -2492,7 +2484,10 @@ impl<T, U, V, const D: usize> Tds<T, U, V, D> {
     /// # Errors
     ///
     /// Returns [`TdsConstructionError::DuplicateUuid`] if a cell with the
-    /// same UUID already exists in the triangulation.
+    /// same UUID already exists in the triangulation, or
+    /// [`TdsConstructionError::ValidationError`] if the cell arity does not
+    /// match `D + 1`, or if any vertex key referenced by `cell` is not present
+    /// in this TDS.
     ///
     /// # Examples
     ///
@@ -2502,12 +2497,34 @@ impl<T, U, V, const D: usize> Tds<T, U, V, D> {
         &mut self,
         cell: Cell<T, U, V, D>,
     ) -> Result<CellKey, TdsConstructionError> {
-        // Phase 3A: Validate structural invariants using vertices
-        debug_assert_eq!(
-            cell.number_of_vertices(),
-            D + 1,
-            "Cell should have exactly D+1 vertices for quick failure in dev"
-        );
+        self.insert_cell_with_mapping_impl(cell)
+    }
+
+    /// Atomically inserts a cell after validating vertex provenance.
+    ///
+    /// Cavity filling, flips, and explicit construction should only build
+    /// `cell` from vertex keys that came from this TDS and are still live. This
+    /// method still verifies that invariant in every build mode so stale keys
+    /// fail with a typed error instead of corrupting TDS invariants.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`TdsConstructionError::DuplicateUuid`] if a cell with the same
+    /// UUID already exists, [`TdsConstructionError::ValidationError`] if the
+    /// arity is wrong, or [`TdsConstructionError::ValidationError`] if any
+    /// referenced vertex key is not present in this TDS.
+    pub(crate) fn insert_cell_with_mapping_trusted_vertices(
+        &mut self,
+        cell: Cell<T, U, V, D>,
+    ) -> Result<CellKey, TdsConstructionError> {
+        self.insert_cell_with_mapping_impl(cell)
+    }
+
+    /// Shared checked cell-insertion path used by public and trusted internal wrappers.
+    fn insert_cell_with_mapping_impl(
+        &mut self,
+        cell: Cell<T, U, V, D>,
+    ) -> Result<CellKey, TdsConstructionError> {
         if cell.number_of_vertices() != D + 1 {
             return Err(TdsConstructionError::ValidationError(
                 TdsError::DimensionMismatch {
@@ -2518,17 +2535,7 @@ impl<T, U, V, const D: usize> Tds<T, U, V, D> {
             ));
         }
 
-        // Phase 3A: Verify all vertex keys exist in the triangulation
-        for &vkey in cell.vertices() {
-            if !self.vertices.contains_key(vkey) {
-                return Err(TdsConstructionError::ValidationError(
-                    TdsError::VertexNotFound {
-                        vertex_key: vkey,
-                        context: "referenced by cell being inserted".to_string(),
-                    },
-                ));
-            }
-        }
+        self.validate_cell_vertices_exist(&cell)?;
 
         let cell_uuid = cell.uuid();
 
@@ -2546,6 +2553,24 @@ impl<T, U, V, const D: usize> Tds<T, U, V, D> {
                 Ok(cell_key)
             }
         }
+    }
+
+    /// Verifies every vertex key referenced by `cell` is live in this TDS.
+    fn validate_cell_vertices_exist(
+        &self,
+        cell: &Cell<T, U, V, D>,
+    ) -> Result<(), TdsConstructionError> {
+        for &vkey in cell.vertices() {
+            if !self.vertices.contains_key(vkey) {
+                return Err(TdsConstructionError::ValidationError(
+                    TdsError::VertexNotFound {
+                        vertex_key: vkey,
+                        context: "referenced by cell being inserted".to_string(),
+                    },
+                ));
+            }
+        }
+        Ok(())
     }
 }
 
@@ -4788,7 +4813,8 @@ impl<T, U, V, const D: usize> Tds<T, U, V, D> {
     /// ```
     pub fn remove_duplicate_cells(&mut self) -> Result<usize, TdsMutationError>
     where
-        Self: Clone,
+        Vertex<T, U, D>: Clone,
+        Cell<T, U, V, D>: Clone,
     {
         let mut unique_cells = FastHashMap::default();
         let mut cells_to_remove = CellRemovalBuffer::new();
@@ -4817,7 +4843,7 @@ impl<T, U, V, const D: usize> Tds<T, U, V, D> {
         }
 
         let original_generation = self.generation();
-        let mut trial = self.clone();
+        let mut trial = self.clone_for_rollback();
         trial.generation = Arc::new(AtomicU64::new(original_generation));
         let removed = trial.remove_cells_by_keys(&cells_to_remove);
         let rebuild_result = (|| -> Result<(), TdsMutationError> {
@@ -6617,6 +6643,7 @@ mod tests {
     };
     use crate::vertex;
     use slotmap::KeyData;
+    use std::sync::Arc;
 
     // =============================================================================
     // TEST HELPER FUNCTIONS
@@ -7103,9 +7130,9 @@ mod tests {
         let removed_target_key = tds.insert_cell_with_mapping(removed_tarcell).unwrap();
         assert_eq!(tds.remove_cells_by_keys(&[removed_target_key]), 1);
 
-        // Inject a dangling neighbor pointer using cells_mut() (violates invariants deliberately).
+        // Inject a dangling neighbor pointer using cell_mut() (violates invariants deliberately).
         {
-            let bad_cell_mut = tds.cells_mut().get_mut(bad_cell_key).unwrap();
+            let bad_cell_mut = tds.cell_mut(bad_cell_key).unwrap();
             let mut neighbors = NeighborBuffer::new();
             neighbors.push(Some(removed_target_key));
             neighbors.push(None);
@@ -9189,6 +9216,39 @@ mod tests {
     }
 
     #[test]
+    fn test_clone_uses_fresh_runtime_identity() {
+        let tds: Tds<f64, (), (), 2> = Tds::empty();
+        let cloned = tds.clone();
+
+        assert!(
+            !Arc::ptr_eq(tds.identity(), cloned.identity()),
+            "ordinary TDS clones must have distinct runtime identities"
+        );
+        assert_eq!(tds.generation(), cloned.generation());
+    }
+
+    #[test]
+    fn test_clone_for_rollback_preserves_identity_with_independent_generation() {
+        let mut tds: Tds<f64, (), (), 2> = Tds::empty();
+        let _v = tds.insert_vertex_with_mapping(vertex!([0.0, 0.0])).unwrap();
+        let snapshot = tds.clone_for_rollback();
+        let snapshot_generation = snapshot.generation();
+
+        assert!(
+            Arc::ptr_eq(tds.identity(), snapshot.identity()),
+            "rollback snapshots should preserve runtime identity"
+        );
+
+        tds.mark_topology_modified();
+
+        assert_eq!(
+            snapshot.generation(),
+            snapshot_generation,
+            "rollback snapshots need an independent generation counter"
+        );
+    }
+
+    #[test]
     fn test_remove_duplicate_cells_removes_exact_duplicates() {
         let mut tds: Tds<f64, (), (), 2> = Tds::empty();
         let v0 = tds.insert_vertex_with_mapping(vertex!([0.0, 0.0])).unwrap();
@@ -9499,6 +9559,23 @@ mod tests {
 
         let cell = Cell::new(vec![v0, v1, stale], None).unwrap();
         let err = tds.insert_cell_with_mapping(cell).unwrap_err();
+        assert!(matches!(
+            err,
+            TdsConstructionError::ValidationError(TdsError::VertexNotFound { .. })
+        ));
+    }
+
+    #[test]
+    fn test_insert_cell_with_mapping_trusted_vertices_rejects_missing_vertex() {
+        let mut tds: Tds<f64, (), (), 2> = Tds::empty();
+        let v0 = tds.insert_vertex_with_mapping(vertex!([0.0, 0.0])).unwrap();
+        let v1 = tds.insert_vertex_with_mapping(vertex!([1.0, 0.0])).unwrap();
+        let stale = VertexKey::from(KeyData::from_ffi(0xDEAD));
+
+        let cell = Cell::new(vec![v0, v1, stale], None).unwrap();
+        let err = tds
+            .insert_cell_with_mapping_trusted_vertices(cell)
+            .unwrap_err();
         assert!(matches!(
             err,
             TdsConstructionError::ValidationError(TdsError::VertexNotFound { .. })

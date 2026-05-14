@@ -12,11 +12,12 @@
 //! triangulation rollbacks do not need to snapshot/restore it.
 //!
 //! It can also be used as a persistent, performance-only cache for incremental
-//! insertion. In that case, callers must ensure the index stays consistent with
-//! the triangulation's vertex set (e.g. by snapshot/restore on outer rollbacks, or
-//! by updating the index only after the full higher-level operation commits).
+//! insertion. In that case, callers should remove committed vertex deletions
+//! explicitly. Query call sites that keep the grid across transactional rollback
+//! must validate returned keys against the live triangulation because stale keys
+//! from rolled-back insertions can remain in the cache.
 
-use super::{FastHashMap, SmallBuffer};
+use super::{SecureHashMap, SmallBuffer};
 use crate::core::tds::VertexKey;
 use crate::geometry::traits::coordinate::CoordinateScalar;
 use std::hash::{Hash, Hasher};
@@ -69,7 +70,35 @@ where
 pub struct HashGridIndex<T, const D: usize, K = VertexKey> {
     cell_size: T,
     usable: bool,
-    cells: FastHashMap<GridKey<T, D>, SmallBuffer<K, BUCKET_INLINE_CAPACITY>>,
+    // Grid keys are derived directly from public coordinate input, so this map
+    // uses randomized hashing instead of the crate's fast non-cryptographic
+    // hasher.
+    cells: SecureHashMap<GridKey<T, D>, SmallBuffer<K, BUCKET_INLINE_CAPACITY>>,
+}
+
+impl<T, const D: usize, K> HashGridIndex<T, D, K> {
+    /// Returns whether the index is usable for accelerated lookup.
+    pub const fn is_usable(&self) -> bool {
+        self.usable
+    }
+
+    /// Returns whether this const-generic dimension can use hash-grid indexing.
+    pub const fn supports_dimension() -> bool {
+        D <= MAX_HASH_GRID_DIMENSION
+    }
+
+    /// Return the configured grid cell size.
+    pub const fn cell_size(&self) -> T
+    where
+        T: Copy,
+    {
+        self.cell_size
+    }
+
+    /// Remove every indexed bucket without changing the configured cell size.
+    pub fn clear(&mut self) {
+        self.cells.clear();
+    }
 }
 
 #[cfg(test)]
@@ -90,14 +119,8 @@ where
         Self {
             cell_size,
             usable,
-            cells: FastHashMap::default(),
+            cells: SecureHashMap::default(),
         }
-    }
-    pub const fn is_usable(&self) -> bool {
-        self.usable
-    }
-    pub const fn cell_size(&self) -> T {
-        self.cell_size
     }
 
     #[cfg(test)]
@@ -119,13 +142,12 @@ where
         }
     }
 
-    pub fn clear(&mut self) {
-        self.cells.clear();
-    }
-
+    /// Marks the index unusable so callers fall back to a conservative scan.
     const fn disable(&mut self) {
         self.usable = false;
     }
+
+    /// Returns whether `coords` can be mapped to a stable grid key.
     pub fn can_key_coords(&self, coords: &[T; D]) -> bool {
         self.key_for_coords(coords).is_some()
     }
@@ -145,6 +167,34 @@ where
         };
 
         self.cells.entry(key).or_default().push(vertex_key);
+    }
+
+    /// Remove a vertex from the appropriate grid cell.
+    ///
+    /// If the coordinates cannot be keyed, the index is disabled so callers fall
+    /// back to a full scan instead of querying a cache that may contain a stale
+    /// entry we could not remove.
+    pub fn remove_vertex(&mut self, vertex_key: &K, coords: &[T; D])
+    where
+        K: PartialEq,
+    {
+        if !self.usable {
+            return;
+        }
+
+        let Some(key) = self.key_for_coords(coords) else {
+            self.disable();
+            return;
+        };
+
+        let Some(bucket) = self.cells.get_mut(&key) else {
+            return;
+        };
+        bucket.retain(|candidate| candidate != vertex_key);
+
+        if bucket.is_empty() {
+            self.cells.remove(&key);
+        }
     }
 
     /// Visit all candidate vertex keys in the 3^D neighborhood around `coords`.
@@ -167,7 +217,7 @@ where
         let base = base_key.0;
         let mut current = base;
 
-        Self::visit_neighbor_cells(0, &base, &mut current, &mut |neighbor| {
+        let _completed = Self::visit_neighbor_cells(0, &base, &mut current, &mut |neighbor| {
             if let Some(bucket) = self.cells.get(&neighbor) {
                 for &vkey in bucket {
                     if !f(vkey) {
@@ -181,6 +231,7 @@ where
         true
     }
 
+    /// Converts finite coordinates into a grid key when neighbor enumeration remains stable.
     fn key_for_coords(&self, coords: &[T; D]) -> Option<GridKey<T, D>> {
         if !self.usable {
             return None;
@@ -216,6 +267,7 @@ where
         Some(GridKey(key))
     }
 
+    /// Recursively visits the Moore neighborhood around `base` and stops early on callback failure.
     fn visit_neighbor_cells<F>(axis: usize, base: &[T; D], current: &mut [T; D], f: &mut F) -> bool
     where
         F: FnMut(GridKey<T, D>) -> bool,
@@ -293,6 +345,75 @@ mod tests {
         for v in expected {
             assert!(found.contains(&v));
         }
+    }
+
+    #[test]
+    fn test_hash_grid_index_remove_vertex_prunes_bucket() {
+        let mut slots: SlotMap<VertexKey, i32> = SlotMap::default();
+        let v1 = slots.insert(1);
+        let v2 = slots.insert(2);
+        let mut grid: HashGridIndex<f64, 2> = HashGridIndex::new(1.0);
+
+        grid.insert_vertex(v1, &[0.25, 0.25]);
+        grid.insert_vertex(v2, &[0.25, 0.25]);
+        grid.remove_vertex(&v1, &[0.25, 0.25]);
+
+        let mut found: FastHashSet<VertexKey> = FastHashSet::default();
+        let used = grid.for_each_candidate_vertex_key(&[0.25, 0.25], |vkey| {
+            found.insert(vkey);
+            true
+        });
+
+        assert!(used);
+        assert!(!found.contains(&v1));
+        assert!(found.contains(&v2));
+
+        grid.remove_vertex(&v2, &[0.25, 0.25]);
+        let mut visited = false;
+        assert!(grid.for_each_candidate_vertex_key(&[0.25, 0.25], |_| {
+            visited = true;
+            true
+        }));
+        assert!(!visited);
+    }
+
+    #[test]
+    fn test_hash_grid_index_remove_vertex_noops_for_unusable_or_missing_bucket() {
+        let mut slots: SlotMap<VertexKey, i32> = SlotMap::default();
+        let v1 = slots.insert(1);
+        let v2 = slots.insert(2);
+
+        let mut unsupported: HashGridIndex<f64, 6> = HashGridIndex::new(1.0);
+        assert!(!unsupported.is_usable());
+        unsupported.remove_vertex(&v1, &[0.0; 6]);
+        assert!(!unsupported.is_usable());
+
+        let mut grid: HashGridIndex<f64, 2> = HashGridIndex::new(1.0);
+        grid.insert_vertex(v1, &[0.25, 0.25]);
+        grid.remove_vertex(&v2, &[20.25, 20.25]);
+
+        let mut found = FastHashSet::default();
+        assert!(grid.for_each_candidate_vertex_key(&[0.25, 0.25], |vkey| {
+            found.insert(vkey);
+            true
+        }));
+        assert!(found.contains(&v1));
+        assert!(!found.contains(&v2));
+    }
+
+    #[test]
+    fn test_hash_grid_index_remove_vertex_disables_on_unkeyable_coordinates() {
+        let mut slots: SlotMap<VertexKey, i32> = SlotMap::default();
+        let v = slots.insert(1);
+        let mut grid: HashGridIndex<f64, 2> = HashGridIndex::new(1.0);
+
+        grid.insert_vertex(v, &[0.25, 0.25]);
+        assert!(grid.is_usable());
+
+        grid.remove_vertex(&v, &[f64::NAN, 0.25]);
+
+        assert!(!grid.is_usable());
+        assert!(!grid.for_each_candidate_vertex_key(&[0.25, 0.25], |_| true));
     }
 
     #[test]

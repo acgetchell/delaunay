@@ -133,7 +133,8 @@ use crate::core::edge::EdgeKey;
 use crate::core::facet::facet_key_from_vertices;
 use crate::core::facet::{AllFacetsIter, BoundaryFacetsIter, FacetHandle};
 use crate::core::operations::{
-    InsertionOutcome, InsertionResult, InsertionStatistics, InsertionTelemetry, SuspicionFlags,
+    InsertionOutcome, InsertionResult, InsertionStatistics, InsertionTelemetry,
+    InsertionTelemetryMode, SuspicionFlags,
 };
 #[cfg(test)]
 use crate::core::tds::NeighborValidationError;
@@ -168,7 +169,7 @@ use crate::triangulation::locality::{
     replace_cells_and_record_removed, retain_cells_and_record_removed,
 };
 use core::ops::Div;
-use num_traits::{NumCast, One, Zero};
+use num_traits::{Float, NumCast, One, Zero};
 use std::borrow::Cow;
 #[cfg(all(test, debug_assertions))]
 use std::cmp::Ordering as CmpOrdering;
@@ -1038,6 +1039,36 @@ impl TopologyGuarantee {
     #[must_use]
     pub const fn requires_vertex_links_at_completion(self) -> bool {
         matches!(self, Self::PLManifold | Self::PLManifoldStrict)
+    }
+
+    /// Returns `true` if this topology guarantee requires pseudomanifold checks
+    /// during insertion.
+    ///
+    /// All current guarantees require the codimension-1 facet-degree and
+    /// codimension-2 closed-boundary conditions. Stronger guarantees layer
+    /// ridge-link and vertex-link validation on top of these checks.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use delaunay::prelude::triangulation::TopologyGuarantee;
+    ///
+    /// assert!(
+    ///     TopologyGuarantee::Pseudomanifold
+    ///         .requires_pseudomanifold_checks_during_insertion()
+    /// );
+    /// assert!(
+    ///     TopologyGuarantee::PLManifold
+    ///         .requires_pseudomanifold_checks_during_insertion()
+    /// );
+    /// ```
+    #[inline]
+    #[must_use]
+    pub const fn requires_pseudomanifold_checks_during_insertion(self) -> bool {
+        matches!(
+            self,
+            Self::Pseudomanifold | Self::PLManifold | Self::PLManifoldStrict
+        )
     }
 
     /// Returns `true` if this topology guarantee requires ridge-link validation.
@@ -3442,6 +3473,17 @@ where
             });
         }
 
+        for vertex in vertices {
+            vertex.is_valid().map_err(|source| {
+                TriangulationConstructionError::Tds(TdsConstructionError::ValidationError(
+                    TdsError::InvalidVertex {
+                        vertex_id: vertex.uuid(),
+                        source,
+                    },
+                ))
+            })?;
+        }
+
         // Validate that the simplex is non-degenerate using exact orientation.
         // Use robust_orientation (no SoS) so that truly degenerate input
         // (collinear/coplanar) is detected even when the kernel uses SoS.
@@ -3642,6 +3684,36 @@ where
         index: Option<&mut HashGridIndex<K::Scalar, D>>,
         bulk_index: Option<usize>,
     ) -> Result<DetailedInsertionResult, InsertionError> {
+        self.insert_with_statistics_seeded_indexed_detailed_with_telemetry(
+            vertex,
+            conflict_cells,
+            hint,
+            perturbation_seed,
+            index,
+            bulk_index,
+            InsertionTelemetryMode::CountsOnly,
+        )
+    }
+
+    /// Insert a vertex with statistics and explicitly selected telemetry collection.
+    ///
+    /// Use [`InsertionTelemetryMode::CountsAndTimings`] only when the caller will
+    /// consume elapsed-time telemetry; the default detailed insertion path records
+    /// counters without paying per-attempt `Instant::now()` costs.
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "Internal detailed insertion carries perturbation, spatial-index, trace, and telemetry knobs"
+    )]
+    pub(crate) fn insert_with_statistics_seeded_indexed_detailed_with_telemetry(
+        &mut self,
+        vertex: Vertex<K::Scalar, U, D>,
+        conflict_cells: Option<&CellKeyBuffer>,
+        hint: Option<CellKey>,
+        perturbation_seed: u64,
+        index: Option<&mut HashGridIndex<K::Scalar, D>>,
+        bulk_index: Option<usize>,
+        telemetry_mode: InsertionTelemetryMode,
+    ) -> Result<DetailedInsertionResult, InsertionError> {
         self.insert_transactional_detailed(
             vertex,
             conflict_cells,
@@ -3650,6 +3722,7 @@ where
             perturbation_seed,
             index,
             bulk_index,
+            telemetry_mode,
         )
     }
 
@@ -3688,6 +3761,7 @@ where
             perturbation_seed,
             index,
             bulk_index,
+            InsertionTelemetryMode::CountsOnly,
         )?;
         Ok((detail.outcome, detail.stats))
     }
@@ -3711,6 +3785,7 @@ where
         perturbation_seed: u64,
         mut index: Option<&mut HashGridIndex<K::Scalar, D>>,
         bulk_index: Option<usize>,
+        telemetry_mode: InsertionTelemetryMode,
     ) -> Result<DetailedInsertionResult, InsertionError> {
         let mut stats = InsertionStatistics::default();
         let mut telemetry = InsertionTelemetry::default();
@@ -3735,9 +3810,9 @@ where
         // to the nearby geometry instead of using a single global epsilon.
         let local_scale = self.estimate_local_perturbation_scale(&original_coords, hint);
 
-        let duplicate_tolerance: K::Scalar =
-            <K::Scalar as NumCast>::from(1e-10_f64).unwrap_or_else(K::Scalar::default_tolerance);
-        let duplicate_tolerance_sq = duplicate_tolerance * duplicate_tolerance;
+        let duplicate_tolerance =
+            self.estimate_duplicate_coordinate_tolerance(&original_coords, hint);
+        self.ensure_duplicate_index_cell_size(index.as_deref_mut(), duplicate_tolerance);
 
         // Base perturbation epsilon: ≈ √machine_epsilon for the scalar type.
         let epsilon_value: f64 = if K::Scalar::mantissa_digits() <= 24 {
@@ -3820,7 +3895,7 @@ where
             // falls back to a linear scan (O(n·D) per insertion, O(n²·D) worst-case).
             if let Some(error) = self.duplicate_coordinates_error(
                 current_vertex.point().coords(),
-                duplicate_tolerance_sq,
+                duplicate_tolerance,
                 index.as_deref(),
             ) {
                 stats.result = InsertionResult::SkippedDuplicate;
@@ -3839,7 +3914,7 @@ where
             let vertices_before_attempt = self.tds.number_of_vertices();
 
             // Clone TDS for rollback (transactional semantics)
-            let tds_snapshot = self.tds.clone();
+            let tds_snapshot = self.tds.clone_for_rollback();
 
             // Try insertion.
             //
@@ -3862,6 +3937,7 @@ where
                     attempt,
                     &tds_snapshot,
                     &mut telemetry,
+                    telemetry_mode,
                 )
             };
             #[cfg(not(test))]
@@ -3872,6 +3948,7 @@ where
                 attempt,
                 &tds_snapshot,
                 &mut telemetry,
+                telemetry_mode,
             );
 
             match result {
@@ -4039,12 +4116,156 @@ where
         best.map(|(_, cell_key)| cell_key)
     }
 
+    /// Chooses the relative duplicate-coordinate tolerance for the scalar precision.
+    fn duplicate_relative_tolerance() -> K::Scalar {
+        let value = if K::Scalar::mantissa_digits() <= 24 {
+            1e-6_f64
+        } else {
+            1e-10_f64
+        };
+        <K::Scalar as NumCast>::from(value).unwrap_or_else(K::Scalar::default_tolerance)
+    }
+
+    /// Keeps duplicate-scale estimates tied to existing geometry rather than
+    /// hard-coding a scalar-unit epsilon.
+    fn include_duplicate_scale_reference(
+        point_coords: &[K::Scalar; D],
+        axis_min: &mut [K::Scalar; D],
+        axis_max: &mut [K::Scalar; D],
+        magnitude_scale: &mut K::Scalar,
+        saw_reference: &mut bool,
+    ) {
+        *saw_reference = true;
+        for i in 0..D {
+            let coord = point_coords[i];
+            if coord < axis_min[i] {
+                axis_min[i] = coord;
+            }
+            if coord > axis_max[i] {
+                axis_max[i] = coord;
+            }
+
+            let abs = coord.abs();
+            if abs > *magnitude_scale {
+                *magnitude_scale = abs;
+            }
+        }
+    }
+
+    /// Estimates a duplicate-coordinate tolerance from the local cell span plus
+    /// a small ULP-scaled floor for translated coordinate systems.
+    fn estimate_duplicate_coordinate_tolerance(
+        &self,
+        coords: &[K::Scalar; D],
+        hint: Option<CellKey>,
+    ) -> K::Scalar {
+        let mut axis_min = *coords;
+        let mut axis_max = *coords;
+        let mut magnitude_scale = K::Scalar::zero();
+        let mut saw_reference = false;
+        let mut local_feature_scale = None;
+
+        for coord in coords {
+            let abs = (*coord).abs();
+            if abs > magnitude_scale {
+                magnitude_scale = abs;
+            }
+        }
+
+        if let Some(cell_key) = hint
+            && let Some(cell) = self.tds.cell(cell_key)
+        {
+            for &vkey in cell.vertices() {
+                if let Some(vertex) = self.tds.vertex(vkey) {
+                    Self::include_duplicate_scale_reference(
+                        vertex.point().coords(),
+                        &mut axis_min,
+                        &mut axis_max,
+                        &mut magnitude_scale,
+                        &mut saw_reference,
+                    );
+                }
+            }
+        }
+
+        if !saw_reference {
+            let local_scale = self.estimate_local_perturbation_scale(coords, None);
+            if local_scale.is_finite() && local_scale > K::Scalar::zero() {
+                if local_scale > magnitude_scale {
+                    magnitude_scale = local_scale;
+                }
+                local_feature_scale = Some(local_scale);
+            }
+        }
+
+        let feature_scale = local_feature_scale.unwrap_or_else(|| {
+            let mut span_sq = K::Scalar::zero();
+            for i in 0..D {
+                let span = axis_max[i] - axis_min[i];
+                span_sq += span * span;
+            }
+            span_sq.sqrt()
+        });
+        let relative_tolerance = Self::duplicate_relative_tolerance() * feature_scale;
+        let ulp_factor = <K::Scalar as NumCast>::from(16.0_f64).unwrap_or_else(K::Scalar::one);
+        let ulp_tolerance = K::Scalar::epsilon() * ulp_factor * magnitude_scale;
+        let mut tolerance = if relative_tolerance > ulp_tolerance {
+            relative_tolerance
+        } else {
+            ulp_tolerance
+        };
+
+        if !tolerance.is_finite() || tolerance <= K::Scalar::zero() {
+            tolerance = Self::duplicate_relative_tolerance();
+        }
+
+        tolerance
+    }
+
+    /// Rebuilds the duplicate index when a scale-aware tolerance grows beyond
+    /// the current grid cell size, preserving complete candidate coverage.
+    fn ensure_duplicate_index_cell_size(
+        &self,
+        index: Option<&mut HashGridIndex<K::Scalar, D>>,
+        tolerance: K::Scalar,
+    ) {
+        let Some(index) = index else {
+            return;
+        };
+        if !HashGridIndex::<K::Scalar, D>::supports_dimension()
+            || !tolerance.is_finite()
+            || tolerance <= K::Scalar::zero()
+        {
+            return;
+        }
+        if index.cell_size() >= tolerance {
+            return;
+        }
+
+        let mut rebuilt = HashGridIndex::new(tolerance);
+        for (vkey, vertex) in self.tds.vertices() {
+            rebuilt.insert_vertex(vkey, vertex.point().coords());
+        }
+        *index = rebuilt;
+    }
+
+    /// Compares a squared distance against the duplicate tolerance without
+    /// overflowing the tolerance square on extreme coordinate scales.
+    fn duplicate_distance_within_tolerance(dist_sq: K::Scalar, tolerance: K::Scalar) -> bool {
+        let tolerance_sq = tolerance * tolerance;
+        if tolerance_sq.is_finite() {
+            dist_sq <= tolerance_sq
+        } else {
+            dist_sq.sqrt() <= tolerance
+        }
+    }
+
     /// Check for near-duplicate coordinates using the hash grid when available, with a
     /// linear-scan fallback (O(n·D) per insertion) if the index is unavailable/unusable.
     fn duplicate_coordinates_error(
         &self,
         coords: &[K::Scalar; D],
-        tolerance_sq: K::Scalar,
+        tolerance: K::Scalar,
         index: Option<&HashGridIndex<K::Scalar, D>>,
     ) -> Option<InsertionError> {
         let mut duplicate_found = false;
@@ -4060,7 +4281,9 @@ where
             InsertionError::DuplicateCoordinates { coordinates }
         };
 
-        if let Some(index) = index {
+        if let Some(index) = index
+            && index.cell_size() >= tolerance
+        {
             let mut candidate_count = 0usize;
             let used_index = index.for_each_candidate_vertex_key(coords, |vkey| {
                 candidate_count = candidate_count.saturating_add(1);
@@ -4075,7 +4298,7 @@ where
                     dist_sq += diff * diff;
                 }
 
-                if dist_sq < tolerance_sq {
+                if Self::duplicate_distance_within_tolerance(dist_sq, tolerance) {
                     duplicate_found = true;
                     return false;
                 }
@@ -4103,7 +4326,7 @@ where
                 dist_sq += diff * diff;
             }
 
-            if dist_sq < tolerance_sq {
+            if Self::duplicate_distance_within_tolerance(dist_sq, tolerance) {
                 duplicate_found = true;
                 break;
             }
@@ -4217,33 +4440,26 @@ where
         if self.tds.number_of_cells() == 0 {
             return Ok(());
         }
-        let need_orientation_check = if self
+
+        let facet_to_cells: FacetToCellsMap = self.tds.build_facet_to_cells_map()?;
+        validate_facet_degree(&facet_to_cells)?;
+        validate_closed_boundary(&self.tds, &facet_to_cells)?;
+
+        if self.topology_guarantee.requires_ridge_links() {
+            validate_ridge_links(&self.tds)?;
+        }
+
+        if self
             .topology_guarantee
             .requires_vertex_links_during_insertion()
         {
-            let facet_to_cells: FacetToCellsMap = self.tds.build_facet_to_cells_map()?;
-            validate_facet_degree(&facet_to_cells)?;
-            validate_closed_boundary(&self.tds, &facet_to_cells)?;
-            validate_ridge_links(&self.tds)?;
             validate_vertex_links(&self.tds, &facet_to_cells)?;
-            true
-        } else if self.topology_guarantee.requires_ridge_links() {
-            // Ridge-link checks assume the pseudomanifold invariants already hold.
-            let facet_to_cells: FacetToCellsMap = self.tds.build_facet_to_cells_map()?;
-            validate_facet_degree(&facet_to_cells)?;
-            validate_closed_boundary(&self.tds, &facet_to_cells)?;
-            validate_ridge_links(&self.tds)?;
-            true
-        } else {
-            false
-        };
-
-        if need_orientation_check {
-            // Keep geometric orientation non-negotiable during incremental insertion for
-            // manifold-guaranteed modes, even when global validation is throttled.
-            // Run this after manifold/link checks so topology diagnostics still surface first.
-            self.validate_geometric_cell_orientation()?;
         }
+
+        // Keep geometric orientation non-negotiable during incremental insertion,
+        // even when global validation is throttled. Run this after topology
+        // checks so topology diagnostics still surface first.
+        self.validate_geometric_cell_orientation()?;
 
         Ok(())
     }
@@ -4274,12 +4490,14 @@ where
             return self.validate_required_topology_links();
         }
 
+        self.tds.validate_coherent_orientation_for_cells(cells)?;
+        validate_local_pseudomanifold_for_cells(&self.tds, cells)?;
+
         if self.topology_guarantee.requires_ridge_links() {
-            self.tds.validate_coherent_orientation_for_cells(cells)?;
-            validate_local_pseudomanifold_for_cells(&self.tds, cells)?;
             validate_ridge_links_for_cells(&self.tds, cells)?;
-            self.validate_geometric_cell_orientation_for_cells(cells)?;
         }
+
+        self.validate_geometric_cell_orientation_for_cells(cells)?;
 
         Ok(())
     }
@@ -4293,14 +4511,13 @@ where
         }
 
         let should_validate = self.validation_policy.should_validate(suspicion);
-        let requires_link_checks = self.topology_guarantee.requires_ridge_links()
-            || self
-                .topology_guarantee
-                .requires_vertex_links_during_insertion();
+        let requires_required_topology_checks = self
+            .topology_guarantee
+            .requires_pseudomanifold_checks_during_insertion();
 
         if should_validate {
             Some(InsertionValidationWork::FullValidation)
-        } else if requires_link_checks {
+        } else if requires_required_topology_checks {
             Some(InsertionValidationWork::RequiredTopologyLinks)
         } else {
             None
@@ -4324,6 +4541,31 @@ where
                 |cells| self.validate_required_topology_links_for_cells(cells),
             ),
         }
+    }
+
+    /// Runs post-insertion validation and records count/timing telemetry for the selected work.
+    fn validate_after_insertion_and_record_telemetry(
+        &self,
+        suspicion: SuspicionFlags,
+        local_cells: &[CellKey],
+        telemetry: &mut InsertionTelemetry,
+        telemetry_mode: InsertionTelemetryMode,
+    ) -> Result<(), InvariantError> {
+        let validation_work = self.validation_after_insertion_work(suspicion);
+        let validation_started =
+            validation_work.and_then(|_| Self::start_insertion_timing(telemetry_mode));
+        let validation_result =
+            self.validate_after_insertion_with_scope(suspicion, Some(local_cells));
+
+        if validation_work.is_some() {
+            Self::record_topology_validation_telemetry(
+                telemetry,
+                validation_started
+                    .map(|started| Self::duration_nanos_saturating(started.elapsed())),
+            );
+        }
+
+        validation_result
     }
 
     /// Repair neighbor pointers after local cell removal without scanning the full TDS.
@@ -4393,6 +4635,10 @@ where
 
     /// Attempt an insertion, and if Level 3 validation fails, roll back and try a
     /// conservative star-split fallback of the containing cell.
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "Topology safety net needs transactional rollback context plus telemetry mode"
+    )]
     fn try_insert_with_topology_safety_net(
         &mut self,
         vertex: Vertex<K::Scalar, U, D>,
@@ -4401,8 +4647,10 @@ where
         attempt: usize,
         tds_snapshot: &Tds<K::Scalar, U, V, D>,
         telemetry: &mut InsertionTelemetry,
+        telemetry_mode: InsertionTelemetryMode,
     ) -> Result<TryInsertImplOk, InsertionError> {
-        let mut insert_ok = self.try_insert_impl(vertex, conflict_cells, hint, telemetry)?;
+        let mut insert_ok =
+            self.try_insert_impl(vertex, conflict_cells, hint, telemetry, telemetry_mode)?;
 
         if attempt > 0 {
             insert_ok.suspicion.perturbation_used = true;
@@ -4416,34 +4664,22 @@ where
             return Ok(insert_ok);
         }
 
-        let validation_work = self.validation_after_insertion_work(insert_ok.suspicion);
-        let validation_started = validation_work.map(|_| Instant::now());
-        let validation_result = self.validate_after_insertion_with_scope(
+        let validation_result = self.validate_after_insertion_and_record_telemetry(
             insert_ok.suspicion,
-            Some(&insert_ok.repair_seed_cells),
+            &insert_ok.repair_seed_cells,
+            telemetry,
+            telemetry_mode,
         );
-        if let (
-            Some(
-                InsertionValidationWork::FullValidation
-                | InsertionValidationWork::RequiredTopologyLinks,
-            ),
-            Some(validation_started),
-        ) = (validation_work, validation_started)
-        {
-            Self::record_topology_validation_telemetry(
-                telemetry,
-                Self::duration_nanos_saturating(validation_started.elapsed()),
-            );
-        }
         if let Err(validation_err) = validation_result {
             // Roll back to snapshot and attempt a star-split fallback for interior points.
-            self.tds = tds_snapshot.clone();
+            self.tds = tds_snapshot.clone_for_rollback();
             return self.try_star_split_fallback_after_topology_failure(
                 vertex,
                 hint,
                 attempt,
                 validation_err,
                 telemetry,
+                telemetry_mode,
             );
         }
 
@@ -4463,6 +4699,7 @@ where
         attempt: usize,
         validation_err: InvariantError,
         telemetry: &mut InsertionTelemetry,
+        telemetry_mode: InsertionTelemetryMode,
     ) -> Result<TryInsertImplOk, InsertionError> {
         let point = *vertex.point();
         let location = match locate_with_stats(&self.tds, &self.kernel, &point, hint) {
@@ -4480,7 +4717,13 @@ where
         let mut star_conflict = CellKeyBuffer::new();
         star_conflict.push(start_cell);
 
-        match self.try_insert_impl(vertex, Some(&star_conflict), Some(start_cell), telemetry) {
+        match self.try_insert_impl(
+            vertex,
+            Some(&star_conflict),
+            Some(start_cell),
+            telemetry,
+            telemetry_mode,
+        ) {
             Ok(mut fallback_ok) => {
                 fallback_ok.suspicion.fallback_star_split = true;
                 if attempt > 0 {
@@ -4488,25 +4731,12 @@ where
                 }
                 fallback_ok.delaunay_repair_required = true;
 
-                let validation_work = self.validation_after_insertion_work(fallback_ok.suspicion);
-                let validation_started = validation_work.map(|_| Instant::now());
-                let validation_result = self.validate_after_insertion_with_scope(
+                let validation_result = self.validate_after_insertion_and_record_telemetry(
                     fallback_ok.suspicion,
-                    Some(&fallback_ok.repair_seed_cells),
+                    &fallback_ok.repair_seed_cells,
+                    telemetry,
+                    telemetry_mode,
                 );
-                if let (
-                    Some(
-                        InsertionValidationWork::FullValidation
-                        | InsertionValidationWork::RequiredTopologyLinks,
-                    ),
-                    Some(validation_started),
-                ) = (validation_work, validation_started)
-                {
-                    Self::record_topology_validation_telemetry(
-                        telemetry,
-                        Self::duration_nanos_saturating(validation_started.elapsed()),
-                    );
-                }
                 if let Err(fallback_validation_err) = validation_result {
                     return Err(Self::invariant_error_to_insertion_error(
                         fallback_validation_err,
@@ -5484,6 +5714,7 @@ where
         }
     }
 
+    /// Records conflict-region size counters without touching timing fields.
     #[inline]
     fn record_conflict_region_telemetry(telemetry: &mut InsertionTelemetry, cells: usize) {
         telemetry.conflict_region_calls = telemetry.conflict_region_calls.saturating_add(1);
@@ -5492,6 +5723,7 @@ where
         telemetry.conflict_region_cells_max = telemetry.conflict_region_cells_max.max(cells);
     }
 
+    /// Records measured conflict-region time when timing telemetry is enabled.
     #[inline]
     fn record_conflict_region_timing(telemetry: &mut InsertionTelemetry, elapsed_nanos: u64) {
         telemetry.conflict_region_nanos = telemetry
@@ -5501,40 +5733,63 @@ where
             telemetry.conflict_region_nanos_max.max(elapsed_nanos);
     }
 
+    /// Records one cavity insertion attempt and its optional elapsed time.
     #[inline]
-    fn record_cavity_insertion_telemetry(telemetry: &mut InsertionTelemetry, elapsed_nanos: u64) {
+    fn record_cavity_insertion_telemetry(
+        telemetry: &mut InsertionTelemetry,
+        elapsed_nanos: Option<u64>,
+    ) {
         telemetry.cavity_insertion_calls = telemetry.cavity_insertion_calls.saturating_add(1);
-        telemetry.cavity_insertion_nanos = telemetry
-            .cavity_insertion_nanos
-            .saturating_add(elapsed_nanos);
-        telemetry.cavity_insertion_nanos_max =
-            telemetry.cavity_insertion_nanos_max.max(elapsed_nanos);
+        if let Some(elapsed_nanos) = elapsed_nanos {
+            telemetry.cavity_insertion_nanos = telemetry
+                .cavity_insertion_nanos
+                .saturating_add(elapsed_nanos);
+            telemetry.cavity_insertion_nanos_max =
+                telemetry.cavity_insertion_nanos_max.max(elapsed_nanos);
+        }
     }
 
+    /// Records one hull-extension attempt and its optional elapsed time.
     #[inline]
-    fn record_hull_extension_telemetry(telemetry: &mut InsertionTelemetry, elapsed_nanos: u64) {
+    fn record_hull_extension_telemetry(
+        telemetry: &mut InsertionTelemetry,
+        elapsed_nanos: Option<u64>,
+    ) {
         telemetry.hull_extension_calls = telemetry.hull_extension_calls.saturating_add(1);
-        telemetry.hull_extension_nanos =
-            telemetry.hull_extension_nanos.saturating_add(elapsed_nanos);
-        telemetry.hull_extension_nanos_max = telemetry.hull_extension_nanos_max.max(elapsed_nanos);
+        if let Some(elapsed_nanos) = elapsed_nanos {
+            telemetry.hull_extension_nanos =
+                telemetry.hull_extension_nanos.saturating_add(elapsed_nanos);
+            telemetry.hull_extension_nanos_max =
+                telemetry.hull_extension_nanos_max.max(elapsed_nanos);
+        }
     }
 
+    /// Records one topology-validation pass and its optional elapsed time.
     #[inline]
     fn record_topology_validation_telemetry(
         telemetry: &mut InsertionTelemetry,
-        elapsed_nanos: u64,
+        elapsed_nanos: Option<u64>,
     ) {
         telemetry.topology_validation_calls = telemetry.topology_validation_calls.saturating_add(1);
-        telemetry.topology_validation_nanos = telemetry
-            .topology_validation_nanos
-            .saturating_add(elapsed_nanos);
-        telemetry.topology_validation_nanos_max =
-            telemetry.topology_validation_nanos_max.max(elapsed_nanos);
+        if let Some(elapsed_nanos) = elapsed_nanos {
+            telemetry.topology_validation_nanos = telemetry
+                .topology_validation_nanos
+                .saturating_add(elapsed_nanos);
+            telemetry.topology_validation_nanos_max =
+                telemetry.topology_validation_nanos_max.max(elapsed_nanos);
+        }
     }
 
+    /// Convert a duration to nanoseconds while saturating at `u64::MAX`.
     #[inline]
     fn duration_nanos_saturating(duration: Duration) -> u64 {
         u64::try_from(duration.as_nanos()).unwrap_or(u64::MAX)
+    }
+
+    /// Starts a wall-clock timer only when insertion telemetry will publish timings.
+    #[inline]
+    fn start_insertion_timing(telemetry_mode: InsertionTelemetryMode) -> Option<Instant> {
+        telemetry_mode.records_timings().then(Instant::now)
     }
 
     fn collect_exterior_repair_seed_cells(
@@ -5542,13 +5797,14 @@ where
         point: &Point<K::Scalar, D>,
         terminal_cell: CellKey,
         locate_stats: &LocateStats,
+        telemetry_mode: InsertionTelemetryMode,
         telemetry: &mut InsertionTelemetry,
     ) -> Result<CellKeyBuffer, ConflictError> {
         if locate_stats.fell_back_to_scan() || !self.tds.contains_cell(terminal_cell) {
             return Ok(CellKeyBuffer::new());
         }
 
-        let conflict_started = Instant::now();
+        let conflict_started = Self::start_insertion_timing(telemetry_mode);
         let local_seed_cells = collect_local_exterior_conflict_seed_cells(
             &self.tds,
             &self.kernel,
@@ -5556,10 +5812,12 @@ where
             terminal_cell,
         )?;
         Self::record_conflict_region_telemetry(telemetry, local_seed_cells.conflict_cells_found);
-        Self::record_conflict_region_timing(
-            telemetry,
-            Self::duration_nanos_saturating(conflict_started.elapsed()),
-        );
+        if let Some(conflict_started) = conflict_started {
+            Self::record_conflict_region_timing(
+                telemetry,
+                Self::duration_nanos_saturating(conflict_started.elapsed()),
+            );
+        }
         Ok(local_seed_cells.seed_cells)
     }
 
@@ -5578,6 +5836,7 @@ where
         conflict_cells: Option<&CellKeyBuffer>,
         hint: Option<CellKey>,
         telemetry: &mut InsertionTelemetry,
+        telemetry_mode: InsertionTelemetryMode,
     ) -> Result<TryInsertImplOk, InsertionError> {
         let mut suspicion = SuspicionFlags::default();
 
@@ -5591,6 +5850,13 @@ where
         //   via the old v_key, so we must have the point value captured.
         let inserted_uuid = vertex.uuid();
         let point = *vertex.point();
+
+        vertex.is_valid().map_err(|source| {
+            InsertionError::TopologyValidation(TdsError::InvalidVertex {
+                vertex_id: inserted_uuid,
+                source,
+            })
+        })?;
 
         // 1. Insert vertex into Tds
         let mut v_key = self
@@ -5681,13 +5947,15 @@ where
                 //
                 // Fallback: treat the containing cell as the conflict region, effectively performing
                 // a star-split of that cell to keep the simplicial complex connected.
-                let conflict_started = Instant::now();
+                let conflict_started = Self::start_insertion_timing(telemetry_mode);
                 let computed = find_conflict_region(&self.tds, &self.kernel, &point, start_cell)?;
                 Self::record_conflict_region_telemetry(telemetry, computed.len());
-                Self::record_conflict_region_timing(
-                    telemetry,
-                    Self::duration_nanos_saturating(conflict_started.elapsed()),
-                );
+                if let Some(conflict_started) = conflict_started {
+                    Self::record_conflict_region_timing(
+                        telemetry,
+                        Self::duration_nanos_saturating(conflict_started.elapsed()),
+                    );
+                }
 
                 #[cfg(feature = "diagnostics")]
                 if std::env::var_os("DELAUNAY_DEBUG_CONFLICT_VERIFY").is_some() {
@@ -5755,6 +6023,7 @@ where
                     &point,
                     locate_trace.terminal_cell,
                     &locate_stats,
+                    telemetry_mode,
                     telemetry,
                 )?;
                 InsertionSite::Exterior {
@@ -5774,6 +6043,7 @@ where
                         &point,
                         locate_trace.terminal_cell,
                         &locate_stats,
+                        telemetry_mode,
                         telemetry,
                     )?;
                     InsertionSite::Exterior {
@@ -5807,7 +6077,7 @@ where
                 conflict_cells,
             } => {
                 let conflict_cells = conflict_cells.into_owned();
-                let cavity_started = Instant::now();
+                let cavity_started = Self::start_insertion_timing(telemetry_mode);
                 let insertion_result = self.insert_with_conflict_region(
                     v_key,
                     &point,
@@ -5817,7 +6087,8 @@ where
                 );
                 Self::record_cavity_insertion_telemetry(
                     telemetry,
-                    Self::duration_nanos_saturating(cavity_started.elapsed()),
+                    cavity_started
+                        .map(|started| Self::duration_nanos_saturating(started.elapsed())),
                 );
                 let outcome = insertion_result?;
                 Ok(TryInsertImplOk {
@@ -5840,7 +6111,7 @@ where
                     tracing::debug!(
                         "Outside insertion attempting cavity insertion with conflict region size {conflict_len}"
                     );
-                    let cavity_started = Instant::now();
+                    let cavity_started = Self::start_insertion_timing(telemetry_mode);
                     let result = self.insert_with_conflict_region(
                         v_key,
                         &point,
@@ -5850,7 +6121,8 @@ where
                     );
                     Self::record_cavity_insertion_telemetry(
                         telemetry,
-                        Self::duration_nanos_saturating(cavity_started.elapsed()),
+                        cavity_started
+                            .map(|started| Self::duration_nanos_saturating(started.elapsed())),
                     );
                     match result {
                         Ok(outcome) => {
@@ -5910,11 +6182,11 @@ where
                         "Outside insertion: proceeding to hull extension"
                     );
                 }
-                let hull_started = Instant::now();
+                let hull_started = Self::start_insertion_timing(telemetry_mode);
                 let hull_result = extend_hull(&mut self.tds, &self.kernel, v_key, &point);
                 Self::record_hull_extension_telemetry(
                     telemetry,
-                    Self::duration_nanos_saturating(hull_started.elapsed()),
+                    hull_started.map(|started| Self::duration_nanos_saturating(started.elapsed())),
                 );
                 let new_cells = match hull_result {
                     Ok(cells) => cells,
@@ -5960,7 +6232,7 @@ where
                                 suspicion.fallback_star_split = true;
                                 let mut star_conflict = CellKeyBuffer::new();
                                 star_conflict.push(start_cell);
-                                let cavity_started = Instant::now();
+                                let cavity_started = Self::start_insertion_timing(telemetry_mode);
                                 let insertion_result = self.insert_with_conflict_region(
                                     v_key,
                                     &point,
@@ -5970,7 +6242,9 @@ where
                                 );
                                 Self::record_cavity_insertion_telemetry(
                                     telemetry,
-                                    Self::duration_nanos_saturating(cavity_started.elapsed()),
+                                    cavity_started.map(|started| {
+                                        Self::duration_nanos_saturating(started.elapsed())
+                                    }),
                                 );
                                 let outcome = insertion_result?;
                                 return Ok(TryInsertImplOk {
@@ -6295,7 +6569,7 @@ where
 
         // Snapshot before destructive retriangulation edits so we can roll back if any
         // subsequent orientation/finalization step fails.
-        let tds_snapshot = self.tds.clone();
+        let tds_snapshot = self.tds.clone_for_rollback();
         let retriangulation_result = (|| -> Result<usize, InvariantError> {
             // Fill cavity with fan triangulation BEFORE removing old cells
             // Use fan triangulation that skips boundary facets which already include the apex
@@ -6450,7 +6724,7 @@ where
             let new_cell = Cell::new(new_cell_vertices, None).map_err(CavityFillingError::from)?;
             let cell_key = self
                 .tds
-                .insert_cell_with_mapping(new_cell)
+                .insert_cell_with_mapping_trusted_vertices(new_cell)
                 .map_err(CavityFillingError::from)?;
 
             new_cells.push(cell_key);
@@ -7159,6 +7433,14 @@ mod tests {
         assert!(TopologyGuarantee::PLManifold.requires_vertex_links_at_completion());
         assert!(TopologyGuarantee::PLManifoldStrict.requires_vertex_links_at_completion());
 
+        assert!(
+            TopologyGuarantee::Pseudomanifold.requires_pseudomanifold_checks_during_insertion()
+        );
+        assert!(TopologyGuarantee::PLManifold.requires_pseudomanifold_checks_during_insertion());
+        assert!(
+            TopologyGuarantee::PLManifoldStrict.requires_pseudomanifold_checks_during_insertion()
+        );
+
         assert!(!TopologyGuarantee::Pseudomanifold.requires_ridge_links());
         assert!(TopologyGuarantee::PLManifold.requires_ridge_links());
         assert!(TopologyGuarantee::PLManifoldStrict.requires_ridge_links());
@@ -7542,29 +7824,29 @@ mod tests {
     }
 
     #[test]
-    fn test_validate_after_insertion_only_checks_required_links_when_policy_does_not_trigger() {
+    fn test_validate_after_insertion_required_checks_do_not_run_global_connectedness() {
         let tds = build_disconnected_two_triangles_tds_2d();
         let mut tri =
             Triangulation::<FastKernel<f64>, (), (), 2>::new_with_tds(FastKernel::new(), tds);
 
         tri.set_validation_policy(ValidationPolicy::OnSuspicion);
-        tri.set_topology_guarantee(TopologyGuarantee::PLManifold);
+        tri.set_topology_guarantee(TopologyGuarantee::Pseudomanifold);
 
-        // The triangulation is invalid (disconnected), but the required PL-manifold link
-        // checks are still satisfied.
+        // The triangulation is globally invalid (disconnected), but the required
+        // pseudomanifold checks are local and still satisfied.
         assert!(tri.is_valid().is_err());
         tri.validate_after_insertion_with_scope(SuspicionFlags::default(), None)
             .unwrap();
     }
 
     #[test]
-    fn test_validate_after_insertion_does_not_skip_required_link_checks_in_pl_manifold_mode() {
+    fn test_validate_after_insertion_does_not_skip_pseudomanifold_checks() {
         let tds = build_three_triangles_sharing_edge_tds_2d();
         let mut tri =
             Triangulation::<FastKernel<f64>, (), (), 2>::new_with_tds(FastKernel::new(), tds);
 
         tri.set_validation_policy(ValidationPolicy::OnSuspicion);
-        tri.set_topology_guarantee(TopologyGuarantee::PLManifold);
+        tri.set_topology_guarantee(TopologyGuarantee::Pseudomanifold);
 
         match tri.validate_after_insertion_with_scope(SuspicionFlags::default(), None) {
             Err(InvariantError::Triangulation(
@@ -7609,6 +7891,25 @@ mod tests {
 
     fn unit_simplex_interior_vertex<const D: usize>() -> Vertex<f64, (), D> {
         vertex!([0.125_f64; D])
+    }
+
+    /// Build a simplex whose feature length is controlled by one shared axis scale.
+    fn axis_scaled_simplex_vertices<const D: usize>(scale: f64) -> Vec<Vertex<f64, (), D>> {
+        let mut vertices = Vec::with_capacity(D + 1);
+        vertices.push(vertex!([0.0_f64; D]));
+        for axis in 0..D {
+            let mut coords = [0.0_f64; D];
+            coords[axis] = scale;
+            vertices.push(vertex!(coords));
+        }
+        vertices
+    }
+
+    /// Build coordinates with only the first component set for tolerance-scale tests.
+    fn coords_with_first<const D: usize>(first: f64) -> [f64; D] {
+        let mut coords = [0.0_f64; D];
+        coords[0] = first;
+        coords
     }
 
     macro_rules! test_scoped_strict_validation_falls_back_to_global_vertex_links {
@@ -7727,8 +8028,7 @@ mod tests {
     test_insertion_scoped_validation_preserves_full_validity!(2, 3, 4, 5);
 
     #[test]
-    fn test_validate_after_insertion_skips_when_policy_does_not_trigger_and_no_required_link_checks()
-     {
+    fn test_validate_after_insertion_skips_global_validation_but_runs_required_checks() {
         let tds = build_disconnected_two_triangles_tds_2d();
         let mut tri =
             Triangulation::<FastKernel<f64>, (), (), 2>::new_with_tds(FastKernel::new(), tds);
@@ -7751,7 +8051,7 @@ mod tests {
         tri.set_topology_guarantee(TopologyGuarantee::Pseudomanifold);
         assert_eq!(
             tri.validation_after_insertion_work(SuspicionFlags::default()),
-            None
+            Some(InsertionValidationWork::RequiredTopologyLinks)
         );
 
         tri.set_topology_guarantee(TopologyGuarantee::PLManifold);
@@ -7815,7 +8115,7 @@ mod tests {
         index.insert_vertex(vkey, &[0.0, 0.0]);
 
         let tol = 1e-10_f64;
-        let err = tri.duplicate_coordinates_error(&[0.0, 0.0], tol * tol, Some(&index));
+        let err = tri.duplicate_coordinates_error(&[0.0, 0.0], tol, Some(&index));
         assert!(matches!(
             err,
             Some(InsertionError::DuplicateCoordinates { .. })
@@ -7833,12 +8133,116 @@ mod tests {
 
         let index: HashGridIndex<f64, 2> = HashGridIndex::new(0.0); // unusable
         let tol = 1e-10_f64;
-        let err = tri.duplicate_coordinates_error(&[0.0, 0.0], tol * tol, Some(&index));
+        let err = tri.duplicate_coordinates_error(&[0.0, 0.0], tol, Some(&index));
         assert!(matches!(
             err,
             Some(InsertionError::DuplicateCoordinates { .. })
         ));
     }
+
+    fn duplicate_coordinate_tolerance_scales_down_for_small_features<const D: usize>() {
+        let mut tri: Triangulation<FastKernel<f64>, (), (), D> =
+            Triangulation::new_empty(FastKernel::new());
+        let _ = tri
+            .tds
+            .insert_vertex_with_mapping(vertex!(coords_with_first::<D>(1.0e-6)))
+            .unwrap();
+
+        let candidate = coords_with_first::<D>(1.0e-6 + 1.0e-11);
+        let tolerance = tri.estimate_duplicate_coordinate_tolerance(&candidate, None);
+
+        assert!(
+            tolerance < 1.0e-10,
+            "small-scale inputs should not inherit a fixed scalar-unit tolerance"
+        );
+        assert!(
+            tri.duplicate_coordinates_error(&candidate, tolerance, None)
+                .is_none(),
+            "distinct small-scale vertices should not be skipped as duplicates"
+        );
+    }
+
+    fn duplicate_coordinate_tolerance_uses_hint_cell_span<const D: usize>() {
+        let vertices = unit_simplex_vertices::<D>();
+        let tds =
+            Triangulation::<FastKernel<f64>, (), (), D>::build_initial_simplex(&vertices).unwrap();
+        let tri = Triangulation::<FastKernel<f64>, (), (), D>::new_with_tds(FastKernel::new(), tds);
+        let hint = tri.tds.cell_keys().next();
+        let candidate = coords_with_first::<D>(5.0e-11);
+        let tolerance = tri.estimate_duplicate_coordinate_tolerance(&candidate, hint);
+
+        assert!(
+            tolerance > 1.0e-10,
+            "unit-scale hint cells should preserve near-duplicate filtering"
+        );
+        assert!(matches!(
+            tri.duplicate_coordinates_error(&candidate, tolerance, None),
+            Some(InsertionError::DuplicateCoordinates { .. })
+        ));
+    }
+
+    fn duplicate_index_rebuilds_when_tolerance_exceeds_cell_size<const D: usize>() {
+        let vertices = axis_scaled_simplex_vertices::<D>(1.0e6);
+        let tds =
+            Triangulation::<FastKernel<f64>, (), (), D>::build_initial_simplex(&vertices).unwrap();
+        let tri = Triangulation::<FastKernel<f64>, (), (), D>::new_with_tds(FastKernel::new(), tds);
+        let hint = tri.tds.cell_keys().next();
+        let candidate = [1.0_f64; D];
+        let tolerance = tri.estimate_duplicate_coordinate_tolerance(&candidate, hint);
+        let mut index: HashGridIndex<f64, D> = HashGridIndex::new(1.0e-10);
+        for (vkey, vertex) in tri.tds.vertices() {
+            index.insert_vertex(vkey, vertex.point().coords());
+        }
+
+        tri.ensure_duplicate_index_cell_size(Some(&mut index), tolerance);
+
+        approx::assert_abs_diff_eq!(index.cell_size(), tolerance, epsilon = f64::EPSILON);
+        assert!(
+            index.for_each_candidate_vertex_key(&candidate, |_| false),
+            "rebuilt duplicate index should remain queryable"
+        );
+    }
+
+    #[test]
+    fn test_duplicate_distance_within_tolerance_handles_overflowed_tolerance_square() {
+        assert!(
+            Triangulation::<FastKernel<f64>, (), (), 2>::duplicate_distance_within_tolerance(
+                f64::MAX,
+                f64::MAX
+            )
+        );
+        assert!(
+            !Triangulation::<FastKernel<f64>, (), (), 2>::duplicate_distance_within_tolerance(
+                f64::MAX,
+                1.0
+            )
+        );
+    }
+
+    macro_rules! test_duplicate_tolerance_dimensions {
+        ($($dim:expr),+ $(,)?) => {
+            pastey::paste! {
+                $(
+                    #[test]
+                    fn [<test_duplicate_coordinate_tolerance_scales_down_for_small_features_ $dim d>]() {
+                        duplicate_coordinate_tolerance_scales_down_for_small_features::<$dim>();
+                    }
+
+                    #[test]
+                    fn [<test_duplicate_coordinate_tolerance_uses_hint_cell_span_ $dim d>]() {
+                        duplicate_coordinate_tolerance_uses_hint_cell_span::<$dim>();
+                    }
+
+                    #[test]
+                    fn [<test_duplicate_index_rebuilds_when_tolerance_exceeds_cell_size_ $dim d>]() {
+                        duplicate_index_rebuilds_when_tolerance_exceeds_cell_size::<$dim>();
+                    }
+                )+
+            }
+        };
+    }
+
+    test_duplicate_tolerance_dimensions!(2, 3, 4, 5);
 
     #[test]
     fn test_estimate_local_perturbation_scale_uses_hint_cell_vertices() {
@@ -8866,6 +9270,21 @@ mod tests {
             Err(TriangulationConstructionError::InsufficientVertices { .. }) => {}
             _ => panic!("Expected InsufficientVertices error for wrong count"),
         }
+    }
+
+    #[test]
+    fn test_build_initial_simplex_rejects_invalid_vertex() {
+        let invalid = Vertex::new_with_uuid(Point::new([0.0, f64::NAN]), Uuid::new_v4(), None);
+        let vertices = vec![vertex!([0.0, 0.0]), invalid, vertex!([0.0, 1.0])];
+
+        let result = Triangulation::<FastKernel<f64>, (), (), 2>::build_initial_simplex(&vertices);
+
+        assert!(matches!(
+            result,
+            Err(TriangulationConstructionError::Tds(
+                TdsConstructionError::ValidationError(TdsError::InvalidVertex { .. })
+            ))
+        ));
     }
 
     #[test]
@@ -10019,7 +10438,7 @@ mod tests {
     }
 
     #[test]
-    fn triangulation_policy_skipped_validation_does_not_increment_telemetry() {
+    fn triangulation_required_topology_validation_records_telemetry() {
         let vertices = vec![
             vertex!([0.0, 0.0]),
             vertex!([1.0, 0.0]),
@@ -10045,7 +10464,14 @@ mod tests {
             .unwrap();
 
         assert!(matches!(detail.outcome, InsertionOutcome::Inserted { .. }));
-        assert_eq!(detail.telemetry.topology_validation_calls, 0);
+        assert!(
+            detail.telemetry.topology_validation_calls > 0,
+            "Pseudomanifold insertion should record required topology validation"
+        );
+        assert_eq!(
+            detail.telemetry.topology_validation_nanos, 0,
+            "default detailed insertion should not start validation timers"
+        );
 
         let tds =
             Triangulation::<FastKernel<f64>, (), (), 2>::build_initial_simplex(&vertices).unwrap();
@@ -10070,6 +10496,10 @@ mod tests {
         assert!(
             detail.telemetry.topology_validation_calls > 0,
             "PLManifold insertion should record RequiredTopologyLinks validation"
+        );
+        assert_eq!(
+            detail.telemetry.topology_validation_nanos, 0,
+            "default detailed insertion should not start validation timers"
         );
     }
 
@@ -11633,14 +12063,14 @@ mod tests {
 
         let tol = 1e-10_f64;
         // No index provided: should fall back to linear scan.
-        let err = tri.duplicate_coordinates_error(&[3.0, 4.0], tol * tol, None);
+        let err = tri.duplicate_coordinates_error(&[3.0, 4.0], tol, None);
         assert!(matches!(
             err,
             Some(InsertionError::DuplicateCoordinates { .. })
         ));
 
         // Non-duplicate should return None.
-        let no_err = tri.duplicate_coordinates_error(&[99.0, 99.0], tol * tol, None);
+        let no_err = tri.duplicate_coordinates_error(&[99.0, 99.0], tol, None);
         assert!(no_err.is_none());
     }
 

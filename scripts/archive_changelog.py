@@ -26,6 +26,8 @@ import re
 import sys
 from pathlib import Path
 
+from postprocess_changelog import postprocess_text
+
 # Matches ``## [X.Y.Z]`` or ``## [Unreleased]``
 _VERSION_HEADING_RE = re.compile(r"^## \[")
 
@@ -252,8 +254,9 @@ def write_archive(
         if defs_text:
             text = text.rstrip("\n") + "\n\n" + defs_text
 
-    # Normalize: single trailing newline.
-    text = text.rstrip("\n") + "\n"
+    # Normalize archive output too; archived blocks can preserve historical
+    # commit-body indentation that no longer appears in the trimmed root file.
+    text = postprocess_text(text)
 
     path.write_text(text, encoding="utf-8")
     return path
@@ -294,7 +297,7 @@ def build_root(
         archive_lines.append("")
         parts.append("\n".join(archive_lines))
 
-    return "\n".join(parts).rstrip("\n") + "\n"
+    return postprocess_text("\n".join(parts))
 
 
 # ---------------------------------------------------------------------------

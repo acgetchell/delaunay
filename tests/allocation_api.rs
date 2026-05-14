@@ -1,204 +1,236 @@
-//! Test file to figure out allocation-counter API with Delaunay triangulation testing
+//! Allocation-bounded tests for performance-sensitive public hot paths.
 //!
-//! This module provides comprehensive testing utilities for memory allocation tracking
-//! in Delaunay triangulation operations.
+//! These tests run only with `--features count-allocations` because the feature
+//! installs the allocation-counting global allocator.
 
-// Import Delaunay triangulation crate components
-#[cfg(feature = "count-allocations")]
-use allocation_counter::measure;
-use delaunay::prelude::geometry::*;
-use delaunay::prelude::triangulation::construction::{
-    DelaunayTriangulation, DelaunayTriangulationConstructionError, TopologyGuarantee, vertex,
+#![cfg(feature = "count-allocations")]
+
+use allocation_counter::AllocationInfo;
+use delaunay::prelude::geometry::{Coordinate, FastKernel, Point};
+use delaunay::prelude::query::{LocateError, LocateResult, locate_with_stats};
+use delaunay::prelude::tds::{
+    CellKey, TdsError, VertexKey, facet_key_from_vertices, measure_with_result,
 };
+use delaunay::prelude::triangulation::construction::{
+    DelaunayTriangulation, DelaunayTriangulationConstructionError, vertex,
+};
+use std::hint::black_box;
+use thiserror::Error;
 
-use delaunay::geometry::kernel::AdaptiveKernel;
+const SIMPLEX_5D_DIMENSION: usize = 5;
+const SIMPLEX_VERTEX_COUNT: usize = SIMPLEX_5D_DIMENSION + 1;
+const SIMPLEX_CELL_COUNT: usize = 1;
+const LOCATE_FAST_PATH_ALLOCATION_BUDGET: u64 = 1;
 
-// Testing utilities
-use rand::RngExt;
+type TestTriangulation2D = DelaunayTriangulation<FastKernel<f64>, (), (), 2>;
+type TestTriangulation5D = DelaunayTriangulation<FastKernel<f64>, (), (), SIMPLEX_5D_DIMENSION>;
 
-/// Common test helpers for initializing and working with the allocator
-pub mod test_helpers {
-    use super::*;
+/// Typed failure modes for allocation-bounded public API checks.
+#[derive(Debug, Error)]
+enum AllocationTestError {
+    #[error("triangulation construction failed: {source}")]
+    Construction {
+        #[from]
+        source: DelaunayTriangulationConstructionError,
+    },
 
-    /// Initialize a simple allocator test environment
-    pub fn init_test_env() {
-        println!("Initializing test environment...");
-        #[cfg(feature = "count-allocations")]
-        println!("✓ Allocation counting enabled");
-        #[cfg(not(feature = "count-allocations"))]
-        println!("⚠ Allocation counting disabled - enable with --features count-allocations");
-    }
+    #[error("TDS lookup failed: {source}")]
+    Tds {
+        #[from]
+        source: TdsError,
+    },
 
-    /// Helper to measure allocations with error handling
-    ///
-    #[cfg(feature = "count-allocations")]
-    pub fn measure_with_result<F, R>(f: F) -> (R, allocation_counter::AllocationInfo)
-    where
-        F: FnOnce() -> R,
-    {
-        let mut result: Option<R> = None;
-        let info = measure(|| {
-            result = Some(f());
-        });
-        println!("Memory info: {info:?}");
-        let Some(result) = result else {
-            unreachable!("allocation_counter::measure did not execute the closure");
-        };
-        (result, info)
-    }
+    #[error("point location failed: {source}")]
+    Locate {
+        #[from]
+        source: LocateError,
+    },
 
-    /// Fallback for when allocation counting is disabled
-    #[cfg(not(feature = "count-allocations"))]
-    pub fn measure_with_result<F, R>(f: F) -> (R, ())
-    where
-        F: FnOnce() -> R,
-    {
-        println!("Allocation counting not available");
-        (f(), ())
-    }
+    #[error("deterministic simplex fixture did not contain a cell")]
+    MissingCell,
 
-    /// Create a set of test points in various dimensions
-    #[must_use]
-    pub fn create_test_points_2d(count: usize) -> Vec<Point<f64, 2>> {
-        let mut rng = rand::rng();
-        (0..count)
-            .map(|_| Point::new([rng.random_range(-10.0..10.0), rng.random_range(-10.0..10.0)]))
-            .collect()
-    }
-
-    /// Create a set of test points in 3D
-    #[must_use]
-    pub fn create_test_points_3d(count: usize) -> Vec<Point<f64, 3>> {
-        let mut rng = rand::rng();
-        (0..count)
-            .map(|_| {
-                Point::new([
-                    rng.random_range(-10.0..10.0),
-                    rng.random_range(-10.0..10.0),
-                    rng.random_range(-10.0..10.0),
-                ])
-            })
-            .collect()
-    }
-
-    /// Create a simple triangulation data structure for testing
-    ///
-    /// # Panics
-    ///
-    /// Panics if triangulation creation fails.
-    #[must_use]
-    pub fn create_test_tds() -> DelaunayTriangulation<AdaptiveKernel<f64>, (), (), 4> {
-        // Create an empty triangulation with no vertices
-        DelaunayTriangulation::empty_with_topology_guarantee(TopologyGuarantee::PLManifold)
-    }
-
-    /// Create a triangulation with some test vertices
-    ///
-    /// # Errors
-    ///
-    /// Returns the typed construction error if triangulation creation with vertices fails.
-    pub fn create_test_tds_with_vertices() -> Result<
-        DelaunayTriangulation<AdaptiveKernel<f64>, (), (), 3>,
-        DelaunayTriangulationConstructionError,
-    > {
-        let vertices = vec![
-            vertex!([0.0, 0.0, 0.0]),
-            vertex!([1.0, 0.0, 0.0]),
-            vertex!([0.0, 1.0, 0.0]),
-            vertex!([0.0, 0.0, 1.0]),
-        ];
-        DelaunayTriangulation::new_with_topology_guarantee(&vertices, TopologyGuarantee::PLManifold)
-    }
-
-    /// Print memory allocation summary
-    #[cfg(feature = "count-allocations")]
-    pub fn print_alloc_summary(info: &allocation_counter::AllocationInfo, operation: &str) {
-        println!("\n=== Memory Allocation Summary for {operation} ===");
-        println!("Total allocations: {}", info.count_total);
-        println!("Current allocations: {}", info.count_current);
-        println!("Max allocations: {}", info.count_max);
-        println!("Total bytes allocated: {}", info.bytes_total);
-        println!("Current bytes allocated: {}", info.bytes_current);
-        println!("Max bytes allocated: {}", info.bytes_max);
-        println!("=====================================\n");
-    }
-
-    /// Print memory allocation summary (fallback for when allocation counting is disabled)
-    #[cfg(not(feature = "count-allocations"))]
-    pub fn print_alloc_summary(_info: &(), operation: &str) {
-        println!("\n=== Memory Allocation Summary for {operation} ===");
-        println!("Allocation counting not enabled");
-        println!("=====================================\n");
-    }
+    #[error("fixture cell has {actual} vertices, expected at least {required}")]
+    CellTooSmall { required: usize, actual: usize },
 }
 
-#[cfg(test)]
-mod tests {
-    use super::test_helpers::*;
-    // Only import what we actually use from the parent module
-    // (the test_helpers module provides all the functions we need)
+/// Build a minimal 2D simplex for the hinted locate fast-path allocation check.
+fn deterministic_2d_simplex() -> Result<TestTriangulation2D, AllocationTestError> {
+    let vertices = [
+        vertex!([0.0, 0.0]),
+        vertex!([1.0, 0.0]),
+        vertex!([0.0, 1.0]),
+    ];
 
-    #[test]
-    fn test_basic_allocation_counting() {
-        init_test_env();
+    Ok(DelaunayTriangulation::with_kernel(
+        &FastKernel::new(),
+        &vertices,
+    )?)
+}
 
-        let (result, info) = measure_with_result(|| {
-            let _v: Vec<i32> = (0..100).collect();
-            42
+/// Build a 5D unit simplex fixture for stack-sized topology hot-path checks.
+fn deterministic_5d_simplex() -> Result<TestTriangulation5D, AllocationTestError> {
+    let vertices = [
+        vertex!([0.0, 0.0, 0.0, 0.0, 0.0]),
+        vertex!([1.0, 0.0, 0.0, 0.0, 0.0]),
+        vertex!([0.0, 1.0, 0.0, 0.0, 0.0]),
+        vertex!([0.0, 0.0, 1.0, 0.0, 0.0]),
+        vertex!([0.0, 0.0, 0.0, 1.0, 0.0]),
+        vertex!([0.0, 0.0, 0.0, 0.0, 1.0]),
+    ];
+
+    Ok(DelaunayTriangulation::with_kernel(
+        &FastKernel::new(),
+        &vertices,
+    )?)
+}
+
+/// Return the only cell in the deterministic 5D simplex fixture.
+fn only_5d_cell_key(dt: &TestTriangulation5D) -> Result<CellKey, AllocationTestError> {
+    dt.tds()
+        .cell_keys()
+        .next()
+        .ok_or(AllocationTestError::MissingCell)
+}
+
+/// Extract one facet from the 5D simplex without allocating a temporary buffer.
+fn first_facet_vertices(
+    dt: &TestTriangulation5D,
+) -> Result<[VertexKey; SIMPLEX_5D_DIMENSION], AllocationTestError> {
+    let cell_key = only_5d_cell_key(dt)?;
+    let cell = dt
+        .tds()
+        .cell(cell_key)
+        .ok_or(AllocationTestError::MissingCell)?;
+    let vertices = cell.vertices();
+    if vertices.len() < SIMPLEX_5D_DIMENSION {
+        return Err(AllocationTestError::CellTooSmall {
+            required: SIMPLEX_5D_DIMENSION,
+            actual: vertices.len(),
         });
-
-        assert_eq!(result, 42);
-        print_alloc_summary(&info, "basic vector creation");
     }
 
-    #[test]
-    fn test_point_creation_allocations() {
-        init_test_env();
+    let mut facet_vertices = [vertices[0]; SIMPLEX_5D_DIMENSION];
+    facet_vertices.copy_from_slice(&vertices[..SIMPLEX_5D_DIMENSION]);
+    Ok(facet_vertices)
+}
 
-        let (points, info) = measure_with_result(|| create_test_points_2d(10));
+/// Assert an operation performed no allocations and retained no allocator state.
+fn assert_zero_allocations(info: &AllocationInfo, operation: &str) {
+    assert_eq!(
+        info.count_total, 0,
+        "{operation} should not allocate; allocation info: {info:?}"
+    );
+    assert_eq!(
+        info.bytes_total, 0,
+        "{operation} should allocate zero bytes; allocation info: {info:?}"
+    );
+    assert_eq!(
+        info.count_current, 0,
+        "{operation} should not retain allocations; allocation info: {info:?}"
+    );
+    assert_eq!(
+        info.bytes_current, 0,
+        "{operation} should retain zero bytes; allocation info: {info:?}"
+    );
+}
 
-        assert_eq!(points.len(), 10);
-        print_alloc_summary(&info, "2D point creation");
-    }
+/// Assert an operation stayed within a known allocation-count budget.
+fn assert_allocation_budget(info: &AllocationInfo, operation: &str, max_allocations: u64) {
+    assert!(
+        info.count_total <= max_allocations,
+        "{operation} exceeded allocation budget {max_allocations}; allocation info: {info:?}"
+    );
+    assert_eq!(
+        info.count_current, 0,
+        "{operation} should not retain allocations; allocation info: {info:?}"
+    );
+    assert_eq!(
+        info.bytes_current, 0,
+        "{operation} should retain zero bytes; allocation info: {info:?}"
+    );
+}
 
-    #[test]
-    fn test_3d_point_creation_allocations() {
-        init_test_env();
+#[test]
+fn tds_and_public_iterators_are_zero_allocation() -> Result<(), AllocationTestError> {
+    let dt = deterministic_5d_simplex()?;
+    let tds = dt.tds();
+    let tri = dt.as_triangulation();
 
-        let (points, info) = measure_with_result(|| create_test_points_3d(10));
+    let (counts, info) = measure_with_result(|| {
+        black_box((
+            tds.cells().count(),
+            tds.vertices().count(),
+            tds.cell_keys().count(),
+            tds.vertex_keys().count(),
+            tri.cells().count(),
+            tri.vertices().count(),
+            dt.cells().count(),
+            dt.vertices().count(),
+        ))
+    });
 
-        assert_eq!(points.len(), 10);
-        print_alloc_summary(&info, "3D point creation");
-    }
+    assert_eq!(
+        counts,
+        (
+            SIMPLEX_CELL_COUNT,
+            SIMPLEX_VERTEX_COUNT,
+            SIMPLEX_CELL_COUNT,
+            SIMPLEX_VERTEX_COUNT,
+            SIMPLEX_CELL_COUNT,
+            SIMPLEX_VERTEX_COUNT,
+            SIMPLEX_CELL_COUNT,
+            SIMPLEX_VERTEX_COUNT,
+        )
+    );
+    assert_zero_allocations(&info, "TDS and public cells()/vertices() iterators");
+    Ok(())
+}
 
-    #[test]
-    fn test_tds_creation_allocations() {
-        init_test_env();
+#[test]
+fn tds_cell_vertices_is_zero_allocation() -> Result<(), AllocationTestError> {
+    let dt = deterministic_5d_simplex()?;
+    let cell_key = only_5d_cell_key(&dt)?;
 
-        let (dt, info) = measure_with_result(create_test_tds);
+    let (vertex_count, info) =
+        measure_with_result(|| dt.tds().cell_vertices(cell_key).map(|keys| keys.len()));
+    assert_eq!(vertex_count?, SIMPLEX_VERTEX_COUNT);
+    assert_zero_allocations(&info, "Tds::cell_vertices");
+    Ok(())
+}
 
-        // Verify triangulation was created successfully
-        assert_eq!(dt.number_of_vertices(), 0);
-        print_alloc_summary(&info, "triangulation creation");
-    }
+#[test]
+fn facet_key_from_vertices_is_zero_allocation() -> Result<(), AllocationTestError> {
+    let facet_vertices = first_facet_vertices(&deterministic_5d_simplex()?)?;
 
-    #[test]
-    fn test_complex_triangulation_workflow() {
-        init_test_env();
+    let (facet_key, info) =
+        measure_with_result(|| black_box(facet_key_from_vertices(&facet_vertices)));
+    assert_ne!(facet_key, 0);
+    assert_zero_allocations(&info, "facet_key_from_vertices");
+    Ok(())
+}
 
-        let (result, info) = measure_with_result(|| {
-            // Create points
-            let points = create_test_points_3d(5);
+#[test]
+fn locate_with_hint_fast_path_stays_allocation_bounded() -> Result<(), AllocationTestError> {
+    let dt = deterministic_2d_simplex()?;
+    let cell_key = dt
+        .tds()
+        .cell_keys()
+        .next()
+        .ok_or(AllocationTestError::MissingCell)?;
+    let kernel = FastKernel::<f64>::new();
+    let query = Point::new([0.25, 0.25]);
 
-            // Create triangulation
-            let dt = create_test_tds();
+    let (locate_result, info) =
+        measure_with_result(|| locate_with_stats(dt.tds(), &kernel, &query, Some(cell_key)));
+    let (location, stats) = locate_result?;
 
-            // Return some result to verify the workflow
-            (points.len(), dt.number_of_vertices())
-        });
-
-        assert_eq!(result.0, 5); // 5 points created
-        assert_eq!(result.1, 0); // Empty triangulation
-        print_alloc_summary(&info, "complex triangulation workflow");
-    }
+    assert!(matches!(location, LocateResult::InsideCell(found) if found == cell_key));
+    assert!(stats.used_hint);
+    assert!(!stats.fell_back_to_scan());
+    assert_allocation_budget(
+        &info,
+        "hinted locate_with_stats fast path",
+        LOCATE_FAST_PATH_ALLOCATION_BUDGET,
+    );
+    Ok(())
 }

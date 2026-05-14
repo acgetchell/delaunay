@@ -884,7 +884,7 @@ mod tests {
     // =============================================================================
 
     #[test]
-    fn test_collect_cell_data_missing_vertex() {
+    fn test_cell_vertex_uuids_missing_vertex() {
         let mut tds: Tds<f64, (), i32, 2> = Tds::empty();
         let vertex_keys: Vec<_> = [
             vertex!([0.0, 0.0]),
@@ -896,13 +896,9 @@ mod tests {
         .collect();
         let missing = vertex_keys[0];
         let cell = Cell::new(vertex_keys, Some(7)).unwrap();
-        let dangling_cell = cell.clone();
-        let cell_key = tds.insert_cell_with_mapping(cell).unwrap();
-        assert_eq!(tds.remove_cells_by_keys(&[cell_key]), 1);
         tds.remove_isolated_vertex(missing);
-        tds.cells_mut().insert(dangling_cell);
 
-        let err = collect_cell_data(&tds).unwrap_err();
+        let err = cell_vertex_uuids(&tds, &cell).unwrap_err();
 
         assert_eq!(err, CellValidationError::VertexKeyNotFound { key: missing });
     }

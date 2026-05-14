@@ -62,17 +62,50 @@
 
 #![forbid(unsafe_code)]
 
-use crate::geometry::matrix::StackMatrixDispatchError;
+use crate::geometry::matrix::{MatrixError, StackMatrixDispatchError};
 use la_stack::LaError;
 use num_traits::{Float, Zero};
 use ordered_float::OrderedFloat;
 use serde::{Serialize, de::DeserializeOwned};
 use std::{
-    fmt::Debug,
+    fmt::{self, Debug},
     hash::{Hash, Hasher},
     iter::Sum,
     ops::{AddAssign, SubAssign},
 };
+
+/// Structured reason why a predicate classified a simplex as geometrically degenerate.
+///
+/// Values of this enum appear in
+/// [`CoordinateConversionError::DegenerateSimplex`] so callers can distinguish
+/// an exactly zero orientation determinant from a symbolic-perturbation tie.
+///
+/// # Examples
+///
+/// ```rust
+/// use delaunay::prelude::geometry::DegenerateSimplexReason;
+///
+/// let reason = DegenerateSimplexReason::ZeroOrientation;
+/// assert_eq!(reason.to_string(), "zero orientation");
+/// ```
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum DegenerateSimplexReason {
+    /// The simplex orientation determinant is exactly zero.
+    ZeroOrientation,
+    /// All symbolic-perturbation cofactors vanished, usually because the input
+    /// points are identical in the evaluated coordinate representation.
+    VanishingSosCofactors,
+}
+
+impl fmt::Display for DegenerateSimplexReason {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::ZeroOrientation => f.write_str("zero orientation"),
+            Self::VanishingSosCofactors => f.write_str("vanishing SoS cofactors"),
+        }
+    }
+}
 
 /// Errors that can occur during coordinate conversion in geometric predicates.
 ///
@@ -116,6 +149,26 @@ pub enum CoordinateConversionError {
         /// String representation of the non-finite coordinate value
         coordinate_value: String,
     },
+    /// A predicate received the wrong number of points for a D-dimensional simplex.
+    #[error(
+        "Invalid simplex point count for dimension {dimension}: expected {expected}, got {actual}"
+    )]
+    InvalidSimplexPointCount {
+        /// Number of points provided.
+        actual: usize,
+        /// Number of points required to form a D-dimensional simplex.
+        expected: usize,
+        /// Dimension of the simplex.
+        dimension: usize,
+    },
+    /// A predicate received a simplex whose geometry cannot determine a sign.
+    #[error("Degenerate simplex in dimension {dimension}: {reason}")]
+    DegenerateSimplex {
+        /// Dimension of the degenerate simplex.
+        dimension: usize,
+        /// Structured reason the simplex was classified as degenerate.
+        reason: DegenerateSimplexReason,
+    },
     /// Strict robust-insphere consistency check failed.
     #[error("Insphere consistency check failed: {details}")]
     InsphereInconsistency {
@@ -134,9 +187,34 @@ pub enum CoordinateConversionError {
         /// Maximum supported matrix dimension.
         max: usize,
     },
+    /// Internal matrix dispatch requested an active block whose size does not
+    /// match the concrete stack matrix.
+    ///
+    /// Public predicate APIs surface this as a typed error rather than silently
+    /// classifying structurally invalid predicate state as degenerate geometry.
+    #[error(
+        "Active matrix block size {active} does not match concrete matrix dimension {matrix_dimension}"
+    )]
+    MatrixDimensionMismatch {
+        /// Requested active matrix dimension.
+        active: usize,
+        /// Concrete matrix dimension.
+        matrix_dimension: usize,
+    },
     /// A linear algebra backend operation failed.
-    #[error("Linear algebra failure: {0}")]
-    LinearAlgebraFailure(#[from] LaError),
+    #[error("Linear algebra failure: {source}")]
+    LinearAlgebraFailure {
+        /// Typed source error from the linear algebra backend.
+        #[from]
+        source: LaError,
+    },
+    /// Matrix operation failed while building or inspecting a predicate matrix.
+    #[error("Matrix error: {source}")]
+    MatrixError {
+        /// Typed source error from matrix operations.
+        #[from]
+        source: MatrixError,
+    },
 }
 
 impl From<StackMatrixDispatchError> for CoordinateConversionError {
@@ -145,7 +223,14 @@ impl From<StackMatrixDispatchError> for CoordinateConversionError {
             StackMatrixDispatchError::UnsupportedDim { k, max } => {
                 Self::UnsupportedMatrixDimension { requested: k, max }
             }
-            StackMatrixDispatchError::La(source) => Self::LinearAlgebraFailure(source),
+            StackMatrixDispatchError::ActiveBlockDimensionMismatch { k, dim } => {
+                Self::MatrixDimensionMismatch {
+                    active: k,
+                    matrix_dimension: dim,
+                }
+            }
+            StackMatrixDispatchError::La { source } => Self::LinearAlgebraFailure { source },
+            StackMatrixDispatchError::Matrix { source } => Self::MatrixError { source },
         }
     }
 }
@@ -877,6 +962,78 @@ mod tests {
     use std::hash::Hasher;
 
     // Use the global tolerance constants
+
+    #[test]
+    fn coordinate_conversion_error_preserves_matrix_error_sources() {
+        let matrix_error = MatrixError::OutOfBounds {
+            row: 2,
+            column: 1,
+            dimension: 2,
+        };
+        let converted = CoordinateConversionError::from(matrix_error.clone());
+
+        assert_eq!(
+            converted,
+            CoordinateConversionError::MatrixError {
+                source: matrix_error
+            }
+        );
+        assert!(converted.source().is_some());
+    }
+
+    #[test]
+    fn stack_matrix_dispatch_errors_map_to_coordinate_conversion_errors() {
+        let unsupported =
+            CoordinateConversionError::from(StackMatrixDispatchError::UnsupportedDim {
+                k: 8,
+                max: 7,
+            });
+        assert_eq!(
+            unsupported,
+            CoordinateConversionError::UnsupportedMatrixDimension {
+                requested: 8,
+                max: 7,
+            }
+        );
+
+        let mismatch = CoordinateConversionError::from(
+            StackMatrixDispatchError::ActiveBlockDimensionMismatch { k: 4, dim: 3 },
+        );
+        assert_eq!(
+            mismatch,
+            CoordinateConversionError::MatrixDimensionMismatch {
+                active: 4,
+                matrix_dimension: 3,
+            }
+        );
+
+        let matrix_error = MatrixError::OutOfBounds {
+            row: 3,
+            column: 1,
+            dimension: 3,
+        };
+        let converted = CoordinateConversionError::from(StackMatrixDispatchError::Matrix {
+            source: matrix_error.clone(),
+        });
+        assert_eq!(
+            converted,
+            CoordinateConversionError::MatrixError {
+                source: matrix_error
+            }
+        );
+    }
+
+    #[test]
+    fn degenerate_simplex_reason_display_covers_all_variants() {
+        assert_eq!(
+            DegenerateSimplexReason::ZeroOrientation.to_string(),
+            "zero orientation"
+        );
+        assert_eq!(
+            DegenerateSimplexReason::VanishingSosCofactors.to_string(),
+            "vanishing SoS cofactors"
+        );
+    }
 
     #[test]
     fn coordinate_trait_basic_functionality() {

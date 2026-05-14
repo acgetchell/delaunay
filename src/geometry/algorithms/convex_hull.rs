@@ -1953,6 +1953,7 @@ pub type ConvexHull4D<K, U, V> = ConvexHull<K, U, V, 4>;
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::core::algorithms::incremental_insertion::InsertionError;
     use crate::core::tds::{Tds, TdsError};
     use crate::core::traits::facet_cache::FacetCacheProvider;
     use crate::core::util::{checked_facet_key_from_vertex_keys, facet_view_to_vertices};
@@ -7111,6 +7112,87 @@ mod tests {
             hull.validate(dt2.as_triangulation()),
             Err(ConvexHullValidationError::IdentityMismatch { .. })
         ));
+    }
+
+    #[test]
+    fn test_hull_cache_key_survives_failed_insert_rollback() {
+        let vertices = [
+            vertex!([0.0, 0.0, 0.0]),
+            vertex!([1.0, 0.0, 0.0]),
+            vertex!([0.0, 1.0, 0.0]),
+            vertex!([0.0, 0.0, 1.0]),
+        ];
+        let mut dt: DelaunayTriangulation<_, (), (), 3> =
+            DelaunayTriangulation::new(&vertices).unwrap();
+        let hull = ConvexHull::from_triangulation(dt.as_triangulation()).unwrap();
+
+        let cache_before = hull
+            .try_get_or_build_facet_cache(&dt.as_triangulation().tds)
+            .unwrap();
+        assert!(!cache_before.is_empty());
+
+        let creation_generation = hull
+            .creation_generation
+            .get()
+            .copied()
+            .expect("constructed hull should capture generation");
+        let creation_identity = hull
+            .creation_identity
+            .get()
+            .expect("constructed hull should capture TDS identity");
+        assert_eq!(creation_generation, dt.as_triangulation().tds.generation());
+        assert!(Arc::ptr_eq(
+            creation_identity,
+            dt.as_triangulation().tds.identity()
+        ));
+        assert!(hull.is_valid_for_triangulation(dt.as_triangulation()));
+
+        let duplicate_uuid = dt
+            .as_triangulation()
+            .tds
+            .vertices()
+            .next()
+            .expect("tetrahedron should have vertices")
+            .1
+            .uuid();
+        let duplicate_uuid_vertex =
+            Vertex::new_with_uuid(Point::new([0.25, 0.25, 0.125]), duplicate_uuid, None);
+
+        let result = dt.insert(duplicate_uuid_vertex);
+        assert!(matches!(
+            result,
+            Err(InsertionError::DuplicateUuid { uuid, .. }) if uuid == duplicate_uuid
+        ));
+
+        assert_eq!(
+            dt.as_triangulation().tds.generation(),
+            creation_generation,
+            "failed insert rollback should restore the generation captured by the hull"
+        );
+        assert!(
+            Arc::ptr_eq(creation_identity, dt.as_triangulation().tds.identity()),
+            "failed insert rollback must preserve TDS identity for cache provenance"
+        );
+        assert!(
+            hull.is_valid_for_triangulation(dt.as_triangulation()),
+            "hull cache key should remain valid after failed insert rollback"
+        );
+
+        let cache_after = hull
+            .try_get_or_build_facet_cache(&dt.as_triangulation().tds)
+            .unwrap();
+        assert!(
+            Arc::ptr_eq(&cache_before, &cache_after),
+            "facet cache should be reused when rollback restores the same generation"
+        );
+
+        let outside = Point::new([2.0, 2.0, 2.0]);
+        assert!(
+            hull.is_point_outside(&outside, dt.as_triangulation())
+                .unwrap(),
+            "post-rollback hull operations should keep using the valid cache"
+        );
+        assert!(hull.validate(dt.as_triangulation()).is_ok());
     }
 
     // ============================================================================

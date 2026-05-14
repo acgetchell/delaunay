@@ -8,9 +8,12 @@
 
 #![forbid(unsafe_code)]
 
-use super::predicates::{InSphere, Orientation};
-use super::util::{safe_coords_to_f64, safe_scalar_to_f64, squared_norm};
-use crate::geometry::matrix::{Matrix, matrix_set};
+use super::predicates::{
+    InSphere, Orientation, relative_insphere_classification, relative_insphere_signs,
+};
+use super::util::safe_coords_to_f64;
+use crate::core::collections::{MAX_PRACTICAL_DIMENSION_SIZE, SmallBuffer};
+use crate::geometry::matrix::{MAX_STACK_MATRIX_DIM, matrix_set};
 use crate::geometry::point::Point;
 use crate::geometry::sos::{sos_insphere_sign, sos_orientation_sign};
 use crate::geometry::traits::coordinate::{
@@ -84,44 +87,58 @@ pub enum InsphereConsistencyError {
 /// implementation is dimension-generic and applies a series of strategies to
 /// provide robust results for degenerate and near-degenerate configurations.
 ///
-/// Strategies used, in order:
-/// 1) Adaptive tolerance insphere via exact-sign determinant evaluation
-/// 2) Diagnostic consistency check against a distance-based insphere (does not
-///    override the exact result; only hard-fails when `DELAUNAY_STRICT_INSPHERE_CONSISTENCY`
-///    is set)
-/// 3) Simulation of Simplicity (`SoS`) fallback (only reached when the exact-sign
-///    computation itself fails, e.g. unsupported matrix size for D ≥ 6)
+/// The predicate uses the following strategies, in order:
 ///
-/// Sign convention and orientation:
+/// 1. Exact-sign determinant evaluation using relative coordinates for the
+///    supported exact-insphere dimensions.
+/// 2. A diagnostic consistency check against a distance-based insphere. This
+///    does not override the exact result; it only hard-fails when
+///    `DELAUNAY_STRICT_INSPHERE_CONSISTENCY` is set.
+/// 3. A [`Simulation of Simplicity`](crate::geometry::sos) fallback. This is
+///    only reached when the exact-sign computation itself is unsupported, such
+///    as D ≥ 6 where the insphere matrix exceeds the stack-matrix limit.
+///
+/// # Sign Convention
+///
 /// - The determinant sign is interpreted relative to the simplex orientation.
-/// - If the simplex orientation is POSITIVE, det > tol => INSIDE and det < -tol => OUTSIDE.
-/// - If NEGATIVE, the interpretation is swapped (det < -tol => INSIDE, det > tol => OUTSIDE).
-/// - DEGENERATE orientation yields BOUNDARY conservatively.
+/// - If the simplex orientation is [`Orientation::POSITIVE`], a positive
+///   determinant classifies `test_point` as [`InSphere::INSIDE`].
+/// - If the simplex orientation is [`Orientation::NEGATIVE`], the
+///   interpretation is swapped.
+/// - [`Orientation::DEGENERATE`] yields [`InSphere::BOUNDARY`] conservatively.
 ///
-/// Type parameters:
-/// - `T`: Coordinate scalar type implementing `CoordinateScalar`
-/// - `D`: Compile-time dimension of the space
+/// # Arguments
 ///
-/// Parameters:
-/// - `simplex_points`: Exactly `D + 1` points defining the simplex
-/// - `test_point`: The query point to classify relative to the simplex circumsphere
+/// * `simplex_points` - Exactly `D + 1` points defining the simplex.
+/// * `test_point` - The query point to classify relative to the simplex
+///   circumsphere.
 ///
-/// Returns:
-/// - `Ok(InSphere::{INSIDE, BOUNDARY, OUTSIDE})` on success
-/// - `Err(CoordinateConversionError)` if inputs are invalid (e.g., wrong point
-///   count) or safe conversions fail
+/// # Returns
 ///
-/// Complexity:
-/// - The f64 fast-filter path is O((D+2)³). When the exact Bareiss path is
-///   triggered (near-degenerate inputs), arbitrary-precision rational arithmetic
-///   increases the cost significantly beyond O(D³).
+/// Returns [`InSphere::INSIDE`], [`InSphere::BOUNDARY`], or
+/// [`InSphere::OUTSIDE`] when classification succeeds.
 ///
-/// Example (3D):
+/// # Errors
+///
+/// Returns [`CoordinateConversionError`] if `simplex_points.len() != D + 1`,
+/// if a coordinate cannot be converted for predicate evaluation, if a relative
+/// squared norm is non-finite, or if strict insphere-consistency diagnostics are
+/// enabled and detect a determinant/distance disagreement.
+///
+/// # Complexity
+///
+/// The f64 fast-filter path is O(D³). When the exact Bareiss path is triggered
+/// for near-degenerate inputs, arbitrary-precision rational arithmetic increases
+/// the cost significantly beyond O(D³).
+///
+/// # Examples
+///
 /// ```rust
-/// use delaunay::prelude::geometry::Point;
-/// use delaunay::prelude::geometry::robust_insphere;
-/// use delaunay::prelude::geometry::InSphere;
-/// use delaunay::prelude::geometry::Coordinate;
+/// use delaunay::prelude::geometry::{
+///     Coordinate, CoordinateConversionError, InSphere, Point, robust_insphere,
+/// };
+///
+/// # fn main() -> Result<(), CoordinateConversionError> {
 ///
 /// let tetra = vec![
 ///     Point::new([0.0, 0.0, 0.0]),
@@ -133,26 +150,21 @@ pub enum InsphereConsistencyError {
 /// let inside = Point::new([0.25, 0.25, 0.25]);
 /// let outside = Point::new([2.0, 2.0, 2.0]);
 ///
-/// let r_in = robust_insphere(&tetra, &inside).unwrap();
-/// let r_out = robust_insphere(&tetra, &outside).unwrap();
+/// let r_in = robust_insphere(&tetra, &inside)?;
+/// let r_out = robust_insphere(&tetra, &outside)?;
 /// assert_eq!(r_in, InSphere::INSIDE);
 /// assert_eq!(r_out, InSphere::OUTSIDE);
+/// # Ok(())
+/// # }
 /// ```
 ///
-/// Notes:
-/// - When Strategy 1 fails (e.g. D ≥ 6 where the insphere matrix exceeds the
-///   stack-matrix limit), the function falls back to Simulation of Simplicity
-///   (`SoS`) for deterministic tie-breaking without modifying coordinates.
-/// - See `robust_orientation` for the orientation predicate used in the sign interpretation.
-/// - The insphere matrix uses absolute coordinates whose squared norms can
-///   overflow `f64` for `‖coords‖ ≥ ~1e154`; see
-///   [`crate::geometry::predicates::insphere_lifted`] for a relative-coordinate
-///   alternative that avoids this limitation.
+/// # Notes
 ///
-/// # Errors
-///
-/// Returns an error if the input is invalid (wrong number of points) or if required
-/// numeric conversions fail.
+/// Absolute-coordinate squared-norm overflow is avoided by using the
+/// relative-coordinate lifted formulation shared with
+/// [`crate::geometry::predicates::insphere_lifted`] for D ≤ 5. If a relative
+/// squared norm is non-finite, the error is returned instead of falling through
+/// to a symbolic classification.
 pub fn robust_insphere<T, const D: usize>(
     simplex_points: &[Point<T, D>],
     test_point: &Point<T, D>,
@@ -161,36 +173,39 @@ where
     T: CoordinateScalar,
 {
     if simplex_points.len() != D + 1 {
-        return Err(CoordinateConversionError::ConversionFailed {
-            coordinate_index: 0,
-            coordinate_value: format!("Expected {} points, got {}", D + 1, simplex_points.len()),
-            from_type: "point count",
-            to_type: "valid simplex",
+        return Err(CoordinateConversionError::InvalidSimplexPointCount {
+            actual: simplex_points.len(),
+            expected: D + 1,
+            dimension: D,
         });
     }
 
     // Strategy 1: Exact-sign determinant approach with adaptive tolerance.
-    if let Ok(result) = adaptive_tolerance_insphere(simplex_points, test_point) {
-        // Strategy 2: Diagnostic consistency check against distance-based insphere.
-        // The exact-sign result from insphere_from_matrix is provably correct for
-        // finite inputs; a disagreement from insphere_distance reflects f64
-        // rounding in the distance-based check, not a defect in the exact predicate.
-        if let ConsistencyResult::Inconsistent(error) =
-            verify_insphere_consistency(simplex_points, test_point, result)
-        {
-            // In strict mode, hard-fail for deterministic witness capture.
-            if *STRICT_INSPHERE_CONSISTENCY {
-                let details = format!(
-                    "{error}; simplex_points={simplex_points:?}; test_point={test_point:?}"
-                );
-                return Err(CoordinateConversionError::InsphereInconsistency {
-                    simplex_points: format!("{simplex_points:?}"),
-                    test_point: format!("{test_point:?}"),
-                    details,
-                });
+    match relative_exact_insphere(simplex_points, test_point) {
+        Ok(result) => {
+            // Strategy 2: Diagnostic consistency check against distance-based insphere.
+            // The exact-sign result from insphere_from_matrix is provably correct for
+            // finite inputs; a disagreement from insphere_distance reflects f64
+            // rounding in the distance-based check, not a defect in the exact predicate.
+            if let ConsistencyResult::Inconsistent(error) =
+                verify_insphere_consistency(simplex_points, test_point, result)
+            {
+                // In strict mode, hard-fail for deterministic witness capture.
+                if *STRICT_INSPHERE_CONSISTENCY {
+                    let details = format!(
+                        "{error}; simplex_points={simplex_points:?}; test_point={test_point:?}"
+                    );
+                    return Err(CoordinateConversionError::InsphereInconsistency {
+                        simplex_points: format!("{simplex_points:?}"),
+                        test_point: format!("{test_point:?}"),
+                        details,
+                    });
+                }
             }
+            return Ok(result);
         }
-        return Ok(result);
+        Err(error) if should_use_sos_fallback(&error) => {}
+        Err(error) => return Err(error),
     }
 
     // Strategy 3: Geometric + SoS fallback — only reached when exact-sign
@@ -213,10 +228,11 @@ where
     // insphere_distance itself failed).  The SoS cofactor minors are one
     // size smaller, so this succeeds where the full insphere matrix
     // dispatch does not.
-    let f64_simplex: Vec<Point<f64, D>> = simplex_points
-        .iter()
-        .map(|p| safe_coords_to_f64(p.coords()).map(Point::new))
-        .collect::<Result<_, _>>()?;
+    let mut f64_simplex: SmallBuffer<Point<f64, D>, MAX_PRACTICAL_DIMENSION_SIZE> =
+        SmallBuffer::with_capacity(simplex_points.len());
+    for point in simplex_points {
+        f64_simplex.push(Point::new(safe_coords_to_f64(point.coords())?));
+    }
     let f64_test: Point<f64, D> = Point::new(safe_coords_to_f64(test_point.coords())?);
 
     // Use exact orientation when available; fall back to SoS only when the
@@ -246,91 +262,41 @@ where
     })
 }
 
+/// Whether an exact-sign failure should fall through to the geometric + `SoS` fallback.
 #[inline]
-fn fill_insphere_predicate_matrix<T, const D: usize, const K: usize>(
-    matrix: &mut Matrix<K>,
-    simplex_points: &[Point<T, D>],
-    test_point: &Point<T, D>,
-) -> Result<(), CoordinateConversionError>
-where
-    T: CoordinateScalar,
-{
-    debug_assert_eq!(K, D + 2);
-
-    // NOTE: Uses absolute coordinates with squared_norm.  The squared norm can
-    // overflow f64 for ‖coords‖ ≥ ~1e154 (since 1e154² ≈ 1e308 ≈ f64::MAX).
-    // `insphere_lifted` avoids this by centering on relative coordinates.
-
-    // Add simplex points
-    for (i, point) in simplex_points.iter().enumerate() {
-        let coords = point.coords();
-
-        // Coordinates - use safe conversion
-        let coords_f64 = safe_coords_to_f64(coords)?;
-        for (j, &v) in coords_f64.iter().enumerate() {
-            matrix_set(matrix, i, j, v);
-        }
-
-        // Squared norm - use safe conversion
-        let norm_sq = squared_norm(coords);
-        let norm_sq_f64 = safe_scalar_to_f64(norm_sq)?;
-        matrix_set(matrix, i, D, norm_sq_f64);
-
-        // Constant term
-        matrix_set(matrix, i, D + 1, 1.0);
-    }
-
-    // Add test point
-    let test_coords = test_point.coords();
-
-    let test_coords_f64 = safe_coords_to_f64(test_coords)?;
-    for (j, &v) in test_coords_f64.iter().enumerate() {
-        matrix_set(matrix, D + 1, j, v);
-    }
-
-    let test_norm_sq = squared_norm(test_coords);
-    let test_norm_sq_f64 = safe_scalar_to_f64(test_norm_sq)?;
-    matrix_set(matrix, D + 1, D, test_norm_sq_f64);
-    matrix_set(matrix, D + 1, D + 1, 1.0);
-
-    Ok(())
+const fn should_use_sos_fallback(error: &CoordinateConversionError) -> bool {
+    matches!(
+        error,
+        CoordinateConversionError::UnsupportedMatrixDimension { .. }
+    )
 }
 
-/// Insphere test with adaptive tolerance based on operand magnitude.
+/// Insphere test using exact relative-coordinate determinants when supported.
 ///
-/// Uses [`super::predicates::insphere_from_matrix`] for provably correct sign
-/// classification on finite inputs, falling back to an f64 determinant with
-/// adaptive tolerance for non-finite entries.
-fn adaptive_tolerance_insphere<T, const D: usize>(
+/// Uses the relative-coordinate lifted formulation shared with
+/// [`super::predicates::insphere_lifted`] for provably correct sign
+/// classification on finite local geometry.
+fn relative_exact_insphere<T, const D: usize>(
     simplex_points: &[Point<T, D>],
     test_point: &Point<T, D>,
 ) -> Result<InSphere, CoordinateConversionError>
 where
     T: CoordinateScalar,
 {
-    // Get simplex orientation for correct interpretation.
-    let orientation = robust_orientation(simplex_points)?;
-    if matches!(orientation, Orientation::DEGENERATE) {
-        // DEGENERATE simplices are rare in well-conditioned inputs; the
-        // BOUNDARY early-return is a cold path.
-        cold_path();
-        return Ok(InSphere::BOUNDARY);
+    if D > 5 {
+        return Err(CoordinateConversionError::UnsupportedMatrixDimension {
+            requested: D + 2,
+            max: MAX_STACK_MATRIX_DIM,
+        });
     }
-    let orient_sign: i8 = if matches!(orientation, Orientation::POSITIVE) {
-        1
-    } else {
-        -1
-    };
 
-    let k = D + 2;
-    try_with_la_stack_matrix!(k, |matrix| {
-        fill_insphere_predicate_matrix(&mut matrix, simplex_points, test_point)?;
-        Ok(super::predicates::insphere_from_matrix(
-            &matrix,
-            k,
-            orient_sign,
-        ))
-    })
+    let signs = relative_insphere_signs(simplex_points, test_point)?;
+    if signs.relative_orientation == 0 {
+        cold_path();
+        Ok(InSphere::BOUNDARY)
+    } else {
+        Ok(relative_insphere_classification(signs))
+    }
 }
 
 /// Enhanced orientation predicate with robustness improvements.
@@ -366,11 +332,10 @@ where
     T: CoordinateScalar,
 {
     if simplex_points.len() != D + 1 {
-        return Err(CoordinateConversionError::ConversionFailed {
-            coordinate_index: 0,
-            coordinate_value: format!("Expected {} points, got {}", D + 1, simplex_points.len()),
-            from_type: "point count",
-            to_type: "valid simplex",
+        return Err(CoordinateConversionError::InvalidSimplexPointCount {
+            actual: simplex_points.len(),
+            expected: D + 1,
+            dimension: D,
         });
     }
 
@@ -383,16 +348,16 @@ where
             // Add coordinates using safe conversion
             let coords_f64 = safe_coords_to_f64(coords)?;
             for (j, &v) in coords_f64.iter().enumerate() {
-                matrix_set(&mut matrix, i, j, v);
+                matrix_set(&mut matrix, i, j, v)?;
             }
 
             // Add constant term
-            matrix_set(&mut matrix, i, D, 1.0);
+            matrix_set(&mut matrix, i, D, 1.0)?;
         }
 
         // Route through the exact-sign orientation helper for provably correct
         // orientation classification on finite inputs.
-        Ok(super::predicates::orientation_from_matrix(&matrix, k))
+        Ok(super::predicates::try_orientation_from_matrix(&matrix, k)?)
     })
 }
 
@@ -467,11 +432,16 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::geometry::matrix::matrix_get;
+    use crate::geometry::matrix::{Matrix, matrix_get};
     use crate::geometry::point::Point;
     use crate::geometry::predicates;
+    use crate::geometry::util::squared_norm;
     use num_traits::NumCast;
     use rand::{RngExt, SeedableRng};
+
+    fn matrix_block_is_finite<const N: usize>(matrix: &Matrix<N>, k: usize) -> bool {
+        (0..k).all(|row| (0..k).all(|column| matrix_get(matrix, row, column).unwrap().is_finite()))
+    }
 
     #[test]
     fn test_robust_insphere_general() {
@@ -636,6 +606,59 @@ mod tests {
             robust_insphere(&tetra, &outside_point).unwrap(),
             InSphere::OUTSIDE,
             "near-cospherical 3D point just outside boundary should be OUTSIDE"
+        );
+    }
+
+    #[test]
+    fn test_robust_insphere_large_translated_simplex_uses_relative_formulation() {
+        // Absolute squared norms overflow for these coordinates:
+        // 3 × (1e154)² > f64::MAX.  The local geometry is still well-scaled,
+        // so the relative-coordinate exact path should classify normally.
+        let base = 1.0e154;
+        let delta = 1.0e140;
+        let simplex = vec![
+            Point::new([base, base, base]),
+            Point::new([base + delta, base, base]),
+            Point::new([base, base + delta, base]),
+            Point::new([base, base, base + delta]),
+        ];
+        let inside_coord = 0.25_f64.mul_add(delta, base);
+        let outside_coord = 2.0_f64.mul_add(delta, base);
+        let inside_point = Point::new([inside_coord, inside_coord, inside_coord]);
+        let outside_point = Point::new([outside_coord, outside_coord, outside_coord]);
+
+        assert_eq!(
+            relative_exact_insphere(&simplex, &inside_point).unwrap(),
+            InSphere::INSIDE
+        );
+        assert_eq!(
+            robust_insphere(&simplex, &inside_point).unwrap(),
+            InSphere::INSIDE
+        );
+        assert_eq!(
+            relative_exact_insphere(&simplex, &outside_point).unwrap(),
+            InSphere::OUTSIDE
+        );
+        assert_eq!(
+            robust_insphere(&simplex, &outside_point).unwrap(),
+            InSphere::OUTSIDE
+        );
+    }
+
+    #[test]
+    fn test_robust_insphere_errors_when_relative_squared_norm_overflows() {
+        let simplex = vec![
+            Point::new([0.0, 0.0, 0.0]),
+            Point::new([1.0, 0.0, 0.0]),
+            Point::new([0.0, 1.0, 0.0]),
+            Point::new([0.0, 0.0, 1.0]),
+        ];
+        let far_point = Point::new([1.0e155, 0.0, 0.0]);
+
+        let error = robust_insphere(&simplex, &far_point).unwrap_err();
+        assert!(
+            matches!(error, CoordinateConversionError::NonFiniteValue { .. }),
+            "relative squared-norm overflow should surface as a typed conversion error, got {error:?}"
         );
     }
 
@@ -959,7 +982,7 @@ mod tests {
 
             let simplex = [expanded[i0], expanded[i1], expanded[i2], expanded[i3]];
             let test_point = expanded[it];
-            let det_result = adaptive_tolerance_insphere(&simplex, &test_point);
+            let det_result = relative_exact_insphere(&simplex, &test_point);
             let dist_result = predicates::insphere_distance(&simplex, test_point);
 
             if let (Ok(det), Ok(dist)) = (det_result, dist_result)
@@ -1120,21 +1143,21 @@ mod tests {
 
         // Test matrix with very small elements
         let scale_small = with_la_stack_matrix!(3, |m| {
-            matrix_set(&mut m, 0, 0, 1e-100);
-            matrix_set(&mut m, 1, 1, 1e-99);
-            matrix_set(&mut m, 2, 2, 1e-98);
+            matrix_set(&mut m, 0, 0, 1e-100).unwrap();
+            matrix_set(&mut m, 1, 1, 1e-99).unwrap();
+            matrix_set(&mut m, 2, 2, 1e-98).unwrap();
 
             let mut scale_factor = 1.0_f64;
             for i in 0..3 {
                 let mut max_element = 0.0_f64;
                 for j in 0..3 {
-                    max_element = max_element.max(matrix_get(&m, i, j).abs());
+                    max_element = max_element.max(matrix_get(&m, i, j).unwrap().abs());
                 }
 
                 if max_element > 1e-100 {
                     for j in 0..3 {
-                        let v = matrix_get(&m, i, j) / max_element;
-                        matrix_set(&mut m, i, j, v);
+                        let v = matrix_get(&m, i, j).unwrap() / max_element;
+                        matrix_set(&mut m, i, j, v).unwrap();
                     }
                     scale_factor *= max_element;
                 }
@@ -1142,7 +1165,7 @@ mod tests {
 
             for i in 0..3 {
                 for j in 0..3 {
-                    assert!(matrix_get(&m, i, j).is_finite());
+                    assert!(matrix_get(&m, i, j).unwrap().is_finite());
                 }
             }
 
@@ -1152,23 +1175,23 @@ mod tests {
 
         // Test matrix with mixed large and small elements
         let scale_mixed = with_la_stack_matrix!(3, |m| {
-            matrix_set(&mut m, 0, 0, 1e10);
-            matrix_set(&mut m, 0, 1, 1e-10);
-            matrix_set(&mut m, 1, 0, 1e5);
-            matrix_set(&mut m, 1, 1, 1e-5);
-            matrix_set(&mut m, 2, 2, 1.0);
+            matrix_set(&mut m, 0, 0, 1e10).unwrap();
+            matrix_set(&mut m, 0, 1, 1e-10).unwrap();
+            matrix_set(&mut m, 1, 0, 1e5).unwrap();
+            matrix_set(&mut m, 1, 1, 1e-5).unwrap();
+            matrix_set(&mut m, 2, 2, 1.0).unwrap();
 
             let mut scale_factor = 1.0_f64;
             for i in 0..3 {
                 let mut max_element = 0.0_f64;
                 for j in 0..3 {
-                    max_element = max_element.max(matrix_get(&m, i, j).abs());
+                    max_element = max_element.max(matrix_get(&m, i, j).unwrap().abs());
                 }
 
                 if max_element > 1e-100 {
                     for j in 0..3 {
-                        let v = matrix_get(&m, i, j) / max_element;
-                        matrix_set(&mut m, i, j, v);
+                        let v = matrix_get(&m, i, j).unwrap() / max_element;
+                        matrix_set(&mut m, i, j, v).unwrap();
                     }
                     scale_factor *= max_element;
                 }
@@ -1176,7 +1199,7 @@ mod tests {
 
             for i in 0..3 {
                 for j in 0..3 {
-                    assert!(matrix_get(&m, i, j).is_finite());
+                    assert!(matrix_get(&m, i, j).unwrap().is_finite());
                 }
             }
 
@@ -1186,21 +1209,21 @@ mod tests {
 
         // Test matrix with some zero elements
         let scale_zero = with_la_stack_matrix!(3, |m| {
-            matrix_set(&mut m, 0, 0, 1.0);
-            matrix_set(&mut m, 1, 1, 0.0); // This row will not be scaled
-            matrix_set(&mut m, 2, 2, 2.0);
+            matrix_set(&mut m, 0, 0, 1.0).unwrap();
+            matrix_set(&mut m, 1, 1, 0.0).unwrap(); // This row will not be scaled
+            matrix_set(&mut m, 2, 2, 2.0).unwrap();
 
             let mut scale_factor = 1.0_f64;
             for i in 0..3 {
                 let mut max_element = 0.0_f64;
                 for j in 0..3 {
-                    max_element = max_element.max(matrix_get(&m, i, j).abs());
+                    max_element = max_element.max(matrix_get(&m, i, j).unwrap().abs());
                 }
 
                 if max_element > 1e-100 {
                     for j in 0..3 {
-                        let v = matrix_get(&m, i, j) / max_element;
-                        matrix_set(&mut m, i, j, v);
+                        let v = matrix_get(&m, i, j).unwrap() / max_element;
+                        matrix_set(&mut m, i, j, v).unwrap();
                     }
                     scale_factor *= max_element;
                 }
@@ -1208,7 +1231,7 @@ mod tests {
 
             for i in 0..3 {
                 for j in 0..3 {
-                    assert!(matrix_get(&m, i, j).is_finite());
+                    assert!(matrix_get(&m, i, j).unwrap().is_finite());
                 }
             }
 
@@ -1451,26 +1474,20 @@ mod tests {
             for (i, point) in zero_points.iter().enumerate() {
                 let coords = point.coords();
                 for (j, &v) in coords.iter().enumerate() {
-                    matrix_set(&mut matrix, i, j, v);
+                    matrix_set(&mut matrix, i, j, v).unwrap();
                 }
-                matrix_set(&mut matrix, i, 3, squared_norm(coords));
-                matrix_set(&mut matrix, i, 4, 1.0);
+                matrix_set(&mut matrix, i, 3, squared_norm(coords)).unwrap();
+                matrix_set(&mut matrix, i, 4, 1.0).unwrap();
             }
 
             let test_coords = zero_test.coords();
             for (j, &v) in test_coords.iter().enumerate() {
-                matrix_set(&mut matrix, 4, j, v);
+                matrix_set(&mut matrix, 4, j, v).unwrap();
             }
-            matrix_set(&mut matrix, 4, 3, squared_norm(test_coords));
-            matrix_set(&mut matrix, 4, 4, 1.0);
+            matrix_set(&mut matrix, 4, 3, squared_norm(test_coords)).unwrap();
+            matrix_set(&mut matrix, 4, 4, 1.0).unwrap();
 
-            let mut ok = true;
-            for r in 0..5 {
-                for c in 0..5 {
-                    ok &= matrix_get(&matrix, r, c).is_finite();
-                }
-            }
-            ok
+            matrix_block_is_finite(&matrix, 5)
         });
         assert!(all_finite_insphere_3d);
 
@@ -1478,18 +1495,12 @@ mod tests {
             for (i, point) in zero_points.iter().enumerate() {
                 let coords = point.coords();
                 for (j, &v) in coords.iter().enumerate() {
-                    matrix_set(&mut matrix, i, j, v);
+                    matrix_set(&mut matrix, i, j, v).unwrap();
                 }
-                matrix_set(&mut matrix, i, 3, 1.0);
+                matrix_set(&mut matrix, i, 3, 1.0).unwrap();
             }
 
-            let mut ok = true;
-            for r in 0..4 {
-                for c in 0..4 {
-                    ok &= matrix_get(&matrix, r, c).is_finite();
-                }
-            }
-            ok
+            matrix_block_is_finite(&matrix, 4)
         });
         assert!(all_finite_orientation_3d);
 
@@ -1505,26 +1516,20 @@ mod tests {
             for (i, point) in large_points.iter().enumerate() {
                 let coords = point.coords();
                 for (j, &v) in coords.iter().enumerate() {
-                    matrix_set(&mut matrix, i, j, v);
+                    matrix_set(&mut matrix, i, j, v).unwrap();
                 }
-                matrix_set(&mut matrix, i, 2, squared_norm(coords));
-                matrix_set(&mut matrix, i, 3, 1.0);
+                matrix_set(&mut matrix, i, 2, squared_norm(coords)).unwrap();
+                matrix_set(&mut matrix, i, 3, 1.0).unwrap();
             }
 
             let test_coords = large_test.coords();
             for (j, &v) in test_coords.iter().enumerate() {
-                matrix_set(&mut matrix, 3, j, v);
+                matrix_set(&mut matrix, 3, j, v).unwrap();
             }
-            matrix_set(&mut matrix, 3, 2, squared_norm(test_coords));
-            matrix_set(&mut matrix, 3, 3, 1.0);
+            matrix_set(&mut matrix, 3, 2, squared_norm(test_coords)).unwrap();
+            matrix_set(&mut matrix, 3, 3, 1.0).unwrap();
 
-            let mut ok = true;
-            for r in 0..4 {
-                for c in 0..4 {
-                    ok &= matrix_get(&matrix, r, c).is_finite();
-                }
-            }
-            ok
+            matrix_block_is_finite(&matrix, 4)
         });
         assert!(all_finite_insphere_2d);
     }
@@ -1532,7 +1537,7 @@ mod tests {
     #[test]
     fn test_sos_fallback_insphere_via_6d() {
         // D=6 → insphere matrix is 8×8, exceeding MAX_STACK_MATRIX_DIM=7.
-        // adaptive_tolerance_insphere returns Err on every call, so
+        // relative_exact_insphere returns Err on every call, so
         // robust_insphere falls through to the SoS fallback (Strategy 3).
         // SoS cofactor minors are 6×6 (within the 7-dim limit), so this
         // succeeds where the full matrix dispatch does not.

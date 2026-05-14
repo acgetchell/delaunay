@@ -230,6 +230,23 @@ impl InsertionStatistics {
     }
 }
 
+/// Controls whether insertion telemetry records only event counters or also
+/// wall-clock timings.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum InsertionTelemetryMode {
+    /// Record event counters without starting wall-clock timers.
+    CountsOnly,
+    /// Record both event counters and wall-clock timings.
+    CountsAndTimings,
+}
+
+impl InsertionTelemetryMode {
+    /// Returns true when the insertion path should start `Instant` timers.
+    pub(crate) const fn records_timings(self) -> bool {
+        matches!(self, Self::CountsAndTimings)
+    }
+}
+
 /// Release-visible telemetry for one transactional insertion.
 ///
 /// These counters are intended for aggregate diagnostics rather than stable performance

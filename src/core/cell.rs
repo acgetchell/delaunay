@@ -3276,7 +3276,7 @@ mod tests {
         let cell_key = dt.cells().next().unwrap().0;
 
         // Set the cell data to a known value
-        if let Some(cell) = dt.tri.tds.cells_mut().get_mut(cell_key) {
+        if let Some(cell) = dt.tri.tds.cell_mut(cell_key) {
             cell.data = Some(42u32);
         }
 
@@ -3586,8 +3586,7 @@ mod tests {
             let cell = dt
                 .tri
                 .tds
-                .cells_mut()
-                .get_mut(cell_key)
+                .cell_mut(cell_key)
                 .expect("cell key should be valid in test");
             while u8::try_from(cell.number_of_vertices()).is_ok() {
                 cell.push_vertex_key(vkey0);

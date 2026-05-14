@@ -3096,43 +3096,32 @@ mod tests {
     // CONVERSION ERROR TESTS
     // =============================================================================
 
+    fn assert_non_finite_coordinate_index(
+        error: &CoordinateConversionError,
+        expected_index: usize,
+    ) {
+        let CoordinateConversionError::NonFiniteValue {
+            coordinate_index, ..
+        } = error
+        else {
+            panic!("Expected NonFiniteValue error at position {expected_index}");
+        };
+        assert_eq!(*coordinate_index, expected_index);
+    }
+
     #[test]
     fn point_try_from_conversion_errors() {
         // Test non-finite value errors (NaN after cast)
         let coords_with_nan = [f64::NAN, 1.0, 2.0];
         let result: Result<Point<f32, 3>, _> = Point::try_from(coords_with_nan);
-        assert!(result.is_err());
-        match result.unwrap_err() {
-            CoordinateConversionError::NonFiniteValue {
-                coordinate_index, ..
-            } => {
-                assert_eq!(coordinate_index, 0);
-            }
-            CoordinateConversionError::ConversionFailed { .. }
-            | CoordinateConversionError::InsphereInconsistency { .. }
-            | CoordinateConversionError::UnsupportedMatrixDimension { .. }
-            | CoordinateConversionError::LinearAlgebraFailure(_) => {
-                panic!("Expected NonFiniteValue error")
-            }
-        }
+        let error = result.unwrap_err();
+        assert_non_finite_coordinate_index(&error, 0);
 
         // Test non-finite value errors (infinity after cast)
         let coords_with_inf = [1.0, f64::INFINITY, 2.0];
         let result: Result<Point<f32, 3>, _> = Point::try_from(coords_with_inf);
-        assert!(result.is_err());
-        match result.unwrap_err() {
-            CoordinateConversionError::NonFiniteValue {
-                coordinate_index, ..
-            } => {
-                assert_eq!(coordinate_index, 1);
-            }
-            CoordinateConversionError::ConversionFailed { .. }
-            | CoordinateConversionError::InsphereInconsistency { .. }
-            | CoordinateConversionError::UnsupportedMatrixDimension { .. }
-            | CoordinateConversionError::LinearAlgebraFailure(_) => {
-                panic!("Expected NonFiniteValue error")
-            }
-        }
+        let error = result.unwrap_err();
+        assert_non_finite_coordinate_index(&error, 1);
 
         // Test conversion failure (overflow cases if we had them)
         // Note: With num_traits::cast, most reasonable numeric conversions succeed,
@@ -3201,17 +3190,16 @@ mod tests {
         // Test overflow error details (f64::MAX overflows to f32)
         let coords_overflow = [f64::MAX, 1.0];
         let result3: Result<Point<f32, 2>, _> = Point::try_from(coords_overflow);
-        match result3 {
-            Err(CoordinateConversionError::NonFiniteValue {
-                coordinate_index,
-                coordinate_value,
-            }) => {
-                assert_eq!(coordinate_index, 0);
-                assert!(!coordinate_value.is_empty());
-                assert!(coordinate_value.contains("inf") || coordinate_value.contains("Inf"));
-            }
-            _ => panic!("Expected NonFiniteValue error for overflow"),
-        }
+        let Err(CoordinateConversionError::NonFiniteValue {
+            coordinate_index,
+            coordinate_value,
+        }) = result3
+        else {
+            panic!("Expected NonFiniteValue error for overflow");
+        };
+        assert_eq!(coordinate_index, 0);
+        assert!(!coordinate_value.is_empty());
+        assert!(coordinate_value.contains("inf") || coordinate_value.contains("Inf"));
     }
 
     #[test]
@@ -3226,20 +3214,8 @@ mod tests {
 
         for &(coords, expected_index) in &test_cases {
             let result: Result<Point<f32, 4>, _> = Point::try_from(coords);
-            assert!(result.is_err());
-            match result.unwrap_err() {
-                CoordinateConversionError::NonFiniteValue {
-                    coordinate_index, ..
-                } => {
-                    assert_eq!(coordinate_index, expected_index);
-                }
-                CoordinateConversionError::ConversionFailed { .. }
-                | CoordinateConversionError::InsphereInconsistency { .. }
-                | CoordinateConversionError::UnsupportedMatrixDimension { .. }
-                | CoordinateConversionError::LinearAlgebraFailure(_) => {
-                    panic!("Expected NonFiniteValue error at position {expected_index}")
-                }
-            }
+            let error = result.unwrap_err();
+            assert_non_finite_coordinate_index(&error, expected_index);
         }
     }
 
@@ -3248,22 +3224,8 @@ mod tests {
         // When multiple coordinates have errors, the first one should be reported
         let coords_multi_error = [f64::NAN, f64::INFINITY, f64::NEG_INFINITY];
         let result: Result<Point<f32, 3>, _> = Point::try_from(coords_multi_error);
-        assert!(result.is_err());
-
-        match result.unwrap_err() {
-            CoordinateConversionError::NonFiniteValue {
-                coordinate_index, ..
-            } => {
-                // Should report the first error (index 0, not 1 or 2)
-                assert_eq!(coordinate_index, 0);
-            }
-            CoordinateConversionError::ConversionFailed { .. }
-            | CoordinateConversionError::InsphereInconsistency { .. }
-            | CoordinateConversionError::UnsupportedMatrixDimension { .. }
-            | CoordinateConversionError::LinearAlgebraFailure(_) => {
-                panic!("Expected NonFiniteValue error")
-            }
-        }
+        let error = result.unwrap_err();
+        assert_non_finite_coordinate_index(&error, 0);
     }
 
     #[test]

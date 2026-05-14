@@ -17,6 +17,7 @@ from postprocess_changelog import (
     _reflow_line,
     _squash_heading_parts,
     postprocess,
+    postprocess_text,
 )
 
 if TYPE_CHECKING:
@@ -535,6 +536,22 @@ class TestSquashHeadingNormalization:
         result = f.read_text(encoding="utf-8")
         assert "  - Added: `just help-workflows` references throughout" in result
         assert "**Added: `just help-workflows`" not in result
+
+    def test_full_pipeline_deindents_children_after_squash_heading(self) -> None:
+        content = (
+            "# Changelog\n\n"
+            "## [1.0.0]\n\n"
+            "### Added\n\n"
+            f"- Identity-based SoS perturbation {_pr(272)} {_commit('a125d98', 'a125d98deadbeef')}\n\n"
+            f"  - feat: Canonical vertex ordering details {_pr(266)}\n\n"
+            "    - Add canonical_points module with sorted_cell_points helpers\n"
+        )
+
+        result = postprocess_text(content)
+
+        assert f"  **Added: Canonical vertex ordering details {_pr(266)}**" in result
+        assert "\n  - Add canonical_points module with sorted_cell_points helpers\n" in result
+        assert "\n    - Add canonical_points module" not in result
 
 
 class TestCodeBlockLanguage:

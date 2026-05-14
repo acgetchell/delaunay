@@ -110,16 +110,12 @@ fn test_circumcenter_with_nan_coordinates() {
     // The function should return an error due to NaN coordinate
     let result = circumcenter(&points);
 
-    match result {
-        Err(CircumcenterError::CoordinateConversion(
-            CoordinateConversionError::NonFiniteValue { .. },
-        )) => {
-            // Expected error type
-        }
-        other => panic!(
-            "Expected CoordinateConversionError::NonFiniteValue wrapped in CircumcenterError, got: {other:?}"
-        ),
-    }
+    assert!(matches!(
+        result,
+        Err(CircumcenterError::CoordinateConversion {
+            source: CoordinateConversionError::NonFiniteValue { .. },
+        })
+    ));
 }
 
 #[test]
@@ -134,16 +130,12 @@ fn test_circumradius_with_infinity_coordinates() {
     // The function should return an error due to infinity coordinate
     let result = circumradius(&points);
 
-    match result {
-        Err(CircumcenterError::CoordinateConversion(
-            CoordinateConversionError::NonFiniteValue { .. },
-        )) => {
-            // Expected error type
-        }
-        other => panic!(
-            "Expected CoordinateConversionError::NonFiniteValue wrapped in CircumcenterError, got: {other:?}"
-        ),
-    }
+    assert!(matches!(
+        result,
+        Err(CircumcenterError::CoordinateConversion {
+            source: CoordinateConversionError::NonFiniteValue { .. },
+        })
+    ));
 }
 
 #[test]
@@ -342,10 +334,6 @@ fn test_zero_and_negative_zero() {
 }
 
 #[test]
-#[expect(
-    clippy::match_same_arms,
-    reason = "test asserts each conversion error maps to the same public category"
-)]
 fn test_very_large_finite_values() {
     // Test that very large but finite values are handled correctly
     // Use a large value that won't overflow when squared (f64::MAX would become infinity when squared)
@@ -360,16 +348,13 @@ fn test_very_large_finite_values() {
     let result = circumcenter(&points);
 
     match result {
-        Ok(_) => {
-            // Expected - finite values should be processed normally
+        Ok(_)
+        | Err(CircumcenterError::CoordinateConversion {
+            source: CoordinateConversionError::NonFiniteValue { .. },
+        }) => {}
+        Err(other_error) => {
+            panic!("Unexpected error with large finite values: {other_error:?}");
         }
-        Err(CircumcenterError::CoordinateConversion(
-            CoordinateConversionError::NonFiniteValue { .. },
-        )) => {
-            // If the large value causes overflow during calculations (like squaring),
-            // this error is acceptable and expected
-        }
-        Err(other_error) => panic!("Unexpected error with large finite values: {other_error:?}"),
     }
 }
 

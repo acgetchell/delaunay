@@ -274,6 +274,61 @@ gen_insphere_distant_point_outside_by_radius!(5);
 gen_insphere_scale_center_outside!(4);
 gen_insphere_scale_center_outside!(5);
 
+proptest! {
+    /// Large translations near the f64 squared-norm overflow boundary should
+    /// not change robust insphere classification when the local simplex scale
+    /// remains finite.
+    #[test]
+    fn prop_robust_insphere_large_translated_3d(
+        base in prop_oneof![
+            Just(1.0e150),
+            Just(-1.0e150),
+            Just(1.0e154),
+            Just(-1.0e154),
+        ],
+        delta_multiplier in 1.0_f64..8.0,
+    ) {
+        let delta = 1.0e140 * delta_multiplier;
+        prop_assume!(2.0_f64.mul_add(delta, base).is_finite());
+        prop_assume!((base + delta).to_bits() != base.to_bits());
+
+        let local_simplex = vec![
+            Point::new([0.0, 0.0, 0.0]),
+            Point::new([delta, 0.0, 0.0]),
+            Point::new([0.0, delta, 0.0]),
+            Point::new([0.0, 0.0, delta]),
+        ];
+        let local_inside = Point::new([0.25 * delta, 0.25 * delta, 0.25 * delta]);
+        let local_outside = Point::new([2.0 * delta, 2.0 * delta, 2.0 * delta]);
+
+        let translated_simplex = vec![
+            Point::new([base, base, base]),
+            Point::new([base + delta, base, base]),
+            Point::new([base, base + delta, base]),
+            Point::new([base, base, base + delta]),
+        ];
+        let inside_coord = 0.25_f64.mul_add(delta, base);
+        let outside_coord = 2.0_f64.mul_add(delta, base);
+        let translated_inside = Point::new([inside_coord, inside_coord, inside_coord]);
+        let translated_outside = Point::new([outside_coord, outside_coord, outside_coord]);
+
+        let local_inside_result = robust_insphere(&local_simplex, &local_inside)
+            .map_err(|error| TestCaseError::fail(format!("{error:?}")))?;
+        let local_outside_result = robust_insphere(&local_simplex, &local_outside)
+            .map_err(|error| TestCaseError::fail(format!("{error:?}")))?;
+
+        let translated_inside_result = robust_insphere(&translated_simplex, &translated_inside)
+            .map_err(|error| TestCaseError::fail(format!("{error:?}")))?;
+        let translated_outside_result = robust_insphere(&translated_simplex, &translated_outside)
+            .map_err(|error| TestCaseError::fail(format!("{error:?}")))?;
+
+        prop_assert_eq!(local_inside_result, InSphere::INSIDE);
+        prop_assert_eq!(local_outside_result, InSphere::OUTSIDE);
+        prop_assert_eq!(translated_inside_result, local_inside_result);
+        prop_assert_eq!(translated_outside_result, local_outside_result);
+    }
+}
+
 // =============================================================================
 // CROSS-PREDICATE CONSISTENCY TESTS
 // =============================================================================

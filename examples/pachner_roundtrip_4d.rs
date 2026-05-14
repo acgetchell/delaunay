@@ -16,7 +16,8 @@
 use ::uuid::Uuid;
 use delaunay::prelude::geometry::RobustKernel;
 use delaunay::prelude::triangulation::construction::{
-    ConstructionOptions, DelaunayTriangulationConstructionError, InsertionOrderStrategy, Vertex,
+    ConstructionOptions, DelaunayTriangulationConstructionError, InsertionOrderStrategy,
+    TopologyGuarantee, Vertex,
 };
 use delaunay::prelude::triangulation::flips::*;
 use delaunay::prelude::triangulation::validation::DelaunayTriangulationValidationError;

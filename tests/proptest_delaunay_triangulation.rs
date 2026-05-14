@@ -33,11 +33,12 @@
 
 use delaunay::geometry::kernel::{AdaptiveKernel, RobustKernel};
 use delaunay::prelude::geometry::*;
+use delaunay::prelude::tds::TdsError;
 use delaunay::prelude::triangulation::construction::{
     ConstructionOptions, DedupPolicy, DelaunayRepairPolicy, DelaunayTriangulation,
     TopologyGuarantee, Vertex, vertex,
 };
-use delaunay::prelude::triangulation::insertion::InsertionOutcome;
+use delaunay::prelude::triangulation::insertion::{InsertionError, InsertionOutcome};
 use delaunay::prelude::triangulation::validation::ValidationPolicy;
 use proptest::prelude::*;
 use proptest::test_runner::{Config, TestCaseError, TestRunner};
@@ -91,6 +92,11 @@ fn finite_coordinate() -> impl Strategy<Value = f64> {
     // Exclude `|x| <= 1e-6` as a shrink guard (not a geometric tolerance).
     let eps = PROPTEST_COORD_NONZERO_EPS;
     prop_oneof![(-100.0..=-eps), (eps..=100.0)]
+}
+
+/// Strategy for generating non-finite `f64` coordinates.
+fn non_finite_coordinate() -> impl Strategy<Value = f64> {
+    prop_oneof![Just(f64::NAN), Just(f64::INFINITY), Just(f64::NEG_INFINITY),]
 }
 
 /// Strategy for generating 2D vertices
@@ -354,6 +360,183 @@ macro_rules! prop_assert_levels_1_to_3_valid {
             validation.err()
         );
     }};
+}
+
+/// Build the four corners of an axis-aligned rectangle.
+///
+/// Rectangle corners are exactly cocircular, so randomized insertion orders
+/// exercise the `OnSuspicion` validation cadence on an adversarial boundary
+/// between valid Delaunay triangulations.
+fn rectangle_corners_2d(origin: [i32; 2], side_lengths: [i32; 2]) -> Vec<Point<f64, 2>> {
+    let x0 = f64::from(origin[0]);
+    let y0 = f64::from(origin[1]);
+    let x1 = x0 + f64::from(side_lengths[0]);
+    let y1 = y0 + f64::from(side_lengths[1]);
+
+    vec![
+        Point::new([x0, y0]),
+        Point::new([x1, y0]),
+        Point::new([x0, y1]),
+        Point::new([x1, y1]),
+    ]
+}
+
+/// Build the eight corners of an axis-aligned cuboid.
+///
+/// Cuboid corners are exactly cospherical. This keeps the property focused on
+/// topology and Delaunay validation under degenerate but finite inputs.
+fn cuboid_corners_3d(origin: [i32; 3], side_lengths: [i32; 3]) -> Vec<Point<f64, 3>> {
+    let x0 = f64::from(origin[0]);
+    let y0 = f64::from(origin[1]);
+    let z0 = f64::from(origin[2]);
+    let x1 = x0 + f64::from(side_lengths[0]);
+    let y1 = y0 + f64::from(side_lengths[1]);
+    let z1 = z0 + f64::from(side_lengths[2]);
+
+    vec![
+        Point::new([x0, y0, z0]),
+        Point::new([x1, y0, z0]),
+        Point::new([x0, y1, z0]),
+        Point::new([x0, y0, z1]),
+        Point::new([x1, y1, z0]),
+        Point::new([x1, y0, z1]),
+        Point::new([x0, y1, z1]),
+        Point::new([x1, y1, z1]),
+    ]
+}
+
+/// Shuffle points with a deterministic seed supplied by proptest.
+fn shuffle_points<const D: usize>(mut points: Vec<Point<f64, D>>, seed: u64) -> Vec<Point<f64, D>> {
+    let mut rng = rand::rngs::StdRng::seed_from_u64(seed);
+    points.shuffle(&mut rng);
+    points
+}
+
+/// Insert an adversarial point sequence under `OnSuspicion` and assert that
+/// validation succeeds after each attempted insertion and at the end of the
+/// sequence.
+fn assert_on_suspicion_sequence_valid<const D: usize>(
+    points: Vec<Point<f64, D>>,
+) -> Result<(), TestCaseError> {
+    let mut dt: DelaunayTriangulation<AdaptiveKernel<f64>, (), (), D> =
+        DelaunayTriangulation::empty_with_topology_guarantee(TopologyGuarantee::PLManifold);
+    dt.set_validation_policy(ValidationPolicy::OnSuspicion);
+
+    for (idx, point) in points.into_iter().enumerate() {
+        let result = dt.insert_with_statistics(vertex!(point));
+
+        if dt.number_of_cells() > 0 {
+            let validation = dt.validate();
+            prop_assert!(
+                validation.is_ok(),
+                "{D}D OnSuspicion validation failed after cospherical attempt {idx}: result={result:?}, validation={:?}",
+                validation.err()
+            );
+        }
+    }
+
+    prop_assert!(
+        dt.number_of_cells() > 0,
+        "{D}D OnSuspicion cospherical sequence did not create any cells"
+    );
+
+    let validation = dt.validate();
+    prop_assert!(
+        validation.is_ok(),
+        "{D}D OnSuspicion final Level 1-4 validation failed after cospherical sequence: {:?}",
+        validation.err()
+    );
+
+    Ok(())
+}
+
+/// Return `true` when insertion rejected a vertex through the typed invalid-vertex path.
+const fn rejected_invalid_vertex<T>(result: &Result<T, InsertionError>) -> bool {
+    matches!(
+        result,
+        Err(InsertionError::TopologyValidation(
+            TdsError::InvalidVertex { .. }
+        ))
+    )
+}
+
+/// Build a fixed non-degenerate unit simplex for non-finite insertion tests.
+fn unit_simplex_vertices<const D: usize>() -> Vec<Vertex<f64, (), D>> {
+    let mut points = Vec::with_capacity(D + 1);
+    points.push(Point::new([0.0; D]));
+
+    for axis in 0..D {
+        let mut coords = [0.0; D];
+        coords[axis] = 1.0;
+        points.push(Point::new(coords));
+    }
+
+    Vertex::from_points(&points)
+}
+
+/// Build a point with one non-finite coordinate and finite filler elsewhere.
+fn non_finite_point<const D: usize>(axis: usize, value: f64) -> Point<f64, D> {
+    let mut coords = [0.25; D];
+    for (idx, coord) in coords.iter_mut().enumerate() {
+        if idx % 2 == 1 {
+            *coord = -0.25;
+        }
+    }
+    coords[axis] = value;
+    Point::new(coords)
+}
+
+/// Assert non-finite insertions fail explicitly and leave topology fully valid.
+fn assert_non_finite_insert_rejected_and_preserves_validity<const D: usize>(
+    initial_vertices: &[Vertex<f64, (), D>],
+    point: Point<f64, D>,
+) -> Result<(), TestCaseError> {
+    let mut empty: DelaunayTriangulation<AdaptiveKernel<f64>, (), (), D> =
+        DelaunayTriangulation::empty_with_topology_guarantee(TopologyGuarantee::PLManifold);
+
+    let empty_result = empty.insert_with_statistics(vertex!(point));
+    prop_assert!(
+        rejected_invalid_vertex(&empty_result),
+        "{D}D empty insertion should reject non-finite coordinates as an invalid vertex, got {empty_result:?}"
+    );
+    prop_assert_eq!(empty.number_of_vertices(), 0);
+    prop_assert_eq!(empty.number_of_cells(), 0);
+    let empty_validation = empty.validate();
+    prop_assert!(
+        empty_validation.is_ok(),
+        "{D}D empty triangulation became invalid after rejected non-finite insertion: {:?}",
+        empty_validation.err()
+    );
+
+    let mut dt =
+        DelaunayTriangulation::<AdaptiveKernel<f64>, (), (), D>::new_with_topology_guarantee(
+            initial_vertices,
+            TopologyGuarantee::PLManifold,
+        )
+        .map_err(|err| {
+            TestCaseError::fail(format!(
+                "{D}D finite initial simplex construction failed: {err:?}"
+            ))
+        })?;
+    let vertex_count = dt.number_of_vertices();
+    let cell_count = dt.number_of_cells();
+
+    let result = dt.insert_with_statistics(vertex!(point));
+    prop_assert!(
+        rejected_invalid_vertex(&result),
+        "{D}D constructed insertion should reject non-finite coordinates as an invalid vertex, got {result:?}"
+    );
+    prop_assert_eq!(dt.number_of_vertices(), vertex_count);
+    prop_assert_eq!(dt.number_of_cells(), cell_count);
+
+    let validation = dt.validate();
+    prop_assert!(
+        validation.is_ok(),
+        "{D}D triangulation became invalid after rejected non-finite insertion: {:?}",
+        validation.err()
+    );
+
+    Ok(())
 }
 
 /// 3D-only helper for the insertion-order robustness property: perform incremental insertion and
@@ -675,6 +858,63 @@ proptest! {
 }
 gen_incremental_insertion_validity!(4, 5, 7);
 gen_incremental_insertion_validity!(5, 6, 8, #[ignore = "Slow (>60s) even in release mode for 5D"]);
+
+proptest! {
+    #![proptest_config(Config {
+        cases: 64,
+        ..Config::default()
+    })]
+
+    #[test]
+    fn prop_on_suspicion_validates_cocircular_2d_sequences(
+        origin in prop::array::uniform2(-16i32..=16),
+        side_lengths in prop::array::uniform2(1i32..=16),
+        seed in any::<u64>(),
+    ) {
+        init_tracing();
+        let points = shuffle_points(rectangle_corners_2d(origin, side_lengths), seed);
+
+        assert_on_suspicion_sequence_valid(points)?;
+    }
+
+    #[test]
+    fn prop_on_suspicion_validates_cospherical_3d_sequences(
+        origin in prop::array::uniform3(-8i32..=8),
+        side_lengths in prop::array::uniform3(1i32..=8),
+        seed in any::<u64>(),
+    ) {
+        init_tracing();
+        let mut points = cuboid_corners_3d(origin, side_lengths);
+        let tail = points.split_off(4);
+        points.extend(shuffle_points(tail, seed));
+
+        assert_on_suspicion_sequence_valid(points)?;
+    }
+}
+
+macro_rules! gen_non_finite_insert_rejection_tests {
+    ($($dim:literal),+ $(,)?) => {
+        pastey::paste! {
+            proptest! {
+                $(
+                    #[test]
+                    fn [<prop_non_finite_insert_returns_error_and_preserves_topology_ $dim d>](
+                        value in non_finite_coordinate(),
+                        axis in 0usize..$dim,
+                    ) {
+                        init_tracing();
+                        let vertices = unit_simplex_vertices::<$dim>();
+                        let point = non_finite_point::<$dim>(axis, value);
+
+                        assert_non_finite_insert_rejected_and_preserves_validity(&vertices, point)?;
+                    }
+                )+
+            }
+        }
+    };
+}
+
+gen_non_finite_insert_rejection_tests!(2, 3, 4, 5);
 
 // =============================================================================
 // DUPLICATE COORDINATE REJECTION TESTS

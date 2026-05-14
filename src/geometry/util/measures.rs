@@ -27,7 +27,7 @@ fn degeneracy_tolerance<T: CoordinateScalar>(scale: T) -> Result<T, Circumcenter
     }
 
     let factor = safe_scalar_from_f64(DEGENERACY_EPSILON_FACTOR)
-        .map_err(CircumcenterError::CoordinateConversion)?;
+        .map_err(|source| CircumcenterError::CoordinateConversion { source })?;
     Ok(scale * factor * T::epsilon())
 }
 
@@ -242,6 +242,24 @@ fn validate_gram_determinant(det: f64) -> Result<f64, CircumcenterError> {
     Ok(det)
 }
 
+/// Computes `n!` in `f64` while preserving typed conversion failures.
+fn factorial_f64(n: usize) -> Result<f64, CircumcenterError> {
+    let mut value = 1.0f64;
+    for k in 2..=n {
+        let k_f64 =
+            safe_usize_to_scalar::<f64>(k).map_err(|e| CircumcenterError::ValueConversion {
+                source: ValueConversionError::ConversionFailed {
+                    value: k.to_string(),
+                    from_type: "usize",
+                    to_type: "f64",
+                    details: e.to_string(),
+                },
+            })?;
+        value *= k_f64;
+    }
+    Ok(value)
+}
+
 /// Compute a Gram determinant using la-stack's stack-allocated LDLT factorization.
 ///
 /// This mirrors the existing `crate::geometry::matrix::determinant` behavior:
@@ -283,7 +301,7 @@ where
         let point_f64 = safe_coords_to_f64(point.coords())?;
 
         for (j, (&p, &p0)) in point_f64.iter().zip(p0_f64.iter()).enumerate() {
-            matrix_set(&mut edge_matrix, row, j, p - p0);
+            matrix_set(&mut edge_matrix, row, j, p - p0)?;
         }
     }
 
@@ -293,9 +311,9 @@ where
         for j in 0..D {
             let mut dot_product = 0.0;
             for k in 0..D {
-                dot_product += matrix_get(&edge_matrix, i, k) * matrix_get(&edge_matrix, j, k);
+                dot_product += matrix_get(&edge_matrix, i, k)? * matrix_get(&edge_matrix, j, k)?;
             }
-            matrix_set(&mut gram_matrix, i, j, dot_product);
+            matrix_set(&mut gram_matrix, i, j, dot_product)?;
         }
     }
 
@@ -304,23 +322,12 @@ where
 
     let volume_f64 = {
         let sqrt_det = det.sqrt();
-        // Compute D! in f64 to avoid usize overflow/precision issues
-        let mut d_fact = 1.0f64;
-        for k in 2..=D {
-            let k_f64 = safe_usize_to_scalar::<f64>(k).map_err(|e| {
-                CircumcenterError::ValueConversion(ValueConversionError::ConversionFailed {
-                    value: k.to_string(),
-                    from_type: "usize",
-                    to_type: "f64",
-                    details: e.to_string(),
-                })
-            })?;
-            d_fact *= k_f64;
-        }
+        let d_fact = factorial_f64(D)?;
         sqrt_det / d_fact
     };
 
-    safe_scalar_from_f64(volume_f64).map_err(CircumcenterError::CoordinateConversion)
+    safe_scalar_from_f64(volume_f64)
+        .map_err(|source| CircumcenterError::CoordinateConversion { source })
 }
 
 /// Calculate the inradius of a D-dimensional simplex.
@@ -419,13 +426,13 @@ where
     }
 
     // inradius = D * volume / surface_area
-    let d_scalar = T::from(D).ok_or_else(|| {
-        CircumcenterError::ValueConversion(ValueConversionError::ConversionFailed {
+    let d_scalar = T::from(D).ok_or_else(|| CircumcenterError::ValueConversion {
+        source: ValueConversionError::ConversionFailed {
             value: D.to_string(),
             from_type: "usize",
             to_type: std::any::type_name::<T>(),
             details: "Failed to convert dimension to coordinate type".to_string(),
-        })
+        },
     })?;
 
     let inradius = (d_scalar * volume) / surface_area;
@@ -645,7 +652,7 @@ where
                     let dj = aj - a0;
                     dot_product += di * dj;
                 }
-                matrix_set(&mut gram_matrix, i, j, dot_product);
+                matrix_set(&mut gram_matrix, i, j, dot_product)?;
             }
         }
 
@@ -654,23 +661,12 @@ where
 
     let volume_f64 = {
         let sqrt_det = det.sqrt();
-        // Compute (D-1)! in f64 using safe conversion
-        let mut d_fact = 1.0f64;
-        for k in 2..D {
-            let k_f64 = safe_usize_to_scalar::<f64>(k).map_err(|e| {
-                CircumcenterError::ValueConversion(ValueConversionError::ConversionFailed {
-                    value: k.to_string(),
-                    from_type: "usize",
-                    to_type: "f64",
-                    details: e.to_string(),
-                })
-            })?;
-            d_fact *= k_f64;
-        }
+        let d_fact = factorial_f64(D - 1)?;
         sqrt_det / d_fact
     };
 
-    safe_scalar_from_f64(volume_f64).map_err(CircumcenterError::CoordinateConversion)
+    safe_scalar_from_f64(volume_f64)
+        .map_err(|source| CircumcenterError::CoordinateConversion { source })
 }
 
 /// Calculate the surface area of a triangulated boundary by summing facet measures.
@@ -1004,7 +1000,7 @@ mod tests {
                     for (&a, &b) in edges[i].iter().zip(edges[j].iter()) {
                         dot_product += a * b;
                     }
-                    matrix_set(&mut gram_matrix, i, j, dot_product);
+                    matrix_set(&mut gram_matrix, i, j, dot_product)?;
                 }
             }
 
