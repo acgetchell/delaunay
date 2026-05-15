@@ -1319,7 +1319,7 @@ where
 /// # {
 /// use delaunay::prelude::collections::CellKeyBuffer;
 /// use delaunay::prelude::diagnostics::verify_conflict_region_completeness;
-/// use delaunay::prelude::geometry::{AdaptiveKernel, Point};
+/// use delaunay::prelude::geometry::{AdaptiveKernel, Coordinate, Point};
 /// use delaunay::prelude::tds::Tds;
 ///
 /// let tds: Tds<f64, (), (), 2> = Tds::empty();
@@ -2803,7 +2803,9 @@ mod tests {
             .insert_cell_with_mapping(Cell::new(vec![origin, x_axis, upper_right], None).unwrap())
             .unwrap();
         let third_cell = tds
-            .insert_cell_with_mapping(Cell::new(vec![origin, x_axis, top_apex], None).unwrap())
+            .insert_cell_bypassing_topology_checks_for_test(
+                Cell::new(vec![origin, x_axis, top_apex], None).unwrap(),
+            )
             .unwrap();
 
         let mut conflict_cells = CellKeyBuffer::new();

@@ -1,321 +1,280 @@
 # Performance Benchmarks
 
-This directory contains performance benchmarks for the delaunay library, organized by purpose:
-
-- **CI Regression Detection**: Fast benchmarks for every PR
-- **Large-scale Throughput**: Construction, validation, and query scaling
-- **Comprehensive Profiling**: Deep analysis for optimization work
-- **Algorithm Comparison**: Comparing different implementations
-- **Specialized Benchmarks**: Focused testing of specific operations
+This directory contains the Criterion and release-mode benchmark harnesses used
+to keep Delaunay construction, topology operations, validation, and geometric
+predicates fast across 2D-5D.
 
 ## Benchmark Suite Overview
 
-| Benchmark | Purpose | Scale | Runtime | Used By |
-|-----------|---------|-------|---------|----------|
-| `ci_performance_suite.rs` | **CI regression detection** | 10–50 vertices | ~5-10 min | CI workflows, baseline generation, performance summary |
-| `circumsphere_containment.rs` | Predicate algorithm comparison | Random queries | ~5 min | Performance summary predicate subsection |
-| `large_scale_performance.rs` | Throughput and memory scaling | 1k–10k vertices | ~10-30 min; ~2-3 hours with `BENCH_LARGE_SCALE=1` | Manual |
-| `profiling_suite.rs` | Comprehensive profiling | 10³–10⁶ vertices | 1-2 hours | Monthly profiling, manual |
-| `tds_clone.rs` | TDS clone snapshot scaling | 2D–5D (small/medium point counts) | ~1-3 min | Manual rollback redesign baseline |
-| `topology_guarantee_construction.rs` | Topology guarantee construction overhead | 2D–5D (small/medium point counts) | ~5–15 min | Manual |
-| ~~`triangulation_creation.rs`~~ | ~~Simple construction~~ | ~~1000 vertices~~ | ~~N/A~~ | **DEPRECATED / REMOVED** |
+| Benchmark | Purpose | Scale | Typical Runtime | Used By |
+|-----------|---------|-------|-----------------|---------|
+| `ci_performance_suite.rs` | Public workflow regression contract | Calibrated 2D-5D canaries | ~5-10 min | CI, baselines, `just perf-no-regressions` |
+| `circumsphere_containment.rs` | Compare circumsphere predicate methods | 2D-5D fixed, 3D random, edge cases | ~5 min | Predicate tuning, summaries |
+| `cold_path_predicates.rs` | Track hot/cold predicate paths | 2D-5D hot queries, near-boundary cases | ~2-5 min | Predicate optimization work |
+| `profiling_suite.rs` | Large-scale construction, memory, query, validation profiling | 2D/3D 10k, 4D 3k, 5D 1k | ~2-3 hr | Manual/monthly |
+| `tds_clone.rs` | `Tds::clone()` snapshot cost | Deterministic 2D-5D triangulations | ~1-3 min | Rollback design baselines |
+| `topology_guarantee_construction.rs` | Cost of topology guarantee modes | 2D-5D construction cases | ~5-15 min | Manual topology policy work |
 
-### Benchmark Selection Guide
+## Selection Guide
 
-| Use Case | Benchmark | Command |
-|----------|-----------|----------|
-| CI regression check | `ci_performance_suite.rs` | `just bench-ci` or `cargo bench --profile perf --bench ci_performance_suite` |
-| Release performance summary | `ci_performance_suite.rs` + `circumsphere_containment.rs` | `just bench-perf-summary` |
-| Smoke-test benchmark harnesses | Workspace benches | `just bench-smoke` |
-| Large-scale throughput | `large_scale_performance.rs` | `cargo bench --profile perf --bench large_scale_performance` |
-| Deep profiling (1-2 hours) | `profiling_suite.rs` | `cargo bench --profile perf --bench profiling_suite` |
-| Memory analysis | `profiling_suite.rs` (memory groups) | `cargo bench --profile perf --bench profiling_suite -- memory_profiling` |
-| Validation layer diagnostics | `profiling_suite.rs` (validation components) | `cargo bench --profile perf --bench profiling_suite -- validation_components` |
-| Algorithm comparison | `circumsphere_containment.rs` | `cargo bench --profile perf --bench circumsphere_containment` |
-| Rollback snapshot baseline | `tds_clone.rs` | `cargo bench --profile perf --bench tds_clone` |
-| Topology guarantee overhead | `topology_guarantee_construction.rs` | See section below |
+| Use Case | Command |
+|----------|---------|
+| Final local correctness check | `just ci` |
+| Fast local PR performance guard with temporary same-machine baseline | `just perf-no-regressions` |
+| Full CI benchmark suite only | `just bench-ci` |
+| Persist/update the default local baseline artifact | `just perf-baseline` |
+| Generate a scratch baseline without replacing the default | `just perf-baseline-to <out> [ref]` |
+| Persist/update the default local baseline from a release/ref | `just perf-baseline v0.7.5` |
+| Compare against an existing baseline | `just perf-compare <file>` |
+| Release performance summary | `just bench-perf-summary` |
+| Smoke-test benchmark harnesses | `just bench-smoke` |
+| Predicate comparison | `cargo bench --profile perf --bench circumsphere_containment -- --noplot` |
+| Predicate cold-path work | `cargo bench --profile perf --bench cold_path_predicates -- --noplot` |
+| Large-scale scaling suite | `cargo bench --profile perf --bench profiling_suite -- --noplot` |
+| One-dimension acceptance/profiling run | `just debug-large-scale-{2,3,4,5}d [n] [repair_every]` |
+| Deep profiling | `cargo bench --profile perf --bench profiling_suite --features count-allocations` |
 
-## Running Benchmarks
+## Profiles And Local Guards
 
-Benchmark discussions below are sorted lexicographically by benchmark name.
-
-### Cargo Profiles
-
-Benchmark commands that produce performance data use the `perf` profile:
+Benchmarks that publish or compare performance data use Cargo's `perf` profile:
 
 ```bash
 just bench
 just bench-ci
-just bench-baseline
-just bench-compare
-just bench-perf-summary
+just perf-baseline
+just perf-compare
+just perf-no-regressions
 cargo bench --profile perf --bench ci_performance_suite
-```
-
-Use smoke or compile-only recipes for fast validation when you do not need
-performance data:
-
-```bash
-just bench-smoke
-just bench-compile
-just bench-test-compile
 ```
 
 The `perf` profile inherits from release and restores ThinLTO with
-`codegen-units = 1`. It is intentionally separate from the default release
-profile used by `just ci` for comprehensive compile/test validation. `just ci`
-does not need the `perf` profile because it is catching correctness, lint,
-documentation, example, and build errors rather than publishing benchmark
-numbers. Do not treat `bench-smoke` output as performance data.
+`codegen-units = 1`. `just ci` intentionally uses the normal validation path
+instead: it catches formatting, lint, test, documentation, example, and
+benchmark-harness compile errors rather than publishing benchmark data.
 
-### CI Performance Suite (`ci_performance_suite.rs`) (primary)
+`just perf-no-regressions [threshold]` is the recommended fast performance
+check before pushing a PR that touches Rust or benchmark code:
 
 ```bash
-# Run CI performance suite benchmarks for 2D, 3D, 4D, and 5D
+just ci
+just perf-no-regressions
+```
+
+The recipe first generates a temporary same-machine dev-mode baseline for the
+current GitHub `main` ref, then runs `ci_performance_suite` for the current
+checkout with the shared dev-mode Criterion settings
+(`--sample-size 10 --measurement-time 2 --warm-up-time 1 --noplot`) and compares
+the two at the default 7.5% threshold. The temporary baseline checkout and
+artifact directory are removed after the comparison.
+
+`just perf-baseline` is optional: use it only when you intentionally want to
+persist or refresh `baseline-artifact/baseline_results.txt` for later manual
+comparisons.
+
+To generate a local baseline without replacing the default persistent artifact,
+write it to another directory and compare directly:
+
+```bash
+just perf-baseline-to /tmp/delaunay-main-baseline
+just perf-compare /tmp/delaunay-main-baseline/baseline_results.txt
+```
+
+Use `just bench-smoke` only to check that benchmark harnesses still compile and
+run with minimal samples. Smoke output is not performance data.
+
+## CI Performance Suite
+
+```bash
 cargo bench --profile perf --bench ci_performance_suite
 ```
 
-The CI Performance Suite is the primary benchmarking suite used for automated performance-regression testing and generated performance summaries:
+`ci_performance_suite.rs` is the stable public workflow contract. It covers:
 
-- **Purpose**: Fast performance regression detection for regular CI/CD
-- **Dimensions**: 2D–5D triangulations
-- **Vertex counts**: 10, 25, 50 per dimension
-- **Runtime**: ~5–10 minutes (hardware dependent)
-- **Frequency**: Every PR and push to main
-- **Integration**: `.github/workflows/benchmarks.yml` and `.github/workflows/generate-baseline.yml` (GitHub Actions)
+- construction via `DelaunayTriangulation::new_with_options`
+- adversarial construction
+- convex hull extraction
+- boundary facet traversal
+- validation Levels 1-4
+- incremental vertex insertion into prepared triangulations
+- explicit 4D bistellar flip roundtrips
 
-### Circumsphere Containment (`circumsphere_containment.rs`)
+The current calibrated fixture sizes are:
+
+| Dimension | Fixture vertices | Insert batch |
+|-----------|------------------|--------------|
+| 2D | 2,000 | 10 |
+| 3D | 700 | 10 |
+| 4D | 50 | 6 |
+| 5D | 25 | 4 |
+
+The same fixture sizes are reused for construction, adversarial construction,
+validation, hull extraction, boundary traversal, and insertion bases. This keeps
+the suite orthogonal: one benchmark contract covers useful real operations
+without carrying separate toy construction-only cases.
+
+## Circumsphere Containment
 
 ```bash
-# Run all circumsphere benchmarks
-cargo bench --profile perf --bench circumsphere_containment
-
-# Run with test mode (faster, no actual benchmarking)
+cargo bench --profile perf --bench circumsphere_containment -- --noplot
 cargo bench --bench circumsphere_containment -- --test
 ```
 
-#### Methods Compared
+This suite compares three predicate paths:
 
-1. **insphere**: Standard determinant-based method (most numerically stable)
-2. **insphere_distance**: Distance-based method using explicit circumcenter calculation
-3. **insphere_lifted**: Matrix determinant method with lifted paraboloid approach
+- `insphere`: determinant-based robust predicate path
+- `insphere_distance`: explicit circumcenter plus distance comparison
+- `insphere_lifted`: lifted-paraboloid determinant formulation
 
-#### Performance Results
+Fresh local perf-profile run on maintainer Apple M4 Max hardware
+(2026-05-14, Rust 1.95.0):
 
-📊 **[View Detailed Performance Results](PERFORMANCE_RESULTS.md)**
+| 3D random batch, 1000 queries | Mean |
+|-------------------------------|------|
+| `insphere` | 8.389 ms |
+| `insphere_distance` | 39.6 µs |
+| `insphere_lifted` | 23.2 µs |
 
-Comprehensive performance benchmarks, analysis, and recommendations have been moved to a dedicated file for easier
-maintenance and automated updates. Circumsphere performance remains a dedicated subsection because these predicates
-exercise `la-stack` code paths that are important to tune independently.
+| Fixed simplex | `insphere` | `insphere_distance` | `insphere_lifted` | Winner |
+|---------------|------------|----------------------|-------------------|--------|
+| 2D | 17.7 ns | 23.6 ns | 8.3 ns | `insphere_lifted` |
+| 3D | 2.93 µs | 26.8 ns | 18.4 ns | `insphere_lifted` |
+| 4D | 6.84 µs | 58.3 ns | 3.98 µs | `insphere_distance` |
+| 5D | 10.6 µs | 97.8 ns | 6.18 µs | `insphere_distance` |
 
-##### Quick Summary
+| Edge-case family | 2D winner | 3D winner | 4D winner | 5D winner |
+|------------------|-----------|-----------|-----------|-----------|
+| Boundary vertex | `insphere` (~1.3 ns) | `insphere` (~1.5 ns) | `insphere` (~1.6 ns) | `insphere` (~2.4 ns) |
+| Far vertex | `insphere_lifted` (~8.3 ns) | `insphere_lifted` (~18.4 ns) | `insphere_distance` (~57.3 ns) | `insphere_distance` (~83.6 ns) |
+| Near boundary | `insphere_lifted` (~8.3 ns) | `insphere_lifted` (~18.4 ns) | `insphere_distance` (~57.0 ns) | `insphere_distance` (~83.3 ns) |
 
-- **Best Performance**: `insphere_lifted` method (fastest across all dimensions)
-- **Best Stability**: `insphere` method (most numerically reliable)
-- **Educational**: `insphere_distance` method (transparent algorithm)
+The same run reported 1000/1000 agreement for each pairwise method comparison
+and 1000/1000 agreement across all three methods on the random consistency
+checks.
 
-##### Performance Data Maintenance
+Interpretation:
 
-Performance results are automatically updated using the benchmark infrastructure:
+- `insphere_lifted` is currently fastest for 2D/3D fixed non-boundary cases and
+  for the 3D random batch.
+- `insphere_distance` is currently fastest for 4D/5D fixed non-boundary cases.
+- `insphere` has very fast boundary-vertex short-circuit behavior, but its
+  robust determinant path is slower on non-boundary 3D-5D cases.
+- Keep `insphere` as the correctness reference unless a caller has a narrowly
+  measured workload-specific reason to choose a comparison helper.
+
+## Cold Path Predicates
 
 ```bash
-# Prerequisite: install uv (e.g., `pipx install uv` or `brew install uv`)
+cargo bench --profile perf --bench cold_path_predicates -- --noplot
+```
 
-# Generate updated performance summary
+`cold_path_predicates.rs` tracks the fast f64 filter path and the exact
+Bareiss fallback path used by `insphere`, `insphere_lifted`, and the orientation
+predicate they invoke. The hot group uses well-separated random queries; the
+near-boundary group deliberately pushes queries close to the circumsphere so
+Stage 2 costs remain visible.
+
+## Profiling Suite
+
+```bash
+cargo bench --profile perf --bench profiling_suite -- --noplot
+BENCH_LARGE_SCALE=1 cargo bench --profile perf --bench profiling_suite -- --noplot
+cargo bench --profile perf --bench profiling_suite --features count-allocations -- memory_profiling
+PROFILING_DEV_MODE=1 cargo bench --profile perf --bench profiling_suite --features count-allocations
+```
+
+`profiling_suite.rs` is the manual optimization harness. It now owns the former
+large-scale scaling workload and the deeper profiling diagnostics:
+
+- construction through the default batch construction path
+- process RSS deltas during construction
+- memory allocation profiling with the optional `count-allocations` feature
+- neighbor queries, vertex iteration, and cell iteration
+- circumsphere query latency
+- algorithmic bottlenecks
+- validation component costs
+
+Current point-count families:
+
+| Dimension | Default counts | Large-scale override |
+|-----------|----------------|----------------------|
+| 2D | 1,000 / 5,000 / 10,000 | same |
+| 3D | 1,000 / 5,000 / 10,000 | same |
+| 4D | 1,000 / 3,000 | 1,000 / 5,000 / 10,000 with `BENCH_LARGE_SCALE=1` |
+| 5D | 500 / 1,000 | same |
+
+Use filters to scope a run:
+
+```bash
+cargo bench --profile perf --bench profiling_suite -- "construction/3D"
+cargo bench --profile perf --bench profiling_suite -- "queries/neighbors"
+cargo bench --profile perf --bench profiling_suite -- "queries/vertices"
+cargo bench --profile perf --bench profiling_suite -- "memory_profiling"
+```
+
+`PROFILING_DEV_MODE=1` reduces the auxiliary diagnostics while iterating with
+profilers such as samply. `BENCH_LARGE_SCALE=1` enables the 4D 5,000 and 10,000
+vertex construction, memory, validation, and traversal cases; reserve that for
+dedicated profiling hardware.
+
+### Release-mode Debug Defaults
+
+The `just debug-large-scale-{2,3,4,5}d [n] [repair_every]` helpers are
+single-run acceptance/profiling harnesses, not Criterion benchmarks. They insert
+all vertices, run repair, and validate Levels 1-4. The defaults were calibrated
+locally on maintainer Apple M4 Max hardware to land near one minute per
+dimension:
+
+| Dimension | Default vertices | Generated Simplices | Total wall time |
+|-----------|------------------|---------------------|-----------------|
+| 2D | 36,000 | 71,887 | ~48.1 s |
+| 3D | 8,000 | 52,308 | ~51.9 s |
+| 4D | 900 | 21,620 | ~57.4 s |
+| 5D | 140 | 8,296 | ~51.8 s |
+
+For 5D, the debug default is 140 vertices: 150 vertices measured about
+61 seconds after strict inverse postcondition checks were enabled, while 140
+vertices keeps the acceptance/profiling run comfortably below one minute and
+allows denser progress reporting on the same hardware.
+
+## TDS Clone
+
+```bash
+cargo bench --profile perf --bench tds_clone -- --noplot
+```
+
+This benchmark prebuilds deterministic 2D-5D triangulations and measures only
+`Tds::clone()` on the resulting topology snapshots. Use it when comparing
+rollback snapshot behavior against future journaled or localized rollback
+implementations.
+
+## Topology Guarantee Construction
+
+```bash
+cargo bench --profile perf --bench topology_guarantee_construction -- --noplot
+cargo bench --profile perf --bench topology_guarantee_construction -- "topology_guarantee_construction/4d"
+```
+
+This suite compares construction cost under:
+
+- `TopologyGuarantee::Pseudomanifold`
+- `TopologyGuarantee::PLManifold`
+- `TopologyGuarantee::PLManifoldStrict`
+
+It is manual-only and useful when changing insertion, repair, or validation
+paths that affect topology guarantees.
+
+## Generated Summaries
+
+`benches/PERFORMANCE_RESULTS.md` is generated by `benchmark-utils` and is used
+for release-oriented summaries:
+
+```bash
 uv run benchmark-utils generate-summary
-
-# Generate summary with fresh perf-profile benchmark data
 uv run benchmark-utils generate-summary --run-benchmarks --profile perf
-
-# Compare current performance against baseline
 uv run benchmark-utils compare --baseline baseline-artifact/baseline_results.txt
-
-# Compare two tags without re-running benchmarks (downloads baseline artifacts via gh)
 uv run benchmark-utils compare-tags --old-tag vX.Y.Z --new-tag vA.B.C
 ```
 
-#### Benchmark Structure
-
-The `circumsphere_containment.rs` benchmark includes:
-
-- **Basic tests**: Fixed simplex performance
-- **Random queries**: Batch processing performance with 1000 random test points
-- **Dimensional tests**: Performance across 2D, 3D, and 4D simplices
-- **Edge cases**: Boundary vertices and far-away points
-- **Numerical consistency**: Agreement analysis between all methods
-
-### Large-scale Performance (`large_scale_performance.rs`)
-
-#### Purpose
-
-This suite measures how construction, validation, iteration, and query paths
-scale on larger point sets than the CI regression suite. It is useful for
-manual performance work and for validating memory behavior before release.
-
-#### Key Metrics
-
-1. **Iteration Performance**
-   - Full vertex/cell traversals
-   - Neighbor-following patterns
-   - Filtered iteration
-
-2. **Memory Efficiency**
-   - Peak RSS during construction
-   - Per-element footprint
-
-3. **Cache Locality**
-   - Sequential vs random access
-   - BFS traversal patterns
-
-4. **Query Performance** (maintain or improve)
-   - Key lookups
-   - Neighbor queries
-
-#### Running Large-scale Benchmarks
-
-```bash
-# Run large-scale performance benchmarks
-cargo bench --profile perf --bench large_scale_performance
-
-# Run specific test categories
-cargo bench --profile perf --bench large_scale_performance -- "construction/3D"
-cargo bench --profile perf --bench large_scale_performance -- "queries/neighbors"
-cargo bench --profile perf --bench large_scale_performance -- "iteration/vertices"
-```
-
-**Note:** `large_scale_performance.rs` measures iteration speed, memory usage,
-query performance, and validation across 2D-5D.
-
-For the 3D correctness acceptance path at 10,000 vertices, use the release-mode
-debug harness rather than Criterion:
-
-```bash
-just debug-large-scale-3d 10000 1
-```
-
-That path should insert all vertices with zero skips, run a clean final repair,
-and pass `validation_report` for Levels 1–4. On maintainer Apple M4 Max hardware
-it sits around the 100-second mark; use the harness output for exact local
-timing.
-
-### Profiling Suite (`profiling_suite.rs`) (comprehensive)
-
-```bash
-# Run comprehensive profiling suite (1-2 hours, 10³-10⁶ vertices)
-cargo bench --profile perf --bench profiling_suite --features count-allocations
-
-# Development mode (faster, reduced scale)
-PROFILING_DEV_MODE=1 cargo bench --profile perf --bench profiling_suite --features count-allocations
-
-# Override measurement times for faster iteration
-BENCH_MEASUREMENT_TIME=10 cargo bench --profile perf --bench profiling_suite --features count-allocations
-
-# Run specific profiling categories
-cargo bench --profile perf --bench profiling_suite --features count-allocations -- triangulation_scaling
-cargo bench --profile perf --bench profiling_suite --features count-allocations -- memory_profiling
-cargo bench --profile perf --bench profiling_suite --features count-allocations -- query_latency
-cargo bench --profile perf --bench profiling_suite --features count-allocations -- algorithmic_bottlenecks
-cargo bench --profile perf --bench profiling_suite --features count-allocations -- validation_components
-
-# Run only memory profiling group (useful for focused analysis)
-cargo bench --profile perf --bench profiling_suite --features count-allocations -- "memory_profiling"
-```
-
-The **Profiling Suite** provides comprehensive performance analysis for optimization work:
-
-- **Purpose**: Comprehensive performance analysis for optimization work
-- **Runtime**: 1-2 hours (full production mode)
-- **Scale**: Large point counts (10³ to 10⁶ points)
-- **Frequency**: Monthly scheduled + manual triggers + release tags
-- **Integration**: `.github/workflows/profiling-benchmarks.yml`
-
-**📊 Key Features & Improvements**:
-
-- **Optimized Query Benchmarks**: Precomputes simplex vertices outside inner loops to reduce per-iteration allocations
-- **Enhanced Memory Profiling**: Reports mean, max, and 95th percentile allocation statistics for better spike detection
-- **Complete Dimensional Coverage**: Memory profiling and triangulation scaling for all dimensions 2D-5D
-- **Environment Variable Control**: Use `BENCH_MEASUREMENT_TIME` to override default measurement times for CI tuning
-- **Eliminated Double Point Generation**: Sample points generated once per benchmark to reduce setup noise
-
-**⚠️ Performance & Hardware Considerations**:
-
-- **Feature Overhead**: The `count-allocations` feature can materially slow benchmark runs (20-50% overhead) and increase memory usage for allocation tracking
-- **Hardware Requirements**: Recommend ≥16 GB RAM and ≥4 CPU cores to prevent timeouts during large-scale runs (10⁶ vertices)
-- **CI/Local Timeouts**: Without adequate resources, runs may exceed typical CI timeouts (30-60 minutes).
-  Note that 10⁶ vertex benchmarks can take several hours and are not suitable for standard CI environments
-- **Development Mode**: Use `PROFILING_DEV_MODE=1` for faster iteration during optimization work
-- **Flexible Timing**: Use `BENCH_MEASUREMENT_TIME=N` to set measurement time in seconds for all benchmark groups
-
-#### Automated Profiling Triggers
-
-```bash
-# Manual trigger via GitHub Actions UI:
-# 1. Go to Actions tab → "Comprehensive Profiling Benchmarks"
-# 2. Click "Run workflow" 
-# 3. Select mode: development (faster) or production (full scale)
-# 4. Optional: Filter specific benchmarks
-
-# Automatic triggers:
-# - Monthly: First Sunday of each month at 2 AM UTC  
-# - Release tags: Every version tag (v*.*.*) for baseline generation
-```
-
-#### Profiling Results and Artifacts
-
-- **Profiling Results**: Available as GitHub Actions artifacts for 30 days
-- **Profiling Baselines**: Release-tagged baselines kept for 90 days
-- **Memory Analysis**: Detailed allocation tracking with `count-allocations` feature
-- **HTML Reports**: Criterion-generated performance reports with statistical analysis
-
-#### Development Workflow
-
-1. **Regular Development**: Use CI Performance Suite for quick feedback
-2. **Optimization Work**: Trigger Profiling Suite manually in development mode
-3. **Release Preparation**: Full profiling suite runs automatically on version tags
-4. **Performance Monitoring**: Monthly automated runs track long-term trends
-
-### TDS Clone (`tds_clone.rs`) (manual)
-
-```bash
-cargo bench --profile perf --bench tds_clone
-```
-
-This benchmark prebuilds deterministic 2D-5D triangulations at several point
-counts and measures only `Tds::clone()` on the resulting topology snapshots.
-Use it as the baseline for rollback work: current full-snapshot behavior should
-be measured here before comparing a future journaled or localized rollback
-implementation.
-
-### Topology Guarantee Construction (`topology_guarantee_construction.rs`) (manual)
-
-This benchmark compares construction cost under `TopologyGuarantee::Pseudomanifold`,
-`TopologyGuarantee::PLManifold` (incremental), and `TopologyGuarantee::PLManifoldStrict`
-across 2D–5D.
-It is intended for **manual** runs (not used by CI).
-
-```bash
-# Run the full suite (recommended: disable plot generation)
-cargo bench --profile perf --bench topology_guarantee_construction -- --noplot
-
-# Filter by dimension
-cargo bench --profile perf --bench topology_guarantee_construction -- "topology_guarantee_construction/2d"
-cargo bench --profile perf --bench topology_guarantee_construction -- "topology_guarantee_construction/3d"
-cargo bench --profile perf --bench topology_guarantee_construction -- "topology_guarantee_construction/4d"
-cargo bench --profile perf --bench topology_guarantee_construction -- "topology_guarantee_construction/5d"
-```
-
-### All Benchmarks
-
-```bash
-# Run all available benchmarks (includes CI + profiling suites + manual comparisons)
-just bench
-
-# Run all benchmarks with memory tracking (direct cargo command)
-cargo bench --profile perf --features count-allocations
-
-# Compile-only check (useful for CI validation without running benchmarks)
-just bench-compile
-```
-
-**💡 Targeted Benchmark Runs**: Use `cargo bench --profile perf --bench profiling_suite -- --help` to see available filters and Criterion flags for scoping
-long-running benchmarks. This helps target specific test categories or adjust measurement parameters for faster iteration.
+Generated summaries should come from fresh perf-profile runs when they are used
+as release evidence. For routine PR work, use `just ci` plus
+`just perf-no-regressions`.

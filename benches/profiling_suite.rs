@@ -1,79 +1,89 @@
-//! Comprehensive Profiling Suite - Extended performance analysis for optimization work
+//! Comprehensive profiling suite for optimization work.
 //!
-//! This benchmark suite provides extensive profiling capabilities for deep performance
-//! analysis and optimization work that would be too time-consuming for regular CI/CD:
+//! This benchmark suite provides manual performance diagnostics that are too
+//! expensive or too specialized for the regular CI regression contract:
 //!
-//! 1. **Large-scale triangulation performance** (10³ to 10⁶ points)
-//! 2. **Multiple point distributions** (random, grid, Poisson disk)
-//! 3. **Memory usage profiling** (allocation tracking)
-//! 4. **Query latency analysis** (circumsphere tests, neighbor queries)
-//! 5. **Multi-dimensional scaling** (2D through 5D)
-//! 6. **Algorithmic bottleneck identification** (specific operation profiling)
-//! 7. **Validation layer diagnostics** (Level 1-3 vs Level 4 cost separation)
+//! 1. **Large-scale triangulation performance** across 2D through 5D
+//! 2. **RSS memory deltas** during construction
+//! 3. **Allocation profiling** with the `count-allocations` feature
+//! 4. **Query and iteration latency** on constructed triangulations
+//! 5. **Algorithmic bottleneck identification** for focused operations
+//! 6. **Validation layer diagnostics** separating topology and Delaunay costs
 //!
 //! ## Usage
 //!
-//! Run comprehensive profiling (expect 1-2 hours):
+//! Run the comprehensive profiling harness:
 //! ```bash
 //! cargo bench --profile perf --bench profiling_suite
 //! ```
 //!
 //! Run specific profiling categories:
 //! ```bash
-//! # Large-scale triangulation only
-//! cargo bench --profile perf --bench profiling_suite -- triangulation_scaling
+//! # Large-scale construction only
+//! cargo bench --profile perf --bench profiling_suite -- construction
 //!
-//! # Memory profiling only  
+//! # Allocation profiling only
 //! cargo bench --profile perf --bench profiling_suite -- memory_profiling
 //!
-//! # Query latency only
+//! # Query and iteration profiling only
+//! cargo bench --profile perf --bench profiling_suite -- queries
 //! cargo bench --profile perf --bench profiling_suite -- query_latency
 //! ```
 //!
-//! ## Development vs Production Mode
+//! ## Scale Modes
 //!
-//! For faster iteration during optimization work:
+//! The default large-scale counts are 1K/5K/10K for 2D and 3D, 1K/3K for
+//! 4D, and 500/1K for 5D. Enable larger 4D runs on dedicated hardware:
 //! ```bash
-//! # Development mode - reduced scale for quick feedback
-//! PROFILING_DEV_MODE=1 cargo bench --profile perf --bench profiling_suite
+//! BENCH_LARGE_SCALE=1 cargo bench --profile perf --bench profiling_suite
 //! ```
+//!
+//! `PROFILING_DEV_MODE=1` still reduces the auxiliary profiling groups for
+//! faster samply/flamegraph iteration.
 //!
 //! ## Environment Variable Configuration
 //!
 //! The benchmark suite supports several environment variables for customization:
 //!
-//! - `PROFILING_DEV_MODE`: Set to "1", "true", "yes", or "on" for reduced scale (faster iteration)
+//! - `BENCH_LARGE_SCALE`: Set to "1", "true", "yes", or "on" for larger
+//!   4D large-scale counts.
+//! - `PROFILING_DEV_MODE`: Set to "1", "true", "yes", or "on" for reduced
+//!   auxiliary profiling groups.
 //! - `BENCH_MEASUREMENT_TIME`: Override measurement time in seconds (minimum: 1, guards against invalid values)
 //! - `BENCH_PERCENTILE`: Configure percentile for memory analysis (1-100, default: 95)
-//! - `BENCH_SAMPLE_SIZE`: Override Criterion sample size (default: 10; values below 10 are clamped to 10, so
-//!   `BENCH_SAMPLE_SIZE=5` still runs 10 samples)
+//! - `BENCH_SAMPLE_SIZE`: Override Criterion sample size (default: 10; values below 10 are clamped to 10)
 //! - `BENCH_WARMUP_SECS`: Override Criterion warm-up time in seconds (default: 10)
+//! - `DELAUNAY_BENCH_SEED`: Override the deterministic random seed
+//! - `DELAUNAY_BENCH_RETRY_ATTEMPTS`: Override shuffled construction retries
 //!
 //! Example with custom configuration:
 //! ```bash
 //! BENCH_SAMPLE_SIZE=10 BENCH_WARMUP_SECS=5 BENCH_PERCENTILE=90 cargo bench --profile perf --bench profiling_suite
 //! ```
 
+use std::env;
+use std::hint::black_box;
+use std::num::NonZeroUsize;
+use std::sync::{Mutex, Once, OnceLock};
+use std::time::{Duration, Instant};
+
+#[cfg(all(feature = "count-allocations", feature = "bench-logging"))]
+use allocation_counter::AllocationInfo;
+#[cfg(feature = "count-allocations")]
+use allocation_counter::measure;
 use criterion::measurement::WallTime;
 use criterion::{
     BatchSize, BenchmarkGroup, BenchmarkId, Criterion, Throughput, criterion_group, criterion_main,
 };
 use delaunay::prelude::collections::SmallBuffer;
-use delaunay::prelude::generators::{
-    generate_grid_points, generate_poisson_points, generate_random_points_seeded,
-};
-use delaunay::prelude::geometry::{Coordinate, safe_usize_to_scalar};
+use delaunay::prelude::generators::generate_random_points_seeded;
+use delaunay::prelude::geometry::{AdaptiveKernel, Coordinate, Point};
 use delaunay::prelude::query::*;
 use delaunay::prelude::triangulation::construction::{
-    ConstructionOptions, DelaunayTriangulationBuilder, RetryPolicy,
+    ConstructionOptions, DelaunayTriangulation, DelaunayTriangulationBuilder, RetryPolicy, Vertex,
 };
 use delaunay::vertex;
-use num_traits::cast;
-use std::env;
-use std::hint::black_box;
-use std::num::NonZeroUsize;
-use std::sync::Once;
-use std::time::{Duration, Instant};
+use sysinfo::{ProcessRefreshKind, ProcessesToUpdate, RefreshKind, System, get_current_pid};
 
 /// Shared benchmark setup error helpers.
 #[path = "common/bench_utils.rs"]
@@ -100,6 +110,16 @@ fn init_tracing() {
 #[cfg(not(feature = "bench-logging"))]
 const fn init_tracing() {}
 
+macro_rules! bench_info {
+    ($($arg:tt)*) => {{
+        #[cfg(feature = "bench-logging")]
+        {
+            init_tracing();
+            tracing::info!($($arg)*);
+        }
+    }};
+}
+
 // SmallBuffer size constants for different use cases
 #[cfg(all(feature = "count-allocations", feature = "bench-logging"))]
 const BENCHMARK_ITERATION_BUFFER_SIZE: usize = 8; // For tracking allocation info across benchmark iterations
@@ -112,9 +132,21 @@ const QUERY_SEED: u64 = 123;
 const MAX_QUERY_RESULTS: usize = 1_000;
 const VALIDATION_SEED_SEARCH_LIMIT: u64 = 64;
 
-// Memory allocation counting support
-#[cfg(feature = "count-allocations")]
-use allocation_counter::{AllocationInfo, measure};
+/// Memory usage information for benchmarking, in KiB.
+#[cfg_attr(
+    not(feature = "bench-logging"),
+    expect(
+        dead_code,
+        reason = "Memory fields are unpacked by optional bench diagnostics"
+    )
+)]
+#[derive(Debug, Clone)]
+struct MemoryInfo {
+    before: u64,
+    after: u64,
+    delta: i64,
+    tds_delta: i64,
+}
 
 #[cfg(not(feature = "count-allocations"))]
 #[derive(Debug, Default)]
@@ -135,25 +167,6 @@ fn print_alloc_banner_once() {
     });
 }
 
-/// Large-scale point counts for comprehensive profiling
-/// Production mode: 10³ to 10⁶ points across multiple decades
-/// Development mode: Reduced scale for faster iteration
-const PROFILING_COUNTS_PRODUCTION: &[usize] = &[
-    1_000,     // 10³
-    3_000,     // ~3×10³
-    10_000,    // 10⁴
-    30_000,    // ~3×10⁴
-    100_000,   // 10⁵
-    300_000,   // ~3×10⁵
-    1_000_000, // 10⁶
-];
-
-const PROFILING_COUNTS_DEVELOPMENT: &[usize] = &[
-    1_000,  // 10³
-    3_000,  // ~3×10³
-    10_000, // 10⁴
-];
-
 /// Parse `PROFILING_DEV_MODE` environment variable as boolean-like value
 /// Returns true for: "1", "true", "TRUE", "yes", "on" (case-insensitive)
 /// Returns false for anything else (including "0", "false", empty, or unset)
@@ -167,12 +180,148 @@ fn is_dev_mode() -> bool {
     })
 }
 
-/// Select appropriate point counts based on environment.
-fn profiling_counts() -> &'static [usize] {
-    if is_dev_mode() {
-        PROFILING_COUNTS_DEVELOPMENT
-    } else {
-        PROFILING_COUNTS_PRODUCTION
+/// Parse `BENCH_LARGE_SCALE` as a boolean-like value.
+fn is_large_scale_mode() -> bool {
+    let large = env::var("BENCH_LARGE_SCALE").ok();
+    large.as_deref().is_some_and(|s| {
+        s == "1"
+            || s.eq_ignore_ascii_case("true")
+            || s.eq_ignore_ascii_case("yes")
+            || s.eq_ignore_ascii_case("on")
+    })
+}
+
+/// Return current process memory usage in KiB.
+fn memory_usage_kib() -> u64 {
+    static SYS: OnceLock<Mutex<System>> = OnceLock::new();
+    static UNIT_LOGGED: Once = Once::new();
+
+    UNIT_LOGGED.call_once(|| {
+        bench_info!("Memory measurements in KiB (sysinfo::Process::memory() / 1024)");
+    });
+
+    let pid = bench_result(get_current_pid(), "failed to get current PID");
+    let sys = SYS.get_or_init(|| {
+        Mutex::new(System::new_with_specifics(
+            RefreshKind::nothing().with_processes(ProcessRefreshKind::nothing().with_memory()),
+        ))
+    });
+    let mut system = bench_result(sys.lock(), "failed to lock System");
+    system.refresh_processes_specifics(
+        ProcessesToUpdate::Some(&[pid]),
+        true,
+        ProcessRefreshKind::nothing().with_memory(),
+    );
+    system
+        .process(pid)
+        .map_or(0, |process| process.memory() / 1024)
+}
+
+/// Return the deterministic base seed for random point generation.
+fn benchmark_seed() -> u64 {
+    static SEED: OnceLock<u64> = OnceLock::new();
+    *SEED.get_or_init(|| {
+        let seed = env::var("DELAUNAY_BENCH_SEED")
+            .ok()
+            .and_then(|s| {
+                let s = s.trim();
+                s.strip_prefix("0x")
+                    .or_else(|| s.strip_prefix("0X"))
+                    .map_or_else(|| s.parse().ok(), |hex| u64::from_str_radix(hex, 16).ok())
+            })
+            .unwrap_or(DEFAULT_SEED);
+
+        if env::var("PRINT_BENCH_SEED").is_ok() {
+            bench_info!("Benchmark seed: 0x{seed:X} ({seed})");
+        }
+
+        seed
+    })
+}
+
+fn benchmark_retry_attempts() -> NonZeroUsize {
+    static ATTEMPTS: OnceLock<NonZeroUsize> = OnceLock::new();
+    *ATTEMPTS.get_or_init(|| {
+        let attempts = env::var("DELAUNAY_BENCH_RETRY_ATTEMPTS")
+            .ok()
+            .and_then(|v| v.parse::<usize>().ok())
+            .unwrap_or(6)
+            .max(1);
+
+        let Some(attempts) = NonZeroUsize::new(attempts) else {
+            unreachable!("attempts clamped to >= 1");
+        };
+        attempts
+    })
+}
+
+fn seed_for_case<const D: usize>(n_points: usize) -> u64 {
+    const SEED_SALT: u64 = 0x9E37_79B9_7F4A_7C15;
+
+    let base_seed = benchmark_seed();
+    base_seed
+        .wrapping_add((n_points as u64).wrapping_mul(SEED_SALT))
+        .wrapping_add((D as u64).wrapping_mul(SEED_SALT.rotate_left(17)))
+}
+
+fn construction_options(seed: u64) -> ConstructionOptions {
+    ConstructionOptions::default().with_retry_policy(RetryPolicy::Shuffled {
+        attempts: benchmark_retry_attempts(),
+        base_seed: Some(seed),
+    })
+}
+
+fn construct_triangulation<const D: usize>(
+    vertices: &[Vertex<f64, (), D>],
+    seed: u64,
+) -> DelaunayTriangulation<AdaptiveKernel<f64>, (), (), D> {
+    bench_result(
+        DelaunayTriangulation::new_with_options(vertices, construction_options(seed)),
+        format!(
+            "failed to create triangulation (dim={D}, n_vertices={}, seed={seed})",
+            vertices.len()
+        ),
+    )
+}
+
+/// Converts generated points into benchmark vertices without attaching data.
+fn vertices_from_points<const D: usize>(points: Vec<Point<f64, D>>) -> Vec<Vertex<f64, (), D>> {
+    points.into_iter().map(|point| vertex!(point)).collect()
+}
+
+/// Measure memory delta during triangulation construction.
+fn measure_construction_with_memory<const D: usize>(n_points: usize, seed: u64) -> MemoryInfo {
+    let mem_before = memory_usage_kib();
+    let points = bench_result(
+        generate_random_points_seeded::<f64, D>(n_points, (-100.0, 100.0), seed),
+        "failed to generate points",
+    );
+    let vertices = vertices_from_points(points);
+
+    let mem_before_tds = memory_usage_kib();
+    let dt = construct_triangulation::<D>(&vertices, seed);
+    let mem_after = memory_usage_kib();
+    black_box(&dt);
+
+    let delta_i128 = i128::from(mem_after) - i128::from(mem_before);
+    #[expect(
+        clippy::cast_possible_truncation,
+        reason = "clamped to i64 range before casting"
+    )]
+    let delta = delta_i128.clamp(i128::from(i64::MIN), i128::from(i64::MAX)) as i64;
+
+    let tds_delta_i128 = i128::from(mem_after) - i128::from(mem_before_tds);
+    #[expect(
+        clippy::cast_possible_truncation,
+        reason = "clamped to i64 range before casting"
+    )]
+    let tds_delta = tds_delta_i128.clamp(i128::from(i64::MIN), i128::from(i64::MAX)) as i64;
+
+    MemoryInfo {
+        before: mem_before,
+        after: mem_after,
+        delta,
+        tds_delta,
     }
 }
 
@@ -190,20 +339,7 @@ fn bench_time(default_secs: u64) -> Duration {
 #[derive(Debug, Clone, Copy)]
 enum PointDistribution {
     Random,
-    Grid,
-    PoissonDisk,
     Adversarial,
-}
-
-impl PointDistribution {
-    const fn name(self) -> &'static str {
-        match self {
-            Self::Random => "random",
-            Self::Grid => "grid",
-            Self::PoissonDisk => "poisson",
-            Self::Adversarial => "adversarial",
-        }
-    }
 }
 
 /// Generate points according to the specified distribution
@@ -244,56 +380,6 @@ fn gen_points<const D: usize>(
             Point::new(coords)
         })
         .collect(),
-        PointDistribution::Grid => {
-            // Calculate points per dimension to get approximately `count` points total
-            let count_f64 = bench_result(
-                safe_usize_to_scalar::<f64>(count),
-                "point count should fit in f64",
-            );
-            let d_f64 = bench_result(
-                safe_usize_to_scalar::<f64>(D),
-                "dimension should fit in f64",
-            );
-            let raw = count_f64.powf(1.0 / d_f64).ceil();
-
-            let points_per_dim = if raw.is_finite() && raw >= 2.0 {
-                cast::<f64, usize>(raw).map_or_else(
-                    || {
-                        abort_benchmark(format_args!(
-                            "Grid side length {raw} does not fit in usize for D={D}, count={count}"
-                        ))
-                    },
-                    |value| value.max(2),
-                )
-            } else {
-                2
-            };
-            match generate_grid_points(points_per_dim, 10.0, [0.0; D]) {
-                Ok(pts) => pts,
-                Err(e) => {
-                    // Grid generation failed - this indicates a configuration issue
-                    // Rather than silently falling back and producing misleading benchmarks,
-                    // we should fail fast to alert developers to adjust parameters
-                    abort_benchmark(format_args!(
-                        "Grid generation failed for D={D}: count={count}, points_per_dim={points_per_dim}, err={e:?}. \
-                         Adjust grid parameters or use smaller point counts for high-dimensional grid benchmarks."
-                    ));
-                }
-            }
-        }
-        PointDistribution::PoissonDisk => {
-            let min_distance = match D {
-                2 => 5.0,  // 2D: reasonable spacing for [-100, 100] bounds
-                3 => 8.0,  // 3D: slightly larger spacing
-                4 => 12.0, // 4D: larger spacing for higher dimensions
-                5 => 15.0, // 5D: even larger spacing
-                _ => 20.0, // Higher dimensions: very large spacing
-            };
-            bench_result(
-                generate_poisson_points(count, (-100.0, 100.0), min_distance, seed),
-                "poisson point generation failed",
-            )
-        }
     }
 }
 
@@ -301,197 +387,274 @@ fn gen_points<const D: usize>(
 // Large-Scale Triangulation Performance Profiling
 // ============================================================================
 
-/// Comprehensive triangulation scaling analysis across dimensions and distributions
-#[expect(
-    clippy::significant_drop_tightening,
-    clippy::too_many_lines,
-    reason = "profiling setup keeps benchmark state lifetimes and measurement branches visible"
-)]
-fn bench_scaling(c: &mut Criterion) {
-    let counts = profiling_counts();
-    let distributions = [
-        PointDistribution::Random,
-        PointDistribution::Grid,
-        PointDistribution::PoissonDisk,
-    ];
+/// Benchmark triangulation construction time for one dimension/count pair.
+fn bench_construction<const D: usize>(c: &mut Criterion, dimension_name: &str, n_points: usize) {
+    let bench_name = format!("construction/{dimension_name}/{n_points}v");
+    let mut group = c.benchmark_group(&bench_name);
+    group.throughput(Throughput::Elements(n_points as u64));
+    group.measurement_time(bench_time(5));
 
-    // 2D Triangulation Scaling
-    let mut group = c.benchmark_group("triangulation_scaling_2d");
-    group.measurement_time(bench_time(120));
+    let seed = seed_for_case::<D>(n_points);
 
-    for &count in counts {
-        for &distribution in &distributions {
-            // Pre-generate sample points to calculate actual count and avoid double-generation
-            let sample_points = gen_points::<2>(count, distribution, DEFAULT_SEED);
-            let actual_count = sample_points.len();
-            group.throughput(Throughput::Elements(actual_count as u64));
-
-            let bench_id = format!("{}_2d_{}", distribution.name(), count);
-            group.bench_with_input(
-                BenchmarkId::new("tds_new", bench_id),
-                &(count, distribution, actual_count),
-                |b, &(count, distribution, _actual_count)| {
-                    b.iter_batched(
-                        || {
-                            // Reuse same generation logic to ensure consistent point count
-                            let points = gen_points::<2>(count, distribution, DEFAULT_SEED);
-                            points.iter().map(|p| vertex!(*p)).collect::<Vec<_>>()
-                        },
-                        |vertices| {
-                            if let Ok(dt) =
-                                DelaunayTriangulationBuilder::new(&vertices).build::<()>()
-                            {
-                                black_box(dt);
-                            }
-                        },
-                        BatchSize::LargeInput,
-                    );
-                },
-            );
-        }
+    if (D == 4 && n_points >= 5000) || D == 5 {
+        group.sample_size(10);
+        group.measurement_time(bench_time(120));
     }
+
+    group.bench_function("construct", |b| {
+        b.iter_batched(
+            || {
+                let points = bench_result(
+                    generate_random_points_seeded::<f64, D>(n_points, (-100.0, 100.0), seed),
+                    "failed to generate points",
+                );
+                vertices_from_points(points)
+            },
+            |vertices| {
+                let dt = construct_triangulation::<D>(black_box(&vertices), seed);
+                black_box(dt)
+            },
+            BatchSize::LargeInput,
+        );
+    });
+
     group.finish();
+}
 
-    // 3D Triangulation Scaling
-    let mut group = c.benchmark_group("triangulation_scaling_3d");
-    group.measurement_time(bench_time(180));
+/// Benchmark process RSS deltas during construction.
+fn bench_rss_memory_usage<const D: usize>(
+    c: &mut Criterion,
+    dimension_name: &str,
+    n_points: usize,
+) {
+    let bench_name = format!("memory/{dimension_name}/{n_points}v");
+    let mut group = c.benchmark_group(&bench_name);
+    group.sample_size(10);
+    group.measurement_time(bench_time(5));
 
-    // 3D: cap to 100_000 in production to avoid runaway memory/time
-    for count in counts
-        .iter()
-        .copied()
-        .filter(|c| is_dev_mode() || *c <= 100_000)
-    {
-        for &distribution in &distributions {
-            // Skip very large counts for 3D in development mode to prevent timeouts
-            if is_dev_mode() && count > 10_000 {
-                continue;
+    let seed = seed_for_case::<D>(n_points);
+
+    #[cfg(feature = "bench-logging")]
+    if env::var_os("BENCH_PRINT_MEM").is_some() {
+        let mem_info = measure_construction_with_memory::<D>(n_points, seed);
+        bench_info!(
+            "Memory sample: before={} KiB, after={} KiB, delta={} KiB (TDS-only: {} KiB)",
+            mem_info.before,
+            mem_info.after,
+            mem_info.delta,
+            mem_info.tds_delta
+        );
+    }
+
+    let _ = memory_usage_kib();
+
+    group.bench_function("construction_memory_delta", |b| {
+        b.iter(|| {
+            let mem_info = measure_construction_with_memory::<D>(n_points, seed);
+            black_box(mem_info)
+        });
+    });
+
+    group.finish();
+}
+
+/// Benchmark topology validation over a prebuilt triangulation.
+fn bench_validation<const D: usize>(c: &mut Criterion, dimension_name: &str, n_points: usize) {
+    let bench_name = format!("validation/{dimension_name}/{n_points}v");
+    let mut group = c.benchmark_group(&bench_name);
+    group.measurement_time(bench_time(5));
+
+    if n_points >= 5000 || D == 5 {
+        group.sample_size(10);
+        group.measurement_time(bench_time(120));
+    }
+
+    let seed = seed_for_case::<D>(n_points);
+    let points = bench_result(
+        generate_random_points_seeded::<f64, D>(n_points, (-100.0, 100.0), seed),
+        "failed to generate points",
+    );
+    let vertices = vertices_from_points(points);
+    let dt = construct_triangulation::<D>(&vertices, seed);
+    let tri = dt.as_triangulation();
+
+    group.throughput(Throughput::Elements(tri.number_of_cells() as u64));
+
+    group.bench_function("validate_topology", |b| {
+        b.iter(|| {
+            if let Err(error) = tri.is_valid() {
+                abort_benchmark(format_args!(
+                    "triangulation should be structurally valid during validation benchmark: {error}"
+                ));
             }
+        });
+    });
 
-            // Pre-generate sample points to calculate actual count and avoid double-generation
-            let sample_points = gen_points::<3>(count, distribution, DEFAULT_SEED);
-            let actual_count = sample_points.len();
-            group.throughput(Throughput::Elements(actual_count as u64));
-
-            let bench_id = format!("{}_3d_{}", distribution.name(), count);
-            group.bench_with_input(
-                BenchmarkId::new("tds_new", bench_id),
-                &(count, distribution, actual_count),
-                |b, &(count, distribution, _actual_count)| {
-                    b.iter_batched(
-                        || {
-                            let points = gen_points::<3>(count, distribution, DEFAULT_SEED);
-                            points.iter().map(|p| vertex!(*p)).collect::<Vec<_>>()
-                        },
-                        |vertices| {
-                            if let Ok(dt) =
-                                DelaunayTriangulationBuilder::new(&vertices).build::<()>()
-                            {
-                                black_box(dt);
-                            }
-                        },
-                        BatchSize::LargeInput,
-                    );
-                },
-            );
-        }
-    }
     group.finish();
+}
 
-    // 4D and 5D Triangulation Scaling (smaller counts due to exponential complexity)
-    let high_dim_counts = if is_dev_mode() {
-        &[1_000, 3_000][..]
+/// Benchmark neighbor lookup over all cells.
+fn bench_neighbor_queries<const D: usize>(
+    c: &mut Criterion,
+    dimension_name: &str,
+    n_points: usize,
+) {
+    let bench_name = format!("queries/neighbors/{dimension_name}/{n_points}v");
+    let mut group = c.benchmark_group(&bench_name);
+    group.measurement_time(bench_time(5));
+
+    if D == 5 || (D == 4 && n_points >= 5000) {
+        group.sample_size(10);
+        group.measurement_time(bench_time(120));
+    }
+
+    let seed = seed_for_case::<D>(n_points);
+    let points = bench_result(
+        generate_random_points_seeded::<f64, D>(n_points, (-100.0, 100.0), seed),
+        "failed to generate points",
+    );
+    let vertices = vertices_from_points(points);
+    let dt = construct_triangulation::<D>(&vertices, seed);
+    let tds = dt.tds();
+    let cell_keys: Vec<_> = tds.cell_keys().collect();
+
+    group.throughput(Throughput::Elements(cell_keys.len() as u64));
+
+    group.bench_function("find_neighbors_all_cells", |b| {
+        b.iter(|| {
+            for &cell_key in &cell_keys {
+                let neighbors = tds.find_neighbors_by_key(cell_key);
+                black_box(neighbors);
+            }
+        });
+    });
+
+    group.finish();
+}
+
+/// Benchmark vertex iteration over a prebuilt triangulation.
+fn bench_vertex_iteration<const D: usize>(
+    c: &mut Criterion,
+    dimension_name: &str,
+    n_points: usize,
+) {
+    let bench_name = format!("queries/vertices/{dimension_name}/{n_points}v");
+    let mut group = c.benchmark_group(&bench_name);
+    group.throughput(Throughput::Elements(n_points as u64));
+    group.measurement_time(bench_time(5));
+
+    if D == 5 || (D == 4 && n_points >= 5000) {
+        group.sample_size(10);
+        group.measurement_time(bench_time(120));
+    }
+
+    let seed = seed_for_case::<D>(n_points);
+    let points = bench_result(
+        generate_random_points_seeded::<f64, D>(n_points, (-100.0, 100.0), seed),
+        "failed to generate points",
+    );
+    let vertices = vertices_from_points(points);
+    let dt = construct_triangulation::<D>(&vertices, seed);
+    let tds = dt.tds();
+
+    group.bench_function("iterate_all_vertices", |b| {
+        b.iter(|| {
+            let mut count = 0;
+            for (_, vertex) in tds.vertices() {
+                black_box(vertex);
+                count += 1;
+            }
+            black_box(count)
+        });
+    });
+
+    group.finish();
+}
+
+/// Benchmark cell-key iteration over a prebuilt triangulation.
+fn bench_cell_iteration<const D: usize>(c: &mut Criterion, dimension_name: &str, n_points: usize) {
+    let bench_name = format!("queries/cells/{dimension_name}/{n_points}v");
+    let mut group = c.benchmark_group(&bench_name);
+    group.measurement_time(bench_time(5));
+
+    if D == 5 || (D == 4 && n_points >= 5000) {
+        group.sample_size(10);
+        group.measurement_time(bench_time(120));
+    }
+
+    let seed = seed_for_case::<D>(n_points);
+    let points = bench_result(
+        generate_random_points_seeded::<f64, D>(n_points, (-100.0, 100.0), seed),
+        "failed to generate points",
+    );
+    let vertices = vertices_from_points(points);
+    let dt = construct_triangulation::<D>(&vertices, seed);
+    let tds = dt.tds();
+
+    group.throughput(Throughput::Elements(tds.number_of_cells() as u64));
+
+    group.bench_function("iterate_all_cells", |b| {
+        b.iter(|| {
+            let mut count = 0;
+            for cell_key in tds.cell_keys() {
+                black_box(cell_key);
+                count += 1;
+            }
+            black_box(count)
+        });
+    });
+
+    group.finish();
+}
+
+fn bench_2d_suite(c: &mut Criterion) {
+    for &n_points in &[1000, 5000, 10_000] {
+        bench_construction::<2>(c, "2D", n_points);
+        bench_rss_memory_usage::<2>(c, "2D", n_points);
+        bench_validation::<2>(c, "2D", n_points);
+        bench_neighbor_queries::<2>(c, "2D", n_points);
+        bench_vertex_iteration::<2>(c, "2D", n_points);
+        bench_cell_iteration::<2>(c, "2D", n_points);
+    }
+}
+
+fn bench_3d_suite(c: &mut Criterion) {
+    for &n_points in &[1000, 5000, 10_000] {
+        bench_construction::<3>(c, "3D", n_points);
+        bench_rss_memory_usage::<3>(c, "3D", n_points);
+        bench_validation::<3>(c, "3D", n_points);
+        bench_neighbor_queries::<3>(c, "3D", n_points);
+        bench_vertex_iteration::<3>(c, "3D", n_points);
+        bench_cell_iteration::<3>(c, "3D", n_points);
+    }
+}
+
+fn bench_4d_suite(c: &mut Criterion) {
+    let point_counts: &[usize] = if is_large_scale_mode() {
+        &[1000, 5000, 10_000]
     } else {
-        &[1_000, 3_000, 10_000][..]
+        &[1000, 3000]
     };
 
-    // 4D Triangulation Scaling
-    let mut group = c.benchmark_group("triangulation_scaling_4d");
-    group.measurement_time(bench_time(240));
-
-    // 4D: cap to 3_000 in production to avoid runaway memory/time
-    for count in high_dim_counts
-        .iter()
-        .copied()
-        .filter(|c| is_dev_mode() || *c <= 3_000)
-    {
-        for &distribution in &distributions {
-            // Pre-generate sample points to calculate actual count and avoid double-generation
-            let sample_points = gen_points::<4>(count, distribution, DEFAULT_SEED);
-            let actual_count = sample_points.len();
-            group.throughput(Throughput::Elements(actual_count as u64));
-
-            let bench_id = format!("{}_4d_{}", distribution.name(), count);
-            group.bench_with_input(
-                BenchmarkId::new("tds_new", bench_id),
-                &(count, distribution, actual_count),
-                |b, &(count, distribution, _actual_count)| {
-                    b.iter_batched(
-                        || {
-                            let points = gen_points::<4>(count, distribution, DEFAULT_SEED);
-                            points.iter().map(|p| vertex!(*p)).collect::<Vec<_>>()
-                        },
-                        |vertices| {
-                            if let Ok(dt) =
-                                DelaunayTriangulationBuilder::new(&vertices).build::<()>()
-                            {
-                                black_box(dt);
-                            }
-                        },
-                        BatchSize::LargeInput,
-                    );
-                },
-            );
-        }
+    for &n_points in point_counts {
+        bench_construction::<4>(c, "4D", n_points);
+        bench_rss_memory_usage::<4>(c, "4D", n_points);
+        bench_validation::<4>(c, "4D", n_points);
+        bench_neighbor_queries::<4>(c, "4D", n_points);
+        bench_vertex_iteration::<4>(c, "4D", n_points);
+        bench_cell_iteration::<4>(c, "4D", n_points);
     }
-    group.finish();
+}
 
-    // 5D Triangulation Scaling (even smaller counts due to very high complexity)
-    let ultra_high_dim_counts = if is_dev_mode() {
-        &[1_000][..]
-    } else {
-        &[1_000, 3_000][..]
-    };
-
-    let mut group = c.benchmark_group("triangulation_scaling_5d");
-    group.measurement_time(bench_time(300));
-
-    // 5D: cap to 1_000 in production to avoid runaway memory/time
-    for count in ultra_high_dim_counts
-        .iter()
-        .copied()
-        .filter(|c| is_dev_mode() || *c <= 1_000)
-    {
-        for &distribution in &distributions {
-            // Pre-generate sample points to calculate actual count and avoid double-generation
-            let sample_points = gen_points::<5>(count, distribution, DEFAULT_SEED);
-            let actual_count = sample_points.len();
-            group.throughput(Throughput::Elements(actual_count as u64));
-
-            let bench_id = format!("{}_5d_{}", distribution.name(), count);
-            group.bench_with_input(
-                BenchmarkId::new("tds_new", bench_id),
-                &(count, distribution, actual_count),
-                |b, &(count, distribution, _actual_count)| {
-                    b.iter_batched(
-                        || {
-                            let points = gen_points::<5>(count, distribution, DEFAULT_SEED);
-                            points.iter().map(|p| vertex!(*p)).collect::<Vec<_>>()
-                        },
-                        |vertices| {
-                            if let Ok(dt) =
-                                DelaunayTriangulationBuilder::new(&vertices).build::<()>()
-                            {
-                                black_box(dt);
-                            }
-                        },
-                        BatchSize::LargeInput,
-                    );
-                },
-            );
-        }
+fn bench_5d_suite(c: &mut Criterion) {
+    for &n_points in &[500, 1000] {
+        bench_construction::<5>(c, "5D", n_points);
+        bench_rss_memory_usage::<5>(c, "5D", n_points);
+        bench_validation::<5>(c, "5D", n_points);
+        bench_neighbor_queries::<5>(c, "5D", n_points);
+        bench_vertex_iteration::<5>(c, "5D", n_points);
+        bench_cell_iteration::<5>(c, "5D", n_points);
     }
-    group.finish();
 }
 
 // ============================================================================
@@ -1047,7 +1210,10 @@ criterion_group!(
             .measurement_time(bench_time(60))
     };
     targets =
-        bench_scaling,
+        bench_2d_suite,
+        bench_3d_suite,
+        bench_4d_suite,
+        bench_5d_suite,
         benchmark_memory_profiling,
         benchmark_query_latency,
         benchmark_validation_components_2d,

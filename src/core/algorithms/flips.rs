@@ -47,7 +47,9 @@ use crate::core::util::stable_hash_u64_slice;
 use crate::core::vertex::Vertex;
 use crate::geometry::kernel::Kernel;
 use crate::geometry::point::Point;
-use crate::geometry::predicates::Orientation;
+#[cfg(debug_assertions)]
+use crate::geometry::predicates::simplex_orientation;
+use crate::geometry::predicates::{Orientation, simplex_orientation_fast_filter_sign};
 use crate::geometry::robust_predicates::robust_orientation;
 use crate::geometry::traits::coordinate::{
     Coordinate, CoordinateConversionError, CoordinateScalar,
@@ -522,7 +524,7 @@ where
     for vertices in new_cell_vertices {
         let cell = Cell::new(vertices, None)?;
         let cell_key = trial
-            .insert_cell_with_mapping_trusted_vertices(cell)
+            .insert_cell_with_mapping_prechecked_topology(cell)
             .map_err(|source| FlipMutationError::CellInsertion {
                 source: source.into(),
             })?;
@@ -3946,18 +3948,15 @@ where
         .and_then(|n| n.get(facet_index_a).copied().flatten())
         .ok_or(FlipError::BoundaryFacet { facet })?;
 
-    if !tds.contains_cell(neighbor_key) {
-        return Err(FlipError::MissingNeighbor {
-            facet,
-            neighbor_key,
-        });
-    }
-
-    let cell_b = tds.cell(neighbor_key).ok_or(FlipError::MissingCell {
-        cell_key: neighbor_key,
+    let cell_b = tds.cell(neighbor_key).ok_or(FlipError::MissingNeighbor {
+        facet,
+        neighbor_key,
     })?;
 
-    let Some(facet_index_b) = cell_a.mirror_facet_index(facet_index_a, cell_b) else {
+    let Some(facet_index_b) = cell_a
+        .mirror_facet_index(facet_index_a, cell_b)
+        .or_else(|| back_reference_facet_index(cell_a_key, cell_b))
+    else {
         return Err(FlipError::InvalidFacetAdjacency {
             cell_key: cell_a_key,
             neighbor_key,
@@ -4009,6 +4008,34 @@ where
     })
 }
 
+/// Finds the neighbor slot that points back to a source cell when reciprocal
+/// neighbor pointers are already available.
+fn back_reference_facet_index<T, U, V, const D: usize>(
+    source_cell: CellKey,
+    neighbor_cell: &Cell<T, U, V, D>,
+) -> Option<usize> {
+    neighbor_cell
+        .neighbors()?
+        .iter()
+        .position(|neighbor| *neighbor == Some(source_cell))
+}
+
+/// Increments a small vertex-incidence count buffer without allocating a hash map
+/// for the tiny opposite-face sets used by inverse flip context builders.
+fn increment_vertex_count(
+    counts: &mut SmallBuffer<(VertexKey, usize), MAX_PRACTICAL_DIMENSION_SIZE>,
+    vertex_key: VertexKey,
+) {
+    if let Some((_vertex, count)) = counts
+        .iter_mut()
+        .find(|(existing_vertex, _count)| *existing_vertex == vertex_key)
+    {
+        *count += 1;
+    } else {
+        counts.push((vertex_key, 1));
+    }
+}
+
 /// Build inverse k=2 flip context from an edge and its incident cells.
 ///
 /// # Errors
@@ -4042,17 +4069,12 @@ where
         return Err(FlipError::MissingVertex { vertex_key: v1 });
     }
 
-    let cells_v0 = tds.find_cells_containing_vertex_by_key(v0);
-    let cells_v1 = tds.find_cells_containing_vertex_by_key(v1);
-    let (small, large) = if cells_v0.len() <= cells_v1.len() {
-        (&cells_v0, &cells_v1)
-    } else {
-        (&cells_v1, &cells_v0)
-    };
-
     let mut removed_cells: CellKeyBuffer = CellKeyBuffer::new();
-    for &cell_key in small {
-        if large.contains(&cell_key) {
+    for cell_key in tds.find_cells_containing_vertex(v0) {
+        let cell = tds
+            .cell(cell_key)
+            .ok_or(FlipError::MissingCell { cell_key })?;
+        if cell.contains_vertex(v1) {
             removed_cells.push(cell_key);
         }
     }
@@ -4064,7 +4086,8 @@ where
         });
     }
 
-    let mut counts: FastHashMap<VertexKey, usize> = FastHashMap::default();
+    let mut counts: SmallBuffer<(VertexKey, usize), MAX_PRACTICAL_DIMENSION_SIZE> =
+        SmallBuffer::new();
     for &cell_key in &removed_cells {
         let cell = tds
             .cell(cell_key)
@@ -4076,12 +4099,12 @@ where
         }
         for &vk in cell.vertices() {
             if vk != v0 && vk != v1 {
-                *counts.entry(vk).or_insert(0) += 1;
+                increment_vertex_count(&mut counts, vk);
             }
         }
     }
 
-    if counts.len() != D || !counts.values().all(|&count| count == D - 1) {
+    if counts.len() != D || !counts.iter().all(|(_vertex, count)| *count == D - 1) {
         return Err(FlipError::InvalidEdgeAdjacency {
             reason: FlipEdgeAdjacencyError::InvalidOppositeVertexIncidence {
                 expected_vertices: D,
@@ -4092,7 +4115,7 @@ where
     }
 
     let mut inserted_face_vertices: SmallBuffer<VertexKey, MAX_PRACTICAL_DIMENSION_SIZE> =
-        counts.keys().copied().collect();
+        counts.iter().map(|(vertex, _count)| *vertex).collect();
     inserted_face_vertices.sort_unstable_by_key(|v| v.data().as_ffi());
 
     let mut removed_face_vertices: SmallBuffer<VertexKey, MAX_PRACTICAL_DIMENSION_SIZE> =
@@ -4227,6 +4250,37 @@ where
     })
 }
 
+/// Return whether source-cell points are safe for the positive-oriented insphere path.
+///
+/// This helper exists so flip predicates only use
+/// [`Kernel::in_sphere_positive_oriented`] when the actual point ordering is
+/// provably positive-oriented. It returns `false` for synthetic/non-source cells
+/// and for geometries whose orientation cannot be certified by the f64 fast
+/// filter, causing callers to use the full orientation-aware predicate instead.
+#[inline]
+fn source_cell_is_certified_positive<T, const D: usize>(
+    source_cell: Option<CellKey>,
+    points: &[Point<T, D>],
+) -> bool
+where
+    T: CoordinateScalar,
+{
+    if source_cell.is_none() {
+        return false;
+    }
+
+    let known_positive =
+        matches!(simplex_orientation_fast_filter_sign(points), Ok(Some(sign)) if sign > 0);
+    #[cfg(debug_assertions)]
+    if known_positive {
+        debug_assert!(
+            matches!(simplex_orientation(points), Ok(Orientation::POSITIVE)),
+            "stored source cells must be positive-oriented before using the insphere fast path"
+        );
+    }
+    known_positive
+}
+
 #[expect(
     clippy::too_many_arguments,
     reason = "local predicate evaluation threads topology, source cells, and diagnostics explicitly"
@@ -4281,52 +4335,73 @@ where
     cell_vertices[0].sort_unstable_by_key(|v| v.data().as_ffi());
     cell_vertices[1].sort_unstable_by_key(|v| v.data().as_ffi());
 
-    let (points_a, points_b, opposite_point_a, opposite_point_b) =
-        if matches!(topology_model, GlobalTopologyModelAdapter::Euclidean(_)) {
-            let mut point_cache = EuclideanPointCache::new();
-            (
-                point_cache.points_for_vertices(tds, &cell_vertices[0])?,
-                point_cache.points_for_vertices(tds, &cell_vertices[1])?,
-                point_cache.point(tds, opposite_a)?,
-                point_cache.point(tds, opposite_b)?,
-            )
+    let (
+        points_a,
+        points_b,
+        opposite_point_a,
+        opposite_point_b,
+        positive_oriented_a,
+        positive_oriented_b,
+    ) = if matches!(topology_model, GlobalTopologyModelAdapter::Euclidean(_)) {
+        let mut point_cache = EuclideanPointCache::new();
+        let source_a = matching_source_cell(tds, &cell_vertices[0], source_cells);
+        let source_b = matching_source_cell(tds, &cell_vertices[1], source_cells);
+        let points_a = if let Some(source_cell) = source_a {
+            let cell = tds.cell(source_cell).ok_or(FlipError::MissingCell {
+                cell_key: source_cell,
+            })?;
+            point_cache.points_for_vertices(tds, cell.vertices())?
         } else {
-            let source_a =
-                matching_source_cell(tds, &cell_vertices[0], source_cells).or(frame_cell);
-            let source_b =
-                matching_source_cell(tds, &cell_vertices[1], source_cells).or(frame_cell);
-            (
-                vertices_to_points_with_optional_lift(
-                    tds,
-                    topology_model,
-                    &cell_vertices[0],
-                    source_a,
-                    source_cells,
-                )?,
-                vertices_to_points_with_optional_lift(
-                    tds,
-                    topology_model,
-                    &cell_vertices[1],
-                    source_b,
-                    source_cells,
-                )?,
-                vertex_point_lifted_into_cell(
-                    tds,
-                    topology_model,
-                    opposite_a,
-                    source_b,
-                    source_cells,
-                )?,
-                vertex_point_lifted_into_cell(
-                    tds,
-                    topology_model,
-                    opposite_b,
-                    source_a,
-                    source_cells,
-                )?,
-            )
+            point_cache.points_for_vertices(tds, &cell_vertices[0])?
         };
-    let in_a = match kernel.in_sphere(&points_a, &opposite_point_b) {
+        let points_b = if let Some(source_cell) = source_b {
+            let cell = tds.cell(source_cell).ok_or(FlipError::MissingCell {
+                cell_key: source_cell,
+            })?;
+            point_cache.points_for_vertices(tds, cell.vertices())?
+        } else {
+            point_cache.points_for_vertices(tds, &cell_vertices[1])?
+        };
+        let positive_oriented_a = source_cell_is_certified_positive(source_a, &points_a);
+        let positive_oriented_b = source_cell_is_certified_positive(source_b, &points_b);
+        (
+            points_a,
+            points_b,
+            point_cache.point(tds, opposite_a)?,
+            point_cache.point(tds, opposite_b)?,
+            positive_oriented_a,
+            positive_oriented_b,
+        )
+    } else {
+        let source_a = matching_source_cell(tds, &cell_vertices[0], source_cells).or(frame_cell);
+        let source_b = matching_source_cell(tds, &cell_vertices[1], source_cells).or(frame_cell);
+        (
+            vertices_to_points_with_optional_lift(
+                tds,
+                topology_model,
+                &cell_vertices[0],
+                source_a,
+                source_cells,
+            )?,
+            vertices_to_points_with_optional_lift(
+                tds,
+                topology_model,
+                &cell_vertices[1],
+                source_b,
+                source_cells,
+            )?,
+            vertex_point_lifted_into_cell(tds, topology_model, opposite_a, source_b, source_cells)?,
+            vertex_point_lifted_into_cell(tds, topology_model, opposite_b, source_a, source_cells)?,
+            false,
+            false,
+        )
+    };
+    let sphere_a = if positive_oriented_a {
+        kernel.in_sphere_positive_oriented(&points_a, &opposite_point_b)
+    } else {
+        kernel.in_sphere(&points_a, &opposite_point_b)
+    };
+    let in_a = match sphere_a {
         Ok(value) => value,
         Err(e) => {
             diagnostics.record_predicate_failure();
@@ -4338,7 +4413,12 @@ where
         }
     };
 
-    let in_b = match kernel.in_sphere(&points_b, &opposite_point_a) {
+    let sphere_b = if positive_oriented_b {
+        kernel.in_sphere_positive_oriented(&points_b, &opposite_point_a)
+    } else {
+        kernel.in_sphere(&points_b, &opposite_point_a)
+    };
+    let in_b = match sphere_b {
         Ok(value) => value,
         Err(e) => {
             diagnostics.record_predicate_failure();
@@ -4670,13 +4750,12 @@ where
         return Err(FlipError::MissingVertex { vertex_key: c });
     }
 
-    let cells_a = tds.find_cells_containing_vertex_by_key(a);
-    let cells_b = tds.find_cells_containing_vertex_by_key(b);
-    let cells_c = tds.find_cells_containing_vertex_by_key(c);
-
     let mut removed_cells: CellKeyBuffer = CellKeyBuffer::new();
-    for &cell_key in &cells_a {
-        if cells_b.contains(&cell_key) && cells_c.contains(&cell_key) {
+    for cell_key in tds.find_cells_containing_vertex(a) {
+        let cell = tds
+            .cell(cell_key)
+            .ok_or(FlipError::MissingCell { cell_key })?;
+        if cell.contains_vertex(b) && cell.contains_vertex(c) {
             removed_cells.push(cell_key);
         }
     }
@@ -4689,7 +4768,8 @@ where
         });
     }
 
-    let mut counts: FastHashMap<VertexKey, usize> = FastHashMap::default();
+    let mut counts: SmallBuffer<(VertexKey, usize), MAX_PRACTICAL_DIMENSION_SIZE> =
+        SmallBuffer::new();
     for &cell_key in &removed_cells {
         let cell = tds
             .cell(cell_key)
@@ -4706,12 +4786,12 @@ where
         }
         for &vk in cell.vertices() {
             if vk != a && vk != b && vk != c {
-                *counts.entry(vk).or_insert(0) += 1;
+                increment_vertex_count(&mut counts, vk);
             }
         }
     }
 
-    if counts.len() != expected || !counts.values().all(|&count| count == expected - 1) {
+    if counts.len() != expected || !counts.iter().all(|(_vertex, count)| *count == expected - 1) {
         return Err(FlipError::InvalidTriangleAdjacency {
             reason: FlipTriangleAdjacencyError::InvalidRidgeVertexIncidence {
                 expected_vertices: expected,
@@ -4722,7 +4802,7 @@ where
     }
 
     let mut inserted_face_vertices: SmallBuffer<VertexKey, MAX_PRACTICAL_DIMENSION_SIZE> =
-        counts.keys().copied().collect();
+        counts.iter().map(|(vertex, _count)| *vertex).collect();
     inserted_face_vertices.sort_unstable_by_key(|v| v.data().as_ffi());
 
     let mut removed_face_vertices: SmallBuffer<VertexKey, MAX_PRACTICAL_DIMENSION_SIZE> =
@@ -4791,10 +4871,21 @@ where
         // Sort by VertexKey for canonical SoS perturbation ordering
         cell_vertices.sort_unstable_by_key(|v| v.data().as_ffi());
 
-        let (points, missing_point) = if is_euclidean_topology {
+        let (points, missing_point, positive_oriented) = if is_euclidean_topology {
+            let source_cell = matching_source_cell(tds, &cell_vertices, source_cells);
+            let points = if let Some(source_cell) = source_cell {
+                let cell = tds.cell(source_cell).ok_or(FlipError::MissingCell {
+                    cell_key: source_cell,
+                })?;
+                euclidean_point_cache.points_for_vertices(tds, cell.vertices())?
+            } else {
+                euclidean_point_cache.points_for_vertices(tds, &cell_vertices)?
+            };
+            let positive_oriented = source_cell_is_certified_positive(source_cell, &points);
             (
-                euclidean_point_cache.points_for_vertices(tds, &cell_vertices)?,
+                points,
                 euclidean_point_cache.point(tds, missing)?,
+                positive_oriented,
             )
         } else {
             let source_cell =
@@ -4814,10 +4905,16 @@ where
                     source_cell,
                     source_cells,
                 )?,
+                false,
             )
         };
 
-        let in_sphere = match kernel.in_sphere(&points, &missing_point) {
+        let in_sphere_result = if positive_oriented {
+            kernel.in_sphere_positive_oriented(&points, &missing_point)
+        } else {
+            kernel.in_sphere(&points, &missing_point)
+        };
+        let in_sphere = match in_sphere_result {
             Ok(value) => value,
             Err(e) => {
                 diagnostics.record_predicate_failure();
@@ -5399,7 +5496,11 @@ where
 
     match attempt1_result {
         Ok(outcome) => {
-            if !outcome.postcondition_required {
+            // D>=4 bulk construction uses local repair as a bounded stabilizer
+            // and performs strict final validation after construction. Replaying
+            // the same local queues after every successful repair adds quadratic
+            // predicate work without strengthening the final correctness gate.
+            if !outcome.postcondition_required || D >= 4 {
                 publish_local_repair_phase_timing(&mut timing, phase_timing);
                 return Ok(outcome.stats);
             }
@@ -5454,7 +5555,9 @@ where
 
     match attempt2_result {
         Ok(outcome) => {
-            if !outcome.postcondition_required {
+            // See attempt 1: D>=4 local postconditions are deferred to the
+            // construction finalization/validation path.
+            if !outcome.postcondition_required || D >= 4 {
                 publish_local_repair_phase_timing(&mut timing, phase_timing);
                 return Ok(outcome.stats);
             }
@@ -6117,14 +6220,6 @@ where
         };
 
         if !violates {
-            // During repair, D≥4 inverse postcondition checks can produce false
-            // positives in near-degenerate configurations (both forward and inverse
-            // flip predicates simultaneously report a violation — a numerical
-            // artifact).  Strict validation still reports these instead of
-            // suppressing applicable inverse flips.
-            if mode == PostconditionMode::Repair && D >= 4 {
-                continue;
-            }
             if repair_trace_enabled() {
                 tracing::debug!(
                     "[repair] postcondition inverse k=2 flip still applicable (edge={edge:?})"
@@ -6201,12 +6296,6 @@ where
         };
 
         if !violates {
-            // Symmetric repair-mode guard to the inverse k=2 check above:
-            // D≥4 inverse checks can be noisy in near-degenerate repair states,
-            // while strict validation still reports applicable inverse flips.
-            if mode == PostconditionMode::Repair && D >= 4 {
-                continue;
-            }
             if repair_trace_enabled() {
                 tracing::debug!(
                     "[repair] postcondition inverse k=3 flip still applicable (triangle={triangle:?})"
@@ -8916,6 +9005,28 @@ mod tests {
             );
         }
         vertices
+    }
+
+    /// Verifies source-cell orientation gating only accepts certified positive orderings.
+    #[test]
+    fn test_source_cell_is_certified_positive_requires_source_and_positive_order() {
+        let source_cell = CellKey::from(KeyData::from_ffi(42));
+        let positive = [
+            Point::new([0.0, 0.0]),
+            Point::new([1.0, 0.0]),
+            Point::new([0.0, 1.0]),
+        ];
+        let negative = [positive[1], positive[0], positive[2]];
+
+        assert!(source_cell_is_certified_positive(
+            Some(source_cell),
+            &positive
+        ));
+        assert!(!source_cell_is_certified_positive(None, &positive));
+        assert!(!source_cell_is_certified_positive(
+            Some(source_cell),
+            &negative,
+        ));
     }
 
     /// Converts vertex-key slices into the fixed-capacity buffer used by flip helpers.

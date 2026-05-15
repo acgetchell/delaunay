@@ -633,7 +633,8 @@ mod tests {
         let cell_key = tds.cell_keys().next().unwrap();
         let vkeys = tds.cell_vertices(cell_key).unwrap();
         let dup_cell = Cell::new(vkeys.to_vec(), None).unwrap();
-        tds.insert_cell_with_mapping(dup_cell).unwrap();
+        tds.insert_cell_bypassing_topology_checks_for_test(dup_cell)
+            .unwrap();
 
         // Sanity: at least one facet should now be over-shared.
         let facet_map = tds.build_facet_to_cells_map().unwrap();

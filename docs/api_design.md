@@ -344,7 +344,7 @@ See the following examples for practical demonstrations:
 
 - `examples/topology_editing_2d_3d.rs` - 2D+3D example showing both APIs
 - `examples/pachner_roundtrip_4d.rs` - Advanced 4D example with all flip types
-- `examples/triangulation_3d_100_points.rs` - Builder API usage for construction
+- `examples/triangulation_3d_1000_points.rs` - Builder API usage for construction
 - `examples/delaunayize_repair.rs` - Delaunayize workflow (2D/3D/4D, flip-then-repair, custom config)
 
 ## Delaunayize Workflow

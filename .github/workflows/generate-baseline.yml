@@ -1,20 +1,29 @@
 name: Generate Performance Baseline
 
-# Generate performance baselines for new releases
+# Generate performance baselines for main and release refs
 # Security: All GitHub context variables are passed through safe environment variables
 # to prevent code injection attacks via malicious branch names or commit data
 on:
-  # Trigger on tag creation (releases)
+  # Trigger on main updates and release tag creation.
   push:
+    branches:
+      - main
     tags:
       - "v*"
+    paths:
+      - "src/**"
+      - "benches/**"
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - "scripts/benchmark_utils.py"
 
-  # Manual trigger (supports regenerating a baseline for an existing tag)
+  # Manual trigger (supports regenerating a baseline for an existing ref)
   workflow_dispatch:
     inputs:
-      tag:
-        description: "Tag to benchmark (e.g. v0.6.2)"
-        required: true
+      ref:
+        description: "Git ref to benchmark (e.g. main or v0.7.5)"
+        required: false
+        default: main
         type: string
 
 # Security: Define minimal required permissions
@@ -61,41 +70,54 @@ jobs:
       - name: Verify uv installation
         run: uv --version
 
-      - name: Determine target tag
-        id: tag_info
+      - name: Determine and validate target ref
+        id: ref_info
         env:
-          INPUT_TAG: ${{ inputs.tag }}
-          REF_TYPE: ${{ github.ref_type }}
-          REF_NAME: ${{ github.ref_name }}
+          INPUT_REF: ${{ inputs.ref || '' }}
+          GITHUB_REF: ${{ github.ref }}
+          GITHUB_REF_NAME: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          uv run benchmark-utils determine-ref
+
+      - name: Validate checkout ref namespace
+        env:
+          TARGET_REF: ${{ steps.ref_info.outputs.ref_name }}
         run: |
           set -euo pipefail
 
-          if [[ "${REF_TYPE}" = "tag" && -n "${REF_NAME}" ]]; then
-            tag_name="${REF_NAME}"
-          elif [[ -n "${INPUT_TAG}" ]]; then
-            tag_name="${INPUT_TAG}"
+          ref="${TARGET_REF:?benchmark-utils determine-ref did not produce ref_name}"
+          disallowed_ref_re='^(refs/pull/|refs/merge-requests/|refs/changes/|pull/)'
+          trusted_tag_re='^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?(\+[0-9A-Za-z.-]+)?$'
+          trusted_owner_prefix='((codex|copilot|cursor)/)?'
+          trusted_type_prefix='(fix|feat|feature|perf|doc|docs|test|refactor|ci|build|chore|style|release)'
+          trusted_branch_re="^${trusted_owner_prefix}(main|${trusted_type_prefix}/[A-Za-z0-9][A-Za-z0-9._/-]*)$"
+
+          if [[ "$ref" =~ $disallowed_ref_re ]]; then
+            echo "❌ Ref namespace not allowed for baseline generation: $ref" >&2
+            exit 1
+          fi
+          if [[ "$ref" =~ ^refs/ ]]; then
+            echo "❌ Raw ref namespace not allowed for baseline generation: $ref" >&2
+            exit 1
+          fi
+          if [[ "$ref" == "main" || "$ref" =~ $trusted_tag_re || "$ref" =~ $trusted_branch_re ]]; then
+            echo "✅ Baseline checkout ref allowed: $ref"
           else
-            echo "error: no tag provided. For workflow_dispatch you must provide inputs.tag" >&2
+            echo "❌ Ref is not in the trusted baseline allow-list: $ref" >&2
             exit 1
           fi
 
-          if [[ ! "${tag_name}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?(\+[0-9A-Za-z.-]+)?$ ]]; then
-            echo "error: tag must look like vX.Y.Z[-PRERELEASE][+BUILD] (got: '${tag_name}')" >&2
-            exit 1
-          fi
-
-          echo "tag_name=${tag_name}" >> "$GITHUB_OUTPUT"
-
-      - name: Checkout target tag (code under test)
+      - name: Checkout target ref (code under test)
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
           fetch-depth: 0
-          ref: ${{ steps.tag_info.outputs.tag_name }}
+          ref: ${{ steps.ref_info.outputs.ref_name }}
           path: bench-target
 
-      - name: Install target Rust toolchain (from tag)
+      - name: Install target Rust toolchain
         env:
-          TAG_NAME: ${{ steps.tag_info.outputs.tag_name }}
+          BASELINE_REF: ${{ steps.ref_info.outputs.ref_name }}
         run: |
           set -euo pipefail
 
@@ -108,25 +130,25 @@ jobs:
           PY
           )"
 
-          echo "📌 Target tag: ${TAG_NAME}"
+          echo "📌 Target ref: ${BASELINE_REF}"
           echo "🦀 Installing Rust toolchain: ${channel}"
 
           rustup toolchain install "${channel}" --profile minimal
 
       - name: Generate performance baseline
         env:
-          TAG_NAME: ${{ steps.tag_info.outputs.tag_name }}
+          BASELINE_REF: ${{ steps.ref_info.outputs.ref_name }}
         run: |
           set -euo pipefail
 
-          echo "🚀 Generating performance baseline for tag ${TAG_NAME}"
+          echo "🚀 Generating performance baseline for ref ${BASELINE_REF}"
 
-          # Generate baseline using fixed tooling (this checkout) against the tag checkout.
+          # Generate baseline using fixed tooling (this checkout) against the target checkout.
           # Use --dev to match the comparison workflow's reduced Criterion settings;
           # benchmark-utils still runs the benchmark under Cargo's perf profile.
           uv run benchmark-utils generate-baseline \
             --project-root bench-target \
-            --tag "${TAG_NAME}" \
+            --ref "${BASELINE_REF}" \
             --dev
 
           echo "✅ Baseline generated successfully"
@@ -137,17 +159,17 @@ jobs:
 
       - name: Prepare baseline artifact
         env:
-          TAG_NAME: ${{ steps.tag_info.outputs.tag_name }}
+          BASELINE_REF: ${{ steps.ref_info.outputs.ref_name }}
           SAFE_RUN_ID: ${{ github.run_id }}
         run: |
           set -euo pipefail
 
           # Create metadata file in the target checkout so it is included in the uploaded artifact.
           uv run benchmark-utils create-metadata \
-            --tag "${TAG_NAME}" \
+            --ref "${BASELINE_REF}" \
             --output-dir "bench-target/baseline-artifact"
 
-          # Extract the tag commit from the baseline file for human-readable logging.
+          # Extract the baseline commit from the baseline file for human-readable logging.
           baseline_commit="$(uv run python - <<'PY'
           from pathlib import Path
           import re
@@ -168,8 +190,8 @@ jobs:
       - name: Create safe artifact name
         id: safe_name
         env:
-          TAG_NAME: ${{ steps.tag_info.outputs.tag_name }}
-        run: uv run benchmark-utils sanitize-artifact-name --tag "$TAG_NAME"
+          BASELINE_REF: ${{ steps.ref_info.outputs.ref_name }}
+        run: uv run benchmark-utils sanitize-artifact-name --ref "$BASELINE_REF"
 
       - name: Upload baseline artifact
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
@@ -181,7 +203,7 @@ jobs:
 
       - name: Display next steps
         env:
-          TAG_NAME: ${{ steps.tag_info.outputs.tag_name }}
+          BASELINE_REF: ${{ steps.ref_info.outputs.ref_name }}
           SAFE_REF_TYPE: ${{ github.ref_type }}
         run: |
           set -euo pipefail
@@ -189,7 +211,7 @@ jobs:
           echo "🎉 Performance baseline generated successfully!"
           echo ""
           echo "📋 Summary:"
-          echo "  Tag: $TAG_NAME"
+          echo "  Ref: $BASELINE_REF"
           echo "  Commit: ${BASELINE_COMMIT:-unknown}"
           echo "  Artifact: ${{ steps.safe_name.outputs.artifact_name }}"
           echo ""
@@ -199,5 +221,5 @@ jobs:
           echo "  • Manual performance comparisons"
           echo ""
           if [ "$SAFE_REF_TYPE" = "tag" ]; then
-            echo "💡 This baseline is now available for tag $TAG_NAME"
+            echo "💡 This baseline is now available for tag $BASELINE_REF"
           fi

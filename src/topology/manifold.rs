@@ -2278,7 +2278,9 @@ mod tests {
             .insert_cell_with_mapping(Cell::new(vec![v0, v1, v2, v4], None).unwrap())
             .unwrap();
         let _ = tds
-            .insert_cell_with_mapping(Cell::new(vec![v0, v1, v2, v5], None).unwrap())
+            .insert_cell_bypassing_topology_checks_for_test(
+                Cell::new(vec![v0, v1, v2, v5], None).unwrap(),
+            )
             .unwrap();
 
         let facet_to_cells = tds.build_facet_to_cells_map().unwrap();
@@ -3683,22 +3685,18 @@ mod tests {
         let v2 = tds.insert_vertex_with_mapping(vertex!([0.5, 1.0])).unwrap();
 
         // c1: all vertices at base image [0,0].
-        let c1 = tds
-            .insert_cell_with_mapping(Cell::new(vec![v0, v1, v2], None).unwrap())
-            .unwrap();
-        tds.cell_mut(c1)
-            .unwrap()
+        let mut cell1 = Cell::new(vec![v0, v1, v2], None).unwrap();
+        cell1
             .set_periodic_vertex_offsets(vec![[0, 0], [0, 0], [0, 0]])
             .unwrap();
+        let c1 = tds.insert_cell_with_mapping(cell1).unwrap();
 
         // c2: v0 at periodic image [1,0]; v1 and v2 at base image.
-        let c2 = tds
-            .insert_cell_with_mapping(Cell::new(vec![v0, v1, v2], None).unwrap())
-            .unwrap();
-        tds.cell_mut(c2)
-            .unwrap()
+        let mut cell2 = Cell::new(vec![v0, v1, v2], None).unwrap();
+        cell2
             .set_periodic_vertex_offsets(vec![[1, 0], [0, 0], [0, 0]])
             .unwrap();
+        let c2 = tds.insert_cell_with_mapping(cell2).unwrap();
 
         let map = build_ridge_star_map_for_cells(&tds, &[c1, c2]).unwrap();
 
@@ -3763,21 +3761,17 @@ mod tests {
         let v1 = tds.insert_vertex_with_mapping(vertex!([1.0, 0.0])).unwrap();
         let v2 = tds.insert_vertex_with_mapping(vertex!([0.5, 1.0])).unwrap();
 
-        let c1 = tds
-            .insert_cell_with_mapping(Cell::new(vec![v0, v1, v2], None).unwrap())
-            .unwrap();
-        tds.cell_mut(c1)
-            .unwrap()
+        let mut cell1 = Cell::new(vec![v0, v1, v2], None).unwrap();
+        cell1
             .set_periodic_vertex_offsets(vec![[0, 0], [0, 0], [0, 0]])
             .unwrap();
+        let c1 = tds.insert_cell_with_mapping(cell1).unwrap();
 
-        let c2 = tds
-            .insert_cell_with_mapping(Cell::new(vec![v0, v1, v2], None).unwrap())
-            .unwrap();
-        tds.cell_mut(c2)
-            .unwrap()
+        let mut cell2 = Cell::new(vec![v0, v1, v2], None).unwrap();
+        cell2
             .set_periodic_vertex_offsets(vec![[1, 0], [0, 0], [0, 0]])
             .unwrap();
+        let c2 = tds.insert_cell_with_mapping(cell2).unwrap();
 
         // All ridge links should be valid paths (boundary ridges with 2 degree-1 vertices).
         validate_ridge_links_for_cells(&tds, &[c1, c2]).unwrap();

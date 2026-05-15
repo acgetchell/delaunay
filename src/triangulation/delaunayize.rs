@@ -758,11 +758,15 @@ mod tests {
         let duplicate_vertices = existing_cell.vertices().to_vec();
         dt.tri
             .tds
-            .insert_cell_with_mapping(Cell::new(duplicate_vertices.clone(), None).unwrap())
+            .insert_cell_bypassing_topology_checks_for_test(
+                Cell::new(duplicate_vertices.clone(), None).unwrap(),
+            )
             .unwrap();
         dt.tri
             .tds
-            .insert_cell_with_mapping(Cell::new(duplicate_vertices, None).unwrap())
+            .insert_cell_bypassing_topology_checks_for_test(
+                Cell::new(duplicate_vertices, None).unwrap(),
+            )
             .unwrap();
 
         let outcome = delaunayize_by_flips(
@@ -1249,8 +1253,10 @@ mod tests {
 
         let duplicate_a = Cell::new(vertex_keys.clone(), Some(42)).unwrap();
         let duplicate_b = Cell::new(vertex_keys, Some(42)).unwrap();
-        tds.insert_cell_with_mapping(duplicate_a).unwrap();
-        tds.insert_cell_with_mapping(duplicate_b).unwrap();
+        tds.insert_cell_bypassing_topology_checks_for_test(duplicate_a)
+            .unwrap();
+        tds.insert_cell_bypassing_topology_checks_for_test(duplicate_b)
+            .unwrap();
 
         let rebuild_vertices: Vec<_> = tds
             .vertices()

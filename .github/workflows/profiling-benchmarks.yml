@@ -15,7 +15,7 @@ on:
           - "development"
           - "production"
       benchmark_filter:
-        description: 'Benchmark filter (optional - e.g., "triangulation_scaling" or "memory_profiling")'
+        description: 'Benchmark filter (optional - e.g., "construction" or "memory_profiling")'
         required: false
         default: ""
         type: string
@@ -87,7 +87,7 @@ jobs:
           #    - Full profiling can be triggered manually if needed
           # 2. Manual dispatch with mode="development": Use development mode
           # 3. Scheduled runs and manual dispatch with mode="production": Use production mode
-          #    - Full scale testing (10³-10⁶ points)
+          #    - Full large-scale profiling counts, including opt-in 4D 5K/10K
           #    - May take 4-6 hours
           if [[ "$INPUT_MODE" == "development" ]] || [[ "${{ github.event_name }}" == "push" ]]; then
             echo "PROFILING_DEV_MODE=1" >> "$GITHUB_ENV"
@@ -106,7 +106,7 @@ jobs:
               echo "BENCH_SAMPLE_SIZE=100"
               echo "BENCH_WARMUP_SECS=5"
               echo "BENCH_MEASUREMENT_TIME=10"
-              echo "BENCH_LARGE_SCALE=1"  # enable 4D @ 10K
+              echo "BENCH_LARGE_SCALE=1"  # enable 4D 5K/10K
             } >> "$GITHUB_ENV"
           fi
 
@@ -175,8 +175,8 @@ jobs:
           ## Configuration
 
           - **Profiling Mode**: ${{ env.PROFILING_DEV_MODE == '1' &&
-            'Development (reduced scale for faster iteration)' ||
-            'Production (full 10³-10⁶ point scale)' }}
+            'Development (reduced auxiliary profiling for faster iteration)' ||
+            'Production (large-scale counts plus auxiliary profiling)' }}
           - **Memory Tracking**: ${{ contains(github.event.inputs.benchmark_filter || '', 'memory') &&
             'Enabled for memory benchmarks (count-allocations feature)' ||
             'Enabled only for memory-specific runs' }}
@@ -185,16 +185,15 @@ jobs:
 
           ## Benchmark Categories Run
 
-          - **Triangulation Scaling**: Large-scale triangulation performance (2D-5D)
-          - **Memory Profiling**: Memory allocation tracking and analysis
-          - **Query Latency**: Circumsphere containment query performance
+          - **Large-scale Profiling**: Construction, RSS memory, validation, and traversal (2D-5D)
+          - **Allocation Profiling**: Memory allocation tracking and analysis
+          - **Query Latency**: Circumsphere containment and traversal query performance
           - **Algorithmic Bottlenecks**: Boundary facets and convex hull operations
 
           ## Point Distributions Tested
 
-          - **Random**: Uniform random distribution
-          - **Grid**: Regular grid pattern (best-case scenario)
-          - **Poisson Disk**: Spatially uniform distribution (realistic scenario)
+          - **Random**: Uniform random distribution for large-scale and query workloads
+          - **Adversarial**: Large-coordinate clustered validation diagnostics
 
           ## Files Generated
 

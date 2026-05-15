@@ -26,7 +26,7 @@ Some examples use random inputs but are seeded for reproducibility. For those ex
 override the seed with `DELAUNAY_EXAMPLE_SEED`:
 
 ```bash
-DELAUNAY_EXAMPLE_SEED=666 cargo run --release --example triangulation_3d_100_points
+DELAUNAY_EXAMPLE_SEED=666 cargo run --release --example triangulation_3d_1000_points
 ```
 
 Feature-gated examples should be run with the relevant feature:
@@ -41,25 +41,25 @@ cargo run --release --features diagnostics --example diagnostics
 |---|---|
 | [`docs/api_design.md`](../docs/api_design.md) | `topology_editing_2d_3d`, `delaunayize_repair` |
 | [`docs/diagnostics.md`](../docs/diagnostics.md) | `diagnostics` |
-| [`docs/invariants.md`](../docs/invariants.md) | `triangulation_3d_100_points`, `delaunayize_repair`, `pachner_roundtrip_4d` |
+| [`docs/invariants.md`](../docs/invariants.md) | `triangulation_3d_1000_points`, `delaunayize_repair`, `pachner_roundtrip_4d` |
 | [`docs/numerical_robustness_guide.md`](../docs/numerical_robustness_guide.md) | `numerical_robustness` |
 | [`docs/topology.md`](../docs/topology.md) | `topology_editing_2d_3d`, `pachner_roundtrip_4d` |
-| [`docs/validation.md`](../docs/validation.md) | `triangulation_3d_100_points`, `diagnostics` |
-| [`docs/workflows.md`](../docs/workflows.md) | `triangulation_3d_100_points`, `convex_hull_3d_100_points` |
+| [`docs/validation.md`](../docs/validation.md) | `triangulation_3d_1000_points`, `diagnostics` |
+| [`docs/workflows.md`](../docs/workflows.md) | `triangulation_3d_1000_points`, `convex_hull_3d_1000_points` |
 
 `docs/code_organization.md` and `docs/property_testing_summary.md` are contributor/testing
 references rather than user-facing API guides, so they do not have dedicated examples here.
 
 ## Example index (lexicographic)
 
-### `convex_hull_3d_100_points`
+### `convex_hull_3d_1000_points`
 
-Extracts a 3D convex hull from a Delaunay triangulation built from a stable 100-point random
+Extracts a 3D convex hull from a Delaunay triangulation built from a stable 1000-point random
 configuration. Demonstrates hull validation, containment queries, visible-facet queries, and
 basic timing.
 
-- Run: `cargo run --release --example convex_hull_3d_100_points`
-- Source: [`convex_hull_3d_100_points.rs`](./convex_hull_3d_100_points.rs)
+- Run: `cargo run --release --example convex_hull_3d_1000_points`
+- Source: [`convex_hull_3d_1000_points.rs`](./convex_hull_3d_1000_points.rs)
 
 ### `delaunayize_repair`
 
@@ -128,13 +128,13 @@ k=3 where applicable) and how Delaunay preservation differs between the two trac
 - Run: `cargo run --release --example topology_editing_2d_3d`
 - Source: [`topology_editing_2d_3d.rs`](./topology_editing_2d_3d.rs)
 
-### `triangulation_3d_100_points`
+### `triangulation_3d_1000_points`
 
-Constructs a 3D Delaunay triangulation from a stable 100-point random configuration and
+Constructs a 3D Delaunay triangulation from a stable 1000-point random configuration and
 demonstrates validation and boundary analysis.
 
-- Run: `cargo run --release --example triangulation_3d_100_points`
-- Source: [`triangulation_3d_100_points.rs`](./triangulation_3d_100_points.rs)
+- Run: `cargo run --release --example triangulation_3d_1000_points`
+- Source: [`triangulation_3d_1000_points.rs`](./triangulation_3d_1000_points.rs)
 
 ### `zero_allocation_iterator_demo`
 

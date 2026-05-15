@@ -12,8 +12,8 @@
 //! deterministically, so every query returns a definitive ±1.
 //!
 //! **`RobustKernel`** — exact-arithmetic predicates that preserve explicit
-//! `BOUNDARY`/`DEGENERATE` signals and run diagnostic consistency checks.
-//! Prefer this when your application needs to detect cospherical or
+//! `BOUNDARY`/`DEGENERATE` signals and can run opt-in diagnostic consistency
+//! checks. Prefer this when your application needs to detect cospherical or
 //! coplanar configurations directly. Use the explicit-kernel constructors
 //! (`with_kernel`, `build_with_kernel`, etc.) to opt in.
 //!
@@ -26,16 +26,28 @@ use crate::core::cell::CellValidationError;
 use crate::core::collections::{MAX_PRACTICAL_DIMENSION_SIZE, SmallBuffer};
 use crate::geometry::point::Point;
 use crate::geometry::predicates::{
-    InSphere, Orientation, insphere_lifted, relative_insphere_effective_sign,
-    relative_insphere_signs, simplex_orientation,
+    InSphere, Orientation, insphere_lifted, relative_insphere_determinant_sign,
+    relative_insphere_effective_sign, relative_insphere_signs, simplex_orientation,
 };
-use crate::geometry::robust_predicates::{robust_insphere, robust_orientation};
+use crate::geometry::robust_predicates::{
+    robust_insphere, robust_insphere_positive_oriented, robust_orientation,
+};
 use crate::geometry::sos::{sos_insphere_sign, sos_orientation_sign};
 use crate::geometry::traits::coordinate::{
     Coordinate, CoordinateConversionError, CoordinateScalar, DegenerateSimplexReason,
 };
 use crate::geometry::util::safe_coords_to_f64;
 use core::marker::PhantomData;
+
+/// Converts an insphere classification into the [`Kernel::in_sphere`] integer convention.
+#[inline]
+const fn insphere_to_i32(result: InSphere) -> i32 {
+    match result {
+        InSphere::OUTSIDE => -1,
+        InSphere::BOUNDARY => 0,
+        InSphere::INSIDE => 1,
+    }
+}
 
 /// Geometric kernel trait defining predicates for triangulation algorithms.
 ///
@@ -179,6 +191,59 @@ pub trait Kernel<const D: usize>: Clone {
         simplex_points: &[Point<Self::Scalar, D>],
         test_point: &Point<Self::Scalar, D>,
     ) -> Result<i32, CoordinateConversionError>;
+
+    /// Test circumsphere containment when the simplex is already known to have
+    /// positive orientation.
+    ///
+    /// The default implementation preserves existing kernel semantics by calling
+    /// [`Kernel::in_sphere`]. Kernels with an exact positive-orientation fast path
+    /// can override this to avoid recomputing the orientation determinant.
+    ///
+    /// Callers must only use this when `simplex_points` are ordered with positive
+    /// geometric orientation under the same coordinate frame used for the predicate.
+    /// If that precondition is not true, optimized implementations can return an
+    /// inverted classification. Check [`Kernel::orientation`] first unless the
+    /// ordering was canonicalized by the triangulation.
+    ///
+    /// Returns:
+    /// - `-1`: Point is outside the circumsphere
+    /// - `0`: Point is on the circumsphere
+    /// - `+1`: Point is inside the circumsphere
+    ///
+    /// # Errors
+    ///
+    /// Returns [`CoordinateConversionError`] if the simplex has the wrong number
+    /// of points, contains non-convertible coordinates, or predicate evaluation
+    /// cannot complete.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use delaunay::prelude::geometry::{Coordinate, CoordinateConversionError, FastKernel};
+    /// use delaunay::prelude::geometry::{Kernel, Point};
+    ///
+    /// # fn main() -> Result<(), CoordinateConversionError> {
+    /// let kernel = FastKernel::<f64>::new();
+    /// let simplex = [
+    ///     Point::new([0.0, 0.0]),
+    ///     Point::new([1.0, 0.0]),
+    ///     Point::new([0.0, 1.0]),
+    /// ];
+    ///
+    /// assert_eq!(kernel.orientation(&simplex)?, 1);
+    ///
+    /// let inside = Point::new([0.25, 0.25]);
+    /// assert_eq!(kernel.in_sphere_positive_oriented(&simplex, &inside)?, 1);
+    /// # Ok(())
+    /// # }
+    /// ```
+    fn in_sphere_positive_oriented(
+        &self,
+        simplex_points: &[Point<Self::Scalar, D>],
+        test_point: &Point<Self::Scalar, D>,
+    ) -> Result<i32, CoordinateConversionError> {
+        self.in_sphere(simplex_points, test_point)
+    }
 }
 
 /// Marker trait for kernels that provide exact geometric predicates.
@@ -374,11 +439,16 @@ where
                 },
             }
         })?;
-        Ok(match result {
-            InSphere::OUTSIDE => -1,
-            InSphere::BOUNDARY => 0,
-            InSphere::INSIDE => 1,
-        })
+        Ok(insphere_to_i32(result))
+    }
+
+    fn in_sphere_positive_oriented(
+        &self,
+        simplex_points: &[Point<Self::Scalar, D>],
+        test_point: &Point<Self::Scalar, D>,
+    ) -> Result<i32, CoordinateConversionError> {
+        let result = robust_insphere_positive_oriented(simplex_points, test_point)?;
+        Ok(insphere_to_i32(result))
     }
 }
 
@@ -393,8 +463,9 @@ where
 /// - **Explicit degeneracy signals** — returns `DEGENERATE`/`BOUNDARY` (`0`)
 ///   instead of forcing a decision, useful when your application needs to
 ///   detect and handle cospherical or coplanar configurations directly
-/// - **Diagnostic consistency checks** — cross-validates insphere results
-///   against a distance-based check
+/// - **Opt-in diagnostic consistency checks** — cross-validates insphere results
+///   against a distance-based check when `DELAUNAY_STRICT_INSPHERE_CONSISTENCY`
+///   is set
 ///
 /// For standard Delaunay triangulation, [`AdaptiveKernel`] is the better
 /// default: zero configuration, provable error bounds, and `SoS`
@@ -470,11 +541,16 @@ where
         test_point: &Point<Self::Scalar, D>,
     ) -> Result<i32, CoordinateConversionError> {
         let result = robust_insphere(simplex_points, test_point)?;
-        Ok(match result {
-            InSphere::OUTSIDE => -1,
-            InSphere::BOUNDARY => 0,
-            InSphere::INSIDE => 1,
-        })
+        Ok(insphere_to_i32(result))
+    }
+
+    fn in_sphere_positive_oriented(
+        &self,
+        simplex_points: &[Point<Self::Scalar, D>],
+        test_point: &Point<Self::Scalar, D>,
+    ) -> Result<i32, CoordinateConversionError> {
+        let result = robust_insphere_positive_oriented(simplex_points, test_point)?;
+        Ok(insphere_to_i32(result))
     }
 }
 
@@ -645,6 +721,36 @@ where
         let insphere_effective: i32 = if insphere_det_sign != 0 {
             insphere_det_sign
         } else {
+            sos_insphere_sign(&f64_simplex, &f64_test)?
+        };
+
+        Ok((insphere_effective * orient_factor).signum())
+    }
+
+    fn in_sphere_positive_oriented(
+        &self,
+        simplex_points: &[Point<Self::Scalar, D>],
+        test_point: &Point<Self::Scalar, D>,
+    ) -> Result<i32, CoordinateConversionError> {
+        if simplex_points.len() != D + 1 {
+            return Err(CoordinateConversionError::InvalidSimplexPointCount {
+                actual: simplex_points.len(),
+                expected: D + 1,
+                dimension: D,
+            });
+        }
+
+        let determinant_sign = relative_insphere_determinant_sign(simplex_points, test_point)?;
+        let orient_factor = if D.is_multiple_of(2) { -1 } else { 1 };
+        let insphere_effective = if determinant_sign != 0 {
+            determinant_sign
+        } else {
+            let mut f64_simplex: SmallBuffer<Point<f64, D>, MAX_PRACTICAL_DIMENSION_SIZE> =
+                SmallBuffer::with_capacity(simplex_points.len());
+            for point in simplex_points {
+                f64_simplex.push(Point::new(safe_coords_to_f64(point.coords())?));
+            }
+            let f64_test = Point::new(safe_coords_to_f64(test_point.coords())?);
             sos_insphere_sign(&f64_simplex, &f64_test)?
         };
 
@@ -900,6 +1006,43 @@ mod tests {
         );
     }
 
+    #[test]
+    fn test_robust_kernel_positive_oriented_insphere_boundary_maps_to_zero() {
+        let kernel = RobustKernel::<f64>::new();
+        let simplex = [
+            Point::new([0.0, 0.0]),
+            Point::new([1.0, 0.0]),
+            Point::new([0.0, 1.0]),
+        ];
+
+        assert_eq!(kernel.orientation(&simplex).unwrap(), 1);
+        assert_eq!(
+            kernel
+                .in_sphere_positive_oriented(&simplex, &Point::new([1.0, 1.0]))
+                .unwrap(),
+            0
+        );
+    }
+
+    #[test]
+    fn test_robust_kernel_positive_oriented_insphere_wrong_arity_errors() {
+        let kernel = RobustKernel::<f64>::new();
+        let simplex: [Point<f64, 2>; 2] = [Point::new([0.0, 0.0]), Point::new([1.0, 0.0])];
+
+        let err = kernel
+            .in_sphere_positive_oriented(&simplex, &Point::new([0.25, 0.25]))
+            .unwrap_err();
+
+        assert_eq!(
+            err,
+            CoordinateConversionError::InvalidSimplexPointCount {
+                actual: 2,
+                expected: 3,
+                dimension: 2,
+            }
+        );
+    }
+
     // =========================================================================
     // MACRO — AdaptiveKernel PER-DIMENSION TESTS (2D–5D)
     // =========================================================================
@@ -965,6 +1108,28 @@ mod tests {
                         fast.in_sphere(&simplex, &outside).unwrap(),
                         "Must agree on clearly outside point"
                     );
+                }
+
+                #[test]
+                fn [<test_adaptive_positive_oriented_insphere_ $dim d_agrees>]() {
+                    let kernel = AdaptiveKernel::<f64>::new();
+                    let mut simplex = standard_simplex::<$dim>();
+                    if kernel.orientation(&simplex).unwrap() < 0 {
+                        simplex.swap(0, 1);
+                    }
+                    assert_eq!(kernel.orientation(&simplex).unwrap(), 1);
+
+                    for test in [
+                        inside_point::<$dim>(),
+                        outside_point::<$dim>(),
+                        cospherical_test::<$dim>(),
+                    ] {
+                        assert_eq!(
+                            kernel.in_sphere_positive_oriented(&simplex, &test).unwrap(),
+                            kernel.in_sphere(&simplex, &test).unwrap(),
+                            "positive-oriented fast path must preserve AdaptiveKernel semantics"
+                        );
+                    }
                 }
 
                 #[test]

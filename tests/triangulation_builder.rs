@@ -8,26 +8,19 @@
 use std::collections::HashMap;
 use std::f64::consts::TAU;
 
-use delaunay::core::tds::{InvariantErrorSummaryDetail, TriangulationValidationErrorKind};
-use delaunay::core::vertex::{Vertex, VertexBuilder};
-use delaunay::geometry::kernel::RobustKernel;
-use delaunay::geometry::point::Point;
-use delaunay::geometry::traits::coordinate::Coordinate;
-use delaunay::prelude::triangulation::repair::{DelaunayRepairError, TopologyGuarantee};
-use delaunay::topology::characteristics::euler::{count_simplices, euler_characteristic};
-use delaunay::topology::traits::topological_space::{
-    GlobalTopology, TopologyKind, ToroidalConstructionMode,
+use delaunay::prelude::geometry::{Coordinate, Point, RobustKernel};
+use delaunay::prelude::tds::{InvariantErrorSummaryDetail, TriangulationValidationErrorKind};
+use delaunay::prelude::topology::spaces::{GlobalTopology, TopologyKind, ToroidalConstructionMode};
+use delaunay::prelude::topology::validation::{count_simplices, euler_characteristic};
+use delaunay::prelude::triangulation::construction::{
+    ConstructionOptions, DelaunayConstructionFailure, DelaunayTriangulation,
+    DelaunayTriangulationBuilder, DelaunayTriangulationConstructionError,
+    ExplicitConstructionError, ExplicitInsertionError, ExplicitInsertionErrorKind,
+    ExplicitInvariantError, ExplicitInvariantErrorKind, ExplicitTdsErrorKind,
+    InsertionOrderStrategy, TopologyGuarantee, Vertex, VertexBuilder, vertex,
 };
-use delaunay::triangulation::builder::{
-    DelaunayTriangulationBuilder, ExplicitConstructionError, ExplicitInsertionError,
-    ExplicitInsertionErrorKind, ExplicitInvariantError, ExplicitInvariantErrorKind,
-    ExplicitTdsErrorKind,
-};
-use delaunay::triangulation::delaunay::{
-    ConstructionOptions, DelaunayTriangulation, DelaunayTriangulationConstructionError,
-    InsertionOrderStrategy,
-};
-use delaunay::vertex;
+use delaunay::prelude::triangulation::insertion::{TdsConstructionFailure, TdsValidationFailure};
+use delaunay::prelude::triangulation::repair::DelaunayRepairError;
 
 // =============================================================================
 // Euclidean path
@@ -1149,7 +1142,7 @@ fn test_explicit_error_variant_wrong_arity() {
     );
 }
 
-/// Error variant: non-manifold facet sharing returns `ExplicitConstruction(NeighborAssignment { .. })`.
+/// Error variant: non-manifold facet sharing is rejected during TDS insertion.
 #[test]
 fn test_explicit_error_variant_non_manifold_facet() {
     // Three triangles sharing the same edge (0,1) — facet shared by 3 cells
@@ -1167,15 +1160,25 @@ fn test_explicit_error_variant_non_manifold_facet() {
         .build::<()>()
         .unwrap_err();
 
-    assert!(
-        matches!(
-            err,
-            DelaunayTriangulationConstructionError::ExplicitConstruction(
-                ExplicitConstructionError::NeighborAssignment { .. }
-            )
-        ),
-        "Expected ExplicitConstruction(NeighborAssignment), got: {err}"
-    );
+    let DelaunayTriangulationConstructionError::Triangulation(DelaunayConstructionFailure::Tds {
+        reason:
+            TdsConstructionFailure::Validation {
+                reason:
+                    TdsValidationFailure::FacetSharingViolation {
+                        existing_incident_count,
+                        attempted_incident_count,
+                        max_incident_count,
+                        ..
+                    },
+            },
+    }) = &err
+    else {
+        panic!("Expected early TDS facet-sharing validation failure, got: {err}");
+    };
+
+    assert_eq!(*existing_incident_count, 2);
+    assert_eq!(*attempted_incident_count, 3);
+    assert_eq!(*max_incident_count, 2);
 }
 
 /// Error variant: duplicate vertex returns ExplicitConstruction(DuplicateVertexInCell { .. }).
@@ -1257,7 +1260,7 @@ fn test_explicit_error_variant_unsupported_construction_options() {
     );
 }
 
-/// Error variant: duplicate maximal cells fail the post-assembly structural pass.
+/// Error variant: duplicate maximal cells are rejected during TDS insertion.
 #[test]
 fn test_explicit_error_variant_duplicate_cells_structural_validation() {
     let vertices = vec![
@@ -1271,12 +1274,19 @@ fn test_explicit_error_variant_duplicate_cells_structural_validation() {
         .build::<()>()
         .unwrap_err();
 
-    match err {
-        DelaunayTriangulationConstructionError::ExplicitConstruction(
-            ExplicitConstructionError::StructuralValidation { source },
-        ) => assert_eq!(source.kind, ExplicitTdsErrorKind::DuplicateCells),
-        other => panic!("expected explicit structural validation failure, got {other:?}"),
-    }
+    assert!(
+        matches!(
+            err,
+            DelaunayTriangulationConstructionError::Triangulation(
+                DelaunayConstructionFailure::Tds {
+                    reason: TdsConstructionFailure::Validation {
+                        reason: TdsValidationFailure::DuplicateCells { .. }
+                    }
+                }
+            )
+        ),
+        "expected early duplicate-cell TDS validation failure, got {err:?}"
+    );
 }
 
 /// Error variant: degenerate explicit cells fail geometric nondegeneracy validation.

@@ -365,20 +365,21 @@ Integration tests for the `delaunayize_by_flips` workflow validating the public 
 
 #### [`large_scale_debug.rs`](./large_scale_debug.rs)
 
-Reproduction-oriented debug harnesses for the active larger 3D/4D/5D
-datasets tracked in issues #340, #341, and #342.
+Reproduction-oriented debug harnesses for larger 2D-5D datasets tracked in
+issues #340, #341, and #342.
 
 **Run with:** `cargo test --release --test large_scale_debug -- --ignored --nocapture`
 or one of the active large-scale helpers:
 
-- `just debug-large-scale-4d [n]` — issue #340, default `n=3000`
-- `just debug-large-scale-3d [n]` — issue #341, default `n=10000`
-- `just debug-large-scale-5d [n]` — issue #342, default `n=1000`
+- `just debug-large-scale-2d [n] [repair_every]` — default `n=40000`
+- `just debug-large-scale-3d [n] [repair_every]` — issue #341, default `n=8000`
+- `just debug-large-scale-4d [n] [repair_every]` — issue #340, default `n=900`
+- `just debug-large-scale-5d [n] [repair_every]` — issue #342, default `n=150`
 
-The default 3D helper is the current 10,000-vertex release-mode acceptance run:
-it should insert all vertices with zero skips, run final repair, and pass
-`validation_report` for Levels 1–4. Expect timings around 100 seconds on
-maintainer Apple M4 Max hardware, with normal hardware/load variation.
+The defaults are calibrated as roughly one-minute release-mode acceptance runs
+on maintainer Apple M4 Max hardware. Each should insert all vertices with zero
+skips, run final repair, and pass `validation_report` for Levels 1–4. Expect
+normal hardware/load variation.
 
 **Note:** Use `--release` for runs above roughly 30 vertices; debug-mode
 overhead makes large 3D/4D cases look hung even when the algorithm is making

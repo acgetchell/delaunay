@@ -1078,6 +1078,10 @@ pub mod prelude {
             };
             pub use crate::triangulation::builder::{
                 DelaunayTriangulationBuilder, ExplicitConstructionError,
+                ExplicitDelaunayValidationError, ExplicitDelaunayValidationErrorKind,
+                ExplicitDelaunayValidationSourceKind, ExplicitInsertionError,
+                ExplicitInsertionErrorKind, ExplicitInvariantError, ExplicitInvariantErrorKind,
+                ExplicitTdsError, ExplicitTdsErrorKind,
             };
             pub use crate::triangulation::delaunay::{
                 ConstructionOptions, ConstructionSkipSample, ConstructionSlowInsertionSample,

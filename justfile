@@ -121,24 +121,14 @@ action-lint: _ensure-actionlint
 bench:
     cargo bench --workspace --profile perf
 
-bench-baseline: _ensure-uv
-    uv run benchmark-utils generate-baseline
-
 # CI regression benchmarks with the perf profile.
 bench-ci:
     cargo bench --profile perf --bench ci_performance_suite
-
-bench-compare: _ensure-uv
-    uv run benchmark-utils compare --baseline baseline-artifact/baseline_results.txt
 
 # Compile benchmarks without running them. Manifest lints enforce the warning
 # policy without using RUSTFLAGS that fragment Cargo artifact caches.
 bench-compile:
     cargo bench --workspace --no-run
-
-# Development benchmark comparison: perf profile with reduced sample sizes.
-bench-dev: _ensure-uv
-    CRIT_SAMPLE_SIZE=10 CRIT_MEASUREMENT_MS=1000 CRIT_WARMUP_MS=500 uv run benchmark-utils compare --baseline baseline-artifact/baseline_results.txt --dev
 
 # Generate performance summary with fresh perf-profile benchmark runs (for releases)
 bench-perf-summary: _ensure-uv
@@ -171,15 +161,15 @@ changelog: _ensure-git-cliff python-sync
     uv run postprocess-changelog
     uv run archive-changelog
 
+changelog-tag version:
+    just tag {{version}}
+
 changelog-unreleased version: _ensure-git-cliff python-sync
     #!/usr/bin/env bash
     set -euo pipefail
     GIT_CLIFF_OFFLINE=true git-cliff --tag {{version}} -o CHANGELOG.md
     uv run postprocess-changelog
     uv run archive-changelog
-
-changelog-tag version:
-    just tag {{version}}
 
 changelog-update: changelog
     @echo "📝 Changelog updated successfully!"
@@ -199,10 +189,10 @@ check-fast:
 ci: check test examples
     @echo "🎯 CI checks complete!"
 
-# CI with performance baseline
-ci-baseline tag="ci":
+# CI followed by an explicit persistent local baseline refresh.
+ci-baseline ref="main":
     just ci
-    just perf-baseline {{tag}}
+    just perf-baseline {{ref}}
 
 # CI + slow/stress tests (100+ vertices, stress tests)
 ci-slow: ci test-slow
@@ -233,14 +223,17 @@ coverage-ci: _ensure-cargo-llvm-cov
     mkdir -p coverage
     cargo llvm-cov {{_coverage_base_args}} --cobertura --output-path coverage/cobertura.xml -- --skip prop_
 
-debug-large-scale-3d n="10000" repair_every="1":
-    DELAUNAY_BULK_PROGRESS_EVERY=100 DELAUNAY_LARGE_DEBUG_MAX_RUNTIME_SECS=1800 DELAUNAY_LARGE_DEBUG_N_3D={{n}} DELAUNAY_LARGE_DEBUG_REPAIR_EVERY={{repair_every}} cargo test --release --test large_scale_debug debug_large_scale_3d -- --ignored --exact --nocapture
+debug-large-scale-2d n="36000" repair_every="1":
+    DELAUNAY_BULK_PROGRESS_EVERY=2000 DELAUNAY_LARGE_DEBUG_MAX_RUNTIME_SECS=1800 DELAUNAY_LARGE_DEBUG_N_2D={{n}} DELAUNAY_LARGE_DEBUG_REPAIR_EVERY={{repair_every}} cargo test --release --test large_scale_debug debug_large_scale_2d -- --ignored --exact --nocapture
 
-debug-large-scale-4d n="3000":
-    DELAUNAY_BULK_PROGRESS_EVERY=100 DELAUNAY_LARGE_DEBUG_MAX_RUNTIME_SECS=1800 DELAUNAY_LARGE_DEBUG_N_4D={{n}} cargo test --release --test large_scale_debug debug_large_scale_4d -- --ignored --exact --nocapture
+debug-large-scale-3d n="8000" repair_every="1":
+    DELAUNAY_BULK_PROGRESS_EVERY=500 DELAUNAY_LARGE_DEBUG_MAX_RUNTIME_SECS=1800 DELAUNAY_LARGE_DEBUG_N_3D={{n}} DELAUNAY_LARGE_DEBUG_REPAIR_EVERY={{repair_every}} cargo test --release --test large_scale_debug debug_large_scale_3d -- --ignored --exact --nocapture
 
-debug-large-scale-5d n="1000":
-    DELAUNAY_BULK_PROGRESS_EVERY=100 DELAUNAY_LARGE_DEBUG_MAX_RUNTIME_SECS=1800 DELAUNAY_LARGE_DEBUG_N_5D={{n}} cargo test --release --test large_scale_debug debug_large_scale_5d -- --ignored --exact --nocapture
+debug-large-scale-4d n="900" repair_every="1":
+    DELAUNAY_BULK_PROGRESS_EVERY=100 DELAUNAY_LARGE_DEBUG_MAX_RUNTIME_SECS=1800 DELAUNAY_LARGE_DEBUG_N_4D={{n}} DELAUNAY_LARGE_DEBUG_REPAIR_EVERY={{repair_every}} cargo test --release --test large_scale_debug debug_large_scale_4d -- --ignored --exact --nocapture
+
+debug-large-scale-5d n="140" repair_every="1":
+    DELAUNAY_BULK_PROGRESS_EVERY=20 DELAUNAY_LARGE_DEBUG_MAX_RUNTIME_SECS=1800 DELAUNAY_LARGE_DEBUG_N_5D={{n}} DELAUNAY_LARGE_DEBUG_REPAIR_EVERY={{repair_every}} cargo test --release --test large_scale_debug debug_large_scale_5d -- --ignored --exact --nocapture
 
 # Default recipe shows available commands
 default:
@@ -280,23 +273,24 @@ help-workflows:
     @echo ""
     @echo "Active large-scale debugging:"
     @echo "  just test-diagnostics      # Run diagnostics tools with output"
-    @echo "  just debug-large-scale-4d [n] # Issue #340: 4D large-scale runtime (default n=3000)"
-    @echo "  just debug-large-scale-3d [n] [repair_every] # Issue #341: 3D scalability (defaults n=10000, repair_every=1)"
-    @echo "  just debug-large-scale-5d [n] # Issue #342: 5D feasibility (default n=1000)"
+    @echo "  just debug-large-scale-2d [n] [repair_every] # 2D acceptance/profiling (defaults n=36000, repair_every=1)"
+    @echo "  just debug-large-scale-3d [n] [repair_every] # Issue #341: 3D scalability (defaults n=8000, repair_every=1)"
+    @echo "  just debug-large-scale-4d [n] [repair_every] # Issue #340: 4D large-scale runtime (defaults n=900, repair_every=1)"
+    @echo "  just debug-large-scale-5d [n] [repair_every] # Issue #342: 5D feasibility (defaults n=140, repair_every=1)"
     @echo ""
     @echo "Benchmark workflows:"
     @echo "  just bench-smoke        # Smoke-test benchmark harnesses (minimal samples)"
     @echo "  just bench              # Run all benchmarks with perf profile (ThinLTO)"
-    @echo "  just bench-baseline     # Generate perf-profile performance baseline"
     @echo "  just bench-ci           # CI regression benchmarks with perf profile (~5-10 min)"
-    @echo "  just bench-compare      # Compare against baseline with perf profile"
-    @echo "  just bench-dev          # Reduced-sample perf-profile comparison (~1-2 min)"
+    @echo "  just perf-no-regressions [threshold] # Fast pre-PR 2D-5D regression guard (default 7.5%)"
+    @echo "  just perf-baseline [ref] # Persist/update default local baseline (default: main)"
+    @echo "  just perf-baseline-to <out> [ref] # Generate scratch baseline without replacing default"
     @echo "  just bench-perf-summary # Generate perf-profile release summary (~30-45 min)"
     @echo "  just profile [toolchain] [code_ref] # Run ci_performance_suite for a compiler/code pair"
     @echo ""
     @echo "Larger/optional workflows:"
     @echo "  just ci-slow             # CI + slow tests (100+ vertices)"
-    @echo "  just ci-baseline         # CI + save performance baseline"
+    @echo "  just ci-baseline         # CI + persist default performance baseline"
     @echo "  just coverage            # Generate coverage report (HTML)"
     @echo "  just semgrep             # Run repository-owned Semgrep rules"
     @echo ""
@@ -344,51 +338,43 @@ markdown-fix: _ensure-npx
 
 markdown-lint: markdown-check
 
-# Performance analysis framework
-perf-baseline tag="": _ensure-uv
+# Generate a same-machine dev-mode baseline for a GitHub ref.
+perf-baseline ref="main": _ensure-uv
     #!/usr/bin/env bash
     set -euo pipefail
-    tag_value="{{tag}}"
-    if [ -n "$tag_value" ]; then
-        uv run benchmark-utils generate-baseline --tag "$tag_value"
-    else
-        uv run benchmark-utils generate-baseline
-    fi
+    uv run benchmark-utils generate-ref-baseline --ref "{{ref}}" --out baseline-artifact --dev
 
-perf-check threshold="5.0": _ensure-uv
+perf-baseline-to out ref="main": _ensure-uv
     #!/usr/bin/env bash
     set -euo pipefail
-    if [ -f "baseline-artifact/baseline_results.txt" ]; then
-        uv run benchmark-utils compare --baseline baseline-artifact/baseline_results.txt --threshold {{threshold}}
-    else
-        echo "❌ No baseline found. Run 'just perf-baseline' first."
-        exit 1
-    fi
+    uv run benchmark-utils generate-ref-baseline --ref "{{ref}}" --out "{{out}}" --dev
 
-perf-compare file: _ensure-uv
-    uv run benchmark-utils compare --baseline "{{file}}"
+perf-compare file threshold="7.5": _ensure-uv
+    uv run benchmark-utils compare --baseline "{{file}}" --threshold {{threshold}} --dev
 
 perf-help:
     @echo "Performance Analysis Commands:"
-    @echo "  just perf-baseline [tag]    # Save current performance as baseline (optionally tagged)"
-    @echo "  just perf-check [threshold] # Check for regressions (default: 5% threshold)"
-    @echo "  just perf-compare <file>    # Compare with specific baseline file"
-    @echo "  just bench-dev             # Reduced-sample perf-profile comparison"
+    @echo "  just perf-no-regressions   # Fast pre-PR guard with a temporary same-machine main baseline"
+    @echo "  just perf-baseline [ref]    # Persist/update baseline-artifact for a GitHub ref (default: main)"
+    @echo "  just perf-baseline-to <out> [ref] # Generate a scratch baseline artifact without replacing the default"
+    @echo "  just perf-compare <file> [threshold] # Compare current tree with a specific dev-mode baseline"
     @echo "  just bench-smoke           # Smoke-test benchmark harnesses"
     @echo ""
     @echo "Profiling Commands:"
     @echo "  just profile               # Run ci_performance_suite for the current tree/toolchain"
     @echo "  just profile [toolchain] [code_ref]"
     @echo "                              # Run ci_performance_suite for a compiler/code pair"
-    @echo "  just profile-dev           # Samply profile 3D dev mode (faster iteration)"
+    @echo "  just profile-dev           # Samply profile 3D construction in profiling_suite"
     @echo "  just profile-mem           # Samply profile memory allocations (with count-allocations feature)"
     @echo ""
     @echo "Benchmark System (Delaunay-specific):"
-    @echo "  just bench-baseline        # Generate baseline via benchmark-utils"
-    @echo "  just bench-compare         # Compare against stored baseline"
+    @echo "  just perf-no-regressions   # Generate temporary main baseline, compare current tree, clean up"
+    @echo "  just perf-baseline [ref]   # Persist baseline-artifact/baseline_results.txt from a GitHub ref"
+    @echo "  just perf-baseline-to <out> [ref] # Generate an alternate local baseline artifact directory"
+    @echo "  just perf-compare <file>   # Compare against a specific dev-mode baseline"
     @echo "  just bench                 # Full benchmark suite with perf profile"
     @echo "  just bench-ci              # CI benchmark suite with perf profile"
-    @echo "  just bench-dev             # Reduced-sample perf-profile comparison"
+    @echo "  just perf-no-regressions   # Fast pre-PR 2D-5D regression guard"
     @echo "  just bench-smoke           # Smoke-test benchmark harnesses"
     @echo ""
     @echo "Environment Variables (Benchmark Configuration):"
@@ -398,14 +384,67 @@ perf-help:
     @echo "  DELAUNAY_BENCH_SEED=N      # Random seed (decimal or 0x-hex)"
     @echo ""
     @echo "Examples:"
-    @echo "  just perf-baseline v1.0.0  # Save tagged baseline"
-    @echo "  just perf-check 10.0       # Check with 10% threshold"
-    @echo "  just bench-dev             # Reduced-sample benchmark iteration"
+    @echo "  just perf-no-regressions   # Recommended local PR performance guard"
+    @echo "  just perf-baseline         # Persist/update default local baseline for GitHub main"
+    @echo "  just perf-baseline v0.7.5  # Persist/update default local baseline for a release tag"
+    @echo "  just perf-baseline-to /tmp/delaunay-main-baseline"
+    @echo "                              # Generate scratch main baseline without overwriting baseline-artifact"
     @echo "  CRIT_SAMPLE_SIZE=100 just bench  # Custom sample size"
     @echo "  just bench-ci              # Final optimized CI-suite benchmark run"
     @echo "  just profile v0.7.5        # v0.7.5 code on its declared Rust toolchain"
     @echo "  just profile 1.95          # Current tree on Rust 1.95"
     @echo "  just profile 1.95 v0.7.5   # v0.7.5 code on Rust 1.95"
+
+# Fast pre-PR performance guard against a temporary same-machine main baseline.
+perf-no-regressions threshold="7.5": _ensure-uv
+    #!/usr/bin/env bash
+    set -euo pipefail
+
+    relevant_worktree_dirty() {
+        if ! git diff --quiet -- src benches Cargo.toml Cargo.lock scripts/benchmark_utils.py; then
+            return 0
+        fi
+        if ! git diff --cached --quiet -- src benches Cargo.toml Cargo.lock scripts/benchmark_utils.py; then
+            return 0
+        fi
+        if [ -n "$(git ls-files --others --exclude-standard -- src benches Cargo.toml Cargo.lock scripts/benchmark_utils.py)" ]; then
+            return 0
+        fi
+        return 1
+    }
+
+    current_commit="$(git rev-parse HEAD)"
+    remote_line="$(git ls-remote origin refs/heads/main || true)"
+    remote_main_commit=""
+    if [ -n "$remote_line" ]; then
+        read -r remote_main_commit _ <<< "$remote_line"
+    fi
+    if [ -n "$remote_main_commit" ] && [ "$remote_main_commit" = "$current_commit" ] && ! relevant_worktree_dirty; then
+        echo "🔍 origin/main matches HEAD (${current_commit}); no relevant worktree changes to compare."
+        echo "   Skipping perf-no-regressions before generating a same-commit baseline."
+        exit 0
+    fi
+
+    tmp="$(mktemp -d "${TMPDIR:-/tmp}/delaunay-perf-baseline.XXXXXX")"
+    trap 'rm -rf "$tmp"' EXIT
+    uv run benchmark-utils generate-ref-baseline --ref main --out "$tmp/baseline" --dev
+    baseline="$tmp/baseline/baseline_results.txt"
+    if ! grep -q 'Benchmark ID: tds_new_2d/tds_new/2000' "$baseline"; then
+        echo "❌ Temporary baseline for main does not match the current ci_performance_suite contract."
+        echo "   The benchmark contract probably changed on this branch; inspect ci_performance_suite before comparing."
+        exit 1
+    fi
+    baseline_line="$(grep -m1 '^Git commit:' "$baseline" || true)"
+    baseline_commit="${baseline_line#Git commit: }"
+    if [ -n "$baseline_commit" ] && [ "$baseline_commit" = "$current_commit" ]; then
+        if ! relevant_worktree_dirty; then
+            echo "🔍 Current commit matches the main baseline (${baseline_commit}); no relevant worktree changes to compare."
+            echo "   Skipping perf-no-regressions because a same-commit baseline would mask regressions."
+            exit 0
+        fi
+        echo "⚠️ Main baseline commit matches HEAD, but relevant uncommitted changes exist; comparing the worktree against HEAD."
+    fi
+    uv run benchmark-utils compare --baseline "$baseline" --threshold {{threshold}} --dev
 
 # Run the selected CI benchmark suite for one compiler/code pair.
 profile toolchain="" code_ref="current":
@@ -497,33 +536,10 @@ profile toolchain="" code_ref="current":
     )
 
 profile-dev:
-    PROFILING_DEV_MODE=1 samply record cargo bench --profile perf --bench profiling_suite -- "triangulation_scaling_3d/tds_new/random_3d"
+    PROFILING_DEV_MODE=1 samply record cargo bench --profile perf --bench profiling_suite -- "construction/3D/5000v/construct"
 
 profile-mem:
     samply record cargo bench --profile perf --bench profiling_suite --features count-allocations -- memory_profiling
-
-verify-expect-counts:
-    #!/usr/bin/env bash
-    set -euo pipefail
-
-    check_count() {
-        local label="$1"
-        local expected="$2"
-        local pattern="$3"
-        shift 3
-
-        local actual
-        actual="$( (rg -o "$pattern" "$@" || true) | wc -l | tr -d ' ')"
-
-        if [[ "$actual" != "$expected" ]]; then
-            echo "❌ $label: expected $expected, found $actual"
-            return 1
-        fi
-
-        echo "✓ $label: $actual"
-    }
-
-    check_count 'src/**/*.rs doc-comment .expect(' 17 '^\s*//[/!].*\.expect\(' src
 
 # Pre-publish validation: checks crates.io metadata rules that cargo publish --dry-run does NOT catch
 publish-check: _ensure-jq
@@ -967,6 +983,29 @@ validate-toml: _ensure-uv
     else
         echo "No TOML files found to validate."
     fi
+
+verify-expect-counts:
+    #!/usr/bin/env bash
+    set -euo pipefail
+
+    check_count() {
+        local label="$1"
+        local expected="$2"
+        local pattern="$3"
+        shift 3
+
+        local actual
+        actual="$( (rg -o "$pattern" "$@" || true) | wc -l | tr -d ' ')"
+
+        if [[ "$actual" != "$expected" ]]; then
+            echo "❌ $label: expected $expected, found $actual"
+            return 1
+        fi
+
+        echo "✓ $label: $actual"
+    }
+
+    check_count 'src/**/*.rs doc-comment .expect(' 17 '^\s*//[/!].*\.expect\(' src
 
 yaml-fix: _ensure-prettier-or-npx
     #!/usr/bin/env bash

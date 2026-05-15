@@ -173,8 +173,9 @@ profile:
 ```bash
 just bench
 just bench-ci
-just bench-baseline
-just bench-compare
+just perf-baseline
+just perf-compare
+just perf-no-regressions
 just bench-perf-summary
 cargo bench --profile perf --bench ci_performance_suite
 ```
@@ -184,6 +185,35 @@ unit. Use it for measured benchmark output; `just ci` does not need it to catch
 compile, lint, test, documentation, example, or benchmark-harness build errors.
 Use `just bench-smoke` only for quick harness validation with minimal samples;
 do not treat smoke output as performance data.
+
+Before pushing Rust or benchmark changes, run:
+
+```bash
+just ci
+just perf-no-regressions
+```
+
+`just perf-no-regressions` is the fast local PR guard. It runs
+`ci_performance_suite` with the shared dev-mode Criterion arguments against a
+temporary same-machine baseline generated from the current GitHub `main` ref.
+The temporary baseline checkout and artifact directory are removed after the
+comparison.
+
+```bash
+just perf-no-regressions
+```
+
+`just perf-baseline` is optional and intentionally persistent: use it only when
+you want to create or refresh `baseline-artifact/baseline_results.txt` for later
+manual comparisons.
+
+To generate a scratch baseline without replacing the default artifact, write it
+somewhere else and compare directly:
+
+```bash
+just perf-baseline-to /tmp/delaunay-main-baseline
+just perf-compare /tmp/delaunay-main-baseline/baseline_results.txt
+```
 
 ---
 

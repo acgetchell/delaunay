@@ -35,10 +35,12 @@ from benchmark_utils import (
     DEFAULT_REGRESSION_THRESHOLD,
     DEV_MODE_BENCH_ARGS,
     TRUSTED_BENCH_PROFILE,
+    BaselineArtifactMetadata,
     BaselineGenerator,
     BaselineParseError,
     BenchmarkRegressionHelper,
     CriterionParser,
+    LocalRefBaselineGenerator,
     PerformanceComparator,
     PerformanceSummaryGenerator,
     ProjectRootNotFoundError,
@@ -1102,6 +1104,64 @@ class TestBaselineGenerator:
             assert f"Cargo profile: {TRUSTED_BENCH_PROFILE}" in content
             assert "Criterion sample size: 10" in content
 
+    @patch("benchmark_utils.get_git_commit_hash", return_value="abc123def456")
+    @patch("benchmark_utils.get_git_remote_url", return_value="git@github.com:acgetchell/delaunay.git")
+    @patch("benchmark_utils.run_git_command")
+    def test_local_ref_baseline_uses_temporary_checkout(self, mock_git, mock_remote, mock_commit, capsys) -> None:
+        """Test that local ref baseline generation cleans up its temporary checkout."""
+        checkout_paths: list[Path] = []
+
+        def fake_git_command(args, _cwd=None, **_kwargs) -> subprocess.CompletedProcess[str]:
+            if args[0] == "clone":
+                Path(args[-1]).mkdir(parents=True)
+            return completed_process(args=args)
+
+        def fake_generate_baseline(self, *, dev_mode=False, output_file=None, bench_timeout=1800) -> bool:
+            checkout_paths.append(self.project_root)
+            assert self.project_root.exists()
+            assert dev_mode is True
+            assert bench_timeout == 1800
+            assert output_file is not None
+            output_file.write_text(
+                "Date: 2026-05-14 10:00:00 UTC\nGit commit: abc123def456\nRef: main\nBenchmark ID: tds_new_2d/tds_new/2000\n",
+                encoding="utf-8",
+            )
+            return True
+
+        mock_git.side_effect = fake_git_command
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            project_root = Path(temp_dir) / "repo"
+            project_root.mkdir()
+            out_dir = project_root / "baseline-artifact"
+            generator = LocalRefBaselineGenerator(project_root)
+
+            with patch.object(BaselineGenerator, "generate_baseline", fake_generate_baseline):
+                baseline_path = generator.generate_for_ref(ref_name="main", out_dir=out_dir, dev_mode=True)
+
+            assert baseline_path == out_dir / "baseline_results.txt"
+            assert baseline_path.exists()
+            assert not (out_dir / "baseline_results.txt.tmp").exists()
+            assert checkout_paths
+            assert not checkout_paths[0].exists()
+
+            metadata = json.loads((out_dir / "metadata.json").read_text(encoding="utf-8"))
+            assert metadata["ref"] == "main"
+            assert metadata["commit"] == "abc123def456"
+            assert metadata["workflow_run_id"] == "local"
+
+            captured = capsys.readouterr()
+            assert captured.out == ""
+            assert "Checking out main" in captured.err
+            assert "Local baseline ready" in captured.err
+
+        mock_remote.assert_called_once_with(remote="origin", cwd=project_root)
+        mock_commit.assert_called_once_with(cwd=checkout_paths[0])
+        calls = [call.args[0] for call in mock_git.call_args_list]
+        assert calls[0][:3] == ["clone", "--no-checkout", "--filter=blob:none"]
+        assert calls[1] == ["fetch", "--depth", "1", "origin", "main"]
+        assert calls[2] == ["checkout", "--detach", "FETCH_HEAD"]
+
     @patch("benchmark_utils.get_git_commit_hash", return_value="abc123")
     def test_written_baseline_round_trips_through_parser(self, mock_git, tmp_path) -> None:
         """Test the baseline writer/parser contract for representative records."""
@@ -1335,41 +1395,41 @@ class TestEdgeCases:
 class TestWorkflowHelper:
     """Test cases for WorkflowHelper class."""
 
-    @patch.dict(os.environ, {"GITHUB_REF": "refs/tags/v1.2.3"}, clear=False)
-    def test_determine_tag_name_from_github_ref(self) -> None:
-        """Test tag name determination from GITHUB_REF with tag."""
-        tag_name = WorkflowHelper.determine_tag_name()
-        assert tag_name == "v1.2.3"
+    @patch.dict(os.environ, {"BASELINE_REF": "main"}, clear=True)
+    def test_determine_ref_name_from_baseline_ref(self) -> None:
+        """Test ref name determination from explicit BASELINE_REF."""
+        ref_name = WorkflowHelper.determine_ref_name()
+        assert ref_name == "main"
 
-    @patch.dict(os.environ, {"GITHUB_REF": "refs/heads/main"}, clear=False)
-    @patch("benchmark_utils.datetime")
-    def test_determine_tag_name_generated(self, mock_datetime) -> None:
-        """Test tag name generation when not from a tag push."""
-        # Mock datetime
-        mock_now = Mock()
-        mock_now.strftime.return_value = "20231215-143000"
-        mock_datetime.now.return_value = mock_now
+    @patch.dict(os.environ, {"GITHUB_REF_NAME": "feature/perf"}, clear=True)
+    def test_determine_ref_name_from_github_ref_name(self) -> None:
+        """Test ref name determination from GITHUB_REF_NAME."""
+        ref_name = WorkflowHelper.determine_ref_name()
+        assert ref_name == "feature/perf"
 
-        tag_name = WorkflowHelper.determine_tag_name()
-        assert tag_name == "manual-20231215-143000"
+    @patch.dict(os.environ, {"INPUT_REF": "refs/tags/v1.2.3"}, clear=True)
+    def test_determine_ref_name_normalizes_trusted_ref_namespace(self) -> None:
+        """Test trusted fully-qualified refs are normalized before checkout."""
+        ref_name = WorkflowHelper.determine_ref_name()
+        assert ref_name == "v1.2.3"
 
-    @patch.dict(os.environ, {"GITHUB_REF": "refs/tags/v2.0.0"}, clear=False)
-    def test_determine_tag_name_with_github_output(self) -> None:
-        """Test tag name determination with GITHUB_OUTPUT file."""
-        with tempfile.NamedTemporaryFile(mode="w", delete=False) as f:
-            output_file = f.name
+    @patch.dict(os.environ, {"INPUT_REF": "refs/pull/123/merge"}, clear=True)
+    def test_determine_ref_name_rejects_pull_request_ref(self, capsys: pytest.CaptureFixture[str]) -> None:
+        """Test untrusted checkout namespaces are rejected before checkout."""
+        with pytest.raises(SystemExit) as exc_info:
+            WorkflowHelper.determine_ref_name()
 
-        try:
-            with patch.dict(os.environ, {"GITHUB_OUTPUT": output_file}):
-                tag_name = WorkflowHelper.determine_tag_name()
-                assert tag_name == "v2.0.0"
+        assert exc_info.value.code == 1
+        assert "refs/pull/123/merge" in capsys.readouterr().err
 
-            # Check that GITHUB_OUTPUT file was written
-            with open(output_file, encoding="utf-8") as f:
-                content = f.read()
-                assert "tag_name=v2.0.0\n" in content
-        finally:
-            Path(output_file).unlink(missing_ok=True)
+    @patch.dict(os.environ, {"GITHUB_REF": "refs/changes/12/34"}, clear=True)
+    def test_determine_ref_name_rejects_untrusted_github_ref(self, capsys: pytest.CaptureFixture[str]) -> None:
+        """Test derived GitHub refs pass through the same namespace validation."""
+        with pytest.raises(SystemExit) as exc_info:
+            WorkflowHelper.determine_ref_name()
+
+        assert exc_info.value.code == 1
+        assert "refs/changes/12/34" in capsys.readouterr().err
 
     def test_create_metadata_success(self) -> None:
         """Test successful metadata creation."""
@@ -1396,6 +1456,7 @@ class TestWorkflowHelper:
             with metadata_file.open("r", encoding="utf-8") as f:
                 metadata = json.load(f)
 
+            assert metadata["ref"] == "v1.0.0"
             assert metadata["tag"] == "v1.0.0"
             assert metadata["commit"] == "abc123def456"
             assert metadata["workflow_run_id"] == "123456789"
@@ -1449,11 +1510,50 @@ class TestWorkflowHelper:
             with metadata_file.open("r", encoding="utf-8") as f:
                 metadata = json.load(f)
 
+            assert metadata["ref"] == "v1.0.0"
             assert metadata["tag"] == "v1.0.0"
             assert metadata["commit"] == "unknown"
             assert metadata["workflow_run_id"] == "unknown"
             assert metadata["runner_os"] == "unknown"
             assert metadata["runner_arch"] == "unknown"
+
+    def test_create_metadata_accepts_explicit_local_values(self) -> None:
+        """Test metadata creation for local baseline artifacts."""
+        with tempfile.TemporaryDirectory() as temp_dir:
+            output_dir = Path(temp_dir)
+
+            success = WorkflowHelper.create_metadata(
+                "main",
+                output_dir,
+                BaselineArtifactMetadata(
+                    commit_sha="abc123def456",
+                    run_id="local",
+                    runner_os="Darwin",
+                    runner_arch="arm64",
+                ),
+            )
+            assert success
+
+            metadata = json.loads((output_dir / "metadata.json").read_text(encoding="utf-8"))
+            assert metadata["ref"] == "main"
+            assert metadata["commit"] == "abc123def456"
+            assert metadata["workflow_run_id"] == "local"
+            assert metadata["runner_os"] == "Darwin"
+            assert metadata["runner_arch"] == "arm64"
+
+    def test_create_metadata_records_non_tag_ref_without_tag(self) -> None:
+        """Test metadata creation for branch refs."""
+        with tempfile.TemporaryDirectory() as temp_dir:
+            output_dir = Path(temp_dir)
+
+            success = WorkflowHelper.create_metadata("main", output_dir)
+            assert success
+
+            with (output_dir / "metadata.json").open("r", encoding="utf-8") as f:
+                metadata = json.load(f)
+
+            assert metadata["ref"] == "main"
+            assert "tag" not in metadata
 
     def test_create_metadata_directory_creation(self) -> None:
         """Test that metadata creation creates directory if it doesn't exist."""
@@ -2321,6 +2421,24 @@ class TestTimeoutHandling:
 
         assert args.verbose
         assert args.command == "generate-summary"
+
+    def test_parser_accepts_ref_baseline_fetch(self) -> None:
+        """Test that baseline fetching accepts git refs instead of only tags."""
+        parser = create_argument_parser()
+        args = parser.parse_args(["fetch-baseline", "--ref", "main", "--regenerate-missing"])
+
+        assert args.command == "fetch-baseline"
+        assert args.ref_name == "main"
+        assert args.regenerate_missing
+
+    def test_parser_accepts_local_ref_baseline_generation(self) -> None:
+        """Test that local baseline generation accepts git refs."""
+        parser = create_argument_parser()
+        args = parser.parse_args(["generate-ref-baseline", "--ref", "main", "--dev"])
+
+        assert args.command == "generate-ref-baseline"
+        assert args.ref_name == "main"
+        assert args.dev
 
     def test_configure_logging_uses_debug_when_verbose(self) -> None:
         """Test that verbose mode configures debug-level CLI logging."""

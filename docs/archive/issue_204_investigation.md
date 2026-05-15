@@ -267,7 +267,41 @@ Implications for the remaining plan:
   seed (e.g. larger point counts or a different distribution) surfaces a
   residual failure that the budget + escalation cannot close.
 
-## Next step
+## #340 large-scale characterization (2026-05-14)
 
-Proceed to Step 3 of the plan (regression test) and Step 4 (documentation
-and TODO refresh).
+The 3000-point follow-up run is now characterized. The hot path was not a new
+correctness failure: batch-local Delaunay repair was doing real repair work,
+but each successful repair also ran a full orientation canonicalization and
+geometric orientation validation over the entire TDS. Delaunay repair flips
+already require positive replacement-cell orientation and locally validate the
+changed cavity, and `finalize_bulk_construction` already runs one global
+orientation canonicalization before topology validation. Deferring the global
+orientation sweep to finalization removes redundant O(cells) work from every
+batch-local repair while preserving the final invariant gate.
+
+Measurements on maintainer hardware:
+
+- 4D/1000 diagnostics, seed `0xD67F76ED1BA1A3EA`: total wall time improved
+  from **163.7s** to **73.6s**, with 1000/1000 inserted, 0 skips, final repair
+  `flips=0`, and `validation_report: OK`.
+- The `EveryN(2)` and `EveryN(10)` repair-cadence probes were slower than the
+  default `EveryInsertion` policy because larger accumulated 4D repair
+  frontiers increased queue work faster than they reduced repair-call count.
+- 4D/3000 default debug harness, seed `0xE7E6701F918B07FA`: inserted
+  **3000/3000** vertices with zero skips, built **80,441** cells, completed
+  insertion in **401.9s**, final repair in **12.8s** with `flips=0`, Level 1–4
+  validation in **6.8s**, and total wall time **421.4s**.
+- 3D/10000 acceptance run also benefits from the same deferral: total wall time
+  was **68.4s**, with 10000/10000 inserted, zero skips, final repair `flips=0`,
+  and `validation_report: OK`.
+
+Decision: the 4D 3000-point scenario should remain a manual release-mode debug
+harness, not routine CI coverage. It is now a characterized performance
+envelope rather than an open correctness issue.
+
+## Current status
+
+The 500-point correctness reproducer and 3000-point #340 characterization are
+closed on the documented seeds. Future work should use smaller bounded
+regressions for CI and reserve the 3000-point harness for manual release-mode
+performance checks.

@@ -474,10 +474,10 @@ Start: Do you need to validate?
 - A brute-force empty-circumsphere check would be O(cells × vertices) and is not used by `is_valid()`.
 
 In practice, `DelaunayTriangulation::validate()` is usually dominated by Level 3 (topology) work.
-As a post-construction acceptance check, the current 10,000-vertex 3D large-scale
+As a post-construction acceptance check, the current 8,000-vertex 3D large-scale
 debug harness passes `validation_report` for Levels 1–4; on maintainer Apple
 M4 Max hardware the final report itself is a low-single-digit-second step, while
-the full construction/repair/validation harness is around 100 seconds.
+the full construction/repair/validation harness is around one minute.
 
 ---
 

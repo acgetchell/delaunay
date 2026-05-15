@@ -383,10 +383,9 @@ degenerate input, and tests under `tests/proptest_sos.rs` enforce that.
   - `const fn` where the inputs allow
   - typed flip/insertion budgets rather than heuristic timeouts
 - Validate any performance claim against one of the benchmark suites in
-  `benches/` (`ci_performance_suite`, `large_scale_performance`,
-  `profiling_suite`, `cold_path_predicates`, `microbenchmarks`,
-  `circumsphere_containment`, `topology_guarantee_construction`) before
-  relying on it.
+  `benches/` (`ci_performance_suite`, `profiling_suite`,
+  `cold_path_predicates`, `circumsphere_containment`,
+  `topology_guarantee_construction`, `tds_clone`) before relying on it.
 
 ### Testing mirrors the principles
 

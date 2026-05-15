@@ -1,15 +1,15 @@
 //! Enhanced geometric predicates with improved numerical robustness.
 //!
 //! This module provides robust orientation and insphere predicates for
-//! Delaunay triangulation. The predicates layer multiple strategies on top
-//! of exact arithmetic: adaptive tolerance, diagnostic consistency checking,
-//! and Simulation of Simplicity (`SoS`) fallback for degenerate and
-//! near-degenerate point configurations.
+//! Delaunay triangulation. The predicates layer exact arithmetic with optional
+//! diagnostic consistency checking and Simulation of Simplicity (`SoS`) fallback
+//! for degenerate and near-degenerate point configurations.
 
 #![forbid(unsafe_code)]
 
 use super::predicates::{
-    InSphere, Orientation, relative_insphere_classification, relative_insphere_signs,
+    InSphere, Orientation, relative_insphere_classification, relative_insphere_determinant_sign,
+    relative_insphere_signs,
 };
 use super::util::safe_coords_to_f64;
 use crate::core::collections::{MAX_PRACTICAL_DIMENSION_SIZE, SmallBuffer};
@@ -19,7 +19,7 @@ use crate::geometry::sos::{sos_insphere_sign, sos_orientation_sign};
 use crate::geometry::traits::coordinate::{
     Coordinate, CoordinateConversionError, CoordinateScalar,
 };
-use core::hint::cold_path;
+use core::{cmp::Ordering, hint::cold_path};
 use std::sync::LazyLock;
 
 static STRICT_INSPHERE_CONSISTENCY: LazyLock<bool> =
@@ -91,9 +91,9 @@ pub enum InsphereConsistencyError {
 ///
 /// 1. Exact-sign determinant evaluation using relative coordinates for the
 ///    supported exact-insphere dimensions.
-/// 2. A diagnostic consistency check against a distance-based insphere. This
-///    does not override the exact result; it only hard-fails when
-///    `DELAUNAY_STRICT_INSPHERE_CONSISTENCY` is set.
+/// 2. If `DELAUNAY_STRICT_INSPHERE_CONSISTENCY` is set, a diagnostic consistency
+///    check against a distance-based insphere. This does not override the exact
+///    result; it only hard-fails for deterministic witness capture.
 /// 3. A [`Simulation of Simplicity`](crate::geometry::sos) fallback. This is
 ///    only reached when the exact-sign computation itself is unsupported, such
 ///    as D ≥ 6 where the insphere matrix exceeds the stack-matrix limit.
@@ -183,15 +183,15 @@ where
     // Strategy 1: Exact-sign determinant approach with adaptive tolerance.
     match relative_exact_insphere(simplex_points, test_point) {
         Ok(result) => {
-            // Strategy 2: Diagnostic consistency check against distance-based insphere.
-            // The exact-sign result from insphere_from_matrix is provably correct for
-            // finite inputs; a disagreement from insphere_distance reflects f64
-            // rounding in the distance-based check, not a defect in the exact predicate.
-            if let ConsistencyResult::Inconsistent(error) =
-                verify_insphere_consistency(simplex_points, test_point, result)
-            {
-                // In strict mode, hard-fail for deterministic witness capture.
-                if *STRICT_INSPHERE_CONSISTENCY {
+            if *STRICT_INSPHERE_CONSISTENCY {
+                // Strategy 2: Diagnostic consistency check against distance-based insphere.
+                // The exact-sign result is provably correct for finite inputs; a disagreement
+                // from insphere_distance reflects f64 rounding in the distance-based check,
+                // not a defect in the exact predicate. Keep this opt-in because RobustKernel
+                // sits on hot Delaunay repair paths.
+                if let ConsistencyResult::Inconsistent(error) =
+                    verify_insphere_consistency(simplex_points, test_point, result)
+                {
                     let details = format!(
                         "{error}; simplex_points={simplex_points:?}; test_point={test_point:?}"
                     );
@@ -260,6 +260,54 @@ where
     } else {
         InSphere::OUTSIDE
     })
+}
+
+/// Robust insphere for a simplex already known to be in positive orientation.
+///
+/// This skips the orientation determinant that [`robust_insphere`] normally uses
+/// to normalize the lifted determinant sign. It is intended for hot triangulation
+/// paths that evaluate stored cells after orientation canonicalization.
+pub(crate) fn robust_insphere_positive_oriented<T, const D: usize>(
+    simplex_points: &[Point<T, D>],
+    test_point: &Point<T, D>,
+) -> Result<InSphere, CoordinateConversionError>
+where
+    T: CoordinateScalar,
+{
+    if simplex_points.len() != D + 1 {
+        return Err(CoordinateConversionError::InvalidSimplexPointCount {
+            actual: simplex_points.len(),
+            expected: D + 1,
+            dimension: D,
+        });
+    }
+    if D > 5 {
+        return robust_insphere(simplex_points, test_point);
+    }
+
+    let determinant_sign = relative_insphere_determinant_sign(simplex_points, test_point)?;
+    let orient_factor = if D.is_multiple_of(2) { -1 } else { 1 };
+    let effective_sign = determinant_sign * orient_factor;
+    let result = match effective_sign.cmp(&0) {
+        Ordering::Greater => InSphere::INSIDE,
+        Ordering::Less => InSphere::OUTSIDE,
+        Ordering::Equal => InSphere::BOUNDARY,
+    };
+
+    if *STRICT_INSPHERE_CONSISTENCY
+        && let ConsistencyResult::Inconsistent(error) =
+            verify_insphere_consistency(simplex_points, test_point, result)
+    {
+        let details =
+            format!("{error}; simplex_points={simplex_points:?}; test_point={test_point:?}");
+        return Err(CoordinateConversionError::InsphereInconsistency {
+            simplex_points: format!("{simplex_points:?}"),
+            test_point: format!("{test_point:?}"),
+            details,
+        });
+    }
+
+    Ok(result)
 }
 
 /// Whether an exact-sign failure should fall through to the geometric + `SoS` fallback.
@@ -461,6 +509,152 @@ mod tests {
         let outside_point = Point::new([2.0, 2.0, 2.0]);
         let result = robust_insphere(&points, &outside_point).unwrap();
         assert_eq!(result, InSphere::OUTSIDE);
+    }
+
+    #[test]
+    fn test_positive_oriented_insphere_matches_robust_insphere() {
+        let simplex_2d = vec![
+            Point::new([0.0, 0.0]),
+            Point::new([1.0, 0.0]),
+            Point::new([0.0, 1.0]),
+        ];
+        assert_eq!(
+            robust_orientation(&simplex_2d).unwrap(),
+            Orientation::POSITIVE
+        );
+        for point in [Point::new([0.2, 0.2]), Point::new([2.0, 2.0])] {
+            assert_eq!(
+                robust_insphere_positive_oriented(&simplex_2d, &point).unwrap(),
+                robust_insphere(&simplex_2d, &point).unwrap()
+            );
+        }
+
+        let simplex_3d = vec![
+            Point::new([0.0, 0.0, 0.0]),
+            Point::new([0.0, 1.0, 0.0]),
+            Point::new([1.0, 0.0, 0.0]),
+            Point::new([0.0, 0.0, 1.0]),
+        ];
+        assert_eq!(
+            robust_orientation(&simplex_3d).unwrap(),
+            Orientation::POSITIVE
+        );
+        for point in [Point::new([0.2, 0.2, 0.2]), Point::new([2.0, 2.0, 2.0])] {
+            assert_eq!(
+                robust_insphere_positive_oriented(&simplex_3d, &point).unwrap(),
+                robust_insphere(&simplex_3d, &point).unwrap()
+            );
+        }
+
+        let simplex_4d = vec![
+            Point::new([0.0, 0.0, 0.0, 0.0]),
+            Point::new([1.0, 0.0, 0.0, 0.0]),
+            Point::new([0.0, 1.0, 0.0, 0.0]),
+            Point::new([0.0, 0.0, 1.0, 0.0]),
+            Point::new([0.0, 0.0, 0.0, 1.0]),
+        ];
+        assert_eq!(
+            robust_orientation(&simplex_4d).unwrap(),
+            Orientation::POSITIVE
+        );
+        for point in [
+            Point::new([0.2, 0.2, 0.2, 0.2]),
+            Point::new([2.0, 2.0, 2.0, 2.0]),
+        ] {
+            assert_eq!(
+                robust_insphere_positive_oriented(&simplex_4d, &point).unwrap(),
+                robust_insphere(&simplex_4d, &point).unwrap()
+            );
+        }
+
+        let simplex_5d = vec![
+            Point::new([0.0, 0.0, 0.0, 0.0, 0.0]),
+            Point::new([0.0, 1.0, 0.0, 0.0, 0.0]),
+            Point::new([1.0, 0.0, 0.0, 0.0, 0.0]),
+            Point::new([0.0, 0.0, 1.0, 0.0, 0.0]),
+            Point::new([0.0, 0.0, 0.0, 1.0, 0.0]),
+            Point::new([0.0, 0.0, 0.0, 0.0, 1.0]),
+        ];
+        assert_eq!(
+            robust_orientation(&simplex_5d).unwrap(),
+            Orientation::POSITIVE
+        );
+        for point in [
+            Point::new([0.2, 0.2, 0.2, 0.2, 0.2]),
+            Point::new([2.0, 2.0, 2.0, 2.0, 2.0]),
+        ] {
+            assert_eq!(
+                robust_insphere_positive_oriented(&simplex_5d, &point).unwrap(),
+                robust_insphere(&simplex_5d, &point).unwrap()
+            );
+        }
+    }
+
+    #[test]
+    fn test_positive_oriented_insphere_boundary_and_invalid_count() {
+        let simplex = vec![
+            Point::new([0.0, 0.0]),
+            Point::new([1.0, 0.0]),
+            Point::new([0.0, 1.0]),
+        ];
+        assert_eq!(robust_orientation(&simplex).unwrap(), Orientation::POSITIVE);
+
+        let boundary = Point::new([1.0, 1.0]);
+        assert_eq!(
+            robust_insphere_positive_oriented(&simplex, &boundary).unwrap(),
+            InSphere::BOUNDARY
+        );
+
+        let too_few = vec![Point::new([0.0, 0.0]), Point::new([1.0, 0.0])];
+        let err =
+            robust_insphere_positive_oriented(&too_few, &Point::new([0.25, 0.25])).unwrap_err();
+        assert_eq!(
+            err,
+            CoordinateConversionError::InvalidSimplexPointCount {
+                actual: 2,
+                expected: 3,
+                dimension: 2,
+            }
+        );
+    }
+
+    #[test]
+    fn test_positive_oriented_insphere_uses_robust_fallback_above_stack_dimension() {
+        let simplex: Vec<Point<f64, 6>> = vec![
+            Point::new([0.0, 0.0, 0.0, 0.0, 0.0, 0.0]),
+            Point::new([1.0, 0.0, 0.0, 0.0, 0.0, 0.0]),
+            Point::new([0.0, 1.0, 0.0, 0.0, 0.0, 0.0]),
+            Point::new([0.0, 0.0, 1.0, 0.0, 0.0, 0.0]),
+            Point::new([0.0, 0.0, 0.0, 1.0, 0.0, 0.0]),
+            Point::new([0.0, 0.0, 0.0, 0.0, 1.0, 0.0]),
+            Point::new([0.0, 0.0, 0.0, 0.0, 0.0, 1.0]),
+        ];
+        assert_eq!(robust_orientation(&simplex).unwrap(), Orientation::POSITIVE);
+        let test_point = Point::new([0.15, 0.15, 0.15, 0.15, 0.15, 0.15]);
+
+        assert_eq!(
+            robust_insphere_positive_oriented(&simplex, &test_point).unwrap(),
+            robust_insphere(&simplex, &test_point).unwrap()
+        );
+    }
+
+    #[test]
+    fn test_verify_insphere_consistency_reports_direct_contradiction() {
+        let simplex = vec![
+            Point::new([0.0, 0.0, 0.0]),
+            Point::new([1.0, 0.0, 0.0]),
+            Point::new([0.0, 1.0, 0.0]),
+            Point::new([0.0, 0.0, 1.0]),
+        ];
+        let inside = Point::new([0.25, 0.25, 0.25]);
+
+        assert_eq!(
+            verify_insphere_consistency(&simplex, &inside, InSphere::OUTSIDE),
+            ConsistencyResult::Inconsistent(InsphereConsistencyError::DirectContradiction {
+                determinant_result: InSphere::OUTSIDE,
+                distance_result: InSphere::INSIDE,
+            })
+        );
     }
 
     #[test]

@@ -35,10 +35,15 @@ use delaunay::prelude::ordering::{
 use delaunay::prelude::query::ConvexHull;
 #[cfg(feature = "diagnostics")]
 use delaunay::prelude::tds::Tds;
+use delaunay::prelude::tds::{InvariantErrorSummaryDetail, TdsErrorKind};
 use delaunay::prelude::triangulation::construction::{
     ConstructionOptions, ConstructionSkipSample, ConstructionSlowInsertionSample,
     DelaunayConstructionFailure, DelaunayRepairPolicy, DelaunayTriangulation,
-    DelaunayTriangulationConstructionError, InsertionOrderStrategy, TopologyGuarantee, Vertex,
+    DelaunayTriangulationConstructionError, ExplicitConstructionError,
+    ExplicitDelaunayValidationError, ExplicitDelaunayValidationErrorKind,
+    ExplicitDelaunayValidationSourceKind, ExplicitInsertionError, ExplicitInsertionErrorKind,
+    ExplicitInvariantError, ExplicitInvariantErrorKind, ExplicitTdsError, ExplicitTdsErrorKind,
+    InsertionOrderStrategy, TopologyGuarantee, Vertex,
 };
 use delaunay::prelude::triangulation::delaunayize::{
     DelaunayizeConfig, DelaunayizeError, DelaunayizeOutcome, delaunayize_by_flips,
@@ -140,7 +145,6 @@ fn preludes_cover_bench_apis() -> Result<(), PreludeExportTestError> {
         },
         MatrixError::OutOfBounds { .. }
     ));
-
     let mut root_secure_map: SecureHashMap<[u64; 2], usize> = SecureHashMap::default();
     root_secure_map.insert([1, 2], 3);
     assert_eq!(root_secure_map.get(&[1, 2]), Some(&3));
@@ -161,6 +165,50 @@ fn preludes_cover_bench_apis() -> Result<(), PreludeExportTestError> {
     let telemetry = ConstructionTelemetry::default();
     assert!(!telemetry.has_data());
     Ok(())
+}
+
+#[test]
+fn construction_prelude_covers_explicit_error_summaries() {
+    let explicit_tds = ExplicitTdsError {
+        kind: ExplicitTdsErrorKind::FacetSharingViolation,
+        message: "facet sharing violation".to_string(),
+    };
+    let explicit_construction = ExplicitConstructionError::StructuralValidation {
+        source: explicit_tds,
+    };
+    let ExplicitConstructionError::StructuralValidation { source } = explicit_construction else {
+        unreachable!("constructed structural validation variant should match");
+    };
+    assert_eq!(source.kind, ExplicitTdsErrorKind::FacetSharingViolation);
+
+    let explicit_insertion = ExplicitInsertionError {
+        kind: ExplicitInsertionErrorKind::TopologyValidation,
+        source_kind: None,
+        message: "topology validation failed".to_string(),
+    };
+    assert_eq!(
+        explicit_insertion.kind,
+        ExplicitInsertionErrorKind::TopologyValidation
+    );
+
+    let explicit_invariant = ExplicitInvariantError {
+        kind: ExplicitInvariantErrorKind::Tds,
+        detail: InvariantErrorSummaryDetail::Tds(TdsErrorKind::FacetSharingViolation),
+        message: "tds validation failed".to_string(),
+    };
+    assert_eq!(explicit_invariant.kind, ExplicitInvariantErrorKind::Tds);
+
+    let explicit_delaunay_validation = ExplicitDelaunayValidationError {
+        kind: ExplicitDelaunayValidationErrorKind::Tds,
+        source_kind: Some(ExplicitDelaunayValidationSourceKind::Tds(
+            TdsErrorKind::FacetSharingViolation,
+        )),
+        message: "delaunay validation failed".to_string(),
+    };
+    assert_eq!(
+        explicit_delaunay_validation.kind,
+        ExplicitDelaunayValidationErrorKind::Tds
+    );
 }
 
 #[test]

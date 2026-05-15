@@ -1,6 +1,6 @@
-//! # 3D Triangulation Example with 100 Points
+//! # 3D Triangulation Example with 1000 Points
 //!
-//! This example demonstrates creating a 3D Delaunay triangulation using 100 randomly
+//! This example demonstrates creating a 3D Delaunay triangulation using 1000 randomly
 //! generated points. It showcases:
 //!
 //! - Using the `generate_random_triangulation` utility function for convenience
@@ -13,7 +13,7 @@
 //! ## Usage
 //!
 //! ```bash
-//! cargo run --example triangulation_3d_100_points
+//! cargo run --example triangulation_3d_1000_points
 //! ```
 //!
 //! ## Output
@@ -57,12 +57,12 @@ enum Triangulation3dExampleError {
 
 fn main() -> Result<(), Triangulation3dExampleError> {
     println!("=================================================================");
-    println!("3D Delaunay Triangulation Example - 100 Random Points");
+    println!("3D Delaunay Triangulation Example - 1000 Random Points");
     println!("=================================================================\\n");
 
     // Create Delaunay triangulation with timing.
     // Use a fixed seed + bounds so that `just examples` is reproducible and robust.
-    let n_points = 100;
+    let n_points = 1000;
     let bounds = (-3.0, 3.0);
     let seed_override: Option<u64> = env::var("DELAUNAY_EXAMPLE_SEED")
         .ok()
