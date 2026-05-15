@@ -102,15 +102,17 @@ The current calibrated fixture sizes are:
 
 | Dimension | Fixture vertices | Insert batch |
 |-----------|------------------|--------------|
-| 2D | 2,000 | 10 |
-| 3D | 700 | 10 |
-| 4D | 50 | 6 |
+| 2D | 4,000 | 10 |
+| 3D | 750 | 10 |
+| 4D | 75 | 6 |
 | 5D | 25 | 4 |
 
 The same fixture sizes are reused for construction, adversarial construction,
 validation, hull extraction, boundary traversal, and insertion bases. This keeps
 the suite orthogonal: one benchmark contract covers useful real operations
-without carrying separate toy construction-only cases.
+without carrying separate toy construction-only cases. The normal construction
+cases target roughly one second on release hardware; adversarial construction
+uses the same vertex counts and may take longer.
 
 ## Circumsphere Containment
 

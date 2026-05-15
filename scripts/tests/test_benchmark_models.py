@@ -53,6 +53,12 @@ class TestBenchmarkData:
         assert data.throughput_high == 1000.0
         assert data.throughput_unit == "Kelem/s"
 
+    def test_with_simplices_fluent_interface(self) -> None:
+        """Test fluent interface for generated simplex counts."""
+        data = BenchmarkData(1000, "2D").with_simplices(1997)
+
+        assert data.simplices == 1997
+
     def test_to_baseline_format_with_timing_only(self) -> None:
         """Test baseline format output with timing data only."""
         data = BenchmarkData(1000, "2D").with_timing(100.0, 110.0, 120.0, "µs")
@@ -330,6 +336,25 @@ class TestFormattingFunctions:
         assert "| Benchmark ID | Points | Time (mean) | Throughput (mean) | Scaling |" in markdown_content
         assert "| `boundary_facets/boundary_facets_3d/50` | 50 | 10.00 µs | 5.00 Kelem/s | N/A |" in markdown_content
         assert "| `validation/validate_3d/50` | 50 | 20.00 µs | N/A | N/A |" in markdown_content
+
+    def test_format_benchmark_tables_can_render_vertices_and_simplices(self) -> None:
+        """Test TDS summary tables can show vertex inputs and generated simplices."""
+        benchmarks = [
+            BenchmarkData(2000, "2D", benchmark_id="tds_new_2d/tds_new/2000")
+            .with_timing(250_000.0, 260_000.0, 270_000.0, "µs")
+            .with_throughput(7.407, 7.692, 8.0, "Kelem/s")
+            .with_simplices(3995),
+            BenchmarkData(2000, "2D", benchmark_id="tds_new_2d/tds_new_adversarial/2000")
+            .with_timing(430_000.0, 440_000.0, 450_000.0, "µs")
+            .with_simplices(3978),
+        ]
+
+        lines = format_benchmark_tables(benchmarks, input_label="Vertices", include_simplices=True)
+        markdown_content = "\n".join(lines)
+
+        assert "| Benchmark ID | Vertices | Time (mean) | Throughput (mean) | Simplices Generated |" in markdown_content
+        assert "| `tds_new_2d/tds_new/2000` | 2000 | 260.000 ms | 7.692 Kelem/s | 3,995 |" in markdown_content
+        assert "| `tds_new_2d/tds_new_adversarial/2000` | 2000 | 440.000 ms | N/A | 3,978 |" in markdown_content
 
     def test_format_benchmark_tables_renders_unsized_points(self) -> None:
         """Test unsized workloads render without fake numeric point counts."""

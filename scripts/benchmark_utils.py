@@ -23,6 +23,7 @@ import subprocess
 import sys
 import tempfile
 import time
+import tomllib
 from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -169,6 +170,8 @@ CI_PERFORMANCE_SUITE_GROUPS = {
 
 CI_PERFORMANCE_SUITE_GROUP_ORDER = tuple(CI_PERFORMANCE_SUITE_GROUPS)
 _CI_PERFORMANCE_SUITE_MANIFEST_IDS_FILE = "ci_performance_suite_manifest_ids.txt"
+_CI_PERFORMANCE_SUITE_METRICS_FILE = "ci_performance_suite_metrics.json"
+_CI_PERFORMANCE_SUITE_RUN_METADATA_FILE = "ci_performance_suite_run_metadata.json"
 
 
 def ci_suite_group_key(first_path_part: str) -> str | None:
@@ -215,9 +218,39 @@ def _parse_ci_performance_manifest_ids(stdout: str) -> set[str]:
     return manifest_ids
 
 
+def _parse_ci_performance_metrics(stdout: str) -> dict[str, dict[str, int]]:
+    """Parse construction metrics emitted by ci_performance_suite."""
+    metrics: dict[str, dict[str, int]] = {}
+    for line in stdout.splitlines():
+        if not line.startswith("api_benchmark_metric "):
+            continue
+        fields = dict(token.split("=", 1) for token in line.split()[1:] if "=" in token)
+        benchmark_id = fields.get("benchmark_id")
+        if not benchmark_id:
+            continue
+        try:
+            metrics[benchmark_id] = {
+                "vertices": int(fields["vertices"]),
+                "simplices": int(fields["simplices"]),
+            }
+        except (KeyError, ValueError):
+            logger.debug("Skipping malformed ci_performance_suite metric line: %s", line)
+    return metrics
+
+
 def _ci_performance_manifest_ids_path(criterion_dir: Path) -> Path:
     """Return the sidecar manifest path used to filter ci_performance_suite results."""
     return criterion_dir / _CI_PERFORMANCE_SUITE_MANIFEST_IDS_FILE
+
+
+def _ci_performance_metrics_path(criterion_dir: Path) -> Path:
+    """Return the sidecar metrics path used to annotate ci_performance_suite results."""
+    return criterion_dir / _CI_PERFORMANCE_SUITE_METRICS_FILE
+
+
+def _ci_performance_run_metadata_path(criterion_dir: Path) -> Path:
+    """Return the sidecar metadata path for the latest ci_performance_suite run."""
+    return criterion_dir / _CI_PERFORMANCE_SUITE_RUN_METADATA_FILE
 
 
 def _write_ci_performance_manifest_ids(project_root: Path, stdout: str) -> None:
@@ -238,6 +271,55 @@ def _write_ci_performance_manifest_ids(project_root: Path, stdout: str) -> None:
     )
 
 
+def _write_ci_performance_metrics(project_root: Path, stdout: str, *, require_metrics: bool = False) -> None:
+    """Persist ci_performance_suite construction metrics beside Criterion results."""
+    criterion_dir = project_root / "target" / "criterion"
+    metrics_path = _ci_performance_metrics_path(criterion_dir)
+    criterion_dir.mkdir(parents=True, exist_ok=True)
+
+    if not isinstance(stdout, str):
+        metrics_path.write_text("{}\n", encoding="utf-8")
+        if require_metrics:
+            msg = "ci_performance_suite completed but stdout was not text; cleared stale construction metrics"
+            raise TypeError(msg)
+        return
+
+    metrics = _parse_ci_performance_metrics(stdout)
+    if not metrics:
+        metrics_path.write_text("{}\n", encoding="utf-8")
+        if require_metrics:
+            msg = f"ci_performance_suite emitted no construction metrics; cleared stale metrics sidecar: {metrics_path}"
+            raise RuntimeError(msg)
+        return
+
+    metrics_path.write_text(
+        json.dumps(metrics, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+
+
+def _write_ci_performance_run_metadata(
+    project_root: Path,
+    *,
+    completed_at: datetime,
+    cargo_profile: str,
+    use_dev_mode: bool,
+) -> None:
+    """Persist metadata for the latest successful ci_performance_suite run."""
+    criterion_dir = project_root / "target" / "criterion"
+    metadata_path = _ci_performance_run_metadata_path(criterion_dir)
+    criterion_dir.mkdir(parents=True, exist_ok=True)
+    metadata = {
+        "cargo_profile": cargo_profile,
+        "completed_at": completed_at.strftime("%Y-%m-%d %H:%M:%S UTC"),
+        "sampling_mode": "dev" if use_dev_mode else "full",
+    }
+    metadata_path.write_text(
+        json.dumps(metadata, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+
+
 def _load_ci_performance_manifest_ids(criterion_dir: Path) -> set[str] | None:
     """Load ci_performance_suite benchmark IDs when a runtime manifest exists."""
     manifest_path = _ci_performance_manifest_ids_path(criterion_dir)
@@ -248,6 +330,63 @@ def _load_ci_performance_manifest_ids(criterion_dir: Path) -> set[str] | None:
     except OSError:
         return None
     return manifest_ids or None
+
+
+def _load_ci_performance_metrics(criterion_dir: Path) -> dict[str, dict[str, int]]:
+    """Load ci_performance_suite construction metrics when present."""
+    metrics_path = _ci_performance_metrics_path(criterion_dir)
+    if not metrics_path.exists():
+        return {}
+    try:
+        data = json.loads(metrics_path.read_text(encoding="utf-8"))
+    except OSError as error:
+        msg = f"failed to read ci_performance_suite metrics sidecar {metrics_path}: {error}"
+        raise OSError(msg) from error
+    except json.JSONDecodeError as error:
+        msg = f"malformed ci_performance_suite metrics sidecar {metrics_path}: {error}"
+        raise ValueError(msg) from error
+    if not isinstance(data, dict):
+        msg = f"malformed ci_performance_suite metrics sidecar {metrics_path}: expected JSON object"
+        raise TypeError(msg)
+
+    metrics: dict[str, dict[str, int]] = {}
+    for benchmark_id, values in data.items():
+        if not isinstance(benchmark_id, str) or not isinstance(values, dict):
+            msg = f"malformed ci_performance_suite metrics sidecar {metrics_path}: invalid entry {benchmark_id!r}"
+            raise TypeError(msg)
+        vertices = values.get("vertices")
+        simplices = values.get("simplices")
+        if not isinstance(vertices, int) or not isinstance(simplices, int):
+            msg = f"malformed ci_performance_suite metrics sidecar {metrics_path}: invalid counts for {benchmark_id!r}"
+            raise TypeError(msg)
+        metrics[benchmark_id] = {"vertices": vertices, "simplices": simplices}
+    return metrics
+
+
+def _load_ci_performance_run_metadata(criterion_dir: Path) -> dict[str, str]:
+    """Load metadata for the latest ci_performance_suite run when present."""
+    metadata_path = _ci_performance_run_metadata_path(criterion_dir)
+    if not metadata_path.exists():
+        return {}
+    try:
+        data = json.loads(metadata_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return {}
+    if not isinstance(data, dict):
+        return {}
+    return {key: value for key, value in data.items() if isinstance(key, str) and isinstance(value, str)}
+
+
+def _ci_performance_sidecar_timestamp(criterion_dir: Path) -> str | None:
+    """Return a best-effort timestamp from ci_performance_suite sidecar mtimes."""
+    sidecars = [
+        _ci_performance_manifest_ids_path(criterion_dir),
+        _ci_performance_metrics_path(criterion_dir),
+    ]
+    timestamps = [path.stat().st_mtime for path in sidecars if path.exists()]
+    if not timestamps:
+        return None
+    return datetime.fromtimestamp(max(timestamps), UTC).strftime("%Y-%m-%d %H:%M:%S UTC")
 
 
 def is_valid_criterion_estimate(mean_ns: float, low_ns: float, high_ns: float) -> bool:
@@ -462,15 +601,15 @@ class PerformanceSummaryGenerator:
             "This file contains performance benchmarks and analysis for the delaunay library.",
             "The results are automatically generated and updated by the benchmark infrastructure.",
             "",
-            f"**Last Updated**: {datetime.now(UTC).strftime('%Y-%m-%d %H:%M:%S UTC')}",
-            f"**Generated By**: {generator_name}",
+            f"- **Last Updated**: {datetime.now(UTC).strftime('%Y-%m-%d %H:%M:%S UTC')}",
+            f"- **Generated By**: {generator_name}",
         ]
 
         # Add git information
         try:
             commit_hash = get_git_commit_hash(cwd=self.project_root)
             if commit_hash and commit_hash != "unknown":
-                lines.append(f"**Git Commit**: {commit_hash}")
+                lines.append(f"- **Git Commit**: {commit_hash}")
         except _RECOVERABLE_CLI_ERRORS as e:
             logger.debug("Could not get git commit hash: %s", e)
 
@@ -480,25 +619,33 @@ class PerformanceSummaryGenerator:
             hw_info = hardware_info.get_hardware_info(cwd=self.project_root)
             lines.extend(
                 [
-                    f"**Hardware**: {hw_info['CPU']} ({hw_info['CPU_CORES']} cores)",
-                    f"**Memory**: {hw_info['MEMORY']}",
-                    f"**OS**: {hw_info['OS']}",
-                    f"**Rust**: {hw_info['RUST']}",
+                    f"- **Hardware**: {hw_info['CPU']} ({hw_info['CPU_CORES']} cores)",
+                    f"- **Memory**: {hw_info['MEMORY']}",
+                    f"- **OS**: {hw_info['OS']}",
+                    f"- **Rust**: {hw_info['RUST']}",
                 ],
             )
         except _RECOVERABLE_CLI_ERRORS as e:
             logger.debug("Could not get hardware info: %s", e)
-            lines.append("**Hardware**: Unknown")
+            lines.append("- **Hardware**: Unknown")
 
+        # Lead with the focused construction/TDS section so the Criterion run
+        # metadata and user-facing construction results are immediately visible.
+        tds_results = self._get_triangulation_data_structure_results()
+        if tds_results:
+            lines.append("")
+            lines.extend(tds_results)
+
+        if lines[-1] != "":
+            lines.append("")
         lines.extend(
             [
-                "",
                 "## Performance Results Summary",
                 "",
             ],
         )
 
-        # Add public API performance results from the CI suite first. This is
+        # Add public API performance results from the CI suite next. This is
         # the versioned benchmark contract used by baseline/comparison tooling.
         lines.extend(self._get_ci_performance_suite_results())
 
@@ -506,19 +653,13 @@ class PerformanceSummaryGenerator:
         # remain important because they exercise la-stack-backed predicates.
         lines.extend(self._get_circumsphere_performance_results())
 
-        # Add baseline results if available
-        if self.baseline_file.exists() or self._baseline_fallback.exists():
-            # Use fallback if primary is missing
-            if not self.baseline_file.exists():
-                self.baseline_file = self._baseline_fallback
-            lines.extend(self._parse_baseline_results())
+        # Add circumsphere-specific implementation notes next to the data they
+        # explain.
+        lines.extend(self._get_implementation_notes())
 
         # Add comparison results if available
         if self.comparison_file.exists():
             lines.extend(self._parse_comparison_results())
-
-        # Add dynamic analysis sections based on performance data
-        lines.extend(self._get_dynamic_analysis_sections())
 
         # Add static content sections (moved to end)
         lines.extend(self._get_static_sections())
@@ -530,11 +671,15 @@ class PerformanceSummaryGenerator:
 
     def _get_current_version(self) -> str:
         """
-        Get the current version from git tags.
+        Get the current crate version.
 
         Returns:
             Current version string (e.g., "0.4.3") or "unknown" if not found
         """
+        package_version = self._get_package_version()
+        if package_version:
+            return package_version
+
         try:
             # Get the latest tag that matches version pattern
             cp = run_git_command(["describe", "--tags", "--abbrev=0", "--match=v*"], cwd=self.project_root)
@@ -555,6 +700,24 @@ class PerformanceSummaryGenerator:
                 return "unknown"
             except _RECOVERABLE_CLI_ERRORS:
                 return "unknown"
+
+    def _get_package_version(self) -> str | None:
+        """Return the root Cargo package version when Cargo.toml is available."""
+        cargo_toml = self.project_root / "Cargo.toml"
+        try:
+            with cargo_toml.open("rb") as f:
+                manifest = tomllib.load(f)
+        except (OSError, tomllib.TOMLDecodeError):
+            return None
+
+        package = manifest.get("package")
+        if not isinstance(package, dict):
+            return None
+
+        version = package.get("version")
+        if isinstance(version, str) and version.strip():
+            return version.strip()
+        return None
 
     def _get_version_date(self) -> str:
         """
@@ -648,7 +811,15 @@ class PerformanceSummaryGenerator:
                 print(f"❌ Error running ci_performance_suite benchmarks: cargo exited with status {result.returncode}")
                 return False
 
+            completed_at = datetime.now(UTC)
             _write_ci_performance_manifest_ids(self.project_root, result.stdout)
+            _write_ci_performance_metrics(self.project_root, result.stdout, require_metrics=True)
+            _write_ci_performance_run_metadata(
+                self.project_root,
+                completed_at=completed_at,
+                cargo_profile=profile,
+                use_dev_mode=use_dev_mode,
+            )
             print("✅ ci_performance_suite benchmarks completed successfully")
             return True
 
@@ -1320,7 +1491,7 @@ class PerformanceSummaryGenerator:
             if metadata_lines:
                 lines.extend(
                     [
-                        "### Current Baseline Information",
+                        "### Baseline Artifact Information",
                         "",
                     ],
                 )
@@ -1330,7 +1501,7 @@ class PerformanceSummaryGenerator:
             # Extract and format benchmark data
             benchmarks = extract_benchmark_data(content)
             if benchmarks:
-                lines.extend(format_benchmark_tables(benchmarks))
+                lines.extend(format_benchmark_tables(benchmarks, input_label="Vertices"))
 
         except (OSError, TypeError, ValueError, KeyError) as e:
             lines.extend(
@@ -1343,6 +1514,67 @@ class PerformanceSummaryGenerator:
             )
 
         return lines
+
+    def _current_tds_benchmarks(self) -> list[BenchmarkData]:
+        """Return current construction/TDS Criterion results from ci_performance_suite."""
+        target_dir = self.project_root / "target"
+        benchmarks = CriterionParser.find_criterion_results(target_dir)
+        return [
+            benchmark
+            for benchmark in benchmarks
+            if benchmark.benchmark_id and ci_suite_group_key(benchmark.benchmark_id.split("/", maxsplit=1)[0]) == "construction"
+        ]
+
+    def _get_triangulation_data_structure_results(self) -> list[str]:
+        """Generate the triangulation data-structure section from current data when possible."""
+        current_benchmarks = self._current_tds_benchmarks()
+        if current_benchmarks:
+            criterion_dir = self.project_root / "target" / "criterion"
+            run_metadata = _load_ci_performance_run_metadata(criterion_dir)
+            run_date = run_metadata.get("completed_at") or None
+            if run_date is None:
+                run_date = _ci_performance_sidecar_timestamp(criterion_dir)
+                if run_date is not None:
+                    run_date = f"{run_date} (sidecar timestamp)"
+
+            lines = [
+                "## Triangulation Data Structure Performance",
+                "",
+                "### Current Criterion Run Information",
+                "",
+            ]
+            if run_date is not None:
+                lines.append(f"- **Date: {run_date}**")
+            else:
+                lines.append("- **Date: unavailable**")
+            try:
+                commit_hash = get_git_commit_hash(cwd=self.project_root)
+                if commit_hash and commit_hash != "unknown":
+                    lines.append(f"- **Git commit: {commit_hash}**")
+            except _RECOVERABLE_CLI_ERRORS as e:
+                logger.debug("Could not get git commit hash for TDS section: %s", e)
+
+            lines.extend(
+                [
+                    "- **Source: current `target/criterion` construction results**",
+                    "",
+                ],
+            )
+            lines.extend(
+                format_benchmark_tables(
+                    current_benchmarks,
+                    input_label="Vertices",
+                    include_simplices=True,
+                ),
+            )
+            return lines
+
+        if self.baseline_file.exists() or self._baseline_fallback.exists():
+            if not self.baseline_file.exists():
+                self.baseline_file = self._baseline_fallback
+            return self._parse_baseline_results()
+
+        return []
 
     def _parse_comparison_results(self) -> list[str]:
         """Parse comparison results and add status information."""
@@ -1607,36 +1839,15 @@ class PerformanceSummaryGenerator:
 
         return lines
 
-    def _get_static_sections(self) -> list[str]:
+    @staticmethod
+    def _get_implementation_notes() -> list[str]:
         """
-        Get static content sections (implementation notes, benchmark structure, etc.).
+        Get circumsphere-specific implementation notes.
 
         Returns:
-            List of markdown lines with static content
+            List of markdown lines with implementation notes
         """
         return [
-            "## Historical Version Comparison",
-            "",
-            "*Based on archived performance measurements from previous releases:*",
-            "",
-            "### v0.3.0 → v0.3.1 Performance Improvements",
-            "",
-            "| Test Case | Method | v0.3.0 | v0.3.1 | Improvement |",
-            "|-----------|--------|--------|--------|-------------|",
-            "| Basic 3D | insphere | 808 ns | 805 ns | +0.4% |",
-            "| Basic 3D | insphere_distance | 1,505 ns | 1,463 ns | +2.8% |",
-            "| Basic 3D | insphere_lifted | 646 ns | 637 ns | +1.4% |",
-            "| Random 1000 queries | insphere | 822 µs | 811 µs | +1.3% |",
-            "| Random 1000 queries | insphere_distance | 1,535 µs | 1,494 µs | +2.7% |",
-            "| Random 1000 queries | insphere_lifted | 661 µs | 650 µs | +1.7% |",
-            "| 2D | insphere_lifted | 442 ns | 440 ns | +0.5% |",
-            "| 4D | insphere_lifted | 962 ns | 955 ns | +0.7% |",
-            "",
-            "**Key Improvements**: Version 0.3.1 showed consistent performance gains across all methods,",
-            "with `insphere_distance` seeing the largest improvement (+2.8%). The changes implemented",
-            "improved numerical stability using `hypot` and `squared_norm` functions while providing",
-            "measurable performance gains.",
-            "",
             "## Implementation Notes",
             "",
             "### Performance Advantages of `insphere_lifted`",
@@ -1645,14 +1856,16 @@ class PerformanceSummaryGenerator:
             "2. Avoids redundant circumcenter calculations",
             "3. Optimized determinant computation",
             "",
-            "### Method Disagreements",
-            "",
-            "The disagreements between methods are expected due to:",
-            "",
-            "1. Different numerical approaches and tolerances",
-            "2. Floating-point precision differences in multi-step calculations",
-            "3. Varying sensitivity to degenerate cases",
-            "",
+        ]
+
+    def _get_static_sections(self) -> list[str]:
+        """
+        Get static content sections (benchmark structure, etc.).
+
+        Returns:
+            List of markdown lines with static content
+        """
+        return [
             "## Benchmark Structure",
             "",
             "The `ci_performance_suite.rs` benchmark is the primary regression and",
@@ -1765,6 +1978,7 @@ class CriterionParser:
     def _process_ci_performance_suite_results(criterion_dir: Path) -> list[BenchmarkData]:
         """Discover ci_performance_suite Criterion results with expanded benchmark IDs."""
         results: list[BenchmarkData] = []
+        metrics = _load_ci_performance_metrics(criterion_dir)
         for path_parts, estimates_path in _collect_ci_suite_estimates(criterion_dir):
             benchmark_id = "/".join(path_parts)
             dimension = ci_suite_dimension(benchmark_id)
@@ -1777,6 +1991,9 @@ class CriterionParser:
                 continue
 
             benchmark_data.benchmark_id = benchmark_id
+            metric = metrics.get(benchmark_id)
+            if metric is not None:
+                benchmark_data.simplices = metric["simplices"]
             results.append(benchmark_data)
 
         group_order = {group: index for index, group in enumerate(CI_PERFORMANCE_SUITE_GROUP_ORDER)}

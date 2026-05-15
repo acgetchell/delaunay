@@ -59,12 +59,13 @@ use bench_utils::{abort_benchmark, bench_option, bench_result};
 ///
 /// These deliberately differ from the `just debug-large-scale-*` defaults. The
 /// debug helpers are one-off, roughly one-minute acceptance/profiling runs.
-/// This suite reuses one practical repeated-sampling size per dimension for
-/// construction, adversarial construction, validation, hull, boundary, and
-/// incremental-insert base triangulations.
-const CANARY_COUNT_2D: usize = 2_000;
-const CANARY_COUNT_3D: usize = 700;
-const CANARY_COUNT_4D: usize = 50;
+/// Keep these canaries large enough to be release-comparison signals while
+/// keeping each normal construction benchmark around one second on release
+/// hardware. The adversarial variants use the same vertex counts and may take
+/// longer.
+const CANARY_COUNT_2D: usize = 4_000;
+const CANARY_COUNT_3D: usize = 750;
+const CANARY_COUNT_4D: usize = 75;
 const CANARY_COUNT_5D: usize = 25;
 /// Incremental insertion batch sizes are deliberately separate from fixture
 /// sizes: these benchmarks measure adding a small batch into an existing
@@ -228,16 +229,16 @@ const STABLE_POINTS_4D: &[[f64; 4]] = &[
 /// (Use a Criterion filter for individual cases, e.g.
 ///  `-- "tds_new_5d/tds_new/25"`)
 const KNOWN_SEEDS: &[(usize, usize, u64)] = &[
-    (2, CANARY_COUNT_2D, 2042),
-    (3, CANARY_COUNT_3D, 823),
-    (4, CANARY_COUNT_4D, 506),
+    (2, CANARY_COUNT_2D, 4042),
+    (3, CANARY_COUNT_3D, 873),
+    (4, CANARY_COUNT_4D, 531),
     (5, CANARY_COUNT_5D, 816),
 ];
 
 const KNOWN_ADV_SEEDS: &[(usize, usize, u64)] = &[
-    (2, CANARY_COUNT_2D, 2_779_099_199),
-    (3, CANARY_COUNT_3D, 2_779_099_276),
-    (4, CANARY_COUNT_4D, 2_779_104_287),
+    (2, CANARY_COUNT_2D, 2_779_101_199),
+    (3, CANARY_COUNT_3D, 2_779_099_326),
+    (4, CANARY_COUNT_4D, 2_779_104_312),
     (5, CANARY_COUNT_5D, 2_779_109_924),
 ];
 
@@ -731,11 +732,60 @@ fn discover_seeds_enabled() -> bool {
     env::var("DELAUNAY_BENCH_DISCOVER_SEEDS").is_ok_and(|value| value != "0")
 }
 
+/// Return positional Criterion filter arguments from the current benchmark invocation.
+fn criterion_filters() -> Vec<String> {
+    env::args()
+        .skip(1)
+        .filter(|arg| !arg.starts_with('-'))
+        .collect()
+}
+
+/// Return whether a benchmark ID matches at least one Criterion-style substring filter.
+fn filter_matches_benchmark(filters: &[String], benchmark_id: &str) -> bool {
+    filters.iter().any(|filter| benchmark_id.contains(filter))
+}
+
+/// Return whether a benchmark ID should run for the provided filters.
+fn benchmark_selected(filters: &[String], benchmark_id: &str) -> bool {
+    filters.is_empty() || filter_matches_benchmark(filters, benchmark_id)
+}
+
+/// Return whether the benchmark should emit construction metrics without sampling.
+///
+/// This is a release-tooling escape hatch for refreshing generated simplex
+/// counts with a filtered `tds_new` run. Any present value except `0` enables
+/// the metric-only path.
+fn export_metrics_enabled() -> bool {
+    env::var("DELAUNAY_BENCH_EXPORT_METRICS").is_ok_and(|value| value != "0")
+}
+
 fn seed_search_limit() -> usize {
     env::var("DELAUNAY_BENCH_DISCOVER_SEEDS_LIMIT")
         .ok()
         .and_then(|value| value.parse::<usize>().ok())
         .unwrap_or(2000)
+}
+
+/// Emit one parseable construction metric line for the generated report.
+///
+/// The summary generator parses these `api_benchmark_metric` lines to display
+/// vertex and simplex counts in `benches/PERFORMANCE_RESULTS.md`. Construction
+/// failures abort the benchmark because stale or missing simplex counts would
+/// make the generated release data misleading.
+fn emit_construction_metric<const D: usize>(
+    benchmark_id: &str,
+    vertices: &[Vertex<f64, (), D>],
+    options: ConstructionOptions,
+) {
+    let dt = bench_result(
+        BenchTriangulation::<D>::new_with_options(vertices, options),
+        format!("failed to collect construction metrics for {benchmark_id}"),
+    );
+    println!(
+        "api_benchmark_metric benchmark_id={benchmark_id} vertices={} simplices={}",
+        vertices.len(),
+        dt.number_of_cells()
+    );
 }
 
 /// Fixed seeds for deterministic triangulation generation across benchmark runs.
@@ -762,7 +812,7 @@ macro_rules! benchmark_tds_new_dimension {
             // It returns early on the first successful seed (and panics on failure),
             // so it is meant to be run with a Criterion filter, for example:
             //
-            //     cargo bench --profile perf --bench ci_performance_suite -- 'tds_new_3d/tds_new/700'
+            //     cargo bench --profile perf --bench ci_performance_suite -- 'tds_new_3d/tds_new/750'
             //
             // The seed table should contain exactly this calibrated count for each
             // dimension/dataset pair; runtime search is only a refresh fallback.
@@ -771,23 +821,19 @@ macro_rules! benchmark_tds_new_dimension {
             // can clean up state on both success and failure.
             if discover_seeds_enabled() {
                 let bounds = (-100.0, 100.0);
-                let filters: Vec<String> = env::args()
-                    .skip(1)
-                    .filter(|arg| !arg.starts_with('-'))
-                    .collect();
+                let filters = criterion_filters();
 
                 let bench_id = format!("tds_new_{}d/tds_new/{count}", stringify!($dim));
                 let adv_bench_id =
                     format!("tds_new_{}d/tds_new_adversarial/{count}", stringify!($dim));
 
-                if !filters.is_empty() && filters.iter().any(|filter| adv_bench_id.contains(filter))
-                {
+                if !filters.is_empty() && filter_matches_benchmark(&filters, &adv_bench_id) {
                     let attempts = retry_attempts(8);
                     let _ = prepare_adv_data::<$dim>($seed, count, attempts);
                     return;
                 }
 
-                if filters.is_empty() || filters.iter().any(|filter| bench_id.contains(filter)) {
+                if benchmark_selected(&filters, &bench_id) {
                     let seed = ($seed as u64).wrapping_add(count as u64);
                     let limit = seed_search_limit();
                     let attempts = retry_attempts(6);
@@ -812,6 +858,41 @@ macro_rules! benchmark_tds_new_dimension {
                 return;
             }
 
+            if export_metrics_enabled() {
+                let filters = criterion_filters();
+                let bench_id = format!("tds_new_{}d/tds_new/{count}", stringify!($dim));
+                let adv_bench_id =
+                    format!("tds_new_{}d/tds_new_adversarial/{count}", stringify!($dim));
+
+                if benchmark_selected(&filters, &bench_id) {
+                    let bounds = (-100.0, 100.0);
+                    let attempts = retry_attempts(6);
+                    let (seed, _, vertices) = prepare_data::<$dim>($seed, count, bounds, attempts);
+                    let options = ConstructionOptions::default().with_retry_policy(
+                        RetryPolicy::Shuffled {
+                            attempts,
+                            base_seed: Some(seed),
+                        },
+                    );
+                    emit_construction_metric::<$dim>(&bench_id, &vertices, options);
+                }
+
+                if benchmark_selected(&filters, &adv_bench_id) {
+                    let attempts = retry_attempts(8);
+                    let (seed, _, vertices) = prepare_adv_data::<$dim>($seed, count, attempts);
+                    let options = ConstructionOptions::default().with_retry_policy(
+                        RetryPolicy::Shuffled {
+                            attempts,
+                            base_seed: Some(seed),
+                        },
+                    );
+                    emit_construction_metric::<$dim>(&adv_bench_id, &vertices, options);
+                }
+                return;
+            }
+
+            let bench_id = format!("tds_new_{}d/tds_new/{count}", stringify!($dim));
+            let adv_bench_id = format!("tds_new_{}d/tds_new_adversarial/{count}", stringify!($dim));
             let mut group = c.benchmark_group(concat!("tds_new_", stringify!($dim), "d"));
 
             // The calibrated construction cases are intentionally larger than
@@ -838,6 +919,7 @@ macro_rules! benchmark_tds_new_dimension {
                         attempts,
                         base_seed: Some(seed),
                     });
+                    emit_construction_metric::<$dim>(&bench_id, &vertices, options);
 
                     b.iter(|| {
                         match DelaunayTriangulation::<_, (), (), $dim>::new_with_options(
@@ -876,6 +958,7 @@ macro_rules! benchmark_tds_new_dimension {
                                 base_seed: Some(seed),
                             },
                         );
+                        emit_construction_metric::<$dim>(&adv_bench_id, &vertices, options);
 
                         b.iter(|| {
                             match DelaunayTriangulation::<_, (), (), $dim>::new_with_options(
