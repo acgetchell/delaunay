@@ -478,6 +478,9 @@ As a post-construction acceptance check, the current 8,000-vertex 3D large-scale
 debug harness passes `validation_report` for Levels 1–4; on maintainer Apple
 M4 Max hardware the final report itself is a low-single-digit-second step, while
 the full construction/repair/validation harness is around one minute.
+The explicit 10,000-vertex 3D run is a heavier characterization probe that has
+also passed Levels 1–4 validation, but it is not the default local acceptance
+helper.
 
 ---
 

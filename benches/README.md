@@ -114,6 +114,25 @@ without carrying separate toy construction-only cases. The normal construction
 cases target roughly one second on release hardware; adversarial construction
 uses the same vertex counts and may take longer.
 
+During setup, the suite prints machine-readable `api_benchmark` manifest lines
+and `api_benchmark_metric` construction lines. `benchmark-utils` stores those
+as sidecars under `target/criterion/` so generated summaries can distinguish
+the current `ci_performance_suite` contract from stale Criterion directories and
+display generated simplex counts beside the current construction timings.
+
+For a quick metric-only refresh while investigating a construction case, set
+`DELAUNAY_BENCH_EXPORT_METRICS=1`. With a `tds_new` Criterion filter, the
+benchmark emits only the selected construction metric and exits before sampling:
+
+```bash
+DELAUNAY_BENCH_EXPORT_METRICS=1 \
+  cargo bench --profile perf --bench ci_performance_suite -- \
+  "tds_new_3d/tds_new/750"
+```
+
+Use `just bench-perf-summary` for release summaries; it runs the full perf
+profile summary workflow and captures the construction metrics automatically.
+
 ## Circumsphere Containment
 
 ```bash
@@ -280,3 +299,9 @@ uv run benchmark-utils compare-tags --old-tag vX.Y.Z --new-tag vA.B.C
 Generated summaries should come from fresh perf-profile runs when they are used
 as release evidence. For routine PR work, use `just ci` plus
 `just perf-no-regressions`.
+
+The generated `Triangulation Data Structure Performance` section is intentionally
+first: it is built from the current `target/criterion` construction results,
+the `ci_performance_suite` metric sidecar, and the latest run metadata sidecar.
+That makes the Criterion run date and generated simplex counts apply to the
+public API tables that follow.

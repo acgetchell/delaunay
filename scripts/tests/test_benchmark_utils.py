@@ -2920,7 +2920,7 @@ OK: Time change -1.8% within acceptable range
 
             assert PERFORMANCE_UPDATES_TITLE in content
             assert "uv run benchmark-utils generate-baseline" in content
-            assert "uv run benchmark-utils generate-summary" in content
+            assert "just bench-perf-summary" in content
             assert "PerformanceSummaryGenerator" in content
 
     def test_parse_numerical_accuracy_output_success(self) -> None:

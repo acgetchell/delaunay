@@ -1,45 +1,111 @@
-# Diagnostics Feature
+# Diagnostics
 
-The `diagnostics` feature exposes opt-in helpers for investigating Delaunay and
-topology failures without adding them to the default public API surface. It is
-intended for tests, bug reports, local debugging, and advanced verification
-workflows.
+This document covers the crate's diagnostic surfaces: structured validation
+reports, construction and repair telemetry, opt-in debug helpers, and runtime
+debug switches.
 
-Enable it when you need detailed evidence about why construction, insertion, or
-validation behaved unexpectedly:
+Keep this separate from [`property_testing_summary.md`](property_testing_summary.md).
+Property testing explains which randomized invariants the repository checks;
+diagnostics explains what evidence to collect when a construction, validation,
+repair, or test failure needs investigation.
+
+## Diagnostic Surfaces
+
+The crate exposes two kinds of diagnostics.
+
+Always available:
+
+- `validate()` and `validation_report()` for cumulative Levels 1-4 validation.
+- Typed construction, insertion, validation, topology, and repair errors.
+- Repair diagnostics attached to non-convergence and repair-neighbor failures.
+- Construction statistics and telemetry through
+  `delaunay::prelude::triangulation::diagnostics`.
+
+Feature-gated with `diagnostics`:
+
+- `delaunay::prelude::diagnostics::delaunay_violation_report`.
+- `DelaunayViolationReport` and `DelaunayViolationDetail`.
+- `debug_print_first_delaunay_violation`.
+- `verify_conflict_region_completeness`.
+- Extra test/debug tracing in selected integration tests and debug harnesses.
+
+The `diagnostics` feature does not change triangulation construction,
+validation, repair, or query semantics. It only compiles in additional
+inspection tools.
+
+## Commands
+
+Use the repository recipe for the standard diagnostics harness:
 
 ```bash
-cargo test --features diagnostics
-cargo test --features diagnostics -- --nocapture
-cargo run --features diagnostics --example diagnostics
+just test-diagnostics
 ```
 
-In application code:
+Run the diagnostics example:
+
+```bash
+cargo run --release --features diagnostics --example diagnostics
+```
+
+Run a diagnostics-enabled test directly:
+
+```bash
+cargo test --test circumsphere_debug_tools --features diagnostics -- --nocapture
+cargo test --test conflict_region_verification --features diagnostics -- --ignored --nocapture
+```
+
+In downstream application code:
 
 ```toml
 [dependencies]
 delaunay = { version = "...", features = ["diagnostics"] }
 ```
 
-## What It Provides
+## Validation Reports
 
-The feature currently exposes `delaunay::prelude::diagnostics`, which includes:
+For most validation work, start with the always-available APIs:
 
-- `delaunay_violation_report`: returns structured, key-based data about
-  Delaunay empty-circumsphere violations.
-- `DelaunayViolationReport` and `DelaunayViolationDetail`: compact report types
-  suitable for assertions, logs, or issue templates.
-- `debug_print_first_delaunay_violation`: emits verbose `tracing` diagnostics
-  for the first detected Delaunay violation.
-- `verify_conflict_region_completeness`: brute-force cross-checks a
-  Bowyer-Watson conflict region against all cells.
+```rust
+use delaunay::prelude::triangulation::construction::{DelaunayTriangulation, vertex};
 
-The feature does not change triangulation construction, validation, repair, or
-query semantics. It only compiles in additional inspection tools.
+let vertices = vec![
+    vertex!([0.0, 0.0, 0.0]),
+    vertex!([1.0, 0.0, 0.0]),
+    vertex!([0.0, 1.0, 0.0]),
+    vertex!([0.0, 0.0, 1.0]),
+];
+let dt = DelaunayTriangulation::new(&vertices).unwrap();
 
-## Structured Delaunay Violation Reports
+assert!(dt.validate().is_ok());
+let report = dt.validation_report();
+assert!(report.is_valid());
+```
 
-Use `delaunay_violation_report` when you want data instead of only log output:
+Use `validate()` when a pass/fail result is enough. Use `validation_report()`
+when you need all violated invariants instead of the first error.
+
+## Construction Telemetry
+
+Construction statistics expose aggregate insertion and repair behavior for batch
+construction workflows. Telemetry is intentionally coarse enough to be useful in
+release-mode characterization without turning every insertion into a trace.
+
+Useful fields include:
+
+- skipped duplicate and degeneracy counts
+- representative skipped-vertex samples
+- insertion, locate, conflict-region, and cavity counters
+- local repair timings and slow repair samples
+- final topology and Delaunay validation timings
+
+For large-scale reproducible diagnostics, prefer the documented debug recipes in
+[`benches/README.md`](../benches/README.md) and
+[`docs/dev/debug_env_vars.md`](dev/debug_env_vars.md).
+
+## Delaunay Violation Reports
+
+Use `delaunay_violation_report` when you want key-based data about Level 4
+empty-circumsphere violations:
 
 ```rust
 use delaunay::prelude::diagnostics::delaunay_violation_report;
@@ -95,7 +161,7 @@ true:
 Use it when investigating missed conflict cells, broken neighbor traversal, or
 cavity construction failures.
 
-## Related Debug Environment Variables
+## Debug Environment Variables
 
 Runtime debug switches are documented in
 [`docs/dev/debug_env_vars.md`](dev/debug_env_vars.md). The most relevant ones
@@ -105,6 +171,19 @@ for diagnostics work are:
 - `DELAUNAY_DEBUG_CAVITY`: trace cavity boundary extraction and filling.
 - `DELAUNAY_DEBUG_NEIGHBORS`: trace neighbor wiring checks.
 - `DELAUNAY_DEBUG_RIDGE_LINK`: trace ridge-link validation failures.
+- `DELAUNAY_DEBUG_RETRYABLE_SKIP`: trace retryable conflict skips after rollback.
+- `DELAUNAY_DUPLICATE_METRICS`: emit duplicate-detection grid metrics.
 
 These switches should remain investigation tools. Normal user-facing validation
 should use `validate()`, `validation_report()`, and typed errors.
+
+## Property-Test Failures
+
+When a property test fails, start with the reproduction seed and minimized input
+from `proptest`. If the failure is geometric or topological, rerun the narrowed
+test with `-- --nocapture`; then enable the `diagnostics` feature or one of the
+debug environment variables above only when the ordinary typed error/report is
+not enough.
+
+See [`property_testing_summary.md`](property_testing_summary.md) for the property
+test map and reproduction workflow.

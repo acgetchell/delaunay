@@ -80,9 +80,9 @@ Before you begin, ensure you have:
    ```bash
    # Basic tests
    cargo test                # Rust library tests
-   uv sync --group dev       # Install Python dev dependencies
-   uv run pytest             # Python utility tests
-   
+   just python-sync          # Install/update Python dev dependencies
+   just test-python          # Python utility tests
+
    # Or use just for comprehensive testing:
    just test                 # Tests + benchmark/release compile smoke
    just test-all             # Rust + Python tests
@@ -109,9 +109,9 @@ Before you begin, ensure you have:
 6. **Code quality checks**:
 
    ```bash
-   just fmt             # Format all code
-   just clippy          # Strict clippy with pedantic/nursery/cargo warnings
-   just doc-check       # Validate documentation builds
+   just check           # Non-mutating formatting, lint, docs, and config checks
+   just doc-check       # Focused documentation build check
+   just fix             # Apply formatters/auto-fixes when needed
    ```
 
 7. **Use Just for comprehensive workflows** (recommended):
@@ -123,10 +123,10 @@ Before you begin, ensure you have:
    # See all available commands
    just --list
    just help-workflows   # Show common workflow patterns
-   
+
    # Recommended workflow
-   just fix             # Apply formatters/auto-fixes (mutating)
    just check           # All non-mutating lints/validators
+   just fix             # Apply formatters/auto-fixes (mutating)
    just test            # Tests + benchmark/release compile smoke
    just ci              # Comprehensive checks + tests + examples
    
@@ -165,8 +165,9 @@ When you enter the project directory, `rustup` will automatically:
 
 - **Install the correct Rust version** (1.95.0) if you don't have it
 - **Switch to the pinned version** for this project
-- **Install required components** (clippy, rustfmt, rust-docs, rust-src)
-- **Add cross-compilation targets** for supported platforms
+- **Install required components** (clippy, rustfmt, rust-src)
+- **Keep the host toolchain lean**; workflows install cross-compilation
+  targets only when they need them
 
 **What this means for contributors:**
 
@@ -213,10 +214,14 @@ The project uses `uv` for fast, reliable Python dependency management:
 # Python dependencies are automatically managed
 # No manual installation required - uv handles everything
 
-# If you need to run Python tools directly:
-uvx ruff format scripts/     # Code formatting
-uvx ruff check --fix scripts/ # Linting with auto-fixes
-uvx pylint scripts/          # Code quality analysis
+# Recommended repository workflow:
+just check            # Non-mutating checks, including Python
+just fix              # Formatters and auto-fixes, including Python
+
+# Focused Python checks:
+just python-check     # Python formatting, linting, and type checking
+just python-typecheck # Python type checking only
+just python-fix       # Python Ruff fixes and formatting
 ```
 
 **Integration with Development Workflow:**
@@ -349,8 +354,8 @@ just --list
 just help-workflows   # Show common workflow patterns
 
 # Recommended workflow
-just fix              # Apply formatters/auto-fixes (mutating)
 just check            # All non-mutating lints/validators
+just fix              # Apply formatters/auto-fixes (mutating)
 just test             # Tests + benchmark/release compile smoke
 
 # Full CI / pre-push validation
@@ -384,21 +389,22 @@ just perf-no-regressions # Fast pre-PR 2D-5D regression guard
 
 #### Code Quality
 
-- `just fmt` - Format all code
+- `just action-lint` - GitHub Actions workflow validation
 - `just clippy` - Run strict clippy
 - `just doc-check` - Validate documentation builds
 - `just lint` - All linting (code + docs + config)
 - `just lint-code` - Code linting (Rust, Python, Shell)
-- `just lint-docs` - Documentation linting (Markdown, Spelling)
 - `just lint-config` - Configuration validation (JSON, TOML, Actions)
-- `just python-fix` - Auto-format / auto-fix Python scripts
-- `just python-lint` - Lint + typecheck Python scripts (non-mutating)
-- `just spell-check` - Check spelling across project files (uses `typos-cli`, configured by `typos.toml`)
-- `just shell-fmt` - Format shell scripts
-- `just shell-lint` - Lint/check shell scripts (non-mutating)
-- `just markdown-fix` - Auto-fix markdown formatting
+- `just lint-docs` - Documentation linting (Markdown, Spelling)
 - `just markdown-lint` - Lint/check markdown (non-mutating)
-- `just action-lint` - GitHub Actions workflow validation
+- `just python-check` - Format, lint, and type-check Python scripts (non-mutating)
+- `just python-lint` - Lint + typecheck Python scripts (non-mutating)
+- `just shell-lint` - Lint/check shell scripts (non-mutating)
+- `just spell-check` - Check spelling across project files (uses `typos-cli`, configured by `typos.toml`)
+- `just fmt` - Format all code
+- `just markdown-fix` - Auto-fix markdown formatting
+- `just python-fix` - Auto-format / auto-fix Python scripts
+- `just shell-fmt` - Format shell scripts
 
 #### Testing
 
@@ -418,12 +424,12 @@ just perf-no-regressions # Fast pre-PR 2D-5D regression guard
 
 #### Validation and Linting
 
+- `just action-lint` - GitHub Actions workflow validation
+- `just markdown-lint` - Lint markdown files
+- `just shell-lint` - Check shell script formatting and lint diagnostics
+- `just spell-check` - Check spelling across project files (uses `typos-cli`, configured by `typos.toml`)
 - `just validate-json` - Validate all JSON files
 - `just validate-toml` - Validate all TOML files
-- `just shell-lint` - Format and lint shell scripts
-- `just markdown-lint` - Lint markdown files
-- `just action-lint` - GitHub Actions workflow validation
-- `just spell-check` - Check spelling across project files (uses `typos-cli`, configured by `typos.toml`)
 
 #### Utilities
 
@@ -432,7 +438,7 @@ just perf-no-regressions # Fast pre-PR 2D-5D regression guard
 - `just build` - Build the project
 - `just build-release` - Build in release mode
 - `just changelog` - Generate enhanced changelog
-- `just changelog-tag <version>` - Create git tag with changelog content
+- `just tag <version>` - Create git tag with changelog content
 - `just help-workflows` - Show common workflow patterns
 
 ### Workflow Recommendations
@@ -440,8 +446,8 @@ just perf-no-regressions # Fast pre-PR 2D-5D regression guard
 **During active development:**
 
 ```bash
-just fix              # Apply formatters/auto-fixes (mutating)
 just check            # All non-mutating lints/validators
+just fix              # Apply formatters/auto-fixes (mutating)
 just test             # Tests + benchmark/release compile smoke
 ```
 
@@ -722,8 +728,8 @@ cargo test
 cargo test --tests
 
 # Python utility tests (development scripts)
-uv sync --group dev  # Install test dependencies
-uv run pytest       # Run Python tests
+just python-sync    # Install/update Python dev dependencies
+just test-python    # Run Python tests
 
 # Example tests (ensure examples compile and run)
 ./scripts/run_all_examples.sh
@@ -919,6 +925,10 @@ The project includes comprehensive benchmarking:
 - **Framework**: Criterion, Cargo's `perf` profile, and release-mode debug harnesses
 - **Coverage**: Public 2D-5D workflows, predicate microbenchmarks, large-scale construction, validation, topology guarantees, and profiling
 - **Automated Baselines**: Dev-mode `ci_performance_suite` baselines are generated on version tags (`vX.Y.Z`) as GitHub Actions artifacts
+- **Release summaries**: `just bench-perf-summary` regenerates
+  `benches/PERFORMANCE_RESULTS.md` from fresh perf-profile Criterion data,
+  circumsphere predicate timings, current run metadata, and generated simplex
+  counts
 
 ### Performance Testing Workflow
 
@@ -957,6 +967,7 @@ just perf-baseline-to /tmp/delaunay-main-baseline
 just perf-compare <file> # Compare against a specific dev-mode baseline file
 just bench-smoke        # Harness smoke test; not performance data
 just bench              # Full benchmark workspace with the perf profile
+just bench-perf-summary # Release summary with current Criterion metadata
 ```
 
 **Compare tags using CI baselines (no benchmarking):**

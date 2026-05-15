@@ -150,6 +150,10 @@ Property-based tests for `DelaunayTriangulation` invariants (all Delaunay-specif
 
 **Remaining ignored high-dimensional variants**:
 
+These are pending the v0.7.8 slow-test taxonomy audit (#380), which will
+re-measure ignored tests and use a 30-second threshold for grouping unattended
+slow tests under `slow-tests`. The notes below record the previous classification.
+
 - `prop_incremental_insertion_maintains_validity_5d` - Slow (>60s even in release mode)
 - `prop_duplicate_coordinates_rejected_4d/5d` - Slow (>60s), ignored for performance
 - `prop_empty_circumsphere_4d/5d` - Slow (>60s), ignored for performance
@@ -300,7 +304,7 @@ a point lies inside the circumsphere of a simplex in 2D, 3D, and 4D.
 # Run specific debug test functions with verbose output
 cargo test --test circumsphere_debug_tools --features diagnostics test_2d_circumsphere_debug -- --nocapture
 cargo test --test circumsphere_debug_tools --features diagnostics test_3d_circumsphere_debug -- --nocapture
-cargo test --test circumsphere_debug_tools --features diagnostics test_all_debug -- --nocapture
+cargo test --test circumsphere_debug_tools --features diagnostics test_all_debug -- --ignored --exact --nocapture
 
 # Run all debug tests at once (recommended)
 just test-diagnostics
@@ -371,15 +375,16 @@ issues #340, #341, and #342.
 **Run with:** `cargo test --release --test large_scale_debug -- --ignored --nocapture`
 or one of the active large-scale helpers:
 
-- `just debug-large-scale-2d [n] [repair_every]` — default `n=40000`
+- `just debug-large-scale-2d [n] [repair_every]` — default `n=36000`
 - `just debug-large-scale-3d [n] [repair_every]` — issue #341, default `n=8000`
 - `just debug-large-scale-4d [n] [repair_every]` — issue #340, default `n=900`
-- `just debug-large-scale-5d [n] [repair_every]` — issue #342, default `n=150`
+- `just debug-large-scale-5d [n] [repair_every]` — issue #342, default `n=140`
 
-The defaults are calibrated as roughly one-minute release-mode acceptance runs
-on maintainer Apple M4 Max hardware. Each should insert all vertices with zero
-skips, run final repair, and pass `validation_report` for Levels 1–4. Expect
-normal hardware/load variation.
+The `just` defaults are calibrated as roughly one-minute release-mode
+acceptance runs on maintainer Apple M4 Max hardware. Each should insert all
+vertices with zero skips, run final repair, and pass `validation_report` for
+Levels 1–4. Expect normal hardware/load variation. Pass `n` explicitly when
+reproducing heavier characterization probes such as 2D=40,000 or 5D=150.
 
 **Note:** Use `--release` for runs above roughly 30 vertices; debug-mode
 overhead makes large 3D/4D cases look hung even when the algorithm is making

@@ -13,15 +13,17 @@
 //! cargo test --release --test large_scale_debug debug_large_scale_2d -- --ignored --nocapture
 //! ```
 //!
-//! The `just debug-large-scale-{2,3,4,5}d` helpers all accept the same
-//! `[n] [repair_every]` arguments. The checked-in defaults are calibrated as
-//! roughly one-minute release-mode acceptance/profiling runs on maintainer Apple
-//! M4 Max hardware:
+//! The ignored tests and `just debug-large-scale-{2,3,4,5}d` helpers all accept
+//! the same `[n] [repair_every]` shape. The ignored test defaults are:
 //!
 //! - 2D: 40,000 vertices
 //! - 3D: 8,000 vertices
 //! - 4D: 900 vertices
 //! - 5D: 150 vertices
+//!
+//! The `just` helpers may use slightly smaller local defaults so routine
+//! acceptance/profiling runs stay near one minute on maintainer Apple M4 Max
+//! hardware. Pass `n` explicitly when a run must match a documented scale.
 //!
 //! Each should insert all vertices with zero skips, run final repair, and pass
 //! `validation_report` for Levels 1–4. Use local harness output for exact

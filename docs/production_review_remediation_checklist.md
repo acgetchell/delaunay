@@ -30,9 +30,11 @@ Treat partial items as still open until their acceptance notes are satisfied.
 
 - [ ] **6. Split very large source files.**
   Start with `core/algorithms/flips.rs`, then `triangulation/delaunay.rs`,
-  `core/triangulation.rs`, and `core/tds.rs`.
+  `core/triangulation.rs`, and `core/tds.rs`. The triangulation-facing module
+  split is tracked for v0.7.8 in #381.
 - [ ] **7. Replace full-TDS clone rollback with journaled or localized rollback.**
-  This remains the largest performance opportunity.
+  This remains the largest performance opportunity. Tracked for v0.8.0 in
+  #364.
 - [x] **8. Harden robust insphere against squared-norm overflow.**
   Share the relative-coordinate formulation with `AdaptiveKernel::in_sphere`
   or return a typed error for non-finite squared norms.
@@ -41,17 +43,19 @@ Treat partial items as still open until their acceptance notes are satisfied.
   layering ridge and vertex-link checks as required.
 - [ ] **10. Replace nested `Option` neighbors with a typed enum.**
   Make unassigned neighbors distinct from assigned boundary slots and hide raw
-  mutation behind accessors.
+  mutation behind accessors. Tracked for v0.7.8 in #387.
 - [x] **11. Gate `cells_mut()` out of production builds.**
   The raw storage accessor was deleted; tests now use narrower mutation paths
   or exercise lower-level helpers directly.
 - [ ] **12. Confirm clone semantics for linear-algebra error variants.**
   Verify `LaError: Clone` and keep parent error enums honestly cloneable.
+  Tracked for v0.7.8 in #384.
 - [ ] **13. Make strict insphere consistency test control isolated.**
   Rename the once-init env flag for process-wide semantics or use an atomic
-  test hook.
+  test hook. Tracked for v0.7.8 in #383.
 - [ ] **14. Consolidate focused preludes.**
-  Reduce overlap and make import surfaces more orthogonal.
+  Reduce overlap and make import surfaces more orthogonal. Folded into the
+  v0.7.8 triangulation-module cleanup in #381.
 - [x] **15. Audit FastHashMap exposure to attacker-controlled hash keys.**
   Coordinate-derived hash-grid and epsilon-dedup buckets now use randomized
   `SecureHashMap`; remaining `FastHashMap` keys are slot keys, UUID identities,
@@ -66,6 +70,7 @@ Treat partial items as still open until their acceptance notes are satisfied.
   against the live TDS.
 - [ ] **17. Add a leaner adaptive orientation fast path.**
   Avoid paying the diagnostic plus exact predicate path when SoS is unnecessary.
+  Tracked for v0.7.8 in #256.
 - [x] **18. Avoid fresh UUID allocation for rollback snapshots.**
   Rollback snapshots now preserve identity with `Arc::clone`; ordinary `Clone`
   intentionally keeps fresh runtime identity.
@@ -87,18 +92,21 @@ Treat partial items as still open until their acceptance notes are satisfied.
 
 - [ ] **22. Reconcile topology guarantee and validation policy combinations.**
   Reject incoherent builder combinations or merge the overlapping policy axes.
+  Tracked for v0.7.8 in #385.
 - [ ] **23. Reconsider skipped insertions as success outcomes.**
   Make skipped duplicate and degeneracy outcomes harder for callers to ignore.
+  Tracked for v0.7.8 in #386.
 - [ ] **24. Make `Cell` encapsulation consistent.**
-  Private neighbor storage plus accessors is the likely direction.
+  Private neighbor storage plus accessors is the likely direction. Tracked for
+  v0.7.8 in #387.
 - [ ] **25. Protect `Vertex::incident_cell` mutation.**
   Introduce a checked setter or newtype so invalid incident-cell links are
-  harder to construct.
+  harder to construct. Tracked for v0.7.8 in #387.
 - [ ] **26. Revisit public `core` module naming.**
   Decide whether to keep the shadowing surface, rename it, or hide it behind
-  curated exports.
+  curated exports. Tracked for v0.7.8 in #388.
 - [ ] **27. Normalize boxing policy in Delaunay repair error variants.**
-  Pick a consistent enum-size and payload strategy.
+  Pick a consistent enum-size and payload strategy. Tracked for v0.7.8 in #384.
 
 ## Testing Gaps
 
@@ -122,21 +130,25 @@ Treat partial items as still open until their acceptance notes are satisfied.
 - [x] **33. Regression-test robust insphere overflow boundaries.**
   Include inputs near `||x|| ~= 1e154`.
 - [ ] **34. Harden doctests that unwrap degenerate construction.**
-  Use provably non-degenerate inputs or hidden `Result` wrappers.
+  Use provably non-degenerate inputs or hidden `Result` wrappers. Tracked by
+  the v0.7.8 doctest cleanup in #365 and builder-doc migration in #214.
 
 ## Optional And Nitpicks
 
 - [ ] **A. Clarify cfg-only feature flags in `Cargo.toml`.**
-  Group empty features under a cfg-only banner.
+  Group empty features under a cfg-only banner. Tracked for v0.7.8 in #382.
 - [ ] **B. Remove stale deprecated-warning comment in `lib.rs`.**
-  Delete or update the comment if no `allow(deprecated)` follows.
+  Delete or update the comment if no `allow(deprecated)` follows. Tracked for
+  v0.7.8 in #382.
 - [ ] **C. Relabel safe-code `SAFETY` comments in `tds.rs`.**
-  Use `INVARIANT` where no unsafe reasoning is involved.
+  Use `INVARIANT` where no unsafe reasoning is involved. Tracked for v0.7.8 in
+  #382.
 - [x] **D. Remove allocation from `geometry/sos.rs` predicate helper.**
   Orientation and insphere SoS helpers now use stack-backed small buffers for
   coordinate and lifted-column scratch storage in supported dimensions.
 - [ ] **E. Verify `core/util/uuid.rs` panic helpers are test-only.**
-  Keep panic and unreachable paths out of production code.
+  Keep panic and unreachable paths out of production code. Tracked for v0.7.8
+  in #382.
 - [x] **F. Remove scale-unit tolerance from the `remove_vertex` doctest.**
   The doctest now finds the vertex by UUID instead of coordinate epsilon.
 

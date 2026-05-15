@@ -1,8 +1,9 @@
 # Scripts Directory
 
 This directory contains Python and shell tooling used by the `delaunay`
-repository. Prefer the `just` recipes and `uv run ...` entrypoints documented
-here over invoking Python files directly.
+repository. Prefer `just` recipes for validation and tests, and use the
+`uv run ...` entrypoints documented here when invoking an individual utility
+directly.
 
 ## Prerequisites
 
@@ -23,12 +24,12 @@ These commands are exposed by `pyproject.toml`; all support `--help`.
 
 ```bash
 just changelog
-just changelog-unreleased v0.7.7
-just tag v0.7.7
+just changelog-unreleased vX.Y.Z
+just tag vX.Y.Z
 
 uv run postprocess-changelog --help
 uv run archive-changelog --help
-uv run tag-release v0.7.7 --help
+uv run tag-release vX.Y.Z --help
 ```
 
 `just changelog` runs `git-cliff`, applies markdown hygiene, and archives
@@ -80,19 +81,10 @@ validation commands.
 ## Linting and tests
 
 ```bash
-uv run ruff check scripts/ --fix
-uv run ruff format scripts/
-uv run ty check scripts/ --error all
-uv run pytest scripts/tests
-```
-
-The usual repository entrypoints are:
-
-```bash
 just python-check
-just python-fix
 just python-typecheck
 just test-python
+just python-fix
 ```
 
 ## Maintenance expectations
