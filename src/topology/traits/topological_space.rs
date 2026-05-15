@@ -350,8 +350,9 @@ pub trait TopologicalSpace {
     /// Different topologies have different canonicalization rules:
     /// - **Euclidean**: No modification (identity operation)
     /// - **Toroidal**: Wraps coordinates into fundamental domain `[0, L)`
-    /// - **Spherical**: Projects onto unit sphere surface
-    /// - **Hyperbolic**: Projects into valid hyperbolic space region
+    /// - **Spherical**: Currently a scaffolded identity operation; unit-sphere
+    ///   projection is tracked separately
+    /// - **Hyperbolic**: Currently a scaffolded identity operation
     ///
     /// The coordinate slice length must match `Self::DIM`.
     ///

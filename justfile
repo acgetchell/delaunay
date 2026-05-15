@@ -258,8 +258,8 @@ fmt-check:
 
 help-workflows:
     @echo "Recommended Just workflow:"
-    @echo "  just fix               # Apply formatters/auto-fixes (mutating)"
     @echo "  just check             # Run all non-mutating lints/validators"
+    @echo "  just fix               # Apply formatters/auto-fixes (mutating)"
     @echo "  just test              # Run tests + default-profile benchmark/release compile smoke"
     @echo "  just ci                # Comprehensive checks + tests + examples"
     @echo ""
@@ -299,7 +299,7 @@ help-workflows:
 # All linting: code + documentation + configuration
 lint: lint-code lint-docs lint-config
 
-# Code linting: Rust (fmt-check, clippy, docs, Semgrep) + Python (ruff, ty, mypy) + Shell scripts
+# Code linting: Rust (fmt-check, clippy, docs, Semgrep) + Python (Ruff, Ty) + Shell scripts
 lint-code: fmt-check clippy doc-check semgrep semgrep-test python-lint shell-lint
 
 # Configuration validation: JSON, TOML, YAML, GitHub Actions workflows

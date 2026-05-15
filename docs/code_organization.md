@@ -5,7 +5,7 @@ This document provides a comprehensive guide to the delaunay project's code orga
 ## Table of Contents
 
 - [Project Structure](#project-structure)
-  - [Complete Directory Tree](#complete-directory-tree)
+- [Directory Tree Snapshot](#directory-tree-snapshot)
   - [Architecture Overview](#architecture-overview)
   - [Architectural Principles](#architectural-principles)
 - [Module Organization Patterns](#module-organization-patterns)
@@ -21,7 +21,7 @@ This document provides a comprehensive guide to the delaunay project's code orga
 
 The delaunay project follows a standard Rust library structure with additional tooling for computational geometry research.
 
-### Complete Directory Tree
+### Directory Tree Snapshot
 
 > **Tip**: Generate this tree in CI
 >
@@ -35,7 +35,9 @@ The delaunay project follows a standard Rust library structure with additional t
 > find . -type f \( -name "*.rs" -o -name "*.md" -o -name "*.toml" -o -name "*.yml" -o -name "*.yaml" \) | LC_ALL=C sort
 > ```
 >
-> This keeps the directory tree automatically synchronized with the actual project structure.
+> Use this command to refresh the snapshot when files move. The tree below is a
+> human-maintained orientation aid, not generated during every documentation
+> build.
 
 ```text
 delaunay/
@@ -47,6 +49,8 @@ delaunay/
 │   ├── ISSUE_TEMPLATE/
 │   │   ├── bug_report.yml
 │   │   └── config.yml
+│   ├── instructions/
+│   │   └── codacy.instructions.md
 │   ├── workflows/
 │   │   ├── audit.yml
 │   │   ├── benchmarks.yml
@@ -56,10 +60,13 @@ delaunay/
 │   │   ├── codeql.yml
 │   │   ├── generate-baseline.yml
 │   │   ├── profiling-benchmarks.yml
-│   │   └── rust-clippy.yml
+│   │   ├── rust-clippy.yml
+│   │   └── semgrep-sarif.yml
 │   ├── CODEOWNERS
 │   └── dependabot.yml
 ├── benches/
+│   ├── common/
+│   │   └── bench_utils.rs
 │   ├── PERFORMANCE_RESULTS.md
 │   ├── README.md
 │   ├── ci_performance_suite.rs
@@ -97,7 +104,8 @@ delaunay/
 │   │   ├── debug_env_vars.md
 │   │   ├── python.md
 │   │   ├── rust.md
-│   │   └── testing.md
+│   │   ├── testing.md
+│   │   └── tooling-alignment.md
 │   ├── templates/
 │   │   └── README.md
 │   ├── ORIENTATION_SPEC.md
@@ -117,8 +125,10 @@ delaunay/
 │   ├── README.md
 │   ├── convex_hull_3d_1000_points.rs
 │   ├── delaunayize_repair.rs
+│   ├── diagnostics.rs
 │   ├── into_from_conversions.rs
 │   ├── memory_analysis.rs
+│   ├── numerical_robustness.rs
 │   ├── pachner_roundtrip_4d.rs
 │   ├── point_comparison_and_hashing.rs
 │   ├── topology_editing_2d_3d.rs
@@ -220,6 +230,7 @@ delaunay/
 │   │   ├── builder.rs
 │   │   ├── delaunay.rs
 │   │   ├── delaunayize.rs
+│   │   ├── diagnostics.rs
 │   │   ├── flips.rs
 │   │   ├── locality.rs
 │   │   └── validation.rs
@@ -227,10 +238,15 @@ delaunay/
 │   └── lib.rs
 ├── tests/
 │   ├── semgrep/
+│   │   ├── scripts/
+│   │   │   └── tests/
+│   │   │       └── python_exceptions.py
 │   │   └── src/
-│   │       └── core/
-│   │           └── algorithms/
-│   │               └── no_std_hash_collections.rs
+│   │       ├── core/
+│   │       │   └── algorithms/
+│   │       │       └── no_std_hash_collections.rs
+│   │       └── project_rules/
+│   │           └── rust_style.rs
 │   ├── COVERAGE.md
 │   ├── README.md
 │   ├── allocation_api.rs
@@ -255,6 +271,7 @@ delaunay/
 │   ├── proptest_delaunay_triangulation.rs
 │   ├── proptest_euler_characteristic.rs
 │   ├── proptest_facet.rs
+│   ├── proptest_flips.rs
 │   ├── proptest_geometry.rs
 │   ├── proptest_orientation.rs
 │   ├── proptest_point.rs
@@ -270,6 +287,7 @@ delaunay/
 │   ├── regressions.rs
 │   ├── serialization_vertex_preservation.rs
 │   ├── tds_orientation.rs
+│   ├── trait_bound_ergonomics.rs
 │   └── triangulation_builder.rs
 ├── .codacy.yml
 ├── .codecov.yml
@@ -314,7 +332,7 @@ just test-diagnostics
 # Or run specific test functions with verbose output (direct cargo)
 cargo test --test circumsphere_debug_tools --features diagnostics test_2d_circumsphere_debug -- --nocapture
 cargo test --test circumsphere_debug_tools --features diagnostics test_3d_circumsphere_debug -- --nocapture
-cargo test --test circumsphere_debug_tools --features diagnostics test_all_debug -- --nocapture
+cargo test --test circumsphere_debug_tools --features diagnostics test_all_debug -- --ignored --exact --nocapture
 # Or run all debug tests at once
 cargo test --test circumsphere_debug_tools --features diagnostics -- --nocapture
 ```
@@ -347,22 +365,23 @@ cargo test --lib --features bench
 > These tests are designed for local performance analysis and ergonomics validation rather than
 > deterministic unit testing. Use `--features bench` when conducting performance investigations.
 
-**Note**: Python tests in `scripts/tests/` are executed via pytest (recommended: `uv run pytest`) and discovered via `pyproject.toml`. Run with:
+**Note**: Python tests in `scripts/tests/` are executed via pytest and discovered via `pyproject.toml`. Run the usual suite through the `just` recipe:
 
 ```bash
 # Run all Python utility tests
 just test-python
 
-# Or run a specific test file
+# Or run a specific test file directly when narrowing failures
 uv run pytest scripts/tests/test_benchmark_utils.py
 uv run pytest scripts/tests/test_postprocess_changelog.py
 ```
 
-**Note**: The changelog is generated by [git-cliff](https://git-cliff.org/) (`just changelog-update`), post-processed by
+**Note**: The changelog is generated by [git-cliff](https://git-cliff.org/) (`just changelog`), post-processed by
 `postprocess_changelog.py` for markdown hygiene, and then archived by `archive_changelog.py` which splits completed minor
 series into `docs/archive/changelog/X.Y.md` files, keeping only Unreleased + the active minor in the root `CHANGELOG.md`.
-Tag creation (`just changelog-tag`) handles GitHub's tag annotation size limits and automatically falls back to archived
-files when the requested version is no longer in the root changelog.
+Tag creation (`just tag`, with `just changelog-tag` kept as a compatibility alias)
+handles GitHub's tag annotation size limits and automatically falls back to
+archived files when the requested version is no longer in the root changelog.
 
 **Note**: Benchmarks, baselines, and performance summaries are generated via the benchmark utilities CLI:
 
@@ -535,8 +554,8 @@ The project uses [`just`](https://github.com/casey/just) as a command runner to 
 **Recommended Workflow:**
 
 ```bash
-just fix           # Apply formatters/auto-fixes (mutating)
 just check         # All non-mutating lints/validators
+just fix           # Apply formatters/auto-fixes (mutating)
 just test          # Tests + benchmark/release compile smoke
 ```
 
@@ -568,11 +587,11 @@ just lint          # All linting (code + docs + config)
 just lint-code     # Code linting (Rust, Python, Shell)
 just lint-docs     # Documentation linting (Markdown, Spelling)
 just lint-config   # Configuration validation (JSON, TOML, Actions)
-just fmt           # Format Rust code
 just clippy        # Run Clippy with strict settings
 just doc-check     # Validate documentation builds
-just python-lint   # Format and lint Python scripts
+just python-check  # Python format/lint/typecheck checks
 just spell-check   # Check spelling across project files
+just fix           # Apply formatters/auto-fixes after reviewing checks
 ```
 
 **Benchmarks and Performance:**
@@ -624,7 +643,7 @@ just clean         # Clean build artifacts
 just build         # Build the project
 just build-release # Build in release mode
 just changelog     # Generate enhanced changelog
-just changelog-tag <version> # Create git tag with changelog content
+just tag <version> # Create git tag with changelog content
 just examples      # Run all examples
 ```
 

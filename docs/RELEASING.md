@@ -43,6 +43,11 @@ already be on `main`.
 Small, critical fixes discovered during the release process may be included,
 but keep them minimal and release-critical.
 
+Update release-facing documentation on this PR branch before publishing. Do not
+defer README, `docs/`, or benchmark documentation fixes until after the release:
+crates.io, docs.rs, and the generated benchmark summary are all versioned with
+the release artifacts.
+
 1. Create the release branch
 
 ```bash
@@ -92,16 +97,30 @@ just bench-perf-summary
 Run it after the version bump so the generated file reports the current Cargo
 package version. The recipe already runs `benchmark-utils generate-summary
 --run-benchmarks --profile perf`, which refreshes the perf-profile Criterion
-`ci_performance_suite` data, captures the generated construction simplex
-counts used by the Triangulation Data Structure tables, reruns the circumsphere
-benchmark, and regenerates `benches/PERFORMANCE_RESULTS.md`. No separate
-Criterion refresh step is required.
+`ci_performance_suite` data, captures the generated construction simplex counts
+emitted by the benchmark harness, records current Criterion run metadata,
+reruns the circumsphere benchmark, and regenerates
+`benches/PERFORMANCE_RESULTS.md`. No separate Criterion refresh step is
+required.
 
 Review generated benchmark docs before committing them. Confirm the file shows
 `Version $VERSION Results`, `Current Criterion Run Information`, and
 `Simplices Generated`, and does not retain `Historical Version Comparison`,
 `Circumsphere Predicate Analysis`, `Method Disagreements`, or
 `Baseline Artifact Information`.
+
+For manual investigation only, `DELAUNAY_BENCH_EXPORT_METRICS=1` can print the
+construction vertex/simplex metric lines without Criterion sampling. Prefer
+pairing it with a `tds_new` Criterion filter, for example:
+
+```bash
+DELAUNAY_BENCH_EXPORT_METRICS=1 \
+  cargo bench --profile perf --bench ci_performance_suite -- \
+  "tds_new_3d/tds_new/750"
+```
+
+This helper is not a replacement for `just bench-perf-summary` in the release
+flow.
 
 5. Validate the release branch
 

@@ -24,13 +24,17 @@ the guarantees stated in the public API documentation.
   - [Table of Contents](#table-of-contents)
   - [Simplicial complexes and manifolds](#simplicial-complexes-and-manifolds)
     - [Simplicial complex model](#simplicial-complex-model)
+  - [Validation layering](#validation-layering)
+  - [Coherent orientation](#coherent-orientation)
   - [Geometric invariants](#geometric-invariants)
     - [Delaunay condition (empty circumsphere property)](#delaunay-condition-empty-circumsphere-property)
+    - [Robust predicate envelope](#robust-predicate-envelope)
   - [PL-manifold conditions](#pl-manifold-conditions)
     - [PL-manifolds vs pseudomanifolds](#pl-manifolds-vs-pseudomanifolds)
   - [Link-based manifold validation](#link-based-manifold-validation)
     - [Vertex links](#vertex-links)
     - [Ridge links](#ridge-links)
+  - [Topological domains](#topological-domains)
   - [Incremental validation strategy](#incremental-validation-strategy)
     - [Incremental insertion algorithm (cavity-based)](#incremental-insertion-algorithm-cavity-based)
     - [Degenerate input and initial simplex construction](#degenerate-input-and-initial-simplex-construction)
@@ -46,9 +50,13 @@ Readers primarily interested in **how to use the library** should start with:
 - [`README.md`](../README.md)
 - [`docs/workflows.md`](workflows.md)
 - [`docs/validation.md`](validation.md)
+- [`docs/limitations.md`](limitations.md)
+- [`docs/numerical_robustness_guide.md`](numerical_robustness_guide.md)
 - [`docs/api_design.md`](api_design.md)
 - [`docs/topology.md`](topology.md)
-- [`docs/numerical_robustness_guide.md`](numerical_robustness_guide.md)
+
+For the implementation details of the coherent-orientation invariant specifically,
+see [`ORIENTATION_SPEC.md`](ORIENTATION_SPEC.md).
 
 ---
 
@@ -64,7 +72,7 @@ Key combinatorial objects:
 
 - **Vertices**: 0-simplices. In the implementation, a vertex has coordinates plus an internal key
   and a UUID (used for stable referencing, e.g. serialization to files).
-- **Cells**: maximal `D`-simplices. Each cell stores a set of `D+1` vertex keys, and also has an internal key and an externally accessible UUID.
+- **Cells**: maximal `D`-simplices. Each cell stores an ordered list of `D+1` vertex keys, and also has an internal key and an externally accessible UUID.
 - **Facets**: codimension-1 faces of a cell. A `D`-simplex has `D+1` facets, each missing exactly one
   vertex.
 - **Adjacency / neighbors**: two cells are neighbors if they share a facet. The triangulation data
@@ -79,6 +87,61 @@ These are **combinatorial** notions: they depend only on incidence and adjacency
 Geometric predicates (orientation / in-sphere tests) are used to construct and validate the
 **geometric** Delaunay property, but the topology checks are expressed in terms of the simplicial
 complex.
+
+The order of a cell's vertices is part of the data-structure contract, not presentation detail.
+It determines the cell's combinatorial orientation and the facet index used for neighbor links.
+This is why the TDS validation layer checks coherent orientation alongside neighbor reciprocity.
+
+---
+
+## Validation layering
+
+The implementation separates invariants into four validation levels. Keeping these layers distinct
+prevents geometric checks from leaking into purely combinatorial validation and makes it clear which
+operation has certified which part of the structure:
+
+1. **Level 1 — element validity**: individual vertices, cells, and facets are internally consistent
+   (dimension, coordinate finiteness, UUID/key relationships, and local cell shape).
+2. **Level 2 — TDS structure**: the triangulation data structure has valid vertex/cell mappings,
+   reciprocal neighbor pointers, bounded facet sharing, no duplicate cells, and coherent
+   combinatorial orientation.
+3. **Level 3 — topology**: the triangulation satisfies the requested `TopologyGuarantee`
+   (pseudomanifold, PL manifold, or strict PL manifold) through incidence, connectivity,
+   Euler-characteristic, and link checks.
+4. **Level 4 — Delaunay property**: the embedded triangulation satisfies the local Delaunay
+   predicates for its facets.
+
+`Triangulation::is_valid()` is a Level 3 topology check. `DelaunayTriangulation::is_valid()` is a
+Level 4 Delaunay-property check for an already-formed Delaunay triangulation. Cumulative validation
+is exposed through the `validate` / `validation_report` APIs described in
+[`docs/validation.md`](validation.md).
+
+Automatic validation during construction is intentionally topology-oriented: `ValidationPolicy`
+controls Level 3 checks during insertion, while Level 4 Delaunay validation remains an explicit
+certification step for workflows that need it.
+
+---
+
+## Coherent orientation
+
+Coherent orientation has two related meanings in this crate:
+
+- **TDS orientation**: adjacent cells must induce opposite orientations on their shared facet. In
+  practice this is checked by comparing the facet index in one cell with the reciprocal mirror index
+  in its neighbor.
+- **Geometric orientation**: a full `Triangulation` should store cells with positive orientation in
+  Euclidean coordinates, except where an operation is explicitly handling a degenerate or
+  intermediate state.
+
+The orientation checker uses the robust orientation predicate directly instead of a kernel-level
+predicate that may apply Simulation of Simplicity. That preserves the distinction between an
+actually degenerate cell and a deterministically tie-broken predicate result. Periodic-image cells
+are a deliberate exception at the TDS layer: their neighbor reciprocity is still checked, but the
+plain Euclidean facet-parity test is not a meaningful combinatorial-orientation certificate once
+periodic offsets are part of the cell identity.
+
+See [`ORIENTATION_SPEC.md`](ORIENTATION_SPEC.md) for the exact parity convention, implementation
+map, and test expectations.
 
 ---
 
@@ -102,12 +165,29 @@ In practice, floating-point degeneracy matters:
 
 - For near-degenerate configurations, robust predicates (and/or retry/repair strategies) may be
   required to construct or certify the Delaunay property.
-- Validation can be performed explicitly via the Level 4 check (`DelaunayTriangulation::is_valid`)
-  when a workflow requires certainty.
+- Validation can be performed explicitly via the Level 4 Delaunay-property check
+  (`DelaunayTriangulation::is_valid`) when a workflow requires certainty.
 
 Internally, the crate’s Level 4 verifier prefers fast, local flip-based checks over the naive
 O(cells × vertices) brute-force test. This reflects the standard theoretical relationship between
 Delaunay optimality and local flip predicates.[^edelshah1996][^impl-flips][^impl-delaunay-validation]
+
+### Robust predicate envelope
+
+The default kernel is designed around a staged predicate model:
+
+- fast floating-point filters where a sign can be certified cheaply,
+- exact arithmetic fallback for supported dimensions,
+- and deterministic symbolic perturbation for exact degeneracies.
+
+The current release envelope is intentionally finite. The fast `f64` predicate filters are available
+through `D <= 4`; exact orientation is available through `D <= 6`; exact in-sphere support, and the
+`ExactPredicates` contract used by flip repair, is available through `D <= 5`. Higher-dimensional
+experiments may still be useful, but they are outside the strongest predicate and repair contract.
+
+For practical coordinate hygiene, kernel selection, and dimensional limits, see
+[`docs/numerical_robustness_guide.md`](numerical_robustness_guide.md) and
+[`docs/limitations.md`](limitations.md).
 
 ---
 
@@ -203,6 +283,25 @@ Ridge‑link validation is *necessary but not sufficient* to fully guarantee
 PL‑manifoldness. Certain global or vertex‑local pathologies are only detectable
 via vertex‑link validation, which is why vertex‑link checks are deferred until
 construction completion by default.
+
+---
+
+## Topological domains
+
+The default model is a finite Euclidean triangulation of a point set. In that setting, boundary
+facets are expected unless the cell complex represents a closed manifold by construction.
+
+Toroidal workflows are integrated as first-class topology options:
+
+- `.toroidal()` canonicalizes coordinates into the fundamental domain and uses toroidal topology
+  metadata for validation.
+- `.toroidal_periodic(...)` constructs a periodic image-point triangulation over neighboring
+  fundamental domains. This gives the strongest current toroidal behavior, with 2D as the primary
+  supported path and compact 3D coverage active in the test suite.
+
+Spherical and hyperbolic topology models are present as metadata and validation scaffolding, but
+they do not yet provide full non-Euclidean geometric construction semantics. Treat them as
+extension points rather than completed domains.
 
 ---
 
@@ -306,9 +405,12 @@ Important caveats:
 Since v0.7.3, the default `AdaptiveKernel` applies **Simulation of Simplicity (SoS)** to both
 orientation and insphere predicates, breaking exact-degeneracy ties deterministically and eliminating
 the most common source of non-progressing flip cycles. The `ExactPredicates` marker trait ensures
-that flip repair entry points only accept kernels with provably correct sign decisions. Remaining
-convergence risks at large scale are primarily cavity/topology interactions rather than predicate
-ambiguity.
+that flip repair entry points only accept kernels with provably correct in-sphere sign decisions in
+the supported dimensions. Exact orientation extends farther than exact in-sphere support, but repair
+entry points are intentionally gated by the stronger Delaunay-predicate contract. Remaining
+convergence risks at large scale are primarily cavity/topology interactions, pathological input
+conditioning, or workflows outside the supported predicate envelope rather than ambiguous predicate
+ties.
 
 The crate therefore treats flip/repair as a best-effort procedure with explicit validation hooks:
 
@@ -326,6 +428,11 @@ Some limitations are inherent to incremental high-dimensional computational geom
 
 - **Degenerate geometry in higher dimensions**: highly degenerate point configurations (many
   nearly coplanar / collinear subsets) can cause insertion to fail or require perturbation.
+- **Predicate support envelope**: the strongest exact Delaunay-predicate and flip-repair contract is
+  currently `D <= 5`; dimensions above that should be treated as experimental unless a workflow
+  performs its own validation.
+- **Topological-domain scope**: Euclidean and toroidal workflows are the active domains. Spherical
+  and hyperbolic models are scaffolding for future work, not complete construction semantics.
 - **Iterative refinement constraints**: cavity-based insertion and flip-based repair are local
   procedures. In rare cases, local refinement can be blocked by topology or by non-progressing
   numerical predicates.
@@ -338,8 +445,9 @@ Ordering and preprocessing can mitigate (but not eliminate) these issues:
 - Locality-preserving orders (Hilbert) tend to keep cavities small and reduce flip cascades.
 - Deduplication / near-duplicate rejection avoids many “almost coincident” degeneracies.
 
-For concrete failure modes and recommended workflows, see [`docs/workflows.md`](workflows.md),
-[`docs/validation.md`](validation.md), and the issue investigation notes in [`docs/archive/`](archive/).
+For concrete failure modes and recommended workflows, see [`docs/limitations.md`](limitations.md),
+[`docs/workflows.md`](workflows.md), [`docs/validation.md`](validation.md), and the issue
+investigation notes in [`docs/archive/`](archive/).
 
 ---
 

@@ -31,8 +31,12 @@ extend-ignore-identifiers-re = [
 [default.extend-words]
 # Domain terms that typos suggests "fixing" but are correct in this repo.
 bimap = "bimap"
+Classe = "Classe"
+continus = "continus"
+formes = "formes"
 Nd = "Nd"
 ND = "ND"
+Sur = "Sur"
 Udo = "Udo"
 # Intentional misspellings used in the postprocess_changelog.py correction map
 # and its tests.  Suppressing here avoids false positives on the map keys.

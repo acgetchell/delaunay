@@ -32,9 +32,9 @@ Agents must run appropriate checks after modifying code.
 Typical development loop:
 
 ```bash
-just fix
 just check
 just check-fast
+just fix
 just test
 just ci
 ```
@@ -56,8 +56,8 @@ configuration, and tool ordering are used.
 
 Examples:
 
-- prefer `just fix` instead of running `cargo fmt` directly
 - prefer `just check` instead of running `cargo clippy` directly
+- prefer `just fix` instead of running `cargo fmt` directly
 - prefer `just ci` instead of manually running multiple validation steps
 
 Direct tool invocation should only be used when a corresponding `just`
@@ -67,19 +67,20 @@ command does not exist.
 
 ## Formatting
 
-Rust formatting:
+Rust formatting checks are non-mutating:
 
 ```bash
-cargo fmt
+just fmt-check
 ```
 
-Typically run through:
+Apply formatting through:
 
 ```bash
 just fix
 ```
 
-Formatting must always be applied before committing changes.
+Run checks before mutating fixers; formatting drift should be understood before
+`just fix` rewrites files.
 
 ---
 
@@ -186,6 +187,11 @@ compile, lint, test, documentation, example, or benchmark-harness build errors.
 Use `just bench-smoke` only for quick harness validation with minimal samples;
 do not treat smoke output as performance data.
 
+Use `just bench-perf-summary` from the release PR branch after version and
+documentation updates. It runs fresh perf-profile summary benchmarks, records
+the current Criterion construction metadata and generated simplex counts, and
+regenerates `benches/PERFORMANCE_RESULTS.md`.
+
 Before pushing Rust or benchmark changes, run:
 
 ```bash
@@ -273,6 +279,7 @@ Commands:
 
 ```bash
 just toml-lint
+just toml-fmt-check
 just toml-fmt
 ```
 
@@ -319,9 +326,10 @@ just action-lint
 
 | Task | Command |
 |-----|-----|
-| Format code | `just fix` |
 | Run lints | `just check` |
 | Fast compile check | `just check-fast` |
+| Check formatting | `just fmt-check` |
+| Apply formatters/auto-fixes | `just fix` |
 | Run tests + compile smoke | `just test` |
 | Run unit/doc tests only | `just test-unit` |
 | Run integration tests | `just test-integration` |
@@ -368,12 +376,12 @@ For release PRs, generate the changelog for a version before the final tag
 exists with:
 
 ```bash
-just changelog-unreleased v0.7.7
+just changelog-unreleased vX.Y.Z
 ```
 
 Create annotated release tags from the generated changelog after the release PR
 is merged with:
 
 ```bash
-just tag v0.7.7
+just tag vX.Y.Z
 ```

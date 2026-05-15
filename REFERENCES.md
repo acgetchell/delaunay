@@ -1,13 +1,17 @@
----
-title: "References and Citations"
-description: "Academic references and bibliographic citations used throughout the delaunay library"
-keywords: ["references", "citations", "computational geometry", "Delaunay triangulation", "bibliography"]
-author: "Adam Getchell"
-date: "2025-08-28"
-category: "Documentation"
-tags: ["academic", "research", "citations", "geometry"]
-layout: "page"
----
+# References and Citations
+
+## AI-Assisted Development Tools
+
+- **ChatGPT**: OpenAI. <https://openai.com/chatgpt>.
+- **Claude**: Anthropic. <https://www.anthropic.com/claude>.
+- **CodeRabbit**: CodeRabbit AI, Inc. <https://coderabbit.ai/>.
+- **Codex**: OpenAI. <https://openai.com/codex/>.
+- **GitHub Copilot**: GitHub. <https://github.com/features/copilot>.
+- **KiloCode AI Engineering Assistant**: KiloCode. <https://kilocode.ai/>.
+- **WARP**: Warp Dev, Inc. <https://www.warp.dev/>.
+
+All AI-generated output was reviewed and/or edited by the maintainer.
+No generated content was used without human oversight.
 
 ## How to Cite This Library
 
@@ -24,18 +28,6 @@ Zenodo. DOI: https://doi.org/10.5281/zenodo.16931097
 
 For BibTeX, APA, or other citation formats, please refer to the [CITATION.cff](CITATION.cff) file or use
 GitHub's "Cite this repository" feature.
-
-## AI-Assisted Development Tools
-
-- OpenAI. "ChatGPT." <https://openai.com/chatgpt>.
-- Anthropic. "Claude." <https://www.anthropic.com/claude>.
-- CodeRabbit AI, Inc. "CodeRabbit." <https://coderabbit.ai/>.
-- GitHub. "GitHub Copilot." <https://github.com/features/copilot>.
-- KiloCode. "KiloCode AI Engineering Assistant." <https://kilocode.ai/>.
-- Warp Dev, Inc. "WARP." <https://www.warp.dev/>.
-
-All AI-generated output was reviewed and/or edited by the maintainer.
-No generated content was used without human oversight.
 
 ## Advanced Computational Geometry Topics
 
@@ -64,13 +56,6 @@ These references support specialized features and high-dimensional computations 
 
 These references provide algorithmic foundations for systematic enumeration and combinatorial generation used in the library.
 
-### Grid Generation and Mixed-Radix Counters
-
-- Knuth, D. E. "The Art of Computer Programming, Vol. 4A: Combinatorial Algorithms." Boston: Addison-Wesley, 2011.
-  ISBN: 978-0-201-03804-0
-- Nijenhuis, A., and Wilf, H. S. "Combinatorial Algorithms for Computers and Calculators." 2nd ed. New York: Academic Press, 1978.
-  ISBN: 978-0-12-519260-6
-
 ### Cube Triangulation (Freudenthal / Kuhn)
 
 These references describe the canonical triangulation of the n-cube into n! simplices via coordinate orderings,
@@ -83,6 +68,13 @@ decompositions used in topology, numerical methods, and periodic triangulations 
   (See discussions of simplicial decompositions and product spaces.)
 - Munkres, J. R. *Elements of Algebraic Topology*. Addison–Wesley, 1984.
   (Simplicial complexes and triangulations of product spaces.)
+
+### Grid Generation and Mixed-Radix Counters
+
+- Knuth, D. E. "The Art of Computer Programming, Vol. 4A: Combinatorial Algorithms." Boston: Addison-Wesley, 2011.
+  ISBN: 978-0-201-03804-0
+- Nijenhuis, A., and Wilf, H. S. "Combinatorial Algorithms for Computers and Calculators." 2nd ed. New York: Academic Press, 1978.
+  ISBN: 978-0-12-519260-6
 
 ## Convex Hull Algorithms
 
@@ -119,16 +111,11 @@ This section contains the foundational algorithms and data structures that form 
 - Joe, B. "Construction of Three-Dimensional Delaunay Triangulations Using Local Transformations."
   *Computer Aided Geometric Design* 8, no. 2 (1991): 123-142.
   DOI: [10.1016/0167-8396(91)90038-D](https://doi.org/10.1016/0167-8396(91)90038-D)
+- Lawson, C. L. "Software for C1 Surface Interpolation."
+  In J. R. Rice (ed.), *Mathematical Software III*, Academic Press, 1977, pp. 161-194.
 - Pachner, U. "PL Homeomorphic Manifolds Are Equivalent by Elementary Shellings."
   *European Journal of Combinatorics* 12, no. 2 (1991): 129-145.
   DOI: [10.1016/S0195-6698(13)80080-7](https://doi.org/10.1016/S0195-6698(13)80080-7)
-
-### Scoped Local Validation and Flips
-
-1. Edelsbrunner, H., and Shah, N. R. "Incremental Topological Flipping Works for Regular Triangulations."
-   *Algorithmica* 15, no. 3 (1996): 223-241. DOI: [10.1007/BF01975867](https://doi.org/10.1007/BF01975867)
-   Local flip neighborhoods support scoped validation when the mutation frontier is complete; global
-   PL vertex-link obligations still require full-link validation.
 
 ### Data Structures and Implementation References
 
@@ -148,6 +135,16 @@ This section contains the foundational algorithms and data structures that form 
   Available at: <https://doc.cgal.org/6.0.1/Manual/packages.html>
   - Triangulation_3 reference: <https://doc.cgal.org/6.0.1/Triangulation_3/index.html>
 
+### Foundational Delaunay and Voronoi Theory
+
+- Delaunay, B. "Sur la sphère vide. A la mémoire de Georges Voronoï."
+  *Bulletin de l'Académie des Sciences de l'URSS. Classe des Sciences Mathématiques et Naturelles*
+  1934, no. 6 (1934): 793-800.
+- Voronoi, G. F. "Nouvelles applications des paramètres continus à la théorie des formes quadratiques."
+  *Journal für die reine und angewandte Mathematik* 133 (1908): 97-178; 134 (1908): 198-287.
+- Aurenhammer, F., Klein, R., and Lee, D.-T. *Voronoi Diagrams and Delaunay Triangulations*.
+  World Scientific, 2013. ISBN: 978-981-4447-62-1
+
 ### Lifted Paraboloid Method
 
 - Edelsbrunner, Herbert. "Algorithms in Combinatorial Geometry."
@@ -157,6 +154,15 @@ This section contains the foundational algorithms and data structures that form 
   Texts and Monographs in Computer Science. New York: Springer-Verlag, 1985.
   DOI: [10.1007/978-1-4612-1098-6](https://doi.org/10.1007/978-1-4612-1098-6)
 
+### Periodic and Toroidal Triangulations
+
+- Caroli, M., and Teillaud, M. "Computing 3D Periodic Triangulations."
+  In *Algorithms - ESA 2009*, Lecture Notes in Computer Science 5757,
+  Springer, 2009, pp. 37-48. Full version: INRIA Research Report RR-6823,
+  <https://inria.hal.science/inria-00356871>
+- The CGAL Project. "3D Periodic Triangulations." *CGAL User and Reference Manual*.
+  Available at: <https://doc.cgal.org/latest/Periodic_3_triangulation_3/>
+
 ### Point Location in Triangulations
 
 - Devillers, O., Pion, S., and Teillaud, M. "Walking in a Triangulation."
@@ -165,6 +171,22 @@ This section contains the foundational algorithms and data structures that form 
 - Mücke, E.P., Saias, I., and Zhu, B. "Fast Randomized Point Location Without Preprocessing in Two- and Three-Dimensional Delaunay Triangulations."
   *Proceedings of the Twelfth Annual Symposium on Computational Geometry* (1996): 274-283.
   DOI: [10.1145/237218.237393](https://doi.org/10.1145/237218.237393)
+
+### Scoped Local Validation and Flips
+
+1. Edelsbrunner, H., and Shah, N. R. "Incremental Topological Flipping Works for Regular Triangulations."
+   *Algorithmica* 15, no. 3 (1996): 223-241. DOI: [10.1007/BF01975867](https://doi.org/10.1007/BF01975867)
+   Local flip neighborhoods support scoped validation when the mutation frontier is complete; global
+   PL vertex-link obligations still require full-link validation.
+
+### Spatial Ordering and Hilbert Curves
+
+- Moon, B., Jagadish, H. V., Faloutsos, C., and Saltz, J. H.
+  "Analysis of the Clustering Properties of the Hilbert Space-Filling Curve."
+  *IEEE Transactions on Knowledge and Data Engineering* 13, no. 1 (2001): 124-141.
+  DOI: [10.1109/69.908985](https://doi.org/10.1109/69.908985)
+- Skilling, J. "Programming the Hilbert Curve." *AIP Conference Proceedings*
+  707 (2004): 381-387. DOI: [10.1063/1.1751381](https://doi.org/10.1063/1.1751381)
 
 ### Triangulation Construction Algorithms
 
@@ -193,14 +215,6 @@ These references ensure the library's geometric computations are mathematically 
   *ACM Transactions on Graphics* 29, no. 4 (July 26, 2010): 119:1-119:11.
   DOI: [10.1145/1778765.1778856](https://doi.org/10.1145/1778765.1778856)
 
-### Geometric Tie-Breaking and Deterministic Perturbations
-
-- Burnikel, C., Funke, S., and Mehlhorn, K. "Exact Geometric Computation Made Easy."
-  *Proceedings of the Fifteenth Annual Symposium on Computational Geometry* (1999): 341-350.
-  DOI: [10.1145/304893.304988](https://doi.org/10.1145/304893.304988)
-- Yap, C. K. "Towards Exact Geometric Computation."
-  *Computational Geometry* 7, no. 1-2 (1997): 3-23. DOI: [10.1016/0925-7721(95)00040-2](https://doi.org/10.1016/0925-7721(95)00040-2)
-
 ### Exact Determinant Sign Computation
 
 - Bareiss, E. H. "Sylvester's Identity and Multistep Integer-Preserving Gaussian Elimination."
@@ -209,6 +223,14 @@ These references ensure the library's geometric computations are mathematically 
 
   The Bareiss fraction-free elimination algorithm is used by `la_stack::Matrix::det_sign_exact`
   to compute provably correct determinant signs in exact `BigRational` arithmetic.
+
+### Geometric Tie-Breaking and Deterministic Perturbations
+
+- Burnikel, C., Funke, S., and Mehlhorn, K. "Exact Geometric Computation Made Easy."
+  *Proceedings of the Fifteenth Annual Symposium on Computational Geometry* (1999): 341-350.
+  DOI: [10.1145/304893.304988](https://doi.org/10.1145/304893.304988)
+- Yap, C. K. "Towards Exact Geometric Computation."
+  *Computational Geometry* 7, no. 1-2 (1997): 3-23. DOI: [10.1016/0925-7721(95)00040-2](https://doi.org/10.1016/0925-7721(95)00040-2)
 
 ### Robust Geometric Predicates
 
@@ -272,9 +294,32 @@ These references inform the library's performance optimization strategies and me
 - Blandford, D.K., Blelloch, G.E., Dahle, C., and Karp, R. "Compact Representations of Simplicial Meshes in Two and Three Dimensions."
   *International Journal of Computational Geometry & Applications* 15, no. 1 (2005): 3-24.
   DOI: [10.1142/S0218195905001580](https://doi.org/10.1142/S0218195905001580)
+- Geuzaine, C., and Remacle, J.-F. "Gmsh: A 3-D Finite Element Mesh Generator
+  with Built-In Pre- and Post-Processing Facilities." *International Journal for Numerical Methods in Engineering*
+  79, no. 11 (2009): 1309-1331. DOI: [10.1002/nme.2579](https://doi.org/10.1002/nme.2579)
 - Shewchuk, J.R. "Triangle: Engineering a 2D Quality Mesh Generator and Delaunay Triangulator."
   *Applied Computational Geometry Towards Geometric Engineering* (1996): 203-222.
   DOI: [10.1007/BFb0014497](https://doi.org/10.1007/BFb0014497)
+- Si, H. "TetGen, a Delaunay-Based Quality Tetrahedral Mesh Generator."
+  *ACM Transactions on Mathematical Software* 41, no. 2 (2015): Article 11.
+  DOI: [10.1145/2629697](https://doi.org/10.1145/2629697)
+
+## Research Software, Citation, and Reproducibility
+
+These references support the library's treatment as a reusable, tested, benchmarked,
+and citable research software artifact.
+
+- Smith, A. M., Katz, D. S., Niemeyer, K. E., and the FORCE11 Software Citation Working Group.
+  "Software Citation Principles." *PeerJ Computer Science* 2 (2016): e86.
+  DOI: [10.7717/peerj-cs.86](https://doi.org/10.7717/peerj-cs.86)
+- Wilson, G., Aruliah, D. A., Brown, C. T., Chue Hong, N. P., Davis, M.,
+  Guy, R. T., Haddock, S. H. D., et al. "Best Practices for Scientific Computing."
+  *PLOS Biology* 12, no. 1 (2014): e1001745.
+  DOI: [10.1371/journal.pbio.1001745](https://doi.org/10.1371/journal.pbio.1001745)
+- Wilson, G., Bryan, J., Cranston, K., Kitzes, J., Nederbragt, L., and Teal, T. K.
+  "Good Enough Practices in Scientific Computing." *PLOS Computational Biology*
+  13, no. 6 (2017): e1005510.
+  DOI: [10.1371/journal.pcbi.1005510](https://doi.org/10.1371/journal.pcbi.1005510)
 
 ## Set Similarity Metrics (Testing and Validation)
 

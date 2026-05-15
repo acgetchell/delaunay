@@ -73,7 +73,9 @@ default repair cadence is `DelaunayRepairPolicy::EveryInsertion` plus final repa
 cadence reflects the current #341 3D scale acceptance path: the release-mode
 `just debug-large-scale-3d 8000 1` harness inserts all 8,000 vertices with zero
 skips and finishes final Levels 1–4 validation in the roughly one-minute
-maintainer-hardware envelope. Direct incremental insertion keeps the lower-level
+maintainer-hardware envelope. The explicit
+`just debug-large-scale-3d 10000 1` run is a heavier characterization probe
+that has also passed the same final validation checks. Direct incremental insertion keeps the lower-level
 `DelaunayRepairPolicy` default at `EveryInsertion`.
 The explicit repair methods (`repair_delaunay_with_flips`, `repair_delaunay_with_flips_advanced`,
 `rebuild_with_heuristic`) require `K: ExactPredicates` at compile time. `AdaptiveKernel` and

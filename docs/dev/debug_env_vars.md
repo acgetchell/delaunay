@@ -169,7 +169,7 @@ release builds only.
 | `DELAUNAY_BENCH_LOG` | presence | Enable error logging inside Criterion measurement loops |
 | `DELAUNAY_BENCH_DISCOVER_SEEDS` | presence | Seed-discovery mode: find and print stable seeds instead of running benchmarks |
 | `DELAUNAY_BENCH_DISCOVER_SEEDS_LIMIT` | **value** (integer) | Maximum seeds to try per (dim, count) pair during discovery or fallback (default: 2000) |
-| `DELAUNAY_BENCH_EXPORT_METRICS` | presence | Print construction vertex/cell counts; pair with a `tds_new` Criterion filter |
+| `DELAUNAY_BENCH_EXPORT_METRICS` | presence | Metric-only mode: print `api_benchmark_metric` vertex/simplex counts; optional `tds_new` filter |
 
 ## Miscellaneous
 

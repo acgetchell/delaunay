@@ -33,7 +33,8 @@ The library provides two distinct APIs for different use cases:
 
 - Computing convex hulls
 - Nearest-neighbor queries
-- Voronoi diagram construction
+- Supplying triangulation data to downstream Voronoi/dual-cell analysis
+  (the crate does not yet extract Voronoi diagrams directly)
 - Mesh generation
 - Scientific simulations requiring Delaunay meshes
 
@@ -87,7 +88,10 @@ For advanced configuration (toroidal topology, custom validation policies, etc.)
 use `DelaunayTriangulationBuilder`:
 
 ```rust
-use delaunay::prelude::triangulation::construction::{DelaunayTriangulationBuilder, vertex};
+use delaunay::prelude::triangulation::construction::{
+    DelaunayTriangulationBuilder, TopologyGuarantee, vertex,
+};
+use delaunay::prelude::triangulation::validation::ValidationPolicy;
 
 // Toroidal (periodic) triangulation in 2D
 let vertices = vec![
@@ -353,7 +357,10 @@ The `triangulation::delaunayize` module provides a single entrypoint for the
 common "repair topology then restore Delaunay" workflow:
 
 ```rust
-use delaunay::prelude::triangulation::delaunayize::*;
+use delaunay::prelude::triangulation::construction::{DelaunayTriangulation, vertex};
+use delaunay::prelude::triangulation::delaunayize::{
+    DelaunayizeConfig, delaunayize_by_flips,
+};
 
 let vertices = vec![
     vertex!([0.0, 0.0, 0.0]),

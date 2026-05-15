@@ -12,8 +12,10 @@ Both repositories now share the same core Rust and Python support-tooling loop:
   `ty.toml` pin local tool behavior.
 - `pyproject.toml` owns Ruff, Ty, pytest, uv packaging, and uv-managed
   development dependencies.
-- `dprint.json`, `.yamllint`, and `typos.toml` define documentation and
-  configuration checks.
+- `.markdownlint.json`, `.yamllint`, and `typos.toml` define documentation and
+  configuration checks. Delaunay still uses Node-backed Markdownlint and
+  Prettier-for-YAML today; a Rust-native `dprint`/`pretty_yaml` and Markdown
+  linter migration remains a future tooling change.
 - `justfile` is the local entry point for formatting, linting, tests,
   coverage, Semgrep, changelog, setup commands, and supported Cargo feature
   surface checks.

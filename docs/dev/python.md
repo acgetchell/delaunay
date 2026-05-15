@@ -14,13 +14,14 @@ hidden behind loose mocks or broad exception handling.
 Run the Python validators through the repository toolchain:
 
 ```bash
-uv run ruff check scripts/
-uv run ty check scripts/ --error all
-uv run pytest scripts/tests
+just python-check
+just python-typecheck
+just test-python
 ```
 
-`ty check scripts/ --error all` is the type-checking authority. Prefer reducing
-untyped surfaces in code and tests over adding more `ty` configuration.
+`just python-typecheck` runs `ty check scripts/ --error all`, which is the
+type-checking authority. Prefer reducing untyped surfaces in code and tests
+over adding more `ty` configuration.
 
 `just check` also runs Python formatting checks, Ruff, and `ty` as part of the
 normal repository validation bundle.

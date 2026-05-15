@@ -725,18 +725,16 @@ Before adding a dependency, consider:
 
 ## Formatting and Lints
 
-Code must pass:
+Code must pass non-mutating checks:
 
 ```bash
-cargo fmt
-cargo clippy
+just check
 ```
 
-Typically run via:
+Apply formatters and auto-fixes after reviewing check output:
 
 ```bash
 just fix
-just check
 ```
 
 CI treats warnings as errors.
