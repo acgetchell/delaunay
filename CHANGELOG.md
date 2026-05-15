@@ -5,18 +5,21 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.7.7] - 2026-05-15
 
 ### ⚠️ Breaking Changes
 
 - Harden Delaunay invariants and tooling [#362](https://github.com/acgetchell/delaunay/pull/362)
 - Harden typed validation and exact predicate APIs [#375](https://github.com/acgetchell/delaunay/pull/375)
+- Harden correctness and performance invariants [#376](https://github.com/acgetchell/delaunay/pull/376)
 - Preserve topology and public error invariants [#363](https://github.com/acgetchell/delaunay/pull/363)
 - Quiet Codacy code scanning noise [#356](https://github.com/acgetchell/delaunay/pull/356)
 - Cadence batch repair for large construction [#369](https://github.com/acgetchell/delaunay/pull/369)
 
 ### Merged Pull Requests
 
+- Stabilize large-scale profiling and construction [#377](https://github.com/acgetchell/delaunay/pull/377)
+- Harden correctness and performance invariants [#376](https://github.com/acgetchell/delaunay/pull/376)
 - Harden typed validation and exact predicate APIs [#375](https://github.com/acgetchell/delaunay/pull/375)
 - Bump urllib3 in the uv group across 1 directory [#374](https://github.com/acgetchell/delaunay/pull/374)
 - Bump actions-rust-lang/setup-rust-toolchain [#373](https://github.com/acgetchell/delaunay/pull/373)
@@ -76,6 +79,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Tighten kernel, coordinate, and data trait contracts so exact predicates are dimension-scoped and payload bounds apply only where needed.
   - Split explicit-construction validation into orthogonal typed errors and preserve structured source details through fallback and repair paths.
   - Narrow focused prelude exports, add repository style rules, and document the 10,000-vertex 3D acceptance envelope.
+- [**breaking**] Harden correctness and performance invariants [#376](https://github.com/acgetchell/delaunay/pull/376)
+  [`4c6d55e`](https://github.com/acgetchell/delaunay/commit/4c6d55e12ff60155c97e117aefabc5ff80d2f47f)
+
+  - Replace scalar-unit duplicate detection with scale-aware tolerances and keep the spatial index usable across rollback-safe insertion and removal paths.
+  - Route matrix dispatch, predicate degeneracy, non-finite geometry, and robust insphere overflow through typed errors and exact relative-coordinate
+    predicates.
+
+  - Preserve TDS identity across transactional rollback, run required pseudomanifold validation during insertion, and remove raw cell-storage mutation.
+  - Use DoS-resistant hashing for coordinate-derived buckets and gate insertion timing telemetry to callers that consume it.
+  - Normalize root and archived changelog markdown through shared post-processing.
+  - Simplify validation telemetry, predicate helpers, cache invalidation, and prelude coverage without changing the correctness/performance contracts.
 
 ### Fixed
 
@@ -433,6 +447,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     flip candidates cannot suppress required validation.
 
   - Update large-scale debug docs and recipes to reflect the new defaults.
+- Stabilize large-scale profiling and construction [#377](https://github.com/acgetchell/delaunay/pull/377)
+  [`77ba50b`](https://github.com/acgetchell/delaunay/commit/77ba50b23c6f22fbeaa6acf240bb144bbb1458f7)
+
+  - Calibrate the 2D-5D debug-large-scale acceptance runs around maintainer
+    hardware and document generated simplex counts.
+
+  - Fold large-scale profiling into profiling_suite with construction, memory,
+    validation, and traversal workloads.
+
+  - Compare performance regressions against same-machine main-ref baselines.
+  - Harden insertion topology preflight and exact insphere paths used by repair
+    and high-dimensional construction.
 
 ## [0.7.6] - 2026-04-25
 
@@ -3350,7 +3376,7 @@ Older releases are archived by minor series:
 - [0.3.x](docs/archive/changelog/0.3.md)
 - [0.2.x](docs/archive/changelog/0.2.md)
 
-[Unreleased]: https://github.com/acgetchell/delaunay/compare/v0.7.6...HEAD
+[0.7.7]: https://github.com/acgetchell/delaunay/compare/v0.7.6...v0.7.7
 [0.7.6]: https://github.com/acgetchell/delaunay/compare/v0.7.5...v0.7.6
 [0.7.5]: https://github.com/acgetchell/delaunay/compare/v0.7.4...v0.7.5
 [0.7.4]: https://github.com/acgetchell/delaunay/compare/v0.7.3...v0.7.4

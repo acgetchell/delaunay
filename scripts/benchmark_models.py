@@ -25,6 +25,7 @@ class BenchmarkData:
     throughput_high: float | None = None
     throughput_unit: str | None = None
     benchmark_id: str = ""
+    simplices: int | None = None
 
     @property
     def comparison_key(self) -> str:
@@ -61,6 +62,11 @@ class BenchmarkData:
         self.throughput_mean = mean
         self.throughput_high = high
         self.throughput_unit = unit
+        return self
+
+    def with_simplices(self, count: int | None) -> "BenchmarkData":
+        """Set the number of generated maximal simplices."""
+        self.simplices = count
         return self
 
     def to_baseline_format(self) -> str:
@@ -340,12 +346,35 @@ def format_throughput_value(value: float | None, unit: str | None) -> str:
     return f"{value:.2f} {unit}"
 
 
-def format_benchmark_tables(benchmarks: list[BenchmarkData]) -> list[str]:
+def format_count_value(value: int | None) -> str:
+    """
+    Format a count value for benchmark tables.
+
+    Args:
+        value: Count value to format (can be None)
+
+    Returns:
+        Formatted count string
+    """
+    if value is None:
+        return "N/A"
+    return f"{value:,}"
+
+
+def format_benchmark_tables(
+    benchmarks: list[BenchmarkData],
+    *,
+    input_label: str = "Points",
+    include_simplices: bool = False,
+) -> list[str]:
     """
     Format benchmark data as markdown tables grouped by dimension.
 
     Args:
         benchmarks: List of BenchmarkData objects to format
+        input_label: Display label for the benchmark input-size column
+        include_simplices: When true, replace the scaling column with generated
+            maximal simplex counts.
 
     Returns:
         List of markdown lines containing formatted tables
@@ -375,17 +404,21 @@ def format_benchmark_tables(benchmarks: list[BenchmarkData]) -> list[str]:
 
         lines.extend([f"### {dimension} Triangulation Performance", ""])
         if include_benchmark_id:
+            final_column_label = "Simplices Generated" if include_simplices else "Scaling"
+            final_column_separator = "---------------------" if include_simplices else "----------"
             lines.extend(
                 [
-                    "| Benchmark ID | Points | Time (mean) | Throughput (mean) | Scaling |",
-                    "|--------------|--------|-------------|-------------------|----------|",
+                    f"| Benchmark ID | {input_label} | Time (mean) | Throughput (mean) | {final_column_label} |",
+                    f"|--------------|--------|-------------|-------------------|{final_column_separator}|",
                 ],
             )
         else:
+            final_column_label = "Simplices Generated" if include_simplices else "Scaling"
+            final_column_separator = "---------------------" if include_simplices else "----------"
             lines.extend(
                 [
-                    "| Points | Time (mean) | Throughput (mean) | Scaling |",
-                    "|--------|-------------|-------------------|----------|",
+                    f"| {input_label} | Time (mean) | Throughput (mean) | {final_column_label} |",
+                    f"|--------|-------------|-------------------|{final_column_separator}|",
                 ],
             )
 
@@ -404,19 +437,20 @@ def format_benchmark_tables(benchmarks: list[BenchmarkData]) -> list[str]:
                 else "N/A"
             )
 
-            # Calculate scaling factor
-            if bench.time_mean > 0 and baseline_time and baseline_time > 0:
+            if include_simplices:
+                final_column_str = format_count_value(bench.simplices)
+            elif bench.time_mean > 0 and baseline_time and baseline_time > 0:
                 scaling = bench.time_mean / baseline_time
-                scaling_str = f"{scaling:.1f}x"
+                final_column_str = f"{scaling:.1f}x"
             else:
-                scaling_str = "N/A"
+                final_column_str = "N/A"
 
             if include_benchmark_id:
                 lines.append(
-                    f"| `{bench.comparison_key}` | {bench.points_label} | {time_str} | {throughput_str} | {scaling_str} |",
+                    f"| `{bench.comparison_key}` | {bench.points_label} | {time_str} | {throughput_str} | {final_column_str} |",
                 )
             else:
-                lines.append(f"| {bench.points_label} | {time_str} | {throughput_str} | {scaling_str} |")
+                lines.append(f"| {bench.points_label} | {time_str} | {throughput_str} | {final_column_str} |")
 
         lines.append("")  # Empty line between tables
 

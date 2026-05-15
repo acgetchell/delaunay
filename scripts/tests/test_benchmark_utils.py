@@ -32,6 +32,8 @@ from benchmark_models import (
 )
 from benchmark_utils import (
     _CI_PERFORMANCE_SUITE_MANIFEST_IDS_FILE,
+    _CI_PERFORMANCE_SUITE_METRICS_FILE,
+    _CI_PERFORMANCE_SUITE_RUN_METADATA_FILE,
     DEFAULT_REGRESSION_THRESHOLD,
     DEV_MODE_BENCH_ARGS,
     TRUSTED_BENCH_PROFILE,
@@ -46,6 +48,9 @@ from benchmark_utils import (
     ProjectRootNotFoundError,
     WorkflowHelper,
     _expand_ci_benchmark_id_pattern,
+    _load_ci_performance_metrics,
+    _parse_ci_performance_metrics,
+    _write_ci_performance_metrics,
     configure_logging,
     create_argument_parser,
     find_project_root,
@@ -56,11 +61,11 @@ THRESHOLD_PERCENT = f"{DEFAULT_REGRESSION_THRESHOLD:.1f}%"
 CI_MANIFEST_STDOUT = (
     "api_benchmark group=boundary_facets public_api=DelaunayTriangulation::boundary_facets "
     "dimensions=3 benchmark_ids=boundary_facets/boundary_facets_3d/50 note=test\n"
+    "api_benchmark_metric benchmark_id=tds_new_2d/tds_new/10 vertices=10 simplices=17\n"
 )
 PUBLIC_API_TITLE = "### Public API Performance Contract (`ci_performance_suite`)"
-CIRCUMSPHERE_TITLE = "## Circumsphere Predicate Analysis"
-PERFORMANCE_RANKING_TITLE = "### Performance Ranking"
-RECOMMENDATIONS_TITLE = "### Recommendations"
+CIRCUMSPHERE_TITLE = "### Circumsphere Predicate Performance"
+TDS_TITLE = "## Triangulation Data Structure Performance"
 PERFORMANCE_UPDATES_TITLE = "## Performance Data Updates"
 
 
@@ -97,6 +102,16 @@ def write_ci_performance_manifest(target_dir: Path, benchmark_ids: list[str]) ->
     criterion_dir.mkdir(parents=True, exist_ok=True)
     (criterion_dir / _CI_PERFORMANCE_SUITE_MANIFEST_IDS_FILE).write_text(
         "\n".join(benchmark_ids) + "\n",
+        encoding="utf-8",
+    )
+
+
+def write_ci_performance_metrics(target_dir: Path, metrics: dict[str, dict[str, int]]) -> None:
+    """Write the ci_performance_suite metrics sidecar."""
+    criterion_dir = target_dir / "criterion"
+    criterion_dir.mkdir(parents=True, exist_ok=True)
+    (criterion_dir / _CI_PERFORMANCE_SUITE_METRICS_FILE).write_text(
+        json.dumps(metrics),
         encoding="utf-8",
     )
 
@@ -398,6 +413,48 @@ class TestCriterionParser:
             "tds_new_2d/tds_new_adversarial/25",
         }
 
+    def test_ci_performance_metrics_parse_construction_counts(self) -> None:
+        """Test parsing generated construction cell counts from benchmark stdout."""
+        stdout = """
+api_benchmark_metric benchmark_id=tds_new_2d/tds_new/2000 vertices=2000 simplices=3995
+api_benchmark_metric benchmark_id=tds_new_3d/tds_new_adversarial/700 vertices=700 simplices=4211
+malformed api_benchmark_metric benchmark_id=ignored vertices=x simplices=y
+"""
+
+        metrics = _parse_ci_performance_metrics(stdout)
+
+        assert metrics == {
+            "tds_new_2d/tds_new/2000": {"vertices": 2000, "simplices": 3995},
+            "tds_new_3d/tds_new_adversarial/700": {"vertices": 700, "simplices": 4211},
+        }
+
+    def test_write_ci_performance_metrics_clears_stale_file_when_required_metrics_missing(self) -> None:
+        """Test missing fresh metrics clears stale simplex data and fails loudly."""
+        with tempfile.TemporaryDirectory() as temp_dir:
+            project_root = Path(temp_dir)
+            metrics_path = project_root / "target" / "criterion" / _CI_PERFORMANCE_SUITE_METRICS_FILE
+            metrics_path.parent.mkdir(parents=True)
+            metrics_path.write_text(
+                json.dumps({"tds_new_2d/tds_new/10": {"vertices": 10, "simplices": 17}}),
+                encoding="utf-8",
+            )
+
+            with pytest.raises(RuntimeError, match="emitted no construction metrics"):
+                _write_ci_performance_metrics(project_root, CI_MANIFEST_STDOUT.splitlines()[0], require_metrics=True)
+
+            assert metrics_path.read_text(encoding="utf-8") == "{}\n"
+
+    def test_load_ci_performance_metrics_rejects_malformed_json_with_path(self) -> None:
+        """Test corrupt metrics sidecars fail with the offending path."""
+        with tempfile.TemporaryDirectory() as temp_dir:
+            criterion_dir = Path(temp_dir) / "target" / "criterion"
+            criterion_dir.mkdir(parents=True)
+            metrics_path = criterion_dir / _CI_PERFORMANCE_SUITE_METRICS_FILE
+            metrics_path.write_text("{ invalid json", encoding="utf-8")
+
+            with pytest.raises(ValueError, match=str(metrics_path)):
+                _load_ci_performance_metrics(criterion_dir)
+
     def test_find_criterion_results_preserves_ci_suite_ids(self) -> None:
         """Test ci_performance_suite results keep expanded Criterion benchmark IDs."""
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -407,6 +464,15 @@ class TestCriterionParser:
             write_estimate(target_dir, ("validation", "validate_3d", "50"), 20_000.0)
             write_estimate(target_dir, ("boundary_facets", "boundary_facets_3d_adversarial", "50"), 30_000.0)
             write_estimate(target_dir, ("bistellar_flips_4d", "k2_roundtrip"), 40_000.0)
+            write_ci_performance_metrics(
+                target_dir,
+                {
+                    "boundary_facets/boundary_facets_3d/50": {
+                        "vertices": 50,
+                        "simplices": 123,
+                    },
+                },
+            )
 
             results = CriterionParser.find_criterion_results(target_dir)
 
@@ -418,6 +484,7 @@ class TestCriterionParser:
             ]
             sized_results = [result for result in results if result.comparison_key != "bistellar_flips_4d/k2_roundtrip"]
             assert {(result.points, result.dimension) for result in sized_results} == {(50, "3D")}
+            assert results[0].simplices == 123
 
             roundtrip = next(result for result in results if result.comparison_key == "bistellar_flips_4d/k2_roundtrip")
             assert roundtrip.points is None
@@ -2533,6 +2600,22 @@ class TestPerformanceSummaryGenerator:
         assert args.profile == TRUSTED_BENCH_PROFILE
 
     @patch("benchmark_utils.run_git_command")
+    def test_get_current_version_prefers_cargo_package_version(self, mock_git_command) -> None:
+        """Test getting current version from Cargo.toml before falling back to tags."""
+        mock_git_command.side_effect = RuntimeError("git unavailable")
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            project_root = Path(temp_dir)
+            (project_root / "Cargo.toml").write_text(
+                '[package]\nname = "delaunay"\nversion = "1.2.3"\n',
+                encoding="utf-8",
+            )
+
+            generator = PerformanceSummaryGenerator(project_root)
+
+            assert generator.current_version == "1.2.3"
+
+    @patch("benchmark_utils.run_git_command")
     def test_get_current_version_with_tag(self, mock_git_command) -> None:
         """Test getting current version from git tags."""
         mock_git_command.return_value = completed_process("v1.2.3\n")
@@ -2651,14 +2734,63 @@ Throughput: [8333.3, 9090.9, 10000.0] Kelem/s
 
             # Should contain metadata section
             markdown_content = "\n".join(lines)
-            assert "### Current Baseline Information" in markdown_content
+            assert "### Baseline Artifact Information" in markdown_content
             assert "Git commit: abc123def456" in markdown_content
             assert "Hardware: Apple M2 Pro" in markdown_content
 
             # Should contain performance tables
             assert "### 2D Triangulation Performance" in markdown_content
             assert "### 3D Triangulation Performance" in markdown_content
-            assert "| Points | Time (mean) | Throughput (mean) | Scaling |" in markdown_content
+            assert "| Vertices | Time (mean) | Throughput (mean) | Scaling |" in markdown_content
+
+    def test_triangulation_data_structure_results_prefer_current_criterion_data(self) -> None:
+        """Test TDS summary uses current Criterion data instead of stale baseline artifacts."""
+        with tempfile.TemporaryDirectory() as temp_dir:
+            project_root = Path(temp_dir)
+            target_dir = project_root / "target"
+            benchmark_id = "tds_new_2d/tds_new/10"
+            write_estimate(target_dir, tuple(benchmark_id.split("/")), 120_000.0)
+            write_ci_performance_manifest(target_dir, [benchmark_id])
+            write_ci_performance_metrics(
+                target_dir,
+                {
+                    benchmark_id: {
+                        "vertices": 10,
+                        "simplices": 17,
+                    },
+                },
+            )
+            metadata_path = target_dir / "criterion" / _CI_PERFORMANCE_SUITE_RUN_METADATA_FILE
+            metadata_path.write_text(
+                json.dumps(
+                    {
+                        "cargo_profile": "perf",
+                        "completed_at": "2026-05-15 12:34:56 UTC",
+                        "sampling_mode": "full",
+                    },
+                ),
+                encoding="utf-8",
+            )
+
+            baseline_dir = project_root / "baseline-artifact"
+            baseline_dir.mkdir(parents=True)
+            (baseline_dir / "baseline_results.txt").write_text(
+                "Date: 2024-01-15 10:30:00 UTC\nGit commit: stale-baseline\n=== 10 Points (2D) ===\nTime: [100.0, 110.0, 120.0] µs\n",
+                encoding="utf-8",
+            )
+
+            with patch("benchmark_utils.get_git_commit_hash", return_value="current-commit"):
+                generator = PerformanceSummaryGenerator(project_root)
+                lines = generator._get_triangulation_data_structure_results()
+
+            content = "\n".join(lines)
+            assert "### Current Criterion Run Information" in content
+            assert "- **Date: 2026-05-15 12:34:56 UTC**" in content
+            assert "`tds_new_2d/tds_new/10`" in content
+            assert "| Benchmark ID | Vertices | Time (mean) | Throughput (mean) | Simplices Generated |" in content
+            assert "| `tds_new_2d/tds_new/10` | 10 | 120.00 µs | 83.333 Kelem/s | 17 |" in content
+            assert "current-commit" in content
+            assert "stale-baseline" not in content
 
     def test_parse_comparison_results_with_regression(self) -> None:
         """Test parsing comparison results that show regression."""
@@ -2726,16 +2858,17 @@ OK: Time change -1.8% within acceptable range
 
             # Check basic structure
             assert "# Delaunay Library Performance Results" in content
-            assert "**Last Updated**: 2024-01-15 10:30:00 UTC" in content
-            assert "**Generated By**: benchmark_utils.py" in content
-            assert "**Git Commit**: abc123def456" in content
+            assert "- **Last Updated**: 2024-01-15 10:30:00 UTC" in content
+            assert "- **Generated By**: benchmark_utils.py" in content
+            assert "- **Git Commit**: abc123def456" in content
             assert "## Performance Results Summary" in content
 
             # Check static content sections
             assert PUBLIC_API_TITLE in content
             assert CIRCUMSPHERE_TITLE in content
-            assert PERFORMANCE_RANKING_TITLE in content
-            assert RECOMMENDATIONS_TITLE in content
+            assert "## Circumsphere Predicate Analysis" not in content
+            assert "### Performance Ranking" not in content
+            assert "### Recommendations" not in content
             assert PERFORMANCE_UPDATES_TITLE in content
 
     def test_get_ci_performance_suite_results(self) -> None:
@@ -2967,6 +3100,15 @@ Benchmark completed.""",
             assert "--" not in args
             manifest_path = project_root / "target" / "criterion" / _CI_PERFORMANCE_SUITE_MANIFEST_IDS_FILE
             assert manifest_path.read_text(encoding="utf-8") == "boundary_facets/boundary_facets_3d/50\n"
+            metrics_path = project_root / "target" / "criterion" / _CI_PERFORMANCE_SUITE_METRICS_FILE
+            assert json.loads(metrics_path.read_text(encoding="utf-8")) == {
+                "tds_new_2d/tds_new/10": {"simplices": 17, "vertices": 10},
+            }
+            metadata_path = project_root / "target" / "criterion" / _CI_PERFORMANCE_SUITE_RUN_METADATA_FILE
+            metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+            assert metadata["cargo_profile"] == TRUSTED_BENCH_PROFILE
+            assert metadata["sampling_mode"] == "full"
+            assert "completed_at" in metadata
 
     @patch("benchmark_utils.run_cargo_command")
     def test_run_ci_performance_suite_uses_requested_cargo_profile(self, mock_cargo) -> None:
@@ -3002,6 +3144,9 @@ Benchmark completed.""",
             assert "--" in args
             for arg in DEV_MODE_BENCH_ARGS:
                 assert arg in args
+            metadata_path = project_root / "target" / "criterion" / _CI_PERFORMANCE_SUITE_RUN_METADATA_FILE
+            metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+            assert metadata["sampling_mode"] == "dev"
 
     @patch("benchmark_utils.run_cargo_command")
     def test_run_ci_performance_suite_requires_manifest(self, mock_cargo) -> None:
@@ -3019,6 +3164,27 @@ Benchmark completed.""",
                 generator._run_ci_performance_suite()
 
             assert stale_manifest_path.read_text(encoding="utf-8") == "stale/benchmark/id\n"
+
+    @patch("benchmark_utils.run_cargo_command")
+    def test_run_ci_performance_suite_requires_metrics(self, mock_cargo) -> None:
+        """Test fresh ci_performance_suite runs must emit construction metrics."""
+        stdout_without_metrics = CI_MANIFEST_STDOUT.split("api_benchmark_metric", maxsplit=1)[0]
+        mock_cargo.return_value = completed_process(stdout_without_metrics)
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            project_root = Path(temp_dir)
+            stale_metrics_path = project_root / "target" / "criterion" / _CI_PERFORMANCE_SUITE_METRICS_FILE
+            stale_metrics_path.parent.mkdir(parents=True)
+            stale_metrics_path.write_text(
+                json.dumps({"tds_new_2d/tds_new/10": {"vertices": 10, "simplices": 17}}),
+                encoding="utf-8",
+            )
+            generator = PerformanceSummaryGenerator(project_root)
+
+            with pytest.raises(RuntimeError, match="emitted no construction metrics"):
+                generator._run_ci_performance_suite()
+
+            assert stale_metrics_path.read_text(encoding="utf-8") == "{}\n"
 
     @patch("benchmark_utils.run_cargo_command")
     def test_run_ci_performance_suite_nonzero_exit(self, mock_cargo, capsys) -> None:
@@ -3164,9 +3330,19 @@ Benchmark completed.""",
             lines = generator._get_static_sections()
             content = "\n".join(lines)
 
-            assert "## Historical Version Comparison" in content
-            assert "## Implementation Notes" in content
+            assert "## Historical Version Comparison" not in content
+            assert "## Implementation Notes" not in content
+            assert "### Method Disagreements" not in content
             assert "## Benchmark Structure" in content
+
+    def test_get_implementation_notes(self) -> None:
+        """Test getting circumsphere implementation notes."""
+        lines = PerformanceSummaryGenerator._get_implementation_notes()
+        content = "\n".join(lines)
+
+        assert "## Implementation Notes" in content
+        assert "### Performance Advantages of `insphere_lifted`" in content
+        assert "### Method Disagreements" not in content
 
     def test_empty_benchmark_results_edge_case(self) -> None:
         """Test handling of empty benchmark results (edge case)."""
@@ -3307,9 +3483,16 @@ Benchmark completed.""",
                 assert "Performance Status: Good" in content
                 assert PUBLIC_API_TITLE.removeprefix("### ") in content
                 assert CIRCUMSPHERE_TITLE.removeprefix("## ") in content
-                assert PERFORMANCE_RANKING_TITLE.removeprefix("### ") in content
-                assert RECOMMENDATIONS_TITLE.removeprefix("### ") in content
+                assert "Implementation Notes" in content
+                assert "Circumsphere Predicate Analysis" not in content
+                assert "Performance Ranking" not in content
+                assert "Recommendations" not in content
                 assert PERFORMANCE_UPDATES_TITLE.removeprefix("## ") in content
+
+                assert content.index(TDS_TITLE) < content.index("## Performance Results Summary")
+                assert content.index("## Performance Results Summary") < content.index(PUBLIC_API_TITLE)
+                assert content.index(PUBLIC_API_TITLE) < content.index(CIRCUMSPHERE_TITLE)
+                assert content.index("Circumsphere Predicate Performance") < content.index("Implementation Notes")
 
     def test_dimension_sorting_numeric_order(self) -> None:
         """Test that dimensions are sorted numerically, not lexically."""

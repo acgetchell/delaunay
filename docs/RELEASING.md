@@ -80,29 +80,40 @@ just changelog-unreleased "$TAG"
 Unreleased plus the active minor series; older completed minor series live
 under `docs/archive/changelog/`.
 
-4. Generate performance results when release notes need fresh benchmark data
+4. Refresh generated performance results, if needed
 
-Run this for releases that update public performance claims or benchmark
-summaries:
+Run this when the release PR updates public performance claims or
+`benches/PERFORMANCE_RESULTS.md`:
 
 ```bash
 just bench-perf-summary
 ```
 
-Review generated benchmark docs before committing them.
+Run it after the version bump so the generated file reports the current Cargo
+package version. The recipe already runs `benchmark-utils generate-summary
+--run-benchmarks --profile perf`, which refreshes the perf-profile Criterion
+`ci_performance_suite` data, captures the generated construction simplex
+counts used by the Triangulation Data Structure tables, reruns the circumsphere
+benchmark, and regenerates `benches/PERFORMANCE_RESULTS.md`. No separate
+Criterion refresh step is required.
+
+Review generated benchmark docs before committing them. Confirm the file shows
+`Version $VERSION Results`, `Current Criterion Run Information`, and
+`Simplices Generated`, and does not retain `Historical Version Comparison`,
+`Circumsphere Predicate Analysis`, `Method Disagreements`, or
+`Baseline Artifact Information`.
 
 5. Validate the release branch
 
 ```bash
 just ci
 just publish-check
-cargo publish --dry-run
 ```
 
 6. Stage and commit release artifacts
 
 ```bash
-git add Cargo.toml Cargo.lock CHANGELOG.md docs/ benches/PERFORMANCE_RESULTS.md
+git add Cargo.toml Cargo.lock CHANGELOG.md CITATION.cff docs/ benches/PERFORMANCE_RESULTS.md
 
 git commit -m "chore(release): release $TAG
 
