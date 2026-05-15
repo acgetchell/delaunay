@@ -226,13 +226,15 @@ dimension:
 
 | Dimension | Default vertices | Generated Simplices | Total wall time |
 |-----------|------------------|---------------------|-----------------|
-| 2D | 40,000 | 79,877 | ~69.5 s |
-| 3D | 8,000 | 52,308 | ~50.4 s |
-| 4D | 900 | 21,620 | ~52.4 s |
-| 5D | 150 | 9,397 | ~50.7 s |
+| 2D | 36,000 | 71,887 | ~48.1 s |
+| 3D | 8,000 | 52,308 | ~51.9 s |
+| 4D | 900 | 21,620 | ~57.4 s |
+| 5D | 140 | 8,296 | ~51.8 s |
 
-For 5D, 150 vertices remains the debug default: 100 vertices measured about
-28 seconds and 200 vertices measured about 114 seconds on the same hardware.
+For 5D, the debug default is 140 vertices: 150 vertices measured about
+61 seconds after strict inverse postcondition checks were enabled, while 140
+vertices keeps the acceptance/profiling run comfortably below one minute and
+allows denser progress reporting on the same hardware.
 
 ## TDS Clone
 

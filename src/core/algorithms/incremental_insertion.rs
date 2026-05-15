@@ -181,22 +181,27 @@ pub enum TdsValidationFailure {
         message: String,
     },
 
-    /// A candidate cell would make a facet incident to too many cells.
+    /// A cell insertion or validation pass found a facet incident to too many cells.
+    ///
+    /// During insertion preflight, the `candidate_*` fields identify the cell that
+    /// would exceed the PL-manifold facet multiplicity. During post-hoc
+    /// validation, they identify one offending incident cell from the over-shared
+    /// facet.
     #[error(
-        "facet {facet_key} would have {attempted_incident_count} incident cells after inserting candidate cell {candidate_cell_uuid} facet {candidate_facet_index}; max is {max_incident_count} (currently {existing_incident_count})"
+        "facet {facet_key} exceeds incident-cell limit: observed {attempted_incident_count} incident cells, max {max_incident_count}; candidate/offending cell {candidate_cell_uuid} facet {candidate_facet_index}; other incident cells {existing_incident_count}"
     )]
     FacetSharingViolation {
         /// Canonical key of the over-shared facet.
         facet_key: u64,
-        /// Number of existing cells already incident to the facet.
+        /// Number of other/pre-existing cells already incident to the facet.
         existing_incident_count: usize,
-        /// Number of incident cells that would exist after inserting the candidate.
+        /// Number of incident cells observed, or that would exist after candidate insertion.
         attempted_incident_count: usize,
         /// Maximum allowed number of incident cells for a PL-manifold facet.
         max_incident_count: usize,
-        /// UUID of the candidate cell being inserted.
+        /// UUID of the candidate or offending cell.
         candidate_cell_uuid: uuid::Uuid,
-        /// Facet index on the candidate cell.
+        /// Facet index on the candidate or offending cell.
         candidate_facet_index: usize,
     },
 
@@ -1479,7 +1484,8 @@ impl InsertionError {
             Self::TopologyValidationFailed { source, .. } => {
                 Self::is_level3_error_retryable(source)
             }
-            // TDS-level topology errors: only geometry/FP-related sub-variants are retryable.
+            // TDS-level topology errors: perturbation-retryable sub-variants are
+            // geometric, orientation, or facet-multiplicity degeneracies.
             // Structural errors (missing cells, broken invariants) won't be fixed by perturbation.
             Self::TopologyValidation(tds_err) => Self::is_tds_error_retryable(tds_err),
             // Conflict region errors: only geometry-degeneracy variants are retryable.
@@ -1525,24 +1531,28 @@ impl InsertionError {
         }
     }
 
-    /// Check whether a TDS-level validation error is geometry-related (retryable).
+    /// Check whether a TDS-level validation error is perturbation-retryable.
     ///
-    /// Only `Geometric` (FP degeneracy) and `OrientationViolation` (coherent-orientation
-    /// breach after near-degenerate geometry) are retryable at this layer.  All other
-    /// `TdsError` variants represent structural bugs that perturbation cannot fix.
+    /// Geometric predicate failures, coherent-orientation violations, and
+    /// facet-sharing violations can all be caused by near-degenerate cavity
+    /// boundaries that may change after coordinate perturbation. All other
+    /// [`TdsError`] variants represent structural bugs that perturbation cannot fix.
     const fn is_tds_error_retryable(tds_err: &TdsError) -> bool {
         matches!(
             tds_err,
-            TdsError::Geometric(_) | TdsError::OrientationViolation { .. }
+            TdsError::Geometric(_)
+                | TdsError::OrientationViolation { .. }
+                | TdsError::FacetSharingViolation { .. }
         )
     }
 
-    /// Check whether a compact TDS validation summary is geometry-related.
+    /// Check whether a compact TDS validation summary is perturbation-retryable.
     const fn is_tds_validation_failure_retryable(err: &TdsValidationFailure) -> bool {
         matches!(
             err,
             TdsValidationFailure::Geometric { .. }
                 | TdsValidationFailure::OrientationViolation { .. }
+                | TdsValidationFailure::FacetSharingViolation { .. }
         )
     }
 
@@ -1951,7 +1961,7 @@ where
                 tds.insert_cell_with_mapping_prechecked_topology(new_cell)
             }
         }
-        .map_err(InsertionError::from)?;
+        .map_err(CavityFillingError::from)?;
 
         // Cell creation provenance: log each newly created cell with its
         // vertex ordering, geometric orientation, and source boundary facet.
@@ -4923,12 +4933,33 @@ mod tests {
         let structural_failure = TdsValidationFailure::InconsistentDataStructure {
             message: "dangling link".to_string(),
         };
+        let facet_failure = TdsValidationFailure::FacetSharingViolation {
+            facet_key: 0x1234,
+            existing_incident_count: 2,
+            attempted_incident_count: 3,
+            max_incident_count: 2,
+            candidate_cell_uuid: uuid::Uuid::nil(),
+            candidate_facet_index: 1,
+        };
+        let facet_message = facet_failure.to_string();
+        assert!(facet_message.contains("exceeds incident-cell limit"));
+        assert!(!facet_message.contains("after inserting candidate cell"));
 
         assert!(
             InsertionError::CavityFilling {
                 reason: CavityFillingError::CellInsertion {
                     reason: TdsConstructionFailure::Validation {
                         reason: geometry_failure.clone(),
+                    },
+                },
+            }
+            .is_retryable()
+        );
+        assert!(
+            InsertionError::CavityFilling {
+                reason: CavityFillingError::CellInsertion {
+                    reason: TdsConstructionFailure::Validation {
+                        reason: facet_failure,
                     },
                 },
             }
@@ -5044,6 +5075,17 @@ mod tests {
                 cell2_facet_vertices: vec![],
                 observed_odd_permutation: true,
                 expected_odd_permutation: false,
+            })
+            .is_retryable()
+        );
+        assert!(
+            InsertionError::TopologyValidation(TdsError::FacetSharingViolation {
+                facet_key: 0x1234,
+                existing_incident_count: 2,
+                attempted_incident_count: 3,
+                max_incident_count: 2,
+                candidate_cell_uuid: uuid::Uuid::nil(),
+                candidate_facet_index: 1,
             })
             .is_retryable()
         );

@@ -223,7 +223,7 @@ coverage-ci: _ensure-cargo-llvm-cov
     mkdir -p coverage
     cargo llvm-cov {{_coverage_base_args}} --cobertura --output-path coverage/cobertura.xml -- --skip prop_
 
-debug-large-scale-2d n="40000" repair_every="1":
+debug-large-scale-2d n="36000" repair_every="1":
     DELAUNAY_BULK_PROGRESS_EVERY=2000 DELAUNAY_LARGE_DEBUG_MAX_RUNTIME_SECS=1800 DELAUNAY_LARGE_DEBUG_N_2D={{n}} DELAUNAY_LARGE_DEBUG_REPAIR_EVERY={{repair_every}} cargo test --release --test large_scale_debug debug_large_scale_2d -- --ignored --exact --nocapture
 
 debug-large-scale-3d n="8000" repair_every="1":
@@ -232,8 +232,8 @@ debug-large-scale-3d n="8000" repair_every="1":
 debug-large-scale-4d n="900" repair_every="1":
     DELAUNAY_BULK_PROGRESS_EVERY=100 DELAUNAY_LARGE_DEBUG_MAX_RUNTIME_SECS=1800 DELAUNAY_LARGE_DEBUG_N_4D={{n}} DELAUNAY_LARGE_DEBUG_REPAIR_EVERY={{repair_every}} cargo test --release --test large_scale_debug debug_large_scale_4d -- --ignored --exact --nocapture
 
-debug-large-scale-5d n="150" repair_every="1":
-    DELAUNAY_BULK_PROGRESS_EVERY=50 DELAUNAY_LARGE_DEBUG_MAX_RUNTIME_SECS=1800 DELAUNAY_LARGE_DEBUG_N_5D={{n}} DELAUNAY_LARGE_DEBUG_REPAIR_EVERY={{repair_every}} cargo test --release --test large_scale_debug debug_large_scale_5d -- --ignored --exact --nocapture
+debug-large-scale-5d n="140" repair_every="1":
+    DELAUNAY_BULK_PROGRESS_EVERY=20 DELAUNAY_LARGE_DEBUG_MAX_RUNTIME_SECS=1800 DELAUNAY_LARGE_DEBUG_N_5D={{n}} DELAUNAY_LARGE_DEBUG_REPAIR_EVERY={{repair_every}} cargo test --release --test large_scale_debug debug_large_scale_5d -- --ignored --exact --nocapture
 
 # Default recipe shows available commands
 default:
@@ -273,10 +273,10 @@ help-workflows:
     @echo ""
     @echo "Active large-scale debugging:"
     @echo "  just test-diagnostics      # Run diagnostics tools with output"
-    @echo "  just debug-large-scale-2d [n] [repair_every] # 2D acceptance/profiling (defaults n=40000, repair_every=1)"
+    @echo "  just debug-large-scale-2d [n] [repair_every] # 2D acceptance/profiling (defaults n=36000, repair_every=1)"
     @echo "  just debug-large-scale-3d [n] [repair_every] # Issue #341: 3D scalability (defaults n=8000, repair_every=1)"
     @echo "  just debug-large-scale-4d [n] [repair_every] # Issue #340: 4D large-scale runtime (defaults n=900, repair_every=1)"
-    @echo "  just debug-large-scale-5d [n] [repair_every] # Issue #342: 5D feasibility (defaults n=150, repair_every=1)"
+    @echo "  just debug-large-scale-5d [n] [repair_every] # Issue #342: 5D feasibility (defaults n=140, repair_every=1)"
     @echo ""
     @echo "Benchmark workflows:"
     @echo "  just bench-smoke        # Smoke-test benchmark harnesses (minimal samples)"

@@ -1911,6 +1911,53 @@ def _is_semver_tag_ref(ref_name: str) -> bool:
     return re.fullmatch(r"v[0-9]+\.[0-9]+\.[0-9]+(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?", ref_name) is not None
 
 
+DISALLOWED_BASELINE_REF_PREFIXES = (
+    "refs/pull/",
+    "refs/merge-requests/",
+    "refs/changes/",
+    "pull/",
+)
+TRUSTED_BASELINE_BRANCH_RE = re.compile(
+    r"(?:(?:codex|copilot|cursor)/)?"
+    r"(?:main|(?:fix|feat|feature|perf|doc|docs|test|refactor|ci|build|chore|style|release)/[A-Za-z0-9][A-Za-z0-9._/-]*)"
+)
+
+
+def _normalize_baseline_ref_name(ref_name: str) -> str:
+    """Normalize trusted fully qualified branch/tag refs to checkout-safe names."""
+    if ref_name.startswith("refs/heads/"):
+        return ref_name.removeprefix("refs/heads/")
+    if ref_name.startswith("refs/tags/"):
+        return ref_name.removeprefix("refs/tags/")
+    return ref_name
+
+
+def _validate_baseline_ref_name(ref_name: str) -> str:
+    """Validate the workflow checkout ref and return the normalized ref name."""
+    stripped = ref_name.strip()
+    if not stripped:
+        msg = "Baseline ref is empty after resolution"
+        raise ValueError(msg)
+    if stripped != ref_name or any(ch in stripped for ch in "\r\n"):
+        msg = f"Disallowed baseline ref {ref_name!r}: refs may not contain surrounding whitespace or newlines"
+        raise ValueError(msg)
+    if any(stripped.startswith(prefix) for prefix in DISALLOWED_BASELINE_REF_PREFIXES):
+        msg = f"Disallowed baseline ref {stripped!r}: untrusted ref namespace"
+        raise ValueError(msg)
+
+    normalized = _normalize_baseline_ref_name(stripped)
+    if stripped.startswith("refs/") and normalized == stripped:
+        msg = f"Disallowed baseline ref {stripped!r}: unsupported ref namespace"
+        raise ValueError(msg)
+    if _is_semver_tag_ref(normalized) or TRUSTED_BASELINE_BRANCH_RE.fullmatch(normalized):
+        return normalized
+
+    msg = (
+        f"Disallowed baseline ref {stripped!r} (resolved as {normalized!r}); allowed refs are main, semver release tags, and trusted branch prefixes"
+    )
+    raise ValueError(msg)
+
+
 class BaselineGenerator:
     """Generate performance baselines from benchmark data."""
 
@@ -2634,15 +2681,23 @@ class WorkflowHelper:
         elif github_ref.startswith("refs/heads/"):
             ref_name = github_ref[len("refs/heads/") :]
             print(f"Using branch ref: {ref_name}", file=sys.stderr)
+        elif github_ref:
+            ref_name = github_ref
+            print(f"Using GitHub ref: {ref_name}", file=sys.stderr)
         else:
             ref_name = "main"
             print("Using default baseline ref: main", file=sys.stderr)
 
+        try:
+            ref_name = _validate_baseline_ref_name(ref_name)
+        except ValueError as error:
+            print(f"❌ {error}", file=sys.stderr)
+            raise SystemExit(1) from error
+
         github_output = os.getenv("GITHUB_OUTPUT")
         if github_output:
-            safe = ref_name.replace("\r", "").replace("\n", "")
             with open(github_output, "a", encoding="utf-8") as f:
-                f.write(f"ref_name={safe}\n")
+                f.write(f"ref_name={ref_name}\n")
 
         print(f"Final baseline ref: {ref_name}", file=sys.stderr)
         return ref_name

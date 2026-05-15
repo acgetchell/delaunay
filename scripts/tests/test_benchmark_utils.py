@@ -1407,6 +1407,30 @@ class TestWorkflowHelper:
         ref_name = WorkflowHelper.determine_ref_name()
         assert ref_name == "feature/perf"
 
+    @patch.dict(os.environ, {"INPUT_REF": "refs/tags/v1.2.3"}, clear=True)
+    def test_determine_ref_name_normalizes_trusted_ref_namespace(self) -> None:
+        """Test trusted fully-qualified refs are normalized before checkout."""
+        ref_name = WorkflowHelper.determine_ref_name()
+        assert ref_name == "v1.2.3"
+
+    @patch.dict(os.environ, {"INPUT_REF": "refs/pull/123/merge"}, clear=True)
+    def test_determine_ref_name_rejects_pull_request_ref(self, capsys: pytest.CaptureFixture[str]) -> None:
+        """Test untrusted checkout namespaces are rejected before checkout."""
+        with pytest.raises(SystemExit) as exc_info:
+            WorkflowHelper.determine_ref_name()
+
+        assert exc_info.value.code == 1
+        assert "refs/pull/123/merge" in capsys.readouterr().err
+
+    @patch.dict(os.environ, {"GITHUB_REF": "refs/changes/12/34"}, clear=True)
+    def test_determine_ref_name_rejects_untrusted_github_ref(self, capsys: pytest.CaptureFixture[str]) -> None:
+        """Test derived GitHub refs pass through the same namespace validation."""
+        with pytest.raises(SystemExit) as exc_info:
+            WorkflowHelper.determine_ref_name()
+
+        assert exc_info.value.code == 1
+        assert "refs/changes/12/34" in capsys.readouterr().err
+
     def test_create_metadata_success(self) -> None:
         """Test successful metadata creation."""
         with tempfile.TemporaryDirectory() as temp_dir:

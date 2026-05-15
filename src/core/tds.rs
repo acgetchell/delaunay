@@ -833,22 +833,27 @@ pub enum TdsError {
         /// Description of the duplicate cell validation failure.
         message: String,
     },
-    /// A candidate cell would make a facet incident to too many cells.
+    /// A cell insertion or validation pass found a facet incident to too many cells.
+    ///
+    /// During insertion preflight, the `candidate_*` fields identify the cell that
+    /// would exceed the PL-manifold facet multiplicity. During post-hoc
+    /// validation, they identify one offending incident cell from the over-shared
+    /// facet.
     #[error(
-        "Facet {facet_key} is already shared by {existing_incident_count} cells; inserting candidate cell {candidate_cell_uuid} facet {candidate_facet_index} would create {attempted_incident_count} incident cells, exceeding max {max_incident_count}"
+        "Facet {facet_key} exceeds incident-cell limit: observed {attempted_incident_count} incident cells, max {max_incident_count}; candidate/offending cell {candidate_cell_uuid} facet {candidate_facet_index}; other incident cells {existing_incident_count}"
     )]
     FacetSharingViolation {
         /// Canonical key of the over-shared facet.
         facet_key: u64,
-        /// Number of existing cells already incident to the facet.
+        /// Number of other/pre-existing cells already incident to the facet.
         existing_incident_count: usize,
-        /// Number of incident cells that would exist after inserting the candidate.
+        /// Number of incident cells observed, or that would exist after candidate insertion.
         attempted_incident_count: usize,
         /// Maximum allowed number of incident cells for a PL-manifold facet.
         max_incident_count: usize,
-        /// UUID of the candidate cell being inserted.
+        /// UUID of the candidate or offending cell.
         candidate_cell_uuid: Uuid,
-        /// Facet index on the candidate cell.
+        /// Facet index on the candidate or offending cell.
         candidate_facet_index: usize,
     },
     /// Failed to create a cell during triangulation.
@@ -982,7 +987,7 @@ pub enum TdsErrorKind {
     OrientationViolation,
     /// Duplicate maximal cells were detected.
     DuplicateCells,
-    /// A facet would exceed the allowed incident-cell count.
+    /// A facet exceeded, or would exceed, the allowed incident-cell count.
     FacetSharingViolation,
     /// Cell creation failed.
     FailedToCreateCell,
@@ -5369,7 +5374,7 @@ impl<T, U, V, const D: usize> Tds<T, U, V, D> {
         // Build a map from facet keys to the cells that contain them.
         // Use the strict version to ensure we catch any missing vertex keys.
         let facet_to_cells = self.build_facet_to_cells_map()?;
-        Self::validate_facet_sharing_with_facet_to_cells_map(&facet_to_cells)
+        self.validate_facet_sharing_with_facet_to_cells_map(&facet_to_cells)
     }
 
     /// Checks whether all adjacent cells induce opposite orientations on shared facets.
@@ -5689,20 +5694,38 @@ impl<T, U, V, const D: usize> Tds<T, U, V, D> {
         Some(is_odd)
     }
 
+    /// Validate facet multiplicity from an already-built facet incidence map.
+    ///
+    /// This helper exists so [`Tds::is_valid`] and validation reports can share
+    /// one O(N×F) facet-map construction while still emitting the same structured
+    /// [`TdsError::FacetSharingViolation`] as insertion preflight. It returns the
+    /// first facet incident to more than two cells, identifying one offending
+    /// incident cell in the `candidate_*` fields.
     fn validate_facet_sharing_with_facet_to_cells_map(
+        &self,
         facet_to_cells: &FacetToCellsMap,
     ) -> Result<(), TdsError> {
         // Check for facets shared by more than 2 cells.
         for (facet_key, cell_facet_pairs) in facet_to_cells {
-            if cell_facet_pairs.len() > 2 {
-                return Err(TdsError::InconsistentDataStructure {
-                    message: format!(
-                        "Facet with key {} is shared by {} cells, but should be shared by at most 2 cells in a valid triangulation",
-                        facet_key,
-                        cell_facet_pairs.len()
-                    ),
-                });
-            }
+            let [_, _, candidate, ..] = cell_facet_pairs.as_slice() else {
+                continue;
+            };
+            let candidate_cell =
+                self.cell(candidate.cell_key())
+                    .ok_or_else(|| TdsError::CellNotFound {
+                        cell_key: candidate.cell_key(),
+                        context: format!(
+                            "facet-sharing validation for over-shared facet {facet_key}"
+                        ),
+                    })?;
+            return Err(TdsError::FacetSharingViolation {
+                facet_key: *facet_key,
+                existing_incident_count: cell_facet_pairs.len() - 1,
+                attempted_incident_count: cell_facet_pairs.len(),
+                max_incident_count: 2,
+                candidate_cell_uuid: candidate_cell.uuid(),
+                candidate_facet_index: usize::from(candidate.facet_index()),
+            });
         }
 
         Ok(())
@@ -5720,7 +5743,8 @@ impl<T, U, V, const D: usize> Tds<T, U, V, D> {
     /// - Cells reference only valid vertex keys (no stale/missing vertex keys)
     /// - `Vertex::incident_cell`, when present, must point at an existing cell that contains the vertex.
     /// - No duplicate cells (same vertex set)
-    /// - Facet sharing invariant (each facet is shared by at most 2 cells)
+    /// - Facet sharing invariant (each facet is shared by at most 2 cells,
+    ///   reported as [`TdsError::FacetSharingViolation`])
     /// - Neighbor consistency (topology + mutual neighbors)
     /// - Coherent orientation (adjacent cells induce opposite facet orientations)
     ///
@@ -5772,7 +5796,7 @@ impl<T, U, V, const D: usize> Tds<T, U, V, D> {
 
         // Build the facet-to-cells map once and share it between facet-sharing and neighbor validators.
         let facet_to_cells = self.build_facet_to_cells_map()?;
-        Self::validate_facet_sharing_with_facet_to_cells_map(&facet_to_cells)?;
+        self.validate_facet_sharing_with_facet_to_cells_map(&facet_to_cells)?;
         self.validate_neighbors_with_facet_to_cells_map(&facet_to_cells)?;
         self.validate_coherent_orientation()?;
 
@@ -5943,8 +5967,7 @@ impl<T, U, V, const D: usize> Tds<T, U, V, D> {
         let mut neighbor_consistency_ok = false;
         match self.build_facet_to_cells_map() {
             Ok(facet_to_cells) => {
-                if let Err(e) =
-                    Self::validate_facet_sharing_with_facet_to_cells_map(&facet_to_cells)
+                if let Err(e) = self.validate_facet_sharing_with_facet_to_cells_map(&facet_to_cells)
                 {
                     violations.push(InvariantViolation {
                         kind: InvariantKind::FacetSharing,
@@ -9583,13 +9606,42 @@ mod tests {
         .unwrap();
 
         let err = tds.validate_facet_sharing().unwrap_err();
+        let message = err.to_string();
         assert!(
             matches!(
-                err,
-                TdsError::InconsistentDataStructure { ref message }
-                    if message.contains("shared by")
+                &err,
+                TdsError::FacetSharingViolation {
+                    existing_incident_count: 2,
+                    attempted_incident_count: 3,
+                    max_incident_count: 2,
+                    candidate_facet_index: 2,
+                    ..
+                }
             ),
             "Expected over-shared facet error, got {err:?}"
+        );
+        assert!(message.contains("exceeds incident-cell limit"));
+        assert!(!message.contains("inserting candidate cell"));
+
+        let err = tds.is_valid().unwrap_err();
+        assert!(
+            matches!(err, TdsError::FacetSharingViolation { .. }),
+            "Expected is_valid to surface facet-sharing violation, got {err:?}"
+        );
+
+        let report = tds.validation_report().unwrap_err();
+        let facet_violation = report
+            .violations
+            .iter()
+            .find(|violation| violation.kind == InvariantKind::FacetSharing)
+            .expect("validation_report should include the facet-sharing violation");
+        assert!(
+            matches!(
+                &facet_violation.error,
+                InvariantError::Tds(TdsError::FacetSharingViolation { .. })
+            ),
+            "Expected validation_report to preserve structured facet-sharing error, got {:?}",
+            facet_violation.error
         );
     }
 
@@ -9807,6 +9859,66 @@ mod tests {
     }
 
     #[test]
+    fn test_insert_cell_rejects_candidate_periodic_offset_count_mismatch() {
+        let mut tds: Tds<f64, (), (), 2> = Tds::empty();
+        let v0 = tds.insert_vertex_with_mapping(vertex!([0.0, 0.0])).unwrap();
+        let v1 = tds.insert_vertex_with_mapping(vertex!([1.0, 0.0])).unwrap();
+        let v2 = tds.insert_vertex_with_mapping(vertex!([0.0, 1.0])).unwrap();
+
+        let mut candidate = Cell::new(vec![v0, v1, v2], None).unwrap();
+        let candidate_uuid = candidate.uuid();
+        let generation_before = tds.generation();
+        candidate.periodic_vertex_offsets = Some(vec![[0_i8, 0_i8], [0_i8, 0_i8]].into());
+
+        let err = tds.insert_cell_with_mapping(candidate).unwrap_err();
+
+        assert!(matches!(
+            err,
+            TdsConstructionError::ValidationError(TdsError::DimensionMismatch {
+                expected: 3,
+                actual: 2,
+                ..
+            })
+        ));
+        assert_eq!(tds.number_of_cells(), 0);
+        assert_eq!(tds.generation(), generation_before);
+        assert_eq!(tds.cell_key_from_uuid(&candidate_uuid), None);
+    }
+
+    #[test]
+    fn test_insert_cell_propagates_existing_periodic_facet_key_error() {
+        let mut tds: Tds<f64, (), (), 2> = Tds::empty();
+        let v0 = tds.insert_vertex_with_mapping(vertex!([0.0, 0.0])).unwrap();
+        let v1 = tds.insert_vertex_with_mapping(vertex!([1.0, 0.0])).unwrap();
+        let v2 = tds.insert_vertex_with_mapping(vertex!([0.0, 1.0])).unwrap();
+        let v3 = tds.insert_vertex_with_mapping(vertex!([1.0, 1.0])).unwrap();
+
+        let existing = tds
+            .insert_cell_with_mapping(Cell::new(vec![v0, v1, v2], None).unwrap())
+            .unwrap();
+        tds.cell_mut(existing)
+            .unwrap()
+            .set_periodic_vertex_offsets(vec![[-128_i8, 0_i8], [127_i8, 0_i8], [0_i8, 0_i8]])
+            .unwrap();
+
+        let candidate = Cell::new(vec![v0, v1, v3], None).unwrap();
+        let candidate_uuid = candidate.uuid();
+        let generation_before = tds.generation();
+
+        let err = tds.insert_cell_with_mapping(candidate).unwrap_err();
+
+        assert!(matches!(
+            err,
+            TdsConstructionError::ValidationError(TdsError::InconsistentDataStructure {
+                message
+            }) if message.contains("Failed to derive periodic facet key")
+        ));
+        assert_eq!(tds.number_of_cells(), 1);
+        assert_eq!(tds.generation(), generation_before);
+        assert_eq!(tds.cell_key_from_uuid(&candidate_uuid), None);
+    }
+
+    #[test]
     fn test_insert_cell_with_mapping_rejects_duplicate_cell_without_mutation() {
         let mut tds: Tds<f64, (), (), 2> = Tds::empty();
         let v0 = tds.insert_vertex_with_mapping(vertex!([0.0, 0.0])).unwrap();
@@ -9871,6 +9983,34 @@ mod tests {
         assert_eq!(tds.number_of_cells(), 2);
         assert_eq!(tds.generation(), generation_before);
         assert_eq!(tds.cell_key_from_uuid(&candidate_uuid), None);
+    }
+
+    /// Verifies removed cells are absent from subsequent insertion preflight scans.
+    #[test]
+    fn test_removed_cells_do_not_block_future_cell_insertions() {
+        let mut tds: Tds<f64, (), (), 2> = Tds::empty();
+        let v0 = tds.insert_vertex_with_mapping(vertex!([0.0, 0.0])).unwrap();
+        let v1 = tds.insert_vertex_with_mapping(vertex!([1.0, 0.0])).unwrap();
+        let v2 = tds.insert_vertex_with_mapping(vertex!([0.0, 1.0])).unwrap();
+        let v3 = tds
+            .insert_vertex_with_mapping(vertex!([0.0, -1.0]))
+            .unwrap();
+        let v4 = tds.insert_vertex_with_mapping(vertex!([1.0, 1.0])).unwrap();
+
+        let removed = tds
+            .insert_cell_with_mapping(Cell::new(vec![v0, v1, v2], None).unwrap())
+            .unwrap();
+        let second = tds
+            .insert_cell_with_mapping(Cell::new(vec![v0, v1, v3], None).unwrap())
+            .unwrap();
+
+        assert_eq!(tds.remove_cells_by_keys(&[removed]), 1);
+
+        tds.insert_cell_with_mapping(Cell::new(vec![v0, v1, v2], None).unwrap())
+            .expect("removed duplicate cell should not block reinsertion");
+        assert_eq!(tds.remove_cells_by_keys(&[second]), 1);
+        tds.insert_cell_with_mapping(Cell::new(vec![v0, v1, v4], None).unwrap())
+            .expect("removed incident cell should not block later facet sharing");
     }
 
     // =========================================================================

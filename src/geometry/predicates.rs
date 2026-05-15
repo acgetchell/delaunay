@@ -229,6 +229,19 @@ where
 
     try_with_la_stack_matrix!(k, |matrix| {
         fill_relative_insphere_matrix(&mut matrix, simplex_points, test_point)?;
+        if let (Some(det), Some(errbound)) = (matrix.det_direct(), matrix.det_errbound())
+            && det.is_finite()
+            && errbound.is_finite()
+        {
+            if det > errbound {
+                return Ok(1);
+            }
+            if det < -errbound {
+                return Ok(-1);
+            }
+        }
+
+        cold_path();
         Ok(exact_det_sign(&matrix))
     })
 }
@@ -482,6 +495,52 @@ where
         }
 
         Ok(try_orientation_from_matrix(&matrix, k)?)
+    })
+}
+
+/// Return a provably determined f64 orientation sign without exact fallback.
+///
+/// `None` means the fast filter cannot prove the sign, not that the simplex is
+/// degenerate. Callers that require a definitive answer must fall back to the
+/// exact orientation path.
+#[inline]
+pub(crate) fn simplex_orientation_fast_filter_sign<T, const D: usize>(
+    simplex_points: &[Point<T, D>],
+) -> Result<Option<i32>, CoordinateConversionError>
+where
+    T: CoordinateScalar,
+{
+    if simplex_points.len() != D + 1 {
+        return Err(CoordinateConversionError::InvalidSimplexPointCount {
+            actual: simplex_points.len(),
+            expected: D + 1,
+            dimension: D,
+        });
+    }
+
+    let k = D + 1;
+    try_with_la_stack_matrix!(k, |matrix| {
+        for (i, p) in simplex_points.iter().enumerate() {
+            let point_coords_f64 = safe_coords_to_f64(p.coords())?;
+            for (j, &v) in point_coords_f64.iter().enumerate() {
+                matrix_set(&mut matrix, i, j, v)?;
+            }
+            matrix_set(&mut matrix, i, D, 1.0)?;
+        }
+
+        if let (Some(det), Some(errbound)) = (matrix.det_direct(), matrix.det_errbound())
+            && det.is_finite()
+            && errbound.is_finite()
+        {
+            if det > errbound {
+                return Ok(Some(1));
+            }
+            if det < -errbound {
+                return Ok(Some(-1));
+            }
+        }
+
+        Ok(None)
     })
 }
 
@@ -1229,6 +1288,39 @@ mod tests {
             insphere_lifted(&incomplete_simplex, test_point).is_err(),
             "Should error with insufficient vertices"
         );
+    }
+
+    #[test]
+    fn test_relative_insphere_determinant_sign_rejects_wrong_point_count() {
+        let incomplete_simplex = vec![Point::new([0.0, 0.0, 0.0]), Point::new([1.0, 0.0, 0.0])];
+        let test_point = Point::new([0.5, 0.5, 0.5]);
+
+        let err = relative_insphere_determinant_sign(&incomplete_simplex, &test_point).unwrap_err();
+
+        assert_eq!(
+            err,
+            CoordinateConversionError::InvalidSimplexPointCount {
+                actual: 2,
+                expected: 4,
+                dimension: 3,
+            }
+        );
+    }
+
+    #[test]
+    fn test_relative_insphere_determinant_sign_boundary_matches_exact_signs() {
+        let simplex = vec![
+            Point::new([0.0, 0.0]),
+            Point::new([1.0, 0.0]),
+            Point::new([0.0, 1.0]),
+        ];
+        let boundary = Point::new([1.0, 1.0]);
+
+        let determinant_sign = relative_insphere_determinant_sign(&simplex, &boundary).unwrap();
+        let signs = relative_insphere_signs(&simplex, &boundary).unwrap();
+
+        assert_eq!(determinant_sign, 0);
+        assert_eq!(determinant_sign, signs.insphere_determinant);
     }
 
     #[test]

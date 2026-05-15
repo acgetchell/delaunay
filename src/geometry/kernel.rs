@@ -26,8 +26,8 @@ use crate::core::cell::CellValidationError;
 use crate::core::collections::{MAX_PRACTICAL_DIMENSION_SIZE, SmallBuffer};
 use crate::geometry::point::Point;
 use crate::geometry::predicates::{
-    InSphere, Orientation, insphere_lifted, relative_insphere_effective_sign,
-    relative_insphere_signs, simplex_orientation,
+    InSphere, Orientation, insphere_lifted, relative_insphere_determinant_sign,
+    relative_insphere_effective_sign, relative_insphere_signs, simplex_orientation,
 };
 use crate::geometry::robust_predicates::{
     robust_insphere, robust_insphere_positive_oriented, robust_orientation,
@@ -726,6 +726,36 @@ where
 
         Ok((insphere_effective * orient_factor).signum())
     }
+
+    fn in_sphere_positive_oriented(
+        &self,
+        simplex_points: &[Point<Self::Scalar, D>],
+        test_point: &Point<Self::Scalar, D>,
+    ) -> Result<i32, CoordinateConversionError> {
+        if simplex_points.len() != D + 1 {
+            return Err(CoordinateConversionError::InvalidSimplexPointCount {
+                actual: simplex_points.len(),
+                expected: D + 1,
+                dimension: D,
+            });
+        }
+
+        let determinant_sign = relative_insphere_determinant_sign(simplex_points, test_point)?;
+        let orient_factor = if D.is_multiple_of(2) { -1 } else { 1 };
+        let insphere_effective = if determinant_sign != 0 {
+            determinant_sign
+        } else {
+            let mut f64_simplex: SmallBuffer<Point<f64, D>, MAX_PRACTICAL_DIMENSION_SIZE> =
+                SmallBuffer::with_capacity(simplex_points.len());
+            for point in simplex_points {
+                f64_simplex.push(Point::new(safe_coords_to_f64(point.coords())?));
+            }
+            let f64_test = Point::new(safe_coords_to_f64(test_point.coords())?);
+            sos_insphere_sign(&f64_simplex, &f64_test)?
+        };
+
+        Ok((insphere_effective * orient_factor).signum())
+    }
 }
 
 #[cfg(test)]
@@ -1078,6 +1108,28 @@ mod tests {
                         fast.in_sphere(&simplex, &outside).unwrap(),
                         "Must agree on clearly outside point"
                     );
+                }
+
+                #[test]
+                fn [<test_adaptive_positive_oriented_insphere_ $dim d_agrees>]() {
+                    let kernel = AdaptiveKernel::<f64>::new();
+                    let mut simplex = standard_simplex::<$dim>();
+                    if kernel.orientation(&simplex).unwrap() < 0 {
+                        simplex.swap(0, 1);
+                    }
+                    assert_eq!(kernel.orientation(&simplex).unwrap(), 1);
+
+                    for test in [
+                        inside_point::<$dim>(),
+                        outside_point::<$dim>(),
+                        cospherical_test::<$dim>(),
+                    ] {
+                        assert_eq!(
+                            kernel.in_sphere_positive_oriented(&simplex, &test).unwrap(),
+                            kernel.in_sphere(&simplex, &test).unwrap(),
+                            "positive-oriented fast path must preserve AdaptiveKernel semantics"
+                        );
+                    }
                 }
 
                 #[test]

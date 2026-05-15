@@ -47,7 +47,9 @@ use crate::core::util::stable_hash_u64_slice;
 use crate::core::vertex::Vertex;
 use crate::geometry::kernel::Kernel;
 use crate::geometry::point::Point;
-use crate::geometry::predicates::Orientation;
+#[cfg(debug_assertions)]
+use crate::geometry::predicates::simplex_orientation;
+use crate::geometry::predicates::{Orientation, simplex_orientation_fast_filter_sign};
 use crate::geometry::robust_predicates::robust_orientation;
 use crate::geometry::traits::coordinate::{
     Coordinate, CoordinateConversionError, CoordinateScalar,
@@ -3951,8 +3953,9 @@ where
         neighbor_key,
     })?;
 
-    let Some(facet_index_b) = back_reference_facet_index(cell_a_key, cell_b)
-        .or_else(|| cell_a.mirror_facet_index(facet_index_a, cell_b))
+    let Some(facet_index_b) = cell_a
+        .mirror_facet_index(facet_index_a, cell_b)
+        .or_else(|| back_reference_facet_index(cell_a_key, cell_b))
     else {
         return Err(FlipError::InvalidFacetAdjacency {
             cell_key: cell_a_key,
@@ -4247,6 +4250,37 @@ where
     })
 }
 
+/// Return whether source-cell points are safe for the positive-oriented insphere path.
+///
+/// This helper exists so flip predicates only use
+/// [`Kernel::in_sphere_positive_oriented`] when the actual point ordering is
+/// provably positive-oriented. It returns `false` for synthetic/non-source cells
+/// and for geometries whose orientation cannot be certified by the f64 fast
+/// filter, causing callers to use the full orientation-aware predicate instead.
+#[inline]
+fn source_cell_is_certified_positive<T, const D: usize>(
+    source_cell: Option<CellKey>,
+    points: &[Point<T, D>],
+) -> bool
+where
+    T: CoordinateScalar,
+{
+    if source_cell.is_none() {
+        return false;
+    }
+
+    let known_positive =
+        matches!(simplex_orientation_fast_filter_sign(points), Ok(Some(sign)) if sign > 0);
+    #[cfg(debug_assertions)]
+    if known_positive {
+        debug_assert!(
+            matches!(simplex_orientation(points), Ok(Orientation::POSITIVE)),
+            "stored source cells must be positive-oriented before using the insphere fast path"
+        );
+    }
+    known_positive
+}
+
 #[expect(
     clippy::too_many_arguments,
     reason = "local predicate evaluation threads topology, source cells, and diagnostics explicitly"
@@ -4328,13 +4362,15 @@ where
         } else {
             point_cache.points_for_vertices(tds, &cell_vertices[1])?
         };
+        let positive_oriented_a = source_cell_is_certified_positive(source_a, &points_a);
+        let positive_oriented_b = source_cell_is_certified_positive(source_b, &points_b);
         (
             points_a,
             points_b,
             point_cache.point(tds, opposite_a)?,
             point_cache.point(tds, opposite_b)?,
-            source_a.is_some(),
-            source_b.is_some(),
+            positive_oriented_a,
+            positive_oriented_b,
         )
     } else {
         let source_a = matching_source_cell(tds, &cell_vertices[0], source_cells).or(frame_cell);
@@ -4845,10 +4881,11 @@ where
             } else {
                 euclidean_point_cache.points_for_vertices(tds, &cell_vertices)?
             };
+            let positive_oriented = source_cell_is_certified_positive(source_cell, &points);
             (
                 points,
                 euclidean_point_cache.point(tds, missing)?,
-                source_cell.is_some(),
+                positive_oriented,
             )
         } else {
             let source_cell =
@@ -5846,26 +5883,24 @@ where
         mode,
         last_applied_flip,
     )?;
-    if mode != PostconditionMode::Repair || D < 4 {
-        verify_postcondition_inverse_k2_edges(
-            tds,
-            kernel,
-            topology_model,
-            &mut queues.edge_queue,
-            &config,
-            &mut diagnostics,
-            mode,
-        )?;
-        verify_postcondition_inverse_k3_triangles(
-            tds,
-            kernel,
-            topology_model,
-            &mut queues.triangle_queue,
-            &config,
-            &mut diagnostics,
-            mode,
-        )?;
-    }
+    verify_postcondition_inverse_k2_edges(
+        tds,
+        kernel,
+        topology_model,
+        &mut queues.edge_queue,
+        &config,
+        &mut diagnostics,
+        mode,
+    )?;
+    verify_postcondition_inverse_k3_triangles(
+        tds,
+        kernel,
+        topology_model,
+        &mut queues.triangle_queue,
+        &config,
+        &mut diagnostics,
+        mode,
+    )?;
 
     // After all flip predicates pass, full repair checks that the repair did not
     // disconnect the neighbor graph. Batch-local construction repair defers this
@@ -6185,14 +6220,6 @@ where
         };
 
         if !violates {
-            // During repair, D≥4 inverse postcondition checks can produce false
-            // positives in near-degenerate configurations (both forward and inverse
-            // flip predicates simultaneously report a violation — a numerical
-            // artifact).  Strict validation still reports these instead of
-            // suppressing applicable inverse flips.
-            if mode == PostconditionMode::Repair && D >= 4 {
-                continue;
-            }
             if repair_trace_enabled() {
                 tracing::debug!(
                     "[repair] postcondition inverse k=2 flip still applicable (edge={edge:?})"
@@ -6269,12 +6296,6 @@ where
         };
 
         if !violates {
-            // Symmetric repair-mode guard to the inverse k=2 check above:
-            // D≥4 inverse checks can be noisy in near-degenerate repair states,
-            // while strict validation still reports applicable inverse flips.
-            if mode == PostconditionMode::Repair && D >= 4 {
-                continue;
-            }
             if repair_trace_enabled() {
                 tracing::debug!(
                     "[repair] postcondition inverse k=3 flip still applicable (triangle={triangle:?})"
@@ -8984,6 +9005,28 @@ mod tests {
             );
         }
         vertices
+    }
+
+    /// Verifies source-cell orientation gating only accepts certified positive orderings.
+    #[test]
+    fn test_source_cell_is_certified_positive_requires_source_and_positive_order() {
+        let source_cell = CellKey::from(KeyData::from_ffi(42));
+        let positive = [
+            Point::new([0.0, 0.0]),
+            Point::new([1.0, 0.0]),
+            Point::new([0.0, 1.0]),
+        ];
+        let negative = [positive[1], positive[0], positive[2]];
+
+        assert!(source_cell_is_certified_positive(
+            Some(source_cell),
+            &positive
+        ));
+        assert!(!source_cell_is_certified_positive(None, &positive));
+        assert!(!source_cell_is_certified_positive(
+            Some(source_cell),
+            &negative,
+        ));
     }
 
     /// Converts vertex-key slices into the fixed-capacity buffer used by flip helpers.
