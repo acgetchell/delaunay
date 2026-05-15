@@ -833,6 +833,24 @@ pub enum TdsError {
         /// Description of the duplicate cell validation failure.
         message: String,
     },
+    /// A candidate cell would make a facet incident to too many cells.
+    #[error(
+        "Facet {facet_key} is already shared by {existing_incident_count} cells; inserting candidate cell {candidate_cell_uuid} facet {candidate_facet_index} would create {attempted_incident_count} incident cells, exceeding max {max_incident_count}"
+    )]
+    FacetSharingViolation {
+        /// Canonical key of the over-shared facet.
+        facet_key: u64,
+        /// Number of existing cells already incident to the facet.
+        existing_incident_count: usize,
+        /// Number of incident cells that would exist after inserting the candidate.
+        attempted_incident_count: usize,
+        /// Maximum allowed number of incident cells for a PL-manifold facet.
+        max_incident_count: usize,
+        /// UUID of the candidate cell being inserted.
+        candidate_cell_uuid: Uuid,
+        /// Facet index on the candidate cell.
+        candidate_facet_index: usize,
+    },
     /// Failed to create a cell during triangulation.
     #[error("Failed to create cell: {message}")]
     FailedToCreateCell {
@@ -964,6 +982,8 @@ pub enum TdsErrorKind {
     OrientationViolation,
     /// Duplicate maximal cells were detected.
     DuplicateCells,
+    /// A facet would exceed the allowed incident-cell count.
+    FacetSharingViolation,
     /// Cell creation failed.
     FailedToCreateCell,
     /// Expected neighbor relation was absent.
@@ -998,6 +1018,7 @@ impl From<&TdsError> for TdsErrorKind {
             TdsError::InvalidNeighbors { .. } => Self::InvalidNeighbors,
             TdsError::OrientationViolation { .. } => Self::OrientationViolation,
             TdsError::DuplicateCells { .. } => Self::DuplicateCells,
+            TdsError::FacetSharingViolation { .. } => Self::FacetSharingViolation,
             TdsError::FailedToCreateCell { .. } => Self::FailedToCreateCell,
             TdsError::NotNeighbors { .. } => Self::NotNeighbors,
             TdsError::MappingInconsistency { .. } => Self::MappingInconsistency,
@@ -1542,6 +1563,15 @@ pub struct Tds<T, U, V, const D: usize> {
     ///
     /// Note: Not serialized - identity is runtime-only.
     identity: Arc<Uuid>,
+}
+
+/// Topology validation mode for checked TDS cell insertion.
+#[derive(Clone, Copy)]
+enum CellInsertionTopologyCheck {
+    /// Validate the candidate against all existing cells.
+    Checked,
+    /// Skip global topology scans because the caller validated the local cavity.
+    Prechecked,
 }
 
 impl<T, U, V, const D: usize> Clone for Tds<T, U, V, D>
@@ -2497,7 +2527,7 @@ impl<T, U, V, const D: usize> Tds<T, U, V, D> {
         &mut self,
         cell: Cell<T, U, V, D>,
     ) -> Result<CellKey, TdsConstructionError> {
-        self.insert_cell_with_mapping_impl(cell)
+        self.insert_cell_with_mapping_impl(cell, CellInsertionTopologyCheck::Checked)
     }
 
     /// Atomically inserts a cell after validating vertex provenance.
@@ -2517,13 +2547,26 @@ impl<T, U, V, const D: usize> Tds<T, U, V, D> {
         &mut self,
         cell: Cell<T, U, V, D>,
     ) -> Result<CellKey, TdsConstructionError> {
-        self.insert_cell_with_mapping_impl(cell)
+        self.insert_cell_with_mapping_impl(cell, CellInsertionTopologyCheck::Checked)
+    }
+
+    /// Inserts a caller-validated cell without global topology scans.
+    ///
+    /// Hull-extension callers use this only after proving that candidate cells
+    /// are built from visible boundary facets around a fresh apex and before
+    /// immediately wiring local neighbors and validating the affected topology.
+    pub(crate) fn insert_cell_with_mapping_prechecked_topology(
+        &mut self,
+        cell: Cell<T, U, V, D>,
+    ) -> Result<CellKey, TdsConstructionError> {
+        self.insert_cell_with_mapping_impl(cell, CellInsertionTopologyCheck::Prechecked)
     }
 
     /// Shared checked cell-insertion path used by public and trusted internal wrappers.
     fn insert_cell_with_mapping_impl(
         &mut self,
         cell: Cell<T, U, V, D>,
+        topology_check: CellInsertionTopologyCheck,
     ) -> Result<CellKey, TdsConstructionError> {
         if cell.number_of_vertices() != D + 1 {
             return Err(TdsConstructionError::ValidationError(
@@ -2538,21 +2581,136 @@ impl<T, U, V, const D: usize> Tds<T, U, V, D> {
         self.validate_cell_vertices_exist(&cell)?;
 
         let cell_uuid = cell.uuid();
-
-        // Use Entry API for atomic check-and-insert
-        match self.uuid_to_cell_key.entry(cell_uuid) {
-            Entry::Occupied(_) => Err(TdsConstructionError::DuplicateUuid {
+        if self.uuid_to_cell_key.contains_key(&cell_uuid) {
+            return Err(TdsConstructionError::DuplicateUuid {
                 entity: EntityKind::Cell,
                 uuid: cell_uuid,
-            }),
-            Entry::Vacant(e) => {
-                let cell_key = self.cells.insert(cell);
-                e.insert(cell_key);
-                // Topology changed; invalidate caches.
-                self.bump_generation();
-                Ok(cell_key)
+            });
+        }
+
+        match topology_check {
+            CellInsertionTopologyCheck::Checked => {
+                self.validate_cell_topology_safe_for_insertion(&cell)?;
+            }
+            CellInsertionTopologyCheck::Prechecked => {}
+        }
+
+        let cell_key = self.cells.insert(cell);
+        self.uuid_to_cell_key.insert(cell_uuid, cell_key);
+        // Topology changed; invalidate caches.
+        self.bump_generation();
+        Ok(cell_key)
+    }
+
+    /// Verifies that inserting `cell` would not violate local topology invariants.
+    fn validate_cell_topology_safe_for_insertion(
+        &self,
+        cell: &Cell<T, U, V, D>,
+    ) -> Result<(), TdsConstructionError> {
+        self.validate_no_duplicate_cell_on_insert(cell)?;
+        self.validate_facet_sharing_on_insert(cell)?;
+        Ok(())
+    }
+
+    /// Builds the duplicate-cell identity for a not-yet-inserted cell.
+    fn candidate_periodic_vertex_uuid_offsets(
+        &self,
+        cell: &Cell<T, U, V, D>,
+    ) -> Result<Vec<(Uuid, [i8; D])>, TdsError> {
+        let vertices = cell.vertices();
+        let periodic_offsets = cell.periodic_vertex_offsets();
+        if let Some(offsets) = periodic_offsets
+            && offsets.len() != vertices.len()
+        {
+            return Err(TdsError::DimensionMismatch {
+                expected: vertices.len(),
+                actual: offsets.len(),
+                context: format!(
+                    "candidate cell {} periodic offset count vs vertex count",
+                    cell.uuid()
+                ),
+            });
+        }
+
+        let mut vertex_uuid_offsets = Vec::with_capacity(vertices.len());
+        for (vertex_idx, &vertex_key) in vertices.iter().enumerate() {
+            let vertex = self
+                .vertices
+                .get(vertex_key)
+                .ok_or_else(|| TdsError::VertexNotFound {
+                    vertex_key,
+                    context: format!(
+                        "referenced by candidate cell {} at index {vertex_idx} while building periodic vertex identity (UUID/offset)",
+                        cell.uuid()
+                    ),
+                })?;
+            let offset = periodic_offsets.map_or([0_i8; D], |offsets| offsets[vertex_idx]);
+            vertex_uuid_offsets.push((vertex.uuid(), offset));
+        }
+        vertex_uuid_offsets.sort_unstable();
+
+        Ok(vertex_uuid_offsets)
+    }
+
+    /// Rejects a candidate cell that duplicates an existing maximal cell.
+    fn validate_no_duplicate_cell_on_insert(
+        &self,
+        cell: &Cell<T, U, V, D>,
+    ) -> Result<(), TdsError> {
+        let candidate_identity = self.candidate_periodic_vertex_uuid_offsets(cell)?;
+
+        for (existing_cell_key, _existing_cell) in &self.cells {
+            let vertices = self.cell_vertices(existing_cell_key)?;
+            let existing_identity =
+                self.build_periodic_vertex_uuid_offsets(existing_cell_key, &vertices)?;
+
+            if existing_identity == candidate_identity {
+                return Err(TdsError::DuplicateCells {
+                    message: format!(
+                        "Refusing to insert duplicate cell {} with same vertex UUIDs as existing cell {existing_cell_key:?}: {candidate_identity:?}",
+                        cell.uuid()
+                    ),
+                });
             }
         }
+
+        Ok(())
+    }
+
+    /// Rejects a candidate cell whose facets would be incident to a third cell.
+    fn validate_facet_sharing_on_insert(&self, cell: &Cell<T, U, V, D>) -> Result<(), TdsError> {
+        let vertices = cell.vertices();
+        for candidate_facet_idx in 0..vertices.len() {
+            let candidate_facet_key =
+                Self::periodic_facet_key_from_cell_vertices(cell, vertices, candidate_facet_idx)?;
+            let mut incident_count = 0_usize;
+
+            for (existing_cell_key, existing_cell) in &self.cells {
+                let existing_vertices = self.cell_vertices(existing_cell_key)?;
+                for existing_facet_idx in 0..existing_vertices.len() {
+                    let existing_facet_key = Self::periodic_facet_key_from_cell_vertices(
+                        existing_cell,
+                        &existing_vertices,
+                        existing_facet_idx,
+                    )?;
+                    if existing_facet_key == candidate_facet_key {
+                        incident_count += 1;
+                        if incident_count >= 2 {
+                            return Err(TdsError::FacetSharingViolation {
+                                facet_key: candidate_facet_key,
+                                existing_incident_count: incident_count,
+                                attempted_incident_count: incident_count + 1,
+                                max_incident_count: 2,
+                                candidate_cell_uuid: cell.uuid(),
+                                candidate_facet_index: candidate_facet_idx,
+                            });
+                        }
+                    }
+                }
+            }
+        }
+
+        Ok(())
     }
 
     /// Verifies every vertex key referenced by `cell` is live in this TDS.
@@ -2571,6 +2729,15 @@ impl<T, U, V, const D: usize> Tds<T, U, V, D> {
             }
         }
         Ok(())
+    }
+
+    /// Inserts a cell while intentionally bypassing topology safety checks in tests.
+    #[cfg(test)]
+    pub(crate) fn insert_cell_bypassing_topology_checks_for_test(
+        &mut self,
+        cell: Cell<T, U, V, D>,
+    ) -> Result<CellKey, TdsConstructionError> {
+        self.insert_cell_with_mapping_impl(cell, CellInsertionTopologyCheck::Prechecked)
     }
 }
 
@@ -3467,7 +3634,7 @@ impl<T, U, V, const D: usize> Tds<T, U, V, D> {
     /// - If `incident_cell` is missing/stale or neighbor pointers are unavailable, falls back to
     ///   scanning all cells.
     /// - Time: O(#cells)
-    fn find_cells_containing_vertex(&self, vertex_key: VertexKey) -> CellRemovalBuffer {
+    pub(crate) fn find_cells_containing_vertex(&self, vertex_key: VertexKey) -> CellRemovalBuffer {
         let fallback_scan = || {
             self.cells()
                 .filter_map(|(cell_key, cell)| cell.contains_vertex(vertex_key).then_some(cell_key))
@@ -6775,6 +6942,17 @@ mod tests {
             TdsErrorKind::DuplicateCells,
         );
         assert_tds_error_kind(
+            &TdsError::FacetSharingViolation {
+                facet_key: 42,
+                existing_incident_count: 2,
+                attempted_incident_count: 3,
+                max_incident_count: 2,
+                candidate_cell_uuid: uuid,
+                candidate_facet_index: 1,
+            },
+            TdsErrorKind::FacetSharingViolation,
+        );
+        assert_tds_error_kind(
             &TdsError::FailedToCreateCell {
                 message: "cell validation failed".to_string(),
             },
@@ -7657,8 +7835,10 @@ mod tests {
             .unwrap();
         tds.insert_cell_with_mapping(Cell::new(vec![v_a, v_b, v_d], None).unwrap())
             .unwrap();
-        tds.insert_cell_with_mapping(Cell::new(vec![v_a, v_b, v_e], None).unwrap())
-            .unwrap();
+        tds.insert_cell_bypassing_topology_checks_for_test(
+            Cell::new(vec![v_a, v_b, v_e], None).unwrap(),
+        )
+        .unwrap();
 
         let err = tds.assign_neighbors().unwrap_err();
         assert!(matches!(err, TdsError::InconsistentDataStructure { .. }));
@@ -8163,7 +8343,9 @@ mod tests {
             .unwrap();
         // Duplicate by vertices (different UUID) -> no unique vertex to identify mirror facet.
         let cell2_key = tds
-            .insert_cell_with_mapping(Cell::new(vec![v_a, v_b, v_c], None).unwrap())
+            .insert_cell_bypassing_topology_checks_for_test(
+                Cell::new(vec![v_a, v_b, v_c], None).unwrap(),
+            )
             .unwrap();
 
         let cell1 = tds.cell(cell1_key).unwrap();
@@ -9215,38 +9397,50 @@ mod tests {
         assert!(tds.generation() > gen_before);
     }
 
-    #[test]
-    fn test_clone_uses_fresh_runtime_identity() {
-        let tds: Tds<f64, (), (), 2> = Tds::empty();
-        let cloned = tds.clone();
+    macro_rules! test_clone_identity_dimensions {
+        ($($dim:expr),+ $(,)?) => {
+            pastey::paste! {
+                $(
+                    #[test]
+                    fn [<test_clone_uses_fresh_runtime_identity_ $dim d>]() {
+                        let tds: Tds<f64, (), (), $dim> = Tds::empty();
+                        let cloned = tds.clone();
 
-        assert!(
-            !Arc::ptr_eq(tds.identity(), cloned.identity()),
-            "ordinary TDS clones must have distinct runtime identities"
-        );
-        assert_eq!(tds.generation(), cloned.generation());
+                        assert!(
+                            !Arc::ptr_eq(tds.identity(), cloned.identity()),
+                            "ordinary TDS clones must have distinct runtime identities"
+                        );
+                        assert_eq!(tds.generation(), cloned.generation());
+                    }
+
+                    #[test]
+                    fn [<test_clone_for_rollback_preserves_identity_with_independent_generation_ $dim d>]() {
+                        let mut tds: Tds<f64, (), (), $dim> = Tds::empty();
+                        let _v = tds
+                            .insert_vertex_with_mapping(vertex!([0.0_f64; $dim]))
+                            .unwrap();
+                        let snapshot = tds.clone_for_rollback();
+                        let snapshot_generation = snapshot.generation();
+
+                        assert!(
+                            Arc::ptr_eq(tds.identity(), snapshot.identity()),
+                            "rollback snapshots should preserve runtime identity"
+                        );
+
+                        tds.mark_topology_modified();
+
+                        assert_eq!(
+                            snapshot.generation(),
+                            snapshot_generation,
+                            "rollback snapshots need an independent generation counter"
+                        );
+                    }
+                )+
+            }
+        };
     }
 
-    #[test]
-    fn test_clone_for_rollback_preserves_identity_with_independent_generation() {
-        let mut tds: Tds<f64, (), (), 2> = Tds::empty();
-        let _v = tds.insert_vertex_with_mapping(vertex!([0.0, 0.0])).unwrap();
-        let snapshot = tds.clone_for_rollback();
-        let snapshot_generation = snapshot.generation();
-
-        assert!(
-            Arc::ptr_eq(tds.identity(), snapshot.identity()),
-            "rollback snapshots should preserve runtime identity"
-        );
-
-        tds.mark_topology_modified();
-
-        assert_eq!(
-            snapshot.generation(),
-            snapshot_generation,
-            "rollback snapshots need an independent generation counter"
-        );
-    }
+    test_clone_identity_dimensions!(2, 3, 4, 5);
 
     #[test]
     fn test_remove_duplicate_cells_removes_exact_duplicates() {
@@ -9258,8 +9452,10 @@ mod tests {
         // Insert the same cell twice
         tds.insert_cell_with_mapping(Cell::new(vec![v0, v1, v2], None).unwrap())
             .unwrap();
-        tds.insert_cell_with_mapping(Cell::new(vec![v0, v1, v2], None).unwrap())
-            .unwrap();
+        tds.insert_cell_bypassing_topology_checks_for_test(
+            Cell::new(vec![v0, v1, v2], None).unwrap(),
+        )
+        .unwrap();
         assert_eq!(tds.number_of_cells(), 2);
         let generation_before = tds.generation();
 
@@ -9300,12 +9496,18 @@ mod tests {
         // assignment will reject the complex after duplicate removal starts.
         tds.insert_cell_with_mapping(Cell::new(vec![v0, v1, v2], None).unwrap())
             .unwrap();
-        tds.insert_cell_with_mapping(Cell::new(vec![v0, v1, v2], None).unwrap())
-            .unwrap();
-        tds.insert_cell_with_mapping(Cell::new(vec![v0, v1, v3], None).unwrap())
-            .unwrap();
-        tds.insert_cell_with_mapping(Cell::new(vec![v0, v1, v4], None).unwrap())
-            .unwrap();
+        tds.insert_cell_bypassing_topology_checks_for_test(
+            Cell::new(vec![v0, v1, v2], None).unwrap(),
+        )
+        .unwrap();
+        tds.insert_cell_bypassing_topology_checks_for_test(
+            Cell::new(vec![v0, v1, v3], None).unwrap(),
+        )
+        .unwrap();
+        tds.insert_cell_bypassing_topology_checks_for_test(
+            Cell::new(vec![v0, v1, v4], None).unwrap(),
+        )
+        .unwrap();
         let before = tds.clone();
         let generation_before = tds.generation();
 
@@ -9375,8 +9577,10 @@ mod tests {
             .unwrap();
         tds.insert_cell_with_mapping(Cell::new(vec![v0, v1, v3], None).unwrap())
             .unwrap();
-        tds.insert_cell_with_mapping(Cell::new(vec![v0, v1, v4], None).unwrap())
-            .unwrap();
+        tds.insert_cell_bypassing_topology_checks_for_test(
+            Cell::new(vec![v0, v1, v4], None).unwrap(),
+        )
+        .unwrap();
 
         let err = tds.validate_facet_sharing().unwrap_err();
         assert!(
@@ -9398,8 +9602,10 @@ mod tests {
 
         tds.insert_cell_with_mapping(Cell::new(vec![v0, v1, v2], None).unwrap())
             .unwrap();
-        tds.insert_cell_with_mapping(Cell::new(vec![v0, v1, v2], None).unwrap())
-            .unwrap();
+        tds.insert_cell_bypassing_topology_checks_for_test(
+            Cell::new(vec![v0, v1, v2], None).unwrap(),
+        )
+        .unwrap();
 
         let err = tds.validate_no_duplicate_cells().unwrap_err();
         assert!(matches!(err, TdsError::DuplicateCells { .. }));
@@ -9598,6 +9804,73 @@ mod tests {
         cell_b.set_uuid(uuid_a).unwrap();
         let err = tds.insert_cell_with_mapping(cell_b).unwrap_err();
         assert!(matches!(err, TdsConstructionError::DuplicateUuid { .. }));
+    }
+
+    #[test]
+    fn test_insert_cell_with_mapping_rejects_duplicate_cell_without_mutation() {
+        let mut tds: Tds<f64, (), (), 2> = Tds::empty();
+        let v0 = tds.insert_vertex_with_mapping(vertex!([0.0, 0.0])).unwrap();
+        let v1 = tds.insert_vertex_with_mapping(vertex!([1.0, 0.0])).unwrap();
+        let v2 = tds.insert_vertex_with_mapping(vertex!([0.0, 1.0])).unwrap();
+
+        tds.insert_cell_with_mapping(Cell::new(vec![v0, v1, v2], None).unwrap())
+            .unwrap();
+        let candidate = Cell::new(vec![v0, v1, v2], None).unwrap();
+        let candidate_uuid = candidate.uuid();
+        let generation_before = tds.generation();
+
+        let err = tds.insert_cell_with_mapping(candidate).unwrap_err();
+
+        assert!(matches!(
+            err,
+            TdsConstructionError::ValidationError(TdsError::DuplicateCells { .. })
+        ));
+        assert_eq!(tds.number_of_cells(), 1);
+        assert_eq!(tds.generation(), generation_before);
+        assert_eq!(tds.cell_key_from_uuid(&candidate_uuid), None);
+    }
+
+    #[test]
+    fn test_insert_cell_with_mapping_rejects_third_incident_facet_without_mutation() {
+        let mut tds: Tds<f64, (), (), 2> = Tds::empty();
+        let v0 = tds.insert_vertex_with_mapping(vertex!([0.0, 0.0])).unwrap();
+        let v1 = tds.insert_vertex_with_mapping(vertex!([1.0, 0.0])).unwrap();
+        let v2 = tds.insert_vertex_with_mapping(vertex!([0.0, 1.0])).unwrap();
+        let v3 = tds
+            .insert_vertex_with_mapping(vertex!([0.0, -1.0]))
+            .unwrap();
+        let v4 = tds.insert_vertex_with_mapping(vertex!([1.0, 1.0])).unwrap();
+
+        tds.insert_cell_with_mapping(Cell::new(vec![v0, v1, v2], None).unwrap())
+            .unwrap();
+        tds.insert_cell_with_mapping(Cell::new(vec![v0, v1, v3], None).unwrap())
+            .unwrap();
+        let candidate = Cell::new(vec![v0, v1, v4], None).unwrap();
+        let candidate_uuid = candidate.uuid();
+        let generation_before = tds.generation();
+
+        let err = tds.insert_cell_with_mapping(candidate).unwrap_err();
+
+        match err {
+            TdsConstructionError::ValidationError(TdsError::FacetSharingViolation {
+                existing_incident_count,
+                attempted_incident_count,
+                max_incident_count,
+                candidate_cell_uuid,
+                candidate_facet_index,
+                ..
+            }) => {
+                assert_eq!(existing_incident_count, 2);
+                assert_eq!(attempted_incident_count, 3);
+                assert_eq!(max_incident_count, 2);
+                assert_eq!(candidate_cell_uuid, candidate_uuid);
+                assert_eq!(candidate_facet_index, 2);
+            }
+            other => panic!("expected structured facet-sharing violation, got {other:?}"),
+        }
+        assert_eq!(tds.number_of_cells(), 2);
+        assert_eq!(tds.generation(), generation_before);
+        assert_eq!(tds.cell_key_from_uuid(&candidate_uuid), None);
     }
 
     // =========================================================================
@@ -9825,8 +10098,10 @@ mod tests {
         tds.insert_cell_with_mapping(Cell::new(vec![v0, v1, v2], None).unwrap())
             .unwrap();
         // Insert a duplicate cell (same vertex set, different UUID).
-        tds.insert_cell_with_mapping(Cell::new(vec![v0, v1, v2], None).unwrap())
-            .unwrap();
+        tds.insert_cell_bypassing_topology_checks_for_test(
+            Cell::new(vec![v0, v1, v2], None).unwrap(),
+        )
+        .unwrap();
         assert_eq!(tds.number_of_cells(), 2);
         let generation_before = tds.generation();
 

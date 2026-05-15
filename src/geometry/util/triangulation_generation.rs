@@ -501,9 +501,12 @@ impl<T> RandomTriangulationBuilder<T> {
     /// # Defaults
     ///
     /// - No seed (random)
-    /// - Default topology guarantee (None)
-    /// - `Hilbert` insertion order (improves spatial locality during bulk insertion)
-    /// - Default construction options (no deduplication, debug-only retries)
+    /// - Default topology guarantee ([`TopologyGuarantee::PLManifold`])
+    /// - [`InsertionOrderStrategy::Hilbert`] insertion order (improves spatial locality during bulk insertion)
+    /// - Default construction options ([`InitialSimplexStrategy::MaxVolume`] initial simplex,
+    ///   shuffled retries, no explicit deduplication)
+    ///
+    /// [`InitialSimplexStrategy::MaxVolume`]: crate::triangulation::delaunay::InitialSimplexStrategy::MaxVolume
     ///
     /// # Examples
     ///

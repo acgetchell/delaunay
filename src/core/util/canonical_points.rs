@@ -179,22 +179,15 @@ mod tests {
     #[test]
     fn test_sorted_cell_points_permutation_invariant() {
         // Build a TDS with 3 vertices
-        let (mut tds, keys) = build_tds_with_points(&[[0.0, 0.0], [1.0, 0.0], [0.0, 1.0]]);
+        let (tds, keys) = build_tds_with_points(&[[0.0, 0.0], [1.0, 0.0], [0.0, 1.0]]);
 
         // Create two cells with vertices in different orders
         let cell_a =
             Cell::new(vec![keys[0], keys[1], keys[2]], None::<()>).expect("cell should be valid");
         let cell_b =
             Cell::new(vec![keys[2], keys[0], keys[1]], None::<()>).expect("cell should be valid");
-        let key_a = tds
-            .insert_cell_with_mapping(cell_a)
-            .expect("insert should succeed");
-        let key_b = tds
-            .insert_cell_with_mapping(cell_b)
-            .expect("insert should succeed");
-
-        let points_a = sorted_cell_points(&tds, tds.cell(key_a).unwrap()).unwrap();
-        let points_b = sorted_cell_points(&tds, tds.cell(key_b).unwrap()).unwrap();
+        let points_a = sorted_cell_points(&tds, &cell_a).unwrap();
+        let points_b = sorted_cell_points(&tds, &cell_b).unwrap();
 
         // Both should produce the same canonical ordering
         assert_eq!(points_a.as_slice(), points_b.as_slice());
@@ -244,7 +237,7 @@ mod tests {
     fn test_canonical_insphere_permutation_invariant_2d() {
         // 3 points forming a right triangle + a cospherical test point.
         // The circumcircle of (0,0),(1,0),(0,1) passes through (1,1).
-        let (mut tds, keys) = build_tds_with_points(&[[0.0, 0.0], [1.0, 0.0], [0.0, 1.0]]);
+        let (tds, keys) = build_tds_with_points(&[[0.0, 0.0], [1.0, 0.0], [0.0, 1.0]]);
         let test_point = Point::new([1.0, 1.0]);
         let kernel = AdaptiveKernel::<f64>::new();
 
@@ -265,12 +258,8 @@ mod tests {
                 None::<()>,
             )
             .expect("cell should be valid");
-            let cell_key = tds
-                .insert_cell_with_mapping(cell)
-                .expect("insert should succeed");
-
             // Use canonical sorting to collect points
-            let sorted = sorted_cell_points(&tds, tds.cell(cell_key).unwrap()).unwrap();
+            let sorted = sorted_cell_points(&tds, &cell).unwrap();
             let sign = kernel.in_sphere(&sorted, &test_point).unwrap();
             signs.push(sign);
         }
@@ -287,7 +276,7 @@ mod tests {
     #[test]
     fn test_canonical_insphere_permutation_invariant_3d() {
         // Standard 3D simplex + cospherical test point (1,1,1)
-        let (mut tds, keys) = build_tds_with_points(&[
+        let (tds, keys) = build_tds_with_points(&[
             [0.0, 0.0, 0.0],
             [1.0, 0.0, 0.0],
             [0.0, 1.0, 0.0],
@@ -312,11 +301,7 @@ mod tests {
                 None::<()>,
             )
             .expect("cell should be valid");
-            let cell_key = tds
-                .insert_cell_with_mapping(cell)
-                .expect("insert should succeed");
-
-            let sorted = sorted_cell_points(&tds, tds.cell(cell_key).unwrap()).unwrap();
+            let sorted = sorted_cell_points(&tds, &cell).unwrap();
             let sign = kernel.in_sphere(&sorted, &test_point).unwrap();
             signs.push(sign);
         }

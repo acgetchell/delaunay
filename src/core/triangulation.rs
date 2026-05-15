@@ -110,7 +110,7 @@
 use crate::core::adjacency::{AdjacencyIndex, AdjacencyIndexBuildError};
 use crate::core::algorithms::incremental_insertion::{
     CavityFillingError, CavityRepairStage, HullExtensionReason, InsertionError, extend_hull,
-    external_facets_for_boundary, fill_cavity, repair_neighbor_pointers,
+    external_facets_for_boundary, fill_cavity_replacing_cells, repair_neighbor_pointers,
     repair_neighbor_pointers_local, wire_cavity_neighbors,
 };
 #[cfg(debug_assertions)]
@@ -5392,8 +5392,8 @@ where
             boundary_facets = Self::star_split_boundary_facets(start_cell);
         }
 
-        // Fill cavity BEFORE removing old cells
-        let new_cells = fill_cavity(&mut self.tds, v_key, &boundary_facets)?;
+        // Fill cavity BEFORE removing old cells.
+        let new_cells = fill_cavity_replacing_cells(&mut self.tds, v_key, &boundary_facets)?;
         self.canonicalize_positive_orientation_for_cells(&new_cells)?;
 
         // Post-insertion orientation audit: verify that canonicalization
@@ -6724,8 +6724,8 @@ where
             let new_cell = Cell::new(new_cell_vertices, None).map_err(CavityFillingError::from)?;
             let cell_key = self
                 .tds
-                .insert_cell_with_mapping_trusted_vertices(new_cell)
-                .map_err(CavityFillingError::from)?;
+                .insert_cell_with_mapping_prechecked_topology(new_cell)
+                .map_err(InsertionError::from)?;
 
             new_cells.push(cell_key);
         }
@@ -7782,7 +7782,9 @@ mod tests {
             .insert_cell_with_mapping(Cell::new(vec![v0, v1, v3], None).unwrap())
             .unwrap();
         let _ = tds
-            .insert_cell_with_mapping(Cell::new(vec![v0, v1, v4], None).unwrap())
+            .insert_cell_bypassing_topology_checks_for_test(
+                Cell::new(vec![v0, v1, v4], None).unwrap(),
+            )
             .unwrap();
 
         tds
@@ -9077,7 +9079,9 @@ mod tests {
 
         let _ = tds.insert_cell_with_mapping(cell_1).unwrap();
         let _ = tds.insert_cell_with_mapping(cell_2).unwrap();
-        let _ = tds.insert_cell_with_mapping(cell_3).unwrap();
+        let _ = tds
+            .insert_cell_bypassing_topology_checks_for_test(cell_3)
+            .unwrap();
 
         let tri = Triangulation::<FastKernel<f64>, (), (), 3>::new_with_tds(FastKernel::new(), tds);
 
@@ -9272,20 +9276,51 @@ mod tests {
         }
     }
 
-    #[test]
-    fn test_build_initial_simplex_rejects_invalid_vertex() {
-        let invalid = Vertex::new_with_uuid(Point::new([0.0, f64::NAN]), Uuid::new_v4(), None);
-        let vertices = vec![vertex!([0.0, 0.0]), invalid, vertex!([0.0, 1.0])];
+    fn invalid_initial_simplex_vertices<const D: usize>() -> Vec<Vertex<f64, (), D>> {
+        let mut vertices = Vec::with_capacity(D + 1);
+        vertices.push(vertex!([0.0_f64; D]));
 
-        let result = Triangulation::<FastKernel<f64>, (), (), 2>::build_initial_simplex(&vertices);
-
-        assert!(matches!(
-            result,
-            Err(TriangulationConstructionError::Tds(
-                TdsConstructionError::ValidationError(TdsError::InvalidVertex { .. })
-            ))
+        let mut invalid_coords = [0.0_f64; D];
+        invalid_coords[0] = 1.0;
+        invalid_coords[1] = f64::NAN;
+        vertices.push(Vertex::new_with_uuid(
+            Point::new(invalid_coords),
+            Uuid::new_v4(),
+            None,
         ));
+
+        for axis in 1..D {
+            let mut coords = [0.0_f64; D];
+            coords[axis] = 1.0;
+            vertices.push(vertex!(coords));
+        }
+
+        vertices
     }
+
+    macro_rules! test_build_initial_simplex_rejects_invalid_vertex_dimensions {
+        ($($dim:expr),+ $(,)?) => {
+            pastey::paste! {
+                $(
+                    #[test]
+                    fn [<test_build_initial_simplex_rejects_invalid_vertex_ $dim d>]() {
+                        let vertices = invalid_initial_simplex_vertices::<$dim>();
+
+                        let result = Triangulation::<FastKernel<f64>, (), (), $dim>::build_initial_simplex(&vertices);
+
+                        assert!(matches!(
+                            result,
+                            Err(TriangulationConstructionError::Tds(
+                                TdsConstructionError::ValidationError(TdsError::InvalidVertex { .. })
+                            ))
+                        ));
+                    }
+                )+
+            }
+        };
+    }
+
+    test_build_initial_simplex_rejects_invalid_vertex_dimensions!(2, 3, 4, 5);
 
     #[test]
     fn test_build_initial_simplex_with_user_data() {
@@ -10319,7 +10354,7 @@ mod tests {
     }
 
     #[test]
-    fn triangulation_exterior_insert_3d_uses_hull_extension_without_global_conflict_scan() {
+    fn triangulation_exterior_insert_3d_uses_local_conflict_without_global_scan() {
         let mut tri: Triangulation<FastKernel<f64>, (), (), 3> =
             Triangulation::new_empty(FastKernel::new());
 
@@ -10345,19 +10380,25 @@ mod tests {
             )
             .unwrap();
 
-        assert!(matches!(
-            detail.outcome,
-            InsertionOutcome::Inserted { hint: Some(_), .. }
-        ));
+        assert!(matches!(detail.outcome, InsertionOutcome::Inserted { .. }));
         assert_eq!(detail.telemetry.global_conflict_scans, 0);
         assert_eq!(detail.telemetry.global_conflict_cells_scanned, 0);
         assert_eq!(detail.telemetry.global_conflict_cells_found_total, 0);
         assert_eq!(detail.telemetry.global_conflict_scan_nanos, 0);
+        assert_eq!(detail.telemetry.conflict_region_calls, 1);
+        assert_eq!(detail.telemetry.conflict_region_cells_total, 0);
         assert_eq!(detail.telemetry.cavity_insertion_calls, 0);
         assert_eq!(detail.telemetry.hull_extension_calls, 1);
         assert!(
             !detail.repair_seed_cells.is_empty(),
             "hull extension should return local repair seeds"
+        );
+        let facet_to_cells = tri.tds.build_facet_to_cells_map().unwrap();
+        assert!(
+            facet_to_cells
+                .values()
+                .all(|incident_cells| incident_cells.len() <= 2),
+            "hull extension should leave every facet with at most two incident cells"
         );
         assert!(tri.is_valid().is_ok());
     }
@@ -10390,15 +10431,22 @@ mod tests {
             )
             .unwrap();
 
-        assert!(matches!(
-            detail.outcome,
-            InsertionOutcome::Inserted { hint: Some(_), .. }
-        ));
+        assert!(matches!(detail.outcome, InsertionOutcome::Inserted { .. }));
         assert_eq!(detail.telemetry.global_conflict_scans, 0);
+        assert_eq!(detail.telemetry.conflict_region_calls, 1);
+        assert_eq!(detail.telemetry.conflict_region_cells_total, 0);
+        assert_eq!(detail.telemetry.cavity_insertion_calls, 0);
         assert_eq!(detail.telemetry.hull_extension_calls, 1);
         assert!(
             !detail.repair_seed_cells.is_empty(),
             "empty caller conflicts should still use terminal-cell local repair seeds"
+        );
+        let facet_to_cells = tri.tds.build_facet_to_cells_map().unwrap();
+        assert!(
+            facet_to_cells
+                .values()
+                .all(|incident_cells| incident_cells.len() <= 2),
+            "hull extension should leave every facet with at most two incident cells"
         );
         assert!(tri.is_valid().is_ok());
     }
@@ -10795,7 +10843,9 @@ mod tests {
             .unwrap();
         let cell3 = tri
             .tds
-            .insert_cell_with_mapping(Cell::new(vec![v0, v1, v2, v5], None).unwrap())
+            .insert_cell_bypassing_topology_checks_for_test(
+                Cell::new(vec![v0, v1, v2, v5], None).unwrap(),
+            )
             .unwrap();
 
         let new_v = tri
@@ -11914,7 +11964,10 @@ mod tests {
         let (_, existing_cell) = tri.tds.cells().next().unwrap();
         let vkeys: Vec<_> = existing_cell.vertices().to_vec();
         let dup_cell = Cell::new(vkeys, None).unwrap();
-        let _ = tri.tds.insert_cell_with_mapping(dup_cell).unwrap();
+        let _ = tri
+            .tds
+            .insert_cell_bypassing_topology_checks_for_test(dup_cell)
+            .unwrap();
 
         // Now detect issues.
         let all_cells: Vec<_> = tri.tds.cell_keys().collect();
@@ -11971,7 +12024,9 @@ mod tests {
             .insert_cell_with_mapping(Cell::new(vec![v_a, v_b, v_d], None).unwrap())
             .unwrap();
         let c3 = tds
-            .insert_cell_with_mapping(Cell::new(vec![v_a, v_b, v_e], None).unwrap())
+            .insert_cell_bypassing_topology_checks_for_test(
+                Cell::new(vec![v_a, v_b, v_e], None).unwrap(),
+            )
             .unwrap();
 
         for (cell_key, neighbor_key) in [(c1, c2), (c2, c3), (c3, c1)] {

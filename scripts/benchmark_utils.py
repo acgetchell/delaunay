@@ -17,9 +17,11 @@ import json
 import logging
 import math
 import os
+import platform
 import re
 import subprocess
 import sys
+import tempfile
 import time
 from collections.abc import Mapping
 from dataclasses import dataclass
@@ -40,6 +42,26 @@ DEFAULT_REGRESSION_THRESHOLD = 7.5
 
 class BaselineParseError(ValueError):
     """Raised when a benchmark baseline cannot be parsed without losing coverage."""
+
+
+@dataclass(frozen=True)
+class BaselineArtifactMetadata:
+    """Metadata values written beside a generated baseline artifact."""
+
+    commit_sha: str = "unknown"
+    run_id: str = "unknown"
+    runner_os: str = "unknown"
+    runner_arch: str = "unknown"
+
+    @classmethod
+    def from_environment(cls) -> "BaselineArtifactMetadata":
+        """Create artifact metadata from GitHub Actions-compatible environment variables."""
+        return cls(
+            commit_sha=os.getenv("GITHUB_SHA", os.getenv("SAFE_COMMIT_SHA", "unknown")),
+            run_id=os.getenv("GITHUB_RUN_ID", os.getenv("SAFE_RUN_ID", "unknown")),
+            runner_os=os.getenv("RUNNER_OS", "unknown"),
+            runner_arch=os.getenv("RUNNER_ARCH", "unknown"),
+        )
 
 
 if TYPE_CHECKING:
@@ -1884,14 +1906,19 @@ class CriterionParser:
         return results
 
 
+def _is_semver_tag_ref(ref_name: str) -> bool:
+    """Return whether a git ref name is a release-style semver tag."""
+    return re.fullmatch(r"v[0-9]+\.[0-9]+\.[0-9]+(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?", ref_name) is not None
+
+
 class BaselineGenerator:
     """Generate performance baselines from benchmark data."""
 
-    def __init__(self, project_root: Path, tag: str | None = None) -> None:
-        """Initialize baseline generation for a project root and optional tag."""
+    def __init__(self, project_root: Path, ref_name: str | None = None) -> None:
+        """Initialize baseline generation for a project root and optional git ref."""
         self.project_root = project_root
         self.hardware = HardwareInfo()
-        self.tag = tag
+        self.ref_name = ref_name
 
     def generate_baseline(self, dev_mode: bool = False, output_file: Path | None = None, bench_timeout: int = 1800) -> bool:
         """
@@ -1992,8 +2019,10 @@ class BaselineGenerator:
         with output_file.open("w", encoding="utf-8") as f:
             f.write(f"Date: {current_date}\n")
             f.write(f"Git commit: {git_commit}\n")
-            if self.tag:
-                f.write(f"Tag: {self.tag}\n")
+            if self.ref_name:
+                f.write(f"Ref: {self.ref_name}\n")
+            if self.ref_name and _is_semver_tag_ref(self.ref_name):
+                f.write(f"Tag: {self.ref_name}\n")
             sampling = _sampling_metadata(dev_mode)
             f.write(f"Sampling mode: {sampling['sampling_mode']}\n")
             f.write(f"Cargo profile: {sampling['cargo_profile']}\n")
@@ -2005,6 +2034,73 @@ class BaselineGenerator:
 
             for benchmark in benchmark_results:
                 f.write(benchmark.to_baseline_format())
+
+
+class LocalRefBaselineGenerator:
+    """Generate a same-machine performance baseline for a git ref."""
+
+    def __init__(self, project_root: Path, *, remote: str = "origin") -> None:
+        """Initialize local ref baseline generation from a project repository."""
+        self.project_root = project_root
+        self.remote = remote
+
+    def generate_for_ref(
+        self,
+        *,
+        ref_name: str,
+        out_dir: Path,
+        dev_mode: bool = False,
+        bench_timeout: int = 1800,
+    ) -> Path:
+        """Generate a baseline for ref_name in a temporary checkout.
+
+        The temporary checkout is always removed when this method returns or
+        raises. Only the final baseline artifact files are written to out_dir.
+        """
+        remote_url = get_git_remote_url(remote=self.remote, cwd=self.project_root)
+        out_dir.mkdir(parents=True, exist_ok=True)
+        output_file = out_dir / "baseline_results.txt"
+        tmp_output_file = out_dir / "baseline_results.txt.tmp"
+        tmp_output_file.unlink(missing_ok=True)
+
+        with tempfile.TemporaryDirectory(prefix="delaunay-baseline-") as temp_dir:
+            checkout_dir = Path(temp_dir) / "checkout"
+            print(f"📥 Checking out {ref_name} from {self.remote} into a temporary directory...", file=sys.stderr)
+            run_git_command(
+                ["clone", "--no-checkout", "--filter=blob:none", remote_url, str(checkout_dir)],
+                cwd=Path(temp_dir),
+                timeout=300,
+            )
+            run_git_command(["fetch", "--depth", "1", "origin", ref_name], cwd=checkout_dir, timeout=300)
+            run_git_command(["checkout", "--detach", "FETCH_HEAD"], cwd=checkout_dir, timeout=120)
+
+            baseline_commit = get_git_commit_hash(cwd=checkout_dir)
+            print(f"🚀 Generating local baseline for {ref_name} at {baseline_commit}...", file=sys.stderr)
+            generator = BaselineGenerator(checkout_dir, ref_name=ref_name)
+            success = generator.generate_baseline(dev_mode=dev_mode, output_file=tmp_output_file, bench_timeout=bench_timeout)
+
+        if not success:
+            tmp_output_file.unlink(missing_ok=True)
+            msg = f"Failed to generate baseline for ref {ref_name}"
+            raise RuntimeError(msg)
+
+        tmp_output_file.replace(output_file)
+        metadata_success = WorkflowHelper.create_metadata(
+            ref_name,
+            out_dir,
+            BaselineArtifactMetadata(
+                commit_sha=baseline_commit,
+                run_id="local",
+                runner_os=platform.system() or "unknown",
+                runner_arch=platform.machine() or "unknown",
+            ),
+        )
+        if not metadata_success:
+            msg = f"Failed to write metadata for baseline ref {ref_name}"
+            raise RuntimeError(msg)
+
+        print(f"✅ Local baseline ready: {output_file}", file=sys.stderr)
+        return output_file
 
 
 class PerformanceComparator:
@@ -2515,52 +2611,60 @@ class WorkflowHelper:
     """Helper functions for GitHub Actions workflow integration."""
 
     @staticmethod
-    def determine_tag_name() -> str:
+    def determine_ref_name() -> str:
         """
-        Determine tag name for baseline generation.
+        Determine the git ref to benchmark in the baseline workflow.
 
         Returns:
-            Tag name based on GITHUB_REF or generated timestamp
+            Ref name based on BASELINE_REF, workflow input, or GITHUB_REF.
         """
+        explicit_ref = os.getenv("BASELINE_REF") or os.getenv("INPUT_REF")
         github_ref = os.getenv("GITHUB_REF", "")
+        github_ref_name = os.getenv("GITHUB_REF_NAME", "")
 
-        if github_ref.startswith("refs/tags/"):
-            tag_name = github_ref[len("refs/tags/") :]
-            print(f"Using push tag: {tag_name}", file=sys.stderr)
+        if explicit_ref:
+            ref_name = explicit_ref
+            print(f"Using input ref: {ref_name}", file=sys.stderr)
+        elif github_ref_name:
+            ref_name = github_ref_name
+            print(f"Using GitHub ref name: {ref_name}", file=sys.stderr)
+        elif github_ref.startswith("refs/tags/"):
+            ref_name = github_ref[len("refs/tags/") :]
+            print(f"Using push tag ref: {ref_name}", file=sys.stderr)
+        elif github_ref.startswith("refs/heads/"):
+            ref_name = github_ref[len("refs/heads/") :]
+            print(f"Using branch ref: {ref_name}", file=sys.stderr)
         else:
-            # Generate timestamp-based tag
-            now = datetime.now(UTC)
-            tag_name = f"manual-{now.strftime('%Y%m%d-%H%M%S')}"
-            print(f"Using generated tag name: {tag_name}", file=sys.stderr)
+            ref_name = "main"
+            print("Using default baseline ref: main", file=sys.stderr)
 
-        # Set GitHub Actions output if available
         github_output = os.getenv("GITHUB_OUTPUT")
         if github_output:
-            safe = tag_name.replace("\r", "").replace("\n", "")
+            safe = ref_name.replace("\r", "").replace("\n", "")
             with open(github_output, "a", encoding="utf-8") as f:
-                f.write(f"tag_name={safe}\n")
+                f.write(f"ref_name={safe}\n")
 
-        print(f"Final tag name: {tag_name}", file=sys.stderr)
-        return tag_name
+        print(f"Final baseline ref: {ref_name}", file=sys.stderr)
+        return ref_name
 
     @staticmethod
-    def create_metadata(tag_name: str, output_dir: Path) -> bool:
+    def create_metadata(
+        ref_name: str,
+        output_dir: Path,
+        artifact_metadata: BaselineArtifactMetadata | None = None,
+    ) -> bool:
         """
         Create metadata.json file for baseline artifact.
 
         Args:
-            tag_name: Tag name for this baseline
+            ref_name: Git ref name for this baseline
             output_dir: Directory to write metadata.json
 
         Returns:
             True if successful, False otherwise
         """
         try:
-            # Get required environment variables
-            commit_sha = os.getenv("GITHUB_SHA", os.getenv("SAFE_COMMIT_SHA", "unknown"))
-            run_id = os.getenv("GITHUB_RUN_ID", os.getenv("SAFE_RUN_ID", "unknown"))
-            runner_os = os.getenv("RUNNER_OS", "unknown")
-            runner_arch = os.getenv("RUNNER_ARCH", "unknown")
+            artifact_metadata = artifact_metadata or BaselineArtifactMetadata.from_environment()
 
             # Generate current timestamp
             now = datetime.now(UTC)
@@ -2568,13 +2672,15 @@ class WorkflowHelper:
 
             # Create metadata dictionary
             metadata = {
-                "tag": tag_name,
-                "commit": commit_sha,
-                "workflow_run_id": run_id,
+                "ref": ref_name,
+                "commit": artifact_metadata.commit_sha,
+                "workflow_run_id": artifact_metadata.run_id,
                 "generated_at": generated_at,
-                "runner_os": runner_os,
-                "runner_arch": runner_arch,
+                "runner_os": artifact_metadata.runner_os,
+                "runner_arch": artifact_metadata.runner_arch,
             }
+            if _is_semver_tag_ref(ref_name):
+                metadata["tag"] = ref_name
 
             # Write metadata file
             output_dir.mkdir(parents=True, exist_ok=True)
@@ -2583,7 +2689,7 @@ class WorkflowHelper:
             with metadata_file.open("w", encoding="utf-8") as f:
                 json.dump(metadata, f, indent=2)
 
-            print(f"📦 Created metadata file: {metadata_file}")
+            print(f"📦 Created metadata file: {metadata_file}", file=sys.stderr)
             return True
 
         except (OSError, TypeError, ValueError) as e:
@@ -2627,18 +2733,18 @@ class WorkflowHelper:
             return False
 
     @staticmethod
-    def sanitize_artifact_name(tag_name: str) -> str:
+    def sanitize_artifact_name(ref_name: str) -> str:
         """
-        Sanitize tag name for GitHub Actions artifact upload.
+        Sanitize a git ref name for GitHub Actions artifact upload.
 
         Args:
-            tag_name: Original tag name
+            ref_name: Original git ref name
 
         Returns:
             Sanitized artifact name
         """
         # Replace any non-alphanumeric characters (except . _ -) with underscore.
-        clean_name = re.sub(r"[^a-zA-Z0-9._-]", "_", tag_name)
+        clean_name = re.sub(r"[^a-zA-Z0-9._-]", "_", ref_name)
 
         # Avoid dots in artifact names.
         #
@@ -2686,6 +2792,27 @@ class BenchmarkRegressionHelper:
             val = "" if value is None else str(value)
             val = val.replace("\r", "")
             os.environ[key] = val
+
+    @staticmethod
+    def _export_baseline_identity(lines: list[str]) -> None:
+        """Export sanitized baseline ref/tag metadata from baseline file lines."""
+        ref_line = next((ln for ln in lines if ln.startswith("Ref: ")), None)
+        tag_line = next((ln for ln in lines if ln.startswith("Tag: ")), None)
+        raw_ref = None
+        if ref_line:
+            raw_ref = ref_line.split(":", 1)[1].strip()
+        elif tag_line:
+            raw_ref = tag_line.split(":", 1)[1].strip()
+
+        if raw_ref:
+            safe_ref = re.sub(r"[^A-Za-z0-9._/\-+]", "_", raw_ref)[:128]
+            BenchmarkRegressionHelper.write_github_env_vars({"BASELINE_REF": safe_ref})
+
+        if tag_line:
+            raw_tag = tag_line.split(":", 1)[1].strip()
+            # Allow [A-Za-z0-9._-+]; replace others with underscore and cap length
+            safe_tag = re.sub(r"[^A-Za-z0-9._\-+]", "_", raw_tag)[:64]
+            BenchmarkRegressionHelper.write_github_env_vars({"BASELINE_TAG": safe_tag})
 
     @staticmethod
     def prepare_baseline(baseline_dir: Path) -> bool:
@@ -2753,14 +2880,8 @@ class BenchmarkRegressionHelper:
             print(f"⚠️ Failed to read baseline summary: {e}", file=sys.stderr)
             lines = []
 
-        # Propagate tag (if present) to the workflow environment
         if lines:
-            tag_line = next((ln for ln in lines if ln.startswith("Tag: ")), None)
-            if tag_line:
-                raw_tag = tag_line.split(":", 1)[1].strip()
-                # Allow [A-Za-z0-9._-+]; replace others with underscore and cap length
-                safe_tag = re.sub(r"[^A-Za-z0-9._\-+]", "_", raw_tag)[:64]
-                BenchmarkRegressionHelper.write_github_env_vars({"BASELINE_TAG": safe_tag})
+            BenchmarkRegressionHelper._export_baseline_identity(lines)
 
         return True
 
@@ -3022,6 +3143,7 @@ class BenchmarkRegressionHelper:
         # Get environment variables
         baseline_source = os.getenv("BASELINE_SOURCE", "none")
         baseline_origin = os.getenv("BASELINE_ORIGIN", "unknown")
+        baseline_ref = os.getenv("BASELINE_REF", "n/a")
         baseline_tag = os.getenv("BASELINE_TAG", "n/a")
         baseline_exists = os.getenv("BASELINE_EXISTS", "false")
         skip_benchmarks = os.getenv("SKIP_BENCHMARKS", "unknown")
@@ -3031,6 +3153,7 @@ class BenchmarkRegressionHelper:
         print("===========================================")
         print(f"Baseline source: {baseline_source}")
         print(f"Baseline origin: {baseline_origin}")
+        print(f"Baseline ref: {baseline_ref}")
         print(f"Baseline tag: {baseline_tag}")
         print(f"Baseline exists: {baseline_exists}")
         print(f"Skip benchmarks: {skip_benchmarks}")
@@ -3083,23 +3206,23 @@ def get_default_bench_timeout() -> int:
 # =============================================================================
 
 
-def _sanitize_tag_name(tag_name: str) -> str:
-    """Sanitize a tag name for use in local cache directories."""
-    return re.sub(r"[^a-zA-Z0-9._-]", "_", tag_name)
+def _sanitize_ref_name(ref_name: str) -> str:
+    """Sanitize a git ref name for use in local cache directories."""
+    return re.sub(r"[^a-zA-Z0-9._-]", "_", ref_name)
 
 
-def _sanitize_tag_name_for_artifact(tag_name: str) -> str:
-    """Sanitize a tag name for GitHub Actions artifact names.
+def _sanitize_ref_name_for_artifact(ref_name: str) -> str:
+    """Sanitize a git ref name for GitHub Actions artifact names.
 
     We avoid dots because some tools treat dot-separated segments as file extensions
     and can truncate extracted directory names (e.g., v0.6.2 → v0).
     """
-    return _sanitize_tag_name(tag_name).replace(".", "_")
+    return _sanitize_ref_name(ref_name).replace(".", "_")
 
 
-def _default_baseline_cache_dir(project_root: Path, tag_name: str) -> Path:
+def _default_baseline_cache_dir(project_root: Path, ref_name: str) -> Path:
     """Default on-disk cache location for downloaded baseline artifacts."""
-    return project_root / "baseline-artifacts" / _sanitize_tag_name(tag_name)
+    return project_root / "baseline-artifacts" / _sanitize_ref_name(ref_name)
 
 
 def _parse_github_owner_repo(remote_url: str) -> tuple[str, str] | None:
@@ -3152,6 +3275,7 @@ def _parse_baseline_metadata(baseline_content: str) -> dict[str, str]:
     metadata = {
         "date": "Unknown",
         "commit": "Unknown",
+        "ref": "Unknown",
         "tag": "Unknown",
     }
 
@@ -3160,10 +3284,15 @@ def _parse_baseline_metadata(baseline_content: str) -> dict[str, str]:
             metadata["date"] = line[6:].strip()
         elif line.startswith("Git commit: "):
             metadata["commit"] = line[12:].strip()
+        elif line.startswith("Ref: "):
+            metadata["ref"] = line[5:].strip()
         elif line.startswith("Tag: "):
             metadata["tag"] = line[5:].strip()
         elif line.strip() == "Hardware Information:":
             break
+
+    if metadata["ref"] == "Unknown" and metadata["tag"] != "Unknown":
+        metadata["ref"] = metadata["tag"]
 
     return metadata
 
@@ -3221,10 +3350,12 @@ def render_baseline_comparison(project_root: Path, old_baseline: Path, new_basel
     buf.write("==========================\n")
     buf.write(f"New baseline file: {new_baseline}\n")
     buf.write(f"  Date: {new_meta['date']}\n")
+    buf.write(f"  Ref: {new_meta['ref']}\n")
     buf.write(f"  Tag: {new_meta['tag']}\n")
     buf.write(f"  Git commit: {new_meta['commit']}\n")
     buf.write(f"Old baseline file: {old_baseline}\n")
     buf.write(f"  Date: {old_meta['date']}\n")
+    buf.write(f"  Ref: {old_meta['ref']}\n")
     buf.write(f"  Tag: {old_meta['tag']}\n")
     buf.write(f"  Git commit: {old_meta['commit']}\n\n")
 
@@ -3248,19 +3379,19 @@ class BaselineFetchOptions:
 
 
 class GitHubBaselineFetcher:
-    """Fetch tag baselines from GitHub Actions artifacts using the GitHub CLI."""
+    """Fetch git-ref baselines from GitHub Actions artifacts using the GitHub CLI."""
 
     def __init__(self, project_root: Path, *, repo: str | None = None, remote: str = "origin") -> None:
         """Initialize artifact fetching for a project repository."""
         self.project_root = project_root
         self.repo = _resolve_github_repo(project_root, repo=repo, remote=remote)
 
-    def _artifact_name_for_tag(self, tag_name: str) -> str:
-        return f"performance-baseline-{_sanitize_tag_name_for_artifact(tag_name)}"
+    def _artifact_name_for_ref(self, ref_name: str) -> str:
+        return f"performance-baseline-{_sanitize_ref_name_for_artifact(ref_name)}"
 
-    def _legacy_artifact_name_for_tag(self, tag_name: str) -> str:
+    def _legacy_artifact_name_for_ref(self, ref_name: str) -> str:
         # Legacy naming kept dots from the tag (e.g., v0.6.2).
-        return f"performance-baseline-{_sanitize_tag_name(tag_name)}"
+        return f"performance-baseline-{_sanitize_ref_name(ref_name)}"
 
     def _try_download_artifact(self, *, artifact_name: str, out_dir: Path) -> bool:
         out_dir.mkdir(parents=True, exist_ok=True)
@@ -3288,7 +3419,7 @@ class GitHubBaselineFetcher:
         logger.debug("gh run download failed (artifact=%s rc=%s stderr=%s)", artifact_name, result.returncode, (result.stderr or "").strip())
         return False
 
-    def _dispatch_generate_baseline(self, *, tag_name: str, workflow_ref: str) -> None:
+    def _dispatch_generate_baseline(self, *, ref_name: str, workflow_ref: str) -> None:
         result = run_safe_command(
             "gh",
             [
@@ -3300,7 +3431,7 @@ class GitHubBaselineFetcher:
                 "--ref",
                 workflow_ref,
                 "-f",
-                f"tag={tag_name}",
+                f"ref={ref_name}",
             ],
             check=False,
             capture_output=True,
@@ -3309,11 +3440,11 @@ class GitHubBaselineFetcher:
 
         if result.returncode != 0:
             details = (result.stderr or result.stdout or "").strip()
-            msg = f"Failed to dispatch generate-baseline.yml for tag {tag_name} on ref {workflow_ref}: {details}"
+            msg = f"Failed to dispatch generate-baseline.yml for ref {ref_name} on workflow ref {workflow_ref}: {details}"
             raise RuntimeError(msg)
 
-    def fetch_baseline(self, *, tag_name: str, out_dir: Path, options: BaselineFetchOptions) -> Path:
-        """Fetch a baseline for a tag.
+    def fetch_baseline(self, *, ref_name: str, out_dir: Path, options: BaselineFetchOptions) -> Path:
+        """Fetch a baseline for a git ref.
 
         If options.regenerate_missing is True, this will trigger a workflow_dispatch run
         when the artifact is missing/expired, and poll until it becomes available.
@@ -3321,8 +3452,8 @@ class GitHubBaselineFetcher:
         Returns:
             Path to the downloaded baseline_results.txt
         """
-        artifact_name = self._artifact_name_for_tag(tag_name)
-        legacy_artifact_name = self._legacy_artifact_name_for_tag(tag_name)
+        artifact_name = self._artifact_name_for_ref(ref_name)
+        legacy_artifact_name = self._legacy_artifact_name_for_ref(ref_name)
 
         # Try the current artifact name first, then fall back to the legacy dotful name.
         candidates = list(dict.fromkeys([artifact_name, legacy_artifact_name]))
@@ -3336,11 +3467,11 @@ class GitHubBaselineFetcher:
 
             if not options.regenerate_missing:
                 expected = ", ".join(candidates)
-                msg = f"Baseline artifact not found for tag {tag_name} (expected artifact name(s): {expected})"
+                msg = f"Baseline artifact not found for ref {ref_name} (expected artifact name(s): {expected})"
                 raise FileNotFoundError(msg)
 
-            print(f"🔁 Baseline artifact not found for {tag_name}; dispatching generate-baseline.yml and waiting...")
-            self._dispatch_generate_baseline(tag_name=tag_name, workflow_ref=options.workflow_ref)
+            print(f"🔁 Baseline artifact not found for {ref_name}; dispatching generate-baseline.yml and waiting...")
+            self._dispatch_generate_baseline(ref_name=ref_name, workflow_ref=options.workflow_ref)
 
             deadline = time.monotonic() + options.wait_seconds
             attempt = 0
@@ -3356,7 +3487,7 @@ class GitHubBaselineFetcher:
                     print(f"⏳ Waiting for baseline artifact {artifact_name}... ({remaining}s remaining)")
 
             expected = ", ".join(candidates)
-            msg = f"Timed out waiting for baseline artifact(s) {expected} (tag {tag_name})"
+            msg = f"Timed out waiting for baseline artifact(s) {expected} (ref {ref_name})"
             raise TimeoutError(msg)
 
         except ExecutableNotFoundError as e:
@@ -3372,7 +3503,13 @@ def _add_benchmark_subcommands(subparsers: "argparse._SubParsersAction[argparse.
     )
     gen_parser.add_argument("--output", type=Path, help="Output file path")
     gen_parser.add_argument("--project-root", type=Path, help="Project root to benchmark (directory containing Cargo.toml)")
-    gen_parser.add_argument("--tag", type=str, default=os.getenv("TAG_NAME"), help="Tag name for this baseline (from TAG_NAME env or --tag option)")
+    gen_parser.add_argument(
+        "--ref",
+        dest="ref_name",
+        type=str,
+        default=os.getenv("BASELINE_REF") or os.getenv("REF_NAME"),
+        help="Git ref name for this baseline (from BASELINE_REF/REF_NAME env or --ref option)",
+    )
     gen_parser.add_argument(
         "--bench-timeout",
         type=int,
@@ -3380,6 +3517,22 @@ def _add_benchmark_subcommands(subparsers: "argparse._SubParsersAction[argparse.
         help="Timeout for cargo bench in seconds (from BENCHMARK_TIMEOUT env, default: 1800)",
     )
     gen_parser.set_defaults(validate_bench_timeout=True)
+
+    ref_parser = subparsers.add_parser("generate-ref-baseline", help="Generate a local baseline for a git ref")
+    ref_parser.add_argument("--ref", dest="ref_name", type=str, default="main", help="Git ref to benchmark (default: main)")
+    ref_parser.add_argument("--out", dest="out_dir", type=Path, default=Path("baseline-artifact"), help="Output artifact directory")
+    ref_parser.add_argument("--remote", type=str, default="origin", help="Git remote to fetch the ref from (default: origin)")
+    ref_parser.add_argument(
+        "--dev", action="store_true", help=f"Use faster Criterion settings while retaining the {TRUSTED_BENCH_PROFILE} Cargo profile"
+    )
+    ref_parser.add_argument(
+        "--bench-timeout",
+        type=int,
+        default=get_default_bench_timeout(),
+        help="Timeout for cargo bench in seconds (from BENCHMARK_TIMEOUT env, default: 1800)",
+    )
+    ref_parser.add_argument("--project-root", type=Path, help="Project root containing the git repo (directory containing Cargo.toml)")
+    ref_parser.set_defaults(validate_bench_timeout=True)
 
     cmp_parser = subparsers.add_parser("compare", help="Compare current performance against baseline")
     cmp_parser.add_argument("--baseline", type=Path, required=True, help="Path to baseline file")
@@ -3411,8 +3564,8 @@ def _add_local_baseline_subcommands(subparsers: "argparse._SubParsersAction[argp
     bb_parser.add_argument("--output", type=Path, help="Optional path to write the comparison report")
     bb_parser.add_argument("--project-root", type=Path, help="Project root (only used for repo context; optional)")
 
-    fetch_parser = subparsers.add_parser("fetch-baseline", help="Fetch a tag baseline artifact from GitHub Actions")
-    fetch_parser.add_argument("--tag", dest="tag_name", type=str, required=True, help="Tag name to fetch (e.g., v0.6.2)")
+    fetch_parser = subparsers.add_parser("fetch-baseline", help="Fetch a git-ref baseline artifact from GitHub Actions")
+    fetch_parser.add_argument("--ref", dest="ref_name", type=str, help="Git ref to fetch (e.g., main or v0.6.2)")
     fetch_parser.add_argument("--out", dest="out_dir", type=Path, help="Output directory for downloaded artifact contents")
     fetch_parser.add_argument("--repo", type=str, help="GitHub repo in OWNER/REPO form (defaults to parsing the git remote)")
     fetch_parser.add_argument("--remote", type=str, default="origin", help="Git remote name used to infer repo when --repo is not set")
@@ -3447,17 +3600,17 @@ def _add_local_baseline_subcommands(subparsers: "argparse._SubParsersAction[argp
 
 def _add_workflow_helper_subcommands(subparsers: "argparse._SubParsersAction[argparse.ArgumentParser]") -> None:
     """Add subcommands used by GitHub Actions workflows."""
-    subparsers.add_parser("determine-tag", help="Determine tag name for baseline generation")
+    subparsers.add_parser("determine-ref", help="Determine git ref name for baseline generation")
 
     meta_parser = subparsers.add_parser("create-metadata", help="Create metadata.json file for baseline artifact")
-    meta_parser.add_argument("--tag", type=str, required=True, help="Tag name for this baseline")
+    meta_parser.add_argument("--ref", dest="ref_name", type=str, help="Git ref name for this baseline")
     meta_parser.add_argument("--output-dir", type=Path, default=Path("baseline-artifact"), help="Output directory for metadata.json")
 
     summary_parser = subparsers.add_parser("display-summary", help="Display baseline file summary")
     summary_parser.add_argument("--baseline", type=Path, required=True, help="Path to baseline file")
 
-    artifact_parser = subparsers.add_parser("sanitize-artifact-name", help="Sanitize tag name for GitHub Actions artifact")
-    artifact_parser.add_argument("--tag", type=str, required=True, help="Tag name to sanitize")
+    artifact_parser = subparsers.add_parser("sanitize-artifact-name", help="Sanitize git ref name for GitHub Actions artifact")
+    artifact_parser.add_argument("--ref", dest="ref_name", type=str, help="Git ref name to sanitize")
 
 
 def _add_regression_subcommands(subparsers: "argparse._SubParsersAction[argparse.ArgumentParser]") -> None:
@@ -3546,9 +3699,33 @@ def configure_logging(*, verbose: bool) -> None:
 def execute_baseline_commands(args: argparse.Namespace, project_root: Path) -> None:
     """Execute baseline generation and comparison commands."""
     if args.command == "generate-baseline":
-        generator = BaselineGenerator(project_root, tag=args.tag)
+        generator = BaselineGenerator(project_root, ref_name=args.ref_name)
         success = generator.generate_baseline(dev_mode=args.dev, output_file=args.output, bench_timeout=args.bench_timeout)
         sys.exit(0 if success else 1)
+
+    elif args.command == "generate-ref-baseline":
+        out_dir = args.out_dir if args.out_dir.is_absolute() else project_root / args.out_dir
+        try:
+            generator = LocalRefBaselineGenerator(project_root, remote=args.remote)
+            baseline_path = generator.generate_for_ref(
+                ref_name=args.ref_name,
+                out_dir=out_dir,
+                dev_mode=args.dev,
+                bench_timeout=args.bench_timeout,
+            )
+        except subprocess.CalledProcessError as e:
+            print(f"❌ Git command failed with exit code {e.returncode}: {e.cmd}", file=sys.stderr)
+            if e.stderr:
+                print(e.stderr, file=sys.stderr)
+            if e.stdout:
+                print(e.stdout, file=sys.stderr)
+            sys.exit(1)
+        except _RECOVERABLE_CLI_ERRORS as e:
+            print(f"❌ {e}", file=sys.stderr)
+            sys.exit(1)
+
+        print(baseline_path)
+        sys.exit(0)
 
     elif args.command == "compare":
         comparator = PerformanceComparator(project_root)
@@ -3609,14 +3786,18 @@ def _cmd_compare_baselines(args: argparse.Namespace, project_root: Path) -> None
 
 
 def _cmd_fetch_baseline(args: argparse.Namespace, project_root: Path) -> None:
+    if not args.ref_name:
+        print("❌ Missing required --ref argument", file=sys.stderr)
+        sys.exit(2)
+
     out_dir = args.out_dir
     if out_dir is None:
-        out_dir = _default_baseline_cache_dir(project_root, args.tag_name)
+        out_dir = _default_baseline_cache_dir(project_root, args.ref_name)
 
     try:
         fetcher = GitHubBaselineFetcher(project_root, repo=args.repo, remote=args.remote)
         options = _baseline_fetch_options_from_args(args)
-        baseline_path = fetcher.fetch_baseline(tag_name=args.tag_name, out_dir=out_dir, options=options)
+        baseline_path = fetcher.fetch_baseline(ref_name=args.ref_name, out_dir=out_dir, options=options)
     except FileNotFoundError as e:
         print(f"❌ {e}", file=sys.stderr)
         sys.exit(3)
@@ -3639,8 +3820,8 @@ def _cmd_compare_tags(args: argparse.Namespace, project_root: Path) -> None:
         old_dir = _default_baseline_cache_dir(project_root, args.old_tag)
         new_dir = _default_baseline_cache_dir(project_root, args.new_tag)
 
-        old_baseline = fetcher.fetch_baseline(tag_name=args.old_tag, out_dir=old_dir, options=options)
-        new_baseline = fetcher.fetch_baseline(tag_name=args.new_tag, out_dir=new_dir, options=options)
+        old_baseline = fetcher.fetch_baseline(ref_name=args.old_tag, out_dir=old_dir, options=options)
+        new_baseline = fetcher.fetch_baseline(ref_name=args.new_tag, out_dir=new_dir, options=options)
 
         report_text, regression_found = render_baseline_comparison(project_root, old_baseline, new_baseline)
     except FileNotFoundError as e:
@@ -3679,13 +3860,16 @@ def execute_local_baseline_commands(args: argparse.Namespace, project_root: Path
 
 def execute_workflow_commands(args: argparse.Namespace) -> None:
     """Execute workflow helper commands."""
-    if args.command == "determine-tag":
-        tag_name = WorkflowHelper.determine_tag_name()
-        print(tag_name)  # Output tag name to stdout
+    if args.command == "determine-ref":
+        ref_name = WorkflowHelper.determine_ref_name()
+        print(ref_name)  # Output ref name to stdout
         sys.exit(0)
 
-    elif args.command == "create-metadata":
-        success = WorkflowHelper.create_metadata(args.tag, args.output_dir)
+    if args.command == "create-metadata":
+        if not args.ref_name:
+            print("❌ Missing required --ref argument", file=sys.stderr)
+            sys.exit(2)
+        success = WorkflowHelper.create_metadata(args.ref_name, args.output_dir)
         sys.exit(0 if success else 1)
 
     elif args.command == "display-summary":
@@ -3693,7 +3877,10 @@ def execute_workflow_commands(args: argparse.Namespace) -> None:
         sys.exit(0 if success else 1)
 
     elif args.command == "sanitize-artifact-name":
-        artifact_name = WorkflowHelper.sanitize_artifact_name(args.tag)
+        if not args.ref_name:
+            print("❌ Missing required --ref argument", file=sys.stderr)
+            sys.exit(2)
+        artifact_name = WorkflowHelper.sanitize_artifact_name(args.ref_name)
         print(artifact_name)  # Output sanitized name to stdout
         sys.exit(0)
 
@@ -3752,7 +3939,7 @@ def execute_regression_commands(args: argparse.Namespace) -> None:
 def execute_command(args: argparse.Namespace, project_root: Path) -> None:
     """Execute the selected command based on parsed arguments."""
     # Try baseline commands first
-    if args.command in ("generate-baseline", "compare"):
+    if args.command in ("generate-baseline", "generate-ref-baseline", "compare"):
         execute_baseline_commands(args, project_root)
         return
 
@@ -3762,7 +3949,7 @@ def execute_command(args: argparse.Namespace, project_root: Path) -> None:
         return
 
     # Try workflow commands
-    if args.command in ("determine-tag", "create-metadata", "display-summary", "sanitize-artifact-name"):
+    if args.command in ("determine-ref", "create-metadata", "display-summary", "sanitize-artifact-name"):
         execute_workflow_commands(args)
         return
 

@@ -65,7 +65,6 @@ delaunay/
 │   ├── ci_performance_suite.rs
 │   ├── circumsphere_containment.rs
 │   ├── cold_path_predicates.rs
-│   ├── large_scale_performance.rs
 │   ├── profiling_suite.rs
 │   ├── tds_clone.rs
 │   └── topology_guarantee_construction.rs
@@ -116,14 +115,14 @@ delaunay/
 │   └── workflows.md
 ├── examples/
 │   ├── README.md
-│   ├── convex_hull_3d_100_points.rs
+│   ├── convex_hull_3d_1000_points.rs
 │   ├── delaunayize_repair.rs
 │   ├── into_from_conversions.rs
 │   ├── memory_analysis.rs
 │   ├── pachner_roundtrip_4d.rs
 │   ├── point_comparison_and_hashing.rs
 │   ├── topology_editing_2d_3d.rs
-│   ├── triangulation_3d_100_points.rs
+│   ├── triangulation_3d_1000_points.rs
 │   └── zero_allocation_iterator_demo.rs
 ├── scripts/
 │   ├── ci/
@@ -368,8 +367,8 @@ files when the requested version is no longer in the root changelog.
 **Note**: Benchmarks, baselines, and performance summaries are generated via the benchmark utilities CLI:
 
 ```bash
-# Generate a baseline artifact (used for comparisons)
-just bench-baseline
+# Prepare the default GitHub main baseline artifact (used for comparisons)
+just perf-baseline
 
 # Generate benches/PERFORMANCE_RESULTS.md (runs benchmarks; longer)
 just bench-perf-summary
@@ -463,7 +462,7 @@ orthogonal files under `src/triangulation/`.
   (see: [examples/memory_analysis.rs](../examples/README.md#5-memory-analysis-across-dimensions-memory_analysisrs)), Pachner move roundtrips
   (see: [examples/pachner_roundtrip_4d.rs](../examples/pachner_roundtrip_4d.rs)), and zero-allocation iterator demonstrations
 - **`benches/`** - Performance benchmarks with automated baseline management (2D-5D coverage) and memory allocation tracking
-  (see: [benches/profiling_suite.rs](../benches/README.md#profiling-suite-comprehensive))
+  (see: [benches/profiling_suite.rs](../benches/README.md#profiling-suite))
 - **`tests/`** - Integration tests including basic TDS validation (creation, neighbor assignment, boundary analysis),
   debugging utilities, regression testing, allocation profiling tools
   (see: [tests/allocation_api.rs](../tests/README.md#allocation_apirs)), and robust predicates validation
@@ -510,9 +509,9 @@ development tooling and clear architectural guidance).
 The project includes optional memory profiling capabilities:
 
 - **Allocation Tracking**: Optional `count-allocations` feature using the `allocation-counter` crate
-- **Memory Benchmarks**: Dedicated benchmarks for memory scaling analysis (`profiling_suite.rs`) - comprehensive profiling suite
-  with typical runtime of 1-2 hours (10³-10⁶ points). **Recommended for manual profiling runs** rather than CI due to
-  long execution time. Use `PROFILING_DEV_MODE=1` for faster iteration (10x speedup).
+- **Memory Benchmarks**: Dedicated benchmarks for RSS and allocation scaling analysis (`profiling_suite.rs`) - comprehensive
+  profiling suite with calibrated large-scale 2D-5D point counts. **Recommended for manual profiling runs** rather than CI due
+  to long execution time. Use `PROFILING_DEV_MODE=1` for faster auxiliary diagnostics.
 - **Profiling Examples**: `memory_analysis.rs` demonstrates allocation counting across different operations
 - **Integration Testing**: `allocation_api.rs` provides utilities for testing memory usage in various scenarios
 - **CI Integration**: Automated profiling benchmarks with detailed allocation reports
@@ -580,33 +579,33 @@ just spell-check   # Check spelling across project files
 
 ```bash
 just bench         # Run all benchmarks with perf profile (ThinLTO)
-just bench-baseline # Generate perf-profile performance baseline
 just bench-ci      # CI regression benchmarks with perf profile (~5-10 min)
-just bench-compare # Compare against baseline with perf profile
-just bench-dev     # Reduced-sample perf-profile comparison (~1-2 min)
+just perf-baseline # Prepare dev-mode GitHub main baseline
+just perf-compare  # Compare against a specific dev-mode baseline file
+just perf-no-regressions # Fast pre-PR 2D-5D regression guard
 just bench-smoke   # Smoke-test benchmark harnesses (minimal samples)
 just bench-perf-summary # Generate perf-profile release summary (~30-45 min)
 ```
 
-**Storage Backend Comparison (large-scale):**
+**Large-scale Profiling:**
 
 ```bash
 # Large-scale performance benchmarks
-cargo bench --profile perf --bench large_scale_performance
+cargo bench --profile perf --bench profiling_suite
 
 # Enable larger 4D point counts (use on a compute cluster)
-BENCH_LARGE_SCALE=1 cargo bench --profile perf --bench large_scale_performance
+BENCH_LARGE_SCALE=1 cargo bench --profile perf --bench profiling_suite
 ```
 
 **Performance Analysis:**
 
 ```bash
 just perf-help     # Show performance analysis commands
-just perf-baseline # Save current performance as baseline
-just perf-check    # Check for performance regressions
-just perf-compare  # Compare with specific baseline file
-just profile       # Profile full triangulation_scaling benchmark
-just profile-dev   # Profile 3D dev mode (faster iteration)
+just perf-baseline # Prepare dev-mode GitHub main baseline
+just perf-compare  # Compare with a specific dev-mode baseline file
+just perf-no-regressions # Check for performance regressions
+just profile       # Run ci_performance_suite for a compiler/code pair
+just profile-dev   # Profile 3D construction in profiling_suite
 just profile-mem   # Profile memory allocations
 ```
 
@@ -614,7 +613,7 @@ just profile-mem   # Profile memory allocations
 
 ```bash
 just ci            # Comprehensive local CI run
-just ci-baseline   # CI + save performance baseline
+just ci-baseline   # CI + persist default performance baseline
 ```
 
 **Utilities:**

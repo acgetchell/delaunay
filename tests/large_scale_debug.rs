@@ -10,14 +10,22 @@
 //!
 //! Run one dimension with full output:
 //! ```bash
-//! cargo test --release --test large_scale_debug debug_large_scale_3d -- --ignored --nocapture
+//! cargo test --release --test large_scale_debug debug_large_scale_2d -- --ignored --nocapture
 //! ```
 //!
-//! The default 3D helper (`just debug-large-scale-3d 10000 1`) is the current
-//! release-mode 10,000-vertex acceptance case: it should insert all vertices
-//! with zero skips, run final repair, and pass `validation_report` for
-//! Levels 1–4. On maintainer Apple M4 Max hardware this sits around the
-//! 100-second mark; use local harness output for exact timing.
+//! The `just debug-large-scale-{2,3,4,5}d` helpers all accept the same
+//! `[n] [repair_every]` arguments. The checked-in defaults are calibrated as
+//! roughly one-minute release-mode acceptance/profiling runs on maintainer Apple
+//! M4 Max hardware:
+//!
+//! - 2D: 40,000 vertices
+//! - 3D: 8,000 vertices
+//! - 4D: 900 vertices
+//! - 5D: 150 vertices
+//!
+//! Each should insert all vertices with zero skips, run final repair, and pass
+//! `validation_report` for Levels 1–4. Use local harness output for exact
+//! timing.
 //!
 //! Override defaults via environment variables:
 //! ```bash
@@ -1723,21 +1731,28 @@ fn regression_issue_230_4d_100_orientation() {
 
 #[test]
 #[ignore = "large-scale debug harness (manual run)"]
+fn debug_large_scale_2d() {
+    let outcome = debug_large_case::<2>("2D", 40_000);
+    assert!(matches!(outcome, DebugOutcome::Success), "{outcome}");
+}
+
+#[test]
+#[ignore = "large-scale debug harness (manual run)"]
 fn debug_large_scale_3d() {
-    let outcome = debug_large_case::<3>("3D", 10_000);
+    let outcome = debug_large_case::<3>("3D", 8_000);
     assert!(matches!(outcome, DebugOutcome::Success), "{outcome}");
 }
 
 #[test]
 #[ignore = "large-scale debug harness (manual run)"]
 fn debug_large_scale_4d() {
-    let outcome = debug_large_case::<4>("4D", 3_000);
+    let outcome = debug_large_case::<4>("4D", 900);
     assert!(matches!(outcome, DebugOutcome::Success), "{outcome}");
 }
 
 #[test]
 #[ignore = "large-scale debug harness (manual run)"]
 fn debug_large_scale_5d() {
-    let outcome = debug_large_case::<5>("5D", 1_000);
+    let outcome = debug_large_case::<5>("5D", 150);
     assert!(matches!(outcome, DebugOutcome::Success), "{outcome}");
 }

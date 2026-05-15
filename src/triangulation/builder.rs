@@ -308,6 +308,8 @@ pub enum ExplicitTdsErrorKind {
     OrientationViolation,
     /// Duplicate maximal cells were detected.
     DuplicateCells,
+    /// A facet would be incident to too many cells.
+    FacetSharingViolation,
     /// Cell creation failed.
     FailedToCreateCell,
     /// Expected neighbor relation was absent.
@@ -372,6 +374,7 @@ impl From<TdsError> for ExplicitTdsError {
             TdsError::InvalidNeighbors { .. } => ExplicitTdsErrorKind::InvalidNeighbors,
             TdsError::OrientationViolation { .. } => ExplicitTdsErrorKind::OrientationViolation,
             TdsError::DuplicateCells { .. } => ExplicitTdsErrorKind::DuplicateCells,
+            TdsError::FacetSharingViolation { .. } => ExplicitTdsErrorKind::FacetSharingViolation,
             TdsError::FailedToCreateCell { .. } => ExplicitTdsErrorKind::FailedToCreateCell,
             TdsError::NotNeighbors { .. } => ExplicitTdsErrorKind::NotNeighbors,
             TdsError::MappingInconsistency { .. } => ExplicitTdsErrorKind::MappingInconsistency,
@@ -3176,6 +3179,17 @@ mod tests {
                 message: "duplicate cell vertex set".to_string(),
             },
             ExplicitTdsErrorKind::DuplicateCells,
+        );
+        assert_explicit_tds_error_kind(
+            TdsError::FacetSharingViolation {
+                facet_key: 42,
+                existing_incident_count: 2,
+                attempted_incident_count: 3,
+                max_incident_count: 2,
+                candidate_cell_uuid: uuid,
+                candidate_facet_index: 1,
+            },
+            ExplicitTdsErrorKind::FacetSharingViolation,
         );
         assert_explicit_tds_error_kind(
             TdsError::FailedToCreateCell {

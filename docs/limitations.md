@@ -63,22 +63,61 @@ reproducers have been rechecked and fixed. Their details are archived in
 [`archive/known_issues_4d_2026-04-23.md`](archive/known_issues_4d_2026-04-23.md)
 and [`archive/issue_204_investigation.md`](archive/issue_204_investigation.md).
 
+Current 2D–5D large-scale debug envelope:
+
+- `just debug-large-scale-{2,3,4,5}d [n] [repair_every]` runs the same
+  release-mode ignored harness shape across dimensions: deterministic point
+  generation, batch construction, final flip repair, and `validation_report`
+  for Levels 1–4.
+- The default point counts are dimension-aware rather than identical: 2D
+  defaults to 40,000 vertices, 3D defaults to 8,000 vertices, 4D defaults to
+  900 vertices, and 5D defaults to 150 vertices.
+
+Current 2D scale envelope:
+
+- `just debug-large-scale-2d 40000 1` is the current release-mode acceptance
+  harness for the 40,000-vertex 2D path.
+- The 2026-05-14 local run inserted all 40,000 vertices with zero skips, final
+  repair performed 0 flips, and `validation_report` passed in about 66 seconds
+  total wall time.
+
 Current 3D scale envelope:
 
-- `just debug-large-scale-3d 10000 1` is the current release-mode acceptance
-  harness for the 10,000-vertex 3D path.
-- Recent maintainer-hardware runs insert all 10,000 vertices with zero skips,
+- `just debug-large-scale-3d 8000 1` is the current release-mode acceptance
+  harness for the 8,000-vertex 3D path.
+- Recent maintainer-hardware runs insert all 8,000 vertices with zero skips,
   run a clean final flip repair, and pass `validation_report` for Levels 1–4.
-- Wall time is hardware- and load-sensitive. Treat "around 100 seconds" as the
-  Apple M4 Max-class local envelope rather than a portable guarantee.
+- Wall time is hardware- and load-sensitive. Recent Apple M4 Max-class local
+  runs complete in roughly 56 seconds; treat that as an envelope, not a
+  portable guarantee.
 
-Remaining large-scale caution:
+Current 4D scale envelope:
 
-- 4D batch construction at thousands of points can be expensive to investigate.
-  Use release mode and the large-scale debug harness when characterizing this
-  regime.
+- `just debug-large-scale-4d 900 1` is the current release-mode acceptance
+  harness for the 900-vertex 4D path. The 2026-05-14 local run inserted all
+  900 vertices with zero skips, final repair performed 0 flips, and
+  `validation_report` passed in about 60 seconds total wall time.
+- `just debug-large-scale-4d 3000 1` remains a manual characterization scale
+  for #340 rather than a default acceptance run.
+- Keep 4D thousands-point runs out of routine CI unless they are reduced to a
+  bounded fixture; use release mode and the large-scale debug harness when
+  characterizing this regime.
 - Exact predicates can dominate runtime on near-degenerate inputs. Improving
   adaptive predicate performance is tracked separately from correctness.
+
+Current 5D scale envelope:
+
+- `just debug-large-scale-5d 150 1` is the current practical 5D acceptance
+  harness. The 2026-05-14 local run inserted all 150 vertices with zero skips,
+  final repair performed 0 flips, and `validation_report` passed in about
+  62 seconds total wall time.
+- The 50-vertex 5D probe remains useful for quick local checks and measured
+  about 7 seconds as a single release-mode debug run; Criterion uses an even
+  smaller 25-vertex canary so repeated samples stay practical.
+- `just debug-large-scale-5d 1000 1` remains the #342 feasibility target. On
+  2026-05-14 it exceeded the 1800-second manual harness timeout before the
+  construction summary completed, so do not treat 1000-point 5D as a default
+  acceptance scale until the shared high-dimensional bottleneck is reduced.
 
 For reproducible large-scale diagnostics, see
 [`dev/debug_env_vars.md`](dev/debug_env_vars.md).

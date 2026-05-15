@@ -71,8 +71,8 @@ The Builder API is designed to construct Delaunay triangulations, and (by defaul
 flip-based repair passes during construction. Batch construction uses `ConstructionOptions`, whose
 default repair cadence is `DelaunayRepairPolicy::EveryInsertion` plus final repair/validation. That
 cadence reflects the current #341 3D scale acceptance path: the release-mode
-`just debug-large-scale-3d 10000 1` harness inserts all 10,000 vertices with zero
-skips and finishes final Levels 1–4 validation in the around-100-second
+`just debug-large-scale-3d 8000 1` harness inserts all 8,000 vertices with zero
+skips and finishes final Levels 1–4 validation in the roughly one-minute
 maintainer-hardware envelope. Direct incremental insertion keeps the lower-level
 `DelaunayRepairPolicy` default at `EveryInsertion`.
 The explicit repair methods (`repair_delaunay_with_flips`, `repair_delaunay_with_flips_advanced`,

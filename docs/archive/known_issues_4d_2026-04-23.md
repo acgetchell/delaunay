@@ -26,14 +26,33 @@ These release-mode reruns supersede the old 35-point 3D, 100-point 4D, and
   which now has progress instrumentation and is clearly a scale/observability
   problem rather than the earlier correctness repros.
 
+### Re-verified on 2026-05-14 (release mode, #340)
+
+The default 4D 3000-point debug harness is no longer an open correctness
+question. A maintainer-hardware release run of `just debug-large-scale-4d 3000`
+with seed `0xE7E6701F918B07FA`:
+
+- inserted **3000/3000** vertices with zero skips and `max_attempts=1`;
+- produced **80,441** final cells;
+- completed insertion in **401.9s**, final repair in **12.8s** with
+  `flips=0`, and Level 1–4 validation in **6.8s**;
+- completed in **421.4s** total wall time with `validation_report: OK`.
+
+The runtime is still large enough that this should remain a manual debug
+harness rather than routine CI coverage. The key 2026-05-14 performance fix was
+deferring the full orientation canonicalization/validation sweep out of each
+successful batch-local repair and relying on the existing single final sweep
+before topology validation.
+
 ### Current issues
 
 #### 4D+ bulk construction at very large scale
 
-The historical correctness failures at 35–100 vertices in 3D and 100–500
-vertices in 4D are now fixed. What remains is a scale/runtime concern: the
-default 3000-point 4D large-scale debug harness is expensive to investigate
-and may still degrade at very large input counts without a bounded test fixture.
+The historical correctness failures at 35–100 vertices in 3D, 100–500 vertices
+in 4D, and the default 3000-point 4D harness are now fixed on the documented
+seeds. What remains is a scale/runtime concern: thousands-point 4D runs are
+expensive to investigate and should stay manual unless reduced to a bounded
+test fixture.
 
 **Severity:** Medium (4D batch-construction runtime / observability)
 **Affects:** the default 3000-point large-scale debug harness and any
@@ -82,9 +101,10 @@ coverage lives in
   `postcondition k=2` retryable-skip traces fired (down from 501 / 31 / 711
   respectively on the pre-fix run).
 - 4D 3000-point batch construction (release mode, seed `0xE7E6701F918B07FA`,
-  ball radius=100) still emits periodic batch-progress summaries. Large-scale
-  runtime characterisation at 3000+ points remains open under the
-  "4D+ bulk construction at very large scale" item above.
+  ball radius=100) was characterized on 2026-05-14 under #340: 3000/3000
+  inserted, 0 skips, final repair `flips=0`, validation OK, and 421.4s total
+  wall time. Keep it as a manual large-scale harness rather than routine CI
+  coverage.
 
 #### Historical 3D flip-cycle reproducer (now fixed)
 

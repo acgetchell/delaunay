@@ -92,7 +92,7 @@ Before you begin, ensure you have:
 4. **Try the examples**:
 
    ```bash
-   cargo run --release --example triangulation_3d_50_points
+   cargo run --release --example triangulation_3d_1000_points
    ./scripts/run_all_examples.sh  # Run all examples
    ```
 
@@ -102,8 +102,8 @@ Before you begin, ensure you have:
    # Compile benchmarks without running (useful for CI)
    just bench-compile
    
-   # Run all benchmarks
-   just bench
+   # Run the fast pre-PR performance guard when a current baseline artifact is present
+   just perf-no-regressions
    ```
 
 6. **Code quality checks**:
@@ -356,7 +356,7 @@ just test             # Tests + benchmark/release compile smoke
 # Full CI / pre-push validation
 just ci               # Comprehensive checks + tests + examples
 just ci-slow          # CI + slow tests (100+ vertices)
-just ci-baseline      # CI + save performance baseline
+just ci-baseline      # CI + persist default performance baseline
 
 # Testing workflows
 just test             # Tests + benchmark/release compile smoke
@@ -373,10 +373,11 @@ just coverage-ci      # Generate XML coverage for CI (5-min timeout per test)
 # Benchmark workflows
 just bench-smoke      # Smoke-test benchmark harnesses (minimal samples)
 just bench            # Run all benchmarks with perf profile
-just bench-baseline   # Generate perf-profile performance baseline
 just bench-ci         # CI regression benchmarks with perf profile (~5-10 min)
-just bench-compare    # Compare against baseline with perf profile
-just bench-dev        # Reduced-sample perf-profile comparison (~1-2 min)
+just perf-baseline    # Persist/update the default local baseline artifact
+just perf-baseline-to <out> # Generate a scratch baseline without replacing the default
+just perf-compare     # Compare against a specific dev-mode baseline file
+just perf-no-regressions # Fast pre-PR 2D-5D regression guard
 ```
 
 ### Individual Task Recipes
@@ -448,16 +449,14 @@ just test             # Tests + benchmark/release compile smoke
 
 ```bash
 just ci               # Comprehensive checks + tests + examples
+just perf-no-regressions # Fast performance guard for Rust/benchmark changes
 just ci-slow          # Optional: also includes slow/stress tests (100+ vertices)
 ```
 
 **When working on performance:**
 
 ```bash
-just bench-baseline   # Generate baseline
-# Make changes...
-just bench-compare    # Check for regressions
-just bench-dev        # Reduced-sample perf-profile comparison
+just perf-no-regressions # Final dev-mode comparison against a temporary main baseline
 ```
 
 **Testing CI locally:**
@@ -917,20 +916,47 @@ Performance is crucial for computational geometry algorithms.
 The project includes comprehensive benchmarking:
 
 - **Location**: `benches/` directory with detailed [README][benches-readme]
-- **Framework**: Criterion with allocation tracking
-- **Coverage**: Small-scale triangulations across dimensions
-- **Automated Baselines**: Performance baselines are automatically generated on version tags (`vX.Y.Z`) as GitHub Actions artifacts
+- **Framework**: Criterion, Cargo's `perf` profile, and release-mode debug harnesses
+- **Coverage**: Public 2D-5D workflows, predicate microbenchmarks, large-scale construction, validation, topology guarantees, and profiling
+- **Automated Baselines**: Dev-mode `ci_performance_suite` baselines are generated on version tags (`vX.Y.Z`) as GitHub Actions artifacts
 
 ### Performance Testing Workflow
+
+**Before pushing Rust or benchmark changes:**
+
+```bash
+just ci
+just perf-no-regressions
+```
+
+`just perf-no-regressions` runs the calibrated 2D/3D/4D/5D
+`ci_performance_suite` canaries with reduced Criterion sample settings and
+compares them against a temporary same-machine baseline generated from the
+current GitHub `main` ref. The temporary baseline checkout and artifact
+directory are removed after the comparison.
+
+`just perf-baseline` is optional and persistent: use it only when you
+intentionally want to refresh `baseline-artifact/baseline_results.txt` for later
+manual comparisons.
+
+To make a one-off local baseline without replacing the default artifact:
+
+```bash
+just perf-baseline-to /tmp/delaunay-main-baseline
+just perf-compare /tmp/delaunay-main-baseline/baseline_results.txt
+```
 
 **For development and manual testing:**
 
 ```bash
-# Run benchmarks directly
-just bench
-
-# Run all examples to verify performance
-just examples
+just bench-ci           # Full local run of the CI performance contract
+just perf-no-regressions # Recommended pre-PR performance guard
+just perf-baseline      # Persist/update the default main-ref baseline locally
+just perf-baseline-to /tmp/delaunay-main-baseline
+                         # Generate a scratch main-ref baseline locally
+just perf-compare <file> # Compare against a specific dev-mode baseline file
+just bench-smoke        # Harness smoke test; not performance data
+just bench              # Full benchmark workspace with the perf profile
 ```
 
 **Compare tags using CI baselines (no benchmarking):**
@@ -948,32 +974,40 @@ uv run benchmark-utils compare-tags --old-tag vX.Y.Z --new-tag vA.B.C --regenera
 - **Automatic baseline generation**: Baselines are created automatically when git tags are pushed via GitHub Actions
 - **CI regression testing**: Performance regressions are detected automatically in PRs against the latest baseline
 - **Hardware compatibility**: The system detects hardware differences and provides warnings when comparing across different configurations
-- **Regression threshold**: CI flags overall average regressions above 7.5% (default)
+- **Regression threshold**: CI and `just perf-no-regressions` flag regressions above 7.5% by default
 
-The old shell scripts (`generate_baseline.sh`, `compare_benchmarks.sh`) mentioned in some documentation have been
-**replaced** with Python utilities that integrate with GitHub Actions for automated baseline management.
+Performance regressions need the same level of explanation as correctness
+changes. Patches that make the 2D-5D public workflow contract materially slower
+are generally not accepted unless the regression is intentional, measured, and
+justified by a higher-priority invariant such as numerical or topological
+correctness.
 
 ### Profiling
 
-The project uses [samply](https://github.com/mstange/samply) for performance profiling to identify bottlenecks:
+The project uses `just profile` for compiler/code benchmark comparisons and
+[samply](https://github.com/mstange/samply) for flamegraph-oriented profiling:
 
 ```bash
-# Profile code changes (runs full profiling suite)
+# Run ci_performance_suite for the current tree/toolchain
 just profile
 
-# Development mode profiling (10x faster for iteration)
+# Flamegraph 3D construction in profiling_suite
 just profile-dev
+
+# Flamegraph allocation profiling
+just profile-mem
 ```
 
 **Profiling workflow:**
 
-1. **Run profiling**: `just profile` generates an interactive flame graph
+1. **Run profiling**: `just profile-dev` or `just profile-mem` generates an interactive flame graph
 2. **Analyze results**: Browser opens automatically with the profiling visualization
 3. **Identify bottlenecks**: Look for hot paths in the flame graph
 4. **Optimize**: Make targeted improvements to high-impact code paths
 5. **Re-profile**: Verify optimizations with another profiling run
 
-**Development mode** (`just profile-dev`) uses reduced iteration counts for faster profiling cycles during active optimization work.
+`just profile-dev` targets `profiling_suite`'s 3D construction benchmark so
+local flamegraphs stay tied to the real large-scale profiling harness.
 
 **Note**: Profiling requires `samply` to be installed (`cargo install samply`). The `just setup` command installs it automatically.
 

@@ -109,11 +109,6 @@ path = "benches/profiling_suite.rs"
 harness = false
 
 [[bench]]
-name = "large_scale_performance"
-path = "benches/large_scale_performance.rs"
-harness = false
-
-[[bench]]
 name = "cold_path_predicates"
 path = "benches/cold_path_predicates.rs"
 harness = false

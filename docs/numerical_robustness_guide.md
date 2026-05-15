@@ -43,8 +43,9 @@ tie-breaking.
 
 The crate includes robust orientation and insphere predicates (e.g. `robust_orientation`,
 `robust_insphere`) for near-degenerate configurations. These predicates layer additional
-strategies on top of exact predicates: consistency checking against `insphere_distance`,
-symbolic perturbation for tie-breaking, and deterministic geometric fallbacks.
+strategies on top of exact predicates: opt-in consistency checking against
+`insphere_distance`, symbolic perturbation for tie-breaking, and deterministic geometric
+fallbacks.
 
 Most users won't call these functions directly; instead, select a kernel.
 
@@ -59,9 +60,9 @@ Kernels control which predicate implementations are used by the triangulation al
   points (same f64 coordinates), where all SoS cofactors vanish and orientation returns 0.
   Best choice for Delaunay triangulation. Implements `ExactPredicates`.
 - `RobustKernel<T>`: exact-arithmetic predicates that preserve explicit
-  `BOUNDARY`/`DEGENERATE` signals and run diagnostic consistency checks. Prefer this when
-  your application needs to detect cospherical/coplanar/collinear configurations directly
-  (SoS would mask these). Implements `ExactPredicates`.
+  `BOUNDARY`/`DEGENERATE` signals and can run opt-in diagnostic consistency checks.
+  Prefer this when your application needs to detect cospherical/coplanar/collinear
+  configurations directly (SoS would mask these). Implements `ExactPredicates`.
 - `FastKernel<T>`: raw f64 arithmetic, no robustness guarantees. Only suitable for 2D with
   well-conditioned input. Does **not** implement `ExactPredicates`. Construction and
   insertion work (automatic repair uses a `RobustKernel` fallback internally), but the

@@ -68,11 +68,25 @@ Some causal-triangulations tooling remains project-specific and was not ported:
   validation, CDT error variants, and `causal_triangulations::prelude` imports.
 - CDT's `examples-validate` recipe and output-marker checks; Delaunay examples
   are currently validated through `just examples`.
-- CDT's `performance-analysis` script; Delaunay keeps its benchmark and
-  storage-backend comparison helpers.
+- CDT's `performance-analysis` script; Delaunay keeps its benchmark helpers and
+  generated performance-summary workflow.
+- Delaunay has a project-specific `just perf-no-regressions` recipe that runs
+  the calibrated 2D-5D `ci_performance_suite` canaries against the current
+  dev-mode baseline artifact. This stays local to Delaunay because the
+  benchmark contract, fixture sizes, and regression threshold are tied to this
+  library's triangulation performance expectations. `just perf-baseline [ref]`
+  generates that baseline on the developer's machine from a temporary checkout
+  of the requested GitHub ref so the comparison uses the same local hardware as
+  the current branch while GitHub Actions still publishes shared CI artifacts.
+- Delaunay keeps a single `profiling_suite` benchmark target for manual
+  large-scale and flamegraph work. The previous standalone large-scale target
+  was folded into that harness so `.github/workflows/profiling-benchmarks.yml`
+  and `just profile-dev` exercise the same real construction, memory,
+  validation, and traversal workloads.
 - CDT's concise `docs/dev/commands.md` structure; Delaunay keeps its more
   detailed benchmark-profile guidance because it documents the `perf` profile,
-  backend compatibility canary, and release benchmark summary workflow.
+  local performance-regression guard, calibrated benchmark canaries, and release
+  benchmark summary workflow.
 
 ## Cargo Packaging And Toolchain Hygiene
 

@@ -205,6 +205,34 @@ where
     })
 }
 
+/// Compute only the lifted insphere determinant sign for a relative-coordinate matrix.
+///
+/// Callers that already know the simplex orientation can combine this determinant
+/// with their orientation sign without recomputing the orientation determinant.
+#[inline]
+pub(crate) fn relative_insphere_determinant_sign<T, const D: usize>(
+    simplex_points: &[Point<T, D>],
+    test_point: &Point<T, D>,
+) -> Result<i32, CoordinateConversionError>
+where
+    T: CoordinateScalar,
+{
+    if simplex_points.len() != D + 1 {
+        return Err(CoordinateConversionError::InvalidSimplexPointCount {
+            actual: simplex_points.len(),
+            expected: D + 1,
+            dimension: D,
+        });
+    }
+
+    let k = D + 1;
+
+    try_with_la_stack_matrix!(k, |matrix| {
+        fill_relative_insphere_matrix(&mut matrix, simplex_points, test_point)?;
+        Ok(exact_det_sign(&matrix))
+    })
+}
+
 /// Compute insphere classification from a pre-populated insphere matrix.
 ///
 /// Uses [`la_stack::Matrix::det_sign_exact`] for provably correct results when

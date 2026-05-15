@@ -4365,24 +4365,6 @@ where
         Ok(dt)
     }
 
-    /// Restores positive geometric orientation after bulk repair calls the
-    /// low-level TDS flip routine directly.
-    fn canonicalize_after_bulk_repair(
-        &mut self,
-    ) -> Result<(), DelaunayTriangulationConstructionError> {
-        self.tri
-            .normalize_and_promote_positive_orientation()
-            .map_err(Self::map_orientation_canonicalization_error)?;
-        self.tri
-            .validate_geometric_cell_orientation()
-            .map_err(|error| {
-                Self::map_orientation_canonicalization_error(InsertionError::TopologyValidation(
-                    error,
-                ))
-            })?;
-        Ok(())
-    }
-
     /// Identifies D≥4 local-repair failures that can safely try escalation and
     /// then enter the bounded soft-fail path.
     const fn can_soft_fail(repair_err: &DelaunayRepairError) -> bool {
@@ -4552,9 +4534,6 @@ where
                         "bulk batch repair: local repair succeeded"
                     );
                 }
-                if stats.flips_performed > 0 {
-                    self.canonicalize_after_bulk_repair()?;
-                }
                 clear_cell_seed_set(pending_seed_cells, pending_seen);
             }
             Err(repair_err) => {
@@ -4576,7 +4555,6 @@ where
                     seed_cells = seed_cells_len,
                     "bulk batch repair: local repair soft-failed; deferring seeds to final repair"
                 );
-                self.canonicalize_after_bulk_repair()?;
                 soft_fail_seeds.extend(pending_seed_cells.iter().copied());
                 clear_cell_seed_set(pending_seed_cells, pending_seen);
             }
@@ -8170,7 +8148,7 @@ mod tests {
         verify_delaunay_via_flip_predicates,
     };
     use crate::core::algorithms::incremental_insertion::{
-        CavityFillingError, HullExtensionReason, NeighborWiringError, repair_neighbor_pointers,
+        CavityFillingError, HullExtensionReason, NeighborWiringError,
     };
     use crate::core::algorithms::locate::{ConflictError, LocateError};
     use crate::core::operations::InsertionResult;
@@ -10191,6 +10169,9 @@ mod tests {
             {
                 // Expected forced path.
             }
+            InvariantError::Tds(TdsError::FacetSharingViolation { .. }) => {
+                // The insertion preflight can now reject the fan before the forced repair path.
+            }
             other => panic!(
                 "expected vertex-removal RepairOperationFailed from forced repair path, got {other:?}"
             ),
@@ -10449,37 +10430,13 @@ mod tests {
     fn test_repair_advanced_max_flips_on_non_delaunay_triangulation() {
         init_tracing();
 
-        // Build a non-Delaunay 2D TDS manually (same config as flips.rs tests).
-        let d_candidates = [[0.0, 1.2], [0.1, 1.1], [0.2, 0.9], [-0.1, 1.3]];
+        // Reuse the explicit non-Delaunay quadrilateral fixture so the primary
+        // and robust fallback kernels both see a real flip-repair site.
         let kernel = AdaptiveKernel::<f64>::new();
-        let mut raw_tds = None;
-        for d_coords in d_candidates {
-            let mut candidate: Tds<f64, (), (), 2> = Tds::empty();
-            let a = candidate
-                .insert_vertex_with_mapping(vertex!([0.0, 0.0]))
-                .unwrap();
-            let b = candidate
-                .insert_vertex_with_mapping(vertex!([1.0, 1.0]))
-                .unwrap();
-            let c = candidate
-                .insert_vertex_with_mapping(vertex!([1.0, 0.0]))
-                .unwrap();
-            let d = candidate
-                .insert_vertex_with_mapping(vertex!(d_coords))
-                .unwrap();
-            let _ = candidate
-                .insert_cell_with_mapping(Cell::new(vec![a, b, c], None).unwrap())
-                .unwrap();
-            let _ = candidate
-                .insert_cell_with_mapping(Cell::new(vec![a, b, d], None).unwrap())
-                .unwrap();
-            repair_neighbor_pointers(&mut candidate).unwrap();
-            if verify_delaunay_via_flip_predicates(&candidate, &kernel).is_err() {
-                raw_tds = Some(candidate);
-                break;
-            }
-        }
-        let tds = raw_tds.expect("need a non-Delaunay 2D config");
+        let robust_kernel = RobustKernel::<f64>::new();
+        let tds = non_delaunay_quad_tds();
+        assert!(verify_delaunay_via_flip_predicates(&tds, &kernel).is_err());
+        assert!(verify_delaunay_via_flip_predicates(&tds, &robust_kernel).is_err());
         let mut dt: DelaunayTriangulation<AdaptiveKernel<f64>, (), (), 2> =
             DelaunayTriangulation::from_tds_with_topology_guarantee(
                 tds,
@@ -10513,35 +10470,7 @@ mod tests {
             ..DelaunayRepairHeuristicConfig::default()
         };
         // Reconstruct dt from the same raw TDS in case the previous attempt mutated it.
-        let kernel2 = AdaptiveKernel::<f64>::new();
-        let mut raw_tds2 = None;
-        for d_coords in d_candidates {
-            let mut candidate: Tds<f64, (), (), 2> = Tds::empty();
-            let a = candidate
-                .insert_vertex_with_mapping(vertex!([0.0, 0.0]))
-                .unwrap();
-            let b = candidate
-                .insert_vertex_with_mapping(vertex!([1.0, 1.0]))
-                .unwrap();
-            let c = candidate
-                .insert_vertex_with_mapping(vertex!([1.0, 0.0]))
-                .unwrap();
-            let d = candidate
-                .insert_vertex_with_mapping(vertex!(d_coords))
-                .unwrap();
-            let _ = candidate
-                .insert_cell_with_mapping(Cell::new(vec![a, b, c], None).unwrap())
-                .unwrap();
-            let _ = candidate
-                .insert_cell_with_mapping(Cell::new(vec![a, b, d], None).unwrap())
-                .unwrap();
-            repair_neighbor_pointers(&mut candidate).unwrap();
-            if verify_delaunay_via_flip_predicates(&candidate, &kernel2).is_err() {
-                raw_tds2 = Some(candidate);
-                break;
-            }
-        }
-        let tds2 = raw_tds2.unwrap();
+        let tds2 = non_delaunay_quad_tds();
         let mut dt2: DelaunayTriangulation<AdaptiveKernel<f64>, (), (), 2> =
             DelaunayTriangulation::from_tds_with_topology_guarantee(
                 tds2,

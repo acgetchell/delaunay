@@ -6,7 +6,7 @@
 //! library. It covers the user-facing workflows that should stay fast across
 //! releases without duplicating every specialized microbenchmark:
 //!
-//! 1. Delaunay construction across 2D-5D at CI-sized scales
+//! 1. Delaunay construction across 2D-5D at calibrated canary scales
 //! 2. Convex hull extraction from completed triangulations
 //! 3. Boundary facet traversal
 //! 4. Full validation (Levels 1-4)
@@ -19,9 +19,9 @@
 //! ## Sample Size Strategy
 //!
 //! Uses dimension-dependent sample sizes to balance accuracy with CI time constraints:
-//! - 2D: Default Criterion sample size (100)
-//! - 3D: Reduced to 25 samples
-//! - 4D/5D: Further reduced to 15 samples for longer-running high-dimensional cases
+//! - Construction canaries: 10 samples, with per-dimension counts selected to
+//!   keep the repeated Criterion workload practical while exceeding toy inputs
+//! - Operation benchmarks: reduced samples where setup or dimensionality is heavier
 //!
 //! ## Dimensional Focus
 //!
@@ -55,20 +55,23 @@ use tracing::warn;
 pub mod bench_utils;
 use bench_utils::{abort_benchmark, bench_option, bench_result};
 
-/// Default point counts for 2D–4D benchmarks.
-const COUNTS: &[usize] = &[10, 25, 50];
-/// Reduced point counts for 5D (50-point construction is prohibitively slow).
-const COUNTS_5D: &[usize] = &[10, 25];
-/// Representative operation count for 2D-4D non-construction workflows.
-const OPERATION_COUNT: usize = 50;
-/// Representative operation count for 5D non-construction workflows.
-const OPERATION_COUNT_5D: usize = 25;
-/// Small insert batch for 2D-3D incremental insertion benchmarks.
-const INSERT_COUNT: usize = 10;
-/// Reduced insert batch for 4D incremental insertion benchmarks.
-const INSERT_COUNT_4D: usize = 6;
-/// Reduced insert batch for 5D incremental insertion benchmarks.
-const INSERT_COUNT_5D: usize = 4;
+/// Calibrated fixture sizes for repeated Criterion performance checks.
+///
+/// These deliberately differ from the `just debug-large-scale-*` defaults. The
+/// debug helpers are one-off, roughly one-minute acceptance/profiling runs.
+/// This suite reuses one practical repeated-sampling size per dimension for
+/// construction, adversarial construction, validation, hull, boundary, and
+/// incremental-insert base triangulations.
+const CANARY_COUNT_2D: usize = 2_000;
+const CANARY_COUNT_3D: usize = 700;
+const CANARY_COUNT_4D: usize = 50;
+const CANARY_COUNT_5D: usize = 25;
+/// Incremental insertion batch sizes are deliberately separate from fixture
+/// sizes: these benchmarks measure adding a small batch into an existing
+/// calibrated triangulation, not rebuilding the full fixture.
+const INSERT_BATCH_COUNT_2D_3D: usize = 10;
+const INSERT_BATCH_COUNT_4D: usize = 6;
+const INSERT_BATCH_COUNT_5D: usize = 4;
 type SeedSearchResult<const D: usize> = Option<(u64, Vec<Point<f64, D>>, Vec<Vertex<f64, (), D>>)>;
 type BenchTriangulation<const D: usize> = DelaunayTriangulation<AdaptiveKernel<f64>, (), (), D>;
 type FlipTriangulation4 = DelaunayTriangulation<RobustKernel<f64>, (), (), 4>;
@@ -105,61 +108,45 @@ struct ApiBenchmarkEntry {
 
 static API_BENCHMARK_MANIFEST: Once = Once::new();
 
-fn count_list(counts: &[usize]) -> String {
-    counts
-        .iter()
-        .map(usize::to_string)
-        .collect::<Vec<_>>()
-        .join(",")
-}
-
 fn construction_benchmark_ids() -> String {
     [
-        format!(
-            "tds_new_2d/{{tds_new,tds_new_adversarial}}/{{{}}}",
-            count_list(COUNTS)
-        ),
-        format!(
-            "tds_new_3d/{{tds_new,tds_new_adversarial}}/{{{}}}",
-            count_list(COUNTS)
-        ),
-        format!(
-            "tds_new_4d/{{tds_new,tds_new_adversarial}}/{{{}}}",
-            count_list(COUNTS)
-        ),
-        format!(
-            "tds_new_5d/{{tds_new,tds_new_adversarial}}/{{{}}}",
-            count_list(COUNTS_5D)
-        ),
+        format!("tds_new_2d/{{tds_new,tds_new_adversarial}}/{CANARY_COUNT_2D}"),
+        format!("tds_new_3d/{{tds_new,tds_new_adversarial}}/{CANARY_COUNT_3D}"),
+        format!("tds_new_4d/{{tds_new,tds_new_adversarial}}/{CANARY_COUNT_4D}"),
+        format!("tds_new_5d/{{tds_new,tds_new_adversarial}}/{CANARY_COUNT_5D}"),
     ]
     .join(";")
 }
 
 fn operation_benchmark_ids(group: &str, prefix: &str) -> String {
     [
-        format!("{group}/{{{prefix}_2d,{prefix}_2d_adversarial}}/{OPERATION_COUNT}"),
-        format!("{group}/{{{prefix}_3d,{prefix}_3d_adversarial}}/{OPERATION_COUNT}"),
-        format!("{group}/{{{prefix}_4d,{prefix}_4d_adversarial}}/{OPERATION_COUNT}"),
-        format!("{group}/{{{prefix}_5d,{prefix}_5d_adversarial}}/{OPERATION_COUNT_5D}"),
+        format!("{group}/{{{prefix}_2d,{prefix}_2d_adversarial}}/{CANARY_COUNT_2D}"),
+        format!("{group}/{{{prefix}_3d,{prefix}_3d_adversarial}}/{CANARY_COUNT_3D}"),
+        format!("{group}/{{{prefix}_4d,{prefix}_4d_adversarial}}/{CANARY_COUNT_4D}"),
+        format!("{group}/{{{prefix}_5d,{prefix}_5d_adversarial}}/{CANARY_COUNT_5D}"),
     ]
     .join(";")
 }
 
 fn validation_benchmark_ids() -> String {
     [
-        format!("validation/{{validate_3d,validate_3d_adversarial}}/{OPERATION_COUNT}"),
-        format!("validation/{{validate_4d,validate_4d_adversarial}}/{OPERATION_COUNT}"),
-        format!("validation/{{validate_5d,validate_5d_adversarial}}/{OPERATION_COUNT_5D}"),
+        format!("validation/{{validate_3d,validate_3d_adversarial}}/{CANARY_COUNT_3D}"),
+        format!("validation/{{validate_4d,validate_4d_adversarial}}/{CANARY_COUNT_4D}"),
+        format!("validation/{{validate_5d,validate_5d_adversarial}}/{CANARY_COUNT_5D}"),
     ]
     .join(";")
 }
 
 fn insert_benchmark_ids() -> String {
     [
-        format!("incremental_insert/{{insert_2d,insert_2d_adversarial}}/{INSERT_COUNT}"),
-        format!("incremental_insert/{{insert_3d,insert_3d_adversarial}}/{INSERT_COUNT}"),
-        format!("incremental_insert/{{insert_4d,insert_4d_adversarial}}/{INSERT_COUNT_4D}"),
-        format!("incremental_insert/{{insert_5d,insert_5d_adversarial}}/{INSERT_COUNT_5D}"),
+        format!(
+            "incremental_insert/{{insert_2d,insert_2d_adversarial}}/{INSERT_BATCH_COUNT_2D_3D}"
+        ),
+        format!(
+            "incremental_insert/{{insert_3d,insert_3d_adversarial}}/{INSERT_BATCH_COUNT_2D_3D}"
+        ),
+        format!("incremental_insert/{{insert_4d,insert_4d_adversarial}}/{INSERT_BATCH_COUNT_4D}"),
+        format!("incremental_insert/{{insert_5d,insert_5d_adversarial}}/{INSERT_BATCH_COUNT_5D}"),
     ]
     .join(";")
 }
@@ -171,7 +158,7 @@ fn api_benchmark_entries() -> Vec<ApiBenchmarkEntry> {
             public_api: "DelaunayTriangulation::new_with_options",
             dimensions: "2,3,4,5",
             benchmark_ids: construction_benchmark_ids(),
-            note: "construct_from_seeded_vertices_and_adversarial_large_coordinate_inputs",
+            note: "construct_from_calibrated_seeded_and_adversarial_inputs",
         },
         ApiBenchmarkEntry {
             group: "boundary_facets",
@@ -199,7 +186,7 @@ fn api_benchmark_entries() -> Vec<ApiBenchmarkEntry> {
             public_api: "DelaunayTriangulation::insert",
             dimensions: "2,3,4,5",
             benchmark_ids: insert_benchmark_ids(),
-            note: "insert_batches_into_prebuilt_well_conditioned_and_adversarial_triangulations",
+            note: "insert_batches_into_calibrated_well_conditioned_and_adversarial_triangulations",
         },
         ApiBenchmarkEntry {
             group: "bistellar_flips",
@@ -227,7 +214,7 @@ const STABLE_POINTS_4D: &[[f64; 4]] = &[
     [0.08, 0.18, 0.12, 0.14],
 ];
 
-/// Pre-computed seeds for each (dimension, count) pair.
+/// Pre-computed seeds for each calibrated (dimension, count) pair.
 ///
 /// These were discovered using `DELAUNAY_BENCH_DISCOVER_SEEDS=1` and eliminate
 /// the expensive runtime seed search from the benchmark hot path.
@@ -241,39 +228,17 @@ const STABLE_POINTS_4D: &[[f64; 4]] = &[
 /// (Use a Criterion filter for individual cases, e.g.
 ///  `-- "tds_new_5d/tds_new/25"`)
 const KNOWN_SEEDS: &[(usize, usize, u64)] = &[
-    // 2D
-    (2, 10, 52),
-    (2, 25, 67),
-    (2, 50, 92),
-    // 3D
-    (3, 10, 133),
-    (3, 25, 148),
-    (3, 50, 173),
-    // 4D
-    (4, 10, 466),
-    (4, 25, 481),
-    (4, 50, 506),
-    // 5D (50-point case excluded — too slow for CI)
-    (5, 10, 799),
-    (5, 25, 816),
+    (2, CANARY_COUNT_2D, 2042),
+    (3, CANARY_COUNT_3D, 823),
+    (4, CANARY_COUNT_4D, 506),
+    (5, CANARY_COUNT_5D, 816),
 ];
 
 const KNOWN_ADV_SEEDS: &[(usize, usize, u64)] = &[
-    // 2D
-    (2, 10, 2_779_097_209),
-    (2, 25, 2_779_097_224),
-    (2, 50, 2_779_097_249),
-    // 3D
-    (3, 10, 2_779_098_586),
-    (3, 25, 2_779_098_601),
-    (3, 50, 2_779_098_627),
-    // 4D
-    (4, 10, 2_779_104_247),
-    (4, 25, 2_779_104_262),
-    (4, 50, 2_779_104_287),
-    // 5D
-    (5, 10, 2_779_109_908),
-    (5, 25, 2_779_109_924),
+    (2, CANARY_COUNT_2D, 2_779_099_199),
+    (3, CANARY_COUNT_3D, 2_779_099_276),
+    (4, CANARY_COUNT_4D, 2_779_104_287),
+    (5, CANARY_COUNT_5D, 2_779_109_924),
 ];
 
 fn known_seed(dim: usize, count: usize) -> Option<u64> {
@@ -314,27 +279,12 @@ fn prepare_data<const D: usize>(
     attempts: NonZeroUsize,
 ) -> (u64, Vec<Point<f64, D>>, Vec<Vertex<f64, (), D>>) {
     // Fast path: use the pre-computed seed (single verification construction)
-    match known_seed(D, count).map(|seed| {
-        (
-            seed,
-            find_seed_vertices::<D>(seed, count, bounds, 1, attempts),
-        )
-    }) {
-        Some((_seed, Some(result))) => return result,
-        Some((seed, None)) => {
-            #[cfg(not(feature = "bench-logging"))]
-            let _ = seed;
-            #[cfg(feature = "bench-logging")]
-            {
-                warn!(
-                    known_seed = seed,
-                    dim = D,
-                    count,
-                    "known seed failed, falling back to runtime search"
-                );
-            }
+    if let Some(seed) = known_seed(D, count) {
+        if let Some(result) = find_seed_vertices::<D>(seed, count, bounds, 1, attempts) {
+            return result;
         }
-        None => {}
+
+        warn_known_seed_failed::<D>(seed, count, Dataset::WellConditioned);
     }
 
     // Slow fallback: runtime search from the base seed
@@ -347,6 +297,26 @@ fn prepare_data<const D: usize>(
                  start_seed={base_seed}; search_limit={search_limit}; bounds={bounds:?}"
         ),
     )
+}
+
+fn warn_known_seed_failed<const D: usize>(seed: u64, count: usize, dataset: Dataset) {
+    let dataset_label = match dataset {
+        Dataset::WellConditioned => "well_conditioned",
+        Dataset::Adversarial => "adversarial",
+    };
+
+    #[cfg(not(feature = "bench-logging"))]
+    let _ = (seed, count, dataset_label);
+    #[cfg(feature = "bench-logging")]
+    {
+        warn!(
+            known_seed = seed,
+            dim = D,
+            count,
+            dataset = dataset_label,
+            "known seed failed, falling back to runtime search"
+        );
+    }
 }
 
 fn prepare_dt<const D: usize>(dim_seed: u64, count: usize) -> BenchTriangulation<D> {
@@ -447,26 +417,14 @@ fn prepare_adv_data<const D: usize>(
     count: usize,
     attempts: NonZeroUsize,
 ) -> (u64, Vec<Point<f64, D>>, Vec<Vertex<f64, (), D>>) {
-    if !discover_seeds_enabled() {
-        match known_adv_seed(D, count)
-            .map(|seed| (seed, stable_adv_points::<D>(seed, count, attempts)))
-        {
-            Some((_seed, Some(result))) => return result,
-            Some((seed, None)) => {
-                #[cfg(not(feature = "bench-logging"))]
-                let _ = seed;
-                #[cfg(feature = "bench-logging")]
-                {
-                    warn!(
-                        known_seed = seed,
-                        dim = D,
-                        count,
-                        "known adversarial seed failed, falling back to runtime search"
-                    );
-                }
-            }
-            None => {}
+    if !discover_seeds_enabled()
+        && let Some(seed) = known_adv_seed(D, count)
+    {
+        if let Some(result) = stable_adv_points::<D>(seed, count, attempts) {
+            return result;
         }
+
+        warn_known_seed_failed::<D>(seed, count, Dataset::Adversarial);
     }
 
     let start_seed = dim_seed
@@ -787,7 +745,7 @@ fn seed_search_limit() -> usize {
 ///
 /// Macro to reduce duplication in dimensional benchmark functions
 macro_rules! benchmark_tds_new_dimension {
-    ($dim:literal, $func_name:ident, $seed:literal, $counts:expr) => {
+    ($dim:literal, $func_name:ident, $seed:literal, $count:expr) => {
         /// Benchmark triangulation creation for D-dimensional triangulations
         #[expect(
             clippy::too_many_lines,
@@ -795,20 +753,19 @@ macro_rules! benchmark_tds_new_dimension {
         )]
         fn $func_name(c: &mut Criterion) {
             print_manifest_once();
-            let counts = $counts;
+            let count = $count;
 
             // Opt-in helper for discovering stable seeds without paying Criterion warmup/
             // measurement cost per seed.
             //
-            // NOTE: This helper is intentionally per (dim, count) benchmark case.
+            // NOTE: This helper is intentionally per calibrated benchmark case.
             // It returns early on the first successful seed (and panics on failure),
-            // so it is meant to be run with a Criterion filter that selects a single
-            // case, for example:
+            // so it is meant to be run with a Criterion filter, for example:
             //
-            //     cargo bench --profile perf --bench ci_performance_suite -- 'tds_new_3d/tds_new/50'
+            //     cargo bench --profile perf --bench ci_performance_suite -- 'tds_new_3d/tds_new/700'
             //
-            // Because the base seed is derived from `count`, a seed that works for one
-            // count may still fail for a different count.
+            // The seed table should contain exactly this calibrated count for each
+            // dimension/dataset pair; runtime search is only a refresh fallback.
             //
             // We avoid `std::process::exit` here so that destructors run and Criterion
             // can clean up state on both success and failure.
@@ -819,44 +776,36 @@ macro_rules! benchmark_tds_new_dimension {
                     .filter(|arg| !arg.starts_with('-'))
                     .collect();
 
-                for &count in counts {
-                    let bench_id = format!("tds_new_{}d/tds_new/{}", stringify!($dim), count);
-                    let adv_bench_id =
-                        format!("tds_new_{}d/tds_new_adversarial/{}", stringify!($dim), count);
+                let bench_id = format!("tds_new_{}d/tds_new/{count}", stringify!($dim));
+                let adv_bench_id =
+                    format!("tds_new_{}d/tds_new_adversarial/{count}", stringify!($dim));
 
-                    if !filters.is_empty()
-                        && filters.iter().any(|filter| adv_bench_id.contains(filter))
+                if !filters.is_empty() && filters.iter().any(|filter| adv_bench_id.contains(filter))
+                {
+                    let attempts = retry_attempts(8);
+                    let _ = prepare_adv_data::<$dim>($seed, count, attempts);
+                    return;
+                }
+
+                if filters.is_empty() || filters.iter().any(|filter| bench_id.contains(filter)) {
+                    let seed = ($seed as u64).wrapping_add(count as u64);
+                    let limit = seed_search_limit();
+                    let attempts = retry_attempts(6);
+
+                    if let Some((candidate_seed, _, _)) =
+                        find_seed_vertices::<$dim>(seed, count, bounds, limit, attempts)
                     {
-                        let attempts = retry_attempts(8);
-                        let _ = prepare_adv_data::<$dim>($seed, count, attempts);
+                        println!(
+                            "seed_search_found dim={} count={} seed={}",
+                            $dim, count, candidate_seed
+                        );
                         return;
                     }
 
-                    if filters.is_empty()
-                        || filters.iter().any(|filter| bench_id.contains(filter))
-                    {
-                        let seed = ($seed as u64).wrapping_add(count as u64);
-                        let limit = seed_search_limit();
-                        let attempts = retry_attempts(6);
-
-                        if let Some((candidate_seed, _, _)) =
-                            find_seed_vertices::<$dim>(seed, count, bounds, limit, attempts)
-                        {
-                            println!(
-                                "seed_search_found dim={} count={} seed={}",
-                                $dim, count, candidate_seed
-                            );
-                            return;
-                        }
-
-                        abort_benchmark(format_args!(
-                            "seed_search_failed dim={} count={} start_seed={} limit={}",
-                            $dim,
-                            count,
-                            seed,
-                            limit
-                        ));
-                    }
+                    abort_benchmark(format_args!(
+                        "seed_search_failed dim={} count={} start_seed={} limit={}",
+                        $dim, count, seed, limit
+                    ));
                 }
 
                 // No filter matched this benchmark function; do nothing.
@@ -865,17 +814,14 @@ macro_rules! benchmark_tds_new_dimension {
 
             let mut group = c.benchmark_group(concat!("tds_new_", stringify!($dim), "d"));
 
-            // Set smaller sample sizes for higher dimensions to keep CI times reasonable
-            if $dim >= 4 {
-                group.sample_size(15); // Fewer samples for 4D and 5D
-            } else if $dim == 3 {
-                group.sample_size(25); // Medium sample size for 3D
-            }
+            // The calibrated construction cases are intentionally larger than
+            // the historical toy counts. Use Criterion's practical floor so
+            // the repeated samples stay suitable for PR regression checks.
+            group.sample_size(10);
 
-            for &count in counts {
-                group.throughput(Throughput::Elements(count as u64));
+            group.throughput(Throughput::Elements(count as u64));
 
-                group.bench_with_input(BenchmarkId::new("tds_new", count), &count, |b, &count| {
+            group.bench_with_input(BenchmarkId::new("tds_new", count), &count, |b, &count| {
                     // Reduce variance: pre-generate deterministic inputs outside the measured loop,
                     // then benchmark only triangulation construction.
                     let bounds = (-100.0, 100.0);
@@ -914,12 +860,12 @@ macro_rules! benchmark_tds_new_dimension {
                             }
                         }
                     });
-                });
+            });
 
-                group.bench_with_input(
-                    BenchmarkId::new("tds_new_adversarial", count),
-                    &count,
-                    |b, &count| {
+            group.bench_with_input(
+                BenchmarkId::new("tds_new_adversarial", count),
+                &count,
+                |b, &count| {
                         let attempts = retry_attempts(8);
                         let (seed, points, vertices) =
                             prepare_adv_data::<$dim>($seed, count, attempts);
@@ -951,9 +897,8 @@ macro_rules! benchmark_tds_new_dimension {
                                 }
                             }
                         });
-                    },
-                );
-            }
+                },
+            );
 
             group.finish();
         }
@@ -961,10 +906,10 @@ macro_rules! benchmark_tds_new_dimension {
 }
 
 // Generate benchmark functions using the macro
-benchmark_tds_new_dimension!(2, benchmark_tds_new_2d, 42, COUNTS);
-benchmark_tds_new_dimension!(3, benchmark_tds_new_3d, 123, COUNTS);
-benchmark_tds_new_dimension!(4, benchmark_tds_new_4d, 456, COUNTS);
-benchmark_tds_new_dimension!(5, benchmark_tds_new_5d, 789, COUNTS_5D);
+benchmark_tds_new_dimension!(2, benchmark_tds_new_2d, 42, CANARY_COUNT_2D);
+benchmark_tds_new_dimension!(3, benchmark_tds_new_3d, 123, CANARY_COUNT_3D);
+benchmark_tds_new_dimension!(4, benchmark_tds_new_4d, 456, CANARY_COUNT_4D);
+benchmark_tds_new_dimension!(5, benchmark_tds_new_5d, 789, CANARY_COUNT_5D);
 
 fn bench_boundary_case<const D: usize>(
     group: &mut BenchmarkGroup<'_, WallTime>,
@@ -1076,71 +1021,71 @@ fn benchmark_boundary_facets(c: &mut Criterion) {
     let mut group = c.benchmark_group("boundary_facets");
     group.sample_size(25);
 
-    let dt_2d = prepare_dt::<2>(42, OPERATION_COUNT);
+    let dt_2d = prepare_dt::<2>(42, CANARY_COUNT_2D);
     bench_boundary_case(
         &mut group,
         2,
         Dataset::WellConditioned,
-        OPERATION_COUNT,
+        CANARY_COUNT_2D,
         &dt_2d,
     );
-    let dt_2d_adversarial = prepare_adv_dt::<2>(42, OPERATION_COUNT);
+    let dt_2d_adversarial = prepare_adv_dt::<2>(42, CANARY_COUNT_2D);
     bench_boundary_case(
         &mut group,
         2,
         Dataset::Adversarial,
-        OPERATION_COUNT,
+        CANARY_COUNT_2D,
         &dt_2d_adversarial,
     );
 
-    let dt_3d = prepare_dt::<3>(123, OPERATION_COUNT);
+    let dt_3d = prepare_dt::<3>(123, CANARY_COUNT_3D);
     bench_boundary_case(
         &mut group,
         3,
         Dataset::WellConditioned,
-        OPERATION_COUNT,
+        CANARY_COUNT_3D,
         &dt_3d,
     );
-    let dt_3d_adversarial = prepare_adv_dt::<3>(123, OPERATION_COUNT);
+    let dt_3d_adversarial = prepare_adv_dt::<3>(123, CANARY_COUNT_3D);
     bench_boundary_case(
         &mut group,
         3,
         Dataset::Adversarial,
-        OPERATION_COUNT,
+        CANARY_COUNT_3D,
         &dt_3d_adversarial,
     );
 
-    let dt_4d = prepare_dt::<4>(456, OPERATION_COUNT);
+    let dt_4d = prepare_dt::<4>(456, CANARY_COUNT_4D);
     bench_boundary_case(
         &mut group,
         4,
         Dataset::WellConditioned,
-        OPERATION_COUNT,
+        CANARY_COUNT_4D,
         &dt_4d,
     );
-    let dt_4d_adversarial = prepare_adv_dt::<4>(456, OPERATION_COUNT);
+    let dt_4d_adversarial = prepare_adv_dt::<4>(456, CANARY_COUNT_4D);
     bench_boundary_case(
         &mut group,
         4,
         Dataset::Adversarial,
-        OPERATION_COUNT,
+        CANARY_COUNT_4D,
         &dt_4d_adversarial,
     );
 
-    let dt_5d = prepare_dt::<5>(789, OPERATION_COUNT_5D);
+    let dt_5d = prepare_dt::<5>(789, CANARY_COUNT_5D);
     bench_boundary_case(
         &mut group,
         5,
         Dataset::WellConditioned,
-        OPERATION_COUNT_5D,
+        CANARY_COUNT_5D,
         &dt_5d,
     );
-    let dt_5d_adversarial = prepare_adv_dt::<5>(789, OPERATION_COUNT_5D);
+    let dt_5d_adversarial = prepare_adv_dt::<5>(789, CANARY_COUNT_5D);
     bench_boundary_case(
         &mut group,
         5,
         Dataset::Adversarial,
-        OPERATION_COUNT_5D,
+        CANARY_COUNT_5D,
         &dt_5d_adversarial,
     );
 
@@ -1155,71 +1100,71 @@ fn benchmark_convex_hull(c: &mut Criterion) {
     let mut group = c.benchmark_group("convex_hull");
     group.sample_size(20);
 
-    let dt_2d = prepare_dt::<2>(42, OPERATION_COUNT);
+    let dt_2d = prepare_dt::<2>(42, CANARY_COUNT_2D);
     bench_hull_case(
         &mut group,
         2,
         Dataset::WellConditioned,
-        OPERATION_COUNT,
+        CANARY_COUNT_2D,
         &dt_2d,
     );
-    let dt_2d_adversarial = prepare_adv_dt::<2>(42, OPERATION_COUNT);
+    let dt_2d_adversarial = prepare_adv_dt::<2>(42, CANARY_COUNT_2D);
     bench_hull_case(
         &mut group,
         2,
         Dataset::Adversarial,
-        OPERATION_COUNT,
+        CANARY_COUNT_2D,
         &dt_2d_adversarial,
     );
 
-    let dt_3d = prepare_dt::<3>(123, OPERATION_COUNT);
+    let dt_3d = prepare_dt::<3>(123, CANARY_COUNT_3D);
     bench_hull_case(
         &mut group,
         3,
         Dataset::WellConditioned,
-        OPERATION_COUNT,
+        CANARY_COUNT_3D,
         &dt_3d,
     );
-    let dt_3d_adversarial = prepare_adv_dt::<3>(123, OPERATION_COUNT);
+    let dt_3d_adversarial = prepare_adv_dt::<3>(123, CANARY_COUNT_3D);
     bench_hull_case(
         &mut group,
         3,
         Dataset::Adversarial,
-        OPERATION_COUNT,
+        CANARY_COUNT_3D,
         &dt_3d_adversarial,
     );
 
-    let dt_4d = prepare_dt::<4>(456, OPERATION_COUNT);
+    let dt_4d = prepare_dt::<4>(456, CANARY_COUNT_4D);
     bench_hull_case(
         &mut group,
         4,
         Dataset::WellConditioned,
-        OPERATION_COUNT,
+        CANARY_COUNT_4D,
         &dt_4d,
     );
-    let dt_4d_adversarial = prepare_adv_dt::<4>(456, OPERATION_COUNT);
+    let dt_4d_adversarial = prepare_adv_dt::<4>(456, CANARY_COUNT_4D);
     bench_hull_case(
         &mut group,
         4,
         Dataset::Adversarial,
-        OPERATION_COUNT,
+        CANARY_COUNT_4D,
         &dt_4d_adversarial,
     );
 
-    let dt_5d = prepare_dt::<5>(789, OPERATION_COUNT_5D);
+    let dt_5d = prepare_dt::<5>(789, CANARY_COUNT_5D);
     bench_hull_case(
         &mut group,
         5,
         Dataset::WellConditioned,
-        OPERATION_COUNT_5D,
+        CANARY_COUNT_5D,
         &dt_5d,
     );
-    let dt_5d_adversarial = prepare_adv_dt::<5>(789, OPERATION_COUNT_5D);
+    let dt_5d_adversarial = prepare_adv_dt::<5>(789, CANARY_COUNT_5D);
     bench_hull_case(
         &mut group,
         5,
         Dataset::Adversarial,
-        OPERATION_COUNT_5D,
+        CANARY_COUNT_5D,
         &dt_5d_adversarial,
     );
 
@@ -1234,54 +1179,54 @@ fn benchmark_validation(c: &mut Criterion) {
     let mut group = c.benchmark_group("validation");
     group.sample_size(15);
 
-    let dt_3d = prepare_dt::<3>(123, OPERATION_COUNT);
+    let dt_3d = prepare_dt::<3>(123, CANARY_COUNT_3D);
     bench_validate_case(
         &mut group,
         3,
         Dataset::WellConditioned,
-        OPERATION_COUNT,
+        CANARY_COUNT_3D,
         &dt_3d,
     );
-    let dt_3d_adversarial = prepare_adv_dt::<3>(123, OPERATION_COUNT);
+    let dt_3d_adversarial = prepare_adv_dt::<3>(123, CANARY_COUNT_3D);
     bench_validate_case(
         &mut group,
         3,
         Dataset::Adversarial,
-        OPERATION_COUNT,
+        CANARY_COUNT_3D,
         &dt_3d_adversarial,
     );
 
-    let dt_4d = prepare_dt::<4>(456, OPERATION_COUNT);
+    let dt_4d = prepare_dt::<4>(456, CANARY_COUNT_4D);
     bench_validate_case(
         &mut group,
         4,
         Dataset::WellConditioned,
-        OPERATION_COUNT,
+        CANARY_COUNT_4D,
         &dt_4d,
     );
-    let dt_4d_adversarial = prepare_adv_dt::<4>(456, OPERATION_COUNT);
+    let dt_4d_adversarial = prepare_adv_dt::<4>(456, CANARY_COUNT_4D);
     bench_validate_case(
         &mut group,
         4,
         Dataset::Adversarial,
-        OPERATION_COUNT,
+        CANARY_COUNT_4D,
         &dt_4d_adversarial,
     );
 
-    let dt_5d = prepare_dt::<5>(789, OPERATION_COUNT_5D);
+    let dt_5d = prepare_dt::<5>(789, CANARY_COUNT_5D);
     bench_validate_case(
         &mut group,
         5,
         Dataset::WellConditioned,
-        OPERATION_COUNT_5D,
+        CANARY_COUNT_5D,
         &dt_5d,
     );
-    let dt_5d_adversarial = prepare_adv_dt::<5>(789, OPERATION_COUNT_5D);
+    let dt_5d_adversarial = prepare_adv_dt::<5>(789, CANARY_COUNT_5D);
     bench_validate_case(
         &mut group,
         5,
         Dataset::Adversarial,
-        OPERATION_COUNT_5D,
+        CANARY_COUNT_5D,
         &dt_5d_adversarial,
     );
 
@@ -1296,86 +1241,90 @@ fn benchmark_insert(c: &mut Criterion) {
     let mut group = c.benchmark_group("incremental_insert");
     group.sample_size(15);
 
-    let dt_2d = prepare_dt::<2>(42, OPERATION_COUNT);
-    let insert_2d = prepare_inserts::<2>(42, INSERT_COUNT, Dataset::WellConditioned);
+    let dt_2d = prepare_dt::<2>(42, CANARY_COUNT_2D);
+    let insert_2d = prepare_inserts::<2>(42, INSERT_BATCH_COUNT_2D_3D, Dataset::WellConditioned);
     bench_insert_case(
         &mut group,
         2,
         Dataset::WellConditioned,
-        INSERT_COUNT,
+        INSERT_BATCH_COUNT_2D_3D,
         &dt_2d,
         &insert_2d,
     );
-    let dt_2d_adversarial = prepare_adv_dt::<2>(42, OPERATION_COUNT);
-    let insert_2d_adversarial = prepare_inserts::<2>(42, INSERT_COUNT, Dataset::Adversarial);
+    let dt_2d_adversarial = prepare_adv_dt::<2>(42, CANARY_COUNT_2D);
+    let insert_2d_adversarial =
+        prepare_inserts::<2>(42, INSERT_BATCH_COUNT_2D_3D, Dataset::Adversarial);
     bench_insert_case(
         &mut group,
         2,
         Dataset::Adversarial,
-        INSERT_COUNT,
+        INSERT_BATCH_COUNT_2D_3D,
         &dt_2d_adversarial,
         &insert_2d_adversarial,
     );
 
-    let dt_3d = prepare_dt::<3>(123, OPERATION_COUNT);
-    let insert_3d = prepare_inserts::<3>(123, INSERT_COUNT, Dataset::WellConditioned);
+    let dt_3d = prepare_dt::<3>(123, CANARY_COUNT_3D);
+    let insert_3d = prepare_inserts::<3>(123, INSERT_BATCH_COUNT_2D_3D, Dataset::WellConditioned);
     bench_insert_case(
         &mut group,
         3,
         Dataset::WellConditioned,
-        INSERT_COUNT,
+        INSERT_BATCH_COUNT_2D_3D,
         &dt_3d,
         &insert_3d,
     );
-    let dt_3d_adversarial = prepare_adv_dt::<3>(123, OPERATION_COUNT);
-    let insert_3d_adversarial = prepare_inserts::<3>(123, INSERT_COUNT, Dataset::Adversarial);
+    let dt_3d_adversarial = prepare_adv_dt::<3>(123, CANARY_COUNT_3D);
+    let insert_3d_adversarial =
+        prepare_inserts::<3>(123, INSERT_BATCH_COUNT_2D_3D, Dataset::Adversarial);
     bench_insert_case(
         &mut group,
         3,
         Dataset::Adversarial,
-        INSERT_COUNT,
+        INSERT_BATCH_COUNT_2D_3D,
         &dt_3d_adversarial,
         &insert_3d_adversarial,
     );
 
-    let dt_4d = prepare_dt::<4>(456, OPERATION_COUNT);
-    let insert_4d = prepare_inserts::<4>(456, INSERT_COUNT_4D, Dataset::WellConditioned);
+    let dt_4d = prepare_dt::<4>(456, CANARY_COUNT_4D);
+    let insert_4d = prepare_inserts::<4>(456, INSERT_BATCH_COUNT_4D, Dataset::WellConditioned);
     bench_insert_case(
         &mut group,
         4,
         Dataset::WellConditioned,
-        INSERT_COUNT_4D,
+        INSERT_BATCH_COUNT_4D,
         &dt_4d,
         &insert_4d,
     );
-    let dt_4d_adversarial = prepare_adv_dt::<4>(456, OPERATION_COUNT);
-    let insert_4d_adversarial = prepare_inserts::<4>(456, INSERT_COUNT_4D, Dataset::Adversarial);
+    let dt_4d_adversarial = prepare_adv_dt::<4>(456, CANARY_COUNT_4D);
+    let insert_4d_adversarial =
+        prepare_inserts::<4>(456, INSERT_BATCH_COUNT_4D, Dataset::Adversarial);
     bench_insert_case(
         &mut group,
         4,
         Dataset::Adversarial,
-        INSERT_COUNT_4D,
+        INSERT_BATCH_COUNT_4D,
         &dt_4d_adversarial,
         &insert_4d_adversarial,
     );
 
-    let dt_5d = prepare_dt::<5>(789, OPERATION_COUNT_5D);
-    let insert_5d = prepare_inserts::<5>(789, INSERT_COUNT_5D, Dataset::WellConditioned);
+    let dt_5d = prepare_dt::<5>(789, CANARY_COUNT_5D);
+    let insert_5d = prepare_inserts::<5>(789, INSERT_BATCH_COUNT_5D, Dataset::WellConditioned);
     bench_insert_case(
         &mut group,
         5,
         Dataset::WellConditioned,
-        INSERT_COUNT_5D,
+        INSERT_BATCH_COUNT_5D,
         &dt_5d,
         &insert_5d,
     );
-    let dt_5d_adversarial = prepare_adv_dt::<5>(789, OPERATION_COUNT_5D);
-    let insert_5d_adversarial = prepare_inserts::<5>(789, INSERT_COUNT_5D, Dataset::Adversarial);
+    let dt_5d_adversarial = prepare_adv_dt::<5>(789, CANARY_COUNT_5D);
+    let insert_5d_adversarial =
+        prepare_inserts::<5>(789, INSERT_BATCH_COUNT_5D, Dataset::Adversarial);
     bench_insert_case(
         &mut group,
         5,
         Dataset::Adversarial,
-        INSERT_COUNT_5D,
+        INSERT_BATCH_COUNT_5D,
         &dt_5d_adversarial,
         &insert_5d_adversarial,
     );

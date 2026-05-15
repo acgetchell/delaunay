@@ -14,12 +14,22 @@ snapshots live in [`archive/`](archive/).
 
 ## Performance
 
-- **3D 10K monitoring (#310/#341):** keep the release-mode 10,000-vertex
-  acceptance harness near the around-100-second maintainer-hardware envelope,
-  and profile before making further targeted hot-path changes.
-- **4D large-scale characterization (#204):** characterize the 3000-point
-  release-mode debug harness and decide whether that scenario belongs in
-  automated regression coverage or remains a manual investigation recipe.
+- **2D-5D shared large-scale monitoring (#340/#341/#342):** keep
+  `just debug-large-scale-{2,3,4,5}d [n] [repair_every]` aligned so
+  performance work is measured across the supported small-dimensional range
+  instead of tuned for one dimension at another's expense. The current defaults
+  are calibrated as roughly one-minute release-mode runs on maintainer hardware:
+  2D=40,000, 3D=8,000, 4D=900, and 5D=150.
+- **Criterion performance canaries:** keep smaller `ci_performance_suite`
+  canaries for the same construction path so PR regression checks remain
+  practical under Criterion's repeated sampling model.
+- **4D large-scale monitoring (#204/#340):** keep the 3000-point release-mode
+  debug harness as an optional manual investigation recipe; its multi-minute
+  runtime is too large for routine CI.
+- **5D feasibility (#342):** keep the 150-point release-mode harness as the
+  current practical 5D baseline while optimizing toward the 1000-point target.
+  The 200-vertex case is a useful heavier probe but currently sits closer to
+  two minutes than one.
 
 ## API and Documentation
 

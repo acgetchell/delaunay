@@ -181,6 +181,25 @@ pub enum TdsValidationFailure {
         message: String,
     },
 
+    /// A candidate cell would make a facet incident to too many cells.
+    #[error(
+        "facet {facet_key} would have {attempted_incident_count} incident cells after inserting candidate cell {candidate_cell_uuid} facet {candidate_facet_index}; max is {max_incident_count} (currently {existing_incident_count})"
+    )]
+    FacetSharingViolation {
+        /// Canonical key of the over-shared facet.
+        facet_key: u64,
+        /// Number of existing cells already incident to the facet.
+        existing_incident_count: usize,
+        /// Number of incident cells that would exist after inserting the candidate.
+        attempted_incident_count: usize,
+        /// Maximum allowed number of incident cells for a PL-manifold facet.
+        max_incident_count: usize,
+        /// UUID of the candidate cell being inserted.
+        candidate_cell_uuid: uuid::Uuid,
+        /// Facet index on the candidate cell.
+        candidate_facet_index: usize,
+    },
+
     /// Cell creation failed inside TDS validation.
     #[error("failed to create cell: {message}")]
     FailedToCreateCell {
@@ -320,6 +339,21 @@ impl From<TdsError> for TdsValidationFailure {
                 expected_odd_permutation,
             },
             TdsError::DuplicateCells { message } => Self::DuplicateCells { message },
+            TdsError::FacetSharingViolation {
+                facet_key,
+                existing_incident_count,
+                attempted_incident_count,
+                max_incident_count,
+                candidate_cell_uuid,
+                candidate_facet_index,
+            } => Self::FacetSharingViolation {
+                facet_key,
+                existing_incident_count,
+                attempted_incident_count,
+                max_incident_count,
+                candidate_cell_uuid,
+                candidate_facet_index,
+            },
             TdsError::FailedToCreateCell { message } => Self::FailedToCreateCell { message },
             TdsError::NotNeighbors { cell1, cell2 } => Self::NotNeighbors { cell1, cell2 },
             TdsError::MappingInconsistency { entity, message } => {
@@ -1645,14 +1679,81 @@ impl InsertionError {
 /// let new_cells = fill_cavity(&mut tds, vkey, &boundary_facets).unwrap();
 /// assert!(new_cells.is_empty());
 /// ```
-#[expect(
-    clippy::too_many_lines,
-    reason = "Cavity filling includes detailed debug instrumentation and error handling"
-)]
 pub fn fill_cavity<T, U, V, const D: usize>(
     tds: &mut Tds<T, U, V, D>,
     new_vertex_key: VertexKey,
     boundary_facets: &[FacetHandle],
+) -> Result<CellKeyBuffer, InsertionError>
+where
+    T: CoordinateScalar,
+    U: DataType,
+    V: DataType,
+{
+    fill_cavity_impl(
+        tds,
+        new_vertex_key,
+        boundary_facets,
+        CavityInsertionTopology::Checked,
+    )
+}
+
+/// Fills a replacement cavity using the transactional replacement insertion path.
+pub(crate) fn fill_cavity_replacing_cells<T, U, V, const D: usize>(
+    tds: &mut Tds<T, U, V, D>,
+    new_vertex_key: VertexKey,
+    boundary_facets: &[FacetHandle],
+) -> Result<CellKeyBuffer, InsertionError>
+where
+    T: CoordinateScalar,
+    U: DataType,
+    V: DataType,
+{
+    fill_cavity_impl(
+        tds,
+        new_vertex_key,
+        boundary_facets,
+        CavityInsertionTopology::Prechecked,
+    )
+}
+
+/// Fills a caller-validated cavity without per-cell global insertion scans.
+fn fill_cavity_with_prechecked_topology<T, U, V, const D: usize>(
+    tds: &mut Tds<T, U, V, D>,
+    new_vertex_key: VertexKey,
+    boundary_facets: &[FacetHandle],
+) -> Result<CellKeyBuffer, InsertionError>
+where
+    T: CoordinateScalar,
+    U: DataType,
+    V: DataType,
+{
+    fill_cavity_impl(
+        tds,
+        new_vertex_key,
+        boundary_facets,
+        CavityInsertionTopology::Prechecked,
+    )
+}
+
+/// Topology-check mode used while filling new cavity cells.
+#[derive(Clone, Copy)]
+enum CavityInsertionTopology {
+    /// Run the standard TDS insertion checks against every existing cell.
+    Checked,
+    /// Skip global insertion scans because the caller validated the local boundary.
+    Prechecked,
+}
+
+/// Shared cavity-fill implementation for checked, replacement, and prechecked insertions.
+#[expect(
+    clippy::too_many_lines,
+    reason = "Cavity filling includes detailed debug instrumentation and error handling"
+)]
+fn fill_cavity_impl<T, U, V, const D: usize>(
+    tds: &mut Tds<T, U, V, D>,
+    new_vertex_key: VertexKey,
+    boundary_facets: &[FacetHandle],
+    insertion_topology: CavityInsertionTopology,
 ) -> Result<CellKeyBuffer, InsertionError>
 where
     T: CoordinateScalar,
@@ -1842,9 +1943,15 @@ where
 
         // Create and insert the new cell
         let new_cell = Cell::new(new_cell_vertices, None).map_err(CavityFillingError::from)?;
-        let cell_key = tds
-            .insert_cell_with_mapping_trusted_vertices(new_cell)
-            .map_err(CavityFillingError::from)?;
+        let cell_key = match insertion_topology {
+            CavityInsertionTopology::Checked => {
+                tds.insert_cell_with_mapping_trusted_vertices(new_cell)
+            }
+            CavityInsertionTopology::Prechecked => {
+                tds.insert_cell_with_mapping_prechecked_topology(new_cell)
+            }
+        }
+        .map_err(InsertionError::from)?;
 
         // Cell creation provenance: log each newly created cell with its
         // vertex ordering, geometric orientation, and source boundary facet.
@@ -3231,7 +3338,7 @@ where
 
         let external_facets = external_facets_for_boundary(tds, &conflict_cells, &boundary_facets)?;
 
-        let new_cells = fill_cavity(tds, new_vertex_key, &boundary_facets)?;
+        let new_cells = fill_cavity_replacing_cells(tds, new_vertex_key, &boundary_facets)?;
         wire_cavity_neighbors(
             tds,
             &new_cells,
@@ -3272,8 +3379,10 @@ where
         });
     }
 
-    // Fill cavity with new cells
-    let new_cells = fill_cavity(tds, new_vertex_key, &visible_facets)?;
+    // Visible hull facets are boundary facets. The new apex cannot already
+    // appear in existing cells, and internal facets are checked when wiring
+    // the new cells below, so avoid a global insertion scan per hull facet.
+    let new_cells = fill_cavity_with_prechecked_topology(tds, new_vertex_key, &visible_facets)?;
 
     // Wire neighbors using comprehensive facet matching
     // For hull extension, no conflict cells (nothing is removed)
@@ -4335,7 +4444,9 @@ mod tests {
             .insert_cell_with_mapping(Cell::new(vec![v1, v0, v3], None).unwrap())
             .unwrap();
         let external_cell = tds
-            .insert_cell_with_mapping(Cell::new(vec![v0, v1, v4], None).unwrap())
+            .insert_cell_bypassing_topology_checks_for_test(
+                Cell::new(vec![v0, v1, v4], None).unwrap(),
+            )
             .unwrap();
 
         let mut new_cells = CellKeyBuffer::new();
@@ -4524,7 +4635,9 @@ mod tests {
             .insert_cell_with_mapping(Cell::new(vec![v_a, v_b, v_d], None).unwrap())
             .unwrap();
         let c3 = tds
-            .insert_cell_with_mapping(Cell::new(vec![v_a, v_b, v_e], None).unwrap())
+            .insert_cell_bypassing_topology_checks_for_test(
+                Cell::new(vec![v_a, v_b, v_e], None).unwrap(),
+            )
             .unwrap();
 
         let mut new_cells = CellKeyBuffer::new();
@@ -5396,14 +5509,18 @@ mod tests {
                     }
 
                     let mut cell_keys = Vec::new();
-                    for vertex in opposite_vertices {
+                    for (idx, vertex) in opposite_vertices.into_iter().enumerate() {
                         let opposite_key = tds.insert_vertex_with_mapping(vertex).unwrap();
                         let mut vertices = shared_keys.clone();
                         vertices.push(opposite_key);
-                        cell_keys.push(
-                            tds.insert_cell_with_mapping(Cell::new(vertices, None).unwrap())
-                                .unwrap(),
-                        );
+                        let cell = Cell::new(vertices, None).unwrap();
+                        let cell_key = if idx < 2 {
+                            tds.insert_cell_with_mapping(cell)
+                        } else {
+                            tds.insert_cell_bypassing_topology_checks_for_test(cell)
+                        }
+                        .unwrap();
+                        cell_keys.push(cell_key);
                     }
 
                     let err = repair_neighbor_pointers_local(&mut tds, &cell_keys, None).unwrap_err();
