@@ -61,7 +61,7 @@ fn repair_fallback_produces_valid_triangulation() {
     let mut candidate_facets = Vec::new();
     for (cell_key, cell) in dt.cells() {
         if let Some(neighbors) = cell.neighbors() {
-            for (index, neighbor) in neighbors.iter().enumerate() {
+            for (index, neighbor) in neighbors.enumerate() {
                 if neighbor.is_some() {
                     let facet_index = u8::try_from(index).expect("2D facet index fits in u8");
                     candidate_facets.push(FacetHandle::new(cell_key, facet_index));

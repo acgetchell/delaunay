@@ -30,7 +30,7 @@ use crate::core::algorithms::flips::DelaunayRepairError;
 use crate::core::algorithms::locate::{
     ConflictError, LocateError, LocateResult, extract_cavity_boundary,
 };
-use crate::core::cell::{Cell, CellValidationError};
+use crate::core::cell::{Cell, CellValidationError, NeighborSlot};
 use crate::core::collections::{
     CellKeyBuffer, FastHashMap, FastHashSet, FastHasher, MAX_PRACTICAL_DIMENSION_SIZE, SmallBuffer,
     VertexKeyBuffer,
@@ -2282,14 +2282,14 @@ where
             let Some(cell) = tds.cell(cell_key) else {
                 continue;
             };
-            let Some(neighbors) = cell.neighbors() else {
+            let Some(neighbors) = cell.neighbor_keys() else {
                 continue;
             };
-            for (facet_idx, neighbor_opt) in neighbors.iter().enumerate() {
+            for (facet_idx, neighbor_opt) in neighbors.enumerate() {
                 let Some(neighbor_key) = neighbor_opt else {
                     continue;
                 };
-                let Some(neighbor_cell) = tds.cell(*neighbor_key) else {
+                let Some(neighbor_cell) = tds.cell(neighbor_key) else {
                     continue;
                 };
                 let Some(mirror_idx) = cell.mirror_facet_index(facet_idx, neighbor_cell) else {
@@ -2302,9 +2302,7 @@ where
                     );
                     continue;
                 };
-                let neighbor_back = neighbor_cell
-                    .neighbors()
-                    .and_then(|ns| ns.get(mirror_idx).copied().flatten());
+                let neighbor_back = neighbor_cell.neighbor_key(mirror_idx).flatten();
                 if neighbor_back != Some(cell_key) {
                     mismatches += 1;
                     tracing::warn!(
@@ -2343,30 +2341,30 @@ where
             let vertex_count = cell.number_of_vertices();
             total_slots = total_slots.saturating_add(vertex_count);
 
-            let Some(neighbors) = cell.neighbors() else {
+            let Some(neighbors) = cell.neighbor_keys() else {
                 neighbor_none = neighbor_none.saturating_add(vertex_count);
                 continue;
             };
 
-            for (facet_idx, neighbor_opt) in neighbors.iter().enumerate() {
+            for (facet_idx, neighbor_opt) in neighbors.enumerate() {
                 match neighbor_opt {
                     None => {
                         neighbor_none = neighbor_none.saturating_add(1);
                     }
                     Some(neighbor_key) => {
-                        if new_cells_set.contains(neighbor_key) {
+                        if new_cells_set.contains(&neighbor_key) {
                             neighbor_new = neighbor_new.saturating_add(1);
-                        } else if conflict_set.contains(neighbor_key) {
+                        } else if conflict_set.contains(&neighbor_key) {
                             neighbor_conflict = neighbor_conflict.saturating_add(1);
                             if anomaly_samples.len() < 10 {
                                 anomaly_samples.push((
                                     cell_key,
                                     facet_idx,
-                                    Some(*neighbor_key),
+                                    Some(neighbor_key),
                                     "CONFLICT".to_string(),
                                 ));
                             }
-                        } else if tds.contains_cell(*neighbor_key) {
+                        } else if tds.contains_cell(neighbor_key) {
                             neighbor_existing = neighbor_existing.saturating_add(1);
                         } else {
                             neighbor_missing = neighbor_missing.saturating_add(1);
@@ -2374,7 +2372,7 @@ where
                                 anomaly_samples.push((
                                     cell_key,
                                     facet_idx,
-                                    Some(*neighbor_key),
+                                    Some(neighbor_key),
                                     "MISSING".to_string(),
                                 ));
                             }
@@ -2470,11 +2468,11 @@ where
         let cell = tds
             .cell(cell_key)
             .ok_or(NeighborWiringError::MissingCell { cell_key })?;
-        let Some(neighbors) = cell.neighbors() else {
+        let Some(neighbors) = cell.neighbor_keys() else {
             continue;
         };
 
-        for &neighbor_opt in neighbors {
+        for neighbor_opt in neighbors {
             let Some(neighbor_key) = neighbor_opt else {
                 continue;
             };
@@ -2531,14 +2529,18 @@ where
     let cell = tds
         .cell_mut(cell_key)
         .ok_or(NeighborWiringError::MissingCell { cell_key })?;
+    let facet_idx = usize::from(facet_idx);
+    if facet_idx >= cell.number_of_vertices() {
+        return Err(NeighborWiringError::InvalidFacetIndex {
+            cell_key,
+            facet_index: facet_idx,
+            vertex_count: cell.number_of_vertices(),
+        }
+        .into());
+    }
 
-    let mut neighbors = cell.neighbors().map_or_else(
-        || SmallBuffer::from_elem(None, D + 1),
-        |n| n.iter().copied().collect(),
-    );
-
-    neighbors[usize::from(facet_idx)] = neighbor;
-    cell.neighbors = Some(neighbors);
+    let neighbors = cell.ensure_neighbors_buffer_mut();
+    neighbors[facet_idx] = NeighborSlot::from_neighbor_key(neighbor);
 
     Ok(())
 }
@@ -2658,7 +2660,7 @@ where
 /// let (cell_key, facet_idx, neighbor_key) = tds
 ///     .cells()
 ///     .find_map(|(cell_key, cell)| {
-///         cell.neighbors()?.iter().enumerate().find_map(|(facet_idx, neighbor)| {
+///         cell.neighbors()?.enumerate().find_map(|(facet_idx, neighbor)| {
 ///             neighbor.map(|neighbor_key| (cell_key, facet_idx, neighbor_key))
 ///         })
 ///     })
@@ -2670,10 +2672,7 @@ where
 /// assert!(repaired >= 2);
 /// assert_eq!(
 ///     tds.cell(cell_key)
-///         .and_then(|cell| cell.neighbors())
-///         .and_then(|neighbors| neighbors.get(facet_idx))
-///         .copied()
-///         .flatten(),
+///         .and_then(|cell| cell.neighbor_key(facet_idx).flatten()),
 ///     Some(neighbor_key)
 /// );
 /// # Ok(())
@@ -2719,10 +2718,10 @@ where
         let Some(cell) = tds.cell(cell_key) else {
             continue;
         };
-        let Some(neighbors) = cell.neighbors() else {
+        let Some(neighbors) = cell.neighbor_keys() else {
             continue;
         };
-        for &neighbor_key in neighbors.iter().flatten() {
+        for neighbor_key in neighbors.flatten() {
             if tds.contains_cell(neighbor_key) {
                 affected_cells.insert(neighbor_key);
             }
@@ -2776,13 +2775,13 @@ where
                 .ok_or(NeighborWiringError::MissingCell { cell_key })?;
             let vertex_count = cell.number_of_vertices();
             let old_neighbors: SmallBuffer<Option<CellKey>, MAX_PRACTICAL_DIMENSION_SIZE> =
-                cell.neighbors().map_or_else(
+                cell.neighbor_keys().map_or_else(
                     || SmallBuffer::from_elem(None, vertex_count),
                     |neighbors| {
-                        let mut copied: SmallBuffer<Option<CellKey>, MAX_PRACTICAL_DIMENSION_SIZE> =
-                            neighbors.iter().copied().collect();
-                        copied.resize(vertex_count, None);
-                        copied
+                        let mut old_neighbors = SmallBuffer::new();
+                        old_neighbors.extend(neighbors);
+                        old_neighbors.resize(vertex_count, None);
+                        old_neighbors
                     },
                 );
 
@@ -2852,11 +2851,7 @@ where
         let cell = tds
             .cell_mut(cell_key)
             .ok_or(NeighborWiringError::MissingCell { cell_key })?;
-        if rebuilt_neighbors.iter().all(Option::is_none) {
-            cell.neighbors = None;
-        } else {
-            cell.neighbors = Some(rebuilt_neighbors);
-        }
+        cell.set_neighbors_from_keys(rebuilt_neighbors);
     }
 
     #[cfg(debug_assertions)]
@@ -3026,9 +3021,9 @@ where
                 .cell(cell_key)
                 .ok_or(NeighborWiringError::MissingCell { cell_key })?;
 
-            cell.neighbors().map_or_else(
+            cell.neighbor_keys().map_or_else(
                 || SmallBuffer::from_elem(None, rebuilt.len()),
-                |ns| ns.iter().copied().collect(),
+                Iterator::collect,
             )
         };
 
@@ -3044,11 +3039,7 @@ where
             .cell_mut(cell_key)
             .ok_or(NeighborWiringError::MissingCell { cell_key })?;
 
-        if rebuilt.iter().all(Option::is_none) {
-            cell.neighbors = None;
-        } else {
-            cell.neighbors = Some(rebuilt);
-        }
+        cell.set_neighbors_from_keys(rebuilt);
     }
 
     #[cfg(debug_assertions)]
@@ -3101,11 +3092,11 @@ where
                 .cell(current)
                 .ok_or(NeighborWiringError::MissingCell { cell_key: current })?;
 
-            let Some(neighbors) = cell.neighbors() else {
+            let Some(neighbors) = cell.neighbor_keys() else {
                 continue;
             };
 
-            for &neighbor_opt in neighbors {
+            for neighbor_opt in neighbors {
                 let Some(neighbor_key) = neighbor_opt else {
                     continue;
                 };
@@ -3163,11 +3154,11 @@ where
                 .cell(current)
                 .ok_or(NeighborWiringError::MissingCell { cell_key: current })?;
 
-            let Some(neighbors) = cell.neighbors() else {
+            let Some(neighbors) = cell.neighbor_keys() else {
                 continue;
             };
 
-            for &neighbor_opt in neighbors {
+            for neighbor_opt in neighbors {
                 let Some(neighbor_key) = neighbor_opt else {
                     continue;
                 };
@@ -3215,11 +3206,11 @@ where
         let cell = tds
             .cell(cell_key)
             .ok_or(NeighborWiringError::MissingCell { cell_key })?;
-        let Some(neighbors) = cell.neighbors() else {
+        let Some(neighbors) = cell.neighbor_keys() else {
             continue;
         };
 
-        for (facet_idx, &neighbor_opt) in neighbors.iter().enumerate() {
+        for (facet_idx, neighbor_opt) in neighbors.enumerate() {
             let Some(neighbor_key) = neighbor_opt else {
                 continue;
             };
@@ -3237,13 +3228,8 @@ where
             };
 
             let mirror_facet_index = cell.mirror_facet_index(facet_idx, neighbor_cell);
-            let neighbor_back = mirror_facet_index.and_then(|mirror_idx| {
-                neighbor_cell
-                    .neighbors()
-                    .and_then(|neighbor_neighbors| neighbor_neighbors.get(mirror_idx))
-                    .copied()
-                    .flatten()
-            });
+            let neighbor_back = mirror_facet_index
+                .and_then(|mirror_idx| neighbor_cell.neighbor_key(mirror_idx).flatten());
 
             if neighbor_back != Some(cell_key) {
                 return Err(NeighborWiringError::AsymmetricNeighbor {
@@ -4155,10 +4141,10 @@ mod tests {
         V: DataType,
     {
         for (cell_key, cell) in tds.cells() {
-            let Some(neighbors) = cell.neighbors() else {
+            let Some(neighbors) = cell.neighbor_keys() else {
                 continue;
             };
-            for (facet_idx, &neighbor_opt) in neighbors.iter().enumerate() {
+            for (facet_idx, neighbor_opt) in neighbors.enumerate() {
                 let Some(neighbor_key) = neighbor_opt else {
                     continue;
                 };
@@ -4514,8 +4500,9 @@ mod tests {
             .insert_cell_with_mapping(Cell::new(vec![v0, v1, v2], None).unwrap())
             .unwrap();
         let missing_neighbor = CellKey::from(KeyData::from_ffi(u64::MAX - 1));
-        tds.cell_mut(cell_key).unwrap().neighbors =
-            Some(vec![Some(missing_neighbor), None, None].into());
+        tds.cell_mut(cell_key)
+            .unwrap()
+            .set_neighbors_from_keys(vec![Some(missing_neighbor), None, None]);
 
         let mut internal_cells = CellKeyBuffer::new();
         internal_cells.push(cell_key);
@@ -5400,7 +5387,7 @@ mod tests {
                     // Verify all neighbor pointers are initially valid
                     for (_, cell) in tds.cells() {
                         if let Some(neighbors) = cell.neighbors() {
-                            for &neighbor_opt in neighbors {
+                            for neighbor_opt in neighbors {
                                 if let Some(neighbor_key) = neighbor_opt {
                                     assert!(tds.contains_cell(neighbor_key), "Neighbor should exist");
                                 }
@@ -5415,7 +5402,7 @@ mod tests {
                     // Verify all pointers still valid after repair
                     for (_, cell) in tds.cells() {
                         if let Some(neighbors) = cell.neighbors() {
-                            for &neighbor_opt in neighbors {
+                            for neighbor_opt in neighbors {
                                 if let Some(neighbor_key) = neighbor_opt {
                                     assert!(tds.contains_cell(neighbor_key), "Neighbor should still exist after repair");
                                 }
@@ -5496,9 +5483,10 @@ mod tests {
             "Expected at least one neighbor pointer to be repaired"
         );
 
-        let any_internal_neighbor = tds
-            .cells()
-            .any(|(_, c)| c.neighbors().is_some_and(|n| n.iter().any(Option::is_some)));
+        let any_internal_neighbor = tds.cells().any(|(_, c)| {
+            c.neighbors()
+                .is_some_and(|mut n| n.any(|neighbor| neighbor.is_some()))
+        });
         assert!(
             any_internal_neighbor,
             "Expected at least one internal neighbor after repair"
@@ -5530,10 +5518,7 @@ mod tests {
                     assert_eq!(repaired, 1);
                     let cell = tds.cell(cell_key).unwrap();
                     assert_eq!(
-                        cell.neighbors()
-                            .and_then(|neighbors| neighbors.get(usize::from(facet_idx)))
-                            .copied()
-                            .flatten(),
+                        cell.neighbor_key(usize::from(facet_idx)).flatten(),
                         Some(neighbor_key)
                     );
                     assert!(tds.is_valid().is_ok());
@@ -5683,10 +5668,7 @@ mod tests {
         assert_eq!(repaired, 1);
         let cell = tds.cell(cell_key).unwrap();
         assert_eq!(
-            cell.neighbors()
-                .and_then(|neighbors| neighbors.get(usize::from(facet_idx)))
-                .copied()
-                .flatten(),
+            cell.neighbor_key(usize::from(facet_idx)).flatten(),
             Some(neighbor_key)
         );
         assert!(tds.is_valid().is_ok());
@@ -5732,13 +5714,7 @@ mod tests {
 
         assert_eq!(repaired, 1);
         let cell = tds.cell(c1).unwrap();
-        assert_eq!(
-            cell.neighbors()
-                .and_then(|neighbors| neighbors.get(shared_facet_idx))
-                .copied()
-                .flatten(),
-            Some(c2)
-        );
+        assert_eq!(cell.neighbor_key(shared_facet_idx).flatten(), Some(c2));
     }
 
     #[test]
@@ -5761,13 +5737,7 @@ mod tests {
 
         assert_eq!(repaired, 0);
         let cell = tds.cell(cell_key).unwrap();
-        assert_eq!(
-            cell.neighbors()
-                .and_then(|neighbors| neighbors.get(usize::from(facet_idx)))
-                .copied()
-                .flatten(),
-            None
-        );
+        assert_eq!(cell.neighbor_key(usize::from(facet_idx)).flatten(), None);
 
         // The global repair still sees the missing slot, proving the local path was scoped.
         assert!(repair_neighbor_pointers(tds).unwrap() > 0);
@@ -5887,6 +5857,29 @@ mod tests {
             err,
             InsertionError::NeighborWiring {
                 reason: NeighborWiringError::MissingCell { .. },
+            }
+        ));
+    }
+
+    #[test]
+    fn test_set_neighbor_errors_on_invalid_facet_index() {
+        let mut tds: Tds<f64, (), (), 2> = Tds::empty();
+        let v0 = tds.insert_vertex_with_mapping(vertex!([0.0, 0.0])).unwrap();
+        let v1 = tds.insert_vertex_with_mapping(vertex!([1.0, 0.0])).unwrap();
+        let v2 = tds.insert_vertex_with_mapping(vertex!([0.0, 1.0])).unwrap();
+        let cell_key = tds
+            .insert_cell_with_mapping(Cell::new(vec![v0, v1, v2], None).unwrap())
+            .unwrap();
+
+        let err = set_neighbor(&mut tds, cell_key, 3, None).unwrap_err();
+        assert!(matches!(
+            err,
+            InsertionError::NeighborWiring {
+                reason: NeighborWiringError::InvalidFacetIndex {
+                    facet_index: 3,
+                    vertex_count: 3,
+                    ..
+                },
             }
         ));
     }

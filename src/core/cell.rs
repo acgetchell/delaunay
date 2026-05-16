@@ -141,6 +141,14 @@ pub enum CellValidationError {
         /// The dimension D.
         dimension: usize,
     },
+    /// An assigned neighbor buffer contains an unassigned slot.
+    #[error(
+        "Unassigned neighbor slot at facet {facet_index}; assigned neighbor buffers must contain only boundary or neighbor slots"
+    )]
+    UnassignedNeighborSlot {
+        /// Facet slot that is still unassigned.
+        facet_index: usize,
+    },
     /// The periodic offset list is not aligned with the cell's vertex list.
     #[error("Periodic offset length mismatch: got {found}, expected {expected}")]
     PeriodicOffsetLengthMismatch {
@@ -185,6 +193,77 @@ where
         }
     }
     cmp::Ordering::Equal
+}
+
+/// A typed neighbor slot for a cell facet.
+///
+/// This distinguishes the TDS states that nested `Option` storage used to blur:
+/// a neighbor buffer can be unassigned, a facet can be assigned as a boundary,
+/// or a facet can point at a neighboring cell.
+///
+/// # Examples
+///
+/// ```rust
+/// use delaunay::prelude::tds::{CellKey, NeighborSlot};
+/// use slotmap::KeyData;
+///
+/// let key = CellKey::from(KeyData::from_ffi(1));
+///
+/// assert_eq!(
+///     NeighborSlot::from_neighbor_key(Some(key)),
+///     NeighborSlot::Neighbor(key)
+/// );
+/// assert!(NeighborSlot::from_neighbor_key(None).is_boundary());
+/// assert!(NeighborSlot::Unassigned.is_unassigned());
+/// assert_eq!(NeighborSlot::Boundary.cell_key(), None);
+/// ```
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub enum NeighborSlot {
+    /// The facet slot has not been assigned by the TDS neighbor builder.
+    Unassigned,
+    /// The facet is assigned and lies on the boundary.
+    Boundary,
+    /// The facet is assigned and has a neighboring cell.
+    Neighbor(CellKey),
+}
+
+impl NeighborSlot {
+    /// Converts an optional neighbor key into an assigned neighbor slot.
+    ///
+    /// `Some(key)` becomes [`Neighbor`](Self::Neighbor); `None` becomes
+    /// [`Boundary`](Self::Boundary), not [`Unassigned`](Self::Unassigned).
+    #[inline]
+    #[must_use]
+    pub const fn from_neighbor_key(neighbor: Option<CellKey>) -> Self {
+        match neighbor {
+            Some(cell_key) => Self::Neighbor(cell_key),
+            None => Self::Boundary,
+        }
+    }
+
+    /// Returns the neighboring cell key when this slot has one.
+    #[inline]
+    #[must_use]
+    pub const fn cell_key(self) -> Option<CellKey> {
+        match self {
+            Self::Neighbor(cell_key) => Some(cell_key),
+            Self::Boundary | Self::Unassigned => None,
+        }
+    }
+
+    /// Returns whether the slot is an assigned boundary facet.
+    #[inline]
+    #[must_use]
+    pub const fn is_boundary(self) -> bool {
+        matches!(self, Self::Boundary)
+    }
+
+    /// Returns whether the slot has not been assigned by the TDS.
+    #[inline]
+    #[must_use]
+    pub const fn is_unassigned(self) -> bool {
+        matches!(self, Self::Unassigned)
+    }
 }
 
 // =============================================================================
@@ -251,8 +330,7 @@ pub struct Cell<T, U, V, const D: usize> {
     /// The unique identifier of the cell.
     uuid: Uuid,
 
-    /// Keys to neighboring cells, indexed by opposite vertex.
-    /// Phase 3A: Changed from `Option<Vec<Option<Uuid>>>` to `Option<NeighborBuffer<Option<CellKey>>>`.
+    /// Typed neighboring-cell slots, indexed by opposite vertex.
     ///
     /// Positional semantics: `neighbors[i]` is the neighbor opposite `vertices[i]`.
     ///
@@ -264,8 +342,8 @@ pub struct Cell<T, U, V, const D: usize> {
     /// - `neighbors[3]` is opposite `vertices[3]` (shares vertices 0, 1, 2)
     ///
     /// Note: Not serialized — neighbors are reconstructed during deserialization by the TDS.
-    /// Access via `neighbors()` method. Writable by TDS for neighbor assignment.
-    pub(crate) neighbors: Option<NeighborBuffer<Option<CellKey>>>,
+    /// Access via `neighbor_slots()` or `neighbors()`. Mutation goes through TDS-owned helpers.
+    neighbors: Option<NeighborBuffer<NeighborSlot>>,
 
     /// The optional data associated with the cell.
     pub(crate) data: Option<V>,
@@ -569,16 +647,21 @@ impl<T, U, V, const D: usize> Cell<T, U, V, D> {
         self.vertices.iter().enumerate()
     }
 
-    /// Returns the neighbor keys for this cell.
+    /// Returns the neighbor keys for this cell without allocating.
     ///
     /// # Phase 3A
     ///
     /// Neighbors are stored as keys (not UUIDs) for direct TDS access.
-    /// The positional semantics: `neighbors()[i]` is the neighbor opposite `vertices()[i]`.
+    /// The positional semantics: `neighbor_key(i)` is the neighbor opposite `vertices()[i]`.
     ///
     /// # Returns
     ///
-    /// An `Option` containing neighbor keys if they have been assigned, or `None` otherwise.
+    /// An `Option` containing an iterator over assigned neighbor keys, or
+    /// `None` if neighbor slots have not been assigned. Inside an assigned
+    /// buffer, `Some(key)` is a neighboring cell and `None` is an assigned
+    /// boundary facet. Use [`neighbor_slots`](Self::neighbor_slots) when
+    /// callers need to distinguish an unassigned neighbor buffer from assigned
+    /// boundary facets explicitly.
     ///
     /// # Example
     ///
@@ -595,17 +678,90 @@ impl<T, U, V, const D: usize> Cell<T, U, V, D> {
     /// let tds = dt.tds();
     ///
     /// if let Some(neighbors) = cell.neighbors() {
-    ///     for (i, neighbor_key_opt) in neighbors.iter().enumerate() {
+    ///     for (i, neighbor_key_opt) in neighbors.enumerate() {
     ///         if let Some(neighbor_key) = neighbor_key_opt {
-    ///             let neighbor_cell = &tds.cell(*neighbor_key).unwrap();
+    ///             let neighbor_cell = &tds.cell(neighbor_key).unwrap();
     ///             // neighbor_cell is opposite to vertex i
     ///         }
     ///     }
     /// }
     /// ```
     #[inline]
-    pub const fn neighbors(&self) -> Option<&NeighborBuffer<Option<CellKey>>> {
+    #[must_use]
+    pub fn neighbors(&self) -> Option<impl ExactSizeIterator<Item = Option<CellKey>> + '_> {
+        self.neighbor_keys()
+    }
+
+    /// Returns neighbor keys without allocating an owned compatibility buffer.
+    ///
+    /// The iterator yields one entry per assigned neighbor slot. `Some(key)` is
+    /// a neighboring cell and `None` is an assigned boundary facet. A return
+    /// value of `None` means neighbor assignment has not run or has been cleared.
+    #[inline]
+    #[must_use]
+    pub(crate) fn neighbor_keys(
+        &self,
+    ) -> Option<impl ExactSizeIterator<Item = Option<CellKey>> + '_> {
+        self.neighbors
+            .as_ref()
+            .map(|slots| slots.iter().map(|slot| slot.cell_key()))
+    }
+
+    /// Returns one assigned neighbor key by facet index without allocating.
+    ///
+    /// The outer `Option` is `None` when neighbor slots are unassigned or when
+    /// `facet_idx` is out of bounds. The inner `Option` is `None` for an
+    /// assigned boundary facet.
+    #[inline]
+    #[must_use]
+    pub fn neighbor_key(&self, facet_idx: usize) -> Option<Option<CellKey>> {
+        self.neighbors
+            .as_ref()
+            .and_then(|slots| slots.get(facet_idx))
+            .map(|slot| slot.cell_key())
+    }
+
+    /// Returns the typed neighbor slots for this cell.
+    ///
+    /// `None` means neighbor assignment has not run or has been explicitly
+    /// cleared. `Some` means each facet slot is assigned as either boundary or
+    /// neighboring-cell state.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use delaunay::prelude::tds::NeighborSlot;
+    /// use delaunay::prelude::triangulation::*;
+    ///
+    /// let vertices = vec![
+    ///     vertex!([0.0, 0.0]),
+    ///     vertex!([1.0, 0.0]),
+    ///     vertex!([0.0, 1.0]),
+    /// ];
+    /// let dt = DelaunayTriangulation::new(&vertices).unwrap();
+    /// let mut tds = dt.tds().clone();
+    /// let cell_key = tds.cell_keys().next().unwrap();
+    ///
+    /// tds.set_neighbors_by_key(cell_key, &[None, None, None]).unwrap();
+    /// let cell = tds.cell(cell_key).unwrap();
+    ///
+    /// let slots = cell
+    ///     .neighbor_slots()
+    ///     .expect("set_neighbors_by_key assigns boundary slots");
+    ///
+    /// assert_eq!(slots.len(), 3);
+    /// assert!(slots.iter().all(|slot| matches!(*slot, NeighborSlot::Boundary)));
+    /// ```
+    #[inline]
+    #[must_use]
+    pub const fn neighbor_slots(&self) -> Option<&NeighborBuffer<NeighborSlot>> {
         self.neighbors.as_ref()
+    }
+
+    /// Returns mutable typed neighbor slots for TDS-owned mutation paths.
+    #[inline]
+    pub(crate) const fn neighbor_slots_mut(&mut self) -> Option<&mut NeighborBuffer<NeighborSlot>> {
+        self.neighbors.as_mut()
     }
 
     /// Returns the vertex keys for this cell.
@@ -778,34 +934,29 @@ impl<T, U, V, const D: usize> Cell<T, U, V, D> {
         }
     }
 
-    /// Ensures the cell has a properly initialized neighbors buffer of size D+1.
-    ///
-    /// This helper centralizes neighbor buffer initialization logic to avoid code duplication
-    /// and reduce the error surface for off-by-one bugs.
-    ///
-    /// Note: This is currently only used by unit tests, but is kept as a small internal building
-    /// block for future insertion/repair code that needs to mutate neighbor buffers in-place.
-    ///
-    /// # Returns
-    ///
-    /// A mutable reference to the neighbors buffer, guaranteed to be sized D+1 with all None values.
-    ///
-    /// # Performance
-    ///
-    /// Inline to zero cost in release builds. Only allocates if the buffer doesn't exist.
+    /// Replaces this cell's assigned neighbor slots from optional neighbor keys.
     #[inline]
-    #[cfg_attr(
-        not(test),
-        expect(dead_code, reason = "Currently only used by unit tests")
-    )]
-    pub(crate) fn ensure_neighbors_buffer_mut(&mut self) -> &mut NeighborBuffer<Option<CellKey>> {
+    pub(crate) fn set_neighbors_from_keys(
+        &mut self,
+        neighbors: impl IntoIterator<Item = Option<CellKey>>,
+    ) {
+        let mut slots = NeighborBuffer::new();
+        slots.extend(neighbors.into_iter().map(NeighborSlot::from_neighbor_key));
+        self.neighbors = Some(slots);
+    }
+
+    /// Ensures this cell has an assigned neighbor-slot buffer.
+    ///
+    /// If the buffer does not exist, it is initialized with D+1 boundary slots.
+    #[inline]
+    pub(crate) fn ensure_neighbors_buffer_mut(&mut self) -> &mut NeighborBuffer<NeighborSlot> {
         debug_assert!(
             self.neighbors.as_ref().is_none_or(|buf| buf.len() == D + 1),
             "neighbors buffer must always have length D+1"
         );
         self.neighbors.get_or_insert_with(|| {
             let mut buffer = NeighborBuffer::new();
-            buffer.resize(D + 1, None);
+            buffer.resize(D + 1, NeighborSlot::Boundary);
             buffer
         })
     }
@@ -1173,8 +1324,9 @@ impl<T, U, V, const D: usize> Cell<T, U, V, D> {
     /// Returns `CellValidationError::InvalidVertex` if any vertex is invalid,
     /// `CellValidationError::InvalidUuid` if the cell's UUID is nil,
     /// `CellValidationError::DuplicateVertices` if the cell contains duplicate vertices,
-    /// `CellValidationError::InsufficientVertices` if the cell doesn't have exactly D+1 vertices, or
-    /// `CellValidationError::InvalidNeighborsLength` if neighbors are provided but don't have D+1 entries.
+    /// `CellValidationError::InsufficientVertices` if the cell doesn't have exactly D+1 vertices,
+    /// `CellValidationError::InvalidNeighborsLength` if neighbors are provided but don't have D+1 entries, or
+    /// `CellValidationError::UnassignedNeighborSlot` if an assigned neighbor buffer still has an unassigned slot.
     ///
     /// # Example
     ///
@@ -1225,6 +1377,13 @@ impl<T, U, V, const D: usize> Cell<T, U, V, D> {
                 expected: D + 1,
                 dimension: D,
             });
+        }
+        if let Some(ref neighbors) = self.neighbors {
+            for (facet_index, slot) in neighbors.iter().enumerate() {
+                if slot.is_unassigned() {
+                    return Err(CellValidationError::UnassignedNeighborSlot { facet_index });
+                }
+            }
         }
 
         Ok(())
@@ -3361,7 +3520,7 @@ mod tests {
         );
 
         // Cell with correct neighbors length is valid
-        cell_2d.neighbors = Some(vec![None, None, None].into());
+        cell_2d.set_neighbors_from_keys(vec![None, None, None]);
         assert!(
             cell_2d.is_valid().is_ok(),
             "Cell with correct neighbors length should be valid"
@@ -3408,7 +3567,7 @@ mod tests {
         let dt = DelaunayTriangulation::new(&vertices_2d).unwrap();
         let (_, cell_ref) = dt.cells().next().unwrap();
         let mut cell_wrong_neighbors = cell_ref.clone();
-        cell_wrong_neighbors.neighbors = Some(vec![None, None].into());
+        cell_wrong_neighbors.set_neighbors_from_keys(vec![None, None]);
         assert!(
             matches!(
                 cell_wrong_neighbors.is_valid(),
@@ -3422,7 +3581,7 @@ mod tests {
         );
 
         // Invalid neighbors length (too many)
-        cell_wrong_neighbors.neighbors = Some(vec![None, None, None, None].into());
+        cell_wrong_neighbors.set_neighbors_from_keys(vec![None, None, None, None]);
         assert!(
             matches!(
                 cell_wrong_neighbors.is_valid(),
@@ -3508,12 +3667,62 @@ mod tests {
 
         let buf = cell.ensure_neighbors_buffer_mut();
         assert_eq!(buf.len(), 3);
-        assert!(buf.iter().all(Option::is_none));
+        assert!(buf.iter().all(|slot| slot.is_boundary()));
 
         // Mutate through the returned buffer and ensure it's preserved
-        buf[0] = Some(cell_key);
+        buf[0] = NeighborSlot::Neighbor(cell_key);
         let buf2 = cell.ensure_neighbors_buffer_mut();
-        assert_eq!(buf2[0], Some(cell_key));
+        assert_eq!(buf2[0], NeighborSlot::Neighbor(cell_key));
+    }
+
+    #[test]
+    fn cell_neighbor_views_distinguish_unassigned_boundary_and_neighbor_slots() {
+        let vertices = vec![
+            vertex!([0.0, 0.0]),
+            vertex!([1.0, 0.0]),
+            vertex!([0.0, 1.0]),
+        ];
+        let dt = DelaunayTriangulation::new(&vertices).unwrap();
+        let (cell_key, cell_ref) = dt.cells().next().unwrap();
+
+        let mut cell = cell_ref.clone();
+        cell.clear_neighbors();
+        assert!(cell.neighbor_slots().is_none());
+        assert!(cell.neighbors().is_none());
+
+        cell.set_neighbors_from_keys([None, Some(cell_key), None]);
+
+        let slots = cell.neighbor_slots().expect("assigned slots should exist");
+        assert_eq!(slots.len(), 3);
+        assert_eq!(slots[0], NeighborSlot::Boundary);
+        assert_eq!(slots[1], NeighborSlot::Neighbor(cell_key));
+        assert_eq!(slots[2], NeighborSlot::Boundary);
+
+        let neighbor_keys: Vec<_> = cell
+            .neighbors()
+            .expect("neighbor iterator should exist")
+            .collect();
+        assert_eq!(neighbor_keys, &[None, Some(cell_key), None]);
+    }
+
+    #[test]
+    fn cell_validation_rejects_unassigned_slot_inside_assigned_neighbors() {
+        let vertices = vec![
+            vertex!([0.0, 0.0]),
+            vertex!([1.0, 0.0]),
+            vertex!([0.0, 1.0]),
+        ];
+        let dt = DelaunayTriangulation::new(&vertices).unwrap();
+        let (_, cell_ref) = dt.cells().next().unwrap();
+
+        let mut cell = cell_ref.clone();
+        let slots = cell.ensure_neighbors_buffer_mut();
+        slots[0] = NeighborSlot::Unassigned;
+
+        assert!(matches!(
+            cell.is_valid(),
+            Err(CellValidationError::UnassignedNeighborSlot { facet_index: 0 })
+        ));
     }
 
     #[test]
@@ -3527,12 +3736,12 @@ mod tests {
         let (cell_key, cell_ref) = dt.cells().next().unwrap();
 
         let mut cell = cell_ref.clone();
-        cell.neighbors = Some(vec![Some(cell_key), None, Some(cell_key)].into());
+        cell.set_neighbors_from_keys(vec![Some(cell_key), None, Some(cell_key)]);
         cell.set_periodic_vertex_offsets(vec![[1, 0], [2, 0], [3, 0]])
             .unwrap();
 
         let before_vertices = cell.vertices().to_vec();
-        let before_neighbors = cell.neighbors().unwrap().to_vec();
+        let before_neighbors: Vec<_> = cell.neighbors().unwrap().collect();
         let before_offsets = cell.periodic_vertex_offsets().unwrap().to_vec();
 
         cell.swap_vertex_slots(0, 2);
@@ -3540,9 +3749,8 @@ mod tests {
         assert_eq!(cell.vertices()[0], before_vertices[2]);
         assert_eq!(cell.vertices()[2], before_vertices[0]);
 
-        let neighbors = cell.neighbors().unwrap();
-        assert_eq!(neighbors[0], before_neighbors[2]);
-        assert_eq!(neighbors[2], before_neighbors[0]);
+        assert_eq!(cell.neighbor_key(0).flatten(), before_neighbors[2]);
+        assert_eq!(cell.neighbor_key(2).flatten(), before_neighbors[0]);
 
         let offsets = cell.periodic_vertex_offsets().unwrap();
         assert_eq!(offsets[0], before_offsets[2]);
@@ -3561,7 +3769,7 @@ mod tests {
         let (_, cell_ref) = dt.cells().next().unwrap();
 
         let mut cell = cell_ref.clone();
-        cell.neighbors = Some(vec![None, None].into());
+        cell.set_neighbors_from_keys(vec![None, None]);
         cell.swap_vertex_slots(0, 2);
     }
 

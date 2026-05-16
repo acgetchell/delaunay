@@ -11325,7 +11325,11 @@ mod tests {
 
         // Corrupt a `Vertex::incident_cell` pointer.
         let vertex_key = dt.tri.tds.vertices().next().unwrap().0;
-        dt.tri.tds.vertex_mut(vertex_key).unwrap().incident_cell = Some(CellKey::default());
+        dt.tri
+            .tds
+            .vertex_mut(vertex_key)
+            .unwrap()
+            .set_incident_cell(Some(CellKey::default()));
 
         let report = dt.validation_report().unwrap_err();
         assert!(

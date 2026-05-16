@@ -311,7 +311,7 @@ pub struct Vertex<T, U, const D: usize> {
     /// Note: This field is not serialized because `CellKey` is only valid within
     /// the current `SlotMap` instance. During deserialization, the TDS automatically
     /// reconstructs `incident_cell` mappings via `assign_incident_cells()`.
-    pub incident_cell: Option<CellKey>,
+    pub(crate) incident_cell: Option<CellKey>,
     /// Optional data associated with the vertex.
     pub(crate) data: Option<U>,
 }
@@ -351,6 +351,32 @@ impl<T, U, const D: usize> Vertex<T, U, D> {
         &self.point
     }
 
+    /// Returns the TDS-managed incident cell pointer for this vertex.
+    ///
+    /// The pointer is maintained by topology mutation and repair operations,
+    /// so callers can inspect it but cannot assign arbitrary cell keys.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use delaunay::prelude::triangulation::*;
+    ///
+    /// let vertices = vec![
+    ///     vertex!([0.0, 0.0]),
+    ///     vertex!([1.0, 0.0]),
+    ///     vertex!([0.0, 1.0]),
+    /// ];
+    /// let dt = DelaunayTriangulation::new(&vertices).unwrap();
+    /// let (_, vertex) = dt.vertices().next().unwrap();
+    ///
+    /// assert!(vertex.incident_cell().is_some());
+    /// ```
+    #[inline]
+    #[must_use]
+    pub const fn incident_cell(&self) -> Option<CellKey> {
+        self.incident_cell
+    }
+
     /// Returns a reference to the optional user data associated with this vertex.
     ///
     /// # Examples
@@ -369,6 +395,12 @@ impl<T, U, const D: usize> Vertex<T, U, D> {
     #[must_use]
     pub const fn data(&self) -> Option<&U> {
         self.data.as_ref()
+    }
+
+    /// Updates the TDS-managed incident cell pointer.
+    #[inline]
+    pub(crate) const fn set_incident_cell(&mut self, incident_cell: Option<CellKey>) {
+        self.incident_cell = incident_cell;
     }
 }
 

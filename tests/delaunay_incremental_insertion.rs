@@ -40,7 +40,7 @@ fn assert_neighbors_valid_and_symmetric<const D: usize>(
         let Some(neighbors) = cell.neighbors() else {
             continue;
         };
-        for (facet_idx, &neighbor_opt) in neighbors.iter().enumerate() {
+        for (facet_idx, neighbor_opt) in neighbors.into_iter().enumerate() {
             let Some(neighbor_key) = neighbor_opt else {
                 continue;
             };
@@ -56,11 +56,7 @@ fn assert_neighbors_valid_and_symmetric<const D: usize>(
                         "neighbor {neighbor_key:?} does not share facet {facet_idx} with {cell_key:?}"
                     )
                 });
-            let neighbor_back = neighbor_cell
-                .neighbors()
-                .and_then(|neighbor_neighbors| neighbor_neighbors.get(mirror_idx))
-                .copied()
-                .flatten();
+            let neighbor_back = neighbor_cell.neighbor_key(mirror_idx).flatten();
             assert_eq!(
                 neighbor_back,
                 Some(cell_key),

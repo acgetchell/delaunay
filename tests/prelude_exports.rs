@@ -35,7 +35,7 @@ use delaunay::prelude::ordering::{
 use delaunay::prelude::query::ConvexHull;
 #[cfg(feature = "diagnostics")]
 use delaunay::prelude::tds::Tds;
-use delaunay::prelude::tds::{InvariantErrorSummaryDetail, TdsErrorKind};
+use delaunay::prelude::tds::{InvariantErrorSummaryDetail, NeighborSlot, TdsErrorKind};
 use delaunay::prelude::triangulation::construction::{
     ConstructionOptions, ConstructionSkipSample, ConstructionSlowInsertionSample,
     DelaunayConstructionFailure, DelaunayRepairPolicy, DelaunayTriangulation,
@@ -133,6 +133,7 @@ fn preludes_cover_bench_apis() -> Result<(), PreludeExportTestError> {
     assert_send_sync_unpin::<CoordinateConversionError>();
     assert_send_sync_unpin::<DegenerateSimplexReason>();
     assert_send_sync_unpin::<MatrixError>();
+    assert!(NeighborSlot::Boundary.is_boundary());
     assert_eq!(
         DegenerateSimplexReason::ZeroOrientation.to_string(),
         "zero orientation"

@@ -560,7 +560,7 @@ fn find_interior_facet_2d<K: Kernel<2>>(
 ) -> Option<FacetHandle> {
     for (cell_key, cell) in dt.cells() {
         if let Some(neighbors) = cell.neighbors() {
-            for (facet_idx, neighbor) in neighbors.iter().enumerate() {
+            for (facet_idx, neighbor) in neighbors.enumerate() {
                 if neighbor.is_some() {
                     let Ok(facet_idx) = u8::try_from(facet_idx) else {
                         continue;
@@ -578,7 +578,7 @@ fn find_interior_facet_3d<K: Kernel<3>>(
 ) -> Option<FacetHandle> {
     for (cell_key, cell) in dt.cells() {
         if let Some(neighbors) = cell.neighbors() {
-            for (facet_idx, neighbor) in neighbors.iter().enumerate() {
+            for (facet_idx, neighbor) in neighbors.enumerate() {
                 if neighbor.is_some() {
                     let Ok(facet_idx) = u8::try_from(facet_idx) else {
                         continue;

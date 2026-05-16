@@ -246,16 +246,16 @@ where
                 //   A.neighbors()[k] = B  ("vertex j opposite neighbor j").
                 if D >= 4 {
                     let is_artifact = 'artifact: {
-                        let Some(a_neighbors) = cell.neighbors() else {
+                        let Some(a_neighbors) = cell.neighbor_keys() else {
                             break 'artifact false;
                         };
                         let mut b_points: SmallVec<[Point<T, D>; 8]> =
                             SmallVec::with_capacity(D + 1);
-                        for (k, neighbor_opt) in a_neighbors.iter().enumerate() {
+                        for (k, neighbor_opt) in a_neighbors.enumerate() {
                             let Some(b_key) = neighbor_opt else {
                                 continue;
                             };
-                            let Some(b_cell) = tds.cell(*b_key) else {
+                            let Some(b_cell) = tds.cell(b_key) else {
                                 continue;
                             };
                             // Is test_vkey the apex of B w.r.t. A?
@@ -542,10 +542,8 @@ where
     let cell = tds.cell(cell_key)?;
     let cell_vertices = cell.vertices().iter().copied().collect();
     let neighbor_cells = cell
-        .neighbors()
-        .map_or_else(NeighborBuffer::new, |neighbors| {
-            neighbors.iter().copied().collect()
-        });
+        .neighbor_keys()
+        .map_or_else(NeighborBuffer::new, Iterator::collect);
     let offending_vertex = first_offending_vertex(tds, cell_key);
 
     Some(DelaunayViolationDetail {
@@ -748,11 +746,11 @@ pub fn debug_print_first_delaunay_violation<T, U, V, const D: usize>(
     }
 
     // Neighbor information for the first violating cell.
-    if let Some(neighbors) = cell.neighbors() {
-        for (facet_idx, neighbor_key_opt) in neighbors.iter().enumerate() {
+    if let Some(neighbors) = cell.neighbor_keys() {
+        for (facet_idx, neighbor_key_opt) in neighbors.enumerate() {
             match neighbor_key_opt {
                 Some(neighbor_key) => {
-                    if let Some(neighbor_cell) = tds.cell(*neighbor_key) {
+                    if let Some(neighbor_cell) = tds.cell(neighbor_key) {
                         tracing::debug!(
                             "[Delaunay debug]  facet {facet_idx}: neighbor cell {neighbor_key:?}, uuid={}",
                             neighbor_cell.uuid()
@@ -1102,7 +1100,7 @@ mod tests {
             Triangulation::<FastKernel<f64>, (), (), 2>::build_initial_simplex(&vertices).unwrap();
         let cell_key = tds.cell_keys().next().unwrap();
         let cell = tds.cell_mut(cell_key).unwrap();
-        cell.neighbors = Some(vec![None, None].into()); // wrong length (expected 3)
+        cell.set_neighbors_from_keys(vec![None, None]); // wrong length (expected 3)
 
         let err = is_delaunay_property_only(&tds).unwrap_err();
         assert!(matches!(err, DelaunayValidationError::InvalidCell { .. }));

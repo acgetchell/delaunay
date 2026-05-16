@@ -787,7 +787,7 @@ where
                 ),
             });
         }
-        let Some(incident_cell_key) = vertex.incident_cell else {
+        let Some(incident_cell_key) = vertex.incident_cell() else {
             continue;
         };
         let incident_cell =
@@ -819,7 +819,7 @@ where
     U: DataType,
     V: DataType,
 {
-    let Some(neighbors) = cell.neighbors() else {
+    let Some(neighbors) = cell.neighbor_keys() else {
         return Ok(());
     };
     if neighbors.len() != D + 1 {
@@ -832,21 +832,21 @@ where
         });
     }
 
-    for (facet_idx, neighbor_key_opt) in neighbors.iter().enumerate() {
+    for (facet_idx, neighbor_key_opt) in neighbors.enumerate() {
         let Some(neighbor_key) = neighbor_key_opt else {
             continue;
         };
-        if removed_cells.contains(neighbor_key) {
+        if removed_cells.contains(&neighbor_key) {
             return Err(TdsValidationFailure::InvalidNeighbors {
                 reason: NeighborValidationError::ReferencedRemovedNeighbor {
                     cell_key,
                     cell_uuid: cell.uuid(),
                     facet_index: facet_idx,
-                    neighbor_key: *neighbor_key,
+                    neighbor_key,
                 },
             });
         }
-        if *neighbor_key == cell_key {
+        if neighbor_key == cell_key {
             if cell_allows_periodic_self_neighbor(cell) {
                 continue;
             }
@@ -860,13 +860,13 @@ where
         }
 
         let neighbor_cell =
-            tds.cell(*neighbor_key)
+            tds.cell(neighbor_key)
                 .ok_or_else(|| TdsValidationFailure::InvalidNeighbors {
                     reason: NeighborValidationError::MissingNeighborCell {
                         cell_key,
                         cell_uuid: cell.uuid(),
                         facet_index: facet_idx,
-                        neighbor_key: *neighbor_key,
+                        neighbor_key,
                         context: "flip trial neighbor validation".to_string(),
                     },
                 })?;
@@ -885,14 +885,14 @@ where
             facet_key_from_vertices(&facet_vertices_from_cell(cell, facet_idx)),
             cell_key,
             facet_idx,
-            *neighbor_key,
+            neighbor_key,
             mirror_idx,
         )?;
         validate_flip_trial_neighbor_orientation(
             cell_key,
             cell,
             facet_idx,
-            *neighbor_key,
+            neighbor_key,
             neighbor_cell,
             mirror_idx,
         )?;
@@ -939,12 +939,8 @@ where
                 context: "flip trial mutual neighbor validation".to_string(),
             })?;
 
-    let source_neighbor = source_cell
-        .neighbors()
-        .and_then(|neighbors| neighbors.get(source_facet).copied().flatten());
-    let target_neighbor = target_cell
-        .neighbors()
-        .and_then(|neighbors| neighbors.get(target_facet).copied().flatten());
+    let source_neighbor = source_cell.neighbor_key(source_facet).flatten();
+    let target_neighbor = target_cell.neighbor_key(target_facet).flatten();
 
     if source_neighbor != Some(target_cell_key) || target_neighbor != Some(source_cell_key) {
         return Err(TdsValidationFailure::InvalidNeighbors {
@@ -1438,7 +1434,7 @@ fn debug_ridge_context<T, U, V, const D: usize>(
         .map(|cells| cells.into_iter().collect::<Vec<_>>());
     let global_cells = cells_containing_vertices(tds, &ridge_vertices);
     let neighbor_snapshot: Option<SmallBuffer<Option<CellKey>, MAX_PRACTICAL_DIMENSION_SIZE>> =
-        cell.neighbors().map(|ns| ns.iter().copied().collect());
+        cell.neighbor_keys().map(Iterator::collect);
     let global_cell_details: Vec<String> = global_cells
         .iter()
         .copied()
@@ -1499,15 +1495,11 @@ where
     V: DataType,
 {
     let mut ridge_neighbors: SmallBuffer<CellKey, 2> = SmallBuffer::new();
-    let Some(neighbors) = cell.neighbors() else {
-        return ridge_neighbors;
-    };
-
     for (idx, &vertex_key) in cell.vertices().iter().enumerate() {
         if ridge_vertices.contains(&vertex_key) {
             continue;
         }
-        if let Some(neighbor_key) = neighbors.get(idx).copied().flatten() {
+        if let Some(neighbor_key) = cell.neighbor_key(idx).flatten() {
             ridge_neighbors.push(neighbor_key);
         }
     }
@@ -1637,7 +1629,7 @@ where
         .filter(|vkey| !facet_vertices.contains(vkey))
         .collect();
     let neighbor_snapshot: Option<SmallBuffer<Option<CellKey>, MAX_PRACTICAL_DIMENSION_SIZE>> =
-        cell.neighbors().map(|ns| ns.iter().copied().collect());
+        cell.neighbor_keys().map(Iterator::collect);
 
     format!(
         "{cell_key:?}: vertices={:?} opposite_vertices={opposite_vertices:?} neighbors={neighbor_snapshot:?}",
@@ -3944,8 +3936,8 @@ where
     }
 
     let neighbor_key = cell_a
-        .neighbors()
-        .and_then(|n| n.get(facet_index_a).copied().flatten())
+        .neighbor_key(facet_index_a)
+        .flatten()
         .ok_or(FlipError::BoundaryFacet { facet })?;
 
     let cell_b = tds.cell(neighbor_key).ok_or(FlipError::MissingNeighbor {
@@ -4015,9 +4007,8 @@ fn back_reference_facet_index<T, U, V, const D: usize>(
     neighbor_cell: &Cell<T, U, V, D>,
 ) -> Option<usize> {
     neighbor_cell
-        .neighbors()?
-        .iter()
-        .position(|neighbor| *neighbor == Some(source_cell))
+        .neighbor_keys()?
+        .position(|neighbor| neighbor == Some(source_cell))
 }
 
 /// Increments a small vertex-incidence count buffer without allocating a hash map
@@ -7996,20 +7987,18 @@ where
             return Ok(cells);
         }
 
-        if let Some(neighbors) = cell.neighbors() {
-            for &omit_idx in &omit_indices {
-                if let Some(neighbor_key) = neighbors.get(omit_idx).copied().flatten() {
-                    let Some(neighbor_cell) = tds.cell(neighbor_key) else {
-                        return Err(FlipError::DanglingRidgeNeighbor {
-                            cell_key,
-                            neighbor_key,
-                        });
-                    };
-                    if !ridge.iter().all(|v| neighbor_cell.contains_vertex(*v)) {
-                        return Err(FlipError::InvalidRidgeAdjacency { cell_key });
-                    }
-                    queue.push(neighbor_key);
+        for &omit_idx in &omit_indices {
+            if let Some(neighbor_key) = cell.neighbor_key(omit_idx).flatten() {
+                let Some(neighbor_cell) = tds.cell(neighbor_key) else {
+                    return Err(FlipError::DanglingRidgeNeighbor {
+                        cell_key,
+                        neighbor_key,
+                    });
+                };
+                if !ridge.iter().all(|v| neighbor_cell.contains_vertex(*v)) {
+                    return Err(FlipError::InvalidRidgeAdjacency { cell_key });
                 }
+                queue.push(neighbor_key);
             }
         }
     }
@@ -8748,8 +8737,8 @@ fn enqueue_facet<T, U, V, const D: usize>(
     }
 
     let Some(_neighbor_key) = cell
-        .neighbors()
-        .and_then(|n| n.get(facet_index).copied().flatten())
+        .neighbor_key(facet_index)
+        .flatten()
         .filter(|&nk| tds.contains_cell(nk))
     else {
         return;
@@ -8955,6 +8944,7 @@ mod tests {
         DelaunayRepairFailureContext, repair_neighbor_pointers,
     };
     use crate::core::algorithms::locate::LocateResult;
+    use crate::core::cell::NeighborSlot;
     use crate::core::collections::Uuid;
     use crate::core::triangulation::TopologyGuarantee;
     use crate::geometry::kernel::{AdaptiveKernel, FastKernel};
@@ -9677,10 +9667,9 @@ mod tests {
         let facet_idx_glue_edge =
             facet_index_for_edge_2d(&tds, cell_external_left, v_left_bottom, v_left_top);
         let external_cell = tds.cell(cell_external_left).unwrap();
-        let neighbors = external_cell
-            .neighbors()
-            .expect("external neighbors should exist");
-        let neighbor_key_glue = neighbors[usize::from(facet_idx_glue_edge)]
+        let neighbor_key_glue = external_cell
+            .neighbor_key(usize::from(facet_idx_glue_edge))
+            .expect("external neighbors should exist")
             .expect("external cell should have a neighbor across the glue edge after the flip");
 
         assert!(tds.contains_cell(neighbor_key_glue));
@@ -9697,18 +9686,16 @@ mod tests {
         let mirror_idx = external_cell
             .mirror_facet_index(usize::from(facet_idx_glue_edge), neighbor_cell)
             .expect("mirror facet index should exist");
-        let neighbor_back = neighbor_cell
-            .neighbors()
-            .and_then(|ns| ns.get(mirror_idx).copied().flatten());
+        let neighbor_back = neighbor_cell.neighbor_key(mirror_idx).flatten();
         assert_eq!(neighbor_back, Some(cell_external_left));
 
         // Ensure flip did not leave any dangling neighbor pointers in the newly inserted cells.
         for &cell_key in &info.new_cells {
             let cell = tds.cell(cell_key).unwrap();
             if let Some(ns) = cell.neighbors() {
-                for neighbor_key in ns.iter().flatten() {
+                for neighbor_key in ns.flatten() {
                     assert!(
-                        tds.contains_cell(*neighbor_key),
+                        tds.contains_cell(neighbor_key),
                         "dangling neighbor pointer from {cell_key:?} to {neighbor_key:?}"
                     );
                 }
@@ -10066,10 +10053,9 @@ mod tests {
         let glue_face_facet_index =
             facet_index_for_face_3d(&tds, cell_external, v_edge_start, v_cycle_0, v_cycle_1);
         let external_cell = tds.cell(cell_external).unwrap();
-        let neighbors = external_cell
-            .neighbors()
-            .expect("external cell should have neighbors after repair");
-        let glued_neighbor = neighbors[usize::from(glue_face_facet_index)]
+        let glued_neighbor = external_cell
+            .neighbor_key(usize::from(glue_face_facet_index))
+            .expect("external cell should have neighbors after repair")
             .expect("external cell should have a neighbor across the glue face");
 
         assert!(tds.contains_cell(glued_neighbor));
@@ -10086,18 +10072,16 @@ mod tests {
         let mirror_idx = external_cell
             .mirror_facet_index(usize::from(glue_face_facet_index), neighbor_cell)
             .expect("mirror facet index should exist");
-        let neighbor_back = neighbor_cell
-            .neighbors()
-            .and_then(|ns| ns.get(mirror_idx).copied().flatten());
+        let neighbor_back = neighbor_cell.neighbor_key(mirror_idx).flatten();
         assert_eq!(neighbor_back, Some(cell_external));
 
         // Ensure the newly inserted cells do not reference removed cells.
         for &cell_key in &info.new_cells {
             let cell = tds.cell(cell_key).unwrap();
             if let Some(ns) = cell.neighbors() {
-                for neighbor_key in ns.iter().flatten() {
+                for neighbor_key in ns.flatten() {
                     assert!(
-                        tds.contains_cell(*neighbor_key),
+                        tds.contains_cell(neighbor_key),
                         "dangling neighbor pointer from {cell_key:?} to {neighbor_key:?}"
                     );
                 }
@@ -10283,7 +10267,6 @@ mod tests {
                     .neighbors()
                     .map(|neighbor_keys| {
                         neighbor_keys
-                            .iter()
                             .map(|neighbor| {
                                 neighbor
                                     .and_then(|neighbor_key| tds.cell(neighbor_key).map(Cell::uuid))
@@ -10306,7 +10289,7 @@ mod tests {
                 (
                     vertex.uuid(),
                     vertex
-                        .incident_cell
+                        .incident_cell()
                         .and_then(|cell_key| tds.cell(cell_key).map(Cell::uuid)),
                 )
             })
@@ -10350,7 +10333,9 @@ mod tests {
         tds.assign_incident_cells().unwrap();
 
         let isolated_vertex = tds.insert_vertex_with_mapping(vertex!([20.0; D])).unwrap();
-        tds.vertex_mut(isolated_vertex).unwrap().incident_cell = Some(second_cell);
+        tds.vertex_mut(isolated_vertex)
+            .unwrap()
+            .set_incident_cell(Some(second_cell));
 
         let before = snapshot_topology(&tds);
         let before_incidence = snapshot_incidence(&tds);
@@ -11528,7 +11513,7 @@ mod tests {
             .cell_mut(cell)
             .expect("test cell should exist")
             .ensure_neighbors_buffer_mut();
-        neighbors[0] = Some(dangling_neighbor);
+        neighbors[0] = NeighborSlot::Neighbor(dangling_neighbor);
 
         let ridge = RidgeHandle::new(cell, 0, 1);
         let err = build_k3_flip_context(&tds, ridge).unwrap_err();

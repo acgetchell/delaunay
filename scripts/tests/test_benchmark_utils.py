@@ -491,6 +491,47 @@ malformed api_benchmark_metric benchmark_id=ignored vertices=x simplices=y
             assert roundtrip.dimension == "4D"
             assert roundtrip.throughput_mean is None
 
+    def test_find_criterion_results_skips_stale_ci_suite_metrics(self) -> None:
+        """Test ci_performance_suite simplex counts require matching current inputs."""
+        with tempfile.TemporaryDirectory() as temp_dir:
+            target_dir = Path(temp_dir) / "target"
+            benchmark_id = "tds_new_2d/tds_new/10"
+            write_estimate(target_dir, tuple(benchmark_id.split("/")), 10_000.0)
+            write_ci_performance_metrics(
+                target_dir,
+                {
+                    benchmark_id: {
+                        "vertices": 25,
+                        "simplices": 999,
+                    },
+                },
+            )
+
+            results = CriterionParser.find_criterion_results(target_dir)
+
+            assert len(results) == 1
+            assert results[0].comparison_key == benchmark_id
+            assert results[0].points == 10
+            assert results[0].simplices is None
+
+    def test_find_criterion_results_skips_malformed_ci_suite_metrics(self) -> None:
+        """Test malformed ci_performance_suite simplex counts are not applied."""
+        with tempfile.TemporaryDirectory() as temp_dir:
+            target_dir = Path(temp_dir) / "target"
+            benchmark_id = "tds_new_2d/tds_new/10"
+            write_estimate(target_dir, tuple(benchmark_id.split("/")), 10_000.0)
+            metrics_path = target_dir / "criterion" / _CI_PERFORMANCE_SUITE_METRICS_FILE
+            metrics_path.write_text(
+                json.dumps({benchmark_id: {"vertices": 10, "simplices": "stale"}}),
+                encoding="utf-8",
+            )
+
+            results = CriterionParser.find_criterion_results(target_dir)
+
+            assert len(results) == 1
+            assert results[0].comparison_key == benchmark_id
+            assert results[0].simplices is None
+
     def test_find_criterion_results_filters_stale_ci_suite_ids_with_manifest(self) -> None:
         """Test ci_performance_suite parsing ignores stale Criterion files outside the manifest."""
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -3341,7 +3382,8 @@ Benchmark completed.""",
         content = "\n".join(lines)
 
         assert "## Implementation Notes" in content
-        assert "### Performance Advantages of `insphere_lifted`" in content
+        assert "### Dimension-Dependent InSphere Predicate Performance" in content
+        assert "`insphere_distance`" in content
         assert "### Method Disagreements" not in content
 
     def test_empty_benchmark_results_edge_case(self) -> None:

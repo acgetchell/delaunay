@@ -332,7 +332,7 @@ def _load_ci_performance_manifest_ids(criterion_dir: Path) -> set[str] | None:
     return manifest_ids or None
 
 
-def _load_ci_performance_metrics(criterion_dir: Path) -> dict[str, dict[str, int]]:
+def _load_ci_performance_metrics(criterion_dir: Path) -> dict[str, Mapping[str, object]]:
     """Load ci_performance_suite construction metrics when present."""
     metrics_path = _ci_performance_metrics_path(criterion_dir)
     if not metrics_path.exists():
@@ -349,17 +349,12 @@ def _load_ci_performance_metrics(criterion_dir: Path) -> dict[str, dict[str, int
         msg = f"malformed ci_performance_suite metrics sidecar {metrics_path}: expected JSON object"
         raise TypeError(msg)
 
-    metrics: dict[str, dict[str, int]] = {}
+    metrics: dict[str, Mapping[str, object]] = {}
     for benchmark_id, values in data.items():
         if not isinstance(benchmark_id, str) or not isinstance(values, dict):
-            msg = f"malformed ci_performance_suite metrics sidecar {metrics_path}: invalid entry {benchmark_id!r}"
-            raise TypeError(msg)
-        vertices = values.get("vertices")
-        simplices = values.get("simplices")
-        if not isinstance(vertices, int) or not isinstance(simplices, int):
-            msg = f"malformed ci_performance_suite metrics sidecar {metrics_path}: invalid counts for {benchmark_id!r}"
-            raise TypeError(msg)
-        metrics[benchmark_id] = {"vertices": vertices, "simplices": simplices}
+            logger.debug("Skipping malformed ci_performance_suite metric entry %r from %s", benchmark_id, metrics_path)
+            continue
+        metrics[benchmark_id] = values
     return metrics
 
 
@@ -1850,11 +1845,11 @@ class PerformanceSummaryGenerator:
         return [
             "## Implementation Notes",
             "",
-            "### Performance Advantages of `insphere_lifted`",
+            "### Dimension-Dependent InSphere Predicate Performance",
             "",
-            "1. More efficient matrix formulation using relative coordinates",
-            "2. Avoids redundant circumcenter calculations",
-            "3. Optimized determinant computation",
+            "The tables above are the source of truth for predicate timing. `insphere_lifted`",
+            "shows advantages in lower dimensions such as 2D/3D, while `insphere_distance`",
+            "often wins in 4D/5D; boundary cases may favor `insphere` because of early exits.",
             "",
         ]
 
@@ -1981,6 +1976,48 @@ class CriterionParser:
         return None
 
     @staticmethod
+    def _ci_suite_metric_simplices(
+        metric: Mapping[str, object] | None,
+        *,
+        benchmark_id: str,
+        path_parts: tuple[str, ...],
+        points: int | None,
+        dimension: str,
+    ) -> int | None:
+        """Return sidecar simplex counts only when they match the Criterion result."""
+        if metric is None:
+            return None
+
+        expected_dimension = ci_suite_dimension(benchmark_id)
+        expected_points = CriterionParser._ci_suite_input_points(path_parts)
+        if expected_dimension != dimension or expected_points != points:
+            logger.debug("Skipping stale ci_performance_suite metric for %s", benchmark_id)
+            return None
+
+        vertices = metric.get("vertices")
+        simplices = metric.get("simplices")
+        if (
+            not isinstance(vertices, int)
+            or isinstance(vertices, bool)
+            or not isinstance(simplices, int)
+            or isinstance(simplices, bool)
+            or simplices < 0
+        ):
+            logger.debug("Skipping malformed ci_performance_suite metric for %s", benchmark_id)
+            return None
+
+        if points is None or vertices != points:
+            logger.debug(
+                "Skipping stale ci_performance_suite metric for %s: vertices=%s, Criterion input=%s",
+                benchmark_id,
+                vertices,
+                points,
+            )
+            return None
+
+        return simplices
+
+    @staticmethod
     def _process_ci_performance_suite_results(criterion_dir: Path) -> list[BenchmarkData]:
         """Discover ci_performance_suite Criterion results with expanded benchmark IDs."""
         results: list[BenchmarkData] = []
@@ -1997,9 +2034,15 @@ class CriterionParser:
                 continue
 
             benchmark_data.benchmark_id = benchmark_id
-            metric = metrics.get(benchmark_id)
-            if metric is not None:
-                benchmark_data.simplices = metric["simplices"]
+            metric_simplices = CriterionParser._ci_suite_metric_simplices(
+                metrics.get(benchmark_id),
+                benchmark_id=benchmark_id,
+                path_parts=path_parts,
+                points=points,
+                dimension=dimension,
+            )
+            if metric_simplices is not None:
+                benchmark_data.simplices = metric_simplices
             results.append(benchmark_data)
 
         group_order = {group: index for index, group in enumerate(CI_PERFORMANCE_SUITE_GROUP_ORDER)}

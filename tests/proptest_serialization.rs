@@ -200,7 +200,7 @@ macro_rules! test_serialization_properties {
                         let mut original_neighbor_count = 0;
                         for (_key, cell) in dt.cells() {
                             if let Some(neighbors) = cell.neighbors() {
-                                original_neighbor_count += neighbors.iter().flatten().count();
+                                original_neighbor_count += neighbors.flatten().count();
                             }
                         }
 
@@ -216,7 +216,7 @@ macro_rules! test_serialization_properties {
                         let mut deserialized_neighbor_count = 0;
                         for (_key, cell) in deserialized.cells() {
                             if let Some(neighbors) = cell.neighbors() {
-                                deserialized_neighbor_count += neighbors.iter().flatten().count();
+                                deserialized_neighbor_count += neighbors.flatten().count();
                             }
                         }
 

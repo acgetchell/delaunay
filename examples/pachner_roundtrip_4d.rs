@@ -275,7 +275,7 @@ fn collect_interior_facets(dt: &Dt4) -> Vec<FacetHandle> {
     let mut facets = Vec::new();
     for (cell_key, cell) in dt.cells() {
         if let Some(neighbors) = cell.neighbors() {
-            for (facet_index, neighbor) in neighbors.iter().enumerate() {
+            for (facet_index, neighbor) in neighbors.enumerate() {
                 if neighbor.is_some() {
                     let Ok(facet_index) = u8::try_from(facet_index) else {
                         continue;

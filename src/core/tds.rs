@@ -230,7 +230,7 @@
 #![forbid(unsafe_code)]
 
 use super::{
-    cell::{Cell, CellValidationError},
+    cell::{Cell, CellValidationError, NeighborSlot},
     facet::{FacetHandle, facet_key_from_vertices},
     traits::data_type::DataType,
     util::{
@@ -1903,16 +1903,12 @@ impl<T, U, V, const D: usize> Tds<T, U, V, D> {
                 })?[vertex_index2] = Some(cell_key1);
         }
 
-        // Apply updates
+        // Apply updates. Even cells with only boundary facets receive an
+        // assigned boundary buffer so assigned-boundary and unassigned states
+        // remain distinct.
         for (cell_key, neighbors) in &cell_neighbors {
             if let Some(cell) = self.cells.get_mut(*cell_key) {
-                if neighbors.iter().all(Option::is_none) {
-                    cell.neighbors = None;
-                } else {
-                    let mut neighbor_buffer = SmallBuffer::new();
-                    neighbor_buffer.extend(neighbors.iter().copied());
-                    cell.neighbors = Some(neighbor_buffer);
-                }
+                cell.set_neighbors_from_keys(neighbors.iter().copied());
             }
         }
 
@@ -2373,10 +2369,10 @@ impl<T, U, V, const D: usize> Tds<T, U, V, D> {
             let Some(cell) = self.cells.get(ck) else {
                 continue;
             };
-            let Some(neighbors) = cell.neighbors() else {
+            let Some(neighbors) = cell.neighbor_keys() else {
                 continue;
             };
-            for &n_opt in neighbors {
+            for n_opt in neighbors {
                 let Some(nk) = n_opt else {
                     continue;
                 };
@@ -3453,11 +3449,10 @@ impl<T, U, V, const D: usize> Tds<T, U, V, D> {
                 continue;
             }
 
-            if cell.neighbors().is_some_and(|neighbors| {
+            if cell.neighbor_keys().is_some_and(|neighbors| {
                 neighbors
-                    .iter()
                     .flatten()
-                    .any(|&neighbor_key| !self.cells.contains_key(neighbor_key))
+                    .any(|neighbor_key| !self.cells.contains_key(neighbor_key))
             }) {
                 to_remove.push(cell_key);
             }
@@ -3489,9 +3484,9 @@ impl<T, U, V, const D: usize> Tds<T, U, V, D> {
                     SmallBuffer::with_capacity(vertices.len());
                 neighbors.resize(vertices.len(), None);
 
-                if let Some(cell_neighbors) = cell.neighbors() {
-                    for (slot, neighbor_opt) in neighbors.iter_mut().zip(cell_neighbors.iter()) {
-                        *slot = *neighbor_opt;
+                if let Some(cell_neighbors) = cell.neighbor_keys() {
+                    for (slot, neighbor_opt) in neighbors.iter_mut().zip(cell_neighbors) {
+                        *slot = neighbor_opt;
                     }
                 }
 
@@ -3525,20 +3520,15 @@ impl<T, U, V, const D: usize> Tds<T, U, V, D> {
                 let Some(neighbor_cell) = self.cells.get_mut(*neighbor_key) else {
                     continue;
                 };
-                let Some(neighbors_buf) = neighbor_cell.neighbors.as_mut() else {
+                let Some(neighbors_buf) = neighbor_cell.neighbor_slots_mut() else {
                     continue;
                 };
 
                 // Clear the back-reference in the neighbor cell's neighbor buffer.
                 for slot in neighbors_buf.iter_mut() {
-                    if *slot == Some(cell_key) {
-                        *slot = None;
+                    if slot.cell_key() == Some(cell_key) {
+                        *slot = NeighborSlot::Boundary;
                     }
-                }
-
-                // Normalize: if all neighbor slots are None, store `None`.
-                if neighbors_buf.iter().all(Option::is_none) {
-                    neighbor_cell.neighbors = None;
                 }
             }
         }
@@ -3574,7 +3564,7 @@ impl<T, U, V, const D: usize> Tds<T, U, V, D> {
                     return false;
                 };
 
-                match v.incident_cell {
+                match v.incident_cell() {
                     None => true,
                     Some(cell_key) => {
                         cells_to_remove.contains(&cell_key) || !self.cells.contains_key(cell_key)
@@ -3608,7 +3598,7 @@ impl<T, U, V, const D: usize> Tds<T, U, V, D> {
 
         for (vk, new_incident) in incident_updates {
             if let Some(vertex) = self.vertices.get_mut(vk) {
-                vertex.incident_cell = new_incident;
+                vertex.set_incident_cell(new_incident);
             }
         }
     }
@@ -3651,7 +3641,7 @@ impl<T, U, V, const D: usize> Tds<T, U, V, D> {
             return fallback_scan();
         };
 
-        let Some(start_cell_key) = vertex.incident_cell else {
+        let Some(start_cell_key) = vertex.incident_cell() else {
             return fallback_scan();
         };
 
@@ -3659,7 +3649,7 @@ impl<T, U, V, const D: usize> Tds<T, U, V, D> {
             return fallback_scan();
         };
 
-        if !start_cell.contains_vertex(vertex_key) || start_cell.neighbors().is_none() {
+        if !start_cell.contains_vertex(vertex_key) || start_cell.neighbor_slots().is_none() {
             return fallback_scan();
         }
 
@@ -3677,12 +3667,12 @@ impl<T, U, V, const D: usize> Tds<T, U, V, D> {
                 continue;
             };
 
-            let Some(neighbors) = cell.neighbors() else {
+            let Some(neighbors) = cell.neighbor_keys() else {
                 continue;
             };
 
             // Traverse only across facets that still contain the target vertex.
-            for (facet_idx, neighbor_opt) in neighbors.iter().enumerate() {
+            for (facet_idx, neighbor_opt) in neighbors.enumerate() {
                 if cell
                     .vertices()
                     .get(facet_idx)
@@ -3697,11 +3687,11 @@ impl<T, U, V, const D: usize> Tds<T, U, V, D> {
                     continue;
                 };
 
-                if visited.contains(neighbor_key) {
+                if visited.contains(&neighbor_key) {
                     continue;
                 }
 
-                let Some(neighbor_cell) = self.cells.get(*neighbor_key) else {
+                let Some(neighbor_cell) = self.cells.get(neighbor_key) else {
                     continue;
                 };
 
@@ -3709,8 +3699,8 @@ impl<T, U, V, const D: usize> Tds<T, U, V, D> {
                     continue;
                 }
 
-                visited.insert(*neighbor_key);
-                stack.push(*neighbor_key);
+                visited.insert(neighbor_key);
+                stack.push(neighbor_key);
             }
         }
 
@@ -3818,7 +3808,7 @@ impl<T, U, V, const D: usize> Tds<T, U, V, D> {
             return;
         };
         // Only remove if truly isolated.
-        if vertex.incident_cell.is_some() {
+        if vertex.incident_cell().is_some() {
             return;
         }
         let uuid = vertex.uuid();
@@ -3878,10 +3868,10 @@ impl<T, U, V, const D: usize> Tds<T, U, V, D> {
         };
 
         // Phase 3A: Cell now stores neighbors directly
-        if let Some(ref neighbors_from_cell) = cell.neighbors {
+        if let Some(neighbors_from_cell) = cell.neighbor_keys() {
             // Use zip to avoid potential OOB if neighbors_from_cell.len() > D+1 (malformed data)
-            for (slot, neighbor_key_opt) in neighbors.iter_mut().zip(neighbors_from_cell.iter()) {
-                *slot = *neighbor_key_opt;
+            for (slot, neighbor_key_opt) in neighbors.iter_mut().zip(neighbors_from_cell) {
+                *slot = neighbor_key_opt;
             }
         }
 
@@ -4110,37 +4100,14 @@ impl<T, U, V, const D: usize> Tds<T, U, V, D> {
         Ok(())
     }
 
-    fn normalized_neighbor_buffer(
-        neighbors: &[Option<CellKey>],
-    ) -> Option<SmallBuffer<Option<CellKey>, MAX_PRACTICAL_DIMENSION_SIZE>> {
-        if neighbors.iter().all(Option::is_none) {
-            None
-        } else {
-            let mut neighbor_buffer = SmallBuffer::new();
-            neighbor_buffer.extend(neighbors.iter().copied());
-            Some(neighbor_buffer)
-        }
-    }
-
     fn set_cell_neighbors_normalized(cell: &mut Cell<T, U, V, D>, neighbors: &[Option<CellKey>]) {
-        cell.neighbors = Self::normalized_neighbor_buffer(neighbors);
+        cell.set_neighbors_from_keys(neighbors.iter().copied());
     }
 
     fn ensure_neighbor_buffer(
         cell: &mut Cell<T, U, V, D>,
-    ) -> Result<&mut SmallBuffer<Option<CellKey>, MAX_PRACTICAL_DIMENSION_SIZE>, TdsError> {
-        if cell.neighbors.is_none() {
-            let mut neighbors = SmallBuffer::with_capacity(D + 1);
-            neighbors.resize(D + 1, None);
-            cell.neighbors = Some(neighbors);
-        }
-
-        let neighbors =
-            cell.neighbors
-                .as_mut()
-                .ok_or_else(|| TdsError::InconsistentDataStructure {
-                    message: "neighbor buffer missing after initialization".to_string(),
-                })?;
+    ) -> Result<&mut SmallBuffer<NeighborSlot, MAX_PRACTICAL_DIMENSION_SIZE>, TdsError> {
+        let neighbors = cell.ensure_neighbors_buffer_mut();
         if neighbors.len() != D + 1 {
             return Err(TdsError::InvalidNeighbors {
                 reason: NeighborValidationError::LengthMismatch {
@@ -4167,10 +4134,7 @@ impl<T, U, V, const D: usize> Tds<T, U, V, D> {
                 },
             });
         };
-        *slot = neighbor;
-        if neighbors.iter().all(Option::is_none) {
-            cell.neighbors = None;
-        }
+        *slot = NeighborSlot::from_neighbor_key(neighbor);
         Ok(())
     }
 
@@ -4187,8 +4151,8 @@ impl<T, U, V, const D: usize> Tds<T, U, V, D> {
                 context: "set_neighbors_by_key".to_string(),
             })?;
         let old_neighbors: Vec<Option<CellKey>> = cell
-            .neighbors()
-            .map_or_else(|| vec![None; D + 1], |old| old.iter().copied().collect());
+            .neighbor_keys()
+            .map_or_else(|| vec![None; D + 1], Iterator::collect);
 
         let mut reciprocal_updates = Vec::new();
         self.collect_stale_reciprocal_neighbor_updates(
@@ -4250,11 +4214,7 @@ impl<T, U, V, const D: usize> Tds<T, U, V, D> {
                         context: "clearing old back-reference".to_string(),
                     },
                 })?;
-            let back_ref = old_neighbor_cell
-                .neighbors()
-                .and_then(|neighbor_neighbors| neighbor_neighbors.get(mirror_idx))
-                .copied()
-                .flatten();
+            let back_ref = old_neighbor_cell.neighbor_key(mirror_idx).flatten();
             if back_ref == Some(cell_key) {
                 reciprocal_updates.push((old_neighbor_key, mirror_idx, None));
             }
@@ -4300,11 +4260,7 @@ impl<T, U, V, const D: usize> Tds<T, U, V, D> {
                         context: "setting back-reference".to_string(),
                     },
                 })?;
-            let existing_back_ref = neighbor_cell
-                .neighbors()
-                .and_then(|neighbor_neighbors| neighbor_neighbors.get(mirror_idx))
-                .copied()
-                .flatten();
+            let existing_back_ref = neighbor_cell.neighbor_key(mirror_idx).flatten();
             if let Some(existing_back_ref) = existing_back_ref
                 && existing_back_ref != cell_key
             {
@@ -4375,7 +4331,11 @@ impl<T, U, V, const D: usize> Tds<T, U, V, D> {
     /// let cell_key = tds.cell_keys().next().unwrap();
     /// let neighbors = vec![None; 3];
     /// tds.set_neighbors_by_key(cell_key, &neighbors).unwrap();
-    /// assert!(tds.cell(cell_key).unwrap().neighbors().is_none());
+    /// assert!(tds
+    ///     .cell(cell_key)
+    ///     .unwrap()
+    ///     .neighbors()
+    ///     .is_some_and(|mut neighbors| neighbors.all(|neighbor| neighbor.is_none())));
     /// ```
     pub fn set_neighbors_by_key(
         &mut self,
@@ -4509,7 +4469,7 @@ impl<T, U, V, const D: usize> Tds<T, U, V, D> {
     /// let dt = DelaunayTriangulation::new(&vertices).unwrap();
     /// let mut tds = dt.tds().clone();
     /// tds.assign_incident_cells().unwrap();
-    /// let all_assigned = tds.vertices().all(|(_, v)| v.incident_cell.is_some());
+    /// let all_assigned = tds.vertices().all(|(_, v)| v.incident_cell().is_some());
     /// assert!(all_assigned);
     /// ```
     pub fn assign_incident_cells(&mut self) -> Result<(), TdsMutationError> {
@@ -4517,7 +4477,7 @@ impl<T, U, V, const D: usize> Tds<T, U, V, D> {
             // No cells remain; all vertices must have incident_cell cleared to avoid
             // dangling pointers to previously removed cells.
             for vertex in self.vertices.values_mut() {
-                vertex.incident_cell = None;
+                vertex.set_incident_cell(None);
             }
             self.bump_generation();
             return Ok(());
@@ -4527,7 +4487,7 @@ impl<T, U, V, const D: usize> Tds<T, U, V, D> {
         // ensures vertices that no longer belong to any cell do not retain stale
         // incident_cell pointers after topology changes (e.g., vertex or cell removal).
         for vertex in self.vertices.values_mut() {
-            vertex.incident_cell = None;
+            vertex.set_incident_cell(None);
         }
 
         // Single-pass rebuild: assign the first cell encountered for each vertex.
@@ -4544,8 +4504,8 @@ impl<T, U, V, const D: usize> Tds<T, U, V, D> {
                     .into());
                 };
 
-                if vertex.incident_cell.is_none() {
-                    vertex.incident_cell = Some(cell_key);
+                if vertex.incident_cell().is_none() {
+                    vertex.set_incident_cell(Some(cell_key));
                 }
             }
         }
@@ -4678,12 +4638,12 @@ impl<T, U, V, const D: usize> Tds<T, U, V, D> {
                         cell_key,
                         context: "orientation normalization traversal".to_string(),
                     })?;
-                let Some(neighbors) = cell.neighbors() else {
+                let Some(neighbors) = cell.neighbor_keys() else {
                     continue;
                 };
 
-                for (facet_idx, neighbor_key_opt) in neighbors.iter().enumerate() {
-                    let Some(neighbor_key) = *neighbor_key_opt else {
+                for (facet_idx, neighbor_key_opt) in neighbors.enumerate() {
+                    let Some(neighbor_key) = neighbor_key_opt else {
                         continue;
                     };
                     if neighbor_key == cell_key && Self::allows_periodic_self_neighbor(cell) {
@@ -4785,12 +4745,12 @@ impl<T, U, V, const D: usize> Tds<T, U, V, D> {
                     cell_key,
                     context: "local orientation validation scope".to_string(),
                 })?;
-            let Some(neighbors) = cell.neighbors() else {
+            let Some(neighbors) = cell.neighbor_keys() else {
                 continue;
             };
 
-            for (facet_idx, neighbor_key_opt) in neighbors.iter().enumerate() {
-                let Some(neighbor_key) = *neighbor_key_opt else {
+            for (facet_idx, neighbor_key_opt) in neighbors.enumerate() {
+                let Some(neighbor_key) = neighbor_key_opt else {
                     continue;
                 };
                 if neighbor_key == cell_key && Self::allows_periodic_self_neighbor(cell) {
@@ -4823,11 +4783,7 @@ impl<T, U, V, const D: usize> Tds<T, U, V, D> {
                             context: "local orientation validation".to_string(),
                         },
                     })?;
-                let observed_back_reference = neighbor_cell
-                    .neighbors()
-                    .and_then(|neighbors| neighbors.get(mirror_idx))
-                    .copied()
-                    .flatten();
+                let observed_back_reference = neighbor_cell.neighbor_key(mirror_idx).flatten();
                 if observed_back_reference != Some(cell_key) {
                     return Err(TdsError::InvalidNeighbors {
                         reason: NeighborValidationError::BackReferenceMismatch {
@@ -5221,7 +5177,7 @@ impl<T, U, V, const D: usize> Tds<T, U, V, D> {
     /// - reference a cell that actually contains the vertex.
     fn validate_vertex_incidence(&self) -> Result<(), TdsError> {
         for (vertex_key, vertex) in &self.vertices {
-            let Some(incident_cell_key) = vertex.incident_cell else {
+            let Some(incident_cell_key) = vertex.incident_cell() else {
                 continue;
             };
 
@@ -5425,12 +5381,12 @@ impl<T, U, V, const D: usize> Tds<T, U, V, D> {
     ///   — facet-extraction helpers encounter invalid indices or periodic-offset count mismatches.
     fn validate_coherent_orientation(&self) -> Result<(), TdsError> {
         for (cell_key, cell) in &self.cells {
-            let Some(neighbors) = cell.neighbors() else {
+            let Some(neighbors) = cell.neighbor_keys() else {
                 continue;
             };
 
-            for (facet_idx, neighbor_key_opt) in neighbors.iter().enumerate() {
-                let Some(neighbor_key) = *neighbor_key_opt else {
+            for (facet_idx, neighbor_key_opt) in neighbors.enumerate() {
+                let Some(neighbor_key) = neighbor_key_opt else {
                     continue; // Boundary facet
                 };
 
@@ -5461,10 +5417,8 @@ impl<T, U, V, const D: usize> Tds<T, U, V, D> {
                         },
                     })?;
                 let back_neighbor = neighbor_cell
-                    .neighbors()
-                    .and_then(|neighbor_neighbors| {
-                        neighbor_neighbors.get(mirror_idx).copied().flatten()
-                    })
+                    .neighbor_key(mirror_idx)
+                    .flatten()
                     .ok_or_else(|| TdsError::InvalidNeighbors {
                         reason: NeighborValidationError::BackReferenceMismatch {
                             cell_key,
@@ -6099,34 +6053,31 @@ impl<T, U, V, const D: usize> Tds<T, U, V, D> {
                             context: "neighbor validation (boundary facet)".to_string(),
                         })?;
 
-                    if let Some(neighbors) = cell.neighbors() {
-                        let neighbor = neighbors.get(facet_index).and_then(|n| *n);
-                        if let Some(neighbor_key) = neighbor {
-                            // Periodic quotient triangulations may encode this as self-adjacency.
-                            if neighbor_key == cell_key {
-                                if Self::allows_periodic_self_neighbor(cell) {
-                                    continue;
-                                }
-                                return Err(TdsError::InvalidNeighbors {
-                                    reason:
-                                        NeighborValidationError::BoundaryFacetHasNonPeriodicSelfNeighbor {
-                                            facet_key: *facet_key,
-                                            cell_key,
-                                            cell_uuid: cell.uuid(),
-                                            facet_index,
-                                        },
-                                });
+                    if let Some(neighbor) = cell.neighbor_key(facet_index).flatten() {
+                        // Periodic quotient triangulations may encode this as self-adjacency.
+                        if neighbor == cell_key {
+                            if Self::allows_periodic_self_neighbor(cell) {
+                                continue;
                             }
                             return Err(TdsError::InvalidNeighbors {
-                                reason: NeighborValidationError::BoundaryFacetHasNeighbor {
-                                    facet_key: *facet_key,
-                                    cell_key,
-                                    cell_uuid: cell.uuid(),
-                                    facet_index,
-                                    neighbor_key,
-                                },
+                                reason:
+                                    NeighborValidationError::BoundaryFacetHasNonPeriodicSelfNeighbor {
+                                        facet_key: *facet_key,
+                                        cell_key,
+                                        cell_uuid: cell.uuid(),
+                                        facet_index,
+                                    },
                             });
                         }
+                        return Err(TdsError::InvalidNeighbors {
+                            reason: NeighborValidationError::BoundaryFacetHasNeighbor {
+                                facet_key: *facet_key,
+                                cell_key,
+                                cell_uuid: cell.uuid(),
+                                facet_index,
+                                neighbor_key: neighbor,
+                            },
+                        });
                     }
                 }
                 [a, b] => {
@@ -6153,14 +6104,8 @@ impl<T, U, V, const D: usize> Tds<T, U, V, D> {
                                     .to_string(),
                             })?;
 
-                    let first_neighbor = first_cell
-                        .neighbors()
-                        .and_then(|n| n.get(first_facet_index))
-                        .and_then(|n| *n);
-                    let second_neighbor = second_cell
-                        .neighbors()
-                        .and_then(|n| n.get(second_facet_index))
-                        .and_then(|n| *n);
+                    let first_neighbor = first_cell.neighbor_key(first_facet_index).flatten();
+                    let second_neighbor = second_cell.neighbor_key(second_facet_index).flatten();
 
                     if first_neighbor != Some(second_cell_key)
                         || second_neighbor != Some(first_cell_key)
@@ -6201,12 +6146,13 @@ impl<T, U, V, const D: usize> Tds<T, U, V, D> {
     ) -> Result<(), TdsError> {
         for (cell_key, cell) in &self.cells {
             // Phase 3A: Use neighbors (CellKey-based) instead of neighbor UUIDs
-            let Some(neighbors_buf) = &cell.neighbors else {
+            let Some(neighbor_keys) = cell.neighbor_keys() else {
                 continue; // Skip cells without neighbors
             };
+            let neighbors_buf: NeighborBuffer<Option<CellKey>> = neighbor_keys.collect();
 
             // Validate topological invariant (neighbor[i] opposite vertex[i])
-            self.validate_neighbor_topology(cell_key, neighbors_buf)?;
+            self.validate_neighbor_topology(cell_key, &neighbors_buf)?;
 
             let this_vertices = cell_vertices.get(&cell_key).ok_or_else(|| {
                 TdsError::InconsistentDataStructure {
@@ -6217,14 +6163,14 @@ impl<T, U, V, const D: usize> Tds<T, U, V, D> {
                 }
             })?;
 
-            for (facet_idx, neighbor_key_opt) in neighbors_buf.iter().enumerate() {
+            for (facet_idx, neighbor_key_opt) in neighbors_buf.iter().copied().enumerate() {
                 // Skip None neighbors (missing neighbors)
                 let Some(neighbor_key) = neighbor_key_opt else {
                     continue;
                 };
 
                 // Self-adjacency is valid for periodic quotient triangulations.
-                if *neighbor_key == cell_key {
+                if neighbor_key == cell_key {
                     if Self::allows_periodic_self_neighbor(cell) {
                         continue;
                     }
@@ -6238,19 +6184,19 @@ impl<T, U, V, const D: usize> Tds<T, U, V, D> {
                 }
 
                 // Early termination: check if neighbor exists
-                let Some(neighbor_cell) = self.cells.get(*neighbor_key) else {
+                let Some(neighbor_cell) = self.cells.get(neighbor_key) else {
                     return Err(TdsError::InvalidNeighbors {
                         reason: NeighborValidationError::MissingNeighborCell {
                             cell_key,
                             cell_uuid: cell.uuid(),
                             facet_index: facet_idx,
-                            neighbor_key: *neighbor_key,
+                            neighbor_key,
                             context: "precomputed neighbor validation".to_string(),
                         },
                     });
                 };
 
-                let neighbor_vertices = cell_vertices.get(neighbor_key).ok_or_else(|| {
+                let neighbor_vertices = cell_vertices.get(&neighbor_key).ok_or_else(|| {
                     TdsError::InconsistentDataStructure {
                         message: format!(
                             "Neighbor cell {} (key {neighbor_key:?}) missing from precomputed vertex set map during neighbor validation",
@@ -6286,7 +6232,7 @@ impl<T, U, V, const D: usize> Tds<T, U, V, D> {
                     cell_key,
                     cell,
                     facet_idx,
-                    *neighbor_key,
+                    neighbor_key,
                     neighbor_cell,
                     mirror_idx,
                 )?;
@@ -6455,7 +6401,7 @@ impl<T, U, V, const D: usize> Tds<T, U, V, D> {
         neighbor_cell: &Cell<T, U, V, D>,
         mirror_idx: usize,
     ) -> Result<(), TdsError> {
-        let Some(neighbor_neighbors) = &neighbor_cell.neighbors else {
+        let Some(back_ref) = neighbor_cell.neighbor_key(mirror_idx) else {
             return Err(TdsError::InvalidNeighbors {
                 reason: NeighborValidationError::BackReferenceMismatch {
                     cell_key,
@@ -6470,7 +6416,6 @@ impl<T, U, V, const D: usize> Tds<T, U, V, D> {
             });
         };
 
-        let back_ref = neighbor_neighbors.get(mirror_idx).copied().flatten();
         if back_ref != Some(cell_key) {
             return Err(TdsError::InvalidNeighbors {
                 reason: NeighborValidationError::BackReferenceMismatch {
@@ -7338,7 +7283,7 @@ mod tests {
             neighbors.push(Some(removed_target_key));
             neighbors.push(None);
             neighbors.push(None);
-            bad_cell_mut.neighbors = Some(neighbors);
+            bad_cell_mut.set_neighbors_from_keys(neighbors);
         }
 
         let removed_count = tds.repair_degenerate_cells();
@@ -7522,10 +7467,10 @@ mod tests {
         // This is the key test for the bug fix
         for (cell_key, cell) in dt.cells() {
             if let Some(neighbors) = cell.neighbors() {
-                for (i, neighbor_opt) in neighbors.iter().enumerate() {
+                for (i, neighbor_opt) in neighbors.enumerate() {
                     if let Some(neighbor_key) = neighbor_opt {
                         assert!(
-                            dt.as_triangulation().tds.cells.contains_key(*neighbor_key),
+                            dt.as_triangulation().tds.cells.contains_key(neighbor_key),
                             "Cell {cell_key:?} has dangling neighbor reference at index {i}: {neighbor_key:?}"
                         );
                     }
@@ -7727,7 +7672,7 @@ mod tests {
 
         // CRITICAL CHECK 3: All remaining vertices should have valid incident_cell pointers
         for (vertex_key, vertex) in dt.vertices() {
-            if let Some(incident_cell_key) = vertex.incident_cell {
+            if let Some(incident_cell_key) = vertex.incident_cell() {
                 assert!(
                     dt.as_triangulation()
                         .tds
@@ -7899,7 +7844,7 @@ mod tests {
             tds.cell(cell1)
                 .unwrap()
                 .neighbors()
-                .is_some_and(|n| n.iter().any(Option::is_some))
+                .is_some_and(|mut n| n.any(|neighbor| neighbor.is_some()))
         );
 
         let gen_before = tds.generation();
@@ -7910,7 +7855,7 @@ mod tests {
         for (_, cell) in tds.cells() {
             if let Some(neighbors) = cell.neighbors() {
                 for neighbor_opt in neighbors {
-                    assert_ne!(*neighbor_opt, Some(cell2));
+                    assert_ne!(neighbor_opt, Some(cell2));
                 }
             }
         }
@@ -7937,22 +7882,22 @@ mod tests {
         tds.assign_neighbors().unwrap();
 
         // Force deterministic incident_cell pointers that require repair.
-        tds.vertex_mut(a).unwrap().incident_cell = Some(cell1);
-        tds.vertex_mut(b).unwrap().incident_cell = Some(cell1);
-        tds.vertex_mut(c).unwrap().incident_cell = Some(cell1);
-        tds.vertex_mut(d).unwrap().incident_cell = Some(cell2);
+        tds.vertex_mut(a).unwrap().set_incident_cell(Some(cell1));
+        tds.vertex_mut(b).unwrap().set_incident_cell(Some(cell1));
+        tds.vertex_mut(c).unwrap().set_incident_cell(Some(cell1));
+        tds.vertex_mut(d).unwrap().set_incident_cell(Some(cell2));
 
         assert_eq!(tds.remove_cells_by_keys(&[cell1]), 1);
 
         // A is now isolated (no remaining cells contain it) => incident_cell must be None.
-        assert!(tds.vertex(a).unwrap().incident_cell.is_none());
+        assert!(tds.vertex(a).unwrap().incident_cell().is_none());
 
         // B, C, D are still in cell2 => their incident_cell must be valid and contain them.
         for vk in [b, c, d] {
             let incident = tds
                 .vertex(vk)
                 .unwrap()
-                .incident_cell
+                .incident_cell()
                 .expect("vertex should have an incident cell after repair");
             assert!(tds.cells.contains_key(incident));
             let cell = tds.cell(incident).unwrap();
@@ -7964,8 +7909,8 @@ mod tests {
 
         // Neighbor pointers in the surviving cell must not reference the removed cell.
         let cell2_ref = tds.cell(cell2).unwrap();
-        if let Some(neighbors) = cell2_ref.neighbors() {
-            assert!(neighbors.iter().all(|n| *n != Some(cell1)));
+        if let Some(mut neighbors) = cell2_ref.neighbors() {
+            assert!(neighbors.all(|n| n != Some(cell1)));
         }
     }
 
@@ -7992,7 +7937,9 @@ mod tests {
 
         // Manually set an incident cell so the vertex appears non-isolated.
         let fake_cell_key = CellKey::from(KeyData::from_ffi(1));
-        tds.vertex_mut(vk).unwrap().incident_cell = Some(fake_cell_key);
+        tds.vertex_mut(vk)
+            .unwrap()
+            .set_incident_cell(Some(fake_cell_key));
 
         let gen_before = tds.generation();
         tds.remove_isolated_vertex(vk);
@@ -8011,7 +7958,7 @@ mod tests {
         let uuid = tds.vertex(vk).unwrap().uuid();
 
         // No incident cell set → truly isolated.
-        assert!(tds.vertex(vk).unwrap().incident_cell.is_none());
+        assert!(tds.vertex(vk).unwrap().incident_cell().is_none());
 
         let gen_before = tds.generation();
         tds.remove_isolated_vertex(vk);
@@ -8053,10 +8000,18 @@ mod tests {
         // - ORIGIN points at cell1 so star discovery can use the neighbor-walk fast path.
         // - EAST/NORTH point at cell1 so removal must repair them to cell2.
         // - DIAGONAL points at cell2 and should remain valid.
-        tds.vertex_mut(origin_key).unwrap().incident_cell = Some(cell1);
-        tds.vertex_mut(east_key).unwrap().incident_cell = Some(cell1);
-        tds.vertex_mut(north_key).unwrap().incident_cell = Some(cell1);
-        tds.vertex_mut(diagonal_key).unwrap().incident_cell = Some(cell2);
+        tds.vertex_mut(origin_key)
+            .unwrap()
+            .set_incident_cell(Some(cell1));
+        tds.vertex_mut(east_key)
+            .unwrap()
+            .set_incident_cell(Some(cell1));
+        tds.vertex_mut(north_key)
+            .unwrap()
+            .set_incident_cell(Some(cell1));
+        tds.vertex_mut(diagonal_key)
+            .unwrap()
+            .set_incident_cell(Some(cell2));
 
         let origin_uuid = tds.vertex(origin_key).unwrap().uuid();
         let removed = tds.remove_vertex(origin_key).unwrap();
@@ -8069,14 +8024,14 @@ mod tests {
         // cell2 should remain and must not reference cell1 as a neighbor.
         assert!(tds.cells.contains_key(cell2));
         let cell2_ref = tds.cell(cell2).unwrap();
-        if let Some(neighbors) = cell2_ref.neighbors() {
-            assert!(neighbors.iter().all(|n| *n != Some(cell1)));
+        if let Some(mut neighbors) = cell2_ref.neighbors() {
+            assert!(neighbors.all(|n| n != Some(cell1)));
         }
 
         // Remaining vertices must have valid incident_cell pointers (if present).
         for vertex_key in [east_key, north_key, diagonal_key] {
             let v = tds.vertex(vertex_key).unwrap();
-            let Some(incident) = v.incident_cell else {
+            let Some(incident) = v.incident_cell() else {
                 panic!("vertex {vertex_key:?} should have an incident cell after removal");
             };
             assert!(tds.cells.contains_key(incident));
@@ -8147,10 +8102,14 @@ mod tests {
         tds.set_neighbors_by_key(cell1, &[None, None, Some(cell2)])
             .unwrap();
 
-        let cell1_neighbors = tds.cell(cell1).unwrap().neighbors().unwrap();
-        let cell2_neighbors = tds.cell(cell2).unwrap().neighbors().unwrap();
-        assert_eq!(cell1_neighbors[2], Some(cell2));
-        assert_eq!(cell2_neighbors[2], Some(cell1));
+        assert_eq!(
+            tds.cell(cell1).unwrap().neighbor_key(2).flatten(),
+            Some(cell2)
+        );
+        assert_eq!(
+            tds.cell(cell2).unwrap().neighbor_key(2).flatten(),
+            Some(cell1)
+        );
         let facet_to_cells = tds.build_facet_to_cells_map().unwrap();
         tds.validate_neighbors_with_facet_to_cells_map(&facet_to_cells)
             .unwrap();
@@ -8689,11 +8648,10 @@ mod tests {
         {
             let cell2_mut = tds.cell_mut(cell2_key).unwrap();
             let neighbors = cell2_mut
-                .neighbors
-                .as_mut()
+                .neighbor_slots_mut()
                 .expect("cell2 should have neighbors after assign_neighbors()");
             // For (v_a, v_b, v_d), the shared edge with cell1 is opposite v_d => index 2.
-            neighbors[2] = None;
+            neighbors[2] = NeighborSlot::Boundary;
         }
 
         let cell1 = tds.cell(cell1_key).unwrap();
@@ -8725,7 +8683,7 @@ mod tests {
 
         {
             let cell = tds.cell_mut(cell_key).unwrap();
-            cell.neighbors = Some(vec![Some(cell_key), None, None].into());
+            cell.set_neighbors_from_keys(vec![Some(cell_key), None, None]);
         }
 
         let cell = tds.cell(cell_key).unwrap();
@@ -8764,7 +8722,7 @@ mod tests {
 
         {
             let cell = tds.cell_mut(cell_key).unwrap();
-            cell.neighbors = Some(vec![Some(cell_key), None, None].into());
+            cell.set_neighbors_from_keys(vec![Some(cell_key), None, None]);
             cell.set_periodic_vertex_offsets(vec![[0, 0], [0, 0], [0, 0]])
                 .unwrap();
         }
@@ -8796,12 +8754,11 @@ mod tests {
 
         let mirror_idx = {
             let cell1 = tds.cell(cell1_key).unwrap();
-            let neighbors = cell1
+            let mut neighbors = cell1
                 .neighbors()
                 .expect("cell1 should have neighbors after assign_neighbors()");
             let facet_idx = neighbors
-                .iter()
-                .position(|n| *n == Some(cell2_key))
+                .position(|n| n == Some(cell2_key))
                 .expect("cell1 should reference cell2");
             let cell2 = tds.cell(cell2_key).unwrap();
             cell1
@@ -8812,10 +8769,9 @@ mod tests {
         {
             let cell2 = tds.cell_mut(cell2_key).unwrap();
             let neighbors = cell2
-                .neighbors
-                .as_mut()
+                .neighbor_slots_mut()
                 .expect("cell2 should have neighbors after assign_neighbors()");
-            neighbors[mirror_idx] = None;
+            neighbors[mirror_idx] = NeighborSlot::Boundary;
         }
 
         let err = tds.validate_coherent_orientation().unwrap_err();
@@ -8945,12 +8901,13 @@ mod tests {
         let vkey = tds.insert_vertex_with_mapping(vertex!([0.0, 0.0])).unwrap();
 
         // Corrupt incident_cell and ensure it gets cleared.
-        tds.vertex_mut(vkey).unwrap().incident_cell =
-            Some(CellKey::from(KeyData::from_ffi(u64::MAX)));
-        assert!(tds.vertex(vkey).unwrap().incident_cell.is_some());
+        tds.vertex_mut(vkey)
+            .unwrap()
+            .set_incident_cell(Some(CellKey::from(KeyData::from_ffi(u64::MAX))));
+        assert!(tds.vertex(vkey).unwrap().incident_cell().is_some());
 
         tds.assign_incident_cells().unwrap();
-        assert!(tds.vertex(vkey).unwrap().incident_cell.is_none());
+        assert!(tds.vertex(vkey).unwrap().incident_cell().is_none());
     }
 
     #[test]
@@ -9398,10 +9355,12 @@ mod tests {
         // Assign neighbors: shared facet is edge v1-v2.
         // c0[v0,v1,v2]: facet opposite v0 (index 0) = edge [v1,v2] → neighbor c1
         // c1[v1,v2,v3]: facet opposite v3 (index 2) = edge [v1,v2] → neighbor c0
-        tds.cell_mut(c0).unwrap().neighbors =
-            Some(NeighborBuffer::from_iter([Some(c1), None, None]));
-        tds.cell_mut(c1).unwrap().neighbors =
-            Some(NeighborBuffer::from_iter([None, None, Some(c0)]));
+        tds.cell_mut(c0)
+            .unwrap()
+            .set_neighbors_from_keys([Some(c1), None, None]);
+        tds.cell_mut(c1)
+            .unwrap()
+            .set_neighbors_from_keys([None, None, Some(c0)]);
 
         tds.normalize_coherent_orientation().unwrap();
         assert!(tds.is_coherently_oriented());
@@ -9707,7 +9666,7 @@ mod tests {
         // Multi-cell: cells that share facets have Some(neighbor) entries
         let has_any_neighbor = tds.cells().any(|(_, cell)| {
             cell.neighbors()
-                .is_some_and(|nb| nb.iter().any(Option::is_some))
+                .is_some_and(|mut nb| nb.any(|neighbor| neighbor.is_some()))
         });
         assert!(has_any_neighbor);
 
@@ -10057,7 +10016,7 @@ mod tests {
         let ck2 = tds
             .insert_cell_with_mapping(Cell::new(vec![v1, v2, v3], None).unwrap())
             .unwrap();
-        tds.vertex_mut(v0).unwrap().incident_cell = Some(ck2);
+        tds.vertex_mut(v0).unwrap().set_incident_cell(Some(ck2));
 
         let err = tds.validate_vertex_incidence().unwrap_err();
         assert!(matches!(err, TdsError::InconsistentDataStructure { .. }));
@@ -10076,7 +10035,9 @@ mod tests {
 
         // Point v0 at a non-existent cell key.
         let dangling = CellKey::from(KeyData::from_ffi(0xDEAD));
-        tds.vertex_mut(v0).unwrap().incident_cell = Some(dangling);
+        tds.vertex_mut(v0)
+            .unwrap()
+            .set_incident_cell(Some(dangling));
 
         let err = tds.validate_vertex_incidence().unwrap_err();
         assert!(matches!(err, TdsError::CellNotFound { .. }));
@@ -10124,7 +10085,7 @@ mod tests {
 
         // All remaining vertex incident_cell pointers should be valid.
         for (vk, v) in tds.vertices() {
-            if let Some(ic) = v.incident_cell {
+            if let Some(ic) = v.incident_cell() {
                 assert!(
                     tds.contains_cell(ic),
                     "Vertex {vk:?} has dangling incident_cell after batch removal"
@@ -10135,8 +10096,8 @@ mod tests {
         // No surviving cell should have a neighbor pointer to the removed cell.
         for (_, cell) in tds.cells() {
             if let Some(neighbors) = cell.neighbors() {
-                for nk in neighbors.iter().flatten() {
-                    assert_ne!(*nk, first_ck, "Dangling neighbor pointer to removed cell");
+                for nk in neighbors.flatten() {
+                    assert_ne!(nk, first_ck, "Dangling neighbor pointer to removed cell");
                 }
             }
         }
@@ -10287,7 +10248,7 @@ mod tests {
                 .unwrap()
                 .neighbors()
                 .unwrap()
-                .contains(&Some(removed_key))
+                .any(|neighbor| neighbor == Some(removed_key))
         );
 
         let removed_uuid = tds.cells.get(removed_key).unwrap().uuid();
@@ -10299,31 +10260,27 @@ mod tests {
         assert!(!tds.cells.contains_key(removed_key));
         assert!(tds.cells.contains_key(surviving_key));
         assert!(!tds.uuid_to_cell_key.contains_key(&removed_uuid));
-        if let Some(neighbors) = tds.cells.get(surviving_key).unwrap().neighbors() {
-            assert!(
-                neighbors
-                    .iter()
-                    .all(|neighbor| *neighbor != Some(removed_key))
-            );
+        if let Some(mut neighbors) = tds.cells.get(surviving_key).unwrap().neighbors() {
+            assert!(neighbors.all(|neighbor| neighbor != Some(removed_key)));
         }
         assert_ne!(
-            tds.vertices.get(v0).unwrap().incident_cell,
+            tds.vertices.get(v0).unwrap().incident_cell(),
             Some(removed_key)
         );
         assert_ne!(
-            tds.vertices.get(v1).unwrap().incident_cell,
+            tds.vertices.get(v1).unwrap().incident_cell(),
             Some(removed_key)
         );
         assert_ne!(
-            tds.vertices.get(v2).unwrap().incident_cell,
+            tds.vertices.get(v2).unwrap().incident_cell(),
             Some(removed_key)
         );
         assert_eq!(
-            tds.vertices.get(v0).unwrap().incident_cell,
+            tds.vertices.get(v0).unwrap().incident_cell(),
             Some(surviving_key)
         );
         assert_eq!(
-            tds.vertices.get(v2).unwrap().incident_cell,
+            tds.vertices.get(v2).unwrap().incident_cell(),
             Some(surviving_key)
         );
     }
