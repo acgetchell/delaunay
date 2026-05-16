@@ -73,13 +73,20 @@ Some causal-triangulations tooling remains project-specific and was not ported:
 - CDT's `performance-analysis` script; Delaunay keeps its benchmark helpers and
   generated performance-summary workflow.
 - Delaunay has a project-specific `just perf-no-regressions` recipe that runs
-  the calibrated 2D-5D `ci_performance_suite` canaries against the current
-  dev-mode baseline artifact. This stays local to Delaunay because the
-  benchmark contract, fixture sizes, and regression threshold are tied to this
-  library's triangulation performance expectations. `just perf-baseline [ref]`
-  generates that baseline on the developer's machine from a temporary checkout
-  of the requested GitHub ref so the comparison uses the same local hardware as
-  the current branch while GitHub Actions still publishes shared CI artifacts.
+  the calibrated 2D-5D `ci_performance_suite` canaries against a cached
+  same-machine dev-mode baseline for the current GitHub `main` commit. This
+  stays local to Delaunay because the benchmark contract, fixture sizes, and
+  regression threshold are tied to this library's triangulation performance
+  expectations. The cache lives under
+  `baseline-artifacts/perf-no-regressions/`, is keyed by the resolved
+  `origin/main` commit and local Rust compiler version, and is refreshed when
+  either key changes or the artifact no longer matches the benchmark contract.
+  The cache/validation logic lives in `benchmark-utils ensure-ref-baseline` and
+  `benchmark-utils compare-ref` so workflows can reuse the same behavior without
+  depending on justfile shell internals.
+  `just perf-baseline [ref]` remains the manual persistent-baseline workflow for
+  a requested GitHub ref, so ad-hoc comparisons still use the developer's local
+  hardware while GitHub Actions publishes shared CI artifacts.
 - Delaunay keeps a single `profiling_suite` benchmark target for manual
   large-scale and flamegraph work. The previous standalone large-scale target
   was folded into that harness so `.github/workflows/profiling-benchmarks.yml`

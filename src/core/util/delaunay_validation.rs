@@ -1100,7 +1100,7 @@ mod tests {
             Triangulation::<FastKernel<f64>, (), (), 2>::build_initial_simplex(&vertices).unwrap();
         let cell_key = tds.cell_keys().next().unwrap();
         let cell = tds.cell_mut(cell_key).unwrap();
-        cell.set_neighbors_from_keys(vec![None, None]); // wrong length (expected 3)
+        cell.ensure_neighbors_buffer_mut().truncate(2); // wrong length (expected 3)
 
         let err = is_delaunay_property_only(&tds).unwrap_err();
         assert!(matches!(err, DelaunayValidationError::InvalidCell { .. }));

@@ -442,6 +442,20 @@ pub enum NeighborValidationError {
         /// Validation context.
         context: String,
     },
+    /// A neighbor buffer contains an unassigned facet slot.
+    #[error(
+        "Cell {cell_uuid} (key {cell_key:?}) has unassigned neighbor slot at facet {facet_index} during {context}"
+    )]
+    UnassignedNeighborSlot {
+        /// Cell containing the unassigned slot.
+        cell_key: CellKey,
+        /// UUID of the cell containing the unassigned slot.
+        cell_uuid: Uuid,
+        /// Facet slot that has not been assigned as boundary or neighbor.
+        facet_index: usize,
+        /// Validation context.
+        context: String,
+    },
     /// A non-periodic cell points to itself as a neighbor.
     #[error(
         "Cell {cell_uuid} (key {cell_key:?}) has non-periodic self-neighbor at facet {facet_index}"
@@ -1908,7 +1922,9 @@ impl<T, U, V, const D: usize> Tds<T, U, V, D> {
         // remain distinct.
         for (cell_key, neighbors) in &cell_neighbors {
             if let Some(cell) = self.cells.get_mut(*cell_key) {
-                cell.set_neighbors_from_keys(neighbors.iter().copied());
+                let cell_id = cell.uuid();
+                cell.set_neighbors_from_keys(neighbors.iter().copied())
+                    .map_err(|source| TdsError::InvalidCell { cell_id, source })?;
             }
         }
 
@@ -3649,7 +3665,12 @@ impl<T, U, V, const D: usize> Tds<T, U, V, D> {
             return fallback_scan();
         };
 
-        if !start_cell.contains_vertex(vertex_key) || start_cell.neighbor_slots().is_none() {
+        let Some(start_neighbor_slots) = start_cell.neighbor_slots() else {
+            return fallback_scan();
+        };
+        if !start_cell.contains_vertex(vertex_key)
+            || start_neighbor_slots.iter().any(|slot| slot.is_unassigned())
+        {
             return fallback_scan();
         }
 
@@ -3664,15 +3685,18 @@ impl<T, U, V, const D: usize> Tds<T, U, V, D> {
             result.push(cell_key);
 
             let Some(cell) = self.cells.get(cell_key) else {
-                continue;
+                return fallback_scan();
             };
 
-            let Some(neighbors) = cell.neighbor_keys() else {
-                continue;
+            let Some(neighbors) = cell.neighbor_slots() else {
+                return fallback_scan();
             };
+            if neighbors.iter().any(|slot| slot.is_unassigned()) {
+                return fallback_scan();
+            }
 
             // Traverse only across facets that still contain the target vertex.
-            for (facet_idx, neighbor_opt) in neighbors.enumerate() {
+            for (facet_idx, neighbor_slot) in neighbors.iter().copied().enumerate() {
                 if cell
                     .vertices()
                     .get(facet_idx)
@@ -3683,7 +3707,7 @@ impl<T, U, V, const D: usize> Tds<T, U, V, D> {
                     continue;
                 }
 
-                let Some(neighbor_key) = neighbor_opt else {
+                let NeighborSlot::Neighbor(neighbor_key) = neighbor_slot else {
                     continue;
                 };
 
@@ -3692,11 +3716,11 @@ impl<T, U, V, const D: usize> Tds<T, U, V, D> {
                 }
 
                 let Some(neighbor_cell) = self.cells.get(neighbor_key) else {
-                    continue;
+                    return fallback_scan();
                 };
 
                 if !neighbor_cell.contains_vertex(vertex_key) {
-                    continue;
+                    return fallback_scan();
                 }
 
                 visited.insert(neighbor_key);
@@ -4100,13 +4124,23 @@ impl<T, U, V, const D: usize> Tds<T, U, V, D> {
         Ok(())
     }
 
-    fn set_cell_neighbors_normalized(cell: &mut Cell<T, U, V, D>, neighbors: &[Option<CellKey>]) {
-        cell.set_neighbors_from_keys(neighbors.iter().copied());
+    fn set_cell_neighbors_normalized(
+        cell: &mut Cell<T, U, V, D>,
+        neighbors: &[Option<CellKey>],
+    ) -> Result<(), TdsError> {
+        let cell_id = cell.uuid();
+        cell.set_neighbors_from_keys(neighbors.iter().copied())
+            .map_err(|source| TdsError::InvalidCell { cell_id, source })
     }
 
     fn ensure_neighbor_buffer(
         cell: &mut Cell<T, U, V, D>,
     ) -> Result<&mut SmallBuffer<NeighborSlot, MAX_PRACTICAL_DIMENSION_SIZE>, TdsError> {
+        if cell.neighbor_slots().is_none() {
+            let cell_id = cell.uuid();
+            cell.set_neighbors_from_keys((0..=D).map(|_| None))
+                .map_err(|source| TdsError::InvalidCell { cell_id, source })?;
+        }
         let neighbors = cell.ensure_neighbors_buffer_mut();
         if neighbors.len() != D + 1 {
             return Err(TdsError::InvalidNeighbors {
@@ -4357,7 +4391,7 @@ impl<T, U, V, const D: usize> Tds<T, U, V, D> {
                     context: "set_neighbors_by_key".to_string(),
                 })?;
             let cell_uuid = cell.uuid();
-            Self::set_cell_neighbors_normalized(cell, neighbors);
+            Self::set_cell_neighbors_normalized(cell, neighbors)?;
             cell_uuid
         };
 
@@ -6040,91 +6074,8 @@ impl<T, U, V, const D: usize> Tds<T, U, V, D> {
     ) -> Result<(), TdsError> {
         for (facet_key, cell_facet_pairs) in facet_to_cells {
             match cell_facet_pairs.as_slice() {
-                [handle] => {
-                    // Boundary facet: must not have a neighbor across this facet.
-                    let cell_key = handle.cell_key();
-                    let facet_index = handle.facet_index() as usize;
-
-                    let cell = self
-                        .cells
-                        .get(cell_key)
-                        .ok_or_else(|| TdsError::CellNotFound {
-                            cell_key,
-                            context: "neighbor validation (boundary facet)".to_string(),
-                        })?;
-
-                    if let Some(neighbor) = cell.neighbor_key(facet_index).flatten() {
-                        // Periodic quotient triangulations may encode this as self-adjacency.
-                        if neighbor == cell_key {
-                            if Self::allows_periodic_self_neighbor(cell) {
-                                continue;
-                            }
-                            return Err(TdsError::InvalidNeighbors {
-                                reason:
-                                    NeighborValidationError::BoundaryFacetHasNonPeriodicSelfNeighbor {
-                                        facet_key: *facet_key,
-                                        cell_key,
-                                        cell_uuid: cell.uuid(),
-                                        facet_index,
-                                    },
-                            });
-                        }
-                        return Err(TdsError::InvalidNeighbors {
-                            reason: NeighborValidationError::BoundaryFacetHasNeighbor {
-                                facet_key: *facet_key,
-                                cell_key,
-                                cell_uuid: cell.uuid(),
-                                facet_index,
-                                neighbor_key: neighbor,
-                            },
-                        });
-                    }
-                }
-                [a, b] => {
-                    // Interior facet: both cells must be neighbors across the corresponding facet indices.
-                    let first_cell_key = a.cell_key();
-                    let first_facet_index = a.facet_index() as usize;
-                    let second_cell_key = b.cell_key();
-                    let second_facet_index = b.facet_index() as usize;
-
-                    let first_cell =
-                        self.cells
-                            .get(first_cell_key)
-                            .ok_or_else(|| TdsError::CellNotFound {
-                                cell_key: first_cell_key,
-                                context: "neighbor validation (interior facet, first cell)"
-                                    .to_string(),
-                            })?;
-                    let second_cell =
-                        self.cells
-                            .get(second_cell_key)
-                            .ok_or_else(|| TdsError::CellNotFound {
-                                cell_key: second_cell_key,
-                                context: "neighbor validation (interior facet, second cell)"
-                                    .to_string(),
-                            })?;
-
-                    let first_neighbor = first_cell.neighbor_key(first_facet_index).flatten();
-                    let second_neighbor = second_cell.neighbor_key(second_facet_index).flatten();
-
-                    if first_neighbor != Some(second_cell_key)
-                        || second_neighbor != Some(first_cell_key)
-                    {
-                        return Err(TdsError::InvalidNeighbors {
-                            reason: NeighborValidationError::InteriorFacetNeighborMismatch {
-                                facet_key: *facet_key,
-                                first_cell_key,
-                                first_cell_uuid: first_cell.uuid(),
-                                first_facet_index,
-                                first_neighbor,
-                                second_cell_key,
-                                second_cell_uuid: second_cell.uuid(),
-                                second_facet_index,
-                                second_neighbor,
-                            },
-                        });
-                    }
-                }
+                [handle] => self.validate_boundary_facet_neighbor_pointer(*facet_key, *handle)?,
+                [a, b] => self.validate_interior_facet_neighbor_pointer(*facet_key, *a, *b)?,
                 _ => {
                     // Non-manifold facet multiplicity should have been caught by facet-sharing validation.
                     return Err(TdsError::InconsistentDataStructure {
@@ -6138,6 +6089,117 @@ impl<T, U, V, const D: usize> Tds<T, U, V, D> {
         }
 
         Ok(())
+    }
+
+    fn validate_boundary_facet_neighbor_pointer(
+        &self,
+        facet_key: u64,
+        handle: FacetHandle,
+    ) -> Result<(), TdsError> {
+        let cell_key = handle.cell_key();
+        let facet_index = handle.facet_index() as usize;
+        let cell = self
+            .cells
+            .get(cell_key)
+            .ok_or_else(|| TdsError::CellNotFound {
+                cell_key,
+                context: "neighbor validation (boundary facet)".to_string(),
+            })?;
+
+        let Some(neighbor_slots) = cell.neighbor_slots() else {
+            return Ok(());
+        };
+        let Some(neighbor_slot) = neighbor_slots.get(facet_index).copied() else {
+            return Err(TdsError::InvalidNeighbors {
+                reason: NeighborValidationError::LengthMismatch {
+                    actual: neighbor_slots.len(),
+                    expected: D + 1,
+                    context: "neighbor validation (boundary facet)".to_string(),
+                },
+            });
+        };
+
+        match neighbor_slot {
+            NeighborSlot::Unassigned => Err(TdsError::InvalidNeighbors {
+                reason: NeighborValidationError::UnassignedNeighborSlot {
+                    cell_key,
+                    cell_uuid: cell.uuid(),
+                    facet_index,
+                    context: "neighbor validation (boundary facet)".to_string(),
+                },
+            }),
+            NeighborSlot::Boundary => Ok(()),
+            NeighborSlot::Neighbor(neighbor) if neighbor == cell_key => {
+                if Self::allows_periodic_self_neighbor(cell) {
+                    return Ok(());
+                }
+                Err(TdsError::InvalidNeighbors {
+                    reason: NeighborValidationError::BoundaryFacetHasNonPeriodicSelfNeighbor {
+                        facet_key,
+                        cell_key,
+                        cell_uuid: cell.uuid(),
+                        facet_index,
+                    },
+                })
+            }
+            NeighborSlot::Neighbor(neighbor) => Err(TdsError::InvalidNeighbors {
+                reason: NeighborValidationError::BoundaryFacetHasNeighbor {
+                    facet_key,
+                    cell_key,
+                    cell_uuid: cell.uuid(),
+                    facet_index,
+                    neighbor_key: neighbor,
+                },
+            }),
+        }
+    }
+
+    fn validate_interior_facet_neighbor_pointer(
+        &self,
+        facet_key: u64,
+        first: FacetHandle,
+        second: FacetHandle,
+    ) -> Result<(), TdsError> {
+        let first_cell_key = first.cell_key();
+        let first_facet_index = first.facet_index() as usize;
+        let second_cell_key = second.cell_key();
+        let second_facet_index = second.facet_index() as usize;
+
+        let first_cell = self
+            .cells
+            .get(first_cell_key)
+            .ok_or_else(|| TdsError::CellNotFound {
+                cell_key: first_cell_key,
+                context: "neighbor validation (interior facet, first cell)".to_string(),
+            })?;
+        let second_cell =
+            self.cells
+                .get(second_cell_key)
+                .ok_or_else(|| TdsError::CellNotFound {
+                    cell_key: second_cell_key,
+                    context: "neighbor validation (interior facet, second cell)".to_string(),
+                })?;
+
+        let first_neighbor = first_cell.neighbor_key(first_facet_index).flatten();
+        let second_neighbor = second_cell.neighbor_key(second_facet_index).flatten();
+
+        if first_neighbor == Some(second_cell_key) && second_neighbor == Some(first_cell_key) {
+            return Ok(());
+        }
+
+        Err(TdsError::InvalidNeighbors {
+            reason: NeighborValidationError::InteriorFacetNeighborMismatch {
+                facet_key,
+                first_cell_key,
+                first_cell_uuid: first_cell.uuid(),
+                first_facet_index,
+                first_neighbor,
+                second_cell_key,
+                second_cell_uuid: second_cell.uuid(),
+                second_facet_index,
+                second_neighbor,
+            },
+        })
     }
 
     fn validate_neighbors_with_precomputed_vertex_sets(
@@ -7283,7 +7345,7 @@ mod tests {
             neighbors.push(Some(removed_target_key));
             neighbors.push(None);
             neighbors.push(None);
-            bad_cell_mut.set_neighbors_from_keys(neighbors);
+            bad_cell_mut.set_neighbors_from_keys(neighbors).unwrap();
         }
 
         let removed_count = tds.repair_degenerate_cells();
@@ -8683,7 +8745,8 @@ mod tests {
 
         {
             let cell = tds.cell_mut(cell_key).unwrap();
-            cell.set_neighbors_from_keys(vec![Some(cell_key), None, None]);
+            cell.set_neighbors_from_keys(vec![Some(cell_key), None, None])
+                .unwrap();
         }
 
         let cell = tds.cell(cell_key).unwrap();
@@ -8722,7 +8785,8 @@ mod tests {
 
         {
             let cell = tds.cell_mut(cell_key).unwrap();
-            cell.set_neighbors_from_keys(vec![Some(cell_key), None, None]);
+            cell.set_neighbors_from_keys(vec![Some(cell_key), None, None])
+                .unwrap();
             cell.set_periodic_vertex_offsets(vec![[0, 0], [0, 0], [0, 0]])
                 .unwrap();
         }
@@ -8732,6 +8796,74 @@ mod tests {
         assert!(tds.validate_coherent_orientation().is_ok());
         assert!(tds.is_coherently_oriented());
         assert!(tds.normalize_coherent_orientation().is_ok());
+    }
+
+    #[test]
+    fn test_boundary_facet_validation_rejects_unassigned_neighbor_slot() {
+        let mut tds: Tds<f64, (), (), 2> = Tds::empty();
+
+        let v0 = tds.insert_vertex_with_mapping(vertex!([0.0, 0.0])).unwrap();
+        let v1 = tds.insert_vertex_with_mapping(vertex!([1.0, 0.0])).unwrap();
+        let v2 = tds.insert_vertex_with_mapping(vertex!([0.0, 1.0])).unwrap();
+        let cell_key = tds
+            .insert_cell_with_mapping(Cell::new(vec![v0, v1, v2], None).unwrap())
+            .unwrap();
+        tds.assign_neighbors().unwrap();
+        let facet_to_cells = tds.build_facet_to_cells_map().unwrap();
+
+        {
+            let cell = tds.cell_mut(cell_key).unwrap();
+            cell.ensure_neighbors_buffer_mut()[1] = NeighborSlot::Unassigned;
+        }
+
+        let err = tds
+            .validate_neighbor_pointers_match_facet_to_cells_map(&facet_to_cells)
+            .unwrap_err();
+
+        assert!(matches!(
+            err,
+            TdsError::InvalidNeighbors {
+                reason: NeighborValidationError::UnassignedNeighborSlot {
+                    cell_key: key,
+                    facet_index: 1,
+                    ..
+                },
+            } if key == cell_key
+        ));
+    }
+
+    #[test]
+    fn test_boundary_facet_validation_rejects_non_periodic_self_neighbor() {
+        let mut tds: Tds<f64, (), (), 2> = Tds::empty();
+
+        let v0 = tds.insert_vertex_with_mapping(vertex!([0.0, 0.0])).unwrap();
+        let v1 = tds.insert_vertex_with_mapping(vertex!([1.0, 0.0])).unwrap();
+        let v2 = tds.insert_vertex_with_mapping(vertex!([0.0, 1.0])).unwrap();
+        let cell_key = tds
+            .insert_cell_with_mapping(Cell::new(vec![v0, v1, v2], None).unwrap())
+            .unwrap();
+        tds.assign_neighbors().unwrap();
+        let facet_to_cells = tds.build_facet_to_cells_map().unwrap();
+
+        {
+            let cell = tds.cell_mut(cell_key).unwrap();
+            cell.ensure_neighbors_buffer_mut()[2] = NeighborSlot::Neighbor(cell_key);
+        }
+
+        let err = tds
+            .validate_neighbor_pointers_match_facet_to_cells_map(&facet_to_cells)
+            .unwrap_err();
+
+        assert!(matches!(
+            err,
+            TdsError::InvalidNeighbors {
+                reason: NeighborValidationError::BoundaryFacetHasNonPeriodicSelfNeighbor {
+                    cell_key: key,
+                    facet_index: 2,
+                    ..
+                },
+            } if key == cell_key
+        ));
     }
 
     #[test]
@@ -9357,10 +9489,12 @@ mod tests {
         // c1[v1,v2,v3]: facet opposite v3 (index 2) = edge [v1,v2] → neighbor c0
         tds.cell_mut(c0)
             .unwrap()
-            .set_neighbors_from_keys([Some(c1), None, None]);
+            .set_neighbors_from_keys([Some(c1), None, None])
+            .unwrap();
         tds.cell_mut(c1)
             .unwrap()
-            .set_neighbors_from_keys([None, None, Some(c0)]);
+            .set_neighbors_from_keys([None, None, Some(c0)])
+            .unwrap();
 
         tds.normalize_coherent_orientation().unwrap();
         assert!(tds.is_coherently_oriented());
@@ -10059,6 +10193,40 @@ mod tests {
         // Don't assign incident cells — force fallback scan.
         let cells = tds.find_cells_containing_vertex_by_key(v0);
         assert_eq!(cells.len(), 1);
+    }
+
+    #[test]
+    fn test_find_cells_containing_vertex_falls_back_on_unassigned_neighbor_slot() {
+        let mut tds: Tds<f64, (), (), 2> = Tds::empty();
+        let v0 = tds.insert_vertex_with_mapping(vertex!([0.0, 0.0])).unwrap();
+        let v1 = tds.insert_vertex_with_mapping(vertex!([1.0, 0.0])).unwrap();
+        let v2 = tds.insert_vertex_with_mapping(vertex!([0.0, 1.0])).unwrap();
+        let v3 = tds
+            .insert_vertex_with_mapping(vertex!([-1.0, 1.0]))
+            .unwrap();
+
+        let first_cell = tds
+            .insert_cell_with_mapping(Cell::new(vec![v0, v1, v2], None).unwrap())
+            .unwrap();
+        let second_cell = tds
+            .insert_cell_with_mapping(Cell::new(vec![v0, v2, v3], None).unwrap())
+            .unwrap();
+        tds.assign_neighbors().unwrap();
+        tds.assign_incident_cells().unwrap();
+        tds.vertex_mut(v0)
+            .unwrap()
+            .set_incident_cell(Some(first_cell));
+
+        {
+            let cell = tds.cell_mut(first_cell).unwrap();
+            cell.ensure_neighbors_buffer_mut()[0] = NeighborSlot::Unassigned;
+        }
+
+        let cells = tds.find_cells_containing_vertex_by_key(v0);
+
+        assert_eq!(cells.len(), 2);
+        assert!(cells.contains(&first_cell));
+        assert!(cells.contains(&second_cell));
     }
 
     // =========================================================================

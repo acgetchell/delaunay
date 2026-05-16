@@ -42,6 +42,7 @@ from benchmark_utils import (
     BaselineParseError,
     BenchmarkRegressionHelper,
     CriterionParser,
+    LocalRefBaselineCacheOptions,
     LocalRefBaselineGenerator,
     PerformanceComparator,
     PerformanceSummaryGenerator,
@@ -51,8 +52,10 @@ from benchmark_utils import (
     _load_ci_performance_metrics,
     _parse_ci_performance_metrics,
     _write_ci_performance_metrics,
+    compare_with_cached_ref_baseline,
     configure_logging,
     create_argument_parser,
+    ensure_cached_ref_baseline,
     find_project_root,
     main,
 )
@@ -114,6 +117,23 @@ def write_ci_performance_metrics(target_dir: Path, metrics: dict[str, dict[str, 
         json.dumps(metrics),
         encoding="utf-8",
     )
+
+
+def cached_ref_baseline_content(*, commit: str = "abc123def456", benchmark_id: str = "tds_new_2d/tds_new/4000") -> str:
+    """Return a minimal parseable local ref baseline fixture."""
+    return f"""Date: 2026-05-14 10:00:00 UTC
+Git commit: {commit}
+Ref: main
+Hardware Information:
+  OS: macOS
+  CPU: Apple M4 Max
+  Memory: 64.0 GB
+
+=== 4000 Points (2D) ===
+Benchmark ID: {benchmark_id}
+Time: [100.0, 110.0, 120.0] µs
+Throughput: [18.0, 19.0, 20.0] Kelem/s
+"""
 
 
 def compute_average_time_change(current_results, baseline_results) -> float:
@@ -1269,6 +1289,109 @@ class TestBaselineGenerator:
         assert calls[0][:3] == ["clone", "--no-checkout", "--filter=blob:none"]
         assert calls[1] == ["fetch", "--depth", "1", "origin", "main"]
         assert calls[2] == ["checkout", "--detach", "FETCH_HEAD"]
+
+    def test_cached_ref_baseline_reuses_valid_cache(self, tmp_path) -> None:
+        """Test that a valid same-machine ref baseline is reused without benchmarking."""
+        commit = "abc123def456"
+        options = LocalRefBaselineCacheOptions(
+            ref_name="main",
+            cache_root=tmp_path / "cache",
+            dev_mode=True,
+        )
+        baseline_dir = tmp_path / "cache" / "main" / commit / "dev" / "rustc_1.95.0"
+        baseline_dir.mkdir(parents=True)
+        baseline_path = baseline_dir / "baseline_results.txt"
+        baseline_path.write_text(cached_ref_baseline_content(commit=commit), encoding="utf-8")
+
+        with (
+            patch("benchmark_utils.run_safe_command", return_value=completed_process(stdout="rustc 1.95.0\n")),
+            patch.object(LocalRefBaselineGenerator, "generate_for_ref") as mock_generate,
+        ):
+            result = ensure_cached_ref_baseline(tmp_path, options, resolved_commit=commit)
+
+        assert result.baseline_path == baseline_path
+        assert result.resolved_commit == commit
+        assert result.reused is True
+        mock_generate.assert_not_called()
+
+    def test_cached_ref_baseline_reuses_same_commit_alias(self, tmp_path) -> None:
+        """Test that refs resolving to the same commit can share a cached baseline."""
+        commit = "abc123def456"
+        options = LocalRefBaselineCacheOptions(
+            ref_name="main",
+            cache_root=tmp_path / "cache",
+            dev_mode=True,
+        )
+        alias_dir = tmp_path / "cache" / "v0.7.7" / commit / "dev" / "rustc_1.95.0"
+        alias_dir.mkdir(parents=True)
+        alias_path = alias_dir / "baseline_results.txt"
+        alias_path.write_text(cached_ref_baseline_content(commit=commit), encoding="utf-8")
+
+        with (
+            patch("benchmark_utils.run_safe_command", return_value=completed_process(stdout="rustc 1.95.0\n")),
+            patch.object(LocalRefBaselineGenerator, "generate_for_ref") as mock_generate,
+        ):
+            result = ensure_cached_ref_baseline(tmp_path, options, resolved_commit=commit)
+
+        assert result.baseline_path == alias_path
+        assert result.resolved_commit == commit
+        assert result.reused is True
+        mock_generate.assert_not_called()
+
+    def test_cached_ref_baseline_regenerates_stale_cache(self, tmp_path) -> None:
+        """Test that stale cache entries are refreshed and revalidated before reuse."""
+        commit = "abc123def456"
+        options = LocalRefBaselineCacheOptions(
+            ref_name="main",
+            cache_root=tmp_path / "cache",
+            dev_mode=True,
+            bench_timeout=42,
+        )
+        baseline_dir = tmp_path / "cache" / "main" / commit / "dev" / "rustc_1.95.0"
+        baseline_dir.mkdir(parents=True)
+        baseline_path = baseline_dir / "baseline_results.txt"
+        baseline_path.write_text(cached_ref_baseline_content(commit="stale-baseline"), encoding="utf-8")
+
+        def fake_generate_for_ref(
+            self,
+            *,
+            ref_name: str,
+            out_dir: Path,
+            dev_mode: bool = False,
+            bench_timeout: int = 1800,
+        ) -> Path:
+            assert self.project_root == tmp_path
+            assert ref_name == "main"
+            assert out_dir == baseline_dir
+            assert dev_mode is True
+            assert bench_timeout == 42
+            baseline_path.write_text(cached_ref_baseline_content(commit=commit), encoding="utf-8")
+            return baseline_path
+
+        with (
+            patch("benchmark_utils.run_safe_command", return_value=completed_process(stdout="rustc 1.95.0\n")),
+            patch.object(LocalRefBaselineGenerator, "generate_for_ref", fake_generate_for_ref),
+        ):
+            result = ensure_cached_ref_baseline(tmp_path, options, resolved_commit=commit)
+
+        assert result.baseline_path == baseline_path
+        assert result.resolved_commit == commit
+        assert result.reused is False
+
+    def test_compare_ref_skips_same_clean_commit(self, tmp_path) -> None:
+        """Test that compare-ref skips before generating a same-commit clean baseline."""
+        options = LocalRefBaselineCacheOptions(ref_name="main", dev_mode=True)
+
+        with (
+            patch("benchmark_utils.get_git_commit_hash", return_value="abc123def456"),
+            patch("benchmark_utils.relevant_perf_worktree_dirty", return_value=False),
+            patch("benchmark_utils.resolve_ref_commit", return_value="abc123def456"),
+            patch("benchmark_utils.ensure_cached_ref_baseline") as mock_ensure,
+        ):
+            exit_code = compare_with_cached_ref_baseline(tmp_path, options, threshold=7.5)
+
+        assert exit_code == 0
+        mock_ensure.assert_not_called()
 
     @patch("benchmark_utils.get_git_commit_hash", return_value="abc123")
     def test_written_baseline_round_trips_through_parser(self, mock_git, tmp_path) -> None:
@@ -2547,6 +2670,22 @@ class TestTimeoutHandling:
         assert args.command == "generate-ref-baseline"
         assert args.ref_name == "main"
         assert args.dev
+
+    def test_parser_accepts_cached_local_ref_baseline_commands(self) -> None:
+        """Test that cached local ref baseline commands expose reusable CLI options."""
+        parser = create_argument_parser()
+
+        ensure_args = parser.parse_args(["ensure-ref-baseline", "--ref", "v0.7.7", "--dev", "--cache-root", "cache"])
+        compare_args = parser.parse_args(["compare-ref", "--ref", "main", "--threshold", "5.0", "--dev"])
+
+        assert ensure_args.command == "ensure-ref-baseline"
+        assert ensure_args.ref_name == "v0.7.7"
+        assert ensure_args.cache_root == Path("cache")
+        assert ensure_args.dev
+        assert compare_args.command == "compare-ref"
+        assert compare_args.ref_name == "main"
+        assert compare_args.threshold == 5.0
+        assert compare_args.dev
 
     def test_configure_logging_uses_debug_when_verbose(self) -> None:
         """Test that verbose mode configures debug-level CLI logging."""

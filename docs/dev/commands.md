@@ -201,9 +201,14 @@ just perf-no-regressions
 
 `just perf-no-regressions` is the fast local PR guard. It runs
 `ci_performance_suite` with the shared dev-mode Criterion arguments against a
-temporary same-machine baseline generated from the current GitHub `main` ref.
-The temporary baseline checkout and artifact directory are removed after the
-comparison.
+same-machine baseline generated from the current GitHub `main` ref. The guard
+reuses a local cache under `baseline-artifacts/perf-no-regressions/` keyed by
+the resolved `origin/main` commit and local Rust compiler version, and refreshes
+that baseline when `main` or the compiler changes, or when the cached artifact
+does not match the benchmark contract. The current worktree benchmark still runs
+fresh each time so repeated comparisons can catch local performance drift.
+`just clean` removes Criterion data under `target/`, but it does not remove this
+local baseline cache.
 
 ```bash
 just perf-no-regressions
@@ -212,6 +217,13 @@ just perf-no-regressions
 `just perf-baseline` is optional and intentionally persistent: use it only when
 you want to create or refresh `baseline-artifact/baseline_results.txt` for later
 manual comparisons.
+
+For lower-level workflows, `uv run benchmark-utils ensure-ref-baseline --ref
+<ref> --dev` prints the cached/generated same-machine baseline path for a branch
+or version tag, and `uv run benchmark-utils fetch-baseline --ref <ref>` downloads
+the GitHub Actions artifact instead. Use the generated local baseline for
+same-machine regression checks; use the downloaded artifact when you explicitly
+want CI-runner parity.
 
 To generate a scratch baseline without replacing the default artifact, write it
 somewhere else and compare directly:

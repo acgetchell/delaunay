@@ -1950,7 +1950,7 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::core::cell::{Cell, NeighborSlot};
+    use crate::core::cell::Cell;
     use crate::core::collections::NeighborBuffer;
     use crate::geometry::kernel::{FastKernel, RobustKernel};
     use crate::geometry::traits::coordinate::Coordinate;
@@ -2356,7 +2356,7 @@ mod tests {
         let cell = dt.tds_mut().cell_mut(cell_key).unwrap();
         let mut neighbors = NeighborBuffer::<Option<CellKey>>::new();
         neighbors.resize(3, Some(cell_key));
-        cell.set_neighbors_from_keys(neighbors);
+        cell.set_neighbors_from_keys(neighbors).unwrap();
 
         // Point outside the simplex: walking will attempt to cross a facet, hit the self-loop,
         // detect a cycle, and fall back to scan.
@@ -3041,8 +3041,8 @@ mod tests {
         let ghost = CellKey::from(KeyData::from_ffi(777_777));
         {
             let cell = tds.cell_mut(cell_key).unwrap();
-            let buf = cell.ensure_neighbors_buffer_mut();
-            buf[0] = NeighborSlot::Neighbor(ghost);
+            cell.set_neighbors_from_keys([Some(ghost), None, None])
+                .unwrap();
         }
 
         let kernel = FastKernel::<f64>::new();

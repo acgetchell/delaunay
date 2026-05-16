@@ -30,7 +30,7 @@ from datetime import UTC, datetime
 from itertools import product
 from pathlib import Path
 from shutil import copy2 as copyfile  # NOTE: Use copy2 (metadata-preserving) under the 'copyfile' alias for tests/patching convenience.
-from typing import TYPE_CHECKING, TextIO
+from typing import TYPE_CHECKING, NoReturn, TextIO
 from urllib.parse import urlparse
 from uuid import uuid4
 
@@ -172,6 +172,14 @@ CI_PERFORMANCE_SUITE_GROUP_ORDER = tuple(CI_PERFORMANCE_SUITE_GROUPS)
 _CI_PERFORMANCE_SUITE_MANIFEST_IDS_FILE = "ci_performance_suite_manifest_ids.txt"
 _CI_PERFORMANCE_SUITE_METRICS_FILE = "ci_performance_suite_metrics.json"
 _CI_PERFORMANCE_SUITE_RUN_METADATA_FILE = "ci_performance_suite_run_metadata.json"
+PERF_NO_REGRESSIONS_REQUIRED_BENCHMARK_ID = "tds_new_2d/tds_new/4000"
+PERF_NO_REGRESSIONS_RELEVANT_PATHS = (
+    "src",
+    "benches",
+    "Cargo.toml",
+    "Cargo.lock",
+    "scripts/benchmark_utils.py",
+)
 
 
 def ci_suite_group_key(first_path_part: str) -> str | None:
@@ -2416,6 +2424,308 @@ class LocalRefBaselineGenerator:
         return output_file
 
 
+@dataclass(frozen=True)
+class LocalRefBaselineCacheOptions:
+    """Options for a cached same-machine baseline generated from a git ref."""
+
+    ref_name: str = "main"
+    remote: str = "origin"
+    cache_root: Path | None = None
+    dev_mode: bool = False
+    bench_timeout: int = 1800
+    required_benchmark_id: str = PERF_NO_REGRESSIONS_REQUIRED_BENCHMARK_ID
+
+
+@dataclass(frozen=True)
+class LocalRefBaselineCacheResult:
+    """Result of ensuring a cached same-machine ref baseline exists."""
+
+    baseline_path: Path
+    resolved_commit: str | None
+    reused: bool
+
+
+def _sanitize_cache_component(value: str, *, fallback: str) -> str:
+    """Return a stable filesystem-safe cache component."""
+    sanitized = _sanitize_ref_name(value.strip())
+    return sanitized or fallback
+
+
+def _first_ls_remote_commit(stdout: str) -> str | None:
+    """Extract the first object id from git ls-remote output."""
+    for line in stdout.splitlines():
+        parts = line.split()
+        if parts and re.fullmatch(r"[0-9a-fA-F]+", parts[0]):
+            return parts[0]
+    return None
+
+
+def _remote_ref_candidates(ref_name: str) -> list[str]:
+    """Return deterministic ls-remote candidates for a branch, tag, or full ref."""
+    if ref_name.startswith("refs/"):
+        return [ref_name]
+    return [
+        f"refs/heads/{ref_name}",
+        f"refs/tags/{ref_name}^{{}}",
+        f"refs/tags/{ref_name}",
+        ref_name,
+    ]
+
+
+def _local_tracking_ref_candidates(remote: str, ref_name: str) -> list[str]:
+    """Return local remote-tracking refs that can stand in when offline."""
+    if ref_name.startswith("refs/heads/"):
+        branch = ref_name.removeprefix("refs/heads/")
+    elif ref_name.startswith("refs/"):
+        return []
+    else:
+        branch = ref_name
+    return [f"refs/remotes/{remote}/{branch}"]
+
+
+def resolve_ref_commit(project_root: Path, *, ref_name: str, remote: str = "origin") -> str | None:
+    """Resolve a remote git ref to a commit-ish object id, falling back to local tracking refs."""
+    for candidate in _remote_ref_candidates(ref_name):
+        result = run_git_command(
+            ["ls-remote", remote, candidate],
+            cwd=project_root,
+            check=False,
+            timeout=120,
+        )
+        if result.returncode == 0:
+            commit = _first_ls_remote_commit(result.stdout)
+            if commit is not None:
+                return commit
+        else:
+            logger.debug("git ls-remote failed for %s/%s: %s", remote, candidate, (result.stderr or result.stdout or "").strip())
+            break
+
+    for candidate in _local_tracking_ref_candidates(remote, ref_name):
+        result = run_git_command(
+            ["rev-parse", "--verify", "--quiet", candidate],
+            cwd=project_root,
+            check=False,
+            timeout=30,
+        )
+        if result.returncode == 0 and result.stdout.strip():
+            return result.stdout.strip()
+
+    return None
+
+
+def _local_rustc_version(project_root: Path) -> str:
+    """Return the local rustc version used to key same-machine benchmark caches."""
+    try:
+        result = run_safe_command("rustc", ["-V"], cwd=project_root, check=False, timeout=30)
+    except (ExecutableNotFoundError, OSError, subprocess.SubprocessError):
+        return "unknown-rustc"
+    if result.returncode == 0 and result.stdout.strip():
+        return result.stdout.strip()
+    return "unknown-rustc"
+
+
+def _default_local_ref_baseline_cache_root(project_root: Path) -> Path:
+    """Default cache root for local same-machine ref baselines."""
+    if env_cache_root := os.getenv("DELAUNAY_PERF_BASELINE_CACHE"):
+        cache_root = Path(env_cache_root)
+        return cache_root if cache_root.is_absolute() else project_root / cache_root
+    return project_root / "baseline-artifacts" / "perf-no-regressions"
+
+
+def _local_ref_baseline_cache_dir(
+    project_root: Path,
+    options: LocalRefBaselineCacheOptions,
+    *,
+    resolved_commit: str | None,
+) -> Path:
+    """Return the deterministic cache directory for a local ref baseline."""
+    cache_root = options.cache_root or _default_local_ref_baseline_cache_root(project_root)
+    if not cache_root.is_absolute():
+        cache_root = project_root / cache_root
+
+    ref_key = _sanitize_cache_component(options.ref_name, fallback="ref")
+    commit_key = _sanitize_cache_component(resolved_commit or options.ref_name, fallback="unresolved")
+    mode_key = "dev" if options.dev_mode else "full"
+    toolchain_key = _sanitize_cache_component(_local_rustc_version(project_root), fallback="unknown-rustc")
+    return cache_root / ref_key / commit_key / mode_key / toolchain_key
+
+
+def _local_ref_baseline_candidates(
+    project_root: Path,
+    options: LocalRefBaselineCacheOptions,
+    *,
+    resolved_commit: str | None,
+) -> list[Path]:
+    """Return primary and commit-alias cache candidates for a local ref baseline."""
+    primary = _local_ref_baseline_cache_dir(project_root, options, resolved_commit=resolved_commit) / "baseline_results.txt"
+    if resolved_commit is None:
+        return [primary]
+
+    cache_root = options.cache_root or _default_local_ref_baseline_cache_root(project_root)
+    if not cache_root.is_absolute():
+        cache_root = project_root / cache_root
+
+    commit_key = _sanitize_cache_component(resolved_commit, fallback="unresolved")
+    mode_key = "dev" if options.dev_mode else "full"
+    toolchain_key = _sanitize_cache_component(_local_rustc_version(project_root), fallback="unknown-rustc")
+    alias_pattern = f"*/{commit_key}/{mode_key}/{toolchain_key}/baseline_results.txt"
+    aliases = sorted(cache_root.glob(alias_pattern)) if cache_root.exists() else []
+
+    candidates = [primary]
+    candidates.extend(alias for alias in aliases if alias != primary)
+    return candidates
+
+
+def _cached_baseline_valid(
+    project_root: Path,
+    baseline_path: Path,
+    *,
+    expected_commit: str | None,
+    required_benchmark_id: str,
+) -> tuple[bool, str]:
+    """Validate cached baseline metadata and parseability before reuse."""
+    if not baseline_path.exists():
+        return False, f"missing baseline file: {baseline_path}"
+
+    try:
+        baseline_content = baseline_path.read_text(encoding="utf-8")
+    except OSError as exc:
+        return False, f"unable to read baseline file {baseline_path}: {exc}"
+
+    metadata = _parse_baseline_metadata(baseline_content)
+    if expected_commit is not None and metadata["commit"] != expected_commit:
+        return False, f"cached commit {metadata['commit']} does not match expected {expected_commit}"
+
+    try:
+        baseline_results = PerformanceComparator(project_root).parse_baseline_file(baseline_content)
+    except BaselineParseError as exc:
+        return False, f"malformed baseline: {exc}"
+
+    if not any(benchmark.benchmark_id == required_benchmark_id for benchmark in baseline_results.values()):
+        return False, f"missing required benchmark id {required_benchmark_id}"
+
+    return True, "valid"
+
+
+def ensure_cached_ref_baseline(
+    project_root: Path,
+    options: LocalRefBaselineCacheOptions,
+    *,
+    resolved_commit: str | None,
+) -> LocalRefBaselineCacheResult:
+    """Ensure a cached same-machine baseline exists for a resolved git ref."""
+    baseline_dir = _local_ref_baseline_cache_dir(project_root, options, resolved_commit=resolved_commit)
+    reason = "no cache candidates checked"
+    for baseline_path in _local_ref_baseline_candidates(project_root, options, resolved_commit=resolved_commit):
+        valid, reason = _cached_baseline_valid(
+            project_root,
+            baseline_path,
+            expected_commit=resolved_commit,
+            required_benchmark_id=options.required_benchmark_id,
+        )
+        if not valid:
+            continue
+
+        print(f"📦 Reusing cached {options.ref_name} baseline: {baseline_path}", file=sys.stderr)
+        return LocalRefBaselineCacheResult(baseline_path=baseline_path, resolved_commit=resolved_commit, reused=True)
+
+    print(f"🚀 Refreshing cached {options.ref_name} baseline ({reason})...", file=sys.stderr)
+    generator = LocalRefBaselineGenerator(project_root, remote=options.remote)
+    generated_path = generator.generate_for_ref(
+        ref_name=options.ref_name,
+        out_dir=baseline_dir,
+        dev_mode=options.dev_mode,
+        bench_timeout=options.bench_timeout,
+    )
+
+    valid, reason = _cached_baseline_valid(
+        project_root,
+        generated_path,
+        expected_commit=resolved_commit,
+        required_benchmark_id=options.required_benchmark_id,
+    )
+    if not valid:
+        msg = f"Generated baseline for {options.ref_name} is not reusable: {reason}"
+        raise RuntimeError(msg)
+
+    return LocalRefBaselineCacheResult(baseline_path=generated_path, resolved_commit=resolved_commit, reused=False)
+
+
+def ensure_cached_ref_baseline_for_ref(project_root: Path, options: LocalRefBaselineCacheOptions) -> LocalRefBaselineCacheResult:
+    """Resolve a ref and ensure its cached same-machine baseline exists."""
+    resolved_commit = resolve_ref_commit(project_root, ref_name=options.ref_name, remote=options.remote)
+    if resolved_commit is None:
+        print(f"⚠️ Could not resolve {options.remote}/{options.ref_name}; cache freshness cannot be verified.", file=sys.stderr)
+    return ensure_cached_ref_baseline(project_root, options, resolved_commit=resolved_commit)
+
+
+def relevant_perf_worktree_dirty(project_root: Path, paths: tuple[str, ...] = PERF_NO_REGRESSIONS_RELEVANT_PATHS) -> bool:
+    """Return whether performance-relevant tracked or untracked paths changed."""
+    diff_args = ["diff", "--quiet", "--", *paths]
+    for label, args in (
+        ("unstaged diff", diff_args),
+        ("staged diff", ["diff", "--cached", "--quiet", "--", *paths]),
+    ):
+        result = run_git_command(args, cwd=project_root, check=False, timeout=60)
+        if result.returncode == 1:
+            return True
+        if result.returncode != 0:
+            details = (result.stderr or result.stdout or "").strip()
+            msg = f"git {label} failed with exit code {result.returncode}: {details}"
+            raise RuntimeError(msg)
+
+    result = run_git_command(
+        ["ls-files", "--others", "--exclude-standard", "--", *paths],
+        cwd=project_root,
+        check=False,
+        timeout=60,
+    )
+    if result.returncode != 0:
+        details = (result.stderr or result.stdout or "").strip()
+        msg = f"git ls-files for untracked perf paths failed with exit code {result.returncode}: {details}"
+        raise RuntimeError(msg)
+    return bool(result.stdout.strip())
+
+
+def compare_with_cached_ref_baseline(
+    project_root: Path,
+    options: LocalRefBaselineCacheOptions,
+    *,
+    threshold: float,
+) -> int:
+    """Compare the current worktree against a cached same-machine ref baseline."""
+    current_commit = get_git_commit_hash(cwd=project_root)
+    dirty = relevant_perf_worktree_dirty(project_root)
+    resolved_commit = resolve_ref_commit(project_root, ref_name=options.ref_name, remote=options.remote)
+
+    if resolved_commit == current_commit and not dirty:
+        print(f"🔍 {options.remote}/{options.ref_name} matches HEAD ({current_commit}); no relevant worktree changes to compare.")
+        print("   Skipping before generating a same-commit baseline.")
+        return 0
+
+    cache_result = ensure_cached_ref_baseline(project_root, options, resolved_commit=resolved_commit)
+    baseline_content = cache_result.baseline_path.read_text(encoding="utf-8")
+    baseline_commit = _parse_baseline_metadata(baseline_content)["commit"]
+
+    if baseline_commit == current_commit:
+        if not dirty:
+            print(f"🔍 Current commit matches the {options.ref_name} baseline ({baseline_commit}); no relevant worktree changes to compare.")
+            print("   Skipping because a same-commit baseline would mask regressions.")
+            return 0
+        print(f"⚠️ {options.ref_name} baseline commit matches HEAD, but relevant uncommitted changes exist; comparing the worktree against HEAD.")
+
+    comparator = PerformanceComparator(project_root)
+    comparator.regression_threshold = threshold
+    success, regression_found = comparator.compare_with_baseline(
+        cache_result.baseline_path,
+        dev_mode=options.dev_mode,
+        bench_timeout=options.bench_timeout,
+    )
+    if not success:
+        return 1
+    return 1 if regression_found else 0
+
+
 class PerformanceComparator:
     """Compare current performance against baseline."""
 
@@ -3855,6 +4165,31 @@ def _add_benchmark_subcommands(subparsers: "argparse._SubParsersAction[argparse.
     ref_parser.add_argument("--project-root", type=Path, help="Project root containing the git repo (directory containing Cargo.toml)")
     ref_parser.set_defaults(validate_bench_timeout=True)
 
+    ensure_ref_parser = subparsers.add_parser("ensure-ref-baseline", help="Ensure a cached same-machine baseline exists for a git ref")
+    ensure_ref_parser.add_argument("--ref", dest="ref_name", type=str, default="main", help="Git ref to benchmark/cache (default: main)")
+    ensure_ref_parser.add_argument("--remote", type=str, default="origin", help="Git remote used to resolve/fetch the ref (default: origin)")
+    ensure_ref_parser.add_argument(
+        "--cache-root",
+        type=Path,
+        help="Cache root for local same-machine baselines (default: baseline-artifacts/perf-no-regressions)",
+    )
+    ensure_ref_parser.add_argument(
+        "--required-benchmark-id",
+        default=PERF_NO_REGRESSIONS_REQUIRED_BENCHMARK_ID,
+        help=f"Benchmark ID required before reusing a cache entry (default: {PERF_NO_REGRESSIONS_REQUIRED_BENCHMARK_ID})",
+    )
+    ensure_ref_parser.add_argument(
+        "--dev", action="store_true", help=f"Use faster Criterion settings while retaining the {TRUSTED_BENCH_PROFILE} Cargo profile"
+    )
+    ensure_ref_parser.add_argument(
+        "--bench-timeout",
+        type=int,
+        default=get_default_bench_timeout(),
+        help="Timeout for cargo bench in seconds when refreshing the cache (from BENCHMARK_TIMEOUT env, default: 1800)",
+    )
+    ensure_ref_parser.add_argument("--project-root", type=Path, help="Project root containing the git repo (directory containing Cargo.toml)")
+    ensure_ref_parser.set_defaults(validate_bench_timeout=True)
+
     cmp_parser = subparsers.add_parser("compare", help="Compare current performance against baseline")
     cmp_parser.add_argument("--baseline", type=Path, required=True, help="Path to baseline file")
     cmp_parser.add_argument(
@@ -3875,6 +4210,37 @@ def _add_benchmark_subcommands(subparsers: "argparse._SubParsersAction[argparse.
         help="Timeout for cargo bench in seconds (from BENCHMARK_TIMEOUT env, default: 1800)",
     )
     cmp_parser.set_defaults(validate_bench_timeout=True)
+
+    cmp_ref_parser = subparsers.add_parser("compare-ref", help="Compare current performance against a cached same-machine git-ref baseline")
+    cmp_ref_parser.add_argument("--ref", dest="ref_name", type=str, default="main", help="Git ref to benchmark/cache (default: main)")
+    cmp_ref_parser.add_argument("--remote", type=str, default="origin", help="Git remote used to resolve/fetch the ref (default: origin)")
+    cmp_ref_parser.add_argument(
+        "--cache-root",
+        type=Path,
+        help="Cache root for local same-machine baselines (default: baseline-artifacts/perf-no-regressions)",
+    )
+    cmp_ref_parser.add_argument(
+        "--required-benchmark-id",
+        default=PERF_NO_REGRESSIONS_REQUIRED_BENCHMARK_ID,
+        help=f"Benchmark ID required before reusing a cache entry (default: {PERF_NO_REGRESSIONS_REQUIRED_BENCHMARK_ID})",
+    )
+    cmp_ref_parser.add_argument(
+        "--threshold",
+        type=float,
+        default=DEFAULT_REGRESSION_THRESHOLD,
+        help=f"Regression threshold percentage for marking regressions (default: {DEFAULT_REGRESSION_THRESHOLD})",
+    )
+    cmp_ref_parser.add_argument(
+        "--dev", action="store_true", help=f"Use faster Criterion settings while retaining the {TRUSTED_BENCH_PROFILE} Cargo profile"
+    )
+    cmp_ref_parser.add_argument(
+        "--bench-timeout",
+        type=int,
+        default=get_default_bench_timeout(),
+        help="Timeout for cargo bench in seconds (from BENCHMARK_TIMEOUT env, default: 1800)",
+    )
+    cmp_ref_parser.add_argument("--project-root", type=Path, help="Project root containing the git repo (directory containing Cargo.toml)")
+    cmp_ref_parser.set_defaults(validate_bench_timeout=True)
 
 
 def _add_local_baseline_subcommands(subparsers: "argparse._SubParsersAction[argparse.ArgumentParser]") -> None:
@@ -4017,51 +4383,109 @@ def configure_logging(*, verbose: bool) -> None:
     )
 
 
-def execute_baseline_commands(args: argparse.Namespace, project_root: Path) -> None:
-    """Execute baseline generation and comparison commands."""
-    if args.command == "generate-baseline":
-        generator = BaselineGenerator(project_root, ref_name=args.ref_name)
-        success = generator.generate_baseline(dev_mode=args.dev, output_file=args.output, bench_timeout=args.bench_timeout)
-        sys.exit(0 if success else 1)
+def _exit_called_process_error(error: subprocess.CalledProcessError) -> NoReturn:
+    print(f"❌ Git command failed with exit code {error.returncode}: {error.cmd}", file=sys.stderr)
+    if error.stderr:
+        print(error.stderr, file=sys.stderr)
+    if error.stdout:
+        print(error.stdout, file=sys.stderr)
+    sys.exit(1)
 
-    elif args.command == "generate-ref-baseline":
-        out_dir = args.out_dir if args.out_dir.is_absolute() else project_root / args.out_dir
-        try:
-            generator = LocalRefBaselineGenerator(project_root, remote=args.remote)
-            baseline_path = generator.generate_for_ref(
-                ref_name=args.ref_name,
-                out_dir=out_dir,
-                dev_mode=args.dev,
-                bench_timeout=args.bench_timeout,
-            )
-        except subprocess.CalledProcessError as e:
-            print(f"❌ Git command failed with exit code {e.returncode}: {e.cmd}", file=sys.stderr)
-            if e.stderr:
-                print(e.stderr, file=sys.stderr)
-            if e.stdout:
-                print(e.stdout, file=sys.stderr)
-            sys.exit(1)
-        except _RECOVERABLE_CLI_ERRORS as e:
-            print(f"❌ {e}", file=sys.stderr)
-            sys.exit(1)
 
-        print(baseline_path)
-        sys.exit(0)
+def _local_ref_cache_options_from_args(args: argparse.Namespace) -> LocalRefBaselineCacheOptions:
+    return LocalRefBaselineCacheOptions(
+        ref_name=args.ref_name,
+        remote=args.remote,
+        cache_root=args.cache_root,
+        dev_mode=args.dev,
+        bench_timeout=args.bench_timeout,
+        required_benchmark_id=args.required_benchmark_id,
+    )
 
-    elif args.command == "compare":
-        comparator = PerformanceComparator(project_root)
-        comparator.regression_threshold = args.threshold
-        success, regression_found = comparator.compare_with_baseline(
-            args.baseline,
+
+def _cmd_generate_baseline(args: argparse.Namespace, project_root: Path) -> None:
+    generator = BaselineGenerator(project_root, ref_name=args.ref_name)
+    success = generator.generate_baseline(dev_mode=args.dev, output_file=args.output, bench_timeout=args.bench_timeout)
+    sys.exit(0 if success else 1)
+
+
+def _cmd_generate_ref_baseline(args: argparse.Namespace, project_root: Path) -> None:
+    out_dir = args.out_dir if args.out_dir.is_absolute() else project_root / args.out_dir
+    try:
+        generator = LocalRefBaselineGenerator(project_root, remote=args.remote)
+        baseline_path = generator.generate_for_ref(
+            ref_name=args.ref_name,
+            out_dir=out_dir,
             dev_mode=args.dev,
-            output_file=args.output,
             bench_timeout=args.bench_timeout,
         )
+    except subprocess.CalledProcessError as e:
+        _exit_called_process_error(e)
+    except _RECOVERABLE_CLI_ERRORS as e:
+        print(f"❌ {e}", file=sys.stderr)
+        sys.exit(1)
 
-        if not success:
-            sys.exit(1)
+    print(baseline_path)
+    sys.exit(0)
 
-        sys.exit(1 if regression_found else 0)
+
+def _cmd_ensure_ref_baseline(args: argparse.Namespace, project_root: Path) -> None:
+    options = _local_ref_cache_options_from_args(args)
+    try:
+        cache_result = ensure_cached_ref_baseline_for_ref(project_root, options)
+    except subprocess.CalledProcessError as e:
+        _exit_called_process_error(e)
+    except _RECOVERABLE_CLI_ERRORS as e:
+        print(f"❌ {e}", file=sys.stderr)
+        sys.exit(1)
+
+    print(cache_result.baseline_path)
+    sys.exit(0)
+
+
+def _cmd_compare(args: argparse.Namespace, project_root: Path) -> None:
+    comparator = PerformanceComparator(project_root)
+    comparator.regression_threshold = args.threshold
+    success, regression_found = comparator.compare_with_baseline(
+        args.baseline,
+        dev_mode=args.dev,
+        output_file=args.output,
+        bench_timeout=args.bench_timeout,
+    )
+
+    if not success:
+        sys.exit(1)
+
+    sys.exit(1 if regression_found else 0)
+
+
+def _cmd_compare_ref(args: argparse.Namespace, project_root: Path) -> None:
+    options = _local_ref_cache_options_from_args(args)
+    try:
+        exit_code = compare_with_cached_ref_baseline(project_root, options, threshold=args.threshold)
+    except subprocess.CalledProcessError as e:
+        _exit_called_process_error(e)
+    except _RECOVERABLE_CLI_ERRORS as e:
+        print(f"❌ {e}", file=sys.stderr)
+        sys.exit(1)
+
+    sys.exit(exit_code)
+
+
+def execute_baseline_commands(args: argparse.Namespace, project_root: Path) -> None:
+    """Execute baseline generation and comparison commands."""
+    handlers = {
+        "generate-baseline": _cmd_generate_baseline,
+        "generate-ref-baseline": _cmd_generate_ref_baseline,
+        "ensure-ref-baseline": _cmd_ensure_ref_baseline,
+        "compare": _cmd_compare,
+        "compare-ref": _cmd_compare_ref,
+    }
+    handler = handlers.get(args.command)
+    if handler is None:
+        msg = f"Unknown baseline command: {args.command}"
+        raise ValueError(msg)
+    handler(args, project_root)
 
 
 def _write_optional_report(output_path: Path | None, report_text: str) -> None:
@@ -4260,7 +4684,7 @@ def execute_regression_commands(args: argparse.Namespace) -> None:
 def execute_command(args: argparse.Namespace, project_root: Path) -> None:
     """Execute the selected command based on parsed arguments."""
     # Try baseline commands first
-    if args.command in ("generate-baseline", "generate-ref-baseline", "compare"):
+    if args.command in ("generate-baseline", "generate-ref-baseline", "ensure-ref-baseline", "compare", "compare-ref"):
         execute_baseline_commands(args, project_root)
         return
 

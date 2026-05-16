@@ -354,7 +354,7 @@ perf-compare file threshold="7.5": _ensure-uv
 
 perf-help:
     @echo "Performance Analysis Commands:"
-    @echo "  just perf-no-regressions   # Fast pre-PR guard with a temporary same-machine main baseline"
+    @echo "  just perf-no-regressions   # Fast pre-PR guard with a cached same-machine main baseline"
     @echo "  just perf-baseline [ref]    # Persist/update baseline-artifact for a GitHub ref (default: main)"
     @echo "  just perf-baseline-to <out> [ref] # Generate a scratch baseline artifact without replacing the default"
     @echo "  just perf-compare <file> [threshold] # Compare current tree with a specific dev-mode baseline"
@@ -368,7 +368,7 @@ perf-help:
     @echo "  just profile-mem           # Samply profile memory allocations (with count-allocations feature)"
     @echo ""
     @echo "Benchmark System (Delaunay-specific):"
-    @echo "  just perf-no-regressions   # Generate temporary main baseline, compare current tree, clean up"
+    @echo "  just perf-no-regressions   # Reuse cached main baseline, compare current tree"
     @echo "  just perf-baseline [ref]   # Persist baseline-artifact/baseline_results.txt from a GitHub ref"
     @echo "  just perf-baseline-to <out> [ref] # Generate an alternate local baseline artifact directory"
     @echo "  just perf-compare <file>   # Compare against a specific dev-mode baseline"
@@ -395,56 +395,9 @@ perf-help:
     @echo "  just profile 1.95          # Current tree on Rust 1.95"
     @echo "  just profile 1.95 v0.7.5   # v0.7.5 code on Rust 1.95"
 
-# Fast pre-PR performance guard against a temporary same-machine main baseline.
+# Fast pre-PR performance guard against a cached same-machine main baseline.
 perf-no-regressions threshold="7.5": _ensure-uv
-    #!/usr/bin/env bash
-    set -euo pipefail
-
-    relevant_worktree_dirty() {
-        if ! git diff --quiet -- src benches Cargo.toml Cargo.lock scripts/benchmark_utils.py; then
-            return 0
-        fi
-        if ! git diff --cached --quiet -- src benches Cargo.toml Cargo.lock scripts/benchmark_utils.py; then
-            return 0
-        fi
-        if [ -n "$(git ls-files --others --exclude-standard -- src benches Cargo.toml Cargo.lock scripts/benchmark_utils.py)" ]; then
-            return 0
-        fi
-        return 1
-    }
-
-    current_commit="$(git rev-parse HEAD)"
-    remote_line="$(git ls-remote origin refs/heads/main || true)"
-    remote_main_commit=""
-    if [ -n "$remote_line" ]; then
-        read -r remote_main_commit _ <<< "$remote_line"
-    fi
-    if [ -n "$remote_main_commit" ] && [ "$remote_main_commit" = "$current_commit" ] && ! relevant_worktree_dirty; then
-        echo "🔍 origin/main matches HEAD (${current_commit}); no relevant worktree changes to compare."
-        echo "   Skipping perf-no-regressions before generating a same-commit baseline."
-        exit 0
-    fi
-
-    tmp="$(mktemp -d "${TMPDIR:-/tmp}/delaunay-perf-baseline.XXXXXX")"
-    trap 'rm -rf "$tmp"' EXIT
-    uv run benchmark-utils generate-ref-baseline --ref main --out "$tmp/baseline" --dev
-    baseline="$tmp/baseline/baseline_results.txt"
-    if ! grep -q 'Benchmark ID: tds_new_2d/tds_new/2000' "$baseline"; then
-        echo "❌ Temporary baseline for main does not match the current ci_performance_suite contract."
-        echo "   The benchmark contract probably changed on this branch; inspect ci_performance_suite before comparing."
-        exit 1
-    fi
-    baseline_line="$(grep -m1 '^Git commit:' "$baseline" || true)"
-    baseline_commit="${baseline_line#Git commit: }"
-    if [ -n "$baseline_commit" ] && [ "$baseline_commit" = "$current_commit" ]; then
-        if ! relevant_worktree_dirty; then
-            echo "🔍 Current commit matches the main baseline (${baseline_commit}); no relevant worktree changes to compare."
-            echo "   Skipping perf-no-regressions because a same-commit baseline would mask regressions."
-            exit 0
-        fi
-        echo "⚠️ Main baseline commit matches HEAD, but relevant uncommitted changes exist; comparing the worktree against HEAD."
-    fi
-    uv run benchmark-utils compare --baseline "$baseline" --threshold {{threshold}} --dev
+    uv run benchmark-utils compare-ref --ref main --threshold {{threshold}} --dev
 
 # Run the selected CI benchmark suite for one compiler/code pair.
 profile toolchain="" code_ref="current":

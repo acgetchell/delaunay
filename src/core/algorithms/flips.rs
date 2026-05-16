@@ -33,7 +33,7 @@ use crate::core::algorithms::incremental_insertion::{
     wire_cavity_neighbors,
 };
 use crate::core::algorithms::locate::{ConflictError, LocateError, extract_cavity_boundary};
-use crate::core::cell::{Cell, CellValidationError};
+use crate::core::cell::{Cell, CellValidationError, NeighborSlot};
 use crate::core::collections::{
     CellKeyBuffer, FastHashMap, FastHashSet, FastHasher, MAX_PRACTICAL_DIMENSION_SIZE, SmallBuffer,
 };
@@ -819,7 +819,7 @@ where
     U: DataType,
     V: DataType,
 {
-    let Some(neighbors) = cell.neighbor_keys() else {
+    let Some(neighbors) = cell.neighbor_slots() else {
         return Ok(());
     };
     if neighbors.len() != D + 1 {
@@ -832,9 +832,20 @@ where
         });
     }
 
-    for (facet_idx, neighbor_key_opt) in neighbors.enumerate() {
-        let Some(neighbor_key) = neighbor_key_opt else {
-            continue;
+    for (facet_idx, neighbor_slot) in neighbors.iter().copied().enumerate() {
+        let neighbor_key = match neighbor_slot {
+            NeighborSlot::Unassigned => {
+                return Err(TdsValidationFailure::InvalidNeighbors {
+                    reason: NeighborValidationError::UnassignedNeighborSlot {
+                        cell_key,
+                        cell_uuid: cell.uuid(),
+                        facet_index: facet_idx,
+                        context: "flip trial neighbor validation".to_string(),
+                    },
+                });
+            }
+            NeighborSlot::Boundary => continue,
+            NeighborSlot::Neighbor(neighbor_key) => neighbor_key,
         };
         if removed_cells.contains(&neighbor_key) {
             return Err(TdsValidationFailure::InvalidNeighbors {
@@ -8944,7 +8955,6 @@ mod tests {
         DelaunayRepairFailureContext, repair_neighbor_pointers,
     };
     use crate::core::algorithms::locate::LocateResult;
-    use crate::core::cell::NeighborSlot;
     use crate::core::collections::Uuid;
     use crate::core::triangulation::TopologyGuarantee;
     use crate::geometry::kernel::{AdaptiveKernel, FastKernel};
@@ -10377,6 +10387,33 @@ mod tests {
 
     gen_trial_validation_rollback_tests!(2, 3, 4, 5);
 
+    #[test]
+    fn test_flip_trial_validation_rejects_unassigned_neighbor_slot() {
+        let mut tds: Tds<f64, (), (), 2> = Tds::empty();
+        let v0 = tds.insert_vertex_with_mapping(vertex!([0.0, 0.0])).unwrap();
+        let v1 = tds.insert_vertex_with_mapping(vertex!([1.0, 0.0])).unwrap();
+        let v2 = tds.insert_vertex_with_mapping(vertex!([0.0, 1.0])).unwrap();
+        let cell_key = tds
+            .insert_cell_with_mapping(Cell::new(vec![v0, v1, v2], None).unwrap())
+            .unwrap();
+        tds.assign_neighbors().unwrap();
+
+        {
+            let cell = tds.cell_mut(cell_key).unwrap();
+            cell.ensure_neighbors_buffer_mut()[0] = NeighborSlot::Unassigned;
+        }
+
+        let cell = tds.cell(cell_key).unwrap();
+        let err = validate_flip_trial_cell_neighbors(&tds, cell_key, cell, &[]).unwrap_err();
+
+        assert!(matches!(
+            err,
+            TdsValidationFailure::InvalidNeighbors {
+                reason: NeighborValidationError::UnassignedNeighborSlot { facet_index: 0, .. },
+            }
+        ));
+    }
+
     /// Checks that a k=2 flip and its inverse preserve topology in dimension `D`.
     #[expect(
         clippy::too_many_lines,
@@ -11509,11 +11546,10 @@ mod tests {
             .unwrap();
 
         assert_eq!(tds.remove_cells_by_keys(&[dangling_neighbor]), 1);
-        let neighbors = tds
-            .cell_mut(cell)
+        tds.cell_mut(cell)
             .expect("test cell should exist")
-            .ensure_neighbors_buffer_mut();
-        neighbors[0] = NeighborSlot::Neighbor(dangling_neighbor);
+            .set_neighbors_from_keys([Some(dangling_neighbor), None, None, None])
+            .unwrap();
 
         let ridge = RidgeHandle::new(cell, 0, 1);
         let err = build_k3_flip_context(&tds, ridge).unwrap_err();

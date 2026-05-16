@@ -939,15 +939,23 @@ impl<T, U, V, const D: usize> Cell<T, U, V, D> {
     pub(crate) fn set_neighbors_from_keys(
         &mut self,
         neighbors: impl IntoIterator<Item = Option<CellKey>>,
-    ) {
+    ) -> Result<(), CellValidationError> {
         let mut slots = NeighborBuffer::new();
         slots.extend(neighbors.into_iter().map(NeighborSlot::from_neighbor_key));
+        if slots.len() != D + 1 {
+            return Err(CellValidationError::InvalidNeighborsLength {
+                actual: slots.len(),
+                expected: D + 1,
+                dimension: D,
+            });
+        }
         self.neighbors = Some(slots);
+        Ok(())
     }
 
     /// Ensures this cell has an assigned neighbor-slot buffer.
     ///
-    /// If the buffer does not exist, it is initialized with D+1 boundary slots.
+    /// If the buffer does not exist, it is initialized with D+1 unassigned slots.
     #[inline]
     pub(crate) fn ensure_neighbors_buffer_mut(&mut self) -> &mut NeighborBuffer<NeighborSlot> {
         debug_assert!(
@@ -956,7 +964,7 @@ impl<T, U, V, const D: usize> Cell<T, U, V, D> {
         );
         self.neighbors.get_or_insert_with(|| {
             let mut buffer = NeighborBuffer::new();
-            buffer.resize(D + 1, NeighborSlot::Boundary);
+            buffer.resize(D + 1, NeighborSlot::Unassigned);
             buffer
         })
     }
@@ -3520,7 +3528,9 @@ mod tests {
         );
 
         // Cell with correct neighbors length is valid
-        cell_2d.set_neighbors_from_keys(vec![None, None, None]);
+        cell_2d
+            .set_neighbors_from_keys(vec![None, None, None])
+            .unwrap();
         assert!(
             cell_2d.is_valid().is_ok(),
             "Cell with correct neighbors length should be valid"
@@ -3567,29 +3577,33 @@ mod tests {
         let dt = DelaunayTriangulation::new(&vertices_2d).unwrap();
         let (_, cell_ref) = dt.cells().next().unwrap();
         let mut cell_wrong_neighbors = cell_ref.clone();
-        cell_wrong_neighbors.set_neighbors_from_keys(vec![None, None]);
+        let err = cell_wrong_neighbors
+            .set_neighbors_from_keys(vec![None, None])
+            .unwrap_err();
         assert!(
             matches!(
-                cell_wrong_neighbors.is_valid(),
-                Err(CellValidationError::InvalidNeighborsLength {
+                err,
+                CellValidationError::InvalidNeighborsLength {
                     actual: 2,
                     expected: 3,
                     dimension: 2
-                })
+                }
             ),
             "Wrong neighbors count should fail validation"
         );
 
         // Invalid neighbors length (too many)
-        cell_wrong_neighbors.set_neighbors_from_keys(vec![None, None, None, None]);
+        let err = cell_wrong_neighbors
+            .set_neighbors_from_keys(vec![None, None, None, None])
+            .unwrap_err();
         assert!(
             matches!(
-                cell_wrong_neighbors.is_valid(),
-                Err(CellValidationError::InvalidNeighborsLength {
+                err,
+                CellValidationError::InvalidNeighborsLength {
                     actual: 4,
                     expected: 3,
                     dimension: 2
-                })
+                }
             ),
             "Wrong neighbors count should fail validation"
         );
@@ -3663,11 +3677,12 @@ mod tests {
         let (cell_key, cell_ref) = dt.cells().next().unwrap();
 
         let mut cell = cell_ref.clone();
+        cell.clear_neighbors();
         assert!(cell.neighbors.is_none());
 
         let buf = cell.ensure_neighbors_buffer_mut();
         assert_eq!(buf.len(), 3);
-        assert!(buf.iter().all(|slot| slot.is_boundary()));
+        assert!(buf.iter().all(|slot| slot.is_unassigned()));
 
         // Mutate through the returned buffer and ensure it's preserved
         buf[0] = NeighborSlot::Neighbor(cell_key);
@@ -3690,7 +3705,8 @@ mod tests {
         assert!(cell.neighbor_slots().is_none());
         assert!(cell.neighbors().is_none());
 
-        cell.set_neighbors_from_keys([None, Some(cell_key), None]);
+        cell.set_neighbors_from_keys([None, Some(cell_key), None])
+            .unwrap();
 
         let slots = cell.neighbor_slots().expect("assigned slots should exist");
         assert_eq!(slots.len(), 3);
@@ -3736,7 +3752,8 @@ mod tests {
         let (cell_key, cell_ref) = dt.cells().next().unwrap();
 
         let mut cell = cell_ref.clone();
-        cell.set_neighbors_from_keys(vec![Some(cell_key), None, Some(cell_key)]);
+        cell.set_neighbors_from_keys(vec![Some(cell_key), None, Some(cell_key)])
+            .unwrap();
         cell.set_periodic_vertex_offsets(vec![[1, 0], [2, 0], [3, 0]])
             .unwrap();
 
@@ -3769,7 +3786,9 @@ mod tests {
         let (_, cell_ref) = dt.cells().next().unwrap();
 
         let mut cell = cell_ref.clone();
-        cell.set_neighbors_from_keys(vec![None, None]);
+        let mut neighbors = NeighborBuffer::<NeighborSlot>::new();
+        neighbors.resize(2, NeighborSlot::Boundary);
+        cell.neighbors = Some(neighbors);
         cell.swap_vertex_slots(0, 2);
     }
 

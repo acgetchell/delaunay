@@ -2539,10 +2539,23 @@ where
         .into());
     }
 
+    if cell.neighbor_slots().is_none() {
+        set_cell_neighbors_from_keys(cell, (0..=D).map(|_| None))?;
+    }
     let neighbors = cell.ensure_neighbors_buffer_mut();
     neighbors[facet_idx] = NeighborSlot::from_neighbor_key(neighbor);
 
     Ok(())
+}
+
+/// Installs a fully assigned neighbor buffer and preserves typed cell context on arity errors.
+fn set_cell_neighbors_from_keys<T, U, V, const D: usize>(
+    cell: &mut Cell<T, U, V, D>,
+    neighbors: impl IntoIterator<Item = Option<CellKey>>,
+) -> Result<(), InsertionError> {
+    let cell_id = cell.uuid();
+    cell.set_neighbors_from_keys(neighbors)
+        .map_err(|source| TdsError::InvalidCell { cell_id, source }.into())
 }
 
 /// Hash a facet from sorted vertex keys.
@@ -2851,7 +2864,7 @@ where
         let cell = tds
             .cell_mut(cell_key)
             .ok_or(NeighborWiringError::MissingCell { cell_key })?;
-        cell.set_neighbors_from_keys(rebuilt_neighbors);
+        set_cell_neighbors_from_keys(cell, rebuilt_neighbors)?;
     }
 
     #[cfg(debug_assertions)]
@@ -3039,7 +3052,7 @@ where
             .cell_mut(cell_key)
             .ok_or(NeighborWiringError::MissingCell { cell_key })?;
 
-        cell.set_neighbors_from_keys(rebuilt);
+        set_cell_neighbors_from_keys(cell, rebuilt)?;
     }
 
     #[cfg(debug_assertions)]
@@ -4502,7 +4515,8 @@ mod tests {
         let missing_neighbor = CellKey::from(KeyData::from_ffi(u64::MAX - 1));
         tds.cell_mut(cell_key)
             .unwrap()
-            .set_neighbors_from_keys(vec![Some(missing_neighbor), None, None]);
+            .set_neighbors_from_keys(vec![Some(missing_neighbor), None, None])
+            .unwrap();
 
         let mut internal_cells = CellKeyBuffer::new();
         internal_cells.push(cell_key);
