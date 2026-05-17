@@ -1009,39 +1009,39 @@ where
     U: DataType,
     V: DataType,
 {
-    let source_order = facet_order(cell.vertices(), facet_idx).map_err(|err| {
-        TdsValidationFailure::InvalidNeighbors {
-            reason: NeighborValidationError::FacetOrderUnavailable {
-                cell_key,
-                cell_uuid: cell.uuid(),
-                facet_index: facet_idx,
-                context: "source facet in local flip validation".to_string(),
-                source: Box::new(err),
-            },
-        }
-    })?;
-    let target_order = facet_order(neighbor_cell.vertices(), mirror_idx).map_err(|err| {
-        TdsValidationFailure::InvalidNeighbors {
-            reason: NeighborValidationError::FacetOrderUnavailable {
-                cell_key: neighbor_key,
-                cell_uuid: neighbor_cell.uuid(),
-                facet_index: mirror_idx,
-                context: "target facet in local flip validation".to_string(),
-                source: Box::new(err),
-            },
-        }
-    })?;
-    let observed_odd_permutation =
-        permutation_odd(&source_order, &target_order).ok_or_else(|| {
-            TdsValidationFailure::InconsistentDataStructure {
-                message: format!(
-                    "Could not derive facet-order permutation parity between cells {:?} and {:?}",
-                    cell.uuid(),
-                    neighbor_cell.uuid()
-                ),
+    let (observed_odd_permutation, expected_odd_permutation, facet_vertex_count, target_count) =
+        match flip_trial_neighbor_orientation_parity(
+            cell_key,
+            cell,
+            facet_idx,
+            neighbor_key,
+            neighbor_cell,
+            mirror_idx,
+        ) {
+            Ok(parity) => parity,
+            Err(FlipError::InvalidFlipContext {
+                reason: FlipContextError::FacetOrderParityUnavailable,
+            }) => {
+                return Err(TdsValidationFailure::InconsistentDataStructure {
+                    message: format!(
+                        "Could not derive facet-order permutation parity between cells {:?} and {:?}",
+                        cell.uuid(),
+                        neighbor_cell.uuid()
+                    ),
+                });
             }
-        })?;
-    let expected_odd_permutation = (facet_idx + mirror_idx).is_multiple_of(2);
+            Err(err) => {
+                return Err(TdsValidationFailure::InvalidNeighbors {
+                    reason: NeighborValidationError::FacetOrderUnavailable {
+                        cell_key,
+                        cell_uuid: cell.uuid(),
+                        facet_index: facet_idx,
+                        context: "facet parity in local flip validation".to_string(),
+                        source: Box::new(err),
+                    },
+                });
+            }
+        };
     if observed_odd_permutation != expected_odd_permutation {
         return Err(TdsValidationFailure::OrientationViolation {
             cell1_key: cell_key,
@@ -1050,14 +1050,66 @@ where
             cell2_uuid: neighbor_cell.uuid(),
             cell1_facet_index: facet_idx,
             cell2_facet_index: mirror_idx,
-            facet_vertex_count: source_order.len(),
-            cell2_facet_vertex_count: target_order.len(),
+            facet_vertex_count,
+            cell2_facet_vertex_count: target_count,
             observed_odd_permutation,
             expected_odd_permutation,
         });
     }
 
     Ok(())
+}
+
+/// Computes local neighbor-orientation parity, including periodic facet offsets.
+fn flip_trial_neighbor_orientation_parity<T, U, V, const D: usize>(
+    cell_key: CellKey,
+    cell: &Cell<T, U, V, D>,
+    facet_idx: usize,
+    neighbor_key: CellKey,
+    neighbor_cell: &Cell<T, U, V, D>,
+    mirror_idx: usize,
+) -> Result<(bool, bool, usize, usize), FlipError>
+where
+    U: DataType,
+    V: DataType,
+{
+    let expected_odd_permutation = (facet_idx + mirror_idx).is_multiple_of(2);
+    if cell.periodic_vertex_offsets().is_some() || neighbor_cell.periodic_vertex_offsets().is_some()
+    {
+        let source_offsets = periodic_offsets_or_zero_frame(cell_key, cell)?;
+        let target_offsets = periodic_offsets_or_zero_frame(neighbor_key, neighbor_cell)?;
+        let source_order = normalized_facet_order_with_offsets(
+            cell_key,
+            cell.vertices(),
+            source_offsets.as_ref(),
+            facet_idx,
+        )?;
+        let target_order = normalized_facet_order_with_offsets(
+            neighbor_key,
+            neighbor_cell.vertices(),
+            target_offsets.as_ref(),
+            mirror_idx,
+        )?;
+        let observed_odd_permutation = permutation_odd(&source_order, &target_order)
+            .ok_or(FlipContextError::FacetOrderParityUnavailable)?;
+        return Ok((
+            observed_odd_permutation,
+            expected_odd_permutation,
+            source_order.len(),
+            target_order.len(),
+        ));
+    }
+
+    let source_order = facet_order(cell.vertices(), facet_idx)?;
+    let target_order = facet_order(neighbor_cell.vertices(), mirror_idx)?;
+    let observed_odd_permutation = permutation_odd(&source_order, &target_order)
+        .ok_or(FlipContextError::FacetOrderParityUnavailable)?;
+    Ok((
+        observed_odd_permutation,
+        expected_odd_permutation,
+        source_order.len(),
+        target_order.len(),
+    ))
 }
 
 /// Detects replacement simplices that already exist outside the flip cavity so
@@ -1517,12 +1569,67 @@ fn facet_order_with_offsets<const D: usize>(
         .into());
     }
 
-    let mut order = SmallBuffer::with_capacity(vertices.len().saturating_sub(1));
+    let mut order: SmallBuffer<(VertexKey, [i8; D]), MAX_PRACTICAL_DIMENSION_SIZE> =
+        SmallBuffer::with_capacity(vertices.len().saturating_sub(1));
     for (idx, &vertex) in vertices.iter().enumerate() {
         if idx != omit_idx {
             order.push((vertex, offsets[idx]));
         }
     }
+    Ok(order)
+}
+
+/// Returns cell-local facet identities with offsets normalized by a stable anchor.
+fn normalized_facet_order_with_offsets<const D: usize>(
+    cell_key: CellKey,
+    vertices: &[VertexKey],
+    offsets: &[[i8; D]],
+    omit_idx: usize,
+) -> Result<SmallBuffer<(VertexKey, [i16; D]), MAX_PRACTICAL_DIMENSION_SIZE>, FlipError> {
+    if offsets.len() != vertices.len() {
+        return Err(FlipContextError::PeriodicOffsetCountMismatch {
+            cell_key,
+            offset_count: offsets.len(),
+            vertex_count: vertices.len(),
+        }
+        .into());
+    }
+    if omit_idx >= vertices.len() {
+        return Err(FlipContextError::ReplacementFacetIndexOutOfRange {
+            facet_index: omit_idx,
+            vertex_count: vertices.len(),
+        }
+        .into());
+    }
+
+    let mut order: SmallBuffer<(VertexKey, [i16; D]), MAX_PRACTICAL_DIMENSION_SIZE> =
+        SmallBuffer::with_capacity(vertices.len().saturating_sub(1));
+    for (idx, &vertex) in vertices.iter().enumerate() {
+        if idx == omit_idx {
+            continue;
+        }
+        let mut offset = [0_i16; D];
+        for axis in 0..D {
+            offset[axis] = i16::from(offsets[idx][axis]);
+        }
+        order.push((vertex, offset));
+    }
+
+    let mut anchor_key = u64::MAX;
+    let mut anchor_offset = [0_i16; D];
+    for (vertex, offset) in &order {
+        let key_value = (*vertex).data().as_ffi();
+        if key_value < anchor_key || (key_value == anchor_key && *offset < anchor_offset) {
+            anchor_key = key_value;
+            anchor_offset = *offset;
+        }
+    }
+    for (_, offset) in &mut order {
+        for axis in 0..D {
+            offset[axis] -= anchor_offset[axis];
+        }
+    }
+
     Ok(order)
 }
 
@@ -9355,6 +9462,31 @@ mod tests {
         offsets
     }
 
+    /// Asserts exact vertex-to-periodic-offset slot pairing independent of cell orientation.
+    fn assert_cell_offsets_by_vertex<const D: usize>(
+        tds: &Tds<f64, (), (), D>,
+        cell_key: CellKey,
+        expected_offsets: &[(VertexKey, [i8; D])],
+    ) {
+        let cell = tds.cell(cell_key).unwrap();
+        let offsets = cell
+            .periodic_vertex_offsets()
+            .expect("cell should carry periodic offsets");
+        assert_eq!(offsets.len(), cell.number_of_vertices());
+        assert_eq!(expected_offsets.len(), cell.number_of_vertices());
+        for &(vertex_key, expected_offset) in expected_offsets {
+            let index = cell
+                .vertices()
+                .iter()
+                .position(|&candidate| candidate == vertex_key)
+                .expect("expected vertex should be present in cell");
+            assert_eq!(
+                offsets[index], expected_offset,
+                "unexpected periodic offset for vertex {vertex_key:?} in cell {cell_key:?}"
+            );
+        }
+    }
+
     /// Verifies source-cell orientation gating only accepts certified positive orderings.
     #[test]
     fn test_source_cell_is_certified_positive_requires_source_and_positive_order() {
@@ -10076,20 +10208,25 @@ mod tests {
             .insert_vertex_with_mapping(vertex!([-1.0, 1.0]))
             .unwrap();
 
+        let offset_left_bottom = [0_i8, 0_i8];
+        let offset_right_bottom = [1_i8, 0_i8];
+        let offset_left_top = [0_i8, 1_i8];
+        let offset_right_top = [1_i8, 1_i8];
+        let offset_external = [0_i8, -1_i8];
         let cell_cavity_left = insert_periodic_cell_with_offsets(
             &mut tds,
             vec![v_left_bottom, v_right_bottom, v_left_top],
-            vec![[0_i8; 2]; 3],
+            vec![offset_left_bottom, offset_right_bottom, offset_left_top],
         );
         let cell_cavity_right = insert_periodic_cell_with_offsets(
             &mut tds,
             vec![v_right_bottom, v_left_bottom, v_right_top],
-            vec![[0_i8; 2]; 3],
+            vec![offset_right_bottom, offset_left_bottom, offset_right_top],
         );
         let cell_external_left = insert_periodic_cell_with_offsets(
             &mut tds,
             vec![v_left_bottom, v_left_top, v_external],
-            vec![[0_i8; 2]; 3],
+            vec![offset_left_bottom, offset_left_top, offset_external],
         );
 
         repair_neighbor_pointers(&mut tds).unwrap();
@@ -10103,18 +10240,40 @@ mod tests {
         )
         .unwrap();
 
-        let info = apply_bistellar_flip(&mut tds, &ctx).unwrap();
+        let info = apply_bistellar_flip_with_k(
+            &mut tds,
+            2,
+            &ctx.removed_face_vertices,
+            &ctx.inserted_face_vertices,
+            &ctx.removed_cells,
+            ctx.direction,
+            ReplacementOrientationPolicy::AllowSigned,
+            FlipValidationScope::LocalCavity,
+        )
+        .unwrap()
+        .info;
 
         assert!(!tds.contains_cell(cell_cavity_left));
         assert!(!tds.contains_cell(cell_cavity_right));
         assert!(tds.contains_cell(cell_external_left));
+        let expected_left_replacement = [
+            (v_left_bottom, offset_left_bottom),
+            (v_left_top, offset_left_top),
+            (v_right_top, offset_right_top),
+        ];
+        let expected_right_replacement = [
+            (v_right_bottom, offset_right_bottom),
+            (v_left_top, offset_left_top),
+            (v_right_top, offset_right_top),
+        ];
         for &cell_key in &info.new_cells {
             let cell = tds.cell(cell_key).unwrap();
-            assert!(
-                cell.periodic_vertex_offsets()
-                    .is_some_and(|offsets| offsets.len() == cell.number_of_vertices()),
-                "replacement cell {cell_key:?} should preserve periodic offsets"
-            );
+            let expected = if cell.contains_vertex(v_left_bottom) {
+                &expected_left_replacement
+            } else {
+                &expected_right_replacement
+            };
+            assert_cell_offsets_by_vertex(&tds, cell_key, expected);
         }
 
         let facet_idx_glue_edge =
@@ -10131,6 +10290,16 @@ mod tests {
                 .any(|cell_key| cell_key == neighbor_key_glue),
             "expected periodic external facet to be wired to a flip replacement cell"
         );
+        assert_cell_offsets_by_vertex(
+            &tds,
+            cell_external_left,
+            &[
+                (v_left_bottom, offset_left_bottom),
+                (v_left_top, offset_left_top),
+                (v_external, offset_external),
+            ],
+        );
+        assert_cell_offsets_by_vertex(&tds, neighbor_key_glue, &expected_left_replacement);
         assert!(tds.is_valid().is_ok());
     }
 
