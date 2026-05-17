@@ -2265,9 +2265,9 @@ fn duration_nanos_saturating(duration: Duration) -> u64 {
 #[derive(Clone, Copy, Debug)]
 /// Snapshot of one batch-construction progress sample.
 struct BatchProgressSample {
-    processed: usize,
-    inserted: usize,
-    skipped: usize,
+    bulk_processed: usize,
+    bulk_inserted: usize,
+    bulk_skipped: usize,
     cell_count: usize,
     perturbation_seed: u64,
 }
@@ -2275,7 +2275,9 @@ struct BatchProgressSample {
 #[derive(Clone, Copy, Debug)]
 /// Rolling state used to compute periodic batch throughput summaries.
 struct BatchProgressState {
-    total_vertices: usize,
+    input_vertices: usize,
+    initial_simplex_vertices: usize,
+    bulk_vertices: usize,
     progress_every: usize,
     started: Instant,
     last_progress: Instant,
@@ -2292,23 +2294,23 @@ fn log_bulk_progress_if_due(sample: BatchProgressSample, state: &mut Option<Batc
     let Some(state) = state.as_mut() else {
         return;
     };
-    if sample.processed == 0 {
+    if sample.bulk_processed == 0 {
         return;
     }
 
     // Always log the final sample, even when the total is not an exact multiple of the
     // requested cadence, so interrupted runs still end with a complete progress line.
-    let should_log = sample.processed == state.total_vertices
-        || sample.processed.is_multiple_of(state.progress_every);
+    let should_log = sample.bulk_processed == state.bulk_vertices
+        || sample.bulk_processed.is_multiple_of(state.progress_every);
     if !should_log {
         return;
     }
 
     let elapsed = state.started.elapsed();
     let chunk_elapsed = state.last_progress.elapsed();
-    let chunk_processed = sample.processed.saturating_sub(state.last_processed);
+    let chunk_processed = sample.bulk_processed.saturating_sub(state.last_processed);
 
-    let overall_rate = safe_usize_to_scalar::<f64>(sample.processed)
+    let overall_rate = safe_usize_to_scalar::<f64>(sample.bulk_processed)
         .ok()
         .map(|processed| processed / elapsed.as_secs_f64().max(1e-9));
     let chunk_rate = safe_usize_to_scalar::<f64>(chunk_processed)
@@ -2318,10 +2320,12 @@ fn log_bulk_progress_if_due(sample: BatchProgressSample, state: &mut Option<Batc
     tracing::debug!(
         target: "delaunay::bulk_progress",
         perturbation_seed = format_args!("0x{:X}", sample.perturbation_seed),
-        processed = sample.processed,
-        total_vertices = state.total_vertices,
-        inserted = sample.inserted,
-        skipped = sample.skipped,
+        input_vertices = state.input_vertices,
+        initial_simplex_vertices = state.initial_simplex_vertices,
+        bulk_processed = sample.bulk_processed,
+        bulk_vertices = state.bulk_vertices,
+        bulk_inserted = sample.bulk_inserted,
+        bulk_skipped = sample.bulk_skipped,
         cells = sample.cell_count,
         elapsed = ?elapsed,
         total_rate_pts_per_s = ?overall_rate,
@@ -2330,7 +2334,7 @@ fn log_bulk_progress_if_due(sample: BatchProgressSample, state: &mut Option<Batc
     );
 
     state.last_progress = Instant::now();
-    state.last_processed = sample.processed;
+    state.last_processed = sample.bulk_processed;
 }
 
 /// Emits retry-boundary events for release-mode large-scale construction runs.
@@ -4598,12 +4602,15 @@ where
 
         let trace_insertion = env::var_os("DELAUNAY_INSERT_TRACE").is_some();
         let mut batch_progress = bulk_progress_every_from_env().map(|progress_every| {
+            let initial_simplex_vertices = vertices.len().min(D + 1);
             let started = Instant::now();
             BatchProgressState {
                 // The initial simplex is already present when this loop starts, so progress
                 // and throughput only count the remaining bulk vertices — the counters live
                 // in a "bulk-only" frame, 0…(input_len - (D+1)).
-                total_vertices: vertices.len().saturating_sub(D + 1),
+                input_vertices: vertices.len(),
+                initial_simplex_vertices,
+                bulk_vertices: vertices.len().saturating_sub(initial_simplex_vertices),
                 progress_every,
                 started,
                 last_progress: started,
@@ -4723,9 +4730,9 @@ where
                             }
                             log_bulk_progress_if_due(
                                 BatchProgressSample {
-                                    processed: offset + 1,
-                                    inserted: inserted_vertices,
-                                    skipped: skipped_vertices,
+                                    bulk_processed: offset + 1,
+                                    bulk_inserted: inserted_vertices,
+                                    bulk_skipped: skipped_vertices,
                                     cell_count: self.tri.tds.number_of_cells(),
                                     perturbation_seed,
                                 },
@@ -4763,9 +4770,9 @@ where
                             }
                             log_bulk_progress_if_due(
                                 BatchProgressSample {
-                                    processed: offset + 1,
-                                    inserted: inserted_vertices,
-                                    skipped: skipped_vertices,
+                                    bulk_processed: offset + 1,
+                                    bulk_inserted: inserted_vertices,
+                                    bulk_skipped: skipped_vertices,
                                     cell_count: self.tri.tds.number_of_cells(),
                                     perturbation_seed,
                                 },
@@ -4930,9 +4937,9 @@ where
                             }
                             log_bulk_progress_if_due(
                                 BatchProgressSample {
-                                    processed: offset + 1,
-                                    inserted: inserted_vertices,
-                                    skipped: skipped_vertices,
+                                    bulk_processed: offset + 1,
+                                    bulk_inserted: inserted_vertices,
+                                    bulk_skipped: skipped_vertices,
                                     cell_count: self.tri.tds.number_of_cells(),
                                     perturbation_seed,
                                 },
@@ -5008,9 +5015,9 @@ where
                             }
                             log_bulk_progress_if_due(
                                 BatchProgressSample {
-                                    processed: offset + 1,
-                                    inserted: inserted_vertices,
-                                    skipped: skipped_vertices,
+                                    bulk_processed: offset + 1,
+                                    bulk_inserted: inserted_vertices,
+                                    bulk_skipped: skipped_vertices,
                                     cell_count: self.tri.tds.number_of_cells(),
                                     perturbation_seed,
                                 },
@@ -8401,9 +8408,9 @@ mod tests {
     #[test]
     fn test_log_bulk_progress_if_due_updates_progress_state_only_when_due() {
         let sample = BatchProgressSample {
-            processed: 5,
-            inserted: 4,
-            skipped: 1,
+            bulk_processed: 5,
+            bulk_inserted: 4,
+            bulk_skipped: 1,
             cell_count: 7,
             perturbation_seed: 0xCAFE,
         };
@@ -8413,7 +8420,9 @@ mod tests {
         assert!(disabled.is_none());
 
         let mut state = Some(BatchProgressState {
-            total_vertices: 10,
+            input_vertices: 13,
+            initial_simplex_vertices: 3,
+            bulk_vertices: 10,
             progress_every: 5,
             started: Instant::now(),
             last_progress: Instant::now(),
@@ -8422,7 +8431,7 @@ mod tests {
 
         log_bulk_progress_if_due(
             BatchProgressSample {
-                processed: 0,
+                bulk_processed: 0,
                 ..sample
             },
             &mut state,
@@ -8431,7 +8440,7 @@ mod tests {
 
         log_bulk_progress_if_due(
             BatchProgressSample {
-                processed: 3,
+                bulk_processed: 3,
                 ..sample
             },
             &mut state,
@@ -8443,9 +8452,9 @@ mod tests {
 
         log_bulk_progress_if_due(
             BatchProgressSample {
-                processed: 10,
-                inserted: 8,
-                skipped: 2,
+                bulk_processed: 10,
+                bulk_inserted: 8,
+                bulk_skipped: 2,
                 cell_count: 11,
                 perturbation_seed: 0xBEEF,
             },

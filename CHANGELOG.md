@@ -10,6 +10,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### ⚠️ Breaking Changes
 
 - Support periodic flip parity for external cells [#391](https://github.com/acgetchell/delaunay/pull/391)
+- Replace public core module with focused facades
 
 ### Merged Pull Requests
 
@@ -30,6 +31,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Refactor/387 tds mutation boundaries [#390](https://github.com/acgetchell/delaunay/pull/390)
   [`da30293`](https://github.com/acgetchell/delaunay/commit/da3029302e8484d26d2a88d1291050c332e6b822)
+
+- [**breaking**] Replace public core module with focused facades
+  [`3fc95ea`](https://github.com/acgetchell/delaunay/commit/3fc95ea62325111c927127a48d4fbd39873dabda)
+
+  - Make `crate::core` private and expose low-level APIs through curated
+    `tds`, `collections`, `algorithms`, and `query` modules.
+
+  - Add focused prelude/docs coverage for the new public import paths.
+  - Update downstream-style tests and doctests to stop relying on
+    `delaunay::core`.
 
 ### Documentation
 

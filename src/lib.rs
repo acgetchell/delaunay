@@ -70,8 +70,8 @@
 //!
 //! ## Public low-level namespace policy
 //!
-//! The implementation namespace remains `crate::core`, but the public
-//! low-level surface is exposed through curated modules:
+//! The low-level implementation namespace is private. The public low-level
+//! surface is exposed through curated modules:
 //! [`tds`](crate::tds), [`collections`](crate::collections),
 //! [`algorithms`](crate::algorithms), and [`query`](crate::query), plus the
 //! matching focused preludes. These names describe the data structures and
@@ -181,18 +181,18 @@
 //! The crate is organized as a small **validation stack**, where each layer adds additional
 //! invariants on top of the preceding one:
 //!
-//! - [`Vertex`](crate::core::vertex::Vertex) and [`Cell`](crate::core::cell::Cell) provide
+//! - [`Vertex`](crate::tds::Vertex) and [`Cell`](crate::tds::Cell) provide
 //!   **element validity** checks.
 //!   Level 1 (elements) validation checks invariants such as:
 //!   - **Vertex coordinates** – finite (no NaN/∞) and UUID is non-nil.
 //!   - **Cell shape** – exactly D+1 distinct vertex keys, valid UUID, and neighbor buffer length
 //!     (if present) is D+1.
 //!
-//!   These checks are surfaced via [`Vertex::is_valid`](crate::core::vertex::Vertex::is_valid) and
-//!   [`Cell::is_valid`](crate::core::cell::Cell::is_valid), and are automatically run by
-//!   [`Tds::validate`](crate::core::tds::Tds::validate) (Levels 1–2).
+//!   These checks are surfaced via [`Vertex::is_valid`](crate::tds::Vertex::is_valid) and
+//!   [`Cell::is_valid`](crate::tds::Cell::is_valid), and are automatically run by
+//!   [`Tds::validate`](crate::tds::Tds::validate) (Levels 1–2).
 //!
-//! - [`Tds`](crate::core::tds::Tds) (Triangulation Data Structure)
+//! - [`Tds`](crate::tds::Tds) (Triangulation Data Structure)
 //!   stores the **combinatorial / structural** representation.
 //!   Level 2 (structural) validation checks invariants such as:
 //!   - **Vertex mappings** – every vertex UUID has a corresponding key and vice versa.
@@ -201,16 +201,16 @@
 //!   - **Facet sharing** – each facet is shared by at most 2 cells (1 on the boundary, 2 in the interior).
 //!   - **Neighbor consistency** – neighbor relationships are mutual and reference a shared facet.
 //!
-//!   These checks are surfaced via [`Tds::is_valid`](crate::core::tds::Tds::is_valid)
-//!   (structural only) and [`Tds::validate`](crate::core::tds::Tds::validate)
+//!   These checks are surfaced via [`Tds::is_valid`](crate::tds::Tds::is_valid)
+//!   (structural only) and [`Tds::validate`](crate::tds::Tds::validate)
 //!   (Levels 1–2, elements + structural). For cumulative diagnostics across the full stack,
 //!   use [`DelaunayTriangulation::validation_report`](triangulation::delaunay::DelaunayTriangulation::validation_report).
 //!
-//! - [`Triangulation`](crate::core::triangulation::Triangulation) builds on the TDS and validates
+//! - [`Triangulation`](crate::triangulation::Triangulation) builds on the TDS and validates
 //!   **manifold topology**.
 //!   Level 3 (topology) validation is performed by
-//!   [`Triangulation::is_valid`](crate::core::triangulation::Triangulation::is_valid) (Level 3 only) and
-//!   [`Triangulation::validate`](crate::core::triangulation::Triangulation::validate) (Levels 1–3), which:
+//!   [`Triangulation::is_valid`](crate::triangulation::Triangulation::is_valid) (Level 3 only) and
+//!   [`Triangulation::validate`](crate::triangulation::Triangulation::validate) (Levels 1–3), which:
 //!   - Strengthens facet sharing to the **manifold facet property**: each facet belongs to
 //!     exactly 1 cell (boundary) or exactly 2 cells (interior).
 //!   - Checks the **Euler characteristic** of the triangulation (using the topology module).
@@ -245,9 +245,9 @@
 //!
 //! In addition to explicit validation calls, incremental construction (`new()` / `insert*()`) can run an
 //! automatic **Level 3** topology validation pass after insertion, controlled by
-//! [`ValidationPolicy`](crate::core::triangulation::ValidationPolicy).
+//! [`ValidationPolicy`](crate::prelude::triangulation::validation::ValidationPolicy).
 //!
-//! The default is [`ValidationPolicy::OnSuspicion`](crate::core::triangulation::ValidationPolicy::OnSuspicion):
+//! The default is [`ValidationPolicy::OnSuspicion`](crate::prelude::triangulation::validation::ValidationPolicy::OnSuspicion):
 //! Level 3 validation runs only when insertion takes a suspicious path (e.g. perturbation retries,
 //! repair loops, or neighbor-pointer repairs that actually changed pointers).
 //!
@@ -294,20 +294,20 @@
 //! definitions and rationale live in `docs/invariants.md`.
 //!
 //! Level 3 topology validation is parameterized by
-//! [`TopologyGuarantee`](crate::core::triangulation::TopologyGuarantee). This is separate from
+//! [`TopologyGuarantee`](crate::prelude::triangulation::construction::TopologyGuarantee). This is separate from
 //! `ValidationPolicy`: it controls *what* invariants Level 3 enforces, not *when* automatic
 //! validation runs.
 //!
-//! - [`TopologyGuarantee::PLManifold`](crate::core::triangulation::TopologyGuarantee::PLManifold)
+//! - [`TopologyGuarantee::PLManifold`](crate::prelude::triangulation::construction::TopologyGuarantee::PLManifold)
 //!   (default): enforces manifold facet degree, boundary closure, connectedness, Euler characteristic,
 //!   and link-based manifold conditions. Ridge-link checks are applied incrementally during insertion,
 //!   with vertex-link validation performed at construction completion.
 //!
 //!   The formal topological definitions, link conditions, and rationale for this validation strategy
 //!   are documented in `docs/invariants.md`.
-//! - [`TopologyGuarantee::PLManifoldStrict`](crate::core::triangulation::TopologyGuarantee::PLManifoldStrict):
+//! - [`TopologyGuarantee::PLManifoldStrict`](crate::prelude::triangulation::construction::TopologyGuarantee::PLManifoldStrict):
 //!   vertex-link validation after every insertion (slowest, maximum safety).
-//! - [`TopologyGuarantee::Pseudomanifold`](crate::core::triangulation::TopologyGuarantee::Pseudomanifold):
+//! - [`TopologyGuarantee::Pseudomanifold`](crate::prelude::triangulation::construction::TopologyGuarantee::Pseudomanifold):
 //!   skips vertex-link validation (may be faster), but bistellar flip convergence is not guaranteed and
 //!   you may want to validate the Delaunay property explicitly for near-degenerate inputs.
 //!
@@ -363,9 +363,9 @@
 //!   previous state.
 //! - **Duplicate detection**: Near-duplicate coordinates are rejected using a scale-aware
 //!   Euclidean tolerance based on nearby geometry and floating-point resolution, returning
-//!   [`InsertionError::DuplicateCoordinates`](core::algorithms::incremental_insertion::InsertionError::DuplicateCoordinates).
+//!   [`InsertionError::DuplicateCoordinates`](crate::prelude::triangulation::insertion::InsertionError::DuplicateCoordinates).
 //!   Duplicate UUIDs return
-//!   [`InsertionError::DuplicateUuid`](core::algorithms::incremental_insertion::InsertionError::DuplicateUuid).
+//!   [`InsertionError::DuplicateUuid`](crate::prelude::triangulation::insertion::InsertionError::DuplicateUuid).
 //! - **Explicit verification**: Use `dt.validate()` for cumulative verification (Levels 1–4), or
 //!   `dt.is_valid()` for Level 4 only.
 
@@ -382,10 +382,10 @@
 /// Internal low-level triangulation data structures and algorithms.
 ///
 /// This module backs the curated public low-level modules. It includes
-/// [`Tds`](crate::core::tds::Tds), [`Cell`](crate::core::cell::Cell),
-/// [`FacetView`](crate::core::facet::FacetView),
-/// [`Vertex`](crate::core::vertex::Vertex), the generic
-/// [`Triangulation`](crate::core::triangulation::Triangulation) wrapper, and
+/// [`Tds`](crate::tds::Tds), [`Cell`](crate::tds::Cell),
+/// [`FacetView`](crate::tds::FacetView),
+/// [`Vertex`](crate::tds::Vertex), the generic
+/// [`Triangulation`](crate::triangulation::Triangulation) wrapper, and
 /// algorithm building blocks used by the crate.
 ///
 /// Public docs, examples, benchmarks, and downstream-style tests should prefer
@@ -461,8 +461,8 @@ mod core {
     /// - Using user-provided keys without validation
     /// - Network-facing applications with external input
     ///
-    /// Use [`SecureHashMap`](crate::core::collections::SecureHashMap) or
-    /// [`SecureHashSet`](crate::core::collections::SecureHashSet) when keys
+    /// Use [`SecureHashMap`](crate::collections::SecureHashMap) or
+    /// [`SecureHashSet`](crate::collections::SecureHashSet) when keys
     /// are derived from public input.
     ///
     /// ## Small Collections
@@ -1321,8 +1321,8 @@ pub mod prelude {
         /// exports for callers that need small by-value diagnostics instead of full insertion
         /// error payloads.
         ///
-        /// [`InsertionErrorSummary`]: crate::core::algorithms::incremental_insertion::InsertionErrorSummary
-        /// [`InsertionErrorKind`]: crate::core::algorithms::incremental_insertion::InsertionErrorKind
+        /// [`InsertionErrorSummary`]: crate::prelude::triangulation::insertion::InsertionErrorSummary
+        /// [`InsertionErrorKind`]: crate::prelude::triangulation::insertion::InsertionErrorKind
         pub mod insertion {
             pub use crate::core::algorithms::incremental_insertion::{
                 CavityFillingError, CavityRepairStage, DelaunayRepairErrorKind,
@@ -1352,8 +1352,8 @@ pub mod prelude {
         /// exports for APIs that need repair categories without retaining full repair
         /// diagnostics.
         ///
-        /// [`DelaunayRepairErrorSummary`]: crate::core::algorithms::incremental_insertion::DelaunayRepairErrorSummary
-        /// [`DelaunayRepairErrorKind`]: crate::core::algorithms::incremental_insertion::DelaunayRepairErrorKind
+        /// [`DelaunayRepairErrorSummary`]: crate::prelude::triangulation::repair::DelaunayRepairErrorSummary
+        /// [`DelaunayRepairErrorKind`]: crate::prelude::triangulation::repair::DelaunayRepairErrorKind
         pub mod repair {
             pub use crate::core::algorithms::flips::{
                 DelaunayRepairDiagnostics, DelaunayRepairError, DelaunayRepairStats,

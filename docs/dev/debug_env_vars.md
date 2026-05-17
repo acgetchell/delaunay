@@ -41,7 +41,7 @@ This matters for large-scale investigations that need to run under
 | Variable | Activation | Module | Description |
 |---|---|---|---|
 | `DELAUNAY_INSERT_TRACE` | presence | `triangulation.rs` | `[release]` Per-insertion summary (vertex index, location, conflict size, suspicion flags) |
-| `DELAUNAY_BULK_PROGRESS_EVERY` | **value** (integer) | `triangulation/delaunay.rs` | `[release]` Periodic batch progress plus retry-boundary output. |
+| `DELAUNAY_BULK_PROGRESS_EVERY` | **value** (integer) | `triangulation/delaunay.rs` | `[release]` Periodic batch progress for post-simplex bulk vertices. |
 | `DELAUNAY_DEBUG_CAVITY_REDUCTION_ONCE` | presence | `triangulation.rs` | `[release]` One-shot trace of first cavity reduction chain + re-extractions. |
 | `DELAUNAY_DEBUG_RETRYABLE_SKIP` | presence | `triangulation.rs` | `[release]` Retryable conflict skip trace with attempt and rollback context. |
 | `DELAUNAY_DEBUG_SHUFFLE` | presence | `triangulation.rs` | Logs vertex shuffle order during batch construction |
@@ -132,7 +132,7 @@ and release builds.
 | `DELAUNAY_LARGE_DEBUG_INITIAL_SIMPLEX` | **value** | Batch initial simplex strategy: `max-volume` (default), `balanced`, or `first` |
 | `DELAUNAY_LARGE_DEBUG_DEBUG_MODE` | **value** | `cadenced` (ridge-link) or `strict` (per-insertion vertex-link) |
 | `DELAUNAY_LARGE_DEBUG_SHUFFLE_SEED` | **value** | Vertex shuffle seed |
-| `DELAUNAY_LARGE_DEBUG_PROGRESS_EVERY` | **value** | Progress logging interval |
+| `DELAUNAY_LARGE_DEBUG_PROGRESS_EVERY` | **value** | Incremental progress interval; batch fallback if the canonical knob is unset |
 | `DELAUNAY_LARGE_DEBUG_VALIDATE_EVERY` | **value** | Validation interval |
 | `DELAUNAY_LARGE_DEBUG_REPAIR_EVERY` | **value** | Batch/incremental repair interval (default: 1) |
 | `DELAUNAY_LARGE_DEBUG_REPAIR_MAX_FLIPS` | **value** | Flip budget override |

@@ -10,9 +10,9 @@ use delaunay::prelude::geometry::AdaptiveKernel;
 use delaunay::prelude::triangulation::construction::{
     ConstructionOptions, DedupPolicy, DelaunayTriangulation,
     DelaunayTriangulationConstructionError, InsertionOrderStrategy, RetryPolicy, TopologyGuarantee,
+    vertex,
 };
 use delaunay::prelude::triangulation::insertion::InsertionError;
-use delaunay::vertex;
 #[cfg(feature = "diagnostics")]
 use rand::{RngExt, SeedableRng, rngs::StdRng};
 
