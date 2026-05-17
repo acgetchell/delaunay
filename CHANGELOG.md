@@ -11,12 +11,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Support periodic flip parity for external cells [#391](https://github.com/acgetchell/delaunay/pull/391)
 - Replace public core module with focused facades
+- Route low-level exports through public facades [#388](https://github.com/acgetchell/delaunay/pull/388)
+- Clarify bulk progress counters
 
 ### Merged Pull Requests
 
 - Support periodic flip parity for external cells [#391](https://github.com/acgetchell/delaunay/pull/391)
 - Refactor/387 tds mutation boundaries [#390](https://github.com/acgetchell/delaunay/pull/390)
 - Refresh release docs and benchmark guidance [#389](https://github.com/acgetchell/delaunay/pull/389)
+- Route low-level exports through public facades [#388](https://github.com/acgetchell/delaunay/pull/388)
 
 ### Added
 
@@ -42,6 +45,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Update downstream-style tests and doctests to stop relying on
     `delaunay::core`.
 
+- [**breaking**] Route low-level exports through public facades [#388](https://github.com/acgetchell/delaunay/pull/388)
+  [`69f4fc3`](https://github.com/acgetchell/delaunay/commit/69f4fc38ad75ade19bfff693d67dee2ea5f99d4f)
+
+  - Move public documentation, doctests, and prelude exports away from the private `crate::core` namespace.
+  - Keep point-location and conflict-region APIs canonical under `delaunay::algorithms` and `delaunay::prelude::algorithms`.
+  - Expose repair, insertion, flip, and validation contracts through the triangulation and TDS facades.
+  - Harden `toml-check` by passing TOML filenames to Python via argv.
+
 ### Documentation
 
 - Refresh release docs and benchmark guidance [#389](https://github.com/acgetchell/delaunay/pull/389)
@@ -59,6 +70,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
   - Update generated benchmark-summary guidance to surface `just bench-perf-summary`,
     current Criterion metadata, and large-scale characterization defaults.
+
+### Fixed
+
+- [**breaking**] Clarify bulk progress counters [`393e463`](https://github.com/acgetchell/delaunay/commit/393e4637adf64fd23a7a32c0ec53fbfb2033a5c3)
+
+  - Report the effective batch progress cadence in the large-scale debug harness, including the canonical `DELAUNAY_BULK_PROGRESS_EVERY` fallback behavior.
+  - Rename bulk progress tracing fields so post-initial-simplex counters are distinct from total input and final insertion statistics.
+  - Point public docs and downstream-style API tests at curated low-level modules and construction prelude imports.
+  - Regenerate the changelog so the core facade break appears in Unreleased.
 
 ## [0.7.7] - 2026-05-15
 
