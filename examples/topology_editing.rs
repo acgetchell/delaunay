@@ -1,4 +1,4 @@
-//! # 2D and 3D Topology Editing Example
+//! # Topology Editing Example
 //!
 //! This example demonstrates the **two-track API design** for working with
 //! Delaunay triangulations in both 2D and 3D:
@@ -15,7 +15,7 @@
 //! ## Usage
 //!
 //! ```bash
-//! cargo run --example topology_editing_2d_3d
+//! cargo run --example topology_editing
 //! ```
 
 #![expect(

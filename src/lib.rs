@@ -1261,7 +1261,8 @@ pub mod prelude {
         /// ```
         pub mod construction {
             pub use crate::tds::{
-                Vertex, VertexBuilder, VertexBuilderError, VertexValidationError,
+                SimplexValidationError, Vertex, VertexBuilder, VertexBuilderError,
+                VertexValidationError,
             };
             pub use crate::topology::traits::{
                 GlobalTopology, TopologyKind, ToroidalConstructionMode,

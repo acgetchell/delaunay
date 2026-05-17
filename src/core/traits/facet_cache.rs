@@ -25,7 +25,7 @@ use std::sync::{
 ///
 /// # Performance Benefits
 ///
-/// - **Avoids recomputation**: Expensive `build_facet_to_simplices_hashmap()` calls
+/// - **Avoids recomputation**: Expensive `build_facet_to_simplices_map()` calls
 /// - **Thread-safe**: Atomic cache updates prevent race conditions  
 /// - **Automatic invalidation**: Cache is invalidated when TDS changes
 /// - **Memory efficient**: Single shared instance across algorithm operations

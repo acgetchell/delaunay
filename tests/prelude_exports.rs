@@ -44,7 +44,7 @@ use delaunay::prelude::triangulation::construction::{
     ExplicitDelaunayValidationError, ExplicitDelaunayValidationErrorKind,
     ExplicitDelaunayValidationSourceKind, ExplicitInsertionError, ExplicitInsertionErrorKind,
     ExplicitInvariantError, ExplicitInvariantErrorKind, ExplicitTdsError, ExplicitTdsErrorKind,
-    InsertionOrderStrategy, TopologyGuarantee, Vertex, vertex,
+    InsertionOrderStrategy, SimplexValidationError, TopologyGuarantee, Vertex, vertex,
 };
 use delaunay::prelude::triangulation::delaunayize::{
     DelaunayizeConfig, DelaunayizeError, DelaunayizeOutcome, delaunayize_by_flips,
@@ -192,6 +192,20 @@ fn construction_prelude_covers_explicit_error_summaries() {
         unreachable!("constructed structural validation variant should match");
     };
     assert_eq!(source.kind, ExplicitTdsErrorKind::FacetSharingViolation);
+
+    let simplex_creation = ExplicitConstructionError::SimplexCreation {
+        simplex_index: 3,
+        source: SimplexValidationError::DuplicateVertices,
+    };
+    let ExplicitConstructionError::SimplexCreation {
+        simplex_index,
+        source,
+    } = simplex_creation
+    else {
+        unreachable!("constructed simplex creation variant should match");
+    };
+    assert_eq!(simplex_index, 3);
+    assert_eq!(source, SimplexValidationError::DuplicateVertices);
 
     let explicit_insertion = ExplicitInsertionError {
         kind: ExplicitInsertionErrorKind::TopologyValidation,

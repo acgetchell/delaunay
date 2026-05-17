@@ -85,9 +85,10 @@ pub trait BoundaryAnalysis<T, U, V, const D: usize> {
     ///
     /// # Errors
     ///
-    /// Returns `Err(TdsError)` if:
+    /// Returns a [`TdsError`] if:
     /// - Building the facet-to-simplices mapping fails due to data structure inconsistencies
-    /// - The triangulation contains invalid simplices or corrupted vertex mappings
+    /// - The facet cannot be keyed because it references missing vertices
+    /// - The facet-to-simplices map contains an invalid multiplicity other than 1 or 2
     ///
     /// # Examples
     ///
@@ -113,7 +114,7 @@ pub trait BoundaryAnalysis<T, U, V, const D: usize> {
 
     /// Checks if a specific facet is a boundary facet using a precomputed facet map.
     ///
-    /// This is an optimized version of `is_boundary_facet` that accepts a prebuilt
+    /// This is an optimized version of [`Self::is_boundary_facet`] that accepts a prebuilt
     /// facet-to-simplices map to avoid recomputation in tight loops.
     ///
     /// # Arguments
@@ -125,13 +126,15 @@ pub trait BoundaryAnalysis<T, U, V, const D: usize> {
     /// # Returns
     ///
     /// `Ok(true)` if the facet is on the boundary (belongs to only one simplex),
-    /// `Ok(false)` if it's an interior facet (belongs to two simplices).
+    /// `Ok(false)` if it is an interior facet (belongs to two simplices) or the
+    /// facet key is absent from the supplied map.
     ///
     /// # Errors
     ///
-    /// Returns `Err(TdsError)` if:
+    /// Returns a [`TdsError`] if:
     /// - The facet's vertices cannot be found in the triangulation (e.g., facet from different TDS)
     /// - The facet key cannot be derived from its vertices
+    /// - The supplied map contains an invalid multiplicity other than 1 or 2 for the facet
     ///
     /// # Examples
     ///
@@ -169,16 +172,17 @@ pub trait BoundaryAnalysis<T, U, V, const D: usize> {
 
     /// Returns the number of boundary facets in the triangulation.
     ///
-    /// This delegates to `boundary_facets()` for consistent error handling.
+    /// This counts boundary facets directly from the facet-to-simplices map.
     ///
     /// # Returns
     ///
     /// A `Result` containing the number of boundary facets in the triangulation,
-    /// or a `TdsError` if the facet map cannot be built.
+    /// or a [`TdsError`] if the facet map cannot be built or contains invalid topology.
     ///
     /// # Errors
     ///
-    /// Returns a [`TdsError`] if the facet-to-simplices map cannot be built.
+    /// Returns a [`TdsError`] if the facet-to-simplices map cannot be built or
+    /// any facet has an invalid multiplicity other than 1 or 2.
     ///
     /// # Examples
     ///

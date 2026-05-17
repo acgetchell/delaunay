@@ -668,9 +668,6 @@ pub fn debug_print_first_delaunay_violation<T, U, V, const D: usize>(
         violations.len()
     );
 
-    // Reusable buffer for simplex vertex points.
-    let mut simplex_vertex_points: SmallVec<[Point<T, D>; 8]> = SmallVec::with_capacity(D + 1);
-
     // Dump each violating simplex with its vertices.
     for simplex_key in violations {
         match tds.simplex(*simplex_key) {
@@ -714,49 +711,16 @@ pub fn debug_print_first_delaunay_violation<T, U, V, const D: usize>(
         return;
     };
 
-    let simplex_vertex_keys: SmallVec<[VertexKey; 8]> =
-        simplex.vertices().iter().copied().collect();
-
-    simplex_vertex_points.clear();
-    let mut missing_vertex_keys: SmallVec<[VertexKey; 8]> = SmallVec::new();
-    for &vkey in &simplex_vertex_keys {
-        match tds.vertex(vkey) {
-            Some(v) => {
-                simplex_vertex_points.push(*v.point());
-            }
-            None => {
-                missing_vertex_keys.push(vkey);
-            }
-        }
-    }
-
-    if simplex_vertex_points.len() != simplex_vertex_keys.len() {
-        tracing::warn!(
-            "[Delaunay debug] First violating simplex {first_simplex_key:?} references missing vertices; skipping robust_insphere search. Missing vertex keys: {missing_vertex_keys:?}",
-        );
-        return;
-    }
-
-    let mut offending: Option<(VertexKey, Point<T, D>)> = None;
-
-    for (test_vkey, test_vertex) in tds.vertices() {
-        if simplex_vertex_keys.contains(&test_vkey) {
-            continue;
-        }
-
-        match robust_insphere(&simplex_vertex_points, test_vertex.point()) {
-            Ok(InSphere::INSIDE) => {
-                offending = Some((test_vkey, *test_vertex.point()));
-                break;
-            }
-            Ok(InSphere::BOUNDARY | InSphere::OUTSIDE) => {}
-            Err(e) => {
+    let offending = first_offending_vertex(tds, first_simplex_key).and_then(|vkey| {
+        tds.vertex(vkey)
+            .map(|vertex| (vkey, *vertex.point()))
+            .or_else(|| {
                 tracing::warn!(
-                    "[Delaunay debug] robust_insphere error while searching for offending vertex in simplex {first_simplex_key:?}: {e}",
+                    "[Delaunay debug] First offending vertex {vkey:?} for simplex {first_simplex_key:?} was not found in TDS",
                 );
-            }
-        }
-    }
+                None
+            })
+    });
 
     if let Some((off_vkey, off_point)) = offending {
         tracing::debug!(

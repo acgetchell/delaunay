@@ -74,15 +74,14 @@ fn nan_comparison_demo() {
     println!("--------------------------");
 
     // Standard IEEE 754 behavior for comparison
-    let nan_val = f64::NAN;
-    println!(
-        "Standard IEEE 754: NaN == NaN is {}",
-        nan_val.is_nan() && nan_val.is_nan()
-    );
-    println!(
-        "Standard IEEE 754: NaN != NaN is {}",
-        !nan_val.is_nan() || !nan_val.is_nan()
-    );
+    let standard_nan1 = f64::NAN;
+    let standard_nan2 = f64::from_bits(standard_nan1.to_bits());
+    let standard_nan_eq = standard_nan1
+        .partial_cmp(&standard_nan2)
+        .is_some_and(std::cmp::Ordering::is_eq);
+    let standard_nan_ne = !standard_nan_eq;
+    println!("Standard IEEE 754: NaN == NaN is {standard_nan_eq}");
+    println!("Standard IEEE 754: NaN != NaN is {standard_nan_ne}");
 
     println!("\nOur Point implementation:");
 
@@ -251,7 +250,7 @@ fn hashset_demo() {
         "HashSet size after inserting duplicates: {}",
         point_set.len()
     );
-    println!("Expected size: 5 (normal, NaN, ∞, zero_combo1, zero_combo2)");
+    println!("Expected size: 4 (normal, NaN, ∞, and ±0.0 treated as the same key)");
 
     // Test membership
     let test_nan = Point::new([f64::NAN, 2.0]);

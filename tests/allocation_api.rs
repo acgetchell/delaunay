@@ -9,7 +9,8 @@ use allocation_counter::AllocationInfo;
 use delaunay::prelude::algorithms::{LocateError, LocateResult, locate_with_stats};
 use delaunay::prelude::geometry::{Coordinate, FastKernel, Point};
 use delaunay::prelude::tds::{
-    SimplexKey, TdsError, VertexKey, facet_key_from_vertices, measure_with_result,
+    SimplexKey, SimplexValidationError, TdsError, VertexKey, facet_key_from_vertices,
+    measure_with_result,
 };
 use delaunay::prelude::triangulation::construction::{
     DelaunayTriangulation, DelaunayTriangulationConstructionError, vertex,
@@ -38,6 +39,12 @@ enum AllocationTestError {
     Tds {
         #[from]
         source: TdsError,
+    },
+
+    #[error("simplex validation failed: {source}")]
+    Simplex {
+        #[from]
+        source: SimplexValidationError,
     },
 
     #[error("point location failed: {source}")]
@@ -198,6 +205,41 @@ fn tds_simplex_vertices_is_zero_allocation() -> Result<(), AllocationTestError> 
     });
     assert_eq!(vertex_count?, SIMPLEX_VERTEX_COUNT);
     assert_zero_allocations(&info, "Tds::simplex_vertices");
+    Ok(())
+}
+
+#[test]
+fn simplex_vertex_uuid_iter_is_zero_allocation() -> Result<(), AllocationTestError> {
+    let dt = deterministic_5d_simplex()?;
+    let tds = dt.tds();
+    let simplex_key = only_5d_simplex_key(&dt)?;
+    let simplex = tds
+        .simplex(simplex_key)
+        .ok_or(AllocationTestError::MissingSimplex)?;
+    let expected_uuids = simplex.vertex_uuids(tds)?;
+
+    let (result, info) = measure_with_result(|| {
+        let iter = simplex.vertex_uuid_iter(tds);
+        let exact_size_len = iter.len();
+        let mut matched = 0usize;
+
+        for (index, uuid) in iter.enumerate() {
+            let uuid = uuid?;
+            if expected_uuids
+                .get(index)
+                .is_some_and(|expected| *expected == uuid)
+            {
+                matched += 1;
+            }
+        }
+
+        Ok::<_, SimplexValidationError>((exact_size_len, matched))
+    });
+    let (exact_size_len, matched) = result?;
+
+    assert_eq!(exact_size_len, SIMPLEX_VERTEX_COUNT);
+    assert_eq!(matched, expected_uuids.len());
+    assert_zero_allocations(&info, "Simplex::vertex_uuid_iter");
     Ok(())
 }
 

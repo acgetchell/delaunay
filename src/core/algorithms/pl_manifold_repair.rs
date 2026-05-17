@@ -21,7 +21,7 @@
 //! # Determinism
 //!
 //! Simplex removal order is deterministic: candidates are sorted by
-//! (ascending quality, canonicalized vertex tuple, simplex UUID) so that
+//! (descending quality, canonicalized vertex tuple, simplex UUID) so that
 //! repeated runs on identical input produce identical output.
 
 #![forbid(unsafe_code)]

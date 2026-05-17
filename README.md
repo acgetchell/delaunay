@@ -422,36 +422,28 @@ counts.
 ```bash
 just examples         # Run all examples
 # Or run specific examples:
-cargo run --release --example triangulation_3d_1000_points
-cargo run --release --example convex_hull_3d_1000_points
+cargo run --release --example triangulation_and_hull
+cargo run --release --example delaunayize_repair
 ```
 
 ## 📋 Examples
 
 The `examples/` directory contains several demonstrations:
 
-- **`convex_hull_3d_1000_points`**: 3D convex hull extraction and analysis on a
-  stable 1000-point configuration
 - **`delaunayize_repair`**: Demonstrates the `delaunayize_by_flips` workflow
   (bounded topology repair + flip-based Delaunay repair + optional fallback)
 - **`diagnostics`**: Opt-in structured diagnostics for validation and
   deliberately non-Delaunay TDS examples
 - **`into_from_conversions`**: Demonstrates Into/From trait conversions and
   utilities
-- **`memory_analysis`**: Memory usage analysis for triangulations across
-  dimensions with allocation tracking
 - **`numerical_robustness`**: Compares `FastKernel`, `RobustKernel`, and
   `AdaptiveKernel` on degenerate predicate inputs
-- **`pachner_roundtrip_4d`**: 4D Pachner move (k=1,2,3) roundtrip checks
-  (flip + inverse preserves the triangulation)
 - **`point_comparison_and_hashing`**: Demonstrates point comparison and hashing
   behavior
-- **`topology_editing_2d_3d`**: Builder API vs Edit API in 2D/3D (bistellar
+- **`topology_editing`**: Builder API vs Edit API in 2D/3D (bistellar
   flips and Delaunay preservation)
-- **`triangulation_3d_1000_points`**: 3D Delaunay triangulation with a stable
-  1000-point random configuration
-- **`zero_allocation_iterator_demo`**: Performance comparison between
-  allocation and zero-allocation iterators
+- **`triangulation_and_hull`**: Seeded 3D and 4D triangulations, boundary
+  traversal, convex hull extraction, and hull containment/visibility queries
 
 For detailed documentation, sample output, and usage instructions for each
 example, see [examples/README.md](examples/README.md).

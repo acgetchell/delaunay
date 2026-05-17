@@ -8,10 +8,11 @@
 //!
 //! 1. Delaunay construction across 2D-5D at calibrated canary scales
 //! 2. Convex hull extraction from completed triangulations
-//! 3. Boundary facet traversal
-//! 4. Full validation (Levels 1-4)
-//! 5. Incremental vertex insertion
-//! 6. Explicit bistellar flip roundtrips on a stable 4D PL-manifold case
+//! 3. Convex hull visibility/containment queries
+//! 4. Boundary facet traversal
+//! 5. Full validation (Levels 1-4)
+//! 6. Incremental vertex insertion
+//! 7. Explicit bistellar flip roundtrips on a stable 4D PL-manifold case
 //!
 //! Predicate microbenchmarks, allocation-focused measurements, and large-scale
 //! stress tests live in the dedicated benchmark targets under `benches/`.
@@ -138,6 +139,21 @@ fn validation_benchmark_ids() -> String {
     .join(";")
 }
 
+fn hull_query_benchmark_ids() -> String {
+    [
+        format!(
+            "convex_hull_queries/{{is_point_outside_3d,is_point_outside_3d_adversarial}}/{CANARY_COUNT_3D}"
+        ),
+        format!(
+            "convex_hull_queries/{{find_visible_facets_3d,find_visible_facets_3d_adversarial}}/{CANARY_COUNT_3D}"
+        ),
+        format!(
+            "convex_hull_queries/{{find_nearest_visible_facet_3d,find_nearest_visible_facet_3d_adversarial}}/{CANARY_COUNT_3D}"
+        ),
+    ]
+    .join(";")
+}
+
 fn insert_benchmark_ids() -> String {
     [
         format!(
@@ -174,6 +190,13 @@ fn api_benchmark_entries() -> Vec<ApiBenchmarkEntry> {
             dimensions: "2,3,4,5",
             benchmark_ids: operation_benchmark_ids("convex_hull", "from_triangulation"),
             note: "extract_hull_from_well_conditioned_and_adversarial_triangulations",
+        },
+        ApiBenchmarkEntry {
+            group: "convex_hull_queries",
+            public_api: "ConvexHull::{is_point_outside,find_visible_facets,find_nearest_visible_facet}",
+            dimensions: "3",
+            benchmark_ids: hull_query_benchmark_ids(),
+            note: "query_prebuilt_3d_hulls_from_well_conditioned_and_adversarial_inputs",
         },
         ApiBenchmarkEntry {
             group: "validation",
@@ -1041,6 +1064,83 @@ fn bench_hull_case<const D: usize>(
     );
 }
 
+fn bench_hull_query_case<const D: usize>(
+    group: &mut BenchmarkGroup<'_, WallTime>,
+    dimension: usize,
+    dataset: Dataset,
+    count: usize,
+    dt: &BenchTriangulation<D>,
+) {
+    let hull = match ConvexHull::from_triangulation(dt.as_triangulation()) {
+        Ok(value) => value,
+        Err(error) => abort_benchmark(format_args!(
+            "convex hull extraction should succeed before query benchmarks: {error}"
+        )),
+    };
+    let outside_point = Point::new([10.0; D]);
+
+    group.throughput(Throughput::Elements(count as u64));
+    group.bench_function(
+        BenchmarkId::new(
+            format!("is_point_outside_{dimension}d{}", dataset.suffix()),
+            count,
+        ),
+        |b| {
+            b.iter(
+                || match hull.is_point_outside(&outside_point, dt.as_triangulation()) {
+                    Ok(value) => {
+                        let _ = black_box(value);
+                    }
+                    Err(error) => abort_benchmark(format_args!(
+                        "ConvexHull::is_point_outside should succeed: {error}"
+                    )),
+                },
+            );
+        },
+    );
+
+    group.bench_function(
+        BenchmarkId::new(
+            format!("find_visible_facets_{dimension}d{}", dataset.suffix()),
+            count,
+        ),
+        |b| {
+            b.iter(
+                || match hull.find_visible_facets(&outside_point, dt.as_triangulation()) {
+                    Ok(value) => {
+                        let _ = black_box(value);
+                    }
+                    Err(error) => abort_benchmark(format_args!(
+                        "ConvexHull::find_visible_facets should succeed: {error}"
+                    )),
+                },
+            );
+        },
+    );
+
+    group.bench_function(
+        BenchmarkId::new(
+            format!(
+                "find_nearest_visible_facet_{dimension}d{}",
+                dataset.suffix()
+            ),
+            count,
+        ),
+        |b| {
+            b.iter(|| {
+                match hull.find_nearest_visible_facet(&outside_point, dt.as_triangulation()) {
+                    Ok(value) => {
+                        let _ = black_box(value);
+                    }
+                    Err(error) => abort_benchmark(format_args!(
+                        "ConvexHull::find_nearest_visible_facet should succeed: {error}"
+                    )),
+                }
+            });
+        },
+    );
+}
+
 fn bench_validate_case<const D: usize>(
     group: &mut BenchmarkGroup<'_, WallTime>,
     dimension: usize,
@@ -1250,6 +1350,34 @@ fn benchmark_convex_hull(c: &mut Criterion) {
         Dataset::Adversarial,
         CANARY_COUNT_5D,
         &dt_5d_adversarial,
+    );
+
+    group.finish();
+}
+
+fn benchmark_convex_hull_queries(c: &mut Criterion) {
+    print_manifest_once();
+    if discover_seeds_enabled() {
+        return;
+    }
+    let mut group = c.benchmark_group("convex_hull_queries");
+    group.sample_size(20);
+
+    let dt_3d = prepare_dt::<3>(123, CANARY_COUNT_3D);
+    bench_hull_query_case(
+        &mut group,
+        3,
+        Dataset::WellConditioned,
+        CANARY_COUNT_3D,
+        &dt_3d,
+    );
+    let dt_3d_adversarial = prepare_adv_dt::<3>(123, CANARY_COUNT_3D);
+    bench_hull_query_case(
+        &mut group,
+        3,
+        Dataset::Adversarial,
+        CANARY_COUNT_3D,
+        &dt_3d_adversarial,
     );
 
     group.finish();
@@ -1474,6 +1602,7 @@ criterion_group!(
         benchmark_tds_new_5d,
         benchmark_boundary_facets,
         benchmark_convex_hull,
+        benchmark_convex_hull_queries,
         benchmark_validation,
         benchmark_insert,
         benchmark_bistellar_flips

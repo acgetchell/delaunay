@@ -7,10 +7,31 @@
 
 use super::{
     collections::FacetToSimplicesMap,
-    facet::{BoundaryFacetsIter, FacetView},
+    facet::{BoundaryFacetsIter, FacetError, FacetView},
     tds::{Tds, TdsError},
     traits::boundary_analysis::BoundaryAnalysis,
 };
+
+/// Counts facets with multiplicity one and rejects non-manifold multiplicities.
+///
+/// Boundary analysis treats multiplicity one as boundary and multiplicity two as
+/// interior. Any other multiplicity is a topology error that callers need to see
+/// rather than an interior facet to ignore.
+fn number_of_boundary_facets_in_map(
+    facet_to_simplices: &FacetToSimplicesMap,
+) -> Result<usize, TdsError> {
+    let mut count = 0usize;
+    for (&facet_key, simplices) in facet_to_simplices {
+        match simplices.len() {
+            1 => count = count.saturating_add(1),
+            2 => {}
+            found => {
+                return Err(FacetError::InvalidFacetMultiplicity { facet_key, found }.into());
+            }
+        }
+    }
+    Ok(count)
+}
 
 /// Implementation of `BoundaryAnalysis` trait for `Tds`.
 ///
@@ -83,8 +104,9 @@ impl<T, U, V, const D: usize> BoundaryAnalysis<T, U, V, D> for Tds<T, U, V, D> {
     /// # Performance Note
     ///
     /// This method rebuilds the facet-to-simplices map on every call, which has O(N·F) complexity.
-    /// For checking multiple facets in hot paths, prefer using `is_boundary_facet_with_map()`
-    /// with a precomputed map to avoid recomputation.
+    /// For checking multiple facets in hot paths, prefer using
+    /// [`BoundaryAnalysis::is_boundary_facet_with_map`] with a precomputed map to avoid
+    /// recomputation.
     ///
     /// # Arguments
     ///
@@ -93,7 +115,12 @@ impl<T, U, V, const D: usize> BoundaryAnalysis<T, U, V, D> for Tds<T, U, V, D> {
     /// # Returns
     ///
     /// `Ok(true)` if the facet is on the boundary (belongs to only one simplex),
-    /// `Ok(false)` otherwise. `Err(...)` on validation/lookup failures.
+    /// `Ok(false)` if it is interior or absent from the facet map.
+    ///
+    /// # Errors
+    ///
+    /// Returns a [`TdsError`] if the facet map cannot be built, the facet cannot
+    /// be keyed, or the map contains an invalid multiplicity other than 1 or 2.
     ///
     /// # Examples
     ///
@@ -121,8 +148,8 @@ impl<T, U, V, const D: usize> BoundaryAnalysis<T, U, V, D> for Tds<T, U, V, D> {
 
     /// Checks if a specific facet is a boundary facet using a precomputed facet map.
     ///
-    /// This is an optimized version of `is_boundary_facet` that accepts a prebuilt
-    /// facet-to-simplices map to avoid recomputation in tight loops.
+    /// This is an optimized version of [`BoundaryAnalysis::is_boundary_facet`] that
+    /// accepts a prebuilt facet-to-simplices map to avoid recomputation in tight loops.
     ///
     /// # Arguments
     ///
@@ -132,7 +159,12 @@ impl<T, U, V, const D: usize> BoundaryAnalysis<T, U, V, D> for Tds<T, U, V, D> {
     /// # Returns
     ///
     /// `Ok(true)` if the facet is on the boundary (belongs to only one simplex),
-    /// `Ok(false)` otherwise. `Err(...)` on validation/lookup failures.
+    /// `Ok(false)` if it is interior or absent from the facet map.
+    ///
+    /// # Errors
+    ///
+    /// Returns a [`TdsError`] if the facet cannot be keyed or the supplied map
+    /// contains an invalid multiplicity other than 1 or 2 for the facet.
     ///
     /// # Examples
     ///
@@ -167,9 +199,16 @@ impl<T, U, V, const D: usize> BoundaryAnalysis<T, U, V, D> for Tds<T, U, V, D> {
         // Use FacetView's key() method which is more efficient
         let facet_key = facet.key().map_err(TdsError::FacetError)?;
 
-        Ok(facet_to_simplices
-            .get(&facet_key)
-            .is_some_and(|simplices| simplices.len() == 1))
+        match facet_to_simplices.get(&facet_key) {
+            Some(simplices) if simplices.len() == 1 => Ok(true),
+            Some(simplices) if simplices.len() == 2 => Ok(false),
+            Some(simplices) => Err(FacetError::InvalidFacetMultiplicity {
+                facet_key,
+                found: simplices.len(),
+            }
+            .into()),
+            None => Ok(false),
+        }
     }
 
     /// Returns the number of boundary facets in the triangulation.
@@ -181,11 +220,12 @@ impl<T, U, V, const D: usize> BoundaryAnalysis<T, U, V, D> for Tds<T, U, V, D> {
     /// # Returns
     ///
     /// A `Result` containing the number of boundary facets in the triangulation,
-    /// or a `TdsError` if the facet map cannot be built.
+    /// or a [`TdsError`] if the facet map cannot be built or contains invalid topology.
     ///
     /// # Errors
     ///
-    /// Returns a [`TdsError`] if the facet-to-simplices map cannot be built.
+    /// Returns a [`TdsError`] if the facet-to-simplices map cannot be built or
+    /// any facet has an invalid multiplicity other than 1 or 2.
     ///
     /// # Examples
     ///
@@ -205,16 +245,17 @@ impl<T, U, V, const D: usize> BoundaryAnalysis<T, U, V, D> for Tds<T, U, V, D> {
     /// # Ok::<(), delaunay::tds::TdsError>(())
     /// ```
     fn number_of_boundary_facets(&self) -> Result<usize, TdsError> {
-        self.build_facet_to_simplices_map()
-            .map(|m| m.values().filter(|v| v.len() == 1).count())
+        let facet_to_simplices = self.build_facet_to_simplices_map()?;
+        number_of_boundary_facets_in_map(&facet_to_simplices)
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::BoundaryAnalysis;
-    use crate::core::facet::FacetError;
-    use crate::core::tds::TdsError;
+    use super::{BoundaryAnalysis, number_of_boundary_facets_in_map};
+    use crate::core::collections::FacetToSimplicesMap;
+    use crate::core::facet::{FacetError, FacetHandle};
+    use crate::core::tds::{SimplexKey, TdsError};
     use crate::core::vertex::Vertex;
     use crate::geometry::{point::Point, traits::coordinate::Coordinate};
     use crate::triangulation::delaunay::DelaunayTriangulation;
@@ -714,6 +755,74 @@ mod tests {
 
         println!("  ✓ All {boundary_count} boundary facets correctly identified");
         println!("  ✓ is_boundary_facet_with_map consistency verified");
+    }
+
+    #[test]
+    fn test_boundary_facet_with_map_rejects_invalid_multiplicity() {
+        let points = vec![
+            Point::new([0.0, 0.0, 0.0]),
+            Point::new([1.0, 0.0, 0.0]),
+            Point::new([0.0, 1.0, 0.0]),
+            Point::new([0.0, 0.0, 1.0]),
+        ];
+        let vertices = Vertex::from_points(&points);
+        let dt = DelaunayTriangulation::new(&vertices).unwrap();
+        let facet = dt.boundary_facets().next().unwrap();
+        let facet_key = facet.key().unwrap();
+
+        let mut facet_to_simplices = dt.tds().build_facet_to_simplices_map().unwrap();
+        facet_to_simplices.remove(&facet_key);
+        assert!(
+            !dt.tds()
+                .is_boundary_facet_with_map(&facet, &facet_to_simplices)
+                .unwrap()
+        );
+
+        facet_to_simplices.insert(
+            facet_key,
+            [
+                FacetHandle::new(facet.simplex_key(), 0),
+                FacetHandle::new(facet.simplex_key(), 1),
+                FacetHandle::new(facet.simplex_key(), 2),
+            ]
+            .into_iter()
+            .collect(),
+        );
+
+        let err = dt
+            .tds()
+            .is_boundary_facet_with_map(&facet, &facet_to_simplices)
+            .unwrap_err();
+
+        assert!(matches!(
+            err,
+            TdsError::FacetError(FacetError::InvalidFacetMultiplicity { found: 3, .. })
+        ));
+    }
+
+    #[test]
+    fn test_boundary_facet_count_rejects_invalid_multiplicity() {
+        let mut facet_to_simplices = FacetToSimplicesMap::default();
+        facet_to_simplices.insert(
+            0xCAFE,
+            [
+                FacetHandle::new(SimplexKey::default(), 0),
+                FacetHandle::new(SimplexKey::default(), 1),
+                FacetHandle::new(SimplexKey::default(), 2),
+            ]
+            .into_iter()
+            .collect(),
+        );
+
+        let err = number_of_boundary_facets_in_map(&facet_to_simplices).unwrap_err();
+
+        assert!(matches!(
+            err,
+            TdsError::FacetError(FacetError::InvalidFacetMultiplicity {
+                facet_key: 0xCAFE,
+                found: 3
+            })
+        ));
     }
 
     #[test]

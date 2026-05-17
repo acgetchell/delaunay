@@ -13,13 +13,11 @@ use delaunay::prelude::tds::{InvariantErrorSummaryDetail, TriangulationValidatio
 use delaunay::prelude::topology::spaces::{GlobalTopology, TopologyKind, ToroidalConstructionMode};
 use delaunay::prelude::topology::validation::{count_simplices, euler_characteristic};
 use delaunay::prelude::triangulation::construction::{
-    ConstructionOptions, DelaunayConstructionFailure, DelaunayTriangulation,
-    DelaunayTriangulationBuilder, DelaunayTriangulationConstructionError,
-    ExplicitConstructionError, ExplicitInsertionError, ExplicitInsertionErrorKind,
-    ExplicitInvariantError, ExplicitInvariantErrorKind, ExplicitTdsErrorKind,
-    InsertionOrderStrategy, TopologyGuarantee, Vertex, VertexBuilder, vertex,
+    ConstructionOptions, DelaunayTriangulation, DelaunayTriangulationBuilder,
+    DelaunayTriangulationConstructionError, ExplicitConstructionError, ExplicitInsertionError,
+    ExplicitInsertionErrorKind, ExplicitInvariantError, ExplicitInvariantErrorKind,
+    ExplicitTdsErrorKind, InsertionOrderStrategy, TopologyGuarantee, Vertex, VertexBuilder, vertex,
 };
-use delaunay::prelude::triangulation::insertion::{TdsConstructionFailure, TdsValidationFailure};
 use delaunay::prelude::triangulation::repair::DelaunayRepairError;
 
 // =============================================================================
@@ -446,6 +444,10 @@ fn test_builder_periodic_topology_level4_smoke_3d() {
     assert!(
         dt.global_topology().is_periodic(),
         "global_topology should use periodic image-point construction"
+    );
+    assert!(
+        dt.number_of_simplices() > 0,
+        "periodic image-point construction should produce at least one simplex"
     );
     assert!(
         dt.simplices().all(|(_, simplex)| {
@@ -1182,25 +1184,16 @@ fn test_explicit_error_variant_non_manifold_facet() {
         .build::<()>()
         .unwrap_err();
 
-    let DelaunayTriangulationConstructionError::Triangulation(DelaunayConstructionFailure::Tds {
-        reason:
-            TdsConstructionFailure::Validation {
-                reason:
-                    TdsValidationFailure::FacetSharingViolation {
-                        existing_incident_count,
-                        attempted_incident_count,
-                        max_incident_count,
-                        ..
-                    },
-            },
-    }) = &err
+    let DelaunayTriangulationConstructionError::ExplicitConstruction(
+        ExplicitConstructionError::TdsAssembly { source },
+    ) = &err
     else {
-        panic!("Expected early TDS facet-sharing validation failure, got: {err}");
+        panic!("Expected explicit TDS assembly failure, got: {err}");
     };
 
-    assert_eq!(*existing_incident_count, 2);
-    assert_eq!(*attempted_incident_count, 3);
-    assert_eq!(*max_incident_count, 2);
+    assert_eq!(source.kind, ExplicitTdsErrorKind::FacetSharingViolation);
+    assert!(source.message.contains("observed 3 incident simplices"));
+    assert!(source.message.contains("max 2"));
 }
 
 /// Error variant: duplicate vertex returns ExplicitConstruction(DuplicateVertexInSimplex { .. }).
@@ -1296,19 +1289,14 @@ fn test_explicit_error_variant_duplicate_simplices_structural_validation() {
         .build::<()>()
         .unwrap_err();
 
-    assert!(
-        matches!(
-            err,
-            DelaunayTriangulationConstructionError::Triangulation(
-                DelaunayConstructionFailure::Tds {
-                    reason: TdsConstructionFailure::Validation {
-                        reason: TdsValidationFailure::DuplicateSimplices { .. }
-                    }
-                }
-            )
-        ),
-        "expected early duplicate-simplex TDS validation failure, got {err:?}"
-    );
+    let DelaunayTriangulationConstructionError::ExplicitConstruction(
+        ExplicitConstructionError::TdsAssembly { source },
+    ) = &err
+    else {
+        panic!("expected explicit TDS assembly failure, got {err:?}");
+    };
+
+    assert_eq!(source.kind, ExplicitTdsErrorKind::DuplicateSimplices);
 }
 
 /// Error variant: degenerate explicit simplices fail geometric nondegeneracy validation.

@@ -63,7 +63,7 @@ work that should not be tangled with v0.7.8 cleanup churn:
   full-TDS clone rollback where benchmarks show it matters, while preserving
   the current strong failed-mutation rollback guarantee.
 - **Naming and spherical topology (#323/#188):** make the breaking
-  `Simplex` → `Simplex` rename and implement unit-sphere normalization for
+  `Cell` → `Simplex` rename and implement unit-sphere normalization for
   `SphericalSpace::canonicalize_point()`.
 - **Iterator cleanup (#353):** prefer iterator-based collection-building paths
   where that improves clarity and allocation behavior.

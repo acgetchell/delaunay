@@ -23,9 +23,11 @@
 //!
 //! **Phase 2 (`.toroidal_periodic()`, issue #210):** Full periodic construction using
 //! the 3^D image-point method — generating copies of each point shifted by ±L in each
-//! dimension, building the full Euclidean DT on the expanded set, and extracting the
-//! restriction to the fundamental domain with rewired periodic neighbor pointers.
-//! Produces a true toroidal (χ = 0) triangulation.
+//! dimension, building the full Euclidean DT on the expanded set, normalizing lifted
+//! simplices, searching a closed quotient candidate subset, and rebuilding quotient
+//! representatives with periodic neighbor pointers. Produces a true toroidal
+//! (χ = 0) triangulation. See `REFERENCES.md`, "Periodic and Toroidal
+//! Triangulations", first entry.
 //!
 //! # Examples
 //!
@@ -111,10 +113,11 @@ use crate::core::algorithms::incremental_insertion::{
 };
 use crate::core::collections::{FastHashMap, PeriodicOffsetBuffer, Uuid, VertexKeySet};
 use crate::core::operations::InsertionOutcome;
-use crate::core::simplex::Simplex;
+use crate::core::simplex::{Simplex, SimplexValidationError};
 use crate::core::tds::{
-    InvariantError, InvariantErrorSummaryDetail, SimplexKey, Tds, TdsError, TdsErrorKind,
-    TriangulationConstructionState, TriangulationValidationErrorKind, VertexKey,
+    InvariantError, InvariantErrorSummaryDetail, SimplexKey, Tds, TdsConstructionError, TdsError,
+    TdsErrorKind, TdsMutationError, TriangulationConstructionState,
+    TriangulationValidationErrorKind, VertexKey,
 };
 use crate::core::traits::data_type::DataType;
 use crate::core::triangulation::{TopologyGuarantee, TriangulationConstructionError};
@@ -310,6 +313,8 @@ pub enum ExplicitTdsErrorKind {
     DuplicateSimplices,
     /// A facet would be incident to too many simplices.
     FacetSharingViolation,
+    /// An entity UUID was duplicated during TDS assembly.
+    DuplicateUuid,
     /// Simplex creation failed.
     FailedToCreateSimplex,
     /// Expected neighbor relation was absent.
@@ -336,12 +341,14 @@ pub enum ExplicitTdsErrorKind {
     DuplicateCoordinatesInSimplex,
 }
 
-/// Compact summary of a [`TdsError`] used by explicit construction.
+/// Compact summary of a TDS construction, mutation, or validation failure used
+/// by explicit construction.
 ///
 /// The conversion preserves the [`ExplicitTdsErrorKind`] and rendered
 /// diagnostic text while dropping the full typed payload. Use this type when
 /// explicit construction needs a small source error; keep the original
-/// [`TdsError`] when callers need source-chain or payload inspection.
+/// [`TdsError`], [`TdsConstructionError`], or [`TdsMutationError`] when callers
+/// need source-chain or payload inspection.
 ///
 /// # Examples
 ///
@@ -398,6 +405,24 @@ impl From<TdsError> for ExplicitTdsError {
             kind,
             message: source.to_string(),
         }
+    }
+}
+
+impl From<TdsConstructionError> for ExplicitTdsError {
+    fn from(source: TdsConstructionError) -> Self {
+        match source {
+            TdsConstructionError::ValidationError(source) => source.into(),
+            duplicate @ TdsConstructionError::DuplicateUuid { .. } => Self {
+                kind: ExplicitTdsErrorKind::DuplicateUuid,
+                message: duplicate.to_string(),
+            },
+        }
+    }
+}
+
+impl From<TdsMutationError> for ExplicitTdsError {
+    fn from(source: TdsMutationError) -> Self {
+        TdsError::from(source).into()
     }
 }
 
@@ -714,8 +739,11 @@ impl From<DelaunayTriangulationValidationError> for ExplicitDelaunayValidationEr
 /// [`ExplicitConstructionError`] (wrapped in
 /// [`DelaunayTriangulationConstructionError::ExplicitConstruction`]).
 ///
-/// Only low-level TDS insertion failures (vertex/simplex creation) flow through
-/// [`TriangulationConstructionError`].
+/// Low-level explicit assembly failures are normalized into
+/// [`ExplicitConstructionError::SimplexCreation`] or
+/// [`ExplicitConstructionError::TdsAssembly`] so callers can handle the whole
+/// explicit-construction path through
+/// [`DelaunayTriangulationConstructionError::ExplicitConstruction`].
 ///
 /// [`DelaunayTriangulationConstructionError::ExplicitConstruction`]: crate::triangulation::delaunay::DelaunayTriangulationConstructionError::ExplicitConstruction
 ///
@@ -773,6 +801,24 @@ pub enum ExplicitConstructionError {
     /// No simplices were provided.
     #[error("No simplices provided for explicit construction")]
     EmptySimplices,
+    /// Simplex creation failed while assembling explicit connectivity.
+    #[error(
+        "Simplex {simplex_index}: simplex creation failed during explicit construction: {source}"
+    )]
+    SimplexCreation {
+        /// The index of the simplex in the input slice.
+        simplex_index: usize,
+        /// Underlying simplex validation error.
+        #[source]
+        source: SimplexValidationError,
+    },
+    /// TDS assembly failed while inserting explicit vertices or simplices.
+    #[error("TDS assembly failed during explicit construction: {source}")]
+    TdsAssembly {
+        /// Underlying TDS construction or mutation error.
+        #[source]
+        source: ExplicitTdsError,
+    },
     /// Toroidal topology is incompatible with explicit simplex construction.
     #[error("Toroidal topology cannot be combined with explicit simplex construction")]
     IncompatibleTopology,
@@ -1744,9 +1790,11 @@ where
         // Insert all vertices and build index → VertexKey map.
         let mut index_to_key = Vec::with_capacity(vertex_count);
         for v in vertices {
-            let vk = tds
-                .insert_vertex_with_mapping(*v)
-                .map_err(TriangulationConstructionError::from)?;
+            let vk = tds.insert_vertex_with_mapping(*v).map_err(|source| {
+                ExplicitConstructionError::TdsAssembly {
+                    source: source.into(),
+                }
+            })?;
             index_to_key.push(vk);
         }
 
@@ -1755,12 +1803,16 @@ where
             let vertex_keys: Vec<VertexKey> =
                 simplex_spec.iter().map(|&vi| index_to_key[vi]).collect();
             let simplex = Simplex::new(vertex_keys, None).map_err(|e| {
-                TriangulationConstructionError::FailedToCreateSimplex {
-                    message: format!("explicit: simplex {simplex_idx}: {e}"),
+                ExplicitConstructionError::SimplexCreation {
+                    simplex_index: simplex_idx,
+                    source: e,
                 }
             })?;
-            tds.insert_simplex_with_mapping(simplex)
-                .map_err(TriangulationConstructionError::from)?;
+            tds.insert_simplex_with_mapping(simplex).map_err(|source| {
+                ExplicitConstructionError::TdsAssembly {
+                    source: source.into(),
+                }
+            })?;
         }
 
         // Mark as constructed so validation doesn't reject incomplete state.
@@ -1773,9 +1825,9 @@ where
             })?;
 
         // --- Assign incident simplices ---
-        tds.assign_incident_simplices().map_err(|e| {
-            TriangulationConstructionError::InternalInconsistency {
-                message: format!("explicit: incident simplex assignment failed: {e}"),
+        tds.assign_incident_simplices().map_err(|source| {
+            ExplicitConstructionError::TdsAssembly {
+                source: source.into(),
             }
         })?;
 
@@ -1935,15 +1987,17 @@ where
     ///    Every copy of canonical vertex `v_i` (including the zero-offset canonical copy)
     ///    receives the **same** tiny deterministic per-vertex perturbation `δ_i`.
     /// 3. Build a full Euclidean DT on the expanded set (n * 3^D points).
-    /// 4. Extract the "central" sub-complex: simplices with all vertices in the canonical set.
-    /// 5. Rewire boundary facets: for each facet of a central simplex adjacent to a non-central simplex,
-    ///    find the corresponding central neighbor and update the neighbor pointer.
-    /// 6. Rebuild incident-simplex associations and return the result.
+    /// 4. Normalize lifted simplices to canonical quotient signatures.
+    /// 5. Search for a closed candidate subset whose periodic facet incidences are valid.
+    /// 6. Rebuild quotient representatives from that selection with periodic offsets.
+    /// 7. Rebuild neighbor and incident-simplex associations and return the result.
     ///
     /// The output is a `Tds` whose `is_valid()` passes at Level 2 (structural validity).
     ///
     /// # References
     ///
+    /// - `REFERENCES.md`, "Periodic and Toroidal Triangulations", first entry
+    ///   (Caroli and Teillaud, "Computing 3D Periodic Triangulations").
     /// - CGAL, *2D Periodic Triangulations*:
     ///   <https://doc.cgal.org/latest/Periodic_2_triangulation_2/index.html>
     /// - CGAL, *3D Periodic Triangulations*:
@@ -2967,6 +3021,7 @@ mod tests {
     use crate::core::simplex::SimplexValidationError;
     use crate::core::tds::{
         DelaunayValidationErrorKind, EntityKind, GeometricError, NeighborValidationError,
+        TdsConstructionError,
     };
     use crate::core::triangulation::TriangulationValidationError;
     use crate::core::util::uuid::UuidValidationError;
@@ -3267,6 +3322,49 @@ mod tests {
             },
             ExplicitTdsErrorKind::InconsistentDataStructure,
         );
+    }
+
+    #[test]
+    fn explicit_tds_error_preserves_construction_and_mutation_wrappers() {
+        let uuid = Uuid::new_v4();
+        let duplicate = ExplicitTdsError::from(TdsConstructionError::DuplicateUuid {
+            entity: EntityKind::Simplex,
+            uuid,
+        });
+        assert_eq!(duplicate.kind, ExplicitTdsErrorKind::DuplicateUuid);
+        assert!(duplicate.message.contains(&uuid.to_string()));
+
+        let mutation = ExplicitTdsError::from(TdsMutationError::from(
+            TdsError::InconsistentDataStructure {
+                message: "incident simplex assignment failed".to_string(),
+            },
+        ));
+        assert_eq!(
+            mutation.kind,
+            ExplicitTdsErrorKind::InconsistentDataStructure
+        );
+        assert!(mutation.message.contains("incident simplex assignment"));
+    }
+
+    #[test]
+    fn explicit_simplex_creation_error_preserves_typed_source() {
+        let err = ExplicitConstructionError::SimplexCreation {
+            simplex_index: 7,
+            source: SimplexValidationError::DuplicateVertices,
+        };
+
+        let ExplicitConstructionError::SimplexCreation {
+            simplex_index,
+            source,
+        } = &err
+        else {
+            panic!("expected simplex creation error, got {err:?}");
+        };
+
+        assert_eq!(*simplex_index, 7);
+        assert_eq!(*source, SimplexValidationError::DuplicateVertices);
+        assert!(err.to_string().contains("Simplex 7"));
+        assert!(err.to_string().contains("Duplicate vertices"));
     }
 
     fn assert_explicit_insertion_error(

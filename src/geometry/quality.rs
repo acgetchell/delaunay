@@ -407,7 +407,9 @@ where
 ///
 /// This metric provides a scale-invariant measure of simplex quality by dividing
 /// the volume by the D-th power of the average edge length. It avoids the numerical
-/// issues that can arise when computing inradius for very small simplices.
+/// issues that can arise when computing inradius for very small simplices. Volume
+/// and edge-length-power degeneracy checks use the D-th power of the scale-aware
+/// length epsilon so comparisons have matching physical dimensions.
 ///
 /// # Quality Interpretation
 ///
@@ -426,9 +428,10 @@ where
 ///
 /// # Errors
 ///
-/// Returns `QualityError` if:
+/// Returns a [`QualityError`] if:
 /// - Simplex has missing or invalid vertices
-/// - Simplex is degenerate (zero or near-zero volume)
+/// - Simplex is degenerate (zero or near-zero volume, average edge length, or
+///   edge-length power)
 /// - Edge length computation fails
 ///
 /// # Examples
@@ -473,13 +476,17 @@ where
 
     // Compute scale-aware epsilon and average edge length
     let (avg_edge_length, epsilon) = scale_aware_epsilon(&points)?;
+    let mut epsilon_pow = K::Scalar::one();
+    for _ in 0..D {
+        epsilon_pow = epsilon_pow * epsilon;
+    }
 
     // Check for degenerate simplex (volume too small)
-    if volume < epsilon {
+    if volume < epsilon_pow {
         return Err(QualityError::DegenerateSimplex {
             measure: QualityDegeneracyMeasure::Volume,
             observed: format!("{volume:?}"),
-            epsilon: format!("{epsilon:?}"),
+            epsilon: format!("{epsilon_pow:?}"),
             avg_edge_length: Some(format!("{avg_edge_length:?}")),
         });
     }
@@ -500,15 +507,15 @@ where
         edge_length_power = edge_length_power * avg_edge_length;
     }
 
-    // Check edge_length_power for numerical underflow.
+    // Check edge_length_power for numerical underflow using a D-dimensional threshold.
     // Although avg_edge_length >= epsilon is verified above, for small avg_edge_length
-    // close to epsilon and large D, raising to power D can underflow to < epsilon.
+    // close to epsilon and large D, raising to power D can underflow to < epsilon^D.
     // This catches numerical precision loss during exponentiation.
-    if edge_length_power < epsilon {
+    if edge_length_power < epsilon_pow {
         return Err(QualityError::DegenerateSimplex {
             measure: QualityDegeneracyMeasure::EdgeLengthPower,
             observed: format!("{edge_length_power:?}"),
-            epsilon: format!("{epsilon:?}"),
+            epsilon: format!("{epsilon_pow:?}"),
             avg_edge_length: Some(format!("{avg_edge_length:?}")),
         });
     }
@@ -521,7 +528,10 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::geometry::kernel::AdaptiveKernel;
+    use crate::core::simplex::Simplex;
+    use crate::core::tds::Tds;
+    use crate::core::triangulation::Triangulation;
+    use crate::geometry::kernel::{AdaptiveKernel, FastKernel};
     use crate::geometry::traits::coordinate::Coordinate;
     use crate::triangulation::delaunay::{
         DelaunayConstructionFailure, DelaunayTriangulation, DelaunayTriangulationConstructionError,
@@ -1452,6 +1462,42 @@ let simplex_key = dt.simplices().next().unwrap().0;
                 "Unexpected triangulation error for normalized_volume numerical edge case: {other}",
             ),
         }
+    }
+
+    #[test]
+    fn normalized_volume_uses_dimensionally_consistent_volume_threshold() {
+        let mut tds: Tds<f64, (), (), 2> = Tds::empty();
+        let v0 = tds.insert_vertex_with_mapping(vertex!([0.0, 0.0])).unwrap();
+        let v1 = tds.insert_vertex_with_mapping(vertex!([1.0, 0.0])).unwrap();
+        let v2 = tds
+            .insert_vertex_with_mapping(vertex!([1.0, 1.0e-30]))
+            .unwrap();
+        let simplex_key = tds
+            .insert_simplex_with_mapping(Simplex::new(vec![v0, v1, v2], None).unwrap())
+            .unwrap();
+        let tri = Triangulation::<FastKernel<f64>, (), (), 2>::new_with_tds(FastKernel::new(), tds);
+
+        let err = normalized_volume(&tri, simplex_key).unwrap_err();
+
+        let QualityError::DegenerateSimplex {
+            measure,
+            epsilon,
+            avg_edge_length,
+            ..
+        } = err
+        else {
+            panic!("expected volume degeneracy, got {err}");
+        };
+
+        assert_eq!(measure, QualityDegeneracyMeasure::Volume);
+        let epsilon: f64 = epsilon.parse().unwrap();
+        let avg_edge_length: f64 = avg_edge_length.unwrap().parse().unwrap();
+        let linear_epsilon = 1.0e-12_f64.max(avg_edge_length * 1.0e-8);
+        let expected_area_epsilon = linear_epsilon * linear_epsilon;
+        assert!(
+            (epsilon - expected_area_epsilon).abs() <= expected_area_epsilon * 1.0e-12,
+            "volume threshold should be epsilon^D; got {epsilon}, expected {expected_area_epsilon}"
+        );
     }
 
     #[test]

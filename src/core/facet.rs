@@ -239,6 +239,7 @@ pub enum FacetError {
 /// // Use it to create a FacetView
 /// let facet = FacetView::new(dt.tds(), handle.simplex_key(), handle.facet_index()).unwrap();
 /// ```
+#[must_use]
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
 pub struct FacetHandle {
     simplex_key: SimplexKey,
@@ -271,7 +272,6 @@ impl FacetHandle {
     /// assert_eq!(handle.simplex_key(), simplex_key);
     /// assert_eq!(handle.facet_index(), 0);
     /// ```
-    #[must_use]
     pub const fn new(simplex_key: SimplexKey, facet_index: u8) -> Self {
         Self {
             simplex_key,
@@ -384,6 +384,7 @@ impl FacetHandle {
 ///     Ok(())
 /// }
 /// ```
+#[must_use]
 pub struct FacetView<'tds, T, U, V, const D: usize> {
     /// Reference to the triangulation data structure.
     tds: &'tds Tds<T, U, V, D>,

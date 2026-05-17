@@ -619,18 +619,22 @@ where
         max_iterations: config.topology_max_iterations,
         max_simplices_removed: config.topology_max_simplices_removed,
     };
+    let fallback_snapshot = if config.fallback_rebuild {
+        let tds = &dt.as_triangulation().tds;
+        Some(
+            snapshot_rebuild_state(tds)
+                .map_err(|source| DelaunayizeError::FallbackSimplexDataSnapshotFailed { source })?,
+        )
+    } else {
+        None
+    };
+
     let topology_stats = match repair_facet_oversharing(dt.tds_mut_for_repair(), &pl_config) {
         Ok(stats) => stats,
         // Topology repair failed but fallback is enabled — try rebuilding.
         Err(topo_err) if config.fallback_rebuild => {
-            let tds = &dt.as_triangulation().tds;
-            let (vertices, simplex_data) = match snapshot_rebuild_state(tds) {
-                Ok(state) => state,
-                Err(snapshot_error) => {
-                    return Err(DelaunayizeError::FallbackSimplexDataSnapshotFailed {
-                        source: snapshot_error,
-                    });
-                }
+            let Some((vertices, simplex_data)) = fallback_snapshot else {
+                return Err(topo_err.into());
             };
             match rebuild_preserving_data(&dt.as_triangulation().kernel, &vertices, &simplex_data) {
                 Ok(rebuilt) => {

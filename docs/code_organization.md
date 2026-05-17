@@ -123,17 +123,13 @@ delaunay/
 │   └── workflows.md
 ├── examples/
 │   ├── README.md
-│   ├── convex_hull_3d_1000_points.rs
 │   ├── delaunayize_repair.rs
 │   ├── diagnostics.rs
 │   ├── into_from_conversions.rs
-│   ├── memory_analysis.rs
 │   ├── numerical_robustness.rs
-│   ├── pachner_roundtrip_4d.rs
 │   ├── point_comparison_and_hashing.rs
-│   ├── topology_editing_2d_3d.rs
-│   ├── triangulation_3d_1000_points.rs
-│   └── zero_allocation_iterator_demo.rs
+│   ├── topology_editing.rs
+│   └── triangulation_and_hull.rs
 ├── scripts/
 │   ├── ci/
 │   │   └── capture_profiling_metadata.sh
@@ -479,9 +475,9 @@ orthogonal files under `src/triangulation/`.
 
 #### Development Infrastructure
 
-- **`examples/`** - Usage demos and trait examples, including memory profiling
-  (see: [examples/memory_analysis.rs](../examples/README.md#5-memory-analysis-across-dimensions-memory_analysisrs)), Pachner move roundtrips
-  (see: [examples/pachner_roundtrip_4d.rs](../examples/pachner_roundtrip_4d.rs)), and zero-allocation iterator demonstrations
+- **`examples/`** - User-facing API demos and workflow examples, including
+  3D/4D construction plus hull queries, topology editing, diagnostics, conversion
+  ergonomics, numerical robustness, and Delaunay repair
 - **`benches/`** - Performance benchmarks with automated baseline management (2D-5D coverage) and memory allocation tracking
   (see: [benches/profiling_suite.rs](../benches/README.md#profiling-suite))
 - **`tests/`** - Integration tests including basic TDS validation (creation, neighbor assignment, boundary analysis),
@@ -533,7 +529,6 @@ The project includes optional memory profiling capabilities:
 - **Memory Benchmarks**: Dedicated benchmarks for RSS and allocation scaling analysis (`profiling_suite.rs`) - comprehensive
   profiling suite with calibrated large-scale 2D-5D point counts. **Recommended for manual profiling runs** rather than CI due
   to long execution time. Use `PROFILING_DEV_MODE=1` for faster auxiliary diagnostics.
-- **Profiling Examples**: `memory_analysis.rs` demonstrates allocation counting across different operations
 - **Integration Testing**: `allocation_api.rs` provides utilities for testing memory usage in various scenarios
 - **CI Integration**: Automated profiling benchmarks with detailed allocation reports
 
