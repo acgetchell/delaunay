@@ -15,7 +15,11 @@ Both repositories now share the same core Rust and Python support-tooling loop:
 - `.markdownlint.json`, `.yamllint`, and `typos.toml` define documentation and
   configuration checks. Delaunay still uses Node-backed Markdownlint and
   Prettier-for-YAML today; a Rust-native `dprint`/`pretty_yaml` and Markdown
-  linter migration remains a future tooling change.
+  linter migration remains a future tooling change. `CITATION.cff` is
+  YAML-style-linted with `.yamllint` and schema-validated through an
+  exact-version `uvx --from cffconvert==2.0.0` invocation, keeping
+  `cffconvert`'s old `jsonschema` constraint isolated from Semgrep's newer
+  dependency requirements.
 - `justfile` is the local entry point for formatting, linting, tests,
   coverage, Semgrep, changelog, setup commands, and supported Cargo feature
   surface checks.
@@ -84,6 +88,12 @@ Some causal-triangulations tooling remains project-specific and was not ported:
   The cache/validation logic lives in `benchmark-utils ensure-ref-baseline` and
   `benchmark-utils compare-ref` so workflows can reuse the same behavior without
   depending on justfile shell internals.
+  `compare-ref` writes branch/PR-vs-ref reports with explicit names such as
+  `benches/worktree_vs_main_compare_results.txt`, while release-baseline
+  comparisons use `benches/main_vs_release_compare_results.txt`. Ref
+  comparisons fail on total matched-time regressions and report individual
+  regressions/improvements as context; release-baseline comparisons remain
+  strict for individual regressions.
   `just perf-baseline [ref]` remains the manual persistent-baseline workflow for
   a requested GitHub ref, so ad-hoc comparisons still use the developer's local
   hardware while GitHub Actions publishes shared CI artifacts.

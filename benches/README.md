@@ -20,6 +20,7 @@ predicates fast across 2D-5D.
 | Use Case | Command |
 |----------|---------|
 | Final local correctness check | `just ci` |
+| Quick local large-scale wall-clock guard | `just perf-large-scale-smoke` |
 | Fast local PR performance guard with temporary same-machine baseline | `just perf-no-regressions` |
 | Full CI benchmark suite only | `just bench-ci` |
 | Persist/update the default local baseline artifact | `just perf-baseline` |
@@ -52,11 +53,26 @@ The `perf` profile inherits from release and restores ThinLTO with
 instead: it catches formatting, lint, test, documentation, example, and
 benchmark-harness compile errors rather than publishing benchmark data.
 
-`just perf-no-regressions [threshold]` is the recommended fast performance
-check before pushing a PR that touches Rust or benchmark code:
+`just perf-large-scale-smoke [max_secs]` is a coarse local wall-clock guard for
+the release-mode large-scale harness. It runs the same 2D-5D cases as
+`just debug-large-scale-{2,3,4,5}d` with their local defaults, caps each test
+runtime at 60 seconds by default, and reports all failing dimensions before
+exiting. This is useful while iterating, but it is not a Criterion comparison
+and should not be treated as published benchmark data. Run it before pushing
+Rust or benchmark changes to catch obvious local performance drift early.
+
+For ordinary Rust or benchmark pushes, use the quick smoke guard with the usual
+correctness checks:
 
 ```bash
 just ci
+just perf-large-scale-smoke
+```
+
+`just perf-no-regressions [threshold]` is the fuller branch-vs-main comparison
+for performance-sensitive changes and PR-ready work:
+
+```bash
 just perf-no-regressions
 ```
 
@@ -298,7 +314,12 @@ uv run benchmark-utils compare-tags --old-tag vX.Y.Z --new-tag vA.B.C
 
 Generated summaries should come from fresh perf-profile runs when they are used
 as release evidence. For routine PR work, use `just ci` plus
-`just perf-no-regressions`.
+`just perf-no-regressions`. Release-baseline comparisons write
+`benches/main_vs_release_compare_results.txt`; PR/ref comparisons write
+`benches/worktree_vs_<ref>_compare_results.txt`. The comparison commands print
+a short pass/regression/error status and the report path before exiting. The
+local PR/ref guard fails on total matched-time regressions, while individual
+regressions and improvements are surfaced in the report.
 
 The generated `Triangulation Data Structure Performance` section is intentionally
 first: it is built from the current `target/criterion` construction results,

@@ -19,8 +19,9 @@ use delaunay::prelude::collections::{
 };
 #[cfg(feature = "diagnostics")]
 use delaunay::prelude::diagnostics::{
-    DelaunayViolationDetail, DelaunayViolationReport, debug_print_first_delaunay_violation,
-    delaunay_violation_report, verify_conflict_region_completeness,
+    DelaunayViolationDetail, DelaunayViolationReport, NeighborSlot as DiagnosticNeighborSlot,
+    debug_print_first_delaunay_violation, delaunay_violation_report,
+    verify_conflict_region_completeness,
 };
 use delaunay::prelude::generators::{RandomPointGenerationError, generate_random_points_seeded};
 #[cfg(feature = "diagnostics")]
@@ -280,6 +281,7 @@ fn diagnostics_prelude_covers_opt_in_helpers() -> Result<(), PreludeExportTestEr
     let report = delaunay_violation_report(&tds, None)?;
     let _typed_report: DelaunayViolationReport = report;
     let _typed_detail: Option<DelaunayViolationDetail> = None;
+    assert!(DiagnosticNeighborSlot::Boundary.is_boundary());
 
     let kernel = AdaptiveKernel::new();
     let point = Point::new([0.0, 0.0]);

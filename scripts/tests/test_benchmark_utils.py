@@ -3,7 +3,7 @@
 Test suite for benchmark_utils.py module.
 
 Tests benchmark parsing, baseline generation, and performance comparison functionality,
-with special focus on the new average regression calculation logic.
+with special focus on benchmark regression policy and summary calculations.
 
 Note: This test file accesses private methods (prefixed with _) which is expected
 and necessary for comprehensive unit testing of internal functionality.
@@ -36,13 +36,16 @@ from benchmark_utils import (
     _CI_PERFORMANCE_SUITE_RUN_METADATA_FILE,
     DEFAULT_REGRESSION_THRESHOLD,
     DEV_MODE_BENCH_ARGS,
+    MAIN_VS_RELEASE_COMPARISON_RESULTS_FILE,
     TRUSTED_BENCH_PROFILE,
+    WORKTREE_VS_REF_COMPARISON_RESULTS_TEMPLATE,
     BaselineArtifactMetadata,
     BaselineGenerator,
     BaselineParseError,
     BenchmarkRegressionHelper,
     CriterionParser,
     LocalRefBaselineCacheOptions,
+    LocalRefBaselineCacheResult,
     LocalRefBaselineGenerator,
     PerformanceComparator,
     PerformanceSummaryGenerator,
@@ -906,7 +909,7 @@ Time: [1.0, 1.0, 1.0] µs
             assert mock_cargo.call_args.kwargs.get("capture_output") is True
 
     def test_write_performance_comparison_detects_individual_regression(self, comparator) -> None:
-        """Test performance comparison fails for individual regressions even when average is fine."""
+        """Test strict performance comparison fails for individual regressions even when total time is fine."""
         # Create current results with mixed performance changes
         current_results = [
             # Big regression: +20%
@@ -927,19 +930,52 @@ Time: [1.0, 1.0, 1.0] µs
         output = StringIO()
         regression_found = comparator._write_performance_comparison(output, current_results, baseline_results)
 
-        # Average change using geometric mean: ~0.0%, but the +20% individual
-        # regression is still a workflow failure.
+        # Total matched time improves, but strict comparisons still fail on the +20%
+        # individual regression.
         assert regression_found
 
         result = output.getvalue()
         assert "SUMMARY" in result
         assert "Total benchmarks compared: 3" in result
         assert f"Individual regressions (>{THRESHOLD_PERCENT}): 1" in result  # Only the +20% one
-        assert re.search(r"Average time change:\s*-?0\.0%", result)
+        assert "Total time change: -3.3%" in result
+        assert re.search(r"Geomean time change:\s*-?0\.0%", result)
         assert "⚠️ INDIVIDUAL REGRESSION" in result
 
-    def test_write_performance_comparison_with_average_regression(self, comparator) -> None:
-        """Test performance comparison with average regression exceeding threshold."""
+    def test_total_time_policy_warns_on_individual_regressions_when_total_is_ok(self, comparator) -> None:
+        """Test local ref comparisons gate on total matched time while preserving warnings."""
+        current_results = [
+            BenchmarkData(1000, "2D").with_timing(45.0, 50.0, 55.0, "µs"),
+            BenchmarkData(2000, "2D").with_timing(140.0, 150.0, 160.0, "µs"),
+        ]
+        baseline_results = {
+            "1000_2D": BenchmarkData(1000, "2D").with_timing(95.0, 100.0, 105.0, "µs"),
+            "2000_2D": BenchmarkData(2000, "2D").with_timing(95.0, 100.0, 105.0, "µs"),
+        }
+
+        output = StringIO()
+        regression_found = comparator._write_performance_comparison(
+            output,
+            current_results,
+            baseline_results,
+            failure_policy="total-time",
+        )
+
+        assert not regression_found
+        result = output.getvalue()
+        assert "Total time change: +0.0%" in result
+        assert "Geomean time change: -13.4%" in result
+        assert "Median time change: +0.0%" in result
+        assert f"Individual regressions (>{THRESHOLD_PERCENT}): 1" in result
+        assert f"Individual improvements (>{THRESHOLD_PERCENT}): 1" in result
+        assert "⚠️ INDIVIDUAL REGRESSION WARNING" in result
+        assert "Top regressions:" in result
+        assert "- 2000_2D: +50.0%" in result
+        assert "Top improvements:" in result
+        assert "- 1000_2D: -50.0%" in result
+
+    def test_write_performance_comparison_with_total_regression(self, comparator) -> None:
+        """Test performance comparison with total matched-time regression exceeding threshold."""
         # Create current results with overall performance degradation
         current_results = [
             # Regression: +20%
@@ -960,19 +996,19 @@ Time: [1.0, 1.0, 1.0] µs
         output = StringIO()
         regression_found = comparator._write_performance_comparison(output, current_results, baseline_results)
 
-        # Average change using geometric mean: 11.0%
-        # This exceeds DEFAULT_REGRESSION_THRESHOLD, so overall regression found
+        # Total time change exceeds DEFAULT_REGRESSION_THRESHOLD, so overall regression is found.
         assert regression_found
 
         result = output.getvalue()
         assert "SUMMARY" in result
         assert "Total benchmarks compared: 3" in result
         assert f"Individual regressions (>{THRESHOLD_PERCENT}): 2" in result  # The +20% and +15% ones
-        assert "Average time change: 11.0%" in result
+        assert "Total time change: +9.2%" in result
+        assert "Geomean time change: +11.0%" in result
         assert "🚨 OVERALL REGRESSION" in result
 
-    def test_write_performance_comparison_with_average_improvement(self, comparator) -> None:
-        """Test performance comparison with significant average improvement."""
+    def test_write_performance_comparison_with_improvement(self, comparator) -> None:
+        """Test performance comparison with mixed improvements and no strict regression."""
         # Create current results with overall performance improvement
         current_results = [
             # Improvement: -10%
@@ -993,8 +1029,7 @@ Time: [1.0, 1.0, 1.0] µs
         output = StringIO()
         regression_found = comparator._write_performance_comparison(output, current_results, baseline_results)
 
-        # Average change using geometric mean: -5.5%
-        # This is significant improvement, so no regression found
+        # Total matched time does not exceed the regression threshold.
         assert not regression_found
 
         result = output.getvalue()
@@ -1002,7 +1037,7 @@ Time: [1.0, 1.0, 1.0] µs
         assert "Total benchmarks compared: 3" in result
         assert f"Individual regressions (>{THRESHOLD_PERCENT}): 0" in result
         expected_average_change = compute_average_time_change(current_results, baseline_results)
-        expected_average_line = f"Average time change: {expected_average_change:.1f}%"
+        expected_average_line = f"Geomean time change: {expected_average_change:+.1f}%"
         assert expected_average_line in result
         assert "✅ OVERALL OK" in result
 
@@ -1393,6 +1428,42 @@ class TestBaselineGenerator:
         assert exit_code == 0
         mock_ensure.assert_not_called()
 
+    def test_compare_ref_uses_ref_named_results_file(self, tmp_path, capsys) -> None:
+        """Test that compare-ref writes a worktree-vs-ref report by default."""
+        commit = "abc123def456"
+        baseline_path = tmp_path / "baseline_results.txt"
+        baseline_path.write_text(cached_ref_baseline_content(commit=commit), encoding="utf-8")
+        options = LocalRefBaselineCacheOptions(ref_name="feature/perf-work", dev_mode=True)
+
+        with (
+            patch("benchmark_utils.get_git_commit_hash", return_value="current123"),
+            patch("benchmark_utils.relevant_perf_worktree_dirty", return_value=True),
+            patch("benchmark_utils.resolve_ref_commit", return_value=commit),
+            patch(
+                "benchmark_utils.ensure_cached_ref_baseline",
+                return_value=LocalRefBaselineCacheResult(
+                    baseline_path=baseline_path,
+                    resolved_commit=commit,
+                    reused=True,
+                ),
+            ),
+            patch.object(PerformanceComparator, "compare_with_baseline", return_value=(True, False)) as mock_compare,
+        ):
+            exit_code = compare_with_cached_ref_baseline(tmp_path, options, threshold=7.5)
+
+        expected_name = WORKTREE_VS_REF_COMPARISON_RESULTS_TEMPLATE.format(ref="feature_perf-work")
+        captured = capsys.readouterr()
+        assert exit_code == 0
+        assert "No significant performance regressions detected" in captured.out
+        assert expected_name in captured.out
+        mock_compare.assert_called_once_with(
+            baseline_path,
+            dev_mode=True,
+            output_file=tmp_path / "benches" / expected_name,
+            failure_policy="total-time",
+            bench_timeout=1800,
+        )
+
     @patch("benchmark_utils.get_git_commit_hash", return_value="abc123")
     def test_written_baseline_round_trips_through_parser(self, mock_git, tmp_path) -> None:
         """Test the baseline writer/parser contract for representative records."""
@@ -1461,15 +1532,15 @@ class TestIntegrationScenarios:
         output = StringIO()
         regression_found = comparator._write_performance_comparison(output, current_results, baseline_results)
 
-        # Average change using geometric mean: -0.2%, but the +8% individual
-        # regression is still a workflow failure.
+        # Strict comparisons fail on the +8% individual regression even though
+        # total matched time improves.
         assert regression_found
 
         result = output.getvalue()
         assert "Total benchmarks compared: 5" in result
         assert f"Individual regressions (>{THRESHOLD_PERCENT}): 1" in result  # Only the +8% one
         expected_average_change = compute_average_time_change(current_results, baseline_results)
-        expected_average_line = f"Average time change: {expected_average_change:.1f}%"
+        expected_average_line = f"Geomean time change: {expected_average_change:+.1f}%"
         assert expected_average_line in result
         assert "⚠️ INDIVIDUAL REGRESSION" in result
 
@@ -1497,14 +1568,13 @@ class TestIntegrationScenarios:
         output = StringIO()
         regression_found = comparator._write_performance_comparison(output, current_results, baseline_results)
 
-        # Average change: 9.0%
-        # Should detect overall regression even though individual ones are mixed
+        # Should detect overall total-time regression.
         assert regression_found
 
         result = output.getvalue()
         assert "Total benchmarks compared: 5" in result
         assert f"Individual regressions (>{THRESHOLD_PERCENT}): 5" in result  # All regressions exceed DEFAULT_REGRESSION_THRESHOLD
-        assert "Average time change: 9.0%" in result
+        assert "Total time change: +9.0%" in result
         assert "🚨 OVERALL REGRESSION" in result
 
     def test_noisy_benchmarks_scenario(self, comparator) -> None:
@@ -1533,14 +1603,13 @@ class TestIntegrationScenarios:
         output = StringIO()
         regression_found = comparator._write_performance_comparison(output, current_results, baseline_results)
 
-        # Average change using geometric mean: 4.9%, but the one big outlier
-        # still needs to fail the benchmark comparison.
+        # Strict comparisons fail on the one big individual outlier.
         assert regression_found
 
         result = output.getvalue()
         assert "Total benchmarks compared: 5" in result
         assert f"Individual regressions (>{THRESHOLD_PERCENT}): 1" in result  # Only the 40% outlier
-        assert "Average time change: 4.9%" in result
+        assert "Geomean time change: +4.9%" in result
         assert "⚠️ INDIVIDUAL REGRESSION" in result
 
 
@@ -2347,7 +2416,7 @@ Hardware Information:
     def test_generate_summary_with_regression(self, temp_chdir, capsys) -> None:
         """Test generating summary when regression is detected."""
         with tempfile.TemporaryDirectory() as temp_dir:
-            results_file = Path(temp_dir) / "benches" / "compare_results.txt"
+            results_file = Path(temp_dir) / "benches" / MAIN_VS_RELEASE_COMPARISON_RESULTS_FILE
             results_file.parent.mkdir(parents=True)
             results_file.write_text("REGRESSION detected in benchmark xyz")
 
@@ -2360,7 +2429,7 @@ Hardware Information:
                 "SKIP_REASON": "changes_detected",
             }
 
-            # Change working directory to temp_dir so Path("benches/compare_results.txt") works
+            # Change working directory to temp_dir so the default release comparison path resolves.
             with patch.dict(os.environ, env_vars), temp_chdir(temp_dir):
                 BenchmarkRegressionHelper.generate_summary()
 
@@ -2404,7 +2473,7 @@ Hardware Information:
     def test_generate_summary_sets_regression_environment_variable(self, temp_chdir, capsys) -> None:
         """Test that generate_summary sets BENCHMARK_REGRESSION_DETECTED environment variable when regressions are found."""
         with tempfile.TemporaryDirectory() as temp_dir:
-            results_file = Path(temp_dir) / "benches" / "compare_results.txt"
+            results_file = Path(temp_dir) / "benches" / MAIN_VS_RELEASE_COMPARISON_RESULTS_FILE
             results_file.parent.mkdir(parents=True)
             results_file.write_text("REGRESSION detected in benchmark xyz")
 
@@ -2430,7 +2499,7 @@ Hardware Information:
     def test_generate_summary_github_env_export(self, temp_chdir) -> None:
         """Test that BENCHMARK_REGRESSION_DETECTED is also exported to GITHUB_ENV when available."""
         with tempfile.TemporaryDirectory() as temp_dir:
-            results_file = Path(temp_dir) / "benches" / "compare_results.txt"
+            results_file = Path(temp_dir) / "benches" / MAIN_VS_RELEASE_COMPARISON_RESULTS_FILE
             results_file.parent.mkdir(parents=True)
             results_file.write_text("REGRESSION detected in benchmark xyz")
 
@@ -2452,7 +2521,7 @@ Hardware Information:
     def test_generate_summary_with_error_file(self, temp_chdir, capsys) -> None:
         """Test generating summary when comparison failed with error file."""
         with tempfile.TemporaryDirectory() as temp_dir:
-            results_file = Path(temp_dir) / "benches" / "compare_results.txt"
+            results_file = Path(temp_dir) / "benches" / MAIN_VS_RELEASE_COMPARISON_RESULTS_FILE
             results_file.parent.mkdir(parents=True)
             # Simulate error file content (as written by _write_error_file)
             results_file.write_text(
@@ -2482,7 +2551,7 @@ Hardware Information:
                 # Should detect error and report failure, not "no regressions"
                 assert "Result:" in captured.out
                 assert "Benchmark comparison failed" in captured.out
-                assert "(see benches/compare_results.txt for details)" in captured.out
+                assert f"(see benches/{MAIN_VS_RELEASE_COMPARISON_RESULTS_FILE} for details)" in captured.out
                 # Should NOT say "no regressions" when there was an error
                 assert "No significant performance regressions" not in captured.out
 
@@ -2609,7 +2678,7 @@ class TestTimeoutHandling:
                 assert "Consider increasing --bench-timeout" in captured.err
 
                 # Verify error file contains full exception message with command context
-                error_file = project_root / "benches" / "compare_results.txt"
+                error_file = project_root / "benches" / MAIN_VS_RELEASE_COMPARISON_RESULTS_FILE
                 assert error_file.exists()
                 error_content = error_file.read_text()
                 assert "❌ Error: Benchmark execution timeout" in error_content
@@ -2676,7 +2745,9 @@ class TestTimeoutHandling:
         parser = create_argument_parser()
 
         ensure_args = parser.parse_args(["ensure-ref-baseline", "--ref", "v0.7.7", "--dev", "--cache-root", "cache"])
-        compare_args = parser.parse_args(["compare-ref", "--ref", "main", "--threshold", "5.0", "--dev"])
+        compare_args = parser.parse_args(
+            ["compare-ref", "--ref", "main", "--threshold", "5.0", "--dev", "--output", "benches/worktree_vs_main_compare_results.txt"],
+        )
 
         assert ensure_args.command == "ensure-ref-baseline"
         assert ensure_args.ref_name == "v0.7.7"
@@ -2685,6 +2756,7 @@ class TestTimeoutHandling:
         assert compare_args.command == "compare-ref"
         assert compare_args.ref_name == "main"
         assert compare_args.threshold == 5.0
+        assert compare_args.output == Path("benches/worktree_vs_main_compare_results.txt")
         assert compare_args.dev
 
     def test_configure_logging_uses_debug_when_verbose(self) -> None:
@@ -2720,7 +2792,7 @@ class TestPerformanceSummaryGenerator:
             assert generator.project_root == project_root
             assert generator.baseline_file == project_root / "baseline-artifact" / "baseline_results.txt"
             assert generator._baseline_fallback == project_root / "benches" / "baseline_results.txt"
-            assert generator.comparison_file == project_root / "benches" / "compare_results.txt"
+            assert generator.comparison_file == project_root / "benches" / MAIN_VS_RELEASE_COMPARISON_RESULTS_FILE
             assert generator.circumsphere_results_dir == project_root / "target" / "criterion"
             assert isinstance(generator.current_version, str)
             assert isinstance(generator.current_date, str)
@@ -2984,7 +3056,7 @@ IMPROVEMENT: Time decreased by 8.5% (faster performance)
             project_root = Path(temp_dir)
             benches_dir = project_root / "benches"
             benches_dir.mkdir(parents=True)
-            comparison_file = benches_dir / "compare_results.txt"
+            comparison_file = benches_dir / MAIN_VS_RELEASE_COMPARISON_RESULTS_FILE
             comparison_file.write_text(comparison_content)
 
             generator = PerformanceSummaryGenerator(project_root)
@@ -3007,7 +3079,7 @@ OK: Time change -1.8% within acceptable range
             project_root = Path(temp_dir)
             benches_dir = project_root / "benches"
             benches_dir.mkdir(parents=True)
-            comparison_file = benches_dir / "compare_results.txt"
+            comparison_file = benches_dir / MAIN_VS_RELEASE_COMPARISON_RESULTS_FILE
             comparison_file.write_text(comparison_content)
 
             generator = PerformanceSummaryGenerator(project_root)
@@ -3642,7 +3714,7 @@ Benchmark completed.""",
             )
 
             # Mock comparison file
-            comparison_file = baseline_dir / "compare_results.txt"
+            comparison_file = baseline_dir / MAIN_VS_RELEASE_COMPARISON_RESULTS_FILE
             comparison_file.write_text("✅ OK: All benchmarks within acceptable range\n")
 
             with (

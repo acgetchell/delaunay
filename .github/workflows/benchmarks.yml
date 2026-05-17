@@ -204,7 +204,7 @@ jobs:
         run: |
           set -euo pipefail
 
-          results_file="benches/compare_results.txt"
+          results_file="benches/main_vs_release_compare_results.txt"
 
           # Successful compare step => no regressions beyond configured threshold.
           if [ "${{ steps.compare_regression.outcome }}" = "success" ]; then
@@ -258,7 +258,7 @@ jobs:
         with:
           name: performance-regression-results-${{ github.run_number }}
           path: |
-            benches/compare_results.txt
+            benches/main_vs_release_compare_results.txt
             baseline-artifact/baseline_results.txt
           if-no-files-found: warn
           retention-days: 30

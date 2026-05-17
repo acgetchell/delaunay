@@ -12,11 +12,22 @@
 [![Audit dependencies](https://github.com/acgetchell/delaunay/actions/workflows/audit.yml/badge.svg)](https://github.com/acgetchell/delaunay/actions/workflows/audit.yml)
 [![Codacy Badge](https://app.codacy.com/project/badge/Grade/3cad94f994f5434d877ae77f0daee692)](https://app.codacy.com/gh/acgetchell/delaunay/dashboard?utm_source=gh&utm_medium=referral&utm_content=&utm_campaign=Badge_grade)
 
-A reusable, tested, and benchmarked [Rust] software artifact for
-dimension-generic Delaunay triangulations and convex hulls in finite Euclidean
-and periodic point sets, with exact predicates, Simulation-of-Simplicity
-degeneracy handling, [PL-manifold]-aware local moves, and exposed bistellar
-flips ([Pachner moves]) inspired by [CGAL].
+[Rust] crate providing D-dimensional [Delaunay triangulations] and
+[convex hulls][Convex hulls] (2D through 5D explicitly tested) constructed with
+a [PL-manifold] (default) or [pseudomanifold][Pseudomanifold] guarantee on
+finite point sets with Euclidean and toroidal global topologies. Uses
+[exact predicates] and [Simulation of Simplicity] for robustness and degeneracy
+handling, and [Hilbert curve]s for deterministic insertion ordering and
+efficient spatial indexing. Provides an explicit
+[4-level validation hierarchy][Validation Guide] on individual elements,
+triangulation data structure validity, manifold topology, and Delaunay property
+adherence. Allows for the complete set of [Pachner moves] up to D=5 using
+bistellar flips, vertex insertion and deletion, and the conversion of
+non-Delaunay triangulations into Delaunay triangulations via bounded
+flip/rebuilds. Auxiliary data may be stored directly in vertices and simplices
+with external [secondary maps][Secondary maps] provided for vertex- and
+simplex-keyed algorithm use, and the entire data structure is
+serializable/deserializable. Written in safe Rust with no unsafe code.
 
 ## 📐 Introduction
 
@@ -91,9 +102,10 @@ complete technical background.
 ## ✨ Features
 
 - [x]  Copyable data types associated with vertices and cells (integers,
-  floats, chars, custom enums)
-- [x]  d-dimensional [Delaunay triangulations]
-- [x]  d-dimensional [Convex hulls]
+  floats, chars, custom enums), plus `CellSecondaryMap` and
+  `VertexSecondaryMap` aliases for caller-owned key-indexed algorithm state
+- [x]  D-dimensional [Delaunay triangulations]
+- [x]  D-dimensional [Convex hulls]
 - [x]  Bistellar flip / [Pachner moves] Edit API up to 5D: k-flips for
   k = 1, 2, 3 plus inverse moves
 - [x]  [Delaunay repair] using bistellar flips for k=2/k=3 with inverse
@@ -522,6 +534,10 @@ Portions of this library were developed with the assistance of these AI tools:
 [Voronoi diagrams]: https://en.wikipedia.org/wiki/Voronoi_diagram
 [Convex hulls]: https://en.wikipedia.org/wiki/Convex_hull
 [Hilbert curve]: https://en.wikipedia.org/wiki/Hilbert_curve
+[exact predicates]: docs/numerical_robustness_guide.md
+[Simulation of Simplicity]: docs/numerical_robustness_guide.md#simulation-of-simplicity-sos
+[Secondary maps]: docs/workflows.md#builder-api-auxiliary-vertex-and-cell-data
+[Validation Guide]: docs/validation.md
 [ChatGPT]: https://openai.com/chatgpt
 [Claude]: https://www.anthropic.com/claude
 [CodeRabbit]: https://coderabbit.ai/

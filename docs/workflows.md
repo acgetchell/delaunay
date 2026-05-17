@@ -283,6 +283,23 @@ assert_eq!(dt.tds().cell(cell_key).unwrap().data(), Some(&42));
 `set_vertex_data` and `set_cell_data` are safe O(1) operations — they modify only the
 user-data field and do not invalidate geometry, topology, or Delaunay invariants.
 
+For algorithm-local state keyed by existing vertices or cells, prefer the
+caller-owned secondary-map aliases instead of mutating stored user data:
+
+```rust
+use delaunay::prelude::collections::{CellSecondaryMap, VertexSecondaryMap};
+
+let mut visited_cells: CellSecondaryMap<bool> = CellSecondaryMap::new();
+let mut vertex_order: VertexSecondaryMap<usize> = VertexSecondaryMap::new();
+
+for (cell_key, _) in dt.cells() {
+    visited_cells.insert(cell_key, false);
+}
+for (order, (vertex_key, _)) in dt.vertices().enumerate() {
+    vertex_order.insert(vertex_key, order);
+}
+```
+
 ## Builder API: insertion statistics
 
 If you need observability (or you want to handle skipped vertices explicitly), use

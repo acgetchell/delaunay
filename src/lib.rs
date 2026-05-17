@@ -1356,6 +1356,7 @@ pub mod prelude {
     #[cfg_attr(docsrs, doc(cfg(feature = "diagnostics")))]
     pub mod diagnostics {
         pub use crate::core::algorithms::locate::verify_conflict_region_completeness;
+        pub use crate::core::cell::NeighborSlot;
         pub use crate::core::util::{
             DelaunayViolationDetail, DelaunayViolationReport, debug_print_first_delaunay_violation,
             delaunay_violation_report,
