@@ -427,6 +427,13 @@ The `benchmark-utils` CLI provides integrated benchmark workflow functionality, 
   - `canonical_points.rs` - Canonical vertex-ordering helpers for geometric predicate call sites (SoS consistency)
 - `operations.rs` - Semantic classification and telemetry for topological operations
 
+Public namespace policy: `crate::core` is the internal implementation namespace
+for the low-level TDS and algorithm layer. The public low-level surface is
+exposed through curated modules and focused preludes (`delaunay::tds`,
+`delaunay::collections`, `delaunay::algorithms`, `delaunay::query`, and their
+`delaunay::prelude::*` counterparts) rather than a broad public
+`delaunay::core` module.
+
 **`src/geometry/`** - Geometric algorithms and predicates:
 
 - `kernel.rs` - Kernel abstraction (`AdaptiveKernel` default, `RobustKernel`, `FastKernel`) and `ExactPredicates` marker trait

@@ -68,6 +68,20 @@
 //! | Legacy broad triangulation import | `use delaunay::prelude::triangulation::*` |
 //! | Everything (kitchen sink) | `use delaunay::prelude::*` |
 //!
+//! ## Public low-level namespace policy
+//!
+//! The implementation namespace remains `crate::core`, but the public
+//! low-level surface is exposed through curated modules:
+//! [`tds`](crate::tds), [`collections`](crate::collections),
+//! [`algorithms`](crate::algorithms), and [`query`](crate::query), plus the
+//! matching focused preludes. These names describe the data structures and
+//! workflows users compose without colliding with Rust's standard `core`
+//! vocabulary.
+//!
+//! Prefer these curated modules and focused preludes in examples, doctests,
+//! benchmarks, and downstream-style integration tests. High-level Delaunay
+//! construction remains outside the low-level TDS/query surface.
+//!
 //! ## Examples (contract-oriented)
 //!
 //! ### Validation hierarchy (Levels 1–4)
@@ -339,7 +353,8 @@
 //! # }
 //! ```
 //!
-//! For implementation details on invariant enforcement, see [`core::algorithms::incremental_insertion`].
+//! For implementation details on invariant enforcement, see the incremental
+//! insertion implementation.
 //!
 //! # Programming contract (high-level)
 //!
@@ -364,20 +379,35 @@
 // Forbid unsafe code throughout the entire crate
 #![forbid(unsafe_code)]
 
-/// The `core` module contains the primary data structures and algorithms for
-/// building and manipulating triangulations.
+/// Internal low-level triangulation data structures and algorithms.
 ///
-/// It includes the [`Tds`](crate::core::tds::Tds) struct, which represents the
-/// triangulation data structure, as well as [`Cell`](crate::core::cell::Cell),
-/// [`FacetView`](crate::core::facet::FacetView), and
-/// [`Vertex`](crate::core::vertex::Vertex) components. High-level Delaunay
-/// construction and builder APIs live under [`crate::triangulation`] and the
-/// focused preludes, not under `core`.
+/// This module backs the curated public low-level modules. It includes
+/// [`Tds`](crate::core::tds::Tds), [`Cell`](crate::core::cell::Cell),
+/// [`FacetView`](crate::core::facet::FacetView),
+/// [`Vertex`](crate::core::vertex::Vertex), the generic
+/// [`Triangulation`](crate::core::triangulation::Triangulation) wrapper, and
+/// algorithm building blocks used by the crate.
 ///
-/// ```compile_fail
-/// delaunay::core::DelaunayTriangulation::empty();
-/// ```
-pub mod core {
+/// Public docs, examples, benchmarks, and downstream-style tests should prefer
+/// the curated public modules and focused preludes:
+///
+/// - [`crate::tds`] / [`crate::prelude::tds`] for TDS cells, facets, keys,
+///   validation reports, and helpers.
+/// - [`crate::collections`] / [`crate::prelude::collections`] for public
+///   collection aliases and small buffers.
+/// - [`crate::algorithms`] / [`crate::prelude::algorithms`] for point-location
+///   and conflict-region algorithms.
+/// - [`crate::query`] / [`crate::prelude::query`] for read-only traversal,
+///   adjacency, convex hull, and set-comparison helpers.
+///
+/// High-level Delaunay construction and builder APIs live under
+/// [`crate::triangulation`] and the focused Delaunay-facing preludes, not under
+/// `core`.
+#[expect(
+    clippy::redundant_pub_crate,
+    reason = "`pub(crate)` keeps internal cross-module intent visible while `core` is private"
+)]
+mod core {
     /// Triangulation algorithms for construction, maintenance, and querying.
     pub mod algorithms {
         /// Flip-based algorithms (Delaunay repair, diagnostics, and related utilities).
@@ -556,21 +586,12 @@ pub mod core {
         pub mod facet_cache;
         pub use boundary_analysis::*;
         pub use data_type::*;
-        pub use facet_cache::*;
     }
 
-    // Re-export the low-level `core` modules.
-    pub use adjacency::*;
-    pub use cell::*;
-    pub use edge::*;
-    pub use facet::*;
-    pub use tds::*;
-    pub use traits::*;
-    pub use util::*;
-    pub use vertex::*;
-
-    // Note: collections module not re-exported here to avoid namespace pollution
-    // Import specific types via prelude or use crate::core::collections::
+    // Import concrete internal modules directly via `crate::core::<module>`.
+    // Public low-level access is exposed through crate-root facades such as
+    // `crate::tds`, `crate::collections`, `crate::algorithms`, and
+    // `crate::query`.
 }
 
 /// Contains geometric types including the `Point` struct and geometry predicates.
@@ -955,6 +976,174 @@ pub mod topology {
     pub use traits::*;
 }
 
+/// Public collection aliases and small-buffer types used by low-level APIs.
+///
+/// This module is the public replacement for reaching through the internal
+/// implementation namespace. It keeps common map, set, key-map, and
+/// small-buffer aliases convenient without importing every algorithm-specific
+/// scratch buffer.
+///
+/// # Examples
+///
+/// ```rust
+/// use delaunay::collections::{FastHashMap, SmallBuffer};
+///
+/// let mut counts: FastHashMap<&'static str, usize> = FastHashMap::default();
+/// counts.insert("cells", 3);
+///
+/// let mut scratch: SmallBuffer<usize, 4> = SmallBuffer::new();
+/// scratch.push(counts["cells"]);
+///
+/// assert_eq!(scratch.as_slice(), &[3]);
+/// ```
+pub mod collections {
+    pub use crate::core::collections::{
+        CellKeyBuffer, CellKeySet, CellNeighborsMap, CellSecondaryMap, CellToVertexUuidsMap,
+        CellVertexBuffer, CellVertexKeysMap, CellVertexUuidBuffer, CellVerticesMap, Entry,
+        FacetIndex, FacetIssuesMap, FacetSharingCellsBuffer, FacetToCellsMap, FacetVertexMap,
+        FastBuildHasher, FastHashMap, FastHashSet, FastHasher, KeyBasedCellMap, KeyBasedVertexMap,
+        MAX_PRACTICAL_DIMENSION_SIZE, NeighborBuffer, PeriodicOffsetBuffer, SecureHashMap,
+        SecureHashSet, SimplexVertexBuffer, SmallBuffer, Uuid, UuidToCellKeyMap,
+        UuidToVertexKeyMap, VertexKeyBuffer, VertexKeySet, VertexSecondaryMap, VertexToCellsMap,
+        VertexUuidBuffer, VertexUuidSet, fast_hash_map_with_capacity, fast_hash_set_with_capacity,
+        small_buffer_with_capacity_2, small_buffer_with_capacity_8, small_buffer_with_capacity_16,
+    };
+
+    /// Expert aliases for algorithm-local scratch buffers.
+    ///
+    /// These remain public for advanced users and APIs that expose exact buffer
+    /// shapes, but they are separated from the common collection aliases to
+    /// avoid accidental broad imports.
+    pub mod algorithm_buffers {
+        pub use crate::core::collections::{
+            BadCellBuffer, CLEANUP_OPERATION_BUFFER_SIZE, CavityBoundaryBuffer, CellRemovalBuffer,
+            FacetInfoBuffer, GeometricPointBuffer, PointBuffer, ValidCellsBuffer, ViolationBuffer,
+        };
+    }
+}
+
+/// Public low-level topology data structures and TDS helpers.
+///
+/// Use this module when you need cells, facets, keys, the
+/// [`Tds`](crate::tds::Tds) container, validation reports, or TDS-specific
+/// helpers without reaching into the internal implementation namespace.
+///
+/// # Examples
+///
+/// ```rust
+/// use delaunay::tds::Tds;
+///
+/// let tds: Tds<f64, (), (), 2> = Tds::empty();
+///
+/// assert_eq!(tds.number_of_vertices(), 0);
+/// assert_eq!(tds.number_of_cells(), 0);
+/// ```
+pub mod tds {
+    pub use crate::core::adjacency::*;
+    pub use crate::core::cell::*;
+    pub use crate::core::collections::{
+        CellKeyBuffer, FacetIndex, FastHashMap, FastHashSet, NeighborBuffer, PeriodicOffsetBuffer,
+        SmallBuffer, Uuid,
+    };
+    pub use crate::core::edge::*;
+    pub use crate::core::facet::*;
+    pub use crate::core::tds::*;
+    pub use crate::core::traits::facet_cache::*;
+    pub use crate::core::util::{
+        UuidValidationError, checked_facet_key_from_vertex_keys, facet_view_to_vertices,
+        facet_views_are_adjacent, format_jaccard_report, jaccard_distance, jaccard_index,
+        make_uuid, measure_with_result, stable_hash_u64_slice, usize_to_u8, validate_uuid,
+        verify_facet_index_consistency,
+    };
+    pub use crate::core::vertex::*;
+}
+
+/// Public low-level algorithms that are useful outside full construction.
+///
+/// This module currently exposes point-location and conflict-region building
+/// blocks. Higher-level Delaunay construction, repair, and editing APIs remain
+/// under [`triangulation`] and the matching focused preludes.
+///
+/// # Examples
+///
+/// ```rust
+/// use delaunay::algorithms::{LocateError, locate};
+/// use delaunay::prelude::geometry::{AdaptiveKernel, Coordinate, Point};
+/// use delaunay::tds::Tds;
+///
+/// let tds: Tds<f64, (), (), 2> = Tds::empty();
+/// let kernel = AdaptiveKernel::new();
+/// let point = Point::new([0.0, 0.0]);
+///
+/// assert!(matches!(
+///     locate(&tds, &kernel, &point, None),
+///     Err(LocateError::EmptyTriangulation)
+/// ));
+/// ```
+pub mod algorithms {
+    pub use crate::core::algorithms::locate::{
+        ConflictError, InternalInconsistencySite, LocateError, LocateFallback,
+        LocateFallbackReason, LocateResult, LocateStats, extract_cavity_boundary,
+        find_conflict_region, locate, locate_with_stats,
+    };
+}
+
+/// Public read-only traversal, adjacency, convex-hull, and set-comparison APIs.
+///
+/// This module is intended for callers who need to inspect a triangulation or
+/// compare derived topology without importing construction and repair surfaces.
+///
+/// # Examples
+///
+/// ```rust
+/// use std::collections::HashSet;
+///
+/// use delaunay::query::{JaccardComputationError, jaccard_index};
+///
+/// # fn main() -> Result<(), JaccardComputationError> {
+/// let a: HashSet<_> = [1, 2, 3].into_iter().collect();
+/// let b: HashSet<_> = [3, 4].into_iter().collect();
+///
+/// let score = jaccard_index(&a, &b)?;
+/// assert!((score - 0.25).abs() < 1e-12);
+/// # Ok(())
+/// # }
+/// ```
+pub mod query {
+    pub use crate::assert_jaccard_gte;
+    pub use crate::core::adjacency::{AdjacencyIndex, AdjacencyIndexBuildError};
+    pub use crate::core::algorithms::locate::{
+        ConflictError, InternalInconsistencySite, LocateError, LocateFallback,
+        LocateFallbackReason, LocateResult, LocateStats, extract_cavity_boundary,
+        find_conflict_region, locate, locate_with_stats,
+    };
+    pub use crate::core::cell::Cell;
+    pub use crate::core::edge::EdgeKey;
+    pub use crate::core::facet::FacetView;
+    pub use crate::core::tds::{CellKey, VertexKey};
+    pub use crate::core::traits::boundary_analysis::BoundaryAnalysis;
+    pub use crate::core::traits::data_type::{
+        DataCopy, DataDebug, DataDeserialize, DataIdentity, DataSerde, DataSerialize, DataType,
+    };
+    pub use crate::core::triangulation::Triangulation;
+    pub use crate::core::util::{
+        JaccardComputationError, extract_edge_set, extract_facet_identifier_set,
+        extract_hull_facet_set, extract_vertex_coordinate_set, format_jaccard_report,
+        jaccard_distance, jaccard_index, measure_with_result,
+    };
+    pub use crate::core::vertex::Vertex;
+    pub use crate::geometry::Point;
+    pub use crate::geometry::algorithms::convex_hull::{
+        ConvexHull, ConvexHullConstructionError, ConvexHullValidationError,
+    };
+    pub use crate::geometry::kernel::{
+        AdaptiveKernel, ExactPredicates, FastKernel, Kernel, RobustKernel,
+    };
+    pub use crate::geometry::traits::coordinate::Coordinate;
+    pub use crate::geometry::{insphere, insphere_distance, insphere_lifted};
+    pub use crate::triangulation::delaunay::DelaunayTriangulation;
+}
+
 /// A prelude module that re-exports commonly used types and macros.
 /// This makes it easier to import the most commonly used items from the crate.
 pub mod prelude {
@@ -1251,7 +1440,7 @@ pub mod prelude {
     ///
     /// This prelude keeps common map, set, key-map, and small-buffer aliases
     /// convenient without importing every algorithm-specific scratch buffer.
-    /// Expert-only buffers remain available from [`crate::core::collections`]
+    /// Expert-only buffers remain available from [`crate::collections`]
     /// or the nested [`crate::prelude::collections::algorithm_buffers`] module.
     ///
     /// ```compile_fail
@@ -1286,6 +1475,17 @@ pub mod prelude {
     }
 
     /// Focused exports for low-level topology data structures.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use delaunay::prelude::tds::Tds;
+    ///
+    /// let tds: Tds<f64, (), (), 2> = Tds::empty();
+    ///
+    /// assert_eq!(tds.number_of_vertices(), 0);
+    /// assert_eq!(tds.number_of_cells(), 0);
+    /// ```
     pub mod tds {
         pub use crate::core::adjacency::*;
         pub use crate::core::cell::*;
@@ -1339,6 +1539,23 @@ pub mod prelude {
     }
 
     /// Focused exports for core algorithms.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use delaunay::prelude::algorithms::{LocateError, locate};
+    /// use delaunay::prelude::geometry::{AdaptiveKernel, Coordinate, Point};
+    /// use delaunay::prelude::tds::Tds;
+    ///
+    /// let tds: Tds<f64, (), (), 2> = Tds::empty();
+    /// let kernel = AdaptiveKernel::new();
+    /// let point = Point::new([0.0, 0.0]);
+    ///
+    /// assert!(matches!(
+    ///     locate(&tds, &kernel, &point, None),
+    ///     Err(LocateError::EmptyTriangulation)
+    /// ));
+    /// ```
     pub mod algorithms {
         pub use crate::core::algorithms::locate::{
             ConflictError, InternalInconsistencySite, LocateError, LocateFallback,
@@ -1352,6 +1569,14 @@ pub mod prelude {
     /// These helpers are compiled only with the `diagnostics` feature because
     /// they are intended for explicit debugging and verification workflows, not
     /// the default public API surface.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use delaunay::prelude::diagnostics::NeighborSlot;
+    ///
+    /// assert!(NeighborSlot::Boundary.is_boundary());
+    /// ```
     #[cfg(feature = "diagnostics")]
     #[cfg_attr(docsrs, doc(cfg(feature = "diagnostics")))]
     pub mod diagnostics {
@@ -1376,6 +1601,23 @@ pub mod prelude {
     /// - Zero-allocation geometry accessors: [`DelaunayTriangulation::vertex_coords`],
     ///   [`DelaunayTriangulation::cell_vertices`]
     /// - Convex hull extraction: [`ConvexHull::from_triangulation`]
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use std::collections::HashSet;
+    ///
+    /// use delaunay::prelude::query::{JaccardComputationError, jaccard_index};
+    ///
+    /// # fn main() -> Result<(), JaccardComputationError> {
+    /// let a: HashSet<_> = [1, 2, 3].into_iter().collect();
+    /// let b: HashSet<_> = [3, 4].into_iter().collect();
+    ///
+    /// let score = jaccard_index(&a, &b)?;
+    /// assert!((score - 0.25).abs() < 1e-12);
+    /// # Ok(())
+    /// # }
+    /// ```
     pub mod query {
         // Core read-only traversal / adjacency
         pub use crate::core::adjacency::{AdjacencyIndex, AdjacencyIndexBuildError};
@@ -1392,12 +1634,13 @@ pub mod prelude {
         };
 
         // Common input/output types (kept intentionally small)
+        pub use crate::core::cell::Cell;
         pub use crate::core::facet::FacetView;
         pub use crate::core::traits::boundary_analysis::BoundaryAnalysis;
         pub use crate::core::traits::data_type::{
             DataCopy, DataDebug, DataDeserialize, DataIdentity, DataSerde, DataSerialize, DataType,
         };
-        pub use crate::core::{Cell, Vertex};
+        pub use crate::core::vertex::Vertex;
         pub use crate::geometry::Point;
         pub use crate::geometry::kernel::{
             AdaptiveKernel, ExactPredicates, FastKernel, Kernel, RobustKernel,
@@ -1421,7 +1664,7 @@ pub mod prelude {
         // Instrumentation helpers (no-op unless features enable extra tracking)
         pub use crate::core::util::measure_with_result;
 
-        // Convenience macro (commonly used in docs/tests/examples) without importing full `prelude::*`.
+        // Fixture construction macro used by query doctests, examples, and benchmarks.
         pub use crate::vertex;
     }
 

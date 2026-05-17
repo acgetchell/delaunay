@@ -572,11 +572,11 @@ macro_rules! assert_jaccard_gte {
         let threshold = $threshold;
 
         // Use jaccard_index function for safety and consistency
-        let jaccard_index = $crate::core::util::jaccard_index(a_ref, b_ref)
+        let jaccard_index = $crate::query::jaccard_index(a_ref, b_ref)
             .expect("Jaccard computation should not overflow for reasonable test sets");
 
         if jaccard_index < threshold {
-            let report = $crate::core::util::format_jaccard_report(
+            let report = $crate::query::format_jaccard_report(
                 a_ref,
                 b_ref,
                 "Set A",

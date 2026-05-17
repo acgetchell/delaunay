@@ -3,8 +3,8 @@
 //! This module is the public facade for triangulation workflows.  It deliberately
 //! stays thin:
 //!
-//! - [`crate::core::triangulation`] owns the generic `Triangulation` container
-//!   and low-level mutation invariants.
+//! - [`crate::prelude::triangulation::Triangulation`] owns the generic
+//!   triangulation container and low-level mutation invariants.
 //! - [`crate::triangulation`] owns higher-level construction, Delaunay repair,
 //!   diagnostics, validation scheduling, editing, and builder workflows.
 //! - Submodules under this namespace keep those concerns separate while this

@@ -1332,7 +1332,7 @@ where
 /// assert_eq!(missed, 0);
 /// # }
 /// ```
-#[cfg(any(test, feature = "diagnostics"))]
+#[cfg(any(feature = "diagnostics", all(test, debug_assertions)))]
 #[cfg_attr(docsrs, doc(cfg(feature = "diagnostics")))]
 pub fn verify_conflict_region_completeness<K, U, V, const D: usize>(
     tds: &Tds<K::Scalar, U, V, D>,

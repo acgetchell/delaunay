@@ -714,6 +714,33 @@ Follow the patterns documented in [code organization documentation][code-organiz
 7. Trait implementations
 8. Tests (comprehensive with subsections)
 
+### Public Namespace Policy
+
+`src/core/` is the internal implementation namespace for the low-level TDS and
+algorithm layer. Do not make `crate::core` public or add a broad
+`delaunay::core` facade. The public low-level surface should stay explicit and
+workflow-oriented:
+
+- `delaunay::tds` for cells, facets, vertex keys, TDS validation, and generic
+  triangulation data structures
+- `delaunay::collections` for collection aliases, small buffers, and secondary
+  maps
+- `delaunay::algorithms` for low-level algorithms such as point location and
+  Hilbert ordering
+- `delaunay::query` for read-only traversal, convex hull extraction, boundary
+  analysis, and diagnostics helpers
+
+Expose new low-level APIs through those curated modules and their focused
+preludes when the item is useful to downstream callers. Keep high-level
+Delaunay construction, repair, validation policy, and workflow APIs separate
+from this layer so imports describe the level of abstraction being used.
+
+During pre-1.0 development, breaking import changes are acceptable when they
+improve correctness, orthogonality, or performance. When changing the public
+surface, update the facade modules in `src/lib.rs`, the focused preludes,
+README import guidance, code-organization docs, doctests, and any
+downstream-style integration tests that demonstrate supported imports.
+
 ## Testing
 
 ### Test Categories

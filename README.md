@@ -194,6 +194,14 @@ intent. The broad `delaunay::prelude::triangulation::*` import is retained for
 compatibility, but new docs and tests should prefer the narrow workflow preludes
 above.
 
+### Low-level imports
+
+`delaunay::core` is an internal implementation namespace. Public low-level APIs
+are exposed through `delaunay::tds`, `delaunay::collections`,
+`delaunay::algorithms`, and `delaunay::query`, plus the matching focused
+preludes. Contributors should follow the namespace policy in
+[CONTRIBUTING.md](CONTRIBUTING.md) and [docs/code_organization.md](docs/code_organization.md).
+
 ```rust
 use delaunay::prelude::triangulation::construction::{
     DelaunayTriangulationBuilder, DelaunayTriangulationConstructionError, vertex,

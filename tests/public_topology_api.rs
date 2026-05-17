@@ -8,7 +8,9 @@
 
 use delaunay::prelude::TopologyGuarantee;
 use delaunay::prelude::query::*;
-use delaunay::prelude::triangulation::DelaunayTriangulationConstructionError;
+use delaunay::prelude::triangulation::{
+    DelaunayTriangulationConstructionError, construction::vertex,
+};
 use std::collections::HashSet;
 
 #[derive(Debug, thiserror::Error)]

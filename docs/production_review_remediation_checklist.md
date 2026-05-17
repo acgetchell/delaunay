@@ -102,9 +102,10 @@ Treat partial items as still open until their acceptance notes are satisfied.
 - [ ] **25. Protect `Vertex::incident_cell` mutation.**
   Introduce a checked setter or newtype so invalid incident-cell links are
   harder to construct. Tracked for v0.7.8 in #387.
-- [ ] **26. Revisit public `core` module naming.**
-  Decide whether to keep the shadowing surface, rename it, or hide it behind
-  curated exports. Tracked for v0.7.8 in #388.
+- [x] **26. Revisit public `core` module naming.**
+  Keep `crate::core` as the internal implementation namespace, and expose the
+  public low-level surface through curated modules and focused preludes such as
+  `tds`, `collections`, `algorithms`, and `query`. Tracked for v0.7.8 in #388.
 - [ ] **27. Normalize boxing policy in Delaunay repair error variants.**
   Pick a consistent enum-size and payload strategy. Tracked for v0.7.8 in #384.
 

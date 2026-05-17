@@ -10,8 +10,8 @@
 
 #![forbid(unsafe_code)]
 
-use delaunay::core::tds::{Tds, TdsError};
 use delaunay::prelude::geometry::*;
+use delaunay::prelude::tds::{Tds, TdsError};
 use delaunay::prelude::triangulation::construction::{
     DelaunayTriangulation, TopologyGuarantee, Vertex,
 };

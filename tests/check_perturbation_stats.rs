@@ -4,10 +4,9 @@
 //! never commit a triangulation with invalid vertex links, independent of
 //! `ValidationPolicy`.
 
-use delaunay::core::vertex::VertexBuilder;
 use delaunay::geometry::util::generate_random_points_seeded;
 use delaunay::prelude::triangulation::construction::{
-    DelaunayRepairPolicy, DelaunayTriangulation, TopologyGuarantee,
+    DelaunayRepairPolicy, DelaunayTriangulation, TopologyGuarantee, VertexBuilder,
 };
 use delaunay::prelude::triangulation::insertion::InsertionOutcome;
 use delaunay::prelude::triangulation::validation::ValidationPolicy;

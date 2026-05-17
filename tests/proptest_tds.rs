@@ -21,10 +21,9 @@
 //!
 //! All tests use `dt.tds().is_valid()` (Level 2 structural validation).
 
-use delaunay::core::collections::{CellVertexBuffer, SimplexVertexBuffer};
-use delaunay::core::tds::Tds;
-use delaunay::core::util::jaccard::jaccard_index;
+use delaunay::prelude::collections::{CellVertexBuffer, SimplexVertexBuffer};
 use delaunay::prelude::query::*;
+use delaunay::prelude::tds::{Tds, jaccard_index};
 use proptest::prelude::*;
 use proptest::test_runner::{Config, TestCaseError, TestRunner};
 use std::cell::RefCell;

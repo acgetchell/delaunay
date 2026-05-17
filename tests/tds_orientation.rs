@@ -2,8 +2,8 @@
 
 #![forbid(unsafe_code)]
 
-use delaunay::core::tds::{Tds, TdsError};
-use delaunay::triangulation::delaunay::DelaunayTriangulation;
+use delaunay::prelude::tds::{Tds, TdsError};
+use delaunay::prelude::triangulation::construction::DelaunayTriangulation;
 use delaunay::vertex;
 macro_rules! coherent_orientation_test {
     ($name:ident, $dim:literal, $vertices:expr) => {

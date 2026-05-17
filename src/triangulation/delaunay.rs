@@ -5725,7 +5725,7 @@ where
     ///
     /// assert_eq!(
     ///     dt.validation_policy(),
-    ///     delaunay::core::triangulation::ValidationPolicy::OnSuspicion
+    ///     delaunay::prelude::triangulation::validation::ValidationPolicy::OnSuspicion
     /// );
     /// ```
     #[inline]
