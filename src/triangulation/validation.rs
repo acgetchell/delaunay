@@ -10,9 +10,9 @@ use std::num::NonZeroUsize;
 
 /// Cadence for explicit validation checkpoints during construction diagnostics.
 ///
-/// This is separate from [`ValidationPolicy`](crate::core::triangulation::ValidationPolicy),
+/// This is separate from [`ValidationPolicy`](crate::triangulation::ValidationPolicy),
 /// which controls automatic insertion-time validation inside
-/// [`Triangulation`](crate::core::triangulation::Triangulation). Diagnostic
+/// [`Triangulation`](crate::triangulation::Triangulation). Diagnostic
 /// harnesses can use this cadence for explicit periodic
 /// [`DelaunayTriangulation::is_valid`](crate::triangulation::delaunay::DelaunayTriangulation::is_valid)
 /// checks without overloading repair policy or exposing raw `Option<usize>`

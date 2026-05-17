@@ -571,12 +571,12 @@ converge, consider the opt-in heuristic rebuild fallback via
 
 | Level | Method | Module | Complexity |
 |-------|--------|--------|------------|
-| 1 | `Cell::is_valid()` | `core::cell` | O(1) |
-| 1 | `Vertex::is_valid()` | `core::vertex` | O(1) |
-| 2 | `Tds::is_valid()` | `core::tds` | O(N×D²) |
-| 2 | `Tds::validate()` | `core::tds` | O(N×D²) |
-| 3 | `Triangulation::is_valid()` | `core::triangulation` | O(N×D²) |
-| 3 | `Triangulation::validate()` | `core::triangulation` | O(N×D²) |
+| 1 | `Cell::is_valid()` | `tds` | O(1) |
+| 1 | `Vertex::is_valid()` | `tds` | O(1) |
+| 2 | `Tds::is_valid()` | `tds` | O(N×D²) |
+| 2 | `Tds::validate()` | `tds` | O(N×D²) |
+| 3 | `Triangulation::is_valid()` | `triangulation` | O(N×D²) |
+| 3 | `Triangulation::validate()` | `triangulation` | O(N×D²) |
 | 4 | `DelaunayTriangulation::is_valid()` | `triangulation::delaunay` | O(cells) |
 | 4 | `DelaunayTriangulation::validate()` | `triangulation::delaunay` | O(cells × D²) + O(cells) |
 | — | `DelaunayTriangulation::validation_report()` | `triangulation::delaunay` | O(cells × D²) + O(cells) |

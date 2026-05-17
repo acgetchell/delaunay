@@ -10,14 +10,13 @@
 //! - Different kernels (Fast vs Robust)
 
 use approx::assert_relative_eq;
-use delaunay::core::vertex::Vertex;
 use delaunay::geometry::kernel::RobustKernel;
 use delaunay::prelude::algorithms::{LocateResult, find_conflict_region, locate};
 use delaunay::prelude::collections::MAX_PRACTICAL_DIMENSION_SIZE;
 use delaunay::prelude::geometry::{AdaptiveKernel, Coordinate, Point};
 use delaunay::prelude::tds::{Cell, CellKey, SmallBuffer, VertexKey, facet_key_from_vertices};
 use delaunay::prelude::triangulation::construction::{
-    ConstructionOptions, DedupPolicy, DelaunayTriangulation, TopologyGuarantee, vertex,
+    ConstructionOptions, DedupPolicy, DelaunayTriangulation, TopologyGuarantee, Vertex, vertex,
 };
 use uuid::Uuid;
 

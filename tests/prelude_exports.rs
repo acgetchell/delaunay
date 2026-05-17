@@ -44,7 +44,7 @@ use delaunay::prelude::triangulation::construction::{
     ExplicitDelaunayValidationError, ExplicitDelaunayValidationErrorKind,
     ExplicitDelaunayValidationSourceKind, ExplicitInsertionError, ExplicitInsertionErrorKind,
     ExplicitInvariantError, ExplicitInvariantErrorKind, ExplicitTdsError, ExplicitTdsErrorKind,
-    InsertionOrderStrategy, TopologyGuarantee, Vertex,
+    InsertionOrderStrategy, TopologyGuarantee, Vertex, vertex,
 };
 use delaunay::prelude::triangulation::delaunayize::{
     DelaunayizeConfig, DelaunayizeError, DelaunayizeOutcome, delaunayize_by_flips,
@@ -64,7 +64,6 @@ use delaunay::prelude::triangulation::repair::{
 };
 use delaunay::prelude::triangulation::validation::ValidationCadence;
 use delaunay::prelude::{SecureHashMap, SecureHashSet};
-use delaunay::vertex;
 
 #[derive(Debug, thiserror::Error)]
 enum PreludeExportTestError {

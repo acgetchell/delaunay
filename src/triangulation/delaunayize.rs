@@ -3,7 +3,7 @@
 //! This module provides `delaunayize_by_flips`, a single public entrypoint that
 //! takes an existing [`DelaunayTriangulation`], performs bounded deterministic
 //! topology repair toward
-//! [`TopologyGuarantee::PLManifold`](crate::core::triangulation::TopologyGuarantee::PLManifold),
+//! [`TopologyGuarantee::PLManifold`](crate::triangulation::TopologyGuarantee::PLManifold),
 //! and then applies
 //! standard flip-based Delaunay repair.
 //!
@@ -44,12 +44,10 @@
 
 // Re-export outcome/error field types so users can name the public contract
 // without reaching into lower-level modules.
-pub use crate::core::algorithms::flips::{DelaunayRepairError, DelaunayRepairStats};
-pub use crate::core::algorithms::pl_manifold_repair::{
-    PlManifoldRepairError, PlManifoldRepairStats,
-};
-pub use crate::core::cell::CellValidationError;
+pub use crate::tds::CellValidationError;
 pub use crate::triangulation::delaunay::DelaunayTriangulationConstructionError;
+pub use crate::triangulation::flips::{DelaunayRepairError, DelaunayRepairStats};
+pub use crate::triangulation::{PlManifoldRepairError, PlManifoldRepairStats};
 
 #[cfg(test)]
 use crate::core::algorithms::flips::{DelaunayRepairDiagnostics, RepairQueueOrder};
@@ -707,11 +705,11 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::core::{tds::VertexKey, triangulation::TriangulationConstructionError};
     use crate::geometry::kernel::AdaptiveKernel;
     use crate::geometry::point::Point;
     use crate::geometry::traits::coordinate::Coordinate;
-    use crate::triangulation::builder::DelaunayTriangulationBuilder;
+    use crate::tds::VertexKey;
+    use crate::triangulation::{DelaunayTriangulationBuilder, TriangulationConstructionError};
     use crate::vertex;
     use slotmap::KeyData;
     use std::error::Error as StdError;

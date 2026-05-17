@@ -56,7 +56,7 @@
 //! DELAUNAY_LARGE_DEBUG_DEBUG_MODE=cadenced \
 //! # Deterministically shuffle insertion order (incremental mode only)
 //! DELAUNAY_LARGE_DEBUG_SHUFFLE_SEED=123 \
-//! # Print progress every N insertions (incremental mode only)
+//! # Print progress every N insertions (incremental mode, or batch fallback)
 //! DELAUNAY_LARGE_DEBUG_PROGRESS_EVERY=1000 \
 //! # (Optional) validate topology every N insertions once cells exist (incremental mode only; can be expensive)
 //! DELAUNAY_LARGE_DEBUG_VALIDATE_EVERY=2000 \
@@ -72,7 +72,9 @@
 //! DELAUNAY_BATCH_REPAIR_TRACE=1 \
 //! # Hard wall-clock cap in seconds before the harness aborts (0 = no cap; default: 600)
 //! DELAUNAY_LARGE_DEBUG_MAX_RUNTIME_SECS=600 \
-//! # Optional: emit periodic batch-construction summaries for new()/Hilbert runs
+//! # Optional: emit periodic batch-construction summaries for new()/Hilbert runs.
+//! # This is the canonical batch progress knob and takes precedence over
+//! # DELAUNAY_LARGE_DEBUG_PROGRESS_EVERY.
 //! DELAUNAY_BULK_PROGRESS_EVERY=100 \
 //! # Optional: dump the first cavity reduction chain once per run
 //! DELAUNAY_DEBUG_CAVITY_REDUCTION_ONCE=1 \
@@ -346,6 +348,12 @@ fn env_usize(name: &str) -> Option<usize> {
     })
 }
 
+fn bulk_progress_every_from_env() -> Option<usize> {
+    env_usize("DELAUNAY_BULK_PROGRESS_EVERY")
+        .or_else(|| env_usize("DELAUNAY_LARGE_DEBUG_PROGRESS_EVERY"))
+        .filter(|every| *every > 0)
+}
+
 fn env_flag(name: &str) -> bool {
     env::var(name).ok().is_some_and(|v| {
         let v = v.trim();
@@ -367,6 +375,7 @@ fn init_tracing() {
             "DELAUNAY_REPAIR_DEBUG_POSTCONDITION_FACET",
             "DELAUNAY_REPAIR_DEBUG_RIDGE_MIN_MULTIPLICITY",
             "DELAUNAY_BULK_PROGRESS_EVERY",
+            "DELAUNAY_LARGE_DEBUG_PROGRESS_EVERY",
             "DELAUNAY_BATCH_REPAIR_TRACE",
             "DELAUNAY_DEBUG_SHUFFLE",
         ];
@@ -1168,6 +1177,7 @@ where
     let progress_every = env_usize("DELAUNAY_LARGE_DEBUG_PROGRESS_EVERY")
         .unwrap_or(1000)
         .max(1);
+    let bulk_progress_every = bulk_progress_every_from_env();
 
     let allow_skips = env_flag("DELAUNAY_LARGE_DEBUG_ALLOW_SKIPS");
     let max_skip_pct = max_skip_pct_from_env();
@@ -1213,7 +1223,15 @@ where
     println!("  debug_mode:    {}", debug_mode.name());
     println!("  topology_guarantee: {topology_guarantee:?}");
     println!("  shuffle_seed:  {shuffle_seed:?}");
-    println!("  progress_every:{progress_every}");
+    match mode {
+        ConstructionMode::New => {
+            let bulk_progress = bulk_progress_every
+                .map_or_else(|| "disabled".to_owned(), |every| every.to_string());
+            println!("  bulk_progress_every:{bulk_progress}");
+            println!("  bulk_progress_scope: remaining vertices after initial simplex");
+        }
+        ConstructionMode::Incremental => println!("  progress_every:{progress_every}"),
+    }
     println!("  validation_cadence: {validation_cadence:?}");
     println!("  allow_skips:   {allow_skips}");
     println!("  max_skip_pct:  {max_skip_pct}");

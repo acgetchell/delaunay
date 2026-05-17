@@ -585,12 +585,12 @@ floating-point precision variations and near-degenerate cases.
 
 ### Available Utilities
 
-#### Extraction Helpers (`delaunay::core::util`)
+#### Extraction Helpers (`delaunay::prelude::query`)
 
 Canonical set extraction functions for comparing triangulation topology:
 
 ```rust
-use delaunay::core::util::{
+use delaunay::prelude::query::{
     extract_vertex_coordinate_set,    // HashSet<Point<T, D>>
     extract_edge_set,                  // HashSet<(u128, u128)>
     extract_facet_identifier_set,      // Result<HashSet<u64>, FacetError>
@@ -634,7 +634,7 @@ assert_jaccard_gte!(&before, &after, 0.99);
 #### Diagnostic Reporting
 
 ```rust
-use delaunay::core::util::format_jaccard_report;
+use delaunay::prelude::query::format_jaccard_report;
 
 let report = format_jaccard_report(
     &set_a,
@@ -660,7 +660,7 @@ println!("{}", report);
 
 ```rust
 use delaunay::assert_jaccard_gte;
-use delaunay::core::util::extract_vertex_coordinate_set;
+use delaunay::prelude::query::extract_vertex_coordinate_set;
 
 let original_coords = extract_vertex_coordinate_set(&tds);
 // ... perform operation (serialization, transformation, etc.) ...
@@ -677,7 +677,7 @@ assert_jaccard_gte!(
 #### Edge Set Comparison
 
 ```rust
-use delaunay::core::util::extract_edge_set;
+use delaunay::prelude::query::extract_edge_set;
 
 let edges_a = extract_edge_set(&tds_a);
 let edges_b = extract_edge_set(&tds_b);
@@ -693,7 +693,7 @@ assert_jaccard_gte!(
 #### Hull Facet Topology
 
 ```rust
-use delaunay::core::util::extract_hull_facet_set;
+use delaunay::prelude::query::extract_hull_facet_set;
 use delaunay::geometry::algorithms::convex_hull::ConvexHull;
 
 let hull1 = ConvexHull::from_triangulation(&tds)?;
@@ -745,7 +745,8 @@ assert_jaccard_gte!(
 ### Related Documentation
 
 - **[Jaccard Similarity Theory](../docs/archive/jaccard.md)**: Mathematical background, adoption plan (completed in v0.5.4)
-- **API Documentation**: `cargo doc --open` → `delaunay::core::util` module
+- **API Documentation**: `cargo doc --open` → `delaunay::query` or
+  `delaunay::prelude::query` for curated test helpers
 
 ## Related Documentation
 

@@ -54,8 +54,6 @@ use crate::triangulation::delaunay::DelaunayTriangulationValidationError;
 use std::fmt;
 use std::hash::{Hash, Hasher};
 
-pub use crate::core::operations::{InsertionOutcome, InsertionResult, InsertionStatistics};
-
 /// Reason for hull extension failure.
 ///
 /// # Examples

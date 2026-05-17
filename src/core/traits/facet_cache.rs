@@ -35,6 +35,7 @@ use std::sync::{
 /// ```
 /// use delaunay::prelude::tds::FacetCacheProvider;
 /// use delaunay::prelude::tds::Tds;
+/// use delaunay::prelude::collections::FacetToCellsMap;
 /// use delaunay::prelude::geometry::CoordinateScalar;
 /// use delaunay::prelude::triangulation::DataType;
 /// use std::sync::Arc;
@@ -43,7 +44,7 @@ use std::sync::{
 /// use arc_swap::ArcSwapOption;
 ///
 /// struct MyAlgorithm {
-///     facet_to_cells_cache: ArcSwapOption<delaunay::core::collections::FacetToCellsMap>,
+///     facet_to_cells_cache: ArcSwapOption<FacetToCellsMap>,
 ///     cached_generation: AtomicU64,
 /// }
 ///
@@ -62,7 +63,7 @@ use std::sync::{
 ///     U: DataType,
 ///     V: DataType,
 /// {
-///     fn facet_cache(&self) -> &ArcSwapOption<delaunay::core::collections::FacetToCellsMap> {
+///     fn facet_cache(&self) -> &ArcSwapOption<FacetToCellsMap> {
 ///         &self.facet_to_cells_cache
 ///     }
 ///     
@@ -333,9 +334,9 @@ where
 mod tests {
     use super::*;
     use crate::core::tds::Tds;
-    use crate::core::vertex;
     use crate::geometry::kernel::AdaptiveKernel;
     use crate::triangulation::delaunay::DelaunayTriangulation;
+    use crate::vertex;
     use std::sync::Arc;
     use std::sync::Barrier;
     use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};

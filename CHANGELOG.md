@@ -5,6 +5,81 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### ⚠️ Breaking Changes
+
+- Support periodic flip parity for external cells [#391](https://github.com/acgetchell/delaunay/pull/391)
+- Replace public core module with focused facades
+- Route low-level exports through public facades [#388](https://github.com/acgetchell/delaunay/pull/388)
+- Clarify bulk progress counters
+
+### Merged Pull Requests
+
+- Support periodic flip parity for external cells [#391](https://github.com/acgetchell/delaunay/pull/391)
+- Refactor/387 tds mutation boundaries [#390](https://github.com/acgetchell/delaunay/pull/390)
+- Refresh release docs and benchmark guidance [#389](https://github.com/acgetchell/delaunay/pull/389)
+- Route low-level exports through public facades [#388](https://github.com/acgetchell/delaunay/pull/388)
+
+### Added
+
+- [**breaking**] Support periodic flip parity for external cells [#391](https://github.com/acgetchell/delaunay/pull/391)
+  [`5fb2d4a`](https://github.com/acgetchell/delaunay/commit/5fb2d4a22927231ba3396950cf2bbbc481f69285)
+
+  - Preserve periodic vertex offsets when bistellar flips build replacement cells.
+  - Align external-facet parity checks across periodic cell frames instead of rejecting periodic external cells.
+  - Surface replacement periodic-offset shape and frame conflicts with typed flip-context errors.
+
+### Changed
+
+- Refactor/387 tds mutation boundaries [#390](https://github.com/acgetchell/delaunay/pull/390)
+  [`da30293`](https://github.com/acgetchell/delaunay/commit/da3029302e8484d26d2a88d1291050c332e6b822)
+
+- [**breaking**] Replace public core module with focused facades
+  [`3fc95ea`](https://github.com/acgetchell/delaunay/commit/3fc95ea62325111c927127a48d4fbd39873dabda)
+
+  - Make `crate::core` private and expose low-level APIs through curated
+    `tds`, `collections`, `algorithms`, and `query` modules.
+
+  - Add focused prelude/docs coverage for the new public import paths.
+  - Update downstream-style tests and doctests to stop relying on
+    `delaunay::core`.
+
+- [**breaking**] Route low-level exports through public facades [#388](https://github.com/acgetchell/delaunay/pull/388)
+  [`69f4fc3`](https://github.com/acgetchell/delaunay/commit/69f4fc38ad75ade19bfff693d67dee2ea5f99d4f)
+
+  - Move public documentation, doctests, and prelude exports away from the private `crate::core` namespace.
+  - Keep point-location and conflict-region APIs canonical under `delaunay::algorithms` and `delaunay::prelude::algorithms`.
+  - Expose repair, insertion, flip, and validation contracts through the triangulation and TDS facades.
+  - Harden `toml-check` by passing TOML filenames to Python via argv.
+
+### Documentation
+
+- Refresh release docs and benchmark guidance [#389](https://github.com/acgetchell/delaunay/pull/389)
+  [`526583c`](https://github.com/acgetchell/delaunay/commit/526583c627d32d9336910bce1913b7f458ca413c)
+
+  - Update the README pitch, feature list, references, and docs.rs-facing guidance
+    around exact predicates, SoS, PL-manifold validation, and bistellar repair.
+
+  - Refresh roadmap, release, limitation, robustness, orientation, invariant,
+    diagnostics, property-testing, workflow, and validation docs for the v0.7.8
+    cleanup path and v0.8.0 paper-facing work.
+
+  - Align contributor and script docs around non-mutating `just` checks before
+    mutating fixes.
+
+  - Update generated benchmark-summary guidance to surface `just bench-perf-summary`,
+    current Criterion metadata, and large-scale characterization defaults.
+
+### Fixed
+
+- [**breaking**] Clarify bulk progress counters [`393e463`](https://github.com/acgetchell/delaunay/commit/393e4637adf64fd23a7a32c0ec53fbfb2033a5c3)
+
+  - Report the effective batch progress cadence in the large-scale debug harness, including the canonical `DELAUNAY_BULK_PROGRESS_EVERY` fallback behavior.
+  - Rename bulk progress tracing fields so post-initial-simplex counters are distinct from total input and final insertion statistics.
+  - Point public docs and downstream-style API tests at curated low-level modules and construction prelude imports.
+  - Regenerate the changelog so the core facade break appears in Unreleased.
+
 ## [0.7.7] - 2026-05-15
 
 ### ⚠️ Breaking Changes
@@ -3376,6 +3451,7 @@ Older releases are archived by minor series:
 - [0.3.x](docs/archive/changelog/0.3.md)
 - [0.2.x](docs/archive/changelog/0.2.md)
 
+[Unreleased]: https://github.com/acgetchell/delaunay/compare/v0.7.7...HEAD
 [0.7.7]: https://github.com/acgetchell/delaunay/compare/v0.7.6...v0.7.7
 [0.7.6]: https://github.com/acgetchell/delaunay/compare/v0.7.5...v0.7.6
 [0.7.5]: https://github.com/acgetchell/delaunay/compare/v0.7.4...v0.7.5

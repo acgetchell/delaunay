@@ -9,14 +9,14 @@
 #![forbid(unsafe_code)]
 
 pub use crate::core::algorithms::flips::{
-    BistellarFlipKind, FlipContextError, FlipDirection, FlipEdgeAdjacencyError, FlipError,
-    FlipInfo, FlipMutationError, FlipNeighborWiringError, FlipPredicateError,
-    FlipPredicateOperation, FlipTriangleAdjacencyError, FlipVertexAdjacencyError, RidgeHandle,
-    TriangleHandle,
+    BistellarFlipKind, BistellarMove, ConstK, DelaunayRepairDiagnostics, DelaunayRepairError,
+    DelaunayRepairStats, DelaunayRepairVerificationContext, FlipContextError, FlipDirection,
+    FlipEdgeAdjacencyError, FlipError, FlipInfo, FlipMutationError, FlipNeighborWiringError,
+    FlipPredicateError, FlipPredicateOperation, FlipTriangleAdjacencyError,
+    FlipVertexAdjacencyError, RepairQueueOrder, RidgeHandle, TriangleHandle,
+    verify_delaunay_for_triangulation, verify_delaunay_via_flip_predicates,
 };
-pub use crate::core::edge::EdgeKey;
-pub use crate::core::facet::FacetHandle;
-pub use crate::core::tds::{CellKey, VertexKey};
+pub use crate::tds::{CellKey, EdgeKey, FacetHandle, VertexKey};
 
 use crate::core::algorithms::flips::{
     apply_bistellar_flip_dynamic, apply_bistellar_flip_k1, apply_bistellar_flip_k1_inverse,
@@ -340,6 +340,7 @@ mod tests {
     use super::*;
 
     use crate::geometry::kernel::{AdaptiveKernel, FastKernel};
+    use crate::triangulation::TopologyGuarantee;
     use crate::vertex;
     use slotmap::KeyData;
 
@@ -354,7 +355,7 @@ mod tests {
         let dt: DelaunayTriangulation<_, (), (), 3> =
             DelaunayTriangulation::new_with_topology_guarantee(
                 &vertices,
-                crate::core::triangulation::TopologyGuarantee::PLManifold,
+                TopologyGuarantee::PLManifold,
             )
             .unwrap();
         let mut tri = dt.as_triangulation().clone();
@@ -383,7 +384,7 @@ mod tests {
         let dt: DelaunayTriangulation<_, (), (), 3> =
             DelaunayTriangulation::new_with_topology_guarantee(
                 &vertices,
-                crate::core::triangulation::TopologyGuarantee::PLManifold,
+                TopologyGuarantee::PLManifold,
             )
             .unwrap();
         let mut tri = dt.as_triangulation().clone();

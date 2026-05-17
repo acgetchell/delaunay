@@ -30,7 +30,7 @@ impl<T, U, V, const D: usize> BoundaryAnalysis<T, U, V, D> for Tds<T, U, V, D> {
     /// Any facet shared by 0, 3, or more cells indicates a topological error in the triangulation.
     ///
     /// For a comprehensive discussion of all topological invariants in Delaunay triangulations,
-    /// see the [Topological Invariants](crate::core::tds#topological-invariants)
+    /// see the [Topological Invariants](crate::tds::Tds#topological-invariants)
     /// section in the triangulation data structure documentation.
     ///
     /// # Returns
@@ -66,7 +66,7 @@ impl<T, U, V, const D: usize> BoundaryAnalysis<T, U, V, D> for Tds<T, U, V, D> {
     /// // TDS-level API (fallible): returns `TdsError` on corruption.
     /// let count = dt.tds().boundary_facets()?.count();
     /// assert_eq!(count, 4);
-    /// # Ok::<(), delaunay::core::tds::TdsError>(())
+    /// # Ok::<(), delaunay::tds::TdsError>(())
     /// ```
     fn boundary_facets(&self) -> Result<BoundaryFacetsIter<'_, T, U, V, D>, TdsError> {
         // Build a map from facet keys to the cells that contain them
@@ -202,7 +202,7 @@ impl<T, U, V, const D: usize> BoundaryAnalysis<T, U, V, D> for Tds<T, U, V, D> {
     ///
     /// // A single tetrahedron has 4 boundary facets
     /// assert_eq!(dt.tds().number_of_boundary_facets()?, 4);
-    /// # Ok::<(), delaunay::core::tds::TdsError>(())
+    /// # Ok::<(), delaunay::tds::TdsError>(())
     /// ```
     fn number_of_boundary_facets(&self) -> Result<usize, TdsError> {
         self.build_facet_to_cells_map()

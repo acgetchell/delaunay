@@ -71,7 +71,7 @@ fn ridge_fan_dump_enabled() -> bool {
 /// # Examples
 ///
 /// ```rust
-/// use delaunay::prelude::query::LocateResult;
+/// use delaunay::prelude::algorithms::LocateResult;
 /// use delaunay::prelude::tds::VertexKey;
 /// use slotmap::KeyData;
 ///
@@ -98,7 +98,7 @@ pub enum LocateResult {
 /// # Examples
 ///
 /// ```rust
-/// use delaunay::prelude::query::LocateError;
+/// use delaunay::prelude::algorithms::LocateError;
 ///
 /// let err = LocateError::EmptyTriangulation;
 /// assert!(matches!(err, LocateError::EmptyTriangulation));
@@ -131,7 +131,7 @@ pub enum LocateError {
 /// # Examples
 ///
 /// ```rust
-/// use delaunay::prelude::query::ConflictError;
+/// use delaunay::prelude::algorithms::ConflictError;
 /// use delaunay::prelude::tds::CellKey;
 /// use slotmap::KeyData;
 ///
@@ -298,7 +298,7 @@ pub enum ConflictError {
 /// # Examples
 ///
 /// ```rust
-/// use delaunay::prelude::query::{ConflictError, InternalInconsistencySite};
+/// use delaunay::prelude::algorithms::{ConflictError, InternalInconsistencySite};
 ///
 /// let site = InternalInconsistencySite::RidgeFanExtraFacetOutOfBounds {
 ///     index: 7,
@@ -590,7 +590,7 @@ fn collect_ridge_fan_extra_cells(
 /// # Examples
 ///
 /// ```rust
-/// use delaunay::prelude::query::LocateFallbackReason;
+/// use delaunay::prelude::algorithms::LocateFallbackReason;
 ///
 /// let reason = LocateFallbackReason::StepLimit;
 /// assert_eq!(reason, LocateFallbackReason::StepLimit);
@@ -608,7 +608,7 @@ pub enum LocateFallbackReason {
 /// # Examples
 ///
 /// ```rust
-/// use delaunay::prelude::query::{LocateFallback, LocateFallbackReason};
+/// use delaunay::prelude::algorithms::{LocateFallback, LocateFallbackReason};
 ///
 /// let fallback = LocateFallback {
 ///     reason: LocateFallbackReason::CycleDetected,
@@ -632,7 +632,7 @@ pub struct LocateFallback {
 /// # Examples
 ///
 /// ```rust
-/// use delaunay::prelude::query::LocateStats;
+/// use delaunay::prelude::algorithms::LocateStats;
 /// use delaunay::prelude::tds::CellKey;
 /// use slotmap::KeyData;
 ///
@@ -1081,7 +1081,7 @@ where
 /// # Examples
 ///
 /// ```rust
-/// use delaunay::prelude::query::{locate, find_conflict_region, LocateResult};
+/// use delaunay::prelude::algorithms::{locate, find_conflict_region, LocateResult};
 /// use delaunay::prelude::DelaunayTriangulation;
 /// use delaunay::prelude::geometry::FastKernel;
 /// use delaunay::prelude::geometry::Point;
@@ -1332,7 +1332,7 @@ where
 /// assert_eq!(missed, 0);
 /// # }
 /// ```
-#[cfg(any(test, feature = "diagnostics"))]
+#[cfg(any(feature = "diagnostics", all(test, debug_assertions)))]
 #[cfg_attr(docsrs, doc(cfg(feature = "diagnostics")))]
 pub fn verify_conflict_region_completeness<K, U, V, const D: usize>(
     tds: &Tds<K::Scalar, U, V, D>,
@@ -1483,7 +1483,7 @@ where
 /// # Examples
 ///
 /// ```rust
-/// use delaunay::prelude::query::extract_cavity_boundary;
+/// use delaunay::prelude::algorithms::extract_cavity_boundary;
 /// use delaunay::prelude::collections::CellKeyBuffer;
 /// use delaunay::prelude::tds::Tds;
 ///
@@ -1494,7 +1494,7 @@ where
 ///
 ///
 /// ```rust
-/// use delaunay::prelude::query::{locate, find_conflict_region, extract_cavity_boundary, LocateResult};
+/// use delaunay::prelude::algorithms::{locate, find_conflict_region, extract_cavity_boundary, LocateResult};
 /// use delaunay::prelude::DelaunayTriangulation;
 /// use delaunay::prelude::geometry::FastKernel;
 /// use delaunay::prelude::geometry::Point;

@@ -8,7 +8,7 @@
 //! - Repeat-run determinism for outcome stats
 //! - Multi-dimensional coverage (2D–3D)
 
-use delaunay::core::triangulation::TriangulationConstructionError;
+use delaunay::prelude::triangulation::construction::TriangulationConstructionError;
 use delaunay::prelude::triangulation::delaunayize::*;
 use delaunay::prelude::triangulation::flips::BistellarFlips;
 use delaunay::triangulation::flips::FacetHandle;

@@ -238,7 +238,7 @@ impl<T, U, const D: usize> VertexBuilder<T, U, D> {
 macro_rules! vertex {
     // Pattern 1: Just coordinates - no data (defaults to ())
     ($coords:expr) => {
-        $crate::core::vertex::VertexBuilder::<_, (), _>::default()
+        $crate::tds::VertexBuilder::<_, (), _>::default()
             .point($crate::geometry::point::Point::try_from($coords)
                 .expect("Failed to convert coordinates to Point: invalid or out-of-range values"))
             .build()
@@ -247,7 +247,7 @@ macro_rules! vertex {
 
     // Pattern 2: Coordinates with data
     ($coords:expr, $data:expr) => {
-        $crate::core::vertex::VertexBuilder::default()
+        $crate::tds::VertexBuilder::default()
             .point($crate::geometry::point::Point::try_from($coords)
                 .expect("Failed to convert coordinates to Point: invalid or out-of-range values"))
             .data($data)
