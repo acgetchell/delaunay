@@ -58,7 +58,7 @@
 //! DELAUNAY_LARGE_DEBUG_SHUFFLE_SEED=123 \
 //! # Print progress every N insertions (incremental mode, or batch fallback)
 //! DELAUNAY_LARGE_DEBUG_PROGRESS_EVERY=1000 \
-//! # (Optional) validate topology every N insertions once cells exist (incremental mode only; can be expensive)
+//! # (Optional) validate topology every N insertions once simplices exist (incremental mode only; can be expensive)
 //! DELAUNAY_LARGE_DEBUG_VALIDATE_EVERY=2000 \
 //! # Maximum skipped-vertex percentage before the run fails (default: 5.0)
 //! DELAUNAY_LARGE_DEBUG_MAX_SKIP_PCT=5.0 \
@@ -173,11 +173,11 @@ struct SlowInsertionSample {
     attempts: usize,
     result: InsertionResult,
     elapsed_nanos: u64,
-    cells_after: usize,
+    simplices_after: usize,
     locate_calls: usize,
     locate_walk_steps_total: usize,
     conflict_region_calls: usize,
-    conflict_region_cells_total: usize,
+    conflict_region_simplices_total: usize,
     cavity_insertion_calls: usize,
     global_conflict_scans: usize,
     hull_extension_calls: usize,
@@ -196,8 +196,8 @@ struct InsertionSummary<const D: usize> {
 
     used_perturbation: usize,
 
-    cells_removed_total: usize,
-    cells_removed_max: usize,
+    simplices_removed_total: usize,
+    simplices_removed_max: usize,
 
     telemetry: ConstructionTelemetry,
 
@@ -221,12 +221,12 @@ impl<const D: usize> InsertionSummary<D> {
             self.used_perturbation = self.used_perturbation.saturating_add(1);
         }
 
-        self.cells_removed_total = self
-            .cells_removed_total
-            .saturating_add(stats.cells_removed_during_repair);
-        self.cells_removed_max = self
-            .cells_removed_max
-            .max(stats.cells_removed_during_repair);
+        self.simplices_removed_total = self
+            .simplices_removed_total
+            .saturating_add(stats.simplices_removed_during_repair);
+        self.simplices_removed_max = self
+            .simplices_removed_max
+            .max(stats.simplices_removed_during_repair);
     }
 
     fn record_inserted(&mut self, stats: InsertionStatistics) {
@@ -266,11 +266,11 @@ impl<const D: usize> From<ConstructionStatistics> for InsertionSummary<D> {
                 attempts: sample.attempts,
                 result: sample.result,
                 elapsed_nanos: sample.elapsed_nanos,
-                cells_after: sample.cells_after,
+                simplices_after: sample.simplices_after,
                 locate_calls: sample.locate_calls,
                 locate_walk_steps_total: sample.locate_walk_steps_total,
                 conflict_region_calls: sample.conflict_region_calls,
-                conflict_region_cells_total: sample.conflict_region_cells_total,
+                conflict_region_simplices_total: sample.conflict_region_simplices_total,
                 cavity_insertion_calls: sample.cavity_insertion_calls,
                 global_conflict_scans: sample.global_conflict_scans,
                 hull_extension_calls: sample.hull_extension_calls,
@@ -316,8 +316,8 @@ impl<const D: usize> From<ConstructionStatistics> for InsertionSummary<D> {
             max_attempts: stats.max_attempts,
             attempts_histogram: stats.attempts_histogram,
             used_perturbation: stats.used_perturbation,
-            cells_removed_total: stats.cells_removed_total,
-            cells_removed_max: stats.cells_removed_max,
+            simplices_removed_total: stats.simplices_removed_total,
+            simplices_removed_max: stats.simplices_removed_max,
             telemetry: stats.telemetry,
             #[cfg(feature = "diagnostics")]
             slow_insertions,
@@ -758,14 +758,14 @@ fn print_repair_seed_accumulation_telemetry(telemetry: &ConstructionTelemetry) {
     }
 
     println!(
-        "    repair_seed_accumulation: calls={} cells_added_total={} avg_cells_added={} max_cells_added={} total_ms={} avg_ms={} max_ms={}",
+        "    repair_seed_accumulation: calls={} simplices_added_total={} avg_simplices_added={} max_simplices_added={} total_ms={} avg_ms={} max_ms={}",
         telemetry.repair_seed_accumulation_calls,
-        telemetry.repair_seed_cells_added_total,
+        telemetry.repair_seed_simplices_added_total,
         format_ratio_2(
-            telemetry.repair_seed_cells_added_total,
+            telemetry.repair_seed_simplices_added_total,
             telemetry.repair_seed_accumulation_calls,
         ),
-        telemetry.repair_seed_cells_added_max,
+        telemetry.repair_seed_simplices_added_max,
         format_nanos_as_ms(telemetry.repair_seed_accumulation_nanos),
         format_avg_nanos_as_ms(
             telemetry.repair_seed_accumulation_nanos,
@@ -782,13 +782,13 @@ fn print_local_repair_frontier_telemetry(telemetry: &ConstructionTelemetry) {
     }
 
     println!(
-        "    local_repair_frontiers: seed_cells_total={} avg_seed_cells={} max_seed_cells={} cadence_triggers={} backlog_triggers={}",
-        telemetry.local_repair_seed_cells_total,
+        "    local_repair_frontiers: seed_simplices_total={} avg_seed_simplices={} max_seed_simplices={} cadence_triggers={} backlog_triggers={}",
+        telemetry.local_repair_seed_simplices_total,
         format_ratio_2(
-            telemetry.local_repair_seed_cells_total,
+            telemetry.local_repair_seed_simplices_total,
             telemetry.local_repair_calls,
         ),
-        telemetry.local_repair_seed_cells_max,
+        telemetry.local_repair_seed_simplices_max,
         telemetry.local_repair_cadence_triggers,
         telemetry.local_repair_backlog_triggers
     );
@@ -830,10 +830,10 @@ fn print_local_repair_slow_samples(telemetry: &ConstructionTelemetry) {
     );
     for sample in &telemetry.local_repair_slow_samples {
         println!(
-            "      idx={} trigger={:?} seed_cells={} elapsed_ms={} checked={} flips={} max_queue={} facet_ms={} ridge_ms={} postcondition_ms={}",
+            "      idx={} trigger={:?} seed_simplices={} elapsed_ms={} checked={} flips={} max_queue={} facet_ms={} ridge_ms={} postcondition_ms={}",
             sample.index,
             sample.trigger,
-            sample.seed_cells,
+            sample.seed_simplices,
             format_nanos_as_ms(sample.elapsed_nanos),
             sample.items_checked,
             sample.flips_performed,
@@ -986,14 +986,14 @@ fn print_construction_telemetry(telemetry: &ConstructionTelemetry) {
 
         if telemetry.conflict_region_calls > 0 {
             println!(
-                "    conflict_regions: calls={} cells_total={} avg_cells={} max_cells={} total_ms={} avg_ms={} max_ms={}",
+                "    conflict_regions: calls={} simplices_total={} avg_simplices={} max_simplices={} total_ms={} avg_ms={} max_ms={}",
                 telemetry.conflict_region_calls,
-                telemetry.conflict_region_cells_total,
+                telemetry.conflict_region_simplices_total,
                 format_ratio_2(
-                    telemetry.conflict_region_cells_total,
+                    telemetry.conflict_region_simplices_total,
                     telemetry.conflict_region_calls,
                 ),
-                telemetry.conflict_region_cells_max,
+                telemetry.conflict_region_simplices_max,
                 format_nanos_as_ms(telemetry.conflict_region_nanos),
                 format_avg_nanos_as_ms(
                     telemetry.conflict_region_nanos,
@@ -1037,19 +1037,19 @@ fn print_construction_telemetry(telemetry: &ConstructionTelemetry) {
             let scans = u64::try_from(telemetry.global_conflict_scans)
                 .expect("scan count should fit in u64 for debug reporting");
             println!(
-                "    global_conflict_scans: scans={} cells_scanned_total={} avg_cells_scanned={} cells_found_total={} avg_cells_found={} max_cells_found={} total_ms={} avg_ms={}",
+                "    global_conflict_scans: scans={} simplices_scanned_total={} avg_simplices_scanned={} simplices_found_total={} avg_simplices_found={} max_simplices_found={} total_ms={} avg_ms={}",
                 telemetry.global_conflict_scans,
-                telemetry.global_conflict_cells_scanned,
+                telemetry.global_conflict_simplices_scanned,
                 format_ratio_2(
-                    telemetry.global_conflict_cells_scanned,
+                    telemetry.global_conflict_simplices_scanned,
                     telemetry.global_conflict_scans,
                 ),
-                telemetry.global_conflict_cells_found_total,
+                telemetry.global_conflict_simplices_found_total,
                 format_ratio_2(
-                    telemetry.global_conflict_cells_found_total,
+                    telemetry.global_conflict_simplices_found_total,
                     telemetry.global_conflict_scans,
                 ),
-                telemetry.global_conflict_cells_found_max,
+                telemetry.global_conflict_simplices_found_max,
                 format_nanos_as_ms(telemetry.global_conflict_scan_nanos),
                 format_nanos_as_ms(telemetry.global_conflict_scan_nanos / scans)
             );
@@ -1073,8 +1073,8 @@ fn print_insertion_summary<const D: usize>(
     println!("  max_attempts:      {}", summary.max_attempts);
     println!("  used_perturbation: {}", summary.used_perturbation);
     println!(
-        "  cells_removed_during_repair: total={}, max={} (insertion safety-net / repair bookkeeping)",
-        summary.cells_removed_total, summary.cells_removed_max
+        "  simplices_removed_during_repair: total={}, max={} (insertion safety-net / repair bookkeeping)",
+        summary.simplices_removed_total, summary.simplices_removed_max
     );
 
     if !summary.attempts_histogram.is_empty() {
@@ -1099,17 +1099,17 @@ fn print_insertion_summary<const D: usize>(
         );
         for s in &summary.slow_insertions {
             println!(
-                "    idx={} uuid={} attempts={} result={:?} elapsed_ms={} cells_after={} locate_calls={} walk_steps={} conflict_calls={} conflict_cells={} cavity_calls={} global_scans={} hull_calls={} validation_calls={}",
+                "    idx={} uuid={} attempts={} result={:?} elapsed_ms={} simplices_after={} locate_calls={} walk_steps={} conflict_calls={} conflict_simplices={} cavity_calls={} global_scans={} hull_calls={} validation_calls={}",
                 s.index,
                 s.uuid,
                 s.attempts,
                 s.result,
                 format_nanos_as_ms(s.elapsed_nanos),
-                s.cells_after,
+                s.simplices_after,
                 s.locate_calls,
                 s.locate_walk_steps_total,
                 s.conflict_region_calls,
-                s.conflict_region_cells_total,
+                s.conflict_region_simplices_total,
                 s.cavity_insertion_calls,
                 s.global_conflict_scans,
                 s.hull_extension_calls,
@@ -1350,7 +1350,7 @@ where
             println!();
 
             let mut summary: InsertionSummary<D> = InsertionSummary::default();
-            let mut had_cells = false;
+            let mut had_simplices = false;
             let mut t_last_progress = Instant::now();
 
             for (idx, vertex) in vertices.iter().copied().enumerate() {
@@ -1392,13 +1392,13 @@ where
                     }
                 };
 
-                if !had_cells && dt.number_of_cells() > 0 {
-                    had_cells = true;
+                if !had_simplices && dt.number_of_simplices() > 0 {
+                    had_simplices = true;
                     println!("Initial simplex created at insertion {}", idx + 1);
                 }
 
                 if inserted_this_loop
-                    && had_cells
+                    && had_simplices
                     && validation_cadence.should_validate(summary.inserted)
                     && let Err(e) = dt.as_triangulation().is_valid()
                 {
@@ -1422,12 +1422,12 @@ where
                         safe_usize_to_scalar(progress_every).unwrap_or(f64::NAN);
                     let rate = progress_f64 / chunk_elapsed.as_secs_f64().max(1e-9);
                     println!(
-                        "progress: {}/{} inserted={} skipped={} cells={} elapsed={:?} ({:.1} pts/s last {})",
+                        "progress: {}/{} inserted={} skipped={} simplices={} elapsed={:?} ({:.1} pts/s last {})",
                         idx + 1,
                         n_points,
                         summary.inserted,
                         summary.total_skipped(),
-                        dt.number_of_cells(),
+                        dt.number_of_simplices(),
                         t_insert.elapsed(),
                         rate,
                         progress_every,
@@ -1446,9 +1446,9 @@ where
     let skipped_total = n_points.saturating_sub(dt.number_of_vertices());
 
     println!(
-        "Triangulation size: vertices={} (skipped={skipped_total}) cells={} dim={}",
+        "Triangulation size: vertices={} (skipped={skipped_total}) simplices={} dim={}",
         dt.number_of_vertices(),
-        dt.number_of_cells(),
+        dt.number_of_simplices(),
         dt.dim()
     );
 
@@ -1465,7 +1465,7 @@ where
     }
 
     let mut repair_failure: Option<String> = None;
-    if !skip_final_repair && dt.number_of_cells() > 0 {
+    if !skip_final_repair && dt.number_of_simplices() > 0 {
         println!();
         println!("Running final flip-based repair (advanced)...");
         let t_repair = Instant::now();
@@ -1666,7 +1666,7 @@ fn test_repair_policy_from_repair_every_maps_cadence() {
 /// `seed_for_case::<3>(42, 1000)` with ball distribution (radius=100).
 ///
 /// Uses `PLManifold` topology for full PL-manifold validation including
-/// geometric cell orientation (#258 fixed the negative-orientation gap that
+/// geometric simplex orientation (#258 fixed the negative-orientation gap that
 /// previously required the `Pseudomanifold` workaround).
 ///
 /// Gated behind `slow-tests` and `#[ignore]` because 1000-point 3D

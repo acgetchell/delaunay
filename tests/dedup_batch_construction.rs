@@ -4,7 +4,7 @@
 //! - Hilbert-sort dedup (unconditional) removes exact duplicates during batch construction
 //! - Hilbert-sort dedup collapses quantization-resolution collisions
 //! - The resulting triangulations are valid (Levels 1–4)
-//! - Cell-level coordinate uniqueness validation catches no violations post-dedup
+//! - Simplex-level coordinate uniqueness validation catches no violations post-dedup
 //! - Explicit `DedupPolicy::Exact` works for non-Hilbert orderings
 //!
 //! Dimension coverage: 2D–5D via `gen_dedup_batch_tests!`.
@@ -118,7 +118,7 @@ macro_rules! gen_dedup_batch_tests {
                     "{}D: duplicates should be removed by Hilbert-sort dedup",
                     $dim
                 );
-                assert!(dt.number_of_cells() > 0);
+                assert!(dt.number_of_simplices() > 0);
 
                 // Full validation (Levels 1–4) including coordinate uniqueness
                 let validation = dt.validate();
@@ -231,7 +231,7 @@ fn test_hilbert_dedup_quantized_collision_2d() {
     init_tracing();
     let mut vertices = simplex_vertices::<2>();
     vertices.push(vertex!([0.5, 0.5]));
-    vertices.push(vertex!([0.5 + 1e-10, 0.5])); // quantizes to same cell
+    vertices.push(vertex!([0.5 + 1e-10, 0.5])); // quantizes to same simplex
     let total = vertices.len();
 
     let dt: DelaunayTriangulation<_, (), (), 2> = DelaunayTriangulation::new(&vertices)

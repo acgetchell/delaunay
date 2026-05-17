@@ -3,33 +3,33 @@
 //! This module implements a `pub(crate)` repair algorithm that attempts to bring
 //! a triangulation closer to satisfying the
 //! [`TopologyGuarantee::PLManifold`](crate::core::triangulation::TopologyGuarantee::PLManifold)
-//! invariant by removing cells that cause codimension-1 facet over-sharing
-//! (facets incident to more than 2 cells).
+//! invariant by removing simplices that cause codimension-1 facet over-sharing
+//! (facets incident to more than 2 simplices).
 //!
 //! # Algorithm
 //!
 //! 1. **Structural precheck**: validate Levels 1–2 via `Tds::validate()`. If
 //!    the facet-degree invariant already holds, return early with zero work.
-//! 2. **Iterative facet over-sharing repair**: build the facet-to-cells map,
+//! 2. **Iterative facet over-sharing repair**: build the facet-to-simplices map,
 //!    identify facets with degree > 2, deterministically select the worst-quality
-//!    cell per over-shared facet for removal, remove the batch, and rebuild
+//!    simplex per over-shared facet for removal, remove the batch, and rebuild
 //!    neighbors/incidence.
 //! 3. **Termination**: the loop terminates on success (all facets have degree
-//!    ≤ 2), budget exhaustion (`max_iterations` or `max_cells_removed`), or
-//!    no-progress (zero cells removed in a pass).
+//!    ≤ 2), budget exhaustion (`max_iterations` or `max_simplices_removed`), or
+//!    no-progress (zero simplices removed in a pass).
 //!
 //! # Determinism
 //!
-//! Cell removal order is deterministic: candidates are sorted by
-//! (ascending quality, canonicalized vertex tuple, cell UUID) so that
+//! Simplex removal order is deterministic: candidates are sorted by
+//! (ascending quality, canonicalized vertex tuple, simplex UUID) so that
 //! repeated runs on identical input produce identical output.
 
 #![forbid(unsafe_code)]
 
-use crate::core::cell::Cell;
-use crate::core::collections::{CellKeySet, SmallBuffer, fast_hash_set_with_capacity};
+use crate::core::collections::{SimplexKeySet, SmallBuffer, fast_hash_set_with_capacity};
 use crate::core::facet::FacetHandle;
-use crate::core::tds::{CellKey, Tds, TdsError, VertexKey};
+use crate::core::simplex::Simplex;
+use crate::core::tds::{SimplexKey, Tds, TdsError, VertexKey};
 use crate::core::traits::data_type::DataType;
 use crate::core::vertex::Vertex;
 use crate::geometry::traits::coordinate::CoordinateScalar;
@@ -49,21 +49,21 @@ use uuid::Uuid;
 /// # Defaults
 ///
 /// - `max_iterations`: 64
-/// - `max_cells_removed`: 10,000
+/// - `max_simplices_removed`: 10,000
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct PlManifoldRepairConfig {
     /// Maximum number of repair iterations (each iteration removes a batch of
-    /// cells).
+    /// simplices).
     pub max_iterations: usize,
-    /// Maximum total number of cells that may be removed across all iterations.
-    pub max_cells_removed: usize,
+    /// Maximum total number of simplices that may be removed across all iterations.
+    pub max_simplices_removed: usize,
 }
 
 impl Default for PlManifoldRepairConfig {
     fn default() -> Self {
         Self {
             max_iterations: 64,
-            max_cells_removed: 10_000,
+            max_simplices_removed: 10_000,
         }
     }
 }
@@ -81,8 +81,8 @@ impl Default for PlManifoldRepairConfig {
 ///
 /// let stats = PlManifoldRepairStats::<f64, (), (), 3>::default();
 /// assert_eq!(stats.iterations, 0);
-/// assert_eq!(stats.cells_removed, 0);
-/// assert!(stats.removed_cells.is_empty());
+/// assert_eq!(stats.simplices_removed, 0);
+/// assert!(stats.removed_simplices.is_empty());
 /// assert!(stats.removed_vertices.is_empty());
 /// assert!(!stats.succeeded);
 /// ```
@@ -90,12 +90,12 @@ impl Default for PlManifoldRepairConfig {
 pub struct PlManifoldRepairStats<T, U, V, const D: usize> {
     /// Number of repair iterations executed.
     pub iterations: usize,
-    /// Total number of cells removed.
-    pub cells_removed: usize,
-    /// Cells that were removed, preserving user data for callers that need to
-    /// migrate or inspect it. Identifiable by [`Cell::uuid()`].
-    pub removed_cells: Vec<Cell<T, U, V, D>>,
-    /// Vertices that became isolated after cell removal and were removed from
+    /// Total number of simplices removed.
+    pub simplices_removed: usize,
+    /// Simplices that were removed, preserving user data for callers that need to
+    /// migrate or inspect it. Identifiable by [`Simplex::uuid()`].
+    pub removed_simplices: Vec<Simplex<T, U, V, D>>,
+    /// Vertices that became isolated after simplex removal and were removed from
     /// the TDS. Identifiable by [`Vertex::uuid()`].
     pub removed_vertices: Vec<Vertex<T, U, D>>,
     /// Whether the facet-degree invariant was satisfied at termination.
@@ -108,8 +108,8 @@ where
 {
     fn eq(&self, other: &Self) -> bool {
         self.iterations == other.iterations
-            && self.cells_removed == other.cells_removed
-            && self.removed_cells == other.removed_cells
+            && self.simplices_removed == other.simplices_removed
+            && self.removed_simplices == other.removed_simplices
             && self.removed_vertices == other.removed_vertices
             && self.succeeded == other.succeeded
     }
@@ -121,8 +121,8 @@ impl<T, U, V, const D: usize> Default for PlManifoldRepairStats<T, U, V, D> {
     fn default() -> Self {
         Self {
             iterations: 0,
-            cells_removed: 0,
-            removed_cells: Vec::new(),
+            simplices_removed: 0,
+            removed_simplices: Vec::new(),
             removed_vertices: Vec::new(),
             succeeded: false,
         }
@@ -142,9 +142,9 @@ impl<T, U, V, const D: usize> Default for PlManifoldRepairStats<T, U, V, D> {
 ///
 /// let err = PlManifoldRepairError::BudgetExhausted {
 ///     iterations: 64,
-///     cells_removed: 100,
+///     simplices_removed: 100,
 ///     max_iterations: 64,
-///     max_cells_removed: 10_000,
+///     max_simplices_removed: 10_000,
 /// };
 /// assert!(err.to_string().contains("budget exhausted"));
 /// ```
@@ -157,32 +157,32 @@ pub enum PlManifoldRepairError {
 
     /// Iteration budget exhausted before the facet-degree invariant was satisfied.
     #[error(
-        "PL-manifold repair budget exhausted: {iterations} iterations, {cells_removed} cells removed (max_iterations={max_iterations}, max_cells_removed={max_cells_removed})"
+        "PL-manifold repair budget exhausted: {iterations} iterations, {simplices_removed} simplices removed (max_iterations={max_iterations}, max_simplices_removed={max_simplices_removed})"
     )]
     BudgetExhausted {
         /// Iterations executed.
         iterations: usize,
-        /// Cells removed so far.
-        cells_removed: usize,
+        /// Simplices removed so far.
+        simplices_removed: usize,
         /// Configured iteration limit.
         max_iterations: usize,
-        /// Configured cell-removal limit.
-        max_cells_removed: usize,
+        /// Configured simplex-removal limit.
+        max_simplices_removed: usize,
     },
 
     /// No progress: a repair pass found over-shared facets but could not remove
-    /// any cells (all candidates were already removed or the TDS is in a state
+    /// any simplices (all candidates were already removed or the TDS is in a state
     /// where removal is not possible).
     #[error(
-        "PL-manifold repair made no progress: {over_shared_facets} over-shared facets remain after {iterations} iterations ({cells_removed} cells removed before stalling)"
+        "PL-manifold repair made no progress: {over_shared_facets} over-shared facets remain after {iterations} iterations ({simplices_removed} simplices removed before stalling)"
     )]
     NoProgress {
         /// Number of over-shared facets remaining.
         over_shared_facets: usize,
         /// Iterations executed so far.
         iterations: usize,
-        /// Total cells removed before progress stalled.
-        cells_removed: usize,
+        /// Total simplices removed before progress stalled.
+        simplices_removed: usize,
     },
 }
 
@@ -191,7 +191,7 @@ pub enum PlManifoldRepairError {
 // =============================================================================
 
 /// Attempts to repair facet over-sharing (degree > 2) by removing the
-/// worst-quality cell per over-shared facet in deterministic order.
+/// worst-quality simplex per over-shared facet in deterministic order.
 ///
 /// This targets only the codimension-1 facet-degree invariant and does **not**
 /// guarantee full PL-manifoldness (ridge-link / vertex-link conditions are not
@@ -201,8 +201,8 @@ pub enum PlManifoldRepairError {
 ///
 /// Returns [`PlManifoldRepairError`] if:
 /// - The TDS fails structural validation (Levels 1–2).
-/// - The iteration or cell-removal budget is exhausted.
-/// - A pass finds violations but cannot remove any cells.
+/// - The iteration or simplex-removal budget is exhausted.
+/// - A pass finds violations but cannot remove any simplices.
 pub fn repair_facet_oversharing<T, U, V, const D: usize>(
     tds: &mut Tds<T, U, V, D>,
     config: &PlManifoldRepairConfig,
@@ -219,11 +219,11 @@ where
     // `tds.validate()` would reject over-shared facets and return before the
     // repair loop could run.
     tds.validate_vertex_mappings()?;
-    tds.validate_cell_mappings()?;
-    tds.validate_cell_vertex_keys()?;
+    tds.validate_simplex_mappings()?;
+    tds.validate_simplex_vertex_keys()?;
 
     // Fast path: if the facet-degree invariant already holds, nothing to do.
-    let facet_map = tds.build_facet_to_cells_map()?;
+    let facet_map = tds.build_facet_to_simplices_map()?;
     if validate_facet_degree(&facet_map).is_ok() {
         stats.succeeded = true;
         return Ok(stats);
@@ -233,77 +233,77 @@ where
         stats.iterations = iteration + 1;
 
         // Rebuild the facet map after mutations.
-        let facet_map = tds.build_facet_to_cells_map()?;
+        let facet_map = tds.build_facet_to_simplices_map()?;
 
-        // Collect cells to remove: for each over-shared facet (degree > 2),
+        // Collect simplices to remove: for each over-shared facet (degree > 2),
         // deterministically pick the worst candidate.
-        let mut removal_candidates: CellKeySet = fast_hash_set_with_capacity(16);
+        let mut removal_candidates: SimplexKeySet = fast_hash_set_with_capacity(16);
 
         for handles in facet_map.values() {
             if handles.len() <= 2 {
                 continue;
             }
 
-            // Among the cells sharing this facet, pick the one to remove.
-            // Strategy: compute a deterministic quality score for each cell
+            // Among the simplices sharing this facet, pick the one to remove.
+            // Strategy: compute a deterministic quality score for each simplex
             // and remove the worst (highest score = worst quality). Ties are
-            // broken by canonicalized vertex-key tuple, then by cell UUID.
-            let worst = pick_worst_cell(tds, handles);
-            if let Some(cell_key) = worst {
-                removal_candidates.insert(cell_key);
+            // broken by canonicalized vertex-key tuple, then by simplex UUID.
+            let worst = pick_worst_simplex(tds, handles);
+            if let Some(simplex_key) = worst {
+                removal_candidates.insert(simplex_key);
             }
         }
 
         if removal_candidates.is_empty() {
-            // We had violations but couldn't pick any cell — no progress.
+            // We had violations but couldn't pick any simplex — no progress.
             let remaining = facet_map.values().filter(|h| h.len() > 2).count();
             return Err(PlManifoldRepairError::NoProgress {
                 over_shared_facets: remaining,
                 iterations: stats.iterations,
-                cells_removed: stats.cells_removed,
+                simplices_removed: stats.simplices_removed,
             });
         }
 
-        // Check cell-removal budget.
+        // Check simplex-removal budget.
         let batch_size = removal_candidates.len();
-        if stats.cells_removed + batch_size > config.max_cells_removed {
+        if stats.simplices_removed + batch_size > config.max_simplices_removed {
             return Err(PlManifoldRepairError::BudgetExhausted {
                 iterations: stats.iterations,
-                cells_removed: stats.cells_removed,
+                simplices_removed: stats.simplices_removed,
                 max_iterations: config.max_iterations,
-                max_cells_removed: config.max_cells_removed,
+                max_simplices_removed: config.max_simplices_removed,
             });
         }
 
-        // Snapshot cells before removal (sorted by UUID for determinism).
-        let mut keys: Vec<CellKey> = removal_candidates.into_iter().collect();
+        // Snapshot simplices before removal (sorted by UUID for determinism).
+        let mut keys: Vec<SimplexKey> = removal_candidates.into_iter().collect();
         keys.sort_by(|a, b| {
-            let uuid_a = tds.cell(*a).map(Cell::uuid);
-            let uuid_b = tds.cell(*b).map(Cell::uuid);
+            let uuid_a = tds.simplex(*a).map(Simplex::uuid);
+            let uuid_b = tds.simplex(*b).map(Simplex::uuid);
             uuid_a.cmp(&uuid_b)
         });
         for &ck in &keys {
-            if let Some(cell) = tds.cell(ck) {
-                stats.removed_cells.push(cell.clone());
+            if let Some(simplex) = tds.simplex(ck) {
+                stats.removed_simplices.push(simplex.clone());
             }
         }
 
-        // Remove the batch. `remove_cells_by_keys` handles local neighbor
-        // back-reference clearing and incident-cell repair. Full neighbor
-        // rebuild is deferred to after the loop to avoid O(cells²) work.
-        let removed = tds.remove_cells_by_keys(&keys);
-        stats.cells_removed += removed;
+        // Remove the batch. `remove_simplices_by_keys` handles local neighbor
+        // back-reference clearing and incident-simplex repair. Full neighbor
+        // rebuild is deferred to after the loop to avoid O(simplices²) work.
+        let removed = tds.remove_simplices_by_keys(&keys);
+        stats.simplices_removed += removed;
 
         // Remove orphaned vertices (required for PL-manifold validity).
         remove_orphaned_vertices(tds, &mut stats);
 
         // Check if the invariant now holds.
-        let facet_map = tds.build_facet_to_cells_map()?;
+        let facet_map = tds.build_facet_to_simplices_map()?;
         if validate_facet_degree(&facet_map).is_ok() {
             stats.succeeded = true;
             // Rebuild full neighbor/incidence pointers before returning.
             tds.assign_neighbors().map_err(PlManifoldRepairError::Tds)?;
-            tds.assign_incident_cells()
+            tds.assign_incident_simplices()
                 .map_err(|e| PlManifoldRepairError::Tds(e.into()))?;
             return Ok(stats);
         }
@@ -311,24 +311,27 @@ where
 
     Err(PlManifoldRepairError::BudgetExhausted {
         iterations: stats.iterations,
-        cells_removed: stats.cells_removed,
+        simplices_removed: stats.simplices_removed,
         max_iterations: config.max_iterations,
-        max_cells_removed: config.max_cells_removed,
+        max_simplices_removed: config.max_simplices_removed,
     })
 }
 
-/// Deterministic quality score for a cell: lower = better quality.
+/// Deterministic quality score for a simplex: lower = better quality.
 ///
 /// Uses an edge-length aspect-ratio metric (max/min edge) that operates
 /// directly on the `Tds` without requiring a full `Triangulation` or
 /// circumsphere computation.
-fn cell_quality_score<T, U, V, const D: usize>(tds: &Tds<T, U, V, D>, cell_key: CellKey) -> f64
+fn simplex_quality_score<T, U, V, const D: usize>(
+    tds: &Tds<T, U, V, D>,
+    simplex_key: SimplexKey,
+) -> f64
 where
     T: CoordinateScalar,
     U: DataType,
     V: DataType,
 {
-    let Ok(vertices) = tds.cell_vertices(cell_key) else {
+    let Ok(vertices) = tds.simplex_vertices(simplex_key) else {
         return f64::MAX;
     };
 
@@ -374,22 +377,22 @@ where
     (max_edge / min_edge) + variance * 1e-12
 }
 
-/// Among the cells incident to an over-shared facet, deterministically select
-/// the worst-quality cell for removal.
+/// Among the simplices incident to an over-shared facet, deterministically select
+/// the worst-quality simplex for removal.
 ///
-/// Selection order: highest quality score first (worst cell), then canonicalized
-/// vertex keys (ascending), then cell UUID (ascending).
-fn pick_worst_cell<T, U, V, const D: usize>(
+/// Selection order: highest quality score first (worst simplex), then canonicalized
+/// vertex keys (ascending), then simplex UUID (ascending).
+fn pick_worst_simplex<T, U, V, const D: usize>(
     tds: &Tds<T, U, V, D>,
     handles: &[FacetHandle],
-) -> Option<CellKey>
+) -> Option<SimplexKey>
 where
     T: CoordinateScalar,
     U: DataType,
     V: DataType,
 {
     struct Candidate {
-        cell_key: CellKey,
+        simplex_key: SimplexKey,
         score: f64,
         vertex_keys: Vec<u64>,
         uuid: Uuid,
@@ -398,14 +401,14 @@ where
     let mut candidates: Vec<Candidate> = Vec::with_capacity(handles.len());
 
     for handle in handles {
-        let cell_key = handle.cell_key();
-        let Some(cell) = tds.cell(cell_key) else {
+        let simplex_key = handle.simplex_key();
+        let Some(simplex) = tds.simplex(simplex_key) else {
             continue;
         };
 
-        let score = cell_quality_score(tds, cell_key);
+        let score = simplex_quality_score(tds, simplex_key);
 
-        let mut vertex_keys: Vec<u64> = cell
+        let mut vertex_keys: Vec<u64> = simplex
             .vertices()
             .iter()
             .map(|vk| vk.data().as_ffi())
@@ -413,10 +416,10 @@ where
         vertex_keys.sort_unstable();
 
         candidates.push(Candidate {
-            cell_key,
+            simplex_key,
             score,
             vertex_keys,
-            uuid: cell.uuid(),
+            uuid: simplex.uuid(),
         });
     }
 
@@ -428,10 +431,10 @@ where
             .then_with(|| a.uuid.cmp(&b.uuid))
     });
 
-    candidates.first().map(|c| c.cell_key)
+    candidates.first().map(|c| c.simplex_key)
 }
 
-/// Remove vertices with no incident cell from the TDS, collecting them into
+/// Remove vertices with no incident simplex from the TDS, collecting them into
 /// `stats.removed_vertices` so callers can recover their data.
 ///
 /// Vertices are sorted by UUID before removal for deterministic ordering.
@@ -445,7 +448,7 @@ fn remove_orphaned_vertices<T, U, V, const D: usize>(
 {
     let mut orphaned: Vec<(VertexKey, Uuid)> = tds
         .vertices()
-        .filter(|(_, v)| v.incident_cell().is_none())
+        .filter(|(_, v)| v.incident_simplex().is_none())
         .map(|(k, v)| (k, v.uuid()))
         .collect();
     orphaned.sort_by_key(|(_, uuid)| *uuid);
@@ -485,7 +488,7 @@ mod tests {
         init_tracing();
         let config = PlManifoldRepairConfig::default();
         assert_eq!(config.max_iterations, 64);
-        assert_eq!(config.max_cells_removed, 10_000);
+        assert_eq!(config.max_simplices_removed, 10_000);
     }
 
     #[test]
@@ -496,7 +499,7 @@ mod tests {
             PlManifoldRepairStats::default();
 
         assert_eq!(stats.iterations, 0);
-        assert!(stats.removed_cells.is_empty());
+        assert!(stats.removed_simplices.is_empty());
         assert!(stats.removed_vertices.is_empty());
 
         let metadata = NonDataType("owned metadata".to_string());
@@ -525,7 +528,7 @@ mod tests {
 
         assert!(stats.succeeded);
         assert_eq!(stats.iterations, 0);
-        assert_eq!(stats.cells_removed, 0);
+        assert_eq!(stats.simplices_removed, 0);
     }
 
     // =============================================================================
@@ -548,7 +551,7 @@ mod tests {
         // Zero iterations — should succeed because already PL-manifold.
         let config = PlManifoldRepairConfig {
             max_iterations: 0,
-            max_cells_removed: 10_000,
+            max_simplices_removed: 10_000,
         };
         let stats = repair_facet_oversharing(&mut tds, &config).unwrap();
         assert!(stats.succeeded);
@@ -575,7 +578,7 @@ mod tests {
         let stats = repair_facet_oversharing(&mut tds, &config).unwrap();
 
         assert!(stats.succeeded);
-        assert_eq!(stats.cells_removed, 0);
+        assert_eq!(stats.simplices_removed, 0);
     }
 
     // =============================================================================
@@ -599,7 +602,7 @@ mod tests {
         assert!(stats.succeeded);
         // iterations == 0 for already-valid
         assert_eq!(stats.iterations, 0);
-        assert_eq!(stats.cells_removed, 0);
+        assert_eq!(stats.simplices_removed, 0);
     }
 
     // =============================================================================
@@ -610,8 +613,8 @@ mod tests {
     // FACET OVER-SHARING REPAIR TESTS
     // =============================================================================
 
-    /// Helper: create a TDS with over-shared facets by duplicating a cell in a
-    /// multi-cell triangulation. Interior facets go from degree 2 to degree 3.
+    /// Helper: create a TDS with over-shared facets by duplicating a simplex in a
+    /// multi-simplex triangulation. Interior facets go from degree 2 to degree 3.
     fn make_overshared_tds() -> Tds<f64, (), (), 3> {
         // 5 points
         let vertices = vec![
@@ -625,50 +628,50 @@ mod tests {
             DelaunayTriangulation::new(&vertices).unwrap();
         let mut tds = dt.tds().clone();
         assert!(
-            tds.number_of_cells() > 1,
-            "Need multiple cells for interior facets"
+            tds.number_of_simplices() > 1,
+            "Need multiple simplices for interior facets"
         );
 
-        // Duplicate the first cell → its facets go from degree 2 to degree 3.
-        let cell_key = tds.cell_keys().next().unwrap();
-        let vkeys = tds.cell_vertices(cell_key).unwrap();
-        let dup_cell = Cell::new(vkeys.to_vec(), None).unwrap();
-        tds.insert_cell_bypassing_topology_checks_for_test(dup_cell)
+        // Duplicate the first simplex → its facets go from degree 2 to degree 3.
+        let simplex_key = tds.simplex_keys().next().unwrap();
+        let vkeys = tds.simplex_vertices(simplex_key).unwrap();
+        let dup_simplex = Simplex::new(vkeys.to_vec(), None).unwrap();
+        tds.insert_simplex_bypassing_topology_checks_for_test(dup_simplex)
             .unwrap();
 
         // Sanity: at least one facet should now be over-shared.
-        let facet_map = tds.build_facet_to_cells_map().unwrap();
+        let facet_map = tds.build_facet_to_simplices_map().unwrap();
         assert!(
             validate_facet_degree(&facet_map).is_err(),
-            "Expected over-shared facets after duplicating a cell"
+            "Expected over-shared facets after duplicating a simplex"
         );
 
         tds
     }
 
     /// Create a TDS with over-shared facets and verify that repair removes
-    /// cells until the facet-degree invariant is satisfied.
+    /// simplices until the facet-degree invariant is satisfied.
     #[test]
-    fn test_repair_removes_overshared_cells() {
+    fn test_repair_removes_overshared_simplices() {
         init_tracing();
         let mut tds = make_overshared_tds();
-        let cells_before = tds.number_of_cells();
+        let simplices_before = tds.number_of_simplices();
 
         let stats = repair_facet_oversharing(&mut tds, &PlManifoldRepairConfig::default()).unwrap();
 
         assert!(stats.succeeded);
-        assert!(stats.cells_removed > 0);
+        assert!(stats.simplices_removed > 0);
         assert!(stats.iterations > 0);
-        assert!(tds.number_of_cells() < cells_before);
+        assert!(tds.number_of_simplices() < simplices_before);
 
-        // removed_cells should contain exactly cells_removed entries.
-        assert_eq!(stats.removed_cells.len(), stats.cells_removed);
+        // removed_simplices should contain exactly simplices_removed entries.
+        assert_eq!(stats.removed_simplices.len(), stats.simplices_removed);
 
-        let facet_map = tds.build_facet_to_cells_map().unwrap();
+        let facet_map = tds.build_facet_to_simplices_map().unwrap();
         assert!(validate_facet_degree(&facet_map).is_ok());
     }
 
-    /// Verify that a tight cell-removal budget triggers `BudgetExhausted`.
+    /// Verify that a tight simplex-removal budget triggers `BudgetExhausted`.
     #[test]
     fn test_repair_budget_exhausted_on_overshared_tds() {
         init_tracing();
@@ -676,7 +679,7 @@ mod tests {
 
         let config = PlManifoldRepairConfig {
             max_iterations: 64,
-            max_cells_removed: 0,
+            max_simplices_removed: 0,
         };
         let result = repair_facet_oversharing(&mut tds, &config);
         assert!(
@@ -686,7 +689,7 @@ mod tests {
     }
 
     /// Verify that `max_iterations: 0` on an over-shared TDS triggers
-    /// `BudgetExhausted` (iteration budget, not cell budget).
+    /// `BudgetExhausted` (iteration budget, not simplex budget).
     #[test]
     fn test_repair_iteration_budget_exhausted_on_overshared_tds() {
         init_tracing();
@@ -694,7 +697,7 @@ mod tests {
 
         let config = PlManifoldRepairConfig {
             max_iterations: 0,
-            max_cells_removed: 10_000,
+            max_simplices_removed: 10_000,
         };
         let result = repair_facet_oversharing(&mut tds, &config);
         assert!(
@@ -707,10 +710,10 @@ mod tests {
     // QUALITY SCORE TESTS
     // =============================================================================
 
-    /// Verify that `cell_quality_score` returns a finite, positive value for a
-    /// valid cell and is deterministic across calls.
+    /// Verify that `simplex_quality_score` returns a finite, positive value for a
+    /// valid simplex and is deterministic across calls.
     #[test]
-    fn test_cell_quality_score_finite_and_deterministic() {
+    fn test_simplex_quality_score_finite_and_deterministic() {
         init_tracing();
         let vertices = vec![
             vertex!([0.0, 0.0, 0.0]),
@@ -721,10 +724,10 @@ mod tests {
         let dt: DelaunayTriangulation<_, (), (), 3> =
             DelaunayTriangulation::new(&vertices).unwrap();
         let tds = dt.tds();
-        let cell_key = tds.cell_keys().next().unwrap();
+        let simplex_key = tds.simplex_keys().next().unwrap();
 
-        let score1 = cell_quality_score(tds, cell_key);
-        let score2 = cell_quality_score(tds, cell_key);
+        let score1 = simplex_quality_score(tds, simplex_key);
+        let score2 = simplex_quality_score(tds, simplex_key);
 
         assert!(score1.is_finite(), "Score should be finite, got {score1}");
         assert!(score1 > 0.0, "Score should be positive, got {score1}");

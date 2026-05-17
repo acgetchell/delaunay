@@ -2,7 +2,7 @@
 //!
 //! Downstream code frequently needs a stable, comparable identifier for an *edge* in the
 //! triangulation topology. Since edges are not stored explicitly (they are inferred from
-//! maximal cells), we expose a lightweight `EdgeKey` that:
+//! maximal simplices), we expose a lightweight `EdgeKey` that:
 //!
 //! - identifies an edge purely by its two endpoint [`VertexKey`]s
 //! - canonicalizes endpoint ordering so `(a, b)` and `(b, a)` map to the same edge

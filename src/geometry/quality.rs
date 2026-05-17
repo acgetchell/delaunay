@@ -1,17 +1,17 @@
-//! Geometric quality measures for d-dimensional simplicial cells.
+//! Geometric quality measures for d-dimensional simplices.
 //!
 //! This module provides quality metrics for evaluating the geometric quality
-//! of simplicial cells (simplices) in d-dimensional triangulations. These metrics
-//! are used to prefer well-shaped cells over degenerate or sliver cells during
+//! of simplices in d-dimensional triangulations. These metrics
+//! are used to prefer well-shaped simplices over degenerate or sliver simplices during
 //! triangulation operations.
 //!
 //! # Quality Metrics
 //!
 //! - **Radius Ratio**: Circumradius divided by inradius. Lower values indicate
-//!   better-shaped cells. An equilateral simplex has a radius ratio close to
+//!   better-shaped simplices. An equilateral simplex has a radius ratio close to
 //!   the dimension-dependent optimal value.
 //! - **Normalized Volume**: Volume divided by the D-th power of the average edge length.
-//!   Provides a scale-invariant measure of cell shape quality.
+//!   Provides a scale-invariant measure of simplex shape quality.
 //!
 //! # References
 //!
@@ -35,7 +35,7 @@
 
 use crate::core::{
     collections::{MAX_PRACTICAL_DIMENSION_SIZE, SmallBuffer},
-    tds::{CellKey, TdsError, VertexKey},
+    tds::{SimplexKey, TdsError, VertexKey},
     triangulation::Triangulation,
 };
 use crate::geometry::{
@@ -66,7 +66,7 @@ pub enum QualityNumericOperation {
     Volume,
 }
 
-/// Geometric quantity that revealed a degenerate cell.
+/// Geometric quantity that revealed a degenerate simplex.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum QualityDegeneracyMeasure {
@@ -80,20 +80,20 @@ pub enum QualityDegeneracyMeasure {
     EdgeLengthPower,
 }
 
-/// Failure while extracting cell vertices for quality metric evaluation.
+/// Failure while extracting simplex vertices for quality metric evaluation.
 #[derive(Debug, Clone, PartialEq, Eq, Error)]
 #[non_exhaustive]
-pub enum QualityCellVerticesError {
-    /// The requested cell key was not present in the TDS.
-    #[error("Cell key {cell_key:?} not found: {context}")]
-    CellNotFound {
-        /// Missing cell key.
-        cell_key: CellKey,
+pub enum QualitySimplexVerticesError {
+    /// The requested simplex key was not present in the TDS.
+    #[error("Simplex key {simplex_key:?} not found: {context}")]
+    SimplexNotFound {
+        /// Missing simplex key.
+        simplex_key: SimplexKey,
         /// Lookup context provided by the TDS.
         context: String,
     },
-    /// A cell referenced a vertex key that was not present in the TDS.
-    #[error("Vertex key {vertex_key:?} referenced by the cell was not found: {context}")]
+    /// A simplex referenced a vertex key that was not present in the TDS.
+    #[error("Vertex key {vertex_key:?} referenced by the simplex was not found: {context}")]
     ReferencedVertexNotFound {
         /// Missing vertex key.
         vertex_key: VertexKey,
@@ -108,12 +108,16 @@ pub enum QualityCellVerticesError {
     },
 }
 
-impl From<TdsError> for QualityCellVerticesError {
+impl From<TdsError> for QualitySimplexVerticesError {
     fn from(source: TdsError) -> Self {
         match source {
-            TdsError::CellNotFound { cell_key, context } => {
-                Self::CellNotFound { cell_key, context }
-            }
+            TdsError::SimplexNotFound {
+                simplex_key,
+                context,
+            } => Self::SimplexNotFound {
+                simplex_key,
+                context,
+            },
             TdsError::VertexNotFound {
                 vertex_key,
                 context,
@@ -143,24 +147,24 @@ impl From<TdsError> for QualityCellVerticesError {
 #[derive(Debug, Clone, PartialEq, Eq, Error)]
 #[non_exhaustive]
 pub enum QualityError {
-    /// Failed to fetch a cell's vertex keys from the TDS.
-    #[error("Failed to fetch vertices for cell {cell_key:?}: {source}")]
-    CellVertices {
-        /// Cell whose vertex keys could not be retrieved.
-        cell_key: CellKey,
+    /// Failed to fetch a simplex's vertex keys from the TDS.
+    #[error("Failed to fetch vertices for simplex {simplex_key:?}: {source}")]
+    SimplexVertices {
+        /// Simplex whose vertex keys could not be retrieved.
+        simplex_key: SimplexKey,
         /// Underlying TDS error.
         #[source]
-        source: QualityCellVerticesError,
+        source: QualitySimplexVerticesError,
     },
-    /// A vertex key referenced by the cell was missing from the triangulation.
-    #[error("Vertex {vertex_key:?} referenced by a quality metric cell was not found")]
+    /// A vertex key referenced by the simplex was missing from the triangulation.
+    #[error("Vertex {vertex_key:?} referenced by a quality metric simplex was not found")]
     VertexNotFound {
         /// Missing vertex key.
         vertex_key: VertexKey,
     },
-    /// Extracted cell arity did not match `D + 1`.
-    #[error("Cell has {actual} vertices, expected {expected} for dimension {dimension}")]
-    InvalidCellArity {
+    /// Extracted simplex arity did not match `D + 1`.
+    #[error("Simplex has {actual} vertices, expected {expected} for dimension {dimension}")]
+    InvalidSimplexArity {
         /// Observed vertex count.
         actual: usize,
         /// Expected vertex count.
@@ -195,11 +199,11 @@ pub enum QualityError {
         #[source]
         source: CircumcenterError,
     },
-    /// Cell is degenerate (zero or near-zero volume).
+    /// Simplex is degenerate (zero or near-zero volume).
     #[error(
-        "Degenerate cell: {measure:?} observed={observed}, epsilon={epsilon}, avg_edge_length={avg_edge_length:?}"
+        "Degenerate simplex: {measure:?} observed={observed}, epsilon={epsilon}, avg_edge_length={avg_edge_length:?}"
     )]
-    DegenerateCell {
+    DegenerateSimplex {
         /// Quantity that failed the degeneracy threshold.
         measure: QualityDegeneracyMeasure,
         /// Observed quantity value.
@@ -211,26 +215,26 @@ pub enum QualityError {
     },
 }
 
-/// Helper function to extract cell points from a triangulation.
+/// Helper function to extract simplex points from a triangulation.
 ///
 /// This centralizes the vertex-to-point extraction logic used by quality metrics.
-/// Uses `SmallBuffer` to avoid heap allocation for typical cell sizes (D+1 vertices).
-fn cell_points<K, U, V, const D: usize>(
+/// Uses `SmallBuffer` to avoid heap allocation for typical simplex sizes (D+1 vertices).
+fn simplex_points<K, U, V, const D: usize>(
     tri: &Triangulation<K, U, V, D>,
-    cell_key: CellKey,
+    simplex_key: SimplexKey,
 ) -> Result<SmallBuffer<Point<K::Scalar, D>, MAX_PRACTICAL_DIMENSION_SIZE>, QualityError>
 where
     K: Kernel<D>,
 {
     let vertex_keys =
         tri.tds
-            .cell_vertices(cell_key)
-            .map_err(|source| QualityError::CellVertices {
-                cell_key,
+            .simplex_vertices(simplex_key)
+            .map_err(|source| QualityError::SimplexVertices {
+                simplex_key,
                 source: source.into(),
             })?;
 
-    // Use SmallBuffer to avoid heap allocation (cells have D+1 vertices, D ≤ MAX_PRACTICAL_DIMENSION_SIZE)
+    // Use SmallBuffer to avoid heap allocation (simplices have D+1 vertices, D ≤ MAX_PRACTICAL_DIMENSION_SIZE)
     let mut points = SmallBuffer::new();
     for &vkey in &vertex_keys {
         let point = tri
@@ -250,7 +254,7 @@ where
 ///
 /// # Arguments
 ///
-/// * `points` - The cell vertices
+/// * `points` - The simplex vertices
 ///
 /// # Returns
 ///
@@ -306,10 +310,10 @@ where
     Ok((avg_edge_length, epsilon))
 }
 
-/// Computes the radius ratio quality metric for a cell.
+/// Computes the radius ratio quality metric for a simplex.
 ///
 /// The radius ratio is defined as the circumradius divided by the inradius.
-/// Lower values indicate better cell quality. For a regular simplex in D dimensions,
+/// Lower values indicate better simplex quality. For a regular simplex in D dimensions,
 /// the circumradius-to-inradius ratio satisfies R/r = D, which is optimal.
 ///
 /// # Quality Interpretation
@@ -321,8 +325,8 @@ where
 ///
 /// # Arguments
 ///
-/// * `tri` - The triangulation containing the cell
-/// * `cell_key` - The key of the cell to evaluate
+/// * `tri` - The triangulation containing the simplex
+/// * `simplex_key` - The key of the simplex to evaluate
 ///
 /// # Returns
 ///
@@ -331,8 +335,8 @@ where
 /// # Errors
 ///
 /// Returns `QualityError` if:
-/// - Cell has missing or invalid vertices
-/// - Cell is degenerate (zero or near-zero volume)
+/// - Simplex has missing or invalid vertices
+/// - Simplex is degenerate (zero or near-zero volume)
 /// - Circumsphere computation fails
 ///
 /// # Examples
@@ -348,25 +352,25 @@ where
 ///     vertex!([0.5, 0.866]), // approximately sqrt(3)/2
 /// ];
 /// let dt = DelaunayTriangulation::new(&vertices).unwrap();
-/// let cell_key = dt.cells().next().unwrap().0;
+/// let simplex_key = dt.simplices().next().unwrap().0;
 ///
-/// let ratio = radius_ratio(dt.as_triangulation(), cell_key).unwrap();
+/// let ratio = radius_ratio(dt.as_triangulation(), simplex_key).unwrap();
 /// // For an equilateral triangle, ratio ≈ 2.0
 /// assert!(ratio > 1.5 && ratio < 2.5);
 /// ```
 pub fn radius_ratio<K, U, V, const D: usize>(
     tri: &Triangulation<K, U, V, D>,
-    cell_key: CellKey,
+    simplex_key: SimplexKey,
 ) -> Result<K::Scalar, QualityError>
 where
     K: Kernel<D>,
     K::Scalar: Div<Output = K::Scalar>,
 {
-    // Extract cell points using helper
-    let points = cell_points(tri, cell_key)?;
+    // Extract simplex points using helper
+    let points = simplex_points(tri, simplex_key)?;
 
     if points.len() != D + 1 {
-        return Err(QualityError::InvalidCellArity {
+        return Err(QualityError::InvalidSimplexArity {
             actual: points.len(),
             expected: D + 1,
             dimension: D,
@@ -381,11 +385,11 @@ where
     let inradius_val =
         simplex_inradius(&points).map_err(|source| QualityError::Inradius { source })?;
 
-    // Check for near-zero inradius (degenerate cell) using scale-aware tolerance
+    // Check for near-zero inradius (degenerate simplex) using scale-aware tolerance
     let (avg_edge_length, epsilon) = scale_aware_epsilon(&points)?;
 
     if inradius_val < epsilon {
-        return Err(QualityError::DegenerateCell {
+        return Err(QualityError::DegenerateSimplex {
             measure: QualityDegeneracyMeasure::Inradius,
             observed: format!("{inradius_val:?}"),
             epsilon: format!("{epsilon:?}"),
@@ -399,22 +403,22 @@ where
     Ok(ratio)
 }
 
-/// Computes the normalized volume quality metric for a cell.
+/// Computes the normalized volume quality metric for a simplex.
 ///
-/// This metric provides a scale-invariant measure of cell quality by dividing
+/// This metric provides a scale-invariant measure of simplex quality by dividing
 /// the volume by the D-th power of the average edge length. It avoids the numerical
-/// issues that can arise when computing inradius for very small cells.
+/// issues that can arise when computing inradius for very small simplices.
 ///
 /// # Quality Interpretation
 ///
 /// - **Higher values** = better quality
 /// - **Optimal** (equilateral 2D): ≈ 0.433 (sqrt(3)/4)
-/// - **Poor**: < 0.1 (flat or sliver cell)
+/// - **Poor**: < 0.1 (flat or sliver simplex)
 ///
 /// # Arguments
 ///
-/// * `tri` - The triangulation containing the cell
-/// * `cell_key` - The key of the cell to evaluate
+/// * `tri` - The triangulation containing the simplex
+/// * `simplex_key` - The key of the simplex to evaluate
 ///
 /// # Returns
 ///
@@ -423,8 +427,8 @@ where
 /// # Errors
 ///
 /// Returns `QualityError` if:
-/// - Cell has missing or invalid vertices
-/// - Cell is degenerate (zero or near-zero volume)
+/// - Simplex has missing or invalid vertices
+/// - Simplex is degenerate (zero or near-zero volume)
 /// - Edge length computation fails
 ///
 /// # Examples
@@ -440,24 +444,24 @@ where
 ///     vertex!([0.0, 1.0]),
 /// ];
 /// let dt = DelaunayTriangulation::new(&vertices).unwrap();
-/// let cell_key = dt.cells().next().unwrap().0;
+/// let simplex_key = dt.simplices().next().unwrap().0;
 ///
-/// let norm_vol = normalized_volume(dt.as_triangulation(), cell_key).unwrap();
+/// let norm_vol = normalized_volume(dt.as_triangulation(), simplex_key).unwrap();
 /// assert!(norm_vol > 0.0);
 /// ```
 pub fn normalized_volume<K, U, V, const D: usize>(
     tri: &Triangulation<K, U, V, D>,
-    cell_key: CellKey,
+    simplex_key: SimplexKey,
 ) -> Result<K::Scalar, QualityError>
 where
     K: Kernel<D>,
     K::Scalar: Div<Output = K::Scalar>,
 {
-    // Extract cell points using helper
-    let points = cell_points(tri, cell_key)?;
+    // Extract simplex points using helper
+    let points = simplex_points(tri, simplex_key)?;
 
     if points.len() != D + 1 {
-        return Err(QualityError::InvalidCellArity {
+        return Err(QualityError::InvalidSimplexArity {
             actual: points.len(),
             expected: D + 1,
             dimension: D,
@@ -470,9 +474,9 @@ where
     // Compute scale-aware epsilon and average edge length
     let (avg_edge_length, epsilon) = scale_aware_epsilon(&points)?;
 
-    // Check for degenerate cell (volume too small)
+    // Check for degenerate simplex (volume too small)
     if volume < epsilon {
-        return Err(QualityError::DegenerateCell {
+        return Err(QualityError::DegenerateSimplex {
             measure: QualityDegeneracyMeasure::Volume,
             observed: format!("{volume:?}"),
             epsilon: format!("{epsilon:?}"),
@@ -482,7 +486,7 @@ where
 
     // Check avg_edge_length using the same scale-aware epsilon
     if avg_edge_length < epsilon {
-        return Err(QualityError::DegenerateCell {
+        return Err(QualityError::DegenerateSimplex {
             measure: QualityDegeneracyMeasure::AverageEdgeLength,
             observed: format!("{avg_edge_length:?}"),
             epsilon: format!("{epsilon:?}"),
@@ -501,7 +505,7 @@ where
     // close to epsilon and large D, raising to power D can underflow to < epsilon.
     // This catches numerical precision loss during exponentiation.
     if edge_length_power < epsilon {
-        return Err(QualityError::DegenerateCell {
+        return Err(QualityError::DegenerateSimplex {
             measure: QualityDegeneracyMeasure::EdgeLengthPower,
             observed: format!("{edge_length_power:?}"),
             epsilon: format!("{epsilon:?}"),
@@ -546,10 +550,10 @@ mod tests {
                 fn $test_name() {
                     let vertices = $vertices;
                     let dt: DelaunayTriangulation<_, (), (), $dim> = DelaunayTriangulation::new(&vertices).unwrap();
-let cell_key = dt.cells().next().unwrap().0;
+let simplex_key = dt.simplices().next().unwrap().0;
 
                     // Test radius_ratio
-                    let ratio = radius_ratio(dt.as_triangulation(), cell_key).unwrap();
+                    let ratio = radius_ratio(dt.as_triangulation(), simplex_key).unwrap();
                     assert!(
                         ($expected_ratio_min..=$expected_ratio_max).contains(&ratio),
                         "{}D {}: radius_ratio={ratio}, expected range [{}, {}]",
@@ -557,7 +561,7 @@ let cell_key = dt.cells().next().unwrap().0;
                     );
 
                     // Test normalized_volume
-                    let norm_vol = normalized_volume(dt.as_triangulation(), cell_key).unwrap();
+                    let norm_vol = normalized_volume(dt.as_triangulation(), simplex_key).unwrap();
                     assert!(norm_vol > 0.0, "{}D {}: normalized_volume should be positive", $dim, $desc);
                 }
 
@@ -567,7 +571,7 @@ let cell_key = dt.cells().next().unwrap().0;
                         // Test scale invariance by scaling coordinates
                         let vertices_base = $vertices;
                         let dt_base: DelaunayTriangulation<_, (), (), $dim> = DelaunayTriangulation::new(&vertices_base).unwrap();
-let key_base = dt_base.cells().next().unwrap().0;
+let key_base = dt_base.simplices().next().unwrap().0;
 
 	                        // Scale by 10x
 	                        let vertices_scaled: Vec<_> = vertices_base.iter().map(|v| {
@@ -575,7 +579,7 @@ let key_base = dt_base.cells().next().unwrap().0;
 	                            vertex!(coords)
 	                        }).collect();
                         let dt_scaled: DelaunayTriangulation<_, (), (), $dim> = DelaunayTriangulation::new(&vertices_scaled).unwrap();
-let key_scaled = dt_scaled.cells().next().unwrap().0;
+let key_scaled = dt_scaled.simplices().next().unwrap().0;
 
                         let ratio_base = radius_ratio(dt_base.as_triangulation(), key_base).unwrap();
                         let ratio_scaled = radius_ratio(dt_scaled.as_triangulation(), key_scaled).unwrap();
@@ -591,7 +595,7 @@ let key_scaled = dt_scaled.cells().next().unwrap().0;
                         // Test translation invariance
                         let vertices_base = $vertices;
                         let dt_base: DelaunayTriangulation<_, (), (), $dim> = DelaunayTriangulation::new(&vertices_base).unwrap();
-let key_base = dt_base.cells().next().unwrap().0;
+let key_base = dt_base.simplices().next().unwrap().0;
 
 	                        // Translate by [5.0, 5.0, ...]
 	                        let vertices_translated: Vec<_> = vertices_base.iter().map(|v| {
@@ -599,7 +603,7 @@ let key_base = dt_base.cells().next().unwrap().0;
 	                            vertex!(coords)
 	                        }).collect();
                         let dt_translated: DelaunayTriangulation<_, (), (), $dim> = DelaunayTriangulation::new(&vertices_translated).unwrap();
-let key_translated = dt_translated.cells().next().unwrap().0;
+let key_translated = dt_translated.simplices().next().unwrap().0;
 
                         let ratio_base = radius_ratio(dt_base.as_triangulation(), key_base).unwrap();
                         let ratio_translated = radius_ratio(dt_translated.as_triangulation(), key_translated).unwrap();
@@ -704,27 +708,27 @@ let key_translated = dt_translated.cells().next().unwrap().0;
         ];
         let dt: DelaunayTriangulation<_, (), (), 2> =
             DelaunayTriangulation::new(&vertices).unwrap();
-        let cell_key = dt.cells().next().unwrap().0;
+        let simplex_key = dt.simplices().next().unwrap().0;
 
         // Test radius_ratio
-        let ratio_result = radius_ratio(dt.as_triangulation(), cell_key);
+        let ratio_result = radius_ratio(dt.as_triangulation(), simplex_key);
         if let Ok(ratio) = ratio_result {
             assert!(ratio > 10.0);
         } else {
             assert!(matches!(
                 ratio_result,
-                Err(QualityError::DegenerateCell { .. })
+                Err(QualityError::DegenerateSimplex { .. })
             ));
         }
 
         // Test normalized_volume
-        let vol_result = normalized_volume(dt.as_triangulation(), cell_key);
+        let vol_result = normalized_volume(dt.as_triangulation(), simplex_key);
         if let Ok(norm_vol) = vol_result {
             assert!(norm_vol < 0.01);
         } else {
             assert!(matches!(
                 vol_result,
-                Err(QualityError::DegenerateCell { .. })
+                Err(QualityError::DegenerateSimplex { .. })
             ));
         }
     }
@@ -734,41 +738,41 @@ let key_translated = dt_translated.cells().next().unwrap().0;
     // =============================================================================
 
     #[test]
-    fn quality_cell_vertices_error_preserves_specific_tds_lookup_failures() {
-        let cell_key = CellKey::from(KeyData::from_ffi(0xCAFE));
+    fn quality_simplex_vertices_error_preserves_specific_tds_lookup_failures() {
+        let simplex_key = SimplexKey::from(KeyData::from_ffi(0xCAFE));
         let vertex_key = VertexKey::from(KeyData::from_ffi(0xBEEF));
 
-        let missing_cell = QualityCellVerticesError::from(TdsError::CellNotFound {
-            cell_key,
-            context: "quality metric cell lookup".to_string(),
+        let missing_simplex = QualitySimplexVerticesError::from(TdsError::SimplexNotFound {
+            simplex_key,
+            context: "quality metric simplex lookup".to_string(),
         });
         assert!(matches!(
-            missing_cell,
-            QualityCellVerticesError::CellNotFound {
-                cell_key: observed,
+            missing_simplex,
+            QualitySimplexVerticesError::SimplexNotFound {
+                simplex_key: observed,
                 context
-            } if observed == cell_key && context == "quality metric cell lookup"
+            } if observed == simplex_key && context == "quality metric simplex lookup"
         ));
 
-        let missing_vertex = QualityCellVerticesError::from(TdsError::VertexNotFound {
+        let missing_vertex = QualitySimplexVerticesError::from(TdsError::VertexNotFound {
             vertex_key,
             context: "quality metric vertex lookup".to_string(),
         });
         assert!(matches!(
             missing_vertex,
-            QualityCellVerticesError::ReferencedVertexNotFound {
+            QualitySimplexVerticesError::ReferencedVertexNotFound {
                 vertex_key: observed,
                 context
             } if observed == vertex_key && context == "quality metric vertex lookup"
         ));
 
-        let unexpected = QualityCellVerticesError::from(TdsError::DuplicateCells {
+        let unexpected = QualitySimplexVerticesError::from(TdsError::DuplicateSimplices {
             message: "same vertex set appears twice".to_string(),
         });
         assert!(matches!(
             unexpected,
-            QualityCellVerticesError::UnexpectedTdsFailure { message }
-                if message.contains("Duplicate cells")
+            QualitySimplexVerticesError::UnexpectedTdsFailure { message }
+                if message.contains("Duplicate simplices")
                     && message.contains("same vertex set appears twice")
         ));
     }
@@ -787,14 +791,14 @@ let key_translated = dt_translated.cells().next().unwrap().0;
     #[test]
     fn test_quality_error_display() {
         // Test that error messages format correctly
-        let err = QualityError::InvalidCellArity {
+        let err = QualityError::InvalidSimplexArity {
             actual: 2,
             expected: 3,
             dimension: 2,
         };
         assert!(format!("{err}").contains("expected 3"));
 
-        let err = QualityError::DegenerateCell {
+        let err = QualityError::DegenerateSimplex {
             measure: QualityDegeneracyMeasure::Volume,
             observed: "0.0".to_string(),
             epsilon: "1e-12".to_string(),
@@ -824,7 +828,7 @@ let key_translated = dt_translated.cells().next().unwrap().0;
         ];
         let dt_good: DelaunayTriangulation<_, (), (), 2> =
             DelaunayTriangulation::new(&vertices_good).unwrap();
-        let cell_key_good = dt_good.cells().next().unwrap().0;
+        let simplex_key_good = dt_good.simplices().next().unwrap().0;
 
         // Poor quality triangle (very flat)
         let vertices_poor = vec![
@@ -834,13 +838,15 @@ let key_translated = dt_translated.cells().next().unwrap().0;
         ];
         let dt_poor: DelaunayTriangulation<_, (), (), 2> =
             DelaunayTriangulation::new(&vertices_poor).unwrap();
-        let cell_key_poor = dt_poor.cells().next().unwrap().0;
+        let simplex_key_poor = dt_poor.simplices().next().unwrap().0;
 
-        let ratio_good = radius_ratio(dt_good.as_triangulation(), cell_key_good).unwrap();
-        let ratio_poor = radius_ratio(dt_poor.as_triangulation(), cell_key_poor).unwrap();
+        let ratio_good = radius_ratio(dt_good.as_triangulation(), simplex_key_good).unwrap();
+        let ratio_poor = radius_ratio(dt_poor.as_triangulation(), simplex_key_poor).unwrap();
 
-        let norm_vol_good = normalized_volume(dt_good.as_triangulation(), cell_key_good).unwrap();
-        let norm_vol_poor = normalized_volume(dt_poor.as_triangulation(), cell_key_poor).unwrap();
+        let norm_vol_good =
+            normalized_volume(dt_good.as_triangulation(), simplex_key_good).unwrap();
+        let norm_vol_poor =
+            normalized_volume(dt_poor.as_triangulation(), simplex_key_poor).unwrap();
 
         // Good triangle: lower ratio, higher normalized volume
         assert!(ratio_good < ratio_poor);
@@ -862,15 +868,15 @@ let key_translated = dt_translated.cells().next().unwrap().0;
         ];
         let dt: DelaunayTriangulation<_, (), (), 2> =
             DelaunayTriangulation::new(&vertices).unwrap();
-        let cell_key = dt.cells().next().unwrap().0;
+        let simplex_key = dt.simplices().next().unwrap().0;
 
         // Test radius_ratio
-        let ratio = radius_ratio(dt.as_triangulation(), cell_key).unwrap();
+        let ratio = radius_ratio(dt.as_triangulation(), simplex_key).unwrap();
         // For equilateral triangle: R/r = 2
         assert!(ratio > 1.5 && ratio < 2.5, "ratio={ratio}");
 
         // Test normalized_volume
-        let norm_vol = normalized_volume(dt.as_triangulation(), cell_key).unwrap();
+        let norm_vol = normalized_volume(dt.as_triangulation(), simplex_key).unwrap();
         // For 2D equilateral: sqrt(3)/4 ≈ 0.433
         assert!(norm_vol > 0.3 && norm_vol < 0.6, "norm_vol={norm_vol}");
     }
@@ -883,7 +889,7 @@ let key_translated = dt_translated.cells().next().unwrap().0;
     fn test_radius_ratio_perfectly_collinear_3points() {
         // Three points on a line - perfectly degenerate for 2D triangulation.
         // Currently, collinear points are accepted during construction but produce
-        // degenerate cells with very poor quality metrics.
+        // degenerate simplices with very poor quality metrics.
         let vertices = vec![
             vertex!([0.0, 0.0]),
             vertex!([1.0, 0.0]),
@@ -897,14 +903,14 @@ let key_translated = dt_translated.cells().next().unwrap().0;
         // Construction may succeed with collinear points, but quality metrics
         // should detect the degeneracy
         if let Ok(dt) = dt_result {
-            let cell_key = dt.cells().next().unwrap().0;
-            let ratio_result = radius_ratio(dt.as_triangulation(), cell_key);
-            let vol_result = normalized_volume(dt.as_triangulation(), cell_key);
+            let simplex_key = dt.simplices().next().unwrap().0;
+            let ratio_result = radius_ratio(dt.as_triangulation(), simplex_key);
+            let vol_result = normalized_volume(dt.as_triangulation(), simplex_key);
 
             // At least one quality metric should detect the degeneracy
             assert!(
                 ratio_result.is_err() || vol_result.is_err(),
-                "Quality metrics should detect degenerate collinear cell"
+                "Quality metrics should detect degenerate collinear simplex"
             );
         }
         // If construction fails, that's also acceptable for degenerate input
@@ -920,10 +926,10 @@ let key_translated = dt_translated.cells().next().unwrap().0;
         ];
         let dt: DelaunayTriangulation<_, (), (), 2> =
             DelaunayTriangulation::new(&vertices).unwrap();
-        let cell_key = dt.cells().next().unwrap().0;
+        let simplex_key = dt.simplices().next().unwrap().0;
 
         // Either should error or produce very poor quality
-        if let Ok(ratio) = radius_ratio(dt.as_triangulation(), cell_key) {
+        if let Ok(ratio) = radius_ratio(dt.as_triangulation(), simplex_key) {
             assert!(ratio > 100.0); // Very poor quality
         }
     }
@@ -938,11 +944,11 @@ let key_translated = dt_translated.cells().next().unwrap().0;
         ];
         let dt: DelaunayTriangulation<_, (), (), 2> =
             DelaunayTriangulation::new(&vertices).unwrap();
-        let cell_key = dt.cells().next().unwrap().0;
+        let simplex_key = dt.simplices().next().unwrap().0;
 
         // Should compute without panicking
-        let ratio_result = radius_ratio(dt.as_triangulation(), cell_key);
-        let norm_vol_result = normalized_volume(dt.as_triangulation(), cell_key);
+        let ratio_result = radius_ratio(dt.as_triangulation(), simplex_key);
+        let norm_vol_result = normalized_volume(dt.as_triangulation(), simplex_key);
 
         // Either succeed or fail gracefully (no panic)
         assert!(ratio_result.is_ok() || ratio_result.is_err());
@@ -967,13 +973,13 @@ let key_translated = dt_translated.cells().next().unwrap().0;
         ];
         let dt: DelaunayTriangulation<_, (), (), 6> =
             DelaunayTriangulation::new(&vertices).unwrap();
-        let cell_key = dt.cells().next().unwrap().0;
+        let simplex_key = dt.simplices().next().unwrap().0;
 
-        let ratio = radius_ratio(dt.as_triangulation(), cell_key).unwrap();
+        let ratio = radius_ratio(dt.as_triangulation(), simplex_key).unwrap();
         assert!(ratio > 6.0); // At least the dimension
         assert!(ratio < 20.0); // Not too degenerate
 
-        let norm_vol = normalized_volume(dt.as_triangulation(), cell_key).unwrap();
+        let norm_vol = normalized_volume(dt.as_triangulation(), simplex_key).unwrap();
         assert!(norm_vol > 0.0);
     }
 
@@ -989,9 +995,9 @@ let key_translated = dt_translated.cells().next().unwrap().0;
                 fn $test_name() {
                     let vertices = $vertices;
                     let dt: DelaunayTriangulation<_, (), (), $dim> = DelaunayTriangulation::new(&vertices).unwrap();
-let cell_key = dt.cells().next().unwrap().0;
+let simplex_key = dt.simplices().next().unwrap().0;
 
-                    if let Ok(ratio) = radius_ratio(dt.as_triangulation(), cell_key) {
+                    if let Ok(ratio) = radius_ratio(dt.as_triangulation(), simplex_key) {
                         assert!(ratio > $min_ratio, "{}: ratio={ratio}, expected > {}", $desc, $min_ratio);
                     }
                 }
@@ -1059,7 +1065,7 @@ let cell_key = dt.cells().next().unwrap().0;
     // =============================================================================
 
     #[test]
-    fn test_quality_invalid_cell_key() {
+    fn test_quality_invalid_simplex_key() {
         // Create triangulation
         let vertices = vec![
             vertex!([0.0, 0.0]),
@@ -1070,19 +1076,19 @@ let cell_key = dt.cells().next().unwrap().0;
             DelaunayTriangulation::new(&vertices).unwrap();
 
         // Create an invalid key (not in the SlotMap)
-        let invalid_key = CellKey::from(KeyData::from_ffi(u64::MAX));
+        let invalid_key = SimplexKey::from(KeyData::from_ffi(u64::MAX));
 
         let result = radius_ratio(dt.as_triangulation(), invalid_key);
-        assert!(matches!(result, Err(QualityError::CellVertices { .. })));
+        assert!(matches!(result, Err(QualityError::SimplexVertices { .. })));
 
         let result = normalized_volume(dt.as_triangulation(), invalid_key);
-        assert!(matches!(result, Err(QualityError::CellVertices { .. })));
+        assert!(matches!(result, Err(QualityError::SimplexVertices { .. })));
     }
 
     #[test]
     fn test_quality_error_clone_eq() {
         // Test that QualityError implements Clone and PartialEq correctly
-        let err1 = QualityError::InvalidCellArity {
+        let err1 = QualityError::InvalidSimplexArity {
             actual: 2,
             expected: 3,
             dimension: 2,
@@ -1090,7 +1096,7 @@ let cell_key = dt.cells().next().unwrap().0;
         let err2 = err1.clone();
         assert_eq!(err1, err2);
 
-        let err3 = QualityError::DegenerateCell {
+        let err3 = QualityError::DegenerateSimplex {
             measure: QualityDegeneracyMeasure::Volume,
             observed: "0".to_string(),
             epsilon: "1e-12".to_string(),
@@ -1125,7 +1131,7 @@ let cell_key = dt.cells().next().unwrap().0;
         ];
         let dt_best: DelaunayTriangulation<_, (), (), 2> =
             DelaunayTriangulation::new(&vertices_best).unwrap();
-        let key_best = dt_best.cells().next().unwrap().0;
+        let key_best = dt_best.simplices().next().unwrap().0;
 
         // Medium: right triangle (acceptable quality)
         let vertices_medium = vec![
@@ -1135,7 +1141,7 @@ let cell_key = dt.cells().next().unwrap().0;
         ];
         let dt_medium: DelaunayTriangulation<_, (), (), 2> =
             DelaunayTriangulation::new(&vertices_medium).unwrap();
-        let key_medium = dt_medium.cells().next().unwrap().0;
+        let key_medium = dt_medium.simplices().next().unwrap().0;
 
         // Worst: very flat (poor quality)
         let vertices_worst = vec![
@@ -1145,7 +1151,7 @@ let cell_key = dt.cells().next().unwrap().0;
         ];
         let dt_worst: DelaunayTriangulation<_, (), (), 2> =
             DelaunayTriangulation::new(&vertices_worst).unwrap();
-        let key_worst = dt_worst.cells().next().unwrap().0;
+        let key_worst = dt_worst.simplices().next().unwrap().0;
 
         let ratio_best = radius_ratio(dt_best.as_triangulation(), key_best).unwrap();
         let ratio_medium = radius_ratio(dt_medium.as_triangulation(), key_medium).unwrap();
@@ -1181,7 +1187,7 @@ let cell_key = dt.cells().next().unwrap().0;
         ];
         let dt_right: DelaunayTriangulation<_, (), (), 2> =
             DelaunayTriangulation::new(&vertices_right).unwrap();
-        let key_right = dt_right.cells().next().unwrap().0;
+        let key_right = dt_right.simplices().next().unwrap().0;
         let ratio_right = radius_ratio(dt_right.as_triangulation(), key_right).unwrap();
         assert_relative_eq!(ratio_right, 1.0 + 2.0_f64.sqrt(), epsilon = 0.1);
 
@@ -1193,7 +1199,7 @@ let cell_key = dt.cells().next().unwrap().0;
         ];
         let dt_iso: DelaunayTriangulation<_, (), (), 2> =
             DelaunayTriangulation::new(&vertices_iso).unwrap();
-        let key_iso = dt_iso.cells().next().unwrap().0;
+        let key_iso = dt_iso.simplices().next().unwrap().0;
         let ratio_iso = radius_ratio(dt_iso.as_triangulation(), key_iso).unwrap();
         assert!(ratio_iso > 2.0 && ratio_iso < 5.0);
     }
@@ -1212,7 +1218,7 @@ let cell_key = dt.cells().next().unwrap().0;
         ];
         let dt_f32: DelaunayTriangulation<AdaptiveKernel<f32>, (), (), 2> =
             DelaunayTriangulation::with_kernel(&AdaptiveKernel::new(), &vertices_f32).unwrap();
-        let key_f32 = dt_f32.cells().next().unwrap().0;
+        let key_f32 = dt_f32.simplices().next().unwrap().0;
 
         let vertices_f64 = vec![
             vertex!([0.0f64, 0.0f64]),
@@ -1221,7 +1227,7 @@ let cell_key = dt.cells().next().unwrap().0;
         ];
         let dt_f64: DelaunayTriangulation<_, (), (), 2> =
             DelaunayTriangulation::new(&vertices_f64).unwrap();
-        let key_f64 = dt_f64.cells().next().unwrap().0;
+        let key_f64 = dt_f64.simplices().next().unwrap().0;
 
         let ratio_f32 = radius_ratio(dt_f32.as_triangulation(), key_f32).unwrap();
         let ratio_f64 = radius_ratio(dt_f64.as_triangulation(), key_f64).unwrap();
@@ -1239,8 +1245,8 @@ let cell_key = dt.cells().next().unwrap().0;
     // =============================================================================
 
     #[test]
-    fn test_cell_points_valid() {
-        // Test cell_points helper with valid cell
+    fn test_simplex_points_valid() {
+        // Test simplex_points helper with valid simplex
         let vertices = vec![
             vertex!([0.0, 0.0]),
             vertex!([1.0, 0.0]),
@@ -1248,15 +1254,15 @@ let cell_key = dt.cells().next().unwrap().0;
         ];
         let dt: DelaunayTriangulation<_, (), (), 2> =
             DelaunayTriangulation::new(&vertices).unwrap();
-        let cell_key = dt.cells().next().unwrap().0;
+        let simplex_key = dt.simplices().next().unwrap().0;
 
-        let points = cell_points(dt.as_triangulation(), cell_key).unwrap();
-        assert_eq!(points.len(), 3, "Should have 3 points for 2D cell");
+        let points = simplex_points(dt.as_triangulation(), simplex_key).unwrap();
+        assert_eq!(points.len(), 3, "Should have 3 points for 2D simplex");
     }
 
     #[test]
-    fn test_cell_points_invalid_key() {
-        // Test cell_points with invalid cell key
+    fn test_simplex_points_invalid_key() {
+        // Test simplex_points with invalid simplex key
         let vertices = vec![
             vertex!([0.0, 0.0]),
             vertex!([1.0, 0.0]),
@@ -1264,10 +1270,10 @@ let cell_key = dt.cells().next().unwrap().0;
         ];
         let dt: DelaunayTriangulation<_, (), (), 2> =
             DelaunayTriangulation::new(&vertices).unwrap();
-        let invalid_key = CellKey::from(KeyData::from_ffi(u64::MAX));
+        let invalid_key = SimplexKey::from(KeyData::from_ffi(u64::MAX));
 
-        let result = cell_points(dt.as_triangulation(), invalid_key);
-        assert!(matches!(result, Err(QualityError::CellVertices { .. })));
+        let result = simplex_points(dt.as_triangulation(), invalid_key);
+        assert!(matches!(result, Err(QualityError::SimplexVertices { .. })));
     }
 
     #[test]
@@ -1343,10 +1349,10 @@ let cell_key = dt.cells().next().unwrap().0;
         ];
         let dt: DelaunayTriangulation<_, (), (), 2> =
             DelaunayTriangulation::new(&vertices).unwrap();
-        let cell_key = dt.cells().next().unwrap().0;
+        let simplex_key = dt.simplices().next().unwrap().0;
 
         // Normal case should succeed
-        let result = radius_ratio(dt.as_triangulation(), cell_key);
+        let result = radius_ratio(dt.as_triangulation(), simplex_key);
         assert!(result.is_ok());
     }
 
@@ -1361,10 +1367,10 @@ let cell_key = dt.cells().next().unwrap().0;
         ];
         let dt: DelaunayTriangulation<_, (), (), 3> =
             DelaunayTriangulation::new(&vertices).unwrap();
-        let cell_key = dt.cells().next().unwrap().0;
+        let simplex_key = dt.simplices().next().unwrap().0;
 
         // Should succeed with correct count
-        let result = normalized_volume(dt.as_triangulation(), cell_key);
+        let result = normalized_volume(dt.as_triangulation(), simplex_key);
         assert!(result.is_ok());
     }
 
@@ -1383,13 +1389,13 @@ let cell_key = dt.cells().next().unwrap().0;
 
         match dt_result {
             Ok(dt) => {
-                let cell_key = dt.cells().next().unwrap().0;
+                let simplex_key = dt.simplices().next().unwrap().0;
 
                 // Should either compute or return degenerate/numerical error (no panic)
-                let result = radius_ratio(dt.as_triangulation(), cell_key);
+                let result = radius_ratio(dt.as_triangulation(), simplex_key);
                 assert!(
                     result.is_ok()
-                        || matches!(result, Err(QualityError::DegenerateCell { .. }))
+                        || matches!(result, Err(QualityError::DegenerateSimplex { .. }))
                         || matches!(result, Err(QualityError::NumericConversion { .. }))
                         || matches!(result, Err(QualityError::Circumradius { .. }))
                         || matches!(result, Err(QualityError::Inradius { .. }))
@@ -1422,13 +1428,13 @@ let cell_key = dt.cells().next().unwrap().0;
 
         match dt_result {
             Ok(dt) => {
-                let cell_key = dt.cells().next().unwrap().0;
+                let simplex_key = dt.simplices().next().unwrap().0;
 
                 // Should either compute or return degenerate/numerical error (no panic)
-                let result = normalized_volume(dt.as_triangulation(), cell_key);
+                let result = normalized_volume(dt.as_triangulation(), simplex_key);
                 assert!(
                     result.is_ok()
-                        || matches!(result, Err(QualityError::DegenerateCell { .. }))
+                        || matches!(result, Err(QualityError::DegenerateSimplex { .. }))
                         || matches!(result, Err(QualityError::NumericConversion { .. }))
                         || matches!(result, Err(QualityError::Volume { .. }))
                 );
@@ -1459,7 +1465,7 @@ let cell_key = dt.cells().next().unwrap().0;
     }
 
     #[test]
-    fn test_degenerate_cell_error_details() {
+    fn test_degenerate_simplex_error_details() {
         // Test that degenerate errors include helpful details when they occur.
         let vertices = vec![
             vertex!([0.0, 0.0]),
@@ -1473,14 +1479,14 @@ let cell_key = dt.cells().next().unwrap().0;
 
         match dt_result {
             Ok(dt) => {
-                let cell_key = dt.cells().next().unwrap().0;
+                let simplex_key = dt.simplices().next().unwrap().0;
 
-                let result = radius_ratio(dt.as_triangulation(), cell_key);
-                if let Err(QualityError::DegenerateCell {
+                let result = radius_ratio(dt.as_triangulation(), simplex_key);
+                if let Err(QualityError::DegenerateSimplex {
                     measure, observed, ..
                 }) = result
                 {
-                    // Should include numeric information when we surface a degenerate cell
+                    // Should include numeric information when we surface a degenerate simplex
                     assert!(matches!(
                         measure,
                         QualityDegeneracyMeasure::Inradius
@@ -1500,7 +1506,7 @@ let cell_key = dt.cells().next().unwrap().0;
                 // error variant.
             }
             Err(other) => {
-                panic!("Unexpected triangulation error for degenerate cell test: {other}")
+                panic!("Unexpected triangulation error for degenerate simplex test: {other}")
             }
         }
     }

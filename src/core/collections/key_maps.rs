@@ -1,10 +1,10 @@
-//! Keyed map and set aliases for vertex, cell, and UUID lookups.
+//! Keyed map and set aliases for vertex, simplex, and UUID lookups.
 //!
 //! These types describe the canonical hash-map shapes used for topology storage,
 //! validation, and geometric algorithm bookkeeping.
 
 use super::{FastHashMap, FastHashSet, Uuid};
-use crate::core::tds::{CellKey, VertexKey};
+use crate::core::tds::{SimplexKey, VertexKey};
 
 // =============================================================================
 // GEOMETRIC ALGORITHM TYPES
@@ -80,14 +80,14 @@ pub type VertexUuidSet = FastHashSet<Uuid>;
 /// ```
 pub type UuidToVertexKeyMap = FastHashMap<Uuid, VertexKey>;
 
-/// Optimized mapping from cell [`Uuid`] values to [`CellKey`] values for fast UUID → key lookups.
+/// Optimized mapping from simplex [`Uuid`] values to [`SimplexKey`] values for fast UUID → key lookups.
 /// This is the primary direction for most triangulation operations.
 ///
 /// # Optimization Rationale
 ///
 /// - **Primary Direction**: UUID → Key is the hot path in neighbor assignment
 /// - **Hash Function**: `FastHasher` provides ~2-3x faster lookups than default hasher in typical non-adversarial workloads
-/// - **Use Case**: Converting cell UUIDs to keys for slot-map access
+/// - **Use Case**: Converting simplex UUIDs to keys for slot-map access
 /// - **Performance**: O(1) average case, optimized for triangulation algorithms
 ///
 /// # Reverse Lookups
@@ -103,10 +103,10 @@ pub type UuidToVertexKeyMap = FastHashMap<Uuid, VertexKey>;
 /// #         #[from]
 /// #         source: DelaunayTriangulationConstructionError,
 /// #     },
-/// #     #[error("expected at least one cell in the triangulation")]
-/// #     MissingCell,
-/// #     #[error("cell key should resolve in the triangulation")]
-/// #     UnresolvedCellKey,
+/// #     #[error("expected at least one simplex in the triangulation")]
+/// #     MissingSimplex,
+/// #     #[error("simplex key should resolve in the triangulation")]
+/// #     UnresolvedSimplexKey,
 /// # }
 /// # fn main() -> Result<(), ReverseLookupExampleError> {
 /// let vertices = vec![
@@ -123,25 +123,25 @@ pub type UuidToVertexKeyMap = FastHashMap<Uuid, VertexKey>;
 /// assert_eq!(dt.topology_guarantee(), TopologyGuarantee::PLManifold);
 /// let tds = dt.tds();
 ///
-/// // Get first cell key and its UUID
-/// let Some((cell_key, _)) = tds.cells().next() else {
-///     return Err(ReverseLookupExampleError::MissingCell);
+/// // Get first simplex key and its UUID
+/// let Some((simplex_key, _)) = tds.simplices().next() else {
+///     return Err(ReverseLookupExampleError::MissingSimplex);
 /// };
-/// let Some(cell) = tds.cell(cell_key) else {
-///     return Err(ReverseLookupExampleError::UnresolvedCellKey);
+/// let Some(simplex) = tds.simplex(simplex_key) else {
+///     return Err(ReverseLookupExampleError::UnresolvedSimplexKey);
 /// };
-/// let cell_uuid = cell.uuid();
-/// assert_eq!(tds.cell_key_from_uuid(&cell_uuid), Some(cell_key));
+/// let simplex_uuid = simplex.uuid();
+/// assert_eq!(tds.simplex_key_from_uuid(&simplex_uuid), Some(simplex_key));
 /// # Ok(())
 /// # }
 /// ```
-pub type UuidToCellKeyMap = FastHashMap<Uuid, CellKey>;
+pub type UuidToSimplexKeyMap = FastHashMap<Uuid, SimplexKey>;
 
 // =============================================================================
-// PHASE 1 MIGRATION: KEY-BASED INTERNAL TYPES
+// KEY-BASED INTERNAL TYPES
 // =============================================================================
 
-/// **Phase 1 Migration**: Optimized set for `CellKey` collections in internal operations.
+/// Optimized set for `SimplexKey` collections in internal operations.
 ///
 /// This eliminates UUID dependencies in internal algorithms by working directly with `SlotMap` keys.
 /// Provides the same performance benefits as `FastHashSet` but for direct key operations.
@@ -150,26 +150,26 @@ pub type UuidToCellKeyMap = FastHashMap<Uuid, CellKey>;
 ///
 /// - **Avoids UUID→Key lookups**: Eliminates extra hash table lookups vs UUID→Key mapping
 /// - **Direct `SlotMap` compatibility**: Keys can be used directly for data structure access
-/// - **Memory efficiency**: `CellKey` is typically smaller than `Uuid` (8 bytes vs 16 bytes)
+/// - **Memory efficiency**: `SimplexKey` is typically smaller than `Uuid` (8 bytes vs 16 bytes)
 /// - **Cache friendly**: Better memory locality for key-based algorithms
 ///
 /// # Use Cases
 ///
-/// - Internal cell tracking during algorithms
-/// - Validation operations that work with cell keys
-/// - Temporary cell collections in geometric operations
+/// - Internal simplex tracking during algorithms
+/// - Validation operations that work with simplex keys
+/// - Temporary simplex collections in geometric operations
 ///
 /// # Examples
 ///
 /// ```rust
-/// use delaunay::prelude::collections::CellKeySet;
+/// use delaunay::prelude::collections::SimplexKeySet;
 ///
-/// let cell_set: CellKeySet = CellKeySet::default();
-/// assert!(cell_set.is_empty());
+/// let simplex_set: SimplexKeySet = SimplexKeySet::default();
+/// assert!(simplex_set.is_empty());
 /// ```
-pub type CellKeySet = FastHashSet<CellKey>;
+pub type SimplexKeySet = FastHashSet<SimplexKey>;
 
-/// **Phase 1 Migration**: Optimized set for `VertexKey` collections in internal operations.
+/// Optimized set for `VertexKey` collections in internal operations.
 ///
 /// This eliminates UUID dependencies in internal algorithms by working directly with `SlotMap` keys.
 /// Provides the same performance benefits as `FastHashSet` but for direct key operations.
@@ -197,10 +197,10 @@ pub type CellKeySet = FastHashSet<CellKey>;
 /// ```
 pub type VertexKeySet = FastHashSet<VertexKey>;
 
-/// **Phase 1 Migration**: Key-based mapping for internal cell operations.
+/// Key-based mapping for internal simplex operations.
 ///
-/// This provides direct `CellKey` → Value mapping without requiring UUID lookups,
-/// optimizing internal algorithms that work with cell keys.
+/// This provides direct `SimplexKey` → Value mapping without requiring UUID lookups,
+/// optimizing internal algorithms that work with simplex keys.
 ///
 /// # Performance Benefits
 ///
@@ -211,22 +211,22 @@ pub type VertexKeySet = FastHashSet<VertexKey>;
 ///
 /// # Use Cases
 ///
-/// - Internal cell metadata storage
-/// - Algorithm state tracking per cell
+/// - Internal simplex metadata storage
+/// - Algorithm state tracking per simplex
 /// - Temporary mappings during geometric operations
-/// - Validation data associated with specific cells
+/// - Validation data associated with specific simplices
 ///
 /// # Examples
 ///
 /// ```rust
-/// use delaunay::prelude::collections::KeyBasedCellMap;
+/// use delaunay::prelude::collections::KeyBasedSimplexMap;
 ///
-/// let cell_map: KeyBasedCellMap<f64> = KeyBasedCellMap::default();
-/// assert!(cell_map.is_empty());
+/// let simplex_map: KeyBasedSimplexMap<f64> = KeyBasedSimplexMap::default();
+/// assert!(simplex_map.is_empty());
 /// ```
-pub type KeyBasedCellMap<V> = FastHashMap<CellKey, V>;
+pub type KeyBasedSimplexMap<V> = FastHashMap<SimplexKey, V>;
 
-/// **Phase 1 Migration**: Key-based mapping for internal vertex operations.
+/// Key-based mapping for internal vertex operations.
 ///
 /// This provides direct `VertexKey` → Value mapping without requiring UUID lookups,
 /// optimizing internal algorithms that work with vertex keys.
@@ -258,27 +258,27 @@ pub type KeyBasedVertexMap<V> = FastHashMap<VertexKey, V>;
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::core::tds::{CellKey, VertexKey};
+    use crate::core::tds::{SimplexKey, VertexKey};
     use slotmap::SlotMap;
 
     #[test]
     fn test_phase1_key_based_roundtrip_operations() {
         // Create mock SlotMaps to generate real keys for testing
-        let mut cell_slots: SlotMap<CellKey, i32> = SlotMap::default();
+        let mut simplex_slots: SlotMap<SimplexKey, i32> = SlotMap::default();
         let mut vertex_slots: SlotMap<VertexKey, i32> = SlotMap::default();
 
         // Insert some dummy data to get real keys
-        let cell_key1 = cell_slots.insert(1);
-        let cell_key2 = cell_slots.insert(2);
+        let simplex_key1 = simplex_slots.insert(1);
+        let simplex_key2 = simplex_slots.insert(2);
         let vertex_key1 = vertex_slots.insert(1);
         let vertex_key2 = vertex_slots.insert(2);
 
-        // Test CellKeySet insert/contains roundtrip
-        let mut cell_set: CellKeySet = CellKeySet::default();
-        assert!(!cell_set.contains(&cell_key1));
-        cell_set.insert(cell_key1);
-        assert!(cell_set.contains(&cell_key1));
-        assert!(!cell_set.contains(&cell_key2));
+        // Test SimplexKeySet insert/contains roundtrip
+        let mut simplex_set: SimplexKeySet = SimplexKeySet::default();
+        assert!(!simplex_set.contains(&simplex_key1));
+        simplex_set.insert(simplex_key1);
+        assert!(simplex_set.contains(&simplex_key1));
+        assert!(!simplex_set.contains(&simplex_key2));
 
         // Test VertexKeySet insert/contains roundtrip
         let mut vertex_set: VertexKeySet = VertexKeySet::default();
@@ -287,15 +287,15 @@ mod tests {
         assert!(vertex_set.contains(&vertex_key1));
         assert!(!vertex_set.contains(&vertex_key2));
 
-        // Test KeyBasedCellMap insert/get roundtrip
-        let mut cell_map: KeyBasedCellMap<String> = KeyBasedCellMap::default();
-        assert_eq!(cell_map.get(&cell_key1), None);
-        cell_map.insert(cell_key1, "cell_data".to_string());
+        // Test KeyBasedSimplexMap insert/get roundtrip
+        let mut simplex_map: KeyBasedSimplexMap<String> = KeyBasedSimplexMap::default();
+        assert_eq!(simplex_map.get(&simplex_key1), None);
+        simplex_map.insert(simplex_key1, "simplex_data".to_string());
         assert_eq!(
-            cell_map.get(&cell_key1).map(String::as_str),
-            Some("cell_data")
+            simplex_map.get(&simplex_key1).map(String::as_str),
+            Some("simplex_data")
         );
-        assert_eq!(cell_map.get(&cell_key2), None);
+        assert_eq!(simplex_map.get(&simplex_key2), None);
 
         // Test KeyBasedVertexMap insert/get roundtrip
         let mut vertex_map: KeyBasedVertexMap<i32> = KeyBasedVertexMap::default();
@@ -305,26 +305,26 @@ mod tests {
         assert_eq!(vertex_map.get(&vertex_key2), None);
 
         // Test that collections have expected sizes
-        assert_eq!(cell_set.len(), 1);
+        assert_eq!(simplex_set.len(), 1);
         assert_eq!(vertex_set.len(), 1);
-        assert_eq!(cell_map.len(), 1);
+        assert_eq!(simplex_map.len(), 1);
         assert_eq!(vertex_map.len(), 1);
     }
 
     #[test]
     fn test_key_based_types_compile_and_instantiate() {
-        let _cell_set: CellKeySet = CellKeySet::default();
+        let _simplex_set: SimplexKeySet = SimplexKeySet::default();
         let _vertex_set: VertexKeySet = VertexKeySet::default();
-        let _cell_map: KeyBasedCellMap<i32> = KeyBasedCellMap::default();
+        let _simplex_map: KeyBasedSimplexMap<i32> = KeyBasedSimplexMap::default();
         let _vertex_map: KeyBasedVertexMap<String> = KeyBasedVertexMap::default();
 
         // Basic operations should work
-        let cell_set: CellKeySet = CellKeySet::default();
-        assert!(cell_set.is_empty());
-        assert_eq!(cell_set.len(), 0);
+        let simplex_set: SimplexKeySet = SimplexKeySet::default();
+        assert!(simplex_set.is_empty());
+        assert_eq!(simplex_set.len(), 0);
 
-        let cell_map: KeyBasedCellMap<f64> = KeyBasedCellMap::default();
-        assert!(cell_map.is_empty());
-        assert_eq!(cell_map.len(), 0);
+        let simplex_map: KeyBasedSimplexMap<f64> = KeyBasedSimplexMap::default();
+        assert!(simplex_map.is_empty());
+        assert_eq!(simplex_map.len(), 0);
     }
 }

@@ -40,7 +40,7 @@ src/
 Notes:
 
 - This repository does not use `mod.rs`; module declarations live in `src/lib.rs`.
-- Topology is combinatorial: core types (`Tds`, `Cell`, `Vertex`) do not require
+- Topology is combinatorial: core types (`Tds`, `Simplex`, `Vertex`) do not require
   `T: CoordinateScalar` at the type level; geometric operations/validation are
   gated behind `T: CoordinateScalar`.
 
@@ -57,14 +57,14 @@ For cumulative validation, use `Triangulation::validate()` (Levels 1–3) or
 Level 3 always checks:
 
 - **Codimension-1 facet degree** (pseudomanifold / manifold-with-boundary):
-  every (D−1)-facet is incident to exactly 1 (boundary) or 2 (interior) D-cells.
+  every (D−1)-facet is incident to exactly 1 (boundary) or 2 (interior) D-simplices.
   (`topology::manifold::validate_facet_degree`)
 - **Codimension-2 boundary manifoldness**: if a boundary exists, it is closed
   ("no boundary of boundary"). (`topology::manifold::validate_closed_boundary`)
-- **Connectedness**: a single connected component in the cell neighbor graph.
-- **No isolated vertices**: every vertex is incident to at least one cell.
+- **Connectedness**: a single connected component in the simplex neighbor graph.
+- **No isolated vertices**: every vertex is incident to at least one simplex.
 - **Euler characteristic** for the full D-dimensional simplicial complex.
-  (`topology::characteristics::validation::validate_triangulation_euler_with_facet_to_cells_map`)
+  (`topology::characteristics::validation::validate_triangulation_euler_with_facet_to_simplices_map`)
 
 ### `TopologyGuarantee`-dependent checks
 
@@ -89,7 +89,7 @@ Level 3 uses Euler characteristic (χ) as a global combinatorial consistency che
 ### What is computed?
 
 `topology::characteristics::euler::count_simplices` computes the f-vector
-(f₀…f_D) for the **full** simplicial complex induced by all D-cells in the TDS.
+(f₀…f_D) for the **full** simplicial complex induced by all D-simplices in the TDS.
 The Euler characteristic is:
 
 ```text
@@ -104,7 +104,7 @@ classification, the full f-vector, and diagnostic notes.
 
 The expected χ is determined from a simple classification:
 
-- `Empty` (no cells): expected χ = 0
+- `Empty` (no simplices): expected χ = 0
 - `SingleSimplex(D)`: expected χ = 1
 - `Ball(D)` (has boundary): expected χ = 1
 - `ClosedSphere(D)` (no boundary): expected χ = 1 + (-1)^D
@@ -153,7 +153,7 @@ internal implementation flexibility:
   - `canonicalize_point_in_place`: normalize coordinates to fundamental domain
   - `lift_for_orientation`: apply periodic offsets for orientation predicates
   - `periodic_domain`: expose domain periods for periodic topologies
-  - `supports_periodic_facet_signatures`: indicate periodic cell support
+  - `supports_periodic_facet_signatures`: indicate periodic simplex support
 - Concrete implementations:
   - `EuclideanModel`: identity operations (no wrapping or lifting)
   - `ToroidalModel`: domain wrapping and lattice-offset lifting

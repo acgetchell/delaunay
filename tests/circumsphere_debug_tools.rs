@@ -429,7 +429,7 @@ fn test_circumsphere_containment() {
     println!("  determinant-based (insphere) vs distance-based (insphere_distance)");
     println!("=============================================");
 
-    // Define the 4D simplex vertices that form a unit 5-cell
+    // Define the 4D simplex vertices that form a unit 5-simplex
     // This creates a 4D simplex with vertices at the origin and unit vectors
     // along each coordinate axis. The circumcenter is at [0.5, 0.5, 0.5, 0.5] and
     // the circumradius is √4/2 = 1.0.

@@ -1,32 +1,32 @@
 //! Sparse secondary-map aliases for data associated with slotmap keys.
 //!
-//! These aliases provide type-safe auxiliary storage keyed by cells or vertices
+//! These aliases provide type-safe auxiliary storage keyed by simplices or vertices
 //! without requiring dense side arrays.
 
-use crate::core::tds::{CellKey, VertexKey};
+use crate::core::tds::{SimplexKey, VertexKey};
 use slotmap::SparseSecondaryMap;
 
 // =============================================================================
 // SLOTMAP SECONDARY MAPS FOR AUXILIARY DATA
 // =============================================================================
 
-/// Sparse secondary map for tracking auxiliary data associated with cells.
+/// Sparse secondary map for tracking auxiliary data associated with simplices.
 ///
 /// This is the idiomatic way to associate temporary data with `SlotMap` keys during algorithms.
-/// Only stores entries for cells that have associated data (sparse representation).
+/// Only stores entries for simplices that have associated data (sparse representation).
 ///
 /// # Performance Benefits
 ///
-/// - **Memory efficient**: Only allocates for cells with data (vs dense array)
-/// - **Type safe**: Can only use valid `CellKey` from the primary `SlotMap`
-/// - **Cache friendly**: Better locality than separate `HashMap<CellKey, V>`
+/// - **Memory efficient**: Only allocates for simplices with data (vs dense array)
+/// - **Type safe**: Can only use valid `SimplexKey` from the primary `SlotMap`
+/// - **Cache friendly**: Better locality than separate `HashMap<SimplexKey, V>`
 /// - **`SlotMap` integration**: Designed specifically for this use case
 ///
 /// # Use Cases
 ///
 /// - **Phase 3 algorithms**: Conflict region finding, cavity extraction
-/// - **Algorithm state**: Marking cells as "visited", "in conflict", "processed"
-/// - **Temporary data**: Associating algorithm-specific data with cells
+/// - **Algorithm state**: Marking simplices as "visited", "in conflict", "processed"
+/// - **Temporary data**: Associating algorithm-specific data with simplices
 ///
 /// # Examples
 ///
@@ -42,13 +42,13 @@ use slotmap::SparseSecondaryMap;
 /// let dt: DelaunayTriangulation<_, _, _, 3> = DelaunayTriangulation::new(&vertices).unwrap();
 /// let tds = dt.tds();
 ///
-/// use delaunay::prelude::collections::CellSecondaryMap;
-/// let mut in_conflict: CellSecondaryMap<bool> = CellSecondaryMap::new();
-/// for (cell_key, _) in tds.cells() {
-///     in_conflict.insert(cell_key, true);
+/// use delaunay::prelude::collections::SimplexSecondaryMap;
+/// let mut in_conflict: SimplexSecondaryMap<bool> = SimplexSecondaryMap::new();
+/// for (simplex_key, _) in tds.simplices() {
+///     in_conflict.insert(simplex_key, true);
 /// }
 /// ```
-pub type CellSecondaryMap<V> = SparseSecondaryMap<CellKey, V>;
+pub type SimplexSecondaryMap<V> = SparseSecondaryMap<SimplexKey, V>;
 
 /// Sparse secondary map for tracking auxiliary data associated with vertices.
 ///
@@ -96,7 +96,7 @@ mod tests {
 
     #[test]
     fn test_secondary_maps_compile_and_instantiate() {
-        let _cell_aux: CellSecondaryMap<bool> = CellSecondaryMap::new();
+        let _simplex_aux: SimplexSecondaryMap<bool> = SimplexSecondaryMap::new();
         let _vertex_aux: VertexSecondaryMap<usize> = VertexSecondaryMap::new();
     }
 }

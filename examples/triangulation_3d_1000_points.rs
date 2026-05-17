@@ -5,7 +5,7 @@
 //!
 //! - Using the `generate_random_triangulation` utility function for convenience
 //! - Building a Delaunay triangulation using the Bowyer-Watson algorithm
-//! - Analyzing triangulation properties (vertices, cells, dimension)
+//! - Analyzing triangulation properties (vertices, simplices, dimension)
 //! - Validating the triangulation's geometric properties
 //! - Computing and displaying boundary information
 //! - Performance timing for triangulation construction
@@ -156,7 +156,7 @@ where
     println!("Triangulation Analysis:");
     println!("======================");
     println!("  Number of vertices: {}", dt.number_of_vertices());
-    println!("  Number of cells:    {}", dt.number_of_cells());
+    println!("  Number of simplices:    {}", dt.number_of_simplices());
     println!("  Dimension:          {}", dt.dim());
 
     // Demonstrate the public topology traversal API using an opt-in adjacency index.
@@ -172,50 +172,50 @@ where
         println!("  Degree of first vertex: {degree}");
     }
 
-    // Calculate vertex-to-cell ratio
+    // Calculate vertex-to-simplex ratio
     let vertex_count = dt.number_of_vertices();
-    let cell_count = dt.number_of_cells();
-    if cell_count > 0 {
+    let simplex_count = dt.number_of_simplices();
+    if simplex_count > 0 {
         let vertex_f64 = cast(vertex_count).unwrap_or(0.0f64);
-        let cell_f64 = cast(cell_count).unwrap_or(1.0f64);
-        let ratio = vertex_f64 / cell_f64;
-        println!("  Vertex/Cell ratio:  {ratio:.2}");
+        let simplex_f64 = cast(simplex_count).unwrap_or(1.0f64);
+        let ratio = vertex_f64 / simplex_f64;
+        println!("  Vertex/Simplex ratio:  {ratio:.2}");
     }
 
-    // Analyze cell properties
-    if cell_count > 0 {
-        println!("\n  Cell Analysis:");
-        let mut valid_cells = 0;
+    // Analyze simplex properties
+    if simplex_count > 0 {
+        println!("\n  Simplex Analysis:");
+        let mut valid_simplices = 0;
         let mut total_neighbors = 0;
         let mut shown = 0;
 
-        for (cell_key, cell) in dt.cells() {
-            // Count valid cells
-            if cell.is_valid().is_ok() {
-                valid_cells += 1;
+        for (simplex_key, simplex) in dt.simplices() {
+            // Count valid simplices
+            if simplex.is_valid().is_ok() {
+                valid_simplices += 1;
             }
 
             // Count neighbors
-            if let Some(neighbors) = cell.neighbors() {
+            if let Some(neighbors) = simplex.neighbors() {
                 total_neighbors += neighbors.len();
             }
 
-            // Show details for first few valid cells
+            // Show details for first few valid simplices
             if shown < 3 {
-                println!("    Cell {cell_key:?}:");
-                println!("      Vertices: {}", cell.vertices().len());
-                if let Some(neighbors) = cell.neighbors() {
+                println!("    Simplex {simplex_key:?}:");
+                println!("      Vertices: {}", simplex.vertices().len());
+                if let Some(neighbors) = simplex.neighbors() {
                     println!("      Neighbors: {}", neighbors.len());
                 }
                 shown += 1;
             }
         }
 
-        println!("    Valid cells:     {valid_cells}/{cell_count}");
-        if cell_count > 0 {
+        println!("    Valid simplices:     {valid_simplices}/{simplex_count}");
+        if simplex_count > 0 {
             let total_f64 = cast(total_neighbors).unwrap_or(0.0f64);
-            let cell_f64 = cast(cell_count).unwrap_or(1.0f64);
-            let avg_neighbors = total_f64 / cell_f64;
+            let simplex_f64 = cast(simplex_count).unwrap_or(1.0f64);
+            let avg_neighbors = total_f64 / simplex_f64;
             println!("    Avg neighbors:   {avg_neighbors:.2}");
         }
     }
@@ -245,9 +245,9 @@ where
             println!("✓ Levels 1–3: VALID (elements + structure + topology)");
             println!("  Completed in {level_1_3_time:?}");
             println!("\n  Details:");
-            println!("    • All vertices and cells are individually valid");
+            println!("    • All vertices and simplices are individually valid");
             println!("    • UUID↔key mappings are consistent");
-            println!("    • No duplicate cells detected");
+            println!("    • No duplicate simplices detected");
             println!("    • Neighbor relationships and facet sharing are consistent");
             println!("    • Manifold topology + Euler characteristic checks pass");
 
@@ -340,7 +340,7 @@ where
     if boundary_count > 0 {
         println!("\n  Boundary Details:");
         println!("    • Boundary facets form the convex hull");
-        println!("    • Each boundary facet belongs to exactly one cell");
+        println!("    • Each boundary facet belongs to exactly one simplex");
 
         // Analyze a few boundary facets
         let sample_size = std::cmp::min(3, boundary_count);
@@ -358,10 +358,10 @@ where
 
     // Euler characteristic check (for 3D: V - E + F - C = 1 for convex hull)
     let vertices = dt.number_of_vertices();
-    let cells = dt.number_of_cells();
+    let simplices = dt.number_of_simplices();
     println!("\n  Topological Properties:");
     println!("    • Vertices (V): {vertices}");
-    println!("    • Cells (C):    {cells}");
+    println!("    • Simplices (C):    {simplices}");
     println!("    • Boundary facets: {boundary_count}");
 
     println!();
@@ -379,7 +379,7 @@ where
     println!("====================");
 
     let vertex_count = dt.number_of_vertices();
-    let cell_count = dt.number_of_cells();
+    let simplex_count = dt.number_of_simplices();
 
     // Benchmark full validation performance (Levels 1–4)
     let validation_times: Vec<_> = (0..5)
@@ -431,12 +431,15 @@ where
 
     // Memory usage estimation
     let vertex_size = std::mem::size_of::<Vertex<f64, (), 3>>();
-    let cell_size = std::mem::size_of::<Cell<f64, (), (), 3>>();
-    let estimated_memory = (vertex_count * vertex_size) + (cell_count * cell_size);
+    let simplex_size = std::mem::size_of::<Simplex<f64, (), (), 3>>();
+    let estimated_memory = (vertex_count * vertex_size) + (simplex_count * simplex_size);
 
     println!("\n  Memory Usage Estimation (stack only, excludes heap allocations):");
     println!("    • Vertex memory: ~{} bytes", vertex_count * vertex_size);
-    println!("    • Cell memory:   ~{} bytes", cell_count * cell_size);
+    println!(
+        "    • Simplex memory:   ~{} bytes",
+        simplex_count * simplex_size
+    );
     let estimated_f64 = cast(estimated_memory).unwrap_or(0.0f64);
     println!(
         "    • Total memory:  ~{estimated_memory} bytes ({:.1} KB)",
@@ -444,16 +447,16 @@ where
     );
     println!("    Note: This excludes heap-owned data like neighbors and internal collections");
 
-    // Performance per vertex/cell ratios
-    if vertex_count > 0 && cell_count > 0 {
+    // Performance per vertex/simplex ratios
+    if vertex_count > 0 && simplex_count > 0 {
         let nanos_f64 = cast(avg_validation_time.as_nanos()).unwrap_or(0.0f64);
         let vertex_f64 = cast(vertex_count).unwrap_or(1.0f64);
-        let cell_f64 = cast(cell_count).unwrap_or(1.0f64);
+        let simplex_f64 = cast(simplex_count).unwrap_or(1.0f64);
         let validation_per_vertex = nanos_f64 / vertex_f64;
-        let validation_per_cell = nanos_f64 / cell_f64;
+        let validation_per_simplex = nanos_f64 / simplex_f64;
 
         println!("\n  Performance Ratios:");
         println!("    • Validation per vertex: {validation_per_vertex:.2} ns");
-        println!("    • Validation per cell:   {validation_per_cell:.2} ns");
+        println!("    • Validation per simplex:   {validation_per_simplex:.2} ns");
     }
 }

@@ -6,7 +6,7 @@
 #![forbid(unsafe_code)]
 
 use super::{
-    collections::FacetToCellsMap,
+    collections::FacetToSimplicesMap,
     facet::{BoundaryFacetsIter, FacetView},
     tds::{Tds, TdsError},
     traits::boundary_analysis::BoundaryAnalysis,
@@ -19,15 +19,15 @@ use super::{
 impl<T, U, V, const D: usize> BoundaryAnalysis<T, U, V, D> for Tds<T, U, V, D> {
     /// Identifies all boundary facets in the triangulation.
     ///
-    /// A boundary facet is a facet that belongs to only one cell, meaning it lies on the
+    /// A boundary facet is a facet that belongs to only one simplex, meaning it lies on the
     /// boundary of the triangulation (convex hull). These facets are important for
     /// convex hull computation and boundary analysis.
     ///
     /// # Triangulation Invariant
     ///
     /// This method relies on the fundamental invariant of Delaunay triangulations:
-    /// **every facet is shared by exactly two cells, except boundary facets which belong to exactly one cell.**
-    /// Any facet shared by 0, 3, or more cells indicates a topological error in the triangulation.
+    /// **every facet is shared by exactly two simplices, except boundary facets which belong to exactly one simplex.**
+    /// Any facet shared by 0, 3, or more simplices indicates a topological error in the triangulation.
     ///
     /// For a comprehensive discussion of all topological invariants in Delaunay triangulations,
     /// see the [Topological Invariants](crate::tds::Tds#topological-invariants)
@@ -42,9 +42,9 @@ impl<T, U, V, const D: usize> BoundaryAnalysis<T, U, V, D> for Tds<T, U, V, D> {
     ///
     /// Returns a [`TdsError`] (typically
     /// [`crate::core::facet::FacetError`]) if:
-    /// - Any boundary facet cannot be created from the cells
+    /// - Any boundary facet cannot be created from the simplices
     /// - A facet index is out of bounds (indicates data corruption)
-    /// - A referenced cell is not found in the triangulation (indicates data corruption)
+    /// - A referenced simplex is not found in the triangulation (indicates data corruption)
     ///
     /// # Examples
     ///
@@ -69,20 +69,20 @@ impl<T, U, V, const D: usize> BoundaryAnalysis<T, U, V, D> for Tds<T, U, V, D> {
     /// # Ok::<(), delaunay::tds::TdsError>(())
     /// ```
     fn boundary_facets(&self) -> Result<BoundaryFacetsIter<'_, T, U, V, D>, TdsError> {
-        // Build a map from facet keys to the cells that contain them
-        let facet_to_cells = self.build_facet_to_cells_map()?;
+        // Build a map from facet keys to the simplices that contain them
+        let facet_to_simplices = self.build_facet_to_simplices_map()?;
 
         // Create the boundary facets iterator
-        Ok(BoundaryFacetsIter::new(self, facet_to_cells))
+        Ok(BoundaryFacetsIter::new(self, facet_to_simplices))
     }
 
     /// Checks if a specific facet is a boundary facet.
     ///
-    /// A boundary facet is a facet that belongs to only one cell in the triangulation.
+    /// A boundary facet is a facet that belongs to only one simplex in the triangulation.
     ///
     /// # Performance Note
     ///
-    /// This method rebuilds the facet-to-cells map on every call, which has O(N·F) complexity.
+    /// This method rebuilds the facet-to-simplices map on every call, which has O(N·F) complexity.
     /// For checking multiple facets in hot paths, prefer using `is_boundary_facet_with_map()`
     /// with a precomputed map to avoid recomputation.
     ///
@@ -92,7 +92,7 @@ impl<T, U, V, const D: usize> BoundaryAnalysis<T, U, V, D> for Tds<T, U, V, D> {
     ///
     /// # Returns
     ///
-    /// `Ok(true)` if the facet is on the boundary (belongs to only one cell),
+    /// `Ok(true)` if the facet is on the boundary (belongs to only one simplex),
     /// `Ok(false)` otherwise. `Err(...)` on validation/lookup failures.
     ///
     /// # Examples
@@ -115,23 +115,23 @@ impl<T, U, V, const D: usize> BoundaryAnalysis<T, U, V, D> for Tds<T, U, V, D> {
     /// ```
     #[inline]
     fn is_boundary_facet(&self, facet: &FacetView<'_, T, U, V, D>) -> Result<bool, TdsError> {
-        let facet_to_cells = self.build_facet_to_cells_map()?;
-        self.is_boundary_facet_with_map(facet, &facet_to_cells)
+        let facet_to_simplices = self.build_facet_to_simplices_map()?;
+        self.is_boundary_facet_with_map(facet, &facet_to_simplices)
     }
 
     /// Checks if a specific facet is a boundary facet using a precomputed facet map.
     ///
     /// This is an optimized version of `is_boundary_facet` that accepts a prebuilt
-    /// facet-to-cells map to avoid recomputation in tight loops.
+    /// facet-to-simplices map to avoid recomputation in tight loops.
     ///
     /// # Arguments
     ///
     /// * `facet` - The facet to check.
-    /// * `facet_to_cells` - Precomputed map from facet keys to cells containing them.
+    /// * `facet_to_simplices` - Precomputed map from facet keys to simplices containing them.
     ///
     /// # Returns
     ///
-    /// `Ok(true)` if the facet is on the boundary (belongs to only one cell),
+    /// `Ok(true)` if the facet is on the boundary (belongs to only one simplex),
     /// `Ok(false)` otherwise. `Err(...)` on validation/lookup failures.
     ///
     /// # Examples
@@ -148,12 +148,12 @@ impl<T, U, V, const D: usize> BoundaryAnalysis<T, U, V, D> for Tds<T, U, V, D> {
     /// let dt = DelaunayTriangulation::new(&vertices).unwrap();
     ///
     /// // Build the facet map once for multiple queries
-    /// let facet_to_cells = dt.tds().build_facet_to_cells_map()
+    /// let facet_to_simplices = dt.tds().build_facet_to_simplices_map()
     ///     .expect("Should build facet map");
     ///
     /// // Check boundary facets efficiently using the iterator API
     /// for facet in dt.boundary_facets() {
-    ///     let is_boundary = dt.tds().is_boundary_facet_with_map(&facet, &facet_to_cells)
+    ///     let is_boundary = dt.tds().is_boundary_facet_with_map(&facet, &facet_to_simplices)
     ///         .expect("Should check if facet is boundary");
     ///     println!("Facet is boundary: {is_boundary}");
     /// }
@@ -162,21 +162,21 @@ impl<T, U, V, const D: usize> BoundaryAnalysis<T, U, V, D> for Tds<T, U, V, D> {
     fn is_boundary_facet_with_map(
         &self,
         facet: &FacetView<'_, T, U, V, D>,
-        facet_to_cells: &FacetToCellsMap,
+        facet_to_simplices: &FacetToSimplicesMap,
     ) -> Result<bool, TdsError> {
         // Use FacetView's key() method which is more efficient
         let facet_key = facet.key().map_err(TdsError::FacetError)?;
 
-        Ok(facet_to_cells
+        Ok(facet_to_simplices
             .get(&facet_key)
-            .is_some_and(|cells| cells.len() == 1))
+            .is_some_and(|simplices| simplices.len() == 1))
     }
 
     /// Returns the number of boundary facets in the triangulation.
     ///
     /// This method efficiently counts boundary facets directly from the facet map
     /// without allocating or cloning `Facet` objects, making it O(|facets|) with
-    /// no per-cell `facets()` calls.
+    /// no per-simplex `facets()` calls.
     ///
     /// # Returns
     ///
@@ -185,7 +185,7 @@ impl<T, U, V, const D: usize> BoundaryAnalysis<T, U, V, D> for Tds<T, U, V, D> {
     ///
     /// # Errors
     ///
-    /// Returns a [`TdsError`] if the facet-to-cells map cannot be built.
+    /// Returns a [`TdsError`] if the facet-to-simplices map cannot be built.
     ///
     /// # Examples
     ///
@@ -205,7 +205,7 @@ impl<T, U, V, const D: usize> BoundaryAnalysis<T, U, V, D> for Tds<T, U, V, D> {
     /// # Ok::<(), delaunay::tds::TdsError>(())
     /// ```
     fn number_of_boundary_facets(&self) -> Result<usize, TdsError> {
-        self.build_facet_to_cells_map()
+        self.build_facet_to_simplices_map()
             .map(|m| m.values().filter(|v| v.len() == 1).count())
     }
 }
@@ -248,7 +248,11 @@ mod tests {
             let vertices = Vertex::from_points(&points);
             let dt = DelaunayTriangulation::new(&vertices).unwrap();
 
-            assert_eq!(dt.number_of_cells(), 1, "2D triangle should have 1 cell");
+            assert_eq!(
+                dt.number_of_simplices(),
+                1,
+                "2D triangle should have 1 simplex"
+            );
             assert_eq!(dt.dim(), 2, "Should be 2-dimensional");
 
             let boundary_count = dt.boundary_facets().count();
@@ -258,13 +262,13 @@ mod tests {
             );
 
             // Verify all facets are boundary facets using cached map
-            let facet_to_cells = dt
+            let facet_to_simplices = dt
                 .tds()
-                .build_facet_to_cells_map()
+                .build_facet_to_simplices_map()
                 .expect("Should build facet map");
             assert!(dt.boundary_facets().all(|f| {
                 dt.tds()
-                    .is_boundary_facet_with_map(&f, &facet_to_cells)
+                    .is_boundary_facet_with_map(&f, &facet_to_simplices)
                     .expect("Should not fail for valid facets")
             }));
         }
@@ -280,7 +284,11 @@ mod tests {
             let vertices = Vertex::from_points(&points);
             let dt = DelaunayTriangulation::new(&vertices).unwrap();
 
-            assert_eq!(dt.number_of_cells(), 1, "3D tetrahedron should have 1 cell");
+            assert_eq!(
+                dt.number_of_simplices(),
+                1,
+                "3D tetrahedron should have 1 simplex"
+            );
             assert_eq!(dt.dim(), 3, "Should be 3-dimensional");
 
             let boundary_count = dt.boundary_facets().count();
@@ -290,13 +298,13 @@ mod tests {
             );
 
             // Verify all facets are boundary facets
-            let facet_to_cells = dt
+            let facet_to_simplices = dt
                 .tds()
-                .build_facet_to_cells_map()
+                .build_facet_to_simplices_map()
                 .expect("Should build facet map");
             assert!(dt.boundary_facets().all(|f| {
                 dt.tds()
-                    .is_boundary_facet_with_map(&f, &facet_to_cells)
+                    .is_boundary_facet_with_map(&f, &facet_to_simplices)
                     .expect("Should not fail for valid facets")
             }));
         }
@@ -313,7 +321,11 @@ mod tests {
             let vertices = Vertex::from_points(&points);
             let dt = DelaunayTriangulation::new(&vertices).unwrap();
 
-            assert_eq!(dt.number_of_cells(), 1, "4D simplex should have 1 cell");
+            assert_eq!(
+                dt.number_of_simplices(),
+                1,
+                "4D simplex should have 1 simplex"
+            );
             assert_eq!(dt.dim(), 4, "Should be 4-dimensional");
 
             let boundary_count = dt.boundary_facets().count();
@@ -323,15 +335,15 @@ mod tests {
             );
 
             // Verify all facets are boundary facets
-            let facet_to_cells = dt
+            let facet_to_simplices = dt
                 .tds()
-                .build_facet_to_cells_map()
+                .build_facet_to_simplices_map()
                 .expect("Should build facet map");
             let confirmed_boundary = dt
                 .boundary_facets()
                 .filter(|f| {
                     dt.tds()
-                        .is_boundary_facet_with_map(f, &facet_to_cells)
+                        .is_boundary_facet_with_map(f, &facet_to_simplices)
                         .expect("Should not fail for valid facets")
                 })
                 .count();
@@ -345,9 +357,9 @@ mod tests {
         {
             let dt: DelaunayTriangulation<_, (), (), 3> = DelaunayTriangulation::empty();
             assert_eq!(
-                dt.number_of_cells(),
+                dt.number_of_simplices(),
                 0,
-                "Empty triangulation should have no cells"
+                "Empty triangulation should have no simplices"
             );
 
             let boundary_count = dt.boundary_facets().count();
@@ -407,10 +419,10 @@ mod tests {
             let vertices = Vertex::from_points(&points);
             let dt = DelaunayTriangulation::new(&vertices).unwrap();
 
-            // After robust cleanup and facet-sharing filtering, we may end up with a single cell
+            // After robust cleanup and facet-sharing filtering, we may end up with a single simplex
             assert!(
-                dt.number_of_cells() >= 1,
-                "Should have at least one cell for this test"
+                dt.number_of_simplices() >= 1,
+                "Should have at least one simplex for this test"
             );
 
             // Exercise capacity allocation, cache initialization, and vector push operations
@@ -460,19 +472,19 @@ mod tests {
         let vertices = Vertex::from_points(&points);
         let mut dt = DelaunayTriangulation::new(&vertices).unwrap();
 
-        // Repair degeneracies by removing structurally invalid cells until stable.
+        // Repair degeneracies by removing structurally invalid simplices until stable.
         loop {
-            let removed = dt.tds_mut().repair_degenerate_cells();
+            let removed = dt.tds_mut().repair_degenerate_simplices();
             if removed == 0 {
                 break;
             }
         }
 
-        if dt.number_of_cells() > 0 {
+        if dt.number_of_simplices() > 0 {
             println!(
-                "Performance test triangulation: {} vertices, {} cells",
+                "Performance test triangulation: {} vertices, {} simplices",
                 dt.number_of_vertices(),
-                dt.number_of_cells()
+                dt.number_of_simplices()
             );
 
             // Time boundary_facets() method
@@ -533,7 +545,7 @@ mod tests {
 
         println!("\nBenchmarking boundary_facets() performance with DelaunayTriangulation:");
         println!(
-            "Note: This demonstrates the O(N·F) complexity where N = cells, F = facets per cell"
+            "Note: This demonstrates the O(N·F) complexity where N = simplices, F = facets per simplex"
         );
 
         for &n_points in &point_counts {
@@ -582,17 +594,17 @@ mod tests {
 
             let boundary_count = dt.boundary_facets().count();
             println!(
-                "Points: {:3} | Cells: {:4} | Boundary Facets: {:4} | Avg Time: {:?}",
+                "Points: {:3} | Simplices: {:4} | Boundary Facets: {:4} | Avg Time: {:?}",
                 n_points,
-                dt.number_of_cells(),
+                dt.number_of_simplices(),
                 boundary_count,
                 avg_time
             );
         }
 
         println!("\nOptimization achieved:");
-        println!("- Single pass over all cells and facets: O(N·F)");
-        println!("- HashMap-based facet-to-cells mapping");
+        println!("- Single pass over all simplices and facets: O(N·F)");
+        println!("- HashMap-based facet-to-simplices mapping");
         println!("- Direct facet cloning instead of repeated computation");
     }
 
@@ -605,7 +617,7 @@ mod tests {
         println!("Testing boundary_facets with invalid facet index error path");
 
         // Note: This error path (InvalidFacetIndex) is difficult to trigger in practice
-        // because the facet-to-cells mapping is built from valid facets.
+        // because the facet-to-simplices mapping is built from valid facets.
         // We test this by confirming the error structure exists and can be created.
 
         // Test that the error can be created and has correct structure
@@ -630,25 +642,25 @@ mod tests {
     }
 
     #[test]
-    fn test_boundary_facets_cell_not_found_error() {
-        println!("Testing boundary_facets with cell not found error path");
+    fn test_boundary_facets_simplex_not_found_error() {
+        println!("Testing boundary_facets with simplex not found error path");
 
-        // Note: This error path (CellNotFoundInTriangulation) is also difficult to trigger
-        // in practice because the mapping is built from existing cells.
+        // Note: This error path (SimplexNotFoundInTriangulation) is also difficult to trigger
+        // in practice because the mapping is built from existing simplices.
         // We test the error structure.
 
         // Test that the error can be created
-        let error = TdsError::FacetError(FacetError::CellNotFoundInTriangulation);
+        let error = TdsError::FacetError(FacetError::SimplexNotFoundInTriangulation);
 
         // Verify error display is meaningful
         let error_string = format!("{error}");
         assert!(
-            error_string.contains("Cell") || error_string.contains("cell"),
-            "Error should mention cell: {error_string}"
+            error_string.contains("Simplex") || error_string.contains("simplex"),
+            "Error should mention simplex: {error_string}"
         );
 
         println!("  Error structure: {error}");
-        println!("  ✓ CellNotFoundInTriangulation error path structure verified");
+        println!("  ✓ SimplexNotFoundInTriangulation error path structure verified");
     }
 
     #[test]
@@ -666,9 +678,9 @@ mod tests {
         let dt = DelaunayTriangulation::new(&vertices).unwrap();
 
         // Build facet map
-        let facet_to_cells = dt
+        let facet_to_simplices = dt
             .tds()
-            .build_facet_to_cells_map()
+            .build_facet_to_simplices_map()
             .expect("Should build map");
 
         // Get all boundary facets and verify they are correctly identified
@@ -677,7 +689,7 @@ mod tests {
         for boundary_facet in dt.boundary_facets() {
             let is_boundary = dt
                 .tds()
-                .is_boundary_facet_with_map(&boundary_facet, &facet_to_cells)
+                .is_boundary_facet_with_map(&boundary_facet, &facet_to_simplices)
                 .expect("Should successfully check boundary status");
 
             assert!(
@@ -706,9 +718,9 @@ mod tests {
 
     #[test]
     fn test_boundary_facets_error_propagation_from_build_map() {
-        println!("Testing error propagation from build_facet_to_cells_map");
+        println!("Testing error propagation from build_facet_to_simplices_map");
 
-        // Test that boundary_facets properly propagates errors from build_facet_to_cells_map
+        // Test that boundary_facets properly propagates errors from build_facet_to_simplices_map
         // This exercises the error propagation path in boundary_facets()
 
         // Create a minimal valid triangulation
@@ -721,21 +733,21 @@ mod tests {
         let vertices = Vertex::from_points(&points);
         let dt = DelaunayTriangulation::new(&vertices).unwrap();
 
-        // Test that build_facet_to_cells_map succeeds on valid triangulation
-        let map_result = dt.tds().build_facet_to_cells_map();
+        // Test that build_facet_to_simplices_map succeeds on valid triangulation
+        let map_result = dt.tds().build_facet_to_simplices_map();
         assert!(
             map_result.is_ok(),
-            "build_facet_to_cells_map should succeed on valid TDS"
+            "build_facet_to_simplices_map should succeed on valid TDS"
         );
 
-        // Test that boundary_facets succeeds when build_facet_to_cells_map succeeds
+        // Test that boundary_facets succeeds when build_facet_to_simplices_map succeeds
         let boundary_count = dt.boundary_facets().count();
         assert_eq!(
             boundary_count, 4,
             "Single tetrahedron should have 4 boundary facets"
         );
 
-        println!("  ✓ Error propagation path from build_facet_to_cells_map verified");
+        println!("  ✓ Error propagation path from build_facet_to_simplices_map verified");
     }
 
     #[test]

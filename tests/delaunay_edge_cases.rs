@@ -91,7 +91,7 @@ macro_rules! test_regression_config {
 
                 // Verify basic properties
                 assert_eq!(dt.number_of_vertices(), vertices.len());
-                assert!(dt.number_of_cells() > 0);
+                assert!(dt.number_of_simplices() > 0);
             }
         }
     };
@@ -116,7 +116,7 @@ macro_rules! test_regression_config {
 
                 // Verify basic properties
                 assert_eq!(dt.number_of_vertices(), vertices.len());
-                assert!(dt.number_of_cells() > 0);
+                assert!(dt.number_of_simplices() > 0);
             }
         }
     };
@@ -264,9 +264,9 @@ fn debug_issue_120_empty_circumsphere_5d() {
             test_debug_warn!("[Issue #120 debug] no valid triangulation found in 20 shuffles");
         }
     }
-    for (cell_key, cell) in dt.cells() {
-        test_debug_info!("[Issue #120 debug] cell {cell_key:?}:");
-        for &vkey in cell.vertices() {
+    for (simplex_key, simplex) in dt.simplices() {
+        test_debug_info!("[Issue #120 debug] simplex {simplex_key:?}:");
+        for &vkey in simplex.vertices() {
             let vertex = dt.tds().vertex(vkey).expect("vertex key should exist");
             test_debug_info!(
                 "  vkey={vkey:?}, uuid={}, point={:?}",
@@ -393,7 +393,7 @@ fn test_regression_proptest_insertion_order_4d_euler_mismatch() {
         "Should have at least 5 vertices for a 4D triangulation"
     );
     assert!(dt.number_of_vertices() <= vertices.len());
-    assert!(dt.number_of_cells() > 0);
+    assert!(dt.number_of_simplices() > 0);
 
     let validation = dt.as_triangulation().validate();
     assert!(
@@ -468,7 +468,7 @@ test_regression_config!(
 ///
 /// This test reproduces a specific failure discovered in the CI benchmark suite
 /// where incremental insertion created temporary non-manifold topology (facet
-/// shared by 4 cells). The fix made `wire_cavity_neighbors` tolerant of this
+/// shared by 4 simplices). The fix made `wire_cavity_neighbors` tolerant of this
 /// condition, allowing the localized repair mechanism to handle it.
 ///
 /// ## Historical Context
@@ -476,7 +476,7 @@ test_regression_config!(
 /// - **When**: Discovered in CI run 19874972833 (2025-12-02)
 /// - **Where**: `benches/ci_performance_suite.rs:85` (3D, 50 points, seed 123)
 /// - **Error**: "Non-manifold topology detected: facet 11030659497163937569
-///   shared by 4 cells (expected ≤2)"
+///   shared by 4 simplices (expected ≤2)"
 /// - **Fix**: Modified `wire_cavity_neighbors` to skip wiring over-shared facets
 ///   and rely on `repair_local_facet_issues` to fix them post-insertion
 ///
@@ -525,7 +525,7 @@ fn test_regression_non_manifold_3d_seed123_50pts() {
         num_vertices >= min_vertices,
         "Should have ≥{min_vertices} vertices (extremely degenerate cases can skip 80%+), got {num_vertices}"
     );
-    assert!(dt.number_of_cells() > 0);
+    assert!(dt.number_of_simplices() > 0);
 
     // Most importantly: validate topology with strict PL-manifold checks (Levels 1–3)
     let validation = dt.as_triangulation().validate();
@@ -611,7 +611,7 @@ fn test_exact_minimum_vertices_2d() {
         .unwrap();
 
     assert_eq!(dt.number_of_vertices(), 3);
-    assert_eq!(dt.number_of_cells(), 1);
+    assert_eq!(dt.number_of_simplices(), 1);
 }
 
 #[test]
@@ -632,7 +632,7 @@ fn test_exact_minimum_vertices_3d() {
         .unwrap();
 
     assert_eq!(dt.number_of_vertices(), 4);
-    assert_eq!(dt.number_of_cells(), 1);
+    assert_eq!(dt.number_of_simplices(), 1);
 }
 
 #[test]
@@ -654,7 +654,7 @@ fn test_exact_minimum_vertices_4d() {
         .unwrap();
 
     assert_eq!(dt.number_of_vertices(), 5);
-    assert_eq!(dt.number_of_cells(), 1);
+    assert_eq!(dt.number_of_simplices(), 1);
 }
 
 // =========================================================================
@@ -680,7 +680,7 @@ fn test_multiple_interior_points_2d() {
         .unwrap();
 
     assert_eq!(dt.number_of_vertices(), 6);
-    assert!(dt.number_of_cells() >= 4);
+    assert!(dt.number_of_simplices() >= 4);
 }
 
 #[test]
@@ -703,7 +703,7 @@ fn test_multiple_interior_points_3d() {
         .unwrap();
 
     assert_eq!(dt.number_of_vertices(), 7);
-    assert!(dt.number_of_cells() >= 4);
+    assert!(dt.number_of_simplices() >= 4);
 }
 
 // =========================================================================
@@ -730,7 +730,7 @@ fn test_square_with_center_2d() {
         .unwrap();
 
     assert_eq!(dt.number_of_vertices(), 5);
-    assert!(dt.number_of_cells() >= 4);
+    assert!(dt.number_of_simplices() >= 4);
 }
 
 #[test]
@@ -756,7 +756,7 @@ fn test_cube_vertices_3d() {
         .unwrap();
 
     assert_eq!(dt.number_of_vertices(), 8);
-    assert!(dt.number_of_cells() >= 5); // At least 5 tetrahedra
+    assert!(dt.number_of_simplices() >= 5); // At least 5 tetrahedra
 }
 
 // =========================================================================
@@ -780,7 +780,7 @@ fn test_large_coordinates_2d() {
         .unwrap();
 
     assert_eq!(dt.number_of_vertices(), 4);
-    assert!(dt.number_of_cells() > 0);
+    assert!(dt.number_of_simplices() > 0);
 }
 
 #[test]
@@ -801,7 +801,7 @@ fn test_small_coordinates_3d() {
         .unwrap();
 
     assert_eq!(dt.number_of_vertices(), 5);
-    assert!(dt.number_of_cells() > 0);
+    assert!(dt.number_of_simplices() > 0);
 }
 
 #[test]
@@ -821,7 +821,7 @@ fn test_negative_coordinates_2d() {
         .unwrap();
 
     assert_eq!(dt.number_of_vertices(), 4);
-    assert!(dt.number_of_cells() > 0);
+    assert!(dt.number_of_simplices() > 0);
 }
 
 // =========================================================================
@@ -847,7 +847,7 @@ fn test_robust_kernel_with_edge_case() {
         .unwrap();
 
     assert_eq!(dt.number_of_vertices(), 4);
-    assert!(dt.number_of_cells() > 0);
+    assert!(dt.number_of_simplices() > 0);
 }
 
 // =========================================================================
@@ -918,7 +918,7 @@ fn regression_issue_228_exact_predicate_paths_3d_fast() {
         "Delaunay property must hold (#228 fast regression, seed=0x{seed:X})"
     );
     assert!(dt.number_of_vertices() > 0);
-    assert!(dt.number_of_cells() > 0);
+    assert!(dt.number_of_simplices() > 0);
 }
 
 // =========================================================================
@@ -945,5 +945,5 @@ fn test_5d_simplex_plus_interior() {
         .unwrap();
 
     assert_eq!(dt.number_of_vertices(), 7);
-    assert!(dt.number_of_cells() > 1);
+    assert!(dt.number_of_simplices() > 1);
 }

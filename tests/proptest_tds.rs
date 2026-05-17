@@ -2,26 +2,26 @@
 //!
 //! This module tests the pure combinatorial/topological structure of the Tds layer.
 //! These tests do NOT use geometric predicates - they operate entirely on topology:
-//! vertex keys, cell keys, neighbor relationships, and mappings.
+//! vertex keys, simplex keys, neighbor relationships, and mappings.
 //!
 //! Following CGAL's architecture, the Tds is purely combinatorial and geometry-independent.
 //!
 //! ## Invariants Tested
 //!
 //! - **Vertex mappings** - UUID↔key consistency for all vertices
-//! - **Cell mappings** - UUID↔key consistency for all cells
-//! - **No duplicate cells** - No two cells share the same vertex set
-//! - **Cell validity** - Each cell has correct vertex count and passes internal consistency checks
-//! - **Cell vertex count** - Maximal cells have exactly D+1 vertices (fundamental Tds constraint)
-//! - **Facet sharing** - Each facet is shared by at most 2 cells
+//! - **Simplex mappings** - UUID↔key consistency for all simplices
+//! - **No duplicate simplices** - No two simplices share the same vertex set
+//! - **Simplex validity** - Each simplex has correct vertex count and passes internal consistency checks
+//! - **Simplex vertex count** - Maximal simplices have exactly D+1 vertices (fundamental Tds constraint)
+//! - **Facet sharing** - Each facet is shared by at most 2 simplices
 //! - **Neighbor consistency** - Neighbor relationships are mutual and reference shared facets
-//! - **Vertex-cell incidence** - All cell vertices exist in the TDS
+//! - **Vertex-simplex incidence** - All simplex vertices exist in the TDS
 //! - **Vertex count consistency** - Vertex key count matches reported vertex count
 //! - **Dimension consistency** - Reported dimension matches actual structure
 //!
 //! All tests use `dt.tds().is_valid()` (Level 2 structural validation).
 
-use delaunay::prelude::collections::{CellVertexBuffer, SimplexVertexBuffer};
+use delaunay::prelude::collections::{SimplexVertexBuffer, SimplexVertexKeyBuffer};
 use delaunay::prelude::query::*;
 use delaunay::prelude::tds::{Tds, jaccard_index};
 use proptest::prelude::*;
@@ -37,10 +37,10 @@ fn tds_empty_does_not_require_coordinate_scalar() {
     let tds: Tds<NotAScalar, (), (), 3> = Tds::empty();
 
     assert_eq!(tds.number_of_vertices(), 0);
-    assert_eq!(tds.number_of_cells(), 0);
+    assert_eq!(tds.number_of_simplices(), 0);
     assert_eq!(tds.dim(), -1);
     assert!(tds.vertex_keys().next().is_none());
-    assert!(tds.cell_keys().next().is_none());
+    assert!(tds.simplex_keys().next().is_none());
     assert!(tds.is_valid().is_ok());
 }
 
@@ -125,26 +125,26 @@ macro_rules! gen_neighbor_symmetry {
                 fn [<prop_neighbor_symmetry_ $dim d>](vertices in [<small_vertex_set_ $dim d>]()) {
                     if let Ok(dt) = DelaunayTriangulation::<_, (), (), $dim>::new(&vertices) {
                         let tds = dt.tds();
-                        for (cell_key, cell) in dt.cells() {
-                            if let Some(neighbors) = cell.neighbors() {
-                                let cell_neighbors: HashSet<_> = neighbors.flatten().collect();
-                                for neighbor_key in &cell_neighbors {
+                        for (simplex_key, simplex) in dt.simplices() {
+                            if let Some(neighbors) = simplex.neighbors() {
+                                let simplex_neighbors: HashSet<_> = neighbors.flatten().collect();
+                                for neighbor_key in &simplex_neighbors {
                                     let found_reciprocal = tds
-                                        .cell(*neighbor_key)
+                                        .simplex(*neighbor_key)
                                         .and_then(|c| c.neighbors())
-                                        .is_some_and(|mut nn| nn.any(|n| n == Some(cell_key)));
+                                        .is_some_and(|mut nn| nn.any(|n| n == Some(simplex_key)));
 
                                     if !found_reciprocal {
                                         // Enhanced diagnostics with Jaccard similarity
                                         let neighbor_neighbors: HashSet<_> = tds
-                                            .cell(*neighbor_key)
+                                            .simplex(*neighbor_key)
                                             .and_then(|c| c.neighbors())
                                             .map(|nn| nn.flatten().collect())
                                             .unwrap_or_default();
 
-                                        let similarity = jaccard_index(&cell_neighbors, &neighbor_neighbors)
+                                        let similarity = jaccard_index(&simplex_neighbors, &neighbor_neighbors)
                                             .expect("Jaccard computation should not overflow for neighbor sets");
-                                        let intersection: Vec<_> = cell_neighbors
+                                        let intersection: Vec<_> = simplex_neighbors
                                             .intersection(&neighbor_neighbors)
                                             .take(5)
                                             .collect();
@@ -152,16 +152,16 @@ macro_rules! gen_neighbor_symmetry {
                                         prop_assert!(
                                             false,
                                             "{}D neighbor relationship should be symmetric\n\
-                                             Cell {:?} has neighbor {:?}, but reciprocal not found\n\
+                                             Simplex {:?} has neighbor {:?}, but reciprocal not found\n\
                                              Jaccard similarity between neighbor sets: {:.6}\n\
-                                             Cell neighbors: {} total\n\
+                                             Simplex neighbors: {} total\n\
                                              Neighbor's neighbors: {} total\n\
                                              Common neighbors (first 5): {:?}",
                                             $dim,
-                                            cell_key,
+                                            simplex_key,
                                             neighbor_key,
                                             similarity,
-                                            cell_neighbors.len(),
+                                            simplex_neighbors.len(),
                                             neighbor_neighbors.len(),
                                             intersection
                                         );
@@ -187,13 +187,13 @@ macro_rules! gen_neighbor_index_semantics {
                     if let Ok(dt) = DelaunayTriangulation::<_, (), (), $dim>::new(&vertices) {
                         prop_assume!(dt.tds().is_valid().is_ok());
                         let tds = dt.tds();
-                        for (cell_key, cell) in dt.cells() {
-                            if let Some(neighbors) = cell.neighbors() {
-                                let a_vertices = cell.vertices();
+                        for (simplex_key, simplex) in dt.simplices() {
+                            if let Some(neighbors) = simplex.neighbors() {
+                                let a_vertices = simplex.vertices();
                                 for (i, nb) in neighbors.enumerate() {
                                     if let Some(b_key) = nb {
-                                        let b_cell = tds.cell(b_key).unwrap();
-                                        let b_vertices = b_cell.vertices();
+                                        let b_simplex = tds.simplex(b_key).unwrap();
+                                        let b_vertices = b_simplex.vertices();
                                         let mut a_facet: SimplexVertexBuffer<_> = a_vertices.iter().enumerate()
                                             .filter_map(|(idx, &vk)| (idx != i).then_some(vk))
                                             .collect();
@@ -206,9 +206,9 @@ macro_rules! gen_neighbor_index_semantics {
                                             b_facet.sort_unstable();
                                             if b_facet == a_facet { found_j = Some(j); break; }
                                         }
-                                        prop_assert!(found_j.is_some(), "Facet mismatch between neighbor cells");
+                                        prop_assert!(found_j.is_some(), "Facet mismatch between neighbor simplices");
                                         if let Some(j) = found_j {
-                                            prop_assert_eq!(b_cell.neighbor_key(j).flatten(), Some(cell_key),
+                                            prop_assert_eq!(b_simplex.neighbor_key(j).flatten(), Some(simplex_key),
                                                 "Reciprocal neighbor at correct index not found");
                                         }
                                     }
@@ -222,19 +222,19 @@ macro_rules! gen_neighbor_index_semantics {
     };
 }
 
-macro_rules! gen_cell_vertices_exist_in_tds {
+macro_rules! gen_simplex_vertices_exist_in_tds {
     ($dim:literal $(, #[$attr:meta])*) => {
         pastey::paste! {
             proptest! {
                 $(#[$attr])*
                 #[test]
-                fn [<prop_cell_vertices_exist_in_tds_ $dim d>](vertices in [<small_vertex_set_ $dim d>]()) {
+                fn [<prop_simplex_vertices_exist_in_tds_ $dim d>](vertices in [<small_vertex_set_ $dim d>]()) {
                     if let Ok(dt) = DelaunayTriangulation::<_, (), (), $dim>::new(&vertices) {
                         let all_vertex_keys: HashSet<_> = dt.tds().vertex_keys().collect();
-                        for (_cell_key, cell) in dt.cells() {
-                            for vertex_key in cell.vertices() {
+                        for (_simplex_key, simplex) in dt.simplices() {
+                            for vertex_key in simplex.vertices() {
                                 prop_assert!(all_vertex_keys.contains(vertex_key),
-                                    "{}D cell vertex should exist in TDS", $dim);
+                                    "{}D simplex vertex should exist in TDS", $dim);
                             }
                         }
                     }
@@ -244,20 +244,20 @@ macro_rules! gen_cell_vertices_exist_in_tds {
     };
 }
 
-macro_rules! gen_no_duplicate_cells {
+macro_rules! gen_no_duplicate_simplices {
     ($dim:literal $(, #[$attr:meta])*) => {
         pastey::paste! {
             proptest! {
                 $(#[$attr])*
                 #[test]
-                fn [<prop_no_duplicate_cells_ $dim d>](vertices in [<small_vertex_set_ $dim d>]()) {
+                fn [<prop_no_duplicate_simplices_ $dim d>](vertices in [<small_vertex_set_ $dim d>]()) {
                     if let Ok(dt) = DelaunayTriangulation::<_, (), (), $dim>::new(&vertices) {
                         let mut seen = HashSet::new();
-                        for (_cell_key, cell) in dt.cells() {
+                        for (_simplex_key, simplex) in dt.simplices() {
                             // Use stack-allocated buffer for D+1 vertices (D ≤ 7 typical)
-                            let mut vs: CellVertexBuffer = cell.vertices().iter().copied().collect();
+                            let mut vs: SimplexVertexKeyBuffer = simplex.vertices().iter().copied().collect();
                             vs.sort_unstable();
-                            prop_assert!(seen.insert(vs), "Found duplicate {}D cell", $dim);
+                            prop_assert!(seen.insert(vs), "Found duplicate {}D simplex", $dim);
                         }
                     }
                 }
@@ -274,7 +274,7 @@ macro_rules! gen_dimension_consistency {
                 #[test]
                 fn [<prop_dimension_consistency_ $dim d>](vertices in [<small_vertex_set_ $dim d>]()) {
                     if let Ok(dt) = DelaunayTriangulation::<_, (), (), $dim>::new(&vertices) {
-                        if dt.number_of_vertices() >= $min_vertices && dt.number_of_cells() > 0 {
+                        if dt.number_of_vertices() >= $min_vertices && dt.number_of_simplices() > 0 {
                             prop_assert_eq!(dt.dim(), $dim as i32, "{}D Tds dimension mismatch", $dim);
                         }
                     }
@@ -302,17 +302,17 @@ macro_rules! gen_vertex_count_consistency {
     };
 }
 
-macro_rules! gen_cell_vertex_count {
+macro_rules! gen_simplex_vertex_count {
     ($dim:literal, $expected:literal $(, #[$attr:meta])*) => {
         pastey::paste! {
             proptest! {
                 $(#[$attr])*
                 #[test]
-                fn [<prop_cell_vertex_count_ $dim d>](vertices in [<small_vertex_set_ $dim d>]()) {
+                fn [<prop_simplex_vertex_count_ $dim d>](vertices in [<small_vertex_set_ $dim d>]()) {
                     if let Ok(dt) = DelaunayTriangulation::<_, (), (), $dim>::new(&vertices) {
-                        for (_, c) in dt.cells() {
+                        for (_, c) in dt.simplices() {
                             prop_assert_eq!(c.number_of_vertices(), $expected,
-                                "{}D cells must have exactly {} vertices (D+1)", $dim, $expected);
+                                "{}D simplices must have exactly {} vertices (D+1)", $dim, $expected);
                         }
                     }
                 }
@@ -355,28 +355,28 @@ gen_neighbor_index_semantics!(4, #[ignore = "Slow (>60s) in test-integration"]);
 gen_neighbor_index_semantics!(5, #[ignore = "Slow (>60s) in test-integration"]);
 
 // =============================================================================
-// VERTEX-CELL INCIDENCE TESTS (2D-5D)
+// VERTEX-SIMPLEX INCIDENCE TESTS (2D-5D)
 // =============================================================================
 
-gen_cell_vertices_exist_in_tds!(2);
+gen_simplex_vertices_exist_in_tds!(2);
 
-gen_cell_vertices_exist_in_tds!(3);
+gen_simplex_vertices_exist_in_tds!(3);
 
-gen_cell_vertices_exist_in_tds!(4, #[ignore = "Slow (>60s) in test-integration"]);
+gen_simplex_vertices_exist_in_tds!(4, #[ignore = "Slow (>60s) in test-integration"]);
 
-gen_cell_vertices_exist_in_tds!(5, #[ignore = "Slow (>60s) in test-integration"]);
+gen_simplex_vertices_exist_in_tds!(5, #[ignore = "Slow (>60s) in test-integration"]);
 
 // =============================================================================
-// NO DUPLICATE CELLS TESTS (2D-5D)
+// NO DUPLICATE SIMPLICES TESTS (2D-5D)
 // =============================================================================
 
-gen_no_duplicate_cells!(2);
+gen_no_duplicate_simplices!(2);
 
-gen_no_duplicate_cells!(3);
+gen_no_duplicate_simplices!(3);
 
-gen_no_duplicate_cells!(4, #[ignore = "Slow (>60s) in test-integration"]);
+gen_no_duplicate_simplices!(4, #[ignore = "Slow (>60s) in test-integration"]);
 
-gen_no_duplicate_cells!(5, #[ignore = "Slow (>60s) in test-integration"]);
+gen_no_duplicate_simplices!(5, #[ignore = "Slow (>60s) in test-integration"]);
 
 // =============================================================================
 // DIMENSION CONSISTENCY TESTS (2D-5D)
@@ -403,16 +403,16 @@ gen_vertex_count_consistency!(4, #[ignore = "Slow (>60s) in test-integration"]);
 gen_vertex_count_consistency!(5, #[ignore = "Slow (>60s) in test-integration"]);
 
 // =============================================================================
-// CELL VERTEX COUNT TESTS (2D-5D)
+// SIMPLEX VERTEX COUNT TESTS (2D-5D)
 // =============================================================================
 
-gen_cell_vertex_count!(2, 3);
+gen_simplex_vertex_count!(2, 3);
 
-gen_cell_vertex_count!(3, 4);
+gen_simplex_vertex_count!(3, 4);
 
-gen_cell_vertex_count!(4, 5, #[ignore = "Slow (>60s) in test-integration"]);
+gen_simplex_vertex_count!(4, 5, #[ignore = "Slow (>60s) in test-integration"]);
 
-gen_cell_vertex_count!(5, 6, #[ignore = "Slow (>60s) in test-integration"]);
+gen_simplex_vertex_count!(5, 6, #[ignore = "Slow (>60s) in test-integration"]);
 
 // =============================================================================
 // CONNECTIVITY TESTS (2D-5D)
@@ -432,9 +432,9 @@ macro_rules! gen_is_connected {
                     if let Ok(dt) = DelaunayTriangulation::<_, (), (), $dim>::new(&vertices) {
                         prop_assert!(
                             dt.tds().is_connected(),
-                            "{}D successfully-built triangulation must be connected ({} cells)",
+                            "{}D successfully-built triangulation must be connected ({} simplices)",
                             $dim,
-                            dt.tds().number_of_cells()
+                            dt.tds().number_of_simplices()
                         );
                     }
                 }
@@ -520,21 +520,21 @@ macro_rules! gen_high_dim_tds_smoke {
                         $dim
                     );
 
-                    for (cell_key, cell) in dt.cells() {
-                        if let Some(neighbors) = cell.neighbors() {
+                    for (simplex_key, simplex) in dt.simplices() {
+                        if let Some(neighbors) = simplex.neighbors() {
                             for neighbor_key in neighbors.flatten() {
                                 let reciprocal = tds
-                                    .cell(neighbor_key)
+                                    .simplex(neighbor_key)
                                     .and_then(|neighbor| neighbor.neighbors())
                                     .is_some_and(|mut neighbor_neighbors| {
-                                        neighbor_neighbors.any(|entry| entry == Some(cell_key))
+                                        neighbor_neighbors.any(|entry| entry == Some(simplex_key))
                                     });
                                 prop_assert!(
                                     reciprocal,
                                     "{}D active TDS smoke neighbor {:?} should point back to {:?}",
                                     $dim,
                                     neighbor_key,
-                                    cell_key
+                                    simplex_key
                                 );
                             }
                         }

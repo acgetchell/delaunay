@@ -137,7 +137,7 @@ macro_rules! generate_memory_analysis {
                 let construction_time = start.elapsed();
 
             let num_vertices = dt.tds().number_of_vertices();
-            let num_cells = dt.tds().number_of_cells();
+            let num_simplices = dt.tds().number_of_simplices();
 
             // Measure convex hull extraction
             let start = Instant::now();
@@ -184,7 +184,7 @@ macro_rules! generate_memory_analysis {
             let hull_facets = hull.number_of_facets();
 
             // Print results
-                println!("    Triangulation: {num_vertices} vertices, {num_cells} cells");
+                println!("    Triangulation: {num_vertices} vertices, {num_simplices} simplices");
                 println!("    Convex hull: {hull_facets} facets");
                 if let Some(seed) = used_seed {
                     println!("    Seed: {seed}");

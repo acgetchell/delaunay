@@ -54,7 +54,7 @@ dt.set_validation_policy(ValidationPolicy::Always);
 ### What the topology guarantees mean (quick summary)
 
 - `TopologyGuarantee::Pseudomanifold`:
-  validates facet degree (each facet is incident to 1 or 2 cells) and a closed boundary
+  validates facet degree (each facet is incident to 1 or 2 simplices) and a closed boundary
   ("no boundary of boundary").
 - `TopologyGuarantee::PLManifold` *(default)*:
   adds **ridge-link validation during insertion** and requires a **vertex-link validation pass at
@@ -126,7 +126,7 @@ methods are not available.
 Internally, standard flip-based repair uses two bounded attempts:
 
 1. Attempt 1: FIFO queue order seeded from the requested local frontier, or from
-   all cells when the caller explicitly requests a global repair.
+   all simplices when the caller explicitly requests a global repair.
 2. Attempt 2: LIFO queue order with a full re-seed of the repair queue. This
    runs only after attempt 1 fails to converge or fails its postcondition.
 
@@ -243,11 +243,11 @@ dt.insert(vertex!([-0.1, 0.7])).unwrap(); // wraps to [0.9, 0.7]
 
 For more details, see `docs/topology.md` and the toroidal section in the main `README.md`.
 
-## Builder API: auxiliary vertex and cell data
+## Builder API: auxiliary vertex and simplex data
 
-Vertices and cells can carry user-defined auxiliary data (`U` for vertices, `V` for cells).
+Vertices and simplices can carry user-defined auxiliary data (`U` for vertices, `V` for simplices).
 Data is attached at construction time via `VertexBuilder::data()`, read via the `data()` accessor,
-and modified post-construction via `set_vertex_data` / `set_cell_data`.
+and modified post-construction via `set_vertex_data` / `set_simplex_data`.
 
 ```rust
 use delaunay::prelude::triangulation::construction::{
@@ -274,26 +274,26 @@ let key = dt.vertices().next().unwrap().0;
 let prev = dt.set_vertex_data(key, Some(99));
 assert!(prev.is_some()); // returns the old Option<U>
 
-// Cell data works the same way
-let cell_key = dt.cells().next().unwrap().0;
-dt.set_cell_data(cell_key, Some(42));
-assert_eq!(dt.tds().cell(cell_key).unwrap().data(), Some(&42));
+// Simplex data works the same way
+let simplex_key = dt.simplices().next().unwrap().0;
+dt.set_simplex_data(simplex_key, Some(42));
+assert_eq!(dt.tds().simplex(simplex_key).unwrap().data(), Some(&42));
 ```
 
-`set_vertex_data` and `set_cell_data` are safe O(1) operations — they modify only the
+`set_vertex_data` and `set_simplex_data` are safe O(1) operations — they modify only the
 user-data field and do not invalidate geometry, topology, or Delaunay invariants.
 
-For algorithm-local state keyed by existing vertices or cells, prefer the
+For algorithm-local state keyed by existing vertices or simplices, prefer the
 caller-owned secondary-map aliases instead of mutating stored user data:
 
 ```rust
-use delaunay::prelude::collections::{CellSecondaryMap, VertexSecondaryMap};
+use delaunay::prelude::collections::{SimplexSecondaryMap, VertexSecondaryMap};
 
-let mut visited_cells: CellSecondaryMap<bool> = CellSecondaryMap::new();
+let mut visited_simplices: SimplexSecondaryMap<bool> = SimplexSecondaryMap::new();
 let mut vertex_order: VertexSecondaryMap<usize> = VertexSecondaryMap::new();
 
-for (cell_key, _) in dt.cells() {
-    visited_cells.insert(cell_key, false);
+for (simplex_key, _) in dt.simplices() {
+    visited_simplices.insert(simplex_key, false);
 }
 for (order, (vertex_key, _)) in dt.vertices().enumerate() {
     vertex_order.insert(vertex_key, order);
@@ -351,7 +351,7 @@ let vertices = vec![
 let mut dt: DelaunayTriangulation<_, (), (), 3> = DelaunayTriangulation::new(&vertices).unwrap();
 let vertex_key = dt.vertices().next().unwrap().0;
 
-let _cells_removed = dt.remove_vertex(vertex_key).unwrap();
+let _simplices_removed = dt.remove_vertex(vertex_key).unwrap();
 
 // Topology should still be valid:
 assert!(dt.as_triangulation().validate().is_ok());
@@ -392,9 +392,9 @@ let vertices = vec![
 ];
 let mut dt: DelaunayTriangulation<_, (), (), 3> = DelaunayTriangulation::new(&vertices).unwrap();
 
-// k=1: split a cell by inserting a vertex.
-let cell_key = dt.cells().next().unwrap().0;
-let info = dt.flip_k1_insert(cell_key, vertex!([0.1, 0.1, 0.1])).unwrap();
+// k=1: split a simplex by inserting a vertex.
+let simplex_key = dt.simplices().next().unwrap().0;
+let info = dt.flip_k1_insert(simplex_key, vertex!([0.1, 0.1, 0.1])).unwrap();
 let inserted_vertex = info.inserted_face_vertices[0];
 
 // k=1 inverse: remove the inserted vertex (collapse its star).

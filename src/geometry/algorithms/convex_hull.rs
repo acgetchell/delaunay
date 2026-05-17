@@ -44,7 +44,7 @@
 #![forbid(unsafe_code)]
 
 use crate::core::collections::{
-    FacetToCellsMap, FastHashMap, MAX_PRACTICAL_DIMENSION_SIZE, SmallBuffer,
+    FacetToSimplicesMap, FastHashMap, MAX_PRACTICAL_DIMENSION_SIZE, SmallBuffer,
 };
 use crate::core::facet::{FacetError, FacetHandle, FacetView};
 use crate::core::tds::TdsError;
@@ -220,9 +220,9 @@ pub enum ConvexHullConstructionError {
         #[source]
         source: TdsError,
     },
-    /// Failed to resolve adjacent cell vertices for visibility testing.
-    #[error("Failed to resolve adjacent cell: {source}")]
-    AdjacentCellResolutionFailed {
+    /// Failed to resolve adjacent simplex vertices for visibility testing.
+    #[error("Failed to resolve adjacent simplex: {source}")]
+    AdjacentSimplexResolutionFailed {
         /// The underlying triangulation data-structure error.
         #[source]
         source: TdsError,
@@ -277,8 +277,8 @@ pub enum ConvexHullConstructionError {
 /// # Important: `ConvexHull` is a Logically Immutable Snapshot
 ///
 /// **A `ConvexHull` instance is a logically immutable snapshot of the triangulation at creation time.**
-/// The hull stores lightweight facet handles `(CellKey, u8)` which reference cells in the TDS.
-/// These handles become **invalid** if the TDS is modified (e.g., by adding/removing vertices or cells).
+/// The hull stores lightweight facet handles `(SimplexKey, u8)` which reference simplices in the TDS.
+/// These handles become **invalid** if the TDS is modified (e.g., by adding/removing vertices or simplices).
 ///
 /// ## Logical Immutability Design
 ///
@@ -330,7 +330,7 @@ pub enum ConvexHullConstructionError {
 ///
 /// You **must** create a new `ConvexHull` by calling `from_triangulation()` if:
 /// - Vertices are added to or removed from the TDS
-/// - Cells are added, removed, or modified in the TDS  
+/// - Simplices are added, removed, or modified in the TDS  
 /// - Any operation that changes the TDS generation counter
 /// - `is_valid_for_triangulation()` returns `false`
 ///
@@ -378,7 +378,7 @@ pub enum ConvexHullConstructionError {
 ///
 /// * `T` - The coordinate scalar type (e.g., f64, f32)
 /// * `U` - The vertex data type
-/// * `V` - The cell data type  
+/// * `V` - The simplex data type  
 /// * `D` - The dimension of the triangulation
 ///
 /// # References
@@ -416,7 +416,7 @@ pub enum ConvexHullConstructionError {
 #[derive(Debug)]
 pub struct ConvexHull<K, U, V, const D: usize> {
     /// The boundary facets that form the convex hull
-    /// Stored as `FacetHandle` tuples (`CellKey`, `facet_index`) to enable reconstruction of `FacetView`
+    /// Stored as `FacetHandle` tuples (`SimplexKey`, `facet_index`) to enable reconstruction of `FacetView`
     ///
     /// **WARNING**: These handles are only valid for the triangulation at the generation captured
     /// in `creation_generation`. If the triangulation is modified, these handles become stale.
@@ -425,10 +425,10 @@ pub struct ConvexHull<K, U, V, const D: usize> {
     /// This field is private to prevent external mutation. Use the provided read-only
     /// accessors (`facets()`, `facet()`, `number_of_facets()`) to access hull facets.
     hull_facets: Vec<FacetHandle>,
-    /// Cache for the facet-to-cells mapping to avoid rebuilding it for each facet check
+    /// Cache for the facet-to-simplices mapping to avoid rebuilding it for each facet check
     /// Uses `ArcSwapOption` for lock-free atomic updates when cache needs invalidation
     /// This avoids Some/None wrapping boilerplate compared to `ArcSwap<Option<K::Scalar>>`
-    facet_to_cells_cache: ArcSwapOption<FacetToCellsMap>,
+    facet_to_simplices_cache: ArcSwapOption<FacetToSimplicesMap>,
     /// Immutable triangulation generation at hull creation time.
     /// Set once in `from_triangulation()` and never modified. Used to detect stale hulls.
     /// Uses `OnceLock` to express the "set once, read many" semantic contract.
@@ -584,7 +584,7 @@ impl<K, U, V, const D: usize> ConvexHull<K, U, V, D> {
     /// // Note: facets() returns FacetHandle structs - need to create FacetView to access vertices
     /// use delaunay::prelude::tds::FacetView;
     /// for facet_handle in hull.facets() {
-    ///     if let Ok(facet_view) = FacetView::new(&dt.tds(), facet_handle.cell_key(), facet_handle.facet_index()) {
+    ///     if let Ok(facet_view) = FacetView::new(&dt.tds(), facet_handle.simplex_key(), facet_handle.facet_index()) {
     ///         assert_eq!(facet_view.vertices()?.count(), 3); // 3D facets have 3 vertices
     ///     }
     /// }
@@ -862,7 +862,7 @@ where
 }
 
 impl<K, U, V, const D: usize> ConvexHull<K, U, V, D> {
-    /// Invalidates the internal facet-to-cells cache and resets the cached generation counter
+    /// Invalidates the internal facet-to-simplices cache and resets the cached generation counter
     ///
     /// This method forces the cache to be rebuilt on the next visibility test.
     /// It can be useful for manual cache management.
@@ -925,7 +925,7 @@ impl<K, U, V, const D: usize> ConvexHull<K, U, V, D> {
     /// ```
     pub fn invalidate_cache(&self) {
         // Clear the cache using ArcSwapOption::store(None)
-        self.facet_to_cells_cache.store(None);
+        self.facet_to_simplices_cache.store(None);
 
         // Reset only cached_generation to force rebuild on next access.
         // creation_generation is NEVER modified - it remains the immutable snapshot from creation.
@@ -958,8 +958,8 @@ where
     /// - Boundary facets cannot be extracted from the triangulation ([`ConvexHullConstructionError::BoundaryFacetExtractionFailed`])
     /// - The input triangulation is invalid ([`ConvexHullConstructionError::InvalidTriangulation`])
     /// - Facet data access fails during construction ([`ConvexHullConstructionError::FacetDataAccessFailed`])
-    ///   - This can happen if cells or vertices referenced by boundary facets are no longer valid
-    ///   - Or if the facet index is out of bounds for the cell's vertex count
+    ///   - This can happen if simplices or vertices referenced by boundary facets are no longer valid
+    ///   - Or if the facet index is out of bounds for the simplex's vertex count
     ///
     /// # Examples
     ///
@@ -1019,9 +1019,9 @@ where
             });
         }
 
-        if tds.number_of_cells() == 0 {
+        if tds.number_of_simplices() == 0 {
             return Err(ConvexHullConstructionError::InsufficientData {
-                message: "Triangulation contains no cells".to_string(),
+                message: "Triangulation contains no simplices".to_string(),
             });
         }
 
@@ -1030,10 +1030,10 @@ where
             ConvexHullConstructionError::BoundaryFacetExtractionFailed { source }
         })?;
 
-        // Collect facet handles (CellKey, facet_index) for storage
+        // Collect facet handles (SimplexKey, facet_index) for storage
         // These can be used to reconstruct FacetViews when needed
         let hull_facets: Vec<_> = hull_facets_iter
-            .map(|facet_view| FacetHandle::new(facet_view.cell_key(), facet_view.facet_index()))
+            .map(|facet_view| FacetHandle::new(facet_view.simplex_key(), facet_view.facet_index()))
             .collect();
 
         // Additional validation: ensure we have at least one boundary facet
@@ -1046,7 +1046,7 @@ where
         let tds_gen = tds.generation();
         Ok(Self {
             hull_facets,
-            facet_to_cells_cache: ArcSwapOption::empty(),
+            facet_to_simplices_cache: ArcSwapOption::empty(),
             // Immutable snapshot of triangulation generation at creation - never changes
             creation_generation: OnceLock::from(tds_gen),
             creation_identity: OnceLock::from(Arc::clone(tds.identity())),
@@ -1062,17 +1062,17 @@ where
     /// This implementation uses geometric orientation predicates to determine the correct
     /// side of the hyperplane defined by the facet, based on the Bowyer-Watson algorithm.
     ///
-    /// Uses an internal cache to avoid rebuilding the facet-to-cells mapping for each call.
+    /// Uses an internal cache to avoid rebuilding the facet-to-simplices mapping for each call.
     ///
     /// # Algorithm
     ///
     /// For a boundary facet F with vertices {f₁, f₂, ..., fₐ}, we need to determine
     /// if a test point p is on the "outside" of the facet. Since this is a boundary facet
-    /// from a convex hull, we know it has exactly one adjacent cell.
+    /// from a convex hull, we know it has exactly one adjacent simplex.
     ///
     /// The algorithm works as follows:
-    /// 1. Get or build the cached facet-to-cells mapping
-    /// 2. Find the "inside" vertex of the adjacent cell (vertex not in the facet)
+    /// 1. Get or build the cached facet-to-simplices mapping
+    /// 2. Find the "inside" vertex of the adjacent simplex (vertex not in the facet)
     /// 3. Create two simplices: facet + `inside_vertex` and facet + `test_point`  
     /// 4. Compare orientations - different orientations mean opposite sides
     /// 5. If test point is on opposite side from inside vertex, facet is visible
@@ -1081,7 +1081,7 @@ where
     ///
     /// * `facet` - The facet to test
     /// * `point` - The external point
-    /// * `tds` - Reference to triangulation (needed to find adjacent cell)
+    /// * `tds` - Reference to triangulation (needed to find adjacent simplex)
     ///
     /// # Returns
     ///
@@ -1089,7 +1089,7 @@ where
     ///
     /// # Note
     ///
-    /// This method uses cached facet-to-cells mapping for optimal performance. The cache is
+    /// This method uses cached facet-to-simplices mapping for optimal performance. The cache is
     /// automatically built if it doesn't exist or has been invalidated.
     ///
     /// For batch visibility checking (e.g., [`Self::find_visible_facets`]), consider using the internal
@@ -1103,7 +1103,7 @@ where
     /// - The hull is queried against a different TDS identity than the one that created it
     ///   ([`ConvexHullConstructionError::IdentityMismatch`])
     /// - The facet cache cannot be built ([`ConvexHullConstructionError::FacetCacheBuildFailed`])
-    /// - Adjacent cell resolution fails ([`ConvexHullConstructionError::AdjacentCellResolutionFailed`])
+    /// - Adjacent simplex resolution fails ([`ConvexHullConstructionError::AdjacentSimplexResolutionFailed`])
     /// - Facet visibility check fails ([`ConvexHullConstructionError::VisibilityCheckFailed`])
     ///
     /// # Examples
@@ -1170,8 +1170,8 @@ where
         // Staleness guard: fail fast before any cache work
         self.ensure_current_for_construction(tri)?;
 
-        // Get or build the cached facet-to-cells mapping
-        let facet_to_cells_arc = self
+        // Get or build the cached facet-to-simplices mapping
+        let facet_to_simplices_arc = self
             .try_get_or_build_facet_cache(tds)
             .map_err(|source| ConvexHullConstructionError::FacetCacheBuildFailed { source })?;
 
@@ -1180,7 +1180,7 @@ where
             facet_handle,
             point,
             tri,
-            facet_to_cells_arc.as_ref(),
+            facet_to_simplices_arc.as_ref(),
         )
     }
 
@@ -1194,7 +1194,7 @@ where
     /// * `facet_handle` - The facet to test
     /// * `point` - The external point
     /// * `tds` - Reference to triangulation
-    /// * `facet_to_cells` - Pre-loaded facet-to-cells mapping
+    /// * `facet_to_simplices` - Pre-loaded facet-to-simplices mapping
     ///
     /// # Returns
     ///
@@ -1212,7 +1212,7 @@ where
         facet_handle: &FacetHandle,
         point: &Point<K::Scalar, D>,
         tri: &Triangulation<K, U, V, D>,
-        facet_to_cells: &FacetToCellsMap,
+        facet_to_simplices: &FacetToSimplicesMap,
     ) -> Result<bool, ConvexHullConstructionError> {
         let tds = &tri.tds;
 
@@ -1234,22 +1234,22 @@ where
         // Production build: always check creation_generation for stale detection
         self.ensure_current_for_construction(tri)?;
 
-        // Phase 3A: Derive facet vertex keys directly from the cell to avoid UUID↔key roundtrips.
-        // This eliminates the need to convert vertex UUIDs back to keys later.
-        let (facet_cell_key, facet_index) = (facet_handle.cell_key(), facet_handle.facet_index());
-        let cell =
-            tds.cell(facet_cell_key)
-                .ok_or(ConvexHullConstructionError::FacetDataAccessFailed {
-                    source: FacetError::CellNotFoundInTriangulation,
-                })?;
+        // Derive facet vertex keys directly from the simplex to avoid UUID↔key roundtrips.
+        let (facet_simplex_key, facet_index) =
+            (facet_handle.simplex_key(), facet_handle.facet_index());
+        let simplex = tds.simplex(facet_simplex_key).ok_or(
+            ConvexHullConstructionError::FacetDataAccessFailed {
+                source: FacetError::SimplexNotFoundInTriangulation,
+            },
+        )?;
 
-        // Bounds check: facet_index must be within cell vertices to prevent out-of-bounds access
-        let cell_vertex_count = cell.vertices().len();
-        if (facet_index as usize) >= cell_vertex_count {
+        // Bounds check: facet_index must be within simplex vertices to prevent out-of-bounds access
+        let simplex_vertex_count = simplex.vertices().len();
+        if (facet_index as usize) >= simplex_vertex_count {
             return Err(ConvexHullConstructionError::VisibilityCheckFailed {
                 source: FacetError::InvalidFacetIndex {
                     index: facet_index,
-                    facet_count: cell_vertex_count,
+                    facet_count: simplex_vertex_count,
                 },
             });
         }
@@ -1258,7 +1258,7 @@ where
         // Use SmallBuffer to avoid heap allocation for typical dimensions (up to 7D on stack)
         let mut facet_vertex_keys: SmallBuffer<_, MAX_PRACTICAL_DIMENSION_SIZE> =
             SmallBuffer::with_capacity(D);
-        for (i, &k) in cell.vertices().iter().enumerate() {
+        for (i, &k) in simplex.vertices().iter().enumerate() {
             if i != facet_index as usize {
                 facet_vertex_keys.push(k);
             }
@@ -1279,7 +1279,7 @@ where
         let facet_key = checked_facet_key_from_vertex_keys::<D>(&facet_vertex_keys)
             .map_err(|source| ConvexHullConstructionError::VisibilityCheckFailed { source })?;
 
-        let adjacent_cells = facet_to_cells.get(&facet_key).ok_or_else(|| {
+        let adjacent_simplices = facet_to_simplices.get(&facet_key).ok_or_else(|| {
             // Collect vertex UUIDs for enhanced error reporting (only on error path)
             // Materialize vertices only when needed for error reporting
             let vertex_uuids: Vec<uuid::Uuid> = facet_vertex_keys
@@ -1289,39 +1289,39 @@ where
             ConvexHullConstructionError::VisibilityCheckFailed {
                 source: FacetError::FacetKeyNotFoundInCache {
                     facet_key,
-                    cache_size: facet_to_cells.len(),
+                    cache_size: facet_to_simplices.len(),
                     vertex_uuids,
                 },
             }
         })?;
 
-        if adjacent_cells.len() != 1 {
+        if adjacent_simplices.len() != 1 {
             return Err(ConvexHullConstructionError::VisibilityCheckFailed {
-                source: FacetError::InvalidAdjacentCellCount {
-                    found: adjacent_cells.len(),
+                source: FacetError::InvalidAdjacentSimplexCount {
+                    found: adjacent_simplices.len(),
                 },
             });
         }
 
-        let adj_cell_key = adjacent_cells[0].cell_key();
+        let adj_simplex_key = adjacent_simplices[0].simplex_key();
 
-        // Find the vertex in the adjacent cell that is NOT part of the facet
+        // Find the vertex in the adjacent simplex that is NOT part of the facet
         // This is the "opposite" or "inside" vertex
         // Optimization: Use vertex keys instead of UUID comparison for better performance
-        let cell_vertices = tds.cell_vertices(adj_cell_key).map_err(|source| {
-            ConvexHullConstructionError::AdjacentCellResolutionFailed { source }
+        let simplex_vertices = tds.simplex_vertices(adj_simplex_key).map_err(|source| {
+            ConvexHullConstructionError::AdjacentSimplexResolutionFailed { source }
         })?;
 
         // facet_vertex_keys already computed above - no UUID→key roundtrip needed!
-        // Find the cell vertex key that's not in the facet
+        // Find the simplex vertex key that's not in the facet
         // Optimized: Use a sorted merge-like approach to avoid O(D²) contains() calls
         // Since both lists are small (D and D+1 elements), we can sort and scan efficiently
         let mut sorted_facet_keys = facet_vertex_keys.clone();
         sorted_facet_keys.sort_unstable();
 
-        let inside_vertex_key = cell_vertices
+        let inside_vertex_key = simplex_vertices
             .iter()
-            .find(|&&cell_key| sorted_facet_keys.binary_search(&cell_key).is_err())
+            .find(|&&simplex_key| sorted_facet_keys.binary_search(&simplex_key).is_err())
             .copied()
             .ok_or(ConvexHullConstructionError::VisibilityCheckFailed {
                 source: FacetError::InsideVertexNotFound,
@@ -1666,9 +1666,10 @@ where
             let facet_handle = &self.hull_facets[facet_index];
             // Create FacetView to access facet vertices
             let facet_view =
-                FacetView::new(tds, facet_handle.cell_key(), facet_handle.facet_index()).map_err(
-                    |source| ConvexHullConstructionError::FacetDataAccessFailed { source },
-                )?;
+                FacetView::new(tds, facet_handle.simplex_key(), facet_handle.facet_index())
+                    .map_err(
+                        |source| ConvexHullConstructionError::FacetDataAccessFailed { source },
+                    )?;
             // Extract points directly to avoid materializing Vertex copies
             let facet_points: Vec<Point<K::Scalar, D>> = facet_view
                 .vertices()
@@ -1841,20 +1842,18 @@ where
 
         // Check staleness first - validate() should explicitly fail on stale hulls
         // This makes the test behavior robust: validate() fails due to staleness check,
-        // not because facet handles happen to point to removed cells
+        // not because facet handles happen to point to removed simplices
         self.ensure_current_for_validation(tri)?;
 
         // Check that all facets have exactly D vertices (for D-dimensional triangulation,
         // facets are (D-1)-dimensional and have D vertices)
         for (index, facet_handle) in self.hull_facets.iter().enumerate() {
-            // Phase 3A: Create FacetView from lightweight handle to access vertices
             let facet_view =
-                FacetView::new(tds, facet_handle.cell_key(), facet_handle.facet_index()).map_err(
-                    |source| ConvexHullValidationError::InvalidFacet {
+                FacetView::new(tds, facet_handle.simplex_key(), facet_handle.facet_index())
+                    .map_err(|source| ConvexHullValidationError::InvalidFacet {
                         facet_index: index,
                         source,
-                    },
-                )?;
+                    })?;
 
             let vertices: Vec<_> = facet_view
                 .vertices()
@@ -1920,8 +1919,8 @@ where
     U: DataType,
     V: DataType,
 {
-    fn facet_cache(&self) -> &ArcSwapOption<FacetToCellsMap> {
-        &self.facet_to_cells_cache
+    fn facet_cache(&self) -> &ArcSwapOption<FacetToSimplicesMap> {
+        &self.facet_to_simplices_cache
     }
 
     fn cached_generation(&self) -> &AtomicU64 {
@@ -1933,7 +1932,7 @@ impl<K, U, V, const D: usize> Default for ConvexHull<K, U, V, D> {
     fn default() -> Self {
         Self {
             hull_facets: Vec::new(),
-            facet_to_cells_cache: ArcSwapOption::empty(),
+            facet_to_simplices_cache: ArcSwapOption::empty(),
             creation_generation: OnceLock::new(), // Empty - indicates invalid/uninitialized hull
             creation_identity: OnceLock::new(),
             cached_generation: Arc::new(AtomicU64::new(0)),
@@ -2011,7 +2010,7 @@ mod tests {
     {
         let tds = &tri.tds;
         let facet_view =
-            FacetView::new(tds, facet_handle.cell_key(), facet_handle.facet_index())
+            FacetView::new(tds, facet_handle.simplex_key(), facet_handle.facet_index())
                 .map_err(|source| ConvexHullConstructionError::FacetDataAccessFailed { source })?;
         // Use the shared utility for extracting vertices
         facet_view_to_vertices(&facet_view)
@@ -2871,7 +2870,7 @@ mod tests {
         for (i, facet_handle) in hull_2d.hull_facets.iter().enumerate() {
             let facet_view = FacetView::new(
                 &dt_2d.as_triangulation().tds,
-                facet_handle.cell_key(),
+                facet_handle.simplex_key(),
                 facet_handle.facet_index(),
             )
             .unwrap();
@@ -2908,7 +2907,7 @@ mod tests {
         for (i, facet_handle) in hull_3d.hull_facets.iter().enumerate() {
             let facet_view = FacetView::new(
                 &dt_3d.as_triangulation().tds,
-                facet_handle.cell_key(),
+                facet_handle.simplex_key(),
                 facet_handle.facet_index(),
             )
             .unwrap();
@@ -2946,7 +2945,7 @@ mod tests {
         for (i, facet_handle) in hull_4d.hull_facets.iter().enumerate() {
             let facet_view = FacetView::new(
                 &dt_4d.as_triangulation().tds,
-                facet_handle.cell_key(),
+                facet_handle.simplex_key(),
                 facet_handle.facet_index(),
             )
             .unwrap();
@@ -2985,7 +2984,7 @@ mod tests {
         for (i, facet_handle) in hull_5d.hull_facets.iter().enumerate() {
             let facet_view = FacetView::new(
                 &dt_5d.as_triangulation().tds,
-                facet_handle.cell_key(),
+                facet_handle.simplex_key(),
                 facet_handle.facet_index(),
             )
             .unwrap();
@@ -3324,7 +3323,7 @@ mod tests {
         for facet_handle in hull.facets() {
             let facet_view = FacetView::new(
                 &dt.as_triangulation().tds,
-                facet_handle.cell_key(),
+                facet_handle.simplex_key(),
                 facet_handle.facet_index(),
             )
             .unwrap();
@@ -3594,8 +3593,8 @@ mod tests {
     }
 
     #[test]
-    fn test_from_triangulation_no_cells_error() {
-        // Create a manually constructed TDS with vertices but no cells
+    fn test_from_triangulation_no_simplices_error() {
+        // Create a manually constructed TDS with vertices but no simplices
         // Note: We need to use the underlying TDS directly for this edge case test
         let mut tds = Tds::<f64, (), (), 3>::empty();
         let vertex = vertex!([0.0, 0.0, 0.0]);
@@ -3608,9 +3607,9 @@ mod tests {
         assert!(result.is_err());
         match result.unwrap_err() {
             ConvexHullConstructionError::InsufficientData { message } => {
-                assert!(message.contains("no cells"));
+                assert!(message.contains("no simplices"));
             }
-            _ => panic!("Expected InsufficientData error for no cells"),
+            _ => panic!("Expected InsufficientData error for no simplices"),
         }
     }
 
@@ -3674,7 +3673,7 @@ mod tests {
             // Create FacetView to get vertices
             let facet_view = FacetView::new(
                 &dt.as_triangulation().tds,
-                facet_handle.cell_key(),
+                facet_handle.simplex_key(),
                 facet_handle.facet_index(),
             )
             .unwrap();
@@ -3872,7 +3871,7 @@ mod tests {
 
         for (i, facet_ref) in iter_facets.iter().enumerate() {
             let facet_by_index = hull.facet(i).unwrap();
-            // They should be equivalent facets (same cell key and facet index)
+            // They should be equivalent facets (same simplex key and facet index)
             assert_eq!(*facet_ref, facet_by_index, "Facet {i} should match");
         }
 
@@ -3897,7 +3896,7 @@ mod tests {
             .map(|facet_handle| {
                 FacetView::new(
                     &dt.as_triangulation().tds,
-                    facet_handle.cell_key(),
+                    facet_handle.simplex_key(),
                     facet_handle.facet_index(),
                 )
                 .unwrap()
@@ -4534,7 +4533,7 @@ mod tests {
             // Create FacetView to get vertices
             let facet_view = FacetView::new(
                 &dt.as_triangulation().tds,
-                facet_handle.cell_key(),
+                facet_handle.simplex_key(),
                 facet_handle.facet_index(),
             )
             .unwrap();
@@ -5024,8 +5023,8 @@ mod tests {
     }
 
     #[test]
-    fn test_adjacent_cell_resolution_failed_error() {
-        test_debug!("Testing AdjacentCellResolutionFailed error variant");
+    fn test_adjacent_simplex_resolution_failed_error() {
+        test_debug!("Testing AdjacentSimplexResolutionFailed error variant");
 
         // Create a simple triangulation to test with
         let vertices = vec![
@@ -5049,19 +5048,19 @@ mod tests {
             "Visibility check should succeed with valid TDS"
         );
 
-        // Verify that the AdjacentCellResolutionFailed error variant exists
+        // Verify that the AdjacentSimplexResolutionFailed error variant exists
         // by creating a synthetic error (we can't easily trigger the actual error path
         // with a valid TDS, but we can verify the error type is properly defined)
-        let synthetic_error = ConvexHullConstructionError::AdjacentCellResolutionFailed {
+        let synthetic_error = ConvexHullConstructionError::AdjacentSimplexResolutionFailed {
             source: TdsError::InconsistentDataStructure {
-                message: "Test error for adjacent cell resolution".to_string(),
+                message: "Test error for adjacent simplex resolution".to_string(),
             },
         };
 
         // Verify the error can be created and displayed properly
         let error_message = format!("{synthetic_error}");
         assert!(
-            error_message.contains("Failed to resolve adjacent cell"),
+            error_message.contains("Failed to resolve adjacent simplex"),
             "Error message should contain expected text: {error_message}"
         );
 
@@ -5069,10 +5068,10 @@ mod tests {
         let source = synthetic_error.source();
         assert!(
             source.is_some(),
-            "AdjacentCellResolutionFailed should have a source error"
+            "AdjacentSimplexResolutionFailed should have a source error"
         );
 
-        test_debug!("  ✓ AdjacentCellResolutionFailed error variant properly implemented");
+        test_debug!("  ✓ AdjacentSimplexResolutionFailed error variant properly implemented");
         test_debug!("  ✓ Error preserves underlying TdsError as source");
         test_debug!("  ✓ Error display format correct: {error_message}");
     }
@@ -5582,7 +5581,7 @@ mod tests {
         let facet_handle = hull.facet(0).unwrap();
         let facet_view = FacetView::new(
             &dt.as_triangulation().tds,
-            facet_handle.cell_key(),
+            facet_handle.simplex_key(),
             facet_handle.facet_index(),
         )
         .unwrap();

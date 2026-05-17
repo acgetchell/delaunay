@@ -43,7 +43,7 @@ use delaunay::prelude::triangulation::construction::{
     TopologyGuarantee, Vertex,
 };
 use delaunay::prelude::triangulation::flips::{
-    BistellarFlips, CellKey, EdgeKey, FacetHandle, RidgeHandle, TriangleHandle,
+    BistellarFlips, EdgeKey, FacetHandle, RidgeHandle, SimplexKey, TriangleHandle,
 };
 use delaunay::vertex;
 use std::{env, hint::black_box, num::NonZeroUsize, sync::Once};
@@ -502,14 +502,14 @@ fn build_flip_dt_4d() -> FlipTriangulation4 {
     })
 }
 
-fn cell_centroid_4d(dt: &FlipTriangulation4, cell_key: CellKey) -> [f64; 4] {
-    let cell = bench_option(
-        dt.tds().cell(cell_key),
-        "cell key should exist in benchmark triangulation",
+fn simplex_centroid_4d(dt: &FlipTriangulation4, simplex_key: SimplexKey) -> [f64; 4] {
+    let simplex = bench_option(
+        dt.tds().simplex(simplex_key),
+        "simplex key should exist in benchmark triangulation",
     );
 
     let mut coords = [0.0_f64; 4];
-    for &vkey in cell.vertices() {
+    for &vkey in simplex.vertices() {
         let vertex = bench_option(
             dt.tds().vertex(vkey),
             "vertex key should exist in benchmark triangulation",
@@ -521,8 +521,8 @@ fn cell_centroid_4d(dt: &FlipTriangulation4, cell_key: CellKey) -> [f64; 4] {
     }
 
     let vertex_count = bench_result(
-        u32::try_from(cell.vertices().len()),
-        "cell vertex count should fit in u32",
+        u32::try_from(simplex.vertices().len()),
+        "simplex vertex count should fit in u32",
     );
     let inv = 1.0_f64 / f64::from(vertex_count);
     for coord in &mut coords {
@@ -531,13 +531,14 @@ fn cell_centroid_4d(dt: &FlipTriangulation4, cell_key: CellKey) -> [f64; 4] {
     coords
 }
 
-fn cell_points_4d(dt: &FlipTriangulation4, cell_key: CellKey) -> Vec<Point<f64, 4>> {
-    let cell = bench_option(
-        dt.tds().cell(cell_key),
-        "cell key should exist in benchmark triangulation",
+fn simplex_points_4d(dt: &FlipTriangulation4, simplex_key: SimplexKey) -> Vec<Point<f64, 4>> {
+    let simplex = bench_option(
+        dt.tds().simplex(simplex_key),
+        "simplex key should exist in benchmark triangulation",
     );
 
-    cell.vertices()
+    simplex
+        .vertices()
         .iter()
         .map(|vertex_key| {
             *bench_option(
@@ -549,31 +550,31 @@ fn cell_points_4d(dt: &FlipTriangulation4, cell_key: CellKey) -> Vec<Point<f64, 
         .collect()
 }
 
-fn largest_volume_cell_4d(dt: &FlipTriangulation4) -> CellKey {
-    dt.cells()
-        .filter_map(|(cell_key, _)| {
-            simplex_volume(&cell_points_4d(dt, cell_key))
+fn largest_volume_simplex_4d(dt: &FlipTriangulation4) -> SimplexKey {
+    dt.simplices()
+        .filter_map(|(simplex_key, _)| {
+            simplex_volume(&simplex_points_4d(dt, simplex_key))
                 .ok()
-                .map(|volume| (cell_key, volume))
+                .map(|volume| (simplex_key, volume))
         })
         .max_by(|(_, left), (_, right)| left.total_cmp(right))
         .map_or_else(
             || {
                 abort_benchmark(
-                    "stable 4D benchmark triangulation should have a non-degenerate cell",
+                    "stable 4D benchmark triangulation should have a non-degenerate simplex",
                 )
             },
-            |(cell_key, _)| cell_key,
+            |(simplex_key, _)| simplex_key,
         )
 }
 
-fn roundtrip_k1_4d(dt: &mut FlipTriangulation4, cell_key: CellKey) {
-    let centroid = cell_centroid_4d(dt, cell_key);
+fn roundtrip_k1_4d(dt: &mut FlipTriangulation4, simplex_key: SimplexKey) {
+    let centroid = simplex_centroid_4d(dt, simplex_key);
     let new_vertex = vertex!(centroid);
     let new_uuid = new_vertex.uuid();
 
     bench_result(
-        dt.flip_k1_insert(cell_key, new_vertex),
+        dt.flip_k1_insert(simplex_key, new_vertex),
         "k=1 insert should succeed on stable 4D benchmark triangulation",
     );
 
@@ -590,14 +591,14 @@ fn roundtrip_k1_4d(dt: &mut FlipTriangulation4, cell_key: CellKey) {
 
 fn interior_facets_4d(dt: &FlipTriangulation4) -> Vec<FacetHandle> {
     let mut facets = Vec::new();
-    for (cell_key, cell) in dt.cells() {
-        if let Some(neighbors) = cell.neighbors() {
+    for (simplex_key, simplex) in dt.simplices() {
+        if let Some(neighbors) = simplex.neighbors() {
             for (facet_index, neighbor) in neighbors.enumerate() {
                 if neighbor.is_some() {
                     let Ok(facet_index) = u8::try_from(facet_index) else {
                         continue;
                     };
-                    facets.push(FacetHandle::new(cell_key, facet_index));
+                    facets.push(FacetHandle::new(simplex_key, facet_index));
                 }
             }
         }
@@ -658,8 +659,8 @@ fn roundtrip_k2_4d(dt: &mut FlipTriangulation4, facet: FacetHandle) {
 
 fn ridges_4d(dt: &FlipTriangulation4) -> Vec<RidgeHandle> {
     let mut ridges = Vec::new();
-    for (cell_key, cell) in dt.cells() {
-        let vertex_count = cell.number_of_vertices();
+    for (simplex_key, simplex) in dt.simplices() {
+        let vertex_count = simplex.number_of_vertices();
         for i in 0..vertex_count {
             for j in (i + 1)..vertex_count {
                 let Ok(omit_a) = u8::try_from(i) else {
@@ -668,7 +669,7 @@ fn ridges_4d(dt: &FlipTriangulation4) -> Vec<RidgeHandle> {
                 let Ok(omit_b) = u8::try_from(j) else {
                     continue;
                 };
-                ridges.push(RidgeHandle::new(cell_key, omit_a, omit_b));
+                ridges.push(RidgeHandle::new(simplex_key, omit_a, omit_b));
             }
         }
     }
@@ -784,7 +785,7 @@ fn emit_construction_metric<const D: usize>(
     println!(
         "api_benchmark_metric benchmark_id={benchmark_id} vertices={} simplices={}",
         vertices.len(),
-        dt.number_of_cells()
+        dt.number_of_simplices()
     );
 }
 
@@ -1423,7 +1424,7 @@ fn benchmark_bistellar_flips(c: &mut Criterion) {
     let mut group = c.benchmark_group("bistellar_flips_4d");
     group.sample_size(10);
     let base_dt = build_flip_dt_4d();
-    let k1_cell = largest_volume_cell_4d(&base_dt);
+    let k1_simplex = largest_volume_simplex_4d(&base_dt);
     let k2_facet = flippable_k2_facet_4d(&base_dt);
     let k3_ridge = flippable_k3_ridge_4d(&base_dt);
 
@@ -1431,7 +1432,7 @@ fn benchmark_bistellar_flips(c: &mut Criterion) {
         b.iter_batched(
             || base_dt.clone(),
             |mut dt| {
-                roundtrip_k1_4d(&mut dt, k1_cell);
+                roundtrip_k1_4d(&mut dt, k1_simplex);
                 black_box(dt);
             },
             BatchSize::LargeInput,

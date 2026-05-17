@@ -1,11 +1,11 @@
 //! Incremental Delaunay insertion using cavity-based algorithm.
 //!
 //! This module implements efficient incremental insertion following CGAL's approach:
-//! 1. Locate the cell containing the new point (facet walking)
+//! 1. Locate the simplex containing the new point (facet walking)
 //! 2. Find conflict region (BFS with in_sphere tests)
 //! 3. Extract cavity boundary facets
-//! 4. Remove conflict cells
-//! 5. Fill cavity (create new cells connecting boundary to new vertex)
+//! 4. Remove conflict simplices
+//! 5. Fill cavity (create new simplices connecting boundary to new vertex)
 //! 6. Wire neighbors locally (no global assign_neighbors call)
 //!
 //! ## Hull Extension and Visibility
@@ -30,15 +30,15 @@ use crate::core::algorithms::flips::DelaunayRepairError;
 use crate::core::algorithms::locate::{
     ConflictError, LocateError, LocateResult, extract_cavity_boundary,
 };
-use crate::core::cell::{Cell, CellValidationError, NeighborSlot};
 use crate::core::collections::{
-    CellKeyBuffer, FastHashMap, FastHashSet, FastHasher, MAX_PRACTICAL_DIMENSION_SIZE, SmallBuffer,
-    VertexKeyBuffer,
+    FastHashMap, FastHashSet, FastHasher, MAX_PRACTICAL_DIMENSION_SIZE, SimplexKeyBuffer,
+    SmallBuffer, VertexKeyBuffer,
 };
 use crate::core::facet::{FacetError, FacetHandle};
+use crate::core::simplex::{NeighborSlot, Simplex, SimplexValidationError};
 use crate::core::tds::{
-    CellKey, DelaunayValidationErrorKind, EntityKind, GeometricError, NeighborValidationError, Tds,
-    TdsConstructionError, TdsError, TdsErrorKind, TriangulationValidationErrorKind, VertexKey,
+    DelaunayValidationErrorKind, EntityKind, GeometricError, NeighborValidationError, SimplexKey,
+    Tds, TdsConstructionError, TdsError, TdsErrorKind, TriangulationValidationErrorKind, VertexKey,
 };
 use crate::core::traits::boundary_analysis::BoundaryAnalysis;
 use crate::core::traits::data_type::DataType;
@@ -124,14 +124,14 @@ pub enum TdsValidationFailure {
         source: VertexValidationError,
     },
 
-    /// The triangulation contains an invalid cell.
-    #[error("invalid cell {cell_id}: {source}")]
-    InvalidCell {
-        /// UUID of the invalid cell.
-        cell_id: uuid::Uuid,
-        /// Underlying cell validation error.
+    /// The triangulation contains an invalid simplex.
+    #[error("invalid simplex {simplex_id}: {source}")]
+    InvalidSimplex {
+        /// UUID of the invalid simplex.
+        simplex_id: uuid::Uuid,
+        /// Underlying simplex validation error.
         #[source]
-        source: CellValidationError,
+        source: SimplexValidationError,
     },
 
     /// Neighbor relationships are invalid.
@@ -142,81 +142,81 @@ pub enum TdsValidationFailure {
         reason: NeighborValidationError,
     },
 
-    /// Coherent orientation was violated between adjacent cells.
+    /// Coherent orientation was violated between adjacent simplices.
     #[error(
-        "orientation invariant violated between cells {cell1_uuid} and {cell2_uuid} \
-         (facet indices {cell1_facet_index}/{cell2_facet_index}, vertex counts \
-         {facet_vertex_count}/{cell2_facet_vertex_count}, observed odd permutation \
+        "orientation invariant violated between simplices {simplex1_uuid} and {simplex2_uuid} \
+         (facet indices {simplex1_facet_index}/{simplex2_facet_index}, vertex counts \
+         {facet_vertex_count}/{simplex2_facet_vertex_count}, observed odd permutation \
          {observed_odd_permutation}, expected {expected_odd_permutation})"
     )]
     OrientationViolation {
-        /// Key of the first cell.
-        cell1_key: CellKey,
-        /// UUID of the first cell.
-        cell1_uuid: uuid::Uuid,
-        /// Key of the second cell.
-        cell2_key: CellKey,
-        /// UUID of the second cell.
-        cell2_uuid: uuid::Uuid,
-        /// Facet index in the first cell.
-        cell1_facet_index: usize,
-        /// Facet index in the second cell.
-        cell2_facet_index: usize,
+        /// Key of the first simplex.
+        simplex1_key: SimplexKey,
+        /// UUID of the first simplex.
+        simplex1_uuid: uuid::Uuid,
+        /// Key of the second simplex.
+        simplex2_key: SimplexKey,
+        /// UUID of the second simplex.
+        simplex2_uuid: uuid::Uuid,
+        /// Facet index in the first simplex.
+        simplex1_facet_index: usize,
+        /// Facet index in the second simplex.
+        simplex2_facet_index: usize,
         /// Number of vertices in the first facet ordering.
         facet_vertex_count: usize,
         /// Number of vertices in the second facet ordering.
-        cell2_facet_vertex_count: usize,
+        simplex2_facet_vertex_count: usize,
         /// Observed permutation parity.
         observed_odd_permutation: bool,
         /// Expected permutation parity.
         expected_odd_permutation: bool,
     },
 
-    /// Duplicate cells were detected.
-    #[error("duplicate cells detected: {message}")]
-    DuplicateCells {
-        /// Duplicate-cell detail.
+    /// Duplicate simplices were detected.
+    #[error("duplicate simplices detected: {message}")]
+    DuplicateSimplices {
+        /// Duplicate-simplex detail.
         message: String,
     },
 
-    /// A cell insertion or validation pass found a facet incident to too many cells.
+    /// A simplex insertion or validation pass found a facet incident to too many simplices.
     ///
-    /// During insertion preflight, the `candidate_*` fields identify the cell that
+    /// During insertion preflight, the `candidate_*` fields identify the simplex that
     /// would exceed the PL-manifold facet multiplicity. During post-hoc
-    /// validation, they identify one offending incident cell from the over-shared
+    /// validation, they identify one offending incident simplex from the over-shared
     /// facet.
     #[error(
-        "facet {facet_key} exceeds incident-cell limit: observed {attempted_incident_count} incident cells, max {max_incident_count}; candidate/offending cell {candidate_cell_uuid} facet {candidate_facet_index}; other incident cells {existing_incident_count}"
+        "facet {facet_key} exceeds incident-simplex limit: observed {attempted_incident_count} incident simplices, max {max_incident_count}; candidate/offending simplex {candidate_simplex_uuid} facet {candidate_facet_index}; other incident simplices {existing_incident_count}"
     )]
     FacetSharingViolation {
         /// Canonical key of the over-shared facet.
         facet_key: u64,
-        /// Number of other/pre-existing cells already incident to the facet.
+        /// Number of other/pre-existing simplices already incident to the facet.
         existing_incident_count: usize,
-        /// Number of incident cells observed, or that would exist after candidate insertion.
+        /// Number of incident simplices observed, or that would exist after candidate insertion.
         attempted_incident_count: usize,
-        /// Maximum allowed number of incident cells for a PL-manifold facet.
+        /// Maximum allowed number of incident simplices for a PL-manifold facet.
         max_incident_count: usize,
-        /// UUID of the candidate or offending cell.
-        candidate_cell_uuid: uuid::Uuid,
-        /// Facet index on the candidate or offending cell.
+        /// UUID of the candidate or offending simplex.
+        candidate_simplex_uuid: uuid::Uuid,
+        /// Facet index on the candidate or offending simplex.
         candidate_facet_index: usize,
     },
 
-    /// Cell creation failed inside TDS validation.
-    #[error("failed to create cell: {message}")]
-    FailedToCreateCell {
-        /// Cell creation failure detail.
+    /// Simplex creation failed inside TDS validation.
+    #[error("failed to create simplex: {message}")]
+    FailedToCreateSimplex {
+        /// Simplex creation failure detail.
         message: String,
     },
 
-    /// Cells were not neighbors as expected.
-    #[error("cells {cell1} and {cell2} are not neighbors")]
+    /// Simplices were not neighbors as expected.
+    #[error("simplices {simplex1} and {simplex2} are not neighbors")]
     NotNeighbors {
-        /// First cell UUID.
-        cell1: uuid::Uuid,
-        /// Second cell UUID.
-        cell2: uuid::Uuid,
+        /// First simplex UUID.
+        simplex1: uuid::Uuid,
+        /// Second simplex UUID.
+        simplex2: uuid::Uuid,
     },
 
     /// Entity mapping became inconsistent.
@@ -228,20 +228,20 @@ pub enum TdsValidationFailure {
         message: String,
     },
 
-    /// Vertex-key retrieval failed for a cell.
-    #[error("failed to retrieve vertex keys for cell {cell_id}: {message}")]
+    /// Vertex-key retrieval failed for a simplex.
+    #[error("failed to retrieve vertex keys for simplex {simplex_id}: {message}")]
     VertexKeyRetrievalFailed {
-        /// Cell UUID.
-        cell_id: uuid::Uuid,
+        /// Simplex UUID.
+        simplex_id: uuid::Uuid,
         /// Retrieval failure detail.
         message: String,
     },
 
-    /// A cell key was missing from storage.
-    #[error("cell key {cell_key:?} not found: {context}")]
-    CellNotFound {
-        /// Missing cell key.
-        cell_key: CellKey,
+    /// A simplex key was missing from storage.
+    #[error("simplex key {simplex_key:?} not found: {context}")]
+    SimplexNotFound {
+        /// Missing simplex key.
+        simplex_key: SimplexKey,
         /// Lookup context.
         context: String,
     },
@@ -300,74 +300,90 @@ pub enum TdsValidationFailure {
         source: FacetError,
     },
 
-    /// A cell contains duplicate coordinates.
-    #[error("duplicate coordinates in cell {cell_id}: {message}")]
-    DuplicateCoordinatesInCell {
-        /// UUID of the cell containing duplicates.
-        cell_id: uuid::Uuid,
+    /// A simplex contains duplicate coordinates.
+    #[error("duplicate coordinates in simplex {simplex_id}: {message}")]
+    DuplicateCoordinatesInSimplex {
+        /// UUID of the simplex containing duplicates.
+        simplex_id: uuid::Uuid,
         /// Duplicate-coordinate detail.
         message: String,
     },
 }
 
 impl From<TdsError> for TdsValidationFailure {
+    #[expect(
+        clippy::too_many_lines,
+        reason = "structured error mapping is intentionally exhaustive; simplex naming pushes it slightly over the lint limit"
+    )]
     fn from(source: TdsError) -> Self {
         match source {
             TdsError::InvalidVertex { vertex_id, source } => {
                 Self::InvalidVertex { vertex_id, source }
             }
-            TdsError::InvalidCell { cell_id, source } => Self::InvalidCell { cell_id, source },
+            TdsError::InvalidSimplex { simplex_id, source } => {
+                Self::InvalidSimplex { simplex_id, source }
+            }
             TdsError::InvalidNeighbors { reason } => Self::InvalidNeighbors { reason },
             TdsError::OrientationViolation {
-                cell1_key,
-                cell1_uuid,
-                cell2_key,
-                cell2_uuid,
-                cell1_facet_index,
-                cell2_facet_index,
+                simplex1_key,
+                simplex1_uuid,
+                simplex2_key,
+                simplex2_uuid,
+                simplex1_facet_index,
+                simplex2_facet_index,
                 facet_vertices,
-                cell2_facet_vertices,
+                simplex2_facet_vertices,
                 observed_odd_permutation,
                 expected_odd_permutation,
             } => Self::OrientationViolation {
-                cell1_key,
-                cell1_uuid,
-                cell2_key,
-                cell2_uuid,
-                cell1_facet_index,
-                cell2_facet_index,
+                simplex1_key,
+                simplex1_uuid,
+                simplex2_key,
+                simplex2_uuid,
+                simplex1_facet_index,
+                simplex2_facet_index,
                 facet_vertex_count: facet_vertices.len(),
-                cell2_facet_vertex_count: cell2_facet_vertices.len(),
+                simplex2_facet_vertex_count: simplex2_facet_vertices.len(),
                 observed_odd_permutation,
                 expected_odd_permutation,
             },
-            TdsError::DuplicateCells { message } => Self::DuplicateCells { message },
+            TdsError::DuplicateSimplices { message } => Self::DuplicateSimplices { message },
             TdsError::FacetSharingViolation {
                 facet_key,
                 existing_incident_count,
                 attempted_incident_count,
                 max_incident_count,
-                candidate_cell_uuid,
+                candidate_simplex_uuid,
                 candidate_facet_index,
             } => Self::FacetSharingViolation {
                 facet_key,
                 existing_incident_count,
                 attempted_incident_count,
                 max_incident_count,
-                candidate_cell_uuid,
+                candidate_simplex_uuid,
                 candidate_facet_index,
             },
-            TdsError::FailedToCreateCell { message } => Self::FailedToCreateCell { message },
-            TdsError::NotNeighbors { cell1, cell2 } => Self::NotNeighbors { cell1, cell2 },
+            TdsError::FailedToCreateSimplex { message } => Self::FailedToCreateSimplex { message },
+            TdsError::NotNeighbors { simplex1, simplex2 } => {
+                Self::NotNeighbors { simplex1, simplex2 }
+            }
             TdsError::MappingInconsistency { entity, message } => {
                 Self::MappingInconsistency { entity, message }
             }
-            TdsError::VertexKeyRetrievalFailed { cell_id, message } => {
-                Self::VertexKeyRetrievalFailed { cell_id, message }
-            }
-            TdsError::CellNotFound { cell_key, context } => {
-                Self::CellNotFound { cell_key, context }
-            }
+            TdsError::VertexKeyRetrievalFailed {
+                simplex_id,
+                message,
+            } => Self::VertexKeyRetrievalFailed {
+                simplex_id,
+                message,
+            },
+            TdsError::SimplexNotFound {
+                simplex_key,
+                context,
+            } => Self::SimplexNotFound {
+                simplex_key,
+                context,
+            },
             TdsError::VertexNotFound {
                 vertex_key,
                 context,
@@ -398,9 +414,13 @@ impl From<TdsError> for TdsValidationFailure {
             }
             TdsError::Geometric(source) => Self::Geometric { source },
             TdsError::FacetError(source) => Self::Facet { source },
-            TdsError::DuplicateCoordinatesInCell { cell_id, message } => {
-                Self::DuplicateCoordinatesInCell { cell_id, message }
-            }
+            TdsError::DuplicateCoordinatesInSimplex {
+                simplex_id,
+                message,
+            } => Self::DuplicateCoordinatesInSimplex {
+                simplex_id,
+                message,
+            },
         }
     }
 }
@@ -461,10 +481,10 @@ pub enum InitialSimplexConstructionError {
         uuid: uuid::Uuid,
     },
 
-    /// Bootstrap cell creation failed.
-    #[error("failed to create bootstrap cell: {message}")]
-    FailedToCreateCell {
-        /// Cell creation failure detail.
+    /// Bootstrap simplex creation failed.
+    #[error("failed to create bootstrap simplex: {message}")]
+    FailedToCreateSimplex {
+        /// Simplex creation failure detail.
         message: String,
     },
 
@@ -473,9 +493,9 @@ pub enum InitialSimplexConstructionError {
     InsufficientVertices {
         /// Attempted dimension.
         dimension: usize,
-        /// Underlying cell validation error.
+        /// Underlying simplex validation error.
         #[source]
-        source: CellValidationError,
+        source: SimplexValidationError,
     },
 
     /// Geometric degeneracy prevented bootstrap construction.
@@ -526,8 +546,13 @@ impl From<TriangulationConstructionError> for InitialSimplexConstructionError {
     fn from(source: TriangulationConstructionError) -> Self {
         match source {
             TriangulationConstructionError::Tds(source) => source.into(),
-            TriangulationConstructionError::FailedToCreateCell { message } => {
-                Self::FailedToCreateCell { message }
+            TriangulationConstructionError::FailedToCreateSimplex { message } => {
+                Self::FailedToCreateSimplex { message }
+            }
+            TriangulationConstructionError::InsertionCavityFilling { source } => {
+                Self::UnexpectedInsertionStage {
+                    message: format!("cavity filling failed during insertion: {source}"),
+                }
             }
             TriangulationConstructionError::InsufficientVertices { dimension, source } => {
                 Self::InsufficientVertices { dimension, source }
@@ -553,10 +578,10 @@ impl From<TriangulationConstructionError> for InitialSimplexConstructionError {
             }
             TriangulationConstructionError::InsertionNonManifoldTopology {
                 facet_hash,
-                cell_count,
+                simplex_count,
             } => Self::UnexpectedInsertionStage {
                 message: format!(
-                    "facet {facet_hash:#x} shared by {cell_count} cells during initial simplex"
+                    "facet {facet_hash:#x} shared by {simplex_count} simplices during initial simplex"
                 ),
             },
             TriangulationConstructionError::InsertionHullExtension { reason } => {
@@ -803,7 +828,7 @@ impl InsertionErrorSummary {
     ///         TriangulationValidationErrorKind::ManifoldFacetMultiplicity,
     ///     )),
     ///     retryable: true,
-    ///     message: "facet shared by too many cells".to_string(),
+    ///     message: "facet shared by too many simplices".to_string(),
     /// };
     /// assert!(retryable.is_retryable());
     ///
@@ -813,7 +838,7 @@ impl InsertionErrorSummary {
     ///         TriangulationValidationErrorKind::Disconnected,
     ///     )),
     ///     retryable: false,
-    ///     message: "cell graph disconnected".to_string(),
+    ///     message: "simplex graph disconnected".to_string(),
     /// };
     /// assert!(!structural.is_retryable());
     /// ```
@@ -908,15 +933,15 @@ impl fmt::Display for DelaunayRepairFailureContext {
 /// # Examples
 ///
 /// ```rust
-/// use delaunay::prelude::tds::CellKey;
+/// use delaunay::prelude::tds::SimplexKey;
 /// use delaunay::prelude::triangulation::insertion::{
 ///     NeighborRebuildError, NeighborWiringError,
 /// };
 /// use slotmap::KeyData;
 ///
-/// let cell_key = CellKey::from(KeyData::from_ffi(11));
+/// let simplex_key = SimplexKey::from(KeyData::from_ffi(11));
 /// let err = NeighborRebuildError::Wiring {
-///     reason: NeighborWiringError::MissingCell { cell_key },
+///     reason: NeighborWiringError::MissingSimplex { simplex_key },
 /// };
 /// assert!(matches!(err, NeighborRebuildError::Wiring { .. }));
 /// ```
@@ -933,13 +958,13 @@ pub enum NeighborRebuildError {
 
     /// The repaired facet incidence is non-manifold.
     #[error(
-        "non-manifold topology while repairing neighbors: facet {facet_hash:#x} shared by {cell_count} cells"
+        "non-manifold topology while repairing neighbors: facet {facet_hash:#x} shared by {simplex_count} simplices"
     )]
     NonManifoldTopology {
         /// Hash of the over-shared facet.
         facet_hash: u64,
-        /// Number of incident cells.
-        cell_count: usize,
+        /// Number of incident simplices.
+        simplex_count: usize,
     },
 
     /// TDS validation failed while repairing neighbor pointers.
@@ -968,13 +993,13 @@ pub enum NeighborRebuildError {
 /// # Examples
 ///
 /// ```rust
-/// use delaunay::prelude::tds::CellKey;
+/// use delaunay::prelude::tds::SimplexKey;
 /// use delaunay::prelude::triangulation::insertion::CavityFillingError;
 /// use slotmap::KeyData;
 ///
-/// let cell_key = CellKey::from(KeyData::from_ffi(7));
+/// let simplex_key = SimplexKey::from(KeyData::from_ffi(7));
 /// let err = CavityFillingError::InvalidFacetIndex {
-///     cell_key,
+///     simplex_key,
 ///     facet_index: 4,
 ///     vertex_count: 3,
 /// };
@@ -983,11 +1008,11 @@ pub enum NeighborRebuildError {
 #[derive(Debug, Clone, thiserror::Error, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum CavityFillingError {
-    /// A boundary facet references a cell that is no longer present.
-    #[error("boundary facet cell {cell_key:?} not found")]
-    MissingBoundaryCell {
-        /// Missing boundary cell key.
-        cell_key: CellKey,
+    /// A boundary facet references a simplex that is no longer present.
+    #[error("boundary facet simplex {simplex_key:?} not found")]
+    MissingBoundarySimplex {
+        /// Missing boundary simplex key.
+        simplex_key: SimplexKey,
     },
 
     /// The vertex being inserted is not present in the TDS.
@@ -997,41 +1022,41 @@ pub enum CavityFillingError {
         vertex_key: VertexKey,
     },
 
-    /// A boundary cell has the wrong number of vertices for the dimension.
-    #[error("boundary cell {cell_key:?} has {actual} vertices, expected {expected}")]
-    WrongCellArity {
-        /// Cell with the wrong arity.
-        cell_key: CellKey,
+    /// A boundary simplex has the wrong number of vertices for the dimension.
+    #[error("boundary simplex {simplex_key:?} has {actual} vertices, expected {expected}")]
+    WrongSimplexArity {
+        /// Simplex with the wrong arity.
+        simplex_key: SimplexKey,
         /// Observed vertex count.
         actual: usize,
         /// Expected vertex count.
         expected: usize,
     },
 
-    /// A facet index is outside the referenced cell's vertex range.
+    /// A facet index is outside the referenced simplex's vertex range.
     #[error(
-        "facet index {facet_index} out of range for boundary cell {cell_key:?} with {vertex_count} vertices"
+        "facet index {facet_index} out of range for boundary simplex {simplex_key:?} with {vertex_count} vertices"
     )]
     InvalidFacetIndex {
-        /// Cell referenced by the facet handle.
-        cell_key: CellKey,
+        /// Simplex referenced by the facet handle.
+        simplex_key: SimplexKey,
         /// Invalid facet index.
         facet_index: usize,
-        /// Number of vertices in the referenced cell.
+        /// Number of vertices in the referenced simplex.
         vertex_count: usize,
     },
 
-    /// Creating a replacement cell failed validation.
-    #[error("failed to create replacement cell: {source}")]
-    CellCreation {
-        /// Underlying cell validation error.
+    /// Creating a replacement simplex failed validation.
+    #[error("failed to create replacement simplex: {source}")]
+    SimplexCreation {
+        /// Underlying simplex validation error.
         #[from]
-        source: CellValidationError,
+        source: SimplexValidationError,
     },
 
-    /// Inserting a replacement cell into the TDS failed.
-    #[error("failed to insert replacement cell: {reason}")]
-    CellInsertion {
+    /// Inserting a replacement simplex into the TDS failed.
+    #[error("failed to insert replacement simplex: {reason}")]
+    SimplexInsertion {
         /// Underlying TDS construction error.
         #[source]
         reason: TdsConstructionFailure,
@@ -1052,18 +1077,22 @@ pub enum CavityFillingError {
         uuid: uuid::Uuid,
     },
 
-    /// The conflict region was empty and no fallback cell was available.
-    #[error("empty conflict region for exterior insertion (fallback cell: {fallback_cell:?})")]
+    /// The conflict region was empty and no fallback simplex was available.
+    #[error(
+        "empty conflict region for exterior insertion (fallback simplex: {fallback_simplex:?})"
+    )]
     EmptyConflictRegion {
-        /// Optional fallback cell that was available to split.
-        fallback_cell: Option<CellKey>,
+        /// Optional fallback simplex that was available to split.
+        fallback_simplex: Option<SimplexKey>,
     },
 
-    /// The extracted cavity boundary was empty and no fallback cell was available.
-    #[error("empty cavity boundary for exterior insertion (fallback cell: {fallback_cell:?})")]
+    /// The extracted cavity boundary was empty and no fallback simplex was available.
+    #[error(
+        "empty cavity boundary for exterior insertion (fallback simplex: {fallback_simplex:?})"
+    )]
     EmptyBoundary {
-        /// Optional fallback cell that was available to split.
-        fallback_cell: Option<CellKey>,
+        /// Optional fallback simplex that was available to split.
+        fallback_simplex: Option<SimplexKey>,
     },
 
     /// Facet sharing remained invalid after local insertion repair.
@@ -1095,8 +1124,8 @@ pub enum CavityFillingError {
         location: LocateResult,
     },
 
-    /// Fan filling produced no replacement cells.
-    #[error("fan triangulation produced no cells")]
+    /// Fan filling produced no replacement simplices.
+    #[error("fan triangulation produced no simplices")]
     EmptyFanTriangulation,
 }
 
@@ -1135,34 +1164,34 @@ impl fmt::Display for CavityRepairStage {
 /// # Examples
 ///
 /// ```rust
-/// use delaunay::prelude::tds::CellKey;
+/// use delaunay::prelude::tds::SimplexKey;
 /// use delaunay::prelude::triangulation::insertion::NeighborWiringError;
 /// use slotmap::KeyData;
 ///
-/// let cell_key = CellKey::from(KeyData::from_ffi(11));
-/// let err = NeighborWiringError::MissingCell { cell_key };
-/// assert!(matches!(err, NeighborWiringError::MissingCell { .. }));
+/// let simplex_key = SimplexKey::from(KeyData::from_ffi(11));
+/// let err = NeighborWiringError::MissingSimplex { simplex_key };
+/// assert!(matches!(err, NeighborWiringError::MissingSimplex { .. }));
 /// ```
 #[derive(Debug, Clone, thiserror::Error, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum NeighborWiringError {
-    /// A cell required for neighbor wiring was not found.
-    #[error("cell {cell_key:?} not found during neighbor wiring")]
-    MissingCell {
-        /// Missing cell key.
-        cell_key: CellKey,
+    /// A simplex required for neighbor wiring was not found.
+    #[error("simplex {simplex_key:?} not found during neighbor wiring")]
+    MissingSimplex {
+        /// Missing simplex key.
+        simplex_key: SimplexKey,
     },
 
-    /// A facet index is outside the referenced cell's vertex range.
+    /// A facet index is outside the referenced simplex's vertex range.
     #[error(
-        "facet index {facet_index} out of range for cell {cell_key:?} with {vertex_count} vertices"
+        "facet index {facet_index} out of range for simplex {simplex_key:?} with {vertex_count} vertices"
     )]
     InvalidFacetIndex {
-        /// Referenced cell.
-        cell_key: CellKey,
+        /// Referenced simplex.
+        simplex_key: SimplexKey,
         /// Invalid facet index.
         facet_index: usize,
-        /// Number of vertices in the referenced cell.
+        /// Number of vertices in the referenced simplex.
         vertex_count: usize,
     },
 
@@ -1175,85 +1204,87 @@ pub enum NeighborWiringError {
         max: u8,
     },
 
-    /// A cell has the wrong number of vertices for the triangulation dimension.
-    #[error("cell {cell_key:?} has {found} vertices; expected {expected} for neighbor wiring")]
-    WrongCellArity {
-        /// Cell with mismatched arity.
-        cell_key: CellKey,
+    /// A simplex has the wrong number of vertices for the triangulation dimension.
+    #[error(
+        "simplex {simplex_key:?} has {found} vertices; expected {expected} for neighbor wiring"
+    )]
+    WrongSimplexArity {
+        /// Simplex with mismatched arity.
+        simplex_key: SimplexKey,
         /// Expected number of vertices.
         expected: usize,
         /// Observed number of vertices.
         found: usize,
     },
 
-    /// An external facet did not match any new-cell boundary facet.
+    /// An external facet did not match any new-simplex boundary facet.
     #[error(
-        "external facet {facet_index} on cell {cell_key:?} with hash {facet_hash:#x} did not match any new-cell facet"
+        "external facet {facet_index} on simplex {simplex_key:?} with hash {facet_hash:#x} did not match any new-simplex facet"
     )]
     ExternalFacetNotFound {
-        /// External cell being glued.
-        cell_key: CellKey,
-        /// Facet index on the external cell.
+        /// External simplex being glued.
+        simplex_key: SimplexKey,
+        /// Facet index on the external simplex.
         facet_index: u8,
         /// Hash of the external facet vertex set.
         facet_hash: u64,
     },
 
-    /// An external facet matched a facet already shared by multiple new cells.
+    /// An external facet matched a facet already shared by multiple new simplices.
     #[error(
-        "external facet {facet_index} on cell {cell_key:?} with hash {facet_hash:#x} matched {existing_incidents} new-cell incidents"
+        "external facet {facet_index} on simplex {simplex_key:?} with hash {facet_hash:#x} matched {existing_incidents} new-simplex incidents"
     )]
     ExternalFacetAlreadyShared {
-        /// External cell being glued.
-        cell_key: CellKey,
-        /// Facet index on the external cell.
+        /// External simplex being glued.
+        simplex_key: SimplexKey,
+        /// Facet index on the external simplex.
         facet_index: u8,
         /// Hash of the external facet vertex set.
         facet_hash: u64,
-        /// Number of existing new-cell incidents for the facet.
+        /// Number of existing new-simplex incidents for the facet.
         existing_incidents: usize,
     },
 
-    /// A cell points to itself as a neighbor.
-    #[error("cell {cell_key:?} has a self-neighbor pointer")]
+    /// A simplex points to itself as a neighbor.
+    #[error("simplex {simplex_key:?} has a self-neighbor pointer")]
     SelfNeighbor {
-        /// Cell containing the self-neighbor pointer.
-        cell_key: CellKey,
+        /// Simplex containing the self-neighbor pointer.
+        simplex_key: SimplexKey,
     },
 
-    /// A neighbor pointer references a missing cell.
-    #[error("cell {cell_key:?} has neighbor pointer to missing cell {neighbor_key:?}")]
+    /// A neighbor pointer references a missing simplex.
+    #[error("simplex {simplex_key:?} has neighbor pointer to missing simplex {neighbor_key:?}")]
     MissingNeighborTarget {
-        /// Cell containing the stale neighbor pointer.
-        cell_key: CellKey,
+        /// Simplex containing the stale neighbor pointer.
+        simplex_key: SimplexKey,
         /// Missing neighbor key.
-        neighbor_key: CellKey,
+        neighbor_key: SimplexKey,
     },
 
     /// A neighbor pointer does not point back through the matching mirror facet.
     #[error(
-        "cell {cell_key:?} facet {facet_index} points to {neighbor_key:?}, \
+        "simplex {simplex_key:?} facet {facet_index} points to {neighbor_key:?}, \
          but the mirror facet {mirror_facet_index:?} points back to {neighbor_back:?}"
     )]
     AsymmetricNeighbor {
-        /// Cell containing the neighbor pointer.
-        cell_key: CellKey,
-        /// Facet index in `cell_key`.
+        /// Simplex containing the neighbor pointer.
+        simplex_key: SimplexKey,
+        /// Facet index in `simplex_key`.
         facet_index: usize,
-        /// Neighbor referenced by `cell_key`.
-        neighbor_key: CellKey,
+        /// Neighbor referenced by `simplex_key`.
+        neighbor_key: SimplexKey,
         /// Matching facet index in `neighbor_key`, if one could be found.
         mirror_facet_index: Option<usize>,
         /// Neighbor's pointer back through the mirror facet.
-        neighbor_back: Option<CellKey>,
+        neighbor_back: Option<SimplexKey>,
     },
 
-    /// Neighbor traversal discovered more cells than the TDS contains.
-    #[error("neighbor walk visited {visited} unique cells but triangulation contains {total}")]
-    NeighborWalkExceededCellCount {
-        /// Number of unique cells visited.
+    /// Neighbor traversal discovered more simplices than the TDS contains.
+    #[error("neighbor walk visited {visited} unique simplices but triangulation contains {total}")]
+    NeighborWalkExceededSimplexCount {
+        /// Number of unique simplices visited.
         visited: usize,
-        /// Number of cells in the TDS.
+        /// Number of simplices in the TDS.
         total: usize,
     },
 }
@@ -1299,17 +1330,17 @@ pub enum InsertionError {
 
     /// Non-manifold topology detected during neighbor wiring.
     ///
-    /// This occurs when a facet is shared by more than 2 cells, violating
+    /// This occurs when a facet is shared by more than 2 simplices, violating
     /// the manifold property. This is typically caused by geometric degeneracy
     /// and can often be resolved via coordinate perturbation.
     #[error(
-        "Non-manifold topology: facet {facet_hash:#x} shared by {cell_count} cells (expected ≤2)"
+        "Non-manifold topology: facet {facet_hash:#x} shared by {simplex_count} simplices (expected ≤2)"
     )]
     NonManifoldTopology {
         /// Hash of the facet vertices
         facet_hash: u64,
-        /// Number of cells sharing this facet
-        cell_count: usize,
+        /// Number of simplices sharing this facet
+        simplex_count: usize,
     },
 
     /// Hull extension failed (finding visible boundary facets).
@@ -1391,7 +1422,7 @@ impl From<CavityFillingError> for InsertionError {
 
 impl From<TdsConstructionError> for CavityFillingError {
     fn from(source: TdsConstructionError) -> Self {
-        Self::CellInsertion {
+        Self::SimplexInsertion {
             reason: source.into(),
         }
     }
@@ -1420,10 +1451,10 @@ impl From<InsertionError> for NeighborRebuildError {
             InsertionError::NeighborWiring { reason } => Self::Wiring { reason },
             InsertionError::NonManifoldTopology {
                 facet_hash,
-                cell_count,
+                simplex_count,
             } => Self::NonManifoldTopology {
                 facet_hash,
-                cell_count,
+                simplex_count,
             },
             InsertionError::TopologyValidation(source) => Self::TopologyValidation {
                 reason: source.into(),
@@ -1440,7 +1471,7 @@ impl InsertionError {
     ///
     /// Retryable errors are geometric degeneracies that may be resolved by
     /// slightly perturbing the vertex coordinates:
-    /// - Non-manifold topology (facets shared by >2 cells, ridge fans)
+    /// - Non-manifold topology (facets shared by >2 simplices, ridge fans)
     /// - Topology validation failures during repair
     /// - Conflict-region boundary degeneracies (disconnected/open boundaries)
     ///
@@ -1456,7 +1487,7 @@ impl InsertionError {
     ///
     /// let retryable = InsertionError::NonManifoldTopology {
     ///     facet_hash: 1,
-    ///     cell_count: 3,
+    ///     simplex_count: 3,
     /// };
     /// assert!(retryable.is_retryable());
     ///
@@ -1484,10 +1515,10 @@ impl InsertionError {
             }
             // TDS-level topology errors: perturbation-retryable sub-variants are
             // geometric, orientation, or facet-multiplicity degeneracies.
-            // Structural errors (missing cells, broken invariants) won't be fixed by perturbation.
+            // Structural errors (missing simplices, broken invariants) won't be fixed by perturbation.
             Self::TopologyValidation(tds_err) => Self::is_tds_error_retryable(tds_err),
             // Conflict region errors: only geometry-degeneracy variants are retryable.
-            // Structural variants (InvalidStartCell, PredicateError, CellDataAccessFailed,
+            // Structural variants (InvalidStartSimplex, PredicateError, SimplexDataAccessFailed,
             // InternalInconsistency — regardless of which typed
             // `InternalInconsistencySite` carries the failure context) represent caller
             // or implementation errors that perturbation cannot fix, and so fall
@@ -1506,7 +1537,7 @@ impl InsertionError {
             //
             // Location errors are treated as non-retryable: `locate()` falls back to a scan when
             // facet-walking fails to make progress (cycle / step limit). Remaining location errors
-            // are structural (invalid cell references) or predicate failures.
+            // are structural (invalid simplex references) or predicate failures.
             Self::HullExtension { reason } => {
                 // Hull extension can fail when the query point is nearly coplanar with the hull
                 // surface (no *strictly* visible facets). This is a geometric degeneracy that may
@@ -1517,7 +1548,7 @@ impl InsertionError {
                 )
             }
             Self::CavityFilling { reason } => Self::is_cavity_filling_error_retryable(reason),
-            // Neighbor wiring errors are structural failures (missing cells, index
+            // Neighbor wiring errors are structural failures (missing simplices, index
             // overflow, etc.). Non-manifold topology detection uses the dedicated
             // `NonManifoldTopology` variant.
             Self::NeighborWiring { .. }
@@ -1558,7 +1589,7 @@ impl InsertionError {
     const fn is_cavity_filling_error_retryable(err: &CavityFillingError) -> bool {
         match err {
             CavityFillingError::InvalidFacetSharingAfterRepair { .. } => true,
-            CavityFillingError::CellInsertion { reason } => match reason {
+            CavityFillingError::SimplexInsertion { reason } => match reason {
                 TdsConstructionFailure::Validation { reason } => {
                     Self::is_tds_validation_failure_retryable(reason)
                 }
@@ -1570,7 +1601,7 @@ impl InsertionError {
                 }
                 InitialSimplexConstructionError::GeometricDegeneracy { .. } => true,
                 InitialSimplexConstructionError::DuplicateUuid { .. }
-                | InitialSimplexConstructionError::FailedToCreateCell { .. }
+                | InitialSimplexConstructionError::FailedToCreateSimplex { .. }
                 | InitialSimplexConstructionError::InsufficientVertices { .. }
                 | InitialSimplexConstructionError::InternalInconsistency { .. }
                 | InitialSimplexConstructionError::DuplicateCoordinates { .. }
@@ -1584,11 +1615,11 @@ impl InsertionError {
                 NeighborRebuildError::Unexpected { source } => source.is_retryable(),
                 NeighborRebuildError::Wiring { .. } => false,
             },
-            CavityFillingError::MissingBoundaryCell { .. }
+            CavityFillingError::MissingBoundarySimplex { .. }
             | CavityFillingError::MissingInsertedVertex { .. }
-            | CavityFillingError::WrongCellArity { .. }
+            | CavityFillingError::WrongSimplexArity { .. }
             | CavityFillingError::InvalidFacetIndex { .. }
-            | CavityFillingError::CellCreation { .. }
+            | CavityFillingError::SimplexCreation { .. }
             | CavityFillingError::RebuiltVertexMissing { .. }
             | CavityFillingError::EmptyConflictRegion { .. }
             | CavityFillingError::EmptyBoundary { .. }
@@ -1606,7 +1637,7 @@ impl InsertionError {
             // may resolve.
             //
             // `IsolatedVertex` is retryable because a geometrically-sensitive conflict
-            // region can leave a pre-existing vertex with no incident cells; perturbing
+            // region can leave a pre-existing vertex with no incident simplices; perturbing
             // coordinates changes the conflict region and can avoid stranding the vertex.
             TriangulationValidationError::ManifoldFacetMultiplicity { .. }
             | TriangulationValidationError::BoundaryRidgeMultiplicity { .. }
@@ -1620,9 +1651,9 @@ impl InsertionError {
     }
 }
 
-/// Fill cavity by creating new cells connecting boundary facets to new vertex.
+/// Fill cavity by creating new simplices connecting boundary facets to new vertex.
 ///
-/// Each boundary facet becomes the base of a new (D+1)-cell with the new vertex as apex.
+/// Each boundary facet becomes the base of a new (D+1)-simplex with the new vertex as apex.
 ///
 /// # Arguments
 /// - `tds` - Mutable triangulation data structure
@@ -1630,25 +1661,25 @@ impl InsertionError {
 /// - `boundary_facets` - Facets forming the cavity boundary
 ///
 /// # Returns
-/// Buffer of newly created cell keys
+/// Buffer of newly created simplex keys
 ///
 /// # Errors
 ///
 /// Returns [`InsertionError`] if the cavity cannot be expanded into valid new
-/// cells. Recoverable causes include:
+/// simplices. Recoverable causes include:
 /// - `new_vertex_key` does not identify a vertex in `tds`.
-/// - A boundary [`FacetHandle`] references a missing cell or an invalid facet
+/// - A boundary [`FacetHandle`] references a missing simplex or an invalid facet
 ///   index.
-/// - A boundary cell has the wrong vertex count for dimension `D`.
-/// - Boundary facets imply duplicate or non-manifold replacement cells.
-/// - Geometric orientation checks fail while canonicalizing the new cells.
-/// - Cell insertion into the underlying [`Tds`] fails.
+/// - A boundary simplex has the wrong vertex count for dimension `D`.
+/// - Boundary facets imply duplicate or non-manifold replacement simplices.
+/// - Geometric orientation checks fail while canonicalizing the new simplices.
+/// - Simplex insertion into the underlying [`Tds`] fails.
 ///
 /// # Partial Mutation on Error
 ///
 /// **IMPORTANT**: If this function returns an error, the TDS may be left in a
-/// partially updated state with some new cells already inserted. This function
-/// does NOT rollback cells created before the error occurred.
+/// partially updated state with some new simplices already inserted. This function
+/// does NOT rollback simplices created before the error occurred.
 ///
 /// This behavior is intentional for performance reasons (avoiding double validation)
 /// and is safe because:
@@ -1663,7 +1694,7 @@ impl InsertionError {
 ///
 /// **Note (Debug Builds)**: In debug builds, this function checks for duplicate
 /// boundary facets and logs warnings if found. Duplicate facets will create
-/// overlapping cells, which will be detected and repaired by subsequent topology
+/// overlapping simplices, which will be detected and repaired by subsequent topology
 /// validation passes (see `detect_local_facet_issues` / `repair_local_facet_issues`).
 ///
 /// # Examples
@@ -1684,14 +1715,14 @@ impl InsertionError {
 /// let vkey = tds.vertex_keys().next().unwrap();
 /// let boundary_facets: Vec<FacetHandle> = Vec::new();
 ///
-/// let new_cells = fill_cavity(&mut tds, vkey, &boundary_facets).unwrap();
-/// assert!(new_cells.is_empty());
+/// let new_simplices = fill_cavity(&mut tds, vkey, &boundary_facets).unwrap();
+/// assert!(new_simplices.is_empty());
 /// ```
 pub fn fill_cavity<T, U, V, const D: usize>(
     tds: &mut Tds<T, U, V, D>,
     new_vertex_key: VertexKey,
     boundary_facets: &[FacetHandle],
-) -> Result<CellKeyBuffer, InsertionError>
+) -> Result<SimplexKeyBuffer, InsertionError>
 where
     T: CoordinateScalar,
     U: DataType,
@@ -1706,11 +1737,11 @@ where
 }
 
 /// Fills a replacement cavity using the transactional replacement insertion path.
-pub(crate) fn fill_cavity_replacing_cells<T, U, V, const D: usize>(
+pub(crate) fn fill_cavity_replacing_simplices<T, U, V, const D: usize>(
     tds: &mut Tds<T, U, V, D>,
     new_vertex_key: VertexKey,
     boundary_facets: &[FacetHandle],
-) -> Result<CellKeyBuffer, InsertionError>
+) -> Result<SimplexKeyBuffer, InsertionError>
 where
     T: CoordinateScalar,
     U: DataType,
@@ -1724,12 +1755,12 @@ where
     )
 }
 
-/// Fills a caller-validated cavity without per-cell global insertion scans.
+/// Fills a caller-validated cavity without per-simplex global insertion scans.
 fn fill_cavity_with_prechecked_topology<T, U, V, const D: usize>(
     tds: &mut Tds<T, U, V, D>,
     new_vertex_key: VertexKey,
     boundary_facets: &[FacetHandle],
-) -> Result<CellKeyBuffer, InsertionError>
+) -> Result<SimplexKeyBuffer, InsertionError>
 where
     T: CoordinateScalar,
     U: DataType,
@@ -1743,10 +1774,10 @@ where
     )
 }
 
-/// Topology-check mode used while filling new cavity cells.
+/// Topology-check mode used while filling new cavity simplices.
 #[derive(Clone, Copy)]
 enum CavityInsertionTopology {
-    /// Run the standard TDS insertion checks against every existing cell.
+    /// Run the standard TDS insertion checks against every existing simplex.
     Checked,
     /// Skip global insertion scans because the caller validated the local boundary.
     Prechecked,
@@ -1762,7 +1793,7 @@ fn fill_cavity_impl<T, U, V, const D: usize>(
     new_vertex_key: VertexKey,
     boundary_facets: &[FacetHandle],
     insertion_topology: CavityInsertionTopology,
-) -> Result<CellKeyBuffer, InsertionError>
+) -> Result<SimplexKeyBuffer, InsertionError>
 where
     T: CoordinateScalar,
     U: DataType,
@@ -1781,10 +1812,10 @@ where
         // Check for duplicate boundary facets
         let mut seen_facets: FastHashMap<u64, Vec<FacetHandle>> = FastHashMap::default();
         for facet_handle in boundary_facets {
-            if let Some(boundary_cell) = tds.cell(facet_handle.cell_key()) {
+            if let Some(boundary_simplex) = tds.simplex(facet_handle.simplex_key()) {
                 let facet_idx = usize::from(facet_handle.facet_index());
                 let mut facet_vkeys = SmallBuffer::<VertexKey, MAX_PRACTICAL_DIMENSION_SIZE>::new();
-                for (i, &vertex_key) in boundary_cell.vertices().iter().enumerate() {
+                for (i, &vertex_key) in boundary_simplex.vertices().iter().enumerate() {
                     if i != facet_idx {
                         facet_vkeys.push(vertex_key);
                     }
@@ -1804,7 +1835,7 @@ where
         if !duplicates.is_empty() {
             tracing::warn!(
                 duplicate_facets = duplicates.len(),
-                "fill_cavity: duplicate boundary facets will create overlapping cells"
+                "fill_cavity: duplicate boundary facets will create overlapping simplices"
             );
             for (hash, handles) in &duplicates {
                 tracing::warn!(
@@ -1826,16 +1857,16 @@ where
             let mut ridge_vertices_map: FastHashMap<u64, VertexKeyBuffer> = FastHashMap::default();
 
             for facet_handle in boundary_facets {
-                let Some(boundary_cell) = tds.cell(facet_handle.cell_key()) else {
+                let Some(boundary_simplex) = tds.simplex(facet_handle.simplex_key()) else {
                     tracing::warn!(
-                        cell_key = ?facet_handle.cell_key(),
-                        "fill_cavity: missing boundary cell while building ridge incidence"
+                        simplex_key = ?facet_handle.simplex_key(),
+                        "fill_cavity: missing boundary simplex while building ridge incidence"
                     );
                     continue;
                 };
                 let facet_idx = usize::from(facet_handle.facet_index());
                 let mut facet_vkeys = SmallBuffer::<VertexKey, MAX_PRACTICAL_DIMENSION_SIZE>::new();
-                for (i, &vertex_key) in boundary_cell.vertices().iter().enumerate() {
+                for (i, &vertex_key) in boundary_simplex.vertices().iter().enumerate() {
                     if i != facet_idx {
                         facet_vkeys.push(vertex_key);
                     }
@@ -1902,167 +1933,170 @@ where
         }
     }
 
-    let mut new_cells = CellKeyBuffer::new();
+    let mut new_simplices = SimplexKeyBuffer::new();
 
     for facet_handle in boundary_facets {
-        let boundary_cell = tds.cell(facet_handle.cell_key()).ok_or_else(|| {
-            CavityFillingError::MissingBoundaryCell {
-                cell_key: facet_handle.cell_key(),
+        let boundary_simplex = tds.simplex(facet_handle.simplex_key()).ok_or_else(|| {
+            CavityFillingError::MissingBoundarySimplex {
+                simplex_key: facet_handle.simplex_key(),
             }
         })?;
 
-        // Validate boundary cell has correct dimensionality (D+1 vertices)
-        if boundary_cell.number_of_vertices() != D + 1 {
-            return Err(CavityFillingError::WrongCellArity {
-                cell_key: facet_handle.cell_key(),
-                actual: boundary_cell.number_of_vertices(),
+        // Validate boundary simplex has correct dimensionality (D+1 vertices)
+        if boundary_simplex.number_of_vertices() != D + 1 {
+            return Err(CavityFillingError::WrongSimplexArity {
+                simplex_key: facet_handle.simplex_key(),
+                actual: boundary_simplex.number_of_vertices(),
                 expected: D + 1,
             }
             .into());
         }
 
         let facet_idx = usize::from(facet_handle.facet_index());
-        if facet_idx >= boundary_cell.number_of_vertices() {
+        if facet_idx >= boundary_simplex.number_of_vertices() {
             return Err(CavityFillingError::InvalidFacetIndex {
-                cell_key: facet_handle.cell_key(),
+                simplex_key: facet_handle.simplex_key(),
                 facet_index: facet_idx,
-                vertex_count: boundary_cell.number_of_vertices(),
+                vertex_count: boundary_simplex.number_of_vertices(),
             }
             .into());
         }
-        let mut new_cell_vertices = SmallBuffer::<VertexKey, MAX_PRACTICAL_DIMENSION_SIZE>::new();
+        let mut new_simplex_vertices =
+            SmallBuffer::<VertexKey, MAX_PRACTICAL_DIMENSION_SIZE>::new();
 
         // Get vertices of the facet (all except the opposite vertex)
-        for (i, &vertex_key) in boundary_cell.vertices().iter().enumerate() {
+        for (i, &vertex_key) in boundary_simplex.vertices().iter().enumerate() {
             if i != facet_idx {
-                new_cell_vertices.push(vertex_key);
+                new_simplex_vertices.push(vertex_key);
             }
         }
 
         // Add the new vertex as the apex
-        new_cell_vertices.push(new_vertex_key);
-        // The facet order copied above matches the boundary-cell facet order.
+        new_simplex_vertices.push(new_vertex_key);
+        // The facet order copied above matches the boundary-simplex facet order.
         // For coherent orientation across that shared facet, odd permutation is required
         // exactly when (facet_idx + apex_idx) is even (apex_idx = D).
         let expected_odd_permutation = (facet_idx + D).is_multiple_of(2);
         if expected_odd_permutation && D >= 2 {
-            new_cell_vertices.swap(0, 1);
+            new_simplex_vertices.swap(0, 1);
         }
 
-        // Create and insert the new cell
-        let new_cell = Cell::new(new_cell_vertices, None).map_err(CavityFillingError::from)?;
-        let cell_key = match insertion_topology {
+        // Create and insert the new simplex
+        let new_simplex =
+            Simplex::new(new_simplex_vertices, None).map_err(CavityFillingError::from)?;
+        let simplex_key = match insertion_topology {
             CavityInsertionTopology::Checked => {
-                tds.insert_cell_with_mapping_trusted_vertices(new_cell)
+                tds.insert_simplex_with_mapping_trusted_vertices(new_simplex)
             }
             CavityInsertionTopology::Prechecked => {
-                tds.insert_cell_with_mapping_prechecked_topology(new_cell)
+                tds.insert_simplex_with_mapping_prechecked_topology(new_simplex)
             }
         }
         .map_err(CavityFillingError::from)?;
 
-        // Cell creation provenance: log each newly created cell with its
+        // Simplex creation provenance: log each newly created simplex with its
         // vertex ordering, geometric orientation, and source boundary facet.
-        // Helps trace which insertion step produces negative-orientation cells.
+        // Helps trace which insertion step produces negative-orientation simplices.
         #[cfg(debug_assertions)]
         if std::env::var_os("DELAUNAY_DEBUG_CAVITY").is_some()
-            && let Some(created_cell) = tds.cell(cell_key)
+            && let Some(created_simplex) = tds.simplex(simplex_key)
         {
-            let cell_points: SmallBuffer<Point<T, D>, MAX_PRACTICAL_DIMENSION_SIZE> = created_cell
-                .vertices()
-                .iter()
-                .filter_map(|&vk| tds.vertex(vk).map(|v| *v.point()))
-                .collect();
-            let orientation: Option<i32> = if cell_points.len() == D + 1 {
-                match robust_orientation(&cell_points) {
+            let simplex_points: SmallBuffer<Point<T, D>, MAX_PRACTICAL_DIMENSION_SIZE> =
+                created_simplex
+                    .vertices()
+                    .iter()
+                    .filter_map(|&vk| tds.vertex(vk).map(|v| *v.point()))
+                    .collect();
+            let orientation: Option<i32> = if simplex_points.len() == D + 1 {
+                match robust_orientation(&simplex_points) {
                     Ok(Orientation::POSITIVE) => Some(1),
                     Ok(Orientation::NEGATIVE) => Some(-1),
                     Ok(Orientation::DEGENERATE) => Some(0),
                     Err(ref e) => {
                         tracing::warn!(
-                            cell_key = ?cell_key,
-                            vertex_keys = ?created_cell.vertices(),
+                            simplex_key = ?simplex_key,
+                            vertex_keys = ?created_simplex.vertices(),
                             error = %e,
-                            "fill_cavity: robust_orientation failed for created cell"
+                            "fill_cavity: robust_orientation failed for created simplex"
                         );
                         None
                     }
                 }
             } else {
                 tracing::warn!(
-                    cell_key = ?cell_key,
-                    vertex_keys = ?created_cell.vertices(),
-                    actual_len = cell_points.len(),
+                    simplex_key = ?simplex_key,
+                    vertex_keys = ?created_simplex.vertices(),
+                    actual_len = simplex_points.len(),
                     expected_len = D + 1,
                     "fill_cavity: incomplete vertex data for orientation (missing vertices)"
                 );
                 None
             };
             tracing::debug!(
-                cell_key = ?cell_key,
-                vertex_keys = ?created_cell.vertices(),
+                simplex_key = ?simplex_key,
+                vertex_keys = ?created_simplex.vertices(),
                 orientation = ?orientation,
-                source_boundary_cell = ?facet_handle.cell_key(),
+                source_boundary_simplex = ?facet_handle.simplex_key(),
                 source_facet_index = usize::from(facet_handle.facet_index()),
-                "fill_cavity: created cell provenance"
+                "fill_cavity: created simplex provenance"
             );
         }
 
-        new_cells.push(cell_key);
+        new_simplices.push(simplex_key);
     }
 
     // Defensive check: 1:1 correspondence is guaranteed by construction
-    // (one iteration per boundary facet, one cell push per iteration)
+    // (one iteration per boundary facet, one simplex push per iteration)
     debug_assert_eq!(
         boundary_facets.len(),
-        new_cells.len(),
-        "Created {} cells for {} boundary facets (should be 1:1)",
-        new_cells.len(),
+        new_simplices.len(),
+        "Created {} simplices for {} boundary facets (should be 1:1)",
+        new_simplices.len(),
         boundary_facets.len()
     );
 
-    Ok(new_cells)
+    Ok(new_simplices)
 }
 
-/// Wire neighbor relationships for newly created cavity cells.
+/// Wire neighbor relationships for newly created cavity simplices.
 ///
 /// This function wires:
-/// - **Internal facets** between newly created cells (new↔new)
-/// - **Boundary facets** between a new cell and an existing cell, using caller-supplied
+/// - **Internal facets** between newly created simplices (new↔new)
+/// - **Boundary facets** between a new simplex and an existing simplex, using caller-supplied
 ///   external facet handles (new↔existing)
 ///
 /// The design goal is to keep wiring **local**: callers provide the small set of
-/// existing facets that bound the cavity/horizon, avoiding an O(#cells) global scan.
+/// existing facets that bound the cavity/horizon, avoiding an O(#simplices) global scan.
 ///
 /// The algorithm:
-/// 1. Index all facets of `new_cells` by a canonical facet hash (sorted vertex keys)
+/// 1. Index all facets of `new_simplices` by a canonical facet hash (sorted vertex keys)
 /// 2. For each `external_facet`, add it to the facet hash entry *only* if the entry
-///    currently has exactly 1 incident cell (i.e., a new-cell boundary facet)
+///    currently has exactly 1 incident simplex (i.e., a new-simplex boundary facet)
 /// 3. Wire mutual neighbor relationships for facet-hash entries with exactly 2 incidents
 ///
 /// # Arguments
 /// - `tds` - Mutable triangulation data structure
-/// - `new_cells` - Keys of newly created cells
-/// - `external_facets` - Facets on existing cells that should be glued to the new cells
-/// - `conflict_cells` - Optional set of cells being removed (for debug classification only)
+/// - `new_simplices` - Keys of newly created simplices
+/// - `external_facets` - Facets on existing simplices that should be glued to the new simplices
+/// - `conflict_simplices` - Optional set of simplices being removed (for debug classification only)
 ///
 /// # Returns
 /// Ok(()) if wiring succeeds
 ///
 /// # Errors
-/// Returns error if neighbor wiring fails or cells cannot be found.
+/// Returns error if neighbor wiring fails or simplices cannot be found.
 ///
 /// # Examples
 ///
 /// ```rust
 /// use delaunay::prelude::triangulation::insertion::wire_cavity_neighbors;
-/// use delaunay::prelude::collections::CellKeyBuffer;
+/// use delaunay::prelude::collections::SimplexKeyBuffer;
 /// use delaunay::prelude::tds::Tds;
 ///
 /// let mut tds: Tds<f64, (), (), 3> = Tds::empty();
-/// let new_cells = CellKeyBuffer::new();
+/// let new_simplices = SimplexKeyBuffer::new();
 ///
-/// wire_cavity_neighbors(&mut tds, &new_cells, [], None).unwrap();
+/// wire_cavity_neighbors(&mut tds, &new_simplices, [], None).unwrap();
 /// ```
 #[expect(
     clippy::too_many_lines,
@@ -2070,9 +2104,9 @@ where
 )]
 pub fn wire_cavity_neighbors<T, U, V, const D: usize, I>(
     tds: &mut Tds<T, U, V, D>,
-    new_cells: &CellKeyBuffer,
+    new_simplices: &SimplexKeyBuffer,
     external_facets: I,
-    conflict_cells: Option<&CellKeyBuffer>,
+    conflict_simplices: Option<&SimplexKeyBuffer>,
 ) -> Result<(), InsertionError>
 where
     T: CoordinateScalar,
@@ -2080,29 +2114,29 @@ where
     V: DataType,
     I: IntoIterator<Item = FacetHandle>,
 {
-    type FacetIncidents = SmallBuffer<(CellKey, u8), 2>;
+    type FacetIncidents = SmallBuffer<(SimplexKey, u8), 2>;
     type FacetMap = FastHashMap<u64, FacetIncidents>;
     let mut facet_map: FacetMap = FastHashMap::default();
 
-    // `conflict_cells` is used only for debug instrumentation, but CI also compiles in
+    // `conflict_simplices` is used only for debug instrumentation, but CI also compiles in
     // release mode with `-D warnings`.
     #[cfg(not(debug_assertions))]
-    let _conflict_cells = conflict_cells;
+    let _conflict_simplices = conflict_simplices;
 
     #[cfg(debug_assertions)]
     let log_enabled = std::env::var_os("DELAUNAY_DEBUG_CAVITY").is_some();
     #[cfg(debug_assertions)]
     let ridge_link_debug = std::env::var_os("DELAUNAY_DEBUG_RIDGE_LINK").is_some();
-    // Index all facets of new cells.
-    for &cell_key in new_cells {
-        let cell = tds
-            .cell(cell_key)
-            .ok_or(NeighborWiringError::MissingCell { cell_key })?;
-        let vertex_count = cell.number_of_vertices();
+    // Index all facets of new simplices.
+    for &simplex_key in new_simplices {
+        let simplex = tds
+            .simplex(simplex_key)
+            .ok_or(NeighborWiringError::MissingSimplex { simplex_key })?;
+        let vertex_count = simplex.number_of_vertices();
         let expected = D + 1;
         if vertex_count != expected {
-            return Err(NeighborWiringError::WrongCellArity {
-                cell_key,
+            return Err(NeighborWiringError::WrongSimplexArity {
+                simplex_key,
                 expected,
                 found: vertex_count,
             }
@@ -2111,7 +2145,7 @@ where
 
         for facet_idx in 0..vertex_count {
             let mut facet_vkeys = SmallBuffer::<VertexKey, MAX_PRACTICAL_DIMENSION_SIZE>::new();
-            for (i, &vkey) in cell.vertices().iter().enumerate() {
+            for (i, &vkey) in simplex.vertices().iter().enumerate() {
                 if i != facet_idx {
                     facet_vkeys.push(vkey);
                 }
@@ -2129,31 +2163,31 @@ where
             facet_map
                 .entry(facet_key)
                 .or_default()
-                .push((cell_key, facet_idx_u8));
+                .push((simplex_key, facet_idx_u8));
         }
     }
 
-    // Index caller-supplied external facets (existing cells) that should glue to
-    // new-cell boundary facets.
+    // Index caller-supplied external facets (existing simplices) that should glue to
+    // new-simplex boundary facets.
     for external in external_facets {
-        let cell_key = external.cell_key();
+        let simplex_key = external.simplex_key();
         let facet_idx = usize::from(external.facet_index());
 
-        let cell = tds
-            .cell(cell_key)
-            .ok_or(NeighborWiringError::MissingCell { cell_key })?;
+        let simplex = tds
+            .simplex(simplex_key)
+            .ok_or(NeighborWiringError::MissingSimplex { simplex_key })?;
 
-        if facet_idx >= cell.number_of_vertices() {
+        if facet_idx >= simplex.number_of_vertices() {
             return Err(NeighborWiringError::InvalidFacetIndex {
-                cell_key,
+                simplex_key,
                 facet_index: facet_idx,
-                vertex_count: cell.number_of_vertices(),
+                vertex_count: simplex.number_of_vertices(),
             }
             .into());
         }
 
         let mut facet_vkeys = SmallBuffer::<VertexKey, MAX_PRACTICAL_DIMENSION_SIZE>::new();
-        for (i, &vkey) in cell.vertices().iter().enumerate() {
+        for (i, &vkey) in simplex.vertices().iter().enumerate() {
             if i != facet_idx {
                 facet_vkeys.push(vkey);
             }
@@ -2163,7 +2197,7 @@ where
 
         let Some(incidents) = facet_map.get_mut(&facet_key) else {
             return Err(NeighborWiringError::ExternalFacetNotFound {
-                cell_key,
+                simplex_key,
                 facet_index: external.facet_index(),
                 facet_hash: facet_key,
             }
@@ -2171,13 +2205,13 @@ where
         };
 
         // Only glue to boundary facets (len == 1). If len >= 2, the facet is already
-        // shared by multiple new cells (internal). Adding an external cell would create
-        // a non-manifold facet shared by 3+ cells.
+        // shared by multiple new simplices (internal). Adding an external simplex would create
+        // a non-manifold facet shared by 3+ simplices.
         if incidents.len() == 1 {
-            incidents.push((cell_key, external.facet_index()));
+            incidents.push((simplex_key, external.facet_index()));
         } else {
             return Err(NeighborWiringError::ExternalFacetAlreadyShared {
-                cell_key,
+                simplex_key,
                 facet_index: external.facet_index(),
                 facet_hash: facet_key,
                 existing_incidents: incidents.len(),
@@ -2187,28 +2221,28 @@ where
     }
 
     #[cfg(debug_assertions)]
-    let conflict_set: FastHashSet<CellKey> = conflict_cells
-        .map(|cells| cells.iter().copied().collect())
+    let conflict_set: FastHashSet<SimplexKey> = conflict_simplices
+        .map(|simplices| simplices.iter().copied().collect())
         .unwrap_or_default();
     #[cfg(debug_assertions)]
-    let new_cells_set: FastHashSet<CellKey> = new_cells.iter().copied().collect();
+    let new_simplices_set: FastHashSet<SimplexKey> = new_simplices.iter().copied().collect();
 
     // Wire all matching facets (both internal and external).
-    // Two cells share a facet if they have the same facet key.
-    for (facet_key, cells) in &facet_map {
-        if cells.len() == 2 {
-            let (c1, idx1) = cells[0];
-            let (c2, idx2) = cells[1];
+    // Two simplices share a facet if they have the same facet key.
+    for (facet_key, simplices) in &facet_map {
+        if simplices.len() == 2 {
+            let (c1, idx1) = simplices[0];
+            let (c2, idx2) = simplices[1];
 
             set_neighbor(tds, c1, idx1, Some(c2))?;
             set_neighbor(tds, c2, idx2, Some(c1))?;
-        } else if cells.len() > 2 {
+        } else if simplices.len() > 2 {
             #[cfg(debug_assertions)]
             {
-                let cell_types: Vec<String> = cells
+                let simplex_types: Vec<String> = simplices
                     .iter()
                     .map(|(ck, _)| {
-                        if new_cells_set.contains(ck) {
+                        if new_simplices_set.contains(ck) {
                             format!("NEW:{ck:?}")
                         } else if conflict_set.contains(ck) {
                             format!("CONFLICT:{ck:?}")
@@ -2219,17 +2253,17 @@ where
                     .collect();
                 tracing::warn!(
                     facet_hash = *facet_key,
-                    cell_count = cells.len(),
-                    cell_types = ?cell_types,
-                    "wire_cavity_neighbors: non-manifold facet shared by >2 cells"
+                    simplex_count = simplices.len(),
+                    simplex_types = ?simplex_types,
+                    "wire_cavity_neighbors: non-manifold facet shared by >2 simplices"
                 );
             }
             return Err(InsertionError::NonManifoldTopology {
                 facet_hash: *facet_key,
-                cell_count: cells.len(),
+                simplex_count: simplices.len(),
             });
         }
-        // cells.len() == 1 means it's a boundary facet (no neighbor)
+        // simplices.len() == 1 means it's a boundary facet (no neighbor)
     }
 
     #[cfg(debug_assertions)]
@@ -2237,16 +2271,16 @@ where
         let mut boundary_facets = 0usize;
         let mut internal_facets = 0usize;
         let mut over_shared_facets = 0usize;
-        for cells in facet_map.values() {
-            match cells.len() {
+        for simplices in facet_map.values() {
+            match simplices.len() {
                 1 => boundary_facets += 1,
                 2 => internal_facets += 1,
                 _ => over_shared_facets += 1,
             }
         }
         tracing::debug!(
-            new_cells = new_cells.len(),
-            conflict_cells = conflict_cells.map_or(0, CellKeyBuffer::len),
+            new_simplices = new_simplices.len(),
+            conflict_simplices = conflict_simplices.map_or(0, SimplexKeyBuffer::len),
             internal_facets,
             boundary_facets,
             over_shared_facets,
@@ -2255,8 +2289,8 @@ where
 
         if over_shared_facets > 0 {
             let mut logged = 0usize;
-            for (facet_key, cells) in &facet_map {
-                if cells.len() <= 2 {
+            for (facet_key, simplices) in &facet_map {
+                if simplices.len() <= 2 {
                     continue;
                 }
                 if logged >= 10 {
@@ -2264,9 +2298,9 @@ where
                 }
                 tracing::debug!(
                     facet_hash = *facet_key,
-                    cell_count = cells.len(),
-                    cells = ?cells,
-                    "wire_cavity_neighbors: facet shared by >2 cells in map"
+                    simplex_count = simplices.len(),
+                    simplices = ?simplices,
+                    "wire_cavity_neighbors: facet shared by >2 simplices in map"
                 );
                 logged += 1;
             }
@@ -2276,35 +2310,36 @@ where
     #[cfg(debug_assertions)]
     if std::env::var_os("DELAUNAY_DEBUG_NEIGHBORS").is_some() {
         let mut mismatches = 0usize;
-        for &cell_key in new_cells {
-            let Some(cell) = tds.cell(cell_key) else {
+        for &simplex_key in new_simplices {
+            let Some(simplex) = tds.simplex(simplex_key) else {
                 continue;
             };
-            let Some(neighbors) = cell.neighbor_keys() else {
+            let Some(neighbors) = simplex.neighbor_keys() else {
                 continue;
             };
             for (facet_idx, neighbor_opt) in neighbors.enumerate() {
                 let Some(neighbor_key) = neighbor_opt else {
                     continue;
                 };
-                let Some(neighbor_cell) = tds.cell(neighbor_key) else {
+                let Some(neighbor_simplex) = tds.simplex(neighbor_key) else {
                     continue;
                 };
-                let Some(mirror_idx) = cell.mirror_facet_index(facet_idx, neighbor_cell) else {
+                let Some(mirror_idx) = simplex.mirror_facet_index(facet_idx, neighbor_simplex)
+                else {
                     mismatches += 1;
                     tracing::warn!(
-                        cell = ?cell_key,
+                        simplex = ?simplex_key,
                         facet_idx,
                         neighbor = ?neighbor_key,
                         "wire_cavity_neighbors: missing mirror facet index"
                     );
                     continue;
                 };
-                let neighbor_back = neighbor_cell.neighbor_key(mirror_idx).flatten();
-                if neighbor_back != Some(cell_key) {
+                let neighbor_back = neighbor_simplex.neighbor_key(mirror_idx).flatten();
+                if neighbor_back != Some(simplex_key) {
                     mismatches += 1;
                     tracing::warn!(
-                        cell = ?cell_key,
+                        simplex = ?simplex_key,
                         facet_idx,
                         neighbor = ?neighbor_key,
                         mirror_idx,
@@ -2329,17 +2364,17 @@ where
         let mut neighbor_conflict = 0usize;
         let mut neighbor_missing = 0usize;
         let mut neighbor_none = 0usize;
-        let mut anomaly_samples: Vec<(CellKey, usize, Option<CellKey>, String)> = Vec::new();
+        let mut anomaly_samples: Vec<(SimplexKey, usize, Option<SimplexKey>, String)> = Vec::new();
 
-        for &cell_key in new_cells {
-            let Some(cell) = tds.cell(cell_key) else {
+        for &simplex_key in new_simplices {
+            let Some(simplex) = tds.simplex(simplex_key) else {
                 continue;
             };
 
-            let vertex_count = cell.number_of_vertices();
+            let vertex_count = simplex.number_of_vertices();
             total_slots = total_slots.saturating_add(vertex_count);
 
-            let Some(neighbors) = cell.neighbor_keys() else {
+            let Some(neighbors) = simplex.neighbor_keys() else {
                 neighbor_none = neighbor_none.saturating_add(vertex_count);
                 continue;
             };
@@ -2350,25 +2385,25 @@ where
                         neighbor_none = neighbor_none.saturating_add(1);
                     }
                     Some(neighbor_key) => {
-                        if new_cells_set.contains(&neighbor_key) {
+                        if new_simplices_set.contains(&neighbor_key) {
                             neighbor_new = neighbor_new.saturating_add(1);
                         } else if conflict_set.contains(&neighbor_key) {
                             neighbor_conflict = neighbor_conflict.saturating_add(1);
                             if anomaly_samples.len() < 10 {
                                 anomaly_samples.push((
-                                    cell_key,
+                                    simplex_key,
                                     facet_idx,
                                     Some(neighbor_key),
                                     "CONFLICT".to_string(),
                                 ));
                             }
-                        } else if tds.contains_cell(neighbor_key) {
+                        } else if tds.contains_simplex(neighbor_key) {
                             neighbor_existing = neighbor_existing.saturating_add(1);
                         } else {
                             neighbor_missing = neighbor_missing.saturating_add(1);
                             if anomaly_samples.len() < 10 {
                                 anomaly_samples.push((
-                                    cell_key,
+                                    simplex_key,
                                     facet_idx,
                                     Some(neighbor_key),
                                     "MISSING".to_string(),
@@ -2381,14 +2416,14 @@ where
         }
 
         tracing::debug!(
-            new_cells = new_cells.len(),
+            new_simplices = new_simplices.len(),
             total_slots,
             neighbor_new,
             neighbor_existing,
             neighbor_conflict,
             neighbor_missing,
             neighbor_none,
-            "wire_cavity_neighbors: new-cell neighbor classification summary"
+            "wire_cavity_neighbors: new-simplex neighbor classification summary"
         );
 
         if neighbor_conflict > 0 || neighbor_missing > 0 {
@@ -2396,7 +2431,7 @@ where
                 neighbor_conflict,
                 neighbor_missing,
                 anomaly_samples = ?anomaly_samples,
-                "wire_cavity_neighbors: unexpected neighbor classifications for new cells"
+                "wire_cavity_neighbors: unexpected neighbor classifications for new simplices"
             );
         }
     }
@@ -2404,20 +2439,20 @@ where
     Ok(())
 }
 
-/// Collect facets on existing (non-internal) cells that share a facet with the internal boundary.
+/// Collect facets on existing (non-internal) simplices that share a facet with the internal boundary.
 ///
 /// Given:
-/// - `internal_cells`: a set of cells that will be removed/replaced
-/// - `boundary_facets`: facet handles on *internal* cells that lie on the boundary of that set
+/// - `internal_simplices`: a set of simplices that will be removed/replaced
+/// - `boundary_facets`: facet handles on *internal* simplices that lie on the boundary of that set
 ///
-/// This returns facet handles on *external* cells (neighbors of `internal_cells`) whose facet
+/// This returns facet handles on *external* simplices (neighbors of `internal_simplices`) whose facet
 /// vertex sets match one of the boundary facets.
 ///
-/// This is used to wire new cells to the pre-existing triangulation without performing a global
-/// scan over all cells.
+/// This is used to wire new simplices to the pre-existing triangulation without performing a global
+/// scan over all simplices.
 pub(crate) fn external_facets_for_boundary<T, U, V, const D: usize>(
     tds: &Tds<T, U, V, D>,
-    internal_cells: &CellKeyBuffer,
+    internal_simplices: &SimplexKeyBuffer,
     boundary_facets: &[FacetHandle],
 ) -> Result<SmallBuffer<FacetHandle, 64>, InsertionError>
 where
@@ -2425,33 +2460,33 @@ where
     U: DataType,
     V: DataType,
 {
-    if internal_cells.is_empty() || boundary_facets.is_empty() {
+    if internal_simplices.is_empty() || boundary_facets.is_empty() {
         return Ok(SmallBuffer::new());
     }
 
-    let internal_set: FastHashSet<CellKey> = internal_cells.iter().copied().collect();
+    let internal_set: FastHashSet<SimplexKey> = internal_simplices.iter().copied().collect();
 
-    // Hashes of boundary facets on internal cells.
+    // Hashes of boundary facets on internal simplices.
     let mut boundary_hashes: FastHashSet<u64> = FastHashSet::default();
     for &facet in boundary_facets {
-        let cell_key = facet.cell_key();
+        let simplex_key = facet.simplex_key();
         let facet_idx = usize::from(facet.facet_index());
 
-        let cell = tds
-            .cell(cell_key)
-            .ok_or(NeighborWiringError::MissingCell { cell_key })?;
+        let simplex = tds
+            .simplex(simplex_key)
+            .ok_or(NeighborWiringError::MissingSimplex { simplex_key })?;
 
-        if facet_idx >= cell.number_of_vertices() {
+        if facet_idx >= simplex.number_of_vertices() {
             return Err(NeighborWiringError::InvalidFacetIndex {
-                cell_key,
+                simplex_key,
                 facet_index: facet_idx,
-                vertex_count: cell.number_of_vertices(),
+                vertex_count: simplex.number_of_vertices(),
             }
             .into());
         }
 
         let mut facet_vkeys = SmallBuffer::<VertexKey, MAX_PRACTICAL_DIMENSION_SIZE>::new();
-        for (i, &vkey) in cell.vertices().iter().enumerate() {
+        for (i, &vkey) in simplex.vertices().iter().enumerate() {
             if i != facet_idx {
                 facet_vkeys.push(vkey);
             }
@@ -2460,13 +2495,13 @@ where
         boundary_hashes.insert(facet_hash_from_sorted_vertices(&facet_vkeys));
     }
 
-    // Candidate external cells are those reachable via neighbor pointers from the internal set.
-    let mut candidate_cells: FastHashSet<CellKey> = FastHashSet::default();
-    for &cell_key in internal_cells {
-        let cell = tds
-            .cell(cell_key)
-            .ok_or(NeighborWiringError::MissingCell { cell_key })?;
-        let Some(neighbors) = cell.neighbor_keys() else {
+    // Candidate external simplices are those reachable via neighbor pointers from the internal set.
+    let mut candidate_simplices: FastHashSet<SimplexKey> = FastHashSet::default();
+    for &simplex_key in internal_simplices {
+        let simplex = tds
+            .simplex(simplex_key)
+            .ok_or(NeighborWiringError::MissingSimplex { simplex_key })?;
+        let Some(neighbors) = simplex.neighbor_keys() else {
             continue;
         };
 
@@ -2475,21 +2510,21 @@ where
                 continue;
             };
             if !internal_set.contains(&neighbor_key) {
-                candidate_cells.insert(neighbor_key);
+                candidate_simplices.insert(neighbor_key);
             }
         }
     }
 
     let mut external_facets: SmallBuffer<FacetHandle, 64> = SmallBuffer::new();
 
-    for &cell_key in &candidate_cells {
-        let cell = tds
-            .cell(cell_key)
-            .ok_or(NeighborWiringError::MissingCell { cell_key })?;
+    for &simplex_key in &candidate_simplices {
+        let simplex = tds
+            .simplex(simplex_key)
+            .ok_or(NeighborWiringError::MissingSimplex { simplex_key })?;
 
-        for facet_idx in 0..cell.number_of_vertices() {
+        for facet_idx in 0..simplex.number_of_vertices() {
             let mut facet_vkeys = SmallBuffer::<VertexKey, MAX_PRACTICAL_DIMENSION_SIZE>::new();
-            for (i, &vkey) in cell.vertices().iter().enumerate() {
+            for (i, &vkey) in simplex.vertices().iter().enumerate() {
                 if i != facet_idx {
                     facet_vkeys.push(vkey);
                 }
@@ -2506,7 +2541,7 @@ where
                     facet_index: facet_idx,
                     max: u8::MAX,
                 })?;
-            external_facets.push(FacetHandle::new(cell_key, facet_idx_u8));
+            external_facets.push(FacetHandle::new(simplex_key, facet_idx_u8));
         }
     }
 
@@ -2516,44 +2551,45 @@ where
 /// Helper: Set a single neighbor relationship
 fn set_neighbor<T, U, V, const D: usize>(
     tds: &mut Tds<T, U, V, D>,
-    cell_key: CellKey,
+    simplex_key: SimplexKey,
     facet_idx: u8,
-    neighbor: Option<CellKey>,
+    neighbor: Option<SimplexKey>,
 ) -> Result<(), InsertionError>
 where
     U: DataType,
     V: DataType,
 {
-    let cell = tds
-        .cell_mut(cell_key)
-        .ok_or(NeighborWiringError::MissingCell { cell_key })?;
+    let simplex = tds
+        .simplex_mut(simplex_key)
+        .ok_or(NeighborWiringError::MissingSimplex { simplex_key })?;
     let facet_idx = usize::from(facet_idx);
-    if facet_idx >= cell.number_of_vertices() {
+    if facet_idx >= simplex.number_of_vertices() {
         return Err(NeighborWiringError::InvalidFacetIndex {
-            cell_key,
+            simplex_key,
             facet_index: facet_idx,
-            vertex_count: cell.number_of_vertices(),
+            vertex_count: simplex.number_of_vertices(),
         }
         .into());
     }
 
-    if cell.neighbor_slots().is_none() {
-        set_cell_neighbors_from_keys(cell, (0..=D).map(|_| None))?;
+    if simplex.neighbor_slots().is_none() {
+        set_simplex_neighbors_from_keys(simplex, (0..=D).map(|_| None))?;
     }
-    let neighbors = cell.ensure_neighbors_buffer_mut();
+    let neighbors = simplex.ensure_neighbors_buffer_mut();
     neighbors[facet_idx] = NeighborSlot::from_neighbor_key(neighbor);
 
     Ok(())
 }
 
-/// Installs a fully assigned neighbor buffer and preserves typed cell context on arity errors.
-fn set_cell_neighbors_from_keys<T, U, V, const D: usize>(
-    cell: &mut Cell<T, U, V, D>,
-    neighbors: impl IntoIterator<Item = Option<CellKey>>,
+/// Installs a fully assigned neighbor buffer and preserves typed simplex context on arity errors.
+fn set_simplex_neighbors_from_keys<T, U, V, const D: usize>(
+    simplex: &mut Simplex<T, U, V, D>,
+    neighbors: impl IntoIterator<Item = Option<SimplexKey>>,
 ) -> Result<(), InsertionError> {
-    let cell_id = cell.uuid();
-    cell.set_neighbors_from_keys(neighbors)
-        .map_err(|source| TdsError::InvalidCell { cell_id, source }.into())
+    let simplex_id = simplex.uuid();
+    simplex
+        .set_neighbors_from_keys(neighbors)
+        .map_err(|source| TdsError::InvalidSimplex { simplex_id, source }.into())
 }
 
 /// Hash a facet from sorted vertex keys.
@@ -2573,15 +2609,18 @@ fn facet_hash_from_sorted_vertices(sorted_vkeys: &[VertexKey]) -> u64 {
     hasher.finish()
 }
 
-/// Compute a canonical hash for one cell facet so local repair can match
+/// Compute a canonical hash for one simplex facet so local repair can match
 /// newly exposed facets without scanning the full triangulation.
-fn facet_hash_for_cell<T, U, V, const D: usize>(cell: &Cell<T, U, V, D>, facet_idx: usize) -> u64
+fn facet_hash_for_simplex<T, U, V, const D: usize>(
+    simplex: &Simplex<T, U, V, D>,
+    facet_idx: usize,
+) -> u64
 where
     U: DataType,
     V: DataType,
 {
     let mut facet_vkeys = SmallBuffer::<VertexKey, MAX_PRACTICAL_DIMENSION_SIZE>::new();
-    for (i, &vkey) in cell.vertices().iter().enumerate() {
+    for (i, &vkey) in simplex.vertices().iter().enumerate() {
         if i != facet_idx {
             facet_vkeys.push(vkey);
         }
@@ -2590,35 +2629,38 @@ where
     facet_hash_from_sorted_vertices(&facet_vkeys)
 }
 
-/// Return whether `neighbor_key` is the cell incident across `cell`'s `facet_idx`.
+/// Return whether `neighbor_key` is the simplex incident across `simplex`'s `facet_idx`.
 fn neighbor_slot_points_across_facet<T, U, V, const D: usize>(
     tds: &Tds<T, U, V, D>,
-    cell: &Cell<T, U, V, D>,
+    simplex: &Simplex<T, U, V, D>,
     facet_idx: usize,
-    neighbor_key: CellKey,
+    neighbor_key: SimplexKey,
 ) -> bool
 where
     U: DataType,
     V: DataType,
 {
-    tds.cell(neighbor_key)
-        .is_some_and(|neighbor_cell| cell.mirror_facet_index(facet_idx, neighbor_cell).is_some())
+    tds.simplex(neighbor_key).is_some_and(|neighbor_simplex| {
+        simplex
+            .mirror_facet_index(facet_idx, neighbor_simplex)
+            .is_some()
+    })
 }
 
-/// Repair neighbor pointers for a locally affected cell set.
+/// Repair neighbor pointers for a locally affected simplex set.
 ///
 /// This is the cold-path counterpart to [`repair_neighbor_pointers`]. It avoids a
-/// triangulation-wide facet scan after a small repair removes cells by:
-/// - seeding the affected set from `seeds` and `optional_external_cells`,
+/// triangulation-wide facet scan after a small repair removes simplices by:
+/// - seeding the affected set from `seeds` and `optional_external_simplices`,
 /// - adding one-hop neighbors reachable through current pointers,
 /// - building facet incidence only for that affected set, and
 /// - filling only empty, dangling, or facet-incompatible neighbor slots that can be matched locally.
 ///
-/// Existing valid neighbor pointers are preserved, including pointers into cells outside
+/// Existing valid neighbor pointers are preserved, including pointers into simplices outside
 /// the affected set.
 ///
 /// This helper is intentionally scoped: it only considers `seeds`,
-/// `optional_external_cells`, and one-hop neighbors reachable from those cells.
+/// `optional_external_simplices`, and one-hop neighbors reachable from those simplices.
 /// Damage outside that local region is ignored. Use [`repair_neighbor_pointers`]
 /// when callers need a full triangulation-wide rebuild, or run validation after
 /// local repair when the affected region is not known precisely.
@@ -2626,8 +2668,8 @@ where
 /// # Arguments
 ///
 /// - `tds` - triangulation data structure whose neighbor slots may be repaired.
-/// - `seeds` - cells that mark the local region touched by cavity repair.
-/// - `optional_external_cells` - outside cells that share facets with the repaired region.
+/// - `seeds` - simplices that mark the local region touched by cavity repair.
+/// - `optional_external_simplices` - outside simplices that share facets with the repaired region.
 ///
 /// # Returns
 ///
@@ -2635,10 +2677,10 @@ where
 ///
 /// # Errors
 ///
-/// Returns [`InsertionError::NeighborWiring`] if an affected cell is malformed, a facet index
+/// Returns [`InsertionError::NeighborWiring`] if an affected simplex is malformed, a facet index
 /// cannot fit in `u8`, or debug-only local validation finds a dangling or asymmetric neighbor
 /// pointer. Returns [`InsertionError::NonManifoldTopology`] if local facet incidence has more
-/// than two incident cells for one facet.
+/// than two incident simplices for one facet.
 ///
 /// # Examples
 ///
@@ -2668,22 +2710,22 @@ where
 /// let dt: DelaunayTriangulation<_, (), (), 2> = DelaunayTriangulation::new(&vertices)?;
 /// let mut tds = dt.tds().clone();
 ///
-/// let (cell_key, facet_idx, neighbor_key) = tds
-///     .cells()
-///     .find_map(|(cell_key, cell)| {
-///         cell.neighbors()?.enumerate().find_map(|(facet_idx, neighbor)| {
-///             neighbor.map(|neighbor_key| (cell_key, facet_idx, neighbor_key))
+/// let (simplex_key, facet_idx, neighbor_key) = tds
+///     .simplices()
+///     .find_map(|(simplex_key, simplex)| {
+///         simplex.neighbors()?.enumerate().find_map(|(facet_idx, neighbor)| {
+///             neighbor.map(|neighbor_key| (simplex_key, facet_idx, neighbor_key))
 ///         })
 ///     })
-///     .expect("test triangulation should contain adjacent cells");
+///     .expect("test triangulation should contain adjacent simplices");
 ///
 /// tds.clear_all_neighbors();
 ///
-/// let repaired = repair_neighbor_pointers_local(&mut tds, &[cell_key], Some(&[neighbor_key]))?;
+/// let repaired = repair_neighbor_pointers_local(&mut tds, &[simplex_key], Some(&[neighbor_key]))?;
 /// assert!(repaired >= 2);
 /// assert_eq!(
-///     tds.cell(cell_key)
-///         .and_then(|cell| cell.neighbor_key(facet_idx).flatten()),
+///     tds.simplex(simplex_key)
+///         .and_then(|simplex| simplex.neighbor_key(facet_idx).flatten()),
 ///     Some(neighbor_key)
 /// );
 /// # Ok(())
@@ -2695,62 +2737,62 @@ where
 )]
 pub fn repair_neighbor_pointers_local<T, U, V, const D: usize>(
     tds: &mut Tds<T, U, V, D>,
-    seeds: &[CellKey],
-    optional_external_cells: Option<&[CellKey]>,
+    seeds: &[SimplexKey],
+    optional_external_simplices: Option<&[SimplexKey]>,
 ) -> Result<usize, InsertionError>
 where
     U: DataType,
     V: DataType,
 {
-    type FacetIncidents = SmallBuffer<(CellKey, u8), 2>;
+    type FacetIncidents = SmallBuffer<(SimplexKey, u8), 2>;
 
-    let mut affected_cells: FastHashSet<CellKey> = FastHashSet::default();
-    for &cell_key in seeds {
-        if tds.contains_cell(cell_key) {
-            affected_cells.insert(cell_key);
+    let mut affected_simplices: FastHashSet<SimplexKey> = FastHashSet::default();
+    for &simplex_key in seeds {
+        if tds.contains_simplex(simplex_key) {
+            affected_simplices.insert(simplex_key);
         }
     }
-    if let Some(external_cells) = optional_external_cells {
-        for &cell_key in external_cells {
-            if tds.contains_cell(cell_key) {
-                affected_cells.insert(cell_key);
+    if let Some(external_simplices) = optional_external_simplices {
+        for &simplex_key in external_simplices {
+            if tds.contains_simplex(simplex_key) {
+                affected_simplices.insert(simplex_key);
             }
         }
     }
 
-    if affected_cells.is_empty() {
+    if affected_simplices.is_empty() {
         return Ok(0);
     }
 
     // Expand once through existing pointers.  This keeps the repair local while
-    // including the surviving cells whose facets may now match a repaired seed.
-    let seed_snapshot: Vec<CellKey> = affected_cells.iter().copied().collect();
-    for cell_key in seed_snapshot {
-        let Some(cell) = tds.cell(cell_key) else {
+    // including the surviving simplices whose facets may now match a repaired seed.
+    let seed_snapshot: Vec<SimplexKey> = affected_simplices.iter().copied().collect();
+    for simplex_key in seed_snapshot {
+        let Some(simplex) = tds.simplex(simplex_key) else {
             continue;
         };
-        let Some(neighbors) = cell.neighbor_keys() else {
+        let Some(neighbors) = simplex.neighbor_keys() else {
             continue;
         };
         for neighbor_key in neighbors.flatten() {
-            if tds.contains_cell(neighbor_key) {
-                affected_cells.insert(neighbor_key);
+            if tds.contains_simplex(neighbor_key) {
+                affected_simplices.insert(neighbor_key);
             }
         }
     }
 
     let mut facet_map: FastHashMap<u64, FacetIncidents> = FastHashMap::default();
 
-    for &cell_key in &affected_cells {
-        let cell = tds
-            .cell(cell_key)
-            .ok_or(NeighborWiringError::MissingCell { cell_key })?;
+    for &simplex_key in &affected_simplices {
+        let simplex = tds
+            .simplex(simplex_key)
+            .ok_or(NeighborWiringError::MissingSimplex { simplex_key })?;
 
-        let vertex_count = cell.number_of_vertices();
+        let vertex_count = simplex.number_of_vertices();
         let expected = D + 1;
         if vertex_count != expected {
-            return Err(NeighborWiringError::WrongCellArity {
-                cell_key,
+            return Err(NeighborWiringError::WrongSimplexArity {
+                simplex_key,
                 expected,
                 found: vertex_count,
             }
@@ -2758,7 +2800,7 @@ where
         }
 
         for facet_idx in 0..vertex_count {
-            let facet_hash = facet_hash_for_cell(cell, facet_idx);
+            let facet_hash = facet_hash_for_simplex(simplex, facet_idx);
             let facet_idx_u8 =
                 u8::try_from(facet_idx).map_err(|_| NeighborWiringError::FacetIndexOverflow {
                     facet_index: facet_idx,
@@ -2766,12 +2808,12 @@ where
                 })?;
 
             let entry = facet_map.entry(facet_hash).or_default();
-            entry.push((cell_key, facet_idx_u8));
+            entry.push((simplex_key, facet_idx_u8));
 
             if entry.len() > 2 {
                 return Err(InsertionError::NonManifoldTopology {
                     facet_hash,
-                    cell_count: entry.len(),
+                    simplex_count: entry.len(),
                 });
             }
         }
@@ -2779,14 +2821,14 @@ where
 
     let mut total_neighbor_slots_fixed = 0usize;
 
-    for &cell_key in &affected_cells {
+    for &simplex_key in &affected_simplices {
         let (vertex_count, old_neighbors, replacement_by_facet, current_usable_by_facet) = {
-            let cell = tds
-                .cell(cell_key)
-                .ok_or(NeighborWiringError::MissingCell { cell_key })?;
-            let vertex_count = cell.number_of_vertices();
-            let old_neighbors: SmallBuffer<Option<CellKey>, MAX_PRACTICAL_DIMENSION_SIZE> =
-                cell.neighbor_keys().map_or_else(
+            let simplex = tds
+                .simplex(simplex_key)
+                .ok_or(NeighborWiringError::MissingSimplex { simplex_key })?;
+            let vertex_count = simplex.number_of_vertices();
+            let old_neighbors: SmallBuffer<Option<SimplexKey>, MAX_PRACTICAL_DIMENSION_SIZE> =
+                simplex.neighbor_keys().map_or_else(
                     || SmallBuffer::from_elem(None, vertex_count),
                     |neighbors| {
                         let mut old_neighbors = SmallBuffer::new();
@@ -2797,7 +2839,7 @@ where
                 );
 
             let mut replacement_by_facet =
-                SmallBuffer::<Option<CellKey>, MAX_PRACTICAL_DIMENSION_SIZE>::new();
+                SmallBuffer::<Option<SimplexKey>, MAX_PRACTICAL_DIMENSION_SIZE>::new();
             replacement_by_facet.resize(vertex_count, None);
 
             let mut current_usable_by_facet =
@@ -2807,14 +2849,14 @@ where
             for facet_idx in 0..vertex_count {
                 let current_neighbor = old_neighbors.get(facet_idx).copied().flatten();
                 let current_usable = current_neighbor.is_some_and(|neighbor_key| {
-                    neighbor_slot_points_across_facet(tds, cell, facet_idx, neighbor_key)
+                    neighbor_slot_points_across_facet(tds, simplex, facet_idx, neighbor_key)
                 });
                 current_usable_by_facet[facet_idx] = current_usable;
                 if current_usable {
                     continue;
                 }
 
-                let facet_hash = facet_hash_for_cell(cell, facet_idx);
+                let facet_hash = facet_hash_for_simplex(simplex, facet_idx);
                 let Some(incidents) = facet_map.get(&facet_hash) else {
                     continue;
                 };
@@ -2822,9 +2864,9 @@ where
                     continue;
                 };
 
-                replacement_by_facet[facet_idx] = if *c1 == cell_key {
+                replacement_by_facet[facet_idx] = if *c1 == simplex_key {
                     Some(*c2)
-                } else if *c2 == cell_key {
+                } else if *c2 == simplex_key {
                     Some(*c1)
                 } else {
                     None
@@ -2859,16 +2901,16 @@ where
             continue;
         }
 
-        let cell = tds
-            .cell_mut(cell_key)
-            .ok_or(NeighborWiringError::MissingCell { cell_key })?;
-        set_cell_neighbors_from_keys(cell, rebuilt_neighbors)?;
+        let simplex = tds
+            .simplex_mut(simplex_key)
+            .ok_or(NeighborWiringError::MissingSimplex { simplex_key })?;
+        set_simplex_neighbors_from_keys(simplex, rebuilt_neighbors)?;
     }
 
     #[cfg(debug_assertions)]
     {
-        validate_no_neighbor_cycles_for_cells(tds, &affected_cells)?;
-        validate_neighbor_symmetry_for_cells(tds, &affected_cells)?;
+        validate_no_neighbor_cycles_for_simplices(tds, &affected_simplices)?;
+        validate_neighbor_symmetry_for_simplices(tds, &affected_simplices)?;
     }
 
     Ok(total_neighbor_slots_fixed)
@@ -2876,9 +2918,9 @@ where
 
 /// Repair neighbor pointers using a global facet-incidence rebuild.
 ///
-/// This performs a **global** reconstruction of the cell-neighbor graph:
-/// - Build a facet → incident-cells map from vertex keys (purely combinatorial)
-/// - Wire mutual neighbors for facets shared by exactly 2 cells
+/// This performs a **global** reconstruction of the simplex-neighbor graph:
+/// - Build a facet → incident-simplices map from vertex keys (purely combinatorial)
+/// - Wire mutual neighbors for facets shared by exactly 2 simplices
 /// - Clear all other neighbor slots (boundary facets)
 ///
 /// Unlike the original "scan for missing neighbors" approach, this avoids an
@@ -2889,7 +2931,7 @@ where
 ///
 /// # Errors
 /// Returns [`InsertionError::NonManifoldTopology`] if any facet is shared by more than
-/// 2 cells, since neighbor pointers are not well-defined in that case.
+/// 2 simplices, since neighbor pointers are not well-defined in that case.
 ///
 /// # Examples
 ///
@@ -2932,44 +2974,44 @@ where
     U: DataType,
     V: DataType,
 {
-    type FacetIncidents = SmallBuffer<(CellKey, u8), 2>;
+    type FacetIncidents = SmallBuffer<(SimplexKey, u8), 2>;
 
-    let cell_keys: Vec<CellKey> = tds.cells().map(|(key, _)| key).collect();
+    let simplex_keys: Vec<SimplexKey> = tds.simplices().map(|(key, _)| key).collect();
 
     #[cfg(debug_assertions)]
     tracing::trace!(
-        cells = cell_keys.len(),
+        simplices = simplex_keys.len(),
         "repair_neighbor_pointers: rebuilding neighbor pointers"
     );
 
-    if cell_keys.is_empty() {
+    if simplex_keys.is_empty() {
         return Ok(0);
     }
 
-    // facet_hash -> [(cell_key, facet_index_opposite_to_facet)]
+    // facet_hash -> [(simplex_key, facet_index_opposite_to_facet)]
     let mut facet_map: FastHashMap<u64, FacetIncidents> = FastHashMap::default();
 
-    // cell_key -> neighbor buffer (len = #vertices in the cell)
-    let mut neighbors_by_cell: FastHashMap<
-        CellKey,
-        SmallBuffer<Option<CellKey>, MAX_PRACTICAL_DIMENSION_SIZE>,
+    // simplex_key -> neighbor buffer (len = #vertices in the simplex)
+    let mut neighbors_by_simplex: FastHashMap<
+        SimplexKey,
+        SmallBuffer<Option<SimplexKey>, MAX_PRACTICAL_DIMENSION_SIZE>,
     > = FastHashMap::default();
 
-    for &cell_key in &cell_keys {
-        let cell = tds
-            .cell(cell_key)
-            .ok_or(NeighborWiringError::MissingCell { cell_key })?;
+    for &simplex_key in &simplex_keys {
+        let simplex = tds
+            .simplex(simplex_key)
+            .ok_or(NeighborWiringError::MissingSimplex { simplex_key })?;
 
-        let vertex_count = cell.number_of_vertices();
+        let vertex_count = simplex.number_of_vertices();
         let mut neighbors = SmallBuffer::with_capacity(vertex_count);
         neighbors.resize(vertex_count, None);
-        neighbors_by_cell.insert(cell_key, neighbors);
+        neighbors_by_simplex.insert(simplex_key, neighbors);
 
         let mut facet_vkeys = SmallBuffer::<VertexKey, MAX_PRACTICAL_DIMENSION_SIZE>::new();
 
         for facet_idx in 0..vertex_count {
             facet_vkeys.clear();
-            for (i, &vkey) in cell.vertices().iter().enumerate() {
+            for (i, &vkey) in simplex.vertices().iter().enumerate() {
                 if i != facet_idx {
                     facet_vkeys.push(vkey);
                 }
@@ -2984,31 +3026,31 @@ where
                 })?;
 
             let entry = facet_map.entry(facet_hash).or_default();
-            entry.push((cell_key, facet_idx_u8));
+            entry.push((simplex_key, facet_idx_u8));
 
             if entry.len() > 2 {
                 return Err(InsertionError::NonManifoldTopology {
                     facet_hash,
-                    cell_count: entry.len(),
+                    simplex_count: entry.len(),
                 });
             }
         }
     }
 
-    // Wire mutual neighbors for facets shared by exactly 2 cells.
+    // Wire mutual neighbors for facets shared by exactly 2 simplices.
     for (facet_hash, incidents) in facet_map {
         match incidents.as_slice() {
             [(c1, i1), (c2, i2)] => {
                 {
-                    let n1 = neighbors_by_cell
+                    let n1 = neighbors_by_simplex
                         .get_mut(c1)
-                        .ok_or(NeighborWiringError::MissingCell { cell_key: *c1 })?;
+                        .ok_or(NeighborWiringError::MissingSimplex { simplex_key: *c1 })?;
                     n1[usize::from(*i1)] = Some(*c2);
                 }
                 {
-                    let n2 = neighbors_by_cell
+                    let n2 = neighbors_by_simplex
                         .get_mut(c2)
-                        .ok_or(NeighborWiringError::MissingCell { cell_key: *c2 })?;
+                        .ok_or(NeighborWiringError::MissingSimplex { simplex_key: *c2 })?;
                     n2[usize::from(*i2)] = Some(*c1);
                 }
             }
@@ -3018,7 +3060,7 @@ where
             many => {
                 return Err(InsertionError::NonManifoldTopology {
                     facet_hash,
-                    cell_count: many.len(),
+                    simplex_count: many.len(),
                 });
             }
         }
@@ -3026,13 +3068,13 @@ where
 
     // Apply rebuilt neighbors and count changed slots.
     let mut total_neighbor_slots_fixed: usize = 0;
-    for (cell_key, rebuilt) in neighbors_by_cell {
-        let old_neighbors: SmallBuffer<Option<CellKey>, MAX_PRACTICAL_DIMENSION_SIZE> = {
-            let cell = tds
-                .cell(cell_key)
-                .ok_or(NeighborWiringError::MissingCell { cell_key })?;
+    for (simplex_key, rebuilt) in neighbors_by_simplex {
+        let old_neighbors: SmallBuffer<Option<SimplexKey>, MAX_PRACTICAL_DIMENSION_SIZE> = {
+            let simplex = tds
+                .simplex(simplex_key)
+                .ok_or(NeighborWiringError::MissingSimplex { simplex_key })?;
 
-            cell.neighbor_keys().map_or_else(
+            simplex.neighbor_keys().map_or_else(
                 || SmallBuffer::from_elem(None, rebuilt.len()),
                 Iterator::collect,
             )
@@ -3046,11 +3088,11 @@ where
                 .count(),
         );
 
-        let cell = tds
-            .cell_mut(cell_key)
-            .ok_or(NeighborWiringError::MissingCell { cell_key })?;
+        let simplex = tds
+            .simplex_mut(simplex_key)
+            .ok_or(NeighborWiringError::MissingSimplex { simplex_key })?;
 
-        set_cell_neighbors_from_keys(cell, rebuilt)?;
+        set_simplex_neighbors_from_keys(simplex, rebuilt)?;
     }
 
     #[cfg(debug_assertions)]
@@ -3059,7 +3101,7 @@ where
         "repair_neighbor_pointers: neighbor rebuild complete"
     );
     // Ensure rebuilt topology is also coherently oriented (used by fixtures/tests that
-    // construct cells manually and rely on this utility to produce a fully valid TDS).
+    // construct simplices manually and rely on this utility to produce a fully valid TDS).
     tds.normalize_coherent_orientation()?;
 
     // Validate no cycles were introduced (debug mode only)
@@ -3073,14 +3115,14 @@ where
 ///
 /// This does **not** attempt to prove the neighbor graph is acyclic (triangulations
 /// naturally contain cycles). Instead, it ensures that walking neighbor pointers from a
-/// few sample cells:
-/// - terminates (by visiting each discovered cell at most once), and
-/// - does not encounter pointers to missing cell keys.
+/// few sample simplices:
+/// - terminates (by visiting each discovered simplex at most once), and
+/// - does not encounter pointers to missing simplex keys.
 ///
-/// **Performance**: O(n·D) in the worst case for each sampled start cell.
+/// **Performance**: O(n·D) in the worst case for each sampled start simplex.
 ///
 /// # Errors
-/// Returns `NeighborWiring` if a neighbor pointer references a missing cell key.
+/// Returns `NeighborWiring` if a neighbor pointer references a missing simplex key.
 #[cfg(debug_assertions)]
 fn validate_no_neighbor_cycles<T, U, V, const D: usize>(
     tds: &Tds<T, U, V, D>,
@@ -3089,21 +3131,23 @@ where
     U: DataType,
     V: DataType,
 {
-    // Sample a few cells and try walking through their neighbor graph.
-    let sample_cells: Vec<CellKey> = tds.cells().map(|(key, _)| key).take(10).collect();
-    let max_cells = tds.number_of_cells();
+    // Sample a few simplices and try walking through their neighbor graph.
+    let sample_simplices: Vec<SimplexKey> = tds.simplices().map(|(key, _)| key).take(10).collect();
+    let max_simplices = tds.number_of_simplices();
 
-    for &start_cell in &sample_cells {
-        let mut visited: FastHashSet<CellKey> = FastHashSet::default();
-        let mut to_visit = vec![start_cell];
-        visited.insert(start_cell);
+    for &start_simplex in &sample_simplices {
+        let mut visited: FastHashSet<SimplexKey> = FastHashSet::default();
+        let mut to_visit = vec![start_simplex];
+        visited.insert(start_simplex);
 
         while let Some(current) = to_visit.pop() {
-            let cell = tds
-                .cell(current)
-                .ok_or(NeighborWiringError::MissingCell { cell_key: current })?;
+            let simplex = tds
+                .simplex(current)
+                .ok_or(NeighborWiringError::MissingSimplex {
+                    simplex_key: current,
+                })?;
 
-            let Some(neighbors) = cell.neighbor_keys() else {
+            let Some(neighbors) = simplex.neighbor_keys() else {
                 continue;
             };
 
@@ -3113,12 +3157,15 @@ where
                 };
 
                 if neighbor_key == current {
-                    return Err(NeighborWiringError::SelfNeighbor { cell_key: current }.into());
+                    return Err(NeighborWiringError::SelfNeighbor {
+                        simplex_key: current,
+                    }
+                    .into());
                 }
 
-                if !tds.contains_cell(neighbor_key) {
+                if !tds.contains_simplex(neighbor_key) {
                     return Err(NeighborWiringError::MissingNeighborTarget {
-                        cell_key: current,
+                        simplex_key: current,
                         neighbor_key,
                     }
                     .into());
@@ -3126,10 +3173,10 @@ where
 
                 if visited.insert(neighbor_key) {
                     to_visit.push(neighbor_key);
-                    if visited.len() > max_cells {
-                        return Err(NeighborWiringError::NeighborWalkExceededCellCount {
+                    if visited.len() > max_simplices {
+                        return Err(NeighborWiringError::NeighborWalkExceededSimplexCount {
                             visited: visited.len(),
-                            total: max_cells,
+                            total: max_simplices,
                         }
                         .into());
                     }
@@ -3144,28 +3191,30 @@ where
 
 /// Validate neighbor walks from a local affected set after partial pointer repair.
 #[cfg(debug_assertions)]
-fn validate_no_neighbor_cycles_for_cells<T, U, V, const D: usize>(
+fn validate_no_neighbor_cycles_for_simplices<T, U, V, const D: usize>(
     tds: &Tds<T, U, V, D>,
-    sample_cells: &FastHashSet<CellKey>,
+    sample_simplices: &FastHashSet<SimplexKey>,
 ) -> Result<(), InsertionError>
 where
     U: DataType,
     V: DataType,
 {
-    let sample_cells: Vec<CellKey> = sample_cells.iter().copied().take(10).collect();
-    let max_cells = tds.number_of_cells();
+    let sample_simplices: Vec<SimplexKey> = sample_simplices.iter().copied().take(10).collect();
+    let max_simplices = tds.number_of_simplices();
 
-    for &start_cell in &sample_cells {
-        let mut visited: FastHashSet<CellKey> = FastHashSet::default();
-        let mut to_visit = vec![start_cell];
-        visited.insert(start_cell);
+    for &start_simplex in &sample_simplices {
+        let mut visited: FastHashSet<SimplexKey> = FastHashSet::default();
+        let mut to_visit = vec![start_simplex];
+        visited.insert(start_simplex);
 
         while let Some(current) = to_visit.pop() {
-            let cell = tds
-                .cell(current)
-                .ok_or(NeighborWiringError::MissingCell { cell_key: current })?;
+            let simplex = tds
+                .simplex(current)
+                .ok_or(NeighborWiringError::MissingSimplex {
+                    simplex_key: current,
+                })?;
 
-            let Some(neighbors) = cell.neighbor_keys() else {
+            let Some(neighbors) = simplex.neighbor_keys() else {
                 continue;
             };
 
@@ -3175,12 +3224,15 @@ where
                 };
 
                 if neighbor_key == current {
-                    return Err(NeighborWiringError::SelfNeighbor { cell_key: current }.into());
+                    return Err(NeighborWiringError::SelfNeighbor {
+                        simplex_key: current,
+                    }
+                    .into());
                 }
 
-                if !tds.contains_cell(neighbor_key) {
+                if !tds.contains_simplex(neighbor_key) {
                     return Err(NeighborWiringError::MissingNeighborTarget {
-                        cell_key: current,
+                        simplex_key: current,
                         neighbor_key,
                     }
                     .into());
@@ -3188,10 +3240,10 @@ where
 
                 if visited.insert(neighbor_key) {
                     to_visit.push(neighbor_key);
-                    if visited.len() > max_cells {
-                        return Err(NeighborWiringError::NeighborWalkExceededCellCount {
+                    if visited.len() > max_simplices {
+                        return Err(NeighborWiringError::NeighborWalkExceededSimplexCount {
                             visited: visited.len(),
-                            total: max_cells,
+                            total: max_simplices,
                         }
                         .into());
                     }
@@ -3205,19 +3257,19 @@ where
 
 /// Check mirror-facet symmetry for neighbor slots touched by local repair.
 #[cfg(debug_assertions)]
-fn validate_neighbor_symmetry_for_cells<T, U, V, const D: usize>(
+fn validate_neighbor_symmetry_for_simplices<T, U, V, const D: usize>(
     tds: &Tds<T, U, V, D>,
-    affected_cells: &FastHashSet<CellKey>,
+    affected_simplices: &FastHashSet<SimplexKey>,
 ) -> Result<(), InsertionError>
 where
     U: DataType,
     V: DataType,
 {
-    for &cell_key in affected_cells {
-        let cell = tds
-            .cell(cell_key)
-            .ok_or(NeighborWiringError::MissingCell { cell_key })?;
-        let Some(neighbors) = cell.neighbor_keys() else {
+    for &simplex_key in affected_simplices {
+        let simplex = tds
+            .simplex(simplex_key)
+            .ok_or(NeighborWiringError::MissingSimplex { simplex_key })?;
+        let Some(neighbors) = simplex.neighbor_keys() else {
             continue;
         };
 
@@ -3226,25 +3278,25 @@ where
                 continue;
             };
 
-            if neighbor_key == cell_key {
-                return Err(NeighborWiringError::SelfNeighbor { cell_key }.into());
+            if neighbor_key == simplex_key {
+                return Err(NeighborWiringError::SelfNeighbor { simplex_key }.into());
             }
 
-            let Some(neighbor_cell) = tds.cell(neighbor_key) else {
+            let Some(neighbor_simplex) = tds.simplex(neighbor_key) else {
                 return Err(NeighborWiringError::MissingNeighborTarget {
-                    cell_key,
+                    simplex_key,
                     neighbor_key,
                 }
                 .into());
             };
 
-            let mirror_facet_index = cell.mirror_facet_index(facet_idx, neighbor_cell);
+            let mirror_facet_index = simplex.mirror_facet_index(facet_idx, neighbor_simplex);
             let neighbor_back = mirror_facet_index
-                .and_then(|mirror_idx| neighbor_cell.neighbor_key(mirror_idx).flatten());
+                .and_then(|mirror_idx| neighbor_simplex.neighbor_key(mirror_idx).flatten());
 
-            if neighbor_back != Some(cell_key) {
+            if neighbor_back != Some(simplex_key) {
                 return Err(NeighborWiringError::AsymmetricNeighbor {
-                    cell_key,
+                    simplex_key,
                     facet_index: facet_idx,
                     neighbor_key,
                     mirror_facet_index,
@@ -3261,7 +3313,7 @@ where
 /// Extend the convex hull by connecting an exterior vertex to visible boundary facets.
 ///
 /// This function is used when a vertex is outside the current convex hull.
-/// It finds all visible boundary facets and creates new cells connecting them to the new vertex.
+/// It finds all visible boundary facets and creates new simplices connecting them to the new vertex.
 ///
 /// # Arguments
 /// - `tds` - Mutable triangulation data structure
@@ -3270,7 +3322,7 @@ where
 /// - `point` - Coordinates of the new vertex
 ///
 /// # Returns
-/// Buffer of newly created cell keys
+/// Buffer of newly created simplex keys
 ///
 /// # Errors
 /// Returns error if:
@@ -3301,7 +3353,7 @@ pub fn extend_hull<K, U, V, const D: usize>(
     kernel: &K,
     new_vertex_key: VertexKey,
     point: &Point<K::Scalar, D>,
-) -> Result<CellKeyBuffer, InsertionError>
+) -> Result<SimplexKeyBuffer, InsertionError>
 where
     K: Kernel<D>,
     U: DataType,
@@ -3316,19 +3368,19 @@ where
         if std::env::var_os("DELAUNAY_DEBUG_HULL").is_some() {
             tracing::debug!(
                 point = ?point,
-                cell_key = ?edge_facet.cell_key(),
+                simplex_key = ?edge_facet.simplex_key(),
                 facet_index = usize::from(edge_facet.facet_index()),
                 "extend_hull: 2D boundary-edge split"
             );
         }
 
-        let mut conflict_cells = CellKeyBuffer::new();
-        conflict_cells.push(edge_facet.cell_key());
+        let mut conflict_simplices = SimplexKeyBuffer::new();
+        conflict_simplices.push(edge_facet.simplex_key());
 
-        let mut boundary_facets = extract_cavity_boundary(tds, &conflict_cells)
+        let mut boundary_facets = extract_cavity_boundary(tds, &conflict_simplices)
             .map_err(InsertionError::ConflictRegion)?;
         boundary_facets.retain(|facet| {
-            facet.cell_key() != edge_facet.cell_key()
+            facet.simplex_key() != edge_facet.simplex_key()
                 || facet.facet_index() != edge_facet.facet_index()
         });
 
@@ -3343,18 +3395,19 @@ where
             });
         }
 
-        let external_facets = external_facets_for_boundary(tds, &conflict_cells, &boundary_facets)?;
+        let external_facets =
+            external_facets_for_boundary(tds, &conflict_simplices, &boundary_facets)?;
 
-        let new_cells = fill_cavity_replacing_cells(tds, new_vertex_key, &boundary_facets)?;
+        let new_simplices = fill_cavity_replacing_simplices(tds, new_vertex_key, &boundary_facets)?;
         wire_cavity_neighbors(
             tds,
-            &new_cells,
+            &new_simplices,
             external_facets.iter().copied(),
-            Some(&conflict_cells),
+            Some(&conflict_simplices),
         )?;
-        let _ = tds.remove_cells_by_keys(&conflict_cells);
+        let _ = tds.remove_simplices_by_keys(&conflict_simplices);
 
-        return Ok(new_cells);
+        return Ok(new_simplices);
     }
 
     // Find visible boundary facets
@@ -3387,15 +3440,15 @@ where
     }
 
     // Visible hull facets are boundary facets. The new apex cannot already
-    // appear in existing cells, and internal facets are checked when wiring
-    // the new cells below, so avoid a global insertion scan per hull facet.
-    let new_cells = fill_cavity_with_prechecked_topology(tds, new_vertex_key, &visible_facets)?;
+    // appear in existing simplices, and internal facets are checked when wiring
+    // the new simplices below, so avoid a global insertion scan per hull facet.
+    let new_simplices = fill_cavity_with_prechecked_topology(tds, new_vertex_key, &visible_facets)?;
 
     // Wire neighbors using comprehensive facet matching
-    // For hull extension, no conflict cells (nothing is removed)
-    wire_cavity_neighbors(tds, &new_cells, visible_facets.iter().copied(), None)?;
+    // For hull extension, no conflict simplices (nothing is removed)
+    wire_cavity_neighbors(tds, &new_simplices, visible_facets.iter().copied(), None)?;
 
-    Ok(new_cells)
+    Ok(new_simplices)
 }
 
 fn find_boundary_edge_split_facet<T, U, V, const D: usize>(
@@ -3421,20 +3474,20 @@ where
         })?;
 
     for facet_view in boundary_facets {
-        let cell_key = facet_view.cell_key();
+        let simplex_key = facet_view.simplex_key();
         let facet_index = facet_view.facet_index();
-        let cell = tds
-            .cell(cell_key)
+        let simplex = tds
+            .simplex(simplex_key)
             .ok_or_else(|| InsertionError::HullExtension {
                 reason: HullExtensionReason::Other {
-                    message: format!("Boundary facet cell {cell_key:?} not found"),
+                    message: format!("Boundary facet simplex {simplex_key:?} not found"),
                 },
             })?;
 
         let mut edge_points = SmallBuffer::<Point<T, D>, MAX_PRACTICAL_DIMENSION_SIZE>::new();
         let mut opposite_point: Option<Point<T, D>> = None;
 
-        for (i, &vkey) in cell.vertices().iter().enumerate() {
+        for (i, &vkey) in simplex.vertices().iter().enumerate() {
             let vertex = tds
                 .vertex(vkey)
                 .ok_or_else(|| InsertionError::HullExtension {
@@ -3456,7 +3509,7 @@ where
         let opposite_point = opposite_point.ok_or_else(|| InsertionError::HullExtension {
             reason: HullExtensionReason::Other {
                 message: format!(
-                    "Opposite vertex missing for facet {facet_index} in cell {cell_key:?}"
+                    "Opposite vertex missing for facet {facet_index} in simplex {simplex_key:?}"
                 ),
             },
         })?;
@@ -3516,7 +3569,7 @@ where
             && p[1] <= max_y + tol;
 
         if on_segment {
-            let handle = FacetHandle::new(cell_key, facet_index);
+            let handle = FacetHandle::new(simplex_key, facet_index);
             if match_facet.is_some() {
                 return Err(InsertionError::HullExtension {
                     reason: HullExtensionReason::Other {
@@ -3556,7 +3609,7 @@ where
 /// Returns `HullExtension` error if:
 /// - Boundary facets cannot be retrieved
 /// - Orientation tests fail
-/// - Cell/vertex lookups fail
+/// - Simplex/vertex lookups fail
 #[expect(
     clippy::too_many_lines,
     reason = "Visibility checks and diagnostic summaries are kept in a single routine"
@@ -3613,15 +3666,15 @@ where
         if track_orientations {
             boundary_facets_count += 1;
         }
-        let cell_key = facet_view.cell_key();
+        let simplex_key = facet_view.simplex_key();
         let facet_index = facet_view.facet_index();
 
-        // Get the cell and its vertices
-        let cell = tds
-            .cell(cell_key)
+        // Get the simplex and its vertices
+        let simplex = tds
+            .simplex(simplex_key)
             .ok_or_else(|| InsertionError::HullExtension {
                 reason: HullExtensionReason::Other {
-                    message: format!("Boundary facet cell {cell_key:?} not found"),
+                    message: format!("Boundary facet simplex {simplex_key:?} not found"),
                 },
             })?;
 
@@ -3630,7 +3683,7 @@ where
             SmallBuffer::<Point<K::Scalar, D>, MAX_PRACTICAL_DIMENSION_SIZE>::new();
         let mut opposite_point: Option<Point<K::Scalar, D>> = None;
 
-        for (i, &vkey) in cell.vertices().iter().enumerate() {
+        for (i, &vkey) in simplex.vertices().iter().enumerate() {
             let vertex = tds
                 .vertex(vkey)
                 .ok_or_else(|| InsertionError::HullExtension {
@@ -3648,7 +3701,7 @@ where
         let opposite_point = opposite_point.ok_or_else(|| InsertionError::HullExtension {
             reason: HullExtensionReason::Other {
                 message: format!(
-                    "Opposite vertex missing for facet {facet_index} in cell {cell_key:?}"
+                    "Opposite vertex missing for facet {facet_index} in simplex {simplex_key:?}"
                 ),
             },
         })?;
@@ -3698,7 +3751,7 @@ where
             let max_y = max_y + tol;
             let on_segment = p[0] >= min_x && p[0] <= max_x && p[1] >= min_y && p[1] <= max_y;
             tracing::debug!(
-                cell_key = ?cell_key,
+                simplex_key = ?simplex_key,
                 facet_index = usize::from(facet_index),
                 point = ?point,
                 edge_start = ?p0,
@@ -3749,12 +3802,12 @@ where
         }
         #[cfg(debug_assertions)]
         if log_enabled && orientation_with_opposite == 0 && degenerate_facets.len() < 10 {
-            degenerate_facets.push(FacetHandle::new(cell_key, facet_index));
+            degenerate_facets.push(FacetHandle::new(simplex_key, facet_index));
         }
         #[cfg(debug_assertions)]
         if detail_enabled {
             tracing::trace!(
-                cell_key = ?cell_key,
+                simplex_key = ?simplex_key,
                 facet_index = usize::from(facet_index),
                 orientation_with_opposite,
                 orientation_with_point,
@@ -3765,7 +3818,7 @@ where
         }
 
         if is_visible {
-            visible_facets.push(FacetHandle::new(cell_key, facet_index));
+            visible_facets.push(FacetHandle::new(simplex_key, facet_index));
         }
     }
 
@@ -3794,17 +3847,17 @@ where
         let mut ridge_vertices_map: FastHashMap<u64, VertexKeyBuffer> = FastHashMap::default();
 
         for (facet_idx, facet_handle) in visible_facets.iter().enumerate() {
-            let Some(cell) = tds.cell(facet_handle.cell_key()) else {
+            let Some(simplex) = tds.simplex(facet_handle.simplex_key()) else {
                 #[cfg(debug_assertions)]
                 tracing::warn!(
-                    cell_key = ?facet_handle.cell_key(),
-                    "find_visible_boundary_facets: missing cell while summarizing ridges"
+                    simplex_key = ?facet_handle.simplex_key(),
+                    "find_visible_boundary_facets: missing simplex while summarizing ridges"
                 );
                 continue;
             };
             let facet_index = usize::from(facet_handle.facet_index());
             let mut facet_vertices = SmallBuffer::<VertexKey, MAX_PRACTICAL_DIMENSION_SIZE>::new();
-            for (i, &vkey) in cell.vertices().iter().enumerate() {
+            for (i, &vkey) in simplex.vertices().iter().enumerate() {
                 if i != facet_index {
                     facet_vertices.push(vkey);
                 }
@@ -4133,7 +4186,7 @@ mod tests {
         DelaunayRepairDiagnostics, DelaunayRepairVerificationContext, FlipError, RepairQueueOrder,
     };
     use crate::core::algorithms::locate::InternalInconsistencySite;
-    use crate::core::collections::CellKeyBuffer;
+    use crate::core::collections::SimplexKeyBuffer;
     use crate::core::tds::GeometricError;
     use crate::core::triangulation::TopologyGuarantee;
     use crate::geometry::kernel::FastKernel;
@@ -4146,26 +4199,26 @@ mod tests {
     /// Return one mutual neighbor pair from a test TDS.
     fn first_neighbor_pair<T, U, V, const D: usize>(
         tds: &Tds<T, U, V, D>,
-    ) -> Option<(CellKey, u8, CellKey, u8)>
+    ) -> Option<(SimplexKey, u8, SimplexKey, u8)>
     where
         U: DataType,
         V: DataType,
     {
-        for (cell_key, cell) in tds.cells() {
-            let Some(neighbors) = cell.neighbor_keys() else {
+        for (simplex_key, simplex) in tds.simplices() {
+            let Some(neighbors) = simplex.neighbor_keys() else {
                 continue;
             };
             for (facet_idx, neighbor_opt) in neighbors.enumerate() {
                 let Some(neighbor_key) = neighbor_opt else {
                     continue;
                 };
-                let Some(neighbor_cell) = tds.cell(neighbor_key) else {
+                let Some(neighbor_simplex) = tds.simplex(neighbor_key) else {
                     continue;
                 };
-                let mirror_idx = cell.mirror_facet_index(facet_idx, neighbor_cell)?;
+                let mirror_idx = simplex.mirror_facet_index(facet_idx, neighbor_simplex)?;
                 let facet_idx = u8::try_from(facet_idx).ok()?;
                 let mirror_idx = u8::try_from(mirror_idx).ok()?;
-                return Some((cell_key, facet_idx, neighbor_key, mirror_idx));
+                return Some((simplex_key, facet_idx, neighbor_key, mirror_idx));
             }
         }
         None
@@ -4186,25 +4239,25 @@ mod tests {
                     let new_vertex = $new_vertex;
                     let new_vkey = tds.insert_vertex_with_mapping(new_vertex).unwrap();
 
-                    // Find the single cell and create boundary facets (one per face)
-                    let cell_key = tds.cell_keys().next().unwrap();
+                    // Find the single simplex and create boundary facets (one per face)
+                    let simplex_key = tds.simplex_keys().next().unwrap();
                     let boundary_facets: Vec<FacetHandle> = (0..=$dim)
-                        .map(|i| FacetHandle::new(cell_key, i))
+                        .map(|i| FacetHandle::new(simplex_key, i))
                         .collect();
 
                     // Verify expected number of facets
                     assert_eq!(boundary_facets.len(), $expected_facets);
 
                     // Fill cavity
-                    let new_cells = fill_cavity(tds, new_vkey, &boundary_facets).unwrap();
+                    let new_simplices = fill_cavity(tds, new_vkey, &boundary_facets).unwrap();
 
-                    // Should create one cell per boundary facet
-                    assert_eq!(new_cells.len(), $expected_facets);
+                    // Should create one simplex per boundary facet
+                    assert_eq!(new_simplices.len(), $expected_facets);
 
-                    // Wire neighbors (glue new cells to the original cell's facets)
+                    // Wire neighbors (glue new simplices to the original simplex's facets)
                     wire_cavity_neighbors(
                         tds,
-                        &new_cells,
+                        &new_simplices,
                         boundary_facets.iter().copied(),
                         None,
                     )
@@ -4217,13 +4270,13 @@ mod tests {
                         tds.is_valid().err()
                     );
 
-                    // Verify all new cells have correct vertex count
-                    for &cell_key in &new_cells {
-                        let cell = tds.cell(cell_key).unwrap();
+                    // Verify all new simplices have correct vertex count
+                    for &simplex_key in &new_simplices {
+                        let simplex = tds.simplex(simplex_key).unwrap();
                         assert_eq!(
-                            cell.number_of_vertices(),
+                            simplex.number_of_vertices(),
                             $dim + 1,
-                            "New cell should have D+1 vertices"
+                            "New simplex should have D+1 vertices"
                         );
                     }
                 }
@@ -4295,9 +4348,9 @@ mod tests {
         let tds = dt.tds_mut();
 
         let invalid_vkey = VertexKey::from(KeyData::from_ffi(u64::MAX));
-        let cell_key = tds.cell_keys().next().unwrap();
+        let simplex_key = tds.simplex_keys().next().unwrap();
         let boundary_facets: Vec<FacetHandle> =
-            (0..=2).map(|i| FacetHandle::new(cell_key, i)).collect();
+            (0..=2).map(|i| FacetHandle::new(simplex_key, i)).collect();
 
         let result = fill_cavity(tds, invalid_vkey, &boundary_facets);
         assert!(
@@ -4312,7 +4365,7 @@ mod tests {
     }
 
     #[test]
-    fn test_fill_cavity_with_invalid_facet_cell() {
+    fn test_fill_cavity_with_invalid_facet_simplex() {
         let vertices = vec![
             vertex!([0.0, 0.0]),
             vertex!([1.0, 0.0]),
@@ -4322,9 +4375,9 @@ mod tests {
         let tds = dt.tds_mut();
 
         let new_vkey = tds.insert_vertex_with_mapping(vertex!([0.5, 0.5])).unwrap();
-        let invalid_cell_key = CellKey::from(KeyData::from_ffi(u64::MAX));
+        let invalid_simplex_key = SimplexKey::from(KeyData::from_ffi(u64::MAX));
         let invalid_boundary_facets: Vec<FacetHandle> = (0..=2)
-            .map(|i| FacetHandle::new(invalid_cell_key, i))
+            .map(|i| FacetHandle::new(invalid_simplex_key, i))
             .collect();
 
         let result = fill_cavity(tds, new_vkey, &invalid_boundary_facets);
@@ -4332,7 +4385,7 @@ mod tests {
         assert!(matches!(
             result,
             Err(InsertionError::CavityFilling {
-                reason: CavityFillingError::MissingBoundaryCell { .. },
+                reason: CavityFillingError::MissingBoundarySimplex { .. },
             })
         ));
     }
@@ -4348,9 +4401,9 @@ mod tests {
         let tds = dt.tds_mut();
 
         let new_vkey = tds.insert_vertex_with_mapping(vertex!([0.5, 0.5])).unwrap();
-        let cell_key = tds.cell_keys().next().unwrap();
-        let original_cell_count = tds.number_of_cells();
-        let invalid_boundary_facets = vec![FacetHandle::new(cell_key, 3)];
+        let simplex_key = tds.simplex_keys().next().unwrap();
+        let original_simplex_count = tds.number_of_simplices();
+        let invalid_boundary_facets = vec![FacetHandle::new(simplex_key, 3)];
 
         let result = fill_cavity(tds, new_vkey, &invalid_boundary_facets);
 
@@ -4361,14 +4414,14 @@ mod tests {
             })
         ));
         assert_eq!(
-            tds.number_of_cells(),
-            original_cell_count,
-            "invalid facet index must fail before inserting replacement cells"
+            tds.number_of_simplices(),
+            original_simplex_count,
+            "invalid facet index must fail before inserting replacement simplices"
         );
     }
 
     #[test]
-    fn test_wire_cavity_neighbors_with_invalid_cells() {
+    fn test_wire_cavity_neighbors_with_invalid_simplices() {
         let vertices = vec![
             vertex!([0.0, 0.0]),
             vertex!([1.0, 0.0]),
@@ -4377,16 +4430,16 @@ mod tests {
         let mut dt = DelaunayTriangulation::<_, (), (), 2>::new(&vertices).unwrap();
         let tds = dt.tds_mut();
 
-        let mut invalid_cells = CellKeyBuffer::new();
-        invalid_cells.push(CellKey::from(KeyData::from_ffi(u64::MAX)));
-        invalid_cells.push(CellKey::from(KeyData::from_ffi(u64::MAX - 1)));
+        let mut invalid_simplices = SimplexKeyBuffer::new();
+        invalid_simplices.push(SimplexKey::from(KeyData::from_ffi(u64::MAX)));
+        invalid_simplices.push(SimplexKey::from(KeyData::from_ffi(u64::MAX - 1)));
 
-        let result = wire_cavity_neighbors(tds, &invalid_cells, [], None);
+        let result = wire_cavity_neighbors(tds, &invalid_simplices, [], None);
         assert!(result.is_err());
         assert!(matches!(
             result,
             Err(InsertionError::NeighborWiring {
-                reason: NeighborWiringError::MissingCell { .. },
+                reason: NeighborWiringError::MissingSimplex { .. },
             })
         ));
     }
@@ -4402,20 +4455,20 @@ mod tests {
         let v4 = tds.insert_vertex_with_mapping(vertex!([3.0, 2.0])).unwrap();
         let v5 = tds.insert_vertex_with_mapping(vertex!([2.0, 3.0])).unwrap();
 
-        let new_cell = tds
-            .insert_cell_with_mapping(Cell::new(vec![v0, v1, v2], None).unwrap())
+        let new_simplex = tds
+            .insert_simplex_with_mapping(Simplex::new(vec![v0, v1, v2], None).unwrap())
             .unwrap();
-        let external_cell = tds
-            .insert_cell_with_mapping(Cell::new(vec![v3, v4, v5], None).unwrap())
+        let external_simplex = tds
+            .insert_simplex_with_mapping(Simplex::new(vec![v3, v4, v5], None).unwrap())
             .unwrap();
 
-        let mut new_cells = CellKeyBuffer::new();
-        new_cells.push(new_cell);
+        let mut new_simplices = SimplexKeyBuffer::new();
+        new_simplices.push(new_simplex);
 
         let err = wire_cavity_neighbors(
             &mut tds,
-            &new_cells,
-            [FacetHandle::new(external_cell, 0)],
+            &new_simplices,
+            [FacetHandle::new(external_simplex, 0)],
             None,
         )
         .unwrap_err();
@@ -4424,11 +4477,11 @@ mod tests {
             err,
             InsertionError::NeighborWiring {
                 reason: NeighborWiringError::ExternalFacetNotFound {
-                    cell_key,
+                    simplex_key,
                     facet_index: 0,
                     ..
                 },
-            } if cell_key == external_cell
+            } if simplex_key == external_simplex
         ));
     }
 
@@ -4444,26 +4497,26 @@ mod tests {
             .unwrap();
         let v4 = tds.insert_vertex_with_mapping(vertex!([2.0, 0.0])).unwrap();
 
-        let new_cell_a = tds
-            .insert_cell_with_mapping(Cell::new(vec![v0, v1, v2], None).unwrap())
+        let new_simplex_a = tds
+            .insert_simplex_with_mapping(Simplex::new(vec![v0, v1, v2], None).unwrap())
             .unwrap();
-        let new_cell_b = tds
-            .insert_cell_with_mapping(Cell::new(vec![v1, v0, v3], None).unwrap())
+        let new_simplex_b = tds
+            .insert_simplex_with_mapping(Simplex::new(vec![v1, v0, v3], None).unwrap())
             .unwrap();
-        let external_cell = tds
-            .insert_cell_bypassing_topology_checks_for_test(
-                Cell::new(vec![v0, v1, v4], None).unwrap(),
+        let external_simplex = tds
+            .insert_simplex_bypassing_topology_checks_for_test(
+                Simplex::new(vec![v0, v1, v4], None).unwrap(),
             )
             .unwrap();
 
-        let mut new_cells = CellKeyBuffer::new();
-        new_cells.push(new_cell_a);
-        new_cells.push(new_cell_b);
+        let mut new_simplices = SimplexKeyBuffer::new();
+        new_simplices.push(new_simplex_a);
+        new_simplices.push(new_simplex_b);
 
         let err = wire_cavity_neighbors(
             &mut tds,
-            &new_cells,
-            [FacetHandle::new(external_cell, 2)],
+            &new_simplices,
+            [FacetHandle::new(external_simplex, 2)],
             None,
         )
         .unwrap_err();
@@ -4472,62 +4525,62 @@ mod tests {
             err,
             InsertionError::NeighborWiring {
                 reason: NeighborWiringError::ExternalFacetAlreadyShared {
-                    cell_key,
+                    simplex_key,
                     facet_index: 2,
                     existing_incidents: 2,
                     ..
                 },
-            } if cell_key == external_cell
+            } if simplex_key == external_simplex
         ));
     }
 
     #[test]
-    fn test_external_facets_for_boundary_errors_on_missing_internal_cell() {
+    fn test_external_facets_for_boundary_errors_on_missing_internal_simplex() {
         let tds: Tds<f64, (), (), 2> = Tds::empty();
-        let missing_cell = CellKey::from(KeyData::from_ffi(u64::MAX));
-        let mut internal_cells = CellKeyBuffer::new();
-        internal_cells.push(missing_cell);
-        let boundary_facets = [FacetHandle::new(missing_cell, 0)];
+        let missing_simplex = SimplexKey::from(KeyData::from_ffi(u64::MAX));
+        let mut internal_simplices = SimplexKeyBuffer::new();
+        internal_simplices.push(missing_simplex);
+        let boundary_facets = [FacetHandle::new(missing_simplex, 0)];
 
         let err =
-            external_facets_for_boundary(&tds, &internal_cells, &boundary_facets).unwrap_err();
+            external_facets_for_boundary(&tds, &internal_simplices, &boundary_facets).unwrap_err();
 
         assert!(matches!(
             err,
             InsertionError::NeighborWiring {
-                reason: NeighborWiringError::MissingCell { cell_key },
-            } if cell_key == missing_cell
+                reason: NeighborWiringError::MissingSimplex { simplex_key },
+            } if simplex_key == missing_simplex
         ));
     }
 
     #[test]
-    fn test_external_facets_for_boundary_errors_on_missing_neighbor_cell() {
+    fn test_external_facets_for_boundary_errors_on_missing_neighbor_simplex() {
         let mut tds: Tds<f64, (), (), 2> = Tds::empty();
 
         let v0 = tds.insert_vertex_with_mapping(vertex!([0.0, 0.0])).unwrap();
         let v1 = tds.insert_vertex_with_mapping(vertex!([1.0, 0.0])).unwrap();
         let v2 = tds.insert_vertex_with_mapping(vertex!([0.0, 1.0])).unwrap();
-        let cell_key = tds
-            .insert_cell_with_mapping(Cell::new(vec![v0, v1, v2], None).unwrap())
+        let simplex_key = tds
+            .insert_simplex_with_mapping(Simplex::new(vec![v0, v1, v2], None).unwrap())
             .unwrap();
-        let missing_neighbor = CellKey::from(KeyData::from_ffi(u64::MAX - 1));
-        tds.cell_mut(cell_key)
+        let missing_neighbor = SimplexKey::from(KeyData::from_ffi(u64::MAX - 1));
+        tds.simplex_mut(simplex_key)
             .unwrap()
             .set_neighbors_from_keys(vec![Some(missing_neighbor), None, None])
             .unwrap();
 
-        let mut internal_cells = CellKeyBuffer::new();
-        internal_cells.push(cell_key);
-        let boundary_facets = [FacetHandle::new(cell_key, 0)];
+        let mut internal_simplices = SimplexKeyBuffer::new();
+        internal_simplices.push(simplex_key);
+        let boundary_facets = [FacetHandle::new(simplex_key, 0)];
 
         let err =
-            external_facets_for_boundary(&tds, &internal_cells, &boundary_facets).unwrap_err();
+            external_facets_for_boundary(&tds, &internal_simplices, &boundary_facets).unwrap_err();
 
         assert!(matches!(
             err,
             InsertionError::NeighborWiring {
-                reason: NeighborWiringError::MissingCell { cell_key },
-            } if cell_key == missing_neighbor
+                reason: NeighborWiringError::MissingSimplex { simplex_key },
+            } if simplex_key == missing_neighbor
         ));
     }
 
@@ -4542,32 +4595,32 @@ mod tests {
         let v3 = tds.insert_vertex_with_mapping(vertex!([1.0, 1.0])).unwrap();
 
         let c1 = tds
-            .insert_cell_with_mapping(Cell::new(vec![v0, v1, v2], None).unwrap())
+            .insert_simplex_with_mapping(Simplex::new(vec![v0, v1, v2], None).unwrap())
             .unwrap();
         let c2 = tds
-            .insert_cell_with_mapping(Cell::new(vec![v1, v0, v3], None).unwrap())
+            .insert_simplex_with_mapping(Simplex::new(vec![v1, v0, v3], None).unwrap())
             .unwrap();
 
         repair_neighbor_pointers(&mut tds).unwrap();
 
-        let mut internal_cells = CellKeyBuffer::new();
-        internal_cells.push(c1);
+        let mut internal_simplices = SimplexKeyBuffer::new();
+        internal_simplices.push(c1);
 
-        // Internal set has a single cell, so all its facets are boundary facets.
+        // Internal set has a single simplex, so all its facets are boundary facets.
         let boundary_facets: Vec<FacetHandle> = (0..=2).map(|i| FacetHandle::new(c1, i)).collect();
 
         let external_facets =
-            external_facets_for_boundary(&tds, &internal_cells, &boundary_facets).unwrap();
+            external_facets_for_boundary(&tds, &internal_simplices, &boundary_facets).unwrap();
         assert_eq!(external_facets.len(), 1);
 
         let external = external_facets[0];
-        assert_eq!(external.cell_key(), c2);
+        assert_eq!(external.simplex_key(), c2);
 
-        let cell = tds.cell(external.cell_key()).unwrap();
+        let simplex = tds.simplex(external.simplex_key()).unwrap();
         let facet_idx = usize::from(external.facet_index());
 
         let mut edge: SmallBuffer<VertexKey, 2> = SmallBuffer::new();
-        for (i, &vkey) in cell.vertices().iter().enumerate() {
+        for (i, &vkey) in simplex.vertices().iter().enumerate() {
             if i != facet_idx {
                 edge.push(vkey);
             }
@@ -4596,7 +4649,7 @@ mod tests {
     }
 
     #[test]
-    fn test_fill_cavity_errors_on_boundary_cell_wrong_vertex_count() {
+    fn test_fill_cavity_errors_on_boundary_simplex_wrong_vertex_count() {
         let vertices = vec![
             vertex!([0.0, 0.0]),
             vertex!([1.0, 0.0]),
@@ -4608,18 +4661,20 @@ mod tests {
         // Insert a new vertex (apex)
         let new_vkey = tds.insert_vertex_with_mapping(vertex!([0.5, 0.5])).unwrap();
 
-        // Corrupt the single boundary cell by adding one extra vertex key.
-        let cell_key = tds.cell_keys().next().unwrap();
-        let extra_vkey = tds.cell(cell_key).unwrap().vertices()[0];
-        tds.cell_mut(cell_key).unwrap().push_vertex_key(extra_vkey);
+        // Corrupt the single boundary simplex by adding one extra vertex key.
+        let simplex_key = tds.simplex_keys().next().unwrap();
+        let extra_vkey = tds.simplex(simplex_key).unwrap().vertices()[0];
+        tds.simplex_mut(simplex_key)
+            .unwrap()
+            .push_vertex_key(extra_vkey);
 
-        let boundary_facets = vec![FacetHandle::new(cell_key, 0)];
+        let boundary_facets = vec![FacetHandle::new(simplex_key, 0)];
         let err = fill_cavity(tds, new_vkey, &boundary_facets).unwrap_err();
 
         assert!(matches!(
             err,
             InsertionError::CavityFilling {
-                reason: CavityFillingError::WrongCellArity { .. },
+                reason: CavityFillingError::WrongSimplexArity { .. },
             }
         ));
     }
@@ -4638,32 +4693,35 @@ mod tests {
         let v_e = tds.insert_vertex_with_mapping(vertex!([1.0, 1.0])).unwrap();
 
         let c1 = tds
-            .insert_cell_with_mapping(Cell::new(vec![v_a, v_b, v_c], None).unwrap())
+            .insert_simplex_with_mapping(Simplex::new(vec![v_a, v_b, v_c], None).unwrap())
             .unwrap();
         let c2 = tds
-            .insert_cell_with_mapping(Cell::new(vec![v_a, v_b, v_d], None).unwrap())
+            .insert_simplex_with_mapping(Simplex::new(vec![v_a, v_b, v_d], None).unwrap())
             .unwrap();
         let c3 = tds
-            .insert_cell_bypassing_topology_checks_for_test(
-                Cell::new(vec![v_a, v_b, v_e], None).unwrap(),
+            .insert_simplex_bypassing_topology_checks_for_test(
+                Simplex::new(vec![v_a, v_b, v_e], None).unwrap(),
             )
             .unwrap();
 
-        let mut new_cells = CellKeyBuffer::new();
-        new_cells.push(c1);
-        new_cells.push(c2);
-        new_cells.push(c3);
+        let mut new_simplices = SimplexKeyBuffer::new();
+        new_simplices.push(c1);
+        new_simplices.push(c2);
+        new_simplices.push(c3);
 
-        let err = wire_cavity_neighbors(&mut tds, &new_cells, [], None).unwrap_err();
+        let err = wire_cavity_neighbors(&mut tds, &new_simplices, [], None).unwrap_err();
         assert!(matches!(
             err,
-            InsertionError::NonManifoldTopology { cell_count: 3, .. }
+            InsertionError::NonManifoldTopology {
+                simplex_count: 3,
+                ..
+            }
         ));
     }
 
     #[test]
-    fn test_wire_cavity_neighbors_errors_on_wrong_cell_arity() {
-        // Force a 2D cell away from triangle arity so wiring reports the invariant directly.
+    fn test_wire_cavity_neighbors_errors_on_wrong_simplex_arity() {
+        // Force a 2D simplex away from triangle arity so wiring reports the invariant directly.
         let vertices = vec![
             vertex!([0.0, 0.0]),
             vertex!([1.0, 0.0]),
@@ -4672,27 +4730,27 @@ mod tests {
         let mut dt = DelaunayTriangulation::<_, (), (), 2>::new(&vertices).unwrap();
         let tds = dt.tds_mut();
 
-        let cell_key = tds.cell_keys().next().unwrap();
-        let vkey0 = tds.cell(cell_key).unwrap().vertices()[0];
+        let simplex_key = tds.simplex_keys().next().unwrap();
+        let vkey0 = tds.simplex(simplex_key).unwrap().vertices()[0];
 
         {
-            let cell = tds.cell_mut(cell_key).unwrap();
-            cell.push_vertex_key(vkey0);
+            let simplex = tds.simplex_mut(simplex_key).unwrap();
+            simplex.push_vertex_key(vkey0);
         }
 
-        let mut new_cells = CellKeyBuffer::new();
-        new_cells.push(cell_key);
+        let mut new_simplices = SimplexKeyBuffer::new();
+        new_simplices.push(simplex_key);
 
-        let err = wire_cavity_neighbors(tds, &new_cells, [], None).unwrap_err();
+        let err = wire_cavity_neighbors(tds, &new_simplices, [], None).unwrap_err();
         assert!(matches!(
             err,
             InsertionError::NeighborWiring {
-                reason: NeighborWiringError::WrongCellArity {
-                    cell_key: key,
+                reason: NeighborWiringError::WrongSimplexArity {
+                    simplex_key: key,
                     expected: 3,
                     found: 4,
                 },
-            } if key == cell_key
+            } if key == simplex_key
         ));
     }
 
@@ -4713,21 +4771,21 @@ mod tests {
     }
 
     #[test]
-    fn test_neighbor_wiring_error_wrong_cell_arity_reports_expected_and_found() {
-        let cell_key = CellKey::from(KeyData::from_ffi(42));
-        let err = NeighborWiringError::WrongCellArity {
-            cell_key,
+    fn test_neighbor_wiring_error_wrong_simplex_arity_reports_expected_and_found() {
+        let simplex_key = SimplexKey::from(KeyData::from_ffi(42));
+        let err = NeighborWiringError::WrongSimplexArity {
+            simplex_key,
             expected: 3,
             found: 2,
         };
 
         assert!(matches!(
             err,
-            NeighborWiringError::WrongCellArity {
-                cell_key: key,
+            NeighborWiringError::WrongSimplexArity {
+                simplex_key: key,
                 expected: 3,
                 found: 2,
-            } if key == cell_key
+            } if key == simplex_key
         ));
         assert!(err.to_string().contains("expected 3"));
         assert!(err.to_string().contains("has 2 vertices"));
@@ -4785,7 +4843,7 @@ mod tests {
             (
                 DelaunayRepairError::VerificationFailed {
                     context: DelaunayRepairVerificationContext::StrictValidation,
-                    source: Box::new(FlipError::DegenerateCell),
+                    source: Box::new(FlipError::DegenerateSimplex),
                 },
                 DelaunayRepairErrorKind::VerificationFailed,
             ),
@@ -4810,7 +4868,7 @@ mod tests {
                 DelaunayRepairErrorKind::HeuristicRebuildFailed,
             ),
             (
-                DelaunayRepairError::Flip(FlipError::DegenerateCell),
+                DelaunayRepairError::Flip(FlipError::DegenerateSimplex),
                 DelaunayRepairErrorKind::Flip,
             ),
         ];
@@ -4837,7 +4895,7 @@ mod tests {
             (
                 InsertionError::TopologyValidationFailed {
                     message: "post-insertion topology validation failed".to_string(),
-                    source: TriangulationValidationError::Disconnected { cell_count: 2 },
+                    source: TriangulationValidationError::Disconnected { simplex_count: 2 },
                 },
                 InsertionErrorKind::TopologyValidationFailed,
                 Some(InsertionErrorSourceKind::Triangulation(
@@ -4937,16 +4995,16 @@ mod tests {
             existing_incident_count: 2,
             attempted_incident_count: 3,
             max_incident_count: 2,
-            candidate_cell_uuid: uuid::Uuid::nil(),
+            candidate_simplex_uuid: uuid::Uuid::nil(),
             candidate_facet_index: 1,
         };
         let facet_message = facet_failure.to_string();
-        assert!(facet_message.contains("exceeds incident-cell limit"));
-        assert!(!facet_message.contains("after inserting candidate cell"));
+        assert!(facet_message.contains("exceeds incident-simplex limit"));
+        assert!(!facet_message.contains("after inserting candidate simplex"));
 
         assert!(
             InsertionError::CavityFilling {
-                reason: CavityFillingError::CellInsertion {
+                reason: CavityFillingError::SimplexInsertion {
                     reason: TdsConstructionFailure::Validation {
                         reason: geometry_failure.clone(),
                     },
@@ -4956,7 +5014,7 @@ mod tests {
         );
         assert!(
             InsertionError::CavityFilling {
-                reason: CavityFillingError::CellInsertion {
+                reason: CavityFillingError::SimplexInsertion {
                     reason: TdsConstructionFailure::Validation {
                         reason: facet_failure,
                     },
@@ -4966,7 +5024,7 @@ mod tests {
         );
         assert!(
             !InsertionError::CavityFilling {
-                reason: CavityFillingError::CellInsertion {
+                reason: CavityFillingError::SimplexInsertion {
                     reason: TdsConstructionFailure::Validation {
                         reason: structural_failure,
                     },
@@ -5001,7 +5059,7 @@ mod tests {
                         message: "local topology validation failed".to_string(),
                         source: TriangulationValidationError::ManifoldFacetMultiplicity {
                             facet_key: 0x1234,
-                            cell_count: 3,
+                            simplex_count: 3,
                         },
                     }),
                 },
@@ -5013,7 +5071,7 @@ mod tests {
                 reason: CavityFillingError::NeighborRebuild {
                     reason: NeighborRebuildError::from(InsertionError::TopologyValidationFailed {
                         message: "structural topology validation failed".to_string(),
-                        source: TriangulationValidationError::Disconnected { cell_count: 2 },
+                        source: TriangulationValidationError::Disconnected { simplex_count: 2 },
                     }),
                 },
             }
@@ -5033,7 +5091,7 @@ mod tests {
         assert!(
             InsertionError::NonManifoldTopology {
                 facet_hash: 0x12345,
-                cell_count: 3
+                simplex_count: 3
             }
             .is_retryable()
         );
@@ -5064,14 +5122,14 @@ mod tests {
         );
         assert!(
             InsertionError::TopologyValidation(TdsError::OrientationViolation {
-                cell1_key: CellKey::from(KeyData::from_ffi(1)),
-                cell1_uuid: uuid::Uuid::nil(),
-                cell2_key: CellKey::from(KeyData::from_ffi(2)),
-                cell2_uuid: uuid::Uuid::nil(),
-                cell1_facet_index: 0,
-                cell2_facet_index: 1,
+                simplex1_key: SimplexKey::from(KeyData::from_ffi(1)),
+                simplex1_uuid: uuid::Uuid::nil(),
+                simplex2_key: SimplexKey::from(KeyData::from_ffi(2)),
+                simplex2_uuid: uuid::Uuid::nil(),
+                simplex1_facet_index: 0,
+                simplex2_facet_index: 1,
                 facet_vertices: vec![],
-                cell2_facet_vertices: vec![],
+                simplex2_facet_vertices: vec![],
                 observed_odd_permutation: true,
                 expected_odd_permutation: false,
             })
@@ -5083,13 +5141,13 @@ mod tests {
                 existing_incident_count: 2,
                 attempted_incident_count: 3,
                 max_incident_count: 2,
-                candidate_cell_uuid: uuid::Uuid::nil(),
+                candidate_simplex_uuid: uuid::Uuid::nil(),
                 candidate_facet_index: 1,
             })
             .is_retryable()
         );
         // IsolatedVertex is retryable: during insertion, a geometrically-sensitive
-        // conflict region can leave a pre-existing vertex with no incident cells;
+        // conflict region can leave a pre-existing vertex with no incident simplices;
         // perturbing coordinates changes the conflict region.
         assert!(
             InsertionError::TopologyValidationFailed {
@@ -5118,7 +5176,7 @@ mod tests {
         // TopologyValidationFailed wrapping a geometry-related error is retryable.
         let geometry_l3 = TriangulationValidationError::ManifoldFacetMultiplicity {
             facet_key: 0x12345,
-            cell_count: 3,
+            simplex_count: 3,
         };
         assert!(
             InsertionError::TopologyValidationFailed {
@@ -5161,7 +5219,7 @@ mod tests {
                 source: TriangulationValidationError::VertexLinkNotManifold {
                     vertex_key: VertexKey::from(KeyData::from_ffi(1)),
                     link_vertex_count: 3,
-                    link_cell_count: 4,
+                    link_simplex_count: 4,
                     boundary_facet_count: 1,
                     max_degree: 2,
                     connected: false,
@@ -5187,8 +5245,8 @@ mod tests {
         // NeighborWiring is unconditionally non-retryable.
         assert!(
             !InsertionError::NeighborWiring {
-                reason: NeighborWiringError::MissingCell {
-                    cell_key: CellKey::from(KeyData::from_ffi(u64::MAX)),
+                reason: NeighborWiringError::MissingSimplex {
+                    simplex_key: SimplexKey::from(KeyData::from_ffi(u64::MAX)),
                 }
             }
             .is_retryable()
@@ -5198,7 +5256,7 @@ mod tests {
         assert!(
             InsertionError::ConflictRegion(ConflictError::NonManifoldFacet {
                 facet_hash: 0x12345_u64,
-                cell_count: 3,
+                simplex_count: 3,
             })
             .is_retryable()
         );
@@ -5206,22 +5264,22 @@ mod tests {
             InsertionError::ConflictRegion(ConflictError::RidgeFan {
                 facet_count: 3,
                 ridge_vertex_count: 2,
-                extra_cells: vec![],
+                extra_simplices: vec![],
             })
             .is_retryable()
         );
-        // extra_cells contents do not affect retryability — a non-empty vec is also retryable.
+        // extra_simplices contents do not affect retryability — a non-empty vec is also retryable.
         assert!(
             InsertionError::ConflictRegion(ConflictError::RidgeFan {
                 facet_count: 3,
                 ridge_vertex_count: 2,
-                extra_cells: vec![CellKey::from(KeyData::from_ffi(1))],
+                extra_simplices: vec![SimplexKey::from(KeyData::from_ffi(1))],
             })
             .is_retryable()
         );
         assert!(
-            !InsertionError::ConflictRegion(ConflictError::InvalidStartCell {
-                cell_key: CellKey::from(KeyData::from_ffi(u64::MAX)),
+            !InsertionError::ConflictRegion(ConflictError::InvalidStartSimplex {
+                simplex_key: SimplexKey::from(KeyData::from_ffi(u64::MAX)),
             })
             .is_retryable()
         );
@@ -5237,8 +5295,8 @@ mod tests {
             .is_retryable()
         );
         assert!(
-            !InsertionError::ConflictRegion(ConflictError::CellDataAccessFailed {
-                cell_key: CellKey::from(KeyData::from_ffi(1)),
+            !InsertionError::ConflictRegion(ConflictError::SimplexDataAccessFailed {
+                simplex_key: SimplexKey::from(KeyData::from_ffi(1)),
                 message: "test".to_string(),
             })
             .is_retryable()
@@ -5280,7 +5338,7 @@ mod tests {
             InsertionError::ConflictRegion(ConflictError::DisconnectedBoundary {
                 visited: 1,
                 total: 3,
-                disconnected_cells: vec![],
+                disconnected_simplices: vec![],
             })
             .is_retryable()
         );
@@ -5288,7 +5346,7 @@ mod tests {
             InsertionError::ConflictRegion(ConflictError::OpenBoundary {
                 facet_count: 1,
                 ridge_vertex_count: 2,
-                open_cell: CellKey::from(KeyData::from_ffi(1)),
+                open_simplex: SimplexKey::from(KeyData::from_ffi(1)),
             })
             .is_retryable()
         );
@@ -5328,7 +5386,7 @@ mod tests {
                 reason: CavityFillingError::NeighborRebuild {
                     reason: NeighborRebuildError::NonManifoldTopology {
                         facet_hash: 0x123,
-                        cell_count: 3,
+                        simplex_count: 3,
                     },
                 },
             }
@@ -5397,11 +5455,11 @@ mod tests {
                     let tds = dt.tds_mut();
 
                     // Verify all neighbor pointers are initially valid
-                    for (_, cell) in tds.cells() {
-                        if let Some(neighbors) = cell.neighbors() {
+                    for (_, simplex) in tds.simplices() {
+                        if let Some(neighbors) = simplex.neighbors() {
                             for neighbor_opt in neighbors {
                                 if let Some(neighbor_key) = neighbor_opt {
-                                    assert!(tds.contains_cell(neighbor_key), "Neighbor should exist");
+                                    assert!(tds.contains_simplex(neighbor_key), "Neighbor should exist");
                                 }
                             }
                         }
@@ -5412,11 +5470,11 @@ mod tests {
                     assert_eq!(fixed, 0);
 
                     // Verify all pointers still valid after repair
-                    for (_, cell) in tds.cells() {
-                        if let Some(neighbors) = cell.neighbors() {
+                    for (_, simplex) in tds.simplices() {
+                        if let Some(neighbors) = simplex.neighbors() {
                             for neighbor_opt in neighbors {
                                 if let Some(neighbor_key) = neighbor_opt {
-                                    assert!(tds.contains_cell(neighbor_key), "Neighbor should still exist after repair");
+                                    assert!(tds.contains_simplex(neighbor_key), "Neighbor should still exist after repair");
                                 }
                             }
                         }
@@ -5486,7 +5544,7 @@ mod tests {
 
         // Remove all neighbor pointers.
         tds.clear_all_neighbors();
-        assert!(tds.cells().all(|(_, c)| c.neighbors().is_none()));
+        assert!(tds.simplices().all(|(_, c)| c.neighbors().is_none()));
 
         // Repair should rebuild internal adjacencies.
         let fixed = repair_neighbor_pointers(tds).unwrap();
@@ -5495,7 +5553,7 @@ mod tests {
             "Expected at least one neighbor pointer to be repaired"
         );
 
-        let any_internal_neighbor = tds.cells().any(|(_, c)| {
+        let any_internal_neighbor = tds.simplices().any(|(_, c)| {
             c.neighbors()
                 .is_some_and(|mut n| n.any(|neighbor| neighbor.is_some()))
         });
@@ -5520,17 +5578,17 @@ mod tests {
                     let vertices = $initial_vertices;
                     let mut dt = DelaunayTriangulation::<_, (), (), $dim>::new(&vertices).unwrap();
                     let tds = dt.tds_mut();
-                    let (cell_key, facet_idx, neighbor_key, _) =
-                        first_neighbor_pair(tds).expect("test triangulation should have adjacent cells");
+                    let (simplex_key, facet_idx, neighbor_key, _) =
+                        first_neighbor_pair(tds).expect("test triangulation should have adjacent simplices");
 
-                    set_neighbor(tds, cell_key, facet_idx, None).unwrap();
-                    let repaired = repair_neighbor_pointers_local(tds, &[cell_key], Some(&[neighbor_key]))
+                    set_neighbor(tds, simplex_key, facet_idx, None).unwrap();
+                    let repaired = repair_neighbor_pointers_local(tds, &[simplex_key], Some(&[neighbor_key]))
                         .expect("local repair should reconstruct the missing slot");
 
                     assert_eq!(repaired, 1);
-                    let cell = tds.cell(cell_key).unwrap();
+                    let simplex = tds.simplex(simplex_key).unwrap();
                     assert_eq!(
-                        cell.neighbor_key(usize::from(facet_idx)).flatten(),
+                        simplex.neighbor_key(usize::from(facet_idx)).flatten(),
                         Some(neighbor_key)
                     );
                     assert!(tds.is_valid().is_ok());
@@ -5547,26 +5605,26 @@ mod tests {
                         shared_keys.push(tds.insert_vertex_with_mapping(vertex).unwrap());
                     }
 
-                    let mut cell_keys = Vec::new();
+                    let mut simplex_keys = Vec::new();
                     for (idx, vertex) in opposite_vertices.into_iter().enumerate() {
                         let opposite_key = tds.insert_vertex_with_mapping(vertex).unwrap();
                         let mut vertices = shared_keys.clone();
                         vertices.push(opposite_key);
-                        let cell = Cell::new(vertices, None).unwrap();
-                        let cell_key = if idx < 2 {
-                            tds.insert_cell_with_mapping(cell)
+                        let simplex = Simplex::new(vertices, None).unwrap();
+                        let simplex_key = if idx < 2 {
+                            tds.insert_simplex_with_mapping(simplex)
                         } else {
-                            tds.insert_cell_bypassing_topology_checks_for_test(cell)
+                            tds.insert_simplex_bypassing_topology_checks_for_test(simplex)
                         }
                         .unwrap();
-                        cell_keys.push(cell_key);
+                        simplex_keys.push(simplex_key);
                     }
 
-                    let err = repair_neighbor_pointers_local(&mut tds, &cell_keys, None).unwrap_err();
+                    let err = repair_neighbor_pointers_local(&mut tds, &simplex_keys, None).unwrap_err();
 
                     assert!(matches!(
                         err,
-                        InsertionError::NonManifoldTopology { cell_count: 3, .. }
+                        InsertionError::NonManifoldTopology { simplex_count: 3, .. }
                     ));
                 }
             }
@@ -5668,19 +5726,19 @@ mod tests {
         ];
         let mut dt = DelaunayTriangulation::<_, (), (), 2>::new(&vertices).unwrap();
         let tds = dt.tds_mut();
-        let (cell_key, facet_idx, neighbor_key, _) =
-            first_neighbor_pair(tds).expect("test triangulation should have adjacent cells");
-        let stale_neighbor = CellKey::from(KeyData::from_ffi(u64::MAX - 7));
-        assert!(!tds.contains_cell(stale_neighbor));
+        let (simplex_key, facet_idx, neighbor_key, _) =
+            first_neighbor_pair(tds).expect("test triangulation should have adjacent simplices");
+        let stale_neighbor = SimplexKey::from(KeyData::from_ffi(u64::MAX - 7));
+        assert!(!tds.contains_simplex(stale_neighbor));
 
-        set_neighbor(tds, cell_key, facet_idx, Some(stale_neighbor)).unwrap();
-        let repaired = repair_neighbor_pointers_local(tds, &[cell_key], Some(&[neighbor_key]))
+        set_neighbor(tds, simplex_key, facet_idx, Some(stale_neighbor)).unwrap();
+        let repaired = repair_neighbor_pointers_local(tds, &[simplex_key], Some(&[neighbor_key]))
             .expect("local repair should replace a stale neighbor slot");
 
         assert_eq!(repaired, 1);
-        let cell = tds.cell(cell_key).unwrap();
+        let simplex = tds.simplex(simplex_key).unwrap();
         assert_eq!(
-            cell.neighbor_key(usize::from(facet_idx)).flatten(),
+            simplex.neighbor_key(usize::from(facet_idx)).flatten(),
             Some(neighbor_key)
         );
         assert!(tds.is_valid().is_ok());
@@ -5700,21 +5758,21 @@ mod tests {
         let v_f = tds.insert_vertex_with_mapping(vertex!([2.0, 1.0])).unwrap();
 
         let c1 = tds
-            .insert_cell_with_mapping(Cell::new(vec![v_a, v_b, v_c], None).unwrap())
+            .insert_simplex_with_mapping(Simplex::new(vec![v_a, v_b, v_c], None).unwrap())
             .unwrap();
         let c2 = tds
-            .insert_cell_with_mapping(Cell::new(vec![v_a, v_b, v_d], None).unwrap())
+            .insert_simplex_with_mapping(Simplex::new(vec![v_a, v_b, v_d], None).unwrap())
             .unwrap();
         let wrong_live_neighbor = tds
-            .insert_cell_with_mapping(Cell::new(vec![v_a, v_e, v_f], None).unwrap())
+            .insert_simplex_with_mapping(Simplex::new(vec![v_a, v_e, v_f], None).unwrap())
             .unwrap();
 
         let shared_facet_idx = 2usize;
         let shared_facet_idx_u8 = u8::try_from(shared_facet_idx).unwrap();
         assert!(
-            tds.cell(c1)
+            tds.simplex(c1)
                 .unwrap()
-                .mirror_facet_index(shared_facet_idx, tds.cell(wrong_live_neighbor).unwrap())
+                .mirror_facet_index(shared_facet_idx, tds.simplex(wrong_live_neighbor).unwrap())
                 .is_none()
         );
 
@@ -5725,12 +5783,12 @@ mod tests {
             .expect("local repair should replace a live neighbor across the wrong facet");
 
         assert_eq!(repaired, 1);
-        let cell = tds.cell(c1).unwrap();
-        assert_eq!(cell.neighbor_key(shared_facet_idx).flatten(), Some(c2));
+        let simplex = tds.simplex(c1).unwrap();
+        assert_eq!(simplex.neighbor_key(shared_facet_idx).flatten(), Some(c2));
     }
 
     #[test]
-    fn test_repair_neighbor_pointers_local_does_not_scan_unseeded_cells() {
+    fn test_repair_neighbor_pointers_local_does_not_scan_unseeded_simplices() {
         let vertices = vec![
             vertex!([0.0, 0.0]),
             vertex!([1.0, 0.0]),
@@ -5740,16 +5798,16 @@ mod tests {
         ];
         let mut dt = DelaunayTriangulation::<_, (), (), 2>::new(&vertices).unwrap();
         let tds = dt.tds_mut();
-        let (cell_key, facet_idx, _neighbor_key, _) =
-            first_neighbor_pair(tds).expect("test triangulation should have adjacent cells");
+        let (simplex_key, facet_idx, _neighbor_key, _) =
+            first_neighbor_pair(tds).expect("test triangulation should have adjacent simplices");
 
-        set_neighbor(tds, cell_key, facet_idx, None).unwrap();
+        set_neighbor(tds, simplex_key, facet_idx, None).unwrap();
         let repaired = repair_neighbor_pointers_local(tds, &[], None)
             .expect("local repair should ignore unseeded damage");
 
         assert_eq!(repaired, 0);
-        let cell = tds.cell(cell_key).unwrap();
-        assert_eq!(cell.neighbor_key(usize::from(facet_idx)).flatten(), None);
+        let simplex = tds.simplex(simplex_key).unwrap();
+        assert_eq!(simplex.neighbor_key(usize::from(facet_idx)).flatten(), None);
 
         // The global repair still sees the missing slot, proving the local path was scoped.
         assert!(repair_neighbor_pointers(tds).unwrap() > 0);
@@ -5757,7 +5815,7 @@ mod tests {
     }
 
     #[test]
-    fn test_extend_hull_adds_cells_for_exterior_vertex() {
+    fn test_extend_hull_adds_simplices_for_exterior_vertex() {
         let vertices = vec![
             vertex!([0.0, 0.0]),
             vertex!([1.0, 0.0]),
@@ -5770,8 +5828,8 @@ mod tests {
         let p = Point::new([2.0, 2.0]);
         let new_vkey = tds.insert_vertex_with_mapping(vertex!([2.0, 2.0])).unwrap();
 
-        let new_cells = extend_hull(tds, &kernel, new_vkey, &p).unwrap();
-        assert!(!new_cells.is_empty());
+        let new_simplices = extend_hull(tds, &kernel, new_vkey, &p).unwrap();
+        assert!(!new_simplices.is_empty());
         assert!(tds.is_valid().is_ok());
     }
 
@@ -5860,15 +5918,15 @@ mod tests {
     }
 
     #[test]
-    fn test_set_neighbor_errors_on_missing_cell() {
+    fn test_set_neighbor_errors_on_missing_simplex() {
         let mut tds: Tds<f64, (), (), 2> = Tds::empty();
-        let missing = CellKey::from(KeyData::from_ffi(u64::MAX));
+        let missing = SimplexKey::from(KeyData::from_ffi(u64::MAX));
 
         let err = set_neighbor(&mut tds, missing, 0, None).unwrap_err();
         assert!(matches!(
             err,
             InsertionError::NeighborWiring {
-                reason: NeighborWiringError::MissingCell { .. },
+                reason: NeighborWiringError::MissingSimplex { .. },
             }
         ));
     }
@@ -5879,11 +5937,11 @@ mod tests {
         let v0 = tds.insert_vertex_with_mapping(vertex!([0.0, 0.0])).unwrap();
         let v1 = tds.insert_vertex_with_mapping(vertex!([1.0, 0.0])).unwrap();
         let v2 = tds.insert_vertex_with_mapping(vertex!([0.0, 1.0])).unwrap();
-        let cell_key = tds
-            .insert_cell_with_mapping(Cell::new(vec![v0, v1, v2], None).unwrap())
+        let simplex_key = tds
+            .insert_simplex_with_mapping(Simplex::new(vec![v0, v1, v2], None).unwrap())
             .unwrap();
 
-        let err = set_neighbor(&mut tds, cell_key, 3, None).unwrap_err();
+        let err = set_neighbor(&mut tds, simplex_key, 3, None).unwrap_err();
         assert!(matches!(
             err,
             InsertionError::NeighborWiring {
@@ -5899,11 +5957,11 @@ mod tests {
     #[test]
     fn test_external_facets_for_boundary_empty_inputs_returns_empty() {
         let tds: Tds<f64, (), (), 2> = Tds::empty();
-        let internal_cells = CellKeyBuffer::new();
+        let internal_simplices = SimplexKeyBuffer::new();
         let boundary_facets: Vec<FacetHandle> = Vec::new();
 
         let external =
-            external_facets_for_boundary(&tds, &internal_cells, &boundary_facets).unwrap();
+            external_facets_for_boundary(&tds, &internal_simplices, &boundary_facets).unwrap();
         assert!(external.is_empty());
     }
 

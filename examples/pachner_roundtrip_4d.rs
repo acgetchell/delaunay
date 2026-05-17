@@ -44,7 +44,7 @@ const STABLE_POINTS_4D: &[[f64; 4]] = &[
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct TopologySnapshot {
     vertex_uuids: Vec<Uuid>,
-    cell_vertex_uuids: Vec<Vec<Uuid>>,
+    simplex_vertex_uuids: Vec<Vec<Uuid>>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -74,10 +74,10 @@ enum PachnerRoundtripError {
     Flip(#[from] FlipError),
     #[error(transparent)]
     IntegerConversion(#[from] std::num::TryFromIntError),
-    #[error("triangulation has no cells")]
+    #[error("triangulation has no simplices")]
     EmptyTriangulation,
-    #[error("cell {cell_key:?} not found in TDS")]
-    MissingCell { cell_key: CellKey },
+    #[error("simplex {simplex_key:?} not found in TDS")]
+    MissingSimplex { simplex_key: SimplexKey },
     #[error("vertex {vertex_key:?} not found in TDS")]
     MissingVertex { vertex_key: VertexKey },
     #[error("inserted vertex with UUID {uuid} not found in TDS")]
@@ -112,9 +112,9 @@ fn main() -> Result<(), PachnerRoundtripError> {
     };
 
     println!(
-        "Triangulation: {} vertices, {} cells",
+        "Triangulation: {} vertices, {} simplices",
         dt.number_of_vertices(),
-        dt.number_of_cells()
+        dt.number_of_simplices()
     );
 
     let start = Instant::now();
@@ -189,23 +189,23 @@ fn snapshot_topology(dt: &Dt4) -> Result<TopologySnapshot, PachnerRoundtripError
     let mut vertex_uuids: Vec<Uuid> = tds.vertices().map(|(_, vertex)| vertex.uuid()).collect();
     vertex_uuids.sort();
 
-    let mut cell_vertex_uuids: Vec<Vec<Uuid>> = Vec::new();
-    for (_, cell) in tds.cells() {
+    let mut simplex_vertex_uuids: Vec<Vec<Uuid>> = Vec::new();
+    for (_, simplex) in tds.simplices() {
         let mut uuids: Vec<Uuid> = Vec::new();
-        for &vkey in cell.vertices() {
+        for &vkey in simplex.vertices() {
             let vertex = tds
                 .vertex(vkey)
                 .ok_or(PachnerRoundtripError::MissingVertex { vertex_key: vkey })?;
             uuids.push(vertex.uuid());
         }
         uuids.sort();
-        cell_vertex_uuids.push(uuids);
+        simplex_vertex_uuids.push(uuids);
     }
-    cell_vertex_uuids.sort();
+    simplex_vertex_uuids.sort();
 
     Ok(TopologySnapshot {
         vertex_uuids,
-        cell_vertex_uuids,
+        simplex_vertex_uuids,
     })
 }
 
@@ -223,14 +223,14 @@ fn assert_roundtrip(
     Ok(())
 }
 
-fn cell_centroid(dt: &Dt4, cell_key: CellKey) -> Result<[f64; 4], PachnerRoundtripError> {
-    let cell = dt
+fn simplex_centroid(dt: &Dt4, simplex_key: SimplexKey) -> Result<[f64; 4], PachnerRoundtripError> {
+    let simplex = dt
         .tds()
-        .cell(cell_key)
-        .ok_or(PachnerRoundtripError::MissingCell { cell_key })?;
+        .simplex(simplex_key)
+        .ok_or(PachnerRoundtripError::MissingSimplex { simplex_key })?;
 
     let mut coords = [0.0_f64; 4];
-    for &vkey in cell.vertices() {
+    for &vkey in simplex.vertices() {
         let vertex = dt
             .tds()
             .vertex(vkey)
@@ -241,7 +241,7 @@ fn cell_centroid(dt: &Dt4, cell_key: CellKey) -> Result<[f64; 4], PachnerRoundtr
         }
     }
 
-    let vertex_count = u32::try_from(cell.vertices().len())?;
+    let vertex_count = u32::try_from(simplex.vertices().len())?;
     let inv = 1.0_f64 / f64::from(vertex_count);
     for coord in &mut coords {
         *coord *= inv;
@@ -250,17 +250,17 @@ fn cell_centroid(dt: &Dt4, cell_key: CellKey) -> Result<[f64; 4], PachnerRoundtr
 }
 
 fn roundtrip_k1(dt: &mut Dt4) -> Result<(), PachnerRoundtripError> {
-    let cell_key = dt
-        .cells()
+    let simplex_key = dt
+        .simplices()
         .next()
-        .map(|(cell_key, _)| cell_key)
+        .map(|(simplex_key, _)| simplex_key)
         .ok_or(PachnerRoundtripError::EmptyTriangulation)?;
-    let centroid = cell_centroid(dt, cell_key)?;
+    let centroid = simplex_centroid(dt, simplex_key)?;
 
     let new_vertex = vertex!(centroid);
     let new_uuid = new_vertex.uuid();
 
-    dt.flip_k1_insert(cell_key, new_vertex)?;
+    dt.flip_k1_insert(simplex_key, new_vertex)?;
 
     let new_key = dt
         .tds()
@@ -273,14 +273,14 @@ fn roundtrip_k1(dt: &mut Dt4) -> Result<(), PachnerRoundtripError> {
 
 fn collect_interior_facets(dt: &Dt4) -> Vec<FacetHandle> {
     let mut facets = Vec::new();
-    for (cell_key, cell) in dt.cells() {
-        if let Some(neighbors) = cell.neighbors() {
+    for (simplex_key, simplex) in dt.simplices() {
+        if let Some(neighbors) = simplex.neighbors() {
             for (facet_index, neighbor) in neighbors.enumerate() {
                 if neighbor.is_some() {
                     let Ok(facet_index) = u8::try_from(facet_index) else {
                         continue;
                     };
-                    facets.push(FacetHandle::new(cell_key, facet_index));
+                    facets.push(FacetHandle::new(simplex_key, facet_index));
                 }
             }
         }
@@ -324,8 +324,8 @@ fn roundtrip_k2(dt: &mut Dt4) -> Result<(), PachnerRoundtripError> {
 
 fn collect_ridges(dt: &Dt4) -> Vec<RidgeHandle> {
     let mut ridges = Vec::new();
-    for (cell_key, cell) in dt.cells() {
-        let vertex_count = cell.number_of_vertices();
+    for (simplex_key, simplex) in dt.simplices() {
+        let vertex_count = simplex.number_of_vertices();
         for i in 0..vertex_count {
             for j in (i + 1)..vertex_count {
                 let Ok(omit_a) = u8::try_from(i) else {
@@ -334,7 +334,7 @@ fn collect_ridges(dt: &Dt4) -> Vec<RidgeHandle> {
                 let Ok(omit_b) = u8::try_from(j) else {
                     continue;
                 };
-                ridges.push(RidgeHandle::new(cell_key, omit_a, omit_b));
+                ridges.push(RidgeHandle::new(simplex_key, omit_a, omit_b));
             }
         }
     }

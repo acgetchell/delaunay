@@ -188,10 +188,10 @@ delaunay/
 │   │   │   └── uuid.rs
 │   │   ├── adjacency.rs
 │   │   ├── boundary.rs
-│   │   ├── cell.rs
 │   │   ├── edge.rs
 │   │   ├── facet.rs
 │   │   ├── operations.rs
+│   │   ├── simplex.rs
 │   │   ├── tds.rs
 │   │   ├── triangulation.rs
 │   │   └── vertex.rs
@@ -234,8 +234,8 @@ delaunay/
 │   │   ├── flips.rs
 │   │   ├── locality.rs
 │   │   └── validation.rs
-│   ├── triangulation.rs
-│   └── lib.rs
+│   ├── lib.rs
+│   └── triangulation.rs
 ├── tests/
 │   ├── semgrep/
 │   │   ├── scripts/
@@ -250,22 +250,17 @@ delaunay/
 │   ├── COVERAGE.md
 │   ├── README.md
 │   ├── allocation_api.rs
-│   ├── check_perturbation_stats.rs
 │   ├── circumsphere_debug_tools.rs
-│   ├── conflict_region_verification.rs
 │   ├── coordinate_conversion_errors.rs
 │   ├── dedup_batch_construction.rs
 │   ├── delaunay_edge_cases.rs
 │   ├── delaunay_incremental_insertion.rs
-│   ├── delaunay_public_api_coverage.rs
 │   ├── delaunay_repair_fallback.rs
 │   ├── delaunayize_workflow.rs
 │   ├── euler_characteristic.rs
 │   ├── insert_with_statistics.rs
-│   ├── k3_cycle_predicate.rs
 │   ├── large_scale_debug.rs
 │   ├── prelude_exports.rs
-│   ├── proptest_cell.rs
 │   ├── proptest_convex_hull.rs
 │   ├── proptest_delaunay_triangulation.proptest-regressions
 │   ├── proptest_delaunay_triangulation.rs
@@ -278,6 +273,7 @@ delaunay/
 │   ├── proptest_predicates.rs
 │   ├── proptest_safe_conversions.rs
 │   ├── proptest_serialization.rs
+│   ├── proptest_simplex.rs
 │   ├── proptest_sos.rs
 │   ├── proptest_tds.rs
 │   ├── proptest_toroidal.rs
@@ -286,7 +282,6 @@ delaunay/
 │   ├── public_topology_api.rs
 │   ├── regressions.rs
 │   ├── serialization_vertex_preservation.rs
-│   ├── tds_orientation.rs
 │   ├── trait_bound_ergonomics.rs
 │   └── triangulation_builder.rs
 ├── .codacy.yml
@@ -406,7 +401,7 @@ The `benchmark-utils` CLI provides integrated benchmark workflow functionality, 
 
 - `tds.rs` - Main `Tds` struct
 - `triangulation.rs` - Generic Triangulation layer with kernel
-- `vertex.rs`, `cell.rs`, `facet.rs` - Core geometric primitives
+- `vertex.rs`, `simplex.rs`, `facet.rs` - Core geometric primitives
 - `edge.rs` - Canonical `EdgeKey` for topology traversal
 - `adjacency.rs` - Optional `AdjacencyIndex` builder outputs (opt-in)
 - `collections/` - Optimized collection types and spatial acceleration structures
@@ -440,8 +435,8 @@ exposed through curated modules and focused preludes (`delaunay::tds`,
 - `point.rs` - NaN-aware Point operations
 - `predicates.rs`, `robust_predicates.rs` - Geometric tests (see [Numerical Robustness Guide](numerical_robustness_guide.md))
 - `sos.rs` - Simulation of Simplicity (SoS) for deterministic degeneracy resolution (orientation and insphere)
-- `quality.rs` - Cell quality metrics (radius ratio, normalized volume) for d-dimensional simplices; provides mesh quality analysis to identify
-  poorly-shaped cells (supports 2D-6D)
+- `quality.rs` - Simplex quality metrics (radius ratio, normalized volume) for d-dimensional simplices; provides mesh quality analysis to identify
+  poorly-shaped simplices (supports 2D-6D)
 - `matrix.rs` - Linear algebra support
 - `algorithms/convex_hull.rs` - Hull extraction
 - `traits/coordinate.rs` - Coordinate abstractions
@@ -547,7 +542,7 @@ The project includes optional memory profiling capabilities:
 The codebase includes several performance-focused components that are relevant when working on hot paths:
 
 - **Fast collections**: `FastHashMap`, `FastHashSet`, and small-buffer helpers in `src/core/collections/`
-- **Key-based internal APIs**: core types use key handles (`VertexKey`, `CellKey`) for fast lookups
+- **Key-based internal APIs**: core types use key handles (`VertexKey`, `SimplexKey`) for fast lookups
 - **Spatial hash-grid index**: `src/core/collections/spatial_hash_grid.rs` (duplicate detection and locate-hint selection)
 - **Zero-allocation iterators / helpers**: used in performance-sensitive traversal paths
 - **Benchmark suite + utilities**: `benches/` and the `benchmark-utils` tooling used by `just bench-*`
@@ -668,7 +663,7 @@ This `justfile`-based workflow provides consistent, cross-platform development c
 ## Module Organization Patterns
 
 The canonical organizational patterns found across key modules in the codebase:
-`cell.rs`, `vertex.rs`, `facet.rs`, `boundary.rs`, and the `util/` submodules
+`simplex.rs`, `vertex.rs`, `facet.rs`, `boundary.rs`, and the `util/` submodules
 under `src/core/util/`.
 
 ### Canonical Section Sequence
@@ -1012,7 +1007,7 @@ mod tests {
 
 ### Module-Specific Variations
 
-#### `cell.rs` (large module)
+#### `simplex.rs` (large module)
 
 - Most comprehensive implementation
 - Multiple specialized implementation blocks
@@ -1071,7 +1066,7 @@ mod tests {
 - Error types: `[Module]ValidationError` or `[Module]Error`
 - Test functions: `test_[functionality]_[specific_case]`
 - Helper functions: `create_[item]` or `assert_[property]`
-- Type aliases in tests: `Test[Type][Dimension]` (e.g., `TestCell3D`)
+- Type aliases in tests: `Test[Type][Dimension]` (e.g., `TestSimplex3D`)
 
 #### Code Organization
 

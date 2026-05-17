@@ -38,9 +38,9 @@ fn delaunay_insert_with_statistics_basic_2d() {
     assert!(!stats.used_perturbation());
     assert!(!stats.skipped());
     assert!(stats.success());
-    assert_eq!(stats.cells_removed_during_repair, 0);
+    assert_eq!(stats.simplices_removed_during_repair, 0);
     assert_eq!(dt.number_of_vertices(), 1);
-    assert_eq!(dt.number_of_cells(), 0);
+    assert_eq!(dt.number_of_simplices(), 0);
 
     // Insert second vertex
     let (outcome, stats) = dt
@@ -60,7 +60,7 @@ fn delaunay_insert_with_statistics_basic_2d() {
     assert_eq!(stats.attempts, 1);
     assert!(stats.success());
     assert_eq!(dt.number_of_vertices(), 3);
-    assert_eq!(dt.number_of_cells(), 1);
+    assert_eq!(dt.number_of_simplices(), 1);
 }
 
 #[test]
@@ -92,7 +92,7 @@ fn delaunay_insert_with_statistics_hint_caching_3d() {
     assert_eq!(stats.attempts, 1);
     assert!(stats.success());
     assert_eq!(dt.number_of_vertices(), 5);
-    assert!(dt.number_of_cells() > 1);
+    assert!(dt.number_of_simplices() > 1);
 }
 
 #[test]
@@ -190,7 +190,7 @@ fn delaunay_insert_with_statistics_duplicate_coordinates_2d() {
         other => panic!("expected Ok(Skipped) with DuplicateCoordinates, got: {other:?}"),
     }
 
-    // Still in bootstrap (no cells yet), so validate only Levels 1–2 (elements + structure).
+    // Still in bootstrap (no simplices yet), so validate only Levels 1–2 (elements + structure).
     assert!(dt.tds().validate().is_ok());
     assert_eq!(dt.number_of_vertices(), 1);
 }
@@ -237,7 +237,7 @@ fn delaunay_insert_with_statistics_statistics_fields_3d() {
         assert!(stats.attempts >= 1);
         assert!(!stats.skipped());
         assert!(stats.success());
-        assert_eq!(stats.cells_removed_during_repair, 0);
+        assert_eq!(stats.simplices_removed_during_repair, 0);
 
         if i < 3 {
             assert!(!stats.used_perturbation());
@@ -245,7 +245,7 @@ fn delaunay_insert_with_statistics_statistics_fields_3d() {
     }
 
     assert_eq!(dt.number_of_vertices(), 4);
-    assert_eq!(dt.number_of_cells(), 1);
+    assert_eq!(dt.number_of_simplices(), 1);
 }
 // =============================================================================
 // PROPERTY TESTS (STATISTICS INVARIANTS)

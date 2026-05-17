@@ -1,12 +1,12 @@
 //! Facet caching trait for performance optimization
 //!
 //! This module provides the `FacetCacheProvider` trait that defines a common
-//! interface for components that need to cache facet-to-cells mappings for
+//! interface for components that need to cache facet-to-simplices mappings for
 //! performance optimization.
 
 use super::data_type::DataType;
 use crate::core::{
-    collections::FacetToCellsMap,
+    collections::FacetToSimplicesMap,
     tds::{Tds, TdsError},
 };
 use crate::geometry::traits::coordinate::CoordinateScalar;
@@ -16,16 +16,16 @@ use std::sync::{
     atomic::{AtomicU64, Ordering},
 };
 
-/// Trait for components that provide cached facet-to-cells mappings.
+/// Trait for components that provide cached facet-to-simplices mappings.
 ///
-/// This trait abstracts the common pattern of caching expensive facet-to-cells
+/// This trait abstracts the common pattern of caching expensive facet-to-simplices
 /// mapping computations with atomic updates and cache invalidation. It's designed
 /// to be implemented by algorithms that frequently need to access facet mappings,
 /// such as convex hull construction, boundary analysis, and insertion algorithms.
 ///
 /// # Performance Benefits
 ///
-/// - **Avoids recomputation**: Expensive `build_facet_to_cells_hashmap()` calls
+/// - **Avoids recomputation**: Expensive `build_facet_to_simplices_hashmap()` calls
 /// - **Thread-safe**: Atomic cache updates prevent race conditions  
 /// - **Automatic invalidation**: Cache is invalidated when TDS changes
 /// - **Memory efficient**: Single shared instance across algorithm operations
@@ -35,7 +35,7 @@ use std::sync::{
 /// ```
 /// use delaunay::prelude::tds::FacetCacheProvider;
 /// use delaunay::prelude::tds::Tds;
-/// use delaunay::prelude::collections::FacetToCellsMap;
+/// use delaunay::prelude::collections::FacetToSimplicesMap;
 /// use delaunay::prelude::geometry::CoordinateScalar;
 /// use delaunay::prelude::triangulation::DataType;
 /// use std::sync::Arc;
@@ -44,14 +44,14 @@ use std::sync::{
 /// use arc_swap::ArcSwapOption;
 ///
 /// struct MyAlgorithm {
-///     facet_to_cells_cache: ArcSwapOption<FacetToCellsMap>,
+///     facet_to_simplices_cache: ArcSwapOption<FacetToSimplicesMap>,
 ///     cached_generation: AtomicU64,
 /// }
 ///
 /// impl MyAlgorithm {
 ///     fn new() -> Self {
 ///         Self {
-///             facet_to_cells_cache: ArcSwapOption::empty(),
+///             facet_to_simplices_cache: ArcSwapOption::empty(),
 ///             cached_generation: AtomicU64::new(0),
 ///         }
 ///     }
@@ -63,8 +63,8 @@ use std::sync::{
 ///     U: DataType,
 ///     V: DataType,
 /// {
-///     fn facet_cache(&self) -> &ArcSwapOption<FacetToCellsMap> {
-///         &self.facet_to_cells_cache
+///     fn facet_cache(&self) -> &ArcSwapOption<FacetToSimplicesMap> {
+///         &self.facet_to_simplices_cache
 ///     }
 ///     
 ///     fn cached_generation(&self) -> &AtomicU64 {
@@ -80,9 +80,9 @@ where
 {
     /// Returns a reference to the facet cache storage.
     ///
-    /// The cache stores precomputed facet-to-cells mappings to avoid expensive
+    /// The cache stores precomputed facet-to-simplices mappings to avoid expensive
     /// rebuilds during repeated facet queries.
-    fn facet_cache(&self) -> &ArcSwapOption<FacetToCellsMap>;
+    fn facet_cache(&self) -> &ArcSwapOption<FacetToSimplicesMap>;
 
     /// Returns a reference to the cached generation counter.
     fn cached_generation(&self) -> &AtomicU64;
@@ -102,7 +102,7 @@ where
     /// # Returns
     ///
     /// A `Result` containing:
-    /// - `Ok(Some(Arc<FacetToCellsMap>))`: The old cache value before update
+    /// - `Ok(Some(Arc<FacetToSimplicesMap>))`: The old cache value before update
     /// - `Ok(None)`: No cache existed before this build
     /// - `Err(TdsError)`: If facet map building fails
     ///
@@ -113,10 +113,10 @@ where
     fn try_build_cache_with_rcu(
         &self,
         tds: &Tds<T, U, V, D>,
-    ) -> Result<Option<Arc<FacetToCellsMap>>, TdsError> {
+    ) -> Result<Option<Arc<FacetToSimplicesMap>>, TdsError> {
         // We memoize the built cache outside the RCU closure to avoid recomputation
         // if RCU needs to retry due to concurrent updates.
-        let mut built: Option<Result<Arc<FacetToCellsMap>, TdsError>> = None;
+        let mut built: Option<Result<Arc<FacetToSimplicesMap>, TdsError>> = None;
 
         let old_cache = self.facet_cache().rcu(|old| {
             if let Some(existing) = old {
@@ -128,7 +128,7 @@ where
                 clippy::option_if_let_else,
                 reason = "explicit match keeps cache-hit and cache-build errors readable"
             )]
-            match built.get_or_insert_with(|| tds.build_facet_to_cells_map().map(Arc::new)) {
+            match built.get_or_insert_with(|| tds.build_facet_to_simplices_map().map(Arc::new)) {
                 Ok(arc) => Some(arc.clone()),
                 Err(_) => None, // Let the caller handle the error
             }
@@ -151,10 +151,10 @@ where
         }
     }
 
-    /// Gets or builds the facet-to-cells mapping cache with strict error handling.
+    /// Gets or builds the facet-to-simplices mapping cache with strict error handling.
     ///
     /// This method handles cache invalidation and thread-safe rebuilding of the
-    /// facet-to-cells mapping when the triangulation has been modified.
+    /// facet-to-simplices mapping when the triangulation has been modified.
     ///
     /// Unlike best-effort caching helpers that may mask structural issues, this method
     /// returns errors if the TDS has corrupted data instead of masking them.
@@ -166,13 +166,13 @@ where
     /// # Returns
     ///
     /// A `Result` containing:
-    /// - `Ok(Arc<FacetToCellsMap>)`: The current facet-to-cells mapping
+    /// - `Ok(Arc<FacetToSimplicesMap>)`: The current facet-to-simplices mapping
     /// - `Err(TdsError)`: If facet map building fails
     ///
     /// # Performance
     ///
     /// - **Cache hit**: O(1) - Returns cached mapping if TDS generation matches
-    /// - **Cache miss**: O(cells × `facets_per_cell`) - Rebuilds and caches mapping
+    /// - **Cache miss**: O(simplices × `facets_per_simplex`) - Rebuilds and caches mapping
     /// - **Thread-safe**: Uses atomic operations for concurrent access
     /// - **Contention**: Minimizes duplicate work by building cache lazily inside RCU
     ///
@@ -195,22 +195,22 @@ where
     /// let dt = DelaunayTriangulation::new(&vertices)
     ///     .expect("nondegenerate tetrahedron should construct");
     ///
-    /// // Build facet-to-cells mapping
+    /// // Build facet-to-simplices mapping
     /// let facet_map = dt
     ///     .tds()
-    ///     .build_facet_to_cells_map()
+    ///     .build_facet_to_simplices_map()
     ///     .expect("valid triangulation should build a facet cache");
     ///
     /// // Use the mapping for facet lookups
-    /// for (facet_key, adjacent_cells) in facet_map.iter() {
-    ///     // Each facet has at most 2 adjacent cells
-    ///     assert!(adjacent_cells.len() <= 2);
+    /// for (facet_key, adjacent_simplices) in facet_map.iter() {
+    ///     // Each facet has at most 2 adjacent simplices
+    ///     assert!(adjacent_simplices.len() <= 2);
     /// }
     /// ```
     fn try_get_or_build_facet_cache(
         &self,
         tds: &Tds<T, U, V, D>,
-    ) -> Result<Arc<FacetToCellsMap>, TdsError> {
+    ) -> Result<Arc<FacetToSimplicesMap>, TdsError> {
         let mut current_generation = tds.generation();
 
         loop {
@@ -220,7 +220,7 @@ where
             // This prevents torn reads where we might see a new cache with old generation.
             let cached_generation = self.cached_generation().load(Ordering::Acquire);
 
-            // Get or build the cached facet-to-cells mapping using ArcSwapOption
+            // Get or build the cached facet-to-simplices mapping using ArcSwapOption
             // If the TDS generation matches the cached generation, cache is current
             if current_generation == cached_generation {
                 // Cache is current - load existing cache or build if it doesn't exist
@@ -278,7 +278,7 @@ where
             }
 
             // Fallback to direct build to guarantee progress
-            let new_cache = tds.build_facet_to_cells_map()?;
+            let new_cache = tds.build_facet_to_simplices_map()?;
             let new_cache_arc = Arc::new(new_cache);
             self.facet_cache().store(Some(new_cache_arc.clone()));
 
@@ -313,8 +313,8 @@ where
     /// ];
     /// let dt = DelaunayTriangulation::new(&vertices).unwrap();
     ///
-    /// // Build facet-to-cells mapping
-    /// let facet_map = dt.tds().build_facet_to_cells_map().unwrap();
+    /// // Build facet-to-simplices mapping
+    /// let facet_map = dt.tds().build_facet_to_simplices_map().unwrap();
     /// assert!(!facet_map.is_empty(), "Facet map should contain entries");
     /// ```
     fn invalidate_facet_cache(&self) {
@@ -345,22 +345,22 @@ mod tests {
 
     /// Test implementation of `FacetCacheProvider` for unit testing
     struct TestCacheProvider {
-        facet_to_cells_cache: ArcSwapOption<FacetToCellsMap>,
+        facet_to_simplices_cache: ArcSwapOption<FacetToSimplicesMap>,
         cached_generation: AtomicU64,
     }
 
     impl TestCacheProvider {
         fn new() -> Self {
             Self {
-                facet_to_cells_cache: ArcSwapOption::empty(),
+                facet_to_simplices_cache: ArcSwapOption::empty(),
                 cached_generation: AtomicU64::new(0),
             }
         }
     }
 
     impl FacetCacheProvider<f64, (), (), 3> for TestCacheProvider {
-        fn facet_cache(&self) -> &ArcSwapOption<FacetToCellsMap> {
-            &self.facet_to_cells_cache
+        fn facet_cache(&self) -> &ArcSwapOption<FacetToSimplicesMap> {
+            &self.facet_to_simplices_cache
         }
 
         fn cached_generation(&self) -> &AtomicU64 {
@@ -476,7 +476,7 @@ mod tests {
             "Cache should be rebuilt when generation changes"
         );
 
-        // The cache size might be different since we added a vertex and created new cells
+        // The cache size might be different since we added a vertex and created new simplices
         // but both should be valid caches
         assert!(!cache1.is_empty(), "Original cache should not be empty");
         assert!(!cache2.is_empty(), "New cache should not be empty");
@@ -848,7 +848,7 @@ mod tests {
         let provider_cache = provider.try_get_or_build_facet_cache(dt.tds()).unwrap();
 
         // Get reference cache directly from TDS (use current strict API)
-        let reference_cache = dt.tds().build_facet_to_cells_map().unwrap();
+        let reference_cache = dt.tds().build_facet_to_simplices_map().unwrap();
 
         // Should have same size
         assert_eq!(
@@ -866,19 +866,19 @@ mod tests {
         }
 
         // Should have same values for each key
-        for (key, reference_cells) in &reference_cache {
-            if let Some(provider_cells) = provider_cache.get(key) {
+        for (key, reference_simplices) in &reference_cache {
+            if let Some(provider_simplices) = provider_cache.get(key) {
                 assert_eq!(
-                    provider_cells.len(),
-                    reference_cells.len(),
-                    "Cell count should match for facet key {key}"
+                    provider_simplices.len(),
+                    reference_simplices.len(),
+                    "Simplex count should match for facet key {key}"
                 );
 
-                // Check that all cells match (order might differ)
-                for cell in reference_cells {
+                // Check that all simplices match (order might differ)
+                for simplex in reference_simplices {
                     assert!(
-                        provider_cells.contains(cell),
-                        "Provider cache should contain cell {cell:?} for key {key}"
+                        provider_simplices.contains(simplex),
+                        "Provider cache should contain simplex {simplex:?} for key {key}"
                     );
                 }
             } else {
@@ -1210,7 +1210,7 @@ mod tests {
         dt.insert(vertex!([0.2, 0.2, 0.2]))
             .expect("Failed to add vertex");
         let cache3 = provider.try_get_or_build_facet_cache(dt.tds()).unwrap();
-        // Size might be different after adding a vertex (more cells = more facets)
+        // Size might be different after adding a vertex (more simplices = more facets)
         assert!(
             cache3.len() >= size1,
             "Cache size should grow or stay same after adding vertex"

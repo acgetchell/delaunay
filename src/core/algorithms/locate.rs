@@ -2,16 +2,16 @@
 
 //! Point location algorithms for triangulations.
 //!
-//! Implements facet-walking point location for finding the cell containing
+//! Implements facet-walking point location for finding the simplex containing
 //! a query point in O(√n) to O(n^(1/D)) expected time.
 //!
 //! # Algorithm
 //!
-//! The facet walking algorithm starts from a hint cell (or arbitrary cell)
+//! The facet walking algorithm starts from a hint simplex (or arbitrary simplex)
 //! and walks toward the query point by repeatedly:
 //! 1. Testing orientation of query point relative to each facet
 //! 2. Crossing to the neighbor on the side containing the query point
-//! 3. Repeating until the query point is inside the current cell
+//! 3. Repeating until the query point is inside the current simplex
 //!
 //! # References
 //!
@@ -20,13 +20,13 @@
 //! - CGAL Triangulation_3 documentation
 
 use crate::core::collections::{
-    CavityBoundaryBuffer, CellKeyBuffer, CellSecondaryMap, FacetToCellsMap, FastHashMap,
-    FastHashSet, FastHasher, MAX_PRACTICAL_DIMENSION_SIZE, SmallBuffer,
+    CavityBoundaryBuffer, FacetToSimplicesMap, FastHashMap, FastHashSet, FastHasher,
+    MAX_PRACTICAL_DIMENSION_SIZE, SimplexKeyBuffer, SimplexSecondaryMap, SmallBuffer,
 };
 use crate::core::facet::FacetHandle;
-use crate::core::tds::{CellKey, Tds, VertexKey};
+use crate::core::tds::{SimplexKey, Tds, VertexKey};
 use crate::core::traits::data_type::DataType;
-use crate::core::util::canonical_points::{sorted_cell_points, sorted_facet_points_with_extra};
+use crate::core::util::canonical_points::{sorted_facet_points_with_extra, sorted_simplex_points};
 use crate::geometry::kernel::Kernel;
 use crate::geometry::point::Point;
 use crate::geometry::traits::coordinate::{CoordinateConversionError, CoordinateScalar};
@@ -81,12 +81,12 @@ fn ridge_fan_dump_enabled() -> bool {
 /// ```
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum LocateResult {
-    /// Point is strictly inside the cell
-    InsideCell(CellKey),
-    /// Point is on a facet between two cells
-    OnFacet(CellKey, u8), // cell_key, facet_index
+    /// Point is strictly inside the simplex
+    InsideSimplex(SimplexKey),
+    /// Point is on a facet between two simplices
+    OnFacet(SimplexKey, u8), // simplex_key, facet_index
     /// Point is on an edge (lower-dimensional simplex)
-    OnEdge(CellKey),
+    OnEdge(SimplexKey),
     /// Point is on a vertex
     OnVertex(VertexKey),
     /// Point is outside the convex hull
@@ -106,15 +106,15 @@ pub enum LocateResult {
 #[derive(Debug, Clone, thiserror::Error, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum LocateError {
-    /// Triangulation has no cells.
+    /// Triangulation has no simplices.
     #[error("Cannot locate in empty triangulation")]
     EmptyTriangulation,
 
-    /// Cell reference is invalid.
-    #[error("Invalid cell reference: {cell_key:?}")]
-    InvalidCell {
-        /// The invalid cell key.
-        cell_key: CellKey,
+    /// Simplex reference is invalid.
+    #[error("Invalid simplex reference: {simplex_key:?}")]
+    InvalidSimplex {
+        /// The invalid simplex key.
+        simplex_key: SimplexKey,
     },
 
     /// Geometric predicate failed.
@@ -132,21 +132,21 @@ pub enum LocateError {
 ///
 /// ```rust
 /// use delaunay::prelude::algorithms::ConflictError;
-/// use delaunay::prelude::tds::CellKey;
+/// use delaunay::prelude::tds::SimplexKey;
 /// use slotmap::KeyData;
 ///
-/// let cell_key = CellKey::from(KeyData::from_ffi(5));
-/// let err = ConflictError::InvalidStartCell { cell_key };
-/// assert!(matches!(err, ConflictError::InvalidStartCell { .. }));
+/// let simplex_key = SimplexKey::from(KeyData::from_ffi(5));
+/// let err = ConflictError::InvalidStartSimplex { simplex_key };
+/// assert!(matches!(err, ConflictError::InvalidStartSimplex { .. }));
 /// ```
 #[derive(Debug, Clone, thiserror::Error, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum ConflictError {
-    /// Starting cell is invalid
-    #[error("Invalid starting cell: {cell_key:?}")]
-    InvalidStartCell {
-        /// The invalid cell key
-        cell_key: CellKey,
+    /// Starting simplex is invalid
+    #[error("Invalid starting simplex: {simplex_key:?}")]
+    InvalidStartSimplex {
+        /// The invalid simplex key
+        simplex_key: SimplexKey,
     },
 
     /// Geometric predicate failed
@@ -157,17 +157,17 @@ pub enum ConflictError {
         source: CoordinateConversionError,
     },
 
-    /// Failed to access required cell data (e.g., vertices) or build facet identifiers.
+    /// Failed to access required simplex data (e.g., vertices) or build facet identifiers.
     ///
-    /// This represents a *data-sourcing* failure attributable to a specific cell key:
+    /// This represents a *data-sourcing* failure attributable to a specific simplex key:
     /// the key resolved but its vertex list, facet index, or derived identifier could
-    /// not be produced. For invariant violations that are *not* about a specific cell
+    /// not be produced. For invariant violations that are *not* about a specific simplex
     /// (e.g., a `boundary_facets` index that must be in range by construction), use
-    /// [`ConflictError::InternalInconsistency`] instead of fabricating a cell key.
-    #[error("Failed to access required data for cell {cell_key:?}: {message}")]
-    CellDataAccessFailed {
-        /// The cell key for which required data could not be accessed.
-        cell_key: CellKey,
+    /// [`ConflictError::InternalInconsistency`] instead of fabricating a simplex key.
+    #[error("Failed to access required data for simplex {simplex_key:?}: {message}")]
+    SimplexDataAccessFailed {
+        /// The simplex key for which required data could not be accessed.
+        simplex_key: SimplexKey,
         /// Human-readable details about what data could not be accessed.
         message: String,
     },
@@ -181,8 +181,8 @@ pub enum ConflictError {
     /// panicking preserves the caller's transactional rollback guarantees.
     ///
     /// Orthogonality: this variant is distinct from
-    /// [`ConflictError::CellDataAccessFailed`]. Use `CellDataAccessFailed` when
-    /// a specific, real cell key is the subject of the failure; use
+    /// [`ConflictError::SimplexDataAccessFailed`]. Use `SimplexDataAccessFailed` when
+    /// a specific, real simplex key is the subject of the failure; use
     /// `InternalInconsistency` when the failure is structural and has no such key.
     /// Treated as non-retryable by [`InsertionError::is_retryable`] because
     /// perturbing coordinates cannot resolve a logic error.
@@ -199,31 +199,31 @@ pub enum ConflictError {
         site: InternalInconsistencySite,
     },
 
-    /// Non-manifold facet detected (facet shared by more than 2 conflict cells).
+    /// Non-manifold facet detected (facet shared by more than 2 conflict simplices).
     #[error(
-        "Non-manifold facet detected: facet {facet_hash:#x} shared by {cell_count} conflict cells (expected ≤2)"
+        "Non-manifold facet detected: facet {facet_hash:#x} shared by {simplex_count} conflict simplices (expected ≤2)"
     )]
     NonManifoldFacet {
         /// Hash of the facet's canonical vertex keys (sorted).
         facet_hash: u64,
-        /// Number of conflict cells incident to this facet.
-        cell_count: usize,
+        /// Number of conflict simplices incident to this facet.
+        simplex_count: usize,
     },
 
     /// Ridge fan detected (many facets sharing same (D-2)-simplex).
     ///
     /// When a single conflict region contains multiple ridge fans,
     /// [`extract_cavity_boundary`] accumulates the removal candidates from every
-    /// fan into `extra_cells` before returning, so a single cavity-reduction step
+    /// fan into `extra_simplices` before returning, so a single cavity-reduction step
     /// can shrink all of them at once. In that case:
     ///
     /// - `facet_count` and `ridge_vertex_count` describe the **first** fan that
     ///   the boundary walk observed (a representative example, not an aggregate).
-    /// - `extra_cells` contains the **union** of extra-cell candidates across all
+    /// - `extra_simplices` contains the **union** of extra-simplex candidates across all
     ///   detected fans in the conflict region (deduplicated).
     ///
     /// The error message reports the representative scalars; consult
-    /// `extra_cells.len()` in traces when the conflict region is large enough to
+    /// `extra_simplices.len()` in traces when the conflict region is large enough to
     /// host several fans.
     #[error(
         "Ridge fan detected: {facet_count} facets share ridge with {ridge_vertex_count} vertices (indicates degenerate geometry requiring perturbation)"
@@ -235,13 +235,13 @@ pub enum ConflictError {
         facet_count: usize,
         /// Number of vertices in the shared ridge for the first fan encountered.
         ridge_vertex_count: usize,
-        /// Deduplicated cell keys that contribute the *extra* (3rd, 4th, …)
+        /// Deduplicated simplex keys that contribute the *extra* (3rd, 4th, …)
         /// facets to one or more ridge fans in the conflict region. Removing
-        /// these cells from the conflict region eliminates every currently
+        /// these simplices from the conflict region eliminates every currently
         /// detected ridge fan at once, enabling cavity insertion to proceed at
-        /// the cost of leaving those cells temporarily non-Delaunay (the
+        /// the cost of leaving those simplices temporarily non-Delaunay (the
         /// subsequent flip-repair pass restores the Delaunay property).
-        extra_cells: Vec<CellKey>,
+        extra_simplices: Vec<SimplexKey>,
     },
 
     /// Cavity boundary is disconnected (multiple components).
@@ -257,11 +257,11 @@ pub enum ConflictError {
         visited: usize,
         /// Total number of boundary facets.
         total: usize,
-        /// Cell keys from the disconnected (unreachable) boundary component.
-        /// Removing these cells from the conflict region makes the cavity boundary
-        /// connected, enabling insertion to proceed (the cells are left temporarily
+        /// Simplex keys from the disconnected (unreachable) boundary component.
+        /// Removing these simplices from the conflict region makes the cavity boundary
+        /// connected, enabling insertion to proceed (the simplices are left temporarily
         /// non-Delaunay and fixed by the subsequent flip-repair pass).
-        disconnected_cells: Vec<CellKey>,
+        disconnected_simplices: Vec<SimplexKey>,
     },
 
     /// Cavity boundary is not closed (a ridge is incident to only one boundary facet).
@@ -277,9 +277,9 @@ pub enum ConflictError {
         facet_count: usize,
         /// Number of vertices in the ridge.
         ridge_vertex_count: usize,
-        /// The conflict-region cell that contributes the dangling (open) boundary facet.
-        /// Removing this cell from the conflict region closes the open ridge.
-        open_cell: CellKey,
+        /// The conflict-region simplex that contributes the dangling (open) boundary facet.
+        /// Removing this simplex from the conflict region closes the open ridge.
+        open_simplex: SimplexKey,
     },
 }
 
@@ -436,12 +436,12 @@ where
     U: DataType,
     V: DataType,
 {
-    let Some(cell) = tds.cell(handle.cell_key()) else {
-        return String::from("<missing-cell>");
+    let Some(simplex) = tds.simplex(handle.simplex_key()) else {
+        return String::from("<missing-simplex>");
     };
 
     let facet_index = usize::from(handle.facet_index());
-    let vertex_keys: Vec<VertexKey> = cell
+    let vertex_keys: Vec<VertexKey> = simplex
         .vertices()
         .iter()
         .enumerate()
@@ -450,16 +450,19 @@ where
     format_vertex_refs(tds, &vertex_keys)
 }
 
-fn format_cell_vertices<T, U, V, const D: usize>(tds: &Tds<T, U, V, D>, cell_key: CellKey) -> String
+fn format_simplex_vertices<T, U, V, const D: usize>(
+    tds: &Tds<T, U, V, D>,
+    simplex_key: SimplexKey,
+) -> String
 where
     T: CoordinateScalar,
     U: DataType,
     V: DataType,
 {
-    let Some(cell) = tds.cell(cell_key) else {
-        return String::from("<missing-cell>");
+    let Some(simplex) = tds.simplex(simplex_key) else {
+        return String::from("<missing-simplex>");
     };
-    format_vertex_refs(tds, cell.vertices())
+    format_vertex_refs(tds, simplex.vertices())
 }
 
 /// Emits a compact one-shot snapshot of the first detected ridge fan in the
@@ -471,13 +474,13 @@ where
 /// `RUST_LOG=debug` (or the matching filter in the large-scale debug harness).
 ///
 /// The snapshot captures the shared ridge vertices, the participating boundary
-/// facets, and the extra cells that cavity reduction would remove.
+/// facets, and the extra simplices that cavity reduction would remove.
 fn log_first_ridge_fan_dump<T, U, V, const D: usize>(
     tds: &Tds<T, U, V, D>,
-    conflict_cells: &CellKeyBuffer,
+    conflict_simplices: &SimplexKeyBuffer,
     boundary_facets: &CavityBoundaryBuffer,
     info: &RidgeInfo,
-    extra_cells: &[CellKey],
+    extra_simplices: &[SimplexKey],
 ) where
     T: CoordinateScalar,
     U: DataType,
@@ -494,7 +497,7 @@ fn log_first_ridge_fan_dump<T, U, V, const D: usize>(
     }
     participating_indices.extend(info.extra_facets.iter().copied());
 
-    let conflict_preview: Vec<CellKey> = conflict_cells.iter().copied().take(16).collect();
+    let conflict_preview: Vec<SimplexKey> = conflict_simplices.iter().copied().take(16).collect();
     let ridge_vertices = format_vertex_refs(tds, info.ridge_vertices.as_slice());
 
     let participating_facets: Vec<String> = participating_indices
@@ -505,9 +508,9 @@ fn log_first_ridge_fan_dump<T, U, V, const D: usize>(
                 || format!("boundary_idx={boundary_index} <missing-boundary-facet>"),
                 |handle| {
                     format!(
-                        "boundary_idx={} cell={:?} facet_index={} vertices=[{}]",
+                        "boundary_idx={} simplex={:?} facet_index={} vertices=[{}]",
                         boundary_index,
-                        handle.cell_key(),
+                        handle.simplex_key(),
                         handle.facet_index(),
                         format_facet_vertices(tds, handle),
                     )
@@ -516,13 +519,13 @@ fn log_first_ridge_fan_dump<T, U, V, const D: usize>(
         })
         .collect();
 
-    let extra_cell_details: Vec<String> = extra_cells
+    let extra_simplex_details: Vec<String> = extra_simplices
         .iter()
         .copied()
-        .map(|cell_key| {
+        .map(|simplex_key| {
             format!(
-                "cell={cell_key:?} vertices=[{}]",
-                format_cell_vertices(tds, cell_key)
+                "simplex={simplex_key:?} vertices=[{}]",
+                format_simplex_vertices(tds, simplex_key)
             )
         })
         .collect();
@@ -530,24 +533,24 @@ fn log_first_ridge_fan_dump<T, U, V, const D: usize>(
     tracing::debug!(
         target: "delaunay::ridge_fan_dump",
         D,
-        conflict_cells = conflict_cells.len(),
+        conflict_simplices = conflict_simplices.len(),
         boundary_facets = boundary_facets.len(),
         facet_count = info.facet_count,
         ridge_vertex_count = info.ridge_vertex_count,
-        extra_cells = ?extra_cells,
+        extra_simplices = ?extra_simplices,
         conflict_preview = ?conflict_preview,
         ridge_vertices = %ridge_vertices,
         participating_boundary_indices = ?participating_indices,
         participating_facets = ?participating_facets,
-        extra_cell_details = ?extra_cell_details,
+        extra_simplex_details = ?extra_simplex_details,
         "ridge-fan-dump: first detected ridge fan"
     );
 }
 
-fn collect_ridge_fan_extra_cells(
+fn collect_ridge_fan_extra_simplices(
     boundary_facets: &CavityBoundaryBuffer,
     info: &RidgeInfo,
-) -> Result<Vec<CellKey>, ConflictError> {
+) -> Result<Vec<SimplexKey>, ConflictError> {
     debug_assert!(
         info.extra_facets
             .iter()
@@ -557,16 +560,16 @@ fn collect_ridge_fan_extra_cells(
         boundary_facets.len(),
     );
 
-    // Deduplicate: multiple extra facets can come from the same cell. Downstream code
-    // expects unique cell keys when shrinking the conflict region.
-    let mut seen = FastHashSet::<CellKey>::default();
-    let mut extra_cells: Vec<CellKey> = Vec::new();
+    // Deduplicate: multiple extra facets can come from the same simplex. Downstream code
+    // expects unique simplex keys when shrinking the conflict region.
+    let mut seen = FastHashSet::<SimplexKey>::default();
+    let mut extra_simplices: Vec<SimplexKey> = Vec::new();
     for &fi in &info.extra_facets {
         // Every entry in `info.extra_facets` is a `boundary_facets` index written by the
         // same traversal that populated `boundary_facets`, so any out-of-range value
         // represents an internal invariant violation rather than a data-access failure
-        // attributable to a real cell. Report it as such so the error message is truthful
-        // (no fabricated `CellKey::default()` placeholder) and stays non-retryable.
+        // attributable to a real simplex. Report it as such so the error message is truthful
+        // (no fabricated `SimplexKey::default()` placeholder) and stays non-retryable.
         let ck = boundary_facets
             .get(fi)
             .ok_or_else(|| ConflictError::InternalInconsistency {
@@ -576,13 +579,13 @@ fn collect_ridge_fan_extra_cells(
                     extra_facets_len: info.extra_facets.len(),
                 },
             })?
-            .cell_key();
+            .simplex_key();
         if seen.insert(ck) {
-            extra_cells.push(ck);
+            extra_simplices.push(ck);
         }
     }
-    extra_cells.sort_unstable();
-    Ok(extra_cells)
+    extra_simplices.sort_unstable();
+    Ok(extra_simplices)
 }
 
 /// Indicates why facet-walking fell back to a brute-force scan.
@@ -597,7 +600,7 @@ fn collect_ridge_fan_extra_cells(
 /// ```
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum LocateFallbackReason {
-    /// The facet-walking traversal revisited a previously seen cell.
+    /// The facet-walking traversal revisited a previously seen simplex.
     CycleDetected,
     /// The facet-walking traversal exceeded the maximum step budget.
     StepLimit,
@@ -633,11 +636,11 @@ pub struct LocateFallback {
 ///
 /// ```rust
 /// use delaunay::prelude::algorithms::LocateStats;
-/// use delaunay::prelude::tds::CellKey;
+/// use delaunay::prelude::tds::SimplexKey;
 /// use slotmap::KeyData;
 ///
 /// let stats = LocateStats {
-///     start_cell: CellKey::from(KeyData::from_ffi(9)),
+///     start_simplex: SimplexKey::from(KeyData::from_ffi(9)),
 ///     used_hint: false,
 ///     walk_steps: 0,
 ///     fallback: None,
@@ -646,9 +649,9 @@ pub struct LocateFallback {
 /// ```
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct LocateStats {
-    /// The start cell used for the facet-walking phase.
-    pub start_cell: CellKey,
-    /// Whether the caller-provided hint was used as the start cell.
+    /// The start simplex used for the facet-walking phase.
+    pub start_simplex: SimplexKey,
+    /// Whether the caller-provided hint was used as the start simplex.
     pub used_hint: bool,
     /// Number of facet-walking steps taken.
     pub walk_steps: usize,
@@ -664,10 +667,10 @@ impl LocateStats {
     }
 }
 
-/// Internal locate result that also records the final cell reached by the walk.
+/// Internal locate result that also records the final simplex reached by the walk.
 ///
-/// Exterior insertion uses `terminal_cell` as a local conflict-region seed so it
-/// can avoid a full triangulation scan while still repairing cells near the hull
+/// Exterior insertion uses `terminal_simplex` as a local conflict-region seed so it
+/// can avoid a full triangulation scan while still repairing simplices near the hull
 /// facet where point location exited the triangulation.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct LocateTrace {
@@ -675,8 +678,8 @@ pub(crate) struct LocateTrace {
     pub(crate) result: LocateResult,
     /// Public locate diagnostics.
     pub(crate) stats: LocateStats,
-    /// Last cell visited by the facet walk before returning or falling back.
-    pub(crate) terminal_cell: CellKey,
+    /// Last simplex visited by the facet walk before returning or falling back.
+    pub(crate) terminal_simplex: SimplexKey,
 }
 
 /// Locate a point in the triangulation using facet walking (correctness-first).
@@ -693,7 +696,7 @@ pub(crate) struct LocateTrace {
 /// * `tds` - The triangulation data structure
 /// * `kernel` - Geometric kernel for orientation tests
 /// * `point` - Query point to locate
-/// * `hint` - Optional starting cell (uses arbitrary cell if None)
+/// * `hint` - Optional starting simplex (uses arbitrary simplex if None)
 ///
 /// # Returns
 ///
@@ -703,7 +706,7 @@ pub(crate) struct LocateTrace {
 ///
 /// Returns `LocateError` if:
 /// - The triangulation is empty
-/// - Cell references are invalid
+/// - Simplex references are invalid
 /// - Geometric predicates fail
 ///
 /// # Examples
@@ -728,10 +731,10 @@ pub(crate) struct LocateTrace {
 /// // Point inside the 4-simplex
 /// let inside_point = Point::new([0.2, 0.2, 0.2, 0.2]);
 /// match locate(dt.tds(), &kernel, &inside_point, None) {
-///     Ok(LocateResult::InsideCell(cell_key)) => {
-///         assert!(dt.tds().contains_cell(cell_key));
+///     Ok(LocateResult::InsideSimplex(simplex_key)) => {
+///         assert!(dt.tds().contains_simplex(simplex_key));
 ///     }
-///     _ => panic!("Expected point to be inside a cell"),
+///     _ => panic!("Expected point to be inside a simplex"),
 /// }
 ///
 /// // Point outside the convex hull
@@ -742,7 +745,7 @@ pub(crate) struct LocateTrace {
 /// }
 /// ```
 ///
-/// Using a hint cell for faster location:
+/// Using a hint simplex for faster location:
 ///
 /// ```rust
 /// use delaunay::prelude::geometry::RobustKernel;
@@ -760,20 +763,20 @@ pub(crate) struct LocateTrace {
 /// let dt = DelaunayTriangulation::new(&vertices).unwrap();
 /// let kernel = RobustKernel::<f64>::default();
 ///
-/// // Get a cell to use as hint (spatially close to query point)
-/// let hint_cell = dt.tds().cell_keys().next().unwrap();
+/// // Get a simplex to use as hint (spatially close to query point)
+/// let hint_simplex = dt.tds().simplex_keys().next().unwrap();
 /// let query_point = Point::new([0.15, 0.15, 0.15, 0.15]);
 ///
-/// match locate(dt.tds(), &kernel, &query_point, Some(hint_cell)) {
-///     Ok(LocateResult::InsideCell(_)) => { /* Success */ }
-///     _ => panic!("Expected to find cell"),
+/// match locate(dt.tds(), &kernel, &query_point, Some(hint_simplex)) {
+///     Ok(LocateResult::InsideSimplex(_)) => { /* Success */ }
+///     _ => panic!("Expected to find simplex"),
 /// }
 /// ```
 pub fn locate<K, U, V, const D: usize>(
     tds: &Tds<K::Scalar, U, V, D>,
     kernel: &K,
     point: &Point<K::Scalar, D>,
-    hint: Option<CellKey>,
+    hint: Option<SimplexKey>,
 ) -> Result<LocateResult, LocateError>
 where
     K: Kernel<D>,
@@ -818,7 +821,7 @@ pub fn locate_with_stats<K, U, V, const D: usize>(
     tds: &Tds<K::Scalar, U, V, D>,
     kernel: &K,
     point: &Point<K::Scalar, D>,
-    hint: Option<CellKey>,
+    hint: Option<SimplexKey>,
 ) -> Result<(LocateResult, LocateStats), LocateError>
 where
     K: Kernel<D>,
@@ -829,16 +832,16 @@ where
     Ok((trace.result, trace.stats))
 }
 
-/// Locate a point and keep the final walked cell for local exterior repair.
+/// Locate a point and keep the final walked simplex for local exterior repair.
 ///
-/// This mirrors [`locate_with_stats`] but also exposes the last facet-walk cell
+/// This mirrors [`locate_with_stats`] but also exposes the last facet-walk simplex
 /// before the algorithm concluded.  For [`LocateResult::Outside`] without a scan
-/// fallback, that cell is adjacent to the hull facet crossed by the query point.
+/// fallback, that simplex is adjacent to the hull facet crossed by the query point.
 pub(crate) fn locate_with_trace<K, U, V, const D: usize>(
     tds: &Tds<K::Scalar, U, V, D>,
     kernel: &K,
     point: &Point<K::Scalar, D>,
-    hint: Option<CellKey>,
+    hint: Option<SimplexKey>,
 ) -> Result<LocateTrace, LocateError>
 where
     K: Kernel<D>,
@@ -847,14 +850,14 @@ where
 {
     const MAX_STEPS: usize = 10000;
 
-    if tds.number_of_cells() == 0 {
+    if tds.number_of_simplices() == 0 {
         return Err(LocateError::EmptyTriangulation);
     }
 
-    let (start_cell, used_hint) = match hint {
-        Some(key) if tds.contains_cell(key) => (key, true),
+    let (start_simplex, used_hint) = match hint {
+        Some(key) if tds.contains_simplex(key) => (key, true),
         _ => (
-            tds.cell_keys()
+            tds.simplex_keys()
                 .next()
                 .ok_or(LocateError::EmptyTriangulation)?,
             false,
@@ -862,19 +865,19 @@ where
     };
 
     let mut stats = LocateStats {
-        start_cell,
+        start_simplex,
         used_hint,
         walk_steps: 0,
         fallback: None,
     };
 
-    let mut current_cell = start_cell;
-    let mut visited: FastHashSet<CellKey> = FastHashSet::default();
+    let mut current_simplex = start_simplex;
+    let mut visited: FastHashSet<SimplexKey> = FastHashSet::default();
 
     for step in 0..MAX_STEPS {
         stats.walk_steps = step + 1;
 
-        if !visited.insert(current_cell) {
+        if !visited.insert(current_simplex) {
             stats.fallback = Some(LocateFallback {
                 reason: LocateFallbackReason::CycleDetected,
                 steps: stats.walk_steps,
@@ -883,37 +886,40 @@ where
             return Ok(LocateTrace {
                 result,
                 stats,
-                terminal_cell: current_cell,
+                terminal_simplex: current_simplex,
             });
         }
 
-        let cell = tds.cell(current_cell).ok_or(LocateError::InvalidCell {
-            cell_key: current_cell,
-        })?;
+        let simplex = tds
+            .simplex(current_simplex)
+            .ok_or(LocateError::InvalidSimplex {
+                simplex_key: current_simplex,
+            })?;
 
-        let facet_count = cell.number_of_vertices();
+        let facet_count = simplex.number_of_vertices();
         let mut found_outside_facet = false;
 
         for facet_idx in 0..facet_count {
-            if is_point_outside_facet(tds, kernel, current_cell, facet_idx, point)? == Some(true) {
-                if let Some(neighbor_key) = cell.neighbor_key(facet_idx).flatten() {
-                    current_cell = neighbor_key;
+            if is_point_outside_facet(tds, kernel, current_simplex, facet_idx, point)? == Some(true)
+            {
+                if let Some(neighbor_key) = simplex.neighbor_key(facet_idx).flatten() {
+                    current_simplex = neighbor_key;
                     found_outside_facet = true;
                     break;
                 }
                 return Ok(LocateTrace {
                     result: LocateResult::Outside,
                     stats,
-                    terminal_cell: current_cell,
+                    terminal_simplex: current_simplex,
                 });
             }
         }
 
         if !found_outside_facet {
             return Ok(LocateTrace {
-                result: LocateResult::InsideCell(current_cell),
+                result: LocateResult::InsideSimplex(current_simplex),
                 stats,
-                terminal_cell: current_cell,
+                terminal_simplex: current_simplex,
             });
         }
     }
@@ -926,7 +932,7 @@ where
     Ok(LocateTrace {
         result,
         stats,
-        terminal_cell: current_cell,
+        terminal_simplex: current_simplex,
     })
 }
 
@@ -940,26 +946,26 @@ where
     U: DataType,
     V: DataType,
 {
-    for (cell_key, cell) in tds.cells() {
+    for (simplex_key, simplex) in tds.simplices() {
         let mut found_outside_facet = false;
-        let facet_count = cell.number_of_vertices();
+        let facet_count = simplex.number_of_vertices();
 
         for facet_idx in 0..facet_count {
-            if is_point_outside_facet(tds, kernel, cell_key, facet_idx, point)? == Some(true) {
+            if is_point_outside_facet(tds, kernel, simplex_key, facet_idx, point)? == Some(true) {
                 found_outside_facet = true;
                 break;
             }
         }
 
         if !found_outside_facet {
-            return Ok(LocateResult::InsideCell(cell_key));
+            return Ok(LocateResult::InsideSimplex(simplex_key));
         }
     }
 
     Ok(LocateResult::Outside)
 }
 
-/// Test if a point is on the outside of a cell's facet.
+/// Test if a point is on the outside of a simplex's facet.
 ///
 /// A point is "outside" a facet if walking through that facet moves us closer
 /// to the query point. This is determined by comparing orientations with a
@@ -969,9 +975,9 @@ where
 ///
 /// **CRITICAL**: This function relies on the triangulation's topological invariant:
 /// - `facet_idx` refers to both the facet AND the vertex opposite to that facet
-/// - `cell.vertices()[facet_idx]` is the vertex opposite the facet
+/// - `simplex.vertices()[facet_idx]` is the vertex opposite the facet
 /// - The facet consists of all vertices EXCEPT `vertices[facet_idx]`
-/// - This invariant is documented in [`Cell`](crate::core::cell::Cell) and enforced by
+/// - This invariant is documented in [`Simplex`](crate::core::simplex::Simplex) and enforced by
 ///   [`Tds::assign_neighbors`](crate::core::tds::Tds::assign_neighbors).
 ///
 /// It is validated as part of Level 2 structural validation via
@@ -988,7 +994,7 @@ where
 fn is_point_outside_facet<K, U, V, const D: usize>(
     tds: &Tds<K::Scalar, U, V, D>,
     kernel: &K,
-    cell_key: CellKey,
+    simplex_key: SimplexKey,
     facet_idx: usize,
     query_point: &Point<K::Scalar, D>,
 ) -> Result<Option<bool>, LocateError>
@@ -997,13 +1003,13 @@ where
     U: DataType,
     V: DataType,
 {
-    let cell = tds
-        .cell(cell_key)
-        .ok_or(LocateError::InvalidCell { cell_key })?;
+    let simplex = tds
+        .simplex(simplex_key)
+        .ok_or(LocateError::InvalidSimplex { simplex_key })?;
 
-    let cell_vertex_keys = cell.vertices();
-    if cell_vertex_keys.len() != D + 1 {
-        return Ok(None); // Degenerate cell
+    let simplex_vertex_keys = simplex.vertices();
+    if simplex_vertex_keys.len() != D + 1 {
+        return Ok(None); // Degenerate simplex
     }
 
     if facet_idx > D {
@@ -1011,13 +1017,13 @@ where
     }
 
     // The vertex at facet_idx is opposite the facet
-    let opposite_key = cell_vertex_keys[facet_idx];
+    let opposite_key = simplex_vertex_keys[facet_idx];
     let Some(opposite_point) = tds.vertex(opposite_key).map(|v| *v.point()) else {
-        return Ok(None); // Unresolvable vertex → degenerate cell
+        return Ok(None); // Unresolvable vertex → degenerate simplex
     };
 
     // Facet keys: all vertex keys except the one at facet_idx
-    let facet_keys: SmallBuffer<VertexKey, MAX_PRACTICAL_DIMENSION_SIZE> = cell_vertex_keys
+    let facet_keys: SmallBuffer<VertexKey, MAX_PRACTICAL_DIMENSION_SIZE> = simplex_vertex_keys
         .iter()
         .enumerate()
         .filter(|&(i, _)| i != facet_idx)
@@ -1026,16 +1032,16 @@ where
 
     // Build facet simplex + opposite vertex in canonical key order.
     // If any facet vertex is unresolvable, treat as degenerate.
-    let Some(canonical_cell) = sorted_facet_points_with_extra(tds, &facet_keys, opposite_point)
+    let Some(canonical_simplex) = sorted_facet_points_with_extra(tds, &facet_keys, opposite_point)
     else {
         return Ok(None);
     };
 
-    let cell_orientation = kernel.orientation(&canonical_cell)?;
+    let simplex_orientation = kernel.orientation(&canonical_simplex)?;
 
     // Build query simplex by reusing the canonical facet ordering:
     // replace the last element (opposite → query point).
-    let mut query_simplex = canonical_cell;
+    let mut query_simplex = canonical_simplex;
     let last = query_simplex.len() - 1;
     query_simplex[last] = *query_point;
 
@@ -1044,39 +1050,39 @@ where
     // If orientations differ, query point and opposite vertex are on
     // opposite sides of the facet → point is "outside" (should cross)
     // If orientations match, they're on the same side → point is "inside" (should not cross)
-    Ok(Some(cell_orientation * query_orientation < 0))
+    Ok(Some(simplex_orientation * query_orientation < 0))
 }
 
-/// Find all cells whose circumspheres contain the query point (conflict region).
+/// Find all simplices whose circumspheres contain the query point (conflict region).
 ///
-/// Uses BFS traversal starting from a located cell to find all cells in conflict.
-/// A cell is in conflict if the query point lies inside **or on** its circumsphere.
+/// Uses BFS traversal starting from a located simplex to find all simplices in conflict.
+/// A simplex is in conflict if the query point lies inside **or on** its circumsphere.
 ///
 /// # Arguments
 ///
 /// * `tds` - The triangulation data structure
 /// * `kernel` - Geometric kernel for `in_sphere` tests
 /// * `point` - Query point to test
-/// * `start_cell` - Starting cell (typically from `locate()`)
+/// * `start_simplex` - Starting simplex (typically from `locate()`)
 ///
 /// # Returns
 ///
-/// Returns a buffer of all `CellKey`s whose circumspheres contain the point.
+/// Returns a buffer of all `SimplexKey`s whose circumspheres contain the point.
 ///
 /// # Errors
 ///
 /// Returns `ConflictError` if:
-/// - The starting cell is invalid
+/// - The starting simplex is invalid
 /// - Geometric predicates fail
-/// - Cannot retrieve cell vertices
+/// - Cannot retrieve simplex vertices
 ///
 /// # Algorithm
 ///
-/// 1. Start BFS from the located cell
-/// 2. For each cell, test `kernel.in_sphere()`
+/// 1. Start BFS from the located simplex
+/// 2. For each simplex, test `kernel.in_sphere()`
 /// 3. If point is inside or on circumsphere (sign >= 0), add to conflict region
-/// 4. Expand search to neighbors of conflicting cells
-/// 5. Track visited cells with `CellSecondaryMap` for O(1) lookups
+/// 4. Expand search to neighbors of conflicting simplices
+/// 5. Track visited simplices with `SimplexSecondaryMap` for O(1) lookups
 ///
 /// # Examples
 ///
@@ -1104,10 +1110,10 @@ where
 ///
 /// // First locate the point
 /// let location = locate(dt.tds(), &kernel, &query_point, None).unwrap();
-/// if let LocateResult::InsideCell(cell_key) = location {
-///     // Find all cells whose circumspheres contain the point
-///     let conflict_cells = find_conflict_region(dt.tds(), &kernel, &query_point, cell_key).unwrap();
-///     assert_eq!(conflict_cells.len(), 1); // Single 4-simplex contains the point
+/// if let LocateResult::InsideSimplex(simplex_key) = location {
+///     // Find all simplices whose circumspheres contain the point
+///     let conflict_simplices = find_conflict_region(dt.tds(), &kernel, &query_point, simplex_key).unwrap();
+///     assert_eq!(conflict_simplices.len(), 1); // Single 4-simplex contains the point
 /// }
 /// ```
 #[expect(
@@ -1118,8 +1124,8 @@ pub fn find_conflict_region<K, U, V, const D: usize>(
     tds: &Tds<K::Scalar, U, V, D>,
     kernel: &K,
     point: &Point<K::Scalar, D>,
-    start_cell: CellKey,
-) -> Result<CellKeyBuffer, ConflictError>
+    start_simplex: SimplexKey,
+) -> Result<SimplexKeyBuffer, ConflictError>
 where
     K: Kernel<D>,
     U: DataType,
@@ -1136,29 +1142,29 @@ where
     #[cfg(debug_assertions)]
     let mut neighbor_enqueued = 0usize;
 
-    // Validate start cell exists
-    if !tds.contains_cell(start_cell) {
-        return Err(ConflictError::InvalidStartCell {
-            cell_key: start_cell,
+    // Validate start simplex exists
+    if !tds.contains_simplex(start_simplex) {
+        return Err(ConflictError::InvalidStartSimplex {
+            simplex_key: start_simplex,
         });
     }
 
-    // Result buffer for conflicting cells
-    let mut conflict_cells = CellKeyBuffer::new();
+    // Result buffer for conflicting simplices
+    let mut conflict_simplices = SimplexKeyBuffer::new();
 
     // BFS work queue
-    let mut queue = CellKeyBuffer::new();
-    queue.push(start_cell);
+    let mut queue = SimplexKeyBuffer::new();
+    queue.push(start_simplex);
 
-    // Track visited cells with SparseSecondaryMap (idiomatic for SlotMap)
-    let mut visited = CellSecondaryMap::new();
+    // Track visited simplices with SparseSecondaryMap (idiomatic for SlotMap)
+    let mut visited = SimplexSecondaryMap::new();
 
-    while let Some(cell_key) = queue.pop() {
+    while let Some(simplex_key) = queue.pop() {
         // Skip if already visited
-        if visited.contains_key(cell_key) {
+        if visited.contains_key(simplex_key) {
             continue;
         }
-        visited.insert(cell_key, ());
+        visited.insert(simplex_key, ());
 
         #[cfg(debug_assertions)]
         {
@@ -1177,25 +1183,26 @@ where
             }
         }
 
-        // Get cell vertices for in_sphere test
-        let cell = tds
-            .cell(cell_key)
-            .ok_or_else(|| ConflictError::CellDataAccessFailed {
-                cell_key,
-                message: "Cell vanished during BFS traversal".to_string(),
-            })?;
+        // Get simplex vertices for in_sphere test
+        let simplex =
+            tds.simplex(simplex_key)
+                .ok_or_else(|| ConflictError::SimplexDataAccessFailed {
+                    simplex_key,
+                    message: "Simplex vanished during BFS traversal".to_string(),
+                })?;
 
-        // Collect cell vertex points in canonical VertexKey order for consistent
+        // Collect simplex vertex points in canonical VertexKey order for consistent
         // SoS perturbation priority.
-        let simplex_points =
-            sorted_cell_points(tds, cell).ok_or_else(|| ConflictError::CellDataAccessFailed {
-                cell_key,
-                message: format!("Failed to resolve all {} cell vertices", D + 1),
-            })?;
+        let simplex_points = sorted_simplex_points(tds, simplex).ok_or_else(|| {
+            ConflictError::SimplexDataAccessFailed {
+                simplex_key,
+                message: format!("Failed to resolve all {} simplex vertices", D + 1),
+            }
+        })?;
 
         if simplex_points.len() != D + 1 {
-            return Err(ConflictError::CellDataAccessFailed {
-                cell_key,
+            return Err(ConflictError::SimplexDataAccessFailed {
+                simplex_key,
                 message: format!("Expected {} vertices, got {}", D + 1, simplex_points.len()),
             });
         }
@@ -1203,8 +1210,8 @@ where
         #[cfg(debug_assertions)]
         if debug_config.log_conflict {
             tracing::debug!(
-                cell_key = ?cell_key,
-                vertex_keys = ?cell.vertices(),
+                simplex_key = ?simplex_key,
+                vertex_keys = ?simplex.vertices(),
                 simplex_len = simplex_points.len(),
                 query_point = ?point,
                 "find_conflict_region: in_sphere input"
@@ -1218,8 +1225,8 @@ where
                 #[cfg(debug_assertions)]
                 if debug_config.log_conflict {
                     tracing::debug!(
-                        cell_key = ?cell_key,
-                        vertex_keys = ?cell.vertices(),
+                        simplex_key = ?simplex_key,
+                        vertex_keys = ?simplex.vertices(),
                         query_point = ?point,
                         error = ?err,
                         "find_conflict_region: in_sphere failed"
@@ -1232,7 +1239,7 @@ where
         #[cfg(debug_assertions)]
         if debug_config.log_conflict {
             tracing::debug!(
-                cell_key = ?cell_key,
+                simplex_key = ?simplex_key,
                 sign,
                 in_conflict = sign >= 0,
                 "find_conflict_region: in_sphere classification"
@@ -1240,8 +1247,8 @@ where
         }
 
         if sign >= 0 {
-            // Point is inside or on circumsphere - cell is in conflict
-            conflict_cells.push(cell_key);
+            // Point is inside or on circumsphere - simplex is in conflict
+            conflict_simplices.push(simplex_key);
 
             #[cfg(debug_assertions)]
             {
@@ -1249,7 +1256,7 @@ where
             }
 
             // Add neighbors to queue for exploration
-            if let Some(neighbors) = cell.neighbor_keys() {
+            if let Some(neighbors) = simplex.neighbor_keys() {
                 for neighbor_opt in neighbors {
                     if let Some(neighbor_key) = neighbor_opt
                         && !visited.contains_key(neighbor_key)
@@ -1263,18 +1270,19 @@ where
                 }
             }
         } else {
-            // Cell is NOT in conflict (sign < 0): BFS boundary.
-            // Log boundary cells so investigators can see exactly where
+            // Simplex is NOT in conflict (sign < 0): BFS boundary.
+            // Log boundary simplices so investigators can see exactly where
             // and why the BFS stopped expanding.
             #[cfg(debug_assertions)]
             if debug_config.log_conflict {
-                let neighbor_keys: SmallBuffer<Option<CellKey>, MAX_PRACTICAL_DIMENSION_SIZE> =
-                    cell.neighbor_keys()
+                let neighbor_keys: SmallBuffer<Option<SimplexKey>, MAX_PRACTICAL_DIMENSION_SIZE> =
+                    simplex
+                        .neighbor_keys()
                         .map(Iterator::collect)
                         .unwrap_or_default();
                 tracing::debug!(
-                    cell_key = ?cell_key,
-                    vertex_keys = ?cell.vertices(),
+                    simplex_key = ?simplex_key,
+                    vertex_keys = ?simplex.vertices(),
                     sign,
                     neighbors = ?neighbor_keys,
                     "find_conflict_region: BFS boundary (non-conflict)"
@@ -1287,33 +1295,33 @@ where
     if debug_config.progress_enabled || debug_config.log_conflict {
         tracing::debug!(
             visited_count,
-            conflict_cells = conflict_cells.len(),
+            conflict_simplices = conflict_simplices.len(),
             neighbor_enqueued,
             elapsed = ?start_time.elapsed(),
             "find_conflict_region: summary"
         );
     }
 
-    Ok(conflict_cells)
+    Ok(conflict_simplices)
 }
 
-/// Verify that a BFS-found conflict region is complete by brute-force scanning all cells.
+/// Verify that a BFS-found conflict region is complete by brute-force scanning all simplices.
 ///
 /// This debug-only function compares the conflict region found by BFS traversal against
-/// a full scan of every cell in the TDS using insphere tests. Any cell that the BFS missed
-/// (i.e., the point is inside its circumsphere but the cell was not found by BFS) is logged
-/// as a "missed" cell.
+/// a full scan of every simplex in the TDS using insphere tests. Any simplex that the BFS missed
+/// (i.e., the point is inside its circumsphere but the simplex was not found by BFS) is logged
+/// as a "missed" simplex.
 ///
 /// Activated by setting `DELAUNAY_DEBUG_CONFLICT_VERIFY=1`.
 ///
-/// Returns the number of missed cells (0 means the BFS result is complete).
+/// Returns the number of missed simplices (0 means the BFS result is complete).
 ///
 /// # Examples
 ///
 /// ```rust
 /// # #[cfg(feature = "diagnostics")]
 /// # {
-/// use delaunay::prelude::collections::CellKeyBuffer;
+/// use delaunay::prelude::collections::SimplexKeyBuffer;
 /// use delaunay::prelude::diagnostics::verify_conflict_region_completeness;
 /// use delaunay::prelude::geometry::{AdaptiveKernel, Coordinate, Point};
 /// use delaunay::prelude::tds::Tds;
@@ -1321,7 +1329,7 @@ where
 /// let tds: Tds<f64, (), (), 2> = Tds::empty();
 /// let kernel = AdaptiveKernel::<f64>::new();
 /// let point = Point::new([0.25, 0.25]);
-/// let bfs_conflicts = CellKeyBuffer::new();
+/// let bfs_conflicts = SimplexKeyBuffer::new();
 ///
 /// let missed = verify_conflict_region_completeness(
 ///     &tds,
@@ -1338,39 +1346,39 @@ pub fn verify_conflict_region_completeness<K, U, V, const D: usize>(
     tds: &Tds<K::Scalar, U, V, D>,
     kernel: &K,
     point: &Point<K::Scalar, D>,
-    bfs_conflict_cells: &CellKeyBuffer,
+    bfs_conflict_simplices: &SimplexKeyBuffer,
 ) -> usize
 where
     K: Kernel<D>,
     U: DataType,
     V: DataType,
 {
-    let bfs_set: FastHashSet<CellKey> = bfs_conflict_cells.iter().copied().collect();
+    let bfs_set: FastHashSet<SimplexKey> = bfs_conflict_simplices.iter().copied().collect();
     let mut missed_count = 0usize;
     let mut brute_force_count = 0usize;
-    let mut malformed_cells = 0usize;
+    let mut malformed_simplices = 0usize;
     let mut predicate_errors = 0usize;
 
-    for (cell_key, cell) in tds.cells() {
-        let Some(simplex_points) = sorted_cell_points(tds, cell) else {
-            malformed_cells += 1;
+    for (simplex_key, simplex) in tds.simplices() {
+        let Some(simplex_points) = sorted_simplex_points(tds, simplex) else {
+            malformed_simplices += 1;
             tracing::debug!(
-                cell_key = ?cell_key,
-                vertex_keys = ?cell.vertices(),
-                "verify_conflict_region: skipping malformed cell (sorted_cell_points returned None)"
+                simplex_key = ?simplex_key,
+                vertex_keys = ?simplex.vertices(),
+                "verify_conflict_region: skipping malformed simplex (sorted_simplex_points returned None)"
             );
             continue;
         };
         if simplex_points.len() != D + 1 {
-            malformed_cells += 1;
+            malformed_simplices += 1;
             continue;
         }
 
         let Ok(sign) = kernel.in_sphere(&simplex_points, point) else {
             predicate_errors += 1;
             tracing::debug!(
-                cell_key = ?cell_key,
-                vertex_keys = ?cell.vertices(),
+                simplex_key = ?simplex_key,
+                vertex_keys = ?simplex.vertices(),
                 "verify_conflict_region: in_sphere predicate failed"
             );
             continue;
@@ -1378,18 +1386,18 @@ where
 
         if sign >= 0 {
             brute_force_count += 1;
-            if !bfs_set.contains(&cell_key) {
+            if !bfs_set.contains(&simplex_key) {
                 missed_count += 1;
 
-                // Reachability analysis: determine WHY BFS missed this cell.
-                // Check if any TDS neighbor of the missed cell is in the BFS
+                // Reachability analysis: determine WHY BFS missed this simplex.
+                // Check if any TDS neighbor of the missed simplex is in the BFS
                 // conflict set.  This distinguishes two root causes:
                 //   - Reachable: a neighbor IS in bfs_set, so BFS reached a
                 //     neighbor but an intermediate insphere test rejected it
                 //   - Unreachable: NO neighbors are in bfs_set, indicating
                 //     broken neighbor pointers or a disconnected pocket
                 let (neighbor_in_bfs, neighbor_total, neighbor_none) =
-                    cell.neighbor_keys().map_or((0, 0, 0), |neighbors| {
+                    simplex.neighbor_keys().map_or((0, 0, 0), |neighbors| {
                         let total = neighbors.len();
                         let mut none_count = 0;
                         let mut in_bfs = 0;
@@ -1414,34 +1422,34 @@ where
                 };
 
                 tracing::warn!(
-                    cell_key = ?cell_key,
-                    vertex_keys = ?cell.vertices(),
+                    simplex_key = ?simplex_key,
+                    vertex_keys = ?simplex.vertices(),
                     sign,
                     reachability,
                     neighbor_in_bfs,
                     neighbor_total,
                     neighbor_none,
-                    bfs_conflict_len = bfs_conflict_cells.len(),
+                    bfs_conflict_len = bfs_conflict_simplices.len(),
                     brute_force_conflict_so_far = brute_force_count,
-                    "verify_conflict_region: BFS MISSED conflicting cell"
+                    "verify_conflict_region: BFS MISSED conflicting simplex"
                 );
             }
         }
     }
 
-    if missed_count > 0 || malformed_cells > 0 || predicate_errors > 0 {
+    if missed_count > 0 || malformed_simplices > 0 || predicate_errors > 0 {
         tracing::warn!(
-            bfs_conflict = bfs_conflict_cells.len(),
+            bfs_conflict = bfs_conflict_simplices.len(),
             brute_force_conflict = brute_force_count,
             missed = missed_count,
-            malformed_cells,
+            malformed_simplices,
             predicate_errors,
             query_point = ?point,
-            "verify_conflict_region: INCOMPLETE — missed cells or evaluation failures"
+            "verify_conflict_region: INCOMPLETE — missed simplices or evaluation failures"
         );
     } else {
         tracing::debug!(
-            bfs_conflict = bfs_conflict_cells.len(),
+            bfs_conflict = bfs_conflict_simplices.len(),
             brute_force_conflict = brute_force_count,
             "verify_conflict_region: conflict region is COMPLETE"
         );
@@ -1452,29 +1460,29 @@ where
 
 /// Extract boundary facets of a conflict region (cavity).
 ///
-/// Finds all facets where exactly one adjacent cell is in the conflict region.
+/// Finds all facets where exactly one adjacent simplex is in the conflict region.
 /// These boundary facets form the surface that will be connected to the new point.
 ///
 /// # Arguments
 ///
 /// * `tds` - The triangulation data structure
-/// * `conflict_cells` - Buffer of cell keys in the conflict region
+/// * `conflict_simplices` - Buffer of simplex keys in the conflict region
 ///
 /// # Returns
 ///
 /// Returns a buffer of `FacetHandle`s representing the cavity boundary.
-/// Each facet is oriented such that its `cell_key` is in the conflict region.
+/// Each facet is oriented such that its `simplex_key` is in the conflict region.
 ///
 /// # Errors
 ///
 /// Returns `ConflictError` if:
-/// - A conflict cell cannot be retrieved from the TDS
-/// - Cell neighbor data is inconsistent
+/// - A conflict simplex cannot be retrieved from the TDS
+/// - Simplex neighbor data is inconsistent
 ///
 /// # Algorithm
 ///
-/// 1. Convert `conflict_cells` to a `FastHashSet` for O(1) lookups
-/// 2. For each cell in the conflict region:
+/// 1. Convert `conflict_simplices` to a `FastHashSet` for O(1) lookups
+/// 2. For each simplex in the conflict region:
 ///    - Iterate through all facets (opposite each vertex)
 ///    - Check if the neighbor across that facet is also in conflict
 ///    - If neighbor is NOT in conflict (or is None/hull), it's a boundary facet
@@ -1484,11 +1492,11 @@ where
 ///
 /// ```rust
 /// use delaunay::prelude::algorithms::extract_cavity_boundary;
-/// use delaunay::prelude::collections::CellKeyBuffer;
+/// use delaunay::prelude::collections::SimplexKeyBuffer;
 /// use delaunay::prelude::tds::Tds;
 ///
 /// let tds: Tds<f64, (), (), 3> = Tds::empty();
-/// let boundary = extract_cavity_boundary(&tds, &CellKeyBuffer::new()).unwrap();
+/// let boundary = extract_cavity_boundary(&tds, &SimplexKeyBuffer::new()).unwrap();
 /// assert!(boundary.is_empty());
 /// ```
 ///
@@ -1516,11 +1524,11 @@ where
 ///
 /// // Locate and find conflict region
 /// let location = locate(dt.tds(), &kernel, &query_point, None).unwrap();
-/// if let LocateResult::InsideCell(cell_key) = location {
-///     let conflict_cells = find_conflict_region(dt.tds(), &kernel, &query_point, cell_key).unwrap();
+/// if let LocateResult::InsideSimplex(simplex_key) = location {
+///     let conflict_simplices = find_conflict_region(dt.tds(), &kernel, &query_point, simplex_key).unwrap();
 ///     
 ///     // Extract cavity boundary
-///     let boundary_facets = extract_cavity_boundary(dt.tds(), &conflict_cells).unwrap();
+///     let boundary_facets = extract_cavity_boundary(dt.tds(), &conflict_simplices).unwrap();
 ///     
 ///     // For a single 4-simplex, all 5 facets are on the boundary (convex hull)
 ///     assert_eq!(boundary_facets.len(), 5);
@@ -1532,7 +1540,7 @@ where
 )]
 pub fn extract_cavity_boundary<T, U, V, const D: usize>(
     tds: &Tds<T, U, V, D>,
-    conflict_cells: &CellKeyBuffer,
+    conflict_simplices: &SimplexKeyBuffer,
 ) -> Result<CavityBoundaryBuffer, ConflictError>
 where
     T: CoordinateScalar,
@@ -1540,7 +1548,7 @@ where
     V: DataType,
 {
     // Empty conflict region => empty boundary
-    if conflict_cells.is_empty() {
+    if conflict_simplices.is_empty() {
         return Ok(CavityBoundaryBuffer::new());
     }
 
@@ -1556,7 +1564,7 @@ where
     #[cfg(debug_assertions)]
     if detail_enabled {
         tracing::debug!(
-            conflict_cells = conflict_cells.len(),
+            conflict_simplices = conflict_simplices.len(),
             "extract_cavity_boundary: start"
         );
     }
@@ -1565,35 +1573,35 @@ where
     // We intentionally do NOT rely on neighbor pointers to classify boundary facets here.
     //
     // Neighbor pointers can be temporarily incomplete during incremental updates (e.g., after
-    // cell removal or before a full neighbor repair). If we rely on `cell.neighbors()` and a
-    // shared facet between two conflict cells is missing a neighbor pointer, that facet will be
+    // simplex removal or before a full neighbor repair). If we rely on `simplex.neighbors()` and a
+    // shared facet between two conflict simplices is missing a neighbor pointer, that facet will be
     // misclassified as a boundary facet. This can introduce internal boundary components and
     // break Level-3 Euler/topology validation (observed as χ=2 for Ball(3)).
     //
     // Instead, classify facets purely by facet incidence *within the conflict region*:
-    // - A facet is on the cavity boundary iff it is incident to exactly 1 conflict cell.
-    let conflict_set: FastHashSet<CellKey> = conflict_cells.iter().copied().collect();
+    // - A facet is on the cavity boundary iff it is incident to exactly 1 conflict simplex.
+    let conflict_set: FastHashSet<SimplexKey> = conflict_simplices.iter().copied().collect();
 
     // facet_hash -> all facets in the conflict region that contain the facet
-    let mut facet_to_conflict: FacetToCellsMap = FacetToCellsMap::default();
+    let mut facet_to_conflict: FacetToSimplicesMap = FacetToSimplicesMap::default();
 
     // facet_hash -> canonical vertex keys (sorted, excluding the opposite vertex)
-    // Cached so ridge analysis doesn't have to rebuild facet vertex sets from cells.
+    // Cached so ridge analysis doesn't have to rebuild facet vertex sets from simplices.
     let mut facet_hash_to_vkeys: FastHashMap<
         u64,
         SmallBuffer<VertexKey, MAX_PRACTICAL_DIMENSION_SIZE>,
     > = FastHashMap::default();
 
-    for &cell_key in &conflict_set {
-        let cell = tds
-            .cell(cell_key)
-            .ok_or(ConflictError::InvalidStartCell { cell_key })?;
+    for &simplex_key in &conflict_set {
+        let simplex = tds
+            .simplex(simplex_key)
+            .ok_or(ConflictError::InvalidStartSimplex { simplex_key })?;
 
-        let facet_count = cell.number_of_vertices(); // D+1 facets
+        let facet_count = simplex.number_of_vertices(); // D+1 facets
         for facet_idx in 0..facet_count {
             // Compute canonical facet hash: sorted vertex keys excluding the opposite vertex.
             let mut facet_vkeys = SmallBuffer::<VertexKey, MAX_PRACTICAL_DIMENSION_SIZE>::new();
-            for (i, &vkey) in cell.vertices().iter().enumerate() {
+            for (i, &vkey) in simplex.vertices().iter().enumerate() {
                 if i != facet_idx {
                     facet_vkeys.push(vkey);
                 }
@@ -1610,15 +1618,15 @@ where
             facet_hash_to_vkeys.entry(facet_hash).or_insert(facet_vkeys);
 
             let facet_idx_u8 =
-                u8::try_from(facet_idx).map_err(|_| ConflictError::CellDataAccessFailed {
-                    cell_key,
+                u8::try_from(facet_idx).map_err(|_| ConflictError::SimplexDataAccessFailed {
+                    simplex_key,
                     message: format!("Facet index {facet_idx} exceeds u8::MAX"),
                 })?;
 
             facet_to_conflict
                 .entry(facet_hash)
                 .or_default()
-                .push(FacetHandle::new(cell_key, facet_idx_u8));
+                .push(FacetHandle::new(simplex_key, facet_idx_u8));
         }
     }
 
@@ -1632,15 +1640,15 @@ where
     // Map: ridge_hash -> RidgeInfo
     let mut ridge_map: FastHashMap<u64, RidgeInfo> = FastHashMap::default();
 
-    for (facet_hash, cell_facet_pairs) in &facet_to_conflict {
-        match cell_facet_pairs.as_slice() {
-            // Exactly one conflict cell owns this facet => boundary facet
+    for (facet_hash, simplex_facet_pairs) in &facet_to_conflict {
+        match simplex_facet_pairs.as_slice() {
+            // Exactly one conflict simplex owns this facet => boundary facet
             [handle] => {
-                let cell_key = handle.cell_key();
+                let simplex_key = handle.simplex_key();
                 let facet_idx_u8 = handle.facet_index();
 
                 let boundary_facet_idx = boundary_facets.len();
-                boundary_facets.push(FacetHandle::new(cell_key, facet_idx_u8));
+                boundary_facets.push(FacetHandle::new(simplex_key, facet_idx_u8));
                 #[cfg(debug_assertions)]
                 {
                     boundary_facet_count = boundary_facet_count.saturating_add(1);
@@ -1648,8 +1656,8 @@ where
 
                 // Use the cached canonical facet vertex keys for ridge analysis.
                 let facet_vkeys = facet_hash_to_vkeys.get(facet_hash).ok_or_else(|| {
-                    ConflictError::CellDataAccessFailed {
-                        cell_key,
+                    ConflictError::SimplexDataAccessFailed {
+                        simplex_key,
                         message: format!(
                             "Missing canonical vertex keys for facet hash {:#x}",
                             *facet_hash
@@ -1680,7 +1688,7 @@ where
                                 if info.second_facet.is_none() {
                                     info.second_facet = Some(boundary_facet_idx);
                                 } else {
-                                    // 3rd+ facet: record for fan-cell identification.
+                                    // 3rd+ facet: record for fan-simplex identification.
                                     info.extra_facets.push(boundary_facet_idx);
                                 }
                             })
@@ -1696,7 +1704,7 @@ where
                 }
             }
 
-            // Two conflict cells share this facet => internal facet (not on boundary)
+            // Two conflict simplices share this facet => internal facet (not on boundary)
             [_, _] => {
                 #[cfg(debug_assertions)]
                 {
@@ -1704,15 +1712,15 @@ where
                 }
             }
 
-            // >2 conflict cells share this facet => non-manifold (should be impossible in valid TDS)
+            // >2 conflict simplices share this facet => non-manifold (should be impossible in valid TDS)
             // Treat as a retryable degeneracy.
             many => {
                 #[cfg(debug_assertions)]
                 if detail_enabled {
                     tracing::debug!(
                         facet_hash = *facet_hash,
-                        cell_count = many.len(),
-                        conflict_cells = conflict_cells.len(),
+                        simplex_count = many.len(),
+                        conflict_simplices = conflict_simplices.len(),
                         boundary_facet_count,
                         internal_facet_count,
                         elapsed = ?start_time.elapsed(),
@@ -1721,7 +1729,7 @@ where
                 }
                 return Err(ConflictError::NonManifoldFacet {
                     facet_hash: *facet_hash,
-                    cell_count: many.len(),
+                    simplex_count: many.len(),
                 });
             }
         }
@@ -1730,7 +1738,7 @@ where
     #[cfg(debug_assertions)]
     if detail_enabled {
         tracing::debug!(
-            conflict_cells = conflict_cells.len(),
+            conflict_simplices = conflict_simplices.len(),
             facet_entries = facet_to_conflict.len(),
             boundary_facets = boundary_facets.len(),
             internal_facets = internal_facet_count,
@@ -1759,7 +1767,7 @@ where
             ridge_vertex_count_min = 0;
         }
         tracing::debug!(
-            conflict_cells = conflict_cells.len(),
+            conflict_simplices = conflict_simplices.len(),
             boundary_facets = boundary_facets.len(),
             ridge_count = ridge_map.len(),
             ridge_facet_one,
@@ -1776,8 +1784,8 @@ where
         let boundary_len = boundary_facets.len();
         let mut adjacency: Vec<Vec<usize>> = vec![Vec::new(); boundary_len];
         let mut first_ridge_fan: Option<(usize, usize)> = None;
-        let mut ridge_fan_extra_cells: Vec<CellKey> = Vec::new();
-        let mut ridge_fan_seen_cells = FastHashSet::<CellKey>::default();
+        let mut ridge_fan_extra_simplices: Vec<SimplexKey> = Vec::new();
+        let mut ridge_fan_seen_simplices = FastHashSet::<SimplexKey>::default();
 
         for info in ridge_map.values() {
             // Closed manifold boundary requires exactly 2 incident facets per ridge.
@@ -1793,12 +1801,12 @@ where
                         "extract_cavity_boundary: open boundary ridge"
                     );
                 }
-                // The open facet's cell is the cell to remove to close the boundary.
+                // The open facet's simplex is the simplex to remove to close the boundary.
                 // `first_facet` is always a valid `boundary_facets` index by construction
                 // (it is set during the same boundary-building traversal), so a missing
-                // entry is an internal invariant violation rather than a cell-data-access
-                // failure attributable to a real cell.
-                let open_cell = boundary_facets
+                // entry is an internal invariant violation rather than a simplex-data-access
+                // failure attributable to a real simplex.
+                let open_simplex = boundary_facets
                     .get(info.first_facet)
                     .ok_or_else(|| ConflictError::InternalInconsistency {
                         site: InternalInconsistencySite::OpenBoundaryMissingFirstFacet {
@@ -1808,11 +1816,11 @@ where
                             ridge_vertex_count: info.ridge_vertex_count,
                         },
                     })
-                    .map(FacetHandle::cell_key)?;
+                    .map(FacetHandle::simplex_key)?;
                 return Err(ConflictError::OpenBoundary {
                     facet_count: info.facet_count,
                     ridge_vertex_count: info.ridge_vertex_count,
-                    open_cell,
+                    open_simplex,
                 });
             }
         }
@@ -1846,15 +1854,21 @@ where
                         "extract_cavity_boundary: ridge fan"
                     );
                 }
-                // Collect the extra cells for this fan, but keep scanning so we can shrink
+                // Collect the extra simplices for this fan, but keep scanning so we can shrink
                 // all currently-detected ridge fans in one reduction step instead of peeling
                 // them one hash-map iteration at a time.
-                let extra_cells = collect_ridge_fan_extra_cells(&boundary_facets, info)?;
-                log_first_ridge_fan_dump(tds, conflict_cells, &boundary_facets, info, &extra_cells);
+                let extra_simplices = collect_ridge_fan_extra_simplices(&boundary_facets, info)?;
+                log_first_ridge_fan_dump(
+                    tds,
+                    conflict_simplices,
+                    &boundary_facets,
+                    info,
+                    &extra_simplices,
+                );
                 first_ridge_fan.get_or_insert((info.facet_count, info.ridge_vertex_count));
-                for cell_key in extra_cells {
-                    if ridge_fan_seen_cells.insert(cell_key) {
-                        ridge_fan_extra_cells.push(cell_key);
+                for simplex_key in extra_simplices {
+                    if ridge_fan_seen_simplices.insert(simplex_key) {
+                        ridge_fan_extra_simplices.push(simplex_key);
                     }
                 }
                 continue;
@@ -1876,11 +1890,11 @@ where
         }
 
         if let Some((facet_count, ridge_vertex_count)) = first_ridge_fan {
-            ridge_fan_extra_cells.sort_unstable();
+            ridge_fan_extra_simplices.sort_unstable();
             return Err(ConflictError::RidgeFan {
                 facet_count,
                 ridge_vertex_count,
-                extra_cells: ridge_fan_extra_cells,
+                extra_simplices: ridge_fan_extra_simplices,
             });
         }
 
@@ -1913,21 +1927,21 @@ where
                     "extract_cavity_boundary: disconnected boundary"
                 );
             }
-            // Collect de-duplicated cell keys from the unreachable (disconnected) component
+            // Collect de-duplicated simplex keys from the unreachable (disconnected) component
             // so callers can reduce the conflict region to eliminate the disconnection.
-            let mut seen = FastHashSet::<CellKey>::default();
-            let mut disconnected_cells: Vec<CellKey> = boundary_facets
+            let mut seen = FastHashSet::<SimplexKey>::default();
+            let mut disconnected_simplices: Vec<SimplexKey> = boundary_facets
                 .iter()
                 .enumerate()
                 .filter(|(i, _)| !visited[*i])
-                .map(|(_, fh)| fh.cell_key())
+                .map(|(_, fh)| fh.simplex_key())
                 .filter(|ck| seen.insert(*ck))
                 .collect();
-            disconnected_cells.sort_unstable();
+            disconnected_simplices.sort_unstable();
             return Err(ConflictError::DisconnectedBoundary {
                 visited: visited_count,
                 total: boundary_len,
-                disconnected_cells,
+                disconnected_simplices,
             });
         }
     }
@@ -1935,7 +1949,7 @@ where
     #[cfg(debug_assertions)]
     if detail_enabled {
         tracing::debug!(
-            conflict_cells = conflict_cells.len(),
+            conflict_simplices = conflict_simplices.len(),
             boundary_facets = boundary_facets.len(),
             internal_facets = internal_facet_count,
             ridge_count = ridge_map.len(),
@@ -1950,8 +1964,8 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::core::cell::Cell;
     use crate::core::collections::NeighborBuffer;
+    use crate::core::simplex::Simplex;
     use crate::geometry::kernel::{FastKernel, RobustKernel};
     use crate::geometry::traits::coordinate::Coordinate;
     use crate::prelude::DelaunayTriangulation;
@@ -1996,7 +2010,7 @@ mod tests {
     }
 
     #[test]
-    fn test_format_vertex_and_cell_references_include_missing_markers() {
+    fn test_format_vertex_and_simplex_references_include_missing_markers() {
         let vertices = vec![
             vertex!([0.0, 0.0]),
             vertex!([1.0, 0.0]),
@@ -2004,10 +2018,10 @@ mod tests {
         ];
         let dt = DelaunayTriangulation::new(&vertices).unwrap();
         let tds = dt.tds();
-        let cell_key = tds.cell_keys().next().unwrap();
-        let cell = tds.cell(cell_key).unwrap();
+        let simplex_key = tds.simplex_keys().next().unwrap();
+        let simplex = tds.simplex(simplex_key).unwrap();
 
-        let formatted_vertices = format_vertex_refs(tds, cell.vertices());
+        let formatted_vertices = format_vertex_refs(tds, simplex.vertices());
         assert!(formatted_vertices.contains("VertexKey"));
         assert!(!formatted_vertices.contains("missing"));
 
@@ -2015,33 +2029,36 @@ mod tests {
         let formatted_missing = format_vertex_refs(tds, &[missing_vertex]);
         assert!(formatted_missing.contains("missing"));
 
-        let facet = FacetHandle::new(cell_key, 0);
+        let facet = FacetHandle::new(simplex_key, 0);
         let formatted_facet = format_facet_vertices(tds, facet);
         assert!(formatted_facet.contains("VertexKey"));
 
-        let formatted_cell = format_cell_vertices(tds, cell_key);
-        assert!(formatted_cell.contains("VertexKey"));
+        let formatted_simplex = format_simplex_vertices(tds, simplex_key);
+        assert!(formatted_simplex.contains("VertexKey"));
 
-        let missing_cell = CellKey::from(KeyData::from_ffi(999_999));
+        let missing_simplex = SimplexKey::from(KeyData::from_ffi(999_999));
         assert_eq!(
-            format_facet_vertices(tds, FacetHandle::new(missing_cell, 0)),
-            "<missing-cell>"
+            format_facet_vertices(tds, FacetHandle::new(missing_simplex, 0)),
+            "<missing-simplex>"
         );
-        assert_eq!(format_cell_vertices(tds, missing_cell), "<missing-cell>");
+        assert_eq!(
+            format_simplex_vertices(tds, missing_simplex),
+            "<missing-simplex>"
+        );
     }
 
     #[test]
-    fn test_collect_ridge_fan_extra_cells_deduplicates_cells() {
-        let cell_a = CellKey::from(KeyData::from_ffi(1));
-        let cell_b = CellKey::from(KeyData::from_ffi(2));
-        let cell_c = CellKey::from(KeyData::from_ffi(3));
-        let cell_d = CellKey::from(KeyData::from_ffi(4));
+    fn test_collect_ridge_fan_extra_simplices_deduplicates_simplices() {
+        let simplex_a = SimplexKey::from(KeyData::from_ffi(1));
+        let simplex_b = SimplexKey::from(KeyData::from_ffi(2));
+        let simplex_c = SimplexKey::from(KeyData::from_ffi(3));
+        let simplex_d = SimplexKey::from(KeyData::from_ffi(4));
         let boundary_facets: CavityBoundaryBuffer = [
-            FacetHandle::new(cell_a, 0),
-            FacetHandle::new(cell_b, 1),
-            FacetHandle::new(cell_c, 2),
-            FacetHandle::new(cell_c, 3),
-            FacetHandle::new(cell_d, 0),
+            FacetHandle::new(simplex_a, 0),
+            FacetHandle::new(simplex_b, 1),
+            FacetHandle::new(simplex_c, 2),
+            FacetHandle::new(simplex_c, 3),
+            FacetHandle::new(simplex_d, 0),
         ]
         .into_iter()
         .collect();
@@ -2055,8 +2072,8 @@ mod tests {
             extra_facets: vec![2, 3, 4],
         };
 
-        let extra_cells = collect_ridge_fan_extra_cells(&boundary_facets, &info).unwrap();
-        assert_eq!(extra_cells, vec![cell_c, cell_d]);
+        let extra_simplices = collect_ridge_fan_extra_simplices(&boundary_facets, &info).unwrap();
+        assert_eq!(extra_simplices, vec![simplex_c, simplex_d]);
     }
 
     #[test]
@@ -2096,45 +2113,45 @@ mod tests {
             .insert_vertex_with_mapping(vertex!([9.0, -1.0]))
             .unwrap();
 
-        let origin_cells = [
-            tds.insert_cell_with_mapping(Cell::new(vec![center_a, a0, a1], None).unwrap())
+        let origin_simplices = [
+            tds.insert_simplex_with_mapping(Simplex::new(vec![center_a, a0, a1], None).unwrap())
                 .unwrap(),
-            tds.insert_cell_with_mapping(Cell::new(vec![center_a, a2, a3], None).unwrap())
+            tds.insert_simplex_with_mapping(Simplex::new(vec![center_a, a2, a3], None).unwrap())
                 .unwrap(),
-            tds.insert_cell_with_mapping(Cell::new(vec![center_a, a4, a5], None).unwrap())
+            tds.insert_simplex_with_mapping(Simplex::new(vec![center_a, a4, a5], None).unwrap())
                 .unwrap(),
         ];
-        let shifted_cells = [
-            tds.insert_cell_with_mapping(Cell::new(vec![center_b, b0, b1], None).unwrap())
+        let shifted_simplices = [
+            tds.insert_simplex_with_mapping(Simplex::new(vec![center_b, b0, b1], None).unwrap())
                 .unwrap(),
-            tds.insert_cell_with_mapping(Cell::new(vec![center_b, b2, b3], None).unwrap())
+            tds.insert_simplex_with_mapping(Simplex::new(vec![center_b, b2, b3], None).unwrap())
                 .unwrap(),
-            tds.insert_cell_with_mapping(Cell::new(vec![center_b, b4, b5], None).unwrap())
+            tds.insert_simplex_with_mapping(Simplex::new(vec![center_b, b4, b5], None).unwrap())
                 .unwrap(),
         ];
 
-        let all_cells = [
-            origin_cells[0],
-            origin_cells[1],
-            origin_cells[2],
-            shifted_cells[0],
-            shifted_cells[1],
-            shifted_cells[2],
+        let all_simplices = [
+            origin_simplices[0],
+            origin_simplices[1],
+            origin_simplices[2],
+            shifted_simplices[0],
+            shifted_simplices[1],
+            shifted_simplices[2],
         ];
-        let conflict_cells: CellKeyBuffer = all_cells.into_iter().collect();
+        let conflict_simplices: SimplexKeyBuffer = all_simplices.into_iter().collect();
 
-        match extract_cavity_boundary(&tds, &conflict_cells).unwrap_err() {
+        match extract_cavity_boundary(&tds, &conflict_simplices).unwrap_err() {
             ConflictError::RidgeFan {
                 facet_count,
                 ridge_vertex_count,
-                extra_cells,
+                extra_simplices,
             } => {
                 assert_eq!(facet_count, 6);
                 assert_eq!(ridge_vertex_count, 1);
-                let expected: FastHashSet<CellKey> = all_cells.into_iter().collect();
-                let actual: FastHashSet<CellKey> = extra_cells.iter().copied().collect();
+                let expected: FastHashSet<SimplexKey> = all_simplices.into_iter().collect();
+                let actual: FastHashSet<SimplexKey> = extra_simplices.iter().copied().collect();
                 assert_eq!(actual, expected);
-                assert_eq!(extra_cells.len(), expected.len());
+                assert_eq!(extra_simplices.len(), expected.len());
             }
             other => panic!("Expected RidgeFan, got {other:?}"),
         }
@@ -2153,22 +2170,22 @@ mod tests {
         let dt = DelaunayTriangulation::new(&vertices).unwrap();
         let kernel = FastKernel::<f64>::new();
 
-        // Get the single cell
-        let cell_key = dt.tds().cell_keys().next().unwrap();
-        let cell = dt.tds().cell(cell_key).unwrap();
+        // Get the single simplex
+        let simplex_key = dt.tds().simplex_keys().next().unwrap();
+        let simplex = dt.tds().simplex(simplex_key).unwrap();
 
-        // Get cell vertices in order
-        let cell_points: Vec<Point<f64, 2>> = cell
+        // Get simplex vertices in order
+        let simplex_points: Vec<Point<f64, 2>> = simplex
             .vertices()
             .iter()
             .map(|&vkey| *dt.tds().vertex(vkey).unwrap().point())
             .collect();
 
-        println!("Cell vertices: {cell_points:?}");
+        println!("Simplex vertices: {simplex_points:?}");
 
-        // Test orientation of full cell
-        let cell_orientation = kernel.orientation(&cell_points).unwrap();
-        println!("Cell orientation: {cell_orientation}");
+        // Test orientation of full simplex
+        let simplex_orientation = kernel.orientation(&simplex_points).unwrap();
+        println!("Simplex orientation: {simplex_orientation}");
 
         // Test query point inside
         let query_inside = Point::new([0.3, 0.3]);
@@ -2176,7 +2193,7 @@ mod tests {
         // For each facet, test if point is outside using the actual function
         for facet_idx in 0..3 {
             let result =
-                is_point_outside_facet(dt.tds(), &kernel, cell_key, facet_idx, &query_inside);
+                is_point_outside_facet(dt.tds(), &kernel, simplex_key, facet_idx, &query_inside);
             let is_outside = result.unwrap() == Some(true);
 
             println!("Facet {facet_idx} (opposite to vertex {facet_idx}): is_outside={is_outside}");
@@ -2194,7 +2211,7 @@ mod tests {
 
         for facet_idx in 0..3 {
             let result =
-                is_point_outside_facet(dt.tds(), &kernel, cell_key, facet_idx, &query_outside);
+                is_point_outside_facet(dt.tds(), &kernel, simplex_key, facet_idx, &query_outside);
             let is_outside = result.unwrap() == Some(true);
 
             println!("Outside point - Facet {facet_idx}: is_outside={is_outside}");
@@ -2236,10 +2253,10 @@ mod tests {
         let result = locate(dt.tds(), &kernel, &point, None);
 
         match result {
-            Ok(LocateResult::InsideCell(cell_key)) => {
-                assert!(dt.tds().contains_cell(cell_key));
+            Ok(LocateResult::InsideSimplex(simplex_key)) => {
+                assert!(dt.tds().contains_simplex(simplex_key));
             }
-            _ => panic!("Expected point to be inside a cell, got {result:?}"),
+            _ => panic!("Expected point to be inside a simplex, got {result:?}"),
         }
     }
 
@@ -2259,10 +2276,10 @@ mod tests {
         let result = locate(dt.tds(), &kernel, &point, None);
 
         match result {
-            Ok(LocateResult::InsideCell(cell_key)) => {
-                assert!(dt.tds().contains_cell(cell_key));
+            Ok(LocateResult::InsideSimplex(simplex_key)) => {
+                assert!(dt.tds().contains_simplex(simplex_key));
             }
-            _ => panic!("Expected point to be inside a cell, got {result:?}"),
+            _ => panic!("Expected point to be inside a simplex, got {result:?}"),
         }
     }
 
@@ -2302,7 +2319,7 @@ mod tests {
     }
 
     #[test]
-    fn test_locate_with_hint_cell() {
+    fn test_locate_with_hint_simplex() {
         let vertices = vec![
             vertex!([0.0, 0.0, 0.0]),
             vertex!([1.0, 0.0, 0.0]),
@@ -2312,12 +2329,12 @@ mod tests {
         let dt = DelaunayTriangulation::new(&vertices).unwrap();
         let kernel = FastKernel::<f64>::new();
 
-        // Get a valid cell as hint
-        let hint_cell = dt.tds().cell_keys().next().unwrap();
+        // Get a valid simplex as hint
+        let hint_simplex = dt.tds().simplex_keys().next().unwrap();
         let point = Point::new([0.25, 0.25, 0.25]);
 
-        let result = locate(dt.tds(), &kernel, &point, Some(hint_cell));
-        assert!(matches!(result, Ok(LocateResult::InsideCell(_))));
+        let result = locate(dt.tds(), &kernel, &point, Some(hint_simplex));
+        assert!(matches!(result, Ok(LocateResult::InsideSimplex(_))));
     }
 
     #[test]
@@ -2333,13 +2350,13 @@ mod tests {
         let point = Point::new([0.3, 0.3]);
         let result = locate(dt.tds(), &kernel, &point, None);
 
-        assert!(matches!(result, Ok(LocateResult::InsideCell(_))));
+        assert!(matches!(result, Ok(LocateResult::InsideSimplex(_))));
     }
 
     #[test]
     fn test_locate_with_stats_falls_back_on_cycle() {
-        // Construct a valid single-cell triangulation, then intentionally corrupt the neighbor
-        // pointers to create a self-loop. This forces facet walking to revisit a cell, exercising
+        // Construct a valid single-simplex triangulation, then intentionally corrupt the neighbor
+        // pointers to create a self-loop. This forces facet walking to revisit a simplex, exercising
         // the cycle-detection fallback path deterministically.
         let vertices = vec![
             vertex!([0.0, 0.0]),
@@ -2350,13 +2367,13 @@ mod tests {
             DelaunayTriangulation::new(&vertices).unwrap();
         let kernel = FastKernel::<f64>::new();
 
-        let cell_key = dt.tds().cell_keys().next().unwrap();
+        let simplex_key = dt.tds().simplex_keys().next().unwrap();
 
         // ⚠️ Dangerous test-only mutation: create a neighbor self-loop on every facet.
-        let cell = dt.tds_mut().cell_mut(cell_key).unwrap();
-        let mut neighbors = NeighborBuffer::<Option<CellKey>>::new();
-        neighbors.resize(3, Some(cell_key));
-        cell.set_neighbors_from_keys(neighbors).unwrap();
+        let simplex = dt.tds_mut().simplex_mut(simplex_key).unwrap();
+        let mut neighbors = NeighborBuffer::<Option<SimplexKey>>::new();
+        neighbors.resize(3, Some(simplex_key));
+        simplex.set_neighbors_from_keys(neighbors).unwrap();
 
         // Point outside the simplex: walking will attempt to cross a facet, hit the self-loop,
         // detect a cycle, and fall back to scan.
@@ -2366,7 +2383,7 @@ mod tests {
         assert!(matches!(result, LocateResult::Outside));
         assert!(stats.fell_back_to_scan());
         assert!(!stats.used_hint);
-        assert_eq!(stats.start_cell, cell_key);
+        assert_eq!(stats.start_simplex, simplex_key);
         assert_eq!(stats.walk_steps, 2);
         assert!(matches!(
             stats.fallback,
@@ -2388,12 +2405,12 @@ mod tests {
         let dt = DelaunayTriangulation::new(&vertices).unwrap();
         let kernel = FastKernel::<f64>::new();
 
-        let cell_key = dt.tds().cell_keys().next().unwrap();
+        let simplex_key = dt.tds().simplex_keys().next().unwrap();
         let point = Point::new([0.25, 0.25, 0.25]); // Inside tetrahedron
 
         // Test all facets - point should not be outside any of them
         for facet_idx in 0..4 {
-            let result = is_point_outside_facet(dt.tds(), &kernel, cell_key, facet_idx, &point);
+            let result = is_point_outside_facet(dt.tds(), &kernel, simplex_key, facet_idx, &point);
             assert!(matches!(result, Ok(Some(false) | None)));
         }
     }
@@ -2409,14 +2426,14 @@ mod tests {
         let dt = DelaunayTriangulation::new(&vertices).unwrap();
         let kernel = FastKernel::<f64>::new();
 
-        let cell_key = dt.tds().cell_keys().next().unwrap();
+        let simplex_key = dt.tds().simplex_keys().next().unwrap();
         let point = Point::new([2.0, 2.0, 2.0]); // Outside tetrahedron
 
         // At least one facet should show the point as outside
         let mut found_outside = false;
         for facet_idx in 0..4 {
             if matches!(
-                is_point_outside_facet(dt.tds(), &kernel, cell_key, facet_idx, &point),
+                is_point_outside_facet(dt.tds(), &kernel, simplex_key, facet_idx, &point),
                 Ok(Some(true))
             ) {
                 found_outside = true;
@@ -2445,7 +2462,7 @@ mod tests {
 
         // Should either be inside or on the edge, not outside
         match result {
-            Ok(LocateResult::InsideCell(_) | LocateResult::OnEdge(_)) => { /* OK */ }
+            Ok(LocateResult::InsideSimplex(_) | LocateResult::OnEdge(_)) => { /* OK */ }
             other => panic!("Expected inside or on edge, got {other:?}"),
         }
     }
@@ -2463,8 +2480,8 @@ mod tests {
             let result = locate(dt.tds(), &kernel, &point, None);
 
             assert!(
-                matches!(result, Ok(LocateResult::InsideCell(_))),
-                "Expected point to be inside a cell in {}-simplex",
+                matches!(result, Ok(LocateResult::InsideSimplex(_))),
+                "Expected point to be inside a simplex in {}-simplex",
                 $dim
             );
         }};
@@ -2523,15 +2540,15 @@ mod tests {
             let dt = DelaunayTriangulation::new(&vertices).unwrap();
             let kernel = FastKernel::<f64>::new();
 
-            let start_cell = dt.tds().cell_keys().next().unwrap();
+            let start_simplex = dt.tds().simplex_keys().next().unwrap();
             let point = Point::new($inside_point);
 
-            let conflict_cells = find_conflict_region(dt.tds(), &kernel, &point, start_cell).unwrap();
+            let conflict_simplices = find_conflict_region(dt.tds(), &kernel, &point, start_simplex).unwrap();
 
             assert_eq!(
-                conflict_cells.len(),
+                conflict_simplices.len(),
                 1,
-                "Expected 1 cell in conflict for point inside single {}-simplex",
+                "Expected 1 simplex in conflict for point inside single {}-simplex",
                 $dim
             );
         }};
@@ -2583,7 +2600,7 @@ mod tests {
 
     #[test]
     fn test_find_conflict_region_outside_point() {
-        // Point outside - should find zero cells in conflict
+        // Point outside - should find zero simplices in conflict
         let vertices = vec![
             vertex!([0.0, 0.0, 0.0]),
             vertex!([1.0, 0.0, 0.0]),
@@ -2593,21 +2610,22 @@ mod tests {
         let dt = DelaunayTriangulation::new(&vertices).unwrap();
         let kernel = FastKernel::<f64>::new();
 
-        let start_cell = dt.tds().cell_keys().next().unwrap();
+        let start_simplex = dt.tds().simplex_keys().next().unwrap();
         let point = Point::new([10.0, 10.0, 10.0]); // Far outside
 
-        let conflict_cells = find_conflict_region(dt.tds(), &kernel, &point, start_cell).unwrap();
+        let conflict_simplices =
+            find_conflict_region(dt.tds(), &kernel, &point, start_simplex).unwrap();
 
-        // Should find zero cells in conflict
+        // Should find zero simplices in conflict
         assert_eq!(
-            conflict_cells.len(),
+            conflict_simplices.len(),
             0,
-            "Expected 0 cells in conflict for point far outside"
+            "Expected 0 simplices in conflict for point far outside"
         );
     }
 
     #[test]
-    fn test_find_conflict_region_invalid_start_cell() {
+    fn test_find_conflict_region_invalid_start_simplex() {
         let vertices = vec![
             vertex!([0.0, 0.0]),
             vertex!([1.0, 0.0]),
@@ -2616,15 +2634,15 @@ mod tests {
         let dt = DelaunayTriangulation::new(&vertices).unwrap();
         let kernel = FastKernel::<f64>::new();
 
-        // Create invalid cell key
-        let invalid_cell = CellKey::from(KeyData::from_ffi(999_999));
+        // Create invalid simplex key
+        let invalid_simplex = SimplexKey::from(KeyData::from_ffi(999_999));
         let point = Point::new([0.3, 0.3]);
 
-        let result = find_conflict_region(dt.tds(), &kernel, &point, invalid_cell);
+        let result = find_conflict_region(dt.tds(), &kernel, &point, invalid_simplex);
 
         assert!(
-            matches!(result, Err(ConflictError::InvalidStartCell { .. })),
-            "Expected InvalidStartCell error"
+            matches!(result, Err(ConflictError::InvalidStartSimplex { .. })),
+            "Expected InvalidStartSimplex error"
         );
     }
 
@@ -2639,15 +2657,16 @@ mod tests {
         let dt = DelaunayTriangulation::new(&vertices).unwrap();
         let kernel = RobustKernel::<f64>::default();
 
-        let start_cell = dt.tds().cell_keys().next().unwrap();
+        let start_simplex = dt.tds().simplex_keys().next().unwrap();
         let point = Point::new([0.3, 0.3]);
 
-        let conflict_cells = find_conflict_region(dt.tds(), &kernel, &point, start_cell).unwrap();
+        let conflict_simplices =
+            find_conflict_region(dt.tds(), &kernel, &point, start_simplex).unwrap();
 
         assert_eq!(
-            conflict_cells.len(),
+            conflict_simplices.len(),
             1,
-            "Robust kernel should also find 1 cell in conflict"
+            "Robust kernel should also find 1 simplex in conflict"
         );
     }
 
@@ -2659,11 +2678,11 @@ mod tests {
             ];
             let dt = DelaunayTriangulation::new(&vertices).unwrap();
 
-            let start_cell = dt.tds().cell_keys().next().unwrap();
-            let mut conflict_cells = CellKeyBuffer::new();
-            conflict_cells.push(start_cell);
+            let start_simplex = dt.tds().simplex_keys().next().unwrap();
+            let mut conflict_simplices = SimplexKeyBuffer::new();
+            conflict_simplices.push(start_simplex);
 
-            let boundary = extract_cavity_boundary(dt.tds(), &conflict_cells).unwrap();
+            let boundary = extract_cavity_boundary(dt.tds(), &conflict_simplices).unwrap();
 
             assert_eq!(
                 boundary.len(),
@@ -2733,9 +2752,9 @@ mod tests {
         ];
         let dt = DelaunayTriangulation::new(&vertices).unwrap();
 
-        let conflict_cells = CellKeyBuffer::new(); // Empty
+        let conflict_simplices = SimplexKeyBuffer::new(); // Empty
 
-        let boundary = extract_cavity_boundary(dt.tds(), &conflict_cells).unwrap();
+        let boundary = extract_cavity_boundary(dt.tds(), &conflict_simplices).unwrap();
 
         assert_eq!(
             boundary.len(),
@@ -2745,7 +2764,7 @@ mod tests {
     }
 
     #[test]
-    fn test_locate_with_stats_invalid_hint_uses_arbitrary_start_cell() {
+    fn test_locate_with_stats_invalid_hint_uses_arbitrary_start_simplex() {
         let vertices = vec![
             vertex!([0.0, 0.0]),
             vertex!([1.0, 0.0]),
@@ -2755,13 +2774,13 @@ mod tests {
         let kernel = FastKernel::<f64>::new();
         let point = Point::new([0.25, 0.25]);
 
-        let invalid_hint = CellKey::from(KeyData::from_ffi(999_999));
-        let expected_start = dt.tds().cell_keys().next().unwrap();
+        let invalid_hint = SimplexKey::from(KeyData::from_ffi(999_999));
+        let expected_start = dt.tds().simplex_keys().next().unwrap();
         let (result, stats) =
             locate_with_stats(dt.tds(), &kernel, &point, Some(invalid_hint)).unwrap();
 
-        assert!(matches!(result, LocateResult::InsideCell(_)));
-        assert_eq!(stats.start_cell, expected_start);
+        assert!(matches!(result, LocateResult::InsideSimplex(_)));
+        assert_eq!(stats.start_simplex, expected_start);
         assert!(!stats.used_hint);
         assert!(!stats.fell_back_to_scan());
     }
@@ -2775,14 +2794,14 @@ mod tests {
         ];
         let dt = DelaunayTriangulation::new(&vertices).unwrap();
         let kernel = FastKernel::<f64>::new();
-        let expected_cell = dt.tds().cell_keys().next().unwrap();
+        let expected_simplex = dt.tds().simplex_keys().next().unwrap();
 
         let inside = Point::new([0.2, 0.2]);
         let outside = Point::new([3.0, 3.0]);
 
         assert_eq!(
             locate_by_scan(dt.tds(), &kernel, &inside).unwrap(),
-            LocateResult::InsideCell(expected_cell)
+            LocateResult::InsideSimplex(expected_simplex)
         );
         assert_eq!(
             locate_by_scan(dt.tds(), &kernel, &outside).unwrap(),
@@ -2799,27 +2818,32 @@ mod tests {
         let upper_right = tds.insert_vertex_with_mapping(vertex!([1.0, 1.0])).unwrap();
         let top_apex = tds.insert_vertex_with_mapping(vertex!([0.5, 1.5])).unwrap();
 
-        let first_cell = tds
-            .insert_cell_with_mapping(Cell::new(vec![origin, x_axis, y_axis], None).unwrap())
+        let first_simplex = tds
+            .insert_simplex_with_mapping(Simplex::new(vec![origin, x_axis, y_axis], None).unwrap())
             .unwrap();
-        let second_cell = tds
-            .insert_cell_with_mapping(Cell::new(vec![origin, x_axis, upper_right], None).unwrap())
+        let second_simplex = tds
+            .insert_simplex_with_mapping(
+                Simplex::new(vec![origin, x_axis, upper_right], None).unwrap(),
+            )
             .unwrap();
-        let third_cell = tds
-            .insert_cell_bypassing_topology_checks_for_test(
-                Cell::new(vec![origin, x_axis, top_apex], None).unwrap(),
+        let third_simplex = tds
+            .insert_simplex_bypassing_topology_checks_for_test(
+                Simplex::new(vec![origin, x_axis, top_apex], None).unwrap(),
             )
             .unwrap();
 
-        let mut conflict_cells = CellKeyBuffer::new();
-        conflict_cells.push(first_cell);
-        conflict_cells.push(second_cell);
-        conflict_cells.push(third_cell);
+        let mut conflict_simplices = SimplexKeyBuffer::new();
+        conflict_simplices.push(first_simplex);
+        conflict_simplices.push(second_simplex);
+        conflict_simplices.push(third_simplex);
 
-        let err = extract_cavity_boundary(&tds, &conflict_cells).unwrap_err();
+        let err = extract_cavity_boundary(&tds, &conflict_simplices).unwrap_err();
         assert!(matches!(
             err,
-            ConflictError::NonManifoldFacet { cell_count: 3, .. }
+            ConflictError::NonManifoldFacet {
+                simplex_count: 3,
+                ..
+            }
         ));
     }
 
@@ -2834,35 +2858,37 @@ mod tests {
         let right_y = tds.insert_vertex_with_mapping(vertex!([3.0, 1.0])).unwrap();
 
         let left = tds
-            .insert_cell_with_mapping(Cell::new(vec![left_origin, left_x, left_y], None).unwrap())
+            .insert_simplex_with_mapping(
+                Simplex::new(vec![left_origin, left_x, left_y], None).unwrap(),
+            )
             .unwrap();
         let right = tds
-            .insert_cell_with_mapping(
-                Cell::new(vec![right_origin, right_x, right_y], None).unwrap(),
+            .insert_simplex_with_mapping(
+                Simplex::new(vec![right_origin, right_x, right_y], None).unwrap(),
             )
             .unwrap();
 
-        let mut conflict_cells = CellKeyBuffer::new();
-        conflict_cells.push(left);
-        conflict_cells.push(right);
+        let mut conflict_simplices = SimplexKeyBuffer::new();
+        conflict_simplices.push(left);
+        conflict_simplices.push(right);
 
-        let err = extract_cavity_boundary(&tds, &conflict_cells).unwrap_err();
+        let err = extract_cavity_boundary(&tds, &conflict_simplices).unwrap_err();
         match err {
             ConflictError::DisconnectedBoundary {
                 visited,
                 total,
-                disconnected_cells,
+                disconnected_simplices,
             } => {
                 assert!(visited < total);
                 assert_eq!(total, 6);
                 assert!(
-                    !disconnected_cells.is_empty(),
-                    "disconnected_cells should be non-empty"
+                    !disconnected_simplices.is_empty(),
+                    "disconnected_simplices should be non-empty"
                 );
-                for ck in &disconnected_cells {
+                for ck in &disconnected_simplices {
                     assert!(
-                        tds.contains_cell(*ck),
-                        "disconnected cell key {ck:?} should be present in the TDS"
+                        tds.contains_simplex(*ck),
+                        "disconnected simplex key {ck:?} should be present in the TDS"
                     );
                 }
             }
@@ -2880,12 +2906,12 @@ mod tests {
         let dt = DelaunayTriangulation::new(&vertices).unwrap();
         let kernel = FastKernel::<f64>::new();
         let point = Point::new([0.2, 0.2]);
-        let hint = dt.tds().cell_keys().next().unwrap();
+        let hint = dt.tds().simplex_keys().next().unwrap();
 
         let (result, stats) = locate_with_stats(dt.tds(), &kernel, &point, Some(hint)).unwrap();
 
-        assert!(matches!(result, LocateResult::InsideCell(_)));
-        assert_eq!(stats.start_cell, hint);
+        assert!(matches!(result, LocateResult::InsideSimplex(_)));
+        assert_eq!(stats.start_simplex, hint);
         assert!(stats.used_hint);
         assert!(!stats.fell_back_to_scan());
     }
@@ -2903,7 +2929,7 @@ mod tests {
     }
 
     #[test]
-    fn test_extract_cavity_boundary_invalid_conflict_cell_key() {
+    fn test_extract_cavity_boundary_invalid_conflict_simplex_key() {
         let vertices = vec![
             vertex!([0.0, 0.0]),
             vertex!([1.0, 0.0]),
@@ -2911,44 +2937,44 @@ mod tests {
         ];
         let dt = DelaunayTriangulation::new(&vertices).unwrap();
 
-        let invalid = CellKey::from(KeyData::from_ffi(424_242));
-        let mut conflict_cells = CellKeyBuffer::new();
-        conflict_cells.push(invalid);
+        let invalid = SimplexKey::from(KeyData::from_ffi(424_242));
+        let mut conflict_simplices = SimplexKeyBuffer::new();
+        conflict_simplices.push(invalid);
 
-        let err = extract_cavity_boundary(dt.tds(), &conflict_cells).unwrap_err();
+        let err = extract_cavity_boundary(dt.tds(), &conflict_simplices).unwrap_err();
         assert!(matches!(
             err,
-            ConflictError::InvalidStartCell { cell_key } if cell_key == invalid
+            ConflictError::InvalidStartSimplex { simplex_key } if simplex_key == invalid
         ));
     }
 
-    /// A cell with fewer than D+1 vertex keys is detected early by the
-    /// `cell_vertex_keys.len() != D + 1` guard and returns `Ok(None)`.
+    /// A simplex with fewer than D+1 vertex keys is detected early by the
+    /// `simplex_vertex_keys.len() != D + 1` guard and returns `Ok(None)`.
     #[test]
-    fn test_is_point_outside_facet_underdimensioned_cell_returns_none() {
+    fn test_is_point_outside_facet_underdimensioned_simplex_returns_none() {
         let mut tds: Tds<f64, (), (), 2> = Tds::empty();
         let v0 = tds.insert_vertex_with_mapping(vertex!([0.0, 0.0])).unwrap();
         let v1 = tds.insert_vertex_with_mapping(vertex!([1.0, 0.0])).unwrap();
         let v2 = tds.insert_vertex_with_mapping(vertex!([0.0, 1.0])).unwrap();
 
-        let cell_key = tds
-            .insert_cell_with_mapping(Cell::new(vec![v0, v1, v2], None).unwrap())
+        let simplex_key = tds
+            .insert_simplex_with_mapping(Simplex::new(vec![v0, v1, v2], None).unwrap())
             .unwrap();
 
-        // Shrink cell to only 2 vertices (D+1 = 3 required for D=2).
+        // Shrink simplex to only 2 vertices (D+1 = 3 required for D=2).
         {
-            let cell = tds.cell_mut(cell_key).unwrap();
-            cell.clear_vertex_keys();
-            cell.push_vertex_key(v0);
-            cell.push_vertex_key(v1);
+            let simplex = tds.simplex_mut(simplex_key).unwrap();
+            simplex.clear_vertex_keys();
+            simplex.push_vertex_key(v0);
+            simplex.push_vertex_key(v1);
         }
 
         let kernel = FastKernel::<f64>::new();
         let point = Point::new([0.3, 0.3]);
-        let result = is_point_outside_facet(&tds, &kernel, cell_key, 0, &point);
+        let result = is_point_outside_facet(&tds, &kernel, simplex_key, 0, &point);
         assert!(
             matches!(result, Ok(None)),
-            "underdimensioned cell should return Ok(None), got {result:?}"
+            "underdimensioned simplex should return Ok(None), got {result:?}"
         );
     }
 
@@ -2962,25 +2988,25 @@ mod tests {
         let v1 = tds.insert_vertex_with_mapping(vertex!([1.0, 0.0])).unwrap();
         let v2 = tds.insert_vertex_with_mapping(vertex!([0.0, 1.0])).unwrap();
 
-        let cell_key = tds
-            .insert_cell_with_mapping(Cell::new(vec![v0, v1, v2], None).unwrap())
+        let simplex_key = tds
+            .insert_simplex_with_mapping(Simplex::new(vec![v0, v1, v2], None).unwrap())
             .unwrap();
 
         // Replace vertex at index 0 (the opposite vertex for facet_idx=0)
-        // with a missing key, keeping the cell at D+1 vertex keys.
+        // with a missing key, keeping the simplex at D+1 vertex keys.
         let missing = VertexKey::from(KeyData::from_ffi(999_999));
         {
-            let cell = tds.cell_mut(cell_key).unwrap();
-            cell.clear_vertex_keys();
-            cell.push_vertex_key(missing); // index 0 = opposite vertex for facet_idx=0
-            cell.push_vertex_key(v1);
-            cell.push_vertex_key(v2);
+            let simplex = tds.simplex_mut(simplex_key).unwrap();
+            simplex.clear_vertex_keys();
+            simplex.push_vertex_key(missing); // index 0 = opposite vertex for facet_idx=0
+            simplex.push_vertex_key(v1);
+            simplex.push_vertex_key(v2);
         }
 
         let kernel = FastKernel::<f64>::new();
         let point = Point::new([0.3, 0.3]);
         // facet_idx=0 → opposite_key = missing → unresolvable → Ok(None)
-        let result = is_point_outside_facet(&tds, &kernel, cell_key, 0, &point);
+        let result = is_point_outside_facet(&tds, &kernel, simplex_key, 0, &point);
         assert!(
             matches!(result, Ok(None)),
             "unresolvable opposite vertex should return Ok(None), got {result:?}"
@@ -2988,150 +3014,151 @@ mod tests {
     }
 
     /// `is_point_outside_facet` resolves vertex points via the canonical ordering
-    /// helper `sorted_facet_points_with_extra`.  A cell whose vertex-key list
+    /// helper `sorted_facet_points_with_extra`.  A simplex whose vertex-key list
     /// contains a key absent from the TDS causes the helper to return `None`,
-    /// which the function converts to `Ok(None)` (degenerate/unresolvable cell).
+    /// which the function converts to `Ok(None)` (degenerate/unresolvable simplex).
     #[test]
-    fn test_is_point_outside_facet_degenerate_cell_missing_vertex_returns_none() {
+    fn test_is_point_outside_facet_degenerate_simplex_missing_vertex_returns_none() {
         let mut tds: Tds<f64, (), (), 2> = Tds::empty();
         let v0 = tds.insert_vertex_with_mapping(vertex!([0.0, 0.0])).unwrap();
         let v1 = tds.insert_vertex_with_mapping(vertex!([1.0, 0.0])).unwrap();
         let v2 = tds.insert_vertex_with_mapping(vertex!([0.0, 1.0])).unwrap();
 
-        // Build a valid cell first, then mutate its vertex list to include a missing key.
-        let cell_key = tds
-            .insert_cell_with_mapping(Cell::new(vec![v0, v1, v2], None).unwrap())
+        // Build a valid simplex first, then mutate its vertex list to include a missing key.
+        let simplex_key = tds
+            .insert_simplex_with_mapping(Simplex::new(vec![v0, v1, v2], None).unwrap())
             .unwrap();
-        let existing_vertices = tds.cell(cell_key).unwrap().vertices().to_vec();
+        let existing_vertices = tds.simplex(simplex_key).unwrap().vertices().to_vec();
         let missing = VertexKey::from(KeyData::from_ffi(999_999));
         {
-            let cell = tds.cell_mut(cell_key).unwrap();
-            cell.clear_vertex_keys();
-            cell.push_vertex_key(existing_vertices[0]);
-            cell.push_vertex_key(existing_vertices[1]);
-            cell.push_vertex_key(missing);
+            let simplex = tds.simplex_mut(simplex_key).unwrap();
+            simplex.clear_vertex_keys();
+            simplex.push_vertex_key(existing_vertices[0]);
+            simplex.push_vertex_key(existing_vertices[1]);
+            simplex.push_vertex_key(missing);
         }
 
         let kernel = FastKernel::<f64>::new();
         let point = Point::new([0.3_f64, 0.3_f64]);
 
-        // Only 2 of the 3 vertices exist → cell_vertices.len() (2) != D+1 (3) → Ok(None).
-        let result = is_point_outside_facet(&tds, &kernel, cell_key, 0, &point);
+        // Only 2 of the 3 vertices exist → simplex_vertices.len() (2) != D+1 (3) → Ok(None).
+        let result = is_point_outside_facet(&tds, &kernel, simplex_key, 0, &point);
         assert!(
             matches!(result, Ok(None)),
-            "degenerate cell with missing vertex should return Ok(None), got {result:?}"
+            "degenerate simplex with missing vertex should return Ok(None), got {result:?}"
         );
     }
 
-    /// When a conflict cell's neighbor list references a non-existent cell key,
+    /// When a conflict simplex's neighbor list references a non-existent simplex key,
     /// the BFS in `find_conflict_region` pops that key and fails to retrieve the
-    /// cell, returning `CellDataAccessFailed` with a "vanished" message.
+    /// simplex, returning `SimplexDataAccessFailed` with a "vanished" message.
     #[test]
-    fn test_find_conflict_region_vanished_neighbor_returns_cell_data_access_failed() {
+    fn test_find_conflict_region_vanished_neighbor_returns_simplex_data_access_failed() {
         let mut tds: Tds<f64, (), (), 2> = Tds::empty();
         let v0 = tds.insert_vertex_with_mapping(vertex!([0.0, 0.0])).unwrap();
         let v1 = tds.insert_vertex_with_mapping(vertex!([1.0, 0.0])).unwrap();
         let v2 = tds.insert_vertex_with_mapping(vertex!([0.0, 1.0])).unwrap();
 
-        let cell_key = tds
-            .insert_cell_with_mapping(Cell::new(vec![v0, v1, v2], None).unwrap())
+        let simplex_key = tds
+            .insert_simplex_with_mapping(Simplex::new(vec![v0, v1, v2], None).unwrap())
             .unwrap();
 
         // Wire a neighbor that doesn't exist in the TDS.
-        let ghost = CellKey::from(KeyData::from_ffi(777_777));
+        let ghost = SimplexKey::from(KeyData::from_ffi(777_777));
         {
-            let cell = tds.cell_mut(cell_key).unwrap();
-            cell.set_neighbors_from_keys([Some(ghost), None, None])
+            let simplex = tds.simplex_mut(simplex_key).unwrap();
+            simplex
+                .set_neighbors_from_keys([Some(ghost), None, None])
                 .unwrap();
         }
 
         let kernel = FastKernel::<f64>::new();
-        // Point inside the circumcircle so the start cell is in conflict
+        // Point inside the circumcircle so the start simplex is in conflict
         // and BFS tries to visit the ghost neighbor.
         let point = Point::new([0.2, 0.2]);
-        let result = find_conflict_region(&tds, &kernel, &point, cell_key);
+        let result = find_conflict_region(&tds, &kernel, &point, simplex_key);
         assert!(
             matches!(
                 result,
-                Err(ConflictError::CellDataAccessFailed { cell_key: ck, .. }) if ck == ghost
+                Err(ConflictError::SimplexDataAccessFailed { simplex_key: ck, .. }) if ck == ghost
             ),
-            "expected CellDataAccessFailed for vanished neighbor, got {result:?}"
+            "expected SimplexDataAccessFailed for vanished neighbor, got {result:?}"
         );
     }
 
-    /// When a cell in the BFS has fewer than D+1 vertex keys (all resolvable),
-    /// `sorted_cell_points` returns a short buffer and the vertex-count guard
-    /// fires `CellDataAccessFailed`.
+    /// When a simplex in the BFS has fewer than D+1 vertex keys (all resolvable),
+    /// `sorted_simplex_points` returns a short buffer and the vertex-count guard
+    /// fires `SimplexDataAccessFailed`.
     #[test]
-    fn test_find_conflict_region_underdimensioned_cell_returns_cell_data_access_failed() {
+    fn test_find_conflict_region_underdimensioned_simplex_returns_simplex_data_access_failed() {
         let mut tds: Tds<f64, (), (), 2> = Tds::empty();
         let v0 = tds.insert_vertex_with_mapping(vertex!([0.0, 0.0])).unwrap();
         let v1 = tds.insert_vertex_with_mapping(vertex!([1.0, 0.0])).unwrap();
         let v2 = tds.insert_vertex_with_mapping(vertex!([0.0, 1.0])).unwrap();
 
-        let cell_key = tds
-            .insert_cell_with_mapping(Cell::new(vec![v0, v1, v2], None).unwrap())
+        let simplex_key = tds
+            .insert_simplex_with_mapping(Simplex::new(vec![v0, v1, v2], None).unwrap())
             .unwrap();
 
-        // Shrink cell to only 2 vertices (both valid).
+        // Shrink simplex to only 2 vertices (both valid).
         {
-            let cell = tds.cell_mut(cell_key).unwrap();
-            cell.clear_vertex_keys();
-            cell.push_vertex_key(v0);
-            cell.push_vertex_key(v1);
+            let simplex = tds.simplex_mut(simplex_key).unwrap();
+            simplex.clear_vertex_keys();
+            simplex.push_vertex_key(v0);
+            simplex.push_vertex_key(v1);
         }
 
         let kernel = FastKernel::<f64>::new();
         let point = Point::new([0.3, 0.3]);
-        let result = find_conflict_region(&tds, &kernel, &point, cell_key);
+        let result = find_conflict_region(&tds, &kernel, &point, simplex_key);
         assert!(
             matches!(
                 result,
-                Err(ConflictError::CellDataAccessFailed { cell_key: ck, .. }) if ck == cell_key
+                Err(ConflictError::SimplexDataAccessFailed { simplex_key: ck, .. }) if ck == simplex_key
             ),
-            "expected CellDataAccessFailed for underdimensioned cell, got {result:?}"
+            "expected SimplexDataAccessFailed for underdimensioned simplex, got {result:?}"
         );
     }
 
-    /// `find_conflict_region` uses `sorted_cell_points` in the BFS loop;
-    /// a conflict cell whose vertex-key list contains a key absent from the TDS
-    /// causes the helper to return `None`, yielding `Err(CellDataAccessFailed)`.
+    /// `find_conflict_region` uses `sorted_simplex_points` in the BFS loop;
+    /// a conflict simplex whose vertex-key list contains a key absent from the TDS
+    /// causes the helper to return `None`, yielding `Err(SimplexDataAccessFailed)`.
     #[test]
-    fn test_find_conflict_region_degenerate_cell_returns_cell_data_access_failed() {
+    fn test_find_conflict_region_degenerate_simplex_returns_simplex_data_access_failed() {
         let mut tds: Tds<f64, (), (), 2> = Tds::empty();
         let v0 = tds.insert_vertex_with_mapping(vertex!([0.0, 0.0])).unwrap();
         let v1 = tds.insert_vertex_with_mapping(vertex!([1.0, 0.0])).unwrap();
         let v2 = tds.insert_vertex_with_mapping(vertex!([0.0, 1.0])).unwrap();
 
-        // Build valid cell then mutate one vertex to a missing key.
-        let cell_key = tds
-            .insert_cell_with_mapping(Cell::new(vec![v0, v1, v2], None).unwrap())
+        // Build valid simplex then mutate one vertex to a missing key.
+        let simplex_key = tds
+            .insert_simplex_with_mapping(Simplex::new(vec![v0, v1, v2], None).unwrap())
             .unwrap();
-        let existing_vertices = tds.cell(cell_key).unwrap().vertices().to_vec();
+        let existing_vertices = tds.simplex(simplex_key).unwrap().vertices().to_vec();
         let missing = VertexKey::from(KeyData::from_ffi(999_999));
         {
-            let cell = tds.cell_mut(cell_key).unwrap();
-            cell.clear_vertex_keys();
-            cell.push_vertex_key(existing_vertices[0]);
-            cell.push_vertex_key(existing_vertices[1]);
-            cell.push_vertex_key(missing);
+            let simplex = tds.simplex_mut(simplex_key).unwrap();
+            simplex.clear_vertex_keys();
+            simplex.push_vertex_key(existing_vertices[0]);
+            simplex.push_vertex_key(existing_vertices[1]);
+            simplex.push_vertex_key(missing);
         }
 
         let kernel = FastKernel::<f64>::new();
         let point = Point::new([0.3_f64, 0.3_f64]);
 
-        // BFS visits the cell; simplex_points.len() == 2 != D+1 == 3 → CellDataAccessFailed.
-        let result = find_conflict_region(&tds, &kernel, &point, cell_key);
+        // BFS visits the simplex; simplex_points.len() == 2 != D+1 == 3 → SimplexDataAccessFailed.
+        let result = find_conflict_region(&tds, &kernel, &point, simplex_key);
         assert!(
-            matches!(result, Err(ConflictError::CellDataAccessFailed { cell_key: ck, .. }) if ck == cell_key),
-            "expected CellDataAccessFailed for degenerate cell, got {result:?}"
+            matches!(result, Err(ConflictError::SimplexDataAccessFailed { simplex_key: ck, .. }) if ck == simplex_key),
+            "expected SimplexDataAccessFailed for degenerate simplex, got {result:?}"
         );
     }
 
     /// Calling `locate_with_stats` with `hint = None` exercises the `_ =>` fallback arm
-    /// of the hint-match, which picks an arbitrary start cell and records `used_hint = false`.
+    /// of the hint-match, which picks an arbitrary start simplex and records `used_hint = false`.
     #[test]
-    fn test_locate_with_stats_none_hint_picks_arbitrary_start_cell() {
+    fn test_locate_with_stats_none_hint_picks_arbitrary_start_simplex() {
         let vertices = vec![
             vertex!([0.0, 0.0]),
             vertex!([1.0, 0.0]),
@@ -3143,7 +3170,7 @@ mod tests {
 
         let (result, stats) = locate_with_stats(dt.tds(), &kernel, &point, None).unwrap();
 
-        assert!(matches!(result, LocateResult::InsideCell(_)));
+        assert!(matches!(result, LocateResult::InsideSimplex(_)));
         assert!(!stats.used_hint, "None hint should set used_hint = false");
         assert!(!stats.fell_back_to_scan());
     }
@@ -3166,13 +3193,13 @@ mod tests {
             let dt = DelaunayTriangulation::new(&vertices).unwrap();
             let kernel = FastKernel::<f64>::new();
 
-            let start_cell = dt.tds().cell_keys().next().unwrap();
+            let start_simplex = dt.tds().simplex_keys().next().unwrap();
             let point = Point::new($inside_point);
 
-            let conflict_cells = find_conflict_region(dt.tds(), &kernel, &point, start_cell).unwrap();
+            let conflict_simplices = find_conflict_region(dt.tds(), &kernel, &point, start_simplex).unwrap();
             assert!(
-                !conflict_cells.is_empty(),
-                "BFS should find at least 1 conflict cell for interior point in {}D",
+                !conflict_simplices.is_empty(),
+                "BFS should find at least 1 conflict simplex for interior point in {}D",
                 $dim
             );
 
@@ -3180,7 +3207,7 @@ mod tests {
                 dt.tds(),
                 &kernel,
                 &point,
-                &conflict_cells,
+                &conflict_simplices,
             );
             assert_eq!(
                 missed, 0,
@@ -3244,7 +3271,7 @@ mod tests {
         );
     }
 
-    /// An empty BFS result should detect all conflict cells as missed.
+    /// An empty BFS result should detect all conflict simplices as missed.
     #[cfg(debug_assertions)]
     #[test]
     fn test_verify_conflict_region_completeness_empty_bfs_detects_missed() {
@@ -3256,18 +3283,18 @@ mod tests {
         let dt = DelaunayTriangulation::new(&vertices).unwrap();
         let kernel = FastKernel::<f64>::new();
 
-        // Point inside the circumcircle — the single cell should be in conflict.
+        // Point inside the circumcircle — the single simplex should be in conflict.
         let point = Point::new([0.3, 0.3]);
-        let empty_bfs = CellKeyBuffer::new();
+        let empty_bfs = SimplexKeyBuffer::new();
 
         let missed = verify_conflict_region_completeness(dt.tds(), &kernel, &point, &empty_bfs);
         assert!(
             missed > 0,
-            "Empty BFS result should detect missed conflict cells"
+            "Empty BFS result should detect missed conflict simplices"
         );
     }
 
-    /// Point far outside produces no conflict cells; verify returns 0 missed.
+    /// Point far outside produces no conflict simplices; verify returns 0 missed.
     #[cfg(debug_assertions)]
     #[test]
     fn test_verify_conflict_region_completeness_outside_point_zero_missed() {
@@ -3280,31 +3307,35 @@ mod tests {
         let dt = DelaunayTriangulation::new(&vertices).unwrap();
         let kernel = FastKernel::<f64>::new();
 
-        let start_cell = dt.tds().cell_keys().next().unwrap();
+        let start_simplex = dt.tds().simplex_keys().next().unwrap();
         let point = Point::new([10.0, 10.0, 10.0]);
 
-        let conflict_cells = find_conflict_region(dt.tds(), &kernel, &point, start_cell).unwrap();
-        assert!(conflict_cells.is_empty());
+        let conflict_simplices =
+            find_conflict_region(dt.tds(), &kernel, &point, start_simplex).unwrap();
+        assert!(conflict_simplices.is_empty());
 
         let missed =
-            verify_conflict_region_completeness(dt.tds(), &kernel, &point, &conflict_cells);
-        assert_eq!(missed, 0, "Outside point should produce zero missed cells");
+            verify_conflict_region_completeness(dt.tds(), &kernel, &point, &conflict_simplices);
+        assert_eq!(
+            missed, 0,
+            "Outside point should produce zero missed simplices"
+        );
     }
 
-    /// Truncated multi-cell BFS result detects missed conflict cells.
+    /// Truncated multi-simplex BFS result detects missed conflict simplices.
     ///
     /// Builds a 2D triangulation with 4 vertices (2 triangles sharing an edge),
-    /// finds a multi-cell conflict region, then drops one cell from the BFS
+    /// finds a multi-simplex conflict region, then drops one simplex from the BFS
     /// result and verifies that `verify_conflict_region_completeness` catches
-    /// the omission.  Because the two triangles are adjacent, the dropped cell
+    /// the omission.  Because the two triangles are adjacent, the dropped simplex
     /// has a neighbor still in the truncated BFS set, so the internal
     /// classification logs `REACHABLE_BUT_REJECTED` (observable via tracing).
     #[cfg(debug_assertions)]
     #[test]
-    fn test_verify_conflict_region_completeness_truncated_multi_cell_detects_missed() {
+    fn test_verify_conflict_region_completeness_truncated_multi_simplex_detects_missed() {
         // Four corners of a rectangle — DT produces 2 triangles sharing a diagonal.
         // All 4 points are co-circular, so a center-ish query point is strictly
-        // inside both circumcircles → conflict region has 2 cells.
+        // inside both circumcircles → conflict region has 2 simplices.
         let vertices = vec![
             vertex!([0.0, 0.0]),
             vertex!([4.0, 0.0]),
@@ -3314,24 +3345,24 @@ mod tests {
         let dt = DelaunayTriangulation::new(&vertices).unwrap();
         let kernel = FastKernel::<f64>::new();
 
-        let start_cell = dt.tds().cell_keys().next().unwrap();
+        let start_simplex = dt.tds().simplex_keys().next().unwrap();
         let point = Point::new([2.0, 1.5]);
 
-        let full_conflict = find_conflict_region(dt.tds(), &kernel, &point, start_cell).unwrap();
+        let full_conflict = find_conflict_region(dt.tds(), &kernel, &point, start_simplex).unwrap();
         assert!(
             full_conflict.len() >= 2,
-            "Expected ≥2 conflict cells for center query in 2-triangle mesh, got {}",
+            "Expected ≥2 conflict simplices for center query in 2-triangle mesh, got {}",
             full_conflict.len()
         );
 
-        // Truncate: keep only the first cell, drop the rest.
-        let mut truncated = CellKeyBuffer::new();
+        // Truncate: keep only the first simplex, drop the rest.
+        let mut truncated = SimplexKeyBuffer::new();
         truncated.push(full_conflict[0]);
 
         let missed = verify_conflict_region_completeness(dt.tds(), &kernel, &point, &truncated);
         assert!(
             missed >= 1,
-            "Truncated BFS should detect at least 1 missed conflict cell, got {missed}"
+            "Truncated BFS should detect at least 1 missed conflict simplex, got {missed}"
         );
     }
 
@@ -3350,47 +3381,47 @@ mod tests {
         let far_x = tds.insert_vertex_with_mapping(vertex!([2.0, 0.0])).unwrap();
         let far_y = tds.insert_vertex_with_mapping(vertex!([0.0, 2.0])).unwrap();
 
-        let first_cell = tds
-            .insert_cell_with_mapping(Cell::new(vec![center, axis_x, axis_y], None).unwrap())
+        let first_simplex = tds
+            .insert_simplex_with_mapping(Simplex::new(vec![center, axis_x, axis_y], None).unwrap())
             .unwrap();
-        let second_cell = tds
-            .insert_cell_with_mapping(
-                Cell::new(vec![center, axis_neg_x, axis_neg_y], None).unwrap(),
+        let second_simplex = tds
+            .insert_simplex_with_mapping(
+                Simplex::new(vec![center, axis_neg_x, axis_neg_y], None).unwrap(),
             )
             .unwrap();
-        let third_cell = tds
-            .insert_cell_with_mapping(Cell::new(vec![center, far_x, far_y], None).unwrap())
+        let third_simplex = tds
+            .insert_simplex_with_mapping(Simplex::new(vec![center, far_x, far_y], None).unwrap())
             .unwrap();
 
-        let mut conflict_cells = CellKeyBuffer::new();
-        conflict_cells.push(first_cell);
-        conflict_cells.push(second_cell);
-        conflict_cells.push(third_cell);
+        let mut conflict_simplices = SimplexKeyBuffer::new();
+        conflict_simplices.push(first_simplex);
+        conflict_simplices.push(second_simplex);
+        conflict_simplices.push(third_simplex);
 
-        match extract_cavity_boundary(&tds, &conflict_cells).unwrap_err() {
+        match extract_cavity_boundary(&tds, &conflict_simplices).unwrap_err() {
             ConflictError::RidgeFan {
                 facet_count,
                 ridge_vertex_count,
-                extra_cells,
+                extra_simplices,
             } => {
                 assert!(facet_count >= 3);
                 assert_eq!(ridge_vertex_count, 1);
-                // After deduplication, extra_cells contains unique cell keys contributing
+                // After deduplication, extra_simplices contains unique simplex keys contributing
                 // the 3rd, 4th, … facets. Its length is ≤ facet_count - 2 and ≥ 1 here.
                 assert!(
-                    !extra_cells.is_empty() && extra_cells.len() <= facet_count - 2,
-                    "deduped extra_cells should be non-empty and not exceed facet_count - 2; got {} vs {}",
-                    extra_cells.len(),
+                    !extra_simplices.is_empty() && extra_simplices.len() <= facet_count - 2,
+                    "deduped extra_simplices should be non-empty and not exceed facet_count - 2; got {} vs {}",
+                    extra_simplices.len(),
                     facet_count - 2
                 );
                 // All entries must be valid keys from the TDS and unique.
                 let mut seen = FastHashSet::default();
-                for ck in &extra_cells {
+                for ck in &extra_simplices {
                     assert!(
-                        tds.contains_cell(*ck),
-                        "extra cell key {ck:?} should be present in the TDS"
+                        tds.contains_simplex(*ck),
+                        "extra simplex key {ck:?} should be present in the TDS"
                     );
-                    assert!(seen.insert(*ck), "duplicate key {ck:?} in extra_cells");
+                    assert!(seen.insert(*ck), "duplicate key {ck:?} in extra_simplices");
                 }
             }
             other => panic!("Expected RidgeFan, got {other:?}"),

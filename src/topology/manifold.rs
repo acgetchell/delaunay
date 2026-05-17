@@ -87,11 +87,11 @@
 
 use crate::core::{
     collections::{
-        CellKeySet, FacetToCellsMap, FastHashMap, FastHashSet, FastHasher, SmallBuffer,
+        FacetToSimplicesMap, FastHashMap, FastHashSet, FastHasher, SimplexKeySet, SmallBuffer,
         VertexKeyBuffer, fast_hash_map_with_capacity, fast_hash_set_with_capacity,
     },
     facet::{FacetHandle, facet_key_from_vertices},
-    tds::{CellKey, Tds, TdsError, VertexKey},
+    tds::{SimplexKey, Tds, TdsError, VertexKey},
 };
 use crate::topology::characteristics::euler::{
     triangulated_surface_boundary_component_count, triangulated_surface_euler_characteristic,
@@ -213,15 +213,15 @@ pub enum ManifoldError {
     #[error(transparent)]
     Tds(#[from] TdsError),
 
-    /// A facet belongs to an unexpected number of cells for a manifold-with-boundary.
+    /// A facet belongs to an unexpected number of simplices for a manifold-with-boundary.
     #[error(
-        "Non-manifold facet: facet {facet_key:016x} belongs to {cell_count} cells (expected 1 or 2)"
+        "Non-manifold facet: facet {facet_key:016x} belongs to {simplex_count} simplices (expected 1 or 2)"
     )]
     ManifoldFacetMultiplicity {
         /// The facet key with invalid multiplicity.
         facet_key: u64,
-        /// The number of incident cells observed.
-        cell_count: usize,
+        /// The number of incident simplices observed.
+        simplex_count: usize,
     },
 
     /// Boundary is not a closed (D-1)-manifold: a ridge on the boundary is incident to the
@@ -262,15 +262,15 @@ pub enum ManifoldError {
     },
     /// A vertex link is not a (D-1)-manifold (sphere/ball) as required for PL-manifoldness.
     #[error(
-        "Vertex link is not a PL (D-1)-manifold: vertex {vertex_key:?} has link with {link_vertex_count} vertices, {link_cell_count} cells, boundary_facets={boundary_facet_count}, max_degree={max_degree}, connected={connected}, interior_vertex={interior_vertex}"
+        "Vertex link is not a PL (D-1)-manifold: vertex {vertex_key:?} has link with {link_vertex_count} vertices, {link_simplex_count} simplices, boundary_facets={boundary_facet_count}, max_degree={max_degree}, connected={connected}, interior_vertex={interior_vertex}"
     )]
     VertexLinkNotManifold {
         /// The vertex whose link failed validation.
         vertex_key: VertexKey,
         /// Number of vertices in the link (0-simplices of the link).
         link_vertex_count: usize,
-        /// Number of (D-1)-simplices (cells) in the link.
-        link_cell_count: usize,
+        /// Number of (D-1)-simplices (simplices) in the link.
+        link_simplex_count: usize,
         /// Number of boundary facets in the link (facets of degree 1).
         boundary_facet_count: usize,
         /// Maximum degree in the link 1-skeleton.
@@ -290,7 +290,7 @@ pub enum ManifoldError {
 /// # Errors
 ///
 /// Returns [`ManifoldError::ManifoldFacetMultiplicity`] if any facet is incident
-/// to a number of cells other than 1 or 2.
+/// to a number of simplices other than 1 or 2.
 ///
 /// # Examples
 ///
@@ -306,18 +306,20 @@ pub enum ManifoldError {
 ///     vertex!([0.0, 0.0, 1.0]),
 /// ];
 /// let tds = Triangulation::<FastKernel<f64>, (), (), 3>::build_initial_simplex(&vertices).unwrap();
-/// let facet_to_cells = tds.build_facet_to_cells_map().unwrap();
+/// let facet_to_simplices = tds.build_facet_to_simplices_map().unwrap();
 ///
-/// validate_facet_degree(&facet_to_cells).unwrap();
+/// validate_facet_degree(&facet_to_simplices).unwrap();
 /// ```
-pub fn validate_facet_degree(facet_to_cells: &FacetToCellsMap) -> Result<(), ManifoldError> {
-    for (facet_key, cell_facet_pairs) in facet_to_cells {
-        match cell_facet_pairs.as_slice() {
+pub fn validate_facet_degree(
+    facet_to_simplices: &FacetToSimplicesMap,
+) -> Result<(), ManifoldError> {
+    for (facet_key, simplex_facet_pairs) in facet_to_simplices {
+        match simplex_facet_pairs.as_slice() {
             [_] | [_, _] => {}
             _ => {
                 return Err(ManifoldError::ManifoldFacetMultiplicity {
                     facet_key: *facet_key,
-                    cell_count: cell_facet_pairs.len(),
+                    simplex_count: simplex_facet_pairs.len(),
                 });
             }
         }
@@ -342,7 +344,7 @@ pub fn validate_facet_degree(facet_to_cells: &FacetToCellsMap) -> Result<(), Man
 ///
 /// Notes:
 /// - Interior ridges can have arbitrary degree; this check only counts incidence among
-///   boundary facets (facets with exactly 1 incident D-cell).
+///   boundary facets (facets with exactly 1 incident D-simplex).
 /// - If the triangulation has no boundary facets, this check is a no-op.
 ///
 /// # Examples
@@ -359,13 +361,13 @@ pub fn validate_facet_degree(facet_to_cells: &FacetToCellsMap) -> Result<(), Man
 ///     vertex!([0.0, 0.0, 1.0]),
 /// ];
 /// let tds = Triangulation::<FastKernel<f64>, (), (), 3>::build_initial_simplex(&vertices).unwrap();
-/// let facet_to_cells = tds.build_facet_to_cells_map().unwrap();
+/// let facet_to_simplices = tds.build_facet_to_simplices_map().unwrap();
 ///
-/// validate_closed_boundary(&tds, &facet_to_cells).unwrap();
+/// validate_closed_boundary(&tds, &facet_to_simplices).unwrap();
 /// ```
 pub fn validate_closed_boundary<T, U, V, const D: usize>(
     tds: &Tds<T, U, V, D>,
-    facet_to_cells: &FacetToCellsMap,
+    facet_to_simplices: &FacetToSimplicesMap,
 ) -> Result<(), ManifoldError> {
     // The boundary is a (D-1)-complex. Codimension-2 manifoldness is only meaningful for D>=2.
     if D < 2 {
@@ -373,7 +375,7 @@ pub fn validate_closed_boundary<T, U, V, const D: usize>(
     }
 
     // First count boundary facets so we can reserve reasonably.
-    let boundary_facet_count = facet_to_cells
+    let boundary_facet_count = facet_to_simplices
         .values()
         .filter(|handles| matches!(handles.as_slice(), [_]))
         .count();
@@ -395,28 +397,28 @@ pub fn validate_closed_boundary<T, U, V, const D: usize>(
     let mut facet_vertices: VertexKeyBuffer = VertexKeyBuffer::with_capacity(D);
     let mut ridge_vertices: VertexKeyBuffer = VertexKeyBuffer::with_capacity(D.saturating_sub(1));
 
-    for cell_facet_pairs in facet_to_cells.values() {
-        // Only boundary facets (exactly one incident cell).
-        let [handle] = cell_facet_pairs.as_slice() else {
+    for simplex_facet_pairs in facet_to_simplices.values() {
+        // Only boundary facets (exactly one incident simplex).
+        let [handle] = simplex_facet_pairs.as_slice() else {
             continue;
         };
 
-        let cell_key = handle.cell_key();
+        let simplex_key = handle.simplex_key();
         let facet_index = handle.facet_index() as usize;
 
-        // Derive the facet's vertex keys from the owning cell.
-        let cell_vertices = tds.cell_vertices(cell_key)?;
-        if facet_index >= cell_vertices.len() {
+        // Derive the facet's vertex keys from the owning simplex.
+        let simplex_vertices = tds.simplex_vertices(simplex_key)?;
+        if facet_index >= simplex_vertices.len() {
             return Err(TdsError::IndexOutOfBounds {
                 index: facet_index,
-                bound: cell_vertices.len(),
-                context: format!("boundary facet index for cell {cell_key:?}"),
+                bound: simplex_vertices.len(),
+                context: format!("boundary facet index for simplex {simplex_key:?}"),
             }
             .into());
         }
 
         facet_vertices.clear();
-        for (i, &vk) in cell_vertices.iter().enumerate() {
+        for (i, &vk) in simplex_vertices.iter().enumerate() {
             if i == facet_index {
                 continue;
             }
@@ -428,7 +430,7 @@ pub fn validate_closed_boundary<T, U, V, const D: usize>(
                 expected: D,
                 actual: facet_vertices.len(),
                 context: format!(
-                    "boundary facet vertex count (cell_key={cell_key:?}, facet_index={facet_index})"
+                    "boundary facet vertex count (simplex_key={simplex_key:?}, facet_index={facet_index})"
                 ),
             }
             .into());
@@ -463,83 +465,84 @@ pub fn validate_closed_boundary<T, U, V, const D: usize>(
 }
 
 /// Validates pseudomanifold conditions for facets and boundary ridges touched
-/// by `cells`.
+/// by `simplices`.
 ///
 /// This is the local counterpart to [`validate_facet_degree`] plus
 /// [`validate_closed_boundary`]. It expands each touched facet to its full
-/// incident-cell star, then checks only boundary ridges incident to those
+/// incident-simplex star, then checks only boundary ridges incident to those
 /// touched facets. This keeps post-insertion checks local while preserving the
 /// same codimension-1 and codimension-2 invariants for the mutated region.
-pub(crate) fn validate_local_pseudomanifold_for_cells<T, U, V, const D: usize>(
+pub(crate) fn validate_local_pseudomanifold_for_simplices<T, U, V, const D: usize>(
     tds: &Tds<T, U, V, D>,
-    cells: &[CellKey],
+    simplices: &[SimplexKey],
 ) -> Result<(), ManifoldError> {
-    if D == 0 || cells.is_empty() {
+    if D == 0 || simplices.is_empty() {
         return Ok(());
     }
 
-    let facet_to_cells = build_local_facet_star_map(tds, cells)?;
-    validate_facet_degree(&facet_to_cells)?;
-    validate_closed_boundary_for_local_facets(tds, &facet_to_cells)
+    let facet_to_simplices = build_local_facet_star_map(tds, simplices)?;
+    validate_facet_degree(&facet_to_simplices)?;
+    validate_closed_boundary_for_local_facets(tds, &facet_to_simplices)
 }
 
-/// Builds full facet-incidence entries for facets owned by the supplied cells.
+/// Builds full facet-incidence entries for facets owned by the supplied simplices.
 fn build_local_facet_star_map<T, U, V, const D: usize>(
     tds: &Tds<T, U, V, D>,
-    cells: &[CellKey],
-) -> Result<FacetToCellsMap, ManifoldError> {
-    let mut facet_to_cells = FacetToCellsMap::default();
+    simplices: &[SimplexKey],
+) -> Result<FacetToSimplicesMap, ManifoldError> {
+    let mut facet_to_simplices = FacetToSimplicesMap::default();
     let mut seen_facets: FastHashSet<u64> = FastHashSet::default();
 
-    for &cell_key in cells {
-        let cell_vertices = tds.cell_vertices(cell_key)?;
-        for facet_index in 0..cell_vertices.len() {
+    for &simplex_key in simplices {
+        let simplex_vertices = tds.simplex_vertices(simplex_key)?;
+        for facet_index in 0..simplex_vertices.len() {
             let (facet_vertices, facet_vertices_bare) =
-                cell_facet_vertex_ids(tds, cell_key, facet_index)?;
+                simplex_facet_vertex_ids(tds, simplex_key, facet_index)?;
             let facet_key = periodic_simplex_key(&facet_vertices);
             if !seen_facets.insert(facet_key) {
                 continue;
             }
 
             let incident = facet_incident_handles(tds, facet_key, &facet_vertices_bare)?;
-            facet_to_cells.insert(facet_key, incident);
+            facet_to_simplices.insert(facet_key, incident);
         }
     }
 
-    Ok(facet_to_cells)
+    Ok(facet_to_simplices)
 }
 
-/// Returns lifted and bare vertices of one cell facet by omitting `facet_index`.
-fn cell_facet_vertex_ids<T, U, V, const D: usize>(
+/// Returns lifted and bare vertices of one simplex facet by omitting `facet_index`.
+fn simplex_facet_vertex_ids<T, U, V, const D: usize>(
     tds: &Tds<T, U, V, D>,
-    cell_key: CellKey,
+    simplex_key: SimplexKey,
     facet_index: usize,
 ) -> Result<(LiftedVertexBuffer, VertexKeyBuffer), ManifoldError> {
-    let cell_vertices = tds.cell_vertices(cell_key)?;
-    if facet_index >= cell_vertices.len() {
+    let simplex_vertices = tds.simplex_vertices(simplex_key)?;
+    if facet_index >= simplex_vertices.len() {
         return Err(TdsError::IndexOutOfBounds {
             index: facet_index,
-            bound: cell_vertices.len(),
+            bound: simplex_vertices.len(),
             context: "local lifted facet vertex extraction".to_string(),
         }
         .into());
     }
 
     let offsets = tds
-        .cell(cell_key)
-        .and_then(|cell| cell.periodic_vertex_offsets());
+        .simplex(simplex_key)
+        .and_then(|simplex| simplex.periodic_vertex_offsets());
     let mut lifted_vertices =
-        LiftedVertexBuffer::with_capacity(cell_vertices.len().saturating_sub(1));
-    let mut bare_vertices = VertexKeyBuffer::with_capacity(cell_vertices.len().saturating_sub(1));
+        LiftedVertexBuffer::with_capacity(simplex_vertices.len().saturating_sub(1));
+    let mut bare_vertices =
+        VertexKeyBuffer::with_capacity(simplex_vertices.len().saturating_sub(1));
 
-    for (idx, &vertex_key) in cell_vertices.iter().enumerate() {
+    for (idx, &vertex_key) in simplex_vertices.iter().enumerate() {
         if idx == facet_index {
             continue;
         }
         bare_vertices.push(vertex_key);
         let lifted = offsets.map_or_else(
             || LiftedVertexId::base(vertex_key),
-            |cell_offsets| lifted_vertex_id(vertex_key, &cell_offsets[idx]),
+            |simplex_offsets| lifted_vertex_id(vertex_key, &simplex_offsets[idx]),
         );
         lifted_vertices.push(lifted);
     }
@@ -547,21 +550,21 @@ fn cell_facet_vertex_ids<T, U, V, const D: usize>(
     Ok((lifted_vertices, bare_vertices))
 }
 
-/// Finds all cell/facet handles whose facet has the requested key.
+/// Finds all simplex/facet handles whose facet has the requested key.
 fn facet_incident_handles<T, U, V, const D: usize>(
     tds: &Tds<T, U, V, D>,
     facet_key: u64,
     facet_vertices_bare: &[VertexKey],
 ) -> Result<SmallBuffer<FacetHandle, 2>, ManifoldError> {
-    let candidate_cells = simplex_star_cells(tds, facet_vertices_bare)?;
+    let candidate_simplices = simplex_star_simplices(tds, facet_vertices_bare)?;
     let mut handles: SmallBuffer<FacetHandle, 2> =
-        SmallBuffer::with_capacity(candidate_cells.len().max(1));
+        SmallBuffer::with_capacity(candidate_simplices.len().max(1));
 
-    for cell_key in candidate_cells {
-        let cell_vertices = tds.cell_vertices(cell_key)?;
-        for candidate_facet_index in 0..cell_vertices.len() {
+    for simplex_key in candidate_simplices {
+        let simplex_vertices = tds.simplex_vertices(simplex_key)?;
+        for candidate_facet_index in 0..simplex_vertices.len() {
             let (candidate_vertices, _candidate_vertices_bare) =
-                cell_facet_vertex_ids(tds, cell_key, candidate_facet_index)?;
+                simplex_facet_vertex_ids(tds, simplex_key, candidate_facet_index)?;
             if periodic_simplex_key(&candidate_vertices) != facet_key {
                 continue;
             }
@@ -573,7 +576,7 @@ fn facet_incident_handles<T, U, V, const D: usize>(
                 }
                 .into());
             };
-            handles.push(FacetHandle::new(cell_key, facet_index));
+            handles.push(FacetHandle::new(simplex_key, facet_index));
         }
     }
 
@@ -583,20 +586,20 @@ fn facet_incident_handles<T, U, V, const D: usize>(
 /// Validates boundary closure for boundary facets present in a local facet map.
 fn validate_closed_boundary_for_local_facets<T, U, V, const D: usize>(
     tds: &Tds<T, U, V, D>,
-    facet_to_cells: &FacetToCellsMap,
+    facet_to_simplices: &FacetToSimplicesMap,
 ) -> Result<(), ManifoldError> {
     if D < 2 {
         return Ok(());
     }
 
     let mut checked_ridges: FastHashSet<u64> = FastHashSet::default();
-    for cell_facet_pairs in facet_to_cells.values() {
-        let [handle] = cell_facet_pairs.as_slice() else {
+    for simplex_facet_pairs in facet_to_simplices.values() {
+        let [handle] = simplex_facet_pairs.as_slice() else {
             continue;
         };
 
         let (facet_vertices, facet_vertices_bare) =
-            cell_facet_vertex_ids(tds, handle.cell_key(), handle.facet_index() as usize)?;
+            simplex_facet_vertex_ids(tds, handle.simplex_key(), handle.facet_index() as usize)?;
         for (ridge_vertices, ridge_vertices_bare) in
             ridge_vertices_for_facet::<D>(&facet_vertices, &facet_vertices_bare)?
         {
@@ -662,15 +665,15 @@ fn boundary_facet_count_for_ridge<T, U, V, const D: usize>(
     ridge_vertices: &[LiftedVertexId],
     ridge_vertices_bare: &[VertexKey],
 ) -> Result<usize, ManifoldError> {
-    let star_cells = simplex_star_cells(tds, ridge_vertices_bare)?;
+    let star_simplices = simplex_star_simplices(tds, ridge_vertices_bare)?;
     let mut count = 0usize;
     let mut seen_boundary_facets: FastHashSet<u64> = FastHashSet::default();
 
-    for cell_key in star_cells {
-        let cell_vertices = tds.cell_vertices(cell_key)?;
-        for facet_index in 0..cell_vertices.len() {
+    for simplex_key in star_simplices {
+        let simplex_vertices = tds.simplex_vertices(simplex_key)?;
+        for facet_index in 0..simplex_vertices.len() {
             let (facet_vertices, facet_vertices_bare) =
-                cell_facet_vertex_ids(tds, cell_key, facet_index)?;
+                simplex_facet_vertex_ids(tds, simplex_key, facet_index)?;
             if !ridge_vertices
                 .iter()
                 .all(|ridge_vertex| facet_vertices.contains(ridge_vertex))
@@ -689,7 +692,7 @@ fn boundary_facet_count_for_ridge<T, U, V, const D: usize>(
                 other => {
                     return Err(ManifoldError::ManifoldFacetMultiplicity {
                         facet_key,
-                        cell_count: other,
+                        simplex_count: other,
                     });
                 }
             }
@@ -699,20 +702,20 @@ fn boundary_facet_count_for_ridge<T, U, V, const D: usize>(
     Ok(count)
 }
 
-/// Computes the star of a simplex (a set of vertices) as the set of incident D-cells.
+/// Computes the star of a simplex (a set of vertices) as the set of incident D-simplices.
 ///
 /// This is a local combinatorial query intended for reuse by topology validation and
 /// (future) local topology mutations (e.g. bistellar flips).
 ///
 /// This helper does **not** call `tds.is_valid()`; it performs lightweight checks and
 /// returns [`ManifoldError::Tds`] if the underlying TDS is internally inconsistent.
-fn simplex_star_cells<T, U, V, const D: usize>(
+fn simplex_star_simplices<T, U, V, const D: usize>(
     tds: &Tds<T, U, V, D>,
     simplex_vertices: &[VertexKey],
-) -> Result<SmallBuffer<CellKey, 8>, ManifoldError> {
+) -> Result<SmallBuffer<SimplexKey, 8>, ManifoldError> {
     if simplex_vertices.is_empty() {
         return Err(TdsError::InconsistentDataStructure {
-            message: "simplex_star_cells requires at least one vertex".to_string(),
+            message: "simplex_star_simplices requires at least one vertex".to_string(),
         }
         .into());
     }
@@ -732,32 +735,34 @@ fn simplex_star_cells<T, U, V, const D: usize>(
     }
 
     // Use the first simplex vertex to get a small candidate set (local star walk when possible).
-    let candidates: CellKeySet = tds.find_cells_containing_vertex_by_key(simplex_vertices[0]);
+    let candidates: SimplexKeySet =
+        tds.find_simplices_containing_vertex_by_key(simplex_vertices[0]);
 
-    let mut star_cells: SmallBuffer<CellKey, 8> = SmallBuffer::with_capacity(candidates.len());
+    let mut star_simplices: SmallBuffer<SimplexKey, 8> =
+        SmallBuffer::with_capacity(candidates.len());
 
-    for cell_key in candidates {
-        let cell_vertices = tds.cell_vertices(cell_key)?;
+    for simplex_key in candidates {
+        let candidate_vertices = tds.simplex_vertices(simplex_key)?;
         if simplex_vertices
             .iter()
-            .all(|&sv| cell_vertices.contains(&sv))
+            .all(|&sv| candidate_vertices.contains(&sv))
         {
-            star_cells.push(cell_key);
+            star_simplices.push(simplex_key);
         }
     }
 
-    Ok(star_cells)
+    Ok(star_simplices)
 }
 
 /// Computes the link simplices induced by a simplex star.
 ///
-/// For each incident D-cell, this returns the complementary vertex set (the vertices in the
-/// D-cell that are not in `simplex_vertices`). This is the standard combinatorial definition of
+/// For each incident D-simplex, this returns the complementary vertex set (the vertices in the
+/// D-simplex that are not in `simplex_vertices`). This is the standard combinatorial definition of
 /// the link of a simplex in a pure simplicial complex.
 fn simplex_link_simplices_from_star<T, U, V, const D: usize>(
     tds: &Tds<T, U, V, D>,
     simplex_vertices: &[VertexKey],
-    star_cells: &[CellKey],
+    star_simplices: &[SimplexKey],
 ) -> Result<LinkSimplexBuffer, ManifoldError> {
     if simplex_vertices.is_empty() {
         return Err(TdsError::InconsistentDataStructure {
@@ -768,30 +773,32 @@ fn simplex_link_simplices_from_star<T, U, V, const D: usize>(
 
     let expected_link_vertices = (D + 1).saturating_sub(simplex_vertices.len());
 
-    let mut link_simplices: LinkSimplexBuffer = SmallBuffer::with_capacity(star_cells.len());
+    let mut link_simplices: LinkSimplexBuffer = SmallBuffer::with_capacity(star_simplices.len());
 
-    for &cell_key in star_cells {
-        let cell_vertices = tds.cell_vertices(cell_key)?;
-        let offsets = tds.cell(cell_key).and_then(|c| c.periodic_vertex_offsets());
+    for &simplex_key in star_simplices {
+        let candidate_vertices = tds.simplex_vertices(simplex_key)?;
+        let offsets = tds
+            .simplex(simplex_key)
+            .and_then(|c| c.periodic_vertex_offsets());
 
         // Find the reference offset: the first simplex vertex's offset in
-        // this cell.  All link vertex offsets are computed relative to this
-        // so that shared vertices across TDS-adjacent cells get the same
-        // lifted ID (adjacent cells may store different absolute offsets
+        // this simplex.  All link vertex offsets are computed relative to this
+        // so that shared vertices across TDS-adjacent simplices get the same
+        // lifted ID (adjacent simplices may store different absolute offsets
         // for the same quotient-space vertex).
         let ref_slot = offsets.and_then(|_| {
-            cell_vertices
+            candidate_vertices
                 .iter()
                 .position(|cv| simplex_vertices.contains(cv))
         });
 
         let mut link_vertices: LiftedVertexBuffer =
             LiftedVertexBuffer::with_capacity(expected_link_vertices);
-        for (i, &vk) in cell_vertices.iter().enumerate() {
+        for (i, &vk) in candidate_vertices.iter().enumerate() {
             // Membership test on bare key: the input simplex (e.g. a single
             // vertex) IS the same vertex regardless of periodic offset.
             if !simplex_vertices.contains(&vk) {
-                // Lift with *relative* offset so adjacent cells agree.
+                // Lift with *relative* offset so adjacent simplices agree.
                 let lifted = match (offsets, ref_slot) {
                     (Some(offs), Some(r)) => {
                         let rel: SmallBuffer<i8, 8> = offs[i]
@@ -811,7 +818,9 @@ fn simplex_link_simplices_from_star<T, U, V, const D: usize>(
             return Err(TdsError::DimensionMismatch {
                 expected: expected_link_vertices,
                 actual: link_vertices.len(),
-                context: format!("simplex link vertex count for {D}D (cell_key={cell_key:?})"),
+                context: format!(
+                    "simplex link vertex count for {D}D (simplex_key={simplex_key:?})"
+                ),
             }
             .into());
         }
@@ -822,7 +831,7 @@ fn simplex_link_simplices_from_star<T, U, V, const D: usize>(
     Ok(link_simplices)
 }
 
-/// Computes the star of a ridge (a (D-2)-simplex) as the set of incident D-cells.
+/// Computes the star of a ridge (a (D-2)-simplex) as the set of incident D-simplices.
 ///
 /// This is a local combinatorial query intended for reuse by topology validation and
 /// (future) local topology mutations (e.g. bistellar flips).
@@ -836,10 +845,10 @@ fn simplex_link_simplices_from_star<T, U, V, const D: usize>(
         reason = "Not used yet; intended for reuse by future local topology mutations (e.g. bistellar flips)"
     )
 )]
-pub(crate) fn ridge_star_cells<T, U, V, const D: usize>(
+pub(crate) fn ridge_star_simplices<T, U, V, const D: usize>(
     tds: &Tds<T, U, V, D>,
     ridge_vertices: &[VertexKey],
-) -> Result<SmallBuffer<CellKey, 8>, ManifoldError> {
+) -> Result<SmallBuffer<SimplexKey, 8>, ManifoldError> {
     // Ridge stars are only meaningful for D>=2.
     if D < 2 {
         return Ok(SmallBuffer::new());
@@ -855,13 +864,13 @@ pub(crate) fn ridge_star_cells<T, U, V, const D: usize>(
         .into());
     }
 
-    simplex_star_cells(tds, ridge_vertices)
+    simplex_star_simplices(tds, ridge_vertices)
 }
 
 fn ridge_link_edges_from_star<T, U, V, const D: usize>(
     tds: &Tds<T, U, V, D>,
     ridge_vertices: &[LiftedVertexId],
-    star_cells: &[CellKey],
+    star_simplices: &[SimplexKey],
 ) -> Result<SmallBuffer<(LiftedVertexId, LiftedVertexId), 8>, ManifoldError> {
     // Ridge links are only meaningful for D>=2.
     if D < 2 {
@@ -879,21 +888,23 @@ fn ridge_link_edges_from_star<T, U, V, const D: usize>(
     }
 
     let mut link_edges: SmallBuffer<(LiftedVertexId, LiftedVertexId), 8> =
-        SmallBuffer::with_capacity(star_cells.len());
+        SmallBuffer::with_capacity(star_simplices.len());
 
     let mut link_vertices: LiftedVertexBuffer = LiftedVertexBuffer::with_capacity(2);
 
-    for &cell_key in star_cells {
-        let cell_vertices = tds.cell_vertices(cell_key)?;
-        let offsets = tds.cell(cell_key).and_then(|c| c.periodic_vertex_offsets());
+    for &simplex_key in star_simplices {
+        let simplex_vertices = tds.simplex_vertices(simplex_key)?;
+        let offsets = tds
+            .simplex(simplex_key)
+            .and_then(|c| c.periodic_vertex_offsets());
 
         // Find the reference offset from the first ridge vertex's slot.
         let ref_slot = offsets.and_then(|offs| {
-            cell_vertices
+            simplex_vertices
                 .iter()
                 .enumerate()
                 .find(|(idx, cv)| {
-                    // Match cell vertex against lifted ridge vertices.
+                    // Match simplex vertex against lifted ridge vertices.
                     let lv = lifted_vertex_id(**cv, &offs[*idx]);
                     ridge_vertices.contains(&lv)
                 })
@@ -901,7 +912,7 @@ fn ridge_link_edges_from_star<T, U, V, const D: usize>(
         });
 
         link_vertices.clear();
-        for (i, &vk) in cell_vertices.iter().enumerate() {
+        for (i, &vk) in simplex_vertices.iter().enumerate() {
             // Lift with absolute offsets for ridge membership test (ridge
             // vertices in `ridge_vertices` use absolute lifted IDs).
             let abs_lifted = offsets.map_or_else(
@@ -910,13 +921,13 @@ fn ridge_link_edges_from_star<T, U, V, const D: usize>(
             );
             if !ridge_vertices.contains(&abs_lifted) {
                 // Lift link vertices with *relative* offsets so adjacent
-                // cells agree on shared vertex identity.
+                // simplices agree on shared vertex identity.
                 let rel_lifted = match (offsets, ref_slot) {
                     (Some(offs), Some(r)) => {
-                        let cell_offs: &[[i8; D]] = offs;
-                        let rel: SmallBuffer<i8, 8> = cell_offs[i]
+                        let simplex_offs: &[[i8; D]] = offs;
+                        let rel: SmallBuffer<i8, 8> = simplex_offs[i]
                             .iter()
-                            .zip(cell_offs[r].iter())
+                            .zip(simplex_offs[r].iter())
                             .map(|(&a, &b)| a - b)
                             .collect();
                         lifted_vertex_id(vk, &rel)
@@ -931,7 +942,7 @@ fn ridge_link_edges_from_star<T, U, V, const D: usize>(
             return Err(TdsError::DimensionMismatch {
                 expected: 2,
                 actual: link_vertices.len(),
-                context: format!("ridge link vertex count for {D}D (cell_key={cell_key:?})"),
+                context: format!("ridge link vertex count for {D}D (simplex_key={simplex_key:?})"),
             }
             .into());
         }
@@ -939,7 +950,7 @@ fn ridge_link_edges_from_star<T, U, V, const D: usize>(
         if link_vertices[0] == link_vertices[1] {
             return Err(TdsError::InconsistentDataStructure {
                 message: format!(
-                    "Ridge link edge is a self-loop: link vertex {vk:?} repeated (cell_key={cell_key:?})",
+                    "Ridge link edge is a self-loop: link vertex {vk:?} repeated (simplex_key={simplex_key:?})",
                     vk = &link_vertices[0],
                 ),
             }
@@ -955,61 +966,61 @@ fn ridge_link_edges_from_star<T, U, V, const D: usize>(
 #[derive(Clone, Debug)]
 struct RidgeStar {
     ridge_vertices: LiftedVertexBuffer,
-    star_cells: SmallBuffer<CellKey, 8>,
+    star_simplices: SmallBuffer<SimplexKey, 8>,
 }
 
-// Performance: This builds a ridge → star incidence map by visiting every cell and
+// Performance: This builds a ridge → star incidence map by visiting every simplex and
 // enumerating its ridges.
 //
-// In terms of D, each cell contributes C(D+1, 2) = O(D²) ridges, each with O(D) vertices.
-// Therefore this pass is O(#cells × C(D+1,2) × D) time (i.e., O(#cells × D³) in D) and
-// O(#cells × C(D+1,2)) additional memory for the incidence map.
+// In terms of D, each simplex contributes C(D+1, 2) = O(D²) ridges, each with O(D) vertices.
+// Therefore this pass is O(#simplices × C(D+1,2) × D) time (i.e., O(#simplices × D³) in D) and
+// O(#simplices × C(D+1,2)) additional memory for the incidence map.
 //
 // This is appropriate for Level 3 topology validation / debugging, but it can be expensive
-// for extremely large triangulations (e.g., millions of cells) or higher-dimensional complexes.
+// for extremely large triangulations (e.g., millions of simplices) or higher-dimensional complexes.
 fn build_ridge_star_map<T, U, V, const D: usize>(
     tds: &Tds<T, U, V, D>,
 ) -> Result<FastHashMap<u64, RidgeStar>, ManifoldError> {
-    let cell_count = tds.number_of_cells();
-    if cell_count == 0 {
+    let simplex_count = tds.number_of_simplices();
+    if simplex_count == 0 {
         return Ok(FastHashMap::default());
     }
 
     // Each D-simplex has C(D+1, 2) ridges (omit two vertices).
-    let ridges_per_cell = (D + 1).saturating_mul(D) / 2;
+    let ridges_per_simplex = (D + 1).saturating_mul(D) / 2;
 
-    // A crude-but-safe estimate: in a manifold, ridges are typically incident to ~2 cells, so the
+    // A crude-but-safe estimate: in a manifold, ridges are typically incident to ~2 simplices, so the
     // number of unique ridges is often around half the total ridge incidences.
-    let estimated_unique_ridges = cell_count
-        .saturating_mul(ridges_per_cell)
+    let estimated_unique_ridges = simplex_count
+        .saturating_mul(ridges_per_simplex)
         .saturating_div(2)
         .max(1);
 
-    // Map ridge key -> ridge star (incident cells).
+    // Map ridge key -> ridge star (incident simplices).
     let mut ridge_to_star: FastHashMap<u64, RidgeStar> =
         fast_hash_map_with_capacity(estimated_unique_ridges);
 
     let mut ridge_vertices: LiftedVertexBuffer =
         LiftedVertexBuffer::with_capacity(D.saturating_sub(1));
 
-    for (cell_key, cell) in tds.cells() {
-        let cell_vertices = tds.cell_vertices(cell_key)?;
-        let offsets = cell.periodic_vertex_offsets();
+    for (simplex_key, simplex) in tds.simplices() {
+        let simplex_vertices = tds.simplex_vertices(simplex_key)?;
+        let offsets = simplex.periodic_vertex_offsets();
 
-        if cell_vertices.len() != D + 1 {
+        if simplex_vertices.len() != D + 1 {
             return Err(TdsError::DimensionMismatch {
                 expected: D + 1,
-                actual: cell_vertices.len(),
-                context: format!("cell {cell_key:?} vertex count for {D}D"),
+                actual: simplex_vertices.len(),
+                context: format!("simplex {simplex_key:?} vertex count for {D}D"),
             }
             .into());
         }
 
-        // Enumerate ridges in this cell by omitting two vertices.
-        for omit_a in 0..cell_vertices.len() {
-            for omit_b in (omit_a + 1)..cell_vertices.len() {
+        // Enumerate ridges in this simplex by omitting two vertices.
+        for omit_a in 0..simplex_vertices.len() {
+            for omit_b in (omit_a + 1)..simplex_vertices.len() {
                 ridge_vertices.clear();
-                for (i, &vk) in cell_vertices.iter().enumerate() {
+                for (i, &vk) in simplex_vertices.iter().enumerate() {
                     if i == omit_a || i == omit_b {
                         continue;
                     }
@@ -1025,7 +1036,7 @@ fn build_ridge_star_map<T, U, V, const D: usize>(
                     return Err(TdsError::DimensionMismatch {
                         expected: D.saturating_sub(1),
                         actual: ridge_vertices.len(),
-                        context: format!("ridge vertex count for {D}D (cell_key={cell_key:?}, omit_a={omit_a}, omit_b={omit_b})"),
+                        context: format!("ridge vertex count for {D}D (simplex_key={simplex_key:?}, omit_a={omit_a}, omit_b={omit_b})"),
                     }
                     .into());
                 }
@@ -1035,9 +1046,9 @@ fn build_ridge_star_map<T, U, V, const D: usize>(
                 let ridge_key = periodic_simplex_key(&ridge_vertices);
                 let star = ridge_to_star.entry(ridge_key).or_insert_with(|| RidgeStar {
                     ridge_vertices: ridge_vertices.clone(),
-                    star_cells: SmallBuffer::new(),
+                    star_simplices: SmallBuffer::new(),
                 });
-                star.star_cells.push(cell_key);
+                star.star_simplices.push(simplex_key);
             }
         }
     }
@@ -1045,25 +1056,25 @@ fn build_ridge_star_map<T, U, V, const D: usize>(
     Ok(ridge_to_star)
 }
 
-fn build_ridge_star_map_for_cells<T, U, V, const D: usize>(
+fn build_ridge_star_map_for_simplices<T, U, V, const D: usize>(
     tds: &Tds<T, U, V, D>,
-    cells: &[CellKey],
+    simplices: &[SimplexKey],
 ) -> Result<FastHashMap<u64, RidgeStar>, ManifoldError> {
     if D < 2 {
         return Ok(FastHashMap::default());
     }
 
-    if cells.is_empty() {
+    if simplices.is_empty() {
         return Ok(FastHashMap::default());
     }
 
     // Each D-simplex has C(D+1, 2) ridges (omit two vertices).
-    let ridges_per_cell = (D + 1).saturating_mul(D) / 2;
-    let estimated_unique_ridges = cells.len().saturating_mul(ridges_per_cell).max(1);
+    let ridges_per_simplex = (D + 1).saturating_mul(D) / 2;
+    let estimated_unique_ridges = simplices.len().saturating_mul(ridges_per_simplex).max(1);
 
-    // Build a set of ridges touched by the specified cells.
-    // For periodic cells we store both lifted vertices (for ridge identity and
-    // downstream link computation) and bare vertices (for `simplex_star_cells`
+    // Build a set of ridges touched by the specified simplices.
+    // For periodic simplices we store both lifted vertices (for ridge identity and
+    // downstream link computation) and bare vertices (for `simplex_star_simplices`
     // which looks up real TDS vertex keys).
     let mut ridge_to_vertices: FastHashMap<u64, (LiftedVertexBuffer, VertexKeyBuffer)> =
         fast_hash_map_with_capacity(estimated_unique_ridges);
@@ -1073,29 +1084,31 @@ fn build_ridge_star_map_for_cells<T, U, V, const D: usize>(
     let mut ridge_vertices_lifted: LiftedVertexBuffer =
         LiftedVertexBuffer::with_capacity(D.saturating_sub(1));
 
-    for &cell_key in cells {
-        if !tds.contains_cell(cell_key) {
+    for &simplex_key in simplices {
+        if !tds.contains_simplex(simplex_key) {
             continue;
         }
 
-        let cell_vertices = tds.cell_vertices(cell_key)?;
-        let offsets = tds.cell(cell_key).and_then(|c| c.periodic_vertex_offsets());
+        let simplex_vertices = tds.simplex_vertices(simplex_key)?;
+        let offsets = tds
+            .simplex(simplex_key)
+            .and_then(|c| c.periodic_vertex_offsets());
 
-        if cell_vertices.len() != D + 1 {
+        if simplex_vertices.len() != D + 1 {
             return Err(TdsError::DimensionMismatch {
                 expected: D + 1,
-                actual: cell_vertices.len(),
-                context: format!("cell {cell_key:?} vertex count for {D}D (local ridge map)"),
+                actual: simplex_vertices.len(),
+                context: format!("simplex {simplex_key:?} vertex count for {D}D (local ridge map)"),
             }
             .into());
         }
 
-        // Enumerate ridges in this cell by omitting two vertices.
-        for omit_a in 0..cell_vertices.len() {
-            for omit_b in (omit_a + 1)..cell_vertices.len() {
+        // Enumerate ridges in this simplex by omitting two vertices.
+        for omit_a in 0..simplex_vertices.len() {
+            for omit_b in (omit_a + 1)..simplex_vertices.len() {
                 ridge_vertices_bare.clear();
                 ridge_vertices_lifted.clear();
-                for (i, &vk) in cell_vertices.iter().enumerate() {
+                for (i, &vk) in simplex_vertices.iter().enumerate() {
                     if i == omit_a || i == omit_b {
                         continue;
                     }
@@ -1112,7 +1125,7 @@ fn build_ridge_star_map_for_cells<T, U, V, const D: usize>(
                     return Err(TdsError::DimensionMismatch {
                         expected: D.saturating_sub(1),
                         actual: ridge_vertices_bare.len(),
-                        context: format!("ridge vertex count for {D}D (cell_key={cell_key:?}, omit_a={omit_a}, omit_b={omit_b})"),
+                        context: format!("ridge vertex count for {D}D (simplex_key={simplex_key:?}, omit_a={omit_a}, omit_b={omit_b})"),
                     }
                     .into());
                 }
@@ -1127,22 +1140,22 @@ fn build_ridge_star_map_for_cells<T, U, V, const D: usize>(
         }
     }
 
-    // For each ridge touched by the local cell set, compute its full star.
-    // Use bare ridge vertices for `simplex_star_cells` (which looks up real TDS
-    // keys), then filter to cells sharing the same periodic image, and store
+    // For each ridge touched by the local simplex set, compute its full star.
+    // Use bare ridge vertices for `simplex_star_simplices` (which looks up real TDS
+    // keys), then filter to simplices sharing the same periodic image, and store
     // lifted ridge vertices in the `RidgeStar` for downstream link computation.
     let mut ridge_to_star: FastHashMap<u64, RidgeStar> =
         fast_hash_map_with_capacity(ridge_to_vertices.len().max(1));
 
     for (ridge_key, (lifted_vertices, bare_vertices)) in ridge_to_vertices {
-        let star_cells =
+        let star_simplices =
             periodic_aware_ridge_star(tds, ridge_key, &lifted_vertices, &bare_vertices)?;
 
         ridge_to_star.insert(
             ridge_key,
             RidgeStar {
                 ridge_vertices: lifted_vertices,
-                star_cells,
+                star_simplices,
             },
         );
     }
@@ -1153,15 +1166,15 @@ fn build_ridge_star_map_for_cells<T, U, V, const D: usize>(
 /// Computes the periodic-aware star of a ridge from its lifted and bare vertex
 /// representations.
 ///
-/// Uses bare keys to find candidate cells via [`simplex_star_cells`], then
-/// filters to cells whose lifted ridge vertices match `lifted_vertices`.
-/// For non-periodic cells (no offsets) all candidates pass.
+/// Uses bare keys to find candidate simplices via [`simplex_star_simplices`], then
+/// filters to simplices whose lifted ridge vertices match `lifted_vertices`.
+/// For non-periodic simplices (no offsets) all candidates pass.
 ///
 /// # Errors
 ///
 /// Returns [`ManifoldError::Tds`] if:
-/// - `simplex_star_cells` fails (vertex not found, etc.).
-/// - `cell_vertices` fails for any candidate cell.
+/// - `simplex_star_simplices` fails (vertex not found, etc.).
+/// - `simplex_vertices` fails for any candidate simplex.
 /// - Periodic offset filtering produces an empty star, indicating inconsistent
 ///   offsets in the TDS.
 fn periodic_aware_ridge_star<T, U, V, const D: usize>(
@@ -1169,20 +1182,21 @@ fn periodic_aware_ridge_star<T, U, V, const D: usize>(
     ridge_key: u64,
     lifted_vertices: &[LiftedVertexId],
     bare_vertices: &VertexKeyBuffer,
-) -> Result<SmallBuffer<CellKey, 8>, ManifoldError> {
-    let all_star_cells = simplex_star_cells(tds, bare_vertices)?;
+) -> Result<SmallBuffer<SimplexKey, 8>, ManifoldError> {
+    let all_star_simplices = simplex_star_simplices(tds, bare_vertices)?;
 
-    // For periodic cells, keep only cells whose lifted ridge vertices agree
-    // with this ridge's lifted vertices.  For non-periodic cells the check is
+    // For periodic simplices, keep only simplices whose lifted ridge vertices agree
+    // with this ridge's lifted vertices.  For non-periodic simplices the check is
     // a no-op (offsets are `None`).  We use an explicit loop instead of
-    // `.filter()` so that `cell_vertices` errors propagate.
-    let mut star_cells: SmallBuffer<CellKey, 8> = SmallBuffer::with_capacity(all_star_cells.len());
-    for &ck in &all_star_cells {
-        let cell_offsets = tds.cell(ck).and_then(|c| c.periodic_vertex_offsets());
-        let matches = match cell_offsets {
+    // `.filter()` so that `simplex_vertices` errors propagate.
+    let mut star_simplices: SmallBuffer<SimplexKey, 8> =
+        SmallBuffer::with_capacity(all_star_simplices.len());
+    for &ck in &all_star_simplices {
+        let simplex_offsets = tds.simplex(ck).and_then(|c| c.periodic_vertex_offsets());
+        let matches = match simplex_offsets {
             None => true,
             Some(offs) => {
-                let cv = tds.cell_vertices(ck)?;
+                let cv = tds.simplex_vertices(ck)?;
                 lifted_vertices.iter().all(|lv| {
                     cv.iter().enumerate().any(|(i, &vk)| {
                         let lifted = lifted_vertex_id(vk, &offs[i]);
@@ -1192,26 +1206,26 @@ fn periodic_aware_ridge_star<T, U, V, const D: usize>(
             }
         };
         if matches {
-            star_cells.push(ck);
+            star_simplices.push(ck);
         }
     }
 
-    // A ridge enumerated from a cell must be incident to at least that cell.
+    // A ridge enumerated from a simplex must be incident to at least that simplex.
     // An empty star after periodic filtering indicates inconsistent offsets.
-    if star_cells.is_empty() {
+    if star_simplices.is_empty() {
         return Err(TdsError::InconsistentDataStructure {
             message: format!(
                 "periodic offset filtering produced empty star for ridge \
-                 {ridge_key:016x}: {count} candidate cells were all excluded \
+                 {ridge_key:016x}: {count} candidate simplices were all excluded \
                  (lifted ridge vertices: {lifted:?})",
-                count = all_star_cells.len(),
+                count = all_star_simplices.len(),
                 lifted = lifted_vertices,
             ),
         }
         .into());
     }
 
-    Ok(star_cells)
+    Ok(star_simplices)
 }
 
 /// Validates the ridge-link condition for a PL-manifold (with boundary).
@@ -1234,8 +1248,8 @@ fn periodic_aware_ridge_star<T, U, V, const D: usize>(
 /// (e.g., [`validate_facet_degree`]) because it must inspect ridge stars/links across the
 /// entire complex.
 ///
-/// Roughly speaking, this requires a full pass over all cells to build a ridge → star
-/// incidence map, which is O(#cells × C(D+1,2) × D) time (linear in #cells for fixed small D)
+/// Roughly speaking, this requires a full pass over all simplices to build a ridge → star
+/// incidence map, which is O(#simplices × C(D+1,2) × D) time (linear in #simplices for fixed small D)
 /// and uses additional memory proportional to total ridge incidences.
 ///
 /// Prefer reserving this check for debug/test builds or on-demand validation in production,
@@ -1273,31 +1287,32 @@ pub fn validate_ridge_links<T, U, V, const D: usize>(
         return Ok(());
     }
 
-    if tds.number_of_cells() == 0 {
+    if tds.number_of_simplices() == 0 {
         return Ok(());
     }
 
-    // Algorithm: ridge -> star (incident cells) -> link (edges) -> validate link graph.
+    // Algorithm: ridge -> star (incident simplices) -> link (edges) -> validate link graph.
     let ridge_to_star = build_ridge_star_map(tds)?;
     for (ridge_key, star) in ridge_to_star {
-        let link_edges = ridge_link_edges_from_star(tds, &star.ridge_vertices, &star.star_cells)?;
+        let link_edges =
+            ridge_link_edges_from_star(tds, &star.ridge_vertices, &star.star_simplices)?;
         if let Err(err) = validate_ridge_link_graph(ridge_key, &link_edges) {
             #[cfg(debug_assertions)]
             if std::env::var_os("DELAUNAY_DEBUG_RIDGE_LINK").is_some() {
-                let mut star_cell_vertices: Vec<(CellKey, VertexKeyBuffer)> =
-                    Vec::with_capacity(star.star_cells.len());
-                for &cell_key in &star.star_cells {
-                    match tds.cell_vertices(cell_key) {
-                        Ok(vertices) => star_cell_vertices.push((cell_key, vertices)),
-                        Err(_) => star_cell_vertices.push((cell_key, VertexKeyBuffer::new())),
+                let mut star_simplex_vertices: Vec<(SimplexKey, VertexKeyBuffer)> =
+                    Vec::with_capacity(star.star_simplices.len());
+                for &simplex_key in &star.star_simplices {
+                    match tds.simplex_vertices(simplex_key) {
+                        Ok(vertices) => star_simplex_vertices.push((simplex_key, vertices)),
+                        Err(_) => star_simplex_vertices.push((simplex_key, VertexKeyBuffer::new())),
                     }
                 }
 
                 tracing::warn!(
                     ridge_key = ridge_key,
                     ridge_vertices = ?star.ridge_vertices,
-                    star_cells = ?star.star_cells,
-                    star_cell_vertices = ?star_cell_vertices,
+                    star_simplices = ?star.star_simplices,
+                    star_simplex_vertices = ?star_simplex_vertices,
                     link_edges = ?link_edges,
                     "validate_ridge_links: ridge link validation failed"
                 );
@@ -1309,26 +1324,26 @@ pub fn validate_ridge_links<T, U, V, const D: usize>(
     Ok(())
 }
 
-/// Validates ridge links for a specific set of cells.
+/// Validates ridge links for a specific set of simplices.
 ///
 /// This is a localized version of [`validate_ridge_links`] that only checks ridges
-/// incident to the specified cells. This is useful for post-insertion validation
+/// incident to the specified simplices. This is useful for post-insertion validation
 /// without needing to re-validate the entire triangulation.
 ///
 /// # Arguments
 /// - `tds` - The triangulation data structure
-/// - `cells` - The specific cells to check ridge links for
+/// - `simplices` - The specific simplices to check ridge links for
 ///
 /// # Errors
 /// Returns [`ManifoldError::RidgeLinkNotManifold`] if any ridge incident to the
-/// specified cells has a disconnected or invalid link graph.
+/// specified simplices has a disconnected or invalid link graph.
 ///
 /// # Examples
 /// ```rust
 /// use delaunay::prelude::geometry::*;
 /// use delaunay::prelude::triangulation::*;
-/// use delaunay::prelude::topology::validation::validate_ridge_links_for_cells;
-/// use delaunay::prelude::collections::CellKeyBuffer;
+/// use delaunay::prelude::topology::validation::validate_ridge_links_for_simplices;
+/// use delaunay::prelude::collections::SimplexKeyBuffer;
 ///
 /// let vertices = vec![
 ///     vertex!([0.0, 0.0, 0.0]),
@@ -1337,47 +1352,48 @@ pub fn validate_ridge_links<T, U, V, const D: usize>(
 ///     vertex!([0.0, 0.0, 1.0]),
 /// ];
 /// let tds = Triangulation::<FastKernel<f64>, (), (), 3>::build_initial_simplex(&vertices).unwrap();
-/// let cells: CellKeyBuffer = tds.cells().map(|(k, _)| k).collect();
+/// let simplices: SimplexKeyBuffer = tds.simplices().map(|(k, _)| k).collect();
 ///
-/// validate_ridge_links_for_cells(&tds, &cells).unwrap();
+/// validate_ridge_links_for_simplices(&tds, &simplices).unwrap();
 /// ```
-pub fn validate_ridge_links_for_cells<T, U, V, const D: usize>(
+pub fn validate_ridge_links_for_simplices<T, U, V, const D: usize>(
     tds: &Tds<T, U, V, D>,
-    cells: &[CellKey],
+    simplices: &[SimplexKey],
 ) -> Result<(), ManifoldError> {
     // Ridge links are only meaningful for D>=2.
     if D < 2 {
         return Ok(());
     }
 
-    if cells.is_empty() {
+    if simplices.is_empty() {
         return Ok(());
     }
 
-    // Build ridge -> star map only for ridges touching the specified cells.
-    let ridge_to_star = build_ridge_star_map_for_cells(tds, cells)?;
+    // Build ridge -> star map only for ridges touching the specified simplices.
+    let ridge_to_star = build_ridge_star_map_for_simplices(tds, simplices)?;
 
     for (ridge_key, star) in ridge_to_star {
-        let link_edges = ridge_link_edges_from_star(tds, &star.ridge_vertices, &star.star_cells)?;
+        let link_edges =
+            ridge_link_edges_from_star(tds, &star.ridge_vertices, &star.star_simplices)?;
         if let Err(err) = validate_ridge_link_graph(ridge_key, &link_edges) {
             #[cfg(debug_assertions)]
             if std::env::var_os("DELAUNAY_DEBUG_RIDGE_LINK").is_some() {
-                let mut star_cell_vertices: Vec<(CellKey, VertexKeyBuffer)> =
-                    Vec::with_capacity(star.star_cells.len());
-                for &cell_key in &star.star_cells {
-                    match tds.cell_vertices(cell_key) {
-                        Ok(vertices) => star_cell_vertices.push((cell_key, vertices)),
-                        Err(_) => star_cell_vertices.push((cell_key, VertexKeyBuffer::new())),
+                let mut star_simplex_vertices: Vec<(SimplexKey, VertexKeyBuffer)> =
+                    Vec::with_capacity(star.star_simplices.len());
+                for &simplex_key in &star.star_simplices {
+                    match tds.simplex_vertices(simplex_key) {
+                        Ok(vertices) => star_simplex_vertices.push((simplex_key, vertices)),
+                        Err(_) => star_simplex_vertices.push((simplex_key, VertexKeyBuffer::new())),
                     }
                 }
 
                 tracing::warn!(
                     ridge_key = ridge_key,
                     ridge_vertices = ?star.ridge_vertices,
-                    star_cells = ?star.star_cells,
-                    star_cell_vertices = ?star_cell_vertices,
+                    star_simplices = ?star.star_simplices,
+                    star_simplex_vertices = ?star_simplex_vertices,
                     link_edges = ?link_edges,
-                    "validate_ridge_links_for_cells: ridge link validation failed"
+                    "validate_ridge_links_for_simplices: ridge link validation failed"
                 );
             }
             return Err(err);
@@ -1394,12 +1410,12 @@ pub fn validate_ridge_links_for_cells<T, U, V, const D: usize>(
 /// (D-1)-ball when `v` lies on the boundary.
 ///
 /// This validator treats a vertex as a *boundary vertex* if it participates in any
-/// boundary facet of the original complex (a facet incident to exactly one D-cell).
+/// boundary facet of the original complex (a facet incident to exactly one D-simplex).
 ///
 /// # Performance
 ///
 /// For fixed D, this runs in time proportional to the total size of all vertex stars
-/// (roughly O(#cells × (D+1))) plus local work to build and validate each link.
+/// (roughly O(#simplices × (D+1))) plus local work to build and validate each link.
 ///
 /// # Errors
 ///
@@ -1424,26 +1440,26 @@ pub fn validate_ridge_links_for_cells<T, U, V, const D: usize>(
 ///     vertex!([0.0, 0.0, 1.0]),
 /// ];
 /// let tds = Triangulation::<FastKernel<f64>, (), (), 3>::build_initial_simplex(&vertices).unwrap();
-/// let facet_to_cells = tds.build_facet_to_cells_map().unwrap();
+/// let facet_to_simplices = tds.build_facet_to_simplices_map().unwrap();
 ///
-/// validate_facet_degree(&facet_to_cells).unwrap();
-/// validate_closed_boundary(&tds, &facet_to_cells).unwrap();
-/// validate_vertex_links(&tds, &facet_to_cells).unwrap();
+/// validate_facet_degree(&facet_to_simplices).unwrap();
+/// validate_closed_boundary(&tds, &facet_to_simplices).unwrap();
+/// validate_vertex_links(&tds, &facet_to_simplices).unwrap();
 /// ```
 pub fn validate_vertex_links<T, U, V, const D: usize>(
     tds: &Tds<T, U, V, D>,
-    facet_to_cells: &FacetToCellsMap,
+    facet_to_simplices: &FacetToSimplicesMap,
 ) -> Result<(), ManifoldError> {
     // Vertex links are only meaningful for D>=1.
     if D < 1 {
         return Ok(());
     }
 
-    if tds.number_of_cells() == 0 {
+    if tds.number_of_simplices() == 0 {
         return Ok(());
     }
 
-    let boundary_vertices = build_boundary_vertex_set(tds, facet_to_cells)?;
+    let boundary_vertices = build_boundary_vertex_set(tds, facet_to_simplices)?;
 
     for (vertex_key, _vertex) in tds.vertices() {
         let interior_vertex = !boundary_vertices.contains(&vertex_key);
@@ -1455,34 +1471,34 @@ pub fn validate_vertex_links<T, U, V, const D: usize>(
 
 fn build_boundary_vertex_set<T, U, V, const D: usize>(
     tds: &Tds<T, U, V, D>,
-    facet_to_cells: &FacetToCellsMap,
+    facet_to_simplices: &FacetToSimplicesMap,
 ) -> Result<FastHashSet<VertexKey>, ManifoldError> {
-    // Single pass: collect all vertices that appear on a boundary facet (a facet incident to exactly 1 D-cell).
+    // Single pass: collect all vertices that appear on a boundary facet (a facet incident to exactly 1 D-simplex).
     //
-    // NOTE: We intentionally avoid a pre-count pass over `facet_to_cells` since Level-3 validation is already
+    // NOTE: We intentionally avoid a pre-count pass over `facet_to_simplices` since Level-3 validation is already
     // expensive and we only need a coarse set (it can grow dynamically).
     let mut boundary_vertices: FastHashSet<VertexKey> = FastHashSet::default();
 
-    for cell_facet_pairs in facet_to_cells.values() {
-        let [handle] = cell_facet_pairs.as_slice() else {
+    for simplex_facet_pairs in facet_to_simplices.values() {
+        let [handle] = simplex_facet_pairs.as_slice() else {
             continue;
         };
 
-        let cell_key = handle.cell_key();
+        let simplex_key = handle.simplex_key();
         let facet_index = handle.facet_index() as usize;
 
-        let cell_vertices = tds.cell_vertices(cell_key)?;
-        if facet_index >= cell_vertices.len() {
+        let simplex_vertices = tds.simplex_vertices(simplex_key)?;
+        if facet_index >= simplex_vertices.len() {
             return Err(TdsError::IndexOutOfBounds {
                 index: facet_index,
-                bound: cell_vertices.len(),
-                context: format!("boundary facet index for cell {cell_key:?}"),
+                bound: simplex_vertices.len(),
+                context: format!("boundary facet index for simplex {simplex_key:?}"),
             }
             .into());
         }
 
         let mut facet_vertex_count = 0usize;
-        for (i, &vk) in cell_vertices.iter().enumerate() {
+        for (i, &vk) in simplex_vertices.iter().enumerate() {
             if i == facet_index {
                 continue;
             }
@@ -1495,7 +1511,7 @@ fn build_boundary_vertex_set<T, U, V, const D: usize>(
                 expected: D,
                 actual: facet_vertex_count,
                 context: format!(
-                    "boundary facet vertex count (cell_key={cell_key:?}, facet_index={facet_index})"
+                    "boundary facet vertex count (simplex_key={simplex_key:?}, facet_index={facet_index})"
                 ),
             }
             .into());
@@ -1535,7 +1551,7 @@ fn validate_vertex_link_d1(
         Err(ManifoldError::VertexLinkNotManifold {
             vertex_key,
             link_vertex_count,
-            link_cell_count: link_simplices.len(),
+            link_simplex_count: link_simplices.len(),
             boundary_facet_count: usize::from(!interior_vertex),
             max_degree: 0,
             connected: true,
@@ -1549,7 +1565,7 @@ fn validate_vertex_link_d2(
     interior_vertex: bool,
     link_simplices: &LinkSimplexBuffer,
     link_vertex_count: usize,
-    link_cell_count: usize,
+    link_simplex_count: usize,
 ) -> Result<(), ManifoldError> {
     // In D=2, the link is a 1-manifold.
     //
@@ -1564,7 +1580,7 @@ fn validate_vertex_link_d2(
         return Err(ManifoldError::VertexLinkNotManifold {
             vertex_key,
             link_vertex_count,
-            link_cell_count,
+            link_simplex_count,
             boundary_facet_count,
             max_degree: 0,
             connected: false,
@@ -1581,7 +1597,7 @@ fn validate_vertex_link_d2(
         Err(ManifoldError::VertexLinkNotManifold {
             vertex_key,
             link_vertex_count,
-            link_cell_count,
+            link_simplex_count,
             boundary_facet_count,
             max_degree,
             connected,
@@ -1596,13 +1612,13 @@ fn validate_single_vertex_link<T, U, V, const D: usize>(
     interior_vertex: bool,
 ) -> Result<(), ManifoldError> {
     // Collect the star of the vertex.
-    let star_cells = simplex_star_cells(tds, &[vertex_key])?;
-    if star_cells.is_empty() {
+    let star_simplices = simplex_star_simplices(tds, &[vertex_key])?;
+    if star_simplices.is_empty() {
         // A vertex with empty star violates purity for a non-empty triangulation.
         return Err(ManifoldError::VertexLinkNotManifold {
             vertex_key,
             link_vertex_count: 0,
-            link_cell_count: 0,
+            link_simplex_count: 0,
             boundary_facet_count: 0,
             max_degree: 0,
             connected: true,
@@ -1610,7 +1626,7 @@ fn validate_single_vertex_link<T, U, V, const D: usize>(
         });
     }
 
-    let link_simplices = simplex_link_simplices_from_star(tds, &[vertex_key], &star_cells)?;
+    let link_simplices = simplex_link_simplices_from_star(tds, &[vertex_key], &star_simplices)?;
 
     // D=1: the link is a 0-manifold (S^0 for interior vertices, B^0 for boundary vertices).
     if D == 1 {
@@ -1626,7 +1642,7 @@ fn validate_single_vertex_link<T, U, V, const D: usize>(
         }
     }
 
-    let link_cell_count = link_simplices.len();
+    let link_simplex_count = link_simplices.len();
     let link_vertex_count = link_vertex_set.len();
 
     // D=2: the link is a 1-manifold.
@@ -1636,7 +1652,7 @@ fn validate_single_vertex_link<T, U, V, const D: usize>(
             interior_vertex,
             &link_simplices,
             link_vertex_count,
-            link_cell_count,
+            link_simplex_count,
         );
     }
 
@@ -1682,7 +1698,7 @@ fn validate_single_vertex_link<T, U, V, const D: usize>(
         Err(ManifoldError::VertexLinkNotManifold {
             vertex_key,
             link_vertex_count,
-            link_cell_count,
+            link_simplex_count,
             boundary_facet_count,
             max_degree,
             connected,
@@ -1691,14 +1707,16 @@ fn validate_single_vertex_link<T, U, V, const D: usize>(
     }
 }
 
-fn link_1_skeleton_connectivity_and_max_degree(link_cells: &LinkSimplexBuffer) -> (bool, usize) {
+fn link_1_skeleton_connectivity_and_max_degree(
+    link_simplices: &LinkSimplexBuffer,
+) -> (bool, usize) {
     // Build adjacency from the 1-skeleton of the link.
     let mut unique_edges: FastHashSet<(LiftedVertexId, LiftedVertexId)> =
-        fast_hash_set_with_capacity(link_cells.len().max(1));
+        fast_hash_set_with_capacity(link_simplices.len().max(1));
     let mut adjacency: FastHashMap<LiftedVertexId, LiftedVertexBuffer> =
-        fast_hash_map_with_capacity(link_cells.len().saturating_mul(2).max(1));
+        fast_hash_map_with_capacity(link_simplices.len().saturating_mul(2).max(1));
 
-    for simplex in link_cells {
+    for simplex in link_simplices {
         // Add all edges in the simplex.
         for i in 0..simplex.len() {
             for j in (i + 1)..simplex.len() {
@@ -1754,18 +1772,18 @@ fn link_1_skeleton_connectivity_and_max_degree(link_cells: &LinkSimplexBuffer) -
     (connected, max_degree)
 }
 
-fn link_1d_graph_stats(link_cells: &LinkSimplexBuffer) -> Option<(bool, usize, usize, usize)> {
-    // In D=2, link cells are edges (2 vertices). Build an undirected graph and compute:
+fn link_1d_graph_stats(link_simplices: &LinkSimplexBuffer) -> Option<(bool, usize, usize, usize)> {
+    // In D=2, link simplices are edges (2 vertices). Build an undirected graph and compute:
     // - connectivity
     // - max degree
     // - number of degree-1 vertices
     // - vertex count
     let mut unique_edges: FastHashSet<(LiftedVertexId, LiftedVertexId)> =
-        fast_hash_set_with_capacity(link_cells.len().max(1));
+        fast_hash_set_with_capacity(link_simplices.len().max(1));
     let mut adjacency: FastHashMap<LiftedVertexId, SmallBuffer<LiftedVertexId, 2>> =
-        fast_hash_map_with_capacity(link_cells.len().saturating_mul(2).max(1));
+        fast_hash_map_with_capacity(link_simplices.len().saturating_mul(2).max(1));
 
-    for e in link_cells {
+    for e in link_simplices {
         if e.len() != 2 {
             return None;
         }
@@ -1823,7 +1841,7 @@ fn link_1d_graph_stats(link_cells: &LinkSimplexBuffer) -> Option<(bool, usize, u
 }
 
 fn validate_link_facets_and_boundary<const D: usize>(
-    link_cells: &LinkSimplexBuffer,
+    link_simplices: &LinkSimplexBuffer,
     interior_vertex: bool,
 ) -> (usize, bool) {
     // For a vertex link in D>=3, the link dimension is (D-1) >= 2.
@@ -1837,12 +1855,12 @@ fn validate_link_facets_and_boundary<const D: usize>(
     }
 
     let mut facet_map: FastHashMap<u64, FacetInfo> =
-        fast_hash_map_with_capacity(link_cells.len().saturating_mul(D).max(1));
+        fast_hash_map_with_capacity(link_simplices.len().saturating_mul(D).max(1));
 
     let mut facet_vertices: LiftedVertexBuffer =
         LiftedVertexBuffer::with_capacity(D.saturating_sub(1));
 
-    for simplex in link_cells {
+    for simplex in link_simplices {
         if simplex.len() != D {
             return (0, false);
         }
@@ -1928,15 +1946,15 @@ fn validate_link_facets_and_boundary<const D: usize>(
     (boundary_facet_count, true)
 }
 
-fn link_simplices_are_base(link_cells: &LinkSimplexBuffer) -> bool {
-    link_cells
+fn link_simplices_are_base(link_simplices: &LinkSimplexBuffer) -> bool {
+    link_simplices
         .iter()
         .flat_map(|simplex| simplex.iter())
         .all(LiftedVertexId::is_base)
 }
 
-fn bare_link_simplices(link_cells: &LinkSimplexBuffer) -> SmallBuffer<VertexKeyBuffer, 8> {
-    link_cells
+fn bare_link_simplices(link_simplices: &LinkSimplexBuffer) -> SmallBuffer<VertexKeyBuffer, 8> {
+    link_simplices
         .iter()
         .map(|simplex| {
             simplex
@@ -1947,13 +1965,13 @@ fn bare_link_simplices(link_cells: &LinkSimplexBuffer) -> SmallBuffer<VertexKeyB
         .collect()
 }
 
-fn triangulated_surface_euler_characteristic_for_link(link_cells: &LinkSimplexBuffer) -> isize {
+fn triangulated_surface_euler_characteristic_for_link(link_simplices: &LinkSimplexBuffer) -> isize {
     let mut vertices: FastHashSet<LiftedVertexId> =
-        fast_hash_set_with_capacity(link_cells.len().saturating_mul(3).max(1));
+        fast_hash_set_with_capacity(link_simplices.len().saturating_mul(3).max(1));
     let mut edges: FastHashSet<(LiftedVertexId, LiftedVertexId)> =
-        fast_hash_set_with_capacity(link_cells.len().saturating_mul(3).max(1));
+        fast_hash_set_with_capacity(link_simplices.len().saturating_mul(3).max(1));
 
-    for simplex in link_cells {
+    for simplex in link_simplices {
         for vertex in simplex {
             vertices.insert(vertex.clone());
         }
@@ -1964,14 +1982,16 @@ fn triangulated_surface_euler_characteristic_for_link(link_cells: &LinkSimplexBu
         }
     }
 
-    vertices.len().cast_signed() - edges.len().cast_signed() + link_cells.len().cast_signed()
+    vertices.len().cast_signed() - edges.len().cast_signed() + link_simplices.len().cast_signed()
 }
 
-fn triangulated_surface_boundary_component_count_for_link(link_cells: &LinkSimplexBuffer) -> usize {
+fn triangulated_surface_boundary_component_count_for_link(
+    link_simplices: &LinkSimplexBuffer,
+) -> usize {
     let mut edge_counts: FastHashMap<(LiftedVertexId, LiftedVertexId), usize> =
-        fast_hash_map_with_capacity(link_cells.len().saturating_mul(3).max(1));
+        fast_hash_map_with_capacity(link_simplices.len().saturating_mul(3).max(1));
 
-    for simplex in link_cells {
+    for simplex in link_simplices {
         if simplex.len() < 2 {
             continue;
         }
@@ -2031,7 +2051,7 @@ fn validate_ridge_link_graph(
     link_edges: &[(LiftedVertexId, LiftedVertexId)],
 ) -> Result<(), ManifoldError> {
     // De-duplicate parallel edges defensively: if the underlying TDS contains duplicate
-    // cells/edges, the ridge link can contain repeated edges which would otherwise inflate
+    // simplices/edges, the ridge link can contain repeated edges which would otherwise inflate
     // degrees and edge counts.
     let mut unique_edges: FastHashSet<(LiftedVertexId, LiftedVertexId)> =
         fast_hash_set_with_capacity(link_edges.len().max(1));
@@ -2120,8 +2140,8 @@ fn validate_ridge_link_graph(
 mod tests {
     use super::*;
 
-    use crate::core::cell::Cell;
     use crate::core::facet::FacetHandle;
+    use crate::core::simplex::Simplex;
     use crate::core::triangulation::Triangulation;
     use crate::geometry::kernel::FastKernel;
     use crate::vertex;
@@ -2148,14 +2168,16 @@ mod tests {
         let v3 = tds.insert_vertex_with_mapping(vertex!([1.0, 1.0])).unwrap();
 
         for tri in [[v0, v1, v2], [v0, v1, v3], [v0, v2, v3], [v1, v2, v3]] {
-            tds.insert_cell_with_mapping(Cell::new(vec![tri[0], tri[1], tri[2]], None).unwrap())
-                .unwrap();
+            tds.insert_simplex_with_mapping(
+                Simplex::new(vec![tri[0], tri[1], tri[2]], None).unwrap(),
+            )
+            .unwrap();
         }
 
         (tds, [v0, v1, v2, v3])
     }
 
-    fn build_non_manifold_boundary_ridge_tds_3d() -> (Tds<f64, (), (), 3>, CellKey, u64) {
+    fn build_non_manifold_boundary_ridge_tds_3d() -> (Tds<f64, (), (), 3>, SimplexKey, u64) {
         // Two tetrahedra that share an edge but not a facet create a non-manifold boundary:
         // the shared edge is incident to 4 boundary triangles.
         let mut tds: Tds<f64, (), (), 3> = Tds::empty();
@@ -2180,19 +2202,19 @@ mod tests {
             .insert_vertex_with_mapping(vertex!([0.0, 0.0, -1.0]))
             .unwrap();
 
-        let touched_cell = tds
-            .insert_cell_with_mapping(
-                Cell::new(vec![shared_edge_v0, shared_edge_v1, tet1_v2, tet1_v3], None).unwrap(),
+        let touched_simplex = tds
+            .insert_simplex_with_mapping(
+                Simplex::new(vec![shared_edge_v0, shared_edge_v1, tet1_v2, tet1_v3], None).unwrap(),
             )
             .unwrap();
         let _ = tds
-            .insert_cell_with_mapping(
-                Cell::new(vec![shared_edge_v0, shared_edge_v1, tet2_v2, tet2_v3], None).unwrap(),
+            .insert_simplex_with_mapping(
+                Simplex::new(vec![shared_edge_v0, shared_edge_v1, tet2_v2, tet2_v3], None).unwrap(),
             )
             .unwrap();
 
         let expected_ridge_key = facet_key_from_vertices(&[shared_edge_v0, shared_edge_v1]);
-        (tds, touched_cell, expected_ridge_key)
+        (tds, touched_simplex, expected_ridge_key)
     }
 
     #[test]
@@ -2206,9 +2228,9 @@ mod tests {
 
         let tds =
             Triangulation::<FastKernel<f64>, (), (), 3>::build_initial_simplex(&vertices).unwrap();
-        let facet_to_cells = tds.build_facet_to_cells_map().unwrap();
+        let facet_to_simplices = tds.build_facet_to_simplices_map().unwrap();
 
-        assert!(validate_facet_degree(&facet_to_cells).is_ok());
+        assert!(validate_facet_degree(&facet_to_simplices).is_ok());
     }
 
     #[test]
@@ -2236,14 +2258,14 @@ mod tests {
             .unwrap();
 
         let _ = tds
-            .insert_cell_with_mapping(Cell::new(vec![v0, v1, v2, v3], None).unwrap())
+            .insert_simplex_with_mapping(Simplex::new(vec![v0, v1, v2, v3], None).unwrap())
             .unwrap();
         let _ = tds
-            .insert_cell_with_mapping(Cell::new(vec![v0, v1, v2, v4], None).unwrap())
+            .insert_simplex_with_mapping(Simplex::new(vec![v0, v1, v2, v4], None).unwrap())
             .unwrap();
 
-        let facet_to_cells = tds.build_facet_to_cells_map().unwrap();
-        assert!(validate_facet_degree(&facet_to_cells).is_ok());
+        let facet_to_simplices = tds.build_facet_to_simplices_map().unwrap();
+        assert!(validate_facet_degree(&facet_to_simplices).is_ok());
     }
 
     #[test]
@@ -2272,27 +2294,27 @@ mod tests {
             .unwrap();
 
         let _ = tds
-            .insert_cell_with_mapping(Cell::new(vec![v0, v1, v2, v3], None).unwrap())
+            .insert_simplex_with_mapping(Simplex::new(vec![v0, v1, v2, v3], None).unwrap())
             .unwrap();
         let _ = tds
-            .insert_cell_with_mapping(Cell::new(vec![v0, v1, v2, v4], None).unwrap())
+            .insert_simplex_with_mapping(Simplex::new(vec![v0, v1, v2, v4], None).unwrap())
             .unwrap();
         let _ = tds
-            .insert_cell_bypassing_topology_checks_for_test(
-                Cell::new(vec![v0, v1, v2, v5], None).unwrap(),
+            .insert_simplex_bypassing_topology_checks_for_test(
+                Simplex::new(vec![v0, v1, v2, v5], None).unwrap(),
             )
             .unwrap();
 
-        let facet_to_cells = tds.build_facet_to_cells_map().unwrap();
+        let facet_to_simplices = tds.build_facet_to_simplices_map().unwrap();
 
         let expected_facet_key = facet_key_from_vertices(&[v0, v1, v2]);
-        match validate_facet_degree(&facet_to_cells) {
+        match validate_facet_degree(&facet_to_simplices) {
             Err(ManifoldError::ManifoldFacetMultiplicity {
                 facet_key,
-                cell_count,
+                simplex_count,
             }) => {
                 assert_eq!(facet_key, expected_facet_key);
-                assert_eq!(cell_count, 3);
+                assert_eq!(simplex_count, 3);
             }
             other => panic!("Expected ManifoldFacetMultiplicity, got {other:?}"),
         }
@@ -2309,9 +2331,9 @@ mod tests {
 
         let tds =
             Triangulation::<FastKernel<f64>, (), (), 3>::build_initial_simplex(&vertices).unwrap();
-        let facet_to_cells = tds.build_facet_to_cells_map().unwrap();
+        let facet_to_simplices = tds.build_facet_to_simplices_map().unwrap();
 
-        assert!(validate_closed_boundary(&tds, &facet_to_cells).is_ok());
+        assert!(validate_closed_boundary(&tds, &facet_to_simplices).is_ok());
     }
 
     #[test]
@@ -2325,15 +2347,15 @@ mod tests {
 
         let tds =
             Triangulation::<FastKernel<f64>, (), (), 3>::build_initial_simplex(&vertices).unwrap();
-        let cell_key = tds.cells().next().unwrap().0;
+        let simplex_key = tds.simplices().next().unwrap().0;
 
         // Synthesize an invalid boundary facet handle: facet indices must be < D+1.
-        let mut facet_to_cells: FacetToCellsMap = FacetToCellsMap::default();
+        let mut facet_to_simplices: FacetToSimplicesMap = FacetToSimplicesMap::default();
         let mut handles: SmallBuffer<FacetHandle, 2> = SmallBuffer::new();
-        handles.push(FacetHandle::new(cell_key, u8::MAX));
-        facet_to_cells.insert(0_u64, handles);
+        handles.push(FacetHandle::new(simplex_key, u8::MAX));
+        facet_to_simplices.insert(0_u64, handles);
 
-        match validate_closed_boundary(&tds, &facet_to_cells) {
+        match validate_closed_boundary(&tds, &facet_to_simplices) {
             Err(ManifoldError::Tds(TdsError::IndexOutOfBounds { index, bound, .. })) => {
                 assert!(
                     index >= bound,
@@ -2366,7 +2388,7 @@ mod tests {
             Err(ManifoldError::VertexLinkNotManifold {
                 vertex_key: got,
                 link_vertex_count,
-                link_cell_count,
+                link_simplex_count,
                 boundary_facet_count,
                 interior_vertex,
                 ..
@@ -2374,7 +2396,7 @@ mod tests {
                 assert_eq!(got, vertex_key);
                 assert!(interior_vertex);
                 assert_eq!(link_vertex_count, 1);
-                assert_eq!(link_cell_count, 1);
+                assert_eq!(link_simplex_count, 1);
                 assert_eq!(boundary_facet_count, 0);
             }
             other => panic!("Expected VertexLinkNotManifold, got {other:?}"),
@@ -2403,7 +2425,7 @@ mod tests {
             Err(ManifoldError::VertexLinkNotManifold {
                 vertex_key: got,
                 link_vertex_count,
-                link_cell_count,
+                link_simplex_count,
                 boundary_facet_count,
                 interior_vertex,
                 ..
@@ -2411,7 +2433,7 @@ mod tests {
                 assert_eq!(got, vertex_key);
                 assert!(!interior_vertex);
                 assert_eq!(link_vertex_count, 2);
-                assert_eq!(link_cell_count, 2);
+                assert_eq!(link_simplex_count, 2);
                 assert_eq!(boundary_facet_count, 1);
             }
             other => panic!("Expected VertexLinkNotManifold, got {other:?}"),
@@ -2462,7 +2484,7 @@ mod tests {
             Err(ManifoldError::VertexLinkNotManifold {
                 vertex_key: got,
                 link_vertex_count,
-                link_cell_count,
+                link_simplex_count,
                 boundary_facet_count,
                 connected,
                 max_degree,
@@ -2471,7 +2493,7 @@ mod tests {
                 assert_eq!(got, vertex_key);
                 assert!(interior_vertex);
                 assert_eq!(link_vertex_count, 3);
-                assert_eq!(link_cell_count, 2);
+                assert_eq!(link_simplex_count, 2);
                 assert_eq!(boundary_facet_count, 0);
                 assert!(connected);
                 assert_eq!(max_degree, 2);
@@ -2520,9 +2542,9 @@ mod tests {
         let v1 = tds.insert_vertex_with_mapping(vertex!([1.0])).unwrap();
         let v2 = tds.insert_vertex_with_mapping(vertex!([2.0])).unwrap();
 
-        tds.insert_cell_with_mapping(Cell::new(vec![v0, v1], None).unwrap())
+        tds.insert_simplex_with_mapping(Simplex::new(vec![v0, v1], None).unwrap())
             .unwrap();
-        tds.insert_cell_with_mapping(Cell::new(vec![v1, v2], None).unwrap())
+        tds.insert_simplex_with_mapping(Simplex::new(vec![v1, v2], None).unwrap())
             .unwrap();
 
         validate_single_vertex_link(&tds, v0, false).unwrap();
@@ -2537,7 +2559,7 @@ mod tests {
         let v0 = tds.insert_vertex_with_mapping(vertex!([0.0])).unwrap();
         let v1 = tds.insert_vertex_with_mapping(vertex!([1.0])).unwrap();
 
-        tds.insert_cell_with_mapping(Cell::new(vec![v0, v1], None).unwrap())
+        tds.insert_simplex_with_mapping(Simplex::new(vec![v0, v1], None).unwrap())
             .unwrap();
 
         assert!(matches!(
@@ -2554,7 +2576,7 @@ mod tests {
         let v1 = tds.insert_vertex_with_mapping(vertex!([1.0, 0.0])).unwrap();
         let v2 = tds.insert_vertex_with_mapping(vertex!([0.0, 1.0])).unwrap();
 
-        tds.insert_cell_with_mapping(Cell::new(vec![v0, v1, v2], None).unwrap())
+        tds.insert_simplex_with_mapping(Simplex::new(vec![v0, v1, v2], None).unwrap())
             .unwrap();
 
         validate_single_vertex_link(&tds, v0, false).unwrap();
@@ -2595,24 +2617,26 @@ mod tests {
             [center, vc, vd],
             [center, vd, va],
         ] {
-            tds.insert_cell_with_mapping(Cell::new(vec![tri[0], tri[1], tri[2]], None).unwrap())
-                .unwrap();
+            tds.insert_simplex_with_mapping(
+                Simplex::new(vec![tri[0], tri[1], tri[2]], None).unwrap(),
+            )
+            .unwrap();
         }
 
-        let facet_to_cells = tds.build_facet_to_cells_map().unwrap();
+        let facet_to_simplices = tds.build_facet_to_simplices_map().unwrap();
 
         // Sanity: pseudomanifold-with-boundary checks pass.
-        validate_facet_degree(&facet_to_cells).unwrap();
-        validate_closed_boundary(&tds, &facet_to_cells).unwrap();
+        validate_facet_degree(&facet_to_simplices).unwrap();
+        validate_closed_boundary(&tds, &facet_to_simplices).unwrap();
 
-        let boundary_vertices = build_boundary_vertex_set(&tds, &facet_to_cells).unwrap();
+        let boundary_vertices = build_boundary_vertex_set(&tds, &facet_to_simplices).unwrap();
         for boundary_vertex in [va, vb, vc, vd] {
             assert!(boundary_vertices.contains(&boundary_vertex));
         }
         assert!(!boundary_vertices.contains(&center));
 
         // Boundary vertex link is a path (two degree-1 vertices).
-        let star_a = simplex_star_cells(&tds, &[va]).unwrap();
+        let star_a = simplex_star_simplices(&tds, &[va]).unwrap();
         let link_a = simplex_link_simplices_from_star(&tds, &[va], &star_a).unwrap();
         let Some((connected, max_degree, degree_one_vertices, vertex_count)) =
             link_1d_graph_stats(&link_a)
@@ -2625,7 +2649,7 @@ mod tests {
         assert_eq!(vertex_count, 3);
 
         // Interior vertex link is a cycle (no degree-1 vertices).
-        let star_o = simplex_star_cells(&tds, &[center]).unwrap();
+        let star_o = simplex_star_simplices(&tds, &[center]).unwrap();
         let link_o = simplex_link_simplices_from_star(&tds, &[center], &star_o).unwrap();
         let Some((connected, max_degree, degree_one_vertices, vertex_count)) =
             link_1d_graph_stats(&link_o)
@@ -2638,7 +2662,7 @@ mod tests {
         assert_eq!(vertex_count, 4);
 
         // Full vertex-link validation should succeed.
-        validate_vertex_links(&tds, &facet_to_cells).unwrap();
+        validate_vertex_links(&tds, &facet_to_simplices).unwrap();
 
         // And misclassifications should be rejected (guards the interior/boundary distinction).
         assert!(matches!(
@@ -2657,21 +2681,25 @@ mod tests {
 
         let tds =
             Triangulation::<FastKernel<f64>, (), (), 1>::build_initial_simplex(&vertices).unwrap();
-        let facet_to_cells = tds.build_facet_to_cells_map().unwrap();
+        let facet_to_simplices = tds.build_facet_to_simplices_map().unwrap();
 
         // Codimension-2 boundary manifoldness is only meaningful for D>=2.
-        assert!(validate_closed_boundary(&tds, &facet_to_cells).is_ok());
+        assert!(validate_closed_boundary(&tds, &facet_to_simplices).is_ok());
     }
 
     #[test]
     fn test_validate_closed_boundary_noop_for_closed_2d_surface() {
         let (tds, _vertices) = build_closed_surface_s2_tds_2d();
-        let facet_to_cells = tds.build_facet_to_cells_map().unwrap();
+        let facet_to_simplices = tds.build_facet_to_simplices_map().unwrap();
 
         // Sanity: no boundary facets (every edge has exactly 2 incident triangles).
-        assert!(facet_to_cells.values().all(|handles| handles.len() == 2));
+        assert!(
+            facet_to_simplices
+                .values()
+                .all(|handles| handles.len() == 2)
+        );
 
-        assert!(validate_closed_boundary(&tds, &facet_to_cells).is_ok());
+        assert!(validate_closed_boundary(&tds, &facet_to_simplices).is_ok());
     }
 
     #[test]
@@ -2679,18 +2707,18 @@ mod tests {
         let (tds, _vertices) = build_closed_surface_s2_tds_2d();
 
         // Sanity: pseudomanifold checks pass.
-        let facet_to_cells = tds.build_facet_to_cells_map().unwrap();
-        validate_facet_degree(&facet_to_cells).unwrap();
-        validate_closed_boundary(&tds, &facet_to_cells).unwrap();
+        let facet_to_simplices = tds.build_facet_to_simplices_map().unwrap();
+        validate_facet_degree(&facet_to_simplices).unwrap();
+        validate_closed_boundary(&tds, &facet_to_simplices).unwrap();
 
         assert!(validate_ridge_links(&tds).is_ok());
     }
 
     #[test]
-    fn test_simplex_star_cells_errors_on_empty_simplex() {
+    fn test_simplex_star_simplices_errors_on_empty_simplex() {
         let tds: Tds<f64, (), (), 2> = Tds::empty();
 
-        match simplex_star_cells(&tds, &[]) {
+        match simplex_star_simplices(&tds, &[]) {
             Err(ManifoldError::Tds(TdsError::InconsistentDataStructure { ref message }))
                 if message.contains("at least one vertex") => {}
             other => panic!("Expected InconsistentDataStructure for empty simplex, got {other:?}"),
@@ -2698,12 +2726,12 @@ mod tests {
     }
 
     #[test]
-    fn test_simplex_star_cells_returns_empty_for_isolated_vertex() {
+    fn test_simplex_star_simplices_returns_empty_for_isolated_vertex() {
         let mut tds: Tds<f64, (), (), 2> = Tds::empty();
 
         let v0 = tds.insert_vertex_with_mapping(vertex!([0.0, 0.0])).unwrap();
 
-        let star = simplex_star_cells(&tds, &[v0]).unwrap();
+        let star = simplex_star_simplices(&tds, &[v0]).unwrap();
         assert!(star.is_empty());
     }
 
@@ -2720,9 +2748,9 @@ mod tests {
 
     #[test]
     fn test_simplex_link_simplices_from_star_errors_on_unrelated_vertex() {
-        // Defensive: a simplex vertex that exists in the TDS but is not part of a star cell should
-        // trigger a link-size mismatch (this should not happen when star cells are produced by
-        // `simplex_star_cells`, but is a robustness check for corrupted inputs).
+        // Defensive: a simplex vertex that exists in the TDS but is not part of a star simplex should
+        // trigger a link-size mismatch (this should not happen when star simplices are produced by
+        // `simplex_star_simplices`, but is a robustness check for corrupted inputs).
         let mut tds: Tds<f64, (), (), 2> = Tds::empty();
 
         let v0 = tds.insert_vertex_with_mapping(vertex!([0.0, 0.0])).unwrap();
@@ -2732,11 +2760,11 @@ mod tests {
             .insert_vertex_with_mapping(vertex!([10.0, 10.0]))
             .unwrap();
 
-        let cell_key = tds
-            .insert_cell_with_mapping(Cell::new(vec![v0, v1, v2], None).unwrap())
+        let simplex_key = tds
+            .insert_simplex_with_mapping(Simplex::new(vec![v0, v1, v2], None).unwrap())
             .unwrap();
 
-        match simplex_link_simplices_from_star(&tds, &[v0, v3], &[cell_key]) {
+        match simplex_link_simplices_from_star(&tds, &[v0, v3], &[simplex_key]) {
             Err(ManifoldError::Tds(TdsError::DimensionMismatch {
                 expected: 1,
                 actual,
@@ -2749,13 +2777,13 @@ mod tests {
     }
 
     #[test]
-    fn test_ridge_star_cells_noop_for_d_lt_2() {
+    fn test_ridge_star_simplices_noop_for_d_lt_2() {
         let tds: Tds<f64, (), (), 1> = Tds::empty();
 
-        let star = ridge_star_cells(&tds, &[]).unwrap();
+        let star = ridge_star_simplices(&tds, &[]).unwrap();
         assert!(star.is_empty());
 
-        let star = ridge_star_cells(&tds, &[VertexKey::from(KeyData::from_ffi(0))]).unwrap();
+        let star = ridge_star_simplices(&tds, &[VertexKey::from(KeyData::from_ffi(0))]).unwrap();
         assert!(star.is_empty());
     }
 
@@ -2768,7 +2796,7 @@ mod tests {
     }
 
     #[test]
-    fn test_ridge_star_cells_errors_on_wrong_vertex_count_in_3d() {
+    fn test_ridge_star_simplices_errors_on_wrong_vertex_count_in_3d() {
         let mut tds: Tds<f64, (), (), 3> = Tds::empty();
 
         let v0 = tds
@@ -2785,11 +2813,11 @@ mod tests {
             .unwrap();
 
         let _c = tds
-            .insert_cell_with_mapping(Cell::new(vec![v0, v1, v2, v3], None).unwrap())
+            .insert_simplex_with_mapping(Simplex::new(vec![v0, v1, v2, v3], None).unwrap())
             .unwrap();
 
         // In 3D, ridges are edges (2 vertices). Passing a single vertex is invalid.
-        match ridge_star_cells(&tds, &[v0]) {
+        match ridge_star_simplices(&tds, &[v0]) {
             Err(ManifoldError::Tds(TdsError::DimensionMismatch {
                 expected: 2,
                 actual: 1,
@@ -2816,12 +2844,12 @@ mod tests {
             .insert_vertex_with_mapping(vertex!([0.0, 0.0, 1.0]))
             .unwrap();
 
-        let cell_key = tds
-            .insert_cell_with_mapping(Cell::new(vec![v0, v1, v2, v3], None).unwrap())
+        let simplex_key = tds
+            .insert_simplex_with_mapping(Simplex::new(vec![v0, v1, v2, v3], None).unwrap())
             .unwrap();
 
         // In 3D, ridges are edges (2 vertices). Passing a single vertex is invalid.
-        match ridge_link_edges_from_star(&tds, &simplex(&[v0]), &[cell_key]) {
+        match ridge_link_edges_from_star(&tds, &simplex(&[v0]), &[simplex_key]) {
             Err(ManifoldError::Tds(TdsError::DimensionMismatch {
                 expected: 2,
                 actual: 1,
@@ -2832,7 +2860,7 @@ mod tests {
     }
 
     #[test]
-    fn test_ridge_star_cells_returns_incident_cells_for_vertex_ridge_in_2d() {
+    fn test_ridge_star_simplices_returns_incident_simplices_for_vertex_ridge_in_2d() {
         // In 2D, a ridge is a vertex and its star is the set of incident triangles.
         let mut tds: Tds<f64, (), (), 2> = Tds::empty();
 
@@ -2842,31 +2870,31 @@ mod tests {
         let v3 = tds.insert_vertex_with_mapping(vertex!([1.0, 1.0])).unwrap();
 
         let c012 = tds
-            .insert_cell_with_mapping(Cell::new(vec![v0, v1, v2], None).unwrap())
+            .insert_simplex_with_mapping(Simplex::new(vec![v0, v1, v2], None).unwrap())
             .unwrap();
         let c013 = tds
-            .insert_cell_with_mapping(Cell::new(vec![v0, v1, v3], None).unwrap())
+            .insert_simplex_with_mapping(Simplex::new(vec![v0, v1, v3], None).unwrap())
             .unwrap();
         let c023 = tds
-            .insert_cell_with_mapping(Cell::new(vec![v0, v2, v3], None).unwrap())
+            .insert_simplex_with_mapping(Simplex::new(vec![v0, v2, v3], None).unwrap())
             .unwrap();
         let _c123 = tds
-            .insert_cell_with_mapping(Cell::new(vec![v1, v2, v3], None).unwrap())
+            .insert_simplex_with_mapping(Simplex::new(vec![v1, v2, v3], None).unwrap())
             .unwrap();
 
-        let star = ridge_star_cells(&tds, &[v0]).unwrap();
-        let star_set: CellKeySet = star.iter().copied().collect();
+        let star = ridge_star_simplices(&tds, &[v0]).unwrap();
+        let star_set: SimplexKeySet = star.iter().copied().collect();
 
-        let expected: CellKeySet = [c012, c013, c023].into_iter().collect();
+        let expected: SimplexKeySet = [c012, c013, c023].into_iter().collect();
         assert_eq!(star_set, expected);
     }
 
     #[test]
-    fn test_ridge_star_cells_errors_on_missing_vertex_key() {
+    fn test_ridge_star_simplices_errors_on_missing_vertex_key() {
         let tds: Tds<f64, (), (), 2> = Tds::empty();
         let missing = VertexKey::from(KeyData::from_ffi(u64::MAX));
 
-        match ridge_star_cells(&tds, &[missing]) {
+        match ridge_star_simplices(&tds, &[missing]) {
             Err(ManifoldError::Tds(TdsError::VertexNotFound { vertex_key, .. })) => {
                 assert_eq!(vertex_key, missing);
             }
@@ -2882,23 +2910,23 @@ mod tests {
         let v1 = tds.insert_vertex_with_mapping(vertex!([1.0, 0.0])).unwrap();
         let v2 = tds.insert_vertex_with_mapping(vertex!([0.0, 1.0])).unwrap();
 
-        let cell_key = tds
-            .insert_cell_with_mapping(Cell::new(vec![v0, v1, v2], None).unwrap())
+        let simplex_key = tds
+            .insert_simplex_with_mapping(Simplex::new(vec![v0, v1, v2], None).unwrap())
             .unwrap();
 
-        // Corrupt the cell in-place: keep length == D+1 but introduce a duplicate link vertex.
+        // Corrupt the simplex in-place: keep length == D+1 but introduce a duplicate link vertex.
         {
-            let cell = tds
-                .cell_mut(cell_key)
-                .expect("cell key should be valid in test");
-            cell.clear_vertex_keys();
-            cell.push_vertex_key(v0);
-            cell.push_vertex_key(v1);
-            cell.push_vertex_key(v1);
+            let simplex = tds
+                .simplex_mut(simplex_key)
+                .expect("simplex key should be valid in test");
+            simplex.clear_vertex_keys();
+            simplex.push_vertex_key(v0);
+            simplex.push_vertex_key(v1);
+            simplex.push_vertex_key(v1);
         }
 
         // For ridge (vertex) v0, the link edge becomes (v1, v1), which is not a simplicial edge.
-        match ridge_link_edges_from_star(&tds, &simplex(&[v0]), &[cell_key]) {
+        match ridge_link_edges_from_star(&tds, &simplex(&[v0]), &[simplex_key]) {
             Err(ManifoldError::Tds(TdsError::InconsistentDataStructure { message })) => {
                 assert!(
                     message.contains("self-loop"),
@@ -2926,8 +2954,8 @@ mod tests {
     }
 
     #[test]
-    fn test_validate_ridge_links_errors_on_corrupted_cell_with_duplicate_vertices() {
-        // This is a defensive robustness test: a corrupted cell with duplicate vertices can
+    fn test_validate_ridge_links_errors_on_corrupted_simplex_with_duplicate_vertices() {
+        // This is a defensive robustness test: a corrupted simplex with duplicate vertices can
         // produce a malformed ridge link (wrong number of link vertices).
         let mut tds: Tds<f64, (), (), 2> = Tds::empty();
 
@@ -2935,19 +2963,19 @@ mod tests {
         let v1 = tds.insert_vertex_with_mapping(vertex!([1.0, 0.0])).unwrap();
         let v2 = tds.insert_vertex_with_mapping(vertex!([0.0, 1.0])).unwrap();
 
-        let cell_key = tds
-            .insert_cell_with_mapping(Cell::new(vec![v0, v1, v2], None).unwrap())
+        let simplex_key = tds
+            .insert_simplex_with_mapping(Simplex::new(vec![v0, v1, v2], None).unwrap())
             .unwrap();
 
-        // Corrupt the cell in-place: keep length == D+1 but introduce a duplicate vertex.
+        // Corrupt the simplex in-place: keep length == D+1 but introduce a duplicate vertex.
         {
-            let cell = tds
-                .cell_mut(cell_key)
-                .expect("cell key should be valid in test");
-            cell.clear_vertex_keys();
-            cell.push_vertex_key(v0);
-            cell.push_vertex_key(v0);
-            cell.push_vertex_key(v0);
+            let simplex = tds
+                .simplex_mut(simplex_key)
+                .expect("simplex key should be valid in test");
+            simplex.clear_vertex_keys();
+            simplex.push_vertex_key(v0);
+            simplex.push_vertex_key(v0);
+            simplex.push_vertex_key(v0);
         }
 
         match validate_ridge_links(&tds) {
@@ -2966,10 +2994,11 @@ mod tests {
 
     #[test]
     fn test_validate_closed_boundary_errors_on_non_manifold_boundary_ridge() {
-        let (tds, _touched_cell, expected_ridge_key) = build_non_manifold_boundary_ridge_tds_3d();
-        let facet_to_cells = tds.build_facet_to_cells_map().unwrap();
+        let (tds, _touched_simplex, expected_ridge_key) =
+            build_non_manifold_boundary_ridge_tds_3d();
+        let facet_to_simplices = tds.build_facet_to_simplices_map().unwrap();
 
-        match validate_closed_boundary(&tds, &facet_to_cells) {
+        match validate_closed_boundary(&tds, &facet_to_simplices) {
             Err(ManifoldError::BoundaryRidgeMultiplicity {
                 ridge_key,
                 boundary_facet_count,
@@ -2982,10 +3011,10 @@ mod tests {
     }
 
     #[test]
-    fn test_validate_local_pseudomanifold_for_cells_errors_on_non_manifold_boundary_ridge() {
-        let (tds, touched_cell, expected_ridge_key) = build_non_manifold_boundary_ridge_tds_3d();
+    fn test_validate_local_pseudomanifold_for_simplices_errors_on_non_manifold_boundary_ridge() {
+        let (tds, touched_simplex, expected_ridge_key) = build_non_manifold_boundary_ridge_tds_3d();
 
-        match validate_local_pseudomanifold_for_cells(&tds, &[touched_cell]) {
+        match validate_local_pseudomanifold_for_simplices(&tds, &[touched_simplex]) {
             Err(ManifoldError::BoundaryRidgeMultiplicity {
                 ridge_key,
                 boundary_facet_count,
@@ -2998,7 +3027,7 @@ mod tests {
     }
 
     #[test]
-    fn test_validate_local_pseudomanifold_for_cells_errors_on_missing_scope_cell() {
+    fn test_validate_local_pseudomanifold_for_simplices_errors_on_missing_scope_simplex() {
         let vertices = vec![
             vertex!([0.0, 0.0, 0.0]),
             vertex!([1.0, 0.0, 0.0]),
@@ -3007,15 +3036,15 @@ mod tests {
         ];
         let mut tds =
             Triangulation::<FastKernel<f64>, (), (), 3>::build_initial_simplex(&vertices).unwrap();
-        let cell_key = tds.cell_keys().next().unwrap();
-        assert_eq!(tds.remove_cells_by_keys(&[cell_key]), 1);
+        let simplex_key = tds.simplex_keys().next().unwrap();
+        assert_eq!(tds.remove_simplices_by_keys(&[simplex_key]), 1);
 
-        match validate_local_pseudomanifold_for_cells(&tds, &[cell_key]) {
-            Err(ManifoldError::Tds(TdsError::CellNotFound {
-                cell_key: missing_key,
+        match validate_local_pseudomanifold_for_simplices(&tds, &[simplex_key]) {
+            Err(ManifoldError::Tds(TdsError::SimplexNotFound {
+                simplex_key: missing_key,
                 ..
-            })) => assert_eq!(missing_key, cell_key),
-            other => panic!("Expected CellNotFound, got {other:?}"),
+            })) => assert_eq!(missing_key, simplex_key),
+            other => panic!("Expected SimplexNotFound, got {other:?}"),
         }
     }
 
@@ -3045,9 +3074,9 @@ mod tests {
         let (tds, v0, _incident, _nonincident) = build_wedge_two_spheres_share_vertex_tds_2d();
 
         // Sanity: pseudomanifold-with-boundary checks pass (in fact, this complex is closed).
-        let facet_to_cells = tds.build_facet_to_cells_map().unwrap();
-        validate_facet_degree(&facet_to_cells).unwrap();
-        validate_closed_boundary(&tds, &facet_to_cells).unwrap();
+        let facet_to_simplices = tds.build_facet_to_simplices_map().unwrap();
+        validate_facet_degree(&facet_to_simplices).unwrap();
+        validate_closed_boundary(&tds, &facet_to_simplices).unwrap();
 
         let expected_ridge_key = facet_key_from_vertices(&[v0]);
 
@@ -3069,7 +3098,7 @@ mod tests {
     }
 
     fn build_two_tetrahedra_sharing_facet_tds_3d()
-    -> (Tds<f64, (), (), 3>, [VertexKey; 5], [CellKey; 2]) {
+    -> (Tds<f64, (), (), 3>, [VertexKey; 5], [SimplexKey; 2]) {
         let mut tds: Tds<f64, (), (), 3> = Tds::empty();
 
         // Shared triangle.
@@ -3092,17 +3121,17 @@ mod tests {
             .unwrap();
 
         let c1 = tds
-            .insert_cell_with_mapping(Cell::new(vec![v0, v1, v2, v3], None).unwrap())
+            .insert_simplex_with_mapping(Simplex::new(vec![v0, v1, v2, v3], None).unwrap())
             .unwrap();
         let c2 = tds
-            .insert_cell_with_mapping(Cell::new(vec![v0, v1, v2, v4], None).unwrap())
+            .insert_simplex_with_mapping(Simplex::new(vec![v0, v1, v2, v4], None).unwrap())
             .unwrap();
 
         (tds, [v0, v1, v2, v3, v4], [c1, c2])
     }
 
     fn build_wedge_two_spheres_share_vertex_tds_2d()
-    -> (Tds<f64, (), (), 2>, VertexKey, CellKey, CellKey) {
+    -> (Tds<f64, (), (), 2>, VertexKey, SimplexKey, SimplexKey) {
         // Two closed 2D spheres (boundaries of tetrahedra) that share a single vertex.
         // This is a pseudomanifold (every edge has degree 2), but not a PL 2-manifold:
         // the shared vertex has a disconnected link (two disjoint cycles).
@@ -3117,16 +3146,16 @@ mod tests {
         let v3 = tds.insert_vertex_with_mapping(vertex!([1.0, 1.0])).unwrap();
 
         let c012 = tds
-            .insert_cell_with_mapping(Cell::new(vec![v0, v1, v2], None).unwrap())
+            .insert_simplex_with_mapping(Simplex::new(vec![v0, v1, v2], None).unwrap())
             .unwrap();
         let _c013 = tds
-            .insert_cell_with_mapping(Cell::new(vec![v0, v1, v3], None).unwrap())
+            .insert_simplex_with_mapping(Simplex::new(vec![v0, v1, v3], None).unwrap())
             .unwrap();
         let _c023 = tds
-            .insert_cell_with_mapping(Cell::new(vec![v0, v2, v3], None).unwrap())
+            .insert_simplex_with_mapping(Simplex::new(vec![v0, v2, v3], None).unwrap())
             .unwrap();
         let c123 = tds
-            .insert_cell_with_mapping(Cell::new(vec![v1, v2, v3], None).unwrap())
+            .insert_simplex_with_mapping(Simplex::new(vec![v1, v2, v3], None).unwrap())
             .unwrap();
 
         // Second tetrahedron boundary (shares only v0).
@@ -3141,16 +3170,16 @@ mod tests {
             .unwrap();
 
         let _c045 = tds
-            .insert_cell_with_mapping(Cell::new(vec![v0, v4, v5], None).unwrap())
+            .insert_simplex_with_mapping(Simplex::new(vec![v0, v4, v5], None).unwrap())
             .unwrap();
         let _c046 = tds
-            .insert_cell_with_mapping(Cell::new(vec![v0, v4, v6], None).unwrap())
+            .insert_simplex_with_mapping(Simplex::new(vec![v0, v4, v6], None).unwrap())
             .unwrap();
         let _c056 = tds
-            .insert_cell_with_mapping(Cell::new(vec![v0, v5, v6], None).unwrap())
+            .insert_simplex_with_mapping(Simplex::new(vec![v0, v5, v6], None).unwrap())
             .unwrap();
         let _c456 = tds
-            .insert_cell_with_mapping(Cell::new(vec![v4, v5, v6], None).unwrap())
+            .insert_simplex_with_mapping(Simplex::new(vec![v4, v5, v6], None).unwrap())
             .unwrap();
 
         (tds, v0, c012, c123)
@@ -3165,25 +3194,25 @@ mod tests {
     }
 
     #[test]
-    fn test_build_ridge_star_map_errors_on_corrupted_cell_vertex_count() {
+    fn test_build_ridge_star_map_errors_on_corrupted_simplex_vertex_count() {
         let mut tds: Tds<f64, (), (), 2> = Tds::empty();
 
         let v0 = tds.insert_vertex_with_mapping(vertex!([0.0, 0.0])).unwrap();
         let v1 = tds.insert_vertex_with_mapping(vertex!([1.0, 0.0])).unwrap();
         let v2 = tds.insert_vertex_with_mapping(vertex!([0.0, 1.0])).unwrap();
 
-        let cell_key = tds
-            .insert_cell_with_mapping(Cell::new(vec![v0, v1, v2], None).unwrap())
+        let simplex_key = tds
+            .insert_simplex_with_mapping(Simplex::new(vec![v0, v1, v2], None).unwrap())
             .unwrap();
 
-        // Corrupt the cell in-place: change it to have only 2 vertices.
+        // Corrupt the simplex in-place: change it to have only 2 vertices.
         {
-            let cell = tds
-                .cell_mut(cell_key)
-                .expect("cell key should be valid in test");
-            cell.clear_vertex_keys();
-            cell.push_vertex_key(v0);
-            cell.push_vertex_key(v1);
+            let simplex = tds
+                .simplex_mut(simplex_key)
+                .expect("simplex key should be valid in test");
+            simplex.clear_vertex_keys();
+            simplex.push_vertex_key(v0);
+            simplex.push_vertex_key(v1);
         }
 
         match build_ridge_star_map(&tds) {
@@ -3192,21 +3221,23 @@ mod tests {
                 actual: 2,
                 ..
             })) => {}
-            other => panic!("Expected DimensionMismatch(3, 2) for corrupted cell, got {other:?}"),
+            other => {
+                panic!("Expected DimensionMismatch(3, 2) for corrupted simplex, got {other:?}")
+            }
         }
     }
 
     #[test]
-    fn test_build_ridge_star_map_for_cells_noop_for_d_lt_2() {
+    fn test_build_ridge_star_map_for_simplices_noop_for_d_lt_2() {
         let tds: Tds<f64, (), (), 1> = Tds::empty();
-        let cell_key = CellKey::from(KeyData::from_ffi(0));
+        let simplex_key = SimplexKey::from(KeyData::from_ffi(0));
 
-        let map = build_ridge_star_map_for_cells(&tds, &[cell_key]).unwrap();
+        let map = build_ridge_star_map_for_simplices(&tds, &[simplex_key]).unwrap();
         assert!(map.is_empty());
     }
 
     #[test]
-    fn test_build_ridge_star_map_for_cells_empty_returns_empty() {
+    fn test_build_ridge_star_map_for_simplices_empty_returns_empty() {
         let mut tds: Tds<f64, (), (), 3> = Tds::empty();
         let v0 = tds
             .insert_vertex_with_mapping(vertex!([0.0, 0.0, 0.0]))
@@ -3222,27 +3253,27 @@ mod tests {
             .unwrap();
 
         let _ = tds
-            .insert_cell_with_mapping(Cell::new(vec![v0, v1, v2, v3], None).unwrap())
+            .insert_simplex_with_mapping(Simplex::new(vec![v0, v1, v2, v3], None).unwrap())
             .unwrap();
 
-        let map = build_ridge_star_map_for_cells(&tds, &[]).unwrap();
+        let map = build_ridge_star_map_for_simplices(&tds, &[]).unwrap();
         assert!(map.is_empty());
     }
 
     #[test]
-    fn test_build_ridge_star_map_for_cells_3d_single_cell_includes_only_its_ridges_and_full_stars()
-    {
+    fn test_build_ridge_star_map_for_simplices_3d_single_simplex_includes_only_its_ridges_and_full_stars()
+     {
         let (tds, [v0, v1, v2, v3, v4], [c1, c2]) = build_two_tetrahedra_sharing_facet_tds_3d();
 
-        // Include a missing cell key to ensure it is skipped, not treated as an error.
-        let missing = CellKey::from(KeyData::from_ffi(u64::MAX));
+        // Include a missing simplex key to ensure it is skipped, not treated as an error.
+        let missing = SimplexKey::from(KeyData::from_ffi(u64::MAX));
 
-        let map = build_ridge_star_map_for_cells(&tds, &[c1, missing]).unwrap();
+        let map = build_ridge_star_map_for_simplices(&tds, &[c1, missing]).unwrap();
 
         // In 3D, ridges are edges: a tetrahedron has C(4,2) = 6 edges.
         assert_eq!(map.len(), 6);
 
-        let star_set_for_edge = |a: VertexKey, b: VertexKey| -> CellKeySet {
+        let star_set_for_edge = |a: VertexKey, b: VertexKey| -> SimplexKeySet {
             let key = facet_key_from_vertices(&[a, b]);
             let star = map
                 .get(&key)
@@ -3252,18 +3283,18 @@ mod tests {
             assert_eq!(periodic_simplex_key(&star.ridge_vertices), key);
             assert_eq!(star.ridge_vertices.len(), 2);
 
-            star.star_cells.iter().copied().collect()
+            star.star_simplices.iter().copied().collect()
         };
 
-        let shared_star: CellKeySet = [c1, c2].into_iter().collect();
-        let c1_only: CellKeySet = std::iter::once(c1).collect();
+        let shared_star: SimplexKeySet = [c1, c2].into_iter().collect();
+        let c1_only: SimplexKeySet = std::iter::once(c1).collect();
 
-        // Shared-facet edges should have a 2-cell star (full star across the whole TDS).
+        // Shared-facet edges should have a 2-simplex star (full star across the whole TDS).
         assert_eq!(star_set_for_edge(v0, v1), shared_star);
         assert_eq!(star_set_for_edge(v0, v2), shared_star);
         assert_eq!(star_set_for_edge(v1, v2), shared_star);
 
-        // Edges incident to the first tetrahedron's opposite vertex should have a 1-cell star.
+        // Edges incident to the first tetrahedron's opposite vertex should have a 1-simplex star.
         assert_eq!(star_set_for_edge(v0, v3), c1_only);
         assert_eq!(star_set_for_edge(v1, v3), c1_only);
         assert_eq!(star_set_for_edge(v2, v3), c1_only);
@@ -3275,10 +3306,10 @@ mod tests {
     }
 
     #[test]
-    fn test_build_ridge_star_map_for_cells_3d_two_cells_includes_union_of_ridges() {
+    fn test_build_ridge_star_map_for_simplices_3d_two_simplices_includes_union_of_ridges() {
         let (tds, [v0, v1, v2, v3, v4], [c1, c2]) = build_two_tetrahedra_sharing_facet_tds_3d();
 
-        let map = build_ridge_star_map_for_cells(&tds, &[c1, c2]).unwrap();
+        let map = build_ridge_star_map_for_simplices(&tds, &[c1, c2]).unwrap();
 
         // Each tetrahedron has 6 edges and they share 3 edges on the shared facet => 6+6-3=9.
         assert_eq!(map.len(), 9);
@@ -3287,11 +3318,11 @@ mod tests {
             let key = facet_key_from_vertices(&[a, b]);
             map.get(&key)
                 .expect("expected ridge key in local ridge-star map")
-                .star_cells
+                .star_simplices
                 .len()
         };
 
-        // Shared edges have a 2-cell star.
+        // Shared edges have a 2-simplex star.
         assert_eq!(star_size_for_edge(v0, v1), 2);
         assert_eq!(star_size_for_edge(v0, v2), 2);
         assert_eq!(star_size_for_edge(v1, v2), 2);
@@ -3307,11 +3338,11 @@ mod tests {
     }
 
     #[test]
-    fn test_build_ridge_star_map_for_cells_2d_includes_full_star_for_shared_vertex() {
+    fn test_build_ridge_star_map_for_simplices_2d_includes_full_star_for_shared_vertex() {
         let (tds, v0, incident, _nonincident) = build_wedge_two_spheres_share_vertex_tds_2d();
 
         // In 2D, ridges are vertices. A single triangle touches 3 ridges.
-        let map = build_ridge_star_map_for_cells(&tds, &[incident]).unwrap();
+        let map = build_ridge_star_map_for_simplices(&tds, &[incident]).unwrap();
         assert_eq!(map.len(), 3);
 
         // The shared vertex v0 should have a star consisting of 6 incident triangles (3 from each sphere).
@@ -3319,44 +3350,46 @@ mod tests {
         let star = map
             .get(&ridge_key)
             .expect("expected ridge key for shared vertex");
-        assert_eq!(star.star_cells.len(), 6);
+        assert_eq!(star.star_simplices.len(), 6);
     }
 
     #[test]
-    fn test_build_ridge_star_map_for_cells_errors_on_corrupted_cell_vertex_count() {
-        // Corrupt a cell's vertex list to violate the (D+1)-vertices invariant.
+    fn test_build_ridge_star_map_for_simplices_errors_on_corrupted_simplex_vertex_count() {
+        // Corrupt a simplex's vertex list to violate the (D+1)-vertices invariant.
         let mut tds: Tds<f64, (), (), 2> = Tds::empty();
 
         let v0 = tds.insert_vertex_with_mapping(vertex!([0.0, 0.0])).unwrap();
         let v1 = tds.insert_vertex_with_mapping(vertex!([1.0, 0.0])).unwrap();
         let v2 = tds.insert_vertex_with_mapping(vertex!([0.0, 1.0])).unwrap();
 
-        let cell_key = tds
-            .insert_cell_with_mapping(Cell::new(vec![v0, v1, v2], None).unwrap())
+        let simplex_key = tds
+            .insert_simplex_with_mapping(Simplex::new(vec![v0, v1, v2], None).unwrap())
             .unwrap();
 
-        // Corrupt the cell in-place: change it to have only 2 vertices.
+        // Corrupt the simplex in-place: change it to have only 2 vertices.
         {
-            let cell = tds
-                .cell_mut(cell_key)
-                .expect("cell key should be valid in test");
-            cell.clear_vertex_keys();
-            cell.push_vertex_key(v0);
-            cell.push_vertex_key(v1);
+            let simplex = tds
+                .simplex_mut(simplex_key)
+                .expect("simplex key should be valid in test");
+            simplex.clear_vertex_keys();
+            simplex.push_vertex_key(v0);
+            simplex.push_vertex_key(v1);
         }
 
-        match build_ridge_star_map_for_cells(&tds, &[cell_key]) {
+        match build_ridge_star_map_for_simplices(&tds, &[simplex_key]) {
             Err(ManifoldError::Tds(TdsError::DimensionMismatch {
                 expected: 3,
                 actual: 2,
                 ..
             })) => {}
-            other => panic!("Expected DimensionMismatch(3, 2) for corrupted cell, got {other:?}"),
+            other => {
+                panic!("Expected DimensionMismatch(3, 2) for corrupted simplex, got {other:?}")
+            }
         }
     }
 
     #[test]
-    fn test_validate_ridge_links_for_cells_ok_for_single_tetrahedron_in_3d() {
+    fn test_validate_ridge_links_for_simplices_ok_for_single_tetrahedron_in_3d() {
         let vertices = vec![
             vertex!([0.0, 0.0, 0.0]),
             vertex!([1.0, 0.0, 0.0]),
@@ -3367,43 +3400,43 @@ mod tests {
         let tds =
             Triangulation::<FastKernel<f64>, (), (), 3>::build_initial_simplex(&vertices).unwrap();
 
-        let cells: Vec<CellKey> = tds.cells().map(|(k, _)| k).collect();
-        validate_ridge_links_for_cells(&tds, &cells).unwrap();
+        let simplices: Vec<SimplexKey> = tds.simplices().map(|(k, _)| k).collect();
+        validate_ridge_links_for_simplices(&tds, &simplices).unwrap();
 
-        // And it should be a no-op on empty cell lists.
-        validate_ridge_links_for_cells(&tds, &[]).unwrap();
+        // And it should be a no-op on empty simplex lists.
+        validate_ridge_links_for_simplices(&tds, &[]).unwrap();
     }
 
     #[test]
-    fn test_validate_ridge_links_for_cells_ok_for_missing_cell_keys() {
-        // Defensive: local validation should ignore missing cell keys.
+    fn test_validate_ridge_links_for_simplices_ok_for_missing_simplex_keys() {
+        // Defensive: local validation should ignore missing simplex keys.
         let tds: Tds<f64, (), (), 3> = Tds::empty();
-        let missing = CellKey::from(KeyData::from_ffi(u64::MAX));
+        let missing = SimplexKey::from(KeyData::from_ffi(u64::MAX));
 
-        assert!(validate_ridge_links_for_cells(&tds, &[missing]).is_ok());
+        assert!(validate_ridge_links_for_simplices(&tds, &[missing]).is_ok());
     }
 
     #[test]
-    fn test_validate_ridge_links_for_cells_noop_for_d_lt_2() {
+    fn test_validate_ridge_links_for_simplices_noop_for_d_lt_2() {
         let mut tds: Tds<f64, (), (), 1> = Tds::empty();
 
         let v0 = tds.insert_vertex_with_mapping(vertex!([0.0])).unwrap();
         let v1 = tds.insert_vertex_with_mapping(vertex!([1.0])).unwrap();
 
         let c01 = tds
-            .insert_cell_with_mapping(Cell::new(vec![v0, v1], None).unwrap())
+            .insert_simplex_with_mapping(Simplex::new(vec![v0, v1], None).unwrap())
             .unwrap();
 
-        assert!(validate_ridge_links_for_cells(&tds, &[c01]).is_ok());
+        assert!(validate_ridge_links_for_simplices(&tds, &[c01]).is_ok());
     }
 
     #[test]
-    fn test_validate_ridge_links_for_cells_rejects_wedge_at_vertex_in_2d() {
+    fn test_validate_ridge_links_for_simplices_rejects_wedge_at_vertex_in_2d() {
         let (tds, v0, incident, _nonincident) = build_wedge_two_spheres_share_vertex_tds_2d();
 
         let expected_ridge_key = facet_key_from_vertices(&[v0]);
 
-        match validate_ridge_links_for_cells(&tds, &[incident]) {
+        match validate_ridge_links_for_simplices(&tds, &[incident]) {
             Err(ManifoldError::RidgeLinkNotManifold {
                 ridge_key,
                 link_vertex_count,
@@ -3424,13 +3457,13 @@ mod tests {
     }
 
     #[test]
-    fn test_validate_ridge_links_for_cells_only_checks_ridges_touched_by_input_cells() {
+    fn test_validate_ridge_links_for_simplices_only_checks_ridges_touched_by_input_simplices() {
         // The wedge complex is globally invalid, but local ridge-link validation should only
-        // consider ridges incident to the provided cells.
+        // consider ridges incident to the provided simplices.
         let (tds, _v0, _incident, nonincident) = build_wedge_two_spheres_share_vertex_tds_2d();
 
         // Validate a triangle that does NOT touch the shared vertex; this should not detect the wedge.
-        assert!(validate_ridge_links_for_cells(&tds, &[nonincident]).is_ok());
+        assert!(validate_ridge_links_for_simplices(&tds, &[nonincident]).is_ok());
     }
 
     fn build_cone_on_torus_tds() -> (Tds<f64, (), (), 3>, VertexKey) {
@@ -3474,8 +3507,8 @@ mod tests {
 
                 for tri in [[v00, v10, v01], [v10, v11, v01]] {
                     let _ = tds
-                        .insert_cell_with_mapping(
-                            Cell::new(vec![tri[0], tri[1], tri[2], apex], None).unwrap(),
+                        .insert_simplex_with_mapping(
+                            Simplex::new(vec![tri[0], tri[1], tri[2], apex], None).unwrap(),
                         )
                         .unwrap();
                 }
@@ -3493,15 +3526,15 @@ mod tests {
         // previously-duplicated `test_validate_vertex_links_rejects_cone_on_torus_in_3d` after consolidation.
         let (tds, apex) = build_cone_on_torus_tds();
 
-        let facet_to_cells = tds.build_facet_to_cells_map().unwrap();
-        validate_facet_degree(&facet_to_cells).unwrap();
-        validate_closed_boundary(&tds, &facet_to_cells).unwrap();
+        let facet_to_simplices = tds.build_facet_to_simplices_map().unwrap();
+        validate_facet_degree(&facet_to_simplices).unwrap();
+        validate_closed_boundary(&tds, &facet_to_simplices).unwrap();
 
         // Ridge-link validation should *not* detect this singularity.
         assert!(validate_ridge_links(&tds).is_ok());
 
         // Vertex-link validation MUST reject it: apex link is T^2, not S^2.
-        match validate_vertex_links(&tds, &facet_to_cells) {
+        match validate_vertex_links(&tds, &facet_to_simplices) {
             Err(ManifoldError::VertexLinkNotManifold {
                 vertex_key,
                 interior_vertex,
@@ -3516,10 +3549,10 @@ mod tests {
     }
 
     #[test]
-    fn test_simplex_star_cells_rejects_missing_vertex() {
+    fn test_simplex_star_simplices_rejects_missing_vertex() {
         let tds: Tds<f64, (), (), 2> = Tds::empty();
         let stale_key = VertexKey::from(KeyData::from_ffi(0xDEAD));
-        match simplex_star_cells(&tds, &[stale_key]) {
+        match simplex_star_simplices(&tds, &[stale_key]) {
             Err(ManifoldError::Tds(TdsError::VertexNotFound {
                 vertex_key,
                 ref context,
@@ -3532,13 +3565,13 @@ mod tests {
     }
 
     #[test]
-    fn test_ridge_star_cells_rejects_too_many_vertices() {
+    fn test_ridge_star_simplices_rejects_too_many_vertices() {
         let tds: Tds<f64, (), (), 3> = Tds::empty();
         // For D=3, ridges have D-1=2 vertices; pass 3 vertices instead.
         let v0 = VertexKey::from(KeyData::from_ffi(1));
         let v1 = VertexKey::from(KeyData::from_ffi(2));
         let v2 = VertexKey::from(KeyData::from_ffi(3));
-        match ridge_star_cells(&tds, &[v0, v1, v2]) {
+        match ridge_star_simplices(&tds, &[v0, v1, v2]) {
             Err(ManifoldError::Tds(TdsError::DimensionMismatch {
                 expected, actual, ..
             })) => {
@@ -3550,8 +3583,8 @@ mod tests {
     }
 
     #[test]
-    fn test_validate_closed_boundary_dimension_mismatch_on_corrupted_cell() {
-        // Create a 3D TDS with a cell that has too few vertices (corrupted state),
+    fn test_validate_closed_boundary_dimension_mismatch_on_corrupted_simplex() {
+        // Create a 3D TDS with a simplex that has too few vertices (corrupted state),
         // then trigger the DimensionMismatch path in validate_closed_boundary.
         let mut tds: Tds<f64, (), (), 3> = Tds::empty();
 
@@ -3568,33 +3601,33 @@ mod tests {
             .insert_vertex_with_mapping(vertex!([0.0, 0.0, 1.0]))
             .unwrap();
 
-        let cell_key = tds
-            .insert_cell_with_mapping(Cell::new(vec![v0, v1, v2, v3], None).unwrap())
+        let simplex_key = tds
+            .insert_simplex_with_mapping(Simplex::new(vec![v0, v1, v2, v3], None).unwrap())
             .unwrap();
 
-        // Build a facet-to-cells map with a synthetic boundary facet pointing at facet_index=0
-        // but then corrupt the cell to only have 2 vertices.
+        // Build a facet-to-simplices map with a synthetic boundary facet pointing at facet_index=0
+        // but then corrupt the simplex to only have 2 vertices.
         {
-            let cell = tds.cell_mut(cell_key).unwrap();
+            let simplex = tds.simplex_mut(simplex_key).unwrap();
             // Replace with only 2 vertices so the facet subtraction produces wrong count.
-            cell.clear_vertex_keys();
-            cell.push_vertex_key(v0);
-            cell.push_vertex_key(v1);
+            simplex.clear_vertex_keys();
+            simplex.push_vertex_key(v0);
+            simplex.push_vertex_key(v1);
         }
 
-        let mut facet_to_cells: FacetToCellsMap = FacetToCellsMap::default();
+        let mut facet_to_simplices: FacetToSimplicesMap = FacetToSimplicesMap::default();
         let mut handles: SmallBuffer<FacetHandle, 2> = SmallBuffer::new();
-        handles.push(FacetHandle::new(cell_key, 0));
-        facet_to_cells.insert(0_u64, handles);
+        handles.push(FacetHandle::new(simplex_key, 0));
+        facet_to_simplices.insert(0_u64, handles);
 
-        match validate_closed_boundary(&tds, &facet_to_cells) {
+        match validate_closed_boundary(&tds, &facet_to_simplices) {
             Err(ManifoldError::Tds(TdsError::DimensionMismatch {
                 expected, actual, ..
             })) => {
                 assert_eq!(expected, 3, "D=3: boundary facet should have 3 vertices");
                 assert!(
                     actual != 3,
-                    "Corrupted cell should produce wrong vertex count"
+                    "Corrupted simplex should produce wrong vertex count"
                 );
             }
             other => panic!("Expected DimensionMismatch, got {other:?}"),
@@ -3605,7 +3638,7 @@ mod tests {
     fn test_manifold_error_display_variants() {
         let err = ManifoldError::ManifoldFacetMultiplicity {
             facet_key: 0xABCD,
-            cell_count: 3,
+            simplex_count: 3,
         };
         assert!(err.to_string().contains("Non-manifold facet"));
 
@@ -3659,24 +3692,24 @@ mod tests {
         for tri in sphere_faces {
             let mut verts = tri;
             verts.push(apex);
-            tds.insert_cell_with_mapping(Cell::new(verts, None).unwrap())
+            tds.insert_simplex_with_mapping(Simplex::new(verts, None).unwrap())
                 .unwrap();
         }
 
-        let facet_to_cells = tds.build_facet_to_cells_map().unwrap();
+        let facet_to_simplices = tds.build_facet_to_simplices_map().unwrap();
 
         // Sanity: pseudomanifold + ridge links pass
-        validate_facet_degree(&facet_to_cells).unwrap();
-        validate_closed_boundary(&tds, &facet_to_cells).unwrap();
+        validate_facet_degree(&facet_to_simplices).unwrap();
+        validate_closed_boundary(&tds, &facet_to_simplices).unwrap();
         validate_ridge_links(&tds).unwrap();
 
         // Vertex-link validation should ACCEPT this complex
-        validate_vertex_links(&tds, &facet_to_cells).unwrap();
+        validate_vertex_links(&tds, &facet_to_simplices).unwrap();
     }
 
     #[test]
-    fn test_build_ridge_star_map_for_cells_separates_periodic_images() {
-        // Two 2D cells share bare vertex keys but differ in periodic offsets.
+    fn test_build_ridge_star_map_for_simplices_separates_periodic_images() {
+        // Two 2D simplices share bare vertex keys but differ in periodic offsets.
         // The ridge map must produce distinct ridges for different offset images.
         let mut tds: Tds<f64, (), (), 2> = Tds::empty();
 
@@ -3685,42 +3718,42 @@ mod tests {
         let v2 = tds.insert_vertex_with_mapping(vertex!([0.5, 1.0])).unwrap();
 
         // c1: all vertices at base image [0,0].
-        let mut cell1 = Cell::new(vec![v0, v1, v2], None).unwrap();
-        cell1
+        let mut simplex1 = Simplex::new(vec![v0, v1, v2], None).unwrap();
+        simplex1
             .set_periodic_vertex_offsets(vec![[0, 0], [0, 0], [0, 0]])
             .unwrap();
-        let c1 = tds.insert_cell_with_mapping(cell1).unwrap();
+        let c1 = tds.insert_simplex_with_mapping(simplex1).unwrap();
 
         // c2: v0 at periodic image [1,0]; v1 and v2 at base image.
-        let mut cell2 = Cell::new(vec![v0, v1, v2], None).unwrap();
-        cell2
+        let mut simplex2 = Simplex::new(vec![v0, v1, v2], None).unwrap();
+        simplex2
             .set_periodic_vertex_offsets(vec![[1, 0], [0, 0], [0, 0]])
             .unwrap();
-        let c2 = tds.insert_cell_with_mapping(cell2).unwrap();
+        let c2 = tds.insert_simplex_with_mapping(simplex2).unwrap();
 
-        let map = build_ridge_star_map_for_cells(&tds, &[c1, c2]).unwrap();
+        let map = build_ridge_star_map_for_simplices(&tds, &[c1, c2]).unwrap();
 
         // In 2D, ridges have D-1 = 1 vertex.  Each triangle contributes 3 ridges.
         // c1 produces: {v0}, {v1}, {v2}    (all at base image)
         // c2 produces: {lifted_v0'}, {v1}, {v2}  (v0 at [1,0] image)
         //
-        // Shared ridges: {v1} and {v2} (same lifted ID in both cells).
+        // Shared ridges: {v1} and {v2} (same lifted ID in both simplices).
         // Distinct ridges: {v0} from c1, {lifted_v0'} from c2.
         assert_eq!(map.len(), 4, "expected 4 distinct periodic-aware ridges");
 
-        // Ridges {v1} and {v2} should have a 2-cell star (both c1 and c2).
-        let shared_count = map.values().filter(|s| s.star_cells.len() == 2).count();
+        // Ridges {v1} and {v2} should have a 2-simplex star (both c1 and c2).
+        let shared_count = map.values().filter(|s| s.star_simplices.len() == 2).count();
         assert_eq!(shared_count, 2, "two ridges should be shared");
 
-        // Ridges {v0@base} and {v0@[1,0]} should each have a 1-cell star.
-        let unique_count = map.values().filter(|s| s.star_cells.len() == 1).count();
+        // Ridges {v0@base} and {v0@[1,0]} should each have a 1-simplex star.
+        let unique_count = map.values().filter(|s| s.star_simplices.len() == 1).count();
         assert_eq!(unique_count, 2, "two ridges should be unique per image");
     }
 
     #[test]
     fn test_periodic_aware_ridge_star_empty_star_returns_error() {
         // Call periodic_aware_ridge_star with lifted vertices that don't match
-        // any cell's offsets, forcing an empty star after filtering.
+        // any simplex's offsets, forcing an empty star after filtering.
         let mut tds: Tds<f64, (), (), 2> = Tds::empty();
 
         let v0 = tds.insert_vertex_with_mapping(vertex!([0.0, 0.0])).unwrap();
@@ -3728,9 +3761,9 @@ mod tests {
         let v2 = tds.insert_vertex_with_mapping(vertex!([0.5, 1.0])).unwrap();
 
         let c1 = tds
-            .insert_cell_with_mapping(Cell::new(vec![v0, v1, v2], None).unwrap())
+            .insert_simplex_with_mapping(Simplex::new(vec![v0, v1, v2], None).unwrap())
             .unwrap();
-        tds.cell_mut(c1)
+        tds.simplex_mut(c1)
             .unwrap()
             .set_periodic_vertex_offsets(vec![[0, 0], [0, 0], [0, 0]])
             .unwrap();
@@ -3753,28 +3786,28 @@ mod tests {
     }
 
     #[test]
-    fn test_validate_ridge_links_for_cells_ok_with_periodic_offsets() {
-        // Two 2D cells with periodic offsets form valid ridge link paths.
+    fn test_validate_ridge_links_for_simplices_ok_with_periodic_offsets() {
+        // Two 2D simplices with periodic offsets form valid ridge link paths.
         let mut tds: Tds<f64, (), (), 2> = Tds::empty();
 
         let v0 = tds.insert_vertex_with_mapping(vertex!([0.0, 0.0])).unwrap();
         let v1 = tds.insert_vertex_with_mapping(vertex!([1.0, 0.0])).unwrap();
         let v2 = tds.insert_vertex_with_mapping(vertex!([0.5, 1.0])).unwrap();
 
-        let mut cell1 = Cell::new(vec![v0, v1, v2], None).unwrap();
-        cell1
+        let mut simplex1 = Simplex::new(vec![v0, v1, v2], None).unwrap();
+        simplex1
             .set_periodic_vertex_offsets(vec![[0, 0], [0, 0], [0, 0]])
             .unwrap();
-        let c1 = tds.insert_cell_with_mapping(cell1).unwrap();
+        let c1 = tds.insert_simplex_with_mapping(simplex1).unwrap();
 
-        let mut cell2 = Cell::new(vec![v0, v1, v2], None).unwrap();
-        cell2
+        let mut simplex2 = Simplex::new(vec![v0, v1, v2], None).unwrap();
+        simplex2
             .set_periodic_vertex_offsets(vec![[1, 0], [0, 0], [0, 0]])
             .unwrap();
-        let c2 = tds.insert_cell_with_mapping(cell2).unwrap();
+        let c2 = tds.insert_simplex_with_mapping(simplex2).unwrap();
 
         // All ridge links should be valid paths (boundary ridges with 2 degree-1 vertices).
-        validate_ridge_links_for_cells(&tds, &[c1, c2]).unwrap();
+        validate_ridge_links_for_simplices(&tds, &[c1, c2]).unwrap();
     }
 
     #[test]
@@ -3791,13 +3824,13 @@ mod tests {
 
         let tds =
             Triangulation::<FastKernel<f64>, (), (), 3>::build_initial_simplex(&vertices).unwrap();
-        let facet_to_cells = tds.build_facet_to_cells_map().unwrap();
+        let facet_to_simplices = tds.build_facet_to_simplices_map().unwrap();
 
         // All vertices are boundary vertices in a single tetrahedron
-        validate_facet_degree(&facet_to_cells).unwrap();
-        validate_closed_boundary(&tds, &facet_to_cells).unwrap();
+        validate_facet_degree(&facet_to_simplices).unwrap();
+        validate_closed_boundary(&tds, &facet_to_simplices).unwrap();
 
         // Vertex-link validation must succeed (links are 2-balls)
-        validate_vertex_links(&tds, &facet_to_cells).unwrap();
+        validate_vertex_links(&tds, &facet_to_simplices).unwrap();
     }
 }

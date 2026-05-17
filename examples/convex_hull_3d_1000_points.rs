@@ -30,7 +30,7 @@
 
 use delaunay::prelude::generators::generate_random_triangulation;
 use delaunay::prelude::query::*;
-use delaunay::prelude::triangulation::flips::CellKey;
+use delaunay::prelude::triangulation::flips::SimplexKey;
 use num_traits::cast::cast;
 use std::cmp;
 use std::env;
@@ -138,7 +138,10 @@ fn analyze_triangulation(dt: &DelaunayTriangulation<AdaptiveKernel<f64>, (), (),
     println!("Triangulation Analysis:");
     println!("======================");
     println!("  Number of vertices: {}", dt.tds().number_of_vertices());
-    println!("  Number of cells:    {}", dt.tds().number_of_cells());
+    println!(
+        "  Number of simplices:    {}",
+        dt.tds().number_of_simplices()
+    );
     println!("  Dimension:          {}", dt.tds().dim());
 
     // Validate the triangulation
@@ -207,7 +210,7 @@ fn analyze_hull(dt: &DelaunayTriangulation<AdaptiveKernel<f64>, (), (), 3>) {
             // Create FacetView to access facet properties
             if let Ok(facet_view) = FacetView::new(
                 dt.tds(),
-                facet_handle.cell_key(),
+                facet_handle.simplex_key(),
                 facet_handle.facet_index(),
             ) {
                 let vertex_count = facet_view.vertices().map_or(0, Iterator::count);
@@ -510,8 +513,8 @@ fn performance_analysis(dt: &DelaunayTriangulation<AdaptiveKernel<f64>, (), (), 
 
     // Memory usage estimation
     let hull_size = mem::size_of::<ConvexHull<AdaptiveKernel<f64>, (), (), 3>>();
-    // Phase 3C: Facets are now lightweight (CellKey, u8) tuples
-    let facet_handle_size = mem::size_of::<(CellKey, u8)>();
+    // Phase 3C: Facets are now lightweight (SimplexKey, u8) tuples
+    let facet_handle_size = mem::size_of::<(SimplexKey, u8)>();
     let estimated_hull_memory = hull_size + (facet_count * facet_handle_size);
 
     println!("\n  Memory Usage Estimation:");

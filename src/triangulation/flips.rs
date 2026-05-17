@@ -16,7 +16,7 @@ pub use crate::core::algorithms::flips::{
     FlipVertexAdjacencyError, RepairQueueOrder, RidgeHandle, TriangleHandle,
     verify_delaunay_for_triangulation, verify_delaunay_via_flip_predicates,
 };
-pub use crate::tds::{CellKey, EdgeKey, FacetHandle, VertexKey};
+pub use crate::tds::{EdgeKey, FacetHandle, SimplexKey, VertexKey};
 
 use crate::core::algorithms::flips::{
     apply_bistellar_flip_dynamic, apply_bistellar_flip_k1, apply_bistellar_flip_k1_inverse,
@@ -48,11 +48,11 @@ use crate::triangulation::delaunay::DelaunayTriangulation;
 ///         TopologyGuarantee::PLManifold,
 ///     )
 ///     .unwrap();
-/// let cell_key = dt.cells().next().unwrap().0;
+/// let simplex_key = dt.simplices().next().unwrap().0;
 ///
-/// // Split a cell by inserting a vertex (k=1 move).
+/// // Split a simplex by inserting a vertex (k=1 move).
 /// let _info = dt
-///     .flip_k1_insert(cell_key, vertex!([0.1, 0.1, 0.1]))
+///     .flip_k1_insert(simplex_key, vertex!([0.1, 0.1, 0.1]))
 ///     .unwrap();
 /// ```
 pub trait BistellarFlips<K, U, const D: usize>
@@ -60,11 +60,11 @@ where
     K: Kernel<D>,
     U: DataType,
 {
-    /// Apply a forward k=1 move (cell split) by inserting a vertex into a cell.
+    /// Apply a forward k=1 move (simplex split) by inserting a vertex into a simplex.
     ///
     /// # Errors
     ///
-    /// Returns [`FlipError`] if the cell is missing, the vertex cannot be inserted,
+    /// Returns [`FlipError`] if the simplex is missing, the vertex cannot be inserted,
     /// or the flip would create invalid topology.
     ///
     /// # Example
@@ -85,15 +85,15 @@ where
     ///         TopologyGuarantee::PLManifold,
     ///     )
     ///     .unwrap();
-    /// let cell_key = dt.cells().next().unwrap().0;
+    /// let simplex_key = dt.simplices().next().unwrap().0;
     ///
-    /// // Insert a vertex into the cell
-    /// let info = dt.flip_k1_insert(cell_key, vertex!([0.25, 0.25, 0.25])).unwrap();
-    /// assert!(!info.new_cells.is_empty());
+    /// // Insert a vertex into the simplex
+    /// let info = dt.flip_k1_insert(simplex_key, vertex!([0.25, 0.25, 0.25])).unwrap();
+    /// assert!(!info.new_simplices.is_empty());
     /// ```
     fn flip_k1_insert(
         &mut self,
-        cell_key: CellKey,
+        simplex_key: SimplexKey,
         vertex: Vertex<K::Scalar, U, D>,
     ) -> Result<FlipInfo<D>, FlipError>;
 
@@ -122,13 +122,13 @@ where
     ///         TopologyGuarantee::PLManifold,
     ///     )
     ///     .unwrap();
-    /// let cell_key = dt.cells().next().unwrap().0;
-    /// let inserted = dt.flip_k1_insert(cell_key, vertex!([0.25, 0.25, 0.25])).unwrap();
+    /// let simplex_key = dt.simplices().next().unwrap().0;
+    /// let inserted = dt.flip_k1_insert(simplex_key, vertex!([0.25, 0.25, 0.25])).unwrap();
     /// let inserted_vertex = inserted.inserted_face_vertices[0];
     ///
     /// // Remove the inserted vertex
     /// let info = dt.flip_k1_remove(inserted_vertex).unwrap();
-    /// assert!(!info.removed_cells.is_empty());
+    /// assert!(!info.removed_simplices.is_empty());
     /// ```
     fn flip_k1_remove(&mut self, vertex_key: VertexKey) -> Result<FlipInfo<D>, FlipError>;
 
@@ -156,10 +156,10 @@ where
     ///
     /// // Find an interior facet and attempt a k=2 flip
     /// // Note: k=2 flips require specific geometric conditions
-    /// let cell_key = dt.cells().next().map(|(k, _)| k);
-    /// if let Some(key) = cell_key {
-    ///     let has_neighbor = dt.tds().cell(key)
-    ///         .and_then(|cell| cell.neighbors())
+    /// let simplex_key = dt.simplices().next().map(|(k, _)| k);
+    /// if let Some(key) = simplex_key {
+    ///     let has_neighbor = dt.tds().simplex(key)
+    ///         .and_then(|simplex| simplex.neighbors())
     ///         .map(|mut neighbors| neighbors.any(|n| n.is_some()))
     ///         .unwrap_or(false);
     ///     if has_neighbor {
@@ -228,10 +228,10 @@ where
 {
     fn flip_k1_insert(
         &mut self,
-        cell_key: CellKey,
+        simplex_key: SimplexKey,
         vertex: Vertex<K::Scalar, U, D>,
     ) -> Result<FlipInfo<D>, FlipError> {
-        apply_bistellar_flip_k1(&mut self.tds, cell_key, vertex)
+        apply_bistellar_flip_k1(&mut self.tds, simplex_key, vertex)
     }
 
     fn flip_k1_remove(&mut self, vertex_key: VertexKey) -> Result<FlipInfo<D>, FlipError> {
@@ -281,10 +281,10 @@ where
 {
     fn flip_k1_insert(
         &mut self,
-        cell_key: CellKey,
+        simplex_key: SimplexKey,
         vertex: Vertex<K::Scalar, U, D>,
     ) -> Result<FlipInfo<D>, FlipError> {
-        let result = self.tri.flip_k1_insert(cell_key, vertex);
+        let result = self.tri.flip_k1_insert(simplex_key, vertex);
         if result.is_ok() {
             self.invalidate_repair_caches();
         }
@@ -359,17 +359,17 @@ mod tests {
             )
             .unwrap();
         let mut tri = dt.as_triangulation().clone();
-        let cell_key = tri.cells().next().unwrap().0;
+        let simplex_key = tri.simplices().next().unwrap().0;
 
         let inserted = tri
-            .flip_k1_insert(cell_key, vertex!([0.25, 0.25, 0.25]))
+            .flip_k1_insert(simplex_key, vertex!([0.25, 0.25, 0.25]))
             .unwrap();
         let inserted_vertex = inserted.inserted_face_vertices[0];
-        assert!(!inserted.new_cells.is_empty());
+        assert!(!inserted.new_simplices.is_empty());
         assert!(tri.validate().is_ok());
 
         let removed = tri.flip_k1_remove(inserted_vertex).unwrap();
-        assert!(!removed.removed_cells.is_empty());
+        assert!(!removed.removed_simplices.is_empty());
         assert!(tri.validate().is_ok());
     }
 
@@ -388,19 +388,19 @@ mod tests {
             )
             .unwrap();
         let mut tri = dt.as_triangulation().clone();
-        let cell_key = tri.cells().next().unwrap().0;
+        let simplex_key = tri.simplices().next().unwrap().0;
 
         let err = tri
-            .flip_k2(FacetHandle::new(cell_key, u8::MAX))
+            .flip_k2(FacetHandle::new(simplex_key, u8::MAX))
             .unwrap_err();
 
         assert!(matches!(
             err,
             FlipError::InvalidFacetIndex {
-                cell_key: key,
+                simplex_key: key,
                 facet_index: u8::MAX,
                 vertex_count: 4,
-            } if key == cell_key
+            } if key == simplex_key
         ));
     }
 

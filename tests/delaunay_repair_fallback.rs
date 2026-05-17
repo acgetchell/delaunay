@@ -59,12 +59,12 @@ fn repair_fallback_produces_valid_triangulation() {
         .expect("fixture construction should succeed");
 
     let mut candidate_facets = Vec::new();
-    for (cell_key, cell) in dt.cells() {
-        if let Some(neighbors) = cell.neighbors() {
+    for (simplex_key, simplex) in dt.simplices() {
+        if let Some(neighbors) = simplex.neighbors() {
             for (index, neighbor) in neighbors.enumerate() {
                 if neighbor.is_some() {
                     let facet_index = u8::try_from(index).expect("2D facet index fits in u8");
-                    candidate_facets.push(FacetHandle::new(cell_key, facet_index));
+                    candidate_facets.push(FacetHandle::new(simplex_key, facet_index));
                 }
             }
         }
@@ -89,7 +89,10 @@ fn repair_fallback_produces_valid_triangulation() {
         .expect("Triangulation should be fully valid after heuristic fallback");
     assert_eq!(dt.number_of_vertices(), vertices.len());
     assert_eq!(dt.dim(), 2, "Should be a full 2D triangulation");
-    assert!(dt.number_of_cells() > 0, "Should have at least one cell");
+    assert!(
+        dt.number_of_simplices() > 0,
+        "Should have at least one simplex"
+    );
 }
 
 /// Test incremental insertion with repair fallback.
@@ -125,9 +128,9 @@ fn incremental_insertion_with_repair_fallback() {
 
         match result {
             Ok(_) => {
-                // Skip validation during bootstrap (vertices exist but no cells yet)
-                // Level 3 topology validation is not meaningful until cells exist
-                if dt.number_of_cells() > 0 {
+                // Skip validation during bootstrap (vertices exist but no simplices yet)
+                // Level 3 topology validation is not meaningful until simplices exist
+                if dt.number_of_simplices() > 0 {
                     dt.validate().unwrap_or_else(|e| {
                         panic!("Triangulation invalid after insertion {}: {}", i + 1, e)
                     });

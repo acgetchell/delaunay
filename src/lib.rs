@@ -63,7 +63,7 @@
 //! | Construction validation cadence/policy | `use delaunay::prelude::triangulation::validation::*` |
 //! | Topology validation, Euler characteristic | `use delaunay::prelude::topology::validation::*` |
 //! | Topological spaces and topology traits | `use delaunay::prelude::topology::spaces::*` |
-//! | Low-level TDS cells, facets, keys | `use delaunay::prelude::tds::*` |
+//! | Low-level TDS simplices, facets, keys | `use delaunay::prelude::tds::*` |
 //! | Collection types (`FastHashMap`, etc.) | `use delaunay::prelude::collections::*` |
 //! | Legacy broad triangulation import | `use delaunay::prelude::triangulation::*` |
 //! | Everything (kitchen sink) | `use delaunay::prelude::*` |
@@ -163,7 +163,7 @@
 //! let mut dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
 //!
 //! let before_vertices = dt.number_of_vertices();
-//! let before_cells = dt.number_of_cells();
+//! let before_simplices = dt.number_of_simplices();
 //!
 //! // Duplicate coordinates are rejected.
 //! let result = dt.insert(vertex!([0.0, 0.0]));
@@ -171,7 +171,7 @@
 //!
 //! // On error, the triangulation is unchanged.
 //! assert_eq!(dt.number_of_vertices(), before_vertices);
-//! assert_eq!(dt.number_of_cells(), before_cells);
+//! assert_eq!(dt.number_of_simplices(), before_simplices);
 //! # Ok(())
 //! # }
 //! ```
@@ -181,24 +181,24 @@
 //! The crate is organized as a small **validation stack**, where each layer adds additional
 //! invariants on top of the preceding one:
 //!
-//! - [`Vertex`](crate::tds::Vertex) and [`Cell`](crate::tds::Cell) provide
+//! - [`Vertex`](crate::tds::Vertex) and [`Simplex`](crate::tds::Simplex) provide
 //!   **element validity** checks.
 //!   Level 1 (elements) validation checks invariants such as:
 //!   - **Vertex coordinates** – finite (no NaN/∞) and UUID is non-nil.
-//!   - **Cell shape** – exactly D+1 distinct vertex keys, valid UUID, and neighbor buffer length
+//!   - **Simplex shape** – exactly D+1 distinct vertex keys, valid UUID, and neighbor buffer length
 //!     (if present) is D+1.
 //!
 //!   These checks are surfaced via [`Vertex::is_valid`](crate::tds::Vertex::is_valid) and
-//!   [`Cell::is_valid`](crate::tds::Cell::is_valid), and are automatically run by
+//!   [`Simplex::is_valid`](crate::tds::Simplex::is_valid), and are automatically run by
 //!   [`Tds::validate`](crate::tds::Tds::validate) (Levels 1–2).
 //!
 //! - [`Tds`](crate::tds::Tds) (Triangulation Data Structure)
 //!   stores the **combinatorial / structural** representation.
 //!   Level 2 (structural) validation checks invariants such as:
 //!   - **Vertex mappings** – every vertex UUID has a corresponding key and vice versa.
-//!   - **Cell mappings** – every cell UUID has a corresponding key and vice versa.
-//!   - **No duplicate cells** – no two maximal cells share the same vertex set.
-//!   - **Facet sharing** – each facet is shared by at most 2 cells (1 on the boundary, 2 in the interior).
+//!   - **Simplex mappings** – every simplex UUID has a corresponding key and vice versa.
+//!   - **No duplicate simplices** – no two maximal simplices share the same vertex set.
+//!   - **Facet sharing** – each facet is shared by at most 2 simplices (1 on the boundary, 2 in the interior).
 //!   - **Neighbor consistency** – neighbor relationships are mutual and reference a shared facet.
 //!
 //!   These checks are surfaced via [`Tds::is_valid`](crate::tds::Tds::is_valid)
@@ -212,7 +212,7 @@
 //!   [`Triangulation::is_valid`](crate::triangulation::Triangulation::is_valid) (Level 3 only) and
 //!   [`Triangulation::validate`](crate::triangulation::Triangulation::validate) (Levels 1–3), which:
 //!   - Strengthens facet sharing to the **manifold facet property**: each facet belongs to
-//!     exactly 1 cell (boundary) or exactly 2 cells (interior).
+//!     exactly 1 simplex (boundary) or exactly 2 simplices (interior).
 //!   - Checks the **Euler characteristic** of the triangulation (using the topology module).
 //!
 //! - [`DelaunayTriangulation`](crate::triangulation::delaunay::DelaunayTriangulation) builds on
@@ -231,7 +231,7 @@
 //! <https://github.com/acgetchell/delaunay/blob/main/docs/validation.md>
 //!
 //! In brief:
-//! - Level 1 (elements / `Vertex` + `Cell`): `Vertex::is_valid()` / `Cell::is_valid()` for element
+//! - Level 1 (elements / `Vertex` + `Simplex`): `Vertex::is_valid()` / `Simplex::is_valid()` for element
 //!   checks, or `dt.tds().validate()` for Levels 1–2.
 //! - Level 2 (structural / `Tds`): `dt.tds().is_valid()` for a quick check, or `dt.tds().validate()` for
 //!   Levels 1–2.
@@ -373,16 +373,13 @@
     clippy::multiple_crate_versions,
     reason = "transitive dependency versions are controlled by upstream crates"
 )]
-// Temporarily allow deprecated warnings during API migrations.
-// - Historical Facet -> FacetView and Tds construction migrations
-// - DelaunayTriangulation::as_triangulation_mut() removal planned for v0.8.0
 // Forbid unsafe code throughout the entire crate
 #![forbid(unsafe_code)]
 
 /// Internal low-level triangulation data structures and algorithms.
 ///
 /// This module backs the curated public low-level modules. It includes
-/// [`Tds`](crate::tds::Tds), [`Cell`](crate::tds::Cell),
+/// [`Tds`](crate::tds::Tds), [`Simplex`](crate::tds::Simplex),
 /// [`FacetView`](crate::tds::FacetView),
 /// [`Vertex`](crate::tds::Vertex), the generic
 /// [`Triangulation`](crate::triangulation::Triangulation) wrapper, and
@@ -391,7 +388,7 @@
 /// Public docs, examples, benchmarks, and downstream-style tests should prefer
 /// the curated public modules and focused preludes:
 ///
-/// - [`crate::tds`] / [`crate::prelude::tds`] for TDS cells, facets, keys,
+/// - [`crate::tds`] / [`crate::prelude::tds`] for TDS simplices, facets, keys,
 ///   validation reports, and helpers.
 /// - [`crate::collections`] / [`crate::prelude::collections`] for public
 ///   collection aliases and small buffers.
@@ -422,7 +419,7 @@ mod core {
 
     pub mod adjacency;
     pub mod boundary;
-    pub mod cell;
+    pub mod simplex;
     /// High-performance collection types optimized for computational geometry operations.
     ///
     /// This module provides centralized type aliases for performance-critical data structures
@@ -471,7 +468,7 @@ mod core {
     ///   allocations for the common case where collections remain small. This is
     ///   particularly effective for:
     ///   - Vertex neighbor lists (typically D+1 neighbors)
-    ///   - Facet-to-cell mappings (typically 1-2 cells per facet)
+    ///   - Facet-to-simplex mappings (typically 1-2 simplices per facet)
     ///   - Temporary collections during geometric operations
     ///
     /// # Usage Patterns
@@ -479,9 +476,9 @@ mod core {
     /// The size parameters for `SmallVec` are chosen based on empirical analysis of
     /// typical triangulation patterns:
     ///
-    /// - **2 elements**: Facet sharing (boundary facets = 1 cell, interior facets = 2 cells)
+    /// - **2 elements**: Facet sharing (boundary facets = 1 simplex, interior facets = 2 simplices)
     /// - **4 elements**: Small temporary collections during geometric operations
-    /// - **8 elements**: Vertex degrees and cell neighbor counts in typical triangulations
+    /// - **8 elements**: Vertex degrees and simplex neighbor counts in typical triangulations
     /// - **16 elements**: Larger temporary buffers for batch operations
     ///
     /// # Future Optimization
@@ -496,7 +493,7 @@ mod core {
     /// # Examples
     ///
     /// ```rust
-    /// use delaunay::prelude::collections::{FastHashMap, FacetToCellsMap, SmallBuffer};
+    /// use delaunay::prelude::collections::{FastHashMap, FacetToSimplicesMap, SmallBuffer};
     ///
     /// // Use optimized HashMap for temporary mappings
     /// let mut temp_map: FastHashMap<u64, usize> = FastHashMap::default();
@@ -507,20 +504,20 @@ mod core {
     /// small_list.push(2);
     ///
     /// // Use domain-specific optimized collections
-    /// let facet_map: FacetToCellsMap = FacetToCellsMap::default();
+    /// let facet_map: FacetToSimplicesMap = FacetToSimplicesMap::default();
     /// ```
     ///
     /// ## Key-based internal operations
     ///
-    /// The crate uses stable keys (`VertexKey`, `CellKey`) internally for performance.
+    /// The crate uses stable keys (`VertexKey`, `SimplexKey`) internally for performance.
     /// This module provides optimized maps/sets keyed by those identifiers:
     ///
     /// ```rust
-    /// use delaunay::prelude::collections::{CellKeySet, KeyBasedCellMap, VertexKeySet};
+    /// use delaunay::prelude::collections::{SimplexKeySet, KeyBasedSimplexMap, VertexKeySet};
     ///
-    /// let mut internal_cells: CellKeySet = CellKeySet::default();
+    /// let mut internal_simplices: SimplexKeySet = SimplexKeySet::default();
     /// let mut internal_vertices: VertexKeySet = VertexKeySet::default();
-    /// let mut key_mappings: KeyBasedCellMap<String> = KeyBasedCellMap::default();
+    /// let mut key_mappings: KeyBasedSimplexMap<String> = KeyBasedSimplexMap::default();
     /// ```
     pub mod collections {
         mod aliases;
@@ -614,7 +611,7 @@ pub mod geometry {
     pub mod kernel;
     pub mod point;
     pub mod predicates;
-    /// Geometric quality measures for d-dimensional simplicial cells
+    /// Geometric quality measures for d-dimensional simplices
     pub mod quality;
     /// Enhanced predicates with improved numerical robustness
     pub mod robust_predicates;
@@ -989,24 +986,25 @@ pub mod topology {
 /// use delaunay::collections::{FastHashMap, SmallBuffer};
 ///
 /// let mut counts: FastHashMap<&'static str, usize> = FastHashMap::default();
-/// counts.insert("cells", 3);
+/// counts.insert("simplices", 3);
 ///
 /// let mut scratch: SmallBuffer<usize, 4> = SmallBuffer::new();
-/// scratch.push(counts["cells"]);
+/// scratch.push(counts["simplices"]);
 ///
 /// assert_eq!(scratch.as_slice(), &[3]);
 /// ```
 pub mod collections {
     pub use crate::core::collections::{
-        CellKeyBuffer, CellKeySet, CellNeighborsMap, CellSecondaryMap, CellToVertexUuidsMap,
-        CellVertexBuffer, CellVertexKeysMap, CellVertexUuidBuffer, CellVerticesMap, Entry,
-        FacetIndex, FacetIssuesMap, FacetSharingCellsBuffer, FacetToCellsMap, FacetVertexMap,
-        FastBuildHasher, FastHashMap, FastHashSet, FastHasher, KeyBasedCellMap, KeyBasedVertexMap,
-        MAX_PRACTICAL_DIMENSION_SIZE, NeighborBuffer, PeriodicOffsetBuffer, SecureHashMap,
-        SecureHashSet, SimplexVertexBuffer, SmallBuffer, Uuid, UuidToCellKeyMap,
-        UuidToVertexKeyMap, VertexKeyBuffer, VertexKeySet, VertexSecondaryMap, VertexToCellsMap,
-        VertexUuidBuffer, VertexUuidSet, fast_hash_map_with_capacity, fast_hash_set_with_capacity,
-        small_buffer_with_capacity_2, small_buffer_with_capacity_8, small_buffer_with_capacity_16,
+        Entry, FacetIndex, FacetIssuesMap, FacetSharingSimplicesBuffer, FacetToSimplicesMap,
+        FacetVertexMap, FastBuildHasher, FastHashMap, FastHashSet, FastHasher, KeyBasedSimplexMap,
+        KeyBasedVertexMap, MAX_PRACTICAL_DIMENSION_SIZE, NeighborBuffer, PeriodicOffsetBuffer,
+        SecureHashMap, SecureHashSet, SimplexKeyBuffer, SimplexKeySet, SimplexNeighborsMap,
+        SimplexSecondaryMap, SimplexToVertexUuidsMap, SimplexVertexBuffer, SimplexVertexKeyBuffer,
+        SimplexVertexKeysMap, SimplexVertexUuidBuffer, SimplexVerticesMap, SmallBuffer, Uuid,
+        UuidToSimplexKeyMap, UuidToVertexKeyMap, VertexKeyBuffer, VertexKeySet, VertexSecondaryMap,
+        VertexToSimplicesMap, VertexUuidBuffer, VertexUuidSet, fast_hash_map_with_capacity,
+        fast_hash_set_with_capacity, small_buffer_with_capacity_2, small_buffer_with_capacity_8,
+        small_buffer_with_capacity_16,
     };
 
     /// Expert aliases for algorithm-local scratch buffers.
@@ -1016,15 +1014,16 @@ pub mod collections {
     /// avoid accidental broad imports.
     pub mod algorithm_buffers {
         pub use crate::core::collections::{
-            BadCellBuffer, CLEANUP_OPERATION_BUFFER_SIZE, CavityBoundaryBuffer, CellRemovalBuffer,
-            FacetInfoBuffer, GeometricPointBuffer, PointBuffer, ValidCellsBuffer, ViolationBuffer,
+            BadSimplexBuffer, CLEANUP_OPERATION_BUFFER_SIZE, CavityBoundaryBuffer, FacetInfoBuffer,
+            GeometricPointBuffer, PointBuffer, SimplexRemovalBuffer, ValidSimplicesBuffer,
+            ViolationBuffer,
         };
     }
 }
 
 /// Public low-level topology data structures and TDS helpers.
 ///
-/// Use this module when you need cells, facets, keys, the
+/// Use this module when you need simplices, facets, keys, the
 /// [`Tds`](crate::tds::Tds) container, validation reports, or TDS-specific
 /// helpers without reaching into the internal implementation namespace.
 ///
@@ -1036,17 +1035,17 @@ pub mod collections {
 /// let tds: Tds<f64, (), (), 2> = Tds::empty();
 ///
 /// assert_eq!(tds.number_of_vertices(), 0);
-/// assert_eq!(tds.number_of_cells(), 0);
+/// assert_eq!(tds.number_of_simplices(), 0);
 /// ```
 pub mod tds {
     pub use crate::core::adjacency::*;
-    pub use crate::core::cell::*;
     pub use crate::core::collections::{
-        CellKeyBuffer, FacetIndex, FastHashMap, FastHashSet, NeighborBuffer, PeriodicOffsetBuffer,
-        SmallBuffer, Uuid,
+        FacetIndex, FastHashMap, FastHashSet, NeighborBuffer, PeriodicOffsetBuffer,
+        SimplexKeyBuffer, SmallBuffer, Uuid,
     };
     pub use crate::core::edge::*;
     pub use crate::core::facet::*;
+    pub use crate::core::simplex::*;
     pub use crate::core::tds::*;
     pub use crate::core::traits::facet_cache::*;
     pub use crate::core::util::{
@@ -1132,7 +1131,7 @@ pub mod query {
     pub use crate::geometry::traits::coordinate::Coordinate;
     pub use crate::geometry::{insphere, insphere_distance, insphere_lifted};
     pub use crate::tds::{
-        AdjacencyIndex, AdjacencyIndexBuildError, Cell, CellKey, EdgeKey, FacetView, Vertex,
+        AdjacencyIndex, AdjacencyIndexBuildError, EdgeKey, FacetView, Simplex, SimplexKey, Vertex,
         VertexKey,
     };
     pub use crate::triangulation::Triangulation;
@@ -1201,9 +1200,9 @@ pub mod prelude {
     // Re-export commonly used collection types from the public collections facade.
     // These are frequently used in advanced examples and downstream code
     pub use crate::collections::{
-        CellNeighborsMap, CellSecondaryMap, FacetToCellsMap, FastHashMap, FastHashSet,
-        SecureHashMap, SecureHashSet, SmallBuffer, VertexSecondaryMap, VertexToCellsMap,
-        fast_hash_map_with_capacity, fast_hash_set_with_capacity,
+        FacetToSimplicesMap, FastHashMap, FastHashSet, SecureHashMap, SecureHashSet,
+        SimplexNeighborsMap, SimplexSecondaryMap, SmallBuffer, VertexSecondaryMap,
+        VertexToSimplicesMap, fast_hash_map_with_capacity, fast_hash_set_with_capacity,
     };
 
     // Re-export from geometry
@@ -1283,7 +1282,8 @@ pub mod prelude {
                 InsertionOrderStrategy, RetryPolicy,
             };
             pub use crate::triangulation::{
-                TopologyGuarantee, Triangulation, TriangulationConstructionError,
+                CavityFillingError, CavityRepairStage, TopologyGuarantee, Triangulation,
+                TriangulationConstructionError,
             };
             // Convenience macro (commonly used in docs/examples).
             pub use crate::vertex;
@@ -1300,9 +1300,9 @@ pub mod prelude {
         ///
         pub mod flips {
             pub use crate::collections::{
-                CellKeyBuffer, MAX_PRACTICAL_DIMENSION_SIZE, SmallBuffer,
+                MAX_PRACTICAL_DIMENSION_SIZE, SimplexKeyBuffer, SmallBuffer,
             };
-            pub use crate::tds::{CellKey, EdgeKey, FacetHandle, VertexKey};
+            pub use crate::tds::{EdgeKey, FacetHandle, SimplexKey, VertexKey};
             pub use crate::triangulation::delaunay::DelaunayTriangulation;
             pub use crate::triangulation::flips::{
                 BistellarFlipKind, BistellarFlips, FlipContextError, FlipDirection,
@@ -1311,14 +1311,6 @@ pub mod prelude {
                 FlipTriangleAdjacencyError, FlipVertexAdjacencyError, RidgeHandle, TriangleHandle,
             };
             pub use crate::triangulation::flips::{BistellarMove, ConstK};
-            #[deprecated(
-                since = "0.7.7",
-                note = "import TopologyGuarantee from delaunay::prelude::triangulation or delaunay::prelude::triangulation::repair"
-            )]
-            /// Deprecated compatibility re-export; prefer
-            /// [`crate::prelude::triangulation::TopologyGuarantee`] or
-            /// [`crate::prelude::triangulation::repair::TopologyGuarantee`].
-            pub use crate::triangulation::{TopologyGuarantee, Triangulation};
 
             // Convenience macro (commonly used in docs/examples).
             pub use crate::vertex;
@@ -1333,9 +1325,9 @@ pub mod prelude {
         /// [`InsertionErrorSummary`]: crate::prelude::triangulation::insertion::InsertionErrorSummary
         /// [`InsertionErrorKind`]: crate::prelude::triangulation::insertion::InsertionErrorKind
         pub mod insertion {
-            pub use crate::collections::CellKeyBuffer;
+            pub use crate::collections::SimplexKeyBuffer;
             pub use crate::tds::FacetHandle;
-            pub use crate::tds::{CellKey, Tds, TdsMutationError, VertexKey};
+            pub use crate::tds::{SimplexKey, Tds, TdsMutationError, VertexKey};
             pub use crate::triangulation::{
                 CavityFillingError, CavityRepairStage, DelaunayRepairErrorKind,
                 DelaunayRepairErrorSummary, DelaunayRepairFailureContext, HullExtensionReason,
@@ -1450,18 +1442,19 @@ pub mod prelude {
     /// or the nested [`crate::prelude::collections::algorithm_buffers`] module.
     ///
     /// ```compile_fail
-    /// use delaunay::prelude::collections::CellRemovalBuffer;
+    /// use delaunay::prelude::collections::SimplexRemovalBuffer;
     /// ```
     pub mod collections {
         pub use crate::collections::{
-            CellKeyBuffer, CellKeySet, CellNeighborsMap, CellSecondaryMap, CellToVertexUuidsMap,
-            CellVertexBuffer, CellVertexKeysMap, CellVertexUuidBuffer, CellVerticesMap, Entry,
-            FacetIndex, FacetIssuesMap, FacetSharingCellsBuffer, FacetToCellsMap, FastBuildHasher,
-            FastHashMap, FastHashSet, FastHasher, KeyBasedCellMap, KeyBasedVertexMap,
-            MAX_PRACTICAL_DIMENSION_SIZE, NeighborBuffer, PeriodicOffsetBuffer, SecureHashMap,
-            SecureHashSet, SimplexVertexBuffer, SmallBuffer, Uuid, UuidToCellKeyMap,
-            UuidToVertexKeyMap, VertexKeyBuffer, VertexKeySet, VertexSecondaryMap,
-            VertexToCellsMap, VertexUuidBuffer, VertexUuidSet, fast_hash_map_with_capacity,
+            Entry, FacetIndex, FacetIssuesMap, FacetSharingSimplicesBuffer, FacetToSimplicesMap,
+            FastBuildHasher, FastHashMap, FastHashSet, FastHasher, KeyBasedSimplexMap,
+            KeyBasedVertexMap, MAX_PRACTICAL_DIMENSION_SIZE, NeighborBuffer, PeriodicOffsetBuffer,
+            SecureHashMap, SecureHashSet, SimplexKeyBuffer, SimplexKeySet, SimplexNeighborsMap,
+            SimplexSecondaryMap, SimplexToVertexUuidsMap, SimplexVertexBuffer,
+            SimplexVertexKeyBuffer, SimplexVertexKeysMap, SimplexVertexUuidBuffer,
+            SimplexVerticesMap, SmallBuffer, Uuid, UuidToSimplexKeyMap, UuidToVertexKeyMap,
+            VertexKeyBuffer, VertexKeySet, VertexSecondaryMap, VertexToSimplicesMap,
+            VertexUuidBuffer, VertexUuidSet, fast_hash_map_with_capacity,
             fast_hash_set_with_capacity, small_buffer_with_capacity_2,
             small_buffer_with_capacity_8, small_buffer_with_capacity_16,
         };
@@ -1473,9 +1466,9 @@ pub mod prelude {
         /// collections prelude to avoid accidental broad imports.
         pub mod algorithm_buffers {
             pub use crate::collections::algorithm_buffers::{
-                BadCellBuffer, CLEANUP_OPERATION_BUFFER_SIZE, CavityBoundaryBuffer,
-                CellRemovalBuffer, FacetInfoBuffer, GeometricPointBuffer, PointBuffer,
-                ValidCellsBuffer, ViolationBuffer,
+                BadSimplexBuffer, CLEANUP_OPERATION_BUFFER_SIZE, CavityBoundaryBuffer,
+                FacetInfoBuffer, GeometricPointBuffer, PointBuffer, SimplexRemovalBuffer,
+                ValidSimplicesBuffer, ViolationBuffer,
             };
         }
     }
@@ -1490,12 +1483,12 @@ pub mod prelude {
     /// let tds: Tds<f64, (), (), 2> = Tds::empty();
     ///
     /// assert_eq!(tds.number_of_vertices(), 0);
-    /// assert_eq!(tds.number_of_cells(), 0);
+    /// assert_eq!(tds.number_of_simplices(), 0);
     /// ```
     pub mod tds {
         pub use crate::collections::{
-            CellKeyBuffer, FacetIndex, FastHashMap, FastHashSet, NeighborBuffer,
-            PeriodicOffsetBuffer, SmallBuffer, Uuid,
+            FacetIndex, FastHashMap, FastHashSet, NeighborBuffer, PeriodicOffsetBuffer,
+            SimplexKeyBuffer, SmallBuffer, Uuid,
         };
         pub use crate::tds::*;
     }
@@ -1511,8 +1504,8 @@ pub mod prelude {
                 simplex_orientation,
             },
             quality::{
-                QualityCellVerticesError, QualityDegeneracyMeasure, QualityError,
-                QualityNumericOperation, normalized_volume, radius_ratio,
+                QualityDegeneracyMeasure, QualityError, QualityNumericOperation,
+                QualitySimplexVerticesError, normalized_volume, radius_ratio,
             },
             robust_predicates::{
                 ConsistencyResult, InsphereConsistencyError, robust_insphere, robust_orientation,
@@ -1590,10 +1583,10 @@ pub mod prelude {
     ///
     /// Includes:
     /// - Topology traversal: [`DelaunayTriangulation::edges`], [`DelaunayTriangulation::incident_edges`],
-    ///   [`DelaunayTriangulation::cell_neighbors`]
+    ///   [`DelaunayTriangulation::simplex_neighbors`]
     /// - Fast repeated queries: [`DelaunayTriangulation::build_adjacency_index`] and [`AdjacencyIndex`]
     /// - Zero-allocation geometry accessors: [`DelaunayTriangulation::vertex_coords`],
-    ///   [`DelaunayTriangulation::cell_vertices`]
+    ///   [`DelaunayTriangulation::simplex_vertices`]
     /// - Convex hull extraction: [`ConvexHull::from_triangulation`]
     ///
     /// # Examples
@@ -1615,7 +1608,7 @@ pub mod prelude {
     pub mod query {
         // Core read-only traversal / adjacency
         pub use crate::tds::{
-            AdjacencyIndex, AdjacencyIndexBuildError, CellKey, EdgeKey, VertexKey,
+            AdjacencyIndex, AdjacencyIndexBuildError, EdgeKey, SimplexKey, VertexKey,
         };
         pub use crate::triangulation::Triangulation;
         pub use crate::triangulation::delaunay::DelaunayTriangulation;
@@ -1627,8 +1620,8 @@ pub mod prelude {
         };
         pub use crate::geometry::traits::coordinate::Coordinate;
         pub use crate::query::{
-            BoundaryAnalysis, Cell, DataCopy, DataDebug, DataDeserialize, DataIdentity, DataSerde,
-            DataSerialize, DataType, FacetView, Vertex,
+            BoundaryAnalysis, DataCopy, DataDebug, DataDeserialize, DataIdentity, DataSerde,
+            DataSerialize, DataType, FacetView, Simplex, Vertex,
         };
 
         // Read-only predicates (useful in benchmarks / lightweight geometry checks)
@@ -1719,7 +1712,7 @@ pub mod prelude {
             pub use crate::topology::characteristics::{euler::*, validation::*};
             pub use crate::topology::manifold::{
                 ManifoldError, validate_closed_boundary, validate_facet_degree,
-                validate_ridge_links, validate_ridge_links_for_cells, validate_vertex_links,
+                validate_ridge_links, validate_ridge_links_for_simplices, validate_vertex_links,
             };
             pub use crate::topology::traits::*;
         }
@@ -1754,7 +1747,7 @@ pub const fn is_normal<T: Send + Sync + Unpin>() -> bool {
 mod tests {
     use crate::{
         core::{
-            adjacency::AdjacencyIndex, cell::Cell, edge::EdgeKey, tds::Tds,
+            adjacency::AdjacencyIndex, edge::EdgeKey, simplex::Simplex, tds::Tds,
             triangulation::Triangulation, vertex::Vertex,
         },
         geometry::{
@@ -1762,8 +1755,9 @@ mod tests {
         },
         is_normal,
         prelude::triangulation::delaunayize::{
-            CellValidationError, DelaunayTriangulationConstructionError, DelaunayizeConfig,
-            DelaunayizeError, DelaunayizeOutcome, PlManifoldRepairError, PlManifoldRepairStats,
+            DelaunayTriangulationConstructionError, DelaunayizeConfig, DelaunayizeError,
+            DelaunayizeOutcome, PlManifoldRepairError, PlManifoldRepairStats,
+            SimplexValidationError,
         },
         prelude::triangulation::repair::{
             DelaunayCheckPolicy, DelaunayRepairError, DelaunayRepairOutcome, DelaunayRepairPolicy,
@@ -1788,7 +1782,7 @@ mod tests {
         assert!(is_normal::<Point<f64, 3>>());
         assert!(is_normal::<Point<f32, 3>>());
         assert!(is_normal::<Vertex<f64, (), 3>>());
-        assert!(is_normal::<Cell<f64, (), (), 4>>());
+        assert!(is_normal::<Simplex<f64, (), (), 4>>());
         assert!(is_normal::<Tds<f64, (), (), 4>>());
         assert!(is_normal::<Triangulation<FastKernel<f64>, (), (), 3>>());
         assert!(is_normal::<DelaunayTriangulation<FastKernel<f64>, (), (), 3>>());
@@ -1802,7 +1796,7 @@ mod tests {
         assert!(is_normal::<DelaunayRepairStats>());
         assert!(is_normal::<PlManifoldRepairError>());
         assert!(is_normal::<PlManifoldRepairStats<f64, (), (), 3>>());
-        assert!(is_normal::<CellValidationError>());
+        assert!(is_normal::<SimplexValidationError>());
         assert!(is_normal::<DelaunayTriangulationConstructionError>());
     }
 
@@ -1829,9 +1823,9 @@ mod tests {
         assert!(set_with_cap.capacity() >= 50);
 
         // Test domain-specific types can be instantiated
-        let _facet_map: FacetToCellsMap = FacetToCellsMap::default();
-        let _neighbors: CellNeighborsMap = CellNeighborsMap::default();
-        let _vertex_cells: VertexToCellsMap = VertexToCellsMap::default();
+        let _facet_map: FacetToSimplicesMap = FacetToSimplicesMap::default();
+        let _neighbors: SimplexNeighborsMap = SimplexNeighborsMap::default();
+        let _vertex_simplices: VertexToSimplicesMap = VertexToSimplicesMap::default();
     }
 
     #[test]
@@ -1862,10 +1856,10 @@ mod tests {
         );
         assert_eq!(DelaunayCheckPolicy::default(), DelaunayCheckPolicy::EndOnly);
 
-        let err = DelaunayRepairError::Flip(FlipError::DegenerateCell);
+        let err = DelaunayRepairError::Flip(FlipError::DegenerateSimplex);
         assert!(matches!(err, DelaunayRepairError::Flip(_)));
         let context_err = FlipContextError::ReplacementPeriodicOffsetCountMismatch {
-            cell_count: 1,
+            simplex_count: 1,
             offset_count: 0,
         };
         assert!(matches!(
@@ -1887,14 +1881,14 @@ mod tests {
         let dt: DelaunayTriangulation<_, (), (), 2> =
             DelaunayTriangulation::new(&vertices).unwrap();
 
-        // Get a cell to test quality functions
-        let (cell_key, _) = dt.cells().next().unwrap();
+        // Get a simplex to test quality functions
+        let (simplex_key, _) = dt.simplices().next().unwrap();
 
         // Test that quality functions are accessible
-        let ratio = radius_ratio(dt.as_triangulation(), cell_key).unwrap();
+        let ratio = radius_ratio(dt.as_triangulation(), simplex_key).unwrap();
         assert!(ratio > 0.0);
 
-        let norm_vol = normalized_volume(dt.as_triangulation(), cell_key).unwrap();
+        let norm_vol = normalized_volume(dt.as_triangulation(), simplex_key).unwrap();
         assert!(norm_vol > 0.0);
     }
 
@@ -1965,18 +1959,18 @@ mod tests {
         let dt: DelaunayTriangulation<_, (), (), 3> =
             DelaunayTriangulation::new(&vertices).unwrap();
         assert_eq!(dt.number_of_vertices(), 4);
-        assert_eq!(dt.number_of_cells(), 1);
+        assert_eq!(dt.number_of_simplices(), 1);
 
-        // Access Triangulation, Tds, Cell types
+        // Access Triangulation, Tds, Simplex types
         let tri = dt.as_triangulation();
         assert_eq!(tri.number_of_vertices(), 4);
 
         let tds = &tri.tds;
-        assert_eq!(tds.number_of_cells(), 1);
+        assert_eq!(tds.number_of_simplices(), 1);
 
-        // Iterate over cells
-        for (cell_key, _cell) in tri.cells() {
-            assert!(tds.cell(cell_key).is_some());
+        // Iterate over simplices
+        for (simplex_key, _simplex) in tri.simplices() {
+            assert!(tds.simplex(simplex_key).is_some());
         }
     }
 
@@ -1999,7 +1993,7 @@ mod tests {
 
         // Result should be a LocateResult
         match result.unwrap() {
-            LocateResult::InsideCell(_)
+            LocateResult::InsideSimplex(_)
             | LocateResult::OnFacet { .. }
             | LocateResult::OnEdge { .. }
             | LocateResult::OnVertex(_) => { /* expected or acceptable */ }

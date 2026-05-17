@@ -82,8 +82,8 @@ fn report_valid_triangulation() -> Result<(), DiagnosticsExampleError> {
 
     println!("Valid 3D triangulation:");
     println!("  vertices: {}", report.number_of_vertices);
-    println!("  cells: {}", report.number_of_cells);
-    println!("  checked cells: {}", report.checked_cells);
+    println!("  simplices: {}", report.number_of_simplices);
+    println!("  checked simplices: {}", report.checked_simplices);
     println!("  Delaunay valid: {}", report.is_valid());
     assert!(report.is_valid());
     Ok(())
@@ -97,13 +97,16 @@ fn report_non_delaunay_triangulation() -> Result<(), DiagnosticsExampleError> {
 
     println!("Non-Delaunay 2D triangulation after an explicit k=2 flip:");
     println!("  vertices: {}", report.number_of_vertices);
-    println!("  cells: {}", report.number_of_cells);
-    println!("  violating cells: {}", report.violating_cells.len());
+    println!("  simplices: {}", report.number_of_simplices);
+    println!(
+        "  violating simplices: {}",
+        report.violating_simplices.len()
+    );
     assert!(!report.is_valid());
 
     if let Some(detail) = &report.first_violation {
-        println!("  first violating cell: {:?}", detail.cell_key);
-        println!("  cell vertex count: {}", detail.cell_vertices.len());
+        println!("  first violating simplex: {:?}", detail.simplex_key);
+        println!("  simplex vertex count: {}", detail.simplex_vertices.len());
         println!("  offending external vertex: {:?}", detail.offending_vertex);
     }
 
@@ -126,8 +129,8 @@ fn build_non_delaunay_triangulation_2d()
     ];
     let dt: DelaunayTriangulation<_, (), (), 2> = DelaunayTriangulation::new(&vertices)?;
 
-    for (cell_key, cell) in dt.cells() {
-        if let Some(neighbors) = cell.neighbors() {
+    for (simplex_key, simplex) in dt.simplices() {
+        if let Some(neighbors) = simplex.neighbors() {
             for (facet_index, neighbor) in neighbors.enumerate() {
                 if neighbor.is_none() {
                     continue;
@@ -136,7 +139,7 @@ fn build_non_delaunay_triangulation_2d()
                 let Ok(facet_index) = u8::try_from(facet_index) else {
                     continue;
                 };
-                let facet = FacetHandle::new(cell_key, facet_index);
+                let facet = FacetHandle::new(simplex_key, facet_index);
                 let mut trial = dt.clone();
                 if trial.flip_k2(facet).is_ok()
                     && trial.as_triangulation().validate().is_ok()

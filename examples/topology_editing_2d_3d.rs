@@ -51,10 +51,10 @@ enum TopologyEditingExampleError {
     Tds(#[from] TdsError),
     #[error(transparent)]
     Circumcenter(#[from] CircumcenterError),
-    #[error("{demo} triangulation has no cells")]
+    #[error("{demo} triangulation has no simplices")]
     EmptyTriangulation { demo: &'static str },
-    #[error("{demo} cell key was not found")]
-    MissingCell { demo: &'static str },
+    #[error("{demo} simplex key was not found")]
+    MissingSimplex { demo: &'static str },
     #[error("{demo} vertex key {vertex_key:?} was not found")]
     MissingVertex {
         demo: &'static str,
@@ -129,10 +129,10 @@ fn builder_api_2d() -> ExampleResult {
     for (i, v) in new_vertices.into_iter().enumerate() {
         dt.insert(v)?;
         println!(
-            "  After insert {}: {} vertices, {} cells",
+            "  After insert {}: {} vertices, {} simplices",
             i + 1,
             dt.number_of_vertices(),
-            dt.number_of_cells()
+            dt.number_of_simplices()
         );
     }
 
@@ -142,9 +142,9 @@ fn builder_api_2d() -> ExampleResult {
     Ok(())
 }
 
-/// Demonstrates k=1 flips (cell split/merge) in 2D.
+/// Demonstrates k=1 flips (simplex split/merge) in 2D.
 fn edit_api_2d_k1() -> ExampleResult {
-    println!("2D Edit API: k=1 Flips (Cell Split/Merge)");
+    println!("2D Edit API: k=1 Flips (Simplex Split/Merge)");
     println!("------------------------------------------\n");
 
     let vertices = vec![
@@ -158,19 +158,21 @@ fn edit_api_2d_k1() -> ExampleResult {
     println!("Initial triangle:");
     print_stats_2d(&dt);
 
-    // Apply k=1 flip (insert vertex into cell)
-    let cell_key = dt.cells().next().map(|(cell_key, _)| cell_key).ok_or(
-        TopologyEditingExampleError::EmptyTriangulation {
-            demo: "2D k=1 demo",
-        },
-    )?;
-    let cell = dt
-        .tds()
-        .cell(cell_key)
-        .ok_or(TopologyEditingExampleError::MissingCell {
+    // Apply k=1 flip (insert vertex into simplex)
+    let simplex_key = dt
+        .simplices()
+        .next()
+        .map(|(simplex_key, _)| simplex_key)
+        .ok_or(TopologyEditingExampleError::EmptyTriangulation {
             demo: "2D k=1 demo",
         })?;
-    let vertex_points: Vec<Point<f64, 2>> = cell
+    let simplex =
+        dt.tds()
+            .simplex(simplex_key)
+            .ok_or(TopologyEditingExampleError::MissingSimplex {
+                demo: "2D k=1 demo",
+            })?;
+    let vertex_points: Vec<Point<f64, 2>> = simplex
         .vertices()
         .iter()
         .map(|vkey| {
@@ -202,12 +204,12 @@ fn edit_api_2d_k1() -> ExampleResult {
         circumcenter_coords[0], circumcenter_coords[1]
     );
 
-    let flip_info = dt.flip_k1_insert(cell_key, vertex!(circumcenter_coords))?;
+    let flip_info = dt.flip_k1_insert(simplex_key, vertex!(circumcenter_coords))?;
 
     println!("After k=1 forward:");
     print_stats_2d(&dt);
-    println!("  Removed: {} cells", flip_info.removed_cells.len());
-    println!("  Inserted: {} cells", flip_info.new_cells.len());
+    println!("  Removed: {} simplices", flip_info.removed_simplices.len());
+    println!("  Inserted: {} simplices", flip_info.new_simplices.len());
     println!("  New vertex: {:?}", flip_info.inserted_face_vertices);
 
     // Verify structural validity (always maintained)
@@ -263,8 +265,8 @@ fn edit_api_2d_k2() -> ExampleResult {
 
     println!("After k=2 forward:");
     print_stats_2d(&dt);
-    println!("  Removed: {} cells", flip_info.removed_cells.len());
-    println!("  Inserted: {} cells", flip_info.new_cells.len());
+    println!("  Removed: {} simplices", flip_info.removed_simplices.len());
+    println!("  Inserted: {} simplices", flip_info.new_simplices.len());
 
     // Check if Delaunay property changed
     let after_valid = dt.is_valid().is_ok();
@@ -329,10 +331,10 @@ fn builder_api_3d() -> ExampleResult {
     for (i, v) in new_vertices.into_iter().enumerate() {
         dt.insert(v)?;
         println!(
-            "  After insert {}: {} vertices, {} cells",
+            "  After insert {}: {} vertices, {} simplices",
             i + 1,
             dt.number_of_vertices(),
-            dt.number_of_cells()
+            dt.number_of_simplices()
         );
     }
 
@@ -343,7 +345,7 @@ fn builder_api_3d() -> ExampleResult {
 
 /// Demonstrates k=1 flips in 3D.
 fn edit_api_3d_k1() -> ExampleResult {
-    println!("3D Edit API: k=1 Flips (Cell Split/Merge)");
+    println!("3D Edit API: k=1 Flips (Simplex Split/Merge)");
     println!("------------------------------------------\n");
 
     let vertices = vec![
@@ -359,18 +361,20 @@ fn edit_api_3d_k1() -> ExampleResult {
     print_stats_3d(&dt);
 
     // Apply k=1 flip
-    let cell_key = dt.cells().next().map(|(cell_key, _)| cell_key).ok_or(
-        TopologyEditingExampleError::EmptyTriangulation {
-            demo: "3D k=1 demo",
-        },
-    )?;
-    let cell = dt
-        .tds()
-        .cell(cell_key)
-        .ok_or(TopologyEditingExampleError::MissingCell {
+    let simplex_key = dt
+        .simplices()
+        .next()
+        .map(|(simplex_key, _)| simplex_key)
+        .ok_or(TopologyEditingExampleError::EmptyTriangulation {
             demo: "3D k=1 demo",
         })?;
-    let vertex_points: Vec<Point<f64, 3>> = cell
+    let simplex =
+        dt.tds()
+            .simplex(simplex_key)
+            .ok_or(TopologyEditingExampleError::MissingSimplex {
+                demo: "3D k=1 demo",
+            })?;
+    let vertex_points: Vec<Point<f64, 3>> = simplex
         .vertices()
         .iter()
         .map(|vkey| {
@@ -402,11 +406,14 @@ fn edit_api_3d_k1() -> ExampleResult {
         "\nApplying k=1 flip (split tetrahedron at circumcenter [{:.2}, {:.2}, {:.2}]):",
         circumcenter_coords[0], circumcenter_coords[1], circumcenter_coords[2]
     );
-    let flip_info = dt.flip_k1_insert(cell_key, vertex!(circumcenter_coords))?;
+    let flip_info = dt.flip_k1_insert(simplex_key, vertex!(circumcenter_coords))?;
 
     println!("After k=1 forward:");
     print_stats_3d(&dt);
-    println!("  1 tetrahedron → {} tetrahedra", flip_info.new_cells.len());
+    println!(
+        "  1 tetrahedron → {} tetrahedra",
+        flip_info.new_simplices.len()
+    );
 
     // Apply inverse
     println!("\nApplying k=1 inverse:");
@@ -448,8 +455,8 @@ fn edit_api_3d_k2() -> ExampleResult {
             Ok(flip_info) => {
                 println!("\nApplied k=2 flip:");
                 print_stats_3d(&dt);
-                println!("  Removed: {} cells", flip_info.removed_cells.len());
-                println!("  Inserted: {} cells", flip_info.new_cells.len());
+                println!("  Removed: {} simplices", flip_info.removed_simplices.len());
+                println!("  Inserted: {} simplices", flip_info.new_simplices.len());
 
                 // Try inverse
                 println!("\nApplying k=2 inverse:");
@@ -519,8 +526,8 @@ fn edit_api_3d_k3() -> ExampleResult {
             Ok(flip_info) => {
                 println!("\n✓ k=3 flip succeeded:");
                 print_stats_3d(&dt);
-                println!("  Removed: {} cells", flip_info.removed_cells.len());
-                println!("  Inserted: {} cells", flip_info.new_cells.len());
+                println!("  Removed: {} simplices", flip_info.removed_simplices.len());
+                println!("  Inserted: {} simplices", flip_info.new_simplices.len());
             }
             Err(e) => {
                 println!("\n⚠️  k=3 flip not applicable: {e}");
@@ -543,7 +550,7 @@ fn print_stats_2d<K: Kernel<2>>(dt: &DelaunayTriangulation<K, (), (), 2>) {
     println!(
         "  Vertices: {}, Triangles: {}",
         dt.number_of_vertices(),
-        dt.number_of_cells()
+        dt.number_of_simplices()
     );
 }
 
@@ -551,21 +558,21 @@ fn print_stats_3d<K: Kernel<3>>(dt: &DelaunayTriangulation<K, (), (), 3>) {
     println!(
         "  Vertices: {}, Tetrahedra: {}",
         dt.number_of_vertices(),
-        dt.number_of_cells()
+        dt.number_of_simplices()
     );
 }
 
 fn find_interior_facet_2d<K: Kernel<2>>(
     dt: &DelaunayTriangulation<K, (), (), 2>,
 ) -> Option<FacetHandle> {
-    for (cell_key, cell) in dt.cells() {
-        if let Some(neighbors) = cell.neighbors() {
+    for (simplex_key, simplex) in dt.simplices() {
+        if let Some(neighbors) = simplex.neighbors() {
             for (facet_idx, neighbor) in neighbors.enumerate() {
                 if neighbor.is_some() {
                     let Ok(facet_idx) = u8::try_from(facet_idx) else {
                         continue;
                     };
-                    return Some(FacetHandle::new(cell_key, facet_idx));
+                    return Some(FacetHandle::new(simplex_key, facet_idx));
                 }
             }
         }
@@ -576,14 +583,14 @@ fn find_interior_facet_2d<K: Kernel<2>>(
 fn find_interior_facet_3d<K: Kernel<3>>(
     dt: &DelaunayTriangulation<K, (), (), 3>,
 ) -> Option<FacetHandle> {
-    for (cell_key, cell) in dt.cells() {
-        if let Some(neighbors) = cell.neighbors() {
+    for (simplex_key, simplex) in dt.simplices() {
+        if let Some(neighbors) = simplex.neighbors() {
             for (facet_idx, neighbor) in neighbors.enumerate() {
                 if neighbor.is_some() {
                     let Ok(facet_idx) = u8::try_from(facet_idx) else {
                         continue;
                     };
-                    return Some(FacetHandle::new(cell_key, facet_idx));
+                    return Some(FacetHandle::new(simplex_key, facet_idx));
                 }
             }
         }
@@ -595,8 +602,8 @@ fn find_flippable_ridge_3d<K: Kernel<3>>(
     dt: &DelaunayTriangulation<K, (), (), 3>,
 ) -> Option<RidgeHandle> {
     // Try to find any ridge (edge in 3D shared by multiple tetrahedra)
-    for (cell_key, cell) in dt.cells() {
-        let vertex_count = cell.number_of_vertices();
+    for (simplex_key, simplex) in dt.simplices() {
+        let vertex_count = simplex.number_of_vertices();
         // Try each pair of vertices (each defines a ridge)
         for i in 0..vertex_count {
             if i + 1 >= vertex_count {
@@ -608,7 +615,7 @@ fn find_flippable_ridge_3d<K: Kernel<3>>(
             let Ok(omit_b) = u8::try_from(i + 1) else {
                 continue;
             };
-            let ridge = RidgeHandle::new(cell_key, omit_a, omit_b);
+            let ridge = RidgeHandle::new(simplex_key, omit_a, omit_b);
 
             // Just return the first one we find
             // (In practice, you'd want to check if it's actually flippable)

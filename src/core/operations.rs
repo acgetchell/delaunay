@@ -10,7 +10,7 @@
 #![forbid(unsafe_code)]
 
 use crate::core::algorithms::incremental_insertion::InsertionError;
-use crate::core::tds::CellKey;
+use crate::core::tds::SimplexKey;
 use crate::core::triangulation::TopologyGuarantee;
 use crate::triangulation::delaunay::{DelaunayCheckPolicy, DelaunayRepairPolicy};
 
@@ -184,7 +184,7 @@ pub enum InsertionResult {
 ///
 /// let stats = InsertionStatistics {
 ///     attempts: 2,
-///     cells_removed_during_repair: 1,
+///     simplices_removed_during_repair: 1,
 ///     result: InsertionResult::Inserted,
 /// };
 /// assert!(stats.used_perturbation());
@@ -195,8 +195,8 @@ pub enum InsertionResult {
 pub struct InsertionStatistics {
     /// Number of insertion attempts (1 = success on first try, >1 = needed perturbation)
     pub attempts: usize,
-    /// Number of cells removed during repair
-    pub cells_removed_during_repair: usize,
+    /// Number of simplices removed during repair
+    pub simplices_removed_during_repair: usize,
     /// Result of the insertion attempt
     pub result: InsertionResult,
 }
@@ -264,7 +264,7 @@ pub(crate) struct InsertionTelemetry {
     pub locate_hint_uses: usize,
     /// Number of point-location calls that fell back to a brute-force scan.
     pub locate_scan_fallbacks: usize,
-    /// Number of point-location calls that ended inside a cell.
+    /// Number of point-location calls that ended inside a simplex.
     pub located_inside: usize,
     /// Number of point-location calls that ended outside the convex hull.
     pub located_outside: usize,
@@ -273,10 +273,10 @@ pub(crate) struct InsertionTelemetry {
 
     /// Number of local conflict-region computations observed by insertion.
     pub conflict_region_calls: usize,
-    /// Total number of cells in local conflict regions.
-    pub conflict_region_cells_total: usize,
-    /// Maximum number of cells in a single local conflict region.
-    pub conflict_region_cells_max: usize,
+    /// Total number of simplices in local conflict regions.
+    pub conflict_region_simplices_total: usize,
+    /// Maximum number of simplices in a single local conflict region.
+    pub conflict_region_simplices_max: usize,
     /// Wall-clock nanoseconds spent computing local conflict regions.
     pub conflict_region_nanos: u64,
     /// Maximum wall-clock nanoseconds spent computing one local conflict region.
@@ -305,12 +305,12 @@ pub(crate) struct InsertionTelemetry {
 
     /// Number of global exterior-point conflict scans.
     pub global_conflict_scans: usize,
-    /// Total cells scanned by global exterior-point conflict scans.
-    pub global_conflict_cells_scanned: usize,
-    /// Total cells found by global exterior-point conflict scans.
-    pub global_conflict_cells_found_total: usize,
-    /// Maximum cells found by a single global exterior-point conflict scan.
-    pub global_conflict_cells_found_max: usize,
+    /// Total simplices scanned by global exterior-point conflict scans.
+    pub global_conflict_simplices_scanned: usize,
+    /// Total simplices found by global exterior-point conflict scans.
+    pub global_conflict_simplices_found_total: usize,
+    /// Maximum simplices found by a single global exterior-point conflict scan.
+    pub global_conflict_simplices_found_max: usize,
     /// Wall-clock nanoseconds spent in global exterior-point conflict scans.
     pub global_conflict_scan_nanos: u64,
 }
@@ -318,8 +318,8 @@ pub(crate) struct InsertionTelemetry {
 /// Ephemeral insertion state used by Delaunay triangulations.
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct DelaunayInsertionState {
-    /// Hint for the next `locate()` call (last inserted cell).
-    pub last_inserted_cell: Option<CellKey>,
+    /// Hint for the next `locate()` call (last inserted simplex).
+    pub last_inserted_simplex: Option<SimplexKey>,
     /// Policy controlling automatic Delaunay repair (flip-based).
     pub delaunay_repair_policy: DelaunayRepairPolicy,
     /// Policy controlling automatic global Delaunay validation (Level 4).
@@ -338,7 +338,7 @@ impl DelaunayInsertionState {
     #[must_use]
     pub const fn new() -> Self {
         Self {
-            last_inserted_cell: None,
+            last_inserted_simplex: None,
             delaunay_repair_policy: DelaunayRepairPolicy::EveryInsertion,
             delaunay_check_policy: DelaunayCheckPolicy::EndOnly,
             delaunay_repair_insertion_count: 0,
@@ -378,8 +378,8 @@ pub enum InsertionOutcome {
     Inserted {
         /// Key of the inserted vertex.
         vertex_key: crate::core::tds::VertexKey,
-        /// Optional cell key that can be used as a hint for subsequent insertions.
-        hint: Option<crate::core::tds::CellKey>,
+        /// Optional simplex key that can be used as a hint for subsequent insertions.
+        hint: Option<crate::core::tds::SimplexKey>,
     },
     /// The vertex was intentionally not inserted.
     ///
@@ -423,15 +423,15 @@ pub struct SuspicionFlags {
     /// A conflict-region computation returned an empty set for an interior point.
     pub empty_conflict_region: bool,
 
-    /// The insertion fell back to splitting the containing cell (star-split) to avoid
+    /// The insertion fell back to splitting the containing simplex (star-split) to avoid
     /// creating a dangling vertex.
     pub fallback_star_split: bool,
 
     /// The non-manifold repair loop was entered after insertion/hull extension.
     pub repair_loop_entered: bool,
 
-    /// One or more cells were removed during non-manifold repair.
-    pub cells_removed: bool,
+    /// One or more simplices were removed during non-manifold repair.
+    pub simplices_removed: bool,
 
     /// Neighbor pointers were rebuilt (facet-matched) after topology repair.
     pub neighbor_pointers_rebuilt: bool,
@@ -446,7 +446,7 @@ impl SuspicionFlags {
             || self.empty_conflict_region
             || self.fallback_star_split
             || self.repair_loop_entered
-            || self.cells_removed
+            || self.simplices_removed
             || self.neighbor_pointers_rebuilt
     }
 }

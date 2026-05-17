@@ -31,7 +31,7 @@ fn test_delaunayize_config_default_values() {
     init_tracing();
     let config = DelaunayizeConfig::default();
     assert_eq!(config.topology_max_iterations, 64);
-    assert_eq!(config.topology_max_cells_removed, 10_000);
+    assert_eq!(config.topology_max_simplices_removed, 10_000);
     assert!(!config.fallback_rebuild);
 }
 
@@ -149,7 +149,7 @@ fn test_outcome_stats_populated_3d() {
 
     // Topology repair stats should be populated.
     assert!(outcome.topology_repair.succeeded);
-    assert_eq!(outcome.topology_repair.cells_removed, 0);
+    assert_eq!(outcome.topology_repair.simplices_removed, 0);
 
     // Delaunay repair stats should be populated.
     assert!(outcome.delaunay_repair.facets_checked >= outcome.delaunay_repair.flips_performed);
@@ -182,8 +182,8 @@ fn test_repeat_run_determinism_2d() {
 
     // Stats should be identical across runs on the same input.
     assert_eq!(
-        outcome1.topology_repair.cells_removed,
-        outcome2.topology_repair.cells_removed
+        outcome1.topology_repair.simplices_removed,
+        outcome2.topology_repair.simplices_removed
     );
     assert_eq!(
         outcome1.topology_repair.iterations,
@@ -222,8 +222,8 @@ fn test_repeat_run_determinism_3d() {
     let outcome2 = delaunayize_by_flips(&mut dt2, config).unwrap();
 
     assert_eq!(
-        outcome1.topology_repair.cells_removed,
-        outcome2.topology_repair.cells_removed
+        outcome1.topology_repair.simplices_removed,
+        outcome2.topology_repair.simplices_removed
     );
     assert_eq!(
         outcome1.used_fallback_rebuild,
@@ -251,7 +251,7 @@ fn test_vertex_count_preserved_after_delaunayize() {
 
     let _outcome = delaunayize_by_flips(&mut dt, DelaunayizeConfig::default()).unwrap();
 
-    // Topology repair only removes cells, not vertices. Delaunay flip repair
+    // Topology repair only removes simplices, not vertices. Delaunay flip repair
     // also preserves vertex count. So the vertex count should be unchanged.
     assert_eq!(dt.number_of_vertices(), vertex_count_before);
 }
@@ -265,7 +265,7 @@ fn test_vertex_count_preserved_after_delaunayize() {
 #[test]
 fn test_flip_breaks_delaunay_then_delaunayize_restores() {
     init_tracing();
-    // 5 points in 3D — produces multiple cells with interior facets.
+    // 5 points in 3D — produces multiple simplices with interior facets.
     let vertices = vec![
         vertex!([0.0, 0.0, 0.0]),
         vertex!([1.0, 0.0, 0.0]),
@@ -279,8 +279,8 @@ fn test_flip_breaks_delaunay_then_delaunayize_restores() {
 
     // Collect candidate interior facets (immutable borrow ends before mutation).
     let mut candidate_facets = Vec::new();
-    for (ck, cell) in dt.cells() {
-        if let Some(neighbors) = cell.neighbors() {
+    for (ck, simplex) in dt.simplices() {
+        if let Some(neighbors) = simplex.neighbors() {
             for (i, n) in neighbors.enumerate() {
                 if let (Some(_), Ok(idx)) = (n, u8::try_from(i)) {
                     candidate_facets.push(FacetHandle::new(ck, idx));
@@ -320,7 +320,7 @@ fn test_error_display_topology_repair_failed() {
     let inner = PlManifoldRepairError::NoProgress {
         over_shared_facets: 3,
         iterations: 5,
-        cells_removed: 10,
+        simplices_removed: 10,
     };
     let err: DelaunayizeError = inner.clone().into();
     let msg = err.to_string();
@@ -366,7 +366,7 @@ fn test_error_display_topology_repair_with_rebuild() {
     let topo_err = PlManifoldRepairError::NoProgress {
         over_shared_facets: 3,
         iterations: 5,
-        cells_removed: 10,
+        simplices_removed: 10,
     };
     let rebuild_err: DelaunayTriangulationConstructionError =
         TriangulationConstructionError::GeometricDegeneracy {
@@ -455,7 +455,7 @@ fn test_prelude_exports_error_payloads() {
     const _: usize = size_of::<DelaunayRepairStats>();
     const _: usize = size_of::<PlManifoldRepairError>();
     const _: usize = size_of::<PlManifoldRepairStats<f64, (), (), 2>>();
-    const _: usize = size_of::<CellValidationError>();
+    const _: usize = size_of::<SimplexValidationError>();
     const _: usize = size_of::<DelaunayTriangulationConstructionError>();
 }
 
@@ -534,8 +534,8 @@ fn test_flip_breaks_then_delaunayize_with_budget_restores_3d() {
 
     // Collect candidate interior facets.
     let mut candidate_facets = Vec::new();
-    for (ck, cell) in dt.cells() {
-        if let Some(neighbors) = cell.neighbors() {
+    for (ck, simplex) in dt.simplices() {
+        if let Some(neighbors) = simplex.neighbors() {
             for (i, n) in neighbors.enumerate() {
                 if let (Some(_), Ok(idx)) = (n, u8::try_from(i)) {
                     candidate_facets.push(FacetHandle::new(ck, idx));

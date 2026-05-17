@@ -7,7 +7,7 @@
 //!
 //! The workflow has three steps:
 //!
-//! 1. **PL-manifold topology repair** — removes cells that cause facet
+//! 1. **PL-manifold topology repair** — removes simplices that cause facet
 //!    over-sharing (codimension-1 facet degree > 2).
 //! 2. **Delaunay flip repair** — restores the empty-circumsphere property
 //!    via k=2/k=3 bistellar flips.
@@ -83,9 +83,9 @@ fn already_delaunay_3d() -> Result<(), DelaunayizeRepairExampleError> {
     let mut dt: DelaunayTriangulation<_, (), (), 3> = DelaunayTriangulation::new(&vertices)?;
 
     println!(
-        "  Built 3D triangulation: {} vertices, {} cells",
+        "  Built 3D triangulation: {} vertices, {} simplices",
         dt.number_of_vertices(),
-        dt.number_of_cells()
+        dt.number_of_simplices()
     );
 
     let outcome = delaunayize_by_flips(&mut dt, DelaunayizeConfig::default())?;
@@ -116,9 +116,9 @@ fn already_delaunay_4d() -> Result<(), DelaunayizeRepairExampleError> {
     let mut dt: DelaunayTriangulation<_, (), (), 4> = DelaunayTriangulation::new(&vertices)?;
 
     println!(
-        "  Built 4D triangulation: {} vertices, {} cells",
+        "  Built 4D triangulation: {} vertices, {} simplices",
         dt.number_of_vertices(),
-        dt.number_of_cells()
+        dt.number_of_simplices()
     );
 
     let outcome = delaunayize_by_flips(&mut dt, DelaunayizeConfig::default())?;
@@ -152,17 +152,17 @@ fn flip_then_repair_2d() -> Result<(), DelaunayizeRepairExampleError> {
     let mut dt: DelaunayTriangulation<_, (), (), 2> = DelaunayTriangulation::new(&vertices)?;
 
     println!(
-        "  Initial: {} vertices, {} cells",
+        "  Initial: {} vertices, {} simplices",
         dt.number_of_vertices(),
-        dt.number_of_cells()
+        dt.number_of_simplices()
     );
     assert!(dt.validate().is_ok());
     println!("  ✓ Initially Delaunay");
 
     // Collect interior facets and find one whose k=2 flip actually breaks Delaunay.
     let mut facets: Vec<_> = Vec::new();
-    for (ck, cell) in dt.cells() {
-        if let Some(neighbors) = cell.neighbors() {
+    for (ck, simplex) in dt.simplices() {
+        if let Some(neighbors) = simplex.neighbors() {
             for (i, n) in neighbors.enumerate() {
                 if let (Some(_), Ok(idx)) = (n, u8::try_from(i)) {
                     facets.push(FacetHandle::new(ck, idx));
@@ -227,14 +227,16 @@ fn custom_config_2d() -> Result<(), DelaunayizeRepairExampleError> {
 
     let config = DelaunayizeConfig {
         topology_max_iterations: 10,
-        topology_max_cells_removed: 100,
+        topology_max_simplices_removed: 100,
         fallback_rebuild: true,
         delaunay_max_flips: None,
     };
 
     println!(
-        "  Config: max_iterations={}, max_cells_removed={}, fallback={}",
-        config.topology_max_iterations, config.topology_max_cells_removed, config.fallback_rebuild,
+        "  Config: max_iterations={}, max_simplices_removed={}, fallback={}",
+        config.topology_max_iterations,
+        config.topology_max_simplices_removed,
+        config.fallback_rebuild,
     );
 
     let outcome = delaunayize_by_flips(&mut dt, config)?;
@@ -242,9 +244,9 @@ fn custom_config_2d() -> Result<(), DelaunayizeRepairExampleError> {
 
     dt.validate()?;
     println!(
-        "  ✓ Valid 2D triangulation: {} vertices, {} cells",
+        "  ✓ Valid 2D triangulation: {} vertices, {} simplices",
         dt.number_of_vertices(),
-        dt.number_of_cells(),
+        dt.number_of_simplices(),
     );
     Ok(())
 }
@@ -253,10 +255,10 @@ fn print_outcome<T: CoordinateScalar, U: DataType, V: DataType, const D: usize>(
     outcome: &DelaunayizeOutcome<T, U, V, D>,
 ) {
     println!(
-        "  Topology repair: succeeded={}, iterations={}, cells_removed={}",
+        "  Topology repair: succeeded={}, iterations={}, simplices_removed={}",
         outcome.topology_repair.succeeded,
         outcome.topology_repair.iterations,
-        outcome.topology_repair.cells_removed,
+        outcome.topology_repair.simplices_removed,
     );
     println!(
         "  Delaunay repair: facets_checked={}, flips_performed={}",

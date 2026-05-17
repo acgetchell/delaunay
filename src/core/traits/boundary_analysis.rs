@@ -9,7 +9,7 @@ use crate::core::{
 ///
 /// This trait provides methods to identify and analyze boundary facets
 /// in d-dimensional triangulations. A boundary facet is a facet that
-/// belongs to only one cell, meaning it lies on the convex hull of
+/// belongs to only one simplex, meaning it lies on the convex hull of
 /// the triangulation.
 ///
 /// # Examples
@@ -37,7 +37,7 @@ use crate::core::{
 pub trait BoundaryAnalysis<T, U, V, const D: usize> {
     /// Identifies all boundary facets in the triangulation.
     ///
-    /// A boundary facet is a facet that belongs to only one cell, meaning it lies on the
+    /// A boundary facet is a facet that belongs to only one simplex, meaning it lies on the
     /// boundary of the triangulation (convex hull). These facets are important for
     /// convex hull computation and boundary analysis.
     ///
@@ -48,7 +48,7 @@ pub trait BoundaryAnalysis<T, U, V, const D: usize> {
     ///
     /// # Errors
     ///
-    /// Returns a [`TdsError`] if any boundary facet cannot be created from the cells.
+    /// Returns a [`TdsError`] if any boundary facet cannot be created from the simplices.
     ///
     /// # Examples
     ///
@@ -72,7 +72,7 @@ pub trait BoundaryAnalysis<T, U, V, const D: usize> {
 
     /// Checks if a specific facet is a boundary facet.
     ///
-    /// A boundary facet is a facet that belongs to only one cell in the triangulation.
+    /// A boundary facet is a facet that belongs to only one simplex in the triangulation.
     ///
     /// # Arguments
     ///
@@ -80,14 +80,14 @@ pub trait BoundaryAnalysis<T, U, V, const D: usize> {
     ///
     /// # Returns
     ///
-    /// `Ok(true)` if the facet is on the boundary (belongs to only one cell),
-    /// `Ok(false)` if it's an interior facet (belongs to two cells).
+    /// `Ok(true)` if the facet is on the boundary (belongs to only one simplex),
+    /// `Ok(false)` if it's an interior facet (belongs to two simplices).
     ///
     /// # Errors
     ///
     /// Returns `Err(TdsError)` if:
-    /// - Building the facet-to-cells mapping fails due to data structure inconsistencies
-    /// - The triangulation contains invalid cells or corrupted vertex mappings
+    /// - Building the facet-to-simplices mapping fails due to data structure inconsistencies
+    /// - The triangulation contains invalid simplices or corrupted vertex mappings
     ///
     /// # Examples
     ///
@@ -114,18 +114,18 @@ pub trait BoundaryAnalysis<T, U, V, const D: usize> {
     /// Checks if a specific facet is a boundary facet using a precomputed facet map.
     ///
     /// This is an optimized version of `is_boundary_facet` that accepts a prebuilt
-    /// facet-to-cells map to avoid recomputation in tight loops.
+    /// facet-to-simplices map to avoid recomputation in tight loops.
     ///
     /// # Arguments
     ///
     /// * `facet` - The facet to check.
-    /// * `facet_to_cells` - Precomputed map from facet keys to cells containing them.
-    ///   Obtain this by calling [`build_facet_to_cells_map`] on the triangulation.
+    /// * `facet_to_simplices` - Precomputed map from facet keys to simplices containing them.
+    ///   Obtain this by calling [`build_facet_to_simplices_map`] on the triangulation.
     ///
     /// # Returns
     ///
-    /// `Ok(true)` if the facet is on the boundary (belongs to only one cell),
-    /// `Ok(false)` if it's an interior facet (belongs to two cells).
+    /// `Ok(true)` if the facet is on the boundary (belongs to only one simplex),
+    /// `Ok(false)` if it's an interior facet (belongs to two simplices).
     ///
     /// # Errors
     ///
@@ -148,23 +148,23 @@ pub trait BoundaryAnalysis<T, U, V, const D: usize> {
     /// let tds = dt.tds();
     ///
     /// // Build the facet map once for multiple queries (efficient for batch operations)
-    /// let facet_to_cells = tds.build_facet_to_cells_map().expect("facet map should build");
+    /// let facet_to_simplices = tds.build_facet_to_simplices_map().expect("facet map should build");
     ///
     /// // Check boundary facets efficiently using the iterator API and cached map
     /// let boundary_facets = tds.boundary_facets().unwrap();
     /// for facet in boundary_facets {
-    ///     let is_boundary = tds.is_boundary_facet_with_map(&facet, &facet_to_cells).expect("Should not fail for valid facets");
+    ///     let is_boundary = tds.is_boundary_facet_with_map(&facet, &facet_to_simplices).expect("Should not fail for valid facets");
     ///     println!("Facet is boundary: {is_boundary}");
     ///     // In a single tetrahedron, all facets are boundary facets
     ///     assert!(is_boundary);
     /// }
     /// ```
     ///
-    /// [`build_facet_to_cells_map`]: crate::core::tds::Tds::build_facet_to_cells_map
+    /// [`build_facet_to_simplices_map`]: crate::core::tds::Tds::build_facet_to_simplices_map
     fn is_boundary_facet_with_map(
         &self,
         facet: &FacetView<'_, T, U, V, D>,
-        facet_to_cells: &crate::core::collections::FacetToCellsMap,
+        facet_to_simplices: &crate::core::collections::FacetToSimplicesMap,
     ) -> Result<bool, TdsError>;
 
     /// Returns the number of boundary facets in the triangulation.
@@ -178,7 +178,7 @@ pub trait BoundaryAnalysis<T, U, V, const D: usize> {
     ///
     /// # Errors
     ///
-    /// Returns a [`TdsError`] if the facet-to-cells map cannot be built.
+    /// Returns a [`TdsError`] if the facet-to-simplices map cannot be built.
     ///
     /// # Examples
     ///

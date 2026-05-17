@@ -2,7 +2,7 @@
 //!
 //! This module provides the `Vertex` struct which represents a geometric vertex
 //! in D-dimensional space with associated metadata including unique identification,
-//! incident cell references, and optional user data.
+//! incident simplex references, and optional user data.
 //!
 //! # Key Features
 //!
@@ -13,8 +13,8 @@
 //! - **Optional Data Storage**: [`Vertex`] and [`VertexBuilder`] support arbitrary
 //!   user data `U`; serialization adds [`DataSerialize`] / [`DataDeserialize`]
 //!   bounds when needed
-//! - **Incident Cell Tracking**: Maintains references to containing cells
-//! - **Serialization Support**: Serde support for persistence (`incident_cell` is reconstructed by TDS)
+//! - **Incident Simplex Tracking**: Maintains references to containing simplices
+//! - **Serialization Support**: Serde support for persistence (`incident_simplex` is reconstructed by TDS)
 //! - **Builder Pattern**: Convenient vertex construction using `VertexBuilder`
 //!
 //! # Examples
@@ -33,7 +33,7 @@
 #![forbid(unsafe_code)]
 
 use super::{
-    tds::CellKey,
+    tds::SimplexKey,
     traits::{DataDeserialize, DataSerialize},
     util::{UuidValidationError, make_uuid, validate_uuid},
 };
@@ -194,7 +194,7 @@ impl<T, U, const D: usize> VertexBuilder<T, U, D> {
         Ok(Vertex {
             point,
             uuid: make_uuid(),
-            incident_cell: None,
+            incident_simplex: None,
             data: self.data,
         })
     }
@@ -277,7 +277,7 @@ pub use crate::vertex;
 ///
 /// - **`point`**: A `Point<T, D>` representing the geometric coordinates of the vertex
 /// - **`uuid`**: A universally unique identifier for the vertex (auto-generated)
-/// - **`incident_cell`**: Optional reference to a containing cell (managed by TDS)
+/// - **`incident_simplex`**: Optional reference to a containing simplex (managed by TDS)
 /// - **`data`**: Optional user-defined data associated with the vertex. Read via [`data()`](Self::data),
 ///   mutate via [`Tds::set_vertex_data`](crate::core::tds::Tds::set_vertex_data)
 ///
@@ -305,13 +305,12 @@ pub struct Vertex<T, U, const D: usize> {
     point: Point<T, D>,
     /// A universally unique identifier for the vertex.
     uuid: Uuid,
-    /// The `CellKey` of the cell that the vertex is incident to.
-    /// Phase 3: Changed from UUID to direct key reference for performance.
+    /// The `SimplexKey` of the simplex that the vertex is incident to.
     ///
-    /// Note: This field is not serialized because `CellKey` is only valid within
+    /// Note: This field is not serialized because `SimplexKey` is only valid within
     /// the current `SlotMap` instance. During deserialization, the TDS automatically
-    /// reconstructs `incident_cell` mappings via `assign_incident_cells()`.
-    pub(crate) incident_cell: Option<CellKey>,
+    /// reconstructs `incident_simplex` mappings via `assign_incident_simplices()`.
+    pub(crate) incident_simplex: Option<SimplexKey>,
     /// Optional data associated with the vertex.
     pub(crate) data: Option<U>,
 }
@@ -351,10 +350,10 @@ impl<T, U, const D: usize> Vertex<T, U, D> {
         &self.point
     }
 
-    /// Returns the TDS-managed incident cell pointer for this vertex.
+    /// Returns the TDS-managed incident simplex pointer for this vertex.
     ///
     /// The pointer is maintained by topology mutation and repair operations,
-    /// so callers can inspect it but cannot assign arbitrary cell keys.
+    /// so callers can inspect it but cannot assign arbitrary simplex keys.
     ///
     /// # Examples
     ///
@@ -369,12 +368,12 @@ impl<T, U, const D: usize> Vertex<T, U, D> {
     /// let dt = DelaunayTriangulation::new(&vertices).unwrap();
     /// let (_, vertex) = dt.vertices().next().unwrap();
     ///
-    /// assert!(vertex.incident_cell().is_some());
+    /// assert!(vertex.incident_simplex().is_some());
     /// ```
     #[inline]
     #[must_use]
-    pub const fn incident_cell(&self) -> Option<CellKey> {
-        self.incident_cell
+    pub const fn incident_simplex(&self) -> Option<SimplexKey> {
+        self.incident_simplex
     }
 
     /// Returns a reference to the optional user data associated with this vertex.
@@ -397,10 +396,10 @@ impl<T, U, const D: usize> Vertex<T, U, D> {
         self.data.as_ref()
     }
 
-    /// Updates the TDS-managed incident cell pointer.
+    /// Updates the TDS-managed incident simplex pointer.
     #[inline]
-    pub(crate) const fn set_incident_cell(&mut self, incident_cell: Option<CellKey>) {
-        self.incident_cell = incident_cell;
+    pub(crate) const fn set_incident_simplex(&mut self, incident_simplex: Option<SimplexKey>) {
+        self.incident_simplex = incident_simplex;
     }
 }
 
@@ -410,7 +409,7 @@ impl<T, U, const D: usize> Vertex<T, U, D> {
 
 /// Manual implementation of Serialize for Vertex.
 ///
-/// This implementation handles serialization of all vertex fields. The `incident_cell`
+/// This implementation handles serialization of all vertex fields. The `incident_simplex`
 /// field is skipped as it's a runtime-only reference that gets reconstructed during
 /// deserialization.
 impl<T, U, const D: usize> Serialize for Vertex<T, U, D>
@@ -475,7 +474,7 @@ where
             {
                 let mut point: Option<Point<T, D>> = None;
                 let mut uuid = None;
-                let mut incident_cell = None;
+                let mut incident_simplex = None;
                 let mut data = None;
 
                 while let Some(key) = map.next_key()? {
@@ -492,14 +491,13 @@ where
                             }
                             uuid = Some(map.next_value()?);
                         }
-                        "incident_cell" => {
-                            if incident_cell.is_some() {
-                                return Err(de::Error::duplicate_field("incident_cell"));
+                        "incident_simplex" => {
+                            if incident_simplex.is_some() {
+                                return Err(de::Error::duplicate_field("incident_simplex"));
                             }
-                            // Phase 3: Ignore payload to accept both legacy UUID and new CellKey formats.
-                            // TDS reconstructs incident_cell mappings via assign_incident_cells().
+                            // TDS reconstructs incident_simplex mappings via assign_incident_simplices().
                             let _ = map.next_value::<IgnoredAny>()?;
-                            incident_cell = Some(None);
+                            incident_simplex = Some(None);
                         }
                         "data" => {
                             if data.is_some() {
@@ -517,7 +515,7 @@ where
                 let uuid: Uuid = uuid.ok_or_else(|| de::Error::missing_field("uuid"))?;
                 validate_uuid(&uuid)
                     .map_err(|e| de::Error::custom(format!("invalid uuid: {e}")))?;
-                let incident_cell = incident_cell.unwrap_or(None);
+                let incident_simplex = incident_simplex.unwrap_or(None);
                 let data = data.unwrap_or(None);
 
                 // Validate point before constructing
@@ -528,13 +526,13 @@ where
                 Ok(Vertex {
                     point,
                     uuid,
-                    incident_cell,
+                    incident_simplex,
                     data,
                 })
             }
         }
 
-        const FIELDS: &[&str] = &["point", "uuid", "incident_cell", "data"];
+        const FIELDS: &[&str] = &["point", "uuid", "incident_simplex", "data"];
         deserializer.deserialize_struct(
             "Vertex",
             FIELDS,
@@ -583,7 +581,7 @@ impl<T, U, const D: usize> Vertex<T, U, D> {
         Self {
             point: Point::default(),
             uuid: Uuid::nil(),
-            incident_cell: None,
+            incident_simplex: None,
             data: None,
         }
     }
@@ -613,7 +611,7 @@ impl<T, U, const D: usize> Vertex<T, U, D> {
         Self {
             point,
             uuid: make_uuid(),
-            incident_cell: None,
+            incident_simplex: None,
             data: None,
         }
     }
@@ -642,7 +640,7 @@ impl<T, U, const D: usize> Vertex<T, U, D> {
         Self {
             point,
             uuid: make_uuid(),
-            incident_cell: None,
+            incident_simplex: None,
             data: Some(data.into()),
         }
     }
@@ -788,10 +786,10 @@ impl<T, U, const D: usize> Vertex<T, U, D> {
         validate_uuid(&self.uuid())?;
 
         Ok(())
-        // Note: incident_cell validation is handled at the TDS level via:
-        // - Tds::assign_incident_cells() ensures proper cell assignment
-        // - Tds::is_valid() validates cell mappings and references
-        // Individual vertices cannot validate incident_cell without TDS context.
+        // Note: incident_simplex validation is handled at the TDS level via:
+        // - Tds::assign_incident_simplices() ensures proper simplex assignment
+        // - Tds::is_valid() validates simplex mappings and references
+        // Individual vertices cannot validate incident_simplex without TDS context.
         // User data validation (if U: DataType requires it) could be added here.
     }
 
@@ -825,7 +823,7 @@ impl<T, U, const D: usize> Vertex<T, U, D> {
         Self {
             point,
             uuid,
-            incident_cell: None,
+            incident_simplex: None,
             data,
         }
     }
@@ -843,7 +841,7 @@ where
     fn eq(&self, other: &Self) -> bool {
         self.point.ordered_equals(&other.point)
         // && self.uuid == other.uuid
-        // && self.incident_cell == other.incident_cell
+        // && self.incident_simplex == other.incident_simplex
         // && self.data == other.data
     }
 }
@@ -914,11 +912,11 @@ where
     /// This ensures that vertices with the same coordinates have the same hash,
     /// maintaining the Eq/Hash contract: if a == b, then hash(a) == hash(b).
     ///
-    /// Note: UUID, `incident_cell`, and data are excluded from hashing to match
+    /// Note: UUID, `incident_simplex`, and data are excluded from hashing to match
     /// the `PartialEq` implementation which only compares coordinates.
     fn hash<H: Hasher>(&self, state: &mut H) {
         self.point.hash_coordinate(state);
-        // Intentionally exclude UUID, incident_cell, and data to maintain
+        // Intentionally exclude UUID, incident_simplex, and data to maintain
         // consistency with PartialEq implementation
     }
 }
@@ -931,7 +929,7 @@ where
 mod tests {
     use super::*;
     use crate::core::collections::{FastHashMap, FastHashSet};
-    use crate::core::tds::CellKey;
+    use crate::core::tds::SimplexKey;
     use crate::core::traits::DataType;
     use crate::core::util::{UuidValidationError, make_uuid, usize_to_u8};
     use crate::geometry::point::Point;
@@ -1000,7 +998,7 @@ mod tests {
         assert_eq!(vertex.point().coords(), &expected_coords);
         assert_eq!(vertex.dim(), D);
         assert!(!vertex.uuid().is_nil());
-        assert!(vertex.incident_cell.is_none());
+        assert!(vertex.incident_simplex.is_none());
     }
 
     // =============================================================================
@@ -1019,7 +1017,7 @@ mod tests {
             epsilon = 1e-9
         );
         assert!(!v.uuid().is_nil());
-        assert!(v.incident_cell.is_none());
+        assert!(v.incident_simplex.is_none());
         assert!(v.data.is_none());
     }
 
@@ -1146,7 +1144,7 @@ mod tests {
         );
         assert_eq!(empty_vertex.dim(), 3);
         assert!(empty_vertex.uuid().is_nil());
-        assert!(empty_vertex.incident_cell.is_none());
+        assert!(empty_vertex.incident_simplex.is_none());
         assert!(empty_vertex.data.is_none());
 
         // Test vertex copying
@@ -1260,7 +1258,7 @@ mod tests {
             epsilon = f64::EPSILON
         );
         assert_eq!(deserialized.dim(), vertex.dim());
-        assert_eq!(deserialized.incident_cell, vertex.incident_cell);
+        assert_eq!(deserialized.incident_simplex, vertex.incident_simplex);
         assert_eq!(deserialized.data, vertex.data);
         assert_eq!(deserialized.uuid(), vertex.uuid());
 
@@ -1341,7 +1339,7 @@ mod tests {
         assert_eq!(v1, v1);
         assert!(v1.eq(&v1));
 
-        // Test that equality ignores UUID, incident_cell, and data
+        // Test that equality ignores UUID, incident_simplex, and data
         let v4: Vertex<f64, i32, 2> = vertex!([1.0, 2.0], 42);
         let v5: Vertex<f64, i32, 2> = vertex!([1.0, 2.0], 99); // Different data
 
@@ -1384,7 +1382,7 @@ mod tests {
         assert_ne!(v1, v3);
         assert_ne!(hash1, hash4);
 
-        // Test that hash ignores UUID, incident_cell, and data (consistent with equality)
+        // Test that hash ignores UUID, incident_simplex, and data (consistent with equality)
         let mut hasher5 = DefaultHasher::new();
         let mut hasher6 = DefaultHasher::new();
 
@@ -1768,7 +1766,7 @@ mod tests {
         let invalid_nan_f64: Vertex<f64, (), 3> = Vertex {
             point: Point::new([1.0, f64::NAN, 3.0]),
             uuid: make_uuid(),
-            incident_cell: None,
+            incident_simplex: None,
             data: None,
         };
         assert!(invalid_nan_f64.is_valid().is_err());
@@ -1776,7 +1774,7 @@ mod tests {
         let invalid_all_nan: Vertex<f64, (), 3> = Vertex {
             point: Point::new([f64::NAN, f64::NAN, f64::NAN]),
             uuid: make_uuid(),
-            incident_cell: None,
+            incident_simplex: None,
             data: None,
         };
         assert!(invalid_all_nan.is_valid().is_err());
@@ -1784,7 +1782,7 @@ mod tests {
         let invalid_nan_f32: Vertex<f32, (), 2> = Vertex {
             point: Point::new([1.0f32, f32::NAN]),
             uuid: make_uuid(),
-            incident_cell: None,
+            incident_simplex: None,
             data: None,
         };
         assert!(invalid_nan_f32.is_valid().is_err());
@@ -1792,7 +1790,7 @@ mod tests {
         let invalid_1d_nan: Vertex<f64, (), 1> = Vertex {
             point: Point::new([f64::NAN]),
             uuid: make_uuid(),
-            incident_cell: None,
+            incident_simplex: None,
             data: None,
         };
         assert!(invalid_1d_nan.is_valid().is_err());
@@ -1800,7 +1798,7 @@ mod tests {
         let invalid_5d_nan: Vertex<f64, (), 5> = Vertex {
             point: Point::new([1.0, 2.0, f64::NAN, 4.0, 5.0]),
             uuid: make_uuid(),
-            incident_cell: None,
+            incident_simplex: None,
             data: None,
         };
         assert!(invalid_5d_nan.is_valid().is_err());
@@ -1809,7 +1807,7 @@ mod tests {
         let invalid_pos_inf: Vertex<f64, (), 3> = Vertex {
             point: Point::new([1.0, f64::INFINITY, 3.0]),
             uuid: make_uuid(),
-            incident_cell: None,
+            incident_simplex: None,
             data: None,
         };
         assert!(invalid_pos_inf.is_valid().is_err());
@@ -1817,7 +1815,7 @@ mod tests {
         let invalid_neg_inf: Vertex<f64, (), 3> = Vertex {
             point: Point::new([1.0, f64::NEG_INFINITY, 3.0]),
             uuid: make_uuid(),
-            incident_cell: None,
+            incident_simplex: None,
             data: None,
         };
         assert!(invalid_neg_inf.is_valid().is_err());
@@ -1825,7 +1823,7 @@ mod tests {
         let invalid_inf_f32: Vertex<f32, (), 2> = Vertex {
             point: Point::new([f32::INFINITY, 2.0f32]),
             uuid: make_uuid(),
-            incident_cell: None,
+            incident_simplex: None,
             data: None,
         };
         assert!(invalid_inf_f32.is_valid().is_err());
@@ -1833,7 +1831,7 @@ mod tests {
         let invalid_mixed: Vertex<f64, (), 3> = Vertex {
             point: Point::new([f64::NAN, f64::INFINITY, 1.0]),
             uuid: make_uuid(),
-            incident_cell: None,
+            incident_simplex: None,
             data: None,
         };
         assert!(invalid_mixed.is_valid().is_err());
@@ -1856,7 +1854,7 @@ mod tests {
         let invalid_uuid_vertex: Vertex<f64, (), 3> = Vertex {
             point: Point::new([1.0, 2.0, 3.0]),
             uuid: uuid::Uuid::nil(),
-            incident_cell: None,
+            incident_simplex: None,
             data: None,
         };
         match invalid_uuid_vertex.is_valid() {
@@ -1870,7 +1868,7 @@ mod tests {
         let invalid_both: Vertex<f64, (), 3> = Vertex {
             point: Point::new([f64::NAN, 2.0, 3.0]),
             uuid: uuid::Uuid::nil(),
-            incident_cell: None,
+            incident_simplex: None,
             data: None,
         };
         match invalid_both.is_valid() {
@@ -2018,19 +2016,19 @@ mod tests {
             vertex.uuid().to_string(),
             "550e8400-e29b-41d4-a716-446655440000"
         );
-        assert!(vertex.incident_cell.is_none());
+        assert!(vertex.incident_simplex.is_none());
         assert!(vertex.data.is_none());
 
-        // Test deserialization with all fields including CellKey
+        // Test deserialization with all fields including SimplexKey
         let point = Point::new([1.5, 2.5, 3.5]);
         let uuid_str = "550e8400-e29b-41d4-a716-446655440000";
         let uuid = uuid::Uuid::parse_str(uuid_str).unwrap();
-        let cell_key = CellKey::from(KeyData::from_ffi(42u64));
+        let simplex_key = SimplexKey::from(KeyData::from_ffi(42u64));
 
         let vertex_with_all = Vertex {
             point,
             uuid,
-            incident_cell: Some(cell_key),
+            incident_simplex: Some(simplex_key),
             data: Some(123i32),
         };
 
@@ -2040,15 +2038,15 @@ mod tests {
             epsilon = 1e-9
         );
         assert_eq!(vertex_with_all.uuid().to_string(), uuid_str);
-        assert!(vertex_with_all.incident_cell.is_some());
-        assert_eq!(vertex_with_all.incident_cell.unwrap(), cell_key);
+        assert!(vertex_with_all.incident_simplex.is_some());
+        assert_eq!(vertex_with_all.incident_simplex.unwrap(), simplex_key);
         assert_eq!(vertex_with_all.data.unwrap(), 123);
 
         // Test unknown field handling (should be ignored)
         let json_with_unknown = r#"{
             "point": [1.0, 2.0, 3.0],
             "uuid": "550e8400-e29b-41d4-a716-446655440000",
-            "incident_cell": null,
+            "incident_simplex": null,
             "data": null,
             "unknown_field": "this should be ignored"
         }"#;
@@ -2073,8 +2071,8 @@ mod tests {
                 "duplicate uuid",
             ),
             (
-                r#"{"point": [1.0, 2.0, 3.0], "uuid": "550e8400-e29b-41d4-a716-446655440000", "incident_cell": null, "incident_cell": "550e8400-e29b-41d4-a716-446655440001"}"#,
-                "duplicate incident_cell",
+                r#"{"point": [1.0, 2.0, 3.0], "uuid": "550e8400-e29b-41d4-a716-446655440000", "incident_simplex": null, "incident_simplex": "550e8400-e29b-41d4-a716-446655440001"}"#,
+                "duplicate incident_simplex",
             ),
             (
                 r#"{"point": [1.0, 2.0, 3.0], "uuid": "550e8400-e29b-41d4-a716-446655440000", "data": null, "data": null}"#,
@@ -2100,7 +2098,7 @@ mod tests {
                 || error_message.contains("point")
                 || error_message.contains("uuid")
                 || error_message.contains("data")
-                || error_message.contains("incident_cell");
+                || error_message.contains("incident_simplex");
             assert!(
                 has_relevant_error,
                 "Error message for {description} doesn't contain expected keywords: {error_message}"
@@ -2121,7 +2119,7 @@ mod tests {
         let vertex_with_nil_uuid = Vertex {
             point: Point::new([1.0, 2.0, 3.0]),
             uuid: uuid::Uuid::nil(),
-            incident_cell: None,
+            incident_simplex: None,
             data: None::<()>,
         };
 
@@ -2278,8 +2276,8 @@ mod tests {
         );
         assert_eq!(original_vertex.uuid(), deserialized_vertex.uuid());
         assert_eq!(
-            original_vertex.incident_cell,
-            deserialized_vertex.incident_cell
+            original_vertex.incident_simplex,
+            deserialized_vertex.incident_simplex
         );
         assert_eq!(original_vertex.data, deserialized_vertex.data);
     }

@@ -345,7 +345,7 @@ even for single‑field carriers. Named fields:
 Prefer:
 
 ```rust
-#[error("Invalid facet index {index} for cell with {facet_count} facets")]
+#[error("Invalid facet index {index} for simplex with {facet_count} facets")]
 InvalidFacetIndex {
     index: u8,
     facet_count: usize,
@@ -355,7 +355,7 @@ InvalidFacetIndex {
 Avoid:
 
 ```rust
-#[error("Invalid facet index {0} for cell with {1} facets")]
+#[error("Invalid facet index {0} for simplex with {1} facets")]
 InvalidFacetIndex(u8, usize),
 ```
 
@@ -402,9 +402,9 @@ named fields of a struct variant.
 Prefer:
 
 ```rust
-#[error("Ridge indices ({omit_a}, {omit_b}) out of bounds for cell {cell_key:?} with {vertex_count} vertices")]
+#[error("Ridge indices ({omit_a}, {omit_b}) out of bounds for simplex {simplex_key:?} with {vertex_count} vertices")]
 InvalidRidgeIndex {
-    cell_key: CellKey,
+    simplex_key: SimplexKey,
     omit_a: u8,
     omit_b: u8,
     vertex_count: usize,
@@ -472,7 +472,7 @@ fn rebuild_candidate(...)
 Avoid:
 
 ```rust
-fn align_periodic_vertex_offsets_for_source_cell_to_target_cell(...)
+fn align_periodic_vertex_offsets_for_source_simplex_to_target_simplex(...)
 fn validate_manifold_link_consistency_for_all_ridges(...)
 fn rebuild_delaunay_triangulation_candidate_after_repair_failure(...)
 ```
@@ -506,7 +506,7 @@ Group imports from the same module into a single `use` statement with braces:
 
 ```rust
 use crate::core::tds::{
-    CellKey, EntityKind, Tds, TdsError, VertexKey,
+    SimplexKey, EntityKind, Tds, TdsError, VertexKey,
 };
 ```
 
@@ -623,8 +623,8 @@ is often clear from the signature; the *why* is not.
 Prefer:
 
 ```rust
-/// Aligns source-cell periodic offsets into the target-cell frame so
-/// cross-cell insphere predicates see consistent lifted coordinates.
+/// Aligns source-simplex periodic offsets into the target-simplex frame so
+/// cross-simplex insphere predicates see consistent lifted coordinates.
 fn align_periodic_offset<const D: usize>(...) -> Result<[i8; D], FlipError>
 ```
 

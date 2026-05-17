@@ -257,7 +257,7 @@ These references ensure the library's geometric computations are mathematically 
 ## Mesh Quality Metrics
 
 These references inform the geometric quality measures used for evaluating simplex quality
-and selecting high-quality cells during triangulation repair.
+and selecting high-quality simplices during triangulation repair.
 
 ### Quality Measures for Simplicial Meshes
 

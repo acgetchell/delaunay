@@ -19,8 +19,8 @@
 //!   (opposite or query) always last.
 //! - **Orientation for degeneracy check**: sort all D+1 vertices by key.
 
-use crate::core::cell::Cell;
 use crate::core::collections::{MAX_PRACTICAL_DIMENSION_SIZE, SmallBuffer};
+use crate::core::simplex::Simplex;
 use crate::core::tds::{Tds, VertexKey};
 use crate::core::traits::DataType;
 use crate::geometry::point::Point;
@@ -31,9 +31,9 @@ use slotmap::Key;
 // CANONICAL POINT-COLLECTION HELPERS
 // =============================================================================
 
-/// Collect cell vertex points in canonical [`VertexKey`] order.
+/// Collect simplex vertex points in canonical [`VertexKey`] order.
 ///
-/// Sorts the cell's vertex keys by their stable identity
+/// Sorts the simplex's vertex keys by their stable identity
 /// (`vk.data().as_ffi()`), then resolves each to its [`Point`].
 ///
 /// Returns [`None`] if any vertex key cannot be resolved via the TDS.
@@ -41,18 +41,18 @@ use slotmap::Key;
 /// # Arguments
 ///
 /// * `tds` - The triangulation data structure for vertex lookups
-/// * `cell` - The cell whose vertices to collect
+/// * `simplex` - The simplex whose vertices to collect
 ///
 /// # Examples
 ///
 /// ```rust,ignore
-/// let points = sorted_cell_points(tds, cell)
+/// let points = sorted_simplex_points(tds, simplex)
 ///     .ok_or(SomeError::MissingVertex)?;
 /// let sign = kernel.in_sphere(&points, &query_point)?;
 /// ```
-pub fn sorted_cell_points<T, U, V, const D: usize>(
+pub fn sorted_simplex_points<T, U, V, const D: usize>(
     tds: &Tds<T, U, V, D>,
-    cell: &Cell<T, U, V, D>,
+    simplex: &Simplex<T, U, V, D>,
 ) -> Option<SmallBuffer<Point<T, D>, MAX_PRACTICAL_DIMENSION_SIZE>>
 where
     T: CoordinateScalar,
@@ -60,7 +60,7 @@ where
     V: DataType,
 {
     let mut keys: SmallBuffer<VertexKey, MAX_PRACTICAL_DIMENSION_SIZE> =
-        cell.vertices().iter().copied().collect();
+        simplex.vertices().iter().copied().collect();
     keys.sort_unstable_by_key(|vk| vk.data().as_ffi());
 
     let mut points = SmallBuffer::with_capacity(keys.len());
@@ -149,22 +149,22 @@ mod tests {
     }
 
     // =========================================================================
-    // SORTED CELL POINTS TESTS
+    // SORTED SIMPLEX POINTS TESTS
     // =========================================================================
 
     #[test]
-    fn test_sorted_cell_points_produces_canonical_order() {
-        // Build a TDS with 3 vertices and a cell referencing them
+    fn test_sorted_simplex_points_produces_canonical_order() {
+        // Build a TDS with 3 vertices and a simplex referencing them
         let (mut tds, keys) = build_tds_with_points(&[[0.0, 0.0], [1.0, 0.0], [0.0, 1.0]]);
 
-        // Create a cell with vertices in insertion order
-        let cell = Cell::new(keys.clone(), None::<()>).expect("cell should be valid");
-        let cell_key = tds
-            .insert_cell_with_mapping(cell)
+        // Create a simplex with vertices in insertion order
+        let simplex = Simplex::new(keys.clone(), None::<()>).expect("simplex should be valid");
+        let simplex_key = tds
+            .insert_simplex_with_mapping(simplex)
             .expect("insert should succeed");
 
-        let cell_ref = tds.cell(cell_key).unwrap();
-        let points = sorted_cell_points(&tds, cell_ref).expect("should resolve all vertices");
+        let simplex_ref = tds.simplex(simplex_key).unwrap();
+        let points = sorted_simplex_points(&tds, simplex_ref).expect("should resolve all vertices");
 
         // Verify points are in VertexKey canonical order
         let mut sorted_keys = keys;
@@ -177,17 +177,17 @@ mod tests {
     }
 
     #[test]
-    fn test_sorted_cell_points_permutation_invariant() {
+    fn test_sorted_simplex_points_permutation_invariant() {
         // Build a TDS with 3 vertices
         let (tds, keys) = build_tds_with_points(&[[0.0, 0.0], [1.0, 0.0], [0.0, 1.0]]);
 
-        // Create two cells with vertices in different orders
-        let cell_a =
-            Cell::new(vec![keys[0], keys[1], keys[2]], None::<()>).expect("cell should be valid");
-        let cell_b =
-            Cell::new(vec![keys[2], keys[0], keys[1]], None::<()>).expect("cell should be valid");
-        let points_a = sorted_cell_points(&tds, &cell_a).unwrap();
-        let points_b = sorted_cell_points(&tds, &cell_b).unwrap();
+        // Create two simplices with vertices in different orders
+        let simplex_a = Simplex::new(vec![keys[0], keys[1], keys[2]], None::<()>)
+            .expect("simplex should be valid");
+        let simplex_b = Simplex::new(vec![keys[2], keys[0], keys[1]], None::<()>)
+            .expect("simplex should be valid");
+        let points_a = sorted_simplex_points(&tds, &simplex_a).unwrap();
+        let points_b = sorted_simplex_points(&tds, &simplex_b).unwrap();
 
         // Both should produce the same canonical ordering
         assert_eq!(points_a.as_slice(), points_b.as_slice());
@@ -232,7 +232,7 @@ mod tests {
 
     /// For a degenerate (co-spherical) configuration, verify that
     /// `AdaptiveKernel::in_sphere` produces the same sign regardless of
-    /// cell vertex storage order, when canonical sorting is applied.
+    /// simplex vertex storage order, when canonical sorting is applied.
     #[test]
     fn test_canonical_insphere_permutation_invariant_2d() {
         // 3 points forming a right triangle + a cospherical test point.
@@ -253,13 +253,13 @@ mod tests {
 
         let mut signs = Vec::new();
         for perm in &permutations {
-            let cell = Cell::new(
+            let simplex = Simplex::new(
                 vec![keys[perm[0]], keys[perm[1]], keys[perm[2]]],
                 None::<()>,
             )
-            .expect("cell should be valid");
+            .expect("simplex should be valid");
             // Use canonical sorting to collect points
-            let sorted = sorted_cell_points(&tds, &cell).unwrap();
+            let sorted = sorted_simplex_points(&tds, &simplex).unwrap();
             let sign = kernel.in_sphere(&sorted, &test_point).unwrap();
             signs.push(sign);
         }
@@ -296,12 +296,12 @@ mod tests {
 
         let mut signs = Vec::new();
         for perm in &perms {
-            let cell = Cell::new(
+            let simplex = Simplex::new(
                 vec![keys[perm[0]], keys[perm[1]], keys[perm[2]], keys[perm[3]]],
                 None::<()>,
             )
-            .expect("cell should be valid");
-            let sorted = sorted_cell_points(&tds, &cell).unwrap();
+            .expect("simplex should be valid");
+            let sorted = sorted_simplex_points(&tds, &simplex).unwrap();
             let sign = kernel.in_sphere(&sorted, &test_point).unwrap();
             signs.push(sign);
         }

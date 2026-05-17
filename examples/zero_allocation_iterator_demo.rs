@@ -6,7 +6,7 @@
 //! `vertex_uuids()` method that allocates a Vec.
 
 use delaunay::prelude::generators::generate_random_triangulation;
-use delaunay::prelude::tds::CellValidationError;
+use delaunay::prelude::tds::SimplexValidationError;
 use delaunay::prelude::triangulation::construction::{
     DelaunayTriangulation, DelaunayTriangulationConstructionError,
 };
@@ -19,7 +19,7 @@ enum DemoError {
     #[error(transparent)]
     Construction(#[from] DelaunayTriangulationConstructionError),
     #[error(transparent)]
-    Cell(#[from] CellValidationError),
+    Simplex(#[from] SimplexValidationError),
 }
 
 fn main() -> Result<(), DemoError> {
@@ -27,7 +27,7 @@ fn main() -> Result<(), DemoError> {
     println!("Zero-Allocation Iterator Demo");
     println!("=================================================================\n");
 
-    // Create a triangulation and get a cell from it to demonstrate the iterator.
+    // Create a triangulation and get a simplex from it to demonstrate the iterator.
     // NOTE: The (n_points, bounds, seed) triple matches the 4D configuration used in
     // `test_generate_random_triangulation_dimensions` so that this example exercises
     // a realistic 4D triangulation without triggering extreme Delaunay repair in CI.
@@ -38,22 +38,22 @@ fn main() -> Result<(), DemoError> {
         Some(777),   // Fixed seed for reproducibility (matches tested configuration)
     )?;
 
-    // Get the first cell from the triangulation
-    let Some(cell) = dt.tds().cells().map(|(_, cell)| cell).next() else {
-        println!("No cells in triangulation; nothing to demo.");
+    // Get the first simplex from the triangulation
+    let Some(simplex) = dt.tds().simplices().map(|(_, simplex)| simplex).next() else {
+        println!("No simplices in triangulation; nothing to demo.");
         return Ok(());
     };
     println!(
-        "Using a 4D cell with {} vertices from triangulation\n",
-        cell.number_of_vertices()
+        "Using a 4D simplex with {} vertices from triangulation\n",
+        simplex.number_of_vertices()
     );
 
     // Demonstrate functional equivalence
     println!("Functional Equivalence Test:");
     println!("===========================");
 
-    let vec_uuids = cell.vertex_uuids(dt.tds())?;
-    let iter_uuids: Vec<_> = cell
+    let vec_uuids = simplex.vertex_uuids(dt.tds())?;
+    let iter_uuids: Vec<_> = simplex
         .vertex_uuid_iter(dt.tds())
         .collect::<Result<Vec<_>, _>>()?;
 
@@ -80,8 +80,8 @@ fn main() -> Result<(), DemoError> {
     let mut total_count = 0;
     for _ in 0..iterations {
         // Note: Errors are intentionally ignored in this timing loop for fair comparison.
-        // In a well-formed triangulation with valid cell references, errors should not occur.
-        if let Ok(uuids) = cell.vertex_uuids(dt.tds()) {
+        // In a well-formed triangulation with valid simplex references, errors should not occur.
+        if let Ok(uuids) = simplex.vertex_uuids(dt.tds()) {
             // Allocates Vec
             total_count += black_box(uuids.len()); // Prevent optimization
         }
@@ -93,7 +93,7 @@ fn main() -> Result<(), DemoError> {
     let mut total_count_iter = 0;
     for _ in 0..iterations {
         // Match Method 1 by counting only successfully resolved UUIDs.
-        let count = cell
+        let count = simplex
             .vertex_uuid_iter(dt.tds())
             .filter_map(Result::ok)
             .count(); // No allocation
@@ -120,12 +120,12 @@ fn main() -> Result<(), DemoError> {
 
     // ExactSizeIterator
     // Note: len() returns the total number of items (including any errors in Results)
-    let iter = cell.vertex_uuid_iter(dt.tds());
+    let iter = simplex.vertex_uuid_iter(dt.tds());
     println!("  Length via ExactSizeIterator: {}", iter.len());
 
     // Can be used in for loops
     let mut count = 0;
-    for uuid_result in cell.vertex_uuid_iter(dt.tds()) {
+    for uuid_result in simplex.vertex_uuid_iter(dt.tds()) {
         let uuid = uuid_result?;
         if !uuid.is_nil() {
             count += 1;
@@ -134,9 +134,9 @@ fn main() -> Result<(), DemoError> {
     println!("  Non-nil UUIDs via for loop: {count}");
 
     // Can be chained with other iterator methods
-    let valid_uuid_count = cell.vertex_uuid_iter(dt.tds()).try_fold(
+    let valid_uuid_count = simplex.vertex_uuid_iter(dt.tds()).try_fold(
         0usize,
-        |count, uuid| -> Result<usize, CellValidationError> {
+        |count, uuid| -> Result<usize, SimplexValidationError> {
             let uuid = uuid?;
             Ok(count + usize::from(!uuid.is_nil()))
         },
@@ -145,7 +145,7 @@ fn main() -> Result<(), DemoError> {
 
     // Can be used with iterator combinators
     // Note: take(3).count() counts items in the iterator (including Results with Err if any)
-    let first_few_count = cell.vertex_uuid_iter(dt.tds()).take(3).count();
+    let first_few_count = simplex.vertex_uuid_iter(dt.tds()).take(3).count();
     println!("  First 3 UUIDs: {first_few_count} collected");
 
     println!("\n=================================================================");

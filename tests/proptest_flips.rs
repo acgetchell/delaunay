@@ -22,7 +22,7 @@ use std::collections::{BTreeSet, HashMap};
 #[derive(Debug, PartialEq, Eq)]
 struct TopologySnapshot {
     vertices: Vec<Uuid>,
-    cell_vertices: Vec<Vec<Uuid>>,
+    simplex_vertices: Vec<Vec<Uuid>>,
 }
 
 /// Generates bounded finite coordinates for stable simplex placement.
@@ -80,7 +80,7 @@ fn interior_simplex_vertex<const D: usize>(
     Vertex::from_point(Point::new(coordinates))
 }
 
-/// Captures the public vertex/cell incidence needed to check round-trips.
+/// Captures the public vertex/simplex incidence needed to check round-trips.
 fn snapshot_topology<const D: usize>(
     triangulation: &Triangulation<AdaptiveKernel<f64>, (), (), D>,
 ) -> Result<TopologySnapshot, TestCaseError> {
@@ -91,25 +91,25 @@ fn snapshot_topology<const D: usize>(
     let mut vertices: Vec<Uuid> = key_to_uuid.values().copied().collect();
     vertices.sort();
 
-    let mut cell_vertices = Vec::new();
-    for (_, cell) in triangulation.cells() {
+    let mut simplex_vertices = Vec::new();
+    for (_, simplex) in triangulation.simplices() {
         let mut uuids = Vec::with_capacity(D + 1);
-        for vertex_key in cell.vertices() {
+        for vertex_key in simplex.vertices() {
             let uuid = key_to_uuid.get(vertex_key).copied().ok_or_else(|| {
                 TestCaseError::fail(format!(
-                    "cell references missing vertex key: {vertex_key:?}"
+                    "simplex references missing vertex key: {vertex_key:?}"
                 ))
             })?;
             uuids.push(uuid);
         }
         uuids.sort();
-        cell_vertices.push(uuids);
+        simplex_vertices.push(uuids);
     }
-    cell_vertices.sort();
+    simplex_vertices.sort();
 
     Ok(TopologySnapshot {
         vertices,
-        cell_vertices,
+        simplex_vertices,
     })
 }
 
@@ -135,14 +135,14 @@ fn record_uuid_combinations(
     }
 }
 
-/// Computes Euler characteristic from public cell/vertex iterators.
+/// Computes Euler characteristic from public simplex/vertex iterators.
 fn euler_characteristic<const D: usize>(
     triangulation: &Triangulation<AdaptiveKernel<f64>, (), (), D>,
 ) -> Result<isize, TestCaseError> {
-    let cell_vertices = snapshot_topology(triangulation)?.cell_vertices;
+    let simplex_vertices = snapshot_topology(triangulation)?.simplex_vertices;
     let mut simplices_by_dim: Vec<BTreeSet<Vec<Uuid>>> = (0..=D).map(|_| BTreeSet::new()).collect();
 
-    for vertices in &cell_vertices {
+    for vertices in &simplex_vertices {
         for (simplex_dimension, simplices) in simplices_by_dim.iter_mut().enumerate().take(D + 1) {
             let mut current = Vec::with_capacity(simplex_dimension + 1);
             record_uuid_combinations(vertices, simplex_dimension + 1, 0, &mut current, simplices);
@@ -177,8 +177,8 @@ fn assert_valid<const D: usize>(
     Ok(())
 }
 
-/// Checks positive exact cell orientation and fast/adaptive sign consistency.
-fn assert_positive_cell_orientations<const D: usize>(
+/// Checks positive exact simplex orientation and fast/adaptive sign consistency.
+fn assert_positive_simplex_orientations<const D: usize>(
     triangulation: &Triangulation<AdaptiveKernel<f64>, (), (), D>,
     context: &str,
 ) -> Result<(), TestCaseError> {
@@ -190,12 +190,12 @@ fn assert_positive_cell_orientations<const D: usize>(
     let robust_kernel = RobustKernel::<f64>::new();
     let adaptive_kernel = AdaptiveKernel::<f64>::new();
 
-    for (cell_key, cell) in triangulation.cells() {
+    for (simplex_key, simplex) in triangulation.simplices() {
         let mut points = Vec::with_capacity(D + 1);
-        for vertex_key in cell.vertices() {
+        for vertex_key in simplex.vertices() {
             let point = vertex_points.get(vertex_key).copied().ok_or_else(|| {
                 TestCaseError::fail(format!(
-                    "{context}: cell {cell_key:?} references missing vertex key {vertex_key:?}"
+                    "{context}: simplex {simplex_key:?} references missing vertex key {vertex_key:?}"
                 ))
             })?;
             points.push(point);
@@ -203,37 +203,37 @@ fn assert_positive_cell_orientations<const D: usize>(
 
         let exact = robust_kernel.orientation(&points).map_err(|err| {
             TestCaseError::fail(format!(
-                "{context}: exact orientation failed for cell {cell_key:?}: {err:?}"
+                "{context}: exact orientation failed for simplex {simplex_key:?}: {err:?}"
             ))
         })?;
         let fast = fast_kernel.orientation(&points).map_err(|err| {
             TestCaseError::fail(format!(
-                "{context}: fast orientation failed for cell {cell_key:?}: {err:?}"
+                "{context}: fast orientation failed for simplex {simplex_key:?}: {err:?}"
             ))
         })?;
         let adaptive = adaptive_kernel.orientation(&points).map_err(|err| {
             TestCaseError::fail(format!(
-                "{context}: adaptive/SoS orientation failed for cell {cell_key:?}: {err:?}"
+                "{context}: adaptive/SoS orientation failed for simplex {simplex_key:?}: {err:?}"
             ))
         })?;
 
         prop_assert!(
             exact > 0,
-            "{context}: cell {cell_key:?} must have positive non-degenerate exact orientation, got {exact}"
+            "{context}: simplex {simplex_key:?} must have positive non-degenerate exact orientation, got {exact}"
         );
         prop_assert_eq!(
             fast,
             adaptive,
-            "{}: fast and adaptive/SoS orientation signs disagreed for cell {:?}",
+            "{}: fast and adaptive/SoS orientation signs disagreed for simplex {:?}",
             context,
-            cell_key,
+            simplex_key,
         );
         prop_assert_eq!(
             exact,
             adaptive,
-            "{}: exact and adaptive/SoS orientation signs disagreed for cell {:?}",
+            "{}: exact and adaptive/SoS orientation signs disagreed for simplex {:?}",
             context,
-            cell_key,
+            simplex_key,
         );
     }
 
@@ -259,36 +259,39 @@ fn check_k1_roundtrip<const D: usize>(
 
     let mut triangulation = simplex.as_triangulation().clone();
     assert_valid(&triangulation, "initial")?;
-    assert_positive_cell_orientations(&triangulation, "before k=1 insertion")?;
+    assert_positive_simplex_orientations(&triangulation, "before k=1 insertion")?;
     let before = snapshot_topology(&triangulation)?;
     let before_chi = euler_characteristic(&triangulation)?;
 
-    let cell_key = triangulation
-        .cells()
+    let simplex_key = triangulation
+        .simplices()
         .next()
         .map(|(key, _)| key)
-        .ok_or_else(|| TestCaseError::fail("constructed simplex should contain one cell"))?;
+        .ok_or_else(|| TestCaseError::fail("constructed simplex should contain one simplex"))?;
     let inserted = triangulation
-        .flip_k1_insert(cell_key, interior_simplex_vertex::<D>(origin, edge_lengths))
+        .flip_k1_insert(
+            simplex_key,
+            interior_simplex_vertex::<D>(origin, edge_lengths),
+        )
         .map_err(|err| TestCaseError::fail(format!("k=1 insertion failed: {err:?}")))?;
-    prop_assert!(!inserted.new_cells.is_empty());
+    prop_assert!(!inserted.new_simplices.is_empty());
     prop_assert_eq!(euler_characteristic(&triangulation)?, before_chi);
     assert_valid(&triangulation, "after k=1 insertion")?;
-    assert_positive_cell_orientations(&triangulation, "after k=1 insertion")?;
+    assert_positive_simplex_orientations(&triangulation, "after k=1 insertion")?;
 
     let inserted_vertex = inserted
         .inserted_face_vertices
         .first()
         .copied()
         .ok_or_else(|| TestCaseError::fail("k=1 insertion did not report an inserted vertex"))?;
-    assert_positive_cell_orientations(&triangulation, "before inverse k=1 removal")?;
+    assert_positive_simplex_orientations(&triangulation, "before inverse k=1 removal")?;
     let removed = triangulation
         .flip_k1_remove(inserted_vertex)
         .map_err(|err| TestCaseError::fail(format!("inverse k=1 removal failed: {err:?}")))?;
-    prop_assert!(!removed.removed_cells.is_empty());
+    prop_assert!(!removed.removed_simplices.is_empty());
     prop_assert_eq!(euler_characteristic(&triangulation)?, before_chi);
     assert_valid(&triangulation, "after inverse k=1 removal")?;
-    assert_positive_cell_orientations(&triangulation, "after inverse k=1 removal")?;
+    assert_positive_simplex_orientations(&triangulation, "after inverse k=1 removal")?;
 
     let after = snapshot_topology(&triangulation)?;
     prop_assert_eq!(after, before);

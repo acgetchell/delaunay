@@ -7,9 +7,9 @@ use rustc_hash::{FxBuildHasher, FxHashMap, FxHashSet, FxHasher};
 use slotmap::DenseSlotMap;
 use smallvec::SmallVec;
 
-/// Compact index type for facet positions within a cell.
+/// Compact index type for facet positions within a simplex.
 ///
-/// Since a D-dimensional cell has D+1 facets, and practical triangulations work with D ≤ 255,
+/// Since a D-dimensional simplex has D+1 facets, and practical triangulations work with D ≤ 255,
 /// a `u8` provides sufficient range while minimizing memory usage.
 ///
 /// # Range
@@ -19,7 +19,7 @@ use smallvec::SmallVec;
 ///
 /// # Performance Benefits
 ///
-/// - **Smaller tuples**: `(CellKey, FacetIndex)` uses less memory than `(CellKey, usize)`
+/// - **Smaller tuples**: `(SimplexKey, FacetIndex)` uses less memory than `(SimplexKey, usize)`
 /// - **Better cache density**: More facet mappings fit in cache lines
 /// - **Reduced memory bandwidth**: Faster iteration over facet collections
 ///
@@ -199,12 +199,12 @@ pub use std::collections::hash_map::Entry;
 ///
 /// **Phase 1**: Internal operations (key-based for performance):
 /// ```rust
-/// use delaunay::prelude::collections::{CellKeySet, FastHashSet};
-/// use delaunay::prelude::tds::CellKey;
+/// use delaunay::prelude::collections::{SimplexKeySet, FastHashSet};
+/// use delaunay::prelude::tds::SimplexKey;
 ///
 /// // For internal algorithms, prefer direct key-based collections
-/// let mut internal_set: CellKeySet = CellKeySet::default();
-/// // internal_set.insert(cell_key); // Avoids extra UUID→Key lookups
+/// let mut internal_set: SimplexKeySet = SimplexKeySet::default();
+/// // internal_set.insert(simplex_key); // Avoids extra UUID→Key lookups
 /// ```
 pub type FastHashSet<T> = FxHashSet<T>;
 
@@ -221,9 +221,9 @@ pub type FastHashSet<T> = FxHashSet<T>;
 ///
 /// # Size Guidelines
 ///
-/// - **N=2**: Facet sharing patterns (1-2 cells per facet)
+/// - **N=2**: Facet sharing patterns (1-2 simplices per facet)
 /// - **N=4**: Small temporary operations
-/// - **N=8**: Typical vertex/cell degrees
+/// - **N=8**: Typical vertex/simplex degrees
 /// - **N=16**: Batch operation buffers
 ///
 /// # Examples

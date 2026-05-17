@@ -65,6 +65,11 @@ The useful updates ported in this pass are:
   workflow used by causal-triangulations, pinned to this repository's current
   uv version. It complements the Codacy Opengrep workflow by uploading
   Semgrep-native SARIF and failing the workflow on repository-rule findings.
+- `.github/workflows/codacy.yml` defensively filters Codacy Opengrep SARIF to
+  repository-owned `delaunay.*` rule IDs before uploading to GitHub Code
+  Scanning. Codacy's default maintainability patterns can still run in Codacy,
+  but they must not create broad Code Scanning alerts for test-only paths such
+  as `scripts/tests/**`.
 
 ## Intentional Differences
 
@@ -163,7 +168,6 @@ This is now enforced by `delaunay.rust.no-public-surface-unwrap-panic` for:
 - `benches/**/*.rs`
 - public API integration tests:
   - `tests/allocation_api.rs`
-  - `tests/delaunay_public_api_coverage.rs`
   - `tests/prelude_exports.rs`
   - `tests/public_*.rs`
 

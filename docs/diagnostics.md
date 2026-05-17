@@ -51,7 +51,6 @@ Run a diagnostics-enabled test directly:
 
 ```bash
 cargo test --test circumsphere_debug_tools --features diagnostics -- --nocapture
-cargo test --test conflict_region_verification --features diagnostics -- --ignored --nocapture
 ```
 
 In downstream application code:
@@ -123,16 +122,16 @@ let report = delaunay_violation_report(dt.tds(), None).unwrap();
 assert!(report.is_valid());
 ```
 
-Reports store `CellKey` and `VertexKey` values rather than copying every
+Reports store `SimplexKey` and `VertexKey` values rather than copying every
 coordinate. This keeps diagnostics compact and lets callers recover coordinates,
 UUIDs, or attached data from the original `Tds`.
 
 Useful fields:
 
-- `number_of_vertices`, `number_of_cells`: size of the inspected TDS.
-- `checked_cells`: number of requested cells considered by the scan.
-- `violating_cells`: all cells that violate the Delaunay property.
-- `first_violation`: first violating cell, its vertex keys, neighbor slots, and
+- `number_of_vertices`, `number_of_simplices`: size of the inspected TDS.
+- `checked_simplices`: number of requested simplices considered by the scan.
+- `violating_simplices`: all simplices that violate the Delaunay property.
+- `first_violation`: first violating simplex, its vertex keys, neighbor slots, and
   one offending external vertex when identified.
 
 ## Tracing Output
@@ -152,13 +151,13 @@ Install a `tracing` subscriber in tests or applications to see output. In tests,
 
 `verify_conflict_region_completeness` is a deliberately expensive brute-force
 check. It compares the conflict region discovered by local traversal against a
-full scan of all cells. The insertion path can invoke this check when both are
+full scan of all simplices. The insertion path can invoke this check when both are
 true:
 
 - the crate was compiled with `diagnostics`
 - `DELAUNAY_DEBUG_CONFLICT_VERIFY=1` is set
 
-Use it when investigating missed conflict cells, broken neighbor traversal, or
+Use it when investigating missed conflict simplices, broken neighbor traversal, or
 cavity construction failures.
 
 ## Debug Environment Variables

@@ -246,7 +246,7 @@ const fn canonical_edge(u: u128, v: u128) -> (u128, u128) {
 ///
 /// # Errors
 ///
-/// Returns `FacetError::VertexKeyNotFoundInTriangulation` if a cell references
+/// Returns `FacetError::VertexKeyNotFoundInTriangulation` if a simplex references
 /// a vertex key that doesn't exist in the TDS
 ///
 /// # Examples
@@ -278,8 +278,8 @@ where
 {
     let mut edges = HashSet::new();
 
-    for (_, cell) in tds.cells() {
-        let vertex_keys = cell.vertices();
+    for (_, simplex) in tds.simplices() {
+        let vertex_keys = simplex.vertices();
         // Generate all pairs of vertices (edges)
         for i in 0..vertex_keys.len() {
             for j in (i + 1)..vertex_keys.len() {
@@ -419,8 +419,9 @@ where
     let mut facet_ids = HashSet::new();
 
     for facet_handle in hull.facets() {
-        // Create FacetView using cell_key() and facet_index() methods from FacetHandle
-        let facet_view = FacetView::new(tds, facet_handle.cell_key(), facet_handle.facet_index())?;
+        // Create FacetView using simplex_key() and facet_index() methods from FacetHandle
+        let facet_view =
+            FacetView::new(tds, facet_handle.simplex_key(), facet_handle.facet_index())?;
         // Use the existing FacetView::key() method
         let facet_id = facet_view.key()?;
         facet_ids.insert(facet_id);
@@ -702,11 +703,11 @@ mod tests {
         ];
         let mut dt = DelaunayTriangulation::new(&vertices).unwrap();
 
-        let cell_key = dt.as_triangulation().tds.cell_keys().next().unwrap();
+        let simplex_key = dt.as_triangulation().tds.simplex_keys().next().unwrap();
         let invalid_vkey = VertexKey::from(KeyData::from_ffi(u64::MAX));
         dt.tri
             .tds
-            .cell_mut(cell_key)
+            .simplex_mut(simplex_key)
             .unwrap()
             .push_vertex_key(invalid_vkey);
 
@@ -727,11 +728,11 @@ mod tests {
         ];
         let mut dt = DelaunayTriangulation::new(&vertices).unwrap();
 
-        let cell_key = dt.as_triangulation().tds.cell_keys().next().unwrap();
+        let simplex_key = dt.as_triangulation().tds.simplex_keys().next().unwrap();
         let invalid_vkey = VertexKey::from(KeyData::from_ffi(u64::MAX));
         dt.tri
             .tds
-            .cell_mut(cell_key)
+            .simplex_mut(simplex_key)
             .unwrap()
             .push_vertex_key(invalid_vkey);
 

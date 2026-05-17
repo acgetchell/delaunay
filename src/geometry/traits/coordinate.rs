@@ -57,7 +57,7 @@
 //! ```
 //!
 //! The coordinate trait system enables geometric structures (`Point`, `Vertex`,
-//! `Cell`, etc.) to work consistently across different scalar types and storage
+//! `Simplex`, etc.) to work consistently across different scalar types and storage
 //! mechanisms while maintaining mathematical correctness and type safety.
 
 #![forbid(unsafe_code)]

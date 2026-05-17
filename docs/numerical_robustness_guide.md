@@ -139,7 +139,7 @@ To eliminate this, **all kernel call sites canonically sort simplex vertices by
 `VertexKey` identity** (`vk.data().as_ffi()`) before passing them to orientation
 or insphere predicates. This makes the existing slice-position SoS identity-based
 by construction: a vertex's perturbation priority depends only on its stable key,
-not on how the cell happened to store its vertices.
+not on how the simplex happened to store its vertices.
 
 **Convention for contributors:**
 
@@ -151,7 +151,7 @@ not on how the cell happened to store its vertices.
 
 Helper functions in `src/core/util/canonical_points.rs` implement these patterns:
 
-- `sorted_cell_points(tds, cell)` — collects cell vertices in canonical order
+- `sorted_simplex_points(tds, simplex)` — collects simplex vertices in canonical order
 - `sorted_facet_points_with_extra(tds, facet_keys, extra)` — collects facet
   vertices in canonical order, then appends `extra` at position D
 
@@ -275,12 +275,12 @@ See `order_vertices_hilbert` (called from `order_vertices_by_strategy`) in
 
 Every call to `insert_transactional` checks the incoming vertex against existing
 vertices before attempting insertion. When a hash-grid spatial index is
-available and its cell size covers the current tolerance, this is an amortized
+available and its simplex size covers the current tolerance, this is an amortized
 local lookup; otherwise it falls back to a linear scan.
 
 The check uses a scale-aware **distance** tolerance, not a fixed squared-distance
 threshold. For `f64`, the relative factor is `1e-10`; for `f32`, it is `1e-6`.
-The actual tolerance is estimated from a nearby cell span or local feature
+The actual tolerance is estimated from a nearby simplex span or local feature
 scale, with a small ULP-scaled floor for translated coordinate systems. The
 comparison is overflow-safe: it compares squared distances against
 `tolerance²` when possible and falls back to square roots for extreme scales.
@@ -295,10 +295,10 @@ This layer catches duplicates that survive Hilbert dedup (e.g. when using
 See `duplicate_coordinates_error` in
 [`src/core/triangulation.rs`](../src/core/triangulation.rs).
 
-### Layer 3: Cell-level coordinate uniqueness validation
+### Layer 3: Simplex-level coordinate uniqueness validation
 
 As a post-hoc safety net, `Tds::validate()` (Level 2 validation) includes a
-`CellCoordinateUniqueness` check that scans every cell for pairs of vertices with
+`SimplexCoordinateUniqueness` check that scans every simplex for pairs of vertices with
 identical coordinates. This uses exact `OrderedFloat`-based comparison (NaN-aware,
 +0.0 == -0.0) via `coords_equal_exact`.
 
@@ -307,9 +307,9 @@ detects only exact floating-point matches — it is a strict invariant that shou
 never be violated if Layers 1 and 2 are working correctly.
 
 If violated, the error is
-`TdsError::DuplicateCoordinatesInCell { cell_id, message }`.
+`TdsError::DuplicateCoordinatesInSimplex { simplex_id, message }`.
 
-See `validate_cell_coordinate_uniqueness` in
+See `validate_simplex_coordinate_uniqueness` in
 [`src/core/tds.rs`](../src/core/tds.rs).
 
 ### User-facing dedup utilities

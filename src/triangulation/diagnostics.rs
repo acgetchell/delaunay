@@ -35,8 +35,8 @@ pub struct LocalRepairSample {
     pub index: usize,
     /// Reason this repair pass was scheduled.
     pub trigger: BatchLocalRepairTrigger,
-    /// Number of pending seed cells repaired by this pass.
-    pub seed_cells: usize,
+    /// Number of pending seed simplices repaired by this pass.
+    pub seed_simplices: usize,
     /// Wall-clock nanoseconds spent in this local repair call.
     pub elapsed_nanos: u64,
     /// Number of queued repair items checked by this pass.
@@ -94,7 +94,7 @@ pub struct ConstructionTelemetry {
     pub locate_hint_uses: usize,
     /// Number of point-location calls that fell back to a brute-force scan.
     pub locate_scan_fallbacks: usize,
-    /// Number of point-location calls that ended inside a cell.
+    /// Number of point-location calls that ended inside a simplex.
     pub located_inside: usize,
     /// Number of point-location calls that ended outside the convex hull.
     pub located_outside: usize,
@@ -103,10 +103,10 @@ pub struct ConstructionTelemetry {
 
     /// Number of local conflict-region computations observed during construction.
     pub conflict_region_calls: usize,
-    /// Total number of cells in local conflict regions.
-    pub conflict_region_cells_total: usize,
-    /// Maximum number of cells in a single local conflict region.
-    pub conflict_region_cells_max: usize,
+    /// Total number of simplices in local conflict regions.
+    pub conflict_region_simplices_total: usize,
+    /// Maximum number of simplices in a single local conflict region.
+    pub conflict_region_simplices_max: usize,
     /// Wall-clock nanoseconds spent computing local conflict regions.
     pub conflict_region_nanos: u64,
     /// Maximum wall-clock nanoseconds spent computing one local conflict region.
@@ -175,10 +175,10 @@ pub struct ConstructionTelemetry {
     pub local_repair_restore_nanos: u64,
     /// Maximum wall-clock nanoseconds spent restoring one local-repair rollback snapshot.
     pub local_repair_restore_nanos_max: u64,
-    /// Total pending seed cells repaired by batch local repair calls.
-    pub local_repair_seed_cells_total: usize,
-    /// Maximum pending seed-cell frontier repaired by one batch local repair call.
-    pub local_repair_seed_cells_max: usize,
+    /// Total pending seed simplices repaired by batch local repair calls.
+    pub local_repair_seed_simplices_total: usize,
+    /// Maximum pending seed-simplex frontier repaired by one batch local repair call.
+    pub local_repair_seed_simplices_max: usize,
     /// Number of batch local repair calls fired by the configured cadence.
     pub local_repair_cadence_triggers: usize,
     /// Number of batch local repair calls fired by the seed-backlog threshold.
@@ -202,19 +202,19 @@ pub struct ConstructionTelemetry {
     pub repair_seed_accumulation_nanos: u64,
     /// Maximum wall-clock nanoseconds spent in one bulk seed accumulation call.
     pub repair_seed_accumulation_nanos_max: u64,
-    /// Total live seed cells added to pending bulk local-repair frontiers.
-    pub repair_seed_cells_added_total: usize,
-    /// Maximum live seed cells added by one bulk seed accumulation call.
-    pub repair_seed_cells_added_max: usize,
+    /// Total live seed simplices added to pending bulk local-repair frontiers.
+    pub repair_seed_simplices_added_total: usize,
+    /// Maximum live seed simplices added by one bulk seed accumulation call.
+    pub repair_seed_simplices_added_max: usize,
 
     /// Number of global exterior-point conflict scans.
     pub global_conflict_scans: usize,
-    /// Total cells scanned by global exterior-point conflict scans.
-    pub global_conflict_cells_scanned: usize,
-    /// Total cells found by global exterior-point conflict scans.
-    pub global_conflict_cells_found_total: usize,
-    /// Maximum cells found by a single global exterior-point conflict scan.
-    pub global_conflict_cells_found_max: usize,
+    /// Total simplices scanned by global exterior-point conflict scans.
+    pub global_conflict_simplices_scanned: usize,
+    /// Total simplices found by global exterior-point conflict scans.
+    pub global_conflict_simplices_found_total: usize,
+    /// Maximum simplices found by a single global exterior-point conflict scan.
+    pub global_conflict_simplices_found_max: usize,
     /// Wall-clock nanoseconds spent in global exterior-point conflict scans.
     pub global_conflict_scan_nanos: u64,
 }
@@ -259,7 +259,7 @@ impl ConstructionTelemetry {
             || self.local_repair_attempt_triangle_nanos > 0
             || self.local_repair_postcondition_nanos > 0
             || self.local_repair_restore_nanos > 0
-            || self.local_repair_seed_cells_total > 0
+            || self.local_repair_seed_simplices_total > 0
             || self.local_repair_items_checked_total > 0
             || self.local_repair_flips_total > 0
             || self.local_repair_no_flip_calls > 0
@@ -402,13 +402,14 @@ impl ConstructionTelemetry {
     /// Records the repaired local frontier size and why the repair fired.
     pub(crate) fn record_local_repair_frontier(
         &mut self,
-        seed_cells: usize,
+        seed_simplices: usize,
         trigger: BatchLocalRepairTrigger,
     ) {
-        self.local_repair_seed_cells_total = self
-            .local_repair_seed_cells_total
-            .saturating_add(seed_cells);
-        self.local_repair_seed_cells_max = self.local_repair_seed_cells_max.max(seed_cells);
+        self.local_repair_seed_simplices_total = self
+            .local_repair_seed_simplices_total
+            .saturating_add(seed_simplices);
+        self.local_repair_seed_simplices_max =
+            self.local_repair_seed_simplices_max.max(seed_simplices);
         match trigger {
             BatchLocalRepairTrigger::Cadence => {
                 self.local_repair_cadence_triggers =
@@ -462,7 +463,7 @@ impl ConstructionTelemetry {
     pub(crate) fn record_repair_seed_accumulation(
         &mut self,
         elapsed_nanos: u64,
-        cells_added: usize,
+        simplices_added: usize,
     ) {
         self.repair_seed_accumulation_calls = self.repair_seed_accumulation_calls.saturating_add(1);
         self.repair_seed_accumulation_nanos = self
@@ -470,10 +471,11 @@ impl ConstructionTelemetry {
             .saturating_add(elapsed_nanos);
         self.repair_seed_accumulation_nanos_max =
             self.repair_seed_accumulation_nanos_max.max(elapsed_nanos);
-        self.repair_seed_cells_added_total = self
-            .repair_seed_cells_added_total
-            .saturating_add(cells_added);
-        self.repair_seed_cells_added_max = self.repair_seed_cells_added_max.max(cells_added);
+        self.repair_seed_simplices_added_total = self
+            .repair_seed_simplices_added_total
+            .saturating_add(simplices_added);
+        self.repair_seed_simplices_added_max =
+            self.repair_seed_simplices_added_max.max(simplices_added);
     }
 
     /// Adds one insertion's telemetry into this construction summary.
@@ -502,12 +504,12 @@ impl ConstructionTelemetry {
         self.conflict_region_calls = self
             .conflict_region_calls
             .saturating_add(telemetry.conflict_region_calls);
-        self.conflict_region_cells_total = self
-            .conflict_region_cells_total
-            .saturating_add(telemetry.conflict_region_cells_total);
-        self.conflict_region_cells_max = self
-            .conflict_region_cells_max
-            .max(telemetry.conflict_region_cells_max);
+        self.conflict_region_simplices_total = self
+            .conflict_region_simplices_total
+            .saturating_add(telemetry.conflict_region_simplices_total);
+        self.conflict_region_simplices_max = self
+            .conflict_region_simplices_max
+            .max(telemetry.conflict_region_simplices_max);
         self.conflict_region_nanos = self
             .conflict_region_nanos
             .saturating_add(telemetry.conflict_region_nanos);
@@ -548,15 +550,15 @@ impl ConstructionTelemetry {
         self.global_conflict_scans = self
             .global_conflict_scans
             .saturating_add(telemetry.global_conflict_scans);
-        self.global_conflict_cells_scanned = self
-            .global_conflict_cells_scanned
-            .saturating_add(telemetry.global_conflict_cells_scanned);
-        self.global_conflict_cells_found_total = self
-            .global_conflict_cells_found_total
-            .saturating_add(telemetry.global_conflict_cells_found_total);
-        self.global_conflict_cells_found_max = self
-            .global_conflict_cells_found_max
-            .max(telemetry.global_conflict_cells_found_max);
+        self.global_conflict_simplices_scanned = self
+            .global_conflict_simplices_scanned
+            .saturating_add(telemetry.global_conflict_simplices_scanned);
+        self.global_conflict_simplices_found_total = self
+            .global_conflict_simplices_found_total
+            .saturating_add(telemetry.global_conflict_simplices_found_total);
+        self.global_conflict_simplices_found_max = self
+            .global_conflict_simplices_found_max
+            .max(telemetry.global_conflict_simplices_found_max);
         self.global_conflict_scan_nanos = self
             .global_conflict_scan_nanos
             .saturating_add(telemetry.global_conflict_scan_nanos);
@@ -594,12 +596,12 @@ impl ConstructionTelemetry {
         self.conflict_region_calls = self
             .conflict_region_calls
             .saturating_add(other.conflict_region_calls);
-        self.conflict_region_cells_total = self
-            .conflict_region_cells_total
-            .saturating_add(other.conflict_region_cells_total);
-        self.conflict_region_cells_max = self
-            .conflict_region_cells_max
-            .max(other.conflict_region_cells_max);
+        self.conflict_region_simplices_total = self
+            .conflict_region_simplices_total
+            .saturating_add(other.conflict_region_simplices_total);
+        self.conflict_region_simplices_max = self
+            .conflict_region_simplices_max
+            .max(other.conflict_region_simplices_max);
         self.conflict_region_nanos = self
             .conflict_region_nanos
             .saturating_add(other.conflict_region_nanos);
@@ -644,15 +646,15 @@ impl ConstructionTelemetry {
         self.global_conflict_scans = self
             .global_conflict_scans
             .saturating_add(other.global_conflict_scans);
-        self.global_conflict_cells_scanned = self
-            .global_conflict_cells_scanned
-            .saturating_add(other.global_conflict_cells_scanned);
-        self.global_conflict_cells_found_total = self
-            .global_conflict_cells_found_total
-            .saturating_add(other.global_conflict_cells_found_total);
-        self.global_conflict_cells_found_max = self
-            .global_conflict_cells_found_max
-            .max(other.global_conflict_cells_found_max);
+        self.global_conflict_simplices_scanned = self
+            .global_conflict_simplices_scanned
+            .saturating_add(other.global_conflict_simplices_scanned);
+        self.global_conflict_simplices_found_total = self
+            .global_conflict_simplices_found_total
+            .saturating_add(other.global_conflict_simplices_found_total);
+        self.global_conflict_simplices_found_max = self
+            .global_conflict_simplices_found_max
+            .max(other.global_conflict_simplices_found_max);
         self.global_conflict_scan_nanos = self
             .global_conflict_scan_nanos
             .saturating_add(other.global_conflict_scan_nanos);
@@ -748,12 +750,12 @@ impl ConstructionTelemetry {
         self.local_repair_restore_nanos_max = self
             .local_repair_restore_nanos_max
             .max(other.local_repair_restore_nanos_max);
-        self.local_repair_seed_cells_total = self
-            .local_repair_seed_cells_total
-            .saturating_add(other.local_repair_seed_cells_total);
-        self.local_repair_seed_cells_max = self
-            .local_repair_seed_cells_max
-            .max(other.local_repair_seed_cells_max);
+        self.local_repair_seed_simplices_total = self
+            .local_repair_seed_simplices_total
+            .saturating_add(other.local_repair_seed_simplices_total);
+        self.local_repair_seed_simplices_max = self
+            .local_repair_seed_simplices_max
+            .max(other.local_repair_seed_simplices_max);
         self.local_repair_cadence_triggers = self
             .local_repair_cadence_triggers
             .saturating_add(other.local_repair_cadence_triggers);
@@ -791,12 +793,12 @@ impl ConstructionTelemetry {
         self.repair_seed_accumulation_nanos_max = self
             .repair_seed_accumulation_nanos_max
             .max(other.repair_seed_accumulation_nanos_max);
-        self.repair_seed_cells_added_total = self
-            .repair_seed_cells_added_total
-            .saturating_add(other.repair_seed_cells_added_total);
-        self.repair_seed_cells_added_max = self
-            .repair_seed_cells_added_max
-            .max(other.repair_seed_cells_added_max);
+        self.repair_seed_simplices_added_total = self
+            .repair_seed_simplices_added_total
+            .saturating_add(other.repair_seed_simplices_added_total);
+        self.repair_seed_simplices_added_max = self
+            .repair_seed_simplices_added_max
+            .max(other.repair_seed_simplices_added_max);
     }
 }
 
@@ -820,8 +822,8 @@ mod tests {
             located_inside: 1,
             located_outside: 1,
             conflict_region_calls: 1,
-            conflict_region_cells_total: 4,
-            conflict_region_cells_max: 4,
+            conflict_region_simplices_total: 4,
+            conflict_region_simplices_max: 4,
             conflict_region_nanos: 125_000,
             conflict_region_nanos_max: 125_000,
             cavity_insertion_calls: 1,
@@ -834,9 +836,9 @@ mod tests {
             topology_validation_nanos: 625_000,
             topology_validation_nanos_max: 625_000,
             global_conflict_scans: 1,
-            global_conflict_cells_scanned: 12,
-            global_conflict_cells_found_total: 3,
-            global_conflict_cells_found_max: 3,
+            global_conflict_simplices_scanned: 12,
+            global_conflict_simplices_found_total: 3,
+            global_conflict_simplices_found_max: 3,
             global_conflict_scan_nanos: 250_000,
             ..InsertionTelemetry::default()
         };
@@ -860,7 +862,7 @@ mod tests {
         summary.record_local_repair_sample(LocalRepairSample {
             index: 42,
             trigger: BatchLocalRepairTrigger::SeedBacklog,
-            seed_cells: 11,
+            seed_simplices: 11,
             elapsed_nanos: 2_000_000,
             items_checked: 123,
             flips_performed: 5,
@@ -897,7 +899,7 @@ mod tests {
         assert_eq!(summary.located_inside, 1);
         assert_eq!(summary.located_outside, 1);
         assert_eq!(summary.conflict_region_calls, 1);
-        assert_eq!(summary.conflict_region_cells_total, 4);
+        assert_eq!(summary.conflict_region_simplices_total, 4);
         assert_eq!(summary.conflict_region_nanos, 125_000);
         assert_eq!(summary.conflict_region_nanos_max, 125_000);
         assert_eq!(summary.cavity_insertion_calls, 1);
@@ -926,8 +928,8 @@ mod tests {
         assert_eq!(summary.local_repair_postcondition_nanos_max, 500_000);
         assert_eq!(summary.local_repair_restore_nanos, 25_000);
         assert_eq!(summary.local_repair_restore_nanos_max, 25_000);
-        assert_eq!(summary.local_repair_seed_cells_total, 11);
-        assert_eq!(summary.local_repair_seed_cells_max, 11);
+        assert_eq!(summary.local_repair_seed_simplices_total, 11);
+        assert_eq!(summary.local_repair_seed_simplices_max, 11);
         assert_eq!(summary.local_repair_cadence_triggers, 0);
         assert_eq!(summary.local_repair_backlog_triggers, 1);
         assert_eq!(summary.local_repair_items_checked_total, 123);
@@ -940,7 +942,7 @@ mod tests {
             vec![LocalRepairSample {
                 index: 42,
                 trigger: BatchLocalRepairTrigger::SeedBacklog,
-                seed_cells: 11,
+                seed_simplices: 11,
                 elapsed_nanos: 2_000_000,
                 items_checked: 123,
                 flips_performed: 5,
@@ -952,11 +954,11 @@ mod tests {
         );
         assert_eq!(summary.repair_seed_accumulation_calls, 1);
         assert_eq!(summary.repair_seed_accumulation_nanos, 500_000);
-        assert_eq!(summary.repair_seed_cells_added_total, 7);
-        assert_eq!(summary.repair_seed_cells_added_max, 7);
+        assert_eq!(summary.repair_seed_simplices_added_total, 7);
+        assert_eq!(summary.repair_seed_simplices_added_max, 7);
         assert_eq!(summary.global_conflict_scans, 1);
-        assert_eq!(summary.global_conflict_cells_scanned, 12);
-        assert_eq!(summary.global_conflict_cells_found_total, 3);
+        assert_eq!(summary.global_conflict_simplices_scanned, 12);
+        assert_eq!(summary.global_conflict_simplices_found_total, 3);
         assert_eq!(summary.global_conflict_scan_nanos, 250_000);
     }
 
@@ -980,7 +982,7 @@ mod tests {
         left.record_local_repair_sample(LocalRepairSample {
             index: 1,
             trigger: BatchLocalRepairTrigger::Cadence,
-            seed_cells: 5,
+            seed_simplices: 5,
             elapsed_nanos: 10,
             items_checked: 10,
             flips_performed: 0,
@@ -1010,7 +1012,7 @@ mod tests {
         right.record_local_repair_sample(LocalRepairSample {
             index: 3,
             trigger: BatchLocalRepairTrigger::SeedBacklog,
-            seed_cells: 11,
+            seed_simplices: 11,
             elapsed_nanos: 30,
             items_checked: 30,
             flips_performed: 4,
@@ -1048,8 +1050,8 @@ mod tests {
         assert_eq!(left.local_repair_postcondition_nanos_max, 30);
         assert_eq!(left.local_repair_restore_nanos, 44);
         assert_eq!(left.local_repair_restore_nanos_max, 40);
-        assert_eq!(left.local_repair_seed_cells_total, 16);
-        assert_eq!(left.local_repair_seed_cells_max, 11);
+        assert_eq!(left.local_repair_seed_simplices_total, 16);
+        assert_eq!(left.local_repair_seed_simplices_max, 11);
         assert_eq!(left.local_repair_cadence_triggers, 1);
         assert_eq!(left.local_repair_backlog_triggers, 1);
         assert_eq!(left.local_repair_items_checked_total, 40);

@@ -6,7 +6,7 @@
 //! ## Test Properties
 //!
 //! 1. **Euler Formula Consistency**: Computed χ matches expected value for classification
-//! 2. **Simplex Count Validity**: Vertex and cell counts match Tds counts
+//! 2. **Simplex Count Validity**: Vertex and simplex counts match Tds counts
 //! 3. **Classification Consistency**: Expected χ for classification matches computed χ  
 //!
 //! ## Notes
@@ -80,7 +80,7 @@ macro_rules! test_euler_properties {
                         // The validation checks this internally via is_valid()
                         prop_assert!(result.is_valid(),
                             "{}D triangulation Euler characteristic doesn't match classification: \
-                            χ={}, expected={:?}, classification={:?}, V={}, cells={}",
+                            χ={}, expected={:?}, classification={:?}, V={}, simplices={}",
                             $dim,
                             result.chi,
                             result.expected,
@@ -116,8 +116,8 @@ macro_rules! test_euler_properties {
 
                         prop_assert_eq!(
                             counts.count($dim),
-                            dt.number_of_cells(),
-                            "{}D: Cell count mismatch",
+                            dt.number_of_simplices(),
+                            "{}D: Simplex count mismatch",
                             $dim
                         );
 
@@ -178,7 +178,7 @@ fn test_seeded_random_generator_euler_consistent() {
     let result_2d = validation::validate_triangulation_euler(dt_2d.tds()).unwrap();
     assert!(
         result_2d.is_valid(),
-        "2D seeded random triangulation Euler mismatch: χ={}, expected={:?}, classification={:?}, V={}, cells={}",
+        "2D seeded random triangulation Euler mismatch: χ={}, expected={:?}, classification={:?}, V={}, simplices={}",
         result_2d.chi,
         result_2d.expected,
         result_2d.classification,
@@ -197,7 +197,7 @@ fn test_seeded_random_generator_euler_consistent() {
     let result_3d = validation::validate_triangulation_euler(dt_3d.tds()).unwrap();
     assert!(
         result_3d.is_valid(),
-        "3D seeded random triangulation Euler mismatch: χ={}, expected={:?}, classification={:?}, V={}, cells={}",
+        "3D seeded random triangulation Euler mismatch: χ={}, expected={:?}, classification={:?}, V={}, simplices={}",
         result_3d.chi,
         result_3d.expected,
         result_3d.classification,

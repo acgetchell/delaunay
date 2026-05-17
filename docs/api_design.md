@@ -33,7 +33,7 @@ The library provides two distinct APIs for different use cases:
 
 - Computing convex hulls
 - Nearest-neighbor queries
-- Supplying triangulation data to downstream Voronoi/dual-cell analysis
+- Supplying triangulation data to downstream Voronoi/dual-simplex analysis
   (the crate does not yet extract Voronoi diagrams directly)
 - Mesh generation
 - Scientific simulations requiring Delaunay meshes
@@ -131,13 +131,13 @@ for topology guarantee and validation policy details.
 - **Automatic property preservation**: Insertion maintains the Delaunay
   empty-circumsphere property; removal runs flip-based repair when the active
   `DelaunayRepairPolicy` permits it
-- **Cavity-based insertion**: New vertices are inserted by identifying conflicting cells, removing them, and filling the cavity
+- **Cavity-based insertion**: New vertices are inserted by identifying conflicting simplices, removing them, and filling the cavity
 - **Transactional vertex removal**: Vertex removal uses an inverse k=1 fast path
   when possible and fan-based retriangulation otherwise. If post-removal
   Delaunay repair or orientation canonicalization fails, the triangulation and
   internal caches are restored to their pre-removal state.
-- **Auxiliary data**: Vertices and cells carry optional user data (`U` / `V`). Read via `vertex.data()` /
-  `cell.data()`, write via `dt.set_vertex_data(key, data)` / `dt.set_cell_data(key, data)` (O(1),
+- **Auxiliary data**: Vertices and simplices carry optional user data (`U` / `V`). Read via `vertex.data()` /
+  `simplex.data()`, write via `dt.set_vertex_data(key, data)` / `dt.set_simplex_data(key, data)` (O(1),
   invariant-preserving). See [`workflows.md`](workflows.md) for examples.
 - **Error handling**: Operations fail gracefully if they would violate invariants (see
   [`invariants.md`](invariants.md)). Mutating operations that invoke repair use
@@ -165,27 +165,27 @@ let vertices = vec![
 let mut dt: DelaunayTriangulation<_, (), (), 3> = 
     DelaunayTriangulation::new(&vertices).unwrap();
 
-// k=1 move: Insert a vertex into a cell (splits cell into D+1 cells)
-let cell_key = dt.cells().next().unwrap().0;
-let info = dt.flip_k1_insert(cell_key, vertex!([0.25, 0.25, 0.25])).unwrap();
+// k=1 move: Insert a vertex into a simplex (splits simplex into D+1 simplices)
+let simplex_key = dt.simplices().next().unwrap().0;
+let info = dt.flip_k1_insert(simplex_key, vertex!([0.25, 0.25, 0.25])).unwrap();
 
 // k=1 inverse: Remove a vertex (collapses its star)
 let vertex_key = info.inserted_face_vertices[0];
 dt.flip_k1_remove(vertex_key).unwrap();
 
-// k=2 move: Flip a facet (2 cells ↔ D cells)
+// k=2 move: Flip a facet (2 simplices ↔ D simplices)
 let facet = /* FacetHandle */;
 let info = dt.flip_k2(facet).unwrap();
 
-// k=2 inverse: Flip from an edge star (D cells ↔ 2 cells)
+// k=2 inverse: Flip from an edge star (D simplices ↔ 2 simplices)
 let edge = EdgeKey::new(info.inserted_face_vertices[0], info.inserted_face_vertices[1]);
 dt.flip_k2_inverse_from_edge(edge).unwrap();
 
-// k=3 move: Flip a ridge (3 cells ↔ D-1 cells, requires D ≥ 3)
+// k=3 move: Flip a ridge (3 simplices ↔ D-1 simplices, requires D ≥ 3)
 let ridge = /* RidgeHandle */;
 let info = dt.flip_k3(ridge).unwrap();
 
-// k=3 inverse: Flip from a triangle star (D-1 cells ↔ 3 cells)
+// k=3 inverse: Flip from a triangle star (D-1 simplices ↔ 3 simplices)
 let triangle = TriangleHandle::new(
     info.inserted_face_vertices[0],
     info.inserted_face_vertices[1],
@@ -196,41 +196,41 @@ dt.flip_k3_inverse_from_triangle(triangle).unwrap();
 
 ### Available Flip Operations
 
-#### k=1 Moves (Cell Split/Merge)
+#### k=1 Moves (Simplex Split/Merge)
 
-- **Forward (`flip_k1_insert`)**: Insert a vertex into a cell, splitting it into D+1 cells
+- **Forward (`flip_k1_insert`)**: Insert a vertex into a simplex, splitting it into D+1 simplices
   - Valid for D ≥ 1
-  - Replaces 1 cell with D+1 cells
-  - Removed face: the entire cell (D-simplex)
+  - Replaces 1 simplex with D+1 simplices
+  - Removed face: the entire simplex (D-simplex)
   - Inserted face: the new vertex (0-simplex)
 
 - **Inverse (`flip_k1_remove`)**: Remove a vertex, collapsing its star
-  - Requires the vertex star to be collapsible (star of D+1 cells forming a ball)
-  - Replaces D+1 cells with 1 cell
+  - Requires the vertex star to be collapsible (star of D+1 simplices forming a ball)
+  - Replaces D+1 simplices with 1 simplex
 
 #### k=2 Moves (Facet Flip)
 
-- **Forward (`flip_k2`)**: Flip a facet shared by 2 cells
+- **Forward (`flip_k2`)**: Flip a facet shared by 2 simplices
   - Valid for D ≥ 2
-  - Replaces 2 cells with D cells
+  - Replaces 2 simplices with D simplices
   - Removed face: the shared facet ((D-1)-simplex)
   - Inserted face: an edge (1-simplex)
 
 - **Inverse (`flip_k2_inverse_from_edge`)**: Flip from an edge star
-  - Requires an edge with star of D cells
-  - Replaces D cells with 2 cells
+  - Requires an edge with star of D simplices
+  - Replaces D simplices with 2 simplices
 
 #### k=3 Moves (Ridge Flip)
 
 - **Forward (`flip_k3`)**: Flip a ridge
   - Valid for D ≥ 3
-  - Replaces 3 cells with D-1 cells
+  - Replaces 3 simplices with D-1 simplices
   - Removed face: a ridge ((D-2)-simplex)
   - Inserted face: a triangle (2-simplex)
 
 - **Inverse (`flip_k3_inverse_from_triangle`)**: Flip from a triangle star
-  - Requires a triangle with star of D-1 cells
-  - Replaces D-1 cells with 3 cells
+  - Requires a triangle with star of D-1 simplices
+  - Replaces D-1 simplices with 3 simplices
 
 ### Key Characteristics
 
@@ -377,7 +377,7 @@ assert!(outcome.topology_repair.succeeded);
 
 ### Steps
 
-1. **PL-manifold topology repair** — bounded deterministic removal of cells
+1. **PL-manifold topology repair** — bounded deterministic removal of simplices
    that cause facet over-sharing (codimension-1 facet degree > 2).
 2. **Delaunay flip repair** — k=2/k=3 bistellar flips to restore the
    empty-circumsphere property.
@@ -393,19 +393,19 @@ assert!(outcome.topology_repair.succeeded);
 `DelaunayizeConfig` controls:
 
 - `topology_max_iterations` (default 64): max repair iterations.
-- `topology_max_cells_removed` (default 10,000): max cells removed.
+- `topology_max_simplices_removed` (default 10,000): max simplices removed.
 - `fallback_rebuild` (default false): rebuild from vertices on failure,
-  restoring cell data for rebuilt cells whose sorted vertex UUID set still
-  matches exactly one original cell.
+  restoring simplex data for rebuilt simplices whose sorted vertex UUID set still
+  matches exactly one original simplex.
 - `delaunay_max_flips` (default `None`): optional per-attempt flip budget.
 
 ### Data Preservation
 
-`PlManifoldRepairStats` carries `removed_cells` and `removed_vertices`
+`PlManifoldRepairStats` carries `removed_simplices` and `removed_vertices`
 (identified by UUID) so callers can recover user data from entities removed
-during topology repair. The fallback rebuild path also preserves cell payloads
-when a rebuilt cell has the same vertex UUID set as exactly one original cell;
-changed or ambiguous cells receive no payload.
+during topology repair. The fallback rebuild path also preserves simplex payloads
+when a rebuilt simplex has the same vertex UUID set as exactly one original simplex;
+changed or ambiguous simplices receive no payload.
 
 ### Explicitly Deferred
 

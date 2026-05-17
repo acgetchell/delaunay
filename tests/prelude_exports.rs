@@ -13,7 +13,7 @@
 use delaunay::prelude::DelaunayValidationError;
 use delaunay::prelude::algorithms::LocateResult;
 #[cfg(feature = "diagnostics")]
-use delaunay::prelude::collections::CellKeyBuffer;
+use delaunay::prelude::collections::SimplexKeyBuffer;
 use delaunay::prelude::collections::{
     SecureHashMap as ScopedSecureHashMap, SecureHashSet as ScopedSecureHashSet,
 };
@@ -38,9 +38,9 @@ use delaunay::prelude::query::ConvexHull;
 use delaunay::prelude::tds::Tds;
 use delaunay::prelude::tds::{InvariantErrorSummaryDetail, NeighborSlot, TdsErrorKind};
 use delaunay::prelude::triangulation::construction::{
-    ConstructionOptions, ConstructionSkipSample, ConstructionSlowInsertionSample,
-    DelaunayConstructionFailure, DelaunayRepairPolicy, DelaunayTriangulation,
-    DelaunayTriangulationConstructionError, ExplicitConstructionError,
+    CavityFillingError, CavityRepairStage, ConstructionOptions, ConstructionSkipSample,
+    ConstructionSlowInsertionSample, DelaunayConstructionFailure, DelaunayRepairPolicy,
+    DelaunayTriangulation, DelaunayTriangulationConstructionError, ExplicitConstructionError,
     ExplicitDelaunayValidationError, ExplicitDelaunayValidationErrorKind,
     ExplicitDelaunayValidationSourceKind, ExplicitInsertionError, ExplicitInsertionErrorKind,
     ExplicitInvariantError, ExplicitInvariantErrorKind, ExplicitTdsError, ExplicitTdsErrorKind,
@@ -121,6 +121,17 @@ fn preludes_cover_bench_apis() -> Result<(), PreludeExportTestError> {
         },
         DelaunayConstructionFailure::GeometricDegeneracy { .. }
     ));
+    let cavity_failure = DelaunayConstructionFailure::InsertionCavityFilling {
+        source: CavityFillingError::EmptyFanTriangulation,
+    };
+    let DelaunayConstructionFailure::InsertionCavityFilling { source } = cavity_failure else {
+        unreachable!("constructed cavity-filling failure should match its own variant");
+    };
+    assert_eq!(source, CavityFillingError::EmptyFanTriangulation);
+    assert_eq!(
+        CavityRepairStage::PrimaryInsertion.to_string(),
+        "primary insertion"
+    );
     assert!(matches!(LocateResult::Outside, LocateResult::Outside));
     assert!(matches!(
         ValidationCadence::from_optional_every(Some(128)),
@@ -248,7 +259,7 @@ fn diagnostic_preludes_cover_repair_apis() -> Result<(), PreludeExportTestError>
     };
     assert!(diagnostics.to_string().contains("checked"));
     assert!(matches!(
-        DelaunayRepairError::Flip(FlipError::DegenerateCell),
+        DelaunayRepairError::Flip(FlipError::DegenerateSimplex),
         DelaunayRepairError::Flip(_)
     ));
     assert_send_sync_unpin::<FlipEdgeAdjacencyError>();
@@ -258,7 +269,7 @@ fn diagnostic_preludes_cover_repair_apis() -> Result<(), PreludeExportTestError>
         operation: DelaunayRepairOperation::VertexRemoval,
         source: Box::new(DelaunayRepairError::VerificationFailed {
             context: DelaunayRepairVerificationContext::StrictValidation,
-            source: Box::new(FlipError::DegenerateCell),
+            source: Box::new(FlipError::DegenerateSimplex),
         }),
     };
     assert!(validation_error.to_string().contains("vertex removal"));
@@ -284,9 +295,9 @@ fn diagnostics_prelude_covers_opt_in_helpers() -> Result<(), PreludeExportTestEr
 
     let kernel = AdaptiveKernel::new();
     let point = Point::new([0.0, 0.0]);
-    let conflict_cells = CellKeyBuffer::new();
+    let conflict_simplices = SimplexKeyBuffer::new();
     assert_eq!(
-        verify_conflict_region_completeness(&tds, &kernel, &point, &conflict_cells),
+        verify_conflict_region_completeness(&tds, &kernel, &point, &conflict_simplices),
         0
     );
     Ok(())

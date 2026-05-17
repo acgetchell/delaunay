@@ -55,7 +55,7 @@ work that should not be tangled with v0.7.8 cleanup churn:
 
 - **Pachner/Edit API shape (#252/#253/#350/#337):** unify the Pachner move API,
   expand public flip benchmark coverage, add Monte-Carlo stress benchmarks, and
-  support periodic external-cell parity constraints in bistellar flips.
+  support periodic external-simplex parity constraints in bistellar flips.
 - **Topology and incidence surface (#359/#304):** add stable incidence queries
   for simplex-local topology and dedicated targeted topology repair stages for
   ridge and vertex-link failures.
@@ -63,7 +63,7 @@ work that should not be tangled with v0.7.8 cleanup churn:
   full-TDS clone rollback where benchmarks show it matters, while preserving
   the current strong failed-mutation rollback guarantee.
 - **Naming and spherical topology (#323/#188):** make the breaking
-  `Cell` → `Simplex` rename and implement unit-sphere normalization for
+  `Simplex` → `Simplex` rename and implement unit-sphere normalization for
   `SphericalSpace::canonicalize_point()`.
 - **Iterator cleanup (#353):** prefer iterator-based collection-building paths
   where that improves clarity and allocation behavior.
