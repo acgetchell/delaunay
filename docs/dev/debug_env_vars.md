@@ -58,7 +58,7 @@ This matters for large-scale investigations that need to run under
 
 | Variable | Activation | Module | Description |
 |---|---|---|---|
-| `DELAUNAY_DEBUG_CONFLICT` | presence | `locate.rs` | Per-cell insphere classification during BFS, including BFS boundary cells |
+| `DELAUNAY_DEBUG_CONFLICT` | presence | `locate.rs` | Per-simplex insphere classification during BFS, including BFS boundary simplices |
 | `DELAUNAY_DEBUG_CONFLICT_PROGRESS` | presence | `locate.rs` | Periodic progress during large BFS traversals |
 | `DELAUNAY_DEBUG_CONFLICT_PROGRESS_EVERY` | **value** (integer) | `locate.rs` | Interval for progress logging (default: dimension-dependent) |
 | `DELAUNAY_DEBUG_CONFLICT_VERIFY` | presence | `triangulation.rs` | `[diagnostics]` Brute-force BFS conflict-region completeness check |
@@ -68,7 +68,7 @@ This matters for large-scale investigations that need to run under
 
 | Variable | Activation | Module | Description |
 |---|---|---|---|
-| `DELAUNAY_DEBUG_CAVITY` | presence | `incremental_insertion.rs`, `locate.rs` | Cavity boundary diagnostics, cell creation provenance with orientation |
+| `DELAUNAY_DEBUG_CAVITY` | presence | `incremental_insertion.rs`, `locate.rs` | Cavity boundary diagnostics, simplex creation provenance with orientation |
 | `DELAUNAY_DEBUG_HULL` | presence | `incremental_insertion.rs` | Hull extension visibility, locate stats, neighbor summary |
 | `DELAUNAY_DEBUG_HULL_DETAIL` | presence | `incremental_insertion.rs` | Per-facet orientation details during visibility computation |
 
@@ -76,7 +76,7 @@ This matters for large-scale investigations that need to run under
 
 | Variable | Activation | Module | Description |
 |---|---|---|---|
-| `DELAUNAY_DEBUG_ORIENTATION` | presence | `triangulation.rs` | Negative-orientation cell canonicalization and post-insertion audit |
+| `DELAUNAY_DEBUG_ORIENTATION` | presence | `triangulation.rs` | Negative-orientation simplex canonicalization and post-insertion audit |
 
 ## Neighbor Wiring
 

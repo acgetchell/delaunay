@@ -1,7 +1,7 @@
 //! Data type traits for Delaunay triangulation structures.
 //!
 //! This module contains trait definitions for data types that can be
-//! stored in vertices and cells of the triangulation data structure.
+//! stored in vertices and simplices of the triangulation data structure.
 
 use serde::{Serialize, de::DeserializeOwned};
 use std::{fmt::Debug, hash::Hash};
@@ -9,7 +9,7 @@ use std::{fmt::Debug, hash::Hash};
 /// Marker for data payloads that can be copied without ownership transfer.
 ///
 /// This is the storage-level requirement used by much of the triangulation
-/// code when vertex or cell data has to be duplicated while preserving rollback
+/// code when vertex or simplex data has to be duplicated while preserving rollback
 /// semantics.
 pub trait DataCopy: Copy {}
 
@@ -44,10 +44,10 @@ pub trait DataSerde: DataSerialize + DataDeserialize {}
 
 impl<T> DataSerde for T where T: DataSerialize + DataDeserialize {}
 
-/// Trait alias for data types that can be stored in vertices and cells.
+/// Trait alias for data types that can be stored in vertices and simplices.
 ///
 /// This trait alias captures all the requirements for data types that can be associated
-/// with vertices and cells in the triangulation data structure. Data types must implement
+/// with vertices and simplices in the triangulation data structure. Data types must implement
 /// `Copy` to enable efficient passing by value and to avoid ownership complications.
 ///
 /// # Required Traits
@@ -67,7 +67,7 @@ impl<T> DataSerde for T where T: DataSerialize + DataDeserialize {}
 /// use delaunay::prelude::triangulation::DataType;
 ///
 /// fn process_data<T: DataType>(data: T) {
-///     // T has all the necessary bounds for use as vertex/cell data
+///     // T has all the necessary bounds for use as vertex/simplex data
 /// }
 ///
 /// // Examples of types that implement DataType:

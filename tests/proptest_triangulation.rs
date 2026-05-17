@@ -36,7 +36,7 @@
 
 use ::uuid::Uuid;
 use delaunay::prelude::geometry::*;
-use delaunay::prelude::tds::CellKey;
+use delaunay::prelude::tds::SimplexKey;
 use delaunay::prelude::triangulation::construction::{
     DelaunayTriangulation, TopologyGuarantee, Vertex, vertex,
 };
@@ -58,9 +58,9 @@ fn finite_coordinate() -> impl Strategy<Value = f64> {
 // HELPER FUNCTIONS
 // =============================================================================
 
-/// Compare quality metrics between two triangulations by matching cells via vertex UUIDs.
+/// Compare quality metrics between two triangulations by matching simplices via vertex UUIDs.
 ///
-/// This helper function matches cells between an original and transformed triangulation
+/// This helper function matches simplices between an original and transformed triangulation
 /// by mapping vertex UUIDs, then compares their quality metrics using the provided
 /// comparison function.
 ///
@@ -70,27 +70,27 @@ fn finite_coordinate() -> impl Strategy<Value = f64> {
 /// * `uuid_map` - Mapping from original vertex UUIDs to transformed vertex UUIDs
 /// * `_metric_name` - Name of the metric being tested (for error messages)
 /// * `_dimension` - Dimensionality (for error messages)
-/// * `compare_fn` - Function to compute and compare quality metrics for matched cells.
+/// * `compare_fn` - Function to compute and compare quality metrics for matched simplices.
 ///   Returns `Ok(())` if metrics match within tolerance, `Err(TestCaseError)` otherwise.
 ///
 /// # Returns
-/// * `Ok(())` - At least one cell was successfully matched and compared
+/// * `Ok(())` - At least one simplex was successfully matched and compared
 /// * `Err(TestCaseError)` - A metric comparison failed
 ///
 /// # Purpose
-/// This function centralizes the UUID-based cell matching logic used across multiple
+/// This function centralizes the UUID-based simplex matching logic used across multiple
 /// transformation invariance tests (translation, scaling, rotation). It eliminates
 /// ~200 lines of duplicated code by extracting the common pattern:
-/// 1. Iterate through cells in original triangulation
+/// 1. Iterate through simplices in original triangulation
 /// 2. Map their vertex UUIDs to transformed triangulation
-/// 3. Find matching cell in transformed triangulation
-/// 4. Compare quality metrics between matched cells
+/// 3. Find matching simplex in transformed triangulation
+/// 4. Compare quality metrics between matched simplices
 ///
-/// Degenerate Delaunay inputs can have more than one valid cell set, so an
+/// Degenerate Delaunay inputs can have more than one valid simplex set, so an
 /// independently constructed transformed triangulation may choose a different
-/// valid tessellation. Unmatched cells are skipped; cases with no comparable
-/// cells are rejected rather than treated as metric failures.
-fn compare_transformed_cells<const D: usize, F>(
+/// valid tessellation. Unmatched simplices are skipped; cases with no comparable
+/// simplices are rejected rather than treated as metric failures.
+fn compare_transformed_simplices<const D: usize, F>(
     dt_orig: &DelaunayTriangulation<AdaptiveKernel<f64>, (), (), D>,
     dt_transformed: &DelaunayTriangulation<AdaptiveKernel<f64>, (), (), D>,
     uuid_map: &HashMap<Uuid, Uuid>,
@@ -99,22 +99,20 @@ fn compare_transformed_cells<const D: usize, F>(
     mut compare_fn: F,
 ) -> Result<(), TestCaseError>
 where
-    F: FnMut(CellKey, CellKey) -> Result<(), TestCaseError>,
+    F: FnMut(SimplexKey, SimplexKey) -> Result<(), TestCaseError>,
 {
     let tds_orig = dt_orig.tds();
     let tds_transformed = dt_transformed.tds();
-    let mut cells_considered = 0usize;
-    let mut matched_cells = 0usize;
+    let mut matched_simplices = 0usize;
 
-    // Iterate through all cells in original triangulation
-    for orig_key in tds_orig.cell_keys() {
-        cells_considered += 1;
+    // Iterate through all simplices in original triangulation
+    for orig_key in tds_orig.simplex_keys() {
         prop_assert!(
-            tds_orig.cell(orig_key).is_some(),
-            "original cell key from iterator should exist: {orig_key:?}"
+            tds_orig.simplex(orig_key).is_some(),
+            "original simplex key from iterator should exist: {orig_key:?}"
         );
-        let orig_cell = tds_orig.cell(orig_key).expect("checked above");
-        let orig_uuids = orig_cell.vertex_uuids(tds_orig)?;
+        let orig_simplex = tds_orig.simplex(orig_key).expect("checked above");
+        let orig_uuids = orig_simplex.vertex_uuids(tds_orig)?;
         let transformed_uuids: Vec<_> = orig_uuids
             .iter()
             .filter_map(|uuid| uuid_map.get(uuid))
@@ -123,33 +121,32 @@ where
         prop_assert_eq!(
             transformed_uuids.len(),
             orig_uuids.len(),
-            "all original cell UUIDs should map to transformed UUIDs"
+            "all original simplex UUIDs should map to transformed UUIDs"
         );
 
-        for trans_key in tds_transformed.cell_keys() {
+        for trans_key in tds_transformed.simplex_keys() {
             prop_assert!(
-                tds_transformed.cell(trans_key).is_some(),
-                "transformed cell key from iterator should exist: {trans_key:?}"
+                tds_transformed.simplex(trans_key).is_some(),
+                "transformed simplex key from iterator should exist: {trans_key:?}"
             );
-            let trans_cell = tds_transformed.cell(trans_key).expect("checked above");
-            if let Ok(trans_cell_uuids) = trans_cell.vertex_uuids(tds_transformed) {
-                // Check if cells have same vertices (by UUID)
-                if transformed_uuids.len() == trans_cell_uuids.len()
+            let trans_simplex = tds_transformed.simplex(trans_key).expect("checked above");
+            if let Ok(trans_simplex_uuids) = trans_simplex.vertex_uuids(tds_transformed) {
+                // Check if simplices have same vertices (by UUID)
+                if transformed_uuids.len() == trans_simplex_uuids.len()
                     && transformed_uuids
                         .iter()
-                        .all(|u| trans_cell_uuids.contains(u))
+                        .all(|u| trans_simplex_uuids.contains(u))
                 {
-                    // Found matching cell - compare quality metrics
+                    // Found matching simplex - compare quality metrics
                     compare_fn(orig_key, trans_key)?;
-                    matched_cells += 1;
-                    break; // Found the match, no need to check other cells
+                    matched_simplices += 1;
+                    break; // Found the match, no need to check other simplices
                 }
             }
         }
     }
 
-    prop_assume!(cells_considered > 1);
-    prop_assume!(matched_cells >= 2);
+    prop_assume!(matched_simplices >= 1);
 
     Ok(())
 }
@@ -367,8 +364,8 @@ macro_rules! test_quality_properties {
                     ) {
                         let tds = dt.tds();
                         let tri = dt.as_triangulation();
-                        for cell_key in tds.cell_keys() {
-                            if let Ok(ratio) = radius_ratio(tri, cell_key) {
+                        for simplex_key in tds.simplex_keys() {
+                            if let Ok(ratio) = radius_ratio(tri, simplex_key) {
                                 prop_assert!(
                                     ratio > 0.0,
                                     "{}D radius ratio should be positive, got {}",
@@ -422,8 +419,8 @@ macro_rules! test_quality_properties {
                                 .map(|(orig, trans)| (orig.uuid(), trans.uuid()))
                                 .collect();
 
-                            // Compare cells using helper function
-                            compare_transformed_cells(
+                            // Compare simplices using helper function
+                            compare_transformed_simplices(
                                 &dt,
                                 &dt_translated,
                                 &uuid_map,
@@ -496,8 +493,8 @@ macro_rules! test_quality_properties {
                                 .map(|(orig, trans)| (orig.uuid(), trans.uuid()))
                                 .collect();
 
-                            // Compare cells using helper function
-                            compare_transformed_cells(
+                            // Compare simplices using helper function
+                            compare_transformed_simplices(
                                 &dt,
                                 &dt_translated,
                                 &uuid_map,
@@ -570,8 +567,8 @@ macro_rules! test_quality_properties {
                                 .map(|(orig, scaled)| (orig.uuid(), scaled.uuid()))
                                 .collect();
 
-                            // Compare cells using helper function
-                            compare_transformed_cells(
+                            // Compare simplices using helper function
+                            compare_transformed_simplices(
                                 &dt,
                                 &dt_scaled,
                                 &uuid_map,
@@ -619,18 +616,18 @@ macro_rules! test_quality_properties {
                     ) {
                         let tds = dt.tds();
                         let tri = dt.as_triangulation();
-                        for cell_key in tds.cell_keys() {
-                            let rr_result = radius_ratio(tri, cell_key);
-                            let nv_result = normalized_volume(tri, cell_key);
+                        for simplex_key in tds.simplex_keys() {
+                            let rr_result = radius_ratio(tri, simplex_key);
+                            let nv_result = normalized_volume(tri, simplex_key);
 
                             // Both metrics should agree on degeneracy
-                            // If one fails with DegenerateCell, both should fail
+                            // If one fails with DegenerateSimplex, both should fail
                             match (rr_result, nv_result) {
                                 (Ok(_), Ok(_)) => (),  // Both succeed - OK
                                 (Err(rr_err), Err(nv_err)) => {
                                     // Both fail - verify they're both degeneracy errors or both other errors
-                                    let rr_is_degen = matches!(rr_err, delaunay::geometry::quality::QualityError::DegenerateCell { .. });
-                                    let nv_is_degen = matches!(nv_err, delaunay::geometry::quality::QualityError::DegenerateCell { .. });
+                                    let rr_is_degen = matches!(rr_err, delaunay::geometry::quality::QualityError::DegenerateSimplex { .. });
+                                    let nv_is_degen = matches!(nv_err, delaunay::geometry::quality::QualityError::DegenerateSimplex { .. });
 
                                     if rr_is_degen || nv_is_degen {
                                         prop_assert!(
@@ -675,7 +672,7 @@ test_quality_properties!(5, 7, 16, #[ignore = "Slow (>60s) in test-integration"]
 /// Macro to generate facet topology invariant property tests for a given dimension.
 ///
 /// These tests verify the **critical manifold topology invariant**: each facet
-/// must be shared by at most 2 cells (1 for boundary, 2 for interior). This
+/// must be shared by at most 2 simplices (1 for boundary, 2 for interior). This
 /// invariant is essential for facet walking used in point location.
 ///
 /// The localized validation functions (`detect_local_facet_issues`,
@@ -684,7 +681,7 @@ macro_rules! test_facet_topology_invariant {
     ($dim:literal, $min_vertices:literal, $max_vertices:literal $(, #[$attr:meta])*) => {
         pastey::paste! {
             proptest! {
-                /// Property: All cells in a valid triangulation have no over-shared facets
+                /// Property: All simplices in a valid triangulation have no over-shared facets
                 $(#[$attr])*
                 #[test]
                 fn [<prop_no_over_shared_facets_ $dim d>](
@@ -700,11 +697,11 @@ macro_rules! test_facet_topology_invariant {
                     ) {
                         let tri = dt.as_triangulation();
 
-                        // Get all cell keys
-                        let cell_keys: Vec<_> = tri.cells().map(|(k, _)| k).collect();
+                        // Get all simplex keys
+                        let simplex_keys: Vec<_> = tri.simplices().map(|(k, _)| k).collect();
 
                         // Validate no over-shared facets
-                        let issues = tri.detect_local_facet_issues(&cell_keys)?;
+                        let issues = tri.detect_local_facet_issues(&simplex_keys)?;
                         prop_assert!(
                             issues.is_none(),
                             "{}D: Triangulation has {} over-shared facets (violates manifold topology invariant)",
@@ -730,16 +727,16 @@ macro_rules! test_facet_topology_invariant {
                     ) {
                         let mut tri = dt.as_triangulation().clone();
 
-                        // Get all cell keys
-                        let cell_keys: Vec<_> = tri.cells().map(|(k, _)| k).collect();
+                        // Get all simplex keys
+                        let simplex_keys: Vec<_> = tri.simplices().map(|(k, _)| k).collect();
 
                         // If there are any issues, repair them
-                        if let Some(issues) = tri.detect_local_facet_issues(&cell_keys)? {
+                        if let Some(issues) = tri.detect_local_facet_issues(&simplex_keys)? {
                             let _removed = tri.repair_local_facet_issues(&issues)?;
 
                             // After repair, re-check - should have no issues
-                            let cell_keys_after: Vec<_> = tri.cells().map(|(k, _)| k).collect();
-                            let issues_after = tri.detect_local_facet_issues(&cell_keys_after)?;
+                            let simplex_keys_after: Vec<_> = tri.simplices().map(|(k, _)| k).collect();
+                            let issues_after = tri.detect_local_facet_issues(&simplex_keys_after)?;
                             prop_assert!(
                                 issues_after.is_none(),
                                 "{}D: After repair, {} over-shared facets still remain",
@@ -750,10 +747,10 @@ macro_rules! test_facet_topology_invariant {
                     }
                 }
 
-                /// Property: Empty cell list returns no issues
+                /// Property: Empty simplex list returns no issues
                 $(#[$attr])*
                 #[test]
-                fn [<prop_empty_cell_list_no_issues_ $dim d>](
+                fn [<prop_empty_simplex_list_no_issues_ $dim d>](
                     vertices in prop::collection::vec(
                         prop::array::[<uniform $dim>](finite_coordinate()).prop_map(|coords| vertex!(coords)),
                         $min_vertices..$max_vertices
@@ -766,11 +763,11 @@ macro_rules! test_facet_topology_invariant {
                     ) {
                         let tri = dt.as_triangulation();
 
-                        // Empty cell list should always return None
+                        // Empty simplex list should always return None
                         let issues = tri.detect_local_facet_issues(&[])?;
                         prop_assert!(
                             issues.is_none(),
-                            "{}D: Empty cell list should have no issues",
+                            "{}D: Empty simplex list should have no issues",
                             $dim
                         );
                     }
@@ -835,8 +832,8 @@ macro_rules! gen_high_dim_facet_topology_smoke {
                     };
 
                     let tri = dt.as_triangulation();
-                    let cell_keys: Vec<_> = tri.cells().map(|(key, _)| key).collect();
-                    let issues = tri.detect_local_facet_issues(&cell_keys)?;
+                    let simplex_keys: Vec<_> = tri.simplices().map(|(key, _)| key).collect();
+                    let issues = tri.detect_local_facet_issues(&simplex_keys)?;
                     prop_assert!(
                         issues.is_none(),
                         "{}D active facet-topology smoke should have no over-shared facets: {:?}",

@@ -17,7 +17,7 @@
 //! - **Duplicate coordinate rejection** - Geometric duplicate detection at insertion time
 //!
 //! ### Delaunay Property (Fast O(N) via Flip Predicates)
-//! - **Empty circumsphere condition** - No vertex lies strictly inside any cell's circumsphere (2D-5D; verified via flip predicates)
+//! - **Empty circumsphere condition** - No vertex lies strictly inside any simplex's circumsphere (2D-5D; verified via flip predicates)
 //! - **Insertion-order robustness** - Levels 1–3 validity across insertion orders (2D-5D; Delaunay property not asserted; see Issue #120)
 //! - **Duplicate cloud integration** - Full pipeline with messy real-world inputs (2D-5D: duplicates + near-duplicates)
 //!
@@ -28,7 +28,7 @@
 //! ## Performance Note
 //!
 //! Delaunay property validation now uses `verify_delaunay_via_flip_predicates()` which checks
-//! local flip configurations (O(cells)) instead of the naive O(cells × vertices) brute-force.
+//! local flip configurations (O(simplices)) instead of the naive O(simplices × vertices) brute-force.
 //! This provides ~40-100x speedup for property-based testing while remaining equally correct.
 
 use delaunay::geometry::kernel::{AdaptiveKernel, RobustKernel};
@@ -425,7 +425,7 @@ fn assert_on_suspicion_sequence_valid<const D: usize>(
     for (idx, point) in points.into_iter().enumerate() {
         let result = dt.insert_with_statistics(vertex!(point));
 
-        if dt.number_of_cells() > 0 {
+        if dt.number_of_simplices() > 0 {
             let validation = dt.validate();
             prop_assert!(
                 validation.is_ok(),
@@ -436,8 +436,8 @@ fn assert_on_suspicion_sequence_valid<const D: usize>(
     }
 
     prop_assert!(
-        dt.number_of_cells() > 0,
-        "{D}D OnSuspicion cospherical sequence did not create any cells"
+        dt.number_of_simplices() > 0,
+        "{D}D OnSuspicion cospherical sequence did not create any simplices"
     );
 
     let validation = dt.validate();
@@ -500,7 +500,7 @@ fn assert_non_finite_insert_rejected_and_preserves_validity<const D: usize>(
         "{D}D empty insertion should reject non-finite coordinates as an invalid vertex, got {empty_result:?}"
     );
     prop_assert_eq!(empty.number_of_vertices(), 0);
-    prop_assert_eq!(empty.number_of_cells(), 0);
+    prop_assert_eq!(empty.number_of_simplices(), 0);
     let empty_validation = empty.validate();
     prop_assert!(
         empty_validation.is_ok(),
@@ -519,7 +519,7 @@ fn assert_non_finite_insert_rejected_and_preserves_validity<const D: usize>(
             ))
         })?;
     let vertex_count = dt.number_of_vertices();
-    let cell_count = dt.number_of_cells();
+    let simplex_count = dt.number_of_simplices();
 
     let result = dt.insert_with_statistics(vertex!(point));
     prop_assert!(
@@ -527,7 +527,7 @@ fn assert_non_finite_insert_rejected_and_preserves_validity<const D: usize>(
         "{D}D constructed insertion should reject non-finite coordinates as an invalid vertex, got {result:?}"
     );
     prop_assert_eq!(dt.number_of_vertices(), vertex_count);
-    prop_assert_eq!(dt.number_of_cells(), cell_count);
+    prop_assert_eq!(dt.number_of_simplices(), simplex_count);
 
     let validation = dt.validate();
     prop_assert!(
@@ -1009,8 +1009,8 @@ macro_rules! test_empty_circumsphere {
     ($dim:literal, $min_vertices:literal, $max_vertices:literal $(, #[$attr:meta])*) => {
         pastey::paste! {
 proptest! {
-                /// Property: For every cell, no other vertex lies strictly inside
-                /// the circumsphere defined by that cell (Delaunay condition).
+                /// Property: For every simplex, no other vertex lies strictly inside
+                /// the circumsphere defined by that simplex (Delaunay condition).
                 $(#[$attr])*
                 #[test]
                 fn [<prop_empty_circumsphere_ $dim d>](
@@ -1058,8 +1058,8 @@ proptest! {
     ($dim:literal, $min_vertices:literal, $max_vertices:literal, ignore $(, #[$attr:meta])*) => {
         pastey::paste! {
 proptest! {
-                /// Property: For every cell, no other vertex lies strictly inside
-                /// the circumsphere defined by that cell (Delaunay condition).
+                /// Property: For every simplex, no other vertex lies strictly inside
+                /// the circumsphere defined by that simplex (Delaunay condition).
                 ///
                 /// **Status**: Ignored - awaiting higher-dimensional flip validation.
                 #[ignore = "Requires k>2 flip validation (3D+); see Issue #120"]
@@ -1423,7 +1423,7 @@ macro_rules! gen_insertion_order_robustness_test {
                     prop_assert!(verts_b > $dim, "{}D: Triangulation B should have > {} vertices, got {}", $dim, $dim, verts_b);
 
                     // Both triangulations are valid - this is the key invariant
-                    // The exact topology (edge sets, cell counts) may differ for degenerate/co-spherical
+                    // The exact topology (edge sets, simplex counts) may differ for degenerate/co-spherical
                     // point sets, which is expected and valid behavior
 
                     // TODO: Once bistellar flips are implemented to ensure unique canonical triangulations,
@@ -1454,8 +1454,10 @@ gen_insertion_order_robustness_test!(2, 6, 10);
 //
 // Coverage note:
 // - The filters below intentionally trade breadth for determinism and debuggability.
-// - Degenerate/perturbation paths are exercised elsewhere (see e.g. [`tests/check_perturbation_stats.rs`](tests/check_perturbation_stats.rs:1)
-//   and the curated edge-case suites in [`tests/delaunay_edge_cases.rs`](tests/delaunay_edge_cases.rs:1) / [`tests/delaunay_incremental_insertion.rs`](tests/delaunay_incremental_insertion.rs:1)).
+// - Degenerate/perturbation paths are exercised by unit regressions in
+//   `src/core/triangulation.rs` and the curated edge-case suites in
+//   [`tests/delaunay_edge_cases.rs`](tests/delaunay_edge_cases.rs:1) /
+//   [`tests/delaunay_incremental_insertion.rs`](tests/delaunay_incremental_insertion.rs:1).
 // - If these filters start rejecting a large fraction of generated cases, that is a signal
 //   to improve the generator or to strengthen the underlying 3D robustness (rather than to
 //   further weaken the property).

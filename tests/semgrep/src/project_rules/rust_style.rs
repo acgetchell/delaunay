@@ -53,7 +53,7 @@ pub fn function_local_use_fixture() {
 
 pub fn deep_crate_path_fixture() {
     // ruleid: delaunay.rust.no-deep-crate-paths-in-functions
-    let _buffer = crate::core::collections::CellKeyBuffer::new();
+    let _buffer = crate::core::collections::SimplexKeyBuffer::new();
 }
 
 pub fn public_unwrap_bypass(value: Option<u8>) -> u8 {

@@ -5,10 +5,10 @@
 
 #![forbid(unsafe_code)]
 
-use crate::core::{collections::FacetToCellsMap, tds::Tds};
+use crate::core::{collections::FacetToSimplicesMap, tds::Tds};
 use crate::topology::{
     characteristics::euler::{
-        FVector, TopologyClassification, count_simplices_with_facet_to_cells_map,
+        FVector, TopologyClassification, count_simplices_with_facet_to_simplices_map,
         euler_characteristic, expected_chi_for,
     },
     traits::topological_space::TopologyError,
@@ -134,32 +134,35 @@ pub fn validate_triangulation_euler<T, U, V, const D: usize>(
     // Precompute the facet map once and reuse it for both counting and classification.
     //
     // Avoid building the map for empty triangulations.
-    let facet_to_cells = if tds.number_of_cells() == 0 {
-        FacetToCellsMap::default()
+    let facet_to_simplices = if tds.number_of_simplices() == 0 {
+        FacetToSimplicesMap::default()
     } else {
-        tds.build_facet_to_cells_map()
+        tds.build_facet_to_simplices_map()
             .map_err(|source| TopologyError::FacetMapBuild { source })?
     };
 
-    Ok(validate_triangulation_euler_with_facet_to_cells_map(
+    Ok(validate_triangulation_euler_with_facet_to_simplices_map(
         tds,
-        &facet_to_cells,
+        &facet_to_simplices,
     ))
 }
 
-pub(crate) fn validate_triangulation_euler_with_facet_to_cells_map<T, U, V, const D: usize>(
+pub(crate) fn validate_triangulation_euler_with_facet_to_simplices_map<T, U, V, const D: usize>(
     tds: &Tds<T, U, V, D>,
-    facet_to_cells: &FacetToCellsMap,
+    facet_to_simplices: &FacetToSimplicesMap,
 ) -> TopologyCheckResult {
-    let counts = count_simplices_with_facet_to_cells_map(tds, facet_to_cells);
+    let counts = count_simplices_with_facet_to_simplices_map(tds, facet_to_simplices);
     let chi = euler_characteristic(&counts);
 
-    let num_cells = tds.number_of_cells();
-    let classification = if num_cells == 0 {
+    let num_simplices = tds.number_of_simplices();
+    let classification = if num_simplices == 0 {
         TopologyClassification::Empty
-    } else if num_cells == 1 {
+    } else if num_simplices == 1 {
         TopologyClassification::SingleSimplex(D)
-    } else if facet_to_cells.values().any(|cells| cells.len() == 1) {
+    } else if facet_to_simplices
+        .values()
+        .any(|simplices| simplices.len() == 1)
+    {
         TopologyClassification::Ball(D)
     } else {
         TopologyClassification::ClosedSphere(D)

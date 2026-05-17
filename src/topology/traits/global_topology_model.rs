@@ -136,7 +136,7 @@ pub trait GlobalTopologyModel<const D: usize> {
 
     /// Indicates whether periodic facet/signature behavior is available.
     ///
-    /// Returns `true` for periodic topologies that support lattice-offset tracking on cells.
+    /// Returns `true` for periodic topologies that support lattice-offset tracking on simplices.
     /// This is used internally by the triangulation to determine whether periodic vertex offsets
     /// should be stored and processed.
     fn supports_periodic_facet_signatures(&self) -> bool {

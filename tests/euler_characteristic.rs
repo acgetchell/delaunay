@@ -9,7 +9,7 @@
 //!
 //! - Empty triangulations (χ = 0)
 //! - Single simplices (χ = 1)
-//! - Multiple cells with interior vertices
+//! - Multiple simplices with interior vertices
 //! - Known 2D, 3D, 4D, and 5D configurations
 //!
 //! For property-based tests with random triangulations, see `proptest_euler_characteristic.rs`.
@@ -38,7 +38,7 @@ fn test_empty_triangulation_euler() {
 
     let counts = euler::count_simplices(&tds).unwrap();
     assert_eq!(counts.count(0), 0); // No vertices
-    assert_eq!(counts.count(3), 0); // No cells
+    assert_eq!(counts.count(3), 0); // No simplices
 
     let chi = euler::euler_characteristic(&counts);
     assert_eq!(chi, 0, "Empty triangulation should have χ = 0");
@@ -126,7 +126,7 @@ fn test_3d_single_tetrahedron() {
     assert_eq!(result.counts.count(0), 4, "Should have 4 vertices");
     assert_eq!(result.counts.count(1), 6, "Should have 6 edges");
     assert_eq!(result.counts.count(2), 4, "Should have 4 faces");
-    assert_eq!(result.counts.count(3), 1, "Should have 1 cell");
+    assert_eq!(result.counts.count(3), 1, "Should have 1 simplex");
     assert_eq!(result.chi, 1, "Single tetrahedron should have χ = 1");
     assert!(result.is_valid(), "Topology should be valid");
     assert_eq!(
@@ -188,7 +188,7 @@ fn test_4d_single_simplex() {
     assert_eq!(result.counts.count(1), 10, "Should have 10 edges");
     assert_eq!(result.counts.count(2), 10, "Should have 10 faces");
     assert_eq!(result.counts.count(3), 5, "Should have 5 tetrahedra");
-    assert_eq!(result.counts.count(4), 1, "Should have 1 4-cell");
+    assert_eq!(result.counts.count(4), 1, "Should have 1 4-simplex");
     assert_eq!(result.chi, 1, "Single 4-simplex should have χ = 1");
     assert!(result.is_valid(), "Topology should be valid");
     assert_eq!(
@@ -252,17 +252,17 @@ fn test_2d_toroidal_explicit_construction_rejected() {
     ];
     let vertices: Vec<_> = coords.iter().map(|c| vertex!([c[0], c[1]])).collect();
     let v = |i: usize, j: usize| -> usize { (i % N) * N + (j % N) };
-    let mut cells = Vec::with_capacity(2 * N * N);
+    let mut simplices = Vec::with_capacity(2 * N * N);
     for i in 0..N {
         for j in 0..N {
             // Up triangle: [v(i,j), v(i+1,j), v(i,j+1)]
-            cells.push(vec![v(i, j), v(i + 1, j), v(i, j + 1)]);
+            simplices.push(vec![v(i, j), v(i + 1, j), v(i, j + 1)]);
             // Down triangle: [v(i+1,j), v(i+1,j+1), v(i,j+1)]
-            cells.push(vec![v(i + 1, j), v(i + 1, j + 1), v(i, j + 1)]);
+            simplices.push(vec![v(i + 1, j), v(i + 1, j + 1), v(i, j + 1)]);
         }
     }
 
-    let err = DelaunayTriangulationBuilder::from_vertices_and_cells(&vertices, &cells)
+    let err = DelaunayTriangulationBuilder::from_vertices_and_simplices(&vertices, &simplices)
         .global_topology(GlobalTopology::Toroidal {
             domain: [1.0, 1.0],
             mode: ToroidalConstructionMode::Explicit,
@@ -322,7 +322,7 @@ fn test_3d_toroidal_explicit_construction_rejected() {
         [2, 1, 0],
     ];
 
-    let mut cells = Vec::with_capacity(6 * N * N * N);
+    let mut simplices = Vec::with_capacity(6 * N * N * N);
     for i in 0..N {
         for j in 0..N {
             for k in 0..N {
@@ -338,13 +338,13 @@ fn test_3d_toroidal_explicit_construction_rejected() {
                     let v2 = v(cur[0], cur[1], cur[2]);
                     cur[perm[2]] += 1;
                     let v3 = v(cur[0], cur[1], cur[2]);
-                    cells.push(vec![v0, v1, v2, v3]);
+                    simplices.push(vec![v0, v1, v2, v3]);
                 }
             }
         }
     }
 
-    let err = DelaunayTriangulationBuilder::from_vertices_and_cells(&vertices, &cells)
+    let err = DelaunayTriangulationBuilder::from_vertices_and_simplices(&vertices, &simplices)
         .global_topology(GlobalTopology::Toroidal {
             domain: [1.0, 1.0, 1.0],
             mode: ToroidalConstructionMode::Explicit,
@@ -402,11 +402,11 @@ macro_rules! test_complex_with_interior {
                 $dim
             );
 
-            // Verify we have more than one cell (ensuring interior point)
-            let cell_count = dt.tds().number_of_cells();
+            // Verify we have more than one simplex (ensuring interior point)
+            let simplex_count = dt.tds().number_of_simplices();
             assert!(
-                cell_count > 1,
-                "Should have multiple cells (>1) to ensure interior point in dimension {}",
+                simplex_count > 1,
+                "Should have multiple simplices (>1) to ensure interior point in dimension {}",
                 $dim
             );
 

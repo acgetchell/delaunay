@@ -48,9 +48,9 @@ macro_rules! gen_orientation_construction_and_tamper_props {
                     }
                 }
 
-                /// Property: swapping one cell's vertex order should violate coherent orientation.
+                /// Property: swapping one simplex's vertex order should violate coherent orientation.
                 ///
-                /// Tampering is done through serialized `cell_vertices` so deserialization rebuilds
+                /// Tampering is done through serialized `simplex_vertices` so deserialization rebuilds
                 /// neighbors/incidence normally while preserving the orientation corruption.
                 $(#[$attr])*
                 #[test]
@@ -64,21 +64,21 @@ macro_rules! gen_orientation_construction_and_tamper_props {
                         &vertices,
                         TopologyGuarantee::PLManifold,
                     ) {
-                        prop_assume!(dt.tds().number_of_cells() >= 2);
+                        prop_assume!(dt.tds().number_of_simplices() >= 2);
                         prop_assert!(dt.tds().is_coherently_oriented());
 
                         let mut serialized = serde_json::to_value(dt.tds()).unwrap();
-                        let cell_vertices_map = serialized
-                            .get_mut("cell_vertices")
+                        let simplex_vertices_map = serialized
+                            .get_mut("simplex_vertices")
                             .and_then(serde_json::Value::as_object_mut)
                             .unwrap();
-                        let first_cell_vertices = cell_vertices_map
+                        let first_simplex_vertices = simplex_vertices_map
                             .values_mut()
                             .next()
                             .and_then(serde_json::Value::as_array_mut)
                             .unwrap();
-                        prop_assume!(first_cell_vertices.len() >= 2);
-                        first_cell_vertices.swap(0, 1);
+                        prop_assume!(first_simplex_vertices.len() >= 2);
+                        first_simplex_vertices.swap(0, 1);
 
                         let tampered_json = serde_json::to_string(&serialized).unwrap();
                         let tampered_tds: Tds<f64, (), (), $dim> =

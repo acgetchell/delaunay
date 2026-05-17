@@ -1,50 +1,50 @@
 //! Triangulation-specific map aliases for adjacency and incidence bookkeeping.
 //!
 //! These aliases encode the small-buffer capacities expected by common topology
-//! relationships such as facets, neighbors, cells, and vertex incidence.
+//! relationships such as facets, neighbors, simplices, and vertex incidence.
 
 use super::{
-    CellVertexBuffer, CellVertexUuidBuffer, FacetIndex, FastHashMap, FastHashSet,
-    MAX_PRACTICAL_DIMENSION_SIZE, NeighborBuffer, SmallBuffer, Uuid, VertexUuidSet,
+    FacetIndex, FastHashMap, FastHashSet, MAX_PRACTICAL_DIMENSION_SIZE, NeighborBuffer,
+    SimplexVertexKeyBuffer, SimplexVertexUuidBuffer, SmallBuffer, Uuid, VertexUuidSet,
 };
 use crate::core::facet::FacetHandle;
-use crate::core::tds::{CellKey, VertexKey};
+use crate::core::tds::{SimplexKey, VertexKey};
 
 // =============================================================================
 // TRIANGULATION-SPECIFIC OPTIMIZED TYPES
 // =============================================================================
 
-/// Facet-to-cells mapping optimized for typical triangulation patterns.
-/// Most facets are shared by at most 2 cells (boundary facets = 1, interior facets = 2).
+/// Facet-to-simplices mapping optimized for typical triangulation patterns.
+/// Most facets are shared by at most 2 simplices (boundary facets = 1, interior facets = 2).
 ///
 /// # Optimization Rationale
 ///
 /// - **Key**: `u64` facet hash (from vertex combination)
 /// - **Value**: `SmallBuffer<FacetHandle, 2>` - stack allocated for typical case
-/// - **Typical Pattern**: 1 cell (boundary) or 2 cells (interior facet)
+/// - **Typical Pattern**: 1 simplex (boundary) or 2 simplices (interior facet)
 /// - **Performance**: Avoids heap allocation for >95% of facets
 /// - **Memory Efficiency**: `FacetHandle` uses u8 for facet index, same size as raw tuple
 ///
 /// # Examples
 ///
 /// ```rust
-/// use delaunay::prelude::collections::FacetToCellsMap;
+/// use delaunay::prelude::collections::FacetToSimplicesMap;
 ///
-/// let facet_map: FacetToCellsMap = FacetToCellsMap::default();
+/// let facet_map: FacetToSimplicesMap = FacetToSimplicesMap::default();
 /// assert!(facet_map.is_empty());
 /// ```
-pub type FacetToCellsMap = FastHashMap<u64, SmallBuffer<FacetHandle, 2>>;
+pub type FacetToSimplicesMap = FastHashMap<u64, SmallBuffer<FacetHandle, 2>>;
 
 /// Map of over-shared facets detected during localized validation.
 ///
-/// Used for O(k) facet validation of newly created cells, avoiding O(N) global scans.
-/// Maps facet hash to cells sharing that facet (only includes facets shared by > 2 cells).
+/// Used for O(k) facet validation of newly created simplices, avoiding O(N) global scans.
+/// Maps facet hash to simplices sharing that facet (only includes facets shared by > 2 simplices).
 ///
 /// # Optimization Rationale
 ///
 /// - **Key**: `u64` facet hash (from sorted vertex keys)
-/// - **Value**: `SmallBuffer<(CellKey, FacetIndex), 4>` - handles up to 4 over-sharing cells on stack
-/// - **Typical Pattern**: 3-4 cells in most over-sharing cases
+/// - **Value**: `SmallBuffer<(SimplexKey, FacetIndex), 4>` - handles up to 4 over-sharing simplices on stack
+/// - **Typical Pattern**: 3-4 simplices in most over-sharing cases
 /// - **Performance**: Stack allocation for common over-sharing patterns
 ///
 /// # Examples
@@ -55,39 +55,39 @@ pub type FacetToCellsMap = FastHashMap<u64, SmallBuffer<FacetHandle, 2>>;
 /// let issues: FacetIssuesMap = FacetIssuesMap::default();
 /// assert!(issues.is_empty());
 /// ```
-pub type FacetIssuesMap = FastHashMap<u64, SmallBuffer<(CellKey, FacetIndex), 4>>;
+pub type FacetIssuesMap = FastHashMap<u64, SmallBuffer<(SimplexKey, FacetIndex), 4>>;
 
-/// Cell neighbor mapping optimized for typical cell degrees.
-/// Most cells have a small number of neighbors (D+1 faces, so at most D+1 neighbors).
+/// Simplex neighbor mapping optimized for typical simplex degrees.
+/// Most simplices have a small number of neighbors (D+1 faces, so at most D+1 neighbors).
 ///
 /// # Optimization Rationale
 ///
-/// - **Key**: `CellKey` identifying the cell
-/// - **Value**: `NeighborBuffer<Option<CellKey>>` - handles up to 8 neighbors on stack
+/// - **Key**: `SimplexKey` identifying the simplex
+/// - **Value**: `NeighborBuffer<Option<SimplexKey>>` - handles up to 8 neighbors on stack
 /// - **Typical Pattern**: 2D=3 neighbors, 3D=4 neighbors, 4D=5 neighbors
 /// - **Performance**: Stack allocation for dimensions up to ~7D
 ///
 /// # Note
 ///
-/// This type mirrors `Cell::neighbors()` which returns `Option<&NeighborBuffer<Option<CellKey>>>`.
+/// This type mirrors `Simplex::neighbors()` which returns `Option<&NeighborBuffer<Option<SimplexKey>>>`.
 ///
 /// # Examples
 ///
 /// ```rust
-/// use delaunay::prelude::collections::CellNeighborsMap;
+/// use delaunay::prelude::collections::SimplexNeighborsMap;
 ///
-/// let neighbors: CellNeighborsMap = CellNeighborsMap::default();
+/// let neighbors: SimplexNeighborsMap = SimplexNeighborsMap::default();
 /// assert!(neighbors.is_empty());
 /// ```
-pub type CellNeighborsMap = FastHashMap<CellKey, NeighborBuffer<Option<CellKey>>>;
+pub type SimplexNeighborsMap = FastHashMap<SimplexKey, NeighborBuffer<Option<SimplexKey>>>;
 
-/// Vertex-to-cells mapping optimized for typical vertex degrees.
-/// Most vertices are incident to a small number of cells in well-conditioned triangulations.
+/// Vertex-to-simplices mapping optimized for typical vertex degrees.
+/// Most vertices are incident to a small number of simplices in well-conditioned triangulations.
 ///
 /// # Optimization Rationale
 ///
 /// - **Key**: `VertexKey` identifying the vertex
-/// - **Value**: `SmallBuffer<CellKey, MAX_PRACTICAL_DIMENSION_SIZE>` - handles up to 8 incident cells on stack
+/// - **Value**: `SmallBuffer<SimplexKey, MAX_PRACTICAL_DIMENSION_SIZE>` - handles up to 8 incident simplices on stack
 /// - **Typical Pattern**: Well-conditioned triangulations have low vertex degrees
 /// - **Performance**: Avoids heap allocation for most vertices
 /// - **Spill Behavior**: Degrees above `MAX_PRACTICAL_DIMENSION_SIZE` spill to heap. This is expected
@@ -96,20 +96,20 @@ pub type CellNeighborsMap = FastHashMap<CellKey, NeighborBuffer<Option<CellKey>>
 /// # Examples
 ///
 /// ```rust
-/// use delaunay::prelude::collections::VertexToCellsMap;
+/// use delaunay::prelude::collections::VertexToSimplicesMap;
 ///
-/// let vertex_cells: VertexToCellsMap = VertexToCellsMap::default();
-/// assert!(vertex_cells.is_empty());
+/// let vertex_simplices: VertexToSimplicesMap = VertexToSimplicesMap::default();
+/// assert!(vertex_simplices.is_empty());
 /// ```
-pub type VertexToCellsMap =
-    FastHashMap<VertexKey, SmallBuffer<CellKey, MAX_PRACTICAL_DIMENSION_SIZE>>;
+pub type VertexToSimplicesMap =
+    FastHashMap<VertexKey, SmallBuffer<SimplexKey, MAX_PRACTICAL_DIMENSION_SIZE>>;
 
-/// Cell vertices mapping optimized for validation operations.
-/// Each cell typically has D+1 vertices, stored as a fast set for efficient intersection operations.
+/// Simplex vertices mapping optimized for validation operations.
+/// Each simplex typically has D+1 vertices, stored as a fast set for efficient intersection operations.
 ///
 /// # Optimization Rationale
 ///
-/// - **Key**: `CellKey` identifying the cell
+/// - **Key**: `SimplexKey` identifying the simplex
 /// - **Value**: `FastHashSet<VertexKey>` - optimized for set operations
 /// - **Use Case**: Validation algorithms that need fast intersection/membership testing
 /// - **Performance**: `FastHasher` provides fast hashing for `VertexKey`
@@ -117,32 +117,32 @@ pub type VertexToCellsMap =
 /// # Examples
 ///
 /// ```rust
-/// use delaunay::prelude::collections::CellVerticesMap;
+/// use delaunay::prelude::collections::SimplexVerticesMap;
 ///
-/// let cell_vertices: CellVerticesMap = CellVerticesMap::default();
-/// assert!(cell_vertices.is_empty());
+/// let simplex_vertices: SimplexVerticesMap = SimplexVerticesMap::default();
+/// assert!(simplex_vertices.is_empty());
 /// ```
-pub type CellVerticesMap = FastHashMap<CellKey, FastHashSet<VertexKey>>;
+pub type SimplexVerticesMap = FastHashMap<SimplexKey, FastHashSet<VertexKey>>;
 
-/// Cell vertex keys mapping optimized for validation operations requiring positional access.
-/// Each cell typically has D+1 vertices, stored in a stack-allocated buffer for efficiency.
+/// Simplex vertex keys mapping optimized for validation operations requiring positional access.
+/// Each simplex typically has D+1 vertices, stored in a stack-allocated buffer for efficiency.
 ///
 /// # Optimization Rationale
 ///
-/// - **Key**: `CellKey` identifying the cell
-/// - **Value**: `CellVertexBuffer` - stack-allocated for D ≤ 7, preserves vertex order
+/// - **Key**: `SimplexKey` identifying the simplex
+/// - **Value**: `SimplexVertexKeyBuffer` - stack-allocated for D ≤ 7, preserves vertex order
 /// - **Use Case**: Validation algorithms that need positional vertex access (e.g., neighbors\[i\] opposite vertices\[i\])
 /// - **Performance**: Eliminates heap allocation for typical dimensions, better cache locality
 ///
 /// # Examples
 ///
 /// ```rust
-/// use delaunay::prelude::collections::CellVertexKeysMap;
+/// use delaunay::prelude::collections::SimplexVertexKeysMap;
 ///
-/// let cell_vertex_keys: CellVertexKeysMap = CellVertexKeysMap::default();
-/// assert!(cell_vertex_keys.is_empty());
+/// let simplex_vertex_keys: SimplexVertexKeysMap = SimplexVertexKeysMap::default();
+/// assert!(simplex_vertex_keys.is_empty());
 /// ```
-pub type CellVertexKeysMap = FastHashMap<CellKey, CellVertexBuffer>;
+pub type SimplexVertexKeysMap = FastHashMap<SimplexKey, SimplexVertexKeyBuffer>;
 
 /// Mapping from facet keys to vertex sets for hull algorithms.
 /// Used in convex hull and Voronoi diagram construction.
@@ -155,15 +155,15 @@ pub type CellVertexKeysMap = FastHashMap<CellKey, CellVertexBuffer>;
 /// - **Performance**: Optimized for geometric algorithm patterns
 pub type FacetVertexMap = FastHashMap<u64, VertexUuidSet>;
 
-/// Mapping from cell UUIDs to their vertex UUIDs (optimized for internal operations).
+/// Mapping from simplex UUIDs to their vertex UUIDs (optimized for internal operations).
 /// Uses stack-allocated buffers for vertex UUID storage.
 ///
 /// # Optimization Rationale
 ///
-/// - **Key**: Cell UUID for stable identification
-/// - **Value**: `CellVertexUuidBuffer` for stack-allocated vertex UUID storage (D+1 UUIDs)
+/// - **Key**: Simplex UUID for stable identification
+/// - **Value**: `SimplexVertexUuidBuffer` for stack-allocated vertex UUID storage (D+1 UUIDs)
 /// - **Use Case**: Internal operations, temporary mappings, validation
-/// - **Performance**: Stack allocation for typical cell vertex counts, avoids heap for D ≤ 7
+/// - **Performance**: Stack allocation for typical simplex vertex counts, avoids heap for D ≤ 7
 ///
 /// # Serialization Note
 ///
@@ -173,41 +173,41 @@ pub type FacetVertexMap = FastHashMap<u64, VertexUuidSet>;
 /// # Examples
 ///
 /// ```rust
-/// use delaunay::prelude::collections::CellToVertexUuidsMap;
+/// use delaunay::prelude::collections::SimplexToVertexUuidsMap;
 ///
-/// let mapping: CellToVertexUuidsMap = CellToVertexUuidsMap::default();
+/// let mapping: SimplexToVertexUuidsMap = SimplexToVertexUuidsMap::default();
 /// assert!(mapping.is_empty());
 /// ```
-pub type CellToVertexUuidsMap = FastHashMap<Uuid, CellVertexUuidBuffer>;
+pub type SimplexToVertexUuidsMap = FastHashMap<Uuid, SimplexVertexUuidBuffer>;
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::core::tds::{CellKey, VertexKey};
+    use crate::core::tds::{SimplexKey, VertexKey};
     use slotmap::SlotMap;
 
     #[test]
     fn test_triangulation_map_type_instantiation() {
         // Test domain-specific UUID-based types compile and instantiate
-        let _facet_map: FacetToCellsMap = FacetToCellsMap::default();
-        let _neighbors: CellNeighborsMap = CellNeighborsMap::default();
-        let _vertex_cells: VertexToCellsMap = VertexToCellsMap::default();
-        let _cell_vertices: CellVerticesMap = CellVerticesMap::default();
+        let _facet_map: FacetToSimplicesMap = FacetToSimplicesMap::default();
+        let _neighbors: SimplexNeighborsMap = SimplexNeighborsMap::default();
+        let _vertex_simplices: VertexToSimplicesMap = VertexToSimplicesMap::default();
+        let _simplex_vertices: SimplexVerticesMap = SimplexVerticesMap::default();
 
-        // Test CellVertexKeysMap with SmallBuffer for D+1 usage pattern
-        let mut cell_vertex_keys: CellVertexKeysMap = CellVertexKeysMap::default();
-        let mut cell_slots: SlotMap<CellKey, i32> = SlotMap::default();
+        // Test SimplexVertexKeysMap with SmallBuffer for D+1 usage pattern
+        let mut simplex_vertex_keys: SimplexVertexKeysMap = SimplexVertexKeysMap::default();
+        let mut simplex_slots: SlotMap<SimplexKey, i32> = SlotMap::default();
         let mut vertex_slots: SlotMap<VertexKey, i32> = SlotMap::default();
 
-        let cell_key = cell_slots.insert(1);
-        let mut vertex_buffer: crate::core::collections::CellVertexBuffer =
-            crate::core::collections::CellVertexBuffer::new();
-        // Simulate D+1 vertices for a 2D cell (3 vertices)
+        let simplex_key = simplex_slots.insert(1);
+        let mut vertex_buffer: crate::core::collections::SimplexVertexKeyBuffer =
+            crate::core::collections::SimplexVertexKeyBuffer::new();
+        // Simulate D+1 vertices for a 2D simplex (3 vertices)
         for _ in 0..3 {
             vertex_buffer.push(vertex_slots.insert(1));
         }
         assert!(!vertex_buffer.spilled()); // Should be on stack for D=2
-        cell_vertex_keys.insert(cell_key, vertex_buffer);
-        assert_eq!(cell_vertex_keys.len(), 1);
+        simplex_vertex_keys.insert(simplex_key, vertex_buffer);
+        assert_eq!(simplex_vertex_keys.len(), 1);
     }
 }

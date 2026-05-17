@@ -1,14 +1,14 @@
 //! D-dimensional Facets Representation
 //!
 //! This module provides the `FacetView` struct which represents a facet of a d-dimensional simplex
-//! (d-1 sub-simplex) within a triangulation. Each facet is defined in terms of a cell and the
+//! (d-1 sub-simplex) within a triangulation. Each facet is defined in terms of a simplex and the
 //! vertex opposite to it, similar to [CGAL](https://doc.cgal.org/latest/TDS_3/index.html#title3).
 //!
 //! # Key Features
 //!
 //! - **Lightweight**: `FacetView` is ~18x smaller than the deprecated `Facet` struct
 //! - **Dimensional Simplicity**: Represents co-dimension 1 sub-simplexes of d-dimensional simplexes
-//! - **Cell Association**: Each facet resides within a specific cell and is described by its opposite vertex
+//! - **Simplex Association**: Each facet resides within a specific simplex and is described by its opposite vertex
 //! - **Support for Delaunay Triangulations**: Facilitates operations fundamental to the
 //!   [Bowyer-Watson algorithm](https://en.wikipedia.org/wiki/Bowyer–Watson_algorithm)
 //! - **On-demand Creation**: Facets are generated dynamically as needed rather than stored persistently in the TDS
@@ -16,13 +16,13 @@
 //!
 //! # Fundamental Invariant
 //!
-//! **A critical invariant of Delaunay triangulations is that each facet is shared by exactly two cells,
-//! except for boundary facets which belong to only one cell.**
+//! **A critical invariant of Delaunay triangulations is that each facet is shared by exactly two simplices,
+//! except for boundary facets which belong to only one simplex.**
 //!
 //! This property ensures the triangulation forms a valid simplicial complex:
-//! - **Interior facets**: Shared by exactly 2 cells (defines proper adjacency)
-//! - **Boundary facets**: Belong to exactly 1 cell (lie on the convex hull)
-//! - **Invalid configurations**: Facets shared by 0, 3, or more cells indicate topological errors
+//! - **Interior facets**: Shared by exactly 2 simplices (defines proper adjacency)
+//! - **Boundary facets**: Belong to exactly 1 simplex (lie on the convex hull)
+//! - **Invalid configurations**: Facets shared by 0, 3, or more simplices indicate topological errors
 //!
 //! This invariant is fundamental to many algorithms and is actively validated during triangulation
 //! construction and validation phases.
@@ -47,20 +47,20 @@
 //!
 //! // Create a 3D triangulation
 //! let dt = DelaunayTriangulation::new(&vertices).unwrap();
-//! let cell_key = dt.cells().next().unwrap().0;
+//! let simplex_key = dt.simplices().next().unwrap().0;
 //!
 //! // Create a facet view (facet 0 excludes vertex 0)
-//! let facet = FacetView::new(dt.tds(), cell_key, 0).unwrap();
+//! let facet = FacetView::new(dt.tds(), simplex_key, 0).unwrap();
 //! assert_eq!(facet.vertices().unwrap().count(), 3);  // Facet (triangle) in 3D has 3 vertices
 //! ```
 
 #![forbid(unsafe_code)]
 
-use super::collections::{FacetToCellsMap, MAX_PRACTICAL_DIMENSION_SIZE, SmallBuffer};
+use super::collections::{FacetToSimplicesMap, MAX_PRACTICAL_DIMENSION_SIZE, SmallBuffer};
 use super::util::{stable_hash_u64_slice, usize_to_u8};
 use super::{
-    cell::Cell,
-    tds::{CellKey, Tds, TdsError, VertexKey},
+    simplex::Simplex,
+    tds::{SimplexKey, Tds, TdsError, VertexKey},
     vertex::Vertex,
 };
 use crate::geometry::traits::coordinate::CoordinateConversionError;
@@ -86,9 +86,9 @@ use thiserror::Error;
 #[derive(Clone, Debug, Error, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum FacetError {
-    /// The cell does not contain the vertex.
-    #[error("The cell does not contain the vertex!")]
-    CellDoesNotContainVertex,
+    /// The simplex does not contain the vertex.
+    #[error("The simplex does not contain the vertex!")]
+    SimplexDoesNotContainVertex,
     /// A vertex UUID was not found in the UUID-to-key mapping.
     #[error("Vertex UUID not found in mapping: {uuid}")]
     VertexNotFound {
@@ -122,15 +122,15 @@ pub enum FacetError {
         /// The vertex UUIDs that generated the facet key.
         vertex_uuids: Vec<uuid::Uuid>,
     },
-    /// Expected exactly one adjacent cell for boundary facet.
-    #[error("Expected exactly 1 adjacent cell for boundary facet, found {found}")]
-    InvalidAdjacentCellCount {
-        /// The number of adjacent cells found.
+    /// Expected exactly one adjacent simplex for boundary facet.
+    #[error("Expected exactly 1 adjacent simplex for boundary facet, found {found}")]
+    InvalidAdjacentSimplexCount {
+        /// The number of adjacent simplices found.
         found: usize,
     },
-    /// Adjacent cell was not found in the triangulation.
-    #[error("Adjacent cell not found")]
-    AdjacentCellNotFound,
+    /// Adjacent simplex was not found in the triangulation.
+    #[error("Adjacent simplex not found")]
+    AdjacentSimplexNotFound,
     /// Could not find inside vertex for boundary facet.
     #[error("Could not find inside vertex for boundary facet")]
     InsideVertexNotFound,
@@ -143,12 +143,12 @@ pub enum FacetError {
         #[source]
         source: CoordinateConversionError,
     },
-    /// Invalid facet index for a cell.
-    #[error("Invalid facet index {index} for cell with {facet_count} facets")]
+    /// Invalid facet index for a simplex.
+    #[error("Invalid facet index {index} for simplex with {facet_count} facets")]
     InvalidFacetIndex {
         /// The invalid facet index.
         index: u8,
-        /// The number of facets in the cell.
+        /// The number of facets in the simplex.
         facet_count: usize,
     },
     /// Invalid facet index that couldn't be converted to u8.
@@ -161,9 +161,9 @@ pub enum FacetError {
         /// The number of facets available.
         facet_count: usize,
     },
-    /// Cell was not found in the triangulation.
-    #[error("Cell not found in triangulation (potential data corruption)")]
-    CellNotFoundInTriangulation,
+    /// Simplex was not found in the triangulation.
+    #[error("Simplex not found in triangulation (potential data corruption)")]
+    SimplexNotFoundInTriangulation,
     /// Vertex key was not found in the triangulation.
     #[error("Vertex key not found in triangulation: {key:?}")]
     VertexKeyNotFoundInTriangulation {
@@ -187,9 +187,9 @@ pub enum FacetError {
         #[source]
         source: Arc<TdsError>,
     },
-    /// Cell operation failed due to validation error.
-    #[error("Cell operation failed: {source}")]
-    CellOperationFailed {
+    /// Simplex operation failed due to validation error.
+    #[error("Simplex operation failed: {source}")]
+    SimplexOperationFailed {
         /// The underlying TDS validation error.
         #[source]
         source: Arc<TdsError>,
@@ -207,7 +207,7 @@ pub enum FacetError {
 ///
 /// # Components
 ///
-/// - `cell_key`: The key of the cell containing the facet
+/// - `simplex_key`: The key of the simplex containing the facet
 /// - `facet_index`: The facet index (0 to D, representing the vertex opposite to the facet)
 ///
 /// # Usage
@@ -231,17 +231,18 @@ pub enum FacetError {
 ///     vertex!([0.0, 0.0, 1.0]),
 /// ];
 /// let dt = DelaunayTriangulation::new(&vertices).unwrap();
-/// let cell_key = dt.cells().next().unwrap().0;
+/// let simplex_key = dt.simplices().next().unwrap().0;
 ///
 /// // Create a facet handle
-/// let handle = FacetHandle::new(cell_key, 0);
+/// let handle = FacetHandle::new(simplex_key, 0);
 ///
 /// // Use it to create a FacetView
-/// let facet = FacetView::new(dt.tds(), handle.cell_key(), handle.facet_index()).unwrap();
+/// let facet = FacetView::new(dt.tds(), handle.simplex_key(), handle.facet_index()).unwrap();
 /// ```
+#[must_use]
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
 pub struct FacetHandle {
-    cell_key: CellKey,
+    simplex_key: SimplexKey,
     facet_index: u8,
 }
 
@@ -250,7 +251,7 @@ impl FacetHandle {
     ///
     /// # Arguments
     ///
-    /// * `cell_key` - The key of the cell containing the facet
+    /// * `simplex_key` - The key of the simplex containing the facet
     /// * `facet_index` - The facet index (0 to D)
     ///
     /// # Examples
@@ -265,21 +266,20 @@ impl FacetHandle {
     ///     vertex!([0.0, 1.0]),
     /// ];
     /// let dt = DelaunayTriangulation::new(&vertices).unwrap();
-    /// let cell_key = dt.cells().next().unwrap().0;
+    /// let simplex_key = dt.simplices().next().unwrap().0;
     ///
-    /// let handle = FacetHandle::new(cell_key, 0);
-    /// assert_eq!(handle.cell_key(), cell_key);
+    /// let handle = FacetHandle::new(simplex_key, 0);
+    /// assert_eq!(handle.simplex_key(), simplex_key);
     /// assert_eq!(handle.facet_index(), 0);
     /// ```
-    #[must_use]
-    pub const fn new(cell_key: CellKey, facet_index: u8) -> Self {
+    pub const fn new(simplex_key: SimplexKey, facet_index: u8) -> Self {
         Self {
-            cell_key,
+            simplex_key,
             facet_index,
         }
     }
 
-    /// Returns the cell key.
+    /// Returns the simplex key.
     ///
     /// # Examples
     ///
@@ -293,14 +293,14 @@ impl FacetHandle {
     ///     vertex!([0.0, 1.0]),
     /// ];
     /// let dt = DelaunayTriangulation::new(&vertices).unwrap();
-    /// let cell_key = dt.cells().next().unwrap().0;
+    /// let simplex_key = dt.simplices().next().unwrap().0;
     ///
-    /// let handle = FacetHandle::new(cell_key, 0);
-    /// assert_eq!(handle.cell_key(), cell_key);
+    /// let handle = FacetHandle::new(simplex_key, 0);
+    /// assert_eq!(handle.simplex_key(), simplex_key);
     /// ```
     #[must_use]
-    pub const fn cell_key(&self) -> CellKey {
-        self.cell_key
+    pub const fn simplex_key(&self) -> SimplexKey {
+        self.simplex_key
     }
 
     /// Returns the facet index.
@@ -317,9 +317,9 @@ impl FacetHandle {
     ///     vertex!([0.0, 1.0]),
     /// ];
     /// let dt = DelaunayTriangulation::new(&vertices).unwrap();
-    /// let cell_key = dt.cells().next().unwrap().0;
+    /// let simplex_key = dt.simplices().next().unwrap().0;
     ///
-    /// let handle = FacetHandle::new(cell_key, 1);
+    /// let handle = FacetHandle::new(simplex_key, 1);
     /// assert_eq!(handle.facet_index(), 1);
     /// ```
     #[must_use]
@@ -337,15 +337,15 @@ impl FacetHandle {
 /// **Phase 3 Optimization**: This is the new lightweight facet implementation that
 /// replaces the heavyweight `Facet` struct with an ~18x memory reduction.
 ///
-/// `FacetView` represents a facet (d-1 dimensional face) of a d-dimensional cell
+/// `FacetView` represents a facet (d-1 dimensional face) of a d-dimensional simplex
 /// without storing any data directly. Instead, it maintains references to the TDS
 /// and uses keys to access data on-demand.
 ///
 /// # Memory Efficiency
 ///
 /// Compared to the original `Facet<T, U, V, D>`:
-/// - **Original**: Stores complete Cell + Vertex objects (~hundreds of bytes)
-/// - **`FacetView`**: Stores TDS reference + `CellKey` + `facet_index` (~17 bytes)
+/// - **Original**: Stores complete Simplex + Vertex objects (~hundreds of bytes)
+/// - **`FacetView`**: Stores TDS reference + `SimplexKey` + `facet_index` (~17 bytes)
 /// - **Memory reduction: ~18x smaller**
 ///
 /// # Type Parameters
@@ -353,23 +353,23 @@ impl FacetHandle {
 /// - `'tds`: Lifetime of the triangulation data structure
 /// - `T`: Coordinate scalar type
 /// - `U`: Vertex data type  
-/// - `V`: Cell data type
+/// - `V`: Simplex data type
 /// - `D`: Spatial dimension
 ///
 /// # Examples
 ///
 /// ```rust,no_run
 /// use delaunay::prelude::tds::{FacetError, FacetView};
-/// use delaunay::prelude::tds::{Tds, CellKey};
+/// use delaunay::prelude::tds::{Tds, SimplexKey};
 ///
 /// // This is a conceptual example showing FacetView usage
-/// // In practice, tds and cell_key would come from your triangulation
+/// // In practice, tds and simplex_key would come from your triangulation
 /// fn example_usage<'a>(
 ///     tds: &'a Tds<f64, (), (), 3>,
-///     cell_key: CellKey,
+///     simplex_key: SimplexKey,
 /// ) -> Result<(), FacetError> {
-///     // Create a facet view for the first facet of a cell
-///     let facet_view = FacetView::new(tds, cell_key, 0)?;
+///     // Create a facet view for the first facet of a simplex
+///     let facet_view = FacetView::new(tds, simplex_key, 0)?;
 ///
 ///     // Access vertices through the view (lazy evaluation)
 ///     for vertex in facet_view.vertices()? {
@@ -384,28 +384,29 @@ impl FacetHandle {
 ///     Ok(())
 /// }
 /// ```
+#[must_use]
 pub struct FacetView<'tds, T, U, V, const D: usize> {
     /// Reference to the triangulation data structure.
     tds: &'tds Tds<T, U, V, D>,
-    /// Key of the cell containing this facet.
-    cell_key: CellKey,
-    /// Index of this facet within the cell (0 <= `facet_index` < D+1).
+    /// Key of the simplex containing this facet.
+    simplex_key: SimplexKey,
+    /// Index of this facet within the simplex (0 <= `facet_index` < D+1).
     ///
-    /// The `facet_index` indicates which vertex of the cell is the "opposite vertex"
-    /// (the vertex not included in the facet). For a D-dimensional cell with D+1
+    /// The `facet_index` indicates which vertex of the simplex is the "opposite vertex"
+    /// (the vertex not included in the facet). For a D-dimensional simplex with D+1
     /// vertices, facet i excludes vertex i and includes all others.
     facet_index: u8,
 }
 
 impl<'tds, T, U, V, const D: usize> FacetView<'tds, T, U, V, D> {
-    /// Returns the cell key for this facet.
+    /// Returns the simplex key for this facet.
     #[inline]
     #[must_use]
-    pub const fn cell_key(&self) -> CellKey {
-        self.cell_key
+    pub const fn simplex_key(&self) -> SimplexKey {
+        self.simplex_key
     }
 
-    /// Returns the facet index within the cell.
+    /// Returns the facet index within the simplex.
     #[inline]
     #[must_use]
     pub const fn facet_index(&self) -> u8 {
@@ -421,13 +422,13 @@ impl<'tds, T, U, V, const D: usize> FacetView<'tds, T, U, V, D> {
 }
 
 impl<'tds, T, U, V, const D: usize> FacetView<'tds, T, U, V, D> {
-    /// Creates a new `FacetView` for the specified facet of a cell.
+    /// Creates a new `FacetView` for the specified facet of a simplex.
     ///
     /// # Arguments
     ///
     /// * `tds` - Reference to the triangulation data structure
-    /// * `cell_key` - The key of the cell containing the facet
-    /// * `facet_index` - The index of the facet within the cell (0 to D)
+    /// * `simplex_key` - The key of the simplex containing the facet
+    /// * `facet_index` - The index of the facet within the simplex (0 to D)
     ///
     /// # Returns
     ///
@@ -436,7 +437,7 @@ impl<'tds, T, U, V, const D: usize> FacetView<'tds, T, U, V, D> {
     /// # Errors
     ///
     /// Returns `FacetError` if:
-    /// - `cell_key` is not found in the TDS
+    /// - `simplex_key` is not found in the TDS
     /// - `facet_index` is out of bounds (>= D+1)
     ///
     /// # Examples
@@ -453,22 +454,22 @@ impl<'tds, T, U, V, const D: usize> FacetView<'tds, T, U, V, D> {
     /// ];
     /// let dt = DelaunayTriangulation::new(&vertices).unwrap();
     ///
-    /// let (cell_key, _) = dt.cells().next().unwrap();
-    /// let facet = FacetView::new(dt.tds(), cell_key, 0).unwrap();
+    /// let (simplex_key, _) = dt.simplices().next().unwrap();
+    /// let facet = FacetView::new(dt.tds(), simplex_key, 0).unwrap();
     /// assert_eq!(facet.facet_index(), 0);
     /// ```
     pub fn new(
         tds: &'tds Tds<T, U, V, D>,
-        cell_key: CellKey,
+        simplex_key: SimplexKey,
         facet_index: u8,
     ) -> Result<Self, FacetError> {
-        // Validate cell exists
-        let cell = tds
-            .cell(cell_key)
-            .ok_or(FacetError::CellNotFoundInTriangulation)?;
+        // Validate simplex exists
+        let simplex = tds
+            .simplex(simplex_key)
+            .ok_or(FacetError::SimplexNotFoundInTriangulation)?;
 
         // Validate facet index
-        let vertex_count = cell.number_of_vertices();
+        let vertex_count = simplex.number_of_vertices();
         if usize::from(facet_index) >= vertex_count {
             return Err(FacetError::InvalidFacetIndex {
                 index: facet_index,
@@ -478,14 +479,14 @@ impl<'tds, T, U, V, const D: usize> FacetView<'tds, T, U, V, D> {
 
         Ok(Self {
             tds,
-            cell_key,
+            simplex_key,
             facet_index,
         })
     }
 
     /// Returns an iterator over the vertices that make up this facet.
     ///
-    /// The facet vertices are all vertices of the containing cell except
+    /// The facet vertices are all vertices of the containing simplex except
     /// the opposite vertex (at `facet_index`).
     ///
     /// This method is available without coordinate or payload trait bounds,
@@ -494,11 +495,11 @@ impl<'tds, T, U, V, const D: usize> FacetView<'tds, T, U, V, D> {
     /// # Returns
     ///
     /// A `Result` containing an iterator yielding references to vertices in the facet,
-    /// or a `FacetError` if the cell is no longer present in the TDS.
+    /// or a `FacetError` if the simplex is no longer present in the TDS.
     ///
     /// # Errors
     ///
-    /// Returns `FacetError::CellNotFoundInTriangulation` if the cell key is no longer
+    /// Returns `FacetError::SimplexNotFoundInTriangulation` if the simplex key is no longer
     /// present in the TDS. This could happen if the TDS is modified after the `FacetView`
     /// is created, though this should not occur under normal usage patterns.
     ///
@@ -516,24 +517,24 @@ impl<'tds, T, U, V, const D: usize> FacetView<'tds, T, U, V, D> {
     /// ];
     /// let dt = DelaunayTriangulation::new(&vertices).unwrap();
     ///
-    /// if let Some((cell_key, _)) = dt.cells().next() {
-    ///     let facet = FacetView::new(dt.tds(), cell_key, 0).unwrap();
+    /// if let Some((simplex_key, _)) = dt.simplices().next() {
+    ///     let facet = FacetView::new(dt.tds(), simplex_key, 0).unwrap();
     ///     let vertex_iter = facet.vertices().unwrap();
     ///     assert_eq!(vertex_iter.count(), 3); // 3D facet has 3 vertices
     /// }
     /// ```
     pub fn vertices(&self) -> Result<impl Iterator<Item = &'tds Vertex<T, U, D>>, FacetError> {
-        let cell = self
+        let simplex = self
             .tds
-            .cell(self.cell_key)
-            .ok_or(FacetError::CellNotFoundInTriangulation)?;
+            .simplex(self.simplex_key)
+            .ok_or(FacetError::SimplexNotFoundInTriangulation)?;
         let facet_index = usize::from(self.facet_index);
 
         // Collect first so missing vertex keys become an error, not silent drops.
         // Use SmallBuffer for stack allocation (D vertices fit on stack for D ≤ 7)
         let mut refs: SmallBuffer<&'tds Vertex<T, U, D>, MAX_PRACTICAL_DIMENSION_SIZE> =
-            SmallBuffer::with_capacity(cell.number_of_vertices().saturating_sub(1));
-        for (i, &vkey) in cell.vertices().iter().enumerate() {
+            SmallBuffer::with_capacity(simplex.number_of_vertices().saturating_sub(1));
+        for (i, &vkey) in simplex.vertices().iter().enumerate() {
             if i == facet_index {
                 continue;
             }
@@ -554,8 +555,8 @@ impl<'tds, T, U, V, const D: usize> FacetView<'tds, T, U, V, D> {
     ///
     /// # Errors
     ///
-    /// Returns [`FacetError::CellNotFoundInTriangulation`] if the cell is no longer in the TDS,
-    /// [`FacetError::InvalidFacetIndex`] if the facet index is outside the cell's vertex list,
+    /// Returns [`FacetError::SimplexNotFoundInTriangulation`] if the simplex is no longer in the TDS,
+    /// [`FacetError::InvalidFacetIndex`] if the facet index is outside the simplex's vertex list,
     /// or [`FacetError::VertexKeyNotFoundInTriangulation`] if the opposite vertex key no longer
     /// resolves to a stored vertex.
     ///
@@ -572,20 +573,19 @@ impl<'tds, T, U, V, const D: usize> FacetView<'tds, T, U, V, D> {
     ///     vertex!([0.0, 0.0, 1.0]),
     /// ];
     /// let dt = DelaunayTriangulation::new(&vertices).unwrap();
-    /// let (cell_key, _) = dt.cells().next().unwrap();
+    /// let (simplex_key, _) = dt.simplices().next().unwrap();
     ///
-    /// let facet = FacetView::new(dt.tds(), cell_key, 1).unwrap();
+    /// let facet = FacetView::new(dt.tds(), simplex_key, 1).unwrap();
     /// let opposite = facet.opposite_vertex().unwrap();
     /// assert_eq!(opposite.point().coords().len(), 3);
     /// ```
     pub fn opposite_vertex(&self) -> Result<&'tds Vertex<T, U, D>, FacetError> {
-        let cell = self
+        let simplex = self
             .tds
-            .cell(self.cell_key)
-            .ok_or(FacetError::CellNotFoundInTriangulation)?;
+            .simplex(self.simplex_key)
+            .ok_or(FacetError::SimplexNotFoundInTriangulation)?;
 
-        // Phase 3A: Use vertices and resolve via TDS
-        let vertices = cell.vertices();
+        let vertices = simplex.vertices();
         let facet_index = usize::from(self.facet_index);
 
         let vkey = vertices
@@ -601,15 +601,15 @@ impl<'tds, T, U, V, const D: usize> FacetView<'tds, T, U, V, D> {
             .ok_or(FacetError::VertexKeyNotFoundInTriangulation { key: *vkey })
     }
 
-    /// Returns the cell containing this facet.
+    /// Returns the simplex containing this facet.
     ///
     /// # Returns
     ///
-    /// A `Result` containing a reference to the containing cell.
+    /// A `Result` containing a reference to the containing simplex.
     ///
     /// # Errors
     ///
-    /// Returns `FacetError::CellNotFoundInTriangulation` if the cell is no longer in the TDS.
+    /// Returns `FacetError::SimplexNotFoundInTriangulation` if the simplex is no longer in the TDS.
     ///
     /// # Examples
     ///
@@ -624,16 +624,16 @@ impl<'tds, T, U, V, const D: usize> FacetView<'tds, T, U, V, D> {
     ///     vertex!([0.0, 0.0, 1.0]),
     /// ];
     /// let dt = DelaunayTriangulation::new(&vertices).unwrap();
-    /// let (cell_key, _) = dt.cells().next().unwrap();
+    /// let (simplex_key, _) = dt.simplices().next().unwrap();
     ///
-    /// let facet = FacetView::new(dt.tds(), cell_key, 2).unwrap();
-    /// let cell = facet.cell().unwrap();
-    /// assert_eq!(cell.number_of_vertices(), 4);
+    /// let facet = FacetView::new(dt.tds(), simplex_key, 2).unwrap();
+    /// let simplex = facet.simplex().unwrap();
+    /// assert_eq!(simplex.number_of_vertices(), 4);
     /// ```
-    pub fn cell(&self) -> Result<&'tds Cell<T, U, V, D>, FacetError> {
+    pub fn simplex(&self) -> Result<&'tds Simplex<T, U, V, D>, FacetError> {
         self.tds
-            .cell(self.cell_key)
-            .ok_or(FacetError::CellNotFoundInTriangulation)
+            .simplex(self.simplex_key)
+            .ok_or(FacetError::SimplexNotFoundInTriangulation)
     }
 
     /// Computes a canonical key for this facet.
@@ -663,17 +663,17 @@ impl<'tds, T, U, V, const D: usize> FacetView<'tds, T, U, V, D> {
     ///     vertex!([0.0, 0.0, 1.0]),
     /// ];
     /// let dt = DelaunayTriangulation::new(&vertices).unwrap();
-    /// let (cell_key, _) = dt.cells().next().unwrap();
+    /// let (simplex_key, _) = dt.simplices().next().unwrap();
     ///
-    /// let facet = FacetView::new(dt.tds(), cell_key, 0).unwrap();
+    /// let facet = FacetView::new(dt.tds(), simplex_key, 0).unwrap();
     /// let facet_key = facet.key().unwrap();
-    /// let map = dt.tds().build_facet_to_cells_map().unwrap();
+    /// let map = dt.tds().build_facet_to_simplices_map().unwrap();
     /// assert!(map.contains_key(&facet_key));
     /// ```
     pub fn key(&self) -> Result<u64, FacetError> {
         self.tds
-            .facet_key_for_cell_facet(self.cell_key, usize::from(self.facet_index))
-            .map_err(|e| FacetError::CellOperationFailed {
+            .facet_key_for_simplex_facet(self.simplex_key, usize::from(self.facet_index))
+            .map_err(|e| FacetError::SimplexOperationFailed {
                 source: Arc::new(e),
             })
     }
@@ -683,7 +683,7 @@ impl<'tds, T, U, V, const D: usize> FacetView<'tds, T, U, V, D> {
 impl<T, U, V, const D: usize> Debug for FacetView<'_, T, U, V, D> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("FacetView")
-            .field("cell_key", &self.cell_key)
+            .field("simplex_key", &self.simplex_key)
             .field("facet_index", &self.facet_index)
             .field("dimension", &D)
             .finish()
@@ -698,7 +698,7 @@ impl<T, U, V, const D: usize> Clone for FacetView<'_, T, U, V, D> {
     fn clone(&self) -> Self {
         Self {
             tds: self.tds,
-            cell_key: self.cell_key,
+            simplex_key: self.simplex_key,
             facet_index: self.facet_index,
         }
     }
@@ -710,27 +710,27 @@ impl<T, U, V, const D: usize> PartialEq for FacetView<'_, T, U, V, D> {
     fn eq(&self, other: &Self) -> bool {
         // Two facet views are equal if they reference the same facet
         std::ptr::eq(self.tds, other.tds)
-            && self.cell_key == other.cell_key
+            && self.simplex_key == other.simplex_key
             && self.facet_index == other.facet_index
     }
 }
 
 impl<T, U, V, const D: usize> Eq for FacetView<'_, T, U, V, D> {}
 
-/// Utility function to create multiple `FacetView`s for all facets of a cell.
+/// Utility function to create multiple `FacetView`s for all facets of a simplex.
 ///
 /// # Arguments
 ///
 /// * `tds` - Reference to the triangulation data structure
-/// * `cell_key` - Key of the cell to create facet views for
+/// * `simplex_key` - Key of the simplex to create facet views for
 ///
 /// # Returns
 ///
-/// A `Result` containing a `Vec` of `FacetView`s for all facets of the cell.
+/// A `Result` containing a `Vec` of `FacetView`s for all facets of the simplex.
 ///
 /// # Errors
 ///
-/// Returns `FacetError` if the cell is not found or has invalid structure.
+/// Returns `FacetError` if the simplex is not found or has invalid structure.
 ///
 /// # Note
 ///
@@ -741,7 +741,7 @@ impl<T, U, V, const D: usize> Eq for FacetView<'_, T, U, V, D> {}
 ///
 /// ```rust
 /// use delaunay::prelude::triangulation::*;
-/// use delaunay::prelude::tds::all_facets_for_cell;
+/// use delaunay::prelude::tds::all_facets_for_simplex;
 ///
 /// let vertices = vec![
 ///     vertex!([0.0, 0.0, 0.0]),
@@ -750,25 +750,25 @@ impl<T, U, V, const D: usize> Eq for FacetView<'_, T, U, V, D> {}
 ///     vertex!([0.0, 0.0, 1.0]),
 /// ];
 /// let dt = DelaunayTriangulation::new(&vertices).unwrap();
-/// let (cell_key, _) = dt.cells().next().unwrap();
+/// let (simplex_key, _) = dt.simplices().next().unwrap();
 ///
-/// let facets = all_facets_for_cell(dt.tds(), cell_key).unwrap();
+/// let facets = all_facets_for_simplex(dt.tds(), simplex_key).unwrap();
 /// assert_eq!(facets.len(), 4);
 /// ```
-pub fn all_facets_for_cell<T, U, V, const D: usize>(
+pub fn all_facets_for_simplex<T, U, V, const D: usize>(
     tds: &Tds<T, U, V, D>,
-    cell_key: CellKey,
+    simplex_key: SimplexKey,
 ) -> Result<Vec<FacetView<'_, T, U, V, D>>, FacetError> {
-    let cell = tds
-        .cell(cell_key)
-        .ok_or(FacetError::CellNotFoundInTriangulation)?;
+    let simplex = tds
+        .simplex(simplex_key)
+        .ok_or(FacetError::SimplexNotFoundInTriangulation)?;
 
-    let vertex_count = cell.number_of_vertices();
+    let vertex_count = simplex.number_of_vertices();
     let mut facet_views = Vec::with_capacity(vertex_count);
 
     for facet_index in 0..vertex_count {
         let idx = facet_index; // usize
-        let facet_view = FacetView::new(tds, cell_key, usize_to_u8(idx, vertex_count)?)?;
+        let facet_view = FacetView::new(tds, simplex_key, usize_to_u8(idx, vertex_count)?)?;
         facet_views.push(facet_view);
     }
 
@@ -801,10 +801,10 @@ pub fn all_facets_for_cell<T, U, V, const D: usize>(
 #[derive(Clone)]
 pub struct AllFacetsIter<'tds, T, U, V, const D: usize> {
     tds: &'tds Tds<T, U, V, D>,
-    cell_keys: std::vec::IntoIter<CellKey>,
-    current_cell_key: Option<CellKey>,
+    simplex_keys: std::vec::IntoIter<SimplexKey>,
+    current_simplex_key: Option<SimplexKey>,
     current_facet_index: usize,
-    current_cell_facet_count: usize,
+    current_simplex_facet_count: usize,
 }
 
 impl<'tds, T, U, V, const D: usize> AllFacetsIter<'tds, T, U, V, D> {
@@ -834,24 +834,24 @@ impl<'tds, T, U, V, const D: usize> AllFacetsIter<'tds, T, U, V, D> {
     /// ```
     #[must_use]
     pub fn new(tds: &'tds Tds<T, U, V, D>) -> Self {
-        // Dimension check: facets per cell = D+1, so D must be <= 255
+        // Dimension check: facets per simplex = D+1, so D must be <= 255
         assert!(
             D <= 255,
             "Dimension D={D} exceeds maximum of 255 for u8 facet indices"
         );
         // We collect here because we need an owned iterator to store in the struct
-        // CellKey is just u64, so this is efficient
+        // SimplexKey is just u64, so this is efficient
         #[expect(
             clippy::needless_collect,
-            reason = "iterator owns a stable snapshot of cell keys before yielding facets"
+            reason = "iterator owns a stable snapshot of simplex keys before yielding facets"
         )]
-        let cell_keys: Vec<CellKey> = tds.cell_keys().collect();
+        let simplex_keys: Vec<SimplexKey> = tds.simplex_keys().collect();
         Self {
             tds,
-            cell_keys: cell_keys.into_iter(),
-            current_cell_key: None,
+            simplex_keys: simplex_keys.into_iter(),
+            current_simplex_key: None,
             current_facet_index: 0,
-            current_cell_facet_count: 0,
+            current_simplex_facet_count: 0,
         }
     }
 }
@@ -861,36 +861,37 @@ impl<'tds, T, U, V, const D: usize> Iterator for AllFacetsIter<'tds, T, U, V, D>
 
     fn next(&mut self) -> Option<Self::Item> {
         loop {
-            // If we have a current cell and more facets in it
-            if let Some(cell_key) = self.current_cell_key
-                && self.current_facet_index < self.current_cell_facet_count
+            // If we have a current simplex and more facets in it
+            if let Some(simplex_key) = self.current_simplex_key
+                && self.current_facet_index < self.current_simplex_facet_count
             {
                 let facet_index = self.current_facet_index;
                 self.current_facet_index += 1;
 
                 // Create FacetView - we know this is valid since we're iterating within bounds
-                let Ok(facet_u8) = usize_to_u8(facet_index, self.current_cell_facet_count) else {
+                let Ok(facet_u8) = usize_to_u8(facet_index, self.current_simplex_facet_count)
+                else {
                     // Fail fast instead of silently skipping in release.
                     // If D can exceed 255, widen the index type.
                     return None;
                 };
-                if let Ok(facet_view) = FacetView::new(self.tds, cell_key, facet_u8) {
+                if let Ok(facet_view) = FacetView::new(self.tds, simplex_key, facet_u8) {
                     return Some(facet_view);
                 }
             }
 
-            // Move to next cell
-            if let Some(next_cell_key) = self.cell_keys.next() {
-                if let Some(cell) = self.tds.cell(next_cell_key) {
-                    self.current_cell_key = Some(next_cell_key);
+            // Move to next simplex
+            if let Some(next_simplex_key) = self.simplex_keys.next() {
+                if let Some(simplex) = self.tds.simplex(next_simplex_key) {
+                    self.current_simplex_key = Some(next_simplex_key);
                     self.current_facet_index = 0;
-                    self.current_cell_facet_count = cell.number_of_vertices();
-                    // Continue loop to process first facet of new cell
+                    self.current_simplex_facet_count = simplex.number_of_vertices();
+                    // Continue loop to process first facet of new simplex
                 } else {
-                    // Cell not found, skip to next (continue is implicit at end of loop)
+                    // Simplex not found, skip to next (continue is implicit at end of loop)
                 }
             } else {
-                // No more cells
+                // No more simplices
                 return None;
             }
         }
@@ -900,7 +901,7 @@ impl<'tds, T, U, V, const D: usize> Iterator for AllFacetsIter<'tds, T, U, V, D>
 /// Iterator over boundary facets in a triangulation.
 ///
 /// This iterator efficiently identifies and yields only the boundary facets
-/// (facets that belong to only one cell) without pre-computing all facets.
+/// (facets that belong to only one simplex) without pre-computing all facets.
 ///
 /// # Examples
 ///
@@ -915,7 +916,7 @@ impl<'tds, T, U, V, const D: usize> Iterator for AllFacetsIter<'tds, T, U, V, D>
 ///     vertex!([0.0, 0.0, 1.0]),
 /// ];
 /// let dt = DelaunayTriangulation::new(&vertices).unwrap();
-/// let facet_map = dt.tds().build_facet_to_cells_map().unwrap();
+/// let facet_map = dt.tds().build_facet_to_simplices_map().unwrap();
 ///
 /// let count = BoundaryFacetsIter::new(dt.tds(), facet_map).count();
 /// assert_eq!(count, 4);
@@ -923,7 +924,7 @@ impl<'tds, T, U, V, const D: usize> Iterator for AllFacetsIter<'tds, T, U, V, D>
 #[derive(Clone)]
 pub struct BoundaryFacetsIter<'tds, T, U, V, const D: usize> {
     all_facets: AllFacetsIter<'tds, T, U, V, D>,
-    facet_to_cells_map: crate::core::collections::FacetToCellsMap,
+    facet_to_simplices_map: crate::core::collections::FacetToSimplicesMap,
 }
 
 impl<'tds, T, U, V, const D: usize> BoundaryFacetsIter<'tds, T, U, V, D> {
@@ -942,16 +943,16 @@ impl<'tds, T, U, V, const D: usize> BoundaryFacetsIter<'tds, T, U, V, D> {
     ///     vertex!([0.0, 0.0, 1.0]),
     /// ];
     /// let dt = DelaunayTriangulation::new(&vertices).unwrap();
-    /// let facet_map = dt.tds().build_facet_to_cells_map().unwrap();
+    /// let facet_map = dt.tds().build_facet_to_simplices_map().unwrap();
     ///
     /// let mut iter = BoundaryFacetsIter::new(dt.tds(), facet_map);
     /// assert!(iter.next().is_some());
     /// ```
     #[must_use]
-    pub fn new(tds: &'tds Tds<T, U, V, D>, facet_to_cells_map: FacetToCellsMap) -> Self {
+    pub fn new(tds: &'tds Tds<T, U, V, D>, facet_to_simplices_map: FacetToSimplicesMap) -> Self {
         Self {
             all_facets: AllFacetsIter::new(tds),
-            facet_to_cells_map,
+            facet_to_simplices_map,
         }
     }
 }
@@ -964,10 +965,10 @@ impl<'tds, T, U, V, const D: usize> Iterator for BoundaryFacetsIter<'tds, T, U, 
         self.all_facets.find(|facet_view| {
             // Check if this facet is a boundary facet using the precomputed map
             if let Ok(facet_key) = facet_view.key()
-                && let Some(cell_list) = self.facet_to_cells_map.get(&facet_key)
+                && let Some(simplex_list) = self.facet_to_simplices_map.get(&facet_key)
             {
-                // Boundary facets appear in exactly one cell
-                return cell_list.len() == 1;
+                // Boundary facets appear in exactly one simplex
+                return simplex_list.len() == 1;
             }
             false
         })
@@ -1125,11 +1126,11 @@ mod tests {
         // Create a 1D triangulation (2 vertices forming an edge)
         let vertices = vec![vertex!([0.0]), vertex!([1.0])];
         let dt = DelaunayTriangulation::new(&vertices).unwrap();
-        let cell_key = dt.cells().next().unwrap().0;
+        let simplex_key = dt.simplices().next().unwrap().0;
 
         // Test invalid facet index (should be 0 or 1 for 1D, facet_index >= 2 is invalid)
         assert!(matches!(
-            FacetView::new(dt.tds(), cell_key, 99),
+            FacetView::new(dt.tds(), simplex_key, 99),
             Err(FacetError::InvalidFacetIndex { .. })
         ));
     }
@@ -1144,43 +1145,43 @@ mod tests {
             vertex!([0.0, 0.0, 1.0]),
         ];
         let dt = DelaunayTriangulation::new(&vertices).unwrap();
-        let cell_key = dt.cells().next().unwrap().0;
+        let simplex_key = dt.simplices().next().unwrap().0;
 
         // Create facet view for facet 0 (excludes vertex 0)
-        let facet = FacetView::new(dt.tds(), cell_key, 0).unwrap();
-        assert_eq!(facet.cell_key(), cell_key);
+        let facet = FacetView::new(dt.tds(), simplex_key, 0).unwrap();
+        assert_eq!(facet.simplex_key(), simplex_key);
         assert_eq!(facet.facet_index(), 0);
 
         // Human readable output for cargo test -- --nocapture
         println!(
-            "FacetView: cell_key={:?}, facet_index={}",
-            facet.cell_key(),
+            "FacetView: simplex_key={:?}, facet_index={}",
+            facet.simplex_key(),
             facet.facet_index()
         );
     }
 
     #[test]
     fn test_facet_new_success_coverage() {
-        // Test 2D case: Create a triangle (2D cell with 3 vertices)
+        // Test 2D case: Create a triangle (2D simplex with 3 vertices)
         let vertices_2d = vec![
             vertex!([0.0, 0.0]),
             vertex!([1.0, 0.0]),
             vertex!([0.5, 1.0]),
         ];
         let dt_2d = DelaunayTriangulation::new(&vertices_2d).unwrap();
-        let cell_key_2d = dt_2d.cells().next().unwrap().0;
-        let result_2d = FacetView::new(dt_2d.tds(), cell_key_2d, 0);
+        let simplex_key_2d = dt_2d.simplices().next().unwrap().0;
+        let result_2d = FacetView::new(dt_2d.tds(), simplex_key_2d, 0);
 
         // Assert that the result is Ok
         assert!(result_2d.is_ok());
         let facet_2d = result_2d.unwrap();
         assert_eq!(facet_2d.vertices().unwrap().count(), 2); // 2D facet should have 2 vertices
 
-        // Test 1D case: Create an edge (1D cell with 2 vertices)
+        // Test 1D case: Create an edge (1D simplex with 2 vertices)
         let vertices_1d = vec![vertex!([0.0]), vertex!([1.0])];
         let dt_1d = DelaunayTriangulation::new(&vertices_1d).unwrap();
-        let cell_key_1d = dt_1d.cells().next().unwrap().0;
-        let result_1d = FacetView::new(dt_1d.tds(), cell_key_1d, 0);
+        let simplex_key_1d = dt_1d.simplices().next().unwrap().0;
+        let result_1d = FacetView::new(dt_1d.tds(), simplex_key_1d, 0);
 
         // Assert that the result is Ok
         assert!(result_1d.is_ok());
@@ -1198,10 +1199,10 @@ mod tests {
             vertex!([0.0, 0.0, 1.0]),
         ];
         let dt = DelaunayTriangulation::new(&vertices).unwrap();
-        let cell_key = dt.cells().next().unwrap().0;
+        let simplex_key = dt.simplices().next().unwrap().0;
 
-        // Test invalid facet index (3D cell has vertices 0-3, facet index 4 is invalid)
-        assert!(FacetView::new(dt.tds(), cell_key, 4).is_err());
+        // Test invalid facet index (3D simplex has vertices 0-3, facet index 4 is invalid)
+        assert!(FacetView::new(dt.tds(), simplex_key, 4).is_err());
     }
 
     #[test]
@@ -1214,10 +1215,10 @@ mod tests {
             vertex!([0.0, 0.0, 1.0]),
         ];
         let dt = DelaunayTriangulation::new(&vertices).unwrap();
-        let cell_key = dt.cells().next().unwrap().0;
+        let simplex_key = dt.simplices().next().unwrap().0;
 
         // Create facet view for facet 0 (excludes vertex 0)
-        let facet = FacetView::new(dt.tds(), cell_key, 0).unwrap();
+        let facet = FacetView::new(dt.tds(), simplex_key, 0).unwrap();
         let facet_vertices: Vec<_> = facet.vertices().unwrap().collect();
 
         assert_eq!(facet_vertices.len(), 3);
@@ -1245,12 +1246,12 @@ mod tests {
             vertex!([0.0, 0.0, 1.0]),
         ];
         let dt = DelaunayTriangulation::new(&vertices).unwrap();
-        let cell_key = dt.cells().next().unwrap().0;
+        let simplex_key = dt.simplices().next().unwrap().0;
 
         // Create facet views with same facet index (should be equal)
-        let facet1 = FacetView::new(dt.tds(), cell_key, 0).unwrap();
-        let facet2 = FacetView::new(dt.tds(), cell_key, 0).unwrap();
-        let facet3 = FacetView::new(dt.tds(), cell_key, 1).unwrap();
+        let facet1 = FacetView::new(dt.tds(), simplex_key, 0).unwrap();
+        let facet2 = FacetView::new(dt.tds(), simplex_key, 0).unwrap();
+        let facet3 = FacetView::new(dt.tds(), simplex_key, 1).unwrap();
 
         assert_eq!(facet1, facet2);
         assert_ne!(facet1, facet3);
@@ -1270,20 +1271,20 @@ mod tests {
             vertex!([0.0, 0.0, 1.0]),
         ];
         let dt = DelaunayTriangulation::new(&vertices).unwrap();
-        let cell_key = dt.cells().next().unwrap().0;
+        let simplex_key = dt.simplices().next().unwrap().0;
 
-        let facet = FacetView::new(dt.tds(), cell_key, 0).unwrap();
+        let facet = FacetView::new(dt.tds(), simplex_key, 0).unwrap();
         let cloned_facet = facet;
 
         // Verify clones are equal
         assert_eq!(facet, cloned_facet);
-        assert_eq!(facet.cell_key(), cloned_facet.cell_key());
+        assert_eq!(facet.simplex_key(), cloned_facet.simplex_key());
         assert_eq!(facet.facet_index(), cloned_facet.facet_index());
 
-        // Verify cell and opposite vertex are accessible through both views
-        let cell1 = facet.cell().unwrap();
-        let cell2 = cloned_facet.cell().unwrap();
-        assert_eq!(cell1.uuid(), cell2.uuid());
+        // Verify simplex and opposite vertex are accessible through both views
+        let simplex1 = facet.simplex().unwrap();
+        let simplex2 = cloned_facet.simplex().unwrap();
+        assert_eq!(simplex1.uuid(), simplex2.uuid());
 
         let vertex1 = facet.opposite_vertex().unwrap();
         let vertex2 = cloned_facet.opposite_vertex().unwrap();
@@ -1300,13 +1301,13 @@ mod tests {
             vertex!([0.0, 0.0, 1.0]),
         ];
         let dt = DelaunayTriangulation::new(&vertices).unwrap();
-        let cell_key = dt.cells().next().unwrap().0;
+        let simplex_key = dt.simplices().next().unwrap().0;
 
-        let facet = FacetView::new(dt.tds(), cell_key, 0).unwrap();
+        let facet = FacetView::new(dt.tds(), simplex_key, 0).unwrap();
         let debug_str = format!("{facet:?}");
 
         assert!(debug_str.contains("FacetView"));
-        assert!(debug_str.contains("cell_key"));
+        assert!(debug_str.contains("simplex_key"));
         assert!(debug_str.contains("facet_index"));
         assert!(debug_str.contains("dimension"));
     }
@@ -1335,15 +1336,15 @@ mod tests {
                 options,
             )
             .unwrap();
-        let cell_key = dt.cells().next().unwrap().0;
+        let simplex_key = dt.simplices().next().unwrap().0;
 
         // Create facet view for facet 0 (excludes vertex 0)
-        let facet = FacetView::new(dt.tds(), cell_key, 0).unwrap();
+        let facet = FacetView::new(dt.tds(), simplex_key, 0).unwrap();
 
         let facet_vertices: Vec<_> = facet.vertices().unwrap().collect();
         assert_eq!(facet_vertices.len(), 3); // 3D facet should have 3 vertices (D)
-        let cell = dt.tds().cell(cell_key).expect("cell exists");
-        for &vertex_key in cell.vertices().iter().skip(1) {
+        let simplex = dt.tds().simplex(simplex_key).expect("simplex exists");
+        for &vertex_key in simplex.vertices().iter().skip(1) {
             let expected_data = dt.tds().vertex(vertex_key).unwrap().data;
             assert!(
                 facet_vertices.iter().any(|v| v.data == expected_data),
@@ -1360,7 +1361,7 @@ mod tests {
     /// - `FacetKey` computation and consistency
     /// - Facet equality tests
     ///
-    /// For a D-dimensional cell, a facet is (D-1)-dimensional and has D vertices.
+    /// For a D-dimensional simplex, a facet is (D-1)-dimensional and has D vertices.
     ///
     /// # Usage
     ///
@@ -1379,12 +1380,12 @@ mod tests {
                     // Test basic facet view creation
                     let vertices = $vertices;
                     let dt = DelaunayTriangulation::new(&vertices).unwrap();
-                    let cell_key = dt.cells().next().unwrap().0;
+                    let simplex_key = dt.simplices().next().unwrap().0;
 
                     // Create facet view for facet 0 (excludes vertex 0)
-                    let facet = FacetView::new(dt.tds(), cell_key, 0).unwrap();
+                    let facet = FacetView::new(dt.tds(), simplex_key, 0).unwrap();
 
-                    // Facet of D-dimensional cell is (D-1)-dimensional with D vertices
+                    // Facet of D-dimensional simplex is (D-1)-dimensional with D vertices
                     assert_eq!(facet.vertices().unwrap().count(), $expected_facet_vertices,
                         "Facet of {}D {} should have {} vertices", $dim, $desc, $expected_facet_vertices);
                 }
@@ -1395,17 +1396,17 @@ mod tests {
                         // Test FacetKey computation consistency
                         let vertices = $vertices;
                         let dt = DelaunayTriangulation::new(&vertices).unwrap();
-                        let cell_key = dt.cells().next().unwrap().0;
+                        let simplex_key = dt.simplices().next().unwrap().0;
 
                         // Create same facet twice
-                        let facet1 = FacetView::new(dt.tds(), cell_key, 0).unwrap();
-                        let facet2 = FacetView::new(dt.tds(), cell_key, 0).unwrap();
+                        let facet1 = FacetView::new(dt.tds(), simplex_key, 0).unwrap();
+                        let facet2 = FacetView::new(dt.tds(), simplex_key, 0).unwrap();
 
                         assert_eq!(facet1.key().unwrap(), facet2.key().unwrap(),
                             "Same facet should produce same key");
 
                         // Create different facet
-                        let facet3 = FacetView::new(dt.tds(), cell_key, 1).unwrap();
+                        let facet3 = FacetView::new(dt.tds(), simplex_key, 1).unwrap();
                         assert_ne!(facet1.key().unwrap(), facet3.key().unwrap(),
                             "Different facets should produce different keys");
                     }
@@ -1415,11 +1416,11 @@ mod tests {
                         // Test facet equality comparison
                         let vertices = $vertices;
                         let dt = DelaunayTriangulation::new(&vertices).unwrap();
-                        let cell_key = dt.cells().next().unwrap().0;
+                        let simplex_key = dt.simplices().next().unwrap().0;
 
-                        let facet1 = FacetView::new(dt.tds(), cell_key, 0).unwrap();
-                        let facet2 = FacetView::new(dt.tds(), cell_key, 0).unwrap();
-                        let facet3 = FacetView::new(dt.tds(), cell_key, 1).unwrap();
+                        let facet1 = FacetView::new(dt.tds(), simplex_key, 0).unwrap();
+                        let facet2 = FacetView::new(dt.tds(), simplex_key, 0).unwrap();
+                        let facet3 = FacetView::new(dt.tds(), simplex_key, 1).unwrap();
 
                         assert!(facet1 == facet2, "Same facet should be equal");
                         assert!(facet1 != facet3, "Different facets should not be equal");
@@ -1427,22 +1428,22 @@ mod tests {
 
                     #[test]
                     fn [<$test_name _all_facets>]() {
-                        // Test iterating through all facets of a cell
+                        // Test iterating through all facets of a simplex
                         let vertices = $vertices;
                         let dt = DelaunayTriangulation::new(&vertices).unwrap();
-                        let cell_key = dt.cells().next().unwrap().0;
+                        let simplex_key = dt.simplices().next().unwrap().0;
 
-                        // D+1 dimensional cell should have D+1 facets (one opposite each vertex)
+                        // D+1 dimensional simplex should have D+1 facets (one opposite each vertex)
                         let expected_facets = $dim + 1;
                         let mut facet_keys = HashSet::new();
 
                         for i in 0..expected_facets {
-                            let facet = FacetView::new(dt.tds(), cell_key, u8::try_from(i).unwrap()).unwrap();
+                            let facet = FacetView::new(dt.tds(), simplex_key, u8::try_from(i).unwrap()).unwrap();
                             facet_keys.insert(facet.key().unwrap());
                         }
 
                         assert_eq!(facet_keys.len(), expected_facets,
-                            "{}D cell should have {} unique facets", $dim, expected_facets);
+                            "{}D simplex should have {} unique facets", $dim, expected_facets);
                     }
                 }
             )+
@@ -1488,10 +1489,10 @@ mod tests {
             .with_insertion_order(InsertionOrderStrategy::Input)
             .with_initial_simplex_strategy(InitialSimplexStrategy::First);
         let dt = DelaunayTriangulation::new_with_options(&vertices, options).unwrap();
-        let cell_key = dt.cells().next().unwrap().0;
+        let simplex_key = dt.simplices().next().unwrap().0;
 
         // Create facet view for facet 0 (excludes vertex 0)
-        let facet = FacetView::new(dt.tds(), cell_key, 0).unwrap();
+        let facet = FacetView::new(dt.tds(), simplex_key, 0).unwrap();
 
         // Facet of 1D edge is a point (0D) with 1 vertex
         assert_eq!(facet.vertices().unwrap().count(), 1);
@@ -1503,21 +1504,21 @@ mod tests {
 
     #[test]
     fn facet_error_display() {
-        let cell_error = FacetError::CellDoesNotContainVertex;
+        let simplex_error = FacetError::SimplexDoesNotContainVertex;
 
         assert_eq!(
-            cell_error.to_string(),
-            "The cell does not contain the vertex!"
+            simplex_error.to_string(),
+            "The simplex does not contain the vertex!"
         );
     }
 
     #[test]
     fn facet_error_debug() {
-        let cell_error = FacetError::CellDoesNotContainVertex;
+        let simplex_error = FacetError::SimplexDoesNotContainVertex;
 
-        let cell_debug = format!("{cell_error:?}");
+        let simplex_debug = format!("{simplex_error:?}");
 
-        assert!(cell_debug.contains("CellDoesNotContainVertex"));
+        assert!(simplex_debug.contains("SimplexDoesNotContainVertex"));
     }
 
     #[test]
@@ -1530,12 +1531,12 @@ mod tests {
             vertex!([0.0, 0.0, 1.0]),
         ];
         let dt = DelaunayTriangulation::new(&vertices).unwrap();
-        let cell_key = dt.cells().next().unwrap().0;
+        let simplex_key = dt.simplices().next().unwrap().0;
 
         // Create facet views for different facets
-        let facet1 = FacetView::new(dt.tds(), cell_key, 0).unwrap(); // excludes vertex 0
-        let facet2 = FacetView::new(dt.tds(), cell_key, 0).unwrap(); // same facet
-        let facet3 = FacetView::new(dt.tds(), cell_key, 1).unwrap(); // excludes vertex 1 (different facet)
+        let facet1 = FacetView::new(dt.tds(), simplex_key, 0).unwrap(); // excludes vertex 0
+        let facet2 = FacetView::new(dt.tds(), simplex_key, 0).unwrap(); // same facet
+        let facet3 = FacetView::new(dt.tds(), simplex_key, 1).unwrap(); // excludes vertex 1 (different facet)
 
         // Both facet1 and facet2 reference the same facet, so same key
         assert_eq!(
@@ -1553,18 +1554,18 @@ mod tests {
     }
 
     #[test]
-    fn facet_vertices_empty_cell() {
-        // Test edge case of minimal cell (1D edge with 2 vertices)
+    fn facet_vertices_empty_simplex() {
+        // Test edge case of minimal simplex (1D edge with 2 vertices)
         let vertices = vec![vertex!([0.0]), vertex!([1.0])];
         let dt = DelaunayTriangulation::new(&vertices).unwrap();
-        let cell_key = dt.cells().next().unwrap().0;
+        let simplex_key = dt.simplices().next().unwrap().0;
 
         // Create facet with vertex 0 as opposite - should have only vertex 1 in facet
-        let facet = FacetView::new(dt.tds(), cell_key, 0).unwrap();
+        let facet = FacetView::new(dt.tds(), simplex_key, 0).unwrap();
         assert_eq!(facet.vertices().unwrap().count(), 1);
 
         // Test the opposite case - vertex 1 as opposite should have only vertex 0 in facet
-        let other_facet = FacetView::new(dt.tds(), cell_key, 1).unwrap();
+        let other_facet = FacetView::new(dt.tds(), simplex_key, 1).unwrap();
         assert_eq!(other_facet.vertices().unwrap().count(), 1);
     }
 
@@ -1578,10 +1579,10 @@ mod tests {
             vertex!([0.0, 0.0, 1.0]),
         ];
         let dt = DelaunayTriangulation::new(&vertices).unwrap();
-        let cell_key = dt.cells().next().unwrap().0;
+        let simplex_key = dt.simplices().next().unwrap().0;
 
         // Create facet view for facet 2 (excludes vertex 2)
-        let facet = FacetView::new(dt.tds(), cell_key, 2).unwrap();
+        let facet = FacetView::new(dt.tds(), simplex_key, 2).unwrap();
 
         // Should have all vertices except vertex at index 2
         assert_eq!(facet.vertices().unwrap().count(), 3);
@@ -1598,12 +1599,12 @@ mod tests {
             vertex!([0.0, 0.0, 1.0]),
         ];
         let dt = DelaunayTriangulation::new(&vertices).unwrap();
-        let cell_key = dt.cells().next().unwrap().0;
+        let simplex_key = dt.simplices().next().unwrap().0;
 
-        let facet1 = FacetView::new(dt.tds(), cell_key, 0).unwrap();
-        let facet2 = FacetView::new(dt.tds(), cell_key, 1).unwrap();
-        let facet3 = FacetView::new(dt.tds(), cell_key, 2).unwrap();
-        let facet4 = FacetView::new(dt.tds(), cell_key, 3).unwrap();
+        let facet1 = FacetView::new(dt.tds(), simplex_key, 0).unwrap();
+        let facet2 = FacetView::new(dt.tds(), simplex_key, 1).unwrap();
+        let facet3 = FacetView::new(dt.tds(), simplex_key, 2).unwrap();
+        let facet4 = FacetView::new(dt.tds(), simplex_key, 3).unwrap();
 
         // All facets should be different because they have different facet indices
         // (i.e., different opposite vertices)
@@ -1628,14 +1629,14 @@ mod tests {
             vertex!([0.0, 0.0, 1.0]),
         ];
         let dt = DelaunayTriangulation::new(&vertices).unwrap();
-        let cell_key = dt.cells().next().unwrap().0;
+        let simplex_key = dt.simplices().next().unwrap().0;
 
         // Create two facet views that reference the same facet
-        let facet1 = FacetView::new(dt.tds(), cell_key, 0).unwrap();
-        let facet2 = FacetView::new(dt.tds(), cell_key, 0).unwrap();
+        let facet1 = FacetView::new(dt.tds(), simplex_key, 0).unwrap();
+        let facet2 = FacetView::new(dt.tds(), simplex_key, 0).unwrap();
 
         // Create a different facet
-        let facet3 = FacetView::new(dt.tds(), cell_key, 1).unwrap();
+        let facet3 = FacetView::new(dt.tds(), simplex_key, 1).unwrap();
 
         // Test that facet keys are consistent for the same facet
         assert_eq!(facet1.key().unwrap(), facet2.key().unwrap());
@@ -1701,15 +1702,15 @@ mod tests {
         ];
 
         let dt = DelaunayTriangulation::new(&vertices).unwrap();
-        let cell_key = dt.cells().next().unwrap().0;
+        let simplex_key = dt.simplices().next().unwrap().0;
 
         // Test valid facet creation
-        let facet_view = FacetView::new(dt.tds(), cell_key, 0).unwrap();
-        assert_eq!(facet_view.cell_key(), cell_key);
+        let facet_view = FacetView::new(dt.tds(), simplex_key, 0).unwrap();
+        assert_eq!(facet_view.simplex_key(), simplex_key);
         assert_eq!(facet_view.facet_index(), 0);
 
         // Test invalid facet index
-        let result = FacetView::new(dt.tds(), cell_key, 10);
+        let result = FacetView::new(dt.tds(), simplex_key, 10);
         assert!(matches!(result, Err(FacetError::InvalidFacetIndex { .. })));
     }
 
@@ -1723,18 +1724,18 @@ mod tests {
         ];
 
         let dt = DelaunayTriangulation::new(&vertices).unwrap();
-        let cell_key = dt.cells().next().unwrap().0;
+        let simplex_key = dt.simplices().next().unwrap().0;
 
-        let facet_view = FacetView::new(dt.tds(), cell_key, 0).unwrap();
+        let facet_view = FacetView::new(dt.tds(), simplex_key, 0).unwrap();
 
         // Facet opposite to vertex 0 should have 3 vertices (D vertices in D-1 facet)
         let facet_vertices: Vec<_> = facet_view.vertices().unwrap().collect();
         assert_eq!(facet_vertices.len(), 3);
 
-        let cell = dt.tds().cell(cell_key).expect("cell exists");
+        let simplex = dt.tds().simplex(simplex_key).expect("simplex exists");
         let opposite_vertex = dt
             .tds()
-            .vertex(cell.vertices()[0])
+            .vertex(simplex.vertices()[0])
             .expect("opposite vertex exists");
 
         // Facet vertices should not include the opposite vertex
@@ -1755,15 +1756,18 @@ mod tests {
         ];
 
         let dt = DelaunayTriangulation::new(&vertices).unwrap();
-        let cell_key = dt.cells().next().unwrap().0;
+        let simplex_key = dt.simplices().next().unwrap().0;
 
-        let facet_view = FacetView::new(dt.tds(), cell_key, 1).unwrap();
+        let facet_view = FacetView::new(dt.tds(), simplex_key, 1).unwrap();
         let opposite = facet_view.opposite_vertex().unwrap();
 
         // The opposite vertex should be the vertex at index 1
-        let cell = dt.tds().cell(cell_key).expect("cell exists");
-        let cell_vertex_keys = cell.vertices();
-        let expected_vertex = dt.tds().vertex(cell_vertex_keys[1]).expect("vertex exists");
+        let simplex = dt.tds().simplex(simplex_key).expect("simplex exists");
+        let simplex_vertex_keys = simplex.vertices();
+        let expected_vertex = dt
+            .tds()
+            .vertex(simplex_vertex_keys[1])
+            .expect("vertex exists");
         assert_eq!(opposite.uuid(), expected_vertex.uuid());
     }
 
@@ -1777,9 +1781,9 @@ mod tests {
         ];
 
         let dt = DelaunayTriangulation::new(&vertices).unwrap();
-        let cell_key = dt.cells().next().unwrap().0;
+        let simplex_key = dt.simplices().next().unwrap().0;
 
-        let facet_view = FacetView::new(dt.tds(), cell_key, 0).unwrap();
+        let facet_view = FacetView::new(dt.tds(), simplex_key, 0).unwrap();
         let key = facet_view.key().unwrap();
 
         // Key should be non-zero for valid facet
@@ -1787,7 +1791,7 @@ mod tests {
     }
 
     #[test]
-    fn test_all_facets_for_cell() {
+    fn test_all_facets_for_simplex() {
         let vertices = vec![
             vertex!([0.0, 0.0, 0.0]),
             vertex!([1.0, 0.0, 0.0]),
@@ -1796,11 +1800,11 @@ mod tests {
         ];
 
         let dt = DelaunayTriangulation::new(&vertices).unwrap();
-        let cell_key = dt.cells().next().unwrap().0;
+        let simplex_key = dt.simplices().next().unwrap().0;
 
-        let facet_views = all_facets_for_cell(dt.tds(), cell_key).unwrap();
+        let facet_views = all_facets_for_simplex(dt.tds(), simplex_key).unwrap();
 
-        // 3D cell (tetrahedron) should have 4 facets
+        // 3D simplex (tetrahedron) should have 4 facets
         assert_eq!(facet_views.len(), 4);
 
         // Each facet should have a different index
@@ -1809,7 +1813,7 @@ mod tests {
                 facet_view.facet_index(),
                 usize_to_u8(i, facet_views.len()).unwrap()
             );
-            assert_eq!(facet_view.cell_key(), cell_key);
+            assert_eq!(facet_view.simplex_key(), simplex_key);
         }
     }
 
@@ -1823,11 +1827,11 @@ mod tests {
         ];
 
         let dt = DelaunayTriangulation::new(&vertices).unwrap();
-        let cell_key = dt.cells().next().unwrap().0;
+        let simplex_key = dt.simplices().next().unwrap().0;
 
-        let facet_view1 = FacetView::new(dt.tds(), cell_key, 0).unwrap();
-        let facet_view2 = FacetView::new(dt.tds(), cell_key, 0).unwrap();
-        let facet_view3 = FacetView::new(dt.tds(), cell_key, 1).unwrap();
+        let facet_view1 = FacetView::new(dt.tds(), simplex_key, 0).unwrap();
+        let facet_view2 = FacetView::new(dt.tds(), simplex_key, 0).unwrap();
+        let facet_view3 = FacetView::new(dt.tds(), simplex_key, 1).unwrap();
 
         // Same facet should be equal
         assert_eq!(facet_view1, facet_view2);
@@ -1846,13 +1850,13 @@ mod tests {
         ];
 
         let dt = DelaunayTriangulation::new(&vertices).unwrap();
-        let cell_key = dt.cells().next().unwrap().0;
+        let simplex_key = dt.simplices().next().unwrap().0;
 
-        let facet_view = FacetView::new(dt.tds(), cell_key, 1).unwrap();
+        let facet_view = FacetView::new(dt.tds(), simplex_key, 1).unwrap();
         let debug_str = format!("{facet_view:?}");
 
         assert!(debug_str.contains("FacetView"));
-        assert!(debug_str.contains("cell_key"));
+        assert!(debug_str.contains("simplex_key"));
         assert!(debug_str.contains("facet_index"));
         assert!(debug_str.contains("dimension"));
     }
@@ -1865,11 +1869,11 @@ mod tests {
 
         println!("Lightweight FacetView size: {lightweight_size} bytes");
 
-        // FacetView should be around 17 bytes (8 byte ref + 8 byte CellKey + 1 byte facet_index)
+        // FacetView should be around 17 bytes (8 byte ref + 8 byte SimplexKey + 1 byte facet_index)
         // Allow for some padding/alignment
         assert!(lightweight_size <= 24);
 
         // Document actual size for reference
-        // On 64-bit systems: typically 17 bytes (reference + CellKey + u8)
+        // On 64-bit systems: typically 17 bytes (reference + SimplexKey + u8)
     }
 }

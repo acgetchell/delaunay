@@ -101,8 +101,8 @@ complete technical background.
 
 ## ✨ Features
 
-- [x]  Copyable data types associated with vertices and cells (integers,
-  floats, chars, custom enums), plus `CellSecondaryMap` and
+- [x]  Copyable data types associated with vertices and simplices (integers,
+  floats, chars, custom enums), plus `SimplexSecondaryMap` and
   `VertexSecondaryMap` aliases for caller-owned key-indexed algorithm state
 - [x]  D-dimensional [Delaunay triangulations]
 - [x]  D-dimensional [Convex hulls]
@@ -137,7 +137,7 @@ complete technical background.
 - [x]  4-level validation hierarchy (element validity → TDS structural
   validity → manifold topology → Delaunay property), including full
   diagnostics via `validation_report`
-- [x]  Coherent combinatorial orientation validation/normalization for cells,
+- [x]  Coherent combinatorial orientation validation/normalization for simplices,
   maintaining oriented simplicial complexes
 - [x]  Typed construction, insertion, TDS, topology, validation, and repair
   errors that preserve source context for callers and diagnostics
@@ -183,7 +183,7 @@ Choose the smallest prelude that matches the task:
 | Construction telemetry diagnostics | `use delaunay::prelude::triangulation::diagnostics::*` |
 | Construction validation cadence/policy | `use delaunay::prelude::triangulation::validation::*` |
 | Hilbert ordering and quantization utilities | `use delaunay::prelude::ordering::*` |
-| Low-level TDS cells, facets, keys, and validation reports | `use delaunay::prelude::tds::*` |
+| Low-level TDS simplices, facets, keys, and validation reports | `use delaunay::prelude::tds::*` |
 | Collection aliases and small buffers | `use delaunay::prelude::collections::*` |
 | Topology validation and Euler characteristic helpers | `use delaunay::prelude::topology::validation::*` |
 | Topological spaces and topology traits | `use delaunay::prelude::topology::spaces::*` |
@@ -286,7 +286,7 @@ For the full periodic image-point method (Phase 2), see the
 
 | Level | What is validated | Primary API |
 |---|---|---|
-| 1 | Element validity (vertex/cell primitives) | `dt.validate()` / `dt.validation_report()` |
+| 1 | Element validity (vertex/simplex primitives) | `dt.validate()` / `dt.validation_report()` |
 | 2 | TDS structural validity (keys, incidences, neighbors) | `dt.tds().is_valid()` |
 | 3 | Manifold topology (link checks, Euler/topological consistency) | `dt.as_triangulation().is_valid()` |
 | 4 | Delaunay property (empty-circumsphere via local predicates) | `dt.is_valid()` |
@@ -422,36 +422,28 @@ counts.
 ```bash
 just examples         # Run all examples
 # Or run specific examples:
-cargo run --release --example triangulation_3d_1000_points
-cargo run --release --example convex_hull_3d_1000_points
+cargo run --release --example triangulation_and_hull
+cargo run --release --example delaunayize_repair
 ```
 
 ## 📋 Examples
 
 The `examples/` directory contains several demonstrations:
 
-- **`convex_hull_3d_1000_points`**: 3D convex hull extraction and analysis on a
-  stable 1000-point configuration
 - **`delaunayize_repair`**: Demonstrates the `delaunayize_by_flips` workflow
   (bounded topology repair + flip-based Delaunay repair + optional fallback)
 - **`diagnostics`**: Opt-in structured diagnostics for validation and
   deliberately non-Delaunay TDS examples
 - **`into_from_conversions`**: Demonstrates Into/From trait conversions and
   utilities
-- **`memory_analysis`**: Memory usage analysis for triangulations across
-  dimensions with allocation tracking
 - **`numerical_robustness`**: Compares `FastKernel`, `RobustKernel`, and
   `AdaptiveKernel` on degenerate predicate inputs
-- **`pachner_roundtrip_4d`**: 4D Pachner move (k=1,2,3) roundtrip checks
-  (flip + inverse preserves the triangulation)
 - **`point_comparison_and_hashing`**: Demonstrates point comparison and hashing
   behavior
-- **`topology_editing_2d_3d`**: Builder API vs Edit API in 2D/3D (bistellar
+- **`topology_editing`**: Builder API vs Edit API in 2D/3D (bistellar
   flips and Delaunay preservation)
-- **`triangulation_3d_1000_points`**: 3D Delaunay triangulation with a stable
-  1000-point random configuration
-- **`zero_allocation_iterator_demo`**: Performance comparison between
-  allocation and zero-allocation iterators
+- **`triangulation_and_hull`**: Seeded 3D and 4D triangulations, boundary
+  traversal, convex hull extraction, and hull containment/visibility queries
 
 For detailed documentation, sample output, and usage instructions for each
 example, see [examples/README.md](examples/README.md).
@@ -544,7 +536,7 @@ Portions of this library were developed with the assistance of these AI tools:
 [Hilbert curve]: https://en.wikipedia.org/wiki/Hilbert_curve
 [exact predicates]: docs/numerical_robustness_guide.md
 [Simulation of Simplicity]: docs/numerical_robustness_guide.md#simulation-of-simplicity-sos
-[Secondary maps]: docs/workflows.md#builder-api-auxiliary-vertex-and-cell-data
+[Secondary maps]: docs/workflows.md#builder-api-auxiliary-vertex-and-simplex-data
 [Validation Guide]: docs/validation.md
 [ChatGPT]: https://openai.com/chatgpt
 [Claude]: https://www.anthropic.com/claude

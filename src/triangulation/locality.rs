@@ -2,161 +2,168 @@
 //!
 //! These utilities sit at the boundary between spatial locality and topological
 //! locality: callers may use Hilbert ordering or point-location hints to find a
-//! nearby insertion site, then pass the concrete cell keys touched by the TDS
+//! nearby insertion site, then pass the concrete simplex keys touched by the TDS
 //! mutation here to build bounded repair frontiers.
 
 #![forbid(unsafe_code)]
 
 use crate::core::algorithms::locate::{ConflictError, find_conflict_region};
-use crate::core::collections::{CellKeyBuffer, FastHashSet, fast_hash_set_with_capacity};
-use crate::core::tds::{CellKey, Tds};
+use crate::core::collections::{FastHashSet, SimplexKeyBuffer, fast_hash_set_with_capacity};
+use crate::core::tds::{SimplexKey, Tds};
 use crate::core::traits::data_type::DataType;
 use crate::geometry::kernel::Kernel;
 use crate::geometry::point::Point;
 
 /// Local conflict-seed collection result for exterior insertion repair.
 #[must_use]
-pub struct LocalConflictSeedCells {
-    /// Live cells that should seed local Delaunay repair.
-    pub seed_cells: CellKeyBuffer,
-    /// Number of cells returned by the local conflict-region search before any fallback seed.
-    pub conflict_cells_found: usize,
+pub struct LocalConflictSeedSimplices {
+    /// Live simplices that should seed local Delaunay repair.
+    pub seed_simplices: SimplexKeyBuffer,
+    /// Number of simplices returned by the local conflict-region search before any fallback seed.
+    pub conflict_simplices_found: usize,
 }
 
-/// Adds live, deduplicated candidate cells to a pending local repair frontier.
+/// Adds live, deduplicated candidate simplices to a pending local repair frontier.
 ///
-/// Returns the number of cells newly appended to `pending_seed_cells`.
-pub(super) fn accumulate_live_cell_seeds<T, U, V, const D: usize>(
+/// Returns the number of simplices newly appended to `pending_seed_simplices`.
+pub(super) fn accumulate_live_simplex_seeds<T, U, V, const D: usize>(
     tds: &Tds<T, U, V, D>,
-    candidate_seed_cells: &[CellKey],
-    pending_seed_cells: &mut Vec<CellKey>,
-    pending_seen: &mut FastHashSet<CellKey>,
+    candidate_seed_simplices: &[SimplexKey],
+    pending_seed_simplices: &mut Vec<SimplexKey>,
+    pending_seen: &mut FastHashSet<SimplexKey>,
 ) -> usize
 where
     U: DataType,
     V: DataType,
 {
     let mut added = 0usize;
-    for &cell_key in candidate_seed_cells {
-        if tds.contains_cell(cell_key) && pending_seen.insert(cell_key) {
-            pending_seed_cells.push(cell_key);
+    for &simplex_key in candidate_seed_simplices {
+        if tds.contains_simplex(simplex_key) && pending_seen.insert(simplex_key) {
+            pending_seed_simplices.push(simplex_key);
             added = added.saturating_add(1);
         }
     }
     added
 }
 
-/// Adds live, deduplicated candidate cells to a compact repair seed buffer.
+/// Adds live, deduplicated candidate simplices to a compact repair seed buffer.
 ///
-/// Returns the number of cells newly appended to `seed_cells`.
-pub fn append_live_unique_cell_seeds<T, U, V, const D: usize>(
+/// Returns the number of simplices newly appended to `seed_simplices`.
+pub fn append_live_unique_simplex_seeds<T, U, V, const D: usize>(
     tds: &Tds<T, U, V, D>,
-    candidate_seed_cells: &[CellKey],
-    seed_cells: &mut CellKeyBuffer,
+    candidate_seed_simplices: &[SimplexKey],
+    seed_simplices: &mut SimplexKeyBuffer,
 ) -> usize
 where
     U: DataType,
     V: DataType,
 {
-    let mut seen: FastHashSet<CellKey> =
-        fast_hash_set_with_capacity(seed_cells.len().saturating_add(candidate_seed_cells.len()));
-    seen.extend(seed_cells.iter().copied());
+    let mut seen: FastHashSet<SimplexKey> = fast_hash_set_with_capacity(
+        seed_simplices
+            .len()
+            .saturating_add(candidate_seed_simplices.len()),
+    );
+    seen.extend(seed_simplices.iter().copied());
 
     let mut added = 0usize;
-    for &cell_key in candidate_seed_cells {
-        if tds.contains_cell(cell_key) && seen.insert(cell_key) {
-            seed_cells.push(cell_key);
+    for &simplex_key in candidate_seed_simplices {
+        if tds.contains_simplex(simplex_key) && seen.insert(simplex_key) {
+            seed_simplices.push(simplex_key);
             added = added.saturating_add(1);
         }
     }
     added
 }
 
-/// Retains only live, deduplicated cells in a pending local repair frontier.
-pub(super) fn retain_live_cell_seeds<T, U, V, const D: usize>(
+/// Retains only live, deduplicated simplices in a pending local repair frontier.
+pub(super) fn retain_live_simplex_seeds<T, U, V, const D: usize>(
     tds: &Tds<T, U, V, D>,
-    seed_cells: &mut Vec<CellKey>,
-    seen: &mut FastHashSet<CellKey>,
+    seed_simplices: &mut Vec<SimplexKey>,
+    seen: &mut FastHashSet<SimplexKey>,
 ) where
     U: DataType,
     V: DataType,
 {
     seen.clear();
-    seed_cells.retain(|cell_key| tds.contains_cell(*cell_key) && seen.insert(*cell_key));
+    seed_simplices
+        .retain(|simplex_key| tds.contains_simplex(*simplex_key) && seen.insert(*simplex_key));
 }
 
 /// Clears a local repair frontier and its deduplication set together.
-pub(super) fn clear_cell_seed_set(seed_cells: &mut Vec<CellKey>, seen: &mut FastHashSet<CellKey>) {
-    seed_cells.clear();
+pub(super) fn clear_simplex_seed_set(
+    seed_simplices: &mut Vec<SimplexKey>,
+    seen: &mut FastHashSet<SimplexKey>,
+) {
+    seed_simplices.clear();
     seen.clear();
 }
 
-/// Retains conflict cells and records removed cells as local repair seeds.
-pub fn retain_cells_and_record_removed(
-    conflict_cells: &mut CellKeyBuffer,
-    repair_seed_cells: &mut CellKeyBuffer,
-    mut keep_cell: impl FnMut(CellKey) -> bool,
+/// Retains conflict simplices and records removed simplices as local repair seeds.
+pub fn retain_simplices_and_record_removed(
+    conflict_simplices: &mut SimplexKeyBuffer,
+    repair_seed_simplices: &mut SimplexKeyBuffer,
+    mut keep_simplex: impl FnMut(SimplexKey) -> bool,
 ) {
-    conflict_cells.retain(|cell_key| {
-        let keep = keep_cell(*cell_key);
+    conflict_simplices.retain(|simplex_key| {
+        let keep = keep_simplex(*simplex_key);
         if !keep {
-            repair_seed_cells.push(*cell_key);
+            repair_seed_simplices.push(*simplex_key);
         }
         keep
     });
 }
 
-/// Replaces conflict cells and records cells missing from the replacement.
-pub fn replace_cells_and_record_removed(
-    conflict_cells: &mut CellKeyBuffer,
-    repair_seed_cells: &mut CellKeyBuffer,
-    replacement: CellKeyBuffer,
+/// Replaces conflict simplices and records simplices missing from the replacement.
+pub fn replace_simplices_and_record_removed(
+    conflict_simplices: &mut SimplexKeyBuffer,
+    repair_seed_simplices: &mut SimplexKeyBuffer,
+    replacement: SimplexKeyBuffer,
 ) {
-    let replacement_set: FastHashSet<CellKey> = replacement.iter().copied().collect();
-    for &cell_key in conflict_cells.iter() {
-        if !replacement_set.contains(&cell_key) {
-            repair_seed_cells.push(cell_key);
+    let replacement_set: FastHashSet<SimplexKey> = replacement.iter().copied().collect();
+    for &simplex_key in conflict_simplices.iter() {
+        if !replacement_set.contains(&simplex_key) {
+            repair_seed_simplices.push(simplex_key);
         }
     }
-    *conflict_cells = replacement;
+    *conflict_simplices = replacement;
 }
 
-/// Collects local repair seeds for an exterior insertion from the terminal walk cell.
+/// Collects local repair seeds for an exterior insertion from the terminal walk simplex.
 ///
-/// The terminal cell is adjacent to the hull facet crossed by point location, so a
+/// The terminal simplex is adjacent to the hull facet crossed by point location, so a
 /// BFS conflict search from it gives a bounded local frontier without scanning the
-/// entire triangulation. If no circumsphere conflict is found, the terminal cell
+/// entire triangulation. If no circumsphere conflict is found, the terminal simplex
 /// itself is still a useful local seed.
-pub fn collect_local_exterior_conflict_seed_cells<K, U, V, const D: usize>(
+pub fn collect_local_exterior_conflict_seed_simplices<K, U, V, const D: usize>(
     tds: &Tds<K::Scalar, U, V, D>,
     kernel: &K,
     point: &Point<K::Scalar, D>,
-    terminal_cell: CellKey,
-) -> Result<LocalConflictSeedCells, ConflictError>
+    terminal_simplex: SimplexKey,
+) -> Result<LocalConflictSeedSimplices, ConflictError>
 where
     K: Kernel<D>,
     U: DataType,
     V: DataType,
 {
-    let mut seed_cells = CellKeyBuffer::new();
-    if !tds.contains_cell(terminal_cell) {
-        return Ok(LocalConflictSeedCells {
-            seed_cells,
-            conflict_cells_found: 0,
+    let mut seed_simplices = SimplexKeyBuffer::new();
+    if !tds.contains_simplex(terminal_simplex) {
+        return Ok(LocalConflictSeedSimplices {
+            seed_simplices,
+            conflict_simplices_found: 0,
         });
     }
 
-    let computed = find_conflict_region(tds, kernel, point, terminal_cell)?;
-    let conflict_cells_found = computed.len();
+    let computed = find_conflict_region(tds, kernel, point, terminal_simplex)?;
+    let conflict_simplices_found = computed.len();
     if computed.is_empty() {
-        seed_cells.push(terminal_cell);
+        seed_simplices.push(terminal_simplex);
     } else {
-        seed_cells = computed;
+        seed_simplices = computed;
     }
 
-    Ok(LocalConflictSeedCells {
-        seed_cells,
-        conflict_cells_found,
+    Ok(LocalConflictSeedSimplices {
+        seed_simplices,
+        conflict_simplices_found,
     })
 }
 
@@ -184,7 +191,7 @@ mod tests {
     }
 
     #[test]
-    fn accumulate_live_cell_seeds_dedupes_and_ignores_stale() {
+    fn accumulate_live_simplex_seeds_dedupes_and_ignores_stale() {
         let vertices = vec![
             vertex!([0.0, 0.0]),
             vertex!([1.0, 0.0]),
@@ -194,71 +201,51 @@ mod tests {
         ];
         let dt: DelaunayTriangulation<_, (), (), 2> =
             DelaunayTriangulation::new(&vertices).unwrap();
-        let all_cells: Vec<CellKey> = dt.cells().map(|(cell_key, _)| cell_key).collect();
+        let all_simplices: Vec<SimplexKey> =
+            dt.simplices().map(|(simplex_key, _)| simplex_key).collect();
         assert!(
-            all_cells.len() >= 2,
-            "fixture should produce multiple cells for seed accumulation"
+            all_simplices.len() >= 2,
+            "fixture should produce multiple simplices for seed accumulation"
         );
 
-        let stale_cell = CellKey::from(KeyData::from_ffi(999_999));
-        let mut pending_seed_cells = vec![all_cells[0]];
-        let mut pending_seen: FastHashSet<CellKey> = pending_seed_cells.iter().copied().collect();
-        let added = accumulate_live_cell_seeds(
+        let stale_simplex = SimplexKey::from(KeyData::from_ffi(999_999));
+        let mut pending_seed_simplices = vec![all_simplices[0]];
+        let mut pending_seen: FastHashSet<SimplexKey> =
+            pending_seed_simplices.iter().copied().collect();
+        let added = accumulate_live_simplex_seeds(
             dt.tds(),
-            &[all_cells[0], all_cells[1], all_cells[1], stale_cell],
-            &mut pending_seed_cells,
+            &[
+                all_simplices[0],
+                all_simplices[1],
+                all_simplices[1],
+                stale_simplex,
+            ],
+            &mut pending_seed_simplices,
             &mut pending_seen,
-        );
-
-        assert_eq!(added, 1);
-        assert_eq!(pending_seed_cells, vec![all_cells[0], all_cells[1]]);
-        assert!(!pending_seed_cells.contains(&stale_cell));
-
-        let added_again = accumulate_live_cell_seeds(
-            dt.tds(),
-            &[all_cells[1]],
-            &mut pending_seed_cells,
-            &mut pending_seen,
-        );
-        assert_eq!(added_again, 0);
-        assert_eq!(pending_seed_cells, vec![all_cells[0], all_cells[1]]);
-    }
-
-    #[test]
-    fn append_live_unique_cell_seeds_dedupes_and_ignores_stale() {
-        let vertices = vec![
-            vertex!([0.0, 0.0]),
-            vertex!([1.0, 0.0]),
-            vertex!([0.0, 1.0]),
-            vertex!([1.0, 1.0]),
-            vertex!([0.5, 0.5]),
-        ];
-        let dt: DelaunayTriangulation<_, (), (), 2> =
-            DelaunayTriangulation::new(&vertices).unwrap();
-        let all_cells: Vec<CellKey> = dt.cells().map(|(cell_key, _)| cell_key).collect();
-        assert!(
-            all_cells.len() >= 2,
-            "fixture should produce multiple cells for compact seed accumulation"
-        );
-
-        let stale_cell = CellKey::from(KeyData::from_ffi(999_999));
-        let mut seed_cells = CellKeyBuffer::new();
-        seed_cells.push(all_cells[0]);
-        let added = append_live_unique_cell_seeds(
-            dt.tds(),
-            &[all_cells[0], all_cells[1], stale_cell, all_cells[1]],
-            &mut seed_cells,
         );
 
         assert_eq!(added, 1);
         assert_eq!(
-            seed_cells.iter().copied().collect::<Vec<_>>(),
-            vec![all_cells[0], all_cells[1],]
+            pending_seed_simplices,
+            vec![all_simplices[0], all_simplices[1]]
+        );
+        assert!(!pending_seed_simplices.contains(&stale_simplex));
+
+        let added_again = accumulate_live_simplex_seeds(
+            dt.tds(),
+            &[all_simplices[1]],
+            &mut pending_seed_simplices,
+            &mut pending_seen,
+        );
+        assert_eq!(added_again, 0);
+        assert_eq!(
+            pending_seed_simplices,
+            vec![all_simplices[0], all_simplices[1]]
         );
     }
 
     #[test]
-    fn retain_live_cell_seeds_filters_stale_and_dedupes() {
+    fn append_live_unique_simplex_seeds_dedupes_and_ignores_stale() {
         let vertices = vec![
             vertex!([0.0, 0.0]),
             vertex!([1.0, 0.0]),
@@ -268,100 +255,153 @@ mod tests {
         ];
         let dt: DelaunayTriangulation<_, (), (), 2> =
             DelaunayTriangulation::new(&vertices).unwrap();
-        let all_cells: Vec<CellKey> = dt.cells().map(|(cell_key, _)| cell_key).collect();
+        let all_simplices: Vec<SimplexKey> =
+            dt.simplices().map(|(simplex_key, _)| simplex_key).collect();
         assert!(
-            all_cells.len() >= 2,
-            "fixture should produce multiple cells for seed retention"
+            all_simplices.len() >= 2,
+            "fixture should produce multiple simplices for compact seed accumulation"
         );
 
-        let stale_cell = CellKey::from(KeyData::from_ffi(999_999));
-        let mut seed_cells = vec![all_cells[0], stale_cell, all_cells[1], all_cells[0]];
-        let mut seen = FastHashSet::default();
-        retain_live_cell_seeds(dt.tds(), &mut seed_cells, &mut seen);
+        let stale_simplex = SimplexKey::from(KeyData::from_ffi(999_999));
+        let mut seed_simplices = SimplexKeyBuffer::new();
+        seed_simplices.push(all_simplices[0]);
+        let added = append_live_unique_simplex_seeds(
+            dt.tds(),
+            &[
+                all_simplices[0],
+                all_simplices[1],
+                stale_simplex,
+                all_simplices[1],
+            ],
+            &mut seed_simplices,
+        );
 
-        assert_eq!(seed_cells, vec![all_cells[0], all_cells[1]]);
+        assert_eq!(added, 1);
+        assert_eq!(
+            seed_simplices.iter().copied().collect::<Vec<_>>(),
+            vec![all_simplices[0], all_simplices[1],]
+        );
+    }
+
+    #[test]
+    fn retain_live_simplex_seeds_filters_stale_and_dedupes() {
+        let vertices = vec![
+            vertex!([0.0, 0.0]),
+            vertex!([1.0, 0.0]),
+            vertex!([0.0, 1.0]),
+            vertex!([1.0, 1.0]),
+            vertex!([0.5, 0.5]),
+        ];
+        let dt: DelaunayTriangulation<_, (), (), 2> =
+            DelaunayTriangulation::new(&vertices).unwrap();
+        let all_simplices: Vec<SimplexKey> =
+            dt.simplices().map(|(simplex_key, _)| simplex_key).collect();
+        assert!(
+            all_simplices.len() >= 2,
+            "fixture should produce multiple simplices for seed retention"
+        );
+
+        let stale_simplex = SimplexKey::from(KeyData::from_ffi(999_999));
+        let mut seed_simplices = vec![
+            all_simplices[0],
+            stale_simplex,
+            all_simplices[1],
+            all_simplices[0],
+        ];
+        let mut seen = FastHashSet::default();
+        retain_live_simplex_seeds(dt.tds(), &mut seed_simplices, &mut seen);
+
+        assert_eq!(seed_simplices, vec![all_simplices[0], all_simplices[1]]);
         assert_eq!(seen.len(), 2);
     }
 
     #[test]
-    fn clear_cell_seed_set_clears_both_collections() {
-        let stale_cell = CellKey::from(KeyData::from_ffi(999_999));
-        let mut seed_cells = vec![stale_cell];
+    fn clear_simplex_seed_set_clears_both_collections() {
+        let stale_simplex = SimplexKey::from(KeyData::from_ffi(999_999));
+        let mut seed_simplices = vec![stale_simplex];
         let mut seen = FastHashSet::default();
-        seen.insert(stale_cell);
+        seen.insert(stale_simplex);
 
-        clear_cell_seed_set(&mut seed_cells, &mut seen);
+        clear_simplex_seed_set(&mut seed_simplices, &mut seen);
 
-        assert!(seed_cells.is_empty());
+        assert!(seed_simplices.is_empty());
         assert!(seen.is_empty());
     }
 
     #[test]
-    fn retain_and_replace_cells_record_removed_repair_seeds() {
-        let a = CellKey::from(KeyData::from_ffi(31));
-        let b = CellKey::from(KeyData::from_ffi(32));
-        let c = CellKey::from(KeyData::from_ffi(33));
-        let d = CellKey::from(KeyData::from_ffi(34));
+    fn retain_and_replace_simplices_record_removed_repair_seeds() {
+        let a = SimplexKey::from(KeyData::from_ffi(31));
+        let b = SimplexKey::from(KeyData::from_ffi(32));
+        let c = SimplexKey::from(KeyData::from_ffi(33));
+        let d = SimplexKey::from(KeyData::from_ffi(34));
 
-        let mut conflict_cells: CellKeyBuffer = [a, b, c].into_iter().collect();
-        let mut repair_seed_cells = CellKeyBuffer::new();
-        retain_cells_and_record_removed(&mut conflict_cells, &mut repair_seed_cells, |ck| ck != b);
+        let mut conflict_simplices: SimplexKeyBuffer = [a, b, c].into_iter().collect();
+        let mut repair_seed_simplices = SimplexKeyBuffer::new();
+        retain_simplices_and_record_removed(
+            &mut conflict_simplices,
+            &mut repair_seed_simplices,
+            |ck| ck != b,
+        );
         assert_eq!(
-            conflict_cells.iter().copied().collect::<Vec<_>>(),
+            conflict_simplices.iter().copied().collect::<Vec<_>>(),
             vec![a, c]
         );
         assert_eq!(
-            repair_seed_cells.iter().copied().collect::<Vec<_>>(),
+            repair_seed_simplices.iter().copied().collect::<Vec<_>>(),
             vec![b]
         );
 
-        let replacement: CellKeyBuffer = [c, d].into_iter().collect();
-        replace_cells_and_record_removed(&mut conflict_cells, &mut repair_seed_cells, replacement);
+        let replacement: SimplexKeyBuffer = [c, d].into_iter().collect();
+        replace_simplices_and_record_removed(
+            &mut conflict_simplices,
+            &mut repair_seed_simplices,
+            replacement,
+        );
         assert_eq!(
-            conflict_cells.iter().copied().collect::<Vec<_>>(),
+            conflict_simplices.iter().copied().collect::<Vec<_>>(),
             vec![c, d]
         );
         assert_eq!(
-            repair_seed_cells.iter().copied().collect::<Vec<_>>(),
+            repair_seed_simplices.iter().copied().collect::<Vec<_>>(),
             vec![b, a]
         );
     }
 
     #[test]
-    fn collect_local_exterior_conflict_seed_cells_uses_terminal_seed_when_empty() {
+    fn collect_local_exterior_conflict_seed_simplices_uses_terminal_seed_when_empty() {
         let tri = simplex_triangulation_3d();
-        let terminal_cell = tri.tds.cell_keys().next().unwrap();
-        let result = collect_local_exterior_conflict_seed_cells(
+        let terminal_simplex = tri.tds.simplex_keys().next().unwrap();
+        let result = collect_local_exterior_conflict_seed_simplices(
             &tri.tds,
             &FastKernel::new(),
             &Point::new([2.0, 2.0, 2.0]),
-            terminal_cell,
+            terminal_simplex,
         )
         .unwrap();
 
-        assert_eq!(result.conflict_cells_found, 0);
+        assert_eq!(result.conflict_simplices_found, 0);
         assert_eq!(
-            result.seed_cells.iter().copied().collect::<Vec<_>>(),
-            vec![terminal_cell]
+            result.seed_simplices.iter().copied().collect::<Vec<_>>(),
+            vec![terminal_simplex]
         );
     }
 
     #[test]
-    fn collect_local_exterior_conflict_seed_cells_returns_local_conflicts() {
+    fn collect_local_exterior_conflict_seed_simplices_returns_local_conflicts() {
         let tri = simplex_triangulation_3d();
-        let terminal_cell = tri.tds.cell_keys().next().unwrap();
-        let result = collect_local_exterior_conflict_seed_cells(
+        let terminal_simplex = tri.tds.simplex_keys().next().unwrap();
+        let result = collect_local_exterior_conflict_seed_simplices(
             &tri.tds,
             &FastKernel::new(),
             &Point::new([0.5, 0.5, 0.5]),
-            terminal_cell,
+            terminal_simplex,
         )
         .unwrap();
 
-        assert_eq!(result.conflict_cells_found, 1);
+        assert_eq!(result.conflict_simplices_found, 1);
         assert_eq!(
-            result.seed_cells.iter().copied().collect::<Vec<_>>(),
-            vec![terminal_cell]
+            result.seed_simplices.iter().copied().collect::<Vec<_>>(),
+            vec![terminal_simplex]
         );
     }
 }

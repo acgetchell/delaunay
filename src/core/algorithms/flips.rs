@@ -10,7 +10,7 @@
 //! - inserted-face dimension = k−1
 //!
 //! Implemented moves:
-//! - k=1: cell split/merge (1↔(D+1)), valid for D≥1
+//! - k=1: simplex split/merge (1↔(D+1)), valid for D≥1
 //! - k=2: facet flips (2↔D), valid for D≥2
 //! - k=3: ridge flips (3↔(D−1)), valid for D≥3
 //!
@@ -33,15 +33,15 @@ use crate::core::algorithms::incremental_insertion::{
     wire_cavity_neighbors,
 };
 use crate::core::algorithms::locate::{ConflictError, LocateError, extract_cavity_boundary};
-use crate::core::cell::{Cell, CellValidationError, NeighborSlot};
 use crate::core::collections::{
-    CellKeyBuffer, FastHashMap, FastHashSet, FastHasher, MAX_PRACTICAL_DIMENSION_SIZE,
-    PeriodicOffsetBuffer, SmallBuffer,
+    FastHashMap, FastHashSet, FastHasher, MAX_PRACTICAL_DIMENSION_SIZE, PeriodicOffsetBuffer,
+    SimplexKeyBuffer, SmallBuffer,
 };
 use crate::core::edge::EdgeKey;
 use crate::core::facet::{AllFacetsIter, FacetError, FacetHandle, facet_key_from_vertices};
 use crate::core::operations::TopologicalOperation;
-use crate::core::tds::{CellKey, EntityKind, NeighborValidationError, Tds, VertexKey};
+use crate::core::simplex::{NeighborSlot, Simplex, SimplexValidationError};
+use crate::core::tds::{EntityKind, NeighborValidationError, SimplexKey, Tds, VertexKey};
 use crate::core::traits::data_type::DataType;
 use crate::core::triangulation::{TopologyGuarantee, Triangulation, TriangulationValidationError};
 use crate::core::util::stable_hash_u64_slice;
@@ -70,7 +70,7 @@ use std::time::{Duration, Instant};
 use thiserror::Error;
 
 type VertexKeyList = SmallBuffer<VertexKey, MAX_PRACTICAL_DIMENSION_SIZE>;
-type RemovedCellVertexSnapshot = SmallBuffer<VertexKeyList, MAX_PRACTICAL_DIMENSION_SIZE>;
+type RemovedSimplexVertexSnapshot = SmallBuffer<VertexKeyList, MAX_PRACTICAL_DIMENSION_SIZE>;
 type ReplacementPeriodicOffsets<const D: usize> =
     SmallBuffer<Option<PeriodicOffsetBuffer<D>>, MAX_PRACTICAL_DIMENSION_SIZE>;
 
@@ -99,7 +99,7 @@ pub struct BistellarFlipKind {
 fn repair_delaunay_with_flips_k2_k3_attempt<K, U, V, const D: usize>(
     tds: &mut Tds<K::Scalar, U, V, D>,
     kernel: &K,
-    seed_cells: Option<&[CellKey]>,
+    seed_simplices: Option<&[SimplexKey]>,
     config: &RepairAttemptConfig,
 ) -> Result<RepairAttemptOutcome, DelaunayRepairError>
 where
@@ -107,7 +107,7 @@ where
     U: DataType,
     V: DataType,
 {
-    repair_delaunay_with_flips_k2_k3_attempt_timed(tds, kernel, seed_cells, config, None)
+    repair_delaunay_with_flips_k2_k3_attempt_timed(tds, kernel, seed_simplices, config, None)
 }
 
 /// Run a single flip-repair attempt while reporting queue-family timings.
@@ -118,7 +118,7 @@ where
 fn repair_delaunay_with_flips_k2_k3_attempt_timed<K, U, V, const D: usize>(
     tds: &mut Tds<K::Scalar, U, V, D>,
     kernel: &K,
-    seed_cells: Option<&[CellKey]>,
+    seed_simplices: Option<&[SimplexKey]>,
     config: &RepairAttemptConfig,
     mut timing: Option<&mut LocalRepairPhaseTiming>,
 ) -> Result<RepairAttemptOutcome, DelaunayRepairError>
@@ -131,24 +131,24 @@ where
         return Err(FlipError::UnsupportedDimension { dimension: D }.into());
     }
     if D == 2 {
-        return repair_delaunay_with_flips_k2_attempt(tds, kernel, seed_cells, config);
+        return repair_delaunay_with_flips_k2_attempt(tds, kernel, seed_simplices, config);
     }
 
     let max_flips = config
         .max_flips_override
-        .unwrap_or_else(|| default_max_flips::<D>(tds.number_of_cells()));
+        .unwrap_or_else(|| default_max_flips::<D>(tds.number_of_simplices()));
 
     let mut stats = DelaunayRepairStats::default();
     let mut diagnostics = RepairDiagnostics::default();
     let mut queues = RepairQueues::new();
     let mut last_applied_flip: Option<LastAppliedFlip> = None;
     let seed_started = timing.is_some().then(Instant::now);
-    let used_full_reseed = seed_repair_queues(tds, seed_cells, &mut queues, &mut stats)?;
+    let used_full_reseed = seed_repair_queues(tds, seed_simplices, &mut queues, &mut stats)?;
     if let (Some(timing), Some(seed_started)) = (timing.as_deref_mut(), seed_started) {
         timing.record_attempt_seed(seed_started.elapsed());
     }
-    let mut touched_cells = CellKeyBuffer::new();
-    let mut touched_cell_set = FastHashSet::<CellKey>::default();
+    let mut touched_simplices = SimplexKeyBuffer::new();
+    let mut touched_simplex_set = FastHashSet::<SimplexKey>::default();
 
     let mut prefer_secondary = false;
 
@@ -180,8 +180,8 @@ where
                     config,
                     &mut diagnostics,
                     &mut last_applied_flip,
-                    &mut touched_cells,
-                    &mut touched_cell_set,
+                    &mut touched_simplices,
+                    &mut touched_simplex_set,
                 )
             );
             let processed_edge = !processed_ridge
@@ -196,8 +196,8 @@ where
                         config,
                         &mut diagnostics,
                         &mut last_applied_flip,
-                        &mut touched_cells,
-                        &mut touched_cell_set,
+                        &mut touched_simplices,
+                        &mut touched_simplex_set,
                     )
                 );
             let processed_triangle = !processed_ridge
@@ -213,8 +213,8 @@ where
                         config,
                         &mut diagnostics,
                         &mut last_applied_flip,
-                        &mut touched_cells,
-                        &mut touched_cell_set,
+                        &mut touched_simplices,
+                        &mut touched_simplex_set,
                     )
                 );
             if processed_ridge || processed_edge || processed_triangle {
@@ -234,8 +234,8 @@ where
                 config,
                 &mut diagnostics,
                 &mut last_applied_flip,
-                &mut touched_cells,
-                &mut touched_cell_set,
+                &mut touched_simplices,
+                &mut touched_simplex_set,
             )
         ) {
             prefer_secondary = true;
@@ -253,8 +253,8 @@ where
                 config,
                 &mut diagnostics,
                 &mut last_applied_flip,
-                &mut touched_cells,
-                &mut touched_cell_set,
+                &mut touched_simplices,
+                &mut touched_simplex_set,
             )
         );
         let processed_edge = !processed_ridge
@@ -269,8 +269,8 @@ where
                     config,
                     &mut diagnostics,
                     &mut last_applied_flip,
-                    &mut touched_cells,
-                    &mut touched_cell_set,
+                    &mut touched_simplices,
+                    &mut touched_simplex_set,
                 )
             );
         let processed_triangle = !processed_ridge
@@ -286,8 +286,8 @@ where
                     config,
                     &mut diagnostics,
                     &mut last_applied_flip,
-                    &mut touched_cells,
-                    &mut touched_cell_set,
+                    &mut touched_simplices,
+                    &mut touched_simplex_set,
                 )
             );
         if processed_ridge || processed_edge || processed_triangle {
@@ -312,36 +312,36 @@ where
         postcondition_required: repair_postcondition_required(&stats, &diagnostics),
         stats,
         last_applied_flip,
-        touched_cells,
+        touched_simplices,
         used_full_reseed,
     })
 }
 
-/// Captures each removed cell's vertex list before a flip deletes the cells.
+/// Captures each removed simplex's vertex list before a flip deletes the simplices.
 ///
 /// The snapshot lets later diagnostics describe removed simplices even after
-/// their `CellKey`s no longer resolve in the TDS.
-fn snapshot_removed_cell_vertices<T, U, V, const D: usize>(
+/// their `SimplexKey`s no longer resolve in the TDS.
+fn snapshot_removed_simplex_vertices<T, U, V, const D: usize>(
     tds: &Tds<T, U, V, D>,
-    removed_cells: &CellKeyBuffer,
-) -> Result<RemovedCellVertexSnapshot, FlipError>
+    removed_simplices: &SimplexKeyBuffer,
+) -> Result<RemovedSimplexVertexSnapshot, FlipError>
 where
     U: DataType,
     V: DataType,
 {
-    removed_cells
+    removed_simplices
         .iter()
         .copied()
-        .map(|cell_key| {
-            let cell = tds
-                .cell(cell_key)
-                .ok_or(FlipError::MissingCell { cell_key })?;
-            Ok(cell.vertices().iter().copied().collect())
+        .map(|simplex_key| {
+            let simplex = tds
+                .simplex(simplex_key)
+                .ok_or(FlipError::MissingSimplex { simplex_key })?;
+            Ok(simplex.vertices().iter().copied().collect())
         })
         .collect()
 }
 
-/// Apply a bistellar flip using explicit k and vertex/cell slices.
+/// Apply a bistellar flip using explicit k and vertex/simplex slices.
 #[expect(
     clippy::too_many_arguments,
     reason = "Flip mutation needs explicit move, cavity, policy, and validation inputs"
@@ -355,7 +355,7 @@ fn apply_bistellar_flip_with_k<T, U, V, const D: usize>(
     k_move: usize,
     removed_face_vertices: &[VertexKey],
     inserted_face_vertices: &[VertexKey],
-    removed_cells: &CellKeyBuffer,
+    removed_simplices: &SimplexKeyBuffer,
     direction: FlipDirection,
     orientation_policy: ReplacementOrientationPolicy,
     validation_scope: FlipValidationScope,
@@ -389,10 +389,10 @@ where
         }
         .into());
     }
-    if removed_cells.len() != k_move {
-        return Err(FlipContextError::WrongRemovedCellCount {
+    if removed_simplices.len() != k_move {
+        return Err(FlipContextError::WrongRemovedSimplexCount {
             expected: k_move,
-            found: removed_cells.len(),
+            found: removed_simplices.len(),
         }
         .into());
     }
@@ -412,27 +412,27 @@ where
     // If it does, applying the move can create non-manifold codimension>1 singularities
     // (e.g., disconnected ridge links in 3D when a k=2 flip inserts an already-existing edge).
     //
-    // For facets (k==D) and full cells (k==D+1), this is already covered by the existing
-    // non-manifold facet / duplicate-cell checks.
+    // For facets (k==D) and full simplices (k==D+1), this is already covered by the existing
+    // non-manifold facet / duplicate-simplex checks.
     if k_move >= 2
         && k_move < D
-        && let Some(existing_cell) =
-            find_cell_containing_simplex(tds, inserted_face_vertices, removed_cells)
+        && let Some(existing_simplex) =
+            find_simplex_containing_simplex(tds, inserted_face_vertices, removed_simplices)
     {
         if repair_trace_enabled() || env::var_os("DELAUNAY_REPAIR_DEBUG_FACETS").is_some() {
             tracing::debug!(
-                "[repair] skip flip: inserted simplex already exists (k={k_move}, inserted_face={inserted_face_vertices:?}, existing_cell={existing_cell:?})"
+                "[repair] skip flip: inserted simplex already exists (k={k_move}, inserted_face={inserted_face_vertices:?}, existing_simplex={existing_simplex:?})"
             );
         }
         return Err(FlipError::InsertedSimplexAlreadyExists {
             k_move,
             simplex_vertices: inserted_face_vertices.iter().copied().collect(),
-            existing_cell,
+            existing_simplex,
         });
     }
 
-    let mut new_cells = CellKeyBuffer::new();
-    let mut new_cell_vertices: SmallBuffer<
+    let mut new_simplices = SimplexKeyBuffer::new();
+    let mut new_simplex_vertices: SmallBuffer<
         SmallBuffer<VertexKey, MAX_PRACTICAL_DIMENSION_SIZE>,
         MAX_PRACTICAL_DIMENSION_SIZE,
     > = SmallBuffer::with_capacity(removed_face_vertices.len());
@@ -447,26 +447,26 @@ where
             }
         }
 
-        new_cell_vertices.push(vertices);
+        new_simplex_vertices.push(vertices);
     }
 
-    let boundary_facets = extract_cavity_boundary(tds, removed_cells).map_err(|source| {
+    let boundary_facets = extract_cavity_boundary(tds, removed_simplices).map_err(|source| {
         FlipError::from(FlipNeighborWiringError::BoundaryExtraction { source })
     })?;
 
-    let external_facets = external_facets_for_boundary(tds, removed_cells, &boundary_facets)
+    let external_facets = external_facets_for_boundary(tds, removed_simplices, &boundary_facets)
         .map_err(FlipNeighborWiringError::from)?;
 
     let topology_index = build_flip_topology_index(
         tds,
-        &new_cell_vertices,
-        removed_cells,
+        &new_simplex_vertices,
+        removed_simplices,
         inserted_face_vertices,
     );
 
-    for vertices in &mut new_cell_vertices {
-        if flip_would_duplicate_cell_any(tds, vertices, &topology_index) {
-            return Err(FlipError::DuplicateCell);
+    for vertices in &mut new_simplex_vertices {
+        if flip_would_duplicate_simplex_any(tds, vertices, &topology_index) {
+            return Err(FlipError::DuplicateSimplex);
         }
         if flip_would_create_nonmanifold_facets_any(vertices, &topology_index) {
             return Err(FlipError::NonManifoldFacet);
@@ -474,14 +474,14 @@ where
 
         let points = vertices_to_points(tds, vertices)?;
 
-        // Exact orientation: reject degenerate cells and canonicalize to
+        // Exact orientation: reject degenerate simplices and canonicalize to
         // positive orientation in one pass.  This function uses
         // robust_orientation (exact arithmetic, no SoS) rather than any
         // kernel predicate, so it is kernel-independent.
         match robust_orientation(&points) {
             Err(e) => {
                 return Err(FlipPredicateError::coordinate_conversion(
-                    FlipPredicateOperation::ReplacementCellOrientation,
+                    FlipPredicateOperation::ReplacementSimplexOrientation,
                     e,
                 )
                 .into());
@@ -494,10 +494,10 @@ where
                         removed_face = ?removed_face_vertices,
                         inserted_face = ?inserted_face_vertices,
                         vertices = ?vertices,
-                        "[repair] flip degenerate cell (exact)"
+                        "[repair] flip degenerate simplex (exact)"
                     );
                 }
-                return Err(FlipError::DegenerateCell);
+                return Err(FlipError::DegenerateSimplex);
             }
             Ok(Orientation::NEGATIVE) => {
                 // Canonicalize to positive orientation by swapping two vertices.
@@ -512,63 +512,63 @@ where
     } else {
         None
     };
-    let mut new_cell_offsets = replacement_cell_periodic_offsets(
+    let mut new_simplex_offsets = replacement_simplex_periodic_offsets(
         tds,
-        &new_cell_vertices,
-        removed_cells,
+        &new_simplex_vertices,
+        removed_simplices,
         &external_facets,
         newly_inserted_vertex,
     )?;
 
-    orient_replacement_cells(
+    orient_replacement_simplices(
         tds,
-        &mut new_cell_vertices,
-        &mut new_cell_offsets,
+        &mut new_simplex_vertices,
+        &mut new_simplex_offsets,
         &external_facets,
     )?;
     if matches!(
         orientation_policy,
         ReplacementOrientationPolicy::RequirePositive
     ) {
-        validate_replacement_orientation(tds, &new_cell_vertices)?;
+        validate_replacement_orientation(tds, &new_simplex_vertices)?;
     }
 
-    // Snapshot the removed cells' vertex lists before any TDS mutation so an
-    // unexpected missing cell aborts without leaving replacement cells behind.
-    // After `tds.remove_cells_by_keys` runs, `tds.cell(removed_key)` returns
+    // Snapshot the removed simplices' vertex lists before any TDS mutation so an
+    // unexpected missing simplex aborts without leaving replacement simplices behind.
+    // After `tds.remove_simplices_by_keys` runs, `tds.simplex(removed_key)` returns
     // `None`, which would strip the most useful context from predecessor-flip
     // traces (see #204 investigation).
-    let removed_cell_vertices = snapshot_removed_cell_vertices(tds, removed_cells)?;
+    let removed_simplex_vertices = snapshot_removed_simplex_vertices(tds, removed_simplices)?;
 
     let mut trial = tds.clone_for_rollback();
 
-    for (vertices, periodic_offsets) in new_cell_vertices.into_iter().zip(new_cell_offsets) {
-        let mut cell = Cell::new(vertices, None)?;
+    for (vertices, periodic_offsets) in new_simplex_vertices.into_iter().zip(new_simplex_offsets) {
+        let mut simplex = Simplex::new(vertices, None)?;
         if let Some(offsets) = periodic_offsets {
-            cell.set_periodic_vertex_offsets(offsets)?;
+            simplex.set_periodic_vertex_offsets(offsets)?;
         }
-        let cell_key = trial
-            .insert_cell_with_mapping_prechecked_topology(cell)
-            .map_err(|source| FlipMutationError::CellInsertion {
+        let simplex_key = trial
+            .insert_simplex_with_mapping_prechecked_topology(simplex)
+            .map_err(|source| FlipMutationError::SimplexInsertion {
                 source: source.into(),
             })?;
-        new_cells.push(cell_key);
+        new_simplices.push(simplex_key);
     }
 
     wire_cavity_neighbors(
         &mut trial,
-        &new_cells,
+        &new_simplices,
         external_facets.iter().copied(),
-        Some(removed_cells),
+        Some(removed_simplices),
     )
     .map_err(FlipNeighborWiringError::from)?;
 
-    trial.remove_cells_by_keys(removed_cells);
+    trial.remove_simplices_by_keys(removed_simplices);
 
     let validation_result = match validation_scope {
         FlipValidationScope::FullTds => trial.is_valid().map_err(TdsValidationFailure::from),
         FlipValidationScope::LocalCavity => {
-            validate_flip_trial_cavity(&trial, &new_cells, &external_facets, removed_cells)
+            validate_flip_trial_cavity(&trial, &new_simplices, &external_facets, removed_simplices)
         }
     };
     validation_result.map_err(|source| {
@@ -590,21 +590,21 @@ where
         info: FlipInfo {
             kind: BistellarFlipKind { k: k_move, d: D },
             direction,
-            removed_cells: removed_cells.iter().copied().collect(),
-            new_cells,
+            removed_simplices: removed_simplices.iter().copied().collect(),
+            new_simplices,
             removed_face_vertices: removed_face_vertices.iter().copied().collect(),
             inserted_face_vertices: inserted_face_vertices.iter().copied().collect(),
         },
-        removed_cell_vertices,
+        removed_simplex_vertices,
     })
 }
 
 /// Selects whether a flip is only topological or must preserve Delaunay geometry.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum ReplacementOrientationPolicy {
-    /// Allow coherent replacement cells regardless of geometric sign.
+    /// Allow coherent replacement simplices regardless of geometric sign.
     AllowSigned,
-    /// Require replacement cells to stay in positive canonical orientation.
+    /// Require replacement simplices to stay in positive canonical orientation.
     RequirePositive,
 }
 
@@ -613,116 +613,120 @@ enum ReplacementOrientationPolicy {
 enum FlipValidationScope {
     /// Validate the whole triangulation data structure.
     FullTds,
-    /// Validate only the cells whose adjacency can change during a cavity flip.
+    /// Validate only the simplices whose adjacency can change during a cavity flip.
     LocalCavity,
 }
 
 /// Checks the flip cavity after mutation without rescanning the full TDS.
 fn validate_flip_trial_cavity<T, U, V, const D: usize>(
     tds: &Tds<T, U, V, D>,
-    new_cells: &[CellKey],
+    new_simplices: &[SimplexKey],
     external_facets: &[FacetHandle],
-    removed_cells: &[CellKey],
+    removed_simplices: &[SimplexKey],
 ) -> Result<(), TdsValidationFailure>
 where
     U: DataType,
     V: DataType,
 {
-    for &cell_key in removed_cells {
-        if tds.contains_cell(cell_key) {
+    for &simplex_key in removed_simplices {
+        if tds.contains_simplex(simplex_key) {
             return Err(TdsValidationFailure::InconsistentDataStructure {
-                message: format!("flip trial still contains removed cell {cell_key:?}"),
+                message: format!("flip trial still contains removed simplex {simplex_key:?}"),
             });
         }
-        if tds.cell_uuid_from_key(cell_key).is_some() {
+        if tds.simplex_uuid_from_key(simplex_key).is_some() {
             return Err(TdsValidationFailure::MappingInconsistency {
-                entity: EntityKind::Cell,
-                message: format!("flip trial still maps removed cell key {cell_key:?}"),
+                entity: EntityKind::Simplex,
+                message: format!("flip trial still maps removed simplex key {simplex_key:?}"),
             });
         }
     }
 
-    let mut affected_cells = CellKeyBuffer::new();
+    let mut affected_simplices = SimplexKeyBuffer::new();
     let mut affected_set = FastHashSet::default();
-    for &cell_key in new_cells {
-        push_unique_cell_key(cell_key, &mut affected_cells, &mut affected_set);
+    for &simplex_key in new_simplices {
+        push_unique_simplex_key(simplex_key, &mut affected_simplices, &mut affected_set);
     }
     for facet in external_facets {
-        push_unique_cell_key(facet.cell_key(), &mut affected_cells, &mut affected_set);
+        push_unique_simplex_key(
+            facet.simplex_key(),
+            &mut affected_simplices,
+            &mut affected_set,
+        );
     }
 
-    validate_flip_trial_local_facet_sharing(tds, &affected_cells)?;
+    validate_flip_trial_local_facet_sharing(tds, &affected_simplices)?;
 
-    for &cell_key in &affected_cells {
-        validate_flip_trial_cell(tds, cell_key, removed_cells)?;
+    for &simplex_key in &affected_simplices {
+        validate_flip_trial_simplex(tds, simplex_key, removed_simplices)?;
     }
 
     Ok(())
 }
 
-/// Adds a cell to a small worklist while preserving first-seen order.
-fn push_unique_cell_key(
-    cell_key: CellKey,
-    cells: &mut CellKeyBuffer,
-    seen: &mut FastHashSet<CellKey>,
+/// Adds a simplex to a small worklist while preserving first-seen order.
+fn push_unique_simplex_key(
+    simplex_key: SimplexKey,
+    simplices: &mut SimplexKeyBuffer,
+    seen: &mut FastHashSet<SimplexKey>,
 ) {
-    if seen.insert(cell_key) {
-        cells.push(cell_key);
+    if seen.insert(simplex_key) {
+        simplices.push(simplex_key);
     }
 }
 
-/// Ensures affected replacement cells agree on shared facets and multiplicity.
+/// Ensures affected replacement simplices agree on shared facets and multiplicity.
 fn validate_flip_trial_local_facet_sharing<T, U, V, const D: usize>(
     tds: &Tds<T, U, V, D>,
-    affected_cells: &[CellKey],
+    affected_simplices: &[SimplexKey],
 ) -> Result<(), TdsValidationFailure>
 where
     U: DataType,
     V: DataType,
 {
-    type FacetIncidents = SmallBuffer<(CellKey, u8), 2>;
-    let mut facet_to_cells: FastHashMap<u64, FacetIncidents> = FastHashMap::default();
+    type FacetIncidents = SmallBuffer<(SimplexKey, u8), 2>;
+    let mut facet_to_simplices: FastHashMap<u64, FacetIncidents> = FastHashMap::default();
 
-    for &cell_key in affected_cells {
-        let cell = tds
-            .cell(cell_key)
-            .ok_or_else(|| TdsValidationFailure::CellNotFound {
-                cell_key,
-                context: "flip trial local facet sharing".to_string(),
-            })?;
-        if cell.number_of_vertices() != D + 1 {
+    for &simplex_key in affected_simplices {
+        let simplex =
+            tds.simplex(simplex_key)
+                .ok_or_else(|| TdsValidationFailure::SimplexNotFound {
+                    simplex_key,
+                    context: "flip trial local facet sharing".to_string(),
+                })?;
+        if simplex.number_of_vertices() != D + 1 {
             return Err(TdsValidationFailure::DimensionMismatch {
                 expected: D + 1,
-                actual: cell.number_of_vertices(),
-                context: format!("flip trial cell {cell_key:?} arity"),
+                actual: simplex.number_of_vertices(),
+                context: format!("flip trial simplex {simplex_key:?} arity"),
             });
         }
 
-        for facet_idx in 0..cell.number_of_vertices() {
-            let facet_vertices = facet_vertices_from_cell(cell, facet_idx);
+        for facet_idx in 0..simplex.number_of_vertices() {
+            let facet_vertices = facet_vertices_from_simplex(simplex, facet_idx);
             let facet_idx_u8 =
                 u8::try_from(facet_idx).map_err(|_| TdsValidationFailure::IndexOutOfBounds {
                     index: facet_idx,
                     bound: usize::from(u8::MAX),
                     context: "flip trial facet index".to_string(),
                 })?;
-            facet_to_cells
+            facet_to_simplices
                 .entry(facet_key_from_vertices(&facet_vertices))
                 .or_default()
-                .push((cell_key, facet_idx_u8));
+                .push((simplex_key, facet_idx_u8));
         }
     }
 
-    for (facet_key, incidents) in facet_to_cells {
+    for (facet_key, incidents) in facet_to_simplices {
         match incidents.as_slice() {
             [_] => {}
-            [(cell_a, facet_a), (cell_b, facet_b)] => {
+            [(simplex_a, facet_a), (simplex_b, facet_b)] => {
                 validate_flip_trial_mutual_facet_neighbors(
                     tds,
                     facet_key,
-                    *cell_a,
+                    *simplex_a,
                     usize::from(*facet_a),
-                    *cell_b,
+                    *simplex_b,
                     usize::from(*facet_b),
                 )?;
             }
@@ -740,59 +744,61 @@ where
     Ok(())
 }
 
-/// Checks one affected cell's local references after a flip mutation.
-fn validate_flip_trial_cell<T, U, V, const D: usize>(
+/// Checks one affected simplex's local references after a flip mutation.
+fn validate_flip_trial_simplex<T, U, V, const D: usize>(
     tds: &Tds<T, U, V, D>,
-    cell_key: CellKey,
-    removed_cells: &[CellKey],
+    simplex_key: SimplexKey,
+    removed_simplices: &[SimplexKey],
 ) -> Result<(), TdsValidationFailure>
 where
     U: DataType,
     V: DataType,
 {
-    let cell = tds
-        .cell(cell_key)
-        .ok_or_else(|| TdsValidationFailure::CellNotFound {
-            cell_key,
-            context: "flip trial local cell validation".to_string(),
-        })?;
-    if tds.cell_uuid_from_key(cell_key) != Some(cell.uuid()) {
+    let simplex =
+        tds.simplex(simplex_key)
+            .ok_or_else(|| TdsValidationFailure::SimplexNotFound {
+                simplex_key,
+                context: "flip trial local simplex validation".to_string(),
+            })?;
+    if tds.simplex_uuid_from_key(simplex_key) != Some(simplex.uuid()) {
         return Err(TdsValidationFailure::MappingInconsistency {
-            entity: EntityKind::Cell,
+            entity: EntityKind::Simplex,
             message: format!(
-                "missing or inconsistent UUID mapping for flip trial cell {cell_key:?}"
+                "missing or inconsistent UUID mapping for flip trial simplex {simplex_key:?}"
             ),
         });
     }
 
-    if cell.number_of_vertices() != D + 1 {
+    if simplex.number_of_vertices() != D + 1 {
         return Err(TdsValidationFailure::DimensionMismatch {
             expected: D + 1,
-            actual: cell.number_of_vertices(),
-            context: format!("flip trial cell {cell_key:?} arity"),
+            actual: simplex.number_of_vertices(),
+            context: format!("flip trial simplex {simplex_key:?} arity"),
         });
     }
 
-    validate_flip_trial_cell_vertices(tds, cell_key, cell)?;
-    validate_flip_trial_cell_neighbors(tds, cell_key, cell, removed_cells)
+    validate_flip_trial_simplex_vertices(tds, simplex_key, simplex)?;
+    validate_flip_trial_simplex_neighbors(tds, simplex_key, simplex, removed_simplices)
 }
 
-/// Verifies that affected cells reference existing vertices with valid incidence.
-fn validate_flip_trial_cell_vertices<T, U, V, const D: usize>(
+/// Verifies that affected simplices reference existing vertices with valid incidence.
+fn validate_flip_trial_simplex_vertices<T, U, V, const D: usize>(
     tds: &Tds<T, U, V, D>,
-    cell_key: CellKey,
-    cell: &Cell<T, U, V, D>,
+    simplex_key: SimplexKey,
+    simplex: &Simplex<T, U, V, D>,
 ) -> Result<(), TdsValidationFailure>
 where
     U: DataType,
     V: DataType,
 {
     let mut seen_vertices: SmallBuffer<VertexKey, MAX_PRACTICAL_DIMENSION_SIZE> =
-        SmallBuffer::with_capacity(cell.number_of_vertices());
-    for &vertex_key in cell.vertices() {
+        SmallBuffer::with_capacity(simplex.number_of_vertices());
+    for &vertex_key in simplex.vertices() {
         if seen_vertices.contains(&vertex_key) {
             return Err(TdsValidationFailure::InconsistentDataStructure {
-                message: format!("flip trial cell {cell_key:?} repeats vertex {vertex_key:?}"),
+                message: format!(
+                    "flip trial simplex {simplex_key:?} repeats vertex {vertex_key:?}"
+                ),
             });
         }
         seen_vertices.push(vertex_key);
@@ -801,7 +807,7 @@ where
             tds.vertex(vertex_key)
                 .ok_or_else(|| TdsValidationFailure::VertexNotFound {
                     vertex_key,
-                    context: format!("flip trial cell {cell_key:?} vertex reference"),
+                    context: format!("flip trial simplex {simplex_key:?} vertex reference"),
                 })?;
         if tds.vertex_uuid_from_key(vertex_key) != Some(vertex.uuid()) {
             return Err(TdsValidationFailure::MappingInconsistency {
@@ -811,19 +817,19 @@ where
                 ),
             });
         }
-        let Some(incident_cell_key) = vertex.incident_cell() else {
+        let Some(incident_simplex_key) = vertex.incident_simplex() else {
             continue;
         };
-        let incident_cell =
-            tds.cell(incident_cell_key)
-                .ok_or_else(|| TdsValidationFailure::CellNotFound {
-                    cell_key: incident_cell_key,
-                    context: format!("dangling incident_cell pointer from vertex {vertex_key:?}"),
-                })?;
-        if !incident_cell.contains_vertex(vertex_key) {
+        let incident_simplex = tds.simplex(incident_simplex_key).ok_or_else(|| {
+            TdsValidationFailure::SimplexNotFound {
+                simplex_key: incident_simplex_key,
+                context: format!("dangling incident_simplex pointer from vertex {vertex_key:?}"),
+            }
+        })?;
+        if !incident_simplex.contains_vertex(vertex_key) {
             return Err(TdsValidationFailure::InconsistentDataStructure {
                 message: format!(
-                    "Vertex {vertex_key:?} incident_cell {incident_cell_key:?} does not contain the vertex"
+                    "Vertex {vertex_key:?} incident_simplex {incident_simplex_key:?} does not contain the vertex"
                 ),
             });
         }
@@ -832,18 +838,18 @@ where
     Ok(())
 }
 
-/// Verifies affected-cell neighbor links, mirror facets, and orientation parity.
-fn validate_flip_trial_cell_neighbors<T, U, V, const D: usize>(
+/// Verifies affected-simplex neighbor links, mirror facets, and orientation parity.
+fn validate_flip_trial_simplex_neighbors<T, U, V, const D: usize>(
     tds: &Tds<T, U, V, D>,
-    cell_key: CellKey,
-    cell: &Cell<T, U, V, D>,
-    removed_cells: &[CellKey],
+    simplex_key: SimplexKey,
+    simplex: &Simplex<T, U, V, D>,
+    removed_simplices: &[SimplexKey],
 ) -> Result<(), TdsValidationFailure>
 where
     U: DataType,
     V: DataType,
 {
-    let Some(neighbors) = cell.neighbor_slots() else {
+    let Some(neighbors) = simplex.neighbor_slots() else {
         return Ok(());
     };
     if neighbors.len() != D + 1 {
@@ -861,8 +867,8 @@ where
             NeighborSlot::Unassigned => {
                 return Err(TdsValidationFailure::InvalidNeighbors {
                     reason: NeighborValidationError::UnassignedNeighborSlot {
-                        cell_key,
-                        cell_uuid: cell.uuid(),
+                        simplex_key,
+                        simplex_uuid: simplex.uuid(),
                         facet_index: facet_idx,
                         context: "flip trial neighbor validation".to_string(),
                     },
@@ -871,64 +877,64 @@ where
             NeighborSlot::Boundary => continue,
             NeighborSlot::Neighbor(neighbor_key) => neighbor_key,
         };
-        if removed_cells.contains(&neighbor_key) {
+        if removed_simplices.contains(&neighbor_key) {
             return Err(TdsValidationFailure::InvalidNeighbors {
                 reason: NeighborValidationError::ReferencedRemovedNeighbor {
-                    cell_key,
-                    cell_uuid: cell.uuid(),
+                    simplex_key,
+                    simplex_uuid: simplex.uuid(),
                     facet_index: facet_idx,
                     neighbor_key,
                 },
             });
         }
-        if neighbor_key == cell_key {
-            if cell_allows_periodic_self_neighbor(cell) {
+        if neighbor_key == simplex_key {
+            if simplex_allows_periodic_self_neighbor(simplex) {
                 continue;
             }
             return Err(TdsValidationFailure::InvalidNeighbors {
                 reason: NeighborValidationError::NonPeriodicSelfNeighbor {
-                    cell_key,
-                    cell_uuid: cell.uuid(),
+                    simplex_key,
+                    simplex_uuid: simplex.uuid(),
                     facet_index: facet_idx,
                 },
             });
         }
 
-        let neighbor_cell =
-            tds.cell(neighbor_key)
+        let neighbor_simplex =
+            tds.simplex(neighbor_key)
                 .ok_or_else(|| TdsValidationFailure::InvalidNeighbors {
-                    reason: NeighborValidationError::MissingNeighborCell {
-                        cell_key,
-                        cell_uuid: cell.uuid(),
+                    reason: NeighborValidationError::MissingNeighborSimplex {
+                        simplex_key,
+                        simplex_uuid: simplex.uuid(),
                         facet_index: facet_idx,
                         neighbor_key,
                         context: "flip trial neighbor validation".to_string(),
                     },
                 })?;
-        let mirror_idx = cell
-            .mirror_facet_index(facet_idx, neighbor_cell)
+        let mirror_idx = simplex
+            .mirror_facet_index(facet_idx, neighbor_simplex)
             .ok_or_else(|| TdsValidationFailure::InvalidNeighbors {
                 reason: NeighborValidationError::MirrorFacetMissing {
-                    cell_uuid: cell.uuid(),
+                    simplex_uuid: simplex.uuid(),
                     facet_index: facet_idx,
-                    neighbor_uuid: neighbor_cell.uuid(),
+                    neighbor_uuid: neighbor_simplex.uuid(),
                     context: "flip trial neighbor validation".to_string(),
                 },
             })?;
         validate_flip_trial_mutual_facet_neighbors(
             tds,
-            facet_key_from_vertices(&facet_vertices_from_cell(cell, facet_idx)),
-            cell_key,
+            facet_key_from_vertices(&facet_vertices_from_simplex(simplex, facet_idx)),
+            simplex_key,
             facet_idx,
             neighbor_key,
             mirror_idx,
         )?;
         validate_flip_trial_neighbor_orientation(
-            cell_key,
-            cell,
+            simplex_key,
+            simplex,
             facet_idx,
             neighbor_key,
-            neighbor_cell,
+            neighbor_simplex,
             mirror_idx,
         )?;
     }
@@ -937,56 +943,58 @@ where
 }
 
 /// Mirrors TDS validation's periodic self-neighbor allowance locally.
-fn cell_allows_periodic_self_neighbor<T, U, V, const D: usize>(cell: &Cell<T, U, V, D>) -> bool
+fn simplex_allows_periodic_self_neighbor<T, U, V, const D: usize>(
+    simplex: &Simplex<T, U, V, D>,
+) -> bool
 where
     U: DataType,
     V: DataType,
 {
-    let Some(offsets) = cell.periodic_vertex_offsets() else {
+    let Some(offsets) = simplex.periodic_vertex_offsets() else {
         return false;
     };
-    !offsets.is_empty() && offsets.len() == cell.number_of_vertices()
+    !offsets.is_empty() && offsets.len() == simplex.number_of_vertices()
 }
 
-/// Requires two cells sharing an affected facet to point back to each other.
+/// Requires two simplices sharing an affected facet to point back to each other.
 fn validate_flip_trial_mutual_facet_neighbors<T, U, V, const D: usize>(
     tds: &Tds<T, U, V, D>,
     facet_key: u64,
-    source_cell_key: CellKey,
+    source_simplex_key: SimplexKey,
     source_facet: usize,
-    target_cell_key: CellKey,
+    target_simplex_key: SimplexKey,
     target_facet: usize,
 ) -> Result<(), TdsValidationFailure>
 where
     U: DataType,
     V: DataType,
 {
-    let source_cell =
-        tds.cell(source_cell_key)
-            .ok_or_else(|| TdsValidationFailure::CellNotFound {
-                cell_key: source_cell_key,
+    let source_simplex =
+        tds.simplex(source_simplex_key)
+            .ok_or_else(|| TdsValidationFailure::SimplexNotFound {
+                simplex_key: source_simplex_key,
                 context: "flip trial mutual neighbor validation".to_string(),
             })?;
-    let target_cell =
-        tds.cell(target_cell_key)
-            .ok_or_else(|| TdsValidationFailure::CellNotFound {
-                cell_key: target_cell_key,
+    let target_simplex =
+        tds.simplex(target_simplex_key)
+            .ok_or_else(|| TdsValidationFailure::SimplexNotFound {
+                simplex_key: target_simplex_key,
                 context: "flip trial mutual neighbor validation".to_string(),
             })?;
 
-    let source_neighbor = source_cell.neighbor_key(source_facet).flatten();
-    let target_neighbor = target_cell.neighbor_key(target_facet).flatten();
+    let source_neighbor = source_simplex.neighbor_key(source_facet).flatten();
+    let target_neighbor = target_simplex.neighbor_key(target_facet).flatten();
 
-    if source_neighbor != Some(target_cell_key) || target_neighbor != Some(source_cell_key) {
+    if source_neighbor != Some(target_simplex_key) || target_neighbor != Some(source_simplex_key) {
         return Err(TdsValidationFailure::InvalidNeighbors {
             reason: NeighborValidationError::InteriorFacetNeighborMismatch {
                 facet_key,
-                first_cell_key: source_cell_key,
-                first_cell_uuid: source_cell.uuid(),
+                first_simplex_key: source_simplex_key,
+                first_simplex_uuid: source_simplex.uuid(),
                 first_facet_index: source_facet,
                 first_neighbor: source_neighbor,
-                second_cell_key: target_cell_key,
-                second_cell_uuid: target_cell.uuid(),
+                second_simplex_key: target_simplex_key,
+                second_simplex_uuid: target_simplex.uuid(),
                 second_facet_index: target_facet,
                 second_neighbor: target_neighbor,
             },
@@ -998,11 +1006,11 @@ where
 
 /// Checks coherent orientation across one locally affected neighbor pair.
 fn validate_flip_trial_neighbor_orientation<T, U, V, const D: usize>(
-    cell_key: CellKey,
-    cell: &Cell<T, U, V, D>,
+    simplex_key: SimplexKey,
+    simplex: &Simplex<T, U, V, D>,
     facet_idx: usize,
-    neighbor_key: CellKey,
-    neighbor_cell: &Cell<T, U, V, D>,
+    neighbor_key: SimplexKey,
+    neighbor_simplex: &Simplex<T, U, V, D>,
     mirror_idx: usize,
 ) -> Result<(), TdsValidationFailure>
 where
@@ -1011,11 +1019,11 @@ where
 {
     let (observed_odd_permutation, expected_odd_permutation, facet_vertex_count, target_count) =
         match flip_trial_neighbor_orientation_parity(
-            cell_key,
-            cell,
+            simplex_key,
+            simplex,
             facet_idx,
             neighbor_key,
-            neighbor_cell,
+            neighbor_simplex,
             mirror_idx,
         ) {
             Ok(parity) => parity,
@@ -1024,17 +1032,17 @@ where
             }) => {
                 return Err(TdsValidationFailure::InconsistentDataStructure {
                     message: format!(
-                        "Could not derive facet-order permutation parity between cells {:?} and {:?}",
-                        cell.uuid(),
-                        neighbor_cell.uuid()
+                        "Could not derive facet-order permutation parity between simplices {:?} and {:?}",
+                        simplex.uuid(),
+                        neighbor_simplex.uuid()
                     ),
                 });
             }
             Err(err) => {
                 return Err(TdsValidationFailure::InvalidNeighbors {
                     reason: NeighborValidationError::FacetOrderUnavailable {
-                        cell_key,
-                        cell_uuid: cell.uuid(),
+                        simplex_key,
+                        simplex_uuid: simplex.uuid(),
                         facet_index: facet_idx,
                         context: "facet parity in local flip validation".to_string(),
                         source: Box::new(err),
@@ -1044,14 +1052,14 @@ where
         };
     if observed_odd_permutation != expected_odd_permutation {
         return Err(TdsValidationFailure::OrientationViolation {
-            cell1_key: cell_key,
-            cell1_uuid: cell.uuid(),
-            cell2_key: neighbor_key,
-            cell2_uuid: neighbor_cell.uuid(),
-            cell1_facet_index: facet_idx,
-            cell2_facet_index: mirror_idx,
+            simplex1_key: simplex_key,
+            simplex1_uuid: simplex.uuid(),
+            simplex2_key: neighbor_key,
+            simplex2_uuid: neighbor_simplex.uuid(),
+            simplex1_facet_index: facet_idx,
+            simplex2_facet_index: mirror_idx,
             facet_vertex_count,
-            cell2_facet_vertex_count: target_count,
+            simplex2_facet_vertex_count: target_count,
             observed_odd_permutation,
             expected_odd_permutation,
         });
@@ -1062,11 +1070,11 @@ where
 
 /// Computes local neighbor-orientation parity, including periodic facet offsets.
 fn flip_trial_neighbor_orientation_parity<T, U, V, const D: usize>(
-    cell_key: CellKey,
-    cell: &Cell<T, U, V, D>,
+    simplex_key: SimplexKey,
+    simplex: &Simplex<T, U, V, D>,
     facet_idx: usize,
-    neighbor_key: CellKey,
-    neighbor_cell: &Cell<T, U, V, D>,
+    neighbor_key: SimplexKey,
+    neighbor_simplex: &Simplex<T, U, V, D>,
     mirror_idx: usize,
 ) -> Result<(bool, bool, usize, usize), FlipError>
 where
@@ -1074,19 +1082,20 @@ where
     V: DataType,
 {
     let expected_odd_permutation = (facet_idx + mirror_idx).is_multiple_of(2);
-    if cell.periodic_vertex_offsets().is_some() || neighbor_cell.periodic_vertex_offsets().is_some()
+    if simplex.periodic_vertex_offsets().is_some()
+        || neighbor_simplex.periodic_vertex_offsets().is_some()
     {
-        let source_offsets = periodic_offsets_or_zero_frame(cell_key, cell)?;
-        let target_offsets = periodic_offsets_or_zero_frame(neighbor_key, neighbor_cell)?;
+        let source_offsets = periodic_offsets_or_zero_frame(simplex_key, simplex)?;
+        let target_offsets = periodic_offsets_or_zero_frame(neighbor_key, neighbor_simplex)?;
         let source_order = normalized_facet_order_with_offsets(
-            cell_key,
-            cell.vertices(),
+            simplex_key,
+            simplex.vertices(),
             source_offsets.as_ref(),
             facet_idx,
         )?;
         let target_order = normalized_facet_order_with_offsets(
             neighbor_key,
-            neighbor_cell.vertices(),
+            neighbor_simplex.vertices(),
             target_offsets.as_ref(),
             mirror_idx,
         )?;
@@ -1100,8 +1109,8 @@ where
         ));
     }
 
-    let source_order = facet_order(cell.vertices(), facet_idx)?;
-    let target_order = facet_order(neighbor_cell.vertices(), mirror_idx)?;
+    let source_order = facet_order(simplex.vertices(), facet_idx)?;
+    let target_order = facet_order(neighbor_simplex.vertices(), mirror_idx)?;
     let observed_odd_permutation = permutation_odd(&source_order, &target_order)
         .ok_or(FlipContextError::FacetOrderParityUnavailable)?;
     Ok((
@@ -1113,51 +1122,51 @@ where
 }
 
 /// Detects replacement simplices that already exist outside the flip cavity so
-/// a flip cannot silently duplicate a cell.
-fn find_cell_containing_simplex<T, U, V, const D: usize>(
+/// a flip cannot silently duplicate a simplex.
+fn find_simplex_containing_simplex<T, U, V, const D: usize>(
     tds: &Tds<T, U, V, D>,
     simplex_vertices: &[VertexKey],
-    removed_cells: &[CellKey],
-) -> Option<CellKey>
+    removed_simplices: &[SimplexKey],
+) -> Option<SimplexKey>
 where
     U: DataType,
     V: DataType,
 {
     let first = *simplex_vertices.first()?;
-    let candidates = tds.find_cells_containing_vertex_by_key(first);
+    let candidates = tds.find_simplices_containing_vertex_by_key(first);
 
-    for cell_key in candidates {
-        if removed_cells.contains(&cell_key) {
+    for simplex_key in candidates {
+        if removed_simplices.contains(&simplex_key) {
             continue;
         }
 
-        let Some(cell) = tds.cell(cell_key) else {
+        let Some(simplex) = tds.simplex(simplex_key) else {
             continue;
         };
 
         if simplex_vertices
             .iter()
             .copied()
-            .all(|vk| cell.contains_vertex(vk))
+            .all(|vk| simplex.contains_vertex(vk))
         {
-            return Some(cell_key);
+            return Some(simplex_key);
         }
     }
 
     None
 }
 
-/// Chooses replacement-cell parity from the oriented cavity boundary.
-fn orient_replacement_cells<T, U, V, const D: usize>(
+/// Chooses replacement-simplex parity from the oriented cavity boundary.
+fn orient_replacement_simplices<T, U, V, const D: usize>(
     tds: &Tds<T, U, V, D>,
-    cells: &mut [SmallBuffer<VertexKey, MAX_PRACTICAL_DIMENSION_SIZE>],
+    simplices: &mut [SmallBuffer<VertexKey, MAX_PRACTICAL_DIMENSION_SIZE>],
     periodic_offsets: &mut [Option<PeriodicOffsetBuffer<D>>],
     external_facets: &[FacetHandle],
 ) -> Result<(), FlipError> {
-    let mut flips = SmallBuffer::from_elem(None, cells.len());
-    if periodic_offsets.len() != cells.len() {
+    let mut flips = SmallBuffer::from_elem(None, simplices.len());
+    if periodic_offsets.len() != simplices.len() {
         return Err(FlipContextError::ReplacementPeriodicOffsetCountMismatch {
-            cell_count: cells.len(),
+            simplex_count: simplices.len(),
             offset_count: periodic_offsets.len(),
         }
         .into());
@@ -1165,7 +1174,7 @@ fn orient_replacement_cells<T, U, V, const D: usize>(
 
     assign_external_replacement_orientation(
         tds,
-        cells,
+        simplices,
         periodic_offsets,
         external_facets,
         &mut flips,
@@ -1174,26 +1183,26 @@ fn orient_replacement_cells<T, U, V, const D: usize>(
     loop {
         let mut changed = false;
 
-        for source_idx in 0..cells.len() {
-            for target_idx in (source_idx + 1)..cells.len() {
+        for source_idx in 0..simplices.len() {
+            for target_idx in (source_idx + 1)..simplices.len() {
                 let Some((source_facet_idx, target_facet_idx)) =
-                    shared_facet_indices(&cells[source_idx], &cells[target_idx])
+                    shared_facet_indices(&simplices[source_idx], &simplices[target_idx])
                 else {
                     continue;
                 };
                 let coherent = facet_orders_coherent(
-                    &cells[source_idx],
+                    &simplices[source_idx],
                     source_facet_idx,
-                    &cells[target_idx],
+                    &simplices[target_idx],
                     target_facet_idx,
                 )?;
                 match (flips[source_idx], flips[target_idx]) {
                     (Some(source_flip), Some(target_flip)) => {
                         if target_flip != (source_flip ^ !coherent) {
                             return Err(
-                                FlipContextError::ConflictingReplacementOrientationBetweenCells {
-                                    source_cell_index: source_idx,
-                                    target_cell_index: target_idx,
+                                FlipContextError::ConflictingReplacementOrientationBetweenSimplices {
+                                    source_simplex_index: source_idx,
+                                    target_simplex_index: target_idx,
                                 }
                                 .into(),
                             );
@@ -1224,10 +1233,11 @@ fn orient_replacement_cells<T, U, V, const D: usize>(
         }
     }
 
-    for ((vertices, offsets), should_flip) in cells.iter_mut().zip(periodic_offsets).zip(flips) {
+    for ((vertices, offsets), should_flip) in simplices.iter_mut().zip(periodic_offsets).zip(flips)
+    {
         if should_flip.unwrap_or(false) {
             if vertices.len() < 2 {
-                return Err(FlipContextError::ReplacementCellTooSmallForOrientationFlip.into());
+                return Err(FlipContextError::ReplacementSimplexTooSmallForOrientationFlip.into());
             }
             vertices.swap(0, 1);
             if let Some(offsets) = offsets {
@@ -1239,57 +1249,58 @@ fn orient_replacement_cells<T, U, V, const D: usize>(
     Ok(())
 }
 
-/// Applies external boundary-facet parity constraints to replacement cells.
+/// Applies external boundary-facet parity constraints to replacement simplices.
 fn assign_external_replacement_orientation<T, U, V, const D: usize>(
     tds: &Tds<T, U, V, D>,
-    cells: &[SmallBuffer<VertexKey, MAX_PRACTICAL_DIMENSION_SIZE>],
+    simplices: &[SmallBuffer<VertexKey, MAX_PRACTICAL_DIMENSION_SIZE>],
     periodic_offsets: &[Option<PeriodicOffsetBuffer<D>>],
     external_facets: &[FacetHandle],
     flips: &mut SmallBuffer<Option<bool>, MAX_PRACTICAL_DIMENSION_SIZE>,
 ) -> Result<(), FlipError> {
     for &external in external_facets {
-        let external_cell =
-            tds.cell(external.cell_key())
-                .ok_or_else(|| FlipError::MissingCell {
-                    cell_key: external.cell_key(),
+        let external_simplex =
+            tds.simplex(external.simplex_key())
+                .ok_or_else(|| FlipError::MissingSimplex {
+                    simplex_key: external.simplex_key(),
                 })?;
-        let external_offsets = periodic_offsets_or_zero_frame(external.cell_key(), external_cell)?;
+        let external_offsets =
+            periodic_offsets_or_zero_frame(external.simplex_key(), external_simplex)?;
 
         let external_facet_idx = usize::from(external.facet_index());
-        for (cell_idx, vertices) in cells.iter().enumerate() {
+        for (simplex_idx, vertices) in simplices.iter().enumerate() {
             let Some(replacement_facet_idx) =
-                matching_facet_index(external_cell.vertices(), external_facet_idx, vertices)?
+                matching_facet_index(external_simplex.vertices(), external_facet_idx, vertices)?
             else {
                 continue;
             };
-            let coherent = if external_cell.periodic_vertex_offsets().is_some()
-                || periodic_offsets[cell_idx].is_some()
+            let coherent = if external_simplex.periodic_vertex_offsets().is_some()
+                || periodic_offsets[simplex_idx].is_some()
             {
-                let Some(replacement_offsets) = periodic_offsets[cell_idx].as_deref() else {
+                let Some(replacement_offsets) = periodic_offsets[simplex_idx].as_deref() else {
                     return Err(FlipContextError::MissingReplacementPeriodicOffsets {
-                        cell_index: cell_idx,
+                        simplex_index: simplex_idx,
                     }
                     .into());
                 };
                 facet_orders_coherent_with_periodic_offsets(&PeriodicFacetParityContext {
-                    source_vertices: external_cell.vertices(),
+                    source_vertices: external_simplex.vertices(),
                     source_offsets: external_offsets.as_ref(),
                     source_facet_idx: external_facet_idx,
                     target_vertices: vertices,
                     target_offsets: replacement_offsets,
                     target_facet_idx: replacement_facet_idx,
-                    source_cell_key: external.cell_key(),
-                    target_cell_index: cell_idx,
+                    source_simplex_key: external.simplex_key(),
+                    target_simplex_index: simplex_idx,
                 })?
             } else {
                 facet_orders_coherent(
-                    external_cell.vertices(),
+                    external_simplex.vertices(),
                     external_facet_idx,
                     vertices,
                     replacement_facet_idx,
                 )?
             };
-            set_flip_assignment(flips, cell_idx, !coherent)?;
+            set_flip_assignment(flips, simplex_idx, !coherent)?;
         }
     }
 
@@ -1299,131 +1310,139 @@ fn assign_external_replacement_orientation<T, U, V, const D: usize>(
 /// Records a required local parity flip and rejects contradictory constraints.
 fn set_flip_assignment(
     assignments: &mut SmallBuffer<Option<bool>, MAX_PRACTICAL_DIMENSION_SIZE>,
-    cell_idx: usize,
+    simplex_idx: usize,
     required: bool,
 ) -> Result<bool, FlipError> {
-    if cell_idx >= assignments.len() {
+    if simplex_idx >= assignments.len() {
         return Err(FlipContextError::ReplacementOrientationIndexOutOfRange {
-            cell_index: cell_idx,
+            simplex_index: simplex_idx,
         }
         .into());
     }
 
-    match assignments[cell_idx] {
-        Some(existing) if existing != required => {
-            Err(FlipContextError::ConflictingReplacementOrientationForCell {
-                cell_index: cell_idx,
+    match assignments[simplex_idx] {
+        Some(existing) if existing != required => Err(
+            FlipContextError::ConflictingReplacementOrientationForSimplex {
+                simplex_index: simplex_idx,
             }
-            .into())
-        }
+            .into(),
+        ),
         Some(_) => Ok(false),
         None => {
-            assignments[cell_idx] = Some(required);
+            assignments[simplex_idx] = Some(required);
             Ok(true)
         }
     }
 }
 
-/// Builds periodic offsets for replacement cells in one shared cavity frame.
-fn replacement_cell_periodic_offsets<T, U, V, const D: usize>(
+/// Builds periodic offsets for replacement simplices in one shared cavity frame.
+fn replacement_simplex_periodic_offsets<T, U, V, const D: usize>(
     tds: &Tds<T, U, V, D>,
-    cells: &[SmallBuffer<VertexKey, MAX_PRACTICAL_DIMENSION_SIZE>],
-    removed_cells: &[CellKey],
+    simplices: &[SmallBuffer<VertexKey, MAX_PRACTICAL_DIMENSION_SIZE>],
+    removed_simplices: &[SimplexKey],
     external_facets: &[FacetHandle],
     newly_inserted_vertex: Option<VertexKey>,
 ) -> Result<ReplacementPeriodicOffsets<D>, FlipError> {
-    let source_cells = replacement_periodic_source_cells(removed_cells, external_facets);
-    if !replacement_sources_use_periodic_offsets(tds, &source_cells)? {
-        return Ok(SmallBuffer::from_elem(None, cells.len()));
+    let source_simplices =
+        replacement_periodic_source_simplices(removed_simplices, external_facets);
+    if !replacement_sources_use_periodic_offsets(tds, &source_simplices)? {
+        return Ok(SmallBuffer::from_elem(None, simplices.len()));
     }
 
-    let target_cell_key = *removed_cells
+    let target_simplex_key = *removed_simplices
         .first()
-        .ok_or(FlipContextError::MissingRemovedCellFrame)?;
-    let mut offsets_by_cell = ReplacementPeriodicOffsets::<D>::with_capacity(cells.len());
+        .ok_or(FlipContextError::MissingRemovedSimplexFrame)?;
+    let mut offsets_by_simplex = ReplacementPeriodicOffsets::<D>::with_capacity(simplices.len());
 
-    for vertices in cells {
+    for vertices in simplices {
         let mut offsets = PeriodicOffsetBuffer::<D>::with_capacity(vertices.len());
         for &vertex_key in vertices {
             let offset = if Some(vertex_key) == newly_inserted_vertex
-                && !source_cells_contain_vertex(tds, &source_cells, vertex_key)?
+                && !source_simplices_contain_vertex(tds, &source_simplices, vertex_key)?
             {
-                new_vertex_periodic_offset_in_frame(tds, target_cell_key)?
+                new_vertex_periodic_offset_in_frame(tds, target_simplex_key)?
             } else {
-                periodic_offset_lifted_into_cell(tds, vertex_key, target_cell_key, &source_cells)?
+                periodic_offset_lifted_into_simplex(
+                    tds,
+                    vertex_key,
+                    target_simplex_key,
+                    &source_simplices,
+                )?
             };
             offsets.push(offset);
         }
-        offsets_by_cell.push(Some(offsets));
+        offsets_by_simplex.push(Some(offsets));
     }
 
-    Ok(offsets_by_cell)
+    Ok(offsets_by_simplex)
 }
 
-/// Collects removed and external cells that can witness periodic frame alignment.
-fn replacement_periodic_source_cells(
-    removed_cells: &[CellKey],
+/// Collects removed and external simplices that can witness periodic frame alignment.
+fn replacement_periodic_source_simplices(
+    removed_simplices: &[SimplexKey],
     external_facets: &[FacetHandle],
-) -> CellKeyBuffer {
-    let mut source_cells = CellKeyBuffer::new();
+) -> SimplexKeyBuffer {
+    let mut source_simplices = SimplexKeyBuffer::new();
     let mut seen = FastHashSet::default();
-    for &cell_key in removed_cells {
-        push_unique_cell_key(cell_key, &mut source_cells, &mut seen);
+    for &simplex_key in removed_simplices {
+        push_unique_simplex_key(simplex_key, &mut source_simplices, &mut seen);
     }
     for external in external_facets {
-        push_unique_cell_key(external.cell_key(), &mut source_cells, &mut seen);
+        push_unique_simplex_key(external.simplex_key(), &mut source_simplices, &mut seen);
     }
-    source_cells
+    source_simplices
 }
 
-/// Returns whether any source cell carries explicit periodic offsets.
+/// Returns whether any source simplex carries explicit periodic offsets.
 fn replacement_sources_use_periodic_offsets<T, U, V, const D: usize>(
     tds: &Tds<T, U, V, D>,
-    source_cells: &[CellKey],
+    source_simplices: &[SimplexKey],
 ) -> Result<bool, FlipError> {
     let mut uses_periodic_offsets = false;
-    for &cell_key in source_cells {
-        let cell = tds
-            .cell(cell_key)
-            .ok_or(FlipError::MissingCell { cell_key })?;
-        if let Some(offsets) = cell.periodic_vertex_offsets() {
-            validate_periodic_offset_len(cell_key, cell, offsets)?;
+    for &simplex_key in source_simplices {
+        let simplex = tds
+            .simplex(simplex_key)
+            .ok_or(FlipError::MissingSimplex { simplex_key })?;
+        if let Some(offsets) = simplex.periodic_vertex_offsets() {
+            validate_periodic_offset_len(simplex_key, simplex, offsets)?;
             uses_periodic_offsets = true;
         }
     }
     Ok(uses_periodic_offsets)
 }
 
-/// Checks whether a vertex already has a periodic representative in any source cell.
-fn source_cells_contain_vertex<T, U, V, const D: usize>(
+/// Checks whether a vertex already has a periodic representative in any source simplex.
+fn source_simplices_contain_vertex<T, U, V, const D: usize>(
     tds: &Tds<T, U, V, D>,
-    source_cells: &[CellKey],
+    source_simplices: &[SimplexKey],
     vertex_key: VertexKey,
 ) -> Result<bool, FlipError> {
-    for &cell_key in source_cells {
-        let cell = tds
-            .cell(cell_key)
-            .ok_or(FlipError::MissingCell { cell_key })?;
-        if cell.contains_vertex(vertex_key) {
+    for &simplex_key in source_simplices {
+        let simplex = tds
+            .simplex(simplex_key)
+            .ok_or(FlipError::MissingSimplex { simplex_key })?;
+        if simplex.contains_vertex(vertex_key) {
             return Ok(true);
         }
     }
     Ok(false)
 }
 
-/// Places a newly inserted k=1 vertex in the target cell's local lattice sheet.
+/// Places a newly inserted k=1 vertex in the target simplex's local lattice sheet.
 fn new_vertex_periodic_offset_in_frame<T, U, V, const D: usize>(
     tds: &Tds<T, U, V, D>,
-    target_cell_key: CellKey,
+    target_simplex_key: SimplexKey,
 ) -> Result<[i8; D], FlipError> {
-    let target_cell = tds.cell(target_cell_key).ok_or(FlipError::MissingCell {
-        cell_key: target_cell_key,
-    })?;
-    let target_offsets = periodic_offsets_or_zero_frame(target_cell_key, target_cell)?;
+    let target_simplex = tds
+        .simplex(target_simplex_key)
+        .ok_or(FlipError::MissingSimplex {
+            simplex_key: target_simplex_key,
+        })?;
+    let target_offsets = periodic_offsets_or_zero_frame(target_simplex_key, target_simplex)?;
     Ok(target_offsets.first().copied().unwrap_or([0_i8; D]))
 }
 
-/// Finds the target facet opposite the source facet, if the cells share it.
+/// Finds the target facet opposite the source facet, if the simplices share it.
 fn matching_facet_index(
     source_vertices: &[VertexKey],
     source_facet_idx: usize,
@@ -1456,7 +1475,7 @@ fn matching_facet_index(
     Ok(target_facet_idx)
 }
 
-/// Finds the opposite slots for two replacement cells that share a facet.
+/// Finds the opposite slots for two replacement simplices that share a facet.
 fn shared_facet_indices(
     source_vertices: &[VertexKey],
     target_vertices: &[VertexKey],
@@ -1508,8 +1527,8 @@ struct PeriodicFacetParityContext<'a, const D: usize> {
     target_vertices: &'a [VertexKey],
     target_offsets: &'a [[i8; D]],
     target_facet_idx: usize,
-    source_cell_key: CellKey,
-    target_cell_index: usize,
+    source_simplex_key: SimplexKey,
+    target_simplex_index: usize,
 }
 
 /// Checks facet parity after aligning a periodic source facet into a replacement frame.
@@ -1518,7 +1537,7 @@ fn facet_orders_coherent_with_periodic_offsets<const D: usize>(
 ) -> Result<bool, FlipError> {
     if context.source_offsets.len() != context.source_vertices.len() {
         return Err(FlipContextError::PeriodicOffsetCountMismatch {
-            cell_key: context.source_cell_key,
+            simplex_key: context.source_simplex_key,
             offset_count: context.source_offsets.len(),
             vertex_count: context.source_vertices.len(),
         }
@@ -1526,7 +1545,7 @@ fn facet_orders_coherent_with_periodic_offsets<const D: usize>(
     }
     if context.target_offsets.len() != context.target_vertices.len() {
         return Err(FlipContextError::ReplacementPeriodicOffsetLengthMismatch {
-            cell_index: context.target_cell_index,
+            simplex_index: context.target_simplex_index,
             offset_count: context.target_offsets.len(),
             vertex_count: context.target_vertices.len(),
         }
@@ -1546,8 +1565,8 @@ fn facet_orders_coherent_with_periodic_offsets<const D: usize>(
     let aligned_source_order = align_periodic_facet_order(
         &source_order,
         &target_order,
-        context.source_cell_key,
-        context.target_cell_index,
+        context.source_simplex_key,
+        context.target_simplex_index,
     )?;
     let observed_odd = permutation_odd(&aligned_source_order, &target_order)
         .ok_or(FlipContextError::FacetOrderParityUnavailable)?;
@@ -1555,7 +1574,7 @@ fn facet_orders_coherent_with_periodic_offsets<const D: usize>(
     Ok(observed_odd == expected_odd)
 }
 
-/// Returns facet `(vertex, offset)` identities in cell-local order.
+/// Returns facet `(vertex, offset)` identities in simplex-local order.
 fn facet_order_with_offsets<const D: usize>(
     vertices: &[VertexKey],
     offsets: &[[i8; D]],
@@ -1579,16 +1598,16 @@ fn facet_order_with_offsets<const D: usize>(
     Ok(order)
 }
 
-/// Returns cell-local facet identities with offsets normalized by a stable anchor.
+/// Returns simplex-local facet identities with offsets normalized by a stable anchor.
 fn normalized_facet_order_with_offsets<const D: usize>(
-    cell_key: CellKey,
+    simplex_key: SimplexKey,
     vertices: &[VertexKey],
     offsets: &[[i8; D]],
     omit_idx: usize,
 ) -> Result<SmallBuffer<(VertexKey, [i16; D]), MAX_PRACTICAL_DIMENSION_SIZE>, FlipError> {
     if offsets.len() != vertices.len() {
         return Err(FlipContextError::PeriodicOffsetCountMismatch {
-            cell_key,
+            simplex_key,
             offset_count: offsets.len(),
             vertex_count: vertices.len(),
         }
@@ -1637,8 +1656,8 @@ fn normalized_facet_order_with_offsets<const D: usize>(
 fn align_periodic_facet_order<const D: usize>(
     source_order: &[(VertexKey, [i8; D])],
     target_order: &[(VertexKey, [i8; D])],
-    source_cell_key: CellKey,
-    target_cell_index: usize,
+    source_simplex_key: SimplexKey,
+    target_simplex_index: usize,
 ) -> Result<SmallBuffer<(VertexKey, [i8; D]), MAX_PRACTICAL_DIMENSION_SIZE>, FlipError> {
     let mut aligned_order = SmallBuffer::with_capacity(source_order.len());
     for &(vertex_key, source_vertex_offset) in source_order {
@@ -1660,8 +1679,8 @@ fn align_periodic_facet_order<const D: usize>(
                     return Err(
                         FlipContextError::ConflictingReplacementPeriodicFrameTranslation {
                             vertex_key,
-                            source_cell_key,
-                            target_cell_index,
+                            source_simplex_key,
+                            target_simplex_index,
                             expected_offset: expected_offset.into(),
                             found_offset: candidate_offset.into(),
                         }
@@ -1680,7 +1699,7 @@ fn align_periodic_facet_order<const D: usize>(
     Ok(aligned_order)
 }
 
-/// Returns facet vertices in cell-local order.
+/// Returns facet vertices in simplex-local order.
 fn facet_order(
     vertices: &[VertexKey],
     omit_idx: usize,
@@ -1737,24 +1756,24 @@ fn permutation_odd<Id: PartialEq>(source_order: &[Id], target_order: &[Id]) -> O
     Some(inversion_count % 2 == 1)
 }
 
-/// Ensures Delaunay-repair replacement cells have positive geometric orientation.
+/// Ensures Delaunay-repair replacement simplices have positive geometric orientation.
 fn validate_replacement_orientation<T, U, V, const D: usize>(
     tds: &Tds<T, U, V, D>,
-    cells: &[SmallBuffer<VertexKey, MAX_PRACTICAL_DIMENSION_SIZE>],
+    simplices: &[SmallBuffer<VertexKey, MAX_PRACTICAL_DIMENSION_SIZE>],
 ) -> Result<(), FlipError>
 where
     T: CoordinateScalar,
     U: DataType,
     V: DataType,
 {
-    for vertices in cells {
+    for vertices in simplices {
         let points = vertices_to_points(tds, vertices)?;
         match robust_orientation(&points) {
             Ok(Orientation::POSITIVE) => {}
-            Ok(Orientation::DEGENERATE) => return Err(FlipError::DegenerateCell),
+            Ok(Orientation::DEGENERATE) => return Err(FlipError::DegenerateSimplex),
             Ok(Orientation::NEGATIVE) => {
                 return Err(FlipError::NegativeOrientation {
-                    cell_vertices: vertices.iter().copied().collect(),
+                    simplex_vertices: vertices.iter().copied().collect(),
                 });
             }
             Err(error) => {
@@ -1771,31 +1790,31 @@ where
 
 /// Scans the whole TDS for ridge diagnostics when local neighbor links are the
 /// thing being investigated.
-fn cells_containing_vertices<T, U, V, const D: usize>(
+fn simplices_containing_vertices<T, U, V, const D: usize>(
     tds: &Tds<T, U, V, D>,
     vertices: &[VertexKey],
-) -> CellKeyBuffer
+) -> SimplexKeyBuffer
 where
     T: CoordinateScalar,
     U: DataType,
     V: DataType,
 {
-    let mut cells = CellKeyBuffer::new();
-    'cells: for (cell_key, cell) in tds.cells() {
+    let mut simplices = SimplexKeyBuffer::new();
+    'simplices: for (simplex_key, simplex) in tds.simplices() {
         for &vkey in vertices {
-            if !cell.contains_vertex(vkey) {
-                continue 'cells;
+            if !simplex.contains_vertex(vkey) {
+                continue 'simplices;
             }
         }
-        cells.push(cell_key);
+        simplices.push(simplex_key);
     }
-    cells
+    simplices
 }
 
 /// Emits a bounded ridge snapshot so repair failures can distinguish bad local
 /// handles from genuinely inconsistent global incidence.
 ///
-/// The local neighbor walk and the global cell scan are logged side by side
+/// The local neighbor walk and the global simplex scan are logged side by side
 /// because #204 currently fails in cases where those two views disagree.
 fn debug_ridge_context<T, U, V, const D: usize>(
     tds: &Tds<T, U, V, D>,
@@ -1811,66 +1830,67 @@ fn debug_ridge_context<T, U, V, const D: usize>(
     if !should_emit_ridge_debug(diagnostics, reported_multiplicity) {
         return;
     }
-    let Some(cell) = tds.cell(ridge.cell_key()) else {
+    let Some(simplex) = tds.simplex(ridge.simplex_key()) else {
         tracing::debug!(
             ridge = ?ridge,
             reported_multiplicity,
-            "repair: ridge debug skipped (cell missing)"
+            "repair: ridge debug skipped (simplex missing)"
         );
         return;
     };
     let omit_a = usize::from(ridge.omit_a());
     let omit_b = usize::from(ridge.omit_b());
-    if omit_a >= cell.number_of_vertices()
-        || omit_b >= cell.number_of_vertices()
+    if omit_a >= simplex.number_of_vertices()
+        || omit_b >= simplex.number_of_vertices()
         || omit_a == omit_b
     {
         tracing::debug!(
             ridge = ?ridge,
             omit_a,
             omit_b,
-            vertex_count = cell.number_of_vertices(),
+            vertex_count = simplex.number_of_vertices(),
             reported_multiplicity,
             "repair: ridge debug skipped (invalid indices)"
         );
         return;
     }
 
-    let ridge_vertices = ridge_vertices_from_cell(cell, omit_a, omit_b);
-    let neighbor_walk = collect_cells_around_ridge(tds, ridge.cell_key(), &ridge_vertices, None)
-        .map(|cells| cells.into_iter().collect::<Vec<_>>());
-    let global_cells = cells_containing_vertices(tds, &ridge_vertices);
-    let neighbor_snapshot: Option<SmallBuffer<Option<CellKey>, MAX_PRACTICAL_DIMENSION_SIZE>> =
-        cell.neighbor_keys().map(Iterator::collect);
-    let global_cell_details: Vec<String> = global_cells
+    let ridge_vertices = ridge_vertices_from_simplex(simplex, omit_a, omit_b);
+    let neighbor_walk =
+        collect_simplices_around_ridge(tds, ridge.simplex_key(), &ridge_vertices, None)
+            .map(|simplices| simplices.into_iter().collect::<Vec<_>>());
+    let global_simplices = simplices_containing_vertices(tds, &ridge_vertices);
+    let neighbor_snapshot: Option<SmallBuffer<Option<SimplexKey>, MAX_PRACTICAL_DIMENSION_SIZE>> =
+        simplex.neighbor_keys().map(Iterator::collect);
+    let global_simplex_details: Vec<String> = global_simplices
         .iter()
         .copied()
-        .map(|cell_key| ridge_incident_cell_summary(tds, cell_key, &ridge_vertices))
+        .map(|simplex_key| ridge_incident_simplex_summary(tds, simplex_key, &ridge_vertices))
         .collect();
     // Attach the immediately preceding flip so the snapshot can say whether repair
     // just created this ridge instead of forcing us to correlate separate log lines.
     let predecessor_summary =
-        last_applied_flip.map(|last| predecessor_flip_summary(tds, ridge, &global_cells, last));
+        last_applied_flip.map(|last| predecessor_flip_summary(tds, ridge, &global_simplices, last));
 
     tracing::debug!(
         ridge = ?ridge,
         ridge_vertices = ?ridge_vertices,
         reported_multiplicity,
         neighbor_walk = ?neighbor_walk,
-        global_count = global_cells.len(),
-        global_cells = ?global_cells,
-        global_cell_details = ?global_cell_details,
+        global_count = global_simplices.len(),
+        global_simplices = ?global_simplices,
+        global_simplex_details = ?global_simplex_details,
         predecessor = ?predecessor_summary,
-        cell_neighbors = ?neighbor_snapshot,
+        simplex_neighbors = ?neighbor_snapshot,
         "repair: ridge adjacency debug snapshot"
     );
 }
 
-/// Formats one incident cell around a ridge so debug output can distinguish
+/// Formats one incident simplex around a ridge so debug output can distinguish
 /// oversharing from bad local neighbor traversal.
-fn ridge_incident_cell_summary<T, U, V, const D: usize>(
+fn ridge_incident_simplex_summary<T, U, V, const D: usize>(
     tds: &Tds<T, U, V, D>,
-    cell_key: CellKey,
+    simplex_key: SimplexKey,
     ridge_vertices: &SmallBuffer<VertexKey, MAX_PRACTICAL_DIMENSION_SIZE>,
 ) -> String
 where
@@ -1878,35 +1898,35 @@ where
     U: DataType,
     V: DataType,
 {
-    let Some(cell) = tds.cell(cell_key) else {
-        return format!("{cell_key:?}: missing");
+    let Some(simplex) = tds.simplex(simplex_key) else {
+        return format!("{simplex_key:?}: missing");
     };
 
-    let extras = match cell_extras_for_ridge(cell_key, cell, ridge_vertices) {
+    let extras = match simplex_extras_for_ridge(simplex_key, simplex, ridge_vertices) {
         Ok(extras) => extras,
-        Err(err) => return format!("{cell_key:?}: extras_error={err}"),
+        Err(err) => return format!("{simplex_key:?}: extras_error={err}"),
     };
-    let ridge_neighbors = ridge_neighbor_cells_for_cell(cell, ridge_vertices);
-    format!("{cell_key:?}: extras={extras:?} ridge_neighbors={ridge_neighbors:?}")
+    let ridge_neighbors = ridge_neighbor_simplices_for_simplex(simplex, ridge_vertices);
+    format!("{simplex_key:?}: extras={extras:?} ridge_neighbors={ridge_neighbors:?}")
 }
 
 /// Extracts the neighbors reached by omitting the two vertices opposite the
 /// ridge, which is exactly the adjacency walk used by k=3 context recovery.
-fn ridge_neighbor_cells_for_cell<T, U, V, const D: usize>(
-    cell: &Cell<T, U, V, D>,
+fn ridge_neighbor_simplices_for_simplex<T, U, V, const D: usize>(
+    simplex: &Simplex<T, U, V, D>,
     ridge_vertices: &SmallBuffer<VertexKey, MAX_PRACTICAL_DIMENSION_SIZE>,
-) -> SmallBuffer<CellKey, 2>
+) -> SmallBuffer<SimplexKey, 2>
 where
     T: CoordinateScalar,
     U: DataType,
     V: DataType,
 {
-    let mut ridge_neighbors: SmallBuffer<CellKey, 2> = SmallBuffer::new();
-    for (idx, &vertex_key) in cell.vertices().iter().enumerate() {
+    let mut ridge_neighbors: SmallBuffer<SimplexKey, 2> = SmallBuffer::new();
+    for (idx, &vertex_key) in simplex.vertices().iter().enumerate() {
         if ridge_vertices.contains(&vertex_key) {
             continue;
         }
-        if let Some(neighbor_key) = cell.neighbor_key(idx).flatten() {
+        if let Some(neighbor_key) = simplex.neighbor_key(idx).flatten() {
             ridge_neighbors.push(neighbor_key);
         }
     }
@@ -1919,7 +1939,7 @@ where
 fn predecessor_flip_summary<T, U, V, const D: usize>(
     tds: &Tds<T, U, V, D>,
     ridge: RidgeHandle,
-    global_cells: &[CellKey],
+    global_simplices: &[SimplexKey],
     last_applied_flip: &LastAppliedFlip,
 ) -> String
 where
@@ -1927,43 +1947,48 @@ where
     U: DataType,
     V: DataType,
 {
-    let global_cells_in_new: Vec<CellKey> = global_cells
+    let global_simplices_in_new: Vec<SimplexKey> = global_simplices
         .iter()
         .copied()
-        .filter(|cell_key| last_applied_flip.new_cells.contains(cell_key))
+        .filter(|simplex_key| last_applied_flip.new_simplices.contains(simplex_key))
         .collect();
-    // Show the predecessor's concrete simplices because cell ids alone become hard to
+    // Show the predecessor's concrete simplices because simplex ids alone become hard to
     // interpret once slot reuse and additional flips start churning the local region.
-    let predecessor_new_cell_vertices: Vec<String> = last_applied_flip
-        .new_cells
+    let predecessor_new_simplex_vertices: Vec<String> = last_applied_flip
+        .new_simplices
         .iter()
         .copied()
-        .map(|cell_key| cell_vertex_summary(tds, cell_key))
+        .map(|simplex_key| simplex_vertex_summary(tds, simplex_key))
         .collect();
 
     format!(
-        "k={} removed_face={:?} inserted_face={:?} removed_cells={:?} new_cells={:?} ridge_cell_is_new={} global_cells_in_new={global_cells_in_new:?} predecessor_new_cell_vertices={predecessor_new_cell_vertices:?}",
+        "k={} removed_face={:?} inserted_face={:?} removed_simplices={:?} new_simplices={:?} ridge_simplex_is_new={} global_simplices_in_new={global_simplices_in_new:?} predecessor_new_simplex_vertices={predecessor_new_simplex_vertices:?}",
         last_applied_flip.k_move,
         last_applied_flip.removed_face_vertices,
         last_applied_flip.inserted_face_vertices,
-        last_applied_flip.removed_cells,
-        last_applied_flip.new_cells,
-        last_applied_flip.new_cells.contains(&ridge.cell_key()),
+        last_applied_flip.removed_simplices,
+        last_applied_flip.new_simplices,
+        last_applied_flip
+            .new_simplices
+            .contains(&ridge.simplex_key()),
     )
 }
 
-/// Formats one cell's current vertex set so predecessor-flip traces can show
+/// Formats one simplex's current vertex set so predecessor-flip traces can show
 /// the exact simplices that were introduced before a bad ridge appeared.
-fn cell_vertex_summary<T, U, V, const D: usize>(tds: &Tds<T, U, V, D>, cell_key: CellKey) -> String
+fn simplex_vertex_summary<T, U, V, const D: usize>(
+    tds: &Tds<T, U, V, D>,
+    simplex_key: SimplexKey,
+) -> String
 where
     T: CoordinateScalar,
     U: DataType,
     V: DataType,
 {
-    let Some(cell) = tds.cell(cell_key) else {
-        return format!("{cell_key:?}: missing");
+    let Some(simplex) = tds.simplex(simplex_key) else {
+        return format!("{simplex_key:?}: missing");
     };
-    format!("{cell_key:?}: vertices={:?}", cell.vertices())
+    format!("{simplex_key:?}: vertices={:?}", simplex.vertices())
 }
 
 /// Captures the first unresolved k=2 postcondition site so #204 debugging can
@@ -1993,31 +2018,33 @@ fn debug_postcondition_facet_context<T, U, V, const D: usize>(
         .iter()
         .filter_map(|&vkey| tds.vertex(vkey).map(|vertex| (vkey, *vertex.point())))
         .collect();
-    let incident_cell_details: Vec<String> = context
-        .removed_cells
+    let incident_simplex_details: Vec<String> = context
+        .removed_simplices
         .iter()
         .copied()
-        .map(|cell_key| facet_incident_cell_summary(tds, cell_key, &context.removed_face_vertices))
+        .map(|simplex_key| {
+            facet_incident_simplex_summary(tds, simplex_key, &context.removed_face_vertices)
+        })
         .collect();
     let predecessor_summary = last_applied_flip
-        .map(|last| postcondition_facet_predecessor_summary(tds, &context.removed_cells, last));
+        .map(|last| postcondition_facet_predecessor_summary(tds, &context.removed_simplices, last));
 
     tracing::debug!(
         facet = ?facet,
         removed_face = ?removed_face_details,
         inserted_face = ?inserted_face_details,
-        incident_cells = ?context.removed_cells,
-        incident_cell_details = ?incident_cell_details,
+        incident_simplices = ?context.removed_simplices,
+        incident_simplex_details = ?incident_simplex_details,
         predecessor = ?predecessor_summary,
         "repair: postcondition facet debug snapshot"
     );
 }
 
-/// Formats the two cells incident to a violating facet so postcondition traces
+/// Formats the two simplices incident to a violating facet so postcondition traces
 /// can see both their full simplex vertices and their opposite vertices.
-fn facet_incident_cell_summary<T, U, V, const D: usize>(
+fn facet_incident_simplex_summary<T, U, V, const D: usize>(
     tds: &Tds<T, U, V, D>,
-    cell_key: CellKey,
+    simplex_key: SimplexKey,
     facet_vertices: &[VertexKey],
 ) -> String
 where
@@ -2025,22 +2052,22 @@ where
     U: DataType,
     V: DataType,
 {
-    let Some(cell) = tds.cell(cell_key) else {
-        return format!("{cell_key:?}: missing");
+    let Some(simplex) = tds.simplex(simplex_key) else {
+        return format!("{simplex_key:?}: missing");
     };
 
-    let opposite_vertices: Vec<VertexKey> = cell
+    let opposite_vertices: Vec<VertexKey> = simplex
         .vertices()
         .iter()
         .copied()
         .filter(|vkey| !facet_vertices.contains(vkey))
         .collect();
-    let neighbor_snapshot: Option<SmallBuffer<Option<CellKey>, MAX_PRACTICAL_DIMENSION_SIZE>> =
-        cell.neighbor_keys().map(Iterator::collect);
+    let neighbor_snapshot: Option<SmallBuffer<Option<SimplexKey>, MAX_PRACTICAL_DIMENSION_SIZE>> =
+        simplex.neighbor_keys().map(Iterator::collect);
 
     format!(
-        "{cell_key:?}: vertices={:?} opposite_vertices={opposite_vertices:?} neighbors={neighbor_snapshot:?}",
-        cell.vertices()
+        "{simplex_key:?}: vertices={:?} opposite_vertices={opposite_vertices:?} neighbors={neighbor_snapshot:?}",
+        simplex.vertices()
     )
 }
 
@@ -2049,7 +2076,7 @@ where
 /// local neighborhood or whether the violation was already present.
 fn postcondition_facet_predecessor_summary<T, U, V, const D: usize>(
     tds: &Tds<T, U, V, D>,
-    incident_cells: &[CellKey],
+    incident_simplices: &[SimplexKey],
     last_applied_flip: &LastAppliedFlip,
 ) -> String
 where
@@ -2057,35 +2084,35 @@ where
     U: DataType,
     V: DataType,
 {
-    let incident_cells_in_new: Vec<CellKey> = incident_cells
+    let incident_simplices_in_new: Vec<SimplexKey> = incident_simplices
         .iter()
         .copied()
-        .filter(|cell_key| last_applied_flip.new_cells.contains(cell_key))
+        .filter(|simplex_key| last_applied_flip.new_simplices.contains(simplex_key))
         .collect();
-    let incident_cells_in_removed: Vec<CellKey> = incident_cells
+    let incident_simplices_in_removed: Vec<SimplexKey> = incident_simplices
         .iter()
         .copied()
-        .filter(|cell_key| last_applied_flip.removed_cells.contains(cell_key))
+        .filter(|simplex_key| last_applied_flip.removed_simplices.contains(simplex_key))
         .collect();
-    let predecessor_new_cell_vertices: Vec<String> = last_applied_flip
-        .new_cells
+    let predecessor_new_simplex_vertices: Vec<String> = last_applied_flip
+        .new_simplices
         .iter()
         .copied()
-        .map(|cell_key| cell_vertex_summary(tds, cell_key))
+        .map(|simplex_key| simplex_vertex_summary(tds, simplex_key))
         .collect();
-    // Removed cells are already deleted from the TDS by the time this summary
+    // Removed simplices are already deleted from the TDS by the time this summary
     // runs, so reach for the pre-flip snapshot in `LastAppliedFlip` to avoid
-    // emitting "CellKey(N): missing" for every entry.
-    let predecessor_removed_cell_vertices: Vec<String> =
-        last_applied_flip.removed_cell_vertex_lines();
+    // emitting "SimplexKey(N): missing" for every entry.
+    let predecessor_removed_simplex_vertices: Vec<String> =
+        last_applied_flip.removed_simplex_vertex_lines();
 
     format!(
-        "k={} removed_face={:?} inserted_face={:?} removed_cells={:?} new_cells={:?} incident_cells_in_new={incident_cells_in_new:?} incident_cells_in_removed={incident_cells_in_removed:?} predecessor_new_cell_vertices={predecessor_new_cell_vertices:?} predecessor_removed_cell_vertices={predecessor_removed_cell_vertices:?}",
+        "k={} removed_face={:?} inserted_face={:?} removed_simplices={:?} new_simplices={:?} incident_simplices_in_new={incident_simplices_in_new:?} incident_simplices_in_removed={incident_simplices_in_removed:?} predecessor_new_simplex_vertices={predecessor_new_simplex_vertices:?} predecessor_removed_simplex_vertices={predecessor_removed_simplex_vertices:?}",
         last_applied_flip.k_move,
         last_applied_flip.removed_face_vertices,
         last_applied_flip.inserted_face_vertices,
-        last_applied_flip.removed_cells,
-        last_applied_flip.new_cells,
+        last_applied_flip.removed_simplices,
+        last_applied_flip.new_simplices,
     )
 }
 
@@ -2093,7 +2120,7 @@ where
 ///
 /// # Errors
 ///
-/// Returns a [`FlipError`] if any referenced cell/vertex is missing or a predicate
+/// Returns a [`FlipError`] if any referenced simplex/vertex is missing or a predicate
 /// evaluation fails.
 fn is_delaunay_violation_k3<K, U, V, const D: usize>(
     tds: &Tds<K::Scalar, U, V, D>,
@@ -2114,7 +2141,7 @@ where
         topology_model,
         &context.removed_face_vertices,
         &context.inserted_face_vertices,
-        &context.removed_cells,
+        &context.removed_simplices,
         None,
         config,
         diagnostics,
@@ -2125,7 +2152,7 @@ where
 ///
 /// # Errors
 ///
-/// Returns a [`FlipError`] if the flip would be degenerate, duplicate an existing cell,
+/// Returns a [`FlipError`] if the flip would be degenerate, duplicate an existing simplex,
 /// create non-manifold topology, if predicate evaluation fails, or if underlying TDS
 /// mutations fail.
 pub(crate) fn apply_bistellar_flip<T, U, V, const D: usize, const K_MOVE: usize>(
@@ -2142,7 +2169,7 @@ where
         K_MOVE,
         &context.removed_face_vertices,
         &context.inserted_face_vertices,
-        &context.removed_cells,
+        &context.removed_simplices,
         context.direction,
         ReplacementOrientationPolicy::AllowSigned,
         FlipValidationScope::FullTds,
@@ -2154,7 +2181,7 @@ where
 ///
 /// # Errors
 ///
-/// Returns a [`FlipError`] if the flip would be degenerate, duplicate an existing cell,
+/// Returns a [`FlipError`] if the flip would be degenerate, duplicate an existing simplex,
 /// create non-manifold topology, if predicate evaluation fails, or if underlying TDS
 /// mutations fail.
 pub(crate) fn apply_bistellar_flip_dynamic<T, U, V, const D: usize>(
@@ -2172,7 +2199,7 @@ where
         k_move,
         &context.removed_face_vertices,
         &context.inserted_face_vertices,
-        &context.removed_cells,
+        &context.removed_simplices,
         context.direction,
         ReplacementOrientationPolicy::AllowSigned,
         FlipValidationScope::FullTds,
@@ -2195,7 +2222,7 @@ where
         2,
         &context.removed_face_vertices,
         &context.inserted_face_vertices,
-        &context.removed_cells,
+        &context.removed_simplices,
         context.direction,
         ReplacementOrientationPolicy::RequirePositive,
         FlipValidationScope::LocalCavity,
@@ -2217,7 +2244,7 @@ where
         3,
         &context.removed_face_vertices,
         &context.inserted_face_vertices,
-        &context.removed_cells,
+        &context.removed_simplices,
         context.direction,
         ReplacementOrientationPolicy::RequirePositive,
         FlipValidationScope::LocalCavity,
@@ -2240,7 +2267,7 @@ where
         k_move,
         &context.removed_face_vertices,
         &context.inserted_face_vertices,
-        &context.removed_cells,
+        &context.removed_simplices,
         context.direction,
         ReplacementOrientationPolicy::RequirePositive,
         FlipValidationScope::LocalCavity,
@@ -2361,7 +2388,7 @@ where
 ///
 /// Slot swaps can invalidate the original facet index while preserving the facet
 /// vertex set (and therefore its hash key). This helper checks the original
-/// index first, then scans the owning cell to recover the correct index for `key`.
+/// index first, then scans the owning simplex to recover the correct index for `key`.
 fn resolve_facet_handle_for_key<T, U, V, const D: usize>(
     tds: &Tds<T, U, V, D>,
     handle: FacetHandle,
@@ -2372,22 +2399,22 @@ where
     U: DataType,
     V: DataType,
 {
-    let cell_key = handle.cell_key();
-    let cell = tds.cell(cell_key)?;
+    let simplex_key = handle.simplex_key();
+    let simplex = tds.simplex(simplex_key)?;
 
     let facet_index = usize::from(handle.facet_index());
-    if facet_index < cell.number_of_vertices() {
-        let facet_vertices = facet_vertices_from_cell(cell, facet_index);
+    if facet_index < simplex.number_of_vertices() {
+        let facet_vertices = facet_vertices_from_simplex(simplex, facet_index);
         if facet_key_from_vertices(&facet_vertices) == key {
             return Some(handle);
         }
     }
 
-    for candidate_idx in 0..cell.number_of_vertices() {
-        let facet_vertices = facet_vertices_from_cell(cell, candidate_idx);
+    for candidate_idx in 0..simplex.number_of_vertices() {
+        let facet_vertices = facet_vertices_from_simplex(simplex, candidate_idx);
         if facet_key_from_vertices(&facet_vertices) == key {
             let facet_index = u8::try_from(candidate_idx).ok()?;
-            return Some(FacetHandle::new(cell_key, facet_index));
+            return Some(FacetHandle::new(simplex_key, facet_index));
         }
     }
 
@@ -2398,7 +2425,7 @@ where
 ///
 /// Slot swaps can invalidate the original omit-index pair while preserving the
 /// ridge vertex set (and therefore its hash key). This helper checks the original
-/// pair first, then scans the owning cell for the pair matching `key`.
+/// pair first, then scans the owning simplex for the pair matching `key`.
 fn resolve_ridge_handle_for_key<T, U, V, const D: usize>(
     tds: &Tds<T, U, V, D>,
     handle: RidgeHandle,
@@ -2413,14 +2440,14 @@ where
         return None;
     }
 
-    let cell_key = handle.cell_key();
-    let cell = tds.cell(cell_key)?;
-    let vertex_count = cell.number_of_vertices();
+    let simplex_key = handle.simplex_key();
+    let simplex = tds.simplex(simplex_key)?;
+    let vertex_count = simplex.number_of_vertices();
 
     let omit_a = usize::from(handle.omit_a());
     let omit_b = usize::from(handle.omit_b());
     if omit_a < vertex_count && omit_b < vertex_count && omit_a != omit_b {
-        let ridge_vertices = ridge_vertices_from_cell(cell, omit_a, omit_b);
+        let ridge_vertices = ridge_vertices_from_simplex(simplex, omit_a, omit_b);
         if ridge_vertices.len() == D - 1 && facet_key_from_vertices(&ridge_vertices) == key {
             return Some(handle);
         }
@@ -2428,14 +2455,14 @@ where
 
     for i in 0..vertex_count {
         for j in (i + 1)..vertex_count {
-            let ridge_vertices = ridge_vertices_from_cell(cell, i, j);
+            let ridge_vertices = ridge_vertices_from_simplex(simplex, i, j);
             if ridge_vertices.len() != D - 1 {
                 continue;
             }
             if facet_key_from_vertices(&ridge_vertices) == key {
                 let omit_a = u8::try_from(i).ok()?;
                 let omit_b = u8::try_from(j).ok()?;
-                return Some(RidgeHandle::new(cell_key, omit_a, omit_b));
+                return Some(RidgeHandle::new(simplex_key, omit_a, omit_b));
             }
         }
     }
@@ -2518,24 +2545,24 @@ impl<const D: usize, const K: usize> BistellarMove<D> for ConstK<K> {
 #[derive(Clone, Copy, Debug, Error, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum FlipPredicateOperation {
-    /// Replacement-cell orientation check while applying a flip.
-    #[error("replacement-cell orientation")]
-    ReplacementCellOrientation,
-    /// Replacement-cell orientation postcondition during Delaunay repair.
-    #[error("Delaunay-repair replacement-cell orientation")]
+    /// Replacement-simplex orientation check while applying a flip.
+    #[error("replacement-simplex orientation")]
+    ReplacementSimplexOrientation,
+    /// Replacement-simplex orientation postcondition during Delaunay repair.
+    #[error("Delaunay-repair replacement-simplex orientation")]
     DelaunayRepairReplacementOrientation,
-    /// Degenerate-cell precheck before applying a flip.
-    #[error("degenerate-cell precheck")]
-    DegenerateCellPrecheck,
+    /// Degenerate-simplex precheck before applying a flip.
+    #[error("degenerate-simplex precheck")]
+    DegenerateSimplexPrecheck,
     /// First k=2 insphere predicate.
-    #[error("k=2 cell-A insphere")]
-    K2CellAInSphere,
+    #[error("k=2 simplex-A insphere")]
+    K2SimplexAInSphere,
     /// Second k=2 insphere predicate.
-    #[error("k=2 cell-B insphere")]
-    K2CellBInSphere,
+    #[error("k=2 simplex-B insphere")]
+    K2SimplexBInSphere,
     /// k=3 insphere predicate.
-    #[error("k=3 cell insphere")]
-    K3CellInSphere,
+    #[error("k=3 simplex insphere")]
+    K3SimplexInSphere,
 }
 
 /// Structured reason a geometric predicate failed during a flip.
@@ -2583,7 +2610,7 @@ impl FlipPredicateError {
 /// use delaunay::prelude::triangulation::flips::{FlipContextError, FlipError};
 ///
 /// let reason = FlipContextError::ReplacementPeriodicOffsetCountMismatch {
-///     cell_count: 2,
+///     simplex_count: 2,
 ///     offset_count: 1,
 /// };
 /// let err: FlipError = reason.into();
@@ -2618,81 +2645,85 @@ pub enum FlipContextError {
         /// Observed inserted-face vertex count.
         found: usize,
     },
-    /// The number of cells selected for removal does not match the k-move.
-    #[error("removed_cells must have {expected} entries, got {found}")]
-    WrongRemovedCellCount {
-        /// Expected number of removed cells.
+    /// The number of simplices selected for removal does not match the k-move.
+    #[error("removed_simplices must have {expected} entries, got {found}")]
+    WrongRemovedSimplexCount {
+        /// Expected number of removed simplices.
         expected: usize,
-        /// Observed number of removed cells.
+        /// Observed number of removed simplices.
         found: usize,
     },
     /// Removed and inserted faces are not disjoint.
     #[error("removed-face and inserted-face must be disjoint")]
     OverlappingFaces,
-    /// Replacement-cell offset sidecar length does not match the replacement cells.
+    /// Replacement-simplex offset sidecar length does not match the replacement simplices.
     #[error(
-        "replacement periodic offset count {offset_count} does not match replacement cell count {cell_count}"
+        "replacement periodic offset count {offset_count} does not match replacement simplex count {simplex_count}"
     )]
     ReplacementPeriodicOffsetCountMismatch {
-        /// Number of replacement cells.
-        cell_count: usize,
+        /// Number of replacement simplices.
+        simplex_count: usize,
         /// Number of periodic-offset entries.
         offset_count: usize,
     },
-    /// A periodic parity constraint referenced a replacement cell without offsets.
-    #[error("replacement cell {cell_index} is missing periodic offsets for periodic facet parity")]
-    MissingReplacementPeriodicOffsets {
-        /// Local replacement-cell index.
-        cell_index: usize,
-    },
-    /// Replacement-cell periodic offsets are not aligned with its vertex slots.
+    /// A periodic parity constraint referenced a replacement simplex without offsets.
     #[error(
-        "replacement cell {cell_index} periodic offset count {offset_count} does not match vertex count {vertex_count}"
+        "replacement simplex {simplex_index} is missing periodic offsets for periodic facet parity"
+    )]
+    MissingReplacementPeriodicOffsets {
+        /// Local replacement-simplex index.
+        simplex_index: usize,
+    },
+    /// Replacement-simplex periodic offsets are not aligned with its vertex slots.
+    #[error(
+        "replacement simplex {simplex_index} periodic offset count {offset_count} does not match vertex count {vertex_count}"
     )]
     ReplacementPeriodicOffsetLengthMismatch {
-        /// Local replacement-cell index.
-        cell_index: usize,
+        /// Local replacement-simplex index.
+        simplex_index: usize,
         /// Number of periodic offsets.
         offset_count: usize,
-        /// Number of replacement-cell vertices.
+        /// Number of replacement-simplex vertices.
         vertex_count: usize,
     },
-    /// Replacement-cell orientation constraints disagree.
+    /// Replacement-simplex orientation constraints disagree.
     #[error(
-        "conflicting replacement-cell orientation constraints between local cells {source_cell_index} and {target_cell_index}"
+        "conflicting replacement-simplex orientation constraints between local simplices {source_simplex_index} and {target_simplex_index}"
     )]
-    ConflictingReplacementOrientationBetweenCells {
-        /// First local replacement-cell index.
-        source_cell_index: usize,
-        /// Second local replacement-cell index.
-        target_cell_index: usize,
+    ConflictingReplacementOrientationBetweenSimplices {
+        /// First local replacement-simplex index.
+        source_simplex_index: usize,
+        /// Second local replacement-simplex index.
+        target_simplex_index: usize,
     },
-    /// Replacement-cell orientation cannot be flipped because the cell is too small.
-    #[error("replacement cell needs at least two vertices to flip orientation")]
-    ReplacementCellTooSmallForOrientationFlip,
-    /// Replacement orientation assignment referenced a missing local cell.
-    #[error("replacement orientation index {cell_index} out of range")]
+    /// Replacement-simplex orientation cannot be flipped because the simplex is too small.
+    #[error("replacement simplex needs at least two vertices to flip orientation")]
+    ReplacementSimplexTooSmallForOrientationFlip,
+    /// Replacement orientation assignment referenced a missing local simplex.
+    #[error("replacement orientation index {simplex_index} out of range")]
     ReplacementOrientationIndexOutOfRange {
-        /// Local replacement-cell index.
-        cell_index: usize,
+        /// Local replacement-simplex index.
+        simplex_index: usize,
     },
-    /// Two parity constraints disagree for the same replacement cell.
-    #[error("conflicting replacement-cell orientation constraints for local cell {cell_index}")]
-    ConflictingReplacementOrientationForCell {
-        /// Local replacement-cell index.
-        cell_index: usize,
+    /// Two parity constraints disagree for the same replacement simplex.
+    #[error(
+        "conflicting replacement-simplex orientation constraints for local simplex {simplex_index}"
+    )]
+    ConflictingReplacementOrientationForSimplex {
+        /// Local replacement-simplex index.
+        simplex_index: usize,
     },
     /// The facet-order permutation parity could not be derived.
     #[error("could not derive replacement facet-order permutation parity")]
     FacetOrderParityUnavailable,
-    /// A facet index is outside the replacement cell's vertex range.
+    /// A facet index is outside the replacement simplex's vertex range.
     #[error(
-        "facet index {facet_index} out of range for replacement cell with {vertex_count} vertices"
+        "facet index {facet_index} out of range for replacement simplex with {vertex_count} vertices"
     )]
     ReplacementFacetIndexOutOfRange {
         /// Invalid facet index.
         facet_index: usize,
-        /// Replacement-cell vertex count.
+        /// Replacement-simplex vertex count.
         vertex_count: usize,
     },
     /// A k=2 facet predicate received the wrong number of facet vertices.
@@ -2716,15 +2747,15 @@ pub enum FlipContextError {
     },
     /// Periodic frame alignment found contradictory translations.
     #[error(
-        "conflicting periodic frame translations while aligning vertex {vertex_key:?} from cell {source_cell_key:?} into frame {target_cell_key:?}: expected {expected_offset:?}, got {found_offset:?}"
+        "conflicting periodic frame translations while aligning vertex {vertex_key:?} from simplex {source_simplex_key:?} into frame {target_simplex_key:?}: expected {expected_offset:?}, got {found_offset:?}"
     )]
     ConflictingPeriodicFrameTranslation {
         /// Vertex being aligned.
         vertex_key: VertexKey,
-        /// Source cell used for alignment.
-        source_cell_key: CellKey,
-        /// Target cell frame.
-        target_cell_key: CellKey,
+        /// Source simplex used for alignment.
+        source_simplex_key: SimplexKey,
+        /// Target simplex frame.
+        target_simplex_key: SimplexKey,
         /// Previously derived offset.
         expected_offset: Vec<i8>,
         /// Conflicting candidate offset.
@@ -2732,38 +2763,38 @@ pub enum FlipContextError {
     },
     /// Periodic frame alignment disagreed for an external-to-replacement facet.
     #[error(
-        "conflicting periodic frame translations while aligning vertex {vertex_key:?} from external cell {source_cell_key:?} into replacement cell {target_cell_index}: expected {expected_offset:?}, got {found_offset:?}"
+        "conflicting periodic frame translations while aligning vertex {vertex_key:?} from external simplex {source_simplex_key:?} into replacement simplex {target_simplex_index}: expected {expected_offset:?}, got {found_offset:?}"
     )]
     ConflictingReplacementPeriodicFrameTranslation {
         /// Vertex being aligned.
         vertex_key: VertexKey,
-        /// External source cell used for alignment.
-        source_cell_key: CellKey,
-        /// Target replacement-cell index.
-        target_cell_index: usize,
+        /// External source simplex used for alignment.
+        source_simplex_key: SimplexKey,
+        /// Target replacement-simplex index.
+        target_simplex_index: usize,
         /// Previously derived offset.
         expected_offset: Vec<i8>,
         /// Conflicting candidate offset.
         found_offset: Vec<i8>,
     },
-    /// No source cell could align a periodic vertex into the target frame.
-    #[error("cannot align periodic vertex {vertex_key:?} into frame {target_cell_key:?}")]
+    /// No source simplex could align a periodic vertex into the target frame.
+    #[error("cannot align periodic vertex {vertex_key:?} into frame {target_simplex_key:?}")]
     PeriodicVertexAlignmentFailed {
         /// Vertex being aligned.
         vertex_key: VertexKey,
-        /// Target cell frame.
-        target_cell_key: CellKey,
+        /// Target simplex frame.
+        target_simplex_key: SimplexKey,
     },
-    /// Periodic offset count does not match the cell's vertex count.
+    /// Periodic offset count does not match the simplex's vertex count.
     #[error(
-        "cell {cell_key:?} periodic offset count {offset_count} does not match vertex count {vertex_count}"
+        "simplex {simplex_key:?} periodic offset count {offset_count} does not match vertex count {vertex_count}"
     )]
     PeriodicOffsetCountMismatch {
-        /// Cell with malformed offsets.
-        cell_key: CellKey,
+        /// Simplex with malformed offsets.
+        simplex_key: SimplexKey,
         /// Number of stored offsets.
         offset_count: usize,
-        /// Number of cell vertices.
+        /// Number of simplex vertices.
         vertex_count: usize,
     },
     /// Periodic offset subtraction overflowed on an axis.
@@ -2778,9 +2809,9 @@ pub enum FlipContextError {
         /// Coordinate axis.
         axis: usize,
     },
-    /// Inverse predicate evaluation had no removed-cell frame.
-    #[error("inverse flip predicate requires at least one removed cell frame")]
-    MissingRemovedCellFrame,
+    /// Inverse predicate evaluation had no removed-simplex frame.
+    #[error("inverse flip predicate requires at least one removed simplex frame")]
+    MissingRemovedSimplexFrame,
 }
 
 /// Non-recursive summary of a flip error that reached another flip error path.
@@ -2793,9 +2824,9 @@ pub enum FlipFailureKind {
     /// Boundary facet.
     #[error("boundary facet")]
     BoundaryFacet,
-    /// Missing cell.
-    #[error("missing cell")]
-    MissingCell,
+    /// Missing simplex.
+    #[error("missing simplex")]
+    MissingSimplex,
     /// Missing vertex.
     #[error("missing vertex")]
     MissingVertex,
@@ -2844,24 +2875,24 @@ pub enum FlipFailureKind {
     /// Predicate failure.
     #[error("predicate failure")]
     PredicateFailure,
-    /// Degenerate cell.
-    #[error("degenerate cell")]
-    DegenerateCell,
+    /// Degenerate simplex.
+    #[error("degenerate simplex")]
+    DegenerateSimplex,
     /// Negative orientation.
     #[error("negative orientation")]
     NegativeOrientation,
-    /// Duplicate cell.
-    #[error("duplicate cell")]
-    DuplicateCell,
+    /// Duplicate simplex.
+    #[error("duplicate simplex")]
+    DuplicateSimplex,
     /// Non-manifold facet.
     #[error("non-manifold facet")]
     NonManifoldFacet,
     /// Inserted simplex already exists.
     #[error("inserted simplex already exists")]
     InsertedSimplexAlreadyExists,
-    /// Cell creation failed.
-    #[error("cell creation")]
-    CellCreation,
+    /// Simplex creation failed.
+    #[error("simplex creation")]
+    SimplexCreation,
     /// Neighbor wiring failed.
     #[error("neighbor wiring")]
     NeighborWiring,
@@ -2883,24 +2914,24 @@ pub enum FlipFailureKind {
 #[derive(Clone, Copy, Debug, Error, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum FlipNeighborCavityFailureKind {
-    /// Boundary cell was missing.
-    #[error("missing boundary cell")]
-    MissingBoundaryCell,
+    /// Boundary simplex was missing.
+    #[error("missing boundary simplex")]
+    MissingBoundarySimplex,
     /// Inserted vertex was missing.
     #[error("missing inserted vertex")]
     MissingInsertedVertex,
-    /// Boundary cell had the wrong arity.
-    #[error("wrong cell arity")]
-    WrongCellArity,
+    /// Boundary simplex had the wrong arity.
+    #[error("wrong simplex arity")]
+    WrongSimplexArity,
     /// Facet index was invalid.
     #[error("invalid facet index")]
     InvalidFacetIndex,
-    /// Replacement cell creation failed.
-    #[error("cell creation")]
-    CellCreation,
-    /// Replacement cell insertion failed.
-    #[error("cell insertion")]
-    CellInsertion,
+    /// Replacement simplex creation failed.
+    #[error("simplex creation")]
+    SimplexCreation,
+    /// Replacement simplex insertion failed.
+    #[error("simplex insertion")]
+    SimplexInsertion,
     /// Initial simplex construction failed.
     #[error("initial simplex construction")]
     InitialSimplexConstruction,
@@ -2925,7 +2956,7 @@ pub enum FlipNeighborCavityFailureKind {
     /// Degenerate insertion location is unsupported.
     #[error("unsupported degenerate location")]
     UnsupportedDegenerateLocation,
-    /// Fan filling produced no cells.
+    /// Fan filling produced no simplices.
     #[error("empty fan triangulation")]
     EmptyFanTriangulation,
 }
@@ -2933,12 +2964,12 @@ pub enum FlipNeighborCavityFailureKind {
 impl From<&CavityFillingError> for FlipNeighborCavityFailureKind {
     fn from(source: &CavityFillingError) -> Self {
         match source {
-            CavityFillingError::MissingBoundaryCell { .. } => Self::MissingBoundaryCell,
+            CavityFillingError::MissingBoundarySimplex { .. } => Self::MissingBoundarySimplex,
             CavityFillingError::MissingInsertedVertex { .. } => Self::MissingInsertedVertex,
-            CavityFillingError::WrongCellArity { .. } => Self::WrongCellArity,
+            CavityFillingError::WrongSimplexArity { .. } => Self::WrongSimplexArity,
             CavityFillingError::InvalidFacetIndex { .. } => Self::InvalidFacetIndex,
-            CavityFillingError::CellCreation { .. } => Self::CellCreation,
-            CavityFillingError::CellInsertion { .. } => Self::CellInsertion,
+            CavityFillingError::SimplexCreation { .. } => Self::SimplexCreation,
+            CavityFillingError::SimplexInsertion { .. } => Self::SimplexInsertion,
             CavityFillingError::InitialSimplexConstruction { .. } => {
                 Self::InitialSimplexConstruction
             }
@@ -3161,7 +3192,7 @@ pub enum FlipNeighborRepairFailure {
 #[derive(Clone, Debug, Error, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum FlipNeighborWiringError {
-    /// Boundary extraction failed before replacement cells were created.
+    /// Boundary extraction failed before replacement simplices were created.
     #[error("flip boundary extraction failed: {source}")]
     BoundaryExtraction {
         /// Underlying conflict-region error.
@@ -3175,13 +3206,13 @@ pub enum FlipNeighborWiringError {
         #[source]
         source: NeighborWiringError,
     },
-    /// The replacement cells would create a non-manifold facet.
-    #[error("non-manifold topology: facet {facet_hash:#x} shared by {cell_count} cells")]
+    /// The replacement simplices would create a non-manifold facet.
+    #[error("non-manifold topology: facet {facet_hash:#x} shared by {simplex_count} simplices")]
     NonManifoldTopology {
         /// Over-shared facet hash.
         facet_hash: u64,
-        /// Number of incident cells.
-        cell_count: usize,
+        /// Number of incident simplices.
+        simplex_count: usize,
     },
     /// TDS topology validation failed while wiring neighbors.
     #[error("topology validation failed during neighbor wiring: {source}")]
@@ -3260,10 +3291,10 @@ impl From<InsertionError> for FlipNeighborWiringError {
             InsertionError::NeighborWiring { reason } => Self::NeighborWiring { source: reason },
             InsertionError::NonManifoldTopology {
                 facet_hash,
-                cell_count,
+                simplex_count,
             } => Self::NonManifoldTopology {
                 facet_hash,
-                cell_count,
+                simplex_count,
             },
             InsertionError::TopologyValidation(source) => Self::TopologyValidation {
                 source: source.into(),
@@ -3304,9 +3335,9 @@ pub enum FlipMutationError {
         #[source]
         source: TdsConstructionFailure,
     },
-    /// Replacement-cell insertion failed.
-    #[error("cell insertion failed: {source}")]
-    CellInsertion {
+    /// Replacement-simplex insertion failed.
+    #[error("simplex insertion failed: {source}")]
+    SimplexInsertion {
         /// Underlying TDS construction error.
         #[source]
         source: TdsConstructionFailure,
@@ -3336,11 +3367,11 @@ pub enum FlipEdgeAdjacencyError {
         /// Repeated endpoint key.
         vertex_key: VertexKey,
     },
-    /// Incident cell does not contain both edge endpoints.
-    #[error("cell {cell_key:?} does not contain edge vertices {v0:?} and {v1:?}")]
-    CellMissingEdgeVertices {
-        /// Cell expected to contain the edge.
-        cell_key: CellKey,
+    /// Incident simplex does not contain both edge endpoints.
+    #[error("simplex {simplex_key:?} does not contain edge vertices {v0:?} and {v1:?}")]
+    SimplexMissingEdgeVertices {
+        /// Simplex expected to contain the edge.
+        simplex_key: SimplexKey,
         /// First edge endpoint.
         v0: VertexKey,
         /// Second edge endpoint.
@@ -3364,11 +3395,11 @@ pub enum FlipEdgeAdjacencyError {
 #[derive(Clone, Copy, Debug, Error, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum FlipTriangleAdjacencyError {
-    /// Incident cell does not contain all triangle vertices.
-    #[error("cell {cell_key:?} does not contain triangle vertices {a:?}, {b:?}, and {c:?}")]
-    CellMissingTriangleVertices {
-        /// Cell expected to contain the triangle.
-        cell_key: CellKey,
+    /// Incident simplex does not contain all triangle vertices.
+    #[error("simplex {simplex_key:?} does not contain triangle vertices {a:?}, {b:?}, and {c:?}")]
+    SimplexMissingTriangleVertices {
+        /// Simplex expected to contain the triangle.
+        simplex_key: SimplexKey,
         /// First triangle vertex.
         a: VertexKey,
         /// Second triangle vertex.
@@ -3394,11 +3425,11 @@ pub enum FlipTriangleAdjacencyError {
 #[derive(Clone, Copy, Debug, Error, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum FlipVertexAdjacencyError {
-    /// Incident cell does not contain the removed vertex.
-    #[error("cell {cell_key:?} does not contain vertex {vertex_key:?}")]
-    CellMissingVertex {
-        /// Cell expected to contain the vertex.
-        cell_key: CellKey,
+    /// Incident simplex does not contain the removed vertex.
+    #[error("simplex {simplex_key:?} does not contain vertex {vertex_key:?}")]
+    SimplexMissingVertex {
+        /// Simplex expected to contain the vertex.
+        simplex_key: SimplexKey,
         /// Removed vertex.
         vertex_key: VertexKey,
     },
@@ -3435,17 +3466,17 @@ pub enum FlipError {
         /// Dimension of the triangulation.
         dimension: usize,
     },
-    /// The facet is on the boundary (no adjacent cell).
+    /// The facet is on the boundary (no adjacent simplex).
     #[error("Facet {facet:?} is on the boundary (no neighbor)")]
     BoundaryFacet {
         /// Facet handle.
         facet: FacetHandle,
     },
-    /// The referenced cell was not found.
-    #[error("Cell not found: {cell_key:?}")]
-    MissingCell {
-        /// Missing cell key.
-        cell_key: CellKey,
+    /// The referenced simplex was not found.
+    #[error("Simplex not found: {simplex_key:?}")]
+    MissingSimplex {
+        /// Missing simplex key.
+        simplex_key: SimplexKey,
     },
     /// The referenced vertex was not found.
     #[error("Vertex not found: {vertex_key:?}")]
@@ -3453,72 +3484,76 @@ pub enum FlipError {
         /// Missing vertex key.
         vertex_key: VertexKey,
     },
-    /// The neighbor cell across the facet is missing.
-    #[error("Neighbor cell {neighbor_key:?} not found for facet {facet:?}")]
+    /// The neighbor simplex across the facet is missing.
+    #[error("Neighbor simplex {neighbor_key:?} not found for facet {facet:?}")]
     MissingNeighbor {
         /// Facet handle.
         facet: FacetHandle,
         /// Missing neighbor key.
-        neighbor_key: CellKey,
+        neighbor_key: SimplexKey,
     },
-    /// Ridge adjacency references a neighbor cell key that is no longer live.
-    #[error("Ridge adjacency from cell {cell_key:?} references missing neighbor {neighbor_key:?}")]
+    /// Ridge adjacency references a neighbor simplex key that is no longer live.
+    #[error(
+        "Ridge adjacency from simplex {simplex_key:?} references missing neighbor {neighbor_key:?}"
+    )]
     DanglingRidgeNeighbor {
-        /// Cell whose neighbor table contains the dangling key.
-        cell_key: CellKey,
-        /// Missing neighbor cell key.
-        neighbor_key: CellKey,
+        /// Simplex whose neighbor table contains the dangling key.
+        simplex_key: SimplexKey,
+        /// Missing neighbor simplex key.
+        neighbor_key: SimplexKey,
     },
     /// Facet adjacency information is inconsistent.
-    #[error("Facet adjacency mismatch between cell {cell_key:?} and neighbor {neighbor_key:?}")]
-    InvalidFacetAdjacency {
-        /// Cell key.
-        cell_key: CellKey,
-        /// Neighbor cell key.
-        neighbor_key: CellKey,
-    },
-    /// The facet index is out of bounds for the cell.
     #[error(
-        "Facet index {facet_index} out of bounds for cell {cell_key:?} with {vertex_count} vertices"
+        "Facet adjacency mismatch between simplex {simplex_key:?} and neighbor {neighbor_key:?}"
+    )]
+    InvalidFacetAdjacency {
+        /// Simplex key.
+        simplex_key: SimplexKey,
+        /// Neighbor simplex key.
+        neighbor_key: SimplexKey,
+    },
+    /// The facet index is out of bounds for the simplex.
+    #[error(
+        "Facet index {facet_index} out of bounds for simplex {simplex_key:?} with {vertex_count} vertices"
     )]
     InvalidFacetIndex {
-        /// Cell key.
-        cell_key: CellKey,
+        /// Simplex key.
+        simplex_key: SimplexKey,
         /// Facet index.
         facet_index: u8,
-        /// Vertex count for the cell.
+        /// Vertex count for the simplex.
         vertex_count: usize,
     },
-    /// Ridge indices are invalid for the cell.
+    /// Ridge indices are invalid for the simplex.
     #[error(
-        "Ridge indices ({omit_a}, {omit_b}) out of bounds for cell {cell_key:?} with {vertex_count} vertices"
+        "Ridge indices ({omit_a}, {omit_b}) out of bounds for simplex {simplex_key:?} with {vertex_count} vertices"
     )]
     InvalidRidgeIndex {
-        /// Cell key.
-        cell_key: CellKey,
+        /// Simplex key.
+        simplex_key: SimplexKey,
         /// First omitted index.
         omit_a: u8,
         /// Second omitted index.
         omit_b: u8,
-        /// Vertex count for the cell.
+        /// Vertex count for the simplex.
         vertex_count: usize,
     },
     /// Ridge adjacency information is inconsistent.
-    #[error("Ridge adjacency mismatch for cell {cell_key:?}")]
+    #[error("Ridge adjacency mismatch for simplex {simplex_key:?}")]
     InvalidRidgeAdjacency {
-        /// Cell key.
-        cell_key: CellKey,
+        /// Simplex key.
+        simplex_key: SimplexKey,
     },
     /// Ridge has an invalid multiplicity for k=3 flips.
     #[error("Ridge has invalid multiplicity {found}, expected 3")]
     InvalidRidgeMultiplicity {
-        /// Number of incident cells found.
+        /// Number of incident simplices found.
         found: usize,
     },
     /// Edge has an invalid multiplicity for inverse k=2 flips.
     #[error("Edge has invalid multiplicity {found}, expected {expected}")]
     InvalidEdgeMultiplicity {
-        /// Number of incident cells found.
+        /// Number of incident simplices found.
         found: usize,
         /// Expected multiplicity for the dimension.
         expected: usize,
@@ -3526,7 +3561,7 @@ pub enum FlipError {
     /// Triangle has an invalid multiplicity for inverse k=3 flips.
     #[error("Triangle has invalid multiplicity {found}, expected {expected}")]
     InvalidTriangleMultiplicity {
-        /// Number of incident cells found.
+        /// Number of incident simplices found.
         found: usize,
         /// Expected multiplicity for the dimension.
         expected: usize,
@@ -3546,7 +3581,7 @@ pub enum FlipError {
     /// Vertex star has an invalid multiplicity for inverse k=1 flips.
     #[error("Vertex star has invalid multiplicity {found}, expected {expected}")]
     InvalidVertexMultiplicity {
-        /// Number of incident cells found.
+        /// Number of incident simplices found.
         found: usize,
         /// Expected multiplicity for the dimension.
         expected: usize,
@@ -3571,20 +3606,20 @@ pub enum FlipError {
         #[source]
         reason: FlipPredicateError,
     },
-    /// Flip would create a degenerate cell (zero orientation).
-    #[error("Flip would create a degenerate cell (zero orientation)")]
-    DegenerateCell,
-    /// Delaunay repair would create a negative-orientation replacement cell.
+    /// Flip would create a degenerate simplex (zero orientation).
+    #[error("Flip would create a degenerate simplex (zero orientation)")]
+    DegenerateSimplex,
+    /// Delaunay repair would create a negative-orientation replacement simplex.
     #[error(
-        "Delaunay repair would create a negative-orientation replacement cell {cell_vertices:?}"
+        "Delaunay repair would create a negative-orientation replacement simplex {simplex_vertices:?}"
     )]
     NegativeOrientation {
-        /// Replacement cell vertices in the rejected order.
-        cell_vertices: Vec<VertexKey>,
+        /// Replacement simplex vertices in the rejected order.
+        simplex_vertices: Vec<VertexKey>,
     },
-    /// Flip would create a duplicate cell.
-    #[error("Flip would create a duplicate cell")]
-    DuplicateCell,
+    /// Flip would create a duplicate simplex.
+    #[error("Flip would create a duplicate simplex")]
+    DuplicateSimplex,
     /// Flip would create a non-manifold facet.
     #[error("Flip would create a non-manifold facet")]
     NonManifoldFacet,
@@ -3593,19 +3628,19 @@ pub enum FlipError {
     /// This violates the bistellar move link condition and can create non-manifold
     /// codimension>1 singularities (e.g., disconnected ridge links).
     #[error(
-        "Flip would insert simplex that already exists (k={k_move}, simplex={simplex_vertices:?}, existing_cell={existing_cell:?})"
+        "Flip would insert simplex that already exists (k={k_move}, simplex={simplex_vertices:?}, existing_simplex={existing_simplex:?})"
     )]
     InsertedSimplexAlreadyExists {
         /// k for the attempted move.
         k_move: usize,
         /// Vertex keys of the inserted simplex.
         simplex_vertices: SmallBuffer<VertexKey, MAX_PRACTICAL_DIMENSION_SIZE>,
-        /// A witness cell key that already contains the inserted simplex.
-        existing_cell: CellKey,
+        /// A witness simplex key that already contains the inserted simplex.
+        existing_simplex: SimplexKey,
     },
-    /// Cell creation failed.
+    /// Simplex creation failed.
     #[error(transparent)]
-    CellCreation(#[from] CellValidationError),
+    SimplexCreation(#[from] SimplexValidationError),
     /// Neighbor wiring failed during flip application.
     #[error("Neighbor wiring failed: {reason}")]
     NeighborWiring {
@@ -3651,7 +3686,7 @@ impl From<&FlipError> for FlipFailureKind {
         match source {
             FlipError::UnsupportedDimension { .. } => Self::UnsupportedDimension,
             FlipError::BoundaryFacet { .. } => Self::BoundaryFacet,
-            FlipError::MissingCell { .. } => Self::MissingCell,
+            FlipError::MissingSimplex { .. } => Self::MissingSimplex,
             FlipError::MissingVertex { .. } => Self::MissingVertex,
             FlipError::MissingNeighbor { .. } => Self::MissingNeighbor,
             FlipError::DanglingRidgeNeighbor { .. } => Self::DanglingRidgeNeighbor,
@@ -3668,12 +3703,12 @@ impl From<&FlipError> for FlipFailureKind {
             FlipError::InvalidVertexAdjacency { .. } => Self::InvalidVertexAdjacency,
             FlipError::InvalidFlipContext { .. } => Self::InvalidFlipContext,
             FlipError::PredicateFailure { .. } => Self::PredicateFailure,
-            FlipError::DegenerateCell => Self::DegenerateCell,
+            FlipError::DegenerateSimplex => Self::DegenerateSimplex,
             FlipError::NegativeOrientation { .. } => Self::NegativeOrientation,
-            FlipError::DuplicateCell => Self::DuplicateCell,
+            FlipError::DuplicateSimplex => Self::DuplicateSimplex,
             FlipError::NonManifoldFacet => Self::NonManifoldFacet,
             FlipError::InsertedSimplexAlreadyExists { .. } => Self::InsertedSimplexAlreadyExists,
-            FlipError::CellCreation(_) => Self::CellCreation,
+            FlipError::SimplexCreation(_) => Self::SimplexCreation,
             FlipError::NeighborWiring { reason } => match reason {
                 FlipNeighborWiringError::TopologyValidation { .. }
                 | FlipNeighborWiringError::DelaunayValidation { .. }
@@ -3703,14 +3738,14 @@ impl From<FlipError> for FlipFailureKind {
 ///
 /// ```rust
 /// use delaunay::prelude::triangulation::flips::{BistellarFlipKind, FlipDirection, FlipInfo};
-/// use delaunay::prelude::collections::{CellKeyBuffer, SmallBuffer, MAX_PRACTICAL_DIMENSION_SIZE};
-/// use delaunay::prelude::tds::{CellKey, VertexKey};
+/// use delaunay::prelude::collections::{SimplexKeyBuffer, SmallBuffer, MAX_PRACTICAL_DIMENSION_SIZE};
+/// use delaunay::prelude::tds::{SimplexKey, VertexKey};
 /// use slotmap::KeyData;
 ///
-/// let mut removed_cells = CellKeyBuffer::new();
-/// removed_cells.push(CellKey::from(KeyData::from_ffi(1)));
-/// let mut new_cells = CellKeyBuffer::new();
-/// new_cells.push(CellKey::from(KeyData::from_ffi(2)));
+/// let mut removed_simplices = SimplexKeyBuffer::new();
+/// removed_simplices.push(SimplexKey::from(KeyData::from_ffi(1)));
+/// let mut new_simplices = SimplexKeyBuffer::new();
+/// new_simplices.push(SimplexKey::from(KeyData::from_ffi(2)));
 ///
 /// let mut removed_face_vertices: SmallBuffer<VertexKey, MAX_PRACTICAL_DIMENSION_SIZE> =
 ///     SmallBuffer::new();
@@ -3722,8 +3757,8 @@ impl From<FlipError> for FlipFailureKind {
 /// let info: FlipInfo<3> = FlipInfo {
 ///     kind: BistellarFlipKind::k2(3),
 ///     direction: FlipDirection::Forward,
-///     removed_cells,
-///     new_cells,
+///     removed_simplices,
+///     new_simplices,
 ///     removed_face_vertices,
 ///     inserted_face_vertices,
 /// };
@@ -3735,11 +3770,11 @@ pub struct FlipInfo<const D: usize> {
     pub kind: BistellarFlipKind,
     /// Flip direction.
     pub direction: FlipDirection,
-    /// Cells removed by the flip.
-    pub removed_cells: CellKeyBuffer,
-    /// Newly created cells.
-    pub new_cells: CellKeyBuffer,
-    /// The removed-face simplex (shared by removed cells).
+    /// Simplices removed by the flip.
+    pub removed_simplices: SimplexKeyBuffer,
+    /// Newly created simplices.
+    pub new_simplices: SimplexKeyBuffer,
+    /// The removed-face simplex (shared by removed simplices).
     pub removed_face_vertices: SmallBuffer<VertexKey, MAX_PRACTICAL_DIMENSION_SIZE>,
     /// The inserted-face simplex (complementary simplex).
     pub inserted_face_vertices: SmallBuffer<VertexKey, MAX_PRACTICAL_DIMENSION_SIZE>,
@@ -3748,7 +3783,7 @@ pub struct FlipInfo<const D: usize> {
 #[derive(Debug, Clone)]
 struct AppliedFlip<const D: usize> {
     info: FlipInfo<D>,
-    removed_cell_vertices: RemovedCellVertexSnapshot,
+    removed_simplex_vertices: RemovedSimplexVertexSnapshot,
 }
 
 /// Const-generic flip context for a k-move (forward or inverse).
@@ -3758,8 +3793,8 @@ pub(crate) struct FlipContext<const D: usize, const K: usize> {
     pub removed_face_vertices: SmallBuffer<VertexKey, MAX_PRACTICAL_DIMENSION_SIZE>,
     /// Vertices of the inserted-face simplex (dimension K−1).
     pub inserted_face_vertices: SmallBuffer<VertexKey, MAX_PRACTICAL_DIMENSION_SIZE>,
-    /// Cells removed by the flip (count = K).
-    pub removed_cells: CellKeyBuffer,
+    /// Simplices removed by the flip (count = K).
+    pub removed_simplices: SimplexKeyBuffer,
     /// Flip direction (forward/inverse).
     pub direction: FlipDirection,
 }
@@ -3771,8 +3806,8 @@ pub(crate) struct FlipContextDyn<const D: usize> {
     pub removed_face_vertices: SmallBuffer<VertexKey, MAX_PRACTICAL_DIMENSION_SIZE>,
     /// Vertices of the inserted-face simplex (dimension k−1).
     pub inserted_face_vertices: SmallBuffer<VertexKey, MAX_PRACTICAL_DIMENSION_SIZE>,
-    /// Cells removed by the flip (count = k).
-    pub removed_cells: CellKeyBuffer,
+    /// Simplices removed by the flip (count = k).
+    pub removed_simplices: SimplexKeyBuffer,
     /// Flip direction (forward/inverse).
     pub direction: FlipDirection,
 }
@@ -3835,23 +3870,23 @@ impl TriangleHandle {
     }
 }
 
-/// Lightweight handle to a ridge (codimension-2 face) within a cell.
+/// Lightweight handle to a ridge (codimension-2 face) within a simplex.
 ///
 /// # Examples
 ///
 /// ```rust
 /// use delaunay::prelude::triangulation::flips::RidgeHandle;
-/// use delaunay::prelude::tds::CellKey;
+/// use delaunay::prelude::tds::SimplexKey;
 /// use slotmap::KeyData;
 ///
-/// let cell_key = CellKey::from(KeyData::from_ffi(7));
-/// let handle = RidgeHandle::new(cell_key, 2, 0);
+/// let simplex_key = SimplexKey::from(KeyData::from_ffi(7));
+/// let handle = RidgeHandle::new(simplex_key, 2, 0);
 /// assert_eq!(handle.omit_a(), 0);
 /// assert_eq!(handle.omit_b(), 2);
 /// ```
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct RidgeHandle {
-    cell_key: CellKey,
+    simplex_key: SimplexKey,
     omit_a: u8,
     omit_b: u8,
 }
@@ -3859,26 +3894,26 @@ pub struct RidgeHandle {
 impl RidgeHandle {
     /// Creates a new ridge handle by specifying the two omitted vertex indices.
     #[must_use]
-    pub const fn new(cell_key: CellKey, omit_a: u8, omit_b: u8) -> Self {
+    pub const fn new(simplex_key: SimplexKey, omit_a: u8, omit_b: u8) -> Self {
         if omit_a <= omit_b {
             Self {
-                cell_key,
+                simplex_key,
                 omit_a,
                 omit_b,
             }
         } else {
             Self {
-                cell_key,
+                simplex_key,
                 omit_a: omit_b,
                 omit_b: omit_a,
             }
         }
     }
 
-    /// Returns the cell key.
+    /// Returns the simplex key.
     #[must_use]
-    pub const fn cell_key(&self) -> CellKey {
-        self.cell_key
+    pub const fn simplex_key(&self) -> SimplexKey {
+        self.simplex_key
     }
 
     /// Returns the first omitted index.
@@ -4022,13 +4057,13 @@ fn publish_local_repair_phase_timing(
 pub(crate) struct DelaunayRepairRun {
     /// Public aggregate repair statistics.
     pub stats: DelaunayRepairStats,
-    /// Cells to validate after the final repair attempt.
+    /// Simplices to validate after the final repair attempt.
     ///
-    /// This records the cells created by successful flips, regardless of
+    /// This records the simplices created by successful flips, regardless of
     /// whether the repair queues were seeded locally or from the full TDS.  The
     /// queue frontier controls Delaunay postcondition replay; ridge-link
-    /// topology validation only needs the cells whose incidence changed.
-    pub touched_cells: CellKeyBuffer,
+    /// topology validation only needs the simplices whose incidence changed.
+    pub touched_simplices: SimplexKeyBuffer,
     /// Whether the final attempt used full-TDS queue seeding.
     pub used_full_reseed: bool,
 }
@@ -4041,7 +4076,7 @@ struct RepairAttemptOutcome {
     postcondition_required: bool,
     stats: DelaunayRepairStats,
     last_applied_flip: Option<LastAppliedFlip>,
-    touched_cells: CellKeyBuffer,
+    touched_simplices: SimplexKeyBuffer,
     used_full_reseed: bool,
 }
 
@@ -4053,30 +4088,30 @@ const fn repair_postcondition_required(
     stats.flips_performed > 0 || diagnostics.saw_applicable_repair_site
 }
 
-/// Adds newly-created cells to the repair mutation frontier without duplicates.
-fn record_touched_cells(
-    touched_cells: &mut CellKeyBuffer,
-    touched_cell_set: &mut FastHashSet<CellKey>,
-    new_cells: &[CellKey],
+/// Adds newly-created simplices to the repair mutation frontier without duplicates.
+fn record_touched_simplices(
+    touched_simplices: &mut SimplexKeyBuffer,
+    touched_simplex_set: &mut FastHashSet<SimplexKey>,
+    new_simplices: &[SimplexKey],
 ) {
-    for &cell_key in new_cells {
-        if touched_cell_set.insert(cell_key) {
-            touched_cells.push(cell_key);
+    for &simplex_key in new_simplices {
+        if touched_simplex_set.insert(simplex_key) {
+            touched_simplices.push(simplex_key);
         }
     }
 }
 
-/// Builds the local postcondition frontier from the caller's seed cells plus
-/// cells created by successful flips.
+/// Builds the local postcondition frontier from the caller's seed simplices plus
+/// simplices created by successful flips.
 fn local_postcondition_frontier(
-    seed_cells: &[CellKey],
-    touched_cells: &[CellKey],
-) -> CellKeyBuffer {
-    let mut frontier = CellKeyBuffer::new();
-    let mut seen = FastHashSet::<CellKey>::default();
-    for &cell_key in seed_cells.iter().chain(touched_cells) {
-        if seen.insert(cell_key) {
-            frontier.push(cell_key);
+    seed_simplices: &[SimplexKey],
+    touched_simplices: &[SimplexKey],
+) -> SimplexKeyBuffer {
+    let mut frontier = SimplexKeyBuffer::new();
+    let mut seen = FastHashSet::<SimplexKey>::default();
+    for &simplex_key in seed_simplices.iter().chain(touched_simplices) {
+        if seen.insert(simplex_key) {
+            frontier.push(simplex_key);
         }
     }
     frontier
@@ -4086,14 +4121,14 @@ fn local_postcondition_frontier(
 fn repair_run_from_attempt(outcome: RepairAttemptOutcome) -> DelaunayRepairRun {
     let RepairAttemptOutcome {
         stats,
-        touched_cells,
+        touched_simplices,
         used_full_reseed,
         ..
     } = outcome;
 
     DelaunayRepairRun {
         stats,
-        touched_cells,
+        touched_simplices,
         used_full_reseed,
     }
 }
@@ -4197,7 +4232,7 @@ impl fmt::Display for DelaunayRepairDiagnostics {
 ///
 /// let err = DelaunayRepairError::VerificationFailed {
 ///     context: DelaunayRepairVerificationContext::StrictValidation,
-///     source: Box::new(FlipError::DegenerateCell),
+///     source: Box::new(FlipError::DegenerateSimplex),
 /// };
 ///
 /// assert!(matches!(
@@ -4366,7 +4401,7 @@ impl From<DelaunayRepairError> for FlipNeighborRepairFailure {
 /// # Errors
 ///
 /// Returns a [`FlipError`] if the facet is invalid, lies on the boundary, references
-/// missing cells/vertices, or the adjacency data is inconsistent.
+/// missing simplices/vertices, or the adjacency data is inconsistent.
 pub(crate) fn build_k2_flip_context<T, U, V, const D: usize>(
     tds: &Tds<T, U, V, D>,
     facet: FacetHandle,
@@ -4380,49 +4415,53 @@ where
         return Err(FlipError::UnsupportedDimension { dimension: D });
     }
 
-    let cell_a_key = facet.cell_key();
-    let cell_a = tds.cell(cell_a_key).ok_or(FlipError::MissingCell {
-        cell_key: cell_a_key,
-    })?;
+    let simplex_a_key = facet.simplex_key();
+    let simplex_a = tds
+        .simplex(simplex_a_key)
+        .ok_or(FlipError::MissingSimplex {
+            simplex_key: simplex_a_key,
+        })?;
 
     let facet_index_a = usize::from(facet.facet_index());
-    let vertex_count = cell_a.number_of_vertices();
+    let vertex_count = simplex_a.number_of_vertices();
     if facet_index_a >= vertex_count {
         return Err(FlipError::InvalidFacetIndex {
-            cell_key: cell_a_key,
+            simplex_key: simplex_a_key,
             facet_index: facet.facet_index(),
             vertex_count,
         });
     }
 
-    let neighbor_key = cell_a
+    let neighbor_key = simplex_a
         .neighbor_key(facet_index_a)
         .flatten()
         .ok_or(FlipError::BoundaryFacet { facet })?;
 
-    let cell_b = tds.cell(neighbor_key).ok_or(FlipError::MissingNeighbor {
-        facet,
-        neighbor_key,
-    })?;
+    let simplex_b = tds
+        .simplex(neighbor_key)
+        .ok_or(FlipError::MissingNeighbor {
+            facet,
+            neighbor_key,
+        })?;
 
-    let Some(facet_index_b) = cell_a
-        .mirror_facet_index(facet_index_a, cell_b)
-        .or_else(|| back_reference_facet_index(cell_a_key, cell_b))
+    let Some(facet_index_b) = simplex_a
+        .mirror_facet_index(facet_index_a, simplex_b)
+        .or_else(|| back_reference_facet_index(simplex_a_key, simplex_b))
     else {
         return Err(FlipError::InvalidFacetAdjacency {
-            cell_key: cell_a_key,
+            simplex_key: simplex_a_key,
             neighbor_key,
         });
     };
 
-    let opposite_a = cell_a.vertices()[facet_index_a];
-    let opposite_b = cell_b.vertices()[facet_index_b];
+    let opposite_a = simplex_a.vertices()[facet_index_a];
+    let opposite_b = simplex_b.vertices()[facet_index_b];
 
-    let shared_facet = facet_vertices_from_cell(cell_a, facet_index_a);
+    let shared_facet = facet_vertices_from_simplex(simplex_a, facet_index_a);
 
     if shared_facet.len() != D {
         return Err(FlipError::InvalidFacetAdjacency {
-            cell_key: cell_a_key,
+            simplex_key: simplex_a_key,
             neighbor_key,
         });
     }
@@ -4432,21 +4471,21 @@ where
         || opposite_a == opposite_b
     {
         return Err(FlipError::InvalidFacetAdjacency {
-            cell_key: cell_a_key,
+            simplex_key: simplex_a_key,
             neighbor_key,
         });
     }
 
     for &v in &shared_facet {
-        if !cell_b.contains_vertex(v) {
+        if !simplex_b.contains_vertex(v) {
             return Err(FlipError::InvalidFacetAdjacency {
-                cell_key: cell_a_key,
+                simplex_key: simplex_a_key,
                 neighbor_key,
             });
         }
     }
 
-    let removed_cells: CellKeyBuffer = [cell_a_key, neighbor_key].into_iter().collect();
+    let removed_simplices: SimplexKeyBuffer = [simplex_a_key, neighbor_key].into_iter().collect();
     let mut inserted_face_vertices: SmallBuffer<VertexKey, MAX_PRACTICAL_DIMENSION_SIZE> =
         SmallBuffer::with_capacity(2);
     inserted_face_vertices.push(opposite_a);
@@ -4455,20 +4494,20 @@ where
     Ok(FlipContext {
         removed_face_vertices: shared_facet,
         inserted_face_vertices,
-        removed_cells,
+        removed_simplices,
         direction: FlipDirection::Forward,
     })
 }
 
-/// Finds the neighbor slot that points back to a source cell when reciprocal
+/// Finds the neighbor slot that points back to a source simplex when reciprocal
 /// neighbor pointers are already available.
 fn back_reference_facet_index<T, U, V, const D: usize>(
-    source_cell: CellKey,
-    neighbor_cell: &Cell<T, U, V, D>,
+    source_simplex: SimplexKey,
+    neighbor_simplex: &Simplex<T, U, V, D>,
 ) -> Option<usize> {
-    neighbor_cell
+    neighbor_simplex
         .neighbor_keys()?
-        .position(|neighbor| neighbor == Some(source_cell))
+        .position(|neighbor| neighbor == Some(source_simplex))
 }
 
 /// Increments a small vertex-incidence count buffer without allocating a hash map
@@ -4487,11 +4526,11 @@ fn increment_vertex_count(
     }
 }
 
-/// Build inverse k=2 flip context from an edge and its incident cells.
+/// Build inverse k=2 flip context from an edge and its incident simplices.
 ///
 /// # Errors
 ///
-/// Returns a [`FlipError`] if the edge is invalid, references missing vertices/cells,
+/// Returns a [`FlipError`] if the edge is invalid, references missing vertices/simplices,
 /// or the adjacency data is inconsistent.
 pub(crate) fn build_k2_flip_context_from_edge<T, U, V, const D: usize>(
     tds: &Tds<T, U, V, D>,
@@ -4520,35 +4559,39 @@ where
         return Err(FlipError::MissingVertex { vertex_key: v1 });
     }
 
-    let mut removed_cells: CellKeyBuffer = CellKeyBuffer::new();
-    for cell_key in tds.find_cells_containing_vertex(v0) {
-        let cell = tds
-            .cell(cell_key)
-            .ok_or(FlipError::MissingCell { cell_key })?;
-        if cell.contains_vertex(v1) {
-            removed_cells.push(cell_key);
+    let mut removed_simplices: SimplexKeyBuffer = SimplexKeyBuffer::new();
+    for simplex_key in tds.find_simplices_containing_vertex(v0) {
+        let simplex = tds
+            .simplex(simplex_key)
+            .ok_or(FlipError::MissingSimplex { simplex_key })?;
+        if simplex.contains_vertex(v1) {
+            removed_simplices.push(simplex_key);
         }
     }
 
-    if removed_cells.len() != D {
+    if removed_simplices.len() != D {
         return Err(FlipError::InvalidEdgeMultiplicity {
-            found: removed_cells.len(),
+            found: removed_simplices.len(),
             expected: D,
         });
     }
 
     let mut counts: SmallBuffer<(VertexKey, usize), MAX_PRACTICAL_DIMENSION_SIZE> =
         SmallBuffer::new();
-    for &cell_key in &removed_cells {
-        let cell = tds
-            .cell(cell_key)
-            .ok_or(FlipError::MissingCell { cell_key })?;
-        if !cell.contains_vertex(v0) || !cell.contains_vertex(v1) {
+    for &simplex_key in &removed_simplices {
+        let simplex = tds
+            .simplex(simplex_key)
+            .ok_or(FlipError::MissingSimplex { simplex_key })?;
+        if !simplex.contains_vertex(v0) || !simplex.contains_vertex(v1) {
             return Err(FlipError::InvalidEdgeAdjacency {
-                reason: FlipEdgeAdjacencyError::CellMissingEdgeVertices { cell_key, v0, v1 },
+                reason: FlipEdgeAdjacencyError::SimplexMissingEdgeVertices {
+                    simplex_key,
+                    v0,
+                    v1,
+                },
             });
         }
-        for &vk in cell.vertices() {
+        for &vk in simplex.vertices() {
             if vk != v0 && vk != v1 {
                 increment_vertex_count(&mut counts, vk);
             }
@@ -4577,14 +4620,14 @@ where
     Ok(FlipContextDyn {
         removed_face_vertices,
         inserted_face_vertices,
-        removed_cells,
+        removed_simplices,
         direction: FlipDirection::Inverse,
     })
 }
-/// Build a forward k=1 flip context from a cell and inserted vertex.
-fn build_k1_forward_context_from_cell<T, U, V, const D: usize>(
+/// Build a forward k=1 flip context from a simplex and inserted vertex.
+fn build_k1_forward_context_from_simplex<T, U, V, const D: usize>(
     tds: &Tds<T, U, V, D>,
-    cell_key: CellKey,
+    simplex_key: SimplexKey,
     inserted_vertex: VertexKey,
 ) -> Result<FlipContext<D, 1>, FlipError>
 where
@@ -4596,9 +4639,9 @@ where
         return Err(FlipError::UnsupportedDimension { dimension: D });
     }
 
-    let cell = tds
-        .cell(cell_key)
-        .ok_or(FlipError::MissingCell { cell_key })?;
+    let simplex = tds
+        .simplex(simplex_key)
+        .ok_or(FlipError::MissingSimplex { simplex_key })?;
     if tds.vertex(inserted_vertex).is_none() {
         return Err(FlipError::MissingVertex {
             vertex_key: inserted_vertex,
@@ -4606,26 +4649,26 @@ where
     }
 
     let removed_face_vertices: SmallBuffer<VertexKey, MAX_PRACTICAL_DIMENSION_SIZE> =
-        cell.vertices().iter().copied().collect();
+        simplex.vertices().iter().copied().collect();
     let mut inserted_face_vertices: SmallBuffer<VertexKey, MAX_PRACTICAL_DIMENSION_SIZE> =
         SmallBuffer::with_capacity(1);
     inserted_face_vertices.push(inserted_vertex);
 
-    let removed_cells: CellKeyBuffer = std::iter::once(cell_key).collect();
+    let removed_simplices: SimplexKeyBuffer = std::iter::once(simplex_key).collect();
 
     Ok(FlipContext {
         removed_face_vertices,
         inserted_face_vertices,
-        removed_cells,
+        removed_simplices,
         direction: FlipDirection::Forward,
     })
 }
 
-/// Build inverse k=1 flip context from a vertex and its incident cells.
+/// Build inverse k=1 flip context from a vertex and its incident simplices.
 ///
 /// # Errors
 ///
-/// Returns a [`FlipError`] if the vertex is missing, its incident cell count is
+/// Returns a [`FlipError`] if the vertex is missing, its incident simplex count is
 /// not D+1, or the adjacency data is inconsistent.
 pub(crate) fn build_k1_inverse_context<T, U, V, const D: usize>(
     tds: &Tds<T, U, V, D>,
@@ -4644,31 +4687,31 @@ where
         return Err(FlipError::MissingVertex { vertex_key });
     }
 
-    let removed_cells = tds.find_cells_containing_vertex_by_key(vertex_key);
+    let removed_simplices = tds.find_simplices_containing_vertex_by_key(vertex_key);
     let expected = D + 1;
-    if removed_cells.len() != expected {
+    if removed_simplices.len() != expected {
         return Err(FlipError::InvalidVertexMultiplicity {
-            found: removed_cells.len(),
+            found: removed_simplices.len(),
             expected,
         });
     }
 
     let mut counts: FastHashMap<VertexKey, usize> = FastHashMap::default();
-    let mut removed_cells_buf: CellKeyBuffer = CellKeyBuffer::new();
-    for &cell_key in &removed_cells {
-        let cell = tds
-            .cell(cell_key)
-            .ok_or(FlipError::MissingCell { cell_key })?;
-        if !cell.contains_vertex(vertex_key) {
+    let mut removed_simplices_buf: SimplexKeyBuffer = SimplexKeyBuffer::new();
+    for &simplex_key in &removed_simplices {
+        let simplex = tds
+            .simplex(simplex_key)
+            .ok_or(FlipError::MissingSimplex { simplex_key })?;
+        if !simplex.contains_vertex(vertex_key) {
             return Err(FlipError::InvalidVertexAdjacency {
-                reason: FlipVertexAdjacencyError::CellMissingVertex {
-                    cell_key,
+                reason: FlipVertexAdjacencyError::SimplexMissingVertex {
+                    simplex_key,
                     vertex_key,
                 },
             });
         }
-        removed_cells_buf.push(cell_key);
-        for &vk in cell.vertices() {
+        removed_simplices_buf.push(simplex_key);
+        for &vk in simplex.vertices() {
             if vk != vertex_key {
                 *counts.entry(vk).or_insert(0) += 1;
             }
@@ -4696,27 +4739,27 @@ where
     Ok(FlipContextDyn {
         removed_face_vertices,
         inserted_face_vertices,
-        removed_cells: removed_cells_buf,
+        removed_simplices: removed_simplices_buf,
         direction: FlipDirection::Inverse,
     })
 }
 
-/// Return whether source-cell points are safe for the positive-oriented insphere path.
+/// Return whether source-simplex points are safe for the positive-oriented insphere path.
 ///
 /// This helper exists so flip predicates only use
 /// [`Kernel::in_sphere_positive_oriented`] when the actual point ordering is
-/// provably positive-oriented. It returns `false` for synthetic/non-source cells
+/// provably positive-oriented. It returns `false` for synthetic/non-source simplices
 /// and for geometries whose orientation cannot be certified by the f64 fast
 /// filter, causing callers to use the full orientation-aware predicate instead.
 #[inline]
-fn source_cell_is_certified_positive<T, const D: usize>(
-    source_cell: Option<CellKey>,
+fn source_simplex_is_certified_positive<T, const D: usize>(
+    source_simplex: Option<SimplexKey>,
     points: &[Point<T, D>],
 ) -> bool
 where
     T: CoordinateScalar,
 {
-    if source_cell.is_none() {
+    if source_simplex.is_none() {
         return false;
     }
 
@@ -4726,7 +4769,7 @@ where
     if known_positive {
         debug_assert!(
             matches!(simplex_orientation(points), Ok(Orientation::POSITIVE)),
-            "stored source cells must be positive-oriented before using the insphere fast path"
+            "stored source simplices must be positive-oriented before using the insphere fast path"
         );
     }
     known_positive
@@ -4734,7 +4777,7 @@ where
 
 #[expect(
     clippy::too_many_arguments,
-    reason = "local predicate evaluation threads topology, source cells, and diagnostics explicitly"
+    reason = "local predicate evaluation threads topology, source simplices, and diagnostics explicitly"
 )]
 #[expect(
     clippy::too_many_lines,
@@ -4748,8 +4791,8 @@ fn delaunay_violation_k2_for_facet<K, U, V, const D: usize>(
     facet_vertices: &[VertexKey],
     opposite_a: VertexKey,
     opposite_b: VertexKey,
-    source_cells: &[CellKey],
-    frame_cell: Option<CellKey>,
+    source_simplices: &[SimplexKey],
+    frame_simplex: Option<SimplexKey>,
     config: &RepairAttemptConfig,
     diagnostics: &mut RepairDiagnostics,
 ) -> Result<bool, FlipError>
@@ -4772,19 +4815,19 @@ where
         return Err(FlipContextError::InvalidK2Opposites.into());
     }
 
-    let mut cell_vertices: [SmallBuffer<VertexKey, MAX_PRACTICAL_DIMENSION_SIZE>; 2] = [
+    let mut simplex_vertices: [SmallBuffer<VertexKey, MAX_PRACTICAL_DIMENSION_SIZE>; 2] = [
         SmallBuffer::with_capacity(D + 1),
         SmallBuffer::with_capacity(D + 1),
     ];
-    for vertices in &mut cell_vertices {
+    for vertices in &mut simplex_vertices {
         vertices.extend_from_slice(facet_vertices);
     }
-    cell_vertices[0].push(opposite_a);
-    cell_vertices[1].push(opposite_b);
+    simplex_vertices[0].push(opposite_a);
+    simplex_vertices[1].push(opposite_b);
 
     // Sort by VertexKey for canonical SoS perturbation ordering
-    cell_vertices[0].sort_unstable_by_key(|v| v.data().as_ffi());
-    cell_vertices[1].sort_unstable_by_key(|v| v.data().as_ffi());
+    simplex_vertices[0].sort_unstable_by_key(|v| v.data().as_ffi());
+    simplex_vertices[1].sort_unstable_by_key(|v| v.data().as_ffi());
 
     let (
         points_a,
@@ -4795,26 +4838,30 @@ where
         positive_oriented_b,
     ) = if matches!(topology_model, GlobalTopologyModelAdapter::Euclidean(_)) {
         let mut point_cache = EuclideanPointCache::new();
-        let source_a = matching_source_cell(tds, &cell_vertices[0], source_cells);
-        let source_b = matching_source_cell(tds, &cell_vertices[1], source_cells);
-        let points_a = if let Some(source_cell) = source_a {
-            let cell = tds.cell(source_cell).ok_or(FlipError::MissingCell {
-                cell_key: source_cell,
-            })?;
-            point_cache.points_for_vertices(tds, cell.vertices())?
+        let source_a = matching_source_simplex(tds, &simplex_vertices[0], source_simplices);
+        let source_b = matching_source_simplex(tds, &simplex_vertices[1], source_simplices);
+        let points_a = if let Some(source_simplex) = source_a {
+            let simplex = tds
+                .simplex(source_simplex)
+                .ok_or(FlipError::MissingSimplex {
+                    simplex_key: source_simplex,
+                })?;
+            point_cache.points_for_vertices(tds, simplex.vertices())?
         } else {
-            point_cache.points_for_vertices(tds, &cell_vertices[0])?
+            point_cache.points_for_vertices(tds, &simplex_vertices[0])?
         };
-        let points_b = if let Some(source_cell) = source_b {
-            let cell = tds.cell(source_cell).ok_or(FlipError::MissingCell {
-                cell_key: source_cell,
-            })?;
-            point_cache.points_for_vertices(tds, cell.vertices())?
+        let points_b = if let Some(source_simplex) = source_b {
+            let simplex = tds
+                .simplex(source_simplex)
+                .ok_or(FlipError::MissingSimplex {
+                    simplex_key: source_simplex,
+                })?;
+            point_cache.points_for_vertices(tds, simplex.vertices())?
         } else {
-            point_cache.points_for_vertices(tds, &cell_vertices[1])?
+            point_cache.points_for_vertices(tds, &simplex_vertices[1])?
         };
-        let positive_oriented_a = source_cell_is_certified_positive(source_a, &points_a);
-        let positive_oriented_b = source_cell_is_certified_positive(source_b, &points_b);
+        let positive_oriented_a = source_simplex_is_certified_positive(source_a, &points_a);
+        let positive_oriented_b = source_simplex_is_certified_positive(source_b, &points_b);
         (
             points_a,
             points_b,
@@ -4824,25 +4871,39 @@ where
             positive_oriented_b,
         )
     } else {
-        let source_a = matching_source_cell(tds, &cell_vertices[0], source_cells).or(frame_cell);
-        let source_b = matching_source_cell(tds, &cell_vertices[1], source_cells).or(frame_cell);
+        let source_a =
+            matching_source_simplex(tds, &simplex_vertices[0], source_simplices).or(frame_simplex);
+        let source_b =
+            matching_source_simplex(tds, &simplex_vertices[1], source_simplices).or(frame_simplex);
         (
             vertices_to_points_with_optional_lift(
                 tds,
                 topology_model,
-                &cell_vertices[0],
+                &simplex_vertices[0],
                 source_a,
-                source_cells,
+                source_simplices,
             )?,
             vertices_to_points_with_optional_lift(
                 tds,
                 topology_model,
-                &cell_vertices[1],
+                &simplex_vertices[1],
                 source_b,
-                source_cells,
+                source_simplices,
             )?,
-            vertex_point_lifted_into_cell(tds, topology_model, opposite_a, source_b, source_cells)?,
-            vertex_point_lifted_into_cell(tds, topology_model, opposite_b, source_a, source_cells)?,
+            vertex_point_lifted_into_simplex(
+                tds,
+                topology_model,
+                opposite_a,
+                source_b,
+                source_simplices,
+            )?,
+            vertex_point_lifted_into_simplex(
+                tds,
+                topology_model,
+                opposite_b,
+                source_a,
+                source_simplices,
+            )?,
             false,
             false,
         )
@@ -4857,7 +4918,7 @@ where
         Err(e) => {
             diagnostics.record_predicate_failure();
             return Err(FlipPredicateError::coordinate_conversion(
-                FlipPredicateOperation::K2CellAInSphere,
+                FlipPredicateOperation::K2SimplexAInSphere,
                 e,
             )
             .into());
@@ -4874,7 +4935,7 @@ where
         Err(e) => {
             diagnostics.record_predicate_failure();
             return Err(FlipPredicateError::coordinate_conversion(
-                FlipPredicateOperation::K2CellBInSphere,
+                FlipPredicateOperation::K2SimplexBInSphere,
                 e,
             )
             .into());
@@ -4883,12 +4944,12 @@ where
 
     // Record ambiguous sites when the predicate returns boundary/uncertain.
     if in_a == 0 {
-        let key = predicate_key_from_vertices(&cell_vertices[0], opposite_b);
+        let key = predicate_key_from_vertices(&simplex_vertices[0], opposite_b);
         diagnostics.record_ambiguous(key);
     }
 
     if in_b == 0 {
-        let key = predicate_key_from_vertices(&cell_vertices[1], opposite_a);
+        let key = predicate_key_from_vertices(&simplex_vertices[1], opposite_a);
         diagnostics.record_ambiguous(key);
     }
 
@@ -4910,12 +4971,12 @@ where
 
     Ok(violates)
 }
-/// Check whether a flip would create a degenerate (zero-volume) cell.
+/// Check whether a flip would create a degenerate (zero-volume) simplex.
 ///
-/// Builds the replacement cells from the given removed/inserted face vertices
+/// Builds the replacement simplices from the given removed/inserted face vertices
 /// and checks each with [`robust_orientation`].  Returns `Ok(true)` if any
-/// replacement cell is degenerate.
-fn flip_would_create_degenerate_cell<T, U, V, const D: usize>(
+/// replacement simplex is degenerate.
+fn flip_would_create_degenerate_simplex<T, U, V, const D: usize>(
     tds: &Tds<T, U, V, D>,
     removed_face_vertices: &[VertexKey],
     inserted_face_vertices: &[VertexKey],
@@ -4936,13 +4997,13 @@ where
         }
 
         let points = vertices_to_points(tds, &vertices)?;
-        // Use exact orientation (no SoS) so that truly degenerate cells are
+        // Use exact orientation (no SoS) so that truly degenerate simplices are
         // detected even when the kernel uses SoS.  Matches the pattern in
         // apply_bistellar_flip_with_k.
         match robust_orientation(&points) {
             Err(e) => {
                 return Err(FlipPredicateError::coordinate_conversion(
-                    FlipPredicateOperation::DegenerateCellPrecheck,
+                    FlipPredicateOperation::DegenerateSimplexPrecheck,
                     e,
                 )
                 .into());
@@ -4955,8 +5016,8 @@ where
     Ok(false)
 }
 
-/// Check whether a k=2 flip would create a degenerate cell.
-fn k2_flip_would_create_degenerate_cell<T, U, V, const D: usize>(
+/// Check whether a k=2 flip would create a degenerate simplex.
+fn k2_flip_would_create_degenerate_simplex<T, U, V, const D: usize>(
     tds: &Tds<T, U, V, D>,
     context: &FlipContext<D, 2>,
 ) -> Result<bool, FlipError>
@@ -4974,7 +5035,7 @@ where
         .into());
     }
 
-    flip_would_create_degenerate_cell(
+    flip_would_create_degenerate_simplex(
         tds,
         &context.removed_face_vertices,
         &context.inserted_face_vertices,
@@ -4984,7 +5045,7 @@ where
 ///
 /// # Errors
 ///
-/// Returns a [`FlipError`] if any referenced cell/vertex is missing or a predicate
+/// Returns a [`FlipError`] if any referenced simplex/vertex is missing or a predicate
 /// evaluation fails.
 fn is_delaunay_violation_k2<K, U, V, const D: usize>(
     tds: &Tds<K::Scalar, U, V, D>,
@@ -5016,7 +5077,7 @@ where
         &context.removed_face_vertices,
         opposite_a,
         opposite_b,
-        &context.removed_cells,
+        &context.removed_simplices,
         None,
         config,
         diagnostics,
@@ -5027,7 +5088,7 @@ where
 ///
 /// # Errors
 ///
-/// Returns a [`FlipError`] if the flip would be degenerate, duplicate an existing cell,
+/// Returns a [`FlipError`] if the flip would be degenerate, duplicate an existing simplex,
 /// create non-manifold topology, if predicate evaluation fails, or if underlying TDS
 /// mutations fail.
 pub(crate) fn apply_bistellar_flip_k2<T, U, V, const D: usize>(
@@ -5046,7 +5107,7 @@ where
 ///
 /// # Errors
 ///
-/// Returns a [`FlipError`] if the ridge is invalid, references missing cells/vertices,
+/// Returns a [`FlipError`] if the ridge is invalid, references missing simplices/vertices,
 /// or the adjacency data is inconsistent.
 pub(crate) fn build_k3_flip_context<T, U, V, const D: usize>(
     tds: &Tds<T, U, V, D>,
@@ -5059,7 +5120,7 @@ where
     build_k3_flip_context_with_star_limit(tds, ridge, None)
 }
 
-/// Builds k=3 repair context only for true three-cell ridge stars.
+/// Builds k=3 repair context only for true three-simplex ridge stars.
 fn build_k3_flip_context_for_repair<T, U, V, const D: usize>(
     tds: &Tds<T, U, V, D>,
     ridge: RidgeHandle,
@@ -5075,7 +5136,7 @@ where
 fn build_k3_flip_context_with_star_limit<T, U, V, const D: usize>(
     tds: &Tds<T, U, V, D>,
     ridge: RidgeHandle,
-    max_cells: Option<usize>,
+    max_simplices: Option<usize>,
 ) -> Result<FlipContext<D, 3>, FlipError>
 where
     U: DataType,
@@ -5085,51 +5146,54 @@ where
         return Err(FlipError::UnsupportedDimension { dimension: D });
     }
 
-    let cell_key = ridge.cell_key();
-    let cell = tds
-        .cell(cell_key)
-        .ok_or(FlipError::MissingCell { cell_key })?;
+    let simplex_key = ridge.simplex_key();
+    let simplex = tds
+        .simplex(simplex_key)
+        .ok_or(FlipError::MissingSimplex { simplex_key })?;
 
-    let vertex_count = cell.number_of_vertices();
+    let vertex_count = simplex.number_of_vertices();
     let omit_a = usize::from(ridge.omit_a());
     let omit_b = usize::from(ridge.omit_b());
     if omit_a >= vertex_count || omit_b >= vertex_count || omit_a == omit_b {
         return Err(FlipError::InvalidRidgeIndex {
-            cell_key,
+            simplex_key,
             omit_a: ridge.omit_a(),
             omit_b: ridge.omit_b(),
             vertex_count,
         });
     }
 
-    let ridge_vertices = ridge_vertices_from_cell(cell, omit_a, omit_b);
+    let ridge_vertices = ridge_vertices_from_simplex(simplex, omit_a, omit_b);
     if ridge_vertices.len() != D - 1 {
-        return Err(FlipError::InvalidRidgeAdjacency { cell_key });
+        return Err(FlipError::InvalidRidgeAdjacency { simplex_key });
     }
 
-    let cells = collect_cells_around_ridge(tds, cell_key, &ridge_vertices, max_cells)?;
-    if cells.len() != 3 {
-        return Err(FlipError::InvalidRidgeMultiplicity { found: cells.len() });
+    let simplices =
+        collect_simplices_around_ridge(tds, simplex_key, &ridge_vertices, max_simplices)?;
+    if simplices.len() != 3 {
+        return Err(FlipError::InvalidRidgeMultiplicity {
+            found: simplices.len(),
+        });
     }
 
-    // k=3 flip contexts are tiny (exactly 3 cells, with 2 "extra" vertices per cell).
+    // k=3 flip contexts are tiny (exactly 3 simplices, with 2 "extra" vertices per simplex).
     // Use flat buffers + linear counting to avoid HashMap/Vec overhead in this hot path.
     let mut opposite_counts: SmallBuffer<(VertexKey, u8), 3> = SmallBuffer::new();
-    let mut extras_per_cell: SmallBuffer<[VertexKey; 2], 3> = SmallBuffer::new();
+    let mut extras_per_simplex: SmallBuffer<[VertexKey; 2], 3> = SmallBuffer::new();
 
-    for &ck in &cells {
-        let cell = tds
-            .cell(ck)
-            .ok_or(FlipError::MissingCell { cell_key: ck })?;
-        let extras = cell_extras_for_ridge(ck, cell, &ridge_vertices)?;
+    for &ck in &simplices {
+        let simplex = tds
+            .simplex(ck)
+            .ok_or(FlipError::MissingSimplex { simplex_key: ck })?;
+        let extras = simplex_extras_for_ridge(ck, simplex, &ridge_vertices)?;
         if extras.len() != 2 {
-            return Err(FlipError::InvalidRidgeAdjacency { cell_key: ck });
+            return Err(FlipError::InvalidRidgeAdjacency { simplex_key: ck });
         }
 
         let extras_pair: [VertexKey; 2] = extras
             .as_slice()
             .try_into()
-            .map_err(|_| FlipError::InvalidRidgeAdjacency { cell_key: ck })?;
+            .map_err(|_| FlipError::InvalidRidgeAdjacency { simplex_key: ck })?;
 
         for &v in &extras_pair {
             if let Some((_key, count)) = opposite_counts.iter_mut().find(|(key, _)| *key == v) {
@@ -5139,11 +5203,11 @@ where
             }
         }
 
-        extras_per_cell.push(extras_pair);
+        extras_per_simplex.push(extras_pair);
     }
 
     if opposite_counts.len() != 3 || !opposite_counts.iter().all(|(_v, count)| *count == 2) {
-        return Err(FlipError::InvalidRidgeAdjacency { cell_key });
+        return Err(FlipError::InvalidRidgeAdjacency { simplex_key });
     }
 
     let mut opposite_vertices: SmallBuffer<VertexKey, 3> =
@@ -5152,11 +5216,11 @@ where
     let opposite_vertices: [VertexKey; 3] = opposite_vertices
         .as_slice()
         .try_into()
-        .map_err(|_| FlipError::InvalidRidgeAdjacency { cell_key })?;
+        .map_err(|_| FlipError::InvalidRidgeAdjacency { simplex_key })?;
 
-    for extras in &extras_per_cell {
-        let _missing = missing_opposite_for_cell(extras, &opposite_vertices)
-            .ok_or(FlipError::InvalidRidgeAdjacency { cell_key })?;
+    for extras in &extras_per_simplex {
+        let _missing = missing_opposite_for_simplex(extras, &opposite_vertices)
+            .ok_or(FlipError::InvalidRidgeAdjacency { simplex_key })?;
     }
 
     let mut inserted_face_vertices: SmallBuffer<VertexKey, MAX_PRACTICAL_DIMENSION_SIZE> =
@@ -5166,16 +5230,16 @@ where
     Ok(FlipContext {
         removed_face_vertices: ridge_vertices,
         inserted_face_vertices,
-        removed_cells: cells,
+        removed_simplices: simplices,
         direction: FlipDirection::Forward,
     })
 }
 
-/// Build inverse k=3 flip context from a triangle and its incident cells.
+/// Build inverse k=3 flip context from a triangle and its incident simplices.
 ///
 /// # Errors
 ///
-/// Returns a [`FlipError`] if the triangle is invalid, references missing vertices/cells,
+/// Returns a [`FlipError`] if the triangle is invalid, references missing vertices/simplices,
 /// or the adjacency data is inconsistent.
 pub(crate) fn build_k3_flip_context_from_triangle<T, U, V, const D: usize>(
     tds: &Tds<T, U, V, D>,
@@ -5201,41 +5265,42 @@ where
         return Err(FlipError::MissingVertex { vertex_key: c });
     }
 
-    let mut removed_cells: CellKeyBuffer = CellKeyBuffer::new();
-    for cell_key in tds.find_cells_containing_vertex(a) {
-        let cell = tds
-            .cell(cell_key)
-            .ok_or(FlipError::MissingCell { cell_key })?;
-        if cell.contains_vertex(b) && cell.contains_vertex(c) {
-            removed_cells.push(cell_key);
+    let mut removed_simplices: SimplexKeyBuffer = SimplexKeyBuffer::new();
+    for simplex_key in tds.find_simplices_containing_vertex(a) {
+        let simplex = tds
+            .simplex(simplex_key)
+            .ok_or(FlipError::MissingSimplex { simplex_key })?;
+        if simplex.contains_vertex(b) && simplex.contains_vertex(c) {
+            removed_simplices.push(simplex_key);
         }
     }
 
     let expected = D - 1;
-    if removed_cells.len() != expected {
+    if removed_simplices.len() != expected {
         return Err(FlipError::InvalidTriangleMultiplicity {
-            found: removed_cells.len(),
+            found: removed_simplices.len(),
             expected,
         });
     }
 
     let mut counts: SmallBuffer<(VertexKey, usize), MAX_PRACTICAL_DIMENSION_SIZE> =
         SmallBuffer::new();
-    for &cell_key in &removed_cells {
-        let cell = tds
-            .cell(cell_key)
-            .ok_or(FlipError::MissingCell { cell_key })?;
-        if !cell.contains_vertex(a) || !cell.contains_vertex(b) || !cell.contains_vertex(c) {
+    for &simplex_key in &removed_simplices {
+        let simplex = tds
+            .simplex(simplex_key)
+            .ok_or(FlipError::MissingSimplex { simplex_key })?;
+        if !simplex.contains_vertex(a) || !simplex.contains_vertex(b) || !simplex.contains_vertex(c)
+        {
             return Err(FlipError::InvalidTriangleAdjacency {
-                reason: FlipTriangleAdjacencyError::CellMissingTriangleVertices {
-                    cell_key,
+                reason: FlipTriangleAdjacencyError::SimplexMissingTriangleVertices {
+                    simplex_key,
                     a,
                     b,
                     c,
                 },
             });
         }
-        for &vk in cell.vertices() {
+        for &vk in simplex.vertices() {
             if vk != a && vk != b && vk != c {
                 increment_vertex_count(&mut counts, vk);
             }
@@ -5265,13 +5330,13 @@ where
     Ok(FlipContextDyn {
         removed_face_vertices,
         inserted_face_vertices,
-        removed_cells,
+        removed_simplices,
         direction: FlipDirection::Inverse,
     })
 }
 #[expect(
     clippy::too_many_arguments,
-    reason = "Local predicate evaluation threads topology, source cells, and diagnostics explicitly"
+    reason = "Local predicate evaluation threads topology, source simplices, and diagnostics explicitly"
 )]
 /// Evaluate the k=3 ridge flip predicate for a local Delaunay violation.
 fn delaunay_violation_k3_for_ridge<K, U, V, const D: usize>(
@@ -5280,8 +5345,8 @@ fn delaunay_violation_k3_for_ridge<K, U, V, const D: usize>(
     topology_model: &GlobalTopologyModelAdapter<D>,
     ridge_vertices: &[VertexKey],
     triangle_vertices: &[VertexKey],
-    source_cells: &[CellKey],
-    frame_cell: Option<CellKey>,
+    source_simplices: &[SimplexKey],
+    frame_simplex: Option<SimplexKey>,
     _config: &RepairAttemptConfig,
     diagnostics: &mut RepairDiagnostics,
 ) -> Result<bool, FlipError>
@@ -5310,51 +5375,53 @@ where
     let mut euclidean_point_cache = EuclideanPointCache::new();
 
     for &missing in triangle_vertices {
-        let mut cell_vertices: SmallBuffer<VertexKey, MAX_PRACTICAL_DIMENSION_SIZE> =
+        let mut simplex_vertices: SmallBuffer<VertexKey, MAX_PRACTICAL_DIMENSION_SIZE> =
             SmallBuffer::with_capacity(D + 1);
-        cell_vertices.extend_from_slice(ridge_vertices);
+        simplex_vertices.extend_from_slice(ridge_vertices);
         for &v in triangle_vertices {
             if v != missing {
-                cell_vertices.push(v);
+                simplex_vertices.push(v);
             }
         }
 
         // Sort by VertexKey for canonical SoS perturbation ordering
-        cell_vertices.sort_unstable_by_key(|v| v.data().as_ffi());
+        simplex_vertices.sort_unstable_by_key(|v| v.data().as_ffi());
 
         let (points, missing_point, positive_oriented) = if is_euclidean_topology {
-            let source_cell = matching_source_cell(tds, &cell_vertices, source_cells);
-            let points = if let Some(source_cell) = source_cell {
-                let cell = tds.cell(source_cell).ok_or(FlipError::MissingCell {
-                    cell_key: source_cell,
-                })?;
-                euclidean_point_cache.points_for_vertices(tds, cell.vertices())?
+            let source_simplex = matching_source_simplex(tds, &simplex_vertices, source_simplices);
+            let points = if let Some(source_simplex) = source_simplex {
+                let simplex = tds
+                    .simplex(source_simplex)
+                    .ok_or(FlipError::MissingSimplex {
+                        simplex_key: source_simplex,
+                    })?;
+                euclidean_point_cache.points_for_vertices(tds, simplex.vertices())?
             } else {
-                euclidean_point_cache.points_for_vertices(tds, &cell_vertices)?
+                euclidean_point_cache.points_for_vertices(tds, &simplex_vertices)?
             };
-            let positive_oriented = source_cell_is_certified_positive(source_cell, &points);
+            let positive_oriented = source_simplex_is_certified_positive(source_simplex, &points);
             (
                 points,
                 euclidean_point_cache.point(tds, missing)?,
                 positive_oriented,
             )
         } else {
-            let source_cell =
-                matching_source_cell(tds, &cell_vertices, source_cells).or(frame_cell);
+            let source_simplex =
+                matching_source_simplex(tds, &simplex_vertices, source_simplices).or(frame_simplex);
             (
                 vertices_to_points_with_optional_lift(
                     tds,
                     topology_model,
-                    &cell_vertices,
-                    source_cell,
-                    source_cells,
+                    &simplex_vertices,
+                    source_simplex,
+                    source_simplices,
                 )?,
-                vertex_point_lifted_into_cell(
+                vertex_point_lifted_into_simplex(
                     tds,
                     topology_model,
                     missing,
-                    source_cell,
-                    source_cells,
+                    source_simplex,
+                    source_simplices,
                 )?,
                 false,
             )
@@ -5370,7 +5437,7 @@ where
             Err(e) => {
                 diagnostics.record_predicate_failure();
                 return Err(FlipPredicateError::coordinate_conversion(
-                    FlipPredicateOperation::K3CellInSphere,
+                    FlipPredicateOperation::K3SimplexInSphere,
                     e,
                 )
                 .into());
@@ -5379,7 +5446,7 @@ where
 
         // Track ambiguous sites when the fast predicate returns boundary/uncertain.
         if in_sphere == 0 {
-            let key = predicate_key_from_vertices(&cell_vertices, missing);
+            let key = predicate_key_from_vertices(&simplex_vertices, missing);
             diagnostics.record_ambiguous(key);
         }
 
@@ -5395,7 +5462,7 @@ where
 ///
 /// # Errors
 ///
-/// Returns a [`FlipError`] if the flip would be degenerate, duplicate an existing cell,
+/// Returns a [`FlipError`] if the flip would be degenerate, duplicate an existing simplex,
 /// create non-manifold topology, if predicate evaluation fails, or if underlying TDS
 /// mutations fail.
 pub(crate) fn apply_bistellar_flip_k3<T, U, V, const D: usize>(
@@ -5410,15 +5477,15 @@ where
     apply_bistellar_flip::<T, U, V, D, 3>(tds, context)
 }
 
-/// Apply a forward k=1 move (cell split) by inserting a new vertex.
+/// Apply a forward k=1 move (simplex split) by inserting a new vertex.
 ///
 /// # Errors
 ///
-/// Returns a [`FlipError`] if the cell is missing, the vertex cannot be inserted,
+/// Returns a [`FlipError`] if the simplex is missing, the vertex cannot be inserted,
 /// or the flip would be degenerate.
 pub(crate) fn apply_bistellar_flip_k1<T, U, V, const D: usize>(
     tds: &mut Tds<T, U, V, D>,
-    cell_key: CellKey,
+    simplex_key: SimplexKey,
     vertex: Vertex<T, U, D>,
 ) -> Result<FlipInfo<D>, FlipError>
 where
@@ -5436,7 +5503,7 @@ where
         }
     })?;
 
-    let context = match build_k1_forward_context_from_cell(tds, cell_key, vertex_key) {
+    let context = match build_k1_forward_context_from_simplex(tds, simplex_key, vertex_key) {
         Ok(ctx) => ctx,
         Err(e) => {
             // Remove the just-inserted vertex to avoid leaving an orphan.
@@ -5494,7 +5561,7 @@ where
 fn repair_delaunay_with_flips_k2_attempt<K, U, V, const D: usize>(
     tds: &mut Tds<K::Scalar, U, V, D>,
     kernel: &K,
-    seed_cells: Option<&[CellKey]>,
+    seed_simplices: Option<&[SimplexKey]>,
     config: &RepairAttemptConfig,
 ) -> Result<RepairAttemptOutcome, DelaunayRepairError>
 where
@@ -5508,7 +5575,7 @@ where
 
     let max_flips = config
         .max_flips_override
-        .unwrap_or_else(|| default_max_flips::<D>(tds.number_of_cells()));
+        .unwrap_or_else(|| default_max_flips::<D>(tds.number_of_simplices()));
 
     let mut stats = DelaunayRepairStats::default();
     let mut diagnostics = RepairDiagnostics::default();
@@ -5516,16 +5583,16 @@ where
     let mut queued: FastHashSet<u64> = FastHashSet::default();
     let mut facet_handles: FastHashMap<u64, FacetHandle> = FastHashMap::default();
     let mut last_applied_flip: Option<LastAppliedFlip> = None;
-    let mut touched_cells = CellKeyBuffer::new();
-    let mut touched_cell_set = FastHashSet::<CellKey>::default();
-    let used_full_reseed = seed_cells.is_none();
+    let mut touched_simplices = SimplexKeyBuffer::new();
+    let mut touched_simplex_set = FastHashSet::<SimplexKey>::default();
+    let used_full_reseed = seed_simplices.is_none();
     let topology_model = GlobalTopology::DEFAULT.model();
 
-    if let Some(seeds) = seed_cells {
-        for &cell_key in seeds {
-            enqueue_cell_facets(
+    if let Some(seeds) = seed_simplices {
+        for &simplex_key in seeds {
+            enqueue_simplex_facets(
                 tds,
-                cell_key,
+                simplex_key,
                 &mut queue,
                 &mut queued,
                 &mut facet_handles,
@@ -5534,7 +5601,7 @@ where
         }
     } else {
         for facet in AllFacetsIter::new(tds) {
-            let handle = FacetHandle::new(facet.cell_key(), facet.facet_index());
+            let handle = FacetHandle::new(facet.simplex_key(), facet.facet_index());
             enqueue_facet(
                 tds,
                 handle,
@@ -5546,12 +5613,12 @@ where
         }
     }
     if repair_trace_enabled() {
-        let seed_count = seed_cells.map_or(0, <[CellKey]>::len);
+        let seed_count = seed_simplices.map_or(0, <[SimplexKey]>::len);
         tracing::debug!(
-            "[repair] attempt={} order={:?} cells={} max_flips={} seeds={} queues(facet={})",
+            "[repair] attempt={} order={:?} simplices={} max_flips={} seeds={} queues(facet={})",
             config.attempt,
             config.queue_order,
-            tds.number_of_cells(),
+            tds.number_of_simplices(),
             max_flips,
             seed_count,
             queue.len(),
@@ -5570,7 +5637,7 @@ where
             Ok(ctx) => ctx,
             Err(
                 FlipError::BoundaryFacet { .. }
-                | FlipError::MissingCell { .. }
+                | FlipError::MissingSimplex { .. }
                 | FlipError::MissingNeighbor { .. }
                 | FlipError::InvalidFacetAdjacency { .. }
                 | FlipError::InvalidFacetIndex { .. },
@@ -5634,12 +5701,12 @@ where
         let applied = match apply_delaunay_flip_k2(tds, &context) {
             Ok(applied) => applied,
             Err(
-                err @ (FlipError::DegenerateCell
+                err @ (FlipError::DegenerateSimplex
                 | FlipError::NegativeOrientation { .. }
-                | FlipError::DuplicateCell
+                | FlipError::DuplicateSimplex
                 | FlipError::NonManifoldFacet
                 | FlipError::InsertedSimplexAlreadyExists { .. }
-                | FlipError::CellCreation(_)),
+                | FlipError::SimplexCreation(_)),
             ) => {
                 if env::var_os("DELAUNAY_REPAIR_DEBUG_FACETS").is_some() {
                     tracing::debug!(
@@ -5649,10 +5716,10 @@ where
                 if repair_trace_enabled() {
                     tracing::debug!("[repair] skip k=2 flip (facet={facet:?}) reason={err}");
                     tracing::debug!(
-                        "[repair] skip k=2 flip context removed_face={:?} inserted_face={:?} removed_cells={:?}",
+                        "[repair] skip k=2 flip context removed_face={:?} inserted_face={:?} removed_simplices={:?}",
                         context.removed_face_vertices,
                         context.inserted_face_vertices,
-                        context.removed_cells,
+                        context.removed_simplices,
                     );
                 }
                 continue;
@@ -5663,12 +5730,16 @@ where
         diagnostics.record_flip_signature(signature);
         last_applied_flip = Some(LastAppliedFlip::from_applied_flip(&applied));
         let info = applied.info;
-        record_touched_cells(&mut touched_cells, &mut touched_cell_set, &info.new_cells);
+        record_touched_simplices(
+            &mut touched_simplices,
+            &mut touched_simplex_set,
+            &info.new_simplices,
+        );
 
-        for &cell_key in &info.new_cells {
-            enqueue_cell_facets(
+        for &simplex_key in &info.new_simplices {
+            enqueue_simplex_facets(
                 tds,
-                cell_key,
+                simplex_key,
                 &mut queue,
                 &mut queued,
                 &mut facet_handles,
@@ -5694,7 +5765,7 @@ where
         postcondition_required: repair_postcondition_required(&stats, &diagnostics),
         stats,
         last_applied_flip,
-        touched_cells,
+        touched_simplices,
         used_full_reseed,
     })
 }
@@ -5709,7 +5780,7 @@ where
 pub(crate) fn repair_delaunay_with_flips_k2_k3<K, U, V, const D: usize>(
     tds: &mut Tds<K::Scalar, U, V, D>,
     kernel: &K,
-    seed_cells: Option<&[CellKey]>,
+    seed_simplices: Option<&[SimplexKey]>,
     topology: TopologyGuarantee,
     max_flips_override: Option<usize>,
 ) -> Result<DelaunayRepairStats, DelaunayRepairError>
@@ -5718,7 +5789,7 @@ where
     U: DataType,
     V: DataType,
 {
-    repair_delaunay_with_flips_k2_k3_run(tds, kernel, seed_cells, topology, max_flips_override)
+    repair_delaunay_with_flips_k2_k3_run(tds, kernel, seed_simplices, topology, max_flips_override)
         .map(|run| run.stats)
 }
 
@@ -5734,18 +5805,18 @@ where
     V: DataType,
 {
     *tds = snapshot.clone_for_rollback();
-    let retry_seed_cells = None;
+    let retry_seed_simplices = None;
     let attempt_result = if D == 2 {
-        repair_delaunay_with_flips_k2_attempt(tds, kernel, retry_seed_cells, config)
+        repair_delaunay_with_flips_k2_attempt(tds, kernel, retry_seed_simplices, config)
     } else {
-        repair_delaunay_with_flips_k2_k3_attempt(tds, kernel, retry_seed_cells, config)
+        repair_delaunay_with_flips_k2_k3_attempt(tds, kernel, retry_seed_simplices, config)
     };
 
     match attempt_result {
         Ok(outcome) => match verify_repair_postcondition(
             tds,
             kernel,
-            retry_seed_cells,
+            retry_seed_simplices,
             outcome.last_applied_flip.as_ref(),
         ) {
             Ok(()) => Ok(repair_run_from_attempt(outcome)),
@@ -5770,7 +5841,7 @@ where
 pub(crate) fn repair_delaunay_with_flips_k2_k3_run<K, U, V, const D: usize>(
     tds: &mut Tds<K::Scalar, U, V, D>,
     kernel: &K,
-    seed_cells: Option<&[CellKey]>,
+    seed_simplices: Option<&[SimplexKey]>,
     topology: TopologyGuarantee,
     max_flips_override: Option<usize>,
 ) -> Result<DelaunayRepairRun, DelaunayRepairError>
@@ -5812,9 +5883,9 @@ where
     let tds_snapshot = tds.clone_for_rollback();
 
     let attempt1_result = if D == 2 {
-        repair_delaunay_with_flips_k2_attempt(tds, kernel, seed_cells, &attempt1)
+        repair_delaunay_with_flips_k2_attempt(tds, kernel, seed_simplices, &attempt1)
     } else {
-        repair_delaunay_with_flips_k2_k3_attempt(tds, kernel, seed_cells, &attempt1)
+        repair_delaunay_with_flips_k2_k3_attempt(tds, kernel, seed_simplices, &attempt1)
     };
 
     match attempt1_result {
@@ -5822,7 +5893,7 @@ where
             if verify_repair_postcondition(
                 tds,
                 kernel,
-                seed_cells,
+                seed_simplices,
                 outcome.last_applied_flip.as_ref(),
             )
             .is_ok()
@@ -5854,12 +5925,12 @@ where
     }
 }
 
-/// Run a seeded, bounded Delaunay repair capped to a specific set of cells.
+/// Run a seeded, bounded Delaunay repair capped to a specific set of simplices.
 ///
 /// Unlike [`repair_delaunay_with_flips_k2_k3`], this function normally reseeds from the
-/// provided `seed_cells` rather than `None` / all cells. This keeps the queue size
-/// bounded to `O(seed_cells × queues_per_cell)` regardless of the total triangulation size,
-/// which is critical for D≥4 where a full-triangulation seed would generate O(cells×30)
+/// provided `seed_simplices` rather than `None` / all simplices. This keeps the queue size
+/// bounded to `O(seed_simplices × queues_per_simplex)` regardless of the total triangulation size,
+/// which is critical for D≥4 where a full-triangulation seed would generate O(simplices×30)
 /// items (prohibitively expensive with robust predicates). An explicit empty seed slice
 /// is a bounded no-op seed set; callers that want a whole-TDS repair pass `None`.
 ///
@@ -5870,11 +5941,11 @@ where
 ///
 /// It is designed for per-insertion bulk construction and for the final bounded pass in
 /// `finalize_bulk_construction`.  On non-convergence after both attempts the caller
-/// should soft-fail and record the seed cells for a subsequent repair pass, or let
+/// should soft-fail and record the seed simplices for a subsequent repair pass, or let
 /// `build_with_shuffled_retries` try a different vertex ordering.
 ///
 /// `max_flips` is the per-attempt flip budget; use a seed-proportional value, e.g.
-/// `(seed_cells.len() * (D + 1) * 8).max(64)` for D ≥ 4.
+/// `(seed_simplices.len() * (D + 1) * 8).max(64)` for D ≥ 4.
 ///
 /// # Errors
 ///
@@ -5883,7 +5954,7 @@ where
 pub(crate) fn repair_delaunay_local_single_pass<K, U, V, const D: usize>(
     tds: &mut Tds<K::Scalar, U, V, D>,
     kernel: &K,
-    seed_cells: &[CellKey],
+    seed_simplices: &[SimplexKey],
     max_flips: usize,
 ) -> Result<DelaunayRepairStats, DelaunayRepairError>
 where
@@ -5891,7 +5962,7 @@ where
     U: DataType,
     V: DataType,
 {
-    repair_delaunay_local_single_pass_timed(tds, kernel, seed_cells, max_flips, None)
+    repair_delaunay_local_single_pass_timed(tds, kernel, seed_simplices, max_flips, None)
 }
 
 /// Run a seeded, bounded repair pass while reporting phase timing to the caller.
@@ -5902,7 +5973,7 @@ where
 pub(crate) fn repair_delaunay_local_single_pass_timed<K, U, V, const D: usize>(
     tds: &mut Tds<K::Scalar, U, V, D>,
     kernel: &K,
-    seed_cells: &[CellKey],
+    seed_simplices: &[SimplexKey],
     max_flips: usize,
     mut timing: Option<&mut LocalRepairPhaseTiming>,
 ) -> Result<DelaunayRepairStats, DelaunayRepairError>
@@ -5933,12 +6004,12 @@ where
 
     let attempt_started = Instant::now();
     let attempt1_result = if D == 2 {
-        repair_delaunay_with_flips_k2_attempt(tds, kernel, Some(seed_cells), &attempt1)
+        repair_delaunay_with_flips_k2_attempt(tds, kernel, Some(seed_simplices), &attempt1)
     } else {
         repair_delaunay_with_flips_k2_k3_attempt_timed(
             tds,
             kernel,
-            Some(seed_cells),
+            Some(seed_simplices),
             &attempt1,
             Some(&mut phase_timing),
         )
@@ -5956,7 +6027,7 @@ where
                 return Ok(outcome.stats);
             }
             let postcondition_frontier =
-                local_postcondition_frontier(seed_cells, &outcome.touched_cells);
+                local_postcondition_frontier(seed_simplices, &outcome.touched_simplices);
             let postcondition_started = Instant::now();
             let postcondition_result = verify_local_repair_postcondition(
                 tds,
@@ -5992,12 +6063,12 @@ where
 
     let attempt_started = Instant::now();
     let attempt2_result = if D == 2 {
-        repair_delaunay_with_flips_k2_attempt(tds, kernel, Some(seed_cells), &attempt2)
+        repair_delaunay_with_flips_k2_attempt(tds, kernel, Some(seed_simplices), &attempt2)
     } else {
         repair_delaunay_with_flips_k2_k3_attempt_timed(
             tds,
             kernel,
-            Some(seed_cells),
+            Some(seed_simplices),
             &attempt2,
             Some(&mut phase_timing),
         )
@@ -6013,7 +6084,7 @@ where
                 return Ok(outcome.stats);
             }
             let postcondition_frontier =
-                local_postcondition_frontier(seed_cells, &outcome.touched_cells);
+                local_postcondition_frontier(seed_simplices, &outcome.touched_simplices);
             let postcondition_started = Instant::now();
             let postcondition_result = verify_local_repair_postcondition(
                 tds,
@@ -6051,18 +6122,18 @@ where
     }
 }
 
-/// Verify the Delaunay property via local flip predicates (fast O(cells) validation).
+/// Verify the Delaunay property via local flip predicates (fast O(simplices) validation).
 ///
 /// This function checks whether the triangulation satisfies the Delaunay property by testing
 /// all possible flip configurations (k=2 facets, k=3 ridges, and their inverses). If no
 /// violations are detected via these local checks, the triangulation is Delaunay.
 ///
-/// This is **much faster** than the naive O(cells × vertices) empty-circumsphere check,
+/// This is **much faster** than the naive O(simplices × vertices) empty-circumsphere check,
 /// while being equally correct due to the completeness of bistellar flip predicates.
 ///
 /// # Performance
 ///
-/// - **Complexity**: O(cells) — tests only local flip predicates
+/// - **Complexity**: O(simplices) — tests only local flip predicates
 /// - **Speedup**: ~40-100x faster than brute-force for typical triangulations
 /// - **Use case**: Ideal for property-based testing with many iterations
 ///
@@ -6153,7 +6224,7 @@ where
 /// Verify the Delaunay property via local flip predicates under a global topology model.
 ///
 /// For periodic topologies this evaluates predicates in lifted coordinates using the
-/// per-cell periodic vertex offsets stored on quotient cells.
+/// per-simplex periodic vertex offsets stored on quotient simplices.
 fn verify_delaunay_with_topology<K, U, V, const D: usize>(
     tds: &Tds<K::Scalar, U, V, D>,
     kernel: &K,
@@ -6180,7 +6251,7 @@ where
 fn verify_repair_postcondition<K, U, V, const D: usize>(
     tds: &Tds<K::Scalar, U, V, D>,
     kernel: &K,
-    seed_cells: Option<&[CellKey]>,
+    seed_simplices: Option<&[SimplexKey]>,
     last_applied_flip: Option<&LastAppliedFlip>,
 ) -> Result<(), DelaunayRepairError>
 where
@@ -6191,7 +6262,7 @@ where
     verify_repair_postcondition_with_topology(
         tds,
         kernel,
-        seed_cells,
+        seed_simplices,
         GlobalTopology::DEFAULT,
         PostconditionMode::Repair,
         last_applied_flip,
@@ -6203,7 +6274,7 @@ where
 fn verify_local_repair_postcondition<K, U, V, const D: usize>(
     tds: &Tds<K::Scalar, U, V, D>,
     kernel: &K,
-    seed_cells: &[CellKey],
+    seed_simplices: &[SimplexKey],
     last_applied_flip: Option<&LastAppliedFlip>,
 ) -> Result<(), DelaunayRepairError>
 where
@@ -6214,7 +6285,7 @@ where
     verify_repair_postcondition_with_topology(
         tds,
         kernel,
-        Some(seed_cells),
+        Some(seed_simplices),
         GlobalTopology::DEFAULT,
         PostconditionMode::Repair,
         last_applied_flip,
@@ -6250,7 +6321,7 @@ fn verification_failed(
 fn verify_repair_postcondition_with_topology<K, U, V, const D: usize>(
     tds: &Tds<K::Scalar, U, V, D>,
     kernel: &K,
-    seed_cells: Option<&[CellKey]>,
+    seed_simplices: Option<&[SimplexKey]>,
     global_topology: GlobalTopology<D>,
     mode: PostconditionMode,
     last_applied_flip: Option<&LastAppliedFlip>,
@@ -6265,7 +6336,7 @@ where
     verify_repair_postcondition_locally(
         tds,
         kernel,
-        seed_cells,
+        seed_simplices,
         &topology_model,
         mode,
         last_applied_flip,
@@ -6278,7 +6349,7 @@ where
 fn verify_repair_postcondition_locally<K, U, V, const D: usize>(
     tds: &Tds<K::Scalar, U, V, D>,
     kernel: &K,
-    seed_cells: Option<&[CellKey]>,
+    seed_simplices: Option<&[SimplexKey]>,
     topology_model: &GlobalTopologyModelAdapter<D>,
     mode: PostconditionMode,
     last_applied_flip: Option<&LastAppliedFlip>,
@@ -6298,14 +6369,14 @@ where
     let mut stats = DelaunayRepairStats::default();
     let mut diagnostics = RepairDiagnostics::default();
     let mut queues = RepairQueues::new();
-    let _ = seed_repair_queues(tds, seed_cells, &mut queues, &mut stats)?;
+    let _ = seed_repair_queues(tds, seed_simplices, &mut queues, &mut stats)?;
     if repair_trace_enabled() {
-        let seed_count = seed_cells.map_or(0, <[CellKey]>::len);
+        let seed_count = seed_simplices.map_or(0, <[SimplexKey]>::len);
         tracing::debug!(
-            "[repair] attempt={} order={:?} cells={} seeds={} queues(facet={}, ridge={}, edge={}, tri={})",
+            "[repair] attempt={} order={:?} simplices={} seeds={} queues(facet={}, ridge={}, edge={}, tri={})",
             config.attempt,
             config.queue_order,
-            tds.number_of_cells(),
+            tds.number_of_simplices(),
             seed_count,
             queues.facet_queue.len(),
             queues.ridge_queue.len(),
@@ -6362,8 +6433,8 @@ where
         return Err(DelaunayRepairError::PostconditionFailed {
             message: format!(
                 "repair pass disconnected the triangulation \
-                 ({} cells remain); neighbor wiring is incomplete",
-                tds.number_of_cells()
+                 ({} simplices remain); neighbor wiring is incomplete",
+                tds.number_of_simplices()
             ),
         });
     }
@@ -6410,7 +6481,7 @@ where
             Ok(ctx) => ctx,
             Err(
                 FlipError::BoundaryFacet { .. }
-                | FlipError::MissingCell { .. }
+                | FlipError::MissingSimplex { .. }
                 | FlipError::MissingNeighbor { .. }
                 | FlipError::InvalidFacetAdjacency { .. }
                 | FlipError::InvalidFacetIndex { .. },
@@ -6422,7 +6493,7 @@ where
 
         match is_delaunay_violation_k2(tds, kernel, topology_model, &context, config, diagnostics) {
             Ok(true) => {
-                let flip_degenerate = match k2_flip_would_create_degenerate_cell(tds, &context) {
+                let flip_degenerate = match k2_flip_would_create_degenerate_simplex(tds, &context) {
                     Ok(degenerate) => degenerate,
                     Err(error @ FlipError::PredicateFailure { .. }) => {
                         resolve_postcondition_predicate_failure(
@@ -6529,7 +6600,7 @@ where
                 FlipError::InvalidRidgeIndex { .. }
                 | FlipError::InvalidRidgeAdjacency { .. }
                 | FlipError::InvalidRidgeMultiplicity { .. }
-                | FlipError::MissingCell { .. },
+                | FlipError::MissingSimplex { .. },
             ) => {
                 continue;
             }
@@ -6538,7 +6609,7 @@ where
 
         match is_delaunay_violation_k3(tds, kernel, topology_model, &context, config, diagnostics) {
             Ok(true) => {
-                let flip_degenerate = match flip_would_create_degenerate_cell(
+                let flip_degenerate = match flip_would_create_degenerate_simplex(
                     tds,
                     &context.removed_face_vertices,
                     &context.inserted_face_vertices,
@@ -6626,7 +6697,7 @@ where
             Err(
                 FlipError::InvalidEdgeMultiplicity { .. }
                 | FlipError::InvalidEdgeAdjacency { .. }
-                | FlipError::MissingCell { .. }
+                | FlipError::MissingSimplex { .. }
                 | FlipError::MissingVertex { .. },
             ) => {
                 continue;
@@ -6639,7 +6710,7 @@ where
         }
         let opposite_a = context.removed_face_vertices[0];
         let opposite_b = context.removed_face_vertices[1];
-        let frame_cell = removed_cell_frame(&context.removed_cells)?;
+        let frame_simplex = removed_simplex_frame(&context.removed_simplices)?;
 
         let violates = match delaunay_violation_k2_for_facet(
             tds,
@@ -6648,8 +6719,8 @@ where
             &context.inserted_face_vertices,
             opposite_a,
             opposite_b,
-            &context.removed_cells,
-            Some(frame_cell),
+            &context.removed_simplices,
+            Some(frame_simplex),
             config,
             diagnostics,
         ) {
@@ -6709,7 +6780,7 @@ where
             Err(
                 FlipError::InvalidTriangleMultiplicity { .. }
                 | FlipError::InvalidTriangleAdjacency { .. }
-                | FlipError::MissingCell { .. }
+                | FlipError::MissingSimplex { .. }
                 | FlipError::MissingVertex { .. },
             ) => {
                 continue;
@@ -6717,15 +6788,15 @@ where
             Err(e) => return Err(e.into()),
         };
 
-        let frame_cell = removed_cell_frame(&context.removed_cells)?;
+        let frame_simplex = removed_simplex_frame(&context.removed_simplices)?;
         let violates = match delaunay_violation_k3_for_ridge(
             tds,
             kernel,
             topology_model,
             &context.inserted_face_vertices,
             &context.removed_face_vertices,
-            &context.removed_cells,
-            Some(frame_cell),
+            &context.removed_simplices,
+            Some(frame_simplex),
             config,
             diagnostics,
         ) {
@@ -6785,8 +6856,8 @@ struct RepairDiagnostics {
     inserted_simplex_sample: Option<InsertedSimplexSkipSample>,
     invalid_ridge_multiplicity_skips: usize,
     invalid_ridge_multiplicity_sample: Option<RidgeMultiplicitySkipSample>,
-    missing_cell_skips: usize,
-    missing_cell_sample: Option<MissingCellSkipSample>,
+    missing_simplex_skips: usize,
+    missing_simplex_sample: Option<MissingSimplexSkipSample>,
     saw_applicable_repair_site: bool,
     flip_signature_window: VecDeque<u64>,
     flip_signature_counts: FastHashMap<u64, usize>,
@@ -6808,9 +6879,9 @@ struct RidgeMultiplicitySkipSample {
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
-struct MissingCellSkipSample {
+struct MissingSimplexSkipSample {
     location: RepairSkipLocation,
-    cell_key: CellKey,
+    simplex_key: SimplexKey,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -6877,14 +6948,14 @@ impl fmt::Debug for RidgeMultiplicitySkipSample {
     }
 }
 
-impl fmt::Display for MissingCellSkipSample {
+impl fmt::Display for MissingSimplexSkipSample {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         self.location.fmt_label(f)?;
-        write!(f, " missing_cell={:?}", self.cell_key)
+        write!(f, " missing_simplex={:?}", self.simplex_key)
     }
 }
 
-impl fmt::Debug for MissingCellSkipSample {
+impl fmt::Debug for MissingSimplexSkipSample {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         fmt::Debug::fmt(&self.to_string(), f)
     }
@@ -6970,12 +7041,12 @@ impl RepairDiagnostics {
         }
     }
 
-    /// Captures one stale-cell sample so slot-swap churn is visible when
+    /// Captures one stale-simplex sample so slot-swap churn is visible when
     /// repair diagnostics are inspected.
-    const fn record_missing_cell_skip(&mut self, sample: MissingCellSkipSample) {
-        self.missing_cell_skips = self.missing_cell_skips.saturating_add(1);
-        if self.missing_cell_sample.is_none() {
-            self.missing_cell_sample = Some(sample);
+    const fn record_missing_simplex_skip(&mut self, sample: MissingSimplexSkipSample) {
+        self.missing_simplex_skips = self.missing_simplex_skips.saturating_add(1);
+        if self.missing_simplex_sample.is_none() {
+            self.missing_simplex_sample = Some(sample);
         }
     }
 
@@ -6989,7 +7060,7 @@ impl RepairDiagnostics {
 struct RepairAttemptConfig {
     attempt: usize,
     queue_order: RepairQueueOrder,
-    /// Override the flip budget. `None` uses `default_max_flips` (proportional to total cell
+    /// Override the flip budget. `None` uses `default_max_flips` (proportional to total simplex
     /// count). Set to `Some(n)` for per-insertion local repairs to avoid a runaway budget when
     /// the triangulation is large but the seed set is small.
     max_flips_override: Option<usize>,
@@ -7053,10 +7124,10 @@ fn emit_repair_debug_summary(
         cycles = diagnostics.cycle_detections,
         inserted_simplex_skips = diagnostics.inserted_simplex_skips,
         invalid_ridge_multiplicity_skips = diagnostics.invalid_ridge_multiplicity_skips,
-        missing_cell_skips = diagnostics.missing_cell_skips,
+        missing_simplex_skips = diagnostics.missing_simplex_skips,
         inserted_simplex_sample = ?diagnostics.inserted_simplex_sample,
         invalid_ridge_multiplicity_sample = ?diagnostics.invalid_ridge_multiplicity_sample,
-        missing_cell_sample = ?diagnostics.missing_cell_sample,
+        missing_simplex_sample = ?diagnostics.missing_simplex_sample,
         "repair summary"
     );
 }
@@ -7122,17 +7193,17 @@ struct LastAppliedFlip {
     k_move: usize,
     removed_face_vertices: SmallBuffer<VertexKey, MAX_PRACTICAL_DIMENSION_SIZE>,
     inserted_face_vertices: SmallBuffer<VertexKey, MAX_PRACTICAL_DIMENSION_SIZE>,
-    removed_cells: CellKeyBuffer,
-    new_cells: CellKeyBuffer,
-    /// Snapshot of each removed cell's vertex list captured before the flip's
-    /// `remove_cells_by_keys` call; pairs 1:1 with `removed_cells`. Empty
+    removed_simplices: SimplexKeyBuffer,
+    new_simplices: SimplexKeyBuffer,
+    /// Snapshot of each removed simplex's vertex list captured before the flip's
+    /// `remove_simplices_by_keys` call; pairs 1:1 with `removed_simplices`. Empty
     /// inner buffers only appear in placeholder instances built via `Self::new`.
-    removed_cell_vertices: RemovedCellVertexSnapshot,
+    removed_simplex_vertices: RemovedSimplexVertexSnapshot,
 }
 
 impl LastAppliedFlip {
-    /// Sorts faces so immediate-reversal detection is independent of local cell
-    /// vertex order. Cell lists stay empty here because this constructor is also
+    /// Sorts faces so immediate-reversal detection is independent of local simplex
+    /// vertex order. Simplex lists stay empty here because this constructor is also
     /// used for temporary reversal checks.
     fn new(k_move: usize, removed: &[VertexKey], inserted: &[VertexKey]) -> Self {
         let mut removed_face_vertices: SmallBuffer<VertexKey, MAX_PRACTICAL_DIMENSION_SIZE> =
@@ -7147,9 +7218,9 @@ impl LastAppliedFlip {
             k_move,
             removed_face_vertices,
             inserted_face_vertices,
-            removed_cells: CellKeyBuffer::new(),
-            new_cells: CellKeyBuffer::new(),
-            removed_cell_vertices: SmallBuffer::new(),
+            removed_simplices: SimplexKeyBuffer::new(),
+            new_simplices: SimplexKeyBuffer::new(),
+            removed_simplex_vertices: SmallBuffer::new(),
         }
     }
 
@@ -7162,27 +7233,27 @@ impl LastAppliedFlip {
             &info.removed_face_vertices,
             &info.inserted_face_vertices,
         );
-        last.removed_cells.clone_from(&info.removed_cells);
-        last.new_cells.clone_from(&info.new_cells);
-        last.removed_cell_vertices
-            .clone_from(&applied.removed_cell_vertices);
+        last.removed_simplices.clone_from(&info.removed_simplices);
+        last.new_simplices.clone_from(&info.new_simplices);
+        last.removed_simplex_vertices
+            .clone_from(&applied.removed_simplex_vertices);
         last
     }
 
-    /// Formats each removed cell as `CellKey(N): vertices=[...]` using the
-    /// snapshot captured before the flip's cell removal. Falls back to
+    /// Formats each removed simplex as `SimplexKey(N): vertices=[...]` using the
+    /// snapshot captured before the flip's simplex removal. Falls back to
     /// `missing-snapshot` only for placeholder rows created by `Self::new`.
-    fn removed_cell_vertex_lines(&self) -> Vec<String> {
-        self.removed_cells
+    fn removed_simplex_vertex_lines(&self) -> Vec<String> {
+        self.removed_simplices
             .iter()
             .copied()
             .enumerate()
             .map(
-                |(idx, cell_key)| match self.removed_cell_vertices.get(idx) {
+                |(idx, simplex_key)| match self.removed_simplex_vertices.get(idx) {
                     Some(verts) if !verts.is_empty() => {
-                        format!("{cell_key:?}: vertices={verts:?}")
+                        format!("{simplex_key:?}: vertices={verts:?}")
                     }
-                    _ => format!("{cell_key:?}: missing-snapshot"),
+                    _ => format!("{simplex_key:?}: missing-snapshot"),
                 },
             )
             .collect()
@@ -7298,7 +7369,7 @@ fn should_emit_postcondition_facet_debug(diagnostics: &mut RepairDiagnostics) ->
 
 /// Computes a dimension-sensitive flip budget so non-convergent repair fails
 /// predictably instead of running unbounded.
-fn default_max_flips<const D: usize>(cell_count: usize) -> usize {
+fn default_max_flips<const D: usize>(simplex_count: usize) -> usize {
     // Flip budget strategy by dimension and build mode:
     //
     // - D<=2: use 4× budget in debug/test (2D flips are fast).
@@ -7306,7 +7377,7 @@ fn default_max_flips<const D: usize>(cell_count: usize) -> usize {
     //   to spend hours cycling through flip loops when many star-splits produced a heavily
     //   non-Delaunay triangulation.  8× still provides headroom for legitimate convergence
     //   while failing faster (triggering the heuristic rebuild sooner) when cycling.
-    // - D>=4: use cells×(D+1)×4 (min 4096) in debug/test.  Flip convergence is not
+    // - D>=4: use simplices×(D+1)×4 (min 4096) in debug/test.  Flip convergence is not
     //   guaranteed in D>=4 (Edelsbrunner-Shah 1996), so this budget is intentionally
     //   conservative: it bounds the cost of user-facing repair APIs (repair_delaunay_with_flips
     //   and run_flip_repair_fallbacks during incremental insertion) while failing fast
@@ -7315,7 +7386,7 @@ fn default_max_flips<const D: usize>(cell_count: usize) -> usize {
     //   find_conflict_region and the is_delaunay_property_only() check in
     //   build_with_shuffled_retries.
     if D >= 4 {
-        return cell_count
+        return simplex_count
             .saturating_mul(D.saturating_add(1))
             .saturating_mul(4)
             .max(4096);
@@ -7324,7 +7395,7 @@ fn default_max_flips<const D: usize>(cell_count: usize) -> usize {
         3 => 8,
         _ => 4, // D<=2
     };
-    let base = cell_count
+    let base = simplex_count
         .saturating_mul(D.saturating_add(1))
         .saturating_mul(multiplier);
     base.max(512)
@@ -7388,7 +7459,7 @@ impl RepairQueues {
 )]
 fn seed_repair_queues<T, U, V, const D: usize>(
     tds: &Tds<T, U, V, D>,
-    seed_cells: Option<&[CellKey]>,
+    seed_simplices: Option<&[SimplexKey]>,
     queues: &mut RepairQueues,
     stats: &mut DelaunayRepairStats,
 ) -> Result<bool, FlipError>
@@ -7397,44 +7468,46 @@ where
     U: DataType,
     V: DataType,
 {
-    if let Some(seeds) = seed_cells {
+    if let Some(seeds) = seed_simplices {
         let mut present = 0usize;
         let mut missing = 0usize;
-        for &cell_key in seeds {
-            if !tds.contains_cell(cell_key) {
+        for &simplex_key in seeds {
+            if !tds.contains_simplex(simplex_key) {
                 missing = missing.saturating_add(1);
                 if repair_trace_enabled() {
-                    tracing::debug!("[repair] seed_repair_queues: missing seed cell={cell_key:?}");
+                    tracing::debug!(
+                        "[repair] seed_repair_queues: missing seed simplex={simplex_key:?}"
+                    );
                 }
                 continue;
             }
             present = present.saturating_add(1);
-            enqueue_cell_facets(
+            enqueue_simplex_facets(
                 tds,
-                cell_key,
+                simplex_key,
                 &mut queues.facet_queue,
                 &mut queues.facet_queued,
                 &mut queues.facet_handles,
                 stats,
             )?;
-            enqueue_cell_ridges(
+            enqueue_simplex_ridges(
                 tds,
-                cell_key,
+                simplex_key,
                 &mut queues.ridge_queue,
                 &mut queues.ridge_queued,
                 &mut queues.ridge_handles,
                 stats,
             )?;
-            enqueue_cell_edges(
+            enqueue_simplex_edges(
                 tds,
-                cell_key,
+                simplex_key,
                 &mut queues.edge_queue,
                 &mut queues.edge_queued,
                 stats,
             );
-            enqueue_cell_triangles(
+            enqueue_simplex_triangles(
                 tds,
-                cell_key,
+                simplex_key,
                 &mut queues.triangle_queue,
                 &mut queues.triangle_queued,
                 stats,
@@ -7442,7 +7515,7 @@ where
             stats.max_queue_len = stats.max_queue_len.max(queues.total_len());
         }
         if repair_trace_enabled() {
-            let seed_sample: Vec<CellKey> = seeds.iter().copied().take(8).collect();
+            let seed_sample: Vec<SimplexKey> = seeds.iter().copied().take(8).collect();
             tracing::debug!(
                 "[repair] seed_repair_queues: seeds={} present={} missing={}",
                 seeds.len(),
@@ -7457,7 +7530,7 @@ where
         if present == 0 && !seeds.is_empty() {
             if repair_trace_enabled() {
                 tracing::debug!(
-                    "[repair] seed_repair_queues: all seed cells stale; falling back to global seeding"
+                    "[repair] seed_repair_queues: all seed simplices stale; falling back to global seeding"
                 );
             }
             seed_repair_queues(tds, None, queues, stats)?;
@@ -7465,7 +7538,7 @@ where
         }
     } else {
         for facet in AllFacetsIter::new(tds) {
-            let handle = FacetHandle::new(facet.cell_key(), facet.facet_index());
+            let handle = FacetHandle::new(facet.simplex_key(), facet.facet_index());
             enqueue_facet(
                 tds,
                 handle,
@@ -7475,25 +7548,25 @@ where
                 stats,
             );
         }
-        for (cell_key, _) in tds.cells() {
-            enqueue_cell_ridges(
+        for (simplex_key, _) in tds.simplices() {
+            enqueue_simplex_ridges(
                 tds,
-                cell_key,
+                simplex_key,
                 &mut queues.ridge_queue,
                 &mut queues.ridge_queued,
                 &mut queues.ridge_handles,
                 stats,
             )?;
-            enqueue_cell_edges(
+            enqueue_simplex_edges(
                 tds,
-                cell_key,
+                simplex_key,
                 &mut queues.edge_queue,
                 &mut queues.edge_queued,
                 stats,
             );
-            enqueue_cell_triangles(
+            enqueue_simplex_triangles(
                 tds,
-                cell_key,
+                simplex_key,
                 &mut queues.triangle_queue,
                 &mut queues.triangle_queued,
                 stats,
@@ -7507,9 +7580,9 @@ where
 
 /// Requeues the local neighborhood created by a flip so the repair loop follows
 /// newly exposed violations instead of rescanning the whole triangulation.
-fn enqueue_new_cells_for_repair<T, U, V, const D: usize>(
+fn enqueue_new_simplices_for_repair<T, U, V, const D: usize>(
     tds: &Tds<T, U, V, D>,
-    new_cells: &[CellKey],
+    new_simplices: &[SimplexKey],
     queues: &mut RepairQueues,
     stats: &mut DelaunayRepairStats,
 ) -> Result<(), FlipError>
@@ -7518,33 +7591,33 @@ where
     U: DataType,
     V: DataType,
 {
-    for &cell_key in new_cells {
-        enqueue_cell_facets(
+    for &simplex_key in new_simplices {
+        enqueue_simplex_facets(
             tds,
-            cell_key,
+            simplex_key,
             &mut queues.facet_queue,
             &mut queues.facet_queued,
             &mut queues.facet_handles,
             stats,
         )?;
-        enqueue_cell_ridges(
+        enqueue_simplex_ridges(
             tds,
-            cell_key,
+            simplex_key,
             &mut queues.ridge_queue,
             &mut queues.ridge_queued,
             &mut queues.ridge_handles,
             stats,
         )?;
-        enqueue_cell_edges(
+        enqueue_simplex_edges(
             tds,
-            cell_key,
+            simplex_key,
             &mut queues.edge_queue,
             &mut queues.edge_queued,
             stats,
         );
-        enqueue_cell_triangles(
+        enqueue_simplex_triangles(
             tds,
-            cell_key,
+            simplex_key,
             &mut queues.triangle_queue,
             &mut queues.triangle_queued,
             stats,
@@ -7573,8 +7646,8 @@ fn run_next_ridge_repair_step<K, U, V, const D: usize>(
     config: &RepairAttemptConfig,
     diagnostics: &mut RepairDiagnostics,
     last_applied_flip: &mut Option<LastAppliedFlip>,
-    touched_cells: &mut CellKeyBuffer,
-    touched_cell_set: &mut FastHashSet<CellKey>,
+    touched_simplices: &mut SimplexKeyBuffer,
+    touched_simplex_set: &mut FastHashSet<SimplexKey>,
 ) -> Result<bool, DelaunayRepairError>
 where
     K: Kernel<D>,
@@ -7597,7 +7670,7 @@ where
             err @ (FlipError::InvalidRidgeIndex { .. }
             | FlipError::InvalidRidgeAdjacency { .. }
             | FlipError::InvalidRidgeMultiplicity { .. }
-            | FlipError::MissingCell { .. }),
+            | FlipError::MissingSimplex { .. }),
         ) => {
             match &err {
                 FlipError::InvalidRidgeMultiplicity { found } => {
@@ -7623,10 +7696,10 @@ where
                 FlipError::InvalidRidgeAdjacency { .. } if repair_ridge_debug_enabled() => {
                     debug_ridge_context(tds, ridge, None, diagnostics, last_applied_flip.as_ref());
                 }
-                FlipError::MissingCell { cell_key } => {
-                    diagnostics.record_missing_cell_skip(MissingCellSkipSample {
+                FlipError::MissingSimplex { simplex_key } => {
+                    diagnostics.record_missing_simplex_skip(MissingSimplexSkipSample {
                         location: RepairSkipLocation::Ridge(ridge),
-                        cell_key: *cell_key,
+                        simplex_key: *simplex_key,
                     });
                 }
                 _ => {}
@@ -7700,10 +7773,10 @@ where
         if repair_trace_enabled() {
             tracing::debug!("[repair] skip k=3 flip (ridge={ridge:?}) reason={err}");
             tracing::debug!(
-                "[repair] skip k=3 flip context removed_face={:?} inserted_face={:?} removed_cells={:?}",
+                "[repair] skip k=3 flip context removed_face={:?} inserted_face={:?} removed_simplices={:?}",
                 context.removed_face_vertices,
                 context.inserted_face_vertices,
-                context.removed_cells,
+                context.removed_simplices,
             );
         }
     };
@@ -7719,11 +7792,11 @@ where
             return Ok(true);
         }
         Err(
-            err @ (FlipError::DegenerateCell
+            err @ (FlipError::DegenerateSimplex
             | FlipError::NegativeOrientation { .. }
-            | FlipError::DuplicateCell
+            | FlipError::DuplicateSimplex
             | FlipError::NonManifoldFacet
-            | FlipError::CellCreation(_)),
+            | FlipError::SimplexCreation(_)),
         ) => {
             log_apply_skip(&err);
             return Ok(true);
@@ -7734,20 +7807,20 @@ where
     let info = applied.info;
     if repair_trace_enabled() {
         tracing::debug!(
-            "[repair] apply k=3 flip: kind={:?} direction={:?} removed_face={:?} inserted_face={:?} removed_cells={:?} new_cells={:?}",
+            "[repair] apply k=3 flip: kind={:?} direction={:?} removed_face={:?} inserted_face={:?} removed_simplices={:?} new_simplices={:?}",
             info.kind,
             info.direction,
             info.removed_face_vertices,
             info.inserted_face_vertices,
-            info.removed_cells,
-            info.new_cells,
+            info.removed_simplices,
+            info.new_simplices,
         );
     }
     stats.flips_performed += 1;
     diagnostics.record_flip_signature(signature);
-    record_touched_cells(touched_cells, touched_cell_set, &info.new_cells);
+    record_touched_simplices(touched_simplices, touched_simplex_set, &info.new_simplices);
 
-    enqueue_new_cells_for_repair(tds, &info.new_cells, queues, stats)?;
+    enqueue_new_simplices_for_repair(tds, &info.new_simplices, queues, stats)?;
 
     Ok(true)
 }
@@ -7771,8 +7844,8 @@ fn run_next_edge_repair_step<K, U, V, const D: usize>(
     config: &RepairAttemptConfig,
     diagnostics: &mut RepairDiagnostics,
     last_applied_flip: &mut Option<LastAppliedFlip>,
-    touched_cells: &mut CellKeyBuffer,
-    touched_cell_set: &mut FastHashSet<CellKey>,
+    touched_simplices: &mut SimplexKeyBuffer,
+    touched_simplex_set: &mut FastHashSet<SimplexKey>,
 ) -> Result<bool, DelaunayRepairError>
 where
     K: Kernel<D>,
@@ -7793,10 +7866,10 @@ where
     };
     let context = match build_k2_flip_context_from_edge(tds, edge) {
         Ok(ctx) => ctx,
-        Err(ref err) if let FlipError::MissingCell { cell_key } = err => {
-            diagnostics.record_missing_cell_skip(MissingCellSkipSample {
+        Err(ref err) if let FlipError::MissingSimplex { simplex_key } = err => {
+            diagnostics.record_missing_simplex_skip(MissingSimplexSkipSample {
                 location: RepairSkipLocation::Edge(edge),
-                cell_key: *cell_key,
+                simplex_key: *simplex_key,
             });
             log_build_skip(err);
             return Ok(true);
@@ -7817,7 +7890,7 @@ where
     }
     let opposite_a = context.removed_face_vertices[0];
     let opposite_b = context.removed_face_vertices[1];
-    let frame_cell = removed_cell_frame(&context.removed_cells)?;
+    let frame_simplex = removed_simplex_frame(&context.removed_simplices)?;
 
     let violates = match delaunay_violation_k2_for_facet(
         tds,
@@ -7826,8 +7899,8 @@ where
         &context.inserted_face_vertices,
         opposite_a,
         opposite_b,
-        &context.removed_cells,
-        Some(frame_cell),
+        &context.removed_simplices,
+        Some(frame_simplex),
         config,
         diagnostics,
     ) {
@@ -7838,7 +7911,7 @@ where
         Err(e) => return Err(e.into()),
     };
 
-    // Normally we only apply inverse k=2 if the target (2-cell) configuration is locally
+    // Normally we only apply inverse k=2 if the target (2-simplex) configuration is locally
     // Delaunay. On the second attempt (LIFO queue order), allow exploratory inverse moves
     // to escape trapped non-regular configurations; postcondition verification still
     // enforces correctness.
@@ -7892,10 +7965,10 @@ where
         if repair_trace_enabled() {
             tracing::debug!("[repair] skip inverse k=2 flip (edge={edge:?}) reason={err}");
             tracing::debug!(
-                "[repair] skip inverse k=2 flip context removed_face={:?} inserted_face={:?} removed_cells={:?}",
+                "[repair] skip inverse k=2 flip context removed_face={:?} inserted_face={:?} removed_simplices={:?}",
                 context.removed_face_vertices,
                 context.inserted_face_vertices,
-                context.removed_cells,
+                context.removed_simplices,
             );
         }
     };
@@ -7911,11 +7984,11 @@ where
             return Ok(true);
         }
         Err(
-            err @ (FlipError::DegenerateCell
+            err @ (FlipError::DegenerateSimplex
             | FlipError::NegativeOrientation { .. }
-            | FlipError::DuplicateCell
+            | FlipError::DuplicateSimplex
             | FlipError::NonManifoldFacet
-            | FlipError::CellCreation(_)),
+            | FlipError::SimplexCreation(_)),
         ) => {
             log_apply_skip(&err);
             return Ok(true);
@@ -7926,20 +7999,20 @@ where
     let info = applied.info;
     if repair_trace_enabled() {
         tracing::debug!(
-            "[repair] apply inverse k=2 flip: kind={:?} direction={:?} removed_face={:?} inserted_face={:?} removed_cells={:?} new_cells={:?}",
+            "[repair] apply inverse k=2 flip: kind={:?} direction={:?} removed_face={:?} inserted_face={:?} removed_simplices={:?} new_simplices={:?}",
             info.kind,
             info.direction,
             info.removed_face_vertices,
             info.inserted_face_vertices,
-            info.removed_cells,
-            info.new_cells,
+            info.removed_simplices,
+            info.new_simplices,
         );
     }
     stats.flips_performed += 1;
     diagnostics.record_flip_signature(signature);
-    record_touched_cells(touched_cells, touched_cell_set, &info.new_cells);
+    record_touched_simplices(touched_simplices, touched_simplex_set, &info.new_simplices);
 
-    enqueue_new_cells_for_repair(tds, &info.new_cells, queues, stats)?;
+    enqueue_new_simplices_for_repair(tds, &info.new_simplices, queues, stats)?;
 
     Ok(true)
 }
@@ -7963,8 +8036,8 @@ fn run_next_triangle_repair_step<K, U, V, const D: usize>(
     config: &RepairAttemptConfig,
     diagnostics: &mut RepairDiagnostics,
     last_applied_flip: &mut Option<LastAppliedFlip>,
-    touched_cells: &mut CellKeyBuffer,
-    touched_cell_set: &mut FastHashSet<CellKey>,
+    touched_simplices: &mut SimplexKeyBuffer,
+    touched_simplex_set: &mut FastHashSet<SimplexKey>,
 ) -> Result<bool, DelaunayRepairError>
 where
     K: Kernel<D>,
@@ -7987,10 +8060,10 @@ where
     };
     let context = match build_k3_flip_context_from_triangle(tds, triangle) {
         Ok(ctx) => ctx,
-        Err(ref err) if let FlipError::MissingCell { cell_key } = err => {
-            diagnostics.record_missing_cell_skip(MissingCellSkipSample {
+        Err(ref err) if let FlipError::MissingSimplex { simplex_key } = err => {
+            diagnostics.record_missing_simplex_skip(MissingSimplexSkipSample {
                 location: RepairSkipLocation::Triangle(triangle),
-                cell_key: *cell_key,
+                simplex_key: *simplex_key,
             });
             log_build_skip(err);
             return Ok(true);
@@ -8006,15 +8079,15 @@ where
         Err(e) => return Err(e.into()),
     };
 
-    let frame_cell = removed_cell_frame(&context.removed_cells)?;
+    let frame_simplex = removed_simplex_frame(&context.removed_simplices)?;
     let violates = match delaunay_violation_k3_for_ridge(
         tds,
         kernel,
         &GlobalTopology::DEFAULT.model(),
         &context.inserted_face_vertices,
         &context.removed_face_vertices,
-        &context.removed_cells,
-        Some(frame_cell),
+        &context.removed_simplices,
+        Some(frame_simplex),
         config,
         diagnostics,
     ) {
@@ -8025,7 +8098,7 @@ where
         Err(e) => return Err(e.into()),
     };
 
-    // Only flip if the target (3-cell) configuration is locally Delaunay.
+    // Only flip if the target (3-simplex) configuration is locally Delaunay.
     if violates {
         return Ok(true);
     }
@@ -8075,10 +8148,10 @@ where
         if repair_trace_enabled() {
             tracing::debug!("[repair] skip inverse k=3 flip (triangle={triangle:?}) reason={err}");
             tracing::debug!(
-                "[repair] skip inverse k=3 flip context removed_face={:?} inserted_face={:?} removed_cells={:?}",
+                "[repair] skip inverse k=3 flip context removed_face={:?} inserted_face={:?} removed_simplices={:?}",
                 context.removed_face_vertices,
                 context.inserted_face_vertices,
-                context.removed_cells,
+                context.removed_simplices,
             );
         }
     };
@@ -8094,11 +8167,11 @@ where
             return Ok(true);
         }
         Err(
-            err @ (FlipError::DegenerateCell
+            err @ (FlipError::DegenerateSimplex
             | FlipError::NegativeOrientation { .. }
-            | FlipError::DuplicateCell
+            | FlipError::DuplicateSimplex
             | FlipError::NonManifoldFacet
-            | FlipError::CellCreation(_)),
+            | FlipError::SimplexCreation(_)),
         ) => {
             log_apply_skip(&err);
             return Ok(true);
@@ -8109,20 +8182,20 @@ where
     let info = applied.info;
     if repair_trace_enabled() {
         tracing::debug!(
-            "[repair] apply inverse k=3 flip: kind={:?} direction={:?} removed_face={:?} inserted_face={:?} removed_cells={:?} new_cells={:?}",
+            "[repair] apply inverse k=3 flip: kind={:?} direction={:?} removed_face={:?} inserted_face={:?} removed_simplices={:?} new_simplices={:?}",
             info.kind,
             info.direction,
             info.removed_face_vertices,
             info.inserted_face_vertices,
-            info.removed_cells,
-            info.new_cells,
+            info.removed_simplices,
+            info.new_simplices,
         );
     }
     stats.flips_performed += 1;
     diagnostics.record_flip_signature(signature);
-    record_touched_cells(touched_cells, touched_cell_set, &info.new_cells);
+    record_touched_simplices(touched_simplices, touched_simplex_set, &info.new_simplices);
 
-    enqueue_new_cells_for_repair(tds, &info.new_cells, queues, stats)?;
+    enqueue_new_simplices_for_repair(tds, &info.new_simplices, queues, stats)?;
 
     Ok(true)
 }
@@ -8146,8 +8219,8 @@ fn run_next_facet_repair_step<K, U, V, const D: usize>(
     config: &RepairAttemptConfig,
     diagnostics: &mut RepairDiagnostics,
     last_applied_flip: &mut Option<LastAppliedFlip>,
-    touched_cells: &mut CellKeyBuffer,
-    touched_cell_set: &mut FastHashSet<CellKey>,
+    touched_simplices: &mut SimplexKeyBuffer,
+    touched_simplex_set: &mut FastHashSet<SimplexKey>,
 ) -> Result<bool, DelaunayRepairError>
 where
     K: Kernel<D>,
@@ -8172,10 +8245,10 @@ where
     };
     let context = match build_k2_flip_context(tds, facet) {
         Ok(ctx) => ctx,
-        Err(ref err) if let FlipError::MissingCell { cell_key } = err => {
-            diagnostics.record_missing_cell_skip(MissingCellSkipSample {
+        Err(ref err) if let FlipError::MissingSimplex { simplex_key } = err => {
+            diagnostics.record_missing_simplex_skip(MissingSimplexSkipSample {
                 location: RepairSkipLocation::Facet(facet),
-                cell_key: *cell_key,
+                simplex_key: *simplex_key,
             });
             log_build_skip(err);
             return Ok(true);
@@ -8256,17 +8329,17 @@ where
                 reason = %err,
                 removed_face = ?context.removed_face_vertices,
                 inserted_face = ?context.inserted_face_vertices,
-                removed_cells = ?context.removed_cells,
+                removed_simplices = ?context.removed_simplices,
                 "[repair] skip k=2 flip"
             );
         }
         if repair_trace_enabled() {
             tracing::debug!("[repair] skip k=2 flip (facet={facet:?}) reason={err}");
             tracing::debug!(
-                "[repair] skip k=2 flip context removed_face={:?} inserted_face={:?} removed_cells={:?}",
+                "[repair] skip k=2 flip context removed_face={:?} inserted_face={:?} removed_simplices={:?}",
                 context.removed_face_vertices,
                 context.inserted_face_vertices,
-                context.removed_cells,
+                context.removed_simplices,
             );
         }
     };
@@ -8282,11 +8355,11 @@ where
             return Ok(true);
         }
         Err(
-            err @ (FlipError::DegenerateCell
+            err @ (FlipError::DegenerateSimplex
             | FlipError::NegativeOrientation { .. }
-            | FlipError::DuplicateCell
+            | FlipError::DuplicateSimplex
             | FlipError::NonManifoldFacet
-            | FlipError::CellCreation(_)),
+            | FlipError::SimplexCreation(_)),
         ) => {
             log_apply_skip(&err);
             return Ok(true);
@@ -8297,28 +8370,28 @@ where
     let info = applied.info;
     if repair_trace_enabled() {
         tracing::debug!(
-            "[repair] apply k=2 flip: kind={:?} direction={:?} removed_face={:?} inserted_face={:?} removed_cells={:?} new_cells={:?}",
+            "[repair] apply k=2 flip: kind={:?} direction={:?} removed_face={:?} inserted_face={:?} removed_simplices={:?} new_simplices={:?}",
             info.kind,
             info.direction,
             info.removed_face_vertices,
             info.inserted_face_vertices,
-            info.removed_cells,
-            info.new_cells,
+            info.removed_simplices,
+            info.new_simplices,
         );
     }
     stats.flips_performed += 1;
     diagnostics.record_flip_signature(signature);
-    record_touched_cells(touched_cells, touched_cell_set, &info.new_cells);
+    record_touched_simplices(touched_simplices, touched_simplex_set, &info.new_simplices);
 
-    enqueue_new_cells_for_repair(tds, &info.new_cells, queues, stats)?;
+    enqueue_new_simplices_for_repair(tds, &info.new_simplices, queues, stats)?;
 
     Ok(true)
 }
 
-/// Extracts facet vertices by omitted slot so facet hashing matches the cell's
+/// Extracts facet vertices by omitted slot so facet hashing matches the simplex's
 /// current vertex ordering.
-fn facet_vertices_from_cell<T, U, V, const D: usize>(
-    cell: &Cell<T, U, V, D>,
+fn facet_vertices_from_simplex<T, U, V, const D: usize>(
+    simplex: &Simplex<T, U, V, D>,
     facet_index: usize,
 ) -> SmallBuffer<VertexKey, MAX_PRACTICAL_DIMENSION_SIZE>
 where
@@ -8327,7 +8400,7 @@ where
 {
     let mut vertices: SmallBuffer<VertexKey, MAX_PRACTICAL_DIMENSION_SIZE> =
         SmallBuffer::with_capacity(D + 1);
-    for (i, &vkey) in cell.vertices().iter().enumerate() {
+    for (i, &vkey) in simplex.vertices().iter().enumerate() {
         if i != facet_index {
             vertices.push(vkey);
         }
@@ -8337,8 +8410,8 @@ where
 
 /// Extracts ridge vertices by omitted slots so ridge handles remain compact but
 /// can still be converted into stable vertex sets.
-fn ridge_vertices_from_cell<T, U, V, const D: usize>(
-    cell: &Cell<T, U, V, D>,
+fn ridge_vertices_from_simplex<T, U, V, const D: usize>(
+    simplex: &Simplex<T, U, V, D>,
     omit_a: usize,
     omit_b: usize,
 ) -> SmallBuffer<VertexKey, MAX_PRACTICAL_DIMENSION_SIZE>
@@ -8348,7 +8421,7 @@ where
 {
     let mut vertices: SmallBuffer<VertexKey, MAX_PRACTICAL_DIMENSION_SIZE> =
         SmallBuffer::with_capacity(D + 1);
-    for (i, &vkey) in cell.vertices().iter().enumerate() {
+    for (i, &vkey) in simplex.vertices().iter().enumerate() {
         if i != omit_a && i != omit_b {
             vertices.push(vkey);
         }
@@ -8356,24 +8429,24 @@ where
     vertices
 }
 
-/// Finds the two vertices opposite a ridge in one cell while validating that the
-/// requested ridge is actually incident to that cell.
-fn cell_extras_for_ridge<T, U, V, const D: usize>(
-    cell_key: CellKey,
-    cell: &Cell<T, U, V, D>,
+/// Finds the two vertices opposite a ridge in one simplex while validating that the
+/// requested ridge is actually incident to that simplex.
+fn simplex_extras_for_ridge<T, U, V, const D: usize>(
+    simplex_key: SimplexKey,
+    simplex: &Simplex<T, U, V, D>,
     ridge: &SmallBuffer<VertexKey, MAX_PRACTICAL_DIMENSION_SIZE>,
 ) -> Result<SmallBuffer<VertexKey, MAX_PRACTICAL_DIMENSION_SIZE>, FlipError>
 where
     U: DataType,
     V: DataType,
 {
-    if !ridge.iter().all(|v| cell.contains_vertex(*v)) {
-        return Err(FlipError::InvalidRidgeAdjacency { cell_key });
+    if !ridge.iter().all(|v| simplex.contains_vertex(*v)) {
+        return Err(FlipError::InvalidRidgeAdjacency { simplex_key });
     }
 
     let mut extras: SmallBuffer<VertexKey, MAX_PRACTICAL_DIMENSION_SIZE> =
         SmallBuffer::with_capacity(2);
-    for &vkey in cell.vertices() {
+    for &vkey in simplex.vertices() {
         if !ridge.contains(&vkey) {
             extras.push(vkey);
         }
@@ -8382,7 +8455,7 @@ where
 }
 
 /// Identifies the one opposite vertex needed to complete a k=3 cavity cycle.
-fn missing_opposite_for_cell(
+fn missing_opposite_for_simplex(
     extras: &[VertexKey; 2],
     opposites: &[VertexKey; 3],
 ) -> Option<VertexKey> {
@@ -8395,75 +8468,75 @@ fn missing_opposite_for_cell(
 /// Walks the neighbor graph around a ridge so k=3 context construction uses the
 /// local star rather than a global incidence scan.
 ///
-/// When `max_cells` is set, the walk stops after discovering more than that
-/// many incident cells. Repair uses this to reject non-k=3 edge stars as soon
+/// When `max_simplices` is set, the walk stops after discovering more than that
+/// many incident simplices. Repair uses this to reject non-k=3 edge stars as soon
 /// as they are known to be too large, while public flip construction leaves the
 /// value unset to preserve exact multiplicity diagnostics.
-fn collect_cells_around_ridge<T, U, V, const D: usize>(
+fn collect_simplices_around_ridge<T, U, V, const D: usize>(
     tds: &Tds<T, U, V, D>,
-    start_cell: CellKey,
+    start_simplex: SimplexKey,
     ridge: &SmallBuffer<VertexKey, MAX_PRACTICAL_DIMENSION_SIZE>,
-    max_cells: Option<usize>,
-) -> Result<CellKeyBuffer, FlipError>
+    max_simplices: Option<usize>,
+) -> Result<SimplexKeyBuffer, FlipError>
 where
     U: DataType,
     V: DataType,
 {
-    let mut queue: CellKeyBuffer = CellKeyBuffer::new();
-    let mut visited: CellKeyBuffer = CellKeyBuffer::new();
-    let mut cells: CellKeyBuffer = CellKeyBuffer::new();
+    let mut queue: SimplexKeyBuffer = SimplexKeyBuffer::new();
+    let mut visited: SimplexKeyBuffer = SimplexKeyBuffer::new();
+    let mut simplices: SimplexKeyBuffer = SimplexKeyBuffer::new();
     let mut queue_cursor = 0usize;
 
-    queue.push(start_cell);
+    queue.push(start_simplex);
 
     while queue_cursor < queue.len() {
-        let cell_key = queue[queue_cursor];
+        let simplex_key = queue[queue_cursor];
         queue_cursor += 1;
 
-        if visited.contains(&cell_key) {
+        if visited.contains(&simplex_key) {
             continue;
         }
-        visited.push(cell_key);
+        visited.push(simplex_key);
 
-        let cell = tds
-            .cell(cell_key)
-            .ok_or(FlipError::MissingCell { cell_key })?;
-        if !ridge.iter().all(|v| cell.contains_vertex(*v)) {
-            return Err(FlipError::InvalidRidgeAdjacency { cell_key });
+        let simplex = tds
+            .simplex(simplex_key)
+            .ok_or(FlipError::MissingSimplex { simplex_key })?;
+        if !ridge.iter().all(|v| simplex.contains_vertex(*v)) {
+            return Err(FlipError::InvalidRidgeAdjacency { simplex_key });
         }
 
         let mut omit_indices: SmallBuffer<usize, 2> = SmallBuffer::with_capacity(2);
-        for (i, &vkey) in cell.vertices().iter().enumerate() {
+        for (i, &vkey) in simplex.vertices().iter().enumerate() {
             if !ridge.contains(&vkey) {
                 omit_indices.push(i);
             }
         }
         if omit_indices.len() != 2 {
-            return Err(FlipError::InvalidRidgeAdjacency { cell_key });
+            return Err(FlipError::InvalidRidgeAdjacency { simplex_key });
         }
 
-        cells.push(cell_key);
-        if max_cells.is_some_and(|limit| cells.len() > limit) {
-            return Ok(cells);
+        simplices.push(simplex_key);
+        if max_simplices.is_some_and(|limit| simplices.len() > limit) {
+            return Ok(simplices);
         }
 
         for &omit_idx in &omit_indices {
-            if let Some(neighbor_key) = cell.neighbor_key(omit_idx).flatten() {
-                let Some(neighbor_cell) = tds.cell(neighbor_key) else {
+            if let Some(neighbor_key) = simplex.neighbor_key(omit_idx).flatten() {
+                let Some(neighbor_simplex) = tds.simplex(neighbor_key) else {
                     return Err(FlipError::DanglingRidgeNeighbor {
-                        cell_key,
+                        simplex_key,
                         neighbor_key,
                     });
                 };
-                if !ridge.iter().all(|v| neighbor_cell.contains_vertex(*v)) {
-                    return Err(FlipError::InvalidRidgeAdjacency { cell_key });
+                if !ridge.iter().all(|v| neighbor_simplex.contains_vertex(*v)) {
+                    return Err(FlipError::InvalidRidgeAdjacency { simplex_key });
                 }
                 queue.push(neighbor_key);
             }
         }
     }
 
-    Ok(cells)
+    Ok(simplices)
 }
 
 /// Returns a vertex's Euclidean point without applying topology-frame lifting.
@@ -8557,14 +8630,14 @@ where
     Ok(points)
 }
 
-/// Builds predicate points in one periodic frame so quotient-cell coordinates
+/// Builds predicate points in one periodic frame so quotient-simplex coordinates
 /// compare as lifted representatives.
 fn vertices_to_points_with_optional_lift<T, U, V, const D: usize>(
     tds: &Tds<T, U, V, D>,
     topology_model: &GlobalTopologyModelAdapter<D>,
     vertices: &[VertexKey],
-    source_cell: Option<CellKey>,
-    source_cells: &[CellKey],
+    source_simplex: Option<SimplexKey>,
+    source_simplices: &[SimplexKey],
 ) -> Result<SmallBuffer<Point<T, D>, MAX_PRACTICAL_DIMENSION_SIZE>, FlipError>
 where
     T: CoordinateScalar,
@@ -8574,24 +8647,24 @@ where
     let mut points: SmallBuffer<Point<T, D>, MAX_PRACTICAL_DIMENSION_SIZE> =
         SmallBuffer::with_capacity(vertices.len());
     for &vkey in vertices {
-        points.push(vertex_point_lifted_into_cell(
+        points.push(vertex_point_lifted_into_simplex(
             tds,
             topology_model,
             vkey,
-            source_cell,
-            source_cells,
+            source_simplex,
+            source_simplices,
         )?);
     }
     Ok(points)
 }
 
-/// Applies a cell-local periodic offset when the vertex is already present in
-/// the selected source cell.
+/// Applies a simplex-local periodic offset when the vertex is already present in
+/// the selected source simplex.
 fn vertex_point_with_optional_lift<T, U, V, const D: usize>(
     tds: &Tds<T, U, V, D>,
     topology_model: &GlobalTopologyModelAdapter<D>,
     vertex_key: VertexKey,
-    source_cell: Option<CellKey>,
+    source_simplex: Option<SimplexKey>,
 ) -> Result<Point<T, D>, FlipError>
 where
     T: CoordinateScalar,
@@ -8599,8 +8672,8 @@ where
     V: DataType,
 {
     let periodic_offset = if topology_model.supports_periodic_orientation_offsets() {
-        match source_cell {
-            Some(cell_key) => periodic_offset_for_cell_vertex(tds, cell_key, vertex_key)?,
+        match source_simplex {
+            Some(simplex_key) => periodic_offset_for_simplex_vertex(tds, simplex_key, vertex_key)?,
             None => None,
         }
     } else {
@@ -8609,21 +8682,21 @@ where
     lift_vertex_point(tds, topology_model, vertex_key, periodic_offset)
 }
 
-/// Lifts a vertex into a target cell's frame, aligning from neighboring source
-/// cells instead of falling back to bare periodic coordinates.
-fn vertex_point_lifted_into_cell<T, U, V, const D: usize>(
+/// Lifts a vertex into a target simplex's frame, aligning from neighboring source
+/// simplices instead of falling back to bare periodic coordinates.
+fn vertex_point_lifted_into_simplex<T, U, V, const D: usize>(
     tds: &Tds<T, U, V, D>,
     topology_model: &GlobalTopologyModelAdapter<D>,
     vertex_key: VertexKey,
-    tarcell: Option<CellKey>,
-    source_cells: &[CellKey],
+    target_simplex: Option<SimplexKey>,
+    source_simplices: &[SimplexKey],
 ) -> Result<Point<T, D>, FlipError>
 where
     T: CoordinateScalar,
     U: DataType,
     V: DataType,
 {
-    let Some(tarcell_key) = tarcell else {
+    let Some(target_simplex_key) = target_simplex else {
         return vertex_point_with_optional_lift(tds, topology_model, vertex_key, None);
     };
 
@@ -8631,43 +8704,46 @@ where
         return lift_vertex_point(tds, topology_model, vertex_key, None);
     }
 
-    let offset = periodic_offset_lifted_into_cell(tds, vertex_key, tarcell_key, source_cells)?;
+    let offset =
+        periodic_offset_lifted_into_simplex(tds, vertex_key, target_simplex_key, source_simplices)?;
     lift_vertex_point(tds, topology_model, vertex_key, Some(offset))
 }
 
-/// Aligns a vertex's periodic offset into a target cell frame.
-fn periodic_offset_lifted_into_cell<T, U, V, const D: usize>(
+/// Aligns a vertex's periodic offset into a target simplex frame.
+fn periodic_offset_lifted_into_simplex<T, U, V, const D: usize>(
     tds: &Tds<T, U, V, D>,
     vertex_key: VertexKey,
-    tarcell_key: CellKey,
-    source_cells: &[CellKey],
+    target_simplex_key: SimplexKey,
+    source_simplices: &[SimplexKey],
 ) -> Result<[i8; D], FlipError> {
-    let target_offset = periodic_offset_for_cell_vertex(tds, tarcell_key, vertex_key)?;
+    let target_offset = periodic_offset_for_simplex_vertex(tds, target_simplex_key, vertex_key)?;
     if let Some(offset) = target_offset {
         return Ok(offset);
     }
 
-    let tarcell = tds.cell(tarcell_key).ok_or(FlipError::MissingCell {
-        cell_key: tarcell_key,
-    })?;
-    let target_offsets = periodic_offsets_or_zero_frame(tarcell_key, tarcell)?;
+    let target_simplex = tds
+        .simplex(target_simplex_key)
+        .ok_or(FlipError::MissingSimplex {
+            simplex_key: target_simplex_key,
+        })?;
+    let target_offsets = periodic_offsets_or_zero_frame(target_simplex_key, target_simplex)?;
 
-    for &source_cell_key in source_cells {
-        let Some(source_cell) = tds.cell(source_cell_key) else {
+    for &source_simplex_key in source_simplices {
+        let Some(source_simplex) = tds.simplex(source_simplex_key) else {
             continue;
         };
-        if !source_cell.contains_vertex(vertex_key) {
+        if !source_simplex.contains_vertex(vertex_key) {
             continue;
         }
-        let source_offsets = periodic_offsets_or_zero_frame(source_cell_key, source_cell)?;
-        let Some(source_vertex_index) = source_cell
+        let source_offsets = periodic_offsets_or_zero_frame(source_simplex_key, source_simplex)?;
+        let Some(source_vertex_index) = source_simplex
             .vertices()
             .iter()
             .position(|&vkey| vkey == vertex_key)
         else {
             continue;
         };
-        let shared_indices = shared_vertex_indices(tarcell, source_cell);
+        let shared_indices = shared_vertex_indices(target_simplex, source_simplex);
         if shared_indices.is_empty() {
             continue;
         }
@@ -8682,8 +8758,8 @@ fn periodic_offset_lifted_into_cell<T, U, V, const D: usize>(
                 if candidate_offset != expected_offset {
                     return Err(FlipContextError::ConflictingPeriodicFrameTranslation {
                         vertex_key,
-                        source_cell_key,
-                        target_cell_key: tarcell_key,
+                        source_simplex_key,
+                        target_simplex_key,
                         expected_offset: expected_offset.into(),
                         found_offset: candidate_offset.into(),
                     }
@@ -8700,7 +8776,7 @@ fn periodic_offset_lifted_into_cell<T, U, V, const D: usize>(
 
     Err(FlipContextError::PeriodicVertexAlignmentFailed {
         vertex_key,
-        target_cell_key: tarcell_key,
+        target_simplex_key,
     }
     .into())
 }
@@ -8731,66 +8807,66 @@ where
 }
 
 /// Looks up the offset paired with a vertex slot, preserving the invariant that
-/// periodic offsets are indexed exactly like cell vertices.
-fn periodic_offset_for_cell_vertex<T, U, V, const D: usize>(
+/// periodic offsets are indexed exactly like simplex vertices.
+fn periodic_offset_for_simplex_vertex<T, U, V, const D: usize>(
     tds: &Tds<T, U, V, D>,
-    cell_key: CellKey,
+    simplex_key: SimplexKey,
     vertex_key: VertexKey,
 ) -> Result<Option<[i8; D]>, FlipError> {
-    let cell = tds
-        .cell(cell_key)
-        .ok_or(FlipError::MissingCell { cell_key })?;
-    let offsets = periodic_offsets_or_zero_frame(cell_key, cell)?;
-    Ok(cell
+    let simplex = tds
+        .simplex(simplex_key)
+        .ok_or(FlipError::MissingSimplex { simplex_key })?;
+    let offsets = periodic_offsets_or_zero_frame(simplex_key, simplex)?;
+    Ok(simplex
         .vertices()
         .iter()
         .position(|&vkey| vkey == vertex_key)
         .map(|index| offsets[index]))
 }
 
-/// Borrows stored periodic offsets, or treats a periodic cell without explicit
+/// Borrows stored periodic offsets, or treats a periodic simplex without explicit
 /// offsets as a zero-offset frame.
 fn periodic_offsets_or_zero_frame<T, U, V, const D: usize>(
-    cell_key: CellKey,
-    cell: &Cell<T, U, V, D>,
+    simplex_key: SimplexKey,
+    simplex: &Simplex<T, U, V, D>,
 ) -> Result<Cow<'_, [[i8; D]]>, FlipError> {
-    let offsets = cell.periodic_vertex_offsets().map_or_else(
+    let offsets = simplex.periodic_vertex_offsets().map_or_else(
         // The fallback frame is synthesized locally, so `Cow::Owned` keeps the
         // temporary vector alive while the stored-offset path can stay borrowed.
-        || Cow::Owned(vec![[0_i8; D]; cell.number_of_vertices()]),
+        || Cow::Owned(vec![[0_i8; D]; simplex.number_of_vertices()]),
         Cow::Borrowed,
     );
-    validate_periodic_offset_len(cell_key, cell, offsets.as_ref())?;
+    validate_periodic_offset_len(simplex_key, simplex, offsets.as_ref())?;
     Ok(offsets)
 }
 
-/// Rejects malformed quotient cells before offset indexing can desynchronize
+/// Rejects malformed quotient simplices before offset indexing can desynchronize
 /// vertices from their lifted representatives.
 fn validate_periodic_offset_len<T, U, V, const D: usize>(
-    cell_key: CellKey,
-    cell: &Cell<T, U, V, D>,
+    simplex_key: SimplexKey,
+    simplex: &Simplex<T, U, V, D>,
     offsets: &[[i8; D]],
 ) -> Result<(), FlipError> {
-    if offsets.len() == cell.number_of_vertices() {
+    if offsets.len() == simplex.number_of_vertices() {
         return Ok(());
     }
     Err(FlipContextError::PeriodicOffsetCountMismatch {
-        cell_key,
+        simplex_key,
         offset_count: offsets.len(),
-        vertex_count: cell.number_of_vertices(),
+        vertex_count: simplex.number_of_vertices(),
     }
     .into())
 }
 
 /// Finds every common vertex to act as a consistency check when aligning two
-/// periodic cell frames.
+/// periodic simplex frames.
 fn shared_vertex_indices<T, U, V, const D: usize>(
-    tarcell: &Cell<T, U, V, D>,
-    source_cell: &Cell<T, U, V, D>,
+    target_simplex: &Simplex<T, U, V, D>,
+    source_simplex: &Simplex<T, U, V, D>,
 ) -> SmallBuffer<(usize, usize), MAX_PRACTICAL_DIMENSION_SIZE> {
     let mut shared = SmallBuffer::new();
-    for (target_index, &target_vertex) in tarcell.vertices().iter().enumerate() {
-        if let Some(source_index) = source_cell
+    for (target_index, &target_vertex) in target_simplex.vertices().iter().enumerate() {
+        if let Some(source_index) = source_simplex
             .vertices()
             .iter()
             .position(|&source_vertex| source_vertex == target_vertex)
@@ -8801,8 +8877,8 @@ fn shared_vertex_indices<T, U, V, const D: usize>(
     shared
 }
 
-/// Aligns a periodic vertex offset from a source cell's frame into a target
-/// cell's frame so cross-cell insphere predicates see consistent lifted
+/// Aligns a periodic vertex offset from a source simplex's frame into a target
+/// simplex's frame so cross-simplex insphere predicates see consistent lifted
 /// coordinates.
 fn align_periodic_offset<const D: usize>(
     source_vertex_offset: [i8; D],
@@ -8821,43 +8897,43 @@ fn align_periodic_offset<const D: usize>(
     Ok(aligned)
 }
 
-/// Reuses an existing removed cell as the predicate frame when the candidate
-/// simplex exactly matches that cell.
-fn matching_source_cell<T, U, V, const D: usize>(
+/// Reuses an existing removed simplex as the predicate frame when the candidate
+/// simplex exactly matches that simplex.
+fn matching_source_simplex<T, U, V, const D: usize>(
     tds: &Tds<T, U, V, D>,
     vertices: &[VertexKey],
-    source_cells: &[CellKey],
-) -> Option<CellKey>
+    source_simplices: &[SimplexKey],
+) -> Option<SimplexKey>
 where
     U: DataType,
     V: DataType,
 {
-    source_cells.iter().copied().find(|&cell_key| {
-        tds.cell(cell_key).is_some_and(|cell| {
-            cell.number_of_vertices() == vertices.len()
+    source_simplices.iter().copied().find(|&simplex_key| {
+        tds.simplex(simplex_key).is_some_and(|simplex| {
+            simplex.number_of_vertices() == vertices.len()
                 && vertices
                     .iter()
-                    .all(|&vertex_key| cell.contains_vertex(vertex_key))
+                    .all(|&vertex_key| simplex.contains_vertex(vertex_key))
         })
     })
 }
 
-/// Selects a concrete removed-cell frame for inverse predicates, where no
+/// Selects a concrete removed-simplex frame for inverse predicates, where no
 /// forward replacement simplex may match exactly.
-fn removed_cell_frame(source_cells: &[CellKey]) -> Result<CellKey, FlipError> {
-    source_cells
+fn removed_simplex_frame(source_simplices: &[SimplexKey]) -> Result<SimplexKey, FlipError> {
+    source_simplices
         .first()
         .copied()
-        .ok_or_else(|| FlipContextError::MissingRemovedCellFrame.into())
+        .ok_or_else(|| FlipContextError::MissingRemovedSimplexFrame.into())
 }
 
 #[derive(Debug, Default)]
 struct FlipTopologyIndex {
-    /// Candidate cell signature → the first existing cell that matches it.
+    /// Candidate simplex signature → the first existing simplex that matches it.
     ///
-    /// The number of candidate cells per flip is small (≤ D+1), so a flat buffer is
+    /// The number of candidate simplices per flip is small (≤ D+1), so a flat buffer is
     /// faster than a `HashMap` in this hot path.
-    duplicate_signature_to_cell: SmallBuffer<(u64, CellKey), MAX_PRACTICAL_DIMENSION_SIZE>,
+    duplicate_signature_to_simplex: SmallBuffer<(u64, SimplexKey), MAX_PRACTICAL_DIMENSION_SIZE>,
 
     /// Candidate *internal* facet hash → topology metadata, sorted by hash for binary search.
     ///
@@ -8873,11 +8949,11 @@ struct FlipTopologyIndex {
 #[derive(Debug, Clone, Copy)]
 struct CandidateFacetInfo {
     existing_count: u8,
-    last_cell: Option<CellKey>,
+    last_simplex: Option<SimplexKey>,
 }
 
 /// Sorts stable slotmap key values before hashing so signatures are independent
-/// of local cell vertex order.
+/// of local simplex vertex order.
 fn sorted_vertex_key_values(
     vertices: &[VertexKey],
 ) -> SmallBuffer<u64, MAX_PRACTICAL_DIMENSION_SIZE> {
@@ -8887,18 +8963,18 @@ fn sorted_vertex_key_values(
     key_values
 }
 
-/// Hashes a complete cell vertex set for duplicate-cell detection during flips.
-fn cell_signature(vertices: &[VertexKey]) -> u64 {
+/// Hashes a complete simplex vertex set for duplicate-simplex detection during flips.
+fn simplex_signature(vertices: &[VertexKey]) -> u64 {
     let key_values = sorted_vertex_key_values(vertices);
     stable_hash_u64_slice(&key_values)
 }
 
-/// Builds the small topology index needed to reject duplicate cells and
+/// Builds the small topology index needed to reject duplicate simplices and
 /// non-manifold internal facets without repeated global scans.
 fn build_flip_topology_index<T, U, V, const D: usize>(
     tds: &Tds<T, U, V, D>,
-    new_cell_vertices: &[SmallBuffer<VertexKey, MAX_PRACTICAL_DIMENSION_SIZE>],
-    removed_cells: &[CellKey],
+    new_simplex_vertices: &[SmallBuffer<VertexKey, MAX_PRACTICAL_DIMENSION_SIZE>],
+    removed_simplices: &[SimplexKey],
     inserted_face_vertices: &[VertexKey],
 ) -> FlipTopologyIndex
 where
@@ -8908,8 +8984,8 @@ where
 {
     let inserted_values = sorted_vertex_key_values(inserted_face_vertices);
 
-    let mut candidate_cell_signatures: SmallBuffer<u64, MAX_PRACTICAL_DIMENSION_SIZE> =
-        SmallBuffer::with_capacity(new_cell_vertices.len());
+    let mut candidate_simplex_signatures: SmallBuffer<u64, MAX_PRACTICAL_DIMENSION_SIZE> =
+        SmallBuffer::with_capacity(new_simplex_vertices.len());
 
     let mut candidate_facet_info: SmallBuffer<
         (u64, CandidateFacetInfo),
@@ -8917,15 +8993,15 @@ where
     > = SmallBuffer::new();
 
     // Seed the facet map with the facets that will exist after the flip.
-    for vertices in new_cell_vertices {
-        let cell_values = sorted_vertex_key_values(vertices);
-        candidate_cell_signatures.push(stable_hash_u64_slice(&cell_values));
+    for vertices in new_simplex_vertices {
+        let simplex_values = sorted_vertex_key_values(vertices);
+        candidate_simplex_signatures.push(stable_hash_u64_slice(&simplex_values));
 
         let mut facet_values: SmallBuffer<u64, MAX_PRACTICAL_DIMENSION_SIZE> =
-            SmallBuffer::with_capacity(cell_values.len().saturating_sub(1));
-        for omit_idx in 0..cell_values.len() {
+            SmallBuffer::with_capacity(simplex_values.len().saturating_sub(1));
+        for omit_idx in 0..simplex_values.len() {
             facet_values.clear();
-            for (i, &val) in cell_values.iter().enumerate() {
+            for (i, &val) in simplex_values.iter().enumerate() {
                 if i != omit_idx {
                     facet_values.push(val);
                 }
@@ -8955,7 +9031,7 @@ where
                 facet_hash,
                 CandidateFacetInfo {
                     existing_count: 0,
-                    last_cell: None,
+                    last_simplex: None,
                 },
             ));
         }
@@ -8963,41 +9039,43 @@ where
 
     candidate_facet_info.sort_unstable_by_key(|(hash, _info)| *hash);
 
-    let mut duplicate_signature_to_cell: SmallBuffer<(u64, CellKey), MAX_PRACTICAL_DIMENSION_SIZE> =
-        SmallBuffer::new();
+    let mut duplicate_signature_to_simplex: SmallBuffer<
+        (u64, SimplexKey),
+        MAX_PRACTICAL_DIMENSION_SIZE,
+    > = SmallBuffer::new();
 
     let mut facet_values: SmallBuffer<u64, MAX_PRACTICAL_DIMENSION_SIZE> =
         SmallBuffer::with_capacity(D);
-    let mut cell_values: SmallBuffer<u64, MAX_PRACTICAL_DIMENSION_SIZE> =
+    let mut simplex_values: SmallBuffer<u64, MAX_PRACTICAL_DIMENSION_SIZE> =
         SmallBuffer::with_capacity(D + 1);
 
-    // Scan existing cells once.
+    // Scan existing simplices once.
     //
-    // Both duplicate cells and existing internal facets must contain all inserted-face vertices.
-    for (cell_key, cell) in tds.cells() {
-        if removed_cells.contains(&cell_key) {
+    // Both duplicate simplices and existing internal facets must contain all inserted-face vertices.
+    for (simplex_key, simplex) in tds.simplices() {
+        if removed_simplices.contains(&simplex_key) {
             continue;
         }
         if !inserted_face_vertices
             .iter()
-            .all(|v| cell.contains_vertex(*v))
+            .all(|v| simplex.contains_vertex(*v))
         {
             continue;
         }
 
-        cell_values.clear();
-        for key in cell.vertices() {
-            cell_values.push(key.data().as_ffi());
+        simplex_values.clear();
+        for key in simplex.vertices() {
+            simplex_values.push(key.data().as_ffi());
         }
-        cell_values.sort_unstable();
+        simplex_values.sort_unstable();
 
-        let signature = stable_hash_u64_slice(&cell_values);
-        if candidate_cell_signatures.contains(&signature)
-            && !duplicate_signature_to_cell
+        let signature = stable_hash_u64_slice(&simplex_values);
+        if candidate_simplex_signatures.contains(&signature)
+            && !duplicate_signature_to_simplex
                 .iter()
-                .any(|(s, _cell_key)| *s == signature)
+                .any(|(s, _simplex_key)| *s == signature)
         {
-            duplicate_signature_to_cell.push((signature, cell_key));
+            duplicate_signature_to_simplex.push((signature, simplex_key));
         }
 
         // If there are no internal facets to check, skip facet hashing.
@@ -9005,9 +9083,9 @@ where
             continue;
         }
 
-        for omit_idx in 0..cell_values.len() {
+        for omit_idx in 0..simplex_values.len() {
             facet_values.clear();
-            for (i, &val) in cell_values.iter().enumerate() {
+            for (i, &val) in simplex_values.iter().enumerate() {
                 if i != omit_idx {
                     facet_values.push(val);
                 }
@@ -9025,19 +9103,19 @@ where
             if info.existing_count < 2 {
                 info.existing_count += 1;
             }
-            info.last_cell = Some(cell_key);
+            info.last_simplex = Some(simplex_key);
         }
     }
 
     FlipTopologyIndex {
-        duplicate_signature_to_cell,
+        duplicate_signature_to_simplex,
         candidate_facet_info,
     }
 }
 
-/// Checks candidate cells against the topology index before mutation so a flip
-/// cannot introduce two cells with the same vertex set.
-fn flip_would_duplicate_cell_any<T, U, V, const D: usize>(
+/// Checks candidate simplices against the topology index before mutation so a flip
+/// cannot introduce two simplices with the same vertex set.
+fn flip_would_duplicate_simplex_any<T, U, V, const D: usize>(
     tds: &Tds<T, U, V, D>,
     vertices: &[VertexKey],
     topology: &FlipTopologyIndex,
@@ -9047,9 +9125,9 @@ where
     U: DataType,
     V: DataType,
 {
-    let signature = cell_signature(vertices);
-    let Some(cell_key) = topology
-        .duplicate_signature_to_cell
+    let signature = simplex_signature(vertices);
+    let Some(simplex_key) = topology
+        .duplicate_signature_to_simplex
         .iter()
         .find_map(|(s, ck)| (*s == signature).then_some(*ck))
     else {
@@ -9061,21 +9139,21 @@ where
             vertices.iter().copied().collect();
         target.sort_unstable();
 
-        let existing_sorted = tds.cell(cell_key).map(|cell| {
+        let existing_sorted = tds.simplex(simplex_key).map(|simplex| {
             let mut v: SmallBuffer<VertexKey, MAX_PRACTICAL_DIMENSION_SIZE> =
-                cell.vertices().iter().copied().collect();
+                simplex.vertices().iter().copied().collect();
             v.sort_unstable();
             v
         });
 
         if env::var_os("DELAUNAY_REPAIR_DEBUG_FACETS").is_some() {
             tracing::debug!(
-                "k=2 flip would duplicate existing cell {cell_key:?}; target={target:?}; existing={existing_sorted:?}"
+                "k=2 flip would duplicate existing simplex {simplex_key:?}; target={target:?}; existing={existing_sorted:?}"
             );
         }
         if repair_trace_enabled() {
             tracing::debug!(
-                "[repair] flip would duplicate existing cell {cell_key:?}; target={target:?}; existing={existing_sorted:?}"
+                "[repair] flip would duplicate existing simplex {simplex_key:?}; target={target:?}; existing={existing_sorted:?}"
             );
         }
     }
@@ -9124,9 +9202,9 @@ fn flip_would_create_nonmanifold_facets_any(
         if info.existing_count > 0 {
             if repair_trace_enabled() {
                 tracing::debug!(
-                    "[repair] flip would create non-manifold internal facet: facet={facet_vertices:?} shared_count={} last_cell={:?}",
+                    "[repair] flip would create non-manifold internal facet: facet={facet_vertices:?} shared_count={} last_simplex={:?}",
                     info.existing_count,
-                    info.last_cell,
+                    info.last_simplex,
                 );
             }
             return true;
@@ -9136,11 +9214,11 @@ fn flip_would_create_nonmanifold_facets_any(
     false
 }
 
-/// Queues all interior facets of a cell because k=2 repair is driven by shared
+/// Queues all interior facets of a simplex because k=2 repair is driven by shared
 /// facet predicates.
-fn enqueue_cell_facets<T, U, V, const D: usize>(
+fn enqueue_simplex_facets<T, U, V, const D: usize>(
     tds: &Tds<T, U, V, D>,
-    cell_key: CellKey,
+    simplex_key: SimplexKey,
     queue: &mut VecDeque<(FacetHandle, u64)>,
     queued: &mut FastHashSet<u64>,
     handles: &mut FastHashMap<u64, FacetHandle>,
@@ -9151,16 +9229,16 @@ where
     U: DataType,
     V: DataType,
 {
-    let Some(cell) = tds.cell(cell_key) else {
+    let Some(simplex) = tds.simplex(simplex_key) else {
         return Ok(());
     };
-    for facet_index in 0..cell.number_of_vertices() {
+    for facet_index in 0..simplex.number_of_vertices() {
         let handle = FacetHandle::new(
-            cell_key,
+            simplex_key,
             u8::try_from(facet_index).map_err(|_| FlipError::InvalidFacetIndex {
-                cell_key,
+                simplex_key,
                 facet_index: u8::MAX,
-                vertex_count: cell.number_of_vertices(),
+                vertex_count: simplex.number_of_vertices(),
             })?,
         );
         enqueue_facet(tds, handle, queue, queued, handles, stats);
@@ -9182,24 +9260,24 @@ fn enqueue_facet<T, U, V, const D: usize>(
     U: DataType,
     V: DataType,
 {
-    let Some(cell) = tds.cell(handle.cell_key()) else {
+    let Some(simplex) = tds.simplex(handle.simplex_key()) else {
         return;
     };
 
     let facet_index = usize::from(handle.facet_index());
-    if facet_index >= cell.number_of_vertices() {
+    if facet_index >= simplex.number_of_vertices() {
         return;
     }
 
-    let Some(_neighbor_key) = cell
+    let Some(_neighbor_key) = simplex
         .neighbor_key(facet_index)
         .flatten()
-        .filter(|&nk| tds.contains_cell(nk))
+        .filter(|&nk| tds.contains_simplex(nk))
     else {
         return;
     };
 
-    let facet_vertices = facet_vertices_from_cell(cell, facet_index);
+    let facet_vertices = facet_vertices_from_simplex(simplex, facet_index);
     let key = facet_key_from_vertices(&facet_vertices);
 
     handles.insert(key, handle);
@@ -9209,10 +9287,10 @@ fn enqueue_facet<T, U, V, const D: usize>(
     }
 }
 
-/// Queues cell edges only in dimensions where inverse k=2 repair is admissible.
-fn enqueue_cell_edges<T, U, V, const D: usize>(
+/// Queues simplex edges only in dimensions where inverse k=2 repair is admissible.
+fn enqueue_simplex_edges<T, U, V, const D: usize>(
     tds: &Tds<T, U, V, D>,
-    cell_key: CellKey,
+    simplex_key: SimplexKey,
     queue: &mut VecDeque<(EdgeKey, u64)>,
     queued: &mut FastHashSet<u64>,
     stats: &mut DelaunayRepairStats,
@@ -9225,11 +9303,11 @@ fn enqueue_cell_edges<T, U, V, const D: usize>(
         return;
     }
 
-    let Some(cell) = tds.cell(cell_key) else {
+    let Some(simplex) = tds.simplex(simplex_key) else {
         return;
     };
 
-    let vertices = cell.vertices();
+    let vertices = simplex.vertices();
     let vertex_count = vertices.len();
     for i in 0..vertex_count {
         for j in (i + 1)..vertex_count {
@@ -9239,7 +9317,7 @@ fn enqueue_cell_edges<T, U, V, const D: usize>(
     }
 }
 
-/// Deduplicates inverse k=2 edge work by vertex-set hash across incident cells.
+/// Deduplicates inverse k=2 edge work by vertex-set hash across incident simplices.
 fn enqueue_edge(
     edge: EdgeKey,
     queue: &mut VecDeque<(EdgeKey, u64)>,
@@ -9253,11 +9331,11 @@ fn enqueue_edge(
     }
 }
 
-/// Queues cell triangles only in dimensions where inverse k=3 repair is
+/// Queues simplex triangles only in dimensions where inverse k=3 repair is
 /// admissible.
-fn enqueue_cell_triangles<T, U, V, const D: usize>(
+fn enqueue_simplex_triangles<T, U, V, const D: usize>(
     tds: &Tds<T, U, V, D>,
-    cell_key: CellKey,
+    simplex_key: SimplexKey,
     queue: &mut VecDeque<(TriangleHandle, u64)>,
     queued: &mut FastHashSet<u64>,
     stats: &mut DelaunayRepairStats,
@@ -9270,11 +9348,11 @@ fn enqueue_cell_triangles<T, U, V, const D: usize>(
         return;
     }
 
-    let Some(cell) = tds.cell(cell_key) else {
+    let Some(simplex) = tds.simplex(simplex_key) else {
         return;
     };
 
-    let vertices = cell.vertices();
+    let vertices = simplex.vertices();
     let vertex_count = vertices.len();
     for i in 0..vertex_count {
         for j in (i + 1)..vertex_count {
@@ -9287,7 +9365,7 @@ fn enqueue_cell_triangles<T, U, V, const D: usize>(
 }
 
 /// Deduplicates inverse k=3 triangle work by vertex-set hash across incident
-/// cells.
+/// simplices.
 fn enqueue_triangle(
     triangle: TriangleHandle,
     queue: &mut VecDeque<(TriangleHandle, u64)>,
@@ -9302,11 +9380,11 @@ fn enqueue_triangle(
     }
 }
 
-/// Queues all ridges of a cell because k=3 repair needs codimension-two local
+/// Queues all ridges of a simplex because k=3 repair needs codimension-two local
 /// stars.
-fn enqueue_cell_ridges<T, U, V, const D: usize>(
+fn enqueue_simplex_ridges<T, U, V, const D: usize>(
     tds: &Tds<T, U, V, D>,
-    cell_key: CellKey,
+    simplex_key: SimplexKey,
     queue: &mut VecDeque<(RidgeHandle, u64)>,
     queued: &mut FastHashSet<u64>,
     handles: &mut FastHashMap<u64, RidgeHandle>,
@@ -9321,23 +9399,23 @@ where
         return Ok(());
     }
 
-    let Some(cell) = tds.cell(cell_key) else {
+    let Some(simplex) = tds.simplex(simplex_key) else {
         return Ok(());
     };
 
-    let vertex_count = cell.number_of_vertices();
+    let vertex_count = simplex.number_of_vertices();
     for i in 0..vertex_count {
         for j in (i + 1)..vertex_count {
             let handle = RidgeHandle::new(
-                cell_key,
+                simplex_key,
                 u8::try_from(i).map_err(|_| FlipError::InvalidRidgeIndex {
-                    cell_key,
+                    simplex_key,
                     omit_a: u8::MAX,
                     omit_b: u8::MAX,
                     vertex_count,
                 })?,
                 u8::try_from(j).map_err(|_| FlipError::InvalidRidgeIndex {
-                    cell_key,
+                    simplex_key,
                     omit_a: u8::MAX,
                     omit_b: u8::MAX,
                     vertex_count,
@@ -9368,18 +9446,18 @@ fn enqueue_ridge<T, U, V, const D: usize>(
         return;
     }
 
-    let Some(cell) = tds.cell(handle.cell_key()) else {
+    let Some(simplex) = tds.simplex(handle.simplex_key()) else {
         return;
     };
 
-    let vertex_count = cell.number_of_vertices();
+    let vertex_count = simplex.number_of_vertices();
     let omit_a = usize::from(handle.omit_a());
     let omit_b = usize::from(handle.omit_b());
     if omit_a >= vertex_count || omit_b >= vertex_count || omit_a == omit_b {
         return;
     }
 
-    let ridge_vertices = ridge_vertices_from_cell(cell, omit_a, omit_b);
+    let ridge_vertices = ridge_vertices_from_simplex(simplex, omit_a, omit_b);
     if ridge_vertices.len() != D - 1 {
         return;
     }
@@ -9429,7 +9507,7 @@ mod tests {
         coords
     }
 
-    /// Places a test vertex on a chosen coordinate axis to create degenerate cells.
+    /// Places a test vertex on a chosen coordinate axis to create degenerate simplices.
     fn scaled_unit_vector<const D: usize>(index: usize, scale: f64) -> [f64; D] {
         let mut coords = [0.0; D];
         coords[index] = scale;
@@ -9462,35 +9540,35 @@ mod tests {
         offsets
     }
 
-    /// Asserts exact vertex-to-periodic-offset slot pairing independent of cell orientation.
-    fn assert_cell_offsets_by_vertex<const D: usize>(
+    /// Asserts exact vertex-to-periodic-offset slot pairing independent of simplex orientation.
+    fn assert_simplex_offsets_by_vertex<const D: usize>(
         tds: &Tds<f64, (), (), D>,
-        cell_key: CellKey,
+        simplex_key: SimplexKey,
         expected_offsets: &[(VertexKey, [i8; D])],
     ) {
-        let cell = tds.cell(cell_key).unwrap();
-        let offsets = cell
+        let simplex = tds.simplex(simplex_key).unwrap();
+        let offsets = simplex
             .periodic_vertex_offsets()
-            .expect("cell should carry periodic offsets");
-        assert_eq!(offsets.len(), cell.number_of_vertices());
-        assert_eq!(expected_offsets.len(), cell.number_of_vertices());
+            .expect("simplex should carry periodic offsets");
+        assert_eq!(offsets.len(), simplex.number_of_vertices());
+        assert_eq!(expected_offsets.len(), simplex.number_of_vertices());
         for &(vertex_key, expected_offset) in expected_offsets {
-            let index = cell
+            let index = simplex
                 .vertices()
                 .iter()
                 .position(|&candidate| candidate == vertex_key)
-                .expect("expected vertex should be present in cell");
+                .expect("expected vertex should be present in simplex");
             assert_eq!(
                 offsets[index], expected_offset,
-                "unexpected periodic offset for vertex {vertex_key:?} in cell {cell_key:?}"
+                "unexpected periodic offset for vertex {vertex_key:?} in simplex {simplex_key:?}"
             );
         }
     }
 
-    /// Verifies source-cell orientation gating only accepts certified positive orderings.
+    /// Verifies source-simplex orientation gating only accepts certified positive orderings.
     #[test]
-    fn test_source_cell_is_certified_positive_requires_source_and_positive_order() {
-        let source_cell = CellKey::from(KeyData::from_ffi(42));
+    fn test_source_simplex_is_certified_positive_requires_source_and_positive_order() {
+        let source_simplex = SimplexKey::from(KeyData::from_ffi(42));
         let positive = [
             Point::new([0.0, 0.0]),
             Point::new([1.0, 0.0]),
@@ -9498,13 +9576,13 @@ mod tests {
         ];
         let negative = [positive[1], positive[0], positive[2]];
 
-        assert!(source_cell_is_certified_positive(
-            Some(source_cell),
+        assert!(source_simplex_is_certified_positive(
+            Some(source_simplex),
             &positive
         ));
-        assert!(!source_cell_is_certified_positive(None, &positive));
-        assert!(!source_cell_is_certified_positive(
-            Some(source_cell),
+        assert!(!source_simplex_is_certified_positive(None, &positive));
+        assert!(!source_simplex_is_certified_positive(
+            Some(source_simplex),
             &negative,
         ));
     }
@@ -9566,58 +9644,58 @@ mod tests {
         FlipContextDyn {
             removed_face_vertices: context.removed_face_vertices,
             inserted_face_vertices: context.inserted_face_vertices,
-            removed_cells: context.removed_cells,
+            removed_simplices: context.removed_simplices,
             direction: context.direction,
         }
     }
 
-    macro_rules! gen_removed_cell_snapshot_tests {
+    macro_rules! gen_removed_simplex_snapshot_tests {
         ($dim:literal) => {
             pastey::paste! {
                 #[test]
-                fn [<test_snapshot_removed_cell_vertices_captures_vertices_and_reports_missing_cell_ $dim d>]() {
+                fn [<test_snapshot_removed_simplex_vertices_captures_vertices_and_reports_missing_simplex_ $dim d>]() {
                     let mut tds: Tds<f64, (), (), $dim> = Tds::empty();
                     let vertices = insert_standard_simplex_vertices::<$dim>(&mut tds);
-                    let cell_key = tds
-                        .insert_cell_with_mapping(Cell::new(vertices.clone(), None).unwrap())
+                    let simplex_key = tds
+                        .insert_simplex_with_mapping(Simplex::new(vertices.clone(), None).unwrap())
                         .unwrap();
 
-                    let removed_cells: CellKeyBuffer = std::iter::once(cell_key).collect();
-                    let snapshot = snapshot_removed_cell_vertices(&tds, &removed_cells).unwrap();
+                    let removed_simplices: SimplexKeyBuffer = std::iter::once(simplex_key).collect();
+                    let snapshot = snapshot_removed_simplex_vertices(&tds, &removed_simplices).unwrap();
                     assert_eq!(snapshot.len(), 1);
                     assert_eq!(snapshot[0].iter().copied().collect::<Vec<_>>(), vertices);
 
-                    let missing_cell = CellKey::from(KeyData::from_ffi(999_999 + $dim));
-                    let missing_cells: CellKeyBuffer = std::iter::once(missing_cell).collect();
-                    let err = snapshot_removed_cell_vertices(&tds, &missing_cells).unwrap_err();
+                    let missing_simplex = SimplexKey::from(KeyData::from_ffi(999_999 + $dim));
+                    let missing_simplices: SimplexKeyBuffer = std::iter::once(missing_simplex).collect();
+                    let err = snapshot_removed_simplex_vertices(&tds, &missing_simplices).unwrap_err();
                     assert!(matches!(
                         err,
-                        FlipError::MissingCell { cell_key } if cell_key == missing_cell
+                        FlipError::MissingSimplex { simplex_key } if simplex_key == missing_simplex
                     ));
                 }
 
                 #[test]
-                fn [<test_last_applied_flip_preserves_removed_cell_vertex_snapshots_ $dim d>]() {
-                    let removed_cell = CellKey::from(KeyData::from_ffi(101 + $dim));
-                    let new_cell = CellKey::from(KeyData::from_ffi(102 + $dim));
+                fn [<test_last_applied_flip_preserves_removed_simplex_vertex_snapshots_ $dim d>]() {
+                    let removed_simplex = SimplexKey::from(KeyData::from_ffi(101 + $dim));
+                    let new_simplex = SimplexKey::from(KeyData::from_ffi(102 + $dim));
                     let v1 = VertexKey::from(KeyData::from_ffi(201 + $dim));
                     let v2 = VertexKey::from(KeyData::from_ffi(202 + $dim));
                     let v3 = VertexKey::from(KeyData::from_ffi(203 + $dim));
                     let v4 = VertexKey::from(KeyData::from_ffi(204 + $dim));
 
-                    let mut removed_cell_vertices = RemovedCellVertexSnapshot::new();
-                    removed_cell_vertices.push([v1, v2, v3].into_iter().collect::<VertexKeyList>());
+                    let mut removed_simplex_vertices = RemovedSimplexVertexSnapshot::new();
+                    removed_simplex_vertices.push([v1, v2, v3].into_iter().collect::<VertexKeyList>());
 
                     let applied = AppliedFlip::<$dim> {
                         info: FlipInfo {
                             kind: BistellarFlipKind::k2($dim),
                             direction: FlipDirection::Forward,
-                            removed_cells: std::iter::once(removed_cell).collect(),
-                            new_cells: std::iter::once(new_cell).collect(),
+                            removed_simplices: std::iter::once(removed_simplex).collect(),
+                            new_simplices: std::iter::once(new_simplex).collect(),
                             removed_face_vertices: [v3, v1].into_iter().collect(),
                             inserted_face_vertices: [v4, v2].into_iter().collect(),
                         },
-                        removed_cell_vertices,
+                        removed_simplex_vertices,
                     };
 
                     let last = LastAppliedFlip::from_applied_flip(&applied);
@@ -9637,34 +9715,34 @@ mod tests {
                         vec![v2, v4]
                     );
                     assert_eq!(
-                        last.removed_cells.iter().copied().collect::<Vec<_>>(),
-                        vec![removed_cell]
+                        last.removed_simplices.iter().copied().collect::<Vec<_>>(),
+                        vec![removed_simplex]
                     );
                     assert_eq!(
-                        last.new_cells.iter().copied().collect::<Vec<_>>(),
-                        vec![new_cell]
+                        last.new_simplices.iter().copied().collect::<Vec<_>>(),
+                        vec![new_simplex]
                     );
 
-                    let lines = last.removed_cell_vertex_lines();
+                    let lines = last.removed_simplex_vertex_lines();
                     assert_eq!(lines.len(), 1);
-                    assert!(lines[0].contains(&format!("{removed_cell:?}: vertices=")));
+                    assert!(lines[0].contains(&format!("{removed_simplex:?}: vertices=")));
                     assert!(!lines[0].contains("missing-snapshot"));
 
                     let mut placeholder = LastAppliedFlip::new(1, &[v1], &[v2]);
-                    placeholder.removed_cells.push(removed_cell);
+                    placeholder.removed_simplices.push(removed_simplex);
                     assert_eq!(
-                        placeholder.removed_cell_vertex_lines(),
-                        vec![format!("{removed_cell:?}: missing-snapshot")]
+                        placeholder.removed_simplex_vertex_lines(),
+                        vec![format!("{removed_simplex:?}: missing-snapshot")]
                     );
                 }
             }
         };
     }
 
-    gen_removed_cell_snapshot_tests!(2);
-    gen_removed_cell_snapshot_tests!(3);
-    gen_removed_cell_snapshot_tests!(4);
-    gen_removed_cell_snapshot_tests!(5);
+    gen_removed_simplex_snapshot_tests!(2);
+    gen_removed_simplex_snapshot_tests!(3);
+    gen_removed_simplex_snapshot_tests!(4);
+    gen_removed_simplex_snapshot_tests!(5);
 
     struct RidgeDiagnosticFixture3d {
         tds: Tds<f64, (), (), 3>,
@@ -9673,8 +9751,8 @@ mod tests {
         y_axis_vertex: VertexKey,
         upper_apex_vertex: VertexKey,
         lower_apex_vertex: VertexKey,
-        upper_tetrahedron: CellKey,
-        lower_neighbor: CellKey,
+        upper_tetrahedron: SimplexKey,
+        lower_neighbor: SimplexKey,
     }
 
     impl RidgeDiagnosticFixture3d {
@@ -9697,8 +9775,8 @@ mod tests {
                 .unwrap();
 
             let upper_tetrahedron = tds
-                .insert_cell_with_mapping(
-                    Cell::new(
+                .insert_simplex_with_mapping(
+                    Simplex::new(
                         vec![
                             origin_vertex,
                             x_axis_vertex,
@@ -9711,8 +9789,8 @@ mod tests {
                 )
                 .unwrap();
             let lower_neighbor = tds
-                .insert_cell_with_mapping(
-                    Cell::new(
+                .insert_simplex_with_mapping(
+                    Simplex::new(
                         vec![
                             origin_vertex,
                             x_axis_vertex,
@@ -9749,8 +9827,8 @@ mod tests {
         }
 
         fn last_applied_flip(&self) -> LastAppliedFlip {
-            let mut removed_cell_vertices = RemovedCellVertexSnapshot::new();
-            removed_cell_vertices.push(
+            let mut removed_simplex_vertices = RemovedSimplexVertexSnapshot::new();
+            removed_simplex_vertices.push(
                 [
                     self.origin_vertex,
                     self.x_axis_vertex,
@@ -9765,8 +9843,8 @@ mod tests {
                 info: FlipInfo {
                     kind: BistellarFlipKind::k2(3),
                     direction: FlipDirection::Forward,
-                    removed_cells: std::iter::once(self.upper_tetrahedron).collect(),
-                    new_cells: std::iter::once(self.lower_neighbor).collect(),
+                    removed_simplices: std::iter::once(self.upper_tetrahedron).collect(),
+                    new_simplices: std::iter::once(self.lower_neighbor).collect(),
                     removed_face_vertices: [
                         self.origin_vertex,
                         self.x_axis_vertex,
@@ -9778,7 +9856,7 @@ mod tests {
                         .into_iter()
                         .collect(),
                 },
-                removed_cell_vertices,
+                removed_simplex_vertices,
             };
 
             LastAppliedFlip::from_applied_flip(&applied)
@@ -9786,27 +9864,28 @@ mod tests {
     }
 
     #[test]
-    fn test_ridge_diagnostic_helpers_format_valid_missing_and_invalid_cells() {
+    fn test_ridge_diagnostic_helpers_format_valid_missing_and_invalid_simplices() {
         init_tracing();
         let fixture = RidgeDiagnosticFixture3d::new();
         let ridge = fixture.ridge_ab();
-        let cell = fixture.tds.cell(fixture.upper_tetrahedron).unwrap();
+        let simplex = fixture.tds.simplex(fixture.upper_tetrahedron).unwrap();
 
-        let ridge_neighbors = ridge_neighbor_cells_for_cell(cell, &ridge);
+        let ridge_neighbors = ridge_neighbor_simplices_for_simplex(simplex, &ridge);
         assert!(
             ridge_neighbors.contains(&fixture.lower_neighbor),
             "shared-face neighbor should be visible from the ridge diagnostics"
         );
 
-        let incident = ridge_incident_cell_summary(&fixture.tds, fixture.upper_tetrahedron, &ridge);
+        let incident =
+            ridge_incident_simplex_summary(&fixture.tds, fixture.upper_tetrahedron, &ridge);
         assert!(incident.contains(&format!("{:?}: extras=", fixture.upper_tetrahedron)));
         assert!(incident.contains("ridge_neighbors="));
         assert!(incident.contains(&format!("{:?}", fixture.lower_neighbor)));
 
-        let cell_summary = cell_vertex_summary(&fixture.tds, fixture.upper_tetrahedron);
-        assert!(cell_summary.contains("vertices="));
+        let simplex_summary = simplex_vertex_summary(&fixture.tds, fixture.upper_tetrahedron);
+        assert!(simplex_summary.contains("vertices="));
 
-        let facet_summary = facet_incident_cell_summary(
+        let facet_summary = facet_incident_simplex_summary(
             &fixture.tds,
             fixture.upper_tetrahedron,
             &[
@@ -9818,22 +9897,22 @@ mod tests {
         assert!(facet_summary.contains("opposite_vertices="));
         assert!(facet_summary.contains("neighbors="));
 
-        let missing_cell = CellKey::from(KeyData::from_ffi(999_901));
+        let missing_simplex = SimplexKey::from(KeyData::from_ffi(999_901));
         assert_eq!(
-            ridge_incident_cell_summary(&fixture.tds, missing_cell, &ridge),
-            format!("{missing_cell:?}: missing")
+            ridge_incident_simplex_summary(&fixture.tds, missing_simplex, &ridge),
+            format!("{missing_simplex:?}: missing")
         );
         assert_eq!(
-            cell_vertex_summary(&fixture.tds, missing_cell),
-            format!("{missing_cell:?}: missing")
+            simplex_vertex_summary(&fixture.tds, missing_simplex),
+            format!("{missing_simplex:?}: missing")
         );
         assert_eq!(
-            facet_incident_cell_summary(
+            facet_incident_simplex_summary(
                 &fixture.tds,
-                missing_cell,
+                missing_simplex,
                 &[fixture.origin_vertex, fixture.x_axis_vertex],
             ),
-            format!("{missing_cell:?}: missing")
+            format!("{missing_simplex:?}: missing")
         );
 
         let missing_vertex = VertexKey::from(KeyData::from_ffi(999_902));
@@ -9842,7 +9921,7 @@ mod tests {
                 .into_iter()
                 .collect();
         let invalid_summary =
-            ridge_incident_cell_summary(&fixture.tds, fixture.upper_tetrahedron, &invalid_ridge);
+            ridge_incident_simplex_summary(&fixture.tds, fixture.upper_tetrahedron, &invalid_ridge);
         assert!(invalid_summary.contains("extras_error="));
     }
 
@@ -9858,18 +9937,18 @@ mod tests {
             &[fixture.lower_neighbor],
             &last,
         );
-        assert!(ridge_summary.contains("ridge_cell_is_new=true"));
-        assert!(ridge_summary.contains("global_cells_in_new"));
-        assert!(ridge_summary.contains("predecessor_new_cell_vertices"));
+        assert!(ridge_summary.contains("ridge_simplex_is_new=true"));
+        assert!(ridge_summary.contains("global_simplices_in_new"));
+        assert!(ridge_summary.contains("predecessor_new_simplex_vertices"));
 
         let postcondition_summary = postcondition_facet_predecessor_summary(
             &fixture.tds,
             &[fixture.upper_tetrahedron, fixture.lower_neighbor],
             &last,
         );
-        assert!(postcondition_summary.contains("incident_cells_in_new"));
-        assert!(postcondition_summary.contains("incident_cells_in_removed"));
-        assert!(postcondition_summary.contains("predecessor_removed_cell_vertices"));
+        assert!(postcondition_summary.contains("incident_simplices_in_new"));
+        assert!(postcondition_summary.contains("incident_simplices_in_removed"));
+        assert!(postcondition_summary.contains("predecessor_removed_simplex_vertices"));
         assert!(!postcondition_summary.contains("missing-snapshot"));
     }
 
@@ -9889,10 +9968,10 @@ mod tests {
         );
         assert_eq!(diagnostics.ridge_debug_emitted, 1);
 
-        let missing_cell = CellKey::from(KeyData::from_ffi(999_903));
+        let missing_simplex = SimplexKey::from(KeyData::from_ffi(999_903));
         debug_ridge_context(
             &fixture.tds,
-            RidgeHandle::new(missing_cell, 0, 1),
+            RidgeHandle::new(missing_simplex, 0, 1),
             None,
             &mut diagnostics,
             None,
@@ -9939,7 +10018,7 @@ mod tests {
             inserted_face_vertices: [fixture.upper_apex_vertex, fixture.lower_apex_vertex]
                 .into_iter()
                 .collect(),
-            removed_cells: [fixture.upper_tetrahedron, fixture.lower_neighbor]
+            removed_simplices: [fixture.upper_tetrahedron, fixture.lower_neighbor]
                 .into_iter()
                 .collect(),
             direction: FlipDirection::Forward,
@@ -9959,31 +10038,35 @@ mod tests {
 
     fn facet_index_for_edge_2d(
         tds: &Tds<f64, (), (), 2>,
-        cell_key: CellKey,
+        simplex_key: SimplexKey,
         edge_start: VertexKey,
         edge_end: VertexKey,
     ) -> u8 {
-        let cell = tds.cell(cell_key).expect("cell key missing in TDS");
-        for facet_idx in 0..cell.number_of_vertices() {
-            let facet = facet_vertices_from_cell(cell, facet_idx);
+        let simplex = tds
+            .simplex(simplex_key)
+            .expect("simplex key missing in TDS");
+        for facet_idx in 0..simplex.number_of_vertices() {
+            let facet = facet_vertices_from_simplex(simplex, facet_idx);
             if facet.len() == 2 && facet.contains(&edge_start) && facet.contains(&edge_end) {
                 return u8::try_from(facet_idx).expect("facet index fits in u8");
             }
         }
 
-        panic!("edge ({edge_start:?}, {edge_end:?}) not found in cell {cell_key:?}");
+        panic!("edge ({edge_start:?}, {edge_end:?}) not found in simplex {simplex_key:?}");
     }
 
     fn facet_index_for_face_3d(
         tds: &Tds<f64, (), (), 3>,
-        cell_key: CellKey,
+        simplex_key: SimplexKey,
         face_v0: VertexKey,
         face_v1: VertexKey,
         face_v2: VertexKey,
     ) -> u8 {
-        let cell = tds.cell(cell_key).expect("cell key missing in TDS");
-        for facet_idx in 0..cell.number_of_vertices() {
-            let facet = facet_vertices_from_cell(cell, facet_idx);
+        let simplex = tds
+            .simplex(simplex_key)
+            .expect("simplex key missing in TDS");
+        for facet_idx in 0..simplex.number_of_vertices() {
+            let facet = facet_vertices_from_simplex(simplex, facet_idx);
             if facet.len() == 3
                 && facet.contains(&face_v0)
                 && facet.contains(&face_v1)
@@ -9993,11 +10076,11 @@ mod tests {
             }
         }
 
-        panic!("face ({face_v0:?}, {face_v1:?}, {face_v2:?}) not found in cell {cell_key:?}");
+        panic!("face ({face_v0:?}, {face_v1:?}, {face_v2:?}) not found in simplex {simplex_key:?}");
     }
 
     /// Assert that `robust_orientation` returns a non-degenerate sign for
-    /// every new-cell point set that a k=2 flip context would produce.
+    /// every new-simplex point set that a k=2 flip context would produce.
     fn assert_context_has_nonzero_robust_orientation(
         tds: &Tds<f64, (), (), 2>,
         context: &FlipContext<2, 2>,
@@ -10026,29 +10109,31 @@ mod tests {
         let v1 = tds.insert_vertex_with_mapping(vertex!([1.0, 0.0])).unwrap();
         let v2 = tds.insert_vertex_with_mapping(vertex!([0.0, 1.0])).unwrap();
 
-        let cell_key = tds
-            .insert_cell_with_mapping(Cell::new(vec![v0, v1, v2], None).unwrap())
+        let simplex_key = tds
+            .insert_simplex_with_mapping(Simplex::new(vec![v0, v1, v2], None).unwrap())
             .unwrap();
-        let stale_handle = FacetHandle::new(cell_key, 0);
+        let stale_handle = FacetHandle::new(simplex_key, 0);
         let stable_key = {
-            let cell = tds.cell(cell_key).unwrap();
+            let simplex = tds.simplex(simplex_key).unwrap();
             let facet_vertices =
-                facet_vertices_from_cell(cell, usize::from(stale_handle.facet_index()));
+                facet_vertices_from_simplex(simplex, usize::from(stale_handle.facet_index()));
             facet_key_from_vertices(&facet_vertices)
         };
 
         // Reorder slots so the original index no longer identifies the same facet.
-        tds.cell_mut(cell_key).unwrap().swap_vertex_slots(0, 1);
+        tds.simplex_mut(simplex_key)
+            .unwrap()
+            .swap_vertex_slots(0, 1);
 
         let resolved = resolve_facet_handle_for_key(&tds, stale_handle, stable_key)
             .expect("facet handle should be recoverable by stable key");
-        assert_eq!(resolved.cell_key(), cell_key);
+        assert_eq!(resolved.simplex_key(), simplex_key);
         assert_eq!(usize::from(resolved.facet_index()), 1);
 
         let resolved_key = {
-            let cell = tds.cell(cell_key).unwrap();
+            let simplex = tds.simplex(simplex_key).unwrap();
             let facet_vertices =
-                facet_vertices_from_cell(cell, usize::from(resolved.facet_index()));
+                facet_vertices_from_simplex(simplex, usize::from(resolved.facet_index()));
             facet_key_from_vertices(&facet_vertices)
         };
         assert_eq!(resolved_key, stable_key);
@@ -10070,14 +10155,14 @@ mod tests {
             .insert_vertex_with_mapping(vertex!([0.0, 0.0, 1.0]))
             .unwrap();
 
-        let cell_key = tds
-            .insert_cell_with_mapping(Cell::new(vec![v0, v1, v2, v3], None).unwrap())
+        let simplex_key = tds
+            .insert_simplex_with_mapping(Simplex::new(vec![v0, v1, v2, v3], None).unwrap())
             .unwrap();
-        let stale_handle = RidgeHandle::new(cell_key, 0, 1);
+        let stale_handle = RidgeHandle::new(simplex_key, 0, 1);
         let stable_key = {
-            let cell = tds.cell(cell_key).unwrap();
-            let ridge_vertices = ridge_vertices_from_cell(
-                cell,
+            let simplex = tds.simplex(simplex_key).unwrap();
+            let ridge_vertices = ridge_vertices_from_simplex(
+                simplex,
                 usize::from(stale_handle.omit_a()),
                 usize::from(stale_handle.omit_b()),
             );
@@ -10085,17 +10170,19 @@ mod tests {
         };
 
         // Reorder slots so the original omit pair no longer identifies the same ridge.
-        tds.cell_mut(cell_key).unwrap().swap_vertex_slots(0, 2);
+        tds.simplex_mut(simplex_key)
+            .unwrap()
+            .swap_vertex_slots(0, 2);
 
         let resolved = resolve_ridge_handle_for_key(&tds, stale_handle, stable_key)
             .expect("ridge handle should be recoverable by stable key");
-        assert_eq!(resolved.cell_key(), cell_key);
+        assert_eq!(resolved.simplex_key(), simplex_key);
         assert_eq!((resolved.omit_a(), resolved.omit_b()), (1, 2));
 
         let resolved_key = {
-            let cell = tds.cell(cell_key).unwrap();
-            let ridge_vertices = ridge_vertices_from_cell(
-                cell,
+            let simplex = tds.simplex(simplex_key).unwrap();
+            let ridge_vertices = ridge_vertices_from_simplex(
+                simplex,
                 usize::from(resolved.omit_a()),
                 usize::from(resolved.omit_b()),
             );
@@ -10118,21 +10205,21 @@ mod tests {
             .unwrap();
 
         // Flip cavity: two triangles sharing the bottom edge.
-        let cell_cavity_left = tds
-            .insert_cell_with_mapping(
-                Cell::new(vec![v_left_bottom, v_right_bottom, v_left_top], None).unwrap(),
+        let simplex_cavity_left = tds
+            .insert_simplex_with_mapping(
+                Simplex::new(vec![v_left_bottom, v_right_bottom, v_left_top], None).unwrap(),
             )
             .unwrap();
-        let cell_cavity_right = tds
-            .insert_cell_with_mapping(
-                Cell::new(vec![v_right_bottom, v_left_bottom, v_right_top], None).unwrap(),
+        let simplex_cavity_right = tds
+            .insert_simplex_with_mapping(
+                Simplex::new(vec![v_right_bottom, v_left_bottom, v_right_top], None).unwrap(),
             )
             .unwrap();
 
-        // External cell glued along the left edge of the cavity.
-        let cell_external_left = tds
-            .insert_cell_with_mapping(
-                Cell::new(vec![v_left_bottom, v_left_top, v_external], None).unwrap(),
+        // External simplex glued along the left edge of the cavity.
+        let simplex_external_left = tds
+            .insert_simplex_with_mapping(
+                Simplex::new(vec![v_left_bottom, v_left_top, v_external], None).unwrap(),
             )
             .unwrap();
 
@@ -10140,53 +10227,53 @@ mod tests {
         assert!(tds.is_valid().is_ok());
 
         let facet_idx_flip_edge =
-            facet_index_for_edge_2d(&tds, cell_cavity_left, v_left_bottom, v_right_bottom);
+            facet_index_for_edge_2d(&tds, simplex_cavity_left, v_left_bottom, v_right_bottom);
         let ctx = build_k2_flip_context(
             &tds,
-            FacetHandle::new(cell_cavity_left, facet_idx_flip_edge),
+            FacetHandle::new(simplex_cavity_left, facet_idx_flip_edge),
         )
         .unwrap();
 
         let info = apply_bistellar_flip(&mut tds, &ctx).unwrap();
 
-        assert!(!tds.contains_cell(cell_cavity_left));
-        assert!(!tds.contains_cell(cell_cavity_right));
-        assert!(tds.contains_cell(cell_external_left));
+        assert!(!tds.contains_simplex(simplex_cavity_left));
+        assert!(!tds.contains_simplex(simplex_cavity_right));
+        assert!(tds.contains_simplex(simplex_external_left));
 
-        // External cell must be rewired from the removed cell to a newly inserted cell.
+        // External simplex must be rewired from the removed simplex to a newly inserted simplex.
         let facet_idx_glue_edge =
-            facet_index_for_edge_2d(&tds, cell_external_left, v_left_bottom, v_left_top);
-        let external_cell = tds.cell(cell_external_left).unwrap();
-        let neighbor_key_glue = external_cell
+            facet_index_for_edge_2d(&tds, simplex_external_left, v_left_bottom, v_left_top);
+        let external_simplex = tds.simplex(simplex_external_left).unwrap();
+        let neighbor_key_glue = external_simplex
             .neighbor_key(usize::from(facet_idx_glue_edge))
             .expect("external neighbors should exist")
-            .expect("external cell should have a neighbor across the glue edge after the flip");
+            .expect("external simplex should have a neighbor across the glue edge after the flip");
 
-        assert!(tds.contains_cell(neighbor_key_glue));
+        assert!(tds.contains_simplex(neighbor_key_glue));
         assert!(
-            info.new_cells
+            info.new_simplices
                 .iter()
                 .copied()
                 .any(|k| k == neighbor_key_glue),
-            "expected external neighbor across glue edge to be one of the flip-inserted cells"
+            "expected external neighbor across glue edge to be one of the flip-inserted simplices"
         );
 
         // Neighbor relation must be symmetric.
-        let neighbor_cell = tds.cell(neighbor_key_glue).unwrap();
-        let mirror_idx = external_cell
-            .mirror_facet_index(usize::from(facet_idx_glue_edge), neighbor_cell)
+        let neighbor_simplex = tds.simplex(neighbor_key_glue).unwrap();
+        let mirror_idx = external_simplex
+            .mirror_facet_index(usize::from(facet_idx_glue_edge), neighbor_simplex)
             .expect("mirror facet index should exist");
-        let neighbor_back = neighbor_cell.neighbor_key(mirror_idx).flatten();
-        assert_eq!(neighbor_back, Some(cell_external_left));
+        let neighbor_back = neighbor_simplex.neighbor_key(mirror_idx).flatten();
+        assert_eq!(neighbor_back, Some(simplex_external_left));
 
-        // Ensure flip did not leave any dangling neighbor pointers in the newly inserted cells.
-        for &cell_key in &info.new_cells {
-            let cell = tds.cell(cell_key).unwrap();
-            if let Some(ns) = cell.neighbors() {
+        // Ensure flip did not leave any dangling neighbor pointers in the newly inserted simplices.
+        for &simplex_key in &info.new_simplices {
+            let simplex = tds.simplex(simplex_key).unwrap();
+            if let Some(ns) = simplex.neighbors() {
                 for neighbor_key in ns.flatten() {
                     assert!(
-                        tds.contains_cell(neighbor_key),
-                        "dangling neighbor pointer from {cell_key:?} to {neighbor_key:?}"
+                        tds.contains_simplex(neighbor_key),
+                        "dangling neighbor pointer from {simplex_key:?} to {neighbor_key:?}"
                     );
                 }
             }
@@ -10213,17 +10300,17 @@ mod tests {
         let offset_left_top = [0_i8, 1_i8];
         let offset_right_top = [1_i8, 1_i8];
         let offset_external = [0_i8, -1_i8];
-        let cell_cavity_left = insert_periodic_cell_with_offsets(
+        let simplex_cavity_left = insert_periodic_simplex_with_offsets(
             &mut tds,
             vec![v_left_bottom, v_right_bottom, v_left_top],
             vec![offset_left_bottom, offset_right_bottom, offset_left_top],
         );
-        let cell_cavity_right = insert_periodic_cell_with_offsets(
+        let simplex_cavity_right = insert_periodic_simplex_with_offsets(
             &mut tds,
             vec![v_right_bottom, v_left_bottom, v_right_top],
             vec![offset_right_bottom, offset_left_bottom, offset_right_top],
         );
-        let cell_external_left = insert_periodic_cell_with_offsets(
+        let simplex_external_left = insert_periodic_simplex_with_offsets(
             &mut tds,
             vec![v_left_bottom, v_left_top, v_external],
             vec![offset_left_bottom, offset_left_top, offset_external],
@@ -10233,10 +10320,10 @@ mod tests {
         assert!(tds.is_valid().is_ok());
 
         let facet_idx_flip_edge =
-            facet_index_for_edge_2d(&tds, cell_cavity_left, v_left_bottom, v_right_bottom);
+            facet_index_for_edge_2d(&tds, simplex_cavity_left, v_left_bottom, v_right_bottom);
         let ctx = build_k2_flip_context(
             &tds,
-            FacetHandle::new(cell_cavity_left, facet_idx_flip_edge),
+            FacetHandle::new(simplex_cavity_left, facet_idx_flip_edge),
         )
         .unwrap();
 
@@ -10245,7 +10332,7 @@ mod tests {
             2,
             &ctx.removed_face_vertices,
             &ctx.inserted_face_vertices,
-            &ctx.removed_cells,
+            &ctx.removed_simplices,
             ctx.direction,
             ReplacementOrientationPolicy::AllowSigned,
             FlipValidationScope::LocalCavity,
@@ -10253,9 +10340,9 @@ mod tests {
         .unwrap()
         .info;
 
-        assert!(!tds.contains_cell(cell_cavity_left));
-        assert!(!tds.contains_cell(cell_cavity_right));
-        assert!(tds.contains_cell(cell_external_left));
+        assert!(!tds.contains_simplex(simplex_cavity_left));
+        assert!(!tds.contains_simplex(simplex_cavity_right));
+        assert!(tds.contains_simplex(simplex_external_left));
         let expected_left_replacement = [
             (v_left_bottom, offset_left_bottom),
             (v_left_top, offset_left_top),
@@ -10266,40 +10353,40 @@ mod tests {
             (v_left_top, offset_left_top),
             (v_right_top, offset_right_top),
         ];
-        for &cell_key in &info.new_cells {
-            let cell = tds.cell(cell_key).unwrap();
-            let expected = if cell.contains_vertex(v_left_bottom) {
+        for &simplex_key in &info.new_simplices {
+            let simplex = tds.simplex(simplex_key).unwrap();
+            let expected = if simplex.contains_vertex(v_left_bottom) {
                 &expected_left_replacement
             } else {
                 &expected_right_replacement
             };
-            assert_cell_offsets_by_vertex(&tds, cell_key, expected);
+            assert_simplex_offsets_by_vertex(&tds, simplex_key, expected);
         }
 
         let facet_idx_glue_edge =
-            facet_index_for_edge_2d(&tds, cell_external_left, v_left_bottom, v_left_top);
-        let external_cell = tds.cell(cell_external_left).unwrap();
-        let neighbor_key_glue = external_cell
+            facet_index_for_edge_2d(&tds, simplex_external_left, v_left_bottom, v_left_top);
+        let external_simplex = tds.simplex(simplex_external_left).unwrap();
+        let neighbor_key_glue = external_simplex
             .neighbor_key(usize::from(facet_idx_glue_edge))
             .expect("external neighbors should exist")
-            .expect("external cell should have a replacement neighbor across the glue edge");
+            .expect("external simplex should have a replacement neighbor across the glue edge");
         assert!(
-            info.new_cells
+            info.new_simplices
                 .iter()
                 .copied()
-                .any(|cell_key| cell_key == neighbor_key_glue),
-            "expected periodic external facet to be wired to a flip replacement cell"
+                .any(|simplex_key| simplex_key == neighbor_key_glue),
+            "expected periodic external facet to be wired to a flip replacement simplex"
         );
-        assert_cell_offsets_by_vertex(
+        assert_simplex_offsets_by_vertex(
             &tds,
-            cell_external_left,
+            simplex_external_left,
             &[
                 (v_left_bottom, offset_left_bottom),
                 (v_left_top, offset_left_top),
                 (v_external, offset_external),
             ],
         );
-        assert_cell_offsets_by_vertex(&tds, neighbor_key_glue, &expected_left_replacement);
+        assert_simplex_offsets_by_vertex(&tds, neighbor_key_glue, &expected_left_replacement);
         assert!(tds.is_valid().is_ok());
     }
 
@@ -10307,32 +10394,32 @@ mod tests {
         ($dim:literal) => {
             pastey::paste! {
                 #[test]
-                fn [<test_orient_replacement_cells_uses_periodic_external_cell_ $dim d>]() {
+                fn [<test_orient_replacement_simplices_uses_periodic_external_simplex_ $dim d>]() {
                     let mut tds: Tds<f64, (), (), $dim> = Tds::empty();
                     let simplex_vertices = insert_standard_simplex_vertices(&mut tds);
 
                     let offsets = periodic_test_offsets::<$dim>($dim + 1);
-                    let mut external_cell = Cell::new(simplex_vertices.clone(), None).unwrap();
-                    external_cell.set_periodic_vertex_offsets(offsets.clone()).unwrap();
-                    let external_cell_key = tds.insert_cell_with_mapping(external_cell).unwrap();
+                    let mut external_simplex = Simplex::new(simplex_vertices.clone(), None).unwrap();
+                    external_simplex.set_periodic_vertex_offsets(offsets.clone()).unwrap();
+                    let external_simplex_key = tds.insert_simplex_with_mapping(external_simplex).unwrap();
 
-                    let mut replacement_cells = vec![vertex_key_buffer(&simplex_vertices)];
+                    let mut replacement_simplices = vec![vertex_key_buffer(&simplex_vertices)];
                     let mut replacement_offsets: Vec<Option<PeriodicOffsetBuffer<$dim>>> =
                         vec![Some(offsets.clone().into())];
-                    orient_replacement_cells(
+                    orient_replacement_simplices(
                         &tds,
-                        &mut replacement_cells,
+                        &mut replacement_simplices,
                         &mut replacement_offsets,
-                        &[FacetHandle::new(external_cell_key, 0)],
+                        &[FacetHandle::new(external_simplex_key, 0)],
                     )
                     .unwrap();
 
                     let mut expected_vertices = simplex_vertices.clone();
                     expected_vertices.swap(0, 1);
                     assert_eq!(
-                        replacement_cells[0].iter().copied().collect::<Vec<_>>(),
+                        replacement_simplices[0].iter().copied().collect::<Vec<_>>(),
                         expected_vertices,
-                        "periodic external facet parity should flip a same-order replacement cell"
+                        "periodic external facet parity should flip a same-order replacement simplex"
                     );
                     let mut expected_offsets = offsets;
                     expected_offsets.swap(0, 1);
@@ -10344,27 +10431,27 @@ mod tests {
                 }
 
                 #[test]
-                fn [<test_orient_replacement_cells_rejects_conflicting_periodic_external_offsets_ $dim d>]() {
+                fn [<test_orient_replacement_simplices_rejects_conflicting_periodic_external_offsets_ $dim d>]() {
                     let mut tds: Tds<f64, (), (), $dim> = Tds::empty();
                     let simplex_vertices = insert_standard_simplex_vertices(&mut tds);
 
                     let external_offsets = vec![[0_i8; $dim]; $dim + 1];
-                    let mut external_cell = Cell::new(simplex_vertices.clone(), None).unwrap();
-                    external_cell
+                    let mut external_simplex = Simplex::new(simplex_vertices.clone(), None).unwrap();
+                    external_simplex
                         .set_periodic_vertex_offsets(external_offsets)
                         .unwrap();
-                    let external_cell_key = tds.insert_cell_with_mapping(external_cell).unwrap();
+                    let external_simplex_key = tds.insert_simplex_with_mapping(external_simplex).unwrap();
 
-                    let mut replacement_cells = vec![vertex_key_buffer(&simplex_vertices)];
+                    let mut replacement_simplices = vec![vertex_key_buffer(&simplex_vertices)];
                     let mut replacement_offsets = vec![[0_i8; $dim]; $dim + 1];
                     replacement_offsets[1][0] = 1;
                     let mut replacement_offsets: Vec<Option<PeriodicOffsetBuffer<$dim>>> =
                         vec![Some(replacement_offsets.into())];
-                    let result = orient_replacement_cells(
+                    let result = orient_replacement_simplices(
                         &tds,
-                        &mut replacement_cells,
+                        &mut replacement_simplices,
                         &mut replacement_offsets,
-                        &[FacetHandle::new(external_cell_key, 0)],
+                        &[FacetHandle::new(external_simplex_key, 0)],
                     );
 
                     assert!(
@@ -10372,26 +10459,26 @@ mod tests {
                             result,
                             Err(FlipError::InvalidFlipContext {
                                 reason: FlipContextError::ConflictingReplacementPeriodicFrameTranslation {
-                                    source_cell_key,
-                                    target_cell_index: 0,
+                                    source_simplex_key,
+                                    target_simplex_index: 0,
                                     ..
                                 }
-                            }) if source_cell_key == external_cell_key
+                            }) if source_simplex_key == external_simplex_key
                         ),
                         "conflicting periodic external facet translations should fail before mutation: {result:?}"
                     );
                 }
 
                 #[test]
-                fn [<test_orient_replacement_cells_rejects_periodic_offset_count_mismatch_ $dim d>]() {
+                fn [<test_orient_replacement_simplices_rejects_periodic_offset_count_mismatch_ $dim d>]() {
                     let mut tds: Tds<f64, (), (), $dim> = Tds::empty();
                     let simplex_vertices = insert_standard_simplex_vertices(&mut tds);
-                    let mut replacement_cells = vec![vertex_key_buffer(&simplex_vertices)];
+                    let mut replacement_simplices = vec![vertex_key_buffer(&simplex_vertices)];
                     let mut replacement_offsets: Vec<Option<PeriodicOffsetBuffer<$dim>>> = Vec::new();
 
-                    let result = orient_replacement_cells(
+                    let result = orient_replacement_simplices(
                         &tds,
-                        &mut replacement_cells,
+                        &mut replacement_simplices,
                         &mut replacement_offsets,
                         &[],
                     );
@@ -10401,7 +10488,7 @@ mod tests {
                             result,
                             Err(FlipError::InvalidFlipContext {
                                 reason: FlipContextError::ReplacementPeriodicOffsetCountMismatch {
-                                    cell_count: 1,
+                                    simplex_count: 1,
                                     offset_count: 0,
                                 }
                             })
@@ -10411,23 +10498,23 @@ mod tests {
                 }
 
                 #[test]
-                fn [<test_orient_replacement_cells_rejects_missing_replacement_periodic_offsets_ $dim d>]() {
+                fn [<test_orient_replacement_simplices_rejects_missing_replacement_periodic_offsets_ $dim d>]() {
                     let mut tds: Tds<f64, (), (), $dim> = Tds::empty();
                     let simplex_vertices = insert_standard_simplex_vertices(&mut tds);
 
-                    let mut external_cell = Cell::new(simplex_vertices.clone(), None).unwrap();
-                    external_cell
+                    let mut external_simplex = Simplex::new(simplex_vertices.clone(), None).unwrap();
+                    external_simplex
                         .set_periodic_vertex_offsets(vec![[0_i8; $dim]; $dim + 1])
                         .unwrap();
-                    let external_cell_key = tds.insert_cell_with_mapping(external_cell).unwrap();
+                    let external_simplex_key = tds.insert_simplex_with_mapping(external_simplex).unwrap();
 
-                    let mut replacement_cells = vec![vertex_key_buffer(&simplex_vertices)];
+                    let mut replacement_simplices = vec![vertex_key_buffer(&simplex_vertices)];
                     let mut replacement_offsets: Vec<Option<PeriodicOffsetBuffer<$dim>>> = vec![None];
-                    let result = orient_replacement_cells(
+                    let result = orient_replacement_simplices(
                         &tds,
-                        &mut replacement_cells,
+                        &mut replacement_simplices,
                         &mut replacement_offsets,
-                        &[FacetHandle::new(external_cell_key, 0)],
+                        &[FacetHandle::new(external_simplex_key, 0)],
                     );
 
                     assert!(
@@ -10435,7 +10522,7 @@ mod tests {
                             result,
                             Err(FlipError::InvalidFlipContext {
                                 reason: FlipContextError::MissingReplacementPeriodicOffsets {
-                                    cell_index: 0,
+                                    simplex_index: 0,
                                 }
                             })
                         ),
@@ -10444,25 +10531,25 @@ mod tests {
                 }
 
                 #[test]
-                fn [<test_orient_replacement_cells_rejects_replacement_periodic_offset_length_mismatch_ $dim d>]() {
+                fn [<test_orient_replacement_simplices_rejects_replacement_periodic_offset_length_mismatch_ $dim d>]() {
                     let mut tds: Tds<f64, (), (), $dim> = Tds::empty();
                     let simplex_vertices = insert_standard_simplex_vertices(&mut tds);
 
-                    let mut external_cell = Cell::new(simplex_vertices.clone(), None).unwrap();
-                    external_cell
+                    let mut external_simplex = Simplex::new(simplex_vertices.clone(), None).unwrap();
+                    external_simplex
                         .set_periodic_vertex_offsets(vec![[0_i8; $dim]; $dim + 1])
                         .unwrap();
-                    let external_cell_key = tds.insert_cell_with_mapping(external_cell).unwrap();
+                    let external_simplex_key = tds.insert_simplex_with_mapping(external_simplex).unwrap();
 
-                    let mut replacement_cells = vec![vertex_key_buffer(&simplex_vertices)];
+                    let mut replacement_simplices = vec![vertex_key_buffer(&simplex_vertices)];
                     let replacement_offsets = vec![[0_i8; $dim]; $dim];
                     let mut replacement_offsets: Vec<Option<PeriodicOffsetBuffer<$dim>>> =
                         vec![Some(replacement_offsets.into())];
-                    let result = orient_replacement_cells(
+                    let result = orient_replacement_simplices(
                         &tds,
-                        &mut replacement_cells,
+                        &mut replacement_simplices,
                         &mut replacement_offsets,
-                        &[FacetHandle::new(external_cell_key, 0)],
+                        &[FacetHandle::new(external_simplex_key, 0)],
                     );
 
                     assert!(
@@ -10470,7 +10557,7 @@ mod tests {
                             result,
                             Err(FlipError::InvalidFlipContext {
                                 reason: FlipContextError::ReplacementPeriodicOffsetLengthMismatch {
-                                    cell_index: 0,
+                                    simplex_index: 0,
                                     offset_count: $dim,
                                     vertex_count,
                                 }
@@ -10481,30 +10568,30 @@ mod tests {
                 }
 
                 #[test]
-                fn [<test_orient_replacement_cells_rejects_missing_external_cell_ $dim d>]() {
+                fn [<test_orient_replacement_simplices_rejects_missing_external_simplex_ $dim d>]() {
                     let mut tds: Tds<f64, (), (), $dim> = Tds::empty();
                     let simplex_vertices = insert_standard_simplex_vertices(&mut tds);
-                    let external_cell_key = tds
-                        .insert_cell_with_mapping(Cell::new(simplex_vertices.clone(), None).unwrap())
+                    let external_simplex_key = tds
+                        .insert_simplex_with_mapping(Simplex::new(simplex_vertices.clone(), None).unwrap())
                         .unwrap();
-                    assert_eq!(tds.remove_cells_by_keys(&[external_cell_key]), 1);
+                    assert_eq!(tds.remove_simplices_by_keys(&[external_simplex_key]), 1);
 
-                    let mut replacement_cells = vec![vertex_key_buffer(&simplex_vertices)];
+                    let mut replacement_simplices = vec![vertex_key_buffer(&simplex_vertices)];
                     let mut replacement_offsets: Vec<Option<PeriodicOffsetBuffer<$dim>>> =
-                        vec![None; replacement_cells.len()];
-                    let result = orient_replacement_cells(
+                        vec![None; replacement_simplices.len()];
+                    let result = orient_replacement_simplices(
                         &tds,
-                        &mut replacement_cells,
+                        &mut replacement_simplices,
                         &mut replacement_offsets,
-                        &[FacetHandle::new(external_cell_key, 0)],
+                        &[FacetHandle::new(external_simplex_key, 0)],
                     );
 
                     assert!(
                         matches!(
                             result,
-                            Err(FlipError::MissingCell { cell_key }) if cell_key == external_cell_key
+                            Err(FlipError::MissingSimplex { simplex_key }) if simplex_key == external_simplex_key
                         ),
-                        "missing external cell should fail explicitly: {result:?}"
+                        "missing external simplex should fail explicitly: {result:?}"
                     );
                 }
 
@@ -10588,8 +10675,8 @@ mod tests {
                         matches!(
                             set_flip_assignment(&mut assignments, 0, false),
                             Err(FlipError::InvalidFlipContext {
-                                reason: FlipContextError::ConflictingReplacementOrientationForCell {
-                                    cell_index: 0,
+                                reason: FlipContextError::ConflictingReplacementOrientationForSimplex {
+                                    simplex_index: 0,
                                 }
                             })
                         ),
@@ -10600,7 +10687,7 @@ mod tests {
                             set_flip_assignment(&mut assignments, 1, false),
                             Err(FlipError::InvalidFlipContext {
                                 reason: FlipContextError::ReplacementOrientationIndexOutOfRange {
-                                    cell_index: 1,
+                                    simplex_index: 1,
                                 }
                             })
                         ),
@@ -10609,22 +10696,22 @@ mod tests {
                 }
 
                 #[test]
-                fn [<test_orient_replacement_cells_aligns_external_and_internal_facets_ $dim d>]() {
+                fn [<test_orient_replacement_simplices_aligns_external_and_internal_facets_ $dim d>]() {
                     let mut tds: Tds<f64, (), (), $dim> = Tds::empty();
                     let simplex_vertices = insert_standard_simplex_vertices(&mut tds);
                     let v_square = tds.insert_vertex_with_mapping(vertex!([1.0; $dim])).unwrap();
-                    let external_cell_key = tds
-                        .insert_cell_with_mapping(Cell::new(simplex_vertices.clone(), None).unwrap())
+                    let external_simplex_key = tds
+                        .insert_simplex_with_mapping(Simplex::new(simplex_vertices.clone(), None).unwrap())
                         .unwrap();
 
                     let mut external_aligned = vec![vertex_key_buffer(&simplex_vertices)];
                     let mut external_offsets: Vec<Option<PeriodicOffsetBuffer<$dim>>> =
                         vec![None; external_aligned.len()];
-                    orient_replacement_cells(
+                    orient_replacement_simplices(
                         &tds,
                         &mut external_aligned,
                         &mut external_offsets,
-                        &[FacetHandle::new(external_cell_key, 0)],
+                        &[FacetHandle::new(external_simplex_key, 0)],
                     )
                     .unwrap();
                     let mut expected_external = simplex_vertices.clone();
@@ -10632,7 +10719,7 @@ mod tests {
                     assert_eq!(
                         external_aligned[0].iter().copied().collect::<Vec<_>>(),
                         expected_external,
-                        "external facet parity should flip a same-order replacement cell"
+                        "external facet parity should flip a same-order replacement simplex"
                     );
 
                     let mut adjacent_vertices = simplex_vertices[..$dim].to_vec();
@@ -10643,7 +10730,7 @@ mod tests {
                     ];
                     let mut internal_offsets: Vec<Option<PeriodicOffsetBuffer<$dim>>> =
                         vec![None; internally_aligned.len()];
-                    orient_replacement_cells(
+                    orient_replacement_simplices(
                         &tds,
                         &mut internally_aligned,
                         &mut internal_offsets,
@@ -10677,8 +10764,8 @@ mod tests {
                         positive_vertices.swap(1, 2);
                     }
                     let positive = vertex_key_buffer(&positive_vertices);
-                    let positive_cells = vec![positive];
-                    assert!(validate_replacement_orientation(&tds, &positive_cells).is_ok());
+                    let positive_simplices = vec![positive];
+                    assert!(validate_replacement_orientation(&tds, &positive_simplices).is_ok());
 
                     let mut negative_vertices = positive_vertices.clone();
                     negative_vertices.swap(1, 2);
@@ -10687,10 +10774,10 @@ mod tests {
                     assert!(
                         matches!(
                             negative_result,
-                            Err(FlipError::NegativeOrientation { ref cell_vertices })
-                                if cell_vertices == &negative_vertices
+                            Err(FlipError::NegativeOrientation { ref simplex_vertices })
+                                if simplex_vertices == &negative_vertices
                         ),
-                        "negative replacement cells should fail before mutation: {negative_result:?}"
+                        "negative replacement simplices should fail before mutation: {negative_result:?}"
                     );
 
                     let mut degenerate_vertices = positive_vertices;
@@ -10698,8 +10785,8 @@ mod tests {
                     let degenerate = vertex_key_buffer(&degenerate_vertices);
                     let degenerate_result = validate_replacement_orientation(&tds, &[degenerate]);
                     assert!(
-                        matches!(degenerate_result, Err(FlipError::DegenerateCell)),
-                        "degenerate replacement cells should fail before mutation: {degenerate_result:?}"
+                        matches!(degenerate_result, Err(FlipError::DegenerateSimplex)),
+                        "degenerate replacement simplices should fail before mutation: {degenerate_result:?}"
                     );
                 }
             }
@@ -10745,103 +10832,103 @@ mod tests {
 
         // Three tetrahedra around the ridge (edge) (v_edge_start, v_edge_end).
         // This is the configuration removed by a k=3 flip (3→2).
-        let cell_around_edge_0 = tds
-            .insert_cell_with_mapping(
-                Cell::new(vec![v_edge_start, v_edge_end, v_cycle_0, v_cycle_1], None).unwrap(),
+        let simplex_around_edge_0 = tds
+            .insert_simplex_with_mapping(
+                Simplex::new(vec![v_edge_start, v_edge_end, v_cycle_0, v_cycle_1], None).unwrap(),
             )
             .unwrap();
-        let cell_around_edge_1 = tds
-            .insert_cell_with_mapping(
-                Cell::new(vec![v_edge_start, v_edge_end, v_cycle_1, v_cycle_2], None).unwrap(),
+        let simplex_around_edge_1 = tds
+            .insert_simplex_with_mapping(
+                Simplex::new(vec![v_edge_start, v_edge_end, v_cycle_1, v_cycle_2], None).unwrap(),
             )
             .unwrap();
-        let cell_around_edge_2 = tds
-            .insert_cell_with_mapping(
-                Cell::new(vec![v_edge_start, v_edge_end, v_cycle_2, v_cycle_0], None).unwrap(),
+        let simplex_around_edge_2 = tds
+            .insert_simplex_with_mapping(
+                Simplex::new(vec![v_edge_start, v_edge_end, v_cycle_2, v_cycle_0], None).unwrap(),
             )
             .unwrap();
 
-        // External tetrahedron glued to a boundary face of `cell_around_edge_0`.
+        // External tetrahedron glued to a boundary face of `simplex_around_edge_0`.
         // This face must be rewired to a newly inserted tetrahedron after the flip.
-        let cell_external = tds
-            .insert_cell_with_mapping(
-                Cell::new(vec![v_edge_start, v_cycle_0, v_cycle_1, v_external], None).unwrap(),
+        let simplex_external = tds
+            .insert_simplex_with_mapping(
+                Simplex::new(vec![v_edge_start, v_cycle_0, v_cycle_1, v_external], None).unwrap(),
             )
             .unwrap();
 
         repair_neighbor_pointers(&mut tds).unwrap();
         assert!(tds.is_valid().is_ok());
 
-        // In `cell_around_edge_0`, the ridge is the edge (v_edge_start, v_edge_end).
+        // In `simplex_around_edge_0`, the ridge is the edge (v_edge_start, v_edge_end).
         // We omitted the two non-ridge vertices by construction (indices 2 and 3).
-        let ridge = RidgeHandle::new(cell_around_edge_0, 2, 3);
+        let ridge = RidgeHandle::new(simplex_around_edge_0, 2, 3);
         let ctx = build_k3_flip_context(&tds, ridge).unwrap();
-        assert_eq!(ctx.removed_cells.len(), 3);
+        assert_eq!(ctx.removed_simplices.len(), 3);
         assert!(
-            ctx.removed_cells
+            ctx.removed_simplices
                 .iter()
                 .copied()
-                .any(|cell_key| cell_key == cell_around_edge_0)
+                .any(|simplex_key| simplex_key == simplex_around_edge_0)
         );
         assert!(
-            ctx.removed_cells
+            ctx.removed_simplices
                 .iter()
                 .copied()
-                .any(|cell_key| cell_key == cell_around_edge_1)
+                .any(|simplex_key| simplex_key == simplex_around_edge_1)
         );
         assert!(
-            ctx.removed_cells
+            ctx.removed_simplices
                 .iter()
                 .copied()
-                .any(|cell_key| cell_key == cell_around_edge_2)
+                .any(|simplex_key| simplex_key == simplex_around_edge_2)
         );
 
         let info = apply_bistellar_flip(&mut tds, &ctx).unwrap();
 
-        // Removed cells should be gone.
-        assert!(!tds.contains_cell(cell_around_edge_0));
-        assert!(!tds.contains_cell(cell_around_edge_1));
-        assert!(!tds.contains_cell(cell_around_edge_2));
-        for &removed_cell in &info.removed_cells {
-            assert!(!tds.contains_cell(removed_cell));
+        // Removed simplices should be gone.
+        assert!(!tds.contains_simplex(simplex_around_edge_0));
+        assert!(!tds.contains_simplex(simplex_around_edge_1));
+        assert!(!tds.contains_simplex(simplex_around_edge_2));
+        for &removed_simplex in &info.removed_simplices {
+            assert!(!tds.contains_simplex(removed_simplex));
         }
-        assert!(tds.contains_cell(cell_external));
+        assert!(tds.contains_simplex(simplex_external));
 
-        // The external cell must now neighbor one of the new cells across face
+        // The external simplex must now neighbor one of the new simplices across face
         // (v_edge_start, v_cycle_0, v_cycle_1).
         let glue_face_facet_index =
-            facet_index_for_face_3d(&tds, cell_external, v_edge_start, v_cycle_0, v_cycle_1);
-        let external_cell = tds.cell(cell_external).unwrap();
-        let glued_neighbor = external_cell
+            facet_index_for_face_3d(&tds, simplex_external, v_edge_start, v_cycle_0, v_cycle_1);
+        let external_simplex = tds.simplex(simplex_external).unwrap();
+        let glued_neighbor = external_simplex
             .neighbor_key(usize::from(glue_face_facet_index))
-            .expect("external cell should have neighbors after repair")
-            .expect("external cell should have a neighbor across the glue face");
+            .expect("external simplex should have neighbors after repair")
+            .expect("external simplex should have a neighbor across the glue face");
 
-        assert!(tds.contains_cell(glued_neighbor));
+        assert!(tds.contains_simplex(glued_neighbor));
         assert!(
-            info.new_cells
+            info.new_simplices
                 .iter()
                 .copied()
-                .any(|cell_key| cell_key == glued_neighbor),
-            "expected glued neighbor to be one of the flip-inserted cells"
+                .any(|simplex_key| simplex_key == glued_neighbor),
+            "expected glued neighbor to be one of the flip-inserted simplices"
         );
 
         // Neighbor relation must be symmetric.
-        let neighbor_cell = tds.cell(glued_neighbor).unwrap();
-        let mirror_idx = external_cell
-            .mirror_facet_index(usize::from(glue_face_facet_index), neighbor_cell)
+        let neighbor_simplex = tds.simplex(glued_neighbor).unwrap();
+        let mirror_idx = external_simplex
+            .mirror_facet_index(usize::from(glue_face_facet_index), neighbor_simplex)
             .expect("mirror facet index should exist");
-        let neighbor_back = neighbor_cell.neighbor_key(mirror_idx).flatten();
-        assert_eq!(neighbor_back, Some(cell_external));
+        let neighbor_back = neighbor_simplex.neighbor_key(mirror_idx).flatten();
+        assert_eq!(neighbor_back, Some(simplex_external));
 
-        // Ensure the newly inserted cells do not reference removed cells.
-        for &cell_key in &info.new_cells {
-            let cell = tds.cell(cell_key).unwrap();
-            if let Some(ns) = cell.neighbors() {
+        // Ensure the newly inserted simplices do not reference removed simplices.
+        for &simplex_key in &info.new_simplices {
+            let simplex = tds.simplex(simplex_key).unwrap();
+            if let Some(ns) = simplex.neighbors() {
                 for neighbor_key in ns.flatten() {
                     assert!(
-                        tds.contains_cell(neighbor_key),
-                        "dangling neighbor pointer from {cell_key:?} to {neighbor_key:?}"
+                        tds.contains_simplex(neighbor_key),
+                        "dangling neighbor pointer from {simplex_key:?} to {neighbor_key:?}"
                     );
                 }
             }
@@ -10870,14 +10957,14 @@ mod tests {
     #[test]
     fn test_skip_recording_keeps_first_typed_sample() {
         let mut diagnostics = RepairDiagnostics::default();
-        let cell = CellKey::from(KeyData::from_ffi(91));
-        let missing_cell = CellKey::from(KeyData::from_ffi(92));
+        let simplex = SimplexKey::from(KeyData::from_ffi(91));
+        let missing_simplex = SimplexKey::from(KeyData::from_ffi(92));
         let v0 = VertexKey::from(KeyData::from_ffi(101));
         let v1 = VertexKey::from(KeyData::from_ffi(102));
         let v2 = VertexKey::from(KeyData::from_ffi(103));
         let edge = EdgeKey::new(v0, v1);
-        let facet = FacetHandle::new(cell, 0);
-        let ridge = RidgeHandle::new(cell, 0, 1);
+        let facet = FacetHandle::new(simplex, 0);
+        let ridge = RidgeHandle::new(simplex, 0, 1);
         let triangle = TriangleHandle::new(v0, v1, v2);
 
         let first_inserted_sample = InsertedSimplexSkipSample {
@@ -10903,14 +10990,14 @@ mod tests {
             Some(first_inserted_sample)
         );
 
-        // Same contract for ridge-multiplicity and missing-cell helpers.
+        // Same contract for ridge-multiplicity and missing-simplex helpers.
         let first_ridge_sample = RidgeMultiplicitySkipSample {
             ridge,
             multiplicity: 3,
         };
         diagnostics.record_invalid_ridge_multiplicity_skip(first_ridge_sample);
         diagnostics.record_invalid_ridge_multiplicity_skip(RidgeMultiplicitySkipSample {
-            ridge: RidgeHandle::new(cell, 1, 2),
+            ridge: RidgeHandle::new(simplex, 1, 2),
             multiplicity: 4,
         });
         assert_eq!(diagnostics.invalid_ridge_multiplicity_skips, 2);
@@ -10919,28 +11006,31 @@ mod tests {
             Some(first_ridge_sample)
         );
 
-        let first_missing_sample = MissingCellSkipSample {
+        let first_missing_sample = MissingSimplexSkipSample {
             location: RepairSkipLocation::Triangle(triangle),
-            cell_key: missing_cell,
+            simplex_key: missing_simplex,
         };
-        diagnostics.record_missing_cell_skip(first_missing_sample);
-        diagnostics.record_missing_cell_skip(MissingCellSkipSample {
+        diagnostics.record_missing_simplex_skip(first_missing_sample);
+        diagnostics.record_missing_simplex_skip(MissingSimplexSkipSample {
             location: RepairSkipLocation::Ridge(ridge),
-            cell_key: CellKey::from(KeyData::from_ffi(93)),
+            simplex_key: SimplexKey::from(KeyData::from_ffi(93)),
         });
-        assert_eq!(diagnostics.missing_cell_skips, 2);
-        assert_eq!(diagnostics.missing_cell_sample, Some(first_missing_sample));
+        assert_eq!(diagnostics.missing_simplex_skips, 2);
+        assert_eq!(
+            diagnostics.missing_simplex_sample,
+            Some(first_missing_sample)
+        );
     }
 
     #[test]
     fn test_repair_skip_samples_keep_legacy_debug_shape() {
-        let cell = CellKey::from(KeyData::from_ffi(91));
-        let missing_cell = CellKey::from(KeyData::from_ffi(92));
+        let simplex = SimplexKey::from(KeyData::from_ffi(91));
+        let missing_simplex = SimplexKey::from(KeyData::from_ffi(92));
         let v0 = VertexKey::from(KeyData::from_ffi(101));
         let v1 = VertexKey::from(KeyData::from_ffi(102));
         let v2 = VertexKey::from(KeyData::from_ffi(103));
-        let facet = FacetHandle::new(cell, 0);
-        let ridge = RidgeHandle::new(cell, 0, 1);
+        let facet = FacetHandle::new(simplex, 0);
+        let ridge = RidgeHandle::new(simplex, 0, 1);
         let triangle = TriangleHandle::new(v0, v1, v2);
 
         let removed_face: VertexKeyList = [v0, v1].into_iter().collect();
@@ -10969,16 +11059,16 @@ mod tests {
             format!("{:?}", Some(format!("ridge={ridge:?} multiplicity=3")))
         );
 
-        let missing_sample = MissingCellSkipSample {
+        let missing_sample = MissingSimplexSkipSample {
             location: RepairSkipLocation::Triangle(triangle),
-            cell_key: missing_cell,
+            simplex_key: missing_simplex,
         };
         assert_eq!(
             format!("{:?}", Some(missing_sample)),
             format!(
                 "{:?}",
                 Some(format!(
-                    "triangle={triangle:?} missing_cell={missing_cell:?}"
+                    "triangle={triangle:?} missing_simplex={missing_simplex:?}"
                 ))
             )
         );
@@ -10987,18 +11077,18 @@ mod tests {
     #[derive(Debug, Clone, PartialEq, Eq)]
     struct TopologySnapshot {
         vertices: Vec<Uuid>,
-        cell_vertices: Vec<Vec<Uuid>>,
-        cell_neighbors: Vec<Vec<Option<Uuid>>>,
+        simplex_vertices: Vec<Vec<Uuid>>,
+        simplex_neighbors: Vec<Vec<Option<Uuid>>>,
     }
 
     fn snapshot_topology<const D: usize>(tds: &Tds<f64, (), (), D>) -> TopologySnapshot {
         let mut vertices: Vec<Uuid> = tds.vertices().map(|(_, vertex)| vertex.uuid()).collect();
         vertices.sort();
 
-        let mut cell_vertices: Vec<Vec<Uuid>> = tds
-            .cells()
-            .map(|(_, cell)| {
-                let mut uuids: Vec<Uuid> = cell
+        let mut simplex_vertices: Vec<Vec<Uuid>> = tds
+            .simplices()
+            .map(|(_, simplex)| {
+                let mut uuids: Vec<Uuid> = simplex
                     .vertices()
                     .iter()
                     .map(|&vkey| tds.vertex(vkey).expect("vertex key missing in TDS").uuid())
@@ -11007,28 +11097,29 @@ mod tests {
                 uuids
             })
             .collect();
-        cell_vertices.sort();
+        simplex_vertices.sort();
 
-        let cell_neighbors = snapshot_neighbors(tds);
+        let simplex_neighbors = snapshot_neighbors(tds);
 
         TopologySnapshot {
             vertices,
-            cell_vertices,
-            cell_neighbors,
+            simplex_vertices,
+            simplex_neighbors,
         }
     }
 
     fn snapshot_neighbors<const D: usize>(tds: &Tds<f64, (), (), D>) -> Vec<Vec<Option<Uuid>>> {
-        let mut cell_neighbors: Vec<Vec<Option<Uuid>>> = tds
-            .cells()
-            .map(|(_, cell)| {
-                let mut neighbors: Vec<Option<Uuid>> = cell
+        let mut simplex_neighbors: Vec<Vec<Option<Uuid>>> = tds
+            .simplices()
+            .map(|(_, simplex)| {
+                let mut neighbors: Vec<Option<Uuid>> = simplex
                     .neighbors()
                     .map(|neighbor_keys| {
                         neighbor_keys
                             .map(|neighbor| {
-                                neighbor
-                                    .and_then(|neighbor_key| tds.cell(neighbor_key).map(Cell::uuid))
+                                neighbor.and_then(|neighbor_key| {
+                                    tds.simplex(neighbor_key).map(Simplex::uuid)
+                                })
                             })
                             .collect()
                     })
@@ -11037,35 +11128,35 @@ mod tests {
                 neighbors
             })
             .collect();
-        cell_neighbors.sort();
-        cell_neighbors
+        simplex_neighbors.sort();
+        simplex_neighbors
     }
 
     fn snapshot_incidence<const D: usize>(tds: &Tds<f64, (), (), D>) -> Vec<(Uuid, Option<Uuid>)> {
-        let mut incident_cells: Vec<(Uuid, Option<Uuid>)> = tds
+        let mut incident_simplices: Vec<(Uuid, Option<Uuid>)> = tds
             .vertices()
             .map(|(_, vertex)| {
                 (
                     vertex.uuid(),
                     vertex
-                        .incident_cell()
-                        .and_then(|cell_key| tds.cell(cell_key).map(Cell::uuid)),
+                        .incident_simplex()
+                        .and_then(|simplex_key| tds.simplex(simplex_key).map(Simplex::uuid)),
                 )
             })
             .collect();
-        incident_cells.sort();
-        incident_cells
+        incident_simplices.sort();
+        incident_simplices
     }
 
-    fn assert_same_vertex_cell_topology(actual: &TopologySnapshot, expected: &TopologySnapshot) {
+    fn assert_same_vertex_simplex_topology(actual: &TopologySnapshot, expected: &TopologySnapshot) {
         assert_eq!(actual.vertices, expected.vertices);
-        assert_eq!(actual.cell_vertices, expected.cell_vertices);
+        assert_eq!(actual.simplex_vertices, expected.simplex_vertices);
     }
 
     fn insert_translated_simplex<const D: usize>(
         tds: &mut Tds<f64, (), (), D>,
         offset: f64,
-    ) -> (Vec<VertexKey>, CellKey) {
+    ) -> (Vec<VertexKey>, SimplexKey) {
         let mut vertices = Vec::with_capacity(D + 1);
         vertices.push(
             tds.insert_vertex_with_mapping(vertex!([offset; D]))
@@ -11078,30 +11169,30 @@ mod tests {
             vertices.push(tds.insert_vertex_with_mapping(vertex!(coords)).unwrap());
         }
 
-        let cell_key = tds
-            .insert_cell_with_mapping(Cell::new(vertices.clone(), None).unwrap())
+        let simplex_key = tds
+            .insert_simplex_with_mapping(Simplex::new(vertices.clone(), None).unwrap())
             .unwrap();
-        (vertices, cell_key)
+        (vertices, simplex_key)
     }
 
     fn test_flip_trial_validation_rollback_for_dim<const D: usize>() {
         let mut tds: Tds<f64, (), (), D> = Tds::empty();
-        let (_first_vertices, first_cell) = insert_translated_simplex(&mut tds, 0.0);
-        let (_second_vertices, second_cell) = insert_translated_simplex(&mut tds, 10.0);
+        let (_first_vertices, first_simplex) = insert_translated_simplex(&mut tds, 0.0);
+        let (_second_vertices, second_simplex) = insert_translated_simplex(&mut tds, 10.0);
         repair_neighbor_pointers(&mut tds).unwrap();
-        tds.assign_incident_cells().unwrap();
+        tds.assign_incident_simplices().unwrap();
 
         let isolated_vertex = tds.insert_vertex_with_mapping(vertex!([20.0; D])).unwrap();
         tds.vertex_mut(isolated_vertex)
             .unwrap()
-            .set_incident_cell(Some(second_cell));
+            .set_incident_simplex(Some(second_simplex));
 
         let before = snapshot_topology(&tds);
         let before_incidence = snapshot_incidence(&tds);
         let denominator = f64::from(u32::try_from(D + 2).unwrap());
         let new_vertex = vertex!([1.0 / denominator; D]);
 
-        let result = apply_bistellar_flip_k1(&mut tds, first_cell, new_vertex);
+        let result = apply_bistellar_flip_k1(&mut tds, first_simplex, new_vertex);
         match result {
             Err(FlipError::TdsMutation {
                 reason: FlipMutationError::TrialValidation { .. },
@@ -11117,7 +11208,7 @@ mod tests {
         assert_eq!(
             snapshot_incidence(&tds),
             before_incidence,
-            "trial.is_valid() failure must leave incident_cell pointers unchanged"
+            "trial.is_valid() failure must leave incident_simplex pointers unchanged"
         );
     }
 
@@ -11142,18 +11233,19 @@ mod tests {
         let v0 = tds.insert_vertex_with_mapping(vertex!([0.0, 0.0])).unwrap();
         let v1 = tds.insert_vertex_with_mapping(vertex!([1.0, 0.0])).unwrap();
         let v2 = tds.insert_vertex_with_mapping(vertex!([0.0, 1.0])).unwrap();
-        let cell_key = tds
-            .insert_cell_with_mapping(Cell::new(vec![v0, v1, v2], None).unwrap())
+        let simplex_key = tds
+            .insert_simplex_with_mapping(Simplex::new(vec![v0, v1, v2], None).unwrap())
             .unwrap();
         tds.assign_neighbors().unwrap();
 
         {
-            let cell = tds.cell_mut(cell_key).unwrap();
-            cell.ensure_neighbors_buffer_mut()[0] = NeighborSlot::Unassigned;
+            let simplex = tds.simplex_mut(simplex_key).unwrap();
+            simplex.ensure_neighbors_buffer_mut()[0] = NeighborSlot::Unassigned;
         }
 
-        let cell = tds.cell(cell_key).unwrap();
-        let err = validate_flip_trial_cell_neighbors(&tds, cell_key, cell, &[]).unwrap_err();
+        let simplex = tds.simplex(simplex_key).unwrap();
+        let err =
+            validate_flip_trial_simplex_neighbors(&tds, simplex_key, simplex, &[]).unwrap_err();
 
         assert!(matches!(
             err,
@@ -11195,28 +11287,27 @@ mod tests {
 
         let mut vertices_with_first_opposite = shared_vertices.clone();
         vertices_with_first_opposite.push(opposite_a);
-        let cell_a = tds
-            .insert_cell_with_mapping(
-                Cell::new(vertices_with_first_opposite, None).map_err(|err| {
-                    TestCaseError::fail(format!("cell A creation failed: {err:?}"))
-                })?,
-            )
-            .map_err(|err| TestCaseError::fail(format!("cell A insertion failed: {err:?}")))?;
+        let simplex_a = tds
+            .insert_simplex_with_mapping(Simplex::new(vertices_with_first_opposite, None).map_err(
+                |err| TestCaseError::fail(format!("simplex A creation failed: {err:?}")),
+            )?)
+            .map_err(|err| TestCaseError::fail(format!("simplex A insertion failed: {err:?}")))?;
 
         let mut vertices_with_second_opposite = shared_vertices.clone();
         vertices_with_second_opposite.push(opposite_b);
-        tds.insert_cell_with_mapping(
-            Cell::new(vertices_with_second_opposite, None)
-                .map_err(|err| TestCaseError::fail(format!("cell B creation failed: {err:?}")))?,
+        tds.insert_simplex_with_mapping(
+            Simplex::new(vertices_with_second_opposite, None).map_err(|err| {
+                TestCaseError::fail(format!("simplex B creation failed: {err:?}"))
+            })?,
         )
-        .map_err(|err| TestCaseError::fail(format!("cell B insertion failed: {err:?}")))?;
+        .map_err(|err| TestCaseError::fail(format!("simplex B insertion failed: {err:?}")))?;
 
         repair_neighbor_pointers(&mut tds)
             .map_err(|err| TestCaseError::fail(format!("neighbor repair failed: {err:?}")))?;
 
         let before = snapshot_topology(&tds);
         let facet = FacetHandle::new(
-            cell_a,
+            simplex_a,
             u8::try_from(D).map_err(|err| {
                 TestCaseError::fail(format!("facet index conversion failed: {err:?}"))
             })?,
@@ -11230,18 +11321,18 @@ mod tests {
 
         if D == 2 {
             let mut inverse_facet: Option<FacetHandle> = None;
-            for &cell_key in &info.new_cells {
-                let cell = tds
-                    .cell(cell_key)
-                    .ok_or_else(|| TestCaseError::fail("new k=2 cell missing"))?;
-                if cell.contains_vertex(opposite_a) && cell.contains_vertex(opposite_b) {
-                    let facet_index = cell
+            for &simplex_key in &info.new_simplices {
+                let simplex = tds
+                    .simplex(simplex_key)
+                    .ok_or_else(|| TestCaseError::fail("new k=2 simplex missing"))?;
+                if simplex.contains_vertex(opposite_a) && simplex.contains_vertex(opposite_b) {
+                    let facet_index = simplex
                         .vertices()
                         .iter()
                         .position(|&vertex| vertex != opposite_a && vertex != opposite_b)
                         .ok_or_else(|| TestCaseError::fail("missing inverse k=2 facet vertex"))?;
                     inverse_facet = Some(FacetHandle::new(
-                        cell_key,
+                        simplex_key,
                         u8::try_from(facet_index).map_err(|err| {
                             TestCaseError::fail(format!(
                                 "inverse facet index conversion failed: {err:?}"
@@ -11280,7 +11371,7 @@ mod tests {
             .map_err(|err| TestCaseError::fail(format!("post inverse k=2 TDS invalid: {err:?}")))?;
         let after = snapshot_topology(&tds);
         prop_assert_eq!(after.vertices, before.vertices);
-        prop_assert_eq!(after.cell_vertices, before.cell_vertices);
+        prop_assert_eq!(after.simplex_vertices, before.simplex_vertices);
         Ok(())
     }
 
@@ -11327,38 +11418,38 @@ mod tests {
         let mut first_vertices = ridge_vertices.clone();
         first_vertices.push(a);
         first_vertices.push(b);
-        let first_cell = tds
-            .insert_cell_with_mapping(
-                Cell::new(first_vertices, None).map_err(|err| {
-                    TestCaseError::fail(format!("cell A creation failed: {err:?}"))
-                })?,
-            )
-            .map_err(|err| TestCaseError::fail(format!("cell A insertion failed: {err:?}")))?;
+        let first_simplex = tds
+            .insert_simplex_with_mapping(Simplex::new(first_vertices, None).map_err(|err| {
+                TestCaseError::fail(format!("simplex A creation failed: {err:?}"))
+            })?)
+            .map_err(|err| TestCaseError::fail(format!("simplex A insertion failed: {err:?}")))?;
 
         let mut second_vertices = ridge_vertices.clone();
         second_vertices.push(b);
         second_vertices.push(c);
-        tds.insert_cell_with_mapping(
-            Cell::new(second_vertices, None)
-                .map_err(|err| TestCaseError::fail(format!("cell B creation failed: {err:?}")))?,
+        tds.insert_simplex_with_mapping(
+            Simplex::new(second_vertices, None).map_err(|err| {
+                TestCaseError::fail(format!("simplex B creation failed: {err:?}"))
+            })?,
         )
-        .map_err(|err| TestCaseError::fail(format!("cell B insertion failed: {err:?}")))?;
+        .map_err(|err| TestCaseError::fail(format!("simplex B insertion failed: {err:?}")))?;
 
         let mut third_vertices = ridge_vertices.clone();
         third_vertices.push(c);
         third_vertices.push(a);
-        tds.insert_cell_with_mapping(
-            Cell::new(third_vertices, None)
-                .map_err(|err| TestCaseError::fail(format!("cell C creation failed: {err:?}")))?,
+        tds.insert_simplex_with_mapping(
+            Simplex::new(third_vertices, None).map_err(|err| {
+                TestCaseError::fail(format!("simplex C creation failed: {err:?}"))
+            })?,
         )
-        .map_err(|err| TestCaseError::fail(format!("cell C insertion failed: {err:?}")))?;
+        .map_err(|err| TestCaseError::fail(format!("simplex C insertion failed: {err:?}")))?;
 
         repair_neighbor_pointers(&mut tds)
             .map_err(|err| TestCaseError::fail(format!("neighbor repair failed: {err:?}")))?;
 
         let before = snapshot_topology(&tds);
         let ridge = RidgeHandle::new(
-            first_cell,
+            first_simplex,
             u8::try_from(ridge_vertex_count).map_err(|err| {
                 TestCaseError::fail(format!("ridge index conversion failed: {err:?}"))
             })?,
@@ -11375,18 +11466,21 @@ mod tests {
 
         if D == 3 {
             let mut inverse_facet: Option<FacetHandle> = None;
-            for &cell_key in &info.new_cells {
-                let cell = tds
-                    .cell(cell_key)
-                    .ok_or_else(|| TestCaseError::fail("new k=3 cell missing"))?;
-                if cell.contains_vertex(a) && cell.contains_vertex(b) && cell.contains_vertex(c) {
-                    let facet_index = cell
+            for &simplex_key in &info.new_simplices {
+                let simplex = tds
+                    .simplex(simplex_key)
+                    .ok_or_else(|| TestCaseError::fail("new k=3 simplex missing"))?;
+                if simplex.contains_vertex(a)
+                    && simplex.contains_vertex(b)
+                    && simplex.contains_vertex(c)
+                {
+                    let facet_index = simplex
                         .vertices()
                         .iter()
                         .position(|&vertex| vertex != a && vertex != b && vertex != c)
                         .ok_or_else(|| TestCaseError::fail("missing inverse k=3 facet vertex"))?;
                     inverse_facet = Some(FacetHandle::new(
-                        cell_key,
+                        simplex_key,
                         u8::try_from(facet_index).map_err(|err| {
                             TestCaseError::fail(format!(
                                 "inverse facet index conversion failed: {err:?}"
@@ -11426,7 +11520,7 @@ mod tests {
             .map_err(|err| TestCaseError::fail(format!("post inverse k=3 TDS invalid: {err:?}")))?;
         let after = snapshot_topology(&tds);
         prop_assert_eq!(after.vertices, before.vertices);
-        prop_assert_eq!(after.cell_vertices, before.cell_vertices);
+        prop_assert_eq!(after.simplex_vertices, before.simplex_vertices);
         Ok(())
     }
 
@@ -11515,15 +11609,15 @@ mod tests {
                         vertices.push(v);
                     }
 
-                    let cell_key = tds
-                        .insert_cell_with_mapping(Cell::new(vertices, None).unwrap())
+                    let simplex_key = tds
+                        .insert_simplex_with_mapping(Simplex::new(vertices, None).unwrap())
                         .unwrap();
 
                     let before = snapshot_topology(&tds);
 
                     let new_vertex = vertex!([0.1; $dim]);
                     let new_uuid = new_vertex.uuid();
-                    let _info = apply_bistellar_flip_k1(&mut tds, cell_key, new_vertex)
+                    let _info = apply_bistellar_flip_k1(&mut tds, simplex_key, new_vertex)
                         .unwrap();
                     assert!(tds.is_valid().is_ok());
 
@@ -11556,17 +11650,17 @@ mod tests {
 
                     let mut vertices_with_first_opposite = shared_vertices.clone();
                     vertices_with_first_opposite.push(opposite_a);
-                    let cell_a = tds
-                        .insert_cell_with_mapping(
-                            Cell::new(vertices_with_first_opposite, None).unwrap(),
+                    let simplex_a = tds
+                        .insert_simplex_with_mapping(
+                            Simplex::new(vertices_with_first_opposite, None).unwrap(),
                         )
                         .unwrap();
 
                     let mut vertices_with_second_opposite = shared_vertices.clone();
                     vertices_with_second_opposite.push(opposite_b);
-                    let _cell_b = tds
-                        .insert_cell_with_mapping(
-                            Cell::new(vertices_with_second_opposite, None).unwrap(),
+                    let _simplex_b = tds
+                        .insert_simplex_with_mapping(
+                            Simplex::new(vertices_with_second_opposite, None).unwrap(),
                         )
                         .unwrap();
 
@@ -11574,23 +11668,23 @@ mod tests {
 
                     let before = snapshot_topology(&tds);
 
-                    let facet = FacetHandle::new(cell_a, u8::try_from($dim).unwrap());
+                    let facet = FacetHandle::new(simplex_a, u8::try_from($dim).unwrap());
                     let context = build_k2_flip_context(&tds, facet).unwrap();
                     let info = apply_bistellar_flip_k2(&mut tds, &context).unwrap();
                     assert!(tds.is_valid().is_ok());
 
                     if $dim == 2 {
                         let mut inverse_facet: Option<FacetHandle> = None;
-                        for &cell_key in &info.new_cells {
-                            let cell = tds.cell(cell_key).unwrap();
-                            if cell.contains_vertex(opposite_a) && cell.contains_vertex(opposite_b) {
-                                let facet_index = cell
+                        for &simplex_key in &info.new_simplices {
+                            let simplex = tds.simplex(simplex_key).unwrap();
+                            if simplex.contains_vertex(opposite_a) && simplex.contains_vertex(opposite_b) {
+                                let facet_index = simplex
                                     .vertices()
                                     .iter()
                                     .position(|&v| v != opposite_a && v != opposite_b)
                                     .expect("missing shared vertex for inverse k=2");
                                 inverse_facet = Some(FacetHandle::new(
-                                    cell_key,
+                                    simplex_key,
                                     u8::try_from(facet_index).unwrap(),
                                 ));
                                 break;
@@ -11611,7 +11705,7 @@ mod tests {
 
                     assert!(tds.is_valid().is_ok());
                     let after = snapshot_topology(&tds);
-                    assert_same_vertex_cell_topology(&after, &before);
+                    assert_same_vertex_simplex_topology(&after, &before);
                 }
             }
         };
@@ -11644,21 +11738,21 @@ mod tests {
                     c1_vertices.push(a);
                     c1_vertices.push(b);
                     let c1 = tds
-                        .insert_cell_with_mapping(Cell::new(c1_vertices, None).unwrap())
+                        .insert_simplex_with_mapping(Simplex::new(c1_vertices, None).unwrap())
                         .unwrap();
 
                     let mut c2_vertices = ridge_vertices.clone();
                     c2_vertices.push(b);
                     c2_vertices.push(c);
                     let _c2 = tds
-                        .insert_cell_with_mapping(Cell::new(c2_vertices, None).unwrap())
+                        .insert_simplex_with_mapping(Simplex::new(c2_vertices, None).unwrap())
                         .unwrap();
 
                     let mut c3_vertices = ridge_vertices.clone();
                     c3_vertices.push(c);
                     c3_vertices.push(a);
                     let _c3 = tds
-                        .insert_cell_with_mapping(Cell::new(c3_vertices, None).unwrap())
+                        .insert_simplex_with_mapping(Simplex::new(c3_vertices, None).unwrap())
                         .unwrap();
 
                     repair_neighbor_pointers(&mut tds).unwrap();
@@ -11676,19 +11770,19 @@ mod tests {
 
                     if $dim == 3 {
                         let mut inverse_facet: Option<FacetHandle> = None;
-                        for &cell_key in &info.new_cells {
-                            let cell = tds.cell(cell_key).unwrap();
-                            if cell.contains_vertex(a)
-                                && cell.contains_vertex(b)
-                                && cell.contains_vertex(c)
+                        for &simplex_key in &info.new_simplices {
+                            let simplex = tds.simplex(simplex_key).unwrap();
+                            if simplex.contains_vertex(a)
+                                && simplex.contains_vertex(b)
+                                && simplex.contains_vertex(c)
                             {
-                                let facet_index = cell
+                                let facet_index = simplex
                                     .vertices()
                                     .iter()
                                     .position(|&v| v != a && v != b && v != c)
                                     .expect("missing ridge vertex for inverse k=3");
                                 inverse_facet = Some(FacetHandle::new(
-                                    cell_key,
+                                    simplex_key,
                                     u8::try_from(facet_index).unwrap(),
                                 ));
                                 break;
@@ -11713,7 +11807,7 @@ mod tests {
 
                     assert!(tds.is_valid().is_ok());
                     let after = snapshot_topology(&tds);
-                    assert_same_vertex_cell_topology(&after, &before);
+                    assert_same_vertex_simplex_topology(&after, &before);
                 }
             }
         };
@@ -11728,15 +11822,15 @@ mod tests {
         VertexKey::from(KeyData::from_ffi(index))
     }
 
-    fn synthetic_cell_key(index: u64) -> CellKey {
-        CellKey::from(KeyData::from_ffi(index))
+    fn synthetic_simplex_key(index: u64) -> SimplexKey {
+        SimplexKey::from(KeyData::from_ffi(index))
     }
 
     #[test]
-    fn test_local_postcondition_frontier_deduplicates_seed_and_touched_cells() {
-        let seed_a = synthetic_cell_key(1);
-        let seed_b = synthetic_cell_key(2);
-        let touched_a = synthetic_cell_key(3);
+    fn test_local_postcondition_frontier_deduplicates_seed_and_touched_simplices() {
+        let seed_a = synthetic_simplex_key(1);
+        let seed_b = synthetic_simplex_key(2);
+        let touched_a = synthetic_simplex_key(3);
         let frontier = local_postcondition_frontier(
             &[seed_a, seed_b, seed_a],
             &[seed_b, touched_a, touched_a],
@@ -11773,13 +11867,13 @@ mod tests {
                 )
             })
             .collect::<Vec<_>>();
-        let c0 = synthetic_cell_key(11);
-        let c1 = synthetic_cell_key(12);
+        let c0 = synthetic_simplex_key(11);
+        let c1 = synthetic_simplex_key(12);
 
         let valid_shape = FlipContextDyn {
             removed_face_vertices: vertices[..D].iter().copied().collect(),
             inserted_face_vertices: vertices[D..D + 2].iter().copied().collect(),
-            removed_cells: [c0, c1].into_iter().collect(),
+            removed_simplices: [c0, c1].into_iter().collect(),
             direction: FlipDirection::Forward,
         };
 
@@ -11831,14 +11925,14 @@ mod tests {
             })
         ));
 
-        let wrong_removed_cells = FlipContextDyn {
-            removed_cells: once(c0).collect(),
+        let wrong_removed_simplices = FlipContextDyn {
+            removed_simplices: once(c0).collect(),
             ..valid_shape.clone()
         };
         assert!(matches!(
-            apply_bistellar_flip_dynamic(&mut tds, 2, &wrong_removed_cells),
+            apply_bistellar_flip_dynamic(&mut tds, 2, &wrong_removed_simplices),
             Err(FlipError::InvalidFlipContext {
-                reason: FlipContextError::WrongRemovedCellCount {
+                reason: FlipContextError::WrongRemovedSimplexCount {
                     expected: 2,
                     found: 1,
                 }
@@ -11856,7 +11950,7 @@ mod tests {
             })
         ));
         assert_eq!(tds.number_of_vertices(), 0);
-        assert_eq!(tds.number_of_cells(), 0);
+        assert_eq!(tds.number_of_simplices(), 0);
     }
 
     macro_rules! gen_dynamic_flip_bad_context_tests {
@@ -11885,10 +11979,10 @@ mod tests {
         let d = tds.insert_vertex_with_mapping(vertex!([1.0, 0.2])).unwrap();
 
         let c1 = tds
-            .insert_cell_with_mapping(Cell::new(vec![a, b, c], None).unwrap())
+            .insert_simplex_with_mapping(Simplex::new(vec![a, b, c], None).unwrap())
             .unwrap();
         let _c2 = tds
-            .insert_cell_with_mapping(Cell::new(vec![a, b, d], None).unwrap())
+            .insert_simplex_with_mapping(Simplex::new(vec![a, b, d], None).unwrap())
             .unwrap();
 
         repair_neighbor_pointers(&mut tds).unwrap();
@@ -11897,13 +11991,13 @@ mod tests {
         let context = build_k2_flip_context(&tds, facet).unwrap();
         let info = apply_bistellar_flip_k2(&mut tds, &context).unwrap();
 
-        assert_eq!(info.removed_cells.len(), 2);
-        assert_eq!(info.new_cells.len(), 2);
+        assert_eq!(info.removed_simplices.len(), 2);
+        assert_eq!(info.new_simplices.len(), 2);
 
-        // After flip, we should have an edge between c and d in some cell.
+        // After flip, we should have an edge between c and d in some simplex.
         let mut has_cd = false;
-        for (_, cell) in tds.cells() {
-            let verts = cell.vertices();
+        for (_, simplex) in tds.simplices() {
+            let verts = simplex.vertices();
             if verts.contains(&c) && verts.contains(&d) {
                 has_cd = true;
             }
@@ -11914,7 +12008,7 @@ mod tests {
     }
 
     #[test]
-    fn test_flip_k2_rejects_duplicate_cell() {
+    fn test_flip_k2_rejects_duplicate_simplex() {
         init_tracing();
         let mut tds: Tds<f64, (), (), 2> = Tds::empty();
         let a = tds.insert_vertex_with_mapping(vertex!([0.0, 0.0])).unwrap();
@@ -11923,15 +12017,15 @@ mod tests {
         let d = tds.insert_vertex_with_mapping(vertex!([1.0, 0.2])).unwrap();
 
         let c1 = tds
-            .insert_cell_with_mapping(Cell::new(vec![a, b, c], None).unwrap())
+            .insert_simplex_with_mapping(Simplex::new(vec![a, b, c], None).unwrap())
             .unwrap();
         let _c2 = tds
-            .insert_cell_with_mapping(Cell::new(vec![a, b, d], None).unwrap())
+            .insert_simplex_with_mapping(Simplex::new(vec![a, b, d], None).unwrap())
             .unwrap();
 
-        // Pre-existing cell that the flip would recreate (B,C,D)
+        // Pre-existing simplex that the flip would recreate (B,C,D)
         let _existing = tds
-            .insert_cell_with_mapping(Cell::new(vec![b, c, d], None).unwrap())
+            .insert_simplex_with_mapping(Simplex::new(vec![b, c, d], None).unwrap())
             .unwrap();
 
         repair_neighbor_pointers(&mut tds).unwrap();
@@ -11940,7 +12034,7 @@ mod tests {
         let context = build_k2_flip_context(&tds, facet).unwrap();
         let result = apply_bistellar_flip_k2(&mut tds, &context);
 
-        assert!(matches!(result, Err(FlipError::DuplicateCell)));
+        assert!(matches!(result, Err(FlipError::DuplicateSimplex)));
         assert!(tds.is_valid().is_ok());
     }
 
@@ -11977,24 +12071,24 @@ mod tests {
             .unwrap();
 
         // Two tetrahedra sharing face (v_x, v_y, v_z): a k=2 flip across that face would insert edge (v_a, v_b).
-        let cell_a = tds
-            .insert_cell_with_mapping(Cell::new(vec![v_a, v_x, v_y, v_z], None).unwrap())
+        let simplex_a = tds
+            .insert_simplex_with_mapping(Simplex::new(vec![v_a, v_x, v_y, v_z], None).unwrap())
             .unwrap();
-        let _cell_b = tds
-            .insert_cell_with_mapping(Cell::new(vec![v_b, v_x, v_y, v_z], None).unwrap())
+        let _simplex_b = tds
+            .insert_simplex_with_mapping(Simplex::new(vec![v_b, v_x, v_y, v_z], None).unwrap())
             .unwrap();
 
         // Existing tetrahedron that already contains edge (v_a, v_b) but does not contain any of
         // the shared-face vertices (v_x, v_y, v_z).
         let _edge_witness = tds
-            .insert_cell_with_mapping(Cell::new(vec![v_a, v_b, v_p, v_q], None).unwrap())
+            .insert_simplex_with_mapping(Simplex::new(vec![v_a, v_b, v_p, v_q], None).unwrap())
             .unwrap();
 
         repair_neighbor_pointers(&mut tds).unwrap();
         assert!(tds.is_valid().is_ok());
 
-        // Face (v_x, v_y, v_z) is opposite v_a in `cell_a` (index 0 by construction).
-        let facet = FacetHandle::new(cell_a, 0);
+        // Face (v_x, v_y, v_z) is opposite v_a in `simplex_a` (index 0 by construction).
+        let facet = FacetHandle::new(simplex_a, 0);
         let ctx = build_k2_flip_context(&tds, facet).unwrap();
 
         let result = apply_bistellar_flip_k2(&mut tds, &ctx);
@@ -12017,15 +12111,15 @@ mod tests {
         let v_e = tds.insert_vertex_with_mapping(vertex!([2.0, 2.0])).unwrap();
 
         let c1 = tds
-            .insert_cell_with_mapping(Cell::new(vec![v_a, v_b, v_c], None).unwrap())
+            .insert_simplex_with_mapping(Simplex::new(vec![v_a, v_b, v_c], None).unwrap())
             .unwrap();
         let _c2 = tds
-            .insert_cell_with_mapping(Cell::new(vec![v_a, v_b, v_d], None).unwrap())
+            .insert_simplex_with_mapping(Simplex::new(vec![v_a, v_b, v_d], None).unwrap())
             .unwrap();
 
-        // Existing cell containing the would-be inserted diagonal (C,D).
+        // Existing simplex containing the would-be inserted diagonal (C,D).
         let _cd_external = tds
-            .insert_cell_with_mapping(Cell::new(vec![v_c, v_d, v_e], None).unwrap())
+            .insert_simplex_with_mapping(Simplex::new(vec![v_c, v_d, v_e], None).unwrap())
             .unwrap();
 
         repair_neighbor_pointers(&mut tds).unwrap();
@@ -12059,10 +12153,10 @@ mod tests {
             .unwrap();
 
         let c1 = tds
-            .insert_cell_with_mapping(Cell::new(vec![v_a, v_b, v_c, v_d], None).unwrap())
+            .insert_simplex_with_mapping(Simplex::new(vec![v_a, v_b, v_c, v_d], None).unwrap())
             .unwrap();
         let _c2 = tds
-            .insert_cell_with_mapping(Cell::new(vec![v_a, v_b, v_c, v_e], None).unwrap())
+            .insert_simplex_with_mapping(Simplex::new(vec![v_a, v_b, v_c, v_e], None).unwrap())
             .unwrap();
 
         repair_neighbor_pointers(&mut tds).unwrap();
@@ -12071,7 +12165,7 @@ mod tests {
         let context = build_k2_flip_context(&tds, facet).unwrap();
         let info = apply_bistellar_flip_k2(&mut tds, &context).unwrap();
 
-        assert_eq!(info.new_cells.len(), 3);
+        assert_eq!(info.new_simplices.len(), 3);
         assert!(tds.is_valid().is_ok());
     }
 
@@ -12096,13 +12190,13 @@ mod tests {
             .unwrap();
 
         let c1 = tds
-            .insert_cell_with_mapping(Cell::new(vec![r0, r1, a, b], None).unwrap())
+            .insert_simplex_with_mapping(Simplex::new(vec![r0, r1, a, b], None).unwrap())
             .unwrap();
         let _c2 = tds
-            .insert_cell_with_mapping(Cell::new(vec![r0, r1, b, c], None).unwrap())
+            .insert_simplex_with_mapping(Simplex::new(vec![r0, r1, b, c], None).unwrap())
             .unwrap();
         let _c3 = tds
-            .insert_cell_with_mapping(Cell::new(vec![r0, r1, c, a], None).unwrap())
+            .insert_simplex_with_mapping(Simplex::new(vec![r0, r1, c, a], None).unwrap())
             .unwrap();
 
         repair_neighbor_pointers(&mut tds).unwrap();
@@ -12112,8 +12206,8 @@ mod tests {
         let info = apply_bistellar_flip_k3(&mut tds, &context).unwrap();
 
         assert_eq!(info.kind, BistellarFlipKind::k3(3));
-        assert_eq!(info.removed_cells.len(), 3);
-        assert_eq!(info.new_cells.len(), 2);
+        assert_eq!(info.removed_simplices.len(), 3);
+        assert_eq!(info.new_simplices.len(), 2);
         assert!(tds.is_valid().is_ok());
     }
 
@@ -12141,13 +12235,13 @@ mod tests {
             .unwrap();
 
         let c1 = tds
-            .insert_cell_with_mapping(Cell::new(vec![r0, r1, r2, a, b], None).unwrap())
+            .insert_simplex_with_mapping(Simplex::new(vec![r0, r1, r2, a, b], None).unwrap())
             .unwrap();
         let _c2 = tds
-            .insert_cell_with_mapping(Cell::new(vec![r0, r1, r2, b, c], None).unwrap())
+            .insert_simplex_with_mapping(Simplex::new(vec![r0, r1, r2, b, c], None).unwrap())
             .unwrap();
         let _c3 = tds
-            .insert_cell_with_mapping(Cell::new(vec![r0, r1, r2, c, a], None).unwrap())
+            .insert_simplex_with_mapping(Simplex::new(vec![r0, r1, r2, c, a], None).unwrap())
             .unwrap();
 
         repair_neighbor_pointers(&mut tds).unwrap();
@@ -12157,8 +12251,8 @@ mod tests {
         let info = apply_bistellar_flip_k3(&mut tds, &context).unwrap();
 
         assert_eq!(info.kind, BistellarFlipKind::k3(4));
-        assert_eq!(info.removed_cells.len(), 3);
-        assert_eq!(info.new_cells.len(), 3);
+        assert_eq!(info.removed_simplices.len(), 3);
+        assert_eq!(info.new_simplices.len(), 3);
         assert!(tds.is_valid().is_ok());
     }
 
@@ -12189,13 +12283,13 @@ mod tests {
             .unwrap();
 
         let c1 = tds
-            .insert_cell_with_mapping(Cell::new(vec![r0, r1, r2, r3, a, b], None).unwrap())
+            .insert_simplex_with_mapping(Simplex::new(vec![r0, r1, r2, r3, a, b], None).unwrap())
             .unwrap();
         let _c2 = tds
-            .insert_cell_with_mapping(Cell::new(vec![r0, r1, r2, r3, b, c], None).unwrap())
+            .insert_simplex_with_mapping(Simplex::new(vec![r0, r1, r2, r3, b, c], None).unwrap())
             .unwrap();
         let _c3 = tds
-            .insert_cell_with_mapping(Cell::new(vec![r0, r1, r2, r3, c, a], None).unwrap())
+            .insert_simplex_with_mapping(Simplex::new(vec![r0, r1, r2, r3, c, a], None).unwrap())
             .unwrap();
 
         repair_neighbor_pointers(&mut tds).unwrap();
@@ -12205,8 +12299,8 @@ mod tests {
         let info = apply_bistellar_flip_k3(&mut tds, &context).unwrap();
 
         assert_eq!(info.kind, BistellarFlipKind::k3(5));
-        assert_eq!(info.removed_cells.len(), 3);
-        assert_eq!(info.new_cells.len(), 4);
+        assert_eq!(info.removed_simplices.len(), 3);
+        assert_eq!(info.new_simplices.len(), 4);
         assert!(tds.is_valid().is_ok());
     }
 
@@ -12217,12 +12311,12 @@ mod tests {
         let a = tds.insert_vertex_with_mapping(vertex!([0.0, 0.0])).unwrap();
         let b = tds.insert_vertex_with_mapping(vertex!([1.0, 0.0])).unwrap();
         let c = tds.insert_vertex_with_mapping(vertex!([0.0, 1.0])).unwrap();
-        let cell = tds
-            .insert_cell_with_mapping(Cell::new(vec![a, b, c], None).unwrap())
+        let simplex = tds
+            .insert_simplex_with_mapping(Simplex::new(vec![a, b, c], None).unwrap())
             .unwrap();
 
         let before = snapshot_topology(&tds);
-        let facet = FacetHandle::new(cell, 0);
+        let facet = FacetHandle::new(simplex, 0);
         let err = build_k2_flip_context(&tds, facet).unwrap_err();
         assert!(matches!(err, FlipError::BoundaryFacet { .. }));
         assert_eq!(snapshot_topology(&tds), before);
@@ -12244,11 +12338,11 @@ mod tests {
         let d = tds
             .insert_vertex_with_mapping(vertex!([0.0, 0.0, 1.0]))
             .unwrap();
-        let cell = tds
-            .insert_cell_with_mapping(Cell::new(vec![a, b, c, d], None).unwrap())
+        let simplex = tds
+            .insert_simplex_with_mapping(Simplex::new(vec![a, b, c, d], None).unwrap())
             .unwrap();
 
-        let ridge = RidgeHandle::new(cell, 0, 1);
+        let ridge = RidgeHandle::new(simplex, 0, 1);
         let err = build_k3_flip_context(&tds, ridge).unwrap_err();
         assert!(matches!(
             err,
@@ -12275,9 +12369,9 @@ mod tests {
         let dangling_opposite = tds
             .insert_vertex_with_mapping(vertex!([1.0, 1.0, 1.0]))
             .unwrap();
-        let cell = tds
-            .insert_cell_with_mapping(
-                Cell::new(
+        let simplex = tds
+            .insert_simplex_with_mapping(
+                Simplex::new(
                     vec![ridge_start, ridge_end, first_opposite, second_opposite],
                     None,
                 )
@@ -12285,8 +12379,8 @@ mod tests {
             )
             .unwrap();
         let dangling_neighbor = tds
-            .insert_cell_with_mapping(
-                Cell::new(
+            .insert_simplex_with_mapping(
+                Simplex::new(
                     vec![ridge_start, ridge_end, first_opposite, dangling_opposite],
                     None,
                 )
@@ -12294,18 +12388,18 @@ mod tests {
             )
             .unwrap();
 
-        assert_eq!(tds.remove_cells_by_keys(&[dangling_neighbor]), 1);
-        tds.cell_mut(cell)
-            .expect("test cell should exist")
+        assert_eq!(tds.remove_simplices_by_keys(&[dangling_neighbor]), 1);
+        tds.simplex_mut(simplex)
+            .expect("test simplex should exist")
             .set_neighbors_from_keys([Some(dangling_neighbor), None, None, None])
             .unwrap();
 
-        let ridge = RidgeHandle::new(cell, 0, 1);
+        let ridge = RidgeHandle::new(simplex, 0, 1);
         let err = build_k3_flip_context(&tds, ridge).unwrap_err();
         assert_eq!(
             err,
             FlipError::DanglingRidgeNeighbor {
-                cell_key: cell,
+                simplex_key: simplex,
                 neighbor_key: dangling_neighbor,
             }
         );
@@ -12328,14 +12422,14 @@ mod tests {
 
         let mut vertices_with_first_opposite = shared_vertices.clone();
         vertices_with_first_opposite.push(opposite_a);
-        let _cell_a = tds
-            .insert_cell_with_mapping(Cell::new(vertices_with_first_opposite, None).unwrap())
+        let _simplex_a = tds
+            .insert_simplex_with_mapping(Simplex::new(vertices_with_first_opposite, None).unwrap())
             .unwrap();
 
         let mut vertices_with_second_opposite = shared_vertices.clone();
         vertices_with_second_opposite.push(opposite_b);
-        let _cell_b = tds
-            .insert_cell_with_mapping(Cell::new(vertices_with_second_opposite, None).unwrap())
+        let _simplex_b = tds
+            .insert_simplex_with_mapping(Simplex::new(vertices_with_second_opposite, None).unwrap())
             .unwrap();
 
         let edge = EdgeKey::new(opposite_a, opposite_b);
@@ -12356,8 +12450,8 @@ mod tests {
                 .unwrap();
             vertices.push(v);
         }
-        let _cell = tds
-            .insert_cell_with_mapping(Cell::new(vertices.clone(), None).unwrap())
+        let _simplex = tds
+            .insert_simplex_with_mapping(Simplex::new(vertices.clone(), None).unwrap())
             .unwrap();
 
         let triangle = TriangleHandle::new(vertices[0], vertices[1], vertices[2]);
@@ -12378,14 +12472,14 @@ mod tests {
         let a = tds.insert_vertex_with_mapping(vertex!([0.0, 0.0])).unwrap();
         let b = tds.insert_vertex_with_mapping(vertex!([1.0, 0.0])).unwrap();
         let c = tds.insert_vertex_with_mapping(vertex!([0.0, 1.0])).unwrap();
-        let cell_key = tds
-            .insert_cell_with_mapping(Cell::new(vec![a, b, c], None).unwrap())
+        let simplex_key = tds
+            .insert_simplex_with_mapping(Simplex::new(vec![a, b, c], None).unwrap())
             .unwrap();
 
         let before = snapshot_topology(&tds);
-        let err = apply_bistellar_flip_k1(&mut tds, cell_key, vertex!([0.5, 0.0])).unwrap_err();
+        let err = apply_bistellar_flip_k1(&mut tds, simplex_key, vertex!([0.5, 0.0])).unwrap_err();
 
-        assert!(matches!(err, FlipError::DegenerateCell));
+        assert!(matches!(err, FlipError::DegenerateSimplex));
         assert_eq!(snapshot_topology(&tds), before);
         assert!(tds.is_valid().is_ok());
     }
@@ -12407,26 +12501,26 @@ mod tests {
 
         let mut vertices_with_first_opposite = shared_vertices.clone();
         vertices_with_first_opposite.push(opposite_a);
-        let cell_a = tds
-            .insert_cell_with_mapping(Cell::new(vertices_with_first_opposite, None).unwrap())
+        let simplex_a = tds
+            .insert_simplex_with_mapping(Simplex::new(vertices_with_first_opposite, None).unwrap())
             .unwrap();
 
         let mut vertices_with_second_opposite = shared_vertices.clone();
         vertices_with_second_opposite.push(opposite_b);
-        let _cell_b = tds
-            .insert_cell_with_mapping(Cell::new(vertices_with_second_opposite, None).unwrap())
+        let _simplex_b = tds
+            .insert_simplex_with_mapping(Simplex::new(vertices_with_second_opposite, None).unwrap())
             .unwrap();
 
         repair_neighbor_pointers(&mut tds).unwrap();
 
-        let facet = FacetHandle::new(cell_a, 4);
+        let facet = FacetHandle::new(simplex_a, 4);
         let context = build_k2_flip_context(&tds, facet).unwrap();
         let context_dyn = to_dynamic(context);
         let info = apply_bistellar_flip_dynamic(&mut tds, 2, &context_dyn).unwrap();
 
         assert_eq!(info.kind, BistellarFlipKind::k2(4));
-        assert_eq!(info.removed_cells.len(), 2);
-        assert_eq!(info.new_cells.len(), 4);
+        assert_eq!(info.removed_simplices.len(), 2);
+        assert_eq!(info.new_simplices.len(), 4);
         assert!(tds.is_valid().is_ok());
     }
 
@@ -12457,13 +12551,13 @@ mod tests {
             .unwrap();
 
         let c1 = tds
-            .insert_cell_with_mapping(Cell::new(vec![r0, r1, r2, r3, a, b], None).unwrap())
+            .insert_simplex_with_mapping(Simplex::new(vec![r0, r1, r2, r3, a, b], None).unwrap())
             .unwrap();
         let _c2 = tds
-            .insert_cell_with_mapping(Cell::new(vec![r0, r1, r2, r3, b, c], None).unwrap())
+            .insert_simplex_with_mapping(Simplex::new(vec![r0, r1, r2, r3, b, c], None).unwrap())
             .unwrap();
         let _c3 = tds
-            .insert_cell_with_mapping(Cell::new(vec![r0, r1, r2, r3, c, a], None).unwrap())
+            .insert_simplex_with_mapping(Simplex::new(vec![r0, r1, r2, r3, c, a], None).unwrap())
             .unwrap();
 
         repair_neighbor_pointers(&mut tds).unwrap();
@@ -12474,8 +12568,8 @@ mod tests {
         let info = apply_bistellar_flip_dynamic(&mut tds, 3, &context_dyn).unwrap();
 
         assert_eq!(info.kind, BistellarFlipKind::k3(5));
-        assert_eq!(info.removed_cells.len(), 3);
-        assert_eq!(info.new_cells.len(), 4);
+        assert_eq!(info.removed_simplices.len(), 3);
+        assert_eq!(info.new_simplices.len(), 4);
         assert!(tds.is_valid().is_ok());
     }
 
@@ -12511,10 +12605,10 @@ mod tests {
                 .unwrap();
 
             let c1 = tds
-                .insert_cell_with_mapping(Cell::new(vec![v_a, v_b, v_c, v_d], None).unwrap())
+                .insert_simplex_with_mapping(Simplex::new(vec![v_a, v_b, v_c, v_d], None).unwrap())
                 .unwrap();
             let _c2 = tds
-                .insert_cell_with_mapping(Cell::new(vec![v_a, v_b, v_c, v_e], None).unwrap())
+                .insert_simplex_with_mapping(Simplex::new(vec![v_a, v_b, v_c, v_e], None).unwrap())
                 .unwrap();
 
             repair_neighbor_pointers(&mut tds).unwrap();
@@ -12534,7 +12628,7 @@ mod tests {
 
             assert!(tds.is_valid().is_ok());
             let after = snapshot_topology(&tds);
-            assert_same_vertex_cell_topology(&after, &before);
+            assert_same_vertex_simplex_topology(&after, &before);
         }
     }
 
@@ -12564,10 +12658,10 @@ mod tests {
                 .unwrap();
 
             let _c1 = candidate
-                .insert_cell_with_mapping(Cell::new(vec![a, b, c], None).unwrap())
+                .insert_simplex_with_mapping(Simplex::new(vec![a, b, c], None).unwrap())
                 .unwrap();
             let _c2 = candidate
-                .insert_cell_with_mapping(Cell::new(vec![a, b, d], None).unwrap())
+                .insert_simplex_with_mapping(Simplex::new(vec![a, b, d], None).unwrap())
                 .unwrap();
 
             repair_neighbor_pointers(&mut candidate).unwrap();
@@ -12619,10 +12713,10 @@ mod tests {
                 .unwrap();
 
             let _c1 = candidate
-                .insert_cell_with_mapping(Cell::new(vec![a, b, c], None).unwrap())
+                .insert_simplex_with_mapping(Simplex::new(vec![a, b, c], None).unwrap())
                 .unwrap();
             let _c2 = candidate
-                .insert_cell_with_mapping(Cell::new(vec![a, b, d], None).unwrap())
+                .insert_simplex_with_mapping(Simplex::new(vec![a, b, d], None).unwrap())
                 .unwrap();
 
             repair_neighbor_pointers(&mut candidate).unwrap();
@@ -12694,10 +12788,10 @@ mod tests {
             .unwrap();
 
         let _c1 = tds
-            .insert_cell_with_mapping(Cell::new(vec![a, b, c, d], None).unwrap())
+            .insert_simplex_with_mapping(Simplex::new(vec![a, b, c, d], None).unwrap())
             .unwrap();
         let _c2 = tds
-            .insert_cell_with_mapping(Cell::new(vec![a, b, c, e], None).unwrap())
+            .insert_simplex_with_mapping(Simplex::new(vec![a, b, c, e], None).unwrap())
             .unwrap();
 
         repair_neighbor_pointers(&mut tds).unwrap();
@@ -12755,10 +12849,10 @@ mod tests {
                 .unwrap();
 
             let _c1 = candidate
-                .insert_cell_with_mapping(Cell::new(vec![a, b, c], None).unwrap())
+                .insert_simplex_with_mapping(Simplex::new(vec![a, b, c], None).unwrap())
                 .unwrap();
             let _c2 = candidate
-                .insert_cell_with_mapping(Cell::new(vec![a, b, d], None).unwrap())
+                .insert_simplex_with_mapping(Simplex::new(vec![a, b, d], None).unwrap())
                 .unwrap();
 
             repair_neighbor_pointers(&mut candidate).unwrap();
@@ -12812,10 +12906,10 @@ mod tests {
             .unwrap();
 
         let c1 = tds
-            .insert_cell_with_mapping(Cell::new(vec![a, b, c], None).unwrap())
+            .insert_simplex_with_mapping(Simplex::new(vec![a, b, c], None).unwrap())
             .unwrap();
         let _c2 = tds
-            .insert_cell_with_mapping(Cell::new(vec![a, b, d], None).unwrap())
+            .insert_simplex_with_mapping(Simplex::new(vec![a, b, d], None).unwrap())
             .unwrap();
 
         repair_neighbor_pointers(&mut tds).unwrap();
@@ -12827,23 +12921,23 @@ mod tests {
         assert!(tds.is_valid().is_ok());
     }
 
-    /// Verifies that `k2_flip_would_create_degenerate_cell` detects a degenerate
-    /// replacement cell (collinear vertices in 2D).
+    /// Verifies that `k2_flip_would_create_degenerate_simplex` detects a degenerate
+    /// replacement simplex (collinear vertices in 2D).
     #[test]
-    fn test_k2_flip_would_create_degenerate_cell_degenerate() {
+    fn test_k2_flip_would_create_degenerate_simplex_degenerate() {
         init_tracing();
         let mut tds: Tds<f64, (), (), 2> = Tds::empty();
-        // a, c, d are collinear on the x-axis → replacement cell {a,c,d} is degenerate
+        // a, c, d are collinear on the x-axis → replacement simplex {a,c,d} is degenerate
         let a = tds.insert_vertex_with_mapping(vertex!([0.0, 0.0])).unwrap();
         let b = tds.insert_vertex_with_mapping(vertex!([0.0, 1.0])).unwrap();
         let c = tds.insert_vertex_with_mapping(vertex!([1.0, 0.0])).unwrap();
         let d = tds.insert_vertex_with_mapping(vertex!([0.5, 0.0])).unwrap();
 
         let c1 = tds
-            .insert_cell_with_mapping(Cell::new(vec![a, b, c], None).unwrap())
+            .insert_simplex_with_mapping(Simplex::new(vec![a, b, c], None).unwrap())
             .unwrap();
         let _c2 = tds
-            .insert_cell_with_mapping(Cell::new(vec![a, b, d], None).unwrap())
+            .insert_simplex_with_mapping(Simplex::new(vec![a, b, d], None).unwrap())
             .unwrap();
 
         repair_neighbor_pointers(&mut tds).unwrap();
@@ -12851,17 +12945,17 @@ mod tests {
         let facet = FacetHandle::new(c1, 2);
         let context = build_k2_flip_context(&tds, facet).unwrap();
 
-        let degenerate = k2_flip_would_create_degenerate_cell(&tds, &context).unwrap();
+        let degenerate = k2_flip_would_create_degenerate_simplex(&tds, &context).unwrap();
         assert!(
             degenerate,
-            "replacement cells with collinear vertices should be degenerate"
+            "replacement simplices with collinear vertices should be degenerate"
         );
     }
 
-    /// Verifies that `k2_flip_would_create_degenerate_cell` returns false for
-    /// non-degenerate cells using `robust_orientation` (kernel-independent).
+    /// Verifies that `k2_flip_would_create_degenerate_simplex` returns false for
+    /// non-degenerate simplices using `robust_orientation` (kernel-independent).
     #[test]
-    fn test_k2_flip_would_create_degenerate_cell_nondegenerate() {
+    fn test_k2_flip_would_create_degenerate_simplex_nondegenerate() {
         init_tracing();
         let mut tds: Tds<f64, (), (), 2> = Tds::empty();
         let a = tds.insert_vertex_with_mapping(vertex!([0.0, 0.0])).unwrap();
@@ -12870,10 +12964,10 @@ mod tests {
         let d = tds.insert_vertex_with_mapping(vertex!([1.0, 1.0])).unwrap();
 
         let c1 = tds
-            .insert_cell_with_mapping(Cell::new(vec![a, b, c], None).unwrap())
+            .insert_simplex_with_mapping(Simplex::new(vec![a, b, c], None).unwrap())
             .unwrap();
         let _c2 = tds
-            .insert_cell_with_mapping(Cell::new(vec![a, b, d], None).unwrap())
+            .insert_simplex_with_mapping(Simplex::new(vec![a, b, d], None).unwrap())
             .unwrap();
 
         repair_neighbor_pointers(&mut tds).unwrap();
@@ -12883,7 +12977,7 @@ mod tests {
 
         assert_context_has_nonzero_robust_orientation(&tds, &context);
 
-        let degenerate = k2_flip_would_create_degenerate_cell(&tds, &context).unwrap();
+        let degenerate = k2_flip_would_create_degenerate_simplex(&tds, &context).unwrap();
         assert!(!degenerate);
     }
 
@@ -12904,19 +12998,19 @@ mod tests {
 
         let mut vertices_with_first_opposite = shared_vertices.clone();
         vertices_with_first_opposite.push(opposite_a);
-        let cell_a = tds
-            .insert_cell_with_mapping(Cell::new(vertices_with_first_opposite, None).unwrap())
+        let simplex_a = tds
+            .insert_simplex_with_mapping(Simplex::new(vertices_with_first_opposite, None).unwrap())
             .unwrap();
 
         let mut vertices_with_second_opposite = shared_vertices.clone();
         vertices_with_second_opposite.push(opposite_b);
-        let _cell_b = tds
-            .insert_cell_with_mapping(Cell::new(vertices_with_second_opposite, None).unwrap())
+        let _simplex_b = tds
+            .insert_simplex_with_mapping(Simplex::new(vertices_with_second_opposite, None).unwrap())
             .unwrap();
 
         repair_neighbor_pointers(&mut tds).unwrap();
 
-        let facet = FacetHandle::new(cell_a, 4);
+        let facet = FacetHandle::new(simplex_a, 4);
         let context = build_k2_flip_context(&tds, facet).unwrap();
         let _info = apply_bistellar_flip_k2(&mut tds, &context).unwrap();
 
@@ -12926,8 +13020,8 @@ mod tests {
 
         assert_eq!(info_back.kind.k, 4);
         assert_eq!(info_back.kind.d, 4);
-        assert_eq!(info_back.removed_cells.len(), 4);
-        assert_eq!(info_back.new_cells.len(), 2);
+        assert_eq!(info_back.removed_simplices.len(), 4);
+        assert_eq!(info_back.new_simplices.len(), 2);
         assert!(tds.is_valid().is_ok());
     }
 
@@ -12945,24 +13039,24 @@ mod tests {
             vertices.push(v);
         }
 
-        let cell_key = tds
-            .insert_cell_with_mapping(Cell::new(vertices, None).unwrap())
+        let simplex_key = tds
+            .insert_simplex_with_mapping(Simplex::new(vertices, None).unwrap())
             .unwrap();
 
         let new_vertex = vertex!([0.1; 4]);
         let new_uuid = new_vertex.uuid();
-        let info = apply_bistellar_flip_k1(&mut tds, cell_key, new_vertex).unwrap();
+        let info = apply_bistellar_flip_k1(&mut tds, simplex_key, new_vertex).unwrap();
 
         assert_eq!(info.kind.k, 1);
-        assert_eq!(info.new_cells.len(), 5);
+        assert_eq!(info.new_simplices.len(), 5);
 
         let new_key = tds.vertex_key_from_uuid(&new_uuid).unwrap();
         let info_back = apply_bistellar_flip_k1_inverse(&mut tds, new_key).unwrap();
 
         assert_eq!(info_back.kind.k, 5);
         assert_eq!(info_back.kind.d, 4);
-        assert_eq!(info_back.removed_cells.len(), 5);
-        assert_eq!(info_back.new_cells.len(), 1);
+        assert_eq!(info_back.removed_simplices.len(), 5);
+        assert_eq!(info_back.new_simplices.len(), 1);
         assert!(tds.is_valid().is_ok());
     }
 
@@ -12993,13 +13087,13 @@ mod tests {
             .unwrap();
 
         let c1 = tds
-            .insert_cell_with_mapping(Cell::new(vec![r0, r1, r2, r3, a, b], None).unwrap())
+            .insert_simplex_with_mapping(Simplex::new(vec![r0, r1, r2, r3, a, b], None).unwrap())
             .unwrap();
         let _c2 = tds
-            .insert_cell_with_mapping(Cell::new(vec![r0, r1, r2, r3, b, c], None).unwrap())
+            .insert_simplex_with_mapping(Simplex::new(vec![r0, r1, r2, r3, b, c], None).unwrap())
             .unwrap();
         let _c3 = tds
-            .insert_cell_with_mapping(Cell::new(vec![r0, r1, r2, r3, c, a], None).unwrap())
+            .insert_simplex_with_mapping(Simplex::new(vec![r0, r1, r2, r3, c, a], None).unwrap())
             .unwrap();
 
         repair_neighbor_pointers(&mut tds).unwrap();
@@ -13021,8 +13115,8 @@ mod tests {
 
         assert_eq!(info_back.kind.k, 4);
         assert_eq!(info_back.kind.d, 5);
-        assert_eq!(info_back.removed_cells.len(), 4);
-        assert_eq!(info_back.new_cells.len(), 3);
+        assert_eq!(info_back.removed_simplices.len(), 4);
+        assert_eq!(info_back.new_simplices.len(), 3);
         assert!(tds.is_valid().is_ok());
     }
 
@@ -13043,19 +13137,19 @@ mod tests {
 
         let mut vertices_with_first_opposite = shared_vertices.clone();
         vertices_with_first_opposite.push(opposite_a);
-        let cell_a = tds
-            .insert_cell_with_mapping(Cell::new(vertices_with_first_opposite, None).unwrap())
+        let simplex_a = tds
+            .insert_simplex_with_mapping(Simplex::new(vertices_with_first_opposite, None).unwrap())
             .unwrap();
 
         let mut vertices_with_second_opposite = shared_vertices.clone();
         vertices_with_second_opposite.push(opposite_b);
-        let _cell_b = tds
-            .insert_cell_with_mapping(Cell::new(vertices_with_second_opposite, None).unwrap())
+        let _simplex_b = tds
+            .insert_simplex_with_mapping(Simplex::new(vertices_with_second_opposite, None).unwrap())
             .unwrap();
 
         repair_neighbor_pointers(&mut tds).unwrap();
 
-        let facet = FacetHandle::new(cell_a, 5);
+        let facet = FacetHandle::new(simplex_a, 5);
         let context = build_k2_flip_context(&tds, facet).unwrap();
         let _info = apply_bistellar_flip_k2(&mut tds, &context).unwrap();
 
@@ -13065,8 +13159,8 @@ mod tests {
 
         assert_eq!(info_back.kind.k, 5);
         assert_eq!(info_back.kind.d, 5);
-        assert_eq!(info_back.removed_cells.len(), 5);
-        assert_eq!(info_back.new_cells.len(), 2);
+        assert_eq!(info_back.removed_simplices.len(), 5);
+        assert_eq!(info_back.new_simplices.len(), 2);
         assert!(tds.is_valid().is_ok());
     }
 
@@ -13084,24 +13178,24 @@ mod tests {
             vertices.push(v);
         }
 
-        let cell_key = tds
-            .insert_cell_with_mapping(Cell::new(vertices, None).unwrap())
+        let simplex_key = tds
+            .insert_simplex_with_mapping(Simplex::new(vertices, None).unwrap())
             .unwrap();
 
         let new_vertex = vertex!([0.1; 5]);
         let new_uuid = new_vertex.uuid();
-        let info = apply_bistellar_flip_k1(&mut tds, cell_key, new_vertex).unwrap();
+        let info = apply_bistellar_flip_k1(&mut tds, simplex_key, new_vertex).unwrap();
 
         assert_eq!(info.kind.k, 1);
-        assert_eq!(info.new_cells.len(), 6);
+        assert_eq!(info.new_simplices.len(), 6);
 
         let new_key = tds.vertex_key_from_uuid(&new_uuid).unwrap();
         let info_back = apply_bistellar_flip_k1_inverse(&mut tds, new_key).unwrap();
 
         assert_eq!(info_back.kind.k, 6);
         assert_eq!(info_back.kind.d, 5);
-        assert_eq!(info_back.removed_cells.len(), 6);
-        assert_eq!(info_back.new_cells.len(), 1);
+        assert_eq!(info_back.removed_simplices.len(), 6);
+        assert_eq!(info_back.new_simplices.len(), 1);
         assert!(tds.is_valid().is_ok());
     }
     #[test]
@@ -13112,24 +13206,24 @@ mod tests {
         let b = tds.insert_vertex_with_mapping(vertex!([1.0, 0.0])).unwrap();
         let c = tds.insert_vertex_with_mapping(vertex!([0.0, 1.0])).unwrap();
 
-        let cell = tds
-            .insert_cell_with_mapping(Cell::new(vec![a, b, c], None).unwrap())
+        let simplex = tds
+            .insert_simplex_with_mapping(Simplex::new(vec![a, b, c], None).unwrap())
             .unwrap();
 
         let new_vertex = vertex!([0.2, 0.2]);
         let new_uuid = new_vertex.uuid();
-        let info = apply_bistellar_flip_k1(&mut tds, cell, new_vertex).unwrap();
+        let info = apply_bistellar_flip_k1(&mut tds, simplex, new_vertex).unwrap();
 
         assert_eq!(info.kind.k, 1);
         assert_eq!(info.kind.d, 2);
-        assert_eq!(tds.number_of_cells(), 3);
+        assert_eq!(tds.number_of_simplices(), 3);
 
         let new_key = tds.vertex_key_from_uuid(&new_uuid).unwrap();
         let info_back = apply_bistellar_flip_k1_inverse(&mut tds, new_key).unwrap();
 
         assert_eq!(info_back.kind.k, 3);
         assert_eq!(info_back.kind.d, 2);
-        assert_eq!(tds.number_of_cells(), 1);
+        assert_eq!(tds.number_of_simplices(), 1);
         assert_eq!(tds.number_of_vertices(), 3);
         assert!(tds.is_valid().is_ok());
     }
@@ -13151,28 +13245,28 @@ mod tests {
 
         let mut vertices_with_first_opposite = shared_vertices.clone();
         vertices_with_first_opposite.push(opposite_a);
-        let cell_a = tds
-            .insert_cell_with_mapping(Cell::new(vertices_with_first_opposite, None).unwrap())
+        let simplex_a = tds
+            .insert_simplex_with_mapping(Simplex::new(vertices_with_first_opposite, None).unwrap())
             .unwrap();
 
         let mut vertices_with_second_opposite = shared_vertices.clone();
         vertices_with_second_opposite.push(opposite_b);
-        let _cell_b = tds
-            .insert_cell_with_mapping(Cell::new(vertices_with_second_opposite, None).unwrap())
+        let _simplex_b = tds
+            .insert_simplex_with_mapping(Simplex::new(vertices_with_second_opposite, None).unwrap())
             .unwrap();
 
         repair_neighbor_pointers(&mut tds).unwrap();
 
-        let facet = FacetHandle::new(cell_a, 4);
+        let facet = FacetHandle::new(simplex_a, 4);
         let context = build_k2_flip_context(&tds, facet).unwrap();
         let info = apply_bistellar_flip_k2(&mut tds, &context).unwrap();
 
         let kernel = AdaptiveKernel::<f64>::new();
-        let seed_cells: Vec<CellKey> = info.new_cells.iter().copied().collect();
+        let seed_simplices: Vec<SimplexKey> = info.new_simplices.iter().copied().collect();
         let stats = repair_delaunay_with_flips_k2_k3(
             &mut tds,
             &kernel,
-            Some(seed_cells.as_slice()),
+            Some(seed_simplices.as_slice()),
             TopologyGuarantee::PLManifold,
             None,
         )
@@ -13208,13 +13302,13 @@ mod tests {
             .unwrap();
 
         let c1 = tds
-            .insert_cell_with_mapping(Cell::new(vec![r0, r1, r2, r3, a, b], None).unwrap())
+            .insert_simplex_with_mapping(Simplex::new(vec![r0, r1, r2, r3, a, b], None).unwrap())
             .unwrap();
         let _c2 = tds
-            .insert_cell_with_mapping(Cell::new(vec![r0, r1, r2, r3, b, c], None).unwrap())
+            .insert_simplex_with_mapping(Simplex::new(vec![r0, r1, r2, r3, b, c], None).unwrap())
             .unwrap();
         let _c3 = tds
-            .insert_cell_with_mapping(Cell::new(vec![r0, r1, r2, r3, c, a], None).unwrap())
+            .insert_simplex_with_mapping(Simplex::new(vec![r0, r1, r2, r3, c, a], None).unwrap())
             .unwrap();
 
         repair_neighbor_pointers(&mut tds).unwrap();
@@ -13224,11 +13318,11 @@ mod tests {
         let info = apply_bistellar_flip_k3(&mut tds, &context).unwrap();
 
         let kernel = AdaptiveKernel::<f64>::new();
-        let seed_cells: Vec<CellKey> = info.new_cells.iter().copied().collect();
+        let seed_simplices: Vec<SimplexKey> = info.new_simplices.iter().copied().collect();
         let result = repair_delaunay_with_flips_k2_k3(
             &mut tds,
             &kernel,
-            Some(seed_cells.as_slice()),
+            Some(seed_simplices.as_slice()),
             TopologyGuarantee::PLManifold,
             None,
         );
@@ -13254,7 +13348,7 @@ mod tests {
         assert_eq!(unsupported_1, unsupported_1_copy);
         assert_ne!(unsupported_1, unsupported_2);
 
-        assert_ne!(FlipError::DegenerateCell, FlipError::DuplicateCell);
+        assert_ne!(FlipError::DegenerateSimplex, FlipError::DuplicateSimplex);
         assert_eq!(FlipError::NonManifoldFacet, FlipError::NonManifoldFacet);
 
         let ridge_4 = FlipError::InvalidRidgeMultiplicity { found: 4 };
@@ -13335,8 +13429,8 @@ mod tests {
         );
 
         let dangling_ridge_neighbor = FlipError::DanglingRidgeNeighbor {
-            cell_key: CellKey::from(KeyData::from_ffi(1)),
-            neighbor_key: CellKey::from(KeyData::from_ffi(2)),
+            simplex_key: SimplexKey::from(KeyData::from_ffi(1)),
+            neighbor_key: SimplexKey::from(KeyData::from_ffi(2)),
         };
         assert_eq!(
             FlipFailureKind::from(&dangling_ridge_neighbor),
@@ -13461,15 +13555,15 @@ mod tests {
 
         let verification_err = DelaunayRepairError::VerificationFailed {
             context: DelaunayRepairVerificationContext::StrictValidation,
-            source: Box::new(FlipError::DegenerateCell),
+            source: Box::new(FlipError::DegenerateSimplex),
         };
         let verification_err_copy = DelaunayRepairError::VerificationFailed {
             context: DelaunayRepairVerificationContext::StrictValidation,
-            source: Box::new(FlipError::DegenerateCell),
+            source: Box::new(FlipError::DegenerateSimplex),
         };
         let verification_other = DelaunayRepairError::VerificationFailed {
             context: DelaunayRepairVerificationContext::StrictValidation,
-            source: Box::new(FlipError::DuplicateCell),
+            source: Box::new(FlipError::DuplicateSimplex),
         };
         assert_eq!(verification_err, verification_err_copy);
         assert_ne!(verification_err, verification_other);
@@ -13545,7 +13639,7 @@ mod tests {
             assert_eq!(context.to_string(), expected_display);
             let err = DelaunayRepairError::VerificationFailed {
                 context,
-                source: Box::new(FlipError::DegenerateCell),
+                source: Box::new(FlipError::DegenerateSimplex),
             };
 
             match err {
@@ -13658,35 +13752,35 @@ mod tests {
         .model()
     }
 
-    fn insert_periodic_cell_with_lifted_vertex<const D: usize>(
+    fn insert_periodic_simplex_with_lifted_vertex<const D: usize>(
         tds: &mut Tds<f64, (), (), D>,
         vertices: Vec<VertexKey>,
         lifted_vertex: VertexKey,
-    ) -> CellKey {
+    ) -> SimplexKey {
         let mut offsets = vec![[0_i8; D]; vertices.len()];
         if let Some(index) = vertices.iter().position(|&vkey| vkey == lifted_vertex) {
             offsets[index][0] = 1;
         }
-        let mut cell = Cell::new(vertices, None).unwrap();
-        cell.set_periodic_vertex_offsets(offsets).unwrap();
-        tds.insert_cell_with_mapping(cell).unwrap()
+        let mut simplex = Simplex::new(vertices, None).unwrap();
+        simplex.set_periodic_vertex_offsets(offsets).unwrap();
+        tds.insert_simplex_with_mapping(simplex).unwrap()
     }
 
-    fn insert_periodic_cell_with_offsets<const D: usize>(
+    fn insert_periodic_simplex_with_offsets<const D: usize>(
         tds: &mut Tds<f64, (), (), D>,
         vertices: Vec<VertexKey>,
         offsets: Vec<[i8; D]>,
-    ) -> CellKey {
-        let mut cell = Cell::new(vertices, None).unwrap();
-        cell.set_periodic_vertex_offsets(offsets).unwrap();
-        tds.insert_cell_with_mapping(cell).unwrap()
+    ) -> SimplexKey {
+        let mut simplex = Simplex::new(vertices, None).unwrap();
+        simplex.set_periodic_vertex_offsets(offsets).unwrap();
+        tds.insert_simplex_with_mapping(simplex).unwrap()
     }
 
-    fn insert_plain_cell<const D: usize>(
+    fn insert_plain_simplex<const D: usize>(
         tds: &mut Tds<f64, (), (), D>,
         vertices: Vec<VertexKey>,
-    ) -> CellKey {
-        tds.insert_cell_with_mapping(Cell::new(vertices, None).unwrap())
+    ) -> SimplexKey {
+        tds.insert_simplex_with_mapping(Simplex::new(vertices, None).unwrap())
             .unwrap()
     }
 
@@ -13710,36 +13804,36 @@ mod tests {
         ($dim:literal) => {
             pastey::paste! {
                 #[test]
-                fn [<test_periodic_lift_helpers_use_cell_offsets_ $dim d>]() {
+                fn [<test_periodic_lift_helpers_use_simplex_offsets_ $dim d>]() {
                     let mut tds: Tds<f64, (), (), $dim> = Tds::empty();
                     let lifted_vertex = tds
                         .insert_vertex_with_mapping(vertex!(unit_vector::<$dim>(0)))
                         .unwrap();
-                    let mut cell_vertices = Vec::with_capacity($dim + 1);
-                    cell_vertices.push(lifted_vertex);
-                    cell_vertices.extend(periodic_helper_vertices::<$dim>(&mut tds, $dim));
-                    let mut offsets = vec![[0_i8; $dim]; cell_vertices.len()];
+                    let mut simplex_vertices = Vec::with_capacity($dim + 1);
+                    simplex_vertices.push(lifted_vertex);
+                    simplex_vertices.extend(periodic_helper_vertices::<$dim>(&mut tds, $dim));
+                    let mut offsets = vec![[0_i8; $dim]; simplex_vertices.len()];
                     offsets[0][0] = 1;
-                    let cell_key =
-                        insert_periodic_cell_with_offsets(&mut tds, cell_vertices.clone(), offsets);
+                    let simplex_key =
+                        insert_periodic_simplex_with_offsets(&mut tds, simplex_vertices.clone(), offsets);
                     let topology_model = toroidal_periodic_model::<$dim>();
 
                     let direct = vertex_point_with_optional_lift(
                         &tds,
                         &topology_model,
                         lifted_vertex,
-                        Some(cell_key),
+                        Some(simplex_key),
                     )
                     .unwrap();
                     let mut expected = unit_vector::<$dim>(0);
                     expected[0] += 1.0;
                     assert_relative_eq!(direct.coords().as_slice(), expected.as_slice());
 
-                    let framed = vertex_point_lifted_into_cell(
+                    let framed = vertex_point_lifted_into_simplex(
                         &tds,
                         &topology_model,
                         lifted_vertex,
-                        Some(cell_key),
+                        Some(simplex_key),
                         &[],
                     )
                     .unwrap();
@@ -13749,12 +13843,12 @@ mod tests {
                         &tds,
                         &topology_model,
                         &[lifted_vertex],
-                        Some(cell_key),
-                        &[cell_key],
+                        Some(simplex_key),
+                        &[simplex_key],
                     )
                     .unwrap();
                     assert_relative_eq!(points[0].coords().as_slice(), expected.as_slice());
-                    assert_eq!(matching_source_cell(&tds, &cell_vertices, &[cell_key]), Some(cell_key));
+                    assert_eq!(matching_source_simplex(&tds, &simplex_vertices, &[simplex_key]), Some(simplex_key));
                 }
 
                 #[test]
@@ -13771,8 +13865,8 @@ mod tests {
                     target_vertices.push(shared_vertex);
                     target_vertices.extend(periodic_helper_vertices::<$dim>(&mut tds, $dim));
                     let target_offsets = vec![[0_i8; $dim]; target_vertices.len()];
-                    let tarcell =
-                        insert_periodic_cell_with_offsets(&mut tds, target_vertices, target_offsets);
+                    let target_simplex =
+                        insert_periodic_simplex_with_offsets(&mut tds, target_vertices, target_offsets);
 
                     let mut source_vertices = Vec::with_capacity($dim + 1);
                     source_vertices.push(shared_vertex);
@@ -13781,15 +13875,15 @@ mod tests {
                         &mut tds,
                         $dim - 1,
                     ));
-                    let source_cell = insert_plain_cell(&mut tds, source_vertices);
+                    let source_simplex = insert_plain_simplex(&mut tds, source_vertices);
                     let topology_model = toroidal_periodic_model::<$dim>();
 
-                    let result = vertex_point_lifted_into_cell(
+                    let result = vertex_point_lifted_into_simplex(
                         &tds,
                         &topology_model,
                         lifted_vertex,
-                        Some(tarcell),
-                        &[source_cell],
+                        Some(target_simplex),
+                        &[source_simplex],
                     );
                     let lifted = result.unwrap();
                     assert_relative_eq!(
@@ -13819,8 +13913,8 @@ mod tests {
                     target_vertices.extend(periodic_helper_vertices::<$dim>(&mut tds, $dim - 1));
                     let mut target_offsets = vec![[0_i8; $dim]; target_vertices.len()];
                     target_offsets[1][0] = 1;
-                    let tarcell =
-                        insert_periodic_cell_with_offsets(&mut tds, target_vertices, target_offsets);
+                    let target_simplex =
+                        insert_periodic_simplex_with_offsets(&mut tds, target_vertices, target_offsets);
 
                     let mut source_vertices = Vec::with_capacity($dim + 1);
                     source_vertices.push(shared_a);
@@ -13831,16 +13925,16 @@ mod tests {
                         $dim - 2,
                     ));
                     let source_offsets = vec![[0_i8; $dim]; source_vertices.len()];
-                    let source_cell =
-                        insert_periodic_cell_with_offsets(&mut tds, source_vertices, source_offsets);
+                    let source_simplex =
+                        insert_periodic_simplex_with_offsets(&mut tds, source_vertices, source_offsets);
                     let topology_model = toroidal_periodic_model::<$dim>();
 
-                    let result = vertex_point_lifted_into_cell(
+                    let result = vertex_point_lifted_into_simplex(
                         &tds,
                         &topology_model,
                         lifted_vertex,
-                        Some(tarcell),
-                        &[source_cell],
+                        Some(target_simplex),
+                        &[source_simplex],
                     );
                     assert!(
                         matches!(
@@ -13854,8 +13948,8 @@ mod tests {
                 }
 
                 #[test]
-                fn [<test_removed_cell_frame_requires_source_cell_ $dim d>]() {
-                    let result = removed_cell_frame(&[]);
+                fn [<test_removed_simplex_frame_requires_source_simplex_ $dim d>]() {
+                    let result = removed_simplex_frame(&[]);
                     assert!(matches!(result, Err(FlipError::InvalidFlipContext { .. })));
                 }
             }
@@ -13872,7 +13966,7 @@ mod tests {
         Vec<VertexKey>,
         VertexKey,
         VertexKey,
-        CellKeyBuffer,
+        SimplexKeyBuffer,
     ) {
         let mut tds: Tds<f64, (), (), D> = Tds::empty();
         let mut face_vertices = Vec::with_capacity(D);
@@ -13886,7 +13980,7 @@ mod tests {
         let opposite_b = tds.insert_vertex_with_mapping(vertex!([0.25; D])).unwrap();
 
         let lifted_vertex = face_vertices[0];
-        let mut removed_cells = CellKeyBuffer::new();
+        let mut removed_simplices = SimplexKeyBuffer::new();
         for skip in 0..D {
             let mut vertices = Vec::with_capacity(D + 1);
             vertices.push(opposite_a);
@@ -13896,21 +13990,27 @@ mod tests {
                     vertices.push(vertex);
                 }
             }
-            removed_cells.push(insert_periodic_cell_with_lifted_vertex(
+            removed_simplices.push(insert_periodic_simplex_with_lifted_vertex(
                 &mut tds,
                 vertices,
                 lifted_vertex,
             ));
         }
 
-        (tds, face_vertices, opposite_a, opposite_b, removed_cells)
+        (
+            tds,
+            face_vertices,
+            opposite_a,
+            opposite_b,
+            removed_simplices,
+        )
     }
 
     fn periodic_inverse_k3_fixture<const D: usize>() -> (
         Tds<f64, (), (), D>,
         Vec<VertexKey>,
         Vec<VertexKey>,
-        CellKeyBuffer,
+        SimplexKeyBuffer,
     ) {
         let mut tds: Tds<f64, (), (), D> = Tds::empty();
         let mut ridge_vertices = Vec::with_capacity(D - 1);
@@ -13930,7 +14030,7 @@ mod tests {
         let triangle_vertices = vec![a, b, c];
 
         let lifted_vertex = ridge_vertices[0];
-        let mut removed_cells = CellKeyBuffer::new();
+        let mut removed_simplices = SimplexKeyBuffer::new();
         for skip in 0..(D - 1) {
             let mut vertices = Vec::with_capacity(D + 1);
             vertices.extend_from_slice(&triangle_vertices);
@@ -13939,40 +14039,40 @@ mod tests {
                     vertices.push(vertex);
                 }
             }
-            removed_cells.push(insert_periodic_cell_with_lifted_vertex(
+            removed_simplices.push(insert_periodic_simplex_with_lifted_vertex(
                 &mut tds,
                 vertices,
                 lifted_vertex,
             ));
         }
 
-        (tds, ridge_vertices, triangle_vertices, removed_cells)
+        (tds, ridge_vertices, triangle_vertices, removed_simplices)
     }
 
     macro_rules! gen_periodic_inverse_predicate_tests {
         ($dim:literal) => {
             pastey::paste! {
                 #[test]
-                fn [<test_periodic_inverse_k2_uses_removed_cell_frame_ $dim d>]() {
-                    let (tds, face_vertices, opposite_a, opposite_b, removed_cells) =
+                fn [<test_periodic_inverse_k2_uses_removed_simplex_frame_ $dim d>]() {
+                    let (tds, face_vertices, opposite_a, opposite_b, removed_simplices) =
                         periodic_inverse_k2_fixture::<$dim>();
-                    let mut tarcell_vertices = face_vertices.clone();
-                    tarcell_vertices.push(opposite_a);
-                    tarcell_vertices.sort_unstable_by_key(|v| v.data().as_ffi());
+                    let mut target_simplex_vertices = face_vertices.clone();
+                    target_simplex_vertices.push(opposite_a);
+                    target_simplex_vertices.sort_unstable_by_key(|v| v.data().as_ffi());
                     assert!(
-                        matching_source_cell(&tds, &tarcell_vertices, &removed_cells)
+                        matching_source_simplex(&tds, &target_simplex_vertices, &removed_simplices)
                             .is_none(),
-                        "inverse k=2 target cell should require explicit frame alignment",
+                        "inverse k=2 target simplex should require explicit frame alignment",
                     );
 
                     let topology_model = toroidal_periodic_model::<$dim>();
-                    let frame_cell = removed_cell_frame(&removed_cells).unwrap();
-                    let lifted = vertex_point_lifted_into_cell(
+                    let frame_simplex = removed_simplex_frame(&removed_simplices).unwrap();
+                    let lifted = vertex_point_lifted_into_simplex(
                         &tds,
                         &topology_model,
                         face_vertices[0],
-                        Some(frame_cell),
-                        &removed_cells,
+                        Some(frame_simplex),
+                        &removed_simplices,
                     )
                     .unwrap();
                     let mut expected = unit_vector::<$dim>(0);
@@ -13993,8 +14093,8 @@ mod tests {
                         &face_vertices,
                         opposite_a,
                         opposite_b,
-                        &removed_cells,
-                        Some(frame_cell),
+                        &removed_simplices,
+                        Some(frame_simplex),
                         &config,
                         &mut diagnostics,
                     );
@@ -14002,26 +14102,26 @@ mod tests {
                 }
 
                 #[test]
-                fn [<test_periodic_inverse_k3_uses_removed_cell_frame_ $dim d>]() {
-                    let (tds, ridge_vertices, triangle_vertices, removed_cells) =
+                fn [<test_periodic_inverse_k3_uses_removed_simplex_frame_ $dim d>]() {
+                    let (tds, ridge_vertices, triangle_vertices, removed_simplices) =
                         periodic_inverse_k3_fixture::<$dim>();
-                    let mut tarcell_vertices = ridge_vertices.clone();
-                    tarcell_vertices.extend_from_slice(&triangle_vertices[1..]);
-                    tarcell_vertices.sort_unstable_by_key(|v| v.data().as_ffi());
+                    let mut target_simplex_vertices = ridge_vertices.clone();
+                    target_simplex_vertices.extend_from_slice(&triangle_vertices[1..]);
+                    target_simplex_vertices.sort_unstable_by_key(|v| v.data().as_ffi());
                     assert!(
-                        matching_source_cell(&tds, &tarcell_vertices, &removed_cells)
+                        matching_source_simplex(&tds, &target_simplex_vertices, &removed_simplices)
                             .is_none(),
-                        "inverse k=3 target cell should require explicit frame alignment",
+                        "inverse k=3 target simplex should require explicit frame alignment",
                     );
 
                     let topology_model = toroidal_periodic_model::<$dim>();
-                    let frame_cell = removed_cell_frame(&removed_cells).unwrap();
-                    let lifted = vertex_point_lifted_into_cell(
+                    let frame_simplex = removed_simplex_frame(&removed_simplices).unwrap();
+                    let lifted = vertex_point_lifted_into_simplex(
                         &tds,
                         &topology_model,
                         ridge_vertices[0],
-                        Some(frame_cell),
-                        &removed_cells,
+                        Some(frame_simplex),
+                        &removed_simplices,
                     )
                     .unwrap();
                     let mut expected = unit_vector::<$dim>(0);
@@ -14041,8 +14141,8 @@ mod tests {
                         &topology_model,
                         &ridge_vertices,
                         &triangle_vertices,
-                        &removed_cells,
-                        Some(frame_cell),
+                        &removed_simplices,
+                        Some(frame_simplex),
                         &config,
                         &mut diagnostics,
                     );
@@ -14057,34 +14157,34 @@ mod tests {
 
     #[test]
     fn test_non_periodic_lift_ignores_stored_periodic_offsets() {
-        let (tds, face_vertices, _opposite_a, _opposite_b, removed_cells) =
+        let (tds, face_vertices, _opposite_a, _opposite_b, removed_simplices) =
             periodic_inverse_k2_fixture::<4>();
         let lifted_vertex = face_vertices[0];
-        let source_cell = removed_cells
+        let source_simplex = removed_simplices
             .iter()
             .copied()
-            .find(|&cell_key| {
-                tds.cell(cell_key)
-                    .is_some_and(|cell| cell.contains_vertex(lifted_vertex))
+            .find(|&simplex_key| {
+                tds.simplex(simplex_key)
+                    .is_some_and(|simplex| simplex.contains_vertex(lifted_vertex))
             })
-            .expect("fixture should contain a removed cell with the lifted vertex");
+            .expect("fixture should contain a removed simplex with the lifted vertex");
         let topology_model = GlobalTopology::Euclidean.model();
 
         let direct = vertex_point_with_optional_lift(
             &tds,
             &topology_model,
             lifted_vertex,
-            Some(source_cell),
+            Some(source_simplex),
         )
         .unwrap();
         assert_relative_eq!(direct.coords().as_slice(), unit_vector::<4>(0).as_slice());
 
-        let framed = vertex_point_lifted_into_cell(
+        let framed = vertex_point_lifted_into_simplex(
             &tds,
             &topology_model,
             lifted_vertex,
-            Some(source_cell),
-            &removed_cells,
+            Some(source_simplex),
+            &removed_simplices,
         )
         .unwrap();
         assert_relative_eq!(framed.coords().as_slice(), unit_vector::<4>(0).as_slice());
@@ -14092,17 +14192,18 @@ mod tests {
 
     #[test]
     fn test_periodic_inverse_k2_alignment_failure_is_error() {
-        let (tds, face_vertices, opposite_a, opposite_b, removed_cells) =
+        let (tds, face_vertices, opposite_a, opposite_b, removed_simplices) =
             periodic_inverse_k2_fixture::<4>();
         let topology_model = toroidal_periodic_model::<4>();
-        let frame_cell = removed_cell_frame(&removed_cells).unwrap();
-        let truncated_removed_cells: CellKeyBuffer = std::iter::once(frame_cell).collect();
-        let lift_result = vertex_point_lifted_into_cell(
+        let frame_simplex = removed_simplex_frame(&removed_simplices).unwrap();
+        let truncated_removed_simplices: SimplexKeyBuffer =
+            std::iter::once(frame_simplex).collect();
+        let lift_result = vertex_point_lifted_into_simplex(
             &tds,
             &topology_model,
             face_vertices[0],
-            Some(frame_cell),
-            &truncated_removed_cells,
+            Some(frame_simplex),
+            &truncated_removed_simplices,
         );
         assert!(matches!(
             lift_result,
@@ -14124,8 +14225,8 @@ mod tests {
             &face_vertices,
             opposite_a,
             opposite_b,
-            &truncated_removed_cells,
-            Some(frame_cell),
+            &truncated_removed_simplices,
+            Some(frame_simplex),
             &config,
             &mut diagnostics,
         );
@@ -14148,12 +14249,12 @@ mod tests {
         let dt: DelaunayTriangulation<_, (), (), 2> =
             DelaunayTriangulation::new(&vertices).unwrap();
         let tds = dt.tds();
-        let local_cell = tds.cell_keys().next().unwrap();
+        let local_simplex = tds.simplex_keys().next().unwrap();
         let outcome = RepairAttemptOutcome {
             postcondition_required: false,
             stats: DelaunayRepairStats::default(),
             last_applied_flip: None,
-            touched_cells: once(local_cell).collect(),
+            touched_simplices: once(local_simplex).collect(),
             used_full_reseed: true,
         };
 
@@ -14161,11 +14262,11 @@ mod tests {
 
         assert!(run.used_full_reseed);
         assert!(
-            tds.cell_keys().count() > 1,
+            tds.simplex_keys().count() > 1,
             "fixture should distinguish local and full frontiers"
         );
-        assert_eq!(run.touched_cells.len(), 1);
-        assert_eq!(run.touched_cells[0], local_cell);
+        assert_eq!(run.touched_simplices.len(), 1);
+        assert_eq!(run.touched_simplices[0], local_simplex);
     }
 
     #[test]
@@ -14187,7 +14288,7 @@ mod tests {
             queue_order: RepairQueueOrder::Fifo,
             max_flips_override: None,
         };
-        let empty_seeds: &[CellKey] = &[];
+        let empty_seeds: &[SimplexKey] = &[];
 
         let outcome =
             repair_delaunay_with_flips_k2_attempt(&mut tds, &kernel, Some(empty_seeds), &config)
@@ -14195,7 +14296,7 @@ mod tests {
 
         assert!(!outcome.used_full_reseed);
         assert_eq!(outcome.stats.facets_checked, 0);
-        assert!(outcome.touched_cells.is_empty());
+        assert!(outcome.touched_simplices.is_empty());
         assert_eq!(snapshot_topology(&tds), before);
     }
 
@@ -14213,11 +14314,11 @@ mod tests {
         let mut tds = dt.tds().clone();
         let kernel = AdaptiveKernel::<f64>::new();
 
-        let seed_cell = tds.cell_keys().next().unwrap();
+        let seed_simplex = tds.simplex_keys().next().unwrap();
         let stats = repair_delaunay_with_flips_k2_k3(
             &mut tds,
             &kernel,
-            Some(&[seed_cell]),
+            Some(&[seed_simplex]),
             TopologyGuarantee::PLManifold,
             None,
         )

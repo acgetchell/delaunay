@@ -42,9 +42,9 @@ Core property modules:
   conversion semantics.
 - `tests/proptest_geometry.rs`: geometric utility and measure properties.
 - `tests/proptest_safe_conversions.rs`: checked conversion behavior.
-- `tests/proptest_cell.rs`, `tests/proptest_facet.rs`,
+- `tests/proptest_simplex.rs`, `tests/proptest_facet.rs`,
   `tests/proptest_vertex.rs`: low-level simplex component invariants.
-- `tests/proptest_tds.rs`: TDS mapping, neighbor, duplicate-cell, and structure
+- `tests/proptest_tds.rs`: TDS mapping, neighbor, duplicate-simplex, and structure
   invariants.
 - `tests/proptest_orientation.rs`: coherent orientation across construction,
   tamper detection, and incremental insertion.

@@ -8,14 +8,9 @@ use crate::core::traits::data_type::DataType;
 use crate::core::vertex::Vertex;
 use crate::geometry::traits::coordinate::CoordinateScalar;
 
-/// NOTE: The deprecated `facets_are_adjacent` function has been removed in Phase 3A.
-///
-/// Use [`facet_views_are_adjacent`] instead, which works with the lightweight `FacetView` API.
-///
 /// Determines if two facet views are adjacent by comparing their vertices.
 ///
 /// Two facets are considered adjacent if they contain the same set of vertices.
-/// This is the modern replacement for `facets_are_adjacent` using `FacetView`.
 ///
 /// # Arguments
 ///
@@ -31,7 +26,7 @@ use crate::geometry::traits::coordinate::CoordinateScalar;
 /// # Errors
 ///
 /// Returns `FacetError` if either facet's vertices cannot be accessed, typically
-/// due to missing cells in the triangulation data structure.
+/// due to missing simplices in the triangulation data structure.
 ///
 /// # Examples
 ///
@@ -42,10 +37,10 @@ use crate::geometry::traits::coordinate::CoordinateScalar;
 ///
 /// // This is a conceptual example - in practice you would get these from a real TDS
 /// fn example(tds: &Tds<f64, (), (), 3>) -> Result<bool, FacetError> {
-///     let cell_keys: Vec<_> = tds.cell_keys().take(2).collect();
-///     if cell_keys.len() >= 2 {
-///         let facet1 = FacetView::new(tds, cell_keys[0], 0)?;
-///         let facet2 = FacetView::new(tds, cell_keys[1], 0)?;
+///     let simplex_keys: Vec<_> = tds.simplex_keys().take(2).collect();
+///     if simplex_keys.len() >= 2 {
+///         let facet1 = FacetView::new(tds, simplex_keys[0], 0)?;
+///         let facet2 = FacetView::new(tds, simplex_keys[1], 0)?;
 ///
 ///         let adjacent = facet_views_are_adjacent(&facet1, &facet2)?;
 ///         match adjacent {
@@ -106,7 +101,7 @@ where
 /// # Errors
 ///
 /// Returns `FacetError` if the facet's vertices cannot be accessed, typically
-/// due to missing cells in the triangulation data structure.
+/// due to missing simplices in the triangulation data structure.
 ///
 /// # Examples
 ///
@@ -118,8 +113,8 @@ where
 /// fn extract_vertices_example(
 ///     tds: &Tds<f64, (), (), 3>,
 /// ) -> Result<(), FacetError> {
-///     let cell_key = tds.cell_keys().next().unwrap();
-///     let facet_view = FacetView::new(tds, cell_key, 0)?;
+///     let simplex_key = tds.simplex_keys().next().unwrap();
+///     let facet_view = FacetView::new(tds, simplex_key, 0)?;
 ///     
 ///     // Extract owned vertices
 ///     let vertices = facet_view_to_vertices(&facet_view)?;
@@ -364,8 +359,8 @@ mod tests {
         let tds1 = &dt1.as_triangulation().tds;
         let tds2 = &dt2.as_triangulation().tds;
 
-        let cell1_key = tds1.cell_keys().next().unwrap();
-        let cell2_key = tds2.cell_keys().next().unwrap();
+        let simplex1_key = tds1.simplex_keys().next().unwrap();
+        let simplex2_key = tds2.simplex_keys().next().unwrap();
 
         // Find any pair of facets that share the 3 vertices from shared triangle
         // Can't assume insertion order, so check all facet pairs
@@ -374,8 +369,8 @@ mod tests {
 
         for facet_idx1 in 0..4 {
             for facet_idx2 in 0..4 {
-                let fv1 = FacetView::new(tds1, cell1_key, facet_idx1).unwrap();
-                let fv2 = FacetView::new(tds2, cell2_key, facet_idx2).unwrap();
+                let fv1 = FacetView::new(tds1, simplex1_key, facet_idx1).unwrap();
+                let fv2 = FacetView::new(tds2, simplex2_key, facet_idx2).unwrap();
                 if facet_views_are_adjacent(&fv1, &fv2).unwrap() {
                     found_adjacent = true;
                     facet_view1_adj = Some(fv1);
@@ -400,8 +395,8 @@ mod tests {
         let mut found_non_adjacent = false;
         for facet_idx1 in 0..4 {
             for facet_idx2 in 0..4 {
-                let fv1 = FacetView::new(tds1, cell1_key, facet_idx1).unwrap();
-                let fv2 = FacetView::new(tds2, cell2_key, facet_idx2).unwrap();
+                let fv1 = FacetView::new(tds1, simplex1_key, facet_idx1).unwrap();
+                let fv2 = FacetView::new(tds2, simplex2_key, facet_idx2).unwrap();
                 if !facet_views_are_adjacent(&fv1, &fv2).unwrap() {
                     found_non_adjacent = true;
                     break;
@@ -455,16 +450,16 @@ mod tests {
         let tds1 = &dt1.as_triangulation().tds;
         let tds2 = &dt2.as_triangulation().tds;
 
-        let cell1_key = tds1.cell_keys().next().unwrap();
-        let cell2_key = tds2.cell_keys().next().unwrap();
+        let simplex1_key = tds1.simplex_keys().next().unwrap();
+        let simplex2_key = tds2.simplex_keys().next().unwrap();
 
         // In 2D, facets are edges. Find ANY pair of facets that share the 2 vertices from shared_edge
         // We can't assume insertion order, so check all facet pairs
         let mut found_adjacent = false;
         for facet_idx1 in 0..3 {
             for facet_idx2 in 0..3 {
-                let facet_view1 = FacetView::new(tds1, cell1_key, facet_idx1).unwrap();
-                let facet_view2 = FacetView::new(tds2, cell2_key, facet_idx2).unwrap();
+                let facet_view1 = FacetView::new(tds1, simplex1_key, facet_idx1).unwrap();
+                let facet_view2 = FacetView::new(tds2, simplex2_key, facet_idx2).unwrap();
                 if facet_views_are_adjacent(&facet_view1, &facet_view2).unwrap() {
                     found_adjacent = true;
                     break;
@@ -487,7 +482,7 @@ mod tests {
     fn test_facet_views_are_adjacent_1d_cases() {
         println!("Test 1D facet adjacency");
 
-        // In 1D, cells are edges and facets are vertices (0D)
+        // In 1D, simplices are edges and facets are vertices (0D)
         // Two edges sharing a vertex have adjacent facets
 
         let shared_vertex = vertex!([0.0]);
@@ -504,8 +499,8 @@ mod tests {
         let tds1 = &dt1.as_triangulation().tds;
         let tds2 = &dt2.as_triangulation().tds;
 
-        let cell1_key = tds1.cell_keys().next().unwrap();
-        let cell2_key = tds2.cell_keys().next().unwrap();
+        let simplex1_key = tds1.simplex_keys().next().unwrap();
+        let simplex2_key = tds2.simplex_keys().next().unwrap();
 
         // In 1D, the facets are the individual vertices (0D)
         // Both edges contain the shared vertex, so find which facet pairs are adjacent
@@ -514,8 +509,8 @@ mod tests {
 
         for facet_idx1 in 0..2 {
             for facet_idx2 in 0..2 {
-                let fv1 = FacetView::new(tds1, cell1_key, facet_idx1).unwrap();
-                let fv2 = FacetView::new(tds2, cell2_key, facet_idx2).unwrap();
+                let fv1 = FacetView::new(tds1, simplex1_key, facet_idx1).unwrap();
+                let fv2 = FacetView::new(tds2, simplex2_key, facet_idx2).unwrap();
                 if facet_views_are_adjacent(&fv1, &fv2).unwrap() {
                     found_adjacent = true;
                 } else {
@@ -553,13 +548,13 @@ mod tests {
 
         let dt = DelaunayTriangulation::new(&vertices).unwrap();
         let tds = &dt.as_triangulation().tds;
-        let cell_key = tds.cell_keys().next().unwrap();
+        let simplex_key = tds.simplex_keys().next().unwrap();
 
         // All facets of the same tetrahedron should be different from each other
-        let facet0 = FacetView::new(tds, cell_key, 0).unwrap();
-        let facet1 = FacetView::new(tds, cell_key, 1).unwrap();
-        let facet2 = FacetView::new(tds, cell_key, 2).unwrap();
-        let facet3 = FacetView::new(tds, cell_key, 3).unwrap();
+        let facet0 = FacetView::new(tds, simplex_key, 0).unwrap();
+        let facet1 = FacetView::new(tds, simplex_key, 1).unwrap();
+        let facet2 = FacetView::new(tds, simplex_key, 2).unwrap();
+        let facet3 = FacetView::new(tds, simplex_key, 3).unwrap();
 
         // Each facet should be adjacent to itself
         assert!(facet_views_are_adjacent(&facet0, &facet0).unwrap());
@@ -593,10 +588,10 @@ mod tests {
 
         let dt = DelaunayTriangulation::new(&vertices).unwrap();
         let tds = &dt.as_triangulation().tds;
-        let cell_key = tds.cell_keys().next().unwrap();
+        let simplex_key = tds.simplex_keys().next().unwrap();
 
-        let facet1 = FacetView::new(tds, cell_key, 0).unwrap();
-        let facet2 = FacetView::new(tds, cell_key, 1).unwrap();
+        let facet1 = FacetView::new(tds, simplex_key, 0).unwrap();
+        let facet2 = FacetView::new(tds, simplex_key, 1).unwrap();
 
         // Run the adjacency check many times to measure performance
         let start = Instant::now();
@@ -642,11 +637,11 @@ mod tests {
         let tds1 = &dt1.as_triangulation().tds;
         let tds2 = &dt2.as_triangulation().tds;
 
-        let cell1_key = tds1.cell_keys().next().unwrap();
-        let cell2_key = tds2.cell_keys().next().unwrap();
+        let simplex1_key = tds1.simplex_keys().next().unwrap();
+        let simplex2_key = tds2.simplex_keys().next().unwrap();
 
-        let facet1 = FacetView::new(tds1, cell1_key, 0).unwrap();
-        let facet2 = FacetView::new(tds2, cell2_key, 0).unwrap();
+        let facet1 = FacetView::new(tds1, simplex1_key, 0).unwrap();
+        let facet2 = FacetView::new(tds2, simplex2_key, 0).unwrap();
 
         // Facets from completely different geometries should not be adjacent
         assert!(
@@ -674,11 +669,11 @@ mod tests {
         let tds1 = &dt1.as_triangulation().tds;
         let tds2 = &dt2.as_triangulation().tds;
 
-        let cell1_key = tds1.cell_keys().next().unwrap();
-        let cell2_key = tds2.cell_keys().next().unwrap();
+        let simplex1_key = tds1.simplex_keys().next().unwrap();
+        let simplex2_key = tds2.simplex_keys().next().unwrap();
 
-        let facet1 = FacetView::new(tds1, cell1_key, 0).unwrap();
-        let facet2 = FacetView::new(tds2, cell2_key, 0).unwrap();
+        let facet1 = FacetView::new(tds1, simplex1_key, 0).unwrap();
+        let facet2 = FacetView::new(tds2, simplex2_key, 0).unwrap();
 
         // Check if the UUID generation is deterministic based on coordinates
         let facet1_vertex_uuids: FastHashSet<_> = facet1
@@ -746,8 +741,8 @@ mod tests {
         let tds1 = &dt1.as_triangulation().tds;
         let tds2 = &dt2.as_triangulation().tds;
 
-        let cell1_key = tds1.cell_keys().next().unwrap();
-        let cell2_key = tds2.cell_keys().next().unwrap();
+        let simplex1_key = tds1.simplex_keys().next().unwrap();
+        let simplex2_key = tds2.simplex_keys().next().unwrap();
 
         // In 4D, facets are tetrahedra. Find any pair that shares the 4 vertices from shared tetrahedron
         let mut found_adjacent = false;
@@ -755,8 +750,8 @@ mod tests {
 
         for facet_idx1 in 0..5 {
             for facet_idx2 in 0..5 {
-                let fv1 = FacetView::new(tds1, cell1_key, facet_idx1).unwrap();
-                let fv2 = FacetView::new(tds2, cell2_key, facet_idx2).unwrap();
+                let fv1 = FacetView::new(tds1, simplex1_key, facet_idx1).unwrap();
+                let fv2 = FacetView::new(tds2, simplex2_key, facet_idx2).unwrap();
                 if facet_views_are_adjacent(&fv1, &fv2).unwrap() {
                     found_adjacent = true;
                 } else {
@@ -807,8 +802,8 @@ mod tests {
         let tds1 = &dt1.as_triangulation().tds;
         let tds2 = &dt2.as_triangulation().tds;
 
-        let cell1_key = tds1.cell_keys().next().unwrap();
-        let cell2_key = tds2.cell_keys().next().unwrap();
+        let simplex1_key = tds1.simplex_keys().next().unwrap();
+        let simplex2_key = tds2.simplex_keys().next().unwrap();
 
         // In 5D, facets are 4D simplices. Find any pair that shares the 5 vertices from shared 4D simplex
         let mut found_adjacent = false;
@@ -816,8 +811,8 @@ mod tests {
 
         for facet_idx1 in 0..6 {
             for facet_idx2 in 0..6 {
-                let fv1 = FacetView::new(tds1, cell1_key, facet_idx1).unwrap();
-                let fv2 = FacetView::new(tds2, cell2_key, facet_idx2).unwrap();
+                let fv1 = FacetView::new(tds1, simplex1_key, facet_idx1).unwrap();
+                let fv2 = FacetView::new(tds2, simplex2_key, facet_idx2).unwrap();
                 if facet_views_are_adjacent(&fv1, &fv2).unwrap() {
                     found_adjacent = true;
                 } else {
@@ -852,8 +847,8 @@ mod tests {
             ("5D", "5-simplices", "4-simplices"),
         ];
 
-        for (dim, cell_type, facet_type) in dimensions_tested {
-            println!("  ✓ {dim}: {cell_type} with {facet_type} facets");
+        for (dim, simplex_type, facet_type) in dimensions_tested {
+            println!("  ✓ {dim}: {simplex_type} with {facet_type} facets");
         }
 
         println!("  ✓ All dimensional cases covered comprehensively");

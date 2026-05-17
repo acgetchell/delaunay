@@ -174,9 +174,9 @@ fn regression_periodic_neighbor_validation_uses_lifted_vertex_offsets() {
         .expect("periodic 2D build should succeed");
 
     assert!(
-        dt.cells()
-            .any(|(_, cell)| cell.periodic_vertex_offsets().is_some()),
-        "periodic image-point construction should populate lifted per-cell offsets"
+        dt.simplices()
+            .any(|(_, simplex)| simplex.periodic_vertex_offsets().is_some()),
+        "periodic image-point construction should populate lifted per-simplex offsets"
     );
     assert!(
         dt.tds().is_valid().is_ok(),
@@ -212,7 +212,7 @@ fn regression_issue_306_3d_construction_succeeds() {
 }
 
 /// The first 14 vertices from the 100-point 4D seed used to leave one negative
-/// cell after bulk local repair, causing the next insertion to be skipped.
+/// simplex after bulk local repair, causing the next insertion to be skipped.
 #[test]
 fn regression_issue_307_4d_bulk_repair_keeps_positive_orientation() {
     let seed: u64 = 0x9B77_86C9_99C5_6A16;
@@ -241,7 +241,7 @@ fn regression_issue_307_4d_bulk_repair_keeps_positive_orientation() {
     assert_eq!(stats.total_skipped(), 0);
     assert!(
         dt.as_triangulation().is_valid().is_ok(),
-        "bulk repair must leave all cells in positive geometric orientation",
+        "bulk repair must leave all simplices in positive geometric orientation",
     );
     assert!(
         dt.as_triangulation().validate().is_ok(),
@@ -252,7 +252,7 @@ fn regression_issue_307_4d_bulk_repair_keeps_positive_orientation() {
 /// The 4D 500-point seed `0xD225B8A07E274AE6` (ball radius 100) exhausted all
 /// shuffled retries before #204: every attempt finished with skip-heavy output
 /// (`inserted≈266–300`, `skipped≈200–234`) and the construction ultimately
-/// failed with `Cell violates Delaunay property: cell contains vertex that is
+/// failed with `Simplex violates Delaunay property: simplex contains vertex that is
 /// inside circumsphere`. The dominant failure mode was a cascade of
 /// `Ridge fan detected: 4 facets share ridge with 3 vertices` skips driven by
 /// a per-insertion local-repair flip budget that was too tight for D≥4

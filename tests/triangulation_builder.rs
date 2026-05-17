@@ -13,13 +13,11 @@ use delaunay::prelude::tds::{InvariantErrorSummaryDetail, TriangulationValidatio
 use delaunay::prelude::topology::spaces::{GlobalTopology, TopologyKind, ToroidalConstructionMode};
 use delaunay::prelude::topology::validation::{count_simplices, euler_characteristic};
 use delaunay::prelude::triangulation::construction::{
-    ConstructionOptions, DelaunayConstructionFailure, DelaunayTriangulation,
-    DelaunayTriangulationBuilder, DelaunayTriangulationConstructionError,
-    ExplicitConstructionError, ExplicitInsertionError, ExplicitInsertionErrorKind,
-    ExplicitInvariantError, ExplicitInvariantErrorKind, ExplicitTdsErrorKind,
-    InsertionOrderStrategy, TopologyGuarantee, Vertex, VertexBuilder, vertex,
+    ConstructionOptions, DelaunayTriangulation, DelaunayTriangulationBuilder,
+    DelaunayTriangulationConstructionError, ExplicitConstructionError, ExplicitInsertionError,
+    ExplicitInsertionErrorKind, ExplicitInvariantError, ExplicitInvariantErrorKind,
+    ExplicitTdsErrorKind, InsertionOrderStrategy, TopologyGuarantee, Vertex, VertexBuilder, vertex,
 };
-use delaunay::prelude::triangulation::insertion::{TdsConstructionFailure, TdsValidationFailure};
 use delaunay::prelude::triangulation::repair::DelaunayRepairError;
 
 // =============================================================================
@@ -41,7 +39,10 @@ fn test_builder_euclidean_matches_new_2d() {
         .expect("builder should succeed");
 
     assert_eq!(dt_new.number_of_vertices(), dt_builder.number_of_vertices());
-    assert_eq!(dt_new.number_of_cells(), dt_builder.number_of_cells());
+    assert_eq!(
+        dt_new.number_of_simplices(),
+        dt_builder.number_of_simplices()
+    );
     assert_eq!(dt_new.dim(), dt_builder.dim());
 }
 
@@ -169,9 +170,9 @@ fn test_builder_toroidal_canonicalizes_coordinates() {
         "Both inputs should produce the same number of vertices after canonicalization"
     );
     assert_eq!(
-        dt_canonical.number_of_cells(),
-        dt_shifted.number_of_cells(),
-        "Both inputs should produce the same number of cells after canonicalization"
+        dt_canonical.number_of_simplices(),
+        dt_shifted.number_of_simplices(),
+        "Both inputs should produce the same number of simplices after canonicalization"
     );
 }
 
@@ -257,8 +258,8 @@ fn test_builder_toroidal_matches_euclidean_on_canonical_input() {
         dt_toroidal.number_of_vertices()
     );
     assert_eq!(
-        dt_euclidean.number_of_cells(),
-        dt_toroidal.number_of_cells()
+        dt_euclidean.number_of_simplices(),
+        dt_toroidal.number_of_simplices()
     );
 }
 
@@ -445,11 +446,16 @@ fn test_builder_periodic_topology_level4_smoke_3d() {
         "global_topology should use periodic image-point construction"
     );
     assert!(
-        dt.cells().all(|(_, cell)| {
-            cell.periodic_vertex_offsets()
-                .is_some_and(|offsets| offsets.len() == cell.number_of_vertices())
+        dt.number_of_simplices() > 0,
+        "periodic image-point construction should produce at least one simplex"
+    );
+    assert!(
+        dt.simplices().all(|(_, simplex)| {
+            simplex
+                .periodic_vertex_offsets()
+                .is_some_and(|offsets| offsets.len() == simplex.number_of_vertices())
         }),
-        "periodic image-point construction should populate per-cell periodic offsets"
+        "periodic image-point construction should populate per-simplex periodic offsets"
     );
     // The compact 3D quotient is a smoke fixture for lifted predicate evaluation,
     // not a full periodic-Delaunay quality fixture. A local violation is a valid
@@ -504,13 +510,13 @@ fn test_explicit_toroidal_heawood_torus_rejected() {
     // Heawood triangulation: two families of 7 triangles each, 14 total.
     // Family 1: {i, i+1, i+3} mod 7
     // Family 2: {i, i+2, i+3} mod 7
-    let mut cells: Vec<Vec<usize>> = Vec::with_capacity(14);
+    let mut simplices: Vec<Vec<usize>> = Vec::with_capacity(14);
     for i in 0..7 {
-        cells.push(vec![i, (i + 1) % 7, (i + 3) % 7]);
-        cells.push(vec![i, (i + 2) % 7, (i + 3) % 7]);
+        simplices.push(vec![i, (i + 1) % 7, (i + 3) % 7]);
+        simplices.push(vec![i, (i + 2) % 7, (i + 3) % 7]);
     }
 
-    let err = DelaunayTriangulationBuilder::from_vertices_and_cells(&vertices, &cells)
+    let err = DelaunayTriangulationBuilder::from_vertices_and_simplices(&vertices, &simplices)
         .global_topology(GlobalTopology::Toroidal {
             domain: [2.0, 2.0],
             mode: ToroidalConstructionMode::Explicit,
@@ -539,14 +545,14 @@ fn test_explicit_toroidal_torus_euler_mismatch_without_override() {
         })
         .collect();
 
-    let mut cells: Vec<Vec<usize>> = Vec::with_capacity(14);
+    let mut simplices: Vec<Vec<usize>> = Vec::with_capacity(14);
     for i in 0..7 {
-        cells.push(vec![i, (i + 1) % 7, (i + 3) % 7]);
-        cells.push(vec![i, (i + 2) % 7, (i + 3) % 7]);
+        simplices.push(vec![i, (i + 1) % 7, (i + 3) % 7]);
+        simplices.push(vec![i, (i + 2) % 7, (i + 3) % 7]);
     }
 
     // Build with default Euclidean topology — should fail at Euler validation.
-    let err = DelaunayTriangulationBuilder::from_vertices_and_cells(&vertices, &cells)
+    let err = DelaunayTriangulationBuilder::from_vertices_and_simplices(&vertices, &simplices)
         .build::<()>()
         .expect_err("explicit torus without Toroidal metadata should fail Euler validation");
 
@@ -630,14 +636,14 @@ fn test_builder_from_vertices_f32() {
         .expect("f32 from_vertices build should succeed");
 
     assert_eq!(dt.number_of_vertices(), 3);
-    assert_eq!(dt.number_of_cells(), 1);
+    assert_eq!(dt.number_of_simplices(), 1);
 }
 
 // =============================================================================
-// Explicit construction (from_vertices_and_cells)
+// Explicit construction (from_vertices_and_simplices)
 // =============================================================================
 
-/// 2D: Build two triangles forming a quad from explicit vertices and cells.
+/// 2D: Build two triangles forming a quad from explicit vertices and simplices.
 #[test]
 fn test_explicit_2d_two_triangle_quad() {
     let vertices = vec![
@@ -646,14 +652,14 @@ fn test_explicit_2d_two_triangle_quad() {
         vertex!([1.0, 1.0]),
         vertex!([0.0, 1.0]),
     ];
-    let cells = vec![vec![0, 1, 2], vec![0, 2, 3]];
+    let simplices = vec![vec![0, 1, 2], vec![0, 2, 3]];
 
-    let dt = DelaunayTriangulationBuilder::from_vertices_and_cells(&vertices, &cells)
+    let dt = DelaunayTriangulationBuilder::from_vertices_and_simplices(&vertices, &simplices)
         .build::<()>()
         .expect("explicit 2D build should succeed");
 
     assert_eq!(dt.number_of_vertices(), 4);
-    assert_eq!(dt.number_of_cells(), 2);
+    assert_eq!(dt.number_of_simplices(), 2);
     assert!(
         dt.tds().is_valid().is_ok(),
         "TDS should be structurally valid"
@@ -662,8 +668,8 @@ fn test_explicit_2d_two_triangle_quad() {
     // Verify neighbor pointers: the two triangles share the edge (0,2) so
     // each should have the other as a neighbor.
     let mut neighbor_count = 0;
-    for (_, cell) in dt.cells() {
-        if let Some(neighbors) = cell.neighbors() {
+    for (_, simplex) in dt.simplices() {
+        if let Some(neighbors) = simplex.neighbors() {
             for n in neighbors {
                 if n.is_some() {
                     neighbor_count += 1;
@@ -671,36 +677,36 @@ fn test_explicit_2d_two_triangle_quad() {
             }
         }
     }
-    // Two cells sharing one facet → 2 neighbor slots filled (one in each cell).
+    // Two simplices sharing one facet → 2 neighbor slots filled (one in each simplex).
     assert!(
         neighbor_count >= 2,
         "Shared facet should produce neighbor pointers"
     );
 }
 
-/// Explicit construction normalizes incoherent local cell orderings.
+/// Explicit construction normalizes incoherent local simplex orderings.
 ///
-/// Swapping two vertices in one cell flips its local orientation relative to an
+/// Swapping two vertices in one simplex flips its local orientation relative to an
 /// otherwise valid two-triangle mesh. The builder should repair that internal
 /// ordering detail and still produce a structurally valid TDS.
 #[test]
-fn test_explicit_normalizes_incoherent_cell_order() {
+fn test_explicit_normalizes_incoherent_simplex_order() {
     let vertices = vec![
         vertex!([0.0_f64, 0.0]),
         vertex!([1.0, 0.0]),
         vertex!([1.0, 1.0]),
         vertex!([0.0, 1.0]),
     ];
-    let mut cells = vec![vec![0, 1, 2], vec![0, 2, 3]];
-    cells[1].swap(0, 1);
+    let mut simplices = vec![vec![0, 1, 2], vec![0, 2, 3]];
+    simplices[1].swap(0, 1);
 
-    let dt = DelaunayTriangulationBuilder::from_vertices_and_cells(&vertices, &cells)
+    let dt = DelaunayTriangulationBuilder::from_vertices_and_simplices(&vertices, &simplices)
         .build::<()>()
-        .expect("explicit build should normalize incoherent cell ordering");
+        .expect("explicit build should normalize incoherent simplex ordering");
 
     assert!(
         dt.tds().is_valid().is_ok(),
-        "builder should canonicalize incoherent cell orderings into a valid TDS"
+        "builder should canonicalize incoherent simplex orderings into a valid TDS"
     );
 }
 
@@ -715,14 +721,14 @@ fn test_explicit_3d_two_tetrahedra() {
         vertex!([1.0, 1.0, 1.0]),
     ];
     // Two tetrahedra sharing face (0, 1, 2)
-    let cells = vec![vec![0, 1, 2, 3], vec![0, 1, 2, 4]];
+    let simplices = vec![vec![0, 1, 2, 3], vec![0, 1, 2, 4]];
 
-    let dt = DelaunayTriangulationBuilder::from_vertices_and_cells(&vertices, &cells)
+    let dt = DelaunayTriangulationBuilder::from_vertices_and_simplices(&vertices, &simplices)
         .build::<()>()
         .expect("explicit 3D build should succeed");
 
     assert_eq!(dt.number_of_vertices(), 5);
-    assert_eq!(dt.number_of_cells(), 2);
+    assert_eq!(dt.number_of_simplices(), 2);
     assert!(
         dt.tds().is_valid().is_ok(),
         "TDS should be structurally valid"
@@ -742,7 +748,7 @@ fn test_explicit_round_trip_3d() {
 
     let dt_original = DelaunayTriangulation::new(&vertices).expect("Delaunay build should succeed");
     let original_vertex_count = dt_original.number_of_vertices();
-    let original_cell_count = dt_original.number_of_cells();
+    let original_simplex_count = dt_original.number_of_simplices();
 
     let tds = dt_original.tds();
     let vertex_keys: Vec<_> = tds.vertex_keys().collect();
@@ -757,19 +763,28 @@ fn test_explicit_round_trip_3d() {
         .map(|&vk| *tds.vertex(vk).unwrap())
         .collect();
 
-    let mut cell_specs: Vec<Vec<usize>> = Vec::new();
-    for (_, cell) in tds.cells() {
-        let spec: Vec<usize> = cell.vertices().iter().map(|vk| key_to_index[vk]).collect();
-        cell_specs.push(spec);
+    let mut simplex_specs: Vec<Vec<usize>> = Vec::new();
+    for (_, simplex) in tds.simplices() {
+        let spec: Vec<usize> = simplex
+            .vertices()
+            .iter()
+            .map(|vk| key_to_index[vk])
+            .collect();
+        simplex_specs.push(spec);
     }
 
-    let dt_reconstructed =
-        DelaunayTriangulationBuilder::from_vertices_and_cells(&extracted_vertices, &cell_specs)
-            .build::<()>()
-            .expect("explicit 3D reconstruction should succeed");
+    let dt_reconstructed = DelaunayTriangulationBuilder::from_vertices_and_simplices(
+        &extracted_vertices,
+        &simplex_specs,
+    )
+    .build::<()>()
+    .expect("explicit 3D reconstruction should succeed");
 
     assert_eq!(dt_reconstructed.number_of_vertices(), original_vertex_count);
-    assert_eq!(dt_reconstructed.number_of_cells(), original_cell_count);
+    assert_eq!(
+        dt_reconstructed.number_of_simplices(),
+        original_simplex_count
+    );
     assert!(
         dt_reconstructed.tds().is_valid().is_ok(),
         "Reconstructed 3D TDS should be structurally valid"
@@ -789,9 +804,9 @@ fn test_explicit_round_trip_2d() {
     // Build via standard Delaunay.
     let dt_original = DelaunayTriangulation::new(&vertices).expect("Delaunay build should succeed");
     let original_vertex_count = dt_original.number_of_vertices();
-    let original_cell_count = dt_original.number_of_cells();
+    let original_simplex_count = dt_original.number_of_simplices();
 
-    // Extract vertex keys → index mapping and cell specifications.
+    // Extract vertex keys → index mapping and simplex specifications.
     let tds = dt_original.tds();
     let vertex_keys: Vec<_> = tds.vertex_keys().collect();
     let key_to_index: HashMap<_, _> = vertex_keys
@@ -805,39 +820,48 @@ fn test_explicit_round_trip_2d() {
         .map(|&vk| *tds.vertex(vk).unwrap())
         .collect();
 
-    let mut cell_specs: Vec<Vec<usize>> = Vec::new();
-    for (_, cell) in tds.cells() {
-        let spec: Vec<usize> = cell.vertices().iter().map(|vk| key_to_index[vk]).collect();
-        cell_specs.push(spec);
+    let mut simplex_specs: Vec<Vec<usize>> = Vec::new();
+    for (_, simplex) in tds.simplices() {
+        let spec: Vec<usize> = simplex
+            .vertices()
+            .iter()
+            .map(|vk| key_to_index[vk])
+            .collect();
+        simplex_specs.push(spec);
     }
 
     // Reconstruct via explicit.
-    let dt_reconstructed =
-        DelaunayTriangulationBuilder::from_vertices_and_cells(&extracted_vertices, &cell_specs)
-            .build::<()>()
-            .expect("explicit reconstruction should succeed");
+    let dt_reconstructed = DelaunayTriangulationBuilder::from_vertices_and_simplices(
+        &extracted_vertices,
+        &simplex_specs,
+    )
+    .build::<()>()
+    .expect("explicit reconstruction should succeed");
 
     assert_eq!(dt_reconstructed.number_of_vertices(), original_vertex_count);
-    assert_eq!(dt_reconstructed.number_of_cells(), original_cell_count);
+    assert_eq!(
+        dt_reconstructed.number_of_simplices(),
+        original_simplex_count
+    );
     assert!(
         dt_reconstructed.tds().is_valid().is_ok(),
         "Reconstructed TDS should be structurally valid"
     );
 }
 
-/// Error: empty cells should fail.
+/// Error: empty simplices should fail.
 #[test]
-fn test_explicit_error_empty_cells() {
+fn test_explicit_error_empty_simplices() {
     let vertices = vec![vertex!([0.0_f64, 0.0]), vertex!([1.0, 0.0])];
-    let cells: Vec<Vec<usize>> = vec![];
+    let simplices: Vec<Vec<usize>> = vec![];
 
-    let result =
-        DelaunayTriangulationBuilder::from_vertices_and_cells(&vertices, &cells).build::<()>();
+    let result = DelaunayTriangulationBuilder::from_vertices_and_simplices(&vertices, &simplices)
+        .build::<()>();
 
-    assert!(result.is_err(), "Empty cells should produce an error");
+    assert!(result.is_err(), "Empty simplices should produce an error");
 }
 
-/// Error: wrong cell arity.
+/// Error: wrong simplex arity.
 #[test]
 fn test_explicit_error_wrong_arity() {
     let vertices = vec![
@@ -845,11 +869,11 @@ fn test_explicit_error_wrong_arity() {
         vertex!([1.0, 0.0]),
         vertex!([0.0, 1.0]),
     ];
-    // 2D expects 3 vertices per cell, but we provide 2.
-    let cells = vec![vec![0, 1]];
+    // 2D expects 3 vertices per simplex, but we provide 2.
+    let simplices = vec![vec![0, 1]];
 
-    let result =
-        DelaunayTriangulationBuilder::from_vertices_and_cells(&vertices, &cells).build::<()>();
+    let result = DelaunayTriangulationBuilder::from_vertices_and_simplices(&vertices, &simplices)
+        .build::<()>();
 
     assert!(result.is_err(), "Wrong arity should produce an error");
 }
@@ -862,10 +886,10 @@ fn test_explicit_error_index_out_of_bounds() {
         vertex!([1.0, 0.0]),
         vertex!([0.0, 1.0]),
     ];
-    let cells = vec![vec![0, 1, 99]]; // 99 is out of bounds
+    let simplices = vec![vec![0, 1, 99]]; // 99 is out of bounds
 
-    let result =
-        DelaunayTriangulationBuilder::from_vertices_and_cells(&vertices, &cells).build::<()>();
+    let result = DelaunayTriangulationBuilder::from_vertices_and_simplices(&vertices, &simplices)
+        .build::<()>();
 
     assert!(
         result.is_err(),
@@ -873,23 +897,23 @@ fn test_explicit_error_index_out_of_bounds() {
     );
 }
 
-/// Error: duplicate vertex in cell.
+/// Error: duplicate vertex in simplex.
 #[test]
-fn test_explicit_error_duplicate_vertex_in_cell() {
+fn test_explicit_error_duplicate_vertex_in_simplex() {
     let vertices = vec![
         vertex!([0.0_f64, 0.0]),
         vertex!([1.0, 0.0]),
         vertex!([0.0, 1.0]),
     ];
-    let cells = vec![vec![0, 1, 1]]; // Duplicate vertex 1
+    let simplices = vec![vec![0, 1, 1]]; // Duplicate vertex 1
 
-    let result =
-        DelaunayTriangulationBuilder::from_vertices_and_cells(&vertices, &cells).build::<()>();
+    let result = DelaunayTriangulationBuilder::from_vertices_and_simplices(&vertices, &simplices)
+        .build::<()>();
 
     assert!(result.is_err(), "Duplicate vertex should produce an error");
 }
 
-/// Error: toroidal + explicit cells is incompatible.
+/// Error: toroidal + explicit simplices is incompatible.
 #[test]
 fn test_explicit_error_toroidal_incompatible() {
     let vertices = vec![
@@ -897,16 +921,16 @@ fn test_explicit_error_toroidal_incompatible() {
         vertex!([1.0, 0.0]),
         vertex!([0.0, 1.0]),
     ];
-    let cells = vec![vec![0, 1, 2]];
+    let simplices = vec![vec![0, 1, 2]];
 
-    // Construct with explicit cells then add toroidal.
-    let result = DelaunayTriangulationBuilder::from_vertices_and_cells(&vertices, &cells)
+    // Construct with explicit simplices then add toroidal.
+    let result = DelaunayTriangulationBuilder::from_vertices_and_simplices(&vertices, &simplices)
         .toroidal([1.0, 1.0])
         .build::<()>();
 
     assert!(
         result.is_err(),
-        "Toroidal + explicit cells should produce an error"
+        "Toroidal + explicit simplices should produce an error"
     );
 }
 
@@ -918,14 +942,14 @@ fn test_explicit_2d_single_triangle() {
         vertex!([1.0, 0.0]),
         vertex!([0.0, 1.0]),
     ];
-    let cells = vec![vec![0, 1, 2]];
+    let simplices = vec![vec![0, 1, 2]];
 
-    let dt = DelaunayTriangulationBuilder::from_vertices_and_cells(&vertices, &cells)
+    let dt = DelaunayTriangulationBuilder::from_vertices_and_simplices(&vertices, &simplices)
         .build::<()>()
         .expect("single triangle should succeed");
 
     assert_eq!(dt.number_of_vertices(), 3);
-    assert_eq!(dt.number_of_cells(), 1);
+    assert_eq!(dt.number_of_simplices(), 1);
     assert!(dt.tds().is_valid().is_ok());
 }
 
@@ -938,14 +962,14 @@ fn test_explicit_3d_single_tetrahedron() {
         vertex!([0.0, 1.0, 0.0]),
         vertex!([0.0, 0.0, 1.0]),
     ];
-    let cells = vec![vec![0, 1, 2, 3]];
+    let simplices = vec![vec![0, 1, 2, 3]];
 
-    let dt = DelaunayTriangulationBuilder::from_vertices_and_cells(&vertices, &cells)
+    let dt = DelaunayTriangulationBuilder::from_vertices_and_simplices(&vertices, &simplices)
         .build::<()>()
         .expect("single tetrahedron should succeed");
 
     assert_eq!(dt.number_of_vertices(), 4);
-    assert_eq!(dt.number_of_cells(), 1);
+    assert_eq!(dt.number_of_simplices(), 1);
     assert!(dt.tds().is_valid().is_ok());
 }
 
@@ -956,7 +980,7 @@ fn test_explicit_3d_single_tetrahedron() {
 /// Geometry: A=(0,0), B=(4,0), C=(4,2), D=(1,2). The circumcircle of ABC has
 /// center (2,1) and radius √5. Point D=(1,2) is at distance √2 < √5 from the
 /// center, so D lies strictly inside the circumcircle of ABC. Using diagonal AC
-/// (cells [0,1,2] and [0,2,3]) is therefore non-Delaunay. The Delaunay
+/// (simplices [0,1,2] and [0,2,3]) is therefore non-Delaunay. The Delaunay
 /// triangulation would use diagonal BD instead.
 #[test]
 fn test_explicit_non_delaunay_mesh() {
@@ -968,9 +992,9 @@ fn test_explicit_non_delaunay_mesh() {
     ];
     // Diagonal AC = (0,0)-(4,2): non-Delaunay because D=(1,2) is inside
     // the circumcircle of triangle ABC.
-    let cells = vec![vec![0, 1, 2], vec![0, 2, 3]];
+    let simplices = vec![vec![0, 1, 2], vec![0, 2, 3]];
 
-    let err = DelaunayTriangulationBuilder::from_vertices_and_cells(&vertices, &cells)
+    let err = DelaunayTriangulationBuilder::from_vertices_and_simplices(&vertices, &simplices)
         .build::<()>()
         .expect_err("non-Delaunay mesh must not construct a DelaunayTriangulation");
 
@@ -997,9 +1021,9 @@ fn test_explicit_topology_guarantee_propagated() {
         vertex!([1.0, 0.0]),
         vertex!([0.0, 1.0]),
     ];
-    let cells = vec![vec![0, 1, 2]];
+    let simplices = vec![vec![0, 1, 2]];
 
-    let dt = DelaunayTriangulationBuilder::from_vertices_and_cells(&vertices, &cells)
+    let dt = DelaunayTriangulationBuilder::from_vertices_and_simplices(&vertices, &simplices)
         .topology_guarantee(TopologyGuarantee::Pseudomanifold)
         .build::<()>()
         .expect("build should succeed");
@@ -1027,9 +1051,9 @@ fn test_explicit_preserves_vertex_data() {
             .build()
             .unwrap(),
     ];
-    let cells = vec![vec![0, 1, 2]];
+    let simplices = vec![vec![0, 1, 2]];
 
-    let dt = DelaunayTriangulationBuilder::from_vertices_and_cells(&vertices, &cells)
+    let dt = DelaunayTriangulationBuilder::from_vertices_and_simplices(&vertices, &simplices)
         .build::<()>()
         .expect("explicit build with vertex data should succeed");
 
@@ -1054,9 +1078,9 @@ fn test_explicit_validate_delaunay_mesh() {
         vertex!([1.0, 0.0]),
         vertex!([0.5, 0.866_025_403_784_438_6]),
     ];
-    let cells = vec![vec![0, 1, 2]];
+    let simplices = vec![vec![0, 1, 2]];
 
-    let dt = DelaunayTriangulationBuilder::from_vertices_and_cells(&vertices, &cells)
+    let dt = DelaunayTriangulationBuilder::from_vertices_and_simplices(&vertices, &simplices)
         .build::<()>()
         .expect("build should succeed");
 
@@ -1073,11 +1097,11 @@ fn test_explicit_unreferenced_vertices_rejected() {
         vertex!([0.0_f64, 0.0]),
         vertex!([1.0, 0.0]),
         vertex!([0.0, 1.0]),
-        vertex!([5.0, 5.0]), // Not referenced by any cell
+        vertex!([5.0, 5.0]), // Not referenced by any simplex
     ];
-    let cells = vec![vec![0, 1, 2]];
+    let simplices = vec![vec![0, 1, 2]];
 
-    let err = DelaunayTriangulationBuilder::from_vertices_and_cells(&vertices, &cells)
+    let err = DelaunayTriangulationBuilder::from_vertices_and_simplices(&vertices, &simplices)
         .build::<()>()
         .unwrap_err();
 
@@ -1092,13 +1116,13 @@ fn test_explicit_unreferenced_vertices_rejected() {
     );
 }
 
-/// Error variant: empty cells returns ExplicitConstruction(EmptyCells).
+/// Error variant: empty simplices returns ExplicitConstruction(EmptySimplices).
 #[test]
-fn test_explicit_error_variant_empty_cells() {
+fn test_explicit_error_variant_empty_simplices() {
     let vertices = vec![vertex!([0.0_f64, 0.0])];
-    let cells: Vec<Vec<usize>> = vec![];
+    let simplices: Vec<Vec<usize>> = vec![];
 
-    let err = DelaunayTriangulationBuilder::from_vertices_and_cells(&vertices, &cells)
+    let err = DelaunayTriangulationBuilder::from_vertices_and_simplices(&vertices, &simplices)
         .build::<()>()
         .unwrap_err();
 
@@ -1106,14 +1130,14 @@ fn test_explicit_error_variant_empty_cells() {
         matches!(
             err,
             DelaunayTriangulationConstructionError::ExplicitConstruction(
-                ExplicitConstructionError::EmptyCells
+                ExplicitConstructionError::EmptySimplices
             )
         ),
-        "Expected ExplicitConstruction(EmptyCells), got: {err}"
+        "Expected ExplicitConstruction(EmptySimplices), got: {err}"
     );
 }
 
-/// Error variant: wrong arity returns ExplicitConstruction(InvalidCellArity { .. }).
+/// Error variant: wrong arity returns ExplicitConstruction(InvalidSimplexArity { .. }).
 #[test]
 fn test_explicit_error_variant_wrong_arity() {
     let vertices = vec![
@@ -1121,9 +1145,9 @@ fn test_explicit_error_variant_wrong_arity() {
         vertex!([1.0, 0.0]),
         vertex!([0.0, 1.0]),
     ];
-    let cells = vec![vec![0, 1]]; // 2D expects 3 vertices
+    let simplices = vec![vec![0, 1]]; // 2D expects 3 vertices
 
-    let err = DelaunayTriangulationBuilder::from_vertices_and_cells(&vertices, &cells)
+    let err = DelaunayTriangulationBuilder::from_vertices_and_simplices(&vertices, &simplices)
         .build::<()>()
         .unwrap_err();
 
@@ -1131,21 +1155,21 @@ fn test_explicit_error_variant_wrong_arity() {
         matches!(
             err,
             DelaunayTriangulationConstructionError::ExplicitConstruction(
-                ExplicitConstructionError::InvalidCellArity {
-                    cell_index: 0,
+                ExplicitConstructionError::InvalidSimplexArity {
+                    simplex_index: 0,
                     actual: 2,
                     expected: 3
                 }
             )
         ),
-        "Expected InvalidCellArity, got: {err}"
+        "Expected InvalidSimplexArity, got: {err}"
     );
 }
 
 /// Error variant: non-manifold facet sharing is rejected during TDS insertion.
 #[test]
 fn test_explicit_error_variant_non_manifold_facet() {
-    // Three triangles sharing the same edge (0,1) — facet shared by 3 cells
+    // Three triangles sharing the same edge (0,1) — facet shared by 3 simplices
     // violates the 2-manifold property.
     let vertices = vec![
         vertex!([0.0_f64, 0.0]),
@@ -1154,44 +1178,35 @@ fn test_explicit_error_variant_non_manifold_facet() {
         vertex!([1.0, 1.0]),
         vertex!([0.5, -1.0]),
     ];
-    let cells = vec![vec![0, 1, 2], vec![0, 1, 3], vec![0, 1, 4]];
+    let simplices = vec![vec![0, 1, 2], vec![0, 1, 3], vec![0, 1, 4]];
 
-    let err = DelaunayTriangulationBuilder::from_vertices_and_cells(&vertices, &cells)
+    let err = DelaunayTriangulationBuilder::from_vertices_and_simplices(&vertices, &simplices)
         .build::<()>()
         .unwrap_err();
 
-    let DelaunayTriangulationConstructionError::Triangulation(DelaunayConstructionFailure::Tds {
-        reason:
-            TdsConstructionFailure::Validation {
-                reason:
-                    TdsValidationFailure::FacetSharingViolation {
-                        existing_incident_count,
-                        attempted_incident_count,
-                        max_incident_count,
-                        ..
-                    },
-            },
-    }) = &err
+    let DelaunayTriangulationConstructionError::ExplicitConstruction(
+        ExplicitConstructionError::TdsAssembly { source },
+    ) = &err
     else {
-        panic!("Expected early TDS facet-sharing validation failure, got: {err}");
+        panic!("Expected explicit TDS assembly failure, got: {err}");
     };
 
-    assert_eq!(*existing_incident_count, 2);
-    assert_eq!(*attempted_incident_count, 3);
-    assert_eq!(*max_incident_count, 2);
+    assert_eq!(source.kind, ExplicitTdsErrorKind::FacetSharingViolation);
+    assert!(source.message.contains("observed 3 incident simplices"));
+    assert!(source.message.contains("max 2"));
 }
 
-/// Error variant: duplicate vertex returns ExplicitConstruction(DuplicateVertexInCell { .. }).
+/// Error variant: duplicate vertex returns ExplicitConstruction(DuplicateVertexInSimplex { .. }).
 #[test]
-fn test_explicit_error_variant_duplicate_vertex_in_cell() {
+fn test_explicit_error_variant_duplicate_vertex_in_simplex() {
     let vertices = vec![
         vertex!([0.0_f64, 0.0]),
         vertex!([1.0, 0.0]),
         vertex!([0.0, 1.0]),
     ];
-    let cells = vec![vec![0, 1, 1]]; // Duplicate vertex 1
+    let simplices = vec![vec![0, 1, 1]]; // Duplicate vertex 1
 
-    let err = DelaunayTriangulationBuilder::from_vertices_and_cells(&vertices, &cells)
+    let err = DelaunayTriangulationBuilder::from_vertices_and_simplices(&vertices, &simplices)
         .build::<()>()
         .unwrap_err();
 
@@ -1199,10 +1214,10 @@ fn test_explicit_error_variant_duplicate_vertex_in_cell() {
         matches!(
             err,
             DelaunayTriangulationConstructionError::ExplicitConstruction(
-                ExplicitConstructionError::DuplicateVertexInCell { cell_index: 0 }
+                ExplicitConstructionError::DuplicateVertexInSimplex { simplex_index: 0 }
             )
         ),
-        "Expected DuplicateVertexInCell, got: {err}"
+        "Expected DuplicateVertexInSimplex, got: {err}"
     );
 }
 
@@ -1214,9 +1229,9 @@ fn test_explicit_error_variant_incompatible_topology() {
         vertex!([1.0, 0.0]),
         vertex!([0.0, 1.0]),
     ];
-    let cells = vec![vec![0, 1, 2]];
+    let simplices = vec![vec![0, 1, 2]];
 
-    let err = DelaunayTriangulationBuilder::from_vertices_and_cells(&vertices, &cells)
+    let err = DelaunayTriangulationBuilder::from_vertices_and_simplices(&vertices, &simplices)
         .toroidal([1.0, 1.0])
         .build::<()>()
         .unwrap_err();
@@ -1240,9 +1255,9 @@ fn test_explicit_error_variant_unsupported_construction_options() {
         vertex!([1.0, 0.0]),
         vertex!([0.0, 1.0]),
     ];
-    let cells = vec![vec![0, 1, 2]];
+    let simplices = vec![vec![0, 1, 2]];
 
-    let err = DelaunayTriangulationBuilder::from_vertices_and_cells(&vertices, &cells)
+    let err = DelaunayTriangulationBuilder::from_vertices_and_simplices(&vertices, &simplices)
         .construction_options(
             ConstructionOptions::default().with_insertion_order(InsertionOrderStrategy::Input),
         )
@@ -1260,36 +1275,31 @@ fn test_explicit_error_variant_unsupported_construction_options() {
     );
 }
 
-/// Error variant: duplicate maximal cells are rejected during TDS insertion.
+/// Error variant: duplicate maximal simplices are rejected during TDS insertion.
 #[test]
-fn test_explicit_error_variant_duplicate_cells_structural_validation() {
+fn test_explicit_error_variant_duplicate_simplices_structural_validation() {
     let vertices = vec![
         vertex!([0.0_f64, 0.0]),
         vertex!([1.0, 0.0]),
         vertex!([0.0, 1.0]),
     ];
-    let cells = vec![vec![0, 1, 2], vec![0, 1, 2]];
+    let simplices = vec![vec![0, 1, 2], vec![0, 1, 2]];
 
-    let err = DelaunayTriangulationBuilder::from_vertices_and_cells(&vertices, &cells)
+    let err = DelaunayTriangulationBuilder::from_vertices_and_simplices(&vertices, &simplices)
         .build::<()>()
         .unwrap_err();
 
-    assert!(
-        matches!(
-            err,
-            DelaunayTriangulationConstructionError::Triangulation(
-                DelaunayConstructionFailure::Tds {
-                    reason: TdsConstructionFailure::Validation {
-                        reason: TdsValidationFailure::DuplicateCells { .. }
-                    }
-                }
-            )
-        ),
-        "expected early duplicate-cell TDS validation failure, got {err:?}"
-    );
+    let DelaunayTriangulationConstructionError::ExplicitConstruction(
+        ExplicitConstructionError::TdsAssembly { source },
+    ) = &err
+    else {
+        panic!("expected explicit TDS assembly failure, got {err:?}");
+    };
+
+    assert_eq!(source.kind, ExplicitTdsErrorKind::DuplicateSimplices);
 }
 
-/// Error variant: degenerate explicit cells fail geometric nondegeneracy validation.
+/// Error variant: degenerate explicit simplices fail geometric nondegeneracy validation.
 #[test]
 fn test_explicit_error_variant_geometric_nondegeneracy() {
     let vertices = vec![
@@ -1297,9 +1307,9 @@ fn test_explicit_error_variant_geometric_nondegeneracy() {
         vertex!([1.0, 0.0]),
         vertex!([2.0, 0.0]),
     ];
-    let cells = vec![vec![0, 1, 2]];
+    let simplices = vec![vec![0, 1, 2]];
 
-    let err = DelaunayTriangulationBuilder::from_vertices_and_cells(&vertices, &cells)
+    let err = DelaunayTriangulationBuilder::from_vertices_and_simplices(&vertices, &simplices)
         .build::<()>()
         .unwrap_err();
 
@@ -1345,14 +1355,14 @@ fn test_explicit_error_variant_orientation_normalization_summary() {
         source: ExplicitInsertionError {
             kind: ExplicitInsertionErrorKind::TopologyValidation,
             source_kind: None,
-            message: "orientation normalization could not establish coherent cells".to_string(),
+            message: "orientation normalization could not establish coherent simplices".to_string(),
         },
     };
 
     match source {
         ExplicitConstructionError::OrientationNormalization { source } => {
             assert_eq!(source.kind, ExplicitInsertionErrorKind::TopologyValidation);
-            assert!(source.to_string().contains("coherent cells"));
+            assert!(source.to_string().contains("coherent simplices"));
         }
         other => panic!("expected orientation-normalization variant, got {other:?}"),
     }
@@ -1366,9 +1376,9 @@ fn test_explicit_error_variant_index_out_of_bounds() {
         vertex!([1.0, 0.0]),
         vertex!([0.0, 1.0]),
     ];
-    let cells = vec![vec![0, 1, 99]];
+    let simplices = vec![vec![0, 1, 99]];
 
-    let err = DelaunayTriangulationBuilder::from_vertices_and_cells(&vertices, &cells)
+    let err = DelaunayTriangulationBuilder::from_vertices_and_simplices(&vertices, &simplices)
         .build::<()>()
         .unwrap_err();
 
@@ -1377,7 +1387,7 @@ fn test_explicit_error_variant_index_out_of_bounds() {
             err,
             DelaunayTriangulationConstructionError::ExplicitConstruction(
                 ExplicitConstructionError::IndexOutOfBounds {
-                    cell_index: 0,
+                    simplex_index: 0,
                     vertex_index: 99,
                     bound: 3,
                 }

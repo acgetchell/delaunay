@@ -30,7 +30,7 @@ use thiserror::Error;
 #[derive(Clone, Debug, Error, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum TopologyError {
-    /// Failed to build the facet-to-cells incidence map.
+    /// Failed to build the facet-to-simplices incidence map.
     #[error("Failed to build facet incidence map during topology analysis: {source}")]
     FacetMapBuild {
         /// Underlying TDS failure.
@@ -46,9 +46,9 @@ pub enum TopologyError {
         source: TdsError,
     },
 
-    /// Failed to access the cell for a boundary facet.
-    #[error("Failed to access boundary facet cell during topology analysis: {source}")]
-    BoundaryFacetCellAccess {
+    /// Failed to access the simplex for a boundary facet.
+    #[error("Failed to access boundary facet simplex during topology analysis: {source}")]
+    BoundaryFacetSimplexAccess {
         /// Underlying facet failure.
         #[source]
         source: FacetError,
@@ -139,7 +139,7 @@ pub enum ToroidalConstructionMode {
     /// Phase 2 toroidal mode: 3^D image-point construction with periodic quotient
     /// neighbor rewiring.
     PeriodicImagePoint,
-    /// Explicit cell construction: the caller provided combinatorial connectivity
+    /// Explicit simplex construction: the caller provided combinatorial connectivity
     /// directly and declared toroidal topology metadata for validation purposes.
     ///
     /// No coordinate canonicalization or image-point expansion is performed.

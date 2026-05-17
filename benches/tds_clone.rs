@@ -37,7 +37,7 @@ type BenchTriangulation<const D: usize> = DelaunayTriangulation<AdaptiveKernel<f
 
 struct CloneSource<const D: usize> {
     vertex_count: usize,
-    cell_count: usize,
+    simplex_count: usize,
     tds: Tds<f64, (), (), D>,
 }
 
@@ -75,14 +75,14 @@ fn build_clone_source<const D: usize>(requested_vertices: usize, seed_base: u64)
 
     CloneSource {
         vertex_count: tds.number_of_vertices(),
-        cell_count: tds.number_of_cells(),
+        simplex_count: tds.number_of_simplices(),
         tds,
     }
 }
 
-/// Report benchmark throughput in total stored vertices plus cells.
+/// Report benchmark throughput in total stored vertices plus simplices.
 fn tds_element_count<const D: usize>(source: &CloneSource<D>) -> u64 {
-    let total_elements = source.vertex_count + source.cell_count;
+    let total_elements = source.vertex_count + source.simplex_count;
     bench_result(
         u64::try_from(total_elements),
         "TDS element count does not fit in u64",
@@ -109,8 +109,8 @@ fn bench_dimension<const D: usize>(
             BenchmarkId::new(
                 "tds_clone",
                 format!(
-                    "vertices_{}_cells_{}",
-                    source.vertex_count, source.cell_count
+                    "vertices_{}_simplices_{}",
+                    source.vertex_count, source.simplex_count
                 ),
             ),
             &source,

@@ -1,17 +1,16 @@
-//! Data and operations on d-dimensional cells or [simplices](https://en.wikipedia.org/wiki/Simplex).
+//! Data and operations on d-dimensional simplices.
 //!
-//! This module provides the `Cell` struct which represents a geometric cell
-//! (simplex) in D-dimensional space with associated metadata including unique
-//! identification, neighboring cells, and optional user data.
+//! This module provides [`Simplex`], the TDS element representing a D-dimensional
+//! simplex by its vertex keys, neighboring-simplex slots, UUID, and optional user data.
 //!
 //! # Key Features
 //!
-//! - **Geometry when you need it**: the `Cell` type does not require `T: CoordinateScalar`
+//! - **Geometry when you need it**: the `Simplex` type does not require `T: CoordinateScalar`
 //!   at the type level, but geometric operations, validation, and serialization are only
 //!   available when `T: CoordinateScalar` (e.g. `f32`, `f64`)
-//! - **Unique Identification**: Each cell has a UUID for consistent identification
+//! - **Unique Identification**: Each simplex has a UUID for consistent identification
 //! - **Vertices Management**: Stores vertices that form the simplex
-//! - **Neighbor Tracking**: Maintains references to neighboring cells
+//! - **Neighbor Tracking**: Maintains references to neighboring simplices
 //! - **Optional Data Storage**: Supports attaching arbitrary user data of type `V`
 //! - **Serialization Support**: Manual serde for `uuid` and `data`; vertex/neighbor keys are
 //!   omitted and reconstructed during TDS (de)serialization
@@ -29,11 +28,11 @@
 //!     vertex!([0.0, 0.0, 1.0]),
 //! ];
 //!
-//! // Create a 3D triangulation with cells
+//! // Create a 3D triangulation with simplices
 //! let dt: DelaunayTriangulation<_, (), (), 3> =
 //!     DelaunayTriangulation::new(&vertices).unwrap();
-//! let (cell_key, cell) = dt.cells().next().unwrap();
-//! assert_eq!(cell.number_of_vertices(), 4);
+//! let (simplex_key, simplex) = dt.simplices().next().unwrap();
+//! assert_eq!(simplex.number_of_vertices(), 4);
 //! ```
 
 #![allow(clippy::similar_names)]
@@ -46,14 +45,14 @@
 use super::vertex::Vertex;
 use super::{
     facet::{FacetError, FacetView},
-    tds::{CellKey, Tds, VertexKey},
-    traits::{DataDeserialize, DataSerialize, DataType},
+    tds::{SimplexKey, Tds, VertexKey},
+    traits::{DataDeserialize, DataSerialize},
     util::{UuidValidationError, make_uuid, usize_to_u8, validate_uuid},
     vertex::VertexValidationError,
 };
 use crate::core::collections::{
-    CellVertexBuffer, CellVertexUuidBuffer, FastHashMap, FastHashSet, NeighborBuffer,
-    PeriodicOffsetBuffer,
+    FastHashMap, FastHashSet, NeighborBuffer, PeriodicOffsetBuffer, SimplexVertexKeyBuffer,
+    SimplexVertexUuidBuffer,
 };
 use crate::geometry::matrix::StackMatrixDispatchError;
 use crate::geometry::traits::coordinate::{CoordinateConversionError, CoordinateScalar};
@@ -75,42 +74,42 @@ use uuid::Uuid;
 // ERROR TYPES
 // =============================================================================
 
-/// Errors that can occur during cell validation.
+/// Errors that can occur during simplex validation.
 ///
 /// # Examples
 ///
 /// ```rust
-/// use delaunay::prelude::tds::CellValidationError;
+/// use delaunay::prelude::tds::SimplexValidationError;
 ///
-/// let err = CellValidationError::DuplicateVertices;
-/// assert!(matches!(err, CellValidationError::DuplicateVertices));
+/// let err = SimplexValidationError::DuplicateVertices;
+/// assert!(matches!(err, SimplexValidationError::DuplicateVertices));
 /// ```
 #[derive(Clone, Debug, Error, PartialEq, Eq)]
 #[non_exhaustive]
-pub enum CellValidationError {
-    /// The cell has an invalid vertex.
+pub enum SimplexValidationError {
+    /// The simplex has an invalid vertex.
     #[error("Invalid vertex: {source}")]
     InvalidVertex {
         /// The underlying vertex validation error.
         #[from]
         source: VertexValidationError,
     },
-    /// The cell has an invalid UUID.
+    /// The simplex has an invalid UUID.
     #[error("Invalid UUID: {source}")]
     InvalidUuid {
         /// The underlying UUID validation error.
         #[from]
         source: UuidValidationError,
     },
-    /// The cell contains duplicate vertices.
-    #[error("Duplicate vertices: cell contains non-unique vertices which is not allowed")]
+    /// The simplex contains duplicate vertices.
+    #[error("Duplicate vertices: simplex contains non-unique vertices which is not allowed")]
     DuplicateVertices,
-    /// The cell has insufficient vertices to form a proper D-simplex.
+    /// The simplex has insufficient vertices to form a proper D-simplex.
     #[error(
-        "Insufficient vertices: cell has {actual} vertices; expected exactly {expected} for a {dimension}D simplex"
+        "Insufficient vertices: simplex has {actual} vertices; expected exactly {expected} for a {dimension}D simplex"
     )]
     InsufficientVertices {
-        /// The actual number of vertices in the cell.
+        /// The actual number of vertices in the simplex.
         actual: usize,
         /// The expected number of vertices (D+1).
         expected: usize,
@@ -149,7 +148,7 @@ pub enum CellValidationError {
         /// Facet slot that is still unassigned.
         facet_index: usize,
     },
-    /// The periodic offset list is not aligned with the cell's vertex list.
+    /// The periodic offset list is not aligned with the simplex's vertex list.
     #[error("Periodic offset length mismatch: got {found}, expected {expected}")]
     PeriodicOffsetLengthMismatch {
         /// The expected number of offsets (= number of vertices).
@@ -157,7 +156,7 @@ pub enum CellValidationError {
         /// The observed number of offsets.
         found: usize,
     },
-    /// A vertex key referenced by the cell was not found in the TDS.
+    /// A vertex key referenced by the simplex was not found in the TDS.
     #[error("Vertex key {key:?} not found in TDS (indicates TDS corruption or inconsistency)")]
     VertexKeyNotFound {
         /// The vertex key that was not found.
@@ -165,7 +164,7 @@ pub enum CellValidationError {
     },
 }
 
-impl From<StackMatrixDispatchError> for CellValidationError {
+impl From<StackMatrixDispatchError> for SimplexValidationError {
     fn from(source: StackMatrixDispatchError) -> Self {
         CoordinateConversionError::from(source).into()
     }
@@ -195,19 +194,19 @@ where
     cmp::Ordering::Equal
 }
 
-/// A typed neighbor slot for a cell facet.
+/// A typed neighbor slot for a simplex facet.
 ///
 /// This distinguishes the TDS states that nested `Option` storage used to blur:
 /// a neighbor buffer can be unassigned, a facet can be assigned as a boundary,
-/// or a facet can point at a neighboring cell.
+/// or a facet can point at a neighboring simplex.
 ///
 /// # Examples
 ///
 /// ```rust
-/// use delaunay::prelude::tds::{CellKey, NeighborSlot};
+/// use delaunay::prelude::tds::{SimplexKey, NeighborSlot};
 /// use slotmap::KeyData;
 ///
-/// let key = CellKey::from(KeyData::from_ffi(1));
+/// let key = SimplexKey::from(KeyData::from_ffi(1));
 ///
 /// assert_eq!(
 ///     NeighborSlot::from_neighbor_key(Some(key)),
@@ -215,7 +214,7 @@ where
 /// );
 /// assert!(NeighborSlot::from_neighbor_key(None).is_boundary());
 /// assert!(NeighborSlot::Unassigned.is_unassigned());
-/// assert_eq!(NeighborSlot::Boundary.cell_key(), None);
+/// assert_eq!(NeighborSlot::Boundary.simplex_key(), None);
 /// ```
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub enum NeighborSlot {
@@ -223,8 +222,8 @@ pub enum NeighborSlot {
     Unassigned,
     /// The facet is assigned and lies on the boundary.
     Boundary,
-    /// The facet is assigned and has a neighboring cell.
-    Neighbor(CellKey),
+    /// The facet is assigned and has a neighboring simplex.
+    Neighbor(SimplexKey),
 }
 
 impl NeighborSlot {
@@ -234,19 +233,19 @@ impl NeighborSlot {
     /// [`Boundary`](Self::Boundary), not [`Unassigned`](Self::Unassigned).
     #[inline]
     #[must_use]
-    pub const fn from_neighbor_key(neighbor: Option<CellKey>) -> Self {
+    pub const fn from_neighbor_key(neighbor: Option<SimplexKey>) -> Self {
         match neighbor {
-            Some(cell_key) => Self::Neighbor(cell_key),
+            Some(simplex_key) => Self::Neighbor(simplex_key),
             None => Self::Boundary,
         }
     }
 
-    /// Returns the neighboring cell key when this slot has one.
+    /// Returns the neighboring simplex key when this slot has one.
     #[inline]
     #[must_use]
-    pub const fn cell_key(self) -> Option<CellKey> {
+    pub const fn simplex_key(self) -> Option<SimplexKey> {
         match self {
-            Self::Neighbor(cell_key) => Some(cell_key),
+            Self::Neighbor(simplex_key) => Some(simplex_key),
             Self::Boundary | Self::Unassigned => None,
         }
     }
@@ -271,30 +270,30 @@ impl NeighborSlot {
 // =============================================================================
 
 // =============================================================================
-// CELL STRUCT DEFINITION
+// SIMPLEX STRUCT DEFINITION
 // =============================================================================
 
 #[derive(Clone, Debug)]
-/// The [Cell] struct represents a d-dimensional
+/// The [Simplex] struct represents a d-dimensional
 /// [simplex](https://en.wikipedia.org/wiki/Simplex) with vertices, a unique
 /// identifier, optional neighbors, and optional data.
 ///
-/// # Phase 3A: Key-Based Storage
+/// # Storage Model
 ///
-/// This Cell now stores keys to vertices and neighbors instead of full objects,
-/// providing better memory efficiency and cache locality.
+/// A simplex stores keys to vertices and neighbors. This keeps topology edits
+/// cheap and lets the owning [`Tds`] provide the authoritative vertex storage.
 ///
 /// # Properties
 ///
 /// - `vertices`: Keys referencing vertices in the TDS. Access via `vertices()` method.
-/// - `uuid`: Universally unique identifier for the cell.
-/// - `neighbors`: Optional keys to neighboring cells (opposite each vertex). Access via `neighbors()` method.
-/// - `data`: Optional user data associated with the cell. Read via [`data()`](Self::data),
-///   mutate via [`Tds::set_cell_data`](crate::core::tds::Tds::set_cell_data).
+/// - `uuid`: Universally unique identifier for the simplex.
+/// - `neighbors`: Optional keys to neighboring simplices (opposite each vertex). Access via `neighbors()` method.
+/// - `data`: Optional user data associated with the simplex. Read via [`data()`](Self::data),
+///   mutate via [`Tds::set_simplex_data`](crate::core::tds::Tds::set_simplex_data).
 ///
 /// # Accessing Vertices
 ///
-/// Since cells now store keys, you need a `&Tds` reference to access vertex data:
+/// Since simplices store keys, use the owning [`Tds`] to resolve vertex data:
 /// ```rust
 /// use delaunay::prelude::collections::Uuid;
 /// use delaunay::prelude::triangulation::*;
@@ -307,35 +306,35 @@ impl NeighborSlot {
 /// ];
 /// let dt = DelaunayTriangulation::new(&vertices).unwrap();
 ///
-/// // Get first cell and iterate over vertex keys
-/// let (cell_key, cell) = dt.cells().next().unwrap();
+/// // Get first simplex and iterate over vertex keys
+/// let (simplex_key, simplex) = dt.simplices().next().unwrap();
 /// let tds = dt.tds();
-/// for &vertex_key in cell.vertices() {
+/// for &vertex_key in simplex.vertices() {
 ///     let vertex = &tds.vertex(vertex_key).unwrap();
 ///     // use vertex...
 ///     assert!(vertex.uuid() != Uuid::nil());
 /// }
 /// ```
-pub struct Cell<T, U, V, const D: usize> {
-    /// Keys to the vertices forming this cell.
-    /// Phase 3A: Changed from `Vec<Vertex>` to `CellVertexBuffer` for:
+pub struct Simplex<T, U, V, const D: usize> {
+    /// Keys to the vertices forming this simplex.
+    ///
     /// - Zero heap allocation for D ≤ 7 (stack-allocated)
     /// - Direct key access without UUID lookup
     /// - Better cache locality
     ///
     /// Note: Not serialized - vertices are serialized separately and keys
     /// are reconstructed during deserialization.
-    vertices: CellVertexBuffer,
+    vertices: SimplexVertexKeyBuffer,
 
-    /// The unique identifier of the cell.
+    /// The unique identifier of the simplex.
     uuid: Uuid,
 
-    /// Typed neighboring-cell slots, indexed by opposite vertex.
+    /// Typed neighboring-simplex slots, indexed by opposite vertex.
     ///
     /// Positional semantics: `neighbors[i]` is the neighbor opposite `vertices[i]`.
     ///
     /// # Example
-    /// For a 3D cell (tetrahedron) with 4 vertices:
+    /// For a 3D simplex (tetrahedron) with 4 vertices:
     /// - `neighbors[0]` is opposite `vertices[0]` (shares vertices 1, 2, 3)
     /// - `neighbors[1]` is opposite `vertices[1]` (shares vertices 0, 2, 3)
     /// - `neighbors[2]` is opposite `vertices[2]` (shares vertices 0, 1, 3)
@@ -345,10 +344,10 @@ pub struct Cell<T, U, V, const D: usize> {
     /// Access via `neighbor_slots()` or `neighbors()`. Mutation goes through TDS-owned helpers.
     neighbors: Option<NeighborBuffer<NeighborSlot>>,
 
-    /// The optional data associated with the cell.
+    /// The optional data associated with the simplex.
     pub(crate) data: Option<V>,
 
-    /// Optional per-vertex periodic lattice offsets for quotient-cell reconstruction.
+    /// Optional per-vertex periodic lattice offsets for quotient-simplex reconstruction.
     ///
     /// When present, this buffer is aligned with `vertices` by index:
     /// `periodic_vertex_offsets[i]` corresponds to `vertices[i]`.
@@ -356,7 +355,7 @@ pub struct Cell<T, U, V, const D: usize> {
     pub(crate) periodic_vertex_offsets: Option<PeriodicOffsetBuffer<D>>,
 
     /// Phantom data to maintain type parameters T and U for coordinate and vertex data types.
-    /// These are needed because cells store keys to vertices, not the vertices themselves.
+    /// These are needed because simplices store keys to vertices, not the vertices themselves.
     _phantom: PhantomData<(T, U)>,
 }
 
@@ -364,9 +363,9 @@ pub struct Cell<T, U, V, const D: usize> {
 // SERIALIZATION IMPLEMENTATION
 // =============================================================================
 
-/// Manual implementation of Serialize for Cell.
+/// Manual implementation of Serialize for Simplex.
 ///
-/// This implementation handles serialization of Cell fields. The `vertices` and `neighbors`
+/// This implementation handles serialization of Simplex fields. The `vertices` and `neighbors`
 /// fields are skipped as they contain keys that are only valid within the current `SlotMap`.
 /// During deserialization, these are reconstructed by the TDS.
 ///
@@ -374,7 +373,7 @@ pub struct Cell<T, U, V, const D: usize> {
 /// serialize `data` to omit it from JSON when None (reducing output size). The second
 /// `is_some()` check matches the field count logic—both could be removed to always
 /// serialize "data": null, but tests explicitly verify the field is omitted when None.
-impl<T, U, V, const D: usize> Serialize for Cell<T, U, V, D>
+impl<T, U, V, const D: usize> Serialize for Simplex<T, U, V, D>
 where
     V: DataSerialize,
 {
@@ -384,7 +383,7 @@ where
     {
         let has_data = self.data.is_some();
         let field_count = if has_data { 2 } else { 1 };
-        let mut state = serializer.serialize_struct("Cell", field_count)?;
+        let mut state = serializer.serialize_struct("Simplex", field_count)?;
         state.serialize_field("uuid", &self.uuid)?;
         if has_data {
             state.serialize_field("data", &self.data)?;
@@ -397,8 +396,8 @@ where
 // DESERIALIZATION IMPLEMENTATION
 // =============================================================================
 
-/// Manual implementation of Deserialize for Cell
-impl<'de, T, U, V, const D: usize> Deserialize<'de> for Cell<T, U, V, D>
+/// Manual implementation of Deserialize for Simplex
+impl<'de, T, U, V, const D: usize> Deserialize<'de> for Simplex<T, U, V, D>
 where
     V: DataDeserialize,
 {
@@ -406,24 +405,24 @@ where
     where
         De: Deserializer<'de>,
     {
-        struct CellVisitor<T, U, V, const D: usize>
+        struct SimplexVisitor<T, U, V, const D: usize>
         where
             V: DataDeserialize,
         {
             _phantom: PhantomData<(T, U, V)>,
         }
 
-        impl<'de, T, U, V, const D: usize> Visitor<'de> for CellVisitor<T, U, V, D>
+        impl<'de, T, U, V, const D: usize> Visitor<'de> for SimplexVisitor<T, U, V, D>
         where
             V: DataDeserialize,
         {
-            type Value = Cell<T, U, V, D>;
+            type Value = Simplex<T, U, V, D>;
 
             fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
-                formatter.write_str("a Cell struct")
+                formatter.write_str("a Simplex struct")
             }
 
-            fn visit_map<A>(self, mut map: A) -> Result<Cell<T, U, V, D>, A::Error>
+            fn visit_map<A>(self, mut map: A) -> Result<Simplex<T, U, V, D>, A::Error>
             where
                 A: MapAccess<'de>,
             {
@@ -459,13 +458,13 @@ where
                 // flatten() converts None -> None and Some(inner) -> inner
                 let data = data.flatten();
 
-                // Phase 3A: vertices and neighbors are not serialized
-                // They will be reconstructed by TDS deserialization using:
-                // - vertices: rebuilt by the TDS using its serialized cell→vertex mapping
+                // Vertices and neighbors are not serialized. They are reconstructed
+                // by TDS deserialization using:
+                // - vertices: rebuilt by the TDS using its serialized simplex→vertex mapping
                 // - neighbors: rebuilt by the TDS via assign_neighbors()
-                let vertices = CellVertexBuffer::new();
+                let vertices = SimplexVertexKeyBuffer::new();
 
-                Ok(Cell {
+                Ok(Simplex {
                     vertices,
                     uuid,
                     neighbors: None, // Will be reconstructed by TDS
@@ -478,9 +477,9 @@ where
 
         const FIELDS: &[&str] = &["uuid", "data"];
         deserializer.deserialize_struct(
-            "Cell",
+            "Simplex",
             FIELDS,
-            CellVisitor {
+            SimplexVisitor {
                 _phantom: PhantomData,
             },
         )
@@ -488,37 +487,37 @@ where
 }
 
 // =============================================================================
-// CELL IMPLEMENTATION - CORE METHODS
+// SIMPLEX IMPLEMENTATION - CORE METHODS
 // =============================================================================
 
 // Minimal trait bounds impl block
-impl<T, U, V, const D: usize> Cell<T, U, V, D> {
+impl<T, U, V, const D: usize> Simplex<T, U, V, D> {
     /// Internal constructor for TDS use only.
     ///
-    /// Creates a Cell with the given vertex keys and optional data.
+    /// Creates a simplex with the given vertex keys and optional data.
     /// This constructor is `pub(crate)` to restrict usage to within the crate,
-    /// ensuring cells are always created through proper TDS methods.
+    /// ensuring simplices are always created through proper TDS methods.
     ///
     /// # Arguments
     ///
-    /// * `vertices` - Keys to the vertices forming this cell (must be D+1 keys)
-    /// * `data` - Optional cell data
+    /// * `vertices` - Keys to the vertices forming this simplex (must be D+1 keys)
+    /// * `data` - Optional simplex data
     ///
     /// # Errors
     ///
     /// Returns:
-    /// - `CellValidationError::InsufficientVertices` if `vertices` doesn't have exactly D+1 elements.
-    /// - `CellValidationError::DuplicateVertices` if any vertex key appears more than once.
+    /// - `SimplexValidationError::InsufficientVertices` if `vertices` doesn't have exactly D+1 elements.
+    /// - `SimplexValidationError::DuplicateVertices` if any vertex key appears more than once.
     pub(crate) fn new(
-        vertices: impl Into<CellVertexBuffer>,
+        vertices: impl Into<SimplexVertexKeyBuffer>,
         data: Option<V>,
-    ) -> Result<Self, CellValidationError> {
+    ) -> Result<Self, SimplexValidationError> {
         let vertices = vertices.into();
 
         // Validate D+1 vertices
         let actual = vertices.len();
         if actual != D + 1 {
-            return Err(CellValidationError::InsufficientVertices {
+            return Err(SimplexValidationError::InsufficientVertices {
                 actual,
                 expected: D + 1,
                 dimension: D,
@@ -529,7 +528,7 @@ impl<T, U, V, const D: usize> Cell<T, U, V, D> {
         let mut seen: FastHashSet<VertexKey> = FastHashSet::default();
         for &vkey in &vertices {
             if !seen.insert(vkey) {
-                return Err(CellValidationError::DuplicateVertices);
+                return Err(SimplexValidationError::DuplicateVertices);
             }
         }
 
@@ -543,7 +542,7 @@ impl<T, U, V, const D: usize> Cell<T, U, V, D> {
         })
     }
 
-    /// Checks if this cell contains the given vertex key.
+    /// Checks if this simplex contains the given vertex key.
     ///
     /// This is a cheap operation (O(D)) that only compares keys.
     ///
@@ -553,7 +552,7 @@ impl<T, U, V, const D: usize> Cell<T, U, V, D> {
     ///
     /// # Returns
     ///
-    /// `true` if the cell contains the vertex key, `false` otherwise.
+    /// `true` if the simplex contains the vertex key, `false` otherwise.
     ///
     /// # Example
     ///
@@ -566,11 +565,11 @@ impl<T, U, V, const D: usize> Cell<T, U, V, D> {
     ///     vertex!([0.0, 1.0]),
     /// ];
     /// let dt = DelaunayTriangulation::new(&vertices).unwrap();
-    /// let (_, cell) = dt.cells().next().unwrap();
-    /// let vkey = cell.vertices()[0];
+    /// let (_, simplex) = dt.simplices().next().unwrap();
+    /// let vkey = simplex.vertices()[0];
     ///
-    /// if cell.contains_vertex(vkey) {
-    ///     println!("Cell contains vertex {:?}", vkey);
+    /// if simplex.contains_vertex(vkey) {
+    ///     println!("Simplex contains vertex {:?}", vkey);
     /// }
     /// ```
     #[inline]
@@ -578,17 +577,17 @@ impl<T, U, V, const D: usize> Cell<T, U, V, D> {
         self.vertices.contains(&vkey)
     }
 
-    /// Checks if this cell has any vertex in common with another cell.
+    /// Checks if this simplex has any vertex in common with another simplex.
     ///
     /// This is a cheap operation that only compares keys.
     ///
     /// # Arguments
     ///
-    /// * `other` - The other cell to check against
+    /// * `other` - The other simplex to check against
     ///
     /// # Returns
     ///
-    /// `true` if the cells share at least one vertex.
+    /// `true` if the simplices share at least one vertex.
     ///
     /// # Example
     ///
@@ -602,12 +601,12 @@ impl<T, U, V, const D: usize> Cell<T, U, V, D> {
     ///     vertex!([1.0, 1.0]),
     /// ];
     /// let dt = DelaunayTriangulation::new(&vertices).unwrap();
-    /// let mut cells_iter = dt.cells().map(|(_, cell)| cell);
-    /// let cell1 = cells_iter.next().unwrap();
-    /// let cell2 = cells_iter.next().unwrap();
+    /// let mut simplices_iter = dt.simplices().map(|(_, simplex)| simplex);
+    /// let simplex1 = simplices_iter.next().unwrap();
+    /// let simplex2 = simplices_iter.next().unwrap();
     ///
-    /// if cell1.has_vertex_in_common(cell2) {
-    ///     println!("Cells share vertices");
+    /// if simplex1.has_vertex_in_common(simplex2) {
+    ///     println!("Simplices share vertices");
     /// }
     /// ```
     #[inline]
@@ -636,9 +635,9 @@ impl<T, U, V, const D: usize> Cell<T, U, V, D> {
     ///     vertex!([0.0, 1.0]),
     /// ];
     /// let dt = DelaunayTriangulation::new(&vertices).unwrap();
-    /// let (_, cell) = dt.cells().next().unwrap();
+    /// let (_, simplex) = dt.simplices().next().unwrap();
     ///
-    /// for (idx, &vkey) in cell.vertices_enumerated() {
+    /// for (idx, &vkey) in simplex.vertices_enumerated() {
     ///     println!("Vertex {:?} at position {}", vkey, idx);
     /// }
     /// ```
@@ -647,9 +646,7 @@ impl<T, U, V, const D: usize> Cell<T, U, V, D> {
         self.vertices.iter().enumerate()
     }
 
-    /// Returns the neighbor keys for this cell without allocating.
-    ///
-    /// # Phase 3A
+    /// Returns the neighbor keys for this simplex without allocating.
     ///
     /// Neighbors are stored as keys (not UUIDs) for direct TDS access.
     /// The positional semantics: `neighbor_key(i)` is the neighbor opposite `vertices()[i]`.
@@ -658,7 +655,7 @@ impl<T, U, V, const D: usize> Cell<T, U, V, D> {
     ///
     /// An `Option` containing an iterator over assigned neighbor keys, or
     /// `None` if neighbor slots have not been assigned. Inside an assigned
-    /// buffer, `Some(key)` is a neighboring cell and `None` is an assigned
+    /// buffer, `Some(key)` is a neighboring simplex and `None` is an assigned
     /// boundary facet. Use [`neighbor_slots`](Self::neighbor_slots) when
     /// callers need to distinguish an unassigned neighbor buffer from assigned
     /// boundary facets explicitly.
@@ -674,37 +671,37 @@ impl<T, U, V, const D: usize> Cell<T, U, V, D> {
     ///     vertex!([0.0, 1.0]),
     /// ];
     /// let dt = DelaunayTriangulation::new(&vertices).unwrap();
-    /// let (_, cell) = dt.cells().next().unwrap();
+    /// let (_, simplex) = dt.simplices().next().unwrap();
     /// let tds = dt.tds();
     ///
-    /// if let Some(neighbors) = cell.neighbors() {
+    /// if let Some(neighbors) = simplex.neighbors() {
     ///     for (i, neighbor_key_opt) in neighbors.enumerate() {
     ///         if let Some(neighbor_key) = neighbor_key_opt {
-    ///             let neighbor_cell = &tds.cell(neighbor_key).unwrap();
-    ///             // neighbor_cell is opposite to vertex i
+    ///             let neighbor_simplex = &tds.simplex(neighbor_key).unwrap();
+    ///             // neighbor_simplex is opposite to vertex i
     ///         }
     ///     }
     /// }
     /// ```
     #[inline]
     #[must_use]
-    pub fn neighbors(&self) -> Option<impl ExactSizeIterator<Item = Option<CellKey>> + '_> {
+    pub fn neighbors(&self) -> Option<impl ExactSizeIterator<Item = Option<SimplexKey>> + '_> {
         self.neighbor_keys()
     }
 
-    /// Returns neighbor keys without allocating an owned compatibility buffer.
+    /// Returns neighbor keys without allocating an owned buffer.
     ///
     /// The iterator yields one entry per assigned neighbor slot. `Some(key)` is
-    /// a neighboring cell and `None` is an assigned boundary facet. A return
+    /// a neighboring simplex and `None` is an assigned boundary facet. A return
     /// value of `None` means neighbor assignment has not run or has been cleared.
     #[inline]
     #[must_use]
     pub(crate) fn neighbor_keys(
         &self,
-    ) -> Option<impl ExactSizeIterator<Item = Option<CellKey>> + '_> {
+    ) -> Option<impl ExactSizeIterator<Item = Option<SimplexKey>> + '_> {
         self.neighbors
             .as_ref()
-            .map(|slots| slots.iter().map(|slot| slot.cell_key()))
+            .map(|slots| slots.iter().map(|slot| slot.simplex_key()))
     }
 
     /// Returns one assigned neighbor key by facet index without allocating.
@@ -714,18 +711,18 @@ impl<T, U, V, const D: usize> Cell<T, U, V, D> {
     /// assigned boundary facet.
     #[inline]
     #[must_use]
-    pub fn neighbor_key(&self, facet_idx: usize) -> Option<Option<CellKey>> {
+    pub fn neighbor_key(&self, facet_idx: usize) -> Option<Option<SimplexKey>> {
         self.neighbors
             .as_ref()
             .and_then(|slots| slots.get(facet_idx))
-            .map(|slot| slot.cell_key())
+            .map(|slot| slot.simplex_key())
     }
 
-    /// Returns the typed neighbor slots for this cell.
+    /// Returns the typed neighbor slots for this simplex.
     ///
     /// `None` means neighbor assignment has not run or has been explicitly
     /// cleared. `Some` means each facet slot is assigned as either boundary or
-    /// neighboring-cell state.
+    /// neighboring-simplex state.
     ///
     /// # Examples
     ///
@@ -740,12 +737,12 @@ impl<T, U, V, const D: usize> Cell<T, U, V, D> {
     /// ];
     /// let dt = DelaunayTriangulation::new(&vertices).unwrap();
     /// let mut tds = dt.tds().clone();
-    /// let cell_key = tds.cell_keys().next().unwrap();
+    /// let simplex_key = tds.simplex_keys().next().unwrap();
     ///
-    /// tds.set_neighbors_by_key(cell_key, &[None, None, None]).unwrap();
-    /// let cell = tds.cell(cell_key).unwrap();
+    /// tds.set_neighbors_by_key(simplex_key, &[None, None, None]).unwrap();
+    /// let simplex = tds.simplex(simplex_key).unwrap();
     ///
-    /// let slots = cell
+    /// let slots = simplex
     ///     .neighbor_slots()
     ///     .expect("set_neighbors_by_key assigns boundary slots");
     ///
@@ -764,9 +761,7 @@ impl<T, U, V, const D: usize> Cell<T, U, V, D> {
         self.neighbors.as_mut()
     }
 
-    /// Returns the vertex keys for this cell.
-    ///
-    /// # Phase 3A
+    /// Returns the vertex keys for this simplex.
     ///
     /// This method returns keys (not full vertex objects). Use the TDS to resolve keys:
     /// ```rust
@@ -779,10 +774,10 @@ impl<T, U, V, const D: usize> Cell<T, U, V, D> {
     ///     vertex!([0.0, 1.0]),
     /// ];
     /// let dt = DelaunayTriangulation::new(&vertices).unwrap();
-    /// let (_, cell) = dt.cells().next().unwrap();
+    /// let (_, simplex) = dt.simplices().next().unwrap();
     /// let tds = dt.tds();
     ///
-    /// for &vkey in cell.vertices() {
+    /// for &vkey in simplex.vertices() {
     ///     let vertex = &tds.vertex(vkey).unwrap();
     ///     // use vertex data...
     ///     assert!(vertex.uuid() != Uuid::nil());
@@ -808,30 +803,30 @@ impl<T, U, V, const D: usize> Cell<T, U, V, D> {
     pub(crate) fn set_periodic_vertex_offsets(
         &mut self,
         offsets: impl Into<PeriodicOffsetBuffer<D>>,
-    ) -> Result<(), CellValidationError> {
+    ) -> Result<(), SimplexValidationError> {
         let offsets = offsets.into();
         let found = offsets.len();
         let expected = self.vertices.len();
         if found != expected {
-            return Err(CellValidationError::PeriodicOffsetLengthMismatch { expected, found });
+            return Err(SimplexValidationError::PeriodicOffsetLengthMismatch { expected, found });
         }
         self.periodic_vertex_offsets = Some(offsets);
         Ok(())
     }
 
-    /// Find the facet index in `neighbor_cell` that corresponds to the shared facet.
+    /// Find the facet index in `neighbor_simplex` that corresponds to the shared facet.
     ///
     /// `facet_idx` is interpreted as the index of the vertex opposite the facet in `self`.
-    /// If `neighbor_cell` shares exactly that facet, this returns the index of the vertex
-    /// opposite the same facet in `neighbor_cell` (CGAL-style "mirror facet").
+    /// If `neighbor_simplex` shares exactly that facet, this returns the index of the vertex
+    /// opposite the same facet in `neighbor_simplex` (CGAL-style "mirror facet").
     ///
-    /// Returns `None` if `facet_idx` is out of range, or if the cells do not appear to share
+    /// Returns `None` if `facet_idx` is out of range, or if the simplices do not appear to share
     /// a single facet.
     #[inline]
     pub(crate) fn mirror_facet_index(
         &self,
         facet_idx: usize,
-        neighbor_cell: &Self,
+        neighbor_simplex: &Self,
     ) -> Option<usize> {
         if facet_idx >= self.vertices.len() {
             return None;
@@ -840,22 +835,22 @@ impl<T, U, V, const D: usize> Cell<T, U, V, D> {
         // Mirror facet semantics are defined for same-dimensional simplices.
         debug_assert_eq!(
             self.vertices().len(),
-            neighbor_cell.vertices().len(),
-            "mirror_facet_index requires cells with matching vertex counts",
+            neighbor_simplex.vertices().len(),
+            "mirror_facet_index requires simplices with matching vertex counts",
         );
 
-        // Build the facet vertex set from the source cell (all except facet_idx)
-        let mut facet_vertices: CellVertexBuffer = CellVertexBuffer::new();
+        // Build the facet vertex set from the source simplex (all except facet_idx)
+        let mut facet_vertices: SimplexVertexKeyBuffer = SimplexVertexKeyBuffer::new();
         for (i, &vkey) in self.vertices().iter().enumerate() {
             if i != facet_idx {
                 facet_vertices.push(vkey);
             }
         }
 
-        // Find the vertex in neighbor_cell that is NOT in the facet.
+        // Find the vertex in neighbor_simplex that is NOT in the facet.
         // That vertex's index is the mirror facet index.
         let mut mirror_idx: Option<usize> = None;
-        for (idx, &neighbor_vkey) in neighbor_cell.vertices().iter().enumerate() {
+        for (idx, &neighbor_vkey) in neighbor_simplex.vertices().iter().enumerate() {
             if !facet_vertices.contains(&neighbor_vkey) {
                 if mirror_idx.is_some() {
                     // More than one vertex is not in the facet -> not a valid facet neighbor relation.
@@ -868,11 +863,11 @@ impl<T, U, V, const D: usize> Cell<T, U, V, D> {
         mirror_idx
     }
 
-    /// Adds a vertex key to this cell.
+    /// Adds a vertex key to this simplex.
     ///
-    /// # Phase 3A: Internal Use Only
+    /// # Internal Use Only
     ///
-    /// This method is used internally by TDS deserialization to rebuild cell vertex keys.
+    /// This method is used internally by TDS deserialization to rebuild simplex vertex keys.
     /// It should not be used outside of TDS serialization/deserialization code.
     ///
     /// # Arguments
@@ -884,12 +879,12 @@ impl<T, U, V, const D: usize> Cell<T, U, V, D> {
         self.periodic_vertex_offsets = None;
     }
 
-    /// Clears all vertex keys from this cell.
+    /// Clears all vertex keys from this simplex.
     ///
-    /// # Phase 3A: Internal Use Only
+    /// # Internal Use Only
     ///
     /// This method is used internally by TDS deserialization to clear stale vertex keys
-    /// before rebuilding them from the serialized `cell_vertices` mapping.
+    /// before rebuilding them from the serialized `simplex_vertices` mapping.
     /// It should not be used outside of TDS serialization/deserialization code.
     #[inline]
     pub(crate) fn clear_vertex_keys(&mut self) {
@@ -934,16 +929,16 @@ impl<T, U, V, const D: usize> Cell<T, U, V, D> {
         }
     }
 
-    /// Replaces this cell's assigned neighbor slots from optional neighbor keys.
+    /// Replaces this simplex's assigned neighbor slots from optional neighbor keys.
     #[inline]
     pub(crate) fn set_neighbors_from_keys(
         &mut self,
-        neighbors: impl IntoIterator<Item = Option<CellKey>>,
-    ) -> Result<(), CellValidationError> {
+        neighbors: impl IntoIterator<Item = Option<SimplexKey>>,
+    ) -> Result<(), SimplexValidationError> {
         let mut slots = NeighborBuffer::new();
         slots.extend(neighbors.into_iter().map(NeighborSlot::from_neighbor_key));
         if slots.len() != D + 1 {
-            return Err(CellValidationError::InvalidNeighborsLength {
+            return Err(SimplexValidationError::InvalidNeighborsLength {
                 actual: slots.len(),
                 expected: D + 1,
                 dimension: D,
@@ -953,7 +948,7 @@ impl<T, U, V, const D: usize> Cell<T, U, V, D> {
         Ok(())
     }
 
-    /// Ensures this cell has an assigned neighbor-slot buffer.
+    /// Ensures this simplex has an assigned neighbor-slot buffer.
     ///
     /// If the buffer does not exist, it is initialized with D+1 unassigned slots.
     #[inline]
@@ -971,12 +966,12 @@ impl<T, U, V, const D: usize> Cell<T, U, V, D> {
 }
 
 // Standard read-only and validation impl block
-impl<T, U, V, const D: usize> Cell<T, U, V, D> {
-    /// The function returns the number of vertices in the [Cell].
+impl<T, U, V, const D: usize> Simplex<T, U, V, D> {
+    /// The function returns the number of vertices in the [Simplex].
     ///
     /// # Returns
     ///
-    /// The number of vertices in the [Cell].
+    /// The number of vertices in the [Simplex].
     ///
     /// # Example
     ///
@@ -990,21 +985,21 @@ impl<T, U, V, const D: usize> Cell<T, U, V, D> {
     ///     vertex!([0.0, 0.0, 1.0]),
     /// ];
     /// let dt = DelaunayTriangulation::new(&vertices).unwrap();
-    /// let cell_key = dt.cells().next().unwrap().0;
+    /// let simplex_key = dt.simplices().next().unwrap().0;
     /// let tds = dt.tds();
-    /// let cell = &tds.cell(cell_key).unwrap();
-    /// assert_eq!(cell.number_of_vertices(), 4);
+    /// let simplex = &tds.simplex(simplex_key).unwrap();
+    /// assert_eq!(simplex.number_of_vertices(), 4);
     /// ```
     #[inline]
     pub fn number_of_vertices(&self) -> usize {
         self.vertices.len()
     }
 
-    /// Returns the UUID of the [Cell].
+    /// Returns the UUID of the [Simplex].
     ///
     /// # Returns
     ///
-    /// The Uuid uniquely identifying this cell.
+    /// The Uuid uniquely identifying this simplex.
     ///
     /// # Example
     ///
@@ -1020,21 +1015,21 @@ impl<T, U, V, const D: usize> Cell<T, U, V, D> {
     /// ];
     /// let dt: DelaunayTriangulation<_, (), (), 3> =
     ///     DelaunayTriangulation::new(&vertices).unwrap();
-    /// let (_, cell) = dt.cells().next().unwrap();
-    /// assert_ne!(cell.uuid(), Uuid::nil());
+    /// let (_, simplex) = dt.simplices().next().unwrap();
+    /// assert_ne!(simplex.uuid(), Uuid::nil());
     /// ```
     #[inline]
     pub const fn uuid(&self) -> Uuid {
         self.uuid
     }
 
-    /// Returns a reference to the optional user data associated with this cell.
+    /// Returns a reference to the optional user data associated with this simplex.
     ///
     /// # Examples
     ///
     /// ```
     /// use delaunay::prelude::triangulation::*;
-    /// use delaunay::prelude::tds::Cell;
+    /// use delaunay::prelude::tds::Simplex;
     ///
     /// let vertices = [
     ///     vertex!([0.0, 0.0]),
@@ -1044,8 +1039,8 @@ impl<T, U, V, const D: usize> Cell<T, U, V, D> {
     /// let dt = DelaunayTriangulationBuilder::new(&vertices)
     ///     .build::<i32>()
     ///     .unwrap();
-    /// let (_, cell) = dt.cells().next().unwrap();
-    /// assert_eq!(cell.data(), None); // No data set yet
+    /// let (_, simplex) = dt.simplices().next().unwrap();
+    /// assert_eq!(simplex.data(), None); // No data set yet
     /// ```
     #[inline]
     #[must_use]
@@ -1053,32 +1048,32 @@ impl<T, U, V, const D: usize> Cell<T, U, V, D> {
         self.data.as_ref()
     }
 
-    /// Sets the cell UUID with validation.
+    /// Sets the simplex UUID with validation.
     ///
-    /// This is a test-only utility for creating cells with specific UUIDs
+    /// This is a test-only utility for creating simplices with specific UUIDs
     /// to test error handling (e.g., duplicate UUID detection).
     ///
     /// # Arguments
     ///
-    /// * `uuid` - The new UUID to set for this cell
+    /// * `uuid` - The new UUID to set for this simplex
     ///
     /// # Returns
     ///
     /// Returns `Ok(())` if the UUID is valid and was set successfully,
-    /// otherwise returns a `CellValidationError::InvalidUuid` if the UUID
+    /// otherwise returns a `SimplexValidationError::InvalidUuid` if the UUID
     /// is nil or has an invalid version.
     ///
     /// # Errors
     ///
-    /// Returns `CellValidationError::InvalidUuid` if the UUID is nil or invalid.
+    /// Returns `SimplexValidationError::InvalidUuid` if the UUID is nil or invalid.
     #[cfg(test)]
-    pub(crate) fn set_uuid(&mut self, uuid: Uuid) -> Result<(), CellValidationError> {
+    pub(crate) fn set_uuid(&mut self, uuid: Uuid) -> Result<(), SimplexValidationError> {
         validate_uuid(&uuid)?;
         self.uuid = uuid;
         Ok(())
     }
 
-    /// Clears the neighbors of the [Cell].
+    /// Clears the neighbors of the [Simplex].
     ///
     /// **Internal API**: This method is `pub(crate)` to enforce that all neighbor
     /// modifications go through validated TDS methods. External code should use
@@ -1101,20 +1096,18 @@ impl<T, U, V, const D: usize> Cell<T, U, V, D> {
     /// # let mut dt = DelaunayTriangulation::new(&vertices).unwrap();
     /// // Note: clear_all_neighbors() is a Tds method, not on DelaunayTriangulation
     /// // This example is conceptual - actual usage requires accessing tds directly
-    /// # let cell_key = dt.cells().next().unwrap().0;
+    /// # let simplex_key = dt.simplices().next().unwrap().0;
     /// # let tds = dt.tds();
-    /// # // assert!(tds.cell(cell_key).unwrap().neighbors().is_none());
+    /// # // assert!(tds.simplex(simplex_key).unwrap().neighbors().is_none());
     /// ```
     #[inline]
     pub(crate) fn clear_neighbors(&mut self) {
         self.neighbors = None;
     }
 
-    /// Returns the UUIDs of the vertices in this cell.
+    /// Returns the UUIDs of the vertices in this simplex.
     ///
-    /// # Phase 3A Migration
-    ///
-    /// This method now requires a `&Tds` parameter to resolve vertex keys to UUIDs.
+    /// This method requires a `&Tds` parameter to resolve vertex keys to UUIDs.
     ///
     /// # Parameters
     ///
@@ -1122,12 +1115,12 @@ impl<T, U, V, const D: usize> Cell<T, U, V, D> {
     ///
     /// # Returns
     ///
-    /// A `Result<CellVertexUuidBuffer, CellValidationError>` containing the UUIDs of all vertices in this cell,
+    /// A `Result<SimplexVertexUuidBuffer, SimplexValidationError>` containing the UUIDs of all vertices in this simplex,
     /// or an error if a vertex key is not found in the TDS. Uses stack allocation for typical dimensions.
     ///
     /// # Errors
     ///
-    /// Returns `CellValidationError::VertexKeyNotFound` if a vertex key in the cell
+    /// Returns `SimplexValidationError::VertexKeyNotFound` if a vertex key in the simplex
     /// does not exist in the TDS. This indicates TDS corruption or inconsistency.
     ///
     /// # Examples
@@ -1142,32 +1135,30 @@ impl<T, U, V, const D: usize> Cell<T, U, V, D> {
     ///     vertex!([0.0, 0.0, 1.0]),
     /// ];
     /// let dt = DelaunayTriangulation::new(&vertices).unwrap();
-    /// let cell_key = dt.cells().next().unwrap().0;
+    /// let simplex_key = dt.simplices().next().unwrap().0;
     /// let tds = dt.tds();
-    /// let cell = &tds.cell(cell_key).unwrap();
-    /// let uuids = cell.vertex_uuids(tds).unwrap();
+    /// let simplex = &tds.simplex(simplex_key).unwrap();
+    /// let uuids = simplex.vertex_uuids(tds).unwrap();
     /// assert_eq!(uuids.len(), 4);
     /// ```
     #[inline]
     pub fn vertex_uuids(
         &self,
         tds: &Tds<T, U, V, D>,
-    ) -> Result<CellVertexUuidBuffer, CellValidationError> {
+    ) -> Result<SimplexVertexUuidBuffer, SimplexValidationError> {
         self.vertices
             .iter()
             .map(|&vkey| {
                 tds.vertex(vkey)
                     .map(Vertex::uuid)
-                    .ok_or(CellValidationError::VertexKeyNotFound { key: vkey })
+                    .ok_or(SimplexValidationError::VertexKeyNotFound { key: vkey })
             })
             .collect()
     }
 
     /// Returns an iterator over vertex UUIDs without allocating a Vec.
     ///
-    /// # Phase 3A Migration
-    ///
-    /// This method now requires a `&Tds` parameter to resolve vertex keys to UUIDs.
+    /// This method requires a `&Tds` parameter to resolve vertex keys to UUIDs.
     ///
     /// # Parameters
     ///
@@ -1175,11 +1166,11 @@ impl<T, U, V, const D: usize> Cell<T, U, V, D> {
     ///
     /// # Returns
     ///
-    /// An iterator that yields `Result<Uuid, CellValidationError>` for each vertex in the cell.
+    /// An iterator that yields `Result<Uuid, SimplexValidationError>` for each vertex in the simplex.
     ///
     /// # Errors
     ///
-    /// The iterator yields `CellValidationError::VertexKeyNotFound` for any vertex key
+    /// The iterator yields `SimplexValidationError::VertexKeyNotFound` for any vertex key
     /// that does not exist in the TDS. This indicates TDS corruption or inconsistency.
     ///
     /// # Examples
@@ -1193,35 +1184,35 @@ impl<T, U, V, const D: usize> Cell<T, U, V, D> {
     ///     vertex!([0.0, 1.0]),
     /// ];
     /// let dt = DelaunayTriangulation::new(&vertices).unwrap();
-    /// let cell_key = dt.cells().next().unwrap().0;
+    /// let simplex_key = dt.simplices().next().unwrap().0;
     /// let tds = dt.tds();
-    /// let cell = &tds.cell(cell_key).unwrap();
-    /// let uuids: Vec<_> = cell.vertex_uuid_iter(tds).collect::<Result<Vec<_>, _>>().unwrap();
+    /// let simplex = &tds.simplex(simplex_key).unwrap();
+    /// let uuids: Vec<_> = simplex.vertex_uuid_iter(tds).collect::<Result<Vec<_>, _>>().unwrap();
     /// assert_eq!(uuids.len(), 3);
     /// ```
     #[inline]
     pub fn vertex_uuid_iter<'a>(
         &'a self,
         tds: &'a Tds<T, U, V, D>,
-    ) -> impl ExactSizeIterator<Item = Result<Uuid, CellValidationError>> + 'a {
+    ) -> impl ExactSizeIterator<Item = Result<Uuid, SimplexValidationError>> + 'a {
         self.vertices.iter().map(move |&vkey| {
             tds.vertex(vkey)
                 .map(Vertex::uuid)
-                .ok_or(CellValidationError::VertexKeyNotFound { key: vkey })
+                .ok_or(SimplexValidationError::VertexKeyNotFound { key: vkey })
         })
     }
 
-    /// The `dim` function returns the dimensionality of the [Cell].
+    /// The `dim` function returns the dimensionality of the [Simplex].
     ///
     /// # Returns
     ///
-    /// The `dim` function returns the compile-time dimension `D` of the [Cell].
+    /// The `dim` function returns the compile-time dimension `D` of the [Simplex].
     ///
     /// # Example
     ///
     /// ```
     /// use delaunay::prelude::triangulation::*;
-    /// use delaunay::prelude::tds::Cell;
+    /// use delaunay::prelude::tds::Simplex;
     ///
     /// let vertices = vec![
     ///     vertex!([0.0, 0.0, 1.0]),
@@ -1231,34 +1222,34 @@ impl<T, U, V, const D: usize> Cell<T, U, V, D> {
     /// ];
     /// let dt: DelaunayTriangulation<_, (), (), 3> =
     ///     DelaunayTriangulation::new(&vertices).unwrap();
-    /// let (_, cell) = dt.cells().next().unwrap();
-    /// assert_eq!(cell.dim(), 3);
+    /// let (_, simplex) = dt.simplices().next().unwrap();
+    /// assert_eq!(simplex.dim(), 3);
     /// ```
     #[inline]
     pub const fn dim(&self) -> usize {
         D
     }
 
-    /// Converts a collection of cells into a `FastHashMap` indexed by their UUIDs.
+    /// Converts a collection of simplices into a `FastHashMap` indexed by their UUIDs.
     ///
-    /// This utility function transforms a collection of cells into a hash map structure
+    /// This utility function transforms a collection of simplices into a hash map structure
     /// for efficient lookups by UUID. Uses `FastHashMap` for performance.
     ///
     /// # Arguments
     ///
-    /// * `cells` - Cells to be converted into a `FastHashMap`.
+    /// * `simplices` - Simplices to be converted into a `FastHashMap`.
     ///
     /// # Returns
     ///
-    /// A [`FastHashMap\u003cUuid, Self\u003e`] where each key is a cell's UUID and each value
-    /// is the corresponding cell. The map provides O(1) average-case lookups
+    /// A [`FastHashMap\u003cUuid, Self\u003e`] where each key is a simplex's UUID and each value
+    /// is the corresponding simplex. The map provides O(1) average-case lookups
     /// by UUID.
     ///
     /// # Examples
     ///
     /// ```
     /// use delaunay::prelude::triangulation::*;
-    /// use delaunay::prelude::tds::Cell;
+    /// use delaunay::prelude::tds::Simplex;
     ///
     /// // Create two separate triangulations
     /// let vertices1 = vec![
@@ -1277,36 +1268,36 @@ impl<T, U, V, const D: usize> Cell<T, U, V, D> {
     ///     DelaunayTriangulation::new(&vertices1).unwrap();
     /// let dt2: DelaunayTriangulation<_, (), (), 3> =
     ///     DelaunayTriangulation::new(&vertices2).unwrap();
-    /// let cell1 = dt1.tds().cells().next().unwrap().1.clone();
-    /// let cell2 = dt2.tds().cells().next().unwrap().1.clone();
+    /// let simplex1 = dt1.tds().simplices().next().unwrap().1.clone();
+    /// let simplex2 = dt2.tds().simplices().next().unwrap().1.clone();
     ///
-    /// let uuid1 = cell1.uuid();
-    /// let uuid2 = cell2.uuid();
+    /// let uuid1 = simplex1.uuid();
+    /// let uuid2 = simplex2.uuid();
     ///
-    /// let cell_map = Cell::into_hashmap([cell1, cell2]);
+    /// let simplex_map = Simplex::into_hashmap([simplex1, simplex2]);
     ///
-    /// // Access cells by their UUIDs
-    /// assert_eq!(cell_map.get(&uuid1).unwrap().uuid(), uuid1);
-    /// assert_eq!(cell_map.get(&uuid2).unwrap().uuid(), uuid2);
-    /// assert_eq!(cell_map.len(), 2);
+    /// // Access simplices by their UUIDs
+    /// assert_eq!(simplex_map.get(&uuid1).unwrap().uuid(), uuid1);
+    /// assert_eq!(simplex_map.get(&uuid2).unwrap().uuid(), uuid2);
+    /// assert_eq!(simplex_map.len(), 2);
     /// ```
     ///
     /// ```
-    /// use delaunay::prelude::tds::Cell;
+    /// use delaunay::prelude::tds::Simplex;
     ///
     /// // Empty collection produces empty FastHashMap
-    /// let empty_map = Cell::<f64, (), (), 3>::into_hashmap([]);
+    /// let empty_map = Simplex::<f64, (), (), 3>::into_hashmap([]);
     /// assert!(empty_map.is_empty());
     /// ```
     #[must_use]
-    pub fn into_hashmap<I>(cells: I) -> FastHashMap<Uuid, Self>
+    pub fn into_hashmap<I>(simplices: I) -> FastHashMap<Uuid, Self>
     where
         I: IntoIterator<Item = Self>,
     {
-        cells.into_iter().map(|c| (c.uuid, c)).collect()
+        simplices.into_iter().map(|c| (c.uuid, c)).collect()
     }
 
-    /// The function `is_valid` checks if a [Cell] is valid.
+    /// The function `is_valid` checks if a [Simplex] is valid.
     ///
     /// # Type Parameters
     ///
@@ -1315,12 +1306,12 @@ impl<T, U, V, const D: usize> Cell<T, U, V, D> {
     ///
     /// # Returns
     ///
-    /// A Result indicating whether the [Cell] is valid. Returns `Ok(())` if valid,
-    /// or a `CellValidationError` if invalid. The validation checks that:
+    /// A Result indicating whether the [Simplex] is valid. Returns `Ok(())` if valid,
+    /// or a `SimplexValidationError` if invalid. The validation checks that:
     /// - All vertices are valid (coordinates are finite and UUIDs are valid)
     /// - All vertices are distinct from one another
-    /// - The cell UUID is valid and not nil
-    /// - The cell has exactly D+1 vertices (forming a proper D-simplex)
+    /// - The simplex UUID is valid and not nil
+    /// - The simplex has exactly D+1 vertices (forming a proper D-simplex)
     /// - If neighbors are provided, they must have exactly D+1 entries (positional semantics)
     ///
     /// Note: This method validates basic neighbor structure invariants but does not validate
@@ -1329,18 +1320,18 @@ impl<T, U, V, const D: usize> Cell<T, U, V, D> {
     ///
     /// # Errors
     ///
-    /// Returns `CellValidationError::InvalidVertex` if any vertex is invalid,
-    /// `CellValidationError::InvalidUuid` if the cell's UUID is nil,
-    /// `CellValidationError::DuplicateVertices` if the cell contains duplicate vertices,
-    /// `CellValidationError::InsufficientVertices` if the cell doesn't have exactly D+1 vertices,
-    /// `CellValidationError::InvalidNeighborsLength` if neighbors are provided but don't have D+1 entries, or
-    /// `CellValidationError::UnassignedNeighborSlot` if an assigned neighbor buffer still has an unassigned slot.
+    /// Returns `SimplexValidationError::InvalidVertex` if any vertex is invalid,
+    /// `SimplexValidationError::InvalidUuid` if the simplex's UUID is nil,
+    /// `SimplexValidationError::DuplicateVertices` if the simplex contains duplicate vertices,
+    /// `SimplexValidationError::InsufficientVertices` if the simplex doesn't have exactly D+1 vertices,
+    /// `SimplexValidationError::InvalidNeighborsLength` if neighbors are provided but don't have D+1 entries, or
+    /// `SimplexValidationError::UnassignedNeighborSlot` if an assigned neighbor buffer still has an unassigned slot.
     ///
     /// # Example
     ///
     /// ```
     /// use delaunay::prelude::triangulation::*;
-    /// use delaunay::prelude::tds::Cell;
+    /// use delaunay::prelude::tds::Simplex;
     ///
     /// let vertices = vec![
     ///     vertex!([0.0, 0.0, 1.0]),
@@ -1350,18 +1341,16 @@ impl<T, U, V, const D: usize> Cell<T, U, V, D> {
     /// ];
     /// let dt: DelaunayTriangulation<_, (), (), 3> =
     ///     DelaunayTriangulation::new(&vertices).unwrap();
-    /// let (_, cell) = dt.cells().next().unwrap();
-    /// assert!(cell.is_valid().is_ok());
+    /// let (_, simplex) = dt.simplices().next().unwrap();
+    /// assert!(simplex.is_valid().is_ok());
     /// ```
-    /// Phase 3A: Updated to use vertices (validation without full vertex data)
-    /// For full validation including vertex data, use `is_valid_with_tds(&tds)`
-    pub fn is_valid(&self) -> Result<(), CellValidationError> {
+    pub fn is_valid(&self) -> Result<(), SimplexValidationError> {
         // Check if UUID is valid
         validate_uuid(&self.uuid)?;
 
-        // Check that cell has exactly D+1 vertex keys (a proper D-simplex)
+        // Check that simplex has exactly D+1 vertex keys (a proper D-simplex)
         if self.vertices.len() != D + 1 {
-            return Err(CellValidationError::InsufficientVertices {
+            return Err(SimplexValidationError::InsufficientVertices {
                 actual: self.vertices.len(),
                 expected: D + 1,
                 dimension: D,
@@ -1372,7 +1361,7 @@ impl<T, U, V, const D: usize> Cell<T, U, V, D> {
         let mut seen: FastHashSet<VertexKey> = FastHashSet::default();
         for &vkey in &self.vertices {
             if !seen.insert(vkey) {
-                return Err(CellValidationError::DuplicateVertices);
+                return Err(SimplexValidationError::DuplicateVertices);
             }
         }
 
@@ -1380,7 +1369,7 @@ impl<T, U, V, const D: usize> Cell<T, U, V, D> {
         if let Some(ref neighbors) = self.neighbors
             && neighbors.len() != D + 1
         {
-            return Err(CellValidationError::InvalidNeighborsLength {
+            return Err(SimplexValidationError::InvalidNeighborsLength {
                 actual: neighbors.len(),
                 expected: D + 1,
                 dimension: D,
@@ -1389,104 +1378,85 @@ impl<T, U, V, const D: usize> Cell<T, U, V, D> {
         if let Some(ref neighbors) = self.neighbors {
             for (facet_index, slot) in neighbors.iter().enumerate() {
                 if slot.is_unassigned() {
-                    return Err(CellValidationError::UnassignedNeighborSlot { facet_index });
+                    return Err(SimplexValidationError::UnassignedNeighborSlot { facet_index });
                 }
             }
         }
 
         Ok(())
-
-        /* OLD CODE - TO BE ADAPTED FOR TDS-BASED VALIDATION:
-        // Check if all vertices are valid (requires TDS context)
-        for vertex in &self.vertices {
-            vertex.is_valid()?;
-        }
-        */
     }
 }
 
-// Advanced implementation block for Cell methods
-impl<T, U, V, const D: usize> Cell<T, U, V, D>
-where
-    T: CoordinateScalar,
-    U: DataType,
-    V: DataType,
-{
-    /// Returns all facets (faces) of the cell.
+// Advanced implementation block for Simplex methods
+impl<T, U, V, const D: usize> Simplex<T, U, V, D> {
+    /// Returns all facets (faces) of the simplex.
     ///
-    /// A facet is a (D-1)-dimensional face of a D-dimensional cell, obtained by removing
-    /// exactly one vertex from the original cell. This operation creates all possible
+    /// A facet is a (D-1)-dimensional face of a D-dimensional simplex, obtained by removing
+    /// exactly one vertex from the original simplex. This operation creates all possible
     /// (D-1)-dimensional boundary faces of the D-dimensional simplex.
     ///
     /// ## Mathematical Background
     ///
-    /// For a D-dimensional cell (D-simplex) with D+1 vertices:
+    /// For a D-dimensional simplex (D-simplex) with D+1 vertices:
     /// - Each facet is a (D-1)-dimensional simplex with D vertices
     /// - The total number of facets equals the number of vertices (D+1)
-    /// - Each vertex defines exactly one facet by its exclusion from the cell
+    /// - Each vertex defines exactly one facet by its exclusion from the simplex
     ///
     /// ## Dimensional Examples
     ///
-    /// - **1D cell (line segment)**: 2 facets, each being a 0D point (vertex)
-    /// - **2D cell (triangle)**: 3 facets, each being a 1D line segment (edge)
-    /// - **3D cell (tetrahedron)**: 4 facets, each being a 2D triangle (face)
-    /// - **4D cell (4-simplex)**: 5 facets, each being a 3D tetrahedron
+    /// - **1D simplex (line segment)**: 2 facets, each being a 0D point (vertex)
+    /// - **2D simplex (triangle)**: 3 facets, each being a 1D line segment (edge)
+    /// - **3D simplex (tetrahedron)**: 4 facets, each being a 2D triangle (face)
+    /// - **4D simplex (4-simplex)**: 5 facets, each being a 3D tetrahedron
     ///
     /// ## Facet Construction
     ///
     /// Each facet is constructed by:
-    /// 1. Taking all vertices from the original cell
+    /// 1. Taking all vertices from the original simplex
     /// 2. Removing exactly one vertex (the "opposite" vertex)
     /// 3. Creating a new (D-1)-dimensional simplex from the remaining D vertices
     ///
-    /// The facet "opposite" to vertex `v` contains all vertices of the cell except `v`.
-    ///
-    /// # Type Parameters
-    ///
-    /// This method requires the coordinate type `T` to implement additional traits
-    /// beyond the basic `Cell` requirements:
-    /// - `Clone + PartialEq + PartialOrd`: Required for
-    ///   geometric computations and facet creation operations.
+    /// The facet "opposite" to vertex `v` contains all vertices of the simplex except `v`.
     ///
     /// # Returns
     ///
-    /// A `Result<Vec<Facet<T, U, V, D>>, FacetError>` containing all facets of the cell.
+    /// A `Result<Vec<FacetView<T, U, V, D>>, FacetError>` containing all facets of the simplex.
     /// The returned vector has exactly D+1 facets, where each facet contains D vertices
-    /// (one fewer than the original cell's D+1 vertices).
+    /// (one fewer than the original simplex's D+1 vertices).
     ///
-    /// The facets are returned in the same order as the vertices in the original cell,
+    /// The facets are returned in the same order as the vertices in the original simplex,
     /// where `facets[i]` is the facet opposite to `vertices[i]`.
     ///
     /// # Errors
     ///
     /// Returns a [`FacetError`] if facet creation fails:
-    /// - [`FacetError::CellDoesNotContainVertex`]: Internal consistency error where
-    ///   a vertex appears to be missing from the cell during facet construction.
-    ///   This should not occur under normal circumstances for properly constructed cells.
+    /// - [`FacetError::SimplexDoesNotContainVertex`]: Internal consistency error where
+    ///   a vertex appears to be missing from the simplex during facet construction.
+    ///   This should not occur under normal circumstances for properly constructed simplices.
     ///
-    /// Note: For properly constructed cells with D+1 distinct vertices, this method
+    /// Note: For properly constructed simplices with D+1 distinct vertices, this method
     /// should not fail under normal circumstances.
-    /// Returns all facets of a cell as lightweight `FacetView` objects using only TDS and cell key.
+    /// Returns all facets of a simplex as lightweight `FacetView` objects using only TDS and simplex key.
     ///
     /// This is a static method that provides a more robust alternative to `facet_views()` by avoiding
-    /// potential mismatches between `self` and the cell retrieved by `cell_key`. It accesses the cell
+    /// potential mismatches between `self` and the simplex retrieved by `simplex_key`. It accesses the simplex
     /// data directly from the TDS using the provided key.
     ///
     /// # Arguments
     ///
     /// * `tds` - Reference to the triangulation data structure
-    /// * `cell_key` - The key of the cell in the TDS
+    /// * `simplex_key` - The key of the simplex in the TDS
     ///
     /// # Returns
     ///
-    /// A `Result<Vec<FacetView>, FacetError>` containing all facets of the cell.
+    /// A `Result<Vec<FacetView>, FacetError>` containing all facets of the simplex.
     /// Each facet is represented as a `FacetView` which provides efficient access
-    /// to facet properties without cloning cell data.
+    /// to facet properties without cloning simplex data.
     ///
     /// # Errors
     ///
     /// Returns a [`FacetError`] if:
-    /// - The cell key is not found in the TDS
+    /// - The simplex key is not found in the TDS
     /// - Facet creation fails during the construction of `FacetView` objects
     /// - The facet index cannot be represented as `u8` (very rare, only for extremely high dimensions)
     ///
@@ -1494,7 +1464,7 @@ where
     ///
     /// ```
     /// use delaunay::prelude::triangulation::*;
-    /// use delaunay::prelude::tds::Cell;
+    /// use delaunay::prelude::tds::Simplex;
     ///
     /// let vertices = vec![
     ///     vertex!([0.0, 0.0, 0.0]),
@@ -1505,8 +1475,8 @@ where
     /// let dt: DelaunayTriangulation<_, _, _, 3> = DelaunayTriangulation::new(&vertices).unwrap();
     /// let tds = dt.tds();
     ///
-    /// let cell_key = tds.cell_keys().next().unwrap();
-    /// let facet_views = Cell::facet_views_from_tds(tds, cell_key).expect("Failed to get facet views");
+    /// let simplex_key = tds.simplex_keys().next().unwrap();
+    /// let facet_views = Simplex::facet_views_from_tds(tds, simplex_key).expect("Failed to get facet views");
     ///
     /// // Each facet should have 3 vertices (triangular faces of tetrahedron)
     /// for facet_view in &facet_views {
@@ -1515,14 +1485,14 @@ where
     /// ```
     pub fn facet_views_from_tds(
         tds: &Tds<T, U, V, D>,
-        cell_key: CellKey,
+        simplex_key: SimplexKey,
     ) -> Result<Vec<FacetView<'_, T, U, V, D>>, FacetError> {
-        // Get the cell from the TDS using the key
-        let cell = tds
-            .cell(cell_key)
-            .ok_or(FacetError::CellNotFoundInTriangulation)?;
+        // Get the simplex from the TDS using the key
+        let simplex = tds
+            .simplex(simplex_key)
+            .ok_or(FacetError::SimplexNotFoundInTriangulation)?;
 
-        let vertex_count = cell.number_of_vertices();
+        let vertex_count = simplex.number_of_vertices();
         if vertex_count > u8::MAX as usize {
             return Err(FacetError::InvalidFacetIndex {
                 index: u8::MAX,
@@ -1533,27 +1503,27 @@ where
         let mut facet_views = Vec::with_capacity(vertex_count);
         for idx in 0..vertex_count {
             let facet_index = usize_to_u8(idx, vertex_count)?;
-            facet_views.push(FacetView::new(tds, cell_key, facet_index)?);
+            facet_views.push(FacetView::new(tds, simplex_key, facet_index)?);
         }
         Ok(facet_views)
     }
 
-    /// Compare two cells by their vertex sets (using `Vertex::PartialEq`) for cross-TDS equality checking.
+    /// Compare two simplices by their vertex sets (using `Vertex::PartialEq`) for cross-TDS equality checking.
     ///
-    /// This method enables semantic comparison of cells from different TDS instances by comparing
+    /// This method enables semantic comparison of simplices from different TDS instances by comparing
     /// the actual Vertex objects using `Vertex::PartialEq` (coordinate-based comparison).
-    /// Two cells are considered equal if they contain the same set of vertices (by coordinates),
-    /// regardless of order. This mirrors `Cell::PartialEq` semantics but works across TDS boundaries.
+    /// Two simplices are considered equal if they contain the same set of vertices (by coordinates),
+    /// regardless of order. This mirrors `Simplex::PartialEq` semantics but works across TDS boundaries.
     ///
     /// # Arguments
     ///
     /// * `self_tds` - The TDS containing `self`
-    /// * `other` - The other cell to compare against
+    /// * `other` - The other simplex to compare against
     /// * `other_tds` - The TDS containing `other`
     ///
     /// # Returns
     ///
-    /// `true` if both cells contain the same set of vertices (by coordinates), `false` otherwise.
+    /// `true` if both simplices contain the same set of vertices (by coordinates), `false` otherwise.
     /// Returns `false` if any vertex keys cannot be resolved.
     ///
     /// # Examples
@@ -1561,7 +1531,7 @@ where
     /// ```
     /// use delaunay::prelude::triangulation::*;
     ///
-    /// // Example 1: Comparing cells from different TDS instances with same coordinates
+    /// // Example 1: Comparing simplices from different TDS instances with same coordinates
     /// let vertices = vec![
     ///     vertex!([0.0, 0.0]),
     ///     vertex!([1.0, 0.0]),
@@ -1572,17 +1542,17 @@ where
     /// let tds1 = dt1.tds();
     /// let tds2 = dt2.tds();
     ///
-    /// let cell1 = tds1.cells().next().unwrap().1;
-    /// let cell2 = tds2.cells().next().unwrap().1;
+    /// let simplex1 = tds1.simplices().next().unwrap().1;
+    /// let simplex2 = tds2.simplices().next().unwrap().1;
     ///
     /// // Different TDS instances, but same vertex coordinates
-    /// assert!(cell1.eq_by_vertices(tds1, cell2, tds2));
+    /// assert!(simplex1.eq_by_vertices(tds1, simplex2, tds2));
     /// ```
     ///
     /// ```
     /// use delaunay::prelude::triangulation::*;
     ///
-    /// // Example 2: Comparing cells with different coordinates returns false
+    /// // Example 2: Comparing simplices with different coordinates returns false
     /// let vertices1 = vec![
     ///     vertex!([0.0, 0.0]),
     ///     vertex!([1.0, 0.0]),
@@ -1598,19 +1568,22 @@ where
     /// let tds1 = dt1.tds();
     /// let tds2 = dt2.tds();
     ///
-    /// let cell1 = tds1.cells().next().unwrap().1;
-    /// let cell2 = tds2.cells().next().unwrap().1;
+    /// let simplex1 = tds1.simplices().next().unwrap().1;
+    /// let simplex2 = tds2.simplices().next().unwrap().1;
     ///
-    /// // Different coordinates mean cells are not equal
-    /// assert!(!cell1.eq_by_vertices(tds1, cell2, tds2));
+    /// // Different coordinates mean simplices are not equal
+    /// assert!(!simplex1.eq_by_vertices(tds1, simplex2, tds2));
     /// ```
     pub fn eq_by_vertices(
         &self,
         self_tds: &Tds<T, U, V, D>,
         other: &Self,
         other_tds: &Tds<T, U, V, D>,
-    ) -> bool {
-        // Get vertices for both cells
+    ) -> bool
+    where
+        T: CoordinateScalar,
+    {
+        // Get vertices for both simplices
         let self_vertices: Option<Vec<_>> = self
             .vertices()
             .iter()
@@ -1623,13 +1596,13 @@ where
             .map(|&vkey| other_tds.vertex(vkey))
             .collect();
 
-        // If we couldn't resolve all vertex keys, cells are not equal
+        // If we couldn't resolve all vertex keys, simplices are not equal
         let (Some(mut self_vertices), Some(mut other_vertices)) = (self_vertices, other_vertices)
         else {
             return false;
         };
 
-        // Sort vertices for order-independent comparison (matches Cell::PartialEq semantics)
+        // Sort vertices for order-independent comparison (matches Simplex::PartialEq semantics)
         // Use Vertex::PartialOrd which compares coordinates
         self_vertices.sort_by(|a, b| compare_vertices_by_coordinates(a, b));
         other_vertices.sort_by(|a, b| compare_vertices_by_coordinates(a, b));
@@ -1638,27 +1611,27 @@ where
         self_vertices == other_vertices
     }
 
-    /// Returns an iterator over all facets of a cell as lightweight `FacetView` objects.
+    /// Returns an iterator over all facets of a simplex as lightweight `FacetView` objects.
     ///
     /// This is a zero-allocation alternative to `facet_views_from_tds()` that returns an iterator
-    /// instead of collecting results into a `Vec`. This is more memory-efficient for large cells
+    /// instead of collecting results into a `Vec`. This is more memory-efficient for large simplices
     /// or when you don't need to store all facet views at once.
     ///
     /// # Arguments
     ///
     /// * `tds` - Reference to the triangulation data structure
-    /// * `cell_key` - The key of the cell in the TDS
+    /// * `simplex_key` - The key of the simplex in the TDS
     ///
     /// # Returns
     ///
-    /// A `Result<impl ExactSizeIterator<Item = Result<FacetView, FacetError>>, FacetError>` that yields all facets of the cell.
+    /// A `Result<impl ExactSizeIterator<Item = Result<FacetView, FacetError>>, FacetError>` that yields all facets of the simplex.
     /// The iterator implements `ExactSizeIterator`, so you can call `.len()` to get the number of facets
     /// without consuming the iterator.
     ///
     /// # Errors
     ///
     /// Returns a [`FacetError`] if:
-    /// - The cell key is not found in the TDS
+    /// - The simplex key is not found in the TDS
     /// - The facet count cannot be represented as `u8` (very rare, only for extremely high dimensions)
     ///
     /// Individual facet creation errors are yielded by the iterator as `Result<FacetView, FacetError>`
@@ -1668,7 +1641,7 @@ where
     ///
     /// ```
     /// use delaunay::prelude::triangulation::*;
-    /// use delaunay::prelude::tds::Cell;
+    /// use delaunay::prelude::tds::Simplex;
     ///
     /// let vertices = vec![
     ///     vertex!([0.0, 0.0, 0.0]),
@@ -1679,8 +1652,8 @@ where
     /// let dt: DelaunayTriangulation<_, _, _, 3> = DelaunayTriangulation::new(&vertices).unwrap();
     /// let tds = dt.tds();
     ///
-    /// let cell_key = tds.cell_keys().next().unwrap();
-    /// let facet_iter = Cell::facet_view_iter(tds, cell_key).expect("Failed to get facet iterator");
+    /// let simplex_key = tds.simplex_keys().next().unwrap();
+    /// let facet_iter = Simplex::facet_view_iter(tds, simplex_key).expect("Failed to get facet iterator");
     ///
     /// // Iterator knows the exact count
     /// assert_eq!(facet_iter.len(), 4); // 4 facets for a tetrahedron
@@ -1694,7 +1667,7 @@ where
     ///
     /// ```
     /// use delaunay::prelude::triangulation::*;
-    /// use delaunay::prelude::tds::Cell;
+    /// use delaunay::prelude::tds::Simplex;
     ///
     /// let vertices = vec![
     ///     vertex!([0.0, 0.0, 0.0]),
@@ -1705,8 +1678,8 @@ where
     /// let dt: DelaunayTriangulation<_, _, _, 3> = DelaunayTriangulation::new(&vertices).unwrap();
     /// let tds = dt.tds();
     ///
-    /// let cell_key = tds.cell_keys().next().unwrap();
-    /// let facet_iter = Cell::facet_view_iter(tds, cell_key).expect("Failed to get facet iterator");
+    /// let simplex_key = tds.simplex_keys().next().unwrap();
+    /// let facet_iter = Simplex::facet_view_iter(tds, simplex_key).expect("Failed to get facet iterator");
     ///
     /// // Collect all facets and surface any construction error
     /// let successful_facets: Vec<_> = facet_iter
@@ -1716,17 +1689,17 @@ where
     /// ```
     pub fn facet_view_iter(
         tds: &Tds<T, U, V, D>,
-        cell_key: CellKey,
+        simplex_key: SimplexKey,
     ) -> Result<
         impl ExactSizeIterator<Item = Result<FacetView<'_, T, U, V, D>, FacetError>>,
         FacetError,
     > {
-        // Get the cell from the TDS using the key
-        let cell = tds
-            .cell(cell_key)
-            .ok_or(FacetError::CellNotFoundInTriangulation)?;
+        // Get the simplex from the TDS using the key
+        let simplex = tds
+            .simplex(simplex_key)
+            .ok_or(FacetError::SimplexNotFoundInTriangulation)?;
 
-        let vertex_count = cell.number_of_vertices();
+        let vertex_count = simplex.number_of_vertices();
         if vertex_count > u8::MAX as usize {
             return Err(FacetError::InvalidFacetIndex {
                 index: u8::MAX,
@@ -1737,7 +1710,7 @@ where
         // Return a simple range-based iterator that maps indices to FacetView creation
         Ok((0..vertex_count).map(move |idx| {
             let facet_index = usize_to_u8(idx, vertex_count)?;
-            FacetView::new(tds, cell_key, facet_index)
+            FacetView::new(tds, simplex_key, facet_index)
         }))
     }
 }
@@ -1746,49 +1719,40 @@ where
 // STANDARD TRAIT IMPLEMENTATIONS
 // =============================================================================
 
-/// Phase 3A: Equality of cells based on sorted vertex keys.
+/// Equality of simplices based on sorted vertex keys.
 ///
-/// Two cells are equal if they contain the same set of vertex keys,
+/// Two simplices are equal if they contain the same set of vertex keys,
 /// regardless of order. This is fast (O(D log D)) and doesn't require TDS access.
 ///
-/// **Note**: This compares cells within the same TDS context. For cross-TDS
-/// comparison, use `eq_by_vertex_uuids()` (to be added if needed).
-impl<T, U, V, const D: usize> PartialEq for Cell<T, U, V, D> {
+/// **Note**: This compares simplices within the same TDS context. For cross-TDS
+/// comparison by coordinates, use [`Simplex::eq_by_vertices`].
+impl<T, U, V, const D: usize> PartialEq for Simplex<T, U, V, D> {
     #[inline]
     fn eq(&self, other: &Self) -> bool {
         // Fast comparison using vertex keys (just u64 comparisons)
-        // Use CellVertexBuffer for stack allocation (D+1 keys fit on stack for D ≤ 7)
-        let mut self_keys: CellVertexBuffer = self.vertices.iter().copied().collect();
-        let mut other_keys: CellVertexBuffer = other.vertices.iter().copied().collect();
+        // Use SimplexVertexKeyBuffer for stack allocation (D+1 keys fit on stack for D ≤ 7)
+        let mut self_keys: SimplexVertexKeyBuffer = self.vertices.iter().copied().collect();
+        let mut other_keys: SimplexVertexKeyBuffer = other.vertices.iter().copied().collect();
         self_keys.sort_unstable();
         other_keys.sort_unstable();
         self_keys == other_keys
-
-        /* OLD CODE - Phase 3A migration: compared full vertex objects
-        sorted_vertices::<T, U, D>(&self.vertices) == sorted_vertices::<T, U, D>(&other.vertices)
-        */
     }
 }
 
-/// Phase 3A: Order of cells based on lexicographic order of sorted vertex keys.
+/// Order of simplices based on lexicographic order of sorted vertex keys.
 ///
-/// This provides a consistent ordering for cells based on their vertex keys.
+/// This provides a consistent ordering for simplices based on their vertex keys.
 /// Fast (O(D log D)) and doesn't require TDS access.
-impl<T, U, V, const D: usize> PartialOrd for Cell<T, U, V, D> {
+impl<T, U, V, const D: usize> PartialOrd for Simplex<T, U, V, D> {
     #[inline]
     fn partial_cmp(&self, other: &Self) -> Option<cmp::Ordering> {
         // Fast comparison using vertex keys
-        // Use CellVertexBuffer for stack allocation (D+1 keys fit on stack for D ≤ 7)
-        let mut self_keys: CellVertexBuffer = self.vertices.iter().copied().collect();
-        let mut other_keys: CellVertexBuffer = other.vertices.iter().copied().collect();
+        // Use SimplexVertexKeyBuffer for stack allocation (D+1 keys fit on stack for D ≤ 7)
+        let mut self_keys: SimplexVertexKeyBuffer = self.vertices.iter().copied().collect();
+        let mut other_keys: SimplexVertexKeyBuffer = other.vertices.iter().copied().collect();
         self_keys.sort_unstable();
         other_keys.sort_unstable();
         self_keys.partial_cmp(&other_keys)
-
-        /* OLD CODE - Phase 3A migration: compared full vertex objects
-        sorted_vertices::<T, U, D>(&self.vertices)
-            .partial_cmp(&sorted_vertices::<T, U, D>(&other.vertices))
-        */
     }
 }
 
@@ -1796,38 +1760,32 @@ impl<T, U, V, const D: usize> PartialOrd for Cell<T, U, V, D> {
 // HASHING AND EQUALITY IMPLEMENTATIONS
 // =============================================================================
 
-/// Phase 3A: Eq implementation for Cell based on sorted vertex keys.
+/// Eq implementation for Simplex based on sorted vertex keys.
 ///
-/// Maintains the Eq contract with `PartialEq`: cells with the same vertex keys
+/// Maintains the Eq contract with `PartialEq`: simplices with the same vertex keys
 /// are considered equal.
-impl<T, U, V, const D: usize> Eq for Cell<T, U, V, D> {}
+impl<T, U, V, const D: usize> Eq for Simplex<T, U, V, D> {}
 
-/// Phase 3A: Custom Hash implementation for Cell using sorted vertex keys.
+/// Custom Hash implementation for Simplex using sorted vertex keys.
 ///
-/// This ensures that cells with the same vertex keys have the same hash,
+/// This ensures that simplices with the same vertex keys have the same hash,
 /// maintaining the Eq/Hash contract: if a == b, then hash(a) == hash(b).
 ///
 /// **Performance**: Fast O(D log D) hashing using just vertex keys (u64).
 ///
 /// **Note**: UUID, neighbors, and data are excluded from hashing to match
 /// the `PartialEq` implementation which only compares vertex keys.
-impl<T, U, V, const D: usize> Hash for Cell<T, U, V, D> {
+impl<T, U, V, const D: usize> Hash for Simplex<T, U, V, D> {
     fn hash<H: Hasher>(&self, state: &mut H) {
         // Hash sorted vertex keys for consistent ordering
-        // Use CellVertexBuffer for stack allocation (D+1 keys fit on stack for D ≤ 7)
-        let mut sorted_keys: CellVertexBuffer = self.vertices.iter().copied().collect();
+        // Use SimplexVertexKeyBuffer for stack allocation (D+1 keys fit on stack for D ≤ 7)
+        let mut sorted_keys: SimplexVertexKeyBuffer = self.vertices.iter().copied().collect();
         sorted_keys.sort_unstable();
         for key in sorted_keys {
             key.hash(state);
         }
         // Intentionally exclude UUID, neighbors, and data to maintain
         // consistency with PartialEq implementation which only compares vertex keys
-
-        /* OLD CODE - Phase 3A migration: hashed full vertex objects
-        for vertex in &sorted_vertices::<T, U, D>(&self.vertices) {
-            vertex.hash(state);
-        }
-        */
     }
 }
 
@@ -1866,11 +1824,11 @@ mod tests {
 
     struct NonDataType(String);
 
-    fn cell_with_non_data_type_metadata<const D: usize>(
+    fn simplex_with_non_data_type_metadata<const D: usize>(
         vertex_ids: [u64; D],
         data: NonDataType,
-    ) -> Cell<f64, String, NonDataType, D> {
-        Cell {
+    ) -> Simplex<f64, String, NonDataType, D> {
+        Simplex {
             vertices: vertex_ids
                 .into_iter()
                 .map(|id| VertexKey::from(slotmap::KeyData::from_ffi(id)))
@@ -1889,48 +1847,48 @@ mod tests {
     // This macro generates comprehensive tests for each dimension (2D-5D)
     // Keep this at the top so it's not forgotten when adding new tests!
 
-    /// Macro to generate dimension-specific cell tests for dimensions 2D-5D.
+    /// Macro to generate dimension-specific simplex tests for dimensions 2D-5D.
     ///
     /// This macro reduces test duplication by generating consistent tests across
     /// multiple dimensions. It creates tests for:
-    /// - Basic cell creation and property validation
+    /// - Basic simplex creation and property validation
     /// - Serialization roundtrip (Some and None data)
     /// - UUID validation
     ///
     /// # Usage
     ///
     /// ```ignore
-    /// test_cell_dimensions! {
-    ///     cell_2d => 2 => vec![vertex!([0.0, 0.0]), vertex!([1.0, 0.0]), vertex!([0.0, 1.0])],
+    /// test_simplex_dimensions! {
+    ///     simplex_2d => 2 => vec![vertex!([0.0, 0.0]), vertex!([1.0, 0.0]), vertex!([0.0, 1.0])],
     /// }
     /// ```
-    macro_rules! test_cell_dimensions {
+    macro_rules! test_simplex_dimensions {
         ($(
             $test_name:ident => $dim:expr => $vertices:expr
         ),+ $(,)?) => {
             $(
                 #[test]
                 fn $test_name() {
-                    // Test basic cell creation
+                    // Test basic simplex creation
                     let vertices = $vertices;
                     let dt = DelaunayTriangulation::new(&vertices).unwrap();
-                    let (_, cell) = dt.cells().next().unwrap();
-                    assert_cell_properties(cell, $dim + 1, $dim);
+                    let (_, simplex) = dt.simplices().next().unwrap();
+                    assert_simplex_properties(simplex, $dim + 1, $dim);
                 }
 
                 pastey::paste! {
                     #[test]
                     fn [<$test_name _with_data>]() {
-                        // Test cell with data - need generic constructor for non-() cell data
+                        // Test simplex with data - need generic constructor for non-() simplex data
                         let vertices = $vertices;
                         let dt: DelaunayTriangulation<AdaptiveKernel<f64>, (), i32, $dim> =
                             DelaunayTriangulation::with_kernel(&AdaptiveKernel::new(), &vertices).unwrap();
 
-                        let (_, cell_ref) = dt.cells().next().unwrap();
-                        let mut cell = cell_ref.clone();
-                        cell.data = Some(42);
-                        assert_cell_properties(&cell, $dim + 1, $dim);
-                        assert_eq!(cell.data, Some(42));
+                        let (_, simplex_ref) = dt.simplices().next().unwrap();
+                        let mut simplex = simplex_ref.clone();
+                        simplex.data = Some(42);
+                        assert_simplex_properties(&simplex, $dim + 1, $dim);
+                        assert_eq!(simplex.data, Some(42));
                     }
 
                     #[test]
@@ -1939,24 +1897,24 @@ mod tests {
                         let vertices = $vertices;
                         let dt: DelaunayTriangulation<AdaptiveKernel<f64>, (), i32, $dim> =
                             DelaunayTriangulation::with_kernel(&AdaptiveKernel::new(), &vertices).unwrap();
-                        let (_, cell) = dt.cells().next().unwrap();
-                        let mut cell = cell.clone();
-                        cell.data = Some(99);
+                        let (_, simplex) = dt.simplices().next().unwrap();
+                        let mut simplex = simplex.clone();
+                        simplex.data = Some(99);
 
-                        let serialized = serde_json::to_string(&cell).unwrap();
+                        let serialized = serde_json::to_string(&simplex).unwrap();
                         assert!(serialized.contains("\"data\":"));
-                        let deserialized: Cell<f64, (), i32, $dim> = serde_json::from_str(&serialized).unwrap();
+                        let deserialized: Simplex<f64, (), i32, $dim> = serde_json::from_str(&serialized).unwrap();
                         assert_eq!(deserialized.data, Some(99));
-                        assert_eq!(deserialized.uuid(), cell.uuid());
+                        assert_eq!(deserialized.uuid(), simplex.uuid());
 
                         // Test serialization with None data - use simple constructor
                         let vertices = $vertices;
                         let dt = DelaunayTriangulation::new(&vertices).unwrap();
-                        let (_, cell) = dt.cells().next().unwrap();
+                        let (_, simplex) = dt.simplices().next().unwrap();
 
-                        let serialized = serde_json::to_string(&cell).unwrap();
+                        let serialized = serde_json::to_string(&simplex).unwrap();
                         assert!(!serialized.contains("\"data\":"));
-                        let deserialized: Cell<f64, (), Option<i32>, $dim> = serde_json::from_str(&serialized).unwrap();
+                        let deserialized: Simplex<f64, (), Option<i32>, $dim> = serde_json::from_str(&serialized).unwrap();
                         assert_eq!(deserialized.data, None);
                     }
 
@@ -1966,12 +1924,12 @@ mod tests {
                         let vertices1 = $vertices;
                         let vertices2 = $vertices;
                         let dt1 = DelaunayTriangulation::new(&vertices1).unwrap();
-                        let (_, cell1) = dt1.cells().next().unwrap();
+                        let (_, simplex1) = dt1.simplices().next().unwrap();
                         let dt2 = DelaunayTriangulation::new(&vertices2).unwrap();
-                        let (_, cell2) = dt2.cells().next().unwrap();
-                        assert_ne!(cell1.uuid(), cell2.uuid());
-                        assert!(!cell1.uuid().is_nil());
-                        assert!(!cell2.uuid().is_nil());
+                        let (_, simplex2) = dt2.simplices().next().unwrap();
+                        assert_ne!(simplex1.uuid(), simplex2.uuid());
+                        assert!(!simplex1.uuid().is_nil());
+                        assert!(!simplex2.uuid().is_nil());
                     }
                 }
             )+
@@ -1980,45 +1938,51 @@ mod tests {
 
     #[test]
     fn equality_ordering_and_hash_do_not_require_data_type_metadata() {
-        let cell_a = cell_with_non_data_type_metadata([1, 2, 3], NonDataType("left".to_string()));
-        let cell_b = cell_with_non_data_type_metadata([3, 2, 1], NonDataType("right".to_string()));
-        let cell_c = cell_with_non_data_type_metadata([1, 2, 4], NonDataType("other".to_string()));
+        let simplex_a =
+            simplex_with_non_data_type_metadata([1, 2, 3], NonDataType("left".to_string()));
+        let simplex_b =
+            simplex_with_non_data_type_metadata([3, 2, 1], NonDataType("right".to_string()));
+        let simplex_c =
+            simplex_with_non_data_type_metadata([1, 2, 4], NonDataType("other".to_string()));
 
-        assert!(cell_a == cell_b);
-        assert!(cell_a != cell_c);
-        assert_eq!(cell_a.partial_cmp(&cell_b), Some(cmp::Ordering::Equal));
+        assert!(simplex_a == simplex_b);
+        assert!(simplex_a != simplex_c);
+        assert_eq!(
+            simplex_a.partial_cmp(&simplex_b),
+            Some(cmp::Ordering::Equal)
+        );
 
         let mut hash_a = DefaultHasher::new();
         let mut hash_b = DefaultHasher::new();
-        cell_a.hash(&mut hash_a);
-        cell_b.hash(&mut hash_b);
+        simplex_a.hash(&mut hash_a);
+        simplex_b.hash(&mut hash_b);
         assert_eq!(hash_a.finish(), hash_b.finish());
 
-        assert_eq!(cell_a.data.as_ref().unwrap().0, "left");
-        assert_eq!(cell_b.data.as_ref().unwrap().0, "right");
+        assert_eq!(simplex_a.data.as_ref().unwrap().0, "left");
+        assert_eq!(simplex_b.data.as_ref().unwrap().0, "right");
     }
 
     // Generate tests for dimensions 2D through 5D
-    test_cell_dimensions! {
-        cell_2d => 2 => vec![
+    test_simplex_dimensions! {
+        simplex_2d => 2 => vec![
             vertex!([0.0, 0.0]),
             vertex!([1.0, 0.0]),
             vertex!([0.0, 1.0]),
         ],
-        cell_3d => 3 => vec![
+        simplex_3d => 3 => vec![
             vertex!([0.0, 0.0, 0.0]),
             vertex!([1.0, 0.0, 0.0]),
             vertex!([0.0, 1.0, 0.0]),
             vertex!([0.0, 0.0, 1.0]),
         ],
-        cell_4d => 4 => vec![
+        simplex_4d => 4 => vec![
             vertex!([0.0, 0.0, 0.0, 0.0]),
             vertex!([1.0, 0.0, 0.0, 0.0]),
             vertex!([0.0, 1.0, 0.0, 0.0]),
             vertex!([0.0, 0.0, 1.0, 0.0]),
             vertex!([0.0, 0.0, 0.0, 1.0]),
         ],
-        cell_5d => 5 => vec![
+        simplex_5d => 5 => vec![
             vertex!([0.0, 0.0, 0.0, 0.0, 0.0]),
             vertex!([1.0, 0.0, 0.0, 0.0, 0.0]),
             vertex!([0.0, 1.0, 0.0, 0.0, 0.0]),
@@ -2032,19 +1996,15 @@ mod tests {
     // HELPER FUNCTIONS
     // =============================================================================
 
-    /// Simplified helper function to test basic cell properties
-    fn assert_cell_properties<T, U, V, const D: usize>(
-        cell: &Cell<T, U, V, D>,
+    /// Simplified helper function to test basic simplex properties
+    fn assert_simplex_properties<T, U, V, const D: usize>(
+        simplex: &Simplex<T, U, V, D>,
         expected_vertices: usize,
         expected_dim: usize,
-    ) where
-        T: CoordinateScalar,
-        U: DataType,
-        V: DataType,
-    {
-        assert_eq!(cell.number_of_vertices(), expected_vertices);
-        assert_eq!(cell.dim(), expected_dim);
-        assert!(!cell.uuid().is_nil());
+    ) {
+        assert_eq!(simplex.number_of_vertices(), expected_vertices);
+        assert_eq!(simplex.dim(), expected_dim);
+        assert!(!simplex.uuid().is_nil());
     }
 
     // Helper functions for creating common test data
@@ -2065,30 +2025,30 @@ mod tests {
         ]
     }
 
-    // Tests covering the cell! macro functionality to ensure it works correctly
+    // Tests covering the simplex! macro functionality to ensure it works correctly
     // with different scenarios including vertex arrays and optional data.
 
     #[test]
-    fn cell_macro_without_data() {
-        // Test the cell! macro without data (explicit type annotation required)
+    fn simplex_macro_without_data() {
+        // Test the simplex! macro without data (explicit type annotation required)
         let vertices = vec![
             vertex!([0.0, 0.0, 0.0]),
             vertex!([1.0, 0.0, 0.0]),
             vertex!([0.0, 1.0, 0.0]),
-            vertex!([0.0, 0.0, 1.0]), // Need 4 vertices for 3D cell
+            vertex!([0.0, 0.0, 1.0]), // Need 4 vertices for 3D simplex
         ];
 
-        // Phase 3A: Create DT to get cell with context
+        // Create DT to get a simplex with TDS context.
         let dt = DelaunayTriangulation::new(&vertices).unwrap();
-        let (_, cell) = dt.cells().next().unwrap();
+        let (_, simplex) = dt.simplices().next().unwrap();
 
-        assert_eq!(cell.number_of_vertices(), 4);
-        assert_eq!(cell.dim(), 3);
-        assert!(cell.data.is_none());
-        assert!(!cell.uuid().is_nil());
+        assert_eq!(simplex.number_of_vertices(), 4);
+        assert_eq!(simplex.dim(), 3);
+        assert!(simplex.data.is_none());
+        assert!(!simplex.uuid().is_nil());
 
         // Verify all input vertices exist in the triangulation (order-independent)
-        let cell_coords: Vec<Vec<f64>> = cell
+        let simplex_coords: Vec<Vec<f64>> = simplex
             .vertices()
             .iter()
             .map(|&vkey| {
@@ -2105,22 +2065,22 @@ mod tests {
         for original in &vertices {
             let original_coords = original.point().coords().as_slice();
             assert!(
-                cell_coords.iter().any(|coords| {
+                simplex_coords.iter().any(|coords| {
                     coords
                         .iter()
                         .zip(original_coords)
                         .all(|(a, b)| (a - b).abs() < f64::EPSILON)
                 }),
-                "Input vertex {original_coords:?} not found in cell"
+                "Input vertex {original_coords:?} not found in simplex"
             );
         }
 
         // Human readable output for cargo test -- --nocapture
-        println!("Cell without data: {cell:?}");
+        println!("Simplex without data: {simplex:?}");
     }
 
     // =============================================================================
-    // CELL EQUALITY TESTS
+    // SIMPLEX EQUALITY TESTS
     // =============================================================================
 
     #[test]
@@ -2137,13 +2097,13 @@ mod tests {
         let dt1 = DelaunayTriangulation::new(&vertices).unwrap();
         let dt2 = DelaunayTriangulation::new(&vertices).unwrap();
 
-        let cell1 = dt1.cells().next().unwrap().1;
-        let cell2 = dt2.cells().next().unwrap().1;
+        let simplex1 = dt1.simplices().next().unwrap().1;
+        let simplex2 = dt2.simplices().next().unwrap().1;
 
         // Despite different DT instances (and thus different vertex keys),
-        // cells should be equal by coordinates
-        assert!(cell1.eq_by_vertices(dt1.tds(), cell2, dt2.tds()));
-        println!("  ✓ Cells from different DT with same coordinates are equal");
+        // simplices should be equal by coordinates
+        assert!(simplex1.eq_by_vertices(dt1.tds(), simplex2, dt2.tds()));
+        println!("  ✓ Simplices from different DT with same coordinates are equal");
     }
 
     #[test]
@@ -2158,16 +2118,16 @@ mod tests {
         let dt1 = DelaunayTriangulation::new(&vertices).unwrap();
         let dt2 = DelaunayTriangulation::new(&vertices).unwrap();
 
-        let cell1 = dt1.cells().next().unwrap().1;
-        let cell2 = dt2.cells().next().unwrap().1;
+        let simplex1 = dt1.simplices().next().unwrap().1;
+        let simplex2 = dt2.simplices().next().unwrap().1;
 
-        assert!(cell1.eq_by_vertices(dt1.tds(), cell2, dt2.tds()));
-        println!("  ✓ 2D cells with same coordinates are equal");
+        assert!(simplex1.eq_by_vertices(dt1.tds(), simplex2, dt2.tds()));
+        println!("  ✓ 2D simplices with same coordinates are equal");
     }
 
     #[test]
-    fn cell_macro_with_data() {
-        // Test the cell! macro with data by creating TDS, cloning cell, and modifying
+    fn simplex_macro_with_data() {
+        // Test the simplex! macro with data by creating TDS, cloning simplex, and modifying
         let vertices = vec![
             vertex!([0.0, 0.0, 0.0]),
             vertex!([1.0, 0.0, 0.0]),
@@ -2175,21 +2135,21 @@ mod tests {
             vertex!([0.0, 0.0, 1.0]),
         ];
 
-        // Build DT with integer cell data type
+        // Build DT with integer simplex data type
         let dt: DelaunayTriangulation<AdaptiveKernel<f64>, (), i32, 3> =
             DelaunayTriangulation::with_kernel(&AdaptiveKernel::new(), &vertices).unwrap();
 
-        let (_, cell_ref) = dt.cells().next().unwrap();
-        let mut cell = cell_ref.clone();
-        cell.data = Some(42);
+        let (_, simplex_ref) = dt.simplices().next().unwrap();
+        let mut simplex = simplex_ref.clone();
+        simplex.data = Some(42);
 
-        assert_eq!(cell.number_of_vertices(), 4);
-        assert_eq!(cell.dim(), 3);
-        assert_eq!(cell.data.unwrap(), 42);
-        assert!(!cell.uuid().is_nil());
+        assert_eq!(simplex.number_of_vertices(), 4);
+        assert_eq!(simplex.dim(), 3);
+        assert_eq!(simplex.data.unwrap(), 42);
+        assert!(!simplex.uuid().is_nil());
 
-        // Verify all input vertices exist in the cell (order-independent)
-        let cell_coords: Vec<Vec<f64>> = cell
+        // Verify all input vertices exist in the simplex (order-independent)
+        let simplex_coords: Vec<Vec<f64>> = simplex
             .vertices()
             .iter()
             .map(|&vkey| {
@@ -2206,42 +2166,42 @@ mod tests {
         for original in &vertices {
             let original_coords = original.point().coords().as_slice();
             assert!(
-                cell_coords.iter().any(|coords| {
+                simplex_coords.iter().any(|coords| {
                     coords
                         .iter()
                         .zip(original_coords)
                         .all(|(a, b)| (a - b).abs() < f64::EPSILON)
                 }),
-                "Input vertex {original_coords:?} not found in cell"
+                "Input vertex {original_coords:?} not found in simplex"
             );
         }
 
         // Human readable output for cargo test -- --nocapture
-        println!("Cell with data: {cell:?}");
+        println!("Simplex with data: {simplex:?}");
     }
 
     #[test]
-    fn cell_with_vertex_data() {
-        // Phase 3A: Test cells with vertex data through TDS
-        // Don't use cell! macro since we need TDS context for vertex data access
+    fn simplex_with_vertex_data() {
+        // Test simplices with vertex data through TDS.
+        // Don't use simplex! macro since we need TDS context for vertex data access
         let vertices = vec![
             vertex!([0.0, 0.0, 0.0], 1),
             vertex!([1.0, 0.0, 0.0], 2),
             vertex!([0.0, 1.0, 0.0], 3),
-            vertex!([0.0, 0.0, 1.0], 4), // Need 4 vertices for 3D cell
+            vertex!([0.0, 0.0, 1.0], 4), // Need 4 vertices for 3D simplex
         ];
 
-        // Create DT with vertex data - simple constructor works since cell data is ()
+        // Create DT with vertex data - simple constructor works since simplex data is ()
         let dt: DelaunayTriangulation<AdaptiveKernel<f64>, i32, (), 3> =
             DelaunayTriangulation::with_kernel(&AdaptiveKernel::new(), &vertices).unwrap();
 
-        let (_, cell) = dt.cells().next().unwrap();
+        let (_, simplex) = dt.simplices().next().unwrap();
 
-        assert_eq!(cell.number_of_vertices(), 4);
-        assert_eq!(cell.dim(), 3);
+        assert_eq!(simplex.number_of_vertices(), 4);
+        assert_eq!(simplex.dim(), 3);
 
         // Check that all expected vertex data values exist (order-independent)
-        let cell_data: Vec<i32> = cell
+        let simplex_data: Vec<i32> = simplex
             .vertices()
             .iter()
             .map(|&vkey| dt.tds().vertex(vkey).unwrap().data.unwrap())
@@ -2249,8 +2209,8 @@ mod tests {
 
         for expected in &[1, 2, 3, 4] {
             assert!(
-                cell_data.contains(expected),
-                "Expected vertex data {expected} not found in cell"
+                simplex_data.contains(expected),
+                "Expected vertex data {expected} not found in simplex"
             );
         }
     }
@@ -2261,8 +2221,8 @@ mod tests {
     // Tests covering core Rust traits like PartialEq, PartialOrd, Hash, Clone
 
     #[test]
-    fn cell_partial_eq() {
-        // Phase 3A: Test PartialEq using cells from TDS
+    fn simplex_partial_eq() {
+        // Test PartialEq using simplices from TDS.
         let vertices = vec![
             vertex!([0.0, 0.0, 1.0]),
             vertex!([0.0, 1.0, 0.0]),
@@ -2270,22 +2230,22 @@ mod tests {
             vertex!([0.0, 0.0, 0.0]),
         ];
         let dt = DelaunayTriangulation::new(&vertices).unwrap();
-        let (_, cell1) = dt.cells().next().unwrap();
-        let cell2 = cell1.clone();
+        let (_, simplex1) = dt.simplices().next().unwrap();
+        let simplex2 = simplex1.clone();
 
         // Test equality
-        assert_eq!(*cell1, cell2);
-        assert_eq!(cell1.uuid(), cell2.uuid()); // Same cell, same UUID after clone
-        assert_eq!(cell1.vertices(), cell2.vertices());
+        assert_eq!(*simplex1, simplex2);
+        assert_eq!(simplex1.uuid(), simplex2.uuid()); // Same simplex, same UUID after clone
+        assert_eq!(simplex1.vertices(), simplex2.vertices());
 
-        // Test cloned cell
-        let cell3 = cell1.clone();
-        assert_eq!(*cell1, cell3);
+        // Test cloned simplex
+        let simplex3 = simplex1.clone();
+        assert_eq!(*simplex1, simplex3);
     }
 
     #[test]
-    fn cell_partial_ord() {
-        // Phase 3A: Test PartialOrd using TDS with multiple cells
+    fn simplex_partial_ord() {
+        // Test PartialOrd using TDS with multiple simplices.
         let all_vertices = vec![
             vertex!([0.0, 0.0, 1.0]),
             vertex!([0.0, 1.0, 0.0]),
@@ -2294,21 +2254,24 @@ mod tests {
             vertex!([1.0, 1.0, 1.0]),
         ];
         let dt = DelaunayTriangulation::new(&all_vertices).unwrap();
-        let cells: Vec<_> = dt.cells().map(|(_, cell)| cell).collect();
+        let simplices: Vec<_> = dt.simplices().map(|(_, simplex)| simplex).collect();
 
-        if cells.len() >= 2 {
-            // Test ordering between different cells
-            let cell1 = cells[0];
-            let cell2 = cells[1];
+        if simplices.len() >= 2 {
+            // Test ordering between different simplices
+            let simplex1 = simplices[0];
+            let simplex2 = simplices[1];
 
             // At least one ordering relationship should hold
-            let has_ordering = cell1 != cell2 || cell1 == cell2;
-            assert!(has_ordering, "Cells should have some ordering relationship");
+            let has_ordering = simplex1 != simplex2 || simplex1 == simplex2;
+            assert!(
+                has_ordering,
+                "Simplices should have some ordering relationship"
+            );
         }
     }
 
     #[test]
-    fn cell_hash() {
+    fn simplex_hash() {
         let vertices = vec![
             vertex!([0.0, 0.0, 1.0]),
             vertex!([0.0, 1.0, 0.0]),
@@ -2316,24 +2279,24 @@ mod tests {
             vertex!([0.0, 0.0, 0.0]),
         ];
         let dt = DelaunayTriangulation::new(&vertices).unwrap();
-        let (_, cell1) = dt.cells().next().unwrap();
-        let cell2 = cell1.clone();
+        let (_, simplex1) = dt.simplices().next().unwrap();
+        let simplex2 = simplex1.clone();
 
         let mut hasher1 = DefaultHasher::new();
         let mut hasher2 = DefaultHasher::new();
 
-        cell1.hash(&mut hasher1);
-        cell2.hash(&mut hasher2);
+        simplex1.hash(&mut hasher1);
+        simplex2.hash(&mut hasher2);
 
         // Same vertices should produce same hash (Eq/Hash contract)
-        assert_eq!(*cell1, cell2); // They are equal by vertices
+        assert_eq!(*simplex1, simplex2); // They are equal by vertices
         assert_eq!(hasher1.finish(), hasher2.finish()); // Therefore hashes must be equal
-        // Note: UUID is same since cell2 is a clone
-        assert_eq!(cell1.uuid(), cell2.uuid());
+        // Note: UUID is same since simplex2 is a clone
+        assert_eq!(simplex1.uuid(), simplex2.uuid());
     }
 
     #[test]
-    fn cell_clone() {
+    fn simplex_clone() {
         let vertices = vec![
             vertex!([0.0, 0.0, 1.0], 1),
             vertex!([0.0, 1.0, 0.0], 1),
@@ -2342,16 +2305,16 @@ mod tests {
         ];
         let dt: DelaunayTriangulation<AdaptiveKernel<f64>, i32, i32, 3> =
             DelaunayTriangulation::with_kernel(&AdaptiveKernel::new(), &vertices).unwrap();
-        let (_, cell_ref) = dt.cells().next().unwrap();
-        let mut cell1 = cell_ref.clone();
-        cell1.data = Some(42);
-        let cell2 = cell1.clone();
+        let (_, simplex_ref) = dt.simplices().next().unwrap();
+        let mut simplex1 = simplex_ref.clone();
+        simplex1.data = Some(42);
+        let simplex2 = simplex1.clone();
 
-        assert_eq!(cell1, cell2);
+        assert_eq!(simplex1, simplex2);
     }
 
     #[test]
-    fn cell_ordering_edge_cases() {
+    fn simplex_ordering_edge_cases() {
         let vertices = vec![
             vertex!([0.0, 0.0, 0.0]),
             vertex!([1.0, 0.0, 0.0]),
@@ -2359,40 +2322,40 @@ mod tests {
             vertex!([0.0, 0.0, 1.0]),
         ];
         let dt = DelaunayTriangulation::new(&vertices).unwrap();
-        let (_, cell1) = dt.cells().next().unwrap();
-        let cell2 = cell1.clone();
+        let (_, simplex1) = dt.simplices().next().unwrap();
+        let simplex2 = simplex1.clone();
 
-        // Test that equal cells are not less than each other
-        assert_ne!(cell1.partial_cmp(&cell2), Some(cmp::Ordering::Less));
-        assert_ne!(cell2.partial_cmp(cell1), Some(cmp::Ordering::Less));
-        assert!(*cell1 <= cell2);
-        assert!(cell2 <= *cell1);
-        assert!(*cell1 >= cell2);
-        assert!(cell2 >= *cell1);
+        // Test that equal simplices are not less than each other
+        assert_ne!(simplex1.partial_cmp(&simplex2), Some(cmp::Ordering::Less));
+        assert_ne!(simplex2.partial_cmp(simplex1), Some(cmp::Ordering::Less));
+        assert!(*simplex1 <= simplex2);
+        assert!(simplex2 <= *simplex1);
+        assert!(*simplex1 >= simplex2);
+        assert!(simplex2 >= *simplex1);
     }
     // =============================================================================
-    // CORE CELL METHODS TESTS
+    // CORE SIMPLEX METHODS TESTS
     // =============================================================================
-    // Tests covering core cell functionality including basic properties, containment
-    // checks, facet operations, and other fundamental cell methods.
+    // Tests covering core simplex functionality including basic properties, containment
+    // checks, facet operations, and other fundamental simplex methods.
 
     #[test]
-    fn cell_number_of_vertices() {
+    fn simplex_number_of_vertices() {
         let vertices_2d = create_test_vertices_2d();
         let dt_2d = DelaunayTriangulation::new(&vertices_2d).unwrap();
-        let cell_key_2d = dt_2d.tds().cell_keys().next().unwrap();
-        let triangle = dt_2d.tds().cell(cell_key_2d).unwrap();
+        let simplex_key_2d = dt_2d.tds().simplex_keys().next().unwrap();
+        let triangle = dt_2d.tds().simplex(simplex_key_2d).unwrap();
         assert_eq!(triangle.number_of_vertices(), 3);
 
         let vertices_3d = create_test_vertices_3d();
         let dt_3d = DelaunayTriangulation::new(&vertices_3d).unwrap();
-        let cell_key_3d = dt_3d.tds().cell_keys().next().unwrap();
-        let tetrahedron = dt_3d.tds().cell(cell_key_3d).unwrap();
+        let simplex_key_3d = dt_3d.tds().simplex_keys().next().unwrap();
+        let tetrahedron = dt_3d.tds().simplex(simplex_key_3d).unwrap();
         assert_eq!(tetrahedron.number_of_vertices(), 4);
     }
 
     #[test]
-    fn cell_mirror_facet_index_shared_facet_2d() {
+    fn simplex_mirror_facet_index_shared_facet_2d() {
         // Four points in convex position should yield two triangles that share an edge.
         let vertices = vec![
             vertex!([0.0, 0.0]),
@@ -2402,42 +2365,42 @@ mod tests {
         ];
         let dt = DelaunayTriangulation::new(&vertices).unwrap();
 
-        let cells: Vec<_> = dt.cells().map(|(_, cell)| cell).collect();
+        let simplices: Vec<_> = dt.simplices().map(|(_, simplex)| simplex).collect();
         assert!(
-            cells.len() >= 2,
-            "Expected at least 2 cells, got {}",
-            cells.len()
+            simplices.len() >= 2,
+            "Expected at least 2 simplices, got {}",
+            simplices.len()
         );
 
-        // Find two distinct cells that share exactly D vertices (i.e., a facet).
+        // Find two distinct simplices that share exactly D vertices (i.e., a facet).
         // For 2D, D = 2, so the shared facet is an edge.
         let mut found = None;
-        for i in 0..cells.len() {
-            for j in (i + 1)..cells.len() {
-                let cell_a = cells[i];
-                let cell_b = cells[j];
+        for i in 0..simplices.len() {
+            for j in (i + 1)..simplices.len() {
+                let simplex_a = simplices[i];
+                let simplex_b = simplices[j];
 
-                let shared: FastHashSet<VertexKey> = cell_a
+                let shared: FastHashSet<VertexKey> = simplex_a
                     .vertices()
                     .iter()
                     .copied()
-                    .filter(|v| cell_b.vertices().contains(v))
+                    .filter(|v| simplex_b.vertices().contains(v))
                     .collect();
 
                 if shared.len() == 2 {
-                    let facet_idx_a = cell_a
+                    let facet_idx_a = simplex_a
                         .vertices()
                         .iter()
                         .position(|v| !shared.contains(v))
-                        .expect("cell_a should have one vertex not in the shared facet");
+                        .expect("simplex_a should have one vertex not in the shared facet");
 
-                    let facet_idx_b = cell_b
+                    let facet_idx_b = simplex_b
                         .vertices()
                         .iter()
                         .position(|v| !shared.contains(v))
-                        .expect("cell_b should have one vertex not in the shared facet");
+                        .expect("simplex_b should have one vertex not in the shared facet");
 
-                    found = Some((cell_a, cell_b, facet_idx_a, facet_idx_b));
+                    found = Some((simplex_a, simplex_b, facet_idx_a, facet_idx_b));
                     break;
                 }
             }
@@ -2446,28 +2409,28 @@ mod tests {
             }
         }
 
-        let Some((cell_a, cell_b, facet_idx_a, facet_idx_b)) = found else {
-            panic!("Expected to find a pair of neighboring cells that share an edge");
+        let Some((simplex_a, simplex_b, facet_idx_a, facet_idx_b)) = found else {
+            panic!("Expected to find a pair of neighboring simplices that share an edge");
         };
 
         assert_eq!(
-            cell_a.mirror_facet_index(facet_idx_a, cell_b),
+            simplex_a.mirror_facet_index(facet_idx_a, simplex_b),
             Some(facet_idx_b)
         );
         assert_eq!(
-            cell_b.mirror_facet_index(facet_idx_b, cell_a),
+            simplex_b.mirror_facet_index(facet_idx_b, simplex_a),
             Some(facet_idx_a)
         );
 
         // Out-of-range facet index
         assert_eq!(
-            cell_a.mirror_facet_index(cell_a.number_of_vertices(), cell_b),
+            simplex_a.mirror_facet_index(simplex_a.number_of_vertices(), simplex_b),
             None
         );
     }
 
     #[test]
-    fn cell_mirror_facet_index_returns_none_when_cells_do_not_share_facet_2d() {
+    fn simplex_mirror_facet_index_returns_none_when_simplices_do_not_share_facet_2d() {
         // Add a point strictly inside the convex hull to yield multiple triangles.
         let vertices = vec![
             vertex!([0.0, 0.0]),
@@ -2478,56 +2441,56 @@ mod tests {
         ];
         let dt = DelaunayTriangulation::new(&vertices).unwrap();
 
-        let cells: Vec<_> = dt.cells().map(|(_, cell)| cell).collect();
+        let simplices: Vec<_> = dt.simplices().map(|(_, simplex)| simplex).collect();
         assert!(
-            cells.len() >= 3,
-            "Expected at least 3 cells, got {}",
-            cells.len()
+            simplices.len() >= 3,
+            "Expected at least 3 simplices, got {}",
+            simplices.len()
         );
 
-        // Find two cells that share fewer than D vertices (D=2 in 2D).
+        // Find two simplices that share fewer than D vertices (D=2 in 2D).
         let mut non_adjacent = None;
-        'outer: for i in 0..cells.len() {
-            for j in (i + 1)..cells.len() {
-                let cell_a = cells[i];
-                let cell_b = cells[j];
-                let shared_count = cell_a
+        'outer: for i in 0..simplices.len() {
+            for j in (i + 1)..simplices.len() {
+                let simplex_a = simplices[i];
+                let simplex_b = simplices[j];
+                let shared_count = simplex_a
                     .vertices()
                     .iter()
-                    .filter(|v| cell_b.vertices().contains(v))
+                    .filter(|v| simplex_b.vertices().contains(v))
                     .count();
 
                 if shared_count < 2 {
-                    non_adjacent = Some((cell_a, cell_b));
+                    non_adjacent = Some((simplex_a, simplex_b));
                     break 'outer;
                 }
             }
         }
 
-        let Some((cell_a, cell_b)) = non_adjacent else {
-            panic!("Expected to find a pair of non-adjacent cells");
+        let Some((simplex_a, simplex_b)) = non_adjacent else {
+            panic!("Expected to find a pair of non-adjacent simplices");
         };
 
-        assert_eq!(cell_a.mirror_facet_index(0, cell_b), None);
+        assert_eq!(simplex_a.mirror_facet_index(0, simplex_b), None);
     }
 
     #[test]
-    fn cell_dim() {
+    fn simplex_dim() {
         let vertices_2d = create_test_vertices_2d();
         let dt_2d = DelaunayTriangulation::new(&vertices_2d).unwrap();
-        let cell_key_2d = dt_2d.tds().cell_keys().next().unwrap();
-        let triangle = dt_2d.tds().cell(cell_key_2d).unwrap();
+        let simplex_key_2d = dt_2d.tds().simplex_keys().next().unwrap();
+        let triangle = dt_2d.tds().simplex(simplex_key_2d).unwrap();
         assert_eq!(triangle.dim(), 2);
 
         let vertices_3d = create_test_vertices_3d();
         let dt_3d = DelaunayTriangulation::new(&vertices_3d).unwrap();
-        let cell_key_3d = dt_3d.tds().cell_keys().next().unwrap();
-        let tetrahedron = dt_3d.tds().cell(cell_key_3d).unwrap();
+        let simplex_key_3d = dt_3d.tds().simplex_keys().next().unwrap();
+        let tetrahedron = dt_3d.tds().simplex(simplex_key_3d).unwrap();
         assert_eq!(tetrahedron.dim(), 3);
     }
 
     #[test]
-    fn cell_contains_vertex() {
+    fn simplex_contains_vertex() {
         let vertex1: Vertex<f64, i32, 3> = vertex!([0.0, 0.0, 1.0], 1);
         let vertex2 = vertex!([0.0, 1.0, 0.0], 1);
         let vertex3 = vertex!([1.0, 0.0, 0.0], 1);
@@ -2538,23 +2501,23 @@ mod tests {
         let dt: DelaunayTriangulation<AdaptiveKernel<f64>, i32, (), 3> =
             DelaunayTriangulation::with_kernel(&AdaptiveKernel::new(), &vertices).unwrap();
 
-        let cell_key = dt.cells().next().unwrap().0;
-        let cell = &dt.tds().cell(cell_key).unwrap();
+        let simplex_key = dt.simplices().next().unwrap().0;
+        let simplex = &dt.tds().simplex(simplex_key).unwrap();
 
         // Get vertex keys from DT
         let vertex_keys: Vec<_> = dt.tds().vertices().map(|(k, _)| k).collect();
 
-        assert!(cell.contains_vertex(vertex_keys[0]));
-        assert!(cell.contains_vertex(vertex_keys[1]));
-        assert!(cell.contains_vertex(vertex_keys[2]));
-        assert!(cell.contains_vertex(vertex_keys[3]));
+        assert!(simplex.contains_vertex(vertex_keys[0]));
+        assert!(simplex.contains_vertex(vertex_keys[1]));
+        assert!(simplex.contains_vertex(vertex_keys[2]));
+        assert!(simplex.contains_vertex(vertex_keys[3]));
 
         // Human readable output for cargo test -- --nocapture
-        println!("Cell: {cell:?}");
+        println!("Simplex: {simplex:?}");
     }
 
     #[test]
-    fn cell_has_vertex_in_common() {
+    fn simplex_has_vertex_in_common() {
         // Test has_vertex_in_common (replacement for deprecated contains_vertex_of)
         let vertices1 = vec![
             vertex!([0.0, 0.0, 1.0], 1),
@@ -2564,9 +2527,9 @@ mod tests {
         ];
         let tds1: DelaunayTriangulation<AdaptiveKernel<f64>, i32, i32, 3> =
             DelaunayTriangulation::with_kernel(&AdaptiveKernel::new(), &vertices1).unwrap();
-        let (_, cell_ref) = tds1.cells().next().unwrap();
-        let mut cell = cell_ref.clone();
-        cell.data = Some(42);
+        let (_, simplex_ref) = tds1.simplices().next().unwrap();
+        let mut simplex = simplex_ref.clone();
+        simplex.data = Some(42);
 
         let vertices2 = vec![
             vertex!([0.0, 0.0, 1.0], 1),
@@ -2576,17 +2539,17 @@ mod tests {
         ];
         let tds2: DelaunayTriangulation<AdaptiveKernel<f64>, i32, i32, 3> =
             DelaunayTriangulation::with_kernel(&AdaptiveKernel::new(), &vertices2).unwrap();
-        let (_, cell2_ref) = tds2.cells().next().unwrap();
-        let mut cell2 = cell2_ref.clone();
-        cell2.data = Some(43);
+        let (_, simplex2_ref) = tds2.simplices().next().unwrap();
+        let mut simplex2 = simplex2_ref.clone();
+        simplex2.data = Some(43);
 
-        assert!(cell.has_vertex_in_common(&cell2));
+        assert!(simplex.has_vertex_in_common(&simplex2));
 
         // Human readable output for cargo test -- --nocapture
-        println!("Cell: {cell:?}");
+        println!("Simplex: {simplex:?}");
     }
 
-    // Removed: cell_facets_contains - redundant with cell_facet_views_comprehensive
+    // Removed: simplex_facets_contains - redundant with simplex_facet_views_comprehensive
 
     // =============================================================================
     // VERTEX_UUIDS METHOD TESTS
@@ -2605,16 +2568,16 @@ mod tests {
         let dt: DelaunayTriangulation<AdaptiveKernel<f64>, i32, (), 3> =
             DelaunayTriangulation::with_kernel(&AdaptiveKernel::new(), &vertices).unwrap();
 
-        let cell_key = dt.cells().next().unwrap().0;
-        let cell = &dt.tds().cell(cell_key).unwrap();
+        let simplex_key = dt.simplices().next().unwrap().0;
+        let simplex = &dt.tds().simplex(simplex_key).unwrap();
 
         // Get vertex UUIDs
-        let vertex_uuids = cell.vertex_uuids(dt.tds()).unwrap();
-        assert_eq!(cell.vertex_uuid_iter(dt.tds()).count(), 4);
+        let vertex_uuids = simplex.vertex_uuids(dt.tds()).unwrap();
+        assert_eq!(simplex.vertex_uuid_iter(dt.tds()).count(), 4);
 
-        // Verify UUIDs match the cell's vertices using iterator
+        // Verify UUIDs match the simplex's vertices using iterator
         for (expected_uuid, returned_uuid) in
-            cell.vertex_uuid_iter(dt.tds()).zip(vertex_uuids.iter())
+            simplex.vertex_uuid_iter(dt.tds()).zip(vertex_uuids.iter())
         {
             assert_eq!(expected_uuid.unwrap(), *returned_uuid);
         }
@@ -2624,7 +2587,7 @@ mod tests {
         assert_eq!(unique_uuids.len(), vertex_uuids.len());
 
         // Verify no nil UUIDs using iterator
-        for uuid in cell.vertex_uuid_iter(dt.tds()) {
+        for uuid in simplex.vertex_uuid_iter(dt.tds()) {
             assert_ne!(uuid.unwrap(), Uuid::nil());
         }
 
@@ -2632,9 +2595,9 @@ mod tests {
     }
 
     #[test]
-    fn test_vertex_uuids_empty_cell_fails() {
+    fn test_vertex_uuids_empty_simplex_fails() {
         // Test that TDS creation fails gracefully with insufficient vertices for dimension
-        // Phase 3A: Now tested through TDS which is the user-facing API
+        // Tested through TDS, which is the user-facing API.
 
         let vertices = vec![vertex!([0.0, 0.0, 0.0])];
         let result = DelaunayTriangulation::new(&vertices);
@@ -2647,8 +2610,8 @@ mod tests {
     }
 
     #[test]
-    fn test_vertex_uuids_2d_cell() {
-        // Test vertex_uuids with a 2D cell (triangle)
+    fn test_vertex_uuids_2d_simplex() {
+        // Test vertex_uuids with a 2D simplex (triangle)
         let vertex1 = vertex!([0.0, 0.0], 1);
         let vertex2 = vertex!([1.0, 0.0], 2);
         let vertex3 = vertex!([0.5, 1.0], 3);
@@ -2656,16 +2619,16 @@ mod tests {
         let vertices = vec![vertex1, vertex2, vertex3];
         let dt: DelaunayTriangulation<AdaptiveKernel<f64>, i32, (), 2> =
             DelaunayTriangulation::with_kernel(&AdaptiveKernel::new(), &vertices).unwrap();
-        let cell_key = dt.cells().next().unwrap().0;
-        let cell = &dt.tds().cell(cell_key).unwrap();
+        let simplex_key = dt.simplices().next().unwrap().0;
+        let simplex = &dt.tds().simplex(simplex_key).unwrap();
 
         // Get vertex UUIDs
-        let vertex_uuids = cell.vertex_uuids(dt.tds()).unwrap();
-        assert_eq!(cell.vertex_uuid_iter(dt.tds()).count(), 3);
+        let vertex_uuids = simplex.vertex_uuids(dt.tds()).unwrap();
+        assert_eq!(simplex.vertex_uuid_iter(dt.tds()).count(), 3);
 
-        // Verify UUIDs match the cell's vertices using iterator
+        // Verify UUIDs match the simplex's vertices using iterator
         for (expected_uuid, returned_uuid) in
-            cell.vertex_uuid_iter(dt.tds()).zip(vertex_uuids.iter())
+            simplex.vertex_uuid_iter(dt.tds()).zip(vertex_uuids.iter())
         {
             assert_eq!(expected_uuid.unwrap(), *returned_uuid);
         }
@@ -2675,16 +2638,16 @@ mod tests {
         assert_eq!(unique_uuids.len(), vertex_uuids.len());
 
         // Verify no nil UUIDs using iterator
-        for uuid in cell.vertex_uuid_iter(dt.tds()) {
+        for uuid in simplex.vertex_uuid_iter(dt.tds()) {
             assert_ne!(uuid.unwrap(), Uuid::nil());
         }
 
-        println!("✓ vertex_uuids works correctly for 2D cells");
+        println!("✓ vertex_uuids works correctly for 2D simplices");
     }
 
     #[test]
-    fn test_vertex_uuids_4d_cell() {
-        // Test vertex_uuids with a 4D cell (4-simplex) using integer data
+    fn test_vertex_uuids_4d_simplex() {
+        // Test vertex_uuids with a 4D simplex (4-simplex) using integer data
         let vertices = vec![
             vertex!([0.0, 0.0, 0.0, 0.0], 1),
             vertex!([1.0, 0.0, 0.0, 0.0], 2),
@@ -2695,16 +2658,16 @@ mod tests {
 
         let dt: DelaunayTriangulation<AdaptiveKernel<f64>, i32, (), 4> =
             DelaunayTriangulation::with_kernel(&AdaptiveKernel::new(), &vertices).unwrap();
-        let cell_key = dt.cells().next().unwrap().0;
-        let cell = &dt.tds().cell(cell_key).unwrap();
+        let simplex_key = dt.simplices().next().unwrap().0;
+        let simplex = &dt.tds().simplex(simplex_key).unwrap();
 
         // Get vertex UUIDs
-        let vertex_uuids = cell.vertex_uuids(dt.tds()).unwrap();
-        assert_eq!(cell.vertex_uuid_iter(dt.tds()).count(), 5);
+        let vertex_uuids = simplex.vertex_uuids(dt.tds()).unwrap();
+        assert_eq!(simplex.vertex_uuid_iter(dt.tds()).count(), 5);
 
-        // Verify UUIDs match the cell's vertices using iterator
+        // Verify UUIDs match the simplex's vertices using iterator
         for (expected_uuid, returned_uuid) in
-            cell.vertex_uuid_iter(dt.tds()).zip(vertex_uuids.iter())
+            simplex.vertex_uuid_iter(dt.tds()).zip(vertex_uuids.iter())
         {
             assert_eq!(expected_uuid.unwrap(), *returned_uuid);
         }
@@ -2714,7 +2677,7 @@ mod tests {
         assert_eq!(unique_uuids.len(), vertex_uuids.len());
 
         // Verify all expected vertex data values exist (order-independent)
-        let vertex_data: Vec<i32> = cell
+        let vertex_data: Vec<i32> = simplex
             .vertices()
             .iter()
             .map(|&vkey| dt.tds().vertex(vkey).unwrap().data.unwrap())
@@ -2728,11 +2691,11 @@ mod tests {
         }
 
         // Verify no nil UUIDs using iterator
-        for uuid in cell.vertex_uuid_iter(dt.tds()) {
+        for uuid in simplex.vertex_uuid_iter(dt.tds()) {
             assert_ne!(uuid.unwrap(), Uuid::nil());
         }
 
-        println!("✓ vertex_uuids works correctly for 4D cells");
+        println!("✓ vertex_uuids works correctly for 4D simplices");
     }
 
     #[test]
@@ -2758,14 +2721,14 @@ mod tests {
                 options,
             )
             .unwrap();
-        let cell_key = dt.cells().next().unwrap().0;
-        let cell = &dt.tds().cell(cell_key).unwrap();
+        let simplex_key = dt.simplices().next().unwrap().0;
+        let simplex = &dt.tds().simplex(simplex_key).unwrap();
 
         // Get vertex UUIDs
-        let vertex_uuids = cell.vertex_uuids(dt.tds()).unwrap();
-        assert_eq!(cell.vertex_uuid_iter(dt.tds()).count(), 4);
+        let vertex_uuids = simplex.vertex_uuids(dt.tds()).unwrap();
+        assert_eq!(simplex.vertex_uuid_iter(dt.tds()).count(), 4);
 
-        // Verify coordinate type is preserved without assuming cell-internal vertex order.
+        // Verify coordinate type is preserved without assuming simplex-internal vertex order.
         for expected_coords in [
             [0.0f32, 0.0f32, 0.0f32],
             [1.0f32, 0.0f32, 0.0f32],
@@ -2773,7 +2736,7 @@ mod tests {
             [0.0f32, 0.0f32, 1.0f32],
         ] {
             assert!(
-                cell.vertices().iter().any(|&vertex_key| {
+                simplex.vertices().iter().any(|&vertex_key| {
                     dt.tds()
                         .vertex(vertex_key)
                         .unwrap()
@@ -2783,13 +2746,13 @@ mod tests {
                         .zip(expected_coords)
                         .all(|(actual, expected)| (*actual - expected).abs() <= f32::EPSILON)
                 }),
-                "Expected cell coordinates {expected_coords:?} not found"
+                "Expected simplex coordinates {expected_coords:?} not found"
             );
         }
 
-        // Verify UUIDs match the cell's vertices using iterator
+        // Verify UUIDs match the simplex's vertices using iterator
         for (expected_uuid, returned_uuid) in
-            cell.vertex_uuid_iter(dt.tds()).zip(vertex_uuids.iter())
+            simplex.vertex_uuid_iter(dt.tds()).zip(vertex_uuids.iter())
         {
             assert_eq!(expected_uuid.unwrap(), *returned_uuid);
         }
@@ -2799,7 +2762,7 @@ mod tests {
         assert_eq!(unique_uuids.len(), vertex_uuids.len());
 
         // Verify no nil UUIDs using iterator
-        for uuid in cell.vertex_uuid_iter(dt.tds()) {
+        for uuid in simplex.vertex_uuid_iter(dt.tds()) {
             assert_ne!(uuid.unwrap(), Uuid::nil());
         }
 
@@ -2809,23 +2772,23 @@ mod tests {
     // =============================================================================
     // DIMENSIONAL TESTS
     // =============================================================================
-    // Tests covering cells in different dimensions (1D, 2D, 3D, 4D+) and
+    // Tests covering simplices in different dimensions (1D, 2D, 3D, 4D+) and
     // various coordinate types (f32, f64) to ensure dimensional flexibility.
     //
-    // NOTE: The main dimension tests (cell_2d, cell_3d, cell_4d, cell_5d) are
-    // generated by the test_cell_dimensions! macro at the top of this test module.
+    // NOTE: The main dimension tests (simplex_2d, simplex_3d, simplex_4d, simplex_5d) are
+    // generated by the test_simplex_dimensions! macro at the top of this test module.
 
     // Keep 1D test separate as it's less common
     #[test]
-    fn cell_1d() {
+    fn simplex_1d() {
         let vertices = vec![vertex!([0.0]), vertex!([1.0])];
         let dt = DelaunayTriangulation::new(&vertices).unwrap();
-        let (_, cell) = dt.cells().next().unwrap();
-        assert_cell_properties(cell, 2, 1);
+        let (_, simplex) = dt.simplices().next().unwrap();
+        assert_simplex_properties(simplex, 2, 1);
     }
 
     #[test]
-    fn cell_with_f32() {
+    fn simplex_with_f32() {
         let vertices = vec![
             vertex!([0.0f32, 0.0f32]),
             vertex!([1.0f32, 0.0f32]),
@@ -2833,17 +2796,17 @@ mod tests {
         ];
         let dt: DelaunayTriangulation<AdaptiveKernel<f32>, (), (), 2> =
             DelaunayTriangulation::with_kernel(&AdaptiveKernel::new(), &vertices).unwrap();
-        let (_, cell) = dt.cells().next().unwrap();
+        let (_, simplex) = dt.simplices().next().unwrap();
 
-        assert_eq!(cell.number_of_vertices(), 3);
-        assert_eq!(cell.dim(), 2);
-        assert!(!cell.uuid().is_nil());
+        assert_eq!(simplex.number_of_vertices(), 3);
+        assert_eq!(simplex.dim(), 2);
+        assert!(!simplex.uuid().is_nil());
     }
 
     #[test]
-    fn cell_single_vertex() {
+    fn simplex_single_vertex() {
         // Test that creating a 3D triangulation with insufficient vertices fails validation
-        // Phase 3A: Now tested through TDS which is the user-facing API
+        // Tested through TDS, which is the user-facing API.
         let vertices = vec![vertex!([0.0, 0.0, 0.0])];
         let result = DelaunayTriangulation::new(&vertices);
 
@@ -2855,7 +2818,7 @@ mod tests {
     }
 
     #[test]
-    fn cell_neighbors_none_by_default() {
+    fn simplex_neighbors_none_by_default() {
         let vertices = vec![
             vertex!([0.0, 0.0, 0.0]),
             vertex!([1.0, 0.0, 0.0]),
@@ -2863,14 +2826,14 @@ mod tests {
             vertex!([0.0, 0.0, 1.0]),
         ];
         let dt = DelaunayTriangulation::new(&vertices).unwrap();
-        let (_, cell) = dt.cells().next().unwrap();
+        let (_, simplex) = dt.simplices().next().unwrap();
 
-        // Note: neighbors may be set by TDS construction, this tests cell structure
-        assert!(cell.neighbors.is_some() || cell.neighbors.is_none());
+        // Note: neighbors may be set by TDS construction, this tests simplex structure
+        assert!(simplex.neighbors.is_some() || simplex.neighbors.is_none());
     }
 
     #[test]
-    fn cell_data_none_by_default() {
+    fn simplex_data_none_by_default() {
         let vertices = vec![
             vertex!([0.0, 0.0, 0.0]),
             vertex!([1.0, 0.0, 0.0]),
@@ -2878,13 +2841,13 @@ mod tests {
             vertex!([0.0, 0.0, 1.0]),
         ];
         let dt = DelaunayTriangulation::new(&vertices).unwrap();
-        let (_, cell) = dt.cells().next().unwrap();
+        let (_, simplex) = dt.simplices().next().unwrap();
 
-        assert!(cell.data.is_none());
+        assert!(simplex.data.is_none());
     }
 
     #[test]
-    fn cell_data_can_be_set() {
+    fn simplex_data_can_be_set() {
         let vertices = vec![
             vertex!([0.0, 0.0, 0.0]),
             vertex!([1.0, 0.0, 0.0]),
@@ -2894,22 +2857,22 @@ mod tests {
         let dt: DelaunayTriangulation<AdaptiveKernel<f64>, (), i32, 3> =
             DelaunayTriangulation::with_kernel(&AdaptiveKernel::new(), &vertices).unwrap();
 
-        let (_, cell_ref) = dt.cells().next().unwrap();
-        let mut cell = cell_ref.clone();
-        cell.data = Some(42);
+        let (_, simplex_ref) = dt.simplices().next().unwrap();
+        let mut simplex = simplex_ref.clone();
+        simplex.data = Some(42);
 
-        assert_eq!(cell.data.unwrap(), 42);
+        assert_eq!(simplex.data.unwrap(), 42);
     }
 
     #[test]
-    fn cell_into_hashmap_empty() {
-        let hashmap = Cell::<f64, (), (), 3>::into_hashmap([]);
+    fn simplex_into_hashmap_empty() {
+        let hashmap = Simplex::<f64, (), (), 3>::into_hashmap([]);
 
         assert!(hashmap.is_empty());
     }
 
     #[test]
-    fn cell_into_hashmap_multiple() {
+    fn simplex_into_hashmap_multiple() {
         let vertices = vec![
             vertex!([0.0, 0.0, 0.0]),
             vertex!([1.0, 0.0, 0.0]),
@@ -2919,22 +2882,22 @@ mod tests {
         ];
         let dt = DelaunayTriangulation::new(&vertices).unwrap();
 
-        // Iterate cells from DT (clone into owned values for the hashmap).
-        let mut cells_iter = dt.cells().map(|(_, cell)| cell.clone());
+        // Iterate simplices from DT (clone into owned values for the hashmap).
+        let mut simplices_iter = dt.simplices().map(|(_, simplex)| simplex.clone());
 
-        let cell1 = cells_iter
+        let simplex1 = simplices_iter
             .next()
-            .expect("Need at least 2 cells for this test");
-        let cell2 = cells_iter
+            .expect("Need at least 2 simplices for this test");
+        let simplex2 = simplices_iter
             .next()
-            .expect("Need at least 2 cells for this test");
+            .expect("Need at least 2 simplices for this test");
 
-        let uuid1 = cell1.uuid();
-        let uuid2 = cell2.uuid();
-        let hashmap = Cell::into_hashmap(
-            std::iter::once(cell1)
-                .chain(std::iter::once(cell2))
-                .chain(cells_iter),
+        let uuid1 = simplex1.uuid();
+        let uuid2 = simplex2.uuid();
+        let hashmap = Simplex::into_hashmap(
+            std::iter::once(simplex1)
+                .chain(std::iter::once(simplex2))
+                .chain(simplices_iter),
         );
 
         assert!(hashmap.len() >= 2);
@@ -2943,7 +2906,7 @@ mod tests {
     }
 
     #[test]
-    fn cell_debug_format() {
+    fn simplex_debug_format() {
         // Use a simple non-degenerate 3D tetrahedron so `DelaunayTriangulation::new` can construct
         // a valid simplex for debug-format testing.
         let vertices = vec![
@@ -2955,28 +2918,28 @@ mod tests {
         let dt: DelaunayTriangulation<AdaptiveKernel<f64>, (), i32, 3> =
             DelaunayTriangulation::with_kernel(&AdaptiveKernel::new(), &vertices).unwrap();
 
-        let (_, cell_ref) = dt.cells().next().unwrap();
-        let mut cell = cell_ref.clone();
-        cell.data = Some(42);
-        let debug_str = format!("{cell:?}");
+        let (_, simplex_ref) = dt.simplices().next().unwrap();
+        let mut simplex = simplex_ref.clone();
+        simplex.data = Some(42);
+        let debug_str = format!("{simplex:?}");
 
-        // Phase 3A: Verify debug output contains basic cell information
+        // Verify debug output contains basic simplex information.
         // Use structural checks rather than brittle string matching
-        assert!(debug_str.contains("Cell"));
-        assert!(!cell.vertices().is_empty());
-        assert!(!cell.uuid().is_nil());
-        assert_eq!(cell.data.unwrap(), 42);
+        assert!(debug_str.contains("Simplex"));
+        assert!(!simplex.vertices().is_empty());
+        assert!(!simplex.uuid().is_nil());
+        assert_eq!(simplex.data.unwrap(), 42);
     }
 
     // =============================================================================
     // COMPREHENSIVE SERIALIZATION TESTS
     // =============================================================================
-    // Tests covering cell serialization and deserialization with different
+    // Tests covering simplex serialization and deserialization with different
     // data types, dimensions, and configurations using serde_json.
 
     #[test]
-    fn cell_to_and_from_json() {
-        // Phase 3A: Test serialization through TDS context (proper way)
+    fn simplex_to_and_from_json() {
+        // Test serialization through TDS context.
         // Use a non-degenerate 3D tetrahedron so `DelaunayTriangulation::new` can construct a
         // valid initial simplex.
         let vertices = vec![
@@ -2987,38 +2950,38 @@ mod tests {
         ];
         let dt = DelaunayTriangulation::new(&vertices).unwrap();
 
-        // Serialize the entire DT (includes cells with proper context)
+        // Serialize the entire DT (includes simplices with proper context)
         let serialized = serde_json::to_string(&dt).unwrap();
         assert!(serialized.contains("vertices"));
-        assert!(serialized.contains("cells"));
+        assert!(serialized.contains("simplices"));
 
         // Deserialize back to DT via try_from_tds (AdaptiveKernel has no auto-Deserialize).
-        let tds: crate::core::tds::Tds<f64, (), (), 3> = serde_json::from_str(&serialized).unwrap();
+        let tds: Tds<f64, (), (), 3> = serde_json::from_str(&serialized).unwrap();
         let deserialized = DelaunayTriangulation::try_from_tds(tds, AdaptiveKernel::new())
             .expect("serialized Delaunay TDS should validate");
 
         // Verify DT properties match
         assert_eq!(deserialized.number_of_vertices(), dt.number_of_vertices());
-        assert_eq!(deserialized.number_of_cells(), dt.number_of_cells());
+        assert_eq!(deserialized.number_of_simplices(), dt.number_of_simplices());
         assert_eq!(deserialized.dim(), dt.dim());
 
-        // Verify cells within DT can be accessed
-        assert_ne!(deserialized.number_of_cells(), 0);
-        for (_cell_key, cell) in deserialized.tds().cells() {
-            assert_eq!(cell.dim(), 3);
-            assert_eq!(cell.number_of_vertices(), 4);
+        // Verify simplices within DT can be accessed
+        assert_ne!(deserialized.number_of_simplices(), 0);
+        for (_simplex_key, simplex) in deserialized.tds().simplices() {
+            assert_eq!(simplex.dim(), 3);
+            assert_eq!(simplex.number_of_vertices(), 4);
         }
 
         println!("TDS serialization/deserialization test passed");
     }
 
     #[test]
-    fn cell_deserialization_error_cases() {
+    fn simplex_deserialization_error_cases() {
         // Test realistic JSON deserialization errors that users might encounter
 
         // Test missing required field (uuid)
         let invalid_json_missing_uuid = r#"{"data": null}"#;
-        let result: Result<Cell<f64, (), (), 3>, _> =
+        let result: Result<Simplex<f64, (), (), 3>, _> =
             serde_json::from_str(invalid_json_missing_uuid);
         assert!(result.is_err(), "Missing UUID should cause error");
         let error = result.unwrap_err().to_string();
@@ -3029,17 +2992,18 @@ mod tests {
 
         // Test invalid UUID format
         let invalid_json_bad_uuid = r#"{"uuid": "not-a-valid-uuid"}"#;
-        let result: Result<Cell<f64, (), (), 3>, _> = serde_json::from_str(invalid_json_bad_uuid);
+        let result: Result<Simplex<f64, (), (), 3>, _> =
+            serde_json::from_str(invalid_json_bad_uuid);
         assert!(result.is_err(), "Invalid UUID format should cause error");
 
         // Test completely invalid JSON syntax
         let invalid_json_syntax = r"{this is not valid JSON}";
-        let result: Result<Cell<f64, (), (), 3>, _> = serde_json::from_str(invalid_json_syntax);
+        let result: Result<Simplex<f64, (), (), 3>, _> = serde_json::from_str(invalid_json_syntax);
         assert!(result.is_err(), "Invalid JSON syntax should cause error");
 
         // Test empty JSON object (missing required uuid)
         let empty_json = r"{}";
-        let result: Result<Cell<f64, (), (), 3>, _> = serde_json::from_str(empty_json);
+        let result: Result<Simplex<f64, (), (), 3>, _> = serde_json::from_str(empty_json);
         assert!(result.is_err(), "Empty JSON should fail (missing uuid)");
 
         // Test deserialization with unknown fields (should succeed - ignored)
@@ -3048,27 +3012,27 @@ mod tests {
             "unknown_field": "value",
             "another_unknown": 123
         }"#;
-        let result: Result<Cell<f64, (), (), 3>, _> = serde_json::from_str(json_unknown_field);
+        let result: Result<Simplex<f64, (), (), 3>, _> = serde_json::from_str(json_unknown_field);
         assert!(result.is_ok(), "Unknown fields should be ignored");
     }
 
     #[test]
-    fn cell_serialization_data_field_handling() {
+    fn simplex_serialization_data_field_handling() {
         // Comprehensive test for data field serialization behavior
 
         // Test 1: Minimal valid JSON (only uuid required)
         let minimal_valid_json = r#"{"uuid": "550e8400-e29b-41d4-a716-446655440000"}"#;
-        let result: Result<Cell<f64, (), (), 3>, _> = serde_json::from_str(minimal_valid_json);
+        let result: Result<Simplex<f64, (), (), 3>, _> = serde_json::from_str(minimal_valid_json);
         assert!(
             result.is_ok(),
             "Minimal valid JSON with just UUID should succeed"
         );
-        let cell = result.unwrap();
+        let simplex = result.unwrap();
         assert_eq!(
-            cell.uuid().to_string(),
+            simplex.uuid().to_string(),
             "550e8400-e29b-41d4-a716-446655440000"
         );
-        assert!(cell.data.is_none());
+        assert!(simplex.data.is_none());
 
         // Test 2: Serialization with Some(data) includes field
         let vertices = vec![
@@ -3079,44 +3043,44 @@ mod tests {
         ];
         let dt: DelaunayTriangulation<AdaptiveKernel<f64>, (), i32, 3> =
             DelaunayTriangulation::with_kernel(&AdaptiveKernel::new(), &vertices).unwrap();
-        let (_, cell_ref) = dt.cells().next().unwrap();
-        let mut cell_with_data = cell_ref.clone();
-        cell_with_data.data = Some(42);
-        let serialized = serde_json::to_string(&cell_with_data).unwrap();
+        let (_, simplex_ref) = dt.simplices().next().unwrap();
+        let mut simplex_with_data = simplex_ref.clone();
+        simplex_with_data.data = Some(42);
+        let serialized = serde_json::to_string(&simplex_with_data).unwrap();
         assert!(
             serialized.contains("\"data\":"),
             "Some(data) should include data field"
         );
         assert!(serialized.contains("42"));
-        let deserialized: Cell<f64, (), i32, 3> = serde_json::from_str(&serialized).unwrap();
+        let deserialized: Simplex<f64, (), i32, 3> = serde_json::from_str(&serialized).unwrap();
         assert_eq!(deserialized.data, Some(42));
 
         // Test 3: Serialization with None data omits field (optimization)
         let dt = DelaunayTriangulation::new(&vertices).unwrap();
-        let (_, cell_none) = dt.cells().next().unwrap();
-        let serialized_none = serde_json::to_string(&cell_none).unwrap();
+        let (_, simplex_none) = dt.simplices().next().unwrap();
+        let serialized_none = serde_json::to_string(&simplex_none).unwrap();
         assert!(
             !serialized_none.contains("\"data\":"),
             "None should omit data field"
         );
-        let deserialized_none: Cell<f64, (), Option<i32>, 3> =
+        let deserialized_none: Simplex<f64, (), Option<i32>, 3> =
             serde_json::from_str(&serialized_none).unwrap();
         assert_eq!(deserialized_none.data, None);
 
         // Test 4: Backward compatibility - explicit "data": null works
         let json_with_null = r#"{"uuid":"550e8400-e29b-41d4-a716-446655440000","data":null}"#;
-        let cell_explicit_null: Cell<f64, (), Option<i32>, 3> =
+        let simplex_explicit_null: Simplex<f64, (), Option<i32>, 3> =
             serde_json::from_str(json_with_null).unwrap();
-        assert_eq!(cell_explicit_null.data, None);
+        assert_eq!(simplex_explicit_null.data, None);
     }
 
     // =============================================================================
     // GEOMETRIC PROPERTIES TESTS
     // =============================================================================
-    // Tests for geometric properties and validation of cells
+    // Tests for geometric properties and validation of simplices
 
     #[test]
-    fn cell_coordinate_ranges() {
+    fn simplex_coordinate_ranges() {
         // Test triangulation construction with various coordinate ranges
 
         // Negative coordinates: fully in negative octant
@@ -3127,9 +3091,9 @@ mod tests {
             vertex!([-1.0, -1.0, -2.0]),
         ];
         let dt_neg = DelaunayTriangulation::new(&negative_vertices).unwrap();
-        let (_, cell_neg) = dt_neg.tds().cells().next().unwrap();
-        assert_eq!(cell_neg.number_of_vertices(), 4);
-        assert_eq!(cell_neg.dim(), 3);
+        let (_, simplex_neg) = dt_neg.tds().simplices().next().unwrap();
+        assert_eq!(simplex_neg.number_of_vertices(), 4);
+        assert_eq!(simplex_neg.dim(), 3);
 
         // Large coordinates: large-magnitude coordinates
         let large_vertices = vec![
@@ -3139,9 +3103,9 @@ mod tests {
             vertex!([1e6, 1e6, 2e6]),
         ];
         let dt_large = DelaunayTriangulation::new(&large_vertices).unwrap();
-        let (_, cell_large) = dt_large.tds().cells().next().unwrap();
-        assert_eq!(cell_large.number_of_vertices(), 4);
-        assert_eq!(cell_large.dim(), 3);
+        let (_, simplex_large) = dt_large.tds().simplices().next().unwrap();
+        assert_eq!(simplex_large.number_of_vertices(), 4);
+        assert_eq!(simplex_large.dim(), 3);
 
         // Small coordinates: scaled-down tetrahedron without degeneracy
         let small_vertices = vec![
@@ -3151,24 +3115,24 @@ mod tests {
             vertex!([0.0, 0.0, 1e-3]),
         ];
         let dt_small = DelaunayTriangulation::new(&small_vertices).unwrap();
-        let (_, cell_small) = dt_small.tds().cells().next().unwrap();
-        assert_eq!(cell_small.number_of_vertices(), 4);
-        assert_eq!(cell_small.dim(), 3);
+        let (_, simplex_small) = dt_small.tds().simplices().next().unwrap();
+        assert_eq!(simplex_small.number_of_vertices(), 4);
+        assert_eq!(simplex_small.dim(), 3);
     }
 
     #[test]
-    fn cell_circumradius_2d() {
+    fn simplex_circumradius_2d() {
         let vertex1 = vertex!([0.0, 0.0]);
         let vertex2 = vertex!([1.0, 0.0]);
         let vertex3 = vertex!([0.0, 1.0]);
 
         let vertices = vec![vertex1, vertex2, vertex3];
         let dt = DelaunayTriangulation::new(&vertices).unwrap();
-        let cell_key = dt.cells().next().unwrap().0;
-        let cell = &dt.tds().cell(cell_key).unwrap();
+        let simplex_key = dt.simplices().next().unwrap().0;
+        let simplex = &dt.tds().simplex(simplex_key).unwrap();
 
         // Resolve VertexKeys to actual vertices
-        let vertex_points: Vec<Point<f64, 2>> = cell
+        let vertex_points: Vec<Point<f64, 2>> = simplex
             .vertices()
             .iter()
             .map(|vk| *dt.tds().vertex(*vk).unwrap().point())
@@ -3181,25 +3145,25 @@ mod tests {
     }
 
     #[test]
-    fn cell_contains_vertex_false() {
+    fn simplex_contains_vertex_false() {
         let vertex1 = vertex!([0.0, 0.0, 0.0]);
         let vertex2 = vertex!([1.0, 0.0, 0.0]);
         let vertex3 = vertex!([0.0, 1.0, 0.0]);
-        let vertex4 = vertex!([0.0, 0.0, 1.0]); // 4th vertex to complete 3D cell
+        let vertex4 = vertex!([0.0, 0.0, 1.0]); // 4th vertex to complete 3D simplex
         let vertex_outside: Vertex<f64, (), 3> = vertex!([2.0, 2.0, 2.0]);
 
         let vertices = vec![vertex1, vertex2, vertex3, vertex4];
         let dt = DelaunayTriangulation::new(&vertices).unwrap();
-        let cell_key = dt.cells().next().unwrap().0;
-        let cell = &dt.tds().cell(cell_key).unwrap();
+        let simplex_key = dt.simplices().next().unwrap().0;
+        let simplex = &dt.tds().simplex(simplex_key).unwrap();
 
-        // Create a vertex key for the outside vertex - it won't be in the cell
+        // Create a vertex key for the outside vertex - it won't be in the simplex
         let outside_key = dt.tds().vertex_key_from_uuid(&vertex_outside.uuid());
-        assert!(outside_key.is_none() || !cell.contains_vertex(outside_key.unwrap()));
+        assert!(outside_key.is_none() || !simplex.contains_vertex(outside_key.unwrap()));
     }
 
     #[test]
-    fn cell_circumsphere_contains_vertex_determinant() {
+    fn simplex_circumsphere_contains_vertex_determinant() {
         // Test the matrix determinant method for circumsphere containment
         // Use a simple, well-known case: unit tetrahedron
         let vertex1 = vertex!([0.0, 0.0, 0.0], 1);
@@ -3210,13 +3174,13 @@ mod tests {
         let vertices = vec![vertex1, vertex2, vertex3, vertex4];
         let dt: DelaunayTriangulation<AdaptiveKernel<f64>, i32, (), 3> =
             DelaunayTriangulation::with_kernel(&AdaptiveKernel::new(), &vertices).unwrap();
-        let cell_key = dt.cells().next().unwrap().0;
-        let cell = &dt.tds().cell(cell_key).unwrap();
+        let simplex_key = dt.simplices().next().unwrap().0;
+        let simplex = &dt.tds().simplex(simplex_key).unwrap();
 
         // Test vertex clearly outside circumsphere
         let vertex_far_outside: Vertex<f64, i32, 3> = vertex!([10.0, 10.0, 10.0], 4);
         // Just check that the method runs without error for now
-        let vertex_points: Vec<Point<f64, 3>> = cell
+        let vertex_points: Vec<Point<f64, 3>> = simplex
             .vertices()
             .iter()
             .map(|vk| *dt.tds().vertex(*vk).unwrap().point())
@@ -3226,7 +3190,7 @@ mod tests {
 
         // Test with origin (should be inside or on boundary)
         let origin: Vertex<f64, i32, 3> = vertex!([0.0, 0.0, 0.0], 3);
-        let vertex_points: Vec<Point<f64, 3>> = cell
+        let vertex_points: Vec<Point<f64, 3>> = simplex
             .vertices()
             .iter()
             .map(|vk| *dt.tds().vertex(*vk).unwrap().point())
@@ -3236,7 +3200,7 @@ mod tests {
     }
 
     #[test]
-    fn cell_circumsphere_contains_vertex_2d() {
+    fn simplex_circumsphere_contains_vertex_2d() {
         // Test 2D case for circumsphere containment using determinant method
         let vertex1 = vertex!([0.0, 0.0]);
         let vertex2 = vertex!([1.0, 0.0]);
@@ -3244,12 +3208,12 @@ mod tests {
 
         let vertices = vec![vertex1, vertex2, vertex3];
         let dt = DelaunayTriangulation::new(&vertices).unwrap();
-        let cell_key = dt.cells().next().unwrap().0;
-        let cell = &dt.tds().cell(cell_key).unwrap();
+        let simplex_key = dt.simplices().next().unwrap().0;
+        let simplex = &dt.tds().simplex(simplex_key).unwrap();
 
         // Test vertex far outside circumcircle
         let vertex_far_outside: Vertex<f64, (), 2> = vertex!([10.0, 10.0]);
-        let vertex_points: Vec<Point<f64, 2>> = cell
+        let vertex_points: Vec<Point<f64, 2>> = simplex
             .vertices()
             .iter()
             .map(|vk| *dt.tds().vertex(*vk).unwrap().point())
@@ -3259,7 +3223,7 @@ mod tests {
 
         // Test with center of triangle (should be inside)
         let center: Vertex<f64, (), 2> = vertex!([0.33, 0.33]);
-        let vertex_points: Vec<Point<f64, 2>> = cell
+        let vertex_points: Vec<Point<f64, 2>> = simplex
             .vertices()
             .iter()
             .map(|vk| *dt.tds().vertex(*vk).unwrap().point())
@@ -3269,7 +3233,7 @@ mod tests {
     }
 
     #[test]
-    fn cell_circumradius_with_center() {
+    fn simplex_circumradius_with_center() {
         // Test the circumradius_with_center method
         let vertex1 = vertex!([0.0, 0.0, 0.0]);
         let vertex2 = vertex!([1.0, 0.0, 0.0]);
@@ -3278,10 +3242,10 @@ mod tests {
 
         let vertices = vec![vertex1, vertex2, vertex3, vertex4];
         let dt = DelaunayTriangulation::new(&vertices).unwrap();
-        let cell_key = dt.cells().next().unwrap().0;
-        let cell = &dt.tds().cell(cell_key).unwrap();
+        let simplex_key = dt.simplices().next().unwrap().0;
+        let simplex = &dt.tds().simplex(simplex_key).unwrap();
 
-        let vertex_points: Vec<Point<f64, 3>> = cell
+        let vertex_points: Vec<Point<f64, 3>> = simplex
             .vertices()
             .iter()
             .map(|vk| *dt.tds().vertex(*vk).unwrap().point())
@@ -3294,10 +3258,10 @@ mod tests {
         assert_relative_eq!(radius_with_center.unwrap(), radius_direct, epsilon = 1e-10);
     }
 
-    // Phase 3A: Test updated to test facet_views instead of from_facet_and_vertex
+    // Test facet views directly.
     // (from_facet_and_vertex is commented out pending refactor)
     #[test]
-    fn cell_facet_views_comprehensive() {
+    fn simplex_facet_views_comprehensive() {
         // Test comprehensive facet view functionality
         let vertex1 = vertex!([0.0, 0.0, 0.0]);
         let vertex2 = vertex!([1.0, 0.0, 0.0]);
@@ -3306,12 +3270,12 @@ mod tests {
 
         let vertices = vec![vertex1, vertex2, vertex3, vertex4];
         let dt = DelaunayTriangulation::new(&vertices).unwrap();
-        let cell_key = dt.cells().next().unwrap().0;
+        let simplex_key = dt.simplices().next().unwrap().0;
 
         // Test that we can get facet views for all facets
-        let facet_views =
-            Cell::facet_views_from_tds(dt.tds(), cell_key).expect("Failed to get facet views");
-        assert_eq!(facet_views.len(), 4, "3D cell should have 4 facets");
+        let facet_views = Simplex::facet_views_from_tds(dt.tds(), simplex_key)
+            .expect("Failed to get facet views");
+        assert_eq!(facet_views.len(), 4, "3D simplex should have 4 facets");
 
         // Each facet should have 3 vertices (for 3D)
         for (i, facet_view) in facet_views.iter().enumerate() {
@@ -3324,24 +3288,24 @@ mod tests {
         }
 
         // Verify opposite vertices are correct
-        let cell = dt.tds().cell(cell_key).unwrap();
+        let simplex = dt.tds().simplex(simplex_key).unwrap();
         for (i, facet_view) in facet_views.iter().enumerate() {
             let opposite_vertex = facet_view
                 .opposite_vertex()
                 .expect("Failed to get opposite vertex");
-            // The opposite vertex should be one of the cell's vertices (by VertexKey)
+            // The opposite vertex should be one of the simplex's vertices (by VertexKey)
             let opposite_key = dt
                 .tds()
                 .vertex_key_from_uuid(&opposite_vertex.uuid())
                 .unwrap();
             assert!(
-                cell.vertices().contains(&opposite_key),
-                "Facet {i} opposite vertex key should be in cell"
+                simplex.vertices().contains(&opposite_key),
+                "Facet {i} opposite vertex key should be in simplex"
             );
         }
     }
 
-    // Phase 3A: Test updated to test facet vertex uniqueness instead of from_facet_and_vertex
+    // Test facet vertex uniqueness directly.
     // (from_facet_and_vertex is commented out pending refactor)
     #[test]
     fn test_facet_vertex_uniqueness() {
@@ -3353,11 +3317,11 @@ mod tests {
 
         let vertices = vec![vertex1, vertex2, vertex3, vertex4];
         let dt = DelaunayTriangulation::new(&vertices).unwrap();
-        let cell_key = dt.cells().next().unwrap().0;
+        let simplex_key = dt.simplices().next().unwrap().0;
 
         // Get all facet views
-        let facet_views =
-            Cell::facet_views_from_tds(dt.tds(), cell_key).expect("Failed to get facet views");
+        let facet_views = Simplex::facet_views_from_tds(dt.tds(), simplex_key)
+            .expect("Failed to get facet views");
 
         for facet_view in &facet_views {
             let opposite_vertex = facet_view
@@ -3391,7 +3355,7 @@ mod tests {
     }
 
     #[test]
-    fn cell_different_numeric_types() {
+    fn simplex_different_numeric_types() {
         // Test with different numeric types to ensure type flexibility
         // Test with f32
         let vertex1_f32 = vertex!([0.0f32, 0.0f32]);
@@ -3399,13 +3363,13 @@ mod tests {
         let vertex3_f32 = vertex!([0.0f32, 1.0f32]);
 
         let dt_f32 = DelaunayTriangulation::new(&[vertex1_f32, vertex2_f32, vertex3_f32]).unwrap();
-        let (_, cell_f32) = dt_f32.cells().next().unwrap();
-        assert_eq!(cell_f32.number_of_vertices(), 3);
-        assert_eq!(cell_f32.dim(), 2);
+        let (_, simplex_f32) = dt_f32.simplices().next().unwrap();
+        assert_eq!(simplex_f32.number_of_vertices(), 3);
+        assert_eq!(simplex_f32.dim(), 2);
     }
 
     #[test]
-    fn cell_high_dimensional() {
+    fn simplex_high_dimensional() {
         // Test with higher dimensions (5D)
         let vertex1 = vertex!([0.0, 0.0, 0.0, 0.0, 0.0]);
         let vertex2 = vertex!([1.0, 0.0, 0.0, 0.0, 0.0]);
@@ -3416,13 +3380,13 @@ mod tests {
 
         let vertices = vec![vertex1, vertex2, vertex3, vertex4, vertex5, vertex6];
         let dt = DelaunayTriangulation::new(&vertices).unwrap();
-        let cell_key = dt.cells().next().unwrap().0;
-        let cell = &dt.tds().cell(cell_key).unwrap();
+        let simplex_key = dt.simplices().next().unwrap().0;
+        let simplex = &dt.tds().simplex(simplex_key).unwrap();
 
-        assert_eq!(cell.number_of_vertices(), 6);
-        assert_eq!(cell.dim(), 5);
+        assert_eq!(simplex.number_of_vertices(), 6);
+        assert_eq!(simplex.dim(), 5);
         assert_eq!(
-            Cell::facet_views_from_tds(dt.tds(), cell_key)
+            Simplex::facet_views_from_tds(dt.tds(), simplex_key)
                 .expect("Failed to get facets")
                 .len(),
             6
@@ -3430,27 +3394,27 @@ mod tests {
     }
 
     #[test]
-    fn cell_vertex_data_consistency() {
-        // Test cells with vertices that have different data types
+    fn simplex_vertex_data_consistency() {
+        // Test simplices with vertices that have different data types
         let vertex1 = vertex!([0.0, 0.0, 0.0], 1);
         let vertex2 = vertex!([1.0, 0.0, 0.0], 2);
         let vertex3 = vertex!([0.0, 1.0, 0.0], 3);
-        let vertex4 = vertex!([0.0, 0.0, 1.0], 4); // Need 4 vertices for 3D cell
+        let vertex4 = vertex!([0.0, 0.0, 1.0], 4); // Need 4 vertices for 3D simplex
 
         let vertices = vec![vertex1, vertex2, vertex3, vertex4];
         let mut dt: DelaunayTriangulation<AdaptiveKernel<f64>, i32, u32, 3> =
             DelaunayTriangulation::with_kernel(&AdaptiveKernel::new(), &vertices).unwrap();
-        let cell_key = dt.cells().next().unwrap().0;
+        let simplex_key = dt.simplices().next().unwrap().0;
 
-        // Set the cell data to a known value
-        if let Some(cell) = dt.tri.tds.cell_mut(cell_key) {
-            cell.data = Some(42u32);
+        // Set the simplex data to a known value
+        if let Some(simplex) = dt.tri.tds.simplex_mut(simplex_key) {
+            simplex.data = Some(42u32);
         }
 
-        let cell = &dt.tds().cell(cell_key).unwrap();
+        let simplex = &dt.tds().simplex(simplex_key).unwrap();
 
         // Verify all expected vertex data values exist (order-independent)
-        let vertex_data: Vec<i32> = cell
+        let vertex_data: Vec<i32> = simplex
             .vertices()
             .iter()
             .map(|&vkey| dt.tds().vertex(vkey).unwrap().data.unwrap())
@@ -3462,11 +3426,11 @@ mod tests {
                 "Expected vertex data {expected} not found"
             );
         }
-        assert_eq!(cell.data.unwrap(), 42u32);
+        assert_eq!(simplex.data.unwrap(), 42u32);
 
         // Also verify we can access vertex data through facet_views
-        let facet_views =
-            Cell::facet_views_from_tds(dt.tds(), cell_key).expect("Failed to get facet views");
+        let facet_views = Simplex::facet_views_from_tds(dt.tds(), simplex_key)
+            .expect("Failed to get facet views");
         for facet_view in &facet_views {
             // Get vertices from the facet view
             let vertices = facet_view.vertices().expect("Failed to get facet vertices");
@@ -3484,15 +3448,15 @@ mod tests {
     }
 
     // =============================================================================
-    // CELL VALIDATION TESTS
+    // SIMPLEX VALIDATION TESTS
     // =============================================================================
-    // Tests covering cell validation logic for success and error cases
+    // Tests covering simplex validation logic for success and error cases
 
     #[test]
-    fn cell_validation_success_cases() {
-        // Test various valid cell configurations
+    fn simplex_validation_success_cases() {
+        // Test various valid simplex configurations
 
-        // Valid 3D cell with correct vertex count (D+1 = 4)
+        // Valid 3D simplex with correct vertex count (D+1 = 4)
         let vertices_3d = vec![
             vertex!([0.0, 0.0, 1.0]),
             vertex!([0.0, 1.0, 0.0]),
@@ -3500,46 +3464,46 @@ mod tests {
             vertex!([0.0, 0.0, 0.0]),
         ];
         let dt = DelaunayTriangulation::new(&vertices_3d).unwrap();
-        let (_, cell_3d) = dt.cells().next().unwrap();
+        let (_, simplex_3d) = dt.simplices().next().unwrap();
         assert!(
-            cell_3d.is_valid().is_ok(),
-            "Valid 3D cell should pass validation"
+            simplex_3d.is_valid().is_ok(),
+            "Valid 3D simplex should pass validation"
         );
 
-        // Valid 2D cell with correct vertex count (D+1 = 3)
+        // Valid 2D simplex with correct vertex count (D+1 = 3)
         let vertices_2d = vec![
             vertex!([0.0, 0.0]),
             vertex!([1.0, 0.0]),
             vertex!([0.0, 1.0]),
         ];
         let dt = DelaunayTriangulation::new(&vertices_2d).unwrap();
-        let (_, cell_ref) = dt.cells().next().unwrap();
-        let mut cell_2d = cell_ref.clone();
+        let (_, simplex_ref) = dt.simplices().next().unwrap();
+        let mut simplex_2d = simplex_ref.clone();
         assert!(
-            cell_2d.is_valid().is_ok(),
-            "Valid 2D cell should pass validation"
+            simplex_2d.is_valid().is_ok(),
+            "Valid 2D simplex should pass validation"
         );
 
-        // Cell with None neighbors is valid
-        cell_2d.neighbors = None;
+        // Simplex with None neighbors is valid
+        simplex_2d.neighbors = None;
         assert!(
-            cell_2d.is_valid().is_ok(),
-            "Cell with no neighbors should be valid"
+            simplex_2d.is_valid().is_ok(),
+            "Simplex with no neighbors should be valid"
         );
 
-        // Cell with correct neighbors length is valid
-        cell_2d
+        // Simplex with correct neighbors length is valid
+        simplex_2d
             .set_neighbors_from_keys(vec![None, None, None])
             .unwrap();
         assert!(
-            cell_2d.is_valid().is_ok(),
-            "Cell with correct neighbors length should be valid"
+            simplex_2d.is_valid().is_ok(),
+            "Simplex with correct neighbors length should be valid"
         );
     }
 
     #[test]
-    fn cell_validation_error_cases() {
-        // Test various invalid cell configurations
+    fn simplex_validation_error_cases() {
+        // Test various invalid simplex configurations
 
         // Invalid UUID (nil)
         let vertices = vec![
@@ -3549,13 +3513,13 @@ mod tests {
             vertex!([0.0, 0.0, 0.0]),
         ];
         let dt = DelaunayTriangulation::new(&vertices).unwrap();
-        let (_, cell_ref) = dt.cells().next().unwrap();
-        let mut invalid_uuid_cell = cell_ref.clone();
-        invalid_uuid_cell.uuid = uuid::Uuid::nil();
+        let (_, simplex_ref) = dt.simplices().next().unwrap();
+        let mut invalid_uuid_simplex = simplex_ref.clone();
+        invalid_uuid_simplex.uuid = uuid::Uuid::nil();
         assert!(
             matches!(
-                invalid_uuid_cell.is_valid(),
-                Err(CellValidationError::InvalidUuid { .. })
+                invalid_uuid_simplex.is_valid(),
+                Err(SimplexValidationError::InvalidUuid { .. })
             ),
             "Nil UUID should fail validation"
         );
@@ -3575,15 +3539,15 @@ mod tests {
             vertex!([0.0, 1.0]),
         ];
         let dt = DelaunayTriangulation::new(&vertices_2d).unwrap();
-        let (_, cell_ref) = dt.cells().next().unwrap();
-        let mut cell_wrong_neighbors = cell_ref.clone();
-        let err = cell_wrong_neighbors
+        let (_, simplex_ref) = dt.simplices().next().unwrap();
+        let mut simplex_wrong_neighbors = simplex_ref.clone();
+        let err = simplex_wrong_neighbors
             .set_neighbors_from_keys(vec![None, None])
             .unwrap_err();
         assert!(
             matches!(
                 err,
-                CellValidationError::InvalidNeighborsLength {
+                SimplexValidationError::InvalidNeighborsLength {
                     actual: 2,
                     expected: 3,
                     dimension: 2
@@ -3593,13 +3557,13 @@ mod tests {
         );
 
         // Invalid neighbors length (too many)
-        let err = cell_wrong_neighbors
+        let err = simplex_wrong_neighbors
             .set_neighbors_from_keys(vec![None, None, None, None])
             .unwrap_err();
         assert!(
             matches!(
                 err,
-                CellValidationError::InvalidNeighborsLength {
+                SimplexValidationError::InvalidNeighborsLength {
                     actual: 4,
                     expected: 3,
                     dimension: 2
@@ -3610,7 +3574,7 @@ mod tests {
     }
 
     #[test]
-    fn cell_new_rejects_insufficient_and_duplicate_vertices() {
+    fn simplex_new_rejects_insufficient_and_duplicate_vertices() {
         let vertices = vec![
             vertex!([0.0, 0.0, 0.0]),
             vertex!([1.0, 0.0, 0.0]),
@@ -3620,12 +3584,12 @@ mod tests {
         let dt = DelaunayTriangulation::new(&vertices).unwrap();
         let vkeys: Vec<_> = dt.tds().vertices().map(|(k, _)| k).collect();
 
-        // Too few vertices for a 3D cell (D+1 = 4)
+        // Too few vertices for a 3D simplex (D+1 = 4)
         let err =
-            Cell::<f64, (), (), 3>::new(vec![vkeys[0], vkeys[1], vkeys[2]], None).unwrap_err();
+            Simplex::<f64, (), (), 3>::new(vec![vkeys[0], vkeys[1], vkeys[2]], None).unwrap_err();
         assert!(matches!(
             err,
-            CellValidationError::InsufficientVertices {
+            SimplexValidationError::InsufficientVertices {
                 actual: 3,
                 expected: 4,
                 dimension: 3,
@@ -3633,13 +3597,14 @@ mod tests {
         ));
 
         // Duplicate vertex keys are rejected
-        let err = Cell::<f64, (), (), 3>::new(vec![vkeys[0], vkeys[1], vkeys[2], vkeys[0]], None)
-            .unwrap_err();
-        assert!(matches!(err, CellValidationError::DuplicateVertices));
+        let err =
+            Simplex::<f64, (), (), 3>::new(vec![vkeys[0], vkeys[1], vkeys[2], vkeys[0]], None)
+                .unwrap_err();
+        assert!(matches!(err, SimplexValidationError::DuplicateVertices));
     }
 
     #[test]
-    fn cell_is_valid_rejects_insufficient_and_duplicate_vertices() {
+    fn simplex_is_valid_rejects_insufficient_and_duplicate_vertices() {
         let vertices = vec![
             vertex!([0.0, 0.0, 0.0]),
             vertex!([1.0, 0.0, 0.0]),
@@ -3647,153 +3612,158 @@ mod tests {
             vertex!([0.0, 0.0, 1.0]),
         ];
         let dt = DelaunayTriangulation::new(&vertices).unwrap();
-        let (_, cell_ref) = dt.cells().next().unwrap();
+        let (_, simplex_ref) = dt.simplices().next().unwrap();
 
         // Insufficient vertices (wrong vertex buffer length)
-        let mut wrong_len = cell_ref.clone();
+        let mut wrong_len = simplex_ref.clone();
         wrong_len.vertices.pop();
         assert!(matches!(
             wrong_len.is_valid(),
-            Err(CellValidationError::InsufficientVertices { .. })
+            Err(SimplexValidationError::InsufficientVertices { .. })
         ));
 
         // Duplicate vertices
-        let mut dup = cell_ref.clone();
+        let mut dup = simplex_ref.clone();
         dup.vertices[1] = dup.vertices[0];
         assert!(matches!(
             dup.is_valid(),
-            Err(CellValidationError::DuplicateVertices)
+            Err(SimplexValidationError::DuplicateVertices)
         ));
     }
 
     #[test]
-    fn cell_ensure_neighbors_buffer_mut_initializes_and_reuses() {
+    fn simplex_ensure_neighbors_buffer_mut_initializes_and_reuses() {
         let vertices = vec![
             vertex!([0.0, 0.0]),
             vertex!([1.0, 0.0]),
             vertex!([0.0, 1.0]),
         ];
         let dt = DelaunayTriangulation::new(&vertices).unwrap();
-        let (cell_key, cell_ref) = dt.cells().next().unwrap();
+        let (simplex_key, simplex_ref) = dt.simplices().next().unwrap();
 
-        let mut cell = cell_ref.clone();
-        cell.clear_neighbors();
-        assert!(cell.neighbors.is_none());
+        let mut simplex = simplex_ref.clone();
+        simplex.clear_neighbors();
+        assert!(simplex.neighbors.is_none());
 
-        let buf = cell.ensure_neighbors_buffer_mut();
+        let buf = simplex.ensure_neighbors_buffer_mut();
         assert_eq!(buf.len(), 3);
         assert!(buf.iter().all(|slot| slot.is_unassigned()));
 
         // Mutate through the returned buffer and ensure it's preserved
-        buf[0] = NeighborSlot::Neighbor(cell_key);
-        let buf2 = cell.ensure_neighbors_buffer_mut();
-        assert_eq!(buf2[0], NeighborSlot::Neighbor(cell_key));
+        buf[0] = NeighborSlot::Neighbor(simplex_key);
+        let buf2 = simplex.ensure_neighbors_buffer_mut();
+        assert_eq!(buf2[0], NeighborSlot::Neighbor(simplex_key));
     }
 
     #[test]
-    fn cell_neighbor_views_distinguish_unassigned_boundary_and_neighbor_slots() {
+    fn simplex_neighbor_views_distinguish_unassigned_boundary_and_neighbor_slots() {
         let vertices = vec![
             vertex!([0.0, 0.0]),
             vertex!([1.0, 0.0]),
             vertex!([0.0, 1.0]),
         ];
         let dt = DelaunayTriangulation::new(&vertices).unwrap();
-        let (cell_key, cell_ref) = dt.cells().next().unwrap();
+        let (simplex_key, simplex_ref) = dt.simplices().next().unwrap();
 
-        let mut cell = cell_ref.clone();
-        cell.clear_neighbors();
-        assert!(cell.neighbor_slots().is_none());
-        assert!(cell.neighbors().is_none());
+        let mut simplex = simplex_ref.clone();
+        simplex.clear_neighbors();
+        assert!(simplex.neighbor_slots().is_none());
+        assert!(simplex.neighbors().is_none());
 
-        cell.set_neighbors_from_keys([None, Some(cell_key), None])
+        simplex
+            .set_neighbors_from_keys([None, Some(simplex_key), None])
             .unwrap();
 
-        let slots = cell.neighbor_slots().expect("assigned slots should exist");
+        let slots = simplex
+            .neighbor_slots()
+            .expect("assigned slots should exist");
         assert_eq!(slots.len(), 3);
         assert_eq!(slots[0], NeighborSlot::Boundary);
-        assert_eq!(slots[1], NeighborSlot::Neighbor(cell_key));
+        assert_eq!(slots[1], NeighborSlot::Neighbor(simplex_key));
         assert_eq!(slots[2], NeighborSlot::Boundary);
 
-        let neighbor_keys: Vec<_> = cell
+        let neighbor_keys: Vec<_> = simplex
             .neighbors()
             .expect("neighbor iterator should exist")
             .collect();
-        assert_eq!(neighbor_keys, &[None, Some(cell_key), None]);
+        assert_eq!(neighbor_keys, &[None, Some(simplex_key), None]);
     }
 
     #[test]
-    fn cell_validation_rejects_unassigned_slot_inside_assigned_neighbors() {
+    fn simplex_validation_rejects_unassigned_slot_inside_assigned_neighbors() {
         let vertices = vec![
             vertex!([0.0, 0.0]),
             vertex!([1.0, 0.0]),
             vertex!([0.0, 1.0]),
         ];
         let dt = DelaunayTriangulation::new(&vertices).unwrap();
-        let (_, cell_ref) = dt.cells().next().unwrap();
+        let (_, simplex_ref) = dt.simplices().next().unwrap();
 
-        let mut cell = cell_ref.clone();
-        let slots = cell.ensure_neighbors_buffer_mut();
+        let mut simplex = simplex_ref.clone();
+        let slots = simplex.ensure_neighbors_buffer_mut();
         slots[0] = NeighborSlot::Unassigned;
 
         assert!(matches!(
-            cell.is_valid(),
-            Err(CellValidationError::UnassignedNeighborSlot { facet_index: 0 })
+            simplex.is_valid(),
+            Err(SimplexValidationError::UnassignedNeighborSlot { facet_index: 0 })
         ));
     }
 
     #[test]
-    fn cell_swap_vertex_slots_swaps_vertices_neighbors_and_offsets() {
+    fn simplex_swap_vertex_slots_swaps_vertices_neighbors_and_offsets() {
         let vertices = vec![
             vertex!([0.0, 0.0]),
             vertex!([1.0, 0.0]),
             vertex!([0.0, 1.0]),
         ];
         let dt = DelaunayTriangulation::new(&vertices).unwrap();
-        let (cell_key, cell_ref) = dt.cells().next().unwrap();
+        let (simplex_key, simplex_ref) = dt.simplices().next().unwrap();
 
-        let mut cell = cell_ref.clone();
-        cell.set_neighbors_from_keys(vec![Some(cell_key), None, Some(cell_key)])
+        let mut simplex = simplex_ref.clone();
+        simplex
+            .set_neighbors_from_keys(vec![Some(simplex_key), None, Some(simplex_key)])
             .unwrap();
-        cell.set_periodic_vertex_offsets(vec![[1, 0], [2, 0], [3, 0]])
+        simplex
+            .set_periodic_vertex_offsets(vec![[1, 0], [2, 0], [3, 0]])
             .unwrap();
 
-        let before_vertices = cell.vertices().to_vec();
-        let before_neighbors: Vec<_> = cell.neighbors().unwrap().collect();
-        let before_offsets = cell.periodic_vertex_offsets().unwrap().to_vec();
+        let before_vertices = simplex.vertices().to_vec();
+        let before_neighbors: Vec<_> = simplex.neighbors().unwrap().collect();
+        let before_offsets = simplex.periodic_vertex_offsets().unwrap().to_vec();
 
-        cell.swap_vertex_slots(0, 2);
+        simplex.swap_vertex_slots(0, 2);
 
-        assert_eq!(cell.vertices()[0], before_vertices[2]);
-        assert_eq!(cell.vertices()[2], before_vertices[0]);
+        assert_eq!(simplex.vertices()[0], before_vertices[2]);
+        assert_eq!(simplex.vertices()[2], before_vertices[0]);
 
-        assert_eq!(cell.neighbor_key(0).flatten(), before_neighbors[2]);
-        assert_eq!(cell.neighbor_key(2).flatten(), before_neighbors[0]);
+        assert_eq!(simplex.neighbor_key(0).flatten(), before_neighbors[2]);
+        assert_eq!(simplex.neighbor_key(2).flatten(), before_neighbors[0]);
 
-        let offsets = cell.periodic_vertex_offsets().unwrap();
+        let offsets = simplex.periodic_vertex_offsets().unwrap();
         assert_eq!(offsets[0], before_offsets[2]);
         assert_eq!(offsets[2], before_offsets[0]);
     }
 
     #[test]
     #[should_panic(expected = "neighbors index out of bounds")]
-    fn cell_swap_vertex_slots_panics_when_neighbors_shorter_than_vertices() {
+    fn simplex_swap_vertex_slots_panics_when_neighbors_shorter_than_vertices() {
         let vertices = vec![
             vertex!([0.0, 0.0]),
             vertex!([1.0, 0.0]),
             vertex!([0.0, 1.0]),
         ];
         let dt = DelaunayTriangulation::new(&vertices).unwrap();
-        let (_, cell_ref) = dt.cells().next().unwrap();
+        let (_, simplex_ref) = dt.simplices().next().unwrap();
 
-        let mut cell = cell_ref.clone();
+        let mut simplex = simplex_ref.clone();
         let mut neighbors = NeighborBuffer::<NeighborSlot>::new();
         neighbors.resize(2, NeighborSlot::Boundary);
-        cell.neighbors = Some(neighbors);
-        cell.swap_vertex_slots(0, 2);
+        simplex.neighbors = Some(neighbors);
+        simplex.swap_vertex_slots(0, 2);
     }
 
     #[test]
-    fn cell_facet_view_helpers_reject_excessive_vertex_count() {
+    fn simplex_facet_view_helpers_reject_excessive_vertex_count() {
         let vertices = vec![
             vertex!([0.0, 0.0, 0.0]),
             vertex!([1.0, 0.0, 0.0]),
@@ -3801,28 +3771,28 @@ mod tests {
             vertex!([0.0, 0.0, 1.0]),
         ];
         let mut dt = DelaunayTriangulation::new(&vertices).unwrap();
-        let cell_key = dt.tds().cell_keys().next().unwrap();
+        let simplex_key = dt.tds().simplex_keys().next().unwrap();
 
         // Grab a stable key we can duplicate to inflate the vertex buffer.
         let vkey0 = {
-            let cell = dt.tds().cell(cell_key).unwrap();
-            cell.vertices()[0]
+            let simplex = dt.tds().simplex(simplex_key).unwrap();
+            simplex.vertices()[0]
         };
 
         {
-            let cell = dt
+            let simplex = dt
                 .tri
                 .tds
-                .cell_mut(cell_key)
-                .expect("cell key should be valid in test");
-            while u8::try_from(cell.number_of_vertices()).is_ok() {
-                cell.push_vertex_key(vkey0);
+                .simplex_mut(simplex_key)
+                .expect("simplex key should be valid in test");
+            while u8::try_from(simplex.number_of_vertices()).is_ok() {
+                simplex.push_vertex_key(vkey0);
             }
-            assert!(u8::try_from(cell.number_of_vertices()).is_err());
+            assert!(u8::try_from(simplex.number_of_vertices()).is_err());
         }
 
         // Both helpers should fail early (before attempting to build individual FacetViews).
-        let err = Cell::facet_views_from_tds(dt.tds(), cell_key).unwrap_err();
+        let err = Simplex::facet_views_from_tds(dt.tds(), simplex_key).unwrap_err();
         assert!(matches!(
             err,
             FacetError::InvalidFacetIndex {
@@ -3831,7 +3801,7 @@ mod tests {
             } if u8::try_from(facet_count).is_err()
         ));
 
-        let err = Cell::facet_view_iter(dt.tds(), cell_key)
+        let err = Simplex::facet_view_iter(dt.tds(), simplex_key)
             .err()
             .expect("Expected facet_view_iter to fail on vertex_count overflow");
         assert!(matches!(
@@ -3844,76 +3814,83 @@ mod tests {
     }
 
     #[test]
-    fn cell_deserialize_rejects_missing_uuid_and_duplicate_fields_and_invalid_uuid() {
+    fn simplex_deserialize_rejects_missing_uuid_and_duplicate_fields_and_invalid_uuid() {
         // Expecting() should surface for non-map inputs.
-        let err = serde_json::from_str::<Cell<f64, (), i32, 3>>("null").unwrap_err();
-        assert!(err.to_string().contains("a Cell struct"));
+        let err = serde_json::from_str::<Simplex<f64, (), i32, 3>>("null").unwrap_err();
+        assert!(err.to_string().contains("a Simplex struct"));
 
         // Missing required field.
-        let err = serde_json::from_str::<Cell<f64, (), i32, 3>>("{\"data\":1}").unwrap_err();
+        let err = serde_json::from_str::<Simplex<f64, (), i32, 3>>("{\"data\":1}").unwrap_err();
         assert!(err.to_string().contains("missing field `uuid`"));
 
         // Duplicate uuid.
         let uuid = uuid::Uuid::new_v4();
         let json = format!("{{\"uuid\":\"{uuid}\",\"uuid\":\"{uuid}\"}}");
-        let err = serde_json::from_str::<Cell<f64, (), i32, 3>>(&json).unwrap_err();
+        let err = serde_json::from_str::<Simplex<f64, (), i32, 3>>(&json).unwrap_err();
         assert!(err.to_string().contains("duplicate field `uuid`"));
 
         // Duplicate data.
         let uuid = uuid::Uuid::new_v4();
         let json = format!("{{\"uuid\":\"{uuid}\",\"data\":1,\"data\":2}}");
-        let err = serde_json::from_str::<Cell<f64, (), i32, 3>>(&json).unwrap_err();
+        let err = serde_json::from_str::<Simplex<f64, (), i32, 3>>(&json).unwrap_err();
         assert!(err.to_string().contains("duplicate field `data`"));
 
         // Invalid uuid (nil) should be rejected by validate_uuid.
         let json = "{\"uuid\":\"00000000-0000-0000-0000-000000000000\"}";
-        let err = serde_json::from_str::<Cell<f64, (), i32, 3>>(json).unwrap_err();
+        let err = serde_json::from_str::<Simplex<f64, (), i32, 3>>(json).unwrap_err();
         assert!(err.to_string().contains("invalid uuid"));
 
         // Unknown fields are ignored.
         let uuid = uuid::Uuid::new_v4();
         let json = format!("{{\"uuid\":\"{uuid}\",\"data\":5,\"neighbors\":[1,2,3]}}");
-        let cell = serde_json::from_str::<Cell<f64, (), i32, 3>>(&json).unwrap();
-        assert_eq!(cell.data, Some(5));
-        assert!(cell.neighbors.is_none());
-        assert_eq!(cell.number_of_vertices(), 0, "vertices are not serialized");
+        let simplex = serde_json::from_str::<Simplex<f64, (), i32, 3>>(&json).unwrap();
+        assert_eq!(simplex.data, Some(5));
+        assert!(simplex.neighbors.is_none());
+        assert_eq!(
+            simplex.number_of_vertices(),
+            0,
+            "vertices are not serialized"
+        );
     }
 
     #[test]
-    fn cell_validation_error_from_stack_matrix_dispatch_error_maps_to_coordinate_conversion() {
+    fn simplex_validation_error_from_stack_matrix_dispatch_error_maps_to_coordinate_conversion() {
         let err = StackMatrixDispatchError::UnsupportedDim {
             k: MAX_STACK_MATRIX_DIM + 1,
             max: MAX_STACK_MATRIX_DIM,
         };
-        let cell_err: CellValidationError = err.into();
+        let simplex_err: SimplexValidationError = err.into();
 
         assert!(matches!(
-            cell_err,
-            CellValidationError::CoordinateConversion { .. }
+            simplex_err,
+            SimplexValidationError::CoordinateConversion { .. }
         ));
     }
 
     // =============================================================================
-    // CELL PARTIALEQ AND EQ TESTS
+    // SIMPLEX PARTIALEQ AND EQ TESTS
     // =============================================================================
 
     #[test]
-    fn test_cell_partial_eq_different_dimensions() {
-        // Test equality for cells of different dimensions
+    fn test_simplex_partial_eq_different_dimensions() {
+        // Test equality for simplices of different dimensions
         let vertices_2d = vec![
             vertex!([0.0, 0.0]),
             vertex!([1.0, 0.0]),
             vertex!([0.0, 1.0]),
         ];
         let dt1 = DelaunayTriangulation::new(&vertices_2d).unwrap();
-        let (_, cell_2d) = dt1.tds().cells().next().unwrap();
+        let (_, simplex_2d) = dt1.tds().simplices().next().unwrap();
         let dt2 = DelaunayTriangulation::new(&vertices_2d).unwrap();
-        let (_, cell_2d_copy) = dt2.tds().cells().next().unwrap();
+        let (_, simplex_2d_copy) = dt2.tds().simplices().next().unwrap();
 
-        // Test equality for 2D cells
-        assert_eq!(cell_2d, cell_2d_copy, "Identical 2D cells should be equal");
+        // Test equality for 2D simplices
+        assert_eq!(
+            simplex_2d, simplex_2d_copy,
+            "Identical 2D simplices should be equal"
+        );
 
-        println!("✓ 2D cells work correctly with PartialEq");
+        println!("✓ 2D simplices work correctly with PartialEq");
     }
 
     #[test]
@@ -3927,11 +3904,11 @@ mod tests {
         ];
         let dt = DelaunayTriangulation::new(&vertices).unwrap();
 
-        let cell_key = dt.tds().cell_keys().next().unwrap();
+        let simplex_key = dt.tds().simplex_keys().next().unwrap();
 
         // Test the iterator method
         let facet_iter =
-            Cell::facet_view_iter(dt.tds(), cell_key).expect("Failed to get facet iterator");
+            Simplex::facet_view_iter(dt.tds(), simplex_key).expect("Failed to get facet iterator");
 
         // Should know the exact count upfront (implements ExactSizeIterator)
         assert_eq!(
@@ -3954,8 +3931,8 @@ mod tests {
         }
 
         // Test iterator is zero-allocation by using it without collect
-        let facet_iter2 =
-            Cell::facet_view_iter(dt.tds(), cell_key).expect("Failed to get second facet iterator");
+        let facet_iter2 = Simplex::facet_view_iter(dt.tds(), simplex_key)
+            .expect("Failed to get second facet iterator");
 
         let mut count = 0;
         for facet_result in facet_iter2 {
@@ -3965,8 +3942,8 @@ mod tests {
         assert_eq!(count, 4, "Iterator should yield 4 facets");
 
         // Test iterator combinators work correctly
-        let facet_iter3 =
-            Cell::facet_view_iter(dt.tds(), cell_key).expect("Failed to get third facet iterator");
+        let facet_iter3 = Simplex::facet_view_iter(dt.tds(), simplex_key)
+            .expect("Failed to get third facet iterator");
 
         let successful_facets: Vec<_> = facet_iter3
             .collect::<Result<Vec<_>, _>>()
@@ -3978,8 +3955,8 @@ mod tests {
         );
 
         // Compare with Vec-based method to ensure same results
-        let vec_facets =
-            Cell::facet_views_from_tds(dt.tds(), cell_key).expect("Vec-based method should work");
+        let vec_facets = Simplex::facet_views_from_tds(dt.tds(), simplex_key)
+            .expect("Vec-based method should work");
         assert_eq!(
             successful_facets.len(),
             vec_facets.len(),
@@ -4004,7 +3981,7 @@ mod tests {
         println!("  Size of &Uuid:    {} bytes", mem::size_of::<&Uuid>());
         println!("  Size of usize:    {} bytes", mem::size_of::<usize>());
 
-        // Create test cell with multiple vertices in a TDS context
+        // Create test simplex with multiple vertices in a TDS context
         let vertices = vec![
             vertex!([0.0, 0.0, 0.0]),
             vertex!([1.0, 0.0, 0.0]),
@@ -4012,18 +3989,18 @@ mod tests {
             vertex!([0.0, 0.0, 1.0]),
         ];
         let dt = DelaunayTriangulation::new(&vertices).unwrap();
-        let (_cell_key, cell) = dt.cells().next().unwrap();
+        let (_simplex_key, simplex) = dt.simplices().next().unwrap();
 
         println!("\nAPI Ergonomics Test:");
 
         // Test 1: Direct comparison (by value - current implementation)
-        let first_uuid = cell.vertex_uuid_iter(dt.tds()).next().unwrap().unwrap();
+        let first_uuid = simplex.vertex_uuid_iter(dt.tds()).next().unwrap().unwrap();
         assert_ne!(first_uuid, Uuid::nil());
         println!("  ✓ By value: Direct comparison works: uuid != Uuid::nil()");
 
         // Test 2: What by-reference would look like (simulation)
         // Note: We simulate by-reference by collecting values then referencing them
-        let uuid_values: Vec<Uuid> = cell
+        let uuid_values: Vec<Uuid> = simplex
             .vertices()
             .iter()
             .map(|&vkey| dt.tds().vertex(vkey).unwrap().uuid())
@@ -4040,7 +4017,7 @@ mod tests {
         let start = Instant::now();
         let mut by_value_count = 0;
         for _ in 0..iterations {
-            for uuid in cell.vertex_uuid_iter(dt.tds()) {
+            for uuid in simplex.vertex_uuid_iter(dt.tds()) {
                 if uuid.unwrap() != Uuid::nil() {
                     by_value_count += 1;
                 }
@@ -4053,7 +4030,7 @@ mod tests {
         let mut by_ref_count = 0;
         for _ in 0..iterations {
             // For by-reference simulation, we'd need to store values first
-            let uuid_values: Vec<Uuid> = cell
+            let uuid_values: Vec<Uuid> = simplex
                 .vertices()
                 .iter()
                 .map(|&vkey| dt.tds().vertex(vkey).unwrap().uuid())
@@ -4105,10 +4082,10 @@ mod tests {
         println!("    5. 16 bytes is small enough to copy efficiently");
 
         // Validate current API works as expected
-        assert_eq!(cell.vertex_uuid_iter(dt.tds()).count(), 4);
+        assert_eq!(simplex.vertex_uuid_iter(dt.tds()).count(), 4);
 
         // Test that we can directly use values in hashmaps, comparisons, etc.
-        let unique_uuids: HashSet<_> = cell
+        let unique_uuids: HashSet<_> = simplex
             .vertex_uuid_iter(dt.tds())
             .collect::<Result<HashSet<_>, _>>()
             .unwrap();
@@ -4118,7 +4095,7 @@ mod tests {
     }
 
     #[test]
-    fn test_cell_data_accessor() {
+    fn test_simplex_data_accessor() {
         let vertices = [
             vertex!([0.0, 0.0]),
             vertex!([1.0, 0.0]),
@@ -4127,14 +4104,14 @@ mod tests {
         let mut dt = DelaunayTriangulationBuilder::new(&vertices)
             .build::<i32>()
             .unwrap();
-        let key = dt.cells().next().unwrap().0;
+        let key = dt.simplices().next().unwrap().0;
 
         // No data initially
-        assert_eq!(dt.tds().cell(key).unwrap().data(), None);
+        assert_eq!(dt.tds().simplex(key).unwrap().data(), None);
 
         // Set data and verify via accessor
-        dt.set_cell_data(key, Some(99));
-        assert_eq!(dt.tds().cell(key).unwrap().data(), Some(&99));
+        dt.set_simplex_data(key, Some(99));
+        assert_eq!(dt.tds().simplex(key).unwrap().data(), Some(&99));
     }
 
     #[test]
@@ -4148,49 +4125,49 @@ mod tests {
         ];
         let dt = DelaunayTriangulation::new(&vertices).unwrap();
 
-        // Get a cell and clone it (since we need mutable access)
-        let (_cell_key, original_cell) = dt.cells().next().unwrap();
-        let mut test_cell = original_cell.clone();
+        // Get a simplex and clone it (since we need mutable access)
+        let (_simplex_key, original_simplex) = dt.simplices().next().unwrap();
+        let mut test_simplex = original_simplex.clone();
 
-        // Verify the cell has 4 vertices initially
+        // Verify the simplex has 4 vertices initially
         assert_eq!(
-            test_cell.number_of_vertices(),
+            test_simplex.number_of_vertices(),
             4,
-            "Cell should start with 4 vertices"
+            "Simplex should start with 4 vertices"
         );
 
         // Clear the vertex keys
-        test_cell.clear_vertex_keys();
+        test_simplex.clear_vertex_keys();
 
-        // Verify the cell now has 0 vertices
+        // Verify the simplex now has 0 vertices
         assert_eq!(
-            test_cell.number_of_vertices(),
+            test_simplex.number_of_vertices(),
             0,
-            "Cell should have 0 vertices after clearing"
+            "Simplex should have 0 vertices after clearing"
         );
         assert_eq!(
-            test_cell.vertices().len(),
+            test_simplex.vertices().len(),
             0,
             "Vertices slice should be empty after clearing"
         );
 
         // Test that we can rebuild vertex keys after clearing (simulating deserialization)
-        for &vkey in original_cell.vertices() {
-            test_cell.push_vertex_key(vkey);
+        for &vkey in original_simplex.vertices() {
+            test_simplex.push_vertex_key(vkey);
         }
 
         // Verify we've restored the correct number of vertices
         assert_eq!(
-            test_cell.number_of_vertices(),
+            test_simplex.number_of_vertices(),
             4,
-            "Cell should have 4 vertices after rebuilding"
+            "Simplex should have 4 vertices after rebuilding"
         );
 
         // Verify the vertex keys match the original
-        for (original_vkey, rebuilt_vkey) in original_cell
+        for (original_vkey, rebuilt_vkey) in original_simplex
             .vertices()
             .iter()
-            .zip(test_cell.vertices().iter())
+            .zip(test_simplex.vertices().iter())
         {
             assert_eq!(
                 original_vkey, rebuilt_vkey,

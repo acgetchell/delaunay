@@ -478,7 +478,7 @@ fn bench_validation<const D: usize>(c: &mut Criterion, dimension_name: &str, n_p
     let dt = construct_triangulation::<D>(&vertices, seed);
     let tri = dt.as_triangulation();
 
-    group.throughput(Throughput::Elements(tri.number_of_cells() as u64));
+    group.throughput(Throughput::Elements(tri.number_of_simplices() as u64));
 
     group.bench_function("validate_topology", |b| {
         b.iter(|| {
@@ -493,7 +493,7 @@ fn bench_validation<const D: usize>(c: &mut Criterion, dimension_name: &str, n_p
     group.finish();
 }
 
-/// Benchmark neighbor lookup over all cells.
+/// Benchmark neighbor lookup over all simplices.
 fn bench_neighbor_queries<const D: usize>(
     c: &mut Criterion,
     dimension_name: &str,
@@ -516,14 +516,14 @@ fn bench_neighbor_queries<const D: usize>(
     let vertices = vertices_from_points(points);
     let dt = construct_triangulation::<D>(&vertices, seed);
     let tds = dt.tds();
-    let cell_keys: Vec<_> = tds.cell_keys().collect();
+    let simplex_keys: Vec<_> = tds.simplex_keys().collect();
 
-    group.throughput(Throughput::Elements(cell_keys.len() as u64));
+    group.throughput(Throughput::Elements(simplex_keys.len() as u64));
 
-    group.bench_function("find_neighbors_all_cells", |b| {
+    group.bench_function("find_neighbors_all_simplices", |b| {
         b.iter(|| {
-            for &cell_key in &cell_keys {
-                let neighbors = tds.find_neighbors_by_key(cell_key);
+            for &simplex_key in &simplex_keys {
+                let neighbors = tds.find_neighbors_by_key(simplex_key);
                 black_box(neighbors);
             }
         });
@@ -571,9 +571,13 @@ fn bench_vertex_iteration<const D: usize>(
     group.finish();
 }
 
-/// Benchmark cell-key iteration over a prebuilt triangulation.
-fn bench_cell_iteration<const D: usize>(c: &mut Criterion, dimension_name: &str, n_points: usize) {
-    let bench_name = format!("queries/cells/{dimension_name}/{n_points}v");
+/// Benchmark simplex-key iteration over a prebuilt triangulation.
+fn bench_simplex_iteration<const D: usize>(
+    c: &mut Criterion,
+    dimension_name: &str,
+    n_points: usize,
+) {
+    let bench_name = format!("queries/simplices/{dimension_name}/{n_points}v");
     let mut group = c.benchmark_group(&bench_name);
     group.measurement_time(bench_time(5));
 
@@ -591,13 +595,13 @@ fn bench_cell_iteration<const D: usize>(c: &mut Criterion, dimension_name: &str,
     let dt = construct_triangulation::<D>(&vertices, seed);
     let tds = dt.tds();
 
-    group.throughput(Throughput::Elements(tds.number_of_cells() as u64));
+    group.throughput(Throughput::Elements(tds.number_of_simplices() as u64));
 
-    group.bench_function("iterate_all_cells", |b| {
+    group.bench_function("iterate_all_simplices", |b| {
         b.iter(|| {
             let mut count = 0;
-            for cell_key in tds.cell_keys() {
-                black_box(cell_key);
+            for simplex_key in tds.simplex_keys() {
+                black_box(simplex_key);
                 count += 1;
             }
             black_box(count)
@@ -614,7 +618,7 @@ fn bench_2d_suite(c: &mut Criterion) {
         bench_validation::<2>(c, "2D", n_points);
         bench_neighbor_queries::<2>(c, "2D", n_points);
         bench_vertex_iteration::<2>(c, "2D", n_points);
-        bench_cell_iteration::<2>(c, "2D", n_points);
+        bench_simplex_iteration::<2>(c, "2D", n_points);
     }
 }
 
@@ -625,7 +629,7 @@ fn bench_3d_suite(c: &mut Criterion) {
         bench_validation::<3>(c, "3D", n_points);
         bench_neighbor_queries::<3>(c, "3D", n_points);
         bench_vertex_iteration::<3>(c, "3D", n_points);
-        bench_cell_iteration::<3>(c, "3D", n_points);
+        bench_simplex_iteration::<3>(c, "3D", n_points);
     }
 }
 
@@ -642,7 +646,7 @@ fn bench_4d_suite(c: &mut Criterion) {
         bench_validation::<4>(c, "4D", n_points);
         bench_neighbor_queries::<4>(c, "4D", n_points);
         bench_vertex_iteration::<4>(c, "4D", n_points);
-        bench_cell_iteration::<4>(c, "4D", n_points);
+        bench_simplex_iteration::<4>(c, "4D", n_points);
     }
 }
 
@@ -653,7 +657,7 @@ fn bench_5d_suite(c: &mut Criterion) {
         bench_validation::<5>(c, "5D", n_points);
         bench_neighbor_queries::<5>(c, "5D", n_points);
         bench_vertex_iteration::<5>(c, "5D", n_points);
-        bench_cell_iteration::<5>(c, "5D", n_points);
+        bench_simplex_iteration::<5>(c, "5D", n_points);
     }
 }
 
@@ -935,13 +939,13 @@ fn benchmark_query_latency(c: &mut Criterion) {
                     SmallBuffer<Point<f64, 3>, SIMPLEX_VERTICES_BUFFER_SIZE>,
                 > = Vec::with_capacity(MAX_PRECOMPUTED_SIMPLICES);
                 let mut sampled_count = 0;
-                for cell in tds.cells() {
+                for simplex in tds.simplices() {
                     if sampled_count >= MAX_PRECOMPUTED_SIMPLICES {
                         break;
                     }
 
-                    // Get vertex points for this cell by looking up each vertex key
-                    let vertex_keys = cell.1.vertices();
+                    // Get vertex points for this simplex by looking up each vertex key
+                    let vertex_keys = simplex.1.vertices();
                     if vertex_keys.len() == 4 {
                         // Valid 3D simplex - collect points
                         let mut vertex_points: SmallBuffer<

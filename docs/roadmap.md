@@ -55,7 +55,7 @@ work that should not be tangled with v0.7.8 cleanup churn:
 
 - **Pachner/Edit API shape (#252/#253/#350/#337):** unify the Pachner move API,
   expand public flip benchmark coverage, add Monte-Carlo stress benchmarks, and
-  support periodic external-cell parity constraints in bistellar flips.
+  support periodic external-simplex parity constraints in bistellar flips.
 - **Topology and incidence surface (#359/#304):** add stable incidence queries
   for simplex-local topology and dedicated targeted topology repair stages for
   ridge and vertex-link failures.

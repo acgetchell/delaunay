@@ -110,9 +110,9 @@ fn build_with_adaptive_kernel() -> Result<(), NumericalRobustnessExampleError> {
 
     dt.validate()?;
     println!(
-        "Adaptive construction: {} vertices, {} cells, full validation passed",
+        "Adaptive construction: {} vertices, {} simplices, full validation passed",
         dt.number_of_vertices(),
-        dt.number_of_cells()
+        dt.number_of_simplices()
     );
     Ok(())
 }

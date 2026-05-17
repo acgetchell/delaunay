@@ -23,9 +23,11 @@
 //!
 //! **Phase 2 (`.toroidal_periodic()`, issue #210):** Full periodic construction using
 //! the 3^D image-point method — generating copies of each point shifted by ±L in each
-//! dimension, building the full Euclidean DT on the expanded set, and extracting the
-//! restriction to the fundamental domain with rewired periodic neighbor pointers.
-//! Produces a true toroidal (χ = 0) triangulation.
+//! dimension, building the full Euclidean DT on the expanded set, normalizing lifted
+//! simplices, searching a closed quotient candidate subset, and rebuilding quotient
+//! representatives with periodic neighbor pointers. Produces a true toroidal
+//! (χ = 0) triangulation. See `REFERENCES.md`, "Periodic and Toroidal
+//! Triangulations", first entry.
 //!
 //! # Examples
 //!
@@ -98,7 +100,7 @@
 //!     .build_with_kernel::<_, ()>(&kernel)?;
 //!
 //! assert_eq!(dt.number_of_vertices(), 7);
-//! // Every vertex has a valid incident cell (no boundary).
+//! // Every vertex has a valid incident simplex (no boundary).
 //! assert!(dt.tds().is_valid().is_ok());
 //! # Ok(())
 //! # }
@@ -109,12 +111,13 @@
 use crate::core::algorithms::incremental_insertion::{
     DelaunayRepairErrorKind, InsertionError, InsertionErrorSourceKind,
 };
-use crate::core::cell::Cell;
 use crate::core::collections::{FastHashMap, PeriodicOffsetBuffer, Uuid, VertexKeySet};
 use crate::core::operations::InsertionOutcome;
+use crate::core::simplex::{Simplex, SimplexValidationError};
 use crate::core::tds::{
-    CellKey, InvariantError, InvariantErrorSummaryDetail, Tds, TdsError, TdsErrorKind,
-    TriangulationConstructionState, TriangulationValidationErrorKind, VertexKey,
+    InvariantError, InvariantErrorSummaryDetail, SimplexKey, Tds, TdsConstructionError, TdsError,
+    TdsErrorKind, TdsMutationError, TriangulationConstructionState,
+    TriangulationValidationErrorKind, VertexKey,
 };
 use crate::core::traits::data_type::DataType;
 use crate::core::triangulation::{TopologyGuarantee, TriangulationConstructionError};
@@ -300,26 +303,28 @@ fn search_closed_2d_selection(
 pub enum ExplicitTdsErrorKind {
     /// A vertex failed validation.
     InvalidVertex,
-    /// A cell failed validation.
-    InvalidCell,
+    /// A simplex failed validation.
+    InvalidSimplex,
     /// Neighbor relationships were invalid.
     InvalidNeighbors,
-    /// Adjacent cells violated coherent orientation.
+    /// Adjacent simplices violated coherent orientation.
     OrientationViolation,
-    /// Duplicate maximal cells were detected.
-    DuplicateCells,
-    /// A facet would be incident to too many cells.
+    /// Duplicate maximal simplices were detected.
+    DuplicateSimplices,
+    /// A facet would be incident to too many simplices.
     FacetSharingViolation,
-    /// Cell creation failed.
-    FailedToCreateCell,
+    /// An entity UUID was duplicated during TDS assembly.
+    DuplicateUuid,
+    /// Simplex creation failed.
+    FailedToCreateSimplex,
     /// Expected neighbor relation was absent.
     NotNeighbors,
     /// UUID-to-key mapping was inconsistent.
     MappingInconsistency,
-    /// Cell vertex-key lookup failed.
+    /// Simplex vertex-key lookup failed.
     VertexKeyRetrievalFailed,
-    /// A referenced cell key was missing.
-    CellNotFound,
+    /// A referenced simplex key was missing.
+    SimplexNotFound,
     /// A referenced vertex key was missing.
     VertexNotFound,
     /// A dimension/count invariant was violated.
@@ -332,16 +337,18 @@ pub enum ExplicitTdsErrorKind {
     Geometric,
     /// A facet operation failed.
     FacetError,
-    /// A cell contained duplicate coordinates.
-    DuplicateCoordinatesInCell,
+    /// A simplex contained duplicate coordinates.
+    DuplicateCoordinatesInSimplex,
 }
 
-/// Compact summary of a [`TdsError`] used by explicit construction.
+/// Compact summary of a TDS construction, mutation, or validation failure used
+/// by explicit construction.
 ///
 /// The conversion preserves the [`ExplicitTdsErrorKind`] and rendered
 /// diagnostic text while dropping the full typed payload. Use this type when
 /// explicit construction needs a small source error; keep the original
-/// [`TdsError`] when callers need source-chain or payload inspection.
+/// [`TdsError`], [`TdsConstructionError`], or [`TdsMutationError`] when callers
+/// need source-chain or payload inspection.
 ///
 /// # Examples
 ///
@@ -350,7 +357,7 @@ pub enum ExplicitTdsErrorKind {
 /// use delaunay::prelude::triangulation::{ExplicitTdsError, ExplicitTdsErrorKind};
 ///
 /// let source = TdsError::InconsistentDataStructure {
-///     message: "dangling cell key".to_string(),
+///     message: "dangling simplex key".to_string(),
 /// };
 /// let summary = ExplicitTdsError::from(source);
 ///
@@ -370,18 +377,18 @@ impl From<TdsError> for ExplicitTdsError {
     fn from(source: TdsError) -> Self {
         let kind = match &source {
             TdsError::InvalidVertex { .. } => ExplicitTdsErrorKind::InvalidVertex,
-            TdsError::InvalidCell { .. } => ExplicitTdsErrorKind::InvalidCell,
+            TdsError::InvalidSimplex { .. } => ExplicitTdsErrorKind::InvalidSimplex,
             TdsError::InvalidNeighbors { .. } => ExplicitTdsErrorKind::InvalidNeighbors,
             TdsError::OrientationViolation { .. } => ExplicitTdsErrorKind::OrientationViolation,
-            TdsError::DuplicateCells { .. } => ExplicitTdsErrorKind::DuplicateCells,
+            TdsError::DuplicateSimplices { .. } => ExplicitTdsErrorKind::DuplicateSimplices,
             TdsError::FacetSharingViolation { .. } => ExplicitTdsErrorKind::FacetSharingViolation,
-            TdsError::FailedToCreateCell { .. } => ExplicitTdsErrorKind::FailedToCreateCell,
+            TdsError::FailedToCreateSimplex { .. } => ExplicitTdsErrorKind::FailedToCreateSimplex,
             TdsError::NotNeighbors { .. } => ExplicitTdsErrorKind::NotNeighbors,
             TdsError::MappingInconsistency { .. } => ExplicitTdsErrorKind::MappingInconsistency,
             TdsError::VertexKeyRetrievalFailed { .. } => {
                 ExplicitTdsErrorKind::VertexKeyRetrievalFailed
             }
-            TdsError::CellNotFound { .. } => ExplicitTdsErrorKind::CellNotFound,
+            TdsError::SimplexNotFound { .. } => ExplicitTdsErrorKind::SimplexNotFound,
             TdsError::VertexNotFound { .. } => ExplicitTdsErrorKind::VertexNotFound,
             TdsError::DimensionMismatch { .. } => ExplicitTdsErrorKind::DimensionMismatch,
             TdsError::IndexOutOfBounds { .. } => ExplicitTdsErrorKind::IndexOutOfBounds,
@@ -390,14 +397,32 @@ impl From<TdsError> for ExplicitTdsError {
             }
             TdsError::Geometric(_) => ExplicitTdsErrorKind::Geometric,
             TdsError::FacetError(_) => ExplicitTdsErrorKind::FacetError,
-            TdsError::DuplicateCoordinatesInCell { .. } => {
-                ExplicitTdsErrorKind::DuplicateCoordinatesInCell
+            TdsError::DuplicateCoordinatesInSimplex { .. } => {
+                ExplicitTdsErrorKind::DuplicateCoordinatesInSimplex
             }
         };
         Self {
             kind,
             message: source.to_string(),
         }
+    }
+}
+
+impl From<TdsConstructionError> for ExplicitTdsError {
+    fn from(source: TdsConstructionError) -> Self {
+        match source {
+            TdsConstructionError::ValidationError(source) => source.into(),
+            duplicate @ TdsConstructionError::DuplicateUuid { .. } => Self {
+                kind: ExplicitTdsErrorKind::DuplicateUuid,
+                message: duplicate.to_string(),
+            },
+        }
+    }
+}
+
+impl From<TdsMutationError> for ExplicitTdsError {
+    fn from(source: TdsMutationError) -> Self {
+        TdsError::from(source).into()
     }
 }
 
@@ -549,7 +574,7 @@ pub enum ExplicitInvariantErrorKind {
 /// };
 ///
 /// let source = InvariantError::Tds(TdsError::InconsistentDataStructure {
-///     message: "dangling cell key".to_string(),
+///     message: "dangling simplex key".to_string(),
 /// });
 /// let summary = ExplicitInvariantError::from(source);
 ///
@@ -708,14 +733,17 @@ impl From<DelaunayTriangulationValidationError> for ExplicitDelaunayValidationEr
 /// Errors from explicit triangulation construction.
 ///
 /// Input validation errors (wrong arity, out-of-bounds indices, duplicate vertices,
-/// empty cells) and post-assembly failures (neighbor wiring, orientation
+/// empty simplices) and post-assembly failures (neighbor wiring, orientation
 /// normalization, structural/topology/nondegeneracy validation) are returned as
 /// variants of this enum — callers should match on
 /// [`ExplicitConstructionError`] (wrapped in
 /// [`DelaunayTriangulationConstructionError::ExplicitConstruction`]).
 ///
-/// Only low-level TDS insertion failures (vertex/cell creation) flow through
-/// [`TriangulationConstructionError`].
+/// Low-level explicit assembly failures are normalized into
+/// [`ExplicitConstructionError::SimplexCreation`] or
+/// [`ExplicitConstructionError::TdsAssembly`] so callers can handle the whole
+/// explicit-construction path through
+/// [`DelaunayTriangulationConstructionError::ExplicitConstruction`].
 ///
 /// [`DelaunayTriangulationConstructionError::ExplicitConstruction`]: crate::triangulation::delaunay::DelaunayTriangulationConstructionError::ExplicitConstruction
 ///
@@ -728,61 +756,81 @@ impl From<DelaunayTriangulationValidationError> for ExplicitDelaunayValidationEr
 /// };
 ///
 /// let vertices = vec![vertex!([0.0, 0.0]), vertex!([1.0, 0.0]), vertex!([0.0, 1.0])];
-/// let cells = vec![vec![0, 1]]; // Wrong arity for 2D (needs 3 vertices)
+/// let simplices = vec![vec![0, 1]]; // Wrong arity for 2D (needs 3 vertices)
 ///
 /// assert!(matches!(
-///     DelaunayTriangulationBuilder::from_vertices_and_cells(&vertices, &cells).build::<()>(),
+///     DelaunayTriangulationBuilder::from_vertices_and_simplices(&vertices, &simplices).build::<()>(),
 ///     Err(DelaunayTriangulationConstructionError::ExplicitConstruction(
-///         ExplicitConstructionError::InvalidCellArity { cell_index: 0, actual: 2, expected: 3 },
+///         ExplicitConstructionError::InvalidSimplexArity { simplex_index: 0, actual: 2, expected: 3 },
 ///     ))
 /// ));
 /// ```
 #[derive(Clone, Debug, Error, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum ExplicitConstructionError {
-    /// A cell references a vertex index that is out of bounds.
+    /// A simplex references a vertex index that is out of bounds.
     #[error(
-        "Cell {cell_index}: vertex index {vertex_index} is out of bounds (vertex count: {bound})"
+        "Simplex {simplex_index}: vertex index {vertex_index} is out of bounds (vertex count: {bound})"
     )]
     IndexOutOfBounds {
-        /// The index of the cell in the input slice.
-        cell_index: usize,
+        /// The index of the simplex in the input slice.
+        simplex_index: usize,
         /// The out-of-bounds vertex index.
         vertex_index: usize,
         /// The number of vertices provided.
         bound: usize,
     },
-    /// A cell does not have exactly D+1 vertex indices.
-    #[error("Cell {cell_index}: has {actual} vertex indices, expected {expected} for a simplex")]
-    InvalidCellArity {
-        /// The index of the cell in the input slice.
-        cell_index: usize,
+    /// A simplex does not have exactly D+1 vertex indices.
+    #[error(
+        "Simplex {simplex_index}: has {actual} vertex indices, expected {expected} for a simplex"
+    )]
+    InvalidSimplexArity {
+        /// The index of the simplex in the input slice.
+        simplex_index: usize,
         /// The actual number of vertex indices.
         actual: usize,
         /// The expected number (D+1).
         expected: usize,
     },
-    /// A cell contains duplicate vertex indices.
-    #[error("Cell {cell_index}: contains duplicate vertex indices")]
-    DuplicateVertexInCell {
-        /// The index of the cell in the input slice.
-        cell_index: usize,
+    /// A simplex contains duplicate vertex indices.
+    #[error("Simplex {simplex_index}: contains duplicate vertex indices")]
+    DuplicateVertexInSimplex {
+        /// The index of the simplex in the input slice.
+        simplex_index: usize,
     },
-    /// No cells were provided.
-    #[error("No cells provided for explicit construction")]
-    EmptyCells,
-    /// Toroidal topology is incompatible with explicit cell construction.
-    #[error("Toroidal topology cannot be combined with explicit cell construction")]
+    /// No simplices were provided.
+    #[error("No simplices provided for explicit construction")]
+    EmptySimplices,
+    /// Simplex creation failed while assembling explicit connectivity.
+    #[error(
+        "Simplex {simplex_index}: simplex creation failed during explicit construction: {source}"
+    )]
+    SimplexCreation {
+        /// The index of the simplex in the input slice.
+        simplex_index: usize,
+        /// Underlying simplex validation error.
+        #[source]
+        source: SimplexValidationError,
+    },
+    /// TDS assembly failed while inserting explicit vertices or simplices.
+    #[error("TDS assembly failed during explicit construction: {source}")]
+    TdsAssembly {
+        /// Underlying TDS construction or mutation error.
+        #[source]
+        source: ExplicitTdsError,
+    },
+    /// Toroidal topology is incompatible with explicit simplex construction.
+    #[error("Toroidal topology cannot be combined with explicit simplex construction")]
     IncompatibleTopology,
-    /// Non-default [`ConstructionOptions`] were set on an explicit-cell builder.
+    /// Non-default [`ConstructionOptions`] were set on an explicit-simplex builder.
     ///
     /// [`ConstructionOptions`] (insertion order, deduplication, retry policy) apply
     /// only to the Delaunay point-insertion path and are not meaningful for
-    /// explicit cell construction.
+    /// explicit simplex construction.
     ///
     /// [`ConstructionOptions`]: crate::triangulation::delaunay::ConstructionOptions
     #[error(
-        "ConstructionOptions are not applicable to explicit cell construction \
+        "ConstructionOptions are not applicable to explicit simplex construction \
          and must be left at their default values"
     )]
     UnsupportedConstructionOptions,
@@ -858,7 +906,7 @@ pub enum ExplicitConstructionError {
 /// - `U` — Vertex data type (inferred from the vertex slice).
 /// - `D` — Spatial dimension (inferred from the vertex slice).
 ///
-/// The cell data type `V` and kernel `K` are deferred to the
+/// The simplex data type `V` and kernel `K` are deferred to the
 /// [`build`](Self::build) / [`build_with_kernel`](Self::build_with_kernel)
 /// call, keeping the builder type signature concise.
 ///
@@ -898,12 +946,12 @@ pub struct DelaunayTriangulationBuilder<'v, T, U, const D: usize> {
     /// When `true` (set by [`.toroidal_periodic()`](Self::toroidal_periodic)), the
     /// Phase 2 image-point algorithm is used instead of the Phase 1 canonicalization path.
     use_image_point_method: bool,
-    /// Optional explicit cell specifications for direct combinatorial construction.
+    /// Optional explicit simplex specifications for direct combinatorial construction.
     ///
     /// When set, the builder constructs a triangulation from the given vertices and
-    /// cells directly, bypassing point-insertion-based Delaunay construction.
+    /// simplices directly, bypassing point-insertion-based Delaunay construction.
     /// Each inner slice must contain exactly D+1 vertex indices.
-    explicit_cells: Option<&'v [Vec<usize>]>,
+    explicit_simplices: Option<&'v [Vec<usize>]>,
     /// Runtime global topology metadata.
     ///
     /// When set to a non-Euclidean topology (e.g. `Toroidal`), Euler characteristic
@@ -966,17 +1014,17 @@ impl<'v, U, const D: usize> DelaunayTriangulationBuilder<'v, f64, U, D> {
             topology_guarantee: TopologyGuarantee::DEFAULT,
             construction_options: ConstructionOptions::default(),
             use_image_point_method: false,
-            explicit_cells: None,
+            explicit_simplices: None,
             global_topology: GlobalTopology::DEFAULT,
         }
     }
 
     /// `f64` convenience wrapper for
-    /// [`from_vertices_and_cells_generic`](Self::from_vertices_and_cells_generic).
+    /// [`from_vertices_and_simplices_generic`](Self::from_vertices_and_simplices_generic).
     ///
     /// Pins `T = f64` so that callers using the default `AdaptiveKernel` never
     /// need explicit type annotations. For non-`f64` scalars, use the generic
-    /// [`from_vertices_and_cells_generic`](Self::from_vertices_and_cells_generic)
+    /// [`from_vertices_and_simplices_generic`](Self::from_vertices_and_simplices_generic)
     /// on the `T: CoordinateScalar` impl block.
     ///
     /// This is not an unchecked topology wrapper. The deferred
@@ -1002,30 +1050,30 @@ impl<'v, U, const D: usize> DelaunayTriangulationBuilder<'v, f64, U, D> {
     ///     vertex!([1.0, 1.0]),
     ///     vertex!([0.0, 1.0]),
     /// ];
-    /// let cells = vec![vec![0, 1, 2], vec![0, 2, 3]];
+    /// let simplices = vec![vec![0, 1, 2], vec![0, 2, 3]];
     ///
-    /// let dt = DelaunayTriangulationBuilder::from_vertices_and_cells(&vertices, &cells)
+    /// let dt = DelaunayTriangulationBuilder::from_vertices_and_simplices(&vertices, &simplices)
     ///     .build::<()>()?;
     ///
     /// assert_eq!(dt.number_of_vertices(), 4);
-    /// assert_eq!(dt.number_of_cells(), 2);
+    /// assert_eq!(dt.number_of_simplices(), 2);
     ///
-    /// let bad_cells = vec![vec![0, 1]]; // Wrong arity for a 2D simplex.
+    /// let bad_simplices = vec![vec![0, 1]]; // Wrong arity for a 2D simplex.
     /// assert!(matches!(
-    ///     DelaunayTriangulationBuilder::from_vertices_and_cells(&vertices, &bad_cells).build::<()>(),
+    ///     DelaunayTriangulationBuilder::from_vertices_and_simplices(&vertices, &bad_simplices).build::<()>(),
     ///     Err(DelaunayTriangulationConstructionError::ExplicitConstruction(
-    ///         ExplicitConstructionError::InvalidCellArity { .. },
+    ///         ExplicitConstructionError::InvalidSimplexArity { .. },
     ///     ))
     /// ));
     /// # Ok(())
     /// # }
     /// ```
     #[must_use]
-    pub fn from_vertices_and_cells(
+    pub fn from_vertices_and_simplices(
         vertices: &'v [Vertex<f64, U, D>],
-        cells: &'v [Vec<usize>],
+        simplices: &'v [Vec<usize>],
     ) -> Self {
-        Self::from_vertices_and_cells_generic(vertices, cells)
+        Self::from_vertices_and_simplices_generic(vertices, simplices)
     }
 }
 
@@ -1034,7 +1082,7 @@ impl<'v, U, const D: usize> DelaunayTriangulationBuilder<'v, f64, U, D> {
 // =============================================================================
 
 impl<'v, T, U, const D: usize> DelaunayTriangulationBuilder<'v, T, U, D> {
-    /// Creates a builder from explicit vertex and cell specifications.
+    /// Creates a builder from explicit vertex and simplex specifications.
     ///
     /// This constructs a triangulation from the given connectivity without
     /// Delaunay point insertion. Works with any scalar type `T`.
@@ -1071,20 +1119,20 @@ impl<'v, T, U, const D: usize> DelaunayTriangulationBuilder<'v, T, U, D> {
     ///     VertexBuilder::default().point(Point::new([1.0_f32, 0.0])).build()?,
     ///     VertexBuilder::default().point(Point::new([0.0_f32, 1.0])).build()?,
     /// ];
-    /// let cells = vec![vec![0, 1, 2]];
+    /// let simplices = vec![vec![0, 1, 2]];
     ///
-    /// let dt = DelaunayTriangulationBuilder::from_vertices_and_cells_generic(&vertices, &cells)
+    /// let dt = DelaunayTriangulationBuilder::from_vertices_and_simplices_generic(&vertices, &simplices)
     ///     .build::<()>()?;
     ///
     /// assert_eq!(dt.number_of_vertices(), 3);
-    /// assert_eq!(dt.number_of_cells(), 1);
+    /// assert_eq!(dt.number_of_simplices(), 1);
     /// # Ok(())
     /// # }
     /// ```
     #[must_use]
-    pub fn from_vertices_and_cells_generic(
+    pub fn from_vertices_and_simplices_generic(
         vertices: &'v [Vertex<T, U, D>],
-        cells: &'v [Vec<usize>],
+        simplices: &'v [Vec<usize>],
     ) -> Self {
         Self {
             vertices,
@@ -1092,7 +1140,7 @@ impl<'v, T, U, const D: usize> DelaunayTriangulationBuilder<'v, T, U, D> {
             topology_guarantee: TopologyGuarantee::DEFAULT,
             construction_options: ConstructionOptions::default(),
             use_image_point_method: false,
-            explicit_cells: Some(cells),
+            explicit_simplices: Some(simplices),
             global_topology: GlobalTopology::DEFAULT,
         }
     }
@@ -1141,7 +1189,7 @@ impl<'v, T, U, const D: usize> DelaunayTriangulationBuilder<'v, T, U, D> {
             topology_guarantee: TopologyGuarantee::DEFAULT,
             construction_options: ConstructionOptions::default(),
             use_image_point_method: false,
-            explicit_cells: None,
+            explicit_simplices: None,
             global_topology: GlobalTopology::DEFAULT,
         }
     }
@@ -1304,9 +1352,9 @@ impl<'v, T, U, const D: usize> DelaunayTriangulationBuilder<'v, T, U, D> {
     ///     vertex!([1.0, 0.0]),
     ///     vertex!([0.0, 1.0]),
     /// ];
-    /// let cells = vec![vec![0, 1, 2]];
+    /// let simplices = vec![vec![0, 1, 2]];
     ///
-    /// let result = DelaunayTriangulationBuilder::from_vertices_and_cells(&vertices, &cells)
+    /// let result = DelaunayTriangulationBuilder::from_vertices_and_simplices(&vertices, &simplices)
     ///     .global_topology(GlobalTopology::Toroidal {
     ///         domain: [1.0, 1.0],
     ///         mode: ToroidalConstructionMode::Explicit,
@@ -1508,7 +1556,7 @@ where
 
     /// Builds the triangulation using [`AdaptiveKernel<T>`](crate::geometry::kernel::AdaptiveKernel).
     ///
-    /// This is the most common build path. Cell data type `V` is inferred or
+    /// This is the most common build path. Simplex data type `V` is inferred or
     /// specified at the call site; it is independent of the vertex data type `U`.
     ///
     /// # Errors
@@ -1603,8 +1651,8 @@ where
         K: Kernel<D, Scalar = T>,
         V: DataType,
     {
-        // Explicit-cells path: bypass Delaunay insertion entirely.
-        if let Some(cells) = self.explicit_cells {
+        // Explicit-simplices path: bypass Delaunay insertion entirely.
+        if let Some(simplices) = self.explicit_simplices {
             if self.topology.is_some() {
                 return Err(ExplicitConstructionError::IncompatibleTopology.into());
             }
@@ -1614,7 +1662,7 @@ where
             return Self::build_explicit(
                 kernel,
                 self.vertices,
-                cells,
+                simplices,
                 self.topology_guarantee,
                 self.global_topology,
             );
@@ -1684,7 +1732,7 @@ where
                         ),
                     })?;
                 dt.as_triangulation()
-                    .validate_geometric_cell_orientation()
+                    .validate_geometric_simplex_orientation()
                     .map_err(|e| TriangulationConstructionError::GeometricDegeneracy {
                         message: format!(
                             "Periodic geometric orientation validation failed after build: {e}",
@@ -1695,7 +1743,7 @@ where
         }
     }
 
-    /// Builds a triangulation from explicit vertex and cell specifications.
+    /// Builds a triangulation from explicit vertex and simplex specifications.
     ///
     /// This is a purely combinatorial construction that assembles a valid TDS from
     /// the given connectivity without Delaunay point insertion. Euclidean explicit
@@ -1706,10 +1754,10 @@ where
     ///
     /// # Algorithm
     ///
-    /// 1. Validate input: each cell has D+1 in-bounds, unique vertex indices.
-    /// 2. Build a `Tds`: insert all vertices, then insert cells from the specifications.
+    /// 1. Validate input: each simplex has D+1 in-bounds, unique vertex indices.
+    /// 2. Build a `Tds`: insert all vertices, then insert simplices from the specifications.
     /// 3. Compute adjacency via `assign_neighbors()`.
-    /// 4. Assign incident cells via `assign_incident_cells()`.
+    /// 4. Assign incident simplices via `assign_incident_simplices()`.
     /// 5. Wrap in `DelaunayTriangulation` via `from_tds_with_topology_guarantee`.
     /// 6. Normalize coherent orientation and promote to positive canonical sign
     ///    via `normalize_and_promote_positive_orientation()`.
@@ -1718,12 +1766,12 @@ where
     /// 8. Validate Levels 1–2 (TDS structural: `tds.validate()`).
     /// 9. Validate Level 3 topology (excluding geometric orientation).
     /// 10. Validate PL-manifold completion (vertex links, if required).
-    /// 11. Validate geometric nondegeneracy (reject zero-volume cells).
+    /// 11. Validate geometric nondegeneracy (reject zero-volume simplices).
     /// 12. Validate the Euclidean Level 4 Delaunay property.
     fn build_explicit<K, V>(
         kernel: &K,
         vertices: &[Vertex<T, U, D>],
-        cells: &[Vec<usize>],
+        simplices: &[Vec<usize>],
         topology_guarantee: TopologyGuarantee,
         global_topology: GlobalTopology<D>,
     ) -> Result<DelaunayTriangulation<K, U, V, D>, DelaunayTriangulationConstructionError>
@@ -1731,7 +1779,7 @@ where
         K: Kernel<D, Scalar = T>,
         V: DataType,
     {
-        Self::validate_explicit_cell_specs(vertices.len(), cells)?;
+        Self::validate_explicit_simplex_specs(vertices.len(), simplices)?;
         Self::reject_explicit_non_euclidean_topology(global_topology)?;
 
         let vertex_count = vertices.len();
@@ -1742,23 +1790,29 @@ where
         // Insert all vertices and build index → VertexKey map.
         let mut index_to_key = Vec::with_capacity(vertex_count);
         for v in vertices {
-            let vk = tds
-                .insert_vertex_with_mapping(*v)
-                .map_err(TriangulationConstructionError::from)?;
+            let vk = tds.insert_vertex_with_mapping(*v).map_err(|source| {
+                ExplicitConstructionError::TdsAssembly {
+                    source: source.into(),
+                }
+            })?;
             index_to_key.push(vk);
         }
 
-        // Insert cells.
-        for (cell_idx, cell_spec) in cells.iter().enumerate() {
+        // Insert simplices.
+        for (simplex_idx, simplex_spec) in simplices.iter().enumerate() {
             let vertex_keys: Vec<VertexKey> =
-                cell_spec.iter().map(|&vi| index_to_key[vi]).collect();
-            let cell = Cell::new(vertex_keys, None).map_err(|e| {
-                TriangulationConstructionError::FailedToCreateCell {
-                    message: format!("explicit: cell {cell_idx}: {e}"),
+                simplex_spec.iter().map(|&vi| index_to_key[vi]).collect();
+            let simplex = Simplex::new(vertex_keys, None).map_err(|e| {
+                ExplicitConstructionError::SimplexCreation {
+                    simplex_index: simplex_idx,
+                    source: e,
                 }
             })?;
-            tds.insert_cell_with_mapping(cell)
-                .map_err(TriangulationConstructionError::from)?;
+            tds.insert_simplex_with_mapping(simplex).map_err(|source| {
+                ExplicitConstructionError::TdsAssembly {
+                    source: source.into(),
+                }
+            })?;
         }
 
         // Mark as constructed so validation doesn't reject incomplete state.
@@ -1770,10 +1824,10 @@ where
                 source: source.into(),
             })?;
 
-        // --- Assign incident cells ---
-        tds.assign_incident_cells().map_err(|e| {
-            TriangulationConstructionError::InternalInconsistency {
-                message: format!("explicit: incident cell assignment failed: {e}"),
+        // --- Assign incident simplices ---
+        tds.assign_incident_simplices().map_err(|source| {
+            ExplicitConstructionError::TdsAssembly {
+                source: source.into(),
             }
         })?;
 
@@ -1796,11 +1850,11 @@ where
         // --- Normalize orientation and promote to positive ---
         //
         // normalize_and_promote_positive_orientation() combines:
-        //   1. BFS coherent-orientation normalization (adjacent cells agree)
+        //   1. BFS coherent-orientation normalization (adjacent simplices agree)
         //   2. Global sign canonicalization (flip all if representative is negative)
-        //   3. Bounded per-cell promotion passes for FP-precision edge cases
+        //   3. Bounded per-simplex promotion passes for FP-precision edge cases
         // This ensures the returned DT has positive geometric orientation,
-        // matching the invariant expected by validate_geometric_cell_orientation.
+        // matching the invariant expected by validate_geometric_simplex_orientation.
         dt.tri
             .normalize_and_promote_positive_orientation()
             .map_err(
@@ -1822,7 +1876,7 @@ where
         // PL-manifold vertex/ridge links when the topology guarantee requires
         // them.  We call `is_valid_topology_only()` which covers all these;
         // the only check we intentionally omit is
-        // `validate_geometric_cell_orientation`.
+        // `validate_geometric_simplex_orientation`.
         if let Err(e) = dt.tri.is_valid_topology_only() {
             return Err(ExplicitConstructionError::TopologyValidation { source: e.into() }.into());
         }
@@ -1836,11 +1890,11 @@ where
 
         // --- Geometric nondegeneracy ---
         //
-        // Reject degenerate simplices (zero-volume cells from collinear /
+        // Reject degenerate simplices (zero-volume simplices from collinear /
         // coplanar vertices).  Unlike the Delaunay construction paths, which
-        // may tolerate near-degenerate cells from flip-based repair,
+        // may tolerate near-degenerate simplices from flip-based repair,
         // explicit construction should not silently accept geometrically
-        // collapsed cells supplied by the user.
+        // collapsed simplices supplied by the user.
         if let Err(e) = dt.tri.validate_geometric_nondegeneracy() {
             return Err(
                 ExplicitConstructionError::GeometricNondegeneracy { source: e.into() }.into(),
@@ -1852,35 +1906,35 @@ where
         Ok(dt)
     }
 
-    /// Validates explicit cell specifications before constructing a TDS.
-    fn validate_explicit_cell_specs(
+    /// Validates explicit simplex specifications before constructing a TDS.
+    fn validate_explicit_simplex_specs(
         vertex_count: usize,
-        cells: &[Vec<usize>],
+        simplices: &[Vec<usize>],
     ) -> Result<(), ExplicitConstructionError> {
-        if cells.is_empty() {
-            return Err(ExplicitConstructionError::EmptyCells);
+        if simplices.is_empty() {
+            return Err(ExplicitConstructionError::EmptySimplices);
         }
 
-        for (cell_idx, cell_spec) in cells.iter().enumerate() {
-            if cell_spec.len() != D + 1 {
-                return Err(ExplicitConstructionError::InvalidCellArity {
-                    cell_index: cell_idx,
-                    actual: cell_spec.len(),
+        for (simplex_idx, simplex_spec) in simplices.iter().enumerate() {
+            if simplex_spec.len() != D + 1 {
+                return Err(ExplicitConstructionError::InvalidSimplexArity {
+                    simplex_index: simplex_idx,
+                    actual: simplex_spec.len(),
                     expected: D + 1,
                 });
             }
-            for (i, &vi) in cell_spec.iter().enumerate() {
+            for (i, &vi) in simplex_spec.iter().enumerate() {
                 if vi >= vertex_count {
                     return Err(ExplicitConstructionError::IndexOutOfBounds {
-                        cell_index: cell_idx,
+                        simplex_index: simplex_idx,
                         vertex_index: vi,
                         bound: vertex_count,
                     });
                 }
-                for &vj in &cell_spec[i + 1..] {
+                for &vj in &simplex_spec[i + 1..] {
                     if vi == vj {
-                        return Err(ExplicitConstructionError::DuplicateVertexInCell {
-                            cell_index: cell_idx,
+                        return Err(ExplicitConstructionError::DuplicateVertexInSimplex {
+                            simplex_index: simplex_idx,
                         });
                     }
                 }
@@ -1933,15 +1987,17 @@ where
     ///    Every copy of canonical vertex `v_i` (including the zero-offset canonical copy)
     ///    receives the **same** tiny deterministic per-vertex perturbation `δ_i`.
     /// 3. Build a full Euclidean DT on the expanded set (n * 3^D points).
-    /// 4. Extract the "central" sub-complex: cells with all vertices in the canonical set.
-    /// 5. Rewire boundary facets: for each facet of a central cell adjacent to a non-central cell,
-    ///    find the corresponding central neighbor and update the neighbor pointer.
-    /// 6. Rebuild incident-cell associations and return the result.
+    /// 4. Normalize lifted simplices to canonical quotient signatures.
+    /// 5. Search for a closed candidate subset whose periodic facet incidences are valid.
+    /// 6. Rebuild quotient representatives from that selection with periodic offsets.
+    /// 7. Rebuild neighbor and incident-simplex associations and return the result.
     ///
     /// The output is a `Tds` whose `is_valid()` passes at Level 2 (structural validity).
     ///
     /// # References
     ///
+    /// - `REFERENCES.md`, "Periodic and Toroidal Triangulations", first entry
+    ///   (Caroli and Teillaud, "Computing 3D Periodic Triangulations").
     /// - CGAL, *2D Periodic Triangulations*:
     ///   <https://doc.cgal.org/latest/Periodic_2_triangulation_2/index.html>
     /// - CGAL, *3D Periodic Triangulations*:
@@ -2199,7 +2255,7 @@ where
                         }
 
                         if canonical_present == n
-                            && candidate_dt.number_of_cells() > 0
+                            && candidate_dt.number_of_simplices() > 0
                             && candidate_dt.tds().is_valid().is_ok()
                         {
                             built = Some(candidate_dt);
@@ -2266,36 +2322,37 @@ where
             vertex_key_to_lifted.insert(vk, (canonical_key, *offset));
         }
 
-        let normalize_cell_lifted = |cell_key: CellKey| -> Option<Vec<(VertexKey, [i8; D])>> {
-            let cell = tds_ref.cell(cell_key)?;
-            let mut lifted: Vec<(VertexKey, [i8; D])> = cell
-                .vertices()
-                .iter()
-                .map(|vk| vertex_key_to_lifted.get(vk).copied())
-                .collect::<Option<Vec<_>>>()?;
+        let normalize_simplex_lifted =
+            |simplex_key: SimplexKey| -> Option<Vec<(VertexKey, [i8; D])>> {
+                let simplex = tds_ref.simplex(simplex_key)?;
+                let mut lifted: Vec<(VertexKey, [i8; D])> = simplex
+                    .vertices()
+                    .iter()
+                    .map(|vk| vertex_key_to_lifted.get(vk).copied())
+                    .collect::<Option<Vec<_>>>()?;
 
-            let mut canonical_keys: Vec<VertexKey> = lifted.iter().map(|(ck, _)| *ck).collect();
-            canonical_keys.sort_unstable();
-            canonical_keys.dedup();
-            if canonical_keys.len() != D + 1 {
-                // Cell collapses in the quotient (repeated canonical vertex); skip it.
-                return None;
-            }
-
-            let (anchor_idx, _) = lifted.iter().enumerate().min_by_key(|(_, (ck, _))| *ck)?;
-            let anchor_offset = lifted[anchor_idx].1;
-            for (_, offset) in &mut lifted {
-                for axis in 0..D {
-                    offset[axis] -= anchor_offset[axis];
+                let mut canonical_keys: Vec<VertexKey> = lifted.iter().map(|(ck, _)| *ck).collect();
+                canonical_keys.sort_unstable();
+                canonical_keys.dedup();
+                if canonical_keys.len() != D + 1 {
+                    // Simplex collapses in the quotient (repeated canonical vertex); skip it.
+                    return None;
                 }
-            }
 
-            Some(lifted)
-        };
-        let cell_barycenter_in_fundamental_domain = |cell_key: CellKey| -> Option<bool> {
-            let cell = tds_ref.cell(cell_key)?;
+                let (anchor_idx, _) = lifted.iter().enumerate().min_by_key(|(_, (ck, _))| *ck)?;
+                let anchor_offset = lifted[anchor_idx].1;
+                for (_, offset) in &mut lifted {
+                    for axis in 0..D {
+                        offset[axis] -= anchor_offset[axis];
+                    }
+                }
+
+                Some(lifted)
+            };
+        let simplex_barycenter_in_fundamental_domain = |simplex_key: SimplexKey| -> Option<bool> {
+            let simplex = tds_ref.simplex(simplex_key)?;
             let mut sums = [0.0_f64; D];
-            for vk in cell.vertices() {
+            for vk in simplex.vertices() {
                 let vertex = tds_ref.vertex(*vk)?;
                 let coords = vertex.point().coords();
                 for (axis, sum) in sums.iter_mut().enumerate() {
@@ -2314,18 +2371,18 @@ where
             Some(true)
         };
 
-        // Build unique symbolic candidates from all full-DT cells.
+        // Build unique symbolic candidates from all full-DT simplices.
         // Candidate tuple layout (see type alias):
         // (symbolic_signature, lifted_ordered, periodic_facet_keys, in_domain_hint)
-        // where `lifted_ordered` preserves the observed per-cell vertex order from
-        // `normalize_cell_lifted` (it is not canonical-key-sorted).
+        // where `lifted_ordered` preserves the observed per-simplex vertex order from
+        // `normalize_simplex_lifted` (it is not canonical-key-sorted).
         let mut candidates_by_symbolic: FastHashMap<SymbolicSignature<D>, PeriodicCandidate<D>> =
             FastHashMap::default();
-        for ck in tds_ref.cell_keys() {
-            let Some(lifted_vertices) = normalize_cell_lifted(ck) else {
+        for ck in tds_ref.simplex_keys() {
+            let Some(lifted_vertices) = normalize_simplex_lifted(ck) else {
                 continue;
             };
-            let in_domain = cell_barycenter_in_fundamental_domain(ck).unwrap_or(false);
+            let in_domain = simplex_barycenter_in_fundamental_domain(ck).unwrap_or(false);
             let mut symbolic_signature = lifted_vertices.clone();
             symbolic_signature.sort_unstable();
             let lifted_ordered = lifted_vertices.clone();
@@ -2354,7 +2411,7 @@ where
             candidates_by_symbolic.into_values().collect();
         if candidates.is_empty() {
             return Err(TriangulationConstructionError::GeometricDegeneracy {
-                message: "No quotient periodic cells found in full image DT".to_owned(),
+                message: "No quotient periodic simplices found in full image DT".to_owned(),
             }
             .into());
         }
@@ -2457,7 +2514,7 @@ where
                     }
                 }
 
-                // Pass 2: only add cells that strictly reduce boundary facets (count == 1).
+                // Pass 2: only add simplices that strictly reduce boundary facets (count == 1).
                 let mut improved = true;
                 while improved {
                     improved = false;
@@ -2582,7 +2639,7 @@ where
                         i64::try_from(central_key_set.len()).expect("vertex count fits in i64");
                     let e_count =
                         i64::try_from(facet_counts.len()).expect("edge/facet count fits in i64");
-                    let f_count = i64::try_from(selected_count).expect("cell count fits in i64");
+                    let f_count = i64::try_from(selected_count).expect("simplex count fits in i64");
                     (v_count - e_count + f_count).abs()
                 } else {
                     0
@@ -2616,7 +2673,7 @@ where
 
         if best_selected.is_empty() {
             return Err(TriangulationConstructionError::GeometricDegeneracy {
-                message: "Periodic quotient selection failed to pick any candidate cells"
+                message: "Periodic quotient selection failed to pick any candidate simplices"
                     .to_owned(),
             }
             .into());
@@ -2624,9 +2681,9 @@ where
         if D == 2 && best_boundary_count > 0 {
             return Err(TriangulationConstructionError::GeometricDegeneracy {
                 message: format!(
-                    "Periodic quotient selection left {best_boundary_count} boundary facets after {search_attempts} attempts (full_vertices={}, full_cells={}, canonical_vertices={}, candidates={}, selected_cells={})",
+                    "Periodic quotient selection left {best_boundary_count} boundary facets after {search_attempts} attempts (full_vertices={}, full_simplices={}, canonical_vertices={}, candidates={}, selected_simplices={})",
                     tds_ref.number_of_vertices(),
-                    tds_ref.number_of_cells(),
+                    tds_ref.number_of_simplices(),
                     central_key_set.len(),
                     candidates.len(),
                     best_selected_count,
@@ -2654,7 +2711,7 @@ where
             .into());
         }
         if D > 2 {
-            // In the quotient TDS, cells that collapse to the same canonical vertex set cannot
+            // In the quotient TDS, simplices that collapse to the same canonical vertex set cannot
             // be distinct facet-neighbors: they would share all D+1 vertices and violate the
             // mirror-facet invariant enforced by `set_neighbors_by_key`.
             //
@@ -2705,12 +2762,12 @@ where
                 .insert(symbolic_signature.clone(), lifted_ordered.clone());
         }
 
-        // Clone TDS and rebuild cell complex from quotient representatives.
+        // Clone TDS and rebuild simplex complex from quotient representatives.
         let mut tds_mut = tds_ref.clone();
 
-        // Remove all cells first.
-        let all_cells: Vec<CellKey> = tds_mut.cell_keys().collect();
-        tds_mut.remove_cells_by_keys(&all_cells);
+        // Remove all simplices first.
+        let all_simplices: Vec<SimplexKey> = tds_mut.simplex_keys().collect();
+        tds_mut.remove_simplices_by_keys(&all_simplices);
 
         // Remove all image vertices.
         let image_vertex_keys: Vec<VertexKey> = tds_mut
@@ -2725,13 +2782,14 @@ where
             })?;
         }
 
-        // Insert quotient cells.
+        // Insert quotient simplices.
         let mut signatures_sorted: Vec<Vec<(VertexKey, [i8; D])>> =
             representative_lifted_by_symbolic.keys().cloned().collect();
         signatures_sorted.sort_unstable();
 
-        let mut inserted_cell_keys: Vec<CellKey> = Vec::with_capacity(signatures_sorted.len());
-        let mut rep_lifted_by_key: FastHashMap<CellKey, Vec<(VertexKey, [i8; D])>> =
+        let mut inserted_simplex_keys: Vec<SimplexKey> =
+            Vec::with_capacity(signatures_sorted.len());
+        let mut rep_lifted_by_key: FastHashMap<SimplexKey, Vec<(VertexKey, [i8; D])>> =
             FastHashMap::default();
 
         for signature in signatures_sorted {
@@ -2740,35 +2798,35 @@ where
             };
             let canonical_vertex_keys: Vec<VertexKey> =
                 lifted_vertices.iter().map(|(ck, _)| *ck).collect();
-            let mut cell = Cell::new(canonical_vertex_keys, None).map_err(|e| {
+            let mut simplex = Simplex::new(canonical_vertex_keys, None).map_err(|e| {
                 TriangulationConstructionError::GeometricDegeneracy {
-                    message: format!("Failed to create quotient periodic cell: {e}"),
+                    message: format!("Failed to create quotient periodic simplex: {e}"),
                 }
             })?;
             let offsets: PeriodicOffsetBuffer<D> =
                 lifted_vertices.iter().map(|(_, offset)| *offset).collect();
-            cell.set_periodic_vertex_offsets(offsets).map_err(|e| {
+            simplex.set_periodic_vertex_offsets(offsets).map_err(|e| {
                 TriangulationConstructionError::GeometricDegeneracy {
                     message: format!("Failed to set quotient periodic offsets: {e}"),
                 }
             })?;
             let ck = tds_mut
-                .insert_cell_with_mapping_trusted_vertices(cell)
+                .insert_simplex_with_mapping_trusted_vertices(simplex)
                 .map_err(|e| TriangulationConstructionError::GeometricDegeneracy {
-                    message: format!("Failed to insert quotient periodic cell: {e}"),
+                    message: format!("Failed to insert quotient periodic simplex: {e}"),
                 })?;
-            inserted_cell_keys.push(ck);
+            inserted_simplex_keys.push(ck);
             rep_lifted_by_key.insert(ck, lifted_vertices.clone());
         }
-        if inserted_cell_keys.is_empty() {
+        if inserted_simplex_keys.is_empty() {
             return Err(TriangulationConstructionError::GeometricDegeneracy {
-                message: "No cells survived periodic quotient reconstruction".to_owned(),
+                message: "No simplices survived periodic quotient reconstruction".to_owned(),
             }
             .into());
         }
 
         // Sanity-check periodic facet multiplicities before neighbor rewiring.
-        // In a valid simplicial manifold each facet is incident to at most two cells.
+        // In a valid simplicial manifold each facet is incident to at most two simplices.
         let mut periodic_facet_counts: FastHashMap<PeriodicFacetKey, usize> =
             FastHashMap::default();
         for lifted in rep_lifted_by_key.values() {
@@ -2784,7 +2842,7 @@ where
         if !overloaded_facets.is_empty() {
             return Err(TriangulationConstructionError::GeometricDegeneracy {
                 message: format!(
-                    "Periodic quotient selection overcounts periodic facets ({} overloaded); selected_cells={}, sample={:?}",
+                    "Periodic quotient selection overcounts periodic facets ({} overloaded); selected_simplices={}, sample={:?}",
                     overloaded_facets.len(),
                     rep_lifted_by_key.len(),
                     overloaded_facets.iter().take(4).collect::<Vec<_>>(),
@@ -2794,15 +2852,16 @@ where
         }
 
         // Rebuild neighbor pointers by pairing equal symbolic facet signatures in the quotient.
-        let mut neighbor_updates: FastHashMap<CellKey, Vec<Option<CellKey>>> = inserted_cell_keys
-            .iter()
-            .copied()
-            .map(|ck| (ck, vec![None; D + 1]))
-            .collect();
+        let mut neighbor_updates: FastHashMap<SimplexKey, Vec<Option<SimplexKey>>> =
+            inserted_simplex_keys
+                .iter()
+                .copied()
+                .map(|ck| (ck, vec![None; D + 1]))
+                .collect();
 
-        let mut facet_occurrences: FastHashMap<PeriodicFacetKey, Vec<(CellKey, usize)>> =
+        let mut facet_occurrences: FastHashMap<PeriodicFacetKey, Vec<(SimplexKey, usize)>> =
             FastHashMap::default();
-        for &rep_ck in &inserted_cell_keys {
+        for &rep_ck in &inserted_simplex_keys {
             let Some(lifted) = rep_lifted_by_key.get(&rep_ck) else {
                 continue;
             };
@@ -2821,14 +2880,14 @@ where
                     let a_lifted = rep_lifted_by_key.get(a_ck).ok_or_else(|| {
                         TriangulationConstructionError::InternalInconsistency {
                             message: format!(
-                                "missing lifted representative for quotient cell {a_ck:?}"
+                                "missing lifted representative for quotient simplex {a_ck:?}"
                             ),
                         }
                     })?;
                     let b_lifted = rep_lifted_by_key.get(b_ck).ok_or_else(|| {
                         TriangulationConstructionError::InternalInconsistency {
                             message: format!(
-                                "missing lifted representative for quotient cell {b_ck:?}"
+                                "missing lifted representative for quotient simplex {b_ck:?}"
                             ),
                         }
                     })?;
@@ -2840,19 +2899,23 @@ where
                     if shares_all_canonical_vertices {
                         return Err(TriangulationConstructionError::GeometricDegeneracy {
                             message: format!(
-                                "Periodic quotient produced distinct cells with identical canonical vertices across a shared facet: {a_ck:?}[{a_idx}] <-> {b_ck:?}[{b_idx}]",
+                                "Periodic quotient produced distinct simplices with identical canonical vertices across a shared facet: {a_ck:?}[{a_idx}] <-> {b_ck:?}[{b_idx}]",
                             ),
                         }
                         .into());
                     }
                     neighbor_updates.get_mut(a_ck).ok_or_else(|| {
                         TriangulationConstructionError::InternalInconsistency {
-                            message: format!("missing neighbor vector for quotient cell {a_ck:?}"),
+                            message: format!(
+                                "missing neighbor vector for quotient simplex {a_ck:?}"
+                            ),
                         }
                     })?[*a_idx] = Some(*b_ck);
                     neighbor_updates.get_mut(b_ck).ok_or_else(|| {
                         TriangulationConstructionError::InternalInconsistency {
-                            message: format!("missing neighbor vector for quotient cell {b_ck:?}"),
+                            message: format!(
+                                "missing neighbor vector for quotient simplex {b_ck:?}"
+                            ),
                         }
                     })?[*b_idx] = Some(*a_ck);
                 }
@@ -2860,7 +2923,9 @@ where
                     // Self-identified periodic facet.
                     neighbor_updates.get_mut(a_ck).ok_or_else(|| {
                         TriangulationConstructionError::InternalInconsistency {
-                            message: format!("missing neighbor vector for quotient cell {a_ck:?}"),
+                            message: format!(
+                                "missing neighbor vector for quotient simplex {a_ck:?}"
+                            ),
                         }
                     })?[*a_idx] = Some(*a_ck);
                 }
@@ -2891,10 +2956,12 @@ where
         }
 
         // Apply neighbor updates.
-        for &ck in &inserted_cell_keys {
+        for &ck in &inserted_simplex_keys {
             let neighbors = neighbor_updates.remove(&ck).ok_or_else(|| {
                 TriangulationConstructionError::InternalInconsistency {
-                    message: format!("missing neighbor vector for inserted quotient cell {ck:?}"),
+                    message: format!(
+                        "missing neighbor vector for inserted quotient simplex {ck:?}"
+                    ),
                 }
             })?;
             tds_mut.set_neighbors_by_key(ck, &neighbors).map_err(|e| {
@@ -2904,7 +2971,7 @@ where
             })?;
         }
 
-        // Canonicalize quotient-cell orientation after symbolic neighbor reconstruction.
+        // Canonicalize quotient-simplex orientation after symbolic neighbor reconstruction.
         //
         // For periodic quotients, self-neighbor identifications can produce orientation
         // constraints that are contradictory for global normalization even when the local
@@ -2917,10 +2984,10 @@ where
                 "periodic quotient: skipping coherent-orientation normalization failure"
             );
         }
-        // Rebuild incident-cell pointers after topology surgery.
-        tds_mut.assign_incident_cells().map_err(|e| {
+        // Rebuild incident-simplex pointers after topology surgery.
+        tds_mut.assign_incident_simplices().map_err(|e| {
             TriangulationConstructionError::InternalInconsistency {
-                message: format!("assign_incident_cells failed: {e}"),
+                message: format!("assign_incident_simplices failed: {e}"),
             }
         })?;
         if let Err(e) = tds_mut.is_valid() {
@@ -2950,10 +3017,11 @@ mod tests {
         CavityFillingError, DelaunayRepairFailureContext, HullExtensionReason, NeighborWiringError,
     };
     use crate::core::algorithms::locate::{ConflictError, LocateError};
-    use crate::core::cell::CellValidationError;
     use crate::core::facet::FacetError;
+    use crate::core::simplex::SimplexValidationError;
     use crate::core::tds::{
         DelaunayValidationErrorKind, EntityKind, GeometricError, NeighborValidationError,
+        TdsConstructionError,
     };
     use crate::core::triangulation::TriangulationValidationError;
     use crate::core::util::uuid::UuidValidationError;
@@ -3021,11 +3089,11 @@ mod tests {
 
     #[test]
     fn explicit_error_summaries_preserve_nested_source_kinds() {
-        let tds = ExplicitTdsError::from(TdsError::DuplicateCells {
+        let tds = ExplicitTdsError::from(TdsError::DuplicateSimplices {
             message: "same vertex set appears twice".to_string(),
         });
-        assert_eq!(tds.kind, ExplicitTdsErrorKind::DuplicateCells);
-        assert!(tds.message.contains("Duplicate cells"));
+        assert_eq!(tds.kind, ExplicitTdsErrorKind::DuplicateSimplices);
+        assert!(tds.message.contains("Duplicate simplices"));
 
         let insertion = ExplicitInsertionError::from(InsertionError::TopologyValidation(
             TdsError::InconsistentDataStructure {
@@ -3040,7 +3108,7 @@ mod tests {
         );
 
         let invariant = ExplicitInvariantError::from(InvariantError::Triangulation(
-            TriangulationValidationError::Disconnected { cell_count: 2 },
+            TriangulationValidationError::Disconnected { simplex_count: 2 },
         ));
         assert_eq!(invariant.kind, ExplicitInvariantErrorKind::Triangulation);
         assert_eq!(
@@ -3067,7 +3135,7 @@ mod tests {
 
         let delaunay_tds = ExplicitDelaunayValidationError::from(
             DelaunayTriangulationValidationError::from(TdsError::InconsistentDataStructure {
-                message: "dangling cell".to_string(),
+                message: "dangling simplex".to_string(),
             }),
         );
         assert_eq!(delaunay_tds.kind, ExplicitDelaunayValidationErrorKind::Tds);
@@ -3080,7 +3148,7 @@ mod tests {
 
         let delaunay_topology =
             ExplicitDelaunayValidationError::from(DelaunayTriangulationValidationError::from(
-                TriangulationValidationError::Disconnected { cell_count: 2 },
+                TriangulationValidationError::Disconnected { simplex_count: 2 },
             ));
         assert_eq!(
             delaunay_topology.kind,
@@ -3102,8 +3170,8 @@ mod tests {
 
     #[test]
     fn explicit_tds_error_preserves_validation_error_kinds() {
-        let cell_key = CellKey::from(KeyData::from_ffi(1));
-        let other_cell_key = CellKey::from(KeyData::from_ffi(2));
+        let simplex_key = SimplexKey::from(KeyData::from_ffi(1));
+        let other_simplex_key = SimplexKey::from(KeyData::from_ffi(2));
         let vertex_key = VertexKey::from(KeyData::from_ffi(3));
         let uuid = Uuid::new_v4();
 
@@ -3117,11 +3185,11 @@ mod tests {
             ExplicitTdsErrorKind::InvalidVertex,
         );
         assert_explicit_tds_error_kind(
-            TdsError::InvalidCell {
-                cell_id: uuid,
-                source: CellValidationError::DuplicateVertices,
+            TdsError::InvalidSimplex {
+                simplex_id: uuid,
+                source: SimplexValidationError::DuplicateVertices,
             },
-            ExplicitTdsErrorKind::InvalidCell,
+            ExplicitTdsErrorKind::InvalidSimplex,
         );
         assert_explicit_tds_error_kind(
             TdsError::InvalidNeighbors {
@@ -3133,14 +3201,14 @@ mod tests {
         );
         assert_explicit_tds_error_kind(
             TdsError::OrientationViolation {
-                cell1_key: cell_key,
-                cell1_uuid: uuid,
-                cell2_key: other_cell_key,
-                cell2_uuid: Uuid::new_v4(),
-                cell1_facet_index: 0,
-                cell2_facet_index: 1,
+                simplex1_key: simplex_key,
+                simplex1_uuid: uuid,
+                simplex2_key: other_simplex_key,
+                simplex2_uuid: Uuid::new_v4(),
+                simplex1_facet_index: 0,
+                simplex2_facet_index: 1,
                 facet_vertices: vec![vertex_key],
-                cell2_facet_vertices: vec![vertex_key],
+                simplex2_facet_vertices: vec![vertex_key],
                 observed_odd_permutation: false,
                 expected_odd_permutation: true,
             },
@@ -3160,25 +3228,25 @@ mod tests {
             ExplicitTdsErrorKind::FacetError,
         );
         assert_explicit_tds_error_kind(
-            TdsError::DuplicateCoordinatesInCell {
-                cell_id: uuid,
+            TdsError::DuplicateCoordinatesInSimplex {
+                simplex_id: uuid,
                 message: "two vertices share coordinates".to_string(),
             },
-            ExplicitTdsErrorKind::DuplicateCoordinatesInCell,
+            ExplicitTdsErrorKind::DuplicateCoordinatesInSimplex,
         );
     }
 
     #[test]
     fn explicit_tds_error_preserves_lookup_and_operation_error_kinds() {
-        let cell_key = CellKey::from(KeyData::from_ffi(1));
+        let simplex_key = SimplexKey::from(KeyData::from_ffi(1));
         let vertex_key = VertexKey::from(KeyData::from_ffi(3));
         let uuid = Uuid::new_v4();
 
         assert_explicit_tds_error_kind(
-            TdsError::DuplicateCells {
-                message: "duplicate cell vertex set".to_string(),
+            TdsError::DuplicateSimplices {
+                message: "duplicate simplex vertex set".to_string(),
             },
-            ExplicitTdsErrorKind::DuplicateCells,
+            ExplicitTdsErrorKind::DuplicateSimplices,
         );
         assert_explicit_tds_error_kind(
             TdsError::FacetSharingViolation {
@@ -3186,44 +3254,44 @@ mod tests {
                 existing_incident_count: 2,
                 attempted_incident_count: 3,
                 max_incident_count: 2,
-                candidate_cell_uuid: uuid,
+                candidate_simplex_uuid: uuid,
                 candidate_facet_index: 1,
             },
             ExplicitTdsErrorKind::FacetSharingViolation,
         );
         assert_explicit_tds_error_kind(
-            TdsError::FailedToCreateCell {
-                message: "cell validation failed".to_string(),
+            TdsError::FailedToCreateSimplex {
+                message: "simplex validation failed".to_string(),
             },
-            ExplicitTdsErrorKind::FailedToCreateCell,
+            ExplicitTdsErrorKind::FailedToCreateSimplex,
         );
         assert_explicit_tds_error_kind(
             TdsError::NotNeighbors {
-                cell1: uuid,
-                cell2: Uuid::new_v4(),
+                simplex1: uuid,
+                simplex2: Uuid::new_v4(),
             },
             ExplicitTdsErrorKind::NotNeighbors,
         );
         assert_explicit_tds_error_kind(
             TdsError::MappingInconsistency {
-                entity: EntityKind::Cell,
+                entity: EntityKind::Simplex,
                 message: "uuid mapping was stale".to_string(),
             },
             ExplicitTdsErrorKind::MappingInconsistency,
         );
         assert_explicit_tds_error_kind(
             TdsError::VertexKeyRetrievalFailed {
-                cell_id: uuid,
-                message: "cell vertices unavailable".to_string(),
+                simplex_id: uuid,
+                message: "simplex vertices unavailable".to_string(),
             },
             ExplicitTdsErrorKind::VertexKeyRetrievalFailed,
         );
         assert_explicit_tds_error_kind(
-            TdsError::CellNotFound {
-                cell_key,
-                context: "cell lookup".to_string(),
+            TdsError::SimplexNotFound {
+                simplex_key,
+                context: "simplex lookup".to_string(),
             },
-            ExplicitTdsErrorKind::CellNotFound,
+            ExplicitTdsErrorKind::SimplexNotFound,
         );
         assert_explicit_tds_error_kind(
             TdsError::VertexNotFound {
@@ -3256,6 +3324,49 @@ mod tests {
         );
     }
 
+    #[test]
+    fn explicit_tds_error_preserves_construction_and_mutation_wrappers() {
+        let uuid = Uuid::new_v4();
+        let duplicate = ExplicitTdsError::from(TdsConstructionError::DuplicateUuid {
+            entity: EntityKind::Simplex,
+            uuid,
+        });
+        assert_eq!(duplicate.kind, ExplicitTdsErrorKind::DuplicateUuid);
+        assert!(duplicate.message.contains(&uuid.to_string()));
+
+        let mutation = ExplicitTdsError::from(TdsMutationError::from(
+            TdsError::InconsistentDataStructure {
+                message: "incident simplex assignment failed".to_string(),
+            },
+        ));
+        assert_eq!(
+            mutation.kind,
+            ExplicitTdsErrorKind::InconsistentDataStructure
+        );
+        assert!(mutation.message.contains("incident simplex assignment"));
+    }
+
+    #[test]
+    fn explicit_simplex_creation_error_preserves_typed_source() {
+        let err = ExplicitConstructionError::SimplexCreation {
+            simplex_index: 7,
+            source: SimplexValidationError::DuplicateVertices,
+        };
+
+        let ExplicitConstructionError::SimplexCreation {
+            simplex_index,
+            source,
+        } = &err
+        else {
+            panic!("expected simplex creation error, got {err:?}");
+        };
+
+        assert_eq!(*simplex_index, 7);
+        assert_eq!(*source, SimplexValidationError::DuplicateVertices);
+        assert!(err.to_string().contains("Simplex 7"));
+        assert!(err.to_string().contains("Duplicate vertices"));
+    }
+
     fn assert_explicit_insertion_error(
         source: InsertionError,
         expected_kind: ExplicitInsertionErrorKind,
@@ -3269,11 +3380,11 @@ mod tests {
 
     #[test]
     fn explicit_insertion_error_preserves_stage_kinds_without_nested_sources() {
-        let cell_key = CellKey::from(KeyData::from_ffi(1));
+        let simplex_key = SimplexKey::from(KeyData::from_ffi(1));
         let uuid = Uuid::new_v4();
 
         assert_explicit_insertion_error(
-            InsertionError::ConflictRegion(ConflictError::InvalidStartCell { cell_key }),
+            InsertionError::ConflictRegion(ConflictError::InvalidStartSimplex { simplex_key }),
             ExplicitInsertionErrorKind::ConflictRegion,
             None,
         );
@@ -3284,14 +3395,14 @@ mod tests {
         );
         assert_explicit_insertion_error(
             InsertionError::CavityFilling {
-                reason: CavityFillingError::MissingBoundaryCell { cell_key },
+                reason: CavityFillingError::MissingBoundarySimplex { simplex_key },
             },
             ExplicitInsertionErrorKind::CavityFilling,
             None,
         );
         assert_explicit_insertion_error(
             InsertionError::NeighborWiring {
-                reason: NeighborWiringError::MissingCell { cell_key },
+                reason: NeighborWiringError::MissingSimplex { simplex_key },
             },
             ExplicitInsertionErrorKind::NeighborWiring,
             None,
@@ -3299,7 +3410,7 @@ mod tests {
         assert_explicit_insertion_error(
             InsertionError::NonManifoldTopology {
                 facet_hash: 0xabc,
-                cell_count: 3,
+                simplex_count: 3,
             },
             ExplicitInsertionErrorKind::NonManifoldTopology,
             None,
@@ -3730,8 +3841,8 @@ mod tests {
             dt_toroidal.number_of_vertices()
         );
         assert_eq!(
-            dt_euclidean.number_of_cells(),
-            dt_toroidal.number_of_cells()
+            dt_euclidean.number_of_simplices(),
+            dt_toroidal.number_of_simplices()
         );
     }
 

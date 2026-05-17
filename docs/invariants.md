@@ -65,31 +65,31 @@ see [`ORIENTATION_SPEC.md`](ORIENTATION_SPEC.md).
 ### Simplicial complex model
 
 At the data-structure level, the crate models a triangulation as a **finite simplicial complex**[^edelsbrunner2001]
-represented by its **minimal** ("vertices") and **maximal** simplices (“cells”). In dimension `D`, a maximal cell is a
+represented by its **minimal** ("vertices") and **maximal** simplices (“simplices”). In dimension `D`, a maximal simplex is a
 `D`-simplex with exactly `D+1` vertices.
 
 Key combinatorial objects:
 
 - **Vertices**: 0-simplices. In the implementation, a vertex has coordinates plus an internal key
   and a UUID (used for stable referencing, e.g. serialization to files).
-- **Cells**: maximal `D`-simplices. Each cell stores an ordered list of `D+1` vertex keys, and also has an internal key and an externally accessible UUID.
-- **Facets**: codimension-1 faces of a cell. A `D`-simplex has `D+1` facets, each missing exactly one
+- **Simplices**: maximal `D`-simplices. Each simplex stores an ordered list of `D+1` vertex keys, and also has an internal key and an externally accessible UUID.
+- **Facets**: codimension-1 faces of a simplex. A `D`-simplex has `D+1` facets, each missing exactly one
   vertex.
-- **Adjacency / neighbors**: two cells are neighbors if they share a facet. The triangulation data
+- **Adjacency / neighbors**: two simplices are neighbors if they share a facet. The triangulation data
   structure (TDS) stores neighbor pointers across facets (see
   [`src/core/tds.rs`](../src/core/tds.rs) and CGAL’s
   [TDS_3](https://doc.cgal.org/latest/TDS_3/index.html)).[^cgal-tds3][^impl-tds]
 - **Boundary vs interior facets**:
-  - An **interior facet** is incident to exactly two cells.
-  - A **boundary facet** is incident to exactly one cell.
+  - An **interior facet** is incident to exactly two simplices.
+  - A **boundary facet** is incident to exactly one simplex.
 
 These are **combinatorial** notions: they depend only on incidence and adjacency relationships.
 Geometric predicates (orientation / in-sphere tests) are used to construct and validate the
 **geometric** Delaunay property, but the topology checks are expressed in terms of the simplicial
 complex.
 
-The order of a cell's vertices is part of the data-structure contract, not presentation detail.
-It determines the cell's combinatorial orientation and the facet index used for neighbor links.
+The order of a simplex's vertices is part of the data-structure contract, not presentation detail.
+It determines the simplex's combinatorial orientation and the facet index used for neighbor links.
 This is why the TDS validation layer checks coherent orientation alongside neighbor reciprocity.
 
 ---
@@ -100,10 +100,10 @@ The implementation separates invariants into four validation levels. Keeping the
 prevents geometric checks from leaking into purely combinatorial validation and makes it clear which
 operation has certified which part of the structure:
 
-1. **Level 1 — element validity**: individual vertices, cells, and facets are internally consistent
-   (dimension, coordinate finiteness, UUID/key relationships, and local cell shape).
-2. **Level 2 — TDS structure**: the triangulation data structure has valid vertex/cell mappings,
-   reciprocal neighbor pointers, bounded facet sharing, no duplicate cells, and coherent
+1. **Level 1 — element validity**: individual vertices, simplices, and facets are internally consistent
+   (dimension, coordinate finiteness, UUID/key relationships, and local simplex shape).
+2. **Level 2 — TDS structure**: the triangulation data structure has valid vertex/simplex mappings,
+   reciprocal neighbor pointers, bounded facet sharing, no duplicate simplices, and coherent
    combinatorial orientation.
 3. **Level 3 — topology**: the triangulation satisfies the requested `TopologyGuarantee`
    (pseudomanifold, PL manifold, or strict PL manifold) through incidence, connectivity,
@@ -126,19 +126,19 @@ certification step for workflows that need it.
 
 Coherent orientation has two related meanings in this crate:
 
-- **TDS orientation**: adjacent cells must induce opposite orientations on their shared facet. In
-  practice this is checked by comparing the facet index in one cell with the reciprocal mirror index
+- **TDS orientation**: adjacent simplices must induce opposite orientations on their shared facet. In
+  practice this is checked by comparing the facet index in one simplex with the reciprocal mirror index
   in its neighbor.
-- **Geometric orientation**: a full `Triangulation` should store cells with positive orientation in
+- **Geometric orientation**: a full `Triangulation` should store simplices with positive orientation in
   Euclidean coordinates, except where an operation is explicitly handling a degenerate or
   intermediate state.
 
 The orientation checker uses the robust orientation predicate directly instead of a kernel-level
 predicate that may apply Simulation of Simplicity. That preserves the distinction between an
-actually degenerate cell and a deterministically tie-broken predicate result. Periodic-image cells
+actually degenerate simplex and a deterministically tie-broken predicate result. Periodic-image simplices
 are a deliberate exception at the TDS layer: their neighbor reciprocity is still checked, but the
 plain Euclidean facet-parity test is not a meaningful combinatorial-orientation certificate once
-periodic offsets are part of the cell identity.
+periodic offsets are part of the simplex identity.
 
 See [`ORIENTATION_SPEC.md`](ORIENTATION_SPEC.md) for the exact parity convention, implementation
 map, and test expectations.
@@ -151,7 +151,7 @@ map, and test expectations.
 
 A Delaunay triangulation is characterized by the **empty circumsphere** condition:[^deberg2008][^edelsbrunner2001]
 
-- for each `D`-simplex (cell), no non-cell vertex lies *strictly inside* that simplex’s
+- for each `D`-simplex (simplex), no non-simplex vertex lies *strictly inside* that simplex’s
   circumsphere.
 
 This is a **geometric** invariant: it depends on the embedding coordinates and on robust evaluation
@@ -169,7 +169,7 @@ In practice, floating-point degeneracy matters:
   (`DelaunayTriangulation::is_valid`) when a workflow requires certainty.
 
 Internally, the crate’s Level 4 verifier prefers fast, local flip-based checks over the naive
-O(cells × vertices) brute-force test. This reflects the standard theoretical relationship between
+O(simplices × vertices) brute-force test. This reflects the standard theoretical relationship between
 Delaunay optimality and local flip predicates.[^edelshah1996][^impl-flips][^impl-delaunay-validation]
 
 ### Robust predicate envelope
@@ -200,16 +200,16 @@ simplicial complexes for geometry:
 
 - **Pseudomanifold / manifold-with-boundary (codimension-1)**: enforce that each facet has the
   expected incidence count:
-  - boundary facets are incident to exactly 1 cell
-  - interior facets are incident to exactly 2 cells
+  - boundary facets are incident to exactly 1 simplex
+  - interior facets are incident to exactly 2 simplices
   This rules out the most obvious non-manifold failures (branching facets).
 
 - **Closed boundary condition (codimension-2 on the boundary)**: enforce “no boundary of boundary”
   (intuitively: the boundary itself is a (D−1)-manifold with no boundary). This rules out hanging
   boundary ridges.
 
-- **Connectedness + isolated vertices**: enforce that the cell-neighbor graph is a single component
-  and that every vertex is incident to at least one cell.
+- **Connectedness + isolated vertices**: enforce that the simplex-neighbor graph is a single component
+  and that every vertex is incident to at least one simplex.
 
 - **Euler characteristic**: check χ against expected classifications where available. This is a
   global consistency check that catches some classes of topological corruption.
@@ -289,7 +289,7 @@ construction completion by default.
 ## Topological domains
 
 The default model is a finite Euclidean triangulation of a point set. In that setting, boundary
-facets are expected unless the cell complex represents a closed manifold by construction.
+facets are expected unless the simplex complex represents a closed manifold by construction.
 
 Toroidal workflows are integrated as first-class topology options:
 
@@ -332,10 +332,10 @@ The crate’s incremental construction follows the standard cavity-based approac
 
 1. **Locate** the simplex containing the query point (facet walking / scan fallback;
    [`src/core/algorithms/locate.rs`](../src/core/algorithms/locate.rs)).[^devillers-walking][^impl-locate]
-2. **Find the conflict region**: the set of cells whose circumspheres contain the point.
+2. **Find the conflict region**: the set of simplices whose circumspheres contain the point.
 3. **Extract the cavity boundary** (a set of boundary facets separating conflicting from
-   non-conflicting cells).
-4. **Remove** the conflicting cells.
+   non-conflicting simplices).
+4. **Remove** the conflicting simplices.
 5. **Fill** the cavity by connecting the new vertex to the cavity boundary.
 6. **Wire neighbors** locally (without global recomputation).
 

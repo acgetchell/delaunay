@@ -6,7 +6,7 @@
 #![forbid(unsafe_code)]
 
 use super::point_generation::{generate_random_points, generate_random_points_seeded};
-use crate::core::cell::CellValidationError;
+use crate::core::simplex::SimplexValidationError;
 use crate::core::traits::data_type::DataType;
 use crate::core::triangulation::{TopologyGuarantee, TriangulationConstructionError};
 use crate::core::vertex::Vertex;
@@ -167,7 +167,7 @@ where
 ///
 /// * `T` - Coordinate scalar type (must implement `CoordinateScalar + SampleUniform`)
 /// * `U` - Vertex data type (must implement `DataType`)
-/// * `V` - Cell data type (must implement `DataType`)
+/// * `V` - Simplex data type (must implement `DataType`)
 /// * `D` - Dimensionality (const generic parameter)
 ///
 /// # Arguments
@@ -208,7 +208,7 @@ where
 /// - Topology/Euler validation failure after robust fallback attempts
 ///
 /// **Other construction failures** (various variants):
-/// - Cell construction errors
+/// - Simplex construction errors
 /// - Triangulation validation failures
 ///
 /// Vertex construction from generated points is infallible; failures are
@@ -367,7 +367,7 @@ where
     if n_points < D + 1 {
         return Err(TriangulationConstructionError::InsufficientVertices {
             dimension: D,
-            source: CellValidationError::InsufficientVertices {
+            source: SimplexValidationError::InsufficientVertices {
                 actual: n_points,
                 expected: D + 1,
                 dimension: D,
@@ -583,7 +583,7 @@ where
     /// # Type Parameters
     ///
     /// * `U` - Vertex data type (must implement `DataType`)
-    /// * `V` - Cell data type (must implement `DataType`)
+    /// * `V` - Simplex data type (must implement `DataType`)
     /// * `D` - Dimensionality (const generic parameter)
     ///
     /// # Errors
@@ -663,7 +663,7 @@ where
         if self.n_points < D + 1 {
             return Err(TriangulationConstructionError::InsufficientVertices {
                 dimension: D,
-                source: CellValidationError::InsufficientVertices {
+                source: SimplexValidationError::InsufficientVertices {
                     actual: self.n_points,
                     expected: D + 1,
                     dimension: D,
@@ -831,8 +831,8 @@ mod tests {
             triangulation2.number_of_vertices()
         );
         assert_eq!(
-            triangulation1.number_of_cells(),
-            triangulation2.number_of_cells()
+            triangulation1.number_of_simplices(),
+            triangulation2.number_of_simplices()
         );
         assert_eq!(triangulation1.dim(), triangulation2.dim());
     }
@@ -869,28 +869,28 @@ mod tests {
             generate_random_triangulation::<f64, (), (), 2>(15, (0.0, 10.0), None, Some(555))
                 .unwrap();
         assert_eq!(tri_2d.dim(), 2);
-        assert!(tri_2d.number_of_cells() > 0);
+        assert!(tri_2d.number_of_simplices() > 0);
 
         // 3D with sufficient points for full triangulation
         let tri_3d =
             generate_random_triangulation::<f64, (), (), 3>(20, (-3.0, 3.0), None, Some(666))
                 .unwrap();
         assert_eq!(tri_3d.dim(), 3);
-        assert!(tri_3d.number_of_cells() > 0);
+        assert!(tri_3d.number_of_simplices() > 0);
 
         // 4D with sufficient points for full triangulation
         let tri_4d =
             generate_random_triangulation::<f64, (), (), 4>(12, (-1.0, 1.0), None, Some(777))
                 .unwrap();
         assert_eq!(tri_4d.dim(), 4);
-        assert!(tri_4d.number_of_cells() > 0);
+        assert!(tri_4d.number_of_simplices() > 0);
 
         // 5D with sufficient points for full triangulation
         let tri_5d =
             generate_random_triangulation::<f64, (), (), 5>(10, (0.0, 5.0), None, Some(888))
                 .unwrap();
         assert_eq!(tri_5d.dim(), 5);
-        assert!(tri_5d.number_of_cells() > 0);
+        assert!(tri_5d.number_of_simplices() > 0);
     }
 
     #[test]

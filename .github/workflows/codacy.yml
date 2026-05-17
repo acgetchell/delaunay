@@ -71,8 +71,9 @@ jobs:
           rsync -a --delete --exclude '.git' ./ "$CODACY_WORKDIR/"
 
       # Execute Codacy Analysis CLI with one selected tool per matrix entry.
-      # Opengrep reads the repository-owned rules from semgrep.yaml; broad
-      # default Semgrep/Opengrep packs remain disabled.
+      # Opengrep should mirror repository-owned rules from semgrep.yaml. The
+      # SARIF splitter below defensively drops any default Codacy/OpenGrep
+      # findings whose rule IDs do not belong to this repository.
       - name: Run Codacy Analysis CLI
         # Cap Codacy runtime so a hung analyzer does not consume the full job timeout.
         timeout-minutes: 20
@@ -98,79 +99,7 @@ jobs:
       - name: Split SARIF runs for upload
         run: |
           set -euo pipefail
-
-          python3 <<'PY'
-          import copy
-          import json
-          import os
-          import re
-          import sys
-          from pathlib import Path
-
-          source = Path(os.environ["CODACY_SARIF"])
-          out_dir = Path(os.environ["RUNNER_TEMP"]) / "codacy-sarif"
-
-          if not source.is_file() or source.stat().st_size == 0:
-              sys.exit(f"Codacy did not produce a SARIF file at {source}")
-
-          try:
-              sarif = json.loads(source.read_text(encoding="utf-8"))
-          except json.JSONDecodeError as exc:
-              raise SystemExit(f"Codacy produced invalid SARIF JSON: {exc}") from exc
-
-          runs = sarif.get("runs")
-          if not isinstance(runs, list):
-              sys.exit("Codacy SARIF did not contain a runs array")
-          if not runs:
-              print("Codacy SARIF did not contain any runs to upload")
-
-          out_dir.mkdir(parents=True, exist_ok=True)
-          for stale in out_dir.glob("*.sarif"):
-              stale.unlink()
-
-          def slug(value: str) -> str:
-              normalized = re.sub(r"[^A-Za-z0-9_.-]+", "-", value.strip().lower())
-              return normalized.strip("-") or "unknown"
-
-          seen_categories: dict[str, int] = {}
-          uploadable_count = 0
-          for index, run in enumerate(runs, start=1):
-              rules = run.get("tool", {}).get("driver", {}).get("rules")
-              results = run.get("results")
-              if not rules and not results:
-                  print(f"Skipping empty SARIF run {index} with no rules or results")
-                  continue
-
-              run_copy = copy.deepcopy(run)
-              tool = run_copy.get("tool", {}).get("driver", {}).get("name")
-              base_category = f"codacy-{slug(str(tool or f'run-{index}'))}"
-              seen_categories[base_category] = seen_categories.get(base_category, 0) + 1
-              suffix = seen_categories[base_category]
-              category = base_category if suffix == 1 else f"{base_category}-{suffix}"
-
-              automation = run_copy.get("automationDetails")
-              if not isinstance(automation, dict):
-                  automation = {}
-              automation["id"] = category
-              run_copy["automationDetails"] = automation
-
-              split_sarif = {key: value for key, value in sarif.items() if key != "runs"}
-              split_sarif.setdefault("$schema", "https://json.schemastore.org/sarif-2.1.0.json")
-              split_sarif.setdefault("version", "2.1.0")
-              split_sarif["runs"] = [run_copy]
-
-              out_file = out_dir / f"{index:02d}-{category}.sarif"
-              out_file.write_text(json.dumps(split_sarif, indent=2), encoding="utf-8")
-              print(f"Wrote {out_file} with category {category}")
-              uploadable_count += 1
-
-          with Path(os.environ["GITHUB_ENV"]).open("a", encoding="utf-8") as env_file:
-              env_file.write(f"CODACY_SPLIT_SARIF_DIR={out_dir}\n")
-              env_file.write(f"CODACY_HAS_UPLOADABLE_SARIF={'true' if uploadable_count else 'false'}\n")
-
-          if uploadable_count == 0:
-              print("No non-empty Codacy SARIF runs to upload")
-          PY
+          python3 scripts/ci/filter_codacy_sarif.py "$CODACY_SARIF" "$RUNNER_TEMP/codacy-sarif"
 
       - name: Upload split SARIF files
         if: env.CODACY_HAS_UPLOADABLE_SARIF == 'true'

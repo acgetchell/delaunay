@@ -3,7 +3,7 @@
 //! This module uses proptest to verify fundamental properties of Facet
 //! operations in d-dimensional triangulations, including:
 //! - Facet vertex count correctness (D vertices for D-dimensional simplex)
-//! - Facet-cell relationship validity
+//! - Facet-simplex relationship validity
 //! - Facet boundary multiplicity (1 for boundary, 2 for interior)
 //!
 //! Tests are generated for dimensions 2D-5D using macros to reduce duplication.
@@ -32,7 +32,7 @@ macro_rules! test_facet_properties {
     ($dim:literal, $min_vertices:literal, $max_vertices:literal, $expected_facet_vertices:literal $(, #[$attr:meta])*) => {
         pastey::paste! {
             proptest! {
-                /// Property: Each facet should have exactly D vertices (one less than cell)
+                /// Property: Each facet should have exactly D vertices (one less than simplex)
                 $(#[$attr])*
                 #[test]
                 fn [<prop_facet_has_correct_vertex_count_ $dim d>](
@@ -46,10 +46,10 @@ macro_rules! test_facet_properties {
                         TopologyGuarantee::PLManifold,
                     ) {
                         let tds = dt.tds();
-                        for cell_key in tds.cell_keys() {
-                            // Each cell has D+1 facets (one opposite each vertex)
+                        for simplex_key in tds.simplex_keys() {
+                            // Each simplex has D+1 facets (one opposite each vertex)
                             for facet_index in 0..=($dim as u8) {
-                                if let Ok(facet) = FacetView::new(&tds, cell_key, facet_index) {
+                                if let Ok(facet) = FacetView::new(&tds, simplex_key, facet_index) {
                                     if let Ok(facet_vertices) = facet.vertices() {
                                         let vertex_count = facet_vertices.count();
                                         prop_assert_eq!(
@@ -66,10 +66,10 @@ macro_rules! test_facet_properties {
                     }
                 }
 
-                /// Property: Facets have one fewer vertex than their containing cell
+                /// Property: Facets have one fewer vertex than their containing simplex
                 $(#[$attr])*
                 #[test]
-                fn [<prop_facet_vertex_count_less_than_cell_ $dim d>](
+                fn [<prop_facet_vertex_count_less_than_simplex_ $dim d>](
                     vertices in prop::collection::vec(
                         prop::array::[<uniform $dim>](finite_coordinate()).prop_map(Point::new),
                         $min_vertices..=$max_vertices
@@ -80,22 +80,22 @@ macro_rules! test_facet_properties {
                         TopologyGuarantee::PLManifold,
                     ) {
                         let tds = dt.tds();
-                        for cell_key in tds.cell_keys() {
+                        for simplex_key in tds.simplex_keys() {
                             prop_assert!(
-                                tds.cell(cell_key).is_some(),
-                                "cell key from iterator should exist: {cell_key:?}"
+                                tds.simplex(simplex_key).is_some(),
+                                "simplex key from iterator should exist: {simplex_key:?}"
                             );
-                            let cell = tds.cell(cell_key).expect("checked above");
-                            let cell_vertex_count = cell.vertices().len();
+                            let simplex = tds.simplex(simplex_key).expect("checked above");
+                            let simplex_vertex_count = simplex.vertices().len();
 
                             for facet_index in 0..=($dim as u8) {
-                                if let Ok(facet) = FacetView::new(&tds, cell_key, facet_index) {
+                                if let Ok(facet) = FacetView::new(&tds, simplex_key, facet_index) {
                                     if let Ok(facet_vertices) = facet.vertices() {
                                         let facet_vertex_count = facet_vertices.count();
                                         prop_assert_eq!(
                                             facet_vertex_count,
-                                            cell_vertex_count - 1,
-                                            "{}D facet should have one fewer vertex than cell",
+                                            simplex_vertex_count - 1,
+                                            "{}D facet should have one fewer vertex than simplex",
                                             $dim
                                         );
                                     }
@@ -105,10 +105,10 @@ macro_rules! test_facet_properties {
                     }
                 }
 
-                /// Property: Each cell has valid facets
+                /// Property: Each simplex has valid facets
                 $(#[$attr])*
                 #[test]
-                fn [<prop_cell_has_valid_facets_ $dim d>](
+                fn [<prop_simplex_has_valid_facets_ $dim d>](
                     vertices in prop::collection::vec(
                         prop::array::[<uniform $dim>](finite_coordinate()).prop_map(Point::new),
                         $min_vertices..=$max_vertices
@@ -120,12 +120,12 @@ macro_rules! test_facet_properties {
                     ) {
                         let tds = dt.tds();
                         // Check that each facet is valid
-                        for cell_key in tds.cell_keys() {
+                        for simplex_key in tds.simplex_keys() {
                             for facet_index in 0..=($dim as u8) {
                                 // Each facet should be constructible
                                 prop_assert!(
-                                    FacetView::new(&tds, cell_key, facet_index).is_ok(),
-                                    "{}D facet {} of cell should be valid",
+                                    FacetView::new(&tds, simplex_key, facet_index).is_ok(),
+                                    "{}D facet {} of simplex should be valid",
                                     $dim,
                                     facet_index
                                 );
@@ -134,10 +134,10 @@ macro_rules! test_facet_properties {
                     }
                 }
 
-                /// Property: Each cell should have exactly D+1 facets
+                /// Property: Each simplex should have exactly D+1 facets
                 $(#[$attr])*
                 #[test]
-                fn [<prop_cell_facet_count_ $dim d>](
+                fn [<prop_simplex_facet_count_ $dim d>](
                     vertices in prop::collection::vec(
                         prop::array::[<uniform $dim>](finite_coordinate()).prop_map(Point::new),
                         $min_vertices..=$max_vertices
@@ -148,17 +148,17 @@ macro_rules! test_facet_properties {
                         TopologyGuarantee::PLManifold,
                     ) {
                         let tds = dt.tds();
-                        for cell_key in tds.cell_keys() {
+                        for simplex_key in tds.simplex_keys() {
                             let mut facet_count = 0;
                             for facet_index in 0..=($dim as u8) {
-                                if FacetView::new(&tds, cell_key, facet_index).is_ok() {
+                                if FacetView::new(&tds, simplex_key, facet_index).is_ok() {
                                     facet_count += 1;
                                 }
                             }
                             prop_assert_eq!(
                                 facet_count,
                                 $dim + 1,
-                                "{}D cell should have exactly {} facets",
+                                "{}D simplex should have exactly {} facets",
                                 $dim,
                                 $dim + 1
                             );
@@ -177,7 +177,7 @@ test_facet_properties!(3, 5, 12, 3);
 test_facet_properties!(4, 6, 14, 4, #[ignore = "Slow (>60s) in test-integration"]);
 test_facet_properties!(5, 7, 16, 5, #[ignore = "Slow (>60s) in test-integration"]);
 
-// Additional invariant: facet multiplicity (each facet should belong to 1 or 2 cells)
+// Additional invariant: facet multiplicity (each facet should belong to 1 or 2 simplices)
 macro_rules! test_facet_multiplicity {
     ($dim:literal, $min_vertices:literal, $max_vertices:literal $(, #[$attr:meta])*) => {
         pastey::paste! {
@@ -200,8 +200,8 @@ macro_rules! test_facet_multiplicity {
 
                         let mut counts: HashMap<u64, usize> = HashMap::new();
 
-                        for (_cell_key, cell) in tds.cells() {
-                            let vs = cell.vertices();
+                        for (_simplex_key, simplex) in tds.simplices() {
+                            let vs = simplex.vertices();
                             for i in 0..vs.len() {
                                 let facet: Vec<_> = vs
                                     .iter()

@@ -542,7 +542,7 @@ The project uses comprehensive CI workflows:
 - **Code Quality** (`.github/workflows/rust-clippy.yml`): Strict linting with SARIF upload
 - **CodeRabbit** (`.coderabbit.yml`): PR review comments for curated quality feedback
 - **Codacy** (`.codacy.yml`): Curated PR quality feedback and duplication/complexity metrics
-- **Codacy SARIF mirror** (`.github/workflows/codacy.yml`): Markdownlint-only SARIF upload
+- **Codacy SARIF mirror** (`.github/workflows/codacy.yml`): Repository-owned Opengrep SARIF upload
 - **Coverage** (`.github/workflows/codecov.yml`): Test coverage tracking with 5-minute per-test timeout
 
 All PRs must pass CI checks before merging.
@@ -569,14 +569,15 @@ tool configuration, but Codacy does not use that file to turn tools on or off.
 - **Configuration**: `.codacy.yml` in the project root
 - **Source of Truth**: Treat the tool lists below as a snapshot; verify current enablement in
   Codacy project settings -> Tools / Code Patterns or Codacy configuration sync before relying on them
-- **Enabled Tools**: Markdownlint, Ruff, ShellCheck, duplication, and advisory Lizard
+- **Enabled Tools**: Markdownlint, Ruff, ShellCheck, repository-owned Opengrep, duplication, and advisory Lizard
 - **Disabled Tools**: Bandit, Prospector, Pylint, broad Opengrep, Trivy, Jackson Linter, and Spectral
 - **Documentation Analysis**: Markdownlint uses `.markdownlint.json`
 - **Python Analysis**: Ruff uses `pyproject.toml`
 - **Local/CI Analysis**: Rust, Python, shell, YAML, TOML, JSON, and GitHub Actions checks run through `just check`
 - **Security Analysis**: Uses CodeQL and cargo-audit rather than Codacy's broader engine set
-- **Code Scanning Mirror**: `.github/workflows/codacy.yml` runs Markdownlint only so Codacy's maintainability
-  findings stay in PR feedback instead of GitHub Code Scanning
+- **Code Scanning Mirror**: `.github/workflows/codacy.yml` uploads only repository-owned Opengrep
+  findings whose rule IDs start with `delaunay.` so Codacy's default maintainability findings stay in
+  PR feedback instead of GitHub Code Scanning
 
 **Key Benefits:**
 
@@ -648,7 +649,7 @@ fix(geometry): handle NaN coordinates in point validation
 fix: resolve memory leak in vertex insertion
 
 # Performance
-perf(core): optimize Bowyer-Watson algorithm with cell caching
+perf(core): optimize Bowyer-Watson algorithm with simplex caching
 perf: reduce allocations in neighbor assignment
 
 # Breaking changes
@@ -721,7 +722,7 @@ algorithm layer. Do not make `crate::core` public or add a broad
 `delaunay::core` facade. The public low-level surface should stay explicit and
 workflow-oriented:
 
-- `delaunay::tds` for cells, facets, vertex keys, TDS validation, and generic
+- `delaunay::tds` for simplices, facets, vertex keys, TDS validation, and generic
   triangulation data structures
 - `delaunay::collections` for collection aliases, small buffers, and secondary
   maps

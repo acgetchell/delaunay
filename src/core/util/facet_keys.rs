@@ -4,14 +4,14 @@
 
 use crate::core::collections::{MAX_PRACTICAL_DIMENSION_SIZE, SmallBuffer};
 use crate::core::facet::{FacetError, facet_key_from_vertices};
-use crate::core::tds::{CellKey, Tds, VertexKey};
+use crate::core::tds::{SimplexKey, Tds, VertexKey};
 use crate::core::util::hashing::stable_hash_u64_slice;
 use slotmap::Key;
 use thiserror::Error;
 
 /// Derives a facet key directly from vertex keys.
 ///
-/// Computes the canonical facet key for lookup in facet-to-cells mappings. This is useful
+/// Computes the canonical facet key for lookup in facet-to-simplices mappings. This is useful
 /// in hot paths like visibility checking in convex hull algorithms and boundary analysis.
 ///
 /// If you have `Vertex` instances instead of `VertexKey`s, obtain the keys via the TDS
@@ -44,9 +44,9 @@ use thiserror::Error;
 /// let dt = DelaunayTriangulation::new(&vertices).unwrap();
 /// let tds = dt.tds();
 ///
-/// // Get facet vertex keys from a cell - no need to materialize Vertex objects
-/// if let Some(cell) = tds.cells().map(|(_, cell)| cell).next() {
-///     let facet_vertex_keys: Vec<_> = cell.vertices().iter().skip(1).copied().collect(); // Skip 1 vertex to get D vertices
+/// // Get facet vertex keys from a simplex - no need to materialize Vertex objects
+/// if let Some(simplex) = tds.simplices().map(|(_, simplex)| simplex).next() {
+///     let facet_vertex_keys: Vec<_> = simplex.vertices().iter().skip(1).copied().collect(); // Skip 1 vertex to get D vertices
 ///     assert_eq!(facet_vertex_keys.len(), 3); // For 3D triangulation, facet has 3 vertices
 ///     let facet_key = checked_facet_key_from_vertex_keys::<3>(&facet_vertex_keys).unwrap();
 ///     println!("Facet key: {}", facet_key);
@@ -83,9 +83,9 @@ pub fn checked_facet_key_from_vertex_keys<const D: usize>(
 /// Errors that can occur while deriving a periodic facet signature from lifted vertices.
 #[derive(Clone, Debug, Error, PartialEq, Eq)]
 pub(crate) enum PeriodicFacetKeyDerivationError {
-    /// The lifted cell does not have the expected simplex arity (`D + 1` vertices).
-    #[error("Invalid lifted cell arity: expected {expected} vertices, got {actual}")]
-    InvalidLiftedCellArity {
+    /// The lifted simplex does not have the expected simplex arity (`D + 1` vertices).
+    #[error("Invalid lifted simplex arity: expected {expected} vertices, got {actual}")]
+    InvalidLiftedSimplexArity {
         /// Expected number of lifted vertices (`D + 1`).
         expected: usize,
         /// Actual lifted vertex count provided by the caller.
@@ -113,9 +113,9 @@ pub(crate) enum PeriodicFacetKeyDerivationError {
     },
 }
 
-/// Computes a translation-invariant periodic facet key from lifted cell vertices.
+/// Computes a translation-invariant periodic facet key from lifted simplex vertices.
 ///
-/// `lifted_vertices` must represent one full lifted cell as `(vertex_key, lattice_offset)` pairs.
+/// `lifted_vertices` must represent one full lifted simplex as `(vertex_key, lattice_offset)` pairs.
 /// The facet opposite `facet_index` is selected, vertex keys are sorted for permutation
 /// invariance, and offsets are normalized against the first facet vertex so equivalent
 /// periodic facets hash identically.
@@ -125,7 +125,7 @@ pub(crate) fn periodic_facet_key_from_lifted_vertices<const D: usize>(
 ) -> Result<u64, PeriodicFacetKeyDerivationError> {
     let expected_arity = D + 1;
     if lifted_vertices.len() != expected_arity {
-        return Err(PeriodicFacetKeyDerivationError::InvalidLiftedCellArity {
+        return Err(PeriodicFacetKeyDerivationError::InvalidLiftedSimplexArity {
             expected: expected_arity,
             actual: lifted_vertices.len(),
         });
@@ -177,31 +177,31 @@ pub(crate) fn periodic_facet_key_from_lifted_vertices<const D: usize>(
     Ok(stable_hash_u64_slice(packed_signature.as_slice()))
 }
 
-/// Verifies facet index consistency between two neighboring cells.
+/// Verifies facet index consistency between two neighboring simplices.
 ///
-/// This function checks that a shared facet computed from both cells' perspectives
+/// This function checks that a shared facet computed from both simplices' perspectives
 /// produces the same facet key, which is critical for catching subtle neighbor
 /// assignment errors in triangulation algorithms.
 ///
 /// # Arguments
 ///
 /// * `tds` - The triangulation data structure
-/// * `cell1_key` - Key of the first cell
-/// * `cell2_key` - Key of the second (neighboring) cell
-/// * `facet_idx` - Index of the facet in cell1 that should match a facet in cell2
+/// * `simplex1_key` - Key of the first simplex
+/// * `simplex2_key` - Key of the second (neighboring) simplex
+/// * `facet_idx` - Index of the facet in simplex1 that should match a facet in simplex2
 ///
 /// # Returns
 ///
-/// `Ok(true)` if a matching facet is found in cell2 with the same facet key.
+/// `Ok(true)` if a matching facet is found in simplex2 with the same facet key.
 /// `Ok(false)` if no matching facet is found.
-/// `Err(FacetError)` if there's an error accessing cell or facet data.
+/// `Err(FacetError)` if there's an error accessing simplex or facet data.
 ///
 /// # Errors
 ///
 /// Returns `FacetError` if:
-/// - Either cell cannot be found in the TDS
+/// - Either simplex cannot be found in the TDS
 /// - The facet index is out of bounds
-/// - Either cell has malformed simplex arity for dimension `D`
+/// - Either simplex has malformed simplex arity for dimension `D`
 ///
 /// # Examples
 ///
@@ -211,14 +211,14 @@ pub(crate) fn periodic_facet_key_from_lifted_vertices<const D: usize>(
 /// fn validate_neighbor_consistency(
 ///     tds: &Tds<f64, (), (), 3>,
 /// ) -> Result<bool, FacetError> {
-///     // Get two neighboring cell keys
-///     let cell_keys: Vec<_> = tds.cell_keys().take(2).collect();
-///     if cell_keys.len() >= 2 {
-///         // Check if facet 0 of cell1 matches a facet in cell2
+///     // Get two neighboring simplex keys
+///     let simplex_keys: Vec<_> = tds.simplex_keys().take(2).collect();
+///     if simplex_keys.len() >= 2 {
+///         // Check if facet 0 of simplex1 matches a facet in simplex2
 ///         let consistent = verify_facet_index_consistency(
 ///             tds,
-///             cell_keys[0],
-///             cell_keys[1],
+///             simplex_keys[0],
+///             simplex_keys[1],
 ///             0,
 ///         )?;
 ///
@@ -240,29 +240,29 @@ pub(crate) fn periodic_facet_key_from_lifted_vertices<const D: usize>(
 /// - Space Complexity: O(D) for temporary vertex buffers
 pub fn verify_facet_index_consistency<T, U, V, const D: usize>(
     tds: &Tds<T, U, V, D>,
-    cell1_key: CellKey,
-    cell2_key: CellKey,
+    simplex1_key: SimplexKey,
+    simplex2_key: SimplexKey,
     facet_idx: usize,
 ) -> Result<bool, FacetError> {
-    let cell1 = tds
-        .cell(cell1_key)
-        .ok_or(FacetError::CellNotFoundInTriangulation)?;
-    let cell2 = tds
-        .cell(cell2_key)
-        .ok_or(FacetError::CellNotFoundInTriangulation)?;
+    let simplex1 = tds
+        .simplex(simplex1_key)
+        .ok_or(FacetError::SimplexNotFoundInTriangulation)?;
+    let simplex2 = tds
+        .simplex(simplex2_key)
+        .ok_or(FacetError::SimplexNotFoundInTriangulation)?;
 
     // Check facet index bounds
-    let cell1_facet_count = cell1.number_of_vertices();
-    if facet_idx >= cell1_facet_count {
-        return Err(facet_index_error(facet_idx, cell1_facet_count));
+    let simplex1_facet_count = simplex1.number_of_vertices();
+    if facet_idx >= simplex1_facet_count {
+        return Err(facet_index_error(facet_idx, simplex1_facet_count));
     }
 
-    // Get the facet from cell1 and compute its key
-    let cell1_key_value = cell_facet_key::<D>(cell1.vertices(), facet_idx)?;
+    // Get the facet from simplex1 and compute its key
+    let simplex1_key_value = simplex_facet_key::<D>(simplex1.vertices(), facet_idx)?;
 
-    // Find matching facet in cell2
-    for cell2_facet_idx in 0..cell2.number_of_vertices() {
-        if cell1_key_value == cell_facet_key::<D>(cell2.vertices(), cell2_facet_idx)? {
+    // Find matching facet in simplex2
+    for simplex2_facet_idx in 0..simplex2.number_of_vertices() {
+        if simplex1_key_value == simplex_facet_key::<D>(simplex2.vertices(), simplex2_facet_idx)? {
             return Ok(true);
         }
     }
@@ -270,7 +270,7 @@ pub fn verify_facet_index_consistency<T, U, V, const D: usize>(
     Ok(false) // No matching facet found
 }
 
-fn cell_facet_key<const D: usize>(
+fn simplex_facet_key<const D: usize>(
     vertices: &[VertexKey],
     omit_idx: usize,
 ) -> Result<u64, FacetError> {
@@ -351,7 +351,7 @@ pub fn usize_to_u8(idx: usize, facet_count: usize) -> Result<u8, FacetError> {
 mod tests {
     use super::*;
 
-    use crate::core::cell::Cell;
+    use crate::core::simplex::Simplex;
     use crate::core::util::measure_with_result;
     use crate::triangulation::delaunay::DelaunayTriangulation;
     use crate::vertex;
@@ -360,7 +360,7 @@ mod tests {
     use std::time::Instant;
 
     #[test]
-    fn periodic_facet_key_rejects_invalid_lifted_cell_arity() {
+    fn periodic_facet_key_rejects_invalid_lifted_simplex_arity() {
         let lifted_vertices = vec![
             (VertexKey::null(), [0_i8; 2]),
             (VertexKey::null(), [0_i8; 2]),
@@ -368,7 +368,7 @@ mod tests {
         let err = periodic_facet_key_from_lifted_vertices::<2>(&lifted_vertices, 0).unwrap_err();
         assert!(matches!(
             err,
-            PeriodicFacetKeyDerivationError::InvalidLiftedCellArity {
+            PeriodicFacetKeyDerivationError::InvalidLiftedSimplexArity {
                 expected: 3,
                 actual: 2
             }
@@ -466,8 +466,8 @@ mod tests {
 
         // Test 1: Basic functionality - successful key derivation
         println!("  Testing basic functionality...");
-        let cell = tds.cells().map(|(_, cell)| cell).next().unwrap();
-        let facet_vertex_keys: Vec<_> = cell.vertices().iter().skip(1).copied().collect();
+        let simplex = tds.simplices().map(|(_, simplex)| simplex).next().unwrap();
+        let facet_vertex_keys: Vec<_> = simplex.vertices().iter().skip(1).copied().collect();
 
         let result = checked_facet_key_from_vertex_keys::<3>(&facet_vertex_keys);
         assert!(
@@ -488,7 +488,7 @@ mod tests {
         );
 
         // Test different vertex keys produce different keys
-        let all_vertex_keys = cell.vertices();
+        let all_vertex_keys = simplex.vertices();
         let different_facet_vertex_keys: Vec<_> = all_vertex_keys.iter().take(3).copied().collect();
         if different_facet_vertex_keys.len() == 3
             && different_facet_vertex_keys != facet_vertex_keys
@@ -560,15 +560,15 @@ mod tests {
         // Test 3: Consistency with TDS cache
         println!("  Testing consistency with TDS...");
         let cache = tds
-            .build_facet_to_cells_map()
+            .build_facet_to_simplices_map()
             .expect("Should build facet map in test");
         let mut keys_found = 0;
         let mut keys_tested = 0;
 
-        for cell in tds.cells().map(|(_, cell)| cell) {
-            let cell_vertex_keys = cell.vertices();
-            for skip_vertex_idx in 0..cell_vertex_keys.len() {
-                let facet_vertex_keys: Vec<_> = cell_vertex_keys
+        for simplex in tds.simplices().map(|(_, simplex)| simplex) {
+            let simplex_vertex_keys = simplex.vertices();
+            for skip_vertex_idx in 0..simplex_vertex_keys.len() {
+                let facet_vertex_keys: Vec<_> = simplex_vertex_keys
                     .iter()
                     .enumerate()
                     .filter(|(i, _)| *i != skip_vertex_idx)
@@ -594,7 +594,7 @@ mod tests {
 
     #[test]
     fn test_verify_facet_index_consistency_true_false_and_error_cases() {
-        // True case: comparing a cell to itself.
+        // True case: comparing a simplex to itself.
         let vertices = vec![
             vertex!([0.0, 0.0, 0.0]),
             vertex!([1.0, 0.0, 0.0]),
@@ -603,15 +603,16 @@ mod tests {
         ];
         let dt = DelaunayTriangulation::new(&vertices).unwrap();
         let tds = &dt.as_triangulation().tds;
-        let cell_key = tds.cell_keys().next().unwrap();
-        assert!(verify_facet_index_consistency(tds, cell_key, cell_key, 0).unwrap());
+        let simplex_key = tds.simplex_keys().next().unwrap();
+        assert!(verify_facet_index_consistency(tds, simplex_key, simplex_key, 0).unwrap());
 
         // Error case: facet index out of bounds.
-        let err = verify_facet_index_consistency(tds, cell_key, cell_key, 99).unwrap_err();
+        let err = verify_facet_index_consistency(tds, simplex_key, simplex_key, 99).unwrap_err();
         assert!(matches!(err, FacetError::InvalidFacetIndex { .. }));
 
         // Logging: demonstrate behavior for large out-of-bounds facet index
-        let err_large = verify_facet_index_consistency(tds, cell_key, cell_key, 300).unwrap_err();
+        let err_large =
+            verify_facet_index_consistency(tds, simplex_key, simplex_key, 300).unwrap_err();
         println!("    Large facet_idx=300 error: {err_large:?}");
         assert!(matches!(
             err_large,
@@ -640,10 +641,10 @@ mod tests {
             .unwrap();
 
         let c1 = tds2
-            .insert_cell_with_mapping(Cell::new(vec![v_a, v_b, v_c], None).unwrap())
+            .insert_simplex_with_mapping(Simplex::new(vec![v_a, v_b, v_c], None).unwrap())
             .unwrap();
         let c2 = tds2
-            .insert_cell_with_mapping(Cell::new(vec![v_d, v_e, v_f], None).unwrap())
+            .insert_simplex_with_mapping(Simplex::new(vec![v_d, v_e, v_f], None).unwrap())
             .unwrap();
 
         assert!(!verify_facet_index_consistency(&tds2, c1, c2, 0).unwrap());

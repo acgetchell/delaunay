@@ -22,8 +22,8 @@
 
 #![forbid(unsafe_code)]
 
-use crate::core::cell::CellValidationError;
 use crate::core::collections::{MAX_PRACTICAL_DIMENSION_SIZE, SmallBuffer};
+use crate::core::simplex::SimplexValidationError;
 use crate::geometry::point::Point;
 use crate::geometry::predicates::{
     InSphere, Orientation, insphere_lifted, relative_insphere_determinant_sign,
@@ -415,8 +415,8 @@ where
         let result = insphere_lifted(simplex_points, *test_point).map_err(|e| {
             // Preserve original CoordinateConversionError if present
             match e {
-                CellValidationError::CoordinateConversion { source } => source,
-                CellValidationError::InsufficientVertices {
+                SimplexValidationError::CoordinateConversion { source } => source,
+                SimplexValidationError::InsufficientVertices {
                     actual,
                     expected,
                     dimension,
@@ -425,7 +425,7 @@ where
                     expected,
                     dimension,
                 },
-                CellValidationError::DegenerateSimplex => {
+                SimplexValidationError::DegenerateSimplex => {
                     CoordinateConversionError::DegenerateSimplex {
                         dimension: D,
                         reason: DegenerateSimplexReason::ZeroOrientation,
@@ -969,7 +969,7 @@ mod tests {
 
     #[test]
     fn test_fast_kernel_in_sphere_insufficient_vertices() {
-        // Exercises the CellValidationError::InsufficientVertices mapping.
+        // Exercises the SimplexValidationError::InsufficientVertices mapping.
         let kernel = FastKernel::<f64>::new();
         let simplex: [Point<f64, 3>; 2] =
             [Point::new([0.0, 0.0, 0.0]), Point::new([1.0, 0.0, 0.0])];
@@ -987,7 +987,7 @@ mod tests {
 
     #[test]
     fn test_fast_kernel_in_sphere_degenerate_simplex() {
-        // Exercises the CellValidationError::DegenerateSimplex mapping.
+        // Exercises the SimplexValidationError::DegenerateSimplex mapping.
         let kernel = FastKernel::<f64>::new();
         let simplex = [
             Point::new([0.0, 0.0, 0.0]),

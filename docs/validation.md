@@ -45,7 +45,7 @@ looks “off”.
 Only **Level 3** (`Triangulation::is_valid()`), using the triangulation’s current
 `TopologyGuarantee` (default: `PLManifold`):
 
-- Codimension-1 manifoldness (facet degree: 1 or 2 incident cells per facet)
+- Codimension-1 manifoldness (facet degree: 1 or 2 incident simplices per facet)
 - Codimension-2 boundary manifoldness (the boundary is closed; "no boundary of boundary")
 - Ridge-link validation (when `TopologyGuarantee::PLManifold` or `TopologyGuarantee::PLManifoldStrict`)
 - Vertex-link validation during insertion (when `TopologyGuarantee::PLManifoldStrict`)
@@ -65,8 +65,8 @@ The default policy is `ValidationPolicy::OnSuspicion`: we validate Level 3 only 
 insertion deviates from the happy-path and trips internal **suspicion flags**, e.g.:
 
 - A perturbation retry was required (geometric degeneracy).
-- The insertion fell back to a conservative “star-split” of the containing cell.
-- Non-manifold facet issues were detected and repaired (cells removed).
+- The insertion fell back to a conservative “star-split” of the containing simplex.
+- Non-manifold facet issues were detected and repaired (simplices removed).
 - Neighbor pointers had to be repaired **and at least one pointer actually changed** (running the repair routine is not, by itself, considered suspicious).
 
 ### Available policies
@@ -190,17 +190,17 @@ structured error from the failing layer (`TdsError`, `TriangulationValidationErr
 
 ### Purpose
 
-Validates basic data integrity of individual vertices and cells.
+Validates basic data integrity of individual vertices and simplices.
 
 ### Methods
 
-- `Cell::is_valid()` - Check if a cell has valid structure
+- `Simplex::is_valid()` - Check if a simplex has valid structure
 - `Vertex::is_valid()` - Check if a vertex has valid coordinates
 
 ### What It Checks
 
 - **Vertices**: Coordinate validity, UUID presence, dimension consistency
-- **Cells**: Correct number of vertices (D+1), no duplicate vertices, valid UUID
+- **Simplices**: Correct number of vertices (D+1), no duplicate vertices, valid UUID
 
 ### Complexity
 
@@ -243,16 +243,16 @@ Validates the combinatorial structure of the Triangulation Data Structure.
 
 `Tds::is_valid()` (Level 2) checks:
 
-1. **UUID ↔ Key Mappings**: Bidirectional consistency for vertices and cells
-2. **No Duplicate Cells**: No cells with identical vertex sets
-3. **Facet Sharing Invariant**: Each facet shared by at most 2 cells
+1. **UUID ↔ Key Mappings**: Bidirectional consistency for vertices and simplices
+2. **No Duplicate Simplices**: No simplices with identical vertex sets
+3. **Facet Sharing Invariant**: Each facet shared by at most 2 simplices
 4. **Neighbor Consistency**: Mutual neighbor relationships are correct (boundary facets have no neighbor; interior facets have reciprocal neighbors)
 
 `Tds::validate()` (Levels 1–2) additionally checks:
 
 - **Vertex Validity**: All vertices pass `Vertex::is_valid()`
-- **Cell Validity**: All cells pass `Cell::is_valid()`
-- **Cell Coordinate Uniqueness**: No cell contains two vertices with identical coordinates
+- **Simplex Validity**: All simplices pass `Simplex::is_valid()`
+- **Simplex Coordinate Uniqueness**: No simplex contains two vertices with identical coordinates
   (exact `OrderedFloat` comparison). Duplicate-coordinate vertices produce zero-volume
   simplices that break SoS and Pachner moves.
   **Note**: `is_valid()` does **not** check coordinate uniqueness. Use `validate()` (or
@@ -260,8 +260,8 @@ Validates the combinatorial structure of the Triangulation Data Structure.
 
 ### Complexity
 
-- **Time**: O(N×D²) where N = number of cells, D = dimension
-- **Space**: O(N×D) for facet-to-cells map
+- **Time**: O(N×D²) where N = number of simplices, D = dimension
+- **Space**: O(N×D) for facet-to-simplices map
 
 ### When to Use
 
@@ -320,16 +320,16 @@ Validates that the triangulation forms a valid topological manifold.
 
 `Triangulation::is_valid()` (Level 3) checks:
 
-1. **Codimension-1 manifoldness (facet degree)**: Each facet belongs to exactly 1 cell (boundary) or exactly 2 cells (interior)
-   - Stronger than Level 2's "≤2 cells per facet"
+1. **Codimension-1 manifoldness (facet degree)**: Each facet belongs to exactly 1 simplex (boundary) or exactly 2 simplices (interior)
+   - Stronger than Level 2's "≤2 simplices per facet"
 2. **Codimension-2 boundary manifoldness (closed boundary)**: Each (d−2)-ridge on the boundary must be incident to exactly 2 boundary facets
    - This is the "no boundary of boundary" condition
    - Interior ridges can have higher degree; only boundary ridges are constrained
 3. **PL-manifold vertex-link condition** (when `TopologyGuarantee::PLManifold`):
    For every vertex `v`, the link `Lk(v)` must be a (D−1)-sphere (interior vertex) or (D−1)-ball (boundary vertex).
-4. **Connectedness**: All cells form a single connected component in the cell neighbor graph
+4. **Connectedness**: All simplices form a single connected component in the simplex neighbor graph
    - Detected via a graph traversal over neighbor pointers (O(N·D))
-5. **No isolated vertices**: Every vertex must be incident to at least one cell
+5. **No isolated vertices**: Every vertex must be incident to at least one simplex
 6. **Euler Characteristic**: χ matches expected topology (when an expectation is defined)
    - Empty: χ = 0
    - Single simplex / Ball(D): χ = 1
@@ -404,9 +404,9 @@ Validates the geometric optimality of the triangulation.
 ### Complexity
 
 - **Time**:
-  - `DelaunayTriangulation::is_valid()` (Level 4 only): O(cells) (local flip-predicate verification, for fixed D)
-  - `DelaunayTriangulation::validate()` (Levels 1–4): O(cells × D²) + O(cells) (typically dominated by Levels 1–3)
-  - `DelaunayTriangulation::validation_report()` (Levels 1–4): O(cells × D²) + O(cells)
+  - `DelaunayTriangulation::is_valid()` (Level 4 only): O(simplices) (local flip-predicate verification, for fixed D)
+  - `DelaunayTriangulation::validate()` (Levels 1–4): O(simplices × D²) + O(simplices) (typically dominated by Levels 1–3)
+  - `DelaunayTriangulation::validation_report()` (Levels 1–4): O(simplices × D²) + O(simplices)
 - **Space**: O(1) additional space (aside from temporary working sets)
 
 ### When to Use
@@ -414,7 +414,7 @@ Validates the geometric optimality of the triangulation.
 - **Critical Applications**: When Delaunay guarantees are essential (interpolation, mesh quality)
 - **Tests**: After construction to verify correctness
 - **Debug**: Investigating geometric issues or suspected violations
-- **Avoid**: Hot loops (still O(cells); use for spot checks / tests)
+- **Avoid**: Hot loops (still O(simplices); use for spot checks / tests)
 
 ### Example
 
@@ -434,7 +434,7 @@ let dt = DelaunayTriangulation::new(&vertices).unwrap();
 
 // Delaunay property validation (Level 4)
 match dt.is_valid() {
-    Ok(()) => println!("✓ All cells satisfy empty circumsphere property"),
+    Ok(()) => println!("✓ All simplices satisfy empty circumsphere property"),
     Err(e) => eprintln!("✗ Delaunay violation: {}", e),
 }
 ```
@@ -468,10 +468,10 @@ Start: Do you need to validate?
 
 ## Performance notes
 
-- Level 2 and Level 3 validation are dominated by combinatorial bookkeeping (roughly O(cells × D²)).
+- Level 2 and Level 3 validation are dominated by combinatorial bookkeeping (roughly O(simplices × D²)).
 - Level 4 `DelaunayTriangulation::is_valid()` verifies the Delaunay property via local flip predicates and is
-  roughly O(cells) for fixed `D`.
-- A brute-force empty-circumsphere check would be O(cells × vertices) and is not used by `is_valid()`.
+  roughly O(simplices) for fixed `D`.
+- A brute-force empty-circumsphere check would be O(simplices × vertices) and is not used by `is_valid()`.
 
 In practice, `DelaunayTriangulation::validate()` is usually dominated by Level 3 (topology) work.
 As a post-construction acceptance check, the current 8,000-vertex 3D large-scale
@@ -543,16 +543,16 @@ pub fn validate_with_level(dt: &DelaunayTriangulation<FastKernel<f64>, (), (), 3
 
 **Problem**: Structural invariants violated
 **Likely Cause**: Bug in construction or mutation code
-**Fix**: Check for duplicate cells, incorrect neighbor assignments, or mapping inconsistencies
+**Fix**: Check for duplicate simplices, incorrect neighbor assignments, or mapping inconsistencies
 
 ### Validation Passes Level 2, Fails at Level 3
 
-**Problem**: Codimension-1 manifoldness violated (facet has 0 or >2 cells), boundary is not closed ("boundary of boundary"),
+**Problem**: Codimension-1 manifoldness violated (facet has 0 or >2 simplices), boundary is not closed ("boundary of boundary"),
 triangulation disconnected, isolated vertex present, or Euler characteristic wrong
 **Likely Cause**: Non-manifold topology, missing/broken neighbor wiring, boundary topology corruption,
 or disconnected components
-**Fix**: Check facet-to-cells mapping, ensure boundary ridges have degree 2 within boundary facets,
-ensure no isolated vertices, and verify the cell neighbor graph is connected
+**Fix**: Check facet-to-simplices mapping, ensure boundary ridges have degree 2 within boundary facets,
+ensure no isolated vertices, and verify the simplex neighbor graph is connected
 
 ### Validation Passes Level 3, Fails at Level 4
 
@@ -571,15 +571,15 @@ converge, consider the opt-in heuristic rebuild fallback via
 
 | Level | Method | Module | Complexity |
 |-------|--------|--------|------------|
-| 1 | `Cell::is_valid()` | `tds` | O(1) |
+| 1 | `Simplex::is_valid()` | `tds` | O(1) |
 | 1 | `Vertex::is_valid()` | `tds` | O(1) |
 | 2 | `Tds::is_valid()` | `tds` | O(N×D²) |
 | 2 | `Tds::validate()` | `tds` | O(N×D²) |
 | 3 | `Triangulation::is_valid()` | `triangulation` | O(N×D²) |
 | 3 | `Triangulation::validate()` | `triangulation` | O(N×D²) |
-| 4 | `DelaunayTriangulation::is_valid()` | `triangulation::delaunay` | O(cells) |
-| 4 | `DelaunayTriangulation::validate()` | `triangulation::delaunay` | O(cells × D²) + O(cells) |
-| — | `DelaunayTriangulation::validation_report()` | `triangulation::delaunay` | O(cells × D²) + O(cells) |
+| 4 | `DelaunayTriangulation::is_valid()` | `triangulation::delaunay` | O(simplices) |
+| 4 | `DelaunayTriangulation::validate()` | `triangulation::delaunay` | O(simplices × D²) + O(simplices) |
+| — | `DelaunayTriangulation::validation_report()` | `triangulation::delaunay` | O(simplices × D²) + O(simplices) |
 
 ---
 

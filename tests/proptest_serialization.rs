@@ -2,8 +2,8 @@
 //!
 //! This module uses proptest to verify that serialization and deserialization
 //! preserve all important properties of triangulation structures, including:
-//! - Triangulation structure preservation (vertices, cells, neighbors)
-//! - Cell and vertex data preservation
+//! - Triangulation structure preservation (vertices, simplices, neighbors)
+//! - Simplex and vertex data preservation
 //! - Triangulation validity after roundtrip
 //!
 //! Tests are generated for dimensions 2D-5D using macros to reduce duplication.
@@ -75,9 +75,9 @@ macro_rules! test_serialization_properties {
                             $dim
                         );
                         prop_assert_eq!(
-                            deserialized.number_of_cells(),
-                            dt.number_of_cells(),
-                            "{}D cell count should be preserved",
+                            deserialized.number_of_simplices(),
+                            dt.number_of_simplices(),
+                            "{}D simplex count should be preserved",
                             $dim
                         );
                         prop_assert_eq!(
@@ -198,8 +198,8 @@ macro_rules! test_serialization_properties {
                     ) {
                         // Count original neighbor relationships
                         let mut original_neighbor_count = 0;
-                        for (_key, cell) in dt.cells() {
-                            if let Some(neighbors) = cell.neighbors() {
+                        for (_key, simplex) in dt.simplices() {
+                            if let Some(neighbors) = simplex.neighbors() {
                                 original_neighbor_count += neighbors.flatten().count();
                             }
                         }
@@ -214,8 +214,8 @@ macro_rules! test_serialization_properties {
 
                         // Count deserialized neighbor relationships
                         let mut deserialized_neighbor_count = 0;
-                        for (_key, cell) in deserialized.cells() {
-                            if let Some(neighbors) = cell.neighbors() {
+                        for (_key, simplex) in deserialized.simplices() {
+                            if let Some(neighbors) = simplex.neighbors() {
                                 deserialized_neighbor_count += neighbors.flatten().count();
                             }
                         }

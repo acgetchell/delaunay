@@ -13,7 +13,6 @@ keywords = [ "delaunay", "triangulation", "geometry", "convex-hull", "simplicial
 categories = [ "algorithms", "mathematics", "science" ]
 readme = "README.md"
 include = [
-    "/Cargo.lock",
     "/Cargo.toml",
     "/CITATION.cff",
     "/LICENSE",

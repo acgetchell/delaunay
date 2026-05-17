@@ -266,7 +266,7 @@ where
 ///
 /// This skips the orientation determinant that [`robust_insphere`] normally uses
 /// to normalize the lifted determinant sign. It is intended for hot triangulation
-/// paths that evaluate stored cells after orientation canonicalization.
+/// paths that evaluate stored simplices after orientation canonicalization.
 pub(crate) fn robust_insphere_positive_oriented<T, const D: usize>(
     simplex_points: &[Point<T, D>],
     test_point: &Point<T, D>,

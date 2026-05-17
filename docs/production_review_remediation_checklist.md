@@ -44,7 +44,7 @@ Treat partial items as still open until their acceptance notes are satisfied.
 - [ ] **10. Replace nested `Option` neighbors with a typed enum.**
   Make unassigned neighbors distinct from assigned boundary slots and hide raw
   mutation behind accessors. Tracked for v0.7.8 in #387.
-- [x] **11. Gate `cells_mut()` out of production builds.**
+- [x] **11. Gate `simplices_mut()` out of production builds.**
   The raw storage accessor was deleted; tests now use narrower mutation paths
   or exercise lower-level helpers directly.
 - [ ] **12. Confirm clone semantics for linear-algebra error variants.**
@@ -74,10 +74,10 @@ Treat partial items as still open until their acceptance notes are satisfied.
 - [x] **18. Avoid fresh UUID allocation for rollback snapshots.**
   Rollback snapshots now preserve identity with `Arc::clone`; ordinary `Clone`
   intentionally keeps fresh runtime identity.
-- [x] **19. Make cell vertex-existence checks debug-only where proven upstream.**
-  `Tds::insert_cell_with_mapping` remains fully checked and returns typed
+- [x] **19. Make simplex vertex-existence checks debug-only where proven upstream.**
+  `Tds::insert_simplex_with_mapping` remains fully checked and returns typed
   errors. Audited hot paths now call
-  `insert_cell_with_mapping_trusted_vertices`, which checks vertex provenance
+  `insert_simplex_with_mapping_trusted_vertices`, which checks vertex provenance
   in debug builds and skips the O(D) slotmap lookup in release.
 - [x] **20. Gate per-attempt timing on diagnostics or benchmark features.**
   Insertion telemetry now records counters by default and starts per-attempt
@@ -96,11 +96,11 @@ Treat partial items as still open until their acceptance notes are satisfied.
 - [ ] **23. Reconsider skipped insertions as success outcomes.**
   Make skipped duplicate and degeneracy outcomes harder for callers to ignore.
   Tracked for v0.7.8 in #386.
-- [ ] **24. Make `Cell` encapsulation consistent.**
+- [ ] **24. Make `Simplex` encapsulation consistent.**
   Private neighbor storage plus accessors is the likely direction. Tracked for
   v0.7.8 in #387.
-- [ ] **25. Protect `Vertex::incident_cell` mutation.**
-  Introduce a checked setter or newtype so invalid incident-cell links are
+- [ ] **25. Protect `Vertex::incident_simplex` mutation.**
+  Introduce a checked setter or newtype so invalid incident-simplex links are
   harder to construct. Tracked for v0.7.8 in #387.
 - [x] **26. Revisit public `core` module naming.**
   Keep `crate::core` as the internal implementation namespace, and expose the
@@ -122,7 +122,7 @@ Treat partial items as still open until their acceptance notes are satisfied.
   the cached `(identity, generation)` provenance key.
 - [x] **31. Add allocation-bounded hot-path tests.**
   `tests/allocation_api.rs` now asserts zero allocations for TDS/public
-  `cells()`/`vertices()` iterator paths, `Tds::cell_vertices`, and
+  `simplices()`/`vertices()` iterator paths, `Tds::simplex_vertices`, and
   `facet_key_from_vertices`, plus an explicit allocation budget for the hinted
   locate fast path under `--features count-allocations`.
 - [x] **32. Benchmark `Tds::clone` cost versus triangulation size.**
@@ -138,9 +138,9 @@ Treat partial items as still open until their acceptance notes are satisfied.
 
 - [ ] **A. Clarify cfg-only feature flags in `Cargo.toml`.**
   Group empty features under a cfg-only banner. Tracked for v0.7.8 in #382.
-- [ ] **B. Remove stale deprecated-warning comment in `lib.rs`.**
-  Delete or update the comment if no `allow(deprecated)` follows. Tracked for
-  v0.7.8 in #382.
+- [x] **B. Remove stale deprecated-warning comment in `lib.rs`.**
+  The crate-level migration comment was removed along with the deprecated
+  mutable triangulation escape hatch.
 - [ ] **C. Relabel safe-code `SAFETY` comments in `tds.rs`.**
   Use `INVARIANT` where no unsafe reasoning is involved. Tracked for v0.7.8 in
   #382.

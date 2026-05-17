@@ -14,16 +14,21 @@ use delaunay::geometry::kernel::RobustKernel;
 use delaunay::prelude::algorithms::{LocateResult, find_conflict_region, locate};
 use delaunay::prelude::collections::MAX_PRACTICAL_DIMENSION_SIZE;
 use delaunay::prelude::geometry::{AdaptiveKernel, Coordinate, Point};
-use delaunay::prelude::tds::{Cell, CellKey, SmallBuffer, VertexKey, facet_key_from_vertices};
+use delaunay::prelude::tds::{
+    Simplex, SimplexKey, SmallBuffer, VertexKey, facet_key_from_vertices,
+};
 use delaunay::prelude::triangulation::construction::{
     ConstructionOptions, DedupPolicy, DelaunayTriangulation, TopologyGuarantee, Vertex, vertex,
 };
 use uuid::Uuid;
 
 /// Build the canonical facet key used to compare neighbor mirror facets in tests.
-fn facet_key_for_cell<const D: usize>(cell: &Cell<f64, (), (), D>, facet_idx: usize) -> u64 {
+fn facet_key_for_simplex<const D: usize>(
+    simplex: &Simplex<f64, (), (), D>,
+    facet_idx: usize,
+) -> u64 {
     let mut facet_vertices = SmallBuffer::<VertexKey, MAX_PRACTICAL_DIMENSION_SIZE>::new();
-    for (idx, &vertex_key) in cell.vertices().iter().enumerate() {
+    for (idx, &vertex_key) in simplex.vertices().iter().enumerate() {
         if idx != facet_idx {
             facet_vertices.push(vertex_key);
         }
@@ -31,67 +36,66 @@ fn facet_key_for_cell<const D: usize>(cell: &Cell<f64, (), (), D>, facet_idx: us
     facet_key_from_vertices(&facet_vertices)
 }
 
-/// Assert that every populated neighbor slot references an existing cell that points back.
+/// Assert that every populated neighbor slot references an existing simplex that points back.
 fn assert_neighbors_valid_and_symmetric<const D: usize>(
     dt: &DelaunayTriangulation<AdaptiveKernel<f64>, (), (), D>,
 ) {
-    for (cell_key, cell) in dt.cells() {
-        let Some(neighbors) = cell.neighbors() else {
+    for (simplex_key, simplex) in dt.simplices() {
+        let Some(neighbors) = simplex.neighbors() else {
             continue;
         };
         for (facet_idx, neighbor_opt) in neighbors.into_iter().enumerate() {
             let Some(neighbor_key) = neighbor_opt else {
                 continue;
             };
-            let neighbor_cell = dt
-                .tds()
-                .cell(neighbor_key)
-                .unwrap_or_else(|| panic!("neighbor {neighbor_key:?} for {cell_key:?} is missing"));
-            let facet_key = facet_key_for_cell(cell, facet_idx);
-            let mirror_idx = (0..neighbor_cell.number_of_vertices())
-                .find(|&idx| facet_key_for_cell(neighbor_cell, idx) == facet_key)
+            let neighbor_simplex = dt.tds().simplex(neighbor_key).unwrap_or_else(|| {
+                panic!("neighbor {neighbor_key:?} for {simplex_key:?} is missing")
+            });
+            let facet_key = facet_key_for_simplex(simplex, facet_idx);
+            let mirror_idx = (0..neighbor_simplex.number_of_vertices())
+                .find(|&idx| facet_key_for_simplex(neighbor_simplex, idx) == facet_key)
                 .unwrap_or_else(|| {
                     panic!(
-                        "neighbor {neighbor_key:?} does not share facet {facet_idx} with {cell_key:?}"
+                        "neighbor {neighbor_key:?} does not share facet {facet_idx} with {simplex_key:?}"
                     )
                 });
-            let neighbor_back = neighbor_cell.neighbor_key(mirror_idx).flatten();
+            let neighbor_back = neighbor_simplex.neighbor_key(mirror_idx).flatten();
             assert_eq!(
                 neighbor_back,
-                Some(cell_key),
-                "neighbor symmetry failed for {cell_key:?} facet {facet_idx}"
+                Some(simplex_key),
+                "neighbor symmetry failed for {simplex_key:?} facet {facet_idx}"
             );
         }
     }
 }
 
-/// Return a query point strictly inside the first cell so locate traversal has a stable target.
-fn centroid_of_first_cell<const D: usize>(
+/// Return a query point strictly inside the first simplex so locate traversal has a stable target.
+fn centroid_of_first_simplex<const D: usize>(
     dt: &DelaunayTriangulation<AdaptiveKernel<f64>, (), (), D>,
-) -> (CellKey, Point<f64, D>) {
-    let (cell_key, cell) = dt
-        .cells()
+) -> (SimplexKey, Point<f64, D>) {
+    let (simplex_key, simplex) = dt
+        .simplices()
         .next()
-        .expect("test triangulation should contain at least one cell");
+        .expect("test triangulation should contain at least one simplex");
     let mut coords = [0.0; D];
-    for &vertex_key in cell.vertices() {
+    for &vertex_key in simplex.vertices() {
         let vertex = dt
             .tds()
             .vertex(vertex_key)
-            .expect("cell vertex should exist");
+            .expect("simplex vertex should exist");
         for (coord, &value) in coords.iter_mut().zip(vertex.point().coords()) {
             *coord += value;
         }
     }
     let mut vertex_count = 0.0;
-    for _ in cell.vertices() {
+    for _ in simplex.vertices() {
         vertex_count += 1.0;
     }
     let scale = 1.0 / vertex_count;
     for coord in &mut coords {
         *coord *= scale;
     }
-    (cell_key, Point::new(coords))
+    (simplex_key, Point::new(coords))
 }
 
 /// Verify repaired neighbor pointers support hinted locate and conflict-region traversal.
@@ -99,26 +103,26 @@ fn assert_locate_and_conflict_traversal<const D: usize>(
     dt: &DelaunayTriangulation<AdaptiveKernel<f64>, (), (), D>,
 ) {
     let kernel = AdaptiveKernel::<f64>::new();
-    let (hint_cell, query) = centroid_of_first_cell(dt);
+    let (hint_simplex, query) = centroid_of_first_simplex(dt);
 
     let no_hint = locate(dt.tds(), &kernel, &query, None).expect("locate without hint failed");
     let with_hint =
-        locate(dt.tds(), &kernel, &query, Some(hint_cell)).expect("locate with hint failed");
+        locate(dt.tds(), &kernel, &query, Some(hint_simplex)).expect("locate with hint failed");
 
-    let start_cell = match with_hint {
-        LocateResult::InsideCell(cell_key) => cell_key,
-        other => panic!("centroid should locate inside a cell with hint, got {other:?}"),
+    let start_simplex = match with_hint {
+        LocateResult::InsideSimplex(simplex_key) => simplex_key,
+        other => panic!("centroid should locate inside a simplex with hint, got {other:?}"),
     };
     assert!(
-        matches!(no_hint, LocateResult::InsideCell(_)),
-        "centroid should locate inside a cell without hint, got {no_hint:?}"
+        matches!(no_hint, LocateResult::InsideSimplex(_)),
+        "centroid should locate inside a simplex without hint, got {no_hint:?}"
     );
 
-    let conflict_cells = find_conflict_region(dt.tds(), &kernel, &query, start_cell)
+    let conflict_simplices = find_conflict_region(dt.tds(), &kernel, &query, start_simplex)
         .expect("conflict traversal failed");
-    assert!(!conflict_cells.is_empty());
-    for &cell_key in &conflict_cells {
-        assert!(dt.tds().contains_cell(cell_key));
+    assert!(!conflict_simplices.is_empty());
+    for &simplex_key in &conflict_simplices {
+        assert!(dt.tds().contains_simplex(simplex_key));
     }
 }
 
@@ -128,7 +132,7 @@ fn assert_locate_and_conflict_traversal<const D: usize>(
 
 /// Macro to generate single point insertion tests across dimensions.
 macro_rules! test_insert_single_point {
-    ($dim:expr, [$($simplex:expr),+ $(,)?], $point:expr, $expected_cells:expr) => {
+    ($dim:expr, [$($simplex:expr),+ $(,)?], $point:expr, $expected_simplices:expr) => {
         pastey::paste! {
             #[test]
             fn [<test_insert_single_point_ $dim d>]() {
@@ -144,12 +148,12 @@ macro_rules! test_insert_single_point {
                     .unwrap();
 
                 let initial_vertices = vertices.len();
-                assert_eq!(dt.number_of_cells(), 1);
+                assert_eq!(dt.number_of_simplices(), 1);
 
                 dt.insert(vertex!($point)).unwrap();
 
                 assert_eq!(dt.number_of_vertices(), initial_vertices + 1);
-                assert_eq!(dt.number_of_cells(), $expected_cells);
+                assert_eq!(dt.number_of_simplices(), $expected_simplices);
             }
         }
     };
@@ -212,7 +216,7 @@ macro_rules! test_insert_5_points {
                     .unwrap();
 
                 let initial_vertices = vertices.len();
-                assert_eq!(dt.number_of_cells(), 1);
+                assert_eq!(dt.number_of_simplices(), 1);
 
                 // Insert 5 well-spaced interior points
                 let points = vec![$(vertex!($point)),+];
@@ -222,7 +226,7 @@ macro_rules! test_insert_5_points {
                 }
 
                 assert_eq!(dt.number_of_vertices(), initial_vertices + 5);
-                assert!(dt.number_of_cells() > 1);
+                assert!(dt.number_of_simplices() > 1);
             }
         }
     };
@@ -418,8 +422,8 @@ fn test_adaptive_kernel_vs_robust_kernel_2d() {
     assert_eq!(dt_adaptive.number_of_vertices(), 4);
 
     // Both should create valid triangulations
-    assert!(dt_adaptive.number_of_cells() > 0);
-    assert!(dt_robust.number_of_cells() > 0);
+    assert!(dt_adaptive.number_of_simplices() > 0);
+    assert!(dt_robust.number_of_simplices() > 0);
 }
 
 #[test]
@@ -444,7 +448,7 @@ fn test_robust_kernel_incremental_insertion() {
     dt.insert(vertex!([0.4, 0.5])).unwrap();
 
     assert_eq!(dt.number_of_vertices(), 6);
-    assert!(dt.number_of_cells() > 1);
+    assert!(dt.number_of_simplices() > 1);
 }
 
 // =========================================================================
@@ -474,7 +478,7 @@ fn test_clustered_points_2d() {
     dt.insert(vertex!([3.05, 3.05])).unwrap();
 
     assert_eq!(dt.number_of_vertices(), 8);
-    assert!(dt.number_of_cells() > 3);
+    assert!(dt.number_of_simplices() > 3);
 }
 
 #[test]
@@ -499,7 +503,7 @@ fn test_grid_pattern_2d() {
     dt.insert(vertex!([2.0, 1.5])).unwrap();
 
     assert_eq!(dt.number_of_vertices(), 7);
-    assert!(dt.number_of_cells() > 4);
+    assert!(dt.number_of_simplices() > 4);
 }
 
 // =========================================================================
@@ -547,8 +551,8 @@ fn test_batch_vs_incremental_same_vertex_count() {
     assert_eq!(dt_batch.number_of_vertices(), 6);
 
     // Both should produce valid triangulations
-    assert!(dt_batch.number_of_cells() > 0);
-    assert!(dt_incremental.number_of_cells() > 0);
+    assert!(dt_batch.number_of_simplices() > 0);
+    assert!(dt_incremental.number_of_simplices() > 0);
 }
 
 #[test]
@@ -570,7 +574,7 @@ fn test_bulk_construction_skips_near_duplicate_3d() {
 
     // The near-duplicate should be skipped, so only 5 unique vertices remain.
     assert_eq!(dt.number_of_vertices(), 5);
-    assert!(dt.number_of_cells() > 0);
+    assert!(dt.number_of_simplices() > 0);
 }
 // =========================================================================
 // Edge Cases
@@ -595,7 +599,7 @@ fn test_insert_at_centroid() {
     dt.insert(vertex!([1.5, 1.0])).unwrap();
 
     assert_eq!(dt.number_of_vertices(), 4);
-    assert_eq!(dt.number_of_cells(), 3);
+    assert_eq!(dt.number_of_simplices(), 3);
 }
 
 #[test]
@@ -616,13 +620,13 @@ fn test_minimal_simplex_then_insert() {
         .unwrap();
 
     assert_eq!(dt.number_of_vertices(), 4);
-    assert_eq!(dt.number_of_cells(), 1);
+    assert_eq!(dt.number_of_simplices(), 1);
 
     // Insert one point
     dt.insert(vertex!([0.25, 0.25, 0.25])).unwrap();
 
     assert_eq!(dt.number_of_vertices(), 5);
-    assert!(dt.number_of_cells() > 1);
+    assert!(dt.number_of_simplices() > 1);
 }
 
 // =========================================================================
@@ -648,7 +652,7 @@ fn test_f32_coordinates() {
     dt.insert(vertex!([0.3f32, 0.3f32])).unwrap();
 
     assert_eq!(dt.number_of_vertices(), 4);
-    assert_eq!(dt.number_of_cells(), 3);
+    assert_eq!(dt.number_of_simplices(), 3);
 }
 
 // =========================================================================
@@ -681,12 +685,12 @@ macro_rules! test_bootstrap_key_stability {
                     keys.push(key);
                     assert_eq!(dt.number_of_vertices(), i + 1);
 
-                    // Before D+1 vertices: no cells
+                    // Before D+1 vertices: no simplices
                     if i < $dim {
-                        assert_eq!(dt.number_of_cells(), 0);
+                        assert_eq!(dt.number_of_simplices(), 0);
                     } else {
                         // At D+1: simplex created
-                        assert_eq!(dt.number_of_cells(), 1);
+                        assert_eq!(dt.number_of_simplices(), 1);
                     }
                 }
 
@@ -776,16 +780,16 @@ fn test_bootstrap_returns_valid_key_after_tds_rebuild() {
 
     let key1 = dt.insert(v1).unwrap();
     assert_eq!(dt.number_of_vertices(), 1);
-    assert_eq!(dt.number_of_cells(), 0);
+    assert_eq!(dt.number_of_simplices(), 0);
 
     let key2 = dt.insert(v2).unwrap();
     assert_eq!(dt.number_of_vertices(), 2);
-    assert_eq!(dt.number_of_cells(), 0);
+    assert_eq!(dt.number_of_simplices(), 0);
 
     // D+1 vertex triggers TDS rebuild - this is where the bug occurred
     let key3 = dt.insert(v3).unwrap();
     assert_eq!(dt.number_of_vertices(), 3);
-    assert_eq!(dt.number_of_cells(), 1);
+    assert_eq!(dt.number_of_simplices(), 1);
 
     // Verify all returned keys are valid in the final TDS
     let vertex1 = dt.tds().vertex(key1);

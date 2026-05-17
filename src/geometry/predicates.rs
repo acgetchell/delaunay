@@ -6,7 +6,7 @@
 
 #![forbid(unsafe_code)]
 
-use crate::core::cell::CellValidationError;
+use crate::core::simplex::SimplexValidationError;
 use crate::geometry::matrix::{
     Matrix, StackMatrixDispatchError, matrix_get, matrix_set, matrix_zero_like,
 };
@@ -971,12 +971,12 @@ where
 pub fn insphere_lifted<T, const D: usize>(
     simplex_points: &[Point<T, D>],
     test_point: Point<T, D>,
-) -> Result<InSphere, CellValidationError>
+) -> Result<InSphere, SimplexValidationError>
 where
     T: CoordinateScalar,
 {
     if simplex_points.len() != D + 1 {
-        return Err(CellValidationError::InsufficientVertices {
+        return Err(SimplexValidationError::InsufficientVertices {
             actual: simplex_points.len(),
             expected: D + 1,
             dimension: D,
@@ -984,9 +984,9 @@ where
     }
 
     let signs = relative_insphere_signs(simplex_points, &test_point)
-        .map_err(|source| CellValidationError::CoordinateConversion { source })?;
+        .map_err(|source| SimplexValidationError::CoordinateConversion { source })?;
     if signs.relative_orientation == 0 {
-        Err(CellValidationError::DegenerateSimplex)
+        Err(SimplexValidationError::DegenerateSimplex)
     } else {
         Ok(relative_insphere_classification(signs))
     }
@@ -1590,7 +1590,7 @@ mod tests {
 
         // Verify the error is the correct type
         match result_lifted {
-            Err(CellValidationError::DegenerateSimplex) => (), // Expected error type
+            Err(SimplexValidationError::DegenerateSimplex) => (), // Expected error type
             Err(other) => panic!("Wrong error type: {other:?}"),
             Ok(_) => panic!("Function should have returned an error"),
         }

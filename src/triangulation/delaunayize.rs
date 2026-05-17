@@ -9,7 +9,7 @@
 //!
 //! # Workflow
 //!
-//! 1. **PL-manifold topology repair** — removes cells that cause facet
+//! 1. **PL-manifold topology repair** — removes simplices that cause facet
 //!    over-sharing (codimension-1 facet degree > 2) using a bounded,
 //!    deterministic pruning algorithm.
 //! 2. **Delaunay flip repair** — runs k=2/k=3 bistellar flips to restore the
@@ -44,7 +44,7 @@
 
 // Re-export outcome/error field types so users can name the public contract
 // without reaching into lower-level modules.
-pub use crate::tds::CellValidationError;
+pub use crate::tds::SimplexValidationError;
 pub use crate::triangulation::delaunay::DelaunayTriangulationConstructionError;
 pub use crate::triangulation::flips::{DelaunayRepairError, DelaunayRepairStats};
 pub use crate::triangulation::{PlManifoldRepairError, PlManifoldRepairStats};
@@ -54,9 +54,9 @@ use crate::core::algorithms::flips::{DelaunayRepairDiagnostics, RepairQueueOrder
 use crate::core::algorithms::pl_manifold_repair::{
     PlManifoldRepairConfig, repair_facet_oversharing,
 };
-use crate::core::cell::Cell;
-use crate::core::collections::{CellVertexUuidBuffer, Entry, FastHashMap};
-use crate::core::tds::{CellKey, Tds};
+use crate::core::collections::{Entry, FastHashMap, SimplexVertexUuidBuffer};
+use crate::core::simplex::Simplex;
+use crate::core::tds::{SimplexKey, Tds};
 use crate::core::traits::data_type::DataType;
 use crate::core::vertex::Vertex;
 use crate::geometry::kernel::{ExactPredicates, Kernel};
@@ -121,7 +121,7 @@ mod test_hooks {
 /// # Defaults
 ///
 /// - `topology_max_iterations`: 64
-/// - `topology_max_cells_removed`: 10,000
+/// - `topology_max_simplices_removed`: 10,000
 /// - `fallback_rebuild`: false
 ///
 /// # Examples
@@ -131,7 +131,7 @@ mod test_hooks {
 ///
 /// let config = DelaunayizeConfig::default();
 /// assert_eq!(config.topology_max_iterations, 64);
-/// assert_eq!(config.topology_max_cells_removed, 10_000);
+/// assert_eq!(config.topology_max_simplices_removed, 10_000);
 /// assert!(!config.fallback_rebuild);
 /// assert!(config.delaunay_max_flips.is_none());
 /// ```
@@ -139,13 +139,13 @@ mod test_hooks {
 pub struct DelaunayizeConfig {
     /// Maximum number of topology-repair iterations.
     pub topology_max_iterations: usize,
-    /// Maximum number of cells that may be removed during topology repair.
-    pub topology_max_cells_removed: usize,
+    /// Maximum number of simplices that may be removed during topology repair.
+    pub topology_max_simplices_removed: usize,
     /// If `true`, rebuild the triangulation from the vertex set when both
     /// topology repair and flip-based Delaunay repair fail.
     ///
-    /// Cell-level user data (`V`) is restored for rebuilt cells whose sorted
-    /// vertex UUID set matches exactly one original cell. Cells that change
+    /// Simplex-level user data (`V`) is restored for rebuilt simplices whose sorted
+    /// vertex UUID set matches exactly one original simplex. Simplices that change
     /// during rebuild, have no original payload, or have ambiguous duplicate
     /// original signatures receive `None`.
     pub fallback_rebuild: bool,
@@ -160,7 +160,7 @@ impl Default for DelaunayizeConfig {
     fn default() -> Self {
         Self {
             topology_max_iterations: 64,
-            topology_max_cells_removed: 10_000,
+            topology_max_simplices_removed: 10_000,
             fallback_rebuild: false,
             delaunay_max_flips: None,
         }
@@ -218,8 +218,8 @@ pub struct DelaunayizeOutcome<T, U, V, const D: usize> {
 /// - **Delaunay repair** failed (step 2), with optional context about a
 ///   fallback rebuild attempt.
 /// - **Fallback snapshot** failed before any repair could run.
-/// - **Fallback cell-data recovery** failed while snapshotting or restoring
-///   cell payloads after a repair failure.
+/// - **Fallback simplex-data recovery** failed while snapshotting or restoring
+///   simplex payloads after a repair failure.
 ///
 /// # Orthogonality
 ///
@@ -228,10 +228,10 @@ pub struct DelaunayizeOutcome<T, U, V, const D: usize> {
 /// - Topology repair, fallback also failed   -> [`TopologyRepairFailedWithRebuild`](Self::TopologyRepairFailedWithRebuild).
 /// - Topology repair, fallback rebuild succeeded but payload restore failed -> [`TopologyRepairFailedWithRebuildRestore`](Self::TopologyRepairFailedWithRebuildRestore).
 /// - Delaunay repair, fallback not attempted -> [`DelaunayRepairFailed`](Self::DelaunayRepairFailed).
-/// - Delaunay repair, fallback payload snapshot failed -> [`DelaunayRepairFailedWithCellDataSnapshot`](Self::DelaunayRepairFailedWithCellDataSnapshot).
+/// - Delaunay repair, fallback payload snapshot failed -> [`DelaunayRepairFailedWithSimplexDataSnapshot`](Self::DelaunayRepairFailedWithSimplexDataSnapshot).
 /// - Delaunay repair, fallback also failed   -> [`DelaunayRepairFailedWithRebuild`](Self::DelaunayRepairFailedWithRebuild).
 /// - Delaunay repair, fallback rebuild succeeded but payload restore failed -> [`DelaunayRepairFailedWithRebuildRestore`](Self::DelaunayRepairFailedWithRebuildRestore).
-/// - Fallback was enabled, but the pre-repair payload snapshot failed -> [`FallbackCellDataSnapshotFailed`](Self::FallbackCellDataSnapshotFailed).
+/// - Fallback was enabled, but the pre-repair payload snapshot failed -> [`FallbackSimplexDataSnapshotFailed`](Self::FallbackSimplexDataSnapshotFailed).
 ///
 /// Variants with secondary fallback failures preserve **both** the primary
 /// repair error and the secondary construction, snapshot, or restore error as
@@ -276,16 +276,16 @@ pub enum DelaunayizeError {
     },
 
     /// PL-manifold topology repair failed, the fallback vertex-set rebuild
-    /// succeeded, but cell-payload restoration from the rebuilt topology failed.
+    /// succeeded, but simplex-payload restoration from the rebuilt topology failed.
     #[error(
-        "Topology repair failed ({source}); fallback rebuild succeeded but cell-data restore failed: {restore_error}"
+        "Topology repair failed ({source}); fallback rebuild succeeded but simplex-data restore failed: {restore_error}"
     )]
     TopologyRepairFailedWithRebuildRestore {
         /// The underlying topology-repair error that triggered the fallback.
         #[source]
         source: PlManifoldRepairError,
-        /// The cell-data restoration error from the rebuilt triangulation.
-        restore_error: CellValidationError,
+        /// The simplex-data restoration error from the rebuilt triangulation.
+        restore_error: SimplexValidationError,
     },
 
     /// Delaunay flip repair failed; no fallback rebuild was attempted
@@ -301,14 +301,14 @@ pub enum DelaunayizeError {
     /// Delaunay flip repair failed and the fallback payload snapshot could not
     /// be collected from the current triangulation.
     #[error(
-        "Delaunay repair failed ({source}); fallback cell-data snapshot failed: {snapshot_error}"
+        "Delaunay repair failed ({source}); fallback simplex-data snapshot failed: {snapshot_error}"
     )]
-    DelaunayRepairFailedWithCellDataSnapshot {
+    DelaunayRepairFailedWithSimplexDataSnapshot {
         /// The underlying flip-repair error that triggered the fallback.
         #[source]
         source: DelaunayRepairError,
-        /// The cell-data snapshot error from the current triangulation.
-        snapshot_error: CellValidationError,
+        /// The simplex-data snapshot error from the current triangulation.
+        snapshot_error: SimplexValidationError,
     },
 
     /// Delaunay flip repair failed **and** the fallback vertex-set rebuild
@@ -323,27 +323,27 @@ pub enum DelaunayizeError {
     },
 
     /// Delaunay flip repair failed, the fallback vertex-set rebuild succeeded,
-    /// but cell-payload restoration from the rebuilt topology failed.
+    /// but simplex-payload restoration from the rebuilt topology failed.
     #[error(
-        "Delaunay repair failed ({source}); fallback rebuild succeeded but cell-data restore failed: {restore_error}"
+        "Delaunay repair failed ({source}); fallback rebuild succeeded but simplex-data restore failed: {restore_error}"
     )]
     DelaunayRepairFailedWithRebuildRestore {
         /// The underlying flip-repair error that triggered the fallback.
         #[source]
         source: DelaunayRepairError,
-        /// The cell-data restoration error from the rebuilt triangulation.
-        restore_error: CellValidationError,
+        /// The simplex-data restoration error from the rebuilt triangulation.
+        restore_error: SimplexValidationError,
     },
 
-    /// Fallback rebuild was enabled, but the pre-repair cell-payload snapshot
+    /// Fallback rebuild was enabled, but the pre-repair simplex-payload snapshot
     /// could not be collected from the input triangulation. No topology or
     /// Delaunay repair was attempted.
-    #[error("Fallback cell-data snapshot failed before repair; no repair attempted: {source}")]
-    FallbackCellDataSnapshotFailed {
-        /// The cell-data snapshot error from the input triangulation.
+    #[error("Fallback simplex-data snapshot failed before repair; no repair attempted: {source}")]
+    FallbackSimplexDataSnapshotFailed {
+        /// The simplex-data snapshot error from the input triangulation.
         #[from]
         #[source]
-        source: CellValidationError,
+        source: SimplexValidationError,
     },
 }
 
@@ -352,20 +352,20 @@ pub enum DelaunayizeError {
 // =============================================================================
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-enum CellDataMatch<V> {
+enum SimplexDataMatch<V> {
     Unique(Option<V>),
     Ambiguous,
 }
 
-type CellDataByVertexUuids<V> = FastHashMap<CellVertexUuidBuffer, CellDataMatch<V>>;
+type SimplexDataByVertexUuids<V> = FastHashMap<SimplexVertexUuidBuffer, SimplexDataMatch<V>>;
 type FallbackRebuildState<T, U, V, const D: usize> =
-    (Vec<Vertex<T, U, D>>, CellDataByVertexUuids<V>);
+    (Vec<Vertex<T, U, D>>, SimplexDataByVertexUuids<V>);
 
 /// Captures the fallback rebuild inputs from the current TDS, including typed
-/// failure if any cell cannot resolve its vertex UUID identity.
+/// failure if any simplex cannot resolve its vertex UUID identity.
 fn snapshot_rebuild_state<T, U, V, const D: usize>(
     tds: &Tds<T, U, V, D>,
-) -> Result<FallbackRebuildState<T, U, V, D>, CellValidationError>
+) -> Result<FallbackRebuildState<T, U, V, D>, SimplexValidationError>
 where
     T: CoordinateScalar,
     U: DataType,
@@ -375,73 +375,74 @@ where
         .vertices()
         .map(|(_, v)| Vertex::new_with_uuid(*v.point(), v.uuid(), v.data))
         .collect::<Vec<_>>();
-    let cell_data = collect_cell_data(tds)?;
-    Ok((vertices, cell_data))
+    let simplex_data = collect_simplex_data(tds)?;
+    Ok((vertices, simplex_data))
 }
 
-/// Hashes cell payloads by sorted vertex UUIDs so fallback rebuilds can
-/// recover payloads for cells whose vertex set survives unchanged.
-fn collect_cell_data<T, U, V, const D: usize>(
+/// Hashes simplex payloads by sorted vertex UUIDs so fallback rebuilds can
+/// recover payloads for simplices whose vertex set survives unchanged.
+fn collect_simplex_data<T, U, V, const D: usize>(
     tds: &Tds<T, U, V, D>,
-) -> Result<CellDataByVertexUuids<V>, CellValidationError>
+) -> Result<SimplexDataByVertexUuids<V>, SimplexValidationError>
 where
     U: DataType,
     V: DataType,
 {
-    let mut cell_data = FastHashMap::default();
-    for (_, cell) in tds.cells() {
-        let vertex_uuids = cell_vertex_uuids(tds, cell)?;
-        match cell_data.entry(vertex_uuids) {
+    let mut simplex_data = FastHashMap::default();
+    for (_, simplex) in tds.simplices() {
+        let vertex_uuids = simplex_vertex_uuids(tds, simplex)?;
+        match simplex_data.entry(vertex_uuids) {
             Entry::Vacant(entry) => {
-                entry.insert(CellDataMatch::Unique(cell.data().copied()));
+                entry.insert(SimplexDataMatch::Unique(simplex.data().copied()));
             }
             Entry::Occupied(mut entry) => {
-                entry.insert(CellDataMatch::Ambiguous);
+                entry.insert(SimplexDataMatch::Ambiguous);
             }
         }
     }
-    Ok(cell_data)
+    Ok(simplex_data)
 }
 
-/// Builds the order-independent cell identity used to match original and
-/// rebuilt cells across fallback reconstruction.
-fn cell_vertex_uuids<T, U, V, const D: usize>(
+/// Builds the order-independent simplex identity used to match original and
+/// rebuilt simplices across fallback reconstruction.
+fn simplex_vertex_uuids<T, U, V, const D: usize>(
     tds: &Tds<T, U, V, D>,
-    cell: &Cell<T, U, V, D>,
-) -> Result<CellVertexUuidBuffer, CellValidationError>
+    simplex: &Simplex<T, U, V, D>,
+) -> Result<SimplexVertexUuidBuffer, SimplexValidationError>
 where
     U: DataType,
     V: DataType,
 {
-    let mut vertex_uuids = cell
+    let mut vertex_uuids = simplex
         .vertex_uuid_iter(tds)
-        .collect::<Result<CellVertexUuidBuffer, CellValidationError>>()?;
+        .collect::<Result<SimplexVertexUuidBuffer, SimplexValidationError>>()?;
     vertex_uuids.sort_unstable();
     Ok(vertex_uuids)
 }
 
-/// Reattaches original cell payloads to rebuilt cells that retain the same
+/// Reattaches original simplex payloads to rebuilt simplices that retain the same
 /// vertex UUID set after fallback reconstruction.
-fn restore_cell_data<K, U, V, const D: usize>(
+fn restore_simplex_data<K, U, V, const D: usize>(
     rebuilt: &mut DelaunayTriangulation<K, U, V, D>,
-    original_cell_data: &CellDataByVertexUuids<V>,
-) -> Result<(), CellValidationError>
+    original_simplex_data: &SimplexDataByVertexUuids<V>,
+) -> Result<(), SimplexValidationError>
 where
     K: Kernel<D>,
     U: DataType,
     V: DataType,
 {
-    let mut assignments: Vec<(CellKey, V)> = Vec::new();
-    for (cell_key, cell) in rebuilt.cells() {
-        let vertex_uuids = cell_vertex_uuids(rebuilt.tds(), cell)?;
-        let Some(CellDataMatch::Unique(Some(data))) = original_cell_data.get(&vertex_uuids) else {
+    let mut assignments: Vec<(SimplexKey, V)> = Vec::new();
+    for (simplex_key, simplex) in rebuilt.simplices() {
+        let vertex_uuids = simplex_vertex_uuids(rebuilt.tds(), simplex)?;
+        let Some(SimplexDataMatch::Unique(Some(data))) = original_simplex_data.get(&vertex_uuids)
+        else {
             continue;
         };
-        assignments.push((cell_key, *data));
+        assignments.push((simplex_key, *data));
     }
 
-    for (cell_key, data) in assignments {
-        rebuilt.set_cell_data(cell_key, Some(data));
+    for (simplex_key, data) in assignments {
+        rebuilt.set_simplex_data(simplex_key, Some(data));
     }
 
     Ok(())
@@ -455,11 +456,11 @@ enum FallbackRebuildError {
         #[source]
         source: DelaunayTriangulationConstructionError,
     },
-    #[error("fallback cell-data restore failed: {source}")]
+    #[error("fallback simplex-data restore failed: {source}")]
     Restore {
         #[from]
         #[source]
-        source: CellValidationError,
+        source: SimplexValidationError,
     },
 }
 
@@ -508,11 +509,11 @@ fn delaunay_rebuild_error(
 }
 
 /// Rebuilds a triangulation from preserved vertices while restoring any
-/// cell payloads whose vertex UUID signatures survive the rebuild unchanged.
+/// simplex payloads whose vertex UUID signatures survive the rebuild unchanged.
 fn rebuild_preserving_data<K, U, V, const D: usize>(
     kernel: &K,
     vertices: &[Vertex<K::Scalar, U, D>],
-    original_cell_data: &CellDataByVertexUuids<V>,
+    original_simplex_data: &SimplexDataByVertexUuids<V>,
 ) -> Result<DelaunayTriangulation<K, U, V, D>, FallbackRebuildError>
 where
     K: ExactPredicates<D>,
@@ -520,7 +521,7 @@ where
     V: DataType,
 {
     let mut rebuilt = DelaunayTriangulation::with_kernel(kernel, vertices)?;
-    restore_cell_data(&mut rebuilt, original_cell_data)?;
+    restore_simplex_data(&mut rebuilt, original_simplex_data)?;
     Ok(rebuilt)
 }
 
@@ -616,22 +617,26 @@ where
     // Step 1: PL-manifold topology repair (facet over-sharing).
     let pl_config = PlManifoldRepairConfig {
         max_iterations: config.topology_max_iterations,
-        max_cells_removed: config.topology_max_cells_removed,
+        max_simplices_removed: config.topology_max_simplices_removed,
     };
+    let fallback_snapshot = if config.fallback_rebuild {
+        let tds = &dt.as_triangulation().tds;
+        Some(
+            snapshot_rebuild_state(tds)
+                .map_err(|source| DelaunayizeError::FallbackSimplexDataSnapshotFailed { source })?,
+        )
+    } else {
+        None
+    };
+
     let topology_stats = match repair_facet_oversharing(dt.tds_mut_for_repair(), &pl_config) {
         Ok(stats) => stats,
         // Topology repair failed but fallback is enabled — try rebuilding.
         Err(topo_err) if config.fallback_rebuild => {
-            let tds = &dt.as_triangulation().tds;
-            let (vertices, cell_data) = match snapshot_rebuild_state(tds) {
-                Ok(state) => state,
-                Err(snapshot_error) => {
-                    return Err(DelaunayizeError::FallbackCellDataSnapshotFailed {
-                        source: snapshot_error,
-                    });
-                }
+            let Some((vertices, simplex_data)) = fallback_snapshot else {
+                return Err(topo_err.into());
             };
-            match rebuild_preserving_data(&dt.as_triangulation().kernel, &vertices, &cell_data) {
+            match rebuild_preserving_data(&dt.as_triangulation().kernel, &vertices, &simplex_data) {
                 Ok(rebuilt) => {
                     *dt = rebuilt;
                     return Ok(DelaunayizeOutcome {
@@ -668,18 +673,23 @@ where
             if config.fallback_rebuild {
                 // Step 3 (optional): rebuild from vertex set.
                 let tds = &dt.as_triangulation().tds;
-                let (vertices, cell_data) = match snapshot_rebuild_state(tds) {
+                let (vertices, simplex_data) = match snapshot_rebuild_state(tds) {
                     Ok(state) => state,
                     Err(snapshot_error) => {
-                        return Err(DelaunayizeError::DelaunayRepairFailedWithCellDataSnapshot {
-                            source: repair_err,
-                            snapshot_error,
-                        });
+                        return Err(
+                            DelaunayizeError::DelaunayRepairFailedWithSimplexDataSnapshot {
+                                source: repair_err,
+                                snapshot_error,
+                            },
+                        );
                     }
                 };
 
-                match rebuild_preserving_data(&dt.as_triangulation().kernel, &vertices, &cell_data)
-                {
+                match rebuild_preserving_data(
+                    &dt.as_triangulation().kernel,
+                    &vertices,
+                    &simplex_data,
+                ) {
                     Ok(rebuilt) => {
                         *dt = rebuilt;
                         // The rebuild succeeded — return stats reflecting the fallback.
@@ -724,8 +734,8 @@ mod tests {
 
     fn construction_error() -> DelaunayTriangulationConstructionError {
         DelaunayTriangulationConstructionError::from(
-            TriangulationConstructionError::FailedToCreateCell {
-                message: "synthetic rebuild degeneracy".to_string(),
+            TriangulationConstructionError::FailedToCreateSimplex {
+                message: "synthetic simplex creation failure".to_string(),
             },
         )
     }
@@ -742,7 +752,7 @@ mod tests {
         Vertex::from_points(&points)
     }
 
-    /// Forces topology repair to fail on duplicate cells, then checks fallback rebuild.
+    /// Forces topology repair to fail on duplicate simplices, then checks fallback rebuild.
     fn assert_topology_repair_fallback_rebuilds_duplicate_simplex<const D: usize>()
     where
         AdaptiveKernel<f64>: ExactPredicates<D>,
@@ -752,25 +762,25 @@ mod tests {
         let mut dt: DelaunayTriangulation<_, (), (), D> =
             DelaunayTriangulation::new(&vertices).unwrap();
 
-        let (_, existing_cell) = dt.cells().next().unwrap();
-        let duplicate_vertices = existing_cell.vertices().to_vec();
+        let (_, existing_simplex) = dt.simplices().next().unwrap();
+        let duplicate_vertices = existing_simplex.vertices().to_vec();
         dt.tri
             .tds
-            .insert_cell_bypassing_topology_checks_for_test(
-                Cell::new(duplicate_vertices.clone(), None).unwrap(),
+            .insert_simplex_bypassing_topology_checks_for_test(
+                Simplex::new(duplicate_vertices.clone(), None).unwrap(),
             )
             .unwrap();
         dt.tri
             .tds
-            .insert_cell_bypassing_topology_checks_for_test(
-                Cell::new(duplicate_vertices, None).unwrap(),
+            .insert_simplex_bypassing_topology_checks_for_test(
+                Simplex::new(duplicate_vertices, None).unwrap(),
             )
             .unwrap();
 
         let outcome = delaunayize_by_flips(
             &mut dt,
             DelaunayizeConfig {
-                topology_max_cells_removed: 0,
+                topology_max_simplices_removed: 0,
                 fallback_rebuild: true,
                 ..DelaunayizeConfig::default()
             },
@@ -814,7 +824,7 @@ mod tests {
         init_tracing();
         let config = DelaunayizeConfig::default();
         assert_eq!(config.topology_max_iterations, 64);
-        assert_eq!(config.topology_max_cells_removed, 10_000);
+        assert_eq!(config.topology_max_simplices_removed, 10_000);
         assert!(!config.fallback_rebuild);
         assert!(config.delaunay_max_flips.is_none());
     }
@@ -877,7 +887,7 @@ mod tests {
 
         let outcome = delaunayize_by_flips(&mut dt, DelaunayizeConfig::default()).unwrap();
         assert!(outcome.topology_repair.succeeded);
-        assert_eq!(outcome.topology_repair.cells_removed, 0);
+        assert_eq!(outcome.topology_repair.simplices_removed, 0);
         assert!(!outcome.used_fallback_rebuild);
     }
 
@@ -886,7 +896,7 @@ mod tests {
     // =============================================================================
 
     #[test]
-    fn test_cell_vertex_uuids_missing_vertex() {
+    fn test_simplex_vertex_uuids_missing_vertex() {
         let mut tds: Tds<f64, (), i32, 2> = Tds::empty();
         let vertex_keys: Vec<_> = [
             vertex!([0.0, 0.0]),
@@ -897,32 +907,35 @@ mod tests {
         .map(|vertex| tds.insert_vertex_with_mapping(*vertex).unwrap())
         .collect();
         let missing = vertex_keys[0];
-        let cell = Cell::new(vertex_keys, Some(7)).unwrap();
+        let simplex = Simplex::new(vertex_keys, Some(7)).unwrap();
         tds.remove_isolated_vertex(missing);
 
-        let err = cell_vertex_uuids(&tds, &cell).unwrap_err();
+        let err = simplex_vertex_uuids(&tds, &simplex).unwrap_err();
 
-        assert_eq!(err, CellValidationError::VertexKeyNotFound { key: missing });
+        assert_eq!(
+            err,
+            SimplexValidationError::VertexKeyNotFound { key: missing }
+        );
     }
 
     #[test]
     fn test_snapshot_error_source() {
-        let source = CellValidationError::VertexKeyNotFound {
+        let source = SimplexValidationError::VertexKeyNotFound {
             key: VertexKey::from(KeyData::from_ffi(0xBAD)),
         };
-        let err = DelaunayizeError::FallbackCellDataSnapshotFailed {
+        let err = DelaunayizeError::FallbackSimplexDataSnapshotFailed {
             source: source.clone(),
         };
 
         assert_eq!(
             err,
-            DelaunayizeError::FallbackCellDataSnapshotFailed {
+            DelaunayizeError::FallbackSimplexDataSnapshotFailed {
                 source: source.clone()
             }
         );
         assert!(
             err.to_string()
-                .contains("Fallback cell-data snapshot failed")
+                .contains("Fallback simplex-data snapshot failed")
         );
         assert!(err.to_string().contains("no repair attempted"));
         let error_source = StdError::source(&err).unwrap();
@@ -934,24 +947,24 @@ mod tests {
         let source = DelaunayRepairError::PostconditionFailed {
             message: "synthetic postcondition".to_string(),
         };
-        let snapshot_error = CellValidationError::VertexKeyNotFound {
+        let snapshot_error = SimplexValidationError::VertexKeyNotFound {
             key: VertexKey::from(KeyData::from_ffi(0xBAD)),
         };
-        let err = DelaunayizeError::DelaunayRepairFailedWithCellDataSnapshot {
+        let err = DelaunayizeError::DelaunayRepairFailedWithSimplexDataSnapshot {
             source: source.clone(),
             snapshot_error: snapshot_error.clone(),
         };
 
         assert_eq!(
             err,
-            DelaunayizeError::DelaunayRepairFailedWithCellDataSnapshot {
+            DelaunayizeError::DelaunayRepairFailedWithSimplexDataSnapshot {
                 source: source.clone(),
                 snapshot_error,
             }
         );
         assert!(
             err.to_string()
-                .contains("fallback cell-data snapshot failed")
+                .contains("fallback simplex-data snapshot failed")
         );
         let error_source = StdError::source(&err).unwrap();
         assert_eq!(error_source.to_string(), source.to_string());
@@ -962,12 +975,12 @@ mod tests {
         let topology_source = PlManifoldRepairError::NoProgress {
             over_shared_facets: 2,
             iterations: 3,
-            cells_removed: 4,
+            simplices_removed: 4,
         };
         let delaunay_source = DelaunayRepairError::PostconditionFailed {
             message: "synthetic postcondition".to_string(),
         };
-        let restore_error = CellValidationError::VertexKeyNotFound {
+        let restore_error = SimplexValidationError::VertexKeyNotFound {
             key: VertexKey::from(KeyData::from_ffi(0xBAD)),
         };
 
@@ -983,7 +996,7 @@ mod tests {
         assert!(
             topology_err
                 .to_string()
-                .contains("cell-data restore failed")
+                .contains("simplex-data restore failed")
         );
         assert_eq!(
             StdError::source(&topology_err).unwrap().to_string(),
@@ -992,7 +1005,7 @@ mod tests {
         assert!(
             delaunay_err
                 .to_string()
-                .contains("cell-data restore failed")
+                .contains("simplex-data restore failed")
         );
         assert_eq!(
             StdError::source(&delaunay_err).unwrap().to_string(),
@@ -1005,10 +1018,10 @@ mod tests {
         let source = PlManifoldRepairError::NoProgress {
             over_shared_facets: 2,
             iterations: 3,
-            cells_removed: 4,
+            simplices_removed: 4,
         };
         let rebuild_error = construction_error();
-        let restore_error = CellValidationError::VertexKeyNotFound {
+        let restore_error = SimplexValidationError::VertexKeyNotFound {
             key: VertexKey::from(KeyData::from_ffi(0xBAD)),
         };
 
@@ -1047,7 +1060,7 @@ mod tests {
         assert!(
             restore_err
                 .to_string()
-                .contains("fallback rebuild succeeded but cell-data restore failed")
+                .contains("fallback rebuild succeeded but simplex-data restore failed")
         );
     }
 
@@ -1057,7 +1070,7 @@ mod tests {
             message: "synthetic postcondition".to_string(),
         };
         let rebuild_error = construction_error();
-        let restore_error = CellValidationError::VertexKeyNotFound {
+        let restore_error = SimplexValidationError::VertexKeyNotFound {
             key: VertexKey::from(KeyData::from_ffi(0xBAD)),
         };
 
@@ -1096,7 +1109,7 @@ mod tests {
         assert!(
             restore_err
                 .to_string()
-                .contains("fallback rebuild succeeded but cell-data restore failed")
+                .contains("fallback rebuild succeeded but simplex-data restore failed")
         );
     }
 
@@ -1149,7 +1162,7 @@ mod tests {
         .unwrap();
 
         assert!(outcome.topology_repair.succeeded);
-        assert_eq!(outcome.topology_repair.cells_removed, 0);
+        assert_eq!(outcome.topology_repair.simplices_removed, 0);
         assert_eq!(outcome.delaunay_repair.facets_checked, 0);
         assert_eq!(outcome.delaunay_repair.flips_performed, 0);
         assert_eq!(outcome.delaunay_repair.max_queue_len, 0);
@@ -1207,7 +1220,7 @@ mod tests {
     gen_topology_repair_fallback_tests!(3, 4, 5);
 
     #[test]
-    fn test_rebuild_restores_cell_data() {
+    fn test_rebuild_restores_simplex_data() {
         init_tracing();
         let vertices = [
             vertex!([0.0, 0.0]),
@@ -1217,21 +1230,22 @@ mod tests {
         let mut dt = DelaunayTriangulationBuilder::new(&vertices)
             .build::<i32>()
             .unwrap();
-        let original_cell_key = dt.cells().next().unwrap().0;
-        dt.set_cell_data(original_cell_key, Some(42));
+        let original_simplex_key = dt.simplices().next().unwrap().0;
+        dt.set_simplex_data(original_simplex_key, Some(42));
 
         let tds = &dt.as_triangulation().tds;
         let vertices: Vec<_> = tds
             .vertices()
             .map(|(_, v)| Vertex::new_with_uuid(*v.point(), v.uuid(), v.data))
             .collect();
-        let cell_data = collect_cell_data(tds).unwrap();
+        let simplex_data = collect_simplex_data(tds).unwrap();
 
         let rebuilt =
-            rebuild_preserving_data(&dt.as_triangulation().kernel, &vertices, &cell_data).unwrap();
+            rebuild_preserving_data(&dt.as_triangulation().kernel, &vertices, &simplex_data)
+                .unwrap();
 
-        let (_, rebuilt_cell) = rebuilt.cells().next().unwrap();
-        assert_eq!(rebuilt_cell.data(), Some(&42));
+        let (_, rebuilt_simplex) = rebuilt.simplices().next().unwrap();
+        assert_eq!(rebuilt_simplex.data(), Some(&42));
         assert!(rebuilt.validate().is_ok());
     }
 
@@ -1249,26 +1263,26 @@ mod tests {
             .map(|vertex| tds.insert_vertex_with_mapping(*vertex).unwrap())
             .collect();
 
-        let duplicate_a = Cell::new(vertex_keys.clone(), Some(42)).unwrap();
-        let duplicate_b = Cell::new(vertex_keys, Some(42)).unwrap();
-        tds.insert_cell_bypassing_topology_checks_for_test(duplicate_a)
+        let duplicate_a = Simplex::new(vertex_keys.clone(), Some(42)).unwrap();
+        let duplicate_b = Simplex::new(vertex_keys, Some(42)).unwrap();
+        tds.insert_simplex_bypassing_topology_checks_for_test(duplicate_a)
             .unwrap();
-        tds.insert_cell_bypassing_topology_checks_for_test(duplicate_b)
+        tds.insert_simplex_bypassing_topology_checks_for_test(duplicate_b)
             .unwrap();
 
         let rebuild_vertices: Vec<_> = tds
             .vertices()
             .map(|(_, v)| Vertex::new_with_uuid(*v.point(), v.uuid(), v.data))
             .collect();
-        let cell_data = collect_cell_data(&tds).unwrap();
+        let simplex_data = collect_simplex_data(&tds).unwrap();
         let kernel = AdaptiveKernel::new();
         let mut rebuilt: DelaunayTriangulation<_, (), i32, 2> =
             DelaunayTriangulation::with_kernel(&kernel, &rebuild_vertices).unwrap();
 
-        restore_cell_data(&mut rebuilt, &cell_data).unwrap();
+        restore_simplex_data(&mut rebuilt, &simplex_data).unwrap();
 
-        let (_, rebuilt_cell) = rebuilt.cells().next().unwrap();
-        assert_eq!(rebuilt_cell.data(), None);
+        let (_, rebuilt_simplex) = rebuilt.simplices().next().unwrap();
+        assert_eq!(rebuilt_simplex.data(), None);
         assert!(rebuilt.validate().is_ok());
     }
 
@@ -1298,8 +1312,8 @@ mod tests {
         let outcome2 = delaunayize_by_flips(&mut dt2, config).unwrap();
 
         assert_eq!(
-            outcome1.topology_repair.cells_removed,
-            outcome2.topology_repair.cells_removed
+            outcome1.topology_repair.simplices_removed,
+            outcome2.topology_repair.simplices_removed
         );
         assert_eq!(
             outcome1.used_fallback_rebuild,

@@ -9,7 +9,8 @@ use allocation_counter::AllocationInfo;
 use delaunay::prelude::algorithms::{LocateError, LocateResult, locate_with_stats};
 use delaunay::prelude::geometry::{Coordinate, FastKernel, Point};
 use delaunay::prelude::tds::{
-    CellKey, TdsError, VertexKey, facet_key_from_vertices, measure_with_result,
+    SimplexKey, SimplexValidationError, TdsError, VertexKey, facet_key_from_vertices,
+    measure_with_result,
 };
 use delaunay::prelude::triangulation::construction::{
     DelaunayTriangulation, DelaunayTriangulationConstructionError, vertex,
@@ -19,7 +20,7 @@ use thiserror::Error;
 
 const SIMPLEX_5D_DIMENSION: usize = 5;
 const SIMPLEX_VERTEX_COUNT: usize = SIMPLEX_5D_DIMENSION + 1;
-const SIMPLEX_CELL_COUNT: usize = 1;
+const SIMPLEX_SIMPLEX_COUNT: usize = 1;
 const LOCATE_FAST_PATH_ALLOCATION_BUDGET: u64 = 1;
 
 type TestTriangulation2D = DelaunayTriangulation<FastKernel<f64>, (), (), 2>;
@@ -40,17 +41,23 @@ enum AllocationTestError {
         source: TdsError,
     },
 
+    #[error("simplex validation failed: {source}")]
+    Simplex {
+        #[from]
+        source: SimplexValidationError,
+    },
+
     #[error("point location failed: {source}")]
     Locate {
         #[from]
         source: LocateError,
     },
 
-    #[error("deterministic simplex fixture did not contain a cell")]
-    MissingCell,
+    #[error("deterministic simplex fixture did not contain a simplex")]
+    MissingSimplex,
 
-    #[error("fixture cell has {actual} vertices, expected at least {required}")]
-    CellTooSmall { required: usize, actual: usize },
+    #[error("fixture simplex has {actual} vertices, expected at least {required}")]
+    SimplexTooSmall { required: usize, actual: usize },
 }
 
 /// Build a minimal 2D simplex for the hinted locate fast-path allocation check.
@@ -84,26 +91,26 @@ fn deterministic_5d_simplex() -> Result<TestTriangulation5D, AllocationTestError
     )?)
 }
 
-/// Return the only cell in the deterministic 5D simplex fixture.
-fn only_5d_cell_key(dt: &TestTriangulation5D) -> Result<CellKey, AllocationTestError> {
+/// Return the only simplex in the deterministic 5D simplex fixture.
+fn only_5d_simplex_key(dt: &TestTriangulation5D) -> Result<SimplexKey, AllocationTestError> {
     dt.tds()
-        .cell_keys()
+        .simplex_keys()
         .next()
-        .ok_or(AllocationTestError::MissingCell)
+        .ok_or(AllocationTestError::MissingSimplex)
 }
 
 /// Extract one facet from the 5D simplex without allocating a temporary buffer.
 fn first_facet_vertices(
     dt: &TestTriangulation5D,
 ) -> Result<[VertexKey; SIMPLEX_5D_DIMENSION], AllocationTestError> {
-    let cell_key = only_5d_cell_key(dt)?;
-    let cell = dt
+    let simplex_key = only_5d_simplex_key(dt)?;
+    let simplex = dt
         .tds()
-        .cell(cell_key)
-        .ok_or(AllocationTestError::MissingCell)?;
-    let vertices = cell.vertices();
+        .simplex(simplex_key)
+        .ok_or(AllocationTestError::MissingSimplex)?;
+    let vertices = simplex.vertices();
     if vertices.len() < SIMPLEX_5D_DIMENSION {
-        return Err(AllocationTestError::CellTooSmall {
+        return Err(AllocationTestError::SimplexTooSmall {
             required: SIMPLEX_5D_DIMENSION,
             actual: vertices.len(),
         });
@@ -158,13 +165,13 @@ fn tds_and_public_iterators_are_zero_allocation() -> Result<(), AllocationTestEr
 
     let (counts, info) = measure_with_result(|| {
         black_box((
-            tds.cells().count(),
+            tds.simplices().count(),
             tds.vertices().count(),
-            tds.cell_keys().count(),
+            tds.simplex_keys().count(),
             tds.vertex_keys().count(),
-            tri.cells().count(),
+            tri.simplices().count(),
             tri.vertices().count(),
-            dt.cells().count(),
+            dt.simplices().count(),
             dt.vertices().count(),
         ))
     });
@@ -172,29 +179,67 @@ fn tds_and_public_iterators_are_zero_allocation() -> Result<(), AllocationTestEr
     assert_eq!(
         counts,
         (
-            SIMPLEX_CELL_COUNT,
+            SIMPLEX_SIMPLEX_COUNT,
             SIMPLEX_VERTEX_COUNT,
-            SIMPLEX_CELL_COUNT,
+            SIMPLEX_SIMPLEX_COUNT,
             SIMPLEX_VERTEX_COUNT,
-            SIMPLEX_CELL_COUNT,
+            SIMPLEX_SIMPLEX_COUNT,
             SIMPLEX_VERTEX_COUNT,
-            SIMPLEX_CELL_COUNT,
+            SIMPLEX_SIMPLEX_COUNT,
             SIMPLEX_VERTEX_COUNT,
         )
     );
-    assert_zero_allocations(&info, "TDS and public cells()/vertices() iterators");
+    assert_zero_allocations(&info, "TDS and public simplices()/vertices() iterators");
     Ok(())
 }
 
 #[test]
-fn tds_cell_vertices_is_zero_allocation() -> Result<(), AllocationTestError> {
+fn tds_simplex_vertices_is_zero_allocation() -> Result<(), AllocationTestError> {
     let dt = deterministic_5d_simplex()?;
-    let cell_key = only_5d_cell_key(&dt)?;
+    let simplex_key = only_5d_simplex_key(&dt)?;
 
-    let (vertex_count, info) =
-        measure_with_result(|| dt.tds().cell_vertices(cell_key).map(|keys| keys.len()));
+    let (vertex_count, info) = measure_with_result(|| {
+        dt.tds()
+            .simplex_vertices(simplex_key)
+            .map(|keys| keys.len())
+    });
     assert_eq!(vertex_count?, SIMPLEX_VERTEX_COUNT);
-    assert_zero_allocations(&info, "Tds::cell_vertices");
+    assert_zero_allocations(&info, "Tds::simplex_vertices");
+    Ok(())
+}
+
+#[test]
+fn simplex_vertex_uuid_iter_is_zero_allocation() -> Result<(), AllocationTestError> {
+    let dt = deterministic_5d_simplex()?;
+    let tds = dt.tds();
+    let simplex_key = only_5d_simplex_key(&dt)?;
+    let simplex = tds
+        .simplex(simplex_key)
+        .ok_or(AllocationTestError::MissingSimplex)?;
+    let expected_uuids = simplex.vertex_uuids(tds)?;
+
+    let (result, info) = measure_with_result(|| {
+        let iter = simplex.vertex_uuid_iter(tds);
+        let exact_size_len = iter.len();
+        let mut matched = 0usize;
+
+        for (index, uuid) in iter.enumerate() {
+            let uuid = uuid?;
+            if expected_uuids
+                .get(index)
+                .is_some_and(|expected| *expected == uuid)
+            {
+                matched += 1;
+            }
+        }
+
+        Ok::<_, SimplexValidationError>((exact_size_len, matched))
+    });
+    let (exact_size_len, matched) = result?;
+
+    assert_eq!(exact_size_len, SIMPLEX_VERTEX_COUNT);
+    assert_eq!(matched, expected_uuids.len());
+    assert_zero_allocations(&info, "Simplex::vertex_uuid_iter");
     Ok(())
 }
 
@@ -212,19 +257,19 @@ fn facet_key_from_vertices_is_zero_allocation() -> Result<(), AllocationTestErro
 #[test]
 fn locate_with_hint_fast_path_stays_allocation_bounded() -> Result<(), AllocationTestError> {
     let dt = deterministic_2d_simplex()?;
-    let cell_key = dt
+    let simplex_key = dt
         .tds()
-        .cell_keys()
+        .simplex_keys()
         .next()
-        .ok_or(AllocationTestError::MissingCell)?;
+        .ok_or(AllocationTestError::MissingSimplex)?;
     let kernel = FastKernel::<f64>::new();
     let query = Point::new([0.25, 0.25]);
 
     let (locate_result, info) =
-        measure_with_result(|| locate_with_stats(dt.tds(), &kernel, &query, Some(cell_key)));
+        measure_with_result(|| locate_with_stats(dt.tds(), &kernel, &query, Some(simplex_key)));
     let (location, stats) = locate_result?;
 
-    assert!(matches!(location, LocateResult::InsideCell(found) if found == cell_key));
+    assert!(matches!(location, LocateResult::InsideSimplex(found) if found == simplex_key));
     assert!(stats.used_hint);
     assert!(!stats.fell_back_to_scan());
     assert_allocation_budget(

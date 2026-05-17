@@ -55,10 +55,10 @@ pub fn fast_hash_map_with_capacity<K, V>(capacity: usize) -> FastHashMap<K, V> {
 /// **Phase 1**: Internal operations (key-based for better performance):
 /// ```rust
 /// use delaunay::prelude::collections::fast_hash_set_with_capacity;
-/// use delaunay::prelude::tds::CellKey;
+/// use delaunay::prelude::tds::SimplexKey;
 ///
-/// let set = fast_hash_set_with_capacity::<CellKey>(500);
-/// // Can insert up to ~375 CellKeys without rehashing, avoids UUID→Key lookups
+/// let set = fast_hash_set_with_capacity::<SimplexKey>(500);
+/// // Can insert up to ~375 SimplexKeys without rehashing, avoids UUID→Key lookups
 /// ```
 #[inline]
 #[must_use]
@@ -95,7 +95,7 @@ pub fn small_buffer_with_capacity_8<T>(capacity: usize) -> SmallBuffer<T, 8> {
 /// Creates a small buffer optimized for 2 elements (common facet sharing pattern)
 ///
 /// # Use Case
-/// Facet-to-cell relationships typically involve exactly 2 cells sharing a facet.
+/// Facet-to-simplex relationships typically involve exactly 2 simplices sharing a facet.
 ///
 /// # Examples
 ///
@@ -115,7 +115,7 @@ pub fn small_buffer_with_capacity_2<T>(capacity: usize) -> SmallBuffer<T, 2> {
 /// Creates a small buffer optimized for 16 elements (larger batch operations)
 ///
 /// # Use Case
-/// Suitable for batch vertex/cell collections in higher-dimensional operations.
+/// Suitable for batch vertex/simplex collections in higher-dimensional operations.
 ///
 /// # Examples
 ///

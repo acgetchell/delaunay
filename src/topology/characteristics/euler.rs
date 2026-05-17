@@ -26,7 +26,7 @@
 
 use crate::core::{
     collections::{
-        FacetToCellsMap, FastHashMap, FastHashSet, MAX_PRACTICAL_DIMENSION_SIZE, SmallBuffer,
+        FacetToSimplicesMap, FastHashMap, FastHashSet, MAX_PRACTICAL_DIMENSION_SIZE, SmallBuffer,
         VertexKeyBuffer, fast_hash_map_with_capacity, fast_hash_set_with_capacity,
     },
     edge::EdgeKey,
@@ -42,8 +42,8 @@ use crate::topology::traits::topological_space::TopologyError;
 /// - `f₀` = vertices (`0`-simplices)
 /// - `f₁` = edges (`1`-simplices)
 /// - `f₂` = triangular faces (`2`-simplices)
-/// - `f₃` = tetrahedral cells (`3`-simplices)
-/// - `f_D` = `D`-dimensional cells
+/// - `f₃` = tetrahedral simplices (`3`-simplices)
+/// - `f_D` = `D`-dimensional simplices
 ///
 /// In the topology literature this is commonly called the **f-vector**.
 ///
@@ -85,7 +85,7 @@ impl FVector {
     /// assert_eq!(counts.count(0), 4);  // 4 vertices
     /// assert_eq!(counts.count(1), 6);  // 6 edges
     /// assert_eq!(counts.count(2), 4);  // 4 faces
-    /// assert_eq!(counts.count(3), 1);  // 1 cell
+    /// assert_eq!(counts.count(3), 1);  // 1 simplex
     /// assert_eq!(counts.count(4), 0);  // out of range
     /// ```
     #[must_use]
@@ -124,7 +124,7 @@ impl FVector {
 ///
 /// # Variants
 ///
-/// - `Empty`: No cells (χ = 0)
+/// - `Empty`: No simplices (χ = 0)
 /// - `SingleSimplex(D)`: One D-simplex (χ = 1)
 /// - `Ball(D)`: D-ball with boundary (χ = 1)
 /// - `ClosedSphere(D)`: Closed D-sphere without boundary (χ = 1 + (-1)^D)
@@ -140,10 +140,10 @@ impl FVector {
 /// ```
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TopologyClassification {
-    /// Empty triangulation (no cells).
+    /// Empty triangulation (no simplices).
     Empty,
 
-    /// Single D-simplex (first cell).
+    /// Single D-simplex (first simplex).
     ///
     /// The value represents the dimension D.
     SingleSimplex(usize),
@@ -180,9 +180,9 @@ pub enum TopologyClassification {
 /// # Algorithm
 ///
 /// - `f₀` (vertices): Direct count from Tds - O(1)
-/// - `f_D` (cells): Direct count from Tds - O(1)
-/// - `f_{D-1}` (facets): Use `build_facet_to_cells_map()` - O(N·D²)
-/// - Intermediate `k`: Enumerate combinations from cells - O(N · C(D+1, k+1))
+/// - `f_D` (simplices): Direct count from Tds - O(1)
+/// - `f_{D-1}` (facets): Use `build_facet_to_simplices_map()` - O(N·D²)
+/// - Intermediate `k`: Enumerate combinations from simplices - O(N · C(D+1, k+1))
 ///
 /// For practical dimensions (D ≤ 5), this is efficient.
 ///
@@ -214,33 +214,33 @@ pub fn count_simplices<T, U, V, const D: usize>(
     // Handle empty triangulation without building any facet map.
     let mut by_dim = vec![0usize; D + 1];
     by_dim[0] = tds.number_of_vertices();
-    by_dim[D] = tds.number_of_cells();
+    by_dim[D] = tds.number_of_simplices();
     if by_dim[D] == 0 {
         return Ok(FVector { by_dim });
     }
 
     // Build the facet map once, then compute counts from it.
-    let facet_to_cells = tds
-        .build_facet_to_cells_map()
+    let facet_to_simplices = tds
+        .build_facet_to_simplices_map()
         .map_err(|source| TopologyError::FacetMapBuild { source })?;
 
-    Ok(count_simplices_with_facet_to_cells_map(
+    Ok(count_simplices_with_facet_to_simplices_map(
         tds,
-        &facet_to_cells,
+        &facet_to_simplices,
     ))
 }
 
-pub(crate) fn count_simplices_with_facet_to_cells_map<T, U, V, const D: usize>(
+pub(crate) fn count_simplices_with_facet_to_simplices_map<T, U, V, const D: usize>(
     tds: &Tds<T, U, V, D>,
-    facet_to_cells: &FacetToCellsMap,
+    facet_to_simplices: &FacetToSimplicesMap,
 ) -> FVector {
     let mut by_dim = vec![0usize; D + 1];
 
     // f₀: vertices (O(1))
     by_dim[0] = tds.number_of_vertices();
 
-    // f_D: D-cells (O(1))
-    by_dim[D] = tds.number_of_cells();
+    // f_D: D-simplices (O(1))
+    by_dim[D] = tds.number_of_simplices();
 
     // Handle empty triangulation
     if by_dim[D] == 0 {
@@ -248,26 +248,26 @@ pub(crate) fn count_simplices_with_facet_to_cells_map<T, U, V, const D: usize>(
     }
 
     // f_{D-1}: (D-1)-facets from precomputed map
-    by_dim[D - 1] = facet_to_cells.len();
+    by_dim[D - 1] = facet_to_simplices.len();
 
     // Intermediate dimensions (1 ≤ k ≤ D-2): enumerate combinations.
     //
-    // We keep a set per k and fill them in a single pass over cells, which is faster than
-    // re-iterating all cells once per k.
+    // We keep a set per k and fill them in a single pass over simplices, which is faster than
+    // re-iterating all simplices once per k.
     // Skip if D <= 2 (no intermediate dimensions)
     if D > 2 {
         let mut intermediate_simplex_sets: Vec<
             FastHashSet<SmallBuffer<VertexKey, MAX_PRACTICAL_DIMENSION_SIZE>>,
         > = (0..(D - 2)).map(|_| FastHashSet::default()).collect();
 
-        // Pre-sort each cell's vertex keys once so every generated combination is already
+        // Pre-sort each simplex's vertex keys once so every generated combination is already
         // in canonical (sorted) order, avoiding per-combination sorting.
         let mut sorted_vertex_keys: SmallBuffer<VertexKey, MAX_PRACTICAL_DIMENSION_SIZE> =
             SmallBuffer::new();
 
-        for (_cell_key, cell) in tds.cells() {
+        for (_simplex_key, simplex) in tds.simplices() {
             sorted_vertex_keys.clear();
-            sorted_vertex_keys.extend(cell.vertices().iter().copied());
+            sorted_vertex_keys.extend(simplex.vertices().iter().copied());
             sorted_vertex_keys.sort();
 
             for simplex_dimension in 1..=D - 2 {
@@ -352,7 +352,7 @@ fn insert_simplices_of_size(
 ///
 /// 1. Extract all boundary facets using `boundary_facets()`
 /// 2. Collect unique vertices that appear on the boundary
-/// 3. Count (D-1)-cells (the boundary facets themselves)
+/// 3. Count (D-1)-simplices (the boundary facets themselves)
 /// 4. For intermediate dimensions k < D-1, enumerate k-simplices
 ///    from the boundary facets' vertex combinations
 ///
@@ -388,7 +388,7 @@ fn insert_simplices_of_size(
 /// # Errors
 ///
 /// Returns [`TopologyError::BoundaryFacetEnumeration`] or
-/// [`TopologyError::BoundaryFacetCellAccess`] if boundary enumeration fails.
+/// [`TopologyError::BoundaryFacetSimplexAccess`] if boundary enumeration fails.
 pub fn count_boundary_simplices<T, U, V, const D: usize>(
     tds: &Tds<T, U, V, D>,
 ) -> Result<FVector, TopologyError> {
@@ -406,13 +406,13 @@ pub fn count_boundary_simplices<T, U, V, const D: usize>(
     // Collect unique vertices on the boundary
     let mut boundary_vertices = FastHashSet::default();
     for facet in &boundary_facets {
-        let cell = facet
-            .cell()
-            .map_err(|source| TopologyError::BoundaryFacetCellAccess { source })?;
+        let simplex = facet
+            .simplex()
+            .map_err(|source| TopologyError::BoundaryFacetSimplexAccess { source })?;
         let facet_index = usize::from(facet.facet_index());
 
         // Add all vertex keys except the opposite vertex
-        for (i, &v_key) in cell.vertices().iter().enumerate() {
+        for (i, &v_key) in simplex.vertices().iter().enumerate() {
             if i != facet_index {
                 boundary_vertices.insert(v_key);
             }
@@ -423,7 +423,7 @@ pub fn count_boundary_simplices<T, U, V, const D: usize>(
     let num_boundary_facets = boundary_facets.len(); // These are (D-1)-simplices
 
     // Initialize counts for (D-1)-dimensional complex
-    // by_dim[0] = vertices, by_dim[1] = edges, ..., by_dim[D-1] = (D-1)-cells
+    // by_dim[0] = vertices, by_dim[1] = edges, ..., by_dim[D-1] = (D-1)-simplices
     let mut by_dim = vec![0; D];
     by_dim[0] = num_boundary_vertices;
     by_dim[D - 1] = num_boundary_facets;
@@ -440,9 +440,9 @@ pub fn count_boundary_simplices<T, U, V, const D: usize>(
         > = (0..(D - 2)).map(|_| FastHashSet::default()).collect();
 
         for facet in &boundary_facets {
-            let cell = facet
-                .cell()
-                .map_err(|source| TopologyError::BoundaryFacetCellAccess { source })?;
+            let simplex = facet
+                .simplex()
+                .map_err(|source| TopologyError::BoundaryFacetSimplexAccess { source })?;
             let facet_index = usize::from(facet.facet_index());
 
             // Collect vertex keys for this facet (excluding opposite vertex).
@@ -451,7 +451,7 @@ pub fn count_boundary_simplices<T, U, V, const D: usize>(
             // per-combination sorting.
             let mut facet_vertex_keys: SmallBuffer<VertexKey, MAX_PRACTICAL_DIMENSION_SIZE> =
                 SmallBuffer::new();
-            for (vertex_position, &v_key) in cell.vertices().iter().enumerate() {
+            for (vertex_position, &v_key) in simplex.vertices().iter().enumerate() {
                 if vertex_position != facet_index {
                     facet_vertex_keys.push(v_key);
                 }
@@ -633,13 +633,13 @@ pub(crate) fn triangulated_surface_boundary_component_count(
 
 /// Classify the triangulation topologically.
 ///
-/// Determines the topological type based on the number of cells
+/// Determines the topological type based on the number of simplices
 /// and boundary structure.
 ///
 /// # Classification Logic
 ///
-/// - No cells → `Empty`
-/// - One cell → `SingleSimplex(D)`
+/// - No simplices → `Empty`
+/// - One simplex → `SingleSimplex(D)`
 /// - Has boundary → `Ball(D)`
 /// - No boundary → `ClosedSphere(D)` (rare)
 ///
@@ -667,15 +667,15 @@ pub(crate) fn triangulated_surface_boundary_component_count(
 pub fn classify_triangulation<T, U, V, const D: usize>(
     tds: &Tds<T, U, V, D>,
 ) -> Result<TopologyClassification, TopologyError> {
-    let num_cells = tds.number_of_cells();
+    let num_simplices = tds.number_of_simplices();
 
     // Empty triangulation
-    if num_cells == 0 {
+    if num_simplices == 0 {
         return Ok(TopologyClassification::Empty);
     }
 
     // Single simplex
-    if num_cells == 1 {
+    if num_simplices == 1 {
         return Ok(TopologyClassification::SingleSimplex(D));
     }
 
@@ -736,7 +736,7 @@ pub fn expected_chi_for(classification: &TopologyClassification) -> Option<isize
 mod tests {
     use super::*;
 
-    use crate::core::cell::Cell;
+    use crate::core::simplex::Simplex;
     use crate::vertex;
     use slotmap::{KeyData, SlotMap};
 
@@ -986,16 +986,16 @@ mod tests {
         let v3 = tds.insert_vertex_with_mapping(vertex!([1.0, 1.0])).unwrap();
 
         let _ = tds
-            .insert_cell_with_mapping(Cell::new(vec![v0, v1, v2], None).unwrap())
+            .insert_simplex_with_mapping(Simplex::new(vec![v0, v1, v2], None).unwrap())
             .unwrap();
         let _ = tds
-            .insert_cell_with_mapping(Cell::new(vec![v0, v1, v3], None).unwrap())
+            .insert_simplex_with_mapping(Simplex::new(vec![v0, v1, v3], None).unwrap())
             .unwrap();
         let _ = tds
-            .insert_cell_with_mapping(Cell::new(vec![v0, v2, v3], None).unwrap())
+            .insert_simplex_with_mapping(Simplex::new(vec![v0, v2, v3], None).unwrap())
             .unwrap();
         let _ = tds
-            .insert_cell_with_mapping(Cell::new(vec![v1, v2, v3], None).unwrap())
+            .insert_simplex_with_mapping(Simplex::new(vec![v1, v2, v3], None).unwrap())
             .unwrap();
 
         tds

@@ -261,14 +261,14 @@ in practice; when in doubt, favour the invariant over the convenient edit.
   `src/topology/manifold.rs` and `src/topology/characteristics/`.
 - Repair paths (`repair_delaunay_with_flips`, `repair_facet_oversharing`,
   `delaunayize_by_flips`) bound their work via explicit budgets
-  (`max_flips`, `max_iterations`, `max_cells_removed`) and surface
+  (`max_flips`, `max_iterations`, `max_simplices_removed`) and surface
   non‑convergence as a typed error — never by logging and proceeding.
 
 ### Validation layering
 
 The library exposes four validation levels, each a superset of the last:
 
-1. **Level 1 — elements**: individual cells, vertices, facets are
+1. **Level 1 — elements**: individual simplices, vertices, facets are
    internally consistent (dimensions, UUIDs, coordinate finiteness).
 2. **Level 2 — structure**: adjacency pointers and neighbour links form a
    valid incidence graph; no dangling keys.
@@ -310,7 +310,7 @@ degenerate input, and tests under `tests/proptest_sos.rs` enforce that.
 ### Composability
 
 - Const‑generic `D` on every core type (`DelaunayTriangulation<K, U, V, D>`,
-  `Tds<T, U, V, D>`, `Cell<T, U, V, D>`, `Vertex<T, U, D>`, `Point<T, D>`).
+  `Tds<T, U, V, D>`, `Simplex<T, U, V, D>`, `Vertex<T, U, D>`, `Point<T, D>`).
   No runtime dimension.
 - Per‑simplex data is stack‑allocated (`[T; D]` coordinates,
   `SmallBuffer<VertexKey, MAX_PRACTICAL_DIMENSION_SIZE>`).  The
@@ -330,10 +330,10 @@ degenerate input, and tests under `tests/proptest_sos.rs` enforce that.
   for documented, debug‑only precondition violations; library code in
   `src/` must not panic on user input.
 - Borrow by default (`&T`, `&mut T`, `&[T]`); return borrowed views where
-  possible.  `FacetView`, `AdjacencyIndex`, and the `cells()`/`vertices()`
+  possible.  `FacetView`, `AdjacencyIndex`, and the `simplices()`/`vertices()`
   iterators are examples.
 - Type and function names match the textbook vocabulary: `Triangulation`,
-  `Vertex`, `Cell`, `Facet`, `Ridge`, `InSphere`, `Orientation`,
+  `Vertex`, `Simplex`, `Facet`, `Ridge`, `InSphere`, `Orientation`,
   `insphere`, `circumcenter`, `circumradius`.  Avoid Rust‑ecosystem
   abstractions that obscure the math.
 - Use `tracing::{debug,info,warn,error}!` for committed diagnostics
@@ -392,7 +392,7 @@ degenerate input, and tests under `tests/proptest_sos.rs` enforce that.
 - Unit tests cover known values, error paths, and dimension‑generic
   correctness.  Dimension‑generic tests **must cover D=2 through D=5**
   whenever feasible; use `pastey` macros to generate per‑dimension tests
-  (see `src/core/cell.rs`, `src/core/tds.rs` for patterns).
+  (see `src/core/simplex.rs`, `src/core/tds.rs` for patterns).
 - Proptests under `tests/proptest_*.rs` cover algebraic and
   topological invariants — round‑trips, Euler characteristic, orientation
   sign agreement, SoS consistency — not just "does it not panic".

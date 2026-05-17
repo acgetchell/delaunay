@@ -66,15 +66,15 @@ Property-based tests for Tds (Triangulation Data Structure) combinatorial/topolo
 **Test Coverage:**
 
 - **Vertex Mappings**: UUID↔key consistency for all vertices
-- **Cell Mappings**: UUID↔key consistency for all cells
-- **No Duplicate Cells**: No two cells share the same vertex set
-- **Cell Validity**: Each cell has correct vertex count and passes internal consistency checks
-- **Cell Vertex Count**: Maximal cells have exactly D+1 vertices (fundamental Tds constraint)
-- **Facet Sharing**: Each facet is shared by at most 2 cells
+- **Simplex Mappings**: UUID↔key consistency for all simplices
+- **No Duplicate Simplices**: No two simplices share the same vertex set
+- **Simplex Validity**: Each simplex has correct vertex count and passes internal consistency checks
+- **Simplex Vertex Count**: Maximal simplices have exactly D+1 vertices (fundamental Tds constraint)
+- **Facet Sharing**: Each facet is shared by at most 2 simplices
 - **Neighbor Consistency**: Neighbor relationships are mutual and reference shared facets
   - Neighbor symmetry (if A neighbors B, then B neighbors A)
   - Neighbor index semantics (correct facet-based indexing)
-- **Vertex-Cell Incidence**: All cell vertices exist in the TDS
+- **Vertex-Simplex Incidence**: All simplex vertices exist in the TDS
 - **Vertex Count Consistency**: Vertex key count matches reported vertex count
 - **Dimension Consistency**: Reported dimension matches actual structure
 
@@ -89,7 +89,7 @@ Property-based tests focused on coherent orientation invariants in the TDS layer
 **Test Coverage:**
 
 - **Construction coherence**: successfully-built triangulations are coherently oriented
-- **Tamper detection**: cell-order tampering is detected as `OrientationViolation`
+- **Tamper detection**: simplex-order tampering is detected as `OrientationViolation`
 - **Incremental coherence**: orientation remains coherent after each successful insertion
 
 **Dimensions Tested:** 2D-5D (4D/5D marked slow/ignored in test-integration profile)
@@ -135,7 +135,7 @@ Property-based tests for `DelaunayTriangulation` invariants (all Delaunay-specif
   - Incremental insertion maintains validity after each insertion
   - Duplicate coordinate rejection (geometric duplicate detection at insertion time)
 - **Delaunay Property (Fast O(N) via Flip Predicates)**:
-  - Empty circumsphere condition - No vertex lies strictly inside any cell's circumsphere (2D-3D active; 4D-5D slow variants retained under `--ignored`)
+  - Empty circumsphere condition - No vertex lies strictly inside any simplex's circumsphere (2D-3D active; 4D-5D slow variants retained under `--ignored`)
   - Insertion-order robustness - Levels 1–3 validity across insertion orders (2D-4D active; 5D retained under `--ignored`)
   - Duplicate cloud integration - Full pipeline with messy real-world inputs (2D-3D active; 4D-5D slow variants retained under `--ignored`)
 
@@ -163,18 +163,18 @@ slow tests under `slow-tests`. The notes below record the previous classificatio
 
 **Run with:** `cargo test --test proptest_delaunay_triangulation` or included in `just test`
 
-#### [`proptest_cell.rs`](./proptest_cell.rs)
+#### [`proptest_simplex.rs`](./proptest_simplex.rs)
 
-Property-based tests for Cell data structure verifying cell-level invariants and topological consistency.
+Property-based tests for Simplex data structure verifying simplex-level invariants and topological consistency.
 
 **Test Coverage:**
 
-- **Orientation Consistency**: Cell vertex ordering and orientation preservation
+- **Orientation Consistency**: Simplex vertex ordering and orientation preservation
 - **Neighbor Linkage**: Neighbor references validity and symmetry
 - **Facet Completeness**: All facets properly defined and accessible
 - **Vertex References**: All vertex keys are valid and consistent
 
-**Run with:** `cargo test --release --test proptest_cell`
+**Run with:** `cargo test --release --test proptest_simplex`
 
 #### [`proptest_convex_hull.rs`](./proptest_convex_hull.rs)
 
@@ -191,13 +191,13 @@ Property-based tests for convex hull computation verifying hull properties and i
 
 #### [`proptest_facet.rs`](./proptest_facet.rs)
 
-Property-based tests for Facet operations verifying facet adjacency and orientation across neighboring cells.
+Property-based tests for Facet operations verifying facet adjacency and orientation across neighboring simplices.
 
 **Test Coverage:**
 
-- **Mutual Neighbor References**: If cell A has neighbor B via facet F, then B has A as neighbor
+- **Mutual Neighbor References**: If simplex A has neighbor B via facet F, then B has A as neighbor
 - **Co-facet Consistency**: Shared facets reference same vertices (possibly different order)
-- **Orientation Alternation**: Adjacent cells have opposite facet orientations
+- **Orientation Alternation**: Adjacent simplices have opposite facet orientations
 - **Facet Key Validity**: All facet identifiers are valid and retrievable
 
 **Run with:** `cargo test --release --test proptest_facet`
@@ -240,9 +240,9 @@ Property-based tests for serialization and deserialization verifying data preser
 **Test Coverage:**
 
 - **Round-trip Equality**: Serialize → deserialize preserves structure and data
-- **Neighbor Graph Preservation**: Cell neighbor relationships survive round-trip
+- **Neighbor Graph Preservation**: Simplex neighbor relationships survive round-trip
 - **Vertex Data Integrity**: Vertex coordinates and associated data are preserved
-- **Cell Data Integrity**: Cell-associated data is preserved
+- **Simplex Data Integrity**: Simplex-associated data is preserved
 - **Cross-dimensional Serialization**: Works correctly for all supported dimensions
 
 **Run with:** `cargo test --release --test proptest_serialization`
@@ -332,10 +332,8 @@ Core integration coverage currently includes:
 - [`delaunayize_workflow.rs`](./delaunayize_workflow.rs)
 - [`triangulation_builder.rs`](./triangulation_builder.rs)
 - [`public_topology_api.rs`](./public_topology_api.rs)
-- [`tds_orientation.rs`](./tds_orientation.rs)
 - [`euler_characteristic.rs`](./euler_characteristic.rs)
 - [`insert_with_statistics.rs`](./insert_with_statistics.rs)
-- [`k3_cycle_predicate.rs`](./k3_cycle_predicate.rs)
 - [`regressions.rs`](./regressions.rs)
 
 #### [`serialization_vertex_preservation.rs`](./serialization_vertex_preservation.rs)
@@ -347,7 +345,7 @@ Integration tests for serialization ensuring vertex identifiers and associated d
 - **Vertex UUID Preservation**: Vertex identifiers remain stable across serialization
 - **Coordinate Preservation**: Exact coordinate values are preserved
 - **Vertex Data Preservation**: Associated vertex data survives round-trip
-- **Cell References**: Cell-to-vertex references remain valid after deserialization
+- **Simplex References**: Simplex-to-vertex references remain valid after deserialization
 
 **Run with:** `cargo test --release --test serialization_vertex_preservation`
 
@@ -392,16 +390,6 @@ progress. For the `new`/batch path, set
 `DELAUNAY_BULK_PROGRESS_EVERY=<N>` to emit periodic batch-construction
 summaries.
 
-#### [`conflict_region_verification.rs`](./conflict_region_verification.rs)
-
-Diagnostic smoke test for conflict-region completeness verification.
-Exercises `verify_conflict_region_completeness` using the known-failing
-3D seed from #306 to confirm the diagnostic tooling works end-to-end.
-
-**Run with:** `cargo test --test conflict_region_verification -- --ignored --nocapture`
-
-**Note:** Tests are `#[ignore]` by default — they are diagnostic rather than correctness assertions.
-
 #### [`regressions.rs`](./regressions.rs)
 
 Fixed-bug regression tests for known Delaunay construction and repair failures,
@@ -414,12 +402,6 @@ seed, and issue #307 4D bulk repair orientation case.
 as integration tests so the library is compiled without `cfg(test)`; only create
 a separate regression test crate when the case needs separate crate-level
 configuration, feature flags, or profile isolation.
-
-#### [`check_perturbation_stats.rs`](./check_perturbation_stats.rs)
-
-Regression checks around insertion perturbation telemetry and statistics reporting behavior.
-
-**Run with:** `cargo test --test check_perturbation_stats` or `just test-release`
 
 #### [`coordinate_conversion_errors.rs`](./coordinate_conversion_errors.rs)
 

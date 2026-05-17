@@ -11,7 +11,7 @@
 //! The library provides **four levels** of validation, each building on the previous:
 //!
 //! ## Level 1: Element Validity
-//! - **Methods**: [`Cell::is_valid()`], [`Vertex::is_valid()`]
+//! - **Methods**: [`Simplex::is_valid()`], [`Vertex::is_valid()`]
 //! - **Checks**: Basic data integrity (coordinate validity, UUID presence, proper initialization)
 //! - **Cost**: O(1) per element
 //!
@@ -19,20 +19,20 @@
 //! - **Method**: [`Tds::is_valid()`]
 //! - **Checks**:
 //!   - UUID ↔ Key mapping consistency
-//!   - No duplicate cells (same vertex sets)
-//!   - Facet sharing invariant (≤2 cells per facet)
+//!   - No duplicate simplices (same vertex sets)
+//!   - Facet sharing invariant (≤2 simplices per facet)
 //!   - Neighbor consistency (mutual relationships)
-//! - **Cost**: O(N×D²) where N = cells, D = dimension
+//! - **Cost**: O(N×D²) where N = simplices, D = dimension
 //!
 //! Use [`Tds::validate()`] for cumulative Levels 1–2 (element + structural) validation.
 //!
 //! ## Level 3: Manifold Topology
 //! - **Method**: [`Triangulation::is_valid()`](crate::core::triangulation::Triangulation::is_valid)
 //! - **Checks**:
-//!   - **Codimension-1 manifoldness**: exactly 1 boundary cell or 2 interior cells per facet
+//!   - **Codimension-1 manifoldness**: exactly 1 boundary simplex or 2 interior simplices per facet
 //!   - **Codimension-2 boundary manifoldness**: the boundary is closed ("no boundary of boundary")
-//!   - Connectedness (single connected component in the cell neighbor graph)
-//!   - No isolated vertices (every vertex must be incident to at least one cell)
+//!   - Connectedness (single connected component in the simplex neighbor graph)
+//!   - No isolated vertices (every vertex must be incident to at least one simplex)
 //!   - Euler characteristic (χ = V - E + F - C matches expected topology)
 //! - **Cost**: O(N×D²) dominated by simplex counting
 //!
@@ -40,8 +40,8 @@
 //!
 //! ## Level 4: Delaunay Property
 //! - **Method**: [`DelaunayTriangulation::is_valid()`](crate::triangulation::delaunay::DelaunayTriangulation::is_valid)
-//! - **Checks**: Empty circumsphere property (no vertex inside any cell's circumsphere)
-//! - **Cost**: O(N×V) where N = cells, V = vertices
+//! - **Checks**: Empty circumsphere property (no vertex inside any simplex's circumsphere)
+//! - **Cost**: O(N×V) where N = simplices, V = vertices
 //!
 //! Use [`DelaunayTriangulation::validate()`](crate::triangulation::delaunay::DelaunayTriangulation::validate) for cumulative Levels 1–4.
 //!
@@ -74,7 +74,7 @@
 //! **Performance**: Use Level 2 for most production validation. Reserve Level 3 for
 //! tests/debug builds, and Level 4 for critical verification or debugging geometric issues.
 //!
-//! [`Cell::is_valid()`]: crate::core::cell::Cell::is_valid
+//! [`Simplex::is_valid()`]: crate::core::simplex::Simplex::is_valid
 //! [`Vertex::is_valid()`]: crate::core::vertex::Vertex::is_valid
 //! [`Tds::is_valid()`]: crate::core::tds::Tds::is_valid
 //! [`Tds::validate()`]: crate::core::tds::Tds::validate
@@ -88,10 +88,10 @@
 //! [`ValidationPolicy`](crate::core::triangulation::ValidationPolicy).
 //!
 //! Level 3 validation always checks:
-//! - Codimension-1 facet degree (pseudomanifold condition: 1 boundary or 2 interior cells per facet)
+//! - Codimension-1 facet degree (pseudomanifold condition: 1 boundary or 2 interior simplices per facet)
 //! - Codimension-2 boundary manifoldness (closed boundary: "no boundary of boundary")
-//! - Connectedness (single connected component in the cell neighbor graph)
-//! - No isolated vertices (every vertex must be incident to at least one cell)
+//! - Connectedness (single connected component in the simplex neighbor graph)
+//! - No isolated vertices (every vertex must be incident to at least one simplex)
 //! - Euler characteristic
 //!
 //! With [`TopologyGuarantee::PLManifold`](crate::core::triangulation::TopologyGuarantee::PLManifold),
@@ -110,7 +110,7 @@
 use crate::core::adjacency::{AdjacencyIndex, AdjacencyIndexBuildError};
 use crate::core::algorithms::incremental_insertion::{
     CavityFillingError, CavityRepairStage, HullExtensionReason, InsertionError, extend_hull,
-    external_facets_for_boundary, fill_cavity_replacing_cells, repair_neighbor_pointers,
+    external_facets_for_boundary, fill_cavity_replacing_simplices, repair_neighbor_pointers,
     repair_neighbor_pointers_local, wire_cavity_neighbors,
 };
 #[cfg(debug_assertions)]
@@ -121,12 +121,11 @@ use crate::core::algorithms::locate::{
     ConflictError, LocateError, LocateResult, LocateStats, extract_cavity_boundary,
     find_conflict_region, locate_by_scan, locate_with_stats, locate_with_trace,
 };
-use crate::core::cell::{Cell, CellValidationError};
 use crate::core::collections::spatial_hash_grid::HashGridIndex;
 use crate::core::collections::{
-    CavityBoundaryBuffer, CellKeyBuffer, CellKeySet, FacetIssuesMap, FacetToCellsMap, FastHashMap,
-    FastHashSet, FastHasher, MAX_PRACTICAL_DIMENSION_SIZE, SmallBuffer, VertexToCellsMap,
-    fast_hash_map_with_capacity, fast_hash_set_with_capacity,
+    CavityBoundaryBuffer, FacetIssuesMap, FacetToSimplicesMap, FastHashMap, FastHashSet,
+    FastHasher, MAX_PRACTICAL_DIMENSION_SIZE, SimplexKeyBuffer, SimplexKeySet, SmallBuffer,
+    VertexToSimplicesMap, fast_hash_map_with_capacity, fast_hash_set_with_capacity,
 };
 use crate::core::edge::EdgeKey;
 #[cfg(test)]
@@ -136,16 +135,16 @@ use crate::core::operations::{
     InsertionOutcome, InsertionResult, InsertionStatistics, InsertionTelemetry,
     InsertionTelemetryMode, SuspicionFlags,
 };
+use crate::core::simplex::{Simplex, SimplexValidationError};
 #[cfg(test)]
 use crate::core::tds::NeighborValidationError;
 use crate::core::tds::{
-    CellKey, GeometricError, InvariantError, InvariantErrorSummary, InvariantKind,
-    InvariantViolation, Tds, TdsConstructionError, TdsError, TriangulationValidationReport,
-    VertexKey,
+    GeometricError, InvariantError, InvariantErrorSummary, InvariantKind, InvariantViolation,
+    SimplexKey, Tds, TdsConstructionError, TdsError, TriangulationValidationReport, VertexKey,
 };
 use crate::core::traits::data_type::DataType;
 #[cfg(test)]
-use crate::core::util::canonical_points::sorted_cell_points;
+use crate::core::util::canonical_points::sorted_simplex_points;
 use crate::core::vertex::Vertex;
 use crate::geometry::kernel::Kernel;
 use crate::geometry::point::Point;
@@ -155,18 +154,18 @@ use crate::geometry::robust_predicates::robust_orientation;
 use crate::geometry::traits::coordinate::{Coordinate, CoordinateScalar};
 use crate::geometry::util::safe_scalar_to_f64;
 use crate::topology::characteristics::euler::{TopologyClassification, expected_chi_for};
-use crate::topology::characteristics::validation::validate_triangulation_euler_with_facet_to_cells_map;
+use crate::topology::characteristics::validation::validate_triangulation_euler_with_facet_to_simplices_map;
 use crate::topology::manifold::{
     ManifoldError, validate_closed_boundary, validate_facet_degree,
-    validate_local_pseudomanifold_for_cells, validate_ridge_links, validate_ridge_links_for_cells,
-    validate_vertex_links,
+    validate_local_pseudomanifold_for_simplices, validate_ridge_links,
+    validate_ridge_links_for_simplices, validate_vertex_links,
 };
 use crate::topology::traits::global_topology_model::GlobalTopologyModel;
 use crate::topology::traits::topological_space::{GlobalTopology, TopologyKind};
 use crate::triangulation::delaunay::DelaunayTriangulationValidationError;
 use crate::triangulation::locality::{
-    append_live_unique_cell_seeds, collect_local_exterior_conflict_seed_cells,
-    replace_cells_and_record_removed, retain_cells_and_record_removed,
+    append_live_unique_simplex_seeds, collect_local_exterior_conflict_seed_simplices,
+    replace_simplices_and_record_removed, retain_simplices_and_record_removed,
 };
 use core::ops::Div;
 use num_traits::{Float, NumCast, One, Zero};
@@ -197,7 +196,7 @@ const MAX_REPAIR_ITERATIONS: usize = 10;
 const DEFAULT_PERTURBATION_RETRIES: usize = 3;
 
 /// Telemetry: counts how often the topology safety-net recovered from a Level 3 validation
-/// failure by retrying insertion with a star-split of the containing cell.
+/// failure by retrying insertion with a star-split of the containing simplex.
 ///
 /// This is a process-wide counter across all triangulation instances.
 ///
@@ -218,7 +217,7 @@ static CAVITY_REDUCTION_TRACE_EMITTED: AtomicBool = AtomicBool::new(false);
 static DUPLICATE_DETECTION_FORCE_ENABLED: AtomicBool = AtomicBool::new(false);
 
 #[cfg(debug_assertions)]
-static VERTEX_TO_CELLS_SPILL_EVENTS: AtomicU64 = AtomicU64::new(0);
+static VERTEX_TO_SIMPLICES_SPILL_EVENTS: AtomicU64 = AtomicU64::new(0);
 
 #[cfg(test)]
 mod test_hooks {
@@ -276,26 +275,26 @@ fn retryable_conflict_trace_detail(error: &InsertionError) -> Option<String> {
     match error {
         InsertionError::ConflictRegion(ConflictError::NonManifoldFacet {
             facet_hash,
-            cell_count,
+            simplex_count,
         }) => Some(format!(
-            "kind=non_manifold_facet facet_hash={facet_hash:#x} cell_count={cell_count}"
+            "kind=non_manifold_facet facet_hash={facet_hash:#x} simplex_count={simplex_count}"
         )),
         InsertionError::ConflictRegion(ConflictError::RidgeFan {
             facet_count,
             ridge_vertex_count,
-            extra_cells,
+            extra_simplices,
         }) => Some(format!(
             "kind=ridge_fan facet_count={facet_count} ridge_vertex_count={ridge_vertex_count} \
-             extra_cells={}",
-            extra_cells.len()
+             extra_simplices={}",
+            extra_simplices.len()
         )),
         InsertionError::ConflictRegion(ConflictError::DisconnectedBoundary {
             visited,
             total,
-            disconnected_cells,
+            disconnected_simplices,
         }) => Some(format!(
-            "kind=disconnected_boundary visited={visited} total={total} disconnected_cells={}",
-            disconnected_cells.len()
+            "kind=disconnected_boundary visited={visited} total={total} disconnected_simplices={}",
+            disconnected_simplices.len()
         )),
         InsertionError::ConflictRegion(ConflictError::OpenBoundary {
             facet_count,
@@ -313,41 +312,44 @@ fn cavity_conflict_error_summary(error: &ConflictError) -> String {
     match error {
         ConflictError::NonManifoldFacet {
             facet_hash,
-            cell_count,
-        } => format!("non_manifold_facet facet_hash={facet_hash:#x} cell_count={cell_count}"),
+            simplex_count,
+        } => format!("non_manifold_facet facet_hash={facet_hash:#x} simplex_count={simplex_count}"),
         ConflictError::RidgeFan {
             facet_count,
             ridge_vertex_count,
-            extra_cells,
+            extra_simplices,
         } => format!(
             "ridge_fan facet_count={facet_count} ridge_vertex_count={ridge_vertex_count} \
-             extra_cells={}",
-            extra_cells.len()
+             extra_simplices={}",
+            extra_simplices.len()
         ),
         ConflictError::DisconnectedBoundary {
             visited,
             total,
-            disconnected_cells,
+            disconnected_simplices,
         } => format!(
-            "disconnected_boundary visited={visited} total={total} disconnected_cells={}",
-            disconnected_cells.len()
+            "disconnected_boundary visited={visited} total={total} disconnected_simplices={}",
+            disconnected_simplices.len()
         ),
         ConflictError::OpenBoundary {
             facet_count,
             ridge_vertex_count,
-            open_cell,
+            open_simplex,
         } => format!(
             "open_boundary facet_count={facet_count} ridge_vertex_count={ridge_vertex_count} \
-             open_cell={open_cell:?}"
+             open_simplex={open_simplex:?}"
         ),
-        ConflictError::InvalidStartCell { cell_key } => {
-            format!("invalid_start_cell cell_key={cell_key:?}")
+        ConflictError::InvalidStartSimplex { simplex_key } => {
+            format!("invalid_start_simplex simplex_key={simplex_key:?}")
         }
         ConflictError::PredicateError { source } => {
             format!("predicate_error source={source}")
         }
-        ConflictError::CellDataAccessFailed { cell_key, message } => {
-            format!("cell_data_access_failed cell_key={cell_key:?} message={message}")
+        ConflictError::SimplexDataAccessFailed {
+            simplex_key,
+            message,
+        } => {
+            format!("simplex_data_access_failed simplex_key={simplex_key:?} message={message}")
         }
         ConflictError::InternalInconsistency { site } => {
             format!("internal_inconsistency site={site}")
@@ -363,7 +365,7 @@ fn cavity_conflict_error_summary(error: &ConflictError) -> String {
 fn log_cavity_reduction_event<F>(
     enabled: bool,
     iteration: usize,
-    conflict_cells: &CellKeyBuffer,
+    conflict_simplices: &SimplexKeyBuffer,
     event: F,
 ) where
     F: FnOnce() -> String,
@@ -372,12 +374,12 @@ fn log_cavity_reduction_event<F>(
         return;
     }
 
-    let conflict_preview: Vec<CellKey> = conflict_cells.iter().copied().take(12).collect();
+    let conflict_preview: Vec<SimplexKey> = conflict_simplices.iter().copied().take(12).collect();
     let event = event();
     tracing::debug!(
         target: "delaunay::cavity_reduction",
         iteration,
-        conflict_cells = conflict_cells.len(),
+        conflict_simplices = conflict_simplices.len(),
         event,
         conflict_preview = ?conflict_preview,
         "cavity-reduction event"
@@ -391,7 +393,7 @@ fn log_cavity_reduction_event<F>(
 /// Emits a single structured line for a retryable conflict-region skip after rollback.
 ///
 /// Logging after rollback lets the trace report both the state we tried to modify and
-/// the restored cell/vertex counts that future attempts will see. Routed through
+/// the restored simplex/vertex counts that future attempts will see. Routed through
 /// `tracing::debug!` so callers can filter it via `RUST_LOG`; enabled for release-mode
 /// runs by `DELAUNAY_DEBUG_RETRYABLE_SKIP`.
 fn log_retryable_conflict_skip(
@@ -401,9 +403,9 @@ fn log_retryable_conflict_skip(
     max_attempts: usize,
     used_perturbation: bool,
     will_retry: bool,
-    cells_before_attempt: usize,
+    simplices_before_attempt: usize,
     vertices_before_attempt: usize,
-    cells_after_rollback: usize,
+    simplices_after_rollback: usize,
     vertices_after_rollback: usize,
     detail: &str,
     error: &InsertionError,
@@ -422,9 +424,9 @@ fn log_retryable_conflict_skip(
         used_perturbation,
         rolled_back = true,
         will_retry,
-        cells_before_attempt,
+        simplices_before_attempt,
         vertices_before_attempt,
-        cells_after_rollback,
+        simplices_after_rollback,
         vertices_after_rollback,
         conflict = %detail,
         error = %error,
@@ -510,11 +512,19 @@ pub enum TriangulationConstructionError {
     #[error(transparent)]
     Tds(#[from] TdsConstructionError),
 
-    /// Failed to create a cell during triangulation construction.
-    #[error("Failed to create cell during construction: {message}")]
-    FailedToCreateCell {
-        /// Description of the cell creation failure.
+    /// Failed to create a simplex during triangulation construction.
+    #[error("Failed to create simplex during construction: {message}")]
+    FailedToCreateSimplex {
+        /// Description of the simplex creation failure.
         message: String,
+    },
+
+    /// Cavity filling failed during incremental construction.
+    #[error("Cavity filling failed during insertion: {source}")]
+    InsertionCavityFilling {
+        /// Underlying cavity-filling error.
+        #[source]
+        source: CavityFillingError,
     },
 
     /// Insufficient vertices to create a triangulation.
@@ -522,8 +532,8 @@ pub enum TriangulationConstructionError {
     InsufficientVertices {
         /// The dimension that was attempted.
         dimension: usize,
-        /// The underlying cell validation error.
-        source: CellValidationError,
+        /// The underlying simplex validation error.
+        source: SimplexValidationError,
     },
 
     /// Geometric degeneracy prevents triangulation construction.
@@ -551,13 +561,13 @@ pub enum TriangulationConstructionError {
 
     /// Incremental insertion detected non-manifold topology.
     #[error(
-        "Non-manifold topology during insertion: facet {facet_hash:#x} shared by {cell_count} cells"
+        "Non-manifold topology during insertion: facet {facet_hash:#x} shared by {simplex_count} simplices"
     )]
     InsertionNonManifoldTopology {
         /// Hash of the over-shared facet.
         facet_hash: u64,
-        /// Number of cells sharing the facet.
-        cell_count: usize,
+        /// Number of simplices sharing the facet.
+        simplex_count: usize,
     },
 
     /// Hull extension failed during incremental construction.
@@ -644,15 +654,15 @@ pub enum TriangulationConstructionError {
 #[derive(Clone, Debug, Error, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum TriangulationValidationError {
-    /// A facet belongs to an unexpected number of cells for a manifold-with-boundary.
+    /// A facet belongs to an unexpected number of simplices for a manifold-with-boundary.
     #[error(
-        "Non-manifold facet: facet {facet_key:016x} belongs to {cell_count} cells (expected 1 or 2)"
+        "Non-manifold facet: facet {facet_key:016x} belongs to {simplex_count} simplices (expected 1 or 2)"
     )]
     ManifoldFacetMultiplicity {
         /// The facet key with invalid multiplicity.
         facet_key: u64,
-        /// The number of incident cells observed.
-        cell_count: usize,
+        /// The number of incident simplices observed.
+        simplex_count: usize,
     },
 
     /// Boundary is not a closed (D-1)-manifold:
@@ -692,15 +702,15 @@ pub enum TriangulationValidationError {
 
     /// A vertex link is not a (D-1)-manifold (sphere/ball) as required for PL-manifoldness.
     #[error(
-        "Vertex link is not a PL (D-1)-manifold: vertex {vertex_key:?} has link with {link_vertex_count} vertices, {link_cell_count} cells, boundary_facets={boundary_facet_count}, max_degree={max_degree}, connected={connected}, interior_vertex={interior_vertex}"
+        "Vertex link is not a PL (D-1)-manifold: vertex {vertex_key:?} has link with {link_vertex_count} vertices, {link_simplex_count} simplices, boundary_facets={boundary_facet_count}, max_degree={max_degree}, connected={connected}, interior_vertex={interior_vertex}"
     )]
     VertexLinkNotManifold {
         /// The vertex whose link failed validation.
         vertex_key: VertexKey,
         /// Number of vertices in the link (0-simplices of the link).
         link_vertex_count: usize,
-        /// Number of (D-1)-simplices (cells) in the link.
-        link_cell_count: usize,
+        /// Number of (D-1)-simplices (simplices) in the link.
+        link_simplex_count: usize,
         /// Number of boundary facets in the link (facets of degree 1).
         boundary_facet_count: usize,
         /// Maximum degree in the link 1-skeleton.
@@ -724,12 +734,12 @@ pub enum TriangulationValidationError {
         classification: TopologyClassification,
     },
 
-    /// Vertex is not incident to any cell.
+    /// Vertex is not incident to any simplex.
     ///
     /// An isolated vertex violates manifold invariants at the topology (Level 3) layer
     /// and may indicate a failed insertion or an insertion that was partially rolled back.
     #[error(
-        "Isolated vertex: vertex {vertex_uuid} (key {vertex_key:?}) is not incident to any cell"
+        "Isolated vertex: vertex {vertex_uuid} (key {vertex_key:?}) is not incident to any simplex"
     )]
     IsolatedVertex {
         /// Key of the isolated vertex.
@@ -738,17 +748,17 @@ pub enum TriangulationValidationError {
         vertex_uuid: Uuid,
     },
 
-    /// The cell neighbor graph is not a single connected component.
+    /// The simplex neighbor graph is not a single connected component.
     ///
     /// A valid triangulation-with-boundary must be connected; multiple disconnected
-    /// components indicate a structural problem (e.g. cells that share only a vertex
+    /// components indicate a structural problem (e.g. simplices that share only a vertex
     /// or edge but no facet, so no neighbor pointers link them).
     #[error(
-        "Disconnected triangulation: cell neighbor graph is not a single connected component ({cell_count} cells total)"
+        "Disconnected triangulation: simplex neighbor graph is not a single connected component ({simplex_count} simplices total)"
     )]
     Disconnected {
-        /// Total number of cells in the triangulation.
-        cell_count: usize,
+        /// Total number of simplices in the triangulation.
+        simplex_count: usize,
     },
 }
 
@@ -760,10 +770,10 @@ impl TryFrom<ManifoldError> for TriangulationValidationError {
             ManifoldError::Tds(source) => Err(source),
             ManifoldError::ManifoldFacetMultiplicity {
                 facet_key,
-                cell_count,
+                simplex_count,
             } => Ok(Self::ManifoldFacetMultiplicity {
                 facet_key,
-                cell_count,
+                simplex_count,
             }),
             ManifoldError::BoundaryRidgeMultiplicity {
                 ridge_key,
@@ -790,7 +800,7 @@ impl TryFrom<ManifoldError> for TriangulationValidationError {
             ManifoldError::VertexLinkNotManifold {
                 vertex_key,
                 link_vertex_count,
-                link_cell_count,
+                link_simplex_count,
                 boundary_facet_count,
                 max_degree,
                 connected,
@@ -798,7 +808,7 @@ impl TryFrom<ManifoldError> for TriangulationValidationError {
             } => Ok(Self::VertexLinkNotManifold {
                 vertex_key,
                 link_vertex_count,
-                link_cell_count,
+                link_simplex_count,
                 boundary_facet_count,
                 max_degree,
                 connected,
@@ -819,17 +829,17 @@ impl From<ManifoldError> for InvariantError {
 
 struct TryInsertImplOk {
     /// Inserted vertex key plus an optional locate hint for the caller.
-    inserted: (VertexKey, Option<CellKey>),
-    /// Number of cells removed during local non-manifold repair.
-    cells_removed: usize,
+    inserted: (VertexKey, Option<SimplexKey>),
+    /// Number of simplices removed during local non-manifold repair.
+    simplices_removed: usize,
     /// Suspicion flags observed during the insertion attempt.
     suspicion: SuspicionFlags,
-    /// Cells touched by insertion that should seed follow-up local repair.
+    /// Simplices touched by insertion that should seed follow-up local repair.
     ///
-    /// This includes live cells created by the insertion plus cells that were shrunk
+    /// This includes live simplices created by the insertion plus simplices that were shrunk
     /// out of the final conflict region so higher layers can revisit nearby
     /// Delaunay violations without rediscovering the inserted vertex star globally.
-    repair_seed_cells: CellKeyBuffer,
+    repair_seed_simplices: SimplexKeyBuffer,
     /// Whether the insertion path can leave local Delaunay work for the caller.
     ///
     /// Clean interior Bowyer-Watson insertions preserve the Delaunay property.
@@ -847,42 +857,42 @@ enum InsertionValidationWork {
 /// Internal result from over-shared-facet repair, including the surviving frontier
 /// that should seed local neighbor-pointer repair.
 struct LocalFacetRepairOutcome {
-    /// Number of cells actually removed from the TDS.
+    /// Number of simplices actually removed from the TDS.
     removed_count: usize,
-    /// Cells selected for removal before they were deleted.
+    /// Simplices selected for removal before they were deleted.
     #[cfg_attr(
         not(debug_assertions),
         expect(
             dead_code,
-            reason = "Removed-cell keys are retained for debug logging and future local repair diagnostics"
+            reason = "Removed-simplex keys are retained for debug logging and future local repair diagnostics"
         )
     )]
-    removed_cells: CellKeyBuffer,
+    removed_simplices: SimplexKeyBuffer,
     /// Surviving one-hop neighbors whose back-references may have been cleared.
-    frontier_cells: CellKeyBuffer,
+    frontier_simplices: SimplexKeyBuffer,
 }
 
 /// Result of filling one insertion cavity, including the follow-up Delaunay
 /// repair requirements that depend on how the cavity was shaped.
 struct CavityInsertionOutcome {
     /// Locate hint for the next insertion.
-    hint: Option<CellKey>,
-    /// Number of cells removed during local non-manifold repair.
-    cells_removed: usize,
-    /// Cells touched by insertion that should seed follow-up local repair.
-    repair_seed_cells: CellKeyBuffer,
+    hint: Option<SimplexKey>,
+    /// Number of simplices removed during local non-manifold repair.
+    simplices_removed: usize,
+    /// Simplices touched by insertion that should seed follow-up local repair.
+    repair_seed_simplices: SimplexKeyBuffer,
     /// Whether this cavity path can leave Delaunay work for the caller.
     delaunay_repair_required: bool,
 }
 
 enum InsertionSite<'a> {
     Interior {
-        start_cell: CellKey,
-        conflict_cells: Cow<'a, CellKeyBuffer>,
+        start_simplex: SimplexKey,
+        conflict_simplices: Cow<'a, SimplexKeyBuffer>,
     },
     Exterior {
-        conflict_cells: Option<Cow<'a, CellKeyBuffer>>,
-        repair_seed_cells: CellKeyBuffer,
+        conflict_simplices: Option<Cow<'a, SimplexKeyBuffer>>,
+        repair_seed_simplices: SimplexKeyBuffer,
     },
 }
 
@@ -895,9 +905,9 @@ pub(crate) struct DetailedInsertionResult {
     pub stats: InsertionStatistics,
     /// Internal path telemetry collected while attempting the insertion.
     pub telemetry: InsertionTelemetry,
-    /// Local cells that should seed the caller's Delaunay repair set.
-    pub repair_seed_cells: CellKeyBuffer,
-    /// Whether callers should run Delaunay repair over `repair_seed_cells`.
+    /// Local simplices that should seed the caller's Delaunay repair set.
+    pub repair_seed_simplices: SimplexKeyBuffer,
+    /// Whether callers should run Delaunay repair over `repair_seed_simplices`.
     pub delaunay_repair_required: bool,
 }
 
@@ -965,7 +975,7 @@ impl Default for ValidationPolicy {
 /// is controlled by [`ValidationPolicy`].
 ///
 /// - [`TopologyGuarantee::Pseudomanifold`] checks the codimension-1 adjacency condition:
-///   each facet is incident to one or two cells, and the codimension-2 boundary is closed.
+///   each facet is incident to one or two simplices, and the codimension-2 boundary is closed.
 ///   This is sufficient for many geometric algorithms but does not guarantee local Euclidean structure.
 ///
 /// - [`TopologyGuarantee::PLManifold`] uses ridge-link validation during insertion and
@@ -995,7 +1005,7 @@ impl Default for ValidationPolicy {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum TopologyGuarantee {
     /// Validate only the pseudomanifold / manifold-with-boundary invariants:
-    /// - facet degree (1 or 2 incident cells per facet)
+    /// - facet degree (1 or 2 incident simplices per facet)
     /// - closed boundary ("no boundary of boundary")
     Pseudomanifold,
 
@@ -1131,7 +1141,7 @@ impl TopologyGuarantee {
 /// # Type Parameters
 /// - `K`: Geometric kernel implementing predicates
 /// - `U`: User data type for vertices
-/// - `V`: User data type for cells
+/// - `V`: User data type for simplices
 /// - `D`: Dimension of the triangulation
 ///
 /// # Examples
@@ -1164,25 +1174,25 @@ impl<K, U, V, const D: usize> Triangulation<K, U, V, D>
 where
     K: Kernel<D>,
 {
-    /// Traverses the cell neighbor graph starting at `start` and returns the set of visited cells.
+    /// Traverses the simplex neighbor graph starting at `start` and returns the set of visited simplices.
     ///
     /// If `allowed` is `Some`, traversal is restricted to that set. Neighbors outside the allowed
     /// set are reported via `on_external_neighbor`.
     #[must_use]
-    fn traverse_cell_neighbor_graph<F>(
+    fn traverse_simplex_neighbor_graph<F>(
         &self,
-        start: CellKey,
+        start: SimplexKey,
         reserve: usize,
-        allowed: Option<&CellKeySet>,
+        allowed: Option<&SimplexKeySet>,
         mut on_external_neighbor: F,
-    ) -> CellKeySet
+    ) -> SimplexKeySet
     where
-        F: FnMut(CellKey, CellKey),
+        F: FnMut(SimplexKey, SimplexKey),
     {
-        let mut visited: CellKeySet = CellKeySet::default();
+        let mut visited: SimplexKeySet = SimplexKeySet::default();
         visited.reserve(reserve);
 
-        let mut stack: CellKeyBuffer = CellKeyBuffer::new();
+        let mut stack: SimplexKeyBuffer = SimplexKeyBuffer::new();
         stack.push(start);
 
         while let Some(ck) = stack.pop() {
@@ -1190,11 +1200,11 @@ where
                 continue;
             }
 
-            let Some(cell) = self.tds.cell(ck) else {
+            let Some(simplex) = self.tds.simplex(ck) else {
                 continue;
             };
 
-            let Some(neighbors) = cell.neighbor_keys() else {
+            let Some(neighbors) = simplex.neighbor_keys() else {
                 continue;
             };
 
@@ -1203,7 +1213,7 @@ where
                     continue;
                 };
 
-                if !self.tds.contains_cell(nk) {
+                if !self.tds.contains_simplex(nk) {
                     continue;
                 }
 
@@ -1241,7 +1251,7 @@ where
     /// let tri: Triangulation<FastKernel<f64>, (), (), 3> =
     ///     Triangulation::new_empty(FastKernel::new());
     /// assert_eq!(tri.number_of_vertices(), 0);
-    /// assert_eq!(tri.number_of_cells(), 0);
+    /// assert_eq!(tri.number_of_simplices(), 0);
     /// assert_eq!(tri.dim(), -1); // Empty triangulation has dimension -1
     /// ```
     #[must_use]
@@ -1399,7 +1409,7 @@ where
     }
 
     /// Returns the number of times the topology safety-net recovered from a Level 3
-    /// validation failure by retrying insertion with a star-split of the containing cell.
+    /// validation failure by retrying insertion with a star-split of the containing simplex.
     ///
     /// This is a process-wide counter (across all triangulation instances) intended for
     /// production telemetry. A high value suggests the cavity-based insertion frequently
@@ -1461,7 +1471,7 @@ where
         }
     }
 
-    /// Returns an iterator over all cells in the triangulation.
+    /// Returns an iterator over all simplices in the triangulation.
     ///
     /// Delegates to the underlying Tds.
     ///
@@ -1478,14 +1488,14 @@ where
     /// let dt = DelaunayTriangulation::new(&vertices).unwrap();
     /// let tri = dt.as_triangulation();
     ///
-    /// // Iterate over cells
-    /// for (_cell_key, cell) in tri.cells() {
-    ///     assert_eq!(cell.number_of_vertices(), 3); // 2D triangle
+    /// // Iterate over simplices
+    /// for (_simplex_key, simplex) in tri.simplices() {
+    ///     assert_eq!(simplex.number_of_vertices(), 3); // 2D triangle
     /// }
-    /// assert_eq!(tri.cells().count(), 1);
+    /// assert_eq!(tri.simplices().count(), 1);
     /// ```
-    pub fn cells(&self) -> impl Iterator<Item = (CellKey, &Cell<K::Scalar, U, V, D>)> {
-        self.tds.cells()
+    pub fn simplices(&self) -> impl Iterator<Item = (SimplexKey, &Simplex<K::Scalar, U, V, D>)> {
+        self.tds.simplices()
     }
 
     /// Returns an iterator over all vertices in the triangulation.
@@ -1552,9 +1562,9 @@ where
         self.tds.set_vertex_data(key, data)
     }
 
-    /// Sets the auxiliary data on a cell, returning the previous value.
+    /// Sets the auxiliary data on a simplex, returning the previous value.
     ///
-    /// Delegates to [`Tds::set_cell_data`]. This is a safe O(1) operation
+    /// Delegates to [`Tds::set_simplex_data`]. This is a safe O(1) operation
     /// that does not affect geometry, topology, or Delaunay invariants.
     ///
     /// # Returns
@@ -1575,18 +1585,18 @@ where
     /// let mut dt = DelaunayTriangulationBuilder::new(&vertices)
     ///     .build::<i32>()
     ///     .unwrap();
-    /// let key = dt.cells().next().unwrap().0;
-    /// let prev = dt.set_cell_data(key, Some(42));
+    /// let key = dt.simplices().next().unwrap().0;
+    /// let prev = dt.set_simplex_data(key, Some(42));
     /// assert_eq!(prev, Some(None));
     ///
     /// // Clear data
-    /// let prev = dt.set_cell_data(key, None);
+    /// let prev = dt.set_simplex_data(key, None);
     /// assert_eq!(prev, Some(Some(42)));
-    /// assert_eq!(dt.tds().cell(key).unwrap().data(), None);
+    /// assert_eq!(dt.tds().simplex(key).unwrap().data(), None);
     /// ```
     #[inline]
-    pub fn set_cell_data(&mut self, key: CellKey, data: Option<V>) -> Option<Option<V>> {
-        self.tds.set_cell_data(key, data)
+    pub fn set_simplex_data(&mut self, key: SimplexKey, data: Option<V>) -> Option<Option<V>> {
+        self.tds.set_simplex_data(key, data)
     }
 
     /// Returns the number of vertices in the triangulation.
@@ -1610,7 +1620,7 @@ where
         self.tds.number_of_vertices()
     }
 
-    /// Returns the number of cells in the triangulation.
+    /// Returns the number of simplices in the triangulation.
     ///
     /// # Examples
     ///
@@ -1624,11 +1634,11 @@ where
     ///     vertex!([0.0, 0.0, 1.0]),
     /// ];
     /// let dt = DelaunayTriangulation::new(&vertices).unwrap();
-    /// assert_eq!(dt.as_triangulation().number_of_cells(), 1); // Single tetrahedron
+    /// assert_eq!(dt.as_triangulation().number_of_simplices(), 1); // Single tetrahedron
     /// ```
     #[must_use]
-    pub fn number_of_cells(&self) -> usize {
-        self.tds.number_of_cells()
+    pub fn number_of_simplices(&self) -> usize {
+        self.tds.number_of_simplices()
     }
 
     /// Returns the dimension of the triangulation.
@@ -1692,8 +1702,8 @@ where
 
     /// Returns an iterator over boundary (hull) facets in the triangulation.
     ///
-    /// Boundary facets are those that belong to exactly one cell. This method
-    /// computes the facet-to-cells map internally for convenience.
+    /// Boundary facets are those that belong to exactly one simplex. This method
+    /// computes the facet-to-simplices map internally for convenience.
     ///
     /// # Returns
     ///
@@ -1701,7 +1711,7 @@ where
     ///
     /// # Panics
     ///
-    /// Panics if the triangulation data structure is corrupted (cells have invalid
+    /// Panics if the triangulation data structure is corrupted (simplices have invalid
     /// neighbor relationships or facet information). This indicates a bug in the
     /// library and should never happen with a properly constructed triangulation.
     ///
@@ -1722,11 +1732,11 @@ where
     /// assert_eq!(boundary_count, 4); // All facets are on boundary
     /// ```
     pub fn boundary_facets(&self) -> BoundaryFacetsIter<'_, K::Scalar, U, V, D> {
-        // build_facet_to_cells_map only fails if cells have invalid structure,
+        // build_facet_to_simplices_map only fails if simplices have invalid structure,
         // which should never happen in a valid triangulation
         let facet_map = self
             .tds
-            .build_facet_to_cells_map()
+            .build_facet_to_simplices_map()
             .expect("Failed to build facet map - triangulation structure is corrupted");
         BoundaryFacetsIter::new(&self.tds, facet_map)
     }
@@ -1741,9 +1751,9 @@ where
         // compile-time that an index belongs to this triangulation, but we can cheaply catch
         // obvious mix-ups in debug builds.
         debug_assert_eq!(
-            index.vertex_to_cells.len(),
+            index.vertex_to_simplices.len(),
             self.tds.number_of_vertices(),
-            "AdjacencyIndex vertex_to_cells size does not match triangulation vertex count"
+            "AdjacencyIndex vertex_to_simplices size does not match triangulation vertex count"
         );
         debug_assert_eq!(
             index.vertex_to_edges.len(),
@@ -1754,7 +1764,7 @@ where
 
     /// Returns an iterator over all unique edges in the triangulation.
     ///
-    /// Edges are inferred from the vertex lists of each cell; they are not stored explicitly.
+    /// Edges are inferred from the vertex lists of each simplex; they are not stored explicitly.
     ///
     /// ## Allocation and iteration order
     ///
@@ -1867,7 +1877,7 @@ where
         index.number_of_edges()
     }
 
-    /// Returns an iterator over all cells adjacent (incident) to a vertex.
+    /// Returns an iterator over all simplices adjacent (incident) to a vertex.
     ///
     /// If `v` is not present in this triangulation, the iterator is empty.
     ///
@@ -1901,14 +1911,16 @@ where
     ///     })
     ///     .unwrap();
     ///
-    /// // The shared vertex is incident to both cells.
-    /// assert_eq!(tri.adjacent_cells(shared_vertex_key).count(), 2);
+    /// // The shared vertex is incident to both simplices.
+    /// assert_eq!(tri.adjacent_simplices(shared_vertex_key).count(), 2);
     /// ```
-    pub fn adjacent_cells(&self, v: VertexKey) -> impl Iterator<Item = CellKey> + '_ {
-        self.tds.find_cells_containing_vertex_by_key(v).into_iter()
+    pub fn adjacent_simplices(&self, v: VertexKey) -> impl Iterator<Item = SimplexKey> + '_ {
+        self.tds
+            .find_simplices_containing_vertex_by_key(v)
+            .into_iter()
     }
 
-    /// Returns an iterator over all cells adjacent (incident) to a vertex using a precomputed
+    /// Returns an iterator over all simplices adjacent (incident) to a vertex using a precomputed
     /// [`AdjacencyIndex`].
     ///
     /// This avoids per-call scans of the triangulation.
@@ -1932,18 +1944,18 @@ where
     /// # let tri = dt.as_triangulation();
     /// # let index = tri.build_adjacency_index().unwrap();
     /// let v = tri.vertices().next().unwrap().0;
-    /// assert!(tri.adjacent_cells_with_index(&index, v).count() >= 1);
+    /// assert!(tri.adjacent_simplices_with_index(&index, v).count() >= 1);
     /// ```
-    pub fn adjacent_cells_with_index<'a>(
+    pub fn adjacent_simplices_with_index<'a>(
         &self,
         index: &'a AdjacencyIndex,
         v: VertexKey,
-    ) -> impl Iterator<Item = CellKey> + 'a {
+    ) -> impl Iterator<Item = SimplexKey> + 'a {
         self.debug_assert_adjacency_index_matches(index);
-        index.adjacent_cells(v)
+        index.adjacent_simplices(v)
     }
 
-    /// Returns the number of cells adjacent (incident) to a vertex using a precomputed
+    /// Returns the number of simplices adjacent (incident) to a vertex using a precomputed
     /// [`AdjacencyIndex`].
     ///
     /// If `v` is not present in the index, returns 0.
@@ -1962,19 +1974,19 @@ where
     /// # let tri = dt.as_triangulation();
     /// # let index = tri.build_adjacency_index().unwrap();
     /// let v0 = tri.vertices().next().unwrap().0;
-    /// assert_eq!(tri.number_of_adjacent_cells_with_index(&index, v0), 1);
+    /// assert_eq!(tri.number_of_adjacent_simplices_with_index(&index, v0), 1);
     /// ```
     #[must_use]
-    pub fn number_of_adjacent_cells_with_index(
+    pub fn number_of_adjacent_simplices_with_index(
         &self,
         index: &AdjacencyIndex,
         v: VertexKey,
     ) -> usize {
         self.debug_assert_adjacency_index_matches(index);
-        index.number_of_adjacent_cells(v)
+        index.number_of_adjacent_simplices(v)
     }
 
-    /// Returns an iterator over all neighbors of a cell.
+    /// Returns an iterator over all neighbors of a simplex.
     ///
     /// Boundary facets are omitted (only existing neighbors are yielded). If `c` is not
     /// present, the iterator is empty.
@@ -2000,27 +2012,27 @@ where
     /// let dt: DelaunayTriangulation<_, (), (), 3> = DelaunayTriangulation::new(&vertices).unwrap();
     /// let tri = dt.as_triangulation();
     ///
-    /// let cell_keys: Vec<_> = tri.cells().map(|(ck, _)| ck).collect();
-    /// assert_eq!(cell_keys.len(), 2);
+    /// let simplex_keys: Vec<_> = tri.simplices().map(|(ck, _)| ck).collect();
+    /// assert_eq!(simplex_keys.len(), 2);
     ///
-    /// for &ck in &cell_keys {
-    ///     let neighbors: Vec<_> = tri.cell_neighbors(ck).collect();
+    /// for &ck in &simplex_keys {
+    ///     let neighbors: Vec<_> = tri.simplex_neighbors(ck).collect();
     ///     assert_eq!(neighbors.len(), 1);
-    ///     assert!(cell_keys.contains(&neighbors[0]));
+    ///     assert!(simplex_keys.contains(&neighbors[0]));
     ///     assert_ne!(neighbors[0], ck);
     /// }
     /// ```
-    pub fn cell_neighbors(&self, c: CellKey) -> impl Iterator<Item = CellKey> + '_ {
+    pub fn simplex_neighbors(&self, c: SimplexKey) -> impl Iterator<Item = SimplexKey> + '_ {
         self.tds
-            .cell(c)
-            .and_then(Cell::neighbors)
+            .simplex(c)
+            .and_then(Simplex::neighbors)
             .into_iter()
             .flat_map(IntoIterator::into_iter)
             .flatten()
-            .filter(|&neighbor_key| self.tds.contains_cell(neighbor_key))
+            .filter(|&neighbor_key| self.tds.contains_simplex(neighbor_key))
     }
 
-    /// Returns an iterator over all neighbors of a cell using a precomputed [`AdjacencyIndex`].
+    /// Returns an iterator over all neighbors of a simplex using a precomputed [`AdjacencyIndex`].
     ///
     /// If `c` is not present in the index, the iterator is empty.
     ///
@@ -2040,20 +2052,20 @@ where
     /// # let dt: DelaunayTriangulation<_, (), (), 3> = DelaunayTriangulation::new(&vertices).unwrap();
     /// # let tri = dt.as_triangulation();
     /// # let index = tri.build_adjacency_index().unwrap();
-    /// let cell_key = tri.cells().next().unwrap().0;
-    /// let neighbors: Vec<_> = tri.cell_neighbors_with_index(&index, cell_key).collect();
+    /// let simplex_key = tri.simplices().next().unwrap().0;
+    /// let neighbors: Vec<_> = tri.simplex_neighbors_with_index(&index, simplex_key).collect();
     /// assert_eq!(neighbors.len(), 1);
     /// ```
-    pub fn cell_neighbors_with_index<'a>(
+    pub fn simplex_neighbors_with_index<'a>(
         &self,
         index: &'a AdjacencyIndex,
-        c: CellKey,
-    ) -> impl Iterator<Item = CellKey> + 'a {
+        c: SimplexKey,
+    ) -> impl Iterator<Item = SimplexKey> + 'a {
         self.debug_assert_adjacency_index_matches(index);
-        index.cell_neighbors(c)
+        index.simplex_neighbors(c)
     }
 
-    /// Returns the number of neighbors of a cell using a precomputed [`AdjacencyIndex`].
+    /// Returns the number of neighbors of a simplex using a precomputed [`AdjacencyIndex`].
     ///
     /// If `c` is not present in the index, returns 0.
     ///
@@ -2073,13 +2085,17 @@ where
     /// # let dt: DelaunayTriangulation<_, (), (), 3> = DelaunayTriangulation::new(&vertices).unwrap();
     /// # let tri = dt.as_triangulation();
     /// # let index = tri.build_adjacency_index().unwrap();
-    /// let cell_key = tri.cells().next().unwrap().0;
-    /// assert_eq!(tri.number_of_cell_neighbors_with_index(&index, cell_key), 1);
+    /// let simplex_key = tri.simplices().next().unwrap().0;
+    /// assert_eq!(tri.number_of_simplex_neighbors_with_index(&index, simplex_key), 1);
     /// ```
     #[must_use]
-    pub fn number_of_cell_neighbors_with_index(&self, index: &AdjacencyIndex, c: CellKey) -> usize {
+    pub fn number_of_simplex_neighbors_with_index(
+        &self,
+        index: &AdjacencyIndex,
+        c: SimplexKey,
+    ) -> usize {
         self.debug_assert_adjacency_index_matches(index);
-        index.number_of_cell_neighbors(c)
+        index.number_of_simplex_neighbors(c)
     }
 
     /// Returns an iterator over all unique edges incident to a vertex.
@@ -2205,7 +2221,7 @@ where
         self.collect_incident_edges(v).len()
     }
 
-    /// Returns a slice view of a cell's vertex keys.
+    /// Returns a slice view of a simplex's vertex keys.
     ///
     /// This is a zero-allocation accessor. If `c` is not present, returns `None`.
     ///
@@ -2222,13 +2238,13 @@ where
     /// let dt: DelaunayTriangulation<_, (), (), 2> = DelaunayTriangulation::new(&vertices).unwrap();
     /// let tri = dt.as_triangulation();
     ///
-    /// let cell_key = tri.cells().next().unwrap().0;
-    /// let cell_vertices = tri.cell_vertices(cell_key).unwrap();
-    /// assert_eq!(cell_vertices.len(), 3); // D+1 for a 2D simplex
+    /// let simplex_key = tri.simplices().next().unwrap().0;
+    /// let simplex_vertices = tri.simplex_vertices(simplex_key).unwrap();
+    /// assert_eq!(simplex_vertices.len(), 3); // D+1 for a 2D simplex
     /// ```
     #[must_use]
-    pub fn cell_vertices(&self, c: CellKey) -> Option<&[VertexKey]> {
-        self.tds.cell(c).map(Cell::vertices)
+    pub fn simplex_vertices(&self, c: SimplexKey) -> Option<&[VertexKey]> {
+        self.tds.simplex(c).map(Simplex::vertices)
     }
 
     /// Returns a slice view of a vertex's coordinates.
@@ -2273,15 +2289,15 @@ where
     /// - The returned collections are optimized for performance.
     /// - The maps include an entry for every vertex currently stored in the triangulation.
     ///   During the bootstrap phase (before the initial simplex is created), vertices have empty
-    ///   adjacency lists because no cells exist yet. This is expected and not an error condition.
-    /// - Isolated vertices (present in the vertex store but not referenced by any cell) are allowed at
+    ///   adjacency lists because no simplices exist yet. This is expected and not an error condition.
+    /// - Isolated vertices (present in the vertex store but not referenced by any simplex) are allowed at
     ///   the TDS structural layer, but violate the Level 3 manifold invariants checked by
     ///   [`Triangulation::is_valid`](Self::is_valid). When present, their adjacency lists are empty.
     ///
     /// # Errors
     ///
     /// Returns an error if the triangulation data structure is internally inconsistent
-    /// (e.g., a cell references a missing vertex key or a missing neighbor cell key).
+    /// (e.g., a simplex references a missing vertex key or a missing neighbor simplex key).
     ///
     /// # Examples
     ///
@@ -2304,62 +2320,62 @@ where
     ///
     /// let index = tri.build_adjacency_index().unwrap();
     ///
-    /// // The index exposes adjacency maps keyed by VertexKey / CellKey.
-    /// let cell_keys: Vec<_> = tri.cells().map(|(ck, _)| ck).collect();
-    /// for &ck in &cell_keys {
-    ///     let neighbors = index.cell_to_neighbors.get(&ck).unwrap();
+    /// // The index exposes adjacency maps keyed by VertexKey / SimplexKey.
+    /// let simplex_keys: Vec<_> = tri.simplices().map(|(ck, _)| ck).collect();
+    /// for &ck in &simplex_keys {
+    ///     let neighbors = index.simplex_to_neighbors.get(&ck).unwrap();
     ///     assert_eq!(neighbors.len(), 1);
     /// }
     /// ```
     pub fn build_adjacency_index(&self) -> Result<AdjacencyIndex, AdjacencyIndexBuildError> {
         let vertex_cap = self.tds.number_of_vertices();
-        let cell_cap = self.tds.number_of_cells();
+        let simplex_cap = self.tds.number_of_simplices();
 
-        let mut vertex_to_cells: VertexToCellsMap = fast_hash_map_with_capacity(vertex_cap);
-        let mut cell_to_neighbors: FastHashMap<
-            CellKey,
-            SmallBuffer<CellKey, MAX_PRACTICAL_DIMENSION_SIZE>,
-        > = fast_hash_map_with_capacity(cell_cap);
+        let mut vertex_to_simplices: VertexToSimplicesMap = fast_hash_map_with_capacity(vertex_cap);
+        let mut simplex_to_neighbors: FastHashMap<
+            SimplexKey,
+            SmallBuffer<SimplexKey, MAX_PRACTICAL_DIMENSION_SIZE>,
+        > = fast_hash_map_with_capacity(simplex_cap);
         let mut vertex_to_edges: FastHashMap<
             VertexKey,
             SmallBuffer<EdgeKey, MAX_PRACTICAL_DIMENSION_SIZE>,
         > = fast_hash_map_with_capacity(vertex_cap);
 
         // Deduplicate edges globally while building the index.
-        let edges_per_cell = (D + 1).saturating_mul(D) / 2;
+        let edges_per_simplex = (D + 1).saturating_mul(D) / 2;
         let mut seen_edges: FastHashSet<EdgeKey> =
-            fast_hash_set_with_capacity(cell_cap.saturating_mul(edges_per_cell));
+            fast_hash_set_with_capacity(simplex_cap.saturating_mul(edges_per_simplex));
 
-        for (cell_key, cell) in self.tds.cells() {
-            let vertices = cell.vertices();
+        for (simplex_key, simplex) in self.tds.simplices() {
+            let vertices = simplex.vertices();
 
-            // Vertex → cells
+            // Vertex → simplices
             for &vk in vertices {
                 if !self.tds.contains_vertex_key(vk) {
                     return Err(AdjacencyIndexBuildError::MissingVertexKey {
-                        cell_key,
+                        simplex_key,
                         vertex_key: vk,
                     });
                 }
-                let entry = vertex_to_cells.entry(vk).or_default();
+                let entry = vertex_to_simplices.entry(vk).or_default();
                 #[cfg(debug_assertions)]
                 let was_spilled = entry.spilled();
-                entry.push(cell_key);
+                entry.push(simplex_key);
                 #[cfg(debug_assertions)]
                 if !was_spilled && entry.spilled() {
                     let spill_count =
-                        VERTEX_TO_CELLS_SPILL_EVENTS.fetch_add(1, Ordering::Relaxed) + 1;
+                        VERTEX_TO_SIMPLICES_SPILL_EVENTS.fetch_add(1, Ordering::Relaxed) + 1;
                     tracing::debug!(
-                        "VertexToCellsMap spill #{spill_count}: vertex={vk:?} len={} cap={} (MAX_PRACTICAL_DIMENSION_SIZE={MAX_PRACTICAL_DIMENSION_SIZE})",
+                        "VertexToSimplicesMap spill #{spill_count}: vertex={vk:?} len={} cap={} (MAX_PRACTICAL_DIMENSION_SIZE={MAX_PRACTICAL_DIMENSION_SIZE})",
                         entry.len(),
                         entry.capacity()
                     );
                 }
             }
 
-            // Cell → neighbors
-            if let Some(neighbors) = cell.neighbor_keys() {
-                let mut neighs: SmallBuffer<CellKey, MAX_PRACTICAL_DIMENSION_SIZE> =
+            // Simplex → neighbors
+            if let Some(neighbors) = simplex.neighbor_keys() {
+                let mut neighs: SmallBuffer<SimplexKey, MAX_PRACTICAL_DIMENSION_SIZE> =
                     SmallBuffer::new();
 
                 for n_opt in neighbors {
@@ -2367,9 +2383,9 @@ where
                         continue;
                     };
 
-                    if !self.tds.contains_cell(nk) {
-                        return Err(AdjacencyIndexBuildError::MissingNeighborCell {
-                            cell_key,
+                    if !self.tds.contains_simplex(nk) {
+                        return Err(AdjacencyIndexBuildError::MissingNeighborSimplex {
+                            simplex_key,
                             neighbor_key: nk,
                         });
                     }
@@ -2378,7 +2394,7 @@ where
                 }
 
                 if !neighs.is_empty() {
-                    cell_to_neighbors.insert(cell_key, neighs);
+                    simplex_to_neighbors.insert(simplex_key, neighs);
                 }
             }
 
@@ -2398,32 +2414,32 @@ where
         }
 
         // Ensure every vertex in the triangulation has an entry, even if it is currently
-        // not incident to any cell (e.g., bootstrap phase with < D+1 vertices, or TDS-level
+        // not incident to any simplex (e.g., bootstrap phase with < D+1 vertices, or TDS-level
         // states with isolated vertices). Level 3 topology validation (`Triangulation::is_valid`)
         // rejects isolated vertices, but this indexing helper remains usable for debugging and
         // intermediate construction states.
         for (vk, _) in self.tds.vertices() {
-            vertex_to_cells.entry(vk).or_default();
+            vertex_to_simplices.entry(vk).or_default();
             vertex_to_edges.entry(vk).or_default();
         }
 
         Ok(AdjacencyIndex {
             vertex_to_edges,
-            vertex_to_cells,
-            cell_to_neighbors,
+            vertex_to_simplices,
+            simplex_to_neighbors,
         })
     }
 
     #[must_use]
     fn collect_edges(&self) -> FastHashSet<EdgeKey> {
-        let cell_cap = self.tds.number_of_cells();
-        let edges_per_cell = (D + 1).saturating_mul(D) / 2;
+        let simplex_cap = self.tds.number_of_simplices();
+        let edges_per_simplex = (D + 1).saturating_mul(D) / 2;
 
         let mut edges: FastHashSet<EdgeKey> =
-            fast_hash_set_with_capacity(cell_cap.saturating_mul(edges_per_cell));
+            fast_hash_set_with_capacity(simplex_cap.saturating_mul(edges_per_simplex));
 
-        for (_cell_key, cell) in self.tds.cells() {
-            let vertices = cell.vertices();
+        for (_simplex_key, simplex) in self.tds.simplices() {
+            let vertices = simplex.vertices();
             for i in 0..vertices.len() {
                 for j in (i + 1)..vertices.len() {
                     edges.insert(EdgeKey::new(vertices[i], vertices[j]));
@@ -2438,12 +2454,12 @@ where
     fn collect_incident_edges(&self, v: VertexKey) -> FastHashSet<EdgeKey> {
         let mut edges: FastHashSet<EdgeKey> = FastHashSet::default();
 
-        for cell_key in self.adjacent_cells(v) {
-            let Some(cell) = self.tds.cell(cell_key) else {
+        for simplex_key in self.adjacent_simplices(v) {
+            let Some(simplex) = self.tds.simplex(simplex_key) else {
                 continue;
             };
 
-            for &other in cell.vertices() {
+            for &other in simplex.vertices() {
                 if other == v {
                     continue;
                 }
@@ -2454,27 +2470,27 @@ where
         edges
     }
 
-    /// Collect cell points for orientation evaluation.
+    /// Collect simplex points for orientation evaluation.
     ///
-    /// For periodic cells, this delegates per-vertex lattice-offset lifting to the active
+    /// For periodic simplices, this delegates per-vertex lattice-offset lifting to the active
     /// [`GlobalTopology`] behavior model.
-    fn collect_cell_points_for_orientation(
+    fn collect_simplex_points_for_orientation(
         &self,
-        cell_key: CellKey,
-        cell: &Cell<K::Scalar, U, V, D>,
+        simplex_key: SimplexKey,
+        simplex: &Simplex<K::Scalar, U, V, D>,
         purpose: &str,
     ) -> Result<SmallBuffer<Point<K::Scalar, D>, MAX_PRACTICAL_DIMENSION_SIZE>, TdsError> {
         let topology_model = self.global_topology.model();
-        let periodic_offsets = cell.periodic_vertex_offsets();
+        let periodic_offsets = simplex.periodic_vertex_offsets();
         if let Some(offsets) = periodic_offsets {
             // Check length invariant
-            if offsets.len() != cell.number_of_vertices() {
+            if offsets.len() != simplex.number_of_vertices() {
                 return Err(TdsError::DimensionMismatch {
-                    expected: cell.number_of_vertices(),
+                    expected: simplex.number_of_vertices(),
                     actual: offsets.len(),
                     context: format!(
-                        "cell {:?} (key {cell_key:?}) periodic offset count vs vertex count during {purpose}",
-                        cell.uuid(),
+                        "simplex {:?} (key {simplex_key:?}) periodic offset count vs vertex count during {purpose}",
+                        simplex.uuid(),
                     ),
                 });
             }
@@ -2482,8 +2498,8 @@ where
             if !topology_model.supports_periodic_orientation_offsets() {
                 return Err(TdsError::InconsistentDataStructure {
                     message: format!(
-                        "Cell {:?} (key {cell_key:?}) has periodic offsets (count {}) during {purpose}, but triangulation global topology is {:?} (kind {:?}, allows_boundary: {}, periodic_domain: {:?}); expected periodic-orientation-offset-capable topology",
-                        cell.uuid(),
+                        "Simplex {:?} (key {simplex_key:?}) has periodic offsets (count {}) during {purpose}, but triangulation global topology is {:?} (kind {:?}, allows_boundary: {}, periodic_domain: {:?}); expected periodic-orientation-offset-capable topology",
+                        simplex.uuid(),
                         offsets.len(),
                         self.global_topology,
                         topology_model.kind(),
@@ -2495,15 +2511,15 @@ where
         }
 
         let mut points: SmallBuffer<Point<K::Scalar, D>, MAX_PRACTICAL_DIMENSION_SIZE> =
-            SmallBuffer::with_capacity(cell.number_of_vertices());
+            SmallBuffer::with_capacity(simplex.number_of_vertices());
 
-        for (vertex_idx, &vertex_key) in cell.vertices().iter().enumerate() {
+        for (vertex_idx, &vertex_key) in simplex.vertices().iter().enumerate() {
             let vertex = self.tds.vertex(vertex_key).ok_or_else(|| {
                 TdsError::VertexNotFound {
                     vertex_key,
                     context: format!(
-                        "referenced by cell {:?} (key {cell_key:?}) at position {vertex_idx} during {purpose}",
-                        cell.uuid(),
+                        "referenced by simplex {:?} (key {simplex_key:?}) at position {vertex_idx} during {purpose}",
+                        simplex.uuid(),
                     ),
                 }
             })?;
@@ -2512,8 +2528,8 @@ where
                 .lift_for_orientation(*vertex.point().coords(), periodic_offset)
                 .map_err(|error| TdsError::InconsistentDataStructure {
                     message: format!(
-                        "Failed to lift coordinates for vertex key {vertex_key:?} at slot {vertex_idx} in cell {:?} (key {cell_key:?}) during {purpose}: {error}",
-                        cell.uuid(),
+                        "Failed to lift coordinates for vertex key {vertex_key:?} at slot {vertex_idx} in simplex {:?} (key {simplex_key:?}) during {purpose}: {error}",
+                        simplex.uuid(),
                     ),
                 })?;
 
@@ -2523,7 +2539,7 @@ where
         Ok(points)
     }
 
-    /// Evaluate a cell's geometric orientation for a specific validation/canonicalization context.
+    /// Evaluate a simplex's geometric orientation for a specific validation/canonicalization context.
     ///
     /// This helper centralizes:
     /// - lifted-point collection, and
@@ -2539,7 +2555,7 @@ where
     ///   (both `robust_orientation` and `AdaptiveKernel::orientation()` run the
     ///   same fast-filter + Bareiss pipeline internally).
     ///
-    /// Returns `0` for truly degenerate (zero-volume) cells, so callers' existing
+    /// Returns `0` for truly degenerate (zero-volume) simplices, so callers' existing
     /// `orientation == 0` handling works correctly.
     ///
     /// # Error Mapping
@@ -2547,64 +2563,65 @@ where
     /// Conversion failures (e.g. non-finite coordinates) are mapped to
     /// [`TdsError::InconsistentDataStructure`] because they indicate
     /// an internal problem rather than a geometry degeneracy.
-    fn evaluate_cell_orientation_for_context(
+    fn evaluate_simplex_orientation_for_context(
         &self,
-        cell_key: CellKey,
-        cell: &Cell<K::Scalar, U, V, D>,
+        simplex_key: SimplexKey,
+        simplex: &Simplex<K::Scalar, U, V, D>,
         purpose: &str,
         predicate_failure_prefix: &str,
     ) -> Result<i32, TdsError> {
-        let points = self.collect_cell_points_for_orientation(cell_key, cell, purpose)?;
+        let points = self.collect_simplex_points_for_orientation(simplex_key, simplex, purpose)?;
 
         // Use exact orientation only (no SoS):
-        // sign to correctly classify degenerate cells vs negatively oriented ones.
+        // sign to correctly classify degenerate simplices vs negatively oriented ones.
         match robust_orientation(&points) {
             Ok(Orientation::POSITIVE) => Ok(1),
             Ok(Orientation::NEGATIVE) => Ok(-1),
             Ok(Orientation::DEGENERATE) => Ok(0),
             Err(e) => Err(TdsError::InconsistentDataStructure {
                 message: format!(
-                    "{predicate_failure_prefix} {:?} (key {cell_key:?}): {e}",
-                    cell.uuid(),
+                    "{predicate_failure_prefix} {:?} (key {simplex_key:?}): {e}",
+                    simplex.uuid(),
                 ),
             }),
         }
     }
-    /// Validates geometric orientation sign for each stored cell using exact arithmetic
+    /// Validates geometric orientation sign for each stored simplex using exact arithmetic
     /// via [`robust_orientation`].
     ///
-    /// Cells are stored in canonical positive orientation order by construction and mutation
+    /// Simplices are stored in canonical positive orientation order by construction and mutation
     /// paths; a negative sign indicates geometric/combinatorial mismatch.
     ///
-    /// Orientation is evaluated through [`evaluate_cell_orientation_for_context`](Self::evaluate_cell_orientation_for_context),
+    /// Orientation is evaluated through [`evaluate_simplex_orientation_for_context`](Self::evaluate_simplex_orientation_for_context),
     /// which uses [`robust_orientation`] exclusively (no `SoS`) so that truly degenerate
-    /// cells are correctly identified rather than masked.
+    /// simplices are correctly identified rather than masked.
     ///
-    /// Periodic-lifted cells are validated in lifted coordinates using per-vertex periodic
+    /// Periodic-lifted simplices are validated in lifted coordinates using per-vertex periodic
     /// offsets and toroidal domain periods.
-    pub(crate) fn validate_geometric_cell_orientation(&self) -> Result<(), TdsError> {
-        for (cell_key, cell) in self.tds.cells() {
-            let orientation = self.evaluate_cell_orientation_for_context(
-                cell_key,
-                cell,
+    pub(crate) fn validate_geometric_simplex_orientation(&self) -> Result<(), TdsError> {
+        for (simplex_key, simplex) in self.tds.simplices() {
+            let orientation = self.evaluate_simplex_orientation_for_context(
+                simplex_key,
+                simplex,
                 "geometric orientation validation",
-                "Geometric orientation predicate failed for cell",
+                "Geometric orientation predicate failed for simplex",
             )?;
-            // Degenerate cells (zero exact determinant) can legitimately arise
+            // Degenerate simplices (zero exact determinant) can legitimately arise
             // from flip-based repair in higher dimensions. They are topologically
             // valid (BFS coherent orientation handles them) and do not indicate
-            // a sign mismatch.  Only flag cells with negative orientation.
+            // a sign mismatch.  Only flag simplices with negative orientation.
             if orientation < 0 {
                 // Emit structured diagnostic context for debugging (especially 4D+ cases).
                 let vertex_keys: SmallBuffer<VertexKey, MAX_PRACTICAL_DIMENSION_SIZE> =
-                    cell.vertices().iter().copied().collect();
-                let neighbor_keys: SmallBuffer<Option<CellKey>, MAX_PRACTICAL_DIMENSION_SIZE> =
-                    cell.neighbor_keys()
+                    simplex.vertices().iter().copied().collect();
+                let neighbor_keys: SmallBuffer<Option<SimplexKey>, MAX_PRACTICAL_DIMENSION_SIZE> =
+                    simplex
+                        .neighbor_keys()
                         .map(Iterator::collect)
                         .unwrap_or_default();
                 tracing::debug!(
-                    cell_uuid = %cell.uuid(),
-                    ?cell_key,
+                    simplex_uuid = %simplex.uuid(),
+                    ?simplex_key,
                     ?vertex_keys,
                     ?neighbor_keys,
                     orientation,
@@ -2613,8 +2630,8 @@ where
 
                 return Err(TdsError::Geometric(GeometricError::NegativeOrientation {
                     message: format!(
-                        "Cell {:?} (key {cell_key:?}, vertices {vertex_keys:?}) has negative geometric orientation; expected positive canonical orientation",
-                        cell.uuid(),
+                        "Simplex {:?} (key {simplex_key:?}, vertices {vertex_keys:?}) has negative geometric orientation; expected positive canonical orientation",
+                        simplex.uuid(),
                     ),
                 }));
             }
@@ -2623,31 +2640,31 @@ where
         Ok(())
     }
 
-    /// Validates geometric orientation for a local set of cells.
-    fn validate_geometric_cell_orientation_for_cells(
+    /// Validates geometric orientation for a local set of simplices.
+    fn validate_geometric_simplex_orientation_for_simplices(
         &self,
-        cells: &[CellKey],
+        simplices: &[SimplexKey],
     ) -> Result<(), TdsError> {
-        for &cell_key in cells {
-            let cell = self
-                .tds
-                .cell(cell_key)
-                .ok_or_else(|| TdsError::CellNotFound {
-                    cell_key,
-                    context: "local geometric orientation validation scope".to_string(),
-                })?;
-            let orientation = self.evaluate_cell_orientation_for_context(
-                cell_key,
-                cell,
+        for &simplex_key in simplices {
+            let simplex =
+                self.tds
+                    .simplex(simplex_key)
+                    .ok_or_else(|| TdsError::SimplexNotFound {
+                        simplex_key,
+                        context: "local geometric orientation validation scope".to_string(),
+                    })?;
+            let orientation = self.evaluate_simplex_orientation_for_context(
+                simplex_key,
+                simplex,
                 "local geometric orientation validation",
-                "Geometric orientation predicate failed for local cell",
+                "Geometric orientation predicate failed for local simplex",
             )?;
             if orientation < 0 {
                 let vertex_keys: SmallBuffer<VertexKey, MAX_PRACTICAL_DIMENSION_SIZE> =
-                    cell.vertices().iter().copied().collect();
+                    simplex.vertices().iter().copied().collect();
                 tracing::debug!(
-                    cell_uuid = %cell.uuid(),
-                    ?cell_key,
+                    simplex_uuid = %simplex.uuid(),
+                    ?simplex_key,
                     ?vertex_keys,
                     orientation,
                     "negative geometric orientation detected during local validation",
@@ -2655,8 +2672,8 @@ where
 
                 return Err(TdsError::Geometric(GeometricError::NegativeOrientation {
                     message: format!(
-                        "Cell {:?} (key {cell_key:?}, vertices {vertex_keys:?}) has negative geometric orientation; expected positive canonical orientation",
-                        cell.uuid(),
+                        "Simplex {:?} (key {simplex_key:?}, vertices {vertex_keys:?}) has negative geometric orientation; expected positive canonical orientation",
+                        simplex.uuid(),
                     ),
                 }));
             }
@@ -2665,56 +2682,57 @@ where
         Ok(())
     }
 
-    /// Validates local orientation invariants for cells changed by insertion.
-    fn validate_local_orientation_for_cells(
+    /// Validates local orientation invariants for simplices changed by insertion.
+    fn validate_local_orientation_for_simplices(
         &self,
-        cells: &[CellKey],
+        simplices: &[SimplexKey],
     ) -> Result<(), InsertionError> {
-        self.tds.validate_coherent_orientation_for_cells(cells)?;
-        self.validate_geometric_cell_orientation_for_cells(cells)?;
+        self.tds
+            .validate_coherent_orientation_for_simplices(simplices)?;
+        self.validate_geometric_simplex_orientation_for_simplices(simplices)?;
         Ok(())
     }
 
-    /// Flip all negatively oriented cells to positive orientation.
+    /// Flip all negatively oriented simplices to positive orientation.
     ///
-    /// This applies to both Euclidean cells and periodic-lifted cells (when present).
+    /// This applies to both Euclidean simplices and periodic-lifted simplices (when present).
     ///
-    /// Returns `true` if at least one cell was flipped.
-    fn promote_cells_to_positive_orientation(&mut self) -> Result<bool, InsertionError> {
-        let mut negative_cells = CellKeyBuffer::new();
+    /// Returns `true` if at least one simplex was flipped.
+    fn promote_simplices_to_positive_orientation(&mut self) -> Result<bool, InsertionError> {
+        let mut negative_simplices = SimplexKeyBuffer::new();
 
-        for (cell_key, cell) in self.tds.cells() {
-            let orientation = self.evaluate_cell_orientation_for_context(
-                cell_key,
-                cell,
+        for (simplex_key, simplex) in self.tds.simplices() {
+            let orientation = self.evaluate_simplex_orientation_for_context(
+                simplex_key,
+                simplex,
                 "positive-orientation promotion",
-                "Geometric orientation predicate failed while promoting positive orientation for cell",
+                "Geometric orientation predicate failed while promoting positive orientation for simplex",
             )?;
-            // Skip degenerate cells — their exact determinant is zero, so there
+            // Skip degenerate simplices — their exact determinant is zero, so there
             // is no meaningful "positive" to promote to. BFS coherent-orientation
             // normalization and the global sign canonicalization handle them.
             if orientation == 0 {
                 continue;
             }
             if orientation < 0 {
-                negative_cells.push(cell_key);
+                negative_simplices.push(simplex_key);
             }
         }
 
-        if negative_cells.is_empty() {
+        if negative_simplices.is_empty() {
             return Ok(false);
         }
 
-        for cell_key in negative_cells {
-            let cell = self
-                .tds
-                .cell_mut(cell_key)
-                .ok_or_else(|| TdsError::CellNotFound {
-                    cell_key,
-                    context: "applying positive-orientation promotion".to_string(),
-                })?;
-            if cell.number_of_vertices() >= 2 {
-                cell.swap_vertex_slots(0, 1);
+        for simplex_key in negative_simplices {
+            let simplex =
+                self.tds
+                    .simplex_mut(simplex_key)
+                    .ok_or_else(|| TdsError::SimplexNotFound {
+                        simplex_key,
+                        context: "applying positive-orientation promotion".to_string(),
+                    })?;
+            if simplex.number_of_vertices() >= 2 {
+                simplex.swap_vertex_slots(0, 1);
             }
         }
 
@@ -2722,29 +2740,29 @@ where
         Ok(true)
     }
 
-    /// Check whether any cell still requires positive-orientation promotion.
+    /// Check whether any simplex still requires positive-orientation promotion.
     ///
-    /// This performs the same orientation inspection as promotion, but does not mutate any cells.
+    /// This performs the same orientation inspection as promotion, but does not mutate any simplices.
     ///
     /// # Returns
     ///
-    /// - `Ok(true)` if at least one cell has negative geometric orientation.
-    /// - `Ok(false)` if all cells are already positively oriented.
+    /// - `Ok(true)` if at least one simplex has negative geometric orientation.
+    /// - `Ok(false)` if all simplices are already positively oriented.
     ///
     /// # Errors
     ///
     /// Returns an [`InsertionError`] if orientation evaluation fails.
-    /// Geometrically degenerate cells (`orientation == 0` per [`robust_orientation`])
-    /// are skipped, consistent with [`promote_cells_to_positive_orientation`](Self::promote_cells_to_positive_orientation).
-    fn cells_require_positive_orientation_promotion(&self) -> Result<bool, InsertionError> {
-        for (cell_key, cell) in self.tds.cells() {
-            let orientation = self.evaluate_cell_orientation_for_context(
-                cell_key,
-                cell,
+    /// Geometrically degenerate simplices (`orientation == 0` per [`robust_orientation`])
+    /// are skipped, consistent with [`promote_simplices_to_positive_orientation`](Self::promote_simplices_to_positive_orientation).
+    fn simplices_require_positive_orientation_promotion(&self) -> Result<bool, InsertionError> {
+        for (simplex_key, simplex) in self.tds.simplices() {
+            let orientation = self.evaluate_simplex_orientation_for_context(
+                simplex_key,
+                simplex,
                 "positive-orientation convergence check",
-                "Geometric orientation predicate failed while checking positive-orientation convergence for cell",
+                "Geometric orientation predicate failed while checking positive-orientation convergence for simplex",
             )?;
-            // Skip degenerate cells (see promote_cells_to_positive_orientation).
+            // Skip degenerate simplices (see promote_simplices_to_positive_orientation).
             if orientation == 0 {
                 continue;
             }
@@ -2757,18 +2775,18 @@ where
     }
 
     /// For connected non-periodic triangulations, coherent orientation has two equivalent global
-    /// sign choices. Canonicalize that global sign to positive by flipping all cells when needed.
+    /// sign choices. Canonicalize that global sign to positive by flipping all simplices when needed.
     fn canonicalize_global_orientation_sign(&mut self) -> Result<(), InsertionError> {
-        // Find the first cell with a non-zero exact orientation
-        // Skip degenerate cells (orientation == 0) — they have no meaningful geometric sign.
+        // Find the first simplex with a non-zero exact orientation
+        // Skip degenerate simplices (orientation == 0) — they have no meaningful geometric sign.
         let representative_sign = {
             let mut sign = None;
-            for (cell_key, cell) in self.tds.cells() {
-                let orientation = self.evaluate_cell_orientation_for_context(
-                    cell_key,
-                    cell,
+            for (simplex_key, simplex) in self.tds.simplices() {
+                let orientation = self.evaluate_simplex_orientation_for_context(
+                    simplex_key,
+                    simplex,
                     "global orientation-sign canonicalization",
-                    "Geometric orientation predicate failed while canonicalizing global orientation sign for cell",
+                    "Geometric orientation predicate failed while canonicalizing global orientation sign for simplex",
                 )?;
                 if orientation != 0 {
                     sign = Some(orientation);
@@ -2782,14 +2800,14 @@ where
             return Ok(());
         }
 
-        let cell_keys: CellKeyBuffer = self.tds.cell_keys().collect();
+        let simplex_keys: SimplexKeyBuffer = self.tds.simplex_keys().collect();
         let mut flipped_any = false;
-        for cell_key in cell_keys {
-            let Some(cell) = self.tds.cell_mut(cell_key) else {
+        for simplex_key in simplex_keys {
+            let Some(simplex) = self.tds.simplex_mut(simplex_key) else {
                 continue;
             };
-            if cell.number_of_vertices() >= 2 {
-                cell.swap_vertex_slots(0, 1);
+            if simplex.number_of_vertices() >= 2 {
+                simplex.swap_vertex_slots(0, 1);
                 flipped_any = true;
             }
         }
@@ -2806,96 +2824,96 @@ where
     ///
     /// Strategy:
     /// 1. Normalize coherent orientation (BFS propagation) so all adjacencies agree.
-    /// 2. Canonicalize the global sign — for a connected orientable manifold all cells
+    /// 2. Canonicalize the global sign — for a connected orientable manifold all simplices
     ///    share the same sign after normalization, so a single global flip resolves it.
-    /// 3. Fall back to bounded per-cell promotion passes for FP-precision edge cases.
+    /// 3. Fall back to bounded per-simplex promotion passes for FP-precision edge cases.
     pub(crate) fn normalize_and_promote_positive_orientation(
         &mut self,
     ) -> Result<(), InsertionError> {
         // Phase 1: make all adjacencies coherent
         // Canonicalizing *before* the promote loop resolves the common case where
-        // all cells share the same (negative) sign after BFS normalization.
+        // all simplices share the same (negative) sign after BFS normalization.
         self.tds.normalize_coherent_orientation()?;
         self.canonicalize_global_orientation_sign()?;
 
         // Phase 2 (fallback): bounded promote + normalize passes for stragglers.
         for _ in 0..3 {
-            if !self.promote_cells_to_positive_orientation()? {
+            if !self.promote_simplices_to_positive_orientation()? {
                 break;
             }
             self.tds.normalize_coherent_orientation()?;
         }
 
         // Soft post-condition: after normalize + canonicalize + bounded promote
-        // passes, any remaining "negative" cells are near-degenerate (det ≈ 0)
+        // passes, any remaining "negative" simplices are near-degenerate (det ≈ 0)
         // where the fast kernel's sign is unreliable.  Log a diagnostic but do
         // not fail — the BFS normalization guarantees coherent orientation and
         // the global canonicalization ensures the dominant sign is positive.
-        if self.cells_require_positive_orientation_promotion()? {
+        if self.simplices_require_positive_orientation_promotion()? {
             let mut residual_count = 0_usize;
-            let mut sample_keys: [Option<CellKey>; 5] = [None; 5];
-            for (cell_key, cell) in self.tds.cells() {
-                let orientation = self.evaluate_cell_orientation_for_context(
-                    cell_key,
-                    cell,
+            let mut sample_keys: [Option<SimplexKey>; 5] = [None; 5];
+            for (simplex_key, simplex) in self.tds.simplices() {
+                let orientation = self.evaluate_simplex_orientation_for_context(
+                    simplex_key,
+                    simplex,
                     "residual negative-orientation sampling",
-                    "Geometric orientation predicate failed while sampling residual negatives for cell",
+                    "Geometric orientation predicate failed while sampling residual negatives for simplex",
                 )?;
                 if orientation < 0 {
                     if residual_count < sample_keys.len() {
-                        sample_keys[residual_count] = Some(cell_key);
+                        sample_keys[residual_count] = Some(simplex_key);
                     }
                     residual_count += 1;
                 }
             }
-            let sampled: Vec<CellKey> = sample_keys.into_iter().flatten().collect();
+            let sampled: Vec<SimplexKey> = sample_keys.into_iter().flatten().collect();
             tracing::debug!(
                 residual_count,
                 sampled_keys = ?sampled,
                 "normalize_and_promote_positive_orientation: \
-                 {residual_count} cells still appear negative after bounded promotion \
+                 {residual_count} simplices still appear negative after bounded promotion \
                  passes (likely near-degenerate FP noise); accepting coherent orientation"
             );
         }
         self.canonicalize_global_orientation_sign()?;
         Ok(())
     }
-    /// Canonicalize a set of newly created cells to positive geometric orientation.
+    /// Canonicalize a set of newly created simplices to positive geometric orientation.
     ///
-    /// This preserves cell-local slot alignment (vertices/neighbors/periodic offsets) by using
-    /// `swap_vertex_slots(0, 1)` for negatively oriented cells.
+    /// This preserves simplex-local slot alignment (vertices/neighbors/periodic offsets) by using
+    /// `swap_vertex_slots(0, 1)` for negatively oriented simplices.
     #[expect(
         clippy::too_many_lines,
         reason = "debug-only orientation diagnostics with dedup add conditional branches"
     )]
-    fn canonicalize_positive_orientation_for_cells(
+    fn canonicalize_positive_orientation_for_simplices(
         &mut self,
-        cells: &CellKeyBuffer,
+        simplices: &SimplexKeyBuffer,
     ) -> Result<(), InsertionError> {
         #[cfg(debug_assertions)]
         let debug_orientation = std::env::var_os("DELAUNAY_DEBUG_ORIENTATION").is_some();
         #[cfg(debug_assertions)]
         let mut orientation_warn_count = 0_usize;
 
-        for &cell_key in cells {
+        for &simplex_key in simplices {
             let orientation = {
-                let cell = self
-                    .tds
-                    .cell(cell_key)
-                    .ok_or_else(|| TdsError::CellNotFound {
-                        cell_key,
-                        context: "canonicalizing insertion orientation".to_string(),
-                    })?;
-                self.evaluate_cell_orientation_for_context(
-                    cell_key,
-                    cell,
+                let simplex =
+                    self.tds
+                        .simplex(simplex_key)
+                        .ok_or_else(|| TdsError::SimplexNotFound {
+                            simplex_key,
+                            context: "canonicalizing insertion orientation".to_string(),
+                        })?;
+                self.evaluate_simplex_orientation_for_context(
+                    simplex_key,
+                    simplex,
                     "insertion orientation canonicalization",
-                    "Geometric orientation predicate failed while canonicalizing cell",
+                    "Geometric orientation predicate failed while canonicalizing simplex",
                 )?
             };
 
             if orientation == 0 {
-                // Keep temporary degenerate cells unchanged here. Downstream local-repair and
+                // Keep temporary degenerate simplices unchanged here. Downstream local-repair and
                 // topology/geometry validation decide whether they are removed or rejected.
                 continue;
             }
@@ -2905,29 +2923,29 @@ where
                 // so release and non-debug runs avoid the allocation entirely.
                 #[cfg(debug_assertions)]
                 let pre_swap_vertices = if debug_orientation {
-                    self.tds.cell(cell_key).map(|c| c.vertices().to_vec())
+                    self.tds.simplex(simplex_key).map(|c| c.vertices().to_vec())
                 } else {
                     None
                 };
 
-                let cell = self
-                    .tds
-                    .cell_mut(cell_key)
-                    .ok_or_else(|| TdsError::CellNotFound {
-                        cell_key,
-                        context: "applying insertion orientation canonicalization".to_string(),
-                    })?;
-                if cell.number_of_vertices() < 2 {
+                let simplex =
+                    self.tds
+                        .simplex_mut(simplex_key)
+                        .ok_or_else(|| TdsError::SimplexNotFound {
+                            simplex_key,
+                            context: "applying insertion orientation canonicalization".to_string(),
+                        })?;
+                if simplex.number_of_vertices() < 2 {
                     return Err(TdsError::DimensionMismatch {
                         expected: 2,
-                        actual: cell.number_of_vertices(),
+                        actual: simplex.number_of_vertices(),
                         context: format!(
-                            "cell {cell_key:?} needs >= 2 vertices for orientation canonicalization"
+                            "simplex {simplex_key:?} needs >= 2 vertices for orientation canonicalization"
                         ),
                     }
                     .into());
                 }
-                cell.swap_vertex_slots(0, 1);
+                simplex.swap_vertex_slots(0, 1);
 
                 #[cfg(debug_assertions)]
                 if debug_orientation {
@@ -2937,9 +2955,9 @@ where
                         // Re-evaluate orientation after swap to confirm it worked.
                         // Handle the Result locally so verification failures are
                         // observational only and never promote to insertion errors.
-                        let post_orientation = self.tds.cell(cell_key).map(|c| {
-                            self.evaluate_cell_orientation_for_context(
-                                cell_key,
+                        let post_orientation = self.tds.simplex(simplex_key).map(|c| {
+                            self.evaluate_simplex_orientation_for_context(
+                                simplex_key,
                                 c,
                                 "orientation swap verification",
                                 "orientation predicate failed during swap verification",
@@ -2948,17 +2966,17 @@ where
                         match post_orientation {
                             Some(Ok(post_o)) => {
                                 tracing::warn!(
-                                    cell_key = ?cell_key,
+                                    simplex_key = ?simplex_key,
                                     pre_swap_vertices = ?pre_swap_vertices,
                                     pre_swap_orientation = orientation,
                                     post_swap_orientation = post_o,
                                     swap_fixed = post_o > 0,
-                                    "canonicalize_positive_orientation: negative-orientation cell swapped"
+                                    "canonicalize_positive_orientation: negative-orientation simplex swapped"
                                 );
                             }
                             Some(Err(ref e)) => {
                                 tracing::warn!(
-                                    cell_key = ?cell_key,
+                                    simplex_key = ?simplex_key,
                                     pre_swap_vertices = ?pre_swap_vertices,
                                     pre_swap_orientation = orientation,
                                     error = %e,
@@ -2967,10 +2985,10 @@ where
                             }
                             None => {
                                 tracing::warn!(
-                                    cell_key = ?cell_key,
+                                    simplex_key = ?simplex_key,
                                     pre_swap_vertices = ?pre_swap_vertices,
                                     pre_swap_orientation = orientation,
-                                    "canonicalize_positive_orientation: cell not found after swap"
+                                    "canonicalize_positive_orientation: simplex not found after swap"
                                 );
                             }
                         }
@@ -2995,28 +3013,28 @@ where
     /// Validates topological invariants of the triangulation (Level 3).
     ///
     /// This checks the triangulation/topology layer **only**:
-    /// - Codimension-1 pseudomanifold condition: each facet is incident to 1 (boundary) or 2 (interior) cells
+    /// - Codimension-1 pseudomanifold condition: each facet is incident to 1 (boundary) or 2 (interior) simplices
     /// - Codimension-2 boundary manifoldness: the boundary must be closed ("no boundary of boundary")
-    /// - Geometric orientation-sign consistency for stored cells (signed determinant > 0)
+    /// - Geometric orientation-sign consistency for stored simplices (signed determinant > 0)
     /// - Ridge-link validation (when `topology_guarantee.requires_ridge_links()`)
     /// - Vertex-link validation during insertion (when `topology_guarantee.requires_vertex_links_during_insertion()`)
-    /// - Connectedness (single component in the cell neighbor graph)
-    /// - No isolated vertices (every vertex must be incident to at least one cell)
+    /// - Connectedness (single component in the simplex neighbor graph)
+    /// - No isolated vertices (every vertex must be incident to at least one simplex)
     /// - Euler characteristic
     ///
     /// For `TopologyGuarantee::PLManifold`, full PL-manifold certification requires
     /// calling [`Triangulation::validate_at_completion`](Self::validate_at_completion)
     /// (or [`Triangulation::validate`](Self::validate)) after batch construction.
     ///
-    /// It intentionally does **not** validate lower layers (vertices/cells or TDS structure).
+    /// It intentionally does **not** validate lower layers (vertices/simplices or TDS structure).
     /// For cumulative validation, use [`Triangulation::validate`](Self::validate).
     ///
     /// # Errors
     ///
     /// Returns an [`InvariantError`] if:
     /// - The manifold-with-boundary facet property is violated.
-    /// - The triangulation is disconnected (multiple cell components).
-    /// - An isolated vertex is detected (no incident cell).
+    /// - The triangulation is disconnected (multiple simplex components).
+    /// - An isolated vertex is detected (no incident simplex).
     /// - Euler characteristic validation fails.
     /// - The topology module reports an error (treated as inconsistent data structure).
     ///
@@ -3042,14 +3060,14 @@ where
         self.validate_topology_core()?;
         // Check geometric orientation after manifold/link checks so topology-specific
         // diagnostics surface first when multiple invariants are violated.
-        self.validate_geometric_cell_orientation()?;
+        self.validate_geometric_simplex_orientation()?;
         Ok(())
     }
 
     /// Validates topological invariants **without** geometric orientation checks.
     ///
     /// This is identical to [`is_valid`](Self::is_valid) but omits the
-    /// `validate_geometric_cell_orientation()` step. It is intended for
+    /// `validate_geometric_simplex_orientation()` step. It is intended for
     /// explicit combinatorial construction where the user-provided vertex
     /// orderings may produce negative determinants that are nonetheless
     /// topologically valid.
@@ -3057,29 +3075,29 @@ where
         self.validate_topology_core()
     }
 
-    /// Verifies that no cell is geometrically degenerate (zero-volume simplex).
+    /// Verifies that no simplex is geometrically degenerate (zero-volume simplex).
     ///
-    /// This is a sign-agnostic check: it flags cells whose exact orientation
+    /// This is a sign-agnostic check: it flags simplices whose exact orientation
     /// determinant is zero (collinear in 2D, coplanar in 3D, etc.) regardless
     /// of the sign.  Intended for explicit construction where the user-supplied
     /// vertex set must form non-degenerate simplices.
     ///
-    /// Unlike [`validate_geometric_cell_orientation`](Self::validate_geometric_cell_orientation),
-    /// this does **not** reject negative-orientation cells.
+    /// Unlike [`validate_geometric_simplex_orientation`](Self::validate_geometric_simplex_orientation),
+    /// this does **not** reject negative-orientation simplices.
     pub(crate) fn validate_geometric_nondegeneracy(&self) -> Result<(), TdsError> {
-        for (cell_key, cell) in self.tds.cells() {
-            let orientation = self.evaluate_cell_orientation_for_context(
-                cell_key,
-                cell,
+        for (simplex_key, simplex) in self.tds.simplices() {
+            let orientation = self.evaluate_simplex_orientation_for_context(
+                simplex_key,
+                simplex,
                 "geometric nondegeneracy check",
-                "Orientation predicate failed for cell",
+                "Orientation predicate failed for simplex",
             )?;
             if orientation == 0 {
                 return Err(TdsError::Geometric(GeometricError::DegenerateOrientation {
                     message: format!(
-                        "Cell {:?} (key {cell_key:?}) is geometrically degenerate \
+                        "Simplex {:?} (key {simplex_key:?}) is geometrically degenerate \
                          (zero-volume simplex from collinear/coplanar vertices)",
-                        cell.uuid(),
+                        simplex.uuid(),
                     ),
                 }));
             }
@@ -3096,7 +3114,7 @@ where
     fn validate_topology_core(&self) -> Result<(), InvariantError> {
         // 1. Connectedness
         //
-        // Checked first because it is cheaper than building the facet-to-cells map
+        // Checked first because it is cheaper than building the facet-to-simplices map
         // (which requires O(N·D) hash-map insertions plus allocations) and avoids
         // all subsequent work when the triangulation is disconnected.
         self.validate_global_connectedness()?;
@@ -3104,19 +3122,19 @@ where
         // 2. Manifold facet multiplicity (codimension-1 pseudomanifold condition)
         //
         // Build the facet map once and reuse it for manifold validation and Euler counting.
-        let facet_to_cells: FacetToCellsMap = self.tds.build_facet_to_cells_map()?;
-        self.validate_topology_core_with_facet_to_cells_map(&facet_to_cells)
+        let facet_to_simplices: FacetToSimplicesMap = self.tds.build_facet_to_simplices_map()?;
+        self.validate_topology_core_with_facet_to_simplices_map(&facet_to_simplices)
     }
 
-    fn validate_topology_core_with_facet_to_cells_map(
+    fn validate_topology_core_with_facet_to_simplices_map(
         &self,
-        facet_to_cells: &FacetToCellsMap,
+        facet_to_simplices: &FacetToSimplicesMap,
     ) -> Result<(), InvariantError> {
-        validate_facet_degree(facet_to_cells)?;
+        validate_facet_degree(facet_to_simplices)?;
 
         // 2b. Boundary manifoldness in codimension 2: the boundary must be "closed"
         // (i.e., its ridges must have degree 2 within boundary facets).
-        validate_closed_boundary(&self.tds, facet_to_cells)?;
+        validate_closed_boundary(&self.tds, facet_to_simplices)?;
 
         // 2c. Ridge-link validation for PLManifold/PLManifoldStrict (fast, catches many PL issues).
         if self.topology_guarantee.requires_ridge_links() {
@@ -3127,15 +3145,15 @@ where
             .topology_guarantee
             .requires_vertex_links_during_insertion()
         {
-            validate_vertex_links(&self.tds, facet_to_cells)?;
+            validate_vertex_links(&self.tds, facet_to_simplices)?;
         }
 
-        // 3. Vertex incidence (manifold invariant): every vertex must be incident to at least one cell.
+        // 3. Vertex incidence (manifold invariant): every vertex must be incident to at least one simplex.
         self.validate_no_isolated_vertices()?;
 
         // 4. Euler characteristic using the topology module
         let topology_result =
-            validate_triangulation_euler_with_facet_to_cells_map(&self.tds, facet_to_cells);
+            validate_triangulation_euler_with_facet_to_simplices_map(&self.tds, facet_to_simplices);
 
         // Override the heuristic classification when the caller has declared a
         // non-Euclidean global topology.  The heuristic classifies any closed
@@ -3200,18 +3218,18 @@ where
             return Ok(());
         }
 
-        if self.tds.number_of_cells() == 0 {
+        if self.tds.number_of_simplices() == 0 {
             return Ok(());
         }
 
-        let facet_to_cells: FacetToCellsMap = self.tds.build_facet_to_cells_map()?;
-        self.validate_at_completion_with_facet_to_cells_map(&facet_to_cells)?;
+        let facet_to_simplices: FacetToSimplicesMap = self.tds.build_facet_to_simplices_map()?;
+        self.validate_at_completion_with_facet_to_simplices_map(&facet_to_simplices)?;
         Ok(())
     }
 
-    fn validate_at_completion_with_facet_to_cells_map(
+    fn validate_at_completion_with_facet_to_simplices_map(
         &self,
-        facet_to_cells: &FacetToCellsMap,
+        facet_to_simplices: &FacetToSimplicesMap,
     ) -> Result<(), InvariantError> {
         if !self
             .topology_guarantee
@@ -3220,11 +3238,11 @@ where
             return Ok(());
         }
 
-        if self.tds.number_of_cells() == 0 {
+        if self.tds.number_of_simplices() == 0 {
             return Ok(());
         }
 
-        validate_vertex_links(&self.tds, facet_to_cells)?;
+        validate_vertex_links(&self.tds, facet_to_simplices)?;
         Ok(())
     }
 
@@ -3238,7 +3256,7 @@ where
     /// # Errors
     ///
     /// Returns an [`InvariantError`] if:
-    /// - Any vertex/cell is invalid (Level 1).
+    /// - Any vertex/simplex is invalid (Level 1).
     /// - The TDS structural invariants fail (Level 2).
     /// - Topology validation fails (Level 3).
     ///
@@ -3267,12 +3285,12 @@ where
     {
         self.tds.validate()?;
         self.validate_global_connectedness()?;
-        let facet_to_cells: FacetToCellsMap = self.tds.build_facet_to_cells_map()?;
-        self.validate_topology_core_with_facet_to_cells_map(&facet_to_cells)?;
+        let facet_to_simplices: FacetToSimplicesMap = self.tds.build_facet_to_simplices_map()?;
+        self.validate_topology_core_with_facet_to_simplices_map(&facet_to_simplices)?;
         // Check geometric orientation after manifold/link checks so topology-specific
         // diagnostics surface first when multiple invariants are violated.
-        self.validate_geometric_cell_orientation()?;
-        self.validate_at_completion_with_facet_to_cells_map(&facet_to_cells)
+        self.validate_geometric_simplex_orientation()?;
+        self.validate_at_completion_with_facet_to_simplices_map(&facet_to_simplices)
     }
 
     /// Generate a comprehensive validation report for Levels 1–3.
@@ -3302,7 +3320,7 @@ where
                 if report.violations.iter().any(|v| {
                     matches!(
                         v.kind,
-                        InvariantKind::VertexMappings | InvariantKind::CellMappings
+                        InvariantKind::VertexMappings | InvariantKind::SimplexMappings
                     )
                 }) {
                     return Err(report);
@@ -3324,13 +3342,13 @@ where
             }
         }
 
-        // Level 1 (element validity): cells
-        for (_cell_key, cell) in self.tds.cells() {
-            if let Err(source) = cell.is_valid() {
+        // Level 1 (element validity): simplices
+        for (_simplex_key, simplex) in self.tds.simplices() {
+            if let Err(source) = simplex.is_valid() {
                 violations.push(InvariantViolation {
-                    kind: InvariantKind::CellValidity,
-                    error: InvariantError::Tds(TdsError::InvalidCell {
-                        cell_id: cell.uuid(),
+                    kind: InvariantKind::SimplexValidity,
+                    error: InvariantError::Tds(TdsError::InvalidSimplex {
+                        simplex_id: simplex.uuid(),
                         source,
                     }),
                 });
@@ -3352,19 +3370,19 @@ where
         }
     }
 
-    /// Validates that the triangulation's cell neighbor graph is a single connected component.
+    /// Validates that the triangulation's simplex neighbor graph is a single connected component.
     ///
     /// Delegates to [`Tds::is_connected`], an O(N·D) BFS over neighbor pointers.
     fn validate_global_connectedness(&self) -> Result<(), TriangulationValidationError> {
         if !self.tds.is_connected() {
             return Err(TriangulationValidationError::Disconnected {
-                cell_count: self.tds.number_of_cells(),
+                simplex_count: self.tds.number_of_simplices(),
             });
         }
         Ok(())
     }
 
-    /// Validates that every vertex is incident to at least one cell.
+    /// Validates that every vertex is incident to at least one simplex.
     ///
     /// Isolated vertices are allowed at the TDS (structural) layer, but they violate the
     /// manifold invariants checked at the topology (Level 3) layer.
@@ -3373,17 +3391,17 @@ where
             return Ok(());
         }
 
-        let mut vertices_in_cells: FastHashSet<VertexKey> =
+        let mut vertices_in_simplices: FastHashSet<VertexKey> =
             fast_hash_set_with_capacity(self.tds.number_of_vertices());
 
-        for (_cell_key, cell) in self.tds.cells() {
-            for &vk in cell.vertices() {
-                vertices_in_cells.insert(vk);
+        for (_simplex_key, simplex) in self.tds.simplices() {
+            for &vk in simplex.vertices() {
+                vertices_in_simplices.insert(vk);
             }
         }
 
         for (vk, vertex) in self.tds.vertices() {
-            if !vertices_in_cells.contains(&vk) {
+            if !vertices_in_simplices.contains(&vk) {
                 return Err(TriangulationValidationError::IsolatedVertex {
                     vertex_key: vk,
                     vertex_uuid: vertex.uuid(),
@@ -3408,7 +3426,7 @@ where
 {
     /// Build initial D-simplex from D+1 vertices with degeneracy validation.
     ///
-    /// This creates a Tds with a single cell containing all D+1 vertices,
+    /// This creates a Tds with a single simplex containing all D+1 vertices,
     /// with explicit boundary neighbor slots. The simplex is
     /// validated to ensure it is non-degenerate (vertices span full D-dimensional space).
     ///
@@ -3421,13 +3439,13 @@ where
     /// - `vertices`: Exactly D+1 vertices to form the initial simplex
     ///
     /// # Returns
-    /// A Tds containing one D-cell with all vertices, ready for incremental insertion.
+    /// A Tds containing one D-simplex with all vertices, ready for incremental insertion.
     ///
     /// # Errors
     /// Returns error if:
     /// - Wrong number of vertices (must be exactly D+1)
     /// - Vertices are degenerate (collinear in 2D, coplanar in 3D, etc.)
-    /// - Vertex or cell insertion fails
+    /// - Vertex or simplex insertion fails
     /// - Duplicate UUIDs detected
     ///
     /// # Examples
@@ -3444,7 +3462,7 @@ where
     /// ];
     /// let tds = Triangulation::<FastKernel<f64>, (), (), 2>::build_initial_simplex(&vertices).unwrap();
     /// assert_eq!(tds.number_of_vertices(), 3);
-    /// assert_eq!(tds.number_of_cells(), 1);
+    /// assert_eq!(tds.number_of_simplices(), 1);
     /// assert_eq!(tds.dim(), 2);
     ///
     /// // Error: wrong number of vertices (need exactly D+1)
@@ -3467,7 +3485,7 @@ where
         if vertices.len() != D + 1 {
             return Err(TriangulationConstructionError::InsufficientVertices {
                 dimension: D,
-                source: CellValidationError::InsufficientVertices {
+                source: SimplexValidationError::InsufficientVertices {
                     actual: vertices.len(),
                     expected: D + 1,
                     dimension: D,
@@ -3496,7 +3514,7 @@ where
 
         // Exact degeneracy check — DEGENERATE means zero-volume simplex.
         let exact_orientation = robust_orientation(&points[..]).map_err(|e| {
-            TriangulationConstructionError::FailedToCreateCell {
+            TriangulationConstructionError::FailedToCreateSimplex {
                 message: format!("Exact orientation test failed: {e}"),
             }
         })?;
@@ -3537,13 +3555,13 @@ where
             vertex_keys.push(vkey);
         }
 
-        // Canonicalize initial simplex orientation: store cells in positive orientation order.
+        // Canonicalize initial simplex orientation: store simplices in positive orientation order.
         // Swapping any two vertices flips orientation.
         if orientation < 0 {
             if vertex_keys.len() >= 2 {
                 vertex_keys.swap(0, 1);
             } else {
-                return Err(TriangulationConstructionError::FailedToCreateCell {
+                return Err(TriangulationConstructionError::FailedToCreateSimplex {
                     message: format!(
                         "Cannot canonicalize orientation for {}D simplex with {} vertex key(s)",
                         D,
@@ -3553,23 +3571,23 @@ where
             }
         }
 
-        // Create single D-cell from all vertices in canonicalized order.
-        let cell = Cell::new(vertex_keys, None).map_err(|e| {
-            TriangulationConstructionError::FailedToCreateCell {
-                message: format!("Failed to create initial simplex cell: {e}"),
+        // Create single D-simplex from all vertices in canonicalized order.
+        let simplex = Simplex::new(vertex_keys, None).map_err(|e| {
+            TriangulationConstructionError::FailedToCreateSimplex {
+                message: format!("Failed to create initial simplex: {e}"),
             }
         })?;
 
-        // Insert the cell
-        let _cell_key = tds.insert_cell_with_mapping(cell)?;
+        // Insert the simplex
+        let _simplex_key = tds.insert_simplex_with_mapping(simplex)?;
 
         // Assign explicit boundary neighbor slots for the initial simplex.
         tds.assign_neighbors()
             .map_err(TdsConstructionError::ValidationError)?;
 
-        // Assign incident cells to vertices (each vertex points to this one cell)
+        // Assign incident simplices to vertices (each vertex points to this one simplex)
         // This is required for proper Tds structure
-        tds.assign_incident_cells()
+        tds.assign_incident_simplices()
             .map_err(|e| TdsConstructionError::ValidationError(e.into()))?;
 
         Ok(tds)
@@ -3578,15 +3596,15 @@ where
     /// Insert a vertex into the triangulation using cavity-based algorithm.
     ///
     /// This is a generic insertion method that handles:
-    /// - **Bootstrap (< D+1 vertices)**: Accumulates vertices without creating cells
-    /// - **Initial simplex (D+1 vertices)**: Automatically builds the first D-cell
+    /// - **Bootstrap (< D+1 vertices)**: Accumulates vertices without creating simplices
+    /// - **Initial simplex (D+1 vertices)**: Automatically builds the first D-simplex
     /// - **Incremental (> D+1 vertices)**: Cavity-based insertion or hull extension
     ///
     /// # Arguments
     /// - `vertex`: The vertex to insert
-    /// - `conflict_cells`: Optional conflict region (cells to be removed). Required for
+    /// - `conflict_simplices`: Optional conflict region (simplices to be removed). Required for
     ///   interior points, not needed for exterior points (hull extension).
-    /// - `hint`: Optional cell hint for point location (improves performance)
+    /// - `hint`: Optional simplex hint for point location (improves performance)
     ///
     /// # Algorithm
     /// 1. Insert vertex into Tds
@@ -3594,19 +3612,19 @@ where
     ///    - If < D+1: Return (bootstrap phase)
     ///    - If == D+1: Build initial simplex from all vertices
     ///    - If > D+1: Continue with steps 3-7
-    /// 3. Locate cell containing the point
+    /// 3. Locate simplex containing the point
     /// 4. Handle location result:
-    ///    - `InsideCell`: Use provided `conflict_cells` for cavity-based insertion
-    ///    - `Outside`: Extend hull (no conflict cells needed)
+    ///    - `InsideSimplex`: Use provided `conflict_simplices` for cavity-based insertion
+    ///    - `Outside`: Extend hull (no conflict simplices needed)
     /// 5. Extract cavity boundary (if interior)
-    /// 6. Fill cavity (create new cells)
+    /// 6. Fill cavity (create new simplices)
     /// 7. Wire neighbors locally
-    /// 8. Remove conflict cells (if interior)
+    /// 8. Remove conflict simplices (if interior)
     /// 9. Repair invalid facet sharing
     ///
     /// # Returns
     /// - `Ok(VertexKey)`: The key of the inserted vertex
-    /// - New cell keys via the returned result (for hint caching at higher layers)
+    /// - New simplex keys via the returned result (for hint caching at higher layers)
     ///
     /// # Errors
     /// Returns error if:
@@ -3614,7 +3632,7 @@ where
     /// - Duplicate UUID detected
     /// - Initial simplex construction fails
     /// - Point location fails
-    /// - Interior point without `conflict_cells` parameter
+    /// - Interior point without `conflict_simplices` parameter
     /// - Cavity operations fail
     /// - Degenerate location (`OnFacet`, `OnEdge`, `OnVertex`) - not yet implemented
     ///
@@ -3624,12 +3642,12 @@ where
     pub(crate) fn insert(
         &mut self,
         vertex: Vertex<K::Scalar, U, D>,
-        conflict_cells: Option<&CellKeyBuffer>,
-        hint: Option<CellKey>,
-    ) -> Result<(VertexKey, Option<CellKey>), InsertionError> {
+        conflict_simplices: Option<&SimplexKeyBuffer>,
+        hint: Option<SimplexKey>,
+    ) -> Result<(VertexKey, Option<SimplexKey>), InsertionError> {
         let (outcome, _stats) = self.insert_transactional(
             vertex,
-            conflict_cells,
+            conflict_simplices,
             hint,
             DEFAULT_PERTURBATION_RETRIES,
             0,
@@ -3647,7 +3665,7 @@ where
     /// This method returns detailed statistics about the insertion including:
     /// - Number of attempts (perturbation retries)
     /// - Whether the vertex was skipped
-    /// - Number of cells removed during repair
+    /// - Number of simplices removed during repair
     ///
     /// This is useful for testing, debugging, and understanding how the
     /// triangulation handles geometric degeneracies.
@@ -3661,12 +3679,12 @@ where
     pub(crate) fn insert_with_statistics(
         &mut self,
         vertex: Vertex<K::Scalar, U, D>,
-        conflict_cells: Option<&CellKeyBuffer>,
-        hint: Option<CellKey>,
+        conflict_simplices: Option<&SimplexKeyBuffer>,
+        hint: Option<SimplexKey>,
     ) -> Result<(InsertionOutcome, InsertionStatistics), InsertionError> {
         self.insert_transactional(
             vertex,
-            conflict_cells,
+            conflict_simplices,
             hint,
             DEFAULT_PERTURBATION_RETRIES,
             0,
@@ -3676,7 +3694,7 @@ where
     }
 
     /// Insert a vertex with statistics, using a custom perturbation seed and an optional
-    /// spatial hash-grid index, and also return the cells that cavity reduction touched
+    /// spatial hash-grid index, and also return the simplices that cavity reduction touched
     /// and left in place.
     ///
     /// The extra seed set stays internal so bulk construction and debug rebuilds can widen
@@ -3684,15 +3702,15 @@ where
     pub(crate) fn insert_with_statistics_seeded_indexed_detailed(
         &mut self,
         vertex: Vertex<K::Scalar, U, D>,
-        conflict_cells: Option<&CellKeyBuffer>,
-        hint: Option<CellKey>,
+        conflict_simplices: Option<&SimplexKeyBuffer>,
+        hint: Option<SimplexKey>,
         perturbation_seed: u64,
         index: Option<&mut HashGridIndex<K::Scalar, D>>,
         bulk_index: Option<usize>,
     ) -> Result<DetailedInsertionResult, InsertionError> {
         self.insert_with_statistics_seeded_indexed_detailed_with_telemetry(
             vertex,
-            conflict_cells,
+            conflict_simplices,
             hint,
             perturbation_seed,
             index,
@@ -3713,8 +3731,8 @@ where
     pub(crate) fn insert_with_statistics_seeded_indexed_detailed_with_telemetry(
         &mut self,
         vertex: Vertex<K::Scalar, U, D>,
-        conflict_cells: Option<&CellKeyBuffer>,
-        hint: Option<CellKey>,
+        conflict_simplices: Option<&SimplexKeyBuffer>,
+        hint: Option<SimplexKey>,
         perturbation_seed: u64,
         index: Option<&mut HashGridIndex<K::Scalar, D>>,
         bulk_index: Option<usize>,
@@ -3722,7 +3740,7 @@ where
     ) -> Result<DetailedInsertionResult, InsertionError> {
         self.insert_transactional_detailed(
             vertex,
-            conflict_cells,
+            conflict_simplices,
             hint,
             DEFAULT_PERTURBATION_RETRIES,
             perturbation_seed,
@@ -3752,8 +3770,8 @@ where
     fn insert_transactional(
         &mut self,
         vertex: Vertex<K::Scalar, U, D>,
-        conflict_cells: Option<&CellKeyBuffer>,
-        hint: Option<CellKey>,
+        conflict_simplices: Option<&SimplexKeyBuffer>,
+        hint: Option<SimplexKey>,
         max_perturbation_attempts: usize,
         perturbation_seed: u64,
         index: Option<&mut HashGridIndex<K::Scalar, D>>,
@@ -3761,7 +3779,7 @@ where
     ) -> Result<(InsertionOutcome, InsertionStatistics), InsertionError> {
         let detail = self.insert_transactional_detailed(
             vertex,
-            conflict_cells,
+            conflict_simplices,
             hint,
             max_perturbation_attempts,
             perturbation_seed,
@@ -3773,7 +3791,7 @@ where
     }
 
     /// Transactional insertion with automatic rollback and perturbation retry, plus
-    /// the local-repair seed cells discovered while shaping the cavity.
+    /// the local-repair seed simplices discovered while shaping the cavity.
     #[expect(
         clippy::too_many_lines,
         reason = "Complex insertion logic; splitting further would harm readability"
@@ -3785,8 +3803,8 @@ where
     fn insert_transactional_detailed(
         &mut self,
         vertex: Vertex<K::Scalar, U, D>,
-        conflict_cells: Option<&CellKeyBuffer>,
-        hint: Option<CellKey>,
+        conflict_simplices: Option<&SimplexKeyBuffer>,
+        hint: Option<SimplexKey>,
         max_perturbation_attempts: usize,
         perturbation_seed: u64,
         mut index: Option<&mut HashGridIndex<K::Scalar, D>>,
@@ -3862,7 +3880,7 @@ where
                         outcome: InsertionOutcome::Skipped { error },
                         stats,
                         telemetry,
-                        repair_seed_cells: CellKeyBuffer::new(),
+                        repair_seed_simplices: SimplexKeyBuffer::new(),
                         delaunay_repair_required: false,
                     });
                 };
@@ -3911,12 +3929,12 @@ where
                     outcome: InsertionOutcome::Skipped { error },
                     stats,
                     telemetry,
-                    repair_seed_cells: CellKeyBuffer::new(),
+                    repair_seed_simplices: SimplexKeyBuffer::new(),
                     delaunay_repair_required: false,
                 });
             }
 
-            let cells_before_attempt = self.tds.number_of_cells();
+            let simplices_before_attempt = self.tds.number_of_simplices();
             let vertices_before_attempt = self.tds.number_of_vertices();
 
             // Clone TDS for rollback (transactional semantics)
@@ -3926,19 +3944,19 @@ where
             //
             // Topology safety net: ensure we don't commit an insertion that breaks Level 3 topology.
             // If the cavity-based insertion produces an Euler/topology mismatch, roll back and retry a
-            // conservative fallback (star-split of the containing cell) within the same transactional attempt.
+            // conservative fallback (star-split of the containing simplex) within the same transactional attempt.
             #[cfg(test)]
             // Test-only hook for deterministic coverage of the rollback + perturbation retry
             // success path, which is otherwise rare under the adaptive SoS predicates.
             let result = if test_hooks::take_force_next_insertion_retryable_failure() {
                 Err(InsertionError::NonManifoldTopology {
                     facet_hash: 0x000F_0CED,
-                    cell_count: 3,
+                    simplex_count: 3,
                 })
             } else {
                 self.try_insert_with_topology_safety_net(
                     current_vertex,
-                    conflict_cells,
+                    conflict_simplices,
                     hint,
                     attempt,
                     &tds_snapshot,
@@ -3949,7 +3967,7 @@ where
             #[cfg(not(test))]
             let result = self.try_insert_with_topology_safety_net(
                 current_vertex,
-                conflict_cells,
+                conflict_simplices,
                 hint,
                 attempt,
                 &tds_snapshot,
@@ -3960,12 +3978,12 @@ where
             match result {
                 Ok(TryInsertImplOk {
                     inserted,
-                    cells_removed,
-                    repair_seed_cells,
+                    simplices_removed,
+                    repair_seed_simplices,
                     delaunay_repair_required,
                     ..
                 }) => {
-                    stats.cells_removed_during_repair = cells_removed;
+                    stats.simplices_removed_during_repair = simplices_removed;
                     stats.result = InsertionResult::Inserted;
                     #[cfg(debug_assertions)]
                     if attempt > 0 {
@@ -3987,7 +4005,7 @@ where
                         outcome: InsertionOutcome::Inserted { vertex_key, hint },
                         stats,
                         telemetry,
-                        repair_seed_cells,
+                        repair_seed_simplices,
                         delaunay_repair_required,
                     });
                 }
@@ -4004,7 +4022,7 @@ where
                             outcome: InsertionOutcome::Skipped { error: e },
                             stats,
                             telemetry,
-                            repair_seed_cells: CellKeyBuffer::new(),
+                            repair_seed_simplices: SimplexKeyBuffer::new(),
                             delaunay_repair_required: false,
                         });
                     }
@@ -4024,9 +4042,9 @@ where
                             max_perturbation_attempts + 1,
                             attempt > 0,
                             is_retryable && attempt < max_perturbation_attempts,
-                            cells_before_attempt,
+                            simplices_before_attempt,
                             vertices_before_attempt,
-                            self.tds.number_of_cells(),
+                            self.tds.number_of_simplices(),
                             self.tds.number_of_vertices(),
                             &detail,
                             &e,
@@ -4064,7 +4082,7 @@ where
                             telemetry,
                             // Skipped insertions do not mutate the triangulation, so any
                             // intermediate cavity-seed hints are irrelevant to callers.
-                            repair_seed_cells: CellKeyBuffer::new(),
+                            repair_seed_simplices: SimplexKeyBuffer::new(),
                             delaunay_repair_required: false,
                         });
                     } else {
@@ -4086,19 +4104,19 @@ where
         &self,
         coords: &[K::Scalar; D],
         index: &HashGridIndex<K::Scalar, D>,
-    ) -> Option<CellKey> {
-        let mut best: Option<(K::Scalar, CellKey)> = None;
+    ) -> Option<SimplexKey> {
+        let mut best: Option<(K::Scalar, SimplexKey)> = None;
 
         index.for_each_candidate_vertex_key(coords, |vkey| {
             let Some(vertex) = self.tds.vertex(vkey) else {
                 return true;
             };
 
-            let Some(cell_key) = vertex.incident_cell() else {
+            let Some(simplex_key) = vertex.incident_simplex() else {
                 return true;
             };
 
-            if !self.tds.contains_cell(cell_key) {
+            if !self.tds.contains_simplex(simplex_key) {
                 return true;
             }
 
@@ -4112,14 +4130,14 @@ where
             match best {
                 Some((best_dist, _)) if dist_sq >= best_dist => {}
                 _ => {
-                    best = Some((dist_sq, cell_key));
+                    best = Some((dist_sq, simplex_key));
                 }
             }
 
             true
         });
 
-        best.map(|(_, cell_key)| cell_key)
+        best.map(|(_, simplex_key)| simplex_key)
     }
 
     /// Chooses the relative duplicate-coordinate tolerance for the scalar precision.
@@ -4158,12 +4176,12 @@ where
         }
     }
 
-    /// Estimates a duplicate-coordinate tolerance from the local cell span plus
+    /// Estimates a duplicate-coordinate tolerance from the local simplex span plus
     /// a small ULP-scaled floor for translated coordinate systems.
     fn estimate_duplicate_coordinate_tolerance(
         &self,
         coords: &[K::Scalar; D],
-        hint: Option<CellKey>,
+        hint: Option<SimplexKey>,
     ) -> K::Scalar {
         let mut axis_min = *coords;
         let mut axis_max = *coords;
@@ -4178,10 +4196,10 @@ where
             }
         }
 
-        if let Some(cell_key) = hint
-            && let Some(cell) = self.tds.cell(cell_key)
+        if let Some(simplex_key) = hint
+            && let Some(simplex) = self.tds.simplex(simplex_key)
         {
-            for &vkey in cell.vertices() {
+            for &vkey in simplex.vertices() {
                 if let Some(vertex) = self.tds.vertex(vkey) {
                     Self::include_duplicate_scale_reference(
                         vertex.point().coords(),
@@ -4347,13 +4365,13 @@ where
 
     /// Estimate a local length scale for perturbation based on nearby vertices.
     ///
-    /// Uses the hint cell when available; otherwise falls back to the closest
+    /// Uses the hint simplex when available; otherwise falls back to the closest
     /// existing vertex. This keeps perturbations translation-invariant and
     /// proportional to local feature size.
     fn estimate_local_perturbation_scale(
         &self,
         coords: &[K::Scalar; D],
-        hint: Option<CellKey>,
+        hint: Option<SimplexKey>,
     ) -> K::Scalar {
         let mut min_dist_sq: Option<K::Scalar> = None;
 
@@ -4377,10 +4395,10 @@ where
             }
         };
 
-        if let Some(cell_key) = hint
-            && let Some(cell) = self.tds.cell(cell_key)
+        if let Some(simplex_key) = hint
+            && let Some(simplex) = self.tds.simplex(simplex_key)
         {
-            for &vkey in cell.vertices() {
+            for &vkey in simplex.vertices() {
                 if let Some(vertex) = self.tds.vertex(vkey) {
                     consider_vertex(vertex, &mut min_dist_sq);
                 }
@@ -4443,13 +4461,13 @@ where
 
     /// Runs mandatory link checks required by the topology guarantee.
     fn validate_required_topology_links(&self) -> Result<(), InvariantError> {
-        if self.tds.number_of_cells() == 0 {
+        if self.tds.number_of_simplices() == 0 {
             return Ok(());
         }
 
-        let facet_to_cells: FacetToCellsMap = self.tds.build_facet_to_cells_map()?;
-        validate_facet_degree(&facet_to_cells)?;
-        validate_closed_boundary(&self.tds, &facet_to_cells)?;
+        let facet_to_simplices: FacetToSimplicesMap = self.tds.build_facet_to_simplices_map()?;
+        validate_facet_degree(&facet_to_simplices)?;
+        validate_closed_boundary(&self.tds, &facet_to_simplices)?;
 
         if self.topology_guarantee.requires_ridge_links() {
             validate_ridge_links(&self.tds)?;
@@ -4459,36 +4477,36 @@ where
             .topology_guarantee
             .requires_vertex_links_during_insertion()
         {
-            validate_vertex_links(&self.tds, &facet_to_cells)?;
+            validate_vertex_links(&self.tds, &facet_to_simplices)?;
         }
 
         // Keep geometric orientation non-negotiable during incremental insertion,
         // even when global validation is throttled. Run this after topology
         // checks so topology diagnostics still surface first.
-        self.validate_geometric_cell_orientation()?;
+        self.validate_geometric_simplex_orientation()?;
 
         Ok(())
     }
 
-    /// Runs mandatory topology checks over the local cells touched by insertion.
+    /// Runs mandatory topology checks over the local simplices touched by insertion.
     ///
     /// Soundness boundary: the scoped path checks coherent orientation, local
-    /// pseudomanifold facet incidence, ridge links, and geometric cell
-    /// orientation. Those local checks are sufficient only when `cells` is
+    /// pseudomanifold facet incidence, ridge links, and geometric simplex
+    /// orientation. Those local checks are sufficient only when `simplices` is
     /// non-empty and `topology_guarantee` does not require vertex-link checks
     /// during insertion; otherwise this explicitly falls back to
     /// [`validate_required_topology_links`](Self::validate_required_topology_links).
     /// See `REFERENCES.md`, "Scoped Local Validation and Flips" \[1\], for the
     /// local-vs-global validation tradeoff and geometric conditioning context.
-    fn validate_required_topology_links_for_cells(
+    fn validate_required_topology_links_for_simplices(
         &self,
-        cells: &[CellKey],
+        simplices: &[SimplexKey],
     ) -> Result<(), InvariantError> {
-        if self.tds.number_of_cells() == 0 {
+        if self.tds.number_of_simplices() == 0 {
             return Ok(());
         }
 
-        if cells.is_empty()
+        if simplices.is_empty()
             || self
                 .topology_guarantee
                 .requires_vertex_links_during_insertion()
@@ -4496,14 +4514,15 @@ where
             return self.validate_required_topology_links();
         }
 
-        self.tds.validate_coherent_orientation_for_cells(cells)?;
-        validate_local_pseudomanifold_for_cells(&self.tds, cells)?;
+        self.tds
+            .validate_coherent_orientation_for_simplices(simplices)?;
+        validate_local_pseudomanifold_for_simplices(&self.tds, simplices)?;
 
         if self.topology_guarantee.requires_ridge_links() {
-            validate_ridge_links_for_cells(&self.tds, cells)?;
+            validate_ridge_links_for_simplices(&self.tds, simplices)?;
         }
 
-        self.validate_geometric_cell_orientation_for_cells(cells)?;
+        self.validate_geometric_simplex_orientation_for_simplices(simplices)?;
 
         Ok(())
     }
@@ -4512,7 +4531,7 @@ where
         &self,
         suspicion: SuspicionFlags,
     ) -> Option<InsertionValidationWork> {
-        if self.tds.number_of_cells() == 0 {
+        if self.tds.number_of_simplices() == 0 {
             return None;
         }
 
@@ -4533,7 +4552,7 @@ where
     fn validate_after_insertion_with_scope(
         &self,
         suspicion: SuspicionFlags,
-        local_cells: Option<&[CellKey]>,
+        local_simplices: Option<&[SimplexKey]>,
     ) -> Result<(), InvariantError> {
         let Some(work) = self.validation_after_insertion_work(suspicion) else {
             return Ok(());
@@ -4542,9 +4561,9 @@ where
         self.log_validation_trigger_if_enabled(suspicion);
         match work {
             InsertionValidationWork::FullValidation => self.is_valid(),
-            InsertionValidationWork::RequiredTopologyLinks => local_cells.map_or_else(
+            InsertionValidationWork::RequiredTopologyLinks => local_simplices.map_or_else(
                 || self.validate_required_topology_links(),
-                |cells| self.validate_required_topology_links_for_cells(cells),
+                |simplices| self.validate_required_topology_links_for_simplices(simplices),
             ),
         }
     }
@@ -4553,7 +4572,7 @@ where
     fn validate_after_insertion_and_record_telemetry(
         &self,
         suspicion: SuspicionFlags,
-        local_cells: &[CellKey],
+        local_simplices: &[SimplexKey],
         telemetry: &mut InsertionTelemetry,
         telemetry_mode: InsertionTelemetryMode,
     ) -> Result<(), InvariantError> {
@@ -4561,7 +4580,7 @@ where
         let validation_started =
             validation_work.and_then(|_| Self::start_insertion_timing(telemetry_mode));
         let validation_result =
-            self.validate_after_insertion_with_scope(suspicion, Some(local_cells));
+            self.validate_after_insertion_with_scope(suspicion, Some(local_simplices));
 
         if validation_work.is_some() {
             Self::record_topology_validation_telemetry(
@@ -4574,22 +4593,22 @@ where
         validation_result
     }
 
-    /// Repair neighbor pointers after local cell removal without scanning the full TDS.
-    fn repair_neighbors_after_local_cell_removal(
+    /// Repair neighbor pointers after local simplex removal without scanning the full TDS.
+    fn repair_neighbors_after_local_simplex_removal(
         &mut self,
-        new_cells: &CellKeyBuffer,
-        frontier_cells: &[CellKey],
+        new_simplices: &SimplexKeyBuffer,
+        frontier_simplices: &[SimplexKey],
     ) -> Result<usize, InsertionError> {
         #[cfg(debug_assertions)]
         tracing::debug!(
-            cells = self.tds.number_of_cells(),
-            surviving_new_cell_seeds = new_cells
+            simplices = self.tds.number_of_simplices(),
+            surviving_new_simplex_seeds = new_simplices
                 .iter()
-                .filter(|&&cell_key| self.tds.contains_cell(cell_key))
+                .filter(|&&simplex_key| self.tds.contains_simplex(simplex_key))
                 .count(),
-            frontier_cell_seeds = frontier_cells
+            frontier_simplex_seeds = frontier_simplices
                 .iter()
-                .filter(|&&cell_key| self.tds.contains_cell(cell_key))
+                .filter(|&&simplex_key| self.tds.contains_simplex(simplex_key))
                 .count(),
             "Before local neighbor-pointer repair"
         );
@@ -4609,7 +4628,11 @@ where
 
         #[cfg(debug_assertions)]
         {
-            match repair_neighbor_pointers_local(&mut self.tds, new_cells, Some(frontier_cells)) {
+            match repair_neighbor_pointers_local(
+                &mut self.tds,
+                new_simplices,
+                Some(frontier_simplices),
+            ) {
                 Ok(repaired) => Ok(repaired),
                 Err(local_error) => {
                     tracing::warn!(
@@ -4628,19 +4651,18 @@ where
 
         #[cfg(not(debug_assertions))]
         {
-            repair_neighbor_pointers_local(&mut self.tds, new_cells, Some(frontier_cells)).map_err(
-                |source| {
+            repair_neighbor_pointers_local(&mut self.tds, new_simplices, Some(frontier_simplices))
+                .map_err(|source| {
                     CavityFillingError::NeighborRebuild {
                         reason: source.into(),
                     }
                     .into()
-                },
-            )
+                })
         }
     }
 
     /// Attempt an insertion, and if Level 3 validation fails, roll back and try a
-    /// conservative star-split fallback of the containing cell.
+    /// conservative star-split fallback of the containing simplex.
     #[expect(
         clippy::too_many_arguments,
         reason = "Topology safety net needs transactional rollback context plus telemetry mode"
@@ -4648,15 +4670,15 @@ where
     fn try_insert_with_topology_safety_net(
         &mut self,
         vertex: Vertex<K::Scalar, U, D>,
-        conflict_cells: Option<&CellKeyBuffer>,
-        hint: Option<CellKey>,
+        conflict_simplices: Option<&SimplexKeyBuffer>,
+        hint: Option<SimplexKey>,
         attempt: usize,
         tds_snapshot: &Tds<K::Scalar, U, V, D>,
         telemetry: &mut InsertionTelemetry,
         telemetry_mode: InsertionTelemetryMode,
     ) -> Result<TryInsertImplOk, InsertionError> {
         let mut insert_ok =
-            self.try_insert_impl(vertex, conflict_cells, hint, telemetry, telemetry_mode)?;
+            self.try_insert_impl(vertex, conflict_simplices, hint, telemetry, telemetry_mode)?;
 
         if attempt > 0 {
             insert_ok.suspicion.perturbation_used = true;
@@ -4665,14 +4687,14 @@ where
             insert_ok.delaunay_repair_required = true;
         }
 
-        // Skip Level 3 validation during bootstrap (vertices but no cells yet).
-        if self.tds.number_of_cells() == 0 {
+        // Skip Level 3 validation during bootstrap (vertices but no simplices yet).
+        if self.tds.number_of_simplices() == 0 {
             return Ok(insert_ok);
         }
 
         let validation_result = self.validate_after_insertion_and_record_telemetry(
             insert_ok.suspicion,
-            &insert_ok.repair_seed_cells,
+            &insert_ok.repair_seed_simplices,
             telemetry,
             telemetry_mode,
         );
@@ -4693,15 +4715,15 @@ where
     }
 
     /// After a Level 3 topology validation failure, try to recover by performing a star-split
-    /// of the containing cell (if the point can be re-located inside a cell).
+    /// of the containing simplex (if the point can be re-located inside a simplex).
     ///
     /// Notes:
-    /// - This fallback is only applicable when the point re-locates to [`LocateResult::InsideCell`].
+    /// - This fallback is only applicable when the point re-locates to [`LocateResult::InsideSimplex`].
     /// - We re-run Level 3 validation after the fallback to avoid "recovering" into an invalid state.
     fn try_star_split_fallback_after_topology_failure(
         &mut self,
         vertex: Vertex<K::Scalar, U, D>,
-        hint: Option<CellKey>,
+        hint: Option<SimplexKey>,
         attempt: usize,
         validation_err: InvariantError,
         telemetry: &mut InsertionTelemetry,
@@ -4716,17 +4738,17 @@ where
             Err(error) => Err(error),
         };
 
-        let Ok(LocateResult::InsideCell(start_cell)) = location else {
+        let Ok(LocateResult::InsideSimplex(start_simplex)) = location else {
             return Err(Self::invariant_error_to_insertion_error(validation_err));
         };
 
-        let mut star_conflict = CellKeyBuffer::new();
-        star_conflict.push(start_cell);
+        let mut star_conflict = SimplexKeyBuffer::new();
+        star_conflict.push(start_simplex);
 
         match self.try_insert_impl(
             vertex,
             Some(&star_conflict),
-            Some(start_cell),
+            Some(start_simplex),
             telemetry,
             telemetry_mode,
         ) {
@@ -4739,7 +4761,7 @@ where
 
                 let validation_result = self.validate_after_insertion_and_record_telemetry(
                     fallback_ok.suspicion,
-                    &fallback_ok.repair_seed_cells,
+                    &fallback_ok.repair_seed_simplices,
                     telemetry,
                     telemetry_mode,
                 );
@@ -4755,7 +4777,7 @@ where
 
                 #[cfg(debug_assertions)]
                 tracing::debug!(
-                    "Topology safety-net: star-split fallback succeeded (start_cell={start_cell:?})"
+                    "Topology safety-net: star-split fallback succeeded (start_simplex={start_simplex:?})"
                 );
 
                 Ok(fallback_ok)
@@ -4766,33 +4788,33 @@ where
 
     /// Ensure an interior insertion never proceeds with an empty conflict region.
     ///
-    /// An empty conflict region would produce an empty cavity boundary, create no new cells, and
-    /// leave the inserted vertex isolated (not incident to any cell), which breaks Level 3 topology
+    /// An empty conflict region would produce an empty cavity boundary, create no new simplices, and
+    /// leave the inserted vertex isolated (not incident to any simplex), which breaks Level 3 topology
     /// validation via Euler characteristic.
-    fn ensure_non_empty_conflict_cells(
-        conflict_cells: Cow<'_, CellKeyBuffer>,
-        fallback_cell: CellKey,
-    ) -> Cow<'_, CellKeyBuffer> {
-        if !conflict_cells.is_empty() {
-            return conflict_cells;
+    fn ensure_non_empty_conflict_simplices(
+        conflict_simplices: Cow<'_, SimplexKeyBuffer>,
+        fallback_simplex: SimplexKey,
+    ) -> Cow<'_, SimplexKeyBuffer> {
+        if !conflict_simplices.is_empty() {
+            return conflict_simplices;
         }
 
-        if let Cow::Owned(mut owned) = conflict_cells {
-            owned.push(fallback_cell);
+        if let Cow::Owned(mut owned) = conflict_simplices {
+            owned.push(fallback_simplex);
             Cow::Owned(owned)
         } else {
-            let mut owned = CellKeyBuffer::new();
-            owned.push(fallback_cell);
+            let mut owned = SimplexKeyBuffer::new();
+            owned.push(fallback_simplex);
             Cow::Owned(owned)
         }
     }
 
-    /// Build the boundary facets for a "star-split" of the containing cell.
-    fn star_split_boundary_facets(start_cell: CellKey) -> CavityBoundaryBuffer {
+    /// Build the boundary facets for a "star-split" of the containing simplex.
+    fn star_split_boundary_facets(start_simplex: SimplexKey) -> CavityBoundaryBuffer {
         (0..=D)
             .map(|i| {
                 FacetHandle::new(
-                    start_cell,
+                    start_simplex,
                     u8::try_from(i).expect("facet index must fit in u8"),
                 )
             })
@@ -4801,26 +4823,29 @@ where
 
     /// Connectedness guard (localized).
     ///
-    /// This check is designed to be **O(k·D)**, where `k` is the number of newly created cells and
-    /// `D` is the triangulation dimension (each cell has at most `D+1` neighbors).
+    /// This check is designed to be **O(k·D)**, where `k` is the number of newly created simplices and
+    /// `D` is the triangulation dimension (each simplex has at most `D+1` neighbors).
     ///
     /// It validates two properties that are sufficient to catch the common “disconnected neighbor
     /// graph after insertion” failure modes without walking the entire triangulation:
     ///
-    /// 1. The surviving subset of `new_cells` forms a single connected component (via neighbor pointers).
-    /// 2. If there are cells outside that component, the new component is attached to at least one
-    ///    existing cell (via a *mutual* neighbor relationship).
-    fn validate_connectedness(&self, new_cells: &CellKeyBuffer) -> Result<(), InsertionError> {
-        let total_cells = self.tds.number_of_cells();
-        if total_cells == 0 {
+    /// 1. The surviving subset of `new_simplices` forms a single connected component (via neighbor pointers).
+    /// 2. If there are simplices outside that component, the new component is attached to at least one
+    ///    existing simplex (via a *mutual* neighbor relationship).
+    fn validate_connectedness(
+        &self,
+        new_simplices: &SimplexKeyBuffer,
+    ) -> Result<(), InsertionError> {
+        let total_simplices = self.tds.number_of_simplices();
+        if total_simplices == 0 {
             return Ok(());
         }
 
-        // Build a set of the *surviving* new cells (some may have been removed during repair).
-        let mut new_set: CellKeySet = CellKeySet::default();
-        new_set.reserve(new_cells.len());
-        for &ck in new_cells {
-            if self.tds.contains_cell(ck) {
+        // Build a set of the *surviving* new simplices (some may have been removed during repair).
+        let mut new_set: SimplexKeySet = SimplexKeySet::default();
+        new_set.reserve(new_simplices.len());
+        for &ck in new_simplices {
+            if self.tds.contains_simplex(ck) {
                 new_set.insert(ck);
             }
         }
@@ -4828,13 +4853,13 @@ where
         if new_set.is_empty() {
             return Err(InsertionError::TopologyValidation(
                 TdsError::InconsistentDataStructure {
-                    message: "Disconnected triangulation detected after insertion: no surviving new cells"
+                    message: "Disconnected triangulation detected after insertion: no surviving new simplices"
                         .to_string(),
                 },
             ));
         }
 
-        let expected_new_cells = new_set.len();
+        let expected_new_simplices = new_set.len();
 
         let Some(&start) = new_set.iter().next() else {
             return Err(InsertionError::TopologyValidation(
@@ -4846,50 +4871,50 @@ where
             ));
         };
 
-        let mut touches_existing_cells = false;
+        let mut touches_existing_simplices = false;
 
-        let visited = self.traverse_cell_neighbor_graph(
+        let visited = self.traverse_simplex_neighbor_graph(
             start,
-            expected_new_cells,
+            expected_new_simplices,
             Some(&new_set),
             |ck, nk| {
-                if touches_existing_cells {
+                if touches_existing_simplices {
                     return;
                 }
 
-                // For connectivity between new cells and existing cells, require *mutual* adjacency.
+                // For connectivity between new simplices and existing simplices, require *mutual* adjacency.
                 // This avoids treating one-way neighbor pointers as “connected”.
-                if let Some(neighbor_cell) = self.tds.cell(nk)
-                    && neighbor_cell
+                if let Some(neighbor_simplex) = self.tds.simplex(nk)
+                    && neighbor_simplex
                         .neighbor_keys()
                         .is_some_and(|mut neighbor_keys| {
                             neighbor_keys.any(|neighbor| neighbor == Some(ck))
                         })
                 {
-                    touches_existing_cells = true;
+                    touches_existing_simplices = true;
                 }
             },
         );
 
-        if visited.len() != expected_new_cells {
+        if visited.len() != expected_new_simplices {
             return Err(InsertionError::TopologyValidation(
                 TdsError::InconsistentDataStructure {
                     message: format!(
-                        "Disconnected triangulation detected after insertion: new-cell subgraph visited {} of {} cells",
+                        "Disconnected triangulation detected after insertion: new-simplex subgraph visited {} of {} simplices",
                         visited.len(),
-                        expected_new_cells
+                        expected_new_simplices
                     ),
                 },
             ));
         }
 
-        // If there are cells outside `new_set`, ensure the new component is attached to at least one
+        // If there are simplices outside `new_set`, ensure the new component is attached to at least one
         // of them (otherwise we'd be creating a disconnected component).
-        if total_cells > expected_new_cells && !touches_existing_cells {
+        if total_simplices > expected_new_simplices && !touches_existing_simplices {
             return Err(InsertionError::TopologyValidation(
                 TdsError::InconsistentDataStructure {
                     message: format!(
-                        "Disconnected triangulation detected after insertion: new-cell component ({expected_new_cells} cells) is not connected to existing cells (total_cells={total_cells})"
+                        "Disconnected triangulation detected after insertion: new-simplex component ({expected_new_simplices} simplices) is not connected to existing simplices (total_simplices={total_simplices})"
                     ),
                 },
             ));
@@ -4898,9 +4923,9 @@ where
         Ok(())
     }
 
-    /// Find all conflict cells by scanning the entire triangulation.
+    /// Find all conflict simplices by scanning the entire triangulation.
     ///
-    /// Test-only global conflict scanner for malformed-cell error coverage.
+    /// Test-only global conflict scanner for malformed-simplex error coverage.
     ///
     /// Exterior production insertion deliberately avoids this path: hull
     /// extension is the local topological mutation, and Delaunay violations are
@@ -4909,12 +4934,12 @@ where
     fn find_conflict_region_global(
         &self,
         point: &Point<K::Scalar, D>,
-    ) -> Result<CellKeyBuffer, ConflictError> {
+    ) -> Result<SimplexKeyBuffer, ConflictError> {
         #[cfg(debug_assertions)]
         let log_enabled = std::env::var_os("DELAUNAY_DEBUG_HULL").is_some()
             || std::env::var_os("DELAUNAY_DEBUG_CONFLICT").is_some();
         #[cfg(debug_assertions)]
-        let mut cells_scanned = 0usize;
+        let mut simplices_scanned = 0usize;
         #[cfg(debug_assertions)]
         let mut sign_positive = 0usize;
         #[cfg(debug_assertions)]
@@ -4922,25 +4947,25 @@ where
         #[cfg(debug_assertions)]
         let mut sign_negative = 0usize;
 
-        let mut conflict_cells = CellKeyBuffer::new();
+        let mut conflict_simplices = SimplexKeyBuffer::new();
 
-        for (cell_key, cell) in self.tds.cells() {
+        for (simplex_key, simplex) in self.tds.simplices() {
             #[cfg(debug_assertions)]
             {
-                cells_scanned = cells_scanned.saturating_add(1);
+                simplices_scanned = simplices_scanned.saturating_add(1);
             }
-            // Collect cell vertex points in canonical VertexKey order for consistent
+            // Collect simplex vertex points in canonical VertexKey order for consistent
             // SoS perturbation priority.
-            let simplex_points = sorted_cell_points(&self.tds, cell).ok_or_else(|| {
-                ConflictError::CellDataAccessFailed {
-                    cell_key,
-                    message: format!("Failed to resolve all {} cell vertices", D + 1),
+            let simplex_points = sorted_simplex_points(&self.tds, simplex).ok_or_else(|| {
+                ConflictError::SimplexDataAccessFailed {
+                    simplex_key,
+                    message: format!("Failed to resolve all {} simplex vertices", D + 1),
                 }
             })?;
 
             if simplex_points.len() != D + 1 {
-                return Err(ConflictError::CellDataAccessFailed {
-                    cell_key,
+                return Err(ConflictError::SimplexDataAccessFailed {
+                    simplex_key,
                     message: format!("Expected {} vertices, got {}", D + 1, simplex_points.len()),
                 });
             }
@@ -4950,7 +4975,7 @@ where
             {
                 if log_enabled {
                     tracing::debug!(
-                        cell_key = ?cell_key,
+                        simplex_key = ?simplex_key,
                         sign,
                         "find_conflict_region_global: in_sphere sign"
                     );
@@ -4968,7 +4993,7 @@ where
                 }
             }
             if sign > 0 {
-                conflict_cells.push(cell_key);
+                conflict_simplices.push(simplex_key);
             }
         }
 
@@ -4976,8 +5001,8 @@ where
         if log_enabled {
             tracing::debug!(
                 point = ?point,
-                cells_scanned,
-                conflict_cells = conflict_cells.len(),
+                simplices_scanned,
+                conflict_simplices = conflict_simplices.len(),
                 sign_positive,
                 sign_zero,
                 sign_negative,
@@ -4985,28 +5010,28 @@ where
             );
         }
 
-        Ok(conflict_cells)
+        Ok(conflict_simplices)
     }
 
-    /// Returns true if any conflict cell has a facet on the hull boundary.
+    /// Returns true if any conflict simplex has a facet on the hull boundary.
     #[cfg(test)]
     fn conflict_region_touches_boundary(
         &self,
-        conflict_cells: &CellKeyBuffer,
+        conflict_simplices: &SimplexKeyBuffer,
     ) -> Result<bool, InsertionError> {
-        if conflict_cells.is_empty() {
+        if conflict_simplices.is_empty() {
             return Ok(false);
         }
 
-        let facet_to_cells = self
+        let facet_to_simplices = self
             .tds
-            .build_facet_to_cells_map()
+            .build_facet_to_simplices_map()
             .map_err(InsertionError::TopologyValidation)?;
 
         let mut boundary_facets: FastHashSet<u64> =
-            fast_hash_set_with_capacity(facet_to_cells.len());
-        for (facet_key, cell_list) in &facet_to_cells {
-            if cell_list.len() == 1 {
+            fast_hash_set_with_capacity(facet_to_simplices.len());
+        for (facet_key, simplex_list) in &facet_to_simplices {
+            if simplex_list.len() == 1 {
                 boundary_facets.insert(*facet_key);
             }
         }
@@ -5015,17 +5040,17 @@ where
             return Ok(false);
         }
 
-        for &cell_key in conflict_cells {
-            let cell = self.tds.cell(cell_key).ok_or_else(|| {
-                InsertionError::TopologyValidation(TdsError::CellNotFound {
-                    cell_key,
+        for &simplex_key in conflict_simplices {
+            let simplex = self.tds.simplex(simplex_key).ok_or_else(|| {
+                InsertionError::TopologyValidation(TdsError::SimplexNotFound {
+                    simplex_key,
                     context: "checking boundary facets for conflict region".to_string(),
                 })
             })?;
-            for facet_idx in 0..cell.number_of_vertices() {
+            for facet_idx in 0..simplex.number_of_vertices() {
                 let mut facet_vertices: SmallBuffer<VertexKey, MAX_PRACTICAL_DIMENSION_SIZE> =
                     SmallBuffer::with_capacity(D);
-                for (i, &vkey) in cell.vertices().iter().enumerate() {
+                for (i, &vkey) in simplex.vertices().iter().enumerate() {
                     if i != facet_idx {
                         facet_vertices.push(vkey);
                     }
@@ -5049,32 +5074,32 @@ where
         &mut self,
         v_key: VertexKey,
         point: &Point<K::Scalar, D>,
-        mut conflict_cells: CellKeyBuffer,
-        fallback_cell: Option<CellKey>,
+        mut conflict_simplices: SimplexKeyBuffer,
+        fallback_simplex: Option<SimplexKey>,
         suspicion: &mut SuspicionFlags,
     ) -> Result<CavityInsertionOutcome, InsertionError> {
         #[cfg(not(debug_assertions))]
         let _ = point;
 
-        if conflict_cells.is_empty() {
-            let Some(start_cell) = fallback_cell else {
+        if conflict_simplices.is_empty() {
+            let Some(start_simplex) = fallback_simplex else {
                 return Err(CavityFillingError::EmptyConflictRegion {
-                    fallback_cell: None,
+                    fallback_simplex: None,
                 }
                 .into());
             };
             suspicion.empty_conflict_region = true;
             suspicion.fallback_star_split = true;
-            conflict_cells.push(start_cell);
+            conflict_simplices.push(start_simplex);
             // The fallback star-split is topologically safe but not a full
             // Bowyer-Watson conflict-region replacement, so local Delaunay
             // repair must revisit it.
         }
 
-        // Preserve every cell that participates in cavity shaping and is later
+        // Preserve every simplex that participates in cavity shaping and is later
         // removed from the final cavity so callers can seed local Delaunay
         // repair from the surviving fringe.
-        let mut repair_seed_cells = CellKeyBuffer::new();
+        let mut repair_seed_simplices = SimplexKeyBuffer::new();
         let mut delaunay_repair_required = suspicion.fallback_star_split;
 
         // Extract cavity boundary.
@@ -5084,12 +5109,12 @@ where
         // must fix; in high dimensions this is extremely slow.  In all dimensions it is better
         // to first attempt to reshape the conflict region:
         //
-        //   • RidgeFan          – SHRINK: remove extra fan cells (3rd, 4th, … facets).
+        //   • RidgeFan          – SHRINK: remove extra fan simplices (3rd, 4th, … facets).
         //   • DisconnectedBnd   – EXPAND: add the non-conflict neighbors of the disconnected
-        //                         cells to fill the topological "hole" in the conflict region
+        //                         simplices to fill the topological "hole" in the conflict region
         //                         that causes the disconnected boundary.  Falls back to SHRINK
         //                         if no non-conflict neighbors are found.
-        //   • OpenBoundary      – SHRINK: remove the cell with the dangling facet.
+        //   • OpenBoundary      – SHRINK: remove the simplex with the dangling facet.
         //
         // After each reshape we re-run extract_cavity_boundary.  If the loop exhausts its
         // budget without producing a valid boundary:
@@ -5098,7 +5123,7 @@ where
         //   • D<3:  fall through to the existing star-split fallback (the 2D flip repair
         //     guarantees convergence even from star-split configurations).
         let mut boundary_facets = {
-            let mut extraction_result = extract_cavity_boundary(&self.tds, &conflict_cells);
+            let mut extraction_result = extract_cavity_boundary(&self.tds, &conflict_simplices);
 
             {
                 const MAX_CAVITY_ITERATIONS: usize = 32;
@@ -5112,7 +5137,7 @@ where
                         log_cavity_reduction_event(
                             trace_cavity_reduction,
                             iterations,
-                            &conflict_cells,
+                            &conflict_simplices,
                             || format!("initial_ok boundary_facets={}", boundary.len()),
                         );
                     }
@@ -5122,7 +5147,7 @@ where
                         log_cavity_reduction_event(
                             trace_cavity_reduction,
                             iterations,
-                            &conflict_cells,
+                            &conflict_simplices,
                             || format!("initial_err {}", cavity_conflict_error_summary(err)),
                         );
                     }
@@ -5133,7 +5158,7 @@ where
                         log_cavity_reduction_event(
                             trace_cavity_reduction,
                             iterations,
-                            &conflict_cells,
+                            &conflict_simplices,
                             || "budget_exhausted".to_string(),
                         );
                         break;
@@ -5141,141 +5166,145 @@ where
                     iterations += 1;
 
                     match &extraction_result {
-                        // RidgeFan: SHRINK – remove the cells contributing extra boundary facets.
-                        Err(ConflictError::RidgeFan { extra_cells, .. })
-                            if !extra_cells.is_empty() && conflict_cells.len() > D + 1 =>
-                        {
+                        // RidgeFan: SHRINK – remove the simplices contributing extra boundary facets.
+                        Err(ConflictError::RidgeFan {
+                            extra_simplices, ..
+                        }) if !extra_simplices.is_empty() && conflict_simplices.len() > D + 1 => {
                             #[cfg(debug_assertions)]
                             tracing::debug!(
-                                remove_count = extra_cells.len(),
-                                conflict_cells_before = conflict_cells.len(),
+                                remove_count = extra_simplices.len(),
+                                conflict_simplices_before = conflict_simplices.len(),
                                 "D={D}: cavity reduction (RidgeFan shrink)"
                             );
                             log_cavity_reduction_event(
                                 trace_cavity_reduction,
                                 iterations,
-                                &conflict_cells,
-                                || format!("ridge_fan_shrink remove_cells={extra_cells:?}"),
+                                &conflict_simplices,
+                                || format!("ridge_fan_shrink remove_simplices={extra_simplices:?}"),
                             );
                             saw_ridge_fan_shrink = true;
                             delaunay_repair_required = true;
-                            let remove_set: FastHashSet<CellKey> =
-                                extra_cells.iter().copied().collect();
-                            retain_cells_and_record_removed(
-                                &mut conflict_cells,
-                                &mut repair_seed_cells,
-                                |cell_key| !remove_set.contains(&cell_key),
+                            let remove_set: FastHashSet<SimplexKey> =
+                                extra_simplices.iter().copied().collect();
+                            retain_simplices_and_record_removed(
+                                &mut conflict_simplices,
+                                &mut repair_seed_simplices,
+                                |simplex_key| !remove_set.contains(&simplex_key),
                             );
                         }
 
                         // DisconnectedBoundary: EXPAND – add non-conflict neighbors of the
-                        // disconnected cells to fill the topological hole.  These cells form the
+                        // disconnected simplices to fill the topological hole.  These simplices form the
                         // "inner wall" of a donut-shaped conflict region; their non-conflict
-                        // neighbors are the hole cells that, when added, reconnect the boundary.
+                        // neighbors are the hole simplices that, when added, reconnect the boundary.
                         // Falls back to SHRINK if no non-conflict neighbors exist.
                         Err(ConflictError::DisconnectedBoundary {
-                            disconnected_cells, ..
-                        }) if !disconnected_cells.is_empty() => {
-                            let conflict_set: FastHashSet<CellKey> =
-                                conflict_cells.iter().copied().collect();
-                            let mut cells_to_add: FastHashSet<CellKey> = FastHashSet::default();
+                            disconnected_simplices,
+                            ..
+                        }) if !disconnected_simplices.is_empty() => {
+                            let conflict_set: FastHashSet<SimplexKey> =
+                                conflict_simplices.iter().copied().collect();
+                            let mut simplices_to_add: FastHashSet<SimplexKey> =
+                                FastHashSet::default();
                             if !saw_ridge_fan_shrink {
-                                for &dc in disconnected_cells {
-                                    if let Some(cell) = self.tds.cell(dc)
-                                        && let Some(neighbors) = cell.neighbor_keys()
+                                for &dc in disconnected_simplices {
+                                    if let Some(simplex) = self.tds.simplex(dc)
+                                        && let Some(neighbors) = simplex.neighbor_keys()
                                     {
                                         for neighbor_opt in neighbors {
                                             if let Some(nk) = neighbor_opt
                                                 && !conflict_set.contains(&nk)
                                             {
-                                                cells_to_add.insert(nk);
+                                                simplices_to_add.insert(nk);
                                             }
                                         }
                                     }
                                 }
                             }
 
-                            if !cells_to_add.is_empty() {
-                                // EXPAND: add the hole-filling cells.
+                            if !simplices_to_add.is_empty() {
+                                // EXPAND: add the hole-filling simplices.
                                 delaunay_repair_required = true;
                                 #[cfg(debug_assertions)]
                                 tracing::debug!(
-                                    add_count = cells_to_add.len(),
-                                    conflict_cells_before = conflict_cells.len(),
+                                    add_count = simplices_to_add.len(),
+                                    conflict_simplices_before = conflict_simplices.len(),
                                     "D={D}: cavity expansion (DisconnectedBoundary hole-fill)"
                                 );
                                 log_cavity_reduction_event(
                                     trace_cavity_reduction,
                                     iterations,
-                                    &conflict_cells,
+                                    &conflict_simplices,
                                     || {
-                                        let added: Vec<CellKey> =
-                                            cells_to_add.iter().copied().collect();
-                                        format!("disconnected_boundary_expand add_cells={added:?}")
+                                        let added: Vec<SimplexKey> =
+                                            simplices_to_add.iter().copied().collect();
+                                        format!(
+                                            "disconnected_boundary_expand add_simplices={added:?}"
+                                        )
                                     },
                                 );
-                                for k in cells_to_add {
-                                    conflict_cells.push(k);
+                                for k in simplices_to_add {
+                                    conflict_simplices.push(k);
                                 }
-                            } else if conflict_cells.len() > D + 1 {
+                            } else if conflict_simplices.len() > D + 1 {
                                 // SHRINK fallback: no non-conflict neighbors found.
                                 delaunay_repair_required = true;
                                 #[cfg(debug_assertions)]
                                 tracing::debug!(
-                                    remove_count = disconnected_cells.len(),
-                                    conflict_cells_before = conflict_cells.len(),
+                                    remove_count = disconnected_simplices.len(),
+                                    conflict_simplices_before = conflict_simplices.len(),
                                     "D={D}: cavity reduction (DisconnectedBoundary shrink fallback)"
                                 );
                                 log_cavity_reduction_event(
                                     trace_cavity_reduction,
                                     iterations,
-                                    &conflict_cells,
+                                    &conflict_simplices,
                                     || {
                                         format!(
-                                            "disconnected_boundary_shrink remove_cells={disconnected_cells:?}"
+                                            "disconnected_boundary_shrink remove_simplices={disconnected_simplices:?}"
                                         )
                                     },
                                 );
-                                let remove_set: FastHashSet<CellKey> =
-                                    disconnected_cells.iter().copied().collect();
-                                retain_cells_and_record_removed(
-                                    &mut conflict_cells,
-                                    &mut repair_seed_cells,
-                                    |cell_key| !remove_set.contains(&cell_key),
+                                let remove_set: FastHashSet<SimplexKey> =
+                                    disconnected_simplices.iter().copied().collect();
+                                retain_simplices_and_record_removed(
+                                    &mut conflict_simplices,
+                                    &mut repair_seed_simplices,
+                                    |simplex_key| !remove_set.contains(&simplex_key),
                                 );
                             } else {
                                 log_cavity_reduction_event(
                                     trace_cavity_reduction,
                                     iterations,
-                                    &conflict_cells,
+                                    &conflict_simplices,
                                     || "disconnected_boundary_no_progress".to_string(),
                                 );
                                 break;
                             }
                         }
 
-                        // OpenBoundary: SHRINK – remove the cell with the dangling facet.
-                        Err(ConflictError::OpenBoundary { open_cell, .. })
-                            if conflict_cells.len() > D + 1 =>
+                        // OpenBoundary: SHRINK – remove the simplex with the dangling facet.
+                        Err(ConflictError::OpenBoundary { open_simplex, .. })
+                            if conflict_simplices.len() > D + 1 =>
                         {
                             delaunay_repair_required = true;
                             #[cfg(debug_assertions)]
                             tracing::debug!(
-                                ?open_cell,
-                                conflict_cells_before = conflict_cells.len(),
+                                ?open_simplex,
+                                conflict_simplices_before = conflict_simplices.len(),
                                 "D={D}: cavity reduction (OpenBoundary shrink)"
                             );
                             log_cavity_reduction_event(
                                 trace_cavity_reduction,
                                 iterations,
-                                &conflict_cells,
-                                || format!("open_boundary_shrink open_cell={open_cell:?}"),
+                                &conflict_simplices,
+                                || format!("open_boundary_shrink open_simplex={open_simplex:?}"),
                             );
-                            let open = *open_cell;
-                            retain_cells_and_record_removed(
-                                &mut conflict_cells,
-                                &mut repair_seed_cells,
-                                |cell_key| cell_key != open,
+                            let open = *open_simplex;
+                            retain_simplices_and_record_removed(
+                                &mut conflict_simplices,
+                                &mut repair_seed_simplices,
+                                |simplex_key| simplex_key != open,
                             );
                         }
 
@@ -5283,20 +5312,20 @@ where
                             log_cavity_reduction_event(
                                 trace_cavity_reduction,
                                 iterations,
-                                &conflict_cells,
+                                &conflict_simplices,
                                 || "no_reduction_rule_matched".to_string(),
                             );
                             break;
                         }
                     }
 
-                    extraction_result = extract_cavity_boundary(&self.tds, &conflict_cells);
+                    extraction_result = extract_cavity_boundary(&self.tds, &conflict_simplices);
                     match &extraction_result {
                         Ok(boundary) => {
                             log_cavity_reduction_event(
                                 trace_cavity_reduction,
                                 iterations,
-                                &conflict_cells,
+                                &conflict_simplices,
                                 || format!("reextract_ok boundary_facets={}", boundary.len()),
                             );
                         }
@@ -5304,7 +5333,7 @@ where
                             log_cavity_reduction_event(
                                 trace_cavity_reduction,
                                 iterations,
-                                &conflict_cells,
+                                &conflict_simplices,
                                 || format!("reextract_err {}", cavity_conflict_error_summary(err)),
                             );
                         }
@@ -5317,9 +5346,9 @@ where
                 Err(err) => {
                     // For D=3 and D≥4: do NOT fall back to star-split once cavity reduction
                     // is exhausted.  Star-splits create heavily non-Delaunay configurations
-                    // (the star of the new vertex is only D+1 cells instead of the correct
+                    // (the star of the new vertex is only D+1 simplices instead of the correct
                     // conflict region) whose violations cannot be reliably fixed by the flip
-                    // repair: isolated violations may exist in cells that are not connected to
+                    // repair: isolated violations may exist in simplices that are not connected to
                     // the star-split star through any violation chain.  Return a retryable
                     // error instead so insert_transactional can retry with a perturbed vertex
                     // and, after all retries, skip the vertex.  A valid Delaunay triangulation
@@ -5328,7 +5357,7 @@ where
                     // will reject the latter anyway).
                     //
                     // For D=2: star-split is used as a last resort.  The 2D flip repair
-                    // guarantees convergence from star-split configurations and the extra cells
+                    // guarantees convergence from star-split configurations and the extra simplices
                     // are quickly handled by the k=2 repair loop.
                     let should_fallback = D < 3
                         && matches!(
@@ -5340,7 +5369,7 @@ where
                         );
 
                     if should_fallback {
-                        let Some(start_cell) = fallback_cell else {
+                        let Some(start_simplex) = fallback_simplex else {
                             return Err(err.into());
                         };
 
@@ -5349,18 +5378,18 @@ where
 
                         #[cfg(debug_assertions)]
                         tracing::warn!(
-                            "Conflict region degeneracy ({err}); falling back to star-split of cell {start_cell:?}"
+                            "Conflict region degeneracy ({err}); falling back to star-split of simplex {start_simplex:?}"
                         );
 
-                        let mut replacement = CellKeyBuffer::new();
-                        replacement.push(start_cell);
-                        replace_cells_and_record_removed(
-                            &mut conflict_cells,
-                            &mut repair_seed_cells,
+                        let mut replacement = SimplexKeyBuffer::new();
+                        replacement.push(start_simplex);
+                        replace_simplices_and_record_removed(
+                            &mut conflict_simplices,
+                            &mut repair_seed_simplices,
                             replacement,
                         );
 
-                        Self::star_split_boundary_facets(start_cell)
+                        Self::star_split_boundary_facets(start_simplex)
                     } else {
                         #[cfg(debug_assertions)]
                         tracing::debug!(
@@ -5374,9 +5403,9 @@ where
 
         // Fallback: never allow an insertion to create a dangling vertex.
         if boundary_facets.is_empty() {
-            let Some(start_cell) = fallback_cell else {
+            let Some(start_simplex) = fallback_simplex else {
                 return Err(CavityFillingError::EmptyBoundary {
-                    fallback_cell: None,
+                    fallback_simplex: None,
                 }
                 .into());
             };
@@ -5387,34 +5416,35 @@ where
 
             #[cfg(debug_assertions)]
             tracing::warn!(
-                "Empty cavity boundary; falling back to splitting containing cell {start_cell:?}"
+                "Empty cavity boundary; falling back to splitting containing simplex {start_simplex:?}"
             );
 
-            let mut replacement = CellKeyBuffer::new();
-            replacement.push(start_cell);
-            replace_cells_and_record_removed(
-                &mut conflict_cells,
-                &mut repair_seed_cells,
+            let mut replacement = SimplexKeyBuffer::new();
+            replacement.push(start_simplex);
+            replace_simplices_and_record_removed(
+                &mut conflict_simplices,
+                &mut repair_seed_simplices,
                 replacement,
             );
-            boundary_facets = Self::star_split_boundary_facets(start_cell);
+            boundary_facets = Self::star_split_boundary_facets(start_simplex);
         }
 
-        // Fill cavity BEFORE removing old cells.
-        let new_cells = fill_cavity_replacing_cells(&mut self.tds, v_key, &boundary_facets)?;
-        self.canonicalize_positive_orientation_for_cells(&new_cells)?;
+        // Fill cavity BEFORE removing old simplices.
+        let new_simplices =
+            fill_cavity_replacing_simplices(&mut self.tds, v_key, &boundary_facets)?;
+        self.canonicalize_positive_orientation_for_simplices(&new_simplices)?;
 
         // Post-insertion orientation audit: verify that canonicalization
-        // actually produced all-positive orientations among the new cells.
+        // actually produced all-positive orientations among the new simplices.
         #[cfg(debug_assertions)]
         if std::env::var_os("DELAUNAY_DEBUG_ORIENTATION").is_some() {
             let mut pos = 0_usize;
             let mut neg = 0_usize;
             let mut deg = 0_usize;
             let mut fail = 0_usize;
-            for &ck in &new_cells {
-                if let Some(c) = self.tds.cell(ck) {
-                    match self.evaluate_cell_orientation_for_context(
+            for &ck in &new_simplices {
+                if let Some(c) = self.tds.simplex(ck) {
+                    match self.evaluate_simplex_orientation_for_context(
                         ck,
                         c,
                         "post-insertion orientation audit",
@@ -5426,7 +5456,7 @@ where
                         Err(ref e) => {
                             fail += 1;
                             tracing::warn!(
-                                cell_key = ?ck,
+                                simplex_key = ?ck,
                                 error = %e,
                                 "post-insertion orientation audit: evaluation failed"
                             );
@@ -5436,48 +5466,49 @@ where
             }
             if neg > 0 || fail > 0 {
                 tracing::warn!(
-                    new_cells = new_cells.len(),
+                    new_simplices = new_simplices.len(),
                     positive = pos,
                     negative = neg,
                     degenerate = deg,
                     eval_errors = fail,
-                    "post-insertion orientation audit: NEGATIVE cells or evaluation errors after canonicalization"
+                    "post-insertion orientation audit: NEGATIVE simplices or evaluation errors after canonicalization"
                 );
             } else {
                 tracing::debug!(
-                    new_cells = new_cells.len(),
+                    new_simplices = new_simplices.len(),
                     positive = pos,
                     degenerate = deg,
-                    "post-insertion orientation audit: all cells positive"
+                    "post-insertion orientation audit: all simplices positive"
                 );
             }
         }
 
-        // Wire neighbors (while both old and new cells exist)
+        // Wire neighbors (while both old and new simplices exist)
         let external_facets =
-            external_facets_for_boundary(&self.tds, &conflict_cells, &boundary_facets)?;
+            external_facets_for_boundary(&self.tds, &conflict_simplices, &boundary_facets)?;
         wire_cavity_neighbors(
             &mut self.tds,
-            &new_cells,
+            &new_simplices,
             external_facets.iter().copied(),
-            Some(&conflict_cells),
+            Some(&conflict_simplices),
         )?;
 
         // Drop any repair-seed entries that were removed earlier but later got
         // reintroduced into the final conflict region. Those keys will be
-        // deleted by `remove_cells_by_keys` below, so they cannot seed repair.
-        let dead_conflict_cells: FastHashSet<CellKey> = conflict_cells.iter().copied().collect();
-        repair_seed_cells.retain(|ck| !dead_conflict_cells.contains(ck));
-        let mut seen_repair_seed_cells = FastHashSet::default();
-        repair_seed_cells.retain(|ck| seen_repair_seed_cells.insert(*ck));
+        // deleted by `remove_simplices_by_keys` below, so they cannot seed repair.
+        let dead_conflict_simplices: FastHashSet<SimplexKey> =
+            conflict_simplices.iter().copied().collect();
+        repair_seed_simplices.retain(|ck| !dead_conflict_simplices.contains(ck));
+        let mut seen_repair_seed_simplices = FastHashSet::default();
+        repair_seed_simplices.retain(|ck| seen_repair_seed_simplices.insert(*ck));
 
-        // Remove conflict cells (now that new cells are wired up)
-        let _removed_count = self.tds.remove_cells_by_keys(&conflict_cells);
+        // Remove conflict simplices (now that new simplices are wired up)
+        let _removed_count = self.tds.remove_simplices_by_keys(&conflict_simplices);
 
         // Iteratively repair non-manifold topology until facet sharing is valid
         let mut total_removed = 0;
         let mut facet_sharing_known_valid = true;
-        let mut neighbor_repair_frontier = CellKeyBuffer::new();
+        let mut neighbor_repair_frontier = SimplexKeyBuffer::new();
         #[cfg_attr(
             not(debug_assertions),
             expect(
@@ -5486,14 +5517,14 @@ where
             )
         )]
         for iteration in 0..MAX_REPAIR_ITERATIONS {
-            // Check for non-manifold issues in newly created cells (local scan)
-            let cells_to_check: CellKeyBuffer = new_cells
+            // Check for non-manifold issues in newly created simplices (local scan)
+            let simplices_to_check: SimplexKeyBuffer = new_simplices
                 .iter()
                 .copied()
-                .filter(|ck| self.tds.contains_cell(*ck))
+                .filter(|ck| self.tds.contains_simplex(*ck))
                 .collect();
 
-            if let Some(issues) = self.detect_local_facet_issues(&cells_to_check)? {
+            if let Some(issues) = self.detect_local_facet_issues(&simplices_to_check)? {
                 // Only mark this as "suspicious" if we *actually* detected local facet issues
                 // and entered the repair path.
                 suspicion.repair_loop_entered = true;
@@ -5501,7 +5532,7 @@ where
 
                 #[cfg(debug_assertions)]
                 tracing::debug!(
-                    "Repair iteration {}: {} over-shared facets detected, removing cells...",
+                    "Repair iteration {}: {} over-shared facets detected, removing simplices...",
                     iteration + 1,
                     issues.len()
                 );
@@ -5513,13 +5544,13 @@ where
                 if removed == 0 {
                     #[cfg(debug_assertions)]
                     tracing::warn!(
-                        "No cells removed in iteration {} - repair cannot make progress",
+                        "No simplices removed in iteration {} - repair cannot make progress",
                         iteration + 1
                     );
                     return Err(InsertionError::TopologyValidation(
                         TdsError::InconsistentDataStructure {
                             message: format!(
-                                "Repair stalled: {} over-shared facets remain but no cells could be removed",
+                                "Repair stalled: {} over-shared facets remain but no simplices could be removed",
                                 issues.len()
                             ),
                         },
@@ -5527,17 +5558,17 @@ where
                 }
 
                 total_removed += removed;
-                neighbor_repair_frontier.extend(repair.frontier_cells);
+                neighbor_repair_frontier.extend(repair.frontier_simplices);
 
                 if removed > 0 {
-                    suspicion.cells_removed = true;
+                    suspicion.simplices_removed = true;
                     delaunay_repair_required = true;
                 }
 
                 #[cfg(debug_assertions)]
                 tracing::debug!(
-                    removed_cells = ?repair.removed_cells,
-                    "Removed {removed} cells (total: {total_removed})"
+                    removed_simplices = ?repair.removed_simplices,
+                    "Removed {removed} simplices (total: {total_removed})"
                 );
 
                 // Early exit if repair succeeded
@@ -5562,35 +5593,41 @@ where
             .into());
         }
 
-        // Global neighbor rebuild is expensive. In the common case (no cells removed during the
+        // Global neighbor rebuild is expensive. In the common case (no simplices removed during the
         // local facet-repair loop), `wire_cavity_neighbors` has already glued the cavity locally.
         //
-        // If we *did* remove cells during the repair loop, repair only the new-cell/frontier
+        // If we *did* remove simplices during the repair loop, repair only the new-simplex/frontier
         // neighborhood unless the force-rebuild diagnostic environment variable is set.
         if total_removed > 0 {
-            let repaired = self
-                .repair_neighbors_after_local_cell_removal(&new_cells, &neighbor_repair_frontier)?;
+            let repaired = self.repair_neighbors_after_local_simplex_removal(
+                &new_simplices,
+                &neighbor_repair_frontier,
+            )?;
             suspicion.neighbor_pointers_rebuilt = repaired > 0;
             delaunay_repair_required = true;
         }
 
-        // New cavity cells were canonicalized on creation; validate the local
+        // New cavity simplices were canonicalized on creation; validate the local
         // orientation frontier without scanning the whole triangulation.
-        let mut orientation_cells = CellKeyBuffer::new();
-        append_live_unique_cell_seeds(&self.tds, &new_cells, &mut orientation_cells);
-        append_live_unique_cell_seeds(&self.tds, &neighbor_repair_frontier, &mut orientation_cells);
-        self.validate_local_orientation_for_cells(&orientation_cells)?;
+        let mut orientation_simplices = SimplexKeyBuffer::new();
+        append_live_unique_simplex_seeds(&self.tds, &new_simplices, &mut orientation_simplices);
+        append_live_unique_simplex_seeds(
+            &self.tds,
+            &neighbor_repair_frontier,
+            &mut orientation_simplices,
+        );
+        self.validate_local_orientation_for_simplices(&orientation_simplices)?;
 
-        // Assign an incident cell for the inserted vertex without a global rebuild.
-        let hint = new_cells.iter().copied().find(|&ck| {
+        // Assign an incident simplex for the inserted vertex without a global rebuild.
+        let hint = new_simplices.iter().copied().find(|&ck| {
             self.tds
-                .cell(ck)
-                .is_some_and(|cell| cell.contains_vertex(v_key))
+                .simplex(ck)
+                .is_some_and(|simplex| simplex.contains_vertex(v_key))
         });
-        if let Some(incident_cell) = hint
+        if let Some(incident_simplex) = hint
             && let Some(vertex) = self.tds.vertex_mut(v_key)
         {
-            vertex.set_incident_cell(Some(incident_cell));
+            vertex.set_incident_simplex(Some(incident_simplex));
         }
 
         // Optional debug: validate neighbor pointers by forcing a full facet walk (no hint).
@@ -5616,42 +5653,46 @@ where
             }
         }
 
-        // Repair stale incident-cell pointers (e.g. pointing to deleted conflict-region
-        // cells) and error only for truly isolated vertices (in zero cells).
-        self.repair_stale_incident_cells()?;
+        // Repair stale incident-simplex pointers (e.g. pointing to deleted conflict-region
+        // simplices) and error only for truly isolated vertices (in zero simplices).
+        self.repair_stale_incident_simplices()?;
 
         // Connectedness guard (STRUCTURAL SAFETY, NOT Level 3 validation)
-        self.validate_connectedness(&new_cells)?;
+        self.validate_connectedness(&new_simplices)?;
 
         // Seed follow-up Delaunay repair from the local insertion product.  Higher layers
-        // use these cells to avoid rediscovering the inserted vertex star with a global scan.
-        append_live_unique_cell_seeds(&self.tds, &new_cells, &mut repair_seed_cells);
-        append_live_unique_cell_seeds(&self.tds, &neighbor_repair_frontier, &mut repair_seed_cells);
+        // use these simplices to avoid rediscovering the inserted vertex star with a global scan.
+        append_live_unique_simplex_seeds(&self.tds, &new_simplices, &mut repair_seed_simplices);
+        append_live_unique_simplex_seeds(
+            &self.tds,
+            &neighbor_repair_frontier,
+            &mut repair_seed_simplices,
+        );
 
         // Return hint for next insertion
         Ok(CavityInsertionOutcome {
             hint,
-            cells_removed: total_removed,
-            repair_seed_cells,
+            simplices_removed: total_removed,
+            repair_seed_simplices,
             delaunay_repair_required: delaunay_repair_required || suspicion.is_suspicious(),
         })
     }
 
-    /// Repair stale incident-cell pointers and detect truly isolated vertices.
+    /// Repair stale incident-simplex pointers and detect truly isolated vertices.
     ///
-    /// After cavity filling and cell removal, pre-existing boundary vertices may
-    /// still reference deleted conflict-region cells via a stale `incident_cell`.
-    /// For each vertex with a stale or missing `incident_cell`, this scans all
-    /// cells for a valid one and updates the pointer.  Returns an error only if a
-    /// vertex is in zero cells (truly isolated).
-    fn repair_stale_incident_cells(&mut self) -> Result<(), InsertionError> {
+    /// After cavity filling and simplex removal, pre-existing boundary vertices may
+    /// still reference deleted conflict-region simplices via a stale `incident_simplex`.
+    /// For each vertex with a stale or missing `incident_simplex`, this scans all
+    /// simplices for a valid one and updates the pointer.  Returns an error only if a
+    /// vertex is in zero simplices (truly isolated).
+    fn repair_stale_incident_simplices(&mut self) -> Result<(), InsertionError> {
         let stale_vertices: Vec<_> = {
             let tds = &self.tds;
             tds.vertices()
                 .filter(|(vk, v)| {
-                    !v.incident_cell().is_some_and(|cell_key| {
-                        tds.cell(cell_key)
-                            .is_some_and(|cell| cell.contains_vertex(*vk))
+                    !v.incident_simplex().is_some_and(|simplex_key| {
+                        tds.simplex(simplex_key)
+                            .is_some_and(|simplex| simplex.contains_vertex(*vk))
                     })
                 })
                 .map(|(vk, v)| (vk, v.uuid()))
@@ -5661,22 +5702,22 @@ where
         if !stale_vertices.is_empty() && std::env::var_os("DELAUNAY_DEBUG_HULL").is_some() {
             tracing::debug!(
                 stale_count = stale_vertices.len(),
-                "repairing stale incident-cell pointers"
+                "repairing stale incident-simplex pointers"
             );
         }
         for &(vk, uuid) in &stale_vertices {
-            let repaired_cell = self
+            let repaired_simplex = self
                 .tds
-                .cells()
-                .find_map(|(ck, cell)| cell.contains_vertex(vk).then_some(ck));
-            if let Some(cell_key) = repaired_cell {
+                .simplices()
+                .find_map(|(ck, simplex)| simplex.contains_vertex(vk).then_some(ck));
+            if let Some(simplex_key) = repaired_simplex {
                 if let Some(vertex) = self.tds.vertex_mut(vk) {
-                    vertex.set_incident_cell(Some(cell_key));
+                    vertex.set_incident_simplex(Some(simplex_key));
                 }
             } else {
-                // Truly isolated: no cell in the TDS contains this vertex.
+                // Truly isolated: no simplex in the TDS contains this vertex.
                 return Err(InsertionError::TopologyValidationFailed {
-                    message: "Truly isolated vertex detected during stale incident-cell repair"
+                    message: "Truly isolated vertex detected during stale incident-simplex repair"
                         .to_string(),
                     source: TriangulationValidationError::IsolatedVertex {
                         vertex_key: vk,
@@ -5710,7 +5751,7 @@ where
         }
 
         match location {
-            LocateResult::InsideCell(_) => {
+            LocateResult::InsideSimplex(_) => {
                 telemetry.located_inside = telemetry.located_inside.saturating_add(1);
             }
             LocateResult::Outside => {
@@ -5724,11 +5765,13 @@ where
 
     /// Records conflict-region size counters without touching timing fields.
     #[inline]
-    fn record_conflict_region_telemetry(telemetry: &mut InsertionTelemetry, cells: usize) {
+    fn record_conflict_region_telemetry(telemetry: &mut InsertionTelemetry, simplices: usize) {
         telemetry.conflict_region_calls = telemetry.conflict_region_calls.saturating_add(1);
-        telemetry.conflict_region_cells_total =
-            telemetry.conflict_region_cells_total.saturating_add(cells);
-        telemetry.conflict_region_cells_max = telemetry.conflict_region_cells_max.max(cells);
+        telemetry.conflict_region_simplices_total = telemetry
+            .conflict_region_simplices_total
+            .saturating_add(simplices);
+        telemetry.conflict_region_simplices_max =
+            telemetry.conflict_region_simplices_max.max(simplices);
     }
 
     /// Records measured conflict-region time when timing telemetry is enabled.
@@ -5800,39 +5843,42 @@ where
         telemetry_mode.records_timings().then(Instant::now)
     }
 
-    fn collect_exterior_repair_seed_cells(
+    fn collect_exterior_repair_seed_simplices(
         &self,
         point: &Point<K::Scalar, D>,
-        terminal_cell: CellKey,
+        terminal_simplex: SimplexKey,
         locate_stats: &LocateStats,
         telemetry_mode: InsertionTelemetryMode,
         telemetry: &mut InsertionTelemetry,
-    ) -> Result<CellKeyBuffer, ConflictError> {
-        if locate_stats.fell_back_to_scan() || !self.tds.contains_cell(terminal_cell) {
-            return Ok(CellKeyBuffer::new());
+    ) -> Result<SimplexKeyBuffer, ConflictError> {
+        if locate_stats.fell_back_to_scan() || !self.tds.contains_simplex(terminal_simplex) {
+            return Ok(SimplexKeyBuffer::new());
         }
 
         let conflict_started = Self::start_insertion_timing(telemetry_mode);
-        let local_seed_cells = collect_local_exterior_conflict_seed_cells(
+        let local_seed_simplices = collect_local_exterior_conflict_seed_simplices(
             &self.tds,
             &self.kernel,
             point,
-            terminal_cell,
+            terminal_simplex,
         )?;
-        Self::record_conflict_region_telemetry(telemetry, local_seed_cells.conflict_cells_found);
+        Self::record_conflict_region_telemetry(
+            telemetry,
+            local_seed_simplices.conflict_simplices_found,
+        );
         if let Some(conflict_started) = conflict_started {
             Self::record_conflict_region_timing(
                 telemetry,
                 Self::duration_nanos_saturating(conflict_started.elapsed()),
             );
         }
-        Ok(local_seed_cells.seed_cells)
+        Ok(local_seed_simplices.seed_simplices)
     }
 
     /// Internal implementation of insert without retry logic.
-    /// Returns the result and the number of cells removed during repair.
+    /// Returns the result and the number of simplices removed during repair.
     ///
-    /// Note: `conflict_cells` parameter is optional. If `None`, it will be computed automatically
+    /// Note: `conflict_simplices` parameter is optional. If `None`, it will be computed automatically
     /// for interior points using `locate()` + `find_conflict_region()`.
     #[expect(
         clippy::too_many_lines,
@@ -5841,8 +5887,8 @@ where
     fn try_insert_impl(
         &mut self,
         vertex: Vertex<K::Scalar, U, D>,
-        conflict_cells: Option<&CellKeyBuffer>,
-        hint: Option<CellKey>,
+        conflict_simplices: Option<&SimplexKeyBuffer>,
+        hint: Option<SimplexKey>,
         telemetry: &mut InsertionTelemetry,
         telemetry_mode: InsertionTelemetryMode,
     ) -> Result<TryInsertImplOk, InsertionError> {
@@ -5876,12 +5922,12 @@ where
         let num_vertices = self.tds.number_of_vertices();
 
         if num_vertices < D + 1 {
-            // Bootstrap phase: just accumulate vertices, no cells yet
+            // Bootstrap phase: just accumulate vertices, no simplices yet
             return Ok(TryInsertImplOk {
                 inserted: (v_key, None),
-                cells_removed: 0,
+                simplices_removed: 0,
                 suspicion,
-                repair_seed_cells: CellKeyBuffer::new(),
+                repair_seed_simplices: SimplexKeyBuffer::new(),
                 delaunay_repair_required: false,
             });
         } else if num_vertices == D + 1 {
@@ -5903,18 +5949,18 @@ where
                 },
             )?;
 
-            // Return first cell key for hint caching
-            let first_cell = self.tds.cell_keys().next();
+            // Return first simplex key for hint caching
+            let first_simplex = self.tds.simplex_keys().next();
             return Ok(TryInsertImplOk {
-                inserted: (v_key, first_cell),
-                cells_removed: 0,
+                inserted: (v_key, first_simplex),
+                simplices_removed: 0,
                 suspicion,
-                repair_seed_cells: CellKeyBuffer::new(),
+                repair_seed_simplices: SimplexKeyBuffer::new(),
                 delaunay_repair_required: false,
             });
         }
 
-        // 3. Locate containing cell (for vertex D+2 and beyond).
+        // 3. Locate containing simplex (for vertex D+2 and beyond).
         //
         // `locate()` delegates to `locate_with_stats()`, so collecting the stats here keeps
         // the same point-location algorithm while making release-mode batch diagnostics useful.
@@ -5930,7 +5976,7 @@ where
             tracing::debug!(
                 point = ?point,
                 location = ?location,
-                start_cell = ?locate_stats.start_cell,
+                start_simplex = ?locate_stats.start_simplex,
                 used_hint = locate_stats.used_hint,
                 walk_steps = locate_stats.walk_steps,
                 fallback = ?locate_stats.fallback,
@@ -5938,25 +5984,26 @@ where
             );
         }
 
-        // 4. Determine the supported insertion site and any conflict cells it needs.
-        let insertion_site = match (location, conflict_cells) {
-            (LocateResult::InsideCell(start_cell), None) => {
+        // 4. Determine the supported insertion site and any conflict simplices it needs.
+        let insertion_site = match (location, conflict_simplices) {
+            (LocateResult::InsideSimplex(start_simplex), None) => {
                 // Interior point: compute conflict region automatically.
                 //
                 // IMPORTANT:
                 // `find_conflict_region()` (Bowyer–Watson style) can legitimately return an empty
                 // set when the point lies inside the triangulation but is not strictly inside any
-                // existing cell circumsphere (e.g., obtuse tetrahedra whose circumsphere does not
+                // existing simplex circumsphere (e.g., obtuse tetrahedra whose circumsphere does not
                 // contain all interior points).
                 //
                 // An empty conflict region would produce an empty cavity boundary, create no new
-                // cells, and leave the inserted vertex isolated (not incident to any cell), which
+                // simplices, and leave the inserted vertex isolated (not incident to any simplex), which
                 // breaks Level 3 topology validation via Euler characteristic.
                 //
-                // Fallback: treat the containing cell as the conflict region, effectively performing
-                // a star-split of that cell to keep the simplicial complex connected.
+                // Fallback: treat the containing simplex as the conflict region, effectively performing
+                // a star-split of that simplex to keep the simplicial complex connected.
                 let conflict_started = Self::start_insertion_timing(telemetry_mode);
-                let computed = find_conflict_region(&self.tds, &self.kernel, &point, start_cell)?;
+                let computed =
+                    find_conflict_region(&self.tds, &self.kernel, &point, start_simplex)?;
                 Self::record_conflict_region_telemetry(telemetry, computed.len());
                 if let Some(conflict_started) = conflict_started {
                     Self::record_conflict_region_timing(
@@ -5977,10 +6024,10 @@ where
                         tracing::warn!(
                             missed,
                             bfs_conflict = computed.len(),
-                            start_cell = ?start_cell,
+                            start_simplex = ?start_simplex,
                             point = ?point,
                             num_vertices = self.tds.number_of_vertices(),
-                            num_cells = self.tds.number_of_cells(),
+                            num_simplices = self.tds.number_of_simplices(),
                             "try_insert_impl: INCOMPLETE conflict region at insertion"
                         );
                     }
@@ -5991,33 +6038,33 @@ where
                     suspicion.fallback_star_split = true;
                 }
                 InsertionSite::Interior {
-                    start_cell,
-                    conflict_cells: Self::ensure_non_empty_conflict_cells(
+                    start_simplex,
+                    conflict_simplices: Self::ensure_non_empty_conflict_simplices(
                         Cow::Owned(computed),
-                        start_cell,
+                        start_simplex,
                     ),
                 }
             }
-            (LocateResult::InsideCell(start_cell), Some(cells)) => {
+            (LocateResult::InsideSimplex(start_simplex), Some(simplices)) => {
                 // If the caller provided an empty conflict region (can happen if the Delaunay layer
                 // computes conflicts using a strict in-sphere test), we must still replace at least
-                // one cell; otherwise we'd create no cavity, no new cells, and leave a dangling
+                // one simplex; otherwise we'd create no cavity, no new simplices, and leave a dangling
                 // vertex (χ increases by 1, typically showing up as χ=2 for Ball(3)).
-                if cells.is_empty() {
+                if simplices.is_empty() {
                     suspicion.empty_conflict_region = true;
                     suspicion.fallback_star_split = true;
                 }
                 InsertionSite::Interior {
-                    start_cell,
-                    conflict_cells: Self::ensure_non_empty_conflict_cells(
-                        Cow::Borrowed(cells),
-                        start_cell,
+                    start_simplex,
+                    conflict_simplices: Self::ensure_non_empty_conflict_simplices(
+                        Cow::Borrowed(simplices),
+                        start_simplex,
                     ),
                 }
             }
             (LocateResult::Outside, None) => {
                 // Exterior insertion is the hull-extension case.  Avoid the old
-                // full-TDS conflict scan here; it was O(number_of_cells) per
+                // full-TDS conflict scan here; it was O(number_of_simplices) per
                 // exterior point, often only to rediscover that the hull path
                 // was required anyway.  Cadenced and final Delaunay repair own
                 // any local empty-circumsphere cleanup after the hull mutation.
@@ -6027,48 +6074,48 @@ where
                         "Outside insertion: skipping global conflict-region scan; using hull extension"
                     );
                 }
-                let repair_seed_cells = self.collect_exterior_repair_seed_cells(
+                let repair_seed_simplices = self.collect_exterior_repair_seed_simplices(
                     &point,
-                    locate_trace.terminal_cell,
+                    locate_trace.terminal_simplex,
                     &locate_stats,
                     telemetry_mode,
                     telemetry,
                 )?;
                 InsertionSite::Exterior {
-                    conflict_cells: None,
-                    repair_seed_cells,
+                    conflict_simplices: None,
+                    repair_seed_simplices,
                 }
             }
-            (LocateResult::Outside, Some(cells)) => {
-                if cells.is_empty() {
+            (LocateResult::Outside, Some(simplices)) => {
+                if simplices.is_empty() {
                     #[cfg(debug_assertions)]
                     if std::env::var_os("DELAUNAY_DEBUG_HULL").is_some() {
                         tracing::debug!(
                             "Outside insertion: caller provided empty conflict region; will use hull extension"
                         );
                     }
-                    let repair_seed_cells = self.collect_exterior_repair_seed_cells(
+                    let repair_seed_simplices = self.collect_exterior_repair_seed_simplices(
                         &point,
-                        locate_trace.terminal_cell,
+                        locate_trace.terminal_simplex,
                         &locate_stats,
                         telemetry_mode,
                         telemetry,
                     )?;
                     InsertionSite::Exterior {
-                        conflict_cells: None,
-                        repair_seed_cells,
+                        conflict_simplices: None,
+                        repair_seed_simplices,
                     }
                 } else {
                     #[cfg(debug_assertions)]
                     if std::env::var_os("DELAUNAY_DEBUG_HULL").is_some() {
                         tracing::debug!(
-                            conflict_cells = cells.len(),
+                            conflict_simplices = simplices.len(),
                             "Outside insertion: using caller-provided conflict region"
                         );
                     }
                     InsertionSite::Exterior {
-                        conflict_cells: Some(Cow::Borrowed(cells)),
-                        repair_seed_cells: cells.iter().copied().collect(),
+                        conflict_simplices: Some(Cow::Borrowed(simplices)),
+                        repair_seed_simplices: simplices.iter().copied().collect(),
                     }
                 }
             }
@@ -6081,16 +6128,16 @@ where
         // 5. Handle different insertion sites.
         match insertion_site {
             InsertionSite::Interior {
-                start_cell,
-                conflict_cells,
+                start_simplex,
+                conflict_simplices,
             } => {
-                let conflict_cells = conflict_cells.into_owned();
+                let conflict_simplices = conflict_simplices.into_owned();
                 let cavity_started = Self::start_insertion_timing(telemetry_mode);
                 let insertion_result = self.insert_with_conflict_region(
                     v_key,
                     &point,
-                    conflict_cells,
-                    Some(start_cell),
+                    conflict_simplices,
+                    Some(start_simplex),
                     &mut suspicion,
                 );
                 Self::record_cavity_insertion_telemetry(
@@ -6101,20 +6148,20 @@ where
                 let outcome = insertion_result?;
                 Ok(TryInsertImplOk {
                     inserted: (v_key, outcome.hint),
-                    cells_removed: outcome.cells_removed,
+                    simplices_removed: outcome.simplices_removed,
                     suspicion,
-                    repair_seed_cells: outcome.repair_seed_cells,
+                    repair_seed_simplices: outcome.repair_seed_simplices,
                     delaunay_repair_required: outcome.delaunay_repair_required,
                 })
             }
             InsertionSite::Exterior {
-                conflict_cells,
-                repair_seed_cells: exterior_repair_seed_cells,
+                conflict_simplices,
+                repair_seed_simplices: exterior_repair_seed_simplices,
             } => {
-                if let Some(conflict_cells) = conflict_cells {
-                    let conflict_cells = conflict_cells.into_owned();
+                if let Some(conflict_simplices) = conflict_simplices {
+                    let conflict_simplices = conflict_simplices.into_owned();
                     #[cfg(debug_assertions)]
-                    let conflict_len = conflict_cells.len();
+                    let conflict_len = conflict_simplices.len();
                     #[cfg(debug_assertions)]
                     tracing::debug!(
                         "Outside insertion attempting cavity insertion with conflict region size {conflict_len}"
@@ -6123,7 +6170,7 @@ where
                     let result = self.insert_with_conflict_region(
                         v_key,
                         &point,
-                        conflict_cells,
+                        conflict_simplices,
                         None,
                         &mut suspicion,
                     );
@@ -6136,9 +6183,9 @@ where
                         Ok(outcome) => {
                             return Ok(TryInsertImplOk {
                                 inserted: (v_key, outcome.hint),
-                                cells_removed: outcome.cells_removed,
+                                simplices_removed: outcome.simplices_removed,
                                 suspicion,
-                                repair_seed_cells: outcome.repair_seed_cells,
+                                repair_seed_simplices: outcome.repair_seed_simplices,
                                 delaunay_repair_required: true,
                             });
                         }
@@ -6150,7 +6197,7 @@ where
                             // IMPORTANT: Only ConflictError variants are safe to fall back from here.
                             // These originate from `extract_cavity_boundary` which runs BEFORE any TDS
                             // mutation.  Errors like `IsolatedVertex` originate from AFTER the cavity
-                            // has been filled, neighbors wired, and conflict cells removed — the TDS
+                            // has been filled, neighbors wired, and conflict simplices removed — the TDS
                             // is already heavily mutated and hull extension on that state is unsound.
                             let should_fallback = matches!(
                                 &err,
@@ -6165,7 +6212,7 @@ where
                             if should_fallback {
                                 #[cfg(debug_assertions)]
                                 tracing::warn!(
-                                    "Outside insertion conflict boundary degeneracy ({err}) (conflict_cells={conflict_len}); falling back to hull extension"
+                                    "Outside insertion conflict boundary degeneracy ({err}) (conflict_simplices={conflict_len}); falling back to hull extension"
                                 );
                                 #[cfg(debug_assertions)]
                                 if std::env::var_os("DELAUNAY_DEBUG_HULL").is_some() {
@@ -6196,8 +6243,8 @@ where
                     telemetry,
                     hull_started.map(|started| Self::duration_nanos_saturating(started.elapsed())),
                 );
-                let new_cells = match hull_result {
-                    Ok(cells) => cells,
+                let new_simplices = match hull_result {
+                    Ok(simplices) => simplices,
                     Err(err) => {
                         let retry_inside = matches!(
                             &err,
@@ -6212,13 +6259,13 @@ where
                             // explicitly and let the common recorder handle the outcome.
                             telemetry.locate_scan_fallbacks =
                                 telemetry.locate_scan_fallbacks.saturating_add(1);
-                            let scan_start_cell = self
+                            let scan_start_simplex = self
                                 .tds
-                                .cell_keys()
+                                .simplex_keys()
                                 .next()
                                 .ok_or(LocateError::EmptyTriangulation)?;
                             let scan_stats = LocateStats {
-                                start_cell: scan_start_cell,
+                                start_simplex: scan_start_simplex,
                                 used_hint: false,
                                 walk_steps: 0,
                                 fallback: None,
@@ -6228,24 +6275,24 @@ where
                                 fallback_location,
                                 &scan_stats,
                             );
-                            if let LocateResult::InsideCell(start_cell) = fallback_location {
+                            if let LocateResult::InsideSimplex(start_simplex) = fallback_location {
                                 #[cfg(debug_assertions)]
                                 if std::env::var_os("DELAUNAY_DEBUG_HULL").is_some() {
                                     tracing::warn!(
                                         point = ?point,
-                                        start_cell = ?start_cell,
+                                        start_simplex = ?start_simplex,
                                         "Outside insertion: no visible facets; retrying as interior with star-split"
                                     );
                                 }
                                 suspicion.fallback_star_split = true;
-                                let mut star_conflict = CellKeyBuffer::new();
-                                star_conflict.push(start_cell);
+                                let mut star_conflict = SimplexKeyBuffer::new();
+                                star_conflict.push(start_simplex);
                                 let cavity_started = Self::start_insertion_timing(telemetry_mode);
                                 let insertion_result = self.insert_with_conflict_region(
                                     v_key,
                                     &point,
                                     star_conflict,
-                                    Some(start_cell),
+                                    Some(start_simplex),
                                     &mut suspicion,
                                 );
                                 Self::record_cavity_insertion_telemetry(
@@ -6257,9 +6304,9 @@ where
                                 let outcome = insertion_result?;
                                 return Ok(TryInsertImplOk {
                                     inserted: (v_key, outcome.hint),
-                                    cells_removed: outcome.cells_removed,
+                                    simplices_removed: outcome.simplices_removed,
                                     suspicion,
-                                    repair_seed_cells: outcome.repair_seed_cells,
+                                    repair_seed_simplices: outcome.repair_seed_simplices,
                                     delaunay_repair_required: true,
                                 });
                             }
@@ -6275,11 +6322,11 @@ where
                         return Err(err);
                     }
                 };
-                self.canonicalize_positive_orientation_for_cells(&new_cells)?;
+                self.canonicalize_positive_orientation_for_simplices(&new_simplices)?;
                 #[cfg(debug_assertions)]
                 if std::env::var_os("DELAUNAY_DEBUG_HULL").is_some() {
                     tracing::debug!(
-                        new_cells = new_cells.len(),
+                        new_simplices = new_simplices.len(),
                         "Outside insertion: hull extension succeeded"
                     );
                 }
@@ -6292,11 +6339,11 @@ where
                     let mut neighbor_mutual = 0usize;
                     let mut neighbor_non_mutual = 0usize;
 
-                    for &cell_key in &new_cells {
-                        let Some(cell) = self.tds.cell(cell_key) else {
+                    for &simplex_key in &new_simplices {
+                        let Some(simplex) = self.tds.simplex(simplex_key) else {
                             continue;
                         };
-                        let Some(neighbors) = cell.neighbor_keys() else {
+                        let Some(neighbors) = simplex.neighbor_keys() else {
                             continue;
                         };
                         for neighbor_opt in neighbors {
@@ -6306,14 +6353,14 @@ where
                                     neighbor_none = neighbor_none.saturating_add(1);
                                 }
                                 Some(neighbor_key) => {
-                                    if !self.tds.contains_cell(neighbor_key) {
+                                    if !self.tds.contains_simplex(neighbor_key) {
                                         neighbor_missing = neighbor_missing.saturating_add(1);
                                     } else if self
                                         .tds
-                                        .cell(neighbor_key)
-                                        .and_then(Cell::neighbors)
+                                        .simplex(neighbor_key)
+                                        .and_then(Simplex::neighbors)
                                         .is_some_and(|mut ns| {
-                                            ns.any(|neighbor| neighbor == Some(cell_key))
+                                            ns.any(|neighbor| neighbor == Some(simplex_key))
                                         })
                                     {
                                         neighbor_mutual = neighbor_mutual.saturating_add(1);
@@ -6326,7 +6373,7 @@ where
                     }
 
                     tracing::debug!(
-                        new_cells = new_cells.len(),
+                        new_simplices = new_simplices.len(),
                         total_slots,
                         neighbor_none,
                         neighbor_missing,
@@ -6339,7 +6386,7 @@ where
                 // Iteratively repair non-manifold topology until facet sharing is valid
                 let mut total_removed = 0;
                 let mut facet_sharing_known_valid = true;
-                let mut neighbor_repair_frontier = CellKeyBuffer::new();
+                let mut neighbor_repair_frontier = SimplexKeyBuffer::new();
                 #[cfg_attr(
                     not(debug_assertions),
                     expect(
@@ -6348,22 +6395,22 @@ where
                     )
                 )]
                 for iteration in 0..MAX_REPAIR_ITERATIONS {
-                    // Check for non-manifold issues in newly created hull cells (local scan)
-                    // This keeps the repair O(k·D) where k is the number of new hull cells, rather than O(N·D)
-                    let cells_to_check: CellKeyBuffer = new_cells
+                    // Check for non-manifold issues in newly created hull simplices (local scan)
+                    // This keeps the repair O(k·D) where k is the number of new hull simplices, rather than O(N·D)
+                    let simplices_to_check: SimplexKeyBuffer = new_simplices
                         .iter()
                         .copied()
-                        .filter(|ck| self.tds.contains_cell(*ck))
+                        .filter(|ck| self.tds.contains_simplex(*ck))
                         .collect();
 
-                    if let Some(issues) = self.detect_local_facet_issues(&cells_to_check)? {
+                    if let Some(issues) = self.detect_local_facet_issues(&simplices_to_check)? {
                         // Only mark this as "suspicious" if we *actually* detected local facet issues
                         // and entered the repair path.
                         suspicion.repair_loop_entered = true;
 
                         #[cfg(debug_assertions)]
                         tracing::debug!(
-                            "Hull extension repair iteration {}: {} over-shared facets detected, removing cells...",
+                            "Hull extension repair iteration {}: {} over-shared facets detected, removing simplices...",
                             iteration + 1,
                             issues.len()
                         );
@@ -6375,13 +6422,13 @@ where
                         if removed == 0 {
                             #[cfg(debug_assertions)]
                             tracing::warn!(
-                                "No cells removed in iteration {} - repair cannot make progress",
+                                "No simplices removed in iteration {} - repair cannot make progress",
                                 iteration + 1
                             );
                             return Err(InsertionError::TopologyValidation(
                                 TdsError::InconsistentDataStructure {
                                     message: format!(
-                                        "Hull extension repair stalled: {} over-shared facets remain but no cells could be removed",
+                                        "Hull extension repair stalled: {} over-shared facets remain but no simplices could be removed",
                                         issues.len()
                                     ),
                                 },
@@ -6389,15 +6436,15 @@ where
                         }
 
                         total_removed += removed;
-                        neighbor_repair_frontier.extend(repair.frontier_cells);
+                        neighbor_repair_frontier.extend(repair.frontier_simplices);
                         if removed > 0 {
-                            suspicion.cells_removed = true;
+                            suspicion.simplices_removed = true;
                         }
 
                         #[cfg(debug_assertions)]
                         tracing::debug!(
-                            removed_cells = ?repair.removed_cells,
-                            "Removed {removed} cells (total: {total_removed})"
+                            removed_simplices = ?repair.removed_simplices,
+                            "Removed {removed} simplices (total: {total_removed})"
                         );
 
                         // Early exit if repair succeeded
@@ -6420,34 +6467,38 @@ where
                 }
 
                 if total_removed > 0 {
-                    let repaired = self.repair_neighbors_after_local_cell_removal(
-                        &new_cells,
+                    let repaired = self.repair_neighbors_after_local_simplex_removal(
+                        &new_simplices,
                         &neighbor_repair_frontier,
                     )?;
                     suspicion.neighbor_pointers_rebuilt = repaired > 0;
                 }
 
-                // New hull cells were canonicalized on creation; validate the
+                // New hull simplices were canonicalized on creation; validate the
                 // local orientation frontier without scanning the whole TDS.
-                let mut orientation_cells = CellKeyBuffer::new();
-                append_live_unique_cell_seeds(&self.tds, &new_cells, &mut orientation_cells);
-                append_live_unique_cell_seeds(
+                let mut orientation_simplices = SimplexKeyBuffer::new();
+                append_live_unique_simplex_seeds(
+                    &self.tds,
+                    &new_simplices,
+                    &mut orientation_simplices,
+                );
+                append_live_unique_simplex_seeds(
                     &self.tds,
                     &neighbor_repair_frontier,
-                    &mut orientation_cells,
+                    &mut orientation_simplices,
                 );
-                self.validate_local_orientation_for_cells(&orientation_cells)?;
+                self.validate_local_orientation_for_simplices(&orientation_simplices)?;
 
-                // Assign an incident cell for the inserted vertex without a global rebuild.
-                let hint = new_cells.iter().copied().find(|&ck| {
+                // Assign an incident simplex for the inserted vertex without a global rebuild.
+                let hint = new_simplices.iter().copied().find(|&ck| {
                     self.tds
-                        .cell(ck)
-                        .is_some_and(|cell| cell.contains_vertex(v_key))
+                        .simplex(ck)
+                        .is_some_and(|simplex| simplex.contains_vertex(v_key))
                 });
-                if let Some(incident_cell) = hint
+                if let Some(incident_simplex) = hint
                     && let Some(vertex) = self.tds.vertex_mut(v_key)
                 {
-                    vertex.set_incident_cell(Some(incident_cell));
+                    vertex.set_incident_simplex(Some(incident_simplex));
                 }
 
                 #[cfg(debug_assertions)]
@@ -6467,32 +6518,36 @@ where
                     }
                 }
 
-                // Repair stale incident-cell pointers (e.g. pointing to deleted
-                // conflict-region cells) and error only for truly isolated vertices.
-                self.repair_stale_incident_cells()?;
+                // Repair stale incident-simplex pointers (e.g. pointing to deleted
+                // conflict-region simplices) and error only for truly isolated vertices.
+                self.repair_stale_incident_simplices()?;
 
-                // Connectedness guard (localized): ensure the newly created cell set is internally
+                // Connectedness guard (localized): ensure the newly created simplex set is internally
                 // connected and attached to the existing triangulation.
-                self.validate_connectedness(&new_cells)?;
+                self.validate_connectedness(&new_simplices)?;
 
                 // Return vertex key and hint for next insertion
-                let mut repair_seed_cells = CellKeyBuffer::new();
-                append_live_unique_cell_seeds(&self.tds, &new_cells, &mut repair_seed_cells);
-                append_live_unique_cell_seeds(
+                let mut repair_seed_simplices = SimplexKeyBuffer::new();
+                append_live_unique_simplex_seeds(
+                    &self.tds,
+                    &new_simplices,
+                    &mut repair_seed_simplices,
+                );
+                append_live_unique_simplex_seeds(
                     &self.tds,
                     &neighbor_repair_frontier,
-                    &mut repair_seed_cells,
+                    &mut repair_seed_simplices,
                 );
-                append_live_unique_cell_seeds(
+                append_live_unique_simplex_seeds(
                     &self.tds,
-                    &exterior_repair_seed_cells,
-                    &mut repair_seed_cells,
+                    &exterior_repair_seed_simplices,
+                    &mut repair_seed_simplices,
                 );
                 Ok(TryInsertImplOk {
                     inserted: (v_key, hint),
-                    cells_removed: total_removed,
+                    simplices_removed: total_removed,
                     suspicion,
-                    repair_seed_cells,
+                    repair_seed_simplices,
                     delaunay_repair_required: true,
                 })
             }
@@ -6502,8 +6557,8 @@ where
     /// Removes a vertex and retriangulates the resulting cavity using fan triangulation.
     ///
     /// This operation maintains topological consistency by:
-    /// 1. Finding all cells containing the vertex
-    /// 2. Removing those cells (creating a cavity)
+    /// 1. Finding all simplices containing the vertex
+    /// 2. Removing those simplices (creating a cavity)
     /// 3. Extracting the cavity boundary facets
     /// 4. Filling the cavity with a fan triangulation (pick apex, connect to all boundary facets)
     /// 5. Wiring neighbors to maintain consistency
@@ -6511,7 +6566,7 @@ where
     ///
     /// **Fan Triangulation**: The cavity is filled by picking one boundary vertex as an apex
     /// and connecting it to all boundary facets. This is fast and maintains all topological
-    /// invariants, though it may create poorly-shaped cells in some cases.
+    /// invariants, though it may create poorly-shaped simplices in some cases.
     ///
     /// # Arguments
     ///
@@ -6519,7 +6574,7 @@ where
     ///
     /// # Returns
     ///
-    /// The number of cells that were removed along with the vertex.
+    /// The number of simplices that were removed along with the vertex.
     ///
     /// # Errors
     ///
@@ -6532,30 +6587,30 @@ where
             return Ok(0); // Vertex not found, nothing to remove
         }
 
-        // Collect all cells containing this vertex by scanning all cells
-        let cells_to_remove: CellKeyBuffer = self
+        // Collect all simplices containing this vertex by scanning all simplices
+        let simplices_to_remove: SimplexKeyBuffer = self
             .tds
-            .cells()
-            .filter_map(|(cell_key, cell)| {
-                if cell.vertices().contains(&vertex_key) {
-                    Some(cell_key)
+            .simplices()
+            .filter_map(|(simplex_key, simplex)| {
+                if simplex.vertices().contains(&vertex_key) {
+                    Some(simplex_key)
                 } else {
                     None
                 }
             })
             .collect();
 
-        if cells_to_remove.is_empty() {
-            // Vertex exists but has no incident cells - use Tds removal
+        if simplices_to_remove.is_empty() {
+            // Vertex exists but has no incident simplices - use Tds removal
             return self
                 .tds
                 .remove_vertex(vertex_key)
                 .map_err(|e| InvariantError::Tds(e.into_inner()));
         }
 
-        // Extract cavity boundary BEFORE removing cells
+        // Extract cavity boundary BEFORE removing simplices
         let boundary_facets =
-            extract_cavity_boundary(&self.tds, &cells_to_remove).map_err(|e| {
+            extract_cavity_boundary(&self.tds, &simplices_to_remove).map_err(|e| {
                 TdsError::InconsistentDataStructure {
                     message: format!("Failed to extract cavity boundary: {e}"),
                 }
@@ -6581,43 +6636,43 @@ where
         // subsequent orientation/finalization step fails.
         let tds_snapshot = self.tds.clone_for_rollback();
         let retriangulation_result = (|| -> Result<usize, InvariantError> {
-            // Fill cavity with fan triangulation BEFORE removing old cells
+            // Fill cavity with fan triangulation BEFORE removing old simplices
             // Use fan triangulation that skips boundary facets which already include the apex
-            let new_cells = self
+            let new_simplices = self
                 .fan_fill_cavity(apex_vertex_key, &boundary_facets)
                 .map_err(|e| insertion_error_to_invariant_error(e, "Fan triangulation failed"))?;
-            // Wire neighbors for the new cells (while both old and new cells exist)
+            // Wire neighbors for the new simplices (while both old and new simplices exist)
             let external_facets =
-                external_facets_for_boundary(&self.tds, &cells_to_remove, &boundary_facets)
+                external_facets_for_boundary(&self.tds, &simplices_to_remove, &boundary_facets)
                     .map_err(|e| {
                         insertion_error_to_invariant_error(e, "External-facet collection failed")
                     })?;
             wire_cavity_neighbors(
                 &mut self.tds,
-                &new_cells,
+                &new_simplices,
                 external_facets.iter().copied(),
-                Some(&cells_to_remove),
+                Some(&simplices_to_remove),
             )
             .map_err(|e| insertion_error_to_invariant_error(e, "Neighbor wiring failed"))?;
 
-            // Remove the cells containing the vertex (now that new cells are wired up)
-            // Note: remove_cells_by_keys() automatically clears neighbor pointers in surviving
-            // cells that reference removed cells (sets them to None/boundary)
-            let mut cells_removed = self.tds.remove_cells_by_keys(&cells_to_remove);
+            // Remove the simplices containing the vertex (now that new simplices are wired up)
+            // Note: remove_simplices_by_keys() automatically clears neighbor pointers in surviving
+            // simplices that reference removed simplices (sets them to None/boundary)
+            let mut simplices_removed = self.tds.remove_simplices_by_keys(&simplices_to_remove);
 
-            // Validate facet topology for newly created cells (O(k*D) localized check)
-            if let Some(issues) = self.detect_local_facet_issues(&new_cells)? {
+            // Validate facet topology for newly created simplices (O(k*D) localized check)
+            if let Some(issues) = self.detect_local_facet_issues(&new_simplices)? {
                 #[cfg(debug_assertions)]
                 tracing::warn!(
                     "Warning: {} over-shared facets detected after vertex removal, repairing...",
                     issues.len()
                 );
                 let removed = self.repair_local_facet_issues(&issues)?;
-                cells_removed += removed;
+                simplices_removed += removed;
                 #[cfg(debug_assertions)]
-                tracing::debug!("Repaired by removing {removed} additional cells");
+                tracing::debug!("Repaired by removing {removed} additional simplices");
 
-                // Repair neighbor pointers after removing additional cells
+                // Repair neighbor pointers after removing additional simplices
                 // This ensures neighbor consistency after repair operations
                 if removed > 0 {
                     repair_neighbor_pointers(&mut self.tds).map_err(|e| {
@@ -6629,7 +6684,7 @@ where
                 }
             }
             // Normalize coherent orientation, canonicalize global sign, and promote
-            // cells to positive orientation (#258).
+            // simplices to positive orientation (#258).
             self.normalize_and_promote_positive_orientation()
                 .map_err(|e| {
                     insertion_error_to_invariant_error(
@@ -6638,9 +6693,9 @@ where
                     )
                 })?;
 
-            // Rebuild vertex-cell incidence for all vertices
+            // Rebuild vertex-simplex incidence for all vertices
             self.tds
-                .assign_incident_cells()
+                .assign_incident_simplices()
                 .map_err(|e| InvariantError::Tds(e.into_inner()))?;
 
             // Remove the vertex using Tds method (handles internal bookkeeping)
@@ -6648,11 +6703,11 @@ where
                 .remove_vertex(vertex_key)
                 .map_err(|e| InvariantError::Tds(e.into_inner()))?;
 
-            Ok(cells_removed)
+            Ok(simplices_removed)
         })();
 
         match retriangulation_result {
-            Ok(cells_removed) => Ok(cells_removed),
+            Ok(simplices_removed) => Ok(simplices_removed),
             Err(error) => {
                 self.tds = tds_snapshot;
                 Err(error)
@@ -6675,11 +6730,12 @@ where
     fn pick_fan_apex(&self, boundary_facets: &[FacetHandle]) -> Option<VertexKey> {
         // Get first boundary facet
         let first_facet = boundary_facets.first()?;
-        let cell = self.tds.cell(first_facet.cell_key())?;
+        let simplex = self.tds.simplex(first_facet.simplex_key())?;
 
         // Get the first vertex from this facet (any vertex that's not the opposite one)
         let facet_idx = <usize as From<_>>::from(first_facet.facet_index());
-        cell.vertices()
+        simplex
+            .vertices()
             .iter()
             .enumerate()
             .find(|(i, _)| *i != facet_idx)
@@ -6687,35 +6743,36 @@ where
     }
 
     /// Fan-specific cavity fill: connect an existing apex vertex to boundary facets
-    /// that do not already include the apex. This avoids creating degenerate cells
+    /// that do not already include the apex. This avoids creating degenerate simplices
     /// with duplicate vertices when the apex lies on a boundary facet.
     fn fan_fill_cavity(
         &mut self,
         apex_vertex_key: VertexKey,
         boundary_facets: &[FacetHandle],
-    ) -> Result<CellKeyBuffer, InsertionError> {
-        let mut new_cells = CellKeyBuffer::new();
+    ) -> Result<SimplexKeyBuffer, InsertionError> {
+        let mut new_simplices = SimplexKeyBuffer::new();
 
         for facet_handle in boundary_facets {
-            let boundary_cell = self.tds.cell(facet_handle.cell_key()).ok_or_else(|| {
-                CavityFillingError::MissingBoundaryCell {
-                    cell_key: facet_handle.cell_key(),
-                }
-            })?;
+            let boundary_simplex =
+                self.tds
+                    .simplex(facet_handle.simplex_key())
+                    .ok_or_else(|| CavityFillingError::MissingBoundarySimplex {
+                        simplex_key: facet_handle.simplex_key(),
+                    })?;
 
             let facet_idx = <usize as From<_>>::from(facet_handle.facet_index());
-            if facet_idx >= boundary_cell.number_of_vertices() {
+            if facet_idx >= boundary_simplex.number_of_vertices() {
                 return Err(CavityFillingError::InvalidFacetIndex {
-                    cell_key: facet_handle.cell_key(),
+                    simplex_key: facet_handle.simplex_key(),
                     facet_index: facet_idx,
-                    vertex_count: boundary_cell.number_of_vertices(),
+                    vertex_count: boundary_simplex.number_of_vertices(),
                 }
                 .into());
             }
 
             // Gather facet vertices (all except the opposite vertex)
             let mut facet_vertices = SmallBuffer::<VertexKey, MAX_PRACTICAL_DIMENSION_SIZE>::new();
-            for (i, &vkey) in boundary_cell.vertices().iter().enumerate() {
+            for (i, &vkey) in boundary_simplex.vertices().iter().enumerate() {
                 if i != facet_idx {
                     facet_vertices.push(vkey);
                 }
@@ -6726,51 +6783,52 @@ where
                 continue;
             }
 
-            // Build new cell vertices = facet_vertices + apex
-            let mut new_cell_vertices = facet_vertices;
-            new_cell_vertices.push(apex_vertex_key);
+            // Build new simplex vertices = facet_vertices + apex
+            let mut new_simplex_vertices = facet_vertices;
+            new_simplex_vertices.push(apex_vertex_key);
 
-            // Create and insert the new cell
-            let new_cell = Cell::new(new_cell_vertices, None).map_err(CavityFillingError::from)?;
-            let cell_key = self
+            // Create and insert the new simplex
+            let new_simplex =
+                Simplex::new(new_simplex_vertices, None).map_err(CavityFillingError::from)?;
+            let simplex_key = self
                 .tds
-                .insert_cell_with_mapping_prechecked_topology(new_cell)
+                .insert_simplex_with_mapping_prechecked_topology(new_simplex)
                 .map_err(InsertionError::from)?;
 
-            new_cells.push(cell_key);
+            new_simplices.push(simplex_key);
         }
 
-        if new_cells.is_empty() {
+        if new_simplices.is_empty() {
             return Err(CavityFillingError::EmptyFanTriangulation.into());
         }
 
-        Ok(new_cells)
+        Ok(new_simplices)
     }
 
     /// Detects over-shared facets
     ///
-    /// This is an **O(k * D)** operation where k = number of cells to check,
+    /// This is an **O(k * D)** operation where k = number of simplices to check,
     /// unlike global validation which is O(N * D) for the entire triangulation.
     ///
     /// # Performance
     ///
-    /// - **Complexity**: O(k * D) where k = `cells.len()`, D = dimension
-    /// - **Use case**: Detect issues in newly created cells after insertion/removal
-    /// - **Comparison**: Global detection is O(N * D) where N = total cells
+    /// - **Complexity**: O(k * D) where k = `simplices.len()`, D = dimension
+    /// - **Use case**: Detect issues in newly created simplices after insertion/removal
+    /// - **Comparison**: Global detection is O(N * D) where N = total simplices
     ///
     /// # Arguments
     ///
-    /// * `cells` - Keys of cells to check (typically newly created cells)
+    /// * `simplices` - Keys of simplices to check (typically newly created simplices)
     ///
     /// # Returns
     ///
-    /// `Ok(None)` if all facets are valid (≤2 cells per facet).
+    /// `Ok(None)` if all facets are valid (≤2 simplices per facet).
     /// `Ok(Some(issues))` if over-shared facets are detected, where issues is a map
-    /// from facet hash to the cells sharing that facet.
+    /// from facet hash to the simplices sharing that facet.
     ///
     /// # Errors
     ///
-    /// Returns error if cells cannot be accessed.
+    /// Returns error if simplices cannot be accessed.
     ///
     /// # Examples
     ///
@@ -6785,35 +6843,35 @@ where
     /// ];
     /// let dt = DelaunayTriangulation::new(&vertices).unwrap();
     ///
-    /// let cell_keys: Vec<_> = dt.cells().map(|(ck, _)| ck).collect();
+    /// let simplex_keys: Vec<_> = dt.simplices().map(|(ck, _)| ck).collect();
     /// let issues = dt
     ///     .as_triangulation()
-    ///     .detect_local_facet_issues(&cell_keys)
+    ///     .detect_local_facet_issues(&simplex_keys)
     ///     .unwrap();
     /// assert!(issues.is_none());
     ///
-    /// // Note: This method is most useful for checking newly created cells
+    /// // Note: This method is most useful for checking newly created simplices
     /// // after insertion/removal operations (see usage in insert_transactional).
     /// ```
     pub fn detect_local_facet_issues(
         &self,
-        cells: &[CellKey],
+        simplices: &[SimplexKey],
     ) -> Result<Option<FacetIssuesMap>, TdsError> {
-        // Build facet map for ONLY the specified cells
+        // Build facet map for ONLY the specified simplices
         // This is O(k * D) instead of O(N * D)
-        let mut facet_to_cells = FacetIssuesMap::default();
+        let mut facet_to_simplices = FacetIssuesMap::default();
 
-        // Index facets from the specified cells
-        for &cell_key in cells {
-            let Some(cell) = self.tds.cell(cell_key) else {
-                continue; // Cell was removed, skip
+        // Index facets from the specified simplices
+        for &simplex_key in simplices {
+            let Some(simplex) = self.tds.simplex(simplex_key) else {
+                continue; // Simplex was removed, skip
             };
 
-            // For each facet of this cell
-            for facet_idx in 0..cell.number_of_vertices() {
+            // For each facet of this simplex
+            for facet_idx in 0..simplex.number_of_vertices() {
                 // Compute facet hash from sorted vertex keys
                 let mut facet_vkeys = SmallBuffer::<VertexKey, MAX_PRACTICAL_DIMENSION_SIZE>::new();
-                for (i, &vkey) in cell.vertices().iter().enumerate() {
+                for (i, &vkey) in simplex.vertices().iter().enumerate() {
                     if i != facet_idx {
                         facet_vkeys.push(vkey);
                     }
@@ -6827,111 +6885,119 @@ where
                 }
                 let facet_hash = hasher.finish();
 
-                // Track this cell/facet pair
+                // Track this simplex/facet pair
                 let facet_idx_u8 =
                     u8::try_from(facet_idx).map_err(|_| TdsError::IndexOutOfBounds {
                         index: facet_idx,
                         bound: u8::MAX as usize + 1,
                         context: "facet index exceeds u8 range (dimension too high)".to_string(),
                     })?;
-                facet_to_cells
+                facet_to_simplices
                     .entry(facet_hash)
                     .or_insert_with(SmallBuffer::new)
-                    .push((cell_key, facet_idx_u8));
+                    .push((simplex_key, facet_idx_u8));
             }
         }
 
-        // Filter to only over-shared facets (> 2 cells) in a single pass
-        facet_to_cells.retain(|_, cell_facet_pairs| cell_facet_pairs.len() > 2);
+        // Filter to only over-shared facets (> 2 simplices) in a single pass
+        facet_to_simplices.retain(|_, simplex_facet_pairs| simplex_facet_pairs.len() > 2);
 
-        if facet_to_cells.is_empty() {
+        if facet_to_simplices.is_empty() {
             Ok(None)
         } else {
-            Ok(Some(facet_to_cells))
+            Ok(Some(facet_to_simplices))
         }
     }
 
-    /// Select cells to remove for over-shared-facet repair without mutating the TDS.
-    fn cells_for_local_facet_issue_repair(
+    /// Select simplices to remove for over-shared-facet repair without mutating the TDS.
+    fn simplices_for_local_facet_issue_repair(
         &self,
         issues: &FacetIssuesMap,
-    ) -> Result<CellKeyBuffer, TdsError>
+    ) -> Result<SimplexKeyBuffer, TdsError>
     where
         K::Scalar: Div<Output = K::Scalar>,
     {
-        let mut cells_to_remove = CellKeySet::default();
+        let mut simplices_to_remove = SimplexKeySet::default();
 
-        // For each over-shared facet, select cells to remove
-        for cell_facet_pairs in issues.values() {
-            // Compute quality for each cell - propagate errors from quality evaluation
-            let mut cell_qualities: Vec<(CellKey, f64, Uuid)> = Vec::new();
-            for &(cell_key, _) in cell_facet_pairs {
-                let cell = self
-                    .tds
-                    .cell(cell_key)
-                    .ok_or_else(|| TdsError::CellNotFound {
-                        cell_key,
-                        context: "facet repair quality evaluation".to_string(),
-                    })?;
-                let uuid = cell.uuid();
+        // For each over-shared facet, select simplices to remove
+        for simplex_facet_pairs in issues.values() {
+            // Compute quality for each simplex - propagate errors from quality evaluation
+            let mut simplex_qualities: Vec<(SimplexKey, f64, Uuid)> = Vec::new();
+            for &(simplex_key, _) in simplex_facet_pairs {
+                let simplex =
+                    self.tds
+                        .simplex(simplex_key)
+                        .ok_or_else(|| TdsError::SimplexNotFound {
+                            simplex_key,
+                            context: "facet repair quality evaluation".to_string(),
+                        })?;
+                let uuid = simplex.uuid();
 
                 // Propagate quality evaluation errors
-                let ratio = radius_ratio(self, cell_key).map_err(|e| {
+                let ratio = radius_ratio(self, simplex_key).map_err(|e| {
                     TdsError::InconsistentDataStructure {
-                        message: format!("Quality evaluation failed for cell {cell_key:?}: {e}"),
+                        message: format!(
+                            "Quality evaluation failed for simplex {simplex_key:?}: {e}"
+                        ),
                     }
                 })?;
                 let ratio_f64 =
                     safe_scalar_to_f64(ratio).map_err(|_| TdsError::InconsistentDataStructure {
-                        message: format!("Quality ratio conversion failed for cell {cell_key:?}"),
+                        message: format!(
+                            "Quality ratio conversion failed for simplex {simplex_key:?}"
+                        ),
                     })?;
 
                 if ratio_f64.is_finite() {
-                    cell_qualities.push((cell_key, ratio_f64, uuid));
+                    simplex_qualities.push((simplex_key, ratio_f64, uuid));
                 } else {
                     return Err(TdsError::InconsistentDataStructure {
                         message: format!(
-                            "Non-finite quality ratio {ratio_f64} for cell {cell_key:?}"
+                            "Non-finite quality ratio {ratio_f64} for simplex {simplex_key:?}"
                         ),
                     });
                 }
             }
 
             // Quality-based selection: keep 2 best, remove rest
-            // Note: cell_qualities always has all involved_cells at this point since
+            // Note: simplex_qualities always has all involved_simplices at this point since
             // any quality computation failure results in an early error return above
-            cell_qualities.sort_unstable_by(|a, b| a.1.total_cmp(&b.1).then_with(|| a.2.cmp(&b.2)));
+            simplex_qualities
+                .sort_unstable_by(|a, b| a.1.total_cmp(&b.1).then_with(|| a.2.cmp(&b.2)));
 
-            // Mark cells beyond the top 2 for removal
-            for (cell_key, _, _) in cell_qualities.iter().skip(2) {
-                if self.tds.contains_cell(*cell_key) {
-                    cells_to_remove.insert(*cell_key);
+            // Mark simplices beyond the top 2 for removal
+            for (simplex_key, _, _) in simplex_qualities.iter().skip(2) {
+                if self.tds.contains_simplex(*simplex_key) {
+                    simplices_to_remove.insert(*simplex_key);
                 }
             }
         }
 
-        Ok(cells_to_remove.into_iter().collect())
+        Ok(simplices_to_remove.into_iter().collect())
     }
 
-    /// Collect surviving neighbor cells that will have removed-cell back-references cleared.
-    fn removal_frontier_for_cells(&self, cells_to_remove: &[CellKey]) -> CellKeyBuffer {
-        if cells_to_remove.is_empty() {
-            return CellKeyBuffer::new();
+    /// Collect surviving neighbor simplices that will have removed-simplex back-references cleared.
+    fn removal_frontier_for_simplices(
+        &self,
+        simplices_to_remove: &[SimplexKey],
+    ) -> SimplexKeyBuffer {
+        if simplices_to_remove.is_empty() {
+            return SimplexKeyBuffer::new();
         }
 
-        let removal_set: CellKeySet = cells_to_remove.iter().copied().collect();
-        let mut frontier = CellKeyBuffer::new();
+        let removal_set: SimplexKeySet = simplices_to_remove.iter().copied().collect();
+        let mut frontier = SimplexKeyBuffer::new();
         let mut seen = FastHashSet::default();
 
-        for &cell_key in cells_to_remove {
-            let Some(cell) = self.tds.cell(cell_key) else {
+        for &simplex_key in simplices_to_remove {
+            let Some(simplex) = self.tds.simplex(simplex_key) else {
                 continue;
             };
-            let Some(neighbors) = cell.neighbor_keys() else {
+            let Some(neighbors) = simplex.neighbor_keys() else {
                 continue;
             };
             for neighbor_key in neighbors.flatten() {
-                if removal_set.contains(&neighbor_key) || !self.tds.contains_cell(neighbor_key) {
+                if removal_set.contains(&neighbor_key) || !self.tds.contains_simplex(neighbor_key) {
                     continue;
                 }
                 if seen.insert(neighbor_key) {
@@ -6943,23 +7009,23 @@ where
         frontier
     }
 
-    /// Add surviving cells from the facet-issue incidence map to the local repair frontier.
+    /// Add surviving simplices from the facet-issue incidence map to the local repair frontier.
     fn add_issue_survivors_to_frontier(
         &self,
         issues: &FacetIssuesMap,
-        cells_to_remove: &[CellKey],
-        frontier: &mut CellKeyBuffer,
+        simplices_to_remove: &[SimplexKey],
+        frontier: &mut SimplexKeyBuffer,
     ) {
-        let removal_set: CellKeySet = cells_to_remove.iter().copied().collect();
-        let mut seen: FastHashSet<CellKey> = frontier.iter().copied().collect();
+        let removal_set: SimplexKeySet = simplices_to_remove.iter().copied().collect();
+        let mut seen: FastHashSet<SimplexKey> = frontier.iter().copied().collect();
 
-        for cell_facet_pairs in issues.values() {
-            for &(cell_key, _) in cell_facet_pairs {
-                if removal_set.contains(&cell_key) || !self.tds.contains_cell(cell_key) {
+        for simplex_facet_pairs in issues.values() {
+            for &(simplex_key, _) in simplex_facet_pairs {
+                if removal_set.contains(&simplex_key) || !self.tds.contains_simplex(simplex_key) {
                     continue;
                 }
-                if seen.insert(cell_key) {
-                    frontier.push(cell_key);
+                if seen.insert(simplex_key) {
+                    frontier.push(simplex_key);
                 }
             }
         }
@@ -6973,28 +7039,28 @@ where
     where
         K::Scalar: Div<Output = K::Scalar>,
     {
-        let to_remove = self.cells_for_local_facet_issue_repair(issues)?;
-        let mut frontier_cells = self.removal_frontier_for_cells(&to_remove);
-        self.add_issue_survivors_to_frontier(issues, &to_remove, &mut frontier_cells);
-        let removed_count = self.tds.remove_cells_by_keys(&to_remove);
+        let to_remove = self.simplices_for_local_facet_issue_repair(issues)?;
+        let mut frontier_simplices = self.removal_frontier_for_simplices(&to_remove);
+        self.add_issue_survivors_to_frontier(issues, &to_remove, &mut frontier_simplices);
+        let removed_count = self.tds.remove_simplices_by_keys(&to_remove);
 
         Ok(LocalFacetRepairOutcome {
             removed_count,
-            removed_cells: to_remove,
-            frontier_cells,
+            removed_simplices: to_remove,
+            frontier_simplices,
         })
     }
 
-    /// Repairs over-shared facets by removing lower-quality cells.
+    /// Repairs over-shared facets by removing lower-quality simplices.
     ///
-    /// Uses geometric quality metrics (`radius_ratio`) to select which cells to keep
-    /// when a facet is shared by more than 2 cells. UUID ordering is used as a tie-breaker
-    /// when cells have equal quality. Errors if quality computation or conversion fails.
+    /// Uses geometric quality metrics (`radius_ratio`) to select which simplices to keep
+    /// when a facet is shared by more than 2 simplices. UUID ordering is used as a tie-breaker
+    /// when simplices have equal quality. Errors if quality computation or conversion fails.
     ///
     /// # Performance
     ///
     /// - **Complexity**: O(m * q) where m = number of problematic facets, q = quality computation cost
-    /// - **Localized**: Only processes cells involved in detected issues
+    /// - **Localized**: Only processes simplices involved in detected issues
     ///
     /// # Arguments
     ///
@@ -7002,12 +7068,12 @@ where
     ///
     /// # Returns
     ///
-    /// Number of cells removed during repair.
+    /// Number of simplices removed during repair.
     ///
     /// # Errors
     ///
     /// Returns error if quality evaluation or facet bookkeeping fails while
-    /// selecting cells to remove. This function itself does not rebuild neighbors;
+    /// selecting simplices to remove. This function itself does not rebuild neighbors;
     /// callers are responsible for repairing or validating topology after removal
     /// (e.g., via local or global neighbor-pointer repair, or a validation pass).
     ///
@@ -7058,9 +7124,9 @@ where
 mod tests {
     use super::*;
     use crate::core::algorithms::locate::InternalInconsistencySite;
-    use crate::core::cell::NeighborSlot;
     use crate::core::collections::NeighborBuffer;
     use crate::core::collections::spatial_hash_grid::HashGridIndex;
+    use crate::core::simplex::NeighborSlot;
     use crate::core::vertex::VertexBuilder;
     use crate::geometry::kernel::{AdaptiveKernel, FastKernel};
     use crate::geometry::point::Point;
@@ -7077,11 +7143,11 @@ mod tests {
     use std::collections::HashSet;
 
     /// Helper: build a minimal 3D triangulation with one tetrahedron and valid
-    /// incident-cell pointers for all four vertices.
+    /// incident-simplex pointers for all four vertices.
     fn build_single_tet() -> (
         Triangulation<FastKernel<f64>, (), (), 3>,
         [VertexKey; 4],
-        CellKey,
+        SimplexKey,
     ) {
         let mut tri: Triangulation<FastKernel<f64>, (), (), 3> =
             Triangulation::new_empty(FastKernel::new());
@@ -7105,11 +7171,14 @@ mod tests {
 
         let ck = tri
             .tds
-            .insert_cell_with_mapping(Cell::new(vec![v0, v1, v2, v3], None).unwrap())
+            .insert_simplex_with_mapping(Simplex::new(vec![v0, v1, v2, v3], None).unwrap())
             .unwrap();
 
         for vk in [v0, v1, v2, v3] {
-            tri.tds.vertex_mut(vk).unwrap().set_incident_cell(Some(ck));
+            tri.tds
+                .vertex_mut(vk)
+                .unwrap()
+                .set_incident_simplex(Some(ck));
         }
 
         (tri, [v0, v1, v2, v3], ck)
@@ -7153,12 +7222,12 @@ mod tests {
         assert!(matches!(
             TriangulationValidationError::try_from(ManifoldError::ManifoldFacetMultiplicity {
                 facet_key: 123,
-                cell_count: 3
+                simplex_count: 3
             })
             .unwrap(),
             TriangulationValidationError::ManifoldFacetMultiplicity {
                 facet_key: 123,
-                cell_count: 3
+                simplex_count: 3
             }
         ));
 
@@ -7198,7 +7267,7 @@ mod tests {
             TriangulationValidationError::try_from(ManifoldError::VertexLinkNotManifold {
                 vertex_key: VertexKey::from(KeyData::from_ffi(1)),
                 link_vertex_count: 3,
-                link_cell_count: 4,
+                link_simplex_count: 4,
                 boundary_facet_count: 1,
                 max_degree: 2,
                 connected: false,
@@ -7207,7 +7276,7 @@ mod tests {
             .unwrap(),
             TriangulationValidationError::VertexLinkNotManifold {
                 link_vertex_count: 3,
-                link_cell_count: 4,
+                link_simplex_count: 4,
                 boundary_facet_count: 1,
                 max_degree: 2,
                 connected: false,
@@ -7231,43 +7300,43 @@ mod tests {
 
     #[test]
     fn test_retryable_conflict_trace_detail_formats_retryable_variants() {
-        let extra_cell = CellKey::from(KeyData::from_ffi(10));
-        let disconnected_cell = CellKey::from(KeyData::from_ffi(11));
-        let open_cell = CellKey::from(KeyData::from_ffi(12));
+        let extra_simplex = SimplexKey::from(KeyData::from_ffi(10));
+        let disconnected_simplex = SimplexKey::from(KeyData::from_ffi(11));
+        let open_simplex = SimplexKey::from(KeyData::from_ffi(12));
 
         let non_manifold = InsertionError::ConflictRegion(ConflictError::NonManifoldFacet {
             facet_hash: 0xABCD,
-            cell_count: 3,
+            simplex_count: 3,
         });
         assert_eq!(
             retryable_conflict_trace_detail(&non_manifold).as_deref(),
-            Some("kind=non_manifold_facet facet_hash=0xabcd cell_count=3")
+            Some("kind=non_manifold_facet facet_hash=0xabcd simplex_count=3")
         );
 
         let ridge_fan = InsertionError::ConflictRegion(ConflictError::RidgeFan {
             facet_count: 4,
             ridge_vertex_count: 2,
-            extra_cells: vec![extra_cell],
+            extra_simplices: vec![extra_simplex],
         });
         assert_eq!(
             retryable_conflict_trace_detail(&ridge_fan).as_deref(),
-            Some("kind=ridge_fan facet_count=4 ridge_vertex_count=2 extra_cells=1")
+            Some("kind=ridge_fan facet_count=4 ridge_vertex_count=2 extra_simplices=1")
         );
 
         let disconnected = InsertionError::ConflictRegion(ConflictError::DisconnectedBoundary {
             visited: 2,
             total: 5,
-            disconnected_cells: vec![disconnected_cell],
+            disconnected_simplices: vec![disconnected_simplex],
         });
         assert_eq!(
             retryable_conflict_trace_detail(&disconnected).as_deref(),
-            Some("kind=disconnected_boundary visited=2 total=5 disconnected_cells=1")
+            Some("kind=disconnected_boundary visited=2 total=5 disconnected_simplices=1")
         );
 
         let open = InsertionError::ConflictRegion(ConflictError::OpenBoundary {
             facet_count: 1,
             ridge_vertex_count: 2,
-            open_cell,
+            open_simplex,
         });
         assert_eq!(
             retryable_conflict_trace_detail(&open).as_deref(),
@@ -7282,50 +7351,54 @@ mod tests {
 
     #[test]
     fn test_cavity_conflict_error_summary_formats_all_variants() {
-        let cell_key = CellKey::from(KeyData::from_ffi(21));
+        let simplex_key = SimplexKey::from(KeyData::from_ffi(21));
 
         let cases = vec![
             (
                 ConflictError::NonManifoldFacet {
                     facet_hash: 0xCAFE,
-                    cell_count: 4,
+                    simplex_count: 4,
                 },
-                "non_manifold_facet facet_hash=0xcafe cell_count=4".to_string(),
+                "non_manifold_facet facet_hash=0xcafe simplex_count=4".to_string(),
             ),
             (
                 ConflictError::RidgeFan {
                     facet_count: 5,
                     ridge_vertex_count: 3,
-                    extra_cells: vec![cell_key],
+                    extra_simplices: vec![simplex_key],
                 },
-                "ridge_fan facet_count=5 ridge_vertex_count=3 extra_cells=1".to_string(),
+                "ridge_fan facet_count=5 ridge_vertex_count=3 extra_simplices=1".to_string(),
             ),
             (
                 ConflictError::DisconnectedBoundary {
                     visited: 1,
                     total: 3,
-                    disconnected_cells: vec![cell_key],
+                    disconnected_simplices: vec![simplex_key],
                 },
-                "disconnected_boundary visited=1 total=3 disconnected_cells=1".to_string(),
+                "disconnected_boundary visited=1 total=3 disconnected_simplices=1".to_string(),
             ),
             (
                 ConflictError::OpenBoundary {
                     facet_count: 1,
                     ridge_vertex_count: 2,
-                    open_cell: cell_key,
+                    open_simplex: simplex_key,
                 },
-                format!("open_boundary facet_count=1 ridge_vertex_count=2 open_cell={cell_key:?}"),
+                format!(
+                    "open_boundary facet_count=1 ridge_vertex_count=2 open_simplex={simplex_key:?}"
+                ),
             ),
             (
-                ConflictError::InvalidStartCell { cell_key },
-                format!("invalid_start_cell cell_key={cell_key:?}"),
+                ConflictError::InvalidStartSimplex { simplex_key },
+                format!("invalid_start_simplex simplex_key={simplex_key:?}"),
             ),
             (
-                ConflictError::CellDataAccessFailed {
-                    cell_key,
+                ConflictError::SimplexDataAccessFailed {
+                    simplex_key,
                     message: "missing vertices".to_string(),
                 },
-                format!("cell_data_access_failed cell_key={cell_key:?} message=missing vertices"),
+                format!(
+                    "simplex_data_access_failed simplex_key={simplex_key:?} message=missing vertices"
+                ),
             ),
         ];
 
@@ -7358,17 +7431,17 @@ mod tests {
 
     #[test]
     fn test_log_cavity_reduction_event_only_evaluates_when_enabled() {
-        let mut conflict_cells = CellKeyBuffer::new();
-        conflict_cells.push(CellKey::from(KeyData::from_ffi(41)));
+        let mut conflict_simplices = SimplexKeyBuffer::new();
+        conflict_simplices.push(SimplexKey::from(KeyData::from_ffi(41)));
 
         let mut called = false;
-        log_cavity_reduction_event(false, 0, &conflict_cells, || {
+        log_cavity_reduction_event(false, 0, &conflict_simplices, || {
             called = true;
             "should not run".to_string()
         });
         assert!(!called);
 
-        log_cavity_reduction_event(true, 1, &conflict_cells, || {
+        log_cavity_reduction_event(true, 1, &conflict_simplices, || {
             called = true;
             "ran".to_string()
         });
@@ -7591,11 +7664,15 @@ mod tests {
         assert!(tri.is_valid().is_ok());
         assert!(tri.is_valid_topology_only().is_ok());
 
-        // Flip the single cell's vertex order to make it negatively oriented.
-        let cell_key = tri.tds.cell_keys().next().expect("single cell exists");
+        // Flip the single simplex's vertex order to make it negatively oriented.
+        let simplex_key = tri
+            .tds
+            .simplex_keys()
+            .next()
+            .expect("single simplex exists");
         tri.tds
-            .cell_mut(cell_key)
-            .expect("cell exists")
+            .simplex_mut(simplex_key)
+            .expect("simplex exists")
             .swap_vertex_slots(0, 1);
 
         // Topology-only validation should still pass (orientation sign is irrelevant).
@@ -7637,7 +7714,7 @@ mod tests {
             let second_b = insert_test_vertex_with_coords(&mut tds, &[(0, 11.0), (1, 1.0)]);
             let second_c = insert_test_vertex_with_coords(&mut tds, &[(0, 9.0), (1, 1.0)]);
 
-            for cell_vertices in [
+            for simplex_vertices in [
                 vec![shared, first_a, first_b],
                 vec![shared, first_b, first_c],
                 vec![shared, first_c, first_a],
@@ -7646,37 +7723,37 @@ mod tests {
                 vec![shared, second_c, second_a],
             ] {
                 let _ = tds
-                    .insert_cell_with_mapping(Cell::new(cell_vertices, None).unwrap())
+                    .insert_simplex_with_mapping(Simplex::new(simplex_vertices, None).unwrap())
                     .unwrap();
             }
 
-            tds.assign_incident_cells().unwrap();
+            tds.assign_incident_simplices().unwrap();
             return (tds, shared);
         }
 
-        let mut first_cell_vertices = vec![shared];
+        let mut first_simplex_vertices = vec![shared];
         for axis in 0..D {
             let mut coords = [0.0_f64; D];
             coords[axis] = 1.0;
-            first_cell_vertices.push(tds.insert_vertex_with_mapping(vertex!(coords)).unwrap());
+            first_simplex_vertices.push(tds.insert_vertex_with_mapping(vertex!(coords)).unwrap());
         }
 
-        let mut second_cell_vertices = vec![shared];
+        let mut second_simplex_vertices = vec![shared];
         for axis in 0..D {
             let mut coords = [0.0_f64; D];
             coords[0] = 10.0;
             coords[axis] += 1.0;
-            second_cell_vertices.push(tds.insert_vertex_with_mapping(vertex!(coords)).unwrap());
+            second_simplex_vertices.push(tds.insert_vertex_with_mapping(vertex!(coords)).unwrap());
         }
 
         let _ = tds
-            .insert_cell_with_mapping(Cell::new(first_cell_vertices, None).unwrap())
+            .insert_simplex_with_mapping(Simplex::new(first_simplex_vertices, None).unwrap())
             .unwrap();
         let _ = tds
-            .insert_cell_with_mapping(Cell::new(second_cell_vertices, None).unwrap())
+            .insert_simplex_with_mapping(Simplex::new(second_simplex_vertices, None).unwrap())
             .unwrap();
 
-        tds.assign_incident_cells().unwrap();
+        tds.assign_incident_simplices().unwrap();
 
         (tds, shared)
     }
@@ -7766,10 +7843,10 @@ mod tests {
             .unwrap();
 
         let _ = tds
-            .insert_cell_with_mapping(Cell::new(vec![a0, a1, a2], None).unwrap())
+            .insert_simplex_with_mapping(Simplex::new(vec![a0, a1, a2], None).unwrap())
             .unwrap();
         let _ = tds
-            .insert_cell_with_mapping(Cell::new(vec![b0, b1, b2], None).unwrap())
+            .insert_simplex_with_mapping(Simplex::new(vec![b0, b1, b2], None).unwrap())
             .unwrap();
 
         tds
@@ -7787,14 +7864,14 @@ mod tests {
         let v4 = tds.insert_vertex_with_mapping(vertex!([2.0, 0.0])).unwrap();
 
         let _ = tds
-            .insert_cell_with_mapping(Cell::new(vec![v0, v1, v2], None).unwrap())
+            .insert_simplex_with_mapping(Simplex::new(vec![v0, v1, v2], None).unwrap())
             .unwrap();
         let _ = tds
-            .insert_cell_with_mapping(Cell::new(vec![v0, v1, v3], None).unwrap())
+            .insert_simplex_with_mapping(Simplex::new(vec![v0, v1, v3], None).unwrap())
             .unwrap();
         let _ = tds
-            .insert_cell_bypassing_topology_checks_for_test(
-                Cell::new(vec![v0, v1, v4], None).unwrap(),
+            .insert_simplex_bypassing_topology_checks_for_test(
+                Simplex::new(vec![v0, v1, v4], None).unwrap(),
             )
             .unwrap();
 
@@ -7802,19 +7879,19 @@ mod tests {
     }
 
     #[test]
-    fn test_validate_after_insertion_skips_when_no_cells() {
+    fn test_validate_after_insertion_skips_when_no_simplices() {
         let mut tri: Triangulation<FastKernel<f64>, (), (), 2> =
             Triangulation::new_empty(FastKernel::new());
 
-        // Force validation to be enabled if there were any cells.
+        // Force validation to be enabled if there were any simplices.
         tri.set_validation_policy(ValidationPolicy::Always);
 
-        // Insert a vertex without creating any cells (bootstrap phase).
+        // Insert a vertex without creating any simplices (bootstrap phase).
         let _ = tri
             .tds
             .insert_vertex_with_mapping(vertex!([0.0, 0.0]))
             .unwrap();
-        assert_eq!(tri.number_of_cells(), 0);
+        assert_eq!(tri.number_of_simplices(), 0);
 
         tri.validate_after_insertion_with_scope(SuspicionFlags::default(), None)
             .unwrap();
@@ -7863,9 +7940,9 @@ mod tests {
 
         match tri.validate_after_insertion_with_scope(SuspicionFlags::default(), None) {
             Err(InvariantError::Triangulation(
-                TriangulationValidationError::ManifoldFacetMultiplicity { cell_count, .. },
+                TriangulationValidationError::ManifoldFacetMultiplicity { simplex_count, .. },
             )) => {
-                assert_eq!(cell_count, 3);
+                assert_eq!(simplex_count, 3);
             }
             other => panic!("Expected ManifoldFacetMultiplicity, got {other:?}"),
         }
@@ -7876,16 +7953,16 @@ mod tests {
         let tds = build_three_triangles_sharing_edge_tds_2d();
         let mut tri =
             Triangulation::<FastKernel<f64>, (), (), 2>::new_with_tds(FastKernel::new(), tds);
-        let scope: CellKeyBuffer = tri.tds.cell_keys().take(1).collect();
+        let scope: SimplexKeyBuffer = tri.tds.simplex_keys().take(1).collect();
 
         tri.set_validation_policy(ValidationPolicy::OnSuspicion);
         tri.set_topology_guarantee(TopologyGuarantee::PLManifold);
 
         match tri.validate_after_insertion_with_scope(SuspicionFlags::default(), Some(&scope)) {
             Err(InvariantError::Triangulation(
-                TriangulationValidationError::ManifoldFacetMultiplicity { cell_count, .. },
+                TriangulationValidationError::ManifoldFacetMultiplicity { simplex_count, .. },
             )) => {
-                assert_eq!(cell_count, 3);
+                assert_eq!(simplex_count, 3);
             }
             other => panic!("Expected ManifoldFacetMultiplicity, got {other:?}"),
         }
@@ -7934,7 +8011,7 @@ mod tests {
                         let (tds, expected_vertex_key) = build_invalid_vertex_link_tds::<$dim>();
                         let mut tri =
                             Triangulation::<FastKernel<f64>, (), (), $dim>::new_with_tds(FastKernel::new(), tds);
-                        let scope: CellKeyBuffer = tri.tds.cell_keys().take(1).collect();
+                        let scope: SimplexKeyBuffer = tri.tds.simplex_keys().take(1).collect();
                         assert!(!scope.is_empty());
 
                         // Direct field assignment keeps this internal test focused on insertion-time
@@ -7968,7 +8045,7 @@ mod tests {
     test_scoped_strict_validation_falls_back_to_global_vertex_links!(2, 3, 4, 5);
 
     #[test]
-    fn test_local_geometric_orientation_validation_errors_on_missing_scope_cell() {
+    fn test_local_geometric_orientation_validation_errors_on_missing_scope_simplex() {
         let vertices = vec![
             vertex!([0.0, 0.0, 0.0]),
             vertex!([1.0, 0.0, 0.0]),
@@ -7979,15 +8056,15 @@ mod tests {
             Triangulation::<FastKernel<f64>, (), (), 3>::build_initial_simplex(&vertices).unwrap();
         let mut tri =
             Triangulation::<FastKernel<f64>, (), (), 3>::new_with_tds(FastKernel::new(), tds);
-        let cell_key = tri.tds.cell_keys().next().unwrap();
-        assert_eq!(tri.tds.remove_cells_by_keys(&[cell_key]), 1);
+        let simplex_key = tri.tds.simplex_keys().next().unwrap();
+        assert_eq!(tri.tds.remove_simplices_by_keys(&[simplex_key]), 1);
 
-        match tri.validate_geometric_cell_orientation_for_cells(&[cell_key]) {
-            Err(TdsError::CellNotFound {
-                cell_key: missing_key,
+        match tri.validate_geometric_simplex_orientation_for_simplices(&[simplex_key]) {
+            Err(TdsError::SimplexNotFound {
+                simplex_key: missing_key,
                 ..
-            }) => assert_eq!(missing_key, cell_key),
-            other => panic!("Expected CellNotFound, got {other:?}"),
+            }) => assert_eq!(missing_key, simplex_key),
+            other => panic!("Expected SimplexNotFound, got {other:?}"),
         }
     }
 
@@ -8025,10 +8102,10 @@ mod tests {
                                 hint: _
                             }
                         ));
-                        assert!(!detail.repair_seed_cells.is_empty());
+                        assert!(!detail.repair_seed_simplices.is_empty());
                         tri.validate_after_insertion_with_scope(
                             SuspicionFlags::default(),
-                            Some(&detail.repair_seed_cells),
+                            Some(&detail.repair_seed_simplices),
                         )
                         .unwrap();
                         tri.is_valid().unwrap();
@@ -8075,7 +8152,7 @@ mod tests {
     }
 
     #[test]
-    fn test_select_locate_hint_from_hash_grid_returns_incident_cell() {
+    fn test_select_locate_hint_from_hash_grid_returns_incident_simplex() {
         let vertices = vec![
             vertex!([0.0, 0.0]),
             vertex!([1.0, 0.0]),
@@ -8084,7 +8161,7 @@ mod tests {
         let tds =
             Triangulation::<FastKernel<f64>, (), (), 2>::build_initial_simplex(&vertices).unwrap();
         let tri = Triangulation::<FastKernel<f64>, (), (), 2>::new_with_tds(FastKernel::new(), tds);
-        let cell_key = tri.tds.cell_keys().next().unwrap();
+        let simplex_key = tri.tds.simplex_keys().next().unwrap();
 
         let mut index: HashGridIndex<f64, 2> = HashGridIndex::new(1.0);
         for (vkey, vertex) in tri.tds.vertices() {
@@ -8092,11 +8169,11 @@ mod tests {
         }
 
         let hint = tri.select_locate_hint_from_hash_grid(&[0.05, 0.05], &index);
-        assert_eq!(hint, Some(cell_key));
+        assert_eq!(hint, Some(simplex_key));
     }
 
     #[test]
-    fn test_select_locate_hint_from_hash_grid_skips_missing_cell() {
+    fn test_select_locate_hint_from_hash_grid_skips_missing_simplex() {
         let mut tri: Triangulation<FastKernel<f64>, (), (), 2> =
             Triangulation::new_empty(FastKernel::new());
         let vkey = tri
@@ -8105,7 +8182,7 @@ mod tests {
             .unwrap();
         {
             let vertex = tri.tds.vertex_mut(vkey).unwrap();
-            vertex.set_incident_cell(Some(CellKey::default()));
+            vertex.set_incident_simplex(Some(SimplexKey::default()));
         }
 
         let mut index: HashGridIndex<f64, 2> = HashGridIndex::new(1.0);
@@ -8175,18 +8252,18 @@ mod tests {
         );
     }
 
-    fn duplicate_coordinate_tolerance_uses_hint_cell_span<const D: usize>() {
+    fn duplicate_coordinate_tolerance_uses_hint_simplex_span<const D: usize>() {
         let vertices = unit_simplex_vertices::<D>();
         let tds =
             Triangulation::<FastKernel<f64>, (), (), D>::build_initial_simplex(&vertices).unwrap();
         let tri = Triangulation::<FastKernel<f64>, (), (), D>::new_with_tds(FastKernel::new(), tds);
-        let hint = tri.tds.cell_keys().next();
+        let hint = tri.tds.simplex_keys().next();
         let candidate = coords_with_first::<D>(5.0e-11);
         let tolerance = tri.estimate_duplicate_coordinate_tolerance(&candidate, hint);
 
         assert!(
             tolerance > 1.0e-10,
-            "unit-scale hint cells should preserve near-duplicate filtering"
+            "unit-scale hint simplices should preserve near-duplicate filtering"
         );
         assert!(matches!(
             tri.duplicate_coordinates_error(&candidate, tolerance, None),
@@ -8199,7 +8276,7 @@ mod tests {
         let tds =
             Triangulation::<FastKernel<f64>, (), (), D>::build_initial_simplex(&vertices).unwrap();
         let tri = Triangulation::<FastKernel<f64>, (), (), D>::new_with_tds(FastKernel::new(), tds);
-        let hint = tri.tds.cell_keys().next();
+        let hint = tri.tds.simplex_keys().next();
         let candidate = [1.0_f64; D];
         let tolerance = tri.estimate_duplicate_coordinate_tolerance(&candidate, hint);
         let mut index: HashGridIndex<f64, D> = HashGridIndex::new(1.0e-10);
@@ -8242,8 +8319,8 @@ mod tests {
                     }
 
                     #[test]
-                    fn [<test_duplicate_coordinate_tolerance_uses_hint_cell_span_ $dim d>]() {
-                        duplicate_coordinate_tolerance_uses_hint_cell_span::<$dim>();
+                    fn [<test_duplicate_coordinate_tolerance_uses_hint_simplex_span_ $dim d>]() {
+                        duplicate_coordinate_tolerance_uses_hint_simplex_span::<$dim>();
                     }
 
                     #[test]
@@ -8258,7 +8335,7 @@ mod tests {
     test_duplicate_tolerance_dimensions!(2, 3, 4, 5);
 
     #[test]
-    fn test_estimate_local_perturbation_scale_uses_hint_cell_vertices() {
+    fn test_estimate_local_perturbation_scale_uses_hint_simplex_vertices() {
         let vertices = vec![
             vertex!([0.0, 0.0]),
             vertex!([1.0, 0.0]),
@@ -8267,9 +8344,9 @@ mod tests {
         let tds =
             Triangulation::<FastKernel<f64>, (), (), 2>::build_initial_simplex(&vertices).unwrap();
         let tri = Triangulation::<FastKernel<f64>, (), (), 2>::new_with_tds(FastKernel::new(), tds);
-        let cell_key = tri.tds.cell_keys().next().unwrap();
+        let simplex_key = tri.tds.simplex_keys().next().unwrap();
 
-        let scale = tri.estimate_local_perturbation_scale(&[0.1, 0.0], Some(cell_key));
+        let scale = tri.estimate_local_perturbation_scale(&[0.1, 0.0], Some(simplex_key));
         assert!((scale - 0.1).abs() < 1e-12);
     }
 
@@ -8311,8 +8388,8 @@ mod tests {
 
             let (outcome, stats) = result;
 
-            // Skip Level 3 validation during bootstrap (vertices but no cells yet).
-            if dt.number_of_cells() > 0
+            // Skip Level 3 validation during bootstrap (vertices but no simplices yet).
+            if dt.number_of_simplices() > 0
                 && let Err(err) = dt.as_triangulation().validate()
             {
                 panic!(
@@ -8329,7 +8406,7 @@ mod tests {
     /// This macro generates tests that verify `build_initial_simplex` by:
     /// 1. Creating D+1 affinely independent vertices
     /// 2. Calling `build_initial_simplex` directly
-    /// 3. Verifying the Tds has correct structure (vertices, cells, dimension)
+    /// 3. Verifying the Tds has correct structure (vertices, simplices, dimension)
     ///
     /// # Usage
     /// ```ignore
@@ -8355,8 +8432,8 @@ mod tests {
                     // Verify structure
                     assert_eq!(tds.number_of_vertices(), expected_vertices,
                         "{}D: Expected {} vertices", $dim, expected_vertices);
-                    assert_eq!(tds.number_of_cells(), 1,
-                        "{}D: Expected 1 cell", $dim);
+                    assert_eq!(tds.number_of_simplices(), 1,
+                        "{}D: Expected 1 simplex", $dim);
                     assert_eq!(tds.dim(), $dim as i32,
                         "{}D: Expected dimension {}", $dim, $dim);
 
@@ -8364,20 +8441,20 @@ mod tests {
                     assert_eq!(tds.vertices().count(), expected_vertices,
                         "{}D: All vertices should be in Tds", $dim);
 
-                    // Verify the single cell has correct number of vertices
-                    let (_, cell) = tds.cells().next()
-                        .expect(&format!("{}D: Should have exactly one cell", $dim));
-                    assert_eq!(cell.number_of_vertices(), expected_vertices,
-                        "{}D: Cell should have {} vertices", $dim, expected_vertices);
+                    // Verify the single simplex has correct number of vertices
+                    let (_, simplex) = tds.simplices().next()
+                        .expect(&format!("{}D: Should have exactly one simplex", $dim));
+                    assert_eq!(simplex.number_of_vertices(), expected_vertices,
+                        "{}D: Simplex should have {} vertices", $dim, expected_vertices);
 
-                    // Verify incident cells are assigned
+                    // Verify incident simplices are assigned
                     for (_, vertex) in tds.vertices() {
-                        assert!(vertex.incident_cell().is_some(),
-                            "{}D: All vertices should have incident cell assigned", $dim);
+                        assert!(vertex.incident_simplex().is_some(),
+                            "{}D: All vertices should have incident simplex assigned", $dim);
                     }
 
                     // Verify initial simplex has explicit boundary neighbor slots.
-                    let neighbors = cell
+                    let neighbors = simplex
                         .neighbor_slots()
                         .expect("initial simplex should assign boundary neighbor slots");
                     assert!(
@@ -8470,8 +8547,8 @@ mod tests {
                     // Also verify basic properties
                     assert_eq!(tri.number_of_vertices(), expected_vertices,
                         "{}D: Should have {} vertices", $dim, expected_vertices);
-                    assert_eq!(tri.number_of_cells(), 1,
-                        "{}D: Should have exactly 1 cell", $dim);
+                    assert_eq!(tri.number_of_simplices(), 1,
+                        "{}D: Should have exactly 1 simplex", $dim);
                 }
             }
         };
@@ -8546,16 +8623,16 @@ mod tests {
         let v3 = tds.insert_vertex_with_mapping(vertex!([1.0, 1.0])).unwrap();
 
         let _ = tds
-            .insert_cell_with_mapping(Cell::new(vec![v0, v1, v2], None).unwrap())
+            .insert_simplex_with_mapping(Simplex::new(vec![v0, v1, v2], None).unwrap())
             .unwrap();
         let _ = tds
-            .insert_cell_with_mapping(Cell::new(vec![v0, v1, v3], None).unwrap())
+            .insert_simplex_with_mapping(Simplex::new(vec![v0, v1, v3], None).unwrap())
             .unwrap();
         let _ = tds
-            .insert_cell_with_mapping(Cell::new(vec![v0, v2, v3], None).unwrap())
+            .insert_simplex_with_mapping(Simplex::new(vec![v0, v2, v3], None).unwrap())
             .unwrap();
         let _ = tds
-            .insert_cell_with_mapping(Cell::new(vec![v1, v2, v3], None).unwrap())
+            .insert_simplex_with_mapping(Simplex::new(vec![v1, v2, v3], None).unwrap())
             .unwrap();
 
         // Second tetrahedron boundary (shares only v0).
@@ -8570,16 +8647,16 @@ mod tests {
             .unwrap();
 
         let _ = tds
-            .insert_cell_with_mapping(Cell::new(vec![v0, v4, v5], None).unwrap())
+            .insert_simplex_with_mapping(Simplex::new(vec![v0, v4, v5], None).unwrap())
             .unwrap();
         let _ = tds
-            .insert_cell_with_mapping(Cell::new(vec![v0, v4, v6], None).unwrap())
+            .insert_simplex_with_mapping(Simplex::new(vec![v0, v4, v6], None).unwrap())
             .unwrap();
         let _ = tds
-            .insert_cell_with_mapping(Cell::new(vec![v0, v5, v6], None).unwrap())
+            .insert_simplex_with_mapping(Simplex::new(vec![v0, v5, v6], None).unwrap())
             .unwrap();
         let _ = tds
-            .insert_cell_with_mapping(Cell::new(vec![v4, v5, v6], None).unwrap())
+            .insert_simplex_with_mapping(Simplex::new(vec![v4, v5, v6], None).unwrap())
             .unwrap();
 
         // Ensure neighbor pointers exist so connectedness validation is meaningful.
@@ -8611,7 +8688,7 @@ mod tests {
                 TriangulationValidationError::VertexLinkNotManifold {
                     vertex_key,
                     link_vertex_count,
-                    link_cell_count,
+                    link_simplex_count,
                     boundary_facet_count,
                     max_degree,
                     connected,
@@ -8621,7 +8698,7 @@ mod tests {
                 assert_eq!(vertex_key, v0);
                 assert!(interior_vertex);
                 assert!(link_vertex_count > 0);
-                assert!(link_cell_count > 0);
+                assert!(link_simplex_count > 0);
                 assert_eq!(boundary_facet_count, 0);
                 assert_eq!(max_degree, 2);
                 assert!(!connected);
@@ -8639,9 +8716,10 @@ mod tests {
     }
 
     #[test]
-    fn test_is_valid_pl_manifold_mode_rejects_cone_on_torus_in_3d_even_when_cell_graph_connected() {
+    fn test_is_valid_pl_manifold_mode_rejects_cone_on_torus_in_3d_even_when_simplex_graph_connected()
+     {
         // Cone over a triangulated torus:
-        // - The 3D cell neighbor graph is connected.
+        // - The 3D simplex neighbor graph is connected.
         // - Facet-degree and closed-boundary checks pass.
         // - But the apex has link T^2 (χ=0), so PL-manifold vertex-link validation must fail.
         const N: usize = 3;
@@ -8676,8 +8754,8 @@ mod tests {
 
                 for tri in [[v00, v10, v01], [v10, v11, v01]] {
                     let _ = tds
-                        .insert_cell_with_mapping(
-                            Cell::new(vec![tri[0], tri[1], tri[2], apex], None).unwrap(),
+                        .insert_simplex_with_mapping(
+                            Simplex::new(vec![tri[0], tri[1], tri[2], apex], None).unwrap(),
                         )
                         .unwrap();
                 }
@@ -8689,13 +8767,13 @@ mod tests {
         let mut tri =
             Triangulation::<FastKernel<f64>, (), (), 3>::new_with_tds(FastKernel::new(), tds);
 
-        // Sanity: the cell neighbor graph is connected.
+        // Sanity: the simplex neighbor graph is connected.
         tri.validate_global_connectedness().unwrap();
 
         // Sanity: pseudomanifold-with-boundary checks pass.
-        let facet_to_cells = tri.tds.build_facet_to_cells_map().unwrap();
-        validate_facet_degree(&facet_to_cells).unwrap();
-        validate_closed_boundary(&tri.tds, &facet_to_cells).unwrap();
+        let facet_to_simplices = tri.tds.build_facet_to_simplices_map().unwrap();
+        validate_facet_degree(&facet_to_simplices).unwrap();
+        validate_closed_boundary(&tri.tds, &facet_to_simplices).unwrap();
 
         tri.set_topology_guarantee(TopologyGuarantee::PLManifoldStrict);
 
@@ -8704,7 +8782,7 @@ mod tests {
                 TriangulationValidationError::VertexLinkNotManifold {
                     vertex_key,
                     link_vertex_count,
-                    link_cell_count,
+                    link_simplex_count,
                     boundary_facet_count,
                     connected,
                     interior_vertex,
@@ -8716,7 +8794,7 @@ mod tests {
                 assert!(connected);
                 assert_eq!(boundary_facet_count, 0);
                 assert!(link_vertex_count > 0);
-                assert!(link_cell_count > 0);
+                assert!(link_simplex_count > 0);
             }
             other => panic!("Expected VertexLinkNotManifold for cone apex, got {other:?}"),
         }
@@ -8755,28 +8833,28 @@ mod tests {
             .unwrap();
 
         let _ = tds
-            .insert_cell_with_mapping(
-                Cell::new(vec![shared_edge_v0, shared_edge_v1, tet1_v2, tet1_v3], None).unwrap(),
+            .insert_simplex_with_mapping(
+                Simplex::new(vec![shared_edge_v0, shared_edge_v1, tet1_v2, tet1_v3], None).unwrap(),
             )
             .unwrap();
         let _ = tds
-            .insert_cell_with_mapping(
-                Cell::new(vec![shared_edge_v0, shared_edge_v1, tet2_v2, tet2_v3], None).unwrap(),
+            .insert_simplex_with_mapping(
+                Simplex::new(vec![shared_edge_v0, shared_edge_v1, tet2_v2, tet2_v3], None).unwrap(),
             )
             .unwrap();
 
         let tri = Triangulation::<FastKernel<f64>, (), (), 3>::new_with_tds(FastKernel::new(), tds);
 
-        // The two cells share only an edge, so they have no mutual neighbor pointers and the
+        // The two simplices share only an edge, so they have no mutual neighbor pointers and the
         // neighbor-graph BFS visits only one of them.  Connectivity is now the first check in
         // `is_valid()`, so the disconnection error is returned first.
         match tri.is_valid() {
             Err(InvariantError::Triangulation(TriangulationValidationError::Disconnected {
-                cell_count,
+                simplex_count,
             })) => {
                 assert_eq!(
-                    cell_count, 2,
-                    "Expected 2 cells in disconnected triangulation"
+                    simplex_count, 2,
+                    "Expected 2 simplices in disconnected triangulation"
                 );
             }
             other => panic!("Expected Disconnected, got {other:?}"),
@@ -8803,12 +8881,12 @@ mod tests {
 
     #[test]
     fn test_is_valid_rejects_bootstrap_phase_with_isolated_vertex() {
-        // A triangulation with vertices but no cells is not a valid manifold (Level 3).
-        // Level 3 requires every vertex to be incident to at least one cell.
+        // A triangulation with vertices but no simplices is not a valid manifold (Level 3).
+        // Level 3 requires every vertex to be incident to at least one simplex.
         let mut tri: Triangulation<FastKernel<f64>, (), (), 3> =
             Triangulation::new_empty(FastKernel::new());
 
-        // Bootstrap insertion (no cells yet)
+        // Bootstrap insertion (no simplices yet)
         let vertex = vertex!([0.0, 0.0, 0.0]);
         let expected_uuid = vertex.uuid();
         let (expected_vk, _) = tri
@@ -8828,7 +8906,7 @@ mod tests {
     }
 
     #[test]
-    fn test_is_valid_rejects_isolated_vertex_even_when_cells_exist() {
+    fn test_is_valid_rejects_isolated_vertex_even_when_simplices_exist() {
         let vertices = vec![
             vertex!([0.0, 0.0, 0.0]),
             vertex!([1.0, 0.0, 0.0]),
@@ -8845,7 +8923,7 @@ mod tests {
         // triggers before vertex-link validation.
         tri.set_topology_guarantee(TopologyGuarantee::Pseudomanifold);
 
-        // Insert a vertex into the TDS without adding any cells that reference it.
+        // Insert a vertex into the TDS without adding any simplices that reference it.
         // This creates an isolated vertex, which violates the Level 3 manifold invariant.
         let _isolated_vk = tri
             .tds
@@ -8878,10 +8956,10 @@ mod tests {
         let v2 = tds.insert_vertex_with_mapping(vertex!([2.0])).unwrap();
 
         let e0 = tds
-            .insert_cell_with_mapping(Cell::new(vec![v0, v1], None).unwrap())
+            .insert_simplex_with_mapping(Simplex::new(vec![v0, v1], None).unwrap())
             .unwrap();
         let e1 = tds
-            .insert_cell_with_mapping(Cell::new(vec![v1, v2], None).unwrap())
+            .insert_simplex_with_mapping(Simplex::new(vec![v1, v2], None).unwrap())
             .unwrap();
 
         // Cycle component: v3 - v4 - v5 - v3 (3 edges)
@@ -8890,71 +8968,71 @@ mod tests {
         let v5 = tds.insert_vertex_with_mapping(vertex!([12.0])).unwrap();
 
         let c0 = tds
-            .insert_cell_with_mapping(Cell::new(vec![v3, v4], None).unwrap())
+            .insert_simplex_with_mapping(Simplex::new(vec![v3, v4], None).unwrap())
             .unwrap();
         let c1 = tds
-            .insert_cell_with_mapping(Cell::new(vec![v4, v5], None).unwrap())
+            .insert_simplex_with_mapping(Simplex::new(vec![v4, v5], None).unwrap())
             .unwrap();
         let c2 = tds
-            .insert_cell_with_mapping(Cell::new(vec![v5, v3], None).unwrap())
+            .insert_simplex_with_mapping(Simplex::new(vec![v5, v3], None).unwrap())
             .unwrap();
 
-        // Set neighbor pointers (1D: each cell has 2 "facets" => 2 neighbor slots).
+        // Set neighbor pointers (1D: each simplex has 2 "facets" => 2 neighbor slots).
 
         // Path neighbors:
         {
-            let cell = tds.cell_mut(e0).unwrap();
-            let mut neighbors = NeighborBuffer::<Option<CellKey>>::new();
+            let simplex = tds.simplex_mut(e0).unwrap();
+            let mut neighbors = NeighborBuffer::<Option<SimplexKey>>::new();
             neighbors.resize(2, None);
             // e0 = [v0, v1]; across v1 is facet_index=0
             neighbors[0] = Some(e1);
-            cell.set_neighbors_from_keys(neighbors).unwrap();
+            simplex.set_neighbors_from_keys(neighbors).unwrap();
         }
         {
-            let cell = tds.cell_mut(e1).unwrap();
-            let mut neighbors = NeighborBuffer::<Option<CellKey>>::new();
+            let simplex = tds.simplex_mut(e1).unwrap();
+            let mut neighbors = NeighborBuffer::<Option<SimplexKey>>::new();
             neighbors.resize(2, None);
             // e1 = [v1, v2]; across v1 is facet_index=1
             neighbors[1] = Some(e0);
-            cell.set_neighbors_from_keys(neighbors).unwrap();
+            simplex.set_neighbors_from_keys(neighbors).unwrap();
         }
 
         // Cycle neighbors:
         {
-            let cell = tds.cell_mut(c0).unwrap();
-            let mut neighbors = NeighborBuffer::<Option<CellKey>>::new();
+            let simplex = tds.simplex_mut(c0).unwrap();
+            let mut neighbors = NeighborBuffer::<Option<SimplexKey>>::new();
             neighbors.resize(2, None);
             // c0 = [v3, v4]; across v4 is facet_index=0, across v3 is facet_index=1
             neighbors[0] = Some(c1); // at v4
             neighbors[1] = Some(c2); // at v3
-            cell.set_neighbors_from_keys(neighbors).unwrap();
+            simplex.set_neighbors_from_keys(neighbors).unwrap();
         }
         {
-            let cell = tds.cell_mut(c1).unwrap();
-            let mut neighbors = NeighborBuffer::<Option<CellKey>>::new();
+            let simplex = tds.simplex_mut(c1).unwrap();
+            let mut neighbors = NeighborBuffer::<Option<SimplexKey>>::new();
             neighbors.resize(2, None);
             // c1 = [v4, v5]; across v5 is facet_index=0, across v4 is facet_index=1
             neighbors[0] = Some(c2); // at v5
             neighbors[1] = Some(c0); // at v4
-            cell.set_neighbors_from_keys(neighbors).unwrap();
+            simplex.set_neighbors_from_keys(neighbors).unwrap();
         }
         {
-            let cell = tds.cell_mut(c2).unwrap();
-            let mut neighbors = NeighborBuffer::<Option<CellKey>>::new();
+            let simplex = tds.simplex_mut(c2).unwrap();
+            let mut neighbors = NeighborBuffer::<Option<SimplexKey>>::new();
             neighbors.resize(2, None);
             // c2 = [v5, v3]; across v3 is facet_index=0, across v5 is facet_index=1
             neighbors[0] = Some(c0); // at v3
             neighbors[1] = Some(c1); // at v5
-            cell.set_neighbors_from_keys(neighbors).unwrap();
+            simplex.set_neighbors_from_keys(neighbors).unwrap();
         }
 
-        tds.assign_incident_cells().unwrap();
+        tds.assign_incident_simplices().unwrap();
 
         let tri = Triangulation::<FastKernel<f64>, (), (), 1>::new_with_tds(FastKernel::new(), tds);
 
         // Sanity: codimension-1 pseudomanifold facet multiplicity passes.
-        let facet_to_cells = tri.tds.build_facet_to_cells_map().unwrap();
-        validate_facet_degree(&facet_to_cells).unwrap();
+        let facet_to_simplices = tri.tds.build_facet_to_simplices_map().unwrap();
+        validate_facet_degree(&facet_to_simplices).unwrap();
 
         // Sanity: Euler characteristic check would pass for this disconnected complex.
         let topology = validate_triangulation_euler(&tri.tds).unwrap();
@@ -8969,11 +9047,11 @@ mod tests {
         // Level 3 should still fail due to disconnectedness.
         match tri.is_valid() {
             Err(InvariantError::Triangulation(TriangulationValidationError::Disconnected {
-                cell_count,
+                simplex_count,
             })) => {
                 assert_eq!(
-                    cell_count, 5,
-                    "Expected 5 cells (2 path + 3 cycle) in disconnected triangulation"
+                    simplex_count, 5,
+                    "Expected 5 simplices (2 path + 3 cycle) in disconnected triangulation"
                 );
             }
             other => panic!("Expected Disconnected, got {other:?}"),
@@ -8984,7 +9062,7 @@ mod tests {
     fn test_tds_is_valid_rejects_boundary_facet_has_neighbor() {
         // Create two disjoint tetrahedra and manually introduce an invalid neighbor pointer
         // across a boundary facet.
-        let vertices_cell_1 = vec![
+        let vertices_simplex_1 = vec![
             vertex!([0.0, 0.0, 0.0]),
             vertex!([1.0, 0.0, 0.0]),
             vertex!([0.0, 1.0, 0.0]),
@@ -8992,9 +9070,9 @@ mod tests {
         ];
 
         let mut tds =
-            Triangulation::<FastKernel<f64>, (), (), 3>::build_initial_simplex(&vertices_cell_1)
+            Triangulation::<FastKernel<f64>, (), (), 3>::build_initial_simplex(&vertices_simplex_1)
                 .unwrap();
-        let first_cell_key = tds.cell_keys().next().unwrap();
+        let first_simplex_key = tds.simplex_keys().next().unwrap();
 
         // Add a disjoint second tetrahedron.
         let v4 = tds
@@ -9010,21 +9088,21 @@ mod tests {
             .insert_vertex_with_mapping(vertex!([10.0, 0.0, 1.0]))
             .unwrap();
 
-        let cell_2 = Cell::new(vec![v4, v5, v6, v7], None).unwrap();
-        let second_cell_key = tds.insert_cell_with_mapping(cell_2).unwrap();
+        let simplex_2 = Simplex::new(vec![v4, v5, v6, v7], None).unwrap();
+        let second_simplex_key = tds.insert_simplex_with_mapping(simplex_2).unwrap();
 
         // Invalidate: boundary facet has a neighbor pointer.
-        let first_cell = tds.cell_mut(first_cell_key).unwrap();
-        let mut neighbors = NeighborBuffer::<Option<CellKey>>::new();
+        let first_simplex = tds.simplex_mut(first_simplex_key).unwrap();
+        let mut neighbors = NeighborBuffer::<Option<SimplexKey>>::new();
         neighbors.resize(4, None);
-        neighbors[0] = Some(second_cell_key);
-        first_cell.set_neighbors_from_keys(neighbors).unwrap();
+        neighbors[0] = Some(second_simplex_key);
+        first_simplex.set_neighbors_from_keys(neighbors).unwrap();
 
         match tds.is_valid() {
             Err(TdsError::InvalidNeighbors {
                 reason: NeighborValidationError::BoundaryFacetHasNeighbor { neighbor_key, .. },
             }) => {
-                assert_eq!(neighbor_key, second_cell_key);
+                assert_eq!(neighbor_key, second_simplex_key);
             }
             other => panic!("Expected InvalidNeighbors, got {other:?}"),
         }
@@ -9051,10 +9129,10 @@ mod tests {
             .insert_vertex_with_mapping(vertex!([0.0, 0.0, 2.0]))
             .unwrap();
 
-        let cell_1 = Cell::new(vec![v0, v1, v2, v3], None).unwrap();
-        let cell_2 = Cell::new(vec![v0, v1, v2, v4], None).unwrap();
-        let _ = tds.insert_cell_with_mapping(cell_1).unwrap();
-        let _ = tds.insert_cell_with_mapping(cell_2).unwrap();
+        let simplex_1 = Simplex::new(vec![v0, v1, v2, v3], None).unwrap();
+        let simplex_2 = Simplex::new(vec![v0, v1, v2, v4], None).unwrap();
+        let _ = tds.insert_simplex_with_mapping(simplex_1).unwrap();
+        let _ = tds.insert_simplex_with_mapping(simplex_2).unwrap();
 
         match tds.is_valid() {
             Err(TdsError::InvalidNeighbors {
@@ -9088,32 +9166,32 @@ mod tests {
             .insert_vertex_with_mapping(vertex!([0.0, 0.0, 3.0]))
             .unwrap();
 
-        let cell_1 = Cell::new(vec![v0, v1, v2, v3], None).unwrap();
-        let cell_2 = Cell::new(vec![v0, v1, v2, v4], None).unwrap();
-        let cell_3 = Cell::new(vec![v0, v1, v2, v5], None).unwrap();
+        let simplex_1 = Simplex::new(vec![v0, v1, v2, v3], None).unwrap();
+        let simplex_2 = Simplex::new(vec![v0, v1, v2, v4], None).unwrap();
+        let simplex_3 = Simplex::new(vec![v0, v1, v2, v5], None).unwrap();
 
-        let _ = tds.insert_cell_with_mapping(cell_1).unwrap();
-        let _ = tds.insert_cell_with_mapping(cell_2).unwrap();
+        let _ = tds.insert_simplex_with_mapping(simplex_1).unwrap();
+        let _ = tds.insert_simplex_with_mapping(simplex_2).unwrap();
         let _ = tds
-            .insert_cell_bypassing_topology_checks_for_test(cell_3)
+            .insert_simplex_bypassing_topology_checks_for_test(simplex_3)
             .unwrap();
 
         let tri = Triangulation::<FastKernel<f64>, (), (), 3>::new_with_tds(FastKernel::new(), tds);
 
-        // The three cells share facet {v0,v1,v2} three-ways.  `repair_neighbor_pointers` would
-        // fail on this configuration (a facet shared by >2 cells violates the early-exit guard in
-        // `assign_neighbors`), so the cells have no neighbor pointers and the neighbor-graph BFS
+        // The three simplices share facet {v0,v1,v2} three-ways.  `repair_neighbor_pointers` would
+        // fail on this configuration (a facet shared by >2 simplices violates the early-exit guard in
+        // `assign_neighbors`), so the simplices have no neighbor pointers and the neighbor-graph BFS
         // visits only one of them.  Connectivity is now the first check in `is_valid()`, so the
         // disconnection error is returned before the non-manifold facet error.
         match tri.is_valid() {
             Err(InvariantError::Triangulation(TriangulationValidationError::Disconnected {
                 ..
             })) => {}
-            // Non-manifold facet detection is still valid if the cells happen to be connected.
+            // Non-manifold facet detection is still valid if the simplices happen to be connected.
             Err(InvariantError::Triangulation(
-                TriangulationValidationError::ManifoldFacetMultiplicity { cell_count, .. },
+                TriangulationValidationError::ManifoldFacetMultiplicity { simplex_count, .. },
             )) => {
-                assert_eq!(cell_count, 3);
+                assert_eq!(simplex_count, 3);
             }
             other => panic!("Expected Disconnected or ManifoldFacetMultiplicity, got {other:?}"),
         }
@@ -9158,13 +9236,13 @@ mod tests {
         assert!(report.violations.iter().all(|v| {
             matches!(
                 v.kind,
-                InvariantKind::VertexMappings | InvariantKind::CellMappings
+                InvariantKind::VertexMappings | InvariantKind::SimplexMappings
             )
         }));
     }
 
     #[test]
-    fn test_triangulation_validation_report_includes_vertex_and_cell_validity() {
+    fn test_triangulation_validation_report_includes_vertex_and_simplex_validity() {
         let vertices = vec![
             vertex!([0.0, 0.0, 0.0]),
             vertex!([1.0, 0.0, 0.0]),
@@ -9181,10 +9259,10 @@ mod tests {
         let invalid_vertex: Vertex<f64, (), 3> = Vertex::empty();
         let _ = tri.tds.insert_vertex_with_mapping(invalid_vertex).unwrap();
 
-        // Corrupt one cell locally: neighbors buffer with the wrong length.
-        let cell_key = tri.tds.cell_keys().next().unwrap();
-        let cell = tri.tds.cell_mut(cell_key).unwrap();
-        cell.ensure_neighbors_buffer_mut().truncate(3); // expected D+1 = 4
+        // Corrupt one simplex locally: neighbors buffer with the wrong length.
+        let simplex_key = tri.tds.simplex_keys().next().unwrap();
+        let simplex = tri.tds.simplex_mut(simplex_key).unwrap();
+        simplex.ensure_neighbors_buffer_mut().truncate(3); // expected D+1 = 4
 
         let report = tri.validation_report().unwrap_err();
 
@@ -9199,8 +9277,8 @@ mod tests {
             report
                 .violations
                 .iter()
-                .any(|v| v.kind == InvariantKind::CellValidity),
-            "Report should include a CellValidity violation"
+                .any(|v| v.kind == InvariantKind::SimplexValidity),
+            "Report should include a SimplexValidity violation"
         );
     }
 
@@ -9359,7 +9437,7 @@ mod tests {
             .unwrap();
 
         assert_eq!(tds.number_of_vertices(), 3);
-        assert_eq!(tds.number_of_cells(), 1);
+        assert_eq!(tds.number_of_simplices(), 1);
 
         // Verify user data is preserved
         let data_values: Vec<_> = tds
@@ -9425,7 +9503,7 @@ mod tests {
     }
 
     #[test]
-    fn test_is_valid_rejects_negative_geometric_cell_orientation() {
+    fn test_is_valid_rejects_negative_geometric_simplex_orientation() {
         let vertices = vec![
             vertex!([0.0, 0.0]),
             vertex!([1.0, 0.0]),
@@ -9434,9 +9512,9 @@ mod tests {
         let mut tds =
             Triangulation::<FastKernel<f64>, (), (), 2>::build_initial_simplex(&vertices).unwrap();
 
-        let cell_key = tds.cell_keys().next().unwrap();
-        let cell = tds.cell_mut(cell_key).unwrap();
-        cell.swap_vertex_slots(0, 1);
+        let simplex_key = tds.simplex_keys().next().unwrap();
+        let simplex = tds.simplex_mut(simplex_key).unwrap();
+        simplex.swap_vertex_slots(0, 1);
 
         let tri = Triangulation::<FastKernel<f64>, (), (), 2>::new_with_tds(FastKernel::new(), tds);
         let err = tri.is_valid().unwrap_err();
@@ -9447,11 +9525,11 @@ mod tests {
         ));
     }
 
-    /// Calls `validate_geometric_cell_orientation()` directly (not through `is_valid()`
+    /// Calls `validate_geometric_simplex_orientation()` directly (not through `is_valid()`
     /// which may short-circuit on coherent orientation checks) and asserts the returned
     /// error contains vertex keys for debuggability.
     #[test]
-    fn test_validate_geometric_cell_orientation_returns_enriched_error_on_negative() {
+    fn test_validate_geometric_simplex_orientation_returns_enriched_error_on_negative() {
         let vertices = vec![
             vertex!([0.0, 0.0]),
             vertex!([1.0, 0.0]),
@@ -9460,11 +9538,13 @@ mod tests {
         let mut tds =
             Triangulation::<FastKernel<f64>, (), (), 2>::build_initial_simplex(&vertices).unwrap();
 
-        let cell_key = tds.cell_keys().next().unwrap();
-        tds.cell_mut(cell_key).unwrap().swap_vertex_slots(0, 1);
+        let simplex_key = tds.simplex_keys().next().unwrap();
+        tds.simplex_mut(simplex_key)
+            .unwrap()
+            .swap_vertex_slots(0, 1);
 
         let tri = Triangulation::<FastKernel<f64>, (), (), 2>::new_with_tds(FastKernel::new(), tds);
-        let err = tri.validate_geometric_cell_orientation().unwrap_err();
+        let err = tri.validate_geometric_simplex_orientation().unwrap_err();
         assert!(
             matches!(
                 &err,
@@ -9477,7 +9557,7 @@ mod tests {
     }
 
     #[test]
-    fn test_cells_require_positive_orientation_promotion_detects_negative_without_mutating() {
+    fn test_simplices_require_positive_orientation_promotion_detects_negative_without_mutating() {
         let vertices = vec![
             vertex!([0.0, 0.0]),
             vertex!([1.0, 0.0]),
@@ -9485,26 +9565,29 @@ mod tests {
         ];
         let mut tds =
             Triangulation::<FastKernel<f64>, (), (), 2>::build_initial_simplex(&vertices).unwrap();
-        let cell_key = tds.cell_keys().next().unwrap();
-        tds.cell_mut(cell_key).unwrap().swap_vertex_slots(0, 1);
+        let simplex_key = tds.simplex_keys().next().unwrap();
+        tds.simplex_mut(simplex_key)
+            .unwrap()
+            .swap_vertex_slots(0, 1);
 
         let tri = Triangulation::<FastKernel<f64>, (), (), 2>::new_with_tds(FastKernel::new(), tds);
-        let before: Vec<_> = tri.tds.cell(cell_key).unwrap().vertices().to_vec();
+        let before: Vec<_> = tri.tds.simplex(simplex_key).unwrap().vertices().to_vec();
 
         assert!(
-            tri.cells_require_positive_orientation_promotion().unwrap(),
+            tri.simplices_require_positive_orientation_promotion()
+                .unwrap(),
             "Negative orientation should be detected"
         );
 
-        let after: Vec<_> = tri.tds.cell(cell_key).unwrap().vertices().to_vec();
+        let after: Vec<_> = tri.tds.simplex(simplex_key).unwrap().vertices().to_vec();
         assert_eq!(
             before, after,
-            "Convergence check must not mutate cell slot ordering"
+            "Convergence check must not mutate simplex slot ordering"
         );
     }
 
     #[test]
-    fn test_cells_require_positive_orientation_promotion_false_for_positive_without_mutating() {
+    fn test_simplices_require_positive_orientation_promotion_false_for_positive_without_mutating() {
         let vertices = vec![
             vertex!([0.0, 0.0]),
             vertex!([1.0, 0.0]),
@@ -9512,20 +9595,21 @@ mod tests {
         ];
         let tds =
             Triangulation::<FastKernel<f64>, (), (), 2>::build_initial_simplex(&vertices).unwrap();
-        let cell_key = tds.cell_keys().next().unwrap();
+        let simplex_key = tds.simplex_keys().next().unwrap();
 
         let tri = Triangulation::<FastKernel<f64>, (), (), 2>::new_with_tds(FastKernel::new(), tds);
-        let before: Vec<_> = tri.tds.cell(cell_key).unwrap().vertices().to_vec();
+        let before: Vec<_> = tri.tds.simplex(simplex_key).unwrap().vertices().to_vec();
 
         assert!(
-            !tri.cells_require_positive_orientation_promotion().unwrap(),
+            !tri.simplices_require_positive_orientation_promotion()
+                .unwrap(),
             "Already-positive orientation should not require promotion"
         );
 
-        let after: Vec<_> = tri.tds.cell(cell_key).unwrap().vertices().to_vec();
+        let after: Vec<_> = tri.tds.simplex(simplex_key).unwrap().vertices().to_vec();
         assert_eq!(
             before, after,
-            "Convergence check must not mutate already-positive cells"
+            "Convergence check must not mutate already-positive simplices"
         );
     }
 
@@ -9538,10 +9622,11 @@ mod tests {
         ];
         let mut tds =
             Triangulation::<FastKernel<f64>, (), (), 2>::build_initial_simplex(&vertices).unwrap();
-        let cell_key = tds.cell_keys().next().unwrap();
+        let simplex_key = tds.simplex_keys().next().unwrap();
         {
-            let cell = tds.cell_mut(cell_key).unwrap();
-            cell.set_periodic_vertex_offsets(vec![[0, 0], [0, 0], [1, 0]])
+            let simplex = tds.simplex_mut(simplex_key).unwrap();
+            simplex
+                .set_periodic_vertex_offsets(vec![[0, 0], [0, 0], [1, 0]])
                 .unwrap();
         }
 
@@ -9552,15 +9637,15 @@ mod tests {
             mode: ToroidalConstructionMode::PeriodicImagePoint,
         });
 
-        // In lifted coordinates this cell is positively oriented.
-        assert!(tri.validate_geometric_cell_orientation().is_ok());
+        // In lifted coordinates this simplex is positively oriented.
+        assert!(tri.validate_geometric_simplex_orientation().is_ok());
 
         // Flipping two slots should invert lifted orientation and be rejected.
         {
-            let cell = tri.tds.cell_mut(cell_key).unwrap();
-            cell.swap_vertex_slots(0, 1);
+            let simplex = tri.tds.simplex_mut(simplex_key).unwrap();
+            simplex.swap_vertex_slots(0, 1);
         }
-        let err = tri.validate_geometric_cell_orientation().unwrap_err();
+        let err = tri.validate_geometric_simplex_orientation().unwrap_err();
         assert!(matches!(
             err,
             TdsError::Geometric(GeometricError::NegativeOrientation { message })
@@ -9577,15 +9662,16 @@ mod tests {
         ];
         let mut tds =
             Triangulation::<FastKernel<f64>, (), (), 2>::build_initial_simplex(&vertices).unwrap();
-        let cell_key = tds.cell_keys().next().unwrap();
+        let simplex_key = tds.simplex_keys().next().unwrap();
         {
-            let cell = tds.cell_mut(cell_key).unwrap();
-            cell.set_periodic_vertex_offsets(vec![[0, 0], [0, 0], [1, 0]])
+            let simplex = tds.simplex_mut(simplex_key).unwrap();
+            simplex
+                .set_periodic_vertex_offsets(vec![[0, 0], [0, 0], [1, 0]])
                 .unwrap();
         }
 
         let tri = Triangulation::<FastKernel<f64>, (), (), 2>::new_with_tds(FastKernel::new(), tds);
-        let err = tri.validate_geometric_cell_orientation().unwrap_err();
+        let err = tri.validate_geometric_simplex_orientation().unwrap_err();
         assert!(matches!(
             err,
             TdsError::InconsistentDataStructure { message }
@@ -9603,11 +9689,13 @@ mod tests {
         ];
         let mut tds =
             Triangulation::<FastKernel<f64>, (), (), 2>::build_initial_simplex(&vertices).unwrap();
-        let cell_key = tds.cell_keys().next().unwrap();
-        tds.cell_mut(cell_key).unwrap().periodic_vertex_offsets = Some(vec![[0, 0], [1, 0]].into());
+        let simplex_key = tds.simplex_keys().next().unwrap();
+        tds.simplex_mut(simplex_key)
+            .unwrap()
+            .periodic_vertex_offsets = Some(vec![[0, 0], [1, 0]].into());
 
         let tri = Triangulation::<FastKernel<f64>, (), (), 2>::new_with_tds(FastKernel::new(), tds);
-        let err = tri.validate_geometric_cell_orientation().unwrap_err();
+        let err = tri.validate_geometric_simplex_orientation().unwrap_err();
         assert!(matches!(
             err,
             TdsError::DimensionMismatch {
@@ -9627,8 +9715,8 @@ mod tests {
         ];
         let mut tds =
             Triangulation::<FastKernel<f64>, (), (), 2>::build_initial_simplex(&vertices).unwrap();
-        let cell_key = tds.cell_keys().next().unwrap();
-        tds.cell_mut(cell_key)
+        let simplex_key = tds.simplex_keys().next().unwrap();
+        tds.simplex_mut(simplex_key)
             .unwrap()
             .set_periodic_vertex_offsets(vec![[0, 0], [0, 0], [1, 0]])
             .unwrap();
@@ -9640,7 +9728,7 @@ mod tests {
             mode: ToroidalConstructionMode::PeriodicImagePoint,
         });
 
-        let err = tri.validate_geometric_cell_orientation().unwrap_err();
+        let err = tri.validate_geometric_simplex_orientation().unwrap_err();
         assert!(matches!(
             err,
             TdsError::InconsistentDataStructure { message }
@@ -9651,7 +9739,7 @@ mod tests {
 
     /// Consolidated macro for facet validation tests across dimensions.
     ///
-    /// Verifies the manifold topology invariant: each facet shared by at most 2 cells.
+    /// Verifies the manifold topology invariant: each facet shared by at most 2 simplices.
     /// Consolidates detection and repair tests into comprehensive suites.
     macro_rules! test_facet_validation {
         ($dim:expr, [$($simplex_coords:expr),+ $(,)?]) => {
@@ -9667,28 +9755,28 @@ mod tests {
                     let tri = Triangulation::<FastKernel<f64>, (), (), $dim>::new_with_tds(FastKernel::new(), tds);
 
                     // Valid simplex: should have no issues
-                    let cell_keys: Vec<_> = tri.tds.cell_keys().collect();
-                    assert_eq!(cell_keys.len(), 1);
-                    let issues = tri.detect_local_facet_issues(&cell_keys).unwrap();
+                    let simplex_keys: Vec<_> = tri.tds.simplex_keys().collect();
+                    assert_eq!(simplex_keys.len(), 1);
+                    let issues = tri.detect_local_facet_issues(&simplex_keys).unwrap();
                     assert!(issues.is_none(), "{}D: Valid simplex should have no facet issues", $dim);
 
                     // Empty list: should return None
                     let issues = tri.detect_local_facet_issues(&[]).unwrap();
                     assert!(issues.is_none(), "{}D: Empty list should have no issues", $dim);
 
-                    // Nonexistent cells: should be skipped gracefully
-                    let fake_keys = vec![CellKey::default()];
+                    // Nonexistent simplices: should be skipped gracefully
+                    let fake_keys = vec![SimplexKey::default()];
                     let issues = tri.detect_local_facet_issues(&fake_keys).unwrap();
-                    assert!(issues.is_none(), "{}D: Nonexistent cells should be skipped", $dim);
+                    assert!(issues.is_none(), "{}D: Nonexistent simplices should be skipped", $dim);
 
-                    // Verify neighbors (all should be explicit boundary slots for a single cell)
-                    let (_, cell) = tri.tds.cells().next().unwrap();
-                    let neighbors = cell
+                    // Verify neighbors (all should be explicit boundary slots for a single simplex)
+                    let (_, simplex) = tri.tds.simplices().next().unwrap();
+                    let neighbors = simplex
                         .neighbor_slots()
-                        .expect("single cell should assign boundary neighbor slots");
+                        .expect("single simplex should assign boundary neighbor slots");
                     assert!(
                         neighbors.iter().all(|slot| *slot == NeighborSlot::Boundary),
-                        "{}D: Single cell should have boundary slots",
+                        "{}D: Single simplex should have boundary slots",
                         $dim
                     );
                 }
@@ -9706,8 +9794,8 @@ mod tests {
                     // Empty issues map: should remove nothing
                     let empty_issues = FacetIssuesMap::default();
                     let removed = tri.repair_local_facet_issues(&empty_issues).unwrap();
-                    assert_eq!(removed, 0, "{}D: Empty issues should remove 0 cells", $dim);
-                    assert_eq!(tri.tds.number_of_cells(), 1, "{}D: Should still have 1 cell", $dim);
+                    assert_eq!(removed, 0, "{}D: Empty issues should remove 0 simplices", $dim);
+                    assert_eq!(tri.tds.number_of_simplices(), 1, "{}D: Should still have 1 simplex", $dim);
                 }
             }
         };
@@ -9744,39 +9832,39 @@ mod tests {
                         .map(|(k, _)| k)
                         .expect("Interior vertex not found");
 
-                    let initial_cell_count = dt.tds().number_of_cells();
+                    let initial_simplex_count = dt.tds().number_of_simplices();
                     dt.remove_vertex(interior_vertex_key)
                         .expect("Failed to remove vertex");
 
-                    // After removal, should have fewer cells (or same if just 1 simplex left)
-                    assert!(dt.tds().number_of_cells() <= initial_cell_count,
-                        "{}D: Cell count should not increase after removal", $dim);
+                    // After removal, should have fewer simplices (or same if just 1 simplex left)
+                    assert!(dt.tds().number_of_simplices() <= initial_simplex_count,
+                        "{}D: Simplex count should not increase after removal", $dim);
 
                     // Verify neighbor pointer consistency:
                     // 1. No dangling pointers (all neighbor keys exist)
                     // 2. Neighbor relationships are symmetric
-                    for (cell_key, cell) in dt.tds().cells() {
-                        if let Some(neighbors) = cell.neighbors() {
+                    for (simplex_key, simplex) in dt.tds().simplices() {
+                        if let Some(neighbors) = simplex.neighbors() {
                             for (facet_idx, neighbor_opt) in neighbors.enumerate() {
                                 if let Some(neighbor_key) = neighbor_opt {
                                     // Verify neighbor exists
                                     assert!(
-                                        dt.tds().contains_cell(neighbor_key),
-                                        "{}D: Cell {cell_key:?} has neighbor pointer to non-existent cell {neighbor_key:?}",
+                                        dt.tds().contains_simplex(neighbor_key),
+                                        "{}D: Simplex {simplex_key:?} has neighbor pointer to non-existent simplex {neighbor_key:?}",
                                         $dim
                                     );
 
                                     // Verify symmetry: neighbor should point back to us
-                                    let neighbor_cell = dt
+                                    let neighbor_simplex = dt
                                         .tds()
-                                        .cell(neighbor_key)
-                                        .expect("Neighbor cell should exist");
-                                    if let Some(mut neighbor_neighbors) = neighbor_cell.neighbors() {
+                                        .simplex(neighbor_key)
+                                        .expect("Neighbor simplex should exist");
+                                    if let Some(mut neighbor_neighbors) = neighbor_simplex.neighbors() {
                                         let points_back = neighbor_neighbors
-                                            .any(|neighbor| neighbor == Some(cell_key));
+                                            .any(|neighbor| neighbor == Some(simplex_key));
                                         assert!(
                                             points_back,
-                                            "{}D: Cell {cell_key:?} has neighbor {neighbor_key:?} at facet {facet_idx}, but neighbor doesn't point back",
+                                            "{}D: Simplex {simplex_key:?} has neighbor {neighbor_key:?} at facet {facet_idx}, but neighbor doesn't point back",
                                             $dim
                                         );
                                     }
@@ -9808,9 +9896,9 @@ mod tests {
                     let empty: Triangulation<FastKernel<f64>, (), (), $dim> =
                         Triangulation::new_empty(FastKernel::new());
                     assert_eq!(empty.number_of_vertices(), 0);
-                    assert_eq!(empty.number_of_cells(), 0);
+                    assert_eq!(empty.number_of_simplices(), 0);
                     assert_eq!(empty.dim(), -1);
-                    assert_eq!(empty.cells().count(), 0);
+                    assert_eq!(empty.simplices().count(), 0);
                     assert_eq!(empty.vertices().count(), 0);
                     assert_eq!(empty.facets().count(), 0);
                     assert_eq!(empty.boundary_facets().count(), 0);
@@ -9829,9 +9917,9 @@ mod tests {
                     );
 
                     assert_eq!(tri.number_of_vertices(), expected_vertex_count);
-                    assert_eq!(tri.number_of_cells(), 1);
+                    assert_eq!(tri.number_of_simplices(), 1);
                     assert_eq!(tri.dim(), $dim as i32);
-                    assert_eq!(tri.cells().count(), 1);
+                    assert_eq!(tri.simplices().count(), 1);
                     assert_eq!(tri.vertices().count(), expected_vertex_count);
 
                     // D-simplex has D+1 facets, all on boundary
@@ -9962,7 +10050,7 @@ mod tests {
             DelaunayTriangulation::new(&vertices).unwrap();
         let tri = dt.as_triangulation();
 
-        assert_eq!(tri.number_of_cells(), 1);
+        assert_eq!(tri.number_of_simplices(), 1);
         assert_eq!(tri.number_of_vertices(), 3);
         assert_eq!(tri.number_of_edges(), 3);
 
@@ -9998,7 +10086,7 @@ mod tests {
             DelaunayTriangulation::new(&vertices).unwrap();
         let tri = dt.as_triangulation();
 
-        assert_eq!(tri.number_of_cells(), 2);
+        assert_eq!(tri.number_of_simplices(), 2);
         assert_eq!(tri.number_of_vertices(), 5);
 
         // This configuration has 9 unique edges (3 base + 6 apex-to-base).
@@ -10014,15 +10102,15 @@ mod tests {
         let index = tri.build_adjacency_index().unwrap();
         assert_eq!(tri.number_of_edges_with_index(&index), 9);
 
-        // A base vertex is incident to both cells.
-        assert_eq!(tri.adjacent_cells(base_vertex_key).count(), 2);
+        // A base vertex is incident to both simplices.
+        assert_eq!(tri.adjacent_simplices(base_vertex_key).count(), 2);
         assert_eq!(
-            tri.adjacent_cells_with_index(&index, base_vertex_key)
+            tri.adjacent_simplices_with_index(&index, base_vertex_key)
                 .count(),
             2
         );
         assert_eq!(
-            tri.number_of_adjacent_cells_with_index(&index, base_vertex_key),
+            tri.number_of_adjacent_simplices_with_index(&index, base_vertex_key),
             2
         );
 
@@ -10045,20 +10133,20 @@ mod tests {
             .unwrap();
         assert_eq!(tri.number_of_incident_edges(apex_vertex_key), 3);
         assert_eq!(
-            tri.adjacent_cells_with_index(&index, apex_vertex_key)
+            tri.adjacent_simplices_with_index(&index, apex_vertex_key)
                 .count(),
             1
         );
         assert_eq!(
-            tri.number_of_adjacent_cells_with_index(&index, apex_vertex_key),
+            tri.number_of_adjacent_simplices_with_index(&index, apex_vertex_key),
             1
         );
 
-        // Each cell has exactly one neighbor in the index.
-        let cell_keys: Vec<_> = tri.cells().map(|(ck, _)| ck).collect();
-        for &ck in &cell_keys {
-            assert_eq!(tri.cell_neighbors_with_index(&index, ck).count(), 1);
-            assert_eq!(tri.number_of_cell_neighbors_with_index(&index, ck), 1);
+        // Each simplex has exactly one neighbor in the index.
+        let simplex_keys: Vec<_> = tri.simplices().map(|(ck, _)| ck).collect();
+        for &ck in &simplex_keys {
+            assert_eq!(tri.simplex_neighbors_with_index(&index, ck).count(), 1);
+            assert_eq!(tri.number_of_simplex_neighbors_with_index(&index, ck), 1);
         }
     }
 
@@ -10077,15 +10165,15 @@ mod tests {
         let index = tri_a.build_adjacency_index().unwrap();
 
         let missing_vertex_key = VertexKey::default();
-        assert_eq!(tri_a.adjacent_cells(missing_vertex_key).count(), 0);
+        assert_eq!(tri_a.adjacent_simplices(missing_vertex_key).count(), 0);
         assert_eq!(
             tri_a
-                .adjacent_cells_with_index(&index, missing_vertex_key)
+                .adjacent_simplices_with_index(&index, missing_vertex_key)
                 .count(),
             0
         );
         assert_eq!(
-            tri_a.number_of_adjacent_cells_with_index(&index, missing_vertex_key),
+            tri_a.number_of_adjacent_simplices_with_index(&index, missing_vertex_key),
             0
         );
 
@@ -10103,19 +10191,19 @@ mod tests {
         );
         assert!(tri_a.vertex_coords(missing_vertex_key).is_none());
 
-        let missing_cell_key = CellKey::default();
-        assert_eq!(tri_a.cell_neighbors(missing_cell_key).count(), 0);
+        let missing_simplex_key = SimplexKey::default();
+        assert_eq!(tri_a.simplex_neighbors(missing_simplex_key).count(), 0);
         assert_eq!(
             tri_a
-                .cell_neighbors_with_index(&index, missing_cell_key)
+                .simplex_neighbors_with_index(&index, missing_simplex_key)
                 .count(),
             0
         );
         assert_eq!(
-            tri_a.number_of_cell_neighbors_with_index(&index, missing_cell_key),
+            tri_a.number_of_simplex_neighbors_with_index(&index, missing_simplex_key),
             0
         );
-        assert!(tri_a.cell_vertices(missing_cell_key).is_none());
+        assert!(tri_a.simplex_vertices(missing_simplex_key).is_none());
     }
 
     #[test]
@@ -10136,10 +10224,10 @@ mod tests {
             .unwrap();
         assert_eq!(tri.vertex_coords(v_key).unwrap(), [1.0, 0.0]);
 
-        let cell_key = tri.cells().next().unwrap().0;
-        let cell_vertices = tri.cell_vertices(cell_key).unwrap();
-        assert_eq!(cell_vertices.len(), 3);
-        assert!(cell_vertices.contains(&v_key));
+        let simplex_key = tri.simplices().next().unwrap().0;
+        let simplex_vertices = tri.simplex_vertices(simplex_key).unwrap();
+        assert_eq!(simplex_vertices.len(), 3);
+        assert!(simplex_vertices.contains(&v_key));
     }
 
     #[test]
@@ -10161,20 +10249,20 @@ mod tests {
 
         let index = tri.build_adjacency_index().unwrap();
 
-        // Each cell has exactly one neighbor.
-        let cell_keys: Vec<_> = tri.cells().map(|(ck, _)| ck).collect();
-        assert_eq!(cell_keys.len(), 2);
-        for &ck in &cell_keys {
-            let neighbors = index.cell_to_neighbors.get(&ck).unwrap();
+        // Each simplex has exactly one neighbor.
+        let simplex_keys: Vec<_> = tri.simplices().map(|(ck, _)| ck).collect();
+        assert_eq!(simplex_keys.len(), 2);
+        for &ck in &simplex_keys {
+            let neighbors = index.simplex_to_neighbors.get(&ck).unwrap();
             assert_eq!(neighbors.len(), 1);
-            assert!(cell_keys.contains(&neighbors[0]));
+            assert!(simplex_keys.contains(&neighbors[0]));
             assert_ne!(neighbors[0], ck);
         }
 
-        // For every vertex, edges/cells lists exist and are consistent.
+        // For every vertex, edges/simplices lists exist and are consistent.
         for (vk, _) in tri.vertices() {
-            let cells = index.vertex_to_cells.get(&vk).unwrap();
-            assert!(!cells.is_empty());
+            let simplices = index.vertex_to_simplices.get(&vk).unwrap();
+            assert!(!simplices.is_empty());
 
             let edges = index.vertex_to_edges.get(&vk).unwrap();
             assert!(!edges.is_empty());
@@ -10192,8 +10280,8 @@ mod tests {
             Triangulation::new_empty(FastKernel::new());
 
         let index = tri.build_adjacency_index().unwrap();
-        assert!(index.vertex_to_cells.is_empty());
-        assert!(index.cell_to_neighbors.is_empty());
+        assert!(index.vertex_to_simplices.is_empty());
+        assert!(index.simplex_to_neighbors.is_empty());
         assert!(index.vertex_to_edges.is_empty());
     }
 
@@ -10217,7 +10305,7 @@ mod tests {
 
         assert!(
             index
-                .vertex_to_cells
+                .vertex_to_simplices
                 .get(&isolated_vertex)
                 .is_some_and(SmallBuffer::is_empty)
         );
@@ -10230,7 +10318,7 @@ mod tests {
     }
 
     #[test]
-    fn test_build_adjacency_index_errors_on_missing_neighbor_cell() {
+    fn test_build_adjacency_index_errors_on_missing_neighbor_simplex() {
         let vertices = vec![
             vertex!([0.0, 0.0]),
             vertex!([1.0, 0.0]),
@@ -10240,34 +10328,35 @@ mod tests {
             Triangulation::<FastKernel<f64>, (), (), 2>::build_initial_simplex(&vertices).unwrap();
         let mut tri =
             Triangulation::<FastKernel<f64>, (), (), 2>::new_with_tds(FastKernel::new(), tds);
-        let cell_key = tri.tds.cell_keys().next().unwrap();
+        let simplex_key = tri.tds.simplex_keys().next().unwrap();
 
-        let mut missing_neighbor = CellKey::default();
-        if tri.tds.contains_cell(missing_neighbor) {
-            missing_neighbor = CellKey::from(KeyData::from_ffi(u64::MAX));
+        let mut missing_neighbor = SimplexKey::default();
+        if tri.tds.contains_simplex(missing_neighbor) {
+            missing_neighbor = SimplexKey::from(KeyData::from_ffi(u64::MAX));
         }
-        assert!(!tri.tds.contains_cell(missing_neighbor));
+        assert!(!tri.tds.contains_simplex(missing_neighbor));
 
         {
-            let cell = tri.tds.cell_mut(cell_key).unwrap();
-            cell.set_neighbors_from_keys([Some(missing_neighbor), None, None])
+            let simplex = tri.tds.simplex_mut(simplex_key).unwrap();
+            simplex
+                .set_neighbors_from_keys([Some(missing_neighbor), None, None])
                 .unwrap();
         }
 
         match tri.build_adjacency_index() {
-            Err(AdjacencyIndexBuildError::MissingNeighborCell {
-                cell_key: err_cell_key,
+            Err(AdjacencyIndexBuildError::MissingNeighborSimplex {
+                simplex_key: err_simplex_key,
                 neighbor_key,
             }) => {
-                assert_eq!(err_cell_key, cell_key);
+                assert_eq!(err_simplex_key, simplex_key);
                 assert_eq!(neighbor_key, missing_neighbor);
             }
-            other => panic!("Expected MissingNeighborCell, got {other:?}"),
+            other => panic!("Expected MissingNeighborSimplex, got {other:?}"),
         }
     }
 
     #[test]
-    fn test_cell_neighbors_filters_missing_neighbor_cell() {
+    fn test_simplex_neighbors_filters_missing_neighbor_simplex() {
         let vertices = vec![
             vertex!([0.0, 0.0]),
             vertex!([1.0, 0.0]),
@@ -10277,17 +10366,17 @@ mod tests {
             Triangulation::<FastKernel<f64>, (), (), 2>::build_initial_simplex(&vertices).unwrap();
         let mut tri =
             Triangulation::<FastKernel<f64>, (), (), 2>::new_with_tds(FastKernel::new(), tds);
-        let cell_key = tri.tds.cell_keys().next().unwrap();
-        let missing_neighbor = CellKey::from(KeyData::from_ffi(u64::MAX));
-        assert!(!tri.tds.contains_cell(missing_neighbor));
+        let simplex_key = tri.tds.simplex_keys().next().unwrap();
+        let missing_neighbor = SimplexKey::from(KeyData::from_ffi(u64::MAX));
+        assert!(!tri.tds.contains_simplex(missing_neighbor));
 
         tri.tds
-            .cell_mut(cell_key)
+            .simplex_mut(simplex_key)
             .unwrap()
             .set_neighbors_from_keys([Some(missing_neighbor), None, None])
             .unwrap();
 
-        assert_eq!(tri.cell_neighbors(cell_key).count(), 0);
+        assert_eq!(tri.simplex_neighbors(simplex_key).count(), 0);
     }
 
     #[test]
@@ -10301,8 +10390,8 @@ mod tests {
             Triangulation::<FastKernel<f64>, (), (), 2>::build_initial_simplex(&vertices).unwrap();
         let mut tri =
             Triangulation::<FastKernel<f64>, (), (), 2>::new_with_tds(FastKernel::new(), tds);
-        let cell_key = tri.tds.cell_keys().next().unwrap();
-        let existing_vertices = tri.tds.cell(cell_key).unwrap().vertices().to_vec();
+        let simplex_key = tri.tds.simplex_keys().next().unwrap();
+        let existing_vertices = tri.tds.simplex(simplex_key).unwrap().vertices().to_vec();
 
         let mut missing_vertex = VertexKey::default();
         if tri.tds.contains_vertex_key(missing_vertex) {
@@ -10311,19 +10400,19 @@ mod tests {
         assert!(!tri.tds.contains_vertex_key(missing_vertex));
 
         {
-            let cell = tri.tds.cell_mut(cell_key).unwrap();
-            cell.clear_vertex_keys();
-            cell.push_vertex_key(existing_vertices[0]);
-            cell.push_vertex_key(existing_vertices[1]);
-            cell.push_vertex_key(missing_vertex);
+            let simplex = tri.tds.simplex_mut(simplex_key).unwrap();
+            simplex.clear_vertex_keys();
+            simplex.push_vertex_key(existing_vertices[0]);
+            simplex.push_vertex_key(existing_vertices[1]);
+            simplex.push_vertex_key(missing_vertex);
         }
 
         match tri.build_adjacency_index() {
             Err(AdjacencyIndexBuildError::MissingVertexKey {
-                cell_key: err_cell_key,
+                simplex_key: err_simplex_key,
                 vertex_key,
             }) => {
-                assert_eq!(err_cell_key, cell_key);
+                assert_eq!(err_simplex_key, simplex_key);
                 assert_eq!(vertex_key, missing_vertex);
             }
             other => panic!("Expected MissingVertexKey, got {other:?}"),
@@ -10390,7 +10479,7 @@ mod tests {
         }
 
         assert_eq!(tri.number_of_vertices(), 4);
-        assert_eq!(tri.number_of_cells(), 1);
+        assert_eq!(tri.number_of_simplices(), 1);
     }
 
     #[test]
@@ -10408,7 +10497,7 @@ mod tests {
                 .unwrap();
         }
 
-        let hint = tri.cells().next().map(|(cell_key, _)| cell_key);
+        let hint = tri.simplices().next().map(|(simplex_key, _)| simplex_key);
         let detail = tri
             .insert_with_statistics_seeded_indexed_detailed(
                 vertex!([2.0, 2.0, 2.0]),
@@ -10422,23 +10511,23 @@ mod tests {
 
         assert!(matches!(detail.outcome, InsertionOutcome::Inserted { .. }));
         assert_eq!(detail.telemetry.global_conflict_scans, 0);
-        assert_eq!(detail.telemetry.global_conflict_cells_scanned, 0);
-        assert_eq!(detail.telemetry.global_conflict_cells_found_total, 0);
+        assert_eq!(detail.telemetry.global_conflict_simplices_scanned, 0);
+        assert_eq!(detail.telemetry.global_conflict_simplices_found_total, 0);
         assert_eq!(detail.telemetry.global_conflict_scan_nanos, 0);
         assert_eq!(detail.telemetry.conflict_region_calls, 1);
-        assert_eq!(detail.telemetry.conflict_region_cells_total, 0);
+        assert_eq!(detail.telemetry.conflict_region_simplices_total, 0);
         assert_eq!(detail.telemetry.cavity_insertion_calls, 0);
         assert_eq!(detail.telemetry.hull_extension_calls, 1);
         assert!(
-            !detail.repair_seed_cells.is_empty(),
+            !detail.repair_seed_simplices.is_empty(),
             "hull extension should return local repair seeds"
         );
-        let facet_to_cells = tri.tds.build_facet_to_cells_map().unwrap();
+        let facet_to_simplices = tri.tds.build_facet_to_simplices_map().unwrap();
         assert!(
-            facet_to_cells
+            facet_to_simplices
                 .values()
-                .all(|incident_cells| incident_cells.len() <= 2),
-            "hull extension should leave every facet with at most two incident cells"
+                .all(|incident_simplices| incident_simplices.len() <= 2),
+            "hull extension should leave every facet with at most two incident simplices"
         );
         assert!(tri.is_valid().is_ok());
     }
@@ -10458,8 +10547,8 @@ mod tests {
                 .unwrap();
         }
 
-        let hint = tri.cells().next().map(|(cell_key, _)| cell_key);
-        let empty_conflicts = CellKeyBuffer::new();
+        let hint = tri.simplices().next().map(|(simplex_key, _)| simplex_key);
+        let empty_conflicts = SimplexKeyBuffer::new();
         let detail = tri
             .insert_with_statistics_seeded_indexed_detailed(
                 vertex!([2.0, 2.0, 2.0]),
@@ -10474,19 +10563,19 @@ mod tests {
         assert!(matches!(detail.outcome, InsertionOutcome::Inserted { .. }));
         assert_eq!(detail.telemetry.global_conflict_scans, 0);
         assert_eq!(detail.telemetry.conflict_region_calls, 1);
-        assert_eq!(detail.telemetry.conflict_region_cells_total, 0);
+        assert_eq!(detail.telemetry.conflict_region_simplices_total, 0);
         assert_eq!(detail.telemetry.cavity_insertion_calls, 0);
         assert_eq!(detail.telemetry.hull_extension_calls, 1);
         assert!(
-            !detail.repair_seed_cells.is_empty(),
-            "empty caller conflicts should still use terminal-cell local repair seeds"
+            !detail.repair_seed_simplices.is_empty(),
+            "empty caller conflicts should still use terminal-simplex local repair seeds"
         );
-        let facet_to_cells = tri.tds.build_facet_to_cells_map().unwrap();
+        let facet_to_simplices = tri.tds.build_facet_to_simplices_map().unwrap();
         assert!(
-            facet_to_cells
+            facet_to_simplices
                 .values()
-                .all(|incident_cells| incident_cells.len() <= 2),
-            "hull extension should leave every facet with at most two incident cells"
+                .all(|incident_simplices| incident_simplices.len() <= 2),
+            "hull extension should leave every facet with at most two incident simplices"
         );
         assert!(tri.is_valid().is_ok());
     }
@@ -10503,14 +10592,18 @@ mod tests {
         let mut tri =
             Triangulation::<FastKernel<f64>, (), (), 2>::new_with_tds(FastKernel::new(), tds);
 
-        let start_cell = tri.cells().next().map(|(cell_key, _)| cell_key).unwrap();
-        let mut conflict_cells = CellKeyBuffer::new();
-        conflict_cells.push(start_cell);
+        let start_simplex = tri
+            .simplices()
+            .next()
+            .map(|(simplex_key, _)| simplex_key)
+            .unwrap();
+        let mut conflict_simplices = SimplexKeyBuffer::new();
+        conflict_simplices.push(start_simplex);
         let detail = tri
             .insert_with_statistics_seeded_indexed_detailed(
                 vertex!([0.25, 0.25]),
-                Some(&conflict_cells),
-                Some(start_cell),
+                Some(&conflict_simplices),
+                Some(start_simplex),
                 0,
                 None,
                 None,
@@ -10520,7 +10613,7 @@ mod tests {
         assert!(matches!(detail.outcome, InsertionOutcome::Inserted { .. }));
         assert!(
             !detail.delaunay_repair_required,
-            "caller-provided conflict cells should preserve the cavity insertion repair flag"
+            "caller-provided conflict simplices should preserve the cavity insertion repair flag"
         );
         assert!(tri.is_valid().is_ok());
     }
@@ -10539,7 +10632,7 @@ mod tests {
         tri.set_validation_policy(ValidationPolicy::OnSuspicion);
         tri.set_topology_guarantee(TopologyGuarantee::Pseudomanifold);
 
-        let hint = tri.cells().next().map(|(cell_key, _)| cell_key);
+        let hint = tri.simplices().next().map(|(simplex_key, _)| simplex_key);
         let detail = tri
             .insert_with_statistics_seeded_indexed_detailed(
                 vertex!([0.25, 0.25]),
@@ -10568,7 +10661,7 @@ mod tests {
         tri.set_validation_policy(ValidationPolicy::OnSuspicion);
         tri.set_topology_guarantee(TopologyGuarantee::PLManifold);
 
-        let hint = tri.cells().next().map(|(cell_key, _)| cell_key);
+        let hint = tri.simplices().next().map(|(simplex_key, _)| simplex_key);
         let detail = tri
             .insert_with_statistics_seeded_indexed_detailed(
                 vertex!([0.25, 0.25]),
@@ -10607,9 +10700,9 @@ mod tests {
         }
 
         // Insert with explicit hint
-        let hint_cell = tri.cells().next().map(|(key, _)| key);
+        let hint_simplex = tri.simplices().next().map(|(key, _)| key);
         let (outcome, stats) = tri
-            .insert_with_statistics(vertex!([0.2, 0.2, 0.2, 0.2]), None, hint_cell)
+            .insert_with_statistics(vertex!([0.2, 0.2, 0.2, 0.2]), None, hint_simplex)
             .unwrap();
 
         assert!(matches!(
@@ -10718,11 +10811,11 @@ mod tests {
         }
 
         assert_eq!(tri.number_of_vertices(), 6);
-        assert_eq!(tri.number_of_cells(), 1);
+        assert_eq!(tri.number_of_simplices(), 1);
     }
 
     #[test]
-    fn statistics_cells_removed_during_repair() {
+    fn statistics_simplices_removed_during_repair() {
         let mut tri: Triangulation<FastKernel<f64>, (), (), 2> =
             Triangulation::new_empty(FastKernel::new());
 
@@ -10734,22 +10827,22 @@ mod tests {
         tri.insert_with_statistics(vertex!([0.5, 1.0]), None, None)
             .unwrap();
 
-        let cells_before = tri.number_of_cells();
+        let simplices_before = tri.number_of_simplices();
 
         // Insert interior point - might trigger repair
         let (_outcome, stats) = tri
             .insert_with_statistics(vertex!([0.5, 0.3]), None, None)
             .unwrap();
 
-        let cells_after = tri.number_of_cells();
+        let simplices_after = tri.number_of_simplices();
 
-        // Basic sanity: repair can't remove more cells than existed before insertion.
+        // Basic sanity: repair can't remove more simplices than existed before insertion.
         assert!(
-            stats.cells_removed_during_repair <= cells_before,
-            "cells_removed_during_repair ({}) should not exceed cell count before insertion ({}); cells after insertion: {}",
-            stats.cells_removed_during_repair,
-            cells_before,
-            cells_after
+            stats.simplices_removed_during_repair <= simplices_before,
+            "simplices_removed_during_repair ({}) should not exceed simplex count before insertion ({}); simplices after insertion: {}",
+            stats.simplices_removed_during_repair,
+            simplices_before,
+            simplices_after
         );
     }
 
@@ -10763,7 +10856,7 @@ mod tests {
     // insertions.
     // =============================================================================
 
-    /// `DisconnectedBoundary` where disconnected cells have no non-conflict neighbours:
+    /// `DisconnectedBoundary` where disconnected simplices have no non-conflict neighbours:
     /// `else { break; }` fires, then the D<3 star-split fallback is taken.
     ///
     /// Covers: `DisconnectedBoundary` `else { break; }` (line 3492), `should_fallback=true`
@@ -10799,16 +10892,16 @@ mod tests {
             .insert_vertex_with_mapping(vertex!([5.5, 1.0]))
             .unwrap();
 
-        let cell_a = tri
+        let simplex_a = tri
             .tds
-            .insert_cell_with_mapping(Cell::new(vec![v0, v1, v2], None).unwrap())
+            .insert_simplex_with_mapping(Simplex::new(vec![v0, v1, v2], None).unwrap())
             .unwrap();
-        let cell_b = tri
+        let simplex_b = tri
             .tds
-            .insert_cell_with_mapping(Cell::new(vec![v3, v4, v5], None).unwrap())
+            .insert_simplex_with_mapping(Simplex::new(vec![v3, v4, v5], None).unwrap())
             .unwrap();
 
-        // Neither cell has any neighbour pointers, so `cells_to_add` will be empty on
+        // Neither simplex has any neighbour pointers, so `simplices_to_add` will be empty on
         // the first iteration and the `else { break; }` arm fires immediately.
         let new_v = tri
             .tds
@@ -10816,16 +10909,16 @@ mod tests {
             .unwrap();
         let point = Point::new([0.5_f64, 0.3_f64]);
 
-        let mut conflict_cells = CellKeyBuffer::new();
-        conflict_cells.push(cell_a);
-        conflict_cells.push(cell_b);
+        let mut conflict_simplices = SimplexKeyBuffer::new();
+        conflict_simplices.push(simplex_a);
+        conflict_simplices.push(simplex_b);
 
         let mut suspicion = SuspicionFlags::default();
         let _ = tri.insert_with_conflict_region(
             new_v,
             &point,
-            conflict_cells,
-            Some(cell_a),
+            conflict_simplices,
+            Some(simplex_a),
             &mut suspicion,
         );
 
@@ -10873,18 +10966,18 @@ mod tests {
             .insert_vertex_with_mapping(vertex!([0.0, 0.0, 2.0]))
             .unwrap();
 
-        let cell1 = tri
+        let simplex1 = tri
             .tds
-            .insert_cell_with_mapping(Cell::new(vec![v0, v1, v2, v3], None).unwrap())
+            .insert_simplex_with_mapping(Simplex::new(vec![v0, v1, v2, v3], None).unwrap())
             .unwrap();
-        let cell2 = tri
+        let simplex2 = tri
             .tds
-            .insert_cell_with_mapping(Cell::new(vec![v0, v1, v2, v4], None).unwrap())
+            .insert_simplex_with_mapping(Simplex::new(vec![v0, v1, v2, v4], None).unwrap())
             .unwrap();
-        let cell3 = tri
+        let simplex3 = tri
             .tds
-            .insert_cell_bypassing_topology_checks_for_test(
-                Cell::new(vec![v0, v1, v2, v5], None).unwrap(),
+            .insert_simplex_bypassing_topology_checks_for_test(
+                Simplex::new(vec![v0, v1, v2, v5], None).unwrap(),
             )
             .unwrap();
 
@@ -10894,14 +10987,19 @@ mod tests {
             .unwrap();
         let point = Point::new([0.1_f64, 0.1_f64, 0.1_f64]);
 
-        let mut conflict_cells = CellKeyBuffer::new();
-        conflict_cells.push(cell1);
-        conflict_cells.push(cell2);
-        conflict_cells.push(cell3);
+        let mut conflict_simplices = SimplexKeyBuffer::new();
+        conflict_simplices.push(simplex1);
+        conflict_simplices.push(simplex2);
+        conflict_simplices.push(simplex3);
 
         let mut suspicion = SuspicionFlags::default();
-        let result =
-            tri.insert_with_conflict_region(new_v, &point, conflict_cells, None, &mut suspicion);
+        let result = tri.insert_with_conflict_region(
+            new_v,
+            &point,
+            conflict_simplices,
+            None,
+            &mut suspicion,
+        );
 
         // NonManifoldFacet → `_ => break` → should_fallback = D<3 = false → Err returned.
         assert!(result.is_err(), "D=3 NonManifoldFacet should return Err");
@@ -10913,16 +11011,16 @@ mod tests {
 
     /// Four 2D triangles all sharing a common vertex but with no shared edges produce a
     /// `RidgeFan` error (`facet_count >= 3` for the shared vertex).  Because
-    /// `conflict_cells.len() = 4 > D+1 = 3`, the SHRINK branch fires on the first
-    /// iteration, removing the extra fan cells from the conflict region.
+    /// `conflict_simplices.len() = 4 > D+1 = 3`, the SHRINK branch fires on the first
+    /// iteration, removing the extra fan simplices from the conflict region.
     ///
     /// Covers: `RidgeFan` SHRINK body (lines 3434-3442) and re-extraction (line 3514).
     #[test]
-    fn test_cavity_reduction_ridge_fan_shrink_fires_for_4_conflict_cells_2d() {
+    fn test_cavity_reduction_ridge_fan_shrink_fires_for_4_conflict_simplices_2d() {
         let mut tri: Triangulation<FastKernel<f64>, (), (), 2> =
             Triangulation::new_empty(FastKernel::new());
 
-        // `center` appears in 8 boundary edges (2 per cell × 4 cells) → RidgeFan.
+        // `center` appears in 8 boundary edges (2 per simplex × 4 simplices) → RidgeFan.
         let center = tri
             .tds
             .insert_vertex_with_mapping(vertex!([0.0, 0.0]))
@@ -10960,21 +11058,21 @@ mod tests {
             .insert_vertex_with_mapping(vertex!([-4.0, -1.0]))
             .unwrap();
 
-        let cell1 = tri
+        let simplex1 = tri
             .tds
-            .insert_cell_with_mapping(Cell::new(vec![center, va, vb], None).unwrap())
+            .insert_simplex_with_mapping(Simplex::new(vec![center, va, vb], None).unwrap())
             .unwrap();
-        let cell2 = tri
+        let simplex2 = tri
             .tds
-            .insert_cell_with_mapping(Cell::new(vec![center, vc, vd], None).unwrap())
+            .insert_simplex_with_mapping(Simplex::new(vec![center, vc, vd], None).unwrap())
             .unwrap();
-        let cell3 = tri
+        let simplex3 = tri
             .tds
-            .insert_cell_with_mapping(Cell::new(vec![center, ve, vf], None).unwrap())
+            .insert_simplex_with_mapping(Simplex::new(vec![center, ve, vf], None).unwrap())
             .unwrap();
-        let cell4 = tri
+        let simplex4 = tri
             .tds
-            .insert_cell_with_mapping(Cell::new(vec![center, vg, vh], None).unwrap())
+            .insert_simplex_with_mapping(Simplex::new(vec![center, vg, vh], None).unwrap())
             .unwrap();
 
         let new_v = tri
@@ -10983,29 +11081,29 @@ mod tests {
             .unwrap();
         let point = Point::new([0.3_f64, 1.0_f64]);
 
-        let mut conflict_cells = CellKeyBuffer::new();
-        conflict_cells.push(cell1);
-        conflict_cells.push(cell2);
-        conflict_cells.push(cell3);
-        conflict_cells.push(cell4);
+        let mut conflict_simplices = SimplexKeyBuffer::new();
+        conflict_simplices.push(simplex1);
+        conflict_simplices.push(simplex2);
+        conflict_simplices.push(simplex3);
+        conflict_simplices.push(simplex4);
 
         let mut suspicion = SuspicionFlags::default();
-        // RidgeFan SHRINK fires on iteration 1 (4 > D+1=3), reducing conflict_cells.
+        // RidgeFan SHRINK fires on iteration 1 (4 > D+1=3), reducing conflict_simplices.
         // The function completes without panic; result may be Ok or Err.
         let _ = tri.insert_with_conflict_region(
             new_v,
             &point,
-            conflict_cells,
-            Some(cell1),
+            conflict_simplices,
+            Some(simplex1),
             &mut suspicion,
         );
         // Reaching here confirms the SHRINK branch executed successfully.
     }
 
-    /// Two completely disconnected 2D conflict cells that each have one non-conflict
+    /// Two completely disconnected 2D conflict simplices that each have one non-conflict
     /// neighbour trigger the `DisconnectedBoundary` EXPAND path on the first iteration
     /// (adding the neighbours), and the SHRINK-fallback on a subsequent iteration
-    /// (when `cells_to_add` is empty but `conflict_cells.len() > D+1`).
+    /// (when `simplices_to_add` is empty but `conflict_simplices.len() > D+1`).
     ///
     /// Covers: EXPAND body (lines 3470-3480), SHRINK-fallback (lines 3481-3491),
     /// and re-extraction after each reshape (line 3514).
@@ -11014,7 +11112,7 @@ mod tests {
         let mut tri: Triangulation<FastKernel<f64>, (), (), 2> =
             Triangulation::new_empty(FastKernel::new());
 
-        // Group A: cell_a = {v0,v1,v2} shares edge {v0,v1} with cell_c = {v0,v1,v6}.
+        // Group A: simplex_a = {v0,v1,v2} shares edge {v0,v1} with simplex_c = {v0,v1,v6}.
         let v0 = tri
             .tds
             .insert_vertex_with_mapping(vertex!([0.0, 0.0]))
@@ -11031,7 +11129,7 @@ mod tests {
             .tds
             .insert_vertex_with_mapping(vertex!([0.5, -1.0]))
             .unwrap();
-        // Group B: cell_b = {v3,v4,v5} shares edge {v3,v4} with cell_d = {v3,v4,v7}.
+        // Group B: simplex_b = {v3,v4,v5} shares edge {v3,v4} with simplex_d = {v3,v4,v7}.
         let v3 = tri
             .tds
             .insert_vertex_with_mapping(vertex!([5.0, 0.0]))
@@ -11049,34 +11147,36 @@ mod tests {
             .insert_vertex_with_mapping(vertex!([5.5, -1.0]))
             .unwrap();
 
-        let cell_a = tri
+        let simplex_a = tri
             .tds
-            .insert_cell_with_mapping(Cell::new(vec![v0, v1, v2], None).unwrap())
+            .insert_simplex_with_mapping(Simplex::new(vec![v0, v1, v2], None).unwrap())
             .unwrap();
-        // cell_c is a non-conflict neighbour of cell_a (not initially in conflict_cells).
-        let cell_c = tri
+        // simplex_c is a non-conflict neighbour of simplex_a (not initially in conflict_simplices).
+        let simplex_c = tri
             .tds
-            .insert_cell_with_mapping(Cell::new(vec![v0, v1, v6], None).unwrap())
+            .insert_simplex_with_mapping(Simplex::new(vec![v0, v1, v6], None).unwrap())
             .unwrap();
-        let cell_b = tri
+        let simplex_b = tri
             .tds
-            .insert_cell_with_mapping(Cell::new(vec![v3, v4, v5], None).unwrap())
+            .insert_simplex_with_mapping(Simplex::new(vec![v3, v4, v5], None).unwrap())
             .unwrap();
-        // cell_d is a non-conflict neighbour of cell_b.
-        let cell_d = tri
+        // simplex_d is a non-conflict neighbour of simplex_b.
+        let simplex_d = tri
             .tds
-            .insert_cell_with_mapping(Cell::new(vec![v3, v4, v7], None).unwrap())
+            .insert_simplex_with_mapping(Simplex::new(vec![v3, v4, v7], None).unwrap())
             .unwrap();
 
-        // Wire neighbours so EXPAND discovers cell_c via cell_a and cell_d via cell_b.
+        // Wire neighbours so EXPAND discovers simplex_c via simplex_a and simplex_d via simplex_b.
         {
-            let cell = tri.tds.cell_mut(cell_a).unwrap();
-            cell.set_neighbors_from_keys([Some(cell_c), None, None])
+            let simplex = tri.tds.simplex_mut(simplex_a).unwrap();
+            simplex
+                .set_neighbors_from_keys([Some(simplex_c), None, None])
                 .unwrap();
         }
         {
-            let cell = tri.tds.cell_mut(cell_b).unwrap();
-            cell.set_neighbors_from_keys([Some(cell_d), None, None])
+            let simplex = tri.tds.simplex_mut(simplex_b).unwrap();
+            simplex
+                .set_neighbors_from_keys([Some(simplex_d), None, None])
                 .unwrap();
         }
 
@@ -11086,22 +11186,22 @@ mod tests {
             .unwrap();
         let point = Point::new([0.5_f64, 0.3_f64]);
 
-        let mut conflict_cells = CellKeyBuffer::new();
-        conflict_cells.push(cell_a);
-        conflict_cells.push(cell_b);
+        let mut conflict_simplices = SimplexKeyBuffer::new();
+        conflict_simplices.push(simplex_a);
+        conflict_simplices.push(simplex_b);
 
         // Iteration trace:
-        //   1. DisconnectedBoundary → EXPAND (adds cell_c or cell_d) → re-extract.
+        //   1. DisconnectedBoundary → EXPAND (adds simplex_c or simplex_d) → re-extract.
         //   2. DisconnectedBoundary → EXPAND (adds the other) → re-extract.
-        //   3. DisconnectedBoundary, cells_to_add=empty (all neighbours in conflict_set),
+        //   3. DisconnectedBoundary, simplices_to_add=empty (all neighbours in conflict_set),
         //      len=4 > D+1=3 → SHRINK-fallback removes disconnected component → re-extract.
-        //   4. Two cells sharing an edge → connected boundary → Ok → break.
+        //   4. Two simplices sharing an edge → connected boundary → Ok → break.
         let mut suspicion = SuspicionFlags::default();
         let _ = tri.insert_with_conflict_region(
             new_v,
             &point,
-            conflict_cells,
-            Some(cell_a),
+            conflict_simplices,
+            Some(simplex_a),
             &mut suspicion,
         );
         // Reaching here without panic confirms EXPAND and SHRINK branches executed.
@@ -11143,7 +11243,7 @@ mod tests {
             matches!(
                 result,
                 InvariantError::Tds(TdsError::InconsistentDataStructure { ref message })
-                    if message.contains("ctx") && message.contains("fan triangulation produced no cells")
+                    if message.contains("ctx") && message.contains("fan triangulation produced no simplices")
             ),
             "CavityFilling should wrap to InconsistentDataStructure: {result:?}"
         );
@@ -11193,7 +11293,7 @@ mod tests {
     fn test_from_manifold_error_for_invariant_error_non_tds() {
         let err = ManifoldError::ManifoldFacetMultiplicity {
             facet_key: 999,
-            cell_count: 5,
+            simplex_count: 5,
         };
         let inv = InvariantError::from(err);
         assert!(matches!(
@@ -11201,7 +11301,7 @@ mod tests {
             InvariantError::Triangulation(
                 TriangulationValidationError::ManifoldFacetMultiplicity {
                     facet_key: 999,
-                    cell_count: 5
+                    simplex_count: 5
                 }
             )
         ));
@@ -11215,7 +11315,7 @@ mod tests {
         };
         let msg = err.to_string();
         assert!(msg.contains("Isolated vertex"));
-        assert!(msg.contains("not incident to any cell"));
+        assert!(msg.contains("not incident to any simplex"));
     }
 
     // ---- is_valid / validate error-path tests ----
@@ -11224,7 +11324,7 @@ mod tests {
     fn test_is_valid_returns_invariant_error_for_isolated_vertex() {
         let (mut tri, _, _) = build_single_tet();
 
-        // Add an isolated vertex that is not referenced by any cell.
+        // Add an isolated vertex that is not referenced by any simplex.
         let iso = tri
             .tds
             .insert_vertex_with_mapping(vertex!([0.5, 0.5, 0.5]))
@@ -11250,11 +11350,11 @@ mod tests {
 
         match tri.is_valid() {
             Err(InvariantError::Triangulation(TriangulationValidationError::Disconnected {
-                cell_count,
+                simplex_count,
             })) => {
                 assert_eq!(
-                    cell_count, 2,
-                    "Expected 2 cells in disconnected triangulation"
+                    simplex_count, 2,
+                    "Expected 2 simplices in disconnected triangulation"
                 );
             }
             other => {
@@ -11308,64 +11408,64 @@ mod tests {
         assert_eq!(inv, InvariantError::Tds(tds_err));
     }
 
-    // ---- repair_stale_incident_cells tests ----
+    // ---- repair_stale_incident_simplices tests ----
 
     #[test]
-    fn test_repair_stale_incident_cells_noop_when_all_valid() {
+    fn test_repair_stale_incident_simplices_noop_when_all_valid() {
         let (mut tri, [v0, v1, v2, v3], ck) = build_single_tet();
-        assert!(tri.repair_stale_incident_cells().is_ok());
+        assert!(tri.repair_stale_incident_simplices().is_ok());
 
         // Pointers unchanged.
         for vk in [v0, v1, v2, v3] {
-            assert_eq!(tri.tds.vertex_mut(vk).unwrap().incident_cell(), Some(ck));
+            assert_eq!(tri.tds.vertex_mut(vk).unwrap().incident_simplex(), Some(ck));
         }
     }
 
     #[test]
-    fn test_repair_stale_incident_cells_repairs_none_pointer() {
+    fn test_repair_stale_incident_simplices_repairs_none_pointer() {
         let (mut tri, [_, _, _, v3], ck) = build_single_tet();
 
-        // Corrupt v3 to have no incident cell.
-        tri.tds.vertex_mut(v3).unwrap().set_incident_cell(None);
+        // Corrupt v3 to have no incident simplex.
+        tri.tds.vertex_mut(v3).unwrap().set_incident_simplex(None);
 
-        assert!(tri.repair_stale_incident_cells().is_ok());
+        assert!(tri.repair_stale_incident_simplices().is_ok());
         assert_eq!(
-            tri.tds.vertex_mut(v3).unwrap().incident_cell(),
+            tri.tds.vertex_mut(v3).unwrap().incident_simplex(),
             Some(ck),
             "v3 should be repaired to point to the tetrahedron"
         );
     }
 
     #[test]
-    fn test_repair_stale_incident_cells_repairs_stale_pointer() {
+    fn test_repair_stale_incident_simplices_repairs_stale_pointer() {
         let (mut tri, [_, _, _, v3], ck) = build_single_tet();
 
-        // Point v3 to a non-existent cell key (simulates a deleted conflict cell).
-        let stale = CellKey::from(KeyData::from_ffi(0xDEAD_BEEF));
+        // Point v3 to a non-existent simplex key (simulates a deleted conflict simplex).
+        let stale = SimplexKey::from(KeyData::from_ffi(0xDEAD_BEEF));
         tri.tds
             .vertex_mut(v3)
             .unwrap()
-            .set_incident_cell(Some(stale));
+            .set_incident_simplex(Some(stale));
 
-        assert!(tri.repair_stale_incident_cells().is_ok());
+        assert!(tri.repair_stale_incident_simplices().is_ok());
         assert_eq!(
-            tri.tds.vertex_mut(v3).unwrap().incident_cell(),
+            tri.tds.vertex_mut(v3).unwrap().incident_simplex(),
             Some(ck),
-            "stale pointer should be repaired to the valid cell"
+            "stale pointer should be repaired to the valid simplex"
         );
     }
 
     #[test]
-    fn test_repair_stale_incident_cells_errors_on_truly_isolated_vertex() {
+    fn test_repair_stale_incident_simplices_errors_on_truly_isolated_vertex() {
         let (mut tri, _, _) = build_single_tet();
 
-        // Insert a vertex that is NOT referenced by any cell.
+        // Insert a vertex that is NOT referenced by any simplex.
         let iso = tri
             .tds
             .insert_vertex_with_mapping(vertex!([0.5, 0.5, 0.5]))
             .unwrap();
 
-        let result = tri.repair_stale_incident_cells();
+        let result = tri.repair_stale_incident_simplices();
         assert!(
             matches!(
                 &result,
@@ -11387,7 +11487,7 @@ mod tests {
 
     #[test]
     fn test_topology_queries_on_two_tet_triangulation() {
-        // 5 vertices in 3D → multi-cell triangulation exercises all query paths
+        // 5 vertices in 3D → multi-simplex triangulation exercises all query paths
         let vertices = [
             vertex!([0.0, 0.0, 0.0]),
             vertex!([1.0, 0.0, 0.0]),
@@ -11409,28 +11509,28 @@ mod tests {
         assert!(tri.facets().next().is_some());
         assert!(tri.boundary_facets().next().is_some());
 
-        // cell_vertices() and vertex_coords()
-        let (ck, _) = tri.cells().next().unwrap();
-        let cell_verts = tri.cell_vertices(ck).unwrap();
-        assert_eq!(cell_verts.len(), 4);
-        for &vk in cell_verts {
+        // simplex_vertices() and vertex_coords()
+        let (ck, _) = tri.simplices().next().unwrap();
+        let simplex_verts = tri.simplex_vertices(ck).unwrap();
+        assert_eq!(simplex_verts.len(), 4);
+        for &vk in simplex_verts {
             let coords = tri.vertex_coords(vk).unwrap();
             assert_eq!(coords.len(), 3);
         }
 
         // Returns None for missing keys
-        let missing_ck = CellKey::from(KeyData::from_ffi(0xDEAD));
-        assert!(tri.cell_vertices(missing_ck).is_none());
+        let missing_ck = SimplexKey::from(KeyData::from_ffi(0xDEAD));
+        assert!(tri.simplex_vertices(missing_ck).is_none());
         let absent_vk = VertexKey::from(KeyData::from_ffi(0xBEEF));
         assert!(tri.vertex_coords(absent_vk).is_none());
 
-        // adjacent_cells()
+        // adjacent_simplices()
         let v0 = tri.vertices().next().unwrap().0;
-        assert!(tri.adjacent_cells(v0).next().is_some());
+        assert!(tri.adjacent_simplices(v0).next().is_some());
 
-        // cell_neighbors()
-        // Multi-cell triangulation has at least one internal neighbor
-        assert!(tri.cell_neighbors(ck).next().is_some());
+        // simplex_neighbors()
+        // Multi-simplex triangulation has at least one internal neighbor
+        assert!(tri.simplex_neighbors(ck).next().is_some());
 
         // incident_edges()
         let inc_edges: Vec<_> = tri.incident_edges(v0).collect();
@@ -11467,24 +11567,24 @@ mod tests {
 
         let v0 = tri.vertices().next().unwrap().0;
 
-        // adjacent_cells_with_index
-        let idx_adj: HashSet<_> = tri.adjacent_cells_with_index(&index, v0).collect();
-        let direct_adj: HashSet<_> = tri.adjacent_cells(v0).collect();
+        // adjacent_simplices_with_index
+        let idx_adj: HashSet<_> = tri.adjacent_simplices_with_index(&index, v0).collect();
+        let direct_adj: HashSet<_> = tri.adjacent_simplices(v0).collect();
         assert_eq!(idx_adj, direct_adj);
         assert_eq!(
-            tri.number_of_adjacent_cells_with_index(&index, v0),
+            tri.number_of_adjacent_simplices_with_index(&index, v0),
             direct_adj.len()
         );
 
-        // cell_neighbors_with_index
-        let ck = tri.cells().next().unwrap().0;
-        let direct_neighbors: Vec<_> = tri.cell_neighbors(ck).collect();
+        // simplex_neighbors_with_index
+        let ck = tri.simplices().next().unwrap().0;
+        let direct_neighbors: Vec<_> = tri.simplex_neighbors(ck).collect();
         assert_eq!(
-            tri.cell_neighbors_with_index(&index, ck).count(),
+            tri.simplex_neighbors_with_index(&index, ck).count(),
             direct_neighbors.len()
         );
         assert_eq!(
-            tri.number_of_cell_neighbors_with_index(&index, ck),
+            tri.number_of_simplex_neighbors_with_index(&index, ck),
             direct_neighbors.len()
         );
 
@@ -11514,43 +11614,45 @@ mod tests {
             DelaunayTriangulation::new(&vertices).unwrap();
         let tri = dt.as_triangulation();
 
-        let cell_keys: Vec<_> = tri.cells().map(|(ck, _)| ck).collect();
-        let issues = tri.detect_local_facet_issues(&cell_keys).unwrap();
+        let simplex_keys: Vec<_> = tri.simplices().map(|(ck, _)| ck).collect();
+        let issues = tri.detect_local_facet_issues(&simplex_keys).unwrap();
         assert!(issues.is_none());
     }
 
     #[test]
-    fn test_ensure_non_empty_conflict_cells_passthrough_when_nonempty() {
-        let mut buf = CellKeyBuffer::new();
-        buf.push(CellKey::from(KeyData::from_ffi(1)));
+    fn test_ensure_non_empty_conflict_simplices_passthrough_when_nonempty() {
+        let mut buf = SimplexKeyBuffer::new();
+        buf.push(SimplexKey::from(KeyData::from_ffi(1)));
 
         let owned = Cow::Owned(buf);
-        let fallback = CellKey::from(KeyData::from_ffi(999));
-        let result = Triangulation::<FastKernel<f64>, (), (), 2>::ensure_non_empty_conflict_cells(
-            owned, fallback,
-        );
+        let fallback = SimplexKey::from(KeyData::from_ffi(999));
+        let result =
+            Triangulation::<FastKernel<f64>, (), (), 2>::ensure_non_empty_conflict_simplices(
+                owned, fallback,
+            );
         assert_eq!(result.len(), 1);
     }
 
     #[test]
-    fn test_ensure_non_empty_conflict_cells_uses_fallback_when_empty() {
-        let buf = CellKeyBuffer::new();
-        let fallback = CellKey::from(KeyData::from_ffi(42));
-        let result = Triangulation::<FastKernel<f64>, (), (), 2>::ensure_non_empty_conflict_cells(
-            Cow::Owned(buf),
-            fallback,
-        );
+    fn test_ensure_non_empty_conflict_simplices_uses_fallback_when_empty() {
+        let buf = SimplexKeyBuffer::new();
+        let fallback = SimplexKey::from(KeyData::from_ffi(42));
+        let result =
+            Triangulation::<FastKernel<f64>, (), (), 2>::ensure_non_empty_conflict_simplices(
+                Cow::Owned(buf),
+                fallback,
+            );
         assert_eq!(result.len(), 1);
         assert_eq!(result[0], fallback);
     }
 
     #[test]
     fn test_star_split_boundary_facets_produces_d_plus_1_facets() {
-        let ck = CellKey::from(KeyData::from_ffi(7));
+        let ck = SimplexKey::from(KeyData::from_ffi(7));
         let facets = Triangulation::<FastKernel<f64>, (), (), 3>::star_split_boundary_facets(ck);
         assert_eq!(facets.len(), 4); // D+1 = 4 for 3D
         for (i, fh) in facets.iter().enumerate() {
-            assert_eq!(fh.cell_key(), ck);
+            assert_eq!(fh.simplex_key(), ck);
             assert_eq!(<usize as From<u8>>::from(fh.facet_index()), i);
         }
     }
@@ -11658,7 +11760,7 @@ mod tests {
                     let mut tri: Triangulation<FastKernel<f64>, (), (), $dim> =
                         Triangulation::new_empty(FastKernel::new());
 
-                    // Insert fewer than D+1 vertices: should remain in bootstrap (no cells).
+                    // Insert fewer than D+1 vertices: should remain in bootstrap (no simplices).
                     let verts = simplex_vertices::<$dim>();
                     for v in &verts[..$dim] {
                         let (vk, hint) = tri.insert(*v, None, None).unwrap();
@@ -11666,7 +11768,7 @@ mod tests {
                         assert!(tri.tds.vertex(vk).is_some());
                     }
                     assert_eq!(tri.number_of_vertices(), $dim);
-                    assert_eq!(tri.number_of_cells(), 0, "{}D: no cells during bootstrap", $dim);
+                    assert_eq!(tri.number_of_simplices(), 0, "{}D: no simplices during bootstrap", $dim);
                 }
 
                 #[test]
@@ -11679,11 +11781,11 @@ mod tests {
                         tri.insert(*v, None, None).unwrap();
                     }
                     assert_eq!(tri.number_of_vertices(), $dim + 1);
-                    assert_eq!(tri.number_of_cells(), 1, "{}D: exactly 1 cell after D+1 vertices", $dim);
+                    assert_eq!(tri.number_of_simplices(), 1, "{}D: exactly 1 simplex after D+1 vertices", $dim);
 
-                    // The cell must have D+1 vertices.
-                    let (_, cell) = tri.cells().next().unwrap();
-                    assert_eq!(cell.number_of_vertices(), $dim + 1);
+                    // The simplex must have D+1 vertices.
+                    let (_, simplex) = tri.simplices().next().unwrap();
+                    assert_eq!(simplex.number_of_vertices(), $dim + 1);
                 }
 
                 #[test]
@@ -11696,7 +11798,7 @@ mod tests {
                     for v in &verts {
                         tri.insert(*v, None, None).unwrap();
                     }
-                    assert_eq!(tri.number_of_cells(), 1);
+                    assert_eq!(tri.number_of_simplices(), 1);
 
                     // Insert an interior point.
                     let mut interior = [0.0; $dim];
@@ -11712,7 +11814,7 @@ mod tests {
                         .unwrap();
 
                     assert!(hint.is_some(), "{}D: hint returned after D+2 insertion", $dim);
-                    assert!(tri.number_of_cells() > 1, "{}D: cell count increased", $dim);
+                    assert!(tri.number_of_simplices() > 1, "{}D: simplex count increased", $dim);
                     assert!(tri.is_valid().is_ok(), "{}D: topology valid after insertion", $dim);
                 }
             }
@@ -11728,7 +11830,7 @@ mod tests {
     // =========================================================================
 
     #[test]
-    fn test_insert_with_statistics_tracks_cells_removed() {
+    fn test_insert_with_statistics_tracks_simplices_removed() {
         // Build a 2D triangulation with several points, verify stats fields.
         let mut tri: Triangulation<FastKernel<f64>, (), (), 2> =
             Triangulation::new_empty(FastKernel::new());
@@ -11743,7 +11845,7 @@ mod tests {
             assert_eq!(stats.attempts, 1);
         }
         assert_eq!(tri.number_of_vertices(), 4);
-        assert!(tri.number_of_cells() >= 2);
+        assert!(tri.number_of_simplices() >= 2);
     }
 
     // =========================================================================
@@ -11756,15 +11858,15 @@ mod tests {
         // so that validation_report collects both VertexValidity + Topology violations.
         let (mut tri, _, ck) = build_single_tet();
 
-        // Add an isolated vertex (no incident cell).
+        // Add an isolated vertex (no incident simplex).
         let _ = tri
             .tds
             .insert_vertex_with_mapping(vertex!([5.0, 5.0, 5.0]))
             .unwrap();
 
-        // Corrupt a cell's neighbor buffer length to trigger CellValidity violation.
-        let cell = tri.tds.cell_mut(ck).unwrap();
-        cell.ensure_neighbors_buffer_mut().truncate(2); // wrong: should be D+1 = 4
+        // Corrupt a simplex's neighbor buffer length to trigger SimplexValidity violation.
+        let simplex = tri.tds.simplex_mut(ck).unwrap();
+        simplex.ensure_neighbors_buffer_mut().truncate(2); // wrong: should be D+1 = 4
 
         let report = tri.validation_report().unwrap_err();
         assert!(
@@ -11790,7 +11892,7 @@ mod tests {
         let mut dt: DelaunayTriangulation<_, (), (), 2> =
             DelaunayTriangulation::new(&vertices).unwrap();
 
-        let initial_cells = dt.number_of_cells();
+        let initial_simplices = dt.number_of_simplices();
         let vertex_key = dt
             .vertices()
             .find(|(_, v)| {
@@ -11801,14 +11903,14 @@ mod tests {
             .unwrap();
 
         let removed = dt.remove_vertex(vertex_key).unwrap();
-        assert!(removed > 0, "Should have removed at least 1 cell");
-        assert!(dt.number_of_cells() <= initial_cells);
+        assert!(removed > 0, "Should have removed at least 1 simplex");
+        assert!(dt.number_of_simplices() <= initial_simplices);
         assert_eq!(dt.number_of_vertices(), 3);
     }
 
     #[test]
     fn test_remove_vertex_entire_triangulation_2d() {
-        // When we remove a vertex from a single-cell triangulation,
+        // When we remove a vertex from a single-simplex triangulation,
         // the empty boundary case triggers Tds::remove_vertex fallback.
         let vertices = [
             vertex!([0.0, 0.0]),
@@ -11829,23 +11931,23 @@ mod tests {
     // =========================================================================
 
     #[test]
-    fn test_validate_connectedness_rejects_empty_new_cells() {
+    fn test_validate_connectedness_rejects_empty_new_simplices() {
         let (tri, _, _) = build_single_tet();
 
-        // Empty new_cells buffer: should error because no surviving new cells.
-        let empty: CellKeyBuffer = CellKeyBuffer::new();
+        // Empty new_simplices buffer: should error because no surviving new simplices.
+        let empty: SimplexKeyBuffer = SimplexKeyBuffer::new();
         let err = tri.validate_connectedness(&empty).unwrap_err();
         assert!(matches!(err, InsertionError::TopologyValidation(_)));
     }
 
     #[test]
-    fn test_validate_connectedness_passes_for_valid_new_cells() {
+    fn test_validate_connectedness_passes_for_valid_new_simplices() {
         let (tri, _, ck) = build_single_tet();
 
-        // Single cell is both the new set and the whole triangulation.
-        let mut new_cells = CellKeyBuffer::new();
-        new_cells.push(ck);
-        assert!(tri.validate_connectedness(&new_cells).is_ok());
+        // Single simplex is both the new set and the whole triangulation.
+        let mut new_simplices = SimplexKeyBuffer::new();
+        new_simplices.push(ck);
+        assert!(tri.validate_connectedness(&new_simplices).is_ok());
     }
 
     // =========================================================================
@@ -11853,7 +11955,7 @@ mod tests {
     // =========================================================================
 
     #[test]
-    fn test_find_conflict_region_global_returns_cells() {
+    fn test_find_conflict_region_global_returns_simplices() {
         // Build a 3D simplex, then check that a point outside has a conflict region.
         let vertices = [
             vertex!([0.0, 0.0, 0.0]),
@@ -11869,65 +11971,66 @@ mod tests {
         let conflict = tri
             .find_conflict_region_global(&Point::new([0.5, 0.5, 0.5]))
             .unwrap();
-        // The single cell's circumsphere should contain this point.
+        // The single simplex's circumsphere should contain this point.
         assert!(
             !conflict.is_empty(),
             "Point near circumcenter should produce a conflict region"
         );
     }
 
-    /// `find_conflict_region_global` uses `sorted_cell_points` to collect
-    /// vertices in canonical order.  A cell containing a missing vertex key
+    /// `find_conflict_region_global` uses `sorted_simplex_points` to collect
+    /// vertices in canonical order.  A simplex containing a missing vertex key
     /// causes the helper to return `None`, which is converted to
-    /// `ConflictError::CellDataAccessFailed`.
+    /// `ConflictError::SimplexDataAccessFailed`.
     #[test]
-    fn test_find_conflict_region_global_missing_vertex_returns_cell_data_access_failed() {
+    fn test_find_conflict_region_global_missing_vertex_returns_simplex_data_access_failed() {
         let (mut tri, vkeys, ck) = build_single_tet();
 
         // Replace one vertex key with a missing key.
         let missing = VertexKey::from(KeyData::from_ffi(999_999));
         {
-            let cell = tri.tds.cell_mut(ck).unwrap();
-            cell.clear_vertex_keys();
-            cell.push_vertex_key(vkeys[0]);
-            cell.push_vertex_key(vkeys[1]);
-            cell.push_vertex_key(vkeys[2]);
-            cell.push_vertex_key(missing);
+            let simplex = tri.tds.simplex_mut(ck).unwrap();
+            simplex.clear_vertex_keys();
+            simplex.push_vertex_key(vkeys[0]);
+            simplex.push_vertex_key(vkeys[1]);
+            simplex.push_vertex_key(vkeys[2]);
+            simplex.push_vertex_key(missing);
         }
 
         let result = tri.find_conflict_region_global(&Point::new([0.5, 0.5, 0.5]));
         assert!(
             matches!(
                 result,
-                Err(ConflictError::CellDataAccessFailed { cell_key, .. }) if cell_key == ck
+                Err(ConflictError::SimplexDataAccessFailed { simplex_key, .. }) if simplex_key == ck
             ),
-            "expected CellDataAccessFailed for missing vertex, got {result:?}"
+            "expected SimplexDataAccessFailed for missing vertex, got {result:?}"
         );
     }
 
-    /// `find_conflict_region_global` checks that `sorted_cell_points` returns
-    /// exactly D+1 points.  A cell with fewer than D+1 vertex keys (all
-    /// resolvable) triggers `CellDataAccessFailed` with a vertex-count message.
+    /// `find_conflict_region_global` checks that `sorted_simplex_points` returns
+    /// exactly D+1 points.  A simplex with fewer than D+1 vertex keys (all
+    /// resolvable) triggers `SimplexDataAccessFailed` with a vertex-count message.
     #[test]
-    fn test_find_conflict_region_global_underdimensioned_cell_returns_cell_data_access_failed() {
+    fn test_find_conflict_region_global_underdimensioned_simplex_returns_simplex_data_access_failed()
+     {
         let (mut tri, vkeys, ck) = build_single_tet();
 
-        // Shrink the cell to only 3 vertices (all valid) in a D=3 triangulation.
+        // Shrink the simplex to only 3 vertices (all valid) in a D=3 triangulation.
         {
-            let cell = tri.tds.cell_mut(ck).unwrap();
-            cell.clear_vertex_keys();
-            cell.push_vertex_key(vkeys[0]);
-            cell.push_vertex_key(vkeys[1]);
-            cell.push_vertex_key(vkeys[2]);
+            let simplex = tri.tds.simplex_mut(ck).unwrap();
+            simplex.clear_vertex_keys();
+            simplex.push_vertex_key(vkeys[0]);
+            simplex.push_vertex_key(vkeys[1]);
+            simplex.push_vertex_key(vkeys[2]);
         }
 
         let result = tri.find_conflict_region_global(&Point::new([0.5, 0.5, 0.5]));
         assert!(
             matches!(
                 result,
-                Err(ConflictError::CellDataAccessFailed { cell_key, .. }) if cell_key == ck
+                Err(ConflictError::SimplexDataAccessFailed { simplex_key, .. }) if simplex_key == ck
             ),
-            "expected CellDataAccessFailed for underdimensioned cell, got {result:?}"
+            "expected SimplexDataAccessFailed for underdimensioned simplex, got {result:?}"
         );
     }
 
@@ -11936,7 +12039,7 @@ mod tests {
     // =========================================================================
 
     #[test]
-    fn test_conflict_region_touches_boundary_single_cell() {
+    fn test_conflict_region_touches_boundary_single_simplex() {
         // A single simplex: all facets are boundary.
         let vertices = [
             vertex!([0.0, 0.0]),
@@ -11947,18 +12050,18 @@ mod tests {
             Triangulation::<FastKernel<f64>, (), (), 2>::build_initial_simplex(&vertices).unwrap();
         let tri = Triangulation::<FastKernel<f64>, (), (), 2>::new_with_tds(FastKernel::new(), tds);
 
-        let cell_key = tri.tds.cell_keys().next().unwrap();
-        let mut buf = CellKeyBuffer::new();
-        buf.push(cell_key);
+        let simplex_key = tri.tds.simplex_keys().next().unwrap();
+        let mut buf = SimplexKeyBuffer::new();
+        buf.push(simplex_key);
 
         let touches = tri.conflict_region_touches_boundary(&buf).unwrap();
-        assert!(touches, "Single cell has only boundary facets");
+        assert!(touches, "Single simplex has only boundary facets");
     }
 
     #[test]
     fn test_conflict_region_touches_boundary_empty() {
         let (tri, _, _) = build_single_tet();
-        let empty = CellKeyBuffer::new();
+        let empty = SimplexKeyBuffer::new();
         let touches = tri.conflict_region_touches_boundary(&empty).unwrap();
         assert!(!touches, "Empty conflict region touches no boundary");
     }
@@ -11968,7 +12071,7 @@ mod tests {
     // =========================================================================
 
     #[test]
-    fn test_fan_fill_cavity_errors_when_no_cells_produced() {
+    fn test_fan_fill_cavity_errors_when_no_simplices_produced() {
         // If the apex is on every boundary facet, fan_fill_cavity should error.
         let (mut tri, vkeys, ck) = build_single_tet();
 
@@ -11979,7 +12082,7 @@ mod tests {
             (1..=3).map(|i| FacetHandle::new(ck, i)).collect();
 
         let result = tri.fan_fill_cavity(vkeys[0], &boundary_facets);
-        // All facets include vkeys[0], so no cells should be created.
+        // All facets include vkeys[0], so no simplices should be created.
         assert!(result.is_err());
     }
 
@@ -11989,8 +12092,8 @@ mod tests {
 
     #[test]
     fn test_repair_local_facet_issues_with_overshared_facet() {
-        // Build 2D triangulation with enough cells to have interior facets,
-        // then artificially create an over-shared facet by duplicating a cell.
+        // Build 2D triangulation with enough simplices to have interior facets,
+        // then artificially create an over-shared facet by duplicating a simplex.
         let vertices = [
             vertex!([0.0, 0.0]),
             vertex!([1.0, 0.0]),
@@ -12001,46 +12104,47 @@ mod tests {
             DelaunayTriangulation::new(&vertices).unwrap();
         let mut tri = dt.as_triangulation().clone();
 
-        // Add a duplicate cell with the same vertices as an existing cell.
-        let (_, existing_cell) = tri.tds.cells().next().unwrap();
-        let vkeys: Vec<_> = existing_cell.vertices().to_vec();
-        let dup_cell = Cell::new(vkeys, None).unwrap();
+        // Add a duplicate simplex with the same vertices as an existing simplex.
+        let (_, existing_simplex) = tri.tds.simplices().next().unwrap();
+        let vkeys: Vec<_> = existing_simplex.vertices().to_vec();
+        let dup_simplex = Simplex::new(vkeys, None).unwrap();
         let _ = tri
             .tds
-            .insert_cell_bypassing_topology_checks_for_test(dup_cell)
+            .insert_simplex_bypassing_topology_checks_for_test(dup_simplex)
             .unwrap();
 
         // Now detect issues.
-        let all_cells: Vec<_> = tri.tds.cell_keys().collect();
-        let issues = tri.detect_local_facet_issues(&all_cells).unwrap();
+        let all_simplices: Vec<_> = tri.tds.simplex_keys().collect();
+        let issues = tri.detect_local_facet_issues(&all_simplices).unwrap();
         assert!(issues.is_some(), "Should detect over-shared facet");
 
         let removed = tri.repair_local_facet_issues(&issues.unwrap()).unwrap();
-        assert!(removed > 0, "Should remove at least one duplicate cell");
+        assert!(removed > 0, "Should remove at least one duplicate simplex");
     }
 
     /// Return the facet index opposite the vertex not on the tested shared edge.
     fn shared_edge_facet_index(
-        cell: &Cell<f64, (), (), 2>,
+        simplex: &Simplex<f64, (), (), 2>,
         v_a: VertexKey,
         v_b: VertexKey,
     ) -> usize {
-        cell.vertices()
+        simplex
+            .vertices()
             .iter()
             .position(|&vertex_key| vertex_key != v_a && vertex_key != v_b)
-            .expect("test cells should contain the shared edge")
+            .expect("test simplices should contain the shared edge")
     }
 
     /// Read the neighbor slot across the tested shared edge in a 2D repair fixture.
     fn neighbor_across_shared_edge(
         tri: &Triangulation<FastKernel<f64>, (), (), 2>,
-        cell_key: CellKey,
+        simplex_key: SimplexKey,
         v_a: VertexKey,
         v_b: VertexKey,
-    ) -> Option<CellKey> {
-        let cell = tri.tds.cell(cell_key).unwrap();
-        let facet_idx = shared_edge_facet_index(cell, v_a, v_b);
-        cell.neighbor_key(facet_idx).flatten()
+    ) -> Option<SimplexKey> {
+        let simplex = tri.tds.simplex(simplex_key).unwrap();
+        let facet_idx = shared_edge_facet_index(simplex, v_a, v_b);
+        simplex.neighbor_key(facet_idx).flatten()
     }
 
     #[test]
@@ -12056,54 +12160,54 @@ mod tests {
         let v_e = tds.insert_vertex_with_mapping(vertex!([1.0, 1.0])).unwrap();
 
         let c1 = tds
-            .insert_cell_with_mapping(Cell::new(vec![v_a, v_b, v_c], None).unwrap())
+            .insert_simplex_with_mapping(Simplex::new(vec![v_a, v_b, v_c], None).unwrap())
             .unwrap();
         let c2 = tds
-            .insert_cell_with_mapping(Cell::new(vec![v_a, v_b, v_d], None).unwrap())
+            .insert_simplex_with_mapping(Simplex::new(vec![v_a, v_b, v_d], None).unwrap())
             .unwrap();
         let c3 = tds
-            .insert_cell_bypassing_topology_checks_for_test(
-                Cell::new(vec![v_a, v_b, v_e], None).unwrap(),
+            .insert_simplex_bypassing_topology_checks_for_test(
+                Simplex::new(vec![v_a, v_b, v_e], None).unwrap(),
             )
             .unwrap();
 
-        for (cell_key, neighbor_key) in [(c1, c2), (c2, c3), (c3, c1)] {
-            let cell = tds.cell_mut(cell_key).unwrap();
-            let mut neighbors = NeighborBuffer::<Option<CellKey>>::new();
+        for (simplex_key, neighbor_key) in [(c1, c2), (c2, c3), (c3, c1)] {
+            let simplex = tds.simplex_mut(simplex_key).unwrap();
+            let mut neighbors = NeighborBuffer::<Option<SimplexKey>>::new();
             neighbors.resize(3, None);
             neighbors[2] = Some(neighbor_key);
-            cell.set_neighbors_from_keys(neighbors).unwrap();
+            simplex.set_neighbors_from_keys(neighbors).unwrap();
         }
-        tds.assign_incident_cells().unwrap();
+        tds.assign_incident_simplices().unwrap();
 
         let mut tri =
             Triangulation::<FastKernel<f64>, (), (), 2>::new_with_tds(FastKernel::new(), tds);
-        let original_cells = [c1, c2, c3];
+        let original_simplices = [c1, c2, c3];
         let issues = tri
-            .detect_local_facet_issues(&original_cells)
+            .detect_local_facet_issues(&original_simplices)
             .unwrap()
-            .expect("three cells sharing one edge should be detected as over-shared");
+            .expect("three simplices sharing one edge should be detected as over-shared");
 
         let repair = tri
             .repair_local_facet_issues_with_frontier(&issues)
             .unwrap();
         assert_eq!(repair.removed_count, 1);
         assert!(
-            !repair.frontier_cells.is_empty(),
-            "removed-cell neighbors should seed the local repair frontier"
+            !repair.frontier_simplices.is_empty(),
+            "removed-simplex neighbors should seed the local repair frontier"
         );
 
-        let survivors: Vec<_> = original_cells
+        let survivors: Vec<_> = original_simplices
             .into_iter()
-            .filter(|cell_key| tri.tds.contains_cell(*cell_key))
+            .filter(|simplex_key| tri.tds.contains_simplex(*simplex_key))
             .collect();
         assert_eq!(survivors.len(), 2);
         let [first_survivor, second_survivor] = survivors.as_slice() else {
-            panic!("fixture should leave exactly two surviving cells");
+            panic!("fixture should leave exactly two surviving simplices");
         };
         for &survivor in &survivors {
             assert!(
-                repair.frontier_cells.contains(&survivor),
+                repair.frontier_simplices.contains(&survivor),
                 "facet-issue survivors should seed the local repair frontier"
             );
         }
@@ -12114,27 +12218,30 @@ mod tests {
 
         let missing_shared_slots_before = survivor_pairs
             .iter()
-            .filter(|&&(cell_key, other)| {
-                neighbor_across_shared_edge(&tri, cell_key, v_a, v_b) != Some(other)
+            .filter(|&&(simplex_key, other)| {
+                neighbor_across_shared_edge(&tri, simplex_key, v_a, v_b) != Some(other)
             })
             .count();
         assert!(
             missing_shared_slots_before > 0,
-            "cell removal should leave at least one survivor slot needing local repair"
+            "simplex removal should leave at least one survivor slot needing local repair"
         );
 
-        let mut new_cells = CellKeyBuffer::new();
-        new_cells.extend(original_cells);
+        let mut new_simplices = SimplexKeyBuffer::new();
+        new_simplices.extend(original_simplices);
         let repaired = tri
-            .repair_neighbors_after_local_cell_removal(&new_cells, &repair.frontier_cells)
+            .repair_neighbors_after_local_simplex_removal(
+                &new_simplices,
+                &repair.frontier_simplices,
+            )
             .unwrap();
 
         assert!(repaired > 0);
-        for (cell_key, other) in survivor_pairs {
+        for (simplex_key, other) in survivor_pairs {
             assert_eq!(
-                neighbor_across_shared_edge(&tri, cell_key, v_a, v_b),
+                neighbor_across_shared_edge(&tri, simplex_key, v_a, v_b),
                 Some(other),
-                "surviving cells should be rewired across the formerly over-shared edge"
+                "surviving simplices should be rewired across the formerly over-shared edge"
             );
         }
         assert!(tri.tds.validate_facet_sharing().is_ok());
@@ -12267,10 +12374,10 @@ mod tests {
     }
 
     #[test]
-    fn test_validate_at_completion_ok_for_pl_manifold_no_cells() {
+    fn test_validate_at_completion_ok_for_pl_manifold_no_simplices() {
         let tri: Triangulation<FastKernel<f64>, (), (), 3> =
             Triangulation::new_empty(FastKernel::new());
-        // PLManifold requires vertex links at completion, but with 0 cells it short-circuits.
+        // PLManifold requires vertex links at completion, but with 0 simplices it short-circuits.
         assert!(tri.validate_at_completion().is_ok());
     }
 
@@ -12284,7 +12391,7 @@ mod tests {
     #[test]
     fn test_perturbation_scale_invariance_3d() {
         const EXPECTED_VERTEX_COUNT: usize = 8;
-        const EXPECTED_CELL_COUNT: usize = 10;
+        const EXPECTED_SIMPLEX_COUNT: usize = 10;
 
         fn build_at_scale(scale: f64) -> (usize, usize) {
             let base_coords: [[f64; 3]; 8] = [
@@ -12303,7 +12410,7 @@ mod tests {
                 .collect();
             let dt: DelaunayTriangulation<_, (), (), 3> =
                 DelaunayTriangulation::new(&vertices).unwrap();
-            (dt.number_of_vertices(), dt.number_of_cells())
+            (dt.number_of_vertices(), dt.number_of_simplices())
         }
 
         let (v1, c1) = build_at_scale(1.0);
@@ -12316,8 +12423,8 @@ mod tests {
             "Vertex count regression at unit scale (build_at_scale(1.0))"
         );
         assert_eq!(
-            c1, EXPECTED_CELL_COUNT,
-            "Cell count regression at unit scale (build_at_scale(1.0))"
+            c1, EXPECTED_SIMPLEX_COUNT,
+            "Simplex count regression at unit scale (build_at_scale(1.0))"
         );
 
         // Cross-scale equality: perturbation is proportional to local feature size.
@@ -12329,8 +12436,14 @@ mod tests {
             v1, v3,
             "Vertex count should be scale-invariant (×1 vs ×1e-6)"
         );
-        assert_eq!(c1, c2, "Cell count should be scale-invariant (×1 vs ×1e6)");
-        assert_eq!(c1, c3, "Cell count should be scale-invariant (×1 vs ×1e-6)");
+        assert_eq!(
+            c1, c2,
+            "Simplex count should be scale-invariant (×1 vs ×1e6)"
+        );
+        assert_eq!(
+            c1, c3,
+            "Simplex count should be scale-invariant (×1 vs ×1e-6)"
+        );
     }
 
     /// Verify the mantissa-based epsilon selection (`1e-4` for f32, `1e-8` for f64)
