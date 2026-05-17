@@ -35,7 +35,8 @@ use crate::core::algorithms::incremental_insertion::{
 use crate::core::algorithms::locate::{ConflictError, LocateError, extract_cavity_boundary};
 use crate::core::cell::{Cell, CellValidationError, NeighborSlot};
 use crate::core::collections::{
-    CellKeyBuffer, FastHashMap, FastHashSet, FastHasher, MAX_PRACTICAL_DIMENSION_SIZE, SmallBuffer,
+    CellKeyBuffer, FastHashMap, FastHashSet, FastHasher, MAX_PRACTICAL_DIMENSION_SIZE,
+    PeriodicOffsetBuffer, SmallBuffer,
 };
 use crate::core::edge::EdgeKey;
 use crate::core::facet::{AllFacetsIter, FacetError, FacetHandle, facet_key_from_vertices};
@@ -70,6 +71,8 @@ use thiserror::Error;
 
 type VertexKeyList = SmallBuffer<VertexKey, MAX_PRACTICAL_DIMENSION_SIZE>;
 type RemovedCellVertexSnapshot = SmallBuffer<VertexKeyList, MAX_PRACTICAL_DIMENSION_SIZE>;
+type ReplacementPeriodicOffsets<const D: usize> =
+    SmallBuffer<Option<PeriodicOffsetBuffer<D>>, MAX_PRACTICAL_DIMENSION_SIZE>;
 
 /// Bistellar flip kind descriptor.
 ///
@@ -504,7 +507,25 @@ where
         }
     }
 
-    orient_replacement_cells(tds, &mut new_cell_vertices, &external_facets)?;
+    let newly_inserted_vertex = if k_move == 1 {
+        inserted_face_vertices.first().copied()
+    } else {
+        None
+    };
+    let mut new_cell_offsets = replacement_cell_periodic_offsets(
+        tds,
+        &new_cell_vertices,
+        removed_cells,
+        &external_facets,
+        newly_inserted_vertex,
+    )?;
+
+    orient_replacement_cells(
+        tds,
+        &mut new_cell_vertices,
+        &mut new_cell_offsets,
+        &external_facets,
+    )?;
     if matches!(
         orientation_policy,
         ReplacementOrientationPolicy::RequirePositive
@@ -521,8 +542,11 @@ where
 
     let mut trial = tds.clone_for_rollback();
 
-    for vertices in new_cell_vertices {
-        let cell = Cell::new(vertices, None)?;
+    for (vertices, periodic_offsets) in new_cell_vertices.into_iter().zip(new_cell_offsets) {
+        let mut cell = Cell::new(vertices, None)?;
+        if let Some(offsets) = periodic_offsets {
+            cell.set_periodic_vertex_offsets(offsets)?;
+        }
         let cell_key = trial
             .insert_cell_with_mapping_prechecked_topology(cell)
             .map_err(|source| FlipMutationError::CellInsertion {
@@ -1075,51 +1099,32 @@ where
 fn orient_replacement_cells<T, U, V, const D: usize>(
     tds: &Tds<T, U, V, D>,
     cells: &mut [SmallBuffer<VertexKey, MAX_PRACTICAL_DIMENSION_SIZE>],
+    periodic_offsets: &mut [Option<PeriodicOffsetBuffer<D>>],
     external_facets: &[FacetHandle],
-) -> Result<(), FlipError>
-where
-    T: CoordinateScalar,
-    U: DataType,
-    V: DataType,
-{
+) -> Result<(), FlipError> {
     let mut flips = SmallBuffer::from_elem(None, cells.len());
-
-    for &external in external_facets {
-        let external_cell =
-            tds.cell(external.cell_key())
-                .ok_or_else(|| FlipError::MissingCell {
-                    cell_key: external.cell_key(),
-                })?;
-        if external_cell.periodic_vertex_offsets().is_some() {
-            return Err(FlipContextError::PeriodicExternalCell {
-                cell_key: external.cell_key(),
-            }
-            .into());
+    if periodic_offsets.len() != cells.len() {
+        return Err(FlipContextError::ReplacementPeriodicOffsetCountMismatch {
+            cell_count: cells.len(),
+            offset_count: periodic_offsets.len(),
         }
-
-        let external_facet_idx = usize::from(external.facet_index());
-        for (cell_idx, vertices) in cells.iter().enumerate() {
-            let Some(replacement_facet_idx) =
-                matching_facet_index(external_cell.vertices(), external_facet_idx, vertices)?
-            else {
-                continue;
-            };
-            let coherent = facet_orders_coherent(
-                external_cell.vertices(),
-                external_facet_idx,
-                vertices,
-                replacement_facet_idx,
-            )?;
-            set_flip_assignment(&mut flips, cell_idx, !coherent)?;
-        }
+        .into());
     }
+
+    assign_external_replacement_orientation(
+        tds,
+        cells,
+        periodic_offsets,
+        external_facets,
+        &mut flips,
+    )?;
 
     loop {
         let mut changed = false;
 
         for source_idx in 0..cells.len() {
             for target_idx in (source_idx + 1)..cells.len() {
-                let Some((source_facet_idx, tarfacet_idx)) =
+                let Some((source_facet_idx, target_facet_idx)) =
                     shared_facet_indices(&cells[source_idx], &cells[target_idx])
                 else {
                     continue;
@@ -1128,7 +1133,7 @@ where
                     &cells[source_idx],
                     source_facet_idx,
                     &cells[target_idx],
-                    tarfacet_idx,
+                    target_facet_idx,
                 )?;
                 match (flips[source_idx], flips[target_idx]) {
                     (Some(source_flip), Some(target_flip)) => {
@@ -1167,12 +1172,72 @@ where
         }
     }
 
-    for (vertices, should_flip) in cells.iter_mut().zip(flips) {
+    for ((vertices, offsets), should_flip) in cells.iter_mut().zip(periodic_offsets).zip(flips) {
         if should_flip.unwrap_or(false) {
             if vertices.len() < 2 {
                 return Err(FlipContextError::ReplacementCellTooSmallForOrientationFlip.into());
             }
             vertices.swap(0, 1);
+            if let Some(offsets) = offsets {
+                offsets.swap(0, 1);
+            }
+        }
+    }
+
+    Ok(())
+}
+
+/// Applies external boundary-facet parity constraints to replacement cells.
+fn assign_external_replacement_orientation<T, U, V, const D: usize>(
+    tds: &Tds<T, U, V, D>,
+    cells: &[SmallBuffer<VertexKey, MAX_PRACTICAL_DIMENSION_SIZE>],
+    periodic_offsets: &[Option<PeriodicOffsetBuffer<D>>],
+    external_facets: &[FacetHandle],
+    flips: &mut SmallBuffer<Option<bool>, MAX_PRACTICAL_DIMENSION_SIZE>,
+) -> Result<(), FlipError> {
+    for &external in external_facets {
+        let external_cell =
+            tds.cell(external.cell_key())
+                .ok_or_else(|| FlipError::MissingCell {
+                    cell_key: external.cell_key(),
+                })?;
+        let external_offsets = periodic_offsets_or_zero_frame(external.cell_key(), external_cell)?;
+
+        let external_facet_idx = usize::from(external.facet_index());
+        for (cell_idx, vertices) in cells.iter().enumerate() {
+            let Some(replacement_facet_idx) =
+                matching_facet_index(external_cell.vertices(), external_facet_idx, vertices)?
+            else {
+                continue;
+            };
+            let coherent = if external_cell.periodic_vertex_offsets().is_some()
+                || periodic_offsets[cell_idx].is_some()
+            {
+                let Some(replacement_offsets) = periodic_offsets[cell_idx].as_deref() else {
+                    return Err(FlipContextError::MissingReplacementPeriodicOffsets {
+                        cell_index: cell_idx,
+                    }
+                    .into());
+                };
+                facet_orders_coherent_with_periodic_offsets(&PeriodicFacetParityContext {
+                    source_vertices: external_cell.vertices(),
+                    source_offsets: external_offsets.as_ref(),
+                    source_facet_idx: external_facet_idx,
+                    target_vertices: vertices,
+                    target_offsets: replacement_offsets,
+                    target_facet_idx: replacement_facet_idx,
+                    source_cell_key: external.cell_key(),
+                    target_cell_index: cell_idx,
+                })?
+            } else {
+                facet_orders_coherent(
+                    external_cell.vertices(),
+                    external_facet_idx,
+                    vertices,
+                    replacement_facet_idx,
+                )?
+            };
+            set_flip_assignment(flips, cell_idx, !coherent)?;
         }
     }
 
@@ -1207,6 +1272,105 @@ fn set_flip_assignment(
     }
 }
 
+/// Builds periodic offsets for replacement cells in one shared cavity frame.
+fn replacement_cell_periodic_offsets<T, U, V, const D: usize>(
+    tds: &Tds<T, U, V, D>,
+    cells: &[SmallBuffer<VertexKey, MAX_PRACTICAL_DIMENSION_SIZE>],
+    removed_cells: &[CellKey],
+    external_facets: &[FacetHandle],
+    newly_inserted_vertex: Option<VertexKey>,
+) -> Result<ReplacementPeriodicOffsets<D>, FlipError> {
+    let source_cells = replacement_periodic_source_cells(removed_cells, external_facets);
+    if !replacement_sources_use_periodic_offsets(tds, &source_cells)? {
+        return Ok(SmallBuffer::from_elem(None, cells.len()));
+    }
+
+    let target_cell_key = *removed_cells
+        .first()
+        .ok_or(FlipContextError::MissingRemovedCellFrame)?;
+    let mut offsets_by_cell = ReplacementPeriodicOffsets::<D>::with_capacity(cells.len());
+
+    for vertices in cells {
+        let mut offsets = PeriodicOffsetBuffer::<D>::with_capacity(vertices.len());
+        for &vertex_key in vertices {
+            let offset = if Some(vertex_key) == newly_inserted_vertex
+                && !source_cells_contain_vertex(tds, &source_cells, vertex_key)?
+            {
+                new_vertex_periodic_offset_in_frame(tds, target_cell_key)?
+            } else {
+                periodic_offset_lifted_into_cell(tds, vertex_key, target_cell_key, &source_cells)?
+            };
+            offsets.push(offset);
+        }
+        offsets_by_cell.push(Some(offsets));
+    }
+
+    Ok(offsets_by_cell)
+}
+
+/// Collects removed and external cells that can witness periodic frame alignment.
+fn replacement_periodic_source_cells(
+    removed_cells: &[CellKey],
+    external_facets: &[FacetHandle],
+) -> CellKeyBuffer {
+    let mut source_cells = CellKeyBuffer::new();
+    let mut seen = FastHashSet::default();
+    for &cell_key in removed_cells {
+        push_unique_cell_key(cell_key, &mut source_cells, &mut seen);
+    }
+    for external in external_facets {
+        push_unique_cell_key(external.cell_key(), &mut source_cells, &mut seen);
+    }
+    source_cells
+}
+
+/// Returns whether any source cell carries explicit periodic offsets.
+fn replacement_sources_use_periodic_offsets<T, U, V, const D: usize>(
+    tds: &Tds<T, U, V, D>,
+    source_cells: &[CellKey],
+) -> Result<bool, FlipError> {
+    let mut uses_periodic_offsets = false;
+    for &cell_key in source_cells {
+        let cell = tds
+            .cell(cell_key)
+            .ok_or(FlipError::MissingCell { cell_key })?;
+        if let Some(offsets) = cell.periodic_vertex_offsets() {
+            validate_periodic_offset_len(cell_key, cell, offsets)?;
+            uses_periodic_offsets = true;
+        }
+    }
+    Ok(uses_periodic_offsets)
+}
+
+/// Checks whether a vertex already has a periodic representative in any source cell.
+fn source_cells_contain_vertex<T, U, V, const D: usize>(
+    tds: &Tds<T, U, V, D>,
+    source_cells: &[CellKey],
+    vertex_key: VertexKey,
+) -> Result<bool, FlipError> {
+    for &cell_key in source_cells {
+        let cell = tds
+            .cell(cell_key)
+            .ok_or(FlipError::MissingCell { cell_key })?;
+        if cell.contains_vertex(vertex_key) {
+            return Ok(true);
+        }
+    }
+    Ok(false)
+}
+
+/// Places a newly inserted k=1 vertex in the target cell's local lattice sheet.
+fn new_vertex_periodic_offset_in_frame<T, U, V, const D: usize>(
+    tds: &Tds<T, U, V, D>,
+    target_cell_key: CellKey,
+) -> Result<[i8; D], FlipError> {
+    let target_cell = tds.cell(target_cell_key).ok_or(FlipError::MissingCell {
+        cell_key: target_cell_key,
+    })?;
+    let target_offsets = periodic_offsets_or_zero_frame(target_cell_key, target_cell)?;
+    Ok(target_offsets.first().copied().unwrap_or([0_i8; D]))
+}
+
 /// Finds the target facet opposite the source facet, if the cells share it.
 fn matching_facet_index(
     source_vertices: &[VertexKey],
@@ -1226,18 +1390,18 @@ fn matching_facet_index(
         return Ok(None);
     }
 
-    let mut tarfacet_idx = None;
+    let mut target_facet_idx = None;
     for (idx, &vertex) in target_vertices.iter().enumerate() {
         if source_facet.contains(&vertex) {
             continue;
         }
-        if tarfacet_idx.is_some() {
+        if target_facet_idx.is_some() {
             return Ok(None);
         }
-        tarfacet_idx = Some(idx);
+        target_facet_idx = Some(idx);
     }
 
-    Ok(tarfacet_idx)
+    Ok(target_facet_idx)
 }
 
 /// Finds the opposite slots for two replacement cells that share a facet.
@@ -1250,8 +1414,8 @@ fn shared_facet_indices(
     }
 
     let source_facet_idx = unique_vertex_index(source_vertices, target_vertices)?;
-    let tarfacet_idx = unique_vertex_index(target_vertices, source_vertices)?;
-    Some((source_facet_idx, tarfacet_idx))
+    let target_facet_idx = unique_vertex_index(target_vertices, source_vertices)?;
+    Some((source_facet_idx, target_facet_idx))
 }
 
 /// Returns the single vertex slot in `vertices` that is absent from `other`.
@@ -1274,14 +1438,139 @@ fn facet_orders_coherent(
     source_vertices: &[VertexKey],
     source_facet_idx: usize,
     target_vertices: &[VertexKey],
-    tarfacet_idx: usize,
+    target_facet_idx: usize,
 ) -> Result<bool, FlipError> {
     let source_order = facet_order(source_vertices, source_facet_idx)?;
-    let target_order = facet_order(target_vertices, tarfacet_idx)?;
+    let target_order = facet_order(target_vertices, target_facet_idx)?;
     let observed_odd = permutation_odd(&source_order, &target_order)
         .ok_or(FlipContextError::FacetOrderParityUnavailable)?;
-    let expected_odd = (source_facet_idx + tarfacet_idx).is_multiple_of(2);
+    let expected_odd = (source_facet_idx + target_facet_idx).is_multiple_of(2);
     Ok(observed_odd == expected_odd)
+}
+
+/// Inputs needed to compare one periodic source facet with a replacement facet.
+struct PeriodicFacetParityContext<'a, const D: usize> {
+    source_vertices: &'a [VertexKey],
+    source_offsets: &'a [[i8; D]],
+    source_facet_idx: usize,
+    target_vertices: &'a [VertexKey],
+    target_offsets: &'a [[i8; D]],
+    target_facet_idx: usize,
+    source_cell_key: CellKey,
+    target_cell_index: usize,
+}
+
+/// Checks facet parity after aligning a periodic source facet into a replacement frame.
+fn facet_orders_coherent_with_periodic_offsets<const D: usize>(
+    context: &PeriodicFacetParityContext<'_, D>,
+) -> Result<bool, FlipError> {
+    if context.source_offsets.len() != context.source_vertices.len() {
+        return Err(FlipContextError::PeriodicOffsetCountMismatch {
+            cell_key: context.source_cell_key,
+            offset_count: context.source_offsets.len(),
+            vertex_count: context.source_vertices.len(),
+        }
+        .into());
+    }
+    if context.target_offsets.len() != context.target_vertices.len() {
+        return Err(FlipContextError::ReplacementPeriodicOffsetLengthMismatch {
+            cell_index: context.target_cell_index,
+            offset_count: context.target_offsets.len(),
+            vertex_count: context.target_vertices.len(),
+        }
+        .into());
+    }
+
+    let source_order = facet_order_with_offsets(
+        context.source_vertices,
+        context.source_offsets,
+        context.source_facet_idx,
+    )?;
+    let target_order = facet_order_with_offsets(
+        context.target_vertices,
+        context.target_offsets,
+        context.target_facet_idx,
+    )?;
+    let aligned_source_order = align_periodic_facet_order(
+        &source_order,
+        &target_order,
+        context.source_cell_key,
+        context.target_cell_index,
+    )?;
+    let observed_odd = permutation_odd(&aligned_source_order, &target_order)
+        .ok_or(FlipContextError::FacetOrderParityUnavailable)?;
+    let expected_odd = (context.source_facet_idx + context.target_facet_idx).is_multiple_of(2);
+    Ok(observed_odd == expected_odd)
+}
+
+/// Returns facet `(vertex, offset)` identities in cell-local order.
+fn facet_order_with_offsets<const D: usize>(
+    vertices: &[VertexKey],
+    offsets: &[[i8; D]],
+    omit_idx: usize,
+) -> Result<SmallBuffer<(VertexKey, [i8; D]), MAX_PRACTICAL_DIMENSION_SIZE>, FlipError> {
+    if omit_idx >= vertices.len() {
+        return Err(FlipContextError::ReplacementFacetIndexOutOfRange {
+            facet_index: omit_idx,
+            vertex_count: vertices.len(),
+        }
+        .into());
+    }
+
+    let mut order = SmallBuffer::with_capacity(vertices.len().saturating_sub(1));
+    for (idx, &vertex) in vertices.iter().enumerate() {
+        if idx != omit_idx {
+            order.push((vertex, offsets[idx]));
+        }
+    }
+    Ok(order)
+}
+
+/// Translates source facet offsets into the target replacement frame.
+fn align_periodic_facet_order<const D: usize>(
+    source_order: &[(VertexKey, [i8; D])],
+    target_order: &[(VertexKey, [i8; D])],
+    source_cell_key: CellKey,
+    target_cell_index: usize,
+) -> Result<SmallBuffer<(VertexKey, [i8; D]), MAX_PRACTICAL_DIMENSION_SIZE>, FlipError> {
+    let mut aligned_order = SmallBuffer::with_capacity(source_order.len());
+    for &(vertex_key, source_vertex_offset) in source_order {
+        let mut aligned_offset: Option<[i8; D]> = None;
+        for &(reference_vertex, source_reference_offset) in source_order {
+            let Some((_, target_reference_offset)) = target_order
+                .iter()
+                .find(|(target_vertex, _)| *target_vertex == reference_vertex)
+            else {
+                return Err(FlipContextError::FacetOrderParityUnavailable.into());
+            };
+            let candidate_offset = align_periodic_offset(
+                source_vertex_offset,
+                source_reference_offset,
+                *target_reference_offset,
+            )?;
+            if let Some(expected_offset) = aligned_offset {
+                if candidate_offset != expected_offset {
+                    return Err(
+                        FlipContextError::ConflictingReplacementPeriodicFrameTranslation {
+                            vertex_key,
+                            source_cell_key,
+                            target_cell_index,
+                            expected_offset: expected_offset.into(),
+                            found_offset: candidate_offset.into(),
+                        }
+                        .into(),
+                    );
+                }
+            } else {
+                aligned_offset = Some(candidate_offset);
+            }
+        }
+        let Some(offset) = aligned_offset else {
+            return Err(FlipContextError::FacetOrderParityUnavailable.into());
+        };
+        aligned_order.push((vertex_key, offset));
+    }
+    Ok(aligned_order)
 }
 
 /// Returns facet vertices in cell-local order.
@@ -1307,7 +1596,7 @@ fn facet_order(
 }
 
 /// Returns whether the permutation from `source_order` to `target_order` is odd.
-fn permutation_odd(source_order: &[VertexKey], target_order: &[VertexKey]) -> Option<bool> {
+fn permutation_odd<Id: PartialEq>(source_order: &[Id], target_order: &[Id]) -> Option<bool> {
     if source_order.len() != target_order.len() {
         return None;
     }
@@ -2176,6 +2465,23 @@ impl FlipPredicateError {
 }
 
 /// Structured reason a flip context is invalid before mutation.
+///
+/// These reasons are wrapped by [`FlipError::InvalidFlipContext`] so callers can
+/// distinguish shape errors, replacement-orientation conflicts, and periodic
+/// frame-alignment failures before any TDS mutation is committed.
+///
+/// # Examples
+///
+/// ```rust
+/// use delaunay::prelude::triangulation::flips::{FlipContextError, FlipError};
+///
+/// let reason = FlipContextError::ReplacementPeriodicOffsetCountMismatch {
+///     cell_count: 2,
+///     offset_count: 1,
+/// };
+/// let err: FlipError = reason.into();
+/// assert!(matches!(err, FlipError::InvalidFlipContext { .. }));
+/// ```
 #[derive(Clone, Debug, Error, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum FlipContextError {
@@ -2216,13 +2522,33 @@ pub enum FlipContextError {
     /// Removed and inserted faces are not disjoint.
     #[error("removed-face and inserted-face must be disjoint")]
     OverlappingFaces,
-    /// A periodic external cell lacks aligned offsets for replacement parity.
+    /// Replacement-cell offset sidecar length does not match the replacement cells.
     #[error(
-        "periodic external cell {cell_key:?} cannot be used for replacement-cell parity without aligned periodic offsets"
+        "replacement periodic offset count {offset_count} does not match replacement cell count {cell_count}"
     )]
-    PeriodicExternalCell {
-        /// External cell with periodic offsets.
-        cell_key: CellKey,
+    ReplacementPeriodicOffsetCountMismatch {
+        /// Number of replacement cells.
+        cell_count: usize,
+        /// Number of periodic-offset entries.
+        offset_count: usize,
+    },
+    /// A periodic parity constraint referenced a replacement cell without offsets.
+    #[error("replacement cell {cell_index} is missing periodic offsets for periodic facet parity")]
+    MissingReplacementPeriodicOffsets {
+        /// Local replacement-cell index.
+        cell_index: usize,
+    },
+    /// Replacement-cell periodic offsets are not aligned with its vertex slots.
+    #[error(
+        "replacement cell {cell_index} periodic offset count {offset_count} does not match vertex count {vertex_count}"
+    )]
+    ReplacementPeriodicOffsetLengthMismatch {
+        /// Local replacement-cell index.
+        cell_index: usize,
+        /// Number of periodic offsets.
+        offset_count: usize,
+        /// Number of replacement-cell vertices.
+        vertex_count: usize,
     },
     /// Replacement-cell orientation constraints disagree.
     #[error(
@@ -2292,6 +2618,22 @@ pub enum FlipContextError {
         source_cell_key: CellKey,
         /// Target cell frame.
         target_cell_key: CellKey,
+        /// Previously derived offset.
+        expected_offset: Vec<i8>,
+        /// Conflicting candidate offset.
+        found_offset: Vec<i8>,
+    },
+    /// Periodic frame alignment disagreed for an external-to-replacement facet.
+    #[error(
+        "conflicting periodic frame translations while aligning vertex {vertex_key:?} from external cell {source_cell_key:?} into replacement cell {target_cell_index}: expected {expected_offset:?}, got {found_offset:?}"
+    )]
+    ConflictingReplacementPeriodicFrameTranslation {
+        /// Vertex being aligned.
+        vertex_key: VertexKey,
+        /// External source cell used for alignment.
+        source_cell_key: CellKey,
+        /// Target replacement-cell index.
+        target_cell_index: usize,
         /// Previously derived offset.
         expected_offset: Vec<i8>,
         /// Conflicting candidate offset.
@@ -8182,9 +8524,20 @@ where
         return lift_vertex_point(tds, topology_model, vertex_key, None);
     }
 
+    let offset = periodic_offset_lifted_into_cell(tds, vertex_key, tarcell_key, source_cells)?;
+    lift_vertex_point(tds, topology_model, vertex_key, Some(offset))
+}
+
+/// Aligns a vertex's periodic offset into a target cell frame.
+fn periodic_offset_lifted_into_cell<T, U, V, const D: usize>(
+    tds: &Tds<T, U, V, D>,
+    vertex_key: VertexKey,
+    tarcell_key: CellKey,
+    source_cells: &[CellKey],
+) -> Result<[i8; D], FlipError> {
     let target_offset = periodic_offset_for_cell_vertex(tds, tarcell_key, vertex_key)?;
     if let Some(offset) = target_offset {
-        return lift_vertex_point(tds, topology_model, vertex_key, Some(offset));
+        return Ok(offset);
     }
 
     let tarcell = tds.cell(tarcell_key).ok_or(FlipError::MissingCell {
@@ -8234,7 +8587,7 @@ where
             }
         }
         if let Some(offset) = aligned_offset {
-            return lift_vertex_point(tds, topology_model, vertex_key, Some(offset));
+            return Ok(offset);
         }
     }
 
@@ -8276,11 +8629,7 @@ fn periodic_offset_for_cell_vertex<T, U, V, const D: usize>(
     tds: &Tds<T, U, V, D>,
     cell_key: CellKey,
     vertex_key: VertexKey,
-) -> Result<Option<[i8; D]>, FlipError>
-where
-    U: DataType,
-    V: DataType,
-{
+) -> Result<Option<[i8; D]>, FlipError> {
     let cell = tds
         .cell(cell_key)
         .ok_or(FlipError::MissingCell { cell_key })?;
@@ -8297,11 +8646,7 @@ where
 fn periodic_offsets_or_zero_frame<T, U, V, const D: usize>(
     cell_key: CellKey,
     cell: &Cell<T, U, V, D>,
-) -> Result<Cow<'_, [[i8; D]]>, FlipError>
-where
-    U: DataType,
-    V: DataType,
-{
+) -> Result<Cow<'_, [[i8; D]]>, FlipError> {
     let offsets = cell.periodic_vertex_offsets().map_or_else(
         // The fallback frame is synthesized locally, so `Cow::Owned` keeps the
         // temporary vector alive while the stored-offset path can stay borrowed.
@@ -8318,11 +8663,7 @@ fn validate_periodic_offset_len<T, U, V, const D: usize>(
     cell_key: CellKey,
     cell: &Cell<T, U, V, D>,
     offsets: &[[i8; D]],
-) -> Result<(), FlipError>
-where
-    U: DataType,
-    V: DataType,
-{
+) -> Result<(), FlipError> {
     if offsets.len() == cell.number_of_vertices() {
         return Ok(());
     }
@@ -8339,11 +8680,7 @@ where
 fn shared_vertex_indices<T, U, V, const D: usize>(
     tarcell: &Cell<T, U, V, D>,
     source_cell: &Cell<T, U, V, D>,
-) -> SmallBuffer<(usize, usize), MAX_PRACTICAL_DIMENSION_SIZE>
-where
-    U: DataType,
-    V: DataType,
-{
+) -> SmallBuffer<(usize, usize), MAX_PRACTICAL_DIMENSION_SIZE> {
     let mut shared = SmallBuffer::new();
     for (target_index, &target_vertex) in tarcell.vertices().iter().enumerate() {
         if let Some(source_index) = source_cell
@@ -9005,6 +9342,17 @@ mod tests {
             );
         }
         vertices
+    }
+
+    /// Creates distinct periodic offsets so tests can verify slot-preserving swaps.
+    fn periodic_test_offsets<const D: usize>(len: usize) -> Vec<[i8; D]> {
+        let mut offsets = Vec::with_capacity(len);
+        for index in 0..len {
+            let mut offset = [0_i8; D];
+            offset[index % D] = i8::try_from(index).expect("test offset index fits in i8");
+            offsets.push(offset);
+        }
+        offsets
     }
 
     /// Verifies source-cell orientation gating only accepts certified positive orderings.
@@ -9715,22 +10063,138 @@ mod tests {
         assert!(tds.is_valid().is_ok());
     }
 
+    #[test]
+    fn test_k2_flip_preserves_periodic_external_offsets() {
+        init_tracing();
+        let mut tds: Tds<f64, (), (), 2> = Tds::empty();
+
+        let v_left_bottom = tds.insert_vertex_with_mapping(vertex!([0.0, 0.0])).unwrap();
+        let v_right_bottom = tds.insert_vertex_with_mapping(vertex!([2.0, 0.0])).unwrap();
+        let v_left_top = tds.insert_vertex_with_mapping(vertex!([0.0, 2.0])).unwrap();
+        let v_right_top = tds.insert_vertex_with_mapping(vertex!([2.0, 2.0])).unwrap();
+        let v_external = tds
+            .insert_vertex_with_mapping(vertex!([-1.0, 1.0]))
+            .unwrap();
+
+        let cell_cavity_left = insert_periodic_cell_with_offsets(
+            &mut tds,
+            vec![v_left_bottom, v_right_bottom, v_left_top],
+            vec![[0_i8; 2]; 3],
+        );
+        let cell_cavity_right = insert_periodic_cell_with_offsets(
+            &mut tds,
+            vec![v_right_bottom, v_left_bottom, v_right_top],
+            vec![[0_i8; 2]; 3],
+        );
+        let cell_external_left = insert_periodic_cell_with_offsets(
+            &mut tds,
+            vec![v_left_bottom, v_left_top, v_external],
+            vec![[0_i8; 2]; 3],
+        );
+
+        repair_neighbor_pointers(&mut tds).unwrap();
+        assert!(tds.is_valid().is_ok());
+
+        let facet_idx_flip_edge =
+            facet_index_for_edge_2d(&tds, cell_cavity_left, v_left_bottom, v_right_bottom);
+        let ctx = build_k2_flip_context(
+            &tds,
+            FacetHandle::new(cell_cavity_left, facet_idx_flip_edge),
+        )
+        .unwrap();
+
+        let info = apply_bistellar_flip(&mut tds, &ctx).unwrap();
+
+        assert!(!tds.contains_cell(cell_cavity_left));
+        assert!(!tds.contains_cell(cell_cavity_right));
+        assert!(tds.contains_cell(cell_external_left));
+        for &cell_key in &info.new_cells {
+            let cell = tds.cell(cell_key).unwrap();
+            assert!(
+                cell.periodic_vertex_offsets()
+                    .is_some_and(|offsets| offsets.len() == cell.number_of_vertices()),
+                "replacement cell {cell_key:?} should preserve periodic offsets"
+            );
+        }
+
+        let facet_idx_glue_edge =
+            facet_index_for_edge_2d(&tds, cell_external_left, v_left_bottom, v_left_top);
+        let external_cell = tds.cell(cell_external_left).unwrap();
+        let neighbor_key_glue = external_cell
+            .neighbor_key(usize::from(facet_idx_glue_edge))
+            .expect("external neighbors should exist")
+            .expect("external cell should have a replacement neighbor across the glue edge");
+        assert!(
+            info.new_cells
+                .iter()
+                .copied()
+                .any(|cell_key| cell_key == neighbor_key_glue),
+            "expected periodic external facet to be wired to a flip replacement cell"
+        );
+        assert!(tds.is_valid().is_ok());
+    }
+
     macro_rules! gen_replacement_orientation_helper_tests {
         ($dim:literal) => {
             pastey::paste! {
                 #[test]
-                fn [<test_orient_replacement_cells_rejects_periodic_external_cell_ $dim d>]() {
+                fn [<test_orient_replacement_cells_uses_periodic_external_cell_ $dim d>]() {
                     let mut tds: Tds<f64, (), (), $dim> = Tds::empty();
                     let simplex_vertices = insert_standard_simplex_vertices(&mut tds);
 
+                    let offsets = periodic_test_offsets::<$dim>($dim + 1);
                     let mut external_cell = Cell::new(simplex_vertices.clone(), None).unwrap();
-                    external_cell.set_periodic_vertex_offsets(vec![[0_i8; $dim]; $dim + 1]).unwrap();
+                    external_cell.set_periodic_vertex_offsets(offsets.clone()).unwrap();
                     let external_cell_key = tds.insert_cell_with_mapping(external_cell).unwrap();
 
                     let mut replacement_cells = vec![vertex_key_buffer(&simplex_vertices)];
+                    let mut replacement_offsets: Vec<Option<PeriodicOffsetBuffer<$dim>>> =
+                        vec![Some(offsets.clone().into())];
+                    orient_replacement_cells(
+                        &tds,
+                        &mut replacement_cells,
+                        &mut replacement_offsets,
+                        &[FacetHandle::new(external_cell_key, 0)],
+                    )
+                    .unwrap();
+
+                    let mut expected_vertices = simplex_vertices.clone();
+                    expected_vertices.swap(0, 1);
+                    assert_eq!(
+                        replacement_cells[0].iter().copied().collect::<Vec<_>>(),
+                        expected_vertices,
+                        "periodic external facet parity should flip a same-order replacement cell"
+                    );
+                    let mut expected_offsets = offsets;
+                    expected_offsets.swap(0, 1);
+                    assert_eq!(
+                        replacement_offsets[0].as_deref(),
+                        Some(expected_offsets.as_slice()),
+                        "periodic offsets should stay aligned with swapped replacement vertices"
+                    );
+                }
+
+                #[test]
+                fn [<test_orient_replacement_cells_rejects_conflicting_periodic_external_offsets_ $dim d>]() {
+                    let mut tds: Tds<f64, (), (), $dim> = Tds::empty();
+                    let simplex_vertices = insert_standard_simplex_vertices(&mut tds);
+
+                    let external_offsets = vec![[0_i8; $dim]; $dim + 1];
+                    let mut external_cell = Cell::new(simplex_vertices.clone(), None).unwrap();
+                    external_cell
+                        .set_periodic_vertex_offsets(external_offsets)
+                        .unwrap();
+                    let external_cell_key = tds.insert_cell_with_mapping(external_cell).unwrap();
+
+                    let mut replacement_cells = vec![vertex_key_buffer(&simplex_vertices)];
+                    let mut replacement_offsets = vec![[0_i8; $dim]; $dim + 1];
+                    replacement_offsets[1][0] = 1;
+                    let mut replacement_offsets: Vec<Option<PeriodicOffsetBuffer<$dim>>> =
+                        vec![Some(replacement_offsets.into())];
                     let result = orient_replacement_cells(
                         &tds,
                         &mut replacement_cells,
+                        &mut replacement_offsets,
                         &[FacetHandle::new(external_cell_key, 0)],
                     );
 
@@ -9738,10 +10202,112 @@ mod tests {
                         matches!(
                             result,
                             Err(FlipError::InvalidFlipContext {
-                                reason: FlipContextError::PeriodicExternalCell { cell_key }
-                            }) if cell_key == external_cell_key
+                                reason: FlipContextError::ConflictingReplacementPeriodicFrameTranslation {
+                                    source_cell_key,
+                                    target_cell_index: 0,
+                                    ..
+                                }
+                            }) if source_cell_key == external_cell_key
                         ),
-                        "periodic external cells should fail before parity constraints are dropped: {result:?}"
+                        "conflicting periodic external facet translations should fail before mutation: {result:?}"
+                    );
+                }
+
+                #[test]
+                fn [<test_orient_replacement_cells_rejects_periodic_offset_count_mismatch_ $dim d>]() {
+                    let mut tds: Tds<f64, (), (), $dim> = Tds::empty();
+                    let simplex_vertices = insert_standard_simplex_vertices(&mut tds);
+                    let mut replacement_cells = vec![vertex_key_buffer(&simplex_vertices)];
+                    let mut replacement_offsets: Vec<Option<PeriodicOffsetBuffer<$dim>>> = Vec::new();
+
+                    let result = orient_replacement_cells(
+                        &tds,
+                        &mut replacement_cells,
+                        &mut replacement_offsets,
+                        &[],
+                    );
+
+                    assert!(
+                        matches!(
+                            result,
+                            Err(FlipError::InvalidFlipContext {
+                                reason: FlipContextError::ReplacementPeriodicOffsetCountMismatch {
+                                    cell_count: 1,
+                                    offset_count: 0,
+                                }
+                            })
+                        ),
+                        "replacement offset sidecar length mismatch should fail explicitly: {result:?}"
+                    );
+                }
+
+                #[test]
+                fn [<test_orient_replacement_cells_rejects_missing_replacement_periodic_offsets_ $dim d>]() {
+                    let mut tds: Tds<f64, (), (), $dim> = Tds::empty();
+                    let simplex_vertices = insert_standard_simplex_vertices(&mut tds);
+
+                    let mut external_cell = Cell::new(simplex_vertices.clone(), None).unwrap();
+                    external_cell
+                        .set_periodic_vertex_offsets(vec![[0_i8; $dim]; $dim + 1])
+                        .unwrap();
+                    let external_cell_key = tds.insert_cell_with_mapping(external_cell).unwrap();
+
+                    let mut replacement_cells = vec![vertex_key_buffer(&simplex_vertices)];
+                    let mut replacement_offsets: Vec<Option<PeriodicOffsetBuffer<$dim>>> = vec![None];
+                    let result = orient_replacement_cells(
+                        &tds,
+                        &mut replacement_cells,
+                        &mut replacement_offsets,
+                        &[FacetHandle::new(external_cell_key, 0)],
+                    );
+
+                    assert!(
+                        matches!(
+                            result,
+                            Err(FlipError::InvalidFlipContext {
+                                reason: FlipContextError::MissingReplacementPeriodicOffsets {
+                                    cell_index: 0,
+                                }
+                            })
+                        ),
+                        "periodic external parity should require replacement offsets: {result:?}"
+                    );
+                }
+
+                #[test]
+                fn [<test_orient_replacement_cells_rejects_replacement_periodic_offset_length_mismatch_ $dim d>]() {
+                    let mut tds: Tds<f64, (), (), $dim> = Tds::empty();
+                    let simplex_vertices = insert_standard_simplex_vertices(&mut tds);
+
+                    let mut external_cell = Cell::new(simplex_vertices.clone(), None).unwrap();
+                    external_cell
+                        .set_periodic_vertex_offsets(vec![[0_i8; $dim]; $dim + 1])
+                        .unwrap();
+                    let external_cell_key = tds.insert_cell_with_mapping(external_cell).unwrap();
+
+                    let mut replacement_cells = vec![vertex_key_buffer(&simplex_vertices)];
+                    let replacement_offsets = vec![[0_i8; $dim]; $dim];
+                    let mut replacement_offsets: Vec<Option<PeriodicOffsetBuffer<$dim>>> =
+                        vec![Some(replacement_offsets.into())];
+                    let result = orient_replacement_cells(
+                        &tds,
+                        &mut replacement_cells,
+                        &mut replacement_offsets,
+                        &[FacetHandle::new(external_cell_key, 0)],
+                    );
+
+                    assert!(
+                        matches!(
+                            result,
+                            Err(FlipError::InvalidFlipContext {
+                                reason: FlipContextError::ReplacementPeriodicOffsetLengthMismatch {
+                                    cell_index: 0,
+                                    offset_count: $dim,
+                                    vertex_count,
+                                }
+                            }) if vertex_count == $dim + 1
+                        ),
+                        "replacement periodic offsets should stay slot-aligned with vertices: {result:?}"
                     );
                 }
 
@@ -9755,9 +10321,12 @@ mod tests {
                     assert_eq!(tds.remove_cells_by_keys(&[external_cell_key]), 1);
 
                     let mut replacement_cells = vec![vertex_key_buffer(&simplex_vertices)];
+                    let mut replacement_offsets: Vec<Option<PeriodicOffsetBuffer<$dim>>> =
+                        vec![None; replacement_cells.len()];
                     let result = orient_replacement_cells(
                         &tds,
                         &mut replacement_cells,
+                        &mut replacement_offsets,
                         &[FacetHandle::new(external_cell_key, 0)],
                     );
 
@@ -9880,9 +10449,12 @@ mod tests {
                         .unwrap();
 
                     let mut external_aligned = vec![vertex_key_buffer(&simplex_vertices)];
+                    let mut external_offsets: Vec<Option<PeriodicOffsetBuffer<$dim>>> =
+                        vec![None; external_aligned.len()];
                     orient_replacement_cells(
                         &tds,
                         &mut external_aligned,
+                        &mut external_offsets,
                         &[FacetHandle::new(external_cell_key, 0)],
                     )
                     .unwrap();
@@ -9900,15 +10472,23 @@ mod tests {
                         vertex_key_buffer(&simplex_vertices),
                         vertex_key_buffer(&adjacent_vertices),
                     ];
-                    orient_replacement_cells(&tds, &mut internally_aligned, &[]).unwrap();
-                    let (source_facet_idx, tarfacet_idx) =
+                    let mut internal_offsets: Vec<Option<PeriodicOffsetBuffer<$dim>>> =
+                        vec![None; internally_aligned.len()];
+                    orient_replacement_cells(
+                        &tds,
+                        &mut internally_aligned,
+                        &mut internal_offsets,
+                        &[],
+                    )
+                    .unwrap();
+                    let (source_facet_idx, target_facet_idx) =
                         shared_facet_indices(&internally_aligned[0], &internally_aligned[1]).unwrap();
                     assert!(
                         facet_orders_coherent(
                             &internally_aligned[0],
                             source_facet_idx,
                             &internally_aligned[1],
-                            tarfacet_idx,
+                            target_facet_idx,
                         )
                         .unwrap(),
                         "internal shared facets should be coherent after parity propagation"

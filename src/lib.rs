@@ -1540,9 +1540,9 @@ mod tests {
         },
         prelude::triangulation::repair::{
             DelaunayCheckPolicy, DelaunayRepairError, DelaunayRepairOutcome, DelaunayRepairPolicy,
-            DelaunayRepairStats, DelaunayTriangulation as RepairDelaunayTriangulation, FlipError,
-            RepairQueueOrder, TopologyGuarantee, verify_delaunay_for_triangulation,
-            verify_delaunay_via_flip_predicates,
+            DelaunayRepairStats, DelaunayTriangulation as RepairDelaunayTriangulation,
+            FlipContextError, FlipError, RepairQueueOrder, TopologyGuarantee,
+            verify_delaunay_for_triangulation, verify_delaunay_via_flip_predicates,
         },
         prelude::*,
         triangulation::delaunay::DelaunayTriangulation,
@@ -1637,6 +1637,14 @@ mod tests {
 
         let err = DelaunayRepairError::Flip(FlipError::DegenerateCell);
         assert!(matches!(err, DelaunayRepairError::Flip(_)));
+        let context_err = FlipContextError::ReplacementPeriodicOffsetCountMismatch {
+            cell_count: 1,
+            offset_count: 0,
+        };
+        assert!(matches!(
+            context_err,
+            FlipContextError::ReplacementPeriodicOffsetCountMismatch { .. }
+        ));
         let topo = TopologyGuarantee::PLManifold;
         assert!(matches!(topo, TopologyGuarantee::PLManifold));
     }
