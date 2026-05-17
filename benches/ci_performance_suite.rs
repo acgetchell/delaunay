@@ -1064,6 +1064,31 @@ fn bench_hull_case<const D: usize>(
     );
 }
 
+fn exterior_hull_query_point<const D: usize>(dt: &BenchTriangulation<D>) -> Point<f64, D> {
+    let mut mins = [f64::INFINITY; D];
+    let mut maxs = [f64::NEG_INFINITY; D];
+    let mut has_vertices = false;
+
+    for (_, vertex) in dt.as_triangulation().vertices() {
+        has_vertices = true;
+        for (axis, coord) in vertex.point().coords().iter().copied().enumerate() {
+            mins[axis] = mins[axis].min(coord);
+            maxs[axis] = maxs[axis].max(coord);
+        }
+    }
+
+    if !has_vertices {
+        abort_benchmark("hull query benchmark triangulation should contain vertices");
+    }
+
+    let mut coords = [0.0; D];
+    for (axis, coord) in coords.iter_mut().enumerate() {
+        let span = maxs[axis] - mins[axis];
+        *coord = maxs[axis] + span.max(1.0);
+    }
+    Point::new(coords)
+}
+
 fn bench_hull_query_case<const D: usize>(
     group: &mut BenchmarkGroup<'_, WallTime>,
     dimension: usize,
@@ -1077,7 +1102,16 @@ fn bench_hull_query_case<const D: usize>(
             "convex hull extraction should succeed before query benchmarks: {error}"
         )),
     };
-    let outside_point = Point::new([10.0; D]);
+    let outside_point = exterior_hull_query_point(dt);
+    match hull.is_point_outside(&outside_point, dt.as_triangulation()) {
+        Ok(true) => {}
+        Ok(false) => abort_benchmark(
+            "computed exterior hull query point should be outside the benchmark hull",
+        ),
+        Err(error) => abort_benchmark(format_args!(
+            "ConvexHull::is_point_outside should validate the exterior query point: {error}"
+        )),
+    }
 
     group.throughput(Throughput::Elements(count as u64));
     group.bench_function(
