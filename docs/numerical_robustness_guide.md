@@ -315,7 +315,7 @@ See `validate_cell_coordinate_uniqueness` in
 ### User-facing dedup utilities
 
 For explicit preprocessing, the crate provides public deduplication functions in
-`core::util`:
+`delaunay::prelude::triangulation`:
 
 - `dedup_vertices_exact(&[Vertex])` — removes exact coordinate duplicates (O(n²))
 - `dedup_vertices_epsilon(&[Vertex], epsilon)` — removes near-duplicates within

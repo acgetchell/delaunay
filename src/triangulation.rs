@@ -51,6 +51,31 @@ pub(crate) mod locality;
 pub mod validation;
 
 // Re-export commonly used triangulation types for discoverability.
-pub use crate::core::triangulation::Triangulation;
+pub use crate::core::algorithms::incremental_insertion::{
+    CavityFillingError, CavityRepairStage, DelaunayRepairErrorKind, DelaunayRepairErrorSummary,
+    DelaunayRepairFailureContext, HullExtensionReason, InitialSimplexConstructionError,
+    InsertionError, InsertionErrorKind, InsertionErrorSourceKind, InsertionErrorSummary,
+    NeighborRebuildError, NeighborWiringError, TdsConstructionFailure, TdsValidationFailure,
+    extend_hull, fill_cavity, repair_neighbor_pointers, repair_neighbor_pointers_local,
+    wire_cavity_neighbors,
+};
+pub use crate::core::algorithms::pl_manifold_repair::{
+    PlManifoldRepairError, PlManifoldRepairStats,
+};
+pub use crate::core::operations::{
+    InsertionOutcome, InsertionResult, InsertionStatistics, RepairDecision, RepairSkipReason,
+    SuspicionFlags, TopologicalOperation,
+};
+pub use crate::core::triangulation::{
+    DuplicateDetectionMetrics, TopologyGuarantee, Triangulation, TriangulationConstructionError,
+    TriangulationValidationError, ValidationPolicy,
+};
+pub use crate::core::util::DeduplicationError;
+pub use crate::core::util::{DelaunayValidationError, find_delaunay_violations};
+#[cfg(feature = "diagnostics")]
+pub use crate::core::util::{
+    DelaunayViolationDetail, DelaunayViolationReport, debug_print_first_delaunay_violation,
+    delaunay_violation_report,
+};
 pub use crate::triangulation::builder::DelaunayTriangulationBuilder;
 pub use crate::triangulation::delaunay::DelaunayTriangulation;

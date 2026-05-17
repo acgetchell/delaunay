@@ -11,6 +11,7 @@ cargo_llvm_cov_version := "0.8.5"
 # Common cargo-llvm-cov arguments for all coverage runs.
 # Excludes benches/examples from reports while allowing integration tests to
 # exercise library code.
+[private]
 _coverage_base_args := '''--ignore-filename-regex '(^|/)(benches|examples)/' \
   --workspace --lib --tests \
   --verbose'''
@@ -25,7 +26,7 @@ _ensure-cargo-llvm-cov:
     set -euo pipefail
     if ! command -v cargo-llvm-cov >/dev/null; then
         echo "❌ 'cargo-llvm-cov' not found. See 'just setup-tools' or install:"
-        echo "   cargo install --locked cargo-llvm-cov --version {{cargo_llvm_cov_version}}"
+        echo "   cargo install --locked cargo-llvm-cov --version {{ cargo_llvm_cov_version }}"
         exit 1
     fi
 
@@ -162,12 +163,12 @@ changelog: _ensure-git-cliff python-sync
     uv run archive-changelog
 
 changelog-tag version:
-    just tag {{version}}
+    just tag {{ version }}
 
 changelog-unreleased version: _ensure-git-cliff python-sync
     #!/usr/bin/env bash
     set -euo pipefail
-    GIT_CLIFF_OFFLINE=true git-cliff --tag {{version}} -o CHANGELOG.md
+    GIT_CLIFF_OFFLINE=true git-cliff --tag {{ version }} -o CHANGELOG.md
     uv run postprocess-changelog
     uv run archive-changelog
 
@@ -192,7 +193,7 @@ ci: check test examples
 # CI followed by an explicit persistent local baseline refresh.
 ci-baseline ref="main":
     just ci
-    just perf-baseline {{ref}}
+    just perf-baseline {{ ref }}
 
 # CI + slow/stress tests (100+ vertices, stress tests)
 ci-slow: ci test-slow
@@ -219,25 +220,25 @@ clippy:
 # Coverage analysis for local development (HTML output)
 coverage: _ensure-cargo-llvm-cov
     mkdir -p target/llvm-cov
-    cargo llvm-cov {{_coverage_base_args}} --html --output-dir target/llvm-cov
+    cargo llvm-cov {{ _coverage_base_args }} --html --output-dir target/llvm-cov
     @echo "📊 Coverage report generated: target/llvm-cov/html/index.html"
 
 # Coverage analysis for CI (XML output for codecov/codacy)
 coverage-ci: _ensure-cargo-llvm-cov
     mkdir -p coverage
-    cargo llvm-cov {{_coverage_base_args}} --cobertura --output-path coverage/cobertura.xml -- --skip prop_
+    cargo llvm-cov {{ _coverage_base_args }} --cobertura --output-path coverage/cobertura.xml -- --skip prop_
 
 debug-large-scale-2d n="36000" repair_every="1":
-    DELAUNAY_BULK_PROGRESS_EVERY=2000 DELAUNAY_LARGE_DEBUG_MAX_RUNTIME_SECS=1800 DELAUNAY_LARGE_DEBUG_N_2D={{n}} DELAUNAY_LARGE_DEBUG_REPAIR_EVERY={{repair_every}} cargo test --release --test large_scale_debug debug_large_scale_2d -- --ignored --exact --nocapture
+    DELAUNAY_BULK_PROGRESS_EVERY=2000 DELAUNAY_LARGE_DEBUG_MAX_RUNTIME_SECS=1800 DELAUNAY_LARGE_DEBUG_N_2D={{ n }} DELAUNAY_LARGE_DEBUG_REPAIR_EVERY={{ repair_every }} cargo test --release --test large_scale_debug debug_large_scale_2d -- --ignored --exact --nocapture
 
 debug-large-scale-3d n="8000" repair_every="1":
-    DELAUNAY_BULK_PROGRESS_EVERY=500 DELAUNAY_LARGE_DEBUG_MAX_RUNTIME_SECS=1800 DELAUNAY_LARGE_DEBUG_N_3D={{n}} DELAUNAY_LARGE_DEBUG_REPAIR_EVERY={{repair_every}} cargo test --release --test large_scale_debug debug_large_scale_3d -- --ignored --exact --nocapture
+    DELAUNAY_BULK_PROGRESS_EVERY=500 DELAUNAY_LARGE_DEBUG_MAX_RUNTIME_SECS=1800 DELAUNAY_LARGE_DEBUG_N_3D={{ n }} DELAUNAY_LARGE_DEBUG_REPAIR_EVERY={{ repair_every }} cargo test --release --test large_scale_debug debug_large_scale_3d -- --ignored --exact --nocapture
 
 debug-large-scale-4d n="900" repair_every="1":
-    DELAUNAY_BULK_PROGRESS_EVERY=100 DELAUNAY_LARGE_DEBUG_MAX_RUNTIME_SECS=1800 DELAUNAY_LARGE_DEBUG_N_4D={{n}} DELAUNAY_LARGE_DEBUG_REPAIR_EVERY={{repair_every}} cargo test --release --test large_scale_debug debug_large_scale_4d -- --ignored --exact --nocapture
+    DELAUNAY_BULK_PROGRESS_EVERY=100 DELAUNAY_LARGE_DEBUG_MAX_RUNTIME_SECS=1800 DELAUNAY_LARGE_DEBUG_N_4D={{ n }} DELAUNAY_LARGE_DEBUG_REPAIR_EVERY={{ repair_every }} cargo test --release --test large_scale_debug debug_large_scale_4d -- --ignored --exact --nocapture
 
 debug-large-scale-5d n="140" repair_every="1":
-    DELAUNAY_BULK_PROGRESS_EVERY=20 DELAUNAY_LARGE_DEBUG_MAX_RUNTIME_SECS=1800 DELAUNAY_LARGE_DEBUG_N_5D={{n}} DELAUNAY_LARGE_DEBUG_REPAIR_EVERY={{repair_every}} cargo test --release --test large_scale_debug debug_large_scale_5d -- --ignored --exact --nocapture
+    DELAUNAY_BULK_PROGRESS_EVERY=20 DELAUNAY_LARGE_DEBUG_MAX_RUNTIME_SECS=1800 DELAUNAY_LARGE_DEBUG_N_5D={{ n }} DELAUNAY_LARGE_DEBUG_REPAIR_EVERY={{ repair_every }} cargo test --release --test large_scale_debug debug_large_scale_5d -- --ignored --exact --nocapture
 
 # Default recipe shows available commands
 default:
@@ -361,15 +362,15 @@ markdown-lint: markdown-check
 perf-baseline ref="main": _ensure-uv
     #!/usr/bin/env bash
     set -euo pipefail
-    uv run benchmark-utils generate-ref-baseline --ref "{{ref}}" --out baseline-artifact --dev
+    uv run benchmark-utils generate-ref-baseline --ref "{{ ref }}" --out baseline-artifact --dev
 
 perf-baseline-to out ref="main": _ensure-uv
     #!/usr/bin/env bash
     set -euo pipefail
-    uv run benchmark-utils generate-ref-baseline --ref "{{ref}}" --out "{{out}}" --dev
+    uv run benchmark-utils generate-ref-baseline --ref "{{ ref }}" --out "{{ out }}" --dev
 
 perf-compare file threshold="7.5": _ensure-uv
-    uv run benchmark-utils compare --baseline "{{file}}" --threshold {{threshold}} --dev
+    uv run benchmark-utils compare --baseline "{{ file }}" --threshold {{ threshold }} --dev
 
 perf-help:
     @echo "Performance Analysis Commands:"
@@ -422,7 +423,7 @@ perf-large-scale-smoke max_secs="60":
     #!/usr/bin/env bash
     set -euo pipefail
 
-    max_secs="{{max_secs}}"
+    max_secs="{{ max_secs }}"
     if [[ ! "$max_secs" =~ ^[1-9][0-9]*$ ]]; then
         echo "❌ max_secs must be a positive integer, got: $max_secs" >&2
         exit 2
@@ -471,7 +472,7 @@ perf-large-scale-smoke max_secs="60":
 
 # Fast pre-PR performance guard against a cached same-machine main baseline.
 perf-no-regressions threshold="7.5": _ensure-uv
-    uv run benchmark-utils compare-ref --ref main --threshold {{threshold}} --dev --output benches/worktree_vs_main_compare_results.txt
+    uv run benchmark-utils compare-ref --ref main --threshold {{ threshold }} --dev --output benches/worktree_vs_main_compare_results.txt
 
 # Run the selected CI benchmark suite for one compiler/code pair.
 profile toolchain="" code_ref="current":
@@ -481,8 +482,8 @@ profile toolchain="" code_ref="current":
     command -v rustup >/dev/null || { echo "❌ 'rustup' not found. Install Rust via https://rustup.rs"; exit 1; }
 
     repo_root="$(pwd)"
-    requested_toolchain="{{toolchain}}"
-    requested_ref="{{code_ref}}"
+    requested_toolchain="{{ toolchain }}"
+    requested_ref="{{ code_ref }}"
     workdir="$repo_root"
     cleanup_worktree=0
 
@@ -774,8 +775,8 @@ setup-tools:
     fi
 
     if ! have cargo-llvm-cov; then
-        echo "  ⏳ Installing cargo-llvm-cov {{cargo_llvm_cov_version}} (cargo)..."
-        cargo install --locked cargo-llvm-cov --version {{cargo_llvm_cov_version}}
+        echo "  ⏳ Installing cargo-llvm-cov {{ cargo_llvm_cov_version }} (cargo)..."
+        cargo install --locked cargo-llvm-cov --version {{ cargo_llvm_cov_version }}
     else
         echo "  ✓ cargo-llvm-cov"
     fi
@@ -886,11 +887,11 @@ spell-check: _ensure-typos
 
 # Create an annotated git tag from the CHANGELOG.md section for the given version
 tag version: python-sync
-    uv run tag-release {{version}}
+    uv run tag-release {{ version }}
 
 # Replace an existing annotated tag from the CHANGELOG.md section.
 tag-force version: python-sync
-    uv run tag-release {{version}} --force
+    uv run tag-release {{ version }} --force
 
 # Testing
 # test: runs default-profile benchmark/release compile checks plus all tests.
@@ -950,7 +951,7 @@ toml-check: _ensure-uv
         files+=("$file")
     done < <(git ls-files -z '*.toml')
     if [ "${#files[@]}" -gt 0 ]; then
-        printf '%s\0' "${files[@]}" | xargs -0 -I {} uv run python -c "import tomllib; tomllib.load(open('{}', 'rb')); print('{} is valid TOML')"
+        printf '%s\0' "${files[@]}" | xargs -0 -I {} uv run python -c "import sys, tomllib; tomllib.load(open(sys.argv[1], 'rb')); print(f'{sys.argv[1]} is valid TOML')" {}
     else
         echo "No TOML files found to check."
     fi

@@ -6,8 +6,8 @@
 #![cfg(feature = "count-allocations")]
 
 use allocation_counter::AllocationInfo;
+use delaunay::prelude::algorithms::{LocateError, LocateResult, locate_with_stats};
 use delaunay::prelude::geometry::{Coordinate, FastKernel, Point};
-use delaunay::prelude::query::{LocateError, LocateResult, locate_with_stats};
 use delaunay::prelude::tds::{
     CellKey, TdsError, VertexKey, facet_key_from_vertices, measure_with_result,
 };

@@ -2565,12 +2565,12 @@ where
 /// - ✅ Hull extension for outside points - [`extend_hull`]
 /// - ✅ Flip-based Delaunay repair (k=2/k=3 bistellar flips)
 ///
-/// [`locate`]: crate::core::algorithms::locate::locate
-/// [`find_conflict_region`]: crate::core::algorithms::locate::find_conflict_region
-/// [`extract_cavity_boundary`]: crate::core::algorithms::locate::extract_cavity_boundary
-/// [`fill_cavity`]: crate::core::algorithms::incremental_insertion::fill_cavity
-/// [`wire_cavity_neighbors`]: crate::core::algorithms::incremental_insertion::wire_cavity_neighbors
-/// [`extend_hull`]: crate::core::algorithms::incremental_insertion::extend_hull
+/// [`locate`]: crate::algorithms::locate
+/// [`find_conflict_region`]: crate::algorithms::find_conflict_region
+/// [`extract_cavity_boundary`]: crate::algorithms::extract_cavity_boundary
+/// [`fill_cavity`]: crate::triangulation::fill_cavity
+/// [`wire_cavity_neighbors`]: crate::triangulation::wire_cavity_neighbors
+/// [`extend_hull`]: crate::triangulation::extend_hull
 ///
 /// # Examples
 ///
@@ -5749,7 +5749,7 @@ where
     ///
     /// If the requested policy is incompatible with the current topology guarantee (for example,
     /// `ValidationPolicy::Never` with `TopologyGuarantee::PLManifold`), this runs
-    /// [`Triangulation::validate_at_completion`](crate::core::triangulation::Triangulation::validate_at_completion)
+    /// [`Triangulation::validate_at_completion`](crate::triangulation::Triangulation::validate_at_completion)
     /// to provide immediate feedback and emits a warning. Call `validate_at_completion()` after
     /// batch construction when using an incompatible combination.
     ///
@@ -6492,7 +6492,7 @@ where
     /// Builds an immutable adjacency index for fast repeated topology queries.
     ///
     /// This is a convenience wrapper around
-    /// [`Triangulation::build_adjacency_index`](crate::core::triangulation::Triangulation::build_adjacency_index).
+    /// [`Triangulation::build_adjacency_index`](crate::triangulation::Triangulation::build_adjacency_index).
     ///
     /// # Errors
     ///
@@ -6525,7 +6525,7 @@ where
     /// Returns an iterator over all unique edges in the triangulation.
     ///
     /// This is a convenience wrapper around
-    /// [`Triangulation::edges`](crate::core::triangulation::Triangulation::edges).
+    /// [`Triangulation::edges`](crate::triangulation::Triangulation::edges).
     ///
     /// # Examples
     ///
@@ -6553,7 +6553,7 @@ where
     /// This avoids per-call deduplication and allocations.
     ///
     /// This is a convenience wrapper around
-    /// [`Triangulation::edges_with_index`](crate::core::triangulation::Triangulation::edges_with_index).
+    /// [`Triangulation::edges_with_index`](crate::triangulation::Triangulation::edges_with_index).
     ///
     /// # Examples
     ///
@@ -6583,7 +6583,7 @@ where
     /// Returns an iterator over all unique edges incident to a vertex.
     ///
     /// This is a convenience wrapper around
-    /// [`Triangulation::incident_edges`](crate::core::triangulation::Triangulation::incident_edges).
+    /// [`Triangulation::incident_edges`](crate::triangulation::Triangulation::incident_edges).
     ///
     /// If `v` is not present in this triangulation, the iterator is empty.
     ///
@@ -6615,7 +6615,7 @@ where
     /// If `v` is not present in the index, the iterator is empty.
     ///
     /// This is a convenience wrapper around
-    /// [`Triangulation::incident_edges_with_index`](crate::core::triangulation::Triangulation::incident_edges_with_index).
+    /// [`Triangulation::incident_edges_with_index`](crate::triangulation::Triangulation::incident_edges_with_index).
     ///
     /// # Examples
     ///
@@ -6649,7 +6649,7 @@ where
     /// present, the iterator is empty.
     ///
     /// This is a convenience wrapper around
-    /// [`Triangulation::cell_neighbors`](crate::core::triangulation::Triangulation::cell_neighbors).
+    /// [`Triangulation::cell_neighbors`](crate::triangulation::Triangulation::cell_neighbors).
     ///
     /// # Examples
     ///
@@ -6677,7 +6677,7 @@ where
     /// If `c` is not present in the index, the iterator is empty.
     ///
     /// This is a convenience wrapper around
-    /// [`Triangulation::cell_neighbors_with_index`](crate::core::triangulation::Triangulation::cell_neighbors_with_index).
+    /// [`Triangulation::cell_neighbors_with_index`](crate::triangulation::Triangulation::cell_neighbors_with_index).
     ///
     /// # Examples
     ///
@@ -6714,7 +6714,7 @@ where
     /// This is a zero-allocation accessor. If `c` is not present, returns `None`.
     ///
     /// This is a convenience wrapper around
-    /// [`Triangulation::cell_vertices`](crate::core::triangulation::Triangulation::cell_vertices).
+    /// [`Triangulation::cell_vertices`](crate::triangulation::Triangulation::cell_vertices).
     ///
     /// # Examples
     ///
@@ -6742,7 +6742,7 @@ where
     /// This is a zero-allocation accessor. If `v` is not present, returns `None`.
     ///
     /// This is a convenience wrapper around
-    /// [`Triangulation::vertex_coords`](crate::core::triangulation::Triangulation::vertex_coords).
+    /// [`Triangulation::vertex_coords`](crate::triangulation::Triangulation::vertex_coords).
     ///
     /// # Examples
     ///
@@ -7527,7 +7527,7 @@ where
     /// Performs cumulative validation for Levels 1–4.
     ///
     /// This validates:
-    /// - **Levels 1–3** via [`Triangulation::validate`](crate::core::triangulation::Triangulation::validate)
+    /// - **Levels 1–3** via [`Triangulation::validate`](crate::triangulation::Triangulation::validate)
     /// - **Level 4** via [`DelaunayTriangulation::is_valid`](Self::is_valid)
     ///
     /// # Errors
