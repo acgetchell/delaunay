@@ -128,23 +128,19 @@ macro_rules! gen_neighbor_symmetry {
                         let tds = dt.tds();
                         for (cell_key, cell) in dt.cells() {
                             if let Some(neighbors) = cell.neighbors() {
-                                for neighbor_key in neighbors.iter().flatten() {
+                                let cell_neighbors: HashSet<_> = neighbors.flatten().collect();
+                                for neighbor_key in &cell_neighbors {
                                     let found_reciprocal = tds
                                         .cell(*neighbor_key)
                                         .and_then(|c| c.neighbors())
-                                        .is_some_and(|nn| nn.iter().any(|n| n == &Some(cell_key)));
+                                        .is_some_and(|mut nn| nn.any(|n| n == Some(cell_key)));
 
                                     if !found_reciprocal {
                                         // Enhanced diagnostics with Jaccard similarity
-                                        let cell_neighbors: HashSet<_> = neighbors
-                                            .iter()
-                                            .flatten()
-                                            .copied()
-                                            .collect();
                                         let neighbor_neighbors: HashSet<_> = tds
                                             .cell(*neighbor_key)
                                             .and_then(|c| c.neighbors())
-                                            .map(|nn| nn.iter().flatten().copied().collect())
+                                            .map(|nn| nn.flatten().collect())
                                             .unwrap_or_default();
 
                                         let similarity = jaccard_index(&cell_neighbors, &neighbor_neighbors)
@@ -195,9 +191,9 @@ macro_rules! gen_neighbor_index_semantics {
                         for (cell_key, cell) in dt.cells() {
                             if let Some(neighbors) = cell.neighbors() {
                                 let a_vertices = cell.vertices();
-                                for (i, nb) in neighbors.iter().enumerate() {
+                                for (i, nb) in neighbors.enumerate() {
                                     if let Some(b_key) = nb {
-                                        let b_cell = tds.cell(*b_key).unwrap();
+                                        let b_cell = tds.cell(b_key).unwrap();
                                         let b_vertices = b_cell.vertices();
                                         let mut a_facet: SimplexVertexBuffer<_> = a_vertices.iter().enumerate()
                                             .filter_map(|(idx, &vk)| (idx != i).then_some(vk))
@@ -212,8 +208,8 @@ macro_rules! gen_neighbor_index_semantics {
                                             if b_facet == a_facet { found_j = Some(j); break; }
                                         }
                                         prop_assert!(found_j.is_some(), "Facet mismatch between neighbor cells");
-                                        if let Some(j) = found_j && let Some(b_neighs) = b_cell.neighbors() {
-                                            prop_assert_eq!(b_neighs.get(j).copied().flatten(), Some(cell_key),
+                                        if let Some(j) = found_j {
+                                            prop_assert_eq!(b_cell.neighbor_key(j).flatten(), Some(cell_key),
                                                 "Reciprocal neighbor at correct index not found");
                                         }
                                     }
@@ -527,12 +523,12 @@ macro_rules! gen_high_dim_tds_smoke {
 
                     for (cell_key, cell) in dt.cells() {
                         if let Some(neighbors) = cell.neighbors() {
-                            for neighbor_key in neighbors.iter().flatten() {
+                            for neighbor_key in neighbors.flatten() {
                                 let reciprocal = tds
-                                    .cell(*neighbor_key)
+                                    .cell(neighbor_key)
                                     .and_then(|neighbor| neighbor.neighbors())
-                                    .is_some_and(|neighbor_neighbors| {
-                                        neighbor_neighbors.iter().any(|entry| entry == &Some(cell_key))
+                                    .is_some_and(|mut neighbor_neighbors| {
+                                        neighbor_neighbors.any(|entry| entry == Some(cell_key))
                                     });
                                 prop_assert!(
                                     reciprocal,

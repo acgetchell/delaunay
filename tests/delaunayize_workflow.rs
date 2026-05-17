@@ -281,7 +281,7 @@ fn test_flip_breaks_delaunay_then_delaunayize_restores() {
     let mut candidate_facets = Vec::new();
     for (ck, cell) in dt.cells() {
         if let Some(neighbors) = cell.neighbors() {
-            for (i, n) in neighbors.iter().enumerate() {
+            for (i, n) in neighbors.enumerate() {
                 if let (Some(_), Ok(idx)) = (n, u8::try_from(i)) {
                     candidate_facets.push(FacetHandle::new(ck, idx));
                 }
@@ -536,7 +536,7 @@ fn test_flip_breaks_then_delaunayize_with_budget_restores_3d() {
     let mut candidate_facets = Vec::new();
     for (ck, cell) in dt.cells() {
         if let Some(neighbors) = cell.neighbors() {
-            for (i, n) in neighbors.iter().enumerate() {
+            for (i, n) in neighbors.enumerate() {
                 if let (Some(_), Ok(idx)) = (n, u8::try_from(i)) {
                     candidate_facets.push(FacetHandle::new(ck, idx));
                 }

@@ -445,7 +445,7 @@ fn remove_orphaned_vertices<T, U, V, const D: usize>(
 {
     let mut orphaned: Vec<(VertexKey, Uuid)> = tds
         .vertices()
-        .filter(|(_, v)| v.incident_cell.is_none())
+        .filter(|(_, v)| v.incident_cell().is_none())
         .map(|(k, v)| (k, v.uuid()))
         .collect();
     orphaned.sort_by_key(|(_, uuid)| *uuid);

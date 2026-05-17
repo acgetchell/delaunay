@@ -163,7 +163,7 @@ fn flip_then_repair_2d() -> Result<(), DelaunayizeRepairExampleError> {
     let mut facets: Vec<_> = Vec::new();
     for (ck, cell) in dt.cells() {
         if let Some(neighbors) = cell.neighbors() {
-            for (i, n) in neighbors.iter().enumerate() {
+            for (i, n) in neighbors.enumerate() {
                 if let (Some(_), Ok(idx)) = (n, u8::try_from(i)) {
                     facets.push(FacetHandle::new(ck, idx));
                 }

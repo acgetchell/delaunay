@@ -896,11 +896,7 @@ where
 
         for facet_idx in 0..facet_count {
             if is_point_outside_facet(tds, kernel, current_cell, facet_idx, point)? == Some(true) {
-                if let Some(neighbor_key) = cell
-                    .neighbors()
-                    .and_then(|neighbors| neighbors.get(facet_idx))
-                    .and_then(|&opt_key| opt_key)
-                {
+                if let Some(neighbor_key) = cell.neighbor_key(facet_idx).flatten() {
                     current_cell = neighbor_key;
                     found_outside_facet = true;
                     break;
@@ -1253,8 +1249,8 @@ where
             }
 
             // Add neighbors to queue for exploration
-            if let Some(neighbors) = cell.neighbors() {
-                for &neighbor_opt in neighbors {
+            if let Some(neighbors) = cell.neighbor_keys() {
+                for neighbor_opt in neighbors {
                     if let Some(neighbor_key) = neighbor_opt
                         && !visited.contains_key(neighbor_key)
                     {
@@ -1273,8 +1269,8 @@ where
             #[cfg(debug_assertions)]
             if debug_config.log_conflict {
                 let neighbor_keys: SmallBuffer<Option<CellKey>, MAX_PRACTICAL_DIMENSION_SIZE> =
-                    cell.neighbors()
-                        .map(|ns| ns.iter().copied().collect())
+                    cell.neighbor_keys()
+                        .map(Iterator::collect)
                         .unwrap_or_default();
                 tracing::debug!(
                     cell_key = ?cell_key,
@@ -1393,14 +1389,21 @@ where
                 //   - Unreachable: NO neighbors are in bfs_set, indicating
                 //     broken neighbor pointers or a disconnected pocket
                 let (neighbor_in_bfs, neighbor_total, neighbor_none) =
-                    cell.neighbors().map_or((0, 0, 0), |neighbors| {
+                    cell.neighbor_keys().map_or((0, 0, 0), |neighbors| {
                         let total = neighbors.len();
-                        let none_count = neighbors.iter().filter(|n| n.is_none()).count();
-                        let in_bfs = neighbors
-                            .iter()
-                            .filter_map(|n| *n)
-                            .filter(|nk| bfs_set.contains(nk))
-                            .count();
+                        let mut none_count = 0;
+                        let mut in_bfs = 0;
+                        for neighbor in neighbors {
+                            match neighbor {
+                                Some(nk) if bfs_set.contains(&nk) => {
+                                    in_bfs += 1;
+                                }
+                                Some(_) => {}
+                                None => {
+                                    none_count += 1;
+                                }
+                            }
+                        }
                         (in_bfs, total, none_count)
                     });
 
@@ -2353,7 +2356,7 @@ mod tests {
         let cell = dt.tds_mut().cell_mut(cell_key).unwrap();
         let mut neighbors = NeighborBuffer::<Option<CellKey>>::new();
         neighbors.resize(3, Some(cell_key));
-        cell.neighbors = Some(neighbors);
+        cell.set_neighbors_from_keys(neighbors).unwrap();
 
         // Point outside the simplex: walking will attempt to cross a facet, hit the self-loop,
         // detect a cycle, and fall back to scan.
@@ -3038,8 +3041,8 @@ mod tests {
         let ghost = CellKey::from(KeyData::from_ffi(777_777));
         {
             let cell = tds.cell_mut(cell_key).unwrap();
-            let buf = cell.ensure_neighbors_buffer_mut();
-            buf[0] = Some(ghost);
+            cell.set_neighbors_from_keys([Some(ghost), None, None])
+                .unwrap();
         }
 
         let kernel = FastKernel::<f64>::new();

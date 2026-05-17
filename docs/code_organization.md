@@ -586,7 +586,7 @@ just test-allocation  # Run allocation profiling tests
 just lint          # All linting (code + docs + config)
 just lint-code     # Code linting (Rust, Python, Shell)
 just lint-docs     # Documentation linting (Markdown, Spelling)
-just lint-config   # Configuration validation (JSON, TOML, Actions)
+just lint-config   # Configuration checks (JSON, TOML, YAML/CFF, Actions)
 just clippy        # Run Clippy with strict settings
 just doc-check     # Validate documentation builds
 just python-check  # Python format/lint/typecheck checks

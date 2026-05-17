@@ -17,9 +17,10 @@ Agents must run appropriate checks after modifying code.
 - [Benchmark Profiles](#benchmark-profiles)
 - [Examples](#examples)
 - [Spell Checking](#spell-checking)
-- [TOML Formatting](#toml-formatting)
+- [TOML Checks](#toml-checks)
 - [Shell Script Validation](#shell-script-validation)
 - [JSON Validation](#json-validation)
+- [CITATION.cff Validation](#citationcff-validation)
 - [GitHub Actions Validation](#github-actions-validation)
 - [Recommended Command Matrix](#recommended-command-matrix)
 - [CI Expectations](#ci-expectations)
@@ -187,6 +188,13 @@ compile, lint, test, documentation, example, or benchmark-harness build errors.
 Use `just bench-smoke` only for quick harness validation with minimal samples;
 do not treat smoke output as performance data.
 
+Use `just perf-large-scale-smoke [max_secs]` for a coarse local wall-clock guard
+over the release-mode large-scale debug harness. It runs the same 2D-5D defaults
+as `just debug-large-scale-{2,3,4,5}d`, caps each test runtime at 60 seconds by
+default, and reports all failing dimensions before exiting. It does not compare
+against a baseline and should not be treated as benchmark data. Run it before
+pushing Rust or benchmark changes to catch obvious local performance drift early.
+
 Use `just bench-perf-summary` from the release PR branch after version and
 documentation updates. It runs fresh perf-profile summary benchmarks, records
 the current Criterion construction metadata and generated simplex counts, and
@@ -196,14 +204,32 @@ Before pushing Rust or benchmark changes, run:
 
 ```bash
 just ci
+just perf-large-scale-smoke
+```
+
+For performance-sensitive changes and PR-ready work, also run:
+
+```bash
 just perf-no-regressions
 ```
 
-`just perf-no-regressions` is the fast local PR guard. It runs
+`just perf-no-regressions` is the fuller local PR guard. It runs
 `ci_performance_suite` with the shared dev-mode Criterion arguments against a
-temporary same-machine baseline generated from the current GitHub `main` ref.
-The temporary baseline checkout and artifact directory are removed after the
-comparison.
+same-machine baseline generated from the current GitHub `main` ref. The guard
+reuses a local cache under `baseline-artifacts/perf-no-regressions/` keyed by
+the resolved `origin/main` commit and local Rust compiler version, and refreshes
+that baseline when `main` or the compiler changes, or when the cached artifact
+does not match the benchmark contract. The current worktree benchmark still runs
+fresh each time so repeated comparisons can catch local performance drift.
+The comparison report is written to
+`benches/worktree_vs_main_compare_results.txt` by default so it is visibly a
+branch/PR-vs-main check. The local guard exits nonzero only when benchmark
+execution fails or total matched benchmark mean time regresses beyond the
+threshold; individual benchmark regressions are warnings in the report. The
+report also lists total, geomean, median, top regressions, and top improvements,
+and the command prints a short terminal status with the report path.
+`just clean` removes Criterion data under `target/`, but it does not remove this
+local baseline cache.
 
 ```bash
 just perf-no-regressions
@@ -211,7 +237,18 @@ just perf-no-regressions
 
 `just perf-baseline` is optional and intentionally persistent: use it only when
 you want to create or refresh `baseline-artifact/baseline_results.txt` for later
-manual comparisons.
+manual comparisons. `just perf-compare <file>` uses that release-baseline
+workflow and writes `benches/main_vs_release_compare_results.txt` by default.
+It follows the same terminal-status convention, but remains stricter: individual
+benchmark regressions still make release-style comparisons fail.
+
+For lower-level workflows, `uv run benchmark-utils ensure-ref-baseline --ref
+<ref> --dev` prints the cached/generated same-machine baseline path for a branch
+or version tag, and `uv run benchmark-utils fetch-baseline --ref <ref>` downloads
+the GitHub Actions artifact instead. Use the generated local baseline for
+same-machine regression checks; use the downloaded artifact when you explicitly
+want CI-runner parity. `uv run benchmark-utils compare-ref --ref <ref>` writes
+`benches/worktree_vs_<ref>_compare_results.txt` unless `--output` is supplied.
 
 To generate a scratch baseline without replacing the default artifact, write it
 somewhere else and compare directly:
@@ -271,13 +308,15 @@ under:
 
 ---
 
-## TOML Formatting
+## TOML Checks
 
-TOML files should be validated and formatted using Taplo.
+TOML files should parse cleanly, pass Taplo linting, and match Taplo
+formatting.
 
 Commands:
 
 ```bash
+just toml-check
 just toml-lint
 just toml-fmt-check
 just toml-fmt
@@ -302,10 +341,23 @@ Run via CI or `just` commands.
 
 JSON files should be validated after edits.
 
-Example:
+Run:
 
 ```bash
-jq empty file.json
+just json-check
+```
+
+---
+
+## CITATION.cff Validation
+
+Citation metadata should pass both YAML style linting and CFF schema
+validation.
+
+Run:
+
+```bash
+just citation-check
 ```
 
 ---

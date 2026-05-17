@@ -160,7 +160,7 @@ where
     /// if let Some(key) = cell_key {
     ///     let has_neighbor = dt.tds().cell(key)
     ///         .and_then(|cell| cell.neighbors())
-    ///         .map(|neighbors| neighbors.iter().any(|n| n.is_some()))
+    ///         .map(|mut neighbors| neighbors.any(|n| n.is_some()))
     ///         .unwrap_or(false);
     ///     if has_neighbor {
     ///         let facet = FacetHandle::new(key, 0);

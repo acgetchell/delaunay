@@ -128,7 +128,7 @@ fn build_non_delaunay_triangulation_2d()
 
     for (cell_key, cell) in dt.cells() {
         if let Some(neighbors) = cell.neighbors() {
-            for (facet_index, neighbor) in neighbors.iter().enumerate() {
+            for (facet_index, neighbor) in neighbors.enumerate() {
                 if neighbor.is_none() {
                     continue;
                 }

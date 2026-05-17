@@ -30,7 +30,7 @@ from datetime import UTC, datetime
 from itertools import product
 from pathlib import Path
 from shutil import copy2 as copyfile  # NOTE: Use copy2 (metadata-preserving) under the 'copyfile' alias for tests/patching convenience.
-from typing import TYPE_CHECKING, TextIO
+from typing import TYPE_CHECKING, Literal, NoReturn, TextIO
 from urllib.parse import urlparse
 from uuid import uuid4
 
@@ -39,6 +39,8 @@ from packaging.version import InvalidVersion, Version
 logger = logging.getLogger(__name__)
 
 DEFAULT_REGRESSION_THRESHOLD = 7.5
+TIME_UNIT_TO_MICROSECONDS = {"ns": 1e-3, "µs": 1.0, "μs": 1.0, "us": 1.0, "ms": 1e3, "s": 1e6}
+ComparisonFailurePolicy = Literal["strict", "total-time"]
 
 
 class BaselineParseError(ValueError):
@@ -172,6 +174,48 @@ CI_PERFORMANCE_SUITE_GROUP_ORDER = tuple(CI_PERFORMANCE_SUITE_GROUPS)
 _CI_PERFORMANCE_SUITE_MANIFEST_IDS_FILE = "ci_performance_suite_manifest_ids.txt"
 _CI_PERFORMANCE_SUITE_METRICS_FILE = "ci_performance_suite_metrics.json"
 _CI_PERFORMANCE_SUITE_RUN_METADATA_FILE = "ci_performance_suite_run_metadata.json"
+PERF_NO_REGRESSIONS_REQUIRED_BENCHMARK_ID = "tds_new_2d/tds_new/4000"
+MAIN_VS_RELEASE_COMPARISON_RESULTS_FILE = "main_vs_release_compare_results.txt"
+WORKTREE_VS_REF_COMPARISON_RESULTS_TEMPLATE = "worktree_vs_{ref}_compare_results.txt"
+PERF_NO_REGRESSIONS_RELEVANT_PATHS = (
+    "src",
+    "benches",
+    "Cargo.toml",
+    "Cargo.lock",
+    "scripts/benchmark_utils.py",
+)
+
+
+@dataclass(frozen=True)
+class BenchmarkTimeChange:
+    """Normalized timing comparison used by benchmark summary policies."""
+
+    label: str
+    current_mean_us: float
+    baseline_mean_us: float
+    time_change_pct: float
+
+
+@dataclass(frozen=True)
+class ComparisonFileRequest:
+    """Context for writing a benchmark comparison report."""
+
+    baseline_content: str
+    output_file: Path
+    dev_mode: bool
+    failure_policy: ComparisonFailurePolicy
+
+
+@dataclass(frozen=True)
+class ComparisonSummaryStats:
+    """Summary statistics for benchmark comparison failure policy decisions."""
+
+    total_time_change: float
+    geomean_change: float
+    median_change: float
+    individual_regressions: int
+    compared_count: int
+    failure_policy: ComparisonFailurePolicy
 
 
 def ci_suite_group_key(first_path_part: str) -> str | None:
@@ -332,7 +376,7 @@ def _load_ci_performance_manifest_ids(criterion_dir: Path) -> set[str] | None:
     return manifest_ids or None
 
 
-def _load_ci_performance_metrics(criterion_dir: Path) -> dict[str, dict[str, int]]:
+def _load_ci_performance_metrics(criterion_dir: Path) -> dict[str, Mapping[str, object]]:
     """Load ci_performance_suite construction metrics when present."""
     metrics_path = _ci_performance_metrics_path(criterion_dir)
     if not metrics_path.exists():
@@ -349,17 +393,12 @@ def _load_ci_performance_metrics(criterion_dir: Path) -> dict[str, dict[str, int
         msg = f"malformed ci_performance_suite metrics sidecar {metrics_path}: expected JSON object"
         raise TypeError(msg)
 
-    metrics: dict[str, dict[str, int]] = {}
+    metrics: dict[str, Mapping[str, object]] = {}
     for benchmark_id, values in data.items():
         if not isinstance(benchmark_id, str) or not isinstance(values, dict):
-            msg = f"malformed ci_performance_suite metrics sidecar {metrics_path}: invalid entry {benchmark_id!r}"
-            raise TypeError(msg)
-        vertices = values.get("vertices")
-        simplices = values.get("simplices")
-        if not isinstance(vertices, int) or not isinstance(simplices, int):
-            msg = f"malformed ci_performance_suite metrics sidecar {metrics_path}: invalid counts for {benchmark_id!r}"
-            raise TypeError(msg)
-        metrics[benchmark_id] = {"vertices": vertices, "simplices": simplices}
+            logger.debug("Skipping malformed ci_performance_suite metric entry %r from %s", benchmark_id, metrics_path)
+            continue
+        metrics[benchmark_id] = values
     return metrics
 
 
@@ -513,7 +552,7 @@ class PerformanceSummaryGenerator:
         # Prefer CI artifact location; fall back to benches/ for local runs
         self.baseline_file = project_root / "baseline-artifact" / "baseline_results.txt"
         self._baseline_fallback = project_root / "benches" / "baseline_results.txt"
-        self.comparison_file = project_root / "benches" / "compare_results.txt"
+        self.comparison_file = release_comparison_results_path(project_root)
 
         # Path for storing Criterion benchmark results
         self.circumsphere_results_dir = project_root / "target" / "criterion"
@@ -1850,11 +1889,11 @@ class PerformanceSummaryGenerator:
         return [
             "## Implementation Notes",
             "",
-            "### Performance Advantages of `insphere_lifted`",
+            "### Dimension-Dependent InSphere Predicate Performance",
             "",
-            "1. More efficient matrix formulation using relative coordinates",
-            "2. Avoids redundant circumcenter calculations",
-            "3. Optimized determinant computation",
+            "The tables above are the source of truth for predicate timing. `insphere_lifted`",
+            "shows advantages in lower dimensions such as 2D/3D, while `insphere_distance`",
+            "often wins in 4D/5D; boundary cases may favor `insphere` because of early exits.",
             "",
         ]
 
@@ -1981,6 +2020,48 @@ class CriterionParser:
         return None
 
     @staticmethod
+    def _ci_suite_metric_simplices(
+        metric: Mapping[str, object] | None,
+        *,
+        benchmark_id: str,
+        path_parts: tuple[str, ...],
+        points: int | None,
+        dimension: str,
+    ) -> int | None:
+        """Return sidecar simplex counts only when they match the Criterion result."""
+        if metric is None:
+            return None
+
+        expected_dimension = ci_suite_dimension(benchmark_id)
+        expected_points = CriterionParser._ci_suite_input_points(path_parts)
+        if expected_dimension != dimension or expected_points != points:
+            logger.debug("Skipping stale ci_performance_suite metric for %s", benchmark_id)
+            return None
+
+        vertices = metric.get("vertices")
+        simplices = metric.get("simplices")
+        if (
+            not isinstance(vertices, int)
+            or isinstance(vertices, bool)
+            or not isinstance(simplices, int)
+            or isinstance(simplices, bool)
+            or simplices < 0
+        ):
+            logger.debug("Skipping malformed ci_performance_suite metric for %s", benchmark_id)
+            return None
+
+        if points is None or vertices != points:
+            logger.debug(
+                "Skipping stale ci_performance_suite metric for %s: vertices=%s, Criterion input=%s",
+                benchmark_id,
+                vertices,
+                points,
+            )
+            return None
+
+        return simplices
+
+    @staticmethod
     def _process_ci_performance_suite_results(criterion_dir: Path) -> list[BenchmarkData]:
         """Discover ci_performance_suite Criterion results with expanded benchmark IDs."""
         results: list[BenchmarkData] = []
@@ -1997,9 +2078,15 @@ class CriterionParser:
                 continue
 
             benchmark_data.benchmark_id = benchmark_id
-            metric = metrics.get(benchmark_id)
-            if metric is not None:
-                benchmark_data.simplices = metric["simplices"]
+            metric_simplices = CriterionParser._ci_suite_metric_simplices(
+                metrics.get(benchmark_id),
+                benchmark_id=benchmark_id,
+                path_parts=path_parts,
+                points=points,
+                dimension=dimension,
+            )
+            if metric_simplices is not None:
+                benchmark_data.simplices = metric_simplices
             results.append(benchmark_data)
 
         group_order = {group: index for index, group in enumerate(CI_PERFORMANCE_SUITE_GROUP_ORDER)}
@@ -2373,6 +2460,347 @@ class LocalRefBaselineGenerator:
         return output_file
 
 
+@dataclass(frozen=True)
+class LocalRefBaselineCacheOptions:
+    """Options for a cached same-machine baseline generated from a git ref."""
+
+    ref_name: str = "main"
+    remote: str = "origin"
+    cache_root: Path | None = None
+    dev_mode: bool = False
+    bench_timeout: int = 1800
+    required_benchmark_id: str = PERF_NO_REGRESSIONS_REQUIRED_BENCHMARK_ID
+
+
+@dataclass(frozen=True)
+class LocalRefBaselineCacheResult:
+    """Result of ensuring a cached same-machine ref baseline exists."""
+
+    baseline_path: Path
+    resolved_commit: str | None
+    reused: bool
+
+
+def _sanitize_cache_component(value: str, *, fallback: str) -> str:
+    """Return a stable filesystem-safe cache component."""
+    sanitized = _sanitize_ref_name(value.strip())
+    return sanitized or fallback
+
+
+def release_comparison_results_path(project_root: Path) -> Path:
+    """Return the release-baseline comparison report path."""
+    return project_root / "benches" / MAIN_VS_RELEASE_COMPARISON_RESULTS_FILE
+
+
+def ref_comparison_results_path(project_root: Path, ref_name: str) -> Path:
+    """Return the worktree-vs-ref comparison report path for a git ref."""
+    ref_key = _sanitize_cache_component(ref_name, fallback="ref")
+    return project_root / "benches" / WORKTREE_VS_REF_COMPARISON_RESULTS_TEMPLATE.format(ref=ref_key)
+
+
+def _first_ls_remote_commit(stdout: str) -> str | None:
+    """Extract the first object id from git ls-remote output."""
+    for line in stdout.splitlines():
+        parts = line.split()
+        if parts and re.fullmatch(r"[0-9a-fA-F]+", parts[0]):
+            return parts[0]
+    return None
+
+
+def _remote_ref_candidates(ref_name: str) -> list[str]:
+    """Return deterministic ls-remote candidates for a branch, tag, or full ref."""
+    if ref_name.startswith("refs/"):
+        return [ref_name]
+    return [
+        f"refs/heads/{ref_name}",
+        f"refs/tags/{ref_name}^{{}}",
+        f"refs/tags/{ref_name}",
+        ref_name,
+    ]
+
+
+def _local_tracking_ref_candidates(remote: str, ref_name: str) -> list[str]:
+    """Return local remote-tracking refs that can stand in when offline."""
+    if ref_name.startswith("refs/heads/"):
+        branch = ref_name.removeprefix("refs/heads/")
+    elif ref_name.startswith("refs/"):
+        return []
+    else:
+        branch = ref_name
+    return [f"refs/remotes/{remote}/{branch}"]
+
+
+def resolve_ref_commit(project_root: Path, *, ref_name: str, remote: str = "origin") -> str | None:
+    """Resolve a remote git ref to a commit-ish object id, falling back to local tracking refs."""
+    for candidate in _remote_ref_candidates(ref_name):
+        result = run_git_command(
+            ["ls-remote", remote, candidate],
+            cwd=project_root,
+            check=False,
+            timeout=120,
+        )
+        if result.returncode == 0:
+            commit = _first_ls_remote_commit(result.stdout)
+            if commit is not None:
+                return commit
+        else:
+            logger.debug("git ls-remote failed for %s/%s: %s", remote, candidate, (result.stderr or result.stdout or "").strip())
+            break
+
+    for candidate in _local_tracking_ref_candidates(remote, ref_name):
+        result = run_git_command(
+            ["rev-parse", "--verify", "--quiet", candidate],
+            cwd=project_root,
+            check=False,
+            timeout=30,
+        )
+        if result.returncode == 0 and result.stdout.strip():
+            return result.stdout.strip()
+
+    return None
+
+
+def _local_rustc_version(project_root: Path) -> str:
+    """Return the local rustc version used to key same-machine benchmark caches."""
+    try:
+        result = run_safe_command("rustc", ["-V"], cwd=project_root, check=False, timeout=30)
+    except (ExecutableNotFoundError, OSError, subprocess.SubprocessError):
+        return "unknown-rustc"
+    if result.returncode == 0 and result.stdout.strip():
+        return result.stdout.strip()
+    return "unknown-rustc"
+
+
+def _default_local_ref_baseline_cache_root(project_root: Path) -> Path:
+    """Default cache root for local same-machine ref baselines."""
+    if env_cache_root := os.getenv("DELAUNAY_PERF_BASELINE_CACHE"):
+        cache_root = Path(env_cache_root)
+        return cache_root if cache_root.is_absolute() else project_root / cache_root
+    return project_root / "baseline-artifacts" / "perf-no-regressions"
+
+
+def _local_ref_baseline_cache_dir(
+    project_root: Path,
+    options: LocalRefBaselineCacheOptions,
+    *,
+    resolved_commit: str | None,
+) -> Path:
+    """Return the deterministic cache directory for a local ref baseline."""
+    cache_root = options.cache_root or _default_local_ref_baseline_cache_root(project_root)
+    if not cache_root.is_absolute():
+        cache_root = project_root / cache_root
+
+    ref_key = _sanitize_cache_component(options.ref_name, fallback="ref")
+    commit_key = _sanitize_cache_component(resolved_commit or options.ref_name, fallback="unresolved")
+    mode_key = "dev" if options.dev_mode else "full"
+    toolchain_key = _sanitize_cache_component(_local_rustc_version(project_root), fallback="unknown-rustc")
+    return cache_root / ref_key / commit_key / mode_key / toolchain_key
+
+
+def _local_ref_baseline_candidates(
+    project_root: Path,
+    options: LocalRefBaselineCacheOptions,
+    *,
+    resolved_commit: str | None,
+) -> list[Path]:
+    """Return primary and commit-alias cache candidates for a local ref baseline."""
+    primary = _local_ref_baseline_cache_dir(project_root, options, resolved_commit=resolved_commit) / "baseline_results.txt"
+    if resolved_commit is None:
+        return [primary]
+
+    cache_root = options.cache_root or _default_local_ref_baseline_cache_root(project_root)
+    if not cache_root.is_absolute():
+        cache_root = project_root / cache_root
+
+    commit_key = _sanitize_cache_component(resolved_commit, fallback="unresolved")
+    mode_key = "dev" if options.dev_mode else "full"
+    toolchain_key = _sanitize_cache_component(_local_rustc_version(project_root), fallback="unknown-rustc")
+    alias_pattern = f"*/{commit_key}/{mode_key}/{toolchain_key}/baseline_results.txt"
+    aliases = sorted(cache_root.glob(alias_pattern)) if cache_root.exists() else []
+
+    candidates = [primary]
+    candidates.extend(alias for alias in aliases if alias != primary)
+    return candidates
+
+
+def _cached_baseline_valid(
+    project_root: Path,
+    baseline_path: Path,
+    *,
+    expected_commit: str | None,
+    required_benchmark_id: str,
+) -> tuple[bool, str]:
+    """Validate cached baseline metadata and parseability before reuse."""
+    if not baseline_path.exists():
+        return False, f"missing baseline file: {baseline_path}"
+
+    try:
+        baseline_content = baseline_path.read_text(encoding="utf-8")
+    except OSError as exc:
+        return False, f"unable to read baseline file {baseline_path}: {exc}"
+
+    metadata = _parse_baseline_metadata(baseline_content)
+    if expected_commit is not None and metadata["commit"] != expected_commit:
+        return False, f"cached commit {metadata['commit']} does not match expected {expected_commit}"
+
+    try:
+        baseline_results = PerformanceComparator(project_root).parse_baseline_file(baseline_content)
+    except BaselineParseError as exc:
+        return False, f"malformed baseline: {exc}"
+
+    if not any(benchmark.benchmark_id == required_benchmark_id for benchmark in baseline_results.values()):
+        return False, f"missing required benchmark id {required_benchmark_id}"
+
+    return True, "valid"
+
+
+def ensure_cached_ref_baseline(
+    project_root: Path,
+    options: LocalRefBaselineCacheOptions,
+    *,
+    resolved_commit: str | None,
+) -> LocalRefBaselineCacheResult:
+    """Ensure a cached same-machine baseline exists for a resolved git ref."""
+    baseline_dir = _local_ref_baseline_cache_dir(project_root, options, resolved_commit=resolved_commit)
+    reason = "no cache candidates checked"
+    for baseline_path in _local_ref_baseline_candidates(project_root, options, resolved_commit=resolved_commit):
+        valid, reason = _cached_baseline_valid(
+            project_root,
+            baseline_path,
+            expected_commit=resolved_commit,
+            required_benchmark_id=options.required_benchmark_id,
+        )
+        if not valid:
+            continue
+
+        print(f"📦 Reusing cached {options.ref_name} baseline: {baseline_path}", file=sys.stderr)
+        return LocalRefBaselineCacheResult(baseline_path=baseline_path, resolved_commit=resolved_commit, reused=True)
+
+    print(f"🚀 Refreshing cached {options.ref_name} baseline ({reason})...", file=sys.stderr)
+    generator = LocalRefBaselineGenerator(project_root, remote=options.remote)
+    generated_path = generator.generate_for_ref(
+        ref_name=options.ref_name,
+        out_dir=baseline_dir,
+        dev_mode=options.dev_mode,
+        bench_timeout=options.bench_timeout,
+    )
+
+    valid, reason = _cached_baseline_valid(
+        project_root,
+        generated_path,
+        expected_commit=resolved_commit,
+        required_benchmark_id=options.required_benchmark_id,
+    )
+    if not valid:
+        msg = f"Generated baseline for {options.ref_name} is not reusable: {reason}"
+        raise RuntimeError(msg)
+
+    return LocalRefBaselineCacheResult(baseline_path=generated_path, resolved_commit=resolved_commit, reused=False)
+
+
+def ensure_cached_ref_baseline_for_ref(project_root: Path, options: LocalRefBaselineCacheOptions) -> LocalRefBaselineCacheResult:
+    """Resolve a ref and ensure its cached same-machine baseline exists."""
+    resolved_commit = resolve_ref_commit(project_root, ref_name=options.ref_name, remote=options.remote)
+    if resolved_commit is None:
+        print(f"⚠️ Could not resolve {options.remote}/{options.ref_name}; cache freshness cannot be verified.", file=sys.stderr)
+    return ensure_cached_ref_baseline(project_root, options, resolved_commit=resolved_commit)
+
+
+def relevant_perf_worktree_dirty(project_root: Path, paths: tuple[str, ...] = PERF_NO_REGRESSIONS_RELEVANT_PATHS) -> bool:
+    """Return whether performance-relevant tracked or untracked paths changed."""
+    diff_args = ["diff", "--quiet", "--", *paths]
+    for label, args in (
+        ("unstaged diff", diff_args),
+        ("staged diff", ["diff", "--cached", "--quiet", "--", *paths]),
+    ):
+        result = run_git_command(args, cwd=project_root, check=False, timeout=60)
+        if result.returncode == 1:
+            return True
+        if result.returncode != 0:
+            details = (result.stderr or result.stdout or "").strip()
+            msg = f"git {label} failed with exit code {result.returncode}: {details}"
+            raise RuntimeError(msg)
+
+    result = run_git_command(
+        ["ls-files", "--others", "--exclude-standard", "--", *paths],
+        cwd=project_root,
+        check=False,
+        timeout=60,
+    )
+    if result.returncode != 0:
+        details = (result.stderr or result.stdout or "").strip()
+        msg = f"git ls-files for untracked perf paths failed with exit code {result.returncode}: {details}"
+        raise RuntimeError(msg)
+    return bool(result.stdout.strip())
+
+
+def compare_with_cached_ref_baseline(
+    project_root: Path,
+    options: LocalRefBaselineCacheOptions,
+    *,
+    threshold: float,
+    output_file: Path | None = None,
+) -> int:
+    """Compare the current worktree against a cached same-machine ref baseline."""
+    current_commit = get_git_commit_hash(cwd=project_root)
+    dirty = relevant_perf_worktree_dirty(project_root)
+    resolved_commit = resolve_ref_commit(project_root, ref_name=options.ref_name, remote=options.remote)
+
+    if resolved_commit == current_commit and not dirty:
+        print(f"🔍 {options.remote}/{options.ref_name} matches HEAD ({current_commit}); no relevant worktree changes to compare.")
+        print("   Skipping before generating a same-commit baseline.")
+        return 0
+
+    cache_result = ensure_cached_ref_baseline(project_root, options, resolved_commit=resolved_commit)
+    baseline_content = cache_result.baseline_path.read_text(encoding="utf-8")
+    baseline_commit = _parse_baseline_metadata(baseline_content)["commit"]
+
+    if baseline_commit == current_commit:
+        if not dirty:
+            print(f"🔍 Current commit matches the {options.ref_name} baseline ({baseline_commit}); no relevant worktree changes to compare.")
+            print("   Skipping because a same-commit baseline would mask regressions.")
+            return 0
+        print(f"⚠️ {options.ref_name} baseline commit matches HEAD, but relevant uncommitted changes exist; comparing the worktree against HEAD.")
+
+    if output_file is None:
+        output_file = ref_comparison_results_path(project_root, options.ref_name)
+
+    comparator = PerformanceComparator(project_root)
+    comparator.regression_threshold = threshold
+    success, regression_found = comparator.compare_with_baseline(
+        cache_result.baseline_path,
+        dev_mode=options.dev_mode,
+        output_file=output_file,
+        failure_policy="total-time",
+        bench_timeout=options.bench_timeout,
+    )
+    _display_comparison_result(output_file, success=success, regression_found=regression_found)
+    if not success:
+        return 1
+    return 1 if regression_found else 0
+
+
+def _display_comparison_result(output_file: Path, *, success: bool, regression_found: bool) -> None:
+    """Print the comparison outcome and report path for command-line users."""
+    if not success:
+        print(f"❌ Benchmark comparison failed; see {output_file}", file=sys.stderr)
+        return
+
+    if regression_found:
+        print(f"⚠️ Performance regressions detected; see {output_file}", file=sys.stderr)
+        return
+
+    try:
+        report_text = output_file.read_text(encoding="utf-8")
+    except OSError:
+        report_text = ""
+    if "INDIVIDUAL REGRESSION WARNING" in report_text:
+        print(f"✅ Net performance OK; individual regression warnings in report: {output_file}")
+        return
+
+    print(f"✅ No significant performance regressions detected; report: {output_file}")
+
+
 class PerformanceComparator:
     """Compare current performance against baseline."""
 
@@ -2393,6 +2821,7 @@ class PerformanceComparator:
         dev_mode: bool = False,
         output_file: Path | None = None,
         bench_timeout: int = 1800,
+        failure_policy: ComparisonFailurePolicy = "strict",
     ) -> tuple[bool, bool]:
         """
         Compare current performance against baseline.
@@ -2400,14 +2829,15 @@ class PerformanceComparator:
         Args:
             baseline_file: Path to baseline file
             dev_mode: Use faster Criterion settings with the trusted Cargo profile
-            output_file: Output file path (default: benches/compare_results.txt)
+            output_file: Output file path (default: benches/main_vs_release_compare_results.txt)
             bench_timeout: Timeout for cargo bench commands in seconds
+            failure_policy: Regression policy for deciding the command exit status
 
         Returns:
             Tuple of (success, regression_found)
         """
         if output_file is None:
-            output_file = self.project_root / "benches" / "compare_results.txt"
+            output_file = release_comparison_results_path(self.project_root)
 
         if not baseline_file.exists():
             self._write_error_file(output_file, "Baseline file not found", baseline_file)
@@ -2452,7 +2882,16 @@ class PerformanceComparator:
             baseline_results = self._parse_baseline_file(baseline_content)
 
             # Generate comparison report
-            regression_found = self._write_comparison_file(current_results, baseline_results, baseline_content, output_file, dev_mode=dev_mode)
+            regression_found = self._write_comparison_file(
+                current_results,
+                baseline_results,
+                ComparisonFileRequest(
+                    baseline_content=baseline_content,
+                    output_file=output_file,
+                    dev_mode=dev_mode,
+                    failure_policy=failure_policy,
+                ),
+            )
 
             return True, regression_found
 
@@ -2505,7 +2944,7 @@ class PerformanceComparator:
         """Public wrapper for writing the performance comparison section.
 
         Returns:
-            True if any individual benchmark or the overall average exceeds the
+            True if the selected failure policy detects a regression exceeding the
             regression threshold.
         """
         return self._write_performance_comparison(f, current_results, baseline_results)
@@ -2514,10 +2953,7 @@ class PerformanceComparator:
         self,
         current_results: list[BenchmarkData],
         baseline_results: dict[str, BenchmarkData],
-        baseline_content: str,
-        output_file: Path,
-        *,
-        dev_mode: bool = False,
+        request: ComparisonFileRequest,
     ) -> bool:
         """Write comparison results to file."""
         logger.debug(
@@ -2527,17 +2963,22 @@ class PerformanceComparator:
             len(baseline_results),
         )
         # Prepare metadata
-        metadata = self._prepare_comparison_metadata(baseline_content)
+        metadata = self._prepare_comparison_metadata(request.baseline_content)
 
         # Prepare hardware comparison
-        hardware_report = self._prepare_hardware_comparison(baseline_content)
-        sampling_warning = self._sampling_warning(baseline_content, dev_mode=dev_mode)
+        hardware_report = self._prepare_hardware_comparison(request.baseline_content)
+        sampling_warning = self._sampling_warning(request.baseline_content, dev_mode=request.dev_mode)
 
         # Write comparison file
-        output_file.parent.mkdir(parents=True, exist_ok=True)
-        with output_file.open("w", encoding="utf-8") as f:
+        request.output_file.parent.mkdir(parents=True, exist_ok=True)
+        with request.output_file.open("w", encoding="utf-8") as f:
             self._write_comparison_header(f, metadata, hardware_report, sampling_warning=sampling_warning)
-            return self._write_performance_comparison(f, current_results, baseline_results)
+            return self._write_performance_comparison(
+                f,
+                current_results,
+                baseline_results,
+                failure_policy=request.failure_policy,
+            )
 
     def _prepare_comparison_metadata(self, baseline_content: str) -> dict[str, str]:
         """Prepare metadata for comparison report."""
@@ -2645,10 +3086,18 @@ class PerformanceComparator:
             return None
         return baseline_results.get(f"{current.points}_{current.dimension}")
 
-    def _write_performance_comparison(self, f: TextIO, current_results: list[BenchmarkData], baseline_results: dict[str, BenchmarkData]) -> bool:
+    def _write_performance_comparison(
+        self,
+        f: TextIO,
+        current_results: list[BenchmarkData],
+        baseline_results: dict[str, BenchmarkData],
+        *,
+        failure_policy: ComparisonFailurePolicy = "strict",
+    ) -> bool:
         """Write performance comparison section and return whether any regression exceeds threshold."""
-        time_changes = []  # Track all time changes for average calculation
+        time_changes: list[BenchmarkTimeChange] = []
         individual_regressions = 0
+        individual_improvements = 0
 
         for current_benchmark in current_results:
             baseline_benchmark = self._matching_baseline(current_benchmark, baseline_results)
@@ -2660,53 +3109,65 @@ class PerformanceComparator:
                 self._write_baseline_benchmark_data(f, baseline_benchmark)
                 time_change, is_individual_regression = self._write_time_comparison(f, current_benchmark, baseline_benchmark)
                 if time_change is not None:
-                    time_changes.append(time_change)
+                    mean_times = self._mean_times_us(current_benchmark, baseline_benchmark)
+                    if mean_times is not None:
+                        current_mean_us, baseline_mean_us = mean_times
+                        time_changes.append(
+                            BenchmarkTimeChange(
+                                label=self._comparison_label(current_benchmark),
+                                current_mean_us=current_mean_us,
+                                baseline_mean_us=baseline_mean_us,
+                                time_change_pct=time_change,
+                            ),
+                        )
                     if is_individual_regression:
                         individual_regressions += 1
+                    elif time_change < -self.regression_threshold:
+                        individual_improvements += 1
                 self._write_throughput_comparison(f, current_benchmark, baseline_benchmark)
             else:
                 f.write("Baseline: N/A (no matching entry)\n")
 
             f.write("\n")
 
-        # Calculate and report average regression
         if time_changes:
-            # Prefer geometric mean of ratios to reflect multiplicative changes across benchmarks
-            ratios = [1.0 + (tc / 100.0) for tc in time_changes]
-            # Guard against non-positive ratios (defensive; should not occur with sane data)
-            positive_ratios = [r for r in ratios if r > 0]
-            if not positive_ratios:
-                average_change = 0.0
-            else:
-                avg_log = sum(math.log(r) for r in positive_ratios) / len(positive_ratios)
-                avg_ratio = math.exp(avg_log)
-                average_change = (avg_ratio - 1.0) * 100.0
-                logger.debug(
-                    "Average change computed: %.2f%% with threshold %.2f%% across %s benchmarks",
-                    average_change,
-                    self.regression_threshold,
-                    len(time_changes),
-                )
+            total_current_us = sum(change.current_mean_us for change in time_changes)
+            total_baseline_us = sum(change.baseline_mean_us for change in time_changes)
+            total_time_change = ((total_current_us - total_baseline_us) / total_baseline_us) * 100.0
+            geomean_change = self._geomean_time_change(time_changes)
+            median_change = self._median_time_change(time_changes)
+
             f.write("\n=== SUMMARY ===\n")
             f.write(f"Total benchmarks compared: {len(time_changes)}\n")
             f.write(f"Individual regressions (>{self.regression_threshold}%): {individual_regressions}\n")
-            f.write(f"Average time change: {average_change:.1f}%\n")
-            # Optional: top regressions
-            top = sorted(time_changes, reverse=True)[:5]
-            if top:
-                f.write("Top regressions (by time change %): " + ", ".join(f"{t:.1f}%" for t in top) + "\n")
+            f.write(f"Individual improvements (>{self.regression_threshold}%): {individual_improvements}\n")
+            f.write(f"Total baseline matched mean time: {total_baseline_us:.3f} µs\n")
+            f.write(f"Total current matched mean time: {total_current_us:.3f} µs\n")
+            f.write(f"Total time change: {total_time_change:+.1f}%\n")
+            f.write(f"Geomean time change: {geomean_change:+.1f}%\n")
+            f.write(f"Median time change: {median_change:+.1f}%\n")
+            self._write_top_time_changes(f, "Top regressions", self._top_regressions(time_changes))
+            self._write_top_time_changes(f, "Top improvements", self._top_improvements(time_changes))
 
             regression_found = self._write_summary_status(
                 f,
-                average_change=average_change,
-                individual_regressions=individual_regressions,
-                compared_count=len(time_changes),
+                ComparisonSummaryStats(
+                    total_time_change=total_time_change,
+                    geomean_change=geomean_change,
+                    median_change=median_change,
+                    individual_regressions=individual_regressions,
+                    compared_count=len(time_changes),
+                    failure_policy=failure_policy,
+                ),
             )
 
             logger.debug(
-                "Performance comparison summary: individual_regressions=%s top_regressions=%s",
+                "Performance comparison summary: policy=%s total_change=%.2f%% geomean_change=%.2f%% median_change=%.2f%% individual_regressions=%s",
+                failure_policy,
+                total_time_change,
+                geomean_change,
+                median_change,
                 individual_regressions,
-                top,
             )
 
             f.write("\n")
@@ -2714,56 +3175,135 @@ class PerformanceComparator:
 
         return False
 
-    def _write_summary_status(self, f: TextIO, *, average_change: float, individual_regressions: int, compared_count: int) -> bool:
+    @staticmethod
+    def _geomean_time_change(time_changes: list[BenchmarkTimeChange]) -> float:
+        """Return the geometric mean time change across matched benchmarks."""
+        ratios = [1.0 + (change.time_change_pct / 100.0) for change in time_changes]
+        positive_ratios = [ratio for ratio in ratios if ratio > 0.0]
+        if not positive_ratios:
+            return 0.0
+        avg_log = sum(math.log(ratio) for ratio in positive_ratios) / len(positive_ratios)
+        return (math.exp(avg_log) - 1.0) * 100.0
+
+    @staticmethod
+    def _median_time_change(time_changes: list[BenchmarkTimeChange]) -> float:
+        """Return the median time change across matched benchmarks."""
+        sorted_changes = sorted(change.time_change_pct for change in time_changes)
+        midpoint = len(sorted_changes) // 2
+        if len(sorted_changes) % 2 == 1:
+            return sorted_changes[midpoint]
+        return (sorted_changes[midpoint - 1] + sorted_changes[midpoint]) / 2.0
+
+    def _top_regressions(self, time_changes: list[BenchmarkTimeChange]) -> list[BenchmarkTimeChange]:
+        """Return the largest individual slowdowns beyond the regression threshold."""
+        regressions = [change for change in time_changes if change.time_change_pct > self.regression_threshold]
+        return sorted(regressions, key=lambda change: change.time_change_pct, reverse=True)[:5]
+
+    def _top_improvements(self, time_changes: list[BenchmarkTimeChange]) -> list[BenchmarkTimeChange]:
+        """Return the largest individual speedups beyond the improvement threshold."""
+        improvements = [change for change in time_changes if change.time_change_pct < -self.regression_threshold]
+        return sorted(improvements, key=lambda change: change.time_change_pct)[:5]
+
+    @staticmethod
+    def _write_top_time_changes(f: TextIO, title: str, changes: list[BenchmarkTimeChange]) -> None:
+        """Write a compact top-N timing change list."""
+        if not changes:
+            return
+        f.write(f"{title}:\n")
+        f.writelines(f"- {change.label}: {change.time_change_pct:+.1f}%\n" for change in changes)
+
+    def _write_summary_status(self, f: TextIO, summary: ComparisonSummaryStats) -> bool:
         """Write the summary status line and return whether the comparison failed."""
-        average_regression_found = average_change > self.regression_threshold
-        if average_regression_found:
+        total_regression_found = summary.total_time_change > self.regression_threshold
+        if total_regression_found:
             f.write(
-                f"🚨 OVERALL REGRESSION: Average performance decreased by {average_change:.1f}% (exceeds {self.regression_threshold}% threshold)\n",
+                f"🚨 OVERALL REGRESSION: Total matched benchmark time increased by {summary.total_time_change:.1f}% "
+                f"(exceeds {self.regression_threshold}% threshold)\n",
             )
             logger.warning(
-                "Average regression detected: average_change=%.2f%% threshold=%.2f%% benchmarks=%s",
-                average_change,
+                "Total-time regression detected: total_time_change=%.2f%% threshold=%.2f%% benchmarks=%s geomean=%.2f%% median=%.2f%%",
+                summary.total_time_change,
                 self.regression_threshold,
-                compared_count,
+                summary.compared_count,
+                summary.geomean_change,
+                summary.median_change,
             )
             return True
 
-        if individual_regressions > 0:
+        if summary.individual_regressions > 0:
+            if summary.failure_policy == "total-time":
+                f.write(
+                    f"⚠️ INDIVIDUAL REGRESSION WARNING: {summary.individual_regressions} benchmark(s) exceeded "
+                    f"{self.regression_threshold}% threshold while total matched time changed by {summary.total_time_change:.1f}%\n",
+                )
+                logger.warning(
+                    "Individual regressions warning under total-time policy: individual_regressions=%s "
+                    "total_time_change=%.2f%% threshold=%.2f%% benchmarks=%s",
+                    summary.individual_regressions,
+                    summary.total_time_change,
+                    self.regression_threshold,
+                    summary.compared_count,
+                )
+                return False
+
             f.write(
-                f"⚠️ INDIVIDUAL REGRESSION: {individual_regressions} benchmark(s) exceeded "
-                f"{self.regression_threshold}% threshold while average changed by {average_change:.1f}%\n",
+                f"⚠️ INDIVIDUAL REGRESSION: {summary.individual_regressions} benchmark(s) exceeded "
+                f"{self.regression_threshold}% threshold while total matched time changed by {summary.total_time_change:.1f}%\n",
             )
             logger.warning(
-                "Individual regression detected: individual_regressions=%s average_change=%.2f%% threshold=%.2f%% benchmarks=%s",
-                individual_regressions,
-                average_change,
+                "Individual regression detected: individual_regressions=%s total_time_change=%.2f%% threshold=%.2f%% benchmarks=%s",
+                summary.individual_regressions,
+                summary.total_time_change,
                 self.regression_threshold,
-                compared_count,
+                summary.compared_count,
             )
             return True
 
-        if average_change < -self.regression_threshold:
+        if summary.total_time_change < -self.regression_threshold:
             f.write(
-                f"🎉 OVERALL IMPROVEMENT: Average performance improved by {abs(average_change):.1f}% "
+                f"🎉 OVERALL IMPROVEMENT: Total matched benchmark time improved by {abs(summary.total_time_change):.1f}% "
                 f"(exceeds {self.regression_threshold}% threshold)\n",
             )
             logger.info(
-                "Average improvement detected: average_change=%.2f%% threshold=%.2f%% benchmarks=%s",
-                average_change,
+                "Total-time improvement detected: total_time_change=%.2f%% threshold=%.2f%% benchmarks=%s",
+                summary.total_time_change,
                 self.regression_threshold,
-                compared_count,
+                summary.compared_count,
             )
             return False
 
-        f.write(f"✅ OVERALL OK: Average change within acceptable range (±{self.regression_threshold}%)\n")
+        f.write(f"✅ OVERALL OK: Total matched time change within acceptable range (±{self.regression_threshold}%)\n")
         logger.debug(
-            "Average change within threshold: average_change=%.2f%% threshold=%.2f%% benchmarks=%s",
-            average_change,
+            "Total-time change within threshold: total_time_change=%.2f%% threshold=%.2f%% benchmarks=%s",
+            summary.total_time_change,
             self.regression_threshold,
-            compared_count,
+            summary.compared_count,
         )
         return False
+
+    @staticmethod
+    def _comparison_label(benchmark: BenchmarkData) -> str:
+        """Return a stable label for summary timing change lists."""
+        return benchmark.benchmark_id or f"{benchmark.points}_{benchmark.dimension}"
+
+    @staticmethod
+    def _mean_time_us(benchmark: BenchmarkData) -> float | None:
+        """Return the benchmark mean time in microseconds when its unit is supported."""
+        unit = benchmark.time_unit or "µs"
+        scale = TIME_UNIT_TO_MICROSECONDS.get(unit)
+        if scale is None:
+            return None
+        return benchmark.time_mean * scale
+
+    def _mean_times_us(self, current: BenchmarkData, baseline: BenchmarkData) -> tuple[float, float] | None:
+        """Return normalized current and baseline mean times for a valid comparison."""
+        if baseline.time_mean <= 0:
+            return None
+        cur_mean_us = self._mean_time_us(current)
+        base_mean_us = self._mean_time_us(baseline)
+        if cur_mean_us is None or base_mean_us is None or base_mean_us <= 0:
+            return None
+        return cur_mean_us, base_mean_us
 
     def _write_benchmark_header(self, f, benchmark: BenchmarkData) -> None:
         """Write benchmark section header."""
@@ -2794,19 +3334,16 @@ class PerformanceComparator:
         if baseline.time_mean <= 0:
             f.write("Time Change: N/A (baseline mean is 0)\n")
             return None, False
-        # Normalize to microseconds when units differ (supports ns, µs/μs/us, ms, s)
-        # Note: Both µ (micro sign U+00B5) and μ (Greek mu U+03BC) symbols are supported
-        unit_scale = {"ns": 1e-3, "µs": 1.0, "μs": 1.0, "us": 1.0, "ms": 1e3, "s": 1e6}
         cur_unit = current.time_unit or "µs"
         base_unit = baseline.time_unit or "µs"
-        if cur_unit not in unit_scale or base_unit not in unit_scale:
+        if cur_unit not in TIME_UNIT_TO_MICROSECONDS or base_unit not in TIME_UNIT_TO_MICROSECONDS:
             f.write(f"Time Change: N/A (unit mismatch: {cur_unit} vs {base_unit})\n")
             return None, False
-        cur_mean_us = current.time_mean * unit_scale[cur_unit]
-        base_mean_us = baseline.time_mean * unit_scale[base_unit]
-        if base_mean_us <= 0:
+        mean_times = self._mean_times_us(current, baseline)
+        if mean_times is None:
             f.write("Time Change: N/A (baseline mean is 0)\n")
             return None, False
+        cur_mean_us, base_mean_us = mean_times
 
         time_change_pct = ((cur_mean_us - base_mean_us) / base_mean_us) * 100
         is_individual_regression = time_change_pct > self.regression_threshold
@@ -3438,12 +3975,12 @@ class BenchmarkRegressionHelper:
         print(f"Skip reason: {skip_reason}")
 
         if baseline_exists == "true" and skip_benchmarks == "false":
-            results_file = Path("benches/compare_results.txt")
+            results_file = Path("benches") / MAIN_VS_RELEASE_COMPARISON_RESULTS_FILE
             if results_file.exists():
                 with results_file.open("r", encoding="utf-8") as f:
                     content = f.read()
                     if "❌ Error:" in content:
-                        print("Result: ❌ Benchmark comparison failed (see benches/compare_results.txt for details)")
+                        print(f"Result: ❌ Benchmark comparison failed (see {results_file} for details)")
                     elif "REGRESSION" in content:
                         print("Result: ⚠️ Performance regressions detected")
                         # Set environment variable for machine consumption by CI systems
@@ -3812,6 +4349,31 @@ def _add_benchmark_subcommands(subparsers: "argparse._SubParsersAction[argparse.
     ref_parser.add_argument("--project-root", type=Path, help="Project root containing the git repo (directory containing Cargo.toml)")
     ref_parser.set_defaults(validate_bench_timeout=True)
 
+    ensure_ref_parser = subparsers.add_parser("ensure-ref-baseline", help="Ensure a cached same-machine baseline exists for a git ref")
+    ensure_ref_parser.add_argument("--ref", dest="ref_name", type=str, default="main", help="Git ref to benchmark/cache (default: main)")
+    ensure_ref_parser.add_argument("--remote", type=str, default="origin", help="Git remote used to resolve/fetch the ref (default: origin)")
+    ensure_ref_parser.add_argument(
+        "--cache-root",
+        type=Path,
+        help="Cache root for local same-machine baselines (default: baseline-artifacts/perf-no-regressions)",
+    )
+    ensure_ref_parser.add_argument(
+        "--required-benchmark-id",
+        default=PERF_NO_REGRESSIONS_REQUIRED_BENCHMARK_ID,
+        help=f"Benchmark ID required before reusing a cache entry (default: {PERF_NO_REGRESSIONS_REQUIRED_BENCHMARK_ID})",
+    )
+    ensure_ref_parser.add_argument(
+        "--dev", action="store_true", help=f"Use faster Criterion settings while retaining the {TRUSTED_BENCH_PROFILE} Cargo profile"
+    )
+    ensure_ref_parser.add_argument(
+        "--bench-timeout",
+        type=int,
+        default=get_default_bench_timeout(),
+        help="Timeout for cargo bench in seconds when refreshing the cache (from BENCHMARK_TIMEOUT env, default: 1800)",
+    )
+    ensure_ref_parser.add_argument("--project-root", type=Path, help="Project root containing the git repo (directory containing Cargo.toml)")
+    ensure_ref_parser.set_defaults(validate_bench_timeout=True)
+
     cmp_parser = subparsers.add_parser("compare", help="Compare current performance against baseline")
     cmp_parser.add_argument("--baseline", type=Path, required=True, help="Path to baseline file")
     cmp_parser.add_argument(
@@ -3823,7 +4385,11 @@ def _add_benchmark_subcommands(subparsers: "argparse._SubParsersAction[argparse.
     cmp_parser.add_argument(
         "--dev", action="store_true", help=f"Use faster Criterion settings while retaining the {TRUSTED_BENCH_PROFILE} Cargo profile"
     )
-    cmp_parser.add_argument("--output", type=Path, help="Output file path")
+    cmp_parser.add_argument(
+        "--output",
+        type=Path,
+        help=f"Output file path (default: benches/{MAIN_VS_RELEASE_COMPARISON_RESULTS_FILE})",
+    )
     cmp_parser.add_argument("--project-root", type=Path, help="Project root to benchmark (directory containing Cargo.toml)")
     cmp_parser.add_argument(
         "--bench-timeout",
@@ -3832,6 +4398,42 @@ def _add_benchmark_subcommands(subparsers: "argparse._SubParsersAction[argparse.
         help="Timeout for cargo bench in seconds (from BENCHMARK_TIMEOUT env, default: 1800)",
     )
     cmp_parser.set_defaults(validate_bench_timeout=True)
+
+    cmp_ref_parser = subparsers.add_parser("compare-ref", help="Compare current performance against a cached same-machine git-ref baseline")
+    cmp_ref_parser.add_argument("--ref", dest="ref_name", type=str, default="main", help="Git ref to benchmark/cache (default: main)")
+    cmp_ref_parser.add_argument("--remote", type=str, default="origin", help="Git remote used to resolve/fetch the ref (default: origin)")
+    cmp_ref_parser.add_argument(
+        "--cache-root",
+        type=Path,
+        help="Cache root for local same-machine baselines (default: baseline-artifacts/perf-no-regressions)",
+    )
+    cmp_ref_parser.add_argument(
+        "--required-benchmark-id",
+        default=PERF_NO_REGRESSIONS_REQUIRED_BENCHMARK_ID,
+        help=f"Benchmark ID required before reusing a cache entry (default: {PERF_NO_REGRESSIONS_REQUIRED_BENCHMARK_ID})",
+    )
+    cmp_ref_parser.add_argument(
+        "--threshold",
+        type=float,
+        default=DEFAULT_REGRESSION_THRESHOLD,
+        help=f"Regression threshold percentage for marking regressions (default: {DEFAULT_REGRESSION_THRESHOLD})",
+    )
+    cmp_ref_parser.add_argument(
+        "--dev", action="store_true", help=f"Use faster Criterion settings while retaining the {TRUSTED_BENCH_PROFILE} Cargo profile"
+    )
+    cmp_ref_parser.add_argument(
+        "--bench-timeout",
+        type=int,
+        default=get_default_bench_timeout(),
+        help="Timeout for cargo bench in seconds (from BENCHMARK_TIMEOUT env, default: 1800)",
+    )
+    cmp_ref_parser.add_argument(
+        "--output",
+        type=Path,
+        help="Output file path (default: benches/worktree_vs_<ref>_compare_results.txt)",
+    )
+    cmp_ref_parser.add_argument("--project-root", type=Path, help="Project root containing the git repo (directory containing Cargo.toml)")
+    cmp_ref_parser.set_defaults(validate_bench_timeout=True)
 
 
 def _add_local_baseline_subcommands(subparsers: "argparse._SubParsersAction[argparse.ArgumentParser]") -> None:
@@ -3925,7 +4527,12 @@ def _add_regression_subcommands(subparsers: "argparse._SubParsersAction[argparse
     regress_parser.set_defaults(validate_bench_timeout=True)
 
     results_parser = subparsers.add_parser("display-results", help="Display regression test results")
-    results_parser.add_argument("--results", type=Path, default=Path("benches/compare_results.txt"), help="Results file path")
+    results_parser.add_argument(
+        "--results",
+        type=Path,
+        default=Path("benches") / MAIN_VS_RELEASE_COMPARISON_RESULTS_FILE,
+        help="Results file path",
+    )
 
     subparsers.add_parser("regression-summary", help="Generate regression testing summary")
 
@@ -3974,51 +4581,116 @@ def configure_logging(*, verbose: bool) -> None:
     )
 
 
-def execute_baseline_commands(args: argparse.Namespace, project_root: Path) -> None:
-    """Execute baseline generation and comparison commands."""
-    if args.command == "generate-baseline":
-        generator = BaselineGenerator(project_root, ref_name=args.ref_name)
-        success = generator.generate_baseline(dev_mode=args.dev, output_file=args.output, bench_timeout=args.bench_timeout)
-        sys.exit(0 if success else 1)
+def _exit_called_process_error(error: subprocess.CalledProcessError) -> NoReturn:
+    print(f"❌ Git command failed with exit code {error.returncode}: {error.cmd}", file=sys.stderr)
+    if error.stderr:
+        print(error.stderr, file=sys.stderr)
+    if error.stdout:
+        print(error.stdout, file=sys.stderr)
+    sys.exit(1)
 
-    elif args.command == "generate-ref-baseline":
-        out_dir = args.out_dir if args.out_dir.is_absolute() else project_root / args.out_dir
-        try:
-            generator = LocalRefBaselineGenerator(project_root, remote=args.remote)
-            baseline_path = generator.generate_for_ref(
-                ref_name=args.ref_name,
-                out_dir=out_dir,
-                dev_mode=args.dev,
-                bench_timeout=args.bench_timeout,
-            )
-        except subprocess.CalledProcessError as e:
-            print(f"❌ Git command failed with exit code {e.returncode}: {e.cmd}", file=sys.stderr)
-            if e.stderr:
-                print(e.stderr, file=sys.stderr)
-            if e.stdout:
-                print(e.stdout, file=sys.stderr)
-            sys.exit(1)
-        except _RECOVERABLE_CLI_ERRORS as e:
-            print(f"❌ {e}", file=sys.stderr)
-            sys.exit(1)
 
-        print(baseline_path)
-        sys.exit(0)
+def _local_ref_cache_options_from_args(args: argparse.Namespace) -> LocalRefBaselineCacheOptions:
+    return LocalRefBaselineCacheOptions(
+        ref_name=args.ref_name,
+        remote=args.remote,
+        cache_root=args.cache_root,
+        dev_mode=args.dev,
+        bench_timeout=args.bench_timeout,
+        required_benchmark_id=args.required_benchmark_id,
+    )
 
-    elif args.command == "compare":
-        comparator = PerformanceComparator(project_root)
-        comparator.regression_threshold = args.threshold
-        success, regression_found = comparator.compare_with_baseline(
-            args.baseline,
+
+def _cmd_generate_baseline(args: argparse.Namespace, project_root: Path) -> None:
+    generator = BaselineGenerator(project_root, ref_name=args.ref_name)
+    success = generator.generate_baseline(dev_mode=args.dev, output_file=args.output, bench_timeout=args.bench_timeout)
+    sys.exit(0 if success else 1)
+
+
+def _cmd_generate_ref_baseline(args: argparse.Namespace, project_root: Path) -> None:
+    out_dir = args.out_dir if args.out_dir.is_absolute() else project_root / args.out_dir
+    try:
+        generator = LocalRefBaselineGenerator(project_root, remote=args.remote)
+        baseline_path = generator.generate_for_ref(
+            ref_name=args.ref_name,
+            out_dir=out_dir,
             dev_mode=args.dev,
-            output_file=args.output,
             bench_timeout=args.bench_timeout,
         )
+    except subprocess.CalledProcessError as e:
+        _exit_called_process_error(e)
+    except _RECOVERABLE_CLI_ERRORS as e:
+        print(f"❌ {e}", file=sys.stderr)
+        sys.exit(1)
 
-        if not success:
-            sys.exit(1)
+    print(baseline_path)
+    sys.exit(0)
 
-        sys.exit(1 if regression_found else 0)
+
+def _cmd_ensure_ref_baseline(args: argparse.Namespace, project_root: Path) -> None:
+    options = _local_ref_cache_options_from_args(args)
+    try:
+        cache_result = ensure_cached_ref_baseline_for_ref(project_root, options)
+    except subprocess.CalledProcessError as e:
+        _exit_called_process_error(e)
+    except _RECOVERABLE_CLI_ERRORS as e:
+        print(f"❌ {e}", file=sys.stderr)
+        sys.exit(1)
+
+    print(cache_result.baseline_path)
+    sys.exit(0)
+
+
+def _cmd_compare(args: argparse.Namespace, project_root: Path) -> None:
+    comparator = PerformanceComparator(project_root)
+    comparator.regression_threshold = args.threshold
+    output_file = args.output or release_comparison_results_path(project_root)
+    success, regression_found = comparator.compare_with_baseline(
+        args.baseline,
+        dev_mode=args.dev,
+        output_file=output_file,
+        bench_timeout=args.bench_timeout,
+    )
+    _display_comparison_result(output_file, success=success, regression_found=regression_found)
+
+    if not success:
+        sys.exit(1)
+
+    sys.exit(1 if regression_found else 0)
+
+
+def _cmd_compare_ref(args: argparse.Namespace, project_root: Path) -> None:
+    options = _local_ref_cache_options_from_args(args)
+    try:
+        exit_code = compare_with_cached_ref_baseline(
+            project_root,
+            options,
+            threshold=args.threshold,
+            output_file=args.output,
+        )
+    except subprocess.CalledProcessError as e:
+        _exit_called_process_error(e)
+    except _RECOVERABLE_CLI_ERRORS as e:
+        print(f"❌ {e}", file=sys.stderr)
+        sys.exit(1)
+
+    sys.exit(exit_code)
+
+
+def execute_baseline_commands(args: argparse.Namespace, project_root: Path) -> None:
+    """Execute baseline generation and comparison commands."""
+    handlers = {
+        "generate-baseline": _cmd_generate_baseline,
+        "generate-ref-baseline": _cmd_generate_ref_baseline,
+        "ensure-ref-baseline": _cmd_ensure_ref_baseline,
+        "compare": _cmd_compare,
+        "compare-ref": _cmd_compare_ref,
+    }
+    handler = handlers.get(args.command)
+    if handler is None:
+        msg = f"Unknown baseline command: {args.command}"
+        raise ValueError(msg)
+    handler(args, project_root)
 
 
 def _write_optional_report(output_path: Path | None, report_text: str) -> None:
@@ -4217,7 +4889,7 @@ def execute_regression_commands(args: argparse.Namespace) -> None:
 def execute_command(args: argparse.Namespace, project_root: Path) -> None:
     """Execute the selected command based on parsed arguments."""
     # Try baseline commands first
-    if args.command in ("generate-baseline", "generate-ref-baseline", "compare"):
+    if args.command in ("generate-baseline", "generate-ref-baseline", "ensure-ref-baseline", "compare", "compare-ref"):
         execute_baseline_commands(args, project_root)
         return
 

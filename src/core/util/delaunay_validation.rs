@@ -2,7 +2,10 @@
 
 #![forbid(unsafe_code)]
 
+#[cfg(not(any(test, feature = "diagnostics")))]
 use crate::core::cell::CellValidationError;
+#[cfg(any(test, feature = "diagnostics"))]
+use crate::core::cell::{CellValidationError, NeighborSlot};
 use crate::core::collections::ViolationBuffer;
 #[cfg(any(test, feature = "diagnostics"))]
 use crate::core::collections::{CellVertexBuffer, NeighborBuffer};
@@ -142,6 +145,12 @@ impl DelaunayViolationReport {
 /// [`cell_key`](Self::cell_key), [`cell_vertices`](Self::cell_vertices), and
 /// [`offending_vertex`](Self::offending_vertex) to recover full vertex or cell
 /// records from the source [`Tds`].
+///
+/// [`neighbor_cells`](Self::neighbor_cells) preserves the violating cell's raw
+/// [`NeighborSlot`] state for each facet so diagnostics can distinguish
+/// [`Boundary`](NeighborSlot::Boundary) hull facets,
+/// [`Unassigned`](NeighborSlot::Unassigned) missing wiring, and
+/// [`Neighbor`](NeighborSlot::Neighbor) cell links.
 #[cfg(any(test, feature = "diagnostics"))]
 #[cfg_attr(docsrs, doc(cfg(feature = "diagnostics")))]
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -155,7 +164,7 @@ pub struct DelaunayViolationDetail {
     /// be identified.
     pub offending_vertex: Option<VertexKey>,
     /// Neighbor slots of the violating cell, preserving facet-index order.
-    pub neighbor_cells: NeighborBuffer<Option<CellKey>>,
+    pub neighbor_cells: NeighborBuffer<NeighborSlot>,
 }
 
 // =============================================================================
@@ -246,16 +255,16 @@ where
                 //   A.neighbors()[k] = B  ("vertex j opposite neighbor j").
                 if D >= 4 {
                     let is_artifact = 'artifact: {
-                        let Some(a_neighbors) = cell.neighbors() else {
+                        let Some(a_neighbors) = cell.neighbor_keys() else {
                             break 'artifact false;
                         };
                         let mut b_points: SmallVec<[Point<T, D>; 8]> =
                             SmallVec::with_capacity(D + 1);
-                        for (k, neighbor_opt) in a_neighbors.iter().enumerate() {
+                        for (k, neighbor_opt) in a_neighbors.enumerate() {
                             let Some(b_key) = neighbor_opt else {
                                 continue;
                             };
-                            let Some(b_cell) = tds.cell(*b_key) else {
+                            let Some(b_cell) = tds.cell(b_key) else {
                                 continue;
                             };
                             // Is test_vkey the apex of B w.r.t. A?
@@ -542,10 +551,8 @@ where
     let cell = tds.cell(cell_key)?;
     let cell_vertices = cell.vertices().iter().copied().collect();
     let neighbor_cells = cell
-        .neighbors()
-        .map_or_else(NeighborBuffer::new, |neighbors| {
-            neighbors.iter().copied().collect()
-        });
+        .neighbor_slots()
+        .map_or_else(NeighborBuffer::new, |slots| slots.iter().copied().collect());
     let offending_vertex = first_offending_vertex(tds, cell_key);
 
     Some(DelaunayViolationDetail {
@@ -748,24 +755,29 @@ pub fn debug_print_first_delaunay_violation<T, U, V, const D: usize>(
     }
 
     // Neighbor information for the first violating cell.
-    if let Some(neighbors) = cell.neighbors() {
-        for (facet_idx, neighbor_key_opt) in neighbors.iter().enumerate() {
-            match neighbor_key_opt {
-                Some(neighbor_key) => {
-                    if let Some(neighbor_cell) = tds.cell(*neighbor_key) {
+    if let Some(neighbors) = cell.neighbor_slots() {
+        for (facet_idx, neighbor_slot) in neighbors.iter().copied().enumerate() {
+            match neighbor_slot {
+                NeighborSlot::Neighbor(neighbor_key) => {
+                    if let Some(neighbor_cell) = tds.cell(neighbor_key) {
                         tracing::debug!(
-                            "[Delaunay debug]  facet {facet_idx}: neighbor cell {neighbor_key:?}, uuid={}",
+                            "[Delaunay debug]  facet {facet_idx}: slot=Assigned, neighbor cell {neighbor_key:?}, uuid={}",
                             neighbor_cell.uuid()
                         );
                     } else {
                         tracing::debug!(
-                            "[Delaunay debug]  facet {facet_idx}: neighbor cell {neighbor_key:?} missing from TDS",
+                            "[Delaunay debug]  facet {facet_idx}: slot=Assigned, neighbor cell {neighbor_key:?} missing from TDS",
                         );
                     }
                 }
-                None => {
+                NeighborSlot::Boundary => {
                     tracing::debug!(
-                        "[Delaunay debug]  facet {facet_idx}: no neighbor (hull facet or unassigned)"
+                        "[Delaunay debug]  facet {facet_idx}: slot=Boundary (hull facet)"
+                    );
+                }
+                NeighborSlot::Unassigned => {
+                    tracing::debug!(
+                        "[Delaunay debug]  facet {facet_idx}: slot=Unassigned (missing neighbor wiring)"
                     );
                 }
             }
@@ -781,7 +793,7 @@ pub fn debug_print_first_delaunay_violation<T, U, V, const D: usize>(
 mod tests {
     use super::*;
     use crate::core::algorithms::incremental_insertion::repair_neighbor_pointers;
-    use crate::core::cell::Cell;
+    use crate::core::cell::{Cell, NeighborSlot};
     use crate::core::triangulation::Triangulation;
     use crate::core::util::make_uuid;
     use crate::core::vertex::Vertex;
@@ -1030,7 +1042,47 @@ mod tests {
         assert!(detail.cell_key == cell_1 || detail.cell_key == cell_2);
         assert_eq!(detail.cell_vertices.len(), 3);
         assert_eq!(detail.neighbor_cells.len(), 3);
+        let expected_neighbor = if detail.cell_key == cell_1 {
+            cell_2
+        } else {
+            cell_1
+        };
+        assert!(
+            detail.neighbor_cells.iter().copied().any(
+                |slot| matches!(slot, NeighborSlot::Neighbor(key) if key == expected_neighbor)
+            ),
+            "violation detail should preserve the assigned neighbor slot"
+        );
         assert!(detail.offending_vertex.is_some());
+    }
+
+    #[test]
+    fn delaunay_violation_detail_preserves_neighbor_slot_state() {
+        let mut tds: Tds<f64, (), (), 2> = Tds::empty();
+
+        let a = tds.insert_vertex_with_mapping(vertex!([0.0, 0.0])).unwrap();
+        let b = tds.insert_vertex_with_mapping(vertex!([1.0, 0.0])).unwrap();
+        let c = tds.insert_vertex_with_mapping(vertex!([0.0, 1.0])).unwrap();
+        let cell_key = tds
+            .insert_cell_with_mapping(Cell::new(vec![a, b, c], None).unwrap())
+            .unwrap();
+        tds.assign_neighbors().unwrap();
+
+        {
+            let cell = tds.cell_mut(cell_key).unwrap();
+            cell.ensure_neighbors_buffer_mut()[1] = NeighborSlot::Unassigned;
+        }
+
+        let detail = build_violation_detail(&tds, cell_key).unwrap();
+
+        assert_eq!(
+            detail.neighbor_cells.as_slice(),
+            &[
+                NeighborSlot::Boundary,
+                NeighborSlot::Unassigned,
+                NeighborSlot::Boundary
+            ]
+        );
     }
 
     #[test]
@@ -1102,7 +1154,7 @@ mod tests {
             Triangulation::<FastKernel<f64>, (), (), 2>::build_initial_simplex(&vertices).unwrap();
         let cell_key = tds.cell_keys().next().unwrap();
         let cell = tds.cell_mut(cell_key).unwrap();
-        cell.neighbors = Some(vec![None, None].into()); // wrong length (expected 3)
+        cell.ensure_neighbors_buffer_mut().truncate(2); // wrong length (expected 3)
 
         let err = is_delaunay_property_only(&tds).unwrap_err();
         assert!(matches!(err, DelaunayValidationError::InvalidCell { .. }));

@@ -198,6 +198,10 @@ ci-baseline ref="main":
 ci-slow: ci test-slow
     @echo "✅ CI + slow tests passed!"
 
+# Validate CITATION.cff against the Citation File Format schema.
+citation-check: _ensure-uv
+    uvx --from cffconvert==2.0.0 cffconvert --validate -i CITATION.cff
+
 # Clean build artifacts
 clean:
     cargo clean
@@ -282,6 +286,7 @@ help-workflows:
     @echo "  just bench-smoke        # Smoke-test benchmark harnesses (minimal samples)"
     @echo "  just bench              # Run all benchmarks with perf profile (ThinLTO)"
     @echo "  just bench-ci           # CI regression benchmarks with perf profile (~5-10 min)"
+    @echo "  just perf-large-scale-smoke [max_secs] # Quick pre-push 2D-5D wall-clock guard (default 60s)"
     @echo "  just perf-no-regressions [threshold] # Fast pre-PR 2D-5D regression guard (default 7.5%)"
     @echo "  just perf-baseline [ref] # Persist/update default local baseline (default: main)"
     @echo "  just perf-baseline-to <out> [ref] # Generate scratch baseline without replacing default"
@@ -296,14 +301,28 @@ help-workflows:
     @echo ""
     @echo "Use 'just --list' for every granular recipe."
 
+# Check JSON files parse cleanly.
+json-check: _ensure-jq
+    #!/usr/bin/env bash
+    set -euo pipefail
+    files=()
+    while IFS= read -r -d '' file; do
+        files+=("$file")
+    done < <(git ls-files -z '*.json')
+    if [ "${#files[@]}" -gt 0 ]; then
+        printf '%s\0' "${files[@]}" | xargs -0 -n1 jq empty
+    else
+        echo "No JSON files found to check."
+    fi
+
 # All linting: code + documentation + configuration
 lint: lint-code lint-docs lint-config
 
 # Code linting: Rust (fmt-check, clippy, docs, Semgrep) + Python (Ruff, Ty) + Shell scripts
 lint-code: fmt-check clippy doc-check semgrep semgrep-test python-lint shell-lint
 
-# Configuration validation: JSON, TOML, YAML, GitHub Actions workflows
-lint-config: validate-json toml-lint toml-fmt-check yaml-lint action-lint
+# Configuration checks: JSON, TOML, YAML/CFF, GitHub Actions workflows
+lint-config: json-check toml-check toml-lint toml-fmt-check yaml-lint citation-check action-lint
 
 # Documentation linting: Markdown + spell checking
 lint-docs: markdown-check spell-check
@@ -354,7 +373,8 @@ perf-compare file threshold="7.5": _ensure-uv
 
 perf-help:
     @echo "Performance Analysis Commands:"
-    @echo "  just perf-no-regressions   # Fast pre-PR guard with a temporary same-machine main baseline"
+    @echo "  just perf-large-scale-smoke # Quick pre-push 2D-5D wall-clock smoke guard"
+    @echo "  just perf-no-regressions   # Fast pre-PR guard with a cached same-machine main baseline"
     @echo "  just perf-baseline [ref]    # Persist/update baseline-artifact for a GitHub ref (default: main)"
     @echo "  just perf-baseline-to <out> [ref] # Generate a scratch baseline artifact without replacing the default"
     @echo "  just perf-compare <file> [threshold] # Compare current tree with a specific dev-mode baseline"
@@ -368,7 +388,8 @@ perf-help:
     @echo "  just profile-mem           # Samply profile memory allocations (with count-allocations feature)"
     @echo ""
     @echo "Benchmark System (Delaunay-specific):"
-    @echo "  just perf-no-regressions   # Generate temporary main baseline, compare current tree, clean up"
+    @echo "  just perf-large-scale-smoke # Pre-push guard using debug-large-scale 2D-5D with a short cap"
+    @echo "  just perf-no-regressions   # Reuse cached main baseline, compare current tree"
     @echo "  just perf-baseline [ref]   # Persist baseline-artifact/baseline_results.txt from a GitHub ref"
     @echo "  just perf-baseline-to <out> [ref] # Generate an alternate local baseline artifact directory"
     @echo "  just perf-compare <file>   # Compare against a specific dev-mode baseline"
@@ -384,6 +405,7 @@ perf-help:
     @echo "  DELAUNAY_BENCH_SEED=N      # Random seed (decimal or 0x-hex)"
     @echo ""
     @echo "Examples:"
+    @echo "  just perf-large-scale-smoke # Run before pushing to catch obvious performance drift"
     @echo "  just perf-no-regressions   # Recommended local PR performance guard"
     @echo "  just perf-baseline         # Persist/update default local baseline for GitHub main"
     @echo "  just perf-baseline v0.7.5  # Persist/update default local baseline for a release tag"
@@ -395,56 +417,61 @@ perf-help:
     @echo "  just profile 1.95          # Current tree on Rust 1.95"
     @echo "  just profile 1.95 v0.7.5   # v0.7.5 code on Rust 1.95"
 
-# Fast pre-PR performance guard against a temporary same-machine main baseline.
-perf-no-regressions threshold="7.5": _ensure-uv
+# Quick pre-push 2D-5D large-scale wall-clock smoke guard.
+perf-large-scale-smoke max_secs="60":
     #!/usr/bin/env bash
     set -euo pipefail
 
-    relevant_worktree_dirty() {
-        if ! git diff --quiet -- src benches Cargo.toml Cargo.lock scripts/benchmark_utils.py; then
-            return 0
+    max_secs="{{max_secs}}"
+    if [[ ! "$max_secs" =~ ^[1-9][0-9]*$ ]]; then
+        echo "❌ max_secs must be a positive integer, got: $max_secs" >&2
+        exit 2
+    fi
+
+    status=0
+    failures=()
+
+    run_case() {
+        local dimension="$1"
+        local test_name="$2"
+        local n_env="$3"
+        local n_points="$4"
+        local progress_every="$5"
+
+        echo ""
+        echo "▶ ${dimension}: ${test_name} (${n_points} vertices, ${max_secs}s cap)"
+        if env \
+            DELAUNAY_BULK_PROGRESS_EVERY="$progress_every" \
+            DELAUNAY_LARGE_DEBUG_MAX_RUNTIME_SECS="$max_secs" \
+            "$n_env=$n_points" \
+            DELAUNAY_LARGE_DEBUG_REPAIR_EVERY=1 \
+            cargo test --release --test large_scale_debug "$test_name" -- --ignored --exact --nocapture; then
+            echo "✅ ${dimension} completed within the ${max_secs}s test-runtime cap"
+        else
+            local code=$?
+            echo "❌ ${dimension} failed or exceeded the ${max_secs}s test-runtime cap (exit ${code})"
+            failures+=("$dimension")
+            status=1
         fi
-        if ! git diff --cached --quiet -- src benches Cargo.toml Cargo.lock scripts/benchmark_utils.py; then
-            return 0
-        fi
-        if [ -n "$(git ls-files --others --exclude-standard -- src benches Cargo.toml Cargo.lock scripts/benchmark_utils.py)" ]; then
-            return 0
-        fi
-        return 1
     }
 
-    current_commit="$(git rev-parse HEAD)"
-    remote_line="$(git ls-remote origin refs/heads/main || true)"
-    remote_main_commit=""
-    if [ -n "$remote_line" ]; then
-        read -r remote_main_commit _ <<< "$remote_line"
-    fi
-    if [ -n "$remote_main_commit" ] && [ "$remote_main_commit" = "$current_commit" ] && ! relevant_worktree_dirty; then
-        echo "🔍 origin/main matches HEAD (${current_commit}); no relevant worktree changes to compare."
-        echo "   Skipping perf-no-regressions before generating a same-commit baseline."
-        exit 0
+    run_case "2D" "debug_large_scale_2d" "DELAUNAY_LARGE_DEBUG_N_2D" "36000" "2000"
+    run_case "3D" "debug_large_scale_3d" "DELAUNAY_LARGE_DEBUG_N_3D" "8000" "500"
+    run_case "4D" "debug_large_scale_4d" "DELAUNAY_LARGE_DEBUG_N_4D" "900" "100"
+    run_case "5D" "debug_large_scale_5d" "DELAUNAY_LARGE_DEBUG_N_5D" "140" "20"
+
+    if (( ${#failures[@]} > 0 )); then
+        echo ""
+        echo "❌ Large-scale smoke guard failed for: ${failures[*]}"
+        exit "$status"
     fi
 
-    tmp="$(mktemp -d "${TMPDIR:-/tmp}/delaunay-perf-baseline.XXXXXX")"
-    trap 'rm -rf "$tmp"' EXIT
-    uv run benchmark-utils generate-ref-baseline --ref main --out "$tmp/baseline" --dev
-    baseline="$tmp/baseline/baseline_results.txt"
-    if ! grep -q 'Benchmark ID: tds_new_2d/tds_new/2000' "$baseline"; then
-        echo "❌ Temporary baseline for main does not match the current ci_performance_suite contract."
-        echo "   The benchmark contract probably changed on this branch; inspect ci_performance_suite before comparing."
-        exit 1
-    fi
-    baseline_line="$(grep -m1 '^Git commit:' "$baseline" || true)"
-    baseline_commit="${baseline_line#Git commit: }"
-    if [ -n "$baseline_commit" ] && [ "$baseline_commit" = "$current_commit" ]; then
-        if ! relevant_worktree_dirty; then
-            echo "🔍 Current commit matches the main baseline (${baseline_commit}); no relevant worktree changes to compare."
-            echo "   Skipping perf-no-regressions because a same-commit baseline would mask regressions."
-            exit 0
-        fi
-        echo "⚠️ Main baseline commit matches HEAD, but relevant uncommitted changes exist; comparing the worktree against HEAD."
-    fi
-    uv run benchmark-utils compare --baseline "$baseline" --threshold {{threshold}} --dev
+    echo ""
+    echo "✅ Large-scale smoke guard passed for 2D-5D"
+
+# Fast pre-PR performance guard against a cached same-machine main baseline.
+perf-no-regressions threshold="7.5": _ensure-uv
+    uv run benchmark-utils compare-ref --ref main --threshold {{threshold}} --dev --output benches/worktree_vs_main_compare_results.txt
 
 # Run the selected CI benchmark suite for one compiler/code pair.
 profile toolchain="" code_ref="current":
@@ -914,6 +941,20 @@ test-unit:
     cargo test --lib --verbose
     cargo test --doc --verbose
 
+# Check TOML files parse cleanly.
+toml-check: _ensure-uv
+    #!/usr/bin/env bash
+    set -euo pipefail
+    files=()
+    while IFS= read -r -d '' file; do
+        files+=("$file")
+    done < <(git ls-files -z '*.toml')
+    if [ "${#files[@]}" -gt 0 ]; then
+        printf '%s\0' "${files[@]}" | xargs -0 -I {} uv run python -c "import tomllib; tomllib.load(open('{}', 'rb')); print('{} is valid TOML')"
+    else
+        echo "No TOML files found to check."
+    fi
+
 toml-fmt: _ensure-taplo
     #!/usr/bin/env bash
     set -euo pipefail
@@ -956,33 +997,6 @@ toml-lint: _ensure-taplo
 # Check for unused direct Cargo dependencies.
 unused-deps: _ensure-cargo-machete
     cargo machete
-
-# File validation
-validate-json: _ensure-jq
-    #!/usr/bin/env bash
-    set -euo pipefail
-    files=()
-    while IFS= read -r -d '' file; do
-        files+=("$file")
-    done < <(git ls-files -z '*.json')
-    if [ "${#files[@]}" -gt 0 ]; then
-        printf '%s\0' "${files[@]}" | xargs -0 -n1 jq empty
-    else
-        echo "No JSON files found to validate."
-    fi
-
-validate-toml: _ensure-uv
-    #!/usr/bin/env bash
-    set -euo pipefail
-    files=()
-    while IFS= read -r -d '' file; do
-        files+=("$file")
-    done < <(git ls-files -z '*.toml')
-    if [ "${#files[@]}" -gt 0 ]; then
-        printf '%s\0' "${files[@]}" | xargs -0 -I {} uv run python -c "import tomllib; tomllib.load(open('{}', 'rb')); print('{} is valid TOML')"
-    else
-        echo "No TOML files found to validate."
-    fi
 
 verify-expect-counts:
     #!/usr/bin/env bash
@@ -1046,9 +1060,9 @@ yaml-lint: _ensure-yamllint
     files=()
     while IFS= read -r -d '' file; do
         files+=("$file")
-    done < <(git ls-files -z '*.yml' '*.yaml')
+    done < <(git ls-files -z '*.yml' '*.yaml' 'CITATION.cff')
     if [ "${#files[@]}" -gt 0 ]; then
-        echo "🔍 yamllint (${#files[@]} files)"
+        echo "🔍 yamllint (${#files[@]} YAML/CFF files)"
         yamllint --strict -c .yamllint "${files[@]}"
     else
         echo "No YAML files found to lint."

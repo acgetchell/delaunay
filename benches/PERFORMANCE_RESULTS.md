@@ -179,11 +179,11 @@ insphere query performance independently from full triangulation workflows.
 
 ## Implementation Notes
 
-### Performance Advantages of `insphere_lifted`
+### Dimension-Dependent InSphere Predicate Performance
 
-1. More efficient matrix formulation using relative coordinates
-2. Avoids redundant circumcenter calculations
-3. Optimized determinant computation
+The tables above are the source of truth for predicate timing. `insphere_lifted`
+shows advantages in lower dimensions such as 2D/3D, while `insphere_distance`
+often wins in 4D/5D; boundary cases may favor `insphere` because of early exits.
 
 ## Benchmark Structure
 

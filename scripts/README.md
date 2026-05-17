@@ -48,7 +48,10 @@ uv run benchmark-utils generate-summary --run-benchmarks --profile perf
 ```
 
 `benchmark-utils` handles Criterion baseline generation, comparison, and
-release performance summaries.
+release performance summaries. The default comparison report for release
+baselines is `benches/main_vs_release_compare_results.txt`; the ref-comparison
+guard writes `benches/worktree_vs_<ref>_compare_results.txt` and fails only on
+total matched-time regressions or execution errors.
 
 ### Hardware utilities
 

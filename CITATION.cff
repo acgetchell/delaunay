@@ -19,10 +19,19 @@ keywords:
   - "simplicial-complex"
   - "triangulation"
 abstract: >-
-  A Rust library for d-dimensional Delaunay triangulations and convex hulls
-  inspired by CGAL. Features exact arithmetic predicates with Simulation of
-  Simplicity (SoS) for deterministic degeneracy resolution, a 4-level
-  validation hierarchy (element, structural, manifold, Delaunay), bistellar
-  flip editing and repair, and serialization support. Supports 2D through 5D
-  with safe Rust (no unsafe code).
+  Rust crate providing D-dimensional Delaunay triangulations and convex hulls
+  (2D through 5D explicitly tested) constructed with a PL-manifold (default) or
+  pseudomanifold guarantee on finite point sets with Euclidean and toroidal
+  global topologies. Uses exact predicates and Simulation of Simplicity for
+  robustness and degeneracy handling, and Hilbert curves for deterministic
+  insertion ordering and efficient spatial indexing. Provides an explicit
+  4-level validation hierarchy on individual elements, triangulation data
+  structure validity, manifold topology, and Delaunay property adherence.
+  Allows for the complete set of Pachner moves up to D=5 using bistellar flips,
+  vertex insertion and deletion, and the conversion of non-Delaunay
+  triangulations into Delaunay triangulations via bounded flip/rebuilds.
+  Auxiliary data may be stored directly in vertices and simplices with external
+  secondary maps provided for vertex- and simplex-keyed algorithm use, and the
+  entire data structure is serializable/deserializable. Written in safe Rust
+  with no unsafe code.
 license: BSD-3-Clause

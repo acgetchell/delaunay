@@ -9,6 +9,9 @@
 /cobertura.xml
 /logs
 /benches/results
+/benches/compare_results.txt
+/benches/main_vs_release_compare_results.txt
+/benches/worktree_vs_*_compare_results.txt
 /node_modules/
 /.package-lock.json
 /package-lock.json

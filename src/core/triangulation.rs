@@ -1194,11 +1194,11 @@ where
                 continue;
             };
 
-            let Some(neighbors) = cell.neighbors() else {
+            let Some(neighbors) = cell.neighbor_keys() else {
                 continue;
             };
 
-            for &n_opt in neighbors {
+            for n_opt in neighbors {
                 let Some(nk) = n_opt else {
                     continue;
                 };
@@ -2013,9 +2013,11 @@ where
     pub fn cell_neighbors(&self, c: CellKey) -> impl Iterator<Item = CellKey> + '_ {
         self.tds
             .cell(c)
-            .and_then(|cell| cell.neighbors())
+            .and_then(Cell::neighbors)
             .into_iter()
-            .flat_map(|neighbors| neighbors.iter().copied().flatten())
+            .flat_map(IntoIterator::into_iter)
+            .flatten()
+            .filter(|&neighbor_key| self.tds.contains_cell(neighbor_key))
     }
 
     /// Returns an iterator over all neighbors of a cell using a precomputed [`AdjacencyIndex`].
@@ -2356,11 +2358,11 @@ where
             }
 
             // Cell → neighbors
-            if let Some(neighbors) = cell.neighbors() {
+            if let Some(neighbors) = cell.neighbor_keys() {
                 let mut neighs: SmallBuffer<CellKey, MAX_PRACTICAL_DIMENSION_SIZE> =
                     SmallBuffer::new();
 
-                for &n_opt in neighbors {
+                for n_opt in neighbors {
                     let Some(nk) = n_opt else {
                         continue;
                     };
@@ -2597,8 +2599,8 @@ where
                 let vertex_keys: SmallBuffer<VertexKey, MAX_PRACTICAL_DIMENSION_SIZE> =
                     cell.vertices().iter().copied().collect();
                 let neighbor_keys: SmallBuffer<Option<CellKey>, MAX_PRACTICAL_DIMENSION_SIZE> =
-                    cell.neighbors()
-                        .map(|n| n.iter().copied().collect())
+                    cell.neighbor_keys()
+                        .map(Iterator::collect)
                         .unwrap_or_default();
                 tracing::debug!(
                     cell_uuid = %cell.uuid(),
@@ -3407,7 +3409,7 @@ where
     /// Build initial D-simplex from D+1 vertices with degeneracy validation.
     ///
     /// This creates a Tds with a single cell containing all D+1 vertices,
-    /// with no neighbor relationships (all boundary facets). The simplex is
+    /// with explicit boundary neighbor slots. The simplex is
     /// validated to ensure it is non-degenerate (vertices span full D-dimensional space).
     ///
     /// **Design Note**: This method uses [`robust_orientation`] directly for the
@@ -3560,6 +3562,10 @@ where
 
         // Insert the cell
         let _cell_key = tds.insert_cell_with_mapping(cell)?;
+
+        // Assign explicit boundary neighbor slots for the initial simplex.
+        tds.assign_neighbors()
+            .map_err(TdsConstructionError::ValidationError)?;
 
         // Assign incident cells to vertices (each vertex points to this one cell)
         // This is required for proper Tds structure
@@ -4088,7 +4094,7 @@ where
                 return true;
             };
 
-            let Some(cell_key) = vertex.incident_cell else {
+            let Some(cell_key) = vertex.incident_cell() else {
                 return true;
             };
 
@@ -4855,8 +4861,10 @@ where
                 // This avoids treating one-way neighbor pointers as “connected”.
                 if let Some(neighbor_cell) = self.tds.cell(nk)
                     && neighbor_cell
-                        .neighbors()
-                        .is_some_and(|ns| ns.contains(&Some(ck)))
+                        .neighbor_keys()
+                        .is_some_and(|mut neighbor_keys| {
+                            neighbor_keys.any(|neighbor| neighbor == Some(ck))
+                        })
                 {
                     touches_existing_cells = true;
                 }
@@ -5174,9 +5182,9 @@ where
                             if !saw_ridge_fan_shrink {
                                 for &dc in disconnected_cells {
                                     if let Some(cell) = self.tds.cell(dc)
-                                        && let Some(neighbors) = cell.neighbors()
+                                        && let Some(neighbors) = cell.neighbor_keys()
                                     {
-                                        for &neighbor_opt in neighbors {
+                                        for neighbor_opt in neighbors {
                                             if let Some(nk) = neighbor_opt
                                                 && !conflict_set.contains(&nk)
                                             {
@@ -5582,7 +5590,7 @@ where
         if let Some(incident_cell) = hint
             && let Some(vertex) = self.tds.vertex_mut(v_key)
         {
-            vertex.incident_cell = Some(incident_cell);
+            vertex.set_incident_cell(Some(incident_cell));
         }
 
         // Optional debug: validate neighbor pointers by forcing a full facet walk (no hint).
@@ -5641,7 +5649,7 @@ where
             let tds = &self.tds;
             tds.vertices()
                 .filter(|(vk, v)| {
-                    !v.incident_cell.is_some_and(|cell_key| {
+                    !v.incident_cell().is_some_and(|cell_key| {
                         tds.cell(cell_key)
                             .is_some_and(|cell| cell.contains_vertex(*vk))
                     })
@@ -5663,7 +5671,7 @@ where
                 .find_map(|(ck, cell)| cell.contains_vertex(vk).then_some(ck));
             if let Some(cell_key) = repaired_cell {
                 if let Some(vertex) = self.tds.vertex_mut(vk) {
-                    vertex.incident_cell = Some(cell_key);
+                    vertex.set_incident_cell(Some(cell_key));
                 }
             } else {
                 // Truly isolated: no cell in the TDS contains this vertex.
@@ -6288,10 +6296,10 @@ where
                         let Some(cell) = self.tds.cell(cell_key) else {
                             continue;
                         };
-                        let Some(neighbors) = cell.neighbors() else {
+                        let Some(neighbors) = cell.neighbor_keys() else {
                             continue;
                         };
-                        for &neighbor_opt in neighbors {
+                        for neighbor_opt in neighbors {
                             total_slots = total_slots.saturating_add(1);
                             match neighbor_opt {
                                 None => {
@@ -6303,8 +6311,10 @@ where
                                     } else if self
                                         .tds
                                         .cell(neighbor_key)
-                                        .and_then(|neighbor_cell| neighbor_cell.neighbors())
-                                        .is_some_and(|ns| ns.contains(&Some(cell_key)))
+                                        .and_then(Cell::neighbors)
+                                        .is_some_and(|mut ns| {
+                                            ns.any(|neighbor| neighbor == Some(cell_key))
+                                        })
                                     {
                                         neighbor_mutual = neighbor_mutual.saturating_add(1);
                                     } else {
@@ -6437,7 +6447,7 @@ where
                 if let Some(incident_cell) = hint
                     && let Some(vertex) = self.tds.vertex_mut(v_key)
                 {
-                    vertex.incident_cell = Some(incident_cell);
+                    vertex.set_incident_cell(Some(incident_cell));
                 }
 
                 #[cfg(debug_assertions)]
@@ -6917,10 +6927,10 @@ where
             let Some(cell) = self.tds.cell(cell_key) else {
                 continue;
             };
-            let Some(neighbors) = cell.neighbors() else {
+            let Some(neighbors) = cell.neighbor_keys() else {
                 continue;
             };
-            for &neighbor_key in neighbors.iter().flatten() {
+            for neighbor_key in neighbors.flatten() {
                 if removal_set.contains(&neighbor_key) || !self.tds.contains_cell(neighbor_key) {
                     continue;
                 }
@@ -7048,6 +7058,7 @@ where
 mod tests {
     use super::*;
     use crate::core::algorithms::locate::InternalInconsistencySite;
+    use crate::core::cell::NeighborSlot;
     use crate::core::collections::NeighborBuffer;
     use crate::core::collections::spatial_hash_grid::HashGridIndex;
     use crate::core::vertex::VertexBuilder;
@@ -7098,7 +7109,7 @@ mod tests {
             .unwrap();
 
         for vk in [v0, v1, v2, v3] {
-            tri.tds.vertex_mut(vk).unwrap().incident_cell = Some(ck);
+            tri.tds.vertex_mut(vk).unwrap().set_incident_cell(Some(ck));
         }
 
         (tri, [v0, v1, v2, v3], ck)
@@ -8094,7 +8105,7 @@ mod tests {
             .unwrap();
         {
             let vertex = tri.tds.vertex_mut(vkey).unwrap();
-            vertex.incident_cell = Some(CellKey::default());
+            vertex.set_incident_cell(Some(CellKey::default()));
         }
 
         let mut index: HashGridIndex<f64, 2> = HashGridIndex::new(1.0);
@@ -8361,15 +8372,19 @@ mod tests {
 
                     // Verify incident cells are assigned
                     for (_, vertex) in tds.vertices() {
-                        assert!(vertex.incident_cell.is_some(),
+                        assert!(vertex.incident_cell().is_some(),
                             "{}D: All vertices should have incident cell assigned", $dim);
                     }
 
-                    // Verify initial simplex has no neighbors (all boundary facets)
-                    if let Some(neighbors) = cell.neighbors() {
-                        assert!(neighbors.iter().all(|n| n.is_none()),
-                            "{}D: Initial simplex should have no neighbors (all boundary)", $dim);
-                    }
+                    // Verify initial simplex has explicit boundary neighbor slots.
+                    let neighbors = cell
+                        .neighbor_slots()
+                        .expect("initial simplex should assign boundary neighbor slots");
+                    assert!(
+                        neighbors.iter().all(|slot| *slot == NeighborSlot::Boundary),
+                        "{}D: Initial simplex should have boundary slots",
+                        $dim
+                    );
                 }
             }
         };
@@ -8893,7 +8908,7 @@ mod tests {
             neighbors.resize(2, None);
             // e0 = [v0, v1]; across v1 is facet_index=0
             neighbors[0] = Some(e1);
-            cell.neighbors = Some(neighbors);
+            cell.set_neighbors_from_keys(neighbors).unwrap();
         }
         {
             let cell = tds.cell_mut(e1).unwrap();
@@ -8901,7 +8916,7 @@ mod tests {
             neighbors.resize(2, None);
             // e1 = [v1, v2]; across v1 is facet_index=1
             neighbors[1] = Some(e0);
-            cell.neighbors = Some(neighbors);
+            cell.set_neighbors_from_keys(neighbors).unwrap();
         }
 
         // Cycle neighbors:
@@ -8912,7 +8927,7 @@ mod tests {
             // c0 = [v3, v4]; across v4 is facet_index=0, across v3 is facet_index=1
             neighbors[0] = Some(c1); // at v4
             neighbors[1] = Some(c2); // at v3
-            cell.neighbors = Some(neighbors);
+            cell.set_neighbors_from_keys(neighbors).unwrap();
         }
         {
             let cell = tds.cell_mut(c1).unwrap();
@@ -8921,7 +8936,7 @@ mod tests {
             // c1 = [v4, v5]; across v5 is facet_index=0, across v4 is facet_index=1
             neighbors[0] = Some(c2); // at v5
             neighbors[1] = Some(c0); // at v4
-            cell.neighbors = Some(neighbors);
+            cell.set_neighbors_from_keys(neighbors).unwrap();
         }
         {
             let cell = tds.cell_mut(c2).unwrap();
@@ -8930,7 +8945,7 @@ mod tests {
             // c2 = [v5, v3]; across v3 is facet_index=0, across v5 is facet_index=1
             neighbors[0] = Some(c0); // at v3
             neighbors[1] = Some(c1); // at v5
-            cell.neighbors = Some(neighbors);
+            cell.set_neighbors_from_keys(neighbors).unwrap();
         }
 
         tds.assign_incident_cells().unwrap();
@@ -9003,7 +9018,7 @@ mod tests {
         let mut neighbors = NeighborBuffer::<Option<CellKey>>::new();
         neighbors.resize(4, None);
         neighbors[0] = Some(second_cell_key);
-        first_cell.neighbors = Some(neighbors);
+        first_cell.set_neighbors_from_keys(neighbors).unwrap();
 
         match tds.is_valid() {
             Err(TdsError::InvalidNeighbors {
@@ -9169,9 +9184,7 @@ mod tests {
         // Corrupt one cell locally: neighbors buffer with the wrong length.
         let cell_key = tri.tds.cell_keys().next().unwrap();
         let cell = tri.tds.cell_mut(cell_key).unwrap();
-        let mut bad_neighbors = NeighborBuffer::<Option<CellKey>>::new();
-        bad_neighbors.resize(3, None); // expected D+1 = 4
-        cell.neighbors = Some(bad_neighbors);
+        cell.ensure_neighbors_buffer_mut().truncate(3); // expected D+1 = 4
 
         let report = tri.validation_report().unwrap_err();
 
@@ -9668,12 +9681,16 @@ mod tests {
                     let issues = tri.detect_local_facet_issues(&fake_keys).unwrap();
                     assert!(issues.is_none(), "{}D: Nonexistent cells should be skipped", $dim);
 
-                    // Verify neighbors (all should be None for single cell)
+                    // Verify neighbors (all should be explicit boundary slots for a single cell)
                     let (_, cell) = tri.tds.cells().next().unwrap();
-                    if let Some(neighbors) = cell.neighbors() {
-                        assert!(neighbors.iter().all(|n| n.is_none()),
-                            "{}D: Single cell should have no neighbors", $dim);
-                    }
+                    let neighbors = cell
+                        .neighbor_slots()
+                        .expect("single cell should assign boundary neighbor slots");
+                    assert!(
+                        neighbors.iter().all(|slot| *slot == NeighborSlot::Boundary),
+                        "{}D: Single cell should have boundary slots",
+                        $dim
+                    );
                 }
 
                 #[test]
@@ -9740,11 +9757,11 @@ mod tests {
                     // 2. Neighbor relationships are symmetric
                     for (cell_key, cell) in dt.tds().cells() {
                         if let Some(neighbors) = cell.neighbors() {
-                            for (facet_idx, neighbor_opt) in neighbors.iter().enumerate() {
+                            for (facet_idx, neighbor_opt) in neighbors.enumerate() {
                                 if let Some(neighbor_key) = neighbor_opt {
                                     // Verify neighbor exists
                                     assert!(
-                                        dt.tds().contains_cell(*neighbor_key),
+                                        dt.tds().contains_cell(neighbor_key),
                                         "{}D: Cell {cell_key:?} has neighbor pointer to non-existent cell {neighbor_key:?}",
                                         $dim
                                     );
@@ -9752,12 +9769,11 @@ mod tests {
                                     // Verify symmetry: neighbor should point back to us
                                     let neighbor_cell = dt
                                         .tds()
-                                        .cell(*neighbor_key)
+                                        .cell(neighbor_key)
                                         .expect("Neighbor cell should exist");
-                                    if let Some(neighbor_neighbors) = neighbor_cell.neighbors() {
+                                    if let Some(mut neighbor_neighbors) = neighbor_cell.neighbors() {
                                         let points_back = neighbor_neighbors
-                                            .iter()
-                                            .any(|n| n.as_ref() == Some(&cell_key));
+                                            .any(|neighbor| neighbor == Some(cell_key));
                                         assert!(
                                             points_back,
                                             "{}D: Cell {cell_key:?} has neighbor {neighbor_key:?} at facet {facet_idx}, but neighbor doesn't point back",
@@ -10234,8 +10250,8 @@ mod tests {
 
         {
             let cell = tri.tds.cell_mut(cell_key).unwrap();
-            let neighbors = cell.ensure_neighbors_buffer_mut();
-            neighbors[0] = Some(missing_neighbor);
+            cell.set_neighbors_from_keys([Some(missing_neighbor), None, None])
+                .unwrap();
         }
 
         match tri.build_adjacency_index() {
@@ -10248,6 +10264,30 @@ mod tests {
             }
             other => panic!("Expected MissingNeighborCell, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn test_cell_neighbors_filters_missing_neighbor_cell() {
+        let vertices = vec![
+            vertex!([0.0, 0.0]),
+            vertex!([1.0, 0.0]),
+            vertex!([0.0, 1.0]),
+        ];
+        let tds =
+            Triangulation::<FastKernel<f64>, (), (), 2>::build_initial_simplex(&vertices).unwrap();
+        let mut tri =
+            Triangulation::<FastKernel<f64>, (), (), 2>::new_with_tds(FastKernel::new(), tds);
+        let cell_key = tri.tds.cell_keys().next().unwrap();
+        let missing_neighbor = CellKey::from(KeyData::from_ffi(u64::MAX));
+        assert!(!tri.tds.contains_cell(missing_neighbor));
+
+        tri.tds
+            .cell_mut(cell_key)
+            .unwrap()
+            .set_neighbors_from_keys([Some(missing_neighbor), None, None])
+            .unwrap();
+
+        assert_eq!(tri.cell_neighbors(cell_key).count(), 0);
     }
 
     #[test]
@@ -11031,13 +11071,13 @@ mod tests {
         // Wire neighbours so EXPAND discovers cell_c via cell_a and cell_d via cell_b.
         {
             let cell = tri.tds.cell_mut(cell_a).unwrap();
-            let nb = cell.ensure_neighbors_buffer_mut();
-            nb[0] = Some(cell_c);
+            cell.set_neighbors_from_keys([Some(cell_c), None, None])
+                .unwrap();
         }
         {
             let cell = tri.tds.cell_mut(cell_b).unwrap();
-            let nb = cell.ensure_neighbors_buffer_mut();
-            nb[0] = Some(cell_d);
+            cell.set_neighbors_from_keys([Some(cell_d), None, None])
+                .unwrap();
         }
 
         let new_v = tri
@@ -11277,7 +11317,7 @@ mod tests {
 
         // Pointers unchanged.
         for vk in [v0, v1, v2, v3] {
-            assert_eq!(tri.tds.vertex_mut(vk).unwrap().incident_cell, Some(ck));
+            assert_eq!(tri.tds.vertex_mut(vk).unwrap().incident_cell(), Some(ck));
         }
     }
 
@@ -11286,11 +11326,11 @@ mod tests {
         let (mut tri, [_, _, _, v3], ck) = build_single_tet();
 
         // Corrupt v3 to have no incident cell.
-        tri.tds.vertex_mut(v3).unwrap().incident_cell = None;
+        tri.tds.vertex_mut(v3).unwrap().set_incident_cell(None);
 
         assert!(tri.repair_stale_incident_cells().is_ok());
         assert_eq!(
-            tri.tds.vertex_mut(v3).unwrap().incident_cell,
+            tri.tds.vertex_mut(v3).unwrap().incident_cell(),
             Some(ck),
             "v3 should be repaired to point to the tetrahedron"
         );
@@ -11302,11 +11342,14 @@ mod tests {
 
         // Point v3 to a non-existent cell key (simulates a deleted conflict cell).
         let stale = CellKey::from(KeyData::from_ffi(0xDEAD_BEEF));
-        tri.tds.vertex_mut(v3).unwrap().incident_cell = Some(stale);
+        tri.tds
+            .vertex_mut(v3)
+            .unwrap()
+            .set_incident_cell(Some(stale));
 
         assert!(tri.repair_stale_incident_cells().is_ok());
         assert_eq!(
-            tri.tds.vertex_mut(v3).unwrap().incident_cell,
+            tri.tds.vertex_mut(v3).unwrap().incident_cell(),
             Some(ck),
             "stale pointer should be repaired to the valid cell"
         );
@@ -11721,9 +11764,7 @@ mod tests {
 
         // Corrupt a cell's neighbor buffer length to trigger CellValidity violation.
         let cell = tri.tds.cell_mut(ck).unwrap();
-        let mut bad_neighbors = NeighborBuffer::<Option<CellKey>>::new();
-        bad_neighbors.resize(2, None); // wrong: should be D+1 = 4
-        cell.neighbors = Some(bad_neighbors);
+        cell.ensure_neighbors_buffer_mut().truncate(2); // wrong: should be D+1 = 4
 
         let report = tri.validation_report().unwrap_err();
         assert!(
@@ -11999,10 +12040,7 @@ mod tests {
     ) -> Option<CellKey> {
         let cell = tri.tds.cell(cell_key).unwrap();
         let facet_idx = shared_edge_facet_index(cell, v_a, v_b);
-        cell.neighbors()
-            .and_then(|neighbors| neighbors.get(facet_idx))
-            .copied()
-            .flatten()
+        cell.neighbor_key(facet_idx).flatten()
     }
 
     #[test]
@@ -12034,7 +12072,7 @@ mod tests {
             let mut neighbors = NeighborBuffer::<Option<CellKey>>::new();
             neighbors.resize(3, None);
             neighbors[2] = Some(neighbor_key);
-            cell.neighbors = Some(neighbors);
+            cell.set_neighbors_from_keys(neighbors).unwrap();
         }
         tds.assign_incident_cells().unwrap();
 
