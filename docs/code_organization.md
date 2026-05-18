@@ -234,6 +234,11 @@ delaunay/
 │   └── triangulation.rs
 ├── tests/
 │   ├── semgrep/
+│   │   ├── .github/
+│   │   │   └── workflows/
+│   │   │       └── action_policy.yml
+│   │   ├── docs/
+│   │   │   └── command_order.sh
 │   │   ├── scripts/
 │   │   │   └── tests/
 │   │   │       └── python_exceptions.py
@@ -285,7 +290,6 @@ delaunay/
 ├── .coderabbit.yml
 ├── .gitignore
 ├── .gitleaks.toml
-├── .markdownlint.json
 ├── .python-version
 ├── .taplo.toml
 ├── .yamllint
@@ -302,6 +306,7 @@ delaunay/
 ├── SECURITY.md
 ├── cliff.toml
 ├── clippy.toml
+├── dprint.json
 ├── justfile
 ├── proptest.toml
 ├── pyproject.toml
@@ -836,7 +841,7 @@ where
 {
     /// Field documentation
     field: Type,
-    
+
     #[builder(setter(skip), default = "default_value()")]
     auto_field: Type,
 }
@@ -963,24 +968,24 @@ where
 mod tests {
     use super::*;
     // additional test imports
-    
+
     // Type aliases for commonly used types to reduce repetition
     type TestType = StructName<generics>;
-    
+
     // =============================================================================
     // HELPER FUNCTIONS
     // =============================================================================
-    
+
     /// Helper function for common test setup
     fn helper_function() -> TestType {
         // setup code
     }
-    
+
     // =============================================================================
     // CATEGORY TESTS
     // =============================================================================
     // Tests covering [specific functionality]
-    
+
     #[test]
     fn test_function_name() {
         // test implementation

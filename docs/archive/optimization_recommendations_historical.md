@@ -48,7 +48,7 @@ impl<T, U, V, const D: usize> Tds<T, U, V, D> {
         let mut duplicate_detector: HashMap<Vec<Uuid>, CellKey> = 
             HashMap::with_capacity(self.cells.len());
         let mut facet_sharing_map: HashMap<u64, u8> = HashMap::new(); // Just count, don't store cells
-        
+
         // Reusable temporary collections
         let mut temp_vertex_uuids = Vec::with_capacity(D + 1);
         let mut temp_vertex_keys = HashSet::with_capacity(D + 1);
@@ -74,12 +74,12 @@ impl<T, U, V, const D: usize> Tds<T, U, V, D> {
                         source: CellValidationError::InvalidVertex { source },
                     }
                 })?;
-                
+
                 let vertex_key = self.vertex_bimap.get_by_left(&vertex.uuid())
                     .ok_or_else(|| TriangulationValidationError::MappingInconsistency {
                         message: format!("Missing vertex mapping for {:?}", vertex.uuid()),
                     })?;
-                
+
                 if !temp_vertex_keys.insert(*vertex_key) {
                     return Err(TriangulationValidationError::InvalidCell {
                         cell_id: cell_uuid,
@@ -120,10 +120,10 @@ impl<T, U, V, const D: usize> Tds<T, U, V, D> {
 
         // Optimized neighbor validation using cached vertex sets
         self.validate_neighbors_with_cache(&cell_vertex_sets)?;
-        
+
         Ok(())
     }
-    
+
     /// Fast validation for frequent checks during construction
     pub fn is_valid_fast(&self) -> Result<(), TriangulationValidationError> {
         // Skip expensive neighbor validation, focus on structural integrity
@@ -158,7 +158,7 @@ impl<T, U, V, const D: usize> Tds<T, U, V, D> {
             }
             duplicate_detector.insert(temp_vertex_uuids.clone(), cell_key);
         }
-        
+
         Ok(())
     }
 }
@@ -186,14 +186,14 @@ impl<T, U, V, const D: usize> Tds<T, U, V, D> {
     fn find_bad_cells_cached(&mut self, vertex: &Vertex<T, U, D>) -> Result<Vec<CellKey>, TriangulationValidationError> {
         // Reuse buffer from struct to avoid allocation
         self.bad_cells_buffer.clear();
-        
+
         for (cell_key, cell) in &self.cells {
             // Reuse vertex_points_buffer (already exists in struct)
             self.vertex_points_buffer.clear();
             self.vertex_points_buffer.extend(
                 cell.vertices().iter().map(|v| *v.point())
             );
-            
+
             // Use existing insphere predicate
             match insphere(&self.vertex_points_buffer, *vertex.point()) {
                 Ok(InSphere::INSIDE) => self.bad_cells_buffer.push(cell_key),
@@ -203,7 +203,7 @@ impl<T, U, V, const D: usize> Tds<T, U, V, D> {
                 }),
             }
         }
-        
+
         Ok(self.bad_cells_buffer.clone())
     }
 }
@@ -244,24 +244,24 @@ impl<T, U, V, const D: usize> Tds<T, U, V, D> {
             .collect();
         for (cell_key, cell) in &self.cells {
             let Some(neighbors) = &cell.neighbors else { continue };
-            
+
             if neighbors.len() > D + 1 {
                 return Err(TriangulationValidationError::InvalidNeighbors {
                     message: format!("Cell has too many neighbors: {}", neighbors.len()),
                 });
             }
-            
+
             let this_vertices = cell_vertices.get(cell_key).expect("missing cell key");
-            
+
             for neighbor_uuid in neighbors {
                 let Some(&neighbor_key) = self.cell_bimap.get_by_left(neighbor_uuid) else {
                     continue;
                 };
                 let neighbor_vertices = cell_vertices.get(&neighbor_key).expect("missing neighbor key");
-                
+
                 // Fast intersection count using sorted vectors
                 let shared_count = count_intersections_sorted(this_vertices, neighbor_vertices);
-                
+
                 if shared_count != D {
                     return Err(TriangulationValidationError::NotNeighbors {
                         cell1: cell.uuid(),
@@ -279,7 +279,7 @@ fn count_intersections_sorted<T: Ord>(a: &[T], b: &[T]) -> usize {
     let mut count = 0;
     let mut i = 0;
     let mut j = 0;
-    
+
     while i < a.len() && j < b.len() {
         match a[i].cmp(&b[j]) {
             std::cmp::Ordering::Equal => {
@@ -304,34 +304,34 @@ fn count_intersections_sorted<T: Ord>(a: &[T], b: &[T]) -> usize {
 fn assign_neighbors(&mut self) {
     let mut facet_map: HashMap<u64, Vec<CellKey>> = 
         HashMap::with_capacity(self.cells.len() * (D + 1)); // Better capacity estimate
-    
+
     let mut neighbor_map: HashMap<CellKey, HashSet<CellKey>> = 
         HashMap::with_capacity(self.cells.len());
-    
+
     // Initialize with proper capacity
     for cell_key in self.cells.keys() {
         neighbor_map.insert(cell_key, HashSet::with_capacity(D + 1));
     }
-    
+
     // Rest of implementation...
 }
 
 // For FxHashMap variants, use with_capacity_and_hasher to set hasher explicitly
 fn assign_neighbors_fast(&mut self) {
     use fxhash::{FxHashMap, FxHashSet, FxBuildHasher};
-    
+
     let mut facet_map: FxHashMap<u64, Vec<CellKey>> = 
         FxHashMap::with_capacity_and_hasher(
             self.cells.len() * (D + 1), 
             FxBuildHasher::default()
         );
-    
+
     let mut neighbor_map: FxHashMap<CellKey, FxHashSet<CellKey>> = 
         FxHashMap::with_capacity_and_hasher(
             self.cells.len(),
             FxBuildHasher::default()
         );
-    
+
     // Initialize with proper capacity and hasher
     for cell_key in self.cells.keys() {
         neighbor_map.insert(
@@ -339,7 +339,7 @@ fn assign_neighbors_fast(&mut self) {
             FxHashSet::with_capacity_and_hasher(D + 1, FxBuildHasher::default())
         );
     }
-    
+
     // Rest of implementation...
 }
 ```
@@ -383,18 +383,18 @@ struct VertexSetHash(u64);
 fn compute_vertex_set_hash<T, U, const D: usize>(vertices: &[Vertex<T, U, D>]) -> VertexSetHash {
     use std::hash::{Hash, Hasher};
     use smallvec::SmallVec;
-    
+
     // Canonical, order-independent hash: sort vertex keys then hash
     // This ensures identical vertex sets always produce the same hash
     // Note: Assumes VertexKey is available and implements Hash + Ord
     let mut keys: SmallVec<[VertexKey; 8]> =
         vertices.iter().filter_map(|v| v.key()).collect();
     keys.sort_unstable();
-    
+
     let mut hasher = fxhash::FxHasher::default();
     keys.hash(&mut hasher);
     VertexSetHash(hasher.finish())
-    
+
     // Alternative if VertexKey is not available:
     // let mut uuids: SmallVec<[uuid::Uuid; 8]> =
     //     vertices.iter().map(|v| v.uuid()).collect();
@@ -423,27 +423,27 @@ where
 {
     fn build_spatial_index(&self) -> SpatialIndex<T, D> {
         let mut tree = kdtree::KdTree::new(D);
-        
+
         for (cell_key, cell) in &self.cells {
             // Use cell centroid for spatial indexing
             // Note: compute_centroid needs to be implemented
             // let centroid = compute_centroid(cell.vertices());
             // tree.add(centroid.coords, cell_key).unwrap();
         }
-        
+
         SpatialIndex { tree }
     }
-    
+
     fn find_bad_cells_spatial(&self, vertex: &Vertex<T, U, D>, 
                             index: &SpatialIndex<T, D>) -> Vec<CellKey> {
         let vertex_point = vertex.point().to_array();
-        
+
         // Query nearby cells first, then test circumsphere
         // Assumes 'within' method exists and can handle query for nearby cells.
         // You may need to replace 'squared_euclidean' with the correct distance function
         // Verify if 'max_circumradius' needs definition or replacement.
         let nearby_cells = index.tree.within(&vertex_point, /* max distance */, /* correct metric */)?;
-        
+
         let mut bad_cells = Vec::new();
         for (_, &cell_key) in nearby_cells {
             let cell = &self.cells[cell_key];
@@ -452,7 +452,7 @@ where
                 bad_cells.push(cell_key);
             }
         }
-        
+
         bad_cells
     }
 }
@@ -465,7 +465,7 @@ impl<T, U, V, const D: usize> Tds<T, U, V, D> {
     fn boundary_facets_optimized(&self) -> Vec<Facet<T, U, V, D>> {
         use std::collections::HashMap;
         let mut counts: HashMap<u64, (u8, Facet<T, U, V, D>)> = HashMap::new();
-        
+
         for cell in self.cells.values() {
             for facet in cell.facets() {
                 counts
@@ -474,22 +474,22 @@ impl<T, U, V, const D: usize> Tds<T, U, V, D> {
                     .or_insert((1, facet.clone()));
             }
         }
-        
+
         let mut boundary_facets = Vec::new();
         for (c, f) in counts.into_values() {
             if c == 1 {
                 boundary_facets.push(f);
             }
         }
-        
+
         boundary_facets
     }
-    
+
     fn number_of_boundary_facets_optimized(&self) -> usize {
         let mut facet_counts: HashMap<u64, u8> = HashMap::with_capacity(
             self.cells.len() * (D + 1)
         );
-        
+
         for cell in self.cells.values() {
             for facet in cell.facets() {
                 let count = facet_counts.entry(facet.key()).or_insert(0);
@@ -500,7 +500,7 @@ impl<T, U, V, const D: usize> Tds<T, U, V, D> {
                 }
             }
         }
-        
+
         facet_counts.values().filter(|&&count| count == 1).count()
     }
 }
@@ -528,7 +528,7 @@ fn is_valid_parallel(&self) -> Result<(), TriangulationValidationError> {
             })
         })
         .collect();
-    
+
     validation_results.map(|_| ())
 }
 
@@ -541,7 +541,7 @@ fn find_bad_cells_parallel(&self, vertex: &Vertex<T, U, D>) -> Vec<CellKey> {
                 .iter()
                 .map(|v| *v.point())
                 .collect();
-            
+
             match insphere(&vertex_points, *vertex.point()) {
                 Ok(InSphere::INSIDE) => Some(cell_key),
                 _ => None,
@@ -598,7 +598,7 @@ impl<T, U, V, const D: usize> Tds<T, U, V, D> {
                            new_cells: &[CellKey]) -> Result<(), TriangulationValidationError> {
         // Only validate affected parts of the triangulation
         // Much faster than full validation during construction
-        
+
         // 1. Validate new cells
         for &cell_key in new_cells {
             if let Some(cell) = self.cells.get(cell_key) {
@@ -610,20 +610,20 @@ impl<T, U, V, const D: usize> Tds<T, U, V, D> {
                 })?;
             }
         }
-        
+
         // 2. Validate changed neighbor relationships
         let affected_cells: HashSet<_> = changed_cells.iter()
             .chain(new_cells.iter())
             .collect();
-            
+
         for &cell_key in &affected_cells {
             // Only validate neighbors of affected cells
             self.validate_cell_neighbors(cell_key)?;
         }
-        
+
         Ok(())
     }
-    
+
     /// Track changes for incremental validation
     fn add_cell_with_tracking(&mut self, cell: Cell<T, U, V, D>) -> CellKey {
         let cell_key = self.cells.insert(cell);
@@ -743,7 +743,7 @@ cargo bench --bench microbenchmarks validation_components/validate_vertex_mappin
 
 The project also includes specialized benchmark suites:
 
-- **[`ci_performance_suite.rs`](../benches/ci_performance_suite.rs)** - Primary CI benchmark for performance regression detection (2D–5D scaling)
+- **[`ci_performance_suite.rs`](../../benches/ci_performance_suite.rs)** - Primary CI benchmark for performance regression detection (2D–5D scaling)
 - **`circumsphere_containment.rs`** - Geometric predicate performance across dimensions
 - **`assign_neighbors_performance.rs`** - Detailed neighbor assignment analysis
 - **`triangulation_creation.rs`** - High-volume triangulation creation (1000+ vertices)
@@ -766,7 +766,7 @@ Implement these tests to ensure optimizations maintain correctness:
 mod optimization_tests {
     use super::*;
     use proptest::prelude::*;
-    
+
     /// Property-based testing to ensure optimized methods produce same results
     proptest! {
         #[test]
@@ -774,40 +774,40 @@ mod optimization_tests {
             vertices in prop::collection::vec(any_vertex_3d(), 4..50)
         ) {
             let tds = Tds::new(&vertices)?;
-            
+
             let original_result = tds.is_valid();
             let optimized_result = tds.is_valid_optimized();
-            
+
             // Results should be equivalent (both Ok or both Err)
             assert_eq!(original_result.is_ok(), optimized_result.is_ok());
-            
+
             // Fast validation should never be more restrictive than full validation
             if original_result.is_ok() {
                 assert!(tds.is_valid_fast().is_ok());
             }
         }
     }
-    
+
     /// Stress test for large triangulations
     #[test]
     #[ignore = "Stress test - resource intensive"]
     fn stress_test_large_triangulation() {
         let vertices = generate_stress_test_vertices(10000);
-        
+
         let start = std::time::Instant::now();
         let tds = Tds::new(&vertices).unwrap();
         let construction_time = start.elapsed();
-        
+
         let start = std::time::Instant::now();
         assert!(tds.is_valid_optimized().is_ok());
         let validation_time = start.elapsed();
-        
+
         println!("Stress test results:");
         println!("  - Vertices: {}", tds.number_of_vertices());
         println!("  - Cells: {}", tds.number_of_cells());
         println!("  - Construction time: {:?}", construction_time);
         println!("  - Validation time: {:?}", validation_time);
-        
+
         // Should complete within reasonable time bounds
         assert!(construction_time.as_secs() < 30, "Construction took too long");
         assert!(validation_time.as_secs() < 10, "Validation took too long");
@@ -864,14 +864,14 @@ impl Tds<T, U, V, D> {
         let start = Instant::now();
         let result = self.is_valid_optimized();
         let duration = start.elapsed();
-        
+
         let metrics = ValidationMetrics {
             validation_time: duration,
             cell_count: self.number_of_cells(),
             vertex_count: self.number_of_vertices(),
             validation_type: "optimized".to_string(),
         };
-        
+
         (result, metrics)
     }
 }
@@ -892,13 +892,13 @@ impl Tds<T, U, V, D> {
    ```rust
    // Replace HashMap with FxHashMap for non-cryptographic hashing
    use fxhash::{FxHashMap, FxHashSet};
-   
+
    // Current:
    type CellNeighborMap = HashMap<CellKey, HashSet<CellKey>>;
-   
+
    // Optimized:
    type FastCellNeighborMap = FxHashMap<CellKey, FxHashSet<CellKey>>;
-   
+
    impl<T, U, V, const D: usize> Tds<T, U, V, D> {
        fn assign_neighbors_fast(&mut self) {
            let mut neighbor_map: FastCellNeighborMap = 
@@ -915,12 +915,12 @@ impl Tds<T, U, V, D> {
 
    ```rust
    use smallvec::{SmallVec, smallvec};
-   
+
    // Stack-allocate small vertex collections
    type SmallVertexVec<T, U, const D: usize> = SmallVec<[Vertex<T, U, D>; 8]>;
    type SmallCellVec = SmallVec<[CellKey; 16]>;
    type SmallFacetVec<T, U, V, const D: usize> = SmallVec<[Facet<T, U, V, D>; 8]>;
-   
+
    impl<T, U, V, const D: usize> Cell<T, U, V, D> {
        fn neighbors_small(&self) -> SmallCellVec {
            match &self.neighbors {
@@ -976,14 +976,14 @@ impl Tds<T, U, V, D> {
            // Less efficient
        }
    }
-   
+
    // Target: Key-based internal functions
    impl<T, U, V, const D: usize> Tds<T, U, V, D> {
        fn find_cells_containing_vertex_key(&self, vertex_key: VertexKey) -> Vec<CellKey> {
            // Direct key usage - more efficient
            // No lookup overhead
        }
-       
+
        // Keep UUID-based public API for compatibility
        pub fn find_cells_containing_vertex(&self, vertex_uuid: Uuid) -> Vec<CellKey> {
            if let Some(&vertex_key) = self.uuid_to_vertex_key.get(&vertex_uuid) {
@@ -1006,7 +1006,7 @@ impl Tds<T, U, V, D> {
                self.neighbors.get_or_insert_with(Vec::new).push(neighbor_cell.uuid());
            }
        }
-       
+
        // Keep UUID-based public API
        pub fn add_neighbor(&mut self, tds: &Tds<T, U, V, D>, neighbor_uuid: Uuid) {
            if let Some(&neighbor_key) = tds.uuid_to_cell_key.get(&neighbor_uuid) {
@@ -1031,7 +1031,7 @@ impl Tds<T, U, V, D> {
                        .collect();
                    (cell_key, vertex_keys)
                }).collect();
-               
+
            // Use keys throughout validation - no UUID lookups
            for (cell_key, cell) in &self.cells {
                if let Some(neighbors) = &cell.neighbors {
@@ -1070,7 +1070,7 @@ impl Tds<T, U, V, D> {
 
    ```rust
    use slotmap::{SlotMap, DefaultKey};
-   
+
    /// Generic collection trait for stable-key collections
    pub trait StableKeyCollection<K, V> {
        fn insert(&mut self, value: V) -> K;
@@ -1083,7 +1083,7 @@ impl Tds<T, U, V, D> {
        fn keys(&self) -> Box<dyn Iterator<Item = K> + '_>;
        fn values(&self) -> Box<dyn Iterator<Item = &V> + '_>;
    }
-   
+
    /// SlotMap implementation of the collection trait
    pub struct SlotMapCollection<K, V> 
    where
@@ -1091,7 +1091,7 @@ impl Tds<T, U, V, D> {
    {
        inner: SlotMap<K, V>,
    }
-   
+
    impl<K, V> StableKeyCollection<K, V> for SlotMapCollection<K, V>
    where
        K: slotmap::Key,
@@ -1099,11 +1099,11 @@ impl Tds<T, U, V, D> {
        fn insert(&mut self, value: V) -> K {
            self.inner.insert(value)
        }
-       
+
        fn get(&self, key: K) -> Option<&V> {
            self.inner.get(key)
        }
-       
+
        // ... implement other methods
    }
    ```
@@ -1124,7 +1124,7 @@ impl Tds<T, U, V, D> {
        pub uuid_to_cell_key: UuidToCellKeyMap,
        pub uuid_to_vertex_key: UuidToVertexKeyMap,
    }
-   
+
    // Type aliases for backward compatibility
    pub type DefaultTds<T, U, V, const D: usize> = Tds<T, U, V, D>;
    ```
@@ -1140,14 +1140,14 @@ impl Tds<T, U, V, D> {
        inner: BTreeMap<K, V>,
        next_key: K,
    }
-   
+
    /// Future: Dense vector-based collection for memory efficiency
    pub struct DenseVectorCollection<V> {
        data: Vec<Option<V>>,
        free_indices: Vec<usize>,
        generation: Vec<u32>,
    }
-   
+
    /// Future: Memory pool collection for allocation optimization
    pub struct PoolCollection<K, V> {
        pool: typed_arena::Arena<V>,
@@ -1173,7 +1173,7 @@ impl Tds<T, U, V, D> {
            }
        }
    }
-   
+
    // Phase 2: Benchmarking different collection types
    #[cfg(test)]
    mod collection_benchmarks {

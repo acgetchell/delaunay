@@ -101,7 +101,7 @@ Before you begin, ensure you have:
    ```bash
    # Compile benchmarks without running (useful for CI)
    just bench-compile
-   
+
    # Run the fast pre-PR performance guard when a current baseline artifact is present
    just perf-no-regressions
    ```
@@ -119,7 +119,7 @@ Before you begin, ensure you have:
    ```bash
    # Install just command runner
    cargo install just
-   
+
    # See all available commands
    just --list
    just help-workflows   # Show common workflow patterns
@@ -129,7 +129,7 @@ Before you begin, ensure you have:
    just fix             # Apply formatters/auto-fixes (mutating)
    just test            # Tests + benchmark/release compile smoke
    just ci              # Comprehensive checks + tests + examples
-   
+
    # Granular quality checks
    just lint            # All linting (code + docs + config)
    just lint-code       # Code linting only (Rust, Python, Shell)
@@ -394,17 +394,19 @@ just perf-no-regressions # Fast pre-PR 2D-5D regression guard
 - `just doc-check` - Validate documentation builds
 - `just lint` - All linting (code + docs + config)
 - `just lint-code` - Code linting (Rust, Python, Shell)
-- `just lint-config` - Configuration validation (JSON, TOML, Actions)
+- `just lint-config` - Configuration validation (JSON, TOML, YAML, Actions)
 - `just lint-docs` - Documentation linting (Markdown, Spelling)
-- `just markdown-lint` - Lint/check markdown (non-mutating)
+- `just markdown-check` - Lint/check Markdown with rumdl (non-mutating)
 - `just python-check` - Format, lint, and type-check Python scripts (non-mutating)
 - `just python-lint` - Lint + typecheck Python scripts (non-mutating)
 - `just shell-lint` - Lint/check shell scripts (non-mutating)
 - `just spell-check` - Check spelling across project files (uses `typos-cli`, configured by `typos.toml`)
+- `just yaml-check` - Check YAML/CFF formatting and YAML style (non-mutating)
 - `just fmt` - Format all code
 - `just markdown-fix` - Auto-fix markdown formatting
 - `just python-fix` - Auto-format / auto-fix Python scripts
-- `just shell-fmt` - Format shell scripts
+- `just shell-fix` - Format shell scripts
+- `just yaml-fix` - Auto-format YAML/CFF files with dprint
 
 #### Testing
 
@@ -425,11 +427,12 @@ just perf-no-regressions # Fast pre-PR 2D-5D regression guard
 #### Validation and Linting
 
 - `just action-lint` - GitHub Actions workflow validation
-- `just markdown-lint` - Lint markdown files
+- `just json-check` - Validate all JSON files
+- `just markdown-check` - Lint Markdown files
 - `just shell-lint` - Check shell script formatting and lint diagnostics
 - `just spell-check` - Check spelling across project files (uses `typos-cli`, configured by `typos.toml`)
-- `just validate-json` - Validate all JSON files
-- `just validate-toml` - Validate all TOML files
+- `just toml-check` - Validate all TOML files
+- `just yaml-check` - Check YAML/CFF formatting and style
 
 #### Utilities
 
@@ -569,11 +572,13 @@ tool configuration, but Codacy does not use that file to turn tools on or off.
 - **Configuration**: `.codacy.yml` in the project root
 - **Source of Truth**: Treat the tool lists below as a snapshot; verify current enablement in
   Codacy project settings -> Tools / Code Patterns or Codacy configuration sync before relying on them
-- **Enabled Tools**: Markdownlint, Ruff, ShellCheck, repository-owned Opengrep, duplication, and advisory Lizard
-- **Disabled Tools**: Bandit, Prospector, Pylint, broad Opengrep, Trivy, Jackson Linter, and Spectral
-- **Documentation Analysis**: Markdownlint uses `.markdownlint.json`
-- **Python Analysis**: Ruff uses `pyproject.toml`
-- **Local/CI Analysis**: Rust, Python, shell, YAML, TOML, JSON, and GitHub Actions checks run through `just check`
+- **Enabled Tools**: Ruff, bandit, markdownlint, ShellCheck, repository-owned Opengrep, duplication,
+  and advisory Lizard
+- **Disabled Tools**: Prospector, Pylint, broad Opengrep, Trivy, Jackson Linter, and Spectral
+- **Documentation Analysis**: Local and CI Markdown checks use rumdl configured in
+  `pyproject.toml`; Codacy markdownlint is scoped by `.codacy.yml` with MD013 managed in the Codacy UI
+- **Python Analysis**: Ruff and bandit use `.codacy.yml` path scopes and skip `scripts/tests/**`
+- **Local/CI Analysis**: Rust, Python, shell, Markdown, YAML, TOML, JSON, and GitHub Actions checks run through `just check`
 - **Security Analysis**: Uses CodeQL and cargo-audit rather than Codacy's broader engine set
 - **Code Scanning Mirror**: `.github/workflows/codacy.yml` uploads only repository-owned Opengrep
   findings whose rule IDs start with `delaunay.` so Codacy's default maintainability findings stay in
@@ -1226,6 +1231,6 @@ Thank you for contributing to the advancement of computational geometry in Rust!
 [benches-readme]: benches/README.md
 [scripts-readme]: scripts/README.md
 [code-organization]: docs/code_organization.md
-[maintainer-email]: mailto:adam@adamgetchell.org
+[maintainer-email]: <mailto:adam@adamgetchell.org>
 [semver]: https://semver.org/
 [rustup]: https://rustup.rs/

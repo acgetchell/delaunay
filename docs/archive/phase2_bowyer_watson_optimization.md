@@ -178,7 +178,7 @@ where
     fn facet_cache(&self) -> &ArcSwapOption<FacetToCellsMap> {
         &self.facet_to_cells_cache
     }
-    
+
     fn cached_generation(&self) -> &AtomicU64 {
         // Return inner &AtomicU64 from Arc explicitly
         self.cached_generation.as_ref()
@@ -300,15 +300,15 @@ To ensure cache invalidation works correctly, add checklist-based tests that ver
 fn test_cache_invalidation_on_tds_operations() {
     let mut algorithm = IncrementalBowyerWatson::new();
     let mut tds = TriangulationDataStructure::new();
-    
+
     // Record initial generation
     let initial_gen = algorithm.cached_generation().load(Ordering::Acquire);
-    
+
     // Test vertex insertion
     let vertex = vertex![1.0, 2.0, 3.0];
     tds.add_vertex(vertex);
     assert_ne!(algorithm.cached_generation().load(Ordering::Acquire), initial_gen);
-    
+
     // Test cell operations, neighbor updates, etc.
     // ... additional assertions for each TDS mutating operation
 }

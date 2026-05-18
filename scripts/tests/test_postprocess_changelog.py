@@ -10,6 +10,7 @@ from postprocess_changelog import (
     _is_duplicate_squash_heading,
     _is_isolated_body_heading,
     _max_pr_number,
+    _normalize_entry_heading,
     _normalize_indented_heading,
     _normalize_squash_heading,
     _plain_summary,
@@ -396,13 +397,22 @@ class TestIndentedHeadingNormalization:
     """MD023: commit-body headings are rendered as prose, not nested headings."""
 
     def test_indented_atx_heading_becomes_bold_prose(self) -> None:
-        assert _normalize_indented_heading("  ## Correctness Fixes") == "  **Correctness Fixes**"
+        assert _normalize_indented_heading("  ## Correctness Fixes") == "#### Correctness Fixes"
 
     def test_indented_atx_closing_sequence_becomes_bold_prose(self) -> None:
-        assert _normalize_indented_heading("  ### API Design ###") == "  **API Design**"
+        assert _normalize_indented_heading("  ### API Design ###") == "#### API Design"
 
     def test_column_zero_changelog_heading_is_preserved(self) -> None:
         assert _normalize_indented_heading("### Added") == "### Added"
+
+    def test_column_zero_entry_heading_becomes_level_four(self) -> None:
+        assert _normalize_entry_heading("## Duplicate Vertex Handling", "parent") == ("#### Duplicate Vertex Handling")
+
+    def test_column_zero_category_heading_is_preserved(self) -> None:
+        assert _normalize_entry_heading("### Fixed", "parent") == "### Fixed"
+
+    def test_archives_heading_is_preserved(self) -> None:
+        assert _normalize_entry_heading("## Archives", "parent") == "## Archives"
 
     def test_normalized_heading_is_idempotent(self) -> None:
         assert _normalize_indented_heading("  **Title**") == "  **Title**"
@@ -429,9 +439,70 @@ class TestIndentedHeadingNormalization:
         result = f.read_text(encoding="utf-8")
         assert "  ## Correctness Fixes" not in result
         assert "  ## API Design" not in result
-        assert "  **Correctness Fixes**" in result
-        assert "  **API Design**" in result
+        assert "#### Correctness Fixes" in result
+        assert "#### API Design" in result
         assert "### Performance" in result
+
+    def test_full_pipeline_normalizes_unindented_commit_body_headings(self, tmp_path: Path) -> None:
+        f = tmp_path / "CHANGELOG.md"
+        f.write_text(
+            "# Changelog\n\n"
+            "## [1.0.0]\n\n"
+            "### Fixed\n\n"
+            "- Handle degenerate configurations [#116](https://github.com/acgetchell/delaunay/pull/116)\n"
+            f"  {_commit()}\n\n"
+            "## Duplicate Vertex Handling\n\n"
+            "  - Add duplicate coordinate detection\n\n"
+            "### Fixed: Add rollback on cell creation failure\n\n"
+            "  Add rollback mechanisms when cell creation fails.\n",
+            encoding="utf-8",
+        )
+
+        postprocess(f)
+
+        result = f.read_text(encoding="utf-8")
+        assert "\n## Duplicate Vertex Handling" not in result
+        assert "\n### Fixed: Add rollback on cell creation failure" not in result
+        assert "#### Duplicate Vertex Handling" in result
+        assert "#### Fixed: Add rollback on cell creation failure" in result
+        assert "### Fixed" in result
+
+    def test_full_pipeline_code_spans_wildcard_identifiers_in_headings(self, tmp_path: Path) -> None:
+        f = tmp_path / "CHANGELOG.md"
+        f.write_text(
+            "# Changelog\n\n"
+            "## [1.0.0]\n\n"
+            "### Documentation\n\n"
+            "- Rename bounding-box helpers\n\n"
+            "### Documentation: Rename saturating_* helpers to bbox_* and clarify float semantics\n",
+            encoding="utf-8",
+        )
+
+        postprocess(f)
+
+        result = f.read_text(encoding="utf-8")
+        assert "#### Documentation: Rename `saturating_*` helpers to `bbox_*` and clarify float semantics" in result
+
+    def test_full_pipeline_normalizes_indented_bold_entry_headings(self, tmp_path: Path) -> None:
+        f = tmp_path / "CHANGELOG.md"
+        f.write_text(
+            "# Changelog\n\n"
+            "## [1.0.0]\n\n"
+            "### Performance\n\n"
+            "- Improve duplicate handling\n\n"
+            "  **Performance Optimization**\n\n"
+            "  - First set of changes\n\n"
+            "  **Performance Optimization**\n\n"
+            "  - Additional changes\n",
+            encoding="utf-8",
+        )
+
+        postprocess(f)
+
+        result = f.read_text(encoding="utf-8")
+        assert "  **Performance Optimization**" not in result
+        assert "#### Performance Optimization\n" in result
+        assert "#### Performance Improvements" in result
 
 
 class TestSquashHeadingNormalization:
@@ -456,10 +527,10 @@ class TestSquashHeadingNormalization:
         assert _squash_heading_parts(f"- fix: actual commit {_commit()}") is None
 
     def test_conventional_squash_heading_becomes_bold_prose(self) -> None:
-        assert _normalize_squash_heading("- fix: close the 4D retry collapse") == "**Fixed: Close the 4D retry collapse**"
+        assert _normalize_squash_heading("- fix: close the 4D retry collapse") == "#### Fixed: Close the 4D retry collapse"
 
     def test_nested_squash_heading_is_indented(self) -> None:
-        assert _normalize_squash_heading("- Changed: harden flip diagnostics", nested=True) == "  **Changed: Harden flip diagnostics**"
+        assert _normalize_squash_heading("- Changed: harden flip diagnostics", nested=True) == "#### Changed: Harden flip diagnostics"
 
     def test_commit_entry_is_preserved(self) -> None:
         line = f"- fix: actual commit {_commit()}"
@@ -496,7 +567,7 @@ class TestSquashHeadingNormalization:
 
         result = f.read_text(encoding="utf-8")
         assert "feat: instrument large-scale 4D debugging" not in result
-        assert "**Fixed: Close the 4D bulk repair retry collapse**" in result
+        assert "#### Fixed: Close the 4D bulk repair retry collapse" in result
         assert "  - Thread cavity-touched cells through insertion." in result
 
     def test_full_pipeline_resets_parent_summary_at_version_heading(self, tmp_path: Path) -> None:
@@ -516,7 +587,7 @@ class TestSquashHeadingNormalization:
         postprocess(f)
 
         result = f.read_text(encoding="utf-8")
-        assert "**Fixed: Repeatable summary**" in result
+        assert "#### Fixed: Repeatable summary" in result
         assert "  - Preserve this historical squash-body heading." in result
 
     def test_full_pipeline_preserves_non_isolated_conventional_bullets(self, tmp_path: Path) -> None:
@@ -535,7 +606,7 @@ class TestSquashHeadingNormalization:
 
         result = f.read_text(encoding="utf-8")
         assert "  - Added: `just help-workflows` references throughout" in result
-        assert "**Added: `just help-workflows`" not in result
+        assert "#### Added: `just help-workflows`" not in result
 
     def test_full_pipeline_deindents_children_after_squash_heading(self) -> None:
         content = (
@@ -549,7 +620,7 @@ class TestSquashHeadingNormalization:
 
         result = postprocess_text(content)
 
-        assert f"  **Added: Canonical vertex ordering details {_pr(266)}**" in result
+        assert f"#### Added: Canonical vertex ordering details {_pr(266)}" in result
         assert "\n  - Add canonical_points module with sorted_cell_points helpers\n" in result
         assert "\n    - Add canonical_points module" not in result
 

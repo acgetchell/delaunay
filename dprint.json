@@ -1,0 +1,19 @@
+{
+  "$schema": "https://dprint.dev/schemas/v0.json",
+  "lineWidth": 160,
+  "indentWidth": 2,
+  "useTabs": false,
+  "newLineKind": "lf",
+  "includes": [
+    "**/*.{yaml,yml}",
+    "CITATION.cff"
+  ],
+  "excludes": [
+    "target/**",
+    "target-*/**",
+    "**/target/**"
+  ],
+  "plugins": [
+    "https://plugins.dprint.dev/g-plane/pretty_yaml-v0.6.0.wasm"
+  ]
+}

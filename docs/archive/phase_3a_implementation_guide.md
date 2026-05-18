@@ -266,7 +266,7 @@ impl Cell {
     pub fn vertices(&self) -> &[Vertex] {
         &self.vertices  // Direct access, 100+ bytes per vertex
     }
-    
+
     pub fn contains_vertex(&self, v: &Vertex) -> bool {
         self.vertices.contains(v)  // Expensive comparison
     }
@@ -286,7 +286,7 @@ impl Cell {
     pub fn vertex_keys(&self) -> &[VertexKey] {
         &self.vertex_keys  // Direct access, 8 bytes per key
     }
-    
+
     pub fn contains_vertex_key(&self, vkey: VertexKey) -> bool {
         self.vertex_keys.contains(&vkey)  // Cheap! Just u64 comparison
     }
@@ -406,7 +406,7 @@ where
         data: Option<V>,
     ) -> Self {
         let vertex_keys = vertex_keys.into();
-        
+
         // Validate D+1 vertices in debug builds
         debug_assert_eq!(
             vertex_keys.len(),
@@ -415,7 +415,7 @@ where
             vertex_keys.len(),
             D
         );
-        
+
         Self {
             vertex_keys,
             uuid: make_uuid(),
@@ -468,7 +468,7 @@ where
     pub fn contains_vertex_key(&self, vkey: VertexKey) -> bool {
         self.vertex_keys.contains(&vkey)
     }
-    
+
     /// Checks if this cell has any vertex key in common with another cell.
     ///
     /// This is a cheap operation that only compares keys.
@@ -494,7 +494,7 @@ where
             .iter()
             .any(|vkey| other.vertex_keys.contains(vkey))
     }
-    
+
     /// Returns an iterator over the vertex keys, paired with their indices.
     ///
     /// Useful for operations that need both the key and its position.
@@ -773,20 +773,20 @@ pub fn is_valid(&self, tds: &Tds<T, U, V, D>) -> Result<(), CellValidationError>
             .ok_or_else(|| CellValidationError::InvalidVertex {
                 reason: format!("VertexKey {:?} not found in TDS", vkey),
             })?;
-        
+
         // Validate the vertex itself
         vertex.is_valid()?;
     }
-    
+
     // Check if UUID is valid
     validate_uuid(&self.uuid)?;
-    
+
     // Check for duplicate vertex keys
     let mut seen: FastHashSet<VertexKey> = FastHashSet::default();
     if !self.vertex_keys.iter().all(|vkey| seen.insert(*vkey)) {
         return Err(CellValidationError::DuplicateVertices);
     }
-    
+
     // Check that cell has exactly D+1 vertices
     if self.vertex_keys.len() != D + 1 {
         return Err(CellValidationError::InsufficientVertices {
@@ -795,7 +795,7 @@ pub fn is_valid(&self, tds: &Tds<T, U, V, D>) -> Result<(), CellValidationError>
             dimension: D,
         });
     }
-    
+
     // Check neighbor structure if present
     if let Some(ref neighbor_keys) = self.neighbor_keys {
         if neighbor_keys.len() != D + 1 {
@@ -805,7 +805,7 @@ pub fn is_valid(&self, tds: &Tds<T, U, V, D>) -> Result<(), CellValidationError>
                 dimension: D,
             });
         }
-        
+
         // Verify all neighbor keys exist in TDS (if Some)
         for (idx, neighbor_opt) in neighbor_keys.iter().enumerate() {
             if let Some(neighbor_key) = neighbor_opt {
@@ -820,7 +820,7 @@ pub fn is_valid(&self, tds: &Tds<T, U, V, D>) -> Result<(), CellValidationError>
             }
         }
     }
-    
+
     Ok(())
 }
 ```
@@ -833,7 +833,7 @@ Check `CellValidationError` enum and add if missing:
 #[derive(Error, Debug, Clone, PartialEq, Eq)]
 pub enum CellValidationError {
     // ... existing variants ...
-    
+
     /// Neighbor structure has invalid length
     #[error("Invalid neighbors length: expected {expected} for dimension {dimension}, got {actual}")]
     InvalidNeighborsLength {
@@ -897,7 +897,7 @@ where
         //
         // For now, we'll assume validation happens at TDS level.
         // Return Ok to allow compilation, but builder should not be exposed publicly.
-        
+
         // TODO Phase 3A: Remove CellBuilder from public API
         unimplemented!(
             "CellBuilder is deprecated in Phase 3A. Use TDS::insert_cell() or similar methods instead."
@@ -1024,7 +1024,7 @@ where
         data: Option<V>,
     ) -> Result<CellKey, TdsError> {
         let vertex_keys = vertex_keys.into();
-        
+
         // Validate vertex count
         if vertex_keys.len() != D + 1 {
             return Err(TdsError::InvalidCellConstruction(format!(
@@ -1034,7 +1034,7 @@ where
                 vertex_keys.len()
             )));
         }
-        
+
         // Validate all vertex keys exist
         for &vkey in vertex_keys.iter() {
             if !self.vertices.contains_key(vkey) {
@@ -1044,23 +1044,23 @@ where
                 )));
             }
         }
-        
+
         // Create cell with validated keys
         let cell = Cell::new_with_keys(vertex_keys, data);
-        
+
         // Insert into TDS
         let cell_key = self.cells.insert(cell);
-        
+
         // Update UUID mapping
         let cell_uuid = self.cells[cell_key].uuid();
         self.uuid_to_cell_key.insert(cell_uuid, cell_key);
-        
+
         // Increment generation
         self.increment_generation();
-        
+
         Ok(cell_key)
     }
-    
+
     /// Creates a new cell from vertex objects and inserts it into the TDS.
     ///
     /// This method first inserts the vertices (if not already present), then
@@ -1103,7 +1103,7 @@ where
                 vertices.len()
             )));
         }
-        
+
         // Insert vertices and collect keys
         let mut vertex_keys = SmallBuffer::new();
         for vertex in vertices {
@@ -1118,10 +1118,10 @@ where
             };
             vertex_keys.push(vkey);
         }
-        
+
         // Create cell from keys
         let cell_key = self.create_cell_from_keys(vertex_keys.clone(), data)?;
-        
+
         Ok((cell_key, vertex_keys.into_vec()))
     }
 }
@@ -1133,7 +1133,7 @@ where
 #[derive(Error, Debug)]
 pub enum TdsError {
     // ... existing variants ...
-    
+
     /// Invalid cell construction
     #[error("Invalid cell construction: {0}")]
     InvalidCellConstruction(String),
@@ -1287,7 +1287,7 @@ Update test helpers to create cells via TDS:
 #[cfg(test)]
 mod tests {
     use super::*;
-    
+
     // Helper to create test TDS
     fn create_test_tds_3d() -> Tds<f64, Option<()>, Option<()>, 3> {
         let vertices = vec![
@@ -1298,13 +1298,13 @@ mod tests {
         ];
         Tds::new(&vertices).unwrap()
     }
-    
+
     #[test]
     fn test_cell_with_keys() {
         let tds = create_test_tds_3d();
         let cell_key = tds.cells().iter().next().unwrap().0;
         let cell = &tds.cells()[cell_key];
-        
+
         assert_eq!(cell.number_of_vertices(), 4);
         assert!(cell.is_valid(&tds).is_ok());
     }
@@ -1476,6 +1476,7 @@ Add Phase 3A entry:
 ### Migration Guide
 
 **Before**:
+
 ```rust
 let cell = cell!(vec![v1, v2, v3, v4], data);
 for vertex in cell.vertices() {
@@ -1517,6 +1518,7 @@ As of version 0.6.0, `Cell` uses key-based storage for performance:
 - **Parallel**: Keys are `Copy + Send + Sync`
 
 **API Changes**:
+
 - `Cell::vertex_keys()` returns `&[VertexKey]`
 - Methods needing vertex data take `&Tds` parameter
 - Cell construction via TDS methods only
@@ -1562,16 +1564,16 @@ just test-all
 #[test]
 fn test_cell_key_operations() {
     let mut tds = create_test_tds_3d();
-    
+
     // Get first cell
     let cell_key = tds.cells().iter().next().unwrap().0;
     let cell = &tds.cells()[cell_key];
-    
+
     // Test key operations
     let vkeys: Vec<_> = cell.vertex_keys().iter().copied().collect();
     assert_eq!(vkeys.len(), 4);
     assert!(cell.contains_vertex_key(vkeys[0]));
-    
+
     // Test validation
     assert!(cell.is_valid(&tds).is_ok());
 }
@@ -1592,15 +1594,15 @@ fn test_cell_key_operations() {
 #[test]
 fn test_parallel_cell_access() {
     use rayon::prelude::*;
-    
+
     let tds = create_large_tds();
-    
+
     // Parallel iteration over cells
     let vertex_counts: Vec<_> = tds.cells()
         .par_iter()
         .map(|(_, cell)| cell.number_of_vertices())
         .collect();
-    
+
     assert!(vertex_counts.iter().all(|&count| count == 4));
 }
 ```
@@ -1614,7 +1616,7 @@ fn test_parallel_cell_access() {
 fn bench_cell_iteration_keys_vs_objects(b: &mut Bencher) {
     let tds = create_benchmark_tds();
     let cells: Vec<_> = tds.cells().values().collect();
-    
+
     b.iter(|| {
         // Just iterate keys (should be very fast)
         cells.iter()

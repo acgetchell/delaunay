@@ -24,11 +24,11 @@ cargo run --release --example numerical_robustness
 Orientation and insphere predicates use staged evaluation:
 
 1. **Provable f64 fast filter (D ≤ 4)** — `la_stack::Matrix::det_errbound()` computes a
-   rigorous Shewchuk-style error bound from the f64 determinant.  If the bound certifies
-   the sign, no allocation is needed.  For D ≥ 5 (where `det_errbound` is not available),
+   rigorous Shewchuk-style error bound from the f64 determinant. If the bound certifies
+   the sign, no allocation is needed. For D ≥ 5 (where `det_errbound` is not available),
    the predicate falls through directly to exact arithmetic.
-2. **Exact sign** — via `la_stack::Matrix::det_sign_exact`.  Uses exact `BigRational`
-   Bareiss elimination.  Provably correct for finite matrix entries.
+2. **Exact sign** — via `la_stack::Matrix::det_sign_exact`. Uses exact `BigRational`
+   Bareiss elimination. Provably correct for finite matrix entries.
 3. **Indeterminate or symbolic fallback** — if exact arithmetic cannot run
    (for example due to non-finite entries or unsupported insphere matrix size),
    robust predicates return `BOUNDARY` / `DEGENERATE` where appropriate, while
@@ -263,10 +263,11 @@ The quantization resolution is `min(128/D, 31)` bits per coordinate, giving:
 - 4D: 31 bits/coord → ~10⁻⁹ relative resolution
 - 5D: 25 bits/coord → ~10⁻⁸ relative resolution
 
-This layer is **unconditional** when Hilbert ordering is active (the default) and runs
-in O(n log n) time with zero extra allocation (the quantized coordinates are already
-computed during Hilbert index generation).  It removes the vast majority of exact and
-near-duplicate vertices before any insertion occurs, regardless of `DedupPolicy`.
+This layer is **unconditional** when Hilbert ordering is active (the default)
+and runs in O(n log n) time with zero extra allocation (the quantized
+coordinates are already computed during Hilbert index generation). It removes
+the vast majority of exact and near-duplicate vertices before any insertion
+occurs, regardless of `DedupPolicy`.
 
 See `order_vertices_hilbert` (called from `order_vertices_by_strategy`) in
 [`src/triangulation/delaunay.rs`](../src/triangulation/delaunay.rs).
@@ -335,9 +336,9 @@ Layer 1 is active when using the default Hilbert ordering, and Layer 2 is always
 active regardless of this setting.
 
 - `DedupPolicy::Off` *(default)*: rely on the built-in Hilbert dedup (Layer 1)
-  and per-insertion checks (Layer 2).  This is sufficient for most use cases.
+  and per-insertion checks (Layer 2). This is sufficient for most use cases.
 - `DedupPolicy::Exact`: additionally apply `dedup_vertices_exact` before
-  construction.  This is a performance optimisation for inputs with many exact
+  construction. This is a performance optimisation for inputs with many exact
   duplicates — it avoids paying per-vertex insertion overhead for each one.
 - `DedupPolicy::Epsilon(value)`: additionally apply `dedup_vertices_epsilon`
   with the given tolerance before construction.

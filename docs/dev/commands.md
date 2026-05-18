@@ -17,7 +17,9 @@ Agents must run appropriate checks after modifying code.
 - [Benchmark Profiles](#benchmark-profiles)
 - [Examples](#examples)
 - [Spell Checking](#spell-checking)
+- [Markdown Checks](#markdown-checks)
 - [TOML Checks](#toml-checks)
+- [YAML Checks](#yaml-checks)
 - [Shell Script Validation](#shell-script-validation)
 - [JSON Validation](#json-validation)
 - [CITATION.cff Validation](#citationcff-validation)
@@ -308,6 +310,23 @@ under:
 
 ---
 
+## Markdown Checks
+
+Markdown files are checked and fixed with rumdl. Keep the non-mutating check
+before the mutating fixer in user-facing command examples.
+
+Commands:
+
+```bash
+just markdown-check
+just markdown-fix
+```
+
+`just markdown-lint` remains as a compatibility alias for `just
+markdown-check`.
+
+---
+
 ## TOML Checks
 
 TOML files should parse cleanly, pass Taplo linting, and match Taplo
@@ -319,8 +338,25 @@ Commands:
 just toml-check
 just toml-lint
 just toml-fmt-check
-just toml-fmt
+just toml-fix
 ```
+
+---
+
+## YAML Checks
+
+YAML and `CITATION.cff` files should match the dprint/pretty_yaml formatting
+configuration and pass yamllint.
+
+Commands:
+
+```bash
+just yaml-check
+just yaml-fix
+```
+
+`just yaml-check` runs both `just yaml-fmt-check` and `just yaml-lint`; use
+`just yaml-fix` for the mutating dprint formatter.
 
 ---
 
@@ -421,8 +457,9 @@ Regenerate with:
 just changelog
 ```
 
-This runs `git-cliff`, applies the Python postprocessor, and archives completed
-minor release series under `docs/archive/changelog/`.
+This runs `git-cliff`, applies the Python postprocessor, archives completed
+minor release series under `docs/archive/changelog/`, and applies `rumdl`
+formatting to the generated changelog files.
 
 For release PRs, generate the changelog for a version before the final tag
 exists with:

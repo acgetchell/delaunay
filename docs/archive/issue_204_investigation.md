@@ -138,6 +138,7 @@ actually being granted today.
   synchronously invoke the existing global flip-repair entry point with a
   bounded budget and reset. This is what finally gives eventual consistency
   a chance to materialize on the stream of cumulative violations that the
+
   #307 relaxation intentionally permits.
 
 Tightening `normalize_and_promote_positive_orientation` itself is out of

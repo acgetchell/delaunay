@@ -22,8 +22,9 @@ env:
   CARGO_TERM_COLOR: always
   RUST_BACKTRACE: 1
   ACTIONLINT_VERSION: "1.7.12"
+  DPRINT_VERSION: "0.54.0"
   JUST_VERSION: "1.51.0"
-  MARKDOWNLINT_VERSION: "0.48.0"
+  RUMDL_VERSION: "0.1.93"
   SHFMT_VERSION: "3.13.1"
   SHFMT_SHA256_DARWIN_AMD64: "6feedafc72915794163114f512348e2437d080d0047ef8b8fa2ec63b575f12af"
   SHFMT_SHA256_DARWIN_ARM64: "9680526be4a66ea1ffe988ed08af58e1400fe1e4f4aef5bd88b20bb9b3da33f8"
@@ -59,7 +60,7 @@ jobs:
           target: ${{ matrix.target }}
           cache: true # Built-in caching
           cache-bin: false # Avoid restoring stale rustup/cargo shims from cache.
-          # toolchain, components, etc. are specified in rust-toolchain.toml
+      # toolchain, components, etc. are specified in rust-toolchain.toml
 
       - name: Install just
         if: matrix.os != 'windows-latest'
@@ -73,16 +74,17 @@ jobs:
         with:
           version: ${{ env.UV_VERSION }}
 
-      - name: Install Node.js (for markdownlint)
+      - name: Install rumdl (for Markdown linting)
         if: matrix.os != 'windows-latest'
-        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
+        uses: taiki-e/install-action@fa0dd4cd0a40696e6f9766370614a5ce482e6aa8 # v2.77.5
         with:
-          node-version: "20"
+          tool: rumdl@${{ env.RUMDL_VERSION }}
 
-      - name: Install Node.js packages
+      - name: Install dprint (for YAML formatting)
         if: matrix.os != 'windows-latest'
-        run: |
-          npm install -g markdownlint-cli@${{ env.MARKDOWNLINT_VERSION }}
+        uses: taiki-e/install-action@fa0dd4cd0a40696e6f9766370614a5ce482e6aa8 # v2.77.5
+        with:
+          tool: dprint@${{ env.DPRINT_VERSION }}
 
       - name: Install typos-cli
         if: matrix.os != 'windows-latest'

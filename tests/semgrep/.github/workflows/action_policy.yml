@@ -1,0 +1,31 @@
+name: Action policy fixtures
+on:
+  workflow_dispatch:
+
+jobs:
+  fixtures:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Allowed pinned action
+        # ok: delaunay.github-actions.external-action-sha-pinned
+        # ok: delaunay.github-actions.external-action-approved-allowlist
+        # ok: delaunay.github-actions.external-action-version-comment
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - name: Moving tag action
+        # ruleid: delaunay.github-actions.external-action-sha-pinned
+        uses: actions/checkout@v6
+
+      - name: Unapproved external action
+        # ruleid: delaunay.github-actions.external-action-approved-allowlist
+        uses: unapproved/example-action@1111111111111111111111111111111111111111 # v1.0.0
+
+      - name: Missing readable version comment
+        # ruleid: delaunay.github-actions.external-action-version-comment
+        uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae
+
+      - name: Local action
+        # ok: delaunay.github-actions.external-action-sha-pinned
+        # ok: delaunay.github-actions.external-action-approved-allowlist
+        # ok: delaunay.github-actions.external-action-version-comment
+        uses: ./.github/actions/local-action

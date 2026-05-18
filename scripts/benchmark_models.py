@@ -432,9 +432,7 @@ def format_benchmark_tables(
             # Format time and throughput
             time_str = format_time_value(bench.time_mean, bench.time_unit) if bench.time_unit else "N/A"
             throughput_str = (
-                format_throughput_value(bench.throughput_mean, bench.throughput_unit)
-                if bench.throughput_unit and bench.throughput_mean is not None
-                else "N/A"
+                format_throughput_value(bench.throughput_mean, bench.throughput_unit) if bench.throughput_unit and bench.throughput_mean is not None else "N/A"
             )
 
             if include_simplices:

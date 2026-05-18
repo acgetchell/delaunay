@@ -1460,9 +1460,7 @@ class PerformanceSummaryGenerator:
         sorted_dims = sorted(
             cases_by_dimension.keys(),
             key=lambda d: (
-                int(str(d).strip().removesuffix("D").removesuffix("d"))
-                if str(d).strip().removesuffix("D").removesuffix("d").isdigit()
-                else sys.maxsize
+                int(str(d).strip().removesuffix("D").removesuffix("d")) if str(d).strip().removesuffix("D").removesuffix("d").isdigit() else sys.maxsize
             ),
         )
 
@@ -2040,13 +2038,7 @@ class CriterionParser:
 
         vertices = metric.get("vertices")
         simplices = metric.get("simplices")
-        if (
-            not isinstance(vertices, int)
-            or isinstance(vertices, bool)
-            or not isinstance(simplices, int)
-            or isinstance(simplices, bool)
-            or simplices < 0
-        ):
+        if not isinstance(vertices, int) or isinstance(vertices, bool) or not isinstance(simplices, int) or isinstance(simplices, bool) or simplices < 0:
             logger.debug("Skipping malformed ci_performance_suite metric for %s", benchmark_id)
             return None
 
@@ -2262,9 +2254,7 @@ def _validate_baseline_ref_name(ref_name: str) -> str:
     if _is_semver_tag_ref(normalized) or TRUSTED_BASELINE_BRANCH_RE.fullmatch(normalized):
         return normalized
 
-    msg = (
-        f"Disallowed baseline ref {stripped!r} (resolved as {normalized!r}); allowed refs are main, semver release tags, and trusted branch prefixes"
-    )
+    msg = f"Disallowed baseline ref {stripped!r} (resolved as {normalized!r}); allowed refs are main, semver release tags, and trusted branch prefixes"
     raise ValueError(msg)
 
 
@@ -3237,8 +3227,7 @@ class PerformanceComparator:
                     f"{self.regression_threshold}% threshold while total matched time changed by {summary.total_time_change:.1f}%\n",
                 )
                 logger.warning(
-                    "Individual regressions warning under total-time policy: individual_regressions=%s "
-                    "total_time_change=%.2f%% threshold=%.2f%% benchmarks=%s",
+                    "Individual regressions warning under total-time policy: individual_regressions=%s total_time_change=%.2f%% threshold=%.2f%% benchmarks=%s",
                     summary.individual_regressions,
                     summary.total_time_change,
                     self.regression_threshold,
@@ -3316,8 +3305,7 @@ class PerformanceComparator:
         f.write(f"Current Time: [{benchmark.time_low}, {benchmark.time_mean}, {benchmark.time_high}] {benchmark.time_unit}\n")
         if benchmark.throughput_mean is not None:
             f.write(
-                f"Current Throughput: [{benchmark.throughput_low}, {benchmark.throughput_mean}, "
-                f"{benchmark.throughput_high}] {benchmark.throughput_unit}\n",
+                f"Current Throughput: [{benchmark.throughput_low}, {benchmark.throughput_mean}, {benchmark.throughput_high}] {benchmark.throughput_unit}\n",
             )
 
     def _write_baseline_benchmark_data(self, f, benchmark: BenchmarkData) -> None:
@@ -3325,8 +3313,7 @@ class PerformanceComparator:
         f.write(f"Baseline Time: [{benchmark.time_low}, {benchmark.time_mean}, {benchmark.time_high}] {benchmark.time_unit}\n")
         if benchmark.throughput_mean is not None:
             f.write(
-                f"Baseline Throughput: [{benchmark.throughput_low}, {benchmark.throughput_mean}, "
-                f"{benchmark.throughput_high}] {benchmark.throughput_unit}\n",
+                f"Baseline Throughput: [{benchmark.throughput_low}, {benchmark.throughput_mean}, {benchmark.throughput_high}] {benchmark.throughput_unit}\n",
             )
 
     def _write_time_comparison(self, f, current: BenchmarkData, baseline: BenchmarkData) -> tuple[float | None, bool]:
@@ -4313,9 +4300,7 @@ class GitHubBaselineFetcher:
 def _add_benchmark_subcommands(subparsers: "argparse._SubParsersAction[argparse.ArgumentParser]") -> None:
     """Add benchmark-running subcommands."""
     gen_parser = subparsers.add_parser("generate-baseline", help="Generate performance baseline")
-    gen_parser.add_argument(
-        "--dev", action="store_true", help=f"Use faster Criterion settings while retaining the {TRUSTED_BENCH_PROFILE} Cargo profile"
-    )
+    gen_parser.add_argument("--dev", action="store_true", help=f"Use faster Criterion settings while retaining the {TRUSTED_BENCH_PROFILE} Cargo profile")
     gen_parser.add_argument("--output", type=Path, help="Output file path")
     gen_parser.add_argument("--project-root", type=Path, help="Project root to benchmark (directory containing Cargo.toml)")
     gen_parser.add_argument(
@@ -4337,9 +4322,7 @@ def _add_benchmark_subcommands(subparsers: "argparse._SubParsersAction[argparse.
     ref_parser.add_argument("--ref", dest="ref_name", type=str, default="main", help="Git ref to benchmark (default: main)")
     ref_parser.add_argument("--out", dest="out_dir", type=Path, default=Path("baseline-artifact"), help="Output artifact directory")
     ref_parser.add_argument("--remote", type=str, default="origin", help="Git remote to fetch the ref from (default: origin)")
-    ref_parser.add_argument(
-        "--dev", action="store_true", help=f"Use faster Criterion settings while retaining the {TRUSTED_BENCH_PROFILE} Cargo profile"
-    )
+    ref_parser.add_argument("--dev", action="store_true", help=f"Use faster Criterion settings while retaining the {TRUSTED_BENCH_PROFILE} Cargo profile")
     ref_parser.add_argument(
         "--bench-timeout",
         type=int,
@@ -4382,9 +4365,7 @@ def _add_benchmark_subcommands(subparsers: "argparse._SubParsersAction[argparse.
         default=DEFAULT_REGRESSION_THRESHOLD,
         help=f"Regression threshold percentage for marking regressions (default: {DEFAULT_REGRESSION_THRESHOLD})",
     )
-    cmp_parser.add_argument(
-        "--dev", action="store_true", help=f"Use faster Criterion settings while retaining the {TRUSTED_BENCH_PROFILE} Cargo profile"
-    )
+    cmp_parser.add_argument("--dev", action="store_true", help=f"Use faster Criterion settings while retaining the {TRUSTED_BENCH_PROFILE} Cargo profile")
     cmp_parser.add_argument(
         "--output",
         type=Path,
@@ -4418,9 +4399,7 @@ def _add_benchmark_subcommands(subparsers: "argparse._SubParsersAction[argparse.
         default=DEFAULT_REGRESSION_THRESHOLD,
         help=f"Regression threshold percentage for marking regressions (default: {DEFAULT_REGRESSION_THRESHOLD})",
     )
-    cmp_ref_parser.add_argument(
-        "--dev", action="store_true", help=f"Use faster Criterion settings while retaining the {TRUSTED_BENCH_PROFILE} Cargo profile"
-    )
+    cmp_ref_parser.add_argument("--dev", action="store_true", help=f"Use faster Criterion settings while retaining the {TRUSTED_BENCH_PROFILE} Cargo profile")
     cmp_ref_parser.add_argument(
         "--bench-timeout",
         type=int,
@@ -4515,9 +4494,7 @@ def _add_regression_subcommands(subparsers: "argparse._SubParsersAction[argparse
 
     regress_parser = subparsers.add_parser("run-regression-test", help="Run performance regression test")
     regress_parser.add_argument("--baseline", type=Path, required=True, help="Path to baseline file")
-    regress_parser.add_argument(
-        "--dev", action="store_true", help=f"Use faster Criterion settings while retaining the {TRUSTED_BENCH_PROFILE} Cargo profile"
-    )
+    regress_parser.add_argument("--dev", action="store_true", help=f"Use faster Criterion settings while retaining the {TRUSTED_BENCH_PROFILE} Cargo profile")
     regress_parser.add_argument(
         "--bench-timeout",
         type=int,

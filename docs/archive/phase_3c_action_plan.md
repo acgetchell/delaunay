@@ -113,7 +113,7 @@ where
 {
     // ✅ Now uses lightweight facet handles
     facet_handles: Vec<(CellKey, u8)>,
-    
+
     // ✅ Methods take &Tds parameter for on-demand data access
     // ... other fields properly implemented
 }
@@ -189,8 +189,8 @@ Completed work:
 
 ## Actual Timeline
 
-|| Task | Estimated Time | Actual Time | Status |
-|------|---------------|-------------|--------|
+| Task | Estimated Time | Actual Time | Status |
+| ------ | --------------- | ------------- | -------- |
 | Task 1: InsertionAlgorithm trait | 2-3 hours | Included in Phase 3A | ✅ Complete |
 | Task 2: ConvexHull module | 3-4 hours | Included in Phase 3A | ✅ Complete |
 | Task 3: Test updates | 1-2 hours | Included in Phase 3A | ✅ Complete |

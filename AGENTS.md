@@ -186,8 +186,8 @@ After modifying files, run appropriate validators.
 Common commands:
 
 ```bash
-just fix
 just check
+just fix
 just ci
 ```
 
@@ -225,10 +225,10 @@ docs/code_organization.md
 
 ## Design Principles
 
-This is a scientific d‑dimensional Delaunay triangulation library.  Design
+This is a scientific d‑dimensional Delaunay triangulation library. Design
 decisions trade off in roughly this priority: **numerical correctness →
 topological correctness → API stability → composability → idiomatic Rust →
-performance within scope**.  The sections below spell out what each means
+performance within scope**. The sections below spell out what each means
 in practice; when in doubt, favour the invariant over the convenient edit.
 
 ### Numerical correctness as an invariant
@@ -238,9 +238,9 @@ in practice; when in doubt, favour the invariant over the convenient edit.
   **Stage 1** — provable f64 fast filter with a Shewchuk‑style errbound;
   **Stage 2** — exact sign via Bareiss in `la-stack`;
   **Stage 3** — deterministic `InSphere::BOUNDARY` / `Orientation::DEGENERATE`
-  fallback for non‑finite inputs.  A new predicate must either plug into
+  fallback for non‑finite inputs. A new predicate must either plug into
   this pattern or justify the deviation in its docs.
-- No f64 operation may silently lose sign information.  `unwrap_or(NaN)`,
+- No f64 operation may silently lose sign information. `unwrap_or(NaN)`,
   `unwrap_or(f64::INFINITY)`, or "return `true` on error" are anti‑patterns.
 - Algorithms cite their source (Shewchuk, Bowyer–Watson, Edelsbrunner,
   Preparata–Shamos, …) in `REFERENCES.md` and document their
@@ -253,11 +253,11 @@ in practice; when in doubt, favour the invariant over the convenient edit.
 
 - Every mutating operation preserves the invariants checked by
   `Tds::is_valid` (Level 1–3) and `DelaunayTriangulation::is_valid`
-  (Level 4).  An operation that cannot preserve them must fail explicitly
+  (Level 4). An operation that cannot preserve them must fail explicitly
   rather than leave the triangulation in an inconsistent state.
 - PL‑manifold invariants: facets have multiplicity 1 (boundary) or 2
   (interior); ridges are linked consistently; the Euler characteristic
-  matches the triangulation's `TopologyGuarantee`.  The checks live in
+  matches the triangulation's `TopologyGuarantee`. The checks live in
   `src/topology/manifold.rs` and `src/topology/characteristics/`.
 - Repair paths (`repair_delaunay_with_flips`, `repair_facet_oversharing`,
   `delaunayize_by_flips`) bound their work via explicit budgets
@@ -277,13 +277,13 @@ The library exposes four validation levels, each a superset of the last:
 4. **Level 4 — Delaunay property**: every facet is locally Delaunay.
 
 Only Level 4 requires predicate evaluation; Levels 1–3 are pure graph
-checks.  Agents adding validation code should place it at the correct
+checks. Agents adding validation code should place it at the correct
 layer and avoid reaching into lower layers unnecessarily.
 
 ### Symbolic perturbation (SoS)
 
 Degenerate configurations (cospherical, collinear, coplanar inputs) are
-resolved by Simulation‑of‑Simplicity in `src/geometry/sos.rs`.  This is
+resolved by Simulation‑of‑Simplicity in `src/geometry/sos.rs`. This is
 a first‑class invariant, not an implementation detail — callers can
 rely on predicates returning a consistent, total ordering even on
 degenerate input, and tests under `tests/proptest_sos.rs` enforce that.
@@ -291,7 +291,7 @@ degenerate input, and tests under `tests/proptest_sos.rs` enforce that.
 ### Public‑API stability
 
 - Error enums are `#[non_exhaustive]`; public wrapper types are
-  `#[must_use]`.  New variants are additive.
+  `#[must_use]`. New variants are additive.
 - New functionality is additive: use `crate::prelude::*` (or the focused
   `prelude::triangulation`, `prelude::query`, etc.) for ergonomic
   re‑exports; never silently rename or remove a public item.
@@ -302,7 +302,7 @@ degenerate input, and tests under `tests/proptest_sos.rs` enforce that.
   re-exports. The root `crate::prelude::*` remains the kitchen-sink import for
   new users, quick experiments, and exploratory tests.
 - Pre‑1.0 semver: `0.x.Y` is a patch‑level additive bump, `0.X.y` is a
-  minor bump that may include breaking changes.  Conventional‑commit
+  minor bump that may include breaking changes. Conventional‑commit
   types (`feat`, `fix`, `refactor`, …) mirror this convention.
 - Publish documentation changes *before* bumping the crates.io version
   (crates.io does not allow re‑publishing docs without a version bump).
@@ -313,11 +313,11 @@ degenerate input, and tests under `tests/proptest_sos.rs` enforce that.
   `Tds<T, U, V, D>`, `Simplex<T, U, V, D>`, `Vertex<T, U, D>`, `Point<T, D>`).
   No runtime dimension.
 - Per‑simplex data is stack‑allocated (`[T; D]` coordinates,
-  `SmallBuffer<VertexKey, MAX_PRACTICAL_DIMENSION_SIZE>`).  The
+  `SmallBuffer<VertexKey, MAX_PRACTICAL_DIMENSION_SIZE>`). The
   triangulation's topology is stored in `DenseSlotMap` — heap‑backed by
   necessity, not by accident.
-- Feature flags isolate optional dependency weight.  Default builds stay
-  dep‑minimal.  Known flags: `count-allocations`, `bench`, `bench-logging`,
+- Feature flags isolate optional dependency weight. Default builds stay
+  dep‑minimal. Known flags: `count-allocations`, `bench`, `bench-logging`,
   `diagnostics`, `slow-tests`.
 
 ### Idiomatic Rust as a proxy for mathematical clarity
@@ -326,15 +326,15 @@ degenerate input, and tests under `tests/proptest_sos.rs` enforce that.
 - `const fn` for pure‑math helpers (`sign_to_orientation`,
   `sign_to_insphere`, coordinate conversions) where the inputs allow.
   Do not twist mutating APIs into `const fn` for its own sake.
-- `Result<_, _Error>` for every fallible operation.  Panics are reserved
+- `Result<_, _Error>` for every fallible operation. Panics are reserved
   for documented, debug‑only precondition violations; library code in
   `src/` must not panic on user input.
 - Borrow by default (`&T`, `&mut T`, `&[T]`); return borrowed views where
-  possible.  `FacetView`, `AdjacencyIndex`, and the `simplices()`/`vertices()`
+  possible. `FacetView`, `AdjacencyIndex`, and the `simplices()`/`vertices()`
   iterators are examples.
 - Type and function names match the textbook vocabulary: `Triangulation`,
   `Vertex`, `Simplex`, `Facet`, `Ridge`, `InSphere`, `Orientation`,
-  `insphere`, `circumcenter`, `circumradius`.  Avoid Rust‑ecosystem
+  `insphere`, `circumcenter`, `circumradius`. Avoid Rust‑ecosystem
   abstractions that obscure the math.
 - Use `tracing::{debug,info,warn,error}!` for committed diagnostics
   across production code, tests, and benchmarks, especially for
@@ -367,14 +367,14 @@ degenerate input, and tests under `tests/proptest_sos.rs` enforce that.
 ### Performance within scope
 
 - Performance is a design goal but strictly subordinate to the principles
-  above.  Never trade correctness, stability, or clarity for speed; if
+  above. Never trade correctness, stability, or clarity for speed; if
   the two conflict, re‑scope the problem rather than compromise the
   invariant.
 - **In scope**: d‑dimensional Delaunay triangulations for small‑to‑medium
   dimensions (typically 2 ≤ D ≤ 7), single‑threaded in‑memory
   construction, `DenseSlotMap`‑backed topology, Hilbert‑ordered insertion.
 - **Out of scope**: massively parallel / GPU meshing, out‑of‑core
-  triangulations, sparse sampling, dynamic remeshing at scale.  Those
+  triangulations, sparse sampling, dynamic remeshing at scale. Those
   belong to specialised tools (CGAL, TetGen, Gmsh).
 - Within scope, prefer:
   - allocation‑free hot paths (`SmallBuffer`, stack arrays, iterators)
@@ -390,7 +390,7 @@ degenerate input, and tests under `tests/proptest_sos.rs` enforce that.
 ### Testing mirrors the principles
 
 - Unit tests cover known values, error paths, and dimension‑generic
-  correctness.  Dimension‑generic tests **must cover D=2 through D=5**
+  correctness. Dimension‑generic tests **must cover D=2 through D=5**
   whenever feasible; use `pastey` macros to generate per‑dimension tests
   (see `src/core/simplex.rs`, `src/core/tds.rs` for patterns).
 - Proptests under `tests/proptest_*.rs` cover algebraic and

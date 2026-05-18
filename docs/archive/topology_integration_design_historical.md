@@ -147,17 +147,17 @@ where
 {
     /// Get the expected Euler characteristic for this topology
     fn expected_euler_characteristic(&self) -> i64;
-    
+
     /// Validate that the triangulation conforms to this topology
     fn validate_topology(&self, tds: &Tds<T, U, V, D>) -> Result<(), TopologyError>;
-    
+
     /// Get the genus of this topological space (for orientable surfaces)
     /// Returns None for non-surface topologies or when genus is undefined
     fn genus(&self) -> Option<u64>;
-    
+
     /// Check if this topology supports the given dimension
     fn supports_dimension(&self, dimension: usize) -> bool;
-    
+
     /// Get a human-readable name for this topology
     fn topology_name(&self) -> &'static str;
 }
@@ -176,13 +176,13 @@ use thiserror::Error;
 pub enum TopologyError {
     #[error("Euler characteristic mismatch: expected {expected}, calculated {calculated}")]
     EulerCharacteristicMismatch { expected: i64, calculated: i64 },
-    
+
     #[error("Topology {topology} does not support dimension {dimension}")]
     UnsupportedDimension { topology: String, dimension: usize },
-    
+
     #[error("Invalid topological configuration: {message}")]
     InvalidConfiguration { message: String },
-    
+
     #[error("Topological validation failed: {details}")]
     ValidationFailed { details: String },
 }
@@ -226,7 +226,7 @@ impl EulerCharacteristic {
             _ => Self::calculate_generic(tds),
         }
     }
-    
+
     /// Optimized 2D calculation: χ = V - E + F
     pub fn calculate_2d<T, U, V>(tds: &Tds<T, U, V, 2>) -> i64 
     where
@@ -237,10 +237,10 @@ impl EulerCharacteristic {
         let vertices = tds.number_of_vertices() as i64;
         let edges = Self::count_edges_2d(tds) as i64;
         let faces = tds.number_of_cells() as i64;
-        
+
         vertices - edges + faces
     }
-    
+
     /// Optimized 3D calculation: χ = V - E + F - C
     pub fn calculate_3d<T, U, V>(tds: &Tds<T, U, V, 3>) -> i64
     where
@@ -252,10 +252,10 @@ impl EulerCharacteristic {
         let edges = Self::count_edges_3d(tds) as i64;
         let faces = Self::count_faces_3d(tds) as i64;
         let cells = tds.number_of_cells() as i64;
-        
+
         vertices - edges + faces - cells
     }
-    
+
     /// Generic D-dimensional calculation
     fn calculate_generic<T, U, V, const D: usize>(tds: &Tds<T, U, V, D>) -> i64
     where
@@ -264,17 +264,17 @@ impl EulerCharacteristic {
         V: DataType,
     {
         let mut euler = 0i64;
-        
+
         // Alternate signs: (-1)^k
         for k in 0..=D {
             let sign = if k % 2 == 0 { 1 } else { -1 };
             let count = Self::count_k_simplices(tds, k) as i64;
             euler += sign * count;
         }
-        
+
         euler
     }
-    
+
     // Helper methods for counting different dimensional simplices
     fn count_edges_2d<T, U, V>(tds: &Tds<T, U, V, 2>) -> usize { /* Implementation */ }
     fn count_edges_3d<T, U, V>(tds: &Tds<T, U, V, 3>) -> usize { /* Implementation */ }
@@ -318,7 +318,7 @@ where
             _ => self.calculate_expected_for_dimension(D),
         }
     }
-    
+
     fn validate_topology(&self, tds: &Tds<T, U, V, D>) -> Result<(), TopologyError> {
         // Check if this topology supports the given dimension
         if !self.supports_dimension(D) {
@@ -327,11 +327,11 @@ where
                 dimension: D 
             });
         }
-        
+
         // Calculate actual Euler characteristic
         let calculated = EulerCharacteristic::calculate(tds);
         let expected = self.expected_euler_characteristic();
-        
+
         if calculated == expected {
             Ok(())
         } else {
@@ -341,15 +341,15 @@ where
             })
         }
     }
-    
+
     fn genus(&self) -> Option<u64> {
         Some(0) // Planar topology has genus 0
     }
-    
+
     fn supports_dimension(&self, dimension: usize) -> bool {
         dimension >= 2 && dimension <= 10 // Practical limitation
     }
-    
+
     fn topology_name(&self) -> &'static str {
         "Planar"
     }
@@ -411,7 +411,7 @@ where
     pub fn euler_characteristic(&self) -> i64 {
         EulerCharacteristic::calculate(self)
     }
-    
+
     /// Validate topology using the specified topological space
     pub fn validate_topology<S>(&self, space: &S) -> Result<(), TopologyError>
     where
@@ -419,33 +419,33 @@ where
     {
         space.validate_topology(self)
     }
-    
+
     /// Validate with default planar topology
     pub fn validate_planar_topology(&self) -> Result<(), TopologyError> {
         let planar = PlanarTopology;
         self.validate_topology(&planar)
     }
-    
+
     /// Get the default topology for this triangulation
     pub fn default_topology(&self) -> PlanarTopology {
         PlanarTopology
     }
-    
+
     /// Extended is_valid() that includes topological validation
     pub fn is_valid_with_topology(&self) -> Result<(), ValidationError> {
         // First run existing geometric/structural validation
         self.is_valid()?;
-        
+
         // Then validate topology
         self.validate_planar_topology()
             .map_err(ValidationError::from)
     }
-    
+
     /// Get topology information as a summary
     pub fn topology_summary(&self) -> TopologySummary {
         let euler_char = self.euler_characteristic();
         let topology = self.default_topology();
-        
+
         TopologySummary {
             topology_type: topology.topology_name(),
             euler_characteristic: euler_char,
@@ -509,7 +509,7 @@ pub mod topology {
         pub use planar::*;
     }
     pub mod util;
-    
+
     // Re-export commonly used types
     pub use characteristics::*;
     pub use spaces::*;
@@ -526,7 +526,7 @@ Update to the prelude for convenience:
 
 pub mod prelude {
     // ... existing exports ...
-    
+
     // Re-export topology essentials
     pub use crate::topology::{
         characteristics::euler::EulerCharacteristic,
@@ -557,7 +557,7 @@ impl EulerCharacteristic {
         V: DataType,
     {
         let mut edge_set = FastHashSet::default();
-        
+
         for cell in tds.cells() {
             let vertices = cell.vertices();
             // Generate all vertex pairs (edges) from this D-simplex
@@ -572,7 +572,7 @@ impl EulerCharacteristic {
                 }
             }
         }
-        
+
         edge_set.len()
     }
 }
@@ -591,7 +591,7 @@ impl EulerCharacteristic {
         V: DataType,
     {
         let mut face_set = FastHashSet::default();
-        
+
         for cell in tds.cells() {
             let vertices = cell.vertices();
             // Generate all vertex triples (triangular faces) from this D-simplex
@@ -605,7 +605,7 @@ impl EulerCharacteristic {
                 }
             }
         }
-        
+
         face_set.len()
     }
 }
@@ -632,7 +632,7 @@ impl<T, U, V, const D: usize> CachedEulerCalculator<T, U, V, D> {
         self.cached_edges = None;
         self.cached_faces = None;
     }
-    
+
     pub fn calculate_cached(&mut self, tds: &Tds<T, U, V, D>) -> i64 {
         if !self.cache_valid {
             self.recalculate_cache(tds);
@@ -657,7 +657,7 @@ impl<T, U, V, const D: usize> CachedEulerCalculator<T, U, V, D> {
 mod euler_tests {
     use super::*;
     use delaunay::prelude::triangulation::*;
-    
+
     #[test]
     fn test_2d_triangle_euler_characteristic() {
         // Single triangle: V=3, E=3, F=1 → χ = 3-3+1 = 1
@@ -666,12 +666,12 @@ mod euler_tests {
             vertex!([1.0, 0.0]),
             vertex!([0.5, 1.0]),
         ];
-        
+
         let tds: Tds<f64, Option<()>, Option<()>, 2> = Tds::new(&vertices).unwrap();
         let euler = tds.euler_characteristic();
         assert_eq!(euler, 1);
     }
-    
+
     #[test]
     fn test_3d_tetrahedron_euler_characteristic() {
         // Note: χ here is for the full simplicial complex (a 3-ball), not just the boundary.
@@ -682,12 +682,12 @@ mod euler_tests {
             vertex!([0.0, 1.0, 0.0]),
             vertex!([0.0, 0.0, 1.0]),
         ];
-        
+
         let tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&vertices).unwrap();
         let euler = tds.euler_characteristic();
         assert_eq!(euler, 1);
     }
-    
+
     #[test]
     fn test_4d_simplex_euler_characteristic() {
         let vertices = vec![
@@ -697,7 +697,7 @@ mod euler_tests {
             vertex!([0.0, 0.0, 1.0, 0.0]),
             vertex!([0.0, 0.0, 0.0, 1.0]),
         ];
-        
+
         let tds: Tds<f64, Option<()>, Option<()>, 4> = Tds::new(&vertices).unwrap();
         let euler = tds.euler_characteristic();
         // Note: χ here is for the full simplicial complex (a 4-ball), not just the boundary.
@@ -716,7 +716,7 @@ mod euler_tests {
 mod topology_validation_tests {
     use super::*;
     use delaunay::prelude::triangulation::*;
-    
+
     #[test]
     fn test_planar_topology_validation_success() {
         let vertices = vec![
@@ -725,14 +725,14 @@ mod topology_validation_tests {
             vertex!([0.0, 1.0, 0.0]),
             vertex!([0.0, 0.0, 1.0]),
         ];
-        
+
         let tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&vertices).unwrap();
-        
+
         // Should validate successfully with planar topology
         assert!(tds.validate_planar_topology().is_ok());
         assert!(tds.is_valid_with_topology().is_ok());
     }
-    
+
     #[test]
     fn test_topology_summary() {
         let vertices = vec![
@@ -741,10 +741,10 @@ mod topology_validation_tests {
             vertex!([0.0, 1.0, 0.0]),
             vertex!([0.0, 0.0, 1.0]),
         ];
-        
+
         let tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&vertices).unwrap();
         let summary = tds.topology_summary();
-        
+
         assert_eq!(summary.topology_type, "Planar");
         assert_eq!(summary.dimension, 3);
         assert_eq!(summary.genus, Some(0));
@@ -766,7 +766,7 @@ mod random_topology_tests {
     use super::*;
     use delaunay::prelude::triangulation::*;
     use proptest::prelude::*;
-    
+
     proptest! {
         #[test]
         fn test_random_2d_triangulations_euler_characteristic(
@@ -778,16 +778,16 @@ mod random_topology_tests {
             let vertex_vec: Vec<_> = vertices.into_iter()
                 .map(|coords| vertex!(coords))
                 .collect();
-                
+
             if let Ok(tds) = Tds::<f64, Option<()>, Option<()>, 2>::new(&vertex_vec) {
                 // Every valid 2D triangulation should have correct topology
                 prop_assert!(tds.validate_planar_topology().is_ok());
-                
+
                 let summary = tds.topology_summary();
                 prop_assert!(summary.is_valid);
             }
         }
-        
+
         #[test]
         fn test_random_3d_triangulations_euler_characteristic(
             vertices in prop::collection::vec(
@@ -798,7 +798,7 @@ mod random_topology_tests {
             let vertex_vec: Vec<_> = vertices.into_iter()
                 .map(|coords| vertex!(coords))
                 .collect();
-                
+
             if let Ok(tds) = Tds::<f64, Option<()>, Option<()>, 3>::new(&vertex_vec) {
                 // Every valid 3D triangulation should have χ = 2
                 prop_assert!(tds.validate_planar_topology().is_ok());
@@ -819,11 +819,11 @@ mod random_topology_tests {
 #[test]
 fn test_topology_debug_analysis() -> Result<(), Box<dyn std::error::Error>> {
     println!("=== Topology Debug Analysis ===");
-    
+
     // Test across multiple dimensions
     for d in 2..=4 {
         println!("\n--- {}D Topology Analysis ---", d);
-        
+
         match d {
             2 => test_2d_topology_debug()?,
             3 => test_3d_topology_debug()?,
@@ -831,7 +831,7 @@ fn test_topology_debug_analysis() -> Result<(), Box<dyn std::error::Error>> {
             _ => {}
         }
     }
-    
+
     Ok(())
 }
 
@@ -842,17 +842,17 @@ fn test_2d_topology_debug() -> Result<(), Box<dyn std::error::Error>> {
         vertex!([0.5, 1.0]),
         vertex!([0.2, 0.3]),
     ];
-    
+
     let tds: Tds<f64, Option<()>, Option<()>, 2> = Tds::new(&vertices)?;
     let summary = tds.topology_summary();
-    
+
     println!("2D Triangulation:");
     println!("  Vertices: {}", tds.number_of_vertices());
     println!("  Cells: {}", tds.number_of_cells());
     println!("  Euler Characteristic: {} (expected: {})", 
              summary.euler_characteristic, summary.expected_euler);
     println!("  Topology Valid: {}", summary.is_valid);
-    
+
     Ok(())
 }
 ```
@@ -1109,7 +1109,7 @@ impl FVector {
     pub fn count(&self, k: usize) -> usize {
         self.by_dim.get(k).copied().unwrap_or(0)
     }
-    
+
     /// The dimension (maximum k where f_k > 0)
     pub fn dimension(&self) -> usize {
         self.by_dim.len().saturating_sub(1)
@@ -1121,16 +1121,16 @@ impl FVector {
 pub enum TopologyClassification {
     /// Empty triangulation (no cells)
     Empty,
-    
+
     /// Single D-simplex
     SingleSimplex(usize),
-    
+
     /// Topological D-ball (has boundary)
     Ball(usize),
-    
+
     /// Closed D-sphere (no boundary)
     ClosedSphere(usize),
-    
+
     /// Cannot determine or doesn't fit known categories
     Unknown,
 }
@@ -1140,16 +1140,16 @@ pub enum TopologyClassification {
 pub struct TopologyCheckResult {
     /// Computed Euler characteristic
     pub chi: isize,
-    
+
     /// Expected χ based on classification (None if unknown)
     pub expected: Option<isize>,
-    
+
     /// Topological classification
     pub classification: TopologyClassification,
-    
+
     /// Full simplex counts
     pub counts: FVector,
-    
+
     /// Diagnostic notes or warnings
     pub notes: Vec<String>,
 }
@@ -1167,10 +1167,10 @@ impl TopologyCheckResult {
 pub enum TopologyError {
     #[error("Failed to count simplices: {0}")]
     Counting(String),
-    
+
     #[error("Failed to classify triangulation: {0}")]
     Classification(String),
-    
+
     #[error("Euler characteristic mismatch: computed χ={chi}, expected χ={expected} for {classification:?}")]
     Mismatch {
         chi: isize,
@@ -1249,9 +1249,9 @@ where
     let chi = euler_characteristic(&counts);
     let classification = classify_triangulation(tds)?;
     let expected = expected_chi_for(&classification);
-    
+
     let mut notes = Vec::new();
-    
+
     // Add diagnostic notes
     if let Some(exp) = expected {
         if chi != exp {
@@ -1261,7 +1261,7 @@ where
             ));
         }
     }
-    
+
     Ok(TopologyCheckResult {
         chi,
         expected,
@@ -1306,29 +1306,29 @@ fn count_simplices<T, U, V, const D: usize>(
     tds: &Tds<T, U, V, D>,
 ) -> Result<FVector, TopologyError> {
     let mut by_dim = vec![0usize; D + 1];
-    
+
     // f₀: vertices
     by_dim[0] = tds.number_of_vertices();
-    
+
     // f_D: D-cells
     by_dim[D] = tds.number_of_cells();
-    
+
     // Handle empty triangulation
     if by_dim[D] == 0 {
         return Ok(FVector { by_dim });
     }
-    
+
     // f_{D-1}: (D-1)-facets
     by_dim[D - 1] = tds
         .build_facet_to_cells_map()
         .map_err(|e| TopologyError::Counting(format!("Failed to build facet map: {}", e)))?
         .len();
-    
+
     // Intermediate dimensions: enumerate combinations
     for k in 1..D - 1 {
         by_dim[k] = count_k_simplices(tds, k)?;
     }
-    
+
     Ok(FVector { by_dim })
 }
 
@@ -1337,26 +1337,26 @@ fn count_k_simplices<T, U, V, const D: usize>(
     k: usize,
 ) -> Result<usize, TopologyError> {
     use crate::core::util::generate_combinations;
-    
+
     let mut k_simplex_set = FastHashSet::default();
     let simplex_size = k + 1; // k-simplex has k+1 vertices
-    
+
     for (_cell_key, cell) in tds.cells() {
         let vertices = cell.vertices();
-        
+
         // Generate all C(D+1, k+1) combinations of size k+1
         for combo in generate_combinations(vertices.len(), simplex_size) {
             // Extract vertex keys for this k-simplex
             let mut k_simplex: SmallBuffer<VertexKey, MAX_PRACTICAL_DIMENSION_SIZE> =
                 combo.iter().map(|&idx| vertices[idx]).collect();
-            
+
             // Canonicalize by sorting for deduplication
             k_simplex.sort();
-            
+
             k_simplex_set.insert(k_simplex);
         }
     }
-    
+
     Ok(k_simplex_set.len())
 }
 ```
@@ -1383,23 +1383,23 @@ fn classify_triangulation<T, U, V, const D: usize>(
     tds: &Tds<T, U, V, D>,
 ) -> Result<TopologyClassification, TopologyError> {
     let num_cells = tds.number_of_cells();
-    
+
     // Empty triangulation
     if num_cells == 0 {
         return Ok(TopologyClassification::Empty);
     }
-    
+
     // Single simplex
     if num_cells == 1 {
         return Ok(TopologyClassification::SingleSimplex(D));
     }
-    
+
     // Check boundary
     let has_boundary = tds
         .number_of_boundary_facets()
         .map_err(|e| TopologyError::Classification(format!("Failed to count boundary: {}", e)))?
         > 0;
-    
+
     if has_boundary {
         // Has boundary → topological ball
         Ok(TopologyClassification::Ball(D))
@@ -1445,7 +1445,7 @@ where
     pub fn validate_euler_characteristic(&self) -> Result<TopologyCheckResult, TopologyError> {
         crate::core::topology::validate_triangulation_euler(self)
     }
-    
+
     /// Get the Euler characteristic (convenience wrapper)
     pub fn euler_characteristic(&self) -> Result<isize, TopologyError> {
         let counts = crate::core::topology::count_simplices(self)?;
@@ -1467,16 +1467,16 @@ where
     self.validate_vertex_mappings()?;
     self.validate_cell_mappings()?;
     self.validate_no_duplicate_cells()?;
-    
+
     for (cell_id, cell) in &self.cells {
         cell.is_valid().map_err(|source| {
             // ... existing error mapping ...
         })?;
     }
-    
+
     self.validate_facet_sharing()?;
     self.validate_neighbors()?;
-    
+
     // NEW: Euler characteristic validation
     // Only run if enabled via feature flag or debug mode
     #[cfg(any(debug_assertions, feature = "topology-validation"))]
@@ -1485,7 +1485,7 @@ where
             .map_err(|e| TriangulationValidationError::Topology {
                 message: format!("Euler characteristic validation failed: {}", e),
             })?;
-        
+
         if !topology_result.is_valid() {
             return Err(TriangulationValidationError::EulerCharacteristic {
                 computed: topology_result.chi,
@@ -1495,7 +1495,7 @@ where
             });
         }
     }
-    
+
     Ok(())
 }
 ```
@@ -1508,7 +1508,7 @@ where
 #[derive(Debug, Error, PartialEq)]
 pub enum TriangulationValidationError {
     // ... existing variants ...
-    
+
     #[error("Euler characteristic mismatch: computed {computed}, expected {expected} for {classification}. Notes: {notes}")]
     EulerCharacteristic {
         computed: isize,
@@ -1516,7 +1516,7 @@ pub enum TriangulationValidationError {
         classification: String,
         notes: String,
     },
-    
+
     #[error("Topology validation failed: {message}")]
     Topology { message: String },
 }
@@ -1534,13 +1534,13 @@ pub enum TriangulationValidationError {
 pub struct BoundaryReport {
     /// Per-facet information (existing)
     pub facet_infos: Vec<BoundaryFacetInfo>,
-    
+
     /// Euler characteristic validation
     pub chi: isize,
     pub expected_chi: Option<isize>,
     pub classification: TopologyClassification,
     pub euler_ok: bool,
-    
+
     /// Diagnostic notes
     pub notes: Vec<String>,
 }
@@ -1565,7 +1565,7 @@ fn gather_boundary_facet_info(
 ) -> Result<BoundaryReport, InsertionError> {
     // Existing facet info gathering
     let facet_infos = /* ... existing code ... */;
-    
+
     // NEW: Topology validation
     let counts = topology::count_simplices(tds)
         .map_err(|e| /* ... */)?;
@@ -1574,7 +1574,7 @@ fn gather_boundary_facet_info(
         .map_err(|e| /* ... */)?;
     let expected_chi = topology::expected_chi_for(&classification);
     let euler_ok = expected_chi.map_or(true, |exp| chi == exp);
-    
+
     let mut notes = Vec::new();
     if !euler_ok {
         notes.push(format!(
@@ -1582,7 +1582,7 @@ fn gather_boundary_facet_info(
             chi, expected_chi.unwrap_or(0)
         ));
     }
-    
+
     Ok(BoundaryReport {
         facet_infos,
         chi,
@@ -1610,7 +1610,7 @@ fn test_2d_single_triangle_euler() {
         vertex!([0.5, 1.0]),
     ];
     let tds: Tds<f64, Option<()>, Option<()>, 2> = Tds::new(&vertices).unwrap();
-    
+
     let result = tds.validate_euler_characteristic().unwrap();
     assert_eq!(result.chi, 1);
     assert_eq!(result.classification, TopologyClassification::Ball(2));
@@ -1627,7 +1627,7 @@ fn test_2d_two_triangles_euler() {
         vertex!([0.5, -1.0]),
     ];
     let tds: Tds<f64, Option<()>, Option<()>, 2> = Tds::new(&vertices).unwrap();
-    
+
     let result = tds.validate_euler_characteristic().unwrap();
     assert_eq!(result.chi, 1); // Still a topological disk
     assert!(result.is_valid());
@@ -1647,7 +1647,7 @@ fn test_3d_tetrahedron_euler() {
         vertex!([0.0, 0.0, 1.0]),
     ];
     let tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&vertices).unwrap();
-    
+
     let result = tds.validate_euler_characteristic().unwrap();
     assert_eq!(result.chi, 1);
     assert_eq!(result.classification, TopologyClassification::Ball(3));
@@ -1663,7 +1663,7 @@ fn test_3d_with_interior_vertex() {
         vertex!([0.25, 0.25, 0.25]), // Interior
     ];
     let tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&vertices).unwrap();
-    
+
     // Should still be χ = 1 (topological ball)
     assert_eq!(tds.euler_characteristic().unwrap(), 1);
 }
@@ -1684,7 +1684,7 @@ fn test_4d_simplex_euler() {
         vertex!([0.0, 0.0, 0.0, 1.0]),
     ];
     let tds: Tds<f64, Option<()>, Option<()>, 4> = Tds::new(&vertices).unwrap();
-    
+
     let result = tds.validate_euler_characteristic().unwrap();
     assert_eq!(result.chi, 1);
 }
@@ -1696,7 +1696,7 @@ fn test_4d_simplex_euler() {
 #[test]
 fn test_empty_triangulation_euler() {
     let tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::empty();
-    
+
     let result = tds.validate_euler_characteristic().unwrap();
     assert_eq!(result.chi, 0);
     assert_eq!(result.classification, TopologyClassification::Empty);
@@ -1726,13 +1726,13 @@ proptest! {
         let vertices: Vec<_> = points.into_iter()
             .map(|p| vertex!(p))
             .collect();
-        
+
         if let Ok(tds) = Tds::<f64, Option<()>, Option<()>, 2>::new(&vertices) {
             let chi = tds.euler_characteristic().unwrap();
             prop_assert_eq!(chi, 1, "2D triangulation should have χ=1");
         }
     }
-    
+
     #[test]
     fn test_random_3d_always_chi_one(
         points in prop::collection::vec(
@@ -1743,7 +1743,7 @@ proptest! {
         let vertices: Vec<_> = points.into_iter()
             .map(|p| vertex!(p))
             .collect();
-        
+
         if let Ok(tds) = Tds::<f64, Option<()>, Option<()>, 3>::new(&vertices) {
             let chi = tds.euler_characteristic().unwrap();
             prop_assert_eq!(chi, 1, "3D triangulation should have χ=1");
@@ -1764,12 +1764,12 @@ fn test_boundary_report_includes_euler() {
         vertex!([0.0, 0.0, 1.0]),
     ];
     let tds: Tds<f64, Option<()>, Option<()>, 3> = Tds::new(&vertices).unwrap();
-    
+
     // Test that boundary report includes topology info
     // (requires gather_boundary_facet_info update)
     let boundary_facets = tds.boundary_facets().unwrap().collect::<Vec<_>>();
     let report = gather_boundary_facet_info(&tds, &boundary_facets).unwrap();
-    
+
     assert_eq!(report.chi, 1);
     assert_eq!(report.expected_chi, Some(1));
     assert!(report.euler_ok);

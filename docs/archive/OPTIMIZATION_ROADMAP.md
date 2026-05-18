@@ -24,11 +24,11 @@ The goal is to achieve maximum performance while maintaining 100% backward compa
 ## 📊 Phase Overview
 
 || Phase | Name | Status | Impact | Risk |
-|-------|------|--------|--------|------|
-| 1 | Collection Optimization | ✅ COMPLETE | 2-3x hash performance | Low |
-| 2 | Key-Based Internal APIs | ✅ COMPLETE | 20-40% hot path improvement | Medium |
-| 3 | Structure Refactoring | ✅ COMPLETE | 50% memory reduction | High |
-| 4 | Storage Backend Evaluation | ✅ COMPLETE | 10-15% iteration improvement (target) | Low |
+| ------- | ------ | -------- | -------- | ------ |  |
+| 1 | Collection Optimization | ✅ COMPLETE | 2-3x hash performance | Low |  |
+| 2 | Key-Based Internal APIs | ✅ COMPLETE | 20-40% hot path improvement | Medium |  |
+| 3 | Structure Refactoring | ✅ COMPLETE | 50% memory reduction | High |  |
+| 4 | Storage Backend Evaluation | ✅ COMPLETE | 10-15% iteration improvement (target) | Low |  |
 
 ---
 
@@ -238,7 +238,7 @@ for neighbor_key in neighbor_keys.into_iter().flatten() {
 fn process_cell_neighbors(tds: &Tds<...>, cell_uuid: Uuid) {
     let cell_key = tds.uuid_to_cell_key.get(&cell_uuid).unwrap(); // Lookup!
     let cell = &tds.cells[cell_key];
-    
+
     if let Some(neighbor_uuids) = &cell.neighbors {
         for neighbor_uuid in neighbor_uuids.iter().flatten() {
             let neighbor_key = tds.uuid_to_cell_key.get(neighbor_uuid).unwrap(); // More lookups!
@@ -427,7 +427,7 @@ impl<'tds, T, U, V, const D: usize> FacetView<'tds, T, U, V, D> {
             .filter(|(i, _)| *i != self.facet_index as usize)
             .map(|(_, &key)| &self.tds.vertices[key])
     }
-    
+
     pub fn opposite_vertex(&self) -> &'tds Vertex<T, U, D> {
         let cell = &self.tds.cells[self.cell_key];
         let key = cell.vertex_keys[self.facet_index as usize];
@@ -744,7 +744,7 @@ These achievements laid the foundation for the current 4-phase optimization road
 ### Orthogonal Improvements
 
 **Numerical Robustness**: Separately from performance optimization, the library includes comprehensive numerical stability improvements
-documented in [`numerical_robustness_guide.md`](./numerical_robustness_guide.md). These address geometric predicate stability and
+documented in [`numerical_robustness_guide.md`](../numerical_robustness_guide.md). These address geometric predicate stability and
 the "No cavity boundary facets found" error through robust predicates and fallback strategies.
 
 ---
