@@ -90,6 +90,10 @@ The useful updates ported in this pass are:
   Scanning. Codacy's default maintainability patterns can still run in Codacy,
   but they must not create broad Code Scanning alerts for test-only paths such
   as `scripts/tests/**`.
+- CI and local setup pins should track the same supported tool versions when
+  practical. The current workflow pins align coverage and test tooling on
+  `cargo-llvm-cov` 0.8.7 and `cargo-nextest` 0.9.136, while all uv-backed
+  workflows use uv 0.11.14 to match the local Python tooling bootstrap.
 
 ## Intentional Differences
 

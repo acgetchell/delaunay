@@ -6,7 +6,7 @@
 # Use bash with strict error handling for all recipes
 set shell := ["bash", "-euo", "pipefail", "-c"]
 
-cargo_llvm_cov_version := "0.8.5"
+cargo_llvm_cov_version := "0.8.7"
 
 # Common cargo-llvm-cov arguments for all coverage runs.
 # Excludes benches/examples from reports while allowing integration tests to

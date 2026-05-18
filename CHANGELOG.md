@@ -15,6 +15,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Merged Pull Requests
 
+- Replace Node markdown tooling with rumdl [#394](https://github.com/acgetchell/delaunay/pull/394)
 - Rename public cell APIs to simplex nomenclature [#393](https://github.com/acgetchell/delaunay/pull/393)
 - Replace public core module with focused facades [#392](https://github.com/acgetchell/delaunay/pull/392)
 - Support periodic flip parity for external cells [#391](https://github.com/acgetchell/delaunay/pull/391)
@@ -77,40 +78,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
-- Align markdown lint policy and changelog hygiene [`2c59b8d`](https://github.com/acgetchell/delaunay/commit/2c59b8dc5309f5385f6cf6d74a865d946b53fc9f)
+- Surface squash-body commit entries [`27116dd`](https://github.com/acgetchell/delaunay/commit/27116ddc1b292ef2f361491a2454a66f126dcaca)
 
-  - Scope Codacy markdownlint to active Markdown docs while keeping the 120-column
-    MD013 threshold managed in Codacy's Code Patterns UI.
+  - Mirror conventional pseudo-commit headings from squash merge bodies into their matching changelog sections while preserving the primary PR entry.
+  - Regenerate active and archived changelogs so historical squash-body fixes, docs, maintenance, and performance notes appear under the right headings.
+  - Resolve production-review hygiene by clarifying Cargo feature gates, relabeling TDS UUID-map invariants, and recording UUID panic paths as test-only.
+- Preserve squash-body release notes [`8d36b92`](https://github.com/acgetchell/delaunay/commit/8d36b92b364bdfcf123c99798b252828acb297b6)
 
-  - Normalize CodeRabbit docstring review length to the same 120-column policy.
-  - Teach changelog postprocessing to demote entry-local headings in existing
-    archived changelogs without rewriting unrelated archive formatting.
+  - Mirror isolated conventional squash-body headings from any changelog section while keeping the source commit-body detail intact.
+  - Skip only exact parent/summary duplicates so generated archives retain distinct fix, docs, maintenance, and performance notes.
+  - Canonicalize renamed diagnostics feature wording before mirror/dedupe so pre-rename wording cannot be reintroduced.
+- Deduplicate contextual squash entries [`792bb48`](https://github.com/acgetchell/delaunay/commit/792bb4865e7d449942ff7d42fd00366413f49796)
 
-  - Fix malformed mailto references, archived Markdown hierarchy, table structure,
-    and Semgrep fixture exclusions that caused review noise.
-
-- Normalize lint policy and changelog hygiene [`aed4bd8`](https://github.com/acgetchell/delaunay/commit/aed4bd82e604f7ae55e91e8973c3b26aa005e7dd)
-
-  - Normalize local Python, Markdown, YAML, and review line-length settings to the
-    160-column policy while keeping CodeRabbit docstring checks schema-valid.
-
-  - Scope Codacy Bandit to production Python scripts so security checks skip test
-    fixtures with intentional assertions.
-
-  - Teach changelog postprocessing to preserve archive heading hierarchy and render
-    wildcard helper names as inline code in generated changelog output.
-
-- Exclude Python tests from Codacy analysis [`829d1c8`](https://github.com/acgetchell/delaunay/commit/829d1c89934b99dff6803f1cc0947da9f3372790)
-
-  - Scope Codacy Ruff to production Python scripts so script test fixtures do not
-    produce pull-request quality findings.
-
-  - Document that Codacy Python engines exclude scripts/tests while local and CI
-    checks remain the source of truth for the full Python test suite.
+  - Collapse standalone generated entries only when the same commit, normalized title, and body are already preserved under a contextual squash-body heading.
+  - Canonicalize renamed diagnostics wording before dedupe so pre-rename feature names do not reappear in generated release notes.
+  - Preserve legitimate follow-up headings unless they belong to a contextual duplicate that replaced a standalone entry.
+  - Regenerate active and archived changelogs from the updated postprocessing pipeline.
+  - Align CI and local tooling pins for cargo-llvm-cov, cargo-nextest, and uv.
 
 ### Maintenance
 
-- Replace Node markdown tooling with rumdl [`edea152`](https://github.com/acgetchell/delaunay/commit/edea1525bf518864fd1962683c49467aaa0941b7)
+- Replace Node markdown tooling with rumdl [#394](https://github.com/acgetchell/delaunay/pull/394)
+  [`5654d14`](https://github.com/acgetchell/delaunay/commit/5654d14bc04dba538d776800495846d0a6ea94da)
 
   - Switch Markdown checks and Codacy configuration from markdownlint/npx to rumdl.
   - Add dprint/pretty_yaml YAML formatting and wire yaml-check/yaml-fix through dprint plus yamllint.
@@ -290,7 +279,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Pin GitHub workflow tool versions and update action SHAs for cache, artifact upload, install-action, and SARIF upload.
 - Exclude Semgrep fixtures from Codacy analysis so intentional rule-test violations do not surface as production issues.
 - Add a cargo-machete backed just unused-deps recipe for checking unused direct dependencies.
-- Gate convex hull test diagnostics behind test-debug tracing instead of unconditional stdout output.
+- Gate convex hull test diagnostics behind diagnostics tracing instead of unconditional stdout output.
 - Add Hilbert ordering and zero-dimensional sort coverage for Codecov patch gaps.
 
 #### Fixed: Harden Hilbert ordering errors and prelude checks [#338](https://github.com/acgetchell/delaunay/pull/338)
@@ -317,15 +306,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Harden Codacy SARIF handling so empty analyses skip upload cleanly instead of creating noisy code-scanning results.
 - Document the new prelude structure and update guides to use public prelude imports.
 
-#### Fixed: Gate diagnostics behind test-debug
+#### Fixed: Gate public diagnostic exports behind diagnostics
 
-- Replace profile-based public diagnostic exports with the documented test-debug feature.
+- Replace profile-based public diagnostic exports with the documented diagnostics feature.
 - Keep debug-only helper definitions and diagnostic call sites aligned with feature-gated API visibility.
 - Allow hidden doctest prelude imports in the Semgrep prelude-import rule.
 
-#### Changed: Rename test-debug feature to diagnostics
+#### Changed: Rename diagnostics feature flag
 
-- Replace the test-debug feature with diagnostics for opt-in diagnostic helpers and verbose test diagnostics.
+- Use the diagnostics feature flag for opt-in diagnostic helpers and verbose test diagnostics.
 - Add prelude::diagnostics for debug verification helpers while keeping focused preludes narrow and orthogonal.
 - Move diagnostic helper exports out of unrelated focused preludes and update cfg gates, tests, docs, and just recipes.
 - Document that focused preludes should favor precise taxonomy over backwards compatibility for unrelated re-exports.
@@ -691,7 +680,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Preserve removed-cell snapshots and predecessor context in flip diagnostics, drop stale repair seeds after cavity reduction, and re-export locate conflict
   diagnostics from the prelude.
 
-- Replace committed `eprintln!` diagnostics in production, tests, and benches with `tracing` , using `test-debug` and `bench-logging` gates and keeping logs
+- Replace committed `eprintln!` diagnostics in production, tests, and benches with `tracing` , using `diagnostics` and `bench-logging` gates and keeping logs
   out of Criterion hot loops.
 
 - Document the #204 investigation, refresh the 4D known-issues and TODO notes, and record the repository logging policy plus release-visible debug environment

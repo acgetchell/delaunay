@@ -1543,7 +1543,7 @@ pub struct Tds<T, U, V, const D: usize> {
     /// This optimizes the common operation of looking up vertex keys by UUID.
     /// For reverse Key → UUID lookups, we use direct storage map access: `vertices[key].uuid()`.
     ///
-    /// SAFETY: External mutation of this map will violate TDS invariants.
+    /// INVARIANT: External mutation of this map will violate TDS invariants.
     /// This should only be modified through TDS methods that maintain consistency.
     ///
     /// Note: Not serialized - reconstructed during deserialization from vertices.
@@ -1553,7 +1553,7 @@ pub struct Tds<T, U, V, const D: usize> {
     /// This optimizes the common operation of looking up simplex keys by UUID.
     /// For reverse Key → UUID lookups, we use direct storage map access: `simplices[key].uuid()`.
     ///
-    /// SAFETY: External mutation of this map will violate TDS invariants.
+    /// INVARIANT: External mutation of this map will violate TDS invariants.
     /// This should only be modified through TDS methods that maintain consistency.
     ///
     /// Note: Not serialized - reconstructed during deserialization from simplices.

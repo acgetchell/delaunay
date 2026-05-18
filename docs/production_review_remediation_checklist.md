@@ -136,20 +136,21 @@ Treat partial items as still open until their acceptance notes are satisfied.
 
 ## Optional And Nitpicks
 
-- [ ] **A. Clarify cfg-only feature flags in `Cargo.toml`.**
-  Group empty features under a cfg-only banner. Tracked for v0.7.8 in #382.
+- [x] **A. Clarify cfg-only feature flags in `Cargo.toml`.**
+  Dependency-backed and cfg-only feature gates are now separated in the manifest
+  so empty features are intentionally documented.
 - [x] **B. Remove stale deprecated-warning comment in `lib.rs`.**
   The crate-level migration comment was removed along with the deprecated
   mutable triangulation escape hatch.
-- [ ] **C. Relabel safe-code `SAFETY` comments in `tds.rs`.**
-  Use `INVARIANT` where no unsafe reasoning is involved. Tracked for v0.7.8 in
-  #382.
+- [x] **C. Relabel safe-code `SAFETY` comments in `tds.rs`.**
+  UUID index-map consistency comments now use `INVARIANT` where no unsafe
+  reasoning is involved.
 - [x] **D. Remove allocation from `geometry/sos.rs` predicate helper.**
   Orientation and insphere SoS helpers now use stack-backed small buffers for
   coordinate and lifted-column scratch storage in supported dimensions.
-- [ ] **E. Verify `core/util/uuid.rs` panic helpers are test-only.**
-  Keep panic and unreachable paths out of production code. Tracked for v0.7.8
-  in #382.
+- [x] **E. Verify `core/util/uuid.rs` panic helpers are test-only.**
+  The remaining UUID validation panic paths are confined to the `#[cfg(test)]`
+  module; production UUID validation returns typed `UuidValidationError` values.
 - [x] **F. Remove scale-unit tolerance from the `remove_vertex` doctest.**
   The doctest now finds the vertex by UUID instead of coordinate epsilon.
 
