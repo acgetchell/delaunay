@@ -14,7 +14,7 @@
 # - lizard: advisory complexity feedback
 #
 # Recommended disabled tools:
-# - prospector, pylintpython3: redundant with Ruff/ty for this repo
+# - prospector, pylintpython3: redundant with Ruff and ty type checking
 # - trivy: dependency vulnerability scanning is handled by cargo-audit and
 #   Dependabot unless this repository adds containers or IaC
 # - jacksonlinter, spectral: not relevant to the current project surface
