@@ -24,9 +24,9 @@ Both repositories now share the same core Rust and Python support-tooling loop:
 - Codacy Markdownlint's MD013 line-length threshold is managed in Codacy's
   Code Patterns UI at 160 columns when that tool is enabled. Local Markdown,
   Python, YAML, and review thresholds are likewise normalized to 160 columns.
-- Codacy Bandit is scoped to production Python scripts and excludes
-  `scripts/tests/**`, so security checks still run without flagging intentional
-  test assertions.
+- Codacy Python engines are scoped to production scripts and exclude
+  `scripts/tests/**`, so Ruff/Bandit feedback stays focused on shipped helper
+  code and Bandit does not flag intentional test assertions.
 - `justfile` is the local entry point for formatting, linting, tests,
   coverage, Semgrep, changelog, setup commands, and supported Cargo feature
   surface checks.
