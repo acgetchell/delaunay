@@ -26,7 +26,7 @@ import re
 import sys
 from pathlib import Path
 
-from postprocess_changelog import postprocess_text
+from postprocess_changelog import normalize_entry_headings_text, postprocess_text
 
 # Matches ``## [X.Y.Z]`` or ``## [Unreleased]``
 _VERSION_HEADING_RE = re.compile(r"^## \[")
@@ -262,6 +262,18 @@ def write_archive(
     return path
 
 
+def _postprocess_existing_archives(archive_dir: Path) -> None:
+    """Apply changelog postprocessing to archive files not rewritten this run."""
+    if not archive_dir.is_dir():
+        return
+
+    for path in sorted(archive_dir.glob("*.md")):
+        text = path.read_text(encoding="utf-8")
+        processed = normalize_entry_headings_text(text)
+        if processed != text:
+            path.write_text(processed, encoding="utf-8")
+
+
 def build_root(
     preamble: str,
     unreleased: str,
@@ -328,6 +340,7 @@ def archive_changelog(
     preamble, unreleased, version_blocks = parse_changelog(text)
 
     if not version_blocks:
+        _postprocess_existing_archives(archive_dir)
         return  # nothing to archive
 
     groups = group_by_minor(version_blocks)
@@ -343,6 +356,7 @@ def archive_changelog(
         archived_minors.append(minor)
 
     if not archived_minors:
+        _postprocess_existing_archives(archive_dir)
         return  # only one minor series — nothing to archive yet
 
     # Compute relative path from changelog location to archive dir.
@@ -376,6 +390,7 @@ def archive_changelog(
             root_text = root_text.rstrip("\n") + "\n\n" + defs_text + "\n"
 
     changelog_path.write_text(root_text, encoding="utf-8")
+    _postprocess_existing_archives(archive_dir)
 
 
 # ---------------------------------------------------------------------------

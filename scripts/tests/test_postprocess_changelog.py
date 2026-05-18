@@ -10,6 +10,7 @@ from postprocess_changelog import (
     _is_duplicate_squash_heading,
     _is_isolated_body_heading,
     _max_pr_number,
+    _normalize_entry_heading,
     _normalize_indented_heading,
     _normalize_squash_heading,
     _plain_summary,
@@ -404,6 +405,15 @@ class TestIndentedHeadingNormalization:
     def test_column_zero_changelog_heading_is_preserved(self) -> None:
         assert _normalize_indented_heading("### Added") == "### Added"
 
+    def test_column_zero_entry_heading_becomes_level_four(self) -> None:
+        assert _normalize_entry_heading("## Duplicate Vertex Handling", "parent") == ("#### Duplicate Vertex Handling")
+
+    def test_column_zero_category_heading_is_preserved(self) -> None:
+        assert _normalize_entry_heading("### Fixed", "parent") == "### Fixed"
+
+    def test_archives_heading_is_preserved(self) -> None:
+        assert _normalize_entry_heading("## Archives", "parent") == "## Archives"
+
     def test_normalized_heading_is_idempotent(self) -> None:
         assert _normalize_indented_heading("  **Title**") == "  **Title**"
 
@@ -432,6 +442,30 @@ class TestIndentedHeadingNormalization:
         assert "#### Correctness Fixes" in result
         assert "#### API Design" in result
         assert "### Performance" in result
+
+    def test_full_pipeline_normalizes_unindented_commit_body_headings(self, tmp_path: Path) -> None:
+        f = tmp_path / "CHANGELOG.md"
+        f.write_text(
+            "# Changelog\n\n"
+            "## [1.0.0]\n\n"
+            "### Fixed\n\n"
+            "- Handle degenerate configurations [#116](https://github.com/acgetchell/delaunay/pull/116)\n"
+            f"  {_commit()}\n\n"
+            "## Duplicate Vertex Handling\n\n"
+            "  - Add duplicate coordinate detection\n\n"
+            "### Fixed: Add rollback on cell creation failure\n\n"
+            "  Add rollback mechanisms when cell creation fails.\n",
+            encoding="utf-8",
+        )
+
+        postprocess(f)
+
+        result = f.read_text(encoding="utf-8")
+        assert "\n## Duplicate Vertex Handling" not in result
+        assert "\n### Fixed: Add rollback on cell creation failure" not in result
+        assert "#### Duplicate Vertex Handling" in result
+        assert "#### Fixed: Add rollback on cell creation failure" in result
+        assert "### Fixed" in result
 
 
 class TestSquashHeadingNormalization:

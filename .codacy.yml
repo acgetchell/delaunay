@@ -7,6 +7,7 @@
 # Recommended enabled tools:
 # - opengrep: repository-owned Rust Semgrep rules from semgrep.yaml
 # - ruff: Python utility linting
+# - markdownlint: Codacy Markdown review, threshold configured in Codacy UI
 # - shellcheck: shell-script linting
 # - duplication: advisory duplicate-code metric
 # - lizard: advisory complexity feedback
@@ -40,6 +41,14 @@ engines:
       - "scripts/**/*.py"
     exclude_paths:
       - "scripts/tests/**"
+      - "target/**"
+      - "node_modules/**"
+      - ".git/**"
+  markdownlint:
+    include_paths:
+      - "**/*.md"
+    exclude_paths:
+      - "docs/archive/**"
       - "target/**"
       - "node_modules/**"
       - ".git/**"

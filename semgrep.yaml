@@ -595,12 +595,12 @@ rules:
         - "/**/*.md"
         - "/justfile"
     pattern-either:
-      - pattern-regex: '(?m)^\s*(?:@echo\s+"?\s*)?just\s+fix\b[^\n]*\n\s*(?:@echo\s+"?\s*)?just\s+check\b'
-      - pattern-regex: '(?m)^\s*(?:@echo\s+"?\s*)?just\s+python-fix\b[^\n]*\n\s*(?:@echo\s+"?\s*)?just\s+python-check\b'
-      - pattern-regex: '(?m)^\s*(?:@echo\s+"?\s*)?just\s+yaml-fix\b[^\n]*\n\s*(?:@echo\s+"?\s*)?just\s+yaml-check\b'
-      - pattern-regex: '(?m)^\s*(?:@echo\s+"?\s*)?just\s+markdown-fix\b[^\n]*\n\s*(?:@echo\s+"?\s*)?just\s+markdown-check\b' # yamllint disable-line rule:line-length
-      - pattern-regex: '(?m)^\s*(?:@echo\s+"?\s*)?just\s+toml-fix\b[^\n]*\n\s*(?:@echo\s+"?\s*)?just\s+toml-check\b'
-      - pattern-regex: '(?m)^\s*(?:@echo\s+"?\s*)?just\s+shell-fix\b[^\n]*\n\s*(?:@echo\s+"?\s*)?just\s+shell-check\b'
+      - pattern-regex: '(?ms)^\s*(?:@echo\s+"?\s*)?just\s+fix\b[^\n]*(?:\n\s*(?:#[^\n]*)?)*?\n\s*(?:@echo\s+"?\s*)?just\s+check\b' # yamllint disable-line rule:line-length
+      - pattern-regex: '(?ms)^\s*(?:@echo\s+"?\s*)?just\s+python-fix\b[^\n]*(?:\n\s*(?:#[^\n]*)?)*?\n\s*(?:@echo\s+"?\s*)?just\s+python-check\b' # yamllint disable-line rule:line-length
+      - pattern-regex: '(?ms)^\s*(?:@echo\s+"?\s*)?just\s+yaml-fix\b[^\n]*(?:\n\s*(?:#[^\n]*)?)*?\n\s*(?:@echo\s+"?\s*)?just\s+yaml-check\b' # yamllint disable-line rule:line-length
+      - pattern-regex: '(?ms)^\s*(?:@echo\s+"?\s*)?just\s+markdown-fix\b[^\n]*(?:\n\s*(?:#[^\n]*)?)*?\n\s*(?:@echo\s+"?\s*)?just\s+markdown-check\b' # yamllint disable-line rule:line-length
+      - pattern-regex: '(?ms)^\s*(?:@echo\s+"?\s*)?just\s+toml-fix\b[^\n]*(?:\n\s*(?:#[^\n]*)?)*?\n\s*(?:@echo\s+"?\s*)?just\s+toml-check\b' # yamllint disable-line rule:line-length
+      - pattern-regex: '(?ms)^\s*(?:@echo\s+"?\s*)?just\s+shell-fix\b[^\n]*(?:\n\s*(?:#[^\n]*)?)*?\n\s*(?:@echo\s+"?\s*)?just\s+shell-check\b' # yamllint disable-line rule:line-length
 
   - id: delaunay.github-actions.external-action-sha-pinned
     languages:
@@ -615,6 +615,8 @@ rules:
       include:
         - "/.github/workflows/**/*.yml"
         - "/.github/workflows/**/*.yaml"
+      exclude:
+        - "/tests/semgrep/**"
     patterns:
       - pattern-regex: '(?m)^\s*uses:\s*(?!\./)(?!docker://)[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+(?:/[A-Za-z0-9_.-]+)?@(?![a-fA-F0-9]{40}(?:\s+#|$))[^\s#]+' # yamllint disable-line rule:line-length
 
@@ -631,6 +633,8 @@ rules:
       include:
         - "/.github/workflows/**/*.yml"
         - "/.github/workflows/**/*.yaml"
+      exclude:
+        - "/tests/semgrep/**"
     patterns:
       - pattern-regex: '(?m)^\s*uses:\s*(?!\./)(?!docker://)(?!(?:actions/checkout|actions/cache|actions/upload-artifact|actions/download-artifact|actions/github-script|actions-rust-lang/setup-rust-toolchain|astral-sh/setup-uv|taiki-e/install-action|github/codeql-action/(?:upload-sarif|init|analyze)|codecov/codecov-action|codacy/codacy-coverage-reporter-action|codacy/codacy-analysis-cli-action)@)[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+(?:/[A-Za-z0-9_.-]+)?@' # yamllint disable-line rule:line-length
 
@@ -647,6 +651,8 @@ rules:
       include:
         - "/.github/workflows/**/*.yml"
         - "/.github/workflows/**/*.yaml"
+      exclude:
+        - "/tests/semgrep/**"
     patterns:
       - pattern-regex: '(?m)^\s*uses:\s*(?!\./)(?!docker://)[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+(?:/[A-Za-z0-9_.-]+)?@[a-fA-F0-9]{40}\s*$' # yamllint disable-line rule:line-length
 

@@ -21,6 +21,10 @@ Both repositories now share the same core Rust and Python support-tooling loop:
   exact-version `uvx --from cffconvert==2.0.0` invocation, keeping
   `cffconvert`'s old `jsonschema` constraint isolated from Semgrep's newer
   dependency requirements.
+- Codacy Markdownlint's MD013 line-length threshold is managed in Codacy's
+  Code Patterns UI at 120 columns when that tool is enabled. Local Markdown
+  checks continue to use rumdl from `pyproject.toml`, while YAML remains
+  normalized to 120 through dprint/pretty_yaml and yamllint.
 - `justfile` is the local entry point for formatting, linting, tests,
   coverage, Semgrep, changelog, setup commands, and supported Cargo feature
   surface checks.
@@ -68,6 +72,10 @@ The useful updates ported in this pass are:
 - Repository-owned Semgrep rules now guard obvious check/fix command-ordering
   regressions in user-facing docs and enforce SHA-pinned, allowlisted external
   GitHub Actions with readable version comments.
+- The GitHub Actions policy rules intentionally exclude `tests/semgrep/**`
+  during normal repository scans because those fixtures contain deliberate
+  violations; `just semgrep-test` remains the comparison path for proving the
+  rules still catch the fixture cases.
 - `.github/workflows/rust-clippy.yml` now matches the hardened SARIF pipeline:
   `set -euo pipefail`, `clippy::cargo`, and guarded upload that skips missing
   SARIF files and forked pull-request uploads.

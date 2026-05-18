@@ -15,3 +15,9 @@ just python-fix
 # ruleid: delaunay.docs.check-before-fix-command-order
 just python-fix
 just python-check
+
+# ruleid: delaunay.docs.check-before-fix-command-order
+just markdown-fix
+
+# Comment-only lines may separate the two commands.
+just markdown-check

@@ -263,10 +263,11 @@ The quantization resolution is `min(128/D, 31)` bits per coordinate, giving:
 - 4D: 31 bits/coord → ~10⁻⁹ relative resolution
 - 5D: 25 bits/coord → ~10⁻⁸ relative resolution
 
-This layer is **unconditional** when Hilbert ordering is active (the default) and runs
-in O(n log n) time with zero extra allocation (the quantized coordinates are already
-computed during Hilbert index generation). It removes the vast majority of exact and
-near-duplicate vertices before any insertion occurs, regardless of `DedupPolicy`.
+This layer is **unconditional** when Hilbert ordering is active (the default)
+and runs in O(n log n) time with zero extra allocation (the quantized
+coordinates are already computed during Hilbert index generation). It removes
+the vast majority of exact and near-duplicate vertices before any insertion
+occurs, regardless of `DedupPolicy`.
 
 See `order_vertices_hilbert` (called from `order_vertices_by_strategy`) in
 [`src/triangulation/delaunay.rs`](../src/triangulation/delaunay.rs).

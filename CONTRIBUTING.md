@@ -1229,6 +1229,6 @@ Thank you for contributing to the advancement of computational geometry in Rust!
 [benches-readme]: benches/README.md
 [scripts-readme]: scripts/README.md
 [code-organization]: docs/code_organization.md
-[maintainer-email]: mailto:<adam@adamgetchell.org>
+[maintainer-email]: <mailto:adam@adamgetchell.org>
 [semver]: https://semver.org/
 [rustup]: https://rustup.rs/

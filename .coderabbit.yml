@@ -51,7 +51,7 @@ reviews:
   pre_merge_checks:
     docstrings:
       mode: warning
-      threshold: 80
+      threshold: 120
     title:
       mode: warning
       requirements: ""

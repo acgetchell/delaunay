@@ -368,6 +368,31 @@ class TestArchiveChangelog:
         assert changelog.read_text(encoding="utf-8") == text
         assert not (tmp_path / "archive").exists()
 
+    def test_existing_archives_are_postprocessed(self, tmp_path: Path) -> None:
+        """Older archive files are normalized even when they are not regenerated."""
+        changelog = tmp_path / "CHANGELOG.md"
+        text = _PREAMBLE + _UNRELEASED + _V072 + _V071
+        changelog.write_text(text, encoding="utf-8")
+        archive_dir = tmp_path / "docs" / "archive" / "changelog"
+        archive_dir.mkdir(parents=True)
+        archive = archive_dir / "0.5.md"
+        archive.write_text(
+            "# Changelog - 0.5.x\n\n"
+            "## [0.5.3] - 2025-10-31\n\n"
+            "### Fixed\n\n"
+            "- Handle degenerate configurations [#116](https://github.com/acgetchell/delaunay/pull/116)\n"
+            "  [`a6ec3fa`](https://github.com/acgetchell/delaunay/commit/a6ec3fadeadbeef)\n\n"
+            "## Duplicate Vertex Handling\n\n"
+            "- Add duplicate coordinate detection\n",
+            encoding="utf-8",
+        )
+
+        archive_changelog(changelog, archive_dir)
+
+        content = archive.read_text(encoding="utf-8")
+        assert "\n## Duplicate Vertex Handling" not in content
+        assert "#### Duplicate Vertex Handling" in content
+
     def test_no_versions_no_op(self, tmp_path: Path) -> None:
         changelog = tmp_path / "CHANGELOG.md"
         changelog.write_text("# Changelog\n\nNo versions yet.\n", encoding="utf-8")

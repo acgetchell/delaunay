@@ -145,7 +145,7 @@ for inclusive community building.
 ---
 
 [delaunay-lib]: https://github.com/acgetchell/delaunay
-[maintainer]: mailto:<adam@adamgetchell.org>
+[maintainer]: <mailto:adam@adamgetchell.org>
 [uc-davis-principles]: https://principles.ucdavis.edu/
 
 Last updated: August 2025

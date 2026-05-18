@@ -41,6 +41,14 @@ _TOKEN_RE = re.compile(
 # Version section heading: ## [X.Y.Z] or ## [Unreleased]
 _VERSION_RE = re.compile(r"^## \[")
 
+# Generated changelog category headings that delimit entries.
+_CATEGORY_HEADING_RE = re.compile(
+    r"^### (?:"
+    r"Merged Pull Requests|Breaking Changes|Added|Changed|Deprecated|"
+    r"Documentation|Fixed|Maintenance|Performance|Removed|Security"
+    r")$"
+)
+
 # PR link: [#123](https://github.com/.../pull/123)
 _PR_LINK_RE = re.compile(r"\[#(\d+)\]\(https://github\.com/[^)]+/pull/\d+\)")
 
@@ -61,6 +69,10 @@ _LIST_MARKER_SPACE_RE = re.compile(r"^(\s*-)\s{2,}")
 
 # Indented ATX headings from commit bodies: ``  ## Title`` → ``#### Title``.
 _INDENTED_ATX_HEADING_RE = re.compile(r"^(?P<indent>\s+)#{1,6}\s+(?P<title>.*?)(?:\s+#+\s*)?$")
+
+# Historical squash bodies can also contain unindented ATX headings inside a
+# generated entry. Demote those without touching release/category headings.
+_ENTRY_ATX_HEADING_RE = re.compile(r"^#{2,3}\s+(?P<title>.*?)(?:\s+#+\s*)?$")
 
 # Squash-merge commit bodies often contain inner conventional-commit
 # headings from the PR branch: ``* fix: thing``. After MD004 normalization
@@ -455,6 +467,39 @@ def _normalize_indented_heading(line: str) -> str:
     return f"#### {title}"
 
 
+def _is_changelog_boundary_heading(line: str) -> bool:
+    """Return true for root, version, or category headings that end an entry."""
+    return line in {"# Changelog", "## Archives"} or bool(_VERSION_RE.match(line) or _CATEGORY_HEADING_RE.match(line))
+
+
+def _normalize_entry_heading(line: str, current_entry_summary: str | None) -> str:
+    """Demote column-zero headings that belong to the active changelog entry."""
+    if current_entry_summary is None or _is_changelog_boundary_heading(line):
+        return line
+
+    match = _ENTRY_ATX_HEADING_RE.match(line)
+    if match is None:
+        return line
+
+    title = match.group("title").strip()
+    if not title:
+        return line
+
+    return f"#### {title}"
+
+
+def normalize_entry_headings_text(text: str) -> str:
+    """Demote entry-local headings without applying broader changelog cleanup."""
+    result: list[str] = []
+    current_entry_summary: str | None = None
+
+    for line in text.split("\n"):
+        current_entry_summary = _update_entry_summary(line, current_entry_summary)
+        result.append(_normalize_entry_heading(line, current_entry_summary))
+
+    return "\n".join(result)
+
+
 def _normalize_horizontal_rule(line: str, result: list[str]) -> str:
     """Normalize indented horizontal rules and ensure they have surrounding blanks."""
     if line.strip() != "---":
@@ -490,9 +535,11 @@ def _process_code_fence(line: str, result: list[str], in_code_block: bool, next_
 
 def _update_entry_summary(line: str, current_entry_summary: str | None) -> str | None:
     """Track the active changelog entry summary for squash-body cleanup."""
-    if line.startswith("- ") and _COMMIT_LINK_RE.search(line):
+    if _squash_heading_parts(line) is not None:
+        return current_entry_summary
+    if line.startswith("- "):
         return _plain_summary(line)
-    if line.startswith(("### ", "## ", "# ")):
+    if _is_changelog_boundary_heading(line):
         return None
     return current_entry_summary
 
@@ -515,6 +562,7 @@ def _normalize_body_line(line: str, lines: list[str], idx: int, result: list[str
     line = _deindent_orphan(line, lines, idx)
     line = _normalize_continuation_indent(line, lines, idx)
     line = _normalize_indented_heading(line)
+    line = _normalize_entry_heading(line, current_entry_summary)
     horizontal_rule = _normalize_horizontal_rule(line, result)
     line = horizontal_rule
 
