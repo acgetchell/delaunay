@@ -467,6 +467,42 @@ class TestIndentedHeadingNormalization:
         assert "#### Fixed: Add rollback on cell creation failure" in result
         assert "### Fixed" in result
 
+    def test_full_pipeline_code_spans_wildcard_identifiers_in_headings(self, tmp_path: Path) -> None:
+        f = tmp_path / "CHANGELOG.md"
+        f.write_text(
+            "# Changelog\n\n"
+            "## [1.0.0]\n\n"
+            "### Documentation\n\n"
+            "- Rename bounding-box helpers\n\n"
+            "### Documentation: Rename saturating_* helpers to bbox_* and clarify float semantics\n",
+            encoding="utf-8",
+        )
+
+        postprocess(f)
+
+        result = f.read_text(encoding="utf-8")
+        assert "#### Documentation: Rename `saturating_*` helpers to `bbox_*` and clarify float semantics" in result
+
+    def test_full_pipeline_normalizes_indented_bold_entry_headings(self, tmp_path: Path) -> None:
+        f = tmp_path / "CHANGELOG.md"
+        f.write_text(
+            "# Changelog\n\n"
+            "## [1.0.0]\n\n"
+            "### Performance\n\n"
+            "- Improve duplicate handling\n\n"
+            "  **Performance Optimization**\n\n"
+            "  - First set of changes\n\n"
+            "  **Performance Optimization**\n\n"
+            "  - Additional changes\n",
+            encoding="utf-8",
+        )
+
+        postprocess(f)
+
+        result = f.read_text(encoding="utf-8")
+        assert "  **Performance Optimization**" not in result
+        assert result.count("#### Performance Optimization") == 2
+
 
 class TestSquashHeadingNormalization:
     """GitHub squash-body pseudo-commit headings are rendered as prose."""

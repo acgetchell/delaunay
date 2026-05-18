@@ -23,7 +23,7 @@ import re
 import sys
 from pathlib import Path
 
-# markdownlint MD013 line-length limit used by this project.
+# Markdown line-length limit used by this project.
 MAX_LINE_WIDTH = 160
 
 # Tokenise a line into atomic markdown units that must not be split.
@@ -70,9 +70,18 @@ _LIST_MARKER_SPACE_RE = re.compile(r"^(\s*-)\s{2,}")
 # Indented ATX headings from commit bodies: ``  ## Title`` → ``#### Title``.
 _INDENTED_ATX_HEADING_RE = re.compile(r"^(?P<indent>\s+)#{1,6}\s+(?P<title>.*?)(?:\s+#+\s*)?$")
 
+# Isolated indented bold headings from historical commit bodies.
+_INDENTED_BOLD_HEADING_RE = re.compile(r"^\s+\*\*(?P<title>[^*].*?)\*\*\s*$")
+
 # Historical squash bodies can also contain unindented ATX headings inside a
 # generated entry. Demote those without touching release/category headings.
 _ENTRY_ATX_HEADING_RE = re.compile(r"^#{2,3}\s+(?P<title>.*?)(?:\s+#+\s*)?$")
+
+# ATX headings after normalization. Used for final heading-specific cleanup.
+_ATX_HEADING_RE = re.compile(r"^(?P<level>#{1,6})\s+(?P<title>.*?)(?:\s+#+\s*)?$")
+
+# Bare glob-like identifiers in headings can be parsed as emphasis by linters.
+_WILDCARD_IDENTIFIER_RE = re.compile(r"(?<![`A-Za-z0-9_])([A-Za-z_][A-Za-z0-9_]*\*+[A-Za-z0-9_*]*)(?![`A-Za-z0-9_])")
 
 # Squash-merge commit bodies often contain inner conventional-commit
 # headings from the PR branch: ``* fix: thing``. After MD004 normalization
@@ -467,6 +476,22 @@ def _normalize_indented_heading(line: str) -> str:
     return f"#### {title}"
 
 
+def _normalize_indented_bold_heading(line: str, current_entry_summary: str | None, is_isolated_body_heading: bool) -> str:
+    """Convert isolated indented bold commit-body headings into level-4 headings."""
+    if current_entry_summary is None or not is_isolated_body_heading:
+        return line
+
+    match = _INDENTED_BOLD_HEADING_RE.match(line)
+    if match is None:
+        return line
+
+    title = match.group("title").strip()
+    if not title:
+        return line
+
+    return f"#### {title}"
+
+
 def _is_changelog_boundary_heading(line: str) -> bool:
     """Return true for root, version, or category headings that end an entry."""
     return line in {"# Changelog", "## Archives"} or bool(_VERSION_RE.match(line) or _CATEGORY_HEADING_RE.match(line))
@@ -488,6 +513,25 @@ def _normalize_entry_heading(line: str, current_entry_summary: str | None) -> st
     return f"#### {title}"
 
 
+def _code_span_heading_wildcards(line: str) -> str:
+    """Wrap bare wildcard identifiers in heading titles with code spans."""
+    match = _ATX_HEADING_RE.match(line)
+    if match is None:
+        return line
+
+    def code_span(match: re.Match[str]) -> str:
+        return f"`{match.group(1)}`"
+
+    title_parts = re.split(r"(`[^`]+`)", match.group("title"))
+    title = "".join(part if part.startswith("`") and part.endswith("`") else _WILDCARD_IDENTIFIER_RE.sub(code_span, part) for part in title_parts)
+    return f"{match.group('level')} {title}"
+
+
+def _normalize_entry_heading_text(line: str) -> str:
+    """Apply final cleanup for generated entry-local headings."""
+    return _code_span_heading_wildcards(line)
+
+
 def normalize_entry_headings_text(text: str) -> str:
     """Demote entry-local headings without applying broader changelog cleanup."""
     result: list[str] = []
@@ -495,7 +539,8 @@ def normalize_entry_headings_text(text: str) -> str:
 
     for line in text.split("\n"):
         current_entry_summary = _update_entry_summary(line, current_entry_summary)
-        result.append(_normalize_entry_heading(line, current_entry_summary))
+        line = _normalize_entry_heading(line, current_entry_summary)
+        result.append(_normalize_entry_heading_text(line))
 
     return "\n".join(result)
 
@@ -556,18 +601,23 @@ def _should_skip_duplicate_heading(
     return False, False
 
 
-def _normalize_body_line(line: str, lines: list[str], idx: int, result: list[str], current_entry_summary: str | None) -> str:
+def _normalize_body_line(
+    line: str,
+    result: list[str],
+    current_entry_summary: str | None,
+    is_isolated_body_heading: bool,
+) -> str:
     """Apply markdown hygiene transforms to a non-code line."""
-    is_isolated_body_heading = _is_isolated_body_heading(lines, idx)
-    line = _deindent_orphan(line, lines, idx)
-    line = _normalize_continuation_indent(line, lines, idx)
     line = _normalize_indented_heading(line)
+    line = _normalize_indented_bold_heading(line, current_entry_summary, is_isolated_body_heading)
     line = _normalize_entry_heading(line, current_entry_summary)
     horizontal_rule = _normalize_horizontal_rule(line, result)
     line = horizontal_rule
 
     if is_isolated_body_heading:
         line = _normalize_squash_heading(line, nested=current_entry_summary is not None)
+
+    line = _normalize_entry_heading_text(line)
 
     if _needs_blank_before(line.lstrip(), result):
         result.append("")
@@ -623,7 +673,9 @@ def postprocess_text(text: str) -> str:
             continue
         drop_next_blank = False
 
-        normalized = _normalize_body_line(line, lines, idx, result, current_entry_summary)
+        line = _deindent_orphan(line, lines, idx)
+        line = _normalize_continuation_indent(line, lines, idx)
+        normalized = _normalize_body_line(line, result, current_entry_summary, is_isolated_body_heading)
         result.append(normalized)
         if normalized == "---" and next_line is not None and next_line.strip():
             result.append("")

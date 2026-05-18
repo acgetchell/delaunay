@@ -75,6 +75,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Update generated benchmark-summary guidance to surface `just bench-perf-summary`,
     current Criterion metadata, and large-scale characterization defaults.
 
+### Fixed
+
+- Align markdown lint policy and changelog hygiene [`2c59b8d`](https://github.com/acgetchell/delaunay/commit/2c59b8dc5309f5385f6cf6d74a865d946b53fc9f)
+
+  - Scope Codacy markdownlint to active Markdown docs while keeping the 120-column
+    MD013 threshold managed in Codacy's Code Patterns UI.
+
+  - Normalize CodeRabbit docstring review length to the same 120-column policy.
+  - Teach changelog postprocessing to demote entry-local headings in existing
+    archived changelogs without rewriting unrelated archive formatting.
+
+  - Fix malformed mailto references, archived Markdown hierarchy, table structure,
+    and Semgrep fixture exclusions that caused review noise.
+
+### Maintenance
+
+- Replace Node markdown tooling with rumdl [`edea152`](https://github.com/acgetchell/delaunay/commit/edea1525bf518864fd1962683c49467aaa0941b7)
+
+  - Switch Markdown checks and Codacy configuration from markdownlint/npx to rumdl.
+  - Add dprint/pretty_yaml YAML formatting and wire yaml-check/yaml-fix through dprint plus yamllint.
+  - Format generated changelog archives with rumdl after git-cliff postprocessing.
+  - Add Semgrep guards for check-before-fix docs and pinned, allowlisted GitHub Actions.
+
 ## [0.7.7] - 2026-05-15
 
 ### ⚠️ Breaking Changes

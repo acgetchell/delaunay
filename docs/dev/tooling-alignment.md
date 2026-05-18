@@ -22,9 +22,11 @@ Both repositories now share the same core Rust and Python support-tooling loop:
   `cffconvert`'s old `jsonschema` constraint isolated from Semgrep's newer
   dependency requirements.
 - Codacy Markdownlint's MD013 line-length threshold is managed in Codacy's
-  Code Patterns UI at 120 columns when that tool is enabled. Local Markdown
-  checks continue to use rumdl from `pyproject.toml`, while YAML remains
-  normalized to 120 through dprint/pretty_yaml and yamllint.
+  Code Patterns UI at 160 columns when that tool is enabled. Local Markdown,
+  Python, YAML, and review thresholds are likewise normalized to 160 columns.
+- Codacy Bandit is scoped to production Python scripts and excludes
+  `scripts/tests/**`, so security checks still run without flagging intentional
+  test assertions.
 - `justfile` is the local entry point for formatting, linting, tests,
   coverage, Semgrep, changelog, setup commands, and supported Cargo feature
   surface checks.

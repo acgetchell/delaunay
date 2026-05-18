@@ -7,18 +7,24 @@
 # Recommended enabled tools:
 # - opengrep: repository-owned Rust Semgrep rules from semgrep.yaml
 # - ruff: Python utility linting
+# - bandit: Python security linting for production scripts, excluding tests
 # - markdownlint: Codacy Markdown review, threshold configured in Codacy UI
 # - shellcheck: shell-script linting
 # - duplication: advisory duplicate-code metric
 # - lizard: advisory complexity feedback
 #
 # Recommended disabled tools:
-# - bandit, prospector, pylintpython3: redundant with Ruff/ty for this repo
+# - prospector, pylintpython3: redundant with Ruff/ty for this repo
 # - trivy: dependency vulnerability scanning is handled by cargo-audit and
 #   Dependabot unless this repository adds containers or IaC
 # - jacksonlinter, spectral: not relevant to the current project surface
 
 engines:
+  bandit:
+    include_paths:
+      - "scripts/**/*.py"
+    exclude_paths:
+      - "scripts/tests/**"
   duplication:
     exclude_paths:
       - "docs/archive/**"
