@@ -61,7 +61,8 @@ sysinfo = "0.39.1" # Process memory monitoring for benchmarks
 tracing-subscriber = { version = "0.3.23", features = [ "env-filter" ] }
 
 [features]
-count-allocations = [ "dep:allocation-counter" ]
+# Dependency-backed feature gates.
+count-allocations = [ "dep:allocation-counter" ] # Enable allocation counting through the optional profiler dependency.
 
 # cfg-only feature gates.
 #

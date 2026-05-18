@@ -624,6 +624,44 @@ class TestSquashHeadingNormalization:
         assert "\n  - Add canonical_points module with sorted_cell_points helpers\n" in result
         assert "\n    - Add canonical_points module" not in result
 
+    def test_full_pipeline_mirrors_squash_body_heading_into_matching_section(self) -> None:
+        content = (
+            "# Changelog\n\n"
+            "## [1.0.0]\n\n"
+            "### Maintenance\n\n"
+            f"- Replace Node markdown tooling with rumdl {_pr(394)} {_commit('5654d14', '5654d14deadbeef')}\n\n"
+            "  * fix(tooling): align markdown lint policy\n\n"
+            "    - Scope Codacy markdownlint to active Markdown docs.\n\n"
+            "  * docs: refresh release guidance\n\n"
+            "    - Document the changelog workflow.\n"
+        )
+
+        result = postprocess_text(content)
+
+        assert f"- Align markdown lint policy {_commit('5654d14', '5654d14deadbeef')}" in result
+        assert "  - Scope Codacy markdownlint to active Markdown docs." in result
+        assert f"- Refresh release guidance {_commit('5654d14', '5654d14deadbeef')}" in result
+        assert "### Fixed" in result
+        assert "### Documentation" in result
+        assert "- Replace Node markdown tooling with rumdl" in result
+        assert "#### Fixed: Align markdown lint policy" in result
+
+    def test_full_pipeline_does_not_mirror_duplicate_parent_heading(self) -> None:
+        content = (
+            "# Changelog\n\n"
+            "## [1.0.0]\n\n"
+            "### Added\n\n"
+            f"- Instrument large-scale debugging {_commit('3af976e', '3af976edeadbeef')}\n\n"
+            "  * feat: instrument large-scale debugging\n\n"
+            "    - Keep this detail under the parent entry.\n"
+        )
+
+        result = postprocess_text(content)
+
+        assert result.count("- Instrument large-scale debugging") == 1
+        assert "#### Added: Instrument large-scale debugging" not in result
+        assert "  - Keep this detail under the parent entry." in result
+
 
 class TestCodeBlockLanguage:
     def test_process_code_fence_opens_and_tags_bare_fence(self) -> None:

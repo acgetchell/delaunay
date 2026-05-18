@@ -120,6 +120,19 @@ _SQUASH_HEADING_LABELS: dict[str, str] = {
     "removed": "Removed",
 }
 
+_CHANGELOG_CATEGORY_ORDER = [
+    "Added",
+    "Changed",
+    "Deprecated",
+    "Documentation",
+    "Fixed",
+    "Maintenance",
+    "Performance",
+    "Removed",
+    "Security",
+    "Dependencies",
+]
+
 
 def _plain_summary(text: str) -> str:
     """Return a normalized comparison key for changelog entry text."""
@@ -187,7 +200,181 @@ def _is_isolated_body_heading(lines: list[str], idx: int) -> bool:
 
 def _is_squash_heading_candidate(lines: list[str], idx: int) -> bool:
     """Return true when an original body line will become bold prose."""
-    return _squash_heading_parts(lines[idx]) is not None and _is_isolated_body_heading(lines, idx)
+    return _squash_heading_parts(_squash_heading_line(lines[idx])) is not None and _is_isolated_body_heading(lines, idx)
+
+
+def _squash_heading_line(line: str) -> str:
+    """Normalize list syntax enough to recognize squash-body headings."""
+    line = _BULLET_SYMBOL_RE.sub(r"\1- ", line)
+    line = _STAR_LIST_RE.sub(r"\1- ", line)
+    return _LIST_MARKER_SPACE_RE.sub(r"\1 ", line)
+
+
+def _squash_heading_title_for_entry(title: str) -> str:
+    """Return the synthetic changelog summary for a squash-body heading."""
+    title = _PR_LINK_RE.sub("", title).strip()
+    return re.sub(r"\s+", " ", title)
+
+
+def _synthetic_entry_body_line(line: str) -> str:
+    """Normalize a squash-body line for use under a synthetic top-level entry."""
+    line = line.removeprefix("  ")
+    if not line.strip():
+        return ""
+    return line if line.startswith("  ") else f"  {line.lstrip()}"
+
+
+def _squash_body_entry_children(lines: list[str], heading_idx: int) -> list[str]:
+    """Collect body lines that belong to one squash-body pseudo-commit."""
+    children: list[str] = []
+
+    for idx in range(heading_idx + 1, len(lines)):
+        line = lines[idx]
+        if _is_changelog_boundary_heading(line) or line.startswith("- "):
+            break
+        if idx != heading_idx and _is_squash_heading_candidate(lines, idx):
+            break
+        children.append(_synthetic_entry_body_line(line))
+
+    while children and not children[0].strip():
+        children.pop(0)
+    while children and not children[-1].strip():
+        children.pop()
+
+    return children
+
+
+def _category_sort_key(category: str) -> int:
+    """Return the preferred display order for a changelog category."""
+    try:
+        return _CHANGELOG_CATEGORY_ORDER.index(category)
+    except ValueError:
+        return len(_CHANGELOG_CATEGORY_ORDER)
+
+
+def _target_category_end(lines: list[str], start: int, end: int, category: str) -> int | None:
+    """Return the insertion point at the end of an existing category block."""
+    heading = f"### {category}"
+    for idx in range(start, end):
+        if lines[idx] != heading:
+            continue
+        cursor = idx + 1
+        while cursor < end and not lines[cursor].startswith("### ") and not _VERSION_RE.match(lines[cursor]):
+            cursor += 1
+        return cursor
+    return None
+
+
+def _new_category_insert_at(lines: list[str], start: int, end: int, category: str) -> int:
+    """Return where a missing changelog category should be inserted."""
+    target_order = _category_sort_key(category)
+    for idx in range(start, end):
+        line = lines[idx]
+        if not line.startswith("### "):
+            continue
+        existing = line.removeprefix("### ").strip()
+        if _category_sort_key(existing) > target_order:
+            return idx
+    return end
+
+
+def _insert_synthetic_squash_entries(lines: list[str], start: int, end: int, entries_by_category: dict[str, list[list[str]]]) -> list[str]:
+    """Insert mirrored squash-body entries into one version section."""
+    for category in sorted(entries_by_category, key=_category_sort_key, reverse=True):
+        entries = entries_by_category[category]
+        existing_end = _target_category_end(lines, start, end, category)
+        if existing_end is None:
+            insert_at = _new_category_insert_at(lines, start, end, category)
+            block = ["", f"### {category}", ""]
+            for entry in entries:
+                block.extend(entry)
+            lines[insert_at:insert_at] = block
+            end += len(block)
+            continue
+
+        block = []
+        if existing_end > 0 and lines[existing_end - 1].strip():
+            block.append("")
+        for entry in entries:
+            block.extend(entry)
+        lines[existing_end:existing_end] = block
+        end += len(block)
+
+    return lines
+
+
+def _synthetic_squash_entries_for_section(section_lines: list[str]) -> dict[str, list[list[str]]]:
+    """Collect mirrored squash-body entries for one version section."""
+    existing_summaries = {_plain_summary(line) for line in section_lines if line.startswith("- ")}
+    entries_by_category: dict[str, list[list[str]]] = {}
+    current_entry_summary: str | None = None
+    current_entry_commit_link = ""
+
+    for local_idx, raw_line in enumerate(section_lines):
+        line = _squash_heading_line(raw_line)
+        if line.startswith("- ") and _COMMIT_LINK_RE.search(line):
+            current_entry_summary = _plain_summary(line)
+            match = _COMMIT_LINK_RE.search(line)
+            current_entry_commit_link = match.group(0).strip() if match is not None else ""
+            continue
+        if _is_changelog_boundary_heading(line):
+            current_entry_summary = None
+            current_entry_commit_link = ""
+            continue
+        if not _is_isolated_body_heading(section_lines, local_idx):
+            continue
+
+        parts = _squash_heading_parts(line)
+        if parts is None or _is_duplicate_squash_heading(line, current_entry_summary):
+            continue
+
+        _, category, title = parts
+        summary = _squash_heading_title_for_entry(title)
+        entry_key = _plain_summary(f"- {summary}")
+        if not summary or entry_key in existing_summaries:
+            continue
+        existing_summaries.add(entry_key)
+
+        entry_line = f"- {summary}"
+        if current_entry_commit_link:
+            entry_line = f"{entry_line} {current_entry_commit_link}"
+
+        entry = [entry_line]
+        children = _squash_body_entry_children(section_lines, local_idx)
+        if children:
+            entry.append("")
+            entry.extend(children)
+        entry.append("")
+        entries_by_category.setdefault(category, []).append(entry)
+
+    return entries_by_category
+
+
+def _mirror_squash_body_entries(text: str) -> str:
+    """
+    Mirror conventional pseudo-commits from squash bodies into top-level sections.
+
+    GitHub squash merges can preserve every pushed commit message in the final
+    squash commit body. git-cliff renders that whole body under the squash
+    commit's primary category, so a ``chore:`` squash can hide inner ``fix:``
+    or ``feat:`` messages from their changelog sections. This pass copies
+    isolated conventional body headings into the matching release category
+    while leaving the original squash entry intact.
+    """
+    lines = text.split("\n")
+    boundaries = [idx for idx, line in enumerate(lines) if _VERSION_RE.match(line)]
+    if not boundaries:
+        return text
+
+    for boundary_idx in reversed(range(len(boundaries))):
+        start = boundaries[boundary_idx]
+        end = boundaries[boundary_idx + 1] if boundary_idx + 1 < len(boundaries) else len(lines)
+        section_lines = lines[start:end]
+        entries_by_category = _synthetic_squash_entries_for_section(section_lines)
+        if entries_by_category:
+            lines = _insert_synthetic_squash_entries(lines, start, end, entries_by_category)
+
+    return "\n".join(lines)
 
 
 def _max_pr_number(entry: str) -> int:
@@ -668,6 +855,9 @@ def _normalize_body_line(
 
 def postprocess_text(text: str) -> str:
     """Apply changelog markdown hygiene transforms to *text*."""
+    # Mirror squash-body conventional commit headings before summaries/reflow.
+    text = _mirror_squash_body_entries(text)
+
     # Inject PR / breaking-change summary sections before reflow.
     text = _inject_summary_sections(text)
 

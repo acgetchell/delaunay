@@ -15,6 +15,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Merged Pull Requests
 
+- Replace Node markdown tooling with rumdl [#394](https://github.com/acgetchell/delaunay/pull/394)
 - Rename public cell APIs to simplex nomenclature [#393](https://github.com/acgetchell/delaunay/pull/393)
 - Replace public core module with focused facades [#392](https://github.com/acgetchell/delaunay/pull/392)
 - Support periodic flip parity for external cells [#391](https://github.com/acgetchell/delaunay/pull/391)
@@ -75,42 +76,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Update generated benchmark-summary guidance to surface `just bench-perf-summary`,
     current Criterion metadata, and large-scale characterization defaults.
 
-### Fixed
-
-- Align markdown lint policy and changelog hygiene [`2c59b8d`](https://github.com/acgetchell/delaunay/commit/2c59b8dc5309f5385f6cf6d74a865d946b53fc9f)
-
-  - Scope Codacy markdownlint to active Markdown docs while keeping the 120-column
-    MD013 threshold managed in Codacy's Code Patterns UI.
-
-  - Normalize CodeRabbit docstring review length to the same 120-column policy.
-  - Teach changelog postprocessing to demote entry-local headings in existing
-    archived changelogs without rewriting unrelated archive formatting.
-
-  - Fix malformed mailto references, archived Markdown hierarchy, table structure,
-    and Semgrep fixture exclusions that caused review noise.
-
-- Normalize lint policy and changelog hygiene [`aed4bd8`](https://github.com/acgetchell/delaunay/commit/aed4bd82e604f7ae55e91e8973c3b26aa005e7dd)
-
-  - Normalize local Python, Markdown, YAML, and review line-length settings to the
-    160-column policy while keeping CodeRabbit docstring checks schema-valid.
-
-  - Scope Codacy Bandit to production Python scripts so security checks skip test
-    fixtures with intentional assertions.
-
-  - Teach changelog postprocessing to preserve archive heading hierarchy and render
-    wildcard helper names as inline code in generated changelog output.
-
-- Exclude Python tests from Codacy analysis [`829d1c8`](https://github.com/acgetchell/delaunay/commit/829d1c89934b99dff6803f1cc0947da9f3372790)
-
-  - Scope Codacy Ruff to production Python scripts so script test fixtures do not
-    produce pull-request quality findings.
-
-  - Document that Codacy Python engines exclude scripts/tests while local and CI
-    checks remain the source of truth for the full Python test suite.
-
 ### Maintenance
 
-- Replace Node markdown tooling with rumdl [`edea152`](https://github.com/acgetchell/delaunay/commit/edea1525bf518864fd1962683c49467aaa0941b7)
+- Replace Node markdown tooling with rumdl [#394](https://github.com/acgetchell/delaunay/pull/394)
+  [`5654d14`](https://github.com/acgetchell/delaunay/commit/5654d14bc04dba538d776800495846d0a6ea94da)
 
   - Switch Markdown checks and Codacy configuration from markdownlint/npx to rumdl.
   - Add dprint/pretty_yaml YAML formatting and wire yaml-check/yaml-fix through dprint plus yamllint.
@@ -151,6 +120,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Harden Python benchmark parsing [#351](https://github.com/acgetchell/delaunay/pull/351)
 - Expand profiling benchmarks around public API workflows [#349](https://github.com/acgetchell/delaunay/pull/349)
 - Bump taiki-e/install-action from 2.75.18 to 2.75.22 [#348](https://github.com/acgetchell/delaunay/pull/348)
+
+### Added
+
+- Add focused preludes for doctest imports [`5d8a9ff`](https://github.com/acgetchell/delaunay/commit/5d8a9ff3bfd260636a8fa4209cb00801c134aaa5)
+
+  - Add minimal, task-focused preludes for triangulation, TDS, geometry, queries, generators, ordering, collections, and topology workflows.
+  - Update doctests, examples, integration tests, and benchmarks to use focused preludes instead of deep internal imports.
+  - Expand the Semgrep doctest import rule to cover all Rust source files and hidden doctest imports.
+  - Harden Codacy SARIF handling so empty analyses skip upload cleanly instead of creating noisy code-scanning results.
+  - Document the new prelude structure and update guides to use public prelude imports.
 
 ### Changed
 
@@ -202,6 +181,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Use DoS-resistant hashing for coordinate-derived buckets and gate insertion timing telemetry to callers that consume it.
   - Normalize root and archived changelog markdown through shared post-processing.
   - Simplify validation telemetry, predicate helpers, cache invalidation, and prelude coverage without changing the correctness/performance contracts.
+- Rename test-debug feature to diagnostics [`5d8a9ff`](https://github.com/acgetchell/delaunay/commit/5d8a9ff3bfd260636a8fa4209cb00801c134aaa5)
+
+  - Replace the test-debug feature with diagnostics for opt-in diagnostic helpers and verbose test diagnostics.
+  - Add prelude::diagnostics for debug verification helpers while keeping focused preludes narrow and orthogonal.
+  - Move diagnostic helper exports out of unrelated focused preludes and update cfg gates, tests, docs, and just recipes.
+  - Document that focused preludes should favor precise taxonomy over backwards compatibility for unrelated re-exports.
 
 ### Fixed
 
@@ -238,9 +223,59 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 #### Fixed: Make duplicate-cell removal transactional
 
 - Validate duplicate-cell removals on a cloned TDS and commit only after neighbor rebuilding, incident-cell assignment, and full validation succeed.
+
 - Preserve typed construction and mutation errors in examples and doctests, including prelude coverage for TdsMutationError.
+
 - Share feature-gated tracing abort helpers across benchmarks and keep setup error handling out of measured closures.
+
 - Remove committed debug printing from collection tests.
+
+- Harden Criterion estimate parsing and validation [`fea5898`](https://github.com/acgetchell/delaunay/commit/fea58987a2fb84e47603be9f0d1960aaa7e0f5f0)
+
+  Consolidates estimate validation into a single public helper,
+  `is_valid_criterion_estimate`, now used by `PerformanceSummaryGenerator`
+  and `StorageBackendComparator`. Adds explicit type checks to
+  `PerformanceSummaryGenerator` to reject structurally malformed JSON
+  data, improving parsing robustness.
+
+- Make duplicate-cell removal transactional [`83d9619`](https://github.com/acgetchell/delaunay/commit/83d96197cc5f7b2b2242904b7bab76ac9e058e6c)
+
+  - Validate duplicate-cell removals on a cloned TDS and commit only after neighbor rebuilding, incident-cell assignment, and full validation succeed.
+  - Preserve typed construction and mutation errors in examples and doctests, including prelude coverage for TdsMutationError.
+  - Share feature-gated tracing abort helpers across benchmarks and keep setup error handling out of measured closures.
+  - Remove committed debug printing from collection tests.
+
+- Harden Hilbert ordering errors and prelude checks [`9d51d30`](https://github.com/acgetchell/delaunay/commit/9d51d3038ae3f3316102ecaf39429bdfb73ff1cc)
+
+  - Return typed Hilbert errors for non-finite quantization inputs and failed u32 coordinate conversions instead of silently collapsing values.
+  - Preserve item order when Hilbert sort key construction fails, and add regression coverage for the new error paths.
+  - Add the focused ordering prelude and update doctests, examples, benchmarks, and integration tests to use orthogonal prelude imports.
+  - Add a Semgrep rule and fixture coverage for examples and benchmarks that bypass focused preludes.
+  - Verify pinned shfmt binaries in CI with explicit SHA256 values instead of downloading a missing upstream checksum file.
+
+- Gate diagnostics behind test-debug [`5d8a9ff`](https://github.com/acgetchell/delaunay/commit/5d8a9ff3bfd260636a8fa4209cb00801c134aaa5)
+
+  - Replace profile-based public diagnostic exports with the documented test-debug feature.
+  - Keep debug-only helper definitions and diagnostic call sites aligned with feature-gated API visibility.
+  - Allow hidden doctest prelude imports in the Semgrep prelude-import rule.
+
+- Tolerate degenerate Delaunay retessellation [`a984b3a`](https://github.com/acgetchell/delaunay/commit/a984b3aa0c57a967b0ae6f33b88042af49ac52cb)
+
+  - Compare quality metrics only for cells shared across independently
+  transformed triangulations, rejecting cases with no comparable cells.
+
+  - Narrow locality repair helper visibility where the current module graph
+  allows it while preserving core insertion repair access.
+
+  - Clarify that non-substantive PRs may be declined unless justified by
+  cleanup or tooling needs.
+
+- Distinguish insertion telemetry [`a984b3a`](https://github.com/acgetchell/delaunay/commit/a984b3aa0c57a967b0ae6f33b88042af49ac52cb)
+
+  - Count only full insertion validation runs in topology validation telemetry while preserving required link checks.
+  - Exclude caller-provided conflict buffers from discovered conflict-region telemetry.
+  - Keep large-scale debug validation cadence tied to inserted vertices and tighten triangulation proptest acceptance.
+  - Add explicit unsafe-code forbids to remaining bench, example, and test crates.
 
 ### Maintenance
 
@@ -455,6 +490,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   dependency-group: dependencies
   ...
 
+- Enable repository Semgrep rules [`9d51d30`](https://github.com/acgetchell/delaunay/commit/9d51d3038ae3f3316102ecaf39429bdfb73ff1cc)
+
+  - Rename the Semgrep config to semgrep.yaml and wire it into local checks, CodeRabbit, and Codacy/OpenGrep.
+  - Add strict Semgrep execution plus fixture coverage for hot-path hash collections and targeted panic bypasses.
+  - Make Hilbert errors non-exhaustive and document quantization-scale conversion failures on APIs that can return them.
+  - Replace fragile VertexBuilder expect paths with infallible Vertex point constructors.
+
+- Expand repository Semgrep rules [`9d51d30`](https://github.com/acgetchell/delaunay/commit/9d51d3038ae3f3316102ecaf39429bdfb73ff1cc)
+
+  - Add project-specific Semgrep checks for Rust dynamic errors, lint suppression reasons, Python subprocess mocks, and typed script helpers.
+  - Add focused Semgrep fixtures for hot-path hash collections, Rust project rules, and Python test conventions.
+  - Wire the expanded Semgrep fixture suite into `just check`.
+  - Replace stale Clippy `allow` suppressions with documented `expect` attributes and remove dynamic error trait-object usage from tests.
+
+- Refresh quality tooling and diagnostics [`9d51d30`](https://github.com/acgetchell/delaunay/commit/9d51d3038ae3f3316102ecaf39429bdfb73ff1cc)
+
+  - Pin GitHub workflow tool versions and update action SHAs for cache, artifact upload, install-action, and SARIF upload.
+  - Exclude Semgrep fixtures from Codacy analysis so intentional rule-test violations do not surface as production issues.
+  - Add a cargo-machete backed just unused-deps recipe for checking unused direct dependencies.
+  - Gate convex hull test diagnostics behind test-debug tracing instead of unconditional stdout output.
+  - Add Hilbert ordering and zero-dimensional sort coverage for Codecov patch gaps.
+
 ### Performance
 
 - Expand profiling benchmarks around public API workflows [#349](https://github.com/acgetchell/delaunay/pull/349)
@@ -577,6 +634,67 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Compare performance regressions against same-machine main-ref baselines.
   - Harden insertion topology preflight and exact insphere paths used by repair
     and high-dimensional construction.
+
+- Keep bulk repair seeding local [`a984b3a`](https://github.com/acgetchell/delaunay/commit/a984b3aa0c57a967b0ae6f33b88042af49ac52cb)
+
+  - Return live insertion-created cells as repair seeds so batch construction can
+  accumulate local frontiers without scanning vertex stars globally.
+
+  - Move repair seed frontier helpers into triangulation locality utilities and
+  defer broad repair fallback to final construction repair.
+
+  - Extend construction telemetry and large-scale debug output with seed
+  accumulation timing.
+
+- Keep exterior repair seeding local [`a984b3a`](https://github.com/acgetchell/delaunay/commit/a984b3aa0c57a967b0ae6f33b88042af49ac52cb)
+
+  - Preserve the terminal locate cell so exterior insertion can seed nearby repair work without scanning the full triangulation.
+  - Skip global conflict-region scans during exterior hull extension and defer broad Delaunay cleanup to cadenced and final repair.
+  - Move local repair seed bookkeeping helpers into triangulation locality utilities.
+
+- Localize construction repair cadence [`a984b3a`](https://github.com/acgetchell/delaunay/commit/a984b3aa0c57a967b0ae6f33b88042af49ac52cb)
+
+  - Keep exterior repair seeding local when conflict buffers are empty, avoiding global conflict-region scans during insertion.
+  - Gate topology-validation telemetry on actual validation work and add typed validation cadences for large-scale diagnostics.
+  - Preserve typed Delaunay repair failures with construction repair phases and keep mutation repair gates independent of insertion cadence.
+  - Add focused triangulation construction, repair, and validation preludes across docs, examples, benches, and tests.
+
+- Trigger batch repair on seed backlog [`a984b3a`](https://github.com/acgetchell/delaunay/commit/a984b3aa0c57a967b0ae6f33b88042af49ac52cb)
+
+  - Add an adaptive seed-backlog trigger for batch local Delaunay repair.
+  - Track local repair frontier sizes and cadence versus backlog triggers.
+  - Expose the 3D large-scale repair interval in the debug just recipe.
+  - Clarify batch repair policy docs and cover trigger/telemetry behavior with focused tests.
+
+- Fast-path retry validation [`a984b3a`](https://github.com/acgetchell/delaunay/commit/a984b3aa0c57a967b0ae6f33b88042af49ac52cb)
+
+  - Use the flip-based Delaunay verifier when accepting shuffled construction
+  retries instead of the brute-force property scan.
+
+  - Add construction phase telemetry for preprocessing, insertion, finalization,
+  and final validation timing.
+
+  - Default the large-scale debug repair interval to 2 for the 3K repair sweep.
+
+- Default batch repair to EveryN(2) [`a984b3a`](https://github.com/acgetchell/delaunay/commit/a984b3aa0c57a967b0ae6f33b88042af49ac52cb)
+
+  - Default batch construction repair to EveryN(2) while keeping direct incremental repair at EveryInsertion.
+  - Preserve final repair and validation as the acceptance gate for valid Delaunay output.
+  - Surface construction skip and slow-insertion diagnostics through the construction prelude.
+  - Align repair-policy docs with the batch default and the current 500/3000-point proxy results.
+
+- Tune batch construction repair [`a984b3a`](https://github.com/acgetchell/delaunay/commit/a984b3aa0c57a967b0ae6f33b88042af49ac52cb)
+
+  - Default batch construction to the real-vertex max-volume initial simplex and
+  every-insertion Delaunay repair cadence.
+
+  - Add focused construction diagnostics telemetry for repair phase timing,
+  queued work, seed frontiers, and construction phase costs.
+
+  - Keep local repair postcondition replay tied to observed repair work so skipped
+  flip candidates cannot suppress required validation.
+
+  - Update large-scale debug docs and recipes to reflect the new defaults.
 
 ## [0.7.6] - 2026-04-25
 
@@ -802,6 +920,67 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Revise SECURITY.md for clarity and completeness [`bd041fa`](https://github.com/acgetchell/delaunay/commit/bd041fa18456abad59a11088ab8a14e7f399adbe)
 
+- Harden flip diagnostics and refine large-scale debug workflows
+  [`3af976e`](https://github.com/acgetchell/delaunay/commit/3af976ec2f7c33d49803b24ab8f1a7da598fea0b)
+
+  Refactor flip snapshotting and cavity-reduction bookkeeping to ensure
+  diagnostic reliability and accurate repair-seed collection. Update
+  documentation and justfile recipes to reflect fixed historical repros
+  and transition to monitoring active scalability investigations for 3D,
+  4D, and 5D datasets.
+
+  - Move removed-cell vertex capturing into fallible internal helpers
+  - Implement lazy evaluation for cavity-reduction diagnostic logs
+  - Harden vertex deduplication with fallible epsilon validation
+  - Update 4D known issues to reflect 100-point and 500-point fixes
+  - Simplify the large-scale debug harness CLI and documentation
+
+- Standardize benchmark profiles and enhance SARIF analysis [`f527c0c`](https://github.com/acgetchell/delaunay/commit/f527c0cf37b76f09222800afcfc138e623957678)
+
+  Standardize benchmark workflows to use the `perf` profile by default
+  across local scripts and CI for consistent optimization settings. Add a
+  dedicated CodeQL analysis workflow and refactor SARIF reporting for
+  cargo-audit, Clippy, and Codacy to improve GitHub Code Scanning
+  integration. Update manifest lints to comply with RFC 3389 priority
+  requirements and fix the minimum sample size for benchmark smoke tests.
+
+- Track sampling metadata and standardize benchmark profiles [`f527c0c`](https://github.com/acgetchell/delaunay/commit/f527c0cf37b76f09222800afcfc138e623957678)
+
+  Enhance performance regression testing by embedding sampling configuration
+  (Criterion settings and Cargo profile) into baseline files. This enables
+  automatic detection of configuration mismatches during comparisons.
+  Standardize benchmarking scripts on the trusted perf profile and update
+  developer guidelines for naming conventions and local imports.
+
+- Enable debug line tables for perf profile and refine validation
+  [`f527c0c`](https://github.com/acgetchell/delaunay/commit/f527c0cf37b76f09222800afcfc138e623957678)
+
+  Include `debug = "line-tables-only"` in the perf Cargo profile to
+  enable source-level profiling. Update the benchmark comparison logic
+  to ensure that legacy baselines with missing or "Unknown" metadata
+  trigger configuration mismatch warnings.
+
+- Expand benchmark metadata validation tests [`f527c0c`](https://github.com/acgetchell/delaunay/commit/f527c0cf37b76f09222800afcfc138e623957678)
+
+  Update the benchmark utility tests to verify that differences or
+  omissions in Criterion measurement and warm-up time are correctly
+  reported in configuration mismatch warnings.
+
+- Enable CodeRabbit request changes workflow [`f527c0c`](https://github.com/acgetchell/delaunay/commit/f527c0cf37b76f09222800afcfc138e623957678)
+
+  Enable the request_changes_workflow in the CodeRabbit configuration to
+  allow the AI reviewer to formally request changes on pull requests. This
+  ensures that identified issues are explicitly addressed during the
+  review process rather than appearing as informational comments only.
+
+- Cover flip repair checks and quality tooling [`68deb62`](https://github.com/acgetchell/delaunay/commit/68deb6212a0860cd85776744d29ba7e76f368579)
+
+  - Add focused coverage for replacement-cell orientation helper error paths and D&gt;=4 bulk-repair canonicalization branches.
+  - Strengthen the #307 regression with a longer 4D prefix and explicit geometric-orientation validation.
+  - Add an opt-in `just semgrep` workflow, pin Semgrep in uv dev dependencies, and refresh Python tool versions.
+  - Clarify CodeRabbit/Codacy quality-scan documentation and workflow labels.
+  - Preserve profiling benchmark rustflags behavior under setup-rust-toolchain.
+
 ### Documentation
 
 - Sync documentation with post-v0.7.5 changes [skip ci] [`5fa36aa`](https://github.com/acgetchell/delaunay/commit/5fa36aa67cb99bb3a5781e4c2733c2acec3adea8)
@@ -949,6 +1128,67 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Preserve typed snapshot, rebuild, and restore errors for debuggable fallback failure paths.
   - Expose delaunayize error payload types through the focused workflow prelude and add normal-type coverage.
   - Document fallback cell-data preservation and refresh related test/docs utility updates.
+- Close the 4D bulk repair retry collapse [`3af976e`](https://github.com/acgetchell/delaunay/commit/3af976ec2f7c33d49803b24ab8f1a7da598fea0b)
+
+  - Raise the D≥4 per-insertion repair budget, add a rate-limited escalation pass, and widen local post-repair validation so the 500-point #204 repro converges
+    without skipped vertices.
+
+  - Preserve removed-cell snapshots and predecessor context in flip diagnostics, drop stale repair seeds after cavity reduction, and re-export locate conflict
+    diagnostics from the prelude.
+
+  - Replace committed `eprintln!` diagnostics in production, tests, and benches with `tracing` , using `test-debug` and `bench-logging` gates and keeping logs
+    out of Criterion hot loops.
+
+  - Document the #204 investigation, refresh the 4D known-issues and TODO notes, and record the repository logging policy plus release-visible debug environment
+    variables.
+- Enable construction retries in release builds by default [`14f0d16`](https://github.com/acgetchell/delaunay/commit/14f0d16b7de52d25d64e7d1fb810b82817e5d7b6)
+
+  Update RetryPolicy::default() to return Shuffled retries in all build
+  profiles. Previously, retries were disabled in release mode, causing
+  fatal construction failures on 3D configurations that required
+  alternative vertex insertion orders to converge. This change ensures
+  consistent behavior between debug and release builds and includes a
+  regression test for the reported failure case.
+- Periodic-aware Delaunay verification (Level 4) for toroidal triangulations
+  [`7c788aa`](https://github.com/acgetchell/delaunay/commit/7c788aa1a7e3b2a94a53193d8d5894718b6afa07)
+
+  - Thread GlobalTopologyModelAdapter through all flip-predicate evaluation
+  functions (k=2 facets, k=3 ridges, and their inverses) so insphere
+  predicates use lifted coordinates for periodic topologies.
+
+  - Add verify_delaunay_for_triangulation() as the preferred topology-aware
+  Level 4 entry point; is_delaunay_via_flips() now delegates to it.
+
+  - Add periodic lifting helpers: vertices_to_points_with_optional_lift,
+  vertex_point_lifted_into_cell, align_periodic_offset, and supporting
+  functions for offset lookup, validation, and cross-cell alignment.
+
+  - Repair paths continue to use GlobalTopology::DEFAULT (non-periodic),
+  which is correct since flip repair runs during construction.
+
+  - Add integration test reproducing the issue: toroidal_periodic 2D
+  triangulation now passes dt.validate() (Levels 1–4).
+
+  - Add doctest for verify_delaunay_for_triangulation.
+  - Add unit tests for align_periodic_offset (identity, delta shifts,
+  higher-dimension, overflow).
+- Use reference frames for periodic inverse predicates in flip repair
+  [`7c788aa`](https://github.com/acgetchell/delaunay/commit/7c788aa1a7e3b2a94a53193d8d5894718b6afa07)
+
+  Update Delaunay violation predicates to accept an optional frame cell,
+  ensuring coordinate lifting remains consistent for inverse k=2 and k=3
+  moves. This prevents verification failures in toroidal triangulations
+  where inverse simplices lack a direct matching cell in the removal
+  buffer. Additionally, document the intent and invariants of internal
+  functions across the flip and construction modules to align with
+  updated developer guidelines.
+- Harden flip repair invariants and PR quality gates [`68deb62`](https://github.com/acgetchell/delaunay/commit/68deb6212a0860cd85776744d29ba7e76f368579)
+
+  - Reject periodic external cells when replacement-cell parity constraints cannot be preserved.
+  - Canonicalize after D&gt;=4 bulk repair failures before continuing with later insertions.
+  - Consolidate fixed-bug regression coverage into tests/regressions.rs and document the pattern.
+  - Narrow CodeQL/Codacy code scanning noise while keeping curated PR quality feedback via Codacy and CodeRabbit.
+  - Stage repository-owned Semgrep rules for future cleanup without enabling broad default rule packs.
 
 ### Maintenance
 
@@ -1211,6 +1451,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Add cell creation provenance logging to fill_cavity
 - Re-export diagnostic types (DelaunayRepairDiagnostics, etc.) in prelude
 - Create comprehensive debug env var reference (docs/dev/debug_env_vars.md)
+- Add diagnostic infrastructure for v0.7.6 investigation (#306, #307)
+  [`b25dff3`](https://github.com/acgetchell/delaunay/commit/b25dff390f27bc8b34ec99fa0c45a6163b6fd723)
+
+  - Enhance conflict-region verifier with neighbor-reachability analysis
+  - Add BFS boundary logging to find_conflict_region
+  - Add orientation tracing and post-insertion audit (DELAUNAY_DEBUG_ORIENTATION)
+  - Add cell creation provenance logging to fill_cavity
+  - Re-export diagnostic types (DelaunayRepairDiagnostics, etc.) in prelude
+  - Create comprehensive debug env var reference (docs/dev/debug_env_vars.md)
 
 ### Changed
 
@@ -1236,15 +1485,50 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Split monolithic DelaunayTriangulation impl block into 6 trait-minimal
   blocks per #302 (ScalarAccumulative only where needed)
+
 - Decompose search_closed_2d_selection: extract ClosedSelectionDfs struct
   and sort_candidates_by_rarity_and_domain helper, remove clippy suppressions
+
 - Add "Which import do I need?" prelude guidance table to lib.rs
+
 - Re-enable 43 previously-ignored 3D proptests (all &lt;1s in release mode)
+
 - Audit doctests for builder migration (no changes needed; deferred to #214)
+
 - Update internal performance results for v0.7.5 [`76b2ff7`](https://github.com/acgetchell/delaunay/commit/76b2ff7c4409a8bfa8aa6b9f5362a3dfb8b67999)
 
   Refresh the performance documentation with updated benchmark metrics,
   timestamps, and commit references to align with the v0.7.5 release.
+
+- Refine explicit construction validation and error reporting
+  [`458ebae`](https://github.com/acgetchell/delaunay/commit/458ebae0fbbd6c5142f88d24c4ff254f058f9285)
+
+  Update the triangulation builder to return specific ValidationFailed
+  errors when structural invariants are violated. Refine the Delaunay
+  property check in the validation suite to use flip-based verification
+  for more precise error reporting. Expand the test suite to cover 3D
+  round-trip fidelity, non-manifold topology errors, and vertex data
+  consistency during explicit construction.
+
+- Allow manifold repair to proceed on over-shared facets [`0370070`](https://github.com/acgetchell/delaunay/commit/037007076e20728f0b23e528c89c783a1f5d2a70)
+
+  Refactor `repair_facet_oversharing` to use partial structural pre-checks
+  rather than full validation, as the latter rejects over-shared facets
+  before repair can occur. Expand test coverage for budget exhaustion,
+  cell removal logic, and repair determinism.
+
+- V0.7.5 cleanup — impl-block split, builder decomposition, prelude guidance, re-enable 3D proptests
+  [`5bf5c81`](https://github.com/acgetchell/delaunay/commit/5bf5c8192b378d320d35f0a074a57f5b7e8170ff)
+
+  - Split monolithic DelaunayTriangulation impl block into 6 trait-minimal
+  blocks per #302 (ScalarAccumulative only where needed)
+
+  - Decompose search_closed_2d_selection: extract ClosedSelectionDfs struct
+  and sort_candidates_by_rarity_and_domain helper, remove clippy suppressions
+
+  - Add "Which import do I need?" prelude guidance table to lib.rs
+  - Re-enable 43 previously-ignored 3D proptests (all &lt;1s in release mode)
+  - Audit doctests for builder migration (no changes needed; deferred to #214)
 
 ### Documentation
 
@@ -1476,6 +1760,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Add performance results for v0.7.4
 
 #### Changed: Clarify adaptive_tolerance_insphere delegation in 4D docs
+
+  Update the documentation for provable error bounds to clarify that the
+  `adaptive_tolerance_insphere` wrapper function remains available but now
+  delegates entirely to the provable `insphere_from_matrix` path.
+
+- Clarify adaptive_tolerance_insphere delegation in 4D docs [`bee1b04`](https://github.com/acgetchell/delaunay/commit/bee1b0409f19631775cbe5bfd1b0618e54380c46)
 
   Update the documentation for provable error bounds to clarify that the
   `adaptive_tolerance_insphere` wrapper function remains available but now
@@ -1945,6 +2235,111 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Add per-chunk insertion rate (pts/s) in progress output
   - Harness tests now assert on DebugOutcome::Success
 
+- Apply SoS to AdaptiveKernel::orientation() and tolerate degenerate cells
+  [`526b39e`](https://github.com/acgetchell/delaunay/commit/526b39e4c1f634208db9014793806e2e94f9c0ed)
+
+  - Apply Simulation of Simplicity to AdaptiveKernel::orientation() so
+  degenerate ties are broken deterministically (returns ±1 for all
+  distinct-point inputs, 0 only for identical f64 points)
+
+  - Tolerate degenerate cells (zero exact determinant) in orientation
+  normalization after flip-based Delaunay repair:
+
+  - promote_cells_to_positive_orientation: skip instead of error
+  - cells_require_positive_orientation_promotion: skip instead of error
+  - canonicalize_global_orientation_sign: scan past degenerate cells
+  - validate_geometric_cell_orientation: only flag negative orientation
+  - Add Hilbert-sort preprocessing dedup (Phase 4 in order_vertices_hilbert)
+  that removes vertices mapping to the same quantized grid cell
+
+  - Add per-cell coordinate uniqueness validation (DuplicateCoordinatesInCell
+  variant, CellCoordinateUniqueness invariant kind)
+
+  - Document three-layer duplicate vertex handling strategy in
+  docs/numerical_robustness_guide.md
+
+  - Update convex_hull and quality tests to accept InsufficientVertices
+  alongside GeometricDegeneracy for extreme-scale dedup inputs
+
+  - Add macro-generated dedup integration tests covering 2D–5D
+
+- Normalize SoS orientation callers and harden Hilbert dedup [`526b39e`](https://github.com/acgetchell/delaunay/commit/526b39e4c1f634208db9014793806e2e94f9c0ed)
+
+  - Refactor evaluate_cell_orientation_for_context to use robust_orientation
+  as the sole oracle, removing the duplicate kernel call
+
+  - Add robust_orientation guard in apply_bistellar_flip_with_k to reject
+  degenerate cells before kernel invocation (fixes 4D perf regression)
+
+  - Switch find_boundary_edge_split_facet to robust_orientation for true
+  collinearity/degeneracy detection instead of kernel SoS
+
+  - Use robust_orientation sign directly in build_initial_simplex, removing
+  unused kernel variable and redundant orientation call
+
+  - Extract hilbert_dedup_sorted from order_vertices_hilbert so the
+  ordering function is pure; apply dedup in
+  preprocess_vertices_for_construction after Hilbert sort regardless of
+  DedupPolicy (safety-critical for SoS identical-point failures)
+
+  - Add validate_cell_coordinate_uniqueness to validation_report with
+  CoordinateScalar bound
+
+  - Fix quantization bits table in numerical_robustness_guide.md (2D/3D
+  capped at 31 bits, not 64/42)
+
+  - Update rustdoc for cells_require_positive_orientation_promotion to
+  reflect skip-degenerate semantics
+
+  - Trim inaccurate near-duplicate claim from dedup_batch_construction docs
+  - Add SoS identical-points regression tests (2D–5D) verifying
+  AdaptiveKernel returns 0 when all cofactors vanish
+
+  - Add standalone hilbert_dedup_sorted edge-case tests
+
+- Identity-based SoS perturbation via canonical vertex ordering
+  [`a125d98`](https://github.com/acgetchell/delaunay/commit/a125d988566bb7196c025212833f3e539665e7de)
+
+  - Add canonical_points module with sorted_cell_points and
+    sorted_facet_points_with_extra helpers that sort vertices by
+    VertexKey identity before resolving to points
+
+  - Update all 5 kernel call sites (locate, flips, triangulation) to
+    use canonical ordering for consistent SoS tie-breaking
+
+  - Fix misleading error variant in find_conflict_region BFS traversal
+    (InvalidStartCell → CellDataAccessFailed)
+
+  - Add 6 unit tests including 2D/3D permutation-invariance tests
+
+- Add ExactPredicates marker trait for flip repair type safety
+  [`4877151`](https://github.com/acgetchell/delaunay/commit/48771518b2b5a8a6dd9b4036b0903f7c3158b7c9)
+
+  - Define `ExactPredicates` marker trait in `kernel.rs`, implemented for
+  `AdaptiveKernel` and `RobustKernel` but not `FastKernel`
+
+  - Add `K: ExactPredicates` bound to flip repair entry points in
+  `flips.rs` and propagate through `delaunay_triangulation.rs`,
+  `builder.rs`, and `triangulation_generation.rs`
+
+  - Add `compile_fail` doctest asserting `FastKernel` cannot satisfy the
+  bound, plus positive compile-time assertion tests for the other kernels
+
+  - Update test code to use `AdaptiveKernel` where `DelaunayTriangulation`
+  construction or flip repair is invoked
+
+  - Document the trait and its design rationale in
+  `numerical_robustness_guide.md`
+
+- Add test injection for robust-fallback coverage [`4877151`](https://github.com/acgetchell/delaunay/commit/48771518b2b5a8a6dd9b4036b0903f7c3158b7c9)
+
+  - Add FORCE_REPAIR_NONCONVERGENT thread-local and test guard
+  - Inject synthetic NonConvergent errors in repair_delaunay_with_flips
+  and maybe_repair_after_insertion to exercise robust-fallback paths
+
+  - Add tests for advanced robust fallback and insertion robust fallback
+  - Move test-only helpers into mod tests with pub(super) visibility
+
 ### Changed
 
 - Replace panicking calls with error propagation [#242](https://github.com/acgetchell/delaunay/pull/242) [#250](https://github.com/acgetchell/delaunay/pull/250)
@@ -1999,13 +2394,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - is_valid, validate, validate_at_completion, validate_after_insertion
   now return InvariantError instead of TriangulationValidationError
+
 - validate_geometric_cell_orientation returns TdsError directly
+
 - remove_vertex returns InvariantError
+
 - Add Tds variant to DelaunayTriangulationValidationError
+
 - TdsMutationError inner field made private; add as_tds_error() and
   into_inner() accessors
+
 - Remove From&lt;TdsMutationError&gt; for TriangulationValidationError
+
 - Add From&lt;ManifoldError&gt; for InvariantError
+
 - Simplify trait bounds and re-export secondary maps [#282](https://github.com/acgetchell/delaunay/pull/282)
   [`04ea024`](https://github.com/acgetchell/delaunay/commit/04ea024f7091b7f1d9406c48d673e58a07a657d3)
 
@@ -2022,6 +2424,124 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     by T: CoordinateScalar (Float → Copy; arrays are always Sized)
 
   - Keep ScalarSummable trait definition and blanket impl for future use
+
+- Address review comments for SoS orientation normalization [`526b39e`](https://github.com/acgetchell/delaunay/commit/526b39e4c1f634208db9014793806e2e94f9c0ed)
+
+  - Propagate `robust_orientation` errors in `apply_bistellar_flip_with_k`
+  instead of silently ignoring `Err` via `matches!`
+
+  - Switch `k2_flip_would_create_degenerate_cell` from kernel orientation
+  to `robust_orientation` so degenerate cells are detected under SoS;
+  remove unused `kernel` parameter
+
+  - Delegate `AdaptiveKernel::orientation()` to `robust_orientation` for
+  layers 1+2, eliminating duplicated matrix build + exact_det_sign logic
+
+  - Remove unused `kernel` parameter from `find_boundary_edge_split_facet`
+  and update call site in `extend_hull`
+
+  - Update stale rustdoc: `validate_geometric_cell_orientation` and
+  `build_initial_simplex` now reference `robust_orientation` instead of
+  kernel predicates / `K::default()`
+
+  - Add `vkeys[i] == vkeys[j]` guard in `validate_cell_coordinate_uniqueness`
+  to avoid misleading error when vertex keys are duplicated
+
+  - Replace broad `assert!(result.is_err())` in all-duplicates test with
+  precise `InsufficientVertices` match
+
+  - Decouple many-duplicates test from magic `$dim + 2` by using the
+  helper's returned distinct count
+
+  - Update docs: numerical_robustness_guide, KNOWN_ISSUES_4D,
+  ORIENTATION_SPEC, validation.md
+
+- Remove unused kernel parameter from flip-application functions
+  [`526b39e`](https://github.com/acgetchell/delaunay/commit/526b39e4c1f634208db9014793806e2e94f9c0ed)
+
+  - Replace `K: Kernel&lt;D&gt;` with `T: CoordinateScalar` in 7 functions:
+  apply_bistellar_flip_with_k, apply_bistellar_flip,
+  apply_bistellar_flip_dynamic, apply_bistellar_flip_k2/k3/k1,
+  apply_bistellar_flip_k1_inverse
+
+  - Update ~40 call sites across flips.rs, triangulation/flips.rs,
+  delaunay_triangulation.rs
+
+  - Delete ZeroOrientationKernel2d test struct (now redundant)
+  - Update ORIENTATION_SPEC.md flip pseudocode to match new signatures
+  - Address review round 3 comments: guard coordinate uniqueness
+  validation, add #[non_exhaustive] to InvariantKind, extract
+  generic flip_would_create_degenerate_cell, add nitpick tests
+
+- Reuse canonical cell ordering for query simplex construction
+  [`a125d98`](https://github.com/acgetchell/delaunay/commit/a125d988566bb7196c025212833f3e539665e7de)
+
+  Optimize the construction of the query simplex by reusing the
+  canonical vertex ordering of the cell. This ensures consistent
+  identity-based SoS perturbation and includes a safety check to
+  prevent out-of-range facet index access.
+
+- Narrow ExactPredicates bound to public repair methods only [`4877151`](https://github.com/acgetchell/delaunay/commit/48771518b2b5a8a6dd9b4036b0903f7c3158b7c9)
+
+  - Remove K: ExactPredicates from ~20 internal, construction, insertion,
+  and removal methods so FastKernel remains usable for all operations
+  except explicit Delaunay repair
+
+  - Retain ExactPredicates bound on repair_delaunay_with_flips,
+  repair_delaunay_with_flips_advanced, and rebuild_with_heuristic
+
+  - Replace run_flip_repair_fallbacks with inline robust-only fallback in
+  maybe_repair_after_insertion; remove dead code (run_flip_repair_fallbacks,
+  remap_vertex_key_by_uuid, HeuristicRebuildRecursionGuard::in_progress)
+
+  - Update with_kernel / build_with_kernel docs to note FastKernel is
+  accepted but exact kernels are recommended
+
+  - Restructure heuristic rebuild test to test_vertex_key_valid_after_explicit_heuristic_rebuild;
+  remove test_run_flip_repair_fallbacks_smoke_ok_with_local_seed
+
+- Remove redundant ScalarSummable where clauses [`4877151`](https://github.com/acgetchell/delaunay/commit/48771518b2b5a8a6dd9b4036b0903f7c3158b7c9)
+
+  - Remove 26 redundant `K::Scalar: ScalarSummable` where clauses from
+  `delaunay_triangulation.rs`; the impl block already bounds
+  `K::Scalar: ScalarAccumulative` which implies `ScalarSummable` via
+  blanket impl
+
+  - Remove unused `ScalarSummable` import
+  - Export `ExactPredicates` from `prelude::query`
+  - Update docs (numerical_robustness_guide, validation, workflows,
+  api_design) to reflect the narrowed `ExactPredicates` bound on
+  public repair methods and add `FastKernel` + `EveryN` guidance
+
+  - Add tests for non-retryable error pass-through in
+  `repair_delaunay_with_flips` and `repair_delaunay_with_flips_advanced`
+
+- Make TriangulationValidationError purely Level 3 [`99b9810`](https://github.com/acgetchell/delaunay/commit/99b9810c7aeeb91f84efba019bb199da8ee4f87a)
+
+  Remove the Tds variant from TriangulationValidationError so it contains
+  only Level 3 (topology) errors. TDS-level errors now flow through
+  InvariantError, keeping Levels 1–2 orthogonal from Level 3.
+
+  API changes:
+
+  - is_valid, validate, validate_at_completion, validate_after_insertion
+  now return InvariantError instead of TriangulationValidationError
+
+  - validate_geometric_cell_orientation returns TdsError directly
+  - remove_vertex returns InvariantError
+  - Add Tds variant to DelaunayTriangulationValidationError
+  - TdsMutationError inner field made private; add as_tds_error() and
+  into_inner() accessors
+
+  - Remove From&lt;TdsMutationError&gt; for TriangulationValidationError
+  - Add From&lt;ManifoldError&gt; for InvariantError
+
+- Categorize errors during orientation canonicalization [`dec8df9`](https://github.com/acgetchell/delaunay/commit/dec8df9f07b5e868825f31a64bee85c4a04e984d)
+
+  Distinguish structural `InsertionError` variants as `InternalInconsistency`
+  to separate algorithmic bugs from input-related `GeometricDegeneracy`
+  during post-repair orientation canonicalization. Added topology
+  validation to the issue #228 regression test to ensure manifold parity.
 
 ### Fixed
 
@@ -2043,6 +2563,77 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   to separate algorithmic bugs from input-related `GeometricDegeneracy`
   during post-repair orientation canonicalization. Added topology
   validation to the issue #228 regression test to ensure manifold parity.
+
+- Remove Morton and Lexicographic ordering, unconditional Hilbert dedup, strengthen flip assertions
+  [`526b39e`](https://github.com/acgetchell/delaunay/commit/526b39e4c1f634208db9014793806e2e94f9c0ed)
+
+  - Strengthen assert_context_has_nonzero_robust_orientation to explicitly
+  fail on Err variants instead of only checking for DEGENERATE
+
+  - Merge hilbert_dedup_sorted into order_vertices_hilbert via
+  dedup_quantized parameter, eliminating redundant re-quantization
+
+  - Make Hilbert quantized dedup unconditional (not gated on DedupPolicy)
+  - Update DedupPolicy docs to frame as performance-tuning knob
+  - Remove InsertionOrderStrategy::Morton variant and all supporting code
+  (~100 lines: morton_bits_per_coord, morton_code, order_vertices_morton)
+
+  - Remove InsertionOrderStrategy::Lexicographic variant and associated
+  tests; keep internal order_vertices_lexicographic as Hilbert fallback
+
+  - Remove Morton/Lexicographic doc references from README, invariants.md,
+  numerical_robustness_guide.md, and triangulation_generation.rs
+
+- Preserve full fallback-chain context in advanced repair errors
+  [`4877151`](https://github.com/acgetchell/delaunay/commit/48771518b2b5a8a6dd9b4036b0903f7c3158b7c9)
+
+  - Restore test_with_kernel_fast_kernel to use FastKernel (regressed when
+  ExactPredicates bound was added, now possible again after narrowing)
+
+  - Restructure repair_delaunay_with_flips_advanced fallback: when primary,
+  robust, and heuristic rebuild all fail, the HeuristicRebuildFailed error
+  now includes context from all three stages instead of losing the robust
+  fallback error
+
+  - Add test_advanced_repair_fallback_error_preserves_full_chain_context
+  asserting the composed error message includes primary, robust, and
+  heuristic failure details
+
+- Correct perturbation exponent off-by-one and improve test coverage
+  [`4c35028`](https://github.com/acgetchell/delaunay/commit/4c35028537b9011d586be3b9b234925e3ca5bb5a)
+
+  - Fix progressive scale factor: use 10^attempt instead of 10^(attempt-1)
+  so the retry ladder reaches 1e-5 × local_scale (was capped at 1e-6),
+  matching the documented "4 orders of magnitude" range
+
+  - Apply the same correction to the debug-message exponent computation
+  - Update perturbation ladder in numerical_robustness_guide.md to reflect
+  the corrected values (1e-7, 1e-6, 1e-5)
+
+  - Replace test_perturbation_f32_base_epsilon with
+  test_perturbation_epsilon_selection_and_retry: asserts mantissa_digits
+  for both f32 and f64, exercises insert_transactional with on-edge
+  near-degenerate points for both scalar types
+
+  - Add absolute expected counts to test_perturbation_scale_invariance_3d
+  to catch regressions that affect all scales equally
+
+  - Add test_perturbation_retry_and_exhaustion_4d: 4D random points
+  exercise the progressive retry loop body and exhaustion branch
+
+  - Add test_perturbation_retry_seeded_branch_4d: calls
+  insert_transactional directly with perturbation_seed != 0 to cover
+  the seeded sign-selection path
+
+- Canonicalize positive orientation after bulk construction repair
+  [`dec8df9`](https://github.com/acgetchell/delaunay/commit/dec8df9f07b5e868825f31a64bee85c4a04e984d)
+
+  - Call normalize_and_promote_positive_orientation() in
+  finalize_bulk_construction after the flip-repair block and before
+  topology validation, ensuring the global geometric sign is positive
+
+  - Update #228 regression test to expect PLManifold (was Pseudomanifold)
+  now that orientation is correctly canonicalized
 
 ### Maintenance
 
@@ -2368,6 +2959,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Document lint suppression preference (`expect` over `allow`) in
     docs/dev/rust.md
 
+- Explicitly handle zero-dimensional inputs in Hilbert index calculation
+  [`2d198e7`](https://github.com/acgetchell/delaunay/commit/2d198e7d2f1f41f1b2e47009a1cf7cc12079fe05)
+
+  Ensures correct behavior for `hilbert_indices_prequantized` when
+  the dimensionality `D` is zero. In such a space, all points map to
+  the single origin, and their Hilbert curve index is always 0.
+  This change adds an early return for this specific edge case.
+
 ### Changed
 
 - Feat/210 toroidalspace periodic [#213](https://github.com/acgetchell/delaunay/pull/213)
@@ -2503,6 +3102,109 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   also adds topological admissibility checks for flip-based repairs and
   improves error diagnostics for per-insertion failures.
 
+- Refine coherent orientation handling and validation [`350f614`](https://github.com/acgetchell/delaunay/commit/350f614c3e18d148bfc88809c28fdc2de362dd9a)
+
+  The flip algorithms now explicitly manage the local orientation of newly created cells, canonicalizing their vertex order to a positive orientation before
+  insertion. This ensures consistent orientation within individual cells as they are added.
+
+  Introduced `facet_vertex_identities_in_cell_order` to `TriangulationDataStructure` which derives canonical facet identities (vertex keys and relative periodic
+  offsets). This improves the robustness of `normalize_coherent_orientation` and `is_coherently_oriented` by ensuring consistent comparisons across facets,
+  especially in periodic domains.
+
+  Added `resolve_facet_handle_for_key` and `resolve_ridge_handle_for_key` to `flips.rs` to allow robust re-resolution of facet/ridge handles. This is necessary
+  because vertex reordering within cells (e.g., during canonicalization) can invalidate direct facet/ridge indices.
+
+  Updates documentation to reflect the new explicit orientation management strategy during flips, where post-flip normalization and validation are now standard
+  practice.
+
+  Improved error handling by boxing `source` errors in `InsertionError` , `DelaunayTriangulationConstructionErrorWithStatistics` , and
+  `TriangulationConstructionError` , reducing struct size and preventing excessive stack usage.
+
+  Enhanced robustness of `Cell::swap_vertex_slots` with additional bounds checks and `Triangulation::build_initial_simplex` to handle cases with insufficient
+  vertices more gracefully.
+
+  Added `bump_generation` in `normalize_coherent_orientation` to correctly increment the TDS generation counter when cell orientations are modified.
+
+  Expanded TDS orientation tests to include serialization, manual tampering of cell vertex order, and verification that `is_coherently_oriented` correctly
+  detects the violation.
+
+- Ignore slow higher-dimensional Delaunay proptests [`2869cfe`](https://github.com/acgetchell/delaunay/commit/2869cfea111dbca3641e7f88119d67b93a0d4841)
+
+  Mark 4D and 5D incremental insertion proptests as ignored. The exact
+  arithmetic fallback for orientation matrices larger than 4×4 is
+  currently too slow for practical test execution. This is an internal
+  change.
+
+- Improve global topology model validation and consistency [`e56265b`](https://github.com/acgetchell/delaunay/commit/e56265bafeb4a1e0e65c72b2037ab0e747af7ffa)
+
+  Enhances periodic cell offset validation by leveraging `supports_periodic_facet_signatures`.
+  Introduces robust checks for non-finite coordinates during point canonicalization
+  in toroidal models, preventing invalid states.
+  Refactors the `GlobalTopologyModelAdapter` to consistently delegate all trait
+  method calls to specific underlying topology model implementations,
+  improving maintainability.
+  Updates error messages for clarity during topology validation.
+  Optimizes `periodic_domain` to return a reference, avoiding data copies.
+  Adjusts internal module visibility and re-exports `ToroidalConstructionMode` to prelude.
+
+- Add comprehensive documentation and tests for GlobalTopologyModel
+  [`e56265b`](https://github.com/acgetchell/delaunay/commit/e56265bafeb4a1e0e65c72b2037ab0e747af7ffa)
+
+  Enhance the global_topology_model module with extensive documentation and unit test coverage:
+
+  Documentation improvements:
+
+  - Add module-level overview explaining trait abstraction and concrete implementations
+  - Enhance trait method documentation for periodic_domain() and supports_periodic_facet_signatures()
+  - Document public methods: ToroidalModel::new(), GlobalTopology::model(), GlobalTopologyModelAdapter::from_global_topology()
+
+  Test coverage (41 tests added):
+
+  - EuclideanModel: comprehensive trait method coverage
+  - SphericalModel and HyperbolicModel: scaffolded model behavior
+  - GlobalTopologyModelAdapter: delegation verification for all trait methods
+  - Error handling: zero/negative/infinite/NaN periods, non-finite coordinates
+  - Edge cases: large coordinates, exact periods, zero/large offsets, f32 scalars, 5D
+
+  Code quality improvements:
+
+  - Fix nitpick: delegate kind() and allows_boundary() in GlobalTopologyModelAdapter
+  - Fix nitpick: add NaN coordinate test for canonicalize_point_in_place
+  - Fix nitpick: add finiteness validation to lift_for_orientation with test
+  - Apply cargo fmt formatting
+  - Fix clippy warnings (float_cmp, suboptimal_flops)
+
+- Optimize facet vertex processing and improve periodic facet key determinism
+  [`e56265b`](https://github.com/acgetchell/delaunay/commit/e56265bafeb4a1e0e65c72b2037ab0e747af7ffa)
+
+  Moves the facet vertex buffer initialization to only execute on the non-periodic path,
+  avoiding unnecessary work for periodic cells and improving efficiency.
+
+  Enhances the `periodic_facet_key_from_lifted_vertices` function to ensure
+  deterministic sorting by considering both the vertex key value and its periodic
+  offset. This prevents inconsistencies when multiple lifted vertices share the same
+  base key.
+
+- Use RobustKernel for random generation and 3D examples [`14ff1b3`](https://github.com/acgetchell/delaunay/commit/14ff1b3aad4ab4c1869018d6cbbb59d2d0456fd3)
+
+  Update examples and random triangulation utilities to use RobustKernel,
+  aligning them with the core library's default. FastKernel is now
+  explicitly documented as unreliable for 3D workloads due to floating-
+  point precision issues in near-degenerate configurations. This change
+  also adds topological admissibility checks for flip-based repairs and
+  improves error diagnostics for per-insertion failures.
+
+- Adopt DelaunayTriangulationBuilder and update related documentation
+  [`a90526c`](https://github.com/acgetchell/delaunay/commit/a90526cd53be4cbe07c0add0b52ef04bd7243c3d)
+
+  Migrates benchmark and example code to consistently use the
+  DelaunayTriangulationBuilder for creating triangulations.
+  This reflects the full implementation and accessibility of toroidal
+  topology via the builder, and updates documentation across various
+  sections (API design, workflows, topology) to guide users on its
+  proper and advanced configuration. Includes internal exports for
+  ergonomic usage.
+
 ### Documentation
 
 - Update docs for DelaunayTriangulationBuilder and toroidal topology [#215](https://github.com/acgetchell/delaunay/pull/215)
@@ -2593,6 +3295,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     it (.without_global_repair_fallback()) so global repair cannot
     disrupt the image-point topology; the existing 24-attempt shuffle
     retry finds a working vertex ordering instead.
+
+- Switch default kernel from FastKernel to RobustKernel [`14ff1b3`](https://github.com/acgetchell/delaunay/commit/14ff1b3aad4ab4c1869018d6cbbb59d2d0456fd3)
+
+  - Change all convenience constructors (new, new_with_topology_guarantee,
+  new_with_options, empty, etc.) to use RobustKernel&lt;f64&gt;
+
+  - Change builder build() default to RobustKernel&lt;T&gt;
+  - Add RobustKernel to prelude::query exports
+  - Update type annotations across tests, benches, and doc tests
+  - Preserve FastKernel in tests that explicitly test it via with_kernel()
 
 ### Maintenance
 
@@ -2903,6 +3615,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   PL-manifolds, link-based validation, insertion strategies, and
   convergence considerations. Updates `README.md` and `lib.rs` to
   reference the new document. Also adds a `examples/README.md` file.
+- K=3 flip rewiring test [`5ab686c`](https://github.com/acgetchell/delaunay/commit/5ab686c2177562bdeb852fe843c946181e03753a)
+
+  Adds a test to verify correct rewiring of external neighbors
+  after a k=3 flip. This validates the boundary handling and
+  neighbor update logic in the bistellar flip implementation.
+
+  This test constructs an explicit k=3 ridge-flip fixture and
+  checks neighbor rewiring.
 
 ### Changed
 
@@ -2994,6 +3714,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Feat/ball pointgen and debug harness [#200](https://github.com/acgetchell/delaunay/pull/200)
   [`79bf0e9`](https://github.com/acgetchell/delaunay/commit/79bf0e96b0d9c4f8cbdda8539910adfa18f412a4)
+
+- Improves examples and updates doc tests [`a1bce55`](https://github.com/acgetchell/delaunay/commit/a1bce556cfd9a799f2a6aabb716443a14aaf6772)
+
+  Updates doc tests to use clearer examples and more
+  idiomatic syntax, enhancing code readability and
+  maintainability. Modifies BistellarFlipKind to use a
+  getter method. Addresses issues identified during
+  documentation review. (internal)
+
+- Refactors prelude modules for clarity (internal) [`c491bb9`](https://github.com/acgetchell/delaunay/commit/c491bb913e1b49ff38d4ce52c180d5220e9db9df)
+
+  Streamlines the prelude modules to provide clearer and more
+  focused exports for common triangulation tasks. This change
+  affects import statements in documentation and examples,
+  requiring more specific paths for certain types.
+
+- Clarifies `Vertex` constraints and moves `point` [`e69f3d1`](https://github.com/acgetchell/delaunay/commit/e69f3d153961050e03a520e5b5457a165097c834)
+
+  Clarifies the `Vertex` struct's constraints, emphasizing
+  `CoordinateScalar` requirement for geometric operations and
+  serialization but allowing combinatorial use without it.
+
+  Moves the `point` method definition to ensure consistent API
+  presentation. (Internal refactoring, no functional change).
 
 ### Documentation
 
@@ -3291,6 +4035,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   project. This change involves removing cspell configurations and
   dependencies, and integrating typos, including its configuration file.
 
+- Topology validation prelude module [`c491bb9`](https://github.com/acgetchell/delaunay/commit/c491bb913e1b49ff38d4ce52c180d5220e9db9df)
+
+  Removes the redundant topology validation prelude module.
+
+  Moves its contents into the main topology prelude, simplifying
+  module structure and reducing code duplication. This change
+  internally refactors the prelude modules for better organization.
+
 ## [0.7.0] - 2026-01-13
 
 ### ⚠️ Breaking Changes
@@ -3425,6 +4177,88 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   robust and canonical check for PL-manifoldness, ensuring that
   the link of every vertex is a sphere or ball of the appropriate
   dimension.
+
+- Exposes public topology traversal API [`3748ebb`](https://github.com/acgetchell/delaunay/commit/3748ebb24ded08154875b2be371128c77d43eed3)
+
+  Makes topology traversal APIs public for external use.
+
+  Exposes `edges()`, `incident_edges()`, and `cell_neighbors()` on the
+  `DelaunayTriangulation` struct as convenience wrappers. Updates
+  documentation, examples, and benchmarks to use new API.
+
+  This allows external users to traverse the triangulation's topology
+  without needing to access internal implementation details.
+
+- Expose topology query APIs on DelaunayTriangulation [`3748ebb`](https://github.com/acgetchell/delaunay/commit/3748ebb24ded08154875b2be371128c77d43eed3)
+
+  Exposes cell and vertex query APIs on `DelaunayTriangulation` for zero-allocation topology traversal.
+
+  Also includes internal refactoring to improve vertex incidence
+  validation and ensure more robust handling of invalid key references.
+  Now TDS validation detects isolated vertices.
+
+- Rename SimplexCounts to FVector for clarity [`561a259`](https://github.com/acgetchell/delaunay/commit/561a259d58401d2baa61cd6313dd0ada01179f4a)
+
+  Renames the `SimplexCounts` struct to `FVector` to better reflect
+  its mathematical meaning as the f-vector in topology, representing
+  the counts of simplices of different dimensions.
+
+  This change improves code readability and aligns the naming
+  convention with standard topological terminology.
+  (Internal refactoring, no API change.)
+
+- Improves simplex generation algorithm [`561a259`](https://github.com/acgetchell/delaunay/commit/561a259d58401d2baa61cd6313dd0ada01179f4a)
+
+  Improves the algorithm for generating simplex combinations in
+  the Euler characteristic calculation. This change enhances
+  efficiency by using a lexicographic approach to generate
+  combinations, reducing unnecessary computations.
+
+- Updates topology guarantee defaults and validation [`dfdba5a`](https://github.com/acgetchell/delaunay/commit/dfdba5a745d6a41b4fa92d66b71c0c3d3dc87e54)
+
+  Updates the default topology guarantee to `Pseudomanifold` for new
+  triangulations and deserialized triangulations. Also, clarifies
+  validation policy and its relationship to topology guarantees in
+  documentation. Introduces a test-only function to repair degenerate
+  cells by removing them and clearing dangling references.
+
+- Improves PL-manifold validation with vertex-link check [`dfdba5a`](https://github.com/acgetchell/delaunay/commit/dfdba5a745d6a41b4fa92d66b71c0c3d3dc87e54)
+
+  Replaces ridge-link validation with vertex-link validation for
+  PL-manifold topology guarantee. This change provides a more
+  robust and canonical check for PL-manifoldness, ensuring that
+  the link of every vertex is a sphere or ball of the appropriate
+  dimension.
+
+### Fixed
+
+- Improves robustness of incremental insertion [`561a259`](https://github.com/acgetchell/delaunay/commit/561a259d58401d2baa61cd6313dd0ada01179f4a)
+
+  Addresses rare topological invalidations during incremental
+  insertion by:
+
+  - Adding connectedness validation to conflict region checks.
+
+  - Adding codimension-2 boundary manifoldness validation
+    ("no boundary of boundary") to triangulation's `is_valid`
+    method.
+
+  - Ensuring that strict Level 3 validation is enabled during
+    batch construction in debug builds.
+  Refs: feat/la-stack-ldlt-factorization
+
+- Corrects triangulation perturbation logic [`dfdba5a`](https://github.com/acgetchell/delaunay/commit/dfdba5a745d6a41b4fa92d66b71c0c3d3dc87e54)
+
+  Fixes a bug in the vertex insertion perturbation logic that
+  caused non-equivalent results when translating the input
+  point set by using a translation-invariant anchor for
+  perturbation scaling.
+
+  Also, preserves the caller-provided vertex UUID across
+  perturbation retries to maintain vertex identity.
+
+  Updates documentation on topology guarantees to clarify
+  manifoldness invariants.
 
 ### Maintenance
 
