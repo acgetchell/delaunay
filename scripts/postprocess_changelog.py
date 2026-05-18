@@ -133,6 +133,25 @@ _CHANGELOG_CATEGORY_ORDER = [
     "Dependencies",
 ]
 
+_CANONICAL_TEXT_REPLACEMENTS = {
+    "Rename test-debug feature to diagnostics": "Rename diagnostics feature flag",
+    "Rename diagnostics feature to diagnostics": "Rename diagnostics feature flag",
+    "Gate diagnostics behind test-debug": "Gate public diagnostic exports behind diagnostics",
+    "Gate diagnostics behind diagnostics": "Gate public diagnostic exports behind diagnostics",
+    "Replace the test-debug feature with diagnostics": "Use the diagnostics feature flag",
+    "test-debug": "diagnostics",
+}
+
+
+SyntheticEntries = dict[str, list[list[str]]]
+
+
+def _canonicalize_changelog_terms(text: str) -> str:
+    """Apply canonical wording to generated changelog text."""
+    for old, new in _CANONICAL_TEXT_REPLACEMENTS.items():
+        text = text.replace(old, new)
+    return text
+
 
 def _plain_summary(text: str) -> str:
     """Return a normalized comparison key for changelog entry text."""
@@ -226,15 +245,7 @@ def _synthetic_entry_body_line(line: str) -> str:
 
 def _squash_body_entry_children(lines: list[str], heading_idx: int) -> list[str]:
     """Collect body lines that belong to one squash-body pseudo-commit."""
-    children: list[str] = []
-
-    for idx in range(heading_idx + 1, len(lines)):
-        line = lines[idx]
-        if _is_changelog_boundary_heading(line) or line.startswith("- "):
-            break
-        if idx != heading_idx and _is_squash_heading_candidate(lines, idx):
-            break
-        children.append(_synthetic_entry_body_line(line))
+    children = [_synthetic_entry_body_line(lines[idx]) for idx in range(heading_idx + 1, _squash_body_entry_end(lines, heading_idx))]
 
     while children and not children[0].strip():
         children.pop(0)
@@ -242,6 +253,17 @@ def _squash_body_entry_children(lines: list[str], heading_idx: int) -> list[str]
         children.pop()
 
     return children
+
+
+def _squash_body_entry_end(lines: list[str], heading_idx: int) -> int:
+    """Return the exclusive end index for a squash-body pseudo-commit block."""
+    for idx in range(heading_idx + 1, len(lines)):
+        line = lines[idx]
+        if _is_changelog_boundary_heading(line) or line.startswith("- "):
+            return idx
+        if idx != heading_idx and _is_squash_heading_candidate(lines, idx):
+            return idx
+    return len(lines)
 
 
 def _category_sort_key(category: str) -> int:
@@ -303,48 +325,85 @@ def _insert_synthetic_squash_entries(lines: list[str], start: int, end: int, ent
     return lines
 
 
-def _synthetic_squash_entries_for_section(section_lines: list[str]) -> dict[str, list[list[str]]]:
+def _entry_summary_and_commit_link(line: str) -> tuple[str, str] | None:
+    """Return the normalized summary and commit link for a generated entry line."""
+    if not (line.startswith("- ") and _COMMIT_LINK_RE.search(line)):
+        return None
+    match = _COMMIT_LINK_RE.search(line)
+    return _plain_summary(line), match.group(0).strip() if match is not None else ""
+
+
+def _is_indented_squash_heading_candidate(section_lines: list[str], idx: int, raw_line: str) -> bool:
+    """Return whether a line is an indented squash-body pseudo-commit."""
+    return raw_line.startswith("  ") and _is_isolated_body_heading(section_lines, idx)
+
+
+def _mirrored_squash_entry(
+    section_lines: list[str],
+    idx: int,
+    line: str,
+    current_entry_context: tuple[str | None, str],
+    existing_summaries: set[str],
+) -> tuple[str, list[str]] | None:
+    """Build a mirrored top-level changelog entry from one squash-body heading."""
+    current_entry_summary, current_entry_commit_link = current_entry_context
+    parts = _squash_heading_parts(line)
+    if parts is None:
+        return None
+
+    if _is_duplicate_squash_heading(line, current_entry_summary):
+        return None
+
+    _, category, title = parts
+    summary = _squash_heading_title_for_entry(title)
+    entry_key = _plain_summary(f"- {summary}")
+    if not summary or entry_key in existing_summaries:
+        return None
+
+    existing_summaries.add(entry_key)
+    entry_line = f"- {summary}"
+    if current_entry_commit_link:
+        entry_line = f"{entry_line} {current_entry_commit_link}"
+
+    entry = [entry_line]
+    children = _squash_body_entry_children(section_lines, idx)
+    if children:
+        entry.append("")
+        entry.extend(children)
+    entry.append("")
+    return category, entry
+
+
+def _synthetic_squash_entries_for_section(section_lines: list[str]) -> SyntheticEntries:
     """Collect mirrored squash-body entries for one version section."""
     existing_summaries = {_plain_summary(line) for line in section_lines if line.startswith("- ")}
-    entries_by_category: dict[str, list[list[str]]] = {}
+    entries_by_category: SyntheticEntries = {}
     current_entry_summary: str | None = None
     current_entry_commit_link = ""
 
     for local_idx, raw_line in enumerate(section_lines):
         line = _squash_heading_line(raw_line)
-        if line.startswith("- ") and _COMMIT_LINK_RE.search(line):
-            current_entry_summary = _plain_summary(line)
-            match = _COMMIT_LINK_RE.search(line)
-            current_entry_commit_link = match.group(0).strip() if match is not None else ""
+        entry_context = _entry_summary_and_commit_link(line)
+        if entry_context is not None:
+            current_entry_summary, current_entry_commit_link = entry_context
             continue
         if _is_changelog_boundary_heading(line):
             current_entry_summary = None
             current_entry_commit_link = ""
             continue
-        if not _is_isolated_body_heading(section_lines, local_idx):
+        if not _is_indented_squash_heading_candidate(section_lines, local_idx, raw_line):
             continue
 
-        parts = _squash_heading_parts(line)
-        if parts is None or _is_duplicate_squash_heading(line, current_entry_summary):
+        mirrored = _mirrored_squash_entry(
+            section_lines,
+            local_idx,
+            line,
+            (current_entry_summary, current_entry_commit_link),
+            existing_summaries,
+        )
+        if mirrored is None:
             continue
-
-        _, category, title = parts
-        summary = _squash_heading_title_for_entry(title)
-        entry_key = _plain_summary(f"- {summary}")
-        if not summary or entry_key in existing_summaries:
-            continue
-        existing_summaries.add(entry_key)
-
-        entry_line = f"- {summary}"
-        if current_entry_commit_link:
-            entry_line = f"{entry_line} {current_entry_commit_link}"
-
-        entry = [entry_line]
-        children = _squash_body_entry_children(section_lines, local_idx)
-        if children:
-            entry.append("")
-            entry.extend(children)
-        entry.append("")
+        category, entry = mirrored
         entries_by_category.setdefault(category, []).append(entry)
 
     return entries_by_category
@@ -372,7 +431,8 @@ def _mirror_squash_body_entries(text: str) -> str:
         section_lines = lines[start:end]
         entries_by_category = _synthetic_squash_entries_for_section(section_lines)
         if entries_by_category:
-            lines = _insert_synthetic_squash_entries(lines, start, end, entries_by_category)
+            section_lines = _insert_synthetic_squash_entries(section_lines, 0, len(section_lines), entries_by_category)
+            lines[start:end] = section_lines
 
     return "\n".join(lines)
 
@@ -855,6 +915,8 @@ def _normalize_body_line(
 
 def postprocess_text(text: str) -> str:
     """Apply changelog markdown hygiene transforms to *text*."""
+    text = _canonicalize_changelog_terms(text)
+
     # Mirror squash-body conventional commit headings before summaries/reflow.
     text = _mirror_squash_body_entries(text)
 

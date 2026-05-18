@@ -645,6 +645,23 @@ class TestSquashHeadingNormalization:
         assert "### Documentation" in result
         assert "- Replace Node markdown tooling with rumdl" in result
         assert "#### Fixed: Align markdown lint policy" in result
+        assert "#### Documentation: Refresh release guidance" in result
+
+    def test_full_pipeline_mirrors_squash_body_from_non_maintenance_section(self) -> None:
+        content = (
+            "# Changelog\n\n"
+            "## [1.0.0]\n\n"
+            "### Changed\n\n"
+            f"- Refine insertion behavior {_commit('a6ec3fa', 'a6ec3fadeadbeef')}\n\n"
+            "  * fix: add rollback on cell creation failure\n\n"
+            "    - Keep failed insertions atomic.\n"
+        )
+
+        result = postprocess_text(content)
+
+        assert f"- Add rollback on cell creation failure {_commit('a6ec3fa', 'a6ec3fadeadbeef')}" in result
+        assert "#### Fixed: Add rollback on cell creation failure" in result
+        assert "  - Keep failed insertions atomic." in result
 
     def test_full_pipeline_does_not_mirror_duplicate_parent_heading(self) -> None:
         content = (
@@ -661,6 +678,21 @@ class TestSquashHeadingNormalization:
         assert result.count("- Instrument large-scale debugging") == 1
         assert "#### Added: Instrument large-scale debugging" not in result
         assert "  - Keep this detail under the parent entry." in result
+
+    def test_full_pipeline_canonicalizes_feature_names_before_deduplication(self) -> None:
+        content = (
+            "# Changelog\n\n"
+            "## [1.0.0]\n\n"
+            "### Fixed\n\n"
+            f"- Gate diagnostics behind test-debug {_commit('5d8a9ff', '5d8a9ffdeadbeef')}\n\n"
+            "  - Replace profile-based public diagnostic exports with the documented test-debug feature.\n"
+        )
+
+        result = postprocess_text(content)
+
+        assert "test-debug" not in result
+        assert "Gate public diagnostic exports behind diagnostics" in result
+        assert "documented diagnostics feature" in result
 
 
 class TestCodeBlockLanguage:

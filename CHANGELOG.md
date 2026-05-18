@@ -76,6 +76,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Update generated benchmark-summary guidance to surface `just bench-perf-summary`,
     current Criterion metadata, and large-scale characterization defaults.
 
+### Fixed
+
+- Surface squash-body commit entries [`27116dd`](https://github.com/acgetchell/delaunay/commit/27116ddc1b292ef2f361491a2454a66f126dcaca)
+
+  - Mirror conventional pseudo-commit headings from squash merge bodies into their matching changelog sections while preserving the primary PR entry.
+  - Regenerate active and archived changelogs so historical squash-body fixes, docs, maintenance, and performance notes appear under the right headings.
+  - Resolve production-review hygiene by clarifying Cargo feature gates, relabeling TDS UUID-map invariants, and recording UUID panic paths as test-only.
+
 ### Maintenance
 
 - Replace Node markdown tooling with rumdl [#394](https://github.com/acgetchell/delaunay/pull/394)
@@ -181,9 +189,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Use DoS-resistant hashing for coordinate-derived buckets and gate insertion timing telemetry to callers that consume it.
   - Normalize root and archived changelog markdown through shared post-processing.
   - Simplify validation telemetry, predicate helpers, cache invalidation, and prelude coverage without changing the correctness/performance contracts.
-- Rename test-debug feature to diagnostics [`5d8a9ff`](https://github.com/acgetchell/delaunay/commit/5d8a9ff3bfd260636a8fa4209cb00801c134aaa5)
+- Rename diagnostics feature flag [`5d8a9ff`](https://github.com/acgetchell/delaunay/commit/5d8a9ff3bfd260636a8fa4209cb00801c134aaa5)
 
-  - Replace the test-debug feature with diagnostics for opt-in diagnostic helpers and verbose test diagnostics.
+  - Use the diagnostics feature flag for opt-in diagnostic helpers and verbose test diagnostics.
   - Add prelude::diagnostics for debug verification helpers while keeping focused preludes narrow and orthogonal.
   - Move diagnostic helper exports out of unrelated focused preludes and update cfg gates, tests, docs, and just recipes.
   - Document that focused preludes should favor precise taxonomy over backwards compatibility for unrelated re-exports.
@@ -253,9 +261,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Add a Semgrep rule and fixture coverage for examples and benchmarks that bypass focused preludes.
   - Verify pinned shfmt binaries in CI with explicit SHA256 values instead of downloading a missing upstream checksum file.
 
-- Gate diagnostics behind test-debug [`5d8a9ff`](https://github.com/acgetchell/delaunay/commit/5d8a9ff3bfd260636a8fa4209cb00801c134aaa5)
+- Gate public diagnostic exports behind diagnostics [`5d8a9ff`](https://github.com/acgetchell/delaunay/commit/5d8a9ff3bfd260636a8fa4209cb00801c134aaa5)
 
-  - Replace profile-based public diagnostic exports with the documented test-debug feature.
+  - Replace profile-based public diagnostic exports with the documented diagnostics feature.
   - Keep debug-only helper definitions and diagnostic call sites aligned with feature-gated API visibility.
   - Allow hidden doctest prelude imports in the Semgrep prelude-import rule.
 
@@ -325,7 +333,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Pin GitHub workflow tool versions and update action SHAs for cache, artifact upload, install-action, and SARIF upload.
 - Exclude Semgrep fixtures from Codacy analysis so intentional rule-test violations do not surface as production issues.
 - Add a cargo-machete backed just unused-deps recipe for checking unused direct dependencies.
-- Gate convex hull test diagnostics behind test-debug tracing instead of unconditional stdout output.
+- Gate convex hull test diagnostics behind diagnostics tracing instead of unconditional stdout output.
 - Add Hilbert ordering and zero-dimensional sort coverage for Codecov patch gaps.
 
 #### Fixed: Harden Hilbert ordering errors and prelude checks [#338](https://github.com/acgetchell/delaunay/pull/338)
@@ -352,15 +360,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Harden Codacy SARIF handling so empty analyses skip upload cleanly instead of creating noisy code-scanning results.
 - Document the new prelude structure and update guides to use public prelude imports.
 
-#### Fixed: Gate diagnostics behind test-debug
+#### Fixed: Gate public diagnostic exports behind diagnostics
 
-- Replace profile-based public diagnostic exports with the documented test-debug feature.
+- Replace profile-based public diagnostic exports with the documented diagnostics feature.
 - Keep debug-only helper definitions and diagnostic call sites aligned with feature-gated API visibility.
 - Allow hidden doctest prelude imports in the Semgrep prelude-import rule.
 
-#### Changed: Rename test-debug feature to diagnostics
+#### Changed: Rename diagnostics feature flag
 
-- Replace the test-debug feature with diagnostics for opt-in diagnostic helpers and verbose test diagnostics.
+- Use the diagnostics feature flag for opt-in diagnostic helpers and verbose test diagnostics.
 - Add prelude::diagnostics for debug verification helpers while keeping focused preludes narrow and orthogonal.
 - Move diagnostic helper exports out of unrelated focused preludes and update cfg gates, tests, docs, and just recipes.
 - Document that focused preludes should favor precise taxonomy over backwards compatibility for unrelated re-exports.
@@ -509,7 +517,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Pin GitHub workflow tool versions and update action SHAs for cache, artifact upload, install-action, and SARIF upload.
   - Exclude Semgrep fixtures from Codacy analysis so intentional rule-test violations do not surface as production issues.
   - Add a cargo-machete backed just unused-deps recipe for checking unused direct dependencies.
-  - Gate convex hull test diagnostics behind test-debug tracing instead of unconditional stdout output.
+  - Gate convex hull test diagnostics behind diagnostics tracing instead of unconditional stdout output.
   - Add Hilbert ordering and zero-dimensional sort coverage for Codecov patch gaps.
 
 ### Performance
@@ -809,7 +817,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Preserve removed-cell snapshots and predecessor context in flip diagnostics, drop stale repair seeds after cavity reduction, and re-export locate conflict
   diagnostics from the prelude.
 
-- Replace committed `eprintln!` diagnostics in production, tests, and benches with `tracing` , using `test-debug` and `bench-logging` gates and keeping logs
+- Replace committed `eprintln!` diagnostics in production, tests, and benches with `tracing` , using `diagnostics` and `bench-logging` gates and keeping logs
   out of Criterion hot loops.
 
 - Document the #204 investigation, refresh the 4D known-issues and TODO notes, and record the repository logging policy plus release-visible debug environment
@@ -1136,7 +1144,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Preserve removed-cell snapshots and predecessor context in flip diagnostics, drop stale repair seeds after cavity reduction, and re-export locate conflict
     diagnostics from the prelude.
 
-  - Replace committed `eprintln!` diagnostics in production, tests, and benches with `tracing` , using `test-debug` and `bench-logging` gates and keeping logs
+  - Replace committed `eprintln!` diagnostics in production, tests, and benches with `tracing` , using `diagnostics` and `bench-logging` gates and keeping logs
     out of Criterion hot loops.
 
   - Document the #204 investigation, refresh the 4D known-issues and TODO notes, and record the repository logging policy plus release-visible debug environment
