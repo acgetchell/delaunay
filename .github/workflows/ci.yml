@@ -31,7 +31,7 @@ env:
   SHFMT_SHA256_LINUX_AMD64: "fb096c5d1ac6beabbdbaa2874d025badb03ee07929f0c9ff67563ce8c75398b1"
   TAPLO_VERSION: "0.10.0"
   TYPOS_VERSION: "1.46.1"
-  UV_VERSION: "0.11.8"
+  UV_VERSION: "0.11.14"
 
 jobs:
   build:

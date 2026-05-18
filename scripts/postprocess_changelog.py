@@ -55,6 +55,9 @@ _PR_LINK_RE = re.compile(r"\[#(\d+)\]\(https://github\.com/[^)]+/pull/\d+\)")
 # Commit-hash link to strip from summary lines.
 _COMMIT_LINK_RE = re.compile(r"\s*\[`[a-f0-9]{7}`\]\(https://github\.com/[^)]+/commit/[a-f0-9]+\)")
 
+# Commit id inside generated commit links.
+_COMMIT_ID_RE = re.compile(r"/commit/([a-f0-9]+)\)")
+
 # Leading git-cliff breaking marker to strip from normalized comparison keys.
 _BREAKING_MARKER_RE = re.compile(r"^\s*(?:[-*]\s+)?\[?\*\*breaking\*\*\]?\s*", re.IGNORECASE)
 
@@ -79,6 +82,13 @@ _ENTRY_ATX_HEADING_RE = re.compile(r"^#{2,3}\s+(?P<title>.*?)(?:\s+#+\s*)?$")
 
 # ATX headings after normalization. Used for final heading-specific cleanup.
 _ATX_HEADING_RE = re.compile(r"^(?P<level>#{1,6})\s+(?P<title>.*?)(?:\s+#+\s*)?$")
+
+# Follow-up suffixes added when duplicate historical body headings are rendered
+# inside one release section.
+_FOLLOWUP_HEADING_SUFFIX_RE = re.compile(r"\s+-\s+Follow-up(?:\s+\d+)?$")
+
+# Markdown code spans used in generated heading titles.
+_CODE_SPAN_RE = re.compile(r"`([^`]*)`")
 
 # Bare glob-like identifiers in headings can be parsed as emphasis by linters.
 _WILDCARD_IDENTIFIER_RE = re.compile(r"(?<![`A-Za-z0-9_])([A-Za-z_][A-Za-z0-9_]*\*+[A-Za-z0-9_*]*)(?![`A-Za-z0-9_])")
@@ -134,6 +144,7 @@ _CHANGELOG_CATEGORY_ORDER = [
 ]
 
 _CANONICAL_TEXT_REPLACEMENTS = {
+    "so `test-debug` cannot be reintroduced": "so pre-rename wording cannot be reintroduced",
     "Rename test-debug feature to diagnostics": "Rename diagnostics feature flag",
     "Rename diagnostics feature to diagnostics": "Rename diagnostics feature flag",
     "Gate diagnostics behind test-debug": "Gate public diagnostic exports behind diagnostics",
@@ -144,6 +155,8 @@ _CANONICAL_TEXT_REPLACEMENTS = {
 
 
 SyntheticEntries = dict[str, list[list[str]]]
+DuplicateEntryKey = tuple[str, str, str]
+ContextualEntryRanges = dict[DuplicateEntryKey, dict[int, list[tuple[int, int]]]]
 
 
 def _canonicalize_changelog_terms(text: str) -> str:
@@ -151,6 +164,11 @@ def _canonicalize_changelog_terms(text: str) -> str:
     for old, new in _CANONICAL_TEXT_REPLACEMENTS.items():
         text = text.replace(old, new)
     return text
+
+
+def _strip_code_spans(text: str) -> str:
+    """Return *text* with markdown code-span delimiters removed."""
+    return _CODE_SPAN_RE.sub(r"\1", text)
 
 
 def _plain_summary(text: str) -> str:
@@ -433,6 +451,254 @@ def _mirror_squash_body_entries(text: str) -> str:
         if entries_by_category:
             section_lines = _insert_synthetic_squash_entries(section_lines, 0, len(section_lines), entries_by_category)
             lines[start:end] = section_lines
+
+    return "\n".join(lines)
+
+
+def _commit_identity(line: str) -> str | None:
+    """Return the short commit id embedded in a generated changelog line."""
+    match = _COMMIT_ID_RE.search(line)
+    if match is None:
+        return None
+    return match.group(1)[:7]
+
+
+def _entry_commit_identity(lines: list[str], start: int) -> str | None:
+    """Return the commit id for a generated entry, allowing wrapped links."""
+    for line in lines[start : min(start + 3, len(lines))]:
+        commit = _commit_identity(line)
+        if commit is not None:
+            return commit
+        if not line.strip():
+            break
+    return None
+
+
+def _is_generated_entry_start(lines: list[str], idx: int) -> bool:
+    """Return true for a top-level generated changelog entry with a commit link."""
+    return lines[idx].startswith("- ") and _entry_commit_identity(lines, idx) is not None
+
+
+def _strip_contextual_category(title: str) -> str:
+    """Remove a leading changelog category prefix from an entry-local heading."""
+    prefix, separator, rest = title.partition(":")
+    if separator and prefix in _CHANGELOG_CATEGORY_ORDER:
+        return rest.strip()
+    return title.strip()
+
+
+def _has_contextual_category_prefix(title: str) -> bool:
+    """Return true when a level-4 heading starts with a changelog category."""
+    prefix, separator, _rest = title.partition(":")
+    return bool(separator and prefix in _CHANGELOG_CATEGORY_ORDER)
+
+
+def _canonical_duplicate_title(title: str) -> str:
+    """Return a stable comparison key for duplicate changelog entry titles."""
+    title = _COMMIT_LINK_RE.sub("", title)
+    title = _PR_LINK_RE.sub("", title)
+    title = _strip_code_spans(title)
+    title = _strip_contextual_category(title)
+    title = _FOLLOWUP_HEADING_SUFFIX_RE.sub("", title).strip()
+    title = _DUPLICATE_HEADING_REPLACEMENTS.get(title.casefold(), title)
+    return _plain_summary(title)
+
+
+def _duplicate_body_key(lines: list[str]) -> str:
+    """Return a stable comparison key for changelog entry body lines."""
+    key_lines: list[str] = []
+    for line in lines:
+        line = _canonicalize_changelog_terms(line)
+        line = _BULLET_SYMBOL_RE.sub(r"\1- ", line)
+        line = _STAR_LIST_RE.sub(r"\1- ", line)
+        line = _LIST_MARKER_SPACE_RE.sub(r"\1 ", line)
+        line = _COMMIT_LINK_RE.sub("", line)
+        line = _PR_LINK_RE.sub("", line)
+        line = _strip_code_spans(line)
+        stripped = line.strip()
+        if not stripped:
+            continue
+
+        heading = _ATX_HEADING_RE.match(stripped)
+        if heading is not None and heading.group("level") == "####":
+            key_lines.append(f"heading:{_canonical_duplicate_title(heading.group('title'))}")
+            continue
+
+        stripped = re.sub(r"^[-*]\s+", "", stripped)
+        key_lines.append(re.sub(r"\s+", " ", stripped).casefold())
+
+    return "\n".join(key_lines)
+
+
+def _top_level_entry_end(lines: list[str], start: int) -> int:
+    """Return the exclusive end index for a top-level changelog list entry."""
+    for idx in range(start + 1, len(lines)):
+        if _is_generated_entry_start(lines, idx) or _is_changelog_boundary_heading(lines[idx]):
+            return idx
+    return len(lines)
+
+
+def _contextual_heading_end(lines: list[str], start: int) -> int:
+    """Return the exclusive end index for an entry-local level-4 heading."""
+    start_heading = _ATX_HEADING_RE.match(lines[start])
+    include_child_headings = bool(start_heading and _has_contextual_category_prefix(start_heading.group("title").strip()))
+    for idx in range(start + 1, len(lines)):
+        if _is_generated_entry_start(lines, idx) or _is_changelog_boundary_heading(lines[idx]):
+            return idx
+        if lines[idx].startswith("#### "):
+            if not include_child_headings:
+                return idx
+            heading = _ATX_HEADING_RE.match(lines[idx])
+            if heading is not None and _has_contextual_category_prefix(heading.group("title").strip()):
+                return idx
+    return len(lines)
+
+
+def _top_level_entry_key(lines: list[str], start: int, end: int) -> DuplicateEntryKey | None:
+    """Return the duplicate-comparison key for a generated top-level entry."""
+    commit = _entry_commit_identity(lines, start)
+    if commit is None:
+        return None
+    title = _canonical_duplicate_title(lines[start])
+    body = _duplicate_body_key(lines[start + 1 : end])
+    if not title or not body:
+        return None
+    return commit, title, body
+
+
+def _contextual_entry_key(lines: list[str], start: int, parent_commit: str | None) -> DuplicateEntryKey | None:
+    """Return the duplicate-comparison key for an entry-local heading block."""
+    if parent_commit is None:
+        return None
+    heading = _ATX_HEADING_RE.match(lines[start])
+    if heading is None or heading.group("level") != "####":
+        return None
+    end = _contextual_heading_end(lines, start)
+    title = _canonical_duplicate_title(heading.group("title"))
+    body = _duplicate_body_key(lines[start + 1 : end])
+    if not title or not body:
+        return None
+    return parent_commit, title, body
+
+
+def _contextual_duplicate_sources(lines: list[str]) -> ContextualEntryRanges:
+    """Collect contextual entry keys and the top-level entries that contain them."""
+    sources: ContextualEntryRanges = {}
+    parent_commit: str | None = None
+    parent_start: int | None = None
+
+    for idx, line in enumerate(lines):
+        if _is_generated_entry_start(lines, idx):
+            parent_commit = _entry_commit_identity(lines, idx)
+            parent_start = idx
+            continue
+        if _is_changelog_boundary_heading(line):
+            parent_commit = None
+            parent_start = None
+            continue
+        if not line.startswith("#### ") or parent_start is None:
+            continue
+
+        key = _contextual_entry_key(lines, idx, parent_commit)
+        if key is not None:
+            end = _contextual_heading_end(lines, idx)
+            sources.setdefault(key, {}).setdefault(parent_start, []).append((idx, end))
+
+    return sources
+
+
+def _rewrite_followup_heading(line: str) -> str:
+    """Remove redundant follow-up suffixes from retained contextual headings."""
+    heading = _ATX_HEADING_RE.match(line)
+    if heading is None or heading.group("level") != "####":
+        return line
+
+    title = heading.group("title").strip()
+    stripped = _FOLLOWUP_HEADING_SUFFIX_RE.sub("", title).strip()
+    if stripped == title:
+        return line
+
+    stripped = _DUPLICATE_HEADING_REPLACEMENTS.get(stripped.casefold(), stripped)
+    return f"#### {stripped}"
+
+
+def _remove_empty_changelog_categories(lines: list[str]) -> list[str]:
+    """Remove generated release categories that no longer contain entries."""
+    result: list[str] = []
+    idx = 0
+    removable = set(_CHANGELOG_CATEGORY_ORDER)
+
+    while idx < len(lines):
+        line = lines[idx]
+        if line.startswith("### ") and line.removeprefix("### ").strip() in removable:
+            cursor = idx + 1
+            while cursor < len(lines) and not lines[cursor].strip():
+                cursor += 1
+            if cursor >= len(lines) or lines[cursor].startswith("### ") or _VERSION_RE.match(lines[cursor]):
+                idx = cursor
+                continue
+
+        result.append(line)
+        idx += 1
+
+    return result
+
+
+def _contextual_duplicate_cleanup_plan(
+    section_lines: list[str],
+    contextual_sources: ContextualEntryRanges,
+) -> tuple[set[int], set[int]]:
+    """Return top-level entries to skip and contextual lines to normalize."""
+    skip_entry_starts: set[int] = set()
+    followup_rewrite_lines: set[int] = set()
+    idx = 0
+
+    while idx < len(section_lines):
+        if not _is_generated_entry_start(section_lines, idx):
+            idx += 1
+            continue
+
+        entry_end = _top_level_entry_end(section_lines, idx)
+        key = _top_level_entry_key(section_lines, idx, entry_end)
+        duplicate_ranges = contextual_sources.get(key, {}) if key is not None else {}
+        other_sources = [source for source in duplicate_ranges if source != idx]
+        if other_sources:
+            skip_entry_starts.add(idx)
+            for source in other_sources:
+                for range_start, range_end in duplicate_ranges[source]:
+                    followup_rewrite_lines.update(range(range_start, range_end))
+        idx = entry_end
+
+    return skip_entry_starts, followup_rewrite_lines
+
+
+def _deduplicate_contextual_squash_entries(text: str) -> str:
+    """Drop standalone entries that exactly duplicate retained contextual notes."""
+    lines = text.split("\n")
+    boundaries = [idx for idx, line in enumerate(lines) if _VERSION_RE.match(line)]
+    if not boundaries:
+        return text
+
+    for boundary_idx in reversed(range(len(boundaries))):
+        start = boundaries[boundary_idx]
+        end = boundaries[boundary_idx + 1] if boundary_idx + 1 < len(boundaries) else len(lines)
+        section_lines = lines[start:end]
+        contextual_sources = _contextual_duplicate_sources(section_lines)
+        skip_entry_starts, followup_rewrite_lines = _contextual_duplicate_cleanup_plan(section_lines, contextual_sources)
+        result: list[str] = []
+
+        idx = 0
+        while idx < len(section_lines):
+            line = section_lines[idx]
+            if idx in skip_entry_starts:
+                idx = _top_level_entry_end(section_lines, idx)
+                continue
+            if idx in followup_rewrite_lines:
+                line = _rewrite_followup_heading(line)
+            result.append(line)
+            idx += 1
+
+        lines[start:end] = _remove_empty_changelog_categories(result)
 
     return "\n".join(lines)
 
@@ -979,6 +1245,7 @@ def postprocess_text(text: str) -> str:
 
     # 1. Reassemble and strip trailing blank lines.
     text = "\n".join(result)
+    text = _deduplicate_contextual_squash_entries(text)
     return text.rstrip("\n") + "\n"
 
 

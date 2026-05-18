@@ -638,11 +638,9 @@ class TestSquashHeadingNormalization:
 
         result = postprocess_text(content)
 
-        assert f"- Align markdown lint policy {_commit('5654d14', '5654d14deadbeef')}" in result
+        assert f"- Align markdown lint policy {_commit('5654d14', '5654d14deadbeef')}" not in result
         assert "  - Scope Codacy markdownlint to active Markdown docs." in result
-        assert f"- Refresh release guidance {_commit('5654d14', '5654d14deadbeef')}" in result
-        assert "### Fixed" in result
-        assert "### Documentation" in result
+        assert f"- Refresh release guidance {_commit('5654d14', '5654d14deadbeef')}" not in result
         assert "- Replace Node markdown tooling with rumdl" in result
         assert "#### Fixed: Align markdown lint policy" in result
         assert "#### Documentation: Refresh release guidance" in result
@@ -659,7 +657,7 @@ class TestSquashHeadingNormalization:
 
         result = postprocess_text(content)
 
-        assert f"- Add rollback on cell creation failure {_commit('a6ec3fa', 'a6ec3fadeadbeef')}" in result
+        assert f"- Add rollback on cell creation failure {_commit('a6ec3fa', 'a6ec3fadeadbeef')}" not in result
         assert "#### Fixed: Add rollback on cell creation failure" in result
         assert "  - Keep failed insertions atomic." in result
 
@@ -693,6 +691,111 @@ class TestSquashHeadingNormalization:
         assert "test-debug" not in result
         assert "Gate public diagnostic exports behind diagnostics" in result
         assert "documented diagnostics feature" in result
+
+    def test_full_pipeline_prefers_contextual_duplicate_squash_body_entry(self) -> None:
+        content = (
+            "# Changelog\n\n"
+            "## [1.0.0]\n\n"
+            "### Changed\n\n"
+            f"- Avoid panic in stack-matrix dispatch {_commit('3ac8b11', '3ac8b11deadbeef')}\n\n"
+            "  - Add StackMatrixDispatchError.\n\n"
+            "### Performance\n\n"
+            f"- Migrate geometry predicates to la-stack {_commit('3ac8b11', '3ac8b11deadbeef')}\n\n"
+            "#### Fixed: Avoid panic in stack-matrix dispatch\n\n"
+            "- Add StackMatrixDispatchError.\n"
+        )
+
+        result = postprocess_text(content)
+
+        assert result.count("Avoid panic in stack-matrix dispatch") == 1
+        assert "#### Fixed: Avoid panic in stack-matrix dispatch" in result
+        assert "### Changed\n\n### Performance" not in result
+
+    def test_full_pipeline_keeps_distinct_entries_with_same_title(self) -> None:
+        content = (
+            "# Changelog\n\n"
+            "## [1.0.0]\n\n"
+            "### Fixed\n\n"
+            f"- Clarify diagnostics {_commit('aaaaaaa', 'aaaaaaadeadbeef')}\n\n"
+            "  - Keep the public docs wording.\n\n"
+            "### Maintenance\n\n"
+            f"- Refresh release notes {_commit('aaaaaaa', 'aaaaaaadeadbeef')}\n\n"
+            "#### Fixed: Clarify diagnostics\n\n"
+            "- Keep the internal test comments aligned.\n"
+        )
+
+        result = postprocess_text(content)
+
+        assert result.count("Clarify diagnostics") == 2
+        assert "Keep the public docs wording." in result
+        assert "Keep the internal test comments aligned." in result
+
+    def test_full_pipeline_strips_followup_suffix_after_duplicate_removal(self) -> None:
+        content = (
+            "# Changelog\n\n"
+            "## [1.0.0]\n\n"
+            "### Changed\n\n"
+            f"- Improve insertion errors {_commit('a6ec3fa', 'a6ec3fadeadbeef')}\n\n"
+            "#### Early Exit for Empty Input\n\n"
+            "- Return a clear empty-handle error.\n\n"
+            "### Fixed\n\n"
+            f"- Handle degenerate insertion {_commit('a6ec3fa', 'a6ec3fadeadbeef')}\n\n"
+            "#### Changed: Improve insertion errors\n\n"
+            "#### Early Exit for Empty Input - Follow-up\n\n"
+            "- Return a clear empty-handle error.\n"
+        )
+
+        result = postprocess_text(content)
+
+        assert "- Improve insertion errors" not in result
+        assert "#### Early Exit for Empty Input - Follow-up" not in result
+        assert "#### Early Exit for Empty Input" in result
+
+    def test_full_pipeline_preserves_distinct_followup_heading_without_duplicate_removal(self) -> None:
+        content = (
+            "# Changelog\n\n"
+            "## [1.0.0]\n\n"
+            "### Documentation\n\n"
+            f"- Refresh release notes {_commit('bbbbbbb', 'bbbbbbbdeadbeef')}\n\n"
+            "#### Migration Guide - Follow-up\n\n"
+            "- Clarify the manual release checklist.\n"
+        )
+
+        result = postprocess_text(content)
+
+        assert "#### Migration Guide - Follow-up" in result
+
+    def test_full_pipeline_deduplicates_real_archive_contextual_excerpt(self) -> None:
+        content = (
+            "# Changelog\n\n"
+            "## [0.6.0]\n\n"
+            "### Changed\n\n"
+            f"- Reduce duplication and clarify tolerance/degeneracy docs {_commit('3ac8b11', '3ac8b11deadbeef')}\n\n"
+            "  - Compute adaptive tolerance before consuming matrices for determinant evaluation.\n"
+            "  - Clarify CoordinateConversionError::ConversionFailed coordinate_index semantics.\n\n"
+            "### Fixed\n\n"
+            f"- Avoid panic in stack-matrix dispatch {_commit('3ac8b11', '3ac8b11deadbeef')}\n\n"
+            "  - Add StackMatrixDispatchError (UnsupportedDim/La) and try_with_la_stack_matrix! helper.\n"
+            "  - Switch predicate/utility call sites to fallible dispatch.\n\n"
+            "### Performance\n\n"
+            f"- Migrate geometry predicates to la-stack {_commit('3ac8b11', '3ac8b11deadbeef')}\n\n"
+            "  - Replace nalgebra-backed dynamic matrices with la-stack fixed-size matrices.\n\n"
+            "#### Fixed: Avoid panic in stack-matrix dispatch\n\n"
+            "- Add StackMatrixDispatchError (UnsupportedDim/La) and try_with_la_stack_matrix! helper.\n"
+            "- Switch predicate/utility call sites to fallible dispatch.\n\n"
+            "#### Changed: Reduce duplication and clarify tolerance/degeneracy docs\n\n"
+            "- Compute adaptive tolerance before consuming matrices for determinant evaluation.\n"
+            "- Clarify CoordinateConversionError::ConversionFailed coordinate_index semantics.\n"
+        )
+
+        result = postprocess_text(content)
+
+        assert result.count("Avoid panic in stack-matrix dispatch") == 1
+        assert result.count("Reduce duplication and clarify tolerance/degeneracy docs") == 1
+        assert "#### Fixed: Avoid panic in stack-matrix dispatch" in result
+        assert "#### Changed: Reduce duplication and clarify tolerance/degeneracy docs" in result
+        assert "\n### Changed\n" not in result
+        assert "\n### Fixed\n" not in result
 
 
 class TestCodeBlockLanguage:

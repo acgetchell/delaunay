@@ -21,9 +21,9 @@ jobs:
     name: Code Coverage
     runs-on: ubuntu-latest
     env:
-      CARGO_LLVM_COV_VERSION: "0.8.6"
+      CARGO_LLVM_COV_VERSION: "0.8.7"
       JUST_VERSION: "1.51.0"
-      NEXTEST_VERSION: "0.9.133"
+      NEXTEST_VERSION: "0.9.136"
     steps:
       - name: Checkout repository
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
