@@ -23,8 +23,6 @@ engines:
   bandit:
     include_paths:
       - "scripts/**/*.py"
-    exclude_paths:
-      - "scripts/tests/**"
   duplication:
     exclude_paths:
       - "docs/archive/**"
@@ -64,8 +62,6 @@ engines:
   ruff:
     include_paths:
       - "scripts/**/*.py"
-    exclude_paths:
-      - "scripts/tests/**"
   shellcheck:
     include_paths:
       - "scripts/**/*.sh"

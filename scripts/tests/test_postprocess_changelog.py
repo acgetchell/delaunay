@@ -501,7 +501,8 @@ class TestIndentedHeadingNormalization:
 
         result = f.read_text(encoding="utf-8")
         assert "  **Performance Optimization**" not in result
-        assert result.count("#### Performance Optimization") == 2
+        assert "#### Performance Optimization\n" in result
+        assert "#### Performance Improvements" in result
 
 
 class TestSquashHeadingNormalization:

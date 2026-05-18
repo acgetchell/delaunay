@@ -89,6 +89,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Fix malformed mailto references, archived Markdown hierarchy, table structure,
     and Semgrep fixture exclusions that caused review noise.
 
+- Normalize lint policy and changelog hygiene [`aed4bd8`](https://github.com/acgetchell/delaunay/commit/aed4bd82e604f7ae55e91e8973c3b26aa005e7dd)
+
+  - Normalize local Python, Markdown, YAML, and review line-length settings to the
+    160-column policy while keeping CodeRabbit docstring checks schema-valid.
+
+  - Scope Codacy Bandit to production Python scripts so security checks skip test
+    fixtures with intentional assertions.
+
+  - Teach changelog postprocessing to preserve archive heading hierarchy and render
+    wildcard helper names as inline code in generated changelog output.
+
+- Exclude Python tests from Codacy analysis [`829d1c8`](https://github.com/acgetchell/delaunay/commit/829d1c89934b99dff6803f1cc0947da9f3372790)
+
+  - Scope Codacy Ruff to production Python scripts so script test fixtures do not
+    produce pull-request quality findings.
+
+  - Document that Codacy Python engines exclude scripts/tests while local and CI
+    checks remain the source of truth for the full Python test suite.
+
 ### Maintenance
 
 - Replace Node markdown tooling with rumdl [`edea152`](https://github.com/acgetchell/delaunay/commit/edea1525bf518864fd1962683c49467aaa0941b7)

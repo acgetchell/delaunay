@@ -574,7 +574,8 @@ tool configuration, but Codacy does not use that file to turn tools on or off.
   Codacy project settings -> Tools / Code Patterns or Codacy configuration sync before relying on them
 - **Enabled Tools**: Ruff, ShellCheck, repository-owned Opengrep, duplication, and advisory Lizard
 - **Disabled Tools**: Bandit, Prospector, Pylint, broad Opengrep, Trivy, Jackson Linter, and Spectral
-- **Documentation Analysis**: Local and CI Markdown checks use rumdl configured in `pyproject.toml`; Codacy Markdownlint is disabled
+- **Documentation Analysis**: Local and CI Markdown checks use rumdl configured in
+  `pyproject.toml`; Codacy Markdownlint is disabled
 - **Python Analysis**: Ruff uses `pyproject.toml`
 - **Local/CI Analysis**: Rust, Python, shell, Markdown, YAML, TOML, JSON, and GitHub Actions checks run through `just check`
 - **Security Analysis**: Uses CodeQL and cargo-audit rather than Codacy's broader engine set

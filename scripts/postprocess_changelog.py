@@ -83,6 +83,11 @@ _ATX_HEADING_RE = re.compile(r"^(?P<level>#{1,6})\s+(?P<title>.*?)(?:\s+#+\s*)?$
 # Bare glob-like identifiers in headings can be parsed as emphasis by linters.
 _WILDCARD_IDENTIFIER_RE = re.compile(r"(?<![`A-Za-z0-9_])([A-Za-z_][A-Za-z0-9_]*\*+[A-Za-z0-9_*]*)(?![`A-Za-z0-9_])")
 
+# Preferred names for known repeated historical body headings.
+_DUPLICATE_HEADING_REPLACEMENTS = {
+    "performance optimization": "Performance Improvements",
+}
+
 # Squash-merge commit bodies often contain inner conventional-commit
 # headings from the PR branch: ``* fix: thing``. After MD004 normalization
 # those become ordinary list items, which makes them look like separate
@@ -476,7 +481,33 @@ def _normalize_indented_heading(line: str) -> str:
     return f"#### {title}"
 
 
-def _normalize_indented_bold_heading(line: str, current_entry_summary: str | None, is_isolated_body_heading: bool) -> str:
+def _deduplicate_heading_title(title: str, seen_headings: dict[str, int]) -> str:
+    """Return a distinct title for repeated historical entry-local headings."""
+    key = title.casefold()
+    count = seen_headings.get(key, 0)
+    if count == 0:
+        seen_headings[key] = 1
+        return title
+
+    replacement = _DUPLICATE_HEADING_REPLACEMENTS.get(key)
+    if replacement is not None and replacement.casefold() not in seen_headings:
+        seen_headings[key] = count + 1
+        seen_headings[replacement.casefold()] = 1
+        return replacement
+
+    suffix = " - Follow-up" if count == 1 else f" - Follow-up {count}"
+    candidate = f"{title}{suffix}"
+    seen_headings[key] = count + 1
+    seen_headings[candidate.casefold()] = 1
+    return candidate
+
+
+def _normalize_indented_bold_heading(
+    line: str,
+    current_entry_summary: str | None,
+    is_isolated_body_heading: bool,
+    seen_headings: dict[str, int],
+) -> str:
     """Convert isolated indented bold commit-body headings into level-4 headings."""
     if current_entry_summary is None or not is_isolated_body_heading:
         return line
@@ -489,6 +520,7 @@ def _normalize_indented_bold_heading(line: str, current_entry_summary: str | Non
     if not title:
         return line
 
+    title = _deduplicate_heading_title(title, seen_headings)
     return f"#### {title}"
 
 
@@ -536,11 +568,19 @@ def normalize_entry_headings_text(text: str) -> str:
     """Demote entry-local headings without applying broader changelog cleanup."""
     result: list[str] = []
     current_entry_summary: str | None = None
+    seen_headings: dict[str, int] = {}
 
     for line in text.split("\n"):
+        if _VERSION_RE.match(line):
+            seen_headings.clear()
         current_entry_summary = _update_entry_summary(line, current_entry_summary)
         line = _normalize_entry_heading(line, current_entry_summary)
-        result.append(_normalize_entry_heading_text(line))
+        line = _normalize_entry_heading_text(line)
+        heading = _ATX_HEADING_RE.match(line)
+        if heading is not None and heading.group("level") == "####":
+            title = _deduplicate_heading_title(heading.group("title").strip(), seen_headings)
+            line = f"#### {title}"
+        result.append(line)
 
     return "\n".join(result)
 
@@ -606,10 +646,11 @@ def _normalize_body_line(
     result: list[str],
     current_entry_summary: str | None,
     is_isolated_body_heading: bool,
+    seen_headings: dict[str, int],
 ) -> str:
     """Apply markdown hygiene transforms to a non-code line."""
     line = _normalize_indented_heading(line)
-    line = _normalize_indented_bold_heading(line, current_entry_summary, is_isolated_body_heading)
+    line = _normalize_indented_bold_heading(line, current_entry_summary, is_isolated_body_heading, seen_headings)
     line = _normalize_entry_heading(line, current_entry_summary)
     horizontal_rule = _normalize_horizontal_rule(line, result)
     line = horizontal_rule
@@ -634,6 +675,7 @@ def postprocess_text(text: str) -> str:
     result: list[str] = []
     in_code_block = False
     current_entry_summary: str | None = None
+    seen_headings: dict[str, int] = {}
     drop_next_blank = False
 
     for idx, line in enumerate(lines):
@@ -655,6 +697,9 @@ def postprocess_text(text: str) -> str:
         # --- MD030: normalise spaces after list marker ---
         line = _LIST_MARKER_SPACE_RE.sub(r"\1 ", line)
 
+        if _VERSION_RE.match(line):
+            seen_headings.clear()
+
         current_entry_summary = _update_entry_summary(line, current_entry_summary)
         is_isolated_body_heading = _is_isolated_body_heading(lines, idx)
 
@@ -675,7 +720,7 @@ def postprocess_text(text: str) -> str:
 
         line = _deindent_orphan(line, lines, idx)
         line = _normalize_continuation_indent(line, lines, idx)
-        normalized = _normalize_body_line(line, result, current_entry_summary, is_isolated_body_heading)
+        normalized = _normalize_body_line(line, result, current_entry_summary, is_isolated_body_heading, seen_headings)
         result.append(normalized)
         if normalized == "---" and next_line is not None and next_line.strip():
             result.append("")
