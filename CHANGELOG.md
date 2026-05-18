@@ -88,6 +88,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Mirror isolated conventional squash-body headings from any changelog section while keeping the source commit-body detail intact.
   - Skip only exact parent/summary duplicates so generated archives retain distinct fix, docs, maintenance, and performance notes.
   - Canonicalize renamed diagnostics feature wording before mirror/dedupe so pre-rename wording cannot be reintroduced.
+- Deduplicate contextual squash entries [`792bb48`](https://github.com/acgetchell/delaunay/commit/792bb4865e7d449942ff7d42fd00366413f49796)
+
+  - Collapse standalone generated entries only when the same commit, normalized title, and body are already preserved under a contextual squash-body heading.
+  - Canonicalize renamed diagnostics wording before dedupe so pre-rename feature names do not reappear in generated release notes.
+  - Preserve legitimate follow-up headings unless they belong to a contextual duplicate that replaced a standalone entry.
+  - Regenerate active and archived changelogs from the updated postprocessing pipeline.
+  - Align CI and local tooling pins for cargo-llvm-cov, cargo-nextest, and uv.
 
 ### Maintenance
 

@@ -661,6 +661,57 @@ class TestSquashHeadingNormalization:
         assert "#### Fixed: Add rollback on cell creation failure" in result
         assert "  - Keep failed insertions atomic." in result
 
+    def test_full_pipeline_stops_squash_children_at_star_top_level_entries(self) -> None:
+        content = (
+            "# Changelog\n\n"
+            "## [1.0.0]\n\n"
+            "### Maintenance\n\n"
+            f"- Refresh tooling {_commit('1111111', '1111111deadbeef')}\n\n"
+            "  * fix: align markdown lint policy\n\n"
+            "    - Scope linting to active docs.\n\n"
+            f"* Bump helper tools {_commit('2222222', '2222222deadbeef')}\n\n"
+            "  - Keep dependency updates as a separate generated entry.\n"
+        )
+
+        result = postprocess_text(content)
+
+        assert result.count("Bump helper tools") == 1
+        assert "#### Fixed: Align markdown lint policy" in result
+        assert result.index("#### Fixed: Align markdown lint policy") < result.index("- Bump helper tools")
+
+    def test_full_pipeline_stops_squash_children_at_unicode_top_level_entries(self) -> None:
+        content = (
+            "# Changelog\n\n"
+            "## [1.0.0]\n\n"
+            "### Maintenance\n\n"
+            f"- Refresh tooling {_commit('1111111', '1111111deadbeef')}\n\n"
+            "  * docs: refresh release guidance\n\n"
+            "    - Document the changelog workflow.\n\n"
+            f"• Update helper docs {_commit('3333333', '3333333deadbeef')}\n\n"
+            "  - Keep the unicode-list entry separate.\n"
+        )
+
+        result = postprocess_text(content)
+
+        assert result.count("Update helper docs") == 1
+        assert "#### Documentation: Refresh release guidance" in result
+        assert result.index("#### Documentation: Refresh release guidance") < result.index("- Update helper docs")
+
+    def test_full_pipeline_keeps_dependencies_heading_as_category_boundary(self) -> None:
+        content = (
+            "# Changelog\n\n"
+            "## [1.0.0]\n\n"
+            "### Fixed\n\n"
+            f"- Fix parser boundaries {_commit('4444444', '4444444deadbeef')}\n\n"
+            "### Dependencies\n\n"
+            f"- Bump helper crate {_commit('5555555', '5555555deadbeef')}\n"
+        )
+
+        result = postprocess_text(content)
+
+        assert "\n### Dependencies\n" in result
+        assert "\n#### Dependencies\n" not in result
+
     def test_full_pipeline_does_not_mirror_duplicate_parent_heading(self) -> None:
         content = (
             "# Changelog\n\n"

@@ -45,7 +45,7 @@ _VERSION_RE = re.compile(r"^## \[")
 _CATEGORY_HEADING_RE = re.compile(
     r"^### (?:"
     r"Merged Pull Requests|Breaking Changes|Added|Changed|Deprecated|"
-    r"Documentation|Fixed|Maintenance|Performance|Removed|Security"
+    r"Dependencies|Documentation|Fixed|Maintenance|Performance|Removed|Security"
     r")$"
 )
 
@@ -157,6 +157,7 @@ _CANONICAL_TEXT_REPLACEMENTS = {
 SyntheticEntries = dict[str, list[list[str]]]
 DuplicateEntryKey = tuple[str, str, str]
 ContextualEntryRanges = dict[DuplicateEntryKey, dict[int, list[tuple[int, int]]]]
+_TOP_LEVEL_LIST_MARKERS = ("- ", "* ", "• ")
 
 
 def _canonicalize_changelog_terms(text: str) -> str:
@@ -176,9 +177,14 @@ def _plain_summary(text: str) -> str:
     text = _BREAKING_MARKER_RE.sub("", text)
     text = _COMMIT_LINK_RE.sub("", text)
     text = _PR_LINK_RE.sub("", text)
-    text = re.sub(r"^\s*[-*]\s+", "", text)
+    text = re.sub(r"^\s*(?:[-*]|•)\s+", "", text)
     text = re.sub(r"^[A-Za-z]+(?:\([^)]+\))?!?:\s+", "", text)
     return re.sub(r"\s+", " ", text).strip().casefold()
+
+
+def _is_top_level_list_item(line: str) -> bool:
+    """Return true for supported column-zero Markdown list markers."""
+    return line.startswith(_TOP_LEVEL_LIST_MARKERS)
 
 
 def _squash_heading_parts(line: str) -> tuple[str, str, str] | None:
@@ -277,7 +283,7 @@ def _squash_body_entry_end(lines: list[str], heading_idx: int) -> int:
     """Return the exclusive end index for a squash-body pseudo-commit block."""
     for idx in range(heading_idx + 1, len(lines)):
         line = lines[idx]
-        if _is_changelog_boundary_heading(line) or line.startswith("- "):
+        if _is_changelog_boundary_heading(line) or _is_top_level_list_item(line):
             return idx
         if idx != heading_idx and _is_squash_heading_candidate(lines, idx):
             return idx
@@ -345,7 +351,7 @@ def _insert_synthetic_squash_entries(lines: list[str], start: int, end: int, ent
 
 def _entry_summary_and_commit_link(line: str) -> tuple[str, str] | None:
     """Return the normalized summary and commit link for a generated entry line."""
-    if not (line.startswith("- ") and _COMMIT_LINK_RE.search(line)):
+    if not (_is_top_level_list_item(line) and _COMMIT_LINK_RE.search(line)):
         return None
     match = _COMMIT_LINK_RE.search(line)
     return _plain_summary(line), match.group(0).strip() if match is not None else ""
@@ -394,7 +400,7 @@ def _mirrored_squash_entry(
 
 def _synthetic_squash_entries_for_section(section_lines: list[str]) -> SyntheticEntries:
     """Collect mirrored squash-body entries for one version section."""
-    existing_summaries = {_plain_summary(line) for line in section_lines if line.startswith("- ")}
+    existing_summaries = {_plain_summary(line) for line in section_lines if _is_top_level_list_item(line)}
     entries_by_category: SyntheticEntries = {}
     current_entry_summary: str | None = None
     current_entry_commit_link = ""
@@ -476,7 +482,7 @@ def _entry_commit_identity(lines: list[str], start: int) -> str | None:
 
 def _is_generated_entry_start(lines: list[str], idx: int) -> bool:
     """Return true for a top-level generated changelog entry with a commit link."""
-    return lines[idx].startswith("- ") and _entry_commit_identity(lines, idx) is not None
+    return _is_top_level_list_item(lines[idx]) and _entry_commit_identity(lines, idx) is not None
 
 
 def _strip_contextual_category(title: str) -> str:
@@ -1135,7 +1141,7 @@ def _update_entry_summary(line: str, current_entry_summary: str | None) -> str |
     """Track the active changelog entry summary for squash-body cleanup."""
     if _squash_heading_parts(line) is not None:
         return current_entry_summary
-    if line.startswith("- "):
+    if _is_top_level_list_item(line):
         return _plain_summary(line)
     if _is_changelog_boundary_heading(line):
         return None
