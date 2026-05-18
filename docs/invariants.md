@@ -455,24 +455,42 @@ investigation notes in [`docs/archive/`](archive/).
 
 For the project-wide bibliography (including references not cited here), see [`REFERENCES.md`](../REFERENCES.md).
 
-[^edelsbrunner2001]: Herbert Edelsbrunner. *Geometry and Topology for Mesh Generation*. Cambridge University Press, 2001. DOI: <https://doi.org/10.1017/CBO9780511530067>.
-[^cgal-tds3]: CGAL Project. *Triangulation Data Structure* (TDS_3) documentation. <https://doc.cgal.org/latest/TDS_3/index.html>.
+[^edelsbrunner2001]: Herbert Edelsbrunner. *Geometry and Topology for Mesh Generation*. Cambridge University Press, 2001.
+    DOI: <https://doi.org/10.1017/CBO9780511530067>.
+[^cgal-tds3]: CGAL Project. *Triangulation Data Structure* (TDS_3) documentation.
+    <https://doc.cgal.org/latest/TDS_3/index.html>.
 [^impl-tds]: Implementation: [src/core/tds.rs](../src/core/tds.rs).
-[^deberg2008]: Mark de Berg, Otfried Cheong, Marc van Kreveld, Mark Overmars. *Computational Geometry: Algorithms and Applications*, 3rd ed. Springer, 2008. DOI: <https://doi.org/10.1007/978-3-540-77974-2>.
-[^shewchuk1997]: Jonathan Richard Shewchuk. “Adaptive Precision Floating-Point Arithmetic and Fast Robust Geometric Predicates.” *Discrete & Computational Geometry* 18(3), 1997. DOI: <https://doi.org/10.1007/PL00009321>.
-[^edelshah1996]: Herbert Edelsbrunner and Nimish R. Shah. “Incremental Topological Flipping Works for Regular Triangulations.” *Algorithmica* 15(3), 1996. DOI: <https://doi.org/10.1007/BF01975867>.
-[^pachner1991]: Udo Pachner. “P.L. Homeomorphic Manifolds Are Equivalent by Elementary Shellings.” *European Journal of Combinatorics* 12(2), 1991. DOI: <https://doi.org/10.1016/S0195-6698(13)80080-7>.
+[^deberg2008]: Mark de Berg, Otfried Cheong, Marc van Kreveld, Mark Overmars.
+    *Computational Geometry: Algorithms and Applications*, 3rd ed. Springer, 2008.
+    DOI: <https://doi.org/10.1007/978-3-540-77974-2>.
+[^shewchuk1997]: Jonathan Richard Shewchuk. “Adaptive Precision Floating-Point Arithmetic and Fast Robust Geometric Predicates.”
+    *Discrete & Computational Geometry* 18(3), 1997. DOI: <https://doi.org/10.1007/PL00009321>.
+[^edelshah1996]: Herbert Edelsbrunner and Nimish R. Shah.
+    “Incremental Topological Flipping Works for Regular Triangulations.” *Algorithmica* 15(3), 1996.
+    DOI: <https://doi.org/10.1007/BF01975867>.
+[^pachner1991]: Udo Pachner. “P.L. Homeomorphic Manifolds Are Equivalent by Elementary Shellings.”
+    *European Journal of Combinatorics* 12(2), 1991. DOI: <https://doi.org/10.1016/S0195-6698(13)80080-7>.
 [^impl-flips]: Implementation: [src/core/algorithms/flips.rs](../src/core/algorithms/flips.rs).
 [^impl-delaunay-validation]: Implementation: [src/core/util/delaunay_validation.rs](../src/core/util/delaunay_validation.rs).
-[^hatcher2002]: Allen Hatcher. *Algebraic Topology*. Cambridge University Press, 2002. Free online version: <https://pi.math.cornell.edu/~hatcher/AT/ATpage>. (See Appendix A: “PL Manifolds and Links”.)
-[^rourke-sanderson]: C. P. Rourke and B. J. Sanderson. *Introduction to Piecewise-Linear Topology*. Springer, 1972. DOI: <https://doi.org/10.1007/978-3-642-81735-9>.
-[^bowyer1981]: A. Bowyer. “Computing Dirichlet Tessellations.” *The Computer Journal* 24(2), 1981. DOI: <https://doi.org/10.1093/comjnl/24.2.162>.
-[^watson1981]: D. F. Watson. “Computing the n-dimensional Delaunay tessellation with application to Voronoi polytopes.” *The Computer Journal* 24(2), 1981. DOI: <https://doi.org/10.1093/comjnl/24.2.167>.
-[^cgal-triangulation3]: CGAL Project. *3D Triangulations* (Triangulation_3) documentation. <https://doc.cgal.org/latest/Triangulation_3/>.
+[^hatcher2002]: Allen Hatcher. *Algebraic Topology*. Cambridge University Press, 2002.
+    Free online version: <https://pi.math.cornell.edu/~hatcher/AT/ATpage>. (See Appendix A: “PL Manifolds and Links”.)
+[^rourke-sanderson]: C. P. Rourke and B. J. Sanderson. *Introduction to Piecewise-Linear Topology*. Springer, 1972.
+    DOI: <https://doi.org/10.1007/978-3-642-81735-9>.
+[^bowyer1981]: A. Bowyer. “Computing Dirichlet Tessellations.” *The Computer Journal* 24(2), 1981.
+    DOI: <https://doi.org/10.1093/comjnl/24.2.162>.
+[^watson1981]: D. F. Watson. “Computing the n-dimensional Delaunay tessellation with application to Voronoi polytopes.”
+    *The Computer Journal* 24(2), 1981. DOI: <https://doi.org/10.1093/comjnl/24.2.167>.
+[^cgal-triangulation3]: CGAL Project. *3D Triangulations* (Triangulation_3) documentation.
+    <https://doc.cgal.org/latest/Triangulation_3/>.
 [^impl-incremental-insertion]: Implementation: [src/core/algorithms/incremental_insertion.rs](../src/core/algorithms/incremental_insertion.rs).
-[^devillers-walking]: Olivier Devillers, Sylvain Pion, Monique Teillaud. “Walking in a Triangulation.” *International Journal of Foundations of Computer Science* 13(2), 2002. DOI: <https://doi.org/10.1142/S0129054102001047>.
+[^devillers-walking]: Olivier Devillers, Sylvain Pion, Monique Teillaud. “Walking in a Triangulation.”
+    *International Journal of Foundations of Computer Science* 13(2), 2002. DOI: <https://doi.org/10.1142/S0129054102001047>.
 [^impl-locate]: Implementation: [src/core/algorithms/locate.rs](../src/core/algorithms/locate.rs).
-[^moon2001]: Bongki Moon, H. V. Jagadish, Christos Faloutsos, Joel H. Saltz. “Analysis of the Clustering Properties of the Hilbert Space-Filling Curve.” *IEEE Transactions on Knowledge and Data Engineering* 13(1), 2001. DOI: <https://doi.org/10.1109/69.908985>.
-[^cgal-spatial-sorting]: CGAL Project. *Spatial Sorting* documentation. <https://doc.cgal.org/latest/Spatial_sorting/index.html>.
+[^moon2001]: Bongki Moon, H. V. Jagadish, Christos Faloutsos, Joel H. Saltz.
+    “Analysis of the Clustering Properties of the Hilbert Space-Filling Curve.”
+    *IEEE Transactions on Knowledge and Data Engineering* 13(1), 2001. DOI: <https://doi.org/10.1109/69.908985>.
+[^cgal-spatial-sorting]: CGAL Project. *Spatial Sorting* documentation.
+    <https://doc.cgal.org/latest/Spatial_sorting/index.html>.
 [^impl-hilbert]: Implementation: [src/core/util/hilbert.rs](../src/core/util/hilbert.rs) (Skilling’s Hilbert index).
-[^skilling2004]: John Skilling. “Programming the Hilbert curve.” *AIP Conference Proceedings* 707, 2004. DOI: <https://doi.org/10.1063/1.1751381>.
+[^skilling2004]: John Skilling. “Programming the Hilbert curve.” *AIP Conference Proceedings* 707, 2004.
+    DOI: <https://doi.org/10.1063/1.1751381>.

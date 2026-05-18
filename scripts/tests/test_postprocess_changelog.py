@@ -396,10 +396,10 @@ class TestIndentedHeadingNormalization:
     """MD023: commit-body headings are rendered as prose, not nested headings."""
 
     def test_indented_atx_heading_becomes_bold_prose(self) -> None:
-        assert _normalize_indented_heading("  ## Correctness Fixes") == "  **Correctness Fixes**"
+        assert _normalize_indented_heading("  ## Correctness Fixes") == "#### Correctness Fixes"
 
     def test_indented_atx_closing_sequence_becomes_bold_prose(self) -> None:
-        assert _normalize_indented_heading("  ### API Design ###") == "  **API Design**"
+        assert _normalize_indented_heading("  ### API Design ###") == "#### API Design"
 
     def test_column_zero_changelog_heading_is_preserved(self) -> None:
         assert _normalize_indented_heading("### Added") == "### Added"
@@ -429,8 +429,8 @@ class TestIndentedHeadingNormalization:
         result = f.read_text(encoding="utf-8")
         assert "  ## Correctness Fixes" not in result
         assert "  ## API Design" not in result
-        assert "  **Correctness Fixes**" in result
-        assert "  **API Design**" in result
+        assert "#### Correctness Fixes" in result
+        assert "#### API Design" in result
         assert "### Performance" in result
 
 
@@ -456,10 +456,10 @@ class TestSquashHeadingNormalization:
         assert _squash_heading_parts(f"- fix: actual commit {_commit()}") is None
 
     def test_conventional_squash_heading_becomes_bold_prose(self) -> None:
-        assert _normalize_squash_heading("- fix: close the 4D retry collapse") == "**Fixed: Close the 4D retry collapse**"
+        assert _normalize_squash_heading("- fix: close the 4D retry collapse") == "#### Fixed: Close the 4D retry collapse"
 
     def test_nested_squash_heading_is_indented(self) -> None:
-        assert _normalize_squash_heading("- Changed: harden flip diagnostics", nested=True) == "  **Changed: Harden flip diagnostics**"
+        assert _normalize_squash_heading("- Changed: harden flip diagnostics", nested=True) == "#### Changed: Harden flip diagnostics"
 
     def test_commit_entry_is_preserved(self) -> None:
         line = f"- fix: actual commit {_commit()}"
@@ -496,7 +496,7 @@ class TestSquashHeadingNormalization:
 
         result = f.read_text(encoding="utf-8")
         assert "feat: instrument large-scale 4D debugging" not in result
-        assert "**Fixed: Close the 4D bulk repair retry collapse**" in result
+        assert "#### Fixed: Close the 4D bulk repair retry collapse" in result
         assert "  - Thread cavity-touched cells through insertion." in result
 
     def test_full_pipeline_resets_parent_summary_at_version_heading(self, tmp_path: Path) -> None:
@@ -516,7 +516,7 @@ class TestSquashHeadingNormalization:
         postprocess(f)
 
         result = f.read_text(encoding="utf-8")
-        assert "**Fixed: Repeatable summary**" in result
+        assert "#### Fixed: Repeatable summary" in result
         assert "  - Preserve this historical squash-body heading." in result
 
     def test_full_pipeline_preserves_non_isolated_conventional_bullets(self, tmp_path: Path) -> None:
@@ -535,7 +535,7 @@ class TestSquashHeadingNormalization:
 
         result = f.read_text(encoding="utf-8")
         assert "  - Added: `just help-workflows` references throughout" in result
-        assert "**Added: `just help-workflows`" not in result
+        assert "#### Added: `just help-workflows`" not in result
 
     def test_full_pipeline_deindents_children_after_squash_heading(self) -> None:
         content = (
@@ -549,7 +549,7 @@ class TestSquashHeadingNormalization:
 
         result = postprocess_text(content)
 
-        assert f"  **Added: Canonical vertex ordering details {_pr(266)}**" in result
+        assert f"#### Added: Canonical vertex ordering details {_pr(266)}" in result
         assert "\n  - Add canonical_points module with sorted_cell_points helpers\n" in result
         assert "\n    - Add canonical_points module" not in result
 

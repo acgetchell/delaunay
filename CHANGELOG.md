@@ -10,16 +10,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### ⚠️ Breaking Changes
 
 - Support periodic flip parity for external cells [#391](https://github.com/acgetchell/delaunay/pull/391)
-- Replace public core module with focused facades
-- Route low-level exports through public facades [#388](https://github.com/acgetchell/delaunay/pull/388)
-- Clarify bulk progress counters
+- Replace public core module with focused facades [#392](https://github.com/acgetchell/delaunay/pull/392)
+- Rename public cell APIs to simplex nomenclature [#393](https://github.com/acgetchell/delaunay/pull/393)
 
 ### Merged Pull Requests
 
+- Rename public cell APIs to simplex nomenclature [#393](https://github.com/acgetchell/delaunay/pull/393)
+- Replace public core module with focused facades [#392](https://github.com/acgetchell/delaunay/pull/392)
 - Support periodic flip parity for external cells [#391](https://github.com/acgetchell/delaunay/pull/391)
 - Refactor/387 tds mutation boundaries [#390](https://github.com/acgetchell/delaunay/pull/390)
 - Refresh release docs and benchmark guidance [#389](https://github.com/acgetchell/delaunay/pull/389)
-- Route low-level exports through public facades [#388](https://github.com/acgetchell/delaunay/pull/388)
 
 ### Added
 
@@ -35,8 +35,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Refactor/387 tds mutation boundaries [#390](https://github.com/acgetchell/delaunay/pull/390)
   [`da30293`](https://github.com/acgetchell/delaunay/commit/da3029302e8484d26d2a88d1291050c332e6b822)
 
-- [**breaking**] Replace public core module with focused facades
-  [`3fc95ea`](https://github.com/acgetchell/delaunay/commit/3fc95ea62325111c927127a48d4fbd39873dabda)
+- [**breaking**] Replace public core module with focused facades [#392](https://github.com/acgetchell/delaunay/pull/392)
+  [`655ff4c`](https://github.com/acgetchell/delaunay/commit/655ff4c944ac918c1a88ab70b26908bd1ebd329f)
 
   - Make `crate::core` private and expose low-level APIs through curated
     `tds`, `collections`, `algorithms`, and `query` modules.
@@ -45,13 +45,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Update downstream-style tests and doctests to stop relying on
     `delaunay::core`.
 
-- [**breaking**] Route low-level exports through public facades [#388](https://github.com/acgetchell/delaunay/pull/388)
-  [`69f4fc3`](https://github.com/acgetchell/delaunay/commit/69f4fc38ad75ade19bfff693d67dee2ea5f99d4f)
+- [**breaking**] Rename public cell APIs to simplex nomenclature [#393](https://github.com/acgetchell/delaunay/pull/393)
+  [`48935d5`](https://github.com/acgetchell/delaunay/commit/48935d5c1ecbeef1b9b833b1de0d1cbcc2e72938)
 
-  - Move public documentation, doctests, and prelude exports away from the private `crate::core` namespace.
-  - Keep point-location and conflict-region APIs canonical under `delaunay::algorithms` and `delaunay::prelude::algorithms`.
-  - Expose repair, insertion, flip, and validation contracts through the triangulation and TDS facades.
-  - Harden `toml-check` by passing TOML filenames to Python via argv.
+  - Replace cell-oriented public types, methods, error variants, maps, and diagnostics with simplex terminology across TDS, triangulation, construction, repair,
+    flips, examples, benches, docs, and tests.
+
+  - Preserve typed construction and insertion error context for cavity filling, explicit construction summaries, focused preludes, and Delaunay repair
+    diagnostics under the simplex API.
+
+  - Remove redundant integration tests whose coverage is now exercised by unit, property, and public API tests.
+  - Move Codacy SARIF filtering into a tested support script and simplify Cargo package metadata.
 
 ### Documentation
 
@@ -70,15 +74,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
   - Update generated benchmark-summary guidance to surface `just bench-perf-summary`,
     current Criterion metadata, and large-scale characterization defaults.
-
-### Fixed
-
-- [**breaking**] Clarify bulk progress counters [`393e463`](https://github.com/acgetchell/delaunay/commit/393e4637adf64fd23a7a32c0ec53fbfb2033a5c3)
-
-  - Report the effective batch progress cadence in the large-scale debug harness, including the canonical `DELAUNAY_BULK_PROGRESS_EVERY` fallback behavior.
-  - Rename bulk progress tracing fields so post-initial-simplex counters are distinct from total input and final insertion statistics.
-  - Point public docs and downstream-style API tests at curated low-level modules and construction prelude imports.
-  - Regenerate the changelog so the core facade break appears in Unreleased.
 
 ## [0.7.7] - 2026-05-15
 
@@ -178,7 +173,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Add regression and round-trip tests for parser behavior, benchmark IDs, unit normalization, and Linux CPU fallback.
   - Document Python parser/file-format round-trip test expectations.
 
-  **Fixed: Harden Criterion estimate parsing and validation**
+#### Fixed: Harden Criterion estimate parsing and validation
 
   Consolidates estimate validation into a single public helper,
   `is_valid_criterion_estimate`, now used by `PerformanceSummaryGenerator`
@@ -198,12 +193,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Propagate construction failures from examples and route benchmark diagnostics through feature-gated tracing.
   - Clarify public API docs for collection aliases and facet error paths.
 
-  **Fixed: Make duplicate-cell removal transactional**
+#### Fixed: Make duplicate-cell removal transactional
 
-  - Validate duplicate-cell removals on a cloned TDS and commit only after neighbor rebuilding, incident-cell assignment, and full validation succeed.
-  - Preserve typed construction and mutation errors in examples and doctests, including prelude coverage for TdsMutationError.
-  - Share feature-gated tracing abort helpers across benchmarks and keep setup error handling out of measured closures.
-  - Remove committed debug printing from collection tests.
+- Validate duplicate-cell removals on a cloned TDS and commit only after neighbor rebuilding, incident-cell assignment, and full validation succeed.
+- Preserve typed construction and mutation errors in examples and doctests, including prelude coverage for TdsMutationError.
+- Share feature-gated tracing abort helpers across benchmarks and keep setup error handling out of measured closures.
+- Remove committed debug printing from collection tests.
 
 ### Maintenance
 
@@ -216,13 +211,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - [Changelog](https://github.com/taiki-e/install-action/blob/main/CHANGELOG.md)
   - [Commits](https://github.com/taiki-e/install-action/compare/055f5df8c3f65ea01cd41e9dc855becd88953486...cf525cb33f51aca27cd6fa02034117ab963ff9f1)
 
-  ---
+---
+
   updated-dependencies:
 
-  - dependency-name: taiki-e/install-action
-    dependency-version: 2.75.22
-    dependency-type: direct:production
-    update-type: version-update:semver-patch
+- dependency-name: taiki-e/install-action
+  dependency-version: 2.75.22
+  dependency-type: direct:production
+  update-type: version-update:semver-patch
   ...
 
 - Enable repo Semgrep rules for issue #338 [#354](https://github.com/acgetchell/delaunay/pull/354)
@@ -233,35 +229,35 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Replace flagged diagnostics and silent numeric fallbacks with explicit tracing, expectations, and typed Hilbert quantization errors.
   - Centralize Delaunay triangulation cache invalidation through the existing repair-cache helper.
 
-  **Maintenance: Enable repository Semgrep rules**
+#### Maintenance: Enable repository Semgrep rules
 
-  - Rename the Semgrep config to semgrep.yaml and wire it into local checks, CodeRabbit, and Codacy/OpenGrep.
-  - Add strict Semgrep execution plus fixture coverage for hot-path hash collections and targeted panic bypasses.
-  - Make Hilbert errors non-exhaustive and document quantization-scale conversion failures on APIs that can return them.
-  - Replace fragile VertexBuilder expect paths with infallible Vertex point constructors.
+- Rename the Semgrep config to semgrep.yaml and wire it into local checks, CodeRabbit, and Codacy/OpenGrep.
+- Add strict Semgrep execution plus fixture coverage for hot-path hash collections and targeted panic bypasses.
+- Make Hilbert errors non-exhaustive and document quantization-scale conversion failures on APIs that can return them.
+- Replace fragile VertexBuilder expect paths with infallible Vertex point constructors.
 
-  **Maintenance: Expand repository Semgrep rules**
+#### Maintenance: Expand repository Semgrep rules
 
-  - Add project-specific Semgrep checks for Rust dynamic errors, lint suppression reasons, Python subprocess mocks, and typed script helpers.
-  - Add focused Semgrep fixtures for hot-path hash collections, Rust project rules, and Python test conventions.
-  - Wire the expanded Semgrep fixture suite into `just check`.
-  - Replace stale Clippy `allow` suppressions with documented `expect` attributes and remove dynamic error trait-object usage from tests.
+- Add project-specific Semgrep checks for Rust dynamic errors, lint suppression reasons, Python subprocess mocks, and typed script helpers.
+- Add focused Semgrep fixtures for hot-path hash collections, Rust project rules, and Python test conventions.
+- Wire the expanded Semgrep fixture suite into `just check`.
+- Replace stale Clippy `allow` suppressions with documented `expect` attributes and remove dynamic error trait-object usage from tests.
 
-  **Maintenance: Refresh quality tooling and diagnostics**
+#### Maintenance: Refresh quality tooling and diagnostics
 
-  - Pin GitHub workflow tool versions and update action SHAs for cache, artifact upload, install-action, and SARIF upload.
-  - Exclude Semgrep fixtures from Codacy analysis so intentional rule-test violations do not surface as production issues.
-  - Add a cargo-machete backed just unused-deps recipe for checking unused direct dependencies.
-  - Gate convex hull test diagnostics behind test-debug tracing instead of unconditional stdout output.
-  - Add Hilbert ordering and zero-dimensional sort coverage for Codecov patch gaps.
+- Pin GitHub workflow tool versions and update action SHAs for cache, artifact upload, install-action, and SARIF upload.
+- Exclude Semgrep fixtures from Codacy analysis so intentional rule-test violations do not surface as production issues.
+- Add a cargo-machete backed just unused-deps recipe for checking unused direct dependencies.
+- Gate convex hull test diagnostics behind test-debug tracing instead of unconditional stdout output.
+- Add Hilbert ordering and zero-dimensional sort coverage for Codecov patch gaps.
 
-  **Fixed: Harden Hilbert ordering errors and prelude checks [#338](https://github.com/acgetchell/delaunay/pull/338)**
+#### Fixed: Harden Hilbert ordering errors and prelude checks [#338](https://github.com/acgetchell/delaunay/pull/338)
 
-  - Return typed Hilbert errors for non-finite quantization inputs and failed u32 coordinate conversions instead of silently collapsing values.
-  - Preserve item order when Hilbert sort key construction fails, and add regression coverage for the new error paths.
-  - Add the focused ordering prelude and update doctests, examples, benchmarks, and integration tests to use orthogonal prelude imports.
-  - Add a Semgrep rule and fixture coverage for examples and benchmarks that bypass focused preludes.
-  - Verify pinned shfmt binaries in CI with explicit SHA256 values instead of downloading a missing upstream checksum file.
+- Return typed Hilbert errors for non-finite quantization inputs and failed u32 coordinate conversions instead of silently collapsing values.
+- Preserve item order when Hilbert sort key construction fails, and add regression coverage for the new error paths.
+- Add the focused ordering prelude and update doctests, examples, benchmarks, and integration tests to use orthogonal prelude imports.
+- Add a Semgrep rule and fixture coverage for examples and benchmarks that bypass focused preludes.
+- Verify pinned shfmt binaries in CI with explicit SHA256 values instead of downloading a missing upstream checksum file.
 - [**breaking**] Quiet Codacy code scanning noise [#356](https://github.com/acgetchell/delaunay/pull/356)
   [`5d8a9ff`](https://github.com/acgetchell/delaunay/commit/5d8a9ff3bfd260636a8fa4209cb00801c134aaa5)
 
@@ -271,26 +267,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Add Semgrep coverage to keep triangulation doctest imports on focused preludes.
   - Clarify vertex point-constructor docs and avoid UUID-bearing facet assertion output.
 
-  **Added: Add focused preludes for doctest imports**
+#### Added: Add focused preludes for doctest imports
 
-  - Add minimal, task-focused preludes for triangulation, TDS, geometry, queries, generators, ordering, collections, and topology workflows.
-  - Update doctests, examples, integration tests, and benchmarks to use focused preludes instead of deep internal imports.
-  - Expand the Semgrep doctest import rule to cover all Rust source files and hidden doctest imports.
-  - Harden Codacy SARIF handling so empty analyses skip upload cleanly instead of creating noisy code-scanning results.
-  - Document the new prelude structure and update guides to use public prelude imports.
+- Add minimal, task-focused preludes for triangulation, TDS, geometry, queries, generators, ordering, collections, and topology workflows.
+- Update doctests, examples, integration tests, and benchmarks to use focused preludes instead of deep internal imports.
+- Expand the Semgrep doctest import rule to cover all Rust source files and hidden doctest imports.
+- Harden Codacy SARIF handling so empty analyses skip upload cleanly instead of creating noisy code-scanning results.
+- Document the new prelude structure and update guides to use public prelude imports.
 
-  **Fixed: Gate diagnostics behind test-debug**
+#### Fixed: Gate diagnostics behind test-debug
 
-  - Replace profile-based public diagnostic exports with the documented test-debug feature.
-  - Keep debug-only helper definitions and diagnostic call sites aligned with feature-gated API visibility.
-  - Allow hidden doctest prelude imports in the Semgrep prelude-import rule.
+- Replace profile-based public diagnostic exports with the documented test-debug feature.
+- Keep debug-only helper definitions and diagnostic call sites aligned with feature-gated API visibility.
+- Allow hidden doctest prelude imports in the Semgrep prelude-import rule.
 
-  **Changed: Rename test-debug feature to diagnostics**
+#### Changed: Rename test-debug feature to diagnostics
 
-  - Replace the test-debug feature with diagnostics for opt-in diagnostic helpers and verbose test diagnostics.
-  - Add prelude::diagnostics for debug verification helpers while keeping focused preludes narrow and orthogonal.
-  - Move diagnostic helper exports out of unrelated focused preludes and update cfg gates, tests, docs, and just recipes.
-  - Document that focused preludes should favor precise taxonomy over backwards compatibility for unrelated re-exports.
+- Replace the test-debug feature with diagnostics for opt-in diagnostic helpers and verbose test diagnostics.
+- Add prelude::diagnostics for debug verification helpers while keeping focused preludes narrow and orthogonal.
+- Move diagnostic helper exports out of unrelated focused preludes and update cfg gates, tests, docs, and just recipes.
+- Document that focused preludes should favor precise taxonomy over backwards compatibility for unrelated re-exports.
 - Bump taiki-e/install-action from 2.75.26 to 2.76.0 [#360](https://github.com/acgetchell/delaunay/pull/360)
   [`5b764e0`](https://github.com/acgetchell/delaunay/commit/5b764e0ab8c63223e63835b475d4829081db5e94)
 
@@ -300,13 +296,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - [Changelog](https://github.com/taiki-e/install-action/blob/main/CHANGELOG.md)
   - [Commits](https://github.com/taiki-e/install-action/compare/b651345a718c8f44efa2460560b3dbf29cbd7ee1...711e1c3275189d76dcc4d34ddea63bf96ac49090)
 
-  ---
+---
+
   updated-dependencies:
 
-  - dependency-name: taiki-e/install-action
-    dependency-version: 2.76.0
-    dependency-type: direct:production
-    update-type: version-update:semver-minor
+- dependency-name: taiki-e/install-action
+  dependency-version: 2.76.0
+  dependency-type: direct:production
+  update-type: version-update:semver-minor
   ...
 
 - Bump python-multipart in the uv group across 1 directory [#361](https://github.com/acgetchell/delaunay/pull/361)
@@ -320,15 +317,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - [Changelog](https://github.com/Kludex/python-multipart/blob/main/CHANGELOG.md)
   - [Commits](https://github.com/Kludex/python-multipart/compare/0.0.26...0.0.27)
 
-  ---
+---
+
   updated-dependencies:
 
-  - dependency-name: python-multipart
-    dependency-version: 0.0.27
-    dependency-type: indirect
-    dependency-group: uv
+- dependency-name: python-multipart
+  dependency-version: 0.0.27
+  dependency-type: indirect
+  dependency-group: uv
   ...
-
 - Harden SARIF tooling [#367](https://github.com/acgetchell/delaunay/pull/367)
   [`e5b20cd`](https://github.com/acgetchell/delaunay/commit/e5b20cd78fd58ba1bc77c20e5076dc778304b917)
 
@@ -345,13 +342,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - [Changelog](https://github.com/taiki-e/install-action/blob/main/CHANGELOG.md)
   - [Commits](https://github.com/taiki-e/install-action/compare/711e1c3275189d76dcc4d34ddea63bf96ac49090...fa0dd4cd0a40696e6f9766370614a5ce482e6aa8)
 
-  ---
+---
+
   updated-dependencies:
 
-  - dependency-name: taiki-e/install-action
-    dependency-version: 2.77.5
-    dependency-type: direct:production
-    update-type: version-update:semver-minor
+- dependency-name: taiki-e/install-action
+  dependency-version: 2.77.5
+  dependency-type: direct:production
+  update-type: version-update:semver-minor
   ...
 
 - Bump urllib3 in the uv group across 1 directory [#374](https://github.com/acgetchell/delaunay/pull/374)
@@ -365,13 +363,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - [Changelog](https://github.com/urllib3/urllib3/blob/main/CHANGES.rst)
   - [Commits](https://github.com/urllib3/urllib3/compare/2.6.3...2.7.0)
 
-  ---
+---
+
   updated-dependencies:
 
-  - dependency-name: urllib3
-    dependency-version: 2.7.0
-    dependency-type: indirect
-    dependency-group: uv
+- dependency-name: urllib3
+  dependency-version: 2.7.0
+  dependency-type: indirect
+  dependency-group: uv
   ...
 
 - Bump actions-rust-lang/setup-rust-toolchain [#373](https://github.com/acgetchell/delaunay/pull/373)
@@ -383,13 +382,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - [Changelog](https://github.com/actions-rust-lang/setup-rust-toolchain/blob/main/CHANGELOG.md)
   - [Commits](https://github.com/actions-rust-lang/setup-rust-toolchain/compare/2b1f5e9b395427c92ee4e3331786ca3c37afe2d7...46268bd060767258de96ed93c1251119784f2ab6)
 
-  ---
+---
+
   updated-dependencies:
 
-  - dependency-name: actions-rust-lang/setup-rust-toolchain
-    dependency-version: 1.16.1
-    dependency-type: direct:production
-    update-type: version-update:semver-patch
+- dependency-name: actions-rust-lang/setup-rust-toolchain
+  dependency-version: 1.16.1
+  dependency-type: direct:production
+  update-type: version-update:semver-patch
   ...
 
 - Bump sysinfo in the dependencies group [#372](https://github.com/acgetchell/delaunay/pull/372)
@@ -402,14 +402,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - [Changelog](https://github.com/GuillaumeGomez/sysinfo/blob/main/CHANGELOG.md)
   - [Commits](https://github.com/GuillaumeGomez/sysinfo/compare/v0.39.0...v0.39.1)
 
-  ---
+---
+
   updated-dependencies:
 
-  - dependency-name: sysinfo
-    dependency-version: 0.39.1
-    dependency-type: direct:production
-    update-type: version-update:semver-patch
-    dependency-group: dependencies
+- dependency-name: sysinfo
+  dependency-version: 0.39.1
+  dependency-type: direct:production
+  update-type: version-update:semver-patch
+  dependency-group: dependencies
   ...
 
 ### Performance
@@ -435,7 +436,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
   - Expose the low-level local repair helper through the insertion prelude
     and preserve typed neighbor-repair error sources.
-
 - [**breaking**] Cadence batch repair for large construction [#369](https://github.com/acgetchell/delaunay/pull/369)
   [`a984b3a`](https://github.com/acgetchell/delaunay/commit/a984b3aa0c57a967b0ae6f33b88042af49ac52cb)
 
@@ -444,84 +444,85 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Report construction telemetry for locate walks, conflict regions, global exterior scans, skipped-vertex budgets, and initial-simplex A/B runs in the
     large-scale debug harness.
 
-  **Performance: Keep bulk repair seeding local**
+#### Performance: Keep bulk repair seeding local
 
-  - Return live insertion-created cells as repair seeds so batch construction can
-    accumulate local frontiers without scanning vertex stars globally.
+- Return live insertion-created cells as repair seeds so batch construction can
+  accumulate local frontiers without scanning vertex stars globally.
 
-  - Move repair seed frontier helpers into triangulation locality utilities and
-    defer broad repair fallback to final construction repair.
+- Move repair seed frontier helpers into triangulation locality utilities and
+  defer broad repair fallback to final construction repair.
 
-  - Extend construction telemetry and large-scale debug output with seed
-    accumulation timing.
+- Extend construction telemetry and large-scale debug output with seed
+  accumulation timing.
 
-  **Performance: Keep exterior repair seeding local**
+#### Performance: Keep exterior repair seeding local
 
-  - Preserve the terminal locate cell so exterior insertion can seed nearby repair work without scanning the full triangulation.
-  - Skip global conflict-region scans during exterior hull extension and defer broad Delaunay cleanup to cadenced and final repair.
-  - Move local repair seed bookkeeping helpers into triangulation locality utilities.
+- Preserve the terminal locate cell so exterior insertion can seed nearby repair work without scanning the full triangulation.
+- Skip global conflict-region scans during exterior hull extension and defer broad Delaunay cleanup to cadenced and final repair.
+- Move local repair seed bookkeeping helpers into triangulation locality utilities.
 
-  **Performance: Localize construction repair cadence**
+#### Performance: Localize construction repair cadence
 
-  - Keep exterior repair seeding local when conflict buffers are empty, avoiding global conflict-region scans during insertion.
-  - Gate topology-validation telemetry on actual validation work and add typed validation cadences for large-scale diagnostics.
-  - Preserve typed Delaunay repair failures with construction repair phases and keep mutation repair gates independent of insertion cadence.
-  - Add focused triangulation construction, repair, and validation preludes across docs, examples, benches, and tests.
+- Keep exterior repair seeding local when conflict buffers are empty, avoiding global conflict-region scans during insertion.
+- Gate topology-validation telemetry on actual validation work and add typed validation cadences for large-scale diagnostics.
+- Preserve typed Delaunay repair failures with construction repair phases and keep mutation repair gates independent of insertion cadence.
+- Add focused triangulation construction, repair, and validation preludes across docs, examples, benches, and tests.
 
-  **Performance: Trigger batch repair on seed backlog [#341](https://github.com/acgetchell/delaunay/pull/341)**
+#### Performance: Trigger batch repair on seed backlog [#341](https://github.com/acgetchell/delaunay/pull/341)
 
-  - Add an adaptive seed-backlog trigger for batch local Delaunay repair.
-  - Track local repair frontier sizes and cadence versus backlog triggers.
-  - Expose the 3D large-scale repair interval in the debug just recipe.
-  - Clarify batch repair policy docs and cover trigger/telemetry behavior with focused tests.
+- Add an adaptive seed-backlog trigger for batch local Delaunay repair.
+- Track local repair frontier sizes and cadence versus backlog triggers.
+- Expose the 3D large-scale repair interval in the debug just recipe.
+- Clarify batch repair policy docs and cover trigger/telemetry behavior with focused tests.
 
-  **Performance: Fast-path retry validation [#341](https://github.com/acgetchell/delaunay/pull/341)**
+#### Performance: Fast-path retry validation [#341](https://github.com/acgetchell/delaunay/pull/341)
 
-  - Use the flip-based Delaunay verifier when accepting shuffled construction
-    retries instead of the brute-force property scan.
+- Use the flip-based Delaunay verifier when accepting shuffled construction
+  retries instead of the brute-force property scan.
 
-  - Add construction phase telemetry for preprocessing, insertion, finalization,
-    and final validation timing.
+- Add construction phase telemetry for preprocessing, insertion, finalization,
+  and final validation timing.
 
-  - Default the large-scale debug repair interval to 2 for the 3K repair sweep.
+- Default the large-scale debug repair interval to 2 for the 3K repair sweep.
 
-  **Performance: Default batch repair to EveryN(2) [#341](https://github.com/acgetchell/delaunay/pull/341)**
+#### Performance: Default batch repair to EveryN(2) [#341](https://github.com/acgetchell/delaunay/pull/341)
 
-  - Default batch construction repair to EveryN(2) while keeping direct incremental repair at EveryInsertion.
-  - Preserve final repair and validation as the acceptance gate for valid Delaunay output.
-  - Surface construction skip and slow-insertion diagnostics through the construction prelude.
-  - Align repair-policy docs with the batch default and the current 500/3000-point proxy results.
+- Default batch construction repair to EveryN(2) while keeping direct incremental repair at EveryInsertion.
+- Preserve final repair and validation as the acceptance gate for valid Delaunay output.
+- Surface construction skip and slow-insertion diagnostics through the construction prelude.
+- Align repair-policy docs with the batch default and the current 500/3000-point proxy results.
 
-  **Fixed: Tolerate degenerate Delaunay retessellation [#341](https://github.com/acgetchell/delaunay/pull/341)**
+#### Fixed: Tolerate degenerate Delaunay retessellation [#341](https://github.com/acgetchell/delaunay/pull/341)
 
-  - Compare quality metrics only for cells shared across independently
-    transformed triangulations, rejecting cases with no comparable cells.
+- Compare quality metrics only for cells shared across independently
+  transformed triangulations, rejecting cases with no comparable cells.
 
-  - Narrow locality repair helper visibility where the current module graph
-    allows it while preserving core insertion repair access.
+- Narrow locality repair helper visibility where the current module graph
+  allows it while preserving core insertion repair access.
 
-  - Clarify that non-substantive PRs may be declined unless justified by
-    cleanup or tooling needs.
+- Clarify that non-substantive PRs may be declined unless justified by
+  cleanup or tooling needs.
 
-  **Fixed: Distinguish insertion telemetry [#341](https://github.com/acgetchell/delaunay/pull/341)**
+#### Fixed: Distinguish insertion telemetry [#341](https://github.com/acgetchell/delaunay/pull/341)
 
-  - Count only full insertion validation runs in topology validation telemetry while preserving required link checks.
-  - Exclude caller-provided conflict buffers from discovered conflict-region telemetry.
-  - Keep large-scale debug validation cadence tied to inserted vertices and tighten triangulation proptest acceptance.
-  - Add explicit unsafe-code forbids to remaining bench, example, and test crates.
+- Count only full insertion validation runs in topology validation telemetry while preserving required link checks.
+- Exclude caller-provided conflict buffers from discovered conflict-region telemetry.
+- Keep large-scale debug validation cadence tied to inserted vertices and tighten triangulation proptest acceptance.
+- Add explicit unsafe-code forbids to remaining bench, example, and test crates.
 
-  **Performance: Tune batch construction repair [#341](https://github.com/acgetchell/delaunay/pull/341)**
+#### Performance: Tune batch construction repair [#341](https://github.com/acgetchell/delaunay/pull/341)
 
-  - Default batch construction to the real-vertex max-volume initial simplex and
-    every-insertion Delaunay repair cadence.
+- Default batch construction to the real-vertex max-volume initial simplex and
+  every-insertion Delaunay repair cadence.
 
-  - Add focused construction diagnostics telemetry for repair phase timing,
-    queued work, seed frontiers, and construction phase costs.
+- Add focused construction diagnostics telemetry for repair phase timing,
+  queued work, seed frontiers, and construction phase costs.
 
-  - Keep local repair postcondition replay tied to observed repair work so skipped
-    flip candidates cannot suppress required validation.
+- Keep local repair postcondition replay tied to observed repair work so skipped
+  flip candidates cannot suppress required validation.
 
-  - Update large-scale debug docs and recipes to reflect the new defaults.
+- Update large-scale debug docs and recipes to reflect the new defaults.
+
 - Stabilize large-scale profiling and construction [#377](https://github.com/acgetchell/delaunay/pull/377)
   [`77ba50b`](https://github.com/acgetchell/delaunay/commit/77ba50b23c6f22fbeaa6acf240bb144bbb1458f7)
 
@@ -561,10 +562,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Bump actions/github-script from 8.0.0 to 9.0.0 [#320](https://github.com/acgetchell/delaunay/pull/320)
 - Unify flip-repair and retry constants across build profiles [#306](https://github.com/acgetchell/delaunay/pull/306)
   [#319](https://github.com/acgetchell/delaunay/pull/319)
-
 - Remove ScalarAccumulative and ScalarSummable traits [#316](https://github.com/acgetchell/delaunay/pull/316)
   [#318](https://github.com/acgetchell/delaunay/pull/318)
-
 - Rename tds file and move delaunay/builder into triangulation/ [#317](https://github.com/acgetchell/delaunay/pull/317)
 - Allow explicit cell construction with non-sphere Euler characteristic [#314](https://github.com/acgetchell/delaunay/pull/314)
 
@@ -642,21 +641,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     improvements that make individual well-conditioned seeds less likely
     to trigger retries.
 
-  **Fixed: Close the 4D bulk repair retry collapse**
+#### Fixed: Close the 4D bulk repair retry collapse
 
-  - Raise the D≥4 per-insertion repair budget, add a rate-limited escalation pass, and widen local post-repair validation so the 500-point #204 repro converges
-    without skipped vertices.
+- Raise the D≥4 per-insertion repair budget, add a rate-limited escalation pass, and widen local post-repair validation so the 500-point #204 repro converges
+  without skipped vertices.
 
-  - Preserve removed-cell snapshots and predecessor context in flip diagnostics, drop stale repair seeds after cavity reduction, and re-export locate conflict
-    diagnostics from the prelude.
+- Preserve removed-cell snapshots and predecessor context in flip diagnostics, drop stale repair seeds after cavity reduction, and re-export locate conflict
+  diagnostics from the prelude.
 
-  - Replace committed `eprintln!` diagnostics in production, tests, and benches with `tracing` , using `test-debug` and `bench-logging` gates and keeping logs
-    out of Criterion hot loops.
+- Replace committed `eprintln!` diagnostics in production, tests, and benches with `tracing` , using `test-debug` and `bench-logging` gates and keeping logs
+  out of Criterion hot loops.
 
-  - Document the #204 investigation, refresh the 4D known-issues and TODO notes, and record the repository logging policy plus release-visible debug environment
-    variables.
+- Document the #204 investigation, refresh the 4D known-issues and TODO notes, and record the repository logging policy plus release-visible debug environment
+  variables.
 
-  **Changed: Harden flip diagnostics and refine large-scale debug workflows**
+#### Changed: Harden flip diagnostics and refine large-scale debug workflows
 
   Refactor flip snapshotting and cavity-reduction bookkeeping to ensure
   diagnostic reliability and accurate repair-seed collection. Update
@@ -664,11 +663,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   and transition to monitoring active scalability investigations for 3D,
   4D, and 5D datasets.
 
-  - Move removed-cell vertex capturing into fallible internal helpers
-  - Implement lazy evaluation for cavity-reduction diagnostic logs
-  - Harden vertex deduplication with fallible epsilon validation
-  - Update 4D known issues to reflect 100-point and 500-point fixes
-  - Simplify the large-scale debug harness CLI and documentation
+- Move removed-cell vertex capturing into fallible internal helpers
+- Implement lazy evaluation for cavity-reduction diagnostic logs
+- Harden vertex deduplication with fallible epsilon validation
+- Update 4D known issues to reflect 100-point and 500-point fixes
+- Simplify the large-scale debug harness CLI and documentation
 
 ### Changed
 
@@ -706,7 +705,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Synchronize `CHANGELOG.md` with recent maintenance tasks, documentation
   updates, and merged pull requests. Add `.kilo/` to the ignored user
   configuration patterns.
-
 - Use dedicated perf profile for consistent benchmark measurement [#334](https://github.com/acgetchell/delaunay/pull/334)
   [`f527c0c`](https://github.com/acgetchell/delaunay/commit/f527c0cf37b76f09222800afcfc138e623957678)
 
@@ -723,7 +721,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Also deniest warnings via the manifest lint policy to ensure consistent
   repository-wide enforcement.
 
-  **Changed: Standardize benchmark profiles and enhance SARIF analysis**
+#### Changed: Standardize benchmark profiles and enhance SARIF analysis
 
   Standardize benchmark workflows to use the `perf` profile by default
   across local scripts and CI for consistent optimization settings. Add a
@@ -732,7 +730,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   integration. Update manifest lints to comply with RFC 3389 priority
   requirements and fix the minimum sample size for benchmark smoke tests.
 
-  **Changed: Track sampling metadata and standardize benchmark profiles**
+#### Changed: Track sampling metadata and standardize benchmark profiles
 
   Enhance performance regression testing by embedding sampling configuration
   (Criterion settings and Cargo profile) into baseline files. This enables
@@ -740,20 +738,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Standardize benchmarking scripts on the trusted perf profile and update
   developer guidelines for naming conventions and local imports.
 
-  **Changed: Enable debug line tables for perf profile and refine validation**
+#### Changed: Enable debug line tables for perf profile and refine validation
 
   Include `debug = "line-tables-only"` in the perf Cargo profile to
   enable source-level profiling. Update the benchmark comparison logic
   to ensure that legacy baselines with missing or "Unknown" metadata
   trigger configuration mismatch warnings.
 
-  **Changed: Expand benchmark metadata validation tests**
+#### Changed: Expand benchmark metadata validation tests
 
   Update the benchmark utility tests to verify that differences or
   omissions in Criterion measurement and warm-up time are correctly
   reported in configuration mismatch warnings.
 
-  **Changed: Enable CodeRabbit request changes workflow**
+#### Changed: Enable CodeRabbit request changes workflow
 
   Enable the request_changes_workflow in the CodeRabbit configuration to
   allow the AI reviewer to formally request changes on pull requests. This
@@ -815,10 +813,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   valid 3D inputs that debug/test builds handled correctly.
 
   Primary fix: RetryPolicy::default() was Disabled in release but
-  DebugOnlyShuffled { attempts: 6 } in debug/test.  When the initial
+  DebugOnlyShuffled { attempts: 6 } in debug/test. When the initial
   Hilbert-ordered insertion hits a co-spherical flip cycle, shuffled
-  retries find a working vertex ordering.  Without retries, the first
-  failure was fatal.  Changed to Shuffled { attempts: 6 } unconditionally.
+  retries find a working vertex ordering. Without retries, the first
+  failure was fatal. Changed to Shuffled { attempts: 6 } unconditionally.
 
   Secondary fixes in flips.rs:
 
@@ -831,7 +829,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Unify HEURISTIC_REBUILD_ATTEMPTS to 6 (was 2 in release)
   - Remove cfg-gated DELAUNAY_SHUFFLE_ATTEMPTS constant
 
-  **Fixed: Enable construction retries in release builds by default**
+#### Fixed: Enable construction retries in release builds by default
 
   Update RetryPolicy::default() to return Shuffled retries in all build
   profiles. Previously, retries were disabled in release mode, causing
@@ -843,30 +841,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Periodic-aware Delaunay verification (Level 4) for toroidal tria… [#333](https://github.com/acgetchell/delaunay/pull/333)
   [`7c788aa`](https://github.com/acgetchell/delaunay/commit/7c788aa1a7e3b2a94a53193d8d5894718b6afa07)
 
-  **Fixed: Periodic-aware Delaunay verification (Level 4) for toroidal triangulations [#315](https://github.com/acgetchell/delaunay/pull/315)**
+#### Fixed: Periodic-aware Delaunay verification (Level 4) for toroidal triangulations [#315](https://github.com/acgetchell/delaunay/pull/315)
 
-  - Thread GlobalTopologyModelAdapter through all flip-predicate evaluation
-    functions (k=2 facets, k=3 ridges, and their inverses) so insphere
-    predicates use lifted coordinates for periodic topologies.
+- Thread GlobalTopologyModelAdapter through all flip-predicate evaluation
+  functions (k=2 facets, k=3 ridges, and their inverses) so insphere
+  predicates use lifted coordinates for periodic topologies.
 
-  - Add verify_delaunay_for_triangulation() as the preferred topology-aware
-    Level 4 entry point; is_delaunay_via_flips() now delegates to it.
+- Add verify_delaunay_for_triangulation() as the preferred topology-aware
+  Level 4 entry point; is_delaunay_via_flips() now delegates to it.
 
-  - Add periodic lifting helpers: vertices_to_points_with_optional_lift,
-    vertex_point_lifted_into_cell, align_periodic_offset, and supporting
-    functions for offset lookup, validation, and cross-cell alignment.
+- Add periodic lifting helpers: vertices_to_points_with_optional_lift,
+  vertex_point_lifted_into_cell, align_periodic_offset, and supporting
+  functions for offset lookup, validation, and cross-cell alignment.
 
-  - Repair paths continue to use GlobalTopology::DEFAULT (non-periodic),
-    which is correct since flip repair runs during construction.
+- Repair paths continue to use GlobalTopology::DEFAULT (non-periodic),
+  which is correct since flip repair runs during construction.
 
-  - Add integration test reproducing the issue: toroidal_periodic 2D
-    triangulation now passes dt.validate() (Levels 1–4).
+- Add integration test reproducing the issue: toroidal_periodic 2D
+  triangulation now passes dt.validate() (Levels 1–4).
 
-  - Add doctest for verify_delaunay_for_triangulation.
-  - Add unit tests for align_periodic_offset (identity, delta shifts,
-    higher-dimension, overflow).
+- Add doctest for verify_delaunay_for_triangulation.
 
-  **Fixed: Use reference frames for periodic inverse predicates in flip repair**
+- Add unit tests for align_periodic_offset (identity, delta shifts,
+  higher-dimension, overflow).
+
+#### Fixed: Use reference frames for periodic inverse predicates in flip repair
 
   Update Delaunay violation predicates to accept an optional frame cell,
   ensuring coordinate lifting remains consistent for inverse k=2 and k=3
@@ -885,21 +884,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Add a 4D regression test for the issue #307 bulk construction failure.
   - Document branch naming conventions for contributors and agents.
 
-  **Fixed: Harden flip repair invariants and PR quality gates**
+#### Fixed: Harden flip repair invariants and PR quality gates
 
-  - Reject periodic external cells when replacement-cell parity constraints cannot be preserved.
-  - Canonicalize after D&gt;=4 bulk repair failures before continuing with later insertions.
-  - Consolidate fixed-bug regression coverage into tests/regressions.rs and document the pattern.
-  - Narrow CodeQL/Codacy code scanning noise while keeping curated PR quality feedback via Codacy and CodeRabbit.
-  - Stage repository-owned Semgrep rules for future cleanup without enabling broad default rule packs.
+- Reject periodic external cells when replacement-cell parity constraints cannot be preserved.
+- Canonicalize after D&gt;=4 bulk repair failures before continuing with later insertions.
+- Consolidate fixed-bug regression coverage into tests/regressions.rs and document the pattern.
+- Narrow CodeQL/Codacy code scanning noise while keeping curated PR quality feedback via Codacy and CodeRabbit.
+- Stage repository-owned Semgrep rules for future cleanup without enabling broad default rule packs.
 
-  **Changed: Cover flip repair checks and quality tooling**
+#### Changed: Cover flip repair checks and quality tooling
 
-  - Add focused coverage for replacement-cell orientation helper error paths and D&gt;=4 bulk-repair canonicalization branches.
-  - Strengthen the #307 regression with a longer 4D prefix and explicit geometric-orientation validation.
-  - Add an opt-in `just semgrep` workflow, pin Semgrep in uv dev dependencies, and refresh Python tool versions.
-  - Clarify CodeRabbit/Codacy quality-scan documentation and workflow labels.
-  - Preserve profiling benchmark rustflags behavior under setup-rust-toolchain.
+- Add focused coverage for replacement-cell orientation helper error paths and D&gt;=4 bulk-repair canonicalization branches.
+- Strengthen the #307 regression with a longer 4D prefix and explicit geometric-orientation validation.
+- Add an opt-in `just semgrep` workflow, pin Semgrep in uv dev dependencies, and refresh Python tool versions.
+- Clarify CodeRabbit/Codacy quality-scan documentation and workflow labels.
+- Preserve profiling benchmark rustflags behavior under setup-rust-toolchain.
 - Preserve fallback rebuild cell data [#305](https://github.com/acgetchell/delaunay/pull/305) [#346](https://github.com/acgetchell/delaunay/pull/346)
   [`7e42be8`](https://github.com/acgetchell/delaunay/commit/7e42be8fba9abe571d0137710fbd7ed0151ebc85)
 
@@ -922,13 +921,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - [Changelog](https://github.com/pytest-dev/pytest/blob/main/CHANGELOG.rst)
   - [Commits](https://github.com/pytest-dev/pytest/compare/8.4.2...9.0.3)
 
-  ---
+---
+
   updated-dependencies:
 
-  - dependency-name: pytest
-    dependency-version: 9.0.3
-    dependency-type: direct:development
-    dependency-group: uv
+- dependency-name: pytest
+  dependency-version: 9.0.3
+  dependency-type: direct:development
+  dependency-group: uv
   ...
 
 - Bump actions/github-script from 8.0.0 to 9.0.0 [#320](https://github.com/acgetchell/delaunay/pull/320)
@@ -939,13 +939,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - [Release notes](https://github.com/actions/github-script/releases)
   - [Commits](https://github.com/actions/github-script/compare/ed597411d8f924073f98dfc5c65a23a2325f34cd...3a2844b7e9c422d3c10d287c895573f7108da1b3)
 
-  ---
+---
+
   updated-dependencies:
 
-  - dependency-name: actions/github-script
-    dependency-version: 9.0.0
-    dependency-type: direct:production
-    update-type: version-update:semver-major
+- dependency-name: actions/github-script
+  dependency-version: 9.0.0
+  dependency-type: direct:production
+  update-type: version-update:semver-major
   ...
 
 - Bump taiki-e/install-action from 2.73.0 to 2.75.9 [#321](https://github.com/acgetchell/delaunay/pull/321)
@@ -957,13 +958,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - [Changelog](https://github.com/taiki-e/install-action/blob/main/CHANGELOG.md)
   - [Commits](https://github.com/taiki-e/install-action/compare/7a562dfa955aa2e4d5b0fd6ebd57ff9715c07b0b...d0f23220b09a75c6db730f13bb37c4f8144b4382)
 
-  ---
+---
+
   updated-dependencies:
 
-  - dependency-name: taiki-e/install-action
-    dependency-version: 2.75.9
-    dependency-type: direct:production
-    update-type: version-update:semver-minor
+- dependency-name: taiki-e/install-action
+  dependency-version: 2.75.9
+  dependency-type: direct:production
+  update-type: version-update:semver-minor
   ...
 
 - Bump actions-rust-lang/setup-rust-toolchain [#328](https://github.com/acgetchell/delaunay/pull/328)
@@ -975,13 +977,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - [Changelog](https://github.com/actions-rust-lang/setup-rust-toolchain/blob/main/CHANGELOG.md)
   - [Commits](https://github.com/actions-rust-lang/setup-rust-toolchain/compare/150fca883cd4034361b621bd4e6a9d34e5143606...2b1f5e9b395427c92ee4e3331786ca3c37afe2d7)
 
-  ---
+---
+
   updated-dependencies:
 
-  - dependency-name: actions-rust-lang/setup-rust-toolchain
-    dependency-version: 1.16.0
-    dependency-type: direct:production
-    update-type: version-update:semver-minor
+- dependency-name: actions-rust-lang/setup-rust-toolchain
+  dependency-version: 1.16.0
+  dependency-type: direct:production
+  update-type: version-update:semver-minor
   ...
 
 - Bump astral-sh/setup-uv from 8.0.0 to 8.1.0 [#325](https://github.com/acgetchell/delaunay/pull/325)
@@ -992,13 +995,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - [Release notes](https://github.com/astral-sh/setup-uv/releases)
   - [Commits](https://github.com/astral-sh/setup-uv/compare/cec208311dfd045dd5311c1add060b2062131d57...08807647e7069bb48b6ef5acd8ec9567f424441b)
 
-  ---
+---
+
   updated-dependencies:
 
-  - dependency-name: astral-sh/setup-uv
-    dependency-version: 8.1.0
-    dependency-type: direct:production
-    update-type: version-update:semver-minor
+- dependency-name: astral-sh/setup-uv
+  dependency-version: 8.1.0
+  dependency-type: direct:production
+  update-type: version-update:semver-minor
   ...
 
 - Bump taiki-e/install-action from 2.75.9 to 2.75.18 [#326](https://github.com/acgetchell/delaunay/pull/326)
@@ -1010,13 +1014,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - [Changelog](https://github.com/taiki-e/install-action/blob/main/CHANGELOG.md)
   - [Commits](https://github.com/taiki-e/install-action/compare/d0f23220b09a75c6db730f13bb37c4f8144b4382...055f5df8c3f65ea01cd41e9dc855becd88953486)
 
-  ---
+---
+
   updated-dependencies:
 
-  - dependency-name: taiki-e/install-action
-    dependency-version: 2.75.18
-    dependency-type: direct:production
-    update-type: version-update:semver-patch
+- dependency-name: taiki-e/install-action
+  dependency-version: 2.75.18
+  dependency-type: direct:production
+  update-type: version-update:semver-patch
   ...
 
 - Bump actions/setup-node from 6.3.0 to 6.4.0 [#327](https://github.com/acgetchell/delaunay/pull/327)
@@ -1027,20 +1032,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - [Release notes](https://github.com/actions/setup-node/releases)
   - [Commits](https://github.com/actions/setup-node/compare/53b83947a5a98c8d113130e565377fae1a50d02f...48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e)
 
-  ---
+---
+
   updated-dependencies:
 
-  - dependency-name: actions/setup-node
-    dependency-version: 6.4.0
-    dependency-type: direct:production
-    update-type: version-update:semver-minor
+- dependency-name: actions/setup-node
+  dependency-version: 6.4.0
+  dependency-type: direct:production
+  update-type: version-update:semver-minor
   ...
-
 - Adopt Rust 1.95.0 MSRV [#330](https://github.com/acgetchell/delaunay/pull/330)
   [`d0c53d9`](https://github.com/acgetchell/delaunay/commit/d0c53d95e748bac33e079a4256222b7bff7fad53)
 
   Bump MSRV from 1.94 to 1.95 and adopt stabilized features where
-  they fit.  Coordinates with la-stack 0.4.0 -&gt; 0.4.1, which also
+  they fit. Coordinates with la-stack 0.4.0 -&gt; 0.4.1, which also
   requires 1.95.
 
   Toolchain and docs:
@@ -1076,7 +1081,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Add MVP delaunayize-by-flips workflow [#227](https://github.com/acgetchell/delaunay/pull/227) [#303](https://github.com/acgetchell/delaunay/pull/303)
 - Add explicit construction from vertices and cells [#293](https://github.com/acgetchell/delaunay/pull/293)
   [#301](https://github.com/acgetchell/delaunay/pull/301)
-
 - Change remove_vertex to accept VertexKey instead of &Vertex [#300](https://github.com/acgetchell/delaunay/pull/300)
 - Bump pygments from 2.19.2 to 2.20.0 [#298](https://github.com/acgetchell/delaunay/pull/298)
 - Bump astral-sh/setup-uv from 7.6.0 to 8.0.0 [#297](https://github.com/acgetchell/delaunay/pull/297)
@@ -1106,7 +1110,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Add comprehensive integration tests for explicit construction across
     2D/3D, round-trip fidelity, error cases, and topology guarantees
 
-  **Changed: Refine explicit construction validation and error reporting**
+#### Changed: Refine explicit construction validation and error reporting
 
   Update the triangulation builder to return specific ValidationFailed
   errors when structural invariants are violated. Refine the Delaunay
@@ -1147,7 +1151,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
   - Update docs/api_design.md and docs/code_organization.md
 
-  **Changed: Allow manifold repair to proceed on over-shared facets**
+#### Changed: Allow manifold repair to proceed on over-shared facets
 
   Refactor `repair_facet_oversharing` to use partial structural pre-checks
   rather than full validation, as the latter rejects over-shared facets
@@ -1157,14 +1161,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Add diagnostic infrastructure for v0.7.6 investigation (#306, #… [#309](https://github.com/acgetchell/delaunay/pull/309)
   [`b25dff3`](https://github.com/acgetchell/delaunay/commit/b25dff390f27bc8b34ec99fa0c45a6163b6fd723)
 
-  **Added: Add diagnostic infrastructure for v0.7.6 investigation (#306, #307)**
+#### Added: Add diagnostic infrastructure for v0.7.6 investigation (#306, #307)
 
-  - Enhance conflict-region verifier with neighbor-reachability analysis
-  - Add BFS boundary logging to find_conflict_region
-  - Add orientation tracing and post-insertion audit (DELAUNAY_DEBUG_ORIENTATION)
-  - Add cell creation provenance logging to fill_cavity
-  - Re-export diagnostic types (DelaunayRepairDiagnostics, etc.) in prelude
-  - Create comprehensive debug env var reference (docs/dev/debug_env_vars.md)
+- Enhance conflict-region verifier with neighbor-reachability analysis
+- Add BFS boundary logging to find_conflict_region
+- Add orientation tracing and post-insertion audit (DELAUNAY_DEBUG_ORIENTATION)
+- Add cell creation provenance logging to fill_cavity
+- Re-export diagnostic types (DelaunayRepairDiagnostics, etc.) in prelude
+- Create comprehensive debug env var reference (docs/dev/debug_env_vars.md)
 
 ### Changed
 
@@ -1186,17 +1190,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - V0.7.5 cleanup — impl-block split, builder decomposition, p… [#311](https://github.com/acgetchell/delaunay/pull/311)
   [`5bf5c81`](https://github.com/acgetchell/delaunay/commit/5bf5c8192b378d320d35f0a074a57f5b7e8170ff)
 
-  **Changed: V0.7.5 cleanup — impl-block split, builder decomposition, prelude guidance, re-enable 3D proptests**
+#### Changed: V0.7.5 cleanup — impl-block split, builder decomposition, prelude guidance, re-enable 3D proptests
 
-  - Split monolithic DelaunayTriangulation impl block into 6 trait-minimal
-    blocks per #302 (ScalarAccumulative only where needed)
-
-  - Decompose search_closed_2d_selection: extract ClosedSelectionDfs struct
-    and sort_candidates_by_rarity_and_domain helper, remove clippy suppressions
-
-  - Add "Which import do I need?" prelude guidance table to lib.rs
-  - Re-enable 43 previously-ignored 3D proptests (all &lt;1s in release mode)
-  - Audit doctests for builder migration (no changes needed; deferred to #214)
+- Split monolithic DelaunayTriangulation impl block into 6 trait-minimal
+  blocks per #302 (ScalarAccumulative only where needed)
+- Decompose search_closed_2d_selection: extract ClosedSelectionDfs struct
+  and sort_candidates_by_rarity_and_domain helper, remove clippy suppressions
+- Add "Which import do I need?" prelude guidance table to lib.rs
+- Re-enable 43 previously-ignored 3D proptests (all &lt;1s in release mode)
+- Audit doctests for builder migration (no changes needed; deferred to #214)
 - Update internal performance results for v0.7.5 [`76b2ff7`](https://github.com/acgetchell/delaunay/commit/76b2ff7c4409a8bfa8aa6b9f5362a3dfb8b67999)
 
   Refresh the performance documentation with updated benchmark metrics,
@@ -1224,12 +1226,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - [Changelog](https://github.com/pygments/pygments/blob/master/CHANGES)
   - [Commits](https://github.com/pygments/pygments/compare/2.19.2...2.20.0)
 
-  ---
+---
+
   updated-dependencies:
 
-  - dependency-name: pygments
-    dependency-version: 2.20.0
-    dependency-type: indirect
+- dependency-name: pygments
+  dependency-version: 2.20.0
+  dependency-type: indirect
   ...
 
 - Bump the dependencies group with 3 updates [#294](https://github.com/acgetchell/delaunay/pull/294)
@@ -1253,26 +1256,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - [Release notes](https://github.com/uuid-rs/uuid/releases)
   - [Commits](https://github.com/uuid-rs/uuid/compare/v1.22.0...v1.23.0)
 
-  ---
+---
+
   updated-dependencies:
 
-  - dependency-name: rustc-hash
-    dependency-version: 2.1.2
-    dependency-type: direct:production
-    update-type: version-update:semver-patch
-    dependency-group: dependencies
+- dependency-name: rustc-hash
+  dependency-version: 2.1.2
+  dependency-type: direct:production
+  update-type: version-update:semver-patch
+  dependency-group: dependencies
 
-  - dependency-name: ordered-float
-    dependency-version: 5.3.0
-    dependency-type: direct:production
-    update-type: version-update:semver-minor
-    dependency-group: dependencies
+- dependency-name: ordered-float
+  dependency-version: 5.3.0
+  dependency-type: direct:production
+  update-type: version-update:semver-minor
+  dependency-group: dependencies
 
-  - dependency-name: uuid
-    dependency-version: 1.23.0
-    dependency-type: direct:production
-    update-type: version-update:semver-minor
-    dependency-group: dependencies
+- dependency-name: uuid
+  dependency-version: 1.23.0
+  dependency-type: direct:production
+  update-type: version-update:semver-minor
+  dependency-group: dependencies
   ...
 
 - Bump codecov/codecov-action from 5.5.3 to 6.0.0 [#295](https://github.com/acgetchell/delaunay/pull/295)
@@ -1284,13 +1288,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - [Changelog](https://github.com/codecov/codecov-action/blob/main/CHANGELOG.md)
   - [Commits](https://github.com/codecov/codecov-action/compare/1af58845a975a7985b0beb0cbe6fbbb71a41dbad...57e3a136b779b570ffcdbf80b3bdc90e7fab3de2)
 
-  ---
+---
+
   updated-dependencies:
 
-  - dependency-name: codecov/codecov-action
-    dependency-version: 6.0.0
-    dependency-type: direct:production
-    update-type: version-update:semver-major
+- dependency-name: codecov/codecov-action
+  dependency-version: 6.0.0
+  dependency-type: direct:production
+  update-type: version-update:semver-major
   ...
 
 - Bump astral-sh/setup-uv from 7.6.0 to 8.0.0 [#297](https://github.com/acgetchell/delaunay/pull/297)
@@ -1301,13 +1306,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - [Release notes](https://github.com/astral-sh/setup-uv/releases)
   - [Commits](https://github.com/astral-sh/setup-uv/compare/37802adc94f370d6bfd71619e3f0bf239e1f3b78...cec208311dfd045dd5311c1add060b2062131d57)
 
-  ---
+---
+
   updated-dependencies:
 
-  - dependency-name: astral-sh/setup-uv
-    dependency-version: 8.0.0
-    dependency-type: direct:production
-    update-type: version-update:semver-major
+- dependency-name: astral-sh/setup-uv
+  dependency-version: 8.0.0
+  dependency-type: direct:production
+  update-type: version-update:semver-major
   ...
 
 - Bump taiki-e/install-action from 2.69.6 to 2.70.2 [#296](https://github.com/acgetchell/delaunay/pull/296)
@@ -1319,13 +1325,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - [Changelog](https://github.com/taiki-e/install-action/blob/main/CHANGELOG.md)
   - [Commits](https://github.com/taiki-e/install-action/compare/06203676c62f0d3c765be3f2fcfbebbcb02d09f5...e9e8e031bcd90cdbe8ac6bb1d376f8596e587fbf)
 
-  ---
+---
+
   updated-dependencies:
 
-  - dependency-name: taiki-e/install-action
-    dependency-version: 2.70.2
-    dependency-type: direct:production
-    update-type: version-update:semver-minor
+- dependency-name: taiki-e/install-action
+  dependency-version: 2.70.2
+  dependency-type: direct:production
+  update-type: version-update:semver-minor
   ...
 
 - Bump taiki-e/install-action from 2.70.2 to 2.73.0 [#308](https://github.com/acgetchell/delaunay/pull/308)
@@ -1337,13 +1344,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - [Changelog](https://github.com/taiki-e/install-action/blob/main/CHANGELOG.md)
   - [Commits](https://github.com/taiki-e/install-action/compare/e9e8e031bcd90cdbe8ac6bb1d376f8596e587fbf...7a562dfa955aa2e4d5b0fd6ebd57ff9715c07b0b)
 
-  ---
+---
+
   updated-dependencies:
 
-  - dependency-name: taiki-e/install-action
-    dependency-version: 2.73.0
-    dependency-type: direct:production
-    update-type: version-update:semver-minor
+- dependency-name: taiki-e/install-action
+  dependency-version: 2.73.0
+  dependency-type: direct:production
+  update-type: version-update:semver-minor
   ...
 
 ## [0.7.4] - 2026-03-27
@@ -1359,7 +1367,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Release v0.7.4 [#291](https://github.com/acgetchell/delaunay/pull/291)
 - Generalize DelaunayTriangulationBuilder::new() over U [#287](https://github.com/acgetchell/delaunay/pull/287)
   [#290](https://github.com/acgetchell/delaunay/pull/290)
-
 - Tighten Vertex::data and Cell::data to pub(crate) [#289](https://github.com/acgetchell/delaunay/pull/289)
 - Add set_vertex_data and set_cell_data methods [#284](https://github.com/acgetchell/delaunay/pull/284) [#285](https://github.com/acgetchell/delaunay/pull/285)
 
@@ -1407,7 +1414,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
   - Update all external-facing doctests and integration tests to use
     the new accessor
-
 - [**breaking**] Generalize DelaunayTriangulationBuilder::new() over U [#287](https://github.com/acgetchell/delaunay/pull/287)
   [#290](https://github.com/acgetchell/delaunay/pull/290) [`7694a3e`](https://github.com/acgetchell/delaunay/commit/7694a3effba4eefb53238d15323e76452eec56ea)
 
@@ -1427,7 +1433,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Update documentation for release
   - Add performance results for v0.7.4
 
-  **Changed: Clarify adaptive_tolerance_insphere delegation in 4D docs**
+#### Changed: Clarify adaptive_tolerance_insphere delegation in 4D docs
 
   Update the documentation for provable error bounds to clarify that the
   `adaptive_tolerance_insphere` wrapper function remains available but now
@@ -1459,6 +1465,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   [#255](https://github.com/acgetchell/delaunay/pull/255)
 
 - Apply SoS to AdaptiveKernel::orientation() and tolerate degener… [#264](https://github.com/acgetchell/delaunay/pull/264)
+
 - Improve 4D debug harness diagnostics, add capped repair and regression test [#230](https://github.com/acgetchell/delaunay/pull/230)
   [#277](https://github.com/acgetchell/delaunay/pull/277)
 
@@ -1466,6 +1473,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   [#260](https://github.com/acgetchell/delaunay/pull/260)
 
 - Rename TdsValidationError to TdsError [#262](https://github.com/acgetchell/delaunay/pull/262) [#265](https://github.com/acgetchell/delaunay/pull/265)
+
 - Replace custom changelog pipeline with git-cliff [#247](https://github.com/acgetchell/delaunay/pull/247)
 
 ### Merged Pull Requests
@@ -1476,7 +1484,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Bump arc-swap from 1.8.2 to 1.9.0 in the dependencies group [#278](https://github.com/acgetchell/delaunay/pull/278)
 - Improve 4D debug harness diagnostics, add capped repair and regression test [#230](https://github.com/acgetchell/delaunay/pull/230)
   [#277](https://github.com/acgetchell/delaunay/pull/277)
-
 - Add progressive scale-invariant perturbation [#209](https://github.com/acgetchell/delaunay/pull/209) [#274](https://github.com/acgetchell/delaunay/pull/274)
 - Add ExactPredicates marker trait for flip repair type safety (#… [#273](https://github.com/acgetchell/delaunay/pull/273)
 - Identity-based SoS perturbation via canonical vertex ordering (… [#272](https://github.com/acgetchell/delaunay/pull/272)
@@ -1490,17 +1497,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Canonicalize positive orientation after bulk construction repair… [#261](https://github.com/acgetchell/delaunay/pull/261)
 - Remove RobustPredicateConfig and config_presets [#259](https://github.com/acgetchell/delaunay/pull/259)
   [#260](https://github.com/acgetchell/delaunay/pull/260)
-
 - Remove use_robust_on_ambiguous override from flip repair [#228](https://github.com/acgetchell/delaunay/pull/228)
   [#255](https://github.com/acgetchell/delaunay/pull/255)
-
 - Add SoS module for deterministic degeneracy resolution [#233](https://github.com/acgetchell/delaunay/pull/233)
   [#251](https://github.com/acgetchell/delaunay/pull/251)
-
 - Replace panicking calls with error propagation [#242](https://github.com/acgetchell/delaunay/pull/242) [#250](https://github.com/acgetchell/delaunay/pull/250)
 - Replace derive_builder with hand-written VertexBuilder [#212](https://github.com/acgetchell/delaunay/pull/212)
   [#249](https://github.com/acgetchell/delaunay/pull/249)
-
 - Archive completed changelog minor series into per-minor files [#248](https://github.com/acgetchell/delaunay/pull/248)
 - Replace custom changelog pipeline with git-cliff [#247](https://github.com/acgetchell/delaunay/pull/247)
 
@@ -1549,7 +1552,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - No coordinate modification — purely a decision rule
 
   Part of AdaptiveKernel implementation (B2 of #233).
-
 - [**breaking**] Remove use_robust_on_ambiguous override from flip repair [#228](https://github.com/acgetchell/delaunay/pull/228)
   [#255](https://github.com/acgetchell/delaunay/pull/255) [`faf84de`](https://github.com/acgetchell/delaunay/commit/faf84ded97e8343fd36292d38b051be9df39c353)
 
@@ -1566,170 +1568,175 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - [**breaking**] Apply SoS to AdaptiveKernel::orientation() and tolerate degener… [#264](https://github.com/acgetchell/delaunay/pull/264)
   [`526b39e`](https://github.com/acgetchell/delaunay/commit/526b39e4c1f634208db9014793806e2e94f9c0ed)
 
-  **Added: Apply SoS to AdaptiveKernel::orientation() and tolerate degenerate cells [#263](https://github.com/acgetchell/delaunay/pull/263)**
+#### Added: Apply SoS to AdaptiveKernel::orientation() and tolerate degenerate cells [#263](https://github.com/acgetchell/delaunay/pull/263)
 
-  - Apply Simulation of Simplicity to AdaptiveKernel::orientation() so
-    degenerate ties are broken deterministically (returns ±1 for all
-    distinct-point inputs, 0 only for identical f64 points)
+- Apply Simulation of Simplicity to AdaptiveKernel::orientation() so
+  degenerate ties are broken deterministically (returns ±1 for all
+  distinct-point inputs, 0 only for identical f64 points)
 
-  - Tolerate degenerate cells (zero exact determinant) in orientation
-    normalization after flip-based Delaunay repair:
+- Tolerate degenerate cells (zero exact determinant) in orientation
+  normalization after flip-based Delaunay repair:
 
-    - promote_cells_to_positive_orientation: skip instead of error
-    - cells_require_positive_orientation_promotion: skip instead of error
-    - canonicalize_global_orientation_sign: scan past degenerate cells
-    - validate_geometric_cell_orientation: only flag negative orientation
-  - Add Hilbert-sort preprocessing dedup (Phase 4 in order_vertices_hilbert)
-    that removes vertices mapping to the same quantized grid cell
+  - promote_cells_to_positive_orientation: skip instead of error
+  - cells_require_positive_orientation_promotion: skip instead of error
+  - canonicalize_global_orientation_sign: scan past degenerate cells
+  - validate_geometric_cell_orientation: only flag negative orientation
 
-  - Add per-cell coordinate uniqueness validation (DuplicateCoordinatesInCell
-    variant, CellCoordinateUniqueness invariant kind)
+- Add Hilbert-sort preprocessing dedup (Phase 4 in order_vertices_hilbert)
+  that removes vertices mapping to the same quantized grid cell
 
-  - Document three-layer duplicate vertex handling strategy in
-    docs/numerical_robustness_guide.md
+- Add per-cell coordinate uniqueness validation (DuplicateCoordinatesInCell
+  variant, CellCoordinateUniqueness invariant kind)
 
-  - Update convex_hull and quality tests to accept InsufficientVertices
-    alongside GeometricDegeneracy for extreme-scale dedup inputs
+- Document three-layer duplicate vertex handling strategy in
+  docs/numerical_robustness_guide.md
 
-  - Add macro-generated dedup integration tests covering 2D–5D
+- Update convex_hull and quality tests to accept InsufficientVertices
+  alongside GeometricDegeneracy for extreme-scale dedup inputs
 
-  **Added: Normalize SoS orientation callers and harden Hilbert dedup [#263](https://github.com/acgetchell/delaunay/pull/263)**
+- Add macro-generated dedup integration tests covering 2D–5D
 
-  - Refactor evaluate_cell_orientation_for_context to use robust_orientation
-    as the sole oracle, removing the duplicate kernel call
+#### Added: Normalize SoS orientation callers and harden Hilbert dedup [#263](https://github.com/acgetchell/delaunay/pull/263)
 
-  - Add robust_orientation guard in apply_bistellar_flip_with_k to reject
-    degenerate cells before kernel invocation (fixes 4D perf regression)
+- Refactor evaluate_cell_orientation_for_context to use robust_orientation
+  as the sole oracle, removing the duplicate kernel call
 
-  - Switch find_boundary_edge_split_facet to robust_orientation for true
-    collinearity/degeneracy detection instead of kernel SoS
+- Add robust_orientation guard in apply_bistellar_flip_with_k to reject
+  degenerate cells before kernel invocation (fixes 4D perf regression)
 
-  - Use robust_orientation sign directly in build_initial_simplex, removing
-    unused kernel variable and redundant orientation call
+- Switch find_boundary_edge_split_facet to robust_orientation for true
+  collinearity/degeneracy detection instead of kernel SoS
 
-  - Extract hilbert_dedup_sorted from order_vertices_hilbert so the
-    ordering function is pure; apply dedup in
-    preprocess_vertices_for_construction after Hilbert sort regardless of
-    DedupPolicy (safety-critical for SoS identical-point failures)
+- Use robust_orientation sign directly in build_initial_simplex, removing
+  unused kernel variable and redundant orientation call
 
-  - Add validate_cell_coordinate_uniqueness to validation_report with
-    CoordinateScalar bound
+- Extract hilbert_dedup_sorted from order_vertices_hilbert so the
+  ordering function is pure; apply dedup in
+  preprocess_vertices_for_construction after Hilbert sort regardless of
+  DedupPolicy (safety-critical for SoS identical-point failures)
 
-  - Fix quantization bits table in numerical_robustness_guide.md (2D/3D
-    capped at 31 bits, not 64/42)
+- Add validate_cell_coordinate_uniqueness to validation_report with
+  CoordinateScalar bound
 
-  - Update rustdoc for cells_require_positive_orientation_promotion to
-    reflect skip-degenerate semantics
+- Fix quantization bits table in numerical_robustness_guide.md (2D/3D
+  capped at 31 bits, not 64/42)
 
-  - Trim inaccurate near-duplicate claim from dedup_batch_construction docs
-  - Add SoS identical-points regression tests (2D–5D) verifying
-    AdaptiveKernel returns 0 when all cofactors vanish
+- Update rustdoc for cells_require_positive_orientation_promotion to
+  reflect skip-degenerate semantics
 
-  - Add standalone hilbert_dedup_sorted edge-case tests
+- Trim inaccurate near-duplicate claim from dedup_batch_construction docs
 
-  **Changed: Address review comments for SoS orientation normalization [#263](https://github.com/acgetchell/delaunay/pull/263)**
+- Add SoS identical-points regression tests (2D–5D) verifying
+  AdaptiveKernel returns 0 when all cofactors vanish
 
-  - Propagate `robust_orientation` errors in `apply_bistellar_flip_with_k`
-    instead of silently ignoring `Err` via `matches!`
+- Add standalone hilbert_dedup_sorted edge-case tests
 
-  - Switch `k2_flip_would_create_degenerate_cell` from kernel orientation
-    to `robust_orientation` so degenerate cells are detected under SoS;
-    remove unused `kernel` parameter
+#### Changed: Address review comments for SoS orientation normalization [#263](https://github.com/acgetchell/delaunay/pull/263)
 
-  - Delegate `AdaptiveKernel::orientation()` to `robust_orientation` for
-    layers 1+2, eliminating duplicated matrix build + exact_det_sign logic
+- Propagate `robust_orientation` errors in `apply_bistellar_flip_with_k`
+  instead of silently ignoring `Err` via `matches!`
 
-  - Remove unused `kernel` parameter from `find_boundary_edge_split_facet`
-    and update call site in `extend_hull`
+- Switch `k2_flip_would_create_degenerate_cell` from kernel orientation
+  to `robust_orientation` so degenerate cells are detected under SoS;
+  remove unused `kernel` parameter
 
-  - Update stale rustdoc: `validate_geometric_cell_orientation` and
-    `build_initial_simplex` now reference `robust_orientation` instead of
-    kernel predicates / `K::default()`
+- Delegate `AdaptiveKernel::orientation()` to `robust_orientation` for
+  layers 1+2, eliminating duplicated matrix build + exact_det_sign logic
 
-  - Add `vkeys[i] == vkeys[j]` guard in `validate_cell_coordinate_uniqueness`
-    to avoid misleading error when vertex keys are duplicated
+- Remove unused `kernel` parameter from `find_boundary_edge_split_facet`
+  and update call site in `extend_hull`
 
-  - Replace broad `assert!(result.is_err())` in all-duplicates test with
-    precise `InsufficientVertices` match
+- Update stale rustdoc: `validate_geometric_cell_orientation` and
+  `build_initial_simplex` now reference `robust_orientation` instead of
+  kernel predicates / `K::default()`
 
-  - Decouple many-duplicates test from magic `$dim + 2` by using the
-    helper's returned distinct count
+- Add `vkeys[i] == vkeys[j]` guard in `validate_cell_coordinate_uniqueness`
+  to avoid misleading error when vertex keys are duplicated
 
-  - Update docs: numerical_robustness_guide, KNOWN_ISSUES_4D,
-    ORIENTATION_SPEC, validation.md
+- Replace broad `assert!(result.is_err())` in all-duplicates test with
+  precise `InsufficientVertices` match
 
-  **Changed: Remove unused kernel parameter from flip-application functions [#263](https://github.com/acgetchell/delaunay/pull/263)**
+- Decouple many-duplicates test from magic `$dim + 2` by using the
+  helper's returned distinct count
 
-  - Replace `K: Kernel&lt;D&gt;` with `T: CoordinateScalar` in 7 functions:
-    apply_bistellar_flip_with_k, apply_bistellar_flip,
-    apply_bistellar_flip_dynamic, apply_bistellar_flip_k2/k3/k1,
-    apply_bistellar_flip_k1_inverse
+- Update docs: numerical_robustness_guide, KNOWN_ISSUES_4D,
+  ORIENTATION_SPEC, validation.md
 
-  - Update ~40 call sites across flips.rs, triangulation/flips.rs,
-    delaunay_triangulation.rs
+#### Changed: Remove unused kernel parameter from flip-application functions [#263](https://github.com/acgetchell/delaunay/pull/263)
 
-  - Delete ZeroOrientationKernel2d test struct (now redundant)
-  - Update ORIENTATION_SPEC.md flip pseudocode to match new signatures
-  - Address review round 3 comments: guard coordinate uniqueness
-    validation, add #[non_exhaustive] to InvariantKind, extract
-    generic flip_would_create_degenerate_cell, add nitpick tests
+- Replace `K: Kernel&lt;D&gt;` with `T: CoordinateScalar` in 7 functions:
+  apply_bistellar_flip_with_k, apply_bistellar_flip,
+  apply_bistellar_flip_dynamic, apply_bistellar_flip_k2/k3/k1,
+  apply_bistellar_flip_k1_inverse
+- Update ~40 call sites across flips.rs, triangulation/flips.rs,
+  delaunay_triangulation.rs
+- Delete ZeroOrientationKernel2d test struct (now redundant)
+- Update ORIENTATION_SPEC.md flip pseudocode to match new signatures
+- Address review round 3 comments: guard coordinate uniqueness
+  validation, add #[non_exhaustive] to InvariantKind, extract
+  generic flip_would_create_degenerate_cell, add nitpick tests
 
-  **Fixed: Remove Morton and Lexicographic ordering, unconditional Hilbert dedup, strengthen flip assertions
-  [#263](https://github.com/acgetchell/delaunay/pull/263) **
+#### Fixed: Remove Morton and Lexicographic ordering, unconditional Hilbert dedup, strengthen flip assertions
 
-  - Strengthen assert_context_has_nonzero_robust_orientation to explicitly
-    fail on Err variants instead of only checking for DEGENERATE
+[#263](https://github.com/acgetchell/delaunay/pull/263)
 
-  - Merge hilbert_dedup_sorted into order_vertices_hilbert via
-    dedup_quantized parameter, eliminating redundant re-quantization
+- Strengthen assert_context_has_nonzero_robust_orientation to explicitly
+  fail on Err variants instead of only checking for DEGENERATE
 
-  - Make Hilbert quantized dedup unconditional (not gated on DedupPolicy)
-  - Update DedupPolicy docs to frame as performance-tuning knob
-  - Remove InsertionOrderStrategy::Morton variant and all supporting code
-    (~100 lines: morton_bits_per_coord, morton_code, order_vertices_morton)
+- Merge hilbert_dedup_sorted into order_vertices_hilbert via
+  dedup_quantized parameter, eliminating redundant re-quantization
 
-  - Remove InsertionOrderStrategy::Lexicographic variant and associated
-    tests; keep internal order_vertices_lexicographic as Hilbert fallback
+- Make Hilbert quantized dedup unconditional (not gated on DedupPolicy)
 
-  - Remove Morton/Lexicographic doc references from README, invariants.md,
-    numerical_robustness_guide.md, and triangulation_generation.rs
+- Update DedupPolicy docs to frame as performance-tuning knob
+
+- Remove InsertionOrderStrategy::Morton variant and all supporting code
+  (~100 lines: morton_bits_per_coord, morton_code, order_vertices_morton)
+
+- Remove InsertionOrderStrategy::Lexicographic variant and associated
+  tests; keep internal order_vertices_lexicographic as Hilbert fallback
+
+- Remove Morton/Lexicographic doc references from README, invariants.md,
+  numerical_robustness_guide.md, and triangulation_generation.rs
 
 - Identity-based SoS perturbation via canonical vertex ordering (… [#272](https://github.com/acgetchell/delaunay/pull/272)
   [`a125d98`](https://github.com/acgetchell/delaunay/commit/a125d988566bb7196c025212833f3e539665e7de)
 
-  **Added: Identity-based SoS perturbation via canonical vertex ordering [#266](https://github.com/acgetchell/delaunay/pull/266)**
+#### Added: Identity-based SoS perturbation via canonical vertex ordering [#266](https://github.com/acgetchell/delaunay/pull/266)
 
-  - Add canonical_points module with sorted_cell_points and
-       sorted_facet_points_with_extra helpers that sort vertices by
-       VertexKey identity before resolving to points
+- Add canonical_points module with sorted_cell_points and
+  sorted_facet_points_with_extra helpers that sort vertices by
+  VertexKey identity before resolving to points
 
-  - Update all 5 kernel call sites (locate, flips, triangulation) to
-       use canonical ordering for consistent SoS tie-breaking
+- Update all 5 kernel call sites (locate, flips, triangulation) to
+  use canonical ordering for consistent SoS tie-breaking
 
-  - Fix misleading error variant in find_conflict_region BFS traversal
-       (InvalidStartCell → CellDataAccessFailed)
+- Fix misleading error variant in find_conflict_region BFS traversal
+  (InvalidStartCell → CellDataAccessFailed)
 
-  - Add 6 unit tests including 2D/3D permutation-invariance tests
+- Add 6 unit tests including 2D/3D permutation-invariance tests
 
-  **Added: Identity-based SoS perturbation via canonical vertex ordering [#266](https://github.com/acgetchell/delaunay/pull/266)**
+#### Added: Identity-based SoS perturbation via canonical vertex ordering [#266](https://github.com/acgetchell/delaunay/pull/266)
 
-  - Add canonical_points module with sorted_cell_points and
-    sorted_facet_points_with_extra helpers that sort vertices by
-    VertexKey identity before resolving to points
+- Add canonical_points module with sorted_cell_points and
+  sorted_facet_points_with_extra helpers that sort vertices by
+  VertexKey identity before resolving to points
 
-  - Update all 5 kernel call sites (locate, flips, triangulation) to
-    use canonical ordering for consistent SoS tie-breaking
+- Update all 5 kernel call sites (locate, flips, triangulation) to
+  use canonical ordering for consistent SoS tie-breaking
 
-  - Fix misleading error variant in find_conflict_region BFS traversal
-    (InvalidStartCell → CellDataAccessFailed)
+- Fix misleading error variant in find_conflict_region BFS traversal
+  (InvalidStartCell → CellDataAccessFailed)
 
-  - Document canonical ordering convention in numerical_robustness_guide
-  - Add canonical_points.rs to code_organization.md util listing
-  - Add 14 new tests: permutation invariance (2D all 6, 3D all 24),
-    canonical ordering helpers, and error-path coverage for
-    is_point_outside_facet and find_conflict_region
+- Document canonical ordering convention in numerical_robustness_guide
 
-  **Changed: Reuse canonical cell ordering for query simplex construction**
+- Add canonical_points.rs to code_organization.md util listing
+
+- Add 14 new tests: permutation invariance (2D all 6, 3D all 24),
+  canonical ordering helpers, and error-path coverage for
+  is_point_outside_facet and find_conflict_region
+
+#### Changed: Reuse canonical cell ordering for query simplex construction
 
   Optimize the construction of the query simplex by reusing the
   canonical vertex ordering of the cell. This ensures consistent
@@ -1739,81 +1746,78 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Add ExactPredicates marker trait for flip repair type safety (#… [#273](https://github.com/acgetchell/delaunay/pull/273)
   [`4877151`](https://github.com/acgetchell/delaunay/commit/48771518b2b5a8a6dd9b4036b0903f7c3158b7c9)
 
-  **Added: Add ExactPredicates marker trait for flip repair type safety [#257](https://github.com/acgetchell/delaunay/pull/257)**
+#### Added: Add ExactPredicates marker trait for flip repair type safety [#257](https://github.com/acgetchell/delaunay/pull/257)
 
-  - Define `ExactPredicates` marker trait in `kernel.rs`, implemented for
-    `AdaptiveKernel` and `RobustKernel` but not `FastKernel`
+- Define `ExactPredicates` marker trait in `kernel.rs`, implemented for
+  `AdaptiveKernel` and `RobustKernel` but not `FastKernel`
 
-  - Add `K: ExactPredicates` bound to flip repair entry points in
-    `flips.rs` and propagate through `delaunay_triangulation.rs`,
-    `builder.rs`, and `triangulation_generation.rs`
+- Add `K: ExactPredicates` bound to flip repair entry points in
+  `flips.rs` and propagate through `delaunay_triangulation.rs`,
+  `builder.rs`, and `triangulation_generation.rs`
 
-  - Add `compile_fail` doctest asserting `FastKernel` cannot satisfy the
-    bound, plus positive compile-time assertion tests for the other kernels
+- Add `compile_fail` doctest asserting `FastKernel` cannot satisfy the
+  bound, plus positive compile-time assertion tests for the other kernels
 
-  - Update test code to use `AdaptiveKernel` where `DelaunayTriangulation`
-    construction or flip repair is invoked
+- Update test code to use `AdaptiveKernel` where `DelaunayTriangulation`
+  construction or flip repair is invoked
 
-  - Document the trait and its design rationale in
-    `numerical_robustness_guide.md`
+- Document the trait and its design rationale in
+  `numerical_robustness_guide.md`
 
-  **Changed: Narrow ExactPredicates bound to public repair methods only [#257](https://github.com/acgetchell/delaunay/pull/257)**
+#### Changed: Narrow ExactPredicates bound to public repair methods only [#257](https://github.com/acgetchell/delaunay/pull/257)
 
-  - Remove K: ExactPredicates from ~20 internal, construction, insertion,
-    and removal methods so FastKernel remains usable for all operations
-    except explicit Delaunay repair
+- Remove K: ExactPredicates from ~20 internal, construction, insertion,
+  and removal methods so FastKernel remains usable for all operations
+  except explicit Delaunay repair
 
-  - Retain ExactPredicates bound on repair_delaunay_with_flips,
-    repair_delaunay_with_flips_advanced, and rebuild_with_heuristic
+- Retain ExactPredicates bound on repair_delaunay_with_flips,
+  repair_delaunay_with_flips_advanced, and rebuild_with_heuristic
 
-  - Replace run_flip_repair_fallbacks with inline robust-only fallback in
-    maybe_repair_after_insertion; remove dead code (run_flip_repair_fallbacks,
-    remap_vertex_key_by_uuid, HeuristicRebuildRecursionGuard::in_progress)
+- Replace run_flip_repair_fallbacks with inline robust-only fallback in
+  maybe_repair_after_insertion; remove dead code (run_flip_repair_fallbacks,
+  remap_vertex_key_by_uuid, HeuristicRebuildRecursionGuard::in_progress)
 
-  - Update with_kernel / build_with_kernel docs to note FastKernel is
-    accepted but exact kernels are recommended
+- Update with_kernel / build_with_kernel docs to note FastKernel is
+  accepted but exact kernels are recommended
 
-  - Restructure heuristic rebuild test to test_vertex_key_valid_after_explicit_heuristic_rebuild;
-    remove test_run_flip_repair_fallbacks_smoke_ok_with_local_seed
+- Restructure heuristic rebuild test to test_vertex_key_valid_after_explicit_heuristic_rebuild;
+  remove test_run_flip_repair_fallbacks_smoke_ok_with_local_seed
 
-  **Fixed: Preserve full fallback-chain context in advanced repair errors [#257](https://github.com/acgetchell/delaunay/pull/257)**
+#### Fixed: Preserve full fallback-chain context in advanced repair errors [#257](https://github.com/acgetchell/delaunay/pull/257)
 
-  - Restore test_with_kernel_fast_kernel to use FastKernel (regressed when
-    ExactPredicates bound was added, now possible again after narrowing)
+- Restore test_with_kernel_fast_kernel to use FastKernel (regressed when
+  ExactPredicates bound was added, now possible again after narrowing)
 
-  - Restructure repair_delaunay_with_flips_advanced fallback: when primary,
-    robust, and heuristic rebuild all fail, the HeuristicRebuildFailed error
-    now includes context from all three stages instead of losing the robust
-    fallback error
+- Restructure repair_delaunay_with_flips_advanced fallback: when primary,
+  robust, and heuristic rebuild all fail, the HeuristicRebuildFailed error
+  now includes context from all three stages instead of losing the robust
+  fallback error
 
-  - Add test_advanced_repair_fallback_error_preserves_full_chain_context
-    asserting the composed error message includes primary, robust, and
-    heuristic failure details
+- Add test_advanced_repair_fallback_error_preserves_full_chain_context
+  asserting the composed error message includes primary, robust, and
+  heuristic failure details
 
-  **Changed: Remove redundant ScalarSummable where clauses [#257](https://github.com/acgetchell/delaunay/pull/257)**
+#### Changed: Remove redundant ScalarSummable where clauses [#257](https://github.com/acgetchell/delaunay/pull/257)
 
-  - Remove 26 redundant `K::Scalar: ScalarSummable` where clauses from
-    `delaunay_triangulation.rs`; the impl block already bounds
-    `K::Scalar: ScalarAccumulative` which implies `ScalarSummable` via
-    blanket impl
+- Remove 26 redundant `K::Scalar: ScalarSummable` where clauses from
+  `delaunay_triangulation.rs`; the impl block already bounds
+  `K::Scalar: ScalarAccumulative` which implies `ScalarSummable` via
+  blanket impl
+- Remove unused `ScalarSummable` import
+- Export `ExactPredicates` from `prelude::query`
+- Update docs (numerical_robustness_guide, validation, workflows,
+  api_design) to reflect the narrowed `ExactPredicates` bound on
+  public repair methods and add `FastKernel` + `EveryN` guidance
+- Add tests for non-retryable error pass-through in
+  `repair_delaunay_with_flips` and `repair_delaunay_with_flips_advanced`
 
-  - Remove unused `ScalarSummable` import
-  - Export `ExactPredicates` from `prelude::query`
-  - Update docs (numerical_robustness_guide, validation, workflows,
-    api_design) to reflect the narrowed `ExactPredicates` bound on
-    public repair methods and add `FastKernel` + `EveryN` guidance
+#### Added: Add test injection for robust-fallback coverage [#257](https://github.com/acgetchell/delaunay/pull/257)
 
-  - Add tests for non-retryable error pass-through in
-    `repair_delaunay_with_flips` and `repair_delaunay_with_flips_advanced`
-
-  **Added: Add test injection for robust-fallback coverage [#257](https://github.com/acgetchell/delaunay/pull/257)**
-
-  - Add FORCE_REPAIR_NONCONVERGENT thread-local and test guard
-  - Inject synthetic NonConvergent errors in repair_delaunay_with_flips
-    and maybe_repair_after_insertion to exercise robust-fallback paths
-
-  - Add tests for advanced robust fallback and insertion robust fallback
-  - Move test-only helpers into mod tests with pub(super) visibility
+- Add FORCE_REPAIR_NONCONVERGENT thread-local and test guard
+- Inject synthetic NonConvergent errors in repair_delaunay_with_flips
+  and maybe_repair_after_insertion to exercise robust-fallback paths
+- Add tests for advanced robust fallback and insertion robust fallback
+- Move test-only helpers into mod tests with pub(super) visibility
 - Add progressive scale-invariant perturbation [#209](https://github.com/acgetchell/delaunay/pull/209) [#274](https://github.com/acgetchell/delaunay/pull/274)
   [`4c35028`](https://github.com/acgetchell/delaunay/commit/4c35028537b9011d586be3b9b234925e3ca5bb5a)
 
@@ -1829,30 +1833,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Remove 32 redundant `where K::Scalar: CoordinateScalar` clauses
     (implied by impl-level bounds)
 
-  **Fixed: Correct perturbation exponent off-by-one and improve test coverage [#209](https://github.com/acgetchell/delaunay/pull/209)**
+#### Fixed: Correct perturbation exponent off-by-one and improve test coverage [#209](https://github.com/acgetchell/delaunay/pull/209)
 
-  - Fix progressive scale factor: use 10^attempt instead of 10^(attempt-1)
-    so the retry ladder reaches 1e-5 × local_scale (was capped at 1e-6),
-    matching the documented "4 orders of magnitude" range
+- Fix progressive scale factor: use 10^attempt instead of 10^(attempt-1)
+  so the retry ladder reaches 1e-5 × local_scale (was capped at 1e-6),
+  matching the documented "4 orders of magnitude" range
 
-  - Apply the same correction to the debug-message exponent computation
-  - Update perturbation ladder in numerical_robustness_guide.md to reflect
-    the corrected values (1e-7, 1e-6, 1e-5)
+- Apply the same correction to the debug-message exponent computation
 
-  - Replace test_perturbation_f32_base_epsilon with
-    test_perturbation_epsilon_selection_and_retry: asserts mantissa_digits
-    for both f32 and f64, exercises insert_transactional with on-edge
-    near-degenerate points for both scalar types
+- Update perturbation ladder in numerical_robustness_guide.md to reflect
+  the corrected values (1e-7, 1e-6, 1e-5)
 
-  - Add absolute expected counts to test_perturbation_scale_invariance_3d
-    to catch regressions that affect all scales equally
+- Replace test_perturbation_f32_base_epsilon with
+  test_perturbation_epsilon_selection_and_retry: asserts mantissa_digits
+  for both f32 and f64, exercises insert_transactional with on-edge
+  near-degenerate points for both scalar types
 
-  - Add test_perturbation_retry_and_exhaustion_4d: 4D random points
-    exercise the progressive retry loop body and exhaustion branch
+- Add absolute expected counts to test_perturbation_scale_invariance_3d
+  to catch regressions that affect all scales equally
 
-  - Add test_perturbation_retry_seeded_branch_4d: calls
-    insert_transactional directly with perturbation_seed != 0 to cover
-    the seeded sign-selection path
+- Add test_perturbation_retry_and_exhaustion_4d: 4D random points
+  exercise the progressive retry loop body and exhaustion branch
+
+- Add test_perturbation_retry_seeded_branch_4d: calls
+  insert_transactional directly with perturbation_seed != 0 to cover
+  the seeded sign-selection path
 
 - [**breaking**] Improve 4D debug harness diagnostics, add capped repair and regression test [#230](https://github.com/acgetchell/delaunay/pull/230)
   [#277](https://github.com/acgetchell/delaunay/pull/277) [`0684ec0`](https://github.com/acgetchell/delaunay/commit/0684ec01108cc6a816d5aa5b41179726ee7a51a5)
@@ -1934,7 +1939,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Delete tests that only exercised config field values
   - Update numerical_robustness_guide.md: document AdaptiveKernel as the
     default kernel, remove config_presets references
-
 - [**breaking**] Rename TdsValidationError to TdsError [#262](https://github.com/acgetchell/delaunay/pull/262)
   [#265](https://github.com/acgetchell/delaunay/pull/265) [`99b9810`](https://github.com/acgetchell/delaunay/commit/99b9810c7aeeb91f84efba019bb199da8ee4f87a)
 
@@ -1943,25 +1947,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Update all references in production code, tests, and examples
   - Part of error hierarchy orthogonalization (Phase 5)
 
-  **Changed: Make TriangulationValidationError purely Level 3 [#262](https://github.com/acgetchell/delaunay/pull/262)**
+#### Changed: Make TriangulationValidationError purely Level 3 [#262](https://github.com/acgetchell/delaunay/pull/262)
 
   Remove the Tds variant from TriangulationValidationError so it contains
-  only Level 3 (topology) errors.  TDS-level errors now flow through
+  only Level 3 (topology) errors. TDS-level errors now flow through
   InvariantError, keeping Levels 1–2 orthogonal from Level 3.
 
   API changes:
 
-  - is_valid, validate, validate_at_completion, validate_after_insertion
-    now return InvariantError instead of TriangulationValidationError
-
-  - validate_geometric_cell_orientation returns TdsError directly
-  - remove_vertex returns InvariantError
-  - Add Tds variant to DelaunayTriangulationValidationError
-  - TdsMutationError inner field made private; add as_tds_error() and
-    into_inner() accessors
-
-  - Remove From&lt;TdsMutationError&gt; for TriangulationValidationError
-  - Add From&lt;ManifoldError&gt; for InvariantError
+- is_valid, validate, validate_at_completion, validate_after_insertion
+  now return InvariantError instead of TriangulationValidationError
+- validate_geometric_cell_orientation returns TdsError directly
+- remove_vertex returns InvariantError
+- Add Tds variant to DelaunayTriangulationValidationError
+- TdsMutationError inner field made private; add as_tds_error() and
+  into_inner() accessors
+- Remove From&lt;TdsMutationError&gt; for TriangulationValidationError
+- Add From&lt;ManifoldError&gt; for InvariantError
 - Simplify trait bounds and re-export secondary maps [#282](https://github.com/acgetchell/delaunay/pull/282)
   [`04ea024`](https://github.com/acgetchell/delaunay/commit/04ea024f7091b7f1d9406c48d673e58a07a657d3)
 
@@ -1984,16 +1986,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Canonicalize positive orientation after bulk construction repair… [#261](https://github.com/acgetchell/delaunay/pull/261)
   [`dec8df9`](https://github.com/acgetchell/delaunay/commit/dec8df9f07b5e868825f31a64bee85c4a04e984d)
 
-  **Fixed: Canonicalize positive orientation after bulk construction repair [#258](https://github.com/acgetchell/delaunay/pull/258)**
+#### Fixed: Canonicalize positive orientation after bulk construction repair [#258](https://github.com/acgetchell/delaunay/pull/258)
 
-  - Call normalize_and_promote_positive_orientation() in
-    finalize_bulk_construction after the flip-repair block and before
-    topology validation, ensuring the global geometric sign is positive
+- Call normalize_and_promote_positive_orientation() in
+  finalize_bulk_construction after the flip-repair block and before
+  topology validation, ensuring the global geometric sign is positive
 
-  - Update #228 regression test to expect PLManifold (was Pseudomanifold)
-    now that orientation is correctly canonicalized
+- Update #228 regression test to expect PLManifold (was Pseudomanifold)
+  now that orientation is correctly canonicalized
 
-  **Changed: Categorize errors during orientation canonicalization**
+#### Changed: Categorize errors during orientation canonicalization
 
   Distinguish structural `InsertionError` variants as `InternalInconsistency`
   to separate algorithmic bugs from input-related `GeometricDegeneracy`
@@ -2033,7 +2035,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
   - Disable markdownlint MD037 (false positives on cron expressions and
     glob patterns like saturating_*)
-
 - Replace derive_builder with hand-written VertexBuilder [#212](https://github.com/acgetchell/delaunay/pull/212)
   [#249](https://github.com/acgetchell/delaunay/pull/249) [`b017b39`](https://github.com/acgetchell/delaunay/commit/b017b39bc410e96703bc7370972a930b93f6d6be)
 
@@ -2051,13 +2052,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - [Release notes](https://github.com/actions/download-artifact/releases)
   - [Commits](https://github.com/actions/download-artifact/compare/70fc10c6e5e1ce46ad2ea6f2b72d43f7d47b13c3...3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c)
 
-  ---
+---
+
   updated-dependencies:
 
-  - dependency-name: actions/download-artifact
-    dependency-version: 8.0.1
-    dependency-type: direct:production
-    update-type: version-update:semver-patch
+- dependency-name: actions/download-artifact
+  dependency-version: 8.0.1
+  dependency-type: direct:production
+  update-type: version-update:semver-patch
   ...
 
 - Bump tracing-subscriber in the dependencies group [#268](https://github.com/acgetchell/delaunay/pull/268)
@@ -2070,14 +2072,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - [Release notes](https://github.com/tokio-rs/tracing/releases)
   - [Commits](https://github.com/tokio-rs/tracing/compare/tracing-subscriber-0.3.22...tracing-subscriber-0.3.23)
 
-  ---
+---
+
   updated-dependencies:
 
-  - dependency-name: tracing-subscriber
-    dependency-version: 0.3.23
-    dependency-type: direct:production
-    update-type: version-update:semver-patch
-    dependency-group: dependencies
+- dependency-name: tracing-subscriber
+  dependency-version: 0.3.23
+  dependency-type: direct:production
+  update-type: version-update:semver-patch
+  dependency-group: dependencies
   ...
 
 - Bump taiki-e/install-action from 2.68.25 to 2.68.33 [#269](https://github.com/acgetchell/delaunay/pull/269)
@@ -2089,13 +2092,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - [Changelog](https://github.com/taiki-e/install-action/blob/main/CHANGELOG.md)
   - [Commits](https://github.com/taiki-e/install-action/compare/a37010ded18ff788be4440302bd6830b1ae50d8b...cbb1dcaa26e1459e2876c39f61c1e22a1258aac5)
 
-  ---
+---
+
   updated-dependencies:
 
-  - dependency-name: taiki-e/install-action
-    dependency-version: 2.68.33
-    dependency-type: direct:production
-    update-type: version-update:semver-patch
+- dependency-name: taiki-e/install-action
+  dependency-version: 2.68.33
+  dependency-type: direct:production
+  update-type: version-update:semver-patch
   ...
 
 - Bump actions-rust-lang/setup-rust-toolchain [#270](https://github.com/acgetchell/delaunay/pull/270)
@@ -2107,13 +2111,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - [Changelog](https://github.com/actions-rust-lang/setup-rust-toolchain/blob/main/CHANGELOG.md)
   - [Commits](https://github.com/actions-rust-lang/setup-rust-toolchain/compare/a0b538fa0b742a6aa35d6e2c169b4bd06d225a98...150fca883cd4034361b621bd4e6a9d34e5143606)
 
-  ---
+---
+
   updated-dependencies:
 
-  - dependency-name: actions-rust-lang/setup-rust-toolchain
-    dependency-version: 1.15.4
-    dependency-type: direct:production
-    update-type: version-update:semver-patch
+- dependency-name: actions-rust-lang/setup-rust-toolchain
+  dependency-version: 1.15.4
+  dependency-type: direct:production
+  update-type: version-update:semver-patch
   ...
 
 - Bump astral-sh/setup-uv from 7.3.1 to 7.5.0 [#271](https://github.com/acgetchell/delaunay/pull/271)
@@ -2124,13 +2129,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - [Release notes](https://github.com/astral-sh/setup-uv/releases)
   - [Commits](https://github.com/astral-sh/setup-uv/compare/5a095e7a2014a4212f075830d4f7277575a9d098...e06108dd0aef18192324c70427afc47652e63a82)
 
-  ---
+---
+
   updated-dependencies:
 
-  - dependency-name: astral-sh/setup-uv
-    dependency-version: 7.5.0
-    dependency-type: direct:production
-    update-type: version-update:semver-minor
+- dependency-name: astral-sh/setup-uv
+  dependency-version: 7.5.0
+  dependency-type: direct:production
+  update-type: version-update:semver-minor
   ...
 
 - Bump arc-swap from 1.8.2 to 1.9.0 in the dependencies group [#278](https://github.com/acgetchell/delaunay/pull/278)
@@ -2143,14 +2149,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - [Changelog](https://github.com/vorner/arc-swap/blob/master/CHANGELOG.md)
   - [Commits](https://github.com/vorner/arc-swap/compare/v1.8.2...v1.9.0)
 
-  ---
+---
+
   updated-dependencies:
 
-  - dependency-name: arc-swap
-    dependency-version: 1.9.0
-    dependency-type: direct:production
-    update-type: version-update:semver-minor
-    dependency-group: dependencies
+- dependency-name: arc-swap
+  dependency-version: 1.9.0
+  dependency-type: direct:production
+  update-type: version-update:semver-minor
+  dependency-group: dependencies
   ...
 
 - Bump taiki-e/install-action from 2.68.34 to 2.69.6 [#279](https://github.com/acgetchell/delaunay/pull/279)
@@ -2162,13 +2169,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - [Changelog](https://github.com/taiki-e/install-action/blob/main/CHANGELOG.md)
   - [Commits](https://github.com/taiki-e/install-action/compare/de6bbd1333b8f331563d54a051e542c7dfef81c3...06203676c62f0d3c765be3f2fcfbebbcb02d09f5)
 
-  ---
+---
+
   updated-dependencies:
 
-  - dependency-name: taiki-e/install-action
-    dependency-version: 2.69.6
-    dependency-type: direct:production
-    update-type: version-update:semver-minor
+- dependency-name: taiki-e/install-action
+  dependency-version: 2.69.6
+  dependency-type: direct:production
+  update-type: version-update:semver-minor
   ...
 
 - Bump codecov/codecov-action from 5.5.2 to 5.5.3 [#280](https://github.com/acgetchell/delaunay/pull/280)
@@ -2180,13 +2188,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - [Changelog](https://github.com/codecov/codecov-action/blob/main/CHANGELOG.md)
   - [Commits](https://github.com/codecov/codecov-action/compare/671740ac38dd9b0130fbe1cec585b89eea48d3de...1af58845a975a7985b0beb0cbe6fbbb71a41dbad)
 
-  ---
+---
+
   updated-dependencies:
 
-  - dependency-name: codecov/codecov-action
-    dependency-version: 5.5.3
-    dependency-type: direct:production
-    update-type: version-update:semver-patch
+- dependency-name: codecov/codecov-action
+  dependency-version: 5.5.3
+  dependency-type: direct:production
+  update-type: version-update:semver-patch
   ...
 
 ## [0.7.2] - 2026-03-10
@@ -2199,7 +2208,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Bump taiki-e/install-action from 2.68.16 to 2.68.25 [#237](https://github.com/acgetchell/delaunay/pull/237)
 - Use exact arithmetic for orientation predicates [#235](https://github.com/acgetchell/delaunay/pull/235)
   [#236](https://github.com/acgetchell/delaunay/pull/236)
-
 - Switch FastKernel to insphere_lifted and enable LTO [#234](https://github.com/acgetchell/delaunay/pull/234)
 - Deduplicate D&lt;4 repair fallback and improve diagnostics [#232](https://github.com/acgetchell/delaunay/pull/232)
 - Resolve 3D seeded bulk construction orientation convergence failure [#228](https://github.com/acgetchell/delaunay/pull/228)
@@ -2213,7 +2221,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Use bulk Hilbert API in order_vertices_hilbert [#218](https://github.com/acgetchell/delaunay/pull/218)
 - Improve Hilbert curve correctness and add bulk API [#207](https://github.com/acgetchell/delaunay/pull/207)
   [#216](https://github.com/acgetchell/delaunay/pull/216)
-
 - Update docs for DelaunayTriangulationBuilder and toroidal topology [#215](https://github.com/acgetchell/delaunay/pull/215)
 - Feat/210 toroidalspace periodic [#213](https://github.com/acgetchell/delaunay/pull/213)
 - Bump taiki-e/install-action from 2.67.30 to 2.68.8 [#211](https://github.com/acgetchell/delaunay/pull/211)
@@ -2227,7 +2234,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - preserve/normalize orientation across flips, cavity/neighbor rebuild paths, periodic quotient reconstruction, and vertex-removal retriangulation
   - add orientation coverage in `tests/tds_orientation.rs`, document the invariant, and update related docs/doctest examples
 
-  **Changed: Refine coherent orientation handling and validation**
+#### Changed: Refine coherent orientation handling and validation
 
   The flip algorithms now explicitly manage the local orientation of newly created cells, canonicalizing their vertex order to a positive orientation before
   insertion. This ensures consistent orientation within individual cells as they are added.
@@ -2295,7 +2302,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Remove adaptive_tolerance / manual threshold comparison from robust_orientation()
   - Add near-degenerate 2D and 3D tests that exercise the exact-sign path
 
-  **Changed: Ignore slow higher-dimensional Delaunay proptests**
+#### Changed: Ignore slow higher-dimensional Delaunay proptests
 
   Mark 4D and 5D incremental insertion proptests as ignored. The exact
   arithmetic fallback for orientation matrices larger than 4×4 is
@@ -2337,7 +2344,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - migrate builder toroidal validation/canonicalization to model-based calls
   - update topology/code-organization docs for metadata-vs-behavior split
 
-  **Changed: Improve global topology model validation and consistency**
+#### Changed: Improve global topology model validation and consistency
 
   Enhances periodic cell offset validation by leveraging `supports_periodic_facet_signatures`.
   Introduces robust checks for non-finite coordinates during point canonicalization
@@ -2349,33 +2356,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Optimizes `periodic_domain` to return a reference, avoiding data copies.
   Adjusts internal module visibility and re-exports `ToroidalConstructionMode` to prelude.
 
-  **Changed: Add comprehensive documentation and tests for GlobalTopologyModel**
+#### Changed: Add comprehensive documentation and tests for GlobalTopologyModel
 
   Enhance the global_topology_model module with extensive documentation and unit test coverage:
 
   Documentation improvements:
 
-  - Add module-level overview explaining trait abstraction and concrete implementations
-  - Enhance trait method documentation for periodic_domain() and supports_periodic_facet_signatures()
-  - Document public methods: ToroidalModel::new(), GlobalTopology::model(), GlobalTopologyModelAdapter::from_global_topology()
+- Add module-level overview explaining trait abstraction and concrete implementations
+- Enhance trait method documentation for periodic_domain() and supports_periodic_facet_signatures()
+- Document public methods: ToroidalModel::new(), GlobalTopology::model(), GlobalTopologyModelAdapter::from_global_topology()
 
   Test coverage (41 tests added):
-
-  - EuclideanModel: comprehensive trait method coverage
-  - SphericalModel and HyperbolicModel: scaffolded model behavior
-  - GlobalTopologyModelAdapter: delegation verification for all trait methods
-  - Error handling: zero/negative/infinite/NaN periods, non-finite coordinates
-  - Edge cases: large coordinates, exact periods, zero/large offsets, f32 scalars, 5D
+- EuclideanModel: comprehensive trait method coverage
+- SphericalModel and HyperbolicModel: scaffolded model behavior
+- GlobalTopologyModelAdapter: delegation verification for all trait methods
+- Error handling: zero/negative/infinite/NaN periods, non-finite coordinates
+- Edge cases: large coordinates, exact periods, zero/large offsets, f32 scalars, 5D
 
   Code quality improvements:
+- Fix nitpick: delegate kind() and allows_boundary() in GlobalTopologyModelAdapter
+- Fix nitpick: add NaN coordinate test for canonicalize_point_in_place
+- Fix nitpick: add finiteness validation to lift_for_orientation with test
+- Apply cargo fmt formatting
+- Fix clippy warnings (float_cmp, suboptimal_flops)
 
-  - Fix nitpick: delegate kind() and allows_boundary() in GlobalTopologyModelAdapter
-  - Fix nitpick: add NaN coordinate test for canonicalize_point_in_place
-  - Fix nitpick: add finiteness validation to lift_for_orientation with test
-  - Apply cargo fmt formatting
-  - Fix clippy warnings (float_cmp, suboptimal_flops)
-
-  **Changed: Optimize facet vertex processing and improve periodic facet key determinism**
+#### Changed: Optimize facet vertex processing and improve periodic facet key determinism
 
   Moves the facet vertex buffer initialization to only execute on the non-periodic path,
   avoiding unnecessary work for periodic cells and improving efficiency.
@@ -2438,17 +2443,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Add test_construction_options_global_repair_fallback_toggle unit
     test verifying the without_global_repair_fallback builder toggle.
 
-  **Fixed: Switch default kernel from FastKernel to RobustKernel**
+#### Fixed: Switch default kernel from FastKernel to RobustKernel
 
-  - Change all convenience constructors (new, new_with_topology_guarantee,
-    new_with_options, empty, etc.) to use RobustKernel&lt;f64&gt;
+- Change all convenience constructors (new, new_with_topology_guarantee,
+  new_with_options, empty, etc.) to use RobustKernel&lt;f64&gt;
+- Change builder build() default to RobustKernel&lt;T&gt;
+- Add RobustKernel to prelude::query exports
+- Update type annotations across tests, benches, and doc tests
+- Preserve FastKernel in tests that explicitly test it via with_kernel()
 
-  - Change builder build() default to RobustKernel&lt;T&gt;
-  - Add RobustKernel to prelude::query exports
-  - Update type annotations across tests, benches, and doc tests
-  - Preserve FastKernel in tests that explicitly test it via with_kernel()
-
-  **Changed: Use RobustKernel for random generation and 3D examples**
+#### Changed: Use RobustKernel for random generation and 3D examples
 
   Update examples and random triangulation utilities to use RobustKernel,
   aligning them with the core library's default. FastKernel is now
@@ -2493,7 +2497,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - examples/topology_editing_2d_3d.rs: Migrate to DelaunayTriangulationBuilder
   - benches/profiling_suite.rs: Migrate to DelaunayTriangulationBuilder
 
-  **Changed: Adopt DelaunayTriangulationBuilder and update related documentation**
+#### Changed: Adopt DelaunayTriangulationBuilder and update related documentation
 
   Migrates benchmark and example code to consistently use the
   DelaunayTriangulationBuilder for creating triangulations.
@@ -2559,15 +2563,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - [Changelog](https://github.com/taiki-e/install-action/blob/main/CHANGELOG.md)
   - [Commits](https://github.com/taiki-e/install-action/compare/288875dd3d64326724fa6d9593062d9f8ba0b131...cfdb446e391c69574ebc316dfb7d7849ec12b940)
 
-  ---
+---
+
   updated-dependencies:
 
-  - dependency-name: taiki-e/install-action
-    dependency-version: 2.68.8
-    dependency-type: direct:production
-    update-type: version-update:semver-minor
+- dependency-name: taiki-e/install-action
+  dependency-version: 2.68.8
+  dependency-type: direct:production
+  update-type: version-update:semver-minor
   ...
-
 - Update docs, remove old files [`18679dc`](https://github.com/acgetchell/delaunay/commit/18679dc73e5764277906ee83d1465cb0134a9780)
 - Bump actions-rust-lang/setup-rust-toolchain [#226](https://github.com/acgetchell/delaunay/pull/226)
   [`3e2cd26`](https://github.com/acgetchell/delaunay/commit/3e2cd26f67d4845445f1b876ec31695a20e745be)
@@ -2578,13 +2582,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - [Changelog](https://github.com/actions-rust-lang/setup-rust-toolchain/blob/main/CHANGELOG.md)
   - [Commits](https://github.com/actions-rust-lang/setup-rust-toolchain/compare/1780873c7b576612439a134613cc4cc74ce5538c...a0b538fa0b742a6aa35d6e2c169b4bd06d225a98)
 
-  ---
+---
+
   updated-dependencies:
 
-  - dependency-name: actions-rust-lang/setup-rust-toolchain
-    dependency-version: 1.15.3
-    dependency-type: direct:production
-    update-type: version-update:semver-patch
+- dependency-name: actions-rust-lang/setup-rust-toolchain
+  dependency-version: 1.15.3
+  dependency-type: direct:production
+  update-type: version-update:semver-patch
   ...
 
 - Bump actions/download-artifact from 7.0.0 to 8.0.0 [#222](https://github.com/acgetchell/delaunay/pull/222)
@@ -2595,13 +2600,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - [Release notes](https://github.com/actions/download-artifact/releases)
   - [Commits](https://github.com/actions/download-artifact/compare/37930b1c2abaa49bbe596cd826c3c89aef350131...70fc10c6e5e1ce46ad2ea6f2b72d43f7d47b13c3)
 
-  ---
+---
+
   updated-dependencies:
 
-  - dependency-name: actions/download-artifact
-    dependency-version: 8.0.0
-    dependency-type: direct:production
-    update-type: version-update:semver-major
+- dependency-name: actions/download-artifact
+  dependency-version: 8.0.0
+  dependency-type: direct:production
+  update-type: version-update:semver-major
   ...
 
 - Bump taiki-e/install-action from 2.68.8 to 2.68.16 [#225](https://github.com/acgetchell/delaunay/pull/225)
@@ -2613,13 +2619,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - [Changelog](https://github.com/taiki-e/install-action/blob/main/CHANGELOG.md)
   - [Commits](https://github.com/taiki-e/install-action/compare/cfdb446e391c69574ebc316dfb7d7849ec12b940...d6e286fa45544157a02d45a43742857ebbc25d12)
 
-  ---
+---
+
   updated-dependencies:
 
-  - dependency-name: taiki-e/install-action
-    dependency-version: 2.68.16
-    dependency-type: direct:production
-    update-type: version-update:semver-patch
+- dependency-name: taiki-e/install-action
+  dependency-version: 2.68.16
+  dependency-type: direct:production
+  update-type: version-update:semver-patch
   ...
 
 - Bump actions/upload-artifact from 6 to 7 [#223](https://github.com/acgetchell/delaunay/pull/223)
@@ -2630,13 +2637,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - [Release notes](https://github.com/actions/upload-artifact/releases)
   - [Commits](https://github.com/actions/upload-artifact/compare/v6...v7)
 
-  ---
+---
+
   updated-dependencies:
 
-  - dependency-name: actions/upload-artifact
-    dependency-version: '7'
-    dependency-type: direct:production
-    update-type: version-update:semver-major
+- dependency-name: actions/upload-artifact
+  dependency-version: '7'
+  dependency-type: direct:production
+  update-type: version-update:semver-major
   ...
 
 - Bump astral-sh/setup-uv from 7.3.0 to 7.3.1 [#224](https://github.com/acgetchell/delaunay/pull/224)
@@ -2647,13 +2655,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - [Release notes](https://github.com/astral-sh/setup-uv/releases)
   - [Commits](https://github.com/astral-sh/setup-uv/compare/eac588ad8def6316056a12d4907a9d4d84ff7a3b...5a095e7a2014a4212f075830d4f7277575a9d098)
 
-  ---
+---
+
   updated-dependencies:
 
-  - dependency-name: astral-sh/setup-uv
-    dependency-version: 7.3.1
-    dependency-type: direct:production
-    update-type: version-update:semver-patch
+- dependency-name: astral-sh/setup-uv
+  dependency-version: 7.3.1
+  dependency-type: direct:production
+  update-type: version-update:semver-patch
   ...
 
 - Bump taiki-e/install-action from 2.68.16 to 2.68.25 [#237](https://github.com/acgetchell/delaunay/pull/237)
@@ -2665,13 +2674,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - [Changelog](https://github.com/taiki-e/install-action/blob/main/CHANGELOG.md)
   - [Commits](https://github.com/taiki-e/install-action/compare/d6e286fa45544157a02d45a43742857ebbc25d12...a37010ded18ff788be4440302bd6830b1ae50d8b)
 
-  ---
+---
+
   updated-dependencies:
 
-  - dependency-name: taiki-e/install-action
-    dependency-version: 2.68.25
-    dependency-type: direct:production
-    update-type: version-update:semver-patch
+- dependency-name: taiki-e/install-action
+  dependency-version: 2.68.25
+  dependency-type: direct:production
+  update-type: version-update:semver-patch
   ...
 
 - Bump actions/setup-node from 6.2.0 to 6.3.0 [#239](https://github.com/acgetchell/delaunay/pull/239)
@@ -2682,13 +2692,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - [Release notes](https://github.com/actions/setup-node/releases)
   - [Commits](https://github.com/actions/setup-node/compare/6044e13b5dc448c55e2357c09f80417699197238...53b83947a5a98c8d113130e565377fae1a50d02f)
 
-  ---
+---
+
   updated-dependencies:
 
-  - dependency-name: actions/setup-node
-    dependency-version: 6.3.0
-    dependency-type: direct:production
-    update-type: version-update:semver-minor
+- dependency-name: actions/setup-node
+  dependency-version: 6.3.0
+  dependency-type: direct:production
+  update-type: version-update:semver-minor
   ...
 
 ### Performance
@@ -2699,47 +2710,47 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Implements correctness fixes, API improvements, and comprehensive testing
   for the Hilbert space-filling curve ordering utilities.
 
-  **Correctness Fixes**
+#### Correctness Fixes
 
-  - Add debug_assert guards in hilbert_index_from_quantized for parameter
-    validation (bits range and overflow checks)
+- Add debug_assert guards in hilbert_index_from_quantized for parameter
+  validation (bits range and overflow checks)
 
-  - Fix quantization truncation bias by changing from NumCast::from(scaled)
-    to scaled.round().to_u32() for fairer spatial distribution across grid
-    cells, improving point ordering quality
+- Fix quantization truncation bias by changing from NumCast::from(scaled)
+  to scaled.round().to_u32() for fairer spatial distribution across grid
+  cells, improving point ordering quality
 
-  **API Design**
+#### API Design
 
-  - Add HilbertError enum with InvalidBitsParameter, IndexOverflow, and
-    DimensionTooLarge variants for proper error handling
+- Add HilbertError enum with InvalidBitsParameter, IndexOverflow, and
+  DimensionTooLarge variants for proper error handling
 
-  - Implement hilbert_indices_prequantized() returning Result&lt;Vec&lt;u128&gt;,
-    HilbertError&gt; for bulk processing of pre-quantized coordinates
+- Implement hilbert_indices_prequantized() returning Result&lt;Vec&lt;u128&gt;,
+  HilbertError&gt; for bulk processing of pre-quantized coordinates
 
-  - Bulk API avoids redundant quantization computation, significantly
-    improving performance for large insertion batches
+- Bulk API avoids redundant quantization computation, significantly
+  improving performance for large insertion batches
 
-  **Testing**
+#### Testing
 
-  - Add 4D continuity test verifying Hilbert curve property on 256-point
-    grid (bits=2)
+- Add 4D continuity test verifying Hilbert curve property on 256-point
+  grid (bits=2)
 
-  - Add quantization rounding distribution test validating fair cell
-    assignment
+- Add quantization rounding distribution test validating fair cell
+  assignment
 
-  - Add 5 comprehensive tests for prequantized API covering success cases,
-    empty input, and all error conditions
+- Add 5 comprehensive tests for prequantized API covering success cases,
+  empty input, and all error conditions
 
-  - All 17 Hilbert-specific tests pass (11 existing + 6 new)
+- All 17 Hilbert-specific tests pass (11 existing + 6 new)
 
-  **Known Issue**
+#### Known Issue
 
   Temporarily ignore repair_fallback_produces_valid_triangulation test as
   the rounding change affects insertion order, exposing a latent geometric
   degeneracy issue in triangulation construction. This is properly
   documented and tracked under issue #204 for investigation.
 
-  **Added: Explicitly handle zero-dimensional inputs in Hilbert index calculation**
+#### Added: Explicitly handle zero-dimensional inputs in Hilbert index calculation
 
   Ensures correct behavior for `hilbert_indices_prequantized` when
   the dimensionality `D` is zero. In such a space, all points map to
@@ -2828,7 +2839,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `SurfaceMeasureError`, `RandomPointGenerationError` and
   `ValueConversionError` to make the crate easier to use.
 
-  **Changed: Improves examples and updates doc tests**
+#### Changed: Improves examples and updates doc tests
 
   Updates doc tests to use clearer examples and more
   idiomatic syntax, enhancing code readability and
@@ -2883,14 +2894,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
   This change involves updating imports and references throughout the codebase and documentation to reflect the new location and name of the trait.
 
-  **Changed: Refactors prelude modules for clarity (internal)**
+#### Changed: Refactors prelude modules for clarity (internal)
 
   Streamlines the prelude modules to provide clearer and more
   focused exports for common triangulation tasks. This change
   affects import statements in documentation and examples,
   requiring more specific paths for certain types.
 
-  **Removed: Topology validation prelude module**
+#### Removed: Topology validation prelude module
 
   Removes the redundant topology validation prelude module.
 
@@ -2909,7 +2920,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   now requires `CoordinateScalar` to perform coordinate validation,
   where applicable. (Internal change).
 
-  **Changed: Clarifies `Vertex` constraints and moves `point`**
+#### Changed: Clarifies `Vertex` constraints and moves `point`
 
   Clarifies the `Vertex` struct's constraints, emphasizing
   `CoordinateScalar` requirement for geometric operations and
@@ -3011,7 +3022,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   valid and consistent.
   Refs: refactor/wire-cavity-neighbors
 
-  **Added: K=3 flip rewiring test**
+#### Added: K=3 flip rewiring test
 
   Adds a test to verify correct rewiring of external neighbors
   after a k=3 flip. This validates the boundary handling and
@@ -3040,13 +3051,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - [Release notes](https://github.com/actions/setup-node/releases)
   - [Commits](https://github.com/actions/setup-node/compare/395ad3262231945c25e8478fd5baf05154b1d79f...6044e13b5dc448c55e2357c09f80417699197238)
 
-  ---
+---
+
   updated-dependencies:
 
-  - dependency-name: actions/setup-node
-    dependency-version: 6.2.0
-    dependency-type: direct:production
-    update-type: version-update:semver-minor
+- dependency-name: actions/setup-node
+  dependency-version: 6.2.0
+  dependency-type: direct:production
+  update-type: version-update:semver-minor
   ...
 
 - Bump actions/checkout from 6.0.1 to 6.0.2 [#176](https://github.com/acgetchell/delaunay/pull/176)
@@ -3057,13 +3069,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - [Release notes](https://github.com/actions/checkout/releases)
   - [Commits](https://github.com/actions/checkout/compare/v6.0.1...v6.0.2)
 
-  ---
+---
+
   updated-dependencies:
 
-  - dependency-name: actions/checkout
-    dependency-version: 6.0.2
-    dependency-type: direct:production
-    update-type: version-update:semver-patch
+- dependency-name: actions/checkout
+  dependency-version: 6.0.2
+  dependency-type: direct:production
+  update-type: version-update:semver-patch
   ...
 
 - Bump taiki-e/install-action from 2.66.1 to 2.67.11 [#177](https://github.com/acgetchell/delaunay/pull/177)
@@ -3075,13 +3088,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - [Changelog](https://github.com/taiki-e/install-action/blob/main/CHANGELOG.md)
   - [Commits](https://github.com/taiki-e/install-action/compare/3522286d40783523f9c7880e33f785905b4c20d0...887bc4e03483810873d617344dd5189cd82e7b8b)
 
-  ---
+---
+
   updated-dependencies:
 
-  - dependency-name: taiki-e/install-action
-    dependency-version: 2.67.11
-    dependency-type: direct:production
-    update-type: version-update:semver-minor
+- dependency-name: taiki-e/install-action
+  dependency-version: 2.67.11
+  dependency-type: direct:production
+  update-type: version-update:semver-minor
   ...
 
 - Bump astral-sh/setup-uv from 7.2.0 to 7.2.1 [#182](https://github.com/acgetchell/delaunay/pull/182)
@@ -3092,13 +3106,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - [Release notes](https://github.com/astral-sh/setup-uv/releases)
   - [Commits](https://github.com/astral-sh/setup-uv/compare/61cb8a9741eeb8a550a1b8544337180c0fc8476b...803947b9bd8e9f986429fa0c5a41c367cd732b41)
 
-  ---
+---
+
   updated-dependencies:
 
-  - dependency-name: astral-sh/setup-uv
-    dependency-version: 7.2.1
-    dependency-type: direct:production
-    update-type: version-update:semver-patch
+- dependency-name: astral-sh/setup-uv
+  dependency-version: 7.2.1
+  dependency-type: direct:production
+  update-type: version-update:semver-patch
   ...
 
 - Bump taiki-e/install-action from 2.67.17 to 2.67.18 [#181](https://github.com/acgetchell/delaunay/pull/181)
@@ -3110,15 +3125,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - [Changelog](https://github.com/taiki-e/install-action/blob/main/CHANGELOG.md)
   - [Commits](https://github.com/taiki-e/install-action/compare/29feb09ac22f4fde4175fe7b5c3548952234f69a...650c5ca14212efbbf3e580844b04bdccf68dac31)
 
-  ---
+---
+
   updated-dependencies:
 
-  - dependency-name: taiki-e/install-action
-    dependency-version: 2.67.18
-    dependency-type: direct:production
-    update-type: version-update:semver-patch
+- dependency-name: taiki-e/install-action
+  dependency-version: 2.67.18
+  dependency-type: direct:production
+  update-type: version-update:semver-patch
   ...
-
 - Bump rand to 0.10 and trim unused deps [`fe3e406`](https://github.com/acgetchell/delaunay/commit/fe3e406f19dcc6c9c72666d89b285626ea00465c)
 
   - Update rand to v0.10 and fix RNG trait imports (use rand::RngExt) in tests/utilities
@@ -3134,13 +3149,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - [Release notes](https://github.com/astral-sh/setup-uv/releases)
   - [Commits](https://github.com/astral-sh/setup-uv/compare/803947b9bd8e9f986429fa0c5a41c367cd732b41...eac588ad8def6316056a12d4907a9d4d84ff7a3b)
 
-  ---
+---
+
   updated-dependencies:
 
-  - dependency-name: astral-sh/setup-uv
-    dependency-version: 7.3.0
-    dependency-type: direct:production
-    update-type: version-update:semver-minor
+- dependency-name: astral-sh/setup-uv
+  dependency-version: 7.3.0
+  dependency-type: direct:production
+  update-type: version-update:semver-minor
   ...
 
 - Bump taiki-e/install-action from 2.67.18 to 2.67.26 [#195](https://github.com/acgetchell/delaunay/pull/195)
@@ -3152,13 +3168,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - [Changelog](https://github.com/taiki-e/install-action/blob/main/CHANGELOG.md)
   - [Commits](https://github.com/taiki-e/install-action/compare/650c5ca14212efbbf3e580844b04bdccf68dac31...509565405a8a987e73cf742e26b26dcc72c4b01a)
 
-  ---
+---
+
   updated-dependencies:
 
-  - dependency-name: taiki-e/install-action
-    dependency-version: 2.67.26
-    dependency-type: direct:production
-    update-type: version-update:semver-patch
+- dependency-name: taiki-e/install-action
+  dependency-version: 2.67.26
+  dependency-type: direct:production
+  update-type: version-update:semver-patch
   ...
 
 - Bump taiki-e/install-action from 2.67.26 to 2.67.30 [#202](https://github.com/acgetchell/delaunay/pull/202)
@@ -3170,13 +3187,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - [Changelog](https://github.com/taiki-e/install-action/blob/main/CHANGELOG.md)
   - [Commits](https://github.com/taiki-e/install-action/compare/509565405a8a987e73cf742e26b26dcc72c4b01a...288875dd3d64326724fa6d9593062d9f8ba0b131)
 
-  ---
+---
+
   updated-dependencies:
 
-  - dependency-name: taiki-e/install-action
-    dependency-version: 2.67.30
-    dependency-type: direct:production
-    update-type: version-update:semver-patch
+- dependency-name: taiki-e/install-action
+  dependency-version: 2.67.30
+  dependency-type: direct:production
+  update-type: version-update:semver-patch
   ...
 
 - Bump the dependencies group with 3 updates [#201](https://github.com/acgetchell/delaunay/pull/201)
@@ -3200,26 +3218,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - [Changelog](https://github.com/GuillaumeGomez/sysinfo/blob/main/CHANGELOG.md)
   - [Commits](https://github.com/GuillaumeGomez/sysinfo/compare/v0.38.1...v0.38.2)
 
-  ---
+---
+
   updated-dependencies:
 
-  - dependency-name: arc-swap
-    dependency-version: 1.8.2
-    dependency-type: direct:production
-    update-type: version-update:semver-patch
-    dependency-group: dependencies
+- dependency-name: arc-swap
+  dependency-version: 1.8.2
+  dependency-type: direct:production
+  update-type: version-update:semver-patch
+  dependency-group: dependencies
 
-  - dependency-name: uuid
-    dependency-version: 1.21.0
-    dependency-type: direct:production
-    update-type: version-update:semver-minor
-    dependency-group: dependencies
+- dependency-name: uuid
+  dependency-version: 1.21.0
+  dependency-type: direct:production
+  update-type: version-update:semver-minor
+  dependency-group: dependencies
 
-  - dependency-name: sysinfo
-    dependency-version: 0.38.2
-    dependency-type: direct:production
-    update-type: version-update:semver-patch
-    dependency-group: dependencies
+- dependency-name: sysinfo
+  dependency-version: 0.38.2
+  dependency-type: direct:production
+  update-type: version-update:semver-patch
+  dependency-group: dependencies
   ...
 
 ### Removed
@@ -3257,7 +3276,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Add integration tests for topology traversal and adjacency index invariants
   - Refresh repo tooling/CI configs and supporting scripts/tests
 
-  **Changed: Exposes public topology traversal API**
+#### Changed: Exposes public topology traversal API
 
   Makes topology traversal APIs public for external use.
 
@@ -3268,7 +3287,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   This allows external users to traverse the triangulation's topology
   without needing to access internal implementation details.
 
-  **Changed: Expose topology query APIs on DelaunayTriangulation**
+#### Changed: Expose topology query APIs on DelaunayTriangulation
 
   Exposes cell and vertex query APIs on `DelaunayTriangulation` for zero-allocation topology traversal.
 
@@ -3293,22 +3312,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
   Also, updates the `la-stack` dependency version.
 
-  **Fixed: Improves robustness of incremental insertion**
+#### Fixed: Improves robustness of incremental insertion
 
   Addresses rare topological invalidations during incremental
   insertion by:
 
-  - Adding connectedness validation to conflict region checks.
+- Adding connectedness validation to conflict region checks.
 
-  - Adding codimension-2 boundary manifoldness validation
-      ("no boundary of boundary") to triangulation's `is_valid`
-       method.
+- Adding codimension-2 boundary manifoldness validation
+  ("no boundary of boundary") to triangulation's `is_valid`
+  method.
 
-  - Ensuring that strict Level 3 validation is enabled during
-      batch construction in debug builds.
+- Ensuring that strict Level 3 validation is enabled during
+  batch construction in debug builds.
   Refs: feat/la-stack-ldlt-factorization
 
-  **Changed: Rename SimplexCounts to FVector for clarity**
+#### Changed: Rename SimplexCounts to FVector for clarity
 
   Renames the `SimplexCounts` struct to `FVector` to better reflect
   its mathematical meaning as the f-vector in topology, representing
@@ -3318,7 +3337,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   convention with standard topological terminology.
   (Internal refactoring, no API change.)
 
-  **Changed: Improves simplex generation algorithm**
+#### Changed: Improves simplex generation algorithm
 
   Improves the algorithm for generating simplex combinations in
   the Euler characteristic calculation. This change enhances
@@ -3336,7 +3355,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   reporting, and adds comprehensive manifold validation tests.
   Also improves robustness of incremental insertion.
 
-  **Changed: Updates topology guarantee defaults and validation**
+#### Changed: Updates topology guarantee defaults and validation
 
   Updates the default topology guarantee to `Pseudomanifold` for new
   triangulations and deserialized triangulations. Also, clarifies
@@ -3344,7 +3363,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   documentation. Introduces a test-only function to repair degenerate
   cells by removing them and clearing dangling references.
 
-  **Fixed: Corrects triangulation perturbation logic**
+#### Fixed: Corrects triangulation perturbation logic
 
   Fixes a bug in the vertex insertion perturbation logic that
   caused non-equivalent results when translating the input
@@ -3357,7 +3376,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Updates documentation on topology guarantees to clarify
   manifoldness invariants.
 
-  **Changed: Improves PL-manifold validation with vertex-link check**
+#### Changed: Improves PL-manifold validation with vertex-link check
 
   Replaces ridge-link validation with vertex-link validation for
   PL-manifold topology guarantee. This change provides a more
@@ -3378,14 +3397,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - [Changelog](https://github.com/clap-rs/clap/blob/master/CHANGELOG.md)
   - [Commits](https://github.com/clap-rs/clap/compare/clap_complete-v4.5.53...clap_complete-v4.5.54)
 
-  ---
+---
+
   updated-dependencies:
 
-  - dependency-name: clap
-    dependency-version: 4.5.54
-    dependency-type: direct:production
-    update-type: version-update:semver-patch
-    dependency-group: dependencies
+- dependency-name: clap
+  dependency-version: 4.5.54
+  dependency-type: direct:production
+  update-type: version-update:semver-patch
+  dependency-group: dependencies
   ...
 
 - Bump taiki-e/install-action from 2.65.7 to 2.65.13 [#165](https://github.com/acgetchell/delaunay/pull/165)
@@ -3397,13 +3417,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - [Changelog](https://github.com/taiki-e/install-action/blob/main/CHANGELOG.md)
   - [Commits](https://github.com/taiki-e/install-action/compare/4c6723ec9c638cccae824b8957c5085b695c8085...0e76c5c569f13f7eb21e8e5b26fe710062b57b62)
 
-  ---
+---
+
   updated-dependencies:
 
-  - dependency-name: taiki-e/install-action
-    dependency-version: 2.65.13
-    dependency-type: direct:production
-    update-type: version-update:semver-patch
+- dependency-name: taiki-e/install-action
+  dependency-version: 2.65.13
+  dependency-type: direct:production
+  update-type: version-update:semver-patch
   ...
 
 - Bump astral-sh/setup-uv from 7.1.6 to 7.2.0 [#170](https://github.com/acgetchell/delaunay/pull/170)
@@ -3414,13 +3435,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - [Release notes](https://github.com/astral-sh/setup-uv/releases)
   - [Commits](https://github.com/astral-sh/setup-uv/compare/681c641aba71e4a1c380be3ab5e12ad51f415867...61cb8a9741eeb8a550a1b8544337180c0fc8476b)
 
-  ---
+---
+
   updated-dependencies:
 
-  - dependency-name: astral-sh/setup-uv
-    dependency-version: 7.2.0
-    dependency-type: direct:production
-    update-type: version-update:semver-minor
+- dependency-name: astral-sh/setup-uv
+  dependency-version: 7.2.0
+  dependency-type: direct:production
+  update-type: version-update:semver-minor
   ...
 
 - Bump taiki-e/install-action from 2.65.13 to 2.66.1 [#169](https://github.com/acgetchell/delaunay/pull/169)
@@ -3432,13 +3454,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - [Changelog](https://github.com/taiki-e/install-action/blob/main/CHANGELOG.md)
   - [Commits](https://github.com/taiki-e/install-action/compare/0e76c5c569f13f7eb21e8e5b26fe710062b57b62...3522286d40783523f9c7880e33f785905b4c20d0)
 
-  ---
+---
+
   updated-dependencies:
 
-  - dependency-name: taiki-e/install-action
-    dependency-version: 2.66.1
-    dependency-type: direct:production
-    update-type: version-update:semver-minor
+- dependency-name: taiki-e/install-action
+  dependency-version: 2.66.1
+  dependency-type: direct:production
+  update-type: version-update:semver-minor
   ...
 
 ## Archives

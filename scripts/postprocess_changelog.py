@@ -53,10 +53,13 @@ _BREAKING_MARKER_RE = re.compile(r"^\s*(?:[-*]\s+)?\[?\*\*breaking\*\*\]?\s*", r
 # Leading ``* `` list marker to normalise to ``- `` (MD004).
 _STAR_LIST_RE = re.compile(r"^(\s*)\* ")
 
+# Unicode bullets from historical changelog entries: ``•  item`` → ``- item``.
+_BULLET_SYMBOL_RE = re.compile(r"^(\s*)•\s+")
+
 # Extra spaces after list marker: ``-   `` → ``- `` (MD030).
 _LIST_MARKER_SPACE_RE = re.compile(r"^(\s*-)\s{2,}")
 
-# Indented ATX headings from commit bodies: ``  ## Title`` → ``  **Title**``.
+# Indented ATX headings from commit bodies: ``  ## Title`` → ``#### Title``.
 _INDENTED_ATX_HEADING_RE = re.compile(r"^(?P<indent>\s+)#{1,6}\s+(?P<title>.*?)(?:\s+#+\s*)?$")
 
 # Squash-merge commit bodies often contain inner conventional-commit
@@ -126,7 +129,7 @@ def _squash_heading_parts(line: str) -> tuple[str, str, str] | None:
 
 def _normalize_squash_heading(line: str, *, nested: bool = False) -> str:
     """
-    Convert squash-merge pseudo-commit bullets into bold prose headings.
+    Convert squash-merge pseudo-commit bullets into level-4 headings.
 
     This keeps release-note subsections from PR squash bodies readable while
     avoiding fake top-level changelog entries.
@@ -135,10 +138,8 @@ def _normalize_squash_heading(line: str, *, nested: bool = False) -> str:
     if parts is None:
         return line
 
-    indent, label, title = parts
-    if nested and not indent:
-        indent = "  "
-    return f"{indent}**{label}: {title}**"
+    _indent, label, title = parts
+    return f"#### {label}: {title}"
 
 
 def _is_duplicate_squash_heading(line: str, parent_summary: str | None) -> bool:
@@ -393,6 +394,29 @@ def _deindent_orphan(line: str, lines: list[str], idx: int) -> str:
     return line[2:] if nearest_parent_indent is not None else stripped
 
 
+def _normalize_continuation_indent(line: str, lines: list[str], idx: int) -> str:
+    """Normalize over-indented list continuation lines for rumdl MD077."""
+    stripped = line.lstrip()
+    if not line.startswith(" ") or not stripped or stripped.startswith("- "):
+        return line
+
+    for j in range(idx - 1, -1, -1):
+        prev = lines[j]
+        if not prev.strip():
+            continue
+
+        prev_stripped = prev.lstrip()
+        if prev_stripped.startswith(("- ", "* ", "• ")):
+            parent_indent = len(prev) - len(prev_stripped)
+            expected = parent_indent + 2
+            actual = len(line) - len(stripped)
+            if actual > expected:
+                return " " * expected + stripped
+        break
+
+    return line
+
+
 def _needs_blank_before(stripped: str, result: list[str]) -> bool:
     """
     Determine whether a blank line is required before a list item to satisfy Markdown rule MD032.
@@ -412,14 +436,13 @@ def _needs_blank_before(stripped: str, result: list[str]) -> bool:
 
 def _normalize_indented_heading(line: str) -> str:
     """
-    Convert indented commit-body headings into bold prose.
+    Convert indented commit-body headings into level-4 headings.
 
     git-cliff indents commit bodies under each changelog entry. If a historical
     commit body contains an ATX heading such as ``## Correctness Fixes``, the
-    rendered changelog contains ``  ## Correctness Fixes``. Markdownlint still
-    treats that as a heading, but MD023 requires headings to start at column 0.
-    Keeping the text as bold prose preserves readability without changing the
-    generated changelog hierarchy.
+    rendered changelog contains ``  ## Correctness Fixes``. Rumdl treats
+    emphasis-only headings as MD036 violations, so internal commit-body headings
+    become real level-4 headings below the release category heading.
     """
     match = _INDENTED_ATX_HEADING_RE.match(line)
     if match is None:
@@ -429,7 +452,17 @@ def _normalize_indented_heading(line: str) -> str:
     if not title:
         return line
 
-    return f"{match.group('indent')}**{title}**"
+    return f"#### {title}"
+
+
+def _normalize_horizontal_rule(line: str, result: list[str]) -> str:
+    """Normalize indented horizontal rules and ensure they have surrounding blanks."""
+    if line.strip() != "---":
+        return line
+
+    if result and result[-1].strip():
+        result.append("")
+    return "---"
 
 
 def _process_code_fence(line: str, result: list[str], in_code_block: bool, next_line: str | None) -> tuple[bool, bool]:
@@ -480,7 +513,10 @@ def _normalize_body_line(line: str, lines: list[str], idx: int, result: list[str
     """Apply markdown hygiene transforms to a non-code line."""
     is_isolated_body_heading = _is_isolated_body_heading(lines, idx)
     line = _deindent_orphan(line, lines, idx)
+    line = _normalize_continuation_indent(line, lines, idx)
     line = _normalize_indented_heading(line)
+    horizontal_rule = _normalize_horizontal_rule(line, result)
+    line = horizontal_rule
 
     if is_isolated_body_heading:
         line = _normalize_squash_heading(line, nested=current_entry_summary is not None)
@@ -514,7 +550,8 @@ def postprocess_text(text: str) -> str:
             result.append(line)
             continue
 
-        # --- MD004: normalise ``* `` list markers to ``- `` ---
+        # --- MD004: normalise historical and ``* `` list markers to ``- `` ---
+        line = _BULLET_SYMBOL_RE.sub(r"\1- ", line)
         line = _STAR_LIST_RE.sub(r"\1- ", line)
 
         # --- MD030: normalise spaces after list marker ---
@@ -538,7 +575,10 @@ def postprocess_text(text: str) -> str:
             continue
         drop_next_blank = False
 
-        result.append(_normalize_body_line(line, lines, idx, result, current_entry_summary))
+        normalized = _normalize_body_line(line, lines, idx, result, current_entry_summary)
+        result.append(normalized)
+        if normalized == "---" and next_line is not None and next_line.strip():
+            result.append("")
 
     # 1. Reassemble and strip trailing blank lines.
     text = "\n".join(result)

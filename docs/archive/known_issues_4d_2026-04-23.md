@@ -155,7 +155,7 @@ threshold is much lower with this seed/distribution.
 - Callers that need true geometric degeneracy detection (e.g. initial simplex validation,
   flip degenerate-cell guards) now use `robust_orientation` (exact, no SoS) directly.
 - Hilbert-sort quantized dedup integrated into `order_vertices_hilbert` and runs
-  unconditionally when Hilbert ordering is active.  Guards against SoS failures on
+  unconditionally when Hilbert ordering is active. Guards against SoS failures on
   identical quantized points with zero extra allocation (reuses quantized coordinates
   from the sorting phase).
 
@@ -163,23 +163,23 @@ threshold is much lower with this seed/distribution.
 
 - Replaced the heuristic adaptive-tolerance fast filter with provable `det_errbound()`
   (Shewchuk-style permanent-based bounds) in both `insphere_from_matrix` and
-  `orientation_from_matrix` (#228, PR #255).  For D ≤ 4, the f64 fast filter now has a
+  `orientation_from_matrix` (#228, PR #255). For D ≤ 4, the f64 fast filter now has a
   mathematically guaranteed error bound; ambiguous cases fall through to exact Bareiss.
   (The wrapper function `adaptive_tolerance_insphere()` retains its name but now delegates
   entirely to the provable `insphere_from_matrix` path.)
 - For D ≥ 5, `det_errbound()` returns `None`, so every call goes directly to exact
-  arithmetic.  Extending bounds to higher dimensions is tracked in #256.
+  arithmetic. Extending bounds to higher dimensions is tracked in #256.
 - Trade-off: the provable bounds correctly reject more cases to the exact path, which
-  is slower.  ~47 proptests were disabled due to CI timeouts (#256).
+  is slower. ~47 proptests were disabled due to CI timeouts (#256).
 
 ### What remains
 
 - **Predicate performance (#256):** the provable error bounds in `det_errbound()` reject
   more cases to exact Bareiss than the old heuristic, causing ~47 proptests to exceed CI
-  timeouts.  Re-enabling them requires Shewchuk-style multi-stage adaptive expansion or
+  timeouts. Re-enabling them requires Shewchuk-style multi-stage adaptive expansion or
   faster exact arithmetic in la-stack.
 - **Stack-matrix dimension limit:** `MAX_STACK_MATRIX_DIM = 7` limits exact insphere
-  to D ≤ 5 (the insphere matrix is (D+2)×(D+2)).  For D ≥ 6, `robust_insphere`
+  to D ≤ 5 (the insphere matrix is (D+2)×(D+2)). For D ≥ 6, `robust_insphere`
   falls back to symbolic perturbation and centroid-based tie-breaking.
 
 ### Reproduction / verification commands
@@ -225,7 +225,7 @@ DELAUNAY_LARGE_DEBUG_CASE_SEED_4D=0xD225B8A07E274AE6 \
 - **5D:** experimental; incremental insertion strongly recommended. Exact insphere
   predicates are available (5D uses a 7×7 matrix, within the stack limit).
 - **6D+:** exact insphere is not available (matrix exceeds stack limit); falls back
-  to symbolic perturbation.  Use with caution.
+  to symbolic perturbation. Use with caution.
 
 ### Related
 

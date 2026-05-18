@@ -315,9 +315,11 @@ Add to limitations section:
 ## Known Limitations
 
 ### Delaunay Property
+
 The incremental Bowyer-Watson algorithm produces valid triangulations but may contain
 local violations of the Delaunay empty circumsphere property. These violations are rare
 and typically occur with:
+
 - Near-degenerate point configurations
 - Points with specific geometric arrangements
 

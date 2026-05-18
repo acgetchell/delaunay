@@ -238,17 +238,16 @@ This section mirrors the current working plan so it can be recovered even if ext
 ### Current Phase 1 Status
 
 - `proptest_delaunay_condition` is currently passing for the configured
-    `PROPTEST_CASES`. The previously failing 5D configuration has been promoted
-    to a deterministic regression in
-    `tests/regression_delaunay_known_configs.rs`.
+  `PROPTEST_CASES`. The previously failing 5D configuration has been promoted
+  to a deterministic regression in
+  `tests/regression_delaunay_known_configs.rs`.
 - `proptest_robust_bowyer_watson` is currently passing with bounded
-    `PROPTEST_CASES` (e.g., 64), suggesting robust per-vertex insertion is
-    behaving correctly on tested inputs.
+  `PROPTEST_CASES` (e.g., 64), suggesting robust per-vertex insertion is
+  behaving correctly on tested inputs.
 - `integration_robust_bowyer_watson` passes in 2D–4D for clustered/scattered
-    and grid-based datasets; any future failures are expected to surface as
-    explicit `DelaunayViolation` errors in regression/property tests rather than
-    silent topology corruption.
-
+  and grid-based datasets; any future failures are expected to surface as
+  explicit `DelaunayViolation` errors in regression/property tests rather than
+  silent topology corruption.
 - [x] **Phase 2 – Validator semantics and diagnostics**
   - [x] Tighten `core::util::{is_delaunay, find_delaunay_violations}` so that:
     - Only `INSIDE` (strictly inside circumsphere) is treated as a Delaunay violation.
@@ -259,7 +258,6 @@ This section mirrors the current working plan so it can be recovered even if ext
     - Offending external vertex key and coordinates.
     - Neighbor information for each facet.
   - [x] Add a basic unit test that exercises the validator and helper on a simple 3D tetrahedron.
-
 - **Phase 3 – Localize violations in `Tds::new` and per-vertex insertion (conditional playbook)**
 - [x] For the canonical 7-point 5D configuration, construct vertices and call
 - `Tds::<f64, Option<()>, Option<()>, D>::new(&vertices)`, asserting that
@@ -277,11 +275,10 @@ This section mirrors the current working plan so it can be recovered even if ext
     only during finalization.
 - If future localized violations point back to insertion/finalization
   code paths, focus debugging on:
-        (`find_bad_cells`, cavity boundary construction/deduplication,
-        `filter_boundary_facets_by_valid_facet_sharing`, `finalize_after_insertion`,
-        hull extension, and fallback paths) to ensure per-vertex
-        insertion preserves Delaunay for valid inputs.
-
+  (`find_bad_cells`, cavity boundary construction/deduplication,
+  `filter_boundary_facets_by_valid_facet_sharing`, `finalize_after_insertion`,
+  hull extension, and fallback paths) to ensure per-vertex
+  insertion preserves Delaunay for valid inputs.
 - [x] **Phase 4 – Align tests with the unified Delaunay pipeline**
   - [x] Update robust Bowyer–Watson tests
         (`src/core/algorithms/robust_bowyer_watson.rs`) so they assert structural
@@ -296,7 +293,6 @@ This section mirrors the current working plan so it can be recovered even if ext
   - [x] Adjust `src/geometry/util.rs` random triangulation tests so `generate_random_triangulation` returns:
     - Valid, globally Delaunay triangulations when a simplex exists.
     - Clear `GeometricDegeneracy` (or equivalent) for truly unsalvageable inputs.
-
 - [x] **Phase 5 – Statistics and error semantics**
   - [x] Extend `InsertionStatistics` to track fast/robust attempts and successes, skipped vertices, and non-test-only global validation runs.
   - [x] Wire these counters through the unified pipeline and `run_global_delaunay_validation_with_policy`.
@@ -309,7 +305,6 @@ This section mirrors the current working plan so it can be recovered even if ext
       `triangulation_data_structure.rs` and
     - transactional rollback tests in `tests/test_insertion_algorithm_trait.rs`
       and `triangulation_data_structure.rs`.
-
 - [x] **Phase 6 – Regression tests, docs, quality tools, and acceptance criteria**
   - [x] Promote important failing seeds to deterministic regression tests (`tests/regression_delaunay_*.rs`) that assert both structural and Delaunay validity.
 - [x] Update crate-level docs, this document, and `tests/README.md` to describe:

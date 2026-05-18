@@ -206,5 +206,21 @@ python_files = [ "test_*.py", "*_test.py" ]
 python_classes = [ "Test*" ]
 python_functions = [ "test_*" ]
 
+[tool.rumdl]
+line-length = 160
+disable = [
+    "MD018",
+    "MD024",
+    "MD029",
+    "MD033",
+    "MD037",
+    "MD038",
+    "MD041",
+    "MD060",
+]
+
+[tool.rumdl.MD013]
+line-length = 160
+
 [dependency-groups]
 dev = [ "pytest>=9.0.3", "ruff>=0.12.11", "semgrep>=1.152.0", "ty>=0.0.8" ]

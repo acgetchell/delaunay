@@ -12,11 +12,12 @@ Both repositories now share the same core Rust and Python support-tooling loop:
   `ty.toml` pin local tool behavior.
 - `pyproject.toml` owns Ruff, Ty, pytest, uv packaging, and uv-managed
   development dependencies.
-- `.markdownlint.json`, `.yamllint`, and `typos.toml` define documentation and
-  configuration checks. Delaunay still uses Node-backed Markdownlint and
-  Prettier-for-YAML today; a Rust-native `dprint`/`pretty_yaml` and Markdown
-  linter migration remains a future tooling change. `CITATION.cff` is
-  YAML-style-linted with `.yamllint` and schema-validated through an
+- `pyproject.toml`, `dprint.json`, `.yamllint`, and `typos.toml` define local
+  and CI documentation/configuration checks. Markdown linting uses Rust-native
+  `rumdl`, and YAML/CFF formatting uses `dprint` with the `pretty_yaml` plugin;
+  Node-backed Markdownlint and Prettier are no longer part of the local, CI, or
+  Codacy tooling path. `CITATION.cff` is YAML-style-linted with `.yamllint` and
+  schema-validated through an
   exact-version `uvx --from cffconvert==2.0.0` invocation, keeping
   `cffconvert`'s old `jsonschema` constraint isolated from Semgrep's newer
   dependency requirements.
@@ -44,8 +45,8 @@ The useful updates ported in this pass are:
 - changelog archive sorting for prerelease labels and POSIX archive paths in
   generated links.
 - changelog postprocessing improvements for breaking-change summary
-  deduplication, star-bullet summaries, and blank lines after closing code
-  fences.
+  deduplication, star-bullet summaries, rumdl-friendly body headings, and final
+  rumdl formatting of generated changelog files.
 - Semgrep rule refinements for non-finite fallback patterns, broad Python
   exception catches with bindings, and direct ad hoc subprocess mock
   constructors.
@@ -58,6 +59,15 @@ The useful updates ported in this pass are:
   mirroring fixture paths to a temporary Semgrep config tree backed by the
   repository `semgrep.yaml`, matching the causal-triangulations fixture
   discovery model.
+- `just markdown-check` and `just markdown-fix` now use `rumdl`, preserving the
+  previous Markdown rule exceptions in `pyproject.toml` while removing the
+  `npx markdownlint` dependency from local and CI workflows.
+- `just yaml-check` and `just yaml-fix` now use `dprint` with the
+  `pretty_yaml` plugin for formatting, while `yaml-lint` remains the yamllint
+  style pass for YAML/CFF validation.
+- Repository-owned Semgrep rules now guard obvious check/fix command-ordering
+  regressions in user-facing docs and enforce SHA-pinned, allowlisted external
+  GitHub Actions with readable version comments.
 - `.github/workflows/rust-clippy.yml` now matches the hardened SARIF pipeline:
   `set -euo pipefail`, `clippy::cargo`, and guarded upload that skips missing
   SARIF files and forked pull-request uploads.

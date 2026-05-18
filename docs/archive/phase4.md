@@ -263,10 +263,10 @@ fn get_memory_usage() -> u64 {
   // Use feature flags + type aliases for zero-cost abstraction:
   #[cfg(feature = "dense-slotmap")]
   type StorageBackend<K, V> = DenseSlotMap<K, V>;
-  
+
   #[cfg(not(feature = "dense-slotmap"))]
   type StorageBackend<K, V> = SlotMap<K, V>;
-  
+
   // Benchmark with:
   // cargo bench --bench large_scale_performance  # default (feature: dense-slotmap)
   // cargo bench --no-default-features --bench large_scale_performance  # SlotMap
@@ -351,13 +351,13 @@ phase4-smoke-test:
   name: Phase 4 SlotMap Smoke Test
   runs-on: macos-15
   timeout-minutes: 30
-  
+
   steps:
     - uses: actions/checkout@v5
-    
+
     - name: Install Rust toolchain
       uses: actions-rust-lang/setup-rust-toolchain@v1
-    
+
     - name: Run Phase 4 benchmarks (reduced scale)
       run: |
         cargo bench --bench large_scale_performance -- \
@@ -382,12 +382,11 @@ phase4-smoke-test:
   - **Algorithm Comparison**: `circumsphere_containment.rs`
   - **Specialized**: `assign_neighbors_performance.rs`
   - **Deprecated**: `triangulation_creation.rs` (use `ci_performance_suite.rs` or `large_scale_performance.rs`)
-
 - [x] Add "When to use which" guidance:
 
   ```markdown
   ## Benchmark Selection Guide
-  
+
   | Use Case | Benchmark | Command |
   |----------|-----------|---------|
   | Quick CI regression check | `ci_performance_suite.rs` | `just bench` or `cargo bench --bench ci_performance_suite` |
@@ -430,7 +429,7 @@ phase4-smoke-test:
   - Add Criterion benches for Serde (bincode, JSON)
   - Vary triangulation sizes (1K, 10K, 100K vertices)
   - Measure throughput (MB/s) and time per operation
-  
+
 - [ ] **f32 vs f64 coordinate type comparison**
   - Matrix: dimensions (2D-5D) × sizes (1K, 10K) × distributions (random, grid)
   - Report relative speed and memory deltas

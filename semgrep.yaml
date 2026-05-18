@@ -578,6 +578,78 @@ rules:
       - pattern-regex: '^\s*//[/!]\s*(?:#\s*)?use\s+delaunay::(core|geometry|triangulation|topology)::'
       - pattern-not-regex: '^\s*//[/!]\s*(?:#\s*)?use\s+delaunay::prelude::'
 
+  - id: delaunay.docs.check-before-fix-command-order
+    languages:
+      - regex
+    severity: WARNING
+    message: "Document non-mutating just checks before mutating just fixers."
+    metadata:
+      category: maintainability
+      tracking_issue: "https://github.com/acgetchell/delaunay/issues/379"
+      rationale: >-
+        User-facing workflow examples should show non-mutating checks before
+        mutating fixers so formatting drift is inspected before files are
+        rewritten.
+    paths:
+      include:
+        - "/**/*.md"
+        - "/justfile"
+    pattern-either:
+      - pattern-regex: '(?m)^\s*(?:@echo\s+"?\s*)?just\s+fix\b[^\n]*\n\s*(?:@echo\s+"?\s*)?just\s+check\b'
+      - pattern-regex: '(?m)^\s*(?:@echo\s+"?\s*)?just\s+python-fix\b[^\n]*\n\s*(?:@echo\s+"?\s*)?just\s+python-check\b'
+      - pattern-regex: '(?m)^\s*(?:@echo\s+"?\s*)?just\s+yaml-fix\b[^\n]*\n\s*(?:@echo\s+"?\s*)?just\s+yaml-check\b'
+      - pattern-regex: '(?m)^\s*(?:@echo\s+"?\s*)?just\s+markdown-fix\b[^\n]*\n\s*(?:@echo\s+"?\s*)?just\s+markdown-check\b' # yamllint disable-line rule:line-length
+      - pattern-regex: '(?m)^\s*(?:@echo\s+"?\s*)?just\s+toml-fix\b[^\n]*\n\s*(?:@echo\s+"?\s*)?just\s+toml-check\b'
+      - pattern-regex: '(?m)^\s*(?:@echo\s+"?\s*)?just\s+shell-fix\b[^\n]*\n\s*(?:@echo\s+"?\s*)?just\s+shell-check\b'
+
+  - id: delaunay.github-actions.external-action-sha-pinned
+    languages:
+      - regex
+    severity: WARNING
+    message: "Pin external GitHub Actions to a full 40-character commit SHA."
+    metadata:
+      category: security
+      tracking_issue: "https://github.com/acgetchell/delaunay/issues/379"
+      rationale: "Moving tags can change workflow behavior without review."
+    paths:
+      include:
+        - "/.github/workflows/**/*.yml"
+        - "/.github/workflows/**/*.yaml"
+    patterns:
+      - pattern-regex: '(?m)^\s*uses:\s*(?!\./)(?!docker://)[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+(?:/[A-Za-z0-9_.-]+)?@(?![a-fA-F0-9]{40}(?:\s+#|$))[^\s#]+' # yamllint disable-line rule:line-length
+
+  - id: delaunay.github-actions.external-action-approved-allowlist
+    languages:
+      - regex
+    severity: WARNING
+    message: "Use only approved external GitHub Actions, or update the repository allowlist deliberately."
+    metadata:
+      category: security
+      tracking_issue: "https://github.com/acgetchell/delaunay/issues/379"
+      rationale: "A small allowlist keeps workflow supply-chain review explicit."
+    paths:
+      include:
+        - "/.github/workflows/**/*.yml"
+        - "/.github/workflows/**/*.yaml"
+    patterns:
+      - pattern-regex: '(?m)^\s*uses:\s*(?!\./)(?!docker://)(?!(?:actions/checkout|actions/cache|actions/upload-artifact|actions/download-artifact|actions/github-script|actions-rust-lang/setup-rust-toolchain|astral-sh/setup-uv|taiki-e/install-action|github/codeql-action/(?:upload-sarif|init|analyze)|codecov/codecov-action|codacy/codacy-coverage-reporter-action|codacy/codacy-analysis-cli-action)@)[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+(?:/[A-Za-z0-9_.-]+)?@' # yamllint disable-line rule:line-length
+
+  - id: delaunay.github-actions.external-action-version-comment
+    languages:
+      - regex
+    severity: WARNING
+    message: "Keep a readable version comment next to external GitHub Action SHA pins."
+    metadata:
+      category: maintainability
+      tracking_issue: "https://github.com/acgetchell/delaunay/issues/379"
+      rationale: "Version comments make Dependabot updates and human review manageable."
+    paths:
+      include:
+        - "/.github/workflows/**/*.yml"
+        - "/.github/workflows/**/*.yaml"
+    patterns:
+      - pattern-regex: '(?m)^\s*uses:\s*(?!\./)(?!docker://)[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+(?:/[A-Za-z0-9_.-]+)?@[a-fA-F0-9]{40}\s*$' # yamllint disable-line rule:line-length
+
   - id: delaunay.python.no-broad-exception
     languages:
       - python

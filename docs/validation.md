@@ -492,10 +492,10 @@ helper.
 #[test]
 fn test_my_triangulation_operation() {
     let mut dt = create_test_triangulation();
-    
+
     // Perform operation
     my_operation(&mut dt);
-    
+
     // Validate at appropriate level
     assert!(dt.tds().is_valid().is_ok());        // Level 2: Structural
     assert!(dt.as_triangulation().is_valid().is_ok()); // Level 3: Topology
@@ -511,7 +511,7 @@ use delaunay::prelude::query::*;
 
 pub fn my_algorithm(dt: &mut DelaunayTriangulation<FastKernel<f64>, (), (), 3>) {
     // Do work...
-    
+
     #[cfg(debug_assertions)]
     {
         dt.tds().is_valid().expect("TDS structure violated");

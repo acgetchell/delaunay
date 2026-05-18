@@ -54,22 +54,15 @@ _ensure-jq:
     set -euo pipefail
     command -v jq >/dev/null || { echo "❌ 'jq' not found. See 'just setup' or install: brew install jq"; exit 1; }
 
-_ensure-npx:
+_ensure-dprint:
     #!/usr/bin/env bash
     set -euo pipefail
-    command -v npx >/dev/null || { echo "❌ 'npx' not found. See 'just setup' or install Node.js (for npx tools): https://nodejs.org"; exit 1; }
+    command -v dprint >/dev/null || { echo "❌ 'dprint' not found. See 'just setup' or install: brew install dprint"; exit 1; }
 
-_ensure-prettier-or-npx:
+_ensure-rumdl:
     #!/usr/bin/env bash
     set -euo pipefail
-    if command -v prettier >/dev/null; then
-        exit 0
-    fi
-    command -v npx >/dev/null || {
-        echo "❌ Neither 'prettier' nor 'npx' found. Install via npm (recommended): npm i -g prettier"
-        echo "   Or install Node.js (for npx): https://nodejs.org"
-        exit 1
-    }
+    command -v rumdl >/dev/null || { echo "❌ 'rumdl' not found. See 'just setup' or install: cargo install rumdl"; exit 1; }
 
 _ensure-shellcheck:
     #!/usr/bin/env bash
@@ -154,23 +147,25 @@ build:
 build-release:
     cargo build --release
 
-# Changelog management (git-cliff + post-processing + archiving)
-changelog: _ensure-git-cliff python-sync
+# Changelog management (git-cliff + post-processing + archiving + rumdl formatting)
+changelog: _ensure-git-cliff _ensure-rumdl python-sync
     #!/usr/bin/env bash
     set -euo pipefail
     GIT_CLIFF_OFFLINE=true git-cliff -o CHANGELOG.md
     uv run postprocess-changelog
     uv run archive-changelog
+    rumdl fmt --silent CHANGELOG.md docs/archive/changelog/*.md
 
 changelog-tag version:
     just tag {{ version }}
 
-changelog-unreleased version: _ensure-git-cliff python-sync
+changelog-unreleased version: _ensure-git-cliff _ensure-rumdl python-sync
     #!/usr/bin/env bash
     set -euo pipefail
     GIT_CLIFF_OFFLINE=true git-cliff --tag {{ version }} -o CHANGELOG.md
     uv run postprocess-changelog
     uv run archive-changelog
+    rumdl fmt --silent CHANGELOG.md docs/archive/changelog/*.md
 
 changelog-update: changelog
     @echo "📝 Changelog updated successfully!"
@@ -252,7 +247,7 @@ examples:
     ./scripts/run_all_examples.sh
 
 # Fix (mutating): apply formatters/auto-fixes
-fix: toml-fmt fmt python-fix shell-fmt markdown-fix yaml-fix
+fix: toml-fix fmt python-fix shell-fix markdown-fix yaml-fix
     @echo "✅ Fixes applied!"
 
 fmt:
@@ -308,7 +303,7 @@ json-check: _ensure-jq
     set -euo pipefail
     files=()
     while IFS= read -r -d '' file; do
-        files+=("$file")
+        [ -f "$file" ] && files+=("$file")
     done < <(git ls-files -z '*.json')
     if [ "${#files[@]}" -gt 0 ]; then
         printf '%s\0' "${files[@]}" | xargs -0 -n1 jq empty
@@ -323,12 +318,12 @@ lint: lint-code lint-docs lint-config
 lint-code: fmt-check clippy doc-check semgrep semgrep-test python-lint shell-lint
 
 # Configuration checks: JSON, TOML, YAML/CFF, GitHub Actions workflows
-lint-config: json-check toml-check toml-lint toml-fmt-check yaml-lint citation-check action-lint
+lint-config: json-check toml-check toml-lint toml-fmt-check yaml-check citation-check action-lint
 
 # Documentation linting: Markdown + spell checking
 lint-docs: markdown-check spell-check
 
-markdown-check: _ensure-npx
+markdown-check: _ensure-rumdl
     #!/usr/bin/env bash
     set -euo pipefail
     files=()
@@ -336,13 +331,13 @@ markdown-check: _ensure-npx
         files+=("$file")
     done < <(git ls-files -z '*.md')
     if [ "${#files[@]}" -gt 0 ]; then
-        printf '%s\0' "${files[@]}" | xargs -0 -n100 npx markdownlint --config .markdownlint.json
+        printf '%s\0' "${files[@]}" | xargs -0 -n100 rumdl check
     else
         echo "No markdown files found to check."
     fi
 
 # Shell, markdown, and YAML quality
-markdown-fix: _ensure-npx
+markdown-fix: _ensure-rumdl
     #!/usr/bin/env bash
     set -euo pipefail
     files=()
@@ -350,8 +345,8 @@ markdown-fix: _ensure-npx
         files+=("$file")
     done < <(git ls-files -z '*.md')
     if [ "${#files[@]}" -gt 0 ]; then
-        echo "📝 markdownlint --fix (${#files[@]} files)"
-        printf '%s\0' "${files[@]}" | xargs -0 -n100 npx markdownlint --config .markdownlint.json --fix
+        echo "📝 rumdl check --fix (${#files[@]} files)"
+        printf '%s\0' "${files[@]}" | xargs -0 -n100 rumdl check --fix
     else
         echo "No markdown files found to format."
     fi
@@ -720,11 +715,12 @@ setup-tools:
         install_with_brew uv
         install_with_brew jq
         install_with_brew taplo
+        install_with_brew dprint
+        install_with_brew rumdl
         install_with_brew yamllint
         install_with_brew shfmt
         install_with_brew shellcheck
         install_with_brew actionlint
-        install_with_brew node
         echo ""
     else
         echo "⚠️  'brew' not found. Skipping Homebrew installs."
@@ -733,7 +729,7 @@ setup-tools:
         else
             echo "Install required tools via your system package manager, or ensure they are on PATH."
         fi
-        echo "Required tools: uv, jq, taplo, yamllint, shfmt, shellcheck, actionlint, git-cliff, node+npx, typos"
+        echo "Required tools: uv, jq, taplo, dprint, rumdl, yamllint, shfmt, shellcheck, actionlint, git-cliff, typos"
         echo ""
     fi
 
@@ -785,7 +781,7 @@ setup-tools:
     echo "Verifying required commands are available..."
     missing=0
 
-    cmds=(uv jq taplo yamllint shfmt shellcheck actionlint git-cliff node npx typos)
+    cmds=(uv jq taplo dprint rumdl yamllint shfmt shellcheck actionlint git-cliff typos)
     cmds+=(cargo-llvm-cov)
 
     for cmd in "${cmds[@]}"; do
@@ -846,6 +842,8 @@ shell-fmt: _ensure-shfmt
     # Note: justfiles are not shell scripts and are excluded from shellcheck
 
 shell-lint: shell-check
+
+shell-fix: shell-fmt
 
 # Spell check (typos)
 spell-check: _ensure-typos
@@ -995,6 +993,8 @@ toml-lint: _ensure-taplo
         echo "No TOML files found to lint."
     fi
 
+toml-fix: toml-fmt
+
 # Check for unused direct Cargo dependencies.
 unused-deps: _ensure-cargo-machete
     cargo machete
@@ -1022,37 +1022,34 @@ verify-expect-counts:
 
     check_count 'src/**/*.rs doc-comment .expect(' 17 '^\s*//[/!].*\.expect\(' src
 
-yaml-fix: _ensure-prettier-or-npx
+yaml-check: yaml-fmt-check yaml-lint
+
+yaml-fix: _ensure-dprint
     #!/usr/bin/env bash
     set -euo pipefail
     files=()
     while IFS= read -r -d '' file; do
         files+=("$file")
-    done < <(git ls-files -z '*.yml' '*.yaml')
+    done < <(git ls-files -z '*.yml' '*.yaml' 'CITATION.cff')
     if [ "${#files[@]}" -gt 0 ]; then
-        echo "📝 prettier --write (YAML, ${#files[@]} files)"
-
-        cmd=()
-        if command -v prettier >/dev/null; then
-            cmd=(prettier --write --print-width 120)
-        elif command -v npx >/dev/null; then
-            # Prefer non-interactive installs when supported (newer npm/npx).
-            # NOTE: With `set -u`, expanding an empty array like "${arr[@]}" can error on older bash.
-            cmd=(npx)
-            if npx --help 2>&1 | grep -q -- '--yes'; then
-                cmd+=(--yes)
-            fi
-            cmd+=(prettier --write --print-width 120)
-        else
-            echo "❌ 'prettier' not found. Install via npm (recommended): npm i -g prettier"
-            echo "   Or install Node.js (for npx): https://nodejs.org"
-            exit 1
-        fi
-
-        # Use CLI flags instead of a repo-wide prettier config: keeps the scope to YAML only.
-        printf '%s\0' "${files[@]}" | xargs -0 -n100 "${cmd[@]}"
+        echo "📝 dprint fmt (YAML/CFF, ${#files[@]} files)"
+        dprint fmt --incremental=false "${files[@]}"
     else
         echo "No YAML files found to format."
+    fi
+
+yaml-fmt-check: _ensure-dprint
+    #!/usr/bin/env bash
+    set -euo pipefail
+    files=()
+    while IFS= read -r -d '' file; do
+        files+=("$file")
+    done < <(git ls-files -z '*.yml' '*.yaml' 'CITATION.cff')
+    if [ "${#files[@]}" -gt 0 ]; then
+        echo "🔍 dprint check (YAML/CFF, ${#files[@]} files)"
+        dprint check --incremental=false "${files[@]}"
+    else
+        echo "No YAML files found to check."
     fi
 
 yaml-lint: _ensure-yamllint

@@ -3,7 +3,6 @@ name: Comprehensive Profiling Benchmarks
 on:
   # Manual trigger for on-demand profiling runs
   # Allows developers to run full production mode or quick development mode with optional filters
-
   workflow_dispatch:
     inputs:
       mode:

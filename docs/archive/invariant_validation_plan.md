@@ -92,12 +92,12 @@ where
             }
         )
     })?;
-    
+
     // Optionally check Delaunay property using robust predicates
     if check_delaunay {
         let all_cells: Vec<_> = tds.cells().map(|(k, _)| k).collect();
         let violations = self.find_delaunay_violations_in_cells(tds, &all_cells)?;
-        
+
         if !violations.is_empty() {
             return Err(InsertionError::GeometricFailure {
                 message: format!(
@@ -108,7 +108,7 @@ where
             });
         }
     }
-    
+
     Ok(())
 }
 ```
@@ -126,16 +126,16 @@ where
 {
     // Remove duplicate cells first
     tds.remove_duplicate_cells()?;
-    
+
     // Fix invalid facet sharing - must succeed
     tds.fix_invalid_facet_sharing()?;
-    
+
     // Assign neighbor relationships - must succeed
     tds.assign_neighbors()?;
-    
+
     // Assign incident cells to vertices - must succeed  
     tds.assign_incident_cells()?;
-    
+
     Ok(())
 }
 ```
@@ -152,13 +152,13 @@ self.validate_triangulation_invariants(tds, false)?;
 // After each refinement iteration
 loop {
     // ... create refinement cells ...
-    
+
     // Validate BEFORE removing violating cells
     self.validate_triangulation_invariants(tds, false)?;
-    
+
     // Now safe to remove
     Self::remove_bad_cells(tds, &violating_cells);
-    
+
     // ... continue ...
 }
 
@@ -204,7 +204,7 @@ if self.validate_triangulation_invariants(tds, false).is_err() {
 fn prop_empty_circumsphere_4d(vertices: Vec<Vertex<f64, Option<()>, 4>>) {
     let mut tds: Tds<f64, Option<()>, Option<()>, 4> = Tds::empty();
     let mut algorithm = RobustBowyerWatson::new();
-    
+
     for vertex in vertices {
         match algorithm.insert_vertex(&mut tds, vertex) {
             Ok(_) => {
