@@ -12,7 +12,7 @@ predicates fast across 2D-5D.
 | `circumsphere_containment.rs` | Compare circumsphere predicate methods | 2D-5D fixed, 3D random, edge cases | ~5 min | Predicate tuning, summaries |
 | `cold_path_predicates.rs` | Track hot/cold predicate paths | 2D-5D hot queries, near-boundary cases | ~2-5 min | Predicate optimization work |
 | `profiling_suite.rs` | Large-scale construction, memory, query, validation profiling | 2D/3D 10k, 4D 3k, 5D 1k | ~2-3 hr | Manual/monthly |
-| `remove_vertex.rs` | Track topology-preserving vertex removal and invalid-remnant rollback | Deterministic 2D-5D triangulations | ~1-5 min | Vertex-removal/local-validation work |
+| `remove_vertex.rs` | Vertex removal and rollback cost | 2D-5D fixed cases | ~1-5 min | Vertex removal |
 | `tds_clone.rs` | `Tds::clone()` snapshot cost | Deterministic 2D-5D triangulations | ~1-3 min | Rollback design baselines |
 | `topology_guarantee_construction.rs` | Cost of topology guarantee modes | 2D-5D construction cases | ~5-15 min | Manual topology policy work |
 

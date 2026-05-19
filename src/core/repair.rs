@@ -30,6 +30,8 @@ use uuid::Uuid;
 
 static FORCE_GLOBAL_NEIGHBOR_REBUILD_ENABLED: OnceLock<bool> = OnceLock::new();
 
+const ORIENTATION_NORMALIZATION_BUDGET: usize = 3;
+
 /// Returns whether local neighbor repair should be bypassed for regression isolation.
 fn force_global_neighbor_rebuild_enabled() -> bool {
     *FORCE_GLOBAL_NEIGHBOR_REBUILD_ENABLED
@@ -453,7 +455,7 @@ where
         &mut self,
         validation_scope: &SimplexKeyBuffer,
     ) -> Result<(), InvariantError> {
-        for _ in 0..3 {
+        for _ in 0..ORIENTATION_NORMALIZATION_BUDGET {
             self.canonicalize_positive_orientation_for_simplices(validation_scope)
                 .map_err(|e| {
                     insertion_error_to_invariant_error(
