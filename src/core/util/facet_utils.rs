@@ -207,7 +207,7 @@ mod tests {
     use super::*;
 
     use crate::core::collections::FastHashSet;
-    use crate::triangulation::delaunay::DelaunayTriangulation;
+    use crate::triangulation::DelaunayTriangulation;
     use crate::vertex;
     use std::time::Instant;
 

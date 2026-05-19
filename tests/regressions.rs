@@ -4,18 +4,18 @@
 //! integration test crates, unless the case needs separate crate-level setup,
 //! feature flags, or profile isolation.
 
+use delaunay::prelude::construction::{
+    ConstructionOptions, DelaunayTriangulation, DelaunayTriangulationBuilder,
+    InsertionOrderStrategy, RetryPolicy, TopologyGuarantee, Vertex, vertex,
+};
 #[cfg(feature = "diagnostics")]
 use delaunay::prelude::diagnostics::debug_print_first_delaunay_violation;
 use delaunay::prelude::generators::generate_random_points_in_ball_seeded;
 use delaunay::prelude::geometry::{Point, RobustKernel};
-use delaunay::prelude::ordering::{hilbert_indices_prequantized, hilbert_quantize};
-use delaunay::prelude::triangulation::construction::{
-    ConstructionOptions, DelaunayTriangulation, DelaunayTriangulationBuilder,
-    InsertionOrderStrategy, RetryPolicy, TopologyGuarantee, Vertex, vertex,
-};
-use delaunay::prelude::triangulation::insertion::{
+use delaunay::prelude::insertion::{
     HullExtensionReason, InsertionError, InsertionErrorKind, InsertionErrorSummary,
 };
+use delaunay::prelude::ordering::{hilbert_indices_prequantized, hilbert_quantize};
 
 /// Replays a full Hilbert ordering while keeping only the prefix that first
 /// exposed issue #307, so the regression stays fast and deterministic.

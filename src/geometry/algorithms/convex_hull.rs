@@ -18,11 +18,11 @@
 //! # #[derive(Debug, thiserror::Error)]
 //! # enum ExampleError {
 //! #     #[error(transparent)]
-//! #     Construction(#[from] delaunay::prelude::triangulation::DelaunayTriangulationConstructionError),
+//! #     Construction(#[from] delaunay::prelude::DelaunayTriangulationConstructionError),
 //! #     #[error(transparent)]
 //! #     Hull(#[from] delaunay::prelude::query::ConvexHullConstructionError),
 //! #     #[error(transparent)]
-//! #     Insertion(#[from] delaunay::prelude::triangulation::InsertionError),
+//! #     Insertion(#[from] delaunay::prelude::InsertionError),
 //! #     #[error("expected tetrahedron hull to have a first facet")]
 //! #     MissingFacet,
 //! # }
@@ -296,17 +296,17 @@ pub enum ConvexHullConstructionError {
 /// Use `is_valid_for_triangulation()` to check if a hull is still valid for a given TDS:
 ///
 /// ```rust
-/// # use delaunay::prelude::triangulation::DelaunayTriangulation;
+/// # use delaunay::prelude::DelaunayTriangulation;
 /// # use delaunay::prelude::query::ConvexHull;
 /// # use delaunay::vertex;
 /// # #[derive(Debug, thiserror::Error)]
 /// # enum ExampleError {
 /// #     #[error(transparent)]
-/// #     Construction(#[from] delaunay::prelude::triangulation::DelaunayTriangulationConstructionError),
+/// #     Construction(#[from] delaunay::prelude::DelaunayTriangulationConstructionError),
 /// #     #[error(transparent)]
 /// #     Hull(#[from] delaunay::prelude::query::ConvexHullConstructionError),
 /// #     #[error(transparent)]
-/// #     Insertion(#[from] delaunay::prelude::triangulation::InsertionError),
+/// #     Insertion(#[from] delaunay::prelude::InsertionError),
 /// #     #[error("expected tetrahedron hull to have a first facet")]
 /// #     MissingFacet,
 /// # }
@@ -337,18 +337,18 @@ pub enum ConvexHullConstructionError {
 /// ## Example: Correct Usage Pattern
 ///
 /// ```rust
-/// use delaunay::prelude::triangulation::DelaunayTriangulation;
+/// use delaunay::prelude::DelaunayTriangulation;
 /// use delaunay::prelude::query::ConvexHull;
 /// use delaunay::vertex;
 ///
 /// # #[derive(Debug, thiserror::Error)]
 /// # enum ExampleError {
 /// #     #[error(transparent)]
-/// #     Construction(#[from] delaunay::prelude::triangulation::DelaunayTriangulationConstructionError),
+/// #     Construction(#[from] delaunay::prelude::DelaunayTriangulationConstructionError),
 /// #     #[error(transparent)]
 /// #     Hull(#[from] delaunay::prelude::query::ConvexHullConstructionError),
 /// #     #[error(transparent)]
-/// #     Insertion(#[from] delaunay::prelude::triangulation::InsertionError),
+/// #     Insertion(#[from] delaunay::prelude::InsertionError),
 /// #     #[error("expected tetrahedron hull to have a first facet")]
 /// #     MissingFacet,
 /// # }
@@ -454,18 +454,18 @@ impl<K, U, V, const D: usize> ConvexHull<K, U, V, D> {
     /// # Examples
     ///
     /// ```rust
-    /// use delaunay::prelude::triangulation::DelaunayTriangulation;
+    /// use delaunay::prelude::DelaunayTriangulation;
     /// use delaunay::prelude::query::ConvexHull;
     /// use delaunay::vertex;
     ///
     /// # #[derive(Debug, thiserror::Error)]
     /// # enum ExampleError {
     /// #     #[error(transparent)]
-    /// #     Construction(#[from] delaunay::prelude::triangulation::DelaunayTriangulationConstructionError),
+    /// #     Construction(#[from] delaunay::prelude::DelaunayTriangulationConstructionError),
     /// #     #[error(transparent)]
     /// #     Hull(#[from] delaunay::prelude::query::ConvexHullConstructionError),
     /// #     #[error(transparent)]
-    /// #     Insertion(#[from] delaunay::prelude::triangulation::InsertionError),
+    /// #     Insertion(#[from] delaunay::prelude::InsertionError),
     /// #     #[error("expected tetrahedron hull to have a first facet")]
     /// #     MissingFacet,
     /// # }
@@ -503,18 +503,18 @@ impl<K, U, V, const D: usize> ConvexHull<K, U, V, D> {
     /// # Examples
     ///
     /// ```rust
-    /// use delaunay::prelude::triangulation::DelaunayTriangulation;
+    /// use delaunay::prelude::DelaunayTriangulation;
     /// use delaunay::prelude::query::ConvexHull;
     /// use delaunay::vertex;
     ///
     /// # #[derive(Debug, thiserror::Error)]
     /// # enum ExampleError {
     /// #     #[error(transparent)]
-    /// #     Construction(#[from] delaunay::prelude::triangulation::DelaunayTriangulationConstructionError),
+    /// #     Construction(#[from] delaunay::prelude::DelaunayTriangulationConstructionError),
     /// #     #[error(transparent)]
     /// #     Hull(#[from] delaunay::prelude::query::ConvexHullConstructionError),
     /// #     #[error(transparent)]
-    /// #     Insertion(#[from] delaunay::prelude::triangulation::InsertionError),
+    /// #     Insertion(#[from] delaunay::prelude::InsertionError),
     /// #     #[error("expected tetrahedron hull to have a first facet")]
     /// #     MissingFacet,
     /// # }
@@ -547,18 +547,18 @@ impl<K, U, V, const D: usize> ConvexHull<K, U, V, D> {
     /// # Examples
     ///
     /// ```rust
-    /// use delaunay::prelude::triangulation::DelaunayTriangulation;
+    /// use delaunay::prelude::DelaunayTriangulation;
     /// use delaunay::prelude::query::ConvexHull;
     /// use delaunay::vertex;
     ///
     /// # #[derive(Debug, thiserror::Error)]
     /// # enum ExampleError {
     /// #     #[error(transparent)]
-    /// #     Construction(#[from] delaunay::prelude::triangulation::DelaunayTriangulationConstructionError),
+    /// #     Construction(#[from] delaunay::prelude::DelaunayTriangulationConstructionError),
     /// #     #[error(transparent)]
     /// #     Hull(#[from] delaunay::prelude::query::ConvexHullConstructionError),
     /// #     #[error(transparent)]
-    /// #     Insertion(#[from] delaunay::prelude::triangulation::InsertionError),
+    /// #     Insertion(#[from] delaunay::prelude::InsertionError),
     /// #     #[error(transparent)]
     /// #     Facet(#[from] delaunay::prelude::tds::FacetError),
     /// #     #[error("expected tetrahedron hull to have a first facet")]
@@ -600,18 +600,18 @@ impl<K, U, V, const D: usize> ConvexHull<K, U, V, D> {
     /// # Examples
     ///
     /// ```rust
-    /// use delaunay::prelude::triangulation::DelaunayTriangulation;
+    /// use delaunay::prelude::DelaunayTriangulation;
     /// use delaunay::prelude::query::ConvexHull;
     /// use delaunay::vertex;
     ///
     /// # #[derive(Debug, thiserror::Error)]
     /// # enum ExampleError {
     /// #     #[error(transparent)]
-    /// #     Construction(#[from] delaunay::prelude::triangulation::DelaunayTriangulationConstructionError),
+    /// #     Construction(#[from] delaunay::prelude::DelaunayTriangulationConstructionError),
     /// #     #[error(transparent)]
     /// #     Hull(#[from] delaunay::prelude::query::ConvexHullConstructionError),
     /// #     #[error(transparent)]
-    /// #     Insertion(#[from] delaunay::prelude::triangulation::InsertionError),
+    /// #     Insertion(#[from] delaunay::prelude::InsertionError),
     /// #     #[error("expected tetrahedron hull to have a first facet")]
     /// #     MissingFacet,
     /// # }
@@ -646,18 +646,18 @@ impl<K, U, V, const D: usize> ConvexHull<K, U, V, D> {
     /// # Examples
     ///
     /// ```rust
-    /// use delaunay::prelude::triangulation::DelaunayTriangulation;
+    /// use delaunay::prelude::DelaunayTriangulation;
     /// use delaunay::prelude::query::ConvexHull;
     /// use delaunay::vertex;
     ///
     /// # #[derive(Debug, thiserror::Error)]
     /// # enum ExampleError {
     /// #     #[error(transparent)]
-    /// #     Construction(#[from] delaunay::prelude::triangulation::DelaunayTriangulationConstructionError),
+    /// #     Construction(#[from] delaunay::prelude::DelaunayTriangulationConstructionError),
     /// #     #[error(transparent)]
     /// #     Hull(#[from] delaunay::prelude::query::ConvexHullConstructionError),
     /// #     #[error(transparent)]
-    /// #     Insertion(#[from] delaunay::prelude::triangulation::InsertionError),
+    /// #     Insertion(#[from] delaunay::prelude::InsertionError),
     /// #     #[error("expected tetrahedron hull to have a first facet")]
     /// #     MissingFacet,
     /// # }
@@ -716,18 +716,18 @@ where
     /// # Examples
     ///
     /// ```rust
-    /// use delaunay::prelude::triangulation::DelaunayTriangulation;
+    /// use delaunay::prelude::DelaunayTriangulation;
     /// use delaunay::prelude::query::ConvexHull;
     /// use delaunay::vertex;
     ///
     /// # #[derive(Debug, thiserror::Error)]
     /// # enum ExampleError {
     /// #     #[error(transparent)]
-    /// #     Construction(#[from] delaunay::prelude::triangulation::DelaunayTriangulationConstructionError),
+    /// #     Construction(#[from] delaunay::prelude::DelaunayTriangulationConstructionError),
     /// #     #[error(transparent)]
     /// #     Hull(#[from] delaunay::prelude::query::ConvexHullConstructionError),
     /// #     #[error(transparent)]
-    /// #     Insertion(#[from] delaunay::prelude::triangulation::InsertionError),
+    /// #     Insertion(#[from] delaunay::prelude::InsertionError),
     /// #     #[error("expected tetrahedron hull to have a first facet")]
     /// #     MissingFacet,
     /// # }
@@ -888,18 +888,18 @@ impl<K, U, V, const D: usize> ConvexHull<K, U, V, D> {
     /// # Examples
     ///
     /// ```rust
-    /// use delaunay::prelude::triangulation::DelaunayTriangulation;
+    /// use delaunay::prelude::DelaunayTriangulation;
     /// use delaunay::prelude::query::ConvexHull;
     /// use delaunay::vertex;
     ///
     /// # #[derive(Debug, thiserror::Error)]
     /// # enum ExampleError {
     /// #     #[error(transparent)]
-    /// #     Construction(#[from] delaunay::prelude::triangulation::DelaunayTriangulationConstructionError),
+    /// #     Construction(#[from] delaunay::prelude::DelaunayTriangulationConstructionError),
     /// #     #[error(transparent)]
     /// #     Hull(#[from] delaunay::prelude::query::ConvexHullConstructionError),
     /// #     #[error(transparent)]
-    /// #     Insertion(#[from] delaunay::prelude::triangulation::InsertionError),
+    /// #     Insertion(#[from] delaunay::prelude::InsertionError),
     /// #     #[error("expected tetrahedron hull to have a first facet")]
     /// #     MissingFacet,
     /// # }
@@ -964,18 +964,18 @@ where
     /// # Examples
     ///
     /// ```rust
-    /// use delaunay::prelude::triangulation::DelaunayTriangulation;
+    /// use delaunay::prelude::DelaunayTriangulation;
     /// use delaunay::prelude::query::ConvexHull;
     /// use delaunay::vertex;
     ///
     /// # #[derive(Debug, thiserror::Error)]
     /// # enum ExampleError {
     /// #     #[error(transparent)]
-    /// #     Construction(#[from] delaunay::prelude::triangulation::DelaunayTriangulationConstructionError),
+    /// #     Construction(#[from] delaunay::prelude::DelaunayTriangulationConstructionError),
     /// #     #[error(transparent)]
     /// #     Hull(#[from] delaunay::prelude::query::ConvexHullConstructionError),
     /// #     #[error(transparent)]
-    /// #     Insertion(#[from] delaunay::prelude::triangulation::InsertionError),
+    /// #     Insertion(#[from] delaunay::prelude::InsertionError),
     /// #     #[error("expected tetrahedron hull to have a first facet")]
     /// #     MissingFacet,
     /// # }
@@ -1109,7 +1109,7 @@ where
     /// # Examples
     ///
     /// ```rust
-    /// use delaunay::prelude::triangulation::DelaunayTriangulation;
+    /// use delaunay::prelude::DelaunayTriangulation;
     /// use delaunay::prelude::query::ConvexHull;
     /// use delaunay::prelude::geometry::Point;
     /// use delaunay::prelude::geometry::Coordinate;
@@ -1118,11 +1118,11 @@ where
     /// # #[derive(Debug, thiserror::Error)]
     /// # enum ExampleError {
     /// #     #[error(transparent)]
-    /// #     Construction(#[from] delaunay::prelude::triangulation::DelaunayTriangulationConstructionError),
+    /// #     Construction(#[from] delaunay::prelude::DelaunayTriangulationConstructionError),
     /// #     #[error(transparent)]
     /// #     Hull(#[from] delaunay::prelude::query::ConvexHullConstructionError),
     /// #     #[error(transparent)]
-    /// #     Insertion(#[from] delaunay::prelude::triangulation::InsertionError),
+    /// #     Insertion(#[from] delaunay::prelude::InsertionError),
     /// #     #[error("expected tetrahedron hull to have a first facet")]
     /// #     MissingFacet,
     /// # }
@@ -1509,7 +1509,7 @@ where
     /// # Examples
     ///
     /// ```rust
-    /// use delaunay::prelude::triangulation::DelaunayTriangulation;
+    /// use delaunay::prelude::DelaunayTriangulation;
     /// use delaunay::prelude::query::ConvexHull;
     /// use delaunay::prelude::geometry::Point;
     /// use delaunay::prelude::geometry::Coordinate;
@@ -1518,11 +1518,11 @@ where
     /// # #[derive(Debug, thiserror::Error)]
     /// # enum ExampleError {
     /// #     #[error(transparent)]
-    /// #     Construction(#[from] delaunay::prelude::triangulation::DelaunayTriangulationConstructionError),
+    /// #     Construction(#[from] delaunay::prelude::DelaunayTriangulationConstructionError),
     /// #     #[error(transparent)]
     /// #     Hull(#[from] delaunay::prelude::query::ConvexHullConstructionError),
     /// #     #[error(transparent)]
-    /// #     Insertion(#[from] delaunay::prelude::triangulation::InsertionError),
+    /// #     Insertion(#[from] delaunay::prelude::InsertionError),
     /// #     #[error("expected tetrahedron hull to have a first facet")]
     /// #     MissingFacet,
     /// # }
@@ -1598,7 +1598,7 @@ where
     /// # Examples
     ///
     /// ```rust
-    /// use delaunay::prelude::triangulation::DelaunayTriangulation;
+    /// use delaunay::prelude::DelaunayTriangulation;
     /// use delaunay::prelude::query::ConvexHull;
     /// use delaunay::prelude::geometry::Point;
     /// use delaunay::prelude::geometry::Coordinate;
@@ -1607,11 +1607,11 @@ where
     /// # #[derive(Debug, thiserror::Error)]
     /// # enum ExampleError {
     /// #     #[error(transparent)]
-    /// #     Construction(#[from] delaunay::prelude::triangulation::DelaunayTriangulationConstructionError),
+    /// #     Construction(#[from] delaunay::prelude::DelaunayTriangulationConstructionError),
     /// #     #[error(transparent)]
     /// #     Hull(#[from] delaunay::prelude::query::ConvexHullConstructionError),
     /// #     #[error(transparent)]
-    /// #     Insertion(#[from] delaunay::prelude::triangulation::InsertionError),
+    /// #     Insertion(#[from] delaunay::prelude::InsertionError),
     /// #     #[error("expected tetrahedron hull to have a first facet")]
     /// #     MissingFacet,
     /// # }
@@ -1734,7 +1734,7 @@ where
     /// # Examples
     ///
     /// ```rust
-    /// use delaunay::prelude::triangulation::DelaunayTriangulation;
+    /// use delaunay::prelude::DelaunayTriangulation;
     /// use delaunay::prelude::query::ConvexHull;
     /// use delaunay::prelude::geometry::Point;
     /// use delaunay::prelude::geometry::Coordinate;
@@ -1743,11 +1743,11 @@ where
     /// # #[derive(Debug, thiserror::Error)]
     /// # enum ExampleError {
     /// #     #[error(transparent)]
-    /// #     Construction(#[from] delaunay::prelude::triangulation::DelaunayTriangulationConstructionError),
+    /// #     Construction(#[from] delaunay::prelude::DelaunayTriangulationConstructionError),
     /// #     #[error(transparent)]
     /// #     Hull(#[from] delaunay::prelude::query::ConvexHullConstructionError),
     /// #     #[error(transparent)]
-    /// #     Insertion(#[from] delaunay::prelude::triangulation::InsertionError),
+    /// #     Insertion(#[from] delaunay::prelude::InsertionError),
     /// #     #[error("expected tetrahedron hull to have a first facet")]
     /// #     MissingFacet,
     /// # }
@@ -1797,18 +1797,18 @@ where
     /// # Examples
     ///
     /// ```rust
-    /// use delaunay::prelude::triangulation::DelaunayTriangulation;
+    /// use delaunay::prelude::DelaunayTriangulation;
     /// use delaunay::prelude::query::ConvexHull;
     /// use delaunay::vertex;
     ///
     /// # #[derive(Debug, thiserror::Error)]
     /// # enum ExampleError {
     /// #     #[error(transparent)]
-    /// #     Construction(#[from] delaunay::prelude::triangulation::DelaunayTriangulationConstructionError),
+    /// #     Construction(#[from] delaunay::prelude::DelaunayTriangulationConstructionError),
     /// #     #[error(transparent)]
     /// #     Hull(#[from] delaunay::prelude::query::ConvexHullConstructionError),
     /// #     #[error(transparent)]
-    /// #     Insertion(#[from] delaunay::prelude::triangulation::InsertionError),
+    /// #     Insertion(#[from] delaunay::prelude::InsertionError),
     /// #     #[error("expected tetrahedron hull to have a first facet")]
     /// #     MissingFacet,
     /// # }
@@ -1952,15 +1952,16 @@ pub type ConvexHull4D<K, U, V> = ConvexHull<K, U, V, 4>;
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::construction::{
+        DelaunayConstructionFailure, DelaunayTriangulationConstructionError,
+    };
     use crate::core::algorithms::incremental_insertion::InsertionError;
     use crate::core::tds::{Tds, TdsError};
     use crate::core::traits::facet_cache::FacetCacheProvider;
     use crate::core::util::{checked_facet_key_from_vertex_keys, facet_view_to_vertices};
     use crate::geometry::kernel::AdaptiveKernel;
     use crate::geometry::traits::coordinate::CoordinateConversionError;
-    use crate::triangulation::delaunay::{
-        DelaunayConstructionFailure, DelaunayTriangulation, DelaunayTriangulationConstructionError,
-    };
+    use crate::triangulation::DelaunayTriangulation;
     use crate::vertex;
     use std::error::Error;
     use std::sync::atomic::Ordering;

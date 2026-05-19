@@ -745,7 +745,7 @@ mod tests {
     use crate::core::traits::boundary_analysis::BoundaryAnalysis;
     use crate::core::vertex::Vertex;
     use crate::geometry::point::Point;
-    use crate::triangulation::delaunay::DelaunayTriangulation;
+    use crate::triangulation::DelaunayTriangulation;
     use crate::vertex;
     use approx::assert_relative_eq;
 

@@ -23,16 +23,16 @@
     reason = "example preserves the crate's typed insertion and flip errors instead of erasing them"
 )]
 
-use delaunay::prelude::geometry::{
-    CircumcenterError, Coordinate, Kernel, Point, circumcenter, hypot,
-};
-use delaunay::prelude::triangulation::construction::{
+use delaunay::prelude::construction::{
     DelaunayTriangulation, DelaunayTriangulationBuilder, DelaunayTriangulationConstructionError,
     vertex,
 };
-use delaunay::prelude::triangulation::flips::*;
-use delaunay::prelude::triangulation::insertion::InsertionError;
-use delaunay::prelude::triangulation::validation::DelaunayTriangulationValidationError;
+use delaunay::prelude::flips::*;
+use delaunay::prelude::geometry::{
+    CircumcenterError, Coordinate, Kernel, Point, circumcenter, hypot,
+};
+use delaunay::prelude::insertion::InsertionError;
+use delaunay::prelude::validation::DelaunayTriangulationValidationError;
 use delaunay::prelude::{TdsError, VertexKey};
 
 type ExampleResult<T = ()> = Result<T, TopologyEditingExampleError>;

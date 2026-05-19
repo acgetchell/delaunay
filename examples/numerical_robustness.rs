@@ -7,14 +7,14 @@
 //! It compares kernel behavior on degenerate predicate inputs and shows the
 //! default adaptive construction path on a small point set.
 
+use delaunay::prelude::construction::{
+    DelaunayTriangulation, DelaunayTriangulationConstructionError,
+};
 use delaunay::prelude::geometry::{
     AdaptiveKernel, CircumcenterError, Coordinate, CoordinateConversionError, FastKernel, Kernel,
     Point, RobustKernel, robust_insphere, robust_orientation,
 };
-use delaunay::prelude::triangulation::construction::{
-    DelaunayTriangulation, DelaunayTriangulationConstructionError,
-};
-use delaunay::prelude::triangulation::validation::DelaunayTriangulationValidationError;
+use delaunay::prelude::validation::DelaunayTriangulationValidationError;
 use delaunay::vertex;
 
 #[derive(Debug, thiserror::Error)]

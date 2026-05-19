@@ -258,7 +258,7 @@ mod tests {
     use crate::core::tds::{SimplexKey, TdsError};
     use crate::core::vertex::Vertex;
     use crate::geometry::{point::Point, traits::coordinate::Coordinate};
-    use crate::triangulation::delaunay::DelaunayTriangulation;
+    use crate::triangulation::DelaunayTriangulation;
 
     #[cfg(feature = "bench")]
     use num_traits::cast::cast;

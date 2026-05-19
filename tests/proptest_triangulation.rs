@@ -35,11 +35,9 @@
 //! Tests are generated for dimensions 2D-5D using macros to reduce duplication.
 
 use ::uuid::Uuid;
+use delaunay::prelude::construction::{DelaunayTriangulation, TopologyGuarantee, Vertex, vertex};
 use delaunay::prelude::geometry::*;
 use delaunay::prelude::tds::SimplexKey;
-use delaunay::prelude::triangulation::construction::{
-    DelaunayTriangulation, TopologyGuarantee, Vertex, vertex,
-};
 use proptest::prelude::*;
 use proptest::test_runner::{Config, TestCaseError, TestRunner};
 use std::cell::RefCell;

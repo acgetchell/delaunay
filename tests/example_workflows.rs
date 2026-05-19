@@ -2,10 +2,10 @@
 
 //! Integration tests for workflows demonstrated by runnable examples.
 
-use delaunay::prelude::query::{ConvexHull, Coordinate, Point};
-use delaunay::prelude::triangulation::construction::{
+use delaunay::prelude::construction::{
     DelaunayTriangulation, DelaunayTriangulationConstructionError, vertex,
 };
+use delaunay::prelude::query::{ConvexHull, Coordinate, Point};
 
 #[test]
 fn triangulation_and_hull_workflow_remains_valid() -> Result<(), WorkflowTestError> {
@@ -54,9 +54,7 @@ enum WorkflowTestError {
     #[error(transparent)]
     Construction(#[from] DelaunayTriangulationConstructionError),
     #[error(transparent)]
-    Validation(
-        #[from] delaunay::prelude::triangulation::validation::DelaunayTriangulationValidationError,
-    ),
+    Validation(#[from] delaunay::prelude::validation::DelaunayTriangulationValidationError),
     #[error(transparent)]
     AdjacencyIndex(#[from] delaunay::prelude::query::AdjacencyIndexBuildError),
     #[error("convex hull construction failed: {source}")]

@@ -24,7 +24,7 @@ use thiserror::Error;
 ///
 /// ```rust
 /// use delaunay::prelude::tds::SimplexKey;
-/// use delaunay::prelude::triangulation::repair::DelaunayValidationError;
+/// use delaunay::prelude::repair::DelaunayValidationError;
 /// use slotmap::KeyData;
 ///
 /// let simplex_key = SimplexKey::from(KeyData::from_ffi(1));
@@ -84,7 +84,7 @@ pub enum DelaunayValidationError {
 ///
 /// ```rust
 /// use delaunay::prelude::diagnostics::delaunay_violation_report;
-/// use delaunay::prelude::triangulation::*;
+/// use delaunay::prelude::*;
 ///
 /// let vertices = vec![
 ///     vertex!([0.0, 0.0]),
@@ -405,7 +405,7 @@ where
 ///
 /// ```
 /// use delaunay::prelude::query::*;
-/// use delaunay::prelude::triangulation::repair::find_delaunay_violations;
+/// use delaunay::prelude::repair::find_delaunay_violations;
 ///
 /// let vertices = vec![
 ///     vertex!([0.0, 0.0, 0.0]),
@@ -510,7 +510,7 @@ where
 ///
 /// ```rust
 /// use delaunay::prelude::diagnostics::delaunay_violation_report;
-/// use delaunay::prelude::triangulation::*;
+/// use delaunay::prelude::*;
 ///
 /// let vertices = vec![
 ///     vertex!([0.0, 0.0, 0.0]),
@@ -778,7 +778,7 @@ mod tests {
     use crate::geometry::kernel::FastKernel;
     use crate::geometry::point::Point;
     use crate::geometry::traits::coordinate::{Coordinate, CoordinateConversionError};
-    use crate::triangulation::delaunay::DelaunayTriangulation;
+    use crate::triangulation::DelaunayTriangulation;
 
     use crate::vertex;
 

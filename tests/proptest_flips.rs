@@ -9,13 +9,13 @@
 //! dimensions 2D-5D.
 
 use ::uuid::Uuid;
+use delaunay::prelude::construction::{
+    DelaunayTriangulation, TopologyGuarantee, Triangulation, Vertex,
+};
+use delaunay::prelude::flips::BistellarFlips;
 use delaunay::prelude::geometry::{
     AdaptiveKernel, Coordinate, FastKernel, Kernel, Point, RobustKernel,
 };
-use delaunay::prelude::triangulation::construction::{
-    DelaunayTriangulation, TopologyGuarantee, Triangulation, Vertex,
-};
-use delaunay::prelude::triangulation::flips::BistellarFlips;
 use proptest::prelude::*;
 use std::collections::{BTreeSet, HashMap};
 

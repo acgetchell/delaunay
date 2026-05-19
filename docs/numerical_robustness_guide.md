@@ -109,7 +109,7 @@ The convenience constructors (`DelaunayTriangulation::new()`, `::empty()`, etc.)
 
 ```rust
 use delaunay::prelude::geometry::RobustKernel;
-use delaunay::prelude::triangulation::construction::{DelaunayTriangulation, vertex};
+use delaunay::prelude::construction::{DelaunayTriangulation, vertex};
 
 let kernel = RobustKernel::<f64>::new();
 
@@ -186,8 +186,8 @@ cases involve cavity/topology failures rather than predicate degeneracies.
 Use `insert_with_statistics()` to observe this behavior:
 
 ```rust
-use delaunay::prelude::triangulation::construction::{DelaunayTriangulation, vertex};
-use delaunay::prelude::triangulation::insertion::InsertionOutcome;
+use delaunay::prelude::construction::{DelaunayTriangulation, vertex};
+use delaunay::prelude::insertion::InsertionOutcome;
 
 let mut dt: DelaunayTriangulation<_, (), (), 3> = DelaunayTriangulation::empty();
 
@@ -270,7 +270,7 @@ the vast majority of exact and near-duplicate vertices before any insertion
 occurs, regardless of `DedupPolicy`.
 
 See `order_vertices_hilbert` (called from `order_vertices_by_strategy`) in
-[`src/triangulation/delaunay.rs`](../src/triangulation/delaunay.rs).
+[`src/delaunay/triangulation.rs`](../src/delaunay/triangulation.rs).
 
 ### Layer 2: Per-insertion duplicate coordinate check
 
@@ -316,7 +316,7 @@ See `validate_simplex_coordinate_uniqueness` in
 ### User-facing dedup utilities
 
 For explicit preprocessing, the crate provides public deduplication functions in
-`delaunay::prelude::triangulation`:
+`delaunay::prelude`:
 
 - `dedup_vertices_exact(&[Vertex])` — removes exact coordinate duplicates (O(n²))
 - `dedup_vertices_epsilon(&[Vertex], epsilon)` — removes near-duplicates within

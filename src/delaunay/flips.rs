@@ -3,8 +3,8 @@
 //! This module exposes **high-level** flip methods for explicit triangulation editing.
 //! These operations do **not** automatically restore the Delaunay property.
 //! For Delaunay construction/removal, use
-//! [`crate::triangulation::delaunay::DelaunayTriangulation::insert`] and
-//! [`crate::triangulation::delaunay::DelaunayTriangulation::remove_vertex`].
+//! [`crate::DelaunayTriangulation::insert`] and
+//! [`crate::DelaunayTriangulation::remove_vertex`].
 
 #![forbid(unsafe_code)]
 
@@ -27,15 +27,16 @@ use crate::core::traits::data_type::DataType;
 use crate::core::triangulation::Triangulation;
 use crate::core::vertex::Vertex;
 use crate::geometry::kernel::Kernel;
-use crate::triangulation::delaunay::DelaunayTriangulation;
+use crate::triangulation::DelaunayTriangulation;
 /// High-level triangulation editing operations via bistellar flips.
 ///
 /// # Example
 ///
 /// ```rust
-/// use delaunay::prelude::triangulation::construction::TopologyGuarantee;
-/// use delaunay::prelude::triangulation::flips::*;
+/// use delaunay::prelude::construction::TopologyGuarantee;
+/// use delaunay::prelude::flips::*;
 ///
+/// # fn main() -> Result<(), Box<dyn std::error::Error>> {
 /// let vertices = vec![
 ///     vertex!([0.0, 0.0, 0.0]),
 ///     vertex!([1.0, 0.0, 0.0]),
@@ -46,20 +47,25 @@ use crate::triangulation::delaunay::DelaunayTriangulation;
 ///     DelaunayTriangulation::new_with_topology_guarantee(
 ///         &vertices,
 ///         TopologyGuarantee::PLManifold,
-///     )
-///     .unwrap();
-/// let simplex_key = dt.simplices().next().unwrap().0;
+///     )?;
+/// let simplex_key = dt
+///     .simplices()
+///     .next()
+///     .map(|(key, _)| key)
+///     .ok_or_else(|| std::io::Error::other("empty triangulation"))?;
 ///
 /// // Split a simplex by inserting a vertex (k=1 move).
-/// let _info = dt
-///     .flip_k1_insert(simplex_key, vertex!([0.1, 0.1, 0.1]))
-///     .unwrap();
+/// let _info = dt.flip_k1_insert(simplex_key, vertex!([0.1, 0.1, 0.1]))?;
+/// # Ok(())
+/// # }
 /// ```
-pub trait BistellarFlips<K, U, const D: usize>
-where
-    K: Kernel<D>,
-    U: DataType,
-{
+pub trait BistellarFlips<const D: usize> {
+    /// Coordinate scalar type used by vertices inserted through k=1 flips.
+    type Scalar;
+
+    /// User data type stored on vertices inserted through k=1 flips.
+    type VertexData;
+
     /// Apply a forward k=1 move (simplex split) by inserting a vertex into a simplex.
     ///
     /// # Errors
@@ -70,9 +76,10 @@ where
     /// # Example
     ///
     /// ```rust
-    /// use delaunay::prelude::triangulation::construction::TopologyGuarantee;
-    /// use delaunay::prelude::triangulation::flips::*;
+    /// use delaunay::prelude::construction::TopologyGuarantee;
+    /// use delaunay::prelude::flips::*;
     ///
+    /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
     /// let vertices = vec![
     ///     vertex!([0.0, 0.0, 0.0]),
     ///     vertex!([1.0, 0.0, 0.0]),
@@ -83,18 +90,23 @@ where
     ///     DelaunayTriangulation::new_with_topology_guarantee(
     ///         &vertices,
     ///         TopologyGuarantee::PLManifold,
-    ///     )
-    ///     .unwrap();
-    /// let simplex_key = dt.simplices().next().unwrap().0;
+    ///     )?;
+    /// let simplex_key = dt
+    ///     .simplices()
+    ///     .next()
+    ///     .map(|(key, _)| key)
+    ///     .ok_or_else(|| std::io::Error::other("empty triangulation"))?;
     ///
     /// // Insert a vertex into the simplex
-    /// let info = dt.flip_k1_insert(simplex_key, vertex!([0.25, 0.25, 0.25])).unwrap();
+    /// let info = dt.flip_k1_insert(simplex_key, vertex!([0.25, 0.25, 0.25]))?;
     /// assert!(!info.new_simplices.is_empty());
+    /// # Ok(())
+    /// # }
     /// ```
     fn flip_k1_insert(
         &mut self,
         simplex_key: SimplexKey,
-        vertex: Vertex<K::Scalar, U, D>,
+        vertex: Vertex<Self::Scalar, Self::VertexData, D>,
     ) -> Result<FlipInfo<D>, FlipError>;
 
     /// Apply an inverse k=1 move (vertex collapse).
@@ -107,9 +119,10 @@ where
     /// # Example
     ///
     /// ```rust
-    /// use delaunay::prelude::triangulation::construction::TopologyGuarantee;
-    /// use delaunay::prelude::triangulation::flips::*;
+    /// use delaunay::prelude::construction::TopologyGuarantee;
+    /// use delaunay::prelude::flips::*;
     ///
+    /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
     /// let vertices = vec![
     ///     vertex!([0.0, 0.0, 0.0]),
     ///     vertex!([1.0, 0.0, 0.0]),
@@ -120,15 +133,20 @@ where
     ///     DelaunayTriangulation::new_with_topology_guarantee(
     ///         &vertices,
     ///         TopologyGuarantee::PLManifold,
-    ///     )
-    ///     .unwrap();
-    /// let simplex_key = dt.simplices().next().unwrap().0;
-    /// let inserted = dt.flip_k1_insert(simplex_key, vertex!([0.25, 0.25, 0.25])).unwrap();
+    ///     )?;
+    /// let simplex_key = dt
+    ///     .simplices()
+    ///     .next()
+    ///     .map(|(key, _)| key)
+    ///     .ok_or_else(|| std::io::Error::other("empty triangulation"))?;
+    /// let inserted = dt.flip_k1_insert(simplex_key, vertex!([0.25, 0.25, 0.25]))?;
     /// let inserted_vertex = inserted.inserted_face_vertices[0];
     ///
     /// // Remove the inserted vertex
-    /// let info = dt.flip_k1_remove(inserted_vertex).unwrap();
+    /// let info = dt.flip_k1_remove(inserted_vertex)?;
     /// assert!(!info.removed_simplices.is_empty());
+    /// # Ok(())
+    /// # }
     /// ```
     fn flip_k1_remove(&mut self, vertex_key: VertexKey) -> Result<FlipInfo<D>, FlipError>;
 
@@ -142,8 +160,9 @@ where
     /// # Example
     ///
     /// ```rust
-    /// use delaunay::prelude::triangulation::flips::*;
+    /// use delaunay::prelude::flips::*;
     ///
+    /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
     /// let vertices = vec![
     ///     vertex!([0.0, 0.0, 0.0]),
     ///     vertex!([1.0, 0.0, 0.0]),
@@ -151,8 +170,7 @@ where
     ///     vertex!([0.0, 0.0, 1.0]),
     ///     vertex!([0.5, 0.5, 0.3]),
     /// ];
-    /// let mut dt: DelaunayTriangulation<_, (), (), 3> =
-    ///     DelaunayTriangulation::new(&vertices).unwrap();
+    /// let mut dt: DelaunayTriangulation<_, (), (), 3> = DelaunayTriangulation::new(&vertices)?;
     ///
     /// // Find an interior facet and attempt a k=2 flip
     /// // Note: k=2 flips require specific geometric conditions
@@ -167,6 +185,8 @@ where
     ///         let _ = dt.flip_k2(facet);  // May succeed or fail depending on configuration
     ///     }
     /// }
+    /// # Ok(())
+    /// # }
     /// ```
     fn flip_k2(&mut self, facet: FacetHandle) -> Result<FlipInfo<D>, FlipError>;
 
@@ -180,8 +200,9 @@ where
     /// # Example
     ///
     /// ```rust
-    /// use delaunay::prelude::triangulation::flips::*;
+    /// use delaunay::prelude::flips::*;
     ///
+    /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
     /// let vertices = vec![
     ///     vertex!([0.0, 0.0, 0.0]),
     ///     vertex!([1.0, 0.0, 0.0]),
@@ -189,12 +210,13 @@ where
     ///     vertex!([0.0, 0.0, 1.0]),
     ///     vertex!([1.0, 1.0, 1.0]),
     /// ];
-    /// let mut dt: DelaunayTriangulation<_, (), (), 3> =
-    ///     DelaunayTriangulation::new(&vertices).unwrap();
+    /// let dt: DelaunayTriangulation<_, (), (), 3> = DelaunayTriangulation::new(&vertices)?;
     ///
     /// // k=3 flips require specific ridge configurations in 3D and above
     /// // This is an illustrative example; actual ridge selection depends on topology
     /// let _ = dt;  // Use dt to prevent unused variable warning
+    /// # Ok(())
+    /// # }
     /// ```
     fn flip_k3(&mut self, ridge: RidgeHandle) -> Result<FlipInfo<D>, FlipError>;
 
@@ -220,12 +242,15 @@ where
     ) -> Result<FlipInfo<D>, FlipError>;
 }
 
-impl<K, U, V, const D: usize> BistellarFlips<K, U, D> for Triangulation<K, U, V, D>
+impl<K, U, V, const D: usize> BistellarFlips<D> for Triangulation<K, U, V, D>
 where
     K: Kernel<D>,
     U: DataType,
     V: DataType,
 {
+    type Scalar = K::Scalar;
+    type VertexData = U;
+
     fn flip_k1_insert(
         &mut self,
         simplex_key: SimplexKey,
@@ -273,12 +298,15 @@ where
     }
 }
 
-impl<K, U, V, const D: usize> BistellarFlips<K, U, D> for DelaunayTriangulation<K, U, V, D>
+impl<K, U, V, const D: usize> BistellarFlips<D> for DelaunayTriangulation<K, U, V, D>
 where
     K: Kernel<D>,
     U: DataType,
     V: DataType,
 {
+    type Scalar = K::Scalar;
+    type VertexData = U;
+
     fn flip_k1_insert(
         &mut self,
         simplex_key: SimplexKey,
@@ -339,8 +367,9 @@ where
 mod tests {
     use super::*;
 
+    use crate::TopologyGuarantee;
+    use crate::core::collections::spatial_hash_grid::HashGridIndex;
     use crate::geometry::kernel::{AdaptiveKernel, FastKernel};
-    use crate::triangulation::TopologyGuarantee;
     use crate::vertex;
     use slotmap::KeyData;
 
@@ -371,6 +400,33 @@ mod tests {
         let removed = tri.flip_k1_remove(inserted_vertex).unwrap();
         assert!(!removed.removed_simplices.is_empty());
         assert!(tri.validate().is_ok());
+    }
+
+    #[test]
+    fn flip_k1_insert_invalidates_caches() {
+        let vertices: Vec<Vertex<f64, (), 3>> = vec![
+            vertex!([0.0, 0.0, 0.0]),
+            vertex!([1.0, 0.0, 0.0]),
+            vertex!([0.0, 1.0, 0.0]),
+            vertex!([0.0, 0.0, 1.0]),
+        ];
+        let mut dt: DelaunayTriangulation<_, (), (), 3> =
+            DelaunayTriangulation::new(&vertices).unwrap();
+
+        let simplex_key = dt.simplices().next().unwrap().0;
+        dt.insertion_state.last_inserted_simplex = Some(simplex_key);
+        let mut spatial_index = HashGridIndex::<f64, 3>::new(1.0);
+        for (vertex_key, vertex) in dt.vertices() {
+            spatial_index.insert_vertex(vertex_key, vertex.point().coords());
+        }
+        dt.spatial_index = Some(spatial_index);
+
+        dt.flip_k1_insert(simplex_key, vertex!([0.2, 0.2, 0.2]))
+            .unwrap();
+
+        assert!(dt.insertion_state.last_inserted_simplex.is_none());
+        assert!(dt.spatial_index.is_none());
+        assert!(dt.as_triangulation().validate().is_ok());
     }
 
     #[test]

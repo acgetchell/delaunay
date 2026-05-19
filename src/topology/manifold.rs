@@ -296,7 +296,7 @@ pub enum ManifoldError {
 ///
 /// ```rust
 /// use delaunay::prelude::geometry::*;
-/// use delaunay::prelude::triangulation::*;
+/// use delaunay::prelude::*;
 /// use delaunay::prelude::topology::validation::validate_facet_degree;
 ///
 /// let vertices = vec![
@@ -351,7 +351,7 @@ pub fn validate_facet_degree(
 ///
 /// ```rust
 /// use delaunay::prelude::geometry::*;
-/// use delaunay::prelude::triangulation::*;
+/// use delaunay::prelude::*;
 /// use delaunay::prelude::topology::validation::validate_closed_boundary;
 ///
 /// let vertices = vec![
@@ -1266,7 +1266,7 @@ fn periodic_aware_ridge_star<T, U, V, const D: usize>(
 ///
 /// ```rust
 /// use delaunay::prelude::geometry::*;
-/// use delaunay::prelude::triangulation::*;
+/// use delaunay::prelude::*;
 /// use delaunay::prelude::topology::validation::validate_ridge_links;
 ///
 /// let vertices = vec![
@@ -1341,7 +1341,7 @@ pub fn validate_ridge_links<T, U, V, const D: usize>(
 /// # Examples
 /// ```rust
 /// use delaunay::prelude::geometry::*;
-/// use delaunay::prelude::triangulation::*;
+/// use delaunay::prelude::*;
 /// use delaunay::prelude::topology::validation::validate_ridge_links_for_simplices;
 /// use delaunay::prelude::collections::SimplexKeyBuffer;
 ///
@@ -1428,7 +1428,7 @@ pub fn validate_ridge_links_for_simplices<T, U, V, const D: usize>(
 ///
 /// ```rust
 /// use delaunay::prelude::geometry::*;
-/// use delaunay::prelude::triangulation::*;
+/// use delaunay::prelude::*;
 /// use delaunay::prelude::topology::validation::{
 ///     validate_closed_boundary, validate_facet_degree, validate_vertex_links,
 /// };

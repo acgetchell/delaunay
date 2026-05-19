@@ -178,6 +178,12 @@ The following previously deferred checks are now repository-owned Semgrep rules:
 - `delaunay.rust.no-silent-conversion-fallbacks-in-public-samples` extends the
   existing source conversion-fallback check to examples, benchmarks, and public
   API tests so copied usage does not hide numeric conversion failures.
+- `delaunay.rust.prefer-prelude-imports-in-examples-benches` and
+  `delaunay.rust.prefer-prelude-imports-in-delaunay-doctests` track the
+  flattened Delaunay API surface: the removed `delaunay::delaunay::*` facade is
+  no longer matched, while focused root modules such as `delaunay::flips::*`
+  still trigger guidance toward the orthogonal prelude modules in public
+  samples.
 
 ## Public Sample Error Handling
 

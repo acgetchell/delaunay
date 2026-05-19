@@ -17,27 +17,7 @@ use delaunay::prelude::collections::SimplexKeyBuffer;
 use delaunay::prelude::collections::{
     SecureHashMap as ScopedSecureHashMap, SecureHashSet as ScopedSecureHashSet,
 };
-#[cfg(feature = "diagnostics")]
-use delaunay::prelude::diagnostics::{
-    DelaunayViolationDetail, DelaunayViolationReport, NeighborSlot as DiagnosticNeighborSlot,
-    debug_print_first_delaunay_violation, delaunay_violation_report,
-    verify_conflict_region_completeness,
-};
-use delaunay::prelude::generators::{RandomPointGenerationError, generate_random_points_seeded};
-#[cfg(feature = "diagnostics")]
-use delaunay::prelude::geometry::Coordinate;
-use delaunay::prelude::geometry::{
-    AdaptiveKernel, CoordinateConversionError, DegenerateSimplexReason, MatrixError, Point,
-};
-use delaunay::prelude::ordering::{
-    HilbertError, hilbert_index, hilbert_indices_prequantized, hilbert_quantize,
-    hilbert_sort_by_stable, hilbert_sort_by_unstable, hilbert_sorted_indices,
-};
-use delaunay::prelude::query::ConvexHull;
-#[cfg(feature = "diagnostics")]
-use delaunay::prelude::tds::Tds;
-use delaunay::prelude::tds::{InvariantErrorSummaryDetail, NeighborSlot, TdsErrorKind};
-use delaunay::prelude::triangulation::construction::{
+use delaunay::prelude::construction::{
     CavityFillingError, CavityRepairStage, ConstructionOptions, ConstructionSkipSample,
     ConstructionSlowInsertionSample, DelaunayConstructionFailure, DelaunayRepairPolicy,
     DelaunayTriangulation, DelaunayTriangulationConstructionError, ExplicitConstructionError,
@@ -46,24 +26,63 @@ use delaunay::prelude::triangulation::construction::{
     ExplicitInvariantError, ExplicitInvariantErrorKind, ExplicitTdsError, ExplicitTdsErrorKind,
     InsertionOrderStrategy, SimplexValidationError, TopologyGuarantee, Vertex, vertex,
 };
-use delaunay::prelude::triangulation::delaunayize::{
+use delaunay::prelude::delaunayize::{
     DelaunayizeConfig, DelaunayizeError, DelaunayizeOutcome, delaunayize_by_flips,
 };
-use delaunay::prelude::triangulation::diagnostics::ConstructionTelemetry;
-use delaunay::prelude::triangulation::flips::BistellarFlips;
-use delaunay::prelude::triangulation::insertion::{
+use delaunay::prelude::diagnostics::ConstructionTelemetry;
+#[cfg(feature = "diagnostics")]
+use delaunay::prelude::diagnostics::{
+    DelaunayViolationDetail, DelaunayViolationReport, NeighborSlot as DiagnosticNeighborSlot,
+    debug_print_first_delaunay_violation, delaunay_violation_report,
+    verify_conflict_region_completeness,
+};
+use delaunay::prelude::flips::BistellarFlips;
+use delaunay::prelude::generators::{RandomPointGenerationError, generate_random_points_seeded};
+#[cfg(feature = "diagnostics")]
+use delaunay::prelude::geometry::{AdaptiveKernel, Coordinate};
+use delaunay::prelude::geometry::{
+    CoordinateConversionError, DegenerateSimplexReason, MatrixError, Point,
+};
+use delaunay::prelude::insertion::{
     InsertionError, NeighborRebuildError, Tds as InsertionTds, TdsMutationError,
     repair_neighbor_pointers_local,
 };
-use delaunay::prelude::triangulation::repair::{
+use delaunay::prelude::ordering::{
+    HilbertError, hilbert_index, hilbert_indices_prequantized, hilbert_quantize,
+    hilbert_sort_by_stable, hilbert_sort_by_unstable, hilbert_sorted_indices,
+};
+use delaunay::prelude::query::ConvexHull;
+use delaunay::prelude::repair::{
     DelaunayCheckPolicy, DelaunayRepairDiagnostics, DelaunayRepairError, DelaunayRepairOperation,
     DelaunayRepairOutcome, DelaunayRepairStats, DelaunayRepairVerificationContext,
     DelaunayTriangulationValidationError, FlipEdgeAdjacencyError, FlipError,
     FlipTriangleAdjacencyError, FlipVertexAdjacencyError, RepairQueueOrder,
     verify_delaunay_for_triangulation,
 };
-use delaunay::prelude::triangulation::validation::ValidationCadence;
+#[cfg(feature = "diagnostics")]
+use delaunay::prelude::tds::Tds;
+use delaunay::prelude::tds::{InvariantErrorSummaryDetail, NeighborSlot, TdsErrorKind};
+use delaunay::prelude::triangulation::{
+    FacetIssuesMap as TriangulationFacetIssuesMap, FastKernel as TriangulationFastKernel,
+    InsertionError as TriangulationInsertionError, TdsError as TriangulationTdsError,
+    TopologyGuarantee as TriangulationTopologyGuarantee, Triangulation as GenericTriangulation,
+    TriangulationConstructionError as GenericTriangulationConstructionError,
+    ValidationPolicy as TriangulationValidationPolicy, vertex as triangulation_vertex,
+};
+use delaunay::prelude::validation::ValidationCadence;
 use delaunay::prelude::{SecureHashMap, SecureHashSet};
+
+#[derive(Debug, thiserror::Error)]
+enum RootApiExportTestError {
+    #[error(transparent)]
+    Construction(#[from] delaunay::DelaunayTriangulationConstructionError),
+    #[error(transparent)]
+    Validation(#[from] delaunay::DelaunayTriangulationValidationError),
+    #[error(transparent)]
+    DelaunayRepair(#[from] delaunay::flips::DelaunayRepairError),
+    #[error(transparent)]
+    Delaunayize(#[from] delaunay::delaunayize::DelaunayizeError),
+}
 
 #[derive(Debug, thiserror::Error)]
 enum PreludeExportTestError {
@@ -82,9 +101,67 @@ enum PreludeExportTestError {
 }
 
 /// Proves the focused flips prelude exports the trait bound expected by benchmarks.
-const fn assert_bistellar_flips(_: &impl BistellarFlips<AdaptiveKernel<f64>, (), 3>) {}
+const fn assert_bistellar_flips(_: &impl BistellarFlips<3, Scalar = f64, VertexData = ()>) {}
+
+/// Proves the root flips module exports the same public trait bound.
+const fn assert_root_bistellar_flips(
+    _: &impl delaunay::flips::BistellarFlips<3, Scalar = f64, VertexData = ()>,
+) {
+}
 
 const fn assert_send_sync_unpin<T: Send + Sync + Unpin>() {}
+
+#[test]
+fn root_exports_cover_flattened_public_api() -> Result<(), RootApiExportTestError> {
+    use delaunay::builder::DelaunayTriangulationBuilder as BuilderModuleBuilder;
+    use delaunay::construction::{
+        ConstructionOptions as ConstructionModuleOptions, InsertionOrderStrategy,
+    };
+    use delaunay::delaunayize::{
+        DelaunayizeConfig as DelaunayizeModuleConfig, delaunayize_by_flips,
+    };
+    use delaunay::repair::{DelaunayCheckPolicy, DelaunayRepairPolicy};
+    use delaunay::validation::{DelaunayTriangulationValidationError, ValidationCadence};
+    use delaunay::{
+        ConstructionOptions, DelaunayTriangulation, DelaunayTriangulationBuilder,
+        TopologyGuarantee, ValidationPolicy,
+    };
+
+    let vertices = vec![
+        delaunay::vertex!([0.0, 0.0, 0.0]),
+        delaunay::vertex!([1.0, 0.0, 0.0]),
+        delaunay::vertex!([0.0, 1.0, 0.0]),
+        delaunay::vertex!([0.0, 0.0, 1.0]),
+    ];
+
+    let options: ConstructionOptions =
+        ConstructionModuleOptions::default().with_insertion_order(InsertionOrderStrategy::Input);
+    let builder: BuilderModuleBuilder<'_, f64, (), 3> =
+        DelaunayTriangulationBuilder::new(&vertices).construction_options(options);
+    let mut dt: DelaunayTriangulation<_, (), (), 3> = builder.build::<()>()?;
+
+    assert_eq!(dt.topology_guarantee(), TopologyGuarantee::PLManifold);
+    assert_eq!(dt.validation_policy(), ValidationPolicy::OnSuspicion);
+    assert!(matches!(
+        ValidationCadence::from_optional_every(Some(2)),
+        ValidationCadence::EveryN(every) if every.get() == 2
+    ));
+    assert_eq!(
+        DelaunayRepairPolicy::default(),
+        DelaunayRepairPolicy::EveryInsertion
+    );
+    assert!(!DelaunayCheckPolicy::default().should_check(1));
+
+    let validation_result: Result<(), DelaunayTriangulationValidationError> = dt.validate();
+    validation_result?;
+    assert_bistellar_flips(&dt);
+    assert_root_bistellar_flips(&dt);
+
+    let outcome = delaunayize_by_flips(&mut dt, DelaunayizeModuleConfig::default())?;
+    assert!(!outcome.used_fallback_rebuild);
+    assert!(outcome.topology_repair.succeeded);
+    Ok(())
+}
 
 #[test]
 fn preludes_cover_bench_apis() -> Result<(), PreludeExportTestError> {
@@ -235,6 +312,38 @@ fn construction_prelude_covers_explicit_error_summaries() {
         explicit_delaunay_validation.kind,
         ExplicitDelaunayValidationErrorKind::Tds
     );
+}
+
+#[test]
+fn triangulation_prelude_covers_generic_layer() -> Result<(), GenericTriangulationConstructionError>
+{
+    let vertices = vec![
+        triangulation_vertex!([0.0, 0.0]),
+        triangulation_vertex!([1.0, 0.0]),
+        triangulation_vertex!([0.0, 1.0]),
+    ];
+    let tds =
+        GenericTriangulation::<TriangulationFastKernel<f64>, (), (), 2>::build_initial_simplex(
+            &vertices,
+        )?;
+    assert_eq!(tds.number_of_vertices(), 3);
+    assert_eq!(tds.number_of_simplices(), 1);
+
+    let mut tri: GenericTriangulation<TriangulationFastKernel<f64>, (), (), 2> =
+        GenericTriangulation::new_empty(TriangulationFastKernel::new());
+    tri.set_topology_guarantee(TriangulationTopologyGuarantee::Pseudomanifold);
+    tri.set_validation_policy(TriangulationValidationPolicy::Never);
+    assert!(tri.validate().is_ok());
+
+    let empty_issues = TriangulationFacetIssuesMap::default();
+    let removed = tri
+        .repair_local_facet_issues(&empty_issues)
+        .expect("empty issue set should not fail generic local repair");
+    assert_eq!(removed, 0);
+
+    assert_send_sync_unpin::<TriangulationInsertionError>();
+    assert_send_sync_unpin::<TriangulationTdsError>();
+    Ok(())
 }
 
 #[test]

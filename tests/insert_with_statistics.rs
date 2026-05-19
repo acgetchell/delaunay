@@ -14,10 +14,8 @@
 //! - Bootstrap phase (< D+1 vertices)
 //! - Post-bootstrap phase (≥ D+1 vertices)
 
-use delaunay::prelude::triangulation::construction::{
-    DelaunayTriangulation, TopologyGuarantee, vertex,
-};
-use delaunay::prelude::triangulation::insertion::{InsertionError, InsertionOutcome};
+use delaunay::prelude::construction::{DelaunayTriangulation, TopologyGuarantee, vertex};
+use delaunay::prelude::insertion::{InsertionError, InsertionOutcome};
 
 // =============================================================================
 // DELAUNAY TRIANGULATION TESTS

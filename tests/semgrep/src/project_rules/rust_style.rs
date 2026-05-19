@@ -5,7 +5,7 @@ use num_traits::NumCast;
 // ruleid: delaunay.rust.prefer-prelude-imports-in-examples-benches
 use delaunay::core::vertex::Vertex as DeepVertex;
 // ok: delaunay.rust.prefer-prelude-imports-in-examples-benches
-use delaunay::prelude::triangulation::Vertex as PreludeVertex;
+use delaunay::prelude::Vertex as PreludeVertex;
 
 pub fn production_stdio() {
     // ruleid: delaunay.rust.no-stdio-diagnostics-in-src
@@ -131,13 +131,13 @@ enum PrivateFixtureError {
 fn doctest_style_error_is_ignored() {}
 
 /// ```rust
-/// // ruleid: delaunay.rust.prefer-prelude-imports-in-triangulation-doctests
-/// use delaunay::triangulation::delaunay::DelaunayTriangulation;
-/// // ok: delaunay.rust.prefer-prelude-imports-in-triangulation-doctests
-/// use delaunay::prelude::triangulation::DelaunayTriangulation;
-/// // ok: delaunay.rust.prefer-prelude-imports-in-triangulation-doctests
-/// # use delaunay::prelude::triangulation::DelaunayTriangulation as HiddenPreludeImport;
-/// // ruleid: delaunay.rust.prefer-prelude-imports-in-triangulation-doctests
-/// # use delaunay::triangulation::delaunay::DelaunayTriangulation as HiddenDeepImport;
+/// // ruleid: delaunay.rust.prefer-prelude-imports-in-delaunay-doctests
+/// use delaunay::flips::BistellarFlips;
+/// // ok: delaunay.rust.prefer-prelude-imports-in-delaunay-doctests
+/// use delaunay::prelude::DelaunayTriangulation;
+/// // ok: delaunay.rust.prefer-prelude-imports-in-delaunay-doctests
+/// # use delaunay::prelude::DelaunayTriangulation as HiddenPreludeImport;
+/// // ruleid: delaunay.rust.prefer-prelude-imports-in-delaunay-doctests
+/// # use delaunay::flips::BistellarFlips as HiddenDeepImport;
 /// ```
 fn triangulation_doctest_deep_import_fixture() {}

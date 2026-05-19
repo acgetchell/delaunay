@@ -528,14 +528,15 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::construction::{
+        DelaunayConstructionFailure, DelaunayTriangulationConstructionError,
+    };
     use crate::core::simplex::Simplex;
     use crate::core::tds::Tds;
     use crate::core::triangulation::Triangulation;
     use crate::geometry::kernel::{AdaptiveKernel, FastKernel};
     use crate::geometry::traits::coordinate::Coordinate;
-    use crate::triangulation::delaunay::{
-        DelaunayConstructionFailure, DelaunayTriangulation, DelaunayTriangulationConstructionError,
-    };
+    use crate::triangulation::DelaunayTriangulation;
     use crate::vertex;
     use approx::assert_relative_eq;
 

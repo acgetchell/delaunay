@@ -14,7 +14,7 @@ The library provides two distinct APIs for different use cases:
    - Designed for building triangulations from point sets
    - Uses cavity-based insertion and fan retriangulation
 
-2. **Edit API** (`prelude::triangulation::flips::BistellarFlips` trait)
+2. **Edit API** (`prelude::flips::BistellarFlips` trait)
    - Low-level topology editing via bistellar (Pachner) flips
    - Explicit control over individual topology operations
    - Does **not** automatically restore the Delaunay property
@@ -61,7 +61,7 @@ The library provides two distinct APIs for different use cases:
 For most use cases, the simple constructor is sufficient:
 
 ```rust
-use delaunay::prelude::triangulation::construction::{DelaunayTriangulation, vertex};
+use delaunay::prelude::construction::{DelaunayTriangulation, vertex};
 
 // Simple construction from vertices (Euclidean space, default options)
 let vertices = vec![
@@ -88,10 +88,10 @@ For advanced configuration (toroidal topology, custom validation policies, etc.)
 use `DelaunayTriangulationBuilder`:
 
 ```rust
-use delaunay::prelude::triangulation::construction::{
+use delaunay::prelude::construction::{
     DelaunayTriangulationBuilder, TopologyGuarantee, vertex,
 };
-use delaunay::prelude::triangulation::validation::ValidationPolicy;
+use delaunay::prelude::validation::ValidationPolicy;
 
 // Toroidal (periodic) triangulation in 2D
 let vertices = vec![
@@ -149,11 +149,11 @@ for topology guarantee and validation policy details.
 
 ## Edit API Reference
 
-The Edit API is exposed through the `BistellarFlips` trait in `prelude::triangulation::flips`:
+The Edit API is exposed through the `BistellarFlips` trait in `prelude::flips`:
 
 ```rust
-use delaunay::prelude::triangulation::construction::{DelaunayTriangulation, vertex};
-use delaunay::prelude::triangulation::flips::*;
+use delaunay::prelude::construction::{DelaunayTriangulation, vertex};
+use delaunay::prelude::flips::*;
 
 // Start with a valid triangulation
 let vertices = vec![
@@ -261,8 +261,8 @@ After applying flips, you should:
 You can mix both APIs in the same workflow:
 
 ```rust
-use delaunay::prelude::triangulation::construction::{DelaunayTriangulation, vertex};
-use delaunay::prelude::triangulation::flips::*;
+use delaunay::prelude::construction::{DelaunayTriangulation, vertex};
+use delaunay::prelude::flips::*;
 
 // 1. Build initial triangulation (Builder API)
 let vertices = vec![
@@ -328,9 +328,9 @@ let report = dt.validation_report();
 
 ### Internal Organization
 
-- **Builder API**: Implemented in `triangulation::delaunay`, `triangulation::builder`,
+- **Builder API**: Implemented in `delaunay::construction`, `delaunay::builder`,
   and `core::algorithms::incremental_insertion`
-- **Edit API**: Implemented in `triangulation::flips` (public trait) and `core::algorithms::flips` (internal implementation)
+- **Edit API**: Implemented in `delaunay::flips` (public trait) and `core::algorithms::flips` (internal implementation)
 - **Low-level primitives**: Context builders and flip application functions are `pub(crate)` in `core::algorithms::flips`
 
 ### Design Rationale
@@ -352,12 +352,12 @@ See the following examples for practical demonstrations:
 
 ## Delaunayize Workflow
 
-The `triangulation::delaunayize` module provides a single entrypoint for the
+The `delaunay::delaunayize` module provides a single entrypoint for the
 common "repair topology then restore Delaunay" workflow:
 
 ```rust
-use delaunay::prelude::triangulation::construction::{DelaunayTriangulation, vertex};
-use delaunay::prelude::triangulation::delaunayize::{
+use delaunay::prelude::construction::{DelaunayTriangulation, vertex};
+use delaunay::prelude::delaunayize::{
     DelaunayizeConfig, delaunayize_by_flips,
 };
 
@@ -417,4 +417,4 @@ changed or ambiguous simplices receive no payload.
 - **Validation framework**: See `docs/validation.md` for detailed validation guide
 - **Invariant rationale**: See [`invariants.md`](invariants.md) for theory and implementation pointers
 - **Topology analysis**: See `docs/topology.md` for topological concepts
-- **API implementation**: See `triangulation::flips` module documentation
+- **API implementation**: See `delaunay::flips` module documentation

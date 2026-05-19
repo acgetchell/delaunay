@@ -26,7 +26,7 @@ pub struct LocalConflictSeedSimplices {
 /// Adds live, deduplicated candidate simplices to a pending local repair frontier.
 ///
 /// Returns the number of simplices newly appended to `pending_seed_simplices`.
-pub(super) fn accumulate_live_simplex_seeds<T, U, V, const D: usize>(
+pub fn accumulate_live_simplex_seeds<T, U, V, const D: usize>(
     tds: &Tds<T, U, V, D>,
     candidate_seed_simplices: &[SimplexKey],
     pending_seed_simplices: &mut Vec<SimplexKey>,
@@ -76,7 +76,7 @@ where
 }
 
 /// Retains only live, deduplicated simplices in a pending local repair frontier.
-pub(super) fn retain_live_simplex_seeds<T, U, V, const D: usize>(
+pub fn retain_live_simplex_seeds<T, U, V, const D: usize>(
     tds: &Tds<T, U, V, D>,
     seed_simplices: &mut Vec<SimplexKey>,
     seen: &mut FastHashSet<SimplexKey>,
@@ -90,7 +90,7 @@ pub(super) fn retain_live_simplex_seeds<T, U, V, const D: usize>(
 }
 
 /// Clears a local repair frontier and its deduplication set together.
-pub(super) fn clear_simplex_seed_set(
+pub fn clear_simplex_seed_set(
     seed_simplices: &mut Vec<SimplexKey>,
     seen: &mut FastHashSet<SimplexKey>,
 ) {
@@ -174,7 +174,7 @@ mod tests {
     use crate::geometry::kernel::FastKernel;
     use crate::geometry::point::Point;
     use crate::geometry::traits::coordinate::Coordinate;
-    use crate::triangulation::delaunay::DelaunayTriangulation;
+    use crate::triangulation::DelaunayTriangulation;
     use crate::vertex;
     use slotmap::KeyData;
 

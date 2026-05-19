@@ -184,12 +184,18 @@ delaunay/
 │   │   │   └── uuid.rs
 │   │   ├── adjacency.rs
 │   │   ├── boundary.rs
+│   │   ├── construction.rs
 │   │   ├── edge.rs
 │   │   ├── facet.rs
+│   │   ├── insertion.rs
 │   │   ├── operations.rs
+│   │   ├── orientation.rs
+│   │   ├── query.rs
+│   │   ├── repair.rs
 │   │   ├── simplex.rs
 │   │   ├── tds.rs
 │   │   ├── triangulation.rs
+│   │   ├── validation.rs
 │   │   └── vertex.rs
 │   ├── geometry/
 │   │   ├── algorithms/
@@ -222,16 +228,21 @@ delaunay/
 │   │   │   ├── global_topology_model.rs
 │   │   │   └── topological_space.rs
 │   │   └── manifold.rs
-│   ├── triangulation/
+│   ├── delaunay/
 │   │   ├── builder.rs
-│   │   ├── delaunay.rs
+│   │   ├── construction.rs
 │   │   ├── delaunayize.rs
 │   │   ├── diagnostics.rs
 │   │   ├── flips.rs
+│   │   ├── insertion.rs
 │   │   ├── locality.rs
+│   │   ├── query.rs
+│   │   ├── repair.rs
+│   │   ├── serialization.rs
+│   │   ├── triangulation.rs
 │   │   └── validation.rs
 │   ├── lib.rs
-│   └── triangulation.rs
+│   └── ...
 ├── tests/
 │   ├── semgrep/
 │   │   ├── .github/
@@ -402,6 +413,17 @@ The `benchmark-utils` CLI provides integrated benchmark workflow functionality, 
 
 - `tds.rs` - Main `Tds` struct
 - `triangulation.rs` - Generic Triangulation layer with kernel
+- `construction.rs` - Generic triangulation construction helpers and initial-simplex setup
+- `insertion.rs` - Generic transactional insertion, duplicate detection, and insertion telemetry
+- `orientation.rs` - Generic simplex orientation validation, lifted-coordinate
+  handling, and positive-orientation canonicalization
+- `query.rs` - Read-only generic triangulation accessors, adjacency indices,
+  and topology traversal helpers
+- `repair.rs` - Generic local topology repair, stale incident-simplex repair,
+  and vertex-removal cavity retriangulation
+- `validation.rs` - Generic validation vocabulary and Level 3 orchestration;
+  Level 1 remains with `vertex.rs`/`simplex.rs`, Level 2 with `tds.rs`, and
+  Delaunay Level 4 with `src/delaunay/validation.rs`
 - `vertex.rs`, `simplex.rs`, `facet.rs` - Core geometric primitives
 - `edge.rs` - Canonical `EdgeKey` for topology traversal
 - `adjacency.rs` - Optional `AdjacencyIndex` builder outputs (opt-in)
@@ -449,19 +471,27 @@ exposed through curated modules and focused preludes (`delaunay::tds`,
   - `point_generation.rs` - Random point generation (uniform, grid, Poisson disk sampling)
   - `triangulation_generation.rs` - Random triangulation generation with topology guarantees
 
-**`src/triangulation/`** - Triangulation-facing public APIs:
+**`src/delaunay/`** - Delaunay-facing implementation modules:
 
 - `builder.rs` - Fluent builder API for Euclidean and toroidal/periodic construction
-- `delaunay.rs` - `DelaunayTriangulation` implementation (top layer) with incremental insertion
+- `construction.rs` - Batch construction options, errors, statistics, and
+  high-level constructors
+- `insertion.rs` - Post-construction vertex insertion/removal and repair policy orchestration
+- `query.rs` - Read-only `DelaunayTriangulation` accessors and traversal helpers
+- `triangulation.rs` - `DelaunayTriangulation` storage type and insertion-state cache
 - `delaunayize.rs` - End-to-end "repair then delaunayize" workflow (`delaunayize_by_flips`);
   bounded topology repair + flip-based Delaunay repair + optional fallback rebuild
 - `flips.rs` - High-level bistellar flip (Pachner move) trait and supporting public types; delegates to `core::algorithms::flips`
 - `locality.rs` - Local seed/frontier helpers for Hilbert-local construction and repair
-- `validation.rs` - Construction validation cadence and scheduling helpers
+- `repair.rs` - Delaunay repair policies, heuristic rebuild config, and repair outcomes
+- `serialization.rs` - Conversion to/from `Tds` with topology metadata reset rules
+- `validation.rs` - Level 4 validation errors plus construction validation cadence helpers
 
-**`src/triangulation.rs`** - Public facade for triangulation-facing workflows.
-It keeps the module namespace stable while the implementation is split across
-orthogonal files under `src/triangulation/`.
+**`src/lib.rs`** - Crate root, public module declarations, root re-exports, and
+focused preludes. Delaunay-facing modules are exposed directly as
+`delaunay::builder`, `delaunay::construction`, `delaunay::flips`,
+`delaunay::repair`, `delaunay::validation`, and related focused preludes rather
+than through a `delaunay::delaunay` or `delaunay::triangulation` facade.
 
 **`src/topology/`** - Topology analysis and validation:
 

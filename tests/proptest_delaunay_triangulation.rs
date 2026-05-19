@@ -32,14 +32,14 @@
 //! This provides ~40-100x speedup for property-based testing while remaining equally correct.
 
 use delaunay::geometry::kernel::{AdaptiveKernel, RobustKernel};
-use delaunay::prelude::geometry::*;
-use delaunay::prelude::tds::TdsError;
-use delaunay::prelude::triangulation::construction::{
+use delaunay::prelude::construction::{
     ConstructionOptions, DedupPolicy, DelaunayRepairPolicy, DelaunayTriangulation,
     TopologyGuarantee, Vertex, vertex,
 };
-use delaunay::prelude::triangulation::insertion::{InsertionError, InsertionOutcome};
-use delaunay::prelude::triangulation::validation::ValidationPolicy;
+use delaunay::prelude::geometry::*;
+use delaunay::prelude::insertion::{InsertionError, InsertionOutcome};
+use delaunay::prelude::tds::TdsError;
+use delaunay::prelude::validation::ValidationPolicy;
 use proptest::prelude::*;
 use proptest::test_runner::{Config, TestCaseError, TestRunner};
 use rand::{SeedableRng, seq::SliceRandom};

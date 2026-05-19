@@ -6,17 +6,19 @@
 #![forbid(unsafe_code)]
 
 use super::point_generation::{generate_random_points, generate_random_points_seeded};
+use crate::construction::{
+    ConstructionOptions, DelaunayTriangulationConstructionError, InsertionOrderStrategy,
+    RetryPolicy,
+};
+use crate::core::construction::TriangulationConstructionError;
 use crate::core::simplex::SimplexValidationError;
 use crate::core::traits::data_type::DataType;
-use crate::core::triangulation::{TopologyGuarantee, TriangulationConstructionError};
+use crate::core::validation::TopologyGuarantee;
 use crate::core::vertex::Vertex;
 use crate::geometry::kernel::{AdaptiveKernel, Kernel};
 use crate::geometry::point::Point;
 use crate::geometry::traits::coordinate::CoordinateScalar;
-use crate::triangulation::delaunay::{
-    ConstructionOptions, DelaunayTriangulation, DelaunayTriangulationConstructionError,
-    InsertionOrderStrategy, RetryPolicy,
-};
+use crate::triangulation::DelaunayTriangulation;
 use rand::SeedableRng;
 use rand::distr::uniform::SampleUniform;
 use rand::rngs::StdRng;
@@ -330,7 +332,7 @@ where
 ///
 /// ```no_run
 /// use delaunay::prelude::generators::generate_random_triangulation_with_topology_guarantee;
-/// use delaunay::prelude::triangulation::TopologyGuarantee;
+/// use delaunay::prelude::TopologyGuarantee;
 ///
 /// let dt = generate_random_triangulation_with_topology_guarantee::<f64, (), (), 3>(
 ///     20,
@@ -466,7 +468,7 @@ where
 /// ```no_run
 /// use delaunay::prelude::generators::RandomTriangulationBuilder;
 /// use delaunay::prelude::generators::InsertionOrderStrategy;
-/// use delaunay::prelude::triangulation::TopologyGuarantee;
+/// use delaunay::prelude::TopologyGuarantee;
 ///
 /// // Override the default `Hilbert` ordering with `Input` ordering.
 /// let dt = RandomTriangulationBuilder::new(20, (-3.0, 3.0))
@@ -506,7 +508,7 @@ impl<T> RandomTriangulationBuilder<T> {
     /// - Default construction options ([`InitialSimplexStrategy::MaxVolume`] initial simplex,
     ///   shuffled retries, no explicit deduplication)
     ///
-    /// [`InitialSimplexStrategy::MaxVolume`]: crate::triangulation::delaunay::InitialSimplexStrategy::MaxVolume
+    /// [`InitialSimplexStrategy::MaxVolume`]: crate::construction::InitialSimplexStrategy::MaxVolume
     ///
     /// # Examples
     ///

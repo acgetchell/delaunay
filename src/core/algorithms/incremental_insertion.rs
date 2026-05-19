@@ -34,6 +34,7 @@ use crate::core::collections::{
     FastHashMap, FastHashSet, FastHasher, MAX_PRACTICAL_DIMENSION_SIZE, SimplexKeyBuffer,
     SmallBuffer, VertexKeyBuffer,
 };
+use crate::core::construction::TriangulationConstructionError;
 use crate::core::facet::{FacetError, FacetHandle};
 use crate::core::simplex::{NeighborSlot, Simplex, SimplexValidationError};
 use crate::core::tds::{
@@ -42,15 +43,14 @@ use crate::core::tds::{
 };
 use crate::core::traits::boundary_analysis::BoundaryAnalysis;
 use crate::core::traits::data_type::DataType;
-use crate::core::triangulation::TriangulationConstructionError;
-use crate::core::triangulation::TriangulationValidationError;
+use crate::core::validation::TriangulationValidationError;
 use crate::core::vertex::VertexValidationError;
 use crate::geometry::kernel::Kernel;
 use crate::geometry::point::Point;
 use crate::geometry::predicates::Orientation;
 use crate::geometry::robust_predicates::robust_orientation;
 use crate::geometry::traits::coordinate::{CoordinateConversionError, CoordinateScalar};
-use crate::triangulation::delaunay::DelaunayTriangulationValidationError;
+use crate::validation::DelaunayTriangulationValidationError;
 use std::fmt;
 use std::hash::{Hash, Hasher};
 
@@ -59,7 +59,7 @@ use std::hash::{Hash, Hasher};
 /// # Examples
 ///
 /// ```rust
-/// use delaunay::prelude::triangulation::insertion::HullExtensionReason;
+/// use delaunay::prelude::insertion::HullExtensionReason;
 ///
 /// let reason = HullExtensionReason::NoVisibleFacets;
 /// assert!(matches!(reason, HullExtensionReason::NoVisibleFacets));
@@ -654,7 +654,7 @@ impl From<&DelaunayRepairError> for DelaunayRepairErrorKind {
 /// # Examples
 ///
 /// ```rust
-/// use delaunay::prelude::triangulation::repair::{
+/// use delaunay::prelude::repair::{
 ///     DelaunayRepairError, DelaunayRepairErrorKind, DelaunayRepairErrorSummary,
 /// };
 ///
@@ -758,12 +758,12 @@ pub enum InsertionErrorSourceKind {
 /// # Examples
 ///
 /// ```rust
-/// use delaunay::prelude::triangulation::insertion::{
+/// use delaunay::prelude::insertion::{
 ///     DelaunayRepairErrorKind, DelaunayRepairFailureContext, HullExtensionReason,
 ///     InsertionError, InsertionErrorKind, InsertionErrorSourceKind,
 ///     InsertionErrorSummary,
 /// };
-/// use delaunay::prelude::triangulation::repair::DelaunayRepairError;
+/// use delaunay::prelude::repair::DelaunayRepairError;
 ///
 /// let source = InsertionError::DelaunayRepairFailed {
 ///     source: Box::new(DelaunayRepairError::PostconditionFailed {
@@ -818,7 +818,7 @@ impl InsertionErrorSummary {
     ///
     /// ```rust
     /// use delaunay::prelude::tds::TriangulationValidationErrorKind;
-    /// use delaunay::prelude::triangulation::insertion::{
+    /// use delaunay::prelude::insertion::{
     ///     InsertionErrorKind, InsertionErrorSourceKind, InsertionErrorSummary,
     /// };
     ///
@@ -934,7 +934,7 @@ impl fmt::Display for DelaunayRepairFailureContext {
 ///
 /// ```rust
 /// use delaunay::prelude::tds::SimplexKey;
-/// use delaunay::prelude::triangulation::insertion::{
+/// use delaunay::prelude::insertion::{
 ///     NeighborRebuildError, NeighborWiringError,
 /// };
 /// use slotmap::KeyData;
@@ -994,7 +994,7 @@ pub enum NeighborRebuildError {
 ///
 /// ```rust
 /// use delaunay::prelude::tds::SimplexKey;
-/// use delaunay::prelude::triangulation::insertion::CavityFillingError;
+/// use delaunay::prelude::insertion::CavityFillingError;
 /// use slotmap::KeyData;
 ///
 /// let simplex_key = SimplexKey::from(KeyData::from_ffi(7));
@@ -1134,7 +1134,7 @@ pub enum CavityFillingError {
 /// # Examples
 ///
 /// ```rust
-/// use delaunay::prelude::triangulation::insertion::CavityRepairStage;
+/// use delaunay::prelude::insertion::CavityRepairStage;
 ///
 /// assert_eq!(
 ///     CavityRepairStage::PrimaryInsertion.to_string(),
@@ -1165,7 +1165,7 @@ impl fmt::Display for CavityRepairStage {
 ///
 /// ```rust
 /// use delaunay::prelude::tds::SimplexKey;
-/// use delaunay::prelude::triangulation::insertion::NeighborWiringError;
+/// use delaunay::prelude::insertion::NeighborWiringError;
 /// use slotmap::KeyData;
 ///
 /// let simplex_key = SimplexKey::from(KeyData::from_ffi(11));
@@ -1294,7 +1294,7 @@ pub enum NeighborWiringError {
 /// # Examples
 ///
 /// ```rust
-/// use delaunay::prelude::triangulation::insertion::InsertionError;
+/// use delaunay::prelude::insertion::InsertionError;
 ///
 /// let err = InsertionError::DuplicateCoordinates {
 ///     coordinates: "[0.0, 0.0, 0.0]".to_string(),
@@ -1483,7 +1483,7 @@ impl InsertionError {
     /// # Examples
     ///
     /// ```rust
-    /// use delaunay::prelude::triangulation::insertion::{HullExtensionReason, InsertionError};
+    /// use delaunay::prelude::insertion::{HullExtensionReason, InsertionError};
     ///
     /// let retryable = InsertionError::NonManifoldTopology {
     ///     facet_hash: 1,
@@ -1700,7 +1700,7 @@ impl InsertionError {
 /// # Examples
 ///
 /// ```rust
-/// use delaunay::prelude::triangulation::insertion::fill_cavity;
+/// use delaunay::prelude::insertion::fill_cavity;
 /// use delaunay::prelude::tds::FacetHandle;
 /// use delaunay::prelude::query::*;
 ///
@@ -2089,7 +2089,7 @@ where
 /// # Examples
 ///
 /// ```rust
-/// use delaunay::prelude::triangulation::insertion::wire_cavity_neighbors;
+/// use delaunay::prelude::insertion::wire_cavity_neighbors;
 /// use delaunay::prelude::collections::SimplexKeyBuffer;
 /// use delaunay::prelude::tds::Tds;
 ///
@@ -2685,9 +2685,9 @@ where
 /// # Examples
 ///
 /// ```rust
-/// use delaunay::prelude::triangulation::{DelaunayTriangulation, vertex};
-/// use delaunay::prelude::triangulation::DelaunayTriangulationConstructionError;
-/// use delaunay::prelude::triangulation::insertion::{
+/// use delaunay::prelude::{DelaunayTriangulation, vertex};
+/// use delaunay::prelude::DelaunayTriangulationConstructionError;
+/// use delaunay::prelude::insertion::{
 ///     InsertionError, TdsMutationError, repair_neighbor_pointers_local,
 /// };
 ///
@@ -2936,10 +2936,10 @@ where
 /// # Examples
 ///
 /// ```rust
-/// use delaunay::prelude::triangulation::construction::{
+/// use delaunay::prelude::construction::{
 ///     DelaunayTriangulation, DelaunayTriangulationConstructionError, vertex,
 /// };
-/// use delaunay::prelude::triangulation::insertion::{InsertionError, repair_neighbor_pointers};
+/// use delaunay::prelude::insertion::{InsertionError, repair_neighbor_pointers};
 ///
 /// # #[derive(Debug, thiserror::Error)]
 /// # enum ExampleError {
@@ -3332,7 +3332,7 @@ where
 /// # Examples
 ///
 /// ```rust
-/// use delaunay::prelude::triangulation::insertion::extend_hull;
+/// use delaunay::prelude::insertion::extend_hull;
 /// use delaunay::prelude::tds::Tds;
 /// use delaunay::prelude::tds::VertexKey;
 /// use delaunay::prelude::geometry::FastKernel;
@@ -4188,11 +4188,11 @@ mod tests {
     use crate::core::algorithms::locate::InternalInconsistencySite;
     use crate::core::collections::SimplexKeyBuffer;
     use crate::core::tds::GeometricError;
-    use crate::core::triangulation::TopologyGuarantee;
+    use crate::core::validation::TopologyGuarantee;
     use crate::geometry::kernel::FastKernel;
     use crate::geometry::traits::coordinate::{Coordinate, CoordinateConversionError};
     use crate::topology::characteristics::euler::TopologyClassification;
-    use crate::triangulation::delaunay::DelaunayTriangulation;
+    use crate::triangulation::DelaunayTriangulation;
     use crate::vertex;
     use slotmap::KeyData;
 

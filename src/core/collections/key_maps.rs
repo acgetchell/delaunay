@@ -38,7 +38,7 @@ pub type VertexUuidSet = FastHashSet<Uuid>;
 ///
 /// For key → UUID lookups (less common), use direct topology access:
 /// ```rust
-/// use delaunay::prelude::triangulation::*;
+/// use delaunay::prelude::*;
 ///
 /// # #[derive(Debug, thiserror::Error)]
 /// # enum ReverseLookupExampleError {
@@ -94,7 +94,7 @@ pub type UuidToVertexKeyMap = FastHashMap<Uuid, VertexKey>;
 ///
 /// For key → UUID lookups (less common), use direct topology access:
 /// ```rust
-/// use delaunay::prelude::triangulation::*;
+/// use delaunay::prelude::*;
 ///
 /// # #[derive(Debug, thiserror::Error)]
 /// # enum ReverseLookupExampleError {

@@ -2,13 +2,13 @@
 
 //! Public API roundtrip tests for Pachner/bistellar flips.
 
-use delaunay::prelude::geometry::RobustKernel;
-use delaunay::prelude::triangulation::construction::{
+use delaunay::prelude::construction::{
     ConstructionOptions, DelaunayTriangulation, InsertionOrderStrategy, TopologyGuarantee, vertex,
 };
-use delaunay::prelude::triangulation::flips::{
+use delaunay::prelude::flips::{
     BistellarFlips, EdgeKey, FacetHandle, RidgeHandle, SimplexKey, TriangleHandle, VertexKey,
 };
+use delaunay::prelude::geometry::RobustKernel;
 use uuid::Uuid;
 
 type Dt4 = DelaunayTriangulation<RobustKernel<f64>, (), (), 4>;

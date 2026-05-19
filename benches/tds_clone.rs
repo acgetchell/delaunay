@@ -15,10 +15,10 @@
 //! ```
 
 use criterion::{BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
+use delaunay::prelude::construction::{DelaunayTriangulation, Vertex};
 use delaunay::prelude::generators::generate_random_points_seeded;
 use delaunay::prelude::geometry::AdaptiveKernel;
 use delaunay::prelude::tds::Tds;
-use delaunay::prelude::triangulation::construction::{DelaunayTriangulation, Vertex};
 use std::hint::black_box;
 use std::time::Duration;
 

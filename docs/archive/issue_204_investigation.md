@@ -208,7 +208,7 @@ The dominant 85% hit N=50 (typical 5-cell seed set).
 
 ### Chosen Fix 2 constants
 
-Declared as `pub(crate) const` in `src/triangulation/delaunay.rs`:
+Declared as `pub(crate) const` in `src/delaunay/triangulation.rs`:
 
 - `LOCAL_REPAIR_FLIP_BUDGET_FACTOR_D_GE_4 = 12` (was inline `2`)
 - `LOCAL_REPAIR_FLIP_BUDGET_FLOOR_D_GE_4 = 96` (was inline `8`)

@@ -389,7 +389,7 @@ where
 ///
 /// ```
 /// use delaunay::prelude::query::extract_hull_facet_set;
-/// use delaunay::prelude::triangulation::DelaunayTriangulation;
+/// use delaunay::prelude::DelaunayTriangulation;
 /// use delaunay::prelude::query::ConvexHull;
 /// use delaunay::vertex;
 ///
@@ -604,7 +604,7 @@ mod tests {
 
     use crate::core::tds::{Tds, VertexKey};
     use crate::geometry::traits::coordinate::Coordinate;
-    use crate::triangulation::delaunay::DelaunayTriangulation;
+    use crate::triangulation::DelaunayTriangulation;
     use crate::vertex;
     use approx::assert_relative_eq;
     use slotmap::KeyData;

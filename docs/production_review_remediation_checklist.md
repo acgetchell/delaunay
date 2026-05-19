@@ -28,10 +28,11 @@ Treat partial items as still open until their acceptance notes are satisfied.
 
 ## High-Value Improvements
 
-- [ ] **6. Split very large source files.**
-  Start with `core/algorithms/flips.rs`, then `triangulation/delaunay.rs`,
-  `core/triangulation.rs`, and `core/tds.rs`. The triangulation-facing module
-  split is tracked for v0.7.8 in #381.
+- [x] **6. Split very large source files.**
+  `core/triangulation.rs` and the Delaunay-facing layer have been split into
+  orthogonal construction, insertion, query, repair, orientation, validation,
+  and serialization modules. The remaining large-file targets are
+  `core/algorithms/flips.rs` and `core/tds.rs`.
 - [ ] **7. Replace full-TDS clone rollback with journaled or localized rollback.**
   This remains the largest performance opportunity. Tracked for v0.8.0 in
   #364.
@@ -53,9 +54,11 @@ Treat partial items as still open until their acceptance notes are satisfied.
 - [ ] **13. Make strict insphere consistency test control isolated.**
   Rename the once-init env flag for process-wide semantics or use an atomic
   test hook. Tracked for v0.7.8 in #383.
-- [ ] **14. Consolidate focused preludes.**
-  Reduce overlap and make import surfaces more orthogonal. Folded into the
-  v0.7.8 triangulation-module cleanup in #381.
+- [x] **14. Consolidate focused preludes.**
+  Delaunay-facing workflow preludes now live directly under
+  `delaunay::prelude::{construction,insertion,flips,repair,delaunayize,diagnostics,validation}`,
+  while `delaunay::prelude::triangulation` is scoped to the generic
+  `Triangulation` layer.
 - [x] **15. Audit FastHashMap exposure to attacker-controlled hash keys.**
   Coordinate-derived hash-grid and epsilon-dedup buckets now use randomized
   `SecureHashMap`; remaining `FastHashMap` keys are slot keys, UUID identities,

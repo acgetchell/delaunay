@@ -14,14 +14,14 @@
 use std::num::NonZeroUsize;
 use std::time::Instant;
 
+use delaunay::prelude::construction::{
+    ConstructionOptions, DelaunayTriangulation, DelaunayTriangulationConstructionError,
+    RetryPolicy, vertex,
+};
 use delaunay::prelude::generators::{RandomPointGenerationError, generate_random_points_seeded};
 use delaunay::prelude::geometry::AdaptiveKernel;
 use delaunay::prelude::query::{
     AdjacencyIndexBuildError, ConvexHull, ConvexHullConstructionError, Coordinate, Point,
-};
-use delaunay::prelude::triangulation::construction::{
-    ConstructionOptions, DelaunayTriangulation, DelaunayTriangulationConstructionError,
-    RetryPolicy, vertex,
 };
 
 type WorkflowTriangulation<const D: usize> = DelaunayTriangulation<AdaptiveKernel<f64>, (), (), D>;

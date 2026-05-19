@@ -1,10 +1,10 @@
 //! Compile coverage for read-only APIs with non-`DataType` payloads.
 
+use delaunay::prelude::Triangulation;
 use delaunay::prelude::geometry::FastKernel;
 use delaunay::prelude::query::BoundaryAnalysis;
 use delaunay::prelude::tds::{Simplex, SimplexKey, Tds, verify_facet_index_consistency};
 use delaunay::prelude::topology::validation::validate_triangulation_euler;
-use delaunay::prelude::triangulation::Triangulation;
 
 struct Payload;
 

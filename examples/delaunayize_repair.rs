@@ -20,10 +20,10 @@
 //! cargo run --example delaunayize_repair
 //! ```
 
-use delaunay::prelude::triangulation::construction::DelaunayTriangulationConstructionError;
-use delaunay::prelude::triangulation::delaunayize::*;
-use delaunay::prelude::triangulation::flips::*;
-use delaunay::prelude::triangulation::validation::DelaunayTriangulationValidationError;
+use delaunay::prelude::construction::DelaunayTriangulationConstructionError;
+use delaunay::prelude::delaunayize::*;
+use delaunay::prelude::flips::*;
+use delaunay::prelude::validation::DelaunayTriangulationValidationError;
 
 // For the generic print_outcome helper.
 use delaunay::prelude::DataType;

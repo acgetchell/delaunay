@@ -1,24 +1,24 @@
 //! Integration tests for [`DelaunayTriangulationBuilder`].
 //!
 //! These tests exercise the public API from the outside, using only items exposed
-//! through `delaunay::prelude::triangulation` and `delaunay::triangulation::builder`.
+//! through `delaunay::prelude` and `delaunay::builder`.
 
 #![forbid(unsafe_code)]
 
 use std::collections::HashMap;
 use std::f64::consts::TAU;
 
-use delaunay::prelude::geometry::{Coordinate, Point, RobustKernel};
-use delaunay::prelude::tds::{InvariantErrorSummaryDetail, TriangulationValidationErrorKind};
-use delaunay::prelude::topology::spaces::{GlobalTopology, TopologyKind, ToroidalConstructionMode};
-use delaunay::prelude::topology::validation::{count_simplices, euler_characteristic};
-use delaunay::prelude::triangulation::construction::{
+use delaunay::prelude::construction::{
     ConstructionOptions, DelaunayTriangulation, DelaunayTriangulationBuilder,
     DelaunayTriangulationConstructionError, ExplicitConstructionError, ExplicitInsertionError,
     ExplicitInsertionErrorKind, ExplicitInvariantError, ExplicitInvariantErrorKind,
     ExplicitTdsErrorKind, InsertionOrderStrategy, TopologyGuarantee, Vertex, VertexBuilder, vertex,
 };
-use delaunay::prelude::triangulation::repair::DelaunayRepairError;
+use delaunay::prelude::geometry::{Coordinate, Point, RobustKernel};
+use delaunay::prelude::repair::DelaunayRepairError;
+use delaunay::prelude::tds::{InvariantErrorSummaryDetail, TriangulationValidationErrorKind};
+use delaunay::prelude::topology::spaces::{GlobalTopology, TopologyKind, ToroidalConstructionMode};
+use delaunay::prelude::topology::validation::{count_simplices, euler_characteristic};
 
 // =============================================================================
 // Euclidean path

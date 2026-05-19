@@ -37,7 +37,7 @@ use std::sync::{
 /// use delaunay::prelude::tds::Tds;
 /// use delaunay::prelude::collections::FacetToSimplicesMap;
 /// use delaunay::prelude::geometry::CoordinateScalar;
-/// use delaunay::prelude::triangulation::DataType;
+/// use delaunay::prelude::DataType;
 /// use std::sync::Arc;
 /// use std::sync::atomic::{AtomicU64, Ordering};
 /// use serde::de::DeserializeOwned;
@@ -335,7 +335,7 @@ mod tests {
     use super::*;
     use crate::core::tds::Tds;
     use crate::geometry::kernel::AdaptiveKernel;
-    use crate::triangulation::delaunay::DelaunayTriangulation;
+    use crate::triangulation::DelaunayTriangulation;
     use crate::vertex;
     use std::sync::Arc;
     use std::sync::Barrier;

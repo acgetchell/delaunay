@@ -15,8 +15,8 @@
 
 use delaunay::geometry::matrix::{Matrix, determinant};
 use delaunay::geometry::util::hypot;
+use delaunay::prelude::construction::{Vertex, vertex};
 use delaunay::prelude::geometry::*;
-use delaunay::prelude::triangulation::construction::{Vertex, vertex};
 use serde::{Deserialize, Serialize};
 
 // Macro for standard test output formatting

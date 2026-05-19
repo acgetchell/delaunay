@@ -351,7 +351,7 @@ Integration tests for serialization ensuring vertex identifiers and associated d
 
 #### [`delaunayize_workflow.rs`](./delaunayize_workflow.rs)
 
-Integration tests for the `delaunayize_by_flips` workflow validating the public API in `delaunay::triangulation::delaunayize`.
+Integration tests for the `delaunayize_by_flips` workflow validating the public API in `delaunay::delaunayize`.
 
 **Test Coverage:**
 
@@ -374,7 +374,7 @@ issues #340, #341, and #342.
 or one of the active large-scale helpers:
 
 - `just debug-large-scale-2d [n] [repair_every]` — default `n=36000`
-- `just debug-large-scale-3d [n] [repair_every]` — issue #341, default `n=8000`
+- `just debug-large-scale-3d [n] [repair_every]` — issue #341, default `n=7500`
 - `just debug-large-scale-4d [n] [repair_every]` — issue #340, default `n=900`
 - `just debug-large-scale-5d [n] [repair_every]` — issue #342, default `n=140`
 

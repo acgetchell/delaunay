@@ -7,13 +7,13 @@
 
 use allocation_counter::AllocationInfo;
 use delaunay::prelude::algorithms::{LocateError, LocateResult, locate_with_stats};
+use delaunay::prelude::construction::{
+    DelaunayTriangulation, DelaunayTriangulationConstructionError, vertex,
+};
 use delaunay::prelude::geometry::{Coordinate, FastKernel, Point};
 use delaunay::prelude::tds::{
     SimplexKey, SimplexValidationError, TdsError, VertexKey, facet_key_from_vertices,
     measure_with_result,
-};
-use delaunay::prelude::triangulation::construction::{
-    DelaunayTriangulation, DelaunayTriangulationConstructionError, vertex,
 };
 use std::hint::black_box;
 use thiserror::Error;

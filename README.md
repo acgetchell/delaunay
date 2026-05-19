@@ -172,16 +172,16 @@ Choose the smallest prelude that matches the task:
 
 | Task | Import |
 |---|---|
-| Construct/configure a Delaunay triangulation | `use delaunay::prelude::triangulation::construction::*` |
+| Construct/configure a Delaunay triangulation | `use delaunay::prelude::construction::*` |
 | Read-only traversal, adjacency, convex hulls, and comparison helpers | `use delaunay::prelude::query::*` |
 | Points, kernels, predicates, and geometric measures | `use delaunay::prelude::geometry::*` |
 | Random points or triangulations for examples, tests, and benchmarks | `use delaunay::prelude::generators::*` |
-| Low-level incremental insertion building blocks | `use delaunay::prelude::triangulation::insertion::*` |
-| Bistellar flips / Edit API | `use delaunay::prelude::triangulation::flips::*` |
-| Delaunay repair diagnostics and policies | `use delaunay::prelude::triangulation::repair::*` |
-| Delaunayize workflow | `use delaunay::prelude::triangulation::delaunayize::*` |
-| Construction telemetry diagnostics | `use delaunay::prelude::triangulation::diagnostics::*` |
-| Construction validation cadence/policy | `use delaunay::prelude::triangulation::validation::*` |
+| Low-level incremental insertion building blocks | `use delaunay::prelude::insertion::*` |
+| Bistellar flips / Edit API | `use delaunay::prelude::flips::*` |
+| Delaunay repair diagnostics and policies | `use delaunay::prelude::repair::*` |
+| Delaunayize workflow | `use delaunay::prelude::delaunayize::*` |
+| Construction telemetry diagnostics | `use delaunay::prelude::diagnostics::*` |
+| Construction validation cadence/policy | `use delaunay::prelude::validation::*` |
 | Hilbert ordering and quantization utilities | `use delaunay::prelude::ordering::*` |
 | Low-level TDS simplices, facets, keys, and validation reports | `use delaunay::prelude::tds::*` |
 | Collection aliases and small buffers | `use delaunay::prelude::collections::*` |
@@ -190,7 +190,7 @@ Choose the smallest prelude that matches the task:
 
 `use delaunay::prelude::*` remains available for quick experiments, but examples
 and benchmarks in this repository prefer focused preludes so imports document
-intent. The broad `delaunay::prelude::triangulation::*` import is retained for
+intent. The broad `delaunay::prelude::*` import is retained for
 compatibility, but new docs and tests should prefer the narrow workflow preludes
 above.
 
@@ -203,7 +203,7 @@ preludes. Contributors should follow the namespace policy in
 [CONTRIBUTING.md](CONTRIBUTING.md) and [docs/code_organization.md](docs/code_organization.md).
 
 ```rust
-use delaunay::prelude::triangulation::construction::{
+use delaunay::prelude::construction::{
     DelaunayTriangulationBuilder, DelaunayTriangulationConstructionError, vertex,
 };
 
@@ -235,7 +235,7 @@ fn main() -> Result<(), DelaunayTriangulationConstructionError> {
 For periodic boundary conditions, use `DelaunayTriangulationBuilder`:
 
 ```rust
-use delaunay::prelude::triangulation::construction::{
+use delaunay::prelude::construction::{
     DelaunayTriangulationBuilder, DelaunayTriangulationConstructionError, TopologyKind, vertex,
 };
 
@@ -313,11 +313,11 @@ regression testing:
   `ValidationPolicy`
 
 ```rust
-use delaunay::prelude::triangulation::construction::{
+use delaunay::prelude::construction::{
     ConstructionOptions, DedupPolicy, DelaunayTriangulationBuilder, InsertionOrderStrategy,
     RetryPolicy, TopologyGuarantee, vertex,
 };
-use delaunay::prelude::triangulation::validation::ValidationPolicy;
+use delaunay::prelude::validation::ValidationPolicy;
 
 let vertices = vec![
     vertex!([0.0, 0.0]),
@@ -356,7 +356,7 @@ For reproducible checks in CI/local runs, use `just check`, `just test`,
 - **Large 4D+ batches:** thousands of 4D points can be expensive to
   investigate. Use release mode and the large-scale debug harness for
   characterization.
-- **3D scale:** the default `just debug-large-scale-3d` helper uses 8,000
+- **3D scale:** the default `just debug-large-scale-3d` helper uses 7,500
   vertices for the near-one-minute acceptance path. The 10,000-vertex run has
   also passed full Levels 1–4 validation as a heavier characterization probe;
   use `just debug-large-scale-3d 10000 1` for local numbers.
@@ -549,4 +549,4 @@ Portions of this library were developed with the assistance of these AI tools:
 [PL-manifold]: https://en.wikipedia.org/wiki/Piecewise_linear_manifold
 [Delaunay repair]: https://link.springer.com/article/10.1007/BF01975867
 [Pachner moves]: https://en.wikipedia.org/wiki/Pachner_move
-[`DelaunayTriangulationBuilder`]: https://docs.rs/delaunay/latest/delaunay/triangulation/builder/struct.DelaunayTriangulationBuilder.html
+[`DelaunayTriangulationBuilder`]: https://docs.rs/delaunay/latest/delaunay/builder/struct.DelaunayTriangulationBuilder.html

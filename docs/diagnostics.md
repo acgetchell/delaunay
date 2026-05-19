@@ -19,7 +19,7 @@ Always available:
 - Typed construction, insertion, validation, topology, and repair errors.
 - Repair diagnostics attached to non-convergence and repair-neighbor failures.
 - Construction statistics and telemetry through
-  `delaunay::prelude::triangulation::diagnostics`.
+  `delaunay::prelude::diagnostics`.
 
 Feature-gated with `diagnostics`:
 
@@ -65,7 +65,7 @@ delaunay = { version = "...", features = ["diagnostics"] }
 For most validation work, start with the always-available APIs:
 
 ```rust
-use delaunay::prelude::triangulation::construction::{DelaunayTriangulation, vertex};
+use delaunay::prelude::construction::{DelaunayTriangulation, vertex};
 
 let vertices = vec![
     vertex!([0.0, 0.0, 0.0]),
@@ -108,7 +108,7 @@ empty-circumsphere violations:
 
 ```rust
 use delaunay::prelude::diagnostics::delaunay_violation_report;
-use delaunay::prelude::triangulation::construction::{DelaunayTriangulation, vertex};
+use delaunay::prelude::construction::{DelaunayTriangulation, vertex};
 
 let vertices = vec![
     vertex!([0.0, 0.0, 0.0]),

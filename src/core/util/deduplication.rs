@@ -44,8 +44,8 @@ pub enum DeduplicationError {
 /// # Examples
 ///
 /// ```
-/// use delaunay::prelude::triangulation::dedup_vertices_exact;
-/// use delaunay::prelude::triangulation::Vertex;
+/// use delaunay::prelude::dedup_vertices_exact;
+/// use delaunay::prelude::Vertex;
 /// use delaunay::prelude::geometry::Point;
 /// use delaunay::prelude::geometry::Coordinate;
 ///
@@ -113,8 +113,8 @@ where
 /// # Examples
 ///
 /// ```
-/// use delaunay::prelude::triangulation::dedup_vertices_epsilon;
-/// use delaunay::prelude::triangulation::Vertex;
+/// use delaunay::prelude::dedup_vertices_epsilon;
+/// use delaunay::prelude::Vertex;
 /// use delaunay::prelude::geometry::Point;
 /// use delaunay::prelude::geometry::Coordinate;
 ///
@@ -163,7 +163,7 @@ where
 ///
 /// ```rust
 /// use delaunay::prelude::{DeduplicationError, try_dedup_vertices_epsilon};
-/// use delaunay::prelude::triangulation::construction::vertex;
+/// use delaunay::prelude::construction::vertex;
 ///
 /// # fn main() -> Result<(), DeduplicationError> {
 /// let vertices = vec![
@@ -247,8 +247,8 @@ where
 /// # Examples
 ///
 /// ```
-/// use delaunay::prelude::triangulation::filter_vertices_excluding;
-/// use delaunay::prelude::triangulation::Vertex;
+/// use delaunay::prelude::filter_vertices_excluding;
+/// use delaunay::prelude::Vertex;
 /// use delaunay::prelude::geometry::Point;
 /// use delaunay::prelude::geometry::Coordinate;
 ///

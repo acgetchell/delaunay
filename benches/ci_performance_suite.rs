@@ -34,18 +34,18 @@ use criterion::measurement::WallTime;
 use criterion::{
     BatchSize, BenchmarkGroup, BenchmarkId, Criterion, Throughput, criterion_group, criterion_main,
 };
+use delaunay::prelude::construction::{
+    ConstructionOptions, DelaunayTriangulation, InsertionOrderStrategy, RetryPolicy,
+    TopologyGuarantee, Vertex,
+};
+use delaunay::prelude::flips::{
+    BistellarFlips, EdgeKey, FacetHandle, RidgeHandle, SimplexKey, TriangleHandle,
+};
 use delaunay::prelude::generators::generate_random_points_seeded;
 use delaunay::prelude::geometry::{
     AdaptiveKernel, Coordinate, Point, RobustKernel, simplex_volume,
 };
 use delaunay::prelude::query::ConvexHull;
-use delaunay::prelude::triangulation::construction::{
-    ConstructionOptions, DelaunayTriangulation, InsertionOrderStrategy, RetryPolicy,
-    TopologyGuarantee, Vertex,
-};
-use delaunay::prelude::triangulation::flips::{
-    BistellarFlips, EdgeKey, FacetHandle, RidgeHandle, SimplexKey, TriangleHandle,
-};
 use delaunay::vertex;
 use std::{env, hint::black_box, num::NonZeroUsize, sync::Once};
 #[cfg(feature = "bench-logging")]
