@@ -4,16 +4,16 @@
 //! repair, and vertex-removal cavity retriangulation for [`Triangulation`](crate::core::triangulation::Triangulation).
 
 use crate::core::algorithms::incremental_insertion::{
-    CavityFillingError, InsertionError, external_facets_for_boundary, repair_neighbor_pointers,
-    repair_neighbor_pointers_local, wire_cavity_neighbors,
+    CavityFillingError, CavityRepairStage, InsertionError, external_facets_for_boundary,
+    fill_cavity_replacing_simplices, repair_neighbor_pointers, repair_neighbor_pointers_local,
+    wire_cavity_neighbors,
 };
 use crate::core::algorithms::locate::extract_cavity_boundary;
 use crate::core::collections::{
     FacetIssuesMap, FastHasher, MAX_PRACTICAL_DIMENSION_SIZE, SimplexKeyBuffer, SimplexKeySet,
-    SmallBuffer, fast_hash_map_with_capacity, fast_hash_set_with_capacity,
+    SmallBuffer, VertexKeySet, fast_hash_map_with_capacity, fast_hash_set_with_capacity,
 };
 use crate::core::facet::FacetHandle;
-use crate::core::simplex::Simplex;
 use crate::core::tds::{InvariantError, SimplexKey, TdsError, VertexKey};
 use crate::core::traits::data_type::DataType;
 use crate::core::triangulation::Triangulation;
@@ -29,6 +29,8 @@ use std::sync::OnceLock;
 use uuid::Uuid;
 
 static FORCE_GLOBAL_NEIGHBOR_REBUILD_ENABLED: OnceLock<bool> = OnceLock::new();
+
+const ORIENTATION_NORMALIZATION_BUDGET: usize = 3;
 
 /// Returns whether local neighbor repair should be bypassed for regression isolation.
 fn force_global_neighbor_rebuild_enabled() -> bool {
@@ -287,23 +289,11 @@ where
     /// triangulation invariants. The error preserves structured information from whichever
     /// layer (TDS or Topology) detected the failure.
     pub(crate) fn remove_vertex(&mut self, vertex_key: VertexKey) -> Result<usize, InvariantError> {
-        // Verify the vertex exists
         if self.tds.vertex(vertex_key).is_none() {
             return Ok(0); // Vertex not found, nothing to remove
         }
 
-        // Collect all simplices containing this vertex by scanning all simplices
-        let simplices_to_remove: SimplexKeyBuffer = self
-            .tds
-            .simplices()
-            .filter_map(|(simplex_key, simplex)| {
-                if simplex.vertices().contains(&vertex_key) {
-                    Some(simplex_key)
-                } else {
-                    None
-                }
-            })
-            .collect();
+        let simplices_to_remove = self.tds.find_simplices_containing_vertex(vertex_key);
 
         if simplices_to_remove.is_empty() {
             // Vertex exists but has no incident simplices; remove it only if the
@@ -311,7 +301,6 @@ where
             return self.remove_vertex_with_invariant_checks(vertex_key);
         }
 
-        // Extract cavity boundary BEFORE removing simplices
         let boundary_facets =
             extract_cavity_boundary(&self.tds, &simplices_to_remove).map_err(|e| {
                 TdsError::InconsistentDataStructure {
@@ -319,16 +308,35 @@ where
                 }
             })?;
 
-        // If boundary is empty, we're removing the entire triangulation
         if boundary_facets.is_empty() {
             // Use TDS removal for the empty-boundary case, then validate so
             // lower-dimensional remnants are rejected and rolled back.
             return self.remove_vertex_with_invariant_checks(vertex_key);
         }
 
-        // Pick apex vertex for fan triangulation (first vertex of first boundary facet)
+        let affected_vertices =
+            self.affected_vertices_for_vertex_removal(&simplices_to_remove, vertex_key)?;
+
         let apex_vertex_key = self.pick_fan_apex(&boundary_facets)?;
 
+        self.remove_vertex_with_fan_retriangulation(
+            vertex_key,
+            &simplices_to_remove,
+            &boundary_facets,
+            &affected_vertices,
+            apex_vertex_key,
+        )
+    }
+
+    /// Removes a vertex through fan cavity filling and rolls back on postcondition failure.
+    fn remove_vertex_with_fan_retriangulation(
+        &mut self,
+        vertex_key: VertexKey,
+        simplices_to_remove: &SimplexKeyBuffer,
+        boundary_facets: &[FacetHandle],
+        affected_vertices: &VertexKeySet,
+        apex_vertex_key: VertexKey,
+    ) -> Result<usize, InvariantError> {
         // Snapshot before destructive retriangulation edits so we can roll back if any
         // subsequent orientation/finalization step fails.
         let tds_snapshot = self.tds.clone_for_rollback();
@@ -336,11 +344,19 @@ where
             // Fill cavity with fan triangulation BEFORE removing old simplices
             // Use fan triangulation that skips boundary facets which already include the apex
             let new_simplices = self
-                .fan_fill_cavity(apex_vertex_key, &boundary_facets)
+                .fan_fill_cavity(apex_vertex_key, boundary_facets)
                 .map_err(|e| insertion_error_to_invariant_error(e, "Fan triangulation failed"))?;
+            self.canonicalize_positive_orientation_for_simplices(&new_simplices)
+                .map_err(|e| {
+                    insertion_error_to_invariant_error(
+                        e,
+                        "Orientation canonicalization failed after fan filling",
+                    )
+                })?;
+
             // Wire neighbors for the new simplices (while both old and new simplices exist)
             let external_facets =
-                external_facets_for_boundary(&self.tds, &simplices_to_remove, &boundary_facets)
+                external_facets_for_boundary(&self.tds, simplices_to_remove, boundary_facets)
                     .map_err(|e| {
                         insertion_error_to_invariant_error(e, "External-facet collection failed")
                     })?;
@@ -348,63 +364,42 @@ where
                 &mut self.tds,
                 &new_simplices,
                 external_facets.iter().copied(),
-                Some(&simplices_to_remove),
+                Some(simplices_to_remove),
             )
             .map_err(|e| insertion_error_to_invariant_error(e, "Neighbor wiring failed"))?;
 
             // Remove the simplices containing the vertex (now that new simplices are wired up)
             // Note: remove_simplices_by_keys() automatically clears neighbor pointers in surviving
             // simplices that reference removed simplices (sets them to None/boundary)
-            let mut simplices_removed = self.tds.remove_simplices_by_keys(&simplices_to_remove);
+            let mut simplices_removed = self.tds.remove_simplices_by_keys(simplices_to_remove);
+            let max_repair_simplices_removed = simplices_to_remove.len();
+            let mut post_repair_frontier = SimplexKeyBuffer::new();
 
-            // Validate facet topology for newly created simplices (O(k*D) localized check)
-            if let Some(issues) = self.detect_local_facet_issues(&new_simplices)? {
-                #[cfg(debug_assertions)]
-                tracing::warn!(
-                    "Warning: {} over-shared facets detected after vertex removal, repairing...",
-                    issues.len()
-                );
-                let repair_outcome = self
-                    .repair_local_facet_issues_with_frontier(&issues)
-                    .map_err(InvariantError::Tds)?;
-                let removed = repair_outcome.removed_count;
-                simplices_removed += removed;
-                #[cfg(debug_assertions)]
-                tracing::debug!("Repaired by removing {removed} additional simplices");
+            self.repair_vertex_removal_facet_issues(
+                &new_simplices,
+                &mut simplices_removed,
+                &mut post_repair_frontier,
+                max_repair_simplices_removed,
+            )?;
 
-                // Repair neighbor pointers after removing additional simplices
-                // This ensures neighbor consistency after repair operations
-                if removed > 0 {
-                    repair_neighbor_pointers(&mut self.tds).map_err(|e| {
-                        insertion_error_to_invariant_error(
-                            e,
-                            "Neighbor repair after facet issue repair failed",
-                        )
-                    })?;
-                }
-            }
-            // Normalize coherent orientation, canonicalize global sign, and promote
-            // simplices to positive orientation (#258).
-            self.normalize_and_promote_positive_orientation()
-                .map_err(|e| {
-                    insertion_error_to_invariant_error(
-                        e,
-                        "Orientation canonicalization failed after fan retriangulation",
-                    )
-                })?;
-
-            // Rebuild vertex-simplex incidence for all vertices
-            self.tds
-                .assign_incident_simplices()
-                .map_err(|e| InvariantError::Tds(e.into_inner()))?;
-
-            // Remove the vertex using Tds method (handles internal bookkeeping)
             self.tds
                 .remove_vertex(vertex_key)
                 .map_err(|e| InvariantError::Tds(e.into_inner()))?;
 
-            self.tds.is_valid().map_err(InvariantError::Tds)?;
-            self.is_valid()?;
+            let surviving_new_simplices = self.live_simplices_from(&new_simplices);
+            let validation_scope = self.vertex_removal_validation_scope(
+                &new_simplices,
+                &external_facets,
+                &post_repair_frontier,
+            );
+            self.normalize_vertex_removal_orientation(&validation_scope)?;
+            self.repair_affected_vertex_incidence_from_scope(affected_vertices, &validation_scope)?;
+            self.validate_vertex_removal_postconditions(
+                vertex_key,
+                affected_vertices,
+                &surviving_new_simplices,
+                &validation_scope,
+            )?;
 
             Ok(simplices_removed)
         })();
@@ -416,6 +411,153 @@ where
                 Err(error)
             }
         }
+    }
+
+    /// Repairs over-shared facets introduced by vertex-removal fan filling.
+    fn repair_vertex_removal_facet_issues(
+        &mut self,
+        new_simplices: &SimplexKeyBuffer,
+        simplices_removed: &mut usize,
+        post_repair_frontier: &mut SimplexKeyBuffer,
+        max_simplices_removed: usize,
+    ) -> Result<(), InvariantError> {
+        let mut remaining_budget = max_simplices_removed;
+
+        loop {
+            if self.tds.validate_facet_sharing().is_ok() {
+                return Ok(());
+            }
+
+            let Some(issues) = self.detect_local_facet_issues(new_simplices)? else {
+                return Ok(());
+            };
+
+            #[cfg(debug_assertions)]
+            tracing::warn!(
+                "Warning: {} over-shared facets detected after vertex removal, repairing...",
+                issues.len()
+            );
+
+            let repair_outcome = self
+                .repair_local_facet_issues_with_frontier(&issues, remaining_budget)
+                .map_err(|e| {
+                    insertion_error_to_invariant_error(
+                        e,
+                        "Local facet repair after vertex removal failed",
+                    )
+                })?;
+            let removed = repair_outcome.removed_count;
+            if removed == 0 {
+                return Err(insertion_error_to_invariant_error(
+                    CavityFillingError::InvalidFacetSharingAfterRepair {
+                        stage: CavityRepairStage::FanTriangulation,
+                    }
+                    .into(),
+                    "Local facet repair after vertex removal stalled",
+                ));
+            }
+
+            remaining_budget = remaining_budget.saturating_sub(removed);
+            post_repair_frontier.extend(repair_outcome.frontier_simplices.iter().copied());
+            *simplices_removed += removed;
+
+            #[cfg(debug_assertions)]
+            tracing::debug!(
+                "Repaired by removing {removed} additional simplices ({remaining_budget} budget remaining)"
+            );
+
+            self.repair_neighbors_after_local_simplex_removal(new_simplices, post_repair_frontier)
+                .map_err(|e| {
+                    insertion_error_to_invariant_error(
+                        e,
+                        "Neighbor repair after facet issue repair failed",
+                    )
+                })?;
+        }
+    }
+
+    /// Normalizes coherence globally but promotes only the vertex-removal scope geometrically.
+    fn normalize_vertex_removal_orientation(
+        &mut self,
+        validation_scope: &SimplexKeyBuffer,
+    ) -> Result<(), InvariantError> {
+        for _ in 0..ORIENTATION_NORMALIZATION_BUDGET {
+            self.canonicalize_positive_orientation_for_simplices(validation_scope)
+                .map_err(|e| {
+                    insertion_error_to_invariant_error(
+                        e,
+                        "Local orientation promotion failed after vertex removal",
+                    )
+                })?;
+            self.tds
+                .normalize_coherent_orientation()
+                .map_err(InvariantError::Tds)?;
+            if self
+                .validate_geometric_simplex_orientation_for_simplices(validation_scope)
+                .is_ok()
+            {
+                return Ok(());
+            }
+        }
+
+        if self
+            .validate_geometric_simplex_orientation_for_simplices(validation_scope)
+            .is_ok()
+        {
+            return Ok(());
+        }
+
+        self.normalize_and_promote_positive_orientation()
+            .map_err(|e| {
+                insertion_error_to_invariant_error(
+                    e,
+                    "Global orientation fallback failed after local vertex-removal normalization",
+                )
+            })
+    }
+
+    /// Repairs incident-simplex pointers for vertices touched by vertex removal.
+    fn repair_affected_vertex_incidence_from_scope(
+        &mut self,
+        affected_vertices: &VertexKeySet,
+        validation_scope: &SimplexKeyBuffer,
+    ) -> Result<(), InvariantError> {
+        for &vertex_key in affected_vertices {
+            let needs_repair = self.tds.vertex(vertex_key).is_some_and(|vertex| {
+                !vertex.incident_simplex().is_some_and(|simplex_key| {
+                    self.tds
+                        .simplex(simplex_key)
+                        .is_some_and(|simplex| simplex.contains_vertex(vertex_key))
+                })
+            });
+            if !needs_repair {
+                continue;
+            }
+
+            let incident_simplex = validation_scope.iter().copied().find(|&simplex_key| {
+                self.tds
+                    .simplex(simplex_key)
+                    .is_some_and(|simplex| simplex.contains_vertex(vertex_key))
+            });
+
+            let Some(simplex_key) = incident_simplex else {
+                let Some(vertex) = self.tds.vertex(vertex_key) else {
+                    continue;
+                };
+                return Err(InvariantError::Triangulation(
+                    TriangulationValidationError::IsolatedVertex {
+                        vertex_key,
+                        vertex_uuid: vertex.uuid(),
+                    },
+                ));
+            };
+
+            if let Some(vertex) = self.tds.vertex_mut(vertex_key) {
+                vertex.set_incident_simplex(Some(simplex_key));
+            }
+        }
+
+        Ok(())
     }
 
     /// Removes a vertex via direct TDS mutation and rolls back unless all triangulation
@@ -446,6 +588,148 @@ where
                 Err(error)
             }
         }
+    }
+
+    /// Collects boundary-star vertices whose incident simplices may change during removal.
+    fn affected_vertices_for_vertex_removal(
+        &self,
+        simplices_to_remove: &[SimplexKey],
+        removed_vertex: VertexKey,
+    ) -> Result<VertexKeySet, InvariantError> {
+        let mut affected_vertices =
+            fast_hash_set_with_capacity(simplices_to_remove.len().saturating_mul(D));
+        for &simplex_key in simplices_to_remove {
+            let simplex = self.tds.simplex(simplex_key).ok_or_else(|| {
+                InvariantError::Tds(TdsError::SimplexNotFound {
+                    simplex_key,
+                    context: "collecting affected vertices for vertex removal".to_string(),
+                })
+            })?;
+            for &vertex_key in simplex.vertices() {
+                if vertex_key != removed_vertex {
+                    affected_vertices.insert(vertex_key);
+                }
+            }
+        }
+        Ok(affected_vertices)
+    }
+
+    /// Returns live simplex keys from a mutation-produced buffer without duplicates.
+    fn live_simplices_from(&self, simplices: &SimplexKeyBuffer) -> SimplexKeyBuffer {
+        let mut live_simplices = SimplexKeyBuffer::new();
+        let mut seen = SimplexKeySet::default();
+        seen.reserve(simplices.len());
+        for &simplex_key in simplices {
+            self.push_live_simplex_once(&mut live_simplices, &mut seen, simplex_key);
+        }
+        live_simplices
+    }
+
+    /// Builds the local simplex scope whose facets, ridges, neighbors, and orientation changed.
+    fn vertex_removal_validation_scope(
+        &self,
+        new_simplices: &SimplexKeyBuffer,
+        external_facets: &[FacetHandle],
+        post_repair_frontier: &SimplexKeyBuffer,
+    ) -> SimplexKeyBuffer {
+        let mut scope = SimplexKeyBuffer::new();
+        let mut seen = SimplexKeySet::default();
+        seen.reserve(new_simplices.len() + external_facets.len() + post_repair_frontier.len());
+
+        for &simplex_key in new_simplices {
+            self.push_live_simplex_once(&mut scope, &mut seen, simplex_key);
+        }
+        for facet in external_facets {
+            self.push_live_simplex_once(&mut scope, &mut seen, facet.simplex_key());
+        }
+        for &simplex_key in post_repair_frontier {
+            self.push_live_simplex_once(&mut scope, &mut seen, simplex_key);
+        }
+
+        scope
+    }
+
+    /// Pushes a simplex key into a local validation scope only when it still exists.
+    fn push_live_simplex_once(
+        &self,
+        scope: &mut SimplexKeyBuffer,
+        seen: &mut SimplexKeySet,
+        simplex_key: SimplexKey,
+    ) {
+        if self.tds.contains_simplex(simplex_key) && seen.insert(simplex_key) {
+            scope.push(simplex_key);
+        }
+    }
+
+    /// Validates the local postconditions that make successful vertex removal topology-preserving.
+    fn validate_vertex_removal_postconditions(
+        &self,
+        removed_vertex: VertexKey,
+        affected_vertices: &VertexKeySet,
+        surviving_new_simplices: &SimplexKeyBuffer,
+        validation_scope: &SimplexKeyBuffer,
+    ) -> Result<(), InvariantError> {
+        if self.tds.contains_vertex_key(removed_vertex) {
+            return Err(InvariantError::Tds(TdsError::InconsistentDataStructure {
+                message: format!(
+                    "Removed vertex {removed_vertex:?} still exists after vertex-removal finalization"
+                ),
+            }));
+        }
+
+        if self.tds.number_of_simplices() == 0
+            || surviving_new_simplices.is_empty()
+            || validation_scope.is_empty()
+        {
+            self.tds.is_valid().map_err(InvariantError::Tds)?;
+            self.is_valid()?;
+            return Ok(());
+        }
+
+        self.validate_connectedness(surviving_new_simplices)
+            .map_err(|e| {
+                insertion_error_to_invariant_error(
+                    e,
+                    "Vertex-removal connectedness validation failed",
+                )
+            })?;
+        self.validate_required_topology_links_for_simplices(validation_scope)?;
+        self.validate_affected_vertices_non_isolated(affected_vertices)?;
+
+        #[cfg(debug_assertions)]
+        {
+            self.tds.is_valid().map_err(InvariantError::Tds)?;
+            self.is_valid()?;
+        }
+
+        Ok(())
+    }
+
+    /// Ensures every vertex in the removed star still has a live incident simplex.
+    fn validate_affected_vertices_non_isolated(
+        &self,
+        affected_vertices: &VertexKeySet,
+    ) -> Result<(), InvariantError> {
+        for &vertex_key in affected_vertices {
+            let Some(vertex) = self.tds.vertex(vertex_key) else {
+                continue;
+            };
+            if vertex.incident_simplex().is_some_and(|simplex_key| {
+                self.tds
+                    .simplex(simplex_key)
+                    .is_some_and(|simplex| simplex.contains_vertex(vertex_key))
+            }) {
+                continue;
+            }
+
+            return Err(InvariantError::Triangulation(
+                TriangulationValidationError::IsolatedVertex {
+                    vertex_key,
+                    vertex_uuid: vertex.uuid(),
+                },
+            ));
+        }
+        Ok(())
     }
 
     /// Pick an apex vertex for fan triangulation.
@@ -518,7 +802,18 @@ where
         apex_vertex_key: VertexKey,
         boundary_facets: &[FacetHandle],
     ) -> Result<SimplexKeyBuffer, InsertionError> {
-        let mut new_simplices = SimplexKeyBuffer::new();
+        let fan_boundary_facets =
+            self.fan_boundary_facets_excluding_apex(apex_vertex_key, boundary_facets)?;
+        fill_cavity_replacing_simplices(&mut self.tds, apex_vertex_key, &fan_boundary_facets)
+    }
+
+    /// Filters out boundary facets that already contain the fan apex.
+    fn fan_boundary_facets_excluding_apex(
+        &self,
+        apex_vertex_key: VertexKey,
+        boundary_facets: &[FacetHandle],
+    ) -> Result<SmallBuffer<FacetHandle, 64>, InsertionError> {
+        let mut fan_boundary_facets = SmallBuffer::new();
 
         for facet_handle in boundary_facets {
             let boundary_simplex =
@@ -538,39 +833,21 @@ where
                 .into());
             }
 
-            // Gather facet vertices (all except the opposite vertex)
-            let mut facet_vertices = SmallBuffer::<VertexKey, MAX_PRACTICAL_DIMENSION_SIZE>::new();
-            for (i, &vkey) in boundary_simplex.vertices().iter().enumerate() {
-                if i != facet_idx {
-                    facet_vertices.push(vkey);
-                }
+            let facet_contains_apex = boundary_simplex
+                .vertices()
+                .iter()
+                .enumerate()
+                .any(|(i, &vkey)| i != facet_idx && vkey == apex_vertex_key);
+            if !facet_contains_apex {
+                fan_boundary_facets.push(*facet_handle);
             }
-
-            // Skip facets that already contain the apex to avoid duplicate vertices
-            if facet_vertices.contains(&apex_vertex_key) {
-                continue;
-            }
-
-            // Build new simplex vertices = facet_vertices + apex
-            let mut new_simplex_vertices = facet_vertices;
-            new_simplex_vertices.push(apex_vertex_key);
-
-            // Create and insert the new simplex
-            let new_simplex =
-                Simplex::new(new_simplex_vertices, None).map_err(CavityFillingError::from)?;
-            let simplex_key = self
-                .tds
-                .insert_simplex_with_mapping_prechecked_topology(new_simplex)
-                .map_err(InsertionError::from)?;
-
-            new_simplices.push(simplex_key);
         }
 
-        if new_simplices.is_empty() {
+        if fan_boundary_facets.is_empty() {
             return Err(CavityFillingError::EmptyFanTriangulation.into());
         }
 
-        Ok(new_simplices)
+        Ok(fan_boundary_facets)
     }
 
     /// Detects over-shared facets
@@ -794,11 +1071,21 @@ where
     pub(crate) fn repair_local_facet_issues_with_frontier(
         &mut self,
         issues: &FacetIssuesMap,
-    ) -> Result<LocalFacetRepairOutcome, TdsError>
+        max_simplices_removed: usize,
+    ) -> Result<LocalFacetRepairOutcome, InsertionError>
     where
         K::Scalar: Div<Output = K::Scalar>,
     {
-        let to_remove = self.simplices_for_local_facet_issue_repair(issues)?;
+        let to_remove = self
+            .simplices_for_local_facet_issue_repair(issues)
+            .map_err(InsertionError::TopologyValidation)?;
+        let attempted = to_remove.len();
+        if attempted > max_simplices_removed {
+            return Err(InsertionError::MaxSimplicesRemovedExceeded {
+                max_simplices_removed,
+                attempted,
+            });
+        }
         let frontier_simplices = self.collect_local_repair_frontier(issues, &to_remove);
         let removed_count = self.tds.remove_simplices_by_keys(&to_remove);
 
@@ -896,15 +1183,8 @@ where
     {
         let tds_snapshot = self.tds.clone_for_rollback();
         let repair_result = (|| -> Result<usize, InsertionError> {
-            let outcome = self
-                .repair_local_facet_issues_with_frontier(issues)
-                .map_err(InsertionError::TopologyValidation)?;
-            if outcome.removed_count > max_simplices_removed {
-                return Err(InsertionError::MaxSimplicesRemovedExceeded {
-                    max_simplices_removed,
-                    attempted: outcome.removed_count,
-                });
-            }
+            let outcome =
+                self.repair_local_facet_issues_with_frontier(issues, max_simplices_removed)?;
             if outcome.removed_count == 0 {
                 return Ok(0);
             }
@@ -936,7 +1216,7 @@ mod tests {
     use super::*;
     use crate::DelaunayTriangulation;
     use crate::core::collections::{CavityBoundaryBuffer, NeighborBuffer};
-    use crate::core::simplex::NeighborSlot;
+    use crate::core::simplex::{NeighborSlot, Simplex};
     use crate::core::tds::Tds;
     use crate::core::vertex::Vertex;
     use crate::geometry::kernel::FastKernel;
@@ -1397,6 +1677,152 @@ mod tests {
     }
 
     #[test]
+    fn test_vertex_removal_affected_vertices_excludes_removed_vertex() {
+        let (tri, [v0, v1, v2, v3], simplex_key) = build_single_tet();
+
+        let affected = tri
+            .affected_vertices_for_vertex_removal(&[simplex_key], v0)
+            .unwrap();
+
+        assert_eq!(affected.len(), 3);
+        assert!(!affected.contains(&v0));
+        assert!(affected.contains(&v1));
+        assert!(affected.contains(&v2));
+        assert!(affected.contains(&v3));
+    }
+
+    #[test]
+    fn test_vertex_removal_affected_vertices_errors_on_missing_simplex() {
+        let (tri, [v0, ..], _) = build_single_tet();
+        let missing_simplex = SimplexKey::from(KeyData::from_ffi(0xBAD));
+
+        let result = tri.affected_vertices_for_vertex_removal(&[missing_simplex], v0);
+
+        assert!(matches!(
+            result,
+            Err(InvariantError::Tds(TdsError::SimplexNotFound {
+                simplex_key,
+                ..
+            })) if simplex_key == missing_simplex
+        ));
+    }
+
+    #[test]
+    fn test_vertex_removal_scope_helpers_keep_live_simplices_once() {
+        let (tri, _, simplex_key) = build_single_tet();
+        let missing_simplex = SimplexKey::from(KeyData::from_ffi(0xBAD));
+        let mut candidate_simplices = SimplexKeyBuffer::new();
+        candidate_simplices.push(simplex_key);
+        candidate_simplices.push(missing_simplex);
+        candidate_simplices.push(simplex_key);
+        let external_facets = [FacetHandle::new(simplex_key, 0)];
+
+        let live_simplices = tri.live_simplices_from(&candidate_simplices);
+        let validation_scope = tri.vertex_removal_validation_scope(
+            &candidate_simplices,
+            &external_facets,
+            &live_simplices,
+        );
+
+        assert_eq!(live_simplices.as_slice(), &[simplex_key]);
+        assert_eq!(validation_scope.as_slice(), &[simplex_key]);
+    }
+
+    #[test]
+    fn test_repair_vertex_removal_facet_issues_noops_without_local_issues() {
+        let (mut tri, _, simplex_key) = build_single_tet();
+        let mut new_simplices = SimplexKeyBuffer::new();
+        new_simplices.push(simplex_key);
+        let mut simplices_removed = 0;
+        let mut post_repair_frontier = SimplexKeyBuffer::new();
+
+        tri.repair_vertex_removal_facet_issues(
+            &new_simplices,
+            &mut simplices_removed,
+            &mut post_repair_frontier,
+            usize::MAX,
+        )
+        .unwrap();
+
+        assert_eq!(simplices_removed, 0);
+        assert!(post_repair_frontier.is_empty());
+    }
+
+    #[test]
+    fn test_repair_affected_vertex_incidence_from_scope_repairs_missing_pointer() {
+        let (mut tri, [_, _, _, v3], simplex_key) = build_single_tet();
+        tri.tds.vertex_mut(v3).unwrap().set_incident_simplex(None);
+        let mut affected_vertices = VertexKeySet::default();
+        affected_vertices.insert(v3);
+        let mut validation_scope = SimplexKeyBuffer::new();
+        validation_scope.push(simplex_key);
+
+        tri.repair_affected_vertex_incidence_from_scope(&affected_vertices, &validation_scope)
+            .unwrap();
+
+        assert_eq!(
+            tri.tds.vertex(v3).unwrap().incident_simplex(),
+            Some(simplex_key)
+        );
+    }
+
+    #[test]
+    fn test_repair_affected_vertex_incidence_from_scope_reports_isolated_vertex() {
+        let (mut tri, [_, _, _, v3], _) = build_single_tet();
+        tri.tds.vertex_mut(v3).unwrap().set_incident_simplex(None);
+        let mut affected_vertices = VertexKeySet::default();
+        affected_vertices.insert(v3);
+        let validation_scope = SimplexKeyBuffer::new();
+
+        let result =
+            tri.repair_affected_vertex_incidence_from_scope(&affected_vertices, &validation_scope);
+
+        assert!(matches!(
+            result,
+            Err(InvariantError::Triangulation(
+                TriangulationValidationError::IsolatedVertex { vertex_key, .. }
+            )) if vertex_key == v3
+        ));
+    }
+
+    #[test]
+    fn test_vertex_removal_postconditions_reject_still_present_vertex() {
+        let (tri, [v0, ..], simplex_key) = build_single_tet();
+        let affected_vertices = VertexKeySet::default();
+        let mut surviving_new_simplices = SimplexKeyBuffer::new();
+        surviving_new_simplices.push(simplex_key);
+        let mut validation_scope = SimplexKeyBuffer::new();
+        validation_scope.push(simplex_key);
+
+        let result = tri.validate_vertex_removal_postconditions(
+            v0,
+            &affected_vertices,
+            &surviving_new_simplices,
+            &validation_scope,
+        );
+
+        assert!(matches!(
+            result,
+            Err(InvariantError::Tds(
+                TdsError::InconsistentDataStructure { .. }
+            ))
+        ));
+    }
+
+    #[test]
+    fn test_fan_boundary_facets_excluding_apex_keeps_only_facets_without_apex() {
+        let (tri, vkeys, simplex_key) = build_single_tet();
+        let boundary_facets: CavityBoundaryBuffer =
+            (0..=3).map(|i| FacetHandle::new(simplex_key, i)).collect();
+
+        let fan_facets = tri
+            .fan_boundary_facets_excluding_apex(vkeys[0], &boundary_facets)
+            .unwrap();
+
+        assert_eq!(fan_facets.as_slice(), &[FacetHandle::new(simplex_key, 0)]);
+    }
+
+    #[test]
     fn test_quality_error_to_tds_error_preserves_lookup_variants() {
         let simplex_key = SimplexKey::from(KeyData::from_ffi(1));
         let vertex_key = VertexKey::from(KeyData::from_ffi(2));
@@ -1601,7 +2027,7 @@ mod tests {
             .expect("three simplices sharing one edge should be detected as over-shared");
 
         let repair = tri
-            .repair_local_facet_issues_with_frontier(&issues)
+            .repair_local_facet_issues_with_frontier(&issues, usize::MAX)
             .unwrap();
         assert_eq!(repair.removed_count, 1);
         assert!(
@@ -1657,6 +2083,93 @@ mod tests {
             );
         }
         assert!(tri.tds.validate_facet_sharing().is_ok());
+        assert!(tri.detect_local_facet_issues(&survivors).unwrap().is_none());
+    }
+
+    #[test]
+    fn test_local_repair_budget_failure_does_not_remove_simplices() {
+        let (mut tri, original_simplices, _, _) = build_overshared_edge_fixture();
+        let issues = tri
+            .detect_local_facet_issues(&original_simplices)
+            .unwrap()
+            .expect("three simplices sharing one edge should be detected as over-shared");
+        let original_simplex_count = tri.tds.number_of_simplices();
+
+        let result = tri.repair_local_facet_issues_with_frontier(&issues, 0);
+
+        assert!(matches!(
+            result,
+            Err(InsertionError::MaxSimplicesRemovedExceeded {
+                max_simplices_removed: 0,
+                attempted
+            }) if attempted > 0
+        ));
+        assert_eq!(tri.tds.number_of_simplices(), original_simplex_count);
+        for simplex_key in original_simplices {
+            assert!(
+                tri.tds.contains_simplex(simplex_key),
+                "budget failure should happen before simplex removal"
+            );
+        }
+    }
+
+    #[test]
+    fn test_vertex_removal_facet_repair_reports_budget_exhaustion() {
+        let (mut tri, original_simplices, _, _) = build_overshared_edge_fixture();
+        let original_simplex_count = tri.tds.number_of_simplices();
+        let mut new_simplices = SimplexKeyBuffer::new();
+        new_simplices.extend(original_simplices);
+        let mut simplices_removed = 0;
+        let mut post_repair_frontier = SimplexKeyBuffer::new();
+
+        let result = tri.repair_vertex_removal_facet_issues(
+            &new_simplices,
+            &mut simplices_removed,
+            &mut post_repair_frontier,
+            0,
+        );
+
+        assert!(matches!(
+            result,
+            Err(InvariantError::Tds(TdsError::InconsistentDataStructure { ref message }))
+                if message.contains("Local facet repair after vertex removal failed")
+                    && message.contains("Local facet repair removal budget exceeded")
+        ));
+        assert_eq!(simplices_removed, 0);
+        assert!(post_repair_frontier.is_empty());
+        assert_eq!(tri.tds.number_of_simplices(), original_simplex_count);
+        for simplex_key in original_simplices {
+            assert!(tri.tds.contains_simplex(simplex_key));
+        }
+    }
+
+    #[test]
+    fn test_vertex_removal_facet_repair_restores_facet_sharing() {
+        let (mut tri, original_simplices, _, _) = build_overshared_edge_fixture();
+        let mut new_simplices = SimplexKeyBuffer::new();
+        new_simplices.extend(original_simplices);
+        let mut simplices_removed = 0;
+        let mut post_repair_frontier = SimplexKeyBuffer::new();
+
+        tri.repair_vertex_removal_facet_issues(
+            &new_simplices,
+            &mut simplices_removed,
+            &mut post_repair_frontier,
+            usize::MAX,
+        )
+        .unwrap();
+
+        assert_eq!(simplices_removed, 1);
+        assert!(
+            !post_repair_frontier.is_empty(),
+            "removed-simplex neighbors should seed the post-repair frontier"
+        );
+        assert!(tri.tds.validate_facet_sharing().is_ok());
+        let survivors: Vec<_> = original_simplices
+            .into_iter()
+            .filter(|simplex_key| tri.tds.contains_simplex(*simplex_key))
+            .collect();
+        assert_eq!(survivors.len(), 2);
         assert!(tri.detect_local_facet_issues(&survivors).unwrap().is_none());
     }
 

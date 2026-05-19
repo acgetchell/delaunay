@@ -99,6 +99,11 @@ path = "benches/tds_clone.rs"
 harness = false
 
 [[bench]]
+name = "remove_vertex"
+path = "benches/remove_vertex.rs"
+harness = false
+
+[[bench]]
 name = "ci_performance_suite"
 path = "benches/ci_performance_suite.rs"
 harness = false

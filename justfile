@@ -7,6 +7,7 @@
 set shell := ["bash", "-euo", "pipefail", "-c"]
 
 cargo_llvm_cov_version := "0.8.7"
+nextest_version := "0.9.136"
 
 # Common cargo-llvm-cov arguments for all coverage runs.
 # Excludes benches/examples from reports while allowing integration tests to
@@ -27,6 +28,15 @@ _ensure-cargo-llvm-cov:
     if ! command -v cargo-llvm-cov >/dev/null; then
         echo "❌ 'cargo-llvm-cov' not found. See 'just setup-tools' or install:"
         echo "   cargo install --locked cargo-llvm-cov --version {{ cargo_llvm_cov_version }}"
+        exit 1
+    fi
+
+_ensure-nextest:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    if ! command -v cargo-nextest >/dev/null; then
+        echo "❌ 'cargo-nextest' not found. See 'just setup-tools' or install:"
+        echo "   cargo install --locked cargo-nextest --version {{ nextest_version }}"
         exit 1
     fi
 
@@ -136,9 +146,9 @@ bench-smoke:
 # Compile benchmarks and integration tests without running. This catches
 # release-profile-only warnings (e.g. cfg-gated unused-mut) that debug-mode
 # clippy/test won't see.
-bench-test-compile:
+bench-test-compile: _ensure-nextest
     cargo bench --workspace --no-run
-    cargo test --tests --release --no-run
+    cargo nextest run --release --tests --no-run
 
 # Build commands
 build:
@@ -180,7 +190,7 @@ check: lint
 check-fast:
     cargo check
 
-# CI simulation: comprehensive validation (matches .github/workflows/ci.yml)
+# CI simulation: comprehensive validation.
 # Runs: checks + test workflow + examples
 ci: check test examples
     @echo "🎯 CI checks complete!"
@@ -209,8 +219,10 @@ clean:
 clippy:
     cargo clippy --workspace --all-targets -- -D warnings -W clippy::pedantic -W clippy::nursery -W clippy::cargo
 
-    # All features
-    cargo clippy --workspace --all-targets --all-features -- -D warnings -W clippy::pedantic -W clippy::nursery -W clippy::cargo
+    # All features, split by target class so feature-gated benchmark/example
+    # code stays covered without rebuilding every target in one oversized graph.
+    cargo clippy --workspace --lib --tests --all-features -- -D warnings -W clippy::pedantic -W clippy::nursery -W clippy::cargo
+    cargo clippy --workspace --benches --examples --all-features -- -D warnings -W clippy::pedantic -W clippy::nursery -W clippy::cargo
 
 # Coverage analysis for local development (HTML output)
 coverage: _ensure-cargo-llvm-cov
@@ -223,17 +235,17 @@ coverage-ci: _ensure-cargo-llvm-cov
     mkdir -p coverage
     cargo llvm-cov {{ _coverage_base_args }} --cobertura --output-path coverage/cobertura.xml -- --skip prop_
 
-debug-large-scale-2d n="36000" repair_every="1":
-    DELAUNAY_BULK_PROGRESS_EVERY=2000 DELAUNAY_LARGE_DEBUG_MAX_RUNTIME_SECS=1800 DELAUNAY_LARGE_DEBUG_N_2D={{ n }} DELAUNAY_LARGE_DEBUG_REPAIR_EVERY={{ repair_every }} cargo test --release --test large_scale_debug debug_large_scale_2d -- --ignored --exact --nocapture
+debug-large-scale-2d n="36000" repair_every="1": _ensure-nextest
+    DELAUNAY_BULK_PROGRESS_EVERY=2000 DELAUNAY_LARGE_DEBUG_MAX_RUNTIME_SECS=1800 DELAUNAY_LARGE_DEBUG_N_2D={{ n }} DELAUNAY_LARGE_DEBUG_REPAIR_EVERY={{ repair_every }} cargo nextest run --release --profile ci --test large_scale_debug debug_large_scale_2d -- --ignored --exact --nocapture
 
-debug-large-scale-3d n="7500" repair_every="1":
-    DELAUNAY_BULK_PROGRESS_EVERY=500 DELAUNAY_LARGE_DEBUG_MAX_RUNTIME_SECS=1800 DELAUNAY_LARGE_DEBUG_N_3D={{ n }} DELAUNAY_LARGE_DEBUG_REPAIR_EVERY={{ repair_every }} cargo test --release --test large_scale_debug debug_large_scale_3d -- --ignored --exact --nocapture
+debug-large-scale-3d n="7500" repair_every="1": _ensure-nextest
+    DELAUNAY_BULK_PROGRESS_EVERY=500 DELAUNAY_LARGE_DEBUG_MAX_RUNTIME_SECS=1800 DELAUNAY_LARGE_DEBUG_N_3D={{ n }} DELAUNAY_LARGE_DEBUG_REPAIR_EVERY={{ repair_every }} cargo nextest run --release --profile ci --test large_scale_debug debug_large_scale_3d -- --ignored --exact --nocapture
 
-debug-large-scale-4d n="900" repair_every="1":
-    DELAUNAY_BULK_PROGRESS_EVERY=100 DELAUNAY_LARGE_DEBUG_MAX_RUNTIME_SECS=1800 DELAUNAY_LARGE_DEBUG_N_4D={{ n }} DELAUNAY_LARGE_DEBUG_REPAIR_EVERY={{ repair_every }} cargo test --release --test large_scale_debug debug_large_scale_4d -- --ignored --exact --nocapture
+debug-large-scale-4d n="900" repair_every="1": _ensure-nextest
+    DELAUNAY_BULK_PROGRESS_EVERY=100 DELAUNAY_LARGE_DEBUG_MAX_RUNTIME_SECS=1800 DELAUNAY_LARGE_DEBUG_N_4D={{ n }} DELAUNAY_LARGE_DEBUG_REPAIR_EVERY={{ repair_every }} cargo nextest run --release --profile ci --test large_scale_debug debug_large_scale_4d -- --ignored --exact --nocapture
 
-debug-large-scale-5d n="140" repair_every="1":
-    DELAUNAY_BULK_PROGRESS_EVERY=20 DELAUNAY_LARGE_DEBUG_MAX_RUNTIME_SECS=1800 DELAUNAY_LARGE_DEBUG_N_5D={{ n }} DELAUNAY_LARGE_DEBUG_REPAIR_EVERY={{ repair_every }} cargo test --release --test large_scale_debug debug_large_scale_5d -- --ignored --exact --nocapture
+debug-large-scale-5d n="140" repair_every="1": _ensure-nextest
+    DELAUNAY_BULK_PROGRESS_EVERY=20 DELAUNAY_LARGE_DEBUG_MAX_RUNTIME_SECS=1800 DELAUNAY_LARGE_DEBUG_N_5D={{ n }} DELAUNAY_LARGE_DEBUG_REPAIR_EVERY={{ repair_every }} cargo nextest run --release --profile ci --test large_scale_debug debug_large_scale_5d -- --ignored --exact --nocapture
 
 # Default recipe shows available commands
 default:
@@ -414,7 +426,7 @@ perf-help:
     @echo "  just profile 1.95 v0.7.5   # v0.7.5 code on Rust 1.95"
 
 # Quick pre-push 2D-5D large-scale wall-clock smoke guard.
-perf-large-scale-smoke max_secs="60":
+perf-large-scale-smoke max_secs="60": _ensure-nextest
     #!/usr/bin/env bash
     set -euo pipefail
 
@@ -441,7 +453,7 @@ perf-large-scale-smoke max_secs="60":
             DELAUNAY_LARGE_DEBUG_MAX_RUNTIME_SECS="$max_secs" \
             "$n_env=$n_points" \
             DELAUNAY_LARGE_DEBUG_REPAIR_EVERY=1 \
-            cargo test --release --test large_scale_debug "$test_name" -- --ignored --exact --nocapture; then
+            cargo nextest run --release --profile ci --test large_scale_debug "$test_name" -- --ignored --exact --nocapture; then
             echo "✅ ${dimension} completed within the ${max_secs}s test-runtime cap"
         else
             local code=$?
@@ -770,6 +782,13 @@ setup-tools:
         echo "  ✓ llvm-tools-preview"
     fi
 
+    if ! have cargo-nextest; then
+        echo "  ⏳ Installing cargo-nextest {{ nextest_version }} (cargo)..."
+        cargo install --locked cargo-nextest --version {{ nextest_version }}
+    else
+        echo "  ✓ cargo-nextest"
+    fi
+
     if ! have cargo-llvm-cov; then
         echo "  ⏳ Installing cargo-llvm-cov {{ cargo_llvm_cov_version }} (cargo)..."
         cargo install --locked cargo-llvm-cov --version {{ cargo_llvm_cov_version }}
@@ -782,7 +801,7 @@ setup-tools:
     missing=0
 
     cmds=(uv jq taplo dprint rumdl yamllint shfmt shellcheck actionlint git-cliff typos)
-    cmds+=(cargo-llvm-cov)
+    cmds+=(cargo-nextest cargo-llvm-cov)
 
     for cmd in "${cmds[@]}"; do
         if have "$cmd"; then
@@ -900,17 +919,17 @@ test: bench-test-compile test-all
 test-all: test-unit test-integration test-python
     @echo "✅ All tests passed!"
 
-test-allocation:
-    cargo test --test allocation_api --features count-allocations -- --nocapture
+test-allocation: _ensure-nextest
+    cargo nextest run --profile ci --test allocation_api --features count-allocations -- --nocapture
 
-test-diagnostics:
-    cargo test --test circumsphere_debug_tools --features diagnostics -- --nocapture
+test-diagnostics: _ensure-nextest
+    cargo nextest run --profile ci --test circumsphere_debug_tools --features diagnostics -- --nocapture
 
 # test-integration: runs all integration tests (includes proptests) in release mode.
 # Release mode is required because exact-predicate arithmetic in debug mode makes
 # 3D+ proptests exceed CI timeout limits (>60s debug vs <1s release).
-test-integration:
-    cargo test --tests --release --verbose
+test-integration: _ensure-nextest
+    cargo nextest run --release --profile ci --tests
 
 # test-integration-fast: runs integration tests but skips proptests (tests prefixed with `prop_`)
 #
@@ -918,26 +937,29 @@ test-integration:
 # To run the full (slow) property suite, use: just test-integration
 #
 # Note: `--skip prop_` is a substring filter applied by the Rust test harness.
-test-integration-fast:
-    cargo test --tests --release --verbose -- --skip prop_
+test-integration-fast: _ensure-nextest
+    cargo nextest run --release --profile ci --tests -- --skip prop_
 
 test-python: _ensure-uv
     uv run pytest
 
-test-release:
-    cargo test --release
+test-release: _ensure-nextest
+    cargo nextest run --release --profile ci
+    cargo test --doc --release
 
 # Run tests including slow/stress tests (100+ vertices, multiple dimensions)
 # These are gated behind the 'slow-tests' feature to keep CI fast
-test-slow:
-    cargo test --features slow-tests
+test-slow: _ensure-nextest
+    cargo nextest run --profile ci --features slow-tests
+    cargo test --doc --features slow-tests
 
-test-slow-release:
-    cargo test --release --features slow-tests
+test-slow-release: _ensure-nextest
+    cargo nextest run --release --profile ci --features slow-tests
+    cargo test --doc --release --features slow-tests
 
 # test-unit: runs lib and doc tests.
-test-unit:
-    cargo test --lib --verbose
+test-unit: _ensure-nextest
+    cargo nextest run --profile ci --lib
     cargo test --doc --verbose
 
 # Check TOML files parse cleanly.

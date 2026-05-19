@@ -24,6 +24,7 @@ env:
   ACTIONLINT_VERSION: "1.7.12"
   DPRINT_VERSION: "0.54.0"
   JUST_VERSION: "1.51.0"
+  NEXTEST_VERSION: "0.9.136"
   RUMDL_VERSION: "0.1.94"
   SHFMT_VERSION: "3.13.1"
   SHFMT_SHA256_DARWIN_AMD64: "6feedafc72915794163114f512348e2437d080d0047ef8b8fa2ec63b575f12af"
@@ -67,6 +68,16 @@ jobs:
         uses: taiki-e/install-action@b550161ef8a7bc4f2a671c0b03a18ac9ccedea1e # v2.79.1
         with:
           tool: just@${{ env.JUST_VERSION }}
+
+      - name: Install cargo-nextest
+        if: matrix.os != 'windows-latest'
+        uses: taiki-e/install-action@b550161ef8a7bc4f2a671c0b03a18ac9ccedea1e # v2.79.1
+        with:
+          tool: nextest@${{ env.NEXTEST_VERSION }}
+
+      - name: Verify cargo-nextest
+        if: matrix.os != 'windows-latest'
+        run: cargo nextest --version
 
       - name: Install uv (for Python scripts and pytest)
         if: matrix.os != 'windows-latest'
