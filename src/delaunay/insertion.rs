@@ -3,6 +3,16 @@
 //! This module owns post-construction mutation APIs: inserting vertices, removing
 //! vertices, maintaining insertion caches, and running policy-controlled local
 //! Delaunay repair after those mutations.
+//!
+//! The insertion workflow follows the Bowyer-Watson cavity model \[2]\[3]:
+//! point location and cavity identification depend on exact orientation and
+//! in-sphere predicates \[1], then the TDS fills the cavity and locally rewires
+//! neighbors. Flip-based repair uses regular-triangulation flip theory \[4].
+//! Robust fallback rebuilds and fan retriangulation are bounded recovery paths:
+//! they still validate with exact predicates where they identify cavities or
+//! test in-sphere/Delaunay violations, but their local repair ordering is
+//! heuristic and must be followed by topology and Delaunay validation \[5].
+//! See `REFERENCES.md` for the numbered bibliography.
 
 #![forbid(unsafe_code)]
 
@@ -828,9 +838,12 @@ mod tests {
                 source.as_ref(),
                 DelaunayRepairError::NonConvergent { max_flips: 0, .. }
             ) => {}
-            InvariantError::Tds(TdsError::FacetSharingViolation { .. }) => {}
+            InvariantError::Triangulation(
+                TriangulationValidationError::OrientationPromotionNonConvergence { .. },
+            )
+            | InvariantError::Tds(TdsError::FacetSharingViolation { .. }) => {}
             other => panic!(
-                "expected vertex-removal RepairOperationFailed from forced repair path, got {other:?}"
+                "expected vertex-removal rollback error from forced repair path, got {other:?}"
             ),
         }
 

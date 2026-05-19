@@ -458,6 +458,8 @@ pub enum ExplicitInsertionErrorKind {
     TopologyValidation,
     /// Triangulation-layer topology validation failed.
     TopologyValidationFailed,
+    /// Local repair would exceed its simplex-removal budget.
+    MaxSimplicesRemovedExceeded,
 }
 
 /// Compact summary of an [`InsertionError`] used by explicit construction.
@@ -520,6 +522,9 @@ impl From<InsertionError> for ExplicitInsertionError {
             InsertionError::TopologyValidation(_) => ExplicitInsertionErrorKind::TopologyValidation,
             InsertionError::TopologyValidationFailed { .. } => {
                 ExplicitInsertionErrorKind::TopologyValidationFailed
+            }
+            InsertionError::MaxSimplicesRemovedExceeded { .. } => {
+                ExplicitInsertionErrorKind::MaxSimplicesRemovedExceeded
             }
         };
         let source_kind = match &source {

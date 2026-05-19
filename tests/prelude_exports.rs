@@ -51,7 +51,7 @@ use delaunay::prelude::ordering::{
     HilbertError, hilbert_index, hilbert_indices_prequantized, hilbert_quantize,
     hilbert_sort_by_stable, hilbert_sort_by_unstable, hilbert_sorted_indices,
 };
-use delaunay::prelude::query::ConvexHull;
+use delaunay::prelude::query::{ConvexHull, QueryError};
 use delaunay::prelude::repair::{
     DelaunayCheckPolicy, DelaunayRepairDiagnostics, DelaunayRepairError, DelaunayRepairOperation,
     DelaunayRepairOutcome, DelaunayRepairStats, DelaunayRepairVerificationContext,
@@ -64,8 +64,9 @@ use delaunay::prelude::tds::Tds;
 use delaunay::prelude::tds::{InvariantErrorSummaryDetail, NeighborSlot, TdsErrorKind};
 use delaunay::prelude::triangulation::{
     FacetIssuesMap as TriangulationFacetIssuesMap, FastKernel as TriangulationFastKernel,
-    InsertionError as TriangulationInsertionError, TdsError as TriangulationTdsError,
-    TopologyGuarantee as TriangulationTopologyGuarantee, Triangulation as GenericTriangulation,
+    InsertionError as TriangulationInsertionError, QueryError as TriangulationQueryError,
+    TdsError as TriangulationTdsError, TopologyGuarantee as TriangulationTopologyGuarantee,
+    Triangulation as GenericTriangulation,
     TriangulationConstructionError as GenericTriangulationConstructionError,
     ValidationPolicy as TriangulationValidationPolicy, vertex as triangulation_vertex,
 };
@@ -98,6 +99,8 @@ enum PreludeExportTestError {
     Delaunayize(#[from] DelaunayizeError),
     #[error(transparent)]
     Insertion(#[from] InsertionError),
+    #[error(transparent)]
+    Query(#[from] QueryError),
 }
 
 /// Proves the focused flips prelude exports the trait bound expected by benchmarks.
@@ -182,7 +185,7 @@ fn preludes_cover_bench_apis() -> Result<(), PreludeExportTestError> {
     let dt = DelaunayTriangulation::new_with_options(&vertices, options)?;
 
     assert_eq!(dt.topology_guarantee(), TopologyGuarantee::PLManifold);
-    assert!(dt.boundary_facets().count() > 0);
+    assert!(dt.boundary_facets()?.count() > 0);
     assert!(ConvexHull::from_triangulation(dt.as_triangulation()).is_ok());
     assert!(dt.validate().is_ok());
     assert_bistellar_flips(&dt);
@@ -337,11 +340,13 @@ fn triangulation_prelude_covers_generic_layer() -> Result<(), GenericTriangulati
 
     let empty_issues = TriangulationFacetIssuesMap::default();
     let removed = tri
-        .repair_local_facet_issues(&empty_issues)
+        .repair_local_facet_issues(&empty_issues, 0)
         .expect("empty issue set should not fail generic local repair");
     assert_eq!(removed, 0);
+    assert_eq!(tri.boundary_facets().unwrap().count(), 0);
 
     assert_send_sync_unpin::<TriangulationInsertionError>();
+    assert_send_sync_unpin::<TriangulationQueryError>();
     assert_send_sync_unpin::<TriangulationTdsError>();
     Ok(())
 }

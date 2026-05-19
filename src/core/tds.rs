@@ -1230,6 +1230,8 @@ pub enum TriangulationValidationErrorKind {
     IsolatedVertex,
     /// The simplex-neighbor graph was disconnected.
     Disconnected,
+    /// Positive-orientation promotion did not converge.
+    OrientationPromotionNonConvergence,
 }
 
 impl From<&TriangulationValidationError> for TriangulationValidationErrorKind {
@@ -1250,6 +1252,9 @@ impl From<&TriangulationValidationError> for TriangulationValidationErrorKind {
             }
             TriangulationValidationError::IsolatedVertex { .. } => Self::IsolatedVertex,
             TriangulationValidationError::Disconnected { .. } => Self::Disconnected,
+            TriangulationValidationError::OrientationPromotionNonConvergence { .. } => {
+                Self::OrientationPromotionNonConvergence
+            }
         }
     }
 }
@@ -6899,6 +6904,7 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::DelaunayTriangulation;
     use crate::builder::DelaunayTriangulationBuilder;
     use crate::core::algorithms::flips::DelaunayRepairError;
     use crate::core::algorithms::incremental_insertion::InsertionError;
@@ -6912,7 +6918,6 @@ mod tests {
     use crate::geometry::traits::coordinate::Coordinate;
     use crate::repair::DelaunayRepairOperation;
     use crate::topology::characteristics::euler::TopologyClassification;
-    use crate::triangulation::DelaunayTriangulation;
     use crate::validation::DelaunayTriangulationValidationError;
     use crate::vertex;
     use slotmap::KeyData;

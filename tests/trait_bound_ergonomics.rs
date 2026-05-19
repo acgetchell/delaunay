@@ -15,7 +15,7 @@ fn read_only_topology_apis_accept_non_datatype_payloads() {
 
     assert_eq!(tri.number_of_vertices(), 0);
     assert_eq!(tri.number_of_simplices(), 0);
-    assert_eq!(tri.boundary_facets().count(), 0);
+    assert_eq!(tri.boundary_facets().unwrap().count(), 0);
 
     let index = tri.build_adjacency_index().unwrap();
     assert!(index.vertex_to_simplices.is_empty());

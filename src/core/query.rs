@@ -12,7 +12,7 @@ use crate::core::collections::{
 use crate::core::edge::EdgeKey;
 use crate::core::facet::{AllFacetsIter, BoundaryFacetsIter};
 use crate::core::simplex::Simplex;
-use crate::core::tds::{SimplexKey, VertexKey};
+use crate::core::tds::{SimplexKey, TdsError, VertexKey};
 use crate::core::triangulation::Triangulation;
 use crate::core::vertex::Vertex;
 use crate::geometry::kernel::Kernel;
@@ -21,6 +21,40 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 #[cfg(debug_assertions)]
 static VERTEX_TO_SIMPLICES_SPILL_EVENTS: AtomicU64 = AtomicU64::new(0);
+
+/// Errors returned by read-only triangulation queries.
+///
+/// These errors indicate that a supposedly read-only query could not derive
+/// its auxiliary topology view because the underlying triangulation state is
+/// inconsistent.
+///
+/// # Examples
+///
+/// ```rust
+/// use delaunay::prelude::*;
+///
+/// let vertices = vec![
+///     vertex!([0.0, 0.0, 0.0]),
+///     vertex!([1.0, 0.0, 0.0]),
+///     vertex!([0.0, 1.0, 0.0]),
+///     vertex!([0.0, 0.0, 1.0]),
+/// ];
+/// let dt = DelaunayTriangulation::new(&vertices).unwrap();
+///
+/// let boundary_count = dt.as_triangulation().boundary_facets().unwrap().count();
+/// assert_eq!(boundary_count, 4);
+/// ```
+#[derive(Debug, Clone, thiserror::Error, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum QueryError {
+    /// The triangulation could not build a facet map for a read-only query.
+    #[error("Triangulation data structure is corrupted: {source}")]
+    TriangulationCorrupted {
+        /// Typed TDS validation or bookkeeping error that prevented the query.
+        #[from]
+        source: TdsError,
+    },
+}
 
 impl<K, U, V, const D: usize> Triangulation<K, U, V, D>
 where
@@ -190,12 +224,6 @@ where
     ///
     /// An iterator yielding `FacetView` objects for boundary facets only.
     ///
-    /// # Panics
-    ///
-    /// Panics if the triangulation data structure is corrupted (simplices have invalid
-    /// neighbor relationships or facet information). This indicates a bug in the
-    /// library and should never happen with a properly constructed triangulation.
-    ///
     /// # Examples
     ///
     /// ```rust
@@ -209,17 +237,23 @@ where
     /// ];
     /// let dt = DelaunayTriangulation::new(&vertices).unwrap();
     ///
-    /// let boundary_count = dt.as_triangulation().boundary_facets().count();
+    /// let boundary_count = dt.as_triangulation().boundary_facets().unwrap().count();
     /// assert_eq!(boundary_count, 4); // All facets are on boundary
     /// ```
-    pub fn boundary_facets(&self) -> BoundaryFacetsIter<'_, K::Scalar, U, V, D> {
-        // build_facet_to_simplices_map only fails if simplices have invalid structure,
-        // which should never happen in a valid triangulation
+    ///
+    /// # Errors
+    ///
+    /// Returns [`QueryError::TriangulationCorrupted`] if facet-map construction
+    /// detects invalid simplex or facet bookkeeping. The variant preserves the
+    /// underlying [`TdsError`] so callers can inspect the structural failure.
+    pub fn boundary_facets(
+        &self,
+    ) -> Result<BoundaryFacetsIter<'_, K::Scalar, U, V, D>, QueryError> {
         let facet_map = self
             .tds
             .build_facet_to_simplices_map()
-            .expect("Failed to build facet map - triangulation structure is corrupted");
-        BoundaryFacetsIter::new(&self.tds, facet_map)
+            .map_err(|source| QueryError::TriangulationCorrupted { source })?;
+        Ok(BoundaryFacetsIter::new(&self.tds, facet_map))
     }
 
     #[inline]
@@ -659,7 +693,7 @@ mod tests {
                     assert_eq!(empty.simplices().count(), 0);
                     assert_eq!(empty.vertices().count(), 0);
                     assert_eq!(empty.facets().count(), 0);
-                    assert_eq!(empty.boundary_facets().count(), 0);
+                    assert_eq!(empty.boundary_facets().unwrap().count(), 0);
 
                     let vertices = vec![
                         $(vertex!($simplex_coords)),+
@@ -680,7 +714,7 @@ mod tests {
                     assert_eq!(tri.simplices().count(), 1);
                     assert_eq!(tri.vertices().count(), expected_vertex_count);
                     assert_eq!(tri.facets().count(), expected_vertex_count);
-                    assert_eq!(tri.boundary_facets().count(), expected_vertex_count);
+                    assert_eq!(tri.boundary_facets().unwrap().count(), expected_vertex_count);
                 }
             }
         };
@@ -717,6 +751,36 @@ mod tests {
             [0.0, 0.0, 0.0, 0.0, 1.0]
         ]
     );
+
+    #[test]
+    fn test_boundary_facets_reports_corrupted_facet_map() {
+        let vertices = vec![
+            vertex!([0.0, 0.0]),
+            vertex!([1.0, 0.0]),
+            vertex!([0.0, 1.0]),
+        ];
+        let mut tds =
+            Triangulation::<FastKernel<f64>, (), (), 2>::build_initial_simplex(&vertices).unwrap();
+        let (simplex_key, _) = tds.simplices().next().unwrap();
+        let first_vertex = tds.simplex(simplex_key).unwrap().vertices()[0];
+
+        {
+            let simplex = tds.simplex_mut(simplex_key).unwrap();
+            while simplex.number_of_vertices() <= usize::from(u8::MAX) + 1 {
+                simplex.push_vertex_key(first_vertex);
+            }
+        }
+
+        let tri = Triangulation::<FastKernel<f64>, (), (), 2>::new_with_tds(FastKernel::new(), tds);
+
+        match tri.boundary_facets() {
+            Ok(_) => panic!("corrupted facet map should return a query error"),
+            Err(QueryError::TriangulationCorrupted {
+                source: TdsError::IndexOutOfBounds { .. },
+            }) => {}
+            Err(err) => panic!("expected index-out-of-bounds query error, got {err:?}"),
+        }
+    }
 
     #[test]
     fn topology_edges_triangle_2d() {
@@ -1095,7 +1159,7 @@ mod tests {
         assert!(edge_count >= 6);
 
         assert!(tri.facets().next().is_some());
-        assert!(tri.boundary_facets().next().is_some());
+        assert!(tri.boundary_facets().unwrap().next().is_some());
 
         let (simplex_key, _) = tri.simplices().next().unwrap();
         let simplex_vertices = tri.simplex_vertices(simplex_key).unwrap();

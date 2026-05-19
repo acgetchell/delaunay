@@ -93,7 +93,7 @@ The useful updates ported in this pass are:
 - CI and local setup pins should track the same supported tool versions when
   practical. The current workflow pins align coverage and test tooling on
   `cargo-llvm-cov` 0.8.7 and `cargo-nextest` 0.9.136, while all uv-backed
-  workflows use uv 0.11.14 to match the local Python tooling bootstrap.
+  workflows use uv 0.11.15 to match the local Python tooling bootstrap.
 
 ## Intentional Differences
 

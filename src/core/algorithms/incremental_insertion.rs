@@ -599,6 +599,15 @@ impl From<TriangulationConstructionError> for InitialSimplexConstructionError {
                     message: source.to_string(),
                 }
             }
+            TriangulationConstructionError::LocalRepairBudgetExceeded {
+                max_simplices_removed,
+                attempted,
+            } => Self::UnexpectedInsertionStage {
+                message: format!(
+                    "local repair budget exceeded during initial simplex construction: \
+                     attempted {attempted}, max {max_simplices_removed}"
+                ),
+            },
             TriangulationConstructionError::FinalTopologyValidation { source, .. } => {
                 Self::UnexpectedInsertionStage {
                     message: source.to_string(),
@@ -727,6 +736,8 @@ pub enum InsertionErrorKind {
     TopologyValidation,
     /// Triangulation-layer topology validation failed.
     TopologyValidationFailed,
+    /// Local repair would exceed its simplex-removal budget.
+    MaxSimplicesRemovedExceeded,
 }
 
 /// Nested discriminant preserved by an [`InsertionErrorSummary`].
@@ -867,6 +878,9 @@ impl From<InsertionError> for InsertionErrorSummary {
             InsertionError::TopologyValidation(_) => InsertionErrorKind::TopologyValidation,
             InsertionError::TopologyValidationFailed { .. } => {
                 InsertionErrorKind::TopologyValidationFailed
+            }
+            InsertionError::MaxSimplicesRemovedExceeded { .. } => {
+                InsertionErrorKind::MaxSimplicesRemovedExceeded
             }
         };
         let source_kind = match &source {
@@ -1412,6 +1426,22 @@ pub enum InsertionError {
         #[source]
         source: TriangulationValidationError,
     },
+
+    /// Local facet repair would remove more simplices than the caller allowed.
+    ///
+    /// This is emitted by
+    /// [`Triangulation::repair_local_facet_issues`](crate::Triangulation::repair_local_facet_issues)
+    /// before neighbor repair or validation runs, so callers can retry with a
+    /// larger budget without committing a partial topology edit.
+    #[error(
+        "Local facet repair removal budget exceeded: would remove {attempted} simplices, maximum is {max_simplices_removed}"
+    )]
+    MaxSimplicesRemovedExceeded {
+        /// Maximum simplices the caller allowed this repair to remove.
+        max_simplices_removed: usize,
+        /// Number of simplices selected for removal.
+        attempted: usize,
+    },
 }
 
 impl From<CavityFillingError> for InsertionError {
@@ -1556,7 +1586,8 @@ impl InsertionError {
             | Self::DelaunayValidationFailed { .. }
             | Self::DelaunayRepairFailed { .. }
             | Self::DuplicateCoordinates { .. }
-            | Self::DuplicateUuid { .. } => false,
+            | Self::DuplicateUuid { .. }
+            | Self::MaxSimplicesRemovedExceeded { .. } => false,
         }
     }
 
@@ -1643,6 +1674,7 @@ impl InsertionError {
             | TriangulationValidationError::BoundaryRidgeMultiplicity { .. }
             | TriangulationValidationError::RidgeLinkNotManifold { .. }
             | TriangulationValidationError::VertexLinkNotManifold { .. }
+            | TriangulationValidationError::OrientationPromotionNonConvergence { .. }
             | TriangulationValidationError::IsolatedVertex { .. } => true,
             // All other variants (structural invariant violations, future additions)
             // are conservatively treated as non-retryable.

@@ -344,6 +344,17 @@ pub enum DelaunayConstructionFailure {
         message: String,
     },
 
+    /// Local facet repair would remove more simplices than the active budget allowed.
+    #[error(
+        "local facet repair removal budget exceeded during construction: attempted {attempted}, max {max_simplices_removed}"
+    )]
+    LocalRepairBudgetExceeded {
+        /// Maximum simplices the repair budget allowed for removal.
+        max_simplices_removed: usize,
+        /// Number of simplices selected for removal.
+        attempted: usize,
+    },
+
     /// Final topology validation failed after construction.
     #[error("final topology validation failed after construction: {message}: {source}")]
     FinalTopologyValidation {
@@ -409,6 +420,13 @@ impl From<TriangulationConstructionError> for DelaunayConstructionFailure {
                     message: format!("{message}: {source}"),
                 }
             }
+            TriangulationConstructionError::LocalRepairBudgetExceeded {
+                max_simplices_removed,
+                attempted,
+            } => Self::LocalRepairBudgetExceeded {
+                max_simplices_removed,
+                attempted,
+            },
             TriangulationConstructionError::FinalTopologyValidation { message, source } => {
                 Self::FinalTopologyValidation { message, source }
             }
@@ -4252,6 +4270,7 @@ where
                 } | DelaunayConstructionFailure::InternalInconsistency { .. }
                     | DelaunayConstructionFailure::DelaunayRepair { .. }
                     | DelaunayConstructionFailure::InsertionTopologyValidation { .. }
+                    | DelaunayConstructionFailure::LocalRepairBudgetExceeded { .. }
                     | DelaunayConstructionFailure::FinalTopologyValidation { .. },
             )
         )
@@ -4349,6 +4368,13 @@ where
                     ),
                 }
             }
+            InsertionError::MaxSimplicesRemovedExceeded {
+                max_simplices_removed,
+                attempted,
+            } => TriangulationConstructionError::LocalRepairBudgetExceeded {
+                max_simplices_removed,
+                attempted,
+            },
             InsertionError::DelaunayRepairFailed { source, context } => {
                 let message = format!(
                     "Failed to canonicalize orientation after post-construction repair: \
@@ -4431,6 +4457,13 @@ where
             InsertionError::TopologyValidationFailed { message, source } => {
                 TriangulationConstructionError::InsertionTopologyValidation { message, source }
             }
+            InsertionError::MaxSimplicesRemovedExceeded {
+                max_simplices_removed,
+                attempted,
+            } => TriangulationConstructionError::LocalRepairBudgetExceeded {
+                max_simplices_removed,
+                attempted,
+            },
         }
     }
 
@@ -6510,6 +6543,22 @@ mod tests {
     }
 
     #[test]
+    fn test_map_orientation_canonicalization_error_preserves_repair_budget() {
+        let error = InsertionError::MaxSimplicesRemovedExceeded {
+            max_simplices_removed: 2,
+            attempted: 3,
+        };
+        let mapped = TestDelaunay::<3>::map_orientation_canonicalization_error(error);
+        assert!(matches!(
+            mapped,
+            TriangulationConstructionError::LocalRepairBudgetExceeded {
+                max_simplices_removed: 2,
+                attempted: 3,
+            }
+        ));
+    }
+
+    #[test]
     fn test_map_orientation_canonicalization_error_duplicate_uuid_is_internal() {
         let error = InsertionError::DuplicateUuid {
             entity: EntityKind::Simplex,
@@ -6753,6 +6802,33 @@ mod tests {
     }
 
     #[test]
+    fn test_map_insertion_error_preserves_repair_budget() {
+        let error = InsertionError::MaxSimplicesRemovedExceeded {
+            max_simplices_removed: 2,
+            attempted: 3,
+        };
+        let mapped = TestDelaunay::<3>::map_insertion_error(error);
+        assert!(matches!(
+            mapped,
+            TriangulationConstructionError::LocalRepairBudgetExceeded {
+                max_simplices_removed: 2,
+                attempted: 3,
+            }
+        ));
+
+        let public_error: DelaunayTriangulationConstructionError = mapped.into();
+        assert!(matches!(
+            public_error,
+            DelaunayTriangulationConstructionError::Triangulation(
+                DelaunayConstructionFailure::LocalRepairBudgetExceeded {
+                    max_simplices_removed: 2,
+                    attempted: 3,
+                }
+            )
+        ));
+    }
+
+    #[test]
     fn test_map_orientation_canonicalization_error_orientation_violation_is_internal_inconsistency()
     {
         let error = InsertionError::TopologyValidation(TdsError::OrientationViolation {
@@ -6817,6 +6893,20 @@ mod tests {
         assert!(
             TestDelaunay::<3>::is_non_retryable_construction_error(&err),
             "InternalInconsistency should be non-retryable"
+        );
+    }
+
+    #[test]
+    fn test_is_non_retryable_construction_error_repair_budget() {
+        let err: DelaunayTriangulationConstructionError =
+            TriangulationConstructionError::LocalRepairBudgetExceeded {
+                max_simplices_removed: 2,
+                attempted: 3,
+            }
+            .into();
+        assert!(
+            TestDelaunay::<3>::is_non_retryable_construction_error(&err),
+            "Local repair budget exhaustion should be non-retryable"
         );
     }
 

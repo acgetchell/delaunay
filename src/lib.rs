@@ -1213,6 +1213,7 @@ pub mod algorithms {
 /// ```
 pub mod query {
     pub use crate::assert_jaccard_gte;
+    pub use crate::core::query::QueryError;
     pub use crate::core::traits::boundary_analysis::BoundaryAnalysis;
     pub use crate::core::traits::data_type::{
         DataCopy, DataDebug, DataDeserialize, DataIdentity, DataSerde, DataSerialize, DataType,
@@ -1244,7 +1245,7 @@ pub mod prelude {
     // Re-export the public low-level facades.
     pub use crate::query::{
         BoundaryAnalysis, DataCopy, DataDebug, DataDeserialize, DataIdentity, DataSerde,
-        DataSerialize, DataType,
+        DataSerialize, DataType, QueryError,
     };
     pub use crate::tds::*;
     pub use crate::{
@@ -1414,6 +1415,7 @@ pub mod prelude {
         pub use crate::query::{
             AdjacencyIndex, AdjacencyIndexBuildError, BoundaryAnalysis, DataCopy, DataDebug,
             DataDeserialize, DataIdentity, DataSerde, DataSerialize, DataType, EdgeKey, FacetView,
+            QueryError,
         };
         pub use crate::tds::{
             FacetHandle, InvariantError, InvariantErrorSummary, InvariantErrorSummaryDetail,
@@ -1739,7 +1741,7 @@ pub mod prelude {
         pub use crate::geometry::traits::coordinate::Coordinate;
         pub use crate::query::{
             BoundaryAnalysis, DataCopy, DataDebug, DataDeserialize, DataIdentity, DataSerde,
-            DataSerialize, DataType, FacetView, Simplex, Vertex,
+            DataSerialize, DataType, FacetView, QueryError, Simplex, Vertex,
         };
 
         // Read-only predicates (useful in benchmarks / lightweight geometry checks)

@@ -187,6 +187,9 @@ impl ValidationCadence {
                 if let Some(every) = NonZeroUsize::new(every) {
                     Self::EveryN(every)
                 } else {
+                    // Logically unreachable because `Some(0)` is matched above.
+                    // Keep this branch so the function remains const without
+                    // introducing unsafe code for `NonZeroUsize::new_unchecked`.
                     Self::Never
                 }
             }

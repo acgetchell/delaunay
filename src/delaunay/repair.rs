@@ -37,6 +37,7 @@ use std::{
 // Heuristic rebuild attempts must be consistent across build profiles to avoid
 // release-only construction failures (see #306).
 const HEURISTIC_REBUILD_ATTEMPTS: usize = 6;
+const MAX_HEURISTIC_REBUILD_DEPTH: usize = 1;
 
 thread_local! {
     static HEURISTIC_REBUILD_DEPTH: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
@@ -49,13 +50,22 @@ struct HeuristicRebuildRecursionGuard {
 impl HeuristicRebuildRecursionGuard {
     /// Tracks nested heuristic rebuilds so fallback construction cannot recurse
     /// indefinitely through repair hooks.
-    fn enter() -> Self {
+    fn enter() -> Result<Self, DelaunayRepairError> {
         let prior_depth = HEURISTIC_REBUILD_DEPTH.with(|depth| {
             let prior = depth.get();
-            depth.set(prior.saturating_add(1));
+            if prior < MAX_HEURISTIC_REBUILD_DEPTH {
+                depth.set(prior.saturating_add(1));
+            }
             prior
         });
-        Self { prior_depth }
+        if prior_depth >= MAX_HEURISTIC_REBUILD_DEPTH {
+            return Err(DelaunayRepairError::HeuristicRebuildFailed {
+                message: format!(
+                    "heuristic rebuild recursion depth exceeded {MAX_HEURISTIC_REBUILD_DEPTH}"
+                ),
+            });
+        }
+        Ok(Self { prior_depth })
     }
 }
 
@@ -673,7 +683,7 @@ where
             };
 
             let rebuild_attempt = (|| {
-                let _guard = HeuristicRebuildRecursionGuard::enter();
+                let _guard = HeuristicRebuildRecursionGuard::enter()?;
 
                 // Shuffle vertices for this attempt.
                 let mut vertices = base_vertices.clone();
@@ -692,10 +702,8 @@ where
                 );
                 candidate.set_global_topology(global_topology);
 
-                // During rebuild, force local repair after every insertion. We'll restore the caller's
-                // policies after we have a repaired candidate.
-                let rebuild_repair_policy = candidate.insertion_state.delaunay_repair_policy;
-                let rebuild_check_policy = candidate.insertion_state.delaunay_check_policy;
+                // During rebuild, force local repair after every insertion. The caller's
+                // policies are copied onto the finished candidate below.
                 candidate.insertion_state.delaunay_repair_policy =
                     DelaunayRepairPolicy::EveryInsertion;
                 candidate.insertion_state.delaunay_check_policy = DelaunayCheckPolicy::EndOnly;
@@ -774,9 +782,6 @@ where
                 candidate.insertion_state.delaunay_repair_insertion_count =
                     self.insertion_state.delaunay_repair_insertion_count;
                 candidate.insertion_state.last_inserted_simplex = None;
-
-                // Restore prior rebuild-only policies (kept for completeness; currently overwritten above).
-                let _ = (rebuild_repair_policy, rebuild_check_policy);
 
                 let topology = candidate.tri.topology_guarantee();
                 candidate.invalidate_locate_hint_cache();

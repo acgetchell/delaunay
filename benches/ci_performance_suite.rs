@@ -1032,7 +1032,14 @@ fn bench_boundary_case<const D: usize>(
             count,
         ),
         |b| {
-            b.iter(|| black_box(dt.boundary_facets().count()));
+            b.iter(|| {
+                black_box(match dt.boundary_facets() {
+                    Ok(facets) => facets.count(),
+                    Err(error) => unreachable!(
+                        "validated benchmark triangulation should build boundary facets: {error}"
+                    ),
+                })
+            });
         },
     );
 }

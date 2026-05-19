@@ -351,7 +351,7 @@ impl AdjacencyIndex {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::triangulation::DelaunayTriangulation;
+    use crate::DelaunayTriangulation;
     use crate::vertex;
     use slotmap::SlotMap;
     use std::collections::HashSet;

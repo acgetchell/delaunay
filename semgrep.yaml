@@ -554,7 +554,9 @@ rules:
         - "/benches/**/*.rs"
         - "/src/project_rules/**/*.rs"
     patterns:
-      - pattern-regex: '^\s*use\s+delaunay::(core|builder|construction|delaunayize|diagnostics|flips|geometry|repair|topology|validation)::'
+      - pattern-either:
+          - pattern-regex: '^\s*use\s+delaunay::(builder|construction|core|delaunayize|diagnostics|flips)::'
+          - pattern-regex: '^\s*use\s+delaunay::(geometry|insertion|repair|topology|validation)::'
       - pattern-not-regex: '^\s*use\s+delaunay::prelude::'
 
   - id: delaunay.rust.prefer-prelude-imports-in-delaunay-doctests
@@ -575,7 +577,9 @@ rules:
         - "/src/**/*.rs"
         - "/tests/semgrep/src/project_rules/**/*.rs"
     patterns:
-      - pattern-regex: '^\s*//[/!]\s*(?:#\s*)?use\s+delaunay::(core|builder|construction|delaunayize|diagnostics|flips|geometry|repair|topology|validation)::'
+      - pattern-either:
+          - pattern-regex: '^\s*//[/!]\s*(?:#\s*)?use\s+delaunay::(builder|construction|core|delaunayize|diagnostics|flips)::'
+          - pattern-regex: '^\s*//[/!]\s*(?:#\s*)?use\s+delaunay::(geometry|insertion|repair|topology|validation)::'
       - pattern-not-regex: '^\s*//[/!]\s*(?:#\s*)?use\s+delaunay::prelude::'
 
   - id: delaunay.docs.check-before-fix-command-order

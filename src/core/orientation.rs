@@ -10,6 +10,7 @@ use crate::core::collections::{MAX_PRACTICAL_DIMENSION_SIZE, SimplexKeyBuffer, S
 use crate::core::simplex::Simplex;
 use crate::core::tds::{GeometricError, SimplexKey, TdsError, VertexKey};
 use crate::core::triangulation::Triangulation;
+use crate::core::validation::TriangulationValidationError;
 use crate::geometry::kernel::Kernel;
 use crate::geometry::point::Point;
 use crate::geometry::predicates::Orientation;
@@ -342,13 +343,13 @@ where
                 }
             }
             let sampled: Vec<SimplexKey> = sample_keys.into_iter().flatten().collect();
-            tracing::debug!(
-                residual_count,
-                sampled_keys = ?sampled,
-                "normalize_and_promote_positive_orientation: \
-                 {residual_count} simplices still appear negative after bounded promotion \
-                 passes (likely near-degenerate FP noise); accepting coherent orientation"
-            );
+            return Err(InsertionError::TopologyValidationFailed {
+                message: "Positive-orientation promotion failed to converge".to_string(),
+                source: TriangulationValidationError::OrientationPromotionNonConvergence {
+                    residual_count,
+                    sampled,
+                },
+            });
         }
         self.canonicalize_global_orientation_sign()?;
         Ok(())

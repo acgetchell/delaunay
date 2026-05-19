@@ -15,6 +15,7 @@ use delaunay::prelude::construction::{
     ExplicitTdsErrorKind, InsertionOrderStrategy, TopologyGuarantee, Vertex, VertexBuilder, vertex,
 };
 use delaunay::prelude::geometry::{Coordinate, Point, RobustKernel};
+use delaunay::prelude::insertion::InsertionErrorSourceKind;
 use delaunay::prelude::repair::DelaunayRepairError;
 use delaunay::prelude::tds::{InvariantErrorSummaryDetail, TriangulationValidationErrorKind};
 use delaunay::prelude::topology::spaces::{GlobalTopology, TopologyKind, ToroidalConstructionMode};
@@ -568,7 +569,23 @@ fn test_explicit_toroidal_torus_euler_mismatch_without_override() {
                 ),
             );
         }
-        other => panic!("expected explicit topology validation failure, got {other:?}"),
+        DelaunayTriangulationConstructionError::ExplicitConstruction(
+            ExplicitConstructionError::OrientationNormalization { source },
+        ) => {
+            assert_eq!(
+                source.kind,
+                ExplicitInsertionErrorKind::TopologyValidationFailed
+            );
+            assert_eq!(
+                source.source_kind,
+                Some(InsertionErrorSourceKind::Triangulation(
+                    TriangulationValidationErrorKind::OrientationPromotionNonConvergence,
+                )),
+            );
+        }
+        other => {
+            panic!("expected explicit topology or orientation-normalization failure, got {other:?}")
+        }
     }
 }
 
@@ -718,7 +735,7 @@ fn test_explicit_3d_two_tetrahedra() {
         vertex!([1.0, 0.0, 0.0]),
         vertex!([0.0, 1.0, 0.0]),
         vertex!([0.0, 0.0, 1.0]),
-        vertex!([1.0, 1.0, 1.0]),
+        vertex!([1.0, 1.0, -1.0]),
     ];
     // Two tetrahedra sharing face (0, 1, 2)
     let simplices = vec![vec![0, 1, 2, 3], vec![0, 1, 2, 4]];

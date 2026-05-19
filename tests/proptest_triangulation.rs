@@ -730,7 +730,7 @@ macro_rules! test_facet_topology_invariant {
 
                         // If there are any issues, repair them
                         if let Some(issues) = tri.detect_local_facet_issues(&simplex_keys)? {
-                            let _removed = tri.repair_local_facet_issues(&issues)?;
+                            let _removed = tri.repair_local_facet_issues(&issues, usize::MAX)?;
 
                             // After repair, re-check - should have no issues
                             let simplex_keys_after: Vec<_> = tri.simplices().map(|(k, _)| k).collect();

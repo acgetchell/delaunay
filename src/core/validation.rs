@@ -238,6 +238,21 @@ pub enum TriangulationValidationError {
         classification: TopologyClassification,
     },
 
+    /// Positive-orientation promotion did not converge within its bounded pass budget.
+    ///
+    /// This is reported at the triangulation layer because the TDS may still be
+    /// structurally coherent while failing the geometric simplex-orientation
+    /// invariant expected by triangulation validation.
+    #[error(
+        "Positive-orientation promotion did not converge: {residual_count} residual negative-orientation simplices, sampled keys {sampled:?}"
+    )]
+    OrientationPromotionNonConvergence {
+        /// Number of simplices still evaluated as negative after promotion.
+        residual_count: usize,
+        /// Sample of residual simplex keys for diagnostics.
+        sampled: Vec<SimplexKey>,
+    },
+
     /// Vertex is not incident to any simplex.
     ///
     /// An isolated vertex violates manifold invariants at the topology (Level 3) layer

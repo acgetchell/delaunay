@@ -42,7 +42,7 @@ concurrency:
 env:
   CARGO_TERM_COLOR: always
   RUST_BACKTRACE: 1
-  UV_VERSION: "0.11.14"
+  UV_VERSION: "0.11.15"
   BENCHMARK_TIMEOUT: 1800 # 30 min; pre-computed seeds + reduced 5D counts keep runtime well under this
   DELAUNAY_BENCH_DISCOVER_SEEDS_LIMIT: 256 # fallback only; ci_performance_suite uses pre-computed seeds
 

@@ -131,6 +131,17 @@ pub enum TriangulationConstructionError {
         source: TriangulationValidationError,
     },
 
+    /// Local facet repair would remove more simplices than the active budget allowed.
+    #[error(
+        "Local facet repair removal budget exceeded during construction: would remove {attempted} simplices, maximum is {max_simplices_removed}"
+    )]
+    LocalRepairBudgetExceeded {
+        /// Maximum simplices the repair budget allowed for removal.
+        max_simplices_removed: usize,
+        /// Number of simplices selected for removal.
+        attempted: usize,
+    },
+
     /// Final cumulative topology validation failed after construction.
     ///
     /// Mirrors [`InsertionTopologyValidation`](Self::InsertionTopologyValidation)
@@ -177,7 +188,8 @@ where
     /// with explicit boundary neighbor slots. The simplex is validated to
     /// ensure it is non-degenerate (vertices span full D-dimensional space).
     ///
-    /// **Design Note**: This method uses [`robust_orientation`] directly for
+    /// **Design Note**: This method uses [`robust_orientation`] directly \[1]
+    /// (Shewchuk robust predicates; see `REFERENCES.md`) for
     /// the non-degeneracy check, bypassing the kernel. This avoids `SoS`
     /// tie-breaking that would mask truly degenerate input and keeps the
     /// method independent of kernel state.

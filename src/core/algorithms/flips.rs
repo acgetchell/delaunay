@@ -3284,6 +3284,16 @@ pub enum FlipNeighborWiringError {
         #[source]
         source: TriangulationValidationError,
     },
+    /// Local repair would exceed its simplex-removal budget.
+    #[error(
+        "local repair removal budget reached flip neighbor wiring: attempted {attempted}, max {max_simplices_removed}"
+    )]
+    MaxSimplicesRemovedExceeded {
+        /// Maximum simplices allowed for removal.
+        max_simplices_removed: usize,
+        /// Number of simplices selected for removal.
+        attempted: usize,
+    },
 }
 
 impl From<InsertionError> for FlipNeighborWiringError {
@@ -3321,6 +3331,13 @@ impl From<InsertionError> for FlipNeighborWiringError {
             InsertionError::TopologyValidationFailed { message, source } => {
                 Self::TopologyValidationFailed { message, source }
             }
+            InsertionError::MaxSimplicesRemovedExceeded {
+                max_simplices_removed,
+                attempted,
+            } => Self::MaxSimplicesRemovedExceeded {
+                max_simplices_removed,
+                attempted,
+            },
         }
     }
 }
@@ -13502,6 +13519,19 @@ mod tests {
             }
             other => panic!("expected preserved Delaunay repair reason, got {other:?}"),
         }
+
+        let budget_wiring =
+            FlipNeighborWiringError::from(InsertionError::MaxSimplicesRemovedExceeded {
+                max_simplices_removed: 2,
+                attempted: 3,
+            });
+        assert_eq!(
+            budget_wiring,
+            FlipNeighborWiringError::MaxSimplicesRemovedExceeded {
+                max_simplices_removed: 2,
+                attempted: 3,
+            }
+        );
     }
 
     #[test]

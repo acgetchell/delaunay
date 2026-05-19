@@ -202,7 +202,7 @@ pub trait BoundaryAnalysis<T, U, V, const D: usize> {
     /// assert_eq!(tds.number_of_boundary_facets().unwrap(), 4);
     ///
     /// // Alternative: using iterator (useful for additional processing)
-    /// let count_via_iter = dt.boundary_facets().count();
+    /// let count_via_iter = dt.boundary_facets().unwrap().count();
     /// assert_eq!(count_via_iter, 4);
     /// ```
     fn number_of_boundary_facets(&self) -> Result<usize, TdsError>;

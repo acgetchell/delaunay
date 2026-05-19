@@ -10,6 +10,7 @@
 use crate::core::adjacency::{AdjacencyIndex, AdjacencyIndexBuildError};
 use crate::core::edge::EdgeKey;
 use crate::core::facet::{AllFacetsIter, BoundaryFacetsIter};
+use crate::core::query::QueryError;
 use crate::core::simplex::Simplex;
 use crate::core::tds::{SimplexKey, Tds, VertexKey};
 use crate::core::traits::data_type::DataType;
@@ -350,6 +351,43 @@ where
         &self.tri
     }
 
+    /// Returns an iterator over boundary (hull) facets in the triangulation.
+    ///
+    /// Boundary facets are those that belong to exactly one simplex. This method
+    /// computes the facet-to-simplices map internally for convenience.
+    ///
+    /// # Returns
+    ///
+    /// An iterator yielding `FacetView` objects for boundary facets only.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use delaunay::prelude::construction::{DelaunayTriangulation, vertex};
+    ///
+    /// let vertices = vec![
+    ///     vertex!([0.0, 0.0, 0.0]),
+    ///     vertex!([1.0, 0.0, 0.0]),
+    ///     vertex!([0.0, 1.0, 0.0]),
+    ///     vertex!([0.0, 0.0, 1.0]),
+    /// ];
+    /// let dt = DelaunayTriangulation::new(&vertices).unwrap();
+    ///
+    /// let boundary_count = dt.boundary_facets().unwrap().count();
+    /// assert_eq!(boundary_count, 4); // All facets are on boundary
+    /// ```
+    ///
+    /// # Errors
+    ///
+    /// Returns [`QueryError::TriangulationCorrupted`] if facet-map construction
+    /// detects invalid simplex or facet bookkeeping. The variant preserves the
+    /// lower-level [`TdsError`](crate::tds::TdsError) for diagnostics.
+    pub fn boundary_facets(
+        &self,
+    ) -> Result<BoundaryFacetsIter<'_, K::Scalar, U, V, D>, QueryError> {
+        self.tri.boundary_facets()
+    }
+
     /// Returns the insertion-time global topology validation policy used by the underlying
     /// triangulation.
     ///
@@ -419,6 +457,19 @@ where
         self.tri.set_validation_policy(policy);
     }
     /// Returns the automatic Delaunay repair policy.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use delaunay::prelude::construction::{DelaunayTriangulation, vertex};
+    /// use delaunay::prelude::repair::DelaunayRepairPolicy;
+    ///
+    /// let vertices = vec![vertex!([0.0, 0.0]), vertex!([1.0, 0.0]), vertex!([0.0, 1.0])];
+    /// let dt: DelaunayTriangulation<_, (), (), 2> =
+    ///     DelaunayTriangulation::new(&vertices).unwrap();
+    ///
+    /// assert_eq!(dt.delaunay_repair_policy(), DelaunayRepairPolicy::EveryInsertion);
+    /// ```
     #[inline]
     #[must_use]
     pub const fn delaunay_repair_policy(&self) -> DelaunayRepairPolicy {
@@ -426,12 +477,42 @@ where
     }
 
     /// Sets the automatic Delaunay repair policy.
+    ///
+    /// This affects future incremental insertions; it does not rewrite already
+    /// stored topology.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use delaunay::prelude::construction::{DelaunayTriangulation, vertex};
+    /// use delaunay::prelude::repair::DelaunayRepairPolicy;
+    ///
+    /// let vertices = vec![vertex!([0.0, 0.0]), vertex!([1.0, 0.0]), vertex!([0.0, 1.0])];
+    /// let mut dt: DelaunayTriangulation<_, (), (), 2> =
+    ///     DelaunayTriangulation::new(&vertices).unwrap();
+    ///
+    /// dt.set_delaunay_repair_policy(DelaunayRepairPolicy::Never);
+    /// assert_eq!(dt.delaunay_repair_policy(), DelaunayRepairPolicy::Never);
+    /// ```
     #[inline]
     pub const fn set_delaunay_repair_policy(&mut self, policy: DelaunayRepairPolicy) {
         self.insertion_state.delaunay_repair_policy = policy;
     }
 
     /// Returns the automatic global Delaunay validation policy.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use delaunay::prelude::construction::{DelaunayTriangulation, vertex};
+    /// use delaunay::prelude::repair::DelaunayCheckPolicy;
+    ///
+    /// let vertices = vec![vertex!([0.0, 0.0]), vertex!([1.0, 0.0]), vertex!([0.0, 1.0])];
+    /// let dt: DelaunayTriangulation<_, (), (), 2> =
+    ///     DelaunayTriangulation::new(&vertices).unwrap();
+    ///
+    /// assert_eq!(dt.delaunay_check_policy(), DelaunayCheckPolicy::EndOnly);
+    /// ```
     #[inline]
     #[must_use]
     pub const fn delaunay_check_policy(&self) -> DelaunayCheckPolicy {
@@ -439,6 +520,25 @@ where
     }
 
     /// Sets the automatic global Delaunay validation policy.
+    ///
+    /// This affects future incremental insertions; it does not perform an
+    /// immediate global Delaunay check.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use delaunay::prelude::construction::{DelaunayTriangulation, vertex};
+    /// use delaunay::prelude::repair::DelaunayCheckPolicy;
+    /// use std::num::NonZeroUsize;
+    ///
+    /// let vertices = vec![vertex!([0.0, 0.0]), vertex!([1.0, 0.0]), vertex!([0.0, 1.0])];
+    /// let mut dt: DelaunayTriangulation<_, (), (), 2> =
+    ///     DelaunayTriangulation::new(&vertices).unwrap();
+    /// let every_two = NonZeroUsize::new(2).unwrap();
+    ///
+    /// dt.set_delaunay_check_policy(DelaunayCheckPolicy::EveryN(every_two));
+    /// assert_eq!(dt.delaunay_check_policy(), DelaunayCheckPolicy::EveryN(every_two));
+    /// ```
     #[inline]
     pub const fn set_delaunay_check_policy(&mut self, policy: DelaunayCheckPolicy) {
         self.insertion_state.delaunay_check_policy = policy;
@@ -581,35 +681,6 @@ where
     /// ```
     pub fn facets(&self) -> AllFacetsIter<'_, K::Scalar, U, V, D> {
         self.tri.facets()
-    }
-
-    /// Returns an iterator over boundary (hull) facets in the triangulation.
-    ///
-    /// Boundary facets are those that belong to exactly one simplex. This method
-    /// computes the facet-to-simplices map internally for convenience.
-    ///
-    /// # Returns
-    ///
-    /// An iterator yielding `FacetView` objects for boundary facets only.
-    ///
-    /// # Examples
-    ///
-    /// ```rust
-    /// use delaunay::prelude::construction::{DelaunayTriangulation, vertex};
-    ///
-    /// let vertices = vec![
-    ///     vertex!([0.0, 0.0, 0.0]),
-    ///     vertex!([1.0, 0.0, 0.0]),
-    ///     vertex!([0.0, 1.0, 0.0]),
-    ///     vertex!([0.0, 0.0, 1.0]),
-    /// ];
-    /// let dt = DelaunayTriangulation::new(&vertices).unwrap();
-    ///
-    /// let boundary_count = dt.boundary_facets().count();
-    /// assert_eq!(boundary_count, 4); // All facets are on boundary
-    /// ```
-    pub fn boundary_facets(&self) -> BoundaryFacetsIter<'_, K::Scalar, U, V, D> {
-        self.tri.boundary_facets()
     }
 
     /// Builds an immutable adjacency index for fast repeated topology queries.
@@ -896,9 +967,13 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::core::operations::DelaunayInsertionState;
+    use crate::core::tds::TdsError;
     use crate::geometry::kernel::{AdaptiveKernel, FastKernel};
     use crate::vertex;
     use std::{collections::HashSet, num::NonZeroUsize, sync::Once};
+
+    struct Payload;
 
     fn init_tracing() {
         static INIT: Once = Once::new();
@@ -966,6 +1041,47 @@ mod tests {
         let policy = DelaunayCheckPolicy::EveryN(NonZeroUsize::new(3).unwrap());
         dt.set_delaunay_check_policy(policy);
         assert_eq!(dt.delaunay_check_policy(), policy);
+    }
+
+    #[test]
+    fn test_boundary_facets_propagates_core_query_error() {
+        init_tracing();
+        let vertices: Vec<Vertex<f64, (), 2>> = vec![
+            vertex!([0.0, 0.0]),
+            vertex!([1.0, 0.0]),
+            vertex!([0.0, 1.0]),
+        ];
+        let mut dt: DelaunayTriangulation<_, (), (), 2> =
+            DelaunayTriangulation::new(&vertices).unwrap();
+        let (simplex_key, _) = dt.tri.tds.simplices().next().unwrap();
+        let first_vertex = dt.tri.tds.simplex(simplex_key).unwrap().vertices()[0];
+
+        {
+            let simplex = dt.tri.tds.simplex_mut(simplex_key).unwrap();
+            while simplex.number_of_vertices() <= usize::from(u8::MAX) + 1 {
+                simplex.push_vertex_key(first_vertex);
+            }
+        }
+
+        match dt.boundary_facets() {
+            Ok(_) => panic!("corrupted facet map should return a query error"),
+            Err(QueryError::TriangulationCorrupted {
+                source: TdsError::IndexOutOfBounds { .. },
+            }) => {}
+            Err(err) => panic!("expected index-out-of-bounds query error, got {err:?}"),
+        }
+    }
+
+    #[test]
+    fn test_boundary_facets_accepts_non_datatype_payloads() {
+        let dt: DelaunayTriangulation<FastKernel<f64>, Payload, Payload, 2> =
+            DelaunayTriangulation {
+                tri: Triangulation::new_empty(FastKernel::new()),
+                insertion_state: DelaunayInsertionState::new(),
+                spatial_index: None,
+            };
+
+        assert_eq!(dt.boundary_facets().unwrap().count(), 0);
     }
 
     #[test]

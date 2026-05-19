@@ -583,7 +583,7 @@ where
     /// assert!(issues.is_none());
     ///
     /// // Note: This method is most useful for checking newly created simplices
-    /// // after insertion/removal operations (see usage in insert_transactional).
+    /// // after insertion/removal operations.
     /// ```
     pub fn detect_local_facet_issues(
         &self,
@@ -786,6 +786,7 @@ where
     /// # Arguments
     ///
     /// * `issues` - Detected facet issues map from `detect_local_facet_issues()`
+    /// * `max_simplices_removed` - Maximum simplices this repair may remove
     ///
     /// # Returns
     ///
@@ -799,7 +800,10 @@ where
     ///
     /// Returns an [`InsertionError`] if quality evaluation, facet bookkeeping,
     /// neighbor repair, incident-simplex assignment, or final topology
-    /// validation fails.
+    /// validation fails. Returns
+    /// [`InsertionError::MaxSimplicesRemovedExceeded`] when the selected repair
+    /// would remove more simplices than `max_simplices_removed` allows; in that
+    /// case the original TDS is restored before returning the error.
     ///
     /// # Examples
     ///
@@ -827,7 +831,7 @@ where
     ///
     /// // Empty issues map => nothing to remove.
     /// let mut tri = dt.as_triangulation().clone();
-    /// let removed = tri.repair_local_facet_issues(&FacetIssuesMap::default())?;
+    /// let removed = tri.repair_local_facet_issues(&FacetIssuesMap::default(), 0)?;
     /// assert_eq!(removed, 0);
     /// # Ok(())
     /// # }
@@ -835,10 +839,11 @@ where
     ///
     /// In practice, this method is typically called with issues detected by
     /// [`detect_local_facet_issues`](Self::detect_local_facet_issues) after insertion/removal
-    /// operations. See `insert_transactional` for a typical usage pattern.
+    /// operations.
     pub fn repair_local_facet_issues(
         &mut self,
         issues: &FacetIssuesMap,
+        max_simplices_removed: usize,
     ) -> Result<usize, InsertionError>
     where
         K::Scalar: Div<Output = K::Scalar>,
@@ -848,6 +853,12 @@ where
             let outcome = self
                 .repair_local_facet_issues_with_frontier(issues)
                 .map_err(InsertionError::TopologyValidation)?;
+            if outcome.removed_count > max_simplices_removed {
+                return Err(InsertionError::MaxSimplicesRemovedExceeded {
+                    max_simplices_removed,
+                    attempted: outcome.removed_count,
+                });
+            }
             if outcome.removed_count == 0 {
                 return Ok(0);
             }
@@ -1034,7 +1045,7 @@ mod tests {
 
                     // Empty issues map: should remove nothing
                     let empty_issues = FacetIssuesMap::default();
-                    let removed = tri.repair_local_facet_issues(&empty_issues).unwrap();
+                    let removed = tri.repair_local_facet_issues(&empty_issues, 0).unwrap();
                     assert_eq!(removed, 0, "{}D: Empty issues should remove 0 simplices", $dim);
                     assert_eq!(tri.tds.number_of_simplices(), 1, "{}D: Should still have 1 simplex", $dim);
                 }
@@ -1485,7 +1496,7 @@ mod tests {
         assert!(issues.is_some(), "Should detect over-shared facet");
         let original_simplex_count = tri.tds.number_of_simplices();
 
-        match tri.repair_local_facet_issues(&issues.unwrap()) {
+        match tri.repair_local_facet_issues(&issues.unwrap(), usize::MAX) {
             Ok(removed) => {
                 assert!(removed > 0, "repair should remove at least one simplex");
                 tri.validate()
@@ -1601,7 +1612,7 @@ mod tests {
         let original_simplex_count = tri.tds.number_of_simplices();
         let original_vertex_count = tri.tds.number_of_vertices();
 
-        let result = tri.repair_local_facet_issues(&issues);
+        let result = tri.repair_local_facet_issues(&issues, usize::MAX);
 
         assert!(
             result.is_err(),
@@ -1615,5 +1626,26 @@ mod tests {
                 "rollback should restore every pre-repair simplex"
             );
         }
+    }
+
+    #[test]
+    fn test_repair_local_facet_issues_respects_removal_budget() {
+        let (mut tri, original_simplices, _, _) = build_overshared_edge_fixture();
+        let issues = tri
+            .detect_local_facet_issues(&original_simplices)
+            .unwrap()
+            .expect("three simplices sharing one edge should be detected as over-shared");
+        let original_simplex_count = tri.tds.number_of_simplices();
+
+        let result = tri.repair_local_facet_issues(&issues, 0);
+
+        assert!(matches!(
+            result,
+            Err(InsertionError::MaxSimplicesRemovedExceeded {
+                max_simplices_removed: 0,
+                attempted
+            }) if attempted > 0
+        ));
+        assert_eq!(tri.tds.number_of_simplices(), original_simplex_count);
     }
 }
