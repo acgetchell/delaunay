@@ -1648,6 +1648,151 @@ mod tests {
     }
 
     #[test]
+    fn test_vertex_removal_affected_vertices_excludes_removed_vertex() {
+        let (tri, [v0, v1, v2, v3], simplex_key) = build_single_tet();
+
+        let affected = tri
+            .affected_vertices_for_vertex_removal(&[simplex_key], v0)
+            .unwrap();
+
+        assert_eq!(affected.len(), 3);
+        assert!(!affected.contains(&v0));
+        assert!(affected.contains(&v1));
+        assert!(affected.contains(&v2));
+        assert!(affected.contains(&v3));
+    }
+
+    #[test]
+    fn test_vertex_removal_affected_vertices_errors_on_missing_simplex() {
+        let (tri, [v0, ..], _) = build_single_tet();
+        let missing_simplex = SimplexKey::from(KeyData::from_ffi(0xBAD));
+
+        let result = tri.affected_vertices_for_vertex_removal(&[missing_simplex], v0);
+
+        assert!(matches!(
+            result,
+            Err(InvariantError::Tds(TdsError::SimplexNotFound {
+                simplex_key,
+                ..
+            })) if simplex_key == missing_simplex
+        ));
+    }
+
+    #[test]
+    fn test_vertex_removal_scope_helpers_keep_live_simplices_once() {
+        let (tri, _, simplex_key) = build_single_tet();
+        let missing_simplex = SimplexKey::from(KeyData::from_ffi(0xBAD));
+        let mut candidate_simplices = SimplexKeyBuffer::new();
+        candidate_simplices.push(simplex_key);
+        candidate_simplices.push(missing_simplex);
+        candidate_simplices.push(simplex_key);
+        let external_facets = [FacetHandle::new(simplex_key, 0)];
+
+        let live_simplices = tri.live_simplices_from(&candidate_simplices);
+        let validation_scope = tri.vertex_removal_validation_scope(
+            &candidate_simplices,
+            &external_facets,
+            &live_simplices,
+        );
+
+        assert_eq!(live_simplices.as_slice(), &[simplex_key]);
+        assert_eq!(validation_scope.as_slice(), &[simplex_key]);
+    }
+
+    #[test]
+    fn test_repair_vertex_removal_facet_issues_noops_without_local_issues() {
+        let (mut tri, _, simplex_key) = build_single_tet();
+        let mut new_simplices = SimplexKeyBuffer::new();
+        new_simplices.push(simplex_key);
+        let mut simplices_removed = 0;
+        let mut post_repair_frontier = SimplexKeyBuffer::new();
+
+        tri.repair_vertex_removal_facet_issues(
+            &new_simplices,
+            &mut simplices_removed,
+            &mut post_repair_frontier,
+        )
+        .unwrap();
+
+        assert_eq!(simplices_removed, 0);
+        assert!(post_repair_frontier.is_empty());
+    }
+
+    #[test]
+    fn test_repair_affected_vertex_incidence_from_scope_repairs_missing_pointer() {
+        let (mut tri, [_, _, _, v3], simplex_key) = build_single_tet();
+        tri.tds.vertex_mut(v3).unwrap().set_incident_simplex(None);
+        let mut affected_vertices = VertexKeySet::default();
+        affected_vertices.insert(v3);
+        let mut validation_scope = SimplexKeyBuffer::new();
+        validation_scope.push(simplex_key);
+
+        tri.repair_affected_vertex_incidence_from_scope(&affected_vertices, &validation_scope)
+            .unwrap();
+
+        assert_eq!(
+            tri.tds.vertex(v3).unwrap().incident_simplex(),
+            Some(simplex_key)
+        );
+    }
+
+    #[test]
+    fn test_repair_affected_vertex_incidence_from_scope_reports_isolated_vertex() {
+        let (mut tri, [_, _, _, v3], _) = build_single_tet();
+        tri.tds.vertex_mut(v3).unwrap().set_incident_simplex(None);
+        let mut affected_vertices = VertexKeySet::default();
+        affected_vertices.insert(v3);
+        let validation_scope = SimplexKeyBuffer::new();
+
+        let result =
+            tri.repair_affected_vertex_incidence_from_scope(&affected_vertices, &validation_scope);
+
+        assert!(matches!(
+            result,
+            Err(InvariantError::Triangulation(
+                TriangulationValidationError::IsolatedVertex { vertex_key, .. }
+            )) if vertex_key == v3
+        ));
+    }
+
+    #[test]
+    fn test_vertex_removal_postconditions_reject_still_present_vertex() {
+        let (tri, [v0, ..], simplex_key) = build_single_tet();
+        let affected_vertices = VertexKeySet::default();
+        let mut surviving_new_simplices = SimplexKeyBuffer::new();
+        surviving_new_simplices.push(simplex_key);
+        let mut validation_scope = SimplexKeyBuffer::new();
+        validation_scope.push(simplex_key);
+
+        let result = tri.validate_vertex_removal_postconditions(
+            v0,
+            &affected_vertices,
+            &surviving_new_simplices,
+            &validation_scope,
+        );
+
+        assert!(matches!(
+            result,
+            Err(InvariantError::Tds(
+                TdsError::InconsistentDataStructure { .. }
+            ))
+        ));
+    }
+
+    #[test]
+    fn test_fan_boundary_facets_excluding_apex_keeps_only_facets_without_apex() {
+        let (tri, vkeys, simplex_key) = build_single_tet();
+        let boundary_facets: CavityBoundaryBuffer =
+            (0..=3).map(|i| FacetHandle::new(simplex_key, i)).collect();
+
+        let fan_facets = tri
+            .fan_boundary_facets_excluding_apex(vkeys[0], &boundary_facets)
+            .unwrap();
+
+        assert_eq!(fan_facets.as_slice(), &[FacetHandle::new(simplex_key, 0)]);
+    }
+
+    #[test]
     fn test_quality_error_to_tds_error_preserves_lookup_variants() {
         let simplex_key = SimplexKey::from(KeyData::from_ffi(1));
         let vertex_key = VertexKey::from(KeyData::from_ffi(2));
