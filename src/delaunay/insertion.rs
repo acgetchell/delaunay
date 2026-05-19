@@ -560,7 +560,7 @@ where
 
     /// Removes a vertex and retriangulates the resulting cavity using fan triangulation.
     ///
-    /// This operation delegates to `Triangulation::remove_vertex()` which:
+    /// This operation delegates to the core triangulation layer, which:
     /// 1. Finds all simplices containing the vertex
     /// 2. Removes those simplices (creating a cavity)
     /// 3. Fills the cavity with fan triangulation
@@ -571,10 +571,13 @@ where
     /// consistent adjacency), this method collapses it via the **inverse k=1** bistellar
     /// flip. Otherwise it falls back to fan triangulation.
     ///
-    /// The triangulation remains topologically valid after removal. However, both the
-    /// inverse k=1 fast-path and fan triangulation may temporarily violate the Delaunay
-    /// property in some cases. If the [`DelaunayRepairPolicy`] allows it, a flip-based
-    /// repair pass is run automatically after removal.
+    /// This operation is topology-preserving on success: it returns `Ok` only after the
+    /// post-removal triangulation satisfies the required manifold and topology invariants. A
+    /// candidate removal that would collapse the mesh to a lower-dimensional remnant or isolate
+    /// remaining vertices is rejected as an [`InvariantError::Triangulation`] failure, and the
+    /// pre-removal state is restored. Both the inverse k=1 fast-path and fan triangulation may
+    /// temporarily violate the Delaunay property in some cases. If the [`DelaunayRepairPolicy`]
+    /// allows it, a flip-based repair pass is run automatically after removal.
     ///
     /// The post-removal repair and orientation canonicalization steps are
     /// transactional: if either step fails, this method restores the triangulation
@@ -603,11 +606,15 @@ where
     /// # Errors
     ///
     /// Returns [`InvariantError`] if:
-    /// - The inverse k=1 flip encounters a neighbor-wiring failure (`InvariantError::Tds`).
-    /// - Fan retriangulation fails (`InvariantError::Tds`).
+    /// - The inverse k=1 flip encounters a neighbor-wiring failure ([`InvariantError::Tds`]).
+    /// - Fan retriangulation fails ([`InvariantError::Tds`]).
+    /// - Post-removal topology validation fails, for example because removal would leave
+    ///   isolated vertices or a lower-dimensional remnant
+    ///   ([`InvariantError::Triangulation`]).
     /// - Delaunay flip-based repair fails after removal
-    ///   (`InvariantError::Delaunay(DelaunayTriangulationValidationError::RepairOperationFailed { .. })`).
-    /// - Orientation canonicalization fails after repair (`InvariantError::Tds`).
+    ///   ([`InvariantError::Delaunay`] wrapping
+    ///   [`DelaunayTriangulationValidationError::RepairOperationFailed`]).
+    /// - Orientation canonicalization fails after repair ([`InvariantError::Tds`]).
     ///
     /// # Examples
     ///
@@ -637,6 +644,29 @@ where
     ///
     /// // Vertex removal preserves topology; automatic repair is attempted when enabled.
     /// assert!(dt.as_triangulation().validate().is_ok());
+    /// ```
+    ///
+    /// Removals that would leave a non-manifold remnant fail and roll back:
+    ///
+    /// ```rust
+    /// use delaunay::prelude::*;
+    ///
+    /// let vertices = [
+    ///     vertex!([0.0, 0.0]),
+    ///     vertex!([1.0, 0.0]),
+    ///     vertex!([0.0, 1.0]),
+    /// ];
+    /// let mut dt: DelaunayTriangulation<_, (), (), 2> =
+    ///     DelaunayTriangulation::new(&vertices).unwrap();
+    /// let vertex_key = dt.vertices().next().unwrap().0;
+    ///
+    /// let err = dt.remove_vertex(vertex_key).unwrap_err();
+    /// assert!(matches!(
+    ///     err,
+    ///     InvariantError::Triangulation(TriangulationValidationError::IsolatedVertex { .. })
+    /// ));
+    /// assert_eq!(dt.number_of_vertices(), 3);
+    /// assert_eq!(dt.number_of_simplices(), 1);
     /// ```
     pub fn remove_vertex(&mut self, vertex_key: VertexKey) -> Result<usize, InvariantError> {
         let Some(removed_vertex) = self.tri.tds.vertex(vertex_key) else {

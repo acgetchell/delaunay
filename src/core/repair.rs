@@ -262,8 +262,16 @@ where
     /// 6. Removing the vertex itself
     ///
     /// **Fan Triangulation**: The cavity is filled by picking one boundary vertex as an apex
-    /// and connecting it to all boundary facets. This is fast and maintains all topological
-    /// invariants, though it may create poorly-shaped simplices in some cases.
+    /// and connecting it to all boundary facets. This follows the local cavity-retriangulation
+    /// lineage used by Bowyer-Watson insertion and the computational-geometry treatment in
+    /// Edelsbrunner and Preparata-Shamos; see `REFERENCES.md` entries \[1\]-\[5\] for
+    /// `remove_vertex` source context and the robust predicate background from Shewchuk.
+    ///
+    /// The `remove_vertex` fan step is numerically and topologically fragile when the cavity is
+    /// degenerate or nearly coplanar, when epsilon thresholds are too small for the active scalar
+    /// range, or when candidate simplices are inverted. Mitigate those cases with robust
+    /// predicates, explicit epsilon thresholds, bounded repair budgets, and transactional
+    /// validation fallbacks.
     ///
     /// # Arguments
     ///
@@ -298,11 +306,9 @@ where
             .collect();
 
         if simplices_to_remove.is_empty() {
-            // Vertex exists but has no incident simplices - use Tds removal
-            return self
-                .tds
-                .remove_vertex(vertex_key)
-                .map_err(|e| InvariantError::Tds(e.into_inner()));
+            // Vertex exists but has no incident simplices; remove it only if the
+            // resulting triangulation satisfies the same invariant checks.
+            return self.remove_vertex_with_invariant_checks(vertex_key);
         }
 
         // Extract cavity boundary BEFORE removing simplices
@@ -315,11 +321,9 @@ where
 
         // If boundary is empty, we're removing the entire triangulation
         if boundary_facets.is_empty() {
-            // Use Tds removal for empty boundary case
-            return self
-                .tds
-                .remove_vertex(vertex_key)
-                .map_err(|e| InvariantError::Tds(e.into_inner()));
+            // Use TDS removal for the empty-boundary case, then validate so
+            // lower-dimensional remnants are rejected and rolled back.
+            return self.remove_vertex_with_invariant_checks(vertex_key);
         }
 
         // Pick apex vertex for fan triangulation (first vertex of first boundary facet)
@@ -399,10 +403,43 @@ where
                 .remove_vertex(vertex_key)
                 .map_err(|e| InvariantError::Tds(e.into_inner()))?;
 
+            self.tds.is_valid().map_err(InvariantError::Tds)?;
+            self.is_valid()?;
+
             Ok(simplices_removed)
         })();
 
         match retriangulation_result {
+            Ok(simplices_removed) => Ok(simplices_removed),
+            Err(error) => {
+                self.tds = tds_snapshot;
+                Err(error)
+            }
+        }
+    }
+
+    /// Removes a vertex via direct TDS mutation and rolls back unless all triangulation
+    /// invariants still hold.
+    ///
+    /// This handles fallback paths that do not retriangulate a cavity, such as isolated vertices
+    /// or empty-boundary removals. Those paths can otherwise leave lower-dimensional remnants that
+    /// are structurally valid at the TDS layer but invalid as a triangulation.
+    fn remove_vertex_with_invariant_checks(
+        &mut self,
+        vertex_key: VertexKey,
+    ) -> Result<usize, InvariantError> {
+        let tds_snapshot = self.tds.clone_for_rollback();
+        let result = (|| -> Result<usize, InvariantError> {
+            let simplices_removed = self
+                .tds
+                .remove_vertex(vertex_key)
+                .map_err(|e| InvariantError::Tds(e.into_inner()))?;
+            self.tds.is_valid().map_err(InvariantError::Tds)?;
+            self.is_valid()?;
+            Ok(simplices_removed)
+        })();
+
+        match result {
             Ok(simplices_removed) => Ok(simplices_removed),
             Err(error) => {
                 self.tds = tds_snapshot;
@@ -805,13 +842,22 @@ where
     /// would remove more simplices than `max_simplices_removed` allows; in that
     /// case the original TDS is restored before returning the error.
     ///
+    /// `repair_local_facet_issues` uses a localized radius-ratio heuristic to choose
+    /// problematic simplices for removal and repair. The heuristic is inspired by the same
+    /// local cavity and simplex-quality ideas cited for `remove_vertex`; see `REFERENCES.md`
+    /// entries \[1\]-\[5\]. It may fail or choose an overly aggressive repair near degenerate or
+    /// nearly-coplanar cavities, inverted simplices, or scalar ranges where small numeric epsilons
+    /// hide facet distinctions. Use robust predicates, explicit epsilon thresholds, bounded
+    /// budgets, and transactional fallbacks when calling it from public repair paths.
+    ///
     /// # Examples
     ///
     /// ```rust
     /// use delaunay::prelude::construction::{
     ///     DelaunayTriangulation, DelaunayTriangulationConstructionError,
     /// };
-    /// use delaunay::prelude::triangulation::{FacetIssuesMap, InsertionError, vertex};
+    /// use delaunay::prelude::insertion::InsertionError;
+    /// use delaunay::prelude::triangulation::{FacetIssuesMap, vertex};
     ///
     /// # #[derive(Debug, thiserror::Error)]
     /// # enum ExampleError {
@@ -888,12 +934,12 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::DelaunayTriangulation;
     use crate::core::collections::{CavityBoundaryBuffer, NeighborBuffer};
     use crate::core::simplex::NeighborSlot;
     use crate::core::tds::Tds;
     use crate::core::vertex::Vertex;
     use crate::geometry::kernel::FastKernel;
-    use crate::triangulation::DelaunayTriangulation;
     use crate::vertex;
 
     use slotmap::KeyData;
@@ -1437,10 +1483,22 @@ mod tests {
         let mut dt: DelaunayTriangulation<_, (), (), 2> =
             DelaunayTriangulation::new(&vertices).unwrap();
 
+        let initial_vertices = dt.number_of_vertices();
+        let initial_simplices = dt.number_of_simplices();
         let vertex_key = dt.vertices().next().unwrap().0;
-        let removed = dt.remove_vertex(vertex_key).unwrap();
-        assert!(removed >= 1);
-        assert_eq!(dt.number_of_vertices(), 2);
+
+        let error = dt.remove_vertex(vertex_key).unwrap_err();
+
+        assert!(
+            matches!(
+                error,
+                InvariantError::Triangulation(TriangulationValidationError::IsolatedVertex { .. })
+            ),
+            "expected isolated-vertex invariant failure, got {error:?}"
+        );
+        assert_eq!(dt.number_of_vertices(), initial_vertices);
+        assert_eq!(dt.number_of_simplices(), initial_simplices);
+        assert!(dt.tds().contains_vertex_key(vertex_key));
     }
 
     // =========================================================================

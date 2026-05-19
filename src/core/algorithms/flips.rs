@@ -9491,6 +9491,7 @@ fn enqueue_ridge<T, U, V, const D: usize>(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::DelaunayTriangulation;
     use crate::core::algorithms::incremental_insertion::{
         DelaunayRepairFailureContext, repair_neighbor_pointers,
     };
@@ -9500,7 +9501,6 @@ mod tests {
     use crate::geometry::kernel::{AdaptiveKernel, FastKernel};
     use crate::repair::DelaunayRepairOperation;
     use crate::topology::traits::topological_space::ToroidalConstructionMode;
-    use crate::triangulation::DelaunayTriangulation;
     use crate::vertex;
     use approx::assert_relative_eq;
     use proptest::prelude::*;

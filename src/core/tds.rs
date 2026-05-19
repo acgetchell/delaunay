@@ -7188,6 +7188,13 @@ mod tests {
                 TriangulationValidationError::Disconnected { simplex_count: 2 },
                 TriangulationValidationErrorKind::Disconnected,
             ),
+            (
+                TriangulationValidationError::OrientationPromotionNonConvergence {
+                    residual_count: 1,
+                    sampled: vec![SimplexKey::from(KeyData::from_ffi(4))],
+                },
+                TriangulationValidationErrorKind::OrientationPromotionNonConvergence,
+            ),
         ];
 
         for (source, expected) in cases {
@@ -7731,11 +7738,21 @@ mod tests {
                 vertex!([1.0, 0.0, 0.0]),
                 vertex!([0.0, 1.0, 0.0]),
                 vertex!([0.0, 0.0, 1.0]),
-                vertex!([1.0, 1.0, 1.0]),
+                vertex!([0.2, 0.2, 0.2]),
             ];
             let mut dt_3d: DelaunayTriangulation<_, (), (), 3> =
                 DelaunayTriangulation::new(&vertices_3d).unwrap();
-            let vertex_key = dt_3d.vertices().next().unwrap().0;
+            let vertex_key = dt_3d
+                .vertices()
+                .find(|(_, vertex)| {
+                    let coords = vertex.point().coords();
+                    coords
+                        .iter()
+                        .zip([0.2, 0.2, 0.2])
+                        .all(|(coord, expected)| (*coord - expected).abs() < 1e-12)
+                })
+                .unwrap()
+                .0;
             let simplices_removed = dt_3d.remove_vertex(vertex_key).unwrap();
             assert!(simplices_removed > 0);
             assert!(dt_3d.as_triangulation().tds.is_valid().is_ok());
@@ -7749,11 +7766,21 @@ mod tests {
                 vertex!([0.0, 1.0, 0.0, 0.0]),
                 vertex!([0.0, 0.0, 1.0, 0.0]),
                 vertex!([0.0, 0.0, 0.0, 1.0]),
-                vertex!([1.0, 1.0, 1.0, 1.0]),
+                vertex!([0.2, 0.2, 0.2, 0.2]),
             ];
             let mut dt_4d: DelaunayTriangulation<_, (), (), 4> =
                 DelaunayTriangulation::new(&vertices_4d).unwrap();
-            let vertex_key = dt_4d.vertices().next().unwrap().0;
+            let vertex_key = dt_4d
+                .vertices()
+                .find(|(_, vertex)| {
+                    let coords = vertex.point().coords();
+                    coords
+                        .iter()
+                        .zip([0.2, 0.2, 0.2, 0.2])
+                        .all(|(coord, expected)| (*coord - expected).abs() < 1e-12)
+                })
+                .unwrap()
+                .0;
             let simplices_removed = dt_4d.remove_vertex(vertex_key).unwrap();
             assert!(simplices_removed > 0);
             assert!(dt_4d.as_triangulation().tds.is_valid().is_ok());

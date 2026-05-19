@@ -519,6 +519,17 @@ pub enum InitialSimplexConstructionError {
         coordinates: String,
     },
 
+    /// Local repair would remove more simplices than the active budget allowed.
+    #[error(
+        "local repair removal budget exceeded while building initial simplex: attempted {attempted}, max {max_simplices_removed}"
+    )]
+    LocalRepairBudgetExceeded {
+        /// Maximum number of simplices this repair stage was allowed to remove.
+        max_simplices_removed: usize,
+        /// Number of simplices the repair stage attempted to remove.
+        attempted: usize,
+    },
+
     /// An insertion-stage-only construction error escaped initial-simplex construction.
     #[error(
         "unexpected insertion-stage construction error while building initial simplex: {message}"
@@ -602,11 +613,9 @@ impl From<TriangulationConstructionError> for InitialSimplexConstructionError {
             TriangulationConstructionError::LocalRepairBudgetExceeded {
                 max_simplices_removed,
                 attempted,
-            } => Self::UnexpectedInsertionStage {
-                message: format!(
-                    "local repair budget exceeded during initial simplex construction: \
-                     attempted {attempted}, max {max_simplices_removed}"
-                ),
+            } => Self::LocalRepairBudgetExceeded {
+                max_simplices_removed,
+                attempted,
             },
             TriangulationConstructionError::FinalTopologyValidation { source, .. } => {
                 Self::UnexpectedInsertionStage {
@@ -1636,6 +1645,7 @@ impl InsertionError {
                 | InitialSimplexConstructionError::InsufficientVertices { .. }
                 | InitialSimplexConstructionError::InternalInconsistency { .. }
                 | InitialSimplexConstructionError::DuplicateCoordinates { .. }
+                | InitialSimplexConstructionError::LocalRepairBudgetExceeded { .. }
                 | InitialSimplexConstructionError::UnexpectedInsertionStage { .. } => false,
             },
             CavityFillingError::NeighborRebuild { reason } => match reason {
@@ -4214,6 +4224,7 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::DelaunayTriangulation;
     use crate::core::algorithms::flips::{
         DelaunayRepairDiagnostics, DelaunayRepairVerificationContext, FlipError, RepairQueueOrder,
     };
@@ -4224,7 +4235,6 @@ mod tests {
     use crate::geometry::kernel::FastKernel;
     use crate::geometry::traits::coordinate::{Coordinate, CoordinateConversionError};
     use crate::topology::characteristics::euler::TopologyClassification;
-    use crate::triangulation::DelaunayTriangulation;
     use crate::vertex;
     use slotmap::KeyData;
 
@@ -4968,6 +4978,24 @@ mod tests {
     }
 
     #[test]
+    fn test_insertion_error_summary_preserves_repair_budget_error() {
+        let source = InsertionError::MaxSimplicesRemovedExceeded {
+            max_simplices_removed: 2,
+            attempted: 3,
+        };
+        let summary = InsertionErrorSummary::from(source.clone());
+
+        assert_eq!(
+            summary.kind,
+            InsertionErrorKind::MaxSimplicesRemovedExceeded
+        );
+        assert_eq!(summary.source_kind, None);
+        assert_eq!(summary.message, source.to_string());
+        assert!(!summary.retryable);
+        assert!(!source.is_retryable());
+    }
+
+    #[test]
     fn test_insertion_error_summary_retryability_covers_tds_source_kinds() {
         let geometric = InsertionErrorSummary {
             kind: InsertionErrorKind::TopologyValidation,
@@ -5013,6 +5041,10 @@ mod tests {
     }
 
     #[test]
+    #[expect(
+        clippy::too_many_lines,
+        reason = "Covers retryability for each structured cavity-filling payload"
+    )]
     fn test_cavity_filling_retryability_inspects_construction_payloads() {
         let geometry_failure = TdsValidationFailure::Geometric {
             source: GeometricError::DegenerateOrientation {
@@ -5085,6 +5117,17 @@ mod tests {
             .is_retryable()
         );
         assert!(
+            !InsertionError::CavityFilling {
+                reason: CavityFillingError::InitialSimplexConstruction {
+                    reason: InitialSimplexConstructionError::LocalRepairBudgetExceeded {
+                        max_simplices_removed: 2,
+                        attempted: 3,
+                    },
+                },
+            }
+            .is_retryable()
+        );
+        assert!(
             InsertionError::CavityFilling {
                 reason: CavityFillingError::NeighborRebuild {
                     reason: NeighborRebuildError::from(InsertionError::TopologyValidationFailed {
@@ -5108,6 +5151,24 @@ mod tests {
                 },
             }
             .is_retryable()
+        );
+    }
+
+    #[test]
+    fn test_initial_simplex_construction_error_preserves_repair_budget() {
+        let source = TriangulationConstructionError::LocalRepairBudgetExceeded {
+            max_simplices_removed: 2,
+            attempted: 3,
+        };
+
+        let converted = InitialSimplexConstructionError::from(source);
+
+        assert_eq!(
+            converted,
+            InitialSimplexConstructionError::LocalRepairBudgetExceeded {
+                max_simplices_removed: 2,
+                attempted: 3,
+            }
         );
     }
 
