@@ -4,7 +4,7 @@
 //! repair, and vertex-removal cavity retriangulation for [`Triangulation`](crate::core::triangulation::Triangulation).
 
 use crate::core::algorithms::incremental_insertion::{
-    CavityFillingError, InsertionError, external_facets_for_boundary,
+    CavityFillingError, CavityRepairStage, InsertionError, external_facets_for_boundary,
     fill_cavity_replacing_simplices, repair_neighbor_pointers, repair_neighbor_pointers_local,
     wire_cavity_neighbors,
 };
@@ -421,32 +421,51 @@ where
         post_repair_frontier: &mut SimplexKeyBuffer,
         max_simplices_removed: usize,
     ) -> Result<(), InvariantError> {
-        let Some(issues) = self.detect_local_facet_issues(new_simplices)? else {
-            return Ok(());
-        };
+        let mut remaining_budget = max_simplices_removed;
 
-        #[cfg(debug_assertions)]
-        tracing::warn!(
-            "Warning: {} over-shared facets detected after vertex removal, repairing...",
-            issues.len()
-        );
+        loop {
+            if self.tds.validate_facet_sharing().is_ok() {
+                return Ok(());
+            }
 
-        let repair_outcome = self
-            .repair_local_facet_issues_with_frontier(&issues, max_simplices_removed)
-            .map_err(|e| {
-                insertion_error_to_invariant_error(
-                    e,
-                    "Local facet repair after vertex removal failed",
-                )
-            })?;
-        let removed = repair_outcome.removed_count;
-        post_repair_frontier.extend(repair_outcome.frontier_simplices.iter().copied());
-        *simplices_removed += removed;
+            let Some(issues) = self.detect_local_facet_issues(new_simplices)? else {
+                return Ok(());
+            };
 
-        #[cfg(debug_assertions)]
-        tracing::debug!("Repaired by removing {removed} additional simplices");
+            #[cfg(debug_assertions)]
+            tracing::warn!(
+                "Warning: {} over-shared facets detected after vertex removal, repairing...",
+                issues.len()
+            );
 
-        if removed > 0 {
+            let repair_outcome = self
+                .repair_local_facet_issues_with_frontier(&issues, remaining_budget)
+                .map_err(|e| {
+                    insertion_error_to_invariant_error(
+                        e,
+                        "Local facet repair after vertex removal failed",
+                    )
+                })?;
+            let removed = repair_outcome.removed_count;
+            if removed == 0 {
+                return Err(insertion_error_to_invariant_error(
+                    CavityFillingError::InvalidFacetSharingAfterRepair {
+                        stage: CavityRepairStage::FanTriangulation,
+                    }
+                    .into(),
+                    "Local facet repair after vertex removal stalled",
+                ));
+            }
+
+            remaining_budget = remaining_budget.saturating_sub(removed);
+            post_repair_frontier.extend(repair_outcome.frontier_simplices.iter().copied());
+            *simplices_removed += removed;
+
+            #[cfg(debug_assertions)]
+            tracing::debug!(
+                "Repaired by removing {removed} additional simplices ({remaining_budget} budget remaining)"
+            );
+
             self.repair_neighbors_after_local_simplex_removal(new_simplices, post_repair_frontier)
                 .map_err(|e| {
                     insertion_error_to_invariant_error(
@@ -455,8 +474,6 @@ where
                     )
                 })?;
         }
-
-        Ok(())
     }
 
     /// Normalizes coherence globally but promotes only the vertex-removal scope geometrically.
@@ -2094,6 +2111,66 @@ mod tests {
                 "budget failure should happen before simplex removal"
             );
         }
+    }
+
+    #[test]
+    fn test_vertex_removal_facet_repair_reports_budget_exhaustion() {
+        let (mut tri, original_simplices, _, _) = build_overshared_edge_fixture();
+        let original_simplex_count = tri.tds.number_of_simplices();
+        let mut new_simplices = SimplexKeyBuffer::new();
+        new_simplices.extend(original_simplices);
+        let mut simplices_removed = 0;
+        let mut post_repair_frontier = SimplexKeyBuffer::new();
+
+        let result = tri.repair_vertex_removal_facet_issues(
+            &new_simplices,
+            &mut simplices_removed,
+            &mut post_repair_frontier,
+            0,
+        );
+
+        assert!(matches!(
+            result,
+            Err(InvariantError::Tds(TdsError::InconsistentDataStructure { ref message }))
+                if message.contains("Local facet repair after vertex removal failed")
+                    && message.contains("Local facet repair removal budget exceeded")
+        ));
+        assert_eq!(simplices_removed, 0);
+        assert!(post_repair_frontier.is_empty());
+        assert_eq!(tri.tds.number_of_simplices(), original_simplex_count);
+        for simplex_key in original_simplices {
+            assert!(tri.tds.contains_simplex(simplex_key));
+        }
+    }
+
+    #[test]
+    fn test_vertex_removal_facet_repair_restores_facet_sharing() {
+        let (mut tri, original_simplices, _, _) = build_overshared_edge_fixture();
+        let mut new_simplices = SimplexKeyBuffer::new();
+        new_simplices.extend(original_simplices);
+        let mut simplices_removed = 0;
+        let mut post_repair_frontier = SimplexKeyBuffer::new();
+
+        tri.repair_vertex_removal_facet_issues(
+            &new_simplices,
+            &mut simplices_removed,
+            &mut post_repair_frontier,
+            usize::MAX,
+        )
+        .unwrap();
+
+        assert_eq!(simplices_removed, 1);
+        assert!(
+            !post_repair_frontier.is_empty(),
+            "removed-simplex neighbors should seed the post-repair frontier"
+        );
+        assert!(tri.tds.validate_facet_sharing().is_ok());
+        let survivors: Vec<_> = original_simplices
+            .into_iter()
+            .filter(|simplex_key| tri.tds.contains_simplex(*simplex_key))
+            .collect();
+        assert_eq!(survivors.len(), 2);
+        assert!(tri.detect_local_facet_issues(&survivors).unwrap().is_none());
     }
 
     #[test]

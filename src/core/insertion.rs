@@ -1692,7 +1692,7 @@ where
 
         // Iteratively repair non-manifold topology until facet sharing is valid
         let mut total_removed = 0;
-        let max_repair_simplices_removed = conflict_simplices.len();
+        let max_repair_simplices_removed = new_simplices.len();
         let mut facet_sharing_known_valid = true;
         let mut neighbor_repair_frontier = SimplexKeyBuffer::new();
         #[cfg_attr(
