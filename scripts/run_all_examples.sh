@@ -114,7 +114,11 @@ if [ ${#all_examples[@]} -eq 0 ]; then
 	error_exit "No examples found under ${PROJECT_ROOT}/examples"
 fi
 
-# Run all examples
+# Build all examples once, then run the compiled binaries. This keeps the same
+# runtime validation while avoiding repeated Cargo planning and relinking.
+echo "Building all examples..."
+cargo build --release --examples
+
 TIMEOUT_CMD=""
 if command -v timeout >/dev/null 2>&1; then
 	TIMEOUT_CMD="timeout"
@@ -122,16 +126,25 @@ elif command -v gtimeout >/dev/null 2>&1; then
 	TIMEOUT_CMD="gtimeout"
 fi
 
+EXE_SUFFIX=""
+case "$(uname -s)" in
+MINGW* | MSYS* | CYGWIN*) EXE_SUFFIX=".exe" ;;
+esac
+
 for example in "${all_examples[@]}"; do
 	echo "=== Running $example ==="
+	example_binary="${PROJECT_ROOT}/target/release/examples/${example}${EXE_SUFFIX}"
+	if [[ ! -x "$example_binary" ]]; then
+		error_exit "Built example binary not found or not executable: $example_binary"
+	fi
 	if [[ -n "$TIMEOUT_CMD" ]]; then
 		DURATION="${EXAMPLE_TIMEOUT:-600s}"
 		# If DURATION has no unit suffix, assume seconds
 		case "$DURATION" in *[a-zA-Z]) ;; *) DURATION="${DURATION}s" ;; esac
 		"$TIMEOUT_CMD" --preserve-status --signal=TERM --kill-after=10s "$DURATION" \
-			cargo run --release --example "$example" || error_exit "Example $example failed!"
+			"$example_binary" || error_exit "Example $example failed!"
 	else
-		cargo run --release --example "$example" || error_exit "Example $example failed!"
+		"$example_binary" || error_exit "Example $example failed!"
 	fi
 done
 

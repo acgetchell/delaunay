@@ -372,12 +372,14 @@ where
             // Note: remove_simplices_by_keys() automatically clears neighbor pointers in surviving
             // simplices that reference removed simplices (sets them to None/boundary)
             let mut simplices_removed = self.tds.remove_simplices_by_keys(simplices_to_remove);
+            let max_repair_simplices_removed = simplices_to_remove.len();
             let mut post_repair_frontier = SimplexKeyBuffer::new();
 
             self.repair_vertex_removal_facet_issues(
                 &new_simplices,
                 &mut simplices_removed,
                 &mut post_repair_frontier,
+                max_repair_simplices_removed,
             )?;
 
             self.tds
@@ -417,6 +419,7 @@ where
         new_simplices: &SimplexKeyBuffer,
         simplices_removed: &mut usize,
         post_repair_frontier: &mut SimplexKeyBuffer,
+        max_simplices_removed: usize,
     ) -> Result<(), InvariantError> {
         let Some(issues) = self.detect_local_facet_issues(new_simplices)? else {
             return Ok(());
@@ -429,8 +432,13 @@ where
         );
 
         let repair_outcome = self
-            .repair_local_facet_issues_with_frontier(&issues)
-            .map_err(InvariantError::Tds)?;
+            .repair_local_facet_issues_with_frontier(&issues, max_simplices_removed)
+            .map_err(|e| {
+                insertion_error_to_invariant_error(
+                    e,
+                    "Local facet repair after vertex removal failed",
+                )
+            })?;
         let removed = repair_outcome.removed_count;
         post_repair_frontier.extend(repair_outcome.frontier_simplices.iter().copied());
         *simplices_removed += removed;
@@ -439,12 +447,13 @@ where
         tracing::debug!("Repaired by removing {removed} additional simplices");
 
         if removed > 0 {
-            repair_neighbor_pointers(&mut self.tds).map_err(|e| {
-                insertion_error_to_invariant_error(
-                    e,
-                    "Neighbor repair after facet issue repair failed",
-                )
-            })?;
+            self.repair_neighbors_after_local_simplex_removal(new_simplices, post_repair_frontier)
+                .map_err(|e| {
+                    insertion_error_to_invariant_error(
+                        e,
+                        "Neighbor repair after facet issue repair failed",
+                    )
+                })?;
         }
 
         Ok(())
@@ -1045,11 +1054,21 @@ where
     pub(crate) fn repair_local_facet_issues_with_frontier(
         &mut self,
         issues: &FacetIssuesMap,
-    ) -> Result<LocalFacetRepairOutcome, TdsError>
+        max_simplices_removed: usize,
+    ) -> Result<LocalFacetRepairOutcome, InsertionError>
     where
         K::Scalar: Div<Output = K::Scalar>,
     {
-        let to_remove = self.simplices_for_local_facet_issue_repair(issues)?;
+        let to_remove = self
+            .simplices_for_local_facet_issue_repair(issues)
+            .map_err(InsertionError::TopologyValidation)?;
+        let attempted = to_remove.len();
+        if attempted > max_simplices_removed {
+            return Err(InsertionError::MaxSimplicesRemovedExceeded {
+                max_simplices_removed,
+                attempted,
+            });
+        }
         let frontier_simplices = self.collect_local_repair_frontier(issues, &to_remove);
         let removed_count = self.tds.remove_simplices_by_keys(&to_remove);
 
@@ -1147,15 +1166,8 @@ where
     {
         let tds_snapshot = self.tds.clone_for_rollback();
         let repair_result = (|| -> Result<usize, InsertionError> {
-            let outcome = self
-                .repair_local_facet_issues_with_frontier(issues)
-                .map_err(InsertionError::TopologyValidation)?;
-            if outcome.removed_count > max_simplices_removed {
-                return Err(InsertionError::MaxSimplicesRemovedExceeded {
-                    max_simplices_removed,
-                    attempted: outcome.removed_count,
-                });
-            }
+            let outcome =
+                self.repair_local_facet_issues_with_frontier(issues, max_simplices_removed)?;
             if outcome.removed_count == 0 {
                 return Ok(0);
             }
@@ -1711,6 +1723,7 @@ mod tests {
             &new_simplices,
             &mut simplices_removed,
             &mut post_repair_frontier,
+            usize::MAX,
         )
         .unwrap();
 
@@ -1997,7 +2010,7 @@ mod tests {
             .expect("three simplices sharing one edge should be detected as over-shared");
 
         let repair = tri
-            .repair_local_facet_issues_with_frontier(&issues)
+            .repair_local_facet_issues_with_frontier(&issues, usize::MAX)
             .unwrap();
         assert_eq!(repair.removed_count, 1);
         assert!(
@@ -2054,6 +2067,33 @@ mod tests {
         }
         assert!(tri.tds.validate_facet_sharing().is_ok());
         assert!(tri.detect_local_facet_issues(&survivors).unwrap().is_none());
+    }
+
+    #[test]
+    fn test_local_repair_budget_failure_does_not_remove_simplices() {
+        let (mut tri, original_simplices, _, _) = build_overshared_edge_fixture();
+        let issues = tri
+            .detect_local_facet_issues(&original_simplices)
+            .unwrap()
+            .expect("three simplices sharing one edge should be detected as over-shared");
+        let original_simplex_count = tri.tds.number_of_simplices();
+
+        let result = tri.repair_local_facet_issues_with_frontier(&issues, 0);
+
+        assert!(matches!(
+            result,
+            Err(InsertionError::MaxSimplicesRemovedExceeded {
+                max_simplices_removed: 0,
+                attempted
+            }) if attempted > 0
+        ));
+        assert_eq!(tri.tds.number_of_simplices(), original_simplex_count);
+        for simplex_key in original_simplices {
+            assert!(
+                tri.tds.contains_simplex(simplex_key),
+                "budget failure should happen before simplex removal"
+            );
+        }
     }
 
     #[test]

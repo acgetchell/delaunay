@@ -1692,6 +1692,7 @@ where
 
         // Iteratively repair non-manifold topology until facet sharing is valid
         let mut total_removed = 0;
+        let max_repair_simplices_removed = conflict_simplices.len();
         let mut facet_sharing_known_valid = true;
         let mut neighbor_repair_frontier = SimplexKeyBuffer::new();
         #[cfg_attr(
@@ -1722,7 +1723,10 @@ where
                     issues.len()
                 );
 
-                let repair = self.repair_local_facet_issues_with_frontier(&issues)?;
+                let repair_budget_remaining =
+                    max_repair_simplices_removed.saturating_sub(total_removed);
+                let repair =
+                    self.repair_local_facet_issues_with_frontier(&issues, repair_budget_remaining)?;
                 let removed = repair.removed_count;
 
                 // Early exit if repair made no progress
@@ -2503,6 +2507,7 @@ where
 
                 // Iteratively repair non-manifold topology until facet sharing is valid
                 let mut total_removed = 0;
+                let max_repair_simplices_removed = new_simplices.len();
                 let mut facet_sharing_known_valid = true;
                 let mut neighbor_repair_frontier = SimplexKeyBuffer::new();
                 #[cfg_attr(
@@ -2533,7 +2538,12 @@ where
                             issues.len()
                         );
 
-                        let repair = self.repair_local_facet_issues_with_frontier(&issues)?;
+                        let repair_budget_remaining =
+                            max_repair_simplices_removed.saturating_sub(total_removed);
+                        let repair = self.repair_local_facet_issues_with_frontier(
+                            &issues,
+                            repair_budget_remaining,
+                        )?;
                         let removed = repair.removed_count;
 
                         // Early exit if repair made no progress
