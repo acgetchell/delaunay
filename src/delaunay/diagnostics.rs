@@ -3,7 +3,7 @@
 //! # Examples
 //!
 //! ```rust
-//! use delaunay::prelude::triangulation::diagnostics::ConstructionTelemetry;
+//! use delaunay::prelude::diagnostics::ConstructionTelemetry;
 //!
 //! let telemetry = ConstructionTelemetry::default();
 //! assert!(!telemetry.has_data());
@@ -225,7 +225,7 @@ impl ConstructionTelemetry {
     /// # Examples
     ///
     /// ```rust
-    /// use delaunay::prelude::triangulation::diagnostics::ConstructionTelemetry;
+    /// use delaunay::prelude::diagnostics::ConstructionTelemetry;
     ///
     /// let mut telemetry = ConstructionTelemetry::default();
     /// assert!(!telemetry.has_data());

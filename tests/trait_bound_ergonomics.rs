@@ -1,10 +1,10 @@
 //! Compile coverage for read-only APIs with non-`DataType` payloads.
 
+use delaunay::prelude::Triangulation;
 use delaunay::prelude::geometry::FastKernel;
 use delaunay::prelude::query::BoundaryAnalysis;
 use delaunay::prelude::tds::{Simplex, SimplexKey, Tds, verify_facet_index_consistency};
 use delaunay::prelude::topology::validation::validate_triangulation_euler;
-use delaunay::prelude::triangulation::Triangulation;
 
 struct Payload;
 
@@ -15,7 +15,7 @@ fn read_only_topology_apis_accept_non_datatype_payloads() {
 
     assert_eq!(tri.number_of_vertices(), 0);
     assert_eq!(tri.number_of_simplices(), 0);
-    assert_eq!(tri.boundary_facets().count(), 0);
+    assert_eq!(tri.boundary_facets().unwrap().count(), 0);
 
     let index = tri.build_adjacency_index().unwrap();
     assert!(index.vertex_to_simplices.is_empty());

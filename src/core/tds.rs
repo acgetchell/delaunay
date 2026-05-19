@@ -115,7 +115,7 @@
 //! ## Example: Using Validation
 //!
 //! ```rust
-//! use delaunay::prelude::triangulation::*;
+//! use delaunay::prelude::*;
 //!
 //! let vertices = [
 //!     vertex!([0.0, 0.0, 0.0]),
@@ -148,15 +148,15 @@
 //! [`Simplex::is_valid()`]: crate::core::simplex::Simplex::is_valid
 //! [`Vertex::is_valid()`]: crate::core::vertex::Vertex::is_valid
 //! [`Triangulation::is_valid()`]: crate::core::triangulation::Triangulation::is_valid
-//! [`DelaunayTriangulation::is_valid()`]: crate::triangulation::delaunay::DelaunayTriangulation::is_valid
-//! [`DelaunayTriangulation::validation_report()`]: crate::triangulation::delaunay::DelaunayTriangulation::validation_report
+//! [`DelaunayTriangulation::is_valid()`]: crate::DelaunayTriangulation::is_valid
+//! [`DelaunayTriangulation::validation_report()`]: crate::DelaunayTriangulation::validation_report
 //!
 //! # Examples
 //!
 //! ## Creating a 3D Triangulation
 //!
 //! ```rust
-//! use delaunay::prelude::triangulation::*;
+//! use delaunay::prelude::*;
 //!
 //! // Create vertices for a tetrahedron
 //! let vertices = [
@@ -179,7 +179,7 @@
 //! ## Adding Vertices to Existing Triangulation
 //!
 //! ```rust
-//! use delaunay::prelude::triangulation::*;
+//! use delaunay::prelude::*;
 //!
 //! // Start with initial vertices
 //! let initial_vertices = [
@@ -202,7 +202,7 @@
 //! ## 4D Triangulation
 //!
 //! ```rust
-//! use delaunay::prelude::triangulation::*;
+//! use delaunay::prelude::*;
 //!
 //! // Create 4D triangulation with 5 vertices (needed for a 4-simplex)
 //! let vertices_4d = [
@@ -245,9 +245,9 @@ use crate::core::collections::{
     UuidToSimplexKeyMap, UuidToVertexKeyMap, VertexKeyBuffer, VertexKeySet,
     fast_hash_map_with_capacity,
 };
-use crate::core::triangulation::TriangulationValidationError;
+use crate::core::validation::TriangulationValidationError;
 use crate::geometry::traits::coordinate::CoordinateScalar;
-use crate::triangulation::delaunay::DelaunayTriangulationValidationError;
+use crate::validation::DelaunayTriangulationValidationError;
 use serde::{
     Deserialize, Deserializer, Serialize,
     de::{self, MapAccess, Visitor},
@@ -405,7 +405,7 @@ pub enum GeometricError {
 /// Example usage
 ///
 /// ```
-/// use delaunay::prelude::triangulation::*;
+/// use delaunay::prelude::*;
 ///
 /// // Build a simple 3D triangulation
 /// let vertices = [
@@ -1230,6 +1230,8 @@ pub enum TriangulationValidationErrorKind {
     IsolatedVertex,
     /// The simplex-neighbor graph was disconnected.
     Disconnected,
+    /// Positive-orientation promotion did not converge.
+    OrientationPromotionNonConvergence,
 }
 
 impl From<&TriangulationValidationError> for TriangulationValidationErrorKind {
@@ -1250,6 +1252,9 @@ impl From<&TriangulationValidationError> for TriangulationValidationErrorKind {
             }
             TriangulationValidationError::IsolatedVertex { .. } => Self::IsolatedVertex,
             TriangulationValidationError::Disconnected { .. } => Self::Disconnected,
+            TriangulationValidationError::OrientationPromotionNonConvergence { .. } => {
+                Self::OrientationPromotionNonConvergence
+            }
         }
     }
 }
@@ -1394,7 +1399,7 @@ pub struct InvariantViolation {
 /// [`DelaunayTriangulation::validation_report()`]
 /// to surface all failed invariants at once for debugging and test diagnostics.
 ///
-/// [`DelaunayTriangulation::validation_report()`]: crate::triangulation::delaunay::DelaunayTriangulation::validation_report
+/// [`DelaunayTriangulation::validation_report()`]: crate::DelaunayTriangulation::validation_report
 ///
 /// # Examples
 ///
@@ -1436,7 +1441,7 @@ new_key_type! {
     /// # Examples
     ///
     /// ```
-    /// use delaunay::prelude::triangulation::*;
+    /// use delaunay::prelude::*;
     ///
     /// let vertices = [
     ///     vertex!([0.0, 0.0]),
@@ -1461,7 +1466,7 @@ new_key_type! {
     /// # Examples
     ///
     /// ```
-    /// use delaunay::prelude::triangulation::*;
+    /// use delaunay::prelude::*;
     ///
     /// let vertices = [
     ///     vertex!([0.0, 0.0]),
@@ -1509,14 +1514,14 @@ new_key_type! {
 ///
 /// `Tds` is the low-level topology container used by
 /// [`Triangulation`](crate::core::triangulation::Triangulation) and
-/// [`DelaunayTriangulation`](crate::triangulation::delaunay::DelaunayTriangulation).
+/// [`crate::DelaunayTriangulation`].
 ///
 /// Most users should construct triangulations via `DelaunayTriangulation` and access the
 /// underlying `Tds` via `dt.tds()`. Use [`Tds::empty`](Self::empty) for low-level or test
 /// scenarios where you want to manipulate the topology directly.
 ///
 /// ```rust
-/// use delaunay::prelude::triangulation::*;
+/// use delaunay::prelude::*;
 ///
 /// // Create vertices for a 2D triangulation
 /// let vertices = [
@@ -1959,7 +1964,7 @@ impl<T, U, V, const D: usize> Tds<T, U, V, D> {
     /// # Example
     ///
     /// ```
-    /// use delaunay::prelude::triangulation::*;
+    /// use delaunay::prelude::*;
     ///
     /// let vertices = [
     ///     vertex!([0.0, 0.0, 0.0]),
@@ -1990,7 +1995,7 @@ impl<T, U, V, const D: usize> Tds<T, U, V, D> {
     /// # Example
     ///
     /// ```
-    /// use delaunay::prelude::triangulation::*;
+    /// use delaunay::prelude::*;
     ///
     /// let vertices = [
     ///     vertex!([0.0, 0.0, 0.0]),
@@ -2027,7 +2032,7 @@ impl<T, U, V, const D: usize> Tds<T, U, V, D> {
     /// # Example
     ///
     /// ```
-    /// use delaunay::prelude::triangulation::*;
+    /// use delaunay::prelude::*;
     ///
     /// let vertices = [
     ///     vertex!([0.0, 0.0]),
@@ -2053,7 +2058,7 @@ impl<T, U, V, const D: usize> Tds<T, U, V, D> {
     /// # Examples
     ///
     /// ```
-    /// use delaunay::prelude::triangulation::*;
+    /// use delaunay::prelude::*;
     ///
     /// let vertices = [
     ///     vertex!([0.0, 0.0]),
@@ -2077,7 +2082,7 @@ impl<T, U, V, const D: usize> Tds<T, U, V, D> {
     /// # Examples
     ///
     /// ```
-    /// use delaunay::prelude::triangulation::*;
+    /// use delaunay::prelude::*;
     ///
     /// let vertices = [
     ///     vertex!([0.0, 0.0]),
@@ -2101,7 +2106,7 @@ impl<T, U, V, const D: usize> Tds<T, U, V, D> {
     /// # Examples
     ///
     /// ```
-    /// use delaunay::prelude::triangulation::*;
+    /// use delaunay::prelude::*;
     ///
     /// let vertices = [
     ///     vertex!([0.0, 0.0]),
@@ -2128,7 +2133,7 @@ impl<T, U, V, const D: usize> Tds<T, U, V, D> {
     /// # Examples
     ///
     /// ```
-    /// use delaunay::prelude::triangulation::*;
+    /// use delaunay::prelude::*;
     ///
     /// let vertices = [
     ///     vertex!([0.0, 0.0]),
@@ -2358,7 +2363,7 @@ impl<T, U, V, const D: usize> Tds<T, U, V, D> {
     /// # Examples
     ///
     /// ```
-    /// use delaunay::prelude::triangulation::*;
+    /// use delaunay::prelude::*;
     ///
     /// let vertices = [
     ///     vertex!([0.0, 0.0, 0.0]),
@@ -2810,7 +2815,7 @@ impl<T, U, V, const D: usize> Tds<T, U, V, D> {
     /// # Examples
     ///
     /// ```
-    /// use delaunay::prelude::triangulation::*;
+    /// use delaunay::prelude::*;
     ///
     /// let vertices = [
     ///     vertex!([0.0, 0.0]),
@@ -2870,7 +2875,7 @@ impl<T, U, V, const D: usize> Tds<T, U, V, D> {
     /// Successfully finding a simplex key from a UUID:
     ///
     /// ```
-    /// use delaunay::prelude::triangulation::*;
+    /// use delaunay::prelude::*;
     ///
     /// // Create a triangulation with some vertices
     /// let vertices = [
@@ -2930,7 +2935,7 @@ impl<T, U, V, const D: usize> Tds<T, U, V, D> {
     /// Successfully finding a vertex key from a UUID:
     ///
     /// ```
-    /// use delaunay::prelude::triangulation::*;
+    /// use delaunay::prelude::*;
     ///
     /// // Create a triangulation with some vertices
     /// let vertices = [
@@ -2990,7 +2995,7 @@ impl<T, U, V, const D: usize> Tds<T, U, V, D> {
     /// Successfully getting a UUID from a simplex key:
     ///
     /// ```
-    /// use delaunay::prelude::triangulation::*;
+    /// use delaunay::prelude::*;
     ///
     /// // Create a triangulation with some vertices
     /// let vertices = [
@@ -3015,7 +3020,7 @@ impl<T, U, V, const D: usize> Tds<T, U, V, D> {
     /// Round-trip conversion between UUID and key:
     ///
     /// ```
-    /// use delaunay::prelude::triangulation::*;
+    /// use delaunay::prelude::*;
     ///
     /// // Create a triangulation with some vertices
     /// let vertices = [
@@ -3065,7 +3070,7 @@ impl<T, U, V, const D: usize> Tds<T, U, V, D> {
     /// Successfully getting a UUID from a vertex key:
     ///
     /// ```
-    /// use delaunay::prelude::triangulation::*;
+    /// use delaunay::prelude::*;
     ///
     /// // Create a triangulation with some vertices
     /// let vertices = [
@@ -3090,7 +3095,7 @@ impl<T, U, V, const D: usize> Tds<T, U, V, D> {
     /// Round-trip conversion between UUID and key:
     ///
     /// ```
-    /// use delaunay::prelude::triangulation::*;
+    /// use delaunay::prelude::*;
     ///
     /// // Create a triangulation with some vertices
     /// let vertices = [
@@ -3165,7 +3170,7 @@ impl<T, U, V, const D: usize> Tds<T, U, V, D> {
     /// # Examples
     ///
     /// ```
-    /// use delaunay::prelude::triangulation::*;
+    /// use delaunay::prelude::*;
     ///
     /// let vertices = [
     ///     vertex!([0.0, 0.0]),
@@ -3217,7 +3222,7 @@ impl<T, U, V, const D: usize> Tds<T, U, V, D> {
     /// # Examples
     ///
     /// ```
-    /// use delaunay::prelude::triangulation::*;
+    /// use delaunay::prelude::*;
     ///
     /// let vertices: [Vertex<f64, i32, 2>; 3] = [
     ///     vertex!([0.0, 0.0], 10i32),
@@ -3269,7 +3274,7 @@ impl<T, U, V, const D: usize> Tds<T, U, V, D> {
     /// # Examples
     ///
     /// ```
-    /// use delaunay::prelude::triangulation::*;
+    /// use delaunay::prelude::*;
     ///
     /// let vertices = [
     ///     vertex!([0.0, 0.0]),
@@ -3316,7 +3321,7 @@ impl<T, U, V, const D: usize> Tds<T, U, V, D> {
     /// # Examples
     ///
     /// ```
-    /// use delaunay::prelude::triangulation::*;
+    /// use delaunay::prelude::*;
     ///
     /// let vertices = [
     ///     vertex!([0.0, 0.0]),
@@ -3347,7 +3352,7 @@ impl<T, U, V, const D: usize> Tds<T, U, V, D> {
     /// # Examples
     ///
     /// ```
-    /// use delaunay::prelude::triangulation::*;
+    /// use delaunay::prelude::*;
     ///
     /// let vertices = [
     ///     vertex!([0.0, 0.0]),
@@ -3397,7 +3402,7 @@ impl<T, U, V, const D: usize> Tds<T, U, V, D> {
     /// # Examples
     ///
     /// ```
-    /// use delaunay::prelude::triangulation::*;
+    /// use delaunay::prelude::*;
     ///
     /// let vertices = [
     ///     vertex!([0.0, 0.0]),
@@ -3796,7 +3801,7 @@ impl<T, U, V, const D: usize> Tds<T, U, V, D> {
     /// # Examples
     ///
     /// ```rust
-    /// use delaunay::prelude::triangulation::*;
+    /// use delaunay::prelude::*;
     ///
     /// let vertices = [
     ///     vertex!([0.0, 0.0]),
@@ -3892,7 +3897,7 @@ impl<T, U, V, const D: usize> Tds<T, U, V, D> {
     /// # Examples
     ///
     /// ```rust
-    /// use delaunay::prelude::triangulation::*;
+    /// use delaunay::prelude::*;
     ///
     /// let vertices = [
     ///     vertex!([0.0, 0.0]),
@@ -4384,7 +4389,7 @@ impl<T, U, V, const D: usize> Tds<T, U, V, D> {
     /// # Examples
     ///
     /// ```
-    /// use delaunay::prelude::triangulation::*;
+    /// use delaunay::prelude::*;
     ///
     /// let vertices = [
     ///     vertex!([0.0, 0.0]),
@@ -4463,7 +4468,7 @@ impl<T, U, V, const D: usize> Tds<T, U, V, D> {
     /// # Examples
     ///
     /// ```
-    /// use delaunay::prelude::triangulation::*;
+    /// use delaunay::prelude::*;
     ///
     /// let vertices = [
     ///     vertex!([0.0, 0.0]),
@@ -4524,7 +4529,7 @@ impl<T, U, V, const D: usize> Tds<T, U, V, D> {
     /// # Examples
     ///
     /// ```
-    /// use delaunay::prelude::triangulation::*;
+    /// use delaunay::prelude::*;
     ///
     /// let vertices = [
     ///     vertex!([0.0, 0.0]),
@@ -4583,7 +4588,7 @@ impl<T, U, V, const D: usize> Tds<T, U, V, D> {
     ///
     ///
     /// This function creates an empty triangulation with no vertices and no simplices.
-    /// Use [`DelaunayTriangulation::empty()`](crate::triangulation::delaunay::DelaunayTriangulation::empty)
+    /// Use [`DelaunayTriangulation::empty()`](crate::DelaunayTriangulation::empty)
     /// for the high-level API, or this method for low-level Tds construction.
     ///
     /// # Returns
@@ -4635,7 +4640,7 @@ impl<T, U, V, const D: usize> Tds<T, U, V, D> {
     /// # Examples
     ///
     /// ```
-    /// use delaunay::prelude::triangulation::*;
+    /// use delaunay::prelude::*;
     ///
     /// let vertices = [
     ///     vertex!([0.0, 0.0, 0.0]),
@@ -4933,7 +4938,7 @@ impl<T, U, V, const D: usize> Tds<T, U, V, D> {
     /// # Examples
     ///
     /// ```
-    /// use delaunay::prelude::triangulation::*;
+    /// use delaunay::prelude::*;
     ///
     /// let vertices = [
     ///     vertex!([0.0, 0.0]),
@@ -5093,7 +5098,7 @@ impl<T, U, V, const D: usize> Tds<T, U, V, D> {
     ///
     /// This corresponds to [`InvariantKind::VertexMappings`], which is included in
     /// [`Tds::is_valid`](Self::is_valid) and [`Tds::validate`](Self::validate), and is also surfaced by
-    /// [`DelaunayTriangulation::validation_report()`](crate::triangulation::delaunay::DelaunayTriangulation::validation_report).
+    /// [`DelaunayTriangulation::validation_report()`](crate::DelaunayTriangulation::validation_report).
     ///
     /// # Errors
     ///
@@ -5161,7 +5166,7 @@ impl<T, U, V, const D: usize> Tds<T, U, V, D> {
     /// [`Tds::is_valid`](Self::is_valid) and [`Tds::validate`](Self::validate), and is also surfaced by
     /// [`DelaunayTriangulation::validation_report()`].
     ///
-    /// [`DelaunayTriangulation::validation_report()`]: crate::triangulation::delaunay::DelaunayTriangulation::validation_report
+    /// [`DelaunayTriangulation::validation_report()`]: crate::DelaunayTriangulation::validation_report
     ///
     /// # Errors
     ///
@@ -5299,7 +5304,7 @@ impl<T, U, V, const D: usize> Tds<T, U, V, D> {
     /// [`Tds::is_valid`](Self::is_valid) and [`Tds::validate`](Self::validate), and is also surfaced by
     /// [`DelaunayTriangulation::validation_report()`].
     ///
-    /// [`DelaunayTriangulation::validation_report()`]: crate::triangulation::delaunay::DelaunayTriangulation::validation_report
+    /// [`DelaunayTriangulation::validation_report()`]: crate::DelaunayTriangulation::validation_report
     fn validate_no_duplicate_simplices(&self) -> Result<(), TdsError> {
         // Include periodic per-vertex offsets in the duplicate key so periodic quotient simplices
         // with identical vertex sets but distinct lattice offsets are not collapsed.
@@ -5413,7 +5418,7 @@ impl<T, U, V, const D: usize> Tds<T, U, V, D> {
     /// [`Tds::is_valid`](Self::is_valid) and [`Tds::validate`](Self::validate), and is also surfaced by
     /// [`DelaunayTriangulation::validation_report()`].
     ///
-    /// [`DelaunayTriangulation::validation_report()`]: crate::triangulation::delaunay::DelaunayTriangulation::validation_report
+    /// [`DelaunayTriangulation::validation_report()`]: crate::DelaunayTriangulation::validation_report
     pub(crate) fn validate_facet_sharing(&self) -> Result<(), TdsError> {
         // Build a map from facet keys to the simplices that contain them.
         // Use the strict version to ensure we catch any missing vertex keys.
@@ -5431,7 +5436,7 @@ impl<T, U, V, const D: usize> Tds<T, U, V, D> {
     /// # Examples
     ///
     /// ```rust
-    /// use delaunay::prelude::triangulation::construction::{
+    /// use delaunay::prelude::construction::{
     ///     DelaunayTriangulation, DelaunayTriangulationConstructionError, vertex,
     /// };
     ///
@@ -5813,7 +5818,7 @@ impl<T, U, V, const D: usize> Tds<T, U, V, D> {
     /// # Examples
     ///
     /// ```rust
-    /// use delaunay::prelude::triangulation::*;
+    /// use delaunay::prelude::*;
     ///
     /// let vertices_4d = [
     ///     vertex!([0.0, 0.0, 0.0, 0.0]),
@@ -5866,7 +5871,7 @@ impl<T, U, V, const D: usize> Tds<T, U, V, D> {
     /// # Examples
     ///
     /// ```rust
-    /// use delaunay::prelude::triangulation::*;
+    /// use delaunay::prelude::*;
     ///
     /// let vertices_4d = [
     ///     vertex!([0.0, 0.0, 0.0, 0.0]),
@@ -6122,7 +6127,7 @@ impl<T, U, V, const D: usize> Tds<T, U, V, D> {
     /// [`Tds::is_valid`](Self::is_valid) and [`Tds::validate`](Self::validate), and is also surfaced by
     /// [`DelaunayTriangulation::validation_report()`].
     ///
-    /// [`DelaunayTriangulation::validation_report()`]: crate::triangulation::delaunay::DelaunayTriangulation::validation_report
+    /// [`DelaunayTriangulation::validation_report()`]: crate::DelaunayTriangulation::validation_report
     ///
     /// Note: callers provide `facet_to_simplices` so `is_valid()` and `validation_report()` can share
     /// the precomputed facet map between validators.
@@ -6899,21 +6904,21 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::DelaunayTriangulation;
+    use crate::builder::DelaunayTriangulationBuilder;
     use crate::core::algorithms::flips::DelaunayRepairError;
     use crate::core::algorithms::incremental_insertion::InsertionError;
     use crate::core::collections::NeighborBuffer;
     use crate::core::facet::FacetError;
     use crate::core::simplex::Simplex;
-    use crate::core::triangulation::TriangulationValidationError;
     use crate::core::util::uuid::UuidValidationError;
+    use crate::core::validation::TriangulationValidationError;
     use crate::core::vertex::VertexBuilder;
     use crate::geometry::point::Point;
     use crate::geometry::traits::coordinate::Coordinate;
+    use crate::repair::DelaunayRepairOperation;
     use crate::topology::characteristics::euler::TopologyClassification;
-    use crate::triangulation::builder::DelaunayTriangulationBuilder;
-    use crate::triangulation::delaunay::{
-        DelaunayRepairOperation, DelaunayTriangulation, DelaunayTriangulationValidationError,
-    };
+    use crate::validation::DelaunayTriangulationValidationError;
     use crate::vertex;
     use slotmap::KeyData;
     use std::sync::Arc;
@@ -7182,6 +7187,13 @@ mod tests {
             (
                 TriangulationValidationError::Disconnected { simplex_count: 2 },
                 TriangulationValidationErrorKind::Disconnected,
+            ),
+            (
+                TriangulationValidationError::OrientationPromotionNonConvergence {
+                    residual_count: 1,
+                    sampled: vec![SimplexKey::from(KeyData::from_ffi(4))],
+                },
+                TriangulationValidationErrorKind::OrientationPromotionNonConvergence,
             ),
         ];
 
@@ -7726,11 +7738,21 @@ mod tests {
                 vertex!([1.0, 0.0, 0.0]),
                 vertex!([0.0, 1.0, 0.0]),
                 vertex!([0.0, 0.0, 1.0]),
-                vertex!([1.0, 1.0, 1.0]),
+                vertex!([0.2, 0.2, 0.2]),
             ];
             let mut dt_3d: DelaunayTriangulation<_, (), (), 3> =
                 DelaunayTriangulation::new(&vertices_3d).unwrap();
-            let vertex_key = dt_3d.vertices().next().unwrap().0;
+            let vertex_key = dt_3d
+                .vertices()
+                .find(|(_, vertex)| {
+                    let coords = vertex.point().coords();
+                    coords
+                        .iter()
+                        .zip([0.2, 0.2, 0.2])
+                        .all(|(coord, expected)| (*coord - expected).abs() < 1e-12)
+                })
+                .unwrap()
+                .0;
             let simplices_removed = dt_3d.remove_vertex(vertex_key).unwrap();
             assert!(simplices_removed > 0);
             assert!(dt_3d.as_triangulation().tds.is_valid().is_ok());
@@ -7744,11 +7766,21 @@ mod tests {
                 vertex!([0.0, 1.0, 0.0, 0.0]),
                 vertex!([0.0, 0.0, 1.0, 0.0]),
                 vertex!([0.0, 0.0, 0.0, 1.0]),
-                vertex!([1.0, 1.0, 1.0, 1.0]),
+                vertex!([0.2, 0.2, 0.2, 0.2]),
             ];
             let mut dt_4d: DelaunayTriangulation<_, (), (), 4> =
                 DelaunayTriangulation::new(&vertices_4d).unwrap();
-            let vertex_key = dt_4d.vertices().next().unwrap().0;
+            let vertex_key = dt_4d
+                .vertices()
+                .find(|(_, vertex)| {
+                    let coords = vertex.point().coords();
+                    coords
+                        .iter()
+                        .zip([0.2, 0.2, 0.2, 0.2])
+                        .all(|(coord, expected)| (*coord - expected).abs() < 1e-12)
+                })
+                .unwrap()
+                .0;
             let simplices_removed = dt_4d.remove_vertex(vertex_key).unwrap();
             assert!(simplices_removed > 0);
             assert!(dt_4d.as_triangulation().tds.is_valid().is_ok());

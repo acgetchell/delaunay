@@ -34,6 +34,7 @@ use crate::core::collections::{
     FastHashMap, FastHashSet, FastHasher, MAX_PRACTICAL_DIMENSION_SIZE, SimplexKeyBuffer,
     SmallBuffer, VertexKeyBuffer,
 };
+use crate::core::construction::TriangulationConstructionError;
 use crate::core::facet::{FacetError, FacetHandle};
 use crate::core::simplex::{NeighborSlot, Simplex, SimplexValidationError};
 use crate::core::tds::{
@@ -42,15 +43,14 @@ use crate::core::tds::{
 };
 use crate::core::traits::boundary_analysis::BoundaryAnalysis;
 use crate::core::traits::data_type::DataType;
-use crate::core::triangulation::TriangulationConstructionError;
-use crate::core::triangulation::TriangulationValidationError;
+use crate::core::validation::TriangulationValidationError;
 use crate::core::vertex::VertexValidationError;
 use crate::geometry::kernel::Kernel;
 use crate::geometry::point::Point;
 use crate::geometry::predicates::Orientation;
 use crate::geometry::robust_predicates::robust_orientation;
 use crate::geometry::traits::coordinate::{CoordinateConversionError, CoordinateScalar};
-use crate::triangulation::delaunay::DelaunayTriangulationValidationError;
+use crate::validation::DelaunayTriangulationValidationError;
 use std::fmt;
 use std::hash::{Hash, Hasher};
 
@@ -59,7 +59,7 @@ use std::hash::{Hash, Hasher};
 /// # Examples
 ///
 /// ```rust
-/// use delaunay::prelude::triangulation::insertion::HullExtensionReason;
+/// use delaunay::prelude::insertion::HullExtensionReason;
 ///
 /// let reason = HullExtensionReason::NoVisibleFacets;
 /// assert!(matches!(reason, HullExtensionReason::NoVisibleFacets));
@@ -519,6 +519,17 @@ pub enum InitialSimplexConstructionError {
         coordinates: String,
     },
 
+    /// Local repair would remove more simplices than the active budget allowed.
+    #[error(
+        "local repair removal budget exceeded while building initial simplex: attempted {attempted}, max {max_simplices_removed}"
+    )]
+    LocalRepairBudgetExceeded {
+        /// Maximum number of simplices this repair stage was allowed to remove.
+        max_simplices_removed: usize,
+        /// Number of simplices the repair stage attempted to remove.
+        attempted: usize,
+    },
+
     /// An insertion-stage-only construction error escaped initial-simplex construction.
     #[error(
         "unexpected insertion-stage construction error while building initial simplex: {message}"
@@ -599,6 +610,13 @@ impl From<TriangulationConstructionError> for InitialSimplexConstructionError {
                     message: source.to_string(),
                 }
             }
+            TriangulationConstructionError::LocalRepairBudgetExceeded {
+                max_simplices_removed,
+                attempted,
+            } => Self::LocalRepairBudgetExceeded {
+                max_simplices_removed,
+                attempted,
+            },
             TriangulationConstructionError::FinalTopologyValidation { source, .. } => {
                 Self::UnexpectedInsertionStage {
                     message: source.to_string(),
@@ -654,7 +672,7 @@ impl From<&DelaunayRepairError> for DelaunayRepairErrorKind {
 /// # Examples
 ///
 /// ```rust
-/// use delaunay::prelude::triangulation::repair::{
+/// use delaunay::prelude::repair::{
 ///     DelaunayRepairError, DelaunayRepairErrorKind, DelaunayRepairErrorSummary,
 /// };
 ///
@@ -727,6 +745,8 @@ pub enum InsertionErrorKind {
     TopologyValidation,
     /// Triangulation-layer topology validation failed.
     TopologyValidationFailed,
+    /// Local repair would exceed its simplex-removal budget.
+    MaxSimplicesRemovedExceeded,
 }
 
 /// Nested discriminant preserved by an [`InsertionErrorSummary`].
@@ -758,12 +778,12 @@ pub enum InsertionErrorSourceKind {
 /// # Examples
 ///
 /// ```rust
-/// use delaunay::prelude::triangulation::insertion::{
+/// use delaunay::prelude::insertion::{
 ///     DelaunayRepairErrorKind, DelaunayRepairFailureContext, HullExtensionReason,
 ///     InsertionError, InsertionErrorKind, InsertionErrorSourceKind,
 ///     InsertionErrorSummary,
 /// };
-/// use delaunay::prelude::triangulation::repair::DelaunayRepairError;
+/// use delaunay::prelude::repair::DelaunayRepairError;
 ///
 /// let source = InsertionError::DelaunayRepairFailed {
 ///     source: Box::new(DelaunayRepairError::PostconditionFailed {
@@ -818,7 +838,7 @@ impl InsertionErrorSummary {
     ///
     /// ```rust
     /// use delaunay::prelude::tds::TriangulationValidationErrorKind;
-    /// use delaunay::prelude::triangulation::insertion::{
+    /// use delaunay::prelude::insertion::{
     ///     InsertionErrorKind, InsertionErrorSourceKind, InsertionErrorSummary,
     /// };
     ///
@@ -867,6 +887,9 @@ impl From<InsertionError> for InsertionErrorSummary {
             InsertionError::TopologyValidation(_) => InsertionErrorKind::TopologyValidation,
             InsertionError::TopologyValidationFailed { .. } => {
                 InsertionErrorKind::TopologyValidationFailed
+            }
+            InsertionError::MaxSimplicesRemovedExceeded { .. } => {
+                InsertionErrorKind::MaxSimplicesRemovedExceeded
             }
         };
         let source_kind = match &source {
@@ -934,7 +957,7 @@ impl fmt::Display for DelaunayRepairFailureContext {
 ///
 /// ```rust
 /// use delaunay::prelude::tds::SimplexKey;
-/// use delaunay::prelude::triangulation::insertion::{
+/// use delaunay::prelude::insertion::{
 ///     NeighborRebuildError, NeighborWiringError,
 /// };
 /// use slotmap::KeyData;
@@ -994,7 +1017,7 @@ pub enum NeighborRebuildError {
 ///
 /// ```rust
 /// use delaunay::prelude::tds::SimplexKey;
-/// use delaunay::prelude::triangulation::insertion::CavityFillingError;
+/// use delaunay::prelude::insertion::CavityFillingError;
 /// use slotmap::KeyData;
 ///
 /// let simplex_key = SimplexKey::from(KeyData::from_ffi(7));
@@ -1134,7 +1157,7 @@ pub enum CavityFillingError {
 /// # Examples
 ///
 /// ```rust
-/// use delaunay::prelude::triangulation::insertion::CavityRepairStage;
+/// use delaunay::prelude::insertion::CavityRepairStage;
 ///
 /// assert_eq!(
 ///     CavityRepairStage::PrimaryInsertion.to_string(),
@@ -1165,7 +1188,7 @@ impl fmt::Display for CavityRepairStage {
 ///
 /// ```rust
 /// use delaunay::prelude::tds::SimplexKey;
-/// use delaunay::prelude::triangulation::insertion::NeighborWiringError;
+/// use delaunay::prelude::insertion::NeighborWiringError;
 /// use slotmap::KeyData;
 ///
 /// let simplex_key = SimplexKey::from(KeyData::from_ffi(11));
@@ -1294,7 +1317,7 @@ pub enum NeighborWiringError {
 /// # Examples
 ///
 /// ```rust
-/// use delaunay::prelude::triangulation::insertion::InsertionError;
+/// use delaunay::prelude::insertion::InsertionError;
 ///
 /// let err = InsertionError::DuplicateCoordinates {
 ///     coordinates: "[0.0, 0.0, 0.0]".to_string(),
@@ -1412,6 +1435,22 @@ pub enum InsertionError {
         #[source]
         source: TriangulationValidationError,
     },
+
+    /// Local facet repair would remove more simplices than the caller allowed.
+    ///
+    /// This is emitted by
+    /// [`Triangulation::repair_local_facet_issues`](crate::Triangulation::repair_local_facet_issues)
+    /// before neighbor repair or validation runs, so callers can retry with a
+    /// larger budget without committing a partial topology edit.
+    #[error(
+        "Local facet repair removal budget exceeded: would remove {attempted} simplices, maximum is {max_simplices_removed}"
+    )]
+    MaxSimplicesRemovedExceeded {
+        /// Maximum simplices the caller allowed this repair to remove.
+        max_simplices_removed: usize,
+        /// Number of simplices selected for removal.
+        attempted: usize,
+    },
 }
 
 impl From<CavityFillingError> for InsertionError {
@@ -1483,7 +1522,7 @@ impl InsertionError {
     /// # Examples
     ///
     /// ```rust
-    /// use delaunay::prelude::triangulation::insertion::{HullExtensionReason, InsertionError};
+    /// use delaunay::prelude::insertion::{HullExtensionReason, InsertionError};
     ///
     /// let retryable = InsertionError::NonManifoldTopology {
     ///     facet_hash: 1,
@@ -1556,7 +1595,8 @@ impl InsertionError {
             | Self::DelaunayValidationFailed { .. }
             | Self::DelaunayRepairFailed { .. }
             | Self::DuplicateCoordinates { .. }
-            | Self::DuplicateUuid { .. } => false,
+            | Self::DuplicateUuid { .. }
+            | Self::MaxSimplicesRemovedExceeded { .. } => false,
         }
     }
 
@@ -1605,6 +1645,7 @@ impl InsertionError {
                 | InitialSimplexConstructionError::InsufficientVertices { .. }
                 | InitialSimplexConstructionError::InternalInconsistency { .. }
                 | InitialSimplexConstructionError::DuplicateCoordinates { .. }
+                | InitialSimplexConstructionError::LocalRepairBudgetExceeded { .. }
                 | InitialSimplexConstructionError::UnexpectedInsertionStage { .. } => false,
             },
             CavityFillingError::NeighborRebuild { reason } => match reason {
@@ -1643,6 +1684,7 @@ impl InsertionError {
             | TriangulationValidationError::BoundaryRidgeMultiplicity { .. }
             | TriangulationValidationError::RidgeLinkNotManifold { .. }
             | TriangulationValidationError::VertexLinkNotManifold { .. }
+            | TriangulationValidationError::OrientationPromotionNonConvergence { .. }
             | TriangulationValidationError::IsolatedVertex { .. } => true,
             // All other variants (structural invariant violations, future additions)
             // are conservatively treated as non-retryable.
@@ -1700,7 +1742,7 @@ impl InsertionError {
 /// # Examples
 ///
 /// ```rust
-/// use delaunay::prelude::triangulation::insertion::fill_cavity;
+/// use delaunay::prelude::insertion::fill_cavity;
 /// use delaunay::prelude::tds::FacetHandle;
 /// use delaunay::prelude::query::*;
 ///
@@ -2089,7 +2131,7 @@ where
 /// # Examples
 ///
 /// ```rust
-/// use delaunay::prelude::triangulation::insertion::wire_cavity_neighbors;
+/// use delaunay::prelude::insertion::wire_cavity_neighbors;
 /// use delaunay::prelude::collections::SimplexKeyBuffer;
 /// use delaunay::prelude::tds::Tds;
 ///
@@ -2685,9 +2727,9 @@ where
 /// # Examples
 ///
 /// ```rust
-/// use delaunay::prelude::triangulation::{DelaunayTriangulation, vertex};
-/// use delaunay::prelude::triangulation::DelaunayTriangulationConstructionError;
-/// use delaunay::prelude::triangulation::insertion::{
+/// use delaunay::prelude::{DelaunayTriangulation, vertex};
+/// use delaunay::prelude::DelaunayTriangulationConstructionError;
+/// use delaunay::prelude::insertion::{
 ///     InsertionError, TdsMutationError, repair_neighbor_pointers_local,
 /// };
 ///
@@ -2936,10 +2978,10 @@ where
 /// # Examples
 ///
 /// ```rust
-/// use delaunay::prelude::triangulation::construction::{
+/// use delaunay::prelude::construction::{
 ///     DelaunayTriangulation, DelaunayTriangulationConstructionError, vertex,
 /// };
-/// use delaunay::prelude::triangulation::insertion::{InsertionError, repair_neighbor_pointers};
+/// use delaunay::prelude::insertion::{InsertionError, repair_neighbor_pointers};
 ///
 /// # #[derive(Debug, thiserror::Error)]
 /// # enum ExampleError {
@@ -3332,7 +3374,7 @@ where
 /// # Examples
 ///
 /// ```rust
-/// use delaunay::prelude::triangulation::insertion::extend_hull;
+/// use delaunay::prelude::insertion::extend_hull;
 /// use delaunay::prelude::tds::Tds;
 /// use delaunay::prelude::tds::VertexKey;
 /// use delaunay::prelude::geometry::FastKernel;
@@ -4182,17 +4224,17 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::DelaunayTriangulation;
     use crate::core::algorithms::flips::{
         DelaunayRepairDiagnostics, DelaunayRepairVerificationContext, FlipError, RepairQueueOrder,
     };
     use crate::core::algorithms::locate::InternalInconsistencySite;
     use crate::core::collections::SimplexKeyBuffer;
     use crate::core::tds::GeometricError;
-    use crate::core::triangulation::TopologyGuarantee;
+    use crate::core::validation::TopologyGuarantee;
     use crate::geometry::kernel::FastKernel;
     use crate::geometry::traits::coordinate::{Coordinate, CoordinateConversionError};
     use crate::topology::characteristics::euler::TopologyClassification;
-    use crate::triangulation::delaunay::DelaunayTriangulation;
     use crate::vertex;
     use slotmap::KeyData;
 
@@ -4936,6 +4978,24 @@ mod tests {
     }
 
     #[test]
+    fn test_insertion_error_summary_preserves_repair_budget_error() {
+        let source = InsertionError::MaxSimplicesRemovedExceeded {
+            max_simplices_removed: 2,
+            attempted: 3,
+        };
+        let summary = InsertionErrorSummary::from(source.clone());
+
+        assert_eq!(
+            summary.kind,
+            InsertionErrorKind::MaxSimplicesRemovedExceeded
+        );
+        assert_eq!(summary.source_kind, None);
+        assert_eq!(summary.message, source.to_string());
+        assert!(!summary.retryable);
+        assert!(!source.is_retryable());
+    }
+
+    #[test]
     fn test_insertion_error_summary_retryability_covers_tds_source_kinds() {
         let geometric = InsertionErrorSummary {
             kind: InsertionErrorKind::TopologyValidation,
@@ -4981,6 +5041,10 @@ mod tests {
     }
 
     #[test]
+    #[expect(
+        clippy::too_many_lines,
+        reason = "Covers retryability for each structured cavity-filling payload"
+    )]
     fn test_cavity_filling_retryability_inspects_construction_payloads() {
         let geometry_failure = TdsValidationFailure::Geometric {
             source: GeometricError::DegenerateOrientation {
@@ -5053,6 +5117,17 @@ mod tests {
             .is_retryable()
         );
         assert!(
+            !InsertionError::CavityFilling {
+                reason: CavityFillingError::InitialSimplexConstruction {
+                    reason: InitialSimplexConstructionError::LocalRepairBudgetExceeded {
+                        max_simplices_removed: 2,
+                        attempted: 3,
+                    },
+                },
+            }
+            .is_retryable()
+        );
+        assert!(
             InsertionError::CavityFilling {
                 reason: CavityFillingError::NeighborRebuild {
                     reason: NeighborRebuildError::from(InsertionError::TopologyValidationFailed {
@@ -5076,6 +5151,24 @@ mod tests {
                 },
             }
             .is_retryable()
+        );
+    }
+
+    #[test]
+    fn test_initial_simplex_construction_error_preserves_repair_budget() {
+        let source = TriangulationConstructionError::LocalRepairBudgetExceeded {
+            max_simplices_removed: 2,
+            attempted: 3,
+        };
+
+        let converted = InitialSimplexConstructionError::from(source);
+
+        assert_eq!(
+            converted,
+            InitialSimplexConstructionError::LocalRepairBudgetExceeded {
+                max_simplices_removed: 2,
+                attempted: 3,
+            }
         );
     }
 

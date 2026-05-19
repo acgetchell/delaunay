@@ -18,7 +18,13 @@ Relevant modules (lexicographically sorted):
 ```text
 src/
 ├── core/
-│   └── triangulation.rs
+│   ├── query.rs
+│   ├── triangulation.rs
+│   └── validation.rs
+├── delaunay/
+│   ├── flips.rs
+│   ├── repair.rs
+│   └── validation.rs
 ├── geometry/
 ├── lib.rs
 ├── topology/
@@ -33,8 +39,6 @@ src/
 │   └── traits/
 │       ├── global_topology_model.rs
 │       └── topological_space.rs
-└── triangulation/
-    └── flips.rs
 ```
 
 Notes:
@@ -78,7 +82,8 @@ Level 3 always checks:
 
 Implementation pointers:
 
-- Level 3 entry point: `src/core/triangulation.rs` (`Triangulation::is_valid`)
+- Level 3 entry points and validation vocabulary: `src/core/validation.rs`
+  (`Triangulation::is_valid`, `Triangulation::validate`)
 - Manifold validators: `src/topology/manifold.rs`
 - Euler characteristic helpers: `src/topology/characteristics/{euler.rs,validation.rs}`
 
@@ -177,7 +182,7 @@ Toroidal (periodic) triangulations are **fully implemented and functional**. You
 construct toroidal triangulations using `DelaunayTriangulationBuilder`:
 
 ```rust
-use delaunay::prelude::triangulation::construction::{DelaunayTriangulationBuilder, vertex};
+use delaunay::prelude::construction::{DelaunayTriangulationBuilder, vertex};
 
 // 2D periodic triangulation
 let vertices = vec![
@@ -205,9 +210,9 @@ Spherical and hyperbolic topologies are defined in metadata/behavior-model
 layers but are not yet fully integrated with the construction and validation
 pipeline.
 
-## Triangulation editing (`src/triangulation/`)
+## Triangulation editing (`src/delaunay/`)
 
-`src/triangulation/flips.rs` exposes explicit bistellar-flip editing APIs
+`src/delaunay/flips.rs` exposes explicit bistellar-flip editing APIs
 (`BistellarFlips`) built on `core::algorithms::flips`. These operations:
 
 - are topological edits (they can change manifold structure), and

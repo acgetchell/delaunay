@@ -1,24 +1,25 @@
 //! Integration tests for [`DelaunayTriangulationBuilder`].
 //!
 //! These tests exercise the public API from the outside, using only items exposed
-//! through `delaunay::prelude::triangulation` and `delaunay::triangulation::builder`.
+//! through `delaunay::prelude` and `delaunay::builder`.
 
 #![forbid(unsafe_code)]
 
 use std::collections::HashMap;
 use std::f64::consts::TAU;
 
-use delaunay::prelude::geometry::{Coordinate, Point, RobustKernel};
-use delaunay::prelude::tds::{InvariantErrorSummaryDetail, TriangulationValidationErrorKind};
-use delaunay::prelude::topology::spaces::{GlobalTopology, TopologyKind, ToroidalConstructionMode};
-use delaunay::prelude::topology::validation::{count_simplices, euler_characteristic};
-use delaunay::prelude::triangulation::construction::{
+use delaunay::prelude::construction::{
     ConstructionOptions, DelaunayTriangulation, DelaunayTriangulationBuilder,
     DelaunayTriangulationConstructionError, ExplicitConstructionError, ExplicitInsertionError,
     ExplicitInsertionErrorKind, ExplicitInvariantError, ExplicitInvariantErrorKind,
     ExplicitTdsErrorKind, InsertionOrderStrategy, TopologyGuarantee, Vertex, VertexBuilder, vertex,
 };
-use delaunay::prelude::triangulation::repair::DelaunayRepairError;
+use delaunay::prelude::geometry::{Coordinate, Point, RobustKernel};
+use delaunay::prelude::insertion::InsertionErrorSourceKind;
+use delaunay::prelude::repair::DelaunayRepairError;
+use delaunay::prelude::tds::{InvariantErrorSummaryDetail, TriangulationValidationErrorKind};
+use delaunay::prelude::topology::spaces::{GlobalTopology, TopologyKind, ToroidalConstructionMode};
+use delaunay::prelude::topology::validation::{count_simplices, euler_characteristic};
 
 // =============================================================================
 // Euclidean path
@@ -568,7 +569,23 @@ fn test_explicit_toroidal_torus_euler_mismatch_without_override() {
                 ),
             );
         }
-        other => panic!("expected explicit topology validation failure, got {other:?}"),
+        DelaunayTriangulationConstructionError::ExplicitConstruction(
+            ExplicitConstructionError::OrientationNormalization { source },
+        ) => {
+            assert_eq!(
+                source.kind,
+                ExplicitInsertionErrorKind::TopologyValidationFailed
+            );
+            assert_eq!(
+                source.source_kind,
+                Some(InsertionErrorSourceKind::Triangulation(
+                    TriangulationValidationErrorKind::OrientationPromotionNonConvergence,
+                )),
+            );
+        }
+        other => {
+            panic!("expected explicit topology or orientation-normalization failure, got {other:?}")
+        }
     }
 }
 
@@ -718,7 +735,7 @@ fn test_explicit_3d_two_tetrahedra() {
         vertex!([1.0, 0.0, 0.0]),
         vertex!([0.0, 1.0, 0.0]),
         vertex!([0.0, 0.0, 1.0]),
-        vertex!([1.0, 1.0, 1.0]),
+        vertex!([1.0, 1.0, -1.0]),
     ];
     // Two tetrahedra sharing face (0, 1, 2)
     let simplices = vec![vec![0, 1, 2, 3], vec![0, 1, 2, 4]];

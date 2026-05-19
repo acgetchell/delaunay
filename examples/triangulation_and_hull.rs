@@ -14,14 +14,15 @@
 use std::num::NonZeroUsize;
 use std::time::Instant;
 
+use delaunay::prelude::construction::{
+    ConstructionOptions, DelaunayTriangulation, DelaunayTriangulationConstructionError,
+    RetryPolicy, vertex,
+};
 use delaunay::prelude::generators::{RandomPointGenerationError, generate_random_points_seeded};
 use delaunay::prelude::geometry::AdaptiveKernel;
 use delaunay::prelude::query::{
     AdjacencyIndexBuildError, ConvexHull, ConvexHullConstructionError, Coordinate, Point,
-};
-use delaunay::prelude::triangulation::construction::{
-    ConstructionOptions, DelaunayTriangulation, DelaunayTriangulationConstructionError,
-    RetryPolicy, vertex,
+    QueryError,
 };
 
 type WorkflowTriangulation<const D: usize> = DelaunayTriangulation<AdaptiveKernel<f64>, (), (), D>;
@@ -34,6 +35,8 @@ enum WorkflowExampleError {
     Construction(#[from] DelaunayTriangulationConstructionError),
     #[error(transparent)]
     AdjacencyIndex(#[from] AdjacencyIndexBuildError),
+    #[error(transparent)]
+    Query(#[from] QueryError),
     #[error("convex hull operation failed: {source}")]
     ConvexHull {
         #[source]
@@ -86,7 +89,7 @@ fn run_case<const D: usize>(
     let index = dt.build_adjacency_index()?;
     println!("  edges:     {}", index.number_of_edges());
 
-    println!("  boundary facets: {}", dt.boundary_facets().count());
+    println!("  boundary facets: {}", dt.boundary_facets()?.count());
 
     let hull = ConvexHull::from_triangulation(dt.as_triangulation())?;
     println!("  hull facets: {}", hull.number_of_facets());

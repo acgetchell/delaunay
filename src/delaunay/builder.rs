@@ -34,9 +34,9 @@
 //! ## Standard Euclidean construction
 //!
 //! ```rust
-//! use delaunay::prelude::triangulation::construction::{DelaunayTriangulationBuilder, vertex};
+//! use delaunay::prelude::construction::{DelaunayTriangulationBuilder, vertex};
 //!
-//! # fn main() -> Result<(), delaunay::prelude::triangulation::construction::DelaunayTriangulationConstructionError> {
+//! # fn main() -> Result<(), delaunay::prelude::construction::DelaunayTriangulationConstructionError> {
 //! let vertices = vec![
 //!     vertex!([0.0, 0.0]),
 //!     vertex!([1.0, 0.0]),
@@ -54,9 +54,9 @@
 //! ## Toroidal construction (Phase 1: canonicalization only)
 //!
 //! ```rust
-//! use delaunay::prelude::triangulation::construction::{DelaunayTriangulationBuilder, vertex};
+//! use delaunay::prelude::construction::{DelaunayTriangulationBuilder, vertex};
 //!
-//! # fn main() -> Result<(), delaunay::prelude::triangulation::construction::DelaunayTriangulationConstructionError> {
+//! # fn main() -> Result<(), delaunay::prelude::construction::DelaunayTriangulationConstructionError> {
 //! // Vertices that fall outside [0, 1)² are wrapped before triangulation.
 //! let vertices = vec![
 //!     vertex!([0.2, 0.3]),
@@ -81,9 +81,9 @@
 //!
 //! ```rust,no_run
 //! use delaunay::prelude::geometry::RobustKernel;
-//! use delaunay::prelude::triangulation::construction::{DelaunayTriangulationBuilder, vertex};
+//! use delaunay::prelude::construction::{DelaunayTriangulationBuilder, vertex};
 //!
-//! # fn main() -> Result<(), delaunay::prelude::triangulation::construction::DelaunayTriangulationConstructionError> {
+//! # fn main() -> Result<(), delaunay::prelude::construction::DelaunayTriangulationConstructionError> {
 //! let vertices = vec![
 //!     vertex!([0.1, 0.2]),
 //!     vertex!([0.4, 0.7]),
@@ -108,10 +108,15 @@
 
 #![forbid(unsafe_code)]
 
+use crate::construction::{
+    ConstructionOptions, DelaunayTriangulationConstructionError, InitialSimplexStrategy,
+    RetryPolicy,
+};
 use crate::core::algorithms::incremental_insertion::{
     DelaunayRepairErrorKind, InsertionError, InsertionErrorSourceKind,
 };
 use crate::core::collections::{FastHashMap, PeriodicOffsetBuffer, Uuid, VertexKeySet};
+use crate::core::construction::TriangulationConstructionError;
 use crate::core::operations::InsertionOutcome;
 use crate::core::simplex::{Simplex, SimplexValidationError};
 use crate::core::tds::{
@@ -120,12 +125,13 @@ use crate::core::tds::{
     TriangulationValidationErrorKind, VertexKey,
 };
 use crate::core::traits::data_type::DataType;
-use crate::core::triangulation::{TopologyGuarantee, TriangulationConstructionError};
 use crate::core::util::periodic_facet_key_from_lifted_vertices;
+use crate::core::validation::TopologyGuarantee;
 use crate::core::vertex::Vertex;
 use crate::geometry::kernel::{AdaptiveKernel, Kernel};
 use crate::geometry::point::Point;
 use crate::geometry::traits::coordinate::{Coordinate, CoordinateScalar};
+use crate::repair::DelaunayRepairPolicy;
 use crate::topology::spaces::toroidal::ToroidalSpace;
 use crate::topology::traits::global_topology_model::{
     GlobalTopologyModel, GlobalTopologyModelError,
@@ -133,11 +139,8 @@ use crate::topology::traits::global_topology_model::{
 use crate::topology::traits::topological_space::{
     GlobalTopology, TopologyKind, ToroidalConstructionMode,
 };
-use crate::triangulation::delaunay::{
-    ConstructionOptions, DelaunayRepairPolicy, DelaunayTriangulation,
-    DelaunayTriangulationConstructionError, DelaunayTriangulationValidationError,
-    InitialSimplexStrategy, RetryPolicy,
-};
+use crate::triangulation::DelaunayTriangulation;
+use crate::validation::DelaunayTriangulationValidationError;
 use num_traits::ToPrimitive;
 use rand::SeedableRng;
 use rand::rngs::StdRng;
@@ -354,7 +357,7 @@ pub enum ExplicitTdsErrorKind {
 ///
 /// ```rust
 /// use delaunay::prelude::tds::TdsError;
-/// use delaunay::prelude::triangulation::{ExplicitTdsError, ExplicitTdsErrorKind};
+/// use delaunay::prelude::construction::{ExplicitTdsError, ExplicitTdsErrorKind};
 ///
 /// let source = TdsError::InconsistentDataStructure {
 ///     message: "dangling simplex key".to_string(),
@@ -455,6 +458,8 @@ pub enum ExplicitInsertionErrorKind {
     TopologyValidation,
     /// Triangulation-layer topology validation failed.
     TopologyValidationFailed,
+    /// Local repair would exceed its simplex-removal budget.
+    MaxSimplicesRemovedExceeded,
 }
 
 /// Compact summary of an [`InsertionError`] used by explicit construction.
@@ -468,10 +473,10 @@ pub enum ExplicitInsertionErrorKind {
 /// # Examples
 ///
 /// ```rust
-/// use delaunay::prelude::triangulation::{
+/// use delaunay::prelude::construction::{
 ///     ExplicitInsertionError, ExplicitInsertionErrorKind,
 /// };
-/// use delaunay::prelude::triangulation::insertion::InsertionError;
+/// use delaunay::prelude::insertion::InsertionError;
 ///
 /// let source = InsertionError::DuplicateCoordinates {
 ///     coordinates: "[0.0, 0.0]".to_string(),
@@ -517,6 +522,9 @@ impl From<InsertionError> for ExplicitInsertionError {
             InsertionError::TopologyValidation(_) => ExplicitInsertionErrorKind::TopologyValidation,
             InsertionError::TopologyValidationFailed { .. } => {
                 ExplicitInsertionErrorKind::TopologyValidationFailed
+            }
+            InsertionError::MaxSimplicesRemovedExceeded { .. } => {
+                ExplicitInsertionErrorKind::MaxSimplicesRemovedExceeded
             }
         };
         let source_kind = match &source {
@@ -569,7 +577,7 @@ pub enum ExplicitInvariantErrorKind {
 /// use delaunay::prelude::tds::{
 ///     InvariantError, InvariantErrorSummaryDetail, TdsError, TdsErrorKind,
 /// };
-/// use delaunay::prelude::triangulation::{
+/// use delaunay::prelude::construction::{
 ///     ExplicitInvariantError, ExplicitInvariantErrorKind,
 /// };
 ///
@@ -662,7 +670,7 @@ pub enum ExplicitDelaunayValidationSourceKind {
 /// # Examples
 ///
 /// ```rust
-/// use delaunay::prelude::triangulation::{
+/// use delaunay::prelude::construction::{
 ///     DelaunayTriangulationValidationError, ExplicitDelaunayValidationError,
 ///     ExplicitDelaunayValidationErrorKind,
 /// };
@@ -745,12 +753,12 @@ impl From<DelaunayTriangulationValidationError> for ExplicitDelaunayValidationEr
 /// explicit-construction path through
 /// [`DelaunayTriangulationConstructionError::ExplicitConstruction`].
 ///
-/// [`DelaunayTriangulationConstructionError::ExplicitConstruction`]: crate::triangulation::delaunay::DelaunayTriangulationConstructionError::ExplicitConstruction
+/// [`DelaunayTriangulationConstructionError::ExplicitConstruction`]: crate::DelaunayTriangulationConstructionError::ExplicitConstruction
 ///
 /// # Examples
 ///
 /// ```rust
-/// use delaunay::prelude::triangulation::construction::{
+/// use delaunay::prelude::construction::{
 ///     DelaunayTriangulationBuilder, DelaunayTriangulationConstructionError,
 ///     ExplicitConstructionError, vertex,
 /// };
@@ -828,7 +836,7 @@ pub enum ExplicitConstructionError {
     /// only to the Delaunay point-insertion path and are not meaningful for
     /// explicit simplex construction.
     ///
-    /// [`ConstructionOptions`]: crate::triangulation::delaunay::ConstructionOptions
+    /// [`ConstructionOptions`]: crate::construction::ConstructionOptions
     #[error(
         "ConstructionOptions are not applicable to explicit simplex construction \
          and must be left at their default values"
@@ -913,11 +921,11 @@ pub enum ExplicitConstructionError {
 /// # Examples
 ///
 /// ```rust
-/// use delaunay::prelude::triangulation::construction::{
+/// use delaunay::prelude::construction::{
 ///     ConstructionOptions, DelaunayTriangulationBuilder, TopologyGuarantee, vertex,
 /// };
 ///
-/// # fn main() -> Result<(), delaunay::prelude::triangulation::construction::DelaunayTriangulationConstructionError> {
+/// # fn main() -> Result<(), delaunay::prelude::construction::DelaunayTriangulationConstructionError> {
 /// let vertices = vec![
 ///     vertex!([0.0, 0.0, 0.0]),
 ///     vertex!([1.0, 0.0, 0.0]),
@@ -987,7 +995,7 @@ impl<'v, U, const D: usize> DelaunayTriangulationBuilder<'v, f64, U, D> {
     /// # Examples
     ///
     /// ```rust
-    /// use delaunay::prelude::triangulation::construction::{
+    /// use delaunay::prelude::construction::{
     ///     DelaunayTriangulationBuilder, DelaunayTriangulationConstructionError, Vertex, vertex,
     /// };
     ///
@@ -1038,7 +1046,7 @@ impl<'v, U, const D: usize> DelaunayTriangulationBuilder<'v, f64, U, D> {
     /// # Examples
     ///
     /// ```rust
-    /// use delaunay::prelude::triangulation::construction::{
+    /// use delaunay::prelude::construction::{
     ///     DelaunayTriangulationBuilder, DelaunayTriangulationConstructionError,
     ///     ExplicitConstructionError, vertex,
     /// };
@@ -1102,16 +1110,16 @@ impl<'v, T, U, const D: usize> DelaunayTriangulationBuilder<'v, T, U, D> {
     ///
     /// ```rust
     /// use delaunay::prelude::geometry::{Coordinate, Point};
-    /// use delaunay::prelude::triangulation::construction::{
+    /// use delaunay::prelude::construction::{
     ///     DelaunayTriangulationBuilder, Vertex, VertexBuilder,
     /// };
     ///
     /// # #[derive(Debug, thiserror::Error)]
     /// # enum ExampleError {
     /// #     #[error(transparent)]
-    /// #     Vertex(#[from] delaunay::prelude::triangulation::construction::VertexBuilderError),
+    /// #     Vertex(#[from] delaunay::prelude::construction::VertexBuilderError),
     /// #     #[error(transparent)]
-    /// #     Construction(#[from] delaunay::prelude::triangulation::construction::DelaunayTriangulationConstructionError),
+    /// #     Construction(#[from] delaunay::prelude::construction::DelaunayTriangulationConstructionError),
     /// # }
     /// # fn main() -> Result<(), ExampleError> {
     /// let vertices: Vec<Vertex<f32, (), 2>> = vec![
@@ -1155,16 +1163,16 @@ impl<'v, T, U, const D: usize> DelaunayTriangulationBuilder<'v, T, U, D> {
     ///
     /// ```rust
     /// use delaunay::prelude::geometry::{Coordinate, Point};
-    /// use delaunay::prelude::triangulation::construction::{
+    /// use delaunay::prelude::construction::{
     ///     DelaunayTriangulationBuilder, Vertex, VertexBuilder,
     /// };
     ///
     /// # #[derive(Debug, thiserror::Error)]
     /// # enum ExampleError {
     /// #     #[error(transparent)]
-    /// #     Vertex(#[from] delaunay::prelude::triangulation::construction::VertexBuilderError),
+    /// #     Vertex(#[from] delaunay::prelude::construction::VertexBuilderError),
     /// #     #[error(transparent)]
-    /// #     Construction(#[from] delaunay::prelude::triangulation::construction::DelaunayTriangulationConstructionError),
+    /// #     Construction(#[from] delaunay::prelude::construction::DelaunayTriangulationConstructionError),
     /// # }
     /// # fn main() -> Result<(), ExampleError> {
     /// // f32 vertices — new() is f64-only, so from_vertices is required here.
@@ -1209,11 +1217,11 @@ impl<'v, T, U, const D: usize> DelaunayTriangulationBuilder<'v, T, U, D> {
     /// # Examples
     ///
     /// ```rust
-    /// use delaunay::prelude::triangulation::construction::{
+    /// use delaunay::prelude::construction::{
     ///     DelaunayTriangulationBuilder, vertex,
     /// };
     ///
-    /// # fn main() -> Result<(), delaunay::prelude::triangulation::construction::DelaunayTriangulationConstructionError> {
+    /// # fn main() -> Result<(), delaunay::prelude::construction::DelaunayTriangulationConstructionError> {
     /// let vertices = vec![
     ///     vertex!([0.2, 0.3]),
     ///     vertex!([0.8, 0.1]),
@@ -1260,11 +1268,11 @@ impl<'v, T, U, const D: usize> DelaunayTriangulationBuilder<'v, T, U, D> {
     ///
     /// ```rust,no_run
     /// use delaunay::prelude::geometry::RobustKernel;
-    /// use delaunay::prelude::triangulation::construction::{
+    /// use delaunay::prelude::construction::{
     ///     DelaunayTriangulationBuilder, vertex,
     /// };
     ///
-    /// # fn main() -> Result<(), delaunay::prelude::triangulation::construction::DelaunayTriangulationConstructionError> {
+    /// # fn main() -> Result<(), delaunay::prelude::construction::DelaunayTriangulationConstructionError> {
     /// let vertices = vec![
     ///     vertex!([0.1, 0.2]),
     ///     vertex!([0.4, 0.7]),
@@ -1299,11 +1307,11 @@ impl<'v, T, U, const D: usize> DelaunayTriangulationBuilder<'v, T, U, D> {
     /// # Examples
     ///
     /// ```rust
-    /// use delaunay::prelude::triangulation::construction::{
+    /// use delaunay::prelude::construction::{
     ///     DelaunayTriangulationBuilder, TopologyGuarantee, vertex,
     /// };
     ///
-    /// # fn main() -> Result<(), delaunay::prelude::triangulation::construction::DelaunayTriangulationConstructionError> {
+    /// # fn main() -> Result<(), delaunay::prelude::construction::DelaunayTriangulationConstructionError> {
     /// let vertices = vec![
     ///     vertex!([0.0, 0.0]),
     ///     vertex!([1.0, 0.0]),
@@ -1343,7 +1351,7 @@ impl<'v, T, U, const D: usize> DelaunayTriangulationBuilder<'v, T, U, D> {
     /// # Examples
     ///
     /// ```rust
-    /// use delaunay::prelude::triangulation::construction::{
+    /// use delaunay::prelude::construction::{
     ///     DelaunayTriangulationBuilder, GlobalTopology, ToroidalConstructionMode, vertex,
     /// };
     ///
@@ -1376,11 +1384,11 @@ impl<'v, T, U, const D: usize> DelaunayTriangulationBuilder<'v, T, U, D> {
     /// # Examples
     ///
     /// ```rust
-    /// use delaunay::prelude::triangulation::construction::{
+    /// use delaunay::prelude::construction::{
     ///     ConstructionOptions, DelaunayTriangulationBuilder, InsertionOrderStrategy, vertex,
     /// };
     ///
-    /// # fn main() -> Result<(), delaunay::prelude::triangulation::construction::DelaunayTriangulationConstructionError> {
+    /// # fn main() -> Result<(), delaunay::prelude::construction::DelaunayTriangulationConstructionError> {
     /// let vertices = vec![
     ///     vertex!([0.0, 0.0]),
     ///     vertex!([1.0, 0.0]),
@@ -1569,11 +1577,11 @@ where
     /// # Examples
     ///
     /// ```rust
-    /// use delaunay::prelude::triangulation::construction::{
+    /// use delaunay::prelude::construction::{
     ///     DelaunayTriangulationBuilder, vertex,
     /// };
     ///
-    /// # fn main() -> Result<(), delaunay::prelude::triangulation::construction::DelaunayTriangulationConstructionError> {
+    /// # fn main() -> Result<(), delaunay::prelude::construction::DelaunayTriangulationConstructionError> {
     /// let vertices = vec![
     ///     vertex!([0.0, 0.0, 0.0]),
     ///     vertex!([1.0, 0.0, 0.0]),
@@ -1623,11 +1631,11 @@ where
     ///
     /// ```rust
     /// use delaunay::prelude::geometry::RobustKernel;
-    /// use delaunay::prelude::triangulation::construction::{
+    /// use delaunay::prelude::construction::{
     ///     DelaunayTriangulationBuilder, vertex,
     /// };
     ///
-    /// # fn main() -> Result<(), delaunay::prelude::triangulation::construction::DelaunayTriangulationConstructionError> {
+    /// # fn main() -> Result<(), delaunay::prelude::construction::DelaunayTriangulationConstructionError> {
     /// let vertices = vec![
     ///     vertex!([0.0, 0.0, 0.0]),
     ///     vertex!([1.0, 0.0, 0.0]),
@@ -3012,6 +3020,7 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::construction::{DelaunayConstructionFailure, InsertionOrderStrategy};
     use crate::core::algorithms::flips::DelaunayRepairError;
     use crate::core::algorithms::incremental_insertion::{
         CavityFillingError, DelaunayRepairFailureContext, HullExtensionReason, NeighborWiringError,
@@ -3023,19 +3032,17 @@ mod tests {
         DelaunayValidationErrorKind, EntityKind, GeometricError, NeighborValidationError,
         TdsConstructionError,
     };
-    use crate::core::triangulation::TriangulationValidationError;
     use crate::core::util::uuid::UuidValidationError;
+    use crate::core::validation::TriangulationValidationError;
     use crate::core::vertex::VertexBuilder;
     use crate::core::vertex::VertexValidationError;
     use crate::geometry::kernel::RobustKernel;
+    use crate::repair::DelaunayRepairOperation;
     use crate::topology::traits::global_topology_model::{
         EuclideanModel, GlobalTopologyModel, GlobalTopologyModelError, ToroidalModel,
     };
     use crate::topology::traits::topological_space::{
         GlobalTopology, TopologyKind, ToroidalConstructionMode,
-    };
-    use crate::triangulation::delaunay::{
-        DelaunayConstructionFailure, DelaunayRepairOperation, InsertionOrderStrategy,
     };
     use crate::vertex;
     use approx::assert_relative_eq;

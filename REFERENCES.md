@@ -29,6 +29,21 @@ Zenodo. DOI: https://doi.org/10.5281/zenodo.16931097
 For BibTeX, APA, or other citation formats, please refer to the [CITATION.cff](CITATION.cff) file or use
 GitHub's "Cite this repository" feature.
 
+## Inline Citation Keys
+
+Some Rust API docs use compact numbered citations. The labels below point to
+the corresponding bibliography entries in this file:
+
+- [1] Shewchuk, J. R. (1997), adaptive precision floating-point arithmetic and
+  robust geometric predicates.
+- [2] Bowyer, A. (1981), incremental Dirichlet/Delaunay tessellation.
+- [3] Watson, D. F. (1981), n-dimensional Delaunay tessellation by cavity
+  replacement.
+- [4] Edelsbrunner, H., and Shah, N. R. (1996), topological flipping for
+  regular triangulations.
+- [5] Edelsbrunner, H. (2001), mesh generation, cavity-based construction, and
+  triangulation repair background.
+
 ## Advanced Computational Geometry Topics
 
 These references support specialized features and high-dimensional computations in the library.

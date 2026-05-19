@@ -20,7 +20,7 @@
 //! # Examples
 //!
 //! ```rust
-//! use delaunay::prelude::triangulation::Vertex;
+//! use delaunay::prelude::Vertex;
 //! use delaunay::vertex;
 //!
 //! // Create a simple vertex
@@ -66,7 +66,7 @@ use uuid::Uuid;
 ///
 /// ```rust
 /// use delaunay::prelude::tds::UuidValidationError;
-/// use delaunay::prelude::triangulation::VertexValidationError;
+/// use delaunay::prelude::VertexValidationError;
 ///
 /// let err = VertexValidationError::InvalidUuid {
 ///     source: UuidValidationError::NilUuid,
@@ -97,7 +97,7 @@ pub enum VertexValidationError {
 /// # Examples
 ///
 /// ```rust
-/// use delaunay::prelude::triangulation::VertexBuilderError;
+/// use delaunay::prelude::VertexBuilderError;
 ///
 /// let err = VertexBuilderError::MissingPoint;
 /// assert_eq!(err.to_string(), "Missing required field: `point`");
@@ -131,7 +131,7 @@ pub enum VertexBuilderError {
 /// # Examples
 ///
 /// ```rust
-/// use delaunay::prelude::triangulation::{Vertex, VertexBuilder};
+/// use delaunay::prelude::{Vertex, VertexBuilder};
 /// use delaunay::prelude::geometry::Point;
 /// use delaunay::prelude::geometry::Coordinate;
 ///
@@ -226,7 +226,7 @@ impl<T, U, const D: usize> VertexBuilder<T, U, D> {
 ///
 /// ```rust
 /// use delaunay::vertex;
-/// use delaunay::prelude::triangulation::Vertex;
+/// use delaunay::prelude::Vertex;
 ///
 /// // Create a vertex without data
 /// let v1: Vertex<f64, (), 3> = vertex!([1.0, 2.0, 3.0]);
@@ -295,7 +295,7 @@ pub use crate::vertex;
 /// Vertices are typically created using the builder pattern for convenience:
 ///
 /// ```rust
-/// use delaunay::prelude::triangulation::Vertex;
+/// use delaunay::prelude::Vertex;
 /// use delaunay::vertex;
 ///
 /// let vertex: Vertex<f64, i32, 3> = vertex!([1.0, 2.0, 3.0], 42);
@@ -337,7 +337,7 @@ impl<T, U, const D: usize> Vertex<T, U, D> {
     /// # Example
     ///
     /// ```
-    /// use delaunay::prelude::triangulation::Vertex;
+    /// use delaunay::prelude::Vertex;
     /// use delaunay::vertex;
     /// use delaunay::prelude::geometry::Coordinate;
     ///
@@ -358,7 +358,7 @@ impl<T, U, const D: usize> Vertex<T, U, D> {
     /// # Examples
     ///
     /// ```rust
-    /// use delaunay::prelude::triangulation::*;
+    /// use delaunay::prelude::*;
     ///
     /// let vertices = vec![
     ///     vertex!([0.0, 0.0]),
@@ -382,7 +382,7 @@ impl<T, U, const D: usize> Vertex<T, U, D> {
     ///
     /// ```
     /// use delaunay::vertex;
-    /// use delaunay::prelude::triangulation::Vertex;
+    /// use delaunay::prelude::Vertex;
     ///
     /// let v: Vertex<f64, i32, 2> = vertex!([1.0, 2.0], 42);
     /// assert_eq!(v.data(), Some(&42));
@@ -560,7 +560,7 @@ impl<T, U, const D: usize> Vertex<T, U, D> {
     /// # Examples
     ///
     /// ```
-    /// use delaunay::prelude::triangulation::Vertex;
+    /// use delaunay::prelude::Vertex;
     /// use delaunay::prelude::geometry::Coordinate;
     /// use approx::assert_relative_eq;
     ///
@@ -597,7 +597,7 @@ impl<T, U, const D: usize> Vertex<T, U, D> {
     ///
     /// ```rust
     /// use delaunay::prelude::geometry::{Coordinate, Point};
-    /// use delaunay::prelude::triangulation::Vertex;
+    /// use delaunay::prelude::Vertex;
     ///
     /// let point = Point::new([1.0, 2.0]);
     /// let vertex = Vertex::<f64, (), 2>::from_point(point);
@@ -627,7 +627,7 @@ impl<T, U, const D: usize> Vertex<T, U, D> {
     ///
     /// ```rust
     /// use delaunay::prelude::geometry::{Coordinate, Point};
-    /// use delaunay::prelude::triangulation::Vertex;
+    /// use delaunay::prelude::Vertex;
     ///
     /// let point = Point::new([1.0, 2.0]);
     /// let vertex = Vertex::<f64, u8, 2>::from_point_with_data(point, 7);
@@ -662,7 +662,7 @@ impl<T, U, const D: usize> Vertex<T, U, D> {
     /// # Example
     ///
     /// ```
-    /// use delaunay::prelude::triangulation::Vertex;
+    /// use delaunay::prelude::Vertex;
     /// use delaunay::prelude::geometry::Point;
     /// use delaunay::prelude::geometry::Coordinate;
     /// let points = [Point::new([1.0, 2.0, 3.0])];
@@ -695,7 +695,7 @@ impl<T, U, const D: usize> Vertex<T, U, D> {
     ///
     /// ```
     /// use std::collections::HashMap;
-    /// use delaunay::prelude::triangulation::Vertex;
+    /// use delaunay::prelude::Vertex;
     /// use delaunay::vertex;
     ///
     /// let v1: Vertex<f64, (), 2> = vertex!([1.0, 2.0]);
@@ -759,7 +759,7 @@ impl<T, U, const D: usize> Vertex<T, U, D> {
     /// # Example
     ///
     /// ```
-    /// use delaunay::prelude::triangulation::{Vertex, VertexValidationError};
+    /// use delaunay::prelude::{Vertex, VertexValidationError};
     /// use delaunay::vertex;
     /// use uuid::Uuid;
     ///

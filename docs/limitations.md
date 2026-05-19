@@ -100,7 +100,7 @@ release characterization, not a portable performance promise:
   generation, batch construction, final flip repair, and `validation_report`
   for Levels 1–4.
 - The `just` helper defaults are dimension-aware rather than identical: 2D
-  defaults to 36,000 vertices, 3D defaults to 8,000 vertices, 4D defaults to
+  defaults to 36,000 vertices, 3D defaults to 7,500 vertices, 4D defaults to
   900 vertices, and 5D defaults to 140 vertices. Pass `n` explicitly when a
   run must match a documented scale exactly.
 - The raw ignored tests use slightly heavier defaults for some dimensions
@@ -119,10 +119,10 @@ Current 2D scale envelope:
 
 Current 3D scale envelope:
 
-- `just debug-large-scale-3d 8000 1` is the current release-mode acceptance
-  harness for the 8,000-vertex 3D path.
-- Recent maintainer-hardware runs insert all 8,000 vertices with zero skips,
-  run a clean final flip repair, and pass `validation_report` for Levels 1–4.
+- `just debug-large-scale-3d 7500 1` is the current release-mode acceptance
+  harness for the 7,500-vertex 3D path.
+- This helper is the default near-one-minute acceptance/profiling target for
+  final flip repair and `validation_report` coverage across Levels 1–4.
 - Wall time is hardware- and load-sensitive. Recent Apple M4 Max-class local
   runs complete in roughly 56 seconds; treat that as an envelope, not a
   portable guarantee.

@@ -36,7 +36,7 @@ Key takeaways from v0.7.7:
   suite.
 - **Module and prelude cleanup (#381):** rename the public high-level
   triangulation module layout to `delaunay`, split the current
-  `triangulation/delaunay.rs` implementation into clearer components, and
+  `delaunay/triangulation.rs` implementation into clearer components, and
   consolidate focused preludes while the API churn is still isolated from
   v0.8.0 feature work.
 - **Documentation and doctest hygiene (#214/#365):** move configuration-heavy
@@ -87,7 +87,7 @@ tightly coupled to the v0.8.0 paper/API push:
   performance work is measured across the supported small-dimensional range
   instead of tuned for one dimension at another's expense. The current defaults
   are calibrated as roughly one-minute release-mode runs on maintainer hardware:
-  2D=36,000, 3D=8,000, 4D=900, and 5D=140. Heavier explicit probes such as
+  2D=36,000, 3D=7,500, 4D=900, and 5D=140. Heavier explicit probes such as
   2D=40,000, 3D=10,000, and 5D=150 remain useful for release characterization.
 - **Criterion performance canaries:** keep smaller `ci_performance_suite`
   canaries for the same construction path so PR regression checks remain

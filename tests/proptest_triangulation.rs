@@ -35,11 +35,9 @@
 //! Tests are generated for dimensions 2D-5D using macros to reduce duplication.
 
 use ::uuid::Uuid;
+use delaunay::prelude::construction::{DelaunayTriangulation, TopologyGuarantee, Vertex, vertex};
 use delaunay::prelude::geometry::*;
 use delaunay::prelude::tds::SimplexKey;
-use delaunay::prelude::triangulation::construction::{
-    DelaunayTriangulation, TopologyGuarantee, Vertex, vertex,
-};
 use proptest::prelude::*;
 use proptest::test_runner::{Config, TestCaseError, TestRunner};
 use std::cell::RefCell;
@@ -732,7 +730,7 @@ macro_rules! test_facet_topology_invariant {
 
                         // If there are any issues, repair them
                         if let Some(issues) = tri.detect_local_facet_issues(&simplex_keys)? {
-                            let _removed = tri.repair_local_facet_issues(&issues)?;
+                            let _removed = tri.repair_local_facet_issues(&issues, usize::MAX)?;
 
                             // After repair, re-check - should have no issues
                             let simplex_keys_after: Vec<_> = tri.simplices().map(|(k, _)| k).collect();

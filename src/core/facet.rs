@@ -34,7 +34,7 @@
 //! # Examples
 //!
 //! ```rust
-//! use delaunay::prelude::triangulation::*;
+//! use delaunay::prelude::*;
 //! use delaunay::prelude::tds::FacetView;
 //!
 //! // Create vertices for a tetrahedron
@@ -221,7 +221,7 @@ pub enum FacetError {
 /// # Example
 ///
 /// ```rust
-/// use delaunay::prelude::triangulation::*;
+/// use delaunay::prelude::*;
 /// use delaunay::prelude::tds::{FacetHandle, FacetView};
 ///
 /// let vertices = vec![
@@ -257,7 +257,7 @@ impl FacetHandle {
     /// # Examples
     ///
     /// ```rust
-    /// use delaunay::prelude::triangulation::*;
+    /// use delaunay::prelude::*;
     /// use delaunay::prelude::tds::FacetHandle;
     ///
     /// let vertices = vec![
@@ -284,7 +284,7 @@ impl FacetHandle {
     /// # Examples
     ///
     /// ```rust
-    /// use delaunay::prelude::triangulation::*;
+    /// use delaunay::prelude::*;
     /// use delaunay::prelude::tds::FacetHandle;
     ///
     /// let vertices = vec![
@@ -308,7 +308,7 @@ impl FacetHandle {
     /// # Examples
     ///
     /// ```rust
-    /// use delaunay::prelude::triangulation::*;
+    /// use delaunay::prelude::*;
     /// use delaunay::prelude::tds::FacetHandle;
     ///
     /// let vertices = vec![
@@ -443,7 +443,7 @@ impl<'tds, T, U, V, const D: usize> FacetView<'tds, T, U, V, D> {
     /// # Examples
     ///
     /// ```rust
-    /// use delaunay::prelude::triangulation::*;
+    /// use delaunay::prelude::*;
     /// use delaunay::prelude::tds::FacetView;
     ///
     /// let vertices = vec![
@@ -506,7 +506,7 @@ impl<'tds, T, U, V, const D: usize> FacetView<'tds, T, U, V, D> {
     /// # Examples
     ///
     /// ```rust
-    /// use delaunay::prelude::triangulation::*;
+    /// use delaunay::prelude::*;
     /// use delaunay::prelude::tds::FacetView;
     ///
     /// let vertices = vec![
@@ -563,7 +563,7 @@ impl<'tds, T, U, V, const D: usize> FacetView<'tds, T, U, V, D> {
     /// # Examples
     ///
     /// ```rust
-    /// use delaunay::prelude::triangulation::*;
+    /// use delaunay::prelude::*;
     /// use delaunay::prelude::tds::FacetView;
     ///
     /// let vertices = vec![
@@ -614,7 +614,7 @@ impl<'tds, T, U, V, const D: usize> FacetView<'tds, T, U, V, D> {
     /// # Examples
     ///
     /// ```rust
-    /// use delaunay::prelude::triangulation::*;
+    /// use delaunay::prelude::*;
     /// use delaunay::prelude::tds::FacetView;
     ///
     /// let vertices = vec![
@@ -653,7 +653,7 @@ impl<'tds, T, U, V, const D: usize> FacetView<'tds, T, U, V, D> {
     /// # Examples
     ///
     /// ```rust
-    /// use delaunay::prelude::triangulation::*;
+    /// use delaunay::prelude::*;
     /// use delaunay::prelude::tds::FacetView;
     ///
     /// let vertices = vec![
@@ -740,7 +740,7 @@ impl<T, U, V, const D: usize> Eq for FacetView<'_, T, U, V, D> {}
 /// # Examples
 ///
 /// ```rust
-/// use delaunay::prelude::triangulation::*;
+/// use delaunay::prelude::*;
 /// use delaunay::prelude::tds::all_facets_for_simplex;
 ///
 /// let vertices = vec![
@@ -785,7 +785,7 @@ pub fn all_facets_for_simplex<T, U, V, const D: usize>(
 ///
 /// ```rust
 /// use delaunay::prelude::tds::AllFacetsIter;
-/// use delaunay::prelude::triangulation::*;
+/// use delaunay::prelude::*;
 ///
 /// let vertices = vec![
 ///     vertex!([0.0, 0.0, 0.0]),
@@ -819,7 +819,7 @@ impl<'tds, T, U, V, const D: usize> AllFacetsIter<'tds, T, U, V, D> {
     ///
     /// ```rust
     /// use delaunay::prelude::tds::AllFacetsIter;
-    /// use delaunay::prelude::triangulation::*;
+    /// use delaunay::prelude::*;
     ///
     /// let vertices = vec![
     ///     vertex!([0.0, 0.0, 0.0]),
@@ -907,7 +907,7 @@ impl<'tds, T, U, V, const D: usize> Iterator for AllFacetsIter<'tds, T, U, V, D>
 ///
 /// ```rust
 /// use delaunay::prelude::tds::BoundaryFacetsIter;
-/// use delaunay::prelude::triangulation::*;
+/// use delaunay::prelude::*;
 ///
 /// let vertices = vec![
 ///     vertex!([0.0, 0.0, 0.0]),
@@ -934,7 +934,7 @@ impl<'tds, T, U, V, const D: usize> BoundaryFacetsIter<'tds, T, U, V, D> {
     ///
     /// ```rust
     /// use delaunay::prelude::tds::BoundaryFacetsIter;
-    /// use delaunay::prelude::triangulation::*;
+    /// use delaunay::prelude::*;
     ///
     /// let vertices = vec![
     ///     vertex!([0.0, 0.0, 0.0]),
@@ -1063,13 +1063,14 @@ pub fn facet_key_from_vertices(vertices: &[VertexKey]) -> u64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::construction::{
+        ConstructionOptions, InitialSimplexStrategy, InsertionOrderStrategy,
+    };
     use crate::core::tds::VertexKey;
-    use crate::core::triangulation::TopologyGuarantee;
+    use crate::core::validation::TopologyGuarantee;
     use crate::core::vertex::Vertex;
     use crate::geometry::kernel::AdaptiveKernel;
-    use crate::triangulation::delaunay::{
-        ConstructionOptions, DelaunayTriangulation, InitialSimplexStrategy, InsertionOrderStrategy,
-    };
+    use crate::triangulation::DelaunayTriangulation;
     use crate::vertex;
     use slotmap::SlotMap;
     use std::{collections::HashSet, mem};

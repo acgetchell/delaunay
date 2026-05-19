@@ -3,7 +3,7 @@
 //! This module provides `delaunayize_by_flips`, a single public entrypoint that
 //! takes an existing [`DelaunayTriangulation`], performs bounded deterministic
 //! topology repair toward
-//! [`TopologyGuarantee::PLManifold`](crate::triangulation::TopologyGuarantee::PLManifold),
+//! [`TopologyGuarantee::PLManifold`](crate::TopologyGuarantee::PLManifold),
 //! and then applies
 //! standard flip-based Delaunay repair.
 //!
@@ -20,19 +20,21 @@
 //! # Example
 //!
 //! ```rust
-//! use delaunay::prelude::triangulation::delaunayize::*;
+//! use delaunay::prelude::delaunayize::*;
 //!
+//! # fn main() -> Result<(), Box<dyn std::error::Error>> {
 //! let vertices = vec![
 //!     vertex!([0.0, 0.0, 0.0]),
 //!     vertex!([1.0, 0.0, 0.0]),
 //!     vertex!([0.0, 1.0, 0.0]),
 //!     vertex!([0.0, 0.0, 1.0]),
 //! ];
-//! let mut dt: DelaunayTriangulation<_, (), (), 3> =
-//!     DelaunayTriangulation::new(&vertices).unwrap();
+//! let mut dt: DelaunayTriangulation<_, (), (), 3> = DelaunayTriangulation::new(&vertices)?;
 //!
-//! let outcome = delaunayize_by_flips(&mut dt, DelaunayizeConfig::default()).unwrap();
+//! let outcome = delaunayize_by_flips(&mut dt, DelaunayizeConfig::default())?;
 //! assert!(outcome.topology_repair.succeeded);
+//! # Ok(())
+//! # }
 //! ```
 //!
 //! # Explicitly Deferred
@@ -44,10 +46,10 @@
 
 // Re-export outcome/error field types so users can name the public contract
 // without reaching into lower-level modules.
+pub use crate::construction::DelaunayTriangulationConstructionError;
+pub use crate::flips::{DelaunayRepairError, DelaunayRepairStats};
 pub use crate::tds::SimplexValidationError;
-pub use crate::triangulation::delaunay::DelaunayTriangulationConstructionError;
-pub use crate::triangulation::flips::{DelaunayRepairError, DelaunayRepairStats};
-pub use crate::triangulation::{PlManifoldRepairError, PlManifoldRepairStats};
+pub use crate::{PlManifoldRepairError, PlManifoldRepairStats};
 
 #[cfg(test)]
 use crate::core::algorithms::flips::{DelaunayRepairDiagnostics, RepairQueueOrder};
@@ -61,7 +63,8 @@ use crate::core::traits::data_type::DataType;
 use crate::core::vertex::Vertex;
 use crate::geometry::kernel::{ExactPredicates, Kernel};
 use crate::geometry::traits::coordinate::CoordinateScalar;
-use crate::triangulation::delaunay::{DelaunayRepairHeuristicConfig, DelaunayTriangulation};
+use crate::repair::DelaunayRepairHeuristicConfig;
+use crate::triangulation::DelaunayTriangulation;
 use thiserror::Error;
 
 #[cfg(test)]
@@ -127,7 +130,7 @@ mod test_hooks {
 /// # Examples
 ///
 /// ```rust
-/// use delaunay::prelude::triangulation::delaunayize::DelaunayizeConfig;
+/// use delaunay::prelude::delaunayize::DelaunayizeConfig;
 ///
 /// let config = DelaunayizeConfig::default();
 /// assert_eq!(config.topology_max_iterations, 64);
@@ -176,20 +179,22 @@ impl Default for DelaunayizeConfig {
 /// # Examples
 ///
 /// ```rust
-/// use delaunay::prelude::triangulation::delaunayize::*;
+/// use delaunay::prelude::delaunayize::*;
 ///
+/// # fn main() -> Result<(), Box<dyn std::error::Error>> {
 /// let vertices = vec![
 ///     vertex!([0.0, 0.0, 0.0]),
 ///     vertex!([1.0, 0.0, 0.0]),
 ///     vertex!([0.0, 1.0, 0.0]),
 ///     vertex!([0.0, 0.0, 1.0]),
 /// ];
-/// let mut dt: DelaunayTriangulation<_, (), (), 3> =
-///     DelaunayTriangulation::new(&vertices).unwrap();
+/// let mut dt: DelaunayTriangulation<_, (), (), 3> = DelaunayTriangulation::new(&vertices)?;
 ///
-/// let outcome = delaunayize_by_flips(&mut dt, DelaunayizeConfig::default()).unwrap();
+/// let outcome = delaunayize_by_flips(&mut dt, DelaunayizeConfig::default())?;
 /// assert!(outcome.topology_repair.succeeded);
 /// assert!(!outcome.used_fallback_rebuild);
+/// # Ok(())
+/// # }
 /// ```
 #[derive(Debug, Clone)]
 #[non_exhaustive]
@@ -242,7 +247,7 @@ pub struct DelaunayizeOutcome<T, U, V, const D: usize> {
 /// # Examples
 ///
 /// ```rust
-/// use delaunay::prelude::triangulation::delaunayize::*;
+/// use delaunay::prelude::delaunayize::*;
 ///
 /// let err = DelaunayizeError::DelaunayRepairFailed {
 ///     source: DelaunayRepairError::PostconditionFailed {
@@ -587,19 +592,21 @@ where
 /// # Examples
 ///
 /// ```rust
-/// use delaunay::prelude::triangulation::delaunayize::*;
+/// use delaunay::prelude::delaunayize::*;
 ///
+/// # fn main() -> Result<(), Box<dyn std::error::Error>> {
 /// let vertices = vec![
 ///     vertex!([0.0, 0.0, 0.0]),
 ///     vertex!([1.0, 0.0, 0.0]),
 ///     vertex!([0.0, 1.0, 0.0]),
 ///     vertex!([0.0, 0.0, 1.0]),
 /// ];
-/// let mut dt: DelaunayTriangulation<_, (), (), 3> =
-///     DelaunayTriangulation::new(&vertices).unwrap();
+/// let mut dt: DelaunayTriangulation<_, (), (), 3> = DelaunayTriangulation::new(&vertices)?;
 ///
-/// let outcome = delaunayize_by_flips(&mut dt, DelaunayizeConfig::default()).unwrap();
+/// let outcome = delaunayize_by_flips(&mut dt, DelaunayizeConfig::default())?;
 /// assert!(outcome.topology_repair.succeeded);
+/// # Ok(())
+/// # }
 /// ```
 #[expect(
     clippy::result_large_err,
@@ -719,8 +726,8 @@ mod tests {
     use crate::geometry::point::Point;
     use crate::geometry::traits::coordinate::Coordinate;
     use crate::tds::VertexKey;
-    use crate::triangulation::{DelaunayTriangulationBuilder, TriangulationConstructionError};
     use crate::vertex;
+    use crate::{DelaunayTriangulationBuilder, TriangulationConstructionError};
     use slotmap::KeyData;
     use std::error::Error as StdError;
 

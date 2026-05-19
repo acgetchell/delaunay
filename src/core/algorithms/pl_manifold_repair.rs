@@ -2,7 +2,7 @@
 //!
 //! This module implements a `pub(crate)` repair algorithm that attempts to bring
 //! a triangulation closer to satisfying the
-//! [`TopologyGuarantee::PLManifold`](crate::core::triangulation::TopologyGuarantee::PLManifold)
+//! [`TopologyGuarantee::PLManifold`](crate::core::validation::TopologyGuarantee::PLManifold)
 //! invariant by removing simplices that cause codimension-1 facet over-sharing
 //! (facets incident to more than 2 simplices).
 //!
@@ -77,7 +77,7 @@ impl Default for PlManifoldRepairConfig {
 /// # Examples
 ///
 /// ```rust
-/// use delaunay::prelude::triangulation::delaunayize::PlManifoldRepairStats;
+/// use delaunay::prelude::delaunayize::PlManifoldRepairStats;
 ///
 /// let stats = PlManifoldRepairStats::<f64, (), (), 3>::default();
 /// assert_eq!(stats.iterations, 0);
@@ -138,7 +138,7 @@ impl<T, U, V, const D: usize> Default for PlManifoldRepairStats<T, U, V, D> {
 /// # Examples
 ///
 /// ```rust
-/// use delaunay::prelude::triangulation::delaunayize::PlManifoldRepairError;
+/// use delaunay::prelude::delaunayize::PlManifoldRepairError;
 ///
 /// let err = PlManifoldRepairError::BudgetExhausted {
 ///     iterations: 64,
@@ -468,7 +468,7 @@ fn remove_orphaned_vertices<T, U, V, const D: usize>(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::triangulation::delaunay::DelaunayTriangulation;
+    use crate::triangulation::DelaunayTriangulation;
     use crate::vertex;
 
     // =============================================================================

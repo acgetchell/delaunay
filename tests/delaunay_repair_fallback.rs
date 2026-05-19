@@ -4,12 +4,12 @@
 //! Delaunay violations, the deterministic rebuild heuristic is triggered and
 //! successfully produces a valid Delaunay triangulation.
 
-use delaunay::prelude::triangulation::construction::{
+use delaunay::flips::FacetHandle;
+use delaunay::prelude::construction::{
     DelaunayRepairPolicy, DelaunayTriangulation, TopologyGuarantee, vertex,
 };
-use delaunay::prelude::triangulation::flips::BistellarFlips;
-use delaunay::prelude::triangulation::repair::DelaunayRepairHeuristicConfig;
-use delaunay::triangulation::flips::FacetHandle;
+use delaunay::prelude::flips::BistellarFlips;
+use delaunay::prelude::repair::DelaunayRepairHeuristicConfig;
 
 #[cfg(feature = "diagnostics")]
 fn init_tracing() {

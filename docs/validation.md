@@ -79,10 +79,10 @@ insertion deviates from the happy-path and trips internal **suspicion flags**, e
 ### Example: configuring validation policy
 
 ```rust
-use delaunay::prelude::triangulation::construction::{
+use delaunay::prelude::construction::{
     DelaunayTriangulation, TopologyGuarantee, Vertex, vertex,
 };
-use delaunay::prelude::triangulation::validation::ValidationPolicy;
+use delaunay::prelude::validation::ValidationPolicy;
 
 let vertices = vec![
     vertex!([0.0, 0.0, 0.0]),
@@ -124,10 +124,10 @@ PL-manifoldness. You can trigger that final certification via
 `Triangulation::validate_at_completion()` (or `Triangulation::validate()`).
 
 ```rust
-use delaunay::prelude::triangulation::construction::{
+use delaunay::prelude::construction::{
     DelaunayTriangulation, TopologyGuarantee, Vertex, vertex,
 };
-use delaunay::prelude::triangulation::validation::ValidationPolicy;
+use delaunay::prelude::validation::ValidationPolicy;
 
 let vertices = vec![
     vertex!([0.0, 0.0, 0.0]),
@@ -216,10 +216,10 @@ Validates basic data integrity of individual vertices and simplices.
 ### Example
 
 ```rust
-use delaunay::prelude::triangulation::construction::{
+use delaunay::prelude::construction::{
     DelaunayTriangulation, TopologyGuarantee, Vertex, vertex,
 };
-use delaunay::prelude::triangulation::validation::ValidationPolicy;
+use delaunay::prelude::validation::ValidationPolicy;
 
 let v = vertex!([0.0, 0.0, 0.0]);
 assert!(v.is_valid().is_ok());
@@ -272,10 +272,10 @@ Validates the combinatorial structure of the Triangulation Data Structure.
 ### Example
 
 ```rust
-use delaunay::prelude::triangulation::construction::{
+use delaunay::prelude::construction::{
     DelaunayTriangulation, TopologyGuarantee, Vertex, vertex,
 };
-use delaunay::prelude::triangulation::validation::ValidationPolicy;
+use delaunay::prelude::validation::ValidationPolicy;
 
 let vertices = vec![
     vertex!([0.0, 0.0, 0.0]),
@@ -353,10 +353,10 @@ Validates that the triangulation forms a valid topological manifold.
 ### Example
 
 ```rust
-use delaunay::prelude::triangulation::construction::{
+use delaunay::prelude::construction::{
     DelaunayTriangulation, TopologyGuarantee, Vertex, vertex,
 };
-use delaunay::prelude::triangulation::validation::ValidationPolicy;
+use delaunay::prelude::validation::ValidationPolicy;
 
 let vertices = vec![
     vertex!([0.0, 0.0, 0.0]),
@@ -419,10 +419,10 @@ Validates the geometric optimality of the triangulation.
 ### Example
 
 ```rust
-use delaunay::prelude::triangulation::construction::{
+use delaunay::prelude::construction::{
     DelaunayTriangulation, TopologyGuarantee, Vertex, vertex,
 };
-use delaunay::prelude::triangulation::validation::ValidationPolicy;
+use delaunay::prelude::validation::ValidationPolicy;
 
 let vertices = vec![
     vertex!([0.0, 0.0, 0.0]),
@@ -474,10 +474,10 @@ Start: Do you need to validate?
 - A brute-force empty-circumsphere check would be O(simplices × vertices) and is not used by `is_valid()`.
 
 In practice, `DelaunayTriangulation::validate()` is usually dominated by Level 3 (topology) work.
-As a post-construction acceptance check, the current 8,000-vertex 3D large-scale
-debug harness passes `validation_report` for Levels 1–4; on maintainer Apple
-M4 Max hardware the final report itself is a low-single-digit-second step, while
-the full construction/repair/validation harness is around one minute.
+As a post-construction acceptance check, the current 7,500-vertex 3D large-scale
+debug harness is the default near-one-minute `validation_report` run for Levels
+1–4; on maintainer Apple M4 Max hardware the final report itself is a
+low-single-digit-second step.
 The explicit 10,000-vertex 3D run is a heavier characterization probe that has
 also passed Levels 1–4 validation, but it is not the default local acceptance
 helper.
@@ -577,9 +577,9 @@ converge, consider the opt-in heuristic rebuild fallback via
 | 2 | `Tds::validate()` | `tds` | O(N×D²) |
 | 3 | `Triangulation::is_valid()` | `triangulation` | O(N×D²) |
 | 3 | `Triangulation::validate()` | `triangulation` | O(N×D²) |
-| 4 | `DelaunayTriangulation::is_valid()` | `triangulation::delaunay` | O(simplices) |
-| 4 | `DelaunayTriangulation::validate()` | `triangulation::delaunay` | O(simplices × D²) + O(simplices) |
-| — | `DelaunayTriangulation::validation_report()` | `triangulation::delaunay` | O(simplices × D²) + O(simplices) |
+| 4 | `DelaunayTriangulation::is_valid()` | `delaunay` | O(simplices) |
+| 4 | `DelaunayTriangulation::validate()` | `delaunay` | O(simplices × D²) + O(simplices) |
+| — | `DelaunayTriangulation::validation_report()` | `delaunay` | O(simplices × D²) + O(simplices) |
 
 ---
 

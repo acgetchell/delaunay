@@ -2,10 +2,10 @@
 
 //! Integration tests for workflows demonstrated by runnable examples.
 
-use delaunay::prelude::query::{ConvexHull, Coordinate, Point};
-use delaunay::prelude::triangulation::construction::{
+use delaunay::prelude::construction::{
     DelaunayTriangulation, DelaunayTriangulationConstructionError, vertex,
 };
+use delaunay::prelude::query::{ConvexHull, Coordinate, Point, QueryError};
 
 #[test]
 fn triangulation_and_hull_workflow_remains_valid() -> Result<(), WorkflowTestError> {
@@ -24,7 +24,7 @@ fn triangulation_and_hull_workflow_remains_valid() -> Result<(), WorkflowTestErr
     let index = dt.build_adjacency_index()?;
     assert!(index.number_of_edges() > 0);
 
-    let boundary_facets: Vec<_> = dt.boundary_facets().collect();
+    let boundary_facets: Vec<_> = dt.boundary_facets()?.collect();
     assert!(!boundary_facets.is_empty());
 
     let hull = ConvexHull::from_triangulation(dt.as_triangulation())?;
@@ -54,11 +54,11 @@ enum WorkflowTestError {
     #[error(transparent)]
     Construction(#[from] DelaunayTriangulationConstructionError),
     #[error(transparent)]
-    Validation(
-        #[from] delaunay::prelude::triangulation::validation::DelaunayTriangulationValidationError,
-    ),
+    Validation(#[from] delaunay::prelude::validation::DelaunayTriangulationValidationError),
     #[error(transparent)]
     AdjacencyIndex(#[from] delaunay::prelude::query::AdjacencyIndexBuildError),
+    #[error(transparent)]
+    Query(#[from] QueryError),
     #[error("convex hull construction failed: {source}")]
     ConvexHullConstruction {
         #[source]

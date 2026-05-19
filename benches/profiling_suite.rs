@@ -76,12 +76,12 @@ use criterion::{
     BatchSize, BenchmarkGroup, BenchmarkId, Criterion, Throughput, criterion_group, criterion_main,
 };
 use delaunay::prelude::collections::SmallBuffer;
+use delaunay::prelude::construction::{
+    ConstructionOptions, DelaunayTriangulation, DelaunayTriangulationBuilder, RetryPolicy, Vertex,
+};
 use delaunay::prelude::generators::generate_random_points_seeded;
 use delaunay::prelude::geometry::{AdaptiveKernel, Coordinate, Point};
 use delaunay::prelude::query::*;
-use delaunay::prelude::triangulation::construction::{
-    ConstructionOptions, DelaunayTriangulation, DelaunayTriangulationBuilder, RetryPolicy, Vertex,
-};
 use delaunay::vertex;
 use sysinfo::{ProcessRefreshKind, ProcessesToUpdate, RefreshKind, System, get_current_pid};
 

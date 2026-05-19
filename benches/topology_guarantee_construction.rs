@@ -15,10 +15,10 @@
 //! ```
 
 use criterion::{BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
+use delaunay::prelude::construction::{DelaunayTriangulation, TopologyGuarantee};
 use delaunay::prelude::generators::generate_random_points_seeded;
-use delaunay::prelude::triangulation::construction::{DelaunayTriangulation, TopologyGuarantee};
-use delaunay::prelude::triangulation::repair::DelaunayRepairPolicy;
-use delaunay::prelude::triangulation::validation::ValidationPolicy;
+use delaunay::prelude::repair::DelaunayRepairPolicy;
+use delaunay::prelude::validation::ValidationPolicy;
 use delaunay::vertex;
 use std::hint::black_box;
 use std::time::Duration;

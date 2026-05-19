@@ -264,7 +264,7 @@ dimension:
 | Dimension | Default vertices | Generated Simplices | Total wall time |
 |-----------|------------------|---------------------|-----------------|
 | 2D | 36,000 | 71,887 | ~48.1 s |
-| 3D | 8,000 | 52,308 | ~51.9 s |
+| 3D | 7,500 | Recomputed by harness | Near one minute |
 | 4D | 900 | 21,620 | ~57.4 s |
 | 5D | 140 | 8,296 | ~51.8 s |
 

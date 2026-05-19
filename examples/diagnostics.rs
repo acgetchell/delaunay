@@ -11,19 +11,19 @@
 #[cfg(feature = "diagnostics")]
 use delaunay::prelude::DelaunayValidationError;
 #[cfg(feature = "diagnostics")]
+use delaunay::prelude::construction::{
+    DelaunayTriangulation, DelaunayTriangulationConstructionError,
+};
+#[cfg(feature = "diagnostics")]
 use delaunay::prelude::diagnostics::{
     debug_print_first_delaunay_violation, delaunay_violation_report,
 };
 #[cfg(feature = "diagnostics")]
+use delaunay::prelude::flips::*;
+#[cfg(feature = "diagnostics")]
 use delaunay::prelude::geometry::AdaptiveKernel;
 #[cfg(feature = "diagnostics")]
-use delaunay::prelude::triangulation::construction::{
-    DelaunayTriangulation, DelaunayTriangulationConstructionError,
-};
-#[cfg(feature = "diagnostics")]
-use delaunay::prelude::triangulation::flips::*;
-#[cfg(feature = "diagnostics")]
-use delaunay::prelude::triangulation::validation::DelaunayTriangulationValidationError;
+use delaunay::prelude::validation::DelaunayTriangulationValidationError;
 #[cfg(feature = "diagnostics")]
 use delaunay::vertex;
 

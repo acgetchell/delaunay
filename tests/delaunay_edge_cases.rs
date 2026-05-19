@@ -8,14 +8,14 @@
 //!
 //! Converted from legacy `Tds::new()` tests to use the new `DelaunayTriangulation` API.
 
+use delaunay::prelude::construction::{
+    DelaunayConstructionFailure, DelaunayTriangulation, DelaunayTriangulationConstructionError,
+    TopologyGuarantee, Vertex, vertex,
+};
 #[cfg(feature = "diagnostics")]
 use delaunay::prelude::diagnostics::debug_print_first_delaunay_violation;
 use delaunay::prelude::generators::generate_random_points_in_ball_seeded;
 use delaunay::prelude::geometry::RobustKernel;
-use delaunay::prelude::triangulation::construction::{
-    DelaunayConstructionFailure, DelaunayTriangulation, DelaunayTriangulationConstructionError,
-    TopologyGuarantee, Vertex, vertex,
-};
 use rand::SeedableRng;
 use rand::seq::SliceRandom;
 fn init_tracing() {

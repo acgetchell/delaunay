@@ -11,8 +11,8 @@
 
 use crate::core::algorithms::incremental_insertion::InsertionError;
 use crate::core::tds::SimplexKey;
-use crate::core::triangulation::TopologyGuarantee;
-use crate::triangulation::delaunay::{DelaunayCheckPolicy, DelaunayRepairPolicy};
+use crate::core::validation::TopologyGuarantee;
+use crate::repair::{DelaunayCheckPolicy, DelaunayRepairPolicy};
 
 /// Semantic classification of topological modifications to a triangulation.
 ///
@@ -22,8 +22,8 @@ use crate::triangulation::delaunay::{DelaunayCheckPolicy, DelaunayRepairPolicy};
 /// # Examples
 ///
 /// ```rust
-/// use delaunay::prelude::triangulation::operations::TopologicalOperation;
-/// use delaunay::prelude::triangulation::TopologyGuarantee;
+/// use delaunay::prelude::operations::TopologicalOperation;
+/// use delaunay::prelude::TopologyGuarantee;
 ///
 /// let op = TopologicalOperation::FacetFlip;
 /// assert!(op.is_admissible_under(TopologyGuarantee::Pseudomanifold));
@@ -45,8 +45,8 @@ pub enum TopologicalOperation {
 /// # Examples
 ///
 /// ```rust
-/// use delaunay::prelude::triangulation::operations::{RepairDecision, RepairSkipReason, TopologicalOperation};
-/// use delaunay::prelude::triangulation::TopologyGuarantee;
+/// use delaunay::prelude::operations::{RepairDecision, RepairSkipReason, TopologicalOperation};
+/// use delaunay::prelude::TopologyGuarantee;
 ///
 /// let decision = RepairDecision::Skip {
 ///     reason: RepairSkipReason::Inadmissible {
@@ -73,7 +73,7 @@ pub enum RepairDecision {
 /// # Examples
 ///
 /// ```rust
-/// use delaunay::prelude::triangulation::operations::RepairSkipReason;
+/// use delaunay::prelude::operations::RepairSkipReason;
 ///
 /// let reason = RepairSkipReason::PolicyDisabled;
 /// assert!(matches!(reason, RepairSkipReason::PolicyDisabled));
@@ -159,7 +159,7 @@ impl TopologicalOperation {
 /// # Examples
 ///
 /// ```rust
-/// use delaunay::prelude::triangulation::operations::InsertionResult;
+/// use delaunay::prelude::operations::InsertionResult;
 ///
 /// let result = InsertionResult::default();
 /// assert_eq!(result, InsertionResult::Inserted);
@@ -180,7 +180,7 @@ pub enum InsertionResult {
 /// # Examples
 ///
 /// ```rust
-/// use delaunay::prelude::triangulation::operations::{InsertionResult, InsertionStatistics};
+/// use delaunay::prelude::operations::{InsertionResult, InsertionStatistics};
 ///
 /// let stats = InsertionStatistics {
 ///     attempts: 2,
@@ -362,8 +362,8 @@ impl DelaunayInsertionState {
 /// # Examples
 ///
 /// ```rust
-/// use delaunay::prelude::triangulation::insertion::InsertionError;
-/// use delaunay::prelude::triangulation::operations::InsertionOutcome;
+/// use delaunay::prelude::insertion::InsertionError;
+/// use delaunay::prelude::operations::InsertionOutcome;
 ///
 /// let outcome = InsertionOutcome::Skipped {
 ///     error: InsertionError::DuplicateCoordinates {
@@ -401,7 +401,7 @@ pub enum InsertionOutcome {
 /// # Examples
 ///
 /// ```rust
-/// use delaunay::prelude::triangulation::operations::SuspicionFlags;
+/// use delaunay::prelude::operations::SuspicionFlags;
 ///
 /// let flags = SuspicionFlags {
 ///     perturbation_used: true,

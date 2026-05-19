@@ -93,7 +93,7 @@ The useful updates ported in this pass are:
 - CI and local setup pins should track the same supported tool versions when
   practical. The current workflow pins align coverage and test tooling on
   `cargo-llvm-cov` 0.8.7 and `cargo-nextest` 0.9.136, while all uv-backed
-  workflows use uv 0.11.14 to match the local Python tooling bootstrap.
+  workflows use uv 0.11.15 to match the local Python tooling bootstrap.
 
 ## Intentional Differences
 
@@ -178,6 +178,12 @@ The following previously deferred checks are now repository-owned Semgrep rules:
 - `delaunay.rust.no-silent-conversion-fallbacks-in-public-samples` extends the
   existing source conversion-fallback check to examples, benchmarks, and public
   API tests so copied usage does not hide numeric conversion failures.
+- `delaunay.rust.prefer-prelude-imports-in-examples-benches` and
+  `delaunay.rust.prefer-prelude-imports-in-delaunay-doctests` track the
+  flattened Delaunay API surface: the removed `delaunay::delaunay::*` facade is
+  no longer matched, while focused root modules such as `delaunay::flips::*`
+  still trigger guidance toward the orthogonal prelude modules in public
+  samples.
 
 ## Public Sample Error Handling
 

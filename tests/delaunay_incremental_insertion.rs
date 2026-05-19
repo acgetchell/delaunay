@@ -13,12 +13,12 @@ use approx::assert_relative_eq;
 use delaunay::geometry::kernel::RobustKernel;
 use delaunay::prelude::algorithms::{LocateResult, find_conflict_region, locate};
 use delaunay::prelude::collections::MAX_PRACTICAL_DIMENSION_SIZE;
+use delaunay::prelude::construction::{
+    ConstructionOptions, DedupPolicy, DelaunayTriangulation, TopologyGuarantee, Vertex, vertex,
+};
 use delaunay::prelude::geometry::{AdaptiveKernel, Coordinate, Point};
 use delaunay::prelude::tds::{
     Simplex, SimplexKey, SmallBuffer, VertexKey, facet_key_from_vertices,
-};
-use delaunay::prelude::triangulation::construction::{
-    ConstructionOptions, DedupPolicy, DelaunayTriangulation, TopologyGuarantee, Vertex, vertex,
 };
 use uuid::Uuid;
 

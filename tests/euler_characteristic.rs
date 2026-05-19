@@ -14,18 +14,18 @@
 //!
 //! For property-based tests with random triangulations, see `proptest_euler_characteristic.rs`.
 
-use delaunay::prelude::geometry::AdaptiveKernel;
-use delaunay::prelude::query::BoundaryAnalysis;
-use delaunay::prelude::tds::Tds;
-use delaunay::prelude::triangulation::construction::{
+use delaunay::builder::DelaunayTriangulationBuilder;
+use delaunay::prelude::construction::{
     DelaunayTriangulation, DelaunayTriangulationConstructionError, ExplicitConstructionError,
     TopologyGuarantee, vertex,
 };
+use delaunay::prelude::geometry::AdaptiveKernel;
+use delaunay::prelude::query::BoundaryAnalysis;
+use delaunay::prelude::tds::Tds;
 use delaunay::topology::characteristics::{euler, validation};
 use delaunay::topology::traits::topological_space::{
     GlobalTopology, TopologyKind, ToroidalConstructionMode,
 };
-use delaunay::triangulation::builder::DelaunayTriangulationBuilder;
 
 // =============================================================================
 // DETERMINISTIC TESTS - KNOWN CONFIGURATIONS

@@ -64,7 +64,7 @@ impl<T> DataSerde for T where T: DataSerialize + DataDeserialize {}
 /// # Usage
 ///
 /// ```rust
-/// use delaunay::prelude::triangulation::DataType;
+/// use delaunay::prelude::DataType;
 ///
 /// fn process_data<T: DataType>(data: T) {
 ///     // T has all the necessary bounds for use as vertex/simplex data

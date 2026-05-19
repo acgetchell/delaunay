@@ -194,7 +194,7 @@ drive repair, but replacement-simplex orientation itself uses `robust_orientatio
 
 ### Builder Paths
 
-`src/triangulation/builder.rs` normalizes explicit and periodic construction:
+`src/delaunay/builder.rs` normalizes explicit and periodic construction:
 
 - `from_vertices_and_simplices(...)` accepts user-provided simplex orderings, assembles
   the TDS, calls `normalize_and_promote_positive_orientation()`, validates TDS

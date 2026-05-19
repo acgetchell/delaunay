@@ -562,13 +562,14 @@ because they make intent visible at the import site.
 Examples:
 
 ```text
+delaunay::prelude
 delaunay::prelude::triangulation
-delaunay::prelude::triangulation::construction
-delaunay::prelude::triangulation::flips
-delaunay::prelude::triangulation::insertion
-delaunay::prelude::triangulation::repair
-delaunay::prelude::triangulation::delaunayize
-delaunay::prelude::triangulation::validation
+delaunay::prelude::construction
+delaunay::prelude::flips
+delaunay::prelude::insertion
+delaunay::prelude::repair
+delaunay::prelude::delaunayize
+delaunay::prelude::validation
 delaunay::prelude::query
 delaunay::prelude::algorithms
 delaunay::prelude::geometry
@@ -603,7 +604,7 @@ Example:
 /// # Examples
 ///
 /// ```rust
-/// # use delaunay::prelude::triangulation::construction::{DelaunayTriangulation, vertex};
+/// # use delaunay::prelude::construction::{DelaunayTriangulation, vertex};
 /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
 /// let mut triangulation = DelaunayTriangulation::<_, _, _, 2>::default();
 /// let key = triangulation.insert_vertex([0.0, 0.0])?;

@@ -18,7 +18,7 @@
 //! # Examples
 //!
 //! ```rust
-//! use delaunay::prelude::triangulation::*;
+//! use delaunay::prelude::*;
 //!
 //! // Create vertices for a tetrahedron
 //! let vertices = vec![
@@ -296,7 +296,7 @@ impl NeighborSlot {
 /// Since simplices store keys, use the owning [`Tds`] to resolve vertex data:
 /// ```rust
 /// use delaunay::prelude::collections::Uuid;
-/// use delaunay::prelude::triangulation::*;
+/// use delaunay::prelude::*;
 ///
 /// // Create a triangulation with some vertices
 /// let vertices = vec![
@@ -557,7 +557,7 @@ impl<T, U, V, const D: usize> Simplex<T, U, V, D> {
     /// # Example
     ///
     /// ```rust
-    /// use delaunay::prelude::triangulation::*;
+    /// use delaunay::prelude::*;
     ///
     /// let vertices = vec![
     ///     vertex!([0.0, 0.0]),
@@ -592,7 +592,7 @@ impl<T, U, V, const D: usize> Simplex<T, U, V, D> {
     /// # Example
     ///
     /// ```rust
-    /// use delaunay::prelude::triangulation::*;
+    /// use delaunay::prelude::*;
     ///
     /// let vertices = vec![
     ///     vertex!([0.0, 0.0]),
@@ -627,7 +627,7 @@ impl<T, U, V, const D: usize> Simplex<T, U, V, D> {
     /// # Example
     ///
     /// ```rust
-    /// use delaunay::prelude::triangulation::*;
+    /// use delaunay::prelude::*;
     ///
     /// let vertices = vec![
     ///     vertex!([0.0, 0.0]),
@@ -663,7 +663,7 @@ impl<T, U, V, const D: usize> Simplex<T, U, V, D> {
     /// # Example
     ///
     /// ```rust
-    /// use delaunay::prelude::triangulation::*;
+    /// use delaunay::prelude::*;
     ///
     /// let vertices = vec![
     ///     vertex!([0.0, 0.0]),
@@ -728,7 +728,7 @@ impl<T, U, V, const D: usize> Simplex<T, U, V, D> {
     ///
     /// ```rust
     /// use delaunay::prelude::tds::NeighborSlot;
-    /// use delaunay::prelude::triangulation::*;
+    /// use delaunay::prelude::*;
     ///
     /// let vertices = vec![
     ///     vertex!([0.0, 0.0]),
@@ -766,7 +766,7 @@ impl<T, U, V, const D: usize> Simplex<T, U, V, D> {
     /// This method returns keys (not full vertex objects). Use the TDS to resolve keys:
     /// ```rust
     /// use delaunay::prelude::collections::Uuid;
-    /// use delaunay::prelude::triangulation::*;
+    /// use delaunay::prelude::*;
     ///
     /// let vertices = vec![
     ///     vertex!([0.0, 0.0]),
@@ -976,7 +976,7 @@ impl<T, U, V, const D: usize> Simplex<T, U, V, D> {
     /// # Example
     ///
     /// ```rust
-    /// use delaunay::prelude::triangulation::*;
+    /// use delaunay::prelude::*;
     ///
     /// let vertices = vec![
     ///     vertex!([0.0, 0.0, 0.0]),
@@ -1005,7 +1005,7 @@ impl<T, U, V, const D: usize> Simplex<T, U, V, D> {
     ///
     /// ```
     /// use delaunay::prelude::collections::Uuid;
-    /// use delaunay::prelude::triangulation::*;
+    /// use delaunay::prelude::*;
     ///
     /// let vertices = vec![
     ///     vertex!([0.0, 0.0, 1.0]),
@@ -1028,7 +1028,7 @@ impl<T, U, V, const D: usize> Simplex<T, U, V, D> {
     /// # Examples
     ///
     /// ```
-    /// use delaunay::prelude::triangulation::*;
+    /// use delaunay::prelude::*;
     /// use delaunay::prelude::tds::Simplex;
     ///
     /// let vertices = [
@@ -1087,7 +1087,7 @@ impl<T, U, V, const D: usize> Simplex<T, U, V, D> {
     /// # Example
     ///
     /// ```
-    /// # use delaunay::prelude::triangulation::*;
+    /// # use delaunay::prelude::*;
     /// # let vertices = vec![
     /// #     vertex!([0.0, 0.0]),
     /// #     vertex!([1.0, 0.0]),
@@ -1126,7 +1126,7 @@ impl<T, U, V, const D: usize> Simplex<T, U, V, D> {
     /// # Examples
     ///
     /// ```rust
-    /// use delaunay::prelude::triangulation::*;
+    /// use delaunay::prelude::*;
     ///
     /// let vertices = vec![
     ///     vertex!([0.0, 0.0, 0.0]),
@@ -1176,7 +1176,7 @@ impl<T, U, V, const D: usize> Simplex<T, U, V, D> {
     /// # Examples
     ///
     /// ```rust
-    /// use delaunay::prelude::triangulation::*;
+    /// use delaunay::prelude::*;
     ///
     /// let vertices = vec![
     ///     vertex!([0.0, 0.0]),
@@ -1211,7 +1211,7 @@ impl<T, U, V, const D: usize> Simplex<T, U, V, D> {
     /// # Example
     ///
     /// ```
-    /// use delaunay::prelude::triangulation::*;
+    /// use delaunay::prelude::*;
     /// use delaunay::prelude::tds::Simplex;
     ///
     /// let vertices = vec![
@@ -1248,7 +1248,7 @@ impl<T, U, V, const D: usize> Simplex<T, U, V, D> {
     /// # Examples
     ///
     /// ```
-    /// use delaunay::prelude::triangulation::*;
+    /// use delaunay::prelude::*;
     /// use delaunay::prelude::tds::Simplex;
     ///
     /// // Create two separate triangulations
@@ -1330,7 +1330,7 @@ impl<T, U, V, const D: usize> Simplex<T, U, V, D> {
     /// # Example
     ///
     /// ```
-    /// use delaunay::prelude::triangulation::*;
+    /// use delaunay::prelude::*;
     /// use delaunay::prelude::tds::Simplex;
     ///
     /// let vertices = vec![
@@ -1463,7 +1463,7 @@ impl<T, U, V, const D: usize> Simplex<T, U, V, D> {
     /// # Examples
     ///
     /// ```
-    /// use delaunay::prelude::triangulation::*;
+    /// use delaunay::prelude::*;
     /// use delaunay::prelude::tds::Simplex;
     ///
     /// let vertices = vec![
@@ -1529,7 +1529,7 @@ impl<T, U, V, const D: usize> Simplex<T, U, V, D> {
     /// # Examples
     ///
     /// ```
-    /// use delaunay::prelude::triangulation::*;
+    /// use delaunay::prelude::*;
     ///
     /// // Example 1: Comparing simplices from different TDS instances with same coordinates
     /// let vertices = vec![
@@ -1550,7 +1550,7 @@ impl<T, U, V, const D: usize> Simplex<T, U, V, D> {
     /// ```
     ///
     /// ```
-    /// use delaunay::prelude::triangulation::*;
+    /// use delaunay::prelude::*;
     ///
     /// // Example 2: Comparing simplices with different coordinates returns false
     /// let vertices1 = vec![
@@ -1640,7 +1640,7 @@ impl<T, U, V, const D: usize> Simplex<T, U, V, D> {
     /// # Examples
     ///
     /// ```
-    /// use delaunay::prelude::triangulation::*;
+    /// use delaunay::prelude::*;
     /// use delaunay::prelude::tds::Simplex;
     ///
     /// let vertices = vec![
@@ -1666,7 +1666,7 @@ impl<T, U, V, const D: usize> Simplex<T, U, V, D> {
     /// ```
     ///
     /// ```
-    /// use delaunay::prelude::triangulation::*;
+    /// use delaunay::prelude::*;
     /// use delaunay::prelude::tds::Simplex;
     ///
     /// let vertices = vec![
@@ -1796,8 +1796,12 @@ impl<T, U, V, const D: usize> Hash for Simplex<T, U, V, D> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::builder::DelaunayTriangulationBuilder;
+    use crate::construction::{
+        ConstructionOptions, InitialSimplexStrategy, InsertionOrderStrategy,
+    };
     use crate::core::facet::FacetError;
-    use crate::core::triangulation::TopologyGuarantee;
+    use crate::core::validation::TopologyGuarantee;
     use crate::core::vertex::vertex;
     use crate::geometry::kernel::AdaptiveKernel;
     use crate::geometry::matrix::MAX_STACK_MATRIX_DIM;
@@ -1805,10 +1809,6 @@ mod tests {
     use crate::geometry::predicates::insphere;
     use crate::geometry::util::{circumcenter, circumradius, circumradius_with_center};
     use crate::prelude::DelaunayTriangulation;
-    use crate::triangulation::builder::DelaunayTriangulationBuilder;
-    use crate::triangulation::delaunay::{
-        ConstructionOptions, InitialSimplexStrategy, InsertionOrderStrategy,
-    };
     use approx::assert_relative_eq;
     use std::{
         cmp,

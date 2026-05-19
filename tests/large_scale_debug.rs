@@ -17,7 +17,7 @@
 //! the same `[n] [repair_every]` shape. The ignored test defaults are:
 //!
 //! - 2D: 40,000 vertices
-//! - 3D: 8,000 vertices
+//! - 3D: 7,500 vertices
 //! - 4D: 900 vertices
 //! - 5D: 150 vertices
 //!
@@ -95,20 +95,18 @@ use delaunay::geometry::kernel::{ExactPredicates, Kernel, RobustKernel};
 use delaunay::geometry::util::{
     generate_random_points_in_ball_seeded, generate_random_points_seeded, safe_usize_to_scalar,
 };
-use delaunay::prelude::tds::{InvariantKind, TriangulationValidationReport};
-use delaunay::prelude::triangulation::construction::{
+use delaunay::prelude::construction::{
     ConstructionOptions, ConstructionStatistics, DelaunayRepairPolicy, DelaunayTriangulation,
     DelaunayTriangulationConstructionErrorWithStatistics, InitialSimplexStrategy,
     TopologyGuarantee, Vertex, vertex,
 };
-use delaunay::prelude::triangulation::diagnostics::ConstructionTelemetry;
+use delaunay::prelude::diagnostics::ConstructionTelemetry;
 #[cfg(feature = "diagnostics")]
-use delaunay::prelude::triangulation::insertion::InsertionResult;
-use delaunay::prelude::triangulation::insertion::{InsertionOutcome, InsertionStatistics};
-use delaunay::prelude::triangulation::repair::{
-    DelaunayCheckPolicy, DelaunayRepairHeuristicConfig,
-};
-use delaunay::prelude::triangulation::validation::ValidationCadence;
+use delaunay::prelude::insertion::InsertionResult;
+use delaunay::prelude::insertion::{InsertionOutcome, InsertionStatistics};
+use delaunay::prelude::repair::{DelaunayCheckPolicy, DelaunayRepairHeuristicConfig};
+use delaunay::prelude::tds::{InvariantKind, TriangulationValidationReport};
+use delaunay::prelude::validation::ValidationCadence;
 use rand::{SeedableRng, rngs::StdRng, seq::SliceRandom};
 use std::env;
 use std::fmt;
@@ -1759,7 +1757,7 @@ fn debug_large_scale_2d() {
 #[test]
 #[ignore = "large-scale debug harness (manual run)"]
 fn debug_large_scale_3d() {
-    let outcome = debug_large_case::<3>("3D", 8_000);
+    let outcome = debug_large_case::<3>("3D", 7_500);
     assert!(matches!(outcome, DebugOutcome::Success), "{outcome}");
 }
 

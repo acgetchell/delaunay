@@ -1,6 +1,6 @@
 //! Integration tests for the delaunayize-by-flips workflow.
 //!
-//! Validates the public API in `delaunay::triangulation::delaunayize`, covering:
+//! Validates the public API in `delaunay::delaunayize`, covering:
 //! - Non-Delaunay but PL-manifold success case
 //! - Config defaults
 //! - Outcome population on success and failure paths
@@ -8,10 +8,10 @@
 //! - Repeat-run determinism for outcome stats
 //! - Multi-dimensional coverage (2D–3D)
 
-use delaunay::prelude::triangulation::construction::TriangulationConstructionError;
-use delaunay::prelude::triangulation::delaunayize::*;
-use delaunay::prelude::triangulation::flips::BistellarFlips;
-use delaunay::triangulation::flips::FacetHandle;
+use delaunay::flips::FacetHandle;
+use delaunay::prelude::construction::TriangulationConstructionError;
+use delaunay::prelude::delaunayize::*;
+use delaunay::prelude::flips::BistellarFlips;
 use std::{error::Error, mem::size_of};
 
 // =============================================================================

@@ -215,15 +215,15 @@ simplicial complexes for geometry:
   global consistency check that catches some classes of topological corruption.
 
 Piecewise-linear (PL) manifoldness is strictly stronger than the pseudomanifold conditions. The public API exposes this
-via [`TopologyGuarantee`](https://docs.rs/delaunay/latest/delaunay/core/triangulation/enum.TopologyGuarantee.html)
-(source: [`src/core/triangulation.rs`](../src/core/triangulation.rs)):
+via `TopologyGuarantee`, re-exported at the crate root and in
+`delaunay::prelude::construction` (source:
+[`src/core/validation.rs`](../src/core/validation.rs)):
 
-- [`TopologyGuarantee::Pseudomanifold`](https://docs.rs/delaunay/latest/delaunay/core/triangulation/enum.TopologyGuarantee.html#variant.Pseudomanifold)
+- `TopologyGuarantee::Pseudomanifold`
   checks the codimension-1 incidence conditions (plus boundary consistency, connectedness,
   isolated-vertex, and Euler characteristic checks).
-- [`TopologyGuarantee::PLManifold`](https://docs.rs/delaunay/latest/delaunay/core/triangulation/enum.TopologyGuarantee.html#variant.PLManifold)
-  and
-  [`TopologyGuarantee::PLManifoldStrict`](https://docs.rs/delaunay/latest/delaunay/core/triangulation/enum.TopologyGuarantee.html#variant.PLManifoldStrict)
+- `TopologyGuarantee::PLManifold` and
+  `TopologyGuarantee::PLManifoldStrict`
   add **link-based** conditions (ridge links and/or vertex links) that are characteristic of
   PL-manifolds. In PL topology, requiring the links of simplices to be spheres (or balls at the
   boundary) is equivalent to the standard manifold condition that every point has a locally
@@ -258,7 +258,7 @@ vertex and verifying topological properties of the resulting complex.
 
 For this reason, the `delaunay` crate defers vertex-link validation until
 construction completion by default. When stronger guarantees are required,
-[`TopologyGuarantee::PLManifoldStrict`](https://docs.rs/delaunay/latest/delaunay/core/triangulation/enum.TopologyGuarantee.html#variant.PLManifoldStrict)
+`TopologyGuarantee::PLManifoldStrict`
 enables vertex-link validation after every insertion, trading performance for earlier detection and
 improved diagnosability.
 
@@ -320,7 +320,7 @@ At a high level:
 - **Vertex-link validation** is stronger but significantly more expensive. The default strategy is
   to defer full vertex-link certification until construction completion.
 - **Strict mode**
-  ([`TopologyGuarantee::PLManifoldStrict`](https://docs.rs/delaunay/latest/delaunay/core/triangulation/enum.TopologyGuarantee.html#variant.PLManifoldStrict))
+  (`TopologyGuarantee::PLManifoldStrict`)
   runs vertex-link validation after each insertion, trading performance for earlier detection and
   improved diagnosability.
 

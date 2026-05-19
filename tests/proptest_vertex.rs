@@ -12,8 +12,8 @@
 
 #![allow(unused_imports)] // Imports used in macro expansion
 
+use delaunay::prelude::construction::{Vertex, vertex};
 use delaunay::prelude::geometry::Point;
-use delaunay::prelude::triangulation::construction::{Vertex, vertex};
 use proptest::prelude::*;
 use std::collections::{HashMap, HashSet};
 use std::hash::{Hash, Hasher};

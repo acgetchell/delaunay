@@ -43,8 +43,9 @@ use crate::core::operations::TopologicalOperation;
 use crate::core::simplex::{NeighborSlot, Simplex, SimplexValidationError};
 use crate::core::tds::{EntityKind, NeighborValidationError, SimplexKey, Tds, VertexKey};
 use crate::core::traits::data_type::DataType;
-use crate::core::triangulation::{TopologyGuarantee, Triangulation, TriangulationValidationError};
+use crate::core::triangulation::Triangulation;
 use crate::core::util::stable_hash_u64_slice;
+use crate::core::validation::{TopologyGuarantee, TriangulationValidationError};
 use crate::core::vertex::Vertex;
 use crate::geometry::kernel::Kernel;
 use crate::geometry::point::Point;
@@ -59,7 +60,7 @@ use crate::topology::traits::global_topology_model::{
     GlobalTopologyModel, GlobalTopologyModelAdapter,
 };
 use crate::topology::traits::topological_space::GlobalTopology;
-use crate::triangulation::delaunay::DelaunayTriangulationValidationError;
+use crate::validation::DelaunayTriangulationValidationError;
 use slotmap::Key;
 use std::borrow::Cow;
 use std::collections::VecDeque;
@@ -81,7 +82,7 @@ type ReplacementPeriodicOffsets<const D: usize> =
 /// # Examples
 ///
 /// ```rust
-/// use delaunay::prelude::triangulation::flips::BistellarFlipKind;
+/// use delaunay::prelude::flips::BistellarFlipKind;
 ///
 /// let kind = BistellarFlipKind::k2(3);
 /// let inverse = kind.inverse();
@@ -2279,7 +2280,7 @@ where
 /// # Examples
 ///
 /// ```rust
-/// use delaunay::prelude::triangulation::flips::FlipDirection;
+/// use delaunay::prelude::flips::FlipDirection;
 ///
 /// assert_eq!(FlipDirection::Forward.inverse(), FlipDirection::Inverse);
 /// ```
@@ -2508,7 +2509,7 @@ impl BistellarFlipKind {
 /// # Examples
 ///
 /// ```rust
-/// use delaunay::prelude::triangulation::flips::{BistellarMove, ConstK};
+/// use delaunay::prelude::flips::{BistellarMove, ConstK};
 ///
 /// fn move_k<const D: usize, M: BistellarMove<D>>() -> usize {
 ///     M::K
@@ -2524,7 +2525,7 @@ pub struct ConstK<const K: usize>;
 /// # Examples
 ///
 /// ```rust
-/// use delaunay::prelude::triangulation::flips::{BistellarMove, ConstK};
+/// use delaunay::prelude::flips::{BistellarMove, ConstK};
 ///
 /// fn move_k<const D: usize, M: BistellarMove<D>>() -> usize {
 ///     M::K
@@ -2607,7 +2608,7 @@ impl FlipPredicateError {
 /// # Examples
 ///
 /// ```rust
-/// use delaunay::prelude::triangulation::flips::{FlipContextError, FlipError};
+/// use delaunay::prelude::flips::{FlipContextError, FlipError};
 ///
 /// let reason = FlipContextError::ReplacementPeriodicOffsetCountMismatch {
 ///     simplex_count: 2,
@@ -3283,6 +3284,16 @@ pub enum FlipNeighborWiringError {
         #[source]
         source: TriangulationValidationError,
     },
+    /// Local repair would exceed its simplex-removal budget.
+    #[error(
+        "local repair removal budget reached flip neighbor wiring: attempted {attempted}, max {max_simplices_removed}"
+    )]
+    MaxSimplicesRemovedExceeded {
+        /// Maximum simplices allowed for removal.
+        max_simplices_removed: usize,
+        /// Number of simplices selected for removal.
+        attempted: usize,
+    },
 }
 
 impl From<InsertionError> for FlipNeighborWiringError {
@@ -3320,6 +3331,13 @@ impl From<InsertionError> for FlipNeighborWiringError {
             InsertionError::TopologyValidationFailed { message, source } => {
                 Self::TopologyValidationFailed { message, source }
             }
+            InsertionError::MaxSimplicesRemovedExceeded {
+                max_simplices_removed,
+                attempted,
+            } => Self::MaxSimplicesRemovedExceeded {
+                max_simplices_removed,
+                attempted,
+            },
         }
     }
 }
@@ -3452,7 +3470,7 @@ pub enum FlipVertexAdjacencyError {
 /// # Examples
 ///
 /// ```rust
-/// use delaunay::prelude::triangulation::flips::FlipError;
+/// use delaunay::prelude::flips::FlipError;
 ///
 /// let err = FlipError::UnsupportedDimension { dimension: 1 };
 /// assert!(matches!(err, FlipError::UnsupportedDimension { .. }));
@@ -3737,7 +3755,7 @@ impl From<FlipError> for FlipFailureKind {
 /// # Examples
 ///
 /// ```rust
-/// use delaunay::prelude::triangulation::flips::{BistellarFlipKind, FlipDirection, FlipInfo};
+/// use delaunay::prelude::flips::{BistellarFlipKind, FlipDirection, FlipInfo};
 /// use delaunay::prelude::collections::{SimplexKeyBuffer, SmallBuffer, MAX_PRACTICAL_DIMENSION_SIZE};
 /// use delaunay::prelude::tds::{SimplexKey, VertexKey};
 /// use slotmap::KeyData;
@@ -3817,7 +3835,7 @@ pub(crate) struct FlipContextDyn<const D: usize> {
 /// # Examples
 ///
 /// ```rust
-/// use delaunay::prelude::triangulation::flips::TriangleHandle;
+/// use delaunay::prelude::flips::TriangleHandle;
 /// use delaunay::prelude::tds::VertexKey;
 /// use slotmap::KeyData;
 ///
@@ -3842,7 +3860,7 @@ impl TriangleHandle {
     /// # Examples
     ///
     /// ```rust
-    /// use delaunay::prelude::triangulation::flips::TriangleHandle;
+    /// use delaunay::prelude::flips::TriangleHandle;
     /// use delaunay::prelude::tds::VertexKey;
     /// use slotmap::KeyData;
     ///
@@ -3875,7 +3893,7 @@ impl TriangleHandle {
 /// # Examples
 ///
 /// ```rust
-/// use delaunay::prelude::triangulation::flips::RidgeHandle;
+/// use delaunay::prelude::flips::RidgeHandle;
 /// use delaunay::prelude::tds::SimplexKey;
 /// use slotmap::KeyData;
 ///
@@ -3934,7 +3952,7 @@ impl RidgeHandle {
 /// # Examples
 ///
 /// ```rust
-/// use delaunay::prelude::triangulation::repair::DelaunayRepairStats;
+/// use delaunay::prelude::repair::DelaunayRepairStats;
 ///
 /// let stats = DelaunayRepairStats::default();
 /// assert_eq!(stats.flips_performed, 0);
@@ -4138,7 +4156,7 @@ fn repair_run_from_attempt(outcome: RepairAttemptOutcome) -> DelaunayRepairRun {
 /// # Examples
 ///
 /// ```rust
-/// use delaunay::prelude::triangulation::repair::RepairQueueOrder;
+/// use delaunay::prelude::repair::RepairQueueOrder;
 ///
 /// let order = RepairQueueOrder::Fifo;
 /// assert_eq!(order, RepairQueueOrder::Fifo);
@@ -4156,7 +4174,7 @@ pub enum RepairQueueOrder {
 /// # Examples
 ///
 /// ```rust
-/// use delaunay::prelude::triangulation::repair::{
+/// use delaunay::prelude::repair::{
 ///     DelaunayRepairDiagnostics, RepairQueueOrder,
 /// };
 ///
@@ -4226,7 +4244,7 @@ impl fmt::Display for DelaunayRepairDiagnostics {
 /// # Examples
 ///
 /// ```rust
-/// use delaunay::prelude::triangulation::repair::{
+/// use delaunay::prelude::repair::{
 ///     DelaunayRepairError, DelaunayRepairVerificationContext, FlipError,
 /// };
 ///
@@ -4292,7 +4310,7 @@ impl fmt::Display for DelaunayRepairVerificationContext {
 /// # Examples
 ///
 /// ```rust
-/// use delaunay::prelude::triangulation::repair::{DelaunayRepairError, TopologyGuarantee};
+/// use delaunay::prelude::repair::{DelaunayRepairError, TopologyGuarantee};
 ///
 /// let err = DelaunayRepairError::InvalidTopology {
 ///     required: TopologyGuarantee::PLManifold,
@@ -6146,8 +6164,8 @@ where
 /// # Examples
 ///
 /// ```
-/// use delaunay::prelude::triangulation::*;
-/// use delaunay::prelude::triangulation::repair::verify_delaunay_via_flip_predicates;
+/// use delaunay::prelude::*;
+/// use delaunay::prelude::repair::verify_delaunay_via_flip_predicates;
 /// use delaunay::prelude::geometry::AdaptiveKernel;
 ///
 /// let vertices = vec![
@@ -6191,8 +6209,8 @@ where
 /// # Examples
 ///
 /// ```
-/// use delaunay::prelude::triangulation::*;
-/// use delaunay::prelude::triangulation::repair::verify_delaunay_for_triangulation;
+/// use delaunay::prelude::*;
+/// use delaunay::prelude::repair::verify_delaunay_for_triangulation;
 ///
 /// let vertices = vec![
 ///     vertex!([0.0, 0.0, 0.0]),
@@ -9473,15 +9491,16 @@ fn enqueue_ridge<T, U, V, const D: usize>(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::DelaunayTriangulation;
     use crate::core::algorithms::incremental_insertion::{
         DelaunayRepairFailureContext, repair_neighbor_pointers,
     };
     use crate::core::algorithms::locate::LocateResult;
     use crate::core::collections::Uuid;
-    use crate::core::triangulation::TopologyGuarantee;
+    use crate::core::validation::TopologyGuarantee;
     use crate::geometry::kernel::{AdaptiveKernel, FastKernel};
+    use crate::repair::DelaunayRepairOperation;
     use crate::topology::traits::topological_space::ToroidalConstructionMode;
-    use crate::triangulation::delaunay::{DelaunayRepairOperation, DelaunayTriangulation};
     use crate::vertex;
     use approx::assert_relative_eq;
     use proptest::prelude::*;
@@ -13500,6 +13519,19 @@ mod tests {
             }
             other => panic!("expected preserved Delaunay repair reason, got {other:?}"),
         }
+
+        let budget_wiring =
+            FlipNeighborWiringError::from(InsertionError::MaxSimplicesRemovedExceeded {
+                max_simplices_removed: 2,
+                attempted: 3,
+            });
+        assert_eq!(
+            budget_wiring,
+            FlipNeighborWiringError::MaxSimplicesRemovedExceeded {
+                max_simplices_removed: 2,
+                attempted: 3,
+            }
+        );
     }
 
     #[test]
