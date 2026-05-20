@@ -270,7 +270,7 @@
 //!     DelaunayTriangulation, DelaunayTriangulationConstructionError, vertex,
 //! };
 //! use delaunay::prelude::insertion::InsertionError;
-//! use delaunay::prelude::validation::ValidationPolicy;
+//! use delaunay::prelude::validation::{ValidationConfigurationError, ValidationPolicy};
 //!
 //! # #[derive(Debug, thiserror::Error)]
 //! # enum ExampleError {
@@ -278,6 +278,8 @@
 //! #     Construction(#[from] DelaunayTriangulationConstructionError),
 //! #     #[error(transparent)]
 //! #     Insertion(#[from] InsertionError),
+//! #     #[error(transparent)]
+//! #     ValidationConfiguration(#[from] ValidationConfigurationError),
 //! # }
 //! # fn main() -> Result<(), ExampleError> {
 //! let vertices = vec![
@@ -288,8 +290,9 @@
 //! ];
 //! let mut dt = DelaunayTriangulation::new(&vertices)?;
 //!
-//! // Performance mode: disable insertion-time Level 3 topology validation.
-//! dt.set_validation_policy(ValidationPolicy::Never);
+//! // Caller-owned validation mode: keep mandatory topology checks, but run full
+//! // Level 3 validation only through explicit validation calls.
+//! dt.try_set_validation_policy(ValidationPolicy::ExplicitOnly)?;
 //!
 //! // Do incremental work...
 //! dt.insert(vertex!([0.2, 0.2, 0.2]))?;
@@ -971,7 +974,7 @@ pub use crate::core::util::{
     delaunay_violation_report,
 };
 pub use crate::core::validation::{
-    TopologyGuarantee, TriangulationValidationError, ValidationPolicy,
+    TopologyGuarantee, TriangulationValidationError, ValidationConfigurationError, ValidationPolicy,
 };
 pub use crate::repair::{
     DelaunayCheckPolicy, DelaunayRepairHeuristicConfig, DelaunayRepairHeuristicSeeds,
@@ -1259,7 +1262,8 @@ pub mod prelude {
         DuplicateDetectionMetrics, InitialSimplexStrategy, InsertionOrderStrategy, InsertionResult,
         PlManifoldRepairError, PlManifoldRepairStats, RepairDecision, RepairSkipReason,
         RetryPolicy, TopologicalOperation, TopologyGuarantee, Triangulation,
-        TriangulationConstructionError, TriangulationValidationError, ValidationPolicy,
+        TriangulationConstructionError, TriangulationValidationError, ValidationConfigurationError,
+        ValidationPolicy,
     };
 
     // Re-export utility items, but avoid exporting the util module names themselves.
@@ -1425,7 +1429,7 @@ pub mod prelude {
         };
         pub use crate::{
             InsertionError, TopologyGuarantee, Triangulation, TriangulationConstructionError,
-            TriangulationValidationError, ValidationPolicy,
+            TriangulationValidationError, ValidationConfigurationError, ValidationPolicy,
         };
 
         // Convenience macro for generic triangulation examples and tests.
@@ -1514,7 +1518,9 @@ pub mod prelude {
             DelaunayTriangulation, DelaunayTriangulationValidationError,
         };
         pub use crate::{DelaunayValidationError, find_delaunay_violations};
-        pub use crate::{TopologyGuarantee, Triangulation, ValidationPolicy};
+        pub use crate::{
+            TopologyGuarantee, Triangulation, ValidationConfigurationError, ValidationPolicy,
+        };
     }
 
     /// End-to-end "repair then delaunayize" workflow.
@@ -1545,7 +1551,8 @@ pub mod prelude {
     pub mod validation {
         pub use crate::validation::*;
         pub use crate::{
-            DelaunayTriangulationValidationError, TriangulationValidationError, ValidationPolicy,
+            DelaunayTriangulationValidationError, TriangulationValidationError,
+            ValidationConfigurationError, ValidationPolicy,
         };
     }
 

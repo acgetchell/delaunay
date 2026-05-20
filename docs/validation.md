@@ -71,7 +71,10 @@ insertion deviates from the happy-path and trips internal **suspicion flags**, e
 
 ### Available policies
 
-- `ValidationPolicy::Never`: never run Level 3 automatically (fastest, least guarded).
+- `ValidationPolicy::Never`: never run full Level 3 automatically; compatible only with
+  `TopologyGuarantee::Pseudomanifold`.
+- `ValidationPolicy::ExplicitOnly`: run full Level 3 only through explicit validation
+  calls while still keeping topology checks required by the active `TopologyGuarantee`.
 - `ValidationPolicy::OnSuspicion` *(default)*: run Level 3 only when insertion is suspicious.
 - `ValidationPolicy::Always`: run Level 3 after every insertion attempt (slowest, best for tests).
 - `ValidationPolicy::DebugOnly`: always run Level 3 in debug builds; in release behaves like `OnSuspicion`.
@@ -99,8 +102,12 @@ assert_eq!(dt.validation_policy(), ValidationPolicy::OnSuspicion);
 // For test/debug: validate topology after every insertion.
 dt.set_validation_policy(ValidationPolicy::Always);
 
-// For maximum performance (you can still validate explicitly when you choose).
-dt.set_validation_policy(ValidationPolicy::Never);
+// For caller-owned full validation checkpoints with the default PL-manifold guarantee.
+dt.try_set_validation_policy(ValidationPolicy::ExplicitOnly).unwrap();
+
+// `Never` is reserved for the relaxed pseudomanifold guarantee.
+dt.try_set_topology_guarantee(TopologyGuarantee::Pseudomanifold).unwrap();
+dt.try_set_validation_policy(ValidationPolicy::Never).unwrap();
 ```
 
 ---
@@ -115,6 +122,9 @@ Level 3 topology validation can be configured to enforce either:
 
 This is separate from [`ValidationPolicy`](#automatic-validation-during-incremental-insertion-validationpolicy),
 which controls *when* Level 3 is run automatically during incremental insertion.
+The builder keeps these axes coherent by deriving the initial validation policy
+from `TopologyGuarantee`: `PLManifoldStrict` starts with `ValidationPolicy::Always`,
+and `PLManifold` / `Pseudomanifold` start with `ValidationPolicy::OnSuspicion`.
 
 ### Default: `PLManifold`
 

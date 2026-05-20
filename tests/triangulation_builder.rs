@@ -20,6 +20,7 @@ use delaunay::prelude::repair::DelaunayRepairError;
 use delaunay::prelude::tds::{InvariantErrorSummaryDetail, TriangulationValidationErrorKind};
 use delaunay::prelude::topology::spaces::{GlobalTopology, TopologyKind, ToroidalConstructionMode};
 use delaunay::prelude::topology::validation::{count_simplices, euler_characteristic};
+use delaunay::prelude::validation::ValidationPolicy;
 
 // =============================================================================
 // Euclidean path
@@ -77,6 +78,25 @@ fn test_builder_topology_guarantee_propagated() {
         .build::<()>()
         .expect("build should succeed");
     assert_eq!(dt.topology_guarantee(), TopologyGuarantee::Pseudomanifold);
+}
+
+/// Builder derives validation policy from topology guarantee instead of exposing
+/// a separate construction-time policy axis.
+#[test]
+fn test_builder_validation_policy_derived_from_topology_guarantee() {
+    let vertices = vec![
+        vertex!([0.0_f64, 0.0]),
+        vertex!([1.0, 0.0]),
+        vertex!([0.0, 1.0]),
+    ];
+
+    let dt = DelaunayTriangulationBuilder::new(&vertices)
+        .topology_guarantee(TopologyGuarantee::PLManifoldStrict)
+        .build::<()>()
+        .expect("build should succeed");
+
+    assert_eq!(dt.topology_guarantee(), TopologyGuarantee::PLManifoldStrict);
+    assert_eq!(dt.validation_policy(), ValidationPolicy::Always);
 }
 
 /// Custom `ConstructionOptions` are accepted and the triangulation is valid.

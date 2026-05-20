@@ -943,7 +943,8 @@ macro_rules! gen_duplicate_coords_test {
                     );
                     prop_assume!(dt.is_ok());
                     let mut dt = dt.unwrap();
-                    dt.set_validation_policy(ValidationPolicy::Never);
+                    dt.try_set_validation_policy(ValidationPolicy::ExplicitOnly)
+                        .expect("explicit-only validation policy should be compatible");
                     dt.set_delaunay_repair_policy(DelaunayRepairPolicy::Never);
                     // Select a vertex that is actually present in the triangulation.
                     // `DelaunayTriangulation::new_with_options` may skip some input vertices (e.g., due to degeneracy),

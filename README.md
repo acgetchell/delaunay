@@ -294,7 +294,9 @@ For the full periodic image-point method (Phase 2), see the
 
 `TopologyGuarantee` controls which Level 3 manifold constraints are enforced,
 and `ValidationPolicy` controls when Level 3 checks run automatically during
-incremental insertion.
+incremental insertion. Incompatible combinations are rejected by the fallible
+`try_set_*` policy setters; use `ValidationPolicy::ExplicitOnly` for
+caller-owned full-validation checkpoints with the default PL-manifold guarantee.
 
 ## 🔬 Reproducibility
 

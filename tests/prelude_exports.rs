@@ -68,10 +68,16 @@ use delaunay::prelude::triangulation::{
     TdsError as TriangulationTdsError, TopologyGuarantee as TriangulationTopologyGuarantee,
     Triangulation as GenericTriangulation,
     TriangulationConstructionError as GenericTriangulationConstructionError,
+    ValidationConfigurationError as TriangulationValidationConfigurationError,
     ValidationPolicy as TriangulationValidationPolicy, vertex as triangulation_vertex,
 };
-use delaunay::prelude::validation::ValidationCadence;
-use delaunay::prelude::{SecureHashMap, SecureHashSet};
+use delaunay::prelude::validation::{
+    ValidationCadence, ValidationConfigurationError as FocusedValidationConfigurationError,
+    ValidationPolicy as FocusedValidationPolicy,
+};
+use delaunay::prelude::{
+    SecureHashMap, SecureHashSet, ValidationConfigurationError as RootValidationConfigurationError,
+};
 
 #[derive(Debug, thiserror::Error)]
 enum RootApiExportTestError {
@@ -315,6 +321,36 @@ fn construction_prelude_covers_explicit_error_summaries() {
         explicit_delaunay_validation.kind,
         ExplicitDelaunayValidationErrorKind::Tds
     );
+}
+
+#[test]
+fn validation_prelude_covers_configuration_error() {
+    let focused_error =
+        FocusedValidationConfigurationError::IncompatibleTopologyAndValidationPolicy {
+            topology_guarantee: TopologyGuarantee::PLManifold,
+            validation_policy: FocusedValidationPolicy::Never,
+        };
+    let root_error: RootValidationConfigurationError = focused_error;
+    assert!(matches!(
+        root_error,
+        RootValidationConfigurationError::IncompatibleTopologyAndValidationPolicy {
+            topology_guarantee: TopologyGuarantee::PLManifold,
+            validation_policy: FocusedValidationPolicy::Never,
+        }
+    ));
+
+    let triangulation_error =
+        TriangulationValidationConfigurationError::IncompatibleTopologyAndValidationPolicy {
+            topology_guarantee: TriangulationTopologyGuarantee::PLManifoldStrict,
+            validation_policy: TriangulationValidationPolicy::Never,
+        };
+    assert!(matches!(
+        triangulation_error,
+        TriangulationValidationConfigurationError::IncompatibleTopologyAndValidationPolicy {
+            topology_guarantee: TriangulationTopologyGuarantee::PLManifoldStrict,
+            validation_policy: TriangulationValidationPolicy::Never,
+        }
+    ));
 }
 
 #[test]
