@@ -118,9 +118,10 @@ dt.insert(vertex!([0.25, 0.75])).unwrap();
   `.toroidal_periodic()` (Phase 2 periodic image-point) with explicit domain periods
 - **Custom topology guarantees**: Set stricter or more relaxed manifold checks
 - **Custom validation policies**: Configure `ValidationPolicy` via
-  `dt.set_validation_policy(...)` before or after build; the active policy controls
-  automatic topology validation for subsequent insert/remove and other modification
-  operations
+  `dt.try_set_validation_policy(...)` before or after build when callers need
+  typed feedback for incompatible policy/guarantee pairs. The compatibility
+  `dt.set_validation_policy(...)` setter leaves the previous policy unchanged
+  for incoherent combinations.
 - **Custom repair policies**: Configure Delaunay repair behavior
 
 See `docs/topology.md` for more on toroidal triangulations and `docs/validation.md`
@@ -144,7 +145,7 @@ for topology guarantee and validation policy details.
   typed repair diagnostics where available, for example
   `RepairOperationFailed { operation, source }`.
 - **Validation**: The active `ValidationPolicy` (set with
-  `dt.set_validation_policy(...)`) governs automatic topology validation for
+  `dt.try_set_validation_policy(...)` or `dt.set_validation_policy(...)`) governs automatic topology validation for
   subsequent construction/modification operations
 
 ## Edit API Reference

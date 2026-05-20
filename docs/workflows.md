@@ -36,6 +36,10 @@ Two knobs are commonly used for insertion-time safety vs performance:
 - `TopologyGuarantee`: what Level 3 topology invariants are enforced.
 - `ValidationPolicy`: when Level 3 topology validation runs automatically during incremental insertion.
 
+Use the `try_set_*` policy setters when changing both axes programmatically; they
+return a typed error for incoherent combinations such as
+`TopologyGuarantee::PLManifold` with `ValidationPolicy::Never`.
+
 See [`validation.md`](validation.md) for details.
 
 ```rust

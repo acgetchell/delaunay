@@ -1303,6 +1303,9 @@ impl<'v, T, U, const D: usize> DelaunayTriangulationBuilder<'v, T, U, D> {
     /// Sets the [`TopologyGuarantee`]
     ///
     /// Defaults to [`TopologyGuarantee::DEFAULT`] (`PLManifold`).
+    /// The builder derives the initial [`ValidationPolicy`](crate::ValidationPolicy)
+    /// from this guarantee; it does not expose a separate construction-time validation
+    /// policy knob.
     ///
     /// # Examples
     ///

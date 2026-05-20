@@ -3767,7 +3767,8 @@ where
         let duplicate_tolerance = default_duplicate_tolerance::<K::Scalar>();
 
         let mut tri = Triangulation::new_empty(kernel);
-        tri.set_topology_guarantee(topology_guarantee);
+        tri.topology_guarantee = topology_guarantee;
+        tri.validation_policy = topology_guarantee.default_validation_policy();
         Self {
             tri,
             insertion_state: DelaunayInsertionState::new(),
@@ -4680,8 +4681,9 @@ mod tests {
     };
     use crate::core::algorithms::locate::{ConflictError, LocateError};
     use crate::core::tds::{EntityKind, GeometricError, InvariantError, SimplexKey, VertexKey};
-    use crate::core::validation::TopologyGuarantee;
-    use crate::core::validation::TriangulationValidationError;
+    use crate::core::validation::{
+        TopologyGuarantee, TriangulationValidationError, ValidationPolicy,
+    };
     use crate::core::vertex::VertexBuilder;
     use crate::diagnostics::BatchLocalRepairTrigger;
     use crate::geometry::kernel::{AdaptiveKernel, FastKernel, RobustKernel};
@@ -6267,6 +6269,35 @@ mod tests {
             .unwrap();
 
         assert_eq!(dt.topology_guarantee(), TopologyGuarantee::PLManifold);
+    }
+
+    #[test]
+    fn test_empty_topology_guarantee_derives_validation_policy() {
+        init_tracing();
+
+        let strict: DelaunayTriangulation<_, (), (), 3> =
+            DelaunayTriangulation::empty_with_topology_guarantee(
+                TopologyGuarantee::PLManifoldStrict,
+            );
+        assert_eq!(
+            strict.topology_guarantee(),
+            TopologyGuarantee::PLManifoldStrict
+        );
+        assert_eq!(strict.validation_policy(), ValidationPolicy::Always);
+
+        let pseudomanifold: DelaunayTriangulation<_, (), (), 3> =
+            DelaunayTriangulation::with_empty_kernel_and_topology_guarantee(
+                FastKernel::<f64>::new(),
+                TopologyGuarantee::Pseudomanifold,
+            );
+        assert_eq!(
+            pseudomanifold.topology_guarantee(),
+            TopologyGuarantee::Pseudomanifold
+        );
+        assert_eq!(
+            pseudomanifold.validation_policy(),
+            ValidationPolicy::OnSuspicion
+        );
     }
 
     #[test]

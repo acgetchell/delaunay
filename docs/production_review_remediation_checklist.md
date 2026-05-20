@@ -93,9 +93,11 @@ Treat partial items as still open until their acceptance notes are satisfied.
 
 ## API Design Feedback
 
-- [ ] **22. Reconcile topology guarantee and validation policy combinations.**
-  Reject incoherent builder combinations or merge the overlapping policy axes.
-  Tracked for v0.7.8 in #385.
+- [x] **22. Reconcile topology guarantee and validation policy combinations.**
+  Incoherent runtime combinations are rejected through typed `try_set_*` policy
+  setters, compatibility setters no longer commit rejected state, and builder
+  construction continues to derive the initial validation policy from the
+  selected topology guarantee. Tracked for v0.7.8 in #385.
 - [ ] **23. Reconsider skipped insertions as success outcomes.**
   Make skipped duplicate and degeneracy outcomes harder for callers to ignore.
   Tracked for v0.7.8 in #386.

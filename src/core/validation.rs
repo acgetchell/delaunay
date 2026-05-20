@@ -352,9 +352,11 @@ impl From<ManifoldError> for InvariantError {
 /// performance for stricter correctness checks during incremental operations.
 ///
 /// **Note**: [`TopologyGuarantee::PLManifold`] is incompatible with [`ValidationPolicy::Never`].
-/// `PLManifold` requires at least end-of-construction validation to certify full
-/// PL-manifoldness. Use [`ValidationPolicy::OnSuspicion`] (default) for best performance,
-/// or [`ValidationPolicy::Always`] for maximum safety during incremental operations.
+/// `PLManifold` requires at least caller-owned completion validation to certify full
+/// PL-manifoldness. Use [`ValidationPolicy::ExplicitOnly`] when you want to run full
+/// topology validation only through explicit validation calls, [`ValidationPolicy::OnSuspicion`]
+/// (default) for best performance, or [`ValidationPolicy::Always`] for maximum safety during
+/// incremental operations.
 ///
 /// # Examples
 ///
@@ -368,8 +370,18 @@ impl From<ManifoldError> for InvariantError {
 /// ```
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ValidationPolicy {
-    /// Never run global validation.
+    /// Never run full global validation automatically.
+    ///
+    /// This is only compatible with [`TopologyGuarantee::Pseudomanifold`]. Use
+    /// [`ValidationPolicy::ExplicitOnly`] when a stronger topology guarantee is active and
+    /// full validation checkpoints are owned by the caller.
     Never,
+
+    /// Run full topology validation only when callers invoke explicit validation APIs.
+    ///
+    /// Mandatory local topology checks required by the active [`TopologyGuarantee`] still run
+    /// during insertion, but suspicion-triggered full Level 3 validation is disabled.
+    ExplicitOnly,
 
     /// Validate only if the operation is suspicious (e.g. degeneracy).
     OnSuspicion,
@@ -388,7 +400,7 @@ impl ValidationPolicy {
     #[must_use]
     pub const fn should_validate(&self, suspicion: SuspicionFlags) -> bool {
         match self {
-            Self::Never => false,
+            Self::Never | Self::ExplicitOnly => false,
             Self::Always => true,
             Self::OnSuspicion => suspicion.is_suspicious(),
             Self::DebugOnly => cfg!(debug_assertions) || suspicion.is_suspicious(),
@@ -553,7 +565,7 @@ impl TopologyGuarantee {
     pub const fn default_validation_policy(self) -> ValidationPolicy {
         match self {
             Self::PLManifoldStrict => ValidationPolicy::Always,
-            _ => ValidationPolicy::OnSuspicion,
+            Self::Pseudomanifold | Self::PLManifold => ValidationPolicy::OnSuspicion,
         }
     }
 
@@ -568,6 +580,59 @@ impl TopologyGuarantee {
             Self::Pseudomanifold => true,
             Self::PLManifold | Self::PLManifoldStrict => !matches!(policy, ValidationPolicy::Never),
         }
+    }
+}
+
+/// Errors returned when validation scheduling and topology guarantees are incoherent.
+///
+/// # Examples
+///
+/// ```rust
+/// use delaunay::prelude::geometry::FastKernel;
+/// use delaunay::prelude::{
+///     TopologyGuarantee, Triangulation, ValidationConfigurationError, ValidationPolicy,
+/// };
+///
+/// let mut tri: Triangulation<FastKernel<f64>, (), (), 2> =
+///     Triangulation::new_empty(FastKernel::new());
+///
+/// assert!(matches!(
+///     tri.try_set_validation_policy(ValidationPolicy::Never),
+///     Err(ValidationConfigurationError::IncompatibleTopologyAndValidationPolicy {
+///         topology_guarantee: TopologyGuarantee::PLManifold,
+///         validation_policy: ValidationPolicy::Never,
+///     })
+/// ));
+/// ```
+#[derive(Clone, Copy, Debug, Error, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum ValidationConfigurationError {
+    /// The requested validation policy cannot support the requested topology guarantee.
+    #[error(
+        "validation policy {validation_policy:?} is incompatible with topology guarantee {topology_guarantee:?}"
+    )]
+    IncompatibleTopologyAndValidationPolicy {
+        /// Topology guarantee that would be active.
+        topology_guarantee: TopologyGuarantee,
+        /// Validation policy that would be active.
+        validation_policy: ValidationPolicy,
+    },
+}
+
+/// Verifies that a topology guarantee and validation policy can coexist.
+const fn validate_configuration(
+    topology_guarantee: TopologyGuarantee,
+    validation_policy: ValidationPolicy,
+) -> Result<(), ValidationConfigurationError> {
+    if topology_guarantee.is_compatible_with_policy(validation_policy) {
+        Ok(())
+    } else {
+        Err(
+            ValidationConfigurationError::IncompatibleTopologyAndValidationPolicy {
+                topology_guarantee,
+                validation_policy,
+            },
+        )
     }
 }
 
@@ -627,13 +692,46 @@ where
         self.validation_policy
     }
 
+    /// Tries to set the insertion-time global topology validation policy used by the triangulation.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ValidationConfigurationError::IncompatibleTopologyAndValidationPolicy`] when the
+    /// requested policy cannot support the current topology guarantee. For example,
+    /// [`ValidationPolicy::Never`] is rejected when the triangulation has
+    /// [`TopologyGuarantee::PLManifold`]; use [`ValidationPolicy::ExplicitOnly`] for
+    /// caller-owned full validation checkpoints with stronger topology guarantees.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use delaunay::prelude::{Triangulation, ValidationPolicy};
+    /// use delaunay::prelude::geometry::FastKernel;
+    ///
+    /// # fn main() -> Result<(), delaunay::prelude::ValidationConfigurationError> {
+    /// let mut tri: Triangulation<FastKernel<f64>, (), (), 2> =
+    ///     Triangulation::new_empty(FastKernel::new());
+    ///
+    /// tri.try_set_validation_policy(ValidationPolicy::Always)?;
+    /// assert_eq!(tri.validation_policy(), ValidationPolicy::Always);
+    /// # Ok(())
+    /// # }
+    /// ```
+    #[inline]
+    pub fn try_set_validation_policy(
+        &mut self,
+        policy: ValidationPolicy,
+    ) -> Result<(), ValidationConfigurationError> {
+        validate_configuration(self.topology_guarantee, policy)?;
+        self.validation_policy = policy;
+        Ok(())
+    }
+
     /// Sets the insertion-time global topology validation policy used by the triangulation.
     ///
-    /// If the requested policy is incompatible with the current topology guarantee (for example,
-    /// `ValidationPolicy::Never` with `TopologyGuarantee::PLManifold`), this runs
-    /// [`Triangulation::validate_at_completion`](Self::validate_at_completion) to provide
-    /// immediate feedback and emits a warning. Call `validate_at_completion()` after batch
-    /// construction when using an incompatible combination.
+    /// Prefer [`try_set_validation_policy`](Self::try_set_validation_policy) when callers need
+    /// typed feedback for rejected combinations. This compatibility setter leaves the existing
+    /// policy unchanged and emits a warning if the requested combination is incoherent.
     ///
     /// # Examples
     ///
@@ -649,38 +747,47 @@ where
     /// ```
     #[inline]
     pub fn set_validation_policy(&mut self, policy: ValidationPolicy) {
-        if !self.topology_guarantee.is_compatible_with_policy(policy) {
-            let completion_result = self.validate_at_completion();
-
-            if let Err(err) = completion_result {
-                debug_assert!(
-                    false,
-                    "Validation policy {policy:?} is incompatible with topology guarantee {guarantee:?}; validate_at_completion failed: {err}",
-                    guarantee = self.topology_guarantee
-                );
-                tracing::warn!(
-                    "Validation policy {policy:?} is incompatible with topology guarantee {guarantee:?}; validate_at_completion failed: {err}. Validation policy not updated.",
-                    guarantee = self.topology_guarantee
-                );
-                return;
-            }
-
-            tracing::warn!(
-                "Validation policy {policy:?} is incompatible with topology guarantee {guarantee:?}; call validate_at_completion() after construction to certify PL-manifoldness.",
-                guarantee = self.topology_guarantee
-            );
+        if let Err(err) = self.try_set_validation_policy(policy) {
+            tracing::warn!("{err}. Validation policy not updated.");
         }
+    }
 
-        self.validation_policy = policy;
+    /// Tries to set the topology guarantee used for Level 3 topology validation.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ValidationConfigurationError::IncompatibleTopologyAndValidationPolicy`] when the
+    /// requested guarantee cannot be represented with the current validation policy.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use delaunay::prelude::{TopologyGuarantee, Triangulation};
+    /// use delaunay::prelude::geometry::FastKernel;
+    ///
+    /// # fn main() -> Result<(), delaunay::prelude::ValidationConfigurationError> {
+    /// let mut tri: Triangulation<FastKernel<f64>, (), (), 2> =
+    ///     Triangulation::new_empty(FastKernel::new());
+    /// tri.try_set_topology_guarantee(TopologyGuarantee::Pseudomanifold)?;
+    /// assert_eq!(tri.topology_guarantee(), TopologyGuarantee::Pseudomanifold);
+    /// # Ok(())
+    /// # }
+    /// ```
+    #[inline]
+    pub fn try_set_topology_guarantee(
+        &mut self,
+        guarantee: TopologyGuarantee,
+    ) -> Result<(), ValidationConfigurationError> {
+        validate_configuration(guarantee, self.validation_policy)?;
+        self.topology_guarantee = guarantee;
+        Ok(())
     }
 
     /// Sets the topology guarantee used for Level 3 topology validation.
     ///
-    /// If the requested guarantee is incompatible with the current validation policy (for
-    /// example, `ValidationPolicy::Never` with `TopologyGuarantee::PLManifold`), this runs
-    /// [`Triangulation::validate_at_completion`](Self::validate_at_completion) to provide
-    /// immediate feedback and emits a warning. Call `validate_at_completion()` after batch
-    /// construction when using an incompatible combination.
+    /// Prefer [`try_set_topology_guarantee`](Self::try_set_topology_guarantee) when callers need
+    /// typed feedback for rejected combinations. This compatibility setter leaves the existing
+    /// guarantee unchanged and emits a warning if the requested combination is incoherent.
     ///
     /// # Examples
     ///
@@ -695,33 +802,9 @@ where
     /// ```
     #[inline]
     pub fn set_topology_guarantee(&mut self, guarantee: TopologyGuarantee) {
-        if !guarantee.is_compatible_with_policy(self.validation_policy) {
-            let previous = self.topology_guarantee;
-            self.topology_guarantee = guarantee;
-            let completion_result = self.validate_at_completion();
-
-            if let Err(err) = completion_result {
-                self.topology_guarantee = previous;
-                debug_assert!(
-                    false,
-                    "Topology guarantee {guarantee:?} is incompatible with validation policy {policy:?}; validate_at_completion failed: {err}",
-                    policy = self.validation_policy
-                );
-                tracing::warn!(
-                    "Topology guarantee {guarantee:?} is incompatible with validation policy {policy:?}; validate_at_completion failed: {err}. Topology guarantee not updated.",
-                    policy = self.validation_policy
-                );
-                return;
-            }
-
-            self.topology_guarantee = previous;
-            tracing::warn!(
-                "Topology guarantee {guarantee:?} is incompatible with validation policy {policy:?}; call validate_at_completion() after construction to certify PL-manifoldness.",
-                policy = self.validation_policy
-            );
+        if let Err(err) = self.try_set_topology_guarantee(guarantee) {
+            tracing::warn!("{err}. Topology guarantee not updated.");
         }
-
-        self.topology_guarantee = guarantee;
     }
 
     /// Traverses the simplex neighbor graph for validation without assuming global connectivity.
@@ -1730,6 +1813,8 @@ mod tests {
 
         assert!(!ValidationPolicy::Never.should_validate(clean));
         assert!(!ValidationPolicy::Never.should_validate(suspicious));
+        assert!(!ValidationPolicy::ExplicitOnly.should_validate(clean));
+        assert!(!ValidationPolicy::ExplicitOnly.should_validate(suspicious));
         assert!(ValidationPolicy::Always.should_validate(clean));
         assert!(ValidationPolicy::Always.should_validate(suspicious));
         assert!(!ValidationPolicy::OnSuspicion.should_validate(clean));
@@ -1782,6 +1867,7 @@ mod tests {
 
         for policy in [
             ValidationPolicy::Never,
+            ValidationPolicy::ExplicitOnly,
             ValidationPolicy::OnSuspicion,
             ValidationPolicy::Always,
             ValidationPolicy::DebugOnly,
@@ -1792,6 +1878,13 @@ mod tests {
         assert!(!TopologyGuarantee::PLManifold.is_compatible_with_policy(ValidationPolicy::Never));
         assert!(
             !TopologyGuarantee::PLManifoldStrict.is_compatible_with_policy(ValidationPolicy::Never)
+        );
+        assert!(
+            TopologyGuarantee::PLManifold.is_compatible_with_policy(ValidationPolicy::ExplicitOnly)
+        );
+        assert!(
+            TopologyGuarantee::PLManifoldStrict
+                .is_compatible_with_policy(ValidationPolicy::ExplicitOnly)
         );
         assert!(
             TopologyGuarantee::PLManifold.is_compatible_with_policy(ValidationPolicy::OnSuspicion)
@@ -1817,31 +1910,67 @@ mod tests {
     }
 
     #[test]
-    fn incompatible_policy_updates_when_completion_validation_succeeds() {
+    fn explicit_only_policy_supports_manual_pl_manifold_validation() {
         let mut tri: Triangulation<FastKernel<f64>, (), (), 2> =
             Triangulation::new_empty(FastKernel::new());
 
         assert_eq!(tri.topology_guarantee(), TopologyGuarantee::PLManifold);
         assert_eq!(tri.validation_policy(), ValidationPolicy::OnSuspicion);
 
-        tri.set_validation_policy(ValidationPolicy::Never);
-        assert_eq!(tri.validation_policy(), ValidationPolicy::Never);
+        tri.try_set_validation_policy(ValidationPolicy::ExplicitOnly)
+            .unwrap();
+        assert_eq!(tri.validation_policy(), ValidationPolicy::ExplicitOnly);
     }
 
     #[test]
-    fn incompatible_guarantee_updates_when_completion_validation_succeeds() {
+    fn incompatible_policy_rejected_even_when_completion_validation_succeeds() {
         let mut tri: Triangulation<FastKernel<f64>, (), (), 2> =
             Triangulation::new_empty(FastKernel::new());
 
-        tri.set_validation_policy(ValidationPolicy::Never);
-        assert_eq!(tri.validation_policy(), ValidationPolicy::Never);
         assert_eq!(tri.topology_guarantee(), TopologyGuarantee::PLManifold);
+        assert!(tri.validate_at_completion().is_ok());
+
+        assert_eq!(
+            tri.try_set_validation_policy(ValidationPolicy::Never),
+            Err(
+                ValidationConfigurationError::IncompatibleTopologyAndValidationPolicy {
+                    topology_guarantee: TopologyGuarantee::PLManifold,
+                    validation_policy: ValidationPolicy::Never,
+                }
+            )
+        );
+        assert_eq!(tri.validation_policy(), ValidationPolicy::OnSuspicion);
+
+        tri.set_validation_policy(ValidationPolicy::Never);
+        assert_eq!(tri.validation_policy(), ValidationPolicy::OnSuspicion);
+    }
+
+    #[test]
+    fn incompatible_guarantee_rejected_even_when_completion_validation_succeeds() {
+        let mut tri: Triangulation<FastKernel<f64>, (), (), 2> =
+            Triangulation::new_empty(FastKernel::new());
+
+        tri.try_set_topology_guarantee(TopologyGuarantee::Pseudomanifold)
+            .unwrap();
+        tri.try_set_validation_policy(ValidationPolicy::Never)
+            .unwrap();
+        assert_eq!(tri.validation_policy(), ValidationPolicy::Never);
+        assert_eq!(tri.topology_guarantee(), TopologyGuarantee::Pseudomanifold);
+        assert!(tri.validate_at_completion().is_ok());
+
+        assert_eq!(
+            tri.try_set_topology_guarantee(TopologyGuarantee::PLManifoldStrict),
+            Err(
+                ValidationConfigurationError::IncompatibleTopologyAndValidationPolicy {
+                    topology_guarantee: TopologyGuarantee::PLManifoldStrict,
+                    validation_policy: ValidationPolicy::Never,
+                }
+            )
+        );
+        assert_eq!(tri.topology_guarantee(), TopologyGuarantee::Pseudomanifold);
 
         tri.set_topology_guarantee(TopologyGuarantee::PLManifoldStrict);
-        assert_eq!(
-            tri.topology_guarantee(),
-            TopologyGuarantee::PLManifoldStrict
-        );
+        assert_eq!(tri.topology_guarantee(), TopologyGuarantee::Pseudomanifold);
     }
 
     #[test]
@@ -1889,14 +2018,16 @@ mod tests {
             ))
         ));
         assert_eq!(tri.validation_policy(), ValidationPolicy::OnSuspicion);
-        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            tri.set_validation_policy(ValidationPolicy::Never);
-        }));
-        if cfg!(debug_assertions) {
-            assert!(result.is_err());
-        } else {
-            assert!(result.is_ok());
-        }
+        assert_eq!(
+            tri.try_set_validation_policy(ValidationPolicy::Never),
+            Err(
+                ValidationConfigurationError::IncompatibleTopologyAndValidationPolicy {
+                    topology_guarantee: TopologyGuarantee::PLManifold,
+                    validation_policy: ValidationPolicy::Never,
+                }
+            )
+        );
+        tri.set_validation_policy(ValidationPolicy::Never);
         assert_eq!(tri.validation_policy(), ValidationPolicy::OnSuspicion);
     }
 
@@ -1906,18 +2037,22 @@ mod tests {
         let mut tri =
             Triangulation::<FastKernel<f64>, (), (), 2>::new_with_tds(FastKernel::new(), tds);
 
-        tri.set_topology_guarantee(TopologyGuarantee::Pseudomanifold);
-        tri.set_validation_policy(ValidationPolicy::Never);
+        tri.try_set_topology_guarantee(TopologyGuarantee::Pseudomanifold)
+            .unwrap();
+        tri.try_set_validation_policy(ValidationPolicy::Never)
+            .unwrap();
         assert_eq!(tri.topology_guarantee(), TopologyGuarantee::Pseudomanifold);
         assert_eq!(tri.validation_policy(), ValidationPolicy::Never);
-        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            tri.set_topology_guarantee(TopologyGuarantee::PLManifoldStrict);
-        }));
-        if cfg!(debug_assertions) {
-            assert!(result.is_err());
-        } else {
-            assert!(result.is_ok());
-        }
+        assert_eq!(
+            tri.try_set_topology_guarantee(TopologyGuarantee::PLManifoldStrict),
+            Err(
+                ValidationConfigurationError::IncompatibleTopologyAndValidationPolicy {
+                    topology_guarantee: TopologyGuarantee::PLManifoldStrict,
+                    validation_policy: ValidationPolicy::Never,
+                }
+            )
+        );
+        tri.set_topology_guarantee(TopologyGuarantee::PLManifoldStrict);
         assert_eq!(tri.topology_guarantee(), TopologyGuarantee::Pseudomanifold);
     }
 
@@ -2963,13 +3098,14 @@ mod tests {
     }
 
     #[test]
-    fn pl_manifold_insertion_never_commits_invalid_topology_when_validation_policy_is_never() {
+    fn pl_manifold_insertion_keeps_valid_topology_with_explicit_only_validation() {
         let points = generate_random_points_seeded::<f64, 3>(25, (-100.0, 100.0), 123).unwrap();
 
         let mut dt: DelaunayTriangulation<_, (), (), 3> =
             DelaunayTriangulation::empty_with_topology_guarantee(TopologyGuarantee::PLManifold);
 
-        dt.set_validation_policy(ValidationPolicy::Never);
+        dt.try_set_validation_policy(ValidationPolicy::ExplicitOnly)
+            .unwrap();
         dt.set_delaunay_repair_policy(DelaunayRepairPolicy::Never);
 
         for (i, point) in points.into_iter().enumerate() {

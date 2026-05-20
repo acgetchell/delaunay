@@ -15,7 +15,7 @@ use crate::core::simplex::Simplex;
 use crate::core::tds::{SimplexKey, Tds, VertexKey};
 use crate::core::traits::data_type::DataType;
 use crate::core::triangulation::Triangulation;
-use crate::core::validation::{TopologyGuarantee, ValidationPolicy};
+use crate::core::validation::{TopologyGuarantee, ValidationConfigurationError, ValidationPolicy};
 use crate::core::vertex::Vertex;
 use crate::geometry::kernel::Kernel;
 use crate::repair::{DelaunayCheckPolicy, DelaunayRepairPolicy};
@@ -419,43 +419,97 @@ where
         self.tri.validation_policy
     }
 
-    /// Sets the insertion-time global topology validation policy used by the underlying
+    /// Tries to set the insertion-time global topology validation policy used by the underlying
     /// triangulation.
     ///
     /// This affects subsequent incremental insertions. (Construction-time behavior is determined
     /// by the policy active during `new()` / `with_kernel()`.)
     ///
-    /// If the requested policy is incompatible with the current topology guarantee (for example,
-    /// `ValidationPolicy::Never` with `TopologyGuarantee::PLManifold`), this runs
-    /// [`Triangulation::validate_at_completion`](crate::Triangulation::validate_at_completion)
-    /// to provide immediate feedback and emits a warning. Call `validate_at_completion()` after
-    /// batch construction when using an incompatible combination.
+    /// # Errors
+    ///
+    /// Returns [`ValidationConfigurationError::IncompatibleTopologyAndValidationPolicy`] when the
+    /// requested policy is incompatible with the current topology guarantee.
     ///
     /// # Examples
     ///
     /// ```rust
-    /// use delaunay::prelude::construction::{DelaunayTriangulation, vertex};
-    /// use delaunay::prelude::validation::ValidationPolicy;
+    /// use delaunay::prelude::construction::DelaunayTriangulation;
+    /// use delaunay::prelude::validation::{
+    ///     ValidationConfigurationError, ValidationPolicy,
+    /// };
     ///
-    /// let vertices = vec![
-    ///     vertex!([0.0, 0.0]),
-    ///     vertex!([1.0, 0.0]),
-    ///     vertex!([0.0, 1.0]),
-    /// ];
+    /// # fn main() -> Result<(), ValidationConfigurationError> {
+    /// let mut dt: DelaunayTriangulation<_, (), (), 2> = DelaunayTriangulation::empty();
     ///
-    /// let mut dt: DelaunayTriangulation<_, (), (), 2> =
-    ///     DelaunayTriangulation::new(&vertices).unwrap();
-    ///
-    /// dt.set_validation_policy(ValidationPolicy::Always);
+    /// dt.try_set_validation_policy(ValidationPolicy::Always)?;
     /// assert_eq!(
     ///     dt.validation_policy(),
     ///     ValidationPolicy::Always
     /// );
+    /// # Ok(())
+    /// # }
+    /// ```
+    #[inline]
+    pub fn try_set_validation_policy(
+        &mut self,
+        policy: ValidationPolicy,
+    ) -> Result<(), ValidationConfigurationError> {
+        self.tri.try_set_validation_policy(policy)
+    }
+
+    /// Sets the insertion-time global topology validation policy used by the underlying
+    /// triangulation.
+    ///
+    /// Prefer [`try_set_validation_policy`](Self::try_set_validation_policy) when callers need
+    /// typed feedback for rejected combinations. This compatibility setter leaves the existing
+    /// policy unchanged and emits a warning if the requested combination is incoherent.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use delaunay::prelude::construction::DelaunayTriangulation;
+    /// use delaunay::prelude::validation::ValidationPolicy;
+    ///
+    /// let mut dt: DelaunayTriangulation<_, (), (), 2> = DelaunayTriangulation::empty();
+    ///
+    /// dt.set_validation_policy(ValidationPolicy::Always);
+    /// assert_eq!(dt.validation_policy(), ValidationPolicy::Always);
     /// ```
     #[inline]
     pub fn set_validation_policy(&mut self, policy: ValidationPolicy) {
         self.tri.set_validation_policy(policy);
     }
+
+    /// Tries to set the topology guarantee used for Level 3 topology validation.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ValidationConfigurationError::IncompatibleTopologyAndValidationPolicy`] when the
+    /// requested guarantee cannot be represented with the current validation policy.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use delaunay::prelude::construction::{
+    ///     DelaunayTriangulation, TopologyGuarantee,
+    /// };
+    ///
+    /// # fn main() -> Result<(), delaunay::prelude::validation::ValidationConfigurationError> {
+    /// let mut dt: DelaunayTriangulation<_, (), (), 3> = DelaunayTriangulation::empty();
+    /// dt.try_set_topology_guarantee(TopologyGuarantee::Pseudomanifold)?;
+    ///
+    /// assert_eq!(dt.topology_guarantee(), TopologyGuarantee::Pseudomanifold);
+    /// # Ok(())
+    /// # }
+    /// ```
+    #[inline]
+    pub fn try_set_topology_guarantee(
+        &mut self,
+        guarantee: TopologyGuarantee,
+    ) -> Result<(), ValidationConfigurationError> {
+        self.tri.try_set_topology_guarantee(guarantee)
+    }
+
     /// Returns the automatic Delaunay repair policy.
     ///
     /// # Examples
@@ -636,6 +690,10 @@ where
     }
 
     /// Sets the topology guarantee used for Level 3 topology validation.
+    ///
+    /// Prefer [`try_set_topology_guarantee`](Self::try_set_topology_guarantee) when callers need
+    /// typed feedback for rejected combinations. This compatibility setter leaves the existing
+    /// guarantee unchanged and emits a warning if the requested combination is incoherent.
     ///
     /// # Examples
     ///
@@ -1142,7 +1200,29 @@ mod tests {
         assert_eq!(dt.validation_policy(), ValidationPolicy::Always);
         assert_eq!(dt.tri.validation_policy, ValidationPolicy::Always);
 
+        dt.try_set_validation_policy(ValidationPolicy::ExplicitOnly)
+            .unwrap();
+        assert_eq!(dt.validation_policy(), ValidationPolicy::ExplicitOnly);
+        assert_eq!(dt.tri.validation_policy, ValidationPolicy::ExplicitOnly);
+
         dt.set_validation_policy(ValidationPolicy::Never);
+        assert_eq!(dt.validation_policy(), ValidationPolicy::ExplicitOnly);
+        assert_eq!(dt.tri.validation_policy, ValidationPolicy::ExplicitOnly);
+
+        assert_eq!(
+            dt.try_set_validation_policy(ValidationPolicy::Never),
+            Err(
+                ValidationConfigurationError::IncompatibleTopologyAndValidationPolicy {
+                    topology_guarantee: TopologyGuarantee::PLManifold,
+                    validation_policy: ValidationPolicy::Never,
+                }
+            )
+        );
+
+        dt.try_set_topology_guarantee(TopologyGuarantee::Pseudomanifold)
+            .unwrap();
+        dt.try_set_validation_policy(ValidationPolicy::Never)
+            .unwrap();
         assert_eq!(dt.validation_policy(), ValidationPolicy::Never);
         assert_eq!(dt.tri.validation_policy, ValidationPolicy::Never);
 
