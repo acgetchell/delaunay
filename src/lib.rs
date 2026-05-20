@@ -147,7 +147,7 @@
 //! let mut dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
 //!
 //! assert_eq!(dt.topology_guarantee(), TopologyGuarantee::PLManifold);
-//! assert_eq!(dt.validation_policy(), ValidationPolicy::OnSuspicion);
+//! assert_eq!(dt.validation_policy(), ValidationPolicy::ExplicitOnly);
 //!
 //! dt.set_topology_guarantee(TopologyGuarantee::Pseudomanifold);
 //! dt.set_validation_policy(ValidationPolicy::Always);
@@ -259,9 +259,11 @@
 //! automatic **Level 3** topology validation pass after insertion, controlled by
 //! [`ValidationPolicy`](crate::prelude::validation::ValidationPolicy).
 //!
-//! The default is [`ValidationPolicy::OnSuspicion`](crate::prelude::validation::ValidationPolicy::OnSuspicion):
-//! Level 3 validation runs only when insertion takes a suspicious path (e.g. perturbation retries,
-//! repair loops, or neighbor-pointer repairs that actually changed pointers).
+//! The initial policy is derived from the active topology guarantee. The default
+//! [`TopologyGuarantee::PLManifold`](crate::prelude::TopologyGuarantee::PLManifold)
+//! uses [`ValidationPolicy::ExplicitOnly`](crate::prelude::validation::ValidationPolicy::ExplicitOnly):
+//! mandatory local topology checks still run during insertion, while full Level 3 validation is a
+//! caller-owned explicit checkpoint.
 //!
 //! This automatic pass only runs Level 3 (`Triangulation::is_valid()`). It does **not** run Level 4.
 //!
@@ -1551,7 +1553,7 @@ pub mod prelude {
     pub mod validation {
         pub use crate::validation::*;
         pub use crate::{
-            DelaunayTriangulationValidationError, TriangulationValidationError,
+            DelaunayTriangulationValidationError, TopologyGuarantee, TriangulationValidationError,
             ValidationConfigurationError, ValidationPolicy,
         };
     }

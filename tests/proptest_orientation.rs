@@ -121,7 +121,7 @@ macro_rules! gen_orientation_incremental_props {
                         );
 
                     for vertex in vertices {
-                        let result = dt.insert_with_statistics(vertex);
+                        let result = dt.insert_best_effort_with_statistics(vertex);
                         if let Ok((InsertionOutcome::Inserted { .. }, _stats)) = result {
                             prop_assert!(
                                 dt.tds().is_coherently_oriented(),

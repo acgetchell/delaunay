@@ -305,8 +305,10 @@ for (order, (vertex_key, _)) in dt.vertices().enumerate() {
 
 ## Builder API: insertion statistics
 
-If you need observability (or you want to handle skipped vertices explicitly), use
-`insert_with_statistics()`.
+If you need strict observability where duplicate or retry-exhausted skipped
+insertions become errors, use `insert_with_statistics()`. If you intentionally
+want to keep going after skipped vertices, use the explicitly best-effort
+`insert_best_effort_with_statistics()`.
 
 ```rust
 use delaunay::prelude::construction::{DelaunayTriangulation, vertex};
@@ -314,7 +316,9 @@ use delaunay::prelude::insertion::InsertionOutcome;
 
 let mut dt: DelaunayTriangulation<_, (), (), 3> = DelaunayTriangulation::empty();
 
-let (outcome, stats) = dt.insert_with_statistics(vertex!([0.5, 0.5, 0.5])).unwrap();
+let (outcome, stats) = dt
+    .insert_best_effort_with_statistics(vertex!([0.5, 0.5, 0.5]))
+    .unwrap();
 
 if stats.used_perturbation() {
     println!("used perturbation (attempts={})", stats.attempts);

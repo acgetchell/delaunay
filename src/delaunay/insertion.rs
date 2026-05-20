@@ -256,12 +256,58 @@ where
     ///
     /// This is a convenience wrapper around the triangulation-layer insertion-with-statistics
     /// implementation that also updates the internal `insertion_state.last_inserted_simplex` hint cache.
+    /// Unlike [`insert_best_effort_with_statistics`](Self::insert_best_effort_with_statistics),
+    /// skipped insertions are reported as [`InsertionError`] values so callers using `?`
+    /// cannot accidentally ignore a duplicate or retry-exhausted degeneracy.
     ///
     /// # Errors
     ///
-    /// Returns `Err(InsertionError)` only for non-retryable structural failures.
-    /// Retryable geometric degeneracies that exhaust all attempts return
-    /// `Ok((InsertionOutcome::Skipped { .. }, stats))`.
+    /// Returns [`InsertionError`] for structural failures, duplicate coordinates,
+    /// and retryable geometric degeneracies that exhaust all attempts.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use delaunay::prelude::construction::{DelaunayTriangulation, vertex};
+    /// use delaunay::prelude::insertion::{InsertionError, InsertionOutcome};
+    ///
+    /// let mut dt: DelaunayTriangulation<_, (), (), 3> = DelaunayTriangulation::empty();
+    ///
+    /// let (outcome, stats) = dt
+    ///     .insert_with_statistics(vertex!([0.0, 0.0, 0.0]))
+    ///     .unwrap();
+    ///
+    /// assert!(stats.success());
+    /// assert!(matches!(outcome, InsertionOutcome::Inserted { .. }));
+    ///
+    /// let duplicate = dt.insert_with_statistics(vertex!([0.0, 0.0, 0.0]));
+    /// assert!(matches!(
+    ///     duplicate,
+    ///     Err(InsertionError::DuplicateCoordinates { .. })
+    /// ));
+    /// ```
+    pub fn insert_with_statistics(
+        &mut self,
+        vertex: Vertex<K::Scalar, U, D>,
+    ) -> Result<(InsertionOutcome, InsertionStatistics), InsertionError> {
+        match self.insert_best_effort_with_statistics(vertex)? {
+            (outcome @ InsertionOutcome::Inserted { .. }, stats) => Ok((outcome, stats)),
+            (InsertionOutcome::Skipped { error }, _stats) => Err(error),
+        }
+    }
+
+    /// Insert a vertex and return telemetry even when the vertex is skipped.
+    ///
+    /// This best-effort API is intended for diagnostics, bulk-style ingestion,
+    /// and workloads that deliberately continue after duplicate coordinates or
+    /// retry-exhausted geometric degeneracies. A skipped insertion returns
+    /// `Ok((InsertionOutcome::Skipped { .. }, stats))`; the triangulation is
+    /// left unchanged for that vertex.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`InsertionError`] for non-skip structural failures that cannot
+    /// be represented as an [`InsertionOutcome::Skipped`] value.
     ///
     /// # Examples
     ///
@@ -272,13 +318,22 @@ where
     /// let mut dt: DelaunayTriangulation<_, (), (), 3> = DelaunayTriangulation::empty();
     ///
     /// let (outcome, stats) = dt
-    ///     .insert_with_statistics(vertex!([0.0, 0.0, 0.0]))
+    ///     .insert_best_effort_with_statistics(vertex!([0.0, 0.0, 0.0]))
     ///     .unwrap();
     ///
     /// assert!(stats.success());
     /// assert!(matches!(outcome, InsertionOutcome::Inserted { .. }));
+    ///
+    /// let vertices_before_duplicate = dt.number_of_vertices();
+    /// let (duplicate_outcome, duplicate_stats) = dt
+    ///     .insert_best_effort_with_statistics(vertex!([0.0, 0.0, 0.0]))
+    ///     .unwrap();
+    ///
+    /// assert!(matches!(duplicate_outcome, InsertionOutcome::Skipped { .. }));
+    /// assert!(duplicate_stats.skipped_duplicate());
+    /// assert_eq!(dt.number_of_vertices(), vertices_before_duplicate);
     /// ```
-    pub fn insert_with_statistics(
+    pub fn insert_best_effort_with_statistics(
         &mut self,
         vertex: Vertex<K::Scalar, U, D>,
     ) -> Result<(InsertionOutcome, InsertionStatistics), InsertionError> {

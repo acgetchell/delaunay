@@ -1355,7 +1355,7 @@ where
                 let coords = *vertex.point().coords();
                 let uuid = vertex.uuid();
 
-                let inserted_this_loop = match dt.insert_with_statistics(vertex) {
+                let inserted_this_loop = match dt.insert_best_effort_with_statistics(vertex) {
                     Ok((InsertionOutcome::Inserted { .. }, stats)) => {
                         summary.record_inserted(stats);
                         true

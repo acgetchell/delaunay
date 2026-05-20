@@ -479,6 +479,10 @@ pub enum InsertionOrderStrategy {
 #[non_exhaustive]
 pub enum DedupPolicy {
     /// Do not apply explicit preprocessing dedup.
+    ///
+    /// Batch construction still keeps its built-in Hilbert and per-insertion
+    /// duplicate defenses; exact duplicates can still be skipped and reported
+    /// through [`ConstructionStatistics`].
     #[default]
     Off,
     /// Remove exact coordinate duplicates before construction.
@@ -1897,6 +1901,12 @@ impl<const D: usize> DelaunayTriangulation<AdaptiveKernel<f64>, (), (), D> {
     /// This convenience constructor uses [`AdaptiveKernel`] and the default
     /// construction options.
     ///
+    /// Batch construction is a best-effort ingestion path for duplicate or
+    /// degenerate inputs: a successful construction may contain fewer vertices
+    /// than the input slice. Use
+    /// [`new_with_construction_statistics`](Self::new_with_construction_statistics)
+    /// when skipped-input observability is required.
+    ///
     /// # Errors
     /// Returns an error if the initial simplex cannot be constructed, if
     /// insertion fails, or if final validation fails.
@@ -1924,6 +1934,12 @@ impl<const D: usize> DelaunayTriangulation<AdaptiveKernel<f64>, (), (), D> {
 
     /// Creates a default `f64` triangulation and returns aggregate construction
     /// statistics.
+    ///
+    /// Batch construction is a best-effort ingestion path for duplicate or
+    /// degenerate inputs: a successful construction may have skipped some input
+    /// vertices. Inspect [`ConstructionStatistics::total_skipped`] and
+    /// [`ConstructionStatistics::skip_samples`] when the caller requires a
+    /// strict all-inputs-inserted contract.
     ///
     /// # Errors
     /// Returns [`DelaunayTriangulationConstructionErrorWithStatistics`] if
@@ -1966,6 +1982,12 @@ impl<const D: usize> DelaunayTriangulation<AdaptiveKernel<f64>, (), (), D> {
 
     /// Creates a default `f64` triangulation with explicit construction options
     /// and returns aggregate construction statistics.
+    ///
+    /// Batch construction is a best-effort ingestion path for duplicate or
+    /// degenerate inputs: a successful construction may have skipped some input
+    /// vertices. Inspect [`ConstructionStatistics::total_skipped`] and
+    /// [`ConstructionStatistics::skip_samples`] when the caller requires a
+    /// strict all-inputs-inserted contract.
     ///
     /// # Errors
     /// Returns [`DelaunayTriangulationConstructionErrorWithStatistics`] if
@@ -2014,6 +2036,11 @@ impl<const D: usize> DelaunayTriangulation<AdaptiveKernel<f64>, (), (), D> {
 
     /// Creates a default `f64` triangulation with explicit construction options.
     ///
+    /// This batch constructor may successfully build a triangulation after
+    /// skipping duplicate or retry-exhausted degenerate input vertices. Use
+    /// [`new_with_options_and_construction_statistics`](Self::new_with_options_and_construction_statistics)
+    /// when skipped-input observability is required.
+    ///
     /// # Errors
     /// Returns an error if construction fails, or if the selected options are invalid.
     ///
@@ -2051,6 +2078,12 @@ impl<const D: usize> DelaunayTriangulation<AdaptiveKernel<f64>, (), (), D> {
     }
 
     /// Creates a default `f64` triangulation with an explicit topology guarantee.
+    ///
+    /// Batch construction is a best-effort ingestion path for duplicate or
+    /// degenerate inputs: a successful construction may contain fewer vertices
+    /// than the input slice. Use
+    /// [`new_with_construction_statistics`](Self::new_with_construction_statistics)
+    /// when skipped-input observability is required.
     ///
     /// # Errors
     /// Returns an error if construction fails or if the requested topology
@@ -3778,6 +3811,12 @@ where
 
     /// Creates a Delaunay triangulation from vertices with an explicit kernel.
     ///
+    /// Batch construction is a best-effort ingestion path for duplicate or
+    /// degenerate inputs: a successful construction may contain fewer vertices
+    /// than the input slice. Use
+    /// [`with_options_and_statistics`](Self::with_options_and_statistics) when
+    /// skipped-input observability is required.
+    ///
     /// # Errors
     /// Returns an error if construction fails or final validation fails.
     ///
@@ -3806,6 +3845,12 @@ where
     }
 
     /// Creates a Delaunay triangulation with an explicit topology guarantee.
+    ///
+    /// Batch construction is a best-effort ingestion path for duplicate or
+    /// degenerate inputs: a successful construction may contain fewer vertices
+    /// than the input slice. Use
+    /// [`with_options_and_statistics`](Self::with_options_and_statistics) when
+    /// skipped-input observability is required.
     ///
     /// # Errors
     /// Returns an error if construction fails or if the requested topology
@@ -3849,6 +3894,11 @@ where
     }
 
     /// Creates a Delaunay triangulation with topology and construction options.
+    ///
+    /// This batch constructor may successfully build a triangulation after
+    /// skipping duplicate or retry-exhausted degenerate input vertices. Use
+    /// [`with_options_and_statistics`](Self::with_options_and_statistics) when
+    /// skipped-input observability is required.
     ///
     /// # Errors
     /// Returns an error if construction fails, if validation fails, or if the
@@ -3966,6 +4016,12 @@ where
     }
 
     /// Creates a Delaunay triangulation with construction statistics.
+    ///
+    /// Batch construction is a best-effort ingestion path for duplicate or
+    /// degenerate inputs: a successful construction may have skipped some input
+    /// vertices. Inspect [`ConstructionStatistics::total_skipped`] and
+    /// [`ConstructionStatistics::skip_samples`] when the caller requires a
+    /// strict all-inputs-inserted contract.
     ///
     /// # Errors
     /// Returns [`DelaunayTriangulationConstructionErrorWithStatistics`] if
@@ -6297,6 +6353,20 @@ mod tests {
         assert_eq!(
             pseudomanifold.validation_policy(),
             ValidationPolicy::OnSuspicion
+        );
+
+        let pl_manifold: DelaunayTriangulation<_, (), (), 3> =
+            DelaunayTriangulation::with_empty_kernel_and_topology_guarantee(
+                FastKernel::<f64>::new(),
+                TopologyGuarantee::PLManifold,
+            );
+        assert_eq!(
+            pl_manifold.topology_guarantee(),
+            TopologyGuarantee::PLManifold
+        );
+        assert_eq!(
+            pl_manifold.validation_policy(),
+            ValidationPolicy::ExplicitOnly
         );
     }
 

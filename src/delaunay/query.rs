@@ -398,6 +398,7 @@ where
     ///
     /// ```rust
     /// use delaunay::prelude::construction::{DelaunayTriangulation, vertex};
+    /// use delaunay::prelude::validation::ValidationPolicy;
     ///
     /// let vertices = vec![
     ///     vertex!([0.0, 0.0]),
@@ -408,10 +409,7 @@ where
     /// let dt: DelaunayTriangulation<_, (), (), 2> =
     ///     DelaunayTriangulation::new(&vertices).unwrap();
     ///
-    /// assert_eq!(
-    ///     dt.validation_policy(),
-    ///     delaunay::prelude::validation::ValidationPolicy::OnSuspicion
-    /// );
+    /// assert_eq!(dt.validation_policy(), ValidationPolicy::ExplicitOnly);
     /// ```
     #[inline]
     #[must_use]
@@ -490,11 +488,12 @@ where
     /// # Examples
     ///
     /// ```rust
-    /// use delaunay::prelude::construction::{
-    ///     DelaunayTriangulation, TopologyGuarantee,
+    /// use delaunay::prelude::construction::DelaunayTriangulation;
+    /// use delaunay::prelude::validation::{
+    ///     TopologyGuarantee, ValidationConfigurationError,
     /// };
     ///
-    /// # fn main() -> Result<(), delaunay::prelude::validation::ValidationConfigurationError> {
+    /// # fn main() -> Result<(), ValidationConfigurationError> {
     /// let mut dt: DelaunayTriangulation<_, (), (), 3> = DelaunayTriangulation::empty();
     /// dt.try_set_topology_guarantee(TopologyGuarantee::Pseudomanifold)?;
     ///
@@ -1143,11 +1142,11 @@ mod tests {
     }
 
     #[test]
-    fn test_validation_policy_defaults_to_on_suspicion() {
+    fn test_validation_policy_defaults_to_topology_guarantee_policy() {
         init_tracing();
-        // empty() -> Triangulation::new_empty() -> ValidationPolicy::default()
+        // empty() -> Triangulation::new_empty() -> TopologyGuarantee::DEFAULT policy.
         let dt_empty: DelaunayTriangulation<_, (), (), 2> = DelaunayTriangulation::empty();
-        assert_eq!(dt_empty.validation_policy(), ValidationPolicy::OnSuspicion);
+        assert_eq!(dt_empty.validation_policy(), ValidationPolicy::ExplicitOnly);
 
         let vertices = vec![
             vertex!([0.0, 0.0]),
@@ -1158,25 +1157,25 @@ mod tests {
         // new() -> with_kernel() -> explicit validation_policy initialization
         let dt_new: DelaunayTriangulation<_, (), (), 2> =
             DelaunayTriangulation::new(&vertices).unwrap();
-        assert_eq!(dt_new.validation_policy(), ValidationPolicy::OnSuspicion);
+        assert_eq!(dt_new.validation_policy(), ValidationPolicy::ExplicitOnly);
 
         // with_kernel() constructor path should also use the default policy
         let dt_with_kernel: DelaunayTriangulation<_, (), (), 2> =
             DelaunayTriangulation::with_kernel(&AdaptiveKernel::new(), &vertices).unwrap();
         assert_eq!(
             dt_with_kernel.validation_policy(),
-            ValidationPolicy::OnSuspicion
+            ValidationPolicy::ExplicitOnly
         );
 
         // try_from_tds() is a separate reconstruction path and should also
-        // default to OnSuspicion after validation succeeds.
+        // default to the topology guarantee policy after validation succeeds.
         let tds =
             Triangulation::<FastKernel<f64>, (), (), 2>::build_initial_simplex(&vertices).unwrap();
         let dt_from_tds: DelaunayTriangulation<_, (), (), 2> =
             DelaunayTriangulation::try_from_tds(tds, FastKernel::new()).unwrap();
         assert_eq!(
             dt_from_tds.validation_policy(),
-            ValidationPolicy::OnSuspicion
+            ValidationPolicy::ExplicitOnly
         );
     }
 
@@ -1193,8 +1192,8 @@ mod tests {
             DelaunayTriangulation::new(&vertices).unwrap();
 
         // Getter reflects the underlying Triangulation policy.
-        assert_eq!(dt.validation_policy(), ValidationPolicy::OnSuspicion);
-        assert_eq!(dt.tri.validation_policy, ValidationPolicy::OnSuspicion);
+        assert_eq!(dt.validation_policy(), ValidationPolicy::ExplicitOnly);
+        assert_eq!(dt.tri.validation_policy, ValidationPolicy::ExplicitOnly);
 
         dt.set_validation_policy(ValidationPolicy::Always);
         assert_eq!(dt.validation_policy(), ValidationPolicy::Always);

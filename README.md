@@ -272,7 +272,8 @@ For the full periodic image-point method (Phase 2), see the
   canonicalization fails, and repair failures preserve typed source errors for
   debugging.
 - **Insertion outcomes and statistics** (`insert_with_statistics`,
-  `InsertionOutcome`, `InsertionStatistics`):
+  `insert_best_effort_with_statistics`, `InsertionOutcome`,
+  `InsertionStatistics`):
   see [`docs/workflows.md`](docs/workflows.md) and
   [`docs/numerical_robustness_guide.md`](docs/numerical_robustness_guide.md).
 - **Topology guarantees** (`TopologyGuarantee`) and **automatic topology

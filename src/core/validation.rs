@@ -355,7 +355,7 @@ impl From<ManifoldError> for InvariantError {
 /// `PLManifold` requires at least caller-owned completion validation to certify full
 /// PL-manifoldness. Use [`ValidationPolicy::ExplicitOnly`] when you want to run full
 /// topology validation only through explicit validation calls, [`ValidationPolicy::OnSuspicion`]
-/// (default) for best performance, or [`ValidationPolicy::Always`] for maximum safety during
+/// for suspicion-triggered validation, or [`ValidationPolicy::Always`] for maximum safety during
 /// incremental operations.
 ///
 /// # Examples
@@ -543,8 +543,10 @@ impl TopologyGuarantee {
     /// [`PLManifoldStrict`](Self::PLManifoldStrict) uses [`Always`](ValidationPolicy::Always)
     /// so that full Level-3 global validation (including vertex-link checks) runs
     /// after every insertion — this is the strongest and slowest setting.
-    /// All other guarantees default to
-    /// [`OnSuspicion`](ValidationPolicy::OnSuspicion).
+    /// [`PLManifold`](Self::PLManifold) uses [`ExplicitOnly`](ValidationPolicy::ExplicitOnly)
+    /// because insertion-time ridge-link checks are mandatory but full vertex-link validation
+    /// is a caller-owned completion checkpoint. [`Pseudomanifold`](Self::Pseudomanifold)
+    /// uses [`OnSuspicion`](ValidationPolicy::OnSuspicion).
     ///
     /// # Examples
     ///
@@ -557,7 +559,7 @@ impl TopologyGuarantee {
     /// );
     /// assert_eq!(
     ///     TopologyGuarantee::PLManifold.default_validation_policy(),
-    ///     ValidationPolicy::OnSuspicion,
+    ///     ValidationPolicy::ExplicitOnly,
     /// );
     /// ```
     #[inline]
@@ -565,7 +567,8 @@ impl TopologyGuarantee {
     pub const fn default_validation_policy(self) -> ValidationPolicy {
         match self {
             Self::PLManifoldStrict => ValidationPolicy::Always,
-            Self::Pseudomanifold | Self::PLManifold => ValidationPolicy::OnSuspicion,
+            Self::PLManifold => ValidationPolicy::ExplicitOnly,
+            Self::Pseudomanifold => ValidationPolicy::OnSuspicion,
         }
     }
 
@@ -684,7 +687,7 @@ where
     /// let tri: Triangulation<FastKernel<f64>, (), (), 2> =
     ///     Triangulation::new_empty(FastKernel::new());
     ///
-    /// assert_eq!(tri.validation_policy(), ValidationPolicy::OnSuspicion);
+    /// assert_eq!(tri.validation_policy(), ValidationPolicy::ExplicitOnly);
     /// ```
     #[inline]
     #[must_use]
@@ -1615,10 +1618,6 @@ mod tests {
         (tds, shared)
     }
 
-    fn build_invalid_vertex_link_tds_2d() -> (Tds<f64, (), (), 2>, VertexKey) {
-        build_invalid_vertex_link_tds::<2>()
-    }
-
     fn build_disconnected_two_triangles_tds_2d() -> Tds<f64, (), (), 2> {
         let mut tds: Tds<f64, (), (), 2> = Tds::empty();
 
@@ -1852,7 +1851,7 @@ mod tests {
         );
         assert_eq!(
             TopologyGuarantee::PLManifold.default_validation_policy(),
-            ValidationPolicy::OnSuspicion
+            ValidationPolicy::ExplicitOnly
         );
         assert_eq!(
             TopologyGuarantee::Pseudomanifold.default_validation_policy(),
@@ -1895,166 +1894,173 @@ mod tests {
         );
     }
 
-    #[test]
-    fn validation_accessors_and_mutators_round_trip() {
-        let mut tri: Triangulation<FastKernel<f64>, (), (), 2> =
-            Triangulation::new_empty(FastKernel::new());
-        assert_eq!(tri.topology_guarantee(), TopologyGuarantee::PLManifold);
-        assert_eq!(tri.validation_policy(), ValidationPolicy::OnSuspicion);
+    macro_rules! test_validation_configuration_paths {
+        ($($dim:expr),+ $(,)?) => {
+            pastey::paste! {
+                $(
+                    #[test]
+                    fn [<validation_accessors_and_mutators_round_trip_ $dim d>]() {
+                        let mut tri: Triangulation<FastKernel<f64>, (), (), $dim> =
+                            Triangulation::new_empty(FastKernel::new());
+                        assert_eq!(tri.topology_guarantee(), TopologyGuarantee::PLManifold);
+                        assert_eq!(tri.validation_policy(), ValidationPolicy::ExplicitOnly);
 
-        tri.set_topology_guarantee(TopologyGuarantee::Pseudomanifold);
-        tri.set_validation_policy(ValidationPolicy::Always);
+                        tri.set_topology_guarantee(TopologyGuarantee::Pseudomanifold);
+                        tri.set_validation_policy(ValidationPolicy::Always);
 
-        assert_eq!(tri.topology_guarantee(), TopologyGuarantee::Pseudomanifold);
-        assert_eq!(tri.validation_policy(), ValidationPolicy::Always);
+                        assert_eq!(tri.topology_guarantee(), TopologyGuarantee::Pseudomanifold);
+                        assert_eq!(tri.validation_policy(), ValidationPolicy::Always);
+                    }
+
+                    #[test]
+                    fn [<explicit_only_policy_supports_manual_pl_manifold_validation_ $dim d>]() {
+                        let mut tri: Triangulation<FastKernel<f64>, (), (), $dim> =
+                            Triangulation::new_empty(FastKernel::new());
+
+                        assert_eq!(tri.topology_guarantee(), TopologyGuarantee::PLManifold);
+                        assert_eq!(tri.validation_policy(), ValidationPolicy::ExplicitOnly);
+
+                        tri.try_set_validation_policy(ValidationPolicy::ExplicitOnly)
+                            .unwrap();
+                        assert_eq!(tri.validation_policy(), ValidationPolicy::ExplicitOnly);
+                    }
+
+                    #[test]
+                    fn [<incompatible_policy_rejected_even_when_completion_validation_succeeds_ $dim d>]() {
+                        let mut tri: Triangulation<FastKernel<f64>, (), (), $dim> =
+                            Triangulation::new_empty(FastKernel::new());
+
+                        assert_eq!(tri.topology_guarantee(), TopologyGuarantee::PLManifold);
+                        assert!(tri.validate_at_completion().is_ok());
+
+                        assert_eq!(
+                            tri.try_set_validation_policy(ValidationPolicy::Never),
+                            Err(
+                                ValidationConfigurationError::IncompatibleTopologyAndValidationPolicy {
+                                    topology_guarantee: TopologyGuarantee::PLManifold,
+                                    validation_policy: ValidationPolicy::Never,
+                                }
+                            )
+                        );
+                        assert_eq!(tri.validation_policy(), ValidationPolicy::ExplicitOnly);
+
+                        tri.set_validation_policy(ValidationPolicy::Never);
+                        assert_eq!(tri.validation_policy(), ValidationPolicy::ExplicitOnly);
+                    }
+
+                    #[test]
+                    fn [<incompatible_guarantee_rejected_even_when_completion_validation_succeeds_ $dim d>]() {
+                        let mut tri: Triangulation<FastKernel<f64>, (), (), $dim> =
+                            Triangulation::new_empty(FastKernel::new());
+
+                        tri.try_set_topology_guarantee(TopologyGuarantee::Pseudomanifold)
+                            .unwrap();
+                        tri.try_set_validation_policy(ValidationPolicy::Never)
+                            .unwrap();
+                        assert_eq!(tri.validation_policy(), ValidationPolicy::Never);
+                        assert_eq!(tri.topology_guarantee(), TopologyGuarantee::Pseudomanifold);
+                        assert!(tri.validate_at_completion().is_ok());
+
+                        assert_eq!(
+                            tri.try_set_topology_guarantee(TopologyGuarantee::PLManifoldStrict),
+                            Err(
+                                ValidationConfigurationError::IncompatibleTopologyAndValidationPolicy {
+                                    topology_guarantee: TopologyGuarantee::PLManifoldStrict,
+                                    validation_policy: ValidationPolicy::Never,
+                                }
+                            )
+                        );
+                        assert_eq!(tri.topology_guarantee(), TopologyGuarantee::Pseudomanifold);
+
+                        tri.set_topology_guarantee(TopologyGuarantee::PLManifoldStrict);
+                        assert_eq!(tri.topology_guarantee(), TopologyGuarantee::Pseudomanifold);
+                    }
+
+                    #[test]
+                    fn [<validate_at_completion_skips_for_pseudomanifold_ $dim d>]() {
+                        let vertices = unit_simplex_vertices::<$dim>();
+                        let tds =
+                            Triangulation::<FastKernel<f64>, (), (), $dim>::build_initial_simplex(&vertices)
+                                .unwrap();
+                        let mut tri =
+                            Triangulation::<FastKernel<f64>, (), (), $dim>::new_with_tds(FastKernel::new(), tds);
+
+                        tri.set_topology_guarantee(TopologyGuarantee::Pseudomanifold);
+                        assert!(tri.validate_at_completion().is_ok());
+                    }
+
+                    #[test]
+                    fn [<validate_at_completion_reports_invalid_vertex_link_ $dim d>]() {
+                        let (tds, expected_vertex_key) = build_invalid_vertex_link_tds::<$dim>();
+
+                        let mut tri =
+                            Triangulation::<FastKernel<f64>, (), (), $dim>::new_with_tds(FastKernel::new(), tds);
+                        tri.set_topology_guarantee(TopologyGuarantee::PLManifold);
+
+                        match tri.validate_at_completion() {
+                            Err(InvariantError::Triangulation(
+                                TriangulationValidationError::VertexLinkNotManifold { vertex_key, .. },
+                            )) => assert_eq!(vertex_key, expected_vertex_key),
+                            other => panic!("Expected VertexLinkNotManifold, got {other:?}"),
+                        }
+                    }
+
+                    #[test]
+                    fn [<incompatible_policy_rejected_when_completion_validation_fails_ $dim d>]() {
+                        let (tds, _) = build_invalid_vertex_link_tds::<$dim>();
+                        let mut tri =
+                            Triangulation::<FastKernel<f64>, (), (), $dim>::new_with_tds(FastKernel::new(), tds);
+
+                        assert!(matches!(
+                            tri.validate_at_completion(),
+                            Err(InvariantError::Triangulation(
+                                TriangulationValidationError::VertexLinkNotManifold { .. }
+                            ))
+                        ));
+                        assert_eq!(tri.validation_policy(), ValidationPolicy::ExplicitOnly);
+                        assert_eq!(
+                            tri.try_set_validation_policy(ValidationPolicy::Never),
+                            Err(
+                                ValidationConfigurationError::IncompatibleTopologyAndValidationPolicy {
+                                    topology_guarantee: TopologyGuarantee::PLManifold,
+                                    validation_policy: ValidationPolicy::Never,
+                                }
+                            )
+                        );
+                        tri.set_validation_policy(ValidationPolicy::Never);
+                        assert_eq!(tri.validation_policy(), ValidationPolicy::ExplicitOnly);
+                    }
+
+                    #[test]
+                    fn [<incompatible_guarantee_rejected_when_completion_validation_fails_ $dim d>]() {
+                        let (tds, _) = build_invalid_vertex_link_tds::<$dim>();
+                        let mut tri =
+                            Triangulation::<FastKernel<f64>, (), (), $dim>::new_with_tds(FastKernel::new(), tds);
+
+                        tri.try_set_topology_guarantee(TopologyGuarantee::Pseudomanifold)
+                            .unwrap();
+                        tri.try_set_validation_policy(ValidationPolicy::Never)
+                            .unwrap();
+                        assert_eq!(tri.topology_guarantee(), TopologyGuarantee::Pseudomanifold);
+                        assert_eq!(tri.validation_policy(), ValidationPolicy::Never);
+                        assert_eq!(
+                            tri.try_set_topology_guarantee(TopologyGuarantee::PLManifoldStrict),
+                            Err(
+                                ValidationConfigurationError::IncompatibleTopologyAndValidationPolicy {
+                                    topology_guarantee: TopologyGuarantee::PLManifoldStrict,
+                                    validation_policy: ValidationPolicy::Never,
+                                }
+                            )
+                        );
+                        tri.set_topology_guarantee(TopologyGuarantee::PLManifoldStrict);
+                        assert_eq!(tri.topology_guarantee(), TopologyGuarantee::Pseudomanifold);
+                    }
+                )+
+            }
+        };
     }
 
-    #[test]
-    fn explicit_only_policy_supports_manual_pl_manifold_validation() {
-        let mut tri: Triangulation<FastKernel<f64>, (), (), 2> =
-            Triangulation::new_empty(FastKernel::new());
-
-        assert_eq!(tri.topology_guarantee(), TopologyGuarantee::PLManifold);
-        assert_eq!(tri.validation_policy(), ValidationPolicy::OnSuspicion);
-
-        tri.try_set_validation_policy(ValidationPolicy::ExplicitOnly)
-            .unwrap();
-        assert_eq!(tri.validation_policy(), ValidationPolicy::ExplicitOnly);
-    }
-
-    #[test]
-    fn incompatible_policy_rejected_even_when_completion_validation_succeeds() {
-        let mut tri: Triangulation<FastKernel<f64>, (), (), 2> =
-            Triangulation::new_empty(FastKernel::new());
-
-        assert_eq!(tri.topology_guarantee(), TopologyGuarantee::PLManifold);
-        assert!(tri.validate_at_completion().is_ok());
-
-        assert_eq!(
-            tri.try_set_validation_policy(ValidationPolicy::Never),
-            Err(
-                ValidationConfigurationError::IncompatibleTopologyAndValidationPolicy {
-                    topology_guarantee: TopologyGuarantee::PLManifold,
-                    validation_policy: ValidationPolicy::Never,
-                }
-            )
-        );
-        assert_eq!(tri.validation_policy(), ValidationPolicy::OnSuspicion);
-
-        tri.set_validation_policy(ValidationPolicy::Never);
-        assert_eq!(tri.validation_policy(), ValidationPolicy::OnSuspicion);
-    }
-
-    #[test]
-    fn incompatible_guarantee_rejected_even_when_completion_validation_succeeds() {
-        let mut tri: Triangulation<FastKernel<f64>, (), (), 2> =
-            Triangulation::new_empty(FastKernel::new());
-
-        tri.try_set_topology_guarantee(TopologyGuarantee::Pseudomanifold)
-            .unwrap();
-        tri.try_set_validation_policy(ValidationPolicy::Never)
-            .unwrap();
-        assert_eq!(tri.validation_policy(), ValidationPolicy::Never);
-        assert_eq!(tri.topology_guarantee(), TopologyGuarantee::Pseudomanifold);
-        assert!(tri.validate_at_completion().is_ok());
-
-        assert_eq!(
-            tri.try_set_topology_guarantee(TopologyGuarantee::PLManifoldStrict),
-            Err(
-                ValidationConfigurationError::IncompatibleTopologyAndValidationPolicy {
-                    topology_guarantee: TopologyGuarantee::PLManifoldStrict,
-                    validation_policy: ValidationPolicy::Never,
-                }
-            )
-        );
-        assert_eq!(tri.topology_guarantee(), TopologyGuarantee::Pseudomanifold);
-
-        tri.set_topology_guarantee(TopologyGuarantee::PLManifoldStrict);
-        assert_eq!(tri.topology_guarantee(), TopologyGuarantee::Pseudomanifold);
-    }
-
-    #[test]
-    fn validate_at_completion_skips_for_pseudomanifold() {
-        let vertices = vec![
-            vertex!([0.0, 0.0]),
-            vertex!([1.0, 0.0]),
-            vertex!([0.0, 1.0]),
-        ];
-        let tds =
-            Triangulation::<FastKernel<f64>, (), (), 2>::build_initial_simplex(&vertices).unwrap();
-        let mut tri =
-            Triangulation::<FastKernel<f64>, (), (), 2>::new_with_tds(FastKernel::new(), tds);
-
-        tri.set_topology_guarantee(TopologyGuarantee::Pseudomanifold);
-        assert!(tri.validate_at_completion().is_ok());
-    }
-
-    #[test]
-    fn validate_at_completion_reports_invalid_vertex_link() {
-        let (tds, v0) = build_invalid_vertex_link_tds_2d();
-
-        let mut tri =
-            Triangulation::<FastKernel<f64>, (), (), 2>::new_with_tds(FastKernel::new(), tds);
-        tri.set_topology_guarantee(TopologyGuarantee::PLManifold);
-
-        match tri.validate_at_completion() {
-            Err(InvariantError::Triangulation(
-                TriangulationValidationError::VertexLinkNotManifold { vertex_key, .. },
-            )) => assert_eq!(vertex_key, v0),
-            other => panic!("Expected VertexLinkNotManifold, got {other:?}"),
-        }
-    }
-
-    #[test]
-    fn incompatible_policy_rejected_when_completion_validation_fails() {
-        let (tds, _) = build_invalid_vertex_link_tds_2d();
-        let mut tri =
-            Triangulation::<FastKernel<f64>, (), (), 2>::new_with_tds(FastKernel::new(), tds);
-
-        assert!(matches!(
-            tri.validate_at_completion(),
-            Err(InvariantError::Triangulation(
-                TriangulationValidationError::VertexLinkNotManifold { .. }
-            ))
-        ));
-        assert_eq!(tri.validation_policy(), ValidationPolicy::OnSuspicion);
-        assert_eq!(
-            tri.try_set_validation_policy(ValidationPolicy::Never),
-            Err(
-                ValidationConfigurationError::IncompatibleTopologyAndValidationPolicy {
-                    topology_guarantee: TopologyGuarantee::PLManifold,
-                    validation_policy: ValidationPolicy::Never,
-                }
-            )
-        );
-        tri.set_validation_policy(ValidationPolicy::Never);
-        assert_eq!(tri.validation_policy(), ValidationPolicy::OnSuspicion);
-    }
-
-    #[test]
-    fn incompatible_guarantee_rejected_when_completion_validation_fails() {
-        let (tds, _) = build_invalid_vertex_link_tds_2d();
-        let mut tri =
-            Triangulation::<FastKernel<f64>, (), (), 2>::new_with_tds(FastKernel::new(), tds);
-
-        tri.try_set_topology_guarantee(TopologyGuarantee::Pseudomanifold)
-            .unwrap();
-        tri.try_set_validation_policy(ValidationPolicy::Never)
-            .unwrap();
-        assert_eq!(tri.topology_guarantee(), TopologyGuarantee::Pseudomanifold);
-        assert_eq!(tri.validation_policy(), ValidationPolicy::Never);
-        assert_eq!(
-            tri.try_set_topology_guarantee(TopologyGuarantee::PLManifoldStrict),
-            Err(
-                ValidationConfigurationError::IncompatibleTopologyAndValidationPolicy {
-                    topology_guarantee: TopologyGuarantee::PLManifoldStrict,
-                    validation_policy: ValidationPolicy::Never,
-                }
-            )
-        );
-        tri.set_topology_guarantee(TopologyGuarantee::PLManifoldStrict);
-        assert_eq!(tri.topology_guarantee(), TopologyGuarantee::Pseudomanifold);
-    }
+    test_validation_configuration_paths!(2, 3, 4, 5);
 
     #[test]
     fn validate_after_insertion_skips_when_no_simplices() {
@@ -3111,7 +3117,7 @@ mod tests {
         for (i, point) in points.into_iter().enumerate() {
             let vertex = VertexBuilder::default().point(point).build().unwrap();
             let (outcome, stats) = dt
-                .insert_with_statistics(vertex)
+                .insert_best_effort_with_statistics(vertex)
                 .unwrap_or_else(|err| panic!("Non-retryable insertion error at i={i}: {err:?}"));
 
             if dt.number_of_simplices() > 0
