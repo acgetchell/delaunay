@@ -4307,10 +4307,18 @@ impl fmt::Display for DelaunayRepairVerificationContext {
 
 /// Errors that can occur during flip-based Delaunay repair.
 ///
+/// Large typed payloads are boxed to keep the public enum small and cheap to
+/// move, while scalar fields and short diagnostic strings stay inline. Boxed
+/// variants still preserve their concrete source type so callers can inspect
+/// or pattern-match the full error chain when they need repair diagnostics.
+/// For example, [`DelaunayRepairError::NonConvergent`] boxes
+/// [`DelaunayRepairDiagnostics`], and [`DelaunayRepairError::Flip`] boxes the
+/// underlying [`FlipError`].
+///
 /// # Examples
 ///
 /// ```rust
-/// use delaunay::prelude::repair::{DelaunayRepairError, TopologyGuarantee};
+/// use delaunay::prelude::repair::{DelaunayRepairError, FlipError, TopologyGuarantee};
 ///
 /// let err = DelaunayRepairError::InvalidTopology {
 ///     required: TopologyGuarantee::PLManifold,
@@ -4318,6 +4326,13 @@ impl fmt::Display for DelaunayRepairVerificationContext {
 ///     message: "requires manifold",
 /// };
 /// assert!(matches!(err, DelaunayRepairError::InvalidTopology { .. }));
+///
+/// let flip_err = DelaunayRepairError::from(FlipError::DegenerateSimplex);
+/// assert!(matches!(
+///     flip_err,
+///     DelaunayRepairError::Flip { source }
+///         if matches!(source.as_ref(), FlipError::DegenerateSimplex)
+/// ));
 /// ```
 #[derive(Clone, Debug, Error, PartialEq, Eq)]
 #[non_exhaustive]
@@ -4368,9 +4383,24 @@ pub enum DelaunayRepairError {
         /// Additional context for the rebuild failure.
         message: String,
     },
-    /// Underlying flip error.
-    #[error(transparent)]
-    Flip(#[from] FlipError),
+    /// A lower-level [`FlipError`] stopped repair.
+    ///
+    /// The source is boxed to keep [`DelaunayRepairError`] compact while
+    /// preserving the concrete flip failure for callers that need to inspect it.
+    #[error("flip error: {source}")]
+    Flip {
+        /// Typed flip failure that stopped repair.
+        #[source]
+        source: Box<FlipError>,
+    },
+}
+
+impl From<FlipError> for DelaunayRepairError {
+    fn from(source: FlipError) -> Self {
+        Self::Flip {
+            source: Box::new(source),
+        }
+    }
 }
 
 impl From<DelaunayRepairError> for FlipNeighborRepairFailure {
@@ -4407,8 +4437,8 @@ impl From<DelaunayRepairError> for FlipNeighborRepairFailure {
             DelaunayRepairError::HeuristicRebuildFailed { message } => {
                 Self::HeuristicRebuildFailed { message }
             }
-            DelaunayRepairError::Flip(source) => Self::Flip {
-                source_kind: FlipFailureKind::from(source),
+            DelaunayRepairError::Flip { source } => Self::Flip {
+                source_kind: FlipFailureKind::from(source.as_ref()),
             },
         }
     }
@@ -9506,7 +9536,7 @@ mod tests {
     use proptest::prelude::*;
     use rand::{RngExt, SeedableRng, rngs::StdRng};
     use slotmap::KeyData;
-    use std::{iter::once, sync::Once};
+    use std::{error::Error as _, iter::once, sync::Once};
 
     fn init_tracing() {
         static INIT: Once = Once::new();
@@ -12907,9 +12937,11 @@ mod tests {
 
         assert!(matches!(
             result,
-            Err(DelaunayRepairError::Flip(FlipError::UnsupportedDimension {
-                dimension: 1
-            }))
+            Err(DelaunayRepairError::Flip { source })
+                if matches!(
+                    source.as_ref(),
+                    FlipError::UnsupportedDimension { dimension: 1 }
+                )
         ));
     }
 
@@ -13439,6 +13471,15 @@ mod tests {
             other => panic!("expected verification failure, got {other:?}"),
         }
 
+        let flip_reason =
+            FlipNeighborRepairFailure::from(DelaunayRepairError::from(FlipError::DuplicateSimplex));
+        assert_eq!(
+            flip_reason,
+            FlipNeighborRepairFailure::Flip {
+                source_kind: FlipFailureKind::DuplicateSimplex,
+            }
+        );
+
         let wiring_repair = FlipError::from(FlipNeighborWiringError::DelaunayRepair {
             reason: repair_reason,
         });
@@ -13600,6 +13641,12 @@ mod tests {
         assert_eq!(verification_err, verification_err_copy);
         assert_ne!(verification_err, verification_other);
 
+        let flip_err = DelaunayRepairError::from(FlipError::DegenerateSimplex);
+        let flip_err_copy = DelaunayRepairError::from(FlipError::DegenerateSimplex);
+        let flip_other = DelaunayRepairError::from(FlipError::DuplicateSimplex);
+        assert_eq!(flip_err, flip_err_copy);
+        assert_ne!(flip_err, flip_other);
+
         let canonicalization_err = DelaunayRepairError::OrientationCanonicalizationFailed {
             message: "test".to_string(),
         };
@@ -13628,6 +13675,26 @@ mod tests {
         assert_ne!(post_test, topo_err);
         assert_ne!(post_test, verification_err);
         assert_ne!(post_test, canonicalization_err);
+    }
+
+    #[test]
+    fn test_delaunay_repair_error_boxes_large_flip_sources() {
+        assert!(
+            std::mem::size_of::<DelaunayRepairError>() < std::mem::size_of::<FlipError>(),
+            "DelaunayRepairError should box large FlipError payloads"
+        );
+
+        let err = DelaunayRepairError::from(FlipError::DegenerateSimplex);
+        let source = err.source().expect("boxed flip source should be exposed");
+        let source = source
+            .downcast_ref::<Box<FlipError>>()
+            .expect("source should remain a typed boxed FlipError");
+        assert!(matches!(source.as_ref(), FlipError::DegenerateSimplex));
+
+        let DelaunayRepairError::Flip { source } = err else {
+            panic!("expected boxed flip source");
+        };
+        assert!(matches!(source.as_ref(), FlipError::DegenerateSimplex));
     }
 
     #[test]

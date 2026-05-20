@@ -424,8 +424,8 @@ fn diagnostic_preludes_cover_repair_apis() -> Result<(), PreludeExportTestError>
     };
     assert!(diagnostics.to_string().contains("checked"));
     assert!(matches!(
-        DelaunayRepairError::Flip(FlipError::DegenerateSimplex),
-        DelaunayRepairError::Flip(_)
+        DelaunayRepairError::from(FlipError::DegenerateSimplex),
+        DelaunayRepairError::Flip { .. }
     ));
     assert_send_sync_unpin::<FlipEdgeAdjacencyError>();
     assert_send_sync_unpin::<FlipTriangleAdjacencyError>();

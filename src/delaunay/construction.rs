@@ -436,12 +436,14 @@ impl From<TriangulationConstructionError> for DelaunayConstructionFailure {
 
 /// Returns true when a repair error represents input geometry or predicate
 /// instability that shuffled construction may be able to resolve.
-const fn is_geometric_repair_error(repair_err: &DelaunayRepairError) -> bool {
+fn is_geometric_repair_error(repair_err: &DelaunayRepairError) -> bool {
     match repair_err {
         DelaunayRepairError::NonConvergent { .. }
         | DelaunayRepairError::PostconditionFailed { .. } => true,
-        DelaunayRepairError::VerificationFailed { source, .. } => is_geometric_flip_error(source),
-        DelaunayRepairError::Flip(source) => is_geometric_flip_error(source),
+        DelaunayRepairError::VerificationFailed { source, .. } => {
+            is_geometric_flip_error(source.as_ref())
+        }
+        DelaunayRepairError::Flip { source } => is_geometric_flip_error(source.as_ref()),
         DelaunayRepairError::OrientationCanonicalizationFailed { .. }
         | DelaunayRepairError::InvalidTopology { .. }
         | DelaunayRepairError::HeuristicRebuildFailed { .. } => false,
@@ -6423,7 +6425,7 @@ mod tests {
         assert!(TestDelaunay::<4>::can_soft_fail(&postcondition));
 
         let flip_error =
-            DelaunayRepairError::Flip(FlipError::UnsupportedDimension { dimension: 1 });
+            DelaunayRepairError::from(FlipError::UnsupportedDimension { dimension: 1 });
         assert!(!TestDelaunay::<4>::can_soft_fail(&flip_error));
 
         let topology_error = DelaunayRepairError::InvalidTopology {
@@ -6455,12 +6457,21 @@ mod tests {
                         phase: DelaunayConstructionRepairPhase::BatchLocal { index: 23 },
                         ref source,
                     }
-                ) if matches!(**source, DelaunayRepairError::Flip(FlipError::UnsupportedDimension { dimension: 1 }))
+                ) if matches!(
+                    source.as_ref(),
+                    DelaunayRepairError::Flip {
+                        source: flip_source
+                    }
+                        if matches!(
+                            flip_source.as_ref(),
+                            FlipError::UnsupportedDimension { dimension: 1 }
+                        )
+                )
             ),
             "deterministic hard D>=4 repair failures should stop shuffled retries: {mapped_hard:?}"
         );
 
-        let geometric_error = DelaunayRepairError::Flip(FlipError::DegenerateSimplex);
+        let geometric_error = DelaunayRepairError::from(FlipError::DegenerateSimplex);
         let mapped_geometric = TestDelaunay::<4>::map_hard_repair_error(24, geometric_error);
         assert!(
             matches!(
@@ -6885,7 +6896,7 @@ mod tests {
     #[test]
     fn test_map_insertion_error_hard_repair_is_internal() {
         let error = InsertionError::DelaunayRepairFailed {
-            source: Box::new(DelaunayRepairError::Flip(FlipError::UnsupportedDimension {
+            source: Box::new(DelaunayRepairError::from(FlipError::UnsupportedDimension {
                 dimension: 1,
             })),
             context: DelaunayRepairFailureContext::LocalRepair,
