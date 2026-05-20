@@ -103,7 +103,7 @@ This matters for large-scale investigations that need to run under
 
 | Variable | Activation | Module | Description |
 |---|---|---|---|
-| `DELAUNAY_STRICT_INSPHERE_CONSISTENCY` | presence | `geometry/robust_predicates.rs` | Cross-validates exact insphere results |
+| `DELAUNAY_STRICT_INSPHERE_CONSISTENCY` | presence | `geometry/robust_predicates.rs` | Process-wide, once-per-process snapshot that cross-validates exact insphere results |
 | `DELAUNAY_DEBUG_LU_FALLBACK` | presence | `circumsphere.rs` | Logs when circumsphere computation falls back to LU decomposition |
 
 ## Point Generation

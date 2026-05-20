@@ -474,8 +474,8 @@ where
 ///   instead of forcing a decision, useful when your application needs to
 ///   detect and handle cospherical or coplanar configurations directly
 /// - **Opt-in diagnostic consistency checks** — cross-validates insphere results
-///   against a distance-based check when `DELAUNAY_STRICT_INSPHERE_CONSISTENCY`
-///   is set
+///   against a distance-based check when the process-wide
+///   `DELAUNAY_STRICT_INSPHERE_CONSISTENCY` snapshot is set
 ///
 /// For standard Delaunay triangulation, [`AdaptiveKernel`] is the better
 /// default: zero configuration, provable error bounds, and `SoS`
