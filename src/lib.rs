@@ -1882,6 +1882,7 @@ mod tests {
         },
         geometry::{
             Point, algorithms::convex_hull::ConvexHull, kernel::AdaptiveKernel, kernel::FastKernel,
+            util::CircumcenterError,
         },
         is_normal,
         prelude::delaunayize::{
@@ -1898,6 +1899,7 @@ mod tests {
         prelude::*,
         vertex,
     };
+    use la_stack::LaError;
 
     #[cfg(feature = "count-allocations")]
     use allocation_counter::measure;
@@ -1927,6 +1929,15 @@ mod tests {
         assert!(is_normal::<PlManifoldRepairStats<f64, (), (), 3>>());
         assert!(is_normal::<SimplexValidationError>());
         assert!(is_normal::<DelaunayTriangulationConstructionError>());
+    }
+
+    #[test]
+    fn circumcenter_error_clones_linear_algebra_source() {
+        let source = LaError::Overflow { index: Some(2) };
+        let error = CircumcenterError::LinearAlgebraFailure { source };
+
+        assert_eq!(error.clone(), error);
+        assert!(error.to_string().contains("Linear algebra"));
     }
 
     #[test]
@@ -1985,8 +1996,8 @@ mod tests {
         );
         assert_eq!(DelaunayCheckPolicy::default(), DelaunayCheckPolicy::EndOnly);
 
-        let err = DelaunayRepairError::Flip(FlipError::DegenerateSimplex);
-        assert!(matches!(err, DelaunayRepairError::Flip(_)));
+        let err = DelaunayRepairError::from(FlipError::DegenerateSimplex);
+        assert!(matches!(err, DelaunayRepairError::Flip { .. }));
         let context_err = FlipContextError::ReplacementPeriodicOffsetCountMismatch {
             simplex_count: 1,
             offset_count: 0,

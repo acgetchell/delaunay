@@ -1282,9 +1282,11 @@ mod tests {
         assert!(
             matches!(
                 result,
-                Err(DelaunayRepairError::Flip(FlipError::UnsupportedDimension {
-                    dimension: 1
-                }))
+                Err(DelaunayRepairError::Flip { ref source })
+                    if matches!(
+                        source.as_ref(),
+                        FlipError::UnsupportedDimension { dimension: 1 }
+                    )
             ),
             "Expected Flip(UnsupportedDimension {{ dimension: 1 }}) for D=1, got: {result:?}"
         );
@@ -1306,9 +1308,11 @@ mod tests {
         assert!(
             matches!(
                 result,
-                Err(DelaunayRepairError::Flip(FlipError::UnsupportedDimension {
-                    dimension: 1
-                }))
+                Err(DelaunayRepairError::Flip { ref source })
+                    if matches!(
+                        source.as_ref(),
+                        FlipError::UnsupportedDimension { dimension: 1 }
+                    )
             ),
             "Expected non-retryable Flip(UnsupportedDimension) pass-through for D=1, got: {result:?}"
         );

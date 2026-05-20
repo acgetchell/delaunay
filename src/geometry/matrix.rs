@@ -259,6 +259,18 @@ mod tests {
     }
 
     #[test]
+    fn stack_matrix_dispatch_error_clones_la_error_source() {
+        let source = LaError::Singular { pivot_col: 3 };
+        let error = StackMatrixDispatchError::La { source };
+
+        assert_eq!(error.clone(), error);
+        assert_eq!(
+            error.to_string(),
+            StackMatrixDispatchError::La { source }.to_string()
+        );
+    }
+
+    #[test]
     fn matrix_zero_like_returns_zero_matrix_of_same_size() {
         let k = 4;
         with_la_stack_matrix!(k, |original| {

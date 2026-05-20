@@ -657,7 +657,7 @@ impl From<&DelaunayRepairError> for DelaunayRepairErrorKind {
             }
             DelaunayRepairError::InvalidTopology { .. } => Self::InvalidTopology,
             DelaunayRepairError::HeuristicRebuildFailed { .. } => Self::HeuristicRebuildFailed,
-            DelaunayRepairError::Flip(_) => Self::Flip,
+            DelaunayRepairError::Flip { .. } => Self::Flip,
         }
     }
 }
@@ -4910,7 +4910,7 @@ mod tests {
                 DelaunayRepairErrorKind::HeuristicRebuildFailed,
             ),
             (
-                DelaunayRepairError::Flip(FlipError::DegenerateSimplex),
+                DelaunayRepairError::from(FlipError::DegenerateSimplex),
                 DelaunayRepairErrorKind::Flip,
             ),
         ];

@@ -1024,6 +1024,18 @@ mod tests {
     }
 
     #[test]
+    fn coordinate_conversion_error_clones_linear_algebra_source() {
+        let source = LaError::NonFinite {
+            row: Some(1),
+            col: 2,
+        };
+        let converted = CoordinateConversionError::LinearAlgebraFailure { source };
+
+        assert_eq!(converted.clone(), converted);
+        assert!(converted.source().is_some());
+    }
+
+    #[test]
     fn degenerate_simplex_reason_display_covers_all_variants() {
         assert_eq!(
             DegenerateSimplexReason::ZeroOrientation.to_string(),
