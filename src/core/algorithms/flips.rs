@@ -13471,6 +13471,15 @@ mod tests {
             other => panic!("expected verification failure, got {other:?}"),
         }
 
+        let flip_reason =
+            FlipNeighborRepairFailure::from(DelaunayRepairError::from(FlipError::DuplicateSimplex));
+        assert_eq!(
+            flip_reason,
+            FlipNeighborRepairFailure::Flip {
+                source_kind: FlipFailureKind::DuplicateSimplex,
+            }
+        );
+
         let wiring_repair = FlipError::from(FlipNeighborWiringError::DelaunayRepair {
             reason: repair_reason,
         });
