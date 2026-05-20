@@ -572,8 +572,8 @@ pub fn hilbert_sort_by_unstable<Item, T: CoordinateScalar, const D: usize>(
 /// // Quantize once
 /// let quantized: Vec<[u32; 2]> = coords
 ///     .iter()
-///     .map(|c| hilbert_quantize(c, bounds, bits).unwrap())
-///     .collect();
+///     .map(|c| hilbert_quantize(c, bounds, bits))
+///     .collect::<Result<_, _>>()?;
 ///
 /// // Compute all indices in bulk
 /// let indices = hilbert_indices_prequantized(&quantized, bits)?;

@@ -363,15 +363,18 @@ where
 /// use delaunay::prelude::geometry::Point;
 /// use delaunay::prelude::geometry::Orientation;
 /// use delaunay::prelude::geometry::robust_orientation;
-/// use delaunay::prelude::geometry::Coordinate;
+/// use delaunay::prelude::geometry::{Coordinate, CoordinateConversionError};
 ///
+/// # fn main() -> Result<(), CoordinateConversionError> {
 /// let tri = vec![
 ///     Point::new([0.0, 0.0]),
 ///     Point::new([1.0, 0.0]),
 ///     Point::new([0.0, 1.0]),
 /// ];
-/// let orientation = robust_orientation(&tri).unwrap();
+/// let orientation = robust_orientation(&tri)?;
 /// assert_eq!(orientation, Orientation::POSITIVE);
+/// # Ok(())
+/// # }
 /// ```
 pub fn robust_orientation<T, const D: usize>(
     simplex_points: &[Point<T, D>],

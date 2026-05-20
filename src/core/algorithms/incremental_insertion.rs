@@ -2142,14 +2142,17 @@ where
 /// # Examples
 ///
 /// ```rust
-/// use delaunay::prelude::insertion::wire_cavity_neighbors;
+/// use delaunay::prelude::insertion::{InsertionError, wire_cavity_neighbors};
 /// use delaunay::prelude::collections::SimplexKeyBuffer;
 /// use delaunay::prelude::tds::Tds;
 ///
+/// # fn main() -> Result<(), InsertionError> {
 /// let mut tds: Tds<f64, (), (), 3> = Tds::empty();
 /// let new_simplices = SimplexKeyBuffer::new();
 ///
-/// wire_cavity_neighbors(&mut tds, &new_simplices, [], None).unwrap();
+/// wire_cavity_neighbors(&mut tds, &new_simplices, [], None)?;
+/// # Ok(())
+/// # }
 /// ```
 #[expect(
     clippy::too_many_lines,

@@ -72,18 +72,17 @@ fn is_zero_or_roundoff<T: CoordinateScalar>(value: T, scale: T) -> Result<bool, 
 /// # Examples
 ///
 /// ```
-/// use delaunay::prelude::geometry::Point;
-/// use delaunay::prelude::geometry::Coordinate;
-/// use delaunay::prelude::geometry::simplex_volume;
+/// use delaunay::prelude::geometry::{CircumcenterError, Coordinate, Point, simplex_volume};
 /// use approx::assert_relative_eq;
 ///
+/// # fn main() -> Result<(), CircumcenterError> {
 /// // 2D: Triangle area
 /// let triangle = vec![
 ///     Point::new([0.0, 0.0]),
 ///     Point::new([1.0, 0.0]),
 ///     Point::new([0.0, 1.0]),
 /// ];
-/// let area = simplex_volume(&triangle).unwrap();
+/// let area = simplex_volume(&triangle)?;
 /// assert_relative_eq!(area, 0.5, epsilon = 1e-10); // Area = 1*1/2 = 0.5
 ///
 /// // 3D: Tetrahedron volume
@@ -93,8 +92,10 @@ fn is_zero_or_roundoff<T: CoordinateScalar>(value: T, scale: T) -> Result<bool, 
 ///     Point::new([0.0, 1.0, 0.0]),
 ///     Point::new([0.0, 0.0, 1.0]),
 /// ];
-/// let volume = simplex_volume(&tetrahedron).unwrap();
+/// let volume = simplex_volume(&tetrahedron)?;
 /// assert_relative_eq!(volume, 1.0/6.0, epsilon = 1e-10); // Volume = 1/6
+/// # Ok(())
+/// # }
 /// ```
 pub fn simplex_volume<T, const D: usize>(points: &[Point<T, D>]) -> Result<T, CircumcenterError>
 where
@@ -357,20 +358,21 @@ where
 /// # Examples
 ///
 /// ```
-/// use delaunay::prelude::geometry::Point;
-/// use delaunay::prelude::geometry::Coordinate;
-/// use delaunay::prelude::geometry::inradius;
+/// use delaunay::prelude::geometry::{CircumcenterError, Coordinate, Point, inradius};
 /// use approx::assert_relative_eq;
 ///
+/// # fn main() -> Result<(), CircumcenterError> {
 /// // 2D: Equilateral triangle with side length 1
 /// let triangle = vec![
 ///     Point::new([0.0, 0.0]),
 ///     Point::new([1.0, 0.0]),
 ///     Point::new([0.5, 0.866025]), // sqrt(3)/2 ≈ 0.866025
 /// ];
-/// let r_in = inradius(&triangle).unwrap();
+/// let r_in = inradius(&triangle)?;
 /// // For equilateral triangle: inradius ≈ 0.2887 (exact: sqrt(3)/6)
 /// assert_relative_eq!(r_in, 0.28867, epsilon = 1e-4);
+/// # Ok(())
+/// # }
 /// ```
 pub fn inradius<T, const D: usize>(points: &[Point<T, D>]) -> Result<T, CircumcenterError>
 where
@@ -468,17 +470,16 @@ where
 /// # Examples
 ///
 /// ```
-/// use delaunay::prelude::geometry::Point;
-/// use delaunay::prelude::geometry::Coordinate;
-/// use delaunay::prelude::geometry::facet_measure;
+/// use delaunay::prelude::geometry::{CircumcenterError, Coordinate, Point, facet_measure};
 /// use approx::assert_relative_eq;
 ///
+/// # fn main() -> Result<(), CircumcenterError> {
 /// // 2D: Line segment length (1D facet in 2D space)
 /// let line_segment = vec![
 ///     Point::new([0.0, 0.0]),
 ///     Point::new([3.0, 4.0]),
 /// ];
-/// let length = facet_measure(&line_segment).unwrap();
+/// let length = facet_measure(&line_segment)?;
 /// assert_relative_eq!(length, 5.0, epsilon = 1e-10); // sqrt(3² + 4²) = 5
 ///
 /// // 3D: Triangle area (2D facet in 3D space)
@@ -487,8 +488,10 @@ where
 ///     Point::new([3.0, 0.0, 0.0]),
 ///     Point::new([0.0, 4.0, 0.0]),
 /// ];
-/// let area = facet_measure(&triangle).unwrap();
+/// let area = facet_measure(&triangle)?;
 /// assert_relative_eq!(area, 6.0, epsilon = 1e-10); // 3*4/2 = 6
+/// # Ok(())
+/// # }
 /// ```
 pub fn facet_measure<T, const D: usize>(points: &[Point<T, D>]) -> Result<T, CircumcenterError>
 where

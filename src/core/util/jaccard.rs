@@ -81,19 +81,22 @@ where
 /// # Examples
 /// ```
 /// use std::collections::HashSet;
-/// use delaunay::prelude::query::jaccard_index;
+/// use delaunay::prelude::query::{JaccardComputationError, jaccard_index};
 ///
+/// # fn main() -> Result<(), JaccardComputationError> {
 /// // Identical sets => similarity 1.0
 /// let a: HashSet<_> = [1, 2, 3].into_iter().collect();
-/// assert_eq!(jaccard_index(&a, &a).unwrap(), 1.0);
+/// assert_eq!(jaccard_index(&a, &a)?, 1.0);
 ///
 /// // Partial overlap: {1,2,3} vs {3,4} => |∩|=1, |∪|=4 => 0.25
 /// let b: HashSet<_> = [3, 4].into_iter().collect();
-/// assert!((jaccard_index(&a, &b).unwrap() - 0.25).abs() < 1e-12);
+/// assert!((jaccard_index(&a, &b)? - 0.25).abs() < 1e-12);
 ///
 /// // Empty vs empty => 1.0 by convention
 /// let empty: HashSet<i32> = HashSet::new();
-/// assert_eq!(jaccard_index(&empty, &empty).unwrap(), 1.0);
+/// assert_eq!(jaccard_index(&empty, &empty)?, 1.0);
+/// # Ok(())
+/// # }
 /// ```
 ///
 /// # Errors
@@ -146,17 +149,22 @@ where
 /// # Examples
 /// ```
 /// use std::collections::HashSet;
-/// use delaunay::prelude::query::{jaccard_distance, jaccard_index};
+/// use delaunay::prelude::query::{
+///     JaccardComputationError, jaccard_distance, jaccard_index,
+/// };
 ///
+/// # fn main() -> Result<(), JaccardComputationError> {
 /// let a: HashSet<_> = [1, 2, 3].into_iter().collect();
 /// let b: HashSet<_> = [3, 4].into_iter().collect();
 ///
 /// // Distance is 0.0 for identical sets
-/// assert_eq!(jaccard_distance(&a, &a).unwrap(), 0.0);
+/// assert_eq!(jaccard_distance(&a, &a)?, 0.0);
 ///
 /// // Index + distance = 1.0
-/// let sum = jaccard_index(&a, &b).unwrap() + jaccard_distance(&a, &b).unwrap();
+/// let sum = jaccard_index(&a, &b)? + jaccard_distance(&a, &b)?;
 /// assert!((sum - 1.0).abs() < 1e-12);
+/// # Ok(())
+/// # }
 /// ```
 ///
 /// # Errors
@@ -490,13 +498,16 @@ where
 ///
 /// ```
 /// use std::collections::HashSet;
-/// use delaunay::prelude::query::format_jaccard_report;
+/// use delaunay::prelude::query::{JaccardComputationError, format_jaccard_report};
 ///
+/// # fn main() -> Result<(), JaccardComputationError> {
 /// let a: HashSet<i32> = [1, 2, 3, 4].into_iter().collect();
 /// let b: HashSet<i32> = [3, 4, 5, 6].into_iter().collect();
 ///
-/// let report = format_jaccard_report(&a, &b, "Set A", "Set B").unwrap();
+/// let report = format_jaccard_report(&a, &b, "Set A", "Set B")?;
 /// assert!(report.contains("Jaccard Index:"));
+/// # Ok(())
+/// # }
 /// ```
 ///
 /// # Errors

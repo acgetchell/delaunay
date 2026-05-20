@@ -105,9 +105,20 @@ dt.set_delaunay_repair_policy(DelaunayRepairPolicy::Never);
 You can also run a global repair pass manually:
 
 ```rust
-use delaunay::prelude::construction::{DelaunayTriangulationBuilder, vertex};
+use delaunay::prelude::construction::{
+    DelaunayTriangulationBuilder, DelaunayTriangulationConstructionError, vertex,
+};
+use delaunay::prelude::repair::DelaunayRepairError;
 
-fn main() -> Result<(), Box<dyn std::error::Error>> {
+#[derive(Debug, thiserror::Error)]
+enum RepairExampleError {
+    #[error(transparent)]
+    Construction(#[from] DelaunayTriangulationConstructionError),
+    #[error(transparent)]
+    Repair(#[from] DelaunayRepairError),
+}
+
+fn main() -> Result<(), RepairExampleError> {
     let vertices = vec![
         vertex!([0.0, 0.0, 0.0]),
         vertex!([1.0, 0.0, 0.0]),
@@ -155,10 +166,18 @@ If repair fails to converge within the flip budget, you get
 detections, etc.).
 
 ```rust
-use delaunay::prelude::construction::{DelaunayTriangulationBuilder, vertex};
+use delaunay::prelude::construction::{
+    DelaunayTriangulationBuilder, DelaunayTriangulationConstructionError, vertex,
+};
 use delaunay::prelude::repair::DelaunayRepairError;
 
-fn main() -> Result<(), Box<dyn std::error::Error>> {
+#[derive(Debug, thiserror::Error)]
+enum RepairExampleError {
+    #[error(transparent)]
+    Construction(#[from] DelaunayTriangulationConstructionError),
+}
+
+fn main() -> Result<(), RepairExampleError> {
     let vertices = vec![
         vertex!([0.0, 0.0, 0.0]),
         vertex!([1.0, 0.0, 0.0]),
@@ -199,10 +218,20 @@ You can provide explicit seeds for reproducibility; otherwise deterministic defa
 from the current vertex set.
 
 ```rust
-use delaunay::prelude::construction::{DelaunayTriangulationBuilder, vertex};
-use delaunay::prelude::repair::DelaunayRepairHeuristicConfig;
+use delaunay::prelude::construction::{
+    DelaunayTriangulationBuilder, DelaunayTriangulationConstructionError, vertex,
+};
+use delaunay::prelude::repair::{DelaunayRepairError, DelaunayRepairHeuristicConfig};
 
-fn main() -> Result<(), Box<dyn std::error::Error>> {
+#[derive(Debug, thiserror::Error)]
+enum RepairExampleError {
+    #[error(transparent)]
+    Construction(#[from] DelaunayTriangulationConstructionError),
+    #[error(transparent)]
+    Repair(#[from] DelaunayRepairError),
+}
+
+fn main() -> Result<(), RepairExampleError> {
     let vertices = vec![
         vertex!([0.0, 0.0, 0.0]),
         vertex!([1.0, 0.0, 0.0]),
@@ -228,9 +257,20 @@ Toroidal triangulations handle periodic boundary conditions. Use
 `DelaunayTriangulationBuilder` to construct them:
 
 ```rust
-use delaunay::prelude::construction::{DelaunayTriangulationBuilder, vertex};
+use delaunay::prelude::construction::{
+    DelaunayTriangulationBuilder, DelaunayTriangulationConstructionError, vertex,
+};
+use delaunay::prelude::insertion::InsertionError;
 
-fn main() -> Result<(), Box<dyn std::error::Error>> {
+#[derive(Debug, thiserror::Error)]
+enum PeriodicExampleError {
+    #[error(transparent)]
+    Construction(#[from] DelaunayTriangulationConstructionError),
+    #[error(transparent)]
+    Insertion(#[from] InsertionError),
+}
+
+fn main() -> Result<(), PeriodicExampleError> {
     // 2D periodic triangulation with unit square domain
     let vertices = vec![
         vertex!([0.1, 0.1]),
@@ -239,7 +279,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     ];
 
     let mut dt = DelaunayTriangulationBuilder::new(&vertices)
-        .toroidal([1.0, 1.0]) // Phase 1: canonicalized toroidal construction
+        .toroidal([1.0, 1.0]) // canonicalized toroidal construction
         .build::<()>()?;
 
     // Insert more points - they'll be wrapped to [0,1)×[0,1)
@@ -256,8 +296,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 - **Distance computation**: Distances are computed accounting for periodic boundaries (toroidal
   metric)
 - **Construction modes**:
-  - `.toroidal([..])`: Phase 1 canonicalized construction (wrap into fundamental domain)
-  - `.toroidal_periodic([..])`: Phase 2 periodic image-point construction (true toroidal quotient)
+  - `.toroidal([..])`: canonicalized construction (wrap into fundamental domain)
+  - `.toroidal_periodic([..])`: periodic image-point construction (true toroidal quotient)
 
 For more details, see `docs/topology.md` and the toroidal section in the main `README.md`.
 
@@ -332,9 +372,9 @@ want to keep going after skipped vertices, use the explicitly best-effort
 
 ```rust
 use delaunay::prelude::construction::{DelaunayTriangulation, vertex};
-use delaunay::prelude::insertion::InsertionOutcome;
+use delaunay::prelude::insertion::{InsertionError, InsertionOutcome};
 
-fn main() -> Result<(), Box<dyn std::error::Error>> {
+fn main() -> Result<(), InsertionError> {
     let mut dt: DelaunayTriangulation<_, (), (), 3> = DelaunayTriangulation::empty();
 
     let (outcome, stats) = dt.insert_best_effort_with_statistics(vertex!([0.5, 0.5, 0.5]))?;
@@ -366,9 +406,20 @@ possible and fan retriangulation otherwise, then runs flip-based Delaunay repair
 the operation rolls back to the pre-removal triangulation.
 
 ```rust
-use delaunay::prelude::construction::{DelaunayTriangulationBuilder, vertex};
+use delaunay::prelude::construction::{
+    DelaunayTriangulationBuilder, DelaunayTriangulationConstructionError, vertex,
+};
+use delaunay::prelude::tds::InvariantError;
 
-fn main() -> Result<(), Box<dyn std::error::Error>> {
+#[derive(Debug, thiserror::Error)]
+enum RemovalExampleError {
+    #[error(transparent)]
+    Construction(#[from] DelaunayTriangulationConstructionError),
+    #[error(transparent)]
+    Invariant(#[from] InvariantError),
+}
+
+fn main() -> Result<(), RemovalExampleError> {
     let vertices = vec![
         vertex!([0.0, 0.0, 0.0]),
         vertex!([1.0, 0.0, 0.0]),
@@ -417,7 +468,15 @@ See [`api_design.md`](api_design.md) for the full Builder vs Edit API design.
 use delaunay::prelude::construction::{DelaunayTriangulationBuilder, vertex};
 use delaunay::prelude::flips::*;
 
-fn main() -> Result<(), Box<dyn std::error::Error>> {
+#[derive(Debug, thiserror::Error)]
+enum FlipExampleError {
+    #[error(transparent)]
+    Construction(#[from] delaunay::prelude::construction::DelaunayTriangulationConstructionError),
+    #[error(transparent)]
+    Flip(#[from] FlipError),
+}
+
+fn main() -> Result<(), FlipExampleError> {
     let vertices = vec![
         vertex!([0.0, 0.0, 0.0]),
         vertex!([1.0, 0.0, 0.0]),

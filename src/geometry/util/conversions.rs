@@ -109,17 +109,20 @@ pub(in crate::geometry::util) fn safe_cast_from_f64<T: CoordinateScalar>(
 /// # Examples
 ///
 /// ```
-/// use delaunay::prelude::geometry::safe_coords_to_f64;
+/// use delaunay::prelude::geometry::{CoordinateConversionError, safe_coords_to_f64};
 ///
+/// # fn main() -> Result<(), CoordinateConversionError> {
 /// // Convert f32 coordinates to f64
 /// let coords_f32 = [1.5f32, 2.5f32, 3.5f32];
-/// let coords_f64 = safe_coords_to_f64(&coords_f32).unwrap();
+/// let coords_f64 = safe_coords_to_f64(&coords_f32)?;
 /// assert_eq!(coords_f64, [1.5f64, 2.5f64, 3.5f64]);
 ///
 /// // Works with different array sizes - 4D example
 /// let coords_4d = [1.0f32, 2.0f32, 3.0f32, 4.0f32];
-/// let result_4d = safe_coords_to_f64(&coords_4d).unwrap();
+/// let result_4d = safe_coords_to_f64(&coords_4d)?;
 /// assert_eq!(result_4d, [1.0f64, 2.0f64, 3.0f64, 4.0f64]);
+/// # Ok(())
+/// # }
 /// ```
 pub fn safe_coords_to_f64<T: CoordinateScalar, const D: usize>(
     coords: &[T; D],
@@ -151,17 +154,20 @@ pub fn safe_coords_to_f64<T: CoordinateScalar, const D: usize>(
 /// # Examples
 ///
 /// ```
-/// use delaunay::prelude::geometry::safe_coords_from_f64;
+/// use delaunay::prelude::geometry::{CoordinateConversionError, safe_coords_from_f64};
 ///
+/// # fn main() -> Result<(), CoordinateConversionError> {
 /// // Convert f64 coordinates to f32
 /// let coords_f64 = [1.5f64, 2.5f64, 3.5f64];
-/// let coords_f32: [f32; 3] = safe_coords_from_f64(&coords_f64).unwrap();
+/// let coords_f32: [f32; 3] = safe_coords_from_f64(&coords_f64)?;
 /// assert_eq!(coords_f32, [1.5f32, 2.5f32, 3.5f32]);
 ///
 /// // Works with different array sizes - 4D example
 /// let coords_4d = [1.0f64, 2.0f64, 3.0f64, 4.0f64];
-/// let result_4d: [f32; 4] = safe_coords_from_f64(&coords_4d).unwrap();
+/// let result_4d: [f32; 4] = safe_coords_from_f64(&coords_4d)?;
 /// assert_eq!(result_4d, [1.0f32, 2.0f32, 3.0f32, 4.0f32]);
+/// # Ok(())
+/// # }
 /// ```
 pub fn safe_coords_from_f64<T: CoordinateScalar, const D: usize>(
     coords: &[f64; D],
@@ -195,11 +201,14 @@ pub fn safe_coords_from_f64<T: CoordinateScalar, const D: usize>(
 /// # Example
 ///
 /// ```
-/// use delaunay::prelude::geometry::safe_scalar_to_f64;
+/// use delaunay::prelude::geometry::{CoordinateConversionError, safe_scalar_to_f64};
 ///
+/// # fn main() -> Result<(), CoordinateConversionError> {
 /// let value_f32 = 42.5f32;
-/// let value_f64 = safe_scalar_to_f64(value_f32).unwrap();
+/// let value_f64 = safe_scalar_to_f64(value_f32)?;
 /// assert_eq!(value_f64, 42.5f64);
+/// # Ok(())
+/// # }
 /// ```
 pub fn safe_scalar_to_f64<T: CoordinateScalar>(value: T) -> Result<f64, CoordinateConversionError> {
     safe_cast_to_f64(value, 0)
@@ -224,16 +233,19 @@ pub fn safe_scalar_to_f64<T: CoordinateScalar>(value: T) -> Result<f64, Coordina
 /// # Examples
 ///
 /// ```
-/// use delaunay::prelude::geometry::safe_scalar_from_f64;
+/// use delaunay::prelude::geometry::{CoordinateConversionError, safe_scalar_from_f64};
 ///
+/// # fn main() -> Result<(), CoordinateConversionError> {
 /// // Convert f64 to f32
 /// let value_f64 = 123.456f64;
-/// let value_f32: f32 = safe_scalar_from_f64(value_f64).unwrap();
+/// let value_f32: f32 = safe_scalar_from_f64(value_f64)?;
 /// assert!((value_f32 - 123.456f32).abs() < 1e-6);
 ///
 /// // Convert f64 to f64 (identity)
-/// let value: f64 = safe_scalar_from_f64(42.0f64).unwrap();
+/// let value: f64 = safe_scalar_from_f64(42.0f64)?;
 /// assert_eq!(value, 42.0f64);
+/// # Ok(())
+/// # }
 /// ```
 pub fn safe_scalar_from_f64<T: CoordinateScalar>(
     value: f64,
@@ -266,11 +278,12 @@ pub fn safe_scalar_from_f64<T: CoordinateScalar>(
 /// # Examples
 ///
 /// ```
-/// use delaunay::prelude::geometry::safe_usize_to_scalar;
+/// use delaunay::prelude::geometry::{CoordinateConversionError, safe_usize_to_scalar};
 ///
+/// # fn main() -> Result<(), CoordinateConversionError> {
 /// // Normal case - small usize values
 /// let result: Result<f64, _> = safe_usize_to_scalar(42_usize);
-/// assert_eq!(result.unwrap(), 42.0);
+/// assert_eq!(result?, 42.0);
 ///
 /// // Large values that fit within f64 precision
 /// let large_value = (1_u64 << 50) as usize; // 2^50, well within f64 precision
@@ -279,6 +292,8 @@ pub fn safe_scalar_from_f64<T: CoordinateScalar>(
 ///
 /// // Values that would lose precision (if usize is large enough)
 /// // This test may not trigger on all platforms depending on usize size
+/// # Ok(())
+/// # }
 /// ```
 ///
 /// # Precision Limits

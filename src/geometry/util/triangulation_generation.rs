@@ -219,8 +219,10 @@ where
 /// # Examples
 ///
 /// ```no_run
+/// use delaunay::prelude::construction::DelaunayTriangulationConstructionError;
 /// use delaunay::prelude::generators::generate_random_triangulation;
 ///
+/// # fn main() -> Result<(), DelaunayTriangulationConstructionError> {
 /// // Generate a 2D triangulation with 50 points, no seed (random each time)
 /// let triangulation_2d = generate_random_triangulation::<f64, (), (), 2>(
 ///     50,
@@ -254,8 +256,10 @@ where
 /// );
 ///
 /// // Access the underlying Tds if needed
-/// let dt = triangulation_3d.unwrap();
+/// let dt = triangulation_3d?;
 /// let vertex_count = dt.tds().number_of_vertices();
+/// # Ok(())
+/// # }
 /// ```
 ///
 /// # Note on String Data
@@ -331,18 +335,21 @@ where
 /// # Examples
 ///
 /// ```no_run
+/// use delaunay::prelude::construction::DelaunayTriangulationConstructionError;
 /// use delaunay::prelude::generators::generate_random_triangulation_with_topology_guarantee;
 /// use delaunay::prelude::TopologyGuarantee;
 ///
+/// # fn main() -> Result<(), DelaunayTriangulationConstructionError> {
 /// let dt = generate_random_triangulation_with_topology_guarantee::<f64, (), (), 3>(
 ///     20,
 ///     (-1.0, 1.0),
 ///     None,
 ///     Some(123),
 ///     TopologyGuarantee::Pseudomanifold,
-/// )
-/// .unwrap();
+/// )?;
 /// assert_eq!(dt.dim(), 3);
+/// # Ok(())
+/// # }
 /// ```
 pub fn generate_random_triangulation_with_topology_guarantee<T, U, V, const D: usize>(
     n_points: usize,
@@ -466,23 +473,25 @@ where
 /// # Examples
 ///
 /// ```no_run
+/// use delaunay::prelude::construction::DelaunayTriangulationConstructionError;
 /// use delaunay::prelude::generators::RandomTriangulationBuilder;
 /// use delaunay::prelude::generators::InsertionOrderStrategy;
 /// use delaunay::prelude::TopologyGuarantee;
 ///
+/// # fn main() -> Result<(), DelaunayTriangulationConstructionError> {
 /// // Override the default `Hilbert` ordering with `Input` ordering.
 /// let dt = RandomTriangulationBuilder::new(20, (-3.0, 3.0))
 ///     .seed(666)
 ///     .insertion_order(InsertionOrderStrategy::Input)
-///     .build::<(), (), 3>()
-///     .unwrap();
+///     .build::<(), (), 3>()?;
 ///
 /// // Build with PLManifold guarantee
 /// let dt_manifold = RandomTriangulationBuilder::new(100, (-10.0, 10.0))
 ///     .seed(777)
 ///     .topology_guarantee(TopologyGuarantee::PLManifold)
-///     .build::<(), (), 4>()
-///     .unwrap();
+///     .build::<(), (), 4>()?;
+/// # Ok(())
+/// # }
 /// ```
 pub struct RandomTriangulationBuilder<T> {
     n_points: usize,
@@ -550,15 +559,18 @@ impl<T> RandomTriangulationBuilder<T> {
     /// # Examples
     ///
     /// ```no_run
+    /// use delaunay::prelude::construction::DelaunayTriangulationConstructionError;
     /// use delaunay::prelude::generators::RandomTriangulationBuilder;
     /// use delaunay::prelude::generators::InsertionOrderStrategy;
     ///
+    /// # fn main() -> Result<(), DelaunayTriangulationConstructionError> {
     /// // Override the default `Hilbert` ordering with `Input` ordering.
     /// let dt = RandomTriangulationBuilder::new(20, (-3.0, 3.0))
     ///     .seed(666)
     ///     .insertion_order(InsertionOrderStrategy::Input)
-    ///     .build::<(), (), 3>()
-    ///     .unwrap();
+    ///     .build::<(), (), 3>()?;
+    /// # Ok(())
+    /// # }
     /// ```
     #[must_use]
     pub const fn insertion_order(mut self, strategy: InsertionOrderStrategy) -> Self {
@@ -599,13 +611,16 @@ where
     /// # Examples
     ///
     /// ```no_run
+    /// use delaunay::prelude::construction::DelaunayTriangulationConstructionError;
     /// use delaunay::prelude::generators::RandomTriangulationBuilder;
     ///
+    /// # fn main() -> Result<(), DelaunayTriangulationConstructionError> {
     /// let dt = RandomTriangulationBuilder::new(12, (-2.0, 2.0))
     ///     .seed(7)
-    ///     .build::<(), (), 3>()
-    ///     .unwrap();
+    ///     .build::<(), (), 3>()?;
     /// assert_eq!(dt.dim(), 3);
+    /// # Ok(())
+    /// # }
     /// ```
     pub fn build<U, V, const D: usize>(
         self,
@@ -633,13 +648,16 @@ where
     /// # Examples
     ///
     /// ```no_run
+    /// use delaunay::prelude::construction::DelaunayTriangulationConstructionError;
     /// use delaunay::prelude::generators::RandomTriangulationBuilder;
     ///
+    /// # fn main() -> Result<(), DelaunayTriangulationConstructionError> {
     /// let dt = RandomTriangulationBuilder::new(12, (-2.0, 2.0))
     ///     .seed(7)
-    ///     .build_with_vertex_data::<(), (), 3>(None)
-    ///     .unwrap();
+    ///     .build_with_vertex_data::<(), (), 3>(None)?;
     /// assert_eq!(dt.dim(), 3);
+    /// # Ok(())
+    /// # }
     /// ```
     pub fn build_with_vertex_data<U, V, const D: usize>(
         self,

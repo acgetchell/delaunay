@@ -110,10 +110,18 @@ where
 /// use delaunay::prelude::tds::facet_view_to_vertices;
 /// use delaunay::prelude::tds::{FacetError, Tds};
 ///
+/// #[derive(Debug, thiserror::Error)]
+/// enum ExampleError {
+///     #[error(transparent)]
+///     Facet(#[from] FacetError),
+///     #[error("triangulation unexpectedly contains no simplices")]
+///     MissingSimplex,
+/// }
+///
 /// fn extract_vertices_example(
 ///     tds: &Tds<f64, (), (), 3>,
-/// ) -> Result<(), FacetError> {
-///     let simplex_key = tds.simplex_keys().next().unwrap();
+/// ) -> Result<(), ExampleError> {
+///     let simplex_key = tds.simplex_keys().next().ok_or(ExampleError::MissingSimplex)?;
 ///     let facet_view = FacetView::new(tds, simplex_key, 0)?;
 ///     
 ///     // Extract owned vertices

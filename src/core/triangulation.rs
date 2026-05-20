@@ -104,25 +104,34 @@ where
     ///
     /// ```
     /// use delaunay::prelude::construction::{
-    ///     DelaunayTriangulationBuilder, Vertex, vertex,
+    ///     DelaunayTriangulationBuilder, DelaunayTriangulationConstructionError, Vertex, vertex,
     /// };
     ///
+    /// # #[derive(Debug, thiserror::Error)]
+    /// # enum ExampleError {
+    /// #     #[error(transparent)]
+    /// #     Construction(#[from] DelaunayTriangulationConstructionError),
+    /// #     #[error("triangulation unexpectedly contains no vertices")]
+    /// #     MissingVertex,
+    /// # }
+    /// # fn main() -> Result<(), ExampleError> {
     /// let vertices: [Vertex<f64, i32, 2>; 3] = [
     ///     vertex!([0.0, 0.0], 10i32),
     ///     vertex!([1.0, 0.0], 20),
     ///     vertex!([0.0, 1.0], 30),
     /// ];
-    /// let mut dt = DelaunayTriangulationBuilder::new(&vertices)
-    ///     .build::<()>()
-    ///     .unwrap();
-    /// let key = dt.vertices().next().unwrap().0;
+    /// let mut dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
+    /// let key = dt.vertices().next().ok_or(ExampleError::MissingVertex)?.0;
     /// let prev = dt.set_vertex_data(key, Some(99));
     /// assert!(prev.is_some());
     ///
     /// // Clear data
     /// let prev = dt.set_vertex_data(key, None);
     /// assert_eq!(prev, Some(Some(99)));
-    /// assert_eq!(dt.tds().vertex(key).unwrap().data(), None);
+    /// let vertex = dt.tds().vertex(key).ok_or(ExampleError::MissingVertex)?;
+    /// assert_eq!(vertex.data(), None);
+    /// # Ok(())
+    /// # }
     /// ```
     #[inline]
     pub fn set_vertex_data(&mut self, key: VertexKey, data: Option<U>) -> Option<Option<U>> {
@@ -143,25 +152,34 @@ where
     ///
     /// ```
     /// use delaunay::prelude::construction::{
-    ///     DelaunayTriangulationBuilder, vertex,
+    ///     DelaunayTriangulationBuilder, DelaunayTriangulationConstructionError, vertex,
     /// };
     ///
+    /// # #[derive(Debug, thiserror::Error)]
+    /// # enum ExampleError {
+    /// #     #[error(transparent)]
+    /// #     Construction(#[from] DelaunayTriangulationConstructionError),
+    /// #     #[error("triangulation unexpectedly contains no simplices")]
+    /// #     MissingSimplex,
+    /// # }
+    /// # fn main() -> Result<(), ExampleError> {
     /// let vertices = [
     ///     vertex!([0.0, 0.0]),
     ///     vertex!([1.0, 0.0]),
     ///     vertex!([0.0, 1.0]),
     /// ];
-    /// let mut dt = DelaunayTriangulationBuilder::new(&vertices)
-    ///     .build::<i32>()
-    ///     .unwrap();
-    /// let key = dt.simplices().next().unwrap().0;
+    /// let mut dt = DelaunayTriangulationBuilder::new(&vertices).build::<i32>()?;
+    /// let key = dt.simplices().next().ok_or(ExampleError::MissingSimplex)?.0;
     /// let prev = dt.set_simplex_data(key, Some(42));
     /// assert_eq!(prev, Some(None));
     ///
     /// // Clear data
     /// let prev = dt.set_simplex_data(key, None);
     /// assert_eq!(prev, Some(Some(42)));
-    /// assert_eq!(dt.tds().simplex(key).unwrap().data(), None);
+    /// let simplex = dt.tds().simplex(key).ok_or(ExampleError::MissingSimplex)?;
+    /// assert_eq!(simplex.data(), None);
+    /// # Ok(())
+    /// # }
     /// ```
     #[inline]
     pub fn set_simplex_data(&mut self, key: SimplexKey, data: Option<V>) -> Option<Option<V>> {

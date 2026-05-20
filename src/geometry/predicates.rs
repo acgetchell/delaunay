@@ -452,17 +452,20 @@ impl std::fmt::Display for Orientation {
 /// # Example
 ///
 /// ```
-/// use delaunay::prelude::geometry::Orientation;
-/// use delaunay::prelude::geometry::Point;
-/// use delaunay::prelude::geometry::Coordinate;
-/// use delaunay::prelude::geometry::simplex_orientation;
+/// use delaunay::prelude::geometry::{
+///     Coordinate, CoordinateConversionError, Orientation, Point, simplex_orientation,
+/// };
+///
+/// # fn main() -> Result<(), CoordinateConversionError> {
 /// let point1 = Point::new([0.0, 0.0, 0.0]);
 /// let point2 = Point::new([1.0, 0.0, 0.0]);
 /// let point3 = Point::new([0.0, 1.0, 0.0]);
 /// let point4 = Point::new([0.0, 0.0, 1.0]);
 /// let simplex_points = vec![point1, point2, point3, point4];
-/// let oriented = simplex_orientation(&simplex_points).unwrap();
+/// let oriented = simplex_orientation(&simplex_points)?;
 /// assert_eq!(oriented, Orientation::NEGATIVE);
+/// # Ok(())
+/// # }
 /// ```
 #[inline]
 pub fn simplex_orientation<T, const D: usize>(
@@ -599,16 +602,20 @@ where
 /// # Example
 ///
 /// ```
-/// use delaunay::prelude::geometry::Point;
-/// use delaunay::prelude::geometry::Coordinate;
-/// use delaunay::prelude::geometry::{insphere_distance, InSphere};
+/// use delaunay::prelude::geometry::{
+///     CircumcenterError, Coordinate, InSphere, Point, insphere_distance,
+/// };
+///
+/// # fn main() -> Result<(), CircumcenterError> {
 /// let point1 = Point::new([0.0, 0.0, 0.0]);
 /// let point2 = Point::new([1.0, 0.0, 0.0]);
 /// let point3 = Point::new([0.0, 1.0, 0.0]);
 /// let point4 = Point::new([0.0, 0.0, 1.0]);
 /// let simplex_points = vec![point1, point2, point3, point4];
 /// let test_point = Point::new([0.5, 0.5, 0.5]);
-/// assert_eq!(insphere_distance(&simplex_points, test_point).unwrap(), InSphere::INSIDE);
+/// assert_eq!(insphere_distance(&simplex_points, test_point)?, InSphere::INSIDE);
+/// # Ok(())
+/// # }
 /// ```
 pub fn insphere_distance<T, const D: usize>(
     simplex_points: &[Point<T, D>],
@@ -746,10 +753,11 @@ where
 /// # Example
 ///
 /// ```
-/// use delaunay::prelude::geometry::Point;
-/// use delaunay::prelude::geometry::Coordinate;
-/// use delaunay::prelude::geometry::insphere;
-/// use delaunay::prelude::geometry::InSphere;
+/// use delaunay::prelude::geometry::{
+///     Coordinate, CoordinateConversionError, InSphere, Point, insphere,
+/// };
+///
+/// # fn main() -> Result<(), CoordinateConversionError> {
 /// let point1 = Point::new([0.0, 0.0, 0.0]);
 /// let point2 = Point::new([1.0, 0.0, 0.0]);
 /// let point3 = Point::new([0.0, 1.0, 0.0]);
@@ -758,11 +766,13 @@ where
 ///
 /// // Test with a point clearly outside the circumsphere
 /// let outside_point = Point::new([2.0, 2.0, 2.0]);
-/// assert_eq!(insphere(&simplex_points, outside_point).unwrap(), InSphere::OUTSIDE);
+/// assert_eq!(insphere(&simplex_points, outside_point)?, InSphere::OUTSIDE);
 ///
 /// // Test with a point clearly inside the circumsphere
 /// let inside_point = Point::new([0.25, 0.25, 0.25]);
-/// assert_eq!(insphere(&simplex_points, inside_point).unwrap(), InSphere::INSIDE);
+/// assert_eq!(insphere(&simplex_points, inside_point)?, InSphere::INSIDE);
+/// # Ok(())
+/// # }
 /// ```
 ///
 /// See function-level docs above for detailed explanation and references.

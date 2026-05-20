@@ -86,11 +86,16 @@ fn format_bytes(bytes: usize) -> String {
 /// # Examples
 ///
 /// ```
-/// use delaunay::prelude::generators::scaled_bounds_by_point_count;
+/// use delaunay::prelude::generators::{
+///     RandomPointGenerationError, scaled_bounds_by_point_count,
+/// };
 ///
+/// # fn main() -> Result<(), RandomPointGenerationError> {
 /// // 100 points -> side length 100, i.e. [-50, 50]
-/// let bounds = scaled_bounds_by_point_count::<f64>(100).unwrap();
+/// let bounds = scaled_bounds_by_point_count::<f64>(100)?;
 /// assert_eq!(bounds, (-50.0, 50.0));
+/// # Ok(())
+/// # }
 /// ```
 pub fn scaled_bounds_by_point_count<T: CoordinateScalar>(
     n_points: usize,
@@ -134,23 +139,28 @@ pub fn scaled_bounds_by_point_count<T: CoordinateScalar>(
 /// # Examples
 ///
 /// ```
-/// use delaunay::prelude::generators::generate_random_points;
+/// use delaunay::prelude::generators::{
+///     RandomPointGenerationError, generate_random_points,
+/// };
 ///
+/// # fn main() -> Result<(), RandomPointGenerationError> {
 /// // Generate 100 random 2D points with coordinates in [-10.0, 10.0]
-/// let points_2d = generate_random_points::<f64, 2>(100, (-10.0, 10.0)).unwrap();
+/// let points_2d = generate_random_points::<f64, 2>(100, (-10.0, 10.0))?;
 /// assert_eq!(points_2d.len(), 100);
 ///
 /// // Generate 3D points with coordinates in [0.0, 1.0] (unit cube)
-/// let points_3d = generate_random_points::<f64, 3>(50, (0.0, 1.0)).unwrap();
+/// let points_3d = generate_random_points::<f64, 3>(50, (0.0, 1.0))?;
 /// assert_eq!(points_3d.len(), 50);
 ///
 /// // Generate 4D points centered around origin
-/// let points_4d = generate_random_points::<f32, 4>(25, (-1.0, 1.0)).unwrap();
+/// let points_4d = generate_random_points::<f32, 4>(25, (-1.0, 1.0))?;
 /// assert_eq!(points_4d.len(), 25);
 ///
 /// // Error handling
 /// let result = generate_random_points::<f64, 2>(100, (10.0, -10.0));
 /// assert!(result.is_err()); // Invalid range
+/// # Ok(())
+/// # }
 /// ```
 pub fn generate_random_points<T: CoordinateScalar + SampleUniform, const D: usize>(
     n_points: usize,
@@ -206,22 +216,27 @@ pub fn generate_random_points<T: CoordinateScalar + SampleUniform, const D: usiz
 /// # Examples
 ///
 /// ```
-/// use delaunay::prelude::generators::generate_random_points_seeded;
+/// use delaunay::prelude::generators::{
+///     RandomPointGenerationError, generate_random_points_seeded,
+/// };
 ///
+/// # fn main() -> Result<(), RandomPointGenerationError> {
 /// // Generate reproducible random points
-/// let points1 = generate_random_points_seeded::<f64, 3>(100, (-5.0, 5.0), 42).unwrap();
-/// let points2 = generate_random_points_seeded::<f64, 3>(100, (-5.0, 5.0), 42).unwrap();
+/// let points1 = generate_random_points_seeded::<f64, 3>(100, (-5.0, 5.0), 42)?;
+/// let points2 = generate_random_points_seeded::<f64, 3>(100, (-5.0, 5.0), 42)?;
 /// assert_eq!(points1, points2); // Same seed produces identical results
 ///
 /// // Different seeds produce different results
-/// let points3 = generate_random_points_seeded::<f64, 3>(100, (-5.0, 5.0), 123).unwrap();
+/// let points3 = generate_random_points_seeded::<f64, 3>(100, (-5.0, 5.0), 123)?;
 /// assert_ne!(points1, points3);
 ///
 /// // Common ranges - unit cube [0,1]
-/// let unit_points = generate_random_points_seeded::<f64, 3>(50, (0.0, 1.0), 42).unwrap();
+/// let unit_points = generate_random_points_seeded::<f64, 3>(50, (0.0, 1.0), 42)?;
 ///
 /// // Centered around origin [-1,1]
-/// let centered_points = generate_random_points_seeded::<f64, 3>(50, (-1.0, 1.0), 42).unwrap();
+/// let centered_points = generate_random_points_seeded::<f64, 3>(50, (-1.0, 1.0), 42)?;
+/// # Ok(())
+/// # }
 /// ```
 pub fn generate_random_points_seeded<T: CoordinateScalar + SampleUniform, const D: usize>(
     n_points: usize,
@@ -279,16 +294,21 @@ pub fn generate_random_points_seeded<T: CoordinateScalar + SampleUniform, const 
 /// # Examples
 ///
 /// ```
-/// use delaunay::prelude::generators::generate_random_points_periodic;
+/// use delaunay::prelude::generators::{
+///     RandomPointGenerationError, generate_random_points_periodic,
+/// };
 ///
+/// # fn main() -> Result<(), RandomPointGenerationError> {
 /// // Generate 100 random 2D points in [0,1) × [0,2)
-/// let points = generate_random_points_periodic::<f64, 2>(100, [1.0, 2.0], 42).unwrap();
+/// let points = generate_random_points_periodic::<f64, 2>(100, [1.0, 2.0], 42)?;
 /// assert_eq!(points.len(), 100);
 ///
 /// // Reproducible generation
-/// let points1 = generate_random_points_periodic::<f64, 3>(50, [1.0, 1.0, 1.0], 123).unwrap();
-/// let points2 = generate_random_points_periodic::<f64, 3>(50, [1.0, 1.0, 1.0], 123).unwrap();
+/// let points1 = generate_random_points_periodic::<f64, 3>(50, [1.0, 1.0, 1.0], 123)?;
+/// let points2 = generate_random_points_periodic::<f64, 3>(50, [1.0, 1.0, 1.0], 123)?;
 /// assert_eq!(points1, points2);
+/// # Ok(())
+/// # }
 /// ```
 pub fn generate_random_points_periodic<T: CoordinateScalar + SampleUniform, const D: usize>(
     n_points: usize,
@@ -379,11 +399,16 @@ where
 /// # Examples
 ///
 /// ```
-/// use delaunay::prelude::generators::generate_random_points_in_ball;
+/// use delaunay::prelude::generators::{
+///     RandomPointGenerationError, generate_random_points_in_ball,
+/// };
 ///
+/// # fn main() -> Result<(), RandomPointGenerationError> {
 /// // Generate 100 random 4D points in a radius-10 ball.
-/// let points = generate_random_points_in_ball::<f64, 4>(100, 10.0).unwrap();
+/// let points = generate_random_points_in_ball::<f64, 4>(100, 10.0)?;
 /// assert_eq!(points.len(), 100);
+/// # Ok(())
+/// # }
 /// ```
 pub fn generate_random_points_in_ball<T: CoordinateScalar + SampleUniform, const D: usize>(
     n_points: usize,
@@ -410,11 +435,16 @@ pub fn generate_random_points_in_ball<T: CoordinateScalar + SampleUniform, const
 /// # Examples
 ///
 /// ```
-/// use delaunay::prelude::generators::generate_random_points_in_ball_seeded;
+/// use delaunay::prelude::generators::{
+///     RandomPointGenerationError, generate_random_points_in_ball_seeded,
+/// };
 ///
-/// let points1 = generate_random_points_in_ball_seeded::<f64, 4>(10, 1.0, 42).unwrap();
-/// let points2 = generate_random_points_in_ball_seeded::<f64, 4>(10, 1.0, 42).unwrap();
+/// # fn main() -> Result<(), RandomPointGenerationError> {
+/// let points1 = generate_random_points_in_ball_seeded::<f64, 4>(10, 1.0, 42)?;
+/// let points2 = generate_random_points_in_ball_seeded::<f64, 4>(10, 1.0, 42)?;
 /// assert_eq!(points1, points2);
+/// # Ok(())
+/// # }
 /// ```
 pub fn generate_random_points_in_ball_seeded<
     T: CoordinateScalar + SampleUniform,
@@ -461,19 +491,24 @@ pub fn generate_random_points_in_ball_seeded<
 /// # Examples
 ///
 /// ```
-/// use delaunay::prelude::generators::generate_grid_points;
+/// use delaunay::prelude::generators::{
+///     RandomPointGenerationError, generate_grid_points,
+/// };
 ///
+/// # fn main() -> Result<(), RandomPointGenerationError> {
 /// // Generate 2D grid: 4x4 = 16 points with unit spacing
-/// let grid_2d = generate_grid_points::<f64, 2>(4, 1.0, [0.0, 0.0]).unwrap();
+/// let grid_2d = generate_grid_points::<f64, 2>(4, 1.0, [0.0, 0.0])?;
 /// assert_eq!(grid_2d.len(), 16);
 ///
 /// // Generate 3D grid: 3x3x3 = 27 points with spacing 2.0
-/// let grid_3d = generate_grid_points::<f64, 3>(3, 2.0, [0.0, 0.0, 0.0]).unwrap();
+/// let grid_3d = generate_grid_points::<f64, 3>(3, 2.0, [0.0, 0.0, 0.0])?;
 /// assert_eq!(grid_3d.len(), 27);
 ///
 /// // Generate 4D grid centered at origin
-/// let grid_4d = generate_grid_points::<f64, 4>(2, 1.0, [-0.5, -0.5, -0.5, -0.5]).unwrap();
+/// let grid_4d = generate_grid_points::<f64, 4>(2, 1.0, [-0.5, -0.5, -0.5, -0.5])?;
 /// assert_eq!(grid_4d.len(), 16); // 2^4 = 16 points
+/// # Ok(())
+/// # }
 /// ```
 pub fn generate_grid_points<T: CoordinateScalar, const D: usize>(
     points_per_dim: usize,
@@ -580,14 +615,19 @@ pub fn generate_grid_points<T: CoordinateScalar, const D: usize>(
 /// # Examples
 ///
 /// ```
-/// use delaunay::prelude::generators::generate_poisson_points;
+/// use delaunay::prelude::generators::{
+///     RandomPointGenerationError, generate_poisson_points,
+/// };
 ///
+/// # fn main() -> Result<(), RandomPointGenerationError> {
 /// // Generate ~100 2D points with minimum distance 0.1 in unit square
-/// let poisson_2d = generate_poisson_points::<f64, 2>(100, (0.0, 1.0), 0.1, 42).unwrap();
+/// let poisson_2d = generate_poisson_points::<f64, 2>(100, (0.0, 1.0), 0.1, 42)?;
 /// // Actual count may be less than 100 due to spacing constraints
 ///
 /// // Generate 3D points in a cube
-/// let poisson_3d = generate_poisson_points::<f64, 3>(50, (-1.0, 1.0), 0.2, 123).unwrap();
+/// let poisson_3d = generate_poisson_points::<f64, 3>(50, (-1.0, 1.0), 0.2, 123)?;
+/// # Ok(())
+/// # }
 /// ```
 pub fn generate_poisson_points<T: CoordinateScalar + SampleUniform, const D: usize>(
     n_points: usize,

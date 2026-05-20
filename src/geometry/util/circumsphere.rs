@@ -70,16 +70,18 @@ pub use super::CircumcenterError;
 /// # Example
 ///
 /// ```
-/// use delaunay::prelude::geometry::Point;
-/// use delaunay::prelude::geometry::Coordinate;
-/// use delaunay::prelude::geometry::circumcenter;
+/// use delaunay::prelude::geometry::{CircumcenterError, Coordinate, Point, circumcenter};
+///
+/// # fn main() -> Result<(), CircumcenterError> {
 /// let point1 = Point::new([0.0, 0.0, 0.0]);
 /// let point2 = Point::new([1.0, 0.0, 0.0]);
 /// let point3 = Point::new([0.0, 1.0, 0.0]);
 /// let point4 = Point::new([0.0, 0.0, 1.0]);
 /// let points = vec![point1, point2, point3, point4];
-/// let center = circumcenter(&points).unwrap();
+/// let center = circumcenter(&points)?;
 /// assert_eq!(center, Point::new([0.5, 0.5, 0.5]));
+/// # Ok(())
+/// # }
 /// ```
 pub fn circumcenter<T, const D: usize>(
     points: &[Point<T, D>],
@@ -213,18 +215,20 @@ where
 /// # Example
 ///
 /// ```
-/// use delaunay::prelude::geometry::Point;
-/// use delaunay::prelude::geometry::Coordinate;
-/// use delaunay::prelude::geometry::circumradius;
+/// use delaunay::prelude::geometry::{CircumcenterError, Coordinate, Point, circumradius};
 /// use approx::assert_relative_eq;
+///
+/// # fn main() -> Result<(), CircumcenterError> {
 /// let point1 = Point::new([0.0, 0.0, 0.0]);
 /// let point2 = Point::new([1.0, 0.0, 0.0]);
 /// let point3 = Point::new([0.0, 1.0, 0.0]);
 /// let point4 = Point::new([0.0, 0.0, 1.0]);
 /// let points = vec![point1, point2, point3, point4];
-/// let radius = circumradius(&points).unwrap();
+/// let radius = circumradius(&points)?;
 /// let expected_radius = (3.0_f64.sqrt() / 2.0);
 /// assert_relative_eq!(radius, expected_radius, epsilon = 1e-9);
+/// # Ok(())
+/// # }
 /// ```
 pub fn circumradius<T, const D: usize>(points: &[Point<T, D>]) -> Result<T, CircumcenterError>
 where
@@ -258,19 +262,23 @@ where
 /// # Example
 ///
 /// ```
-/// use delaunay::prelude::geometry::Point;
-/// use delaunay::prelude::geometry::Coordinate;
-/// use delaunay::prelude::geometry::{circumcenter, circumradius_with_center};
+/// use delaunay::prelude::geometry::{
+///     CircumcenterError, Coordinate, Point, circumcenter, circumradius_with_center,
+/// };
 /// use approx::assert_relative_eq;
+///
+/// # fn main() -> Result<(), CircumcenterError> {
 /// let point1 = Point::new([0.0, 0.0, 0.0]);
 /// let point2 = Point::new([1.0, 0.0, 0.0]);
 /// let point3 = Point::new([0.0, 1.0, 0.0]);
 /// let point4 = Point::new([0.0, 0.0, 1.0]);
 /// let points = vec![point1, point2, point3, point4];
-/// let center = circumcenter(&points).unwrap();
-/// let radius = circumradius_with_center(&points, &center).unwrap();
+/// let center = circumcenter(&points)?;
+/// let radius = circumradius_with_center(&points, &center)?;
 /// let expected_radius = (3.0_f64.sqrt() / 2.0);
 /// assert_relative_eq!(radius, expected_radius, epsilon = 1e-9);
+/// # Ok(())
+/// # }
 /// ```
 pub fn circumradius_with_center<T, const D: usize>(
     points: &[Point<T, D>],
