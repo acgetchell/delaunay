@@ -817,7 +817,7 @@ mod random_topology_tests {
 // Addition to tests/circumsphere_debug_tools.rs
 
 #[test]
-fn test_topology_debug_analysis() -> Result<(), Box<dyn std::error::Error>> {
+fn test_topology_debug_analysis() -> Result<(), TdsConstructionError> {
     println!("=== Topology Debug Analysis ===");
 
     // Test across multiple dimensions
@@ -835,7 +835,7 @@ fn test_topology_debug_analysis() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
-fn test_2d_topology_debug() -> Result<(), Box<dyn std::error::Error>> {
+fn test_2d_topology_debug() -> Result<(), TdsConstructionError> {
     let vertices = vec![
         vertex!([0.0, 0.0]),
         vertex!([1.0, 0.0]),

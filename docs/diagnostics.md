@@ -116,8 +116,17 @@ use delaunay::prelude::diagnostics::delaunay_violation_report;
 use delaunay::prelude::construction::{
     DelaunayTriangulationBuilder, DelaunayTriangulationConstructionError, vertex,
 };
+use delaunay::prelude::DelaunayValidationError;
 
-fn main() -> Result<(), Box<dyn std::error::Error>> {
+#[derive(Debug, thiserror::Error)]
+enum DiagnosticsExampleError {
+    #[error(transparent)]
+    Construction(#[from] DelaunayTriangulationConstructionError),
+    #[error(transparent)]
+    Validation(#[from] DelaunayValidationError),
+}
+
+fn main() -> Result<(), DiagnosticsExampleError> {
     let vertices = vec![
         vertex!([0.0, 0.0, 0.0]),
         vertex!([1.0, 0.0, 0.0]),

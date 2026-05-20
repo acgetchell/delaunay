@@ -58,10 +58,10 @@ const fn insphere_to_i32(result: InSphere) -> i32 {
 /// # Examples
 ///
 /// ```
-/// use delaunay::prelude::geometry::{FastKernel, Kernel};
+/// use delaunay::prelude::geometry::{Coordinate, CoordinateConversionError, FastKernel, Kernel};
 /// use delaunay::prelude::geometry::Point;
-/// use delaunay::prelude::geometry::Coordinate;
 ///
+/// # fn main() -> Result<(), CoordinateConversionError> {
 /// let kernel = FastKernel::<f64>::new();
 ///
 /// // Test orientation of a 2D triangle
@@ -70,13 +70,15 @@ const fn insphere_to_i32(result: InSphere) -> i32 {
 ///     Point::new([1.0, 0.0]),
 ///     Point::new([0.5, 1.0]),
 /// ];
-/// let orientation = kernel.orientation(&points).unwrap();
+/// let orientation = kernel.orientation(&points)?;
 /// assert!(orientation != 0); // Not degenerate
 ///
 /// // Test if point is inside circumcircle
 /// let test_point = Point::new([0.5, 0.3]);
-/// let result = kernel.in_sphere(&points, &test_point).unwrap();
+/// let result = kernel.in_sphere(&points, &test_point)?;
 /// assert_eq!(result, 1); // Inside
+/// # Ok(())
+/// # }
 /// ```
 pub trait Kernel<const D: usize>: Clone {
     /// The scalar type used for coordinates.
@@ -113,10 +115,11 @@ pub trait Kernel<const D: usize>: Clone {
     /// # Examples
     ///
     /// ```
-    /// use delaunay::prelude::geometry::{FastKernel, Kernel};
-    /// use delaunay::prelude::geometry::Point;
-    /// use delaunay::prelude::geometry::Coordinate;
+    /// use delaunay::prelude::geometry::{
+    ///     Coordinate, CoordinateConversionError, FastKernel, Kernel, Point,
+    /// };
     ///
+    /// # fn main() -> Result<(), CoordinateConversionError> {
     /// let kernel = FastKernel::<f64>::new();
     ///
     /// // 3D tetrahedron
@@ -126,8 +129,10 @@ pub trait Kernel<const D: usize>: Clone {
     ///     Point::new([0.0, 1.0, 0.0]),
     ///     Point::new([0.0, 0.0, 1.0]),
     /// ];
-    /// let orientation = kernel.orientation(&points).unwrap();
+    /// let orientation = kernel.orientation(&points)?;
     /// assert!(orientation == -1 || orientation == 1); // Non-degenerate
+    /// # Ok(())
+    /// # }
     /// ```
     fn orientation(
         &self,
@@ -164,10 +169,11 @@ pub trait Kernel<const D: usize>: Clone {
     /// # Examples
     ///
     /// ```
-    /// use delaunay::prelude::geometry::{FastKernel, Kernel};
-    /// use delaunay::prelude::geometry::Point;
-    /// use delaunay::prelude::geometry::Coordinate;
+    /// use delaunay::prelude::geometry::{
+    ///     Coordinate, CoordinateConversionError, FastKernel, Kernel, Point,
+    /// };
     ///
+    /// # fn main() -> Result<(), CoordinateConversionError> {
     /// let kernel = FastKernel::<f64>::new();
     ///
     /// // 3D tetrahedron
@@ -180,11 +186,13 @@ pub trait Kernel<const D: usize>: Clone {
     ///
     /// // Point inside the circumsphere
     /// let inside = Point::new([0.25, 0.25, 0.25]);
-    /// assert_eq!(kernel.in_sphere(&simplex, &inside).unwrap(), 1);
+    /// assert_eq!(kernel.in_sphere(&simplex, &inside)?, 1);
     ///
     /// // Point outside the circumsphere
     /// let outside = Point::new([2.0, 2.0, 2.0]);
-    /// assert_eq!(kernel.in_sphere(&simplex, &outside).unwrap(), -1);
+    /// assert_eq!(kernel.in_sphere(&simplex, &outside)?, -1);
+    /// # Ok(())
+    /// # }
     /// ```
     fn in_sphere(
         &self,
@@ -342,10 +350,10 @@ impl_exact_predicates_for_supported_dims!(0, 1, 2, 3, 4, 5);
 /// # Examples
 ///
 /// ```
-/// use delaunay::prelude::geometry::{FastKernel, Kernel};
+/// use delaunay::prelude::geometry::{Coordinate, CoordinateConversionError, FastKernel, Kernel};
 /// use delaunay::prelude::geometry::Point;
-/// use delaunay::prelude::geometry::Coordinate;
 ///
+/// # fn main() -> Result<(), CoordinateConversionError> {
 /// // Create a fast kernel for f64 coordinates
 /// let kernel = FastKernel::<f64>::new();
 ///
@@ -357,13 +365,15 @@ impl_exact_predicates_for_supported_dims!(0, 1, 2, 3, 4, 5);
 /// ];
 ///
 /// // Check orientation
-/// let orientation = kernel.orientation(&points).unwrap();
+/// let orientation = kernel.orientation(&points)?;
 /// assert!(orientation != 0);
 ///
 /// // Test insphere predicate
 /// let test_point = Point::new([0.25, 0.25]);
-/// let result = kernel.in_sphere(&points, &test_point).unwrap();
+/// let result = kernel.in_sphere(&points, &test_point)?;
 /// assert_eq!(result, 1); // Inside circumcircle
+/// # Ok(())
+/// # }
 /// ```
 #[derive(Clone, Default, Debug)]
 pub struct FastKernel<T> {
@@ -474,10 +484,10 @@ where
 /// # Examples
 ///
 /// ```
-/// use delaunay::prelude::geometry::{RobustKernel, Kernel};
+/// use delaunay::prelude::geometry::{Coordinate, CoordinateConversionError, Kernel, RobustKernel};
 /// use delaunay::prelude::geometry::Point;
-/// use delaunay::prelude::geometry::Coordinate;
 ///
+/// # fn main() -> Result<(), CoordinateConversionError> {
 /// let kernel = RobustKernel::<f64>::new();
 ///
 /// let points = [
@@ -487,12 +497,14 @@ where
 ///     Point::new([0.0, 0.0, 1.0]),
 /// ];
 ///
-/// let orientation = kernel.orientation(&points).unwrap();
+/// let orientation = kernel.orientation(&points)?;
 /// assert!(orientation != 0); // Non-degenerate
 ///
 /// let test_point = Point::new([0.25, 0.25, 0.25]);
-/// let result = kernel.in_sphere(&points, &test_point).unwrap();
+/// let result = kernel.in_sphere(&points, &test_point)?;
 /// assert_eq!(result, 1); // Inside circumsphere
+/// # Ok(())
+/// # }
 /// ```
 #[derive(Clone, Default, Debug)]
 pub struct RobustKernel<T> {
@@ -590,10 +602,11 @@ where
 /// # Examples
 ///
 /// ```
-/// use delaunay::prelude::geometry::{AdaptiveKernel, Kernel};
-/// use delaunay::prelude::geometry::Point;
-/// use delaunay::prelude::geometry::Coordinate;
+/// use delaunay::prelude::geometry::{
+///     AdaptiveKernel, Coordinate, CoordinateConversionError, Kernel, Point,
+/// };
 ///
+/// # fn main() -> Result<(), CoordinateConversionError> {
 /// let kernel = AdaptiveKernel::<f64>::new();
 ///
 /// // Collinear points get a deterministic SoS sign (never 0)
@@ -602,8 +615,10 @@ where
 ///     Point::new([1.0, 0.0]),
 ///     Point::new([2.0, 0.0]),
 /// ];
-/// let orientation = kernel.orientation(&collinear).unwrap();
+/// let orientation = kernel.orientation(&collinear)?;
 /// assert!(orientation == 1 || orientation == -1); // SoS: always non-zero
+/// # Ok(())
+/// # }
 /// ```
 #[derive(Clone, Default, Debug)]
 pub struct AdaptiveKernel<T> {

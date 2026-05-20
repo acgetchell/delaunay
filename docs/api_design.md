@@ -61,9 +61,23 @@ The library provides two distinct APIs for different use cases:
 For most use cases, the builder with default options is sufficient:
 
 ```rust
-use delaunay::prelude::construction::{DelaunayTriangulationBuilder, vertex};
+use delaunay::prelude::construction::{
+    DelaunayTriangulationBuilder, DelaunayTriangulationConstructionError, vertex,
+};
+use delaunay::prelude::insertion::InsertionError;
+use delaunay::prelude::tds::InvariantError;
 
-fn main() -> Result<(), Box<dyn std::error::Error>> {
+#[derive(Debug, thiserror::Error)]
+enum ExampleError {
+    #[error(transparent)]
+    Construction(#[from] DelaunayTriangulationConstructionError),
+    #[error(transparent)]
+    Insertion(#[from] InsertionError),
+    #[error(transparent)]
+    Topology(#[from] InvariantError),
+}
+
+fn main() -> Result<(), ExampleError> {
     // Simple construction from vertices (Euclidean space, default options)
     let vertices = vec![
         vertex!([0.0, 0.0, 0.0]),
@@ -92,11 +106,21 @@ use `DelaunayTriangulationBuilder`:
 
 ```rust
 use delaunay::prelude::construction::{
-    DelaunayTriangulationBuilder, TopologyGuarantee, vertex,
+    DelaunayTriangulationBuilder, DelaunayTriangulationConstructionError, TopologyGuarantee,
+    vertex,
 };
+use delaunay::prelude::insertion::InsertionError;
 use delaunay::prelude::validation::ValidationPolicy;
 
-fn main() -> Result<(), Box<dyn std::error::Error>> {
+#[derive(Debug, thiserror::Error)]
+enum ExampleError {
+    #[error(transparent)]
+    Construction(#[from] DelaunayTriangulationConstructionError),
+    #[error(transparent)]
+    Insertion(#[from] InsertionError),
+}
+
+fn main() -> Result<(), ExampleError> {
     // Toroidal (periodic) triangulation in 2D
     let vertices = vec![
         vertex!([0.1, 0.1]),
@@ -158,10 +182,20 @@ for topology guarantee and validation policy details.
 The Edit API is exposed through the `BistellarFlips` trait in `prelude::flips`:
 
 ```rust
-use delaunay::prelude::construction::{DelaunayTriangulationBuilder, vertex};
+use delaunay::prelude::construction::{
+    DelaunayTriangulationBuilder, DelaunayTriangulationConstructionError, vertex,
+};
 use delaunay::prelude::flips::*;
 
-fn main() -> Result<(), Box<dyn std::error::Error>> {
+#[derive(Debug, thiserror::Error)]
+enum ExampleError {
+    #[error(transparent)]
+    Construction(#[from] DelaunayTriangulationConstructionError),
+    #[error(transparent)]
+    Flip(#[from] FlipError),
+}
+
+fn main() -> Result<(), ExampleError> {
     // Start with a valid triangulation
     let vertices = vec![
         vertex!([0.0, 0.0, 0.0]),
@@ -271,10 +305,23 @@ After applying flips, you should:
 You can mix both APIs in the same workflow:
 
 ```rust
-use delaunay::prelude::construction::{DelaunayTriangulationBuilder, vertex};
+use delaunay::prelude::construction::{
+    DelaunayTriangulationBuilder, DelaunayTriangulationConstructionError, vertex,
+};
 use delaunay::prelude::flips::*;
+use delaunay::prelude::insertion::InsertionError;
 
-fn main() -> Result<(), Box<dyn std::error::Error>> {
+#[derive(Debug, thiserror::Error)]
+enum ExampleError {
+    #[error(transparent)]
+    Construction(#[from] DelaunayTriangulationConstructionError),
+    #[error(transparent)]
+    Insertion(#[from] InsertionError),
+    #[error(transparent)]
+    Flip(#[from] FlipError),
+}
+
+fn main() -> Result<(), ExampleError> {
     // 1. Build initial triangulation (Builder API)
     let vertices = vec![
         vertex!([0.0, 0.0, 0.0]),
@@ -368,12 +415,22 @@ The `delaunay::delaunayize` module provides a single entrypoint for the
 common "repair topology then restore Delaunay" workflow:
 
 ```rust
-use delaunay::prelude::construction::{DelaunayTriangulationBuilder, vertex};
+use delaunay::prelude::construction::{
+    DelaunayTriangulationBuilder, DelaunayTriangulationConstructionError, vertex,
+};
 use delaunay::prelude::delaunayize::{
-    DelaunayizeConfig, delaunayize_by_flips,
+    DelaunayizeConfig, DelaunayizeError, delaunayize_by_flips,
 };
 
-fn main() -> Result<(), Box<dyn std::error::Error>> {
+#[derive(Debug, thiserror::Error)]
+enum ExampleError {
+    #[error(transparent)]
+    Construction(#[from] DelaunayTriangulationConstructionError),
+    #[error(transparent)]
+    Delaunayize(#[from] DelaunayizeError),
+}
+
+fn main() -> Result<(), ExampleError> {
     let vertices = vec![
         vertex!([0.0, 0.0, 0.0]),
         vertex!([1.0, 0.0, 0.0]),

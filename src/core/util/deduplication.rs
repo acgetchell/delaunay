@@ -45,16 +45,11 @@ pub enum DeduplicationError {
 ///
 /// ```
 /// use delaunay::prelude::dedup_vertices_exact;
-/// use delaunay::prelude::Vertex;
-/// use delaunay::prelude::geometry::Point;
-/// use delaunay::prelude::geometry::Coordinate;
+/// use delaunay::prelude::{Vertex, vertex};
 ///
-/// let v1: Vertex<f64, (), 2> = Vertex::from_points(&[Point::new([0.0, 0.0])])
-///     .into_iter().next().unwrap();
-/// let v2: Vertex<f64, (), 2> = Vertex::from_points(&[Point::new([0.0, 0.0])]) // Duplicate
-///     .into_iter().next().unwrap();
-/// let v3: Vertex<f64, (), 2> = Vertex::from_points(&[Point::new([1.0, 1.0])])
-///     .into_iter().next().unwrap();
+/// let v1: Vertex<f64, (), 2> = vertex!([0.0, 0.0]);
+/// let v2: Vertex<f64, (), 2> = vertex!([0.0, 0.0]); // Duplicate
+/// let v3: Vertex<f64, (), 2> = vertex!([1.0, 1.0]);
 ///
 /// let vertices = vec![v1, v2, v3];
 /// let unique = dedup_vertices_exact(&vertices);
@@ -114,16 +109,11 @@ where
 ///
 /// ```
 /// use delaunay::prelude::dedup_vertices_epsilon;
-/// use delaunay::prelude::Vertex;
-/// use delaunay::prelude::geometry::Point;
-/// use delaunay::prelude::geometry::Coordinate;
+/// use delaunay::prelude::{Vertex, vertex};
 ///
-/// let v1: Vertex<f64, (), 2> = Vertex::from_points(&[Point::new([0.0, 0.0])])
-///     .into_iter().next().unwrap();
-/// let v2: Vertex<f64, (), 2> = Vertex::from_points(&[Point::new([1e-11, 1e-11])]) // Near duplicate
-///     .into_iter().next().unwrap();
-/// let v3: Vertex<f64, (), 2> = Vertex::from_points(&[Point::new([1.0, 1.0])])
-///     .into_iter().next().unwrap();
+/// let v1: Vertex<f64, (), 2> = vertex!([0.0, 0.0]);
+/// let v2: Vertex<f64, (), 2> = vertex!([1e-11, 1e-11]); // Near duplicate
+/// let v3: Vertex<f64, (), 2> = vertex!([1.0, 1.0]);
 ///
 /// let vertices = vec![v1, v2, v3];
 /// let unique = dedup_vertices_epsilon(&vertices, 1e-10);
@@ -248,14 +238,10 @@ where
 ///
 /// ```
 /// use delaunay::prelude::filter_vertices_excluding;
-/// use delaunay::prelude::Vertex;
-/// use delaunay::prelude::geometry::Point;
-/// use delaunay::prelude::geometry::Coordinate;
+/// use delaunay::prelude::{Vertex, vertex};
 ///
-/// let v1: Vertex<f64, (), 2> = Vertex::from_points(&[Point::new([0.0, 0.0])])
-///     .into_iter().next().unwrap();
-/// let v2: Vertex<f64, (), 2> = Vertex::from_points(&[Point::new([1.0, 1.0])])
-///     .into_iter().next().unwrap();
+/// let v1: Vertex<f64, (), 2> = vertex!([0.0, 0.0]);
+/// let v2: Vertex<f64, (), 2> = vertex!([1.0, 1.0]);
 ///
 /// let reference = vec![v1]; // Exclude origin
 /// let vertices = vec![v1, v2];

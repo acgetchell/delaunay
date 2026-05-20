@@ -93,9 +93,17 @@ use delaunay::prelude::construction::{
     DelaunayTriangulationBuilder, DelaunayTriangulationConstructionError, TopologyGuarantee,
     Vertex, vertex,
 };
-use delaunay::prelude::validation::ValidationPolicy;
+use delaunay::prelude::validation::{ValidationConfigurationError, ValidationPolicy};
 
-fn main() -> Result<(), Box<dyn std::error::Error>> {
+#[derive(Debug, thiserror::Error)]
+enum ValidationExampleError {
+    #[error(transparent)]
+    Construction(#[from] DelaunayTriangulationConstructionError),
+    #[error(transparent)]
+    Configuration(#[from] ValidationConfigurationError),
+}
+
+fn main() -> Result<(), ValidationExampleError> {
     let vertices = vec![
         vertex!([0.0, 0.0, 0.0]),
         vertex!([1.0, 0.0, 0.0]),

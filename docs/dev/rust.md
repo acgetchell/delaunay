@@ -361,11 +361,11 @@ InvalidFacetIndex(u8, usize),
 
 ### Preserve typed sources — no boxing, no `dyn Error`
 
-Source and "secondary" errors must be stored **by value as typed enums**,
-not as `Box<dyn Error>`, not as `anyhow::Error`, and not stringified into a
-`message: String` field. The whole point of the taxonomy is that consumers
-can pattern-match the full structured error, while [`Error::source`]
-exposes whichever field is annotated as the primary source.
+Source and "secondary" errors must be stored **by value as typed enums**.
+Do not erase them behind dynamic error objects, `anyhow::Error`, or
+`message: String` fields. The whole point of the taxonomy is that consumers
+can pattern-match the full structured error, while [`Error::source`] exposes
+whichever field is annotated as the primary source.
 
 - Use `#[source]` (and `#[from]` where the conversion is unambiguous) on
   the typed field so `thiserror` wires up the source chain.
@@ -445,8 +445,8 @@ pub enum FooError { ... }
   (integers, strings, UUIDs, keys, other `Eq` enums, `Arc<T>` /
   `Box<T>` where `T: Eq`). All error enums in this crate satisfy
   this today. Skip these only when a payload genuinely cannot be `Eq`
-  (e.g. `f64`, `io::Error`, `Box<dyn Error>`) — none of which belong in
-  error values anyway.
+  (e.g. `f64`, `io::Error`, dynamically erased error objects) — none of
+  which belong in error values anyway.
 - `#[non_exhaustive]` — new variants must remain additive; downstream
   matches need a `_` arm.
 
@@ -605,7 +605,8 @@ Example:
 ///
 /// ```rust
 /// # use delaunay::prelude::construction::{DelaunayTriangulation, vertex};
-/// # fn main() -> Result<(), Box<dyn std::error::Error>> {
+/// # use delaunay::prelude::insertion::InsertionError;
+/// # fn main() -> Result<(), InsertionError> {
 /// let mut triangulation = DelaunayTriangulation::<_, _, _, 2>::default();
 /// let key = triangulation.insert_vertex([0.0, 0.0])?;
 /// assert!(triangulation.contains_vertex(key));

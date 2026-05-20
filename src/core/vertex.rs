@@ -131,22 +131,23 @@ pub enum VertexBuilderError {
 /// # Examples
 ///
 /// ```rust
-/// use delaunay::prelude::{Vertex, VertexBuilder};
+/// use delaunay::prelude::{Vertex, VertexBuilder, VertexBuilderError};
 /// use delaunay::prelude::geometry::Point;
 /// use delaunay::prelude::geometry::Coordinate;
 ///
+/// # fn main() -> Result<(), VertexBuilderError> {
 /// // Build a vertex with just a point
 /// let v: Vertex<f64, (), 3> = VertexBuilder::default()
 ///     .point(Point::new([1.0, 2.0, 3.0]))
-///     .build()
-///     .unwrap();
+///     .build()?;
 ///
 /// // Build a vertex with data
 /// let v: Vertex<f64, i32, 2> = VertexBuilder::default()
 ///     .point(Point::new([0.0, 1.0]))
 ///     .data(42)
-///     .build()
-///     .unwrap();
+///     .build()?;
+/// # Ok(())
+/// # }
 /// ```
 pub struct VertexBuilder<T, U, const D: usize> {
     point: Option<Point<T, D>>,

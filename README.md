@@ -114,8 +114,9 @@ complete technical background.
   orientation and in-sphere configurations
 - [x]  [PL-manifold] topology validation by default, with [Pseudomanifold]
   available as an explicit opt-out
-- [x]  Toroidal (periodic) triangulations via [`DelaunayTriangulationBuilder`]
-  with Phase 1 (canonicalization) and Phase 2 (image-point method) support
+- [x]  Toroidal (periodic) triangulations via [`DelaunayTriangulationBuilder`]:
+  `.toroidal(...)` canonicalizes points into the fundamental domain, while
+  `.toroidal_periodic(...)` builds a true periodic image-point quotient
 - [x]  Geometry quality metrics for simplices: radius ratio and normalized
   volume (dimension-agnostic)
 - [x]  Serialization/deserialization of all data structures to/from [JSON]
@@ -256,8 +257,9 @@ fn main() -> Result<(), DelaunayTriangulationConstructionError> {
 }
 ```
 
-For the full periodic image-point method (Phase 2), see the
-[`DelaunayTriangulationBuilder`] documentation.
+For boundary-facet identification and periodic neighbor pointers, use
+`.toroidal_periodic([..])`; see the [toroidal construction workflow] for the
+full recipe.
 
 ### Need more control?
 
@@ -554,4 +556,5 @@ Portions of this library were developed with the assistance of these AI tools:
 [PL-manifold]: https://en.wikipedia.org/wiki/Piecewise_linear_manifold
 [Delaunay repair]: https://link.springer.com/article/10.1007/BF01975867
 [Pachner moves]: https://en.wikipedia.org/wiki/Pachner_move
-[`DelaunayTriangulationBuilder`]: https://docs.rs/delaunay/latest/delaunay/builder/struct.DelaunayTriangulationBuilder.html
+[`DelaunayTriangulationBuilder`]: src/delaunay/builder.rs
+[toroidal construction workflow]: docs/workflows.md#builder-api-toroidal-periodic-triangulations
