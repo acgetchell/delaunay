@@ -46,17 +46,17 @@ use thiserror::Error;
 /// # Examples
 ///
 /// ```rust
-/// use delaunay::prelude::construction::{DelaunayTriangulation, vertex};
+/// use delaunay::prelude::construction::{DelaunayTriangulationBuilder, vertex};
 /// use delaunay::prelude::validation::DelaunayTriangulationValidationError;
 ///
-/// # fn main() -> Result<(), Box<dyn std::error::Error>> {
+/// # fn main() -> Result<(), delaunay::DelaunayTriangulationConstructionError> {
 /// let vertices = vec![
 ///     vertex!([0.0, 0.0, 0.0]),
 ///     vertex!([1.0, 0.0, 0.0]),
 ///     vertex!([0.0, 1.0, 0.0]),
 ///     vertex!([0.0, 0.0, 1.0]),
 /// ];
-/// let dt: DelaunayTriangulation<_, (), (), 3> = DelaunayTriangulation::new(&vertices)?;
+/// let dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
 ///
 /// let result: Result<(), DelaunayTriangulationValidationError> = dt.validate();
 /// assert!(result.is_ok());
@@ -256,8 +256,10 @@ where
     /// # Examples
     ///
     /// ```rust
+    /// use delaunay::prelude::construction::DelaunayTriangulationBuilder;
     /// use delaunay::prelude::query::*;
     ///
+    /// # fn main() -> Result<(), delaunay::DelaunayTriangulationConstructionError> {
     /// let vertices_4d = [
     ///     vertex!([0.0, 0.0, 0.0, 0.0]),
     ///     vertex!([1.0, 0.0, 0.0, 0.0]),
@@ -265,11 +267,12 @@ where
     ///     vertex!([0.0, 0.0, 1.0, 0.0]),
     ///     vertex!([0.0, 0.0, 0.0, 1.0]),
     /// ];
-    /// let dt: DelaunayTriangulation<_, (), (), 4> =
-    ///     DelaunayTriangulation::new(&vertices_4d).unwrap();
+    /// let dt = DelaunayTriangulationBuilder::new(&vertices_4d).build::<()>()?;
     ///
     /// // Level 4: Delaunay property only
     /// assert!(dt.is_valid().is_ok());
+    /// # Ok(())
+    /// # }
     /// ```
     pub fn is_valid(&self) -> Result<(), DelaunayTriangulationValidationError> {
         // Use fast flip-based verification (O(simplices) instead of O(simplices × vertices))
@@ -295,8 +298,10 @@ where
     /// # Examples
     ///
     /// ```
+    /// use delaunay::prelude::construction::DelaunayTriangulationBuilder;
     /// use delaunay::prelude::query::*;
     ///
+    /// # fn main() -> Result<(), delaunay::DelaunayTriangulationConstructionError> {
     /// let vertices = vec![
     ///     vertex!([0.0, 0.0, 0.0]),
     ///     vertex!([1.0, 0.0, 0.0]),
@@ -304,10 +309,12 @@ where
     ///     vertex!([0.0, 0.0, 1.0]),
     /// ];
     ///
-    /// let dt: DelaunayTriangulation<_, (), (), 3> = DelaunayTriangulation::new(&vertices).unwrap();
+    /// let dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
     ///
     /// // Fast O(N) verification
     /// assert!(dt.is_delaunay_via_flips().is_ok());
+    /// # Ok(())
+    /// # }
     /// ```
     pub fn is_delaunay_via_flips(&self) -> Result<(), DelaunayRepairError> {
         verify_delaunay_for_triangulation(&self.tri)
@@ -327,8 +334,10 @@ where
     /// # Examples
     ///
     /// ```rust
+    /// use delaunay::prelude::construction::DelaunayTriangulationBuilder;
     /// use delaunay::prelude::query::*;
     ///
+    /// # fn main() -> Result<(), delaunay::DelaunayTriangulationConstructionError> {
     /// let vertices_4d = [
     ///     vertex!([0.0, 0.0, 0.0, 0.0]),
     ///     vertex!([1.0, 0.0, 0.0, 0.0]),
@@ -336,11 +345,12 @@ where
     ///     vertex!([0.0, 0.0, 1.0, 0.0]),
     ///     vertex!([0.0, 0.0, 0.0, 1.0]),
     /// ];
-    /// let dt: DelaunayTriangulation<_, (), (), 4> =
-    ///     DelaunayTriangulation::new(&vertices_4d).unwrap();
+    /// let dt = DelaunayTriangulationBuilder::new(&vertices_4d).build::<()>()?;
     ///
     /// // Levels 1–4: elements + structure + topology + Delaunay property
     /// assert!(dt.validate().is_ok());
+    /// # Ok(())
+    /// # }
     /// ```
     pub fn validate(&self) -> Result<(), DelaunayTriangulationValidationError> {
         self.tri.validate().map_err(|e| match e {
@@ -368,19 +378,23 @@ where
     /// # Examples
     ///
     /// ```rust
+    /// use delaunay::prelude::construction::DelaunayTriangulationBuilder;
     /// use delaunay::prelude::query::*;
     ///
+    /// # fn main() -> Result<(), delaunay::DelaunayTriangulationConstructionError> {
     /// let vertices = [
     ///     vertex!([0.0, 0.0, 0.0]),
     ///     vertex!([1.0, 0.0, 0.0]),
     ///     vertex!([0.0, 1.0, 0.0]),
     ///     vertex!([0.0, 0.0, 1.0]),
     /// ];
-    /// let dt: DelaunayTriangulation<_, (), (), 3> = DelaunayTriangulation::new(&vertices).unwrap();
+    /// let dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
     ///
     /// // Returns Ok(()) on success; otherwise returns a report listing all violations.
     /// let report = dt.validation_report();
     /// assert!(report.is_ok());
+    /// # Ok(())
+    /// # }
     /// ```
     pub fn validation_report(&self) -> Result<(), TriangulationValidationReport> {
         // Levels 1–3: reuse the Triangulation layer report.
@@ -466,8 +480,18 @@ where
     /// ```rust
     /// use delaunay::prelude::geometry::FastKernel;
     /// use delaunay::prelude::tds::Tds;
-    /// use delaunay::prelude::construction::{DelaunayTriangulation, vertex};
+    /// use delaunay::prelude::construction::{DelaunayTriangulation, DelaunayTriangulationBuilder, vertex};
     ///
+    /// # #[derive(Debug, thiserror::Error)]
+    /// # enum ExampleError {
+    /// #     #[error(transparent)]
+    /// #     Construction(#[from] delaunay::DelaunayTriangulationConstructionError),
+    /// #     #[error(transparent)]
+    /// #     Serde(#[from] serde_json::Error),
+    /// #     #[error(transparent)]
+    /// #     Validation(#[from] delaunay::DelaunayTriangulationValidationError),
+    /// # }
+    /// # fn main() -> Result<(), ExampleError> {
     /// let vertices = vec![
     ///     vertex!([0.0, 0.0, 0.0, 0.0]),
     ///     vertex!([1.0, 0.0, 0.0, 0.0]),
@@ -475,16 +499,17 @@ where
     ///     vertex!([0.0, 0.0, 1.0, 0.0]),
     ///     vertex!([0.0, 0.0, 0.0, 1.0]),
     /// ];
-    /// let dt: DelaunayTriangulation<_, (), (), 4> =
-    ///     DelaunayTriangulation::new(&vertices).unwrap();
+    /// let dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
     ///
     /// // Serialize just the Tds
-    /// let json = serde_json::to_string(dt.tds()).unwrap();
+    /// let json = serde_json::to_string(dt.tds())?;
     ///
     /// // Deserialize Tds and reconstruct DelaunayTriangulation
-    /// let tds: Tds<f64, (), (), 4> = serde_json::from_str(&json).unwrap();
-    /// let reconstructed = DelaunayTriangulation::try_from_tds(tds, FastKernel::new()).unwrap();
+    /// let tds: Tds<f64, (), (), 4> = serde_json::from_str(&json)?;
+    /// let reconstructed = DelaunayTriangulation::try_from_tds(tds, FastKernel::new())?;
     /// assert_eq!(reconstructed.number_of_vertices(), 5);
+    /// # Ok(())
+    /// # }
     /// ```
     ///
     /// # Errors
@@ -513,28 +538,36 @@ where
     /// ```rust
     /// use delaunay::prelude::geometry::FastKernel;
     /// use delaunay::prelude::construction::{
-    ///     DelaunayTriangulation, TopologyGuarantee, vertex,
+    ///     DelaunayTriangulation, DelaunayTriangulationBuilder, TopologyGuarantee, vertex,
     /// };
     ///
+    /// # #[derive(Debug, thiserror::Error)]
+    /// # enum ExampleError {
+    /// #     #[error(transparent)]
+    /// #     Construction(#[from] delaunay::DelaunayTriangulationConstructionError),
+    /// #     #[error(transparent)]
+    /// #     Validation(#[from] delaunay::DelaunayTriangulationValidationError),
+    /// # }
+    /// # fn main() -> Result<(), ExampleError> {
     /// let vertices = vec![
     ///     vertex!([0.0, 0.0]),
     ///     vertex!([1.0, 0.0]),
     ///     vertex!([0.0, 1.0]),
     /// ];
-    /// let dt: DelaunayTriangulation<_, (), (), 2> =
-    ///     DelaunayTriangulation::new(&vertices).unwrap();
+    /// let dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
     ///
     /// let reconstructed = DelaunayTriangulation::try_from_tds_with_topology_guarantee(
     ///     dt.tds().clone(),
     ///     FastKernel::new(),
     ///     TopologyGuarantee::PLManifoldStrict,
-    /// )
-    /// .unwrap();
+    /// )?;
     ///
     /// assert_eq!(
     ///     reconstructed.topology_guarantee(),
     ///     TopologyGuarantee::PLManifoldStrict
     /// );
+    /// # Ok(())
+    /// # }
     /// ```
     ///
     /// # Errors
@@ -565,30 +598,39 @@ where
     /// ```rust
     /// use delaunay::prelude::geometry::FastKernel;
     /// use delaunay::prelude::construction::{
-    ///     DelaunayTriangulation, GlobalTopology, TopologyGuarantee, vertex,
+    ///     DelaunayTriangulation, DelaunayTriangulationBuilder, GlobalTopology, TopologyGuarantee,
+    ///     vertex,
     /// };
     ///
+    /// # #[derive(Debug, thiserror::Error)]
+    /// # enum ExampleError {
+    /// #     #[error(transparent)]
+    /// #     Construction(#[from] delaunay::DelaunayTriangulationConstructionError),
+    /// #     #[error(transparent)]
+    /// #     Validation(#[from] delaunay::DelaunayTriangulationValidationError),
+    /// # }
+    /// # fn main() -> Result<(), ExampleError> {
     /// let vertices = vec![
     ///     vertex!([0.0, 0.0]),
     ///     vertex!([1.0, 0.0]),
     ///     vertex!([0.0, 1.0]),
     /// ];
-    /// let dt: DelaunayTriangulation<_, (), (), 2> =
-    ///     DelaunayTriangulation::new(&vertices).unwrap();
+    /// let dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
     ///
     /// let reconstructed = DelaunayTriangulation::try_from_tds_with_topology_context(
     ///     dt.tds().clone(),
     ///     FastKernel::new(),
     ///     TopologyGuarantee::PLManifoldStrict,
     ///     GlobalTopology::Euclidean,
-    /// )
-    /// .unwrap();
+    /// )?;
     ///
     /// assert_eq!(
     ///     reconstructed.topology_guarantee(),
     ///     TopologyGuarantee::PLManifoldStrict
     /// );
     /// assert_eq!(reconstructed.global_topology(), GlobalTopology::Euclidean);
+    /// # Ok(())
+    /// # }
     /// ```
     ///
     /// # Errors

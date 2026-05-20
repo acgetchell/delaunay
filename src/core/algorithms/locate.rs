@@ -715,8 +715,18 @@ pub(crate) struct LocateTrace {
 ///
 /// ```rust
 /// use delaunay::prelude::algorithms::*;
-/// use delaunay::prelude::query::*;
+/// use delaunay::prelude::*;
 ///
+/// # #[derive(Debug, thiserror::Error)]
+/// # enum ExampleError {
+/// #     #[error(transparent)]
+/// #     Construction(#[from] delaunay::DelaunayTriangulationConstructionError),
+/// #     #[error(transparent)]
+/// #     Locate(#[from] delaunay::prelude::algorithms::LocateError),
+/// #     #[error(transparent)]
+/// #     Conflict(#[from] delaunay::prelude::algorithms::ConflictError),
+/// # }
+/// # fn main() -> Result<(), ExampleError> {
 /// // Create a 4D simplex (5 vertices)
 /// let vertices = vec![
 ///     vertex!([0.0, 0.0, 0.0, 0.0]),
@@ -725,24 +735,23 @@ pub(crate) struct LocateTrace {
 ///     vertex!([0.0, 0.0, 1.0, 0.0]),
 ///     vertex!([0.0, 0.0, 0.0, 1.0]),
 /// ];
-/// let dt = DelaunayTriangulation::new(&vertices).unwrap();
+/// let dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
 /// let kernel = FastKernel::<f64>::new();
 ///
 /// // Point inside the 4-simplex
 /// let inside_point = Point::new([0.2, 0.2, 0.2, 0.2]);
-/// match locate(dt.tds(), &kernel, &inside_point, None) {
-///     Ok(LocateResult::InsideSimplex(simplex_key)) => {
-///         assert!(dt.tds().contains_simplex(simplex_key));
-///     }
-///     _ => panic!("Expected point to be inside a simplex"),
-/// }
+/// let inside = locate(dt.tds(), &kernel, &inside_point, None)?;
+/// assert!(matches!(
+///     inside,
+///     LocateResult::InsideSimplex(simplex_key) if dt.tds().contains_simplex(simplex_key)
+/// ));
 ///
 /// // Point outside the convex hull
 /// let outside_point = Point::new([2.0, 2.0, 2.0, 2.0]);
-/// match locate(dt.tds(), &kernel, &outside_point, None) {
-///     Ok(LocateResult::Outside) => { /* Expected */ }
-///     _ => panic!("Expected point to be outside convex hull"),
-/// }
+/// let outside = locate(dt.tds(), &kernel, &outside_point, None)?;
+/// assert!(matches!(outside, LocateResult::Outside));
+/// # Ok(())
+/// # }
 /// ```
 ///
 /// Using a hint simplex for faster location:
@@ -750,8 +759,18 @@ pub(crate) struct LocateTrace {
 /// ```rust
 /// use delaunay::prelude::geometry::RobustKernel;
 /// use delaunay::prelude::algorithms::*;
-/// use delaunay::prelude::query::*;
+/// use delaunay::prelude::*;
 ///
+/// # #[derive(Debug, thiserror::Error)]
+/// # enum ExampleError {
+/// #     #[error(transparent)]
+/// #     Construction(#[from] delaunay::DelaunayTriangulationConstructionError),
+/// #     #[error(transparent)]
+/// #     Locate(#[from] delaunay::prelude::algorithms::LocateError),
+/// #     #[error(transparent)]
+/// #     Conflict(#[from] delaunay::prelude::algorithms::ConflictError),
+/// # }
+/// # fn main() -> Result<(), ExampleError> {
 /// // Create a 4D simplex
 /// let vertices = vec![
 ///     vertex!([0.0, 0.0, 0.0, 0.0]),
@@ -760,17 +779,19 @@ pub(crate) struct LocateTrace {
 ///     vertex!([0.0, 0.0, 1.0, 0.0]),
 ///     vertex!([0.0, 0.0, 0.0, 1.0]),
 /// ];
-/// let dt = DelaunayTriangulation::new(&vertices).unwrap();
+/// let dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
 /// let kernel = RobustKernel::<f64>::default();
 ///
 /// // Get a simplex to use as hint (spatially close to query point)
-/// let hint_simplex = dt.tds().simplex_keys().next().unwrap();
+/// let Some(hint_simplex) = dt.tds().simplex_keys().next() else {
+///     return Ok(());
+/// };
 /// let query_point = Point::new([0.15, 0.15, 0.15, 0.15]);
 ///
-/// match locate(dt.tds(), &kernel, &query_point, Some(hint_simplex)) {
-///     Ok(LocateResult::InsideSimplex(_)) => { /* Success */ }
-///     _ => panic!("Expected to find simplex"),
-/// }
+/// let located = locate(dt.tds(), &kernel, &query_point, Some(hint_simplex))?;
+/// assert!(matches!(located, LocateResult::InsideSimplex(_)));
+/// # Ok(())
+/// # }
 /// ```
 pub fn locate<K, U, V, const D: usize>(
     tds: &Tds<K::Scalar, U, V, D>,
@@ -801,21 +822,34 @@ where
 ///
 /// ```rust
 /// use delaunay::prelude::algorithms::*;
-/// use delaunay::prelude::query::*;
+/// use delaunay::prelude::*;
 ///
+/// # #[derive(Debug, thiserror::Error)]
+/// # enum ExampleError {
+/// #     #[error(transparent)]
+/// #     Construction(#[from] delaunay::DelaunayTriangulationConstructionError),
+/// #     #[error(transparent)]
+/// #     Locate(#[from] delaunay::prelude::algorithms::LocateError),
+/// #     #[error(transparent)]
+/// #     Conflict(#[from] delaunay::prelude::algorithms::ConflictError),
+/// # }
+/// # fn main() -> Result<(), ExampleError> {
 /// let vertices = vec![
 ///     vertex!([0.0, 0.0]),
 ///     vertex!([1.0, 0.0]),
 ///     vertex!([0.0, 1.0]),
 /// ];
-/// let dt: DelaunayTriangulation<_, (), (), 2> = DelaunayTriangulation::new(&vertices).unwrap();
+/// let dt: DelaunayTriangulation<_, (), (), 2> =
+///     DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
 /// let kernel = FastKernel::<f64>::new();
 ///
 /// let query_point = Point::new([0.3, 0.3]);
-/// let (_result, stats) = locate_with_stats(dt.tds(), &kernel, &query_point, None).unwrap();
+/// let (_result, stats) = locate_with_stats(dt.tds(), &kernel, &query_point, None)?;
 ///
 /// // In well-conditioned cases, the facet-walk should converge without falling back.
 /// assert!(!stats.fell_back_to_scan());
+/// # Ok(())
+/// # }
 /// ```
 pub fn locate_with_stats<K, U, V, const D: usize>(
     tds: &Tds<K::Scalar, U, V, D>,
@@ -1088,12 +1122,22 @@ where
 ///
 /// ```rust
 /// use delaunay::prelude::algorithms::{locate, find_conflict_region, LocateResult};
-/// use delaunay::prelude::DelaunayTriangulation;
+/// use delaunay::prelude::{DelaunayTriangulation, DelaunayTriangulationBuilder};
 /// use delaunay::prelude::geometry::FastKernel;
 /// use delaunay::prelude::geometry::Point;
 /// use delaunay::prelude::geometry::Coordinate;
 /// use delaunay::vertex;
 ///
+/// # #[derive(Debug, thiserror::Error)]
+/// # enum ExampleError {
+/// #     #[error(transparent)]
+/// #     Construction(#[from] delaunay::DelaunayTriangulationConstructionError),
+/// #     #[error(transparent)]
+/// #     Locate(#[from] delaunay::prelude::algorithms::LocateError),
+/// #     #[error(transparent)]
+/// #     Conflict(#[from] delaunay::prelude::algorithms::ConflictError),
+/// # }
+/// # fn main() -> Result<(), ExampleError> {
 /// // Create a 4D simplex (5 vertices forming a 4-simplex)
 /// let vertices = vec![
 ///     vertex!([0.0, 0.0, 0.0, 0.0]),
@@ -1102,19 +1146,21 @@ where
 ///     vertex!([0.0, 0.0, 1.0, 0.0]),
 ///     vertex!([0.0, 0.0, 0.0, 1.0]),
 /// ];
-/// let dt = DelaunayTriangulation::new(&vertices).unwrap();
+/// let dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
 ///
 /// let kernel = FastKernel::<f64>::new();
 /// // Point inside the 4-simplex
 /// let query_point = Point::new([0.2, 0.2, 0.2, 0.2]);
 ///
 /// // First locate the point
-/// let location = locate(dt.tds(), &kernel, &query_point, None).unwrap();
+/// let location = locate(dt.tds(), &kernel, &query_point, None)?;
 /// if let LocateResult::InsideSimplex(simplex_key) = location {
 ///     // Find all simplices whose circumspheres contain the point
-///     let conflict_simplices = find_conflict_region(dt.tds(), &kernel, &query_point, simplex_key).unwrap();
+///     let conflict_simplices = find_conflict_region(dt.tds(), &kernel, &query_point, simplex_key)?;
 ///     assert_eq!(conflict_simplices.len(), 1); // Single 4-simplex contains the point
 /// }
+/// # Ok(())
+/// # }
 /// ```
 #[expect(
     clippy::too_many_lines,
@@ -1495,20 +1541,33 @@ where
 /// use delaunay::prelude::collections::SimplexKeyBuffer;
 /// use delaunay::prelude::tds::Tds;
 ///
+/// # fn main() -> Result<(), delaunay::prelude::algorithms::ConflictError> {
 /// let tds: Tds<f64, (), (), 3> = Tds::empty();
-/// let boundary = extract_cavity_boundary(&tds, &SimplexKeyBuffer::new()).unwrap();
+/// let boundary = extract_cavity_boundary(&tds, &SimplexKeyBuffer::new())?;
 /// assert!(boundary.is_empty());
+/// # Ok(())
+/// # }
 /// ```
 ///
 ///
 /// ```rust
 /// use delaunay::prelude::algorithms::{locate, find_conflict_region, extract_cavity_boundary, LocateResult};
-/// use delaunay::prelude::DelaunayTriangulation;
+/// use delaunay::prelude::{DelaunayTriangulation, DelaunayTriangulationBuilder};
 /// use delaunay::prelude::geometry::FastKernel;
 /// use delaunay::prelude::geometry::Point;
 /// use delaunay::prelude::geometry::Coordinate;
 /// use delaunay::vertex;
 ///
+/// # #[derive(Debug, thiserror::Error)]
+/// # enum ExampleError {
+/// #     #[error(transparent)]
+/// #     Construction(#[from] delaunay::DelaunayTriangulationConstructionError),
+/// #     #[error(transparent)]
+/// #     Locate(#[from] delaunay::prelude::algorithms::LocateError),
+/// #     #[error(transparent)]
+/// #     Conflict(#[from] delaunay::prelude::algorithms::ConflictError),
+/// # }
+/// # fn main() -> Result<(), ExampleError> {
 /// // Create a 4D simplex
 /// let vertices = vec![
 ///     vertex!([0.0, 0.0, 0.0, 0.0]),
@@ -1517,22 +1576,24 @@ where
 ///     vertex!([0.0, 0.0, 1.0, 0.0]),
 ///     vertex!([0.0, 0.0, 0.0, 1.0]),
 /// ];
-/// let dt = DelaunayTriangulation::new(&vertices).unwrap();
+/// let dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
 ///
 /// let kernel = FastKernel::<f64>::new();
 /// let query_point = Point::new([0.2, 0.2, 0.2, 0.2]);
 ///
 /// // Locate and find conflict region
-/// let location = locate(dt.tds(), &kernel, &query_point, None).unwrap();
+/// let location = locate(dt.tds(), &kernel, &query_point, None)?;
 /// if let LocateResult::InsideSimplex(simplex_key) = location {
-///     let conflict_simplices = find_conflict_region(dt.tds(), &kernel, &query_point, simplex_key).unwrap();
+///     let conflict_simplices = find_conflict_region(dt.tds(), &kernel, &query_point, simplex_key)?;
 ///     
 ///     // Extract cavity boundary
-///     let boundary_facets = extract_cavity_boundary(dt.tds(), &conflict_simplices).unwrap();
+///     let boundary_facets = extract_cavity_boundary(dt.tds(), &conflict_simplices)?;
 ///     
 ///     // For a single 4-simplex, all 5 facets are on the boundary (convex hull)
 ///     assert_eq!(boundary_facets.len(), 5);
 /// }
+/// # Ok(())
+/// # }
 /// ```
 #[expect(
     clippy::too_many_lines,

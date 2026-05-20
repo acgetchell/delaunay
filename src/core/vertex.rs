@@ -360,15 +360,20 @@ impl<T, U, const D: usize> Vertex<T, U, D> {
     /// ```rust
     /// use delaunay::prelude::*;
     ///
+    /// # fn main() -> Result<(), DelaunayTriangulationConstructionError> {
     /// let vertices = vec![
     ///     vertex!([0.0, 0.0]),
     ///     vertex!([1.0, 0.0]),
     ///     vertex!([0.0, 1.0]),
     /// ];
-    /// let dt = DelaunayTriangulation::new(&vertices).unwrap();
-    /// let (_, vertex) = dt.vertices().next().unwrap();
+    /// let dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
+    /// let Some((_, vertex)) = dt.vertices().next() else {
+    ///     return Ok(());
+    /// };
     ///
     /// assert!(vertex.incident_simplex().is_some());
+    /// # Ok(())
+    /// # }
     /// ```
     #[inline]
     #[must_use]

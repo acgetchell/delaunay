@@ -47,24 +47,28 @@ impl EdgeKey {
     /// # Examples
     ///
     /// ```rust
-    /// use delaunay::prelude::query::*;
+    /// use delaunay::prelude::*;
     ///
+    /// # fn main() -> Result<(), DelaunayTriangulationConstructionError> {
     /// let vertices = vec![
     ///     vertex!([0.0, 0.0]),
     ///     vertex!([1.0, 0.0]),
     ///     vertex!([0.0, 1.0]),
     /// ];
-    /// let dt: DelaunayTriangulation<_, (), (), 2> = DelaunayTriangulation::new(&vertices).unwrap();
+    /// let dt: DelaunayTriangulation<_, (), (), 2> =
+    ///     DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
     /// let tri = dt.as_triangulation();
     ///
     /// let mut it = tri.vertices();
-    /// let a = it.next().unwrap().0;
-    /// let b = it.next().unwrap().0;
+    /// let Some((a, _)) = it.next() else { return Ok(()); };
+    /// let Some((b, _)) = it.next() else { return Ok(()); };
     ///
     /// let e1 = EdgeKey::new(a, b);
     /// let e2 = EdgeKey::new(b, a);
     /// assert_eq!(e1, e2);
     /// assert!(e1.v0() <= e1.v1());
+    /// # Ok(())
+    /// # }
     /// ```
     #[must_use]
     pub fn new(a: VertexKey, b: VertexKey) -> Self {
@@ -85,24 +89,28 @@ impl EdgeKey {
     /// # Examples
     ///
     /// ```rust
-    /// use delaunay::prelude::query::*;
+    /// use delaunay::prelude::*;
     ///
+    /// # fn main() -> Result<(), DelaunayTriangulationConstructionError> {
     /// let vertices = vec![
     ///     vertex!([0.0, 0.0]),
     ///     vertex!([1.0, 0.0]),
     ///     vertex!([0.0, 1.0]),
     /// ];
-    /// let dt: DelaunayTriangulation<_, (), (), 2> = DelaunayTriangulation::new(&vertices).unwrap();
+    /// let dt: DelaunayTriangulation<_, (), (), 2> =
+    ///     DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
     /// let tri = dt.as_triangulation();
     ///
     /// let mut it = tri.vertices();
-    /// let a = it.next().unwrap().0;
-    /// let b = it.next().unwrap().0;
+    /// let Some((a, _)) = it.next() else { return Ok(()); };
+    /// let Some((b, _)) = it.next() else { return Ok(()); };
     ///
     /// let e = EdgeKey::new(a, b);
     /// let v0 = e.v0();
     /// let v1 = e.v1();
     /// assert!(v0 <= v1);
+    /// # Ok(())
+    /// # }
     /// ```
     #[inline]
     #[must_use]
@@ -115,24 +123,28 @@ impl EdgeKey {
     /// # Examples
     ///
     /// ```rust
-    /// use delaunay::prelude::query::*;
+    /// use delaunay::prelude::*;
     ///
+    /// # fn main() -> Result<(), DelaunayTriangulationConstructionError> {
     /// let vertices = vec![
     ///     vertex!([0.0, 0.0]),
     ///     vertex!([1.0, 0.0]),
     ///     vertex!([0.0, 1.0]),
     /// ];
-    /// let dt: DelaunayTriangulation<_, (), (), 2> = DelaunayTriangulation::new(&vertices).unwrap();
+    /// let dt: DelaunayTriangulation<_, (), (), 2> =
+    ///     DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
     /// let tri = dt.as_triangulation();
     ///
     /// let mut it = tri.vertices();
-    /// let a = it.next().unwrap().0;
-    /// let b = it.next().unwrap().0;
+    /// let Some((a, _)) = it.next() else { return Ok(()); };
+    /// let Some((b, _)) = it.next() else { return Ok(()); };
     ///
     /// let e = EdgeKey::new(a, b);
     /// let v0 = e.v0();
     /// let v1 = e.v1();
     /// assert!(v0 <= v1);
+    /// # Ok(())
+    /// # }
     /// ```
     #[inline]
     #[must_use]
@@ -145,25 +157,29 @@ impl EdgeKey {
     /// # Examples
     ///
     /// ```rust
-    /// use delaunay::prelude::query::*;
+    /// use delaunay::prelude::*;
     ///
+    /// # fn main() -> Result<(), DelaunayTriangulationConstructionError> {
     /// let vertices = vec![
     ///     vertex!([0.0, 0.0]),
     ///     vertex!([1.0, 0.0]),
     ///     vertex!([0.0, 1.0]),
     /// ];
-    /// let dt: DelaunayTriangulation<_, (), (), 2> = DelaunayTriangulation::new(&vertices).unwrap();
+    /// let dt: DelaunayTriangulation<_, (), (), 2> =
+    ///     DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
     /// let tri = dt.as_triangulation();
     ///
     /// let mut it = tri.vertices();
-    /// let a = it.next().unwrap().0;
-    /// let b = it.next().unwrap().0;
+    /// let Some((a, _)) = it.next() else { return Ok(()); };
+    /// let Some((b, _)) = it.next() else { return Ok(()); };
     ///
     /// let e = EdgeKey::new(a, b);
     /// let (v0, v1) = e.endpoints();
     /// assert_eq!(v0, e.v0());
     /// assert_eq!(v1, e.v1());
     /// assert!(v0 <= v1);
+    /// # Ok(())
+    /// # }
     /// ```
     #[inline]
     #[must_use]

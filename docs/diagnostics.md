@@ -65,19 +65,24 @@ delaunay = { version = "...", features = ["diagnostics"] }
 For most validation work, start with the always-available APIs:
 
 ```rust
-use delaunay::prelude::construction::{DelaunayTriangulation, vertex};
+use delaunay::prelude::construction::{
+    DelaunayTriangulationBuilder, DelaunayTriangulationConstructionError, vertex,
+};
 
-let vertices = vec![
-    vertex!([0.0, 0.0, 0.0]),
-    vertex!([1.0, 0.0, 0.0]),
-    vertex!([0.0, 1.0, 0.0]),
-    vertex!([0.0, 0.0, 1.0]),
-];
-let dt = DelaunayTriangulation::new(&vertices).unwrap();
+fn main() -> Result<(), DelaunayTriangulationConstructionError> {
+    let vertices = vec![
+        vertex!([0.0, 0.0, 0.0]),
+        vertex!([1.0, 0.0, 0.0]),
+        vertex!([0.0, 1.0, 0.0]),
+        vertex!([0.0, 0.0, 1.0]),
+    ];
+    let dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
 
-assert!(dt.validate().is_ok());
-let report = dt.validation_report();
-assert!(report.is_valid());
+    assert!(dt.validate().is_ok());
+    let report = dt.validation_report();
+    assert!(report.is_valid());
+    Ok(())
+}
 ```
 
 Use `validate()` when a pass/fail result is enough. Use `validation_report()`
@@ -108,18 +113,23 @@ empty-circumsphere violations:
 
 ```rust
 use delaunay::prelude::diagnostics::delaunay_violation_report;
-use delaunay::prelude::construction::{DelaunayTriangulation, vertex};
+use delaunay::prelude::construction::{
+    DelaunayTriangulationBuilder, DelaunayTriangulationConstructionError, vertex,
+};
 
-let vertices = vec![
-    vertex!([0.0, 0.0, 0.0]),
-    vertex!([1.0, 0.0, 0.0]),
-    vertex!([0.0, 1.0, 0.0]),
-    vertex!([0.0, 0.0, 1.0]),
-];
-let dt = DelaunayTriangulation::new(&vertices).unwrap();
+fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let vertices = vec![
+        vertex!([0.0, 0.0, 0.0]),
+        vertex!([1.0, 0.0, 0.0]),
+        vertex!([0.0, 1.0, 0.0]),
+        vertex!([0.0, 0.0, 1.0]),
+    ];
+    let dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
 
-let report = delaunay_violation_report(dt.tds(), None).unwrap();
-assert!(report.is_valid());
+    let report = delaunay_violation_report(dt.tds(), None)?;
+    assert!(report.is_valid());
+    Ok(())
+}
 ```
 
 Reports store `SimplexKey` and `VertexKey` values rather than copying every

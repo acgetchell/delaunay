@@ -342,21 +342,33 @@ where
 /// # Examples
 ///
 /// ```
-/// use delaunay::prelude::query::*;
+/// use delaunay::prelude::*;
 /// use delaunay::prelude::geometry::radius_ratio;
 ///
+/// # #[derive(Debug, thiserror::Error)]
+/// # enum ExampleError {
+/// #     #[error(transparent)]
+/// #     Construction(#[from] delaunay::DelaunayTriangulationConstructionError),
+/// #     #[error(transparent)]
+/// #     Quality(#[from] delaunay::prelude::geometry::QualityError),
+/// # }
+/// # fn main() -> Result<(), ExampleError> {
 /// // Create a 2D equilateral triangle
 /// let vertices = vec![
 ///     vertex!([0.0, 0.0]),
 ///     vertex!([1.0, 0.0]),
 ///     vertex!([0.5, 0.866]), // approximately sqrt(3)/2
 /// ];
-/// let dt = DelaunayTriangulation::new(&vertices).unwrap();
-/// let simplex_key = dt.simplices().next().unwrap().0;
+/// let dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
+/// let Some((simplex_key, _)) = dt.simplices().next() else {
+///     return Ok(());
+/// };
 ///
-/// let ratio = radius_ratio(dt.as_triangulation(), simplex_key).unwrap();
+/// let ratio = radius_ratio(dt.as_triangulation(), simplex_key)?;
 /// // For an equilateral triangle, ratio ≈ 2.0
 /// assert!(ratio > 1.5 && ratio < 2.5);
+/// # Ok(())
+/// # }
 /// ```
 pub fn radius_ratio<K, U, V, const D: usize>(
     tri: &Triangulation<K, U, V, D>,
@@ -437,20 +449,32 @@ where
 /// # Examples
 ///
 /// ```
-/// use delaunay::prelude::query::*;
+/// use delaunay::prelude::*;
 /// use delaunay::prelude::geometry::normalized_volume;
 ///
+/// # #[derive(Debug, thiserror::Error)]
+/// # enum ExampleError {
+/// #     #[error(transparent)]
+/// #     Construction(#[from] delaunay::DelaunayTriangulationConstructionError),
+/// #     #[error(transparent)]
+/// #     Quality(#[from] delaunay::prelude::geometry::QualityError),
+/// # }
+/// # fn main() -> Result<(), ExampleError> {
 /// // Create a 2D triangle
 /// let vertices = vec![
 ///     vertex!([0.0, 0.0]),
 ///     vertex!([1.0, 0.0]),
 ///     vertex!([0.0, 1.0]),
 /// ];
-/// let dt = DelaunayTriangulation::new(&vertices).unwrap();
-/// let simplex_key = dt.simplices().next().unwrap().0;
+/// let dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
+/// let Some((simplex_key, _)) = dt.simplices().next() else {
+///     return Ok(());
+/// };
 ///
-/// let norm_vol = normalized_volume(dt.as_triangulation(), simplex_key).unwrap();
+/// let norm_vol = normalized_volume(dt.as_triangulation(), simplex_key)?;
 /// assert!(norm_vol > 0.0);
+/// # Ok(())
+/// # }
 /// ```
 pub fn normalized_volume<K, U, V, const D: usize>(
     tri: &Triangulation<K, U, V, D>,

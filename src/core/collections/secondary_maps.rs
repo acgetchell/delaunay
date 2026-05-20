@@ -33,13 +33,15 @@ use slotmap::SparseSecondaryMap;
 /// ```rust
 /// use delaunay::prelude::*;
 ///
+/// # fn main() -> Result<(), DelaunayTriangulationConstructionError> {
 /// let vertices = vec![
 ///     vertex!([0.0, 0.0, 0.0]),
 ///     vertex!([1.0, 0.0, 0.0]),
 ///     vertex!([0.0, 1.0, 0.0]),
 ///     vertex!([0.0, 0.0, 1.0]),
 /// ];
-/// let dt: DelaunayTriangulation<_, _, _, 3> = DelaunayTriangulation::new(&vertices).unwrap();
+/// let dt: DelaunayTriangulation<_, _, _, 3> =
+///     DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
 /// let tds = dt.tds();
 ///
 /// use delaunay::prelude::collections::SimplexSecondaryMap;
@@ -47,6 +49,8 @@ use slotmap::SparseSecondaryMap;
 /// for (simplex_key, _) in tds.simplices() {
 ///     in_conflict.insert(simplex_key, true);
 /// }
+/// # Ok(())
+/// # }
 /// ```
 pub type SimplexSecondaryMap<V> = SparseSecondaryMap<SimplexKey, V>;
 
@@ -73,13 +77,15 @@ pub type SimplexSecondaryMap<V> = SparseSecondaryMap<SimplexKey, V>;
 /// ```rust
 /// use delaunay::prelude::*;
 ///
+/// # fn main() -> Result<(), DelaunayTriangulationConstructionError> {
 /// let vertices = vec![
 ///     vertex!([0.0, 0.0, 0.0]),
 ///     vertex!([1.0, 0.0, 0.0]),
 ///     vertex!([0.0, 1.0, 0.0]),
 ///     vertex!([0.0, 0.0, 1.0]),
 /// ];
-/// let dt: DelaunayTriangulation<_, _, _, 3> = DelaunayTriangulation::new(&vertices).unwrap();
+/// let dt: DelaunayTriangulation<_, _, _, 3> =
+///     DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
 /// let tds = dt.tds();
 ///
 /// use delaunay::prelude::collections::VertexSecondaryMap;
@@ -87,6 +93,8 @@ pub type SimplexSecondaryMap<V> = SparseSecondaryMap<SimplexKey, V>;
 /// for (idx, (vertex_key, _)) in tds.vertices().enumerate() {
 ///     processing_order.insert(vertex_key, idx);
 /// }
+/// # Ok(())
+/// # }
 /// ```
 pub type VertexSecondaryMap<V> = SparseSecondaryMap<VertexKey, V>;
 

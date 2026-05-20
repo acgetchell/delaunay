@@ -269,7 +269,7 @@
 //!
 //! ```rust
 //! use delaunay::prelude::construction::{
-//!     DelaunayTriangulation, DelaunayTriangulationConstructionError, vertex,
+//!     DelaunayTriangulationBuilder, DelaunayTriangulationConstructionError, vertex,
 //! };
 //! use delaunay::prelude::insertion::InsertionError;
 //! use delaunay::prelude::validation::{ValidationConfigurationError, ValidationPolicy};
@@ -290,7 +290,7 @@
 //!     vertex!([0.0, 1.0, 0.0]),
 //!     vertex!([0.0, 0.0, 1.0]),
 //! ];
-//! let mut dt = DelaunayTriangulation::new(&vertices)?;
+//! let mut dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
 //!
 //! // Caller-owned validation mode: keep mandatory topology checks, but run full
 //! // Level 3 validation only through explicit validation calls.
@@ -1007,7 +1007,7 @@ pub use crate::validation::DelaunayTriangulationValidationError;
 ///
 /// ```rust
 /// use delaunay::prelude::construction::{
-///     DelaunayTriangulation, DelaunayTriangulationConstructionError, vertex,
+///     DelaunayTriangulationBuilder, DelaunayTriangulationConstructionError, vertex,
 /// };
 /// use delaunay::prelude::topology::validation;
 ///
@@ -1025,7 +1025,7 @@ pub use crate::validation::DelaunayTriangulationValidationError;
 ///     vertex!([0.0, 1.0, 0.0]),
 ///     vertex!([0.0, 0.0, 1.0]),
 /// ];
-/// let dt = DelaunayTriangulation::new(&vertices)?;
+/// let dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
 ///
 /// let result = validation::validate_triangulation_euler(dt.tds())?;
 /// assert_eq!(result.chi, 1);  // Tetrahedron has χ = 1
@@ -1528,11 +1528,11 @@ pub mod prelude {
     /// End-to-end "repair then delaunayize" workflow.
     ///
     /// Self-contained: a single `use delaunay::prelude::delaunayize::*`
-    /// import brings in [`DelaunayTriangulation`], [`vertex!`], and all
-    /// delaunayize-specific types.
+    /// import brings in [`DelaunayTriangulationBuilder`], [`DelaunayTriangulation`],
+    /// [`vertex!`], and all delaunayize-specific types.
     pub mod delaunayize {
-        pub use crate::DelaunayTriangulation;
         pub use crate::delaunayize::*;
+        pub use crate::{DelaunayTriangulation, DelaunayTriangulationBuilder};
         pub use crate::{PlManifoldRepairError, PlManifoldRepairStats};
 
         // Convenience macro (commonly used in docs/examples).

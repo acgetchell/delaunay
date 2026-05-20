@@ -44,22 +44,30 @@ where
 /// ```rust
 /// # use delaunay::prelude::geometry::*;
 /// # use delaunay::prelude::tds::Tds;
-/// # use delaunay::prelude::construction::{DelaunayTriangulation, vertex};
-/// # fn example() {
+/// # use delaunay::prelude::construction::{DelaunayTriangulation, DelaunayTriangulationBuilder, vertex};
+/// # #[derive(Debug, thiserror::Error)]
+/// # enum ExampleError {
+/// #     #[error(transparent)]
+/// #     Construction(#[from] delaunay::DelaunayTriangulationConstructionError),
+/// #     #[error(transparent)]
+/// #     Serde(#[from] serde_json::Error),
+/// #     #[error(transparent)]
+/// #     Validation(#[from] delaunay::DelaunayTriangulationValidationError),
+/// # }
+/// # fn example() -> Result<(), ExampleError> {
 /// let vertices = vec![
 ///     vertex!([0.0, 0.0, 0.0]),
 ///     vertex!([1.0, 0.0, 0.0]),
 ///     vertex!([0.0, 1.0, 0.0]),
 ///     vertex!([0.0, 0.0, 1.0]),
 /// ];
-/// let dt = DelaunayTriangulation::<_, (), (), 3>::new(&vertices)
-///     .expect("nondegenerate tetrahedron should construct");
-/// let json = serde_json::to_string(&dt).expect("triangulation should serialize");
+/// let dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
+/// let json = serde_json::to_string(&dt)?;
 ///
-/// let tds: Tds<f64, (), (), 3> =
-///     serde_json::from_str(&json).expect("serialized triangulation should deserialize");
-/// let dt_adaptive = DelaunayTriangulation::try_from_tds(tds, AdaptiveKernel::new())
-///     .expect("deserialized TDS should validate");
+/// let tds: Tds<f64, (), (), 3> = serde_json::from_str(&json)?;
+/// let dt_adaptive = DelaunayTriangulation::try_from_tds(tds, AdaptiveKernel::new())?;
+/// # let _ = dt_adaptive;
+/// # Ok(())
 /// # }
 /// ```
 impl<'de, const D: usize> Deserialize<'de> for DelaunayTriangulation<RobustKernel<f64>, (), (), D>

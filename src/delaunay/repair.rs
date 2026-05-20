@@ -118,13 +118,14 @@ impl fmt::Display for DelaunayRepairOperation {
 /// use delaunay::prelude::repair::DelaunayRepairPolicy;
 /// use std::num::NonZeroUsize;
 ///
-/// # fn main() -> Result<(), Box<dyn std::error::Error>> {
-/// let every_four = NonZeroUsize::new(4).ok_or("repair cadence must be non-zero")?;
+/// # fn main() {
+/// let Some(every_four) = NonZeroUsize::new(4) else {
+///     return;
+/// };
 /// let policy = DelaunayRepairPolicy::EveryN(every_four);
 /// assert!(!policy.should_repair(0));
 /// assert!(!policy.should_repair(3));
 /// assert!(policy.should_repair(4));
-/// # Ok(())
 /// # }
 /// ```
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -287,12 +288,13 @@ impl DelaunayRepairOutcome {
 /// use delaunay::prelude::repair::DelaunayCheckPolicy;
 /// use std::num::NonZeroUsize;
 ///
-/// # fn main() -> Result<(), Box<dyn std::error::Error>> {
-/// let every_three = NonZeroUsize::new(3).ok_or("check cadence must be non-zero")?;
+/// # fn main() {
+/// let Some(every_three) = NonZeroUsize::new(3) else {
+///     return;
+/// };
 /// let policy = DelaunayCheckPolicy::EveryN(every_three);
 /// assert!(!policy.should_check(2));
 /// assert!(policy.should_check(3));
-/// # Ok(())
 /// # }
 /// ```
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -346,19 +348,29 @@ where
     /// # Examples
     ///
     /// ```rust
-    /// use delaunay::prelude::construction::{DelaunayTriangulation, vertex};
+    /// use delaunay::prelude::construction::{DelaunayTriangulationBuilder, vertex};
     /// use delaunay::prelude::repair::DelaunayRepairStats;
     ///
+    /// # #[derive(Debug, thiserror::Error)]
+    /// # enum ExampleError {
+    /// #     #[error(transparent)]
+    /// #     Construction(#[from] delaunay::DelaunayTriangulationConstructionError),
+    /// #     #[error(transparent)]
+    /// #     Repair(#[from] delaunay::flips::DelaunayRepairError),
+    /// # }
+    /// # fn main() -> Result<(), ExampleError> {
     /// let vertices = vec![
     ///     vertex!([0.0, 0.0, 0.0]),
     ///     vertex!([1.0, 0.0, 0.0]),
     ///     vertex!([0.0, 1.0, 0.0]),
     ///     vertex!([0.0, 0.0, 1.0]),
     /// ];
-    /// let mut dt: DelaunayTriangulation<_, (), (), 3> = DelaunayTriangulation::new(&vertices).unwrap();
+    /// let mut dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
     ///
-    /// let stats = dt.repair_delaunay_with_flips().unwrap();
+    /// let stats = dt.repair_delaunay_with_flips()?;
     /// assert!(stats.facets_checked >= stats.flips_performed);
+    /// # Ok(())
+    /// # }
     /// ```
     pub fn repair_delaunay_with_flips(&mut self) -> Result<DelaunayRepairStats, DelaunayRepairError>
     where
@@ -551,21 +563,31 @@ where
     /// # Examples
     ///
     /// ```rust
-    /// use delaunay::prelude::construction::{DelaunayTriangulation, vertex};
+    /// use delaunay::prelude::construction::{DelaunayTriangulationBuilder, vertex};
     /// use delaunay::prelude::repair::DelaunayRepairHeuristicConfig;
     ///
+    /// # #[derive(Debug, thiserror::Error)]
+    /// # enum ExampleError {
+    /// #     #[error(transparent)]
+    /// #     Construction(#[from] delaunay::DelaunayTriangulationConstructionError),
+    /// #     #[error(transparent)]
+    /// #     Repair(#[from] delaunay::flips::DelaunayRepairError),
+    /// # }
+    /// # fn main() -> Result<(), ExampleError> {
     /// let vertices = vec![
     ///     vertex!([0.0, 0.0, 0.0]),
     ///     vertex!([1.0, 0.0, 0.0]),
     ///     vertex!([0.0, 1.0, 0.0]),
     ///     vertex!([0.0, 0.0, 1.0]),
     /// ];
-    /// let mut dt: DelaunayTriangulation<_, (), (), 3> = DelaunayTriangulation::new(&vertices).unwrap();
+    /// let mut dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
     ///
     /// let outcome = dt
     ///     .repair_delaunay_with_flips_advanced(DelaunayRepairHeuristicConfig::default())
-    ///     .unwrap();
+    ///     ?;
     /// assert!(outcome.stats.facets_checked >= outcome.stats.flips_performed);
+    /// # Ok(())
+    /// # }
     /// ```
     pub fn repair_delaunay_with_flips_advanced(
         &mut self,

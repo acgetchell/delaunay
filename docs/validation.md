@@ -90,31 +90,35 @@ deviates from the happy-path and trips internal **suspicion flags**, e.g.:
 
 ```rust
 use delaunay::prelude::construction::{
-    DelaunayTriangulation, TopologyGuarantee, Vertex, vertex,
+    DelaunayTriangulationBuilder, DelaunayTriangulationConstructionError, TopologyGuarantee,
+    Vertex, vertex,
 };
 use delaunay::prelude::validation::ValidationPolicy;
 
-let vertices = vec![
-    vertex!([0.0, 0.0, 0.0]),
-    vertex!([1.0, 0.0, 0.0]),
-    vertex!([0.0, 1.0, 0.0]),
-    vertex!([0.0, 0.0, 1.0]),
-];
+fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let vertices = vec![
+        vertex!([0.0, 0.0, 0.0]),
+        vertex!([1.0, 0.0, 0.0]),
+        vertex!([0.0, 1.0, 0.0]),
+        vertex!([0.0, 0.0, 1.0]),
+    ];
 
-let mut dt: DelaunayTriangulation<_, (), (), 3> = DelaunayTriangulation::new(&vertices).unwrap();
+    let mut dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
 
-// Default PL-manifold mode: caller-owned full validation checkpoints.
-assert_eq!(dt.validation_policy(), ValidationPolicy::ExplicitOnly);
+    // Default PL-manifold mode: caller-owned full validation checkpoints.
+    assert_eq!(dt.validation_policy(), ValidationPolicy::ExplicitOnly);
 
-// For test/debug: validate topology after every insertion.
-dt.set_validation_policy(ValidationPolicy::Always);
+    // For test/debug: validate topology after every insertion.
+    dt.set_validation_policy(ValidationPolicy::Always);
 
-// For caller-owned full validation checkpoints with the default PL-manifold guarantee.
-dt.try_set_validation_policy(ValidationPolicy::ExplicitOnly).unwrap();
+    // For caller-owned full validation checkpoints with the default PL-manifold guarantee.
+    dt.try_set_validation_policy(ValidationPolicy::ExplicitOnly)?;
 
-// `Never` is reserved for the relaxed pseudomanifold guarantee.
-dt.try_set_topology_guarantee(TopologyGuarantee::Pseudomanifold).unwrap();
-dt.try_set_validation_policy(ValidationPolicy::Never).unwrap();
+    // `Never` is reserved for the relaxed pseudomanifold guarantee.
+    dt.try_set_topology_guarantee(TopologyGuarantee::Pseudomanifold)?;
+    dt.try_set_validation_policy(ValidationPolicy::Never)?;
+    Ok(())
+}
 ```
 
 ---
@@ -143,25 +147,29 @@ PL-manifoldness. You can trigger that final certification via
 
 ```rust
 use delaunay::prelude::construction::{
-    DelaunayTriangulation, TopologyGuarantee, Vertex, vertex,
+    DelaunayTriangulationBuilder, DelaunayTriangulationConstructionError, TopologyGuarantee,
+    Vertex, vertex,
 };
 use delaunay::prelude::validation::ValidationPolicy;
 
-let vertices = vec![
-    vertex!([0.0, 0.0, 0.0]),
-    vertex!([1.0, 0.0, 0.0]),
-    vertex!([0.0, 1.0, 0.0]),
-    vertex!([0.0, 0.0, 1.0]),
-];
+fn main() -> Result<(), DelaunayTriangulationConstructionError> {
+    let vertices = vec![
+        vertex!([0.0, 0.0, 0.0]),
+        vertex!([1.0, 0.0, 0.0]),
+        vertex!([0.0, 1.0, 0.0]),
+        vertex!([0.0, 0.0, 1.0]),
+    ];
 
-let mut dt: DelaunayTriangulation<_, (), (), 3> = DelaunayTriangulation::new(&vertices).unwrap();
-assert_eq!(dt.topology_guarantee(), TopologyGuarantee::PLManifold);
+    let mut dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
+    assert_eq!(dt.topology_guarantee(), TopologyGuarantee::PLManifold);
 
-// Optional: relax topology checks for speed (weaker guarantees).
-dt.set_topology_guarantee(TopologyGuarantee::Pseudomanifold);
+    // Optional: relax topology checks for speed (weaker guarantees).
+    dt.set_topology_guarantee(TopologyGuarantee::Pseudomanifold);
 
-// Now Level 3 skips vertex-link validation entirely.
-dt.as_triangulation().is_valid().unwrap();
+    // Now Level 3 skips vertex-link validation entirely.
+    assert!(dt.as_triangulation().is_valid().is_ok());
+    Ok(())
+}
 ```
 
 ### Strict: `PLManifoldStrict`
@@ -291,29 +299,33 @@ Validates the combinatorial structure of the Triangulation Data Structure.
 
 ```rust
 use delaunay::prelude::construction::{
-    DelaunayTriangulation, TopologyGuarantee, Vertex, vertex,
+    DelaunayTriangulationBuilder, DelaunayTriangulationConstructionError, TopologyGuarantee,
+    Vertex, vertex,
 };
 use delaunay::prelude::validation::ValidationPolicy;
 
-let vertices = vec![
-    vertex!([0.0, 0.0, 0.0]),
-    vertex!([1.0, 0.0, 0.0]),
-    vertex!([0.0, 1.0, 0.0]),
-    vertex!([0.0, 0.0, 1.0]),
-];
-let dt = DelaunayTriangulation::new(&vertices).unwrap();
+fn main() -> Result<(), DelaunayTriangulationConstructionError> {
+    let vertices = vec![
+        vertex!([0.0, 0.0, 0.0]),
+        vertex!([1.0, 0.0, 0.0]),
+        vertex!([0.0, 1.0, 0.0]),
+        vertex!([0.0, 0.0, 1.0]),
+    ];
+    let dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
 
-// Quick structural check (Level 2)
-assert!(dt.tds().is_valid().is_ok());
+    // Quick structural check (Level 2)
+    assert!(dt.tds().is_valid().is_ok());
 
-// Detailed report showing all violations across Levels 1–4 (on failure)
-match dt.validation_report() {
-    Ok(()) => println!("✓ All invariants satisfied"),
-    Err(report) => {
-        for violation in report.violations {
-            eprintln!("Invariant violation: {:?}", violation);
+    // Detailed report showing all violations across Levels 1–4 (on failure)
+    match dt.validation_report() {
+        Ok(()) => println!("✓ All invariants satisfied"),
+        Err(report) => {
+            for violation in report.violations {
+                eprintln!("Invariant violation: {:?}", violation);
+            }
         }
     }
+    Ok(())
 }
 ```
 
@@ -372,23 +384,27 @@ Validates that the triangulation forms a valid topological manifold.
 
 ```rust
 use delaunay::prelude::construction::{
-    DelaunayTriangulation, TopologyGuarantee, Vertex, vertex,
+    DelaunayTriangulationBuilder, DelaunayTriangulationConstructionError, TopologyGuarantee,
+    Vertex, vertex,
 };
 use delaunay::prelude::validation::ValidationPolicy;
 
-let vertices = vec![
-    vertex!([0.0, 0.0, 0.0]),
-    vertex!([1.0, 0.0, 0.0]),
-    vertex!([0.0, 1.0, 0.0]),
-    vertex!([0.0, 0.0, 1.0]),
-    vertex!([0.25, 0.25, 0.25]), // Interior point
-];
-let dt = DelaunayTriangulation::new(&vertices).unwrap();
+fn main() -> Result<(), DelaunayTriangulationConstructionError> {
+    let vertices = vec![
+        vertex!([0.0, 0.0, 0.0]),
+        vertex!([1.0, 0.0, 0.0]),
+        vertex!([0.0, 1.0, 0.0]),
+        vertex!([0.0, 0.0, 1.0]),
+        vertex!([0.25, 0.25, 0.25]), // Interior point
+    ];
+    let dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
 
-// Thorough topology validation (includes Levels 1–2 TDS checks)
-match dt.as_triangulation().validate() {
-    Ok(()) => println!("✓ Valid manifold with correct Euler characteristic"),
-    Err(e) => eprintln!("✗ Topology validation failed: {}", e),
+    // Thorough topology validation (includes Levels 1–2 TDS checks)
+    match dt.as_triangulation().validate() {
+        Ok(()) => println!("✓ Valid manifold with correct Euler characteristic"),
+        Err(e) => eprintln!("✗ Topology validation failed: {}", e),
+    }
+    Ok(())
 }
 ```
 
@@ -438,22 +454,26 @@ Validates the geometric optimality of the triangulation.
 
 ```rust
 use delaunay::prelude::construction::{
-    DelaunayTriangulation, TopologyGuarantee, Vertex, vertex,
+    DelaunayTriangulationBuilder, DelaunayTriangulationConstructionError, TopologyGuarantee,
+    Vertex, vertex,
 };
 use delaunay::prelude::validation::ValidationPolicy;
 
-let vertices = vec![
-    vertex!([0.0, 0.0, 0.0]),
-    vertex!([1.0, 0.0, 0.0]),
-    vertex!([0.0, 1.0, 0.0]),
-    vertex!([0.0, 0.0, 1.0]),
-];
-let dt = DelaunayTriangulation::new(&vertices).unwrap();
+fn main() -> Result<(), DelaunayTriangulationConstructionError> {
+    let vertices = vec![
+        vertex!([0.0, 0.0, 0.0]),
+        vertex!([1.0, 0.0, 0.0]),
+        vertex!([0.0, 1.0, 0.0]),
+        vertex!([0.0, 0.0, 1.0]),
+    ];
+    let dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
 
-// Delaunay property validation (Level 4)
-match dt.is_valid() {
-    Ok(()) => println!("✓ All simplices satisfy empty circumsphere property"),
-    Err(e) => eprintln!("✗ Delaunay violation: {}", e),
+    // Delaunay property validation (Level 4)
+    match dt.is_valid() {
+        Ok(()) => println!("✓ All simplices satisfy empty circumsphere property"),
+        Err(e) => eprintln!("✗ Delaunay violation: {}", e),
+    }
+    Ok(())
 }
 ```
 
@@ -532,8 +552,11 @@ pub fn my_algorithm(dt: &mut DelaunayTriangulation<FastKernel<f64>, (), (), 3>) 
 
     #[cfg(debug_assertions)]
     {
-        dt.tds().is_valid().expect("TDS structure violated");
-        dt.as_triangulation().is_valid().expect("Topology invariant violated");
+        debug_assert!(dt.tds().is_valid().is_ok(), "TDS structure violated");
+        debug_assert!(
+            dt.as_triangulation().is_valid().is_ok(),
+            "Topology invariant violated"
+        );
     }
 }
 ```

@@ -45,8 +45,9 @@ where
     /// # Examples
     ///
     /// ```rust
-    /// use delaunay::prelude::construction::{DelaunayTriangulation, vertex};
+    /// use delaunay::prelude::construction::{DelaunayTriangulationBuilder, vertex};
     ///
+    /// # fn main() -> Result<(), delaunay::DelaunayTriangulationConstructionError> {
     /// let vertices = vec![
     ///     vertex!([0.0, 0.0, 0.0, 0.0]),
     ///     vertex!([1.0, 0.0, 0.0, 0.0]),
@@ -56,9 +57,10 @@ where
     ///     vertex!([0.2, 0.2, 0.2, 0.2]),
     /// ];
     ///
-    /// let dt: DelaunayTriangulation<_, (), (), 4> =
-    ///     DelaunayTriangulation::new(&vertices).unwrap();
+    /// let dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
     /// assert_eq!(dt.number_of_vertices(), 6);
+    /// # Ok(())
+    /// # }
     /// ```
     #[must_use]
     pub fn number_of_vertices(&self) -> usize {
@@ -70,8 +72,9 @@ where
     /// # Examples
     ///
     /// ```rust
-    /// use delaunay::prelude::construction::{DelaunayTriangulation, vertex};
+    /// use delaunay::prelude::construction::{DelaunayTriangulationBuilder, vertex};
     ///
+    /// # fn main() -> Result<(), delaunay::DelaunayTriangulationConstructionError> {
     /// let vertices = vec![
     ///     vertex!([0.0, 0.0, 0.0, 0.0]),
     ///     vertex!([1.0, 0.0, 0.0, 0.0]),
@@ -80,10 +83,11 @@ where
     ///     vertex!([0.0, 0.0, 0.0, 1.0]),
     /// ];
     ///
-    /// let dt: DelaunayTriangulation<_, (), (), 4> =
-    ///     DelaunayTriangulation::new(&vertices).unwrap();
+    /// let dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
     /// // One 4-simplex in 4D
     /// assert_eq!(dt.number_of_simplices(), 1);
+    /// # Ok(())
+    /// # }
     /// ```
     #[must_use]
     pub fn number_of_simplices(&self) -> usize {
@@ -97,8 +101,9 @@ where
     /// # Examples
     ///
     /// ```rust
-    /// use delaunay::prelude::construction::{DelaunayTriangulation, vertex};
+    /// use delaunay::prelude::construction::{DelaunayTriangulationBuilder, vertex};
     ///
+    /// # fn main() -> Result<(), delaunay::DelaunayTriangulationConstructionError> {
     /// let vertices = vec![
     ///     vertex!([0.0, 0.0, 0.0, 0.0]),
     ///     vertex!([1.0, 0.0, 0.0, 0.0]),
@@ -107,9 +112,10 @@ where
     ///     vertex!([0.0, 0.0, 0.0, 1.0]),
     /// ];
     ///
-    /// let dt: DelaunayTriangulation<_, (), (), 4> =
-    ///     DelaunayTriangulation::new(&vertices).unwrap();
+    /// let dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
     /// assert_eq!(dt.dim(), 4);
+    /// # Ok(())
+    /// # }
     /// ```
     #[must_use]
     pub fn dim(&self) -> i32 {
@@ -129,8 +135,10 @@ where
     /// # Examples
     ///
     /// ```rust
+    /// use delaunay::prelude::construction::DelaunayTriangulationBuilder;
     /// use delaunay::prelude::query::*;
     ///
+    /// # fn main() -> Result<(), delaunay::DelaunayTriangulationConstructionError> {
     /// let vertices = vec![
     ///     vertex!([0.0, 0.0, 0.0]),
     ///     vertex!([1.0, 0.0, 0.0]),
@@ -138,11 +146,13 @@ where
     ///     vertex!([0.0, 0.0, 1.0]),
     /// ];
     ///
-    /// let dt = DelaunayTriangulation::new(&vertices).unwrap();
+    /// let dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
     ///
     /// for (simplex_key, simplex) in dt.simplices() {
     ///     println!("Simplex {:?} has {} vertices", simplex_key, simplex.number_of_vertices());
     /// }
+    /// # Ok(())
+    /// # }
     /// ```
     pub fn simplices(&self) -> impl Iterator<Item = (SimplexKey, &Simplex<K::Scalar, U, V, D>)> {
         self.tri.tds.simplices()
@@ -161,8 +171,10 @@ where
     /// # Examples
     ///
     /// ```rust
+    /// use delaunay::prelude::construction::DelaunayTriangulationBuilder;
     /// use delaunay::prelude::query::*;
     ///
+    /// # fn main() -> Result<(), delaunay::DelaunayTriangulationConstructionError> {
     /// let vertices = vec![
     ///     vertex!([0.0, 0.0, 0.0]),
     ///     vertex!([1.0, 0.0, 0.0]),
@@ -170,11 +182,13 @@ where
     ///     vertex!([0.0, 0.0, 1.0]),
     /// ];
     ///
-    /// let dt = DelaunayTriangulation::new(&vertices).unwrap();
+    /// let dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
     ///
     /// for (vertex_key, vertex) in dt.vertices() {
     ///     println!("Vertex {:?} at {:?}", vertex_key, vertex.point());
     /// }
+    /// # Ok(())
+    /// # }
     /// ```
     pub fn vertices(&self) -> impl Iterator<Item = (VertexKey, &Vertex<K::Scalar, U, D>)> {
         self.tri.vertices()
@@ -195,18 +209,19 @@ where
     ///
     /// ```
     /// use delaunay::prelude::construction::{
-    ///     DelaunayTriangulationBuilder, Vertex, vertex,
+    ///     DelaunayTriangulationBuilder, DelaunayTriangulationConstructionError, Vertex, vertex,
     /// };
     ///
+    /// # fn main() -> Result<(), delaunay::DelaunayTriangulationConstructionError> {
     /// let vertices: [Vertex<f64, i32, 2>; 3] = [
     ///     vertex!([0.0, 0.0], 10i32),
     ///     vertex!([1.0, 0.0], 20),
     ///     vertex!([0.0, 1.0], 30),
     /// ];
-    /// let mut dt = DelaunayTriangulationBuilder::new(&vertices)
-    ///     .build::<()>()
-    ///     .unwrap();
-    /// let key = dt.vertices().next().unwrap().0;
+    /// let mut dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
+    /// let Some((key, _)) = dt.vertices().next() else {
+    ///     return Ok(());
+    /// };
     ///
     /// let prev = dt.set_vertex_data(key, Some(99));
     /// assert!(prev.is_some());
@@ -214,7 +229,9 @@ where
     /// // Clear data
     /// let prev = dt.set_vertex_data(key, None);
     /// assert_eq!(prev, Some(Some(99)));
-    /// assert_eq!(dt.tds().vertex(key).unwrap().data(), None);
+    /// assert_eq!(dt.tds().vertex(key).map(|v| v.data()), Some(None));
+    /// # Ok(())
+    /// # }
     /// ```
     #[inline]
     pub fn set_vertex_data(&mut self, key: VertexKey, data: Option<U>) -> Option<Option<U>> {
@@ -235,19 +252,18 @@ where
     /// # Examples
     ///
     /// ```
-    /// use delaunay::prelude::construction::{
-    ///     DelaunayTriangulationBuilder, vertex,
-    /// };
+    /// use delaunay::prelude::construction::{DelaunayTriangulationBuilder, vertex};
     ///
+    /// # fn main() -> Result<(), delaunay::DelaunayTriangulationConstructionError> {
     /// let vertices = [
     ///     vertex!([0.0, 0.0]),
     ///     vertex!([1.0, 0.0]),
     ///     vertex!([0.0, 1.0]),
     /// ];
-    /// let mut dt = DelaunayTriangulationBuilder::new(&vertices)
-    ///     .build::<i32>()
-    ///     .unwrap();
-    /// let key = dt.simplices().next().unwrap().0;
+    /// let mut dt = DelaunayTriangulationBuilder::new(&vertices).build::<i32>()?;
+    /// let Some((key, _)) = dt.simplices().next() else {
+    ///     return Ok(());
+    /// };
     ///
     /// let prev = dt.set_simplex_data(key, Some(42));
     /// assert_eq!(prev, Some(None));
@@ -255,7 +271,9 @@ where
     /// // Clear data
     /// let prev = dt.set_simplex_data(key, None);
     /// assert_eq!(prev, Some(Some(42)));
-    /// assert_eq!(dt.tds().simplex(key).unwrap().data(), None);
+    /// assert_eq!(dt.tds().simplex(key).map(|s| s.data()), Some(None));
+    /// # Ok(())
+    /// # }
     /// ```
     #[inline]
     pub fn set_simplex_data(&mut self, key: SimplexKey, data: Option<V>) -> Option<Option<V>> {
@@ -270,8 +288,11 @@ where
     /// # Examples
     ///
     /// ```rust
-    /// use delaunay::prelude::construction::{DelaunayTriangulation, vertex};
+    /// use delaunay::prelude::construction::{
+    ///     DelaunayTriangulationBuilder, DelaunayTriangulationConstructionError, vertex,
+    /// };
     ///
+    /// # fn main() -> Result<(), DelaunayTriangulationConstructionError> {
     /// let vertices = vec![
     ///     vertex!([0.0, 0.0, 0.0, 0.0]),
     ///     vertex!([1.0, 0.0, 0.0, 0.0]),
@@ -280,10 +301,11 @@ where
     ///     vertex!([0.0, 0.0, 0.0, 1.0]),
     /// ];
     ///
-    /// let dt: DelaunayTriangulation<_, (), (), 4> =
-    ///     DelaunayTriangulation::new(&vertices).unwrap();
+    /// let dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
     /// let tds = dt.tds();
     /// assert_eq!(tds.number_of_vertices(), 5);
+    /// # Ok(())
+    /// # }
     /// ```
     #[must_use]
     pub const fn tds(&self) -> &Tds<K::Scalar, U, V, D> {
@@ -332,9 +354,18 @@ where
     /// # Examples
     ///
     /// ```rust
+    /// use delaunay::prelude::construction::DelaunayTriangulationBuilder;
     /// use delaunay::prelude::query::ConvexHull;
-    /// use delaunay::prelude::construction::{DelaunayTriangulation, vertex};
+    /// use delaunay::prelude::construction::vertex;
     ///
+    /// # #[derive(Debug, thiserror::Error)]
+    /// # enum ExampleError {
+    /// #     #[error(transparent)]
+    /// #     Construction(#[from] delaunay::DelaunayTriangulationConstructionError),
+    /// #     #[error(transparent)]
+    /// #     Hull(#[from] delaunay::query::ConvexHullConstructionError),
+    /// # }
+    /// # fn main() -> Result<(), ExampleError> {
     /// let vertices: Vec<_> = vec![
     ///     vertex!([0.0, 0.0, 0.0]),
     ///     vertex!([1.0, 0.0, 0.0]),
@@ -342,9 +373,11 @@ where
     ///     vertex!([0.0, 0.0, 1.0]),
     /// ];
     ///
-    /// let dt: DelaunayTriangulation<_, (), (), 3> = DelaunayTriangulation::new(&vertices).unwrap();
-    /// let hull = ConvexHull::from_triangulation(dt.as_triangulation()).unwrap();
+    /// let dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
+    /// let hull = ConvexHull::from_triangulation(dt.as_triangulation())?;
     /// assert_eq!(hull.number_of_facets(), 4);
+    /// # Ok(())
+    /// # }
     /// ```
     #[must_use]
     pub const fn as_triangulation(&self) -> &Triangulation<K, U, V, D> {
@@ -363,18 +396,28 @@ where
     /// # Examples
     ///
     /// ```rust
-    /// use delaunay::prelude::construction::{DelaunayTriangulation, vertex};
+    /// use delaunay::prelude::construction::{DelaunayTriangulationBuilder, vertex};
     ///
+    /// # #[derive(Debug, thiserror::Error)]
+    /// # enum ExampleError {
+    /// #     #[error(transparent)]
+    /// #     Construction(#[from] delaunay::DelaunayTriangulationConstructionError),
+    /// #     #[error(transparent)]
+    /// #     Query(#[from] delaunay::query::QueryError),
+    /// # }
+    /// # fn main() -> Result<(), ExampleError> {
     /// let vertices = vec![
     ///     vertex!([0.0, 0.0, 0.0]),
     ///     vertex!([1.0, 0.0, 0.0]),
     ///     vertex!([0.0, 1.0, 0.0]),
     ///     vertex!([0.0, 0.0, 1.0]),
     /// ];
-    /// let dt = DelaunayTriangulation::new(&vertices).unwrap();
+    /// let dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
     ///
-    /// let boundary_count = dt.boundary_facets().unwrap().count();
+    /// let boundary_count = dt.boundary_facets()?.count();
     /// assert_eq!(boundary_count, 4); // All facets are on boundary
+    /// # Ok(())
+    /// # }
     /// ```
     ///
     /// # Errors
@@ -397,19 +440,23 @@ where
     /// # Examples
     ///
     /// ```rust
-    /// use delaunay::prelude::construction::{DelaunayTriangulation, vertex};
+    /// use delaunay::prelude::construction::{
+    ///     DelaunayTriangulationBuilder, DelaunayTriangulationConstructionError, vertex,
+    /// };
     /// use delaunay::prelude::validation::ValidationPolicy;
     ///
+    /// # fn main() -> Result<(), DelaunayTriangulationConstructionError> {
     /// let vertices = vec![
     ///     vertex!([0.0, 0.0]),
     ///     vertex!([1.0, 0.0]),
     ///     vertex!([0.0, 1.0]),
     /// ];
     ///
-    /// let dt: DelaunayTriangulation<_, (), (), 2> =
-    ///     DelaunayTriangulation::new(&vertices).unwrap();
+    /// let dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
     ///
     /// assert_eq!(dt.validation_policy(), ValidationPolicy::ExplicitOnly);
+    /// # Ok(())
+    /// # }
     /// ```
     #[inline]
     #[must_use]
@@ -514,14 +561,18 @@ where
     /// # Examples
     ///
     /// ```rust
-    /// use delaunay::prelude::construction::{DelaunayTriangulation, vertex};
+    /// use delaunay::prelude::construction::{
+    ///     DelaunayTriangulationBuilder, DelaunayTriangulationConstructionError, vertex,
+    /// };
     /// use delaunay::prelude::repair::DelaunayRepairPolicy;
     ///
+    /// # fn main() -> Result<(), DelaunayTriangulationConstructionError> {
     /// let vertices = vec![vertex!([0.0, 0.0]), vertex!([1.0, 0.0]), vertex!([0.0, 1.0])];
-    /// let dt: DelaunayTriangulation<_, (), (), 2> =
-    ///     DelaunayTriangulation::new(&vertices).unwrap();
+    /// let dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
     ///
     /// assert_eq!(dt.delaunay_repair_policy(), DelaunayRepairPolicy::EveryInsertion);
+    /// # Ok(())
+    /// # }
     /// ```
     #[inline]
     #[must_use]
@@ -537,15 +588,19 @@ where
     /// # Examples
     ///
     /// ```rust
-    /// use delaunay::prelude::construction::{DelaunayTriangulation, vertex};
+    /// use delaunay::prelude::construction::{
+    ///     DelaunayTriangulationBuilder, DelaunayTriangulationConstructionError, vertex,
+    /// };
     /// use delaunay::prelude::repair::DelaunayRepairPolicy;
     ///
+    /// # fn main() -> Result<(), DelaunayTriangulationConstructionError> {
     /// let vertices = vec![vertex!([0.0, 0.0]), vertex!([1.0, 0.0]), vertex!([0.0, 1.0])];
-    /// let mut dt: DelaunayTriangulation<_, (), (), 2> =
-    ///     DelaunayTriangulation::new(&vertices).unwrap();
+    /// let mut dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
     ///
     /// dt.set_delaunay_repair_policy(DelaunayRepairPolicy::Never);
     /// assert_eq!(dt.delaunay_repair_policy(), DelaunayRepairPolicy::Never);
+    /// # Ok(())
+    /// # }
     /// ```
     #[inline]
     pub const fn set_delaunay_repair_policy(&mut self, policy: DelaunayRepairPolicy) {
@@ -557,14 +612,18 @@ where
     /// # Examples
     ///
     /// ```rust
-    /// use delaunay::prelude::construction::{DelaunayTriangulation, vertex};
+    /// use delaunay::prelude::construction::{
+    ///     DelaunayTriangulationBuilder, DelaunayTriangulationConstructionError, vertex,
+    /// };
     /// use delaunay::prelude::repair::DelaunayCheckPolicy;
     ///
+    /// # fn main() -> Result<(), DelaunayTriangulationConstructionError> {
     /// let vertices = vec![vertex!([0.0, 0.0]), vertex!([1.0, 0.0]), vertex!([0.0, 1.0])];
-    /// let dt: DelaunayTriangulation<_, (), (), 2> =
-    ///     DelaunayTriangulation::new(&vertices).unwrap();
+    /// let dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
     ///
     /// assert_eq!(dt.delaunay_check_policy(), DelaunayCheckPolicy::EndOnly);
+    /// # Ok(())
+    /// # }
     /// ```
     #[inline]
     #[must_use]
@@ -580,17 +639,23 @@ where
     /// # Examples
     ///
     /// ```rust
-    /// use delaunay::prelude::construction::{DelaunayTriangulation, vertex};
+    /// use delaunay::prelude::construction::{
+    ///     DelaunayTriangulationBuilder, DelaunayTriangulationConstructionError, vertex,
+    /// };
     /// use delaunay::prelude::repair::DelaunayCheckPolicy;
     /// use std::num::NonZeroUsize;
     ///
+    /// # fn main() -> Result<(), DelaunayTriangulationConstructionError> {
     /// let vertices = vec![vertex!([0.0, 0.0]), vertex!([1.0, 0.0]), vertex!([0.0, 1.0])];
-    /// let mut dt: DelaunayTriangulation<_, (), (), 2> =
-    ///     DelaunayTriangulation::new(&vertices).unwrap();
-    /// let every_two = NonZeroUsize::new(2).unwrap();
+    /// let mut dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
+    /// let Some(every_two) = NonZeroUsize::new(2) else {
+    ///     return Ok(());
+    /// };
     ///
     /// dt.set_delaunay_check_policy(DelaunayCheckPolicy::EveryN(every_two));
     /// assert_eq!(dt.delaunay_check_policy(), DelaunayCheckPolicy::EveryN(every_two));
+    /// # Ok(())
+    /// # }
     /// ```
     #[inline]
     pub const fn set_delaunay_check_policy(&mut self, policy: DelaunayCheckPolicy) {
@@ -621,9 +686,12 @@ where
     ///     DelaunayTriangulationBuilder, TopologyGuarantee, vertex,
     /// };
     ///
+    /// # fn main() -> Result<(), delaunay::DelaunayTriangulationConstructionError> {
     /// let vertices = vec![vertex!([0.0, 0.0]), vertex!([1.0, 0.0]), vertex!([0.0, 1.0])];
-    /// let dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>().unwrap();
+    /// let dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
     /// assert_eq!(dt.topology_guarantee(), TopologyGuarantee::PLManifold);
+    /// # Ok(())
+    /// # }
     /// ```
     #[inline]
     #[must_use]
@@ -640,9 +708,12 @@ where
     ///     DelaunayTriangulationBuilder, GlobalTopology, vertex,
     /// };
     ///
+    /// # fn main() -> Result<(), delaunay::DelaunayTriangulationConstructionError> {
     /// let vertices = vec![vertex!([0.0, 0.0]), vertex!([1.0, 0.0]), vertex!([0.0, 1.0])];
-    /// let dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>().unwrap();
+    /// let dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
     /// assert!(dt.global_topology().is_euclidean());
+    /// # Ok(())
+    /// # }
     /// ```
     #[inline]
     #[must_use]
@@ -659,9 +730,12 @@ where
     ///     DelaunayTriangulationBuilder, TopologyKind, vertex,
     /// };
     ///
+    /// # fn main() -> Result<(), delaunay::DelaunayTriangulationConstructionError> {
     /// let vertices = vec![vertex!([0.0, 0.0]), vertex!([1.0, 0.0]), vertex!([0.0, 1.0])];
-    /// let dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>().unwrap();
+    /// let dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
     /// assert_eq!(dt.topology_kind(), TopologyKind::Euclidean);
+    /// # Ok(())
+    /// # }
     /// ```
     #[inline]
     #[must_use]
@@ -678,10 +752,13 @@ where
     ///     DelaunayTriangulationBuilder, GlobalTopology, vertex,
     /// };
     ///
+    /// # fn main() -> Result<(), delaunay::DelaunayTriangulationConstructionError> {
     /// let vertices = vec![vertex!([0.0, 0.0]), vertex!([1.0, 0.0]), vertex!([0.0, 1.0])];
-    /// let mut dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>().unwrap();
+    /// let mut dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
     /// dt.set_global_topology(GlobalTopology::Euclidean);
     /// assert!(dt.global_topology().is_euclidean());
+    /// # Ok(())
+    /// # }
     /// ```
     #[inline]
     pub const fn set_global_topology(&mut self, global_topology: GlobalTopology<D>) {
@@ -723,18 +800,23 @@ where
     /// # Examples
     ///
     /// ```rust
-    /// use delaunay::prelude::construction::{DelaunayTriangulation, vertex};
+    /// use delaunay::prelude::construction::{
+    ///     DelaunayTriangulationBuilder, DelaunayTriangulationConstructionError, vertex,
+    /// };
     ///
+    /// # fn main() -> Result<(), DelaunayTriangulationConstructionError> {
     /// let vertices = vec![
     ///     vertex!([0.0, 0.0, 0.0]),
     ///     vertex!([1.0, 0.0, 0.0]),
     ///     vertex!([0.0, 1.0, 0.0]),
     ///     vertex!([0.0, 0.0, 1.0]),
     /// ];
-    /// let dt = DelaunayTriangulation::new(&vertices).unwrap();
+    /// let dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
     ///
     /// let facet_count = dt.facets().count();
     /// assert_eq!(facet_count, 4); // Tetrahedron has 4 facets
+    /// # Ok(())
+    /// # }
     /// ```
     pub fn facets(&self) -> AllFacetsIter<'_, K::Scalar, U, V, D> {
         self.tri.facets()
@@ -753,9 +835,18 @@ where
     /// # Examples
     ///
     /// ```rust
+    /// use delaunay::prelude::construction::DelaunayTriangulationBuilder;
     /// use delaunay::prelude::query::*;
     ///
     /// // A single 3D tetrahedron has 6 unique edges.
+    /// # #[derive(Debug, thiserror::Error)]
+    /// # enum ExampleError {
+    /// #     #[error(transparent)]
+    /// #     Construction(#[from] delaunay::DelaunayTriangulationConstructionError),
+    /// #     #[error(transparent)]
+    /// #     Adjacency(#[from] delaunay::query::AdjacencyIndexBuildError),
+    /// # }
+    /// # fn main() -> Result<(), ExampleError> {
     /// let vertices = vec![
     ///     vertex!([0.0, 0.0, 0.0]),
     ///     vertex!([1.0, 0.0, 0.0]),
@@ -763,10 +854,12 @@ where
     ///     vertex!([0.0, 0.0, 1.0]),
     /// ];
     ///
-    /// let dt: DelaunayTriangulation<_, (), (), 3> = DelaunayTriangulation::new(&vertices).unwrap();
-    /// let index = dt.build_adjacency_index().unwrap();
+    /// let dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
+    /// let index = dt.build_adjacency_index()?;
     ///
     /// assert_eq!(index.number_of_edges(), 6);
+    /// # Ok(())
+    /// # }
     /// ```
     #[inline]
     pub fn build_adjacency_index(&self) -> Result<AdjacencyIndex, AdjacencyIndexBuildError> {
@@ -781,9 +874,11 @@ where
     /// # Examples
     ///
     /// ```rust
+    /// use delaunay::prelude::construction::DelaunayTriangulationBuilder;
     /// use delaunay::prelude::query::*;
     ///
     /// // A single 3D tetrahedron has 6 unique edges.
+    /// # fn main() -> Result<(), delaunay::DelaunayTriangulationConstructionError> {
     /// let vertices = vec![
     ///     vertex!([0.0, 0.0, 0.0]),
     ///     vertex!([1.0, 0.0, 0.0]),
@@ -791,9 +886,11 @@ where
     ///     vertex!([0.0, 0.0, 1.0]),
     /// ];
     ///
-    /// let dt: DelaunayTriangulation<_, (), (), 3> = DelaunayTriangulation::new(&vertices).unwrap();
+    /// let dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
     /// let edges: std::collections::HashSet<_> = dt.edges().collect();
     /// assert_eq!(edges.len(), 6);
+    /// # Ok(())
+    /// # }
     /// ```
     pub fn edges(&self) -> impl Iterator<Item = EdgeKey> + '_ {
         self.as_triangulation().edges()
@@ -809,8 +906,17 @@ where
     /// # Examples
     ///
     /// ```rust
+    /// use delaunay::prelude::construction::DelaunayTriangulationBuilder;
     /// use delaunay::prelude::query::*;
     ///
+    /// # #[derive(Debug, thiserror::Error)]
+    /// # enum ExampleError {
+    /// #     #[error(transparent)]
+    /// #     Construction(#[from] delaunay::DelaunayTriangulationConstructionError),
+    /// #     #[error(transparent)]
+    /// #     Adjacency(#[from] delaunay::query::AdjacencyIndexBuildError),
+    /// # }
+    /// # fn main() -> Result<(), ExampleError> {
     /// let vertices = vec![
     ///     vertex!([0.0, 0.0, 0.0]),
     ///     vertex!([1.0, 0.0, 0.0]),
@@ -818,11 +924,13 @@ where
     ///     vertex!([0.0, 0.0, 1.0]),
     /// ];
     ///
-    /// let dt: DelaunayTriangulation<_, (), (), 3> = DelaunayTriangulation::new(&vertices).unwrap();
-    /// let index = dt.build_adjacency_index().unwrap();
+    /// let dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
+    /// let index = dt.build_adjacency_index()?;
     ///
     /// let edges: std::collections::HashSet<_> = dt.edges_with_index(&index).collect();
     /// assert_eq!(edges.len(), 6);
+    /// # Ok(())
+    /// # }
     /// ```
     pub fn edges_with_index<'a>(
         &self,
@@ -841,8 +949,10 @@ where
     /// # Examples
     ///
     /// ```rust
+    /// use delaunay::prelude::construction::DelaunayTriangulationBuilder;
     /// use delaunay::prelude::query::*;
     ///
+    /// # fn main() -> Result<(), delaunay::DelaunayTriangulationConstructionError> {
     /// let vertices = vec![
     ///     vertex!([0.0, 0.0, 0.0]),
     ///     vertex!([1.0, 0.0, 0.0]),
@@ -850,11 +960,15 @@ where
     ///     vertex!([0.0, 0.0, 1.0]),
     /// ];
     ///
-    /// let dt: DelaunayTriangulation<_, (), (), 3> = DelaunayTriangulation::new(&vertices).unwrap();
-    /// let v0 = dt.vertices().next().unwrap().0;
+    /// let dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
+    /// let Some((v0, _)) = dt.vertices().next() else {
+    ///     return Ok(());
+    /// };
     ///
     /// // In a tetrahedron, each vertex has degree 3.
     /// assert_eq!(dt.incident_edges(v0).count(), 3);
+    /// # Ok(())
+    /// # }
     /// ```
     pub fn incident_edges(&self, v: VertexKey) -> impl Iterator<Item = EdgeKey> + '_ {
         self.as_triangulation().incident_edges(v)
@@ -871,8 +985,17 @@ where
     /// # Examples
     ///
     /// ```rust
+    /// use delaunay::prelude::construction::DelaunayTriangulationBuilder;
     /// use delaunay::prelude::query::*;
     ///
+    /// # #[derive(Debug, thiserror::Error)]
+    /// # enum ExampleError {
+    /// #     #[error(transparent)]
+    /// #     Construction(#[from] delaunay::DelaunayTriangulationConstructionError),
+    /// #     #[error(transparent)]
+    /// #     Adjacency(#[from] delaunay::query::AdjacencyIndexBuildError),
+    /// # }
+    /// # fn main() -> Result<(), ExampleError> {
     /// let vertices = vec![
     ///     vertex!([0.0, 0.0, 0.0]),
     ///     vertex!([1.0, 0.0, 0.0]),
@@ -880,11 +1003,15 @@ where
     ///     vertex!([0.0, 0.0, 1.0]),
     /// ];
     ///
-    /// let dt: DelaunayTriangulation<_, (), (), 3> = DelaunayTriangulation::new(&vertices).unwrap();
-    /// let index = dt.build_adjacency_index().unwrap();
-    /// let v0 = dt.vertices().next().unwrap().0;
+    /// let dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
+    /// let index = dt.build_adjacency_index()?;
+    /// let Some((v0, _)) = dt.vertices().next() else {
+    ///     return Ok(());
+    /// };
     ///
     /// assert_eq!(dt.incident_edges_with_index(&index, v0).count(), 3);
+    /// # Ok(())
+    /// # }
     /// ```
     pub fn incident_edges_with_index<'a>(
         &self,
@@ -905,9 +1032,11 @@ where
     /// # Examples
     ///
     /// ```rust
+    /// use delaunay::prelude::construction::DelaunayTriangulationBuilder;
     /// use delaunay::prelude::query::*;
     ///
     /// // A single tetrahedron has no simplex neighbors.
+    /// # fn main() -> Result<(), delaunay::DelaunayTriangulationConstructionError> {
     /// let vertices = vec![
     ///     vertex!([0.0, 0.0, 0.0]),
     ///     vertex!([1.0, 0.0, 0.0]),
@@ -915,9 +1044,13 @@ where
     ///     vertex!([0.0, 0.0, 1.0]),
     /// ];
     ///
-    /// let dt: DelaunayTriangulation<_, (), (), 3> = DelaunayTriangulation::new(&vertices).unwrap();
-    /// let simplex_key = dt.simplices().next().unwrap().0;
+    /// let dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
+    /// let Some((simplex_key, _)) = dt.simplices().next() else {
+    ///     return Ok(());
+    /// };
     /// assert_eq!(dt.simplex_neighbors(simplex_key).count(), 0);
+    /// # Ok(())
+    /// # }
     /// ```
     pub fn simplex_neighbors(&self, c: SimplexKey) -> impl Iterator<Item = SimplexKey> + '_ {
         self.as_triangulation().simplex_neighbors(c)
@@ -933,9 +1066,18 @@ where
     /// # Examples
     ///
     /// ```rust
+    /// use delaunay::prelude::construction::DelaunayTriangulationBuilder;
     /// use delaunay::prelude::query::*;
     ///
     /// // Two tetrahedra sharing a triangular facet => each tetra has exactly one neighbor.
+    /// # #[derive(Debug, thiserror::Error)]
+    /// # enum ExampleError {
+    /// #     #[error(transparent)]
+    /// #     Construction(#[from] delaunay::DelaunayTriangulationConstructionError),
+    /// #     #[error(transparent)]
+    /// #     Adjacency(#[from] delaunay::query::AdjacencyIndexBuildError),
+    /// # }
+    /// # fn main() -> Result<(), ExampleError> {
     /// let vertices: Vec<_> = vec![
     ///     // Shared triangle
     ///     vertex!([0.0, 0.0, 0.0]),
@@ -946,11 +1088,15 @@ where
     ///     vertex!([1.0, 0.7, -1.5]),
     /// ];
     ///
-    /// let dt: DelaunayTriangulation<_, (), (), 3> = DelaunayTriangulation::new(&vertices).unwrap();
-    /// let index = dt.build_adjacency_index().unwrap();
+    /// let dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
+    /// let index = dt.build_adjacency_index()?;
     ///
-    /// let simplex_key = dt.simplices().next().unwrap().0;
+    /// let Some((simplex_key, _)) = dt.simplices().next() else {
+    ///     return Ok(());
+    /// };
     /// assert_eq!(dt.simplex_neighbors_with_index(&index, simplex_key).count(), 1);
+    /// # Ok(())
+    /// # }
     /// ```
     pub fn simplex_neighbors_with_index<'a>(
         &self,
@@ -971,18 +1117,26 @@ where
     /// # Examples
     ///
     /// ```rust
+    /// use delaunay::prelude::construction::DelaunayTriangulationBuilder;
     /// use delaunay::prelude::query::*;
     ///
+    /// # fn main() -> Result<(), delaunay::DelaunayTriangulationConstructionError> {
     /// let vertices = vec![
     ///     vertex!([0.0, 0.0]),
     ///     vertex!([1.0, 0.0]),
     ///     vertex!([0.0, 1.0]),
     /// ];
-    /// let dt: DelaunayTriangulation<_, (), (), 2> = DelaunayTriangulation::new(&vertices).unwrap();
+    /// let dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
     ///
-    /// let simplex_key = dt.simplices().next().unwrap().0;
-    /// let simplex_vertices = dt.simplex_vertices(simplex_key).unwrap();
+    /// let Some((simplex_key, _)) = dt.simplices().next() else {
+    ///     return Ok(());
+    /// };
+    /// let Some(simplex_vertices) = dt.simplex_vertices(simplex_key) else {
+    ///     return Ok(());
+    /// };
     /// assert_eq!(simplex_vertices.len(), 3); // D+1 for a 2D simplex
+    /// # Ok(())
+    /// # }
     /// ```
     #[must_use]
     pub fn simplex_vertices(&self, c: SimplexKey) -> Option<&[VertexKey]> {
@@ -999,22 +1153,28 @@ where
     /// # Examples
     ///
     /// ```rust
+    /// use delaunay::prelude::construction::DelaunayTriangulationBuilder;
     /// use delaunay::prelude::query::*;
     ///
+    /// # fn main() -> Result<(), delaunay::DelaunayTriangulationConstructionError> {
     /// let vertices = vec![
     ///     vertex!([0.0, 0.0]),
     ///     vertex!([1.0, 0.0]),
     ///     vertex!([0.0, 1.0]),
     /// ];
-    /// let dt: DelaunayTriangulation<_, (), (), 2> = DelaunayTriangulation::new(&vertices).unwrap();
+    /// let dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
     ///
     /// // Find the key for a known vertex by matching coordinates.
-    /// let v_key = dt
+    /// let Some(v_key) = dt
     ///     .vertices()
     ///     .find_map(|(vk, _)| (dt.vertex_coords(vk)? == [1.0, 0.0]).then_some(vk))
-    ///     .unwrap();
+    /// else {
+    ///     return Ok(());
+    /// };
     ///
-    /// assert_eq!(dt.vertex_coords(v_key).unwrap(), [1.0, 0.0]);
+    /// assert_eq!(dt.vertex_coords(v_key), Some([1.0, 0.0].as_slice()));
+    /// # Ok(())
+    /// # }
     /// ```
     #[must_use]
     pub fn vertex_coords(&self, v: VertexKey) -> Option<&[K::Scalar]> {

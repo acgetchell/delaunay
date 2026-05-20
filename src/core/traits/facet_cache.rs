@@ -184,28 +184,37 @@ where
     /// # Examples
     ///
     /// ```rust
-    /// use delaunay::prelude::query::*;
+    /// use delaunay::prelude::*;
     ///
+    /// # #[derive(Debug, thiserror::Error)]
+    /// # enum ExampleError {
+    /// #     #[error(transparent)]
+    /// #     Construction(#[from] delaunay::DelaunayTriangulationConstructionError),
+    /// #     #[error(transparent)]
+    /// #     Tds(#[from] delaunay::prelude::tds::TdsError),
+    /// # }
+    /// # fn main() -> Result<(), ExampleError> {
     /// let vertices = vec![
     ///     vertex!([0.0, 0.0, 0.0]),
     ///     vertex!([1.0, 0.0, 0.0]),
     ///     vertex!([0.0, 1.0, 0.0]),
     ///     vertex!([0.0, 0.0, 1.0]),
     /// ];
-    /// let dt = DelaunayTriangulation::new(&vertices)
-    ///     .expect("nondegenerate tetrahedron should construct");
+    /// let dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
     ///
     /// // Build facet-to-simplices mapping
     /// let facet_map = dt
     ///     .tds()
     ///     .build_facet_to_simplices_map()
-    ///     .expect("valid triangulation should build a facet cache");
+    ///     ?;
     ///
     /// // Use the mapping for facet lookups
     /// for (facet_key, adjacent_simplices) in facet_map.iter() {
     ///     // Each facet has at most 2 adjacent simplices
     ///     assert!(adjacent_simplices.len() <= 2);
     /// }
+    /// # Ok(())
+    /// # }
     /// ```
     fn try_get_or_build_facet_cache(
         &self,
@@ -303,19 +312,29 @@ where
     /// # Examples
     ///
     /// ```rust
-    /// use delaunay::prelude::query::*;
+    /// use delaunay::prelude::*;
     ///
+    /// # #[derive(Debug, thiserror::Error)]
+    /// # enum ExampleError {
+    /// #     #[error(transparent)]
+    /// #     Construction(#[from] delaunay::DelaunayTriangulationConstructionError),
+    /// #     #[error(transparent)]
+    /// #     Tds(#[from] delaunay::prelude::tds::TdsError),
+    /// # }
+    /// # fn main() -> Result<(), ExampleError> {
     /// let vertices = vec![
     ///     vertex!([0.0, 0.0, 0.0]),
     ///     vertex!([1.0, 0.0, 0.0]),
     ///     vertex!([0.0, 1.0, 0.0]),
     ///     vertex!([0.0, 0.0, 1.0]),
     /// ];
-    /// let dt = DelaunayTriangulation::new(&vertices).unwrap();
+    /// let dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
     ///
     /// // Build facet-to-simplices mapping
-    /// let facet_map = dt.tds().build_facet_to_simplices_map().unwrap();
+    /// let facet_map = dt.tds().build_facet_to_simplices_map()?;
     /// assert!(!facet_map.is_empty(), "Facet map should contain entries");
+    /// # Ok(())
+    /// # }
     /// ```
     fn invalidate_facet_cache(&self) {
         // Clear the cache - next access will rebuild

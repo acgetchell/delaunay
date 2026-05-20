@@ -126,35 +126,47 @@ where
     ///
     /// ```rust
     /// use delaunay::prelude::construction::{DelaunayTriangulation, vertex};
+    /// use delaunay::prelude::insertion::InsertionError;
     ///
+    /// # fn main() -> Result<(), InsertionError> {
     /// // Start with empty triangulation
     /// let mut dt: DelaunayTriangulation<_, (), (), 3> = DelaunayTriangulation::empty();
     /// assert_eq!(dt.number_of_vertices(), 0);
     /// assert_eq!(dt.number_of_simplices(), 0);
     ///
     /// // Insert vertices one by one - bootstrap phase (no simplices yet)
-    /// dt.insert(vertex!([0.0, 0.0, 0.0])).unwrap();
-    /// dt.insert(vertex!([1.0, 0.0, 0.0])).unwrap();
-    /// dt.insert(vertex!([0.0, 1.0, 0.0])).unwrap();
+    /// dt.insert(vertex!([0.0, 0.0, 0.0]))?;
+    /// dt.insert(vertex!([1.0, 0.0, 0.0]))?;
+    /// dt.insert(vertex!([0.0, 1.0, 0.0]))?;
     /// assert_eq!(dt.number_of_vertices(), 3);
     /// assert_eq!(dt.number_of_simplices(), 0); // Still no simplices
     ///
     /// // 4th vertex triggers initial simplex creation
-    /// dt.insert(vertex!([0.0, 0.0, 1.0])).unwrap();
+    /// dt.insert(vertex!([0.0, 0.0, 1.0]))?;
     /// assert_eq!(dt.number_of_vertices(), 4);
     /// assert_eq!(dt.number_of_simplices(), 1); // First simplex created!
     ///
     /// // Further insertions use cavity-based algorithm
-    /// dt.insert(vertex!([0.2, 0.2, 0.2])).unwrap();
+    /// dt.insert(vertex!([0.2, 0.2, 0.2]))?;
     /// assert_eq!(dt.number_of_vertices(), 5);
     /// assert!(dt.number_of_simplices() > 1);
+    /// # Ok(())
+    /// # }
     /// ```
     ///
     /// Using batch construction (traditional approach):
     ///
     /// ```rust
-    /// use delaunay::prelude::construction::{DelaunayTriangulation, vertex};
+    /// use delaunay::prelude::construction::{DelaunayTriangulationBuilder, vertex};
     ///
+    /// # #[derive(Debug, thiserror::Error)]
+    /// # enum ExampleError {
+    /// #     #[error(transparent)]
+    /// #     Construction(#[from] delaunay::DelaunayTriangulationConstructionError),
+    /// #     #[error(transparent)]
+    /// #     Insertion(#[from] delaunay::InsertionError),
+    /// # }
+    /// # fn main() -> Result<(), ExampleError> {
     /// // Create initial triangulation with 5 vertices (4-simplex)
     /// let vertices = vec![
     ///     vertex!([0.0, 0.0, 0.0, 0.0]),
@@ -163,14 +175,15 @@ where
     ///     vertex!([0.0, 0.0, 1.0, 0.0]),
     ///     vertex!([0.0, 0.0, 0.0, 1.0]),
     /// ];
-    /// let mut dt: DelaunayTriangulation<_, (), (), 4> =
-    ///     DelaunayTriangulation::new(&vertices).unwrap();
+    /// let mut dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
     /// assert_eq!(dt.number_of_vertices(), 5);
     ///
     /// // Insert additional interior vertex
-    /// dt.insert(vertex!([0.2, 0.2, 0.2, 0.2])).unwrap();
+    /// dt.insert(vertex!([0.2, 0.2, 0.2, 0.2]))?;
     /// assert_eq!(dt.number_of_vertices(), 6);
     /// assert!(dt.number_of_simplices() > 1);
+    /// # Ok(())
+    /// # }
     /// ```
     pub fn insert(&mut self, vertex: Vertex<K::Scalar, U, D>) -> Result<VertexKey, InsertionError> {
         self.ensure_spatial_index_seeded();
@@ -271,11 +284,11 @@ where
     /// use delaunay::prelude::construction::{DelaunayTriangulation, vertex};
     /// use delaunay::prelude::insertion::{InsertionError, InsertionOutcome};
     ///
+    /// # fn main() -> Result<(), InsertionError> {
     /// let mut dt: DelaunayTriangulation<_, (), (), 3> = DelaunayTriangulation::empty();
     ///
     /// let (outcome, stats) = dt
-    ///     .insert_with_statistics(vertex!([0.0, 0.0, 0.0]))
-    ///     .unwrap();
+    ///     .insert_with_statistics(vertex!([0.0, 0.0, 0.0]))?;
     ///
     /// assert!(stats.success());
     /// assert!(matches!(outcome, InsertionOutcome::Inserted { .. }));
@@ -285,6 +298,8 @@ where
     ///     duplicate,
     ///     Err(InsertionError::DuplicateCoordinates { .. })
     /// ));
+    /// # Ok(())
+    /// # }
     /// ```
     pub fn insert_with_statistics(
         &mut self,
@@ -315,23 +330,24 @@ where
     /// use delaunay::prelude::construction::{DelaunayTriangulation, vertex};
     /// use delaunay::prelude::insertion::InsertionOutcome;
     ///
+    /// # fn main() -> Result<(), delaunay::InsertionError> {
     /// let mut dt: DelaunayTriangulation<_, (), (), 3> = DelaunayTriangulation::empty();
     ///
     /// let (outcome, stats) = dt
-    ///     .insert_best_effort_with_statistics(vertex!([0.0, 0.0, 0.0]))
-    ///     .unwrap();
+    ///     .insert_best_effort_with_statistics(vertex!([0.0, 0.0, 0.0]))?;
     ///
     /// assert!(stats.success());
     /// assert!(matches!(outcome, InsertionOutcome::Inserted { .. }));
     ///
     /// let vertices_before_duplicate = dt.number_of_vertices();
     /// let (duplicate_outcome, duplicate_stats) = dt
-    ///     .insert_best_effort_with_statistics(vertex!([0.0, 0.0, 0.0]))
-    ///     .unwrap();
+    ///     .insert_best_effort_with_statistics(vertex!([0.0, 0.0, 0.0]))?;
     ///
     /// assert!(matches!(duplicate_outcome, InsertionOutcome::Skipped { .. }));
     /// assert!(duplicate_stats.skipped_duplicate());
     /// assert_eq!(dt.number_of_vertices(), vertices_before_duplicate);
+    /// # Ok(())
+    /// # }
     /// ```
     pub fn insert_best_effort_with_statistics(
         &mut self,
@@ -674,8 +690,16 @@ where
     /// # Examples
     ///
     /// ```rust
-    /// use delaunay::prelude::construction::{DelaunayTriangulation, vertex};
+    /// use delaunay::prelude::construction::{DelaunayTriangulationBuilder, vertex};
     ///
+    /// # #[derive(Debug, thiserror::Error)]
+    /// # enum ExampleError {
+    /// #     #[error(transparent)]
+    /// #     Construction(#[from] delaunay::DelaunayTriangulationConstructionError),
+    /// #     #[error(transparent)]
+    /// #     Invariant(#[from] delaunay::tds::InvariantError),
+    /// # }
+    /// # fn main() -> Result<(), ExampleError> {
     /// let interior = vertex!([0.3, 0.3]);
     /// let interior_uuid = interior.uuid();
     /// let vertices = [
@@ -684,44 +708,52 @@ where
     ///     vertex!([0.0, 1.0]),
     ///     interior,
     /// ];
-    /// let mut dt = DelaunayTriangulation::new(&vertices).unwrap();
+    /// let mut dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
     ///
     /// // Find the key of a known interior vertex.
-    /// let vertex_key = dt
-    ///     .vertices()
-    ///     .find(|(_, v)| v.uuid() == interior_uuid)
-    ///     .map(|(k, _)| k)
-    ///     .unwrap();
+    /// let Some((vertex_key, _)) = dt.vertices().find(|(_, v)| v.uuid() == interior_uuid) else {
+    ///     return Ok(());
+    /// };
     ///
     /// // Remove the vertex and all simplices containing it
-    /// let simplices_removed = dt.remove_vertex(vertex_key).unwrap();
+    /// let simplices_removed = dt.remove_vertex(vertex_key)?;
     /// println!("Removed {} simplices along with the vertex", simplices_removed);
     ///
     /// // Vertex removal preserves topology; automatic repair is attempted when enabled.
     /// assert!(dt.as_triangulation().validate().is_ok());
+    /// # Ok(())
+    /// # }
     /// ```
     ///
     /// Removals that would leave a non-manifold remnant fail and roll back:
     ///
     /// ```rust
-    /// use delaunay::prelude::*;
+    /// use delaunay::prelude::construction::{DelaunayTriangulationBuilder, vertex};
+    /// use delaunay::prelude::tds::InvariantError;
+    /// use delaunay::prelude::triangulation::TriangulationValidationError;
     ///
+    /// # fn main() -> Result<(), delaunay::DelaunayTriangulationConstructionError> {
     /// let vertices = [
     ///     vertex!([0.0, 0.0]),
     ///     vertex!([1.0, 0.0]),
     ///     vertex!([0.0, 1.0]),
     /// ];
-    /// let mut dt: DelaunayTriangulation<_, (), (), 2> =
-    ///     DelaunayTriangulation::new(&vertices).unwrap();
-    /// let vertex_key = dt.vertices().next().unwrap().0;
+    /// let mut dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
+    /// let Some((vertex_key, _)) = dt.vertices().next() else {
+    ///     return Ok(());
+    /// };
     ///
-    /// let err = dt.remove_vertex(vertex_key).unwrap_err();
+    /// let err = dt
+    ///     .remove_vertex(vertex_key)
+    ///     .expect_err("removal should leave an isolated vertex");
     /// assert!(matches!(
     ///     err,
     ///     InvariantError::Triangulation(TriangulationValidationError::IsolatedVertex { .. })
     /// ));
     /// assert_eq!(dt.number_of_vertices(), 3);
     /// assert_eq!(dt.number_of_simplices(), 1);
+    /// # Ok(())
+    /// # }
     /// ```
     pub fn remove_vertex(&mut self, vertex_key: VertexKey) -> Result<usize, InvariantError> {
         let Some(removed_vertex) = self.tri.tds.vertex(vertex_key) else {

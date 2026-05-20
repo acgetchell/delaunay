@@ -1916,8 +1916,9 @@ impl<const D: usize> DelaunayTriangulation<AdaptiveKernel<f64>, (), (), D> {
     /// # Examples
     ///
     /// ```rust
-    /// use delaunay::prelude::construction::{DelaunayTriangulation, vertex};
+    /// use delaunay::prelude::construction::{DelaunayTriangulationBuilder, vertex};
     ///
+    /// # fn main() -> Result<(), delaunay::DelaunayTriangulationConstructionError> {
     /// let vertices = vec![
     ///     vertex!([0.0, 0.0, 0.0]),
     ///     vertex!([1.0, 0.0, 0.0]),
@@ -1925,8 +1926,10 @@ impl<const D: usize> DelaunayTriangulation<AdaptiveKernel<f64>, (), (), D> {
     ///     vertex!([0.0, 0.0, 1.0]),
     /// ];
     ///
-    /// let dt = DelaunayTriangulation::new(&vertices).unwrap();
+    /// let dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
     /// assert_eq!(dt.number_of_vertices(), 4);
+    /// # Ok(())
+    /// # }
     /// ```
     pub fn new(
         vertices: &[Vertex<f64, (), D>],
@@ -1951,8 +1954,9 @@ impl<const D: usize> DelaunayTriangulation<AdaptiveKernel<f64>, (), (), D> {
     /// # Examples
     ///
     /// ```rust
-    /// use delaunay::prelude::construction::{DelaunayTriangulation, vertex};
+    /// use delaunay::prelude::construction::{DelaunayTriangulationBuilder, vertex};
     ///
+    /// # fn main() -> Result<(), delaunay::DelaunayTriangulationConstructionError> {
     /// let vertices = vec![
     ///     vertex!([0.0, 0.0, 0.0]),
     ///     vertex!([1.0, 0.0, 0.0]),
@@ -1960,10 +1964,10 @@ impl<const D: usize> DelaunayTriangulation<AdaptiveKernel<f64>, (), (), D> {
     ///     vertex!([0.0, 0.0, 1.0]),
     /// ];
     ///
-    /// let (dt, stats) = DelaunayTriangulation::new_with_construction_statistics(&vertices)
-    ///     .unwrap();
+    /// let dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
     /// assert_eq!(dt.number_of_vertices(), 4);
-    /// assert_eq!(stats.inserted, 4);
+    /// # Ok(())
+    /// # }
     /// ```
     #[expect(
         clippy::result_large_err,
@@ -2000,10 +2004,11 @@ impl<const D: usize> DelaunayTriangulation<AdaptiveKernel<f64>, (), (), D> {
     ///
     /// ```rust
     /// use delaunay::prelude::construction::{
-    ///     ConstructionOptions, DelaunayTriangulation, RetryPolicy, vertex,
+    ///     ConstructionOptions, DelaunayTriangulationBuilder, RetryPolicy, vertex,
     /// };
     /// use std::num::NonZeroUsize;
     ///
+    /// # fn main() -> Result<(), delaunay::DelaunayTriangulationConstructionError> {
     /// let vertices = vec![
     ///     vertex!([0.0, 0.0, 0.0]),
     ///     vertex!([1.0, 0.0, 0.0]),
@@ -2011,17 +2016,19 @@ impl<const D: usize> DelaunayTriangulation<AdaptiveKernel<f64>, (), (), D> {
     ///     vertex!([0.0, 0.0, 1.0]),
     /// ];
     ///
+    /// let Some(attempts) = NonZeroUsize::new(2) else {
+    ///     return Ok(());
+    /// };
     /// let options = ConstructionOptions::default().with_retry_policy(RetryPolicy::Shuffled {
-    ///     attempts: NonZeroUsize::new(2).unwrap(),
+    ///     attempts,
     ///     base_seed: Some(7),
     /// });
-    /// let (dt, stats) =
-    ///     DelaunayTriangulation::new_with_options_and_construction_statistics(
-    ///         &vertices,
-    ///         options,
-    ///     )
-    ///     .unwrap();
-    /// assert_eq!(dt.number_of_vertices(), stats.inserted);
+    /// let dt = DelaunayTriangulationBuilder::new(&vertices)
+    ///     .construction_options(options)
+    ///     .build::<()>()?;
+    /// assert_eq!(dt.number_of_vertices(), 4);
+    /// # Ok(())
+    /// # }
     /// ```
     #[expect(
         clippy::result_large_err,
@@ -2050,9 +2057,11 @@ impl<const D: usize> DelaunayTriangulation<AdaptiveKernel<f64>, (), (), D> {
     ///
     /// ```rust
     /// use delaunay::prelude::construction::{
-    ///     ConstructionOptions, DedupPolicy, DelaunayTriangulation, InsertionOrderStrategy, vertex,
+    ///     ConstructionOptions, DedupPolicy, DelaunayTriangulationBuilder, InsertionOrderStrategy,
+    ///     vertex,
     /// };
     ///
+    /// # fn main() -> Result<(), delaunay::DelaunayTriangulationConstructionError> {
     /// let vertices = vec![
     ///     vertex!([0.0, 0.0, 0.0]),
     ///     vertex!([1.0, 0.0, 0.0]),
@@ -2063,8 +2072,12 @@ impl<const D: usize> DelaunayTriangulation<AdaptiveKernel<f64>, (), (), D> {
     ///     .with_insertion_order(InsertionOrderStrategy::Hilbert)
     ///     .with_dedup_policy(DedupPolicy::Exact);
     ///
-    /// let dt = DelaunayTriangulation::new_with_options(&vertices, options).unwrap();
+    /// let dt = DelaunayTriangulationBuilder::new(&vertices)
+    ///     .construction_options(options)
+    ///     .build::<()>()?;
     /// assert_eq!(dt.number_of_vertices(), 4);
+    /// # Ok(())
+    /// # }
     /// ```
     pub fn new_with_options(
         vertices: &[Vertex<f64, (), D>],
@@ -2095,16 +2108,17 @@ impl<const D: usize> DelaunayTriangulation<AdaptiveKernel<f64>, (), (), D> {
     ///
     /// ```rust
     /// use delaunay::prelude::construction::{
-    ///     DelaunayTriangulation, TopologyGuarantee, vertex,
+    ///     DelaunayTriangulationBuilder, TopologyGuarantee, vertex,
     /// };
     ///
+    /// # fn main() -> Result<(), delaunay::DelaunayTriangulationConstructionError> {
     /// let vertices = vec![vertex!([0.0, 0.0]), vertex!([1.0, 0.0]), vertex!([0.0, 1.0])];
-    /// let dt = DelaunayTriangulation::new_with_topology_guarantee(
-    ///     &vertices,
-    ///     TopologyGuarantee::PLManifold,
-    /// )
-    /// .unwrap();
+    /// let dt = DelaunayTriangulationBuilder::new(&vertices)
+    ///     .topology_guarantee(TopologyGuarantee::PLManifold)
+    ///     .build::<()>()?;
     /// assert_eq!(dt.topology_guarantee(), TopologyGuarantee::PLManifold);
+    /// # Ok(())
+    /// # }
     /// ```
     pub fn new_with_topology_guarantee(
         vertices: &[Vertex<f64, (), D>],
@@ -2159,11 +2173,14 @@ impl<const D: usize> DelaunayTriangulation<AdaptiveKernel<f64>, (), (), D> {
     /// # Examples
     ///
     /// ```rust
-    /// use delaunay::prelude::construction::{DelaunayTriangulation, vertex};
+    /// use delaunay::prelude::construction::{DelaunayTriangulationBuilder, vertex};
     ///
+    /// # fn main() -> Result<(), delaunay::DelaunayTriangulationConstructionError> {
     /// let vertices = vec![vertex!([0.0, 0.0]), vertex!([1.0, 0.0]), vertex!([0.0, 1.0])];
-    /// let dt = DelaunayTriangulation::builder(&vertices).build::<()>().unwrap();
+    /// let dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
     /// assert_eq!(dt.number_of_vertices(), 3);
+    /// # Ok(())
+    /// # }
     /// ```
     #[must_use]
     pub fn builder(
@@ -3825,9 +3842,10 @@ where
     /// # Examples
     ///
     /// ```rust
-    /// use delaunay::prelude::construction::{DelaunayTriangulation, vertex};
+    /// use delaunay::prelude::construction::{DelaunayTriangulationBuilder, vertex};
     /// use delaunay::prelude::geometry::RobustKernel;
     ///
+    /// # fn main() -> Result<(), delaunay::DelaunayTriangulationConstructionError> {
     /// let vertices = vec![
     ///     vertex!([0.0, 0.0, 0.0]),
     ///     vertex!([1.0, 0.0, 0.0]),
@@ -3835,9 +3853,11 @@ where
     ///     vertex!([0.0, 0.0, 1.0]),
     /// ];
     /// let kernel = RobustKernel::<f64>::new();
-    /// let dt: DelaunayTriangulation<RobustKernel<f64>, (), (), 3> =
-    ///     DelaunayTriangulation::with_kernel(&kernel, &vertices).unwrap();
+    /// let dt = DelaunayTriangulationBuilder::new(&vertices)
+    ///     .build_with_kernel::<_, ()>(&kernel)?;
     /// assert_eq!(dt.number_of_vertices(), 4);
+    /// # Ok(())
+    /// # }
     /// ```
     pub fn with_kernel(
         kernel: &K,
@@ -3862,10 +3882,11 @@ where
     ///
     /// ```rust
     /// use delaunay::prelude::construction::{
-    ///     DelaunayTriangulation, TopologyGuarantee, vertex,
+    ///     DelaunayTriangulationBuilder, TopologyGuarantee, vertex,
     /// };
     /// use delaunay::prelude::geometry::RobustKernel;
     ///
+    /// # fn main() -> Result<(), delaunay::DelaunayTriangulationConstructionError> {
     /// let vertices = vec![
     ///     vertex!([0.0, 0.0, 0.0]),
     ///     vertex!([1.0, 0.0, 0.0]),
@@ -3873,14 +3894,12 @@ where
     ///     vertex!([0.0, 0.0, 1.0]),
     /// ];
     /// let kernel = RobustKernel::<f64>::new();
-    /// let dt: DelaunayTriangulation<RobustKernel<f64>, (), (), 3> =
-    ///     DelaunayTriangulation::with_topology_guarantee(
-    ///         &kernel,
-    ///         &vertices,
-    ///         TopologyGuarantee::PLManifold,
-    ///     )
-    ///     .unwrap();
+    /// let dt = DelaunayTriangulationBuilder::new(&vertices)
+    ///     .topology_guarantee(TopologyGuarantee::PLManifold)
+    ///     .build_with_kernel::<_, ()>(&kernel)?;
     /// assert_eq!(dt.topology_guarantee(), TopologyGuarantee::PLManifold);
+    /// # Ok(())
+    /// # }
     /// ```
     pub fn with_topology_guarantee(
         kernel: &K,
@@ -3910,10 +3929,11 @@ where
     ///
     /// ```rust
     /// use delaunay::prelude::construction::{
-    ///     ConstructionOptions, DelaunayTriangulation, TopologyGuarantee, vertex,
+    ///     ConstructionOptions, DelaunayTriangulationBuilder, TopologyGuarantee, vertex,
     /// };
     /// use delaunay::prelude::geometry::RobustKernel;
     ///
+    /// # fn main() -> Result<(), delaunay::DelaunayTriangulationConstructionError> {
     /// let vertices = vec![
     ///     vertex!([0.0, 0.0, 0.0]),
     ///     vertex!([1.0, 0.0, 0.0]),
@@ -3921,15 +3941,13 @@ where
     ///     vertex!([0.0, 0.0, 1.0]),
     /// ];
     /// let kernel = RobustKernel::<f64>::new();
-    /// let dt: DelaunayTriangulation<RobustKernel<f64>, (), (), 3> =
-    ///     DelaunayTriangulation::with_topology_guarantee_and_options(
-    ///         &kernel,
-    ///         &vertices,
-    ///         TopologyGuarantee::PLManifold,
-    ///         ConstructionOptions::default(),
-    ///     )
-    ///     .unwrap();
+    /// let dt = DelaunayTriangulationBuilder::new(&vertices)
+    ///     .topology_guarantee(TopologyGuarantee::PLManifold)
+    ///     .construction_options(ConstructionOptions::default())
+    ///     .build_with_kernel::<_, ()>(&kernel)?;
     /// assert_eq!(dt.number_of_vertices(), 4);
+    /// # Ok(())
+    /// # }
     /// ```
     pub fn with_topology_guarantee_and_options(
         kernel: &K,
@@ -4038,6 +4056,7 @@ where
     /// };
     /// use delaunay::prelude::geometry::RobustKernel;
     ///
+    /// # fn main() -> Result<(), delaunay::DelaunayTriangulationConstructionErrorWithStatistics> {
     /// let vertices = vec![
     ///     vertex!([0.0, 0.0, 0.0]),
     ///     vertex!([1.0, 0.0, 0.0]),
@@ -4051,9 +4070,10 @@ where
     ///         &vertices,
     ///         TopologyGuarantee::PLManifold,
     ///         ConstructionOptions::default(),
-    ///     )
-    ///     .unwrap();
+    ///     )?;
     /// assert_eq!(dt.number_of_vertices(), stats.inserted);
+    /// # Ok(())
+    /// # }
     /// ```
     #[expect(
         clippy::result_large_err,

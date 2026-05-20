@@ -14,19 +14,24 @@ For the theoretical background and rationale behind the invariants, see [`invari
 For most use cases, construction is a single call:
 
 ```rust
-use delaunay::prelude::construction::{DelaunayTriangulation, vertex};
+use delaunay::prelude::construction::{
+    DelaunayTriangulationBuilder, DelaunayTriangulationConstructionError, vertex,
+};
 
-let vertices = vec![
-    vertex!([0.0, 0.0, 0.0]),
-    vertex!([1.0, 0.0, 0.0]),
-    vertex!([0.0, 1.0, 0.0]),
-    vertex!([0.0, 0.0, 1.0]),
-];
+fn main() -> Result<(), DelaunayTriangulationConstructionError> {
+    let vertices = vec![
+        vertex!([0.0, 0.0, 0.0]),
+        vertex!([1.0, 0.0, 0.0]),
+        vertex!([0.0, 1.0, 0.0]),
+        vertex!([0.0, 0.0, 1.0]),
+    ];
 
-let dt: DelaunayTriangulation<_, (), (), 3> = DelaunayTriangulation::new(&vertices).unwrap();
+    let dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
 
-// Optional verification (see docs/validation.md for when to use each):
-dt.is_valid().unwrap(); // Level 4 only (Delaunay property)
+    // Optional verification (see docs/validation.md for when to use each):
+    assert!(dt.is_valid().is_ok()); // Level 4 only (Delaunay property)
+    Ok(())
+}
 ```
 
 ## Builder API: topology guarantees and automatic validation
@@ -100,18 +105,21 @@ dt.set_delaunay_repair_policy(DelaunayRepairPolicy::Never);
 You can also run a global repair pass manually:
 
 ```rust
-use delaunay::prelude::construction::{DelaunayTriangulation, vertex};
+use delaunay::prelude::construction::{DelaunayTriangulationBuilder, vertex};
 
-let vertices = vec![
-    vertex!([0.0, 0.0, 0.0]),
-    vertex!([1.0, 0.0, 0.0]),
-    vertex!([0.0, 1.0, 0.0]),
-    vertex!([0.0, 0.0, 1.0]),
-];
+fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let vertices = vec![
+        vertex!([0.0, 0.0, 0.0]),
+        vertex!([1.0, 0.0, 0.0]),
+        vertex!([0.0, 1.0, 0.0]),
+        vertex!([0.0, 0.0, 1.0]),
+    ];
 
-let mut dt: DelaunayTriangulation<_, (), (), 3> = DelaunayTriangulation::new(&vertices).unwrap();
+    let mut dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
 
-let _stats = dt.repair_delaunay_with_flips().unwrap();
+    let _stats = dt.repair_delaunay_with_flips()?;
+    Ok(())
+}
 ```
 
 ### Topology and kernel requirements
@@ -147,26 +155,29 @@ If repair fails to converge within the flip budget, you get
 detections, etc.).
 
 ```rust
-use delaunay::prelude::construction::{DelaunayTriangulation, vertex};
+use delaunay::prelude::construction::{DelaunayTriangulationBuilder, vertex};
 use delaunay::prelude::repair::DelaunayRepairError;
 
-let vertices = vec![
-    vertex!([0.0, 0.0, 0.0]),
-    vertex!([1.0, 0.0, 0.0]),
-    vertex!([0.0, 1.0, 0.0]),
-    vertex!([0.0, 0.0, 1.0]),
-];
+fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let vertices = vec![
+        vertex!([0.0, 0.0, 0.0]),
+        vertex!([1.0, 0.0, 0.0]),
+        vertex!([0.0, 1.0, 0.0]),
+        vertex!([0.0, 0.0, 1.0]),
+    ];
 
-let mut dt: DelaunayTriangulation<_, (), (), 3> = DelaunayTriangulation::new(&vertices).unwrap();
+    let mut dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
 
-match dt.repair_delaunay_with_flips() {
-    Ok(_stats) => {}
-    Err(DelaunayRepairError::NonConvergent { diagnostics, .. }) => {
-        eprintln!("repair non-convergent: {diagnostics}");
+    match dt.repair_delaunay_with_flips() {
+        Ok(_stats) => {}
+        Err(DelaunayRepairError::NonConvergent { diagnostics, .. }) => {
+            eprintln!("repair non-convergent: {diagnostics}");
+        }
+        Err(err) => {
+            eprintln!("repair failed: {err}");
+        }
     }
-    Err(err) => {
-        eprintln!("repair failed: {err}");
-    }
+    Ok(())
 }
 ```
 
@@ -188,24 +199,26 @@ You can provide explicit seeds for reproducibility; otherwise deterministic defa
 from the current vertex set.
 
 ```rust
-use delaunay::prelude::construction::{DelaunayTriangulation, vertex};
+use delaunay::prelude::construction::{DelaunayTriangulationBuilder, vertex};
 use delaunay::prelude::repair::DelaunayRepairHeuristicConfig;
 
-let vertices = vec![
-    vertex!([0.0, 0.0, 0.0]),
-    vertex!([1.0, 0.0, 0.0]),
-    vertex!([0.0, 1.0, 0.0]),
-    vertex!([0.0, 0.0, 1.0]),
-];
+fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let vertices = vec![
+        vertex!([0.0, 0.0, 0.0]),
+        vertex!([1.0, 0.0, 0.0]),
+        vertex!([0.0, 1.0, 0.0]),
+        vertex!([0.0, 0.0, 1.0]),
+    ];
 
-let mut dt: DelaunayTriangulation<_, (), (), 3> = DelaunayTriangulation::new(&vertices).unwrap();
+    let mut dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
 
-let outcome = dt
-    .repair_delaunay_with_flips_advanced(DelaunayRepairHeuristicConfig::default())
-    .unwrap();
+    let outcome = dt
+        .repair_delaunay_with_flips_advanced(DelaunayRepairHeuristicConfig::default())?;
 
-if let Some(seeds) = outcome.heuristic {
-    eprintln!("heuristic rebuild used: {seeds:?}");
+    if let Some(seeds) = outcome.heuristic {
+        eprintln!("heuristic rebuild used: {seeds:?}");
+    }
+    Ok(())
 }
 ```
 
@@ -217,21 +230,23 @@ Toroidal triangulations handle periodic boundary conditions. Use
 ```rust
 use delaunay::prelude::construction::{DelaunayTriangulationBuilder, vertex};
 
-// 2D periodic triangulation with unit square domain
-let vertices = vec![
-    vertex!([0.1, 0.1]),
-    vertex!([0.9, 0.9]),
-    vertex!([0.5, 0.5]),
-];
+fn main() -> Result<(), Box<dyn std::error::Error>> {
+    // 2D periodic triangulation with unit square domain
+    let vertices = vec![
+        vertex!([0.1, 0.1]),
+        vertex!([0.9, 0.9]),
+        vertex!([0.5, 0.5]),
+    ];
 
-let mut dt = DelaunayTriangulationBuilder::new(&vertices)
-    .toroidal([1.0, 1.0]) // Phase 1: canonicalized toroidal construction
-    .build::<()>()
-    .unwrap();
+    let mut dt = DelaunayTriangulationBuilder::new(&vertices)
+        .toroidal([1.0, 1.0]) // Phase 1: canonicalized toroidal construction
+        .build::<()>()?;
 
-// Insert more points - they'll be wrapped to [0,1)×[0,1)
-dt.insert(vertex!([1.2, 0.3])).unwrap(); // wraps to [0.2, 0.3]
-dt.insert(vertex!([-0.1, 0.7])).unwrap(); // wraps to [0.9, 0.7]
+    // Insert more points - they'll be wrapped to [0,1)×[0,1)
+    dt.insert(vertex!([1.2, 0.3]))?; // wraps to [0.2, 0.3]
+    dt.insert(vertex!([-0.1, 0.7]))?; // wraps to [0.9, 0.7]
+    Ok(())
+}
 ```
 
 **Key points:**
@@ -254,33 +269,38 @@ and modified post-construction via `set_vertex_data` / `set_simplex_data`.
 
 ```rust
 use delaunay::prelude::construction::{
-    DelaunayTriangulationBuilder, Vertex, vertex,
+    DelaunayTriangulationBuilder, DelaunayTriangulationConstructionError, Vertex, vertex,
 };
 
-// Attach integer labels at construction time
-let vertices: [Vertex<f64, i32, 2>; 3] = [
-    vertex!([0.0, 0.0], 10i32),
-    vertex!([1.0, 0.0], 20),
-    vertex!([0.0, 1.0], 30),
-];
-let mut dt = DelaunayTriangulationBuilder::new(&vertices)
-    .build::<()>()
-    .unwrap();
+fn main() -> Result<(), DelaunayTriangulationConstructionError> {
+    // Attach integer labels at construction time
+    let vertices: [Vertex<f64, i32, 2>; 3] = [
+        vertex!([0.0, 0.0], 10i32),
+        vertex!([1.0, 0.0], 20),
+        vertex!([0.0, 1.0], 30),
+    ];
+    let mut dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
 
-// Read vertex data
-for (_key, vertex) in dt.vertices() {
-    println!("data = {:?}", vertex.data()); // Some(10), Some(20), or Some(30)
+    // Read vertex data
+    for (_key, vertex) in dt.vertices() {
+        println!("data = {:?}", vertex.data()); // Some(10), Some(20), or Some(30)
+    }
+
+    // Modify vertex data (O(1), does not affect geometry or topology)
+    let Some((key, _)) = dt.vertices().next() else {
+        return Ok(());
+    };
+    let prev = dt.set_vertex_data(key, Some(99));
+    assert!(prev.is_some()); // returns the old Option<U>
+
+    // Simplex data works the same way
+    let Some((simplex_key, _)) = dt.simplices().next() else {
+        return Ok(());
+    };
+    dt.set_simplex_data(simplex_key, Some(42));
+    assert_eq!(dt.tds().simplex(simplex_key).map(|s| s.data()), Some(Some(&42)));
+    Ok(())
 }
-
-// Modify vertex data (O(1), does not affect geometry or topology)
-let key = dt.vertices().next().unwrap().0;
-let prev = dt.set_vertex_data(key, Some(99));
-assert!(prev.is_some()); // returns the old Option<U>
-
-// Simplex data works the same way
-let simplex_key = dt.simplices().next().unwrap().0;
-dt.set_simplex_data(simplex_key, Some(42));
-assert_eq!(dt.tds().simplex(simplex_key).unwrap().data(), Some(&42));
 ```
 
 `set_vertex_data` and `set_simplex_data` are safe O(1) operations — they modify only the
@@ -314,23 +334,24 @@ want to keep going after skipped vertices, use the explicitly best-effort
 use delaunay::prelude::construction::{DelaunayTriangulation, vertex};
 use delaunay::prelude::insertion::InsertionOutcome;
 
-let mut dt: DelaunayTriangulation<_, (), (), 3> = DelaunayTriangulation::empty();
+fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let mut dt: DelaunayTriangulation<_, (), (), 3> = DelaunayTriangulation::empty();
 
-let (outcome, stats) = dt
-    .insert_best_effort_with_statistics(vertex!([0.5, 0.5, 0.5]))
-    .unwrap();
+    let (outcome, stats) = dt.insert_best_effort_with_statistics(vertex!([0.5, 0.5, 0.5]))?;
 
-if stats.used_perturbation() {
-    println!("used perturbation (attempts={})", stats.attempts);
-}
-
-match outcome {
-    InsertionOutcome::Inserted { vertex_key, hint: _ } => {
-        println!("inserted: {vertex_key:?}");
+    if stats.used_perturbation() {
+        println!("used perturbation (attempts={})", stats.attempts);
     }
-    InsertionOutcome::Skipped { error } => {
-        println!("skipped: {error}");
+
+    match outcome {
+        InsertionOutcome::Inserted { vertex_key, hint: _ } => {
+            println!("inserted: {vertex_key:?}");
+        }
+        InsertionOutcome::Skipped { error } => {
+            println!("skipped: {error}");
+        }
     }
+    Ok(())
 }
 ```
 
@@ -345,27 +366,32 @@ possible and fan retriangulation otherwise, then runs flip-based Delaunay repair
 the operation rolls back to the pre-removal triangulation.
 
 ```rust
-use delaunay::prelude::construction::{DelaunayTriangulation, vertex};
+use delaunay::prelude::construction::{DelaunayTriangulationBuilder, vertex};
 
-let vertices = vec![
-    vertex!([0.0, 0.0, 0.0]),
-    vertex!([1.0, 0.0, 0.0]),
-    vertex!([0.0, 1.0, 0.0]),
-    vertex!([0.0, 0.0, 1.0]),
-    vertex!([0.2, 0.2, 0.2]),
-];
+fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let vertices = vec![
+        vertex!([0.0, 0.0, 0.0]),
+        vertex!([1.0, 0.0, 0.0]),
+        vertex!([0.0, 1.0, 0.0]),
+        vertex!([0.0, 0.0, 1.0]),
+        vertex!([0.2, 0.2, 0.2]),
+    ];
 
-let mut dt: DelaunayTriangulation<_, (), (), 3> = DelaunayTriangulation::new(&vertices).unwrap();
-let vertex_key = dt.vertices().next().unwrap().0;
+    let mut dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
+    let Some((vertex_key, _)) = dt.vertices().next() else {
+        return Ok(());
+    };
 
-let _simplices_removed = dt.remove_vertex(vertex_key).unwrap();
+    let _simplices_removed = dt.remove_vertex(vertex_key)?;
 
-// Topology should still be valid:
-assert!(dt.as_triangulation().validate().is_ok());
+    // Topology should still be valid:
+    assert!(dt.as_triangulation().validate().is_ok());
 
-// If automatic repair is enabled, successful removal has already attempted to
-// restore the Delaunay property.
-dt.is_valid().unwrap();
+    // If automatic repair is enabled, successful removal has already attempted to
+    // restore the Delaunay property.
+    assert!(dt.is_valid().is_ok());
+    Ok(())
+}
 ```
 
 When automatic repair fails after the mutation, `remove_vertex` reports
@@ -388,29 +414,34 @@ After using flips, you typically:
 See [`api_design.md`](api_design.md) for the full Builder vs Edit API design.
 
 ```rust
-use delaunay::prelude::construction::{DelaunayTriangulation, vertex};
+use delaunay::prelude::construction::{DelaunayTriangulationBuilder, vertex};
 use delaunay::prelude::flips::*;
 
-let vertices = vec![
-    vertex!([0.0, 0.0, 0.0]),
-    vertex!([1.0, 0.0, 0.0]),
-    vertex!([0.0, 1.0, 0.0]),
-    vertex!([0.0, 0.0, 1.0]),
-];
-let mut dt: DelaunayTriangulation<_, (), (), 3> = DelaunayTriangulation::new(&vertices).unwrap();
+fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let vertices = vec![
+        vertex!([0.0, 0.0, 0.0]),
+        vertex!([1.0, 0.0, 0.0]),
+        vertex!([0.0, 1.0, 0.0]),
+        vertex!([0.0, 0.0, 1.0]),
+    ];
+    let mut dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
 
-// k=1: split a simplex by inserting a vertex.
-let simplex_key = dt.simplices().next().unwrap().0;
-let info = dt.flip_k1_insert(simplex_key, vertex!([0.1, 0.1, 0.1])).unwrap();
-let inserted_vertex = info.inserted_face_vertices[0];
+    // k=1: split a simplex by inserting a vertex.
+    let Some((simplex_key, _)) = dt.simplices().next() else {
+        return Ok(());
+    };
+    let info = dt.flip_k1_insert(simplex_key, vertex!([0.1, 0.1, 0.1]))?;
+    let inserted_vertex = info.inserted_face_vertices[0];
 
-// k=1 inverse: remove the inserted vertex (collapse its star).
-let _ = dt.flip_k1_remove(inserted_vertex).unwrap();
+    // k=1 inverse: remove the inserted vertex (collapse its star).
+    let _ = dt.flip_k1_remove(inserted_vertex)?;
 
-// Validate the stack (Levels 1–3) after topological edits.
-assert!(dt.as_triangulation().validate().is_ok());
+    // Validate the stack (Levels 1–3) after topological edits.
+    assert!(dt.as_triangulation().validate().is_ok());
 
-// If you need Delaunay after edits (requires K: ExactPredicates):
-// dt.repair_delaunay_with_flips().unwrap();
-// dt.is_valid().unwrap();
+    // If you need Delaunay after edits (requires K: ExactPredicates):
+    // dt.repair_delaunay_with_flips()?;
+    // assert!(dt.is_valid().is_ok());
+    Ok(())
+}
 ```

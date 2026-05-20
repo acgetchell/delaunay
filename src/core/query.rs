@@ -33,16 +33,26 @@ static VERTEX_TO_SIMPLICES_SPILL_EVENTS: AtomicU64 = AtomicU64::new(0);
 /// ```rust
 /// use delaunay::prelude::*;
 ///
+/// # #[derive(Debug, thiserror::Error)]
+/// # enum ExampleError {
+/// #     #[error(transparent)]
+/// #     Construction(#[from] delaunay::DelaunayTriangulationConstructionError),
+/// #     #[error(transparent)]
+/// #     Query(#[from] delaunay::query::QueryError),
+/// # }
+/// # fn main() -> Result<(), ExampleError> {
 /// let vertices = vec![
 ///     vertex!([0.0, 0.0, 0.0]),
 ///     vertex!([1.0, 0.0, 0.0]),
 ///     vertex!([0.0, 1.0, 0.0]),
 ///     vertex!([0.0, 0.0, 1.0]),
 /// ];
-/// let dt = DelaunayTriangulation::new(&vertices).unwrap();
+/// let dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
 ///
-/// let boundary_count = dt.as_triangulation().boundary_facets().unwrap().count();
+/// let boundary_count = dt.as_triangulation().boundary_facets()?.count();
 /// assert_eq!(boundary_count, 4);
+/// # Ok(())
+/// # }
 /// ```
 #[derive(Debug, Clone, thiserror::Error, PartialEq, Eq)]
 #[non_exhaustive]
@@ -69,12 +79,13 @@ where
     /// ```rust
     /// use delaunay::prelude::*;
     ///
+    /// # fn main() -> Result<(), DelaunayTriangulationConstructionError> {
     /// let vertices = vec![
     ///     vertex!([0.0, 0.0]),
     ///     vertex!([1.0, 0.0]),
     ///     vertex!([0.0, 1.0]),
     /// ];
-    /// let dt = DelaunayTriangulation::new(&vertices).unwrap();
+    /// let dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
     /// let tri = dt.as_triangulation();
     ///
     /// // Iterate over simplices
@@ -82,6 +93,8 @@ where
     ///     assert_eq!(simplex.number_of_vertices(), 3); // 2D triangle
     /// }
     /// assert_eq!(tri.simplices().count(), 1);
+    /// # Ok(())
+    /// # }
     /// ```
     pub fn simplices(&self) -> impl Iterator<Item = (SimplexKey, &Simplex<K::Scalar, U, V, D>)> {
         self.tds.simplices()
@@ -96,12 +109,13 @@ where
     /// ```rust
     /// use delaunay::prelude::*;
     ///
+    /// # fn main() -> Result<(), DelaunayTriangulationConstructionError> {
     /// let vertices = vec![
     ///     vertex!([0.0, 0.0]),
     ///     vertex!([1.0, 0.0]),
     ///     vertex!([0.0, 1.0]),
     /// ];
-    /// let dt = DelaunayTriangulation::new(&vertices).unwrap();
+    /// let dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
     /// let tri = dt.as_triangulation();
     ///
     /// // Iterate over vertices
@@ -109,6 +123,8 @@ where
     ///     assert_eq!(vertex.dim(), 2); // 2D vertices
     /// }
     /// assert_eq!(tri.vertices().count(), 3);
+    /// # Ok(())
+    /// # }
     /// ```
     pub fn vertices(&self) -> impl Iterator<Item = (VertexKey, &Vertex<K::Scalar, U, D>)> {
         self.tds.vertices()
@@ -121,14 +137,17 @@ where
     /// ```rust
     /// use delaunay::prelude::*;
     ///
+    /// # fn main() -> Result<(), DelaunayTriangulationConstructionError> {
     /// let vertices = vec![
     ///     vertex!([0.0, 0.0, 0.0]),
     ///     vertex!([1.0, 0.0, 0.0]),
     ///     vertex!([0.0, 1.0, 0.0]),
     ///     vertex!([0.0, 0.0, 1.0]),
     /// ];
-    /// let dt = DelaunayTriangulation::new(&vertices).unwrap();
+    /// let dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
     /// assert_eq!(dt.as_triangulation().number_of_vertices(), 4);
+    /// # Ok(())
+    /// # }
     /// ```
     #[must_use]
     pub fn number_of_vertices(&self) -> usize {
@@ -142,14 +161,17 @@ where
     /// ```rust
     /// use delaunay::prelude::*;
     ///
+    /// # fn main() -> Result<(), DelaunayTriangulationConstructionError> {
     /// let vertices = vec![
     ///     vertex!([0.0, 0.0, 0.0]),
     ///     vertex!([1.0, 0.0, 0.0]),
     ///     vertex!([0.0, 1.0, 0.0]),
     ///     vertex!([0.0, 0.0, 1.0]),
     /// ];
-    /// let dt = DelaunayTriangulation::new(&vertices).unwrap();
+    /// let dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
     /// assert_eq!(dt.as_triangulation().number_of_simplices(), 1); // Single tetrahedron
+    /// # Ok(())
+    /// # }
     /// ```
     #[must_use]
     pub fn number_of_simplices(&self) -> usize {
@@ -164,6 +186,7 @@ where
     /// use delaunay::prelude::geometry::*;
     /// use delaunay::prelude::*;
     ///
+    /// # fn main() -> Result<(), DelaunayTriangulationConstructionError> {
     /// // Empty triangulation has dimension -1
     /// let empty: Triangulation<FastKernel<f64>, (), (), 3> =
     ///     Triangulation::new_empty(FastKernel::new());
@@ -176,8 +199,10 @@ where
     ///     vertex!([0.0, 1.0, 0.0]),
     ///     vertex!([0.0, 0.0, 1.0]),
     /// ];
-    /// let dt = DelaunayTriangulation::new(&vertices).unwrap();
+    /// let dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
     /// assert_eq!(dt.as_triangulation().dim(), 3);
+    /// # Ok(())
+    /// # }
     /// ```
     #[must_use]
     pub fn dim(&self) -> i32 {
@@ -199,17 +224,20 @@ where
     /// ```rust
     /// use delaunay::prelude::*;
     ///
+    /// # fn main() -> Result<(), DelaunayTriangulationConstructionError> {
     /// let vertices = vec![
     ///     vertex!([0.0, 0.0, 0.0]),
     ///     vertex!([1.0, 0.0, 0.0]),
     ///     vertex!([0.0, 1.0, 0.0]),
     ///     vertex!([0.0, 0.0, 1.0]),
     /// ];
-    /// let dt = DelaunayTriangulation::new(&vertices).unwrap();
+    /// let dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
     ///
     /// // Iterate over all facets
     /// let facet_count = dt.as_triangulation().facets().count();
     /// assert_eq!(facet_count, 4); // Tetrahedron has 4 facets
+    /// # Ok(())
+    /// # }
     /// ```
     pub fn facets(&self) -> AllFacetsIter<'_, K::Scalar, U, V, D> {
         AllFacetsIter::new(&self.tds)
@@ -229,16 +257,26 @@ where
     /// ```rust
     /// use delaunay::prelude::*;
     ///
+    /// # #[derive(Debug, thiserror::Error)]
+    /// # enum ExampleError {
+    /// #     #[error(transparent)]
+    /// #     Construction(#[from] delaunay::DelaunayTriangulationConstructionError),
+    /// #     #[error(transparent)]
+    /// #     Query(#[from] delaunay::query::QueryError),
+    /// # }
+    /// # fn main() -> Result<(), ExampleError> {
     /// let vertices = vec![
     ///     vertex!([0.0, 0.0, 0.0]),
     ///     vertex!([1.0, 0.0, 0.0]),
     ///     vertex!([0.0, 1.0, 0.0]),
     ///     vertex!([0.0, 0.0, 1.0]),
     /// ];
-    /// let dt = DelaunayTriangulation::new(&vertices).unwrap();
+    /// let dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
     ///
-    /// let boundary_count = dt.as_triangulation().boundary_facets().unwrap().count();
+    /// let boundary_count = dt.as_triangulation().boundary_facets()?.count();
     /// assert_eq!(boundary_count, 4); // All facets are on boundary
+    /// # Ok(())
+    /// # }
     /// ```
     ///
     /// # Errors
@@ -290,6 +328,7 @@ where
     /// ```rust
     /// use delaunay::prelude::*;
     ///
+    /// # fn main() -> Result<(), DelaunayTriangulationConstructionError> {
     /// // A single 3D tetrahedron has 6 unique edges.
     /// let vertices = vec![
     ///     vertex!([0.0, 0.0, 0.0]),
@@ -297,11 +336,14 @@ where
     ///     vertex!([0.0, 1.0, 0.0]),
     ///     vertex!([0.0, 0.0, 1.0]),
     /// ];
-    /// let dt: DelaunayTriangulation<_, (), (), 3> = DelaunayTriangulation::new(&vertices).unwrap();
+    /// let dt: DelaunayTriangulation<_, (), (), 3> =
+    ///     DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
     /// let tri = dt.as_triangulation();
     ///
     /// let edges: std::collections::HashSet<_> = tri.edges().collect();
     /// assert_eq!(edges.len(), 6);
+    /// # Ok(())
+    /// # }
     /// ```
     pub fn edges(&self) -> impl Iterator<Item = EdgeKey> + '_ {
         self.collect_edges().into_iter()
@@ -314,8 +356,16 @@ where
     /// # Examples
     ///
     /// ```rust
-    /// use delaunay::prelude::query::*;
+    /// use delaunay::prelude::*;
     ///
+    /// # #[derive(Debug, thiserror::Error)]
+    /// # enum ExampleError {
+    /// #     #[error(transparent)]
+    /// #     Construction(#[from] delaunay::DelaunayTriangulationConstructionError),
+    /// #     #[error(transparent)]
+    /// #     Adjacency(#[from] delaunay::prelude::query::AdjacencyIndexBuildError),
+    /// # }
+    /// # fn main() -> Result<(), ExampleError> {
     /// // A single 3D tetrahedron has 6 unique edges.
     /// let vertices = vec![
     ///     vertex!([0.0, 0.0, 0.0]),
@@ -323,12 +373,15 @@ where
     ///     vertex!([0.0, 1.0, 0.0]),
     ///     vertex!([0.0, 0.0, 1.0]),
     /// ];
-    /// let dt: DelaunayTriangulation<_, (), (), 3> = DelaunayTriangulation::new(&vertices).unwrap();
+    /// let dt: DelaunayTriangulation<_, (), (), 3> =
+    ///     DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
     /// let tri = dt.as_triangulation();
     ///
-    /// let index = tri.build_adjacency_index().unwrap();
+    /// let index = tri.build_adjacency_index()?;
     /// let edges: std::collections::HashSet<_> = tri.edges_with_index(&index).collect();
     /// assert_eq!(edges.len(), 6);
+    /// # Ok(())
+    /// # }
     /// ```
     pub fn edges_with_index<'a>(
         &self,
@@ -347,16 +400,20 @@ where
     /// ```rust
     /// use delaunay::prelude::*;
     ///
+    /// # fn main() -> Result<(), DelaunayTriangulationConstructionError> {
     /// // A single 2D triangle has 3 unique edges.
     /// let vertices = vec![
     ///     vertex!([0.0, 0.0]),
     ///     vertex!([1.0, 0.0]),
     ///     vertex!([0.0, 1.0]),
     /// ];
-    /// let dt: DelaunayTriangulation<_, (), (), 2> = DelaunayTriangulation::new(&vertices).unwrap();
+    /// let dt: DelaunayTriangulation<_, (), (), 2> =
+    ///     DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
     /// let tri = dt.as_triangulation();
     ///
     /// assert_eq!(tri.number_of_edges(), 3);
+    /// # Ok(())
+    /// # }
     /// ```
     #[must_use]
     pub fn number_of_edges(&self) -> usize {
@@ -370,17 +427,28 @@ where
     /// # Examples
     ///
     /// ```rust
-    /// # use delaunay::prelude::query::*;
+    /// # use delaunay::prelude::*;
+    /// # #[derive(Debug, thiserror::Error)]
+    /// # enum ExampleError {
+    /// #     #[error(transparent)]
+    /// #     Construction(#[from] delaunay::DelaunayTriangulationConstructionError),
+    /// #     #[error(transparent)]
+    /// #     Adjacency(#[from] delaunay::prelude::query::AdjacencyIndexBuildError),
+    /// # }
+    /// # fn main() -> Result<(), ExampleError> {
     /// # let vertices = vec![
     /// #     vertex!([0.0, 0.0, 0.0]),
     /// #     vertex!([1.0, 0.0, 0.0]),
     /// #     vertex!([0.0, 1.0, 0.0]),
     /// #     vertex!([0.0, 0.0, 1.0]),
     /// # ];
-    /// # let dt: DelaunayTriangulation<_, (), (), 3> = DelaunayTriangulation::new(&vertices).unwrap();
+    /// # let dt: DelaunayTriangulation<_, (), (), 3> =
+    /// #     DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
     /// # let tri = dt.as_triangulation();
-    /// # let index = tri.build_adjacency_index().unwrap();
+    /// # let index = tri.build_adjacency_index()?;
     /// assert_eq!(tri.number_of_edges_with_index(&index), 6);
+    /// # Ok(())
+    /// # }
     /// ```
     #[must_use]
     pub fn number_of_edges_with_index(&self, index: &AdjacencyIndex) -> usize {

@@ -144,16 +144,20 @@ pub(crate) fn insertion_error_to_invariant_error(
 /// use delaunay::prelude::tds::InvariantError;
 /// use delaunay::prelude::*;
 ///
+/// # fn main() -> Result<(), DelaunayTriangulationConstructionError> {
 /// let vertices = vec![
 ///     vertex!([0.0, 0.0, 0.0]),
 ///     vertex!([1.0, 0.0, 0.0]),
 ///     vertex!([0.0, 1.0, 0.0]),
 ///     vertex!([0.0, 0.0, 1.0]),
 /// ];
-/// let dt: DelaunayTriangulation<_, (), (), 3> = DelaunayTriangulation::new(&vertices).unwrap();
+/// let dt: DelaunayTriangulation<_, (), (), 3> =
+///     DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
 ///
 /// let result: Result<(), InvariantError> = dt.as_triangulation().validate();
 /// assert!(result.is_ok());
+/// # Ok(())
+/// # }
 /// ```
 #[derive(Clone, Debug, Error, PartialEq, Eq)]
 #[non_exhaustive]
@@ -436,18 +440,22 @@ impl Default for ValidationPolicy {
 /// ```rust
 /// use delaunay::prelude::*;
 ///
+/// # fn main() -> Result<(), DelaunayTriangulationConstructionError> {
 /// let vertices = vec![
 ///     vertex!([0.0, 0.0, 0.0]),
 ///     vertex!([1.0, 0.0, 0.0]),
 ///     vertex!([0.0, 1.0, 0.0]),
 ///     vertex!([0.0, 0.0, 1.0]),
 /// ];
-/// let mut dt: DelaunayTriangulation<_, (), (), 3> = DelaunayTriangulation::new(&vertices).unwrap();
+/// let mut dt: DelaunayTriangulation<_, (), (), 3> =
+///     DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
 /// assert_eq!(dt.topology_guarantee(), TopologyGuarantee::PLManifold);
 ///
 /// // Optional: relax topology checks for speed (weaker guarantees).
 /// dt.set_topology_guarantee(TopologyGuarantee::Pseudomanifold);
 /// assert!(!dt.topology_guarantee().requires_vertex_links_at_completion());
+/// # Ok(())
+/// # }
 /// ```
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum TopologyGuarantee {
@@ -902,6 +910,7 @@ where
     /// ```rust
     /// use delaunay::prelude::*;
     ///
+    /// # fn main() -> Result<(), DelaunayTriangulationConstructionError> {
     /// let vertices_4d = [
     ///     vertex!([0.0, 0.0, 0.0, 0.0]),
     ///     vertex!([1.0, 0.0, 0.0, 0.0]),
@@ -910,10 +919,12 @@ where
     ///     vertex!([0.0, 0.0, 0.0, 1.0]),
     /// ];
     /// let dt: DelaunayTriangulation<_, (), (), 4> =
-    ///     DelaunayTriangulation::new(&vertices_4d).unwrap();
+    ///     DelaunayTriangulationBuilder::new(&vertices_4d).build::<()>()?;
     ///
     /// // Level 3: topology validation (manifold-with-boundary + Euler characteristic)
     /// assert!(dt.as_triangulation().is_valid().is_ok());
+    /// # Ok(())
+    /// # }
     /// ```
     pub fn is_valid(&self) -> Result<(), InvariantError> {
         self.validate_topology_core()?;
@@ -1030,14 +1041,18 @@ where
     /// ```rust
     /// use delaunay::prelude::*;
     ///
+    /// # fn main() -> Result<(), DelaunayTriangulationConstructionError> {
     /// let vertices = vec![
     ///     vertex!([0.0, 0.0, 0.0]),
     ///     vertex!([1.0, 0.0, 0.0]),
     ///     vertex!([0.0, 1.0, 0.0]),
     ///     vertex!([0.0, 0.0, 1.0]),
     /// ];
-    /// let dt: DelaunayTriangulation<_, (), (), 3> = DelaunayTriangulation::new(&vertices).unwrap();
+    /// let dt: DelaunayTriangulation<_, (), (), 3> =
+    ///     DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
     /// assert!(dt.as_triangulation().validate_at_completion().is_ok());
+    /// # Ok(())
+    /// # }
     /// ```
     pub fn validate_at_completion(&self) -> Result<(), InvariantError> {
         if !self
@@ -1094,6 +1109,7 @@ where
     /// ```rust
     /// use delaunay::prelude::*;
     ///
+    /// # fn main() -> Result<(), DelaunayTriangulationConstructionError> {
     /// let vertices_4d = [
     ///     vertex!([0.0, 0.0, 0.0, 0.0]),
     ///     vertex!([1.0, 0.0, 0.0, 0.0]),
@@ -1102,10 +1118,12 @@ where
     ///     vertex!([0.0, 0.0, 0.0, 1.0]),
     /// ];
     /// let dt: DelaunayTriangulation<_, (), (), 4> =
-    ///     DelaunayTriangulation::new(&vertices_4d).unwrap();
+    ///     DelaunayTriangulationBuilder::new(&vertices_4d).build::<()>()?;
     ///
     /// // Levels 1–3: elements + TDS structure + topology
     /// assert!(dt.as_triangulation().validate().is_ok());
+    /// # Ok(())
+    /// # }
     /// ```
     pub fn validate(&self) -> Result<(), InvariantError>
     where

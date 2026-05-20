@@ -13,7 +13,7 @@
 //!
 //! # Example
 //! ```rust
-//! use delaunay::prelude::query::*;
+//! use delaunay::prelude::*;
 //!
 //! # #[derive(Debug, thiserror::Error)]
 //! # enum ExampleError {
@@ -33,7 +33,8 @@
 //!     vertex!([0.0, 1.0, 0.0]),
 //!     vertex!([0.0, 0.0, 1.0]),
 //! ];
-//! let dt: DelaunayTriangulation<_, (), (), 3> = DelaunayTriangulation::new(&vertices)?;
+//! let dt: DelaunayTriangulation<_, (), (), 3> =
+//!     DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
 //! let hull = ConvexHull::from_triangulation(dt.as_triangulation())?;
 //! let outside = Point::new([2.0, 2.0, 2.0]);
 //! assert!(hull.is_point_outside(&outside, dt.as_triangulation())?);
@@ -296,7 +297,7 @@ pub enum ConvexHullConstructionError {
 /// Use `is_valid_for_triangulation()` to check if a hull is still valid for a given TDS:
 ///
 /// ```rust
-/// # use delaunay::prelude::DelaunayTriangulation;
+/// # use delaunay::prelude::{DelaunayTriangulation, DelaunayTriangulationBuilder};
 /// # use delaunay::prelude::query::ConvexHull;
 /// # use delaunay::vertex;
 /// # #[derive(Debug, thiserror::Error)]
@@ -311,12 +312,12 @@ pub enum ConvexHullConstructionError {
 /// #     MissingFacet,
 /// # }
 /// # fn main() -> Result<(), ExampleError> {
-/// # let mut dt: DelaunayTriangulation<_, (), (), 3> = DelaunayTriangulation::new(&vec![
+/// # let mut dt: DelaunayTriangulation<_, (), (), 3> = DelaunayTriangulationBuilder::new(&vec![
 /// #     vertex!([0.0, 0.0, 0.0]),
 /// #     vertex!([1.0, 0.0, 0.0]),
 /// #     vertex!([0.0, 1.0, 0.0]),
 /// #     vertex!([0.0, 0.0, 1.0]),
-/// # ])?;
+/// # ]).build::<()>()?;
 /// let hull = ConvexHull::from_triangulation(dt.as_triangulation())?;
 /// assert!(hull.is_valid_for_triangulation(dt.as_triangulation())); // Valid initially
 ///
@@ -337,7 +338,7 @@ pub enum ConvexHullConstructionError {
 /// ## Example: Correct Usage Pattern
 ///
 /// ```rust
-/// use delaunay::prelude::DelaunayTriangulation;
+/// use delaunay::prelude::{DelaunayTriangulation, DelaunayTriangulationBuilder};
 /// use delaunay::prelude::query::ConvexHull;
 /// use delaunay::vertex;
 ///
@@ -353,12 +354,12 @@ pub enum ConvexHullConstructionError {
 /// #     MissingFacet,
 /// # }
 /// # fn main() -> Result<(), ExampleError> {
-/// let mut dt: DelaunayTriangulation<_, (), (), 3> = DelaunayTriangulation::new(&vec![
+/// let mut dt: DelaunayTriangulation<_, (), (), 3> = DelaunayTriangulationBuilder::new(&vec![
 ///     vertex!([0.0, 0.0, 0.0]),
 ///     vertex!([1.0, 0.0, 0.0]),
 ///     vertex!([0.0, 1.0, 0.0]),
 ///     vertex!([0.0, 0.0, 1.0]),
-/// ])?;
+/// ]).build::<()>()?;
 ///
 /// // Create initial hull (note: immutable binding)
 /// let hull = ConvexHull::from_triangulation(dt.as_triangulation())?;
@@ -454,7 +455,7 @@ impl<K, U, V, const D: usize> ConvexHull<K, U, V, D> {
     /// # Examples
     ///
     /// ```rust
-    /// use delaunay::prelude::DelaunayTriangulation;
+    /// use delaunay::prelude::{DelaunayTriangulation, DelaunayTriangulationBuilder};
     /// use delaunay::prelude::query::ConvexHull;
     /// use delaunay::vertex;
     ///
@@ -477,7 +478,8 @@ impl<K, U, V, const D: usize> ConvexHull<K, U, V, D> {
     ///     vertex!([0.0, 1.0, 0.0]),
     ///     vertex!([0.0, 0.0, 1.0]),
     /// ];
-    /// let dt: DelaunayTriangulation<_, (), (), 3> = DelaunayTriangulation::new(&vertices)?;
+    /// let dt: DelaunayTriangulation<_, (), (), 3> =
+    ///     DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
     /// let hull =
     ///     ConvexHull::from_triangulation(dt.as_triangulation())?;
     ///
@@ -503,7 +505,7 @@ impl<K, U, V, const D: usize> ConvexHull<K, U, V, D> {
     /// # Examples
     ///
     /// ```rust
-    /// use delaunay::prelude::DelaunayTriangulation;
+    /// use delaunay::prelude::{DelaunayTriangulation, DelaunayTriangulationBuilder};
     /// use delaunay::prelude::query::ConvexHull;
     /// use delaunay::vertex;
     ///
@@ -526,7 +528,8 @@ impl<K, U, V, const D: usize> ConvexHull<K, U, V, D> {
     ///     vertex!([0.0, 1.0, 0.0]),
     ///     vertex!([0.0, 0.0, 1.0]),
     /// ];
-    /// let dt: DelaunayTriangulation<_, (), (), 3> = DelaunayTriangulation::new(&vertices)?;
+    /// let dt: DelaunayTriangulation<_, (), (), 3> =
+    ///     DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
     /// let hull =
     ///     ConvexHull::from_triangulation(dt.as_triangulation())?;
     ///
@@ -547,7 +550,7 @@ impl<K, U, V, const D: usize> ConvexHull<K, U, V, D> {
     /// # Examples
     ///
     /// ```rust
-    /// use delaunay::prelude::DelaunayTriangulation;
+    /// use delaunay::prelude::{DelaunayTriangulation, DelaunayTriangulationBuilder};
     /// use delaunay::prelude::query::ConvexHull;
     /// use delaunay::vertex;
     ///
@@ -572,7 +575,8 @@ impl<K, U, V, const D: usize> ConvexHull<K, U, V, D> {
     ///     vertex!([0.0, 1.0, 0.0]),
     ///     vertex!([0.0, 0.0, 1.0]),
     /// ];
-    /// let dt: DelaunayTriangulation<_, (), (), 3> = DelaunayTriangulation::new(&vertices)?;
+    /// let dt: DelaunayTriangulation<_, (), (), 3> =
+    ///     DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
     /// let hull =
     ///     ConvexHull::from_triangulation(dt.as_triangulation())?;
     ///
@@ -600,7 +604,7 @@ impl<K, U, V, const D: usize> ConvexHull<K, U, V, D> {
     /// # Examples
     ///
     /// ```rust
-    /// use delaunay::prelude::DelaunayTriangulation;
+    /// use delaunay::prelude::{DelaunayTriangulation, DelaunayTriangulationBuilder};
     /// use delaunay::prelude::query::ConvexHull;
     /// use delaunay::vertex;
     ///
@@ -627,7 +631,8 @@ impl<K, U, V, const D: usize> ConvexHull<K, U, V, D> {
     ///     vertex!([0.0, 1.0, 0.0]),
     ///     vertex!([0.0, 0.0, 1.0]),
     /// ];
-    /// let dt: DelaunayTriangulation<_, (), (), 3> = DelaunayTriangulation::new(&vertices)?;
+    /// let dt: DelaunayTriangulation<_, (), (), 3> =
+    ///     DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
     /// let hull =
     ///     ConvexHull::from_triangulation(dt.as_triangulation())?;
     /// assert!(!hull.is_empty());
@@ -646,7 +651,7 @@ impl<K, U, V, const D: usize> ConvexHull<K, U, V, D> {
     /// # Examples
     ///
     /// ```rust
-    /// use delaunay::prelude::DelaunayTriangulation;
+    /// use delaunay::prelude::{DelaunayTriangulation, DelaunayTriangulationBuilder};
     /// use delaunay::prelude::query::ConvexHull;
     /// use delaunay::vertex;
     ///
@@ -668,7 +673,8 @@ impl<K, U, V, const D: usize> ConvexHull<K, U, V, D> {
     ///     vertex!([1.0, 0.0]),
     ///     vertex!([0.0, 1.0]),
     /// ];
-    /// let dt_2d: DelaunayTriangulation<_, (), (), 2> = DelaunayTriangulation::new(&vertices_2d)?;
+    /// let dt_2d: DelaunayTriangulation<_, (), (), 2> =
+    ///     DelaunayTriangulationBuilder::new(&vertices_2d).build::<()>()?;
     /// let hull_2d =
     ///     ConvexHull::from_triangulation(dt_2d.as_triangulation())?;
     /// assert_eq!(hull_2d.dimension(), 2);
@@ -679,7 +685,8 @@ impl<K, U, V, const D: usize> ConvexHull<K, U, V, D> {
     ///     vertex!([0.0, 1.0, 0.0]),
     ///     vertex!([0.0, 0.0, 1.0]),
     /// ];
-    /// let dt_3d: DelaunayTriangulation<_, (), (), 3> = DelaunayTriangulation::new(&vertices_3d)?;
+    /// let dt_3d: DelaunayTriangulation<_, (), (), 3> =
+    ///     DelaunayTriangulationBuilder::new(&vertices_3d).build::<()>()?;
     /// let hull_3d =
     ///     ConvexHull::from_triangulation(dt_3d.as_triangulation())?;
     /// assert_eq!(hull_3d.dimension(), 3);
@@ -716,7 +723,7 @@ where
     /// # Examples
     ///
     /// ```rust
-    /// use delaunay::prelude::DelaunayTriangulation;
+    /// use delaunay::prelude::{DelaunayTriangulation, DelaunayTriangulationBuilder};
     /// use delaunay::prelude::query::ConvexHull;
     /// use delaunay::vertex;
     ///
@@ -732,12 +739,12 @@ where
     /// #     MissingFacet,
     /// # }
     /// # fn main() -> Result<(), ExampleError> {
-    /// let mut dt: DelaunayTriangulation<_, (), (), 3> = DelaunayTriangulation::new(&vec![
+    /// let mut dt: DelaunayTriangulation<_, (), (), 3> = DelaunayTriangulationBuilder::new(&vec![
     ///     vertex!([0.0, 0.0, 0.0]),
     ///     vertex!([1.0, 0.0, 0.0]),
     ///     vertex!([0.0, 1.0, 0.0]),
     ///     vertex!([0.0, 0.0, 1.0]),
-    /// ])?;
+    /// ]).build::<()>()?;
     ///
     /// // Create hull and verify it's valid
     /// let hull = ConvexHull::from_triangulation(dt.as_triangulation())?;
@@ -888,7 +895,7 @@ impl<K, U, V, const D: usize> ConvexHull<K, U, V, D> {
     /// # Examples
     ///
     /// ```rust
-    /// use delaunay::prelude::DelaunayTriangulation;
+    /// use delaunay::prelude::{DelaunayTriangulation, DelaunayTriangulationBuilder};
     /// use delaunay::prelude::query::ConvexHull;
     /// use delaunay::vertex;
     ///
@@ -911,7 +918,8 @@ impl<K, U, V, const D: usize> ConvexHull<K, U, V, D> {
     ///     vertex!([0.0, 1.0, 0.0]),
     ///     vertex!([0.0, 0.0, 1.0]),
     /// ];
-    /// let dt: DelaunayTriangulation<_, (), (), 3> = DelaunayTriangulation::new(&vertices)?;
+    /// let dt: DelaunayTriangulation<_, (), (), 3> =
+    ///     DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
     /// let hull =
     ///     ConvexHull::from_triangulation(dt.as_triangulation())?;
     ///
@@ -964,7 +972,7 @@ where
     /// # Examples
     ///
     /// ```rust
-    /// use delaunay::prelude::DelaunayTriangulation;
+    /// use delaunay::prelude::{DelaunayTriangulation, DelaunayTriangulationBuilder};
     /// use delaunay::prelude::query::ConvexHull;
     /// use delaunay::vertex;
     ///
@@ -987,7 +995,8 @@ where
     ///     vertex!([0.0, 1.0, 0.0]),
     ///     vertex!([0.0, 0.0, 1.0]),
     /// ];
-    /// let dt_3d: DelaunayTriangulation<_, (), (), 3> = DelaunayTriangulation::new(&vertices_3d)?;
+    /// let dt_3d: DelaunayTriangulation<_, (), (), 3> =
+    ///     DelaunayTriangulationBuilder::new(&vertices_3d).build::<()>()?;
     /// let hull_3d: ConvexHull<_, (), (), 3> =
     ///     ConvexHull::from_triangulation(dt_3d.as_triangulation())?;
     /// assert_eq!(hull_3d.number_of_facets(), 4); // Tetrahedron has 4 faces
@@ -1000,7 +1009,8 @@ where
     ///     vertex!([0.0, 0.0, 1.0, 0.0]),
     ///     vertex!([0.0, 0.0, 0.0, 1.0]),
     /// ];
-    /// let dt_4d: DelaunayTriangulation<_, (), (), 4> = DelaunayTriangulation::new(&vertices_4d)?;
+    /// let dt_4d: DelaunayTriangulation<_, (), (), 4> =
+    ///     DelaunayTriangulationBuilder::new(&vertices_4d).build::<()>()?;
     /// let hull_4d =
     ///     ConvexHull::from_triangulation(dt_4d.as_triangulation())?;
     /// assert_eq!(hull_4d.number_of_facets(), 5); // 4-simplex has 5 facets
@@ -1109,7 +1119,7 @@ where
     /// # Examples
     ///
     /// ```rust
-    /// use delaunay::prelude::DelaunayTriangulation;
+    /// use delaunay::prelude::{DelaunayTriangulation, DelaunayTriangulationBuilder};
     /// use delaunay::prelude::query::ConvexHull;
     /// use delaunay::prelude::geometry::Point;
     /// use delaunay::prelude::geometry::Coordinate;
@@ -1134,7 +1144,8 @@ where
     ///     vertex!([0.0, 1.0, 0.0]),
     ///     vertex!([0.0, 0.0, 1.0]),
     /// ];
-    /// let dt: DelaunayTriangulation<_, (), (), 3> = DelaunayTriangulation::new(&vertices)?;
+    /// let dt: DelaunayTriangulation<_, (), (), 3> =
+    ///     DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
     /// let hull =
     ///     ConvexHull::from_triangulation(dt.as_triangulation())?;
     ///
@@ -1509,7 +1520,7 @@ where
     /// # Examples
     ///
     /// ```rust
-    /// use delaunay::prelude::DelaunayTriangulation;
+    /// use delaunay::prelude::{DelaunayTriangulation, DelaunayTriangulationBuilder};
     /// use delaunay::prelude::query::ConvexHull;
     /// use delaunay::prelude::geometry::Point;
     /// use delaunay::prelude::geometry::Coordinate;
@@ -1534,7 +1545,8 @@ where
     ///     vertex!([0.0, 1.0, 0.0]),
     ///     vertex!([0.0, 0.0, 1.0]),
     /// ];
-    /// let dt: DelaunayTriangulation<_, (), (), 3> = DelaunayTriangulation::new(&vertices)?;
+    /// let dt: DelaunayTriangulation<_, (), (), 3> =
+    ///     DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
     /// let hull =
     ///     ConvexHull::from_triangulation(dt.as_triangulation())?;
     ///
@@ -1598,7 +1610,7 @@ where
     /// # Examples
     ///
     /// ```rust
-    /// use delaunay::prelude::DelaunayTriangulation;
+    /// use delaunay::prelude::{DelaunayTriangulation, DelaunayTriangulationBuilder};
     /// use delaunay::prelude::query::ConvexHull;
     /// use delaunay::prelude::geometry::Point;
     /// use delaunay::prelude::geometry::Coordinate;
@@ -1623,7 +1635,8 @@ where
     ///     vertex!([0.0, 1.0, 0.0]),
     ///     vertex!([0.0, 0.0, 1.0]),
     /// ];
-    /// let dt: DelaunayTriangulation<_, (), (), 3> = DelaunayTriangulation::new(&vertices)?;
+    /// let dt: DelaunayTriangulation<_, (), (), 3> =
+    ///     DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
     /// let hull =
     ///     ConvexHull::from_triangulation(dt.as_triangulation())?;
     ///
@@ -1734,7 +1747,7 @@ where
     /// # Examples
     ///
     /// ```rust
-    /// use delaunay::prelude::DelaunayTriangulation;
+    /// use delaunay::prelude::{DelaunayTriangulation, DelaunayTriangulationBuilder};
     /// use delaunay::prelude::query::ConvexHull;
     /// use delaunay::prelude::geometry::Point;
     /// use delaunay::prelude::geometry::Coordinate;
@@ -1759,7 +1772,8 @@ where
     ///     vertex!([0.0, 1.0, 0.0]),
     ///     vertex!([0.0, 0.0, 1.0]),
     /// ];
-    /// let dt: DelaunayTriangulation<_, (), (), 3> = DelaunayTriangulation::new(&vertices)?;
+    /// let dt: DelaunayTriangulation<_, (), (), 3> =
+    ///     DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
     /// let hull =
     ///     ConvexHull::from_triangulation(dt.as_triangulation())?;
     ///
@@ -1797,7 +1811,7 @@ where
     /// # Examples
     ///
     /// ```rust
-    /// use delaunay::prelude::DelaunayTriangulation;
+    /// use delaunay::prelude::{DelaunayTriangulation, DelaunayTriangulationBuilder};
     /// use delaunay::prelude::query::ConvexHull;
     /// use delaunay::vertex;
     ///
@@ -1820,7 +1834,8 @@ where
     ///     vertex!([0.0, 1.0, 0.0]),
     ///     vertex!([0.0, 0.0, 1.0]),
     /// ];
-    /// let dt: DelaunayTriangulation<_, (), (), 3> = DelaunayTriangulation::new(&vertices)?;
+    /// let dt: DelaunayTriangulation<_, (), (), 3> =
+    ///     DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
     /// let hull =
     ///     ConvexHull::from_triangulation(dt.as_triangulation())?;
     ///
@@ -1987,7 +2002,7 @@ mod tests {
 
     /// Helper function to create a Triangulation from vertices.
     ///
-    /// This uses `DelaunayTriangulation::new()` and returns a reference to the underlying `Triangulation`.
+    /// This uses `DelaunayTriangulationBuilder` and returns a reference to the underlying `Triangulation`.
     /// Since we need ownership, we create the `DelaunayTriangulation` and extract the `Triangulation`.
     fn create_triangulation<const D: usize>(
         vertices: &[Vertex<f64, (), D>],

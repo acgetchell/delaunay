@@ -690,9 +690,19 @@ where
 /// # Examples
 ///
 /// ```
-/// use delaunay::prelude::query::*;
+/// use delaunay::prelude::*;
 /// use delaunay::prelude::geometry::surface_measure;
 ///
+/// # #[derive(Debug, thiserror::Error)]
+/// # enum ExampleError {
+/// #     #[error(transparent)]
+/// #     Construction(#[from] delaunay::DelaunayTriangulationConstructionError),
+/// #     #[error(transparent)]
+/// #     Tds(#[from] delaunay::prelude::tds::TdsError),
+/// #     #[error(transparent)]
+/// #     SurfaceMeasure(#[from] delaunay::prelude::geometry::SurfaceMeasureError),
+/// # }
+/// # fn main() -> Result<(), ExampleError> {
 /// // Create a triangulation and calculate surface measure of boundary facets
 /// let vertices = vec![
 ///     vertex!([0.0, 0.0, 0.0]),
@@ -700,15 +710,17 @@ where
 ///     vertex!([0.0, 1.0, 0.0]),
 ///     vertex!([0.0, 0.0, 1.0]),
 /// ];
-/// let dt = DelaunayTriangulation::new(&vertices).unwrap();
+/// let dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
 /// let tds = dt.tds();
 ///
 /// // Get boundary facets as FacetViews
-/// let boundary_facets = tds.boundary_facets().unwrap().collect::<Vec<_>>();
+/// let boundary_facets = tds.boundary_facets()?.collect::<Vec<_>>();
 ///
 /// // Calculate surface area
-/// let surface_area = surface_measure(&boundary_facets).unwrap();
+/// let surface_area = surface_measure(&boundary_facets)?;
 /// assert!(surface_area > 0.0);
+/// # Ok(())
+/// # }
 /// ```
 pub fn surface_measure<T, U, V, const D: usize>(
     facets: &[FacetView<'_, T, U, V, D>],

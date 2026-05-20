@@ -52,17 +52,22 @@ use crate::geometry::kernel::Kernel;
 /// # Examples
 ///
 /// ```rust
-/// use delaunay::prelude::construction::{DelaunayTriangulation, vertex};
+/// use delaunay::prelude::construction::{
+///     DelaunayTriangulationBuilder, DelaunayTriangulationConstructionError, vertex,
+/// };
 ///
+/// # fn main() -> Result<(), DelaunayTriangulationConstructionError> {
 /// let vertices = vec![
 ///     vertex!([0.0, 0.0, 0.0]),
 ///     vertex!([1.0, 0.0, 0.0]),
 ///     vertex!([0.0, 1.0, 0.0]),
 ///     vertex!([0.0, 0.0, 1.0]),
 /// ];
-/// let dt: DelaunayTriangulation<_, (), (), 3> = DelaunayTriangulation::new(&vertices).unwrap();
+/// let dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
 ///
 /// assert_eq!(dt.number_of_simplices(), 1);
+/// # Ok(())
+/// # }
 /// ```
 #[derive(Clone, Debug)]
 pub struct DelaunayTriangulation<K: Kernel<D>, U, V, const D: usize> {

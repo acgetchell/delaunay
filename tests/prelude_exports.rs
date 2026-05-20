@@ -27,7 +27,8 @@ use delaunay::prelude::construction::{
     InsertionOrderStrategy, SimplexValidationError, TopologyGuarantee, Vertex, vertex,
 };
 use delaunay::prelude::delaunayize::{
-    DelaunayizeConfig, DelaunayizeError, DelaunayizeOutcome, delaunayize_by_flips,
+    DelaunayTriangulationBuilder as DelaunayizeDelaunayTriangulationBuilder, DelaunayizeConfig,
+    DelaunayizeError, DelaunayizeOutcome, delaunayize_by_flips,
 };
 use delaunay::prelude::diagnostics::ConstructionTelemetry;
 #[cfg(feature = "diagnostics")]
@@ -396,7 +397,7 @@ fn diagnostic_preludes_cover_repair_apis() -> Result<(), PreludeExportTestError>
         vertex!([0.0, 1.0, 0.0]),
         vertex!([0.0, 0.0, 1.0]),
     ];
-    let mut dt = DelaunayTriangulation::new(&vertices)?;
+    let mut dt = DelaunayizeDelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
 
     let repair_stats = DelaunayRepairStats::default();
     let repair_outcome = DelaunayRepairOutcome {

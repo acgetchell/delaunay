@@ -70,8 +70,18 @@ impl<T, U, V, const D: usize> BoundaryAnalysis<T, U, V, D> for Tds<T, U, V, D> {
     /// # Examples
     ///
     /// ```
-    /// use delaunay::prelude::query::*;
+    /// use delaunay::prelude::*;
     ///
+    /// # #[derive(Debug, thiserror::Error)]
+    /// # enum ExampleError {
+    /// #     #[error(transparent)]
+    /// #     Construction(#[from] delaunay::DelaunayTriangulationConstructionError),
+    /// #     #[error(transparent)]
+    /// #     Query(#[from] delaunay::query::QueryError),
+    /// #     #[error(transparent)]
+    /// #     Tds(#[from] delaunay::prelude::tds::TdsError),
+    /// # }
+    /// # fn main() -> Result<(), ExampleError> {
     /// // Create a simple 3D triangulation (single tetrahedron)
     /// let vertices = vec![
     ///     vertex!([0.0, 0.0, 0.0]),
@@ -79,15 +89,16 @@ impl<T, U, V, const D: usize> BoundaryAnalysis<T, U, V, D> for Tds<T, U, V, D> {
     ///     vertex!([0.0, 1.0, 0.0]),
     ///     vertex!([0.0, 0.0, 1.0]),
     /// ];
-    /// let dt = DelaunayTriangulation::new(&vertices).unwrap();
+    /// let dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
     ///
     /// // High-level API returns `QueryError` if the underlying TDS is corrupted.
-    /// assert_eq!(dt.boundary_facets().unwrap().count(), 4);
+    /// assert_eq!(dt.boundary_facets()?.count(), 4);
     ///
     /// // TDS-level API (fallible): returns `TdsError` on corruption.
     /// let count = dt.tds().boundary_facets()?.count();
     /// assert_eq!(count, 4);
-    /// # Ok::<(), delaunay::tds::TdsError>(())
+    /// # Ok(())
+    /// # }
     /// ```
     fn boundary_facets(&self) -> Result<BoundaryFacetsIter<'_, T, U, V, D>, TdsError> {
         // Build a map from facet keys to the simplices that contain them
@@ -125,20 +136,34 @@ impl<T, U, V, const D: usize> BoundaryAnalysis<T, U, V, D> for Tds<T, U, V, D> {
     /// # Examples
     ///
     /// ```
-    /// use delaunay::prelude::query::*;
+    /// use delaunay::prelude::*;
     ///
+    /// # #[derive(Debug, thiserror::Error)]
+    /// # enum ExampleError {
+    /// #     #[error(transparent)]
+    /// #     Construction(#[from] delaunay::DelaunayTriangulationConstructionError),
+    /// #     #[error(transparent)]
+    /// #     Query(#[from] delaunay::query::QueryError),
+    /// #     #[error(transparent)]
+    /// #     Tds(#[from] delaunay::prelude::tds::TdsError),
+    /// # }
+    /// # fn main() -> Result<(), ExampleError> {
     /// let vertices = vec![
     ///     vertex!([0.0, 0.0, 0.0]),
     ///     vertex!([1.0, 0.0, 0.0]),
     ///     vertex!([0.0, 1.0, 0.0]),
     ///     vertex!([0.0, 0.0, 1.0]),
     /// ];
-    /// let dt = DelaunayTriangulation::new(&vertices).unwrap();
+    /// let dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
     ///
     /// // Get boundary facets using the new iterator API
-    /// let first_facet = dt.boundary_facets().unwrap().next().unwrap();
+    /// let Some(first_facet) = dt.boundary_facets()?.next() else {
+    ///     return Ok(());
+    /// };
     /// // In a single tetrahedron, all facets are boundary facets
-    /// assert!(dt.tds().is_boundary_facet(&first_facet).unwrap());
+    /// assert!(dt.tds().is_boundary_facet(&first_facet)?);
+    /// # Ok(())
+    /// # }
     /// ```
     #[inline]
     fn is_boundary_facet(&self, facet: &FacetView<'_, T, U, V, D>) -> Result<bool, TdsError> {
@@ -169,26 +194,36 @@ impl<T, U, V, const D: usize> BoundaryAnalysis<T, U, V, D> for Tds<T, U, V, D> {
     /// # Examples
     ///
     /// ```
-    /// use delaunay::prelude::query::*;
+    /// use delaunay::prelude::*;
     ///
+    /// # #[derive(Debug, thiserror::Error)]
+    /// # enum ExampleError {
+    /// #     #[error(transparent)]
+    /// #     Construction(#[from] delaunay::DelaunayTriangulationConstructionError),
+    /// #     #[error(transparent)]
+    /// #     Query(#[from] delaunay::query::QueryError),
+    /// #     #[error(transparent)]
+    /// #     Tds(#[from] delaunay::prelude::tds::TdsError),
+    /// # }
+    /// # fn main() -> Result<(), ExampleError> {
     /// let vertices = vec![
     ///     vertex!([0.0, 0.0, 0.0]),
     ///     vertex!([1.0, 0.0, 0.0]),
     ///     vertex!([0.0, 1.0, 0.0]),
     ///     vertex!([0.0, 0.0, 1.0]),
     /// ];
-    /// let dt = DelaunayTriangulation::new(&vertices).unwrap();
+    /// let dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
     ///
     /// // Build the facet map once for multiple queries
-    /// let facet_to_simplices = dt.tds().build_facet_to_simplices_map()
-    ///     .expect("Should build facet map");
+    /// let facet_to_simplices = dt.tds().build_facet_to_simplices_map()?;
     ///
     /// // Check boundary facets efficiently using the iterator API
-    /// for facet in dt.boundary_facets().unwrap() {
-    ///     let is_boundary = dt.tds().is_boundary_facet_with_map(&facet, &facet_to_simplices)
-    ///         .expect("Should check if facet is boundary");
+    /// for facet in dt.boundary_facets()? {
+    ///     let is_boundary = dt.tds().is_boundary_facet_with_map(&facet, &facet_to_simplices)?;
     ///     println!("Facet is boundary: {is_boundary}");
     /// }
+    /// # Ok(())
+    /// # }
     /// ```
     #[inline]
     fn is_boundary_facet_with_map(
@@ -230,19 +265,30 @@ impl<T, U, V, const D: usize> BoundaryAnalysis<T, U, V, D> for Tds<T, U, V, D> {
     /// # Examples
     ///
     /// ```
-    /// use delaunay::prelude::query::*;
+    /// use delaunay::prelude::*;
     ///
+    /// # #[derive(Debug, thiserror::Error)]
+    /// # enum ExampleError {
+    /// #     #[error(transparent)]
+    /// #     Construction(#[from] delaunay::DelaunayTriangulationConstructionError),
+    /// #     #[error(transparent)]
+    /// #     Query(#[from] delaunay::query::QueryError),
+    /// #     #[error(transparent)]
+    /// #     Tds(#[from] delaunay::prelude::tds::TdsError),
+    /// # }
+    /// # fn main() -> Result<(), ExampleError> {
     /// let vertices = vec![
     ///     vertex!([0.0, 0.0, 0.0]),
     ///     vertex!([1.0, 0.0, 0.0]),
     ///     vertex!([0.0, 1.0, 0.0]),
     ///     vertex!([0.0, 0.0, 1.0]),
     /// ];
-    /// let dt = DelaunayTriangulation::new(&vertices).unwrap();
+    /// let dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
     ///
     /// // A single tetrahedron has 4 boundary facets
     /// assert_eq!(dt.tds().number_of_boundary_facets()?, 4);
-    /// # Ok::<(), delaunay::tds::TdsError>(())
+    /// # Ok(())
+    /// # }
     /// ```
     fn number_of_boundary_facets(&self) -> Result<usize, TdsError> {
         let facet_to_simplices = self.build_facet_to_simplices_map()?;

@@ -878,26 +878,36 @@ where
     /// # Examples
     ///
     /// ```rust
-    /// use delaunay::prelude::construction::DelaunayTriangulation;
+    /// use delaunay::prelude::construction::DelaunayTriangulationBuilder;
     /// use delaunay::prelude::triangulation::vertex;
     ///
+    /// # #[derive(Debug, thiserror::Error)]
+    /// # enum ExampleError {
+    /// #     #[error(transparent)]
+    /// #     Construction(#[from] delaunay::DelaunayTriangulationConstructionError),
+    /// #     #[error(transparent)]
+    /// #     Tds(#[from] delaunay::prelude::tds::TdsError),
+    /// # }
+    /// # fn main() -> Result<(), ExampleError> {
     /// // A single simplex has no over-shared facets.
     /// let vertices = vec![
     ///     vertex!([0.0, 0.0]),
     ///     vertex!([1.0, 0.0]),
     ///     vertex!([0.0, 1.0]),
     /// ];
-    /// let dt = DelaunayTriangulation::new(&vertices).unwrap();
+    /// let dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
     ///
     /// let simplex_keys: Vec<_> = dt.simplices().map(|(ck, _)| ck).collect();
     /// let issues = dt
     ///     .as_triangulation()
     ///     .detect_local_facet_issues(&simplex_keys)
-    ///     .unwrap();
+    ///     ?;
     /// assert!(issues.is_none());
     ///
     /// // Note: This method is most useful for checking newly created simplices
     /// // after insertion/removal operations.
+    /// # Ok(())
+    /// # }
     /// ```
     pub fn detect_local_facet_issues(
         &self,
@@ -1141,7 +1151,7 @@ where
     ///
     /// ```rust
     /// use delaunay::prelude::construction::{
-    ///     DelaunayTriangulation, DelaunayTriangulationConstructionError,
+    ///     DelaunayTriangulation, DelaunayTriangulationBuilder, DelaunayTriangulationConstructionError,
     /// };
     /// use delaunay::prelude::insertion::InsertionError;
     /// use delaunay::prelude::triangulation::{FacetIssuesMap, vertex};
@@ -1160,7 +1170,8 @@ where
     ///     vertex!([1.0, 0.0]),
     ///     vertex!([0.0, 1.0]),
     /// ];
-    /// let dt: DelaunayTriangulation<_, (), (), 2> = DelaunayTriangulation::new(&vertices)?;
+    /// let dt: DelaunayTriangulation<_, (), (), 2> =
+    ///     DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
     ///
     /// // Empty issues map => nothing to remove.
     /// let mut tri = dt.as_triangulation().clone();

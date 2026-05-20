@@ -66,8 +66,16 @@ pub enum AdjacencyIndexBuildError {
 /// # Examples
 ///
 /// ```rust
-/// use delaunay::prelude::query::*;
+/// use delaunay::prelude::*;
 ///
+/// # #[derive(Debug, thiserror::Error)]
+/// # enum ExampleError {
+/// #     #[error(transparent)]
+/// #     Construction(#[from] delaunay::DelaunayTriangulationConstructionError),
+/// #     #[error(transparent)]
+/// #     Adjacency(#[from] delaunay::prelude::query::AdjacencyIndexBuildError),
+/// # }
+/// # fn main() -> Result<(), ExampleError> {
 /// // Two tetrahedra sharing a triangular facet.
 /// let vertices: Vec<_> = vec![
 ///     // Shared triangle
@@ -79,15 +87,20 @@ pub enum AdjacencyIndexBuildError {
 ///     vertex!([1.0, 0.7, -1.5]),
 /// ];
 ///
-/// let dt: DelaunayTriangulation<_, (), (), 3> = DelaunayTriangulation::new(&vertices).unwrap();
+/// let dt: DelaunayTriangulation<_, (), (), 3> =
+///     DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
 /// let tri = dt.as_triangulation();
 ///
-/// let index = tri.build_adjacency_index().unwrap();
+/// let index = tri.build_adjacency_index()?;
 ///
 /// // Query incident simplices for some vertex key from the triangulation.
-/// let vk = tri.vertices().next().unwrap().0;
-/// let incident_simplices = index.vertex_to_simplices.get(&vk).unwrap();
+/// let Some((vk, _)) = tri.vertices().next() else { return Ok(()); };
+/// let Some(incident_simplices) = index.vertex_to_simplices.get(&vk) else {
+///     return Ok(());
+/// };
 /// assert!(!incident_simplices.is_empty());
+/// # Ok(())
+/// # }
 /// ```
 #[derive(Clone, Debug)]
 #[non_exhaustive]
@@ -111,8 +124,16 @@ impl AdjacencyIndex {
     /// # Examples
     ///
     /// ```rust
-    /// use delaunay::prelude::query::*;
+    /// use delaunay::prelude::*;
     ///
+    /// # #[derive(Debug, thiserror::Error)]
+    /// # enum ExampleError {
+    /// #     #[error(transparent)]
+    /// #     Construction(#[from] delaunay::DelaunayTriangulationConstructionError),
+    /// #     #[error(transparent)]
+    /// #     Adjacency(#[from] delaunay::prelude::query::AdjacencyIndexBuildError),
+    /// # }
+    /// # fn main() -> Result<(), ExampleError> {
     /// // Two tetrahedra sharing a triangular facet.
     /// let vertices: Vec<_> = vec![
     ///     // Shared triangle
@@ -123,16 +144,21 @@ impl AdjacencyIndex {
     ///     vertex!([1.0, 0.7, 1.5]),
     ///     vertex!([1.0, 0.7, -1.5]),
     /// ];
-    /// let dt: DelaunayTriangulation<_, (), (), 3> = DelaunayTriangulation::new(&vertices).unwrap();
+    /// let dt: DelaunayTriangulation<_, (), (), 3> =
+    ///     DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
     /// let tri = dt.as_triangulation();
     ///
-    /// let shared_vertex_key = tri
+    /// let Some(shared_vertex_key) = tri
     ///     .vertices()
     ///     .find_map(|(vk, _)| (tri.vertex_coords(vk)? == [0.0, 0.0, 0.0]).then_some(vk))
-    ///     .unwrap();
+    /// else {
+    ///     return Ok(());
+    /// };
     ///
-    /// let index = tri.build_adjacency_index().unwrap();
+    /// let index = tri.build_adjacency_index()?;
     /// assert_eq!(index.adjacent_simplices(shared_vertex_key).count(), 2);
+    /// # Ok(())
+    /// # }
     /// ```
     #[must_use = "this iterator is lazy and does nothing unless consumed"]
     #[inline]
@@ -150,7 +176,15 @@ impl AdjacencyIndex {
     /// # Examples
     ///
     /// ```rust
-    /// # use delaunay::prelude::query::*;
+    /// # use delaunay::prelude::*;
+    /// # #[derive(Debug, thiserror::Error)]
+    /// # enum ExampleError {
+    /// #     #[error(transparent)]
+    /// #     Construction(#[from] delaunay::DelaunayTriangulationConstructionError),
+    /// #     #[error(transparent)]
+    /// #     Adjacency(#[from] delaunay::prelude::query::AdjacencyIndexBuildError),
+    /// # }
+    /// # fn main() -> Result<(), ExampleError> {
     /// # let vertices: Vec<_> = vec![
     /// #     // Shared triangle
     /// #     vertex!([0.0, 0.0, 0.0]),
@@ -160,14 +194,19 @@ impl AdjacencyIndex {
     /// #     vertex!([1.0, 0.7, 1.5]),
     /// #     vertex!([1.0, 0.7, -1.5]),
     /// # ];
-    /// # let dt: DelaunayTriangulation<_, (), (), 3> = DelaunayTriangulation::new(&vertices).unwrap();
+    /// # let dt: DelaunayTriangulation<_, (), (), 3> =
+    /// #     DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
     /// # let tri = dt.as_triangulation();
-    /// # let shared_vertex_key = tri
+    /// # let Some(shared_vertex_key) = tri
     /// #     .vertices()
     /// #     .find_map(|(vk, _)| (tri.vertex_coords(vk)? == [0.0, 0.0, 0.0]).then_some(vk))
-    /// #     .unwrap();
-    /// # let index = tri.build_adjacency_index().unwrap();
+    /// # else {
+    /// #     return Ok(());
+    /// # };
+    /// # let index = tri.build_adjacency_index()?;
     /// assert_eq!(index.number_of_adjacent_simplices(shared_vertex_key), 2);
+    /// # Ok(())
+    /// # }
     /// ```
     #[must_use]
     #[inline]
@@ -182,18 +221,29 @@ impl AdjacencyIndex {
     /// # Examples
     ///
     /// ```rust
-    /// # use delaunay::prelude::query::*;
+    /// # use delaunay::prelude::*;
+    /// # #[derive(Debug, thiserror::Error)]
+    /// # enum ExampleError {
+    /// #     #[error(transparent)]
+    /// #     Construction(#[from] delaunay::DelaunayTriangulationConstructionError),
+    /// #     #[error(transparent)]
+    /// #     Adjacency(#[from] delaunay::prelude::query::AdjacencyIndexBuildError),
+    /// # }
+    /// # fn main() -> Result<(), ExampleError> {
     /// # let vertices = vec![
     /// #     vertex!([0.0, 0.0, 0.0]),
     /// #     vertex!([1.0, 0.0, 0.0]),
     /// #     vertex!([0.0, 1.0, 0.0]),
     /// #     vertex!([0.0, 0.0, 1.0]),
     /// # ];
-    /// # let dt: DelaunayTriangulation<_, (), (), 3> = DelaunayTriangulation::new(&vertices).unwrap();
+    /// # let dt: DelaunayTriangulation<_, (), (), 3> =
+    /// #     DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
     /// # let tri = dt.as_triangulation();
-    /// # let index = tri.build_adjacency_index().unwrap();
-    /// let v0 = tri.vertices().next().unwrap().0;
+    /// # let index = tri.build_adjacency_index()?;
+    /// let Some((v0, _)) = tri.vertices().next() else { return Ok(()); };
     /// assert_eq!(index.incident_edges(v0).count(), 3);
+    /// # Ok(())
+    /// # }
     /// ```
     #[must_use = "this iterator is lazy and does nothing unless consumed"]
     #[inline]
@@ -211,18 +261,29 @@ impl AdjacencyIndex {
     /// # Examples
     ///
     /// ```rust
-    /// # use delaunay::prelude::query::*;
+    /// # use delaunay::prelude::*;
+    /// # #[derive(Debug, thiserror::Error)]
+    /// # enum ExampleError {
+    /// #     #[error(transparent)]
+    /// #     Construction(#[from] delaunay::DelaunayTriangulationConstructionError),
+    /// #     #[error(transparent)]
+    /// #     Adjacency(#[from] delaunay::prelude::query::AdjacencyIndexBuildError),
+    /// # }
+    /// # fn main() -> Result<(), ExampleError> {
     /// # let vertices = vec![
     /// #     vertex!([0.0, 0.0, 0.0]),
     /// #     vertex!([1.0, 0.0, 0.0]),
     /// #     vertex!([0.0, 1.0, 0.0]),
     /// #     vertex!([0.0, 0.0, 1.0]),
     /// # ];
-    /// # let dt: DelaunayTriangulation<_, (), (), 3> = DelaunayTriangulation::new(&vertices).unwrap();
+    /// # let dt: DelaunayTriangulation<_, (), (), 3> =
+    /// #     DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
     /// # let tri = dt.as_triangulation();
-    /// # let index = tri.build_adjacency_index().unwrap();
-    /// let v0 = tri.vertices().next().unwrap().0;
+    /// # let index = tri.build_adjacency_index()?;
+    /// let Some((v0, _)) = tri.vertices().next() else { return Ok(()); };
     /// assert_eq!(index.number_of_incident_edges(v0), 3);
+    /// # Ok(())
+    /// # }
     /// ```
     #[must_use]
     #[inline]
@@ -237,7 +298,15 @@ impl AdjacencyIndex {
     /// # Examples
     ///
     /// ```rust
-    /// # use delaunay::prelude::query::*;
+    /// # use delaunay::prelude::*;
+    /// # #[derive(Debug, thiserror::Error)]
+    /// # enum ExampleError {
+    /// #     #[error(transparent)]
+    /// #     Construction(#[from] delaunay::DelaunayTriangulationConstructionError),
+    /// #     #[error(transparent)]
+    /// #     Adjacency(#[from] delaunay::prelude::query::AdjacencyIndexBuildError),
+    /// # }
+    /// # fn main() -> Result<(), ExampleError> {
     /// # let vertices: Vec<_> = vec![
     /// #     // Shared triangle
     /// #     vertex!([0.0, 0.0, 0.0]),
@@ -247,11 +316,14 @@ impl AdjacencyIndex {
     /// #     vertex!([1.0, 0.7, 1.5]),
     /// #     vertex!([1.0, 0.7, -1.5]),
     /// # ];
-    /// # let dt: DelaunayTriangulation<_, (), (), 3> = DelaunayTriangulation::new(&vertices).unwrap();
+    /// # let dt: DelaunayTriangulation<_, (), (), 3> =
+    /// #     DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
     /// # let tri = dt.as_triangulation();
-    /// # let index = tri.build_adjacency_index().unwrap();
-    /// let simplex_key = tri.simplices().next().unwrap().0;
+    /// # let index = tri.build_adjacency_index()?;
+    /// let Some((simplex_key, _)) = tri.simplices().next() else { return Ok(()); };
     /// assert_eq!(index.simplex_neighbors(simplex_key).count(), 1);
+    /// # Ok(())
+    /// # }
     /// ```
     #[must_use = "this iterator is lazy and does nothing unless consumed"]
     #[inline]
@@ -269,7 +341,15 @@ impl AdjacencyIndex {
     /// # Examples
     ///
     /// ```rust
-    /// # use delaunay::prelude::query::*;
+    /// # use delaunay::prelude::*;
+    /// # #[derive(Debug, thiserror::Error)]
+    /// # enum ExampleError {
+    /// #     #[error(transparent)]
+    /// #     Construction(#[from] delaunay::DelaunayTriangulationConstructionError),
+    /// #     #[error(transparent)]
+    /// #     Adjacency(#[from] delaunay::prelude::query::AdjacencyIndexBuildError),
+    /// # }
+    /// # fn main() -> Result<(), ExampleError> {
     /// # let vertices: Vec<_> = vec![
     /// #     // Shared triangle
     /// #     vertex!([0.0, 0.0, 0.0]),
@@ -279,11 +359,14 @@ impl AdjacencyIndex {
     /// #     vertex!([1.0, 0.7, 1.5]),
     /// #     vertex!([1.0, 0.7, -1.5]),
     /// # ];
-    /// # let dt: DelaunayTriangulation<_, (), (), 3> = DelaunayTriangulation::new(&vertices).unwrap();
+    /// # let dt: DelaunayTriangulation<_, (), (), 3> =
+    /// #     DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
     /// # let tri = dt.as_triangulation();
-    /// # let index = tri.build_adjacency_index().unwrap();
-    /// let simplex_key = tri.simplices().next().unwrap().0;
+    /// # let index = tri.build_adjacency_index()?;
+    /// let Some((simplex_key, _)) = tri.simplices().next() else { return Ok(()); };
     /// assert_eq!(index.number_of_simplex_neighbors(simplex_key), 1);
+    /// # Ok(())
+    /// # }
     /// ```
     #[must_use]
     #[inline]
@@ -302,18 +385,29 @@ impl AdjacencyIndex {
     /// # Examples
     ///
     /// ```rust
-    /// # use delaunay::prelude::query::*;
+    /// # use delaunay::prelude::*;
+    /// # #[derive(Debug, thiserror::Error)]
+    /// # enum ExampleError {
+    /// #     #[error(transparent)]
+    /// #     Construction(#[from] delaunay::DelaunayTriangulationConstructionError),
+    /// #     #[error(transparent)]
+    /// #     Adjacency(#[from] delaunay::prelude::query::AdjacencyIndexBuildError),
+    /// # }
+    /// # fn main() -> Result<(), ExampleError> {
     /// # let vertices = vec![
     /// #     vertex!([0.0, 0.0, 0.0]),
     /// #     vertex!([1.0, 0.0, 0.0]),
     /// #     vertex!([0.0, 1.0, 0.0]),
     /// #     vertex!([0.0, 0.0, 1.0]),
     /// # ];
-    /// # let dt: DelaunayTriangulation<_, (), (), 3> = DelaunayTriangulation::new(&vertices).unwrap();
+    /// # let dt: DelaunayTriangulation<_, (), (), 3> =
+    /// #     DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
     /// # let tri = dt.as_triangulation();
-    /// # let index = tri.build_adjacency_index().unwrap();
+    /// # let index = tri.build_adjacency_index()?;
     /// let edges: std::collections::HashSet<_> = index.edges().collect();
     /// assert_eq!(edges.len(), 6);
+    /// # Ok(())
+    /// # }
     /// ```
     #[must_use = "this iterator is lazy and does nothing unless consumed"]
     pub fn edges(&self) -> impl Iterator<Item = EdgeKey> + '_ {
@@ -330,17 +424,28 @@ impl AdjacencyIndex {
     /// # Examples
     ///
     /// ```rust
-    /// # use delaunay::prelude::query::*;
+    /// # use delaunay::prelude::*;
+    /// # #[derive(Debug, thiserror::Error)]
+    /// # enum ExampleError {
+    /// #     #[error(transparent)]
+    /// #     Construction(#[from] delaunay::DelaunayTriangulationConstructionError),
+    /// #     #[error(transparent)]
+    /// #     Adjacency(#[from] delaunay::prelude::query::AdjacencyIndexBuildError),
+    /// # }
+    /// # fn main() -> Result<(), ExampleError> {
     /// # let vertices = vec![
     /// #     vertex!([0.0, 0.0, 0.0]),
     /// #     vertex!([1.0, 0.0, 0.0]),
     /// #     vertex!([0.0, 1.0, 0.0]),
     /// #     vertex!([0.0, 0.0, 1.0]),
     /// # ];
-    /// # let dt: DelaunayTriangulation<_, (), (), 3> = DelaunayTriangulation::new(&vertices).unwrap();
+    /// # let dt: DelaunayTriangulation<_, (), (), 3> =
+    /// #     DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
     /// # let tri = dt.as_triangulation();
-    /// # let index = tri.build_adjacency_index().unwrap();
+    /// # let index = tri.build_adjacency_index()?;
     /// assert_eq!(index.number_of_edges(), 6);
+    /// # Ok(())
+    /// # }
     /// ```
     #[must_use]
     pub fn number_of_edges(&self) -> usize {

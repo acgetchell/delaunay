@@ -104,8 +104,9 @@ support through D ≤ 6, but the public exact repair contract is tied to exact
 insphere support and the currently tested triangulation envelope, so
 `ExactPredicates` stops at D ≤ 5.
 
-The convenience constructors (`DelaunayTriangulation::new()`, `::empty()`, etc.) use
-`AdaptiveKernel`. To opt into a different kernel, use the explicit-kernel constructors:
+`DelaunayTriangulationBuilder::new(&vertices).build::<()>()` and
+`DelaunayTriangulation::empty()` use `AdaptiveKernel`. To opt into a different
+kernel, use the explicit-kernel constructors:
 
 ```rust
 use delaunay::prelude::geometry::RobustKernel;
@@ -254,8 +255,10 @@ the triangulation interior.
 
 ### Layer 1: Hilbert-sort preprocessing dedup (batch construction)
 
-When vertices are inserted via batch constructors (`DelaunayTriangulation::new()`,
-`::with_kernel()`, etc.) using the default `InsertionOrderStrategy::Hilbert`, the
+When vertices are inserted via batch construction
+(`DelaunayTriangulationBuilder::new(&vertices).build::<()>()`,
+`DelaunayTriangulation::with_kernel()`, etc.) using the default
+`InsertionOrderStrategy::Hilbert`, the
 Hilbert ordering pass quantizes each coordinate to a fixed-width integer grid before
 computing the space-filling curve index. After sorting, vertices that map to the same
 quantized grid cell are adjacent and are removed in a single linear sweep.
@@ -354,7 +357,8 @@ and per-insertion checks handle any remaining cases.
 
 ## Practical recommendations
 
-- Start with the default `AdaptiveKernel` (`DelaunayTriangulation::new()` / `::empty()`).
+- Start with the default `AdaptiveKernel` (`DelaunayTriangulationBuilder::new(&vertices).build::<()>()` /
+  `DelaunayTriangulation::empty()`).
   This handles near-degenerate configurations correctly out of the box.
 - If you need explicit `BOUNDARY`/`DEGENERATE` signals (e.g. to detect and handle cospherical
   configurations yourself), switch to `RobustKernel`.
