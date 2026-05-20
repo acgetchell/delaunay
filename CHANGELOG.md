@@ -10,17 +10,34 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### ⚠️ Breaking Changes
 
 - Support periodic flip parity for external cells [#391](https://github.com/acgetchell/delaunay/pull/391)
+- Split strict and best-effort insertion statistics [#405](https://github.com/acgetchell/delaunay/pull/405)
 - Replace public core module with focused facades [#392](https://github.com/acgetchell/delaunay/pull/392)
 - Rename public cell APIs to simplex nomenclature [#393](https://github.com/acgetchell/delaunay/pull/393)
+- Flatten triangulation modules into focused APIs [#399](https://github.com/acgetchell/delaunay/pull/399)
+- Reconcile topology validation policy [#385](https://github.com/acgetchell/delaunay/pull/385) [#404](https://github.com/acgetchell/delaunay/pull/404)
+- Box Delaunay repair flip errors [#407](https://github.com/acgetchell/delaunay/pull/407)
 
 ### Merged Pull Requests
 
+- Use typed errors in public examples [#365](https://github.com/acgetchell/delaunay/pull/365) [#410](https://github.com/acgetchell/delaunay/pull/410)
+- Prefer builder-based fallible examples [#214](https://github.com/acgetchell/delaunay/pull/214) [#409](https://github.com/acgetchell/delaunay/pull/409)
+- Box Delaunay repair flip errors [#407](https://github.com/acgetchell/delaunay/pull/407)
+- Split strict and best-effort insertion statistics [#405](https://github.com/acgetchell/delaunay/pull/405)
+- Reconcile topology validation policy [#385](https://github.com/acgetchell/delaunay/pull/385) [#404](https://github.com/acgetchell/delaunay/pull/404)
+- Localize remove_vertex repair [#401](https://github.com/acgetchell/delaunay/pull/401)
+- Bump idna in the uv group across 1 directory [#400](https://github.com/acgetchell/delaunay/pull/400)
+- Flatten triangulation modules into focused APIs [#399](https://github.com/acgetchell/delaunay/pull/399)
+- Bump codecov/codecov-action from 6.0.0 to 6.0.1 [#398](https://github.com/acgetchell/delaunay/pull/398)
+- Bump sysinfo in the dependencies group across 1 directory [#397](https://github.com/acgetchell/delaunay/pull/397)
+- Bump taiki-e/install-action from 2.77.5 to 2.79.1 [#396](https://github.com/acgetchell/delaunay/pull/396)
+- Surface squash-body commit entries [#395](https://github.com/acgetchell/delaunay/pull/395)
 - Replace Node markdown tooling with rumdl [#394](https://github.com/acgetchell/delaunay/pull/394)
 - Rename public cell APIs to simplex nomenclature [#393](https://github.com/acgetchell/delaunay/pull/393)
 - Replace public core module with focused facades [#392](https://github.com/acgetchell/delaunay/pull/392)
 - Support periodic flip parity for external cells [#391](https://github.com/acgetchell/delaunay/pull/391)
 - Refactor/387 tds mutation boundaries [#390](https://github.com/acgetchell/delaunay/pull/390)
 - Refresh release docs and benchmark guidance [#389](https://github.com/acgetchell/delaunay/pull/389)
+- Isolate strict insphere consistency control [#383](https://github.com/acgetchell/delaunay/pull/383)
 
 ### Added
 
@@ -30,12 +47,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Preserve periodic vertex offsets when bistellar flips build replacement cells.
   - Align external-facet parity checks across periodic cell frames instead of rejecting periodic external cells.
   - Surface replacement periodic-offset shape and frame conflicts with typed flip-context errors.
+- [**breaking**] Split strict and best-effort insertion statistics [#405](https://github.com/acgetchell/delaunay/pull/405)
+  [`71336b5`](https://github.com/acgetchell/delaunay/commit/71336b52ffad7ad6923ea0268928a700e37c43e3)
+
+  - Make insert_with_statistics return typed insertion errors for skipped
+    duplicate or retry-exhausted vertices so callers using ? cannot silently
+    ignore skipped inputs.
+
+  - Add insert_best_effort_with_statistics for diagnostic and bulk-ingestion
+    workflows that intentionally preserve skipped insertions as outcomes with
+    telemetry.
+
+  - Derive the default validation policy from the active topology guarantee so
+    PLManifold starts in ExplicitOnly mode while Pseudomanifold keeps
+    OnSuspicion.
+
+  - Document skipped-input observability across construction, workflows, and
+    robustness guidance.
 
 ### Changed
 
 - Refactor/387 tds mutation boundaries [#390](https://github.com/acgetchell/delaunay/pull/390)
   [`da30293`](https://github.com/acgetchell/delaunay/commit/da3029302e8484d26d2a88d1291050c332e6b822)
-
 - [**breaking**] Replace public core module with focused facades [#392](https://github.com/acgetchell/delaunay/pull/392)
   [`655ff4c`](https://github.com/acgetchell/delaunay/commit/655ff4c944ac918c1a88ab70b26908bd1ebd329f)
 
@@ -45,7 +78,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Add focused prelude/docs coverage for the new public import paths.
   - Update downstream-style tests and doctests to stop relying on
     `delaunay::core`.
-
 - [**breaking**] Rename public cell APIs to simplex nomenclature [#393](https://github.com/acgetchell/delaunay/pull/393)
   [`48935d5`](https://github.com/acgetchell/delaunay/commit/48935d5c1ecbeef1b9b833b1de0d1cbcc2e72938)
 
@@ -57,6 +89,46 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
   - Remove redundant integration tests whose coverage is now exercised by unit, property, and public API tests.
   - Move Codacy SARIF filtering into a tested support script and simplify Cargo package metadata.
+- [**breaking**] Flatten triangulation modules into focused APIs [#399](https://github.com/acgetchell/delaunay/pull/399)
+  [`774fd1b`](https://github.com/acgetchell/delaunay/commit/774fd1b92756a070d945061eff203fbc80563dbe)
+
+  - Move Delaunay-facing APIs from the old triangulation facade to crate-root
+    modules and focused preludes such as construction, insertion, flips,
+    repair, validation, and delaunayize.
+
+  - Split generic Triangulation behavior into construction, insertion, query,
+    orientation, repair, and validation modules with colocated tests and errors.
+
+  - Keep the broad prelude for exploratory use while making focused preludes
+    orthogonal and workflow-specific.
+
+  - Refresh docs, examples, benchmarks, and API export tests for the new module
+    layout and 7,500-vertex 3D debug-scale default.
+- [**breaking**] Reconcile topology validation policy [#385](https://github.com/acgetchell/delaunay/pull/385)
+  [#404](https://github.com/acgetchell/delaunay/pull/404) [`e5a74a1`](https://github.com/acgetchell/delaunay/commit/e5a74a10586b162fad56d7f227ab194997f7a87c)
+
+  - Add explicit caller-owned validation mode for PL-manifold topology guarantees.
+  - Reject incoherent topology guarantee and validation policy pairings through typed fallible setters.
+  - Keep compatibility setters non-committal when a requested pairing is invalid.
+  - Derive builder validation policy from the selected topology guarantee and document the compatibility matrix.
+- [**breaking**] Box Delaunay repair flip errors [#407](https://github.com/acgetchell/delaunay/pull/407)
+  [`1789ceb`](https://github.com/acgetchell/delaunay/commit/1789cebd4f56b4dc09e014482d8d90176fdaeffc)
+
+  - Box `DelaunayRepairError::Flip` sources while preserving typed `FlipError`
+    inspection through `From&lt;FlipError&gt;` and `Error::source`.
+
+  - Update repair and construction mappings for the named boxed variant.
+  - Cover clone and source behavior for wrapped linear-algebra errors.
+- Isolate strict insphere consistency control [#383](https://github.com/acgetchell/delaunay/pull/383)
+  [`54a08b7`](https://github.com/acgetchell/delaunay/commit/54a08b7a9e773cfee4747ee8efc5ac59e73e064e)
+
+  - Document the strict insphere consistency environment knob as a process-wide
+    once-per-process snapshot.
+
+  - Add a thread-local test override guard so strict diagnostic paths can be
+    exercised without mutating global environment state.
+
+  - Mark the production review checklist item complete.
 
 ### Documentation
 
@@ -75,26 +147,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
   - Update generated benchmark-summary guidance to surface `just bench-perf-summary`,
     current Criterion metadata, and large-scale characterization defaults.
+- Prefer builder-based fallible examples [#214](https://github.com/acgetchell/delaunay/pull/214) [#409](https://github.com/acgetchell/delaunay/pull/409)
+  [`238dc12`](https://github.com/acgetchell/delaunay/commit/238dc124f6fb930cbeee31ea07c16d017f1822bd)
+
+  - Present `DelaunayTriangulationBuilder` as the primary construction path while retaining `DelaunayTriangulation::new` as a legacy convenience constructor.
+  - Replace doctest `unwrap()` patterns with typed `?` propagation and explicit optional guards across construction, validation, repair, geometry, and topology
+    examples.
+
+  - Re-export `DelaunayTriangulationBuilder` from `prelude::delaunayize` so single-prelude delaunayize examples can use the builder directly.
+- Use typed errors in public examples [#365](https://github.com/acgetchell/delaunay/pull/365) [#410](https://github.com/acgetchell/delaunay/pull/410)
+  [`15633e2`](https://github.com/acgetchell/delaunay/commit/15633e2c03d2b2b9af1532676f0ce2c1292a538c)
+
+  - Replace public doctest unwraps and expects with typed Result examples across core and geometry APIs.
+  - Use concrete crate errors or small local thiserror enums in guides instead of boxed dynamic errors.
+  - Clarify toroidal builder wording and point the README at the workflow docs for periodic construction.
 
 ### Fixed
 
-- Surface squash-body commit entries [`27116dd`](https://github.com/acgetchell/delaunay/commit/27116ddc1b292ef2f361491a2454a66f126dcaca)
+- Surface squash-body commit entries [#395](https://github.com/acgetchell/delaunay/pull/395)
+  [`44dc3ed`](https://github.com/acgetchell/delaunay/commit/44dc3ede1012ed4b1f3a560b3c724e2e21d5169e)
 
   - Mirror conventional pseudo-commit headings from squash merge bodies into their matching changelog sections while preserving the primary PR entry.
   - Regenerate active and archived changelogs so historical squash-body fixes, docs, maintenance, and performance notes appear under the right headings.
   - Resolve production-review hygiene by clarifying Cargo feature gates, relabeling TDS UUID-map invariants, and recording UUID panic paths as test-only.
-- Preserve squash-body release notes [`8d36b92`](https://github.com/acgetchell/delaunay/commit/8d36b92b364bdfcf123c99798b252828acb297b6)
-
-  - Mirror isolated conventional squash-body headings from any changelog section while keeping the source commit-body detail intact.
-  - Skip only exact parent/summary duplicates so generated archives retain distinct fix, docs, maintenance, and performance notes.
-  - Canonicalize renamed diagnostics feature wording before mirror/dedupe so pre-rename wording cannot be reintroduced.
-- Deduplicate contextual squash entries [`792bb48`](https://github.com/acgetchell/delaunay/commit/792bb4865e7d449942ff7d42fd00366413f49796)
-
-  - Collapse standalone generated entries only when the same commit, normalized title, and body are already preserved under a contextual squash-body heading.
-  - Canonicalize renamed diagnostics wording before dedupe so pre-rename feature names do not reappear in generated release notes.
-  - Preserve legitimate follow-up headings unless they belong to a contextual duplicate that replaced a standalone entry.
-  - Regenerate active and archived changelogs from the updated postprocessing pipeline.
-  - Align CI and local tooling pins for cargo-llvm-cov, cargo-nextest, and uv.
 
 ### Maintenance
 
@@ -105,6 +180,131 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Add dprint/pretty_yaml YAML formatting and wire yaml-check/yaml-fix through dprint plus yamllint.
   - Format generated changelog archives with rumdl after git-cliff postprocessing.
   - Add Semgrep guards for check-before-fix docs and pinned, allowlisted GitHub Actions.
+- Bump codecov/codecov-action from 6.0.0 to 6.0.1 [#398](https://github.com/acgetchell/delaunay/pull/398)
+  [`325aa94`](https://github.com/acgetchell/delaunay/commit/325aa941ba9adaca7973c1f2a3f623c88b9a5d27)
+
+  Bumps [codecov/codecov-action](https://github.com/codecov/codecov-action) from 6.0.0 to 6.0.1.
+
+  - [Release notes](https://github.com/codecov/codecov-action/releases)
+  - [Changelog](https://github.com/codecov/codecov-action/blob/main/CHANGELOG.md)
+  - [Commits](https://github.com/codecov/codecov-action/compare/57e3a136b779b570ffcdbf80b3bdc90e7fab3de2...e79a6962e0d4c0c17b229090214935d2e33f8354)
+
+---
+
+  updated-dependencies:
+
+- dependency-name: codecov/codecov-action
+  dependency-version: 6.0.1
+  dependency-type: direct:production
+  update-type: version-update:semver-patch
+  ...
+
+- Bump sysinfo in the dependencies group across 1 directory [#397](https://github.com/acgetchell/delaunay/pull/397)
+  [`8800150`](https://github.com/acgetchell/delaunay/commit/88001505822ed949c5075f9000a7f2e114bcf089)
+
+  Bumps the dependencies group with 1 update in the / directory: [sysinfo](https://github.com/GuillaumeGomez/sysinfo).
+
+  Updates `sysinfo` from 0.39.1 to 0.39.2
+
+  - [Changelog](https://github.com/GuillaumeGomez/sysinfo/blob/main/CHANGELOG.md)
+  - [Commits](https://github.com/GuillaumeGomez/sysinfo/compare/v0.39.1...v0.39.2)
+
+---
+
+  updated-dependencies:
+
+- dependency-name: sysinfo
+  dependency-version: 0.39.2
+  dependency-type: direct:production
+  update-type: version-update:semver-patch
+  dependency-group: dependencies
+  ...
+
+- Bump taiki-e/install-action from 2.77.5 to 2.79.1 [#396](https://github.com/acgetchell/delaunay/pull/396)
+  [`d89961c`](https://github.com/acgetchell/delaunay/commit/d89961cfdc4af5c354c78f4e5fe008f1f273c6e2)
+
+  Bumps [taiki-e/install-action](https://github.com/taiki-e/install-action) from 2.77.5 to 2.79.1.
+
+  - [Release notes](https://github.com/taiki-e/install-action/releases)
+  - [Changelog](https://github.com/taiki-e/install-action/blob/main/CHANGELOG.md)
+  - [Commits](https://github.com/taiki-e/install-action/compare/fa0dd4cd0a40696e6f9766370614a5ce482e6aa8...b550161ef8a7bc4f2a671c0b03a18ac9ccedea1e)
+
+---
+
+  updated-dependencies:
+
+- dependency-name: taiki-e/install-action
+  dependency-version: 2.79.1
+  dependency-type: direct:production
+  update-type: version-update:semver-minor
+  ...
+
+- Bump idna in the uv group across 1 directory [#400](https://github.com/acgetchell/delaunay/pull/400)
+  [`dadb724`](https://github.com/acgetchell/delaunay/commit/dadb7248243e2b320095c647d8314fd952c116e0)
+
+  Bumps the uv group with 1 update in the / directory: [idna](https://github.com/kjd/idna).
+
+  Updates `idna` from 3.13 to 3.15
+
+  - [Release notes](https://github.com/kjd/idna/releases)
+  - [Changelog](https://github.com/kjd/idna/blob/master/HISTORY.md)
+  - [Commits](https://github.com/kjd/idna/compare/v3.13...v3.15)
+
+---
+
+  updated-dependencies:
+
+- dependency-name: idna
+  dependency-version: '3.15'
+  dependency-type: indirect
+  dependency-group: uv
+  ...
+
+- Run Windows tests with cargo-nextest [`bc5d48f`](https://github.com/acgetchell/delaunay/commit/bc5d48f61012d49224d783f6c49f88024948959c)
+
+  - Install and verify the pinned cargo-nextest version across the CI build matrix.
+  - Run Windows library and release integration tests through nextest while keeping doctests on cargo test.
+  - Document the Windows nextest alignment in the tooling notes.
+
+### Performance
+
+- Localize remove_vertex repair [#401](https://github.com/acgetchell/delaunay/pull/401)
+  [`382f9e1`](https://github.com/acgetchell/delaunay/commit/382f9e13cff0f4a325361c056ea1d59be18003c5)
+
+  - Avoid global simplex scans and incident-simplex rebuilds on successful
+    vertex removal by using the affected vertex star and scoped repair.
+
+  - Promote and validate orientation over the touched removal scope, with the
+    full global orientation path retained as a fallback.
+
+  - Add a Criterion remove_vertex benchmark covering successful removals and
+    invalid-remnant rollback across 2D through 5D.
+
+#### Performance: Stress remove_vertex cases
+
+- Add adversarial remove_vertex benchmark fixtures for near-boundary,
+  cospherical, near-degenerate, and large-coordinate point sets.
+
+- Include the selected fixture kind in Criterion case names so benchmark
+  output shows which geometry each run exercises.
+
+- Name the vertex-removal orientation normalization budget.
+
+#### Changed: Cover vertex-removal helper invariants
+
+  Add focused regression coverage for vertex-removal helper behavior:
+
+- affected-vertex collection and missing-simplex error preservation
+- local validation-scope deduplication and live-simplex filtering
+- incident-simplex repair, isolated-vertex reporting, and postcondition failure
+- fan-boundary filtering for facets that already contain the apex
+
+#### Fixed: Bound local facet repair removals
+
+- Preserve local repair removal budgets before mutating the TDS.
+- Reuse scoped neighbor repair after vertex-removal facet cleanup.
+- Install and verify cargo-nextest for faster CI test recipes.
+- Build examples once before running their compiled binaries.
 
 ## [0.7.7] - 2026-05-15
 

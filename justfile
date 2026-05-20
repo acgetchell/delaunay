@@ -344,6 +344,24 @@ markdown-check: _ensure-rumdl
     done < <(git ls-files -z '*.md')
     if [ "${#files[@]}" -gt 0 ]; then
         printf '%s\0' "${files[@]}" | xargs -0 -n100 rumdl check
+        violations=0
+        for file in "${files[@]}"; do
+            case "$file" in
+                CHANGELOG.md|docs/archive/*) continue ;;
+            esac
+            line_number=0
+            while IFS= read -r line || [[ -n "$line" ]]; do
+                line_number=$((line_number + 1))
+                if [ "${#line}" -gt 160 ]; then
+                    printf '%s:%d: line length %d exceeds 160\n' "$file" "$line_number" "${#line}" >&2
+                    violations=$((violations + 1))
+                fi
+            done < "$file"
+        done
+        if [ "$violations" -gt 0 ]; then
+            echo "Markdown raw line-length check failed." >&2
+            exit 1
+        fi
     else
         echo "No markdown files found to check."
     fi

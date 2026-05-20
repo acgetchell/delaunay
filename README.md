@@ -5,12 +5,12 @@
 [![Downloads](https://img.shields.io/crates/d/delaunay.svg)](https://crates.io/crates/delaunay)
 [![License](https://img.shields.io/crates/l/delaunay.svg)](https://github.com/acgetchell/delaunay/blob/main/LICENSE)
 [![Docs.rs](https://docs.rs/delaunay/badge.svg)](https://docs.rs/delaunay)
-[![CI](https://github.com/acgetchell/delaunay/actions/workflows/ci.yml/badge.svg)](https://github.com/acgetchell/delaunay/actions/workflows/ci.yml)
-[![CodeQL](https://github.com/acgetchell/delaunay/actions/workflows/codeql.yml/badge.svg)](https://github.com/acgetchell/delaunay/actions/workflows/codeql.yml)
-[![rust-clippy analyze](https://github.com/acgetchell/delaunay/actions/workflows/rust-clippy.yml/badge.svg)](https://github.com/acgetchell/delaunay/actions/workflows/rust-clippy.yml)
+[![CI][ci-badge]][ci-workflow]
+[![CodeQL][codeql-badge]][codeql-workflow]
+[![rust-clippy analyze][clippy-badge]][clippy-workflow]
 [![codecov](https://codecov.io/gh/acgetchell/delaunay/graph/badge.svg?token=WT7qZGT9bO)](https://codecov.io/gh/acgetchell/delaunay)
-[![Audit dependencies](https://github.com/acgetchell/delaunay/actions/workflows/audit.yml/badge.svg)](https://github.com/acgetchell/delaunay/actions/workflows/audit.yml)
-[![Codacy Badge](https://app.codacy.com/project/badge/Grade/3cad94f994f5434d877ae77f0daee692)](https://app.codacy.com/gh/acgetchell/delaunay/dashboard?utm_source=gh&utm_medium=referral&utm_content=&utm_campaign=Badge_grade)
+[![Audit dependencies][audit-badge]][audit-workflow]
+[![Codacy Badge][codacy-badge]][codacy-dashboard]
 
 [Rust] crate providing D-dimensional [Delaunay triangulations] and
 [convex hulls][Convex hulls] (2D through 5D explicitly tested) constructed with
@@ -532,6 +532,16 @@ Portions of this library were developed with the assistance of these AI tools:
 > All code was written and/or reviewed and validated by the author.
 
 [Rust]: https://rust-lang.org
+[audit-badge]: https://github.com/acgetchell/delaunay/actions/workflows/audit.yml/badge.svg
+[audit-workflow]: https://github.com/acgetchell/delaunay/actions/workflows/audit.yml
+[ci-badge]: https://github.com/acgetchell/delaunay/actions/workflows/ci.yml/badge.svg
+[ci-workflow]: https://github.com/acgetchell/delaunay/actions/workflows/ci.yml
+[clippy-badge]: https://github.com/acgetchell/delaunay/actions/workflows/rust-clippy.yml/badge.svg
+[clippy-workflow]: https://github.com/acgetchell/delaunay/actions/workflows/rust-clippy.yml
+[codacy-badge]: https://app.codacy.com/project/badge/Grade/3cad94f994f5434d877ae77f0daee692
+[codacy-dashboard]: https://app.codacy.com/gh/acgetchell/delaunay/dashboard?utm_source=gh&utm_medium=referral&utm_content=&utm_campaign=Badge_grade
+[codeql-badge]: https://github.com/acgetchell/delaunay/actions/workflows/codeql.yml/badge.svg
+[codeql-workflow]: https://github.com/acgetchell/delaunay/actions/workflows/codeql.yml
 [CGAL]: https://www.cgal.org/
 [C++]: https://isocpp.org
 [Spade]: https://crates.io/crates/spade

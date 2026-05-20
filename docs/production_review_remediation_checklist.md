@@ -51,9 +51,10 @@ Treat partial items as still open until their acceptance notes are satisfied.
 - [ ] **12. Confirm clone semantics for linear-algebra error variants.**
   Verify `LaError: Clone` and keep parent error enums honestly cloneable.
   Tracked for v0.7.8 in #384.
-- [ ] **13. Make strict insphere consistency test control isolated.**
-  Rename the once-init env flag for process-wide semantics or use an atomic
-  test hook. Tracked for v0.7.8 in #383.
+- [x] **13. Make strict insphere consistency test control isolated.**
+  The once-init strict-insphere env snapshot is now named and documented as
+  process-wide, while unit tests use a thread-local override guard instead of
+  mutating process environment state. Tracked for v0.7.8 in #383.
 - [x] **14. Consolidate focused preludes.**
   Delaunay-facing workflow preludes now live directly under
   `delaunay::prelude::{construction,insertion,flips,repair,delaunayize,diagnostics,validation}`,

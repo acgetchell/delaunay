@@ -38,6 +38,11 @@ Both repositories now share the same core Rust and Python support-tooling loop:
 The useful updates ported in this pass are:
 
 - `just check-fast` for a cheap compile-only check.
+- `just markdown-check` keeps `rumdl` as the Markdown linter and adds a raw
+  active-doc line-length guard so table rows and other Markdown constructs that
+  `rumdl` exempts from MD013 still respect the repository's 160-column limit.
+  The guard excludes generated changelog files and archived historical docs,
+  which remain governed by their regeneration/archive workflows.
 - `just changelog-unreleased <version>`, implemented with
   `GIT_CLIFF_OFFLINE=true git-cliff --tag`, so release PR changelogs no longer
   need temporary local release tags.
@@ -90,6 +95,11 @@ The useful updates ported in this pass are:
   Scanning. Codacy's default maintainability patterns can still run in Codacy,
   but they must not create broad Code Scanning alerts for test-only paths such
   as `scripts/tests/**`.
+- Codacy Code Patterns should stay aligned with local validators rather than
+  acting as an independent style regime. Keep repository-owned Rust feedback on
+  Opengrep/Semgrep rules; keep broad advisory engines such as Lizard disabled
+  for PR gating unless a specific baseline audit requests them. If the Codacy
+  UI exposes a separate duplicate-code metric, treat it the same way.
 - CI and local setup pins should track the same supported tool versions when
   practical. The current workflow pins align coverage and test tooling on
   `cargo-llvm-cov` 0.8.7 and `cargo-nextest` 0.9.136. Both CI and Codecov

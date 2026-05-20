@@ -431,7 +431,9 @@ Validates the geometric optimality of the triangulation.
 
 ### What It Checks
 
-- **Delaunay property**: Verified via local flip predicates (k=2/k=3 and inverses), equivalent to the empty-circumsphere condition for properly constructed triangulations
+- **Delaunay property**: Verified via local flip predicates (k=2/k=3 and
+  inverses), equivalent to the empty-circumsphere condition for properly
+  constructed triangulations
 - Uses geometric predicates from the kernel (`insphere` test)
 - **Independent of Levels 1-3**: Checks geometric property, not structural/topological
 - **Flip-based repair**: Insertions run k=2/k=3 flip repairs with inverse edge/triangle queues in
