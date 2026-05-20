@@ -278,7 +278,7 @@ where
 ///
 /// - [`generate_random_points`] - For generating points without triangulation
 /// - [`generate_random_points_seeded`] - For seeded random point generation only
-/// - [`DelaunayTriangulation::new`] - For creating triangulations from existing vertices
+/// - [`DelaunayTriangulationBuilder`](crate::DelaunayTriangulationBuilder) - For creating triangulations from existing vertices
 /// - [`RandomTriangulationBuilder`] - For more control over construction options
 pub fn generate_random_triangulation<T, U, V, const D: usize>(
     n_points: usize,

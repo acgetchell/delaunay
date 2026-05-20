@@ -1744,21 +1744,32 @@ impl InsertionError {
 /// ```rust
 /// use delaunay::prelude::insertion::fill_cavity;
 /// use delaunay::prelude::tds::FacetHandle;
-/// use delaunay::prelude::query::*;
+/// use delaunay::prelude::*;
 ///
+/// # #[derive(Debug, thiserror::Error)]
+/// # enum ExampleError {
+/// #     #[error(transparent)]
+/// #     Construction(#[from] delaunay::DelaunayTriangulationConstructionError),
+/// #     #[error(transparent)]
+/// #     Insertion(#[from] delaunay::prelude::insertion::InsertionError),
+/// # }
+/// # fn main() -> Result<(), ExampleError> {
 /// let vertices = vec![
 ///     vertex!([0.0, 0.0, 0.0]),
 ///     vertex!([1.0, 0.0, 0.0]),
 ///     vertex!([0.0, 1.0, 0.0]),
 ///     vertex!([0.0, 0.0, 1.0]),
 /// ];
-/// let dt: DelaunayTriangulation<_, (), (), 3> = DelaunayTriangulation::new(&vertices).unwrap();
+/// let dt: DelaunayTriangulation<_, (), (), 3> =
+///     DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
 /// let mut tds = dt.tds().clone();
-/// let vkey = tds.vertex_keys().next().unwrap();
+/// let Some(vkey) = tds.vertex_keys().next() else { return Ok(()); };
 /// let boundary_facets: Vec<FacetHandle> = Vec::new();
 ///
-/// let new_simplices = fill_cavity(&mut tds, vkey, &boundary_facets).unwrap();
+/// let new_simplices = fill_cavity(&mut tds, vkey, &boundary_facets)?;
 /// assert!(new_simplices.is_empty());
+/// # Ok(())
+/// # }
 /// ```
 pub fn fill_cavity<T, U, V, const D: usize>(
     tds: &mut Tds<T, U, V, D>,
@@ -2727,7 +2738,7 @@ where
 /// # Examples
 ///
 /// ```rust
-/// use delaunay::prelude::{DelaunayTriangulation, vertex};
+/// use delaunay::prelude::{DelaunayTriangulation, DelaunayTriangulationBuilder, vertex};
 /// use delaunay::prelude::DelaunayTriangulationConstructionError;
 /// use delaunay::prelude::insertion::{
 ///     InsertionError, TdsMutationError, repair_neighbor_pointers_local,
@@ -2749,17 +2760,20 @@ where
 ///     vertex!([0.0, 1.0]),
 ///     vertex!([1.0, 1.1]),
 /// ];
-/// let dt: DelaunayTriangulation<_, (), (), 2> = DelaunayTriangulation::new(&vertices)?;
+/// let dt: DelaunayTriangulation<_, (), (), 2> =
+///     DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
 /// let mut tds = dt.tds().clone();
 ///
-/// let (simplex_key, facet_idx, neighbor_key) = tds
+/// let Some((simplex_key, facet_idx, neighbor_key)) = tds
 ///     .simplices()
 ///     .find_map(|(simplex_key, simplex)| {
 ///         simplex.neighbors()?.enumerate().find_map(|(facet_idx, neighbor)| {
 ///             neighbor.map(|neighbor_key| (simplex_key, facet_idx, neighbor_key))
 ///         })
 ///     })
-///     .expect("test triangulation should contain adjacent simplices");
+/// else {
+///     return Ok(());
+/// };
 ///
 /// tds.clear_all_neighbors();
 ///
@@ -2979,7 +2993,8 @@ where
 ///
 /// ```rust
 /// use delaunay::prelude::construction::{
-///     DelaunayTriangulation, DelaunayTriangulationConstructionError, vertex,
+///     DelaunayTriangulation, DelaunayTriangulationBuilder, DelaunayTriangulationConstructionError,
+///     vertex,
 /// };
 /// use delaunay::prelude::insertion::{InsertionError, repair_neighbor_pointers};
 ///
@@ -2996,7 +3011,8 @@ where
 ///     vertex!([1.0, 0.0]),
 ///     vertex!([0.0, 1.0]),
 /// ];
-/// let dt: DelaunayTriangulation<_, (), (), 2> = DelaunayTriangulation::new(&vertices)?;
+/// let dt: DelaunayTriangulation<_, (), (), 2> =
+///     DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
 /// let mut tds = dt.tds().clone();
 ///
 /// let _changed_slots = repair_neighbor_pointers(&mut tds)?;

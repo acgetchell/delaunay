@@ -6198,6 +6198,7 @@ where
 /// use delaunay::prelude::repair::verify_delaunay_via_flip_predicates;
 /// use delaunay::prelude::geometry::AdaptiveKernel;
 ///
+/// # fn main() -> Result<(), DelaunayTriangulationConstructionError> {
 /// let vertices = vec![
 ///     vertex!([0.0, 0.0, 0.0]),
 ///     vertex!([1.0, 0.0, 0.0]),
@@ -6205,11 +6206,14 @@ where
 ///     vertex!([0.0, 0.0, 1.0]),
 /// ];
 ///
-/// let dt: DelaunayTriangulation<_, (), (), 3> = DelaunayTriangulation::new(&vertices).unwrap();
+/// let dt: DelaunayTriangulation<_, (), (), 3> =
+///     DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
 /// let kernel = AdaptiveKernel::<f64>::new();
 ///
 /// // Fast O(N) verification
 /// assert!(verify_delaunay_via_flip_predicates(dt.tds(), &kernel).is_ok());
+/// # Ok(())
+/// # }
 /// ```
 pub fn verify_delaunay_via_flip_predicates<K, U, V, const D: usize>(
     tds: &Tds<K::Scalar, U, V, D>,
@@ -6242,6 +6246,7 @@ where
 /// use delaunay::prelude::*;
 /// use delaunay::prelude::repair::verify_delaunay_for_triangulation;
 ///
+/// # fn main() -> Result<(), DelaunayTriangulationConstructionError> {
 /// let vertices = vec![
 ///     vertex!([0.0, 0.0, 0.0]),
 ///     vertex!([1.0, 0.0, 0.0]),
@@ -6249,10 +6254,13 @@ where
 ///     vertex!([0.0, 0.0, 1.0]),
 /// ];
 ///
-/// let dt: DelaunayTriangulation<_, (), (), 3> = DelaunayTriangulation::new(&vertices).unwrap();
+/// let dt: DelaunayTriangulation<_, (), (), 3> =
+///     DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
 ///
 /// // Topology-aware O(N) verification
 /// assert!(verify_delaunay_for_triangulation(dt.as_triangulation()).is_ok());
+/// # Ok(())
+/// # }
 /// ```
 pub fn verify_delaunay_for_triangulation<K, U, V, const D: usize>(
     triangulation: &Triangulation<K, U, V, D>,

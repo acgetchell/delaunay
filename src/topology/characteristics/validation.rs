@@ -22,20 +22,30 @@ use crate::topology::{
 /// # Examples
 ///
 /// ```rust
-/// use delaunay::prelude::query::*;
+/// use delaunay::prelude::*;
 /// use delaunay::prelude::topology::validation;
 ///
+/// # #[derive(Debug, thiserror::Error)]
+/// # enum ExampleError {
+/// #     #[error(transparent)]
+/// #     Construction(#[from] delaunay::DelaunayTriangulationConstructionError),
+/// #     #[error(transparent)]
+/// #     Topology(#[from] delaunay::topology::TopologyError),
+/// # }
+/// # fn main() -> Result<(), ExampleError> {
 /// let vertices = vec![
 ///     vertex!([0.0, 0.0, 0.0]),
 ///     vertex!([1.0, 0.0, 0.0]),
 ///     vertex!([0.0, 1.0, 0.0]),
 ///     vertex!([0.0, 0.0, 1.0]),
 /// ];
-/// let dt = DelaunayTriangulation::new(&vertices).unwrap();
+/// let dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
 ///
-/// let result = validation::validate_triangulation_euler(dt.tds()).unwrap();
+/// let result = validation::validate_triangulation_euler(dt.tds())?;
 /// assert_eq!(result.chi, 1);
 /// assert!(result.is_valid());
+/// # Ok(())
+/// # }
 /// ```
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TopologyCheckResult {
@@ -107,22 +117,32 @@ impl TopologyCheckResult {
 /// # Examples
 ///
 /// ```rust
-/// use delaunay::prelude::query::*;
+/// use delaunay::prelude::*;
 /// use delaunay::prelude::topology::validation;
 ///
+/// # #[derive(Debug, thiserror::Error)]
+/// # enum ExampleError {
+/// #     #[error(transparent)]
+/// #     Construction(#[from] delaunay::DelaunayTriangulationConstructionError),
+/// #     #[error(transparent)]
+/// #     Topology(#[from] delaunay::topology::TopologyError),
+/// # }
+/// # fn main() -> Result<(), ExampleError> {
 /// let vertices = vec![
 ///     vertex!([0.0, 0.0]),
 ///     vertex!([1.0, 0.0]),
 ///     vertex!([0.5, 1.0]),
 /// ];
-/// let dt = DelaunayTriangulation::new(&vertices).unwrap();
+/// let dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
 ///
-/// let result = validation::validate_triangulation_euler(dt.tds()).unwrap();
+/// let result = validation::validate_triangulation_euler(dt.tds())?;
 /// assert_eq!(result.chi, 1);
 /// assert_eq!(result.counts.count(0), 3);  // 3 vertices
 /// assert_eq!(result.counts.count(1), 3);  // 3 edges
 /// assert_eq!(result.counts.count(2), 1);  // 1 face
 /// assert!(result.is_valid());
+/// # Ok(())
+/// # }
 /// ```
 ///
 /// # Errors

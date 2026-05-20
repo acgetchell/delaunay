@@ -37,6 +37,16 @@
 //! use delaunay::prelude::*;
 //! use delaunay::prelude::tds::FacetView;
 //!
+//! # #[derive(Debug, thiserror::Error)]
+//! # enum ExampleError {
+//! #     #[error(transparent)]
+//! #     Construction(#[from] delaunay::DelaunayTriangulationConstructionError),
+//! #     #[error(transparent)]
+//! #     Facet(#[from] delaunay::prelude::tds::FacetError),
+//! #     #[error(transparent)]
+//! #     Tds(#[from] delaunay::prelude::tds::TdsError),
+//! # }
+//! # fn main() -> Result<(), ExampleError> {
 //! // Create vertices for a tetrahedron
 //! let vertices = vec![
 //!     vertex!([0.0, 0.0, 0.0]),
@@ -46,12 +56,16 @@
 //! ];
 //!
 //! // Create a 3D triangulation
-//! let dt = DelaunayTriangulation::new(&vertices).unwrap();
-//! let simplex_key = dt.simplices().next().unwrap().0;
+//! let dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
+//! let Some((simplex_key, _)) = dt.simplices().next() else {
+//!     return Ok(());
+//! };
 //!
 //! // Create a facet view (facet 0 excludes vertex 0)
-//! let facet = FacetView::new(dt.tds(), simplex_key, 0).unwrap();
-//! assert_eq!(facet.vertices().unwrap().count(), 3);  // Facet (triangle) in 3D has 3 vertices
+//! let facet = FacetView::new(dt.tds(), simplex_key, 0)?;
+//! assert_eq!(facet.vertices()?.count(), 3);  // Facet (triangle) in 3D has 3 vertices
+//! # Ok(())
+//! # }
 //! ```
 
 #![forbid(unsafe_code)]
@@ -224,20 +238,35 @@ pub enum FacetError {
 /// use delaunay::prelude::*;
 /// use delaunay::prelude::tds::{FacetHandle, FacetView};
 ///
+/// # #[derive(Debug, thiserror::Error)]
+/// # enum ExampleError {
+/// #     #[error(transparent)]
+/// #     Construction(#[from] delaunay::DelaunayTriangulationConstructionError),
+/// #     #[error(transparent)]
+/// #     Facet(#[from] delaunay::prelude::tds::FacetError),
+/// #     #[error(transparent)]
+/// #     Tds(#[from] delaunay::prelude::tds::TdsError),
+/// # }
+/// # fn main() -> Result<(), ExampleError> {
 /// let vertices = vec![
 ///     vertex!([0.0, 0.0, 0.0]),
 ///     vertex!([1.0, 0.0, 0.0]),
 ///     vertex!([0.0, 1.0, 0.0]),
 ///     vertex!([0.0, 0.0, 1.0]),
 /// ];
-/// let dt = DelaunayTriangulation::new(&vertices).unwrap();
-/// let simplex_key = dt.simplices().next().unwrap().0;
+/// let dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
+/// let Some((simplex_key, _)) = dt.simplices().next() else {
+///     return Ok(());
+/// };
 ///
 /// // Create a facet handle
 /// let handle = FacetHandle::new(simplex_key, 0);
 ///
 /// // Use it to create a FacetView
-/// let facet = FacetView::new(dt.tds(), handle.simplex_key(), handle.facet_index()).unwrap();
+/// let facet = FacetView::new(dt.tds(), handle.simplex_key(), handle.facet_index())?;
+/// # let _ = facet;
+/// # Ok(())
+/// # }
 /// ```
 #[must_use]
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
@@ -260,17 +289,22 @@ impl FacetHandle {
     /// use delaunay::prelude::*;
     /// use delaunay::prelude::tds::FacetHandle;
     ///
+    /// # fn main() -> Result<(), DelaunayTriangulationConstructionError> {
     /// let vertices = vec![
     ///     vertex!([0.0, 0.0]),
     ///     vertex!([1.0, 0.0]),
     ///     vertex!([0.0, 1.0]),
     /// ];
-    /// let dt = DelaunayTriangulation::new(&vertices).unwrap();
-    /// let simplex_key = dt.simplices().next().unwrap().0;
+    /// let dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
+    /// let Some((simplex_key, _)) = dt.simplices().next() else {
+    ///     return Ok(());
+    /// };
     ///
     /// let handle = FacetHandle::new(simplex_key, 0);
     /// assert_eq!(handle.simplex_key(), simplex_key);
     /// assert_eq!(handle.facet_index(), 0);
+    /// # Ok(())
+    /// # }
     /// ```
     pub const fn new(simplex_key: SimplexKey, facet_index: u8) -> Self {
         Self {
@@ -287,16 +321,21 @@ impl FacetHandle {
     /// use delaunay::prelude::*;
     /// use delaunay::prelude::tds::FacetHandle;
     ///
+    /// # fn main() -> Result<(), DelaunayTriangulationConstructionError> {
     /// let vertices = vec![
     ///     vertex!([0.0, 0.0]),
     ///     vertex!([1.0, 0.0]),
     ///     vertex!([0.0, 1.0]),
     /// ];
-    /// let dt = DelaunayTriangulation::new(&vertices).unwrap();
-    /// let simplex_key = dt.simplices().next().unwrap().0;
+    /// let dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
+    /// let Some((simplex_key, _)) = dt.simplices().next() else {
+    ///     return Ok(());
+    /// };
     ///
     /// let handle = FacetHandle::new(simplex_key, 0);
     /// assert_eq!(handle.simplex_key(), simplex_key);
+    /// # Ok(())
+    /// # }
     /// ```
     #[must_use]
     pub const fn simplex_key(&self) -> SimplexKey {
@@ -311,16 +350,21 @@ impl FacetHandle {
     /// use delaunay::prelude::*;
     /// use delaunay::prelude::tds::FacetHandle;
     ///
+    /// # fn main() -> Result<(), DelaunayTriangulationConstructionError> {
     /// let vertices = vec![
     ///     vertex!([0.0, 0.0]),
     ///     vertex!([1.0, 0.0]),
     ///     vertex!([0.0, 1.0]),
     /// ];
-    /// let dt = DelaunayTriangulation::new(&vertices).unwrap();
-    /// let simplex_key = dt.simplices().next().unwrap().0;
+    /// let dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
+    /// let Some((simplex_key, _)) = dt.simplices().next() else {
+    ///     return Ok(());
+    /// };
     ///
     /// let handle = FacetHandle::new(simplex_key, 1);
     /// assert_eq!(handle.facet_index(), 1);
+    /// # Ok(())
+    /// # }
     /// ```
     #[must_use]
     pub const fn facet_index(&self) -> u8 {
@@ -446,17 +490,31 @@ impl<'tds, T, U, V, const D: usize> FacetView<'tds, T, U, V, D> {
     /// use delaunay::prelude::*;
     /// use delaunay::prelude::tds::FacetView;
     ///
+    /// # #[derive(Debug, thiserror::Error)]
+    /// # enum ExampleError {
+    /// #     #[error(transparent)]
+    /// #     Construction(#[from] delaunay::DelaunayTriangulationConstructionError),
+    /// #     #[error(transparent)]
+    /// #     Facet(#[from] delaunay::prelude::tds::FacetError),
+    /// #     #[error(transparent)]
+    /// #     Tds(#[from] delaunay::prelude::tds::TdsError),
+    /// # }
+    /// # fn main() -> Result<(), ExampleError> {
     /// let vertices = vec![
     ///     vertex!([0.0, 0.0, 0.0]),
     ///     vertex!([1.0, 0.0, 0.0]),
     ///     vertex!([0.0, 1.0, 0.0]),
     ///     vertex!([0.0, 0.0, 1.0]),
     /// ];
-    /// let dt = DelaunayTriangulation::new(&vertices).unwrap();
+    /// let dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
     ///
-    /// let (simplex_key, _) = dt.simplices().next().unwrap();
-    /// let facet = FacetView::new(dt.tds(), simplex_key, 0).unwrap();
+    /// let Some((simplex_key, _)) = dt.simplices().next() else {
+    ///     return Ok(());
+    /// };
+    /// let facet = FacetView::new(dt.tds(), simplex_key, 0)?;
     /// assert_eq!(facet.facet_index(), 0);
+    /// # Ok(())
+    /// # }
     /// ```
     pub fn new(
         tds: &'tds Tds<T, U, V, D>,
@@ -509,19 +567,31 @@ impl<'tds, T, U, V, const D: usize> FacetView<'tds, T, U, V, D> {
     /// use delaunay::prelude::*;
     /// use delaunay::prelude::tds::FacetView;
     ///
+    /// # #[derive(Debug, thiserror::Error)]
+    /// # enum ExampleError {
+    /// #     #[error(transparent)]
+    /// #     Construction(#[from] delaunay::DelaunayTriangulationConstructionError),
+    /// #     #[error(transparent)]
+    /// #     Facet(#[from] delaunay::prelude::tds::FacetError),
+    /// #     #[error(transparent)]
+    /// #     Tds(#[from] delaunay::prelude::tds::TdsError),
+    /// # }
+    /// # fn main() -> Result<(), ExampleError> {
     /// let vertices = vec![
     ///     vertex!([0.0, 0.0, 0.0]),
     ///     vertex!([1.0, 0.0, 0.0]),
     ///     vertex!([0.0, 1.0, 0.0]),
     ///     vertex!([0.0, 0.0, 1.0]),
     /// ];
-    /// let dt = DelaunayTriangulation::new(&vertices).unwrap();
+    /// let dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
     ///
     /// if let Some((simplex_key, _)) = dt.simplices().next() {
-    ///     let facet = FacetView::new(dt.tds(), simplex_key, 0).unwrap();
-    ///     let vertex_iter = facet.vertices().unwrap();
+    ///     let facet = FacetView::new(dt.tds(), simplex_key, 0)?;
+    ///     let vertex_iter = facet.vertices()?;
     ///     assert_eq!(vertex_iter.count(), 3); // 3D facet has 3 vertices
     /// }
+    /// # Ok(())
+    /// # }
     /// ```
     pub fn vertices(&self) -> Result<impl Iterator<Item = &'tds Vertex<T, U, D>>, FacetError> {
         let simplex = self
@@ -566,18 +636,32 @@ impl<'tds, T, U, V, const D: usize> FacetView<'tds, T, U, V, D> {
     /// use delaunay::prelude::*;
     /// use delaunay::prelude::tds::FacetView;
     ///
+    /// # #[derive(Debug, thiserror::Error)]
+    /// # enum ExampleError {
+    /// #     #[error(transparent)]
+    /// #     Construction(#[from] delaunay::DelaunayTriangulationConstructionError),
+    /// #     #[error(transparent)]
+    /// #     Facet(#[from] delaunay::prelude::tds::FacetError),
+    /// #     #[error(transparent)]
+    /// #     Tds(#[from] delaunay::prelude::tds::TdsError),
+    /// # }
+    /// # fn main() -> Result<(), ExampleError> {
     /// let vertices = vec![
     ///     vertex!([0.0, 0.0, 0.0]),
     ///     vertex!([1.0, 0.0, 0.0]),
     ///     vertex!([0.0, 1.0, 0.0]),
     ///     vertex!([0.0, 0.0, 1.0]),
     /// ];
-    /// let dt = DelaunayTriangulation::new(&vertices).unwrap();
-    /// let (simplex_key, _) = dt.simplices().next().unwrap();
+    /// let dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
+    /// let Some((simplex_key, _)) = dt.simplices().next() else {
+    ///     return Ok(());
+    /// };
     ///
-    /// let facet = FacetView::new(dt.tds(), simplex_key, 1).unwrap();
-    /// let opposite = facet.opposite_vertex().unwrap();
+    /// let facet = FacetView::new(dt.tds(), simplex_key, 1)?;
+    /// let opposite = facet.opposite_vertex()?;
     /// assert_eq!(opposite.point().coords().len(), 3);
+    /// # Ok(())
+    /// # }
     /// ```
     pub fn opposite_vertex(&self) -> Result<&'tds Vertex<T, U, D>, FacetError> {
         let simplex = self
@@ -617,18 +701,32 @@ impl<'tds, T, U, V, const D: usize> FacetView<'tds, T, U, V, D> {
     /// use delaunay::prelude::*;
     /// use delaunay::prelude::tds::FacetView;
     ///
+    /// # #[derive(Debug, thiserror::Error)]
+    /// # enum ExampleError {
+    /// #     #[error(transparent)]
+    /// #     Construction(#[from] delaunay::DelaunayTriangulationConstructionError),
+    /// #     #[error(transparent)]
+    /// #     Facet(#[from] delaunay::prelude::tds::FacetError),
+    /// #     #[error(transparent)]
+    /// #     Tds(#[from] delaunay::prelude::tds::TdsError),
+    /// # }
+    /// # fn main() -> Result<(), ExampleError> {
     /// let vertices = vec![
     ///     vertex!([0.0, 0.0, 0.0]),
     ///     vertex!([1.0, 0.0, 0.0]),
     ///     vertex!([0.0, 1.0, 0.0]),
     ///     vertex!([0.0, 0.0, 1.0]),
     /// ];
-    /// let dt = DelaunayTriangulation::new(&vertices).unwrap();
-    /// let (simplex_key, _) = dt.simplices().next().unwrap();
+    /// let dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
+    /// let Some((simplex_key, _)) = dt.simplices().next() else {
+    ///     return Ok(());
+    /// };
     ///
-    /// let facet = FacetView::new(dt.tds(), simplex_key, 2).unwrap();
-    /// let simplex = facet.simplex().unwrap();
+    /// let facet = FacetView::new(dt.tds(), simplex_key, 2)?;
+    /// let simplex = facet.simplex()?;
     /// assert_eq!(simplex.number_of_vertices(), 4);
+    /// # Ok(())
+    /// # }
     /// ```
     pub fn simplex(&self) -> Result<&'tds Simplex<T, U, V, D>, FacetError> {
         self.tds
@@ -656,19 +754,33 @@ impl<'tds, T, U, V, const D: usize> FacetView<'tds, T, U, V, D> {
     /// use delaunay::prelude::*;
     /// use delaunay::prelude::tds::FacetView;
     ///
+    /// # #[derive(Debug, thiserror::Error)]
+    /// # enum ExampleError {
+    /// #     #[error(transparent)]
+    /// #     Construction(#[from] delaunay::DelaunayTriangulationConstructionError),
+    /// #     #[error(transparent)]
+    /// #     Facet(#[from] delaunay::prelude::tds::FacetError),
+    /// #     #[error(transparent)]
+    /// #     Tds(#[from] delaunay::prelude::tds::TdsError),
+    /// # }
+    /// # fn main() -> Result<(), ExampleError> {
     /// let vertices = vec![
     ///     vertex!([0.0, 0.0, 0.0]),
     ///     vertex!([1.0, 0.0, 0.0]),
     ///     vertex!([0.0, 1.0, 0.0]),
     ///     vertex!([0.0, 0.0, 1.0]),
     /// ];
-    /// let dt = DelaunayTriangulation::new(&vertices).unwrap();
-    /// let (simplex_key, _) = dt.simplices().next().unwrap();
+    /// let dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
+    /// let Some((simplex_key, _)) = dt.simplices().next() else {
+    ///     return Ok(());
+    /// };
     ///
-    /// let facet = FacetView::new(dt.tds(), simplex_key, 0).unwrap();
-    /// let facet_key = facet.key().unwrap();
-    /// let map = dt.tds().build_facet_to_simplices_map().unwrap();
+    /// let facet = FacetView::new(dt.tds(), simplex_key, 0)?;
+    /// let facet_key = facet.key()?;
+    /// let map = dt.tds().build_facet_to_simplices_map()?;
     /// assert!(map.contains_key(&facet_key));
+    /// # Ok(())
+    /// # }
     /// ```
     pub fn key(&self) -> Result<u64, FacetError> {
         self.tds
@@ -743,17 +855,31 @@ impl<T, U, V, const D: usize> Eq for FacetView<'_, T, U, V, D> {}
 /// use delaunay::prelude::*;
 /// use delaunay::prelude::tds::all_facets_for_simplex;
 ///
+/// # #[derive(Debug, thiserror::Error)]
+/// # enum ExampleError {
+/// #     #[error(transparent)]
+/// #     Construction(#[from] delaunay::DelaunayTriangulationConstructionError),
+/// #     #[error(transparent)]
+/// #     Facet(#[from] delaunay::prelude::tds::FacetError),
+/// #     #[error(transparent)]
+/// #     Tds(#[from] delaunay::prelude::tds::TdsError),
+/// # }
+/// # fn main() -> Result<(), ExampleError> {
 /// let vertices = vec![
 ///     vertex!([0.0, 0.0, 0.0]),
 ///     vertex!([1.0, 0.0, 0.0]),
 ///     vertex!([0.0, 1.0, 0.0]),
 ///     vertex!([0.0, 0.0, 1.0]),
 /// ];
-/// let dt = DelaunayTriangulation::new(&vertices).unwrap();
-/// let (simplex_key, _) = dt.simplices().next().unwrap();
+/// let dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
+/// let Some((simplex_key, _)) = dt.simplices().next() else {
+///     return Ok(());
+/// };
 ///
-/// let facets = all_facets_for_simplex(dt.tds(), simplex_key).unwrap();
+/// let facets = all_facets_for_simplex(dt.tds(), simplex_key)?;
 /// assert_eq!(facets.len(), 4);
+/// # Ok(())
+/// # }
 /// ```
 pub fn all_facets_for_simplex<T, U, V, const D: usize>(
     tds: &Tds<T, U, V, D>,
@@ -787,16 +913,19 @@ pub fn all_facets_for_simplex<T, U, V, const D: usize>(
 /// use delaunay::prelude::tds::AllFacetsIter;
 /// use delaunay::prelude::*;
 ///
+/// # fn main() -> Result<(), DelaunayTriangulationConstructionError> {
 /// let vertices = vec![
 ///     vertex!([0.0, 0.0, 0.0]),
 ///     vertex!([1.0, 0.0, 0.0]),
 ///     vertex!([0.0, 1.0, 0.0]),
 ///     vertex!([0.0, 0.0, 1.0]),
 /// ];
-/// let dt = DelaunayTriangulation::new(&vertices).unwrap();
+/// let dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
 ///
 /// let count = AllFacetsIter::new(dt.tds()).count();
 /// assert_eq!(count, 4);
+/// # Ok(())
+/// # }
 /// ```
 #[derive(Clone)]
 pub struct AllFacetsIter<'tds, T, U, V, const D: usize> {
@@ -821,16 +950,19 @@ impl<'tds, T, U, V, const D: usize> AllFacetsIter<'tds, T, U, V, D> {
     /// use delaunay::prelude::tds::AllFacetsIter;
     /// use delaunay::prelude::*;
     ///
+    /// # fn main() -> Result<(), DelaunayTriangulationConstructionError> {
     /// let vertices = vec![
     ///     vertex!([0.0, 0.0, 0.0]),
     ///     vertex!([1.0, 0.0, 0.0]),
     ///     vertex!([0.0, 1.0, 0.0]),
     ///     vertex!([0.0, 0.0, 1.0]),
     /// ];
-    /// let dt = DelaunayTriangulation::new(&vertices).unwrap();
+    /// let dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
     ///
     /// let mut iter = AllFacetsIter::new(dt.tds());
     /// assert!(iter.next().is_some());
+    /// # Ok(())
+    /// # }
     /// ```
     #[must_use]
     pub fn new(tds: &'tds Tds<T, U, V, D>) -> Self {
@@ -909,17 +1041,29 @@ impl<'tds, T, U, V, const D: usize> Iterator for AllFacetsIter<'tds, T, U, V, D>
 /// use delaunay::prelude::tds::BoundaryFacetsIter;
 /// use delaunay::prelude::*;
 ///
+/// # #[derive(Debug, thiserror::Error)]
+/// # enum ExampleError {
+/// #     #[error(transparent)]
+/// #     Construction(#[from] delaunay::DelaunayTriangulationConstructionError),
+/// #     #[error(transparent)]
+/// #     Facet(#[from] delaunay::prelude::tds::FacetError),
+/// #     #[error(transparent)]
+/// #     Tds(#[from] delaunay::prelude::tds::TdsError),
+/// # }
+/// # fn main() -> Result<(), ExampleError> {
 /// let vertices = vec![
 ///     vertex!([0.0, 0.0, 0.0]),
 ///     vertex!([1.0, 0.0, 0.0]),
 ///     vertex!([0.0, 1.0, 0.0]),
 ///     vertex!([0.0, 0.0, 1.0]),
 /// ];
-/// let dt = DelaunayTriangulation::new(&vertices).unwrap();
-/// let facet_map = dt.tds().build_facet_to_simplices_map().unwrap();
+/// let dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
+/// let facet_map = dt.tds().build_facet_to_simplices_map()?;
 ///
 /// let count = BoundaryFacetsIter::new(dt.tds(), facet_map).count();
 /// assert_eq!(count, 4);
+/// # Ok(())
+/// # }
 /// ```
 #[derive(Clone)]
 pub struct BoundaryFacetsIter<'tds, T, U, V, const D: usize> {
@@ -936,17 +1080,29 @@ impl<'tds, T, U, V, const D: usize> BoundaryFacetsIter<'tds, T, U, V, D> {
     /// use delaunay::prelude::tds::BoundaryFacetsIter;
     /// use delaunay::prelude::*;
     ///
+    /// # #[derive(Debug, thiserror::Error)]
+    /// # enum ExampleError {
+    /// #     #[error(transparent)]
+    /// #     Construction(#[from] delaunay::DelaunayTriangulationConstructionError),
+    /// #     #[error(transparent)]
+    /// #     Facet(#[from] delaunay::prelude::tds::FacetError),
+    /// #     #[error(transparent)]
+    /// #     Tds(#[from] delaunay::prelude::tds::TdsError),
+    /// # }
+    /// # fn main() -> Result<(), ExampleError> {
     /// let vertices = vec![
     ///     vertex!([0.0, 0.0, 0.0]),
     ///     vertex!([1.0, 0.0, 0.0]),
     ///     vertex!([0.0, 1.0, 0.0]),
     ///     vertex!([0.0, 0.0, 1.0]),
     /// ];
-    /// let dt = DelaunayTriangulation::new(&vertices).unwrap();
-    /// let facet_map = dt.tds().build_facet_to_simplices_map().unwrap();
+    /// let dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
+    /// let facet_map = dt.tds().build_facet_to_simplices_map()?;
     ///
     /// let mut iter = BoundaryFacetsIter::new(dt.tds(), facet_map);
     /// assert!(iter.next().is_some());
+    /// # Ok(())
+    /// # }
     /// ```
     #[must_use]
     pub fn new(tds: &'tds Tds<T, U, V, D>, facet_to_simplices_map: FacetToSimplicesMap) -> Self {

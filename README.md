@@ -158,9 +158,9 @@ archived under [docs/archive/changelog/](docs/archive/changelog/).
 
 The construction API has two entry points:
 
-- `DelaunayTriangulation::new(&vertices)` - simple constructor for the common case
-- [`DelaunayTriangulationBuilder`] - advanced configuration (custom options,
+- [`DelaunayTriangulationBuilder`] - primary construction interface for the common case and advanced configuration (custom options,
   toroidal topology, custom kernels)
+- `DelaunayTriangulation::new(&vertices)` - legacy convenience constructor
 
 Add the library to your crate:
 
@@ -318,29 +318,31 @@ regression testing:
 ```rust
 use delaunay::prelude::construction::{
     ConstructionOptions, DedupPolicy, DelaunayTriangulationBuilder, InsertionOrderStrategy,
-    RetryPolicy, TopologyGuarantee, vertex,
+    RetryPolicy, TopologyGuarantee, DelaunayTriangulationConstructionError, vertex,
 };
 use delaunay::prelude::validation::ValidationPolicy;
 
-let vertices = vec![
-    vertex!([0.0, 0.0]),
-    vertex!([1.0, 0.0]),
-    vertex!([0.0, 1.0]),
-];
+fn main() -> Result<(), DelaunayTriangulationConstructionError> {
+    let vertices = vec![
+        vertex!([0.0, 0.0]),
+        vertex!([1.0, 0.0]),
+        vertex!([0.0, 1.0]),
+    ];
 
-let options = ConstructionOptions::default()
-    .with_insertion_order(InsertionOrderStrategy::Input)
-    .with_dedup_policy(DedupPolicy::Exact)
-    .with_retry_policy(RetryPolicy::Disabled);
+    let options = ConstructionOptions::default()
+        .with_insertion_order(InsertionOrderStrategy::Input)
+        .with_dedup_policy(DedupPolicy::Exact)
+        .with_retry_policy(RetryPolicy::Disabled);
 
-let mut dt = DelaunayTriangulationBuilder::new(&vertices)
-    .topology_guarantee(TopologyGuarantee::PLManifold)
-    .construction_options(options)
-    .build::<()>()
-    .unwrap();
+    let mut dt = DelaunayTriangulationBuilder::new(&vertices)
+        .topology_guarantee(TopologyGuarantee::PLManifold)
+        .construction_options(options)
+        .build::<()>()?;
 
-dt.set_validation_policy(ValidationPolicy::Always);
-assert!(dt.validate().is_ok());
+    dt.set_validation_policy(ValidationPolicy::Always);
+    assert!(dt.validate().is_ok());
+    Ok(())
+}
 ```
 
 For reproducible checks in CI/local runs, use `just check`, `just test`,

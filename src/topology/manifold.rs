@@ -299,16 +299,25 @@ pub enum ManifoldError {
 /// use delaunay::prelude::*;
 /// use delaunay::prelude::topology::validation::validate_facet_degree;
 ///
+/// # #[derive(Debug, thiserror::Error)]
+/// # enum ExampleError {
+/// #     #[error(transparent)] Tds(#[from] delaunay::prelude::tds::TdsError),
+/// #     #[error(transparent)] Construction(#[from] delaunay::prelude::triangulation::TriangulationConstructionError),
+/// #     #[error(transparent)] Manifold(#[from] delaunay::prelude::topology::validation::ManifoldError),
+/// # }
+/// # fn main() -> Result<(), ExampleError> {
 /// let vertices = vec![
 ///     vertex!([0.0, 0.0, 0.0]),
 ///     vertex!([1.0, 0.0, 0.0]),
 ///     vertex!([0.0, 1.0, 0.0]),
 ///     vertex!([0.0, 0.0, 1.0]),
 /// ];
-/// let tds = Triangulation::<FastKernel<f64>, (), (), 3>::build_initial_simplex(&vertices).unwrap();
-/// let facet_to_simplices = tds.build_facet_to_simplices_map().unwrap();
+/// let tds = Triangulation::<FastKernel<f64>, (), (), 3>::build_initial_simplex(&vertices)?;
+/// let facet_to_simplices = tds.build_facet_to_simplices_map()?;
 ///
-/// validate_facet_degree(&facet_to_simplices).unwrap();
+/// validate_facet_degree(&facet_to_simplices)?;
+/// # Ok(())
+/// # }
 /// ```
 pub fn validate_facet_degree(
     facet_to_simplices: &FacetToSimplicesMap,
@@ -354,16 +363,25 @@ pub fn validate_facet_degree(
 /// use delaunay::prelude::*;
 /// use delaunay::prelude::topology::validation::validate_closed_boundary;
 ///
+/// # #[derive(Debug, thiserror::Error)]
+/// # enum ExampleError {
+/// #     #[error(transparent)] Tds(#[from] delaunay::prelude::tds::TdsError),
+/// #     #[error(transparent)] Construction(#[from] delaunay::prelude::triangulation::TriangulationConstructionError),
+/// #     #[error(transparent)] Manifold(#[from] delaunay::prelude::topology::validation::ManifoldError),
+/// # }
+/// # fn main() -> Result<(), ExampleError> {
 /// let vertices = vec![
 ///     vertex!([0.0, 0.0, 0.0]),
 ///     vertex!([1.0, 0.0, 0.0]),
 ///     vertex!([0.0, 1.0, 0.0]),
 ///     vertex!([0.0, 0.0, 1.0]),
 /// ];
-/// let tds = Triangulation::<FastKernel<f64>, (), (), 3>::build_initial_simplex(&vertices).unwrap();
-/// let facet_to_simplices = tds.build_facet_to_simplices_map().unwrap();
+/// let tds = Triangulation::<FastKernel<f64>, (), (), 3>::build_initial_simplex(&vertices)?;
+/// let facet_to_simplices = tds.build_facet_to_simplices_map()?;
 ///
-/// validate_closed_boundary(&tds, &facet_to_simplices).unwrap();
+/// validate_closed_boundary(&tds, &facet_to_simplices)?;
+/// # Ok(())
+/// # }
 /// ```
 pub fn validate_closed_boundary<T, U, V, const D: usize>(
     tds: &Tds<T, U, V, D>,
@@ -1269,15 +1287,23 @@ fn periodic_aware_ridge_star<T, U, V, const D: usize>(
 /// use delaunay::prelude::*;
 /// use delaunay::prelude::topology::validation::validate_ridge_links;
 ///
+/// # #[derive(Debug, thiserror::Error)]
+/// # enum ExampleError {
+/// #     #[error(transparent)] Construction(#[from] delaunay::prelude::triangulation::TriangulationConstructionError),
+/// #     #[error(transparent)] Manifold(#[from] delaunay::prelude::topology::validation::ManifoldError),
+/// # }
+/// # fn main() -> Result<(), ExampleError> {
 /// let vertices = vec![
 ///     vertex!([0.0, 0.0, 0.0]),
 ///     vertex!([1.0, 0.0, 0.0]),
 ///     vertex!([0.0, 1.0, 0.0]),
 ///     vertex!([0.0, 0.0, 1.0]),
 /// ];
-/// let tds = Triangulation::<FastKernel<f64>, (), (), 3>::build_initial_simplex(&vertices).unwrap();
+/// let tds = Triangulation::<FastKernel<f64>, (), (), 3>::build_initial_simplex(&vertices)?;
 ///
-/// validate_ridge_links(&tds).unwrap();
+/// validate_ridge_links(&tds)?;
+/// # Ok(())
+/// # }
 /// ```
 pub fn validate_ridge_links<T, U, V, const D: usize>(
     tds: &Tds<T, U, V, D>,
@@ -1345,16 +1371,24 @@ pub fn validate_ridge_links<T, U, V, const D: usize>(
 /// use delaunay::prelude::topology::validation::validate_ridge_links_for_simplices;
 /// use delaunay::prelude::collections::SimplexKeyBuffer;
 ///
+/// # #[derive(Debug, thiserror::Error)]
+/// # enum ExampleError {
+/// #     #[error(transparent)] Construction(#[from] delaunay::prelude::triangulation::TriangulationConstructionError),
+/// #     #[error(transparent)] Manifold(#[from] delaunay::prelude::topology::validation::ManifoldError),
+/// # }
+/// # fn main() -> Result<(), ExampleError> {
 /// let vertices = vec![
 ///     vertex!([0.0, 0.0, 0.0]),
 ///     vertex!([1.0, 0.0, 0.0]),
 ///     vertex!([0.0, 1.0, 0.0]),
 ///     vertex!([0.0, 0.0, 1.0]),
 /// ];
-/// let tds = Triangulation::<FastKernel<f64>, (), (), 3>::build_initial_simplex(&vertices).unwrap();
+/// let tds = Triangulation::<FastKernel<f64>, (), (), 3>::build_initial_simplex(&vertices)?;
 /// let simplices: SimplexKeyBuffer = tds.simplices().map(|(k, _)| k).collect();
 ///
-/// validate_ridge_links_for_simplices(&tds, &simplices).unwrap();
+/// validate_ridge_links_for_simplices(&tds, &simplices)?;
+/// # Ok(())
+/// # }
 /// ```
 pub fn validate_ridge_links_for_simplices<T, U, V, const D: usize>(
     tds: &Tds<T, U, V, D>,
@@ -1433,18 +1467,27 @@ pub fn validate_ridge_links_for_simplices<T, U, V, const D: usize>(
 ///     validate_closed_boundary, validate_facet_degree, validate_vertex_links,
 /// };
 ///
+/// # #[derive(Debug, thiserror::Error)]
+/// # enum ExampleError {
+/// #     #[error(transparent)] Tds(#[from] delaunay::prelude::tds::TdsError),
+/// #     #[error(transparent)] Construction(#[from] delaunay::prelude::triangulation::TriangulationConstructionError),
+/// #     #[error(transparent)] Manifold(#[from] delaunay::prelude::topology::validation::ManifoldError),
+/// # }
+/// # fn main() -> Result<(), ExampleError> {
 /// let vertices = vec![
 ///     vertex!([0.0, 0.0, 0.0]),
 ///     vertex!([1.0, 0.0, 0.0]),
 ///     vertex!([0.0, 1.0, 0.0]),
 ///     vertex!([0.0, 0.0, 1.0]),
 /// ];
-/// let tds = Triangulation::<FastKernel<f64>, (), (), 3>::build_initial_simplex(&vertices).unwrap();
-/// let facet_to_simplices = tds.build_facet_to_simplices_map().unwrap();
+/// let tds = Triangulation::<FastKernel<f64>, (), (), 3>::build_initial_simplex(&vertices)?;
+/// let facet_to_simplices = tds.build_facet_to_simplices_map()?;
 ///
-/// validate_facet_degree(&facet_to_simplices).unwrap();
-/// validate_closed_boundary(&tds, &facet_to_simplices).unwrap();
-/// validate_vertex_links(&tds, &facet_to_simplices).unwrap();
+/// validate_facet_degree(&facet_to_simplices)?;
+/// validate_closed_boundary(&tds, &facet_to_simplices)?;
+/// validate_vertex_links(&tds, &facet_to_simplices)?;
+/// # Ok(())
+/// # }
 /// ```
 pub fn validate_vertex_links<T, U, V, const D: usize>(
     tds: &Tds<T, U, V, D>,

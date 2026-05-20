@@ -32,25 +32,35 @@ use thiserror::Error;
 /// # Examples
 ///
 /// ```
-/// use delaunay::prelude::query::*;
+/// use delaunay::prelude::*;
 /// use delaunay::prelude::tds::checked_facet_key_from_vertex_keys;
 ///
+/// # #[derive(Debug, thiserror::Error)]
+/// # enum ExampleError {
+/// #     #[error(transparent)]
+/// #     Construction(#[from] delaunay::DelaunayTriangulationConstructionError),
+/// #     #[error(transparent)]
+/// #     Facet(#[from] delaunay::prelude::tds::FacetError),
+/// # }
+/// # fn main() -> Result<(), ExampleError> {
 /// let vertices = vec![
 ///     vertex!([0.0, 0.0, 0.0]),
 ///     vertex!([1.0, 0.0, 0.0]),
 ///     vertex!([0.0, 1.0, 0.0]),
 ///     vertex!([0.0, 0.0, 1.0]),
 /// ];
-/// let dt = DelaunayTriangulation::new(&vertices).unwrap();
+/// let dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
 /// let tds = dt.tds();
 ///
 /// // Get facet vertex keys from a simplex - no need to materialize Vertex objects
 /// if let Some(simplex) = tds.simplices().map(|(_, simplex)| simplex).next() {
 ///     let facet_vertex_keys: Vec<_> = simplex.vertices().iter().skip(1).copied().collect(); // Skip 1 vertex to get D vertices
 ///     assert_eq!(facet_vertex_keys.len(), 3); // For 3D triangulation, facet has 3 vertices
-///     let facet_key = checked_facet_key_from_vertex_keys::<3>(&facet_vertex_keys).unwrap();
+///     let facet_key = checked_facet_key_from_vertex_keys::<3>(&facet_vertex_keys)?;
 ///     println!("Facet key: {}", facet_key);
 /// }
+/// # Ok(())
+/// # }
 /// ```
 ///
 /// # Performance

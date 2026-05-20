@@ -86,15 +86,25 @@ pub enum DelaunayValidationError {
 /// use delaunay::prelude::diagnostics::delaunay_violation_report;
 /// use delaunay::prelude::*;
 ///
+/// # #[derive(Debug, thiserror::Error)]
+/// # enum ExampleError {
+/// #     #[error(transparent)]
+/// #     Construction(#[from] delaunay::DelaunayTriangulationConstructionError),
+/// #     #[error(transparent)]
+/// #     Validation(#[from] delaunay::DelaunayValidationError),
+/// # }
+/// # fn main() -> Result<(), ExampleError> {
 /// let vertices = vec![
 ///     vertex!([0.0, 0.0]),
 ///     vertex!([1.0, 0.0]),
 ///     vertex!([0.0, 1.0]),
 /// ];
-/// let dt = DelaunayTriangulation::new(&vertices).unwrap();
+/// let dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
 ///
-/// let report = delaunay_violation_report(dt.tds(), None).unwrap();
+/// let report = delaunay_violation_report(dt.tds(), None)?;
 /// assert!(report.is_valid());
+/// # Ok(())
+/// # }
 /// ```
 #[cfg(any(test, feature = "diagnostics"))]
 #[cfg_attr(docsrs, doc(cfg(feature = "diagnostics")))]
@@ -404,9 +414,17 @@ where
 /// # Examples
 ///
 /// ```
-/// use delaunay::prelude::query::*;
+/// use delaunay::prelude::*;
 /// use delaunay::prelude::repair::find_delaunay_violations;
 ///
+/// # #[derive(Debug, thiserror::Error)]
+/// # enum ExampleError {
+/// #     #[error(transparent)]
+/// #     Construction(#[from] delaunay::DelaunayTriangulationConstructionError),
+/// #     #[error(transparent)]
+/// #     Validation(#[from] delaunay::DelaunayValidationError),
+/// # }
+/// # fn main() -> Result<(), ExampleError> {
 /// let vertices = vec![
 ///     vertex!([0.0, 0.0, 0.0]),
 ///     vertex!([1.0, 0.0, 0.0]),
@@ -414,12 +432,14 @@ where
 ///     vertex!([0.0, 0.0, 1.0]),
 /// ];
 ///
-/// let dt = DelaunayTriangulation::new(&vertices).unwrap();
+/// let dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
 /// let tds = dt.tds();
 ///
 /// // Find all violating simplices (should be empty for valid Delaunay triangulation)
-/// let violations = find_delaunay_violations(tds, None).unwrap();
+/// let violations = find_delaunay_violations(tds, None)?;
 /// assert!(violations.is_empty());
+/// # Ok(())
+/// # }
 /// ```
 pub fn find_delaunay_violations<T, U, V, const D: usize>(
     tds: &Tds<T, U, V, D>,
@@ -512,16 +532,26 @@ where
 /// use delaunay::prelude::diagnostics::delaunay_violation_report;
 /// use delaunay::prelude::*;
 ///
+/// # #[derive(Debug, thiserror::Error)]
+/// # enum ExampleError {
+/// #     #[error(transparent)]
+/// #     Construction(#[from] delaunay::DelaunayTriangulationConstructionError),
+/// #     #[error(transparent)]
+/// #     Validation(#[from] delaunay::DelaunayValidationError),
+/// # }
+/// # fn main() -> Result<(), ExampleError> {
 /// let vertices = vec![
 ///     vertex!([0.0, 0.0, 0.0]),
 ///     vertex!([1.0, 0.0, 0.0]),
 ///     vertex!([0.0, 1.0, 0.0]),
 ///     vertex!([0.0, 0.0, 1.0]),
 /// ];
-/// let dt = DelaunayTriangulation::new(&vertices).unwrap();
+/// let dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
 ///
-/// let report = delaunay_violation_report(dt.tds(), None).unwrap();
+/// let report = delaunay_violation_report(dt.tds(), None)?;
 /// assert!(report.violating_simplices.is_empty());
+/// # Ok(())
+/// # }
 /// ```
 #[cfg(any(test, feature = "diagnostics"))]
 #[cfg_attr(docsrs, doc(cfg(feature = "diagnostics")))]

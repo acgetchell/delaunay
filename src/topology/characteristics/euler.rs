@@ -6,20 +6,30 @@
 //! # Examples
 //!
 //! ```rust
-//! use delaunay::prelude::query::*;
+//! use delaunay::prelude::*;
 //! use delaunay::prelude::topology::validation::euler;
 //!
+//! # #[derive(Debug, thiserror::Error)]
+//! # enum ExampleError {
+//! #     #[error(transparent)]
+//! #     Construction(#[from] delaunay::DelaunayTriangulationConstructionError),
+//! #     #[error(transparent)]
+//! #     Topology(#[from] delaunay::topology::TopologyError),
+//! # }
+//! # fn main() -> Result<(), ExampleError> {
 //! let vertices = vec![
 //!     vertex!([0.0, 0.0, 0.0]),
 //!     vertex!([1.0, 0.0, 0.0]),
 //!     vertex!([0.0, 1.0, 0.0]),
 //!     vertex!([0.0, 0.0, 1.0]),
 //! ];
-//! let dt = DelaunayTriangulation::new(&vertices).unwrap();
+//! let dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
 //!
-//! let counts = euler::count_simplices(dt.tds()).unwrap();
+//! let counts = euler::count_simplices(dt.tds())?;
 //! let chi = euler::euler_characteristic(&counts);
 //! assert_eq!(chi, 1);  // Single tetrahedron has χ = 1
+//! # Ok(())
+//! # }
 //! ```
 
 #![forbid(unsafe_code)]
@@ -189,20 +199,30 @@ pub enum TopologyClassification {
 /// # Examples
 ///
 /// ```rust
-/// use delaunay::prelude::query::*;
+/// use delaunay::prelude::*;
 /// use delaunay::prelude::topology::validation::euler;
 ///
+/// # #[derive(Debug, thiserror::Error)]
+/// # enum ExampleError {
+/// #     #[error(transparent)]
+/// #     Construction(#[from] delaunay::DelaunayTriangulationConstructionError),
+/// #     #[error(transparent)]
+/// #     Topology(#[from] delaunay::topology::TopologyError),
+/// # }
+/// # fn main() -> Result<(), ExampleError> {
 /// let vertices = vec![
 ///     vertex!([0.0, 0.0]),
 ///     vertex!([1.0, 0.0]),
 ///     vertex!([0.5, 1.0]),
 /// ];
-/// let dt = DelaunayTriangulation::new(&vertices).unwrap();
+/// let dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
 ///
-/// let counts = euler::count_simplices(dt.tds()).unwrap();
+/// let counts = euler::count_simplices(dt.tds())?;
 /// assert_eq!(counts.count(0), 3);  // 3 vertices
 /// assert_eq!(counts.count(1), 3);  // 3 edges
 /// assert_eq!(counts.count(2), 1);  // 1 face
+/// # Ok(())
+/// # }
 /// ```
 ///
 /// # Errors
@@ -368,9 +388,17 @@ fn insert_simplices_of_size(
 /// # Examples
 ///
 /// ```rust
-/// use delaunay::prelude::query::*;
+/// use delaunay::prelude::*;
 /// use delaunay::prelude::topology::validation::euler;
 ///
+/// # #[derive(Debug, thiserror::Error)]
+/// # enum ExampleError {
+/// #     #[error(transparent)]
+/// #     Construction(#[from] delaunay::DelaunayTriangulationConstructionError),
+/// #     #[error(transparent)]
+/// #     Topology(#[from] delaunay::topology::TopologyError),
+/// # }
+/// # fn main() -> Result<(), ExampleError> {
 /// // 3D tetrahedron - boundary is S² (sphere)
 /// let vertices = vec![
 ///     vertex!([0.0, 0.0, 0.0]),
@@ -378,11 +406,13 @@ fn insert_simplices_of_size(
 ///     vertex!([0.0, 1.0, 0.0]),
 ///     vertex!([0.0, 0.0, 1.0]),
 /// ];
-/// let dt = DelaunayTriangulation::new(&vertices).unwrap();
+/// let dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
 ///
-/// let boundary_counts = euler::count_boundary_simplices(dt.tds()).unwrap();
+/// let boundary_counts = euler::count_boundary_simplices(dt.tds())?;
 /// let boundary_chi = euler::euler_characteristic(&boundary_counts);
 /// assert_eq!(boundary_chi, 2);  // S² has χ = 2
+/// # Ok(())
+/// # }
 /// ```
 ///
 /// # Errors
@@ -646,19 +676,29 @@ pub(crate) fn triangulated_surface_boundary_component_count(
 /// # Examples
 ///
 /// ```rust
-/// use delaunay::prelude::query::*;
+/// use delaunay::prelude::*;
 /// use delaunay::prelude::topology::validation::{classify_triangulation, TopologyClassification};
 ///
+/// # #[derive(Debug, thiserror::Error)]
+/// # enum ExampleError {
+/// #     #[error(transparent)]
+/// #     Construction(#[from] delaunay::DelaunayTriangulationConstructionError),
+/// #     #[error(transparent)]
+/// #     Topology(#[from] delaunay::topology::TopologyError),
+/// # }
+/// # fn main() -> Result<(), ExampleError> {
 /// let vertices = vec![
 ///     vertex!([0.0, 0.0, 0.0]),
 ///     vertex!([1.0, 0.0, 0.0]),
 ///     vertex!([0.0, 1.0, 0.0]),
 ///     vertex!([0.0, 0.0, 1.0]),
 /// ];
-/// let dt = DelaunayTriangulation::new(&vertices).unwrap();
+/// let dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
 ///
-/// let classification = classify_triangulation(dt.tds()).unwrap();
+/// let classification = classify_triangulation(dt.tds())?;
 /// assert_eq!(classification, TopologyClassification::SingleSimplex(3));
+/// # Ok(())
+/// # }
 /// ```
 ///
 /// # Errors

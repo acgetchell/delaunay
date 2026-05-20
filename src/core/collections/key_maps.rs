@@ -59,11 +59,9 @@ pub type VertexUuidSet = FastHashSet<Uuid>;
 ///     vertex!([0.0, 1.0, 0.0]),
 ///     vertex!([0.0, 0.0, 1.0]),
 /// ];
-/// let dt: DelaunayTriangulation<_, _, _, 3> =
-///     DelaunayTriangulation::new_with_topology_guarantee(
-///         &vertices,
-///         TopologyGuarantee::PLManifold,
-///     )?;
+/// let dt: DelaunayTriangulation<_, _, _, 3> = DelaunayTriangulationBuilder::new(&vertices)
+///     .topology_guarantee(TopologyGuarantee::PLManifold)
+///     .build::<()>()?;
 /// println!("Topology guarantee: {:?}", dt.topology_guarantee());
 /// let tds = dt.tds();
 ///
@@ -115,11 +113,9 @@ pub type UuidToVertexKeyMap = FastHashMap<Uuid, VertexKey>;
 ///     vertex!([0.0, 1.0, 0.0]),
 ///     vertex!([0.0, 0.0, 1.0]),
 /// ];
-/// let dt: DelaunayTriangulation<_, _, _, 3> =
-///     DelaunayTriangulation::new_with_topology_guarantee(
-///         &vertices,
-///         TopologyGuarantee::PLManifold,
-///     )?;
+/// let dt: DelaunayTriangulation<_, _, _, 3> = DelaunayTriangulationBuilder::new(&vertices)
+///     .topology_guarantee(TopologyGuarantee::PLManifold)
+///     .build::<()>()?;
 /// assert_eq!(dt.topology_guarantee(), TopologyGuarantee::PLManifold);
 /// let tds = dt.tds();
 ///

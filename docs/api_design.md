@@ -56,30 +56,33 @@ The library provides two distinct APIs for different use cases:
 
 ## Builder API Reference
 
-### Simple Construction: `DelaunayTriangulation::new()`
+### Simple Construction: `DelaunayTriangulationBuilder`
 
-For most use cases, the simple constructor is sufficient:
+For most use cases, the builder with default options is sufficient:
 
 ```rust
-use delaunay::prelude::construction::{DelaunayTriangulation, vertex};
+use delaunay::prelude::construction::{DelaunayTriangulationBuilder, vertex};
 
-// Simple construction from vertices (Euclidean space, default options)
-let vertices = vec![
-    vertex!([0.0, 0.0, 0.0]),
-    vertex!([1.0, 0.0, 0.0]),
-    vertex!([0.0, 1.0, 0.0]),
-    vertex!([0.0, 0.0, 1.0]),
-];
-let mut dt: DelaunayTriangulation<_, (), (), 3> = 
-    DelaunayTriangulation::new(&vertices).unwrap();
+fn main() -> Result<(), Box<dyn std::error::Error>> {
+    // Simple construction from vertices (Euclidean space, default options)
+    let vertices = vec![
+        vertex!([0.0, 0.0, 0.0]),
+        vertex!([1.0, 0.0, 0.0]),
+        vertex!([0.0, 1.0, 0.0]),
+        vertex!([0.0, 0.0, 1.0]),
+    ];
+    let mut dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
 
-// Incremental insertion (maintains Delaunay property)
-let new_vertex = vertex!([0.5, 0.5, 0.5]);
-dt.insert(new_vertex).unwrap();
+    // Incremental insertion (maintains Delaunay property)
+    let new_vertex = vertex!([0.5, 0.5, 0.5]);
+    dt.insert(new_vertex)?;
 
-// Vertex removal (topology-preserving, with automatic repair when enabled)
-let vertex_key = dt.vertices().next().unwrap().0;
-dt.remove_vertex(vertex_key).unwrap();
+    // Vertex removal (topology-preserving, with automatic repair when enabled)
+    if let Some((vertex_key, _)) = dt.vertices().next() {
+        dt.remove_vertex(vertex_key)?;
+    }
+    Ok(())
+}
 ```
 
 ### Advanced Construction: `DelaunayTriangulationBuilder`
@@ -93,23 +96,25 @@ use delaunay::prelude::construction::{
 };
 use delaunay::prelude::validation::ValidationPolicy;
 
-// Toroidal (periodic) triangulation in 2D
-let vertices = vec![
-    vertex!([0.1, 0.1]),
-    vertex!([0.9, 0.9]),
-    vertex!([0.5, 0.5]),
-];
+fn main() -> Result<(), Box<dyn std::error::Error>> {
+    // Toroidal (periodic) triangulation in 2D
+    let vertices = vec![
+        vertex!([0.1, 0.1]),
+        vertex!([0.9, 0.9]),
+        vertex!([0.5, 0.5]),
+    ];
 
-let mut dt = DelaunayTriangulationBuilder::new(&vertices)
-    .toroidal([1.0, 1.0]) // Phase 1: canonicalized toroidal construction
-    .topology_guarantee(TopologyGuarantee::PLManifoldStrict)
-    .build::<()>()
-    .unwrap();
+    let mut dt = DelaunayTriangulationBuilder::new(&vertices)
+        .toroidal([1.0, 1.0]) // Phase 1: canonicalized toroidal construction
+        .topology_guarantee(TopologyGuarantee::PLManifoldStrict)
+        .build::<()>()?;
 
-dt.set_validation_policy(ValidationPolicy::Always);
+    dt.set_validation_policy(ValidationPolicy::Always);
 
-// Works like any other DelaunayTriangulation
-dt.insert(vertex!([0.25, 0.75])).unwrap();
+    // Works like any other DelaunayTriangulation
+    dt.insert(vertex!([0.25, 0.75]))?;
+    Ok(())
+}
 ```
 
 **When to use the Builder:**
@@ -153,46 +158,50 @@ for topology guarantee and validation policy details.
 The Edit API is exposed through the `BistellarFlips` trait in `prelude::flips`:
 
 ```rust
-use delaunay::prelude::construction::{DelaunayTriangulation, vertex};
+use delaunay::prelude::construction::{DelaunayTriangulationBuilder, vertex};
 use delaunay::prelude::flips::*;
 
-// Start with a valid triangulation
-let vertices = vec![
-    vertex!([0.0, 0.0, 0.0]),
-    vertex!([1.0, 0.0, 0.0]),
-    vertex!([0.0, 1.0, 0.0]),
-    vertex!([0.0, 0.0, 1.0]),
-];
-let mut dt: DelaunayTriangulation<_, (), (), 3> = 
-    DelaunayTriangulation::new(&vertices).unwrap();
+fn main() -> Result<(), Box<dyn std::error::Error>> {
+    // Start with a valid triangulation
+    let vertices = vec![
+        vertex!([0.0, 0.0, 0.0]),
+        vertex!([1.0, 0.0, 0.0]),
+        vertex!([0.0, 1.0, 0.0]),
+        vertex!([0.0, 0.0, 1.0]),
+    ];
+    let mut dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
 
-// k=1 move: Insert a vertex into a simplex (splits simplex into D+1 simplices)
-let simplex_key = dt.simplices().next().unwrap().0;
-let info = dt.flip_k1_insert(simplex_key, vertex!([0.25, 0.25, 0.25])).unwrap();
+    // k=1 move: Insert a vertex into a simplex (splits simplex into D+1 simplices)
+    let Some((simplex_key, _)) = dt.simplices().next() else {
+        return Ok(());
+    };
+    let info = dt.flip_k1_insert(simplex_key, vertex!([0.25, 0.25, 0.25]))?;
 
-// k=1 inverse: Remove a vertex (collapses its star)
-let vertex_key = info.inserted_face_vertices[0];
-dt.flip_k1_remove(vertex_key).unwrap();
+    // k=1 inverse: Remove a vertex (collapses its star)
+    let vertex_key = info.inserted_face_vertices[0];
+    dt.flip_k1_remove(vertex_key)?;
 
-// k=2 move: Flip a facet (2 simplices ↔ D simplices)
-let facet = /* FacetHandle */;
-let info = dt.flip_k2(facet).unwrap();
+    // k=2 move: Flip a facet (2 simplices ↔ D simplices)
+    let facet = /* FacetHandle */;
+    let info = dt.flip_k2(facet)?;
 
-// k=2 inverse: Flip from an edge star (D simplices ↔ 2 simplices)
-let edge = EdgeKey::new(info.inserted_face_vertices[0], info.inserted_face_vertices[1]);
-dt.flip_k2_inverse_from_edge(edge).unwrap();
+    // k=2 inverse: Flip from an edge star (D simplices ↔ 2 simplices)
+    let edge = EdgeKey::new(info.inserted_face_vertices[0], info.inserted_face_vertices[1]);
+    dt.flip_k2_inverse_from_edge(edge)?;
 
-// k=3 move: Flip a ridge (3 simplices ↔ D-1 simplices, requires D ≥ 3)
-let ridge = /* RidgeHandle */;
-let info = dt.flip_k3(ridge).unwrap();
+    // k=3 move: Flip a ridge (3 simplices ↔ D-1 simplices, requires D ≥ 3)
+    let ridge = /* RidgeHandle */;
+    let info = dt.flip_k3(ridge)?;
 
-// k=3 inverse: Flip from a triangle star (D-1 simplices ↔ 3 simplices)
-let triangle = TriangleHandle::new(
-    info.inserted_face_vertices[0],
-    info.inserted_face_vertices[1],
-    info.inserted_face_vertices[2],
-);
-dt.flip_k3_inverse_from_triangle(triangle).unwrap();
+    // k=3 inverse: Flip from a triangle star (D-1 simplices ↔ 3 simplices)
+    let triangle = TriangleHandle::new(
+        info.inserted_face_vertices[0],
+        info.inserted_face_vertices[1],
+        info.inserted_face_vertices[2],
+    );
+    dt.flip_k3_inverse_from_triangle(triangle)?;
+    Ok(())
+}
 ```
 
 ### Available Flip Operations
@@ -250,7 +259,7 @@ After applying flips, you should:
 1. Manually verify the Delaunay property if needed:
 
    ```rust
-   dt.is_valid().unwrap();  // Check Level 4 (Delaunay property)
+   assert!(dt.is_valid().is_ok()); // Check Level 4 (Delaunay property)
    ```
 
 2. Consider running a repair pass if you need the Delaunay property again (requires `K: ExactPredicates`):
@@ -262,30 +271,32 @@ After applying flips, you should:
 You can mix both APIs in the same workflow:
 
 ```rust
-use delaunay::prelude::construction::{DelaunayTriangulation, vertex};
+use delaunay::prelude::construction::{DelaunayTriangulationBuilder, vertex};
 use delaunay::prelude::flips::*;
 
-// 1. Build initial triangulation (Builder API)
-let vertices = vec![
-    vertex!([0.0, 0.0, 0.0]),
-    vertex!([1.0, 0.0, 0.0]),
-    vertex!([0.0, 1.0, 0.0]),
-    vertex!([0.0, 0.0, 1.0]),
-];
-let mut dt: DelaunayTriangulation<_, (), (), 3> = 
-    DelaunayTriangulation::new(&vertices).unwrap();
+fn main() -> Result<(), Box<dyn std::error::Error>> {
+    // 1. Build initial triangulation (Builder API)
+    let vertices = vec![
+        vertex!([0.0, 0.0, 0.0]),
+        vertex!([1.0, 0.0, 0.0]),
+        vertex!([0.0, 1.0, 0.0]),
+        vertex!([0.0, 0.0, 1.0]),
+    ];
+    let mut dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
 
-// 2. Add vertices using Builder API (maintains Delaunay)
-dt.insert(vertex!([0.5, 0.5, 0.5])).unwrap();
+    // 2. Add vertices using Builder API (maintains Delaunay)
+    dt.insert(vertex!([0.5, 0.5, 0.5]))?;
 
-// 3. Make custom topology edits (Edit API)
-let facet = /* ... */;
-dt.flip_k2(facet).unwrap();
+    // 3. Make custom topology edits (Edit API)
+    let facet = /* ... */;
+    dt.flip_k2(facet)?;
 
-// 4. Verify Delaunay property if needed
-if let Err(e) = dt.is_valid() {
-    eprintln!("Warning: Delaunay property violated after manual edit: {}", e);
-    // Optionally restore using Builder API or custom repair
+    // 4. Verify Delaunay property if needed
+    if let Err(e) = dt.is_valid() {
+        eprintln!("Warning: Delaunay property violated after manual edit: {}", e);
+        // Optionally restore using Builder API or custom repair
+    }
+    Ok(())
 }
 ```
 
@@ -313,13 +324,13 @@ Use the appropriate validation level for your needs:
 
 ```rust
 // Level 2: Structural only (fast)
-dt.tds().is_valid().unwrap();
+assert!(dt.tds().is_valid().is_ok());
 
 // Level 3: + Manifold topology
-dt.as_triangulation().is_valid().unwrap();
+assert!(dt.as_triangulation().is_valid().is_ok());
 
 // Level 4: + Delaunay property (most comprehensive)
-dt.is_valid().unwrap();
+assert!(dt.is_valid().is_ok());
 
 // Full diagnostic report
 let report = dt.validation_report();
@@ -357,22 +368,24 @@ The `delaunay::delaunayize` module provides a single entrypoint for the
 common "repair topology then restore Delaunay" workflow:
 
 ```rust
-use delaunay::prelude::construction::{DelaunayTriangulation, vertex};
+use delaunay::prelude::construction::{DelaunayTriangulationBuilder, vertex};
 use delaunay::prelude::delaunayize::{
     DelaunayizeConfig, delaunayize_by_flips,
 };
 
-let vertices = vec![
-    vertex!([0.0, 0.0, 0.0]),
-    vertex!([1.0, 0.0, 0.0]),
-    vertex!([0.0, 1.0, 0.0]),
-    vertex!([0.0, 0.0, 1.0]),
-];
-let mut dt: DelaunayTriangulation<_, (), (), 3> =
-    DelaunayTriangulation::new(&vertices).unwrap();
+fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let vertices = vec![
+        vertex!([0.0, 0.0, 0.0]),
+        vertex!([1.0, 0.0, 0.0]),
+        vertex!([0.0, 1.0, 0.0]),
+        vertex!([0.0, 0.0, 1.0]),
+    ];
+    let mut dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
 
-let outcome = delaunayize_by_flips(&mut dt, DelaunayizeConfig::default()).unwrap();
-assert!(outcome.topology_repair.succeeded);
+    let outcome = delaunayize_by_flips(&mut dt, DelaunayizeConfig::default())?;
+    assert!(outcome.topology_repair.succeeded);
+    Ok(())
+}
 ```
 
 ### Steps

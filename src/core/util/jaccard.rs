@@ -195,20 +195,23 @@ where
 /// # Examples
 ///
 /// ```
-/// use delaunay::prelude::query::*;
+/// use delaunay::prelude::*;
 /// use delaunay::prelude::query::extract_vertex_coordinate_set;
 ///
+/// # fn main() -> Result<(), DelaunayTriangulationConstructionError> {
 /// let vertices = vec![
 ///     vertex!([0.0, 0.0, 0.0]),
 ///     vertex!([1.0, 0.0, 0.0]),
 ///     vertex!([0.0, 1.0, 0.0]),
 ///     vertex!([0.0, 0.0, 1.0]),
 /// ];
-/// let dt = DelaunayTriangulation::new(&vertices).unwrap();
+/// let dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
 /// let tds = dt.tds();
 ///
 /// let coord_set = extract_vertex_coordinate_set(tds);
 /// assert_eq!(coord_set.len(), 4);
+/// # Ok(())
+/// # }
 /// ```
 #[must_use]
 pub fn extract_vertex_coordinate_set<T, U, V, const D: usize>(
@@ -252,21 +255,31 @@ const fn canonical_edge(u: u128, v: u128) -> (u128, u128) {
 /// # Examples
 ///
 /// ```
-/// use delaunay::prelude::query::*;
+/// use delaunay::prelude::*;
 /// use delaunay::prelude::query::extract_edge_set;
 ///
+/// # #[derive(Debug, thiserror::Error)]
+/// # enum ExampleError {
+/// #     #[error(transparent)]
+/// #     Construction(#[from] delaunay::DelaunayTriangulationConstructionError),
+/// #     #[error(transparent)]
+/// #     Facet(#[from] delaunay::prelude::tds::FacetError),
+/// # }
+/// # fn main() -> Result<(), ExampleError> {
 /// let vertices = vec![
 ///     vertex!([0.0, 0.0, 0.0]),
 ///     vertex!([1.0, 0.0, 0.0]),
 ///     vertex!([0.0, 1.0, 0.0]),
 ///     vertex!([0.0, 0.0, 1.0]),
 /// ];
-/// let dt = DelaunayTriangulation::new(&vertices).unwrap();
+/// let dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
 /// let tds = dt.tds();
 ///
-/// let edge_set = extract_edge_set(tds).unwrap();
+/// let edge_set = extract_edge_set(tds)?;
 /// // A tetrahedron has 6 edges
 /// assert_eq!(edge_set.len(), 6);
+/// # Ok(())
+/// # }
 /// ```
 pub fn extract_edge_set<T, U, V, const D: usize>(
     tds: &Tds<T, U, V, D>,
@@ -324,21 +337,31 @@ where
 /// # Examples
 ///
 /// ```
-/// use delaunay::prelude::query::*;
+/// use delaunay::prelude::*;
 /// use delaunay::prelude::query::extract_facet_identifier_set;
 ///
+/// # #[derive(Debug, thiserror::Error)]
+/// # enum ExampleError {
+/// #     #[error(transparent)]
+/// #     Construction(#[from] delaunay::DelaunayTriangulationConstructionError),
+/// #     #[error(transparent)]
+/// #     Facet(#[from] delaunay::prelude::tds::FacetError),
+/// # }
+/// # fn main() -> Result<(), ExampleError> {
 /// let vertices = vec![
 ///     vertex!([0.0, 0.0, 0.0]),
 ///     vertex!([1.0, 0.0, 0.0]),
 ///     vertex!([0.0, 1.0, 0.0]),
 ///     vertex!([0.0, 0.0, 1.0]),
 /// ];
-/// let dt = DelaunayTriangulation::new(&vertices).unwrap();
+/// let dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
 /// let tds = dt.tds();
 ///
-/// let facet_set = extract_facet_identifier_set(tds).unwrap();
+/// let facet_set = extract_facet_identifier_set(tds)?;
 /// // A tetrahedron has 4 facets
 /// assert_eq!(facet_set.len(), 4);
+/// # Ok(())
+/// # }
 /// ```
 pub fn extract_facet_identifier_set<T, U, V, const D: usize>(
     tds: &Tds<T, U, V, D>,
@@ -388,11 +411,19 @@ where
 /// # Examples
 ///
 /// ```
-/// use delaunay::prelude::query::extract_hull_facet_set;
-/// use delaunay::prelude::DelaunayTriangulation;
-/// use delaunay::prelude::query::ConvexHull;
-/// use delaunay::vertex;
+/// use delaunay::prelude::*;
+/// use delaunay::prelude::query::{ConvexHull, extract_hull_facet_set};
 ///
+/// # #[derive(Debug, thiserror::Error)]
+/// # enum ExampleError {
+/// #     #[error(transparent)]
+/// #     Construction(#[from] delaunay::DelaunayTriangulationConstructionError),
+/// #     #[error(transparent)]
+/// #     ConvexHull(#[from] delaunay::geometry::ConvexHullConstructionError),
+/// #     #[error(transparent)]
+/// #     Facet(#[from] delaunay::prelude::tds::FacetError),
+/// # }
+/// # fn main() -> Result<(), ExampleError> {
 /// let vertices: Vec<_> = vec![
 ///     vertex!([0.0, 0.0, 0.0]),
 ///     vertex!([1.0, 0.0, 0.0]),
@@ -400,11 +431,13 @@ where
 ///     vertex!([0.0, 0.0, 1.0]),
 /// ];
 /// let dt: DelaunayTriangulation<_, (), (), 3> =
-///     DelaunayTriangulation::new(&vertices).unwrap();
-/// let hull = ConvexHull::from_triangulation(dt.as_triangulation()).unwrap();
+///     DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
+/// let hull = ConvexHull::from_triangulation(dt.as_triangulation())?;
 ///
-/// let facet_set = extract_hull_facet_set(&hull, dt.as_triangulation()).unwrap();
+/// let facet_set = extract_hull_facet_set(&hull, dt.as_triangulation())?;
 /// assert_eq!(facet_set.len(), 4);
+/// # Ok(())
+/// # }
 /// ```
 pub fn extract_hull_facet_set<K, U, V, const D: usize>(
     hull: &ConvexHull<K, U, V, D>,

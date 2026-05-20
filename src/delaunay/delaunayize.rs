@@ -22,14 +22,21 @@
 //! ```rust
 //! use delaunay::prelude::delaunayize::*;
 //!
-//! # fn main() -> Result<(), Box<dyn std::error::Error>> {
+//! # #[derive(Debug, thiserror::Error)]
+//! # enum ExampleError {
+//! #     #[error(transparent)]
+//! #     Construction(#[from] delaunay::DelaunayTriangulationConstructionError),
+//! #     #[error(transparent)]
+//! #     Delaunayize(#[from] delaunay::prelude::delaunayize::DelaunayizeError),
+//! # }
+//! # fn main() -> Result<(), ExampleError> {
 //! let vertices = vec![
 //!     vertex!([0.0, 0.0, 0.0]),
 //!     vertex!([1.0, 0.0, 0.0]),
 //!     vertex!([0.0, 1.0, 0.0]),
 //!     vertex!([0.0, 0.0, 1.0]),
 //! ];
-//! let mut dt: DelaunayTriangulation<_, (), (), 3> = DelaunayTriangulation::new(&vertices)?;
+//! let mut dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
 //!
 //! let outcome = delaunayize_by_flips(&mut dt, DelaunayizeConfig::default())?;
 //! assert!(outcome.topology_repair.succeeded);
@@ -181,14 +188,21 @@ impl Default for DelaunayizeConfig {
 /// ```rust
 /// use delaunay::prelude::delaunayize::*;
 ///
-/// # fn main() -> Result<(), Box<dyn std::error::Error>> {
+/// # #[derive(Debug, thiserror::Error)]
+/// # enum ExampleError {
+/// #     #[error(transparent)]
+/// #     Construction(#[from] delaunay::DelaunayTriangulationConstructionError),
+/// #     #[error(transparent)]
+/// #     Delaunayize(#[from] delaunay::prelude::delaunayize::DelaunayizeError),
+/// # }
+/// # fn main() -> Result<(), ExampleError> {
 /// let vertices = vec![
 ///     vertex!([0.0, 0.0, 0.0]),
 ///     vertex!([1.0, 0.0, 0.0]),
 ///     vertex!([0.0, 1.0, 0.0]),
 ///     vertex!([0.0, 0.0, 1.0]),
 /// ];
-/// let mut dt: DelaunayTriangulation<_, (), (), 3> = DelaunayTriangulation::new(&vertices)?;
+/// let mut dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
 ///
 /// let outcome = delaunayize_by_flips(&mut dt, DelaunayizeConfig::default())?;
 /// assert!(outcome.topology_repair.succeeded);
@@ -594,14 +608,21 @@ where
 /// ```rust
 /// use delaunay::prelude::delaunayize::*;
 ///
-/// # fn main() -> Result<(), Box<dyn std::error::Error>> {
+/// # #[derive(Debug, thiserror::Error)]
+/// # enum ExampleError {
+/// #     #[error(transparent)]
+/// #     Construction(#[from] delaunay::DelaunayTriangulationConstructionError),
+/// #     #[error(transparent)]
+/// #     Delaunayize(#[from] delaunay::prelude::delaunayize::DelaunayizeError),
+/// # }
+/// # fn main() -> Result<(), ExampleError> {
 /// let vertices = vec![
 ///     vertex!([0.0, 0.0, 0.0]),
 ///     vertex!([1.0, 0.0, 0.0]),
 ///     vertex!([0.0, 1.0, 0.0]),
 ///     vertex!([0.0, 0.0, 1.0]),
 /// ];
-/// let mut dt: DelaunayTriangulation<_, (), (), 3> = DelaunayTriangulation::new(&vertices)?;
+/// let mut dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
 ///
 /// let outcome = delaunayize_by_flips(&mut dt, DelaunayizeConfig::default())?;
 /// assert!(outcome.topology_repair.succeeded);

@@ -33,26 +33,29 @@ use crate::triangulation::DelaunayTriangulation;
 /// # Example
 ///
 /// ```rust
-/// use delaunay::prelude::construction::TopologyGuarantee;
+/// use delaunay::prelude::construction::{DelaunayTriangulationBuilder, TopologyGuarantee};
 /// use delaunay::prelude::flips::*;
 ///
-/// # fn main() -> Result<(), Box<dyn std::error::Error>> {
+/// # #[derive(Debug, thiserror::Error)]
+/// # enum ExampleError {
+/// #     #[error(transparent)]
+/// #     Construction(#[from] delaunay::DelaunayTriangulationConstructionError),
+/// #     #[error(transparent)]
+/// #     Flip(#[from] delaunay::flips::FlipError),
+/// # }
+/// # fn main() -> Result<(), ExampleError> {
 /// let vertices = vec![
 ///     vertex!([0.0, 0.0, 0.0]),
 ///     vertex!([1.0, 0.0, 0.0]),
 ///     vertex!([0.0, 1.0, 0.0]),
 ///     vertex!([0.0, 0.0, 1.0]),
 /// ];
-/// let mut dt: DelaunayTriangulation<_, (), (), 3> =
-///     DelaunayTriangulation::new_with_topology_guarantee(
-///         &vertices,
-///         TopologyGuarantee::PLManifold,
-///     )?;
-/// let simplex_key = dt
-///     .simplices()
-///     .next()
-///     .map(|(key, _)| key)
-///     .ok_or_else(|| std::io::Error::other("empty triangulation"))?;
+/// let mut dt = DelaunayTriangulationBuilder::new(&vertices)
+///     .topology_guarantee(TopologyGuarantee::PLManifold)
+///     .build::<()>()?;
+/// let Some((simplex_key, _)) = dt.simplices().next() else {
+///     return Ok(());
+/// };
 ///
 /// // Split a simplex by inserting a vertex (k=1 move).
 /// let _info = dt.flip_k1_insert(simplex_key, vertex!([0.1, 0.1, 0.1]))?;
@@ -76,26 +79,29 @@ pub trait BistellarFlips<const D: usize> {
     /// # Example
     ///
     /// ```rust
-    /// use delaunay::prelude::construction::TopologyGuarantee;
+    /// use delaunay::prelude::construction::{DelaunayTriangulationBuilder, TopologyGuarantee};
     /// use delaunay::prelude::flips::*;
     ///
-    /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
+    /// # #[derive(Debug, thiserror::Error)]
+    /// # enum ExampleError {
+    /// #     #[error(transparent)]
+    /// #     Construction(#[from] delaunay::DelaunayTriangulationConstructionError),
+    /// #     #[error(transparent)]
+    /// #     Flip(#[from] delaunay::flips::FlipError),
+    /// # }
+    /// # fn main() -> Result<(), ExampleError> {
     /// let vertices = vec![
     ///     vertex!([0.0, 0.0, 0.0]),
     ///     vertex!([1.0, 0.0, 0.0]),
     ///     vertex!([0.0, 1.0, 0.0]),
     ///     vertex!([0.0, 0.0, 1.0]),
     /// ];
-    /// let mut dt: DelaunayTriangulation<_, (), (), 3> =
-    ///     DelaunayTriangulation::new_with_topology_guarantee(
-    ///         &vertices,
-    ///         TopologyGuarantee::PLManifold,
-    ///     )?;
-    /// let simplex_key = dt
-    ///     .simplices()
-    ///     .next()
-    ///     .map(|(key, _)| key)
-    ///     .ok_or_else(|| std::io::Error::other("empty triangulation"))?;
+    /// let mut dt = DelaunayTriangulationBuilder::new(&vertices)
+    ///     .topology_guarantee(TopologyGuarantee::PLManifold)
+    ///     .build::<()>()?;
+    /// let Some((simplex_key, _)) = dt.simplices().next() else {
+    ///     return Ok(());
+    /// };
     ///
     /// // Insert a vertex into the simplex
     /// let info = dt.flip_k1_insert(simplex_key, vertex!([0.25, 0.25, 0.25]))?;
@@ -119,26 +125,29 @@ pub trait BistellarFlips<const D: usize> {
     /// # Example
     ///
     /// ```rust
-    /// use delaunay::prelude::construction::TopologyGuarantee;
+    /// use delaunay::prelude::construction::{DelaunayTriangulationBuilder, TopologyGuarantee};
     /// use delaunay::prelude::flips::*;
     ///
-    /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
+    /// # #[derive(Debug, thiserror::Error)]
+    /// # enum ExampleError {
+    /// #     #[error(transparent)]
+    /// #     Construction(#[from] delaunay::DelaunayTriangulationConstructionError),
+    /// #     #[error(transparent)]
+    /// #     Flip(#[from] delaunay::flips::FlipError),
+    /// # }
+    /// # fn main() -> Result<(), ExampleError> {
     /// let vertices = vec![
     ///     vertex!([0.0, 0.0, 0.0]),
     ///     vertex!([1.0, 0.0, 0.0]),
     ///     vertex!([0.0, 1.0, 0.0]),
     ///     vertex!([0.0, 0.0, 1.0]),
     /// ];
-    /// let mut dt: DelaunayTriangulation<_, (), (), 3> =
-    ///     DelaunayTriangulation::new_with_topology_guarantee(
-    ///         &vertices,
-    ///         TopologyGuarantee::PLManifold,
-    ///     )?;
-    /// let simplex_key = dt
-    ///     .simplices()
-    ///     .next()
-    ///     .map(|(key, _)| key)
-    ///     .ok_or_else(|| std::io::Error::other("empty triangulation"))?;
+    /// let mut dt = DelaunayTriangulationBuilder::new(&vertices)
+    ///     .topology_guarantee(TopologyGuarantee::PLManifold)
+    ///     .build::<()>()?;
+    /// let Some((simplex_key, _)) = dt.simplices().next() else {
+    ///     return Ok(());
+    /// };
     /// let inserted = dt.flip_k1_insert(simplex_key, vertex!([0.25, 0.25, 0.25]))?;
     /// let inserted_vertex = inserted.inserted_face_vertices[0];
     ///
@@ -160,9 +169,10 @@ pub trait BistellarFlips<const D: usize> {
     /// # Example
     ///
     /// ```rust
+    /// use delaunay::prelude::construction::DelaunayTriangulationBuilder;
     /// use delaunay::prelude::flips::*;
     ///
-    /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
+    /// # fn main() -> Result<(), delaunay::DelaunayTriangulationConstructionError> {
     /// let vertices = vec![
     ///     vertex!([0.0, 0.0, 0.0]),
     ///     vertex!([1.0, 0.0, 0.0]),
@@ -170,7 +180,7 @@ pub trait BistellarFlips<const D: usize> {
     ///     vertex!([0.0, 0.0, 1.0]),
     ///     vertex!([0.5, 0.5, 0.3]),
     /// ];
-    /// let mut dt: DelaunayTriangulation<_, (), (), 3> = DelaunayTriangulation::new(&vertices)?;
+    /// let mut dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
     ///
     /// // Find an interior facet and attempt a k=2 flip
     /// // Note: k=2 flips require specific geometric conditions
@@ -200,9 +210,10 @@ pub trait BistellarFlips<const D: usize> {
     /// # Example
     ///
     /// ```rust
+    /// use delaunay::prelude::construction::DelaunayTriangulationBuilder;
     /// use delaunay::prelude::flips::*;
     ///
-    /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
+    /// # fn main() -> Result<(), delaunay::DelaunayTriangulationConstructionError> {
     /// let vertices = vec![
     ///     vertex!([0.0, 0.0, 0.0]),
     ///     vertex!([1.0, 0.0, 0.0]),
@@ -210,7 +221,7 @@ pub trait BistellarFlips<const D: usize> {
     ///     vertex!([0.0, 0.0, 1.0]),
     ///     vertex!([1.0, 1.0, 1.0]),
     /// ];
-    /// let dt: DelaunayTriangulation<_, (), (), 3> = DelaunayTriangulation::new(&vertices)?;
+    /// let dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
     ///
     /// // k=3 flips require specific ridge configurations in 3D and above
     /// // This is an illustrative example; actual ridge selection depends on topology

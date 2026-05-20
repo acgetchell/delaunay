@@ -8,7 +8,7 @@
 //!
 //! | Situation | Recommended API |
 //! |---|---|
-//! | Simple Euclidean, default options | [`DelaunayTriangulation::new`] |
+//! | Simple Euclidean, default options | [`DelaunayTriangulationBuilder::new`] |
 //! | Custom `ConstructionOptions` or `TopologyGuarantee` | [`DelaunayTriangulationBuilder`] |
 //! | Toroidal Phase 1 (canonicalize only) | [`DelaunayTriangulationBuilder`] with [`.toroidal()`](DelaunayTriangulationBuilder::toroidal) |
 //! | Toroidal Phase 2 (true periodic, χ = 0) | [`DelaunayTriangulationBuilder`] with [`.toroidal_periodic()`](DelaunayTriangulationBuilder::toroidal_periodic) |
