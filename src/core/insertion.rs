@@ -3261,7 +3261,8 @@ mod tests {
             .expect("first insertion should succeed");
         assert_eq!(tri.number_of_vertices(), 1);
 
-        // Second insertion at same coordinates: insert() returns Err, insert_with_statistics() reports Skipped.
+        // Second insertion at same coordinates: insert() returns Err; the internal
+        // statistics helper reports Skipped so telemetry can classify the no-op.
         let err = insert(&mut tri, vertex!([0.0, 0.0, 0.0]), None, None).unwrap_err();
         assert!(matches!(err, InsertionError::DuplicateCoordinates { .. }));
 

@@ -2234,7 +2234,9 @@ where
                         let mut skipped = 0_usize;
                         let mut hard_errors = 0_usize;
                         for (insert_idx, &source_idx) in insertion_order.iter().enumerate() {
-                            match candidate_dt.insert_with_statistics(expanded[source_idx]) {
+                            match candidate_dt
+                                .insert_best_effort_with_statistics(expanded[source_idx])
+                            {
                                 Ok((InsertionOutcome::Inserted { .. }, _stats)) => {
                                     inserted = inserted.saturating_add(1);
                                 }

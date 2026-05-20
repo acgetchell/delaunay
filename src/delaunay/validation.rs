@@ -629,7 +629,10 @@ where
     /// The initial
     /// [`ValidationPolicy`](crate::ValidationPolicy) is derived from the guarantee:
     /// [`PLManifoldStrict`](TopologyGuarantee::PLManifoldStrict) uses
-    /// [`Always`](crate::ValidationPolicy::Always); all others default to
+    /// [`Always`](crate::ValidationPolicy::Always),
+    /// [`PLManifold`](TopologyGuarantee::PLManifold) uses
+    /// [`ExplicitOnly`](crate::ValidationPolicy::ExplicitOnly), and
+    /// [`Pseudomanifold`](TopologyGuarantee::Pseudomanifold) uses
     /// [`OnSuspicion`](crate::ValidationPolicy::OnSuspicion).
     #[must_use]
     pub(crate) const fn from_tds_with_topology_guarantee(

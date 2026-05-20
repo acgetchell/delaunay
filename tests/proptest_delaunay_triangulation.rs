@@ -423,7 +423,7 @@ fn assert_on_suspicion_sequence_valid<const D: usize>(
     dt.set_validation_policy(ValidationPolicy::OnSuspicion);
 
     for (idx, point) in points.into_iter().enumerate() {
-        let result = dt.insert_with_statistics(vertex!(point));
+        let result = dt.insert_best_effort_with_statistics(vertex!(point));
 
         if dt.number_of_simplices() > 0 {
             let validation = dt.validate();
@@ -557,7 +557,7 @@ fn insert_vertices_3d_no_retry_or_skip(
     vertices: &[Vertex<f64, (), 3>],
 ) -> InsertionOrder3dRunStatus {
     for (idx, v) in vertices.iter().enumerate() {
-        let result = dt.insert_with_statistics(*v);
+        let result = dt.insert_best_effort_with_statistics(*v);
         let Ok((outcome, stats)) = result else {
             if std::env::var_os("DELAUNAY_PROPTEST_INSERT_ERRORS").is_some()
                 && let Err(err) = result
@@ -636,7 +636,7 @@ fn regression_insertion_order_3d_case_001() {
         DelaunayTriangulation::empty_with_topology_guarantee(TopologyGuarantee::PLManifold);
 
     for (idx, v) in vertices.iter().enumerate() {
-        let result = dt.insert_with_statistics(*v);
+        let result = dt.insert_best_effort_with_statistics(*v);
         match result {
             Ok((InsertionOutcome::Inserted { .. }, _stats)) => {}
             Ok((InsertionOutcome::Skipped { error }, _stats)) => {
@@ -837,7 +837,7 @@ proptest! {
         let mut dt = dt.unwrap();
         prop_assert_levels_1_to_3_valid!(3, &dt, "initial triangulation");
 
-        let insert_result = dt.insert_with_statistics(additional_vertex);
+        let insert_result = dt.insert_best_effort_with_statistics(additional_vertex);
         if let Err(e) = &insert_result
             && std::env::var_os("DELAUNAY_PROPTEST_INSERT_ERRORS").is_some()
         {

@@ -356,8 +356,12 @@ impl DelaunayInsertionState {
 ///   - The input vertex is a duplicate/near-duplicate (skipped immediately)
 ///   - A retryable geometric degeneracy exhausts all perturbation attempts
 ///
-/// Other non-recoverable structural failures are returned as `Err(InsertionError)` instead
-/// (e.g. duplicate UUID).
+/// Strict insertion APIs return skipped insertions as `Err(InsertionError)` so
+/// callers using `?` cannot miss them. The explicitly named
+/// `insert_best_effort_with_statistics` API preserves `Skipped` as an `Ok`
+/// outcome for diagnostics and best-effort ingestion. Other non-recoverable
+/// structural failures are returned as `Err(InsertionError)` instead (e.g.
+/// duplicate UUID).
 ///
 /// # Examples
 ///

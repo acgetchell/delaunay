@@ -59,10 +59,15 @@ Note: neighbor-pointer consistency is a **Level 2** structural invariant checked
 Automatic validation does **not** run Level 4 (the Delaunay empty-circumsphere property).
 If you need geometric verification, call `dt.is_valid()` or `dt.validate()` explicitly.
 
-### Default: `OnSuspicion`
+### Default: derived from `TopologyGuarantee`
 
-The default policy is `ValidationPolicy::OnSuspicion`: we validate Level 3 only when the
-insertion deviates from the happy-path and trips internal **suspicion flags**, e.g.:
+The initial policy is derived from the active `TopologyGuarantee`: `PLManifold`
+uses `ValidationPolicy::ExplicitOnly`, `PLManifoldStrict` uses
+`ValidationPolicy::Always`, and `Pseudomanifold` uses
+`ValidationPolicy::OnSuspicion`.
+
+With `ValidationPolicy::OnSuspicion`, Level 3 validation runs only when insertion
+deviates from the happy-path and trips internal **suspicion flags**, e.g.:
 
 - A perturbation retry was required (geometric degeneracy).
 - The insertion fell back to a conservative “star-split” of the containing simplex.
@@ -73,9 +78,11 @@ insertion deviates from the happy-path and trips internal **suspicion flags**, e
 
 - `ValidationPolicy::Never`: never run full Level 3 automatically; compatible only with
   `TopologyGuarantee::Pseudomanifold`.
-- `ValidationPolicy::ExplicitOnly`: run full Level 3 only through explicit validation
-  calls while still keeping topology checks required by the active `TopologyGuarantee`.
-- `ValidationPolicy::OnSuspicion` *(default)*: run Level 3 only when insertion is suspicious.
+- `ValidationPolicy::ExplicitOnly` *(default for `PLManifold`)*: run full Level 3
+  only through explicit validation calls while still keeping topology checks required
+  by the active `TopologyGuarantee`.
+- `ValidationPolicy::OnSuspicion` *(default for `Pseudomanifold`)*: run Level 3
+  only when insertion is suspicious.
 - `ValidationPolicy::Always`: run Level 3 after every insertion attempt (slowest, best for tests).
 - `ValidationPolicy::DebugOnly`: always run Level 3 in debug builds; in release behaves like `OnSuspicion`.
 
@@ -96,8 +103,8 @@ let vertices = vec![
 
 let mut dt: DelaunayTriangulation<_, (), (), 3> = DelaunayTriangulation::new(&vertices).unwrap();
 
-// Default: validate topology only when insertion is suspicious.
-assert_eq!(dt.validation_policy(), ValidationPolicy::OnSuspicion);
+// Default PL-manifold mode: caller-owned full validation checkpoints.
+assert_eq!(dt.validation_policy(), ValidationPolicy::ExplicitOnly);
 
 // For test/debug: validate topology after every insertion.
 dt.set_validation_policy(ValidationPolicy::Always);
@@ -124,7 +131,8 @@ This is separate from [`ValidationPolicy`](#automatic-validation-during-incremen
 which controls *when* Level 3 is run automatically during incremental insertion.
 The builder keeps these axes coherent by deriving the initial validation policy
 from `TopologyGuarantee`: `PLManifoldStrict` starts with `ValidationPolicy::Always`,
-and `PLManifold` / `Pseudomanifold` start with `ValidationPolicy::OnSuspicion`.
+`PLManifold` starts with `ValidationPolicy::ExplicitOnly`, and
+`Pseudomanifold` starts with `ValidationPolicy::OnSuspicion`.
 
 ### Default: `PLManifold`
 

@@ -72,7 +72,8 @@ use delaunay::prelude::triangulation::{
     ValidationPolicy as TriangulationValidationPolicy, vertex as triangulation_vertex,
 };
 use delaunay::prelude::validation::{
-    ValidationCadence, ValidationConfigurationError as FocusedValidationConfigurationError,
+    TopologyGuarantee as FocusedValidationTopologyGuarantee, ValidationCadence,
+    ValidationConfigurationError as FocusedValidationConfigurationError,
     ValidationPolicy as FocusedValidationPolicy,
 };
 use delaunay::prelude::{
@@ -150,7 +151,7 @@ fn root_exports_cover_flattened_public_api() -> Result<(), RootApiExportTestErro
     let mut dt: DelaunayTriangulation<_, (), (), 3> = builder.build::<()>()?;
 
     assert_eq!(dt.topology_guarantee(), TopologyGuarantee::PLManifold);
-    assert_eq!(dt.validation_policy(), ValidationPolicy::OnSuspicion);
+    assert_eq!(dt.validation_policy(), ValidationPolicy::ExplicitOnly);
     assert!(matches!(
         ValidationCadence::from_optional_every(Some(2)),
         ValidationCadence::EveryN(every) if every.get() == 2
@@ -327,14 +328,14 @@ fn construction_prelude_covers_explicit_error_summaries() {
 fn validation_prelude_covers_configuration_error() {
     let focused_error =
         FocusedValidationConfigurationError::IncompatibleTopologyAndValidationPolicy {
-            topology_guarantee: TopologyGuarantee::PLManifold,
+            topology_guarantee: FocusedValidationTopologyGuarantee::PLManifold,
             validation_policy: FocusedValidationPolicy::Never,
         };
     let root_error: RootValidationConfigurationError = focused_error;
     assert!(matches!(
         root_error,
         RootValidationConfigurationError::IncompatibleTopologyAndValidationPolicy {
-            topology_guarantee: TopologyGuarantee::PLManifold,
+            topology_guarantee: FocusedValidationTopologyGuarantee::PLManifold,
             validation_policy: FocusedValidationPolicy::Never,
         }
     ));

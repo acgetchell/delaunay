@@ -2,6 +2,7 @@
 //!
 //! This module tests:
 //! - `DelaunayTriangulation::insert_with_statistics`
+//! - `DelaunayTriangulation::insert_best_effort_with_statistics`
 //!
 //! Triangulation-layer insertion tests live in `core::triangulation` unit tests.
 //!
@@ -115,7 +116,7 @@ fn delaunay_insert_with_statistics_multiple_vertices_4d() {
     let mut skipped = 0;
 
     for v in vertices {
-        match dt.insert_with_statistics(v) {
+        match dt.insert_best_effort_with_statistics(v) {
             Ok((InsertionOutcome::Inserted { .. }, stats)) => {
                 total_attempts += stats.attempts;
                 successful_insertions += 1;
@@ -170,8 +171,20 @@ fn delaunay_insert_with_statistics_duplicate_coordinates_2d() {
     dt.insert_with_statistics(vertex!([1.0, 2.0]))
         .expect("first insertion should succeed");
 
-    // Try to insert vertex with same coordinates - should be skipped
+    // The strict statistics API reports skipped insertions as errors so callers
+    // using `?` cannot miss them.
     let result = dt.insert_with_statistics(vertex!([1.0, 2.0]));
+    assert!(
+        matches!(
+            result,
+            Err(InsertionError::DuplicateCoordinates { ref coordinates })
+                if coordinates.contains('1') && coordinates.contains('2')
+        ),
+        "expected duplicate coordinate error, got: {result:?}"
+    );
+
+    // The explicitly best-effort API preserves the skipped outcome plus telemetry.
+    let result = dt.insert_best_effort_with_statistics(vertex!([1.0, 2.0]));
 
     match result {
         Ok((
@@ -185,7 +198,9 @@ fn delaunay_insert_with_statistics_duplicate_coordinates_2d() {
             assert!(stats.skipped_duplicate());
             assert_eq!(stats.attempts, 1);
         }
-        other => panic!("expected Ok(Skipped) with DuplicateCoordinates, got: {other:?}"),
+        other => {
+            panic!("expected best-effort Ok(Skipped) with DuplicateCoordinates, got: {other:?}")
+        }
     }
 
     // Still in bootstrap (no simplices yet), so validate only Levels 1–2 (elements + structure).
@@ -208,7 +223,7 @@ fn delaunay_insert_with_statistics_bootstrap_happy_path_3d() {
     ];
 
     for v in vertices {
-        let (outcome, stats) = dt.insert_with_statistics(v).unwrap();
+        let (outcome, stats) = dt.insert_best_effort_with_statistics(v).unwrap();
         assert!(matches!(outcome, InsertionOutcome::Inserted { .. }));
         assert_eq!(stats.attempts, 1);
     }

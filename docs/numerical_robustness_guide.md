@@ -176,14 +176,16 @@ With the default 3 retries, the ladder is:
 - attempt 2: `1e-6 × local_scale`
 - attempt 3: `1e-5 × local_scale`
 
-If all retries are exhausted, the vertex is skipped and you get
-`InsertionOutcome::Skipped { .. }` (the triangulation is unchanged).
+If all retries are exhausted, strict insertion APIs return an
+`InsertionError` and the triangulation is unchanged. The explicitly named
+best-effort API reports the same event as `InsertionOutcome::Skipped { .. }`
+with telemetry.
 
 **Note:** With the default `AdaptiveKernel`, SoS resolves most orientation degeneracies
 symbolically, so perturbation retries are rarely needed. The primary remaining retryable
 cases involve cavity/topology failures rather than predicate degeneracies.
 
-Use `insert_with_statistics()` to observe this behavior:
+Use `insert_best_effort_with_statistics()` to observe this behavior:
 
 ```rust
 use delaunay::prelude::construction::{DelaunayTriangulation, vertex};
@@ -191,7 +193,9 @@ use delaunay::prelude::insertion::InsertionOutcome;
 
 let mut dt: DelaunayTriangulation<_, (), (), 3> = DelaunayTriangulation::empty();
 
-let (outcome, stats) = dt.insert_with_statistics(vertex!([0.5, 0.5, 0.5])).unwrap();
+let (outcome, stats) = dt
+    .insert_best_effort_with_statistics(vertex!([0.5, 0.5, 0.5]))
+    .unwrap();
 
 if stats.used_perturbation() {
     println!("used perturbation (attempts={})", stats.attempts);
@@ -286,9 +290,11 @@ scale, with a small ULP-scaled floor for translated coordinate systems. The
 comparison is overflow-safe: it compares squared distances against
 `tolerance²` when possible and falls back to square roots for extreme scales.
 
-If a duplicate is detected, the vertex is skipped with
-`InsertionOutcome::Skipped { error: DuplicateCoordinates { .. } }` and the
-triangulation is unchanged.
+If a duplicate is detected, strict APIs return
+`InsertionError::DuplicateCoordinates` and the triangulation is unchanged.
+`insert_best_effort_with_statistics()` instead returns
+`InsertionOutcome::Skipped { error: DuplicateCoordinates { .. } }` with skip
+telemetry.
 
 This layer catches duplicates that survive Hilbert dedup (e.g. when using
 `InsertionOrderStrategy::Input`) and also protects single-vertex `insert()` calls.
@@ -367,9 +373,9 @@ and per-insertion checks handle any remaining cases.
   `RobustKernel` if you need manual repair control.
 - If you see retryable insertion errors, frequent perturbation retries, or skipped vertices,
   preprocess your input (dedup / rescale if appropriate).
-- Treat `InsertionOutcome::Skipped { .. }` as an expected outcome on pathological data; decide
-  at the application level whether to drop the vertex, perturb/rescale your point set, or
-  re-run with a different kernel.
+- Treat `InsertionOutcome::Skipped { .. }` from the best-effort API as an expected outcome on
+  pathological data; decide at the application level whether to drop the vertex,
+  perturb/rescale your point set, or re-run with a different kernel.
 
 ## Current limitations
 
