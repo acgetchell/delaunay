@@ -2000,10 +2000,10 @@ mod tests {
     // HELPER FUNCTIONS
     // =============================================================================
 
-    /// Helper function to create a Triangulation from vertices.
+    /// Helper function to create a `DelaunayTriangulation` from vertices.
     ///
-    /// This uses `DelaunayTriangulationBuilder` and returns a reference to the underlying `Triangulation`.
-    /// Since we need ownership, we create the `DelaunayTriangulation` and extract the `Triangulation`.
+    /// This uses `DelaunayTriangulation::with_kernel` and returns the owned
+    /// triangulation directly.
     fn create_triangulation<const D: usize>(
         vertices: &[Vertex<f64, (), D>],
     ) -> DelaunayTriangulation<AdaptiveKernel<f64>, (), (), D> {
