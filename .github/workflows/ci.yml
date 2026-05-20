@@ -70,13 +70,11 @@ jobs:
           tool: just@${{ env.JUST_VERSION }}
 
       - name: Install cargo-nextest
-        if: matrix.os != 'windows-latest'
         uses: taiki-e/install-action@b550161ef8a7bc4f2a671c0b03a18ac9ccedea1e # v2.79.1
         with:
           tool: nextest@${{ env.NEXTEST_VERSION }}
 
       - name: Verify cargo-nextest
-        if: matrix.os != 'windows-latest'
         run: cargo nextest --version
 
       - name: Install uv (for Python scripts and pytest)
@@ -251,6 +249,6 @@ jobs:
         if: matrix.os == 'windows-latest'
         run: |
           cargo build --verbose --all-targets
-          cargo test --lib --verbose
+          cargo nextest run --profile ci --lib
           cargo test --doc --verbose
-          cargo test --tests --release --verbose
+          cargo nextest run --release --profile ci --tests

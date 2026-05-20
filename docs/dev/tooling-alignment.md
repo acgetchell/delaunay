@@ -95,9 +95,12 @@ The useful updates ported in this pass are:
   `cargo-llvm-cov` 0.8.7 and `cargo-nextest` 0.9.136. Both CI and Codecov
   install the same `cargo-nextest` pin with the repository's pinned binary-tool
   installer and verify `cargo nextest --version` before nextest-backed recipes
-  run. Local `just setup-tools` uses `cargo install --locked cargo-nextest` and
-  verifies the command is available for developer machines. All uv-backed
-  workflows use uv 0.11.15 to match the local Python tooling bootstrap.
+  run. The CI build matrix also installs and verifies that pin on Windows, where
+  the lightweight direct-Cargo job runs library and integration tests through
+  `cargo nextest run` while keeping doctests on `cargo test --doc`. Local
+  `just setup-tools` uses `cargo install --locked cargo-nextest` and verifies
+  the command is available for developer machines. All uv-backed workflows use
+  uv 0.11.15 to match the local Python tooling bootstrap.
 
 ## Intentional Differences
 
