@@ -1303,7 +1303,9 @@ mod tests {
 
         if let Some((simplex, test_point, det, dist)) = witness {
             panic!(
-                "Found periodic-3D determinant-vs-distance inconsistency: determinant={det:?}, distance={dist:?}, simplex={simplex:?}, test_point={test_point:?}"
+                "Found periodic-3D determinant-vs-distance inconsistency: \
+                 determinant={det:?}, distance={dist:?}, simplex={simplex:?}, \
+                 test_point={test_point:?}"
             );
         }
     }

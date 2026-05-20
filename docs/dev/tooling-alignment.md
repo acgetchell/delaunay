@@ -95,6 +95,11 @@ The useful updates ported in this pass are:
   Scanning. Codacy's default maintainability patterns can still run in Codacy,
   but they must not create broad Code Scanning alerts for test-only paths such
   as `scripts/tests/**`.
+- Codacy Code Patterns should stay aligned with local validators rather than
+  acting as an independent style regime. Keep repository-owned Rust feedback on
+  Opengrep/Semgrep rules; keep broad advisory engines such as Lizard disabled
+  for PR gating unless a specific baseline audit requests them. If the Codacy
+  UI exposes a separate duplicate-code metric, treat it the same way.
 - CI and local setup pins should track the same supported tool versions when
   practical. The current workflow pins align coverage and test tooling on
   `cargo-llvm-cov` 0.8.7 and `cargo-nextest` 0.9.136. Both CI and Codecov

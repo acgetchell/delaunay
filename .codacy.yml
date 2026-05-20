@@ -10,14 +10,15 @@
 # - bandit: Python security linting for production scripts, excluding tests
 # - markdownlint: Codacy Markdown review, threshold configured in Codacy UI
 # - shellcheck: shell-script linting
-# - duplication: advisory duplicate-code metric
-# - lizard: advisory complexity feedback
 #
 # Recommended disabled tools:
 # - prospector, pylintpython3: redundant with Ruff and ty type checking
 # - trivy: dependency vulnerability scanning is handled by cargo-audit and
 #   Dependabot unless this repository adds containers or IaC
 # - jacksonlinter, spectral: not relevant to the current project surface
+# - lizard and any duplicate-code metric, if exposed by the Codacy UI: useful
+#   for occasional baseline exploration, but too broad and noisy for PR quality
+#   gates on this invariant-heavy Rust crate
 
 engines:
   bandit:
