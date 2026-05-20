@@ -38,6 +38,11 @@ Both repositories now share the same core Rust and Python support-tooling loop:
 The useful updates ported in this pass are:
 
 - `just check-fast` for a cheap compile-only check.
+- `just markdown-check` keeps `rumdl` as the Markdown linter and adds a raw
+  active-doc line-length guard so table rows and other Markdown constructs that
+  `rumdl` exempts from MD013 still respect the repository's 160-column limit.
+  The guard excludes generated changelog files and archived historical docs,
+  which remain governed by their regeneration/archive workflows.
 - `just changelog-unreleased <version>`, implemented with
   `GIT_CLIFF_OFFLINE=true git-cliff --tag`, so release PR changelogs no longer
   need temporary local release tags.

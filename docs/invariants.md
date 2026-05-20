@@ -72,7 +72,9 @@ Key combinatorial objects:
 
 - **Vertices**: 0-simplices. In the implementation, a vertex has coordinates plus an internal key
   and a UUID (used for stable referencing, e.g. serialization to files).
-- **Simplices**: maximal `D`-simplices. Each simplex stores an ordered list of `D+1` vertex keys, and also has an internal key and an externally accessible UUID.
+- **Simplices**: maximal `D`-simplices. Each simplex stores an ordered list of
+  `D+1` vertex keys, and also has an internal key and an externally accessible
+  UUID.
 - **Facets**: codimension-1 faces of a simplex. A `D`-simplex has `D+1` facets, each missing exactly one
   vertex.
 - **Adjacency / neighbors**: two simplices are neighbors if they share a facet. The triangulation data
@@ -328,7 +330,8 @@ At a high level:
 
 The crate’s incremental construction follows the standard cavity-based approach (CGAL-style; see
 [CGAL Triangulation_3](https://doc.cgal.org/latest/Triangulation_3/index.html) and
-[`src/core/algorithms/incremental_insertion.rs`](../src/core/algorithms/incremental_insertion.rs)):[^bowyer1981][^watson1981][^cgal-triangulation3][^impl-incremental-insertion]
+[`src/core/algorithms/incremental_insertion.rs`](../src/core/algorithms/incremental_insertion.rs)):
+[^bowyer1981][^watson1981][^cgal-triangulation3][^impl-incremental-insertion]
 
 1. **Locate** the simplex containing the query point (facet walking / scan fallback;
    [`src/core/algorithms/locate.rs`](../src/core/algorithms/locate.rs)).[^devillers-walking][^impl-locate]

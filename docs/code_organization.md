@@ -1,6 +1,8 @@
 # Code Organization Guide
 
-This document provides a comprehensive guide to the delaunay project's code organization, from the overall project architecture to detailed individual module patterns.
+This document provides a comprehensive guide to the delaunay project's code
+organization, from the overall project architecture to detailed individual
+module patterns.
 
 ## Table of Contents
 

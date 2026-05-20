@@ -56,7 +56,9 @@ Before you begin, ensure you have:
    - **Ubuntu/Debian**: `sudo apt-get install findutils coreutils`
    - **Other systems**: Install equivalent packages for `find` and `sort`
 
-**Note**: Many development tasks now use Python utilities (managed by uv) instead of traditional shell tools, reducing the number of required system dependencies.
+**Note**: Many development tasks now use Python utilities (managed by uv)
+instead of traditional shell tools, reducing the number of required system
+dependencies.
 
 ### Quick Start
 
