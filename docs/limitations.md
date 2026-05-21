@@ -68,12 +68,18 @@ Toroidal support has two modes:
 
 - `.toroidal([..])` canonicalizes vertices into the fundamental domain, then
   builds the Euclidean Delaunay triangulation of the wrapped point set. It does
-  not identify opposite boundary facets.
+  not identify opposite boundary facets. The 2D and 3D canonical toroidal
+  construction paths are part of routine release coverage.
 - `.toroidal_periodic([..])` uses the 3^D image-point method to construct a
   true periodic quotient with rewired neighbor pointers. This path is strongest
-  in 2D. Compact 3D smoke coverage is active, while full 3D validation and
-  4D/5D periodic validation are ignored slow tests because image expansion grows
-  quickly with dimension.
+  in 2D, where periodic triangulation and validation remain in routine release
+  coverage. Compact 3D periodic construction and lifted-predicate smoke coverage
+  are active. Full 3D periodic PL-manifold validation is tested as a known
+  limitation: construction succeeds, but the quotient can still report an
+  unclosed boundary ridge instead of a closed 3-torus. 4D/5D periodic validation
+  is outside routine test coverage because image expansion grows quickly with
+  dimension and high-dimensional quotient selection is not yet robust enough for
+  release validation.
 
 Spherical and hyperbolic topologies are public metadata and behavior-model
 scaffolds today. They do not yet provide full construction or validation

@@ -126,11 +126,12 @@ Treat partial items as still open until their acceptance notes are satisfied.
 - [x] **30. Add rollback identity regression for facet caches.**
   Convex hull facet-cache tests now prove a failed insertion rollback preserves
   the cached `(identity, generation)` provenance key.
-- [x] **31. Add allocation-bounded hot-path tests.**
-  `tests/allocation_api.rs` now asserts zero allocations for TDS/public
+- [x] **31. Add allocation-bounded hot-path benchmarks.**
+  `benches/allocation_hot_paths.rs` now asserts zero allocations over calibrated 2D-5D triangulations for TDS/public
   `simplices()`/`vertices()` iterator paths, `Tds::simplex_vertices`, and
   `facet_key_from_vertices`, plus an explicit allocation budget for the hinted
-  locate fast path under `--features count-allocations`.
+  locate fast path under `--features count-allocations`. `tests/allocation_api.rs`
+  remains a narrow wiring smoke test for the allocation measurement API.
 - [x] **32. Benchmark `Tds::clone` cost versus triangulation size.**
   `benches/tds_clone.rs` now measures full `Tds::clone()` snapshot cost across
   deterministic 2D-5D triangulations before any rollback redesign.

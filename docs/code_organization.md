@@ -349,10 +349,13 @@ cargo test --test circumsphere_debug_tools --features diagnostics -- --nocapture
 **Note**: Memory allocation profiling is available through the `count-allocations` feature:
 
 ```bash
-# Run allocation profiling tests (just command)
+# Verify allocation measurement wiring (just command)
 just test-allocation
 
-# Run benchmarks with allocation counting (direct cargo for specific bench)
+# Run hot-path allocation contracts (just command)
+just bench-allocations
+
+# Run broader profiling benchmarks with allocation counting (direct cargo)
 cargo bench --profile perf --bench profiling_suite --features count-allocations
 ```
 
@@ -515,9 +518,10 @@ than through a `delaunay::delaunay` or `delaunay::triangulation` facade.
   3D/4D construction plus hull queries, topology editing, diagnostics, conversion
   ergonomics, numerical robustness, and Delaunay repair
 - **`benches/`** - Performance benchmarks with automated baseline management (2D-5D coverage) and memory allocation tracking
-  (see: [benches/profiling_suite.rs](../benches/README.md#profiling-suite))
+  (see: [benches/profiling_suite.rs](../benches/README.md#profiling-suite) and
+  [benches/allocation_hot_paths.rs](../benches/README.md))
 - **`tests/`** - Integration tests including basic TDS validation (creation, neighbor assignment, boundary analysis),
-  debugging utilities, regression testing, allocation profiling tools
+  debugging utilities, regression testing, allocation-measurement smoke coverage
   (see: [tests/allocation_api.rs](../tests/README.md#allocation_apirs)), and robust predicates validation
 - **`docs/`** - User and contributor documentation, including architecture/reference guides,
   `docs/dev/` workflow rules for agents, archived design notes, and templates
@@ -566,7 +570,9 @@ The project includes optional memory profiling capabilities:
 - **Memory Benchmarks**: Dedicated benchmarks for RSS and allocation scaling analysis (`profiling_suite.rs`) - comprehensive
   profiling suite with calibrated large-scale 2D-5D point counts. **Recommended for manual profiling runs** rather than CI due
   to long execution time. Use `PROFILING_DEV_MODE=1` for faster auxiliary diagnostics.
-- **Integration Testing**: `allocation_api.rs` provides utilities for testing memory usage in various scenarios
+- **Allocation Contracts**: `allocation_hot_paths.rs` keeps zero-allocation and bounded-allocation hot-path checks over
+  calibrated 2D-5D triangulations in Criterion benchmarks, while `allocation_api.rs` only smoke-tests that allocation
+  measurement is wired correctly.
 - **CI Integration**: Automated profiling benchmarks with detailed allocation reports
 
 #### Performance-oriented infrastructure
@@ -611,7 +617,8 @@ just test-release  # All tests in release mode
 just test-slow     # Run correctness tests over the 10s default-suite budget
 just test-slow-release # Compatibility alias for just test-slow
 just test-diagnostics # Run diagnostics tools with output
-just test-allocation  # Run allocation profiling tests
+just test-allocation  # Verify allocation measurement wiring
+just bench-allocations # Run allocation-contract microbenchmarks
 ```
 
 **Quality and Linting:**

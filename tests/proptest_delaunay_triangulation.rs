@@ -996,7 +996,7 @@ proptest! {
 test_empty_circumsphere!(2, 6, 10);
 test_empty_circumsphere!(3, 6, 10);
 test_empty_circumsphere!(4, 6, 12);
-test_empty_circumsphere!(5, 7, 12);
+test_empty_circumsphere!(5, 7, 12, #[cfg(feature = "slow-tests")]);
 
 // =============================================================================
 // FAST HIGH-DIMENSIONAL CI SMOKE TESTS

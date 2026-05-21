@@ -129,6 +129,10 @@ bench:
 bench-ci:
     cargo bench --profile perf --bench ci_performance_suite
 
+# Allocation-contract microbenchmarks for public hot paths.
+bench-allocations:
+    cargo bench --profile perf --bench allocation_hot_paths --features count-allocations -- --noplot
+
 # Compile benchmarks without running them. Manifest lints enforce the warning
 # policy without using RUSTFLAGS that fragment Cargo artifact caches.
 bench-compile:
@@ -236,16 +240,16 @@ coverage-ci: _ensure-cargo-llvm-cov
     cargo llvm-cov {{ _coverage_base_args }} --cobertura --output-path coverage/cobertura.xml -- --skip prop_
 
 debug-large-scale-2d n="36000" repair_every="1": _ensure-nextest
-    DELAUNAY_BULK_PROGRESS_EVERY=2000 DELAUNAY_LARGE_DEBUG_MAX_RUNTIME_SECS=1800 DELAUNAY_LARGE_DEBUG_N_2D={{ n }} DELAUNAY_LARGE_DEBUG_REPAIR_EVERY={{ repair_every }} cargo nextest run --release --profile ci --features slow-tests --test large_scale_debug debug_large_scale_2d -- --exact --nocapture
+    DELAUNAY_BULK_PROGRESS_EVERY=2000 DELAUNAY_LARGE_DEBUG_MAX_RUNTIME_SECS=1800 DELAUNAY_LARGE_DEBUG_N_2D={{ n }} DELAUNAY_LARGE_DEBUG_REPAIR_EVERY={{ repair_every }} cargo nextest run --release --profile slow --features slow-tests --test large_scale_debug debug_large_scale_2d -- --exact --nocapture
 
 debug-large-scale-3d n="7500" repair_every="1": _ensure-nextest
-    DELAUNAY_BULK_PROGRESS_EVERY=500 DELAUNAY_LARGE_DEBUG_MAX_RUNTIME_SECS=1800 DELAUNAY_LARGE_DEBUG_N_3D={{ n }} DELAUNAY_LARGE_DEBUG_REPAIR_EVERY={{ repair_every }} cargo nextest run --release --profile ci --features slow-tests --test large_scale_debug debug_large_scale_3d -- --exact --nocapture
+    DELAUNAY_BULK_PROGRESS_EVERY=500 DELAUNAY_LARGE_DEBUG_MAX_RUNTIME_SECS=1800 DELAUNAY_LARGE_DEBUG_N_3D={{ n }} DELAUNAY_LARGE_DEBUG_REPAIR_EVERY={{ repair_every }} cargo nextest run --release --profile slow --features slow-tests --test large_scale_debug debug_large_scale_3d -- --exact --nocapture
 
 debug-large-scale-4d n="900" repair_every="1": _ensure-nextest
-    DELAUNAY_BULK_PROGRESS_EVERY=100 DELAUNAY_LARGE_DEBUG_MAX_RUNTIME_SECS=1800 DELAUNAY_LARGE_DEBUG_N_4D={{ n }} DELAUNAY_LARGE_DEBUG_REPAIR_EVERY={{ repair_every }} cargo nextest run --release --profile ci --features slow-tests --test large_scale_debug debug_large_scale_4d -- --exact --nocapture
+    DELAUNAY_BULK_PROGRESS_EVERY=100 DELAUNAY_LARGE_DEBUG_MAX_RUNTIME_SECS=1800 DELAUNAY_LARGE_DEBUG_N_4D={{ n }} DELAUNAY_LARGE_DEBUG_REPAIR_EVERY={{ repair_every }} cargo nextest run --release --profile slow --features slow-tests --test large_scale_debug debug_large_scale_4d -- --exact --nocapture
 
 debug-large-scale-5d n="140" repair_every="1": _ensure-nextest
-    DELAUNAY_BULK_PROGRESS_EVERY=20 DELAUNAY_LARGE_DEBUG_MAX_RUNTIME_SECS=1800 DELAUNAY_LARGE_DEBUG_N_5D={{ n }} DELAUNAY_LARGE_DEBUG_REPAIR_EVERY={{ repair_every }} cargo nextest run --release --profile ci --features slow-tests --test large_scale_debug debug_large_scale_5d -- --exact --nocapture
+    DELAUNAY_BULK_PROGRESS_EVERY=20 DELAUNAY_LARGE_DEBUG_MAX_RUNTIME_SECS=1800 DELAUNAY_LARGE_DEBUG_N_5D={{ n }} DELAUNAY_LARGE_DEBUG_REPAIR_EVERY={{ repair_every }} cargo nextest run --release --profile slow --features slow-tests --test large_scale_debug debug_large_scale_5d -- --exact --nocapture
 
 # Default recipe shows available commands
 default:
@@ -421,6 +425,7 @@ perf-help:
     @echo "  just perf-compare <file>   # Compare against a specific dev-mode baseline"
     @echo "  just bench                 # Full benchmark suite with perf profile"
     @echo "  just bench-ci              # CI benchmark suite with perf profile"
+    @echo "  just bench-allocations     # Allocation-contract microbenchmarks"
     @echo "  just perf-no-regressions   # Fast pre-PR 2D-5D regression guard"
     @echo "  just bench-smoke           # Smoke-test benchmark harnesses"
     @echo ""
@@ -471,7 +476,7 @@ perf-large-scale-smoke max_secs="60": _ensure-nextest
             DELAUNAY_LARGE_DEBUG_MAX_RUNTIME_SECS="$max_secs" \
             "$n_env=$n_points" \
             DELAUNAY_LARGE_DEBUG_REPAIR_EVERY=1 \
-            cargo nextest run --release --profile ci --features slow-tests --test large_scale_debug "$test_name" -- --exact --nocapture; then
+            cargo nextest run --release --profile slow --features slow-tests --test large_scale_debug "$test_name" -- --exact --nocapture; then
             echo "✅ ${dimension} completed within the ${max_secs}s test-runtime cap"
         else
             local code=$?
@@ -943,9 +948,7 @@ test-allocation: _ensure-nextest
 test-diagnostics: _ensure-nextest
     cargo nextest run --profile ci --test circumsphere_debug_tools --features diagnostics -- --nocapture
 
-# test-integration: runs all integration tests (includes proptests) in release mode.
-# Release mode is required because exact-predicate arithmetic in debug mode makes
-# 3D+ proptests exceed CI timeout limits (>60s debug vs <1s release).
+# test-integration: runs all default integration tests under the 10s per-test budget.
 test-integration: _ensure-nextest
     cargo nextest run --release --profile ci --tests
 

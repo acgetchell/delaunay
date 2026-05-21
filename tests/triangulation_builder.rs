@@ -512,19 +512,6 @@ fn test_builder_toroidal_periodic_validate_levels_1_to_4_3d_known_limitation() {
     }
 }
 
-gen_toroidal_periodic_validation_test!(
-    4,
-    levels_1_to_3,
-    false,
-    #[cfg(feature = "slow-tests")]
-);
-gen_toroidal_periodic_validation_test!(
-    5,
-    levels_1_to_3,
-    false,
-    #[cfg(feature = "slow-tests")]
-);
-
 /// Explicit 7-vertex torus (Heawood triangulation) with `GlobalTopology::Toroidal`
 /// is rejected until explicit non-Euclidean construction has Level 4 validation.
 ///

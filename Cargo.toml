@@ -84,18 +84,8 @@ codegen-units = 1
 debug = "line-tables-only"
 
 [[bench]]
-name = "circumsphere_containment"
-path = "benches/circumsphere_containment.rs"
-harness = false
-
-[[bench]]
-name = "topology_guarantee_construction"
-path = "benches/topology_guarantee_construction.rs"
-harness = false
-
-[[bench]]
-name = "tds_clone"
-path = "benches/tds_clone.rs"
+name = "allocation_hot_paths"
+path = "benches/allocation_hot_paths.rs"
 harness = false
 
 [[bench]]
@@ -104,13 +94,18 @@ path = "benches/boundary_uuid_iter.rs"
 harness = false
 
 [[bench]]
-name = "remove_vertex"
-path = "benches/remove_vertex.rs"
+name = "ci_performance_suite"
+path = "benches/ci_performance_suite.rs"
 harness = false
 
 [[bench]]
-name = "ci_performance_suite"
-path = "benches/ci_performance_suite.rs"
+name = "circumsphere_containment"
+path = "benches/circumsphere_containment.rs"
+harness = false
+
+[[bench]]
+name = "cold_path_predicates"
+path = "benches/cold_path_predicates.rs"
 harness = false
 
 [[bench]]
@@ -119,8 +114,18 @@ path = "benches/profiling_suite.rs"
 harness = false
 
 [[bench]]
-name = "cold_path_predicates"
-path = "benches/cold_path_predicates.rs"
+name = "remove_vertex"
+path = "benches/remove_vertex.rs"
+harness = false
+
+[[bench]]
+name = "tds_clone"
+path = "benches/tds_clone.rs"
+harness = false
+
+[[bench]]
+name = "topology_guarantee_construction"
+path = "benches/topology_guarantee_construction.rs"
 harness = false
 
 [lints.rust]
