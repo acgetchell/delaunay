@@ -599,6 +599,9 @@ where
 /// `topology_repair.succeeded = false`; the topology pass is not reported as
 /// successful merely because rebuild recovered the workflow.
 ///
+/// If topology repair fails and no fallback rebuild succeeds, the triangulation
+/// is restored to its pre-call state before the error is returned.
+///
 /// The `*WithRebuild` variants preserve both errors as typed fields so
 /// consumers can inspect both typed errors;
 /// [`Error::source`](std::error::Error::source) exposes the primary repair error.
@@ -647,6 +650,7 @@ where
         max_iterations: config.topology_max_iterations,
         max_simplices_removed: config.topology_max_simplices_removed,
     };
+    let pre_topology_repair = dt.clone();
     let fallback_snapshot = if config.fallback_rebuild {
         let tds = &dt.as_triangulation().tds;
         Some(
@@ -662,9 +666,14 @@ where
         // Topology repair failed but fallback is enabled — try rebuilding.
         Err(topo_err) if config.fallback_rebuild => {
             let Some((vertices, simplex_data)) = fallback_snapshot else {
+                *dt = pre_topology_repair;
                 return Err(topo_err.into());
             };
-            match rebuild_preserving_data(&dt.as_triangulation().kernel, &vertices, &simplex_data) {
+            match rebuild_preserving_data(
+                &pre_topology_repair.as_triangulation().kernel,
+                &vertices,
+                &simplex_data,
+            ) {
                 Ok(rebuilt) => {
                     *dt = rebuilt;
                     return Ok(DelaunayizeOutcome {
@@ -674,11 +683,15 @@ where
                     });
                 }
                 Err(fallback_error) => {
+                    *dt = pre_topology_repair;
                     return Err(topology_rebuild_error(topo_err, fallback_error));
                 }
             }
         }
-        Err(topo_err) => return Err(topo_err.into()),
+        Err(topo_err) => {
+            *dt = pre_topology_repair;
+            return Err(topo_err.into());
+        }
     };
 
     // Step 2: Flip-based Delaunay repair.
@@ -780,6 +793,25 @@ mod tests {
         Vertex::from_points(&points)
     }
 
+    fn insert_duplicate_simplex_copies<const D: usize>(
+        dt: &mut DelaunayTriangulation<AdaptiveKernel<f64>, (), (), D>,
+        copies: usize,
+    ) {
+        let duplicate_vertices = {
+            let (_, existing_simplex) = dt.simplices().next().unwrap();
+            existing_simplex.vertices().to_vec()
+        };
+
+        for _ in 0..copies {
+            dt.tri
+                .tds
+                .insert_simplex_bypassing_topology_checks_for_test(
+                    Simplex::new(duplicate_vertices.clone(), None).unwrap(),
+                )
+                .unwrap();
+        }
+    }
+
     /// Forces topology repair to fail on duplicate simplices, then checks fallback rebuild.
     fn assert_topology_repair_fallback_rebuilds_duplicate_simplex<const D: usize>()
     where
@@ -790,20 +822,7 @@ mod tests {
         let mut dt: DelaunayTriangulation<_, (), (), D> =
             DelaunayTriangulation::new(&vertices).unwrap();
 
-        let (_, existing_simplex) = dt.simplices().next().unwrap();
-        let duplicate_vertices = existing_simplex.vertices().to_vec();
-        dt.tri
-            .tds
-            .insert_simplex_bypassing_topology_checks_for_test(
-                Simplex::new(duplicate_vertices.clone(), None).unwrap(),
-            )
-            .unwrap();
-        dt.tri
-            .tds
-            .insert_simplex_bypassing_topology_checks_for_test(
-                Simplex::new(duplicate_vertices, None).unwrap(),
-            )
-            .unwrap();
+        insert_duplicate_simplex_copies(&mut dt, 2);
 
         let outcome = delaunayize_by_flips(
             &mut dt,
@@ -822,6 +841,48 @@ mod tests {
         );
         assert_eq!(dt.number_of_vertices(), vertices.len());
         assert!(dt.validate().is_ok());
+    }
+
+    #[test]
+    fn topology_repair_failure_rolls_back_partial_mutation() {
+        init_tracing();
+        let vertices = unit_simplex_vertices::<2>();
+        let mut dt: DelaunayTriangulation<_, (), (), 2> =
+            DelaunayTriangulation::new(&vertices).unwrap();
+        insert_duplicate_simplex_copies(&mut dt, 3);
+
+        let before_simplex_count = dt.number_of_simplices();
+        let mut before_simplex_uuids = dt
+            .simplices()
+            .map(|(_, simplex)| simplex.uuid())
+            .collect::<Vec<_>>();
+        before_simplex_uuids.sort_unstable();
+
+        let err = delaunayize_by_flips(
+            &mut dt,
+            DelaunayizeConfig {
+                topology_max_iterations: 1,
+                topology_max_simplices_removed: usize::MAX,
+                fallback_rebuild: false,
+                ..DelaunayizeConfig::default()
+            },
+        )
+        .unwrap_err();
+
+        assert!(matches!(
+            err,
+            DelaunayizeError::TopologyRepairFailed {
+                source: PlManifoldRepairError::BudgetExhausted { .. }
+            }
+        ));
+        assert_eq!(dt.number_of_simplices(), before_simplex_count);
+
+        let mut after_simplex_uuids = dt
+            .simplices()
+            .map(|(_, simplex)| simplex.uuid())
+            .collect::<Vec<_>>();
+        after_simplex_uuids.sort_unstable();
+        assert_eq!(after_simplex_uuids, before_simplex_uuids);
     }
 
     struct ForceDelaunayRepairFailureGuard {

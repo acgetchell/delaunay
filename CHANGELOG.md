@@ -5,7 +5,7 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.7.8] - 2026-05-21
 
 ### ⚠️ Breaking Changes
 
@@ -20,6 +20,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Merged Pull Requests
 
+- Validate compact 3D toroidal quotients [#417](https://github.com/acgetchell/delaunay/pull/417)
+- Enforce 10-second default test budget [#415](https://github.com/acgetchell/delaunay/pull/415)
 - Run slow correctness cases through slow-tests [#412](https://github.com/acgetchell/delaunay/pull/412)
 - Isolate strict insphere consistency control [#383](https://github.com/acgetchell/delaunay/pull/383) [#411](https://github.com/acgetchell/delaunay/pull/411)
 - Use typed errors in public examples [#365](https://github.com/acgetchell/delaunay/pull/365) [#410](https://github.com/acgetchell/delaunay/pull/410)
@@ -145,7 +147,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Move benchmark-style boundary and UUID iterator measurements into a Criterion benchmark target.
 - Replace ignored flaky or known-failure cases with active assertions or slow-tests gating.
 - Add a Semgrep guard against reintroducing ignored tests and align docs and helper recipes with the new taxonomy.
-- Enforce 10-second default test budget [`772b2d0`](https://github.com/acgetchell/delaunay/commit/772b2d0298bf7cee4373602e05992f54ad1b010f)
+- Enforce 10-second default test budget [#415](https://github.com/acgetchell/delaunay/pull/415)
+  [`ba15de8`](https://github.com/acgetchell/delaunay/commit/ba15de8e97ab3dace8a2f5e0443f473930d1d344)
 
   - Gate default-suite cases at or above the 10-second budget behind
     slow-tests and remove obsolete high-dimensional periodic validation from
@@ -197,6 +200,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Mirror conventional pseudo-commit headings from squash merge bodies into their matching changelog sections while preserving the primary PR entry.
   - Regenerate active and archived changelogs so historical squash-body fixes, docs, maintenance, and performance notes appear under the right headings.
   - Resolve production-review hygiene by clarifying Cargo feature gates, relabeling TDS UUID-map invariants, and recording UUID panic paths as test-only.
+- Validate compact 3D toroidal quotients [#417](https://github.com/acgetchell/delaunay/pull/417)
+  [`3456ca9`](https://github.com/acgetchell/delaunay/commit/3456ca96abeeee5efb2ef413c3eb91d57f3921b4)
+
+  - Validate periodic image-point quotients through final Levels 1-3 topology and Level 4 Delaunay checks before returning them.
+  - Preserve lifted periodic vertex identity in Euler and manifold validation so 3D quotient links and ridges are checked in the correct lattice frame.
+  - Select periodic quotient candidates by circumcenter ownership instead of barycenter ownership.
+  - Add a typed UnsupportedPeriodicDimension guardrail so 4D/5D periodic quotient construction fails fast pending scalable follow-up work in #416.
+  - Refresh toroidal periodic docs to state the 2D/compact 3D release boundary and high-dimensional guardrails.
 
 ### Maintenance
 
@@ -3732,7 +3743,7 @@ Older releases are archived by minor series:
 - [0.3.x](docs/archive/changelog/0.3.md)
 - [0.2.x](docs/archive/changelog/0.2.md)
 
-[Unreleased]: https://github.com/acgetchell/delaunay/compare/v0.7.7...HEAD
+[0.7.8]: https://github.com/acgetchell/delaunay/compare/v0.7.7...v0.7.8
 [0.7.7]: https://github.com/acgetchell/delaunay/compare/v0.7.6...v0.7.7
 [0.7.6]: https://github.com/acgetchell/delaunay/compare/v0.7.5...v0.7.6
 [0.7.5]: https://github.com/acgetchell/delaunay/compare/v0.7.4...v0.7.5

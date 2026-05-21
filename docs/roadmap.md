@@ -5,52 +5,33 @@ snapshots live in [`archive/`](archive/).
 
 ## Release Sequence
 
-### v0.7.7 performance baseline (released)
+### v0.7.8 pre-v0.8.0 cleanup (released)
 
-The just-released v0.7.7 line closed a large amount of performance and
-benchmark-documentation cleanup. It should be treated as the current baseline
-for construction throughput, generated simplex counts, release benchmark
-summaries, and the roughly one-minute large-scale debug envelopes.
+The v0.7.8 line is the current pre-v0.8.0 cleanup baseline. It keeps the
+performance-summary work from v0.7.7, closes the release-facing documentation
+and doctest hygiene pass, tightens default test-suite budgets, validates compact
+3D toroidal quotient construction, and restores failed topology-repair
+workflows to their pre-call state when fallback rebuild does not succeed.
 
-Key takeaways from v0.7.7:
+Key takeaways from v0.7.8:
 
-- The public `ci_performance_suite` contract now reports current Criterion run
-  metadata and generated simplex counts instead of stale baseline-only context.
-- The release summary flow highlights the user-facing construction path first,
-  then the public API contract and circumsphere predicate data.
-- The `just debug-large-scale-{2,3,4,5}d` helpers are calibrated across
-  supported dimensions instead of focusing only on one scale target.
-- Several previous performance pain points were reduced enough to make v0.7.8
-  a cleanup release rather than another performance stabilization release.
-
-### v0.7.8 pre-v0.8.0 cleanup
-
-- **Rust-native tooling cleanup (#379):** plan the switch from the current
-  Node-backed Markdown/YAML tooling to `pretty_yaml` plus a Rust Markdown
-  linter, while also cleaning up `just` recipe naming and adding a Semgrep guard
-  for check-before-fix ordering.
-- **Predicate and slow-test cleanup (#256/#380):** continue predicate
-  performance work while preserving the test taxonomy: default correctness
-  tests stay under the routine budget, long-running correctness tests use the
-  `slow-tests` flow, and benchmark-style measurements live in `benches/`.
-- **Module and prelude cleanup (#381):** rename the public high-level
-  triangulation module layout to `delaunay`, split the current
-  `delaunay/triangulation.rs` implementation into clearer components, and
-  consolidate focused preludes while the API churn is still isolated from
-  v0.8.0 feature work.
-- **Documentation and doctest hygiene (#214/#365):** move configuration-heavy
-  examples to `DelaunayTriangulationBuilder`, remove public doctest
-  `.unwrap()`/`.expect(...)` patterns, and keep examples tied to typed errors.
-- **Production-review API and hygiene (#382-#388):** resolve cfg-only feature
-  labels, stale comments, safe-code invariant wording, UUID panic-helper scope,
-  strict insphere test control, error enum clone/boxing policy, the
-  topology-guarantee/validation-policy API split, skipped-insertion semantics,
-  TDS neighbor/incidence encapsulation, and public `core` module naming.
+- Default correctness tests now stay under the routine 10-second budget, with
+  long-running correctness work routed through `slow-tests`.
+- Public examples and doctests avoid release-hostile `.unwrap()` / `.expect(...)`
+  patterns in favor of typed `Result` wrappers or non-degenerate examples.
+- Compact 3D toroidal quotients are validated through topology and Delaunay
+  checks before being returned; higher-dimensional quotient construction fails
+  fast until scalable follow-up work lands.
+- `delaunayize_by_flips` preserves the incoming triangulation on topology
+  repair failure unless fallback rebuild succeeds.
+- The release benchmark summary remains the current public performance snapshot
+  for construction throughput, generated simplex counts, and circumsphere
+  predicate behavior.
 
 ### v0.8.0 paper-facing API and topology push
 
 v0.8.0 is the next feature-bearing release and is expected to carry the larger
-work that should not be tangled with v0.7.8 cleanup churn:
+work intentionally deferred from v0.7.8 cleanup:
 
 - **Pachner/Edit API shape (#252/#253/#350/#337):** unify the Pachner move API,
   expand public flip benchmark coverage, add Monte-Carlo stress benchmarks, and
