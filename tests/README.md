@@ -162,7 +162,7 @@ Property-based tests for `DelaunayTriangulation` invariants (all Delaunay-specif
 - Inverse edge/triangle queues for 4D/5D repair
 - See `src/core/algorithms/flips.rs` for implementation
 
-**Slow variants:** 5D empty-circumsphere, duplicate-coordinate, and insertion-order robustness properties are gated by `slow-tests`.
+**Slow variants:** 5D empty-circumsphere, duplicate-coordinate, and 4D/5D insertion-order robustness properties are gated by `slow-tests`.
 
 **Dimensions Tested:** 2D-5D; variants over the 10-second budget run through `just test-slow`.
 
@@ -191,6 +191,8 @@ Property-based tests for convex hull computation verifying hull properties and i
 - **Hull Facet Consistency**: All hull facets are valid and properly oriented
 - **Boundary Subset Property**: Hull is a subset of triangulation boundary
 - **Dimension Consistency**: Hull dimension matches point set dimension
+
+**Dimensions Tested:** 2D-5D; convex-hull property variants over the 10-second budget run through `just test-slow`.
 
 **Run with:** `cargo test --release --test proptest_convex_hull`
 
@@ -249,6 +251,8 @@ Property-based tests for serialization and deserialization verifying data preser
 - **Vertex Data Integrity**: Vertex coordinates and associated data are preserved
 - **Simplex Data Integrity**: Simplex-associated data is preserved
 - **Cross-dimensional Serialization**: Works correctly for all supported dimensions
+
+**Dimensions Tested:** 2D-5D; serialization property variants over the 10-second budget run through `just test-slow`.
 
 **Run with:** `cargo test --release --test proptest_serialization`
 

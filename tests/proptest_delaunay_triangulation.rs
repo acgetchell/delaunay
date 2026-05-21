@@ -1880,7 +1880,7 @@ macro_rules! gen_insertion_order_robustness_high_dim {
     };
 }
 
-gen_insertion_order_robustness_high_dim!(4, 6, 12);
+gen_insertion_order_robustness_high_dim!(4, 6, 12, #[cfg(feature = "slow-tests")]);
 gen_insertion_order_robustness_high_dim!(5, 7, 12, #[cfg(feature = "slow-tests")]);
 
 // =============================================================================
