@@ -92,7 +92,7 @@ Property-based tests for Tds (Triangulation Data Structure) combinatorial/topolo
 - **Vertex Count Consistency**: Vertex key count matches reported vertex count
 - **Dimension Consistency**: Reported dimension matches actual structure
 
-**Dimensions Tested:** 2D-5D
+**Dimensions Tested:** 2D-5D; 4D/5D full TDS property variants over the 10-second budget run through `just test-slow`.
 
 **Run with:** `cargo test --test proptest_tds` or included in `just test`
 
@@ -106,7 +106,7 @@ Property-based tests focused on coherent orientation invariants in the TDS layer
 - **Tamper detection**: simplex-order tampering is detected as `OrientationViolation`
 - **Incremental coherence**: orientation remains coherent after each successful insertion
 
-**Dimensions Tested:** 2D-5D (5D slow variants run through `just test-slow`)
+**Dimensions Tested:** 2D-5D; 4D/5D full orientation property variants over the 10-second budget run through `just test-slow`.
 
 **Run with:** `cargo test --test proptest_orientation` or included in `just test`
 
@@ -133,7 +133,7 @@ Property-based tests for Triangulation layer invariants (generic geometric layer
 **Note:** Tests use `DelaunayTriangulation` for construction (most convenient way to obtain valid triangulations).
 The properties tested are generic Triangulation-layer concerns applicable to any triangulation with a kernel.
 
-**Dimensions Tested:** 2D-5D
+**Dimensions Tested:** 2D-5D; 4D/5D quality and facet-topology variants over the 10-second budget run through `just test-slow`.
 
 **Run with:** `cargo test --test proptest_triangulation` or included in `just test`
 
@@ -162,7 +162,7 @@ Property-based tests for `DelaunayTriangulation` invariants (all Delaunay-specif
 - Inverse edge/triangle queues for 4D/5D repair
 - See `src/core/algorithms/flips.rs` for implementation
 
-**Slow variants:** 5D duplicate-coordinate and insertion-order robustness properties are gated by `slow-tests`.
+**Slow variants:** 4D/5D empty-circumsphere, duplicate-coordinate, duplicate-cloud, and insertion-order robustness properties are gated by `slow-tests`.
 
 **Dimensions Tested:** 2D-5D; variants over the 10-second budget run through `just test-slow`.
 
@@ -179,6 +179,8 @@ Property-based tests for Simplex data structure verifying simplex-level invarian
 - **Facet Completeness**: All facets properly defined and accessible
 - **Vertex References**: All vertex keys are valid and consistent
 
+**Dimensions Tested:** 2D-5D; 4D/5D full simplex property variants over the 10-second budget run through `just test-slow`.
+
 **Run with:** `cargo test --release --test proptest_simplex`
 
 #### [`proptest_convex_hull.rs`](./proptest_convex_hull.rs)
@@ -192,6 +194,8 @@ Property-based tests for convex hull computation verifying hull properties and i
 - **Boundary Subset Property**: Hull is a subset of triangulation boundary
 - **Dimension Consistency**: Hull dimension matches point set dimension
 
+**Dimensions Tested:** 2D-5D; convex-hull property variants over the 10-second budget run through `just test-slow`.
+
 **Run with:** `cargo test --release --test proptest_convex_hull`
 
 #### [`proptest_facet.rs`](./proptest_facet.rs)
@@ -204,6 +208,8 @@ Property-based tests for Facet operations verifying facet adjacency and orientat
 - **Co-facet Consistency**: Shared facets reference same vertices (possibly different order)
 - **Orientation Alternation**: Adjacent simplices have opposite facet orientations
 - **Facet Key Validity**: All facet identifiers are valid and retrievable
+
+**Dimensions Tested:** 2D-5D; 4D/5D full facet property variants over the 10-second budget run through `just test-slow`.
 
 **Run with:** `cargo test --release --test proptest_facet`
 
@@ -249,6 +255,8 @@ Property-based tests for serialization and deserialization verifying data preser
 - **Vertex Data Integrity**: Vertex coordinates and associated data are preserved
 - **Simplex Data Integrity**: Simplex-associated data is preserved
 - **Cross-dimensional Serialization**: Works correctly for all supported dimensions
+
+**Dimensions Tested:** 2D-5D; serialization property variants over the 10-second budget run through `just test-slow`.
 
 **Run with:** `cargo test --release --test proptest_serialization`
 
@@ -426,18 +434,19 @@ Tests error handling for coordinate conversion operations, particularly focusing
 
 #### [`allocation_api.rs`](./allocation_api.rs)
 
-Memory allocation profiling and testing utilities for tracking memory usage patterns during triangulation operations.
+Smoke test for the optional allocation measurement API.
 
-**Monitoring Areas:**
+**Coverage:**
 
-- Point and vertex creation allocations
-- Triangulation data structure memory usage
-- Complex workflow allocation patterns
-- Memory efficiency validation
+- `count-allocations` feature wiring
+- `measure_with_result` returns the measured value
+- allocation counters record an intentional allocation
 
 **Run with:** `just test-allocation`
 
-**Note:** This uses the `count-allocations` feature flag automatically.
+**Note:** Hot-path allocation budgets live in
+[`benches/allocation_hot_paths.rs`](../benches/README.md),
+not in the default test suite.
 
 ## Running Tests
 
@@ -460,7 +469,7 @@ cargo test --test <test_file_name>
 # Examples
 just test-diagnostics                            # circumsphere_debug_tools
 cargo test --test delaunay_incremental_insertion # specific integration test
-just test-allocation                             # allocation profiling
+just test-allocation                             # allocation measurement wiring
 ```
 
 ### Performance Considerations
@@ -548,7 +557,7 @@ Before releases, run the full integration test suite:
 # Complete test validation
 just test-release
 
-# Include allocation testing
+# Verify allocation measurement wiring
 just test-allocation
 
 # Comprehensive pre-release checks

@@ -900,7 +900,7 @@ macro_rules! gen_duplicate_coords_test {
 
 gen_duplicate_coords_test!(2, 3, 10);
 gen_duplicate_coords_test!(3, 4, 12);
-gen_duplicate_coords_test!(4, 5, 14);
+gen_duplicate_coords_test!(4, 5, 14, #[cfg(feature = "slow-tests")]);
 gen_duplicate_coords_test!(5, 6, 16, #[cfg(feature = "slow-tests")]);
 
 /// Allow runtime tuning for the empty-circumsphere property in higher dimensions.
@@ -995,8 +995,8 @@ proptest! {
 // 2D–5D coverage (keep ranges small to bound runtime)
 test_empty_circumsphere!(2, 6, 10);
 test_empty_circumsphere!(3, 6, 10);
-test_empty_circumsphere!(4, 6, 12);
-test_empty_circumsphere!(5, 7, 12);
+test_empty_circumsphere!(4, 6, 12, #[cfg(feature = "slow-tests")]);
+test_empty_circumsphere!(5, 7, 12, #[cfg(feature = "slow-tests")]);
 
 // =============================================================================
 // FAST HIGH-DIMENSIONAL CI SMOKE TESTS
@@ -1880,7 +1880,7 @@ macro_rules! gen_insertion_order_robustness_high_dim {
     };
 }
 
-gen_insertion_order_robustness_high_dim!(4, 6, 12);
+gen_insertion_order_robustness_high_dim!(4, 6, 12, #[cfg(feature = "slow-tests")]);
 gen_insertion_order_robustness_high_dim!(5, 7, 12, #[cfg(feature = "slow-tests")]);
 
 // =============================================================================
@@ -2007,5 +2007,5 @@ macro_rules! gen_duplicate_cloud_test {
 
 gen_duplicate_cloud_test!(2, 2);
 gen_duplicate_cloud_test!(3, 3);
-gen_duplicate_cloud_test!(4, 4);
+gen_duplicate_cloud_test!(4, 4, #[cfg(feature = "slow-tests")]);
 gen_duplicate_cloud_test!(5, 5, #[cfg(feature = "slow-tests")]);

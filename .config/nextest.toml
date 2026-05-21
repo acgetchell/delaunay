@@ -15,6 +15,10 @@ fail-fast = false
 # Retry flaky tests (useful for proptests)
 retries = 0
 
+# Default-suite tests should stay under the 10-second per-test budget. Longer
+# deterministic correctness tests belong behind the slow-tests feature.
+slow-timeout = { period = "10s", terminate-after = 1 }
+
 [profile.ci]
 # CI profile: optimized for GitHub Actions
 # Inherits from default profile
@@ -29,8 +33,8 @@ fail-fast = false
 # Retry flaky tests once in CI (helps with proptests and timing-sensitive tests)
 retries = 1
 
-# Show slow tests (> 60s) in CI
-slow-timeout = { period = "60s", terminate-after = 2 }
+# Enforce the default-suite 10-second per-test budget in CI.
+slow-timeout = { period = "10s", terminate-after = 1 }
 
 # JUnit report configuration
 [profile.ci.junit]

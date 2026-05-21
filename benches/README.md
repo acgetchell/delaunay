@@ -8,9 +8,10 @@ predicates fast across 2D-5D.
 
 | Benchmark | Purpose | Scale | Typical Runtime | Used By |
 |-----------|---------|-------|-----------------|---------|
+| `allocation_hot_paths.rs` | Allocation contracts for public hot paths | Calibrated 2D-5D canary fixtures | ~1-2 min | Manual allocation checks |
+| `boundary_uuid_iter.rs` | Focused boundary-facet and UUID iterator microbenchmarks | 3D small fixed schedules | <1 min | Manual micro-optimization checks |
 | `ci_performance_suite.rs` | Public workflow regression contract | Calibrated 2D-5D canaries | ~5-10 min | CI, baselines, `just perf-no-regressions` |
 | `circumsphere_containment.rs` | Compare circumsphere predicate methods | 2D-5D fixed, 3D random, edge cases | ~5 min | Predicate tuning, summaries |
-| `boundary_uuid_iter.rs` | Focused boundary-facet and UUID iterator microbenchmarks | 3D small fixed schedules | <1 min | Manual micro-optimization checks |
 | `cold_path_predicates.rs` | Track hot/cold predicate paths | 2D-5D hot queries, near-boundary cases | ~2-5 min | Predicate optimization work |
 | `profiling_suite.rs` | Large-scale construction, memory, query, validation profiling | 2D/3D 10k, 4D 3k, 5D 1k | ~2-3 hr | Manual/monthly |
 | `remove_vertex.rs` | Vertex removal and rollback cost | 2D-5D fixed cases | ~1-5 min | Vertex removal |
@@ -25,17 +26,19 @@ predicates fast across 2D-5D.
 | Quick local large-scale wall-clock guard | `just perf-large-scale-smoke` |
 | Fast local PR performance guard with temporary same-machine baseline | `just perf-no-regressions` |
 | Full CI benchmark suite only | `just bench-ci` |
+| Allocation-contract microbenchmarks | `just bench-allocations` |
 | Persist/update the default local baseline artifact | `just perf-baseline` |
 | Generate a scratch baseline without replacing the default | `just perf-baseline-to <out> [ref]` |
 | Persist/update the default local baseline from a release/ref | `just perf-baseline v0.7.5` |
 | Compare against an existing baseline | `just perf-compare <file>` |
 | Release performance summary | `just bench-perf-summary` |
 | Smoke-test benchmark harnesses | `just bench-smoke` |
-| Vertex removal mutation baseline | `cargo bench --profile perf --bench remove_vertex -- --noplot` |
-| Predicate comparison | `cargo bench --profile perf --bench circumsphere_containment -- --noplot` |
+| Allocation hot-path contracts | `cargo bench --profile perf --bench allocation_hot_paths --features count-allocations -- --noplot` |
 | Boundary/UUID microbenchmarks | `cargo bench --profile perf --bench boundary_uuid_iter -- --noplot` |
+| Predicate comparison | `cargo bench --profile perf --bench circumsphere_containment -- --noplot` |
 | Predicate cold-path work | `cargo bench --profile perf --bench cold_path_predicates -- --noplot` |
 | Large-scale scaling suite | `cargo bench --profile perf --bench profiling_suite -- --noplot` |
+| Vertex removal mutation baseline | `cargo bench --profile perf --bench remove_vertex -- --noplot` |
 | One-dimension acceptance/profiling run | `just debug-large-scale-{2,3,4,5}d [n] [repair_every]` |
 | Deep profiling | `cargo bench --profile perf --bench profiling_suite --features count-allocations` |
 

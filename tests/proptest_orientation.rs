@@ -138,7 +138,12 @@ macro_rules! gen_orientation_incremental_props {
 
 gen_orientation_construction_and_tamper_props!(2, 4, 10);
 gen_orientation_construction_and_tamper_props!(3, 5, 12);
-gen_orientation_construction_and_tamper_props!(4, 6, 14);
+gen_orientation_construction_and_tamper_props!(
+    4,
+    6,
+    14,
+    #[cfg(feature = "slow-tests")]
+);
 gen_orientation_construction_and_tamper_props!(
     5,
     7,
@@ -148,5 +153,5 @@ gen_orientation_construction_and_tamper_props!(
 
 gen_orientation_incremental_props!(2, 4, 10);
 gen_orientation_incremental_props!(3, 5, 12);
-gen_orientation_incremental_props!(4, 6, 14);
+gen_orientation_incremental_props!(4, 6, 14, #[cfg(feature = "slow-tests")]);
 gen_orientation_incremental_props!(5, 7, 16, #[cfg(feature = "slow-tests")]);
