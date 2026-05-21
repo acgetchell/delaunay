@@ -1971,6 +1971,44 @@ impl<T, U, V, const D: usize> Tds<T, U, V, D> {
         Ok(None)
     }
 
+    /// Finds the neighbor facet that matches a source facet in lifted periodic coordinates.
+    fn matching_lifted_mirror_facet_index(
+        simplex: &Simplex<T, U, V, D>,
+        facet_idx: usize,
+        neighbor: &Simplex<T, U, V, D>,
+        context: &str,
+    ) -> Result<usize, TdsError> {
+        let simplex_facet_key =
+            Self::periodic_facet_key_from_simplex_vertices(simplex, simplex.vertices(), facet_idx)?;
+        let mut mirror_idx = None;
+        for neighbor_facet_idx in 0..neighbor.vertices().len() {
+            let neighbor_facet_key = Self::periodic_facet_key_from_simplex_vertices(
+                neighbor,
+                neighbor.vertices(),
+                neighbor_facet_idx,
+            )?;
+            if neighbor_facet_key == simplex_facet_key
+                && mirror_idx.replace(neighbor_facet_idx).is_some()
+            {
+                return Err(TdsError::InvalidNeighbors {
+                    reason: NeighborValidationError::MirrorFacetAmbiguous {
+                        simplex_uuid: simplex.uuid(),
+                        neighbor_uuid: neighbor.uuid(),
+                    },
+                });
+            }
+        }
+
+        mirror_idx.ok_or_else(|| TdsError::InvalidNeighbors {
+            reason: NeighborValidationError::MirrorFacetMissing {
+                simplex_uuid: simplex.uuid(),
+                facet_index: facet_idx,
+                neighbor_uuid: neighbor.uuid(),
+                context: context.to_string(),
+            },
+        })
+    }
+
     pub(crate) fn facet_key_for_simplex_facet(
         &self,
         simplex_key: SimplexKey,
@@ -5507,22 +5545,12 @@ impl<T, U, V, const D: usize> Tds<T, U, V, D> {
                             ),
                         })?;
 
-                if simplex.periodic_vertex_offsets().is_some()
-                    || neighbor_simplex.periodic_vertex_offsets().is_some()
-                {
-                    continue;
-                }
-
-                let mirror_idx = simplex
-                    .mirror_facet_index(facet_idx, neighbor_simplex)
-                    .ok_or_else(|| TdsError::InvalidNeighbors {
-                        reason: NeighborValidationError::MirrorFacetMissing {
-                            simplex_uuid: simplex.uuid(),
-                            facet_index: facet_idx,
-                            neighbor_uuid: neighbor_simplex.uuid(),
-                            context: "local orientation validation".to_string(),
-                        },
-                    })?;
+                let (mirror_idx, uses_periodic_offsets) = Self::orientation_mirror_facet_index(
+                    simplex,
+                    facet_idx,
+                    neighbor_simplex,
+                    "local orientation validation",
+                )?;
                 let observed_back_reference = neighbor_simplex.neighbor_key(mirror_idx).flatten();
                 if observed_back_reference != Some(simplex_key) {
                     return Err(TdsError::InvalidNeighbors {
@@ -5537,6 +5565,9 @@ impl<T, U, V, const D: usize> Tds<T, U, V, D> {
                             context: "local orientation validation".to_string(),
                         },
                     });
+                }
+                if uses_periodic_offsets {
+                    continue;
                 }
 
                 let simplex1_facet_vertices =
@@ -6183,16 +6214,12 @@ impl<T, U, V, const D: usize> Tds<T, U, V, D> {
                             ),
                         })?;
 
-                let mirror_idx = simplex
-                    .mirror_facet_index(facet_idx, neighbor_simplex)
-                    .ok_or_else(|| TdsError::InvalidNeighbors {
-                        reason: NeighborValidationError::MirrorFacetMissing {
-                            simplex_uuid: simplex.uuid(),
-                            facet_index: facet_idx,
-                            neighbor_uuid: neighbor_simplex.uuid(),
-                            context: "orientation validation".to_string(),
-                        },
-                    })?;
+                let (mirror_idx, uses_periodic_offsets) = Self::orientation_mirror_facet_index(
+                    simplex,
+                    facet_idx,
+                    neighbor_simplex,
+                    "orientation validation",
+                )?;
                 let back_neighbor = neighbor_simplex
                     .neighbor_key(mirror_idx)
                     .flatten()
@@ -6222,14 +6249,7 @@ impl<T, U, V, const D: usize> Tds<T, U, V, D> {
                         },
                     });
                 }
-
-                // Periodic-lifted adjacencies do not have a unique canonical orientation at this
-                // structural layer because the embedding depends on lattice representative choice.
-                // Skip combinatorial orientation checks for these pairs after validating reciprocal
-                // neighbor wiring above.
-                if simplex.periodic_vertex_offsets().is_some()
-                    || neighbor_simplex.periodic_vertex_offsets().is_some()
-                {
+                if uses_periodic_offsets {
                     continue;
                 }
 
@@ -6263,6 +6283,32 @@ impl<T, U, V, const D: usize> Tds<T, U, V, D> {
         }
 
         Ok(())
+    }
+
+    /// Resolves the mirror facet for orientation validation without forcing periodic parity checks.
+    fn orientation_mirror_facet_index(
+        simplex: &Simplex<T, U, V, D>,
+        facet_idx: usize,
+        neighbor_simplex: &Simplex<T, U, V, D>,
+        context: &str,
+    ) -> Result<(usize, bool), TdsError> {
+        let uses_periodic_offsets = simplex.periodic_vertex_offsets().is_some()
+            || neighbor_simplex.periodic_vertex_offsets().is_some();
+        let mirror_idx = if uses_periodic_offsets {
+            Self::matching_lifted_mirror_facet_index(simplex, facet_idx, neighbor_simplex, context)?
+        } else {
+            simplex
+                .mirror_facet_index(facet_idx, neighbor_simplex)
+                .ok_or_else(|| TdsError::InvalidNeighbors {
+                    reason: NeighborValidationError::MirrorFacetMissing {
+                        simplex_uuid: simplex.uuid(),
+                        facet_index: facet_idx,
+                        neighbor_uuid: neighbor_simplex.uuid(),
+                        context: context.to_string(),
+                    },
+                })?
+        };
+        Ok((mirror_idx, uses_periodic_offsets))
     }
 
     fn facet_vertices_in_simplex_order(
@@ -7040,6 +7086,12 @@ impl<T, U, V, const D: usize> Tds<T, U, V, D> {
                         },
                     });
                 };
+
+                if simplex.periodic_vertex_offsets().is_some()
+                    || neighbor_simplex.periodic_vertex_offsets().is_some()
+                {
+                    continue;
+                }
 
                 let neighbor_vertices = simplex_vertices.get(&neighbor_key).ok_or_else(|| {
                     TdsError::InconsistentDataStructure {
@@ -9670,6 +9722,61 @@ mod tests {
         assert!(tds.validate_coherent_orientation().is_ok());
         assert!(tds.is_coherently_oriented());
         assert!(tds.normalize_coherent_orientation().is_ok());
+    }
+
+    #[test]
+    fn test_orientation_validation_rejects_one_sided_periodic_neighbor() {
+        let mut tds: Tds<f64, (), (), 2> = Tds::empty();
+
+        let v_a = tds.insert_vertex_with_mapping(vertex!([0.0, 0.0])).unwrap();
+        let v_b = tds.insert_vertex_with_mapping(vertex!([1.0, 0.0])).unwrap();
+        let v_c = tds.insert_vertex_with_mapping(vertex!([0.0, 1.0])).unwrap();
+        let v_d = tds.insert_vertex_with_mapping(vertex!([1.0, 1.0])).unwrap();
+
+        let simplex1_key = tds
+            .insert_simplex_with_mapping(Simplex::new(vec![v_a, v_b, v_c], None).unwrap())
+            .unwrap();
+        let simplex2_key = tds
+            .insert_simplex_with_mapping(Simplex::new(vec![v_a, v_b, v_d], None).unwrap())
+            .unwrap();
+
+        {
+            let simplex1 = tds.simplex_mut(simplex1_key).unwrap();
+            simplex1
+                .set_neighbors_from_keys(vec![None, None, Some(simplex2_key)])
+                .unwrap();
+            simplex1
+                .set_periodic_vertex_offsets(vec![[0, 0], [0, 0], [0, 0]])
+                .unwrap();
+        }
+        {
+            let simplex2 = tds.simplex_mut(simplex2_key).unwrap();
+            simplex2
+                .set_neighbors_from_keys(vec![None, None, None])
+                .unwrap();
+            simplex2
+                .set_periodic_vertex_offsets(vec![[0, 0], [0, 0], [0, 0]])
+                .unwrap();
+        }
+
+        let err = tds.validate_coherent_orientation().unwrap_err();
+        assert!(matches!(
+            err,
+            TdsError::InvalidNeighbors {
+                reason: NeighborValidationError::BackReferenceMismatch { observed: None, .. },
+            }
+        ));
+        assert!(!tds.is_coherently_oriented());
+
+        let err = tds
+            .validate_coherent_orientation_for_simplices(&[simplex1_key])
+            .unwrap_err();
+        assert!(matches!(
+            err,
+            TdsError::InvalidNeighbors {
+                reason: NeighborValidationError::BackReferenceMismatch { observed: None, .. },
+            }
+        ));
     }
 
     #[test]

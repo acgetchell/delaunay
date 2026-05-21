@@ -114,7 +114,7 @@ use thiserror::Error;
 #[derive(Clone, Debug, Eq, PartialEq)]
 struct LiftedVertexId {
     vertex_key: VertexKey,
-    offset: SmallBuffer<i8, 8>,
+    offset: SmallBuffer<i16, 8>,
 }
 
 type LiftedVertexBuffer = SmallBuffer<LiftedVertexId, 8>;
@@ -158,18 +158,41 @@ impl Hash for LiftedVertexId {
 
 /// Creates a lifted vertex identity from a real TDS vertex key and periodic
 /// lattice offset.
-fn lifted_vertex_id(vk: VertexKey, offset: &[i8]) -> LiftedVertexId {
-    if offset.is_empty() || offset.iter().all(|&o| o == 0) {
+fn lifted_vertex_id<O>(vk: VertexKey, offset: &[O]) -> LiftedVertexId
+where
+    O: Copy + Into<i16>,
+{
+    if offset.is_empty() || offset.iter().all(|&o| o.into() == 0) {
         return LiftedVertexId::base(vk);
     }
     LiftedVertexId {
         vertex_key: vk,
-        offset: offset.iter().copied().collect(),
+        offset: offset.iter().map(|&component| component.into()).collect(),
     }
 }
 
 /// Computes a periodic-aware simplex key from lifted vertex IDs.
 fn periodic_simplex_key(lifted_vertices: &[LiftedVertexId]) -> u64 {
+    if lifted_vertices.iter().all(LiftedVertexId::is_base) {
+        let bare_vertices: VertexKeyBuffer =
+            lifted_vertices.iter().map(|id| id.vertex_key).collect();
+        return facet_key_from_vertices(&bare_vertices);
+    }
+
+    let keys = normalize_lifted_vertices(lifted_vertices);
+    let mut hasher = FastHasher::default();
+    for key in &keys {
+        key.hash(&mut hasher);
+    }
+    hasher.finish()
+}
+
+/// Computes an exact lifted simplex key without quotient translation normalization.
+///
+/// Vertex links already express every lifted vertex relative to the linked
+/// anchor vertex, so applying an additional global translation quotient can
+/// collapse distinct link simplices.
+fn anchored_lifted_simplex_key(lifted_vertices: &[LiftedVertexId]) -> u64 {
     if lifted_vertices.iter().all(LiftedVertexId::is_base) {
         let bare_vertices: VertexKeyBuffer =
             lifted_vertices.iter().map(|id| id.vertex_key).collect();
@@ -183,6 +206,34 @@ fn periodic_simplex_key(lifted_vertices: &[LiftedVertexId]) -> u64 {
         key.hash(&mut hasher);
     }
     hasher.finish()
+}
+
+/// Normalizes lifted vertices by subtracting the offset of the first sorted
+/// lifted vertex, making periodic simplex identities translation invariant.
+fn normalize_lifted_vertices(lifted_vertices: &[LiftedVertexId]) -> LiftedVertexBuffer {
+    let mut keys: LiftedVertexBuffer = lifted_vertices.iter().cloned().collect();
+    keys.sort_unstable();
+    let anchor_offset: SmallBuffer<i16, 8> = keys
+        .first()
+        .map_or_else(SmallBuffer::new, |key| key.offset.clone());
+    let axes = keys
+        .iter()
+        .map(|key| key.offset.len())
+        .max()
+        .unwrap_or(0)
+        .max(anchor_offset.len());
+
+    let mut normalized = LiftedVertexBuffer::with_capacity(keys.len());
+    for key in keys {
+        let mut offset: SmallBuffer<i16, 8> = SmallBuffer::with_capacity(axes);
+        for axis in 0..axes {
+            let component = key.offset.get(axis).copied().unwrap_or(0)
+                - anchor_offset.get(axis).copied().unwrap_or(0);
+            offset.push(component);
+        }
+        normalized.push(lifted_vertex_id(key.vertex_key, &offset));
+    }
+    normalized
 }
 
 fn ordered_lifted_edge(a: &LiftedVertexId, b: &LiftedVertexId) -> (LiftedVertexId, LiftedVertexId) {
@@ -392,11 +443,17 @@ pub fn validate_closed_boundary<T, U, V, const D: usize>(
         return Ok(());
     }
 
-    // First count boundary facets so we can reserve reasonably.
-    let boundary_facet_count = facet_to_simplices
-        .values()
-        .filter(|handles| matches!(handles.as_slice(), [_]))
-        .count();
+    // First count boundary facets so we can reserve reasonably. Periodic
+    // self-neighbor facets are closed quotient identifications, not boundary.
+    let mut boundary_facet_count = 0usize;
+    for simplex_facet_pairs in facet_to_simplices.values() {
+        let [handle] = simplex_facet_pairs.as_slice() else {
+            continue;
+        };
+        if is_boundary_facet_handle(tds, *handle)? {
+            boundary_facet_count = boundary_facet_count.saturating_add(1);
+        }
+    }
 
     if boundary_facet_count == 0 {
         return Ok(());
@@ -423,6 +480,9 @@ pub fn validate_closed_boundary<T, U, V, const D: usize>(
 
         let simplex_key = handle.simplex_key();
         let facet_index = handle.facet_index() as usize;
+        if !is_boundary_facet_handle(tds, *handle)? {
+            continue;
+        }
 
         // Derive the facet's vertex keys from the owning simplex.
         let simplex_vertices = tds.simplex_vertices(simplex_key)?;
@@ -615,6 +675,9 @@ fn validate_closed_boundary_for_local_facets<T, U, V, const D: usize>(
         let [handle] = simplex_facet_pairs.as_slice() else {
             continue;
         };
+        if !is_boundary_facet_handle(tds, *handle)? {
+            continue;
+        }
 
         let (facet_vertices, facet_vertices_bare) =
             simplex_facet_vertex_ids(tds, handle.simplex_key(), handle.facet_index() as usize)?;
@@ -705,7 +768,11 @@ fn boundary_facet_count_for_ridge<T, U, V, const D: usize>(
             }
             let handles = facet_incident_handles(tds, facet_key, &facet_vertices_bare)?;
             match handles.len() {
-                1 => count = count.saturating_add(1),
+                1 => {
+                    if is_boundary_facet_handle(tds, handles[0])? {
+                        count = count.saturating_add(1);
+                    }
+                }
                 2 => {}
                 other => {
                     return Err(ManifoldError::ManifoldFacetMultiplicity {
@@ -718,6 +785,34 @@ fn boundary_facet_count_for_ridge<T, U, V, const D: usize>(
     }
 
     Ok(count)
+}
+
+/// Returns true when a one-sided facet occurrence is an actual boundary facet.
+///
+/// Periodic quotient TDSs may encode a closed facet identification as a single
+/// facet occurrence whose neighbor slot points back to the owning simplex. That
+/// is valid closed-topology metadata, not a boundary facet.
+fn is_boundary_facet_handle<T, U, V, const D: usize>(
+    tds: &Tds<T, U, V, D>,
+    handle: FacetHandle,
+) -> Result<bool, ManifoldError> {
+    let simplex_key = handle.simplex_key();
+    let facet_index = handle.facet_index() as usize;
+    let simplex = tds
+        .simplex(simplex_key)
+        .ok_or_else(|| TdsError::SimplexNotFound {
+            simplex_key,
+            context: "boundary facet classification".to_string(),
+        })?;
+
+    let is_periodic_self_identified = simplex
+        .neighbor_key(facet_index)
+        .is_some_and(|neighbor| neighbor == Some(simplex_key))
+        && simplex.periodic_vertex_offsets().is_some_and(|offsets| {
+            !offsets.is_empty() && offsets.len() == simplex.number_of_vertices()
+        });
+
+    Ok(!is_periodic_self_identified)
 }
 
 /// Computes the star of a simplex (a set of vertices) as the set of incident D-simplices.
@@ -792,6 +887,8 @@ fn simplex_link_simplices_from_star<T, U, V, const D: usize>(
     let expected_link_vertices = (D + 1).saturating_sub(simplex_vertices.len());
 
     let mut link_simplices: LinkSimplexBuffer = SmallBuffer::with_capacity(star_simplices.len());
+    let mut seen_link_simplices: FastHashSet<u64> =
+        fast_hash_set_with_capacity(star_simplices.len().max(1));
 
     for &simplex_key in star_simplices {
         let candidate_vertices = tds.simplex_vertices(simplex_key)?;
@@ -819,10 +916,10 @@ fn simplex_link_simplices_from_star<T, U, V, const D: usize>(
                 // Lift with *relative* offset so adjacent simplices agree.
                 let lifted = match (offsets, ref_slot) {
                     (Some(offs), Some(r)) => {
-                        let rel: SmallBuffer<i8, 8> = offs[i]
+                        let rel: SmallBuffer<i16, 8> = offs[i]
                             .iter()
                             .zip(offs[r].iter())
-                            .map(|(&a, &b)| a - b)
+                            .map(|(&a, &b)| i16::from(a) - i16::from(b))
                             .collect();
                         lifted_vertex_id(vk, &rel)
                     }
@@ -843,7 +940,10 @@ fn simplex_link_simplices_from_star<T, U, V, const D: usize>(
             .into());
         }
 
-        link_simplices.push(link_vertices);
+        let link_key = anchored_lifted_simplex_key(&link_vertices);
+        if seen_link_simplices.insert(link_key) {
+            link_simplices.push(link_vertices);
+        }
     }
 
     Ok(link_simplices)
@@ -911,48 +1011,22 @@ fn ridge_link_edges_from_star<T, U, V, const D: usize>(
     let mut link_vertices: LiftedVertexBuffer = LiftedVertexBuffer::with_capacity(2);
 
     for &simplex_key in star_simplices {
-        let simplex_vertices = tds.simplex_vertices(simplex_key)?;
-        let offsets = tds
-            .simplex(simplex_key)
-            .and_then(|c| c.periodic_vertex_offsets());
-
-        // Find the reference offset from the first ridge vertex's slot.
-        let ref_slot = offsets.and_then(|offs| {
-            simplex_vertices
-                .iter()
-                .enumerate()
-                .find(|(idx, cv)| {
-                    // Match simplex vertex against lifted ridge vertices.
-                    let lv = lifted_vertex_id(**cv, &offs[*idx]);
-                    ridge_vertices.contains(&lv)
-                })
-                .map(|(idx, _)| idx)
-        });
+        let Some(simplex_vertices) =
+            normalized_simplex_vertices_for_lifted_target(tds, simplex_key, ridge_vertices)?
+        else {
+            return Err(TdsError::InconsistentDataStructure {
+                message: format!(
+                    "ridge star simplex {simplex_key:?} does not contain normalized ridge vertices \
+                     {ridge_vertices:?}"
+                ),
+            }
+            .into());
+        };
 
         link_vertices.clear();
-        for (i, &vk) in simplex_vertices.iter().enumerate() {
-            // Lift with absolute offsets for ridge membership test (ridge
-            // vertices in `ridge_vertices` use absolute lifted IDs).
-            let abs_lifted = offsets.map_or_else(
-                || LiftedVertexId::base(vk),
-                |offs| lifted_vertex_id(vk, &offs[i]),
-            );
-            if !ridge_vertices.contains(&abs_lifted) {
-                // Lift link vertices with *relative* offsets so adjacent
-                // simplices agree on shared vertex identity.
-                let rel_lifted = match (offsets, ref_slot) {
-                    (Some(offs), Some(r)) => {
-                        let simplex_offs: &[[i8; D]] = offs;
-                        let rel: SmallBuffer<i8, 8> = simplex_offs[i]
-                            .iter()
-                            .zip(simplex_offs[r].iter())
-                            .map(|(&a, &b)| a - b)
-                            .collect();
-                        lifted_vertex_id(vk, &rel)
-                    }
-                    _ => LiftedVertexId::base(vk),
-                };
-                link_vertices.push(rel_lifted);
+        for lifted in simplex_vertices {
+            if !ridge_vertices.contains(&lifted) {
+                link_vertices.push(lifted);
             }
         }
 
@@ -1059,11 +1133,10 @@ fn build_ridge_star_map<T, U, V, const D: usize>(
                     .into());
                 }
 
-                // Periodic-aware key: lifted vertex IDs produce distinct
-                // ridge keys for different offset images.
-                let ridge_key = periodic_simplex_key(&ridge_vertices);
+                let normalized_ridge_vertices = normalize_lifted_vertices(&ridge_vertices);
+                let ridge_key = periodic_simplex_key(&normalized_ridge_vertices);
                 let star = ridge_to_star.entry(ridge_key).or_insert_with(|| RidgeStar {
-                    ridge_vertices: ridge_vertices.clone(),
+                    ridge_vertices: normalized_ridge_vertices.clone(),
                     star_simplices: SmallBuffer::new(),
                 });
                 star.star_simplices.push(simplex_key);
@@ -1148,12 +1221,11 @@ fn build_ridge_star_map_for_simplices<T, U, V, const D: usize>(
                     .into());
                 }
 
-                // Periodic-aware key: lifted vertex IDs produce distinct
-                // ridge keys for different offset images.
-                let ridge_key = periodic_simplex_key(&ridge_vertices_lifted);
-                ridge_to_vertices.entry(ridge_key).or_insert_with(|| {
-                    (ridge_vertices_lifted.clone(), ridge_vertices_bare.clone())
-                });
+                let normalized_ridge_vertices = normalize_lifted_vertices(&ridge_vertices_lifted);
+                let ridge_key = periodic_simplex_key(&normalized_ridge_vertices);
+                ridge_to_vertices
+                    .entry(ridge_key)
+                    .or_insert_with(|| (normalized_ridge_vertices, ridge_vertices_bare.clone()));
             }
         }
     }
@@ -1179,6 +1251,46 @@ fn build_ridge_star_map_for_simplices<T, U, V, const D: usize>(
     }
 
     Ok(ridge_to_star)
+}
+
+fn normalized_simplex_vertices_for_lifted_target<T, U, V, const D: usize>(
+    tds: &Tds<T, U, V, D>,
+    simplex_key: SimplexKey,
+    target_vertices: &[LiftedVertexId],
+) -> Result<Option<LiftedVertexBuffer>, ManifoldError> {
+    let simplex_vertices = tds.simplex_vertices(simplex_key)?;
+    let offsets = tds
+        .simplex(simplex_key)
+        .and_then(|simplex| simplex.periodic_vertex_offsets());
+
+    let Some(offsets) = offsets else {
+        let vertices: LiftedVertexBuffer = simplex_vertices
+            .iter()
+            .copied()
+            .map(LiftedVertexId::base)
+            .collect();
+        return Ok(Some(vertices));
+    };
+
+    let Some(anchor) = target_vertices.first() else {
+        return Ok(Some(LiftedVertexBuffer::new()));
+    };
+    let Some(anchor_index) = simplex_vertices
+        .iter()
+        .position(|&vertex_key| vertex_key == anchor.vertex_key)
+    else {
+        return Ok(None);
+    };
+    let anchor_offset = offsets[anchor_index];
+    let mut normalized = LiftedVertexBuffer::with_capacity(simplex_vertices.len());
+    for (idx, &vertex_key) in simplex_vertices.iter().enumerate() {
+        let mut relative_offset: SmallBuffer<i16, 8> = SmallBuffer::with_capacity(D);
+        for axis in 0..D {
+            relative_offset.push(i16::from(offsets[idx][axis]) - i16::from(anchor_offset[axis]));
+        }
+        normalized.push(lifted_vertex_id(vertex_key, &relative_offset));
+    }
+    Ok(Some(normalized))
 }
 
 /// Computes the periodic-aware star of a ridge from its lifted and bare vertex
@@ -1210,20 +1322,15 @@ fn periodic_aware_ridge_star<T, U, V, const D: usize>(
     let mut star_simplices: SmallBuffer<SimplexKey, 8> =
         SmallBuffer::with_capacity(all_star_simplices.len());
     for &ck in &all_star_simplices {
-        let simplex_offsets = tds.simplex(ck).and_then(|c| c.periodic_vertex_offsets());
-        let matches = match simplex_offsets {
-            None => true,
-            Some(offs) => {
-                let cv = tds.simplex_vertices(ck)?;
-                lifted_vertices.iter().all(|lv| {
-                    cv.iter().enumerate().any(|(i, &vk)| {
-                        let lifted = lifted_vertex_id(vk, &offs[i]);
-                        &lifted == lv
-                    })
-                })
-            }
+        let Some(normalized_vertices) =
+            normalized_simplex_vertices_for_lifted_target(tds, ck, lifted_vertices)?
+        else {
+            continue;
         };
-        if matches {
+        if lifted_vertices
+            .iter()
+            .all(|lv| normalized_vertices.contains(lv))
+        {
             star_simplices.push(ck);
         }
     }
@@ -1921,7 +2028,7 @@ fn validate_link_facets_and_boundary<const D: usize>(
                 return (0, false);
             }
 
-            let key = periodic_simplex_key(&facet_vertices);
+            let key = anchored_lifted_simplex_key(&facet_vertices);
             let entry = facet_map.entry(key).or_insert_with(|| FacetInfo {
                 vertices: facet_vertices.clone(),
                 count: 0,
@@ -1974,7 +2081,7 @@ fn validate_link_facets_and_boundary<const D: usize>(
                 if ridge_vertices.len() != D.saturating_sub(2) {
                     return (boundary_facet_count, false);
                 }
-                let ridge_key = periodic_simplex_key(&ridge_vertices);
+                let ridge_key = anchored_lifted_simplex_key(&ridge_vertices);
                 *ridge_map.entry(ridge_key).or_insert(0) += 1;
             }
         }
@@ -3751,9 +3858,9 @@ mod tests {
     }
 
     #[test]
-    fn test_build_ridge_star_map_for_simplices_separates_periodic_images() {
+    fn test_build_ridge_star_map_for_simplices_identifies_translated_periodic_images() {
         // Two 2D simplices share bare vertex keys but differ in periodic offsets.
-        // The ridge map must produce distinct ridges for different offset images.
+        // The ridge map identifies globally translated quotient ridges.
         let mut tds: Tds<f64, (), (), 2> = Tds::empty();
 
         let v0 = tds.insert_vertex_with_mapping(vertex!([0.0, 0.0])).unwrap();
@@ -3776,21 +3883,55 @@ mod tests {
 
         let map = build_ridge_star_map_for_simplices(&tds, &[c1, c2]).unwrap();
 
-        // In 2D, ridges have D-1 = 1 vertex.  Each triangle contributes 3 ridges.
-        // c1 produces: {v0}, {v1}, {v2}    (all at base image)
-        // c2 produces: {lifted_v0'}, {v1}, {v2}  (v0 at [1,0] image)
-        //
-        // Shared ridges: {v1} and {v2} (same lifted ID in both simplices).
-        // Distinct ridges: {v0} from c1, {lifted_v0'} from c2.
-        assert_eq!(map.len(), 4, "expected 4 distinct periodic-aware ridges");
+        // In 2D, ridges have D-1 = 1 vertex. Single-vertex ridges are identified
+        // modulo global periodic translation, so v0@base and v0@[1,0] represent
+        // the same quotient ridge.
+        assert_eq!(map.len(), 3, "expected 3 quotient-aware ridges");
 
-        // Ridges {v1} and {v2} should have a 2-simplex star (both c1 and c2).
+        // All quotient ridges should have a 2-simplex star (both c1 and c2).
         let shared_count = map.values().filter(|s| s.star_simplices.len() == 2).count();
-        assert_eq!(shared_count, 2, "two ridges should be shared");
+        assert_eq!(shared_count, 3, "three ridges should be shared");
+    }
 
-        // Ridges {v0@base} and {v0@[1,0]} should each have a 1-simplex star.
-        let unique_count = map.values().filter(|s| s.star_simplices.len() == 1).count();
-        assert_eq!(unique_count, 2, "two ridges should be unique per image");
+    #[test]
+    fn test_anchored_lifted_simplex_key_preserves_vertex_link_offsets() {
+        let mut tds: Tds<f64, (), (), 3> = Tds::empty();
+
+        let v0 = tds
+            .insert_vertex_with_mapping(vertex!([0.0, 0.0, 0.0]))
+            .unwrap();
+        let v1 = tds
+            .insert_vertex_with_mapping(vertex!([1.0, 0.0, 0.0]))
+            .unwrap();
+        let v2 = tds
+            .insert_vertex_with_mapping(vertex!([0.0, 1.0, 0.0]))
+            .unwrap();
+
+        let first_link_triangle: LiftedVertexBuffer = [
+            lifted_vertex_id(v0, &[1_i16, 0, 0]),
+            lifted_vertex_id(v1, &[1_i16, 0, 0]),
+            lifted_vertex_id(v2, &[1_i16, 0, 0]),
+        ]
+        .into_iter()
+        .collect();
+        let shifted_link_triangle: LiftedVertexBuffer = [
+            lifted_vertex_id(v0, &[2_i16, 0, 0]),
+            lifted_vertex_id(v1, &[2_i16, 0, 0]),
+            lifted_vertex_id(v2, &[2_i16, 0, 0]),
+        ]
+        .into_iter()
+        .collect();
+
+        assert_eq!(
+            periodic_simplex_key(&first_link_triangle),
+            periodic_simplex_key(&shifted_link_triangle),
+            "quotient simplex keys intentionally identify global translations"
+        );
+        assert_ne!(
+            anchored_lifted_simplex_key(&first_link_triangle),
+            anchored_lifted_simplex_key(&shifted_link_triangle),
+            "vertex-link keys must preserve offsets relative to the linked vertex"
+        );
     }
 
     #[test]
@@ -3813,7 +3954,7 @@ mod tests {
 
         // Bare [v0] finds c1, but lifted_vertex_id(v0, [99,99]) won't match
         // c1's lifted v0 (which is bare v0 since offset is [0,0]).
-        let synthetic = lifted_vertex_id(v0, &[99, 99]);
+        let synthetic = lifted_vertex_id(v0, &[99_i16, 99_i16]);
         let bare: VertexKeyBuffer = std::iter::once(v0).collect();
         let lifted: LiftedVertexBuffer = std::iter::once(synthetic).collect();
 
@@ -3829,8 +3970,9 @@ mod tests {
     }
 
     #[test]
-    fn test_validate_ridge_links_for_simplices_ok_with_periodic_offsets() {
-        // Two 2D simplices with periodic offsets form valid ridge link paths.
+    fn test_validate_ridge_links_for_simplices_rejects_split_periodic_link() {
+        // These two lifted triangles share quotient ridge vertices but leave a split
+        // periodic link, so quotient-aware ridge-link validation must reject them.
         let mut tds: Tds<f64, (), (), 2> = Tds::empty();
 
         let v0 = tds.insert_vertex_with_mapping(vertex!([0.0, 0.0])).unwrap();
@@ -3849,8 +3991,10 @@ mod tests {
             .unwrap();
         let c2 = tds.insert_simplex_with_mapping(simplex2).unwrap();
 
-        // All ridge links should be valid paths (boundary ridges with 2 degree-1 vertices).
-        validate_ridge_links_for_simplices(&tds, &[c1, c2]).unwrap();
+        match validate_ridge_links_for_simplices(&tds, &[c1, c2]) {
+            Err(ManifoldError::RidgeLinkNotManifold { .. }) => {}
+            other => panic!("Expected RidgeLinkNotManifold, got {other:?}"),
+        }
     }
 
     #[test]

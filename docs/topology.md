@@ -199,8 +199,10 @@ let dt = DelaunayTriangulationBuilder::new(&vertices)
 
 Toroidal triangulations handle point canonicalization (wrapping coordinates to the
 fundamental domain) and distance computations across periodic boundaries. The
-implementation supports both 2D and 3D toroidal spaces. For true periodic
-image-point construction, use `.toroidal_periodic([..])`.
+implementation supports canonicalized 2D and 3D toroidal spaces. For true
+periodic image-point construction, use `.toroidal_periodic([..])`; the validated
+periodic quotient path currently covers 2D and compact 3D fixtures. 4D/5D
+periodic quotients fail fast pending scalable construction work in issue #416.
 
 For more examples, see the toroidal section in the main `README.md`.
 

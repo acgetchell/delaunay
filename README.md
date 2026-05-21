@@ -116,7 +116,8 @@ complete technical background.
   available as an explicit opt-out
 - [x]  Toroidal (periodic) triangulations via [`DelaunayTriangulationBuilder`]:
   `.toroidal(...)` canonicalizes points into the fundamental domain, while
-  `.toroidal_periodic(...)` builds a true periodic image-point quotient
+  `.toroidal_periodic(...)` builds a validated periodic image-point quotient
+  in 2D and compact 3D
 - [x]  Geometry quality metrics for simplices: radius ratio and normalized
   volume (dimension-agnostic)
 - [x]  Serialization/deserialization of all data structures to/from [JSON]
@@ -258,8 +259,9 @@ fn main() -> Result<(), DelaunayTriangulationConstructionError> {
 ```
 
 For boundary-facet identification and periodic neighbor pointers, use
-`.toroidal_periodic([..])`; see the [toroidal construction workflow] for the
-full recipe.
+`.toroidal_periodic([..])` in 2D or compact 3D; see the
+[toroidal construction workflow] for the full recipe and current 4D/5D
+guardrails.
 
 ### Need more control?
 
@@ -359,7 +361,8 @@ For reproducible checks in CI/local runs, use `just check`, `just test`,
   `(D+2)×(D+2)` determinant exceeds the stack matrix limit.
 - **Periodic domains:** `.toroidal()` canonicalizes coordinates into the
   fundamental domain. `.toroidal_periodic()` uses the periodic image-point
-  method and is strongest in 2D, with compact 3D coverage active.
+  method and is release-validated in 2D and compact 3D. 4D/5D periodic
+  quotients fail fast pending scalable construction work in issue #416.
 - **Large 4D+ batches:** thousands of 4D points can be expensive to
   investigate. Use release mode and the large-scale debug harness for
   characterization.

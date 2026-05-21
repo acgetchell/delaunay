@@ -45,6 +45,9 @@ use crate::core::{
 };
 use crate::topology::traits::topological_space::TopologyError;
 
+type LiftedCellVertex = (VertexKey, SmallBuffer<i16, MAX_PRACTICAL_DIMENSION_SIZE>);
+type LiftedCellKey = SmallBuffer<LiftedCellVertex, MAX_PRACTICAL_DIMENSION_SIZE>;
+
 /// Counts of k-simplices for all dimensions 0 ≤ k ≤ D.
 ///
 /// Stores the f-vector (f₀, f₁, ..., `f_D`) where `f_k` is the number of
@@ -276,25 +279,20 @@ pub(crate) fn count_simplices_with_facet_to_simplices_map<T, U, V, const D: usiz
     // re-iterating all simplices once per k.
     // Skip if D <= 2 (no intermediate dimensions)
     if D > 2 {
-        let mut intermediate_simplex_sets: Vec<
-            FastHashSet<SmallBuffer<VertexKey, MAX_PRACTICAL_DIMENSION_SIZE>>,
-        > = (0..(D - 2)).map(|_| FastHashSet::default()).collect();
-
-        // Pre-sort each simplex's vertex keys once so every generated combination is already
-        // in canonical (sorted) order, avoiding per-combination sorting.
-        let mut sorted_vertex_keys: SmallBuffer<VertexKey, MAX_PRACTICAL_DIMENSION_SIZE> =
-            SmallBuffer::new();
+        let mut intermediate_simplex_sets: Vec<FastHashSet<LiftedCellKey>> =
+            (0..(D - 2)).map(|_| FastHashSet::default()).collect();
 
         for (_simplex_key, simplex) in tds.simplices() {
-            sorted_vertex_keys.clear();
-            sorted_vertex_keys.extend(simplex.vertices().iter().copied());
-            sorted_vertex_keys.sort();
-
             for simplex_dimension in 1..=D - 2 {
                 let simplex_set =
                     &mut intermediate_simplex_sets[simplex_dimension.saturating_sub(1)];
                 let simplex_size = simplex_dimension + 1; // k-simplex has k+1 vertices
-                insert_simplices_of_size(&sorted_vertex_keys, simplex_size, simplex_set);
+                insert_lifted_simplices_of_size(
+                    simplex.vertices(),
+                    simplex.periodic_vertex_offsets(),
+                    simplex_size,
+                    simplex_set,
+                );
             }
         }
 
@@ -307,21 +305,16 @@ pub(crate) fn count_simplices_with_facet_to_simplices_map<T, U, V, const D: usiz
     FVector { by_dim }
 }
 
-fn insert_simplices_of_size(
+fn insert_lifted_simplices_of_size<const D: usize>(
     vertex_keys: &[VertexKey],
+    periodic_offsets: Option<&[[i8; D]]>,
     simplex_size: usize,
-    simplex_set: &mut FastHashSet<SmallBuffer<VertexKey, MAX_PRACTICAL_DIMENSION_SIZE>>,
+    simplex_set: &mut FastHashSet<LiftedCellKey>,
 ) {
     let n = vertex_keys.len();
     if n < simplex_size {
         return;
     }
-
-    // We expect `vertex_keys` to be in sorted (canonical) order.
-    //
-    // With sorted input, each combination produced by increasing indices is already sorted, so we
-    // can insert it directly without per-combination sorting.
-    debug_assert!(vertex_keys.windows(2).all(|w| w[0] <= w[1]));
 
     // Generate all C(n, simplex_size) combinations using the standard lexicographic algorithm.
     //
@@ -333,7 +326,85 @@ fn insert_simplices_of_size(
     let mut indices: SmallBuffer<usize, MAX_PRACTICAL_DIMENSION_SIZE> = (0..simplex_size).collect();
 
     'outer: loop {
-        // Extract current combination (already sorted due to sorted input + increasing indices).
+        let mut simplex_vertices: LiftedCellKey = SmallBuffer::new();
+        for &vertex_index in &indices {
+            let offset: SmallBuffer<i16, MAX_PRACTICAL_DIMENSION_SIZE> = periodic_offsets
+                .map_or_else(SmallBuffer::new, |offsets| {
+                    offsets[vertex_index]
+                        .iter()
+                        .map(|&component| i16::from(component))
+                        .collect()
+                });
+            simplex_vertices.push((vertex_keys[vertex_index], offset));
+        }
+        normalize_lifted_cell_key(&mut simplex_vertices);
+        simplex_set.insert(simplex_vertices);
+
+        // Generate next combination.
+        // The maximum valid value at position `i` is `i + n - simplex_size`.
+        //
+        // Find the rightmost index that can be incremented.
+        let mut pivot = simplex_size;
+        loop {
+            if pivot == 0 {
+                break 'outer;
+            }
+            pivot -= 1;
+            if indices[pivot] < pivot + n - simplex_size {
+                break;
+            }
+        }
+
+        indices[pivot] += 1;
+        for position in (pivot + 1)..simplex_size {
+            indices[position] = indices[position - 1] + 1;
+        }
+    }
+}
+
+fn normalize_lifted_cell_key(simplex_vertices: &mut LiftedCellKey) {
+    simplex_vertices.sort_unstable_by(|(vertex_a, offset_a), (vertex_b, offset_b)| {
+        vertex_a.cmp(vertex_b).then_with(|| offset_a.cmp(offset_b))
+    });
+    let anchor_offset = simplex_vertices
+        .first()
+        .map_or_else(SmallBuffer::new, |(_, offset)| offset.clone());
+    let axes = simplex_vertices
+        .iter()
+        .map(|(_, offset)| offset.len())
+        .max()
+        .unwrap_or(0)
+        .max(anchor_offset.len());
+    for (_, offset) in simplex_vertices.iter_mut() {
+        let mut normalized: SmallBuffer<i16, MAX_PRACTICAL_DIMENSION_SIZE> =
+            SmallBuffer::with_capacity(axes);
+        for axis in 0..axes {
+            let component = offset.get(axis).copied().unwrap_or(0)
+                - anchor_offset.get(axis).copied().unwrap_or(0);
+            normalized.push(component);
+        }
+        *offset = normalized;
+    }
+    simplex_vertices.sort_unstable_by(|(vertex_a, offset_a), (vertex_b, offset_b)| {
+        vertex_a.cmp(vertex_b).then_with(|| offset_a.cmp(offset_b))
+    });
+}
+
+fn insert_simplices_of_size(
+    vertex_keys: &[VertexKey],
+    simplex_size: usize,
+    simplex_set: &mut FastHashSet<SmallBuffer<VertexKey, MAX_PRACTICAL_DIMENSION_SIZE>>,
+) {
+    let n = vertex_keys.len();
+    if n < simplex_size {
+        return;
+    }
+
+    debug_assert!(vertex_keys.windows(2).all(|w| w[0] <= w[1]));
+
+    let mut indices: SmallBuffer<usize, MAX_PRACTICAL_DIMENSION_SIZE> = (0..simplex_size).collect();
+
+    'outer: loop {
         let mut simplex_vertices: SmallBuffer<VertexKey, MAX_PRACTICAL_DIMENSION_SIZE> =
             SmallBuffer::new();
         for &vertex_index in &indices {
@@ -341,10 +412,6 @@ fn insert_simplices_of_size(
         }
         simplex_set.insert(simplex_vertices);
 
-        // Generate next combination.
-        // The maximum valid value at position `i` is `i + n - simplex_size`.
-        //
-        // Find the rightmost index that can be incremented.
         let mut pivot = simplex_size;
         loop {
             if pivot == 0 {

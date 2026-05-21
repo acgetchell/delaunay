@@ -201,7 +201,8 @@ drive repair, but replacement-simplex orientation itself uses `robust_orientatio
   structure/topology, rejects geometrically degenerate simplices, and then enforces
   the Delaunay property.
 - `.toroidal_periodic([..])` builds an image-point triangulation and then runs
-  orientation normalization plus lifted geometric orientation validation before
+  orientation normalization, lifted geometric orientation validation, final
+  Levels 1-3 topology validation, and final Level 4 Delaunay validation before
   returning the quotient triangulation.
 
 ## Degenerate Simplices

@@ -79,6 +79,19 @@ pub enum TriangulationConstructionError {
         message: String,
     },
 
+    /// Periodic quotient construction is not release-validated for this dimension.
+    #[error(
+        "Periodic image-point construction is release-validated only up to {max_validated_dimension}D; {dimension}D scalable quotient construction is tracked by issue #{tracking_issue}"
+    )]
+    UnsupportedPeriodicDimension {
+        /// Requested triangulation dimension.
+        dimension: usize,
+        /// Highest dimension with release-validated periodic quotient construction.
+        max_validated_dimension: usize,
+        /// Tracking issue for extending periodic quotient support.
+        tracking_issue: u32,
+    },
+
     /// Conflict-region extraction failed during incremental construction.
     #[error("Conflict region failed during insertion: {source}")]
     InsertionConflictRegion {

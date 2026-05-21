@@ -298,8 +298,9 @@ Toroidal workflows are integrated as first-class topology options:
 - `.toroidal()` canonicalizes coordinates into the fundamental domain and uses toroidal topology
   metadata for validation.
 - `.toroidal_periodic(...)` constructs a periodic image-point triangulation over neighboring
-  fundamental domains. This gives the strongest current toroidal behavior, with 2D as the primary
-  supported path and compact 3D coverage active in the test suite.
+  fundamental domains. The 2D and compact 3D paths are validated periodic quotients; 4D/5D
+  periodic construction fails fast until quotient selection scales to routine release validation
+  under issue #416.
 
 Spherical and hyperbolic topology models are present as metadata and validation scaffolding, but
 they do not yet provide full non-Euclidean geometric construction semantics. Treat them as

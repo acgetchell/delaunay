@@ -273,6 +273,19 @@ pub enum DelaunayConstructionFailure {
         message: String,
     },
 
+    /// Periodic quotient construction is not release-validated for this dimension.
+    #[error(
+        "periodic image-point construction is release-validated only up to {max_validated_dimension}D; {dimension}D scalable quotient construction is tracked by issue #{tracking_issue}"
+    )]
+    UnsupportedPeriodicDimension {
+        /// Requested triangulation dimension.
+        dimension: usize,
+        /// Highest dimension with release-validated periodic quotient construction.
+        max_validated_dimension: usize,
+        /// Tracking issue for extending periodic quotient support.
+        tracking_issue: u32,
+    },
+
     /// Internal construction invariant failed.
     #[error("internal inconsistency during construction: {message}")]
     InternalInconsistency {
@@ -384,6 +397,15 @@ impl From<TriangulationConstructionError> for DelaunayConstructionFailure {
             TriangulationConstructionError::GeometricDegeneracy { message } => {
                 Self::GeometricDegeneracy { message }
             }
+            TriangulationConstructionError::UnsupportedPeriodicDimension {
+                dimension,
+                max_validated_dimension,
+                tracking_issue,
+            } => Self::UnsupportedPeriodicDimension {
+                dimension,
+                max_validated_dimension,
+                tracking_issue,
+            },
             TriangulationConstructionError::InternalInconsistency { message } => {
                 Self::InternalInconsistency { message }
             }
@@ -4347,6 +4369,7 @@ where
                     reason: TdsConstructionFailure::DuplicateUuid { .. }
                         | TdsConstructionFailure::Validation { .. },
                 } | DelaunayConstructionFailure::InternalInconsistency { .. }
+                    | DelaunayConstructionFailure::UnsupportedPeriodicDimension { .. }
                     | DelaunayConstructionFailure::DelaunayRepair { .. }
                     | DelaunayConstructionFailure::InsertionTopologyValidation { .. }
                     | DelaunayConstructionFailure::LocalRepairBudgetExceeded { .. }
@@ -7101,6 +7124,21 @@ mod tests {
         assert!(
             !TestDelaunay::<3>::is_non_retryable_construction_error(&err),
             "GeometricDegeneracy should NOT be non-retryable"
+        );
+    }
+
+    #[test]
+    fn test_is_non_retryable_construction_error_true_for_unsupported_periodic_dimension() {
+        let err: DelaunayTriangulationConstructionError =
+            TriangulationConstructionError::UnsupportedPeriodicDimension {
+                dimension: 4,
+                max_validated_dimension: 3,
+                tracking_issue: 416,
+            }
+            .into();
+        assert!(
+            TestDelaunay::<4>::is_non_retryable_construction_error(&err),
+            "UnsupportedPeriodicDimension should be non-retryable"
         );
     }
 
