@@ -2497,10 +2497,10 @@ where
                     covered.insert(*vertex_key);
                 }
             }
-            if facet_counts.values().all(|&count| count <= 2)
+            if facet_counts.values().all(|&count| count == 2)
                 && covered.len() == central_key_set.len()
             {
-                best_boundary_count = facet_counts.values().filter(|&&count| count == 1).count();
+                best_boundary_count = 0;
                 best_selected_count = selected.iter().filter(|&&is_selected| is_selected).count();
                 best_coverage_count = covered.len();
                 best_abs_chi = 0;
