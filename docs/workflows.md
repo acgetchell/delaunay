@@ -297,7 +297,8 @@ fn main() -> Result<(), PeriodicExampleError> {
   metric)
 - **Construction modes**:
   - `.toroidal([..])`: canonicalized construction (wrap into fundamental domain)
-  - `.toroidal_periodic([..])`: periodic image-point construction (true toroidal quotient)
+  - `.toroidal_periodic([..])`: periodic image-point construction; currently validated as a true
+    toroidal quotient in 2D and compact 3D; 4D/5D fail fast pending issue #416
 
 For more details, see `docs/topology.md` and the toroidal section in the main `README.md`.
 

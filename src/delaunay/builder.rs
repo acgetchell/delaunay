@@ -21,12 +21,14 @@
 //! constructor. The resulting triangulation is a valid Euclidean Delaunay triangulation
 //! of the canonicalized point set; it does **not** identify opposite boundary facets.
 //!
-//! **Phase 2 (`.toroidal_periodic()`, issue #210):** Full periodic construction using
+//! **Phase 2 (`.toroidal_periodic()`, issue #210):** Periodic construction using
 //! the 3^D image-point method — generating copies of each point shifted by ±L in each
 //! dimension, building the full Euclidean DT on the expanded set, normalizing lifted
 //! simplices, searching a closed quotient candidate subset, and rebuilding quotient
-//! representatives with periodic neighbor pointers. Produces a true toroidal
-//! (χ = 0) triangulation. See `REFERENCES.md`, "Periodic and Toroidal
+//! representatives with periodic neighbor pointers. The 2D and compact 3D paths
+//! are release-covered as true toroidal (χ = 0) triangulations. 4D/5D periodic
+//! quotients fail fast until issue #416 makes quotient selection scalable enough
+//! for routine validation. See `REFERENCES.md`, "Periodic and Toroidal
 //! Triangulations", first entry.
 //!
 //! # Examples
@@ -115,7 +117,10 @@ use crate::construction::{
 use crate::core::algorithms::incremental_insertion::{
     DelaunayRepairErrorKind, InsertionError, InsertionErrorSourceKind,
 };
-use crate::core::collections::{FastHashMap, PeriodicOffsetBuffer, Uuid, VertexKeySet};
+use crate::core::collections::{
+    FastHashMap, MAX_PRACTICAL_DIMENSION_SIZE, PeriodicOffsetBuffer, SmallBuffer, Uuid,
+    VertexKeySet,
+};
 use crate::core::construction::TriangulationConstructionError;
 use crate::core::operations::InsertionOutcome;
 use crate::core::simplex::{Simplex, SimplexValidationError};
@@ -131,6 +136,7 @@ use crate::core::vertex::Vertex;
 use crate::geometry::kernel::{AdaptiveKernel, Kernel};
 use crate::geometry::point::Point;
 use crate::geometry::traits::coordinate::{Coordinate, CoordinateScalar};
+use crate::geometry::util::circumcenter;
 use crate::repair::DelaunayRepairPolicy;
 use crate::topology::spaces::toroidal::ToroidalSpace;
 use crate::topology::traits::global_topology_model::{
@@ -1250,8 +1256,10 @@ impl<'v, T, U, const D: usize> DelaunayTriangulationBuilder<'v, T, U, D> {
     /// Euclidean Delaunay triangulation is built on the expanded set, the fundamental domain
     /// is extracted, and boundary facets are rewired with periodic neighbor pointers.
     ///
-    /// The result is a valid toroidal triangulation with Euler characteristic χ = 0 (2D),
-    /// χ = 0 (3D), etc.
+    /// The 2D and compact 3D results validate as toroidal triangulations with
+    /// Euler characteristic χ = 0. Higher-dimensional periodic quotients fail
+    /// fast until issue #416 makes quotient selection scalable enough for
+    /// routine validation.
     ///
     /// **Requires at least `2*D + 1` input points** after canonicalization.
     ///
@@ -1749,6 +1757,20 @@ where
                             "Periodic geometric orientation validation failed after build: {e}",
                         ),
                     })?;
+                dt.as_triangulation().validate().map_err(|e| {
+                    TriangulationConstructionError::FinalTopologyValidation {
+                        message: "Periodic quotient failed final Levels 1-3 topology validation"
+                            .to_string(),
+                        source: e.into(),
+                    }
+                })?;
+                dt.is_valid().map_err(|e| {
+                    TriangulationConstructionError::FinalTopologyValidation {
+                        message: "Periodic quotient failed final Level 4 Delaunay validation"
+                            .to_string(),
+                        source: InvariantError::Delaunay(e).into(),
+                    }
+                })?;
                 Ok(dt)
             }
         }
@@ -2049,6 +2071,16 @@ where
                 ),
             }
         })?;
+        if D > 3 {
+            return Err(
+                TriangulationConstructionError::UnsupportedPeriodicDimension {
+                    dimension: D,
+                    max_validated_dimension: 3,
+                    tracking_issue: 416,
+                }
+                .into(),
+            );
+        }
         let n = canonical_vertices.len();
         let min_points = 2 * D + 1;
         if n < min_points {
@@ -2086,7 +2118,6 @@ where
             let span = u64::try_from(2 * IMAGE_JITTER_UNITS + 1).expect("span fits in u64");
             i64::try_from(h % span).expect("residue fits in i64") - IMAGE_JITTER_UNITS
         };
-
         let canonical_f64: Vec<[f64; D]> = canonical_vertices
             .iter()
             .enumerate()
@@ -2362,22 +2393,19 @@ where
 
                 Some(lifted)
             };
-        let simplex_barycenter_in_fundamental_domain = |simplex_key: SimplexKey| -> Option<bool> {
+        let simplex_circumcenter_in_fundamental_domain = |simplex_key: SimplexKey| -> Option<bool> {
             let simplex = tds_ref.simplex(simplex_key)?;
-            let mut sums = [0.0_f64; D];
+            let mut points: SmallBuffer<Point<T, D>, MAX_PRACTICAL_DIMENSION_SIZE> =
+                SmallBuffer::with_capacity(D + 1);
             for vk in simplex.vertices() {
                 let vertex = tds_ref.vertex(*vk)?;
-                let coords = vertex.point().coords();
-                for (axis, sum) in sums.iter_mut().enumerate() {
-                    *sum += coords[axis].to_f64()?;
-                }
+                points.push(*vertex.point());
             }
-            let denom = <f64 as num_traits::NumCast>::from(D + 1)
-                .expect("simplex vertex count fits in f64 for D");
-            for (axis, sum) in sums.iter().enumerate() {
-                let bary = *sum / denom;
+            let center = circumcenter(&points).ok()?;
+            for (axis, coord) in center.coords().iter().enumerate() {
+                let center_coord = coord.to_f64()?;
                 let period = domain[axis];
-                if !(bary >= 0.0 && bary < period) {
+                if !(center_coord >= 0.0 && center_coord < period) {
                     return Some(false);
                 }
             }
@@ -2395,7 +2423,7 @@ where
             let Some(lifted_vertices) = normalize_simplex_lifted(ck) else {
                 continue;
             };
-            let in_domain = simplex_barycenter_in_fundamental_domain(ck).unwrap_or(false);
+            let in_domain = simplex_circumcenter_in_fundamental_domain(ck).unwrap_or(false);
             let mut symbolic_signature = lifted_vertices.clone();
             symbolic_signature.sort_unstable();
             let lifted_ordered = lifted_vertices.clone();
@@ -2454,7 +2482,31 @@ where
         let mut best_selected_count = 0_usize;
         let mut best_coverage_count = 0_usize;
         let mut best_abs_chi = i64::MAX;
-        if D == 2 {
+        if D > 2 {
+            let selected: Vec<bool> = candidates.iter().map(|candidate| candidate.3).collect();
+            let mut facet_counts: FastHashMap<PeriodicFacetKey, u8> = FastHashMap::default();
+            let mut covered: VertexKeySet = VertexKeySet::default();
+            for (idx, is_selected) in selected.iter().copied().enumerate() {
+                if !is_selected {
+                    continue;
+                }
+                for facet in &candidates[idx].2 {
+                    *facet_counts.entry(*facet).or_insert(0) += 1;
+                }
+                for (vertex_key, _) in &candidates[idx].1 {
+                    covered.insert(*vertex_key);
+                }
+            }
+            if facet_counts.values().all(|&count| count <= 2)
+                && covered.len() == central_key_set.len()
+            {
+                best_boundary_count = facet_counts.values().filter(|&&count| count == 1).count();
+                best_selected_count = selected.iter().filter(|&&is_selected| is_selected).count();
+                best_coverage_count = covered.len();
+                best_abs_chi = 0;
+                best_selected = selected;
+            }
+        } else if D == 2 {
             let target_faces = central_key_set.len().saturating_mul(2);
             let mut edge_to_index: FastHashMap<PeriodicFacetKey, usize> = FastHashMap::default();
             let mut candidate_edges: Vec<[usize; 3]> = Vec::with_capacity(candidates.len());
@@ -2674,11 +2726,7 @@ where
                     best_abs_chi = abs_chi;
                     best_selected = selected;
                 }
-                let best_has_full_canonical_coverage = best_coverage_count == central_key_set.len();
-                if best_boundary_count == 0
-                    && ((D == 2 && best_abs_chi == 0)
-                        || (D > 2 && best_has_full_canonical_coverage))
-                {
+                if D == 2 && best_boundary_count == 0 && best_abs_chi == 0 {
                     break;
                 }
             }
@@ -2723,45 +2771,6 @@ where
             }
             .into());
         }
-        if D > 2 {
-            // In the quotient TDS, simplices that collapse to the same canonical vertex set cannot
-            // be distinct facet-neighbors: they would share all D+1 vertices and violate the
-            // mirror-facet invariant enforced by `set_neighbors_by_key`.
-            //
-            // Keep at most one selected representative per canonical simplex. Prefer in-domain
-            // representatives, then deterministic symbolic ordering.
-            let mut selected_by_canonical: FastHashMap<Vec<VertexKey>, usize> =
-                FastHashMap::default();
-            let mut dedup_selected = vec![false; candidates.len()];
-
-            for (idx, is_selected) in best_selected.iter().copied().enumerate() {
-                if !is_selected {
-                    continue;
-                }
-                let mut canonical_keys: Vec<VertexKey> =
-                    candidates[idx].1.iter().map(|(vk, _)| *vk).collect();
-                canonical_keys.sort_unstable();
-
-                if let Some(existing_idx) = selected_by_canonical.get(&canonical_keys).copied() {
-                    let existing_in_domain = candidates[existing_idx].3;
-                    let candidate_in_domain = candidates[idx].3;
-                    let should_replace = (!existing_in_domain && candidate_in_domain)
-                        || (existing_in_domain == candidate_in_domain
-                            && candidates[idx].0 < candidates[existing_idx].0);
-                    if should_replace {
-                        dedup_selected[existing_idx] = false;
-                        dedup_selected[idx] = true;
-                        selected_by_canonical.insert(canonical_keys, idx);
-                    }
-                } else {
-                    dedup_selected[idx] = true;
-                    selected_by_canonical.insert(canonical_keys, idx);
-                }
-            }
-
-            best_selected = dedup_selected;
-        }
-
         let mut representative_lifted_by_symbolic: FastHashMap<
             SymbolicSignature<D>,
             SymbolicSignature<D>,
@@ -2890,33 +2899,6 @@ where
         for (_facet_sig, occurrences) in facet_occurrences {
             match occurrences.as_slice() {
                 [(a_ck, a_idx), (b_ck, b_idx)] => {
-                    let a_lifted = rep_lifted_by_key.get(a_ck).ok_or_else(|| {
-                        TriangulationConstructionError::InternalInconsistency {
-                            message: format!(
-                                "missing lifted representative for quotient simplex {a_ck:?}"
-                            ),
-                        }
-                    })?;
-                    let b_lifted = rep_lifted_by_key.get(b_ck).ok_or_else(|| {
-                        TriangulationConstructionError::InternalInconsistency {
-                            message: format!(
-                                "missing lifted representative for quotient simplex {b_ck:?}"
-                            ),
-                        }
-                    })?;
-                    let shares_all_canonical_vertices = a_lifted
-                        .iter()
-                        .zip(b_lifted.iter())
-                        .all(|((a_vk, _), (b_vk, _))| a_vk == b_vk);
-
-                    if shares_all_canonical_vertices {
-                        return Err(TriangulationConstructionError::GeometricDegeneracy {
-                            message: format!(
-                                "Periodic quotient produced distinct simplices with identical canonical vertices across a shared facet: {a_ck:?}[{a_idx}] <-> {b_ck:?}[{b_idx}]",
-                            ),
-                        }
-                        .into());
-                    }
                     neighbor_updates.get_mut(a_ck).ok_or_else(|| {
                         TriangulationConstructionError::InternalInconsistency {
                             message: format!(

@@ -530,6 +530,19 @@ pub enum InitialSimplexConstructionError {
         attempted: usize,
     },
 
+    /// Periodic quotient construction is not release-validated for this dimension.
+    #[error(
+        "periodic image-point construction is release-validated only up to {max_validated_dimension}D; {dimension}D scalable quotient construction is tracked by issue #{tracking_issue}"
+    )]
+    UnsupportedPeriodicDimension {
+        /// Requested triangulation dimension.
+        dimension: usize,
+        /// Highest dimension with release-validated periodic quotient construction.
+        max_validated_dimension: usize,
+        /// Tracking issue for extending periodic quotient support.
+        tracking_issue: u32,
+    },
+
     /// An insertion-stage-only construction error escaped initial-simplex construction.
     #[error(
         "unexpected insertion-stage construction error while building initial simplex: {message}"
@@ -571,6 +584,15 @@ impl From<TriangulationConstructionError> for InitialSimplexConstructionError {
             TriangulationConstructionError::GeometricDegeneracy { message } => {
                 Self::GeometricDegeneracy { message }
             }
+            TriangulationConstructionError::UnsupportedPeriodicDimension {
+                dimension,
+                max_validated_dimension,
+                tracking_issue,
+            } => Self::UnsupportedPeriodicDimension {
+                dimension,
+                max_validated_dimension,
+                tracking_issue,
+            },
             TriangulationConstructionError::InternalInconsistency { message } => {
                 Self::InternalInconsistency { message }
             }
@@ -1646,6 +1668,7 @@ impl InsertionError {
                 | InitialSimplexConstructionError::InternalInconsistency { .. }
                 | InitialSimplexConstructionError::DuplicateCoordinates { .. }
                 | InitialSimplexConstructionError::LocalRepairBudgetExceeded { .. }
+                | InitialSimplexConstructionError::UnsupportedPeriodicDimension { .. }
                 | InitialSimplexConstructionError::UnexpectedInsertionStage { .. } => false,
             },
             CavityFillingError::NeighborRebuild { reason } => match reason {
@@ -5187,6 +5210,26 @@ mod tests {
             InitialSimplexConstructionError::LocalRepairBudgetExceeded {
                 max_simplices_removed: 2,
                 attempted: 3,
+            }
+        );
+    }
+
+    #[test]
+    fn test_initial_simplex_construction_error_preserves_unsupported_periodic_dimension() {
+        let source = TriangulationConstructionError::UnsupportedPeriodicDimension {
+            dimension: 4,
+            max_validated_dimension: 3,
+            tracking_issue: 416,
+        };
+
+        let converted = InitialSimplexConstructionError::from(source);
+
+        assert_eq!(
+            converted,
+            InitialSimplexConstructionError::UnsupportedPeriodicDimension {
+                dimension: 4,
+                max_validated_dimension: 3,
+                tracking_issue: 416,
             }
         );
     }

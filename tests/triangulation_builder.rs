@@ -9,21 +9,17 @@ use std::collections::HashMap;
 use std::f64::consts::TAU;
 
 use delaunay::prelude::construction::{
-    ConstructionOptions, DelaunayTriangulation, DelaunayTriangulationBuilder,
-    DelaunayTriangulationConstructionError, ExplicitConstructionError, ExplicitInsertionError,
-    ExplicitInsertionErrorKind, ExplicitInvariantError, ExplicitInvariantErrorKind,
-    ExplicitTdsErrorKind, InsertionOrderStrategy, TopologyGuarantee, Vertex, VertexBuilder, vertex,
+    ConstructionOptions, DelaunayConstructionFailure, DelaunayTriangulation,
+    DelaunayTriangulationBuilder, DelaunayTriangulationConstructionError,
+    ExplicitConstructionError, ExplicitInsertionError, ExplicitInsertionErrorKind,
+    ExplicitInvariantError, ExplicitInvariantErrorKind, ExplicitTdsErrorKind,
+    InsertionOrderStrategy, TopologyGuarantee, Vertex, VertexBuilder, vertex,
 };
 use delaunay::prelude::geometry::{Coordinate, Point, RobustKernel};
 use delaunay::prelude::insertion::InsertionErrorSourceKind;
-use delaunay::prelude::repair::DelaunayRepairError;
-#[cfg(feature = "slow-tests")]
-use delaunay::prelude::tds::InvariantError;
 use delaunay::prelude::tds::{InvariantErrorSummaryDetail, TriangulationValidationErrorKind};
 use delaunay::prelude::topology::spaces::{GlobalTopology, TopologyKind, ToroidalConstructionMode};
 use delaunay::prelude::topology::validation::{count_simplices, euler_characteristic};
-#[cfg(feature = "slow-tests")]
-use delaunay::prelude::triangulation::TriangulationValidationError;
 use delaunay::prelude::validation::ValidationPolicy;
 
 // =============================================================================
@@ -445,7 +441,7 @@ macro_rules! gen_toroidal_periodic_validation_test {
 
 gen_toroidal_periodic_validation_test!(2, levels_1_to_4, true);
 #[test]
-fn test_builder_periodic_topology_level4_smoke_3d() {
+fn test_builder_toroidal_periodic_3d_validates_level_1_to_4() {
     let vertices = vec![
         vertex!([0.2_f64, 0.3, 0.4]),
         vertex!([0.8, 0.1, 0.2]),
@@ -459,60 +455,63 @@ fn test_builder_periodic_topology_level4_smoke_3d() {
     let dt = DelaunayTriangulationBuilder::new(&vertices)
         .toroidal_periodic([1.0_f64; 3])
         .build_with_kernel::<_, ()>(&kernel)
-        .expect("compact periodic 3D build should succeed");
+        .expect("compact periodic 3D quotient should validate after #413");
 
     assert_eq!(dt.number_of_vertices(), vertices.len());
-    assert!(
-        dt.tds().is_valid().is_ok(),
-        "TDS structural validity should pass for compact periodic 3D"
-    );
     assert!(
         dt.global_topology().is_periodic(),
         "global_topology should use periodic image-point construction"
     );
     assert!(
-        dt.number_of_simplices() > 0,
-        "periodic image-point construction should produce at least one simplex"
+        dt.tds().is_valid().is_ok(),
+        "TDS structural validity should pass for periodic 3D"
     );
     assert!(
-        dt.simplices().all(|(_, simplex)| {
-            simplex
-                .periodic_vertex_offsets()
-                .is_some_and(|offsets| offsets.len() == simplex.number_of_vertices())
-        }),
-        "periodic image-point construction should populate per-simplex periodic offsets"
+        dt.as_triangulation().validate().is_ok(),
+        "Levels 1-3 topology validation should pass for periodic 3D"
     );
-    // The compact 3D quotient is a smoke fixture for lifted predicate evaluation,
-    // not a full periodic-Delaunay quality fixture. A local violation is a valid
-    // Level 4 result; malformed periodic-offset plumbing is not.
-    match dt.is_delaunay_via_flips() {
-        Ok(()) => {}
-        Err(DelaunayRepairError::PostconditionFailed { message }) => {
-            assert!(
-                !message.contains("predicate failed in strict mode")
-                    && !message.contains("periodic offset")
-                    && !message.contains("cannot align periodic vertex"),
-                "periodic Level 4 should evaluate lifted predicates with populated offsets: {message}"
-            );
-        }
-        Err(err) => panic!("periodic Level 4 validation returned an unexpected error: {err:?}"),
-    }
+    assert!(
+        dt.validate().is_ok(),
+        "Levels 1-4 validation should pass for periodic 3D"
+    );
 }
-#[test]
-#[cfg(feature = "slow-tests")]
-fn test_builder_toroidal_periodic_validate_levels_1_to_4_3d_known_limitation() {
-    let dt = build_toroidal_periodic_triangulation::<3>();
 
-    match dt.as_triangulation().validate() {
-        Err(InvariantError::Triangulation(
-            TriangulationValidationError::BoundaryRidgeMultiplicity {
-                boundary_facet_count,
-                ..
-            },
-        )) => assert_eq!(boundary_facet_count, 4),
-        other => panic!("expected periodic 3D ridge-multiplicity limitation, got {other:?}"),
-    }
+macro_rules! gen_toroidal_periodic_high_dim_guardrail_test {
+    ($dim:literal) => {
+        pastey::paste! {
+            #[test]
+            fn [<test_builder_toroidal_periodic_ $dim d_fails_fast_until_scalable_quotient>]() {
+                let vertices = toroidal_periodic_vertices::<$dim>();
+                let kernel = RobustKernel::new();
+                let err = DelaunayTriangulationBuilder::new(&vertices)
+                    .toroidal_periodic([1.0_f64; $dim])
+                    .build_with_kernel::<_, ()>(&kernel)
+                    .expect_err(concat!(
+                        stringify!($dim),
+                        "D periodic quotient construction should fail fast pending #416"
+                    ));
+
+                match err {
+                    DelaunayTriangulationConstructionError::Triangulation(
+                        DelaunayConstructionFailure::UnsupportedPeriodicDimension {
+                            dimension,
+                            max_validated_dimension,
+                            tracking_issue,
+                        },
+                    ) => {
+                        assert_eq!(dimension, $dim);
+                        assert_eq!(max_validated_dimension, 3);
+                        assert_eq!(tracking_issue, 416);
+                    }
+                    other => panic!("expected high-dimensional periodic guardrail, got {other:?}"),
+                }
+            }
+        }
+    };
 }
+
+gen_toroidal_periodic_high_dim_guardrail_test!(4);
+gen_toroidal_periodic_high_dim_guardrail_test!(5);
 
 /// Explicit 7-vertex torus (Heawood triangulation) with `GlobalTopology::Toroidal`
 /// is rejected until explicit non-Euclidean construction has Level 4 validation.
@@ -608,40 +607,6 @@ fn test_explicit_toroidal_torus_euler_mismatch_without_override() {
             panic!("expected explicit topology or orientation-normalization failure, got {other:?}")
         }
     }
-}
-
-/// `toroidal_periodic` in 3D builds a valid periodic triangulation.
-///
-/// For a 3D periodic triangulation on the 3-torus the Euler characteristic is
-/// also 0, so we verify TDS structural validity rather than the full `validate()`
-/// check (which would expect χ = 2 for a sphere).
-#[test]
-fn test_builder_toroidal_periodic_3d_success() {
-    // Keep this fixture compact: the periodic 3D pipeline expands to 3^D image
-    // points internally.
-
-    let vertices = vec![
-        vertex!([0.1_f64, 0.2, 0.3]),
-        vertex!([0.4, 0.7, 0.1]),
-        vertex!([0.7, 0.3, 0.8]),
-        vertex!([0.2, 0.9, 0.5]),
-        vertex!([0.8, 0.6, 0.2]),
-        vertex!([0.5, 0.1, 0.7]),
-        vertex!([0.3, 0.5, 0.9]),
-        vertex!([0.6, 0.8, 0.4]),
-        vertex!([0.9, 0.2, 0.6]),
-    ];
-    let n = vertices.len();
-    let kernel = RobustKernel::new();
-    let dt = DelaunayTriangulationBuilder::new(&vertices)
-        .toroidal_periodic([1.0_f64, 1.0, 1.0])
-        .build_with_kernel::<_, ()>(&kernel)
-        .expect("periodic 3D build should succeed");
-    assert_eq!(dt.number_of_vertices(), n);
-    assert!(
-        dt.tds().is_valid().is_ok(),
-        "TDS structural validity should pass for 3D periodic triangulation"
-    );
 }
 
 // =============================================================================

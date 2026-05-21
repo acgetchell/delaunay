@@ -209,6 +209,23 @@ fn preludes_cover_bench_apis() -> Result<(), PreludeExportTestError> {
         },
         DelaunayConstructionFailure::GeometricDegeneracy { .. }
     ));
+    let unsupported_periodic_dimension =
+        DelaunayConstructionFailure::UnsupportedPeriodicDimension {
+            dimension: 4,
+            max_validated_dimension: 3,
+            tracking_issue: 416,
+        };
+    let DelaunayConstructionFailure::UnsupportedPeriodicDimension {
+        dimension,
+        max_validated_dimension,
+        tracking_issue,
+    } = unsupported_periodic_dimension
+    else {
+        unreachable!("constructed unsupported periodic dimension variant should match");
+    };
+    assert_eq!(dimension, 4);
+    assert_eq!(max_validated_dimension, 3);
+    assert_eq!(tracking_issue, 416);
     let cavity_failure = DelaunayConstructionFailure::InsertionCavityFilling {
         source: CavityFillingError::EmptyFanTriangulation,
     };

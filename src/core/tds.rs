@@ -6183,6 +6183,16 @@ impl<T, U, V, const D: usize> Tds<T, U, V, D> {
                             ),
                         })?;
 
+                // Periodic-lifted adjacencies do not have a unique bare canonical
+                // mirror facet at this structural layer because the embedding depends
+                // on lattice representative choice. Neighbor/facet-incidence validation
+                // checks lifted facet identity and reciprocal wiring.
+                if simplex.periodic_vertex_offsets().is_some()
+                    || neighbor_simplex.periodic_vertex_offsets().is_some()
+                {
+                    continue;
+                }
+
                 let mirror_idx = simplex
                     .mirror_facet_index(facet_idx, neighbor_simplex)
                     .ok_or_else(|| TdsError::InvalidNeighbors {
@@ -6221,16 +6231,6 @@ impl<T, U, V, const D: usize> Tds<T, U, V, D> {
                             context: "orientation validation".to_string(),
                         },
                     });
-                }
-
-                // Periodic-lifted adjacencies do not have a unique canonical orientation at this
-                // structural layer because the embedding depends on lattice representative choice.
-                // Skip combinatorial orientation checks for these pairs after validating reciprocal
-                // neighbor wiring above.
-                if simplex.periodic_vertex_offsets().is_some()
-                    || neighbor_simplex.periodic_vertex_offsets().is_some()
-                {
-                    continue;
                 }
 
                 let simplex1_facet_vertices =
@@ -7040,6 +7040,12 @@ impl<T, U, V, const D: usize> Tds<T, U, V, D> {
                         },
                     });
                 };
+
+                if simplex.periodic_vertex_offsets().is_some()
+                    || neighbor_simplex.periodic_vertex_offsets().is_some()
+                {
+                    continue;
+                }
 
                 let neighbor_vertices = simplex_vertices.get(&neighbor_key).ok_or_else(|| {
                     TdsError::InconsistentDataStructure {

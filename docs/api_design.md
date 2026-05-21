@@ -144,7 +144,9 @@ fn main() -> Result<(), ExampleError> {
 **When to use the Builder:**
 
 - **Toroidal/periodic triangulations**: Use `.toroidal()` (Phase 1 canonicalized) or
-  `.toroidal_periodic()` (Phase 2 periodic image-point) with explicit domain periods
+  `.toroidal_periodic()` (Phase 2 periodic image-point) with explicit domain periods.
+  The periodic image-point path is release-validated in 2D and compact 3D; 4D/5D
+  fail fast pending scalable quotient construction in issue #416.
 - **Custom topology guarantees**: Set stricter or more relaxed manifold checks
 - **Custom validation policies**: Configure `ValidationPolicy` via
   `dt.try_set_validation_policy(...)` before or after build when callers need
