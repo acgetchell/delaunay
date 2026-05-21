@@ -728,12 +728,27 @@ fn test_cube_vertices_3d() {
         )
         .unwrap();
 
+    // The eight cube corners are cospherical, so this intentionally exercises
+    // degenerate construction. Under `TopologyGuarantee::PLManifold`,
+    // `DelaunayTriangulation::new_with_topology_guarantee` may omit one
+    // boundary vertex while preserving a valid PL-manifold. This edge-case test
+    // checks that construction succeeds with a non-empty triangulation, not that
+    // the cospherical cube is meshed into a specific tetrahedralization.
     let vertex_count = dt.number_of_vertices();
     assert!(
         (7..=8).contains(&vertex_count),
-        "degenerate cube construction should retain at least 7 vertices, got {vertex_count}"
+        "test_cube_vertices_3d using TopologyGuarantee::PLManifold should retain 7 or 8 vertices, got {vertex_count}"
     );
-    assert!(dt.number_of_simplices() > 0);
+    let simplex_count = dt.number_of_simplices();
+    assert!(
+        simplex_count >= 1,
+        "test_cube_vertices_3d using TopologyGuarantee::PLManifold should produce at least one simplex, got {simplex_count}"
+    );
+    let validation = dt.is_valid();
+    assert!(
+        validation.is_ok(),
+        "test_cube_vertices_3d using TopologyGuarantee::PLManifold should produce a valid triangulation: {validation:?}"
+    );
 }
 
 // =========================================================================

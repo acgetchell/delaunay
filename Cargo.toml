@@ -68,6 +68,7 @@ count-allocations = [ "dep:allocation-counter" ] # Enable allocation counting th
 #
 # These features intentionally do not enable dependencies. They select optional
 # diagnostics, logging, or long-running tests through `#[cfg(feature = "...")]`.
+bench = [  ] # Compatibility no-op for existing `--features bench` invocations; benchmarks live under `benches/`.
 bench-logging = [  ] # Enable extra benchmark logging for CI diagnostics.
 diagnostics = [  ] # Enable opt-in diagnostic helpers and verbose test diagnostics.
 slow-tests = [  ] # Enable correctness tests that exceed the default-suite 10-second budget.

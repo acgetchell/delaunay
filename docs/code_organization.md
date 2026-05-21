@@ -535,7 +535,7 @@ than through a `delaunay::delaunay` or `delaunay::triangulation` facade.
 - **Environment**: `rust-toolchain.toml`, `.python-version`, `.cargo/config.toml`, GitHub Actions workflows
 - **Development Workflow**: `justfile` with automated commands for common development tasks (see [Development Workflow](#development-workflow) below)
 - **Memory Profiling**: `count-allocations` feature flag, allocation-counter dependency, profiling benchmarks
-- **Performance Analysis**: `bench` feature flag for timing-based tests and performance demos (see "Benchmark-style tests" note above)
+- **Performance Analysis**: Criterion benchmark targets under `benches/` for timing-based measurements and performance demos
 - **Project Metadata**: `CITATION.cff`, `REFERENCES.md`, `AGENTS.md`
 
 ### Architectural Principles
@@ -547,7 +547,8 @@ The project structure reflects several key architectural decisions:
 3. **Trait-Based Architecture**: Heavy use of traits for extensibility and code reuse
 4. **Performance Focus**: Dedicated benchmarking infrastructure, performance regression detection, and memory allocation profiling
 5. **Memory Profiling**: Comprehensive allocation tracking with `count-allocations` feature for detailed memory analysis
-6. **Performance Analysis (opt-in)**: `bench` feature for timing-based tests and ergonomics checks; distinct from CI-driven regression detection in item 4
+6. **Performance Analysis (opt-in)**: Criterion benchmark targets for timing-based
+   measurements and ergonomics checks, distinct from CI-driven regression detection in item 4
 7. **Academic Integration**: Strong support for research use with comprehensive citations and references
 8. **Performance-Oriented Design**: Optimized collections, key-based APIs, and optional spatial indexing to reduce hot-path overhead
 9. **Enhanced Robustness**: Rollback mechanisms, atomic operations, and comprehensive error handling
