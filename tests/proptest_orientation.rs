@@ -138,20 +138,15 @@ macro_rules! gen_orientation_incremental_props {
 
 gen_orientation_construction_and_tamper_props!(2, 4, 10);
 gen_orientation_construction_and_tamper_props!(3, 5, 12);
-gen_orientation_construction_and_tamper_props!(
-    4,
-    6,
-    14,
-    #[ignore = "Slow (>60s) in test-integration"]
-);
+gen_orientation_construction_and_tamper_props!(4, 6, 14);
 gen_orientation_construction_and_tamper_props!(
     5,
     7,
     16,
-    #[ignore = "Slow (>60s) in test-integration"]
+    #[cfg(feature = "slow-tests")]
 );
 
 gen_orientation_incremental_props!(2, 4, 10);
 gen_orientation_incremental_props!(3, 5, 12);
-gen_orientation_incremental_props!(4, 6, 14, #[ignore = "Slow (>60s) in test-integration"]);
-gen_orientation_incremental_props!(5, 7, 16, #[ignore = "Slow (>60s) in test-integration"]);
+gen_orientation_incremental_props!(4, 6, 14);
+gen_orientation_incremental_props!(5, 7, 16, #[cfg(feature = "slow-tests")]);

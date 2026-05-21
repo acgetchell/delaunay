@@ -3,6 +3,20 @@
 This directory contains integration tests for the delaunay library, focusing on comprehensive testing scenarios, debugging utilities,
 regression testing, and performance analysis.
 
+## Routine Test Buckets
+
+Correctness tests live in two routine buckets:
+
+- Default tests run through `just test`; each test should normally stay under
+  about 10 seconds.
+- Slow tests are deterministic correctness or regression tests that exceed that
+  budget; gate them with `#[cfg(feature = "slow-tests")]` and run them with
+  `just test-slow`.
+
+Do not use `#[ignore]` as a slow-test marker. Slow correctness tests belong
+behind `#[cfg(feature = "slow-tests")]`; benchmark-style measurements belong in
+`benches/`; known limitations should be asserted explicitly instead of hidden.
+
 ## Test Categories
 
 ### 🎲 Property-Based Testing
@@ -92,7 +106,7 @@ Property-based tests focused on coherent orientation invariants in the TDS layer
 - **Tamper detection**: simplex-order tampering is detected as `OrientationViolation`
 - **Incremental coherence**: orientation remains coherent after each successful insertion
 
-**Dimensions Tested:** 2D-5D (4D/5D marked slow/ignored in test-integration profile)
+**Dimensions Tested:** 2D-5D (5D slow variants run through `just test-slow`)
 
 **Run with:** `cargo test --test proptest_orientation` or included in `just test`
 
@@ -135,11 +149,11 @@ Property-based tests for `DelaunayTriangulation` invariants (all Delaunay-specif
   - Incremental insertion maintains validity after each insertion
   - Duplicate coordinate rejection (geometric duplicate detection at insertion time)
 - **Delaunay Property (Fast O(N) via Flip Predicates)**:
-  - Empty circumsphere condition - No vertex lies strictly inside any simplex's circumsphere (2D-3D active; 4D-5D slow variants retained under `--ignored`)
-  - Insertion-order robustness - Levels 1–3 validity across insertion orders (2D-4D active; 5D retained under `--ignored`)
-  - Duplicate cloud integration - Full pipeline with messy real-world inputs (2D-3D active; 4D-5D slow variants retained under `--ignored`)
+  - Empty circumsphere condition - No vertex lies strictly inside any simplex's circumsphere
+  - Insertion-order robustness - Levels 1–3 validity across insertion orders
+  - Duplicate cloud integration - Full pipeline with messy real-world inputs
 
-**Status:** ✅ Fast Delaunay property tests are enabled and passing in the default suite; slow high-dimensional variants are available with `--ignored`.
+**Status:** ✅ Fast Delaunay property tests run in the default suite; high-dimensional variants over the 10-second budget run through `just test-slow`.
 
 **Implementation:** Bistellar flips (k=2 facets, k=3 ridges) with automatic Delaunay repair:
 
@@ -148,18 +162,9 @@ Property-based tests for `DelaunayTriangulation` invariants (all Delaunay-specif
 - Inverse edge/triangle queues for 4D/5D repair
 - See `src/core/algorithms/flips.rs` for implementation
 
-**Remaining ignored high-dimensional variants**:
+**Slow variants:** 5D duplicate-coordinate and insertion-order robustness properties are gated by `slow-tests`.
 
-These are pending the v0.7.8 slow-test taxonomy audit (#380), which will
-re-measure ignored tests and use a 30-second threshold for grouping unattended
-slow tests under `slow-tests`. The notes below record the previous classification.
-
-- `prop_incremental_insertion_maintains_validity_5d` - Slow (>60s even in release mode)
-- `prop_duplicate_coordinates_rejected_4d/5d` - Slow (>60s), ignored for performance
-- `prop_empty_circumsphere_4d/5d` - Slow (>60s), ignored for performance
-- `prop_cloud_with_duplicates_is_delaunay_4d/5d` - Slow (>60s), ignored for performance
-
-**Dimensions Tested:** 2D-5D, with the slow 4D/5D variants run explicitly under `--ignored`.
+**Dimensions Tested:** 2D-5D; variants over the 10-second budget run through `just test-slow`.
 
 **Run with:** `cargo test --test proptest_delaunay_triangulation` or included in `just test`
 
@@ -304,7 +309,7 @@ a point lies inside the circumsphere of a simplex in 2D, 3D, and 4D.
 # Run specific debug test functions with verbose output
 cargo test --test circumsphere_debug_tools --features diagnostics test_2d_circumsphere_debug -- --nocapture
 cargo test --test circumsphere_debug_tools --features diagnostics test_3d_circumsphere_debug -- --nocapture
-cargo test --test circumsphere_debug_tools --features diagnostics test_all_debug -- --ignored --exact --nocapture
+cargo test --test circumsphere_debug_tools --features diagnostics test_all_debug -- --exact --nocapture
 
 # Run all debug tests at once (recommended)
 just test-diagnostics
@@ -370,7 +375,7 @@ Integration tests for the `delaunayize_by_flips` workflow validating the public 
 Reproduction-oriented debug harnesses for larger 2D-5D datasets tracked in
 issues #340, #341, and #342.
 
-**Run with:** `cargo test --release --test large_scale_debug -- --ignored --nocapture`
+**Run with:** `cargo test --release --features slow-tests --test large_scale_debug -- --nocapture`
 or one of the active large-scale helpers:
 
 - `just debug-large-scale-2d [n] [repair_every]` — default `n=36000`

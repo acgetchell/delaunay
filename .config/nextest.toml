@@ -40,3 +40,12 @@ path = "test-results/junit.xml"
 # Store test output in JUnit report
 store-success-output = false
 store-failure-output = true
+
+[profile.slow]
+# Slow correctness and regression tests are intentionally outside the default
+# 10-second per-test budget. Keep a finite watchdog so hangs still fail.
+failure-output = "immediate-final"
+success-output = "never"
+fail-fast = false
+retries = 0
+slow-timeout = { period = "900s", terminate-after = 1 }

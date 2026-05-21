@@ -25,8 +25,8 @@ function does not panic. In this crate, that usually means one of:
 - serialization round trips and public API surface stability
 
 Dimension-generic properties should cover 2D through 5D when feasible. Heavier
-or intentionally slow properties may be gated by `slow-tests` or temporarily
-ignored while the v0.7.8 slow-test taxonomy cleanup is in progress.
+or intentionally slow properties must be gated by `slow-tests` so `just
+test-slow` runs them explicitly.
 
 ## Where Tests Live
 
@@ -95,9 +95,9 @@ just test-slow
 just test-slow-release
 ```
 
-The intended contract for `slow-tests` versus `#[ignore]` is being cleaned up in
-the v0.7.8 test taxonomy work (#380). Until that lands, prefer the documented
-recipes in [`tests/README.md`](../tests/README.md) for one-off ignored tests.
+The intended contract for slow property tests is `#[cfg(feature = "slow-tests")]`
+plus `just test-slow`. Do not use `#[ignore]` for long-running property tests;
+prefer the documented recipes in [`tests/README.md`](../tests/README.md).
 
 ## Configuration
 

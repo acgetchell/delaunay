@@ -29,11 +29,10 @@ Key takeaways from v0.7.7:
   Node-backed Markdown/YAML tooling to `pretty_yaml` plus a Rust Markdown
   linter, while also cleaning up `just` recipe naming and adding a Semgrep guard
   for check-before-fix ordering.
-- **Predicate and slow-test cleanup (#256/#380):** continue the predicate
-  performance work needed to re-enable ignored proptests, re-measure ignored
-  tests, move unattended tests over the 30-second threshold into the
-  `slow-tests` flow, and keep shorter ignored tests eligible for the default
-  suite.
+- **Predicate and slow-test cleanup (#256/#380):** continue predicate
+  performance work while preserving the test taxonomy: default correctness
+  tests stay under the routine budget, long-running correctness tests use the
+  `slow-tests` flow, and benchmark-style measurements live in `benches/`.
 - **Module and prelude cleanup (#381):** rename the public high-level
   triangulation module layout to `delaunay`, split the current
   `delaunay/triangulation.rs` implementation into clearer components, and

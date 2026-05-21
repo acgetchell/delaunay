@@ -67,11 +67,11 @@ count-allocations = [ "dep:allocation-counter" ] # Enable allocation counting th
 # cfg-only feature gates.
 #
 # These features intentionally do not enable dependencies. They select optional
-# code paths, diagnostics, or long-running tests through `#[cfg(feature = "...")]`.
-bench = [  ] # Enable benchmark-style tests and performance analysis.
+# diagnostics, logging, or long-running tests through `#[cfg(feature = "...")]`.
+bench = [  ] # Compatibility no-op for existing `--features bench` invocations; benchmarks live under `benches/`.
 bench-logging = [  ] # Enable extra benchmark logging for CI diagnostics.
 diagnostics = [  ] # Enable opt-in diagnostic helpers and verbose test diagnostics.
-slow-tests = [  ] # Enable slow-running integration tests (100+ vertices, multiple dimensions).
+slow-tests = [  ] # Enable correctness tests that exceed the default-suite 10-second budget.
 
 # Performance profile for benchmark baselines, comparisons, summaries, and
 # profiling. Comprehensive CI validation intentionally uses Cargo's default
@@ -96,6 +96,11 @@ harness = false
 [[bench]]
 name = "tds_clone"
 path = "benches/tds_clone.rs"
+harness = false
+
+[[bench]]
+name = "boundary_uuid_iter"
+path = "benches/boundary_uuid_iter.rs"
 harness = false
 
 [[bench]]

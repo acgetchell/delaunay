@@ -4025,8 +4025,7 @@ impl<T, U, V, const D: usize> Tds<T, U, V, D> {
     /// Repairs locally degenerate simplices by removing them and clearing dangling references
     /// (neighbor back-references + `incident_simplex` pointers).
     ///
-    /// This is a narrowly scoped repair primitive intended for test-only usage
-    /// (including bench-feature tests).
+    /// This is a narrowly scoped repair primitive intended for test-only usage.
     ///
     /// A simplex is treated as degenerate if it:
     /// - fails basic per-simplex validity (`Simplex::is_valid()`),

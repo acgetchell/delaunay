@@ -654,72 +654,6 @@ fn regression_insertion_order_3d_case_001() {
 // =============================================================================
 
 macro_rules! gen_incremental_insertion_validity {
-    ($dim:literal, $min:literal, $max:literal, ignore $(, #[$attr:meta])*) => {
-        pastey::paste! {
-            proptest! {
-                #[ignore = "Insertion order issues; see plan 72755302-2c93-43bb-879c-ef6ed21f5560"]
-                $(#[$attr])*
-                #[test]
-                fn [<prop_incremental_insertion_maintains_validity_ $dim d>](
-                    initial_points in prop::collection::vec([<vertex_ $dim d>](), $min..=$max),
-                    additional_point in [<vertex_ $dim d>](),
-                ) {
-                    init_tracing();
-                    // Dedup exact duplicates to avoid pathological degeneracies during shrinking.
-                    let initial_vertices =
-                        dedup_vertices_by_coords::<$dim>(Vertex::from_points(&initial_points));
-
-                    // Require at least D+1 distinct vertices for valid simplices.
-                    prop_assume!(initial_vertices.len() > $dim);
-
-                    // Reject pathological shrink targets with too many points on a coordinate hyperplane (x_i == 0).
-                    // This is redundant with `finite_coordinate()` today (|x| > 1e-6), but kept as a guardrail if the
-                    // generator changes.
-                    prop_assume!(has_no_coordinate_hyperplane_degeneracy(&initial_vertices));
-
-                    let additional_vertex = vertex!(additional_point);
-
-                    // Avoid duplicate insertion cases here; duplicate-handling is tested in dedicated suites.
-                    let add_coords = *additional_vertex.point().coords();
-                    let is_dup = initial_vertices.iter().any(|u| {
-                        let uc = *u.point().coords();
-                        add_coords
-                            .iter()
-                            .zip(uc.iter())
-                            .all(|(a, b)| a.to_bits() == b.to_bits())
-                    });
-                    prop_assume!(!is_dup);
-
-                    let dt = DelaunayTriangulation::<_, (), (), $dim>::new_with_topology_guarantee(
-                        &initial_vertices,
-                        TopologyGuarantee::PLManifold,
-                    );
-                    if let Err(err) = &dt {
-                        if std::env::var_os("DELAUNAY_PROPTEST_CONSTRUCTION_ERRORS").is_some() {
-                            tracing::warn!(
-                                "{}D: incremental insertion construction failed (treated as rejection): {err}",
-                                $dim
-                            );
-                        }
-                    }
-                    let mut dt = dt.prop_assume_ok()?;
-                    prop_assert_levels_1_to_3_valid!($dim, &dt, "initial triangulation");
-
-                    let insert_result = dt.insert(additional_vertex);
-                    if let Err(e) = &insert_result {
-                        if std::env::var_os("DELAUNAY_PROPTEST_INSERT_ERRORS").is_some() {
-                            tracing::warn!(
-                                "{}D: incremental insertion error (treated as rejection): {e}",
-                                $dim
-                            );
-                        }
-                    }
-                    prop_assume!(insert_result.is_ok());
-                    prop_assert_levels_1_to_3_valid!($dim, &dt, "after insertion");
-                }
-            }
-        }
-    };
     ($dim:literal, $min:literal, $max:literal $(, #[$attr:meta])*) => {
         pastey::paste! {
             proptest! {
@@ -857,7 +791,7 @@ proptest! {
     }
 }
 gen_incremental_insertion_validity!(4, 5, 7);
-gen_incremental_insertion_validity!(5, 6, 8, #[ignore = "Slow (>60s) even in release mode for 5D"]);
+gen_incremental_insertion_validity!(5, 6, 8);
 
 proptest! {
     #![proptest_config(Config {
@@ -966,8 +900,8 @@ macro_rules! gen_duplicate_coords_test {
 
 gen_duplicate_coords_test!(2, 3, 10);
 gen_duplicate_coords_test!(3, 4, 12);
-gen_duplicate_coords_test!(4, 5, 14, #[ignore = "Slow (>60s) in test-integration"]);
-gen_duplicate_coords_test!(5, 6, 16, #[ignore = "Slow (>60s) in test-integration"]);
+gen_duplicate_coords_test!(4, 5, 14);
+gen_duplicate_coords_test!(5, 6, 16, #[cfg(feature = "slow-tests")]);
 
 /// Allow runtime tuning for the empty-circumsphere property in higher dimensions.
 ///
@@ -1056,65 +990,13 @@ proptest! {
             }
         }
     };
-    ($dim:literal, $min_vertices:literal, $max_vertices:literal, ignore $(, #[$attr:meta])*) => {
-        pastey::paste! {
-proptest! {
-                /// Property: For every simplex, no other vertex lies strictly inside
-                /// the circumsphere defined by that simplex (Delaunay condition).
-                ///
-                /// **Status**: Ignored - awaiting higher-dimensional flip validation.
-                #[ignore = "Requires k>2 flip validation (3D+); see Issue #120"]
-                $(#[$attr])*
-                #[test]
-                fn [<prop_empty_circumsphere_ $dim d>](
-                    vertices in empty_circumsphere_vertices!($dim, $min_vertices, $max_vertices)
-                ) {
-                    init_tracing();
-                    // Build Delaunay triangulation using DelaunayTriangulation::new_with_topology_guarantee() which properly triangulates all vertices
-                    // This ensures the entire triangulation (including initial simplex) satisfies Delaunay property
-
-                    // Require at least D+1 distinct vertices to form valid D-simplices
-                    prop_assume!(vertices.len() > $dim);
-
-                    // General position filter: reject pathological shrink targets with too many points lying exactly on a
-                    // coordinate hyperplane (x_i == 0.0).
-                    prop_assume!(has_no_coordinate_hyperplane_degeneracy(&vertices));
-
-                    // Use DelaunayTriangulation::new_with_topology_guarantee() to triangulate ALL vertices together
-                    let dt = DelaunayTriangulation::<_, (), (), $dim>::new_with_topology_guarantee(
-                        &vertices,
-                        TopologyGuarantee::PLManifold,
-                    );
-                    if let Err(err) = &dt {
-                        if std::env::var_os("DELAUNAY_PROPTEST_CONSTRUCTION_ERRORS").is_some() {
-                            tracing::warn!(
-                                "{}D: empty-circumsphere construction failed (treated as rejection): {err}",
-                                $dim
-                            );
-                        }
-                    }
-                    let dt = dt.prop_assume_ok()?;
-
-                    // Verify the triangulation satisfies the Delaunay property (Level 4)
-                    // Use fast O(N) flip-based verification instead of O(N×V) brute-force
-                    let delaunay_result = dt.is_delaunay_via_flips();
-                    prop_assert!(
-                        delaunay_result.is_ok(),
-                        "{}D triangulation should satisfy Delaunay property: {:?}",
-                        $dim,
-                        delaunay_result.err()
-                    );
-                }
-            }
-        }
-    };
 }
 
 // 2D–5D coverage (keep ranges small to bound runtime)
 test_empty_circumsphere!(2, 6, 10);
 test_empty_circumsphere!(3, 6, 10);
-test_empty_circumsphere!(4, 6, 12, #[ignore = "Slow (>60s) in test-integration"]);
-test_empty_circumsphere!(5, 7, 12, #[ignore = "Slow (>60s) in test-integration"]);
+test_empty_circumsphere!(4, 6, 12);
+test_empty_circumsphere!(5, 7, 12);
 
 // =============================================================================
 // FAST HIGH-DIMENSIONAL CI SMOKE TESTS
@@ -1998,8 +1880,8 @@ macro_rules! gen_insertion_order_robustness_high_dim {
     };
 }
 
-gen_insertion_order_robustness_high_dim!(4, 6, 12, #[ignore = "Slow (>60s) in test-integration"]);
-gen_insertion_order_robustness_high_dim!(5, 7, 12, #[ignore = "Slow (>60s) in test-integration"]);
+gen_insertion_order_robustness_high_dim!(4, 6, 12);
+gen_insertion_order_robustness_high_dim!(5, 7, 12, #[cfg(feature = "slow-tests")]);
 
 // =============================================================================
 // DUPLICATE CLOUD INTEGRATION TESTS
@@ -2018,113 +1900,11 @@ fn count_unique_coords_by_bits<const D: usize>(pts: &[Point<f64, D>]) -> usize {
 }
 
 macro_rules! gen_duplicate_cloud_test {
-    ($dim:literal, $min_vertices:literal, ignore $(, #[$attr:meta])*) => {
-        pastey::paste! {
-            /// Generate random point cloud with exact duplicates and near-duplicates (1e-7 jitter).
-            /// Tests full construction pipeline with realistic messy inputs.
-            fn [<cloud_with_duplicates_ $dim d>]() -> impl Strategy<Value = Vec<Point<f64, $dim>>> {
-                prop::collection::vec(
-                    prop::array::[<uniform $dim>](finite_coordinate()).prop_map(Point::new),
-                    6..=12,
-                )
-                .prop_map(|mut pts| {
-                    if pts.len() >= 3 {
-                        // Exact duplicate of the first point
-                        let dup = pts[0];
-                        pts.push(dup);
-
-                        // Jittered near-duplicate of the second point
-                        let mut coords = *pts[1].coords();
-                        for c in &mut coords {
-                            *c += 1e-7;
-                        }
-                        pts.push(Point::new(coords));
-                    }
-                    pts
-                })
-            }
-
-            proptest! {
-                /// Property: Random clouds with duplicates and near-duplicates
-                /// produce triangulations that are globally Delaunay for the kept subset.
-                ///
-                /// **Status**: Enabled - flip repair in place; validates Delaunay for the kept subset.
-                ///
-                /// This integration test exercises the full construction pipeline with messy real-world
-                /// inputs (exact duplicates + near-duplicates).
-                ///
-                /// See: Issue #120, src/core/algorithms/flips.rs
-                #[ignore = "Insertion order issues; see plan 72755302-2c93-43bb-879c-ef6ed21f5560"]
-                $(#[$attr])*
-                #[test]
-                fn [<prop_cloud_with_duplicates_is_delaunay_ $dim d>](
-                    points in [<cloud_with_duplicates_ $dim d>]()
-                ) {
-                    init_tracing();
-                    let log_coverage = std::env::var_os("DELAUNAY_PROPTEST_COVERAGE_LOGS").is_some()
-                        && $dim >= 4;
-                    // Require at least D+1 distinct points
-                    let unique = count_unique_coords_by_bits(&points);
-                    prop_assume!(unique > $min_vertices);
-
-                    let vertices: Vec<Vertex<f64, (), $dim>> = Vertex::from_points(&points);
-
-                    let build_start = std::time::Instant::now();
-                    let options = ConstructionOptions::default()
-                        .with_dedup_policy(DedupPolicy::Epsilon { tolerance: 1e-6 });
-                    let dt = DelaunayTriangulation::<_, (), (), $dim>::new_with_options(
-                        &vertices,
-                        options,
-                    );
-                    let build_elapsed = build_start.elapsed();
-                    if let Err(err) = &dt {
-                        if std::env::var_os("DELAUNAY_PROPTEST_CONSTRUCTION_ERRORS").is_some() {
-                            tracing::warn!(
-                                "{}D: duplicate-cloud construction failed (treated as rejection): {err}",
-                                $dim
-                            );
-                        }
-                    }
-                    let dt = dt.prop_assume_ok()?;
-                    if log_coverage {
-                        tracing::info!(
-                            dim = $dim,
-                            points = points.len(),
-                            unique = unique,
-                            kept_vertices = dt.number_of_vertices(),
-                            build_elapsed = ?build_elapsed,
-                            "prop_cloud_with_duplicates_is_delaunay build complete"
-                        );
-                    }
-
-                    // Structural/topological validity (Levels 1–3) for kept subset
-                    prop_assert_levels_1_to_3_valid!($dim, &dt, "triangulation (kept subset)");
-
-                    // Delaunay validity (Level 4) for kept subset
-                    let validate_start = std::time::Instant::now();
-                    let delaunay = dt.is_valid();
-                    let validate_elapsed = validate_start.elapsed();
-                    if log_coverage {
-                        tracing::info!(
-                            dim = $dim,
-                            validate_elapsed = ?validate_elapsed,
-                            "prop_cloud_with_duplicates_is_delaunay is_valid complete"
-                        );
-                    }
-                    prop_assert!(
-                        delaunay.is_ok(),
-                        "{}D triangulation should satisfy Delaunay property: {:?}",
-                        $dim,
-                        delaunay.err()
-                    );
-                }
-            }
-        }
-    };
     ($dim:literal, $min_vertices:literal $(, #[$attr:meta])*) => {
         pastey::paste! {
             /// Generate random point cloud with exact duplicates and near-duplicates (1e-7 jitter).
             /// Tests full construction pipeline with realistic messy inputs.
+            $(#[$attr])*
             fn [<cloud_with_duplicates_ $dim d>]() -> impl Strategy<Value = Vec<Point<f64, $dim>>> {
                 prop::collection::vec(
                     prop::array::[<uniform $dim>](finite_coordinate()).prop_map(Point::new),
@@ -2227,5 +2007,5 @@ macro_rules! gen_duplicate_cloud_test {
 
 gen_duplicate_cloud_test!(2, 2);
 gen_duplicate_cloud_test!(3, 3);
-gen_duplicate_cloud_test!(4, 4, #[ignore = "Slow (>60s) in test-integration"]);
-gen_duplicate_cloud_test!(5, 5, #[ignore = "Slow (>60s) in test-integration"]);
+gen_duplicate_cloud_test!(4, 4);
+gen_duplicate_cloud_test!(5, 5, #[cfg(feature = "slow-tests")]);

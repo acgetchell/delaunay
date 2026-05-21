@@ -1295,7 +1295,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "stress test; run explicitly with --ignored"]
     fn test_periodic_3d_inconsistency_witness_search_seeded() {
         let canonical_points = periodic_3d_canonical_points();
         let expanded = periodic_3d_builder_style_expansion(&canonical_points);

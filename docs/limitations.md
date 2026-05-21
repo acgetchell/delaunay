@@ -96,16 +96,16 @@ The current 2D–5D large-scale debug envelope is an operational baseline for
 release characterization, not a portable performance promise:
 
 - `just debug-large-scale-{2,3,4,5}d [n] [repair_every]` runs the same
-  release-mode ignored harness shape across dimensions: deterministic point
+  release-mode `slow-tests` harness shape across dimensions: deterministic point
   generation, batch construction, final flip repair, and `validation_report`
   for Levels 1–4.
 - The `just` helper defaults are dimension-aware rather than identical: 2D
   defaults to 36,000 vertices, 3D defaults to 7,500 vertices, 4D defaults to
   900 vertices, and 5D defaults to 140 vertices. Pass `n` explicitly when a
   run must match a documented scale exactly.
-- The raw ignored tests use slightly heavier defaults for some dimensions
-  (currently 40,000 vertices in 2D and 150 vertices in 5D). Prefer the `just`
-  helpers for routine acceptance/profiling runs.
+- The raw `slow-tests` harness defaults use slightly heavier defaults for some
+  dimensions (currently 40,000 vertices in 2D and 150 vertices in 5D). Prefer
+  the `just` helpers for routine acceptance/profiling runs.
 
 Current 2D scale envelope:
 

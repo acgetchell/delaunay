@@ -143,5 +143,5 @@ macro_rules! test_simplex_properties {
 // Parameters: dimension, min_vertices, max_vertices, expected_vertices (D+1), max_neighbors (D+1)
 test_simplex_properties!(2, 4, 10, 3, 3);
 test_simplex_properties!(3, 5, 12, 4, 4);
-test_simplex_properties!(4, 6, 14, 5, 5, #[ignore = "Slow (>60s) in test-integration"]);
-test_simplex_properties!(5, 7, 16, 6, 6, #[ignore = "Slow (>60s) in test-integration"]);
+test_simplex_properties!(4, 6, 14, 5, 5);
+test_simplex_properties!(5, 7, 16, 6, 6, #[cfg(feature = "slow-tests")]);

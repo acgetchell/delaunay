@@ -200,7 +200,7 @@ ci-baseline ref="main":
     just ci
     just perf-baseline {{ ref }}
 
-# CI + slow/stress tests (100+ vertices, stress tests)
+# CI plus the explicit slow correctness bucket.
 ci-slow: ci test-slow
     @echo "✅ CI + slow tests passed!"
 
@@ -236,16 +236,16 @@ coverage-ci: _ensure-cargo-llvm-cov
     cargo llvm-cov {{ _coverage_base_args }} --cobertura --output-path coverage/cobertura.xml -- --skip prop_
 
 debug-large-scale-2d n="36000" repair_every="1": _ensure-nextest
-    DELAUNAY_BULK_PROGRESS_EVERY=2000 DELAUNAY_LARGE_DEBUG_MAX_RUNTIME_SECS=1800 DELAUNAY_LARGE_DEBUG_N_2D={{ n }} DELAUNAY_LARGE_DEBUG_REPAIR_EVERY={{ repair_every }} cargo nextest run --release --profile ci --test large_scale_debug debug_large_scale_2d -- --ignored --exact --nocapture
+    DELAUNAY_BULK_PROGRESS_EVERY=2000 DELAUNAY_LARGE_DEBUG_MAX_RUNTIME_SECS=1800 DELAUNAY_LARGE_DEBUG_N_2D={{ n }} DELAUNAY_LARGE_DEBUG_REPAIR_EVERY={{ repair_every }} cargo nextest run --release --profile ci --features slow-tests --test large_scale_debug debug_large_scale_2d -- --exact --nocapture
 
 debug-large-scale-3d n="7500" repair_every="1": _ensure-nextest
-    DELAUNAY_BULK_PROGRESS_EVERY=500 DELAUNAY_LARGE_DEBUG_MAX_RUNTIME_SECS=1800 DELAUNAY_LARGE_DEBUG_N_3D={{ n }} DELAUNAY_LARGE_DEBUG_REPAIR_EVERY={{ repair_every }} cargo nextest run --release --profile ci --test large_scale_debug debug_large_scale_3d -- --ignored --exact --nocapture
+    DELAUNAY_BULK_PROGRESS_EVERY=500 DELAUNAY_LARGE_DEBUG_MAX_RUNTIME_SECS=1800 DELAUNAY_LARGE_DEBUG_N_3D={{ n }} DELAUNAY_LARGE_DEBUG_REPAIR_EVERY={{ repair_every }} cargo nextest run --release --profile ci --features slow-tests --test large_scale_debug debug_large_scale_3d -- --exact --nocapture
 
 debug-large-scale-4d n="900" repair_every="1": _ensure-nextest
-    DELAUNAY_BULK_PROGRESS_EVERY=100 DELAUNAY_LARGE_DEBUG_MAX_RUNTIME_SECS=1800 DELAUNAY_LARGE_DEBUG_N_4D={{ n }} DELAUNAY_LARGE_DEBUG_REPAIR_EVERY={{ repair_every }} cargo nextest run --release --profile ci --test large_scale_debug debug_large_scale_4d -- --ignored --exact --nocapture
+    DELAUNAY_BULK_PROGRESS_EVERY=100 DELAUNAY_LARGE_DEBUG_MAX_RUNTIME_SECS=1800 DELAUNAY_LARGE_DEBUG_N_4D={{ n }} DELAUNAY_LARGE_DEBUG_REPAIR_EVERY={{ repair_every }} cargo nextest run --release --profile ci --features slow-tests --test large_scale_debug debug_large_scale_4d -- --exact --nocapture
 
 debug-large-scale-5d n="140" repair_every="1": _ensure-nextest
-    DELAUNAY_BULK_PROGRESS_EVERY=20 DELAUNAY_LARGE_DEBUG_MAX_RUNTIME_SECS=1800 DELAUNAY_LARGE_DEBUG_N_5D={{ n }} DELAUNAY_LARGE_DEBUG_REPAIR_EVERY={{ repair_every }} cargo nextest run --release --profile ci --test large_scale_debug debug_large_scale_5d -- --ignored --exact --nocapture
+    DELAUNAY_BULK_PROGRESS_EVERY=20 DELAUNAY_LARGE_DEBUG_MAX_RUNTIME_SECS=1800 DELAUNAY_LARGE_DEBUG_N_5D={{ n }} DELAUNAY_LARGE_DEBUG_REPAIR_EVERY={{ repair_every }} cargo nextest run --release --profile ci --features slow-tests --test large_scale_debug debug_large_scale_5d -- --exact --nocapture
 
 # Default recipe shows available commands
 default:
@@ -280,7 +280,7 @@ help-workflows:
     @echo "  just test-integration  # All integration tests (includes proptests)"
     @echo "  just test-integration-fast # Integration tests (skips proptests)"
     @echo "  just test-python       # Python tests only (pytest)"
-    @echo "  just test-slow         # Run slow/stress tests with --features slow-tests"
+    @echo "  just test-slow         # Run correctness tests over the 10s default-suite budget"
     @echo "  just examples          # Run all examples"
     @echo ""
     @echo "Active large-scale debugging:"
@@ -302,7 +302,7 @@ help-workflows:
     @echo "  just profile [toolchain] [code_ref] # Run ci_performance_suite for a compiler/code pair"
     @echo ""
     @echo "Larger/optional workflows:"
-    @echo "  just ci-slow             # CI + slow tests (100+ vertices)"
+    @echo "  just ci-slow             # CI + slow correctness tests"
     @echo "  just ci-baseline         # CI + persist default performance baseline"
     @echo "  just coverage            # Generate coverage report (HTML)"
     @echo "  just semgrep             # Run repository-owned Semgrep rules"
@@ -471,7 +471,7 @@ perf-large-scale-smoke max_secs="60": _ensure-nextest
             DELAUNAY_LARGE_DEBUG_MAX_RUNTIME_SECS="$max_secs" \
             "$n_env=$n_points" \
             DELAUNAY_LARGE_DEBUG_REPAIR_EVERY=1 \
-            cargo nextest run --release --profile ci --test large_scale_debug "$test_name" -- --ignored --exact --nocapture; then
+            cargo nextest run --release --profile ci --features slow-tests --test large_scale_debug "$test_name" -- --exact --nocapture; then
             echo "✅ ${dimension} completed within the ${max_secs}s test-runtime cap"
         else
             local code=$?
@@ -965,15 +965,14 @@ test-release: _ensure-nextest
     cargo nextest run --release --profile ci
     cargo test --doc --release
 
-# Run tests including slow/stress tests (100+ vertices, multiple dimensions)
-# These are gated behind the 'slow-tests' feature to keep CI fast
+# Run correctness tests that exceed the 10s default-suite budget.
+# Slow tests run in release mode because debug exact-predicate paths can turn
+# a slow correctness check into a local timeout.
 test-slow: _ensure-nextest
-    cargo nextest run --profile ci --features slow-tests
-    cargo test --doc --features slow-tests
-
-test-slow-release: _ensure-nextest
-    cargo nextest run --release --profile ci --features slow-tests
+    cargo nextest run --release --profile slow --features slow-tests
     cargo test --doc --release --features slow-tests
+
+test-slow-release: test-slow
 
 # test-unit: runs lib and doc tests.
 test-unit: _ensure-nextest

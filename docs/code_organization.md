@@ -341,7 +341,7 @@ just test-diagnostics
 # Or run specific test functions with verbose output (direct cargo)
 cargo test --test circumsphere_debug_tools --features diagnostics test_2d_circumsphere_debug -- --nocapture
 cargo test --test circumsphere_debug_tools --features diagnostics test_3d_circumsphere_debug -- --nocapture
-cargo test --test circumsphere_debug_tools --features diagnostics test_all_debug -- --ignored --exact --nocapture
+cargo test --test circumsphere_debug_tools --features diagnostics test_all_debug -- --exact --nocapture
 # Or run all debug tests at once
 cargo test --test circumsphere_debug_tools --features diagnostics -- --nocapture
 ```
@@ -360,19 +360,18 @@ cargo bench --profile perf --bench profiling_suite --features count-allocations
 > For consistent results across environments, ensure the same allocator is used. The `allocation-counter` crate works
 > with the global allocator interface.
 
-**Note**: Benchmark-style tests are available through the `bench` feature for performance analysis and demonstrations:
+**Note**: Benchmark-style measurements live in Criterion harnesses under `benches/`:
 
 ```bash
-# Run regular tests (just command)
+# Run regular tests
 just test
 
-# Run all tests including benchmark-style performance analysis
-cargo test --lib --features bench
+# Run focused benchmark harnesses
+cargo bench --profile perf --bench boundary_uuid_iter -- --noplot
 ```
 
-> **CI Stability**: The `bench` feature gates timing-based tests that may be flaky in CI environments.
-> These tests are designed for local performance analysis and ergonomics validation rather than
-> deterministic unit testing. Use `--features bench` when conducting performance investigations.
+> **CI Stability**: Timing-based measurements are not unit tests. Keep
+> performance analysis in `benches/` so correctness tests remain deterministic.
 
 **Note**: Python tests in `scripts/tests/` are executed via pytest and discovered via `pyproject.toml`. Run the usual suite through the `just` recipe:
 
@@ -536,7 +535,7 @@ than through a `delaunay::delaunay` or `delaunay::triangulation` facade.
 - **Environment**: `rust-toolchain.toml`, `.python-version`, `.cargo/config.toml`, GitHub Actions workflows
 - **Development Workflow**: `justfile` with automated commands for common development tasks (see [Development Workflow](#development-workflow) below)
 - **Memory Profiling**: `count-allocations` feature flag, allocation-counter dependency, profiling benchmarks
-- **Performance Analysis**: `bench` feature flag for timing-based tests and performance demos (see "Benchmark-style tests" note above)
+- **Performance Analysis**: Criterion benchmark targets under `benches/` for timing-based measurements and performance demos
 - **Project Metadata**: `CITATION.cff`, `REFERENCES.md`, `AGENTS.md`
 
 ### Architectural Principles
@@ -548,7 +547,8 @@ The project structure reflects several key architectural decisions:
 3. **Trait-Based Architecture**: Heavy use of traits for extensibility and code reuse
 4. **Performance Focus**: Dedicated benchmarking infrastructure, performance regression detection, and memory allocation profiling
 5. **Memory Profiling**: Comprehensive allocation tracking with `count-allocations` feature for detailed memory analysis
-6. **Performance Analysis (opt-in)**: `bench` feature for timing-based tests and ergonomics checks; distinct from CI-driven regression detection in item 4
+6. **Performance Analysis (opt-in)**: Criterion benchmark targets for timing-based
+   measurements and ergonomics checks, distinct from CI-driven regression detection in item 4
 7. **Academic Integration**: Strong support for research use with comprehensive citations and references
 8. **Performance-Oriented Design**: Optimized collections, key-based APIs, and optional spatial indexing to reduce hot-path overhead
 9. **Enhanced Robustness**: Rollback mechanisms, atomic operations, and comprehensive error handling
@@ -597,7 +597,7 @@ just test          # Tests + benchmark/release compile smoke
 
 ```bash
 just ci            # Comprehensive checks + tests + examples
-just ci-slow       # CI + slow tests (100+ vertices)
+just ci-slow       # CI + slow correctness tests
 ```
 
 **Testing Workflows:**
@@ -608,8 +608,8 @@ just test-integration # All integration tests (includes proptests)
 just test-all      # All tests (lib + doc + integration + Python)
 just test-python   # Python tests only (pytest)
 just test-release  # All tests in release mode
-just test-slow     # Run slow/stress tests with --features slow-tests
-just test-slow-release # Slow tests in release mode (faster)
+just test-slow     # Run correctness tests over the 10s default-suite budget
+just test-slow-release # Compatibility alias for just test-slow
 just test-diagnostics # Run diagnostics tools with output
 just test-allocation  # Run allocation profiling tests
 ```

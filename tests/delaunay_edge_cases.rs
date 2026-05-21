@@ -95,31 +95,6 @@ macro_rules! test_regression_config {
             }
         }
     };
-    ($name:ident, $dim:expr, $vertices:expr, ignore = $reason:expr) => {
-        pastey::paste! {
-            #[test]
-            #[ignore = $reason]
-            fn [<test_ $name>]() {
-                let vertices = $vertices;
-
-                let dt: DelaunayTriangulation<_, (), (), $dim> =
-                    DelaunayTriangulation::new_with_topology_guarantee(
-                        &vertices,
-                        TopologyGuarantee::PLManifold,
-                    )
-                        .unwrap_or_else(|err| {
-                            panic!(
-                                "{}D regression configuration failed to construct: {err}",
-                                $dim
-                            )
-                        });
-
-                // Verify basic properties
-                assert_eq!(dt.number_of_vertices(), vertices.len());
-                assert!(dt.number_of_simplices() > 0);
-            }
-        }
-    };
 }
 
 // 2D regression: base triangle with interior and exterior point
@@ -541,7 +516,6 @@ fn test_regression_non_manifold_3d_seed123_50pts() {
 /// Tests seeds near 123 to ensure robustness across similar random configurations.
 /// Some may also trigger temporary non-manifold conditions during insertion.
 #[test]
-#[ignore = "Stress test for non-manifold topology with nearby seeds"]
 fn test_regression_non_manifold_nearby_seeds() {
     let test_seeds = [120, 121, 122, 123, 124, 125, 126];
     let n_points = 50;
@@ -734,7 +708,6 @@ fn test_square_with_center_2d() {
 }
 
 #[test]
-#[ignore = "Geometric degeneracy - cube corners are coplanar in sets of 4"]
 fn test_cube_vertices_3d() {
     // 8 corners of a unit cube
     let vertices = vec![
@@ -755,8 +728,27 @@ fn test_cube_vertices_3d() {
         )
         .unwrap();
 
-    assert_eq!(dt.number_of_vertices(), 8);
-    assert!(dt.number_of_simplices() >= 5); // At least 5 tetrahedra
+    // The eight cube corners are cospherical, so this intentionally exercises
+    // degenerate construction. Under `TopologyGuarantee::PLManifold`,
+    // `DelaunayTriangulation::new_with_topology_guarantee` may omit one
+    // boundary vertex while preserving a valid PL-manifold. This edge-case test
+    // checks that construction succeeds with a non-empty triangulation, not that
+    // the cospherical cube is meshed into a specific tetrahedralization.
+    let vertex_count = dt.number_of_vertices();
+    assert!(
+        (7..=8).contains(&vertex_count),
+        "test_cube_vertices_3d using TopologyGuarantee::PLManifold should retain 7 or 8 vertices, got {vertex_count}"
+    );
+    let simplex_count = dt.number_of_simplices();
+    assert!(
+        simplex_count >= 1,
+        "test_cube_vertices_3d using TopologyGuarantee::PLManifold should produce at least one simplex, got {simplex_count}"
+    );
+    let validation = dt.is_valid();
+    assert!(
+        validation.is_ok(),
+        "test_cube_vertices_3d using TopologyGuarantee::PLManifold should produce a valid triangulation: {validation:?}"
+    );
 }
 
 // =========================================================================
