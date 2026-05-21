@@ -1062,7 +1062,7 @@ verify-expect-counts:
         echo "✓ $label: $actual"
     }
 
-    check_count 'src/**/*.rs doc-comment .expect(' 17 '^\s*//[/!].*\.expect\(' src
+    check_count 'src/**/*.rs doc-comment .expect(' 0 '^\s*//[/!].*\.expect\(' src
 
 yaml-check: yaml-fmt-check yaml-lint
 

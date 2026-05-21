@@ -44,17 +44,17 @@ Treat partial items as still open until their acceptance notes are satisfied.
   layering ridge and vertex-link checks as required.
 - [ ] **10. Replace nested `Option` neighbors with a typed enum.**
   Make unassigned neighbors distinct from assigned boundary slots and hide raw
-  mutation behind accessors. Tracked for v0.7.8 in #387.
+  mutation behind accessors. Deferred beyond v0.7.8 and tracked in #387.
 - [x] **11. Gate `simplices_mut()` out of production builds.**
   The raw storage accessor was deleted; tests now use narrower mutation paths
   or exercise lower-level helpers directly.
 - [ ] **12. Confirm clone semantics for linear-algebra error variants.**
   Verify `LaError: Clone` and keep parent error enums honestly cloneable.
-  Tracked for v0.7.8 in #384.
+  Deferred beyond v0.7.8 and tracked in #384.
 - [x] **13. Make strict insphere consistency test control isolated.**
   The once-init strict-insphere env snapshot is now named and documented as
   process-wide, while unit tests use a thread-local override guard instead of
-  mutating process environment state. Tracked for v0.7.8 in #383.
+  mutating process environment state. Closed for v0.7.8 in #383.
 - [x] **14. Consolidate focused preludes.**
   Delaunay-facing workflow preludes now live directly under
   `delaunay::prelude::{construction,insertion,flips,repair,delaunayize,diagnostics,validation}`,
@@ -74,7 +74,7 @@ Treat partial items as still open until their acceptance notes are satisfied.
   against the live TDS.
 - [ ] **17. Add a leaner adaptive orientation fast path.**
   Avoid paying the diagnostic plus exact predicate path when SoS is unnecessary.
-  Tracked for v0.7.8 in #256.
+  Deferred beyond v0.7.8 and tracked in #256.
 - [x] **18. Avoid fresh UUID allocation for rollback snapshots.**
   Rollback snapshots now preserve identity with `Arc::clone`; ordinary `Clone`
   intentionally keeps fresh runtime identity.
@@ -98,22 +98,23 @@ Treat partial items as still open until their acceptance notes are satisfied.
   Incoherent runtime combinations are rejected through typed `try_set_*` policy
   setters, compatibility setters no longer commit rejected state, and builder
   construction continues to derive the initial validation policy from the
-  selected topology guarantee. Tracked for v0.7.8 in #385.
+  selected topology guarantee. Closed for v0.7.8 in #385.
 - [x] **23. Reconsider skipped insertions as success outcomes.**
   Make skipped duplicate and degeneracy outcomes harder for callers to ignore.
-  Tracked for v0.7.8 in #386.
+  Closed for v0.7.8 in #386.
 - [ ] **24. Make `Simplex` encapsulation consistent.**
   Private neighbor storage plus accessors is the likely direction. Tracked for
-  v0.7.8 in #387.
+  v0.8.0+ in #387.
 - [ ] **25. Protect `Vertex::incident_simplex` mutation.**
   Introduce a checked setter or newtype so invalid incident-simplex links are
-  harder to construct. Tracked for v0.7.8 in #387.
+  harder to construct. Tracked for v0.8.0+ in #387.
 - [x] **26. Revisit public `core` module naming.**
   Keep `crate::core` as the internal implementation namespace, and expose the
   public low-level surface through curated modules and focused preludes such as
-  `tds`, `collections`, `algorithms`, and `query`. Tracked for v0.7.8 in #388.
+  `tds`, `collections`, `algorithms`, and `query`. Closed for v0.7.8 in #388.
 - [ ] **27. Normalize boxing policy in Delaunay repair error variants.**
-  Pick a consistent enum-size and payload strategy. Tracked for v0.7.8 in #384.
+  Pick a consistent enum-size and payload strategy. Deferred beyond v0.7.8 and
+  tracked in #384.
 
 ## Testing Gaps
 
@@ -137,9 +138,9 @@ Treat partial items as still open until their acceptance notes are satisfied.
   deterministic 2D-5D triangulations before any rollback redesign.
 - [x] **33. Regression-test robust insphere overflow boundaries.**
   Include inputs near `||x|| ~= 1e154`.
-- [ ] **34. Harden doctests that unwrap degenerate construction.**
-  Use provably non-degenerate inputs or hidden `Result` wrappers. Tracked by
-  the v0.7.8 doctest cleanup in #365 and builder-doc migration in #214.
+- [x] **34. Harden doctests that unwrap degenerate construction.**
+  Public doctests now use typed `Result` wrappers or non-degenerate examples,
+  and `just verify-expect-counts` tracks a zero doc-comment `.expect(` baseline.
 
 ## Optional And Nitpicks
 
