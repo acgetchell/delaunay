@@ -16,9 +16,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Flatten triangulation modules into focused APIs [#399](https://github.com/acgetchell/delaunay/pull/399)
 - Reconcile topology validation policy [#385](https://github.com/acgetchell/delaunay/pull/385) [#404](https://github.com/acgetchell/delaunay/pull/404)
 - Box Delaunay repair flip errors [#407](https://github.com/acgetchell/delaunay/pull/407)
+- Run slow correctness cases through slow-tests [#412](https://github.com/acgetchell/delaunay/pull/412)
 
 ### Merged Pull Requests
 
+- Run slow correctness cases through slow-tests [#412](https://github.com/acgetchell/delaunay/pull/412)
+- Isolate strict insphere consistency control [#383](https://github.com/acgetchell/delaunay/pull/383) [#411](https://github.com/acgetchell/delaunay/pull/411)
 - Use typed errors in public examples [#365](https://github.com/acgetchell/delaunay/pull/365) [#410](https://github.com/acgetchell/delaunay/pull/410)
 - Prefer builder-based fallible examples [#214](https://github.com/acgetchell/delaunay/pull/214) [#409](https://github.com/acgetchell/delaunay/pull/409)
 - Box Delaunay repair flip errors [#407](https://github.com/acgetchell/delaunay/pull/407)
@@ -37,7 +40,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Support periodic flip parity for external cells [#391](https://github.com/acgetchell/delaunay/pull/391)
 - Refactor/387 tds mutation boundaries [#390](https://github.com/acgetchell/delaunay/pull/390)
 - Refresh release docs and benchmark guidance [#389](https://github.com/acgetchell/delaunay/pull/389)
-- Isolate strict insphere consistency control [#383](https://github.com/acgetchell/delaunay/pull/383)
 
 ### Added
 
@@ -119,8 +121,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
   - Update repair and construction mappings for the named boxed variant.
   - Cover clone and source behavior for wrapped linear-algebra errors.
-- Isolate strict insphere consistency control [#383](https://github.com/acgetchell/delaunay/pull/383)
-  [`54a08b7`](https://github.com/acgetchell/delaunay/commit/54a08b7a9e773cfee4747ee8efc5ac59e73e064e)
+- Isolate strict insphere consistency control [#383](https://github.com/acgetchell/delaunay/pull/383) [#411](https://github.com/acgetchell/delaunay/pull/411)
+  [`222e572`](https://github.com/acgetchell/delaunay/commit/222e572b4364007cdbf6d1fa6428ea7e670cfb56)
 
   - Document the strict insphere consistency environment knob as a process-wide
     once-per-process snapshot.
@@ -129,6 +131,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     exercised without mutating global environment state.
 
   - Mark the production review checklist item complete.
+- [**breaking**] Run slow correctness cases through slow-tests [#412](https://github.com/acgetchell/delaunay/pull/412)
+  [`1498153`](https://github.com/acgetchell/delaunay/commit/149815313530335a98f6951c63924e4774d509c1)
+
+  - Define the slow-test bucket around deterministic correctness tests that exceed the default-suite budget.
+  - Move runnable high-dimensional properties out of ignored tests and into either the default suite or the slow-tests feature.
+  - Give just test-slow a release-mode nextest profile with a longer watchdog for intentional multi-minute regressions.
+  - Add a repository Semgrep guard against reintroducing slow ignored tests.
+
+#### Changed: Enforce explicit test buckets
+
+- Sort correctness tests into default and slow-tests buckets instead of relying on ignored tests.
+- Move benchmark-style boundary and UUID iterator measurements into a Criterion benchmark target.
+- Replace ignored flaky or known-failure cases with active assertions or slow-tests gating.
+- Add a Semgrep guard against reintroducing ignored tests and align docs and helper recipes with the new taxonomy.
+- Enforce 10-second default test budget [`772b2d0`](https://github.com/acgetchell/delaunay/commit/772b2d0298bf7cee4373602e05992f54ad1b010f)
+
+  - Gate default-suite cases at or above the 10-second budget behind
+    slow-tests and remove obsolete high-dimensional periodic validation from
+    routine runs.
+
+  - Move allocation hot-path contracts into a Criterion benchmark over
+    calibrated 2D-5D fixtures, leaving allocation_api as wiring smoke coverage.
+
+  - Document the toroidal validation limits and add the bench-allocations
+    workflow.
 
 ### Documentation
 

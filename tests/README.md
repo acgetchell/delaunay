@@ -92,7 +92,7 @@ Property-based tests for Tds (Triangulation Data Structure) combinatorial/topolo
 - **Vertex Count Consistency**: Vertex key count matches reported vertex count
 - **Dimension Consistency**: Reported dimension matches actual structure
 
-**Dimensions Tested:** 2D-5D
+**Dimensions Tested:** 2D-5D; triangulation quality variants over the 10-second budget run through `just test-slow`.
 
 **Run with:** `cargo test --test proptest_tds` or included in `just test`
 
