@@ -106,7 +106,7 @@ Property-based tests focused on coherent orientation invariants in the TDS layer
 - **Tamper detection**: simplex-order tampering is detected as `OrientationViolation`
 - **Incremental coherence**: orientation remains coherent after each successful insertion
 
-**Dimensions Tested:** 2D-5D (5D slow variants run through `just test-slow`)
+**Dimensions Tested:** 2D-5D; 4D/5D full orientation property variants over the 10-second budget run through `just test-slow`.
 
 **Run with:** `cargo test --test proptest_orientation` or included in `just test`
 
@@ -162,7 +162,7 @@ Property-based tests for `DelaunayTriangulation` invariants (all Delaunay-specif
 - Inverse edge/triangle queues for 4D/5D repair
 - See `src/core/algorithms/flips.rs` for implementation
 
-**Slow variants:** 5D empty-circumsphere, duplicate-coordinate, and 4D/5D insertion-order robustness properties are gated by `slow-tests`.
+**Slow variants:** 4D/5D empty-circumsphere, duplicate-coordinate, duplicate-cloud, and insertion-order robustness properties are gated by `slow-tests`.
 
 **Dimensions Tested:** 2D-5D; variants over the 10-second budget run through `just test-slow`.
 
@@ -178,6 +178,8 @@ Property-based tests for Simplex data structure verifying simplex-level invarian
 - **Neighbor Linkage**: Neighbor references validity and symmetry
 - **Facet Completeness**: All facets properly defined and accessible
 - **Vertex References**: All vertex keys are valid and consistent
+
+**Dimensions Tested:** 2D-5D; 4D/5D full simplex property variants over the 10-second budget run through `just test-slow`.
 
 **Run with:** `cargo test --release --test proptest_simplex`
 
@@ -206,6 +208,8 @@ Property-based tests for Facet operations verifying facet adjacency and orientat
 - **Co-facet Consistency**: Shared facets reference same vertices (possibly different order)
 - **Orientation Alternation**: Adjacent simplices have opposite facet orientations
 - **Facet Key Validity**: All facet identifiers are valid and retrievable
+
+**Dimensions Tested:** 2D-5D; 4D/5D full facet property variants over the 10-second budget run through `just test-slow`.
 
 **Run with:** `cargo test --release --test proptest_facet`
 

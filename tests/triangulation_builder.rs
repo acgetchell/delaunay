@@ -17,11 +17,12 @@ use delaunay::prelude::construction::{
 use delaunay::prelude::geometry::{Coordinate, Point, RobustKernel};
 use delaunay::prelude::insertion::InsertionErrorSourceKind;
 use delaunay::prelude::repair::DelaunayRepairError;
-use delaunay::prelude::tds::{
-    InvariantError, InvariantErrorSummaryDetail, TriangulationValidationErrorKind,
-};
+#[cfg(feature = "slow-tests")]
+use delaunay::prelude::tds::InvariantError;
+use delaunay::prelude::tds::{InvariantErrorSummaryDetail, TriangulationValidationErrorKind};
 use delaunay::prelude::topology::spaces::{GlobalTopology, TopologyKind, ToroidalConstructionMode};
 use delaunay::prelude::topology::validation::{count_simplices, euler_characteristic};
+#[cfg(feature = "slow-tests")]
 use delaunay::prelude::triangulation::TriangulationValidationError;
 use delaunay::prelude::validation::ValidationPolicy;
 
@@ -498,6 +499,7 @@ fn test_builder_periodic_topology_level4_smoke_3d() {
     }
 }
 #[test]
+#[cfg(feature = "slow-tests")]
 fn test_builder_toroidal_periodic_validate_levels_1_to_4_3d_known_limitation() {
     let dt = build_toroidal_periodic_triangulation::<3>();
 
