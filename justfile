@@ -236,16 +236,16 @@ coverage-ci: _ensure-cargo-llvm-cov
     cargo llvm-cov {{ _coverage_base_args }} --cobertura --output-path coverage/cobertura.xml -- --skip prop_
 
 debug-large-scale-2d n="36000" repair_every="1": _ensure-nextest
-    DELAUNAY_BULK_PROGRESS_EVERY=2000 DELAUNAY_LARGE_DEBUG_MAX_RUNTIME_SECS=1800 DELAUNAY_LARGE_DEBUG_N_2D={{ n }} DELAUNAY_LARGE_DEBUG_REPAIR_EVERY={{ repair_every }} cargo nextest run --release --profile ci --test large_scale_debug debug_large_scale_2d -- --ignored --exact --nocapture
+    DELAUNAY_BULK_PROGRESS_EVERY=2000 DELAUNAY_LARGE_DEBUG_MAX_RUNTIME_SECS=1800 DELAUNAY_LARGE_DEBUG_N_2D={{ n }} DELAUNAY_LARGE_DEBUG_REPAIR_EVERY={{ repair_every }} cargo nextest run --release --profile ci --features slow-tests --test large_scale_debug debug_large_scale_2d -- --exact --nocapture
 
 debug-large-scale-3d n="7500" repair_every="1": _ensure-nextest
-    DELAUNAY_BULK_PROGRESS_EVERY=500 DELAUNAY_LARGE_DEBUG_MAX_RUNTIME_SECS=1800 DELAUNAY_LARGE_DEBUG_N_3D={{ n }} DELAUNAY_LARGE_DEBUG_REPAIR_EVERY={{ repair_every }} cargo nextest run --release --profile ci --test large_scale_debug debug_large_scale_3d -- --ignored --exact --nocapture
+    DELAUNAY_BULK_PROGRESS_EVERY=500 DELAUNAY_LARGE_DEBUG_MAX_RUNTIME_SECS=1800 DELAUNAY_LARGE_DEBUG_N_3D={{ n }} DELAUNAY_LARGE_DEBUG_REPAIR_EVERY={{ repair_every }} cargo nextest run --release --profile ci --features slow-tests --test large_scale_debug debug_large_scale_3d -- --exact --nocapture
 
 debug-large-scale-4d n="900" repair_every="1": _ensure-nextest
-    DELAUNAY_BULK_PROGRESS_EVERY=100 DELAUNAY_LARGE_DEBUG_MAX_RUNTIME_SECS=1800 DELAUNAY_LARGE_DEBUG_N_4D={{ n }} DELAUNAY_LARGE_DEBUG_REPAIR_EVERY={{ repair_every }} cargo nextest run --release --profile ci --test large_scale_debug debug_large_scale_4d -- --ignored --exact --nocapture
+    DELAUNAY_BULK_PROGRESS_EVERY=100 DELAUNAY_LARGE_DEBUG_MAX_RUNTIME_SECS=1800 DELAUNAY_LARGE_DEBUG_N_4D={{ n }} DELAUNAY_LARGE_DEBUG_REPAIR_EVERY={{ repair_every }} cargo nextest run --release --profile ci --features slow-tests --test large_scale_debug debug_large_scale_4d -- --exact --nocapture
 
 debug-large-scale-5d n="140" repair_every="1": _ensure-nextest
-    DELAUNAY_BULK_PROGRESS_EVERY=20 DELAUNAY_LARGE_DEBUG_MAX_RUNTIME_SECS=1800 DELAUNAY_LARGE_DEBUG_N_5D={{ n }} DELAUNAY_LARGE_DEBUG_REPAIR_EVERY={{ repair_every }} cargo nextest run --release --profile ci --test large_scale_debug debug_large_scale_5d -- --ignored --exact --nocapture
+    DELAUNAY_BULK_PROGRESS_EVERY=20 DELAUNAY_LARGE_DEBUG_MAX_RUNTIME_SECS=1800 DELAUNAY_LARGE_DEBUG_N_5D={{ n }} DELAUNAY_LARGE_DEBUG_REPAIR_EVERY={{ repair_every }} cargo nextest run --release --profile ci --features slow-tests --test large_scale_debug debug_large_scale_5d -- --exact --nocapture
 
 # Default recipe shows available commands
 default:
@@ -471,7 +471,7 @@ perf-large-scale-smoke max_secs="60": _ensure-nextest
             DELAUNAY_LARGE_DEBUG_MAX_RUNTIME_SECS="$max_secs" \
             "$n_env=$n_points" \
             DELAUNAY_LARGE_DEBUG_REPAIR_EVERY=1 \
-            cargo nextest run --release --profile ci --test large_scale_debug "$test_name" -- --ignored --exact --nocapture; then
+            cargo nextest run --release --profile ci --features slow-tests --test large_scale_debug "$test_name" -- --exact --nocapture; then
             echo "✅ ${dimension} completed within the ${max_secs}s test-runtime cap"
         else
             local code=$?

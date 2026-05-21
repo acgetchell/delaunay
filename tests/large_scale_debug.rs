@@ -4,19 +4,19 @@
 //! at large vertex counts (slow cases, rare geometric degeneracies, topology/Delaunay
 //! validation failures, etc.).
 //!
-//! The `debug_large_scale_*` harness tests are `#[ignore]` by default. Fixed
-//! slow regressions in this file use `#[cfg(feature = "slow-tests")]` and run
+//! The `debug_large_scale_*` harness tests use `#[cfg(feature = "slow-tests")]`
+//! because their documented scales exceed the default-suite budget. Run them
 //! through `just test-slow`.
 //!
 //! ## Usage
 //!
 //! Run one dimension with full output:
 //! ```bash
-//! cargo test --release --test large_scale_debug debug_large_scale_2d -- --ignored --nocapture
+//! cargo test --release --features slow-tests --test large_scale_debug debug_large_scale_2d -- --nocapture
 //! ```
 //!
-//! The ignored tests and `just debug-large-scale-{2,3,4,5}d` helpers all accept
-//! the same `[n] [repair_every]` shape. The ignored test defaults are:
+//! The slow-tests and `just debug-large-scale-{2,3,4,5}d` helpers all accept
+//! the same `[n] [repair_every]` shape. The slow-test defaults are:
 //!
 //! - 2D: 40,000 vertices
 //! - 3D: 7,500 vertices
@@ -26,6 +26,8 @@
 //! The `just` helpers may use slightly smaller local defaults so routine
 //! acceptance/profiling runs stay near one minute on maintainer Apple M4 Max
 //! hardware. Pass `n` explicitly when a run must match a documented scale.
+
+#![cfg_attr(not(feature = "slow-tests"), allow(dead_code))]
 //!
 //! Each should insert all vertices with zero skips, run final repair, and pass
 //! `validation_report` for Levels 1–4. Use local harness output for exact
@@ -37,8 +39,12 @@
 //! DELAUNAY_LARGE_DEBUG_SEED=0xDEADBEEF \
 //! # Optional explicit case seed (overrides derived seed_for_case)
 //! DELAUNAY_LARGE_DEBUG_CASE_SEED=0x12345678 \
+//! # Per-dimension case seed override; {D} is 2, 3, 4, or 5 and overrides the generic case seed
+//! DELAUNAY_LARGE_DEBUG_CASE_SEED_3D=0x12345678 \
 //! # Override point count for the selected test
 //! DELAUNAY_LARGE_DEBUG_N=10000 \
+//! # Per-dimension point-count override; e.g. _3D overrides DELAUNAY_LARGE_DEBUG_N for 3D
+//! DELAUNAY_LARGE_DEBUG_N_3D=7500 \
 //! # Point distribution: "ball" (default) or "box"
 //! DELAUNAY_LARGE_DEBUG_DISTRIBUTION=ball \
 //! # Ball radius (default: 100) [used when distribution=ball]
@@ -88,7 +94,7 @@
 //! DELAUNAY_REPAIR_DEBUG_POSTCONDITION_FACET=1 \
 //! # Optional: only emit ridge repair debug when multiplicity is at least N
 //! DELAUNAY_REPAIR_DEBUG_RIDGE_MIN_MULTIPLICITY=4 \
-//! cargo test --release --test large_scale_debug debug_large_scale_4d -- --ignored --nocapture
+//! cargo test --release --features slow-tests --test large_scale_debug debug_large_scale_4d -- --nocapture
 //! ```
 
 #![forbid(unsafe_code)]
@@ -673,7 +679,7 @@ fn print_abort_summary<const D: usize>(
     println!();
     println!("Replay command:");
     println!(
-        "  DELAUNAY_LARGE_DEBUG_N_{D}D={n_points} DELAUNAY_LARGE_DEBUG_CASE_SEED_{D}D=0x{seed:X} DELAUNAY_LARGE_DEBUG_ALLOW_SKIPS=1 cargo test --release --test large_scale_debug debug_large_scale_{D}d -- --ignored --nocapture"
+        "  DELAUNAY_LARGE_DEBUG_N_{D}D={n_points} DELAUNAY_LARGE_DEBUG_CASE_SEED_{D}D=0x{seed:X} DELAUNAY_LARGE_DEBUG_ALLOW_SKIPS=1 cargo test --release --features slow-tests --test large_scale_debug debug_large_scale_{D}d -- --nocapture"
     );
 }
 
@@ -1747,28 +1753,28 @@ fn regression_issue_230_4d_100_orientation() {
 }
 
 #[test]
-#[ignore = "large-scale debug harness (manual run)"]
+#[cfg(feature = "slow-tests")]
 fn debug_large_scale_2d() {
     let outcome = debug_large_case::<2>("2D", 40_000);
     assert!(matches!(outcome, DebugOutcome::Success), "{outcome}");
 }
 
 #[test]
-#[ignore = "large-scale debug harness (manual run)"]
+#[cfg(feature = "slow-tests")]
 fn debug_large_scale_3d() {
     let outcome = debug_large_case::<3>("3D", 7_500);
     assert!(matches!(outcome, DebugOutcome::Success), "{outcome}");
 }
 
 #[test]
-#[ignore = "large-scale debug harness (manual run)"]
+#[cfg(feature = "slow-tests")]
 fn debug_large_scale_4d() {
     let outcome = debug_large_case::<4>("4D", 900);
     assert!(matches!(outcome, DebugOutcome::Success), "{outcome}");
 }
 
 #[test]
-#[ignore = "large-scale debug harness (manual run)"]
+#[cfg(feature = "slow-tests")]
 fn debug_large_scale_5d() {
     let outcome = debug_large_case::<5>("5D", 150);
     assert!(matches!(outcome, DebugOutcome::Success), "{outcome}");

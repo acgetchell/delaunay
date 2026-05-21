@@ -13,9 +13,9 @@ Correctness tests live in two routine buckets:
   budget; gate them with `#[cfg(feature = "slow-tests")]` and run them with
   `just test-slow`.
 
-Do not use `#[ignore]` as a slow-test marker. Ignored tests are reserved for
-manual diagnostic helpers or known-failure reproducers that are not part of the
-routine correctness suite.
+Do not use `#[ignore]` as a slow-test marker. Slow correctness tests belong
+behind `#[cfg(feature = "slow-tests")]`; benchmark-style measurements belong in
+`benches/`; known limitations should be asserted explicitly instead of hidden.
 
 ## Test Categories
 
@@ -309,7 +309,7 @@ a point lies inside the circumsphere of a simplex in 2D, 3D, and 4D.
 # Run specific debug test functions with verbose output
 cargo test --test circumsphere_debug_tools --features diagnostics test_2d_circumsphere_debug -- --nocapture
 cargo test --test circumsphere_debug_tools --features diagnostics test_3d_circumsphere_debug -- --nocapture
-cargo test --test circumsphere_debug_tools --features diagnostics test_all_debug -- --ignored --exact --nocapture
+cargo test --test circumsphere_debug_tools --features diagnostics test_all_debug -- --exact --nocapture
 
 # Run all debug tests at once (recommended)
 just test-diagnostics
@@ -375,7 +375,7 @@ Integration tests for the `delaunayize_by_flips` workflow validating the public 
 Reproduction-oriented debug harnesses for larger 2D-5D datasets tracked in
 issues #340, #341, and #342.
 
-**Run with:** `cargo test --release --test large_scale_debug -- --ignored --nocapture`
+**Run with:** `cargo test --release --features slow-tests --test large_scale_debug -- --nocapture`
 or one of the active large-scale helpers:
 
 - `just debug-large-scale-2d [n] [repair_every]` — default `n=36000`

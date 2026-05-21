@@ -515,24 +515,26 @@ rules:
         - "/tests/semgrep/**"
     pattern-regex: '^\s*#\s*\[\s*allow\s*\(\s*clippy::'
 
-  - id: delaunay.rust.no-slow-ignore-tests
+  - id: delaunay.rust.no-ignored-tests
     languages:
       - generic
     severity: WARNING
-    message: "Gate deterministic slow tests with #[cfg(feature = \"slow-tests\")] instead of #[ignore]."
+    message: "Gate slow tests with an explicit cfg feature instead of #[ignore]."
     metadata:
       category: maintainability
       tracking_issue: "https://github.com/acgetchell/delaunay/issues/380"
       rationale: >-
-        The routine correctness suite has two buckets: default tests and
-        slow-tests. Marking slow tests ignored hides them from just test-slow.
+        The routine test suite has explicit cfg-gated buckets. Marking tests
+        ignored hides them from the commands that are supposed to run the
+        selected bucket.
     paths:
       include:
+        - "/src/**/*.rs"
         - "/tests/**/*.rs"
-        - "/src/project_rules/**/*.rs"
+        - "/benches/**/*.rs"
       exclude:
         - "/tests/semgrep/**"
-    pattern-regex: '^\s*#\s*\[\s*ignore\s*=\s*"[^"]*[Ss]low[^"]*"\s*\]'
+    pattern-regex: '^\s*#\s*\[\s*ignore(?:\s|=|\])'
 
   - id: delaunay.rust.expect-requires-reason
     languages:

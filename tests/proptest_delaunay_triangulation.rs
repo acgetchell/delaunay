@@ -2008,4 +2008,5 @@ macro_rules! gen_duplicate_cloud_test {
 gen_duplicate_cloud_test!(2, 2);
 gen_duplicate_cloud_test!(3, 3);
 gen_duplicate_cloud_test!(4, 4);
+#[cfg(feature = "slow-tests")]
 gen_duplicate_cloud_test!(5, 5);

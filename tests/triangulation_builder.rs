@@ -17,9 +17,12 @@ use delaunay::prelude::construction::{
 use delaunay::prelude::geometry::{Coordinate, Point, RobustKernel};
 use delaunay::prelude::insertion::InsertionErrorSourceKind;
 use delaunay::prelude::repair::DelaunayRepairError;
-use delaunay::prelude::tds::{InvariantErrorSummaryDetail, TriangulationValidationErrorKind};
+use delaunay::prelude::tds::{
+    InvariantError, InvariantErrorSummaryDetail, TriangulationValidationErrorKind,
+};
 use delaunay::prelude::topology::spaces::{GlobalTopology, TopologyKind, ToroidalConstructionMode};
 use delaunay::prelude::topology::validation::{count_simplices, euler_characteristic};
+use delaunay::prelude::triangulation::TriangulationValidationError;
 use delaunay::prelude::validation::ValidationPolicy;
 
 // =============================================================================
@@ -494,23 +497,32 @@ fn test_builder_periodic_topology_level4_smoke_3d() {
         Err(err) => panic!("periodic Level 4 validation returned an unexpected error: {err:?}"),
     }
 }
-gen_toroidal_periodic_validation_test!(
-    3,
-    levels_1_to_4,
-    true,
-    #[ignore = "known periodic Level 3 ridge-multiplicity failure; run directly when investigating toroidal validation"]
-);
+#[test]
+fn test_builder_toroidal_periodic_validate_levels_1_to_4_3d_known_limitation() {
+    let dt = build_toroidal_periodic_triangulation::<3>();
+
+    match dt.as_triangulation().validate() {
+        Err(InvariantError::Triangulation(
+            TriangulationValidationError::BoundaryRidgeMultiplicity {
+                boundary_facet_count,
+                ..
+            },
+        )) => assert_eq!(boundary_facet_count, 4),
+        other => panic!("expected periodic 3D ridge-multiplicity limitation, got {other:?}"),
+    }
+}
+
 gen_toroidal_periodic_validation_test!(
     4,
     levels_1_to_3,
     false,
-    #[ignore = "manual periodic validation stress exceeds the routine test timeout"]
+    #[cfg(feature = "slow-tests")]
 );
 gen_toroidal_periodic_validation_test!(
     5,
     levels_1_to_3,
     false,
-    #[ignore = "manual periodic validation stress exceeds the routine test timeout"]
+    #[cfg(feature = "slow-tests")]
 );
 
 /// Explicit 7-vertex torus (Heawood triangulation) with `GlobalTopology::Toroidal`

@@ -212,5 +212,5 @@ fn test_seeded_random_generator_euler_consistent() {
 // - Match patterns in other proptest files
 test_euler_properties!(2, 4, 15);
 test_euler_properties!(3, 5, 20);
-test_euler_properties!(4, 6, 25, #[cfg(feature = "slow-tests")]);
+test_euler_properties!(4, 6, 25);
 test_euler_properties!(5, 7, 16, #[cfg(feature = "slow-tests")]);

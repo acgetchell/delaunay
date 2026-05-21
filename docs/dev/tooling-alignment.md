@@ -196,10 +196,10 @@ The following previously deferred checks are now repository-owned Semgrep rules:
 - `delaunay.rust.no-deep-crate-paths-in-functions` keeps long internal module
   paths out of function bodies; use focused imports or a local helper when the
   path is part of the implementation.
-- `delaunay.rust.no-slow-ignore-tests` keeps the test taxonomy to two routine
-  correctness buckets: default tests and `slow-tests`. Deterministic slow tests
-  should be feature-gated so `just test-slow` runs them; ignored tests remain
-  reserved for manual diagnostics or known-failure reproducers.
+- `delaunay.rust.no-ignored-tests` keeps the test taxonomy to explicit
+  cfg-gated buckets. Deterministic slow tests should use `slow-tests`,
+  benchmark-style measurements should live in `benches/`, and real tests should
+  not use `#[ignore]`.
 - `delaunay.rust.no-silent-conversion-fallbacks-in-public-samples` extends the
   existing source conversion-fallback check to examples, benchmarks, and public
   API tests so copied usage does not hide numeric conversion failures.

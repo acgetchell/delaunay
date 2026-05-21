@@ -89,11 +89,11 @@ pub fn env_gated_stdio() {
 #[allow(clippy::too_many_lines)]
 fn clippy_allow_fixture() {}
 
-// ruleid: delaunay.rust.no-slow-ignore-tests
+// ruleid: delaunay.rust.no-ignored-tests
 #[ignore = "Slow (>10s); use the slow-tests feature instead"]
 fn slow_ignore_fixture() {}
 
-// ok: delaunay.rust.no-slow-ignore-tests
+// ok: delaunay.rust.no-ignored-tests
 #[cfg(feature = "slow-tests")]
 fn slow_cfg_fixture() {}
 
