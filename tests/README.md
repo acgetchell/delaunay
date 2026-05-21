@@ -92,7 +92,7 @@ Property-based tests for Tds (Triangulation Data Structure) combinatorial/topolo
 - **Vertex Count Consistency**: Vertex key count matches reported vertex count
 - **Dimension Consistency**: Reported dimension matches actual structure
 
-**Dimensions Tested:** 2D-5D; triangulation quality variants over the 10-second budget run through `just test-slow`.
+**Dimensions Tested:** 2D-5D; 4D/5D full TDS property variants over the 10-second budget run through `just test-slow`.
 
 **Run with:** `cargo test --test proptest_tds` or included in `just test`
 
@@ -133,7 +133,7 @@ Property-based tests for Triangulation layer invariants (generic geometric layer
 **Note:** Tests use `DelaunayTriangulation` for construction (most convenient way to obtain valid triangulations).
 The properties tested are generic Triangulation-layer concerns applicable to any triangulation with a kernel.
 
-**Dimensions Tested:** 2D-5D
+**Dimensions Tested:** 2D-5D; 4D/5D quality and facet-topology variants over the 10-second budget run through `just test-slow`.
 
 **Run with:** `cargo test --test proptest_triangulation` or included in `just test`
 

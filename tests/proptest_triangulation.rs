@@ -779,7 +779,7 @@ macro_rules! test_facet_topology_invariant {
 // Parameters: dimension, min_vertices, max_vertices
 test_facet_topology_invariant!(2, 4, 10);
 test_facet_topology_invariant!(3, 5, 12);
-test_facet_topology_invariant!(4, 6, 14);
+test_facet_topology_invariant!(4, 6, 14, #[cfg(feature = "slow-tests")]);
 test_facet_topology_invariant!(5, 7, 16, #[cfg(feature = "slow-tests")]);
 
 // =============================================================================
