@@ -597,7 +597,7 @@ just test          # Tests + benchmark/release compile smoke
 
 ```bash
 just ci            # Comprehensive checks + tests + examples
-just ci-slow       # CI + slow tests (100+ vertices)
+just ci-slow       # CI + slow correctness tests
 ```
 
 **Testing Workflows:**
@@ -608,8 +608,8 @@ just test-integration # All integration tests (includes proptests)
 just test-all      # All tests (lib + doc + integration + Python)
 just test-python   # Python tests only (pytest)
 just test-release  # All tests in release mode
-just test-slow     # Run slow/stress tests with --features slow-tests
-just test-slow-release # Slow tests in release mode (faster)
+just test-slow     # Run correctness tests over the 10s default-suite budget
+just test-slow-release # Compatibility alias for just test-slow
 just test-diagnostics # Run diagnostics tools with output
 just test-allocation  # Run allocation profiling tests
 ```

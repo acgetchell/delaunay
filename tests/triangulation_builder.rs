@@ -498,19 +498,19 @@ gen_toroidal_periodic_validation_test!(
     3,
     levels_1_to_4,
     true,
-    #[ignore = "Slow (>60s): periodic 3D expands to 3^D image points; run with --ignored"]
+    #[ignore = "known periodic Level 3 ridge-multiplicity failure; run directly when investigating toroidal validation"]
 );
 gen_toroidal_periodic_validation_test!(
     4,
     levels_1_to_3,
     false,
-    #[ignore = "Slow: periodic 4D expands to 3^D image points; run with --ignored"]
+    #[ignore = "manual periodic validation stress exceeds the routine test timeout"]
 );
 gen_toroidal_periodic_validation_test!(
     5,
     levels_1_to_3,
     false,
-    #[ignore = "Slow: periodic 5D expands to 3^D image points; run with --ignored"]
+    #[ignore = "manual periodic validation stress exceeds the routine test timeout"]
 );
 
 /// Explicit 7-vertex torus (Heawood triangulation) with `GlobalTopology::Toroidal`
@@ -615,12 +615,9 @@ fn test_explicit_toroidal_torus_euler_mismatch_without_override() {
 /// also 0, so we verify TDS structural validity rather than the full `validate()`
 /// check (which would expect χ = 2 for a sphere).
 #[test]
-#[ignore = "Slow (>60s): periodic 3D expands to 3^D image points; run with --ignored"]
 fn test_builder_toroidal_periodic_3d_success() {
-    // Keep this
-    // The periodic 3D pipeline expands to 3^D image points internally, so runtime grows quickly
-    // with input size and can become flaky under CI load. We keep a compact, well-separated set
-    // above the algorithm minimum (2*D + 1 = 7 points for D=3).
+    // Keep this fixture compact: the periodic 3D pipeline expands to 3^D image
+    // points internally.
 
     let vertices = vec![
         vertex!([0.1_f64, 0.2, 0.3]),

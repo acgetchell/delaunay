@@ -354,6 +354,19 @@ algorithms.
 
 Tests should pass using the repository command set.
 
+The test suite has two routine correctness buckets:
+
+- Default tests: expected to stay under roughly 10 seconds per test and run
+  through `just test`.
+- Slow tests: correctness or regression tests that exceed that per-test budget.
+  Gate these with `#[cfg(feature = "slow-tests")]` and run them through
+  `just test-slow`.
+
+Do not mark deterministic slow correctness tests with `#[ignore]`; that makes
+them invisible to `just test-slow`. Use `#[ignore]` only for manual diagnostic
+helpers or known-failure reproducers that are not part of the routine
+correctness suite.
+
 Run standard tests:
 
 ```bash
@@ -370,6 +383,12 @@ Run all tests:
 
 ```bash
 just test-all
+```
+
+Run the slow correctness bucket:
+
+```bash
+just test-slow
 ```
 
 ---

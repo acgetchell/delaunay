@@ -95,31 +95,6 @@ macro_rules! test_regression_config {
             }
         }
     };
-    ($name:ident, $dim:expr, $vertices:expr, ignore = $reason:expr) => {
-        pastey::paste! {
-            #[test]
-            #[ignore = $reason]
-            fn [<test_ $name>]() {
-                let vertices = $vertices;
-
-                let dt: DelaunayTriangulation<_, (), (), $dim> =
-                    DelaunayTriangulation::new_with_topology_guarantee(
-                        &vertices,
-                        TopologyGuarantee::PLManifold,
-                    )
-                        .unwrap_or_else(|err| {
-                            panic!(
-                                "{}D regression configuration failed to construct: {err}",
-                                $dim
-                            )
-                        });
-
-                // Verify basic properties
-                assert_eq!(dt.number_of_vertices(), vertices.len());
-                assert!(dt.number_of_simplices() > 0);
-            }
-        }
-    };
 }
 
 // 2D regression: base triangle with interior and exterior point
@@ -541,7 +516,6 @@ fn test_regression_non_manifold_3d_seed123_50pts() {
 /// Tests seeds near 123 to ensure robustness across similar random configurations.
 /// Some may also trigger temporary non-manifold conditions during insertion.
 #[test]
-#[ignore = "Stress test for non-manifold topology with nearby seeds"]
 fn test_regression_non_manifold_nearby_seeds() {
     let test_seeds = [120, 121, 122, 123, 124, 125, 126];
     let n_points = 50;

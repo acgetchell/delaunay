@@ -4,7 +4,9 @@
 //! at large vertex counts (slow cases, rare geometric degeneracies, topology/Delaunay
 //! validation failures, etc.).
 //!
-//! The tests are `#[ignore]` by default.
+//! The `debug_large_scale_*` harness tests are `#[ignore]` by default. Fixed
+//! slow regressions in this file use `#[cfg(feature = "slow-tests")]` and run
+//! through `just test-slow`.
 //!
 //! ## Usage
 //!
@@ -671,7 +673,7 @@ fn print_abort_summary<const D: usize>(
     println!();
     println!("Replay command:");
     println!(
-        "  DELAUNAY_LARGE_DEBUG_N_{D}D={n_points} DELAUNAY_LARGE_DEBUG_CASE_SEED_{D}D=0x{seed:X} DELAUNAY_LARGE_DEBUG_ALLOW_SKIPS=1 cargo test --test large_scale_debug debug_large_scale_{D}d -- --ignored --nocapture"
+        "  DELAUNAY_LARGE_DEBUG_N_{D}D={n_points} DELAUNAY_LARGE_DEBUG_CASE_SEED_{D}D=0x{seed:X} DELAUNAY_LARGE_DEBUG_ALLOW_SKIPS=1 cargo test --release --test large_scale_debug debug_large_scale_{D}d -- --ignored --nocapture"
     );
 }
 
@@ -1667,15 +1669,13 @@ fn test_repair_policy_from_repair_every_maps_cadence() {
 /// geometric simplex orientation (#258 fixed the negative-orientation gap that
 /// previously required the `Pseudomanifold` workaround).
 ///
-/// Gated behind `slow-tests` and `#[ignore]` because 1000-point 3D
-/// construction takes minutes in debug mode, exceeding CI timeout.
-/// Run manually with:
+/// Gated behind `slow-tests` because 1000-point 3D construction belongs to
+/// the explicit slow-test bucket. Run with:
 /// ```bash
-/// cargo test --test large_scale_debug --features slow-tests regression_issue_228 -- --ignored --nocapture
+/// cargo test --release --test large_scale_debug --features slow-tests regression_issue_228_3d_1000_flip_repair_convergence -- --nocapture
 /// ```
 #[cfg(feature = "slow-tests")]
 #[test]
-#[ignore = "1000-point 3D construction exceeds CI timeout (~30min debug)"]
 fn regression_issue_228_3d_1000_flip_repair_convergence() {
     let seed = seed_for_case::<3>(42, 1000);
     let points = generate_random_points_in_ball_seeded::<f64, 3>(1000, 100.0, seed)
@@ -1712,11 +1712,10 @@ fn regression_issue_228_3d_1000_flip_repair_convergence() {
 /// - Some vertices may be skipped due to degeneracy handling/retries
 /// - Resulting triangulation passes topology validation (L1-L3)
 ///
-/// Gated behind `slow-tests` and `#[ignore]` because 4D construction can
-/// take multiple minutes in debug mode.
+/// Gated behind `slow-tests` because 4D construction can take more than the
+/// default-suite budget.
 #[cfg(feature = "slow-tests")]
 #[test]
-#[ignore = "4D 100-point construction can take minutes in debug mode"]
 fn regression_issue_230_4d_100_orientation() {
     let seed = seed_for_case::<4>(42, 100);
     let points = generate_random_points_in_ball_seeded::<f64, 4>(100, 100.0, seed)

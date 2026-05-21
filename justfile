@@ -200,7 +200,7 @@ ci-baseline ref="main":
     just ci
     just perf-baseline {{ ref }}
 
-# CI + slow/stress tests (100+ vertices, stress tests)
+# CI plus the explicit slow correctness bucket.
 ci-slow: ci test-slow
     @echo "✅ CI + slow tests passed!"
 
@@ -280,7 +280,7 @@ help-workflows:
     @echo "  just test-integration  # All integration tests (includes proptests)"
     @echo "  just test-integration-fast # Integration tests (skips proptests)"
     @echo "  just test-python       # Python tests only (pytest)"
-    @echo "  just test-slow         # Run slow/stress tests with --features slow-tests"
+    @echo "  just test-slow         # Run correctness tests over the 10s default-suite budget"
     @echo "  just examples          # Run all examples"
     @echo ""
     @echo "Active large-scale debugging:"
@@ -302,7 +302,7 @@ help-workflows:
     @echo "  just profile [toolchain] [code_ref] # Run ci_performance_suite for a compiler/code pair"
     @echo ""
     @echo "Larger/optional workflows:"
-    @echo "  just ci-slow             # CI + slow tests (100+ vertices)"
+    @echo "  just ci-slow             # CI + slow correctness tests"
     @echo "  just ci-baseline         # CI + persist default performance baseline"
     @echo "  just coverage            # Generate coverage report (HTML)"
     @echo "  just semgrep             # Run repository-owned Semgrep rules"
@@ -965,15 +965,14 @@ test-release: _ensure-nextest
     cargo nextest run --release --profile ci
     cargo test --doc --release
 
-# Run tests including slow/stress tests (100+ vertices, multiple dimensions)
-# These are gated behind the 'slow-tests' feature to keep CI fast
+# Run correctness tests that exceed the 10s default-suite budget.
+# Slow tests run in release mode because debug exact-predicate paths can turn
+# a slow correctness check into a local timeout.
 test-slow: _ensure-nextest
-    cargo nextest run --profile ci --features slow-tests
-    cargo test --doc --features slow-tests
-
-test-slow-release: _ensure-nextest
-    cargo nextest run --release --profile ci --features slow-tests
+    cargo nextest run --release --profile slow --features slow-tests
     cargo test --doc --release --features slow-tests
+
+test-slow-release: test-slow
 
 # test-unit: runs lib and doc tests.
 test-unit: _ensure-nextest

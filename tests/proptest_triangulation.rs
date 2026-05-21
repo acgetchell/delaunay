@@ -660,8 +660,8 @@ test_simplex_quality_properties!(5, 6);
 // Parameters: dimension, min_vertices, max_vertices
 test_quality_properties!(2, 4, 10);
 test_quality_properties!(3, 5, 12);
-test_quality_properties!(4, 6, 14, #[ignore = "Slow (>60s) in test-integration"]);
-test_quality_properties!(5, 7, 16, #[ignore = "Slow (>60s) in test-integration"]);
+test_quality_properties!(4, 6, 14, #[cfg(feature = "slow-tests")]);
+test_quality_properties!(5, 7, 16, #[cfg(feature = "slow-tests")]);
 
 // =============================================================================
 // FACET TOPOLOGY INVARIANT TESTS
@@ -779,8 +779,8 @@ macro_rules! test_facet_topology_invariant {
 // Parameters: dimension, min_vertices, max_vertices
 test_facet_topology_invariant!(2, 4, 10);
 test_facet_topology_invariant!(3, 5, 12);
-test_facet_topology_invariant!(4, 6, 14, #[ignore = "Slow (>60s) in test-integration"]);
-test_facet_topology_invariant!(5, 7, 16, #[ignore = "Slow (>60s) in test-integration"]);
+test_facet_topology_invariant!(4, 6, 14);
+test_facet_topology_invariant!(5, 7, 16, #[cfg(feature = "slow-tests")]);
 
 // =============================================================================
 // FAST HIGH-DIMENSIONAL FACET TOPOLOGY SMOKE TESTS

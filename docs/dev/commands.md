@@ -215,6 +215,21 @@ For performance-sensitive changes and PR-ready work, also run:
 just perf-no-regressions
 ```
 
+## Slow Correctness Tests
+
+The routine correctness suite has two buckets:
+
+- `just test` runs default tests that should stay under roughly 10 seconds per
+  test.
+- `just test-slow` runs tests gated by the `slow-tests` feature when a
+  deterministic correctness or regression case exceeds that budget.
+
+`just test-slow` runs in release mode with the repository's `slow` nextest
+profile. Debug-mode exact-predicate arithmetic can make high-dimensional tests
+look like hangs, so slow correctness timing should be measured with the release
+recipe. Deterministic slow tests should use `#[cfg(feature = "slow-tests")]`,
+not `#[ignore]`.
+
 `just perf-no-regressions` is the fuller local PR guard. It runs
 `ci_performance_suite` with the shared dev-mode Criterion arguments against a
 same-machine baseline generated from the current GitHub `main` ref. The guard

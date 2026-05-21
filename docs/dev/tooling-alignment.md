@@ -111,6 +111,10 @@ The useful updates ported in this pass are:
   `just setup-tools` uses `cargo install --locked cargo-nextest` and verifies
   the command is available for developer machines. All uv-backed workflows use
   uv 0.11.15 to match the local Python tooling bootstrap.
+- `.config/nextest.toml` keeps `profile.ci` bounded for normal CI while
+  `profile.slow` raises the per-test watchdog for `just test-slow`, allowing
+  intentional multi-minute correctness regressions to run without making the
+  default suite or CI profile permissive.
 
 ## Intentional Differences
 
@@ -192,6 +196,10 @@ The following previously deferred checks are now repository-owned Semgrep rules:
 - `delaunay.rust.no-deep-crate-paths-in-functions` keeps long internal module
   paths out of function bodies; use focused imports or a local helper when the
   path is part of the implementation.
+- `delaunay.rust.no-slow-ignore-tests` keeps the test taxonomy to two routine
+  correctness buckets: default tests and `slow-tests`. Deterministic slow tests
+  should be feature-gated so `just test-slow` runs them; ignored tests remain
+  reserved for manual diagnostics or known-failure reproducers.
 - `delaunay.rust.no-silent-conversion-fallbacks-in-public-samples` extends the
   existing source conversion-fallback check to examples, benchmarks, and public
   API tests so copied usage does not hide numeric conversion failures.
