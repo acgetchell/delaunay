@@ -2615,7 +2615,7 @@ impl FlipPredicateError {
 ///     offset_count: 1,
 /// };
 /// let err: FlipError = reason.into();
-/// assert!(matches!(err, FlipError::InvalidFlipContext { .. }));
+/// std::assert_matches!(err, FlipError::InvalidFlipContext { .. });
 /// ```
 #[derive(Clone, Debug, Error, PartialEq, Eq)]
 #[non_exhaustive]
@@ -3473,7 +3473,7 @@ pub enum FlipVertexAdjacencyError {
 /// use delaunay::prelude::flips::FlipError;
 ///
 /// let err = FlipError::UnsupportedDimension { dimension: 1 };
-/// assert!(matches!(err, FlipError::UnsupportedDimension { .. }));
+/// std::assert_matches!(err, FlipError::UnsupportedDimension { .. });
 /// ```
 #[derive(Clone, Debug, Error, PartialEq, Eq)]
 #[non_exhaustive]
@@ -4253,13 +4253,13 @@ impl fmt::Display for DelaunayRepairDiagnostics {
 ///     source: Box::new(FlipError::DegenerateSimplex),
 /// };
 ///
-/// assert!(matches!(
+/// std::assert_matches!(
 ///     err,
 ///     DelaunayRepairError::VerificationFailed {
 ///         context: DelaunayRepairVerificationContext::StrictValidation,
 ///         ..
 ///     },
-/// ));
+/// );
 /// ```
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[non_exhaustive]
@@ -4325,14 +4325,14 @@ impl fmt::Display for DelaunayRepairVerificationContext {
 ///     found: TopologyGuarantee::Pseudomanifold,
 ///     message: "requires manifold",
 /// };
-/// assert!(matches!(err, DelaunayRepairError::InvalidTopology { .. }));
+/// std::assert_matches!(err, DelaunayRepairError::InvalidTopology { .. });
 ///
 /// let flip_err = DelaunayRepairError::from(FlipError::DegenerateSimplex);
-/// assert!(matches!(
+/// std::assert_matches!(
 ///     flip_err,
 ///     DelaunayRepairError::Flip { source }
 ///         if matches!(source.as_ref(), FlipError::DegenerateSimplex)
-/// ));
+/// );
 /// ```
 #[derive(Clone, Debug, Error, PartialEq, Eq)]
 #[non_exhaustive]
@@ -9544,6 +9544,7 @@ mod tests {
     use proptest::prelude::*;
     use rand::{RngExt, SeedableRng, rngs::StdRng};
     use slotmap::KeyData;
+    use std::assert_matches;
     use std::{error::Error as _, iter::once, sync::Once};
 
     fn init_tracing() {
@@ -9677,7 +9678,7 @@ mod tests {
         let mut coords = [offset; D];
         for (i, coord) in coords.iter_mut().enumerate().take(D) {
             let idx = f64::from(u32::try_from(i + 1).expect("index fits in u32"));
-            *coord += scale * 0.11 * idx;
+            *coord = (scale * 0.11).mul_add(idx, *coord);
         }
         coords
     }
@@ -9725,10 +9726,10 @@ mod tests {
                     let missing_simplex = SimplexKey::from(KeyData::from_ffi(999_999 + $dim));
                     let missing_simplices: SimplexKeyBuffer = std::iter::once(missing_simplex).collect();
                     let err = snapshot_removed_simplex_vertices(&tds, &missing_simplices).unwrap_err();
-                    assert!(matches!(
+                    assert_matches!(
                         err,
                         FlipError::MissingSimplex { simplex_key } if simplex_key == missing_simplex
-                    ));
+                    );
                 }
 
                 #[test]
@@ -11304,12 +11305,12 @@ mod tests {
         let err =
             validate_flip_trial_simplex_neighbors(&tds, simplex_key, simplex, &[]).unwrap_err();
 
-        assert!(matches!(
+        assert_matches!(
             err,
             TdsValidationFailure::InvalidNeighbors {
                 reason: NeighborValidationError::UnassignedNeighborSlot { facet_index: 0, .. },
             }
-        ));
+        );
     }
 
     /// Checks that a k=2 flip and its inverse preserve topology in dimension `D`.
@@ -11934,7 +11935,7 @@ mod tests {
             direction: FlipDirection::Forward,
         };
 
-        assert!(matches!(
+        assert_matches!(
             apply_bistellar_flip_dynamic(&mut tds, 0, &valid_shape),
             Err(FlipError::InvalidFlipContext {
                 reason: FlipContextError::InvalidMoveSize {
@@ -11942,8 +11943,8 @@ mod tests {
                     dimension,
                 }
             }) if dimension == D
-        ));
-        assert!(matches!(
+        );
+        assert_matches!(
             apply_bistellar_flip_dynamic(&mut tds, D + 2, &valid_shape),
             Err(FlipError::InvalidFlipContext {
                 reason: FlipContextError::InvalidMoveSize {
@@ -11951,13 +11952,13 @@ mod tests {
                     dimension,
                 }
             }) if k_move == D + 2 && dimension == D
-        ));
+        );
 
         let wrong_removed_face = FlipContextDyn {
             removed_face_vertices: vertices[..D - 1].iter().copied().collect(),
             ..valid_shape.clone()
         };
-        assert!(matches!(
+        assert_matches!(
             apply_bistellar_flip_dynamic(&mut tds, 2, &wrong_removed_face),
             Err(FlipError::InvalidFlipContext {
                 reason: FlipContextError::WrongRemovedFaceArity {
@@ -11965,13 +11966,13 @@ mod tests {
                     found,
                 }
             }) if expected == D && found == D - 1
-        ));
+        );
 
         let wrong_inserted_face = FlipContextDyn {
             inserted_face_vertices: once(vertices[D]).collect(),
             ..valid_shape.clone()
         };
-        assert!(matches!(
+        assert_matches!(
             apply_bistellar_flip_dynamic(&mut tds, 2, &wrong_inserted_face),
             Err(FlipError::InvalidFlipContext {
                 reason: FlipContextError::WrongInsertedFaceArity {
@@ -11980,13 +11981,13 @@ mod tests {
                     found: 1,
                 }
             })
-        ));
+        );
 
         let wrong_removed_simplices = FlipContextDyn {
             removed_simplices: once(c0).collect(),
             ..valid_shape.clone()
         };
-        assert!(matches!(
+        assert_matches!(
             apply_bistellar_flip_dynamic(&mut tds, 2, &wrong_removed_simplices),
             Err(FlipError::InvalidFlipContext {
                 reason: FlipContextError::WrongRemovedSimplexCount {
@@ -11994,18 +11995,18 @@ mod tests {
                     found: 1,
                 }
             })
-        ));
+        );
 
         let overlapping_faces = FlipContextDyn {
             inserted_face_vertices: [vertices[D - 1], vertices[D]].into_iter().collect(),
             ..valid_shape
         };
-        assert!(matches!(
+        assert_matches!(
             apply_bistellar_flip_dynamic(&mut tds, 2, &overlapping_faces),
             Err(FlipError::InvalidFlipContext {
                 reason: FlipContextError::OverlappingFaces,
             })
-        ));
+        );
         assert_eq!(tds.number_of_vertices(), 0);
         assert_eq!(tds.number_of_simplices(), 0);
     }
@@ -12091,7 +12092,7 @@ mod tests {
         let context = build_k2_flip_context(&tds, facet).unwrap();
         let result = apply_bistellar_flip_k2(&mut tds, &context);
 
-        assert!(matches!(result, Err(FlipError::DuplicateSimplex)));
+        assert_matches!(result, Err(FlipError::DuplicateSimplex));
         assert!(tds.is_valid().is_ok());
     }
 
@@ -12150,10 +12151,7 @@ mod tests {
 
         let result = apply_bistellar_flip_k2(&mut tds, &ctx);
 
-        assert!(matches!(
-            result,
-            Err(FlipError::InsertedSimplexAlreadyExists { .. })
-        ));
+        assert_matches!(result, Err(FlipError::InsertedSimplexAlreadyExists { .. }));
         assert!(tds.is_valid().is_ok());
     }
 
@@ -12185,7 +12183,7 @@ mod tests {
         let context = build_k2_flip_context(&tds, facet).unwrap();
         let result = apply_bistellar_flip_k2(&mut tds, &context);
 
-        assert!(matches!(result, Err(FlipError::NonManifoldFacet)));
+        assert_matches!(result, Err(FlipError::NonManifoldFacet));
         assert!(tds.is_valid().is_ok());
     }
 
@@ -12375,7 +12373,7 @@ mod tests {
         let before = snapshot_topology(&tds);
         let facet = FacetHandle::new(simplex, 0);
         let err = build_k2_flip_context(&tds, facet).unwrap_err();
-        assert!(matches!(err, FlipError::BoundaryFacet { .. }));
+        assert_matches!(err, FlipError::BoundaryFacet { .. });
         assert_eq!(snapshot_topology(&tds), before);
     }
 
@@ -12401,10 +12399,7 @@ mod tests {
 
         let ridge = RidgeHandle::new(simplex, 0, 1);
         let err = build_k3_flip_context(&tds, ridge).unwrap_err();
-        assert!(matches!(
-            err,
-            FlipError::InvalidRidgeMultiplicity { found: 1 }
-        ));
+        assert_matches!(err, FlipError::InvalidRidgeMultiplicity { found: 1 });
     }
 
     #[test]
@@ -12491,7 +12486,7 @@ mod tests {
 
         let edge = EdgeKey::new(opposite_a, opposite_b);
         let err = build_k2_flip_context_from_edge(&tds, edge).unwrap_err();
-        assert!(matches!(err, FlipError::InvalidEdgeMultiplicity { .. }));
+        assert_matches!(err, FlipError::InvalidEdgeMultiplicity { .. });
     }
 
     #[test]
@@ -12513,13 +12508,13 @@ mod tests {
 
         let triangle = TriangleHandle::new(vertices[0], vertices[1], vertices[2]);
         let err = build_k3_flip_context_from_triangle(&tds, triangle).unwrap_err();
-        assert!(matches!(
+        assert_matches!(
             err,
             FlipError::InvalidTriangleMultiplicity {
                 found: 1,
                 expected: 4,
             }
-        ));
+        );
     }
 
     #[test]
@@ -12536,7 +12531,7 @@ mod tests {
         let before = snapshot_topology(&tds);
         let err = apply_bistellar_flip_k1(&mut tds, simplex_key, vertex!([0.5, 0.0])).unwrap_err();
 
-        assert!(matches!(err, FlipError::DegenerateSimplex));
+        assert_matches!(err, FlipError::DegenerateSimplex);
         assert_eq!(snapshot_topology(&tds), before);
         assert!(tds.is_valid().is_ok());
     }
@@ -12923,10 +12918,7 @@ mod tests {
         let tds = tds.expect("expected a non-Delaunay configuration from candidates");
         let result = verify_delaunay_via_flip_predicates(&tds, &kernel);
 
-        assert!(matches!(
-            result,
-            Err(DelaunayRepairError::PostconditionFailed { .. })
-        ));
+        assert_matches!(result, Err(DelaunayRepairError::PostconditionFailed { .. }));
     }
 
     #[test]
@@ -12943,14 +12935,14 @@ mod tests {
             None,
         );
 
-        assert!(matches!(
+        assert_matches!(
             result,
             Err(DelaunayRepairError::Flip { source })
                 if matches!(
                     source.as_ref(),
                     FlipError::UnsupportedDimension { dimension: 1 }
                 )
-        ));
+        );
     }
 
     #[test]
@@ -13697,12 +13689,12 @@ mod tests {
         let source = source
             .downcast_ref::<Box<FlipError>>()
             .expect("source should remain a typed boxed FlipError");
-        assert!(matches!(source.as_ref(), FlipError::DegenerateSimplex));
+        assert_matches!(source.as_ref(), FlipError::DegenerateSimplex);
 
         let DelaunayRepairError::Flip { source } = err else {
             panic!("expected boxed flip source");
         };
-        assert!(matches!(source.as_ref(), FlipError::DegenerateSimplex));
+        assert_matches!(source.as_ref(), FlipError::DegenerateSimplex);
     }
 
     #[test]
@@ -13900,8 +13892,11 @@ mod tests {
                 let mut coords = [0.0; D];
                 coords[index % D] =
                     0.05 * f64::from(u32::try_from(index + 1).expect("test index fits in u32"));
-                coords[(index + 1) % D] +=
-                    0.01 * f64::from(u32::try_from(index + 2).expect("test index fits in u32"));
+                let next_index = (index + 1) % D;
+                coords[next_index] = 0.01_f64.mul_add(
+                    f64::from(u32::try_from(index + 2).expect("test index fits in u32")),
+                    coords[next_index],
+                );
                 tds.insert_vertex_with_mapping(vertex!(coords)).unwrap()
             })
             .collect()
@@ -14057,7 +14052,7 @@ mod tests {
                 #[test]
                 fn [<test_removed_simplex_frame_requires_source_simplex_ $dim d>]() {
                     let result = removed_simplex_frame(&[]);
-                    assert!(matches!(result, Err(FlipError::InvalidFlipContext { .. })));
+                    assert_matches!(result, Err(FlipError::InvalidFlipContext { .. }));
                 }
             }
         };
@@ -14312,10 +14307,7 @@ mod tests {
             Some(frame_simplex),
             &truncated_removed_simplices,
         );
-        assert!(matches!(
-            lift_result,
-            Err(FlipError::InvalidFlipContext { .. })
-        ));
+        assert_matches!(lift_result, Err(FlipError::InvalidFlipContext { .. }));
 
         let kernel = AdaptiveKernel::<f64>::new();
         let config = RepairAttemptConfig {

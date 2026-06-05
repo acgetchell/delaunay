@@ -15,6 +15,8 @@
 //! - Bootstrap phase (< D+1 vertices)
 //! - Post-bootstrap phase (≥ D+1 vertices)
 
+use std::assert_matches;
+
 use delaunay::prelude::construction::{DelaunayTriangulation, TopologyGuarantee, vertex};
 use delaunay::prelude::insertion::{InsertionError, InsertionOutcome};
 
@@ -32,7 +34,7 @@ fn delaunay_insert_with_statistics_basic_2d() {
         .insert_with_statistics(vertex!([0.0, 0.0]))
         .expect("insertion should succeed");
 
-    assert!(matches!(outcome, InsertionOutcome::Inserted { .. }));
+    assert_matches!(outcome, InsertionOutcome::Inserted { .. });
     assert_eq!(stats.attempts, 1);
     assert!(!stats.used_perturbation());
     assert!(!stats.skipped());
@@ -46,7 +48,7 @@ fn delaunay_insert_with_statistics_basic_2d() {
         .insert_with_statistics(vertex!([1.0, 0.0]))
         .expect("insertion should succeed");
 
-    assert!(matches!(outcome, InsertionOutcome::Inserted { .. }));
+    assert_matches!(outcome, InsertionOutcome::Inserted { .. });
     assert_eq!(stats.attempts, 1);
     assert_eq!(dt.number_of_vertices(), 2);
 
@@ -55,7 +57,7 @@ fn delaunay_insert_with_statistics_basic_2d() {
         .insert_with_statistics(vertex!([0.5, 1.0]))
         .expect("insertion should succeed");
 
-    assert!(matches!(outcome, InsertionOutcome::Inserted { hint, .. } if hint.is_some()));
+    assert_matches!(outcome, InsertionOutcome::Inserted { hint, .. } if hint.is_some());
     assert_eq!(stats.attempts, 1);
     assert!(stats.success());
     assert_eq!(dt.number_of_vertices(), 3);
@@ -74,20 +76,14 @@ fn delaunay_insert_with_statistics_hint_caching_3d() {
     let (outcome, _) = dt.insert_with_statistics(vertex!([0.0, 0.0, 1.0])).unwrap();
 
     // After simplex creation, hint should be available
-    assert!(matches!(
-        outcome,
-        InsertionOutcome::Inserted { hint: Some(_), .. }
-    ));
+    assert_matches!(outcome, InsertionOutcome::Inserted { hint: Some(_), .. });
 
     // Insert interior point - should benefit from hint
     let (outcome, stats) = dt
         .insert_with_statistics(vertex!([0.25, 0.25, 0.25]))
         .unwrap();
 
-    assert!(matches!(
-        outcome,
-        InsertionOutcome::Inserted { hint: Some(_), .. }
-    ));
+    assert_matches!(outcome, InsertionOutcome::Inserted { hint: Some(_), .. });
     assert_eq!(stats.attempts, 1);
     assert!(stats.success());
     assert_eq!(dt.number_of_vertices(), 5);
@@ -224,7 +220,7 @@ fn delaunay_insert_with_statistics_bootstrap_happy_path_3d() {
 
     for v in vertices {
         let (outcome, stats) = dt.insert_best_effort_with_statistics(v).unwrap();
-        assert!(matches!(outcome, InsertionOutcome::Inserted { .. }));
+        assert_matches!(outcome, InsertionOutcome::Inserted { .. });
         assert_eq!(stats.attempts, 1);
     }
 
@@ -246,7 +242,7 @@ fn delaunay_insert_with_statistics_statistics_fields_3d() {
         let (outcome, stats) = dt.insert_with_statistics(vertex!(coords)).unwrap();
 
         // Verify all statistics fields
-        assert!(matches!(outcome, InsertionOutcome::Inserted { .. }));
+        assert_matches!(outcome, InsertionOutcome::Inserted { .. });
         assert!(stats.attempts >= 1);
         assert!(!stats.skipped());
         assert!(stats.success());

@@ -62,7 +62,7 @@ use std::hash::{Hash, Hasher};
 /// use delaunay::prelude::insertion::HullExtensionReason;
 ///
 /// let reason = HullExtensionReason::NoVisibleFacets;
-/// assert!(matches!(reason, HullExtensionReason::NoVisibleFacets));
+/// std::assert_matches!(reason, HullExtensionReason::NoVisibleFacets);
 /// ```
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[non_exhaustive]
@@ -988,7 +988,7 @@ impl fmt::Display for DelaunayRepairFailureContext {
 /// let err = NeighborRebuildError::Wiring {
 ///     reason: NeighborWiringError::MissingSimplex { simplex_key },
 /// };
-/// assert!(matches!(err, NeighborRebuildError::Wiring { .. }));
+/// std::assert_matches!(err, NeighborRebuildError::Wiring { .. });
 /// ```
 #[derive(Debug, Clone, thiserror::Error, PartialEq, Eq)]
 #[non_exhaustive]
@@ -1048,7 +1048,7 @@ pub enum NeighborRebuildError {
 ///     facet_index: 4,
 ///     vertex_count: 3,
 /// };
-/// assert!(matches!(err, CavityFillingError::InvalidFacetIndex { .. }));
+/// std::assert_matches!(err, CavityFillingError::InvalidFacetIndex { .. });
 /// ```
 #[derive(Debug, Clone, thiserror::Error, PartialEq, Eq)]
 #[non_exhaustive]
@@ -1215,7 +1215,7 @@ impl fmt::Display for CavityRepairStage {
 ///
 /// let simplex_key = SimplexKey::from(KeyData::from_ffi(11));
 /// let err = NeighborWiringError::MissingSimplex { simplex_key };
-/// assert!(matches!(err, NeighborWiringError::MissingSimplex { .. }));
+/// std::assert_matches!(err, NeighborWiringError::MissingSimplex { .. });
 /// ```
 #[derive(Debug, Clone, thiserror::Error, PartialEq, Eq)]
 #[non_exhaustive]
@@ -1344,7 +1344,7 @@ pub enum NeighborWiringError {
 /// let err = InsertionError::DuplicateCoordinates {
 ///     coordinates: "[0.0, 0.0, 0.0]".to_string(),
 /// };
-/// assert!(matches!(err, InsertionError::DuplicateCoordinates { .. }));
+/// std::assert_matches!(err, InsertionError::DuplicateCoordinates { .. });
 /// ```
 #[derive(Debug, Clone, thiserror::Error, PartialEq, Eq)]
 #[non_exhaustive]
@@ -4279,6 +4279,7 @@ mod tests {
     use crate::topology::characteristics::euler::TopologyClassification;
     use crate::vertex;
     use slotmap::KeyData;
+    use std::assert_matches;
 
     /// Return one mutual neighbor pair from a test TDS.
     fn first_neighbor_pair<T, U, V, const D: usize>(
@@ -4466,12 +4467,12 @@ mod tests {
 
         let result = fill_cavity(tds, new_vkey, &invalid_boundary_facets);
         assert!(result.is_err());
-        assert!(matches!(
+        assert_matches!(
             result,
             Err(InsertionError::CavityFilling {
                 reason: CavityFillingError::MissingBoundarySimplex { .. },
             })
-        ));
+        );
     }
 
     #[test]
@@ -4491,12 +4492,12 @@ mod tests {
 
         let result = fill_cavity(tds, new_vkey, &invalid_boundary_facets);
 
-        assert!(matches!(
+        assert_matches!(
             result,
             Err(InsertionError::CavityFilling {
                 reason: CavityFillingError::InvalidFacetIndex { .. },
             })
-        ));
+        );
         assert_eq!(
             tds.number_of_simplices(),
             original_simplex_count,
@@ -4520,12 +4521,12 @@ mod tests {
 
         let result = wire_cavity_neighbors(tds, &invalid_simplices, [], None);
         assert!(result.is_err());
-        assert!(matches!(
+        assert_matches!(
             result,
             Err(InsertionError::NeighborWiring {
                 reason: NeighborWiringError::MissingSimplex { .. },
             })
-        ));
+        );
     }
 
     #[test]
@@ -4557,7 +4558,7 @@ mod tests {
         )
         .unwrap_err();
 
-        assert!(matches!(
+        assert_matches!(
             err,
             InsertionError::NeighborWiring {
                 reason: NeighborWiringError::ExternalFacetNotFound {
@@ -4566,7 +4567,7 @@ mod tests {
                     ..
                 },
             } if simplex_key == external_simplex
-        ));
+        );
     }
 
     #[test]
@@ -4605,7 +4606,7 @@ mod tests {
         )
         .unwrap_err();
 
-        assert!(matches!(
+        assert_matches!(
             err,
             InsertionError::NeighborWiring {
                 reason: NeighborWiringError::ExternalFacetAlreadyShared {
@@ -4615,7 +4616,7 @@ mod tests {
                     ..
                 },
             } if simplex_key == external_simplex
-        ));
+        );
     }
 
     #[test]
@@ -4629,12 +4630,12 @@ mod tests {
         let err =
             external_facets_for_boundary(&tds, &internal_simplices, &boundary_facets).unwrap_err();
 
-        assert!(matches!(
+        assert_matches!(
             err,
             InsertionError::NeighborWiring {
                 reason: NeighborWiringError::MissingSimplex { simplex_key },
             } if simplex_key == missing_simplex
-        ));
+        );
     }
 
     #[test]
@@ -4660,12 +4661,12 @@ mod tests {
         let err =
             external_facets_for_boundary(&tds, &internal_simplices, &boundary_facets).unwrap_err();
 
-        assert!(matches!(
+        assert_matches!(
             err,
             InsertionError::NeighborWiring {
                 reason: NeighborWiringError::MissingSimplex { simplex_key },
             } if simplex_key == missing_neighbor
-        ));
+        );
     }
 
     #[test]
@@ -4755,12 +4756,12 @@ mod tests {
         let boundary_facets = vec![FacetHandle::new(simplex_key, 0)];
         let err = fill_cavity(tds, new_vkey, &boundary_facets).unwrap_err();
 
-        assert!(matches!(
+        assert_matches!(
             err,
             InsertionError::CavityFilling {
                 reason: CavityFillingError::WrongSimplexArity { .. },
             }
-        ));
+        );
     }
 
     #[test]
@@ -4794,13 +4795,13 @@ mod tests {
         new_simplices.push(c3);
 
         let err = wire_cavity_neighbors(&mut tds, &new_simplices, [], None).unwrap_err();
-        assert!(matches!(
+        assert_matches!(
             err,
             InsertionError::NonManifoldTopology {
                 simplex_count: 3,
                 ..
             }
-        ));
+        );
     }
 
     #[test]
@@ -4826,7 +4827,7 @@ mod tests {
         new_simplices.push(simplex_key);
 
         let err = wire_cavity_neighbors(tds, &new_simplices, [], None).unwrap_err();
-        assert!(matches!(
+        assert_matches!(
             err,
             InsertionError::NeighborWiring {
                 reason: NeighborWiringError::WrongSimplexArity {
@@ -4835,7 +4836,7 @@ mod tests {
                     found: 4,
                 },
             } if key == simplex_key
-        ));
+        );
     }
 
     #[test]
@@ -4845,13 +4846,13 @@ mod tests {
             max: u8::MAX,
         };
 
-        assert!(matches!(
+        assert_matches!(
             err,
             NeighborWiringError::FacetIndexOverflow {
                 facet_index,
                 max: u8::MAX,
             } if facet_index == usize::from(u8::MAX) + 1
-        ));
+        );
     }
 
     #[test]
@@ -4863,14 +4864,14 @@ mod tests {
             found: 2,
         };
 
-        assert!(matches!(
+        assert_matches!(
             err,
             NeighborWiringError::WrongSimplexArity {
                 simplex_key: key,
                 expected: 3,
                 found: 2,
             } if key == simplex_key
-        ));
+        );
         assert!(err.to_string().contains("expected 3"));
         assert!(err.to_string().contains("has 2 vertices"));
     }
@@ -5777,10 +5778,10 @@ mod tests {
 
                     let err = repair_neighbor_pointers_local(&mut tds, &simplex_keys, None).unwrap_err();
 
-                    assert!(matches!(
+                    assert_matches!(
                         err,
                         InsertionError::NonManifoldTopology { simplex_count: 3, .. }
-                    ));
+                    );
                 }
             }
         };
@@ -6005,12 +6006,12 @@ mod tests {
             .unwrap();
 
         let err = extend_hull(tds, &kernel, new_vkey, &p).unwrap_err();
-        assert!(matches!(
+        assert_matches!(
             err,
             InsertionError::HullExtension {
                 reason: HullExtensionReason::NoVisibleFacets
             }
-        ));
+        );
     }
 
     #[test]
@@ -6078,12 +6079,12 @@ mod tests {
         let missing = SimplexKey::from(KeyData::from_ffi(u64::MAX));
 
         let err = set_neighbor(&mut tds, missing, 0, None).unwrap_err();
-        assert!(matches!(
+        assert_matches!(
             err,
             InsertionError::NeighborWiring {
                 reason: NeighborWiringError::MissingSimplex { .. },
             }
-        ));
+        );
     }
 
     #[test]
@@ -6097,7 +6098,7 @@ mod tests {
             .unwrap();
 
         let err = set_neighbor(&mut tds, simplex_key, 3, None).unwrap_err();
-        assert!(matches!(
+        assert_matches!(
             err,
             InsertionError::NeighborWiring {
                 reason: NeighborWiringError::InvalidFacetIndex {
@@ -6106,7 +6107,7 @@ mod tests {
                     ..
                 },
             }
-        ));
+        );
     }
 
     #[test]

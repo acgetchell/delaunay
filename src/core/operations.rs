@@ -55,7 +55,7 @@ pub enum TopologicalOperation {
 ///         found: TopologyGuarantee::Pseudomanifold,
 ///     },
 /// };
-/// assert!(matches!(decision, RepairDecision::Skip { .. }));
+/// std::assert_matches!(decision, RepairDecision::Skip { .. });
 /// ```
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RepairDecision {
@@ -76,7 +76,7 @@ pub enum RepairDecision {
 /// use delaunay::prelude::operations::RepairSkipReason;
 ///
 /// let reason = RepairSkipReason::PolicyDisabled;
-/// assert!(matches!(reason, RepairSkipReason::PolicyDisabled));
+/// std::assert_matches!(reason, RepairSkipReason::PolicyDisabled);
 /// ```
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RepairSkipReason {
@@ -374,7 +374,7 @@ impl DelaunayInsertionState {
 ///         coordinates: "[0.0, 0.0, 0.0]".to_string(),
 ///     },
 /// };
-/// assert!(matches!(outcome, InsertionOutcome::Skipped { .. }));
+/// std::assert_matches!(outcome, InsertionOutcome::Skipped { .. });
 /// ```
 #[derive(Debug, Clone)]
 pub enum InsertionOutcome {
@@ -458,6 +458,7 @@ impl SuspicionFlags {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::assert_matches;
 
     #[test]
     fn test_topological_operation_admissibility() {
@@ -487,28 +488,28 @@ mod tests {
 
         let decision =
             DelaunayRepairPolicy::EveryInsertion.decide(1, TopologyGuarantee::PLManifold, op);
-        assert!(matches!(decision, RepairDecision::Proceed));
+        assert_matches!(decision, RepairDecision::Proceed);
 
         let decision =
             DelaunayRepairPolicy::EveryInsertion.decide(0, TopologyGuarantee::PLManifold, op);
-        assert!(matches!(
+        assert_matches!(
             decision,
             RepairDecision::Skip {
                 reason: RepairSkipReason::PolicyDisabled
             }
-        ));
+        );
 
         let decision =
             DelaunayRepairPolicy::EveryInsertion.decide(1, TopologyGuarantee::Pseudomanifold, op);
-        assert!(matches!(decision, RepairDecision::Proceed));
+        assert_matches!(decision, RepairDecision::Proceed);
 
         let decision = DelaunayRepairPolicy::Never.decide(1, TopologyGuarantee::PLManifold, op);
-        assert!(matches!(
+        assert_matches!(
             decision,
             RepairDecision::Skip {
                 reason: RepairSkipReason::PolicyDisabled
             }
-        ));
+        );
     }
 
     #[test]
@@ -517,7 +518,7 @@ mod tests {
         let op = TopologicalOperation::CavityFlip;
         let decision =
             DelaunayRepairPolicy::EveryInsertion.decide(1, TopologyGuarantee::Pseudomanifold, op);
-        assert!(matches!(
+        assert_matches!(
             decision,
             RepairDecision::Skip {
                 reason: RepairSkipReason::Inadmissible {
@@ -526,7 +527,7 @@ mod tests {
                     found: TopologyGuarantee::Pseudomanifold,
                 }
             }
-        ));
+        );
     }
 
     #[test]

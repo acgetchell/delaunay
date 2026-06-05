@@ -135,6 +135,7 @@ enum PrivateFixtureError {
     Invalid,
 }
 
+/// // ruleid: delaunay.rust.no-box-dyn-error-in-doctests
 /// # Ok::<(), Box<dyn std::error::Error>>(())
 fn doctest_style_error_is_ignored() {}
 

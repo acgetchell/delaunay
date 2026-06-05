@@ -291,13 +291,13 @@ where
     ///     .insert_with_statistics(vertex!([0.0, 0.0, 0.0]))?;
     ///
     /// assert!(stats.success());
-    /// assert!(matches!(outcome, InsertionOutcome::Inserted { .. }));
+    /// std::assert_matches!(outcome, InsertionOutcome::Inserted { .. });
     ///
     /// let duplicate = dt.insert_with_statistics(vertex!([0.0, 0.0, 0.0]));
-    /// assert!(matches!(
+    /// std::assert_matches!(
     ///     duplicate,
     ///     Err(InsertionError::DuplicateCoordinates { .. })
-    /// ));
+    /// );
     /// # Ok(())
     /// # }
     /// ```
@@ -337,13 +337,13 @@ where
     ///     .insert_best_effort_with_statistics(vertex!([0.0, 0.0, 0.0]))?;
     ///
     /// assert!(stats.success());
-    /// assert!(matches!(outcome, InsertionOutcome::Inserted { .. }));
+    /// std::assert_matches!(outcome, InsertionOutcome::Inserted { .. });
     ///
     /// let vertices_before_duplicate = dt.number_of_vertices();
     /// let (duplicate_outcome, duplicate_stats) = dt
     ///     .insert_best_effort_with_statistics(vertex!([0.0, 0.0, 0.0]))?;
     ///
-    /// assert!(matches!(duplicate_outcome, InsertionOutcome::Skipped { .. }));
+    /// std::assert_matches!(duplicate_outcome, InsertionOutcome::Skipped { .. });
     /// assert!(duplicate_stats.skipped_duplicate());
     /// assert_eq!(dt.number_of_vertices(), vertices_before_duplicate);
     /// # Ok(())
@@ -746,10 +746,10 @@ where
     /// let err = dt
     ///     .remove_vertex(vertex_key)
     ///     .expect_err("removal should leave an isolated vertex");
-    /// assert!(matches!(
+    /// std::assert_matches!(
     ///     err,
     ///     InvariantError::Triangulation(TriangulationValidationError::IsolatedVertex { .. })
-    /// ));
+    /// );
     /// assert_eq!(dt.number_of_vertices(), 3);
     /// assert_eq!(dt.number_of_simplices(), 1);
     /// # Ok(())
@@ -851,6 +851,7 @@ mod tests {
     use crate::geometry::util::safe_usize_to_scalar;
     use crate::vertex;
     use slotmap::KeyData;
+    use std::assert_matches;
     use std::sync::Once;
     use uuid::Uuid;
 
@@ -1087,13 +1088,13 @@ mod tests {
         match error {
             InsertionError::TopologyValidationFailed { message, source } => {
                 assert_eq!(message, RIDGE_LINK_REPAIR_VALIDATION_MESSAGE);
-                assert!(matches!(
+                assert_matches!(
                     source,
                     TriangulationValidationError::BoundaryRidgeMultiplicity {
                         ridge_key: observed_ridge_key,
                         boundary_facet_count: 3
                     } if observed_ridge_key == ridge_key
-                ));
+                );
             }
             other => panic!("expected TopologyValidationFailed, got {other:?}"),
         }

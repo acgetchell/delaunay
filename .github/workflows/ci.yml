@@ -24,14 +24,14 @@ env:
   ACTIONLINT_VERSION: "1.7.12"
   DPRINT_VERSION: "0.54.0"
   JUST_VERSION: "1.51.0"
-  NEXTEST_VERSION: "0.9.136"
-  RUMDL_VERSION: "0.1.94"
+  NEXTEST_VERSION: "0.9.137"
+  RUMDL_VERSION: "0.2.6"
   SHFMT_VERSION: "3.13.1"
   SHFMT_SHA256_DARWIN_AMD64: "6feedafc72915794163114f512348e2437d080d0047ef8b8fa2ec63b575f12af"
   SHFMT_SHA256_DARWIN_ARM64: "9680526be4a66ea1ffe988ed08af58e1400fe1e4f4aef5bd88b20bb9b3da33f8"
   SHFMT_SHA256_LINUX_AMD64: "fb096c5d1ac6beabbdbaa2874d025badb03ee07929f0c9ff67563ce8c75398b1"
   TAPLO_VERSION: "0.10.0"
-  TYPOS_VERSION: "1.46.1"
+  TYPOS_VERSION: "1.47.1"
   UV_VERSION: "0.11.15"
 
 jobs:
@@ -54,6 +54,8 @@ jobs:
 
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
 
       - name: Install Rust toolchain
         uses: actions-rust-lang/setup-rust-toolchain@46268bd060767258de96ed93c1251119784f2ab6 # v1.16.1
@@ -65,14 +67,14 @@ jobs:
 
       - name: Install just
         if: matrix.os != 'windows-latest'
-        uses: taiki-e/install-action@e49978b799e49ff429d162b7a30601a569ab6538 # v2.81.1
+        uses: taiki-e/cache-cargo-install-action@417450f3c33ee20393705369577571770643d4c7 # v3.0.7
         with:
           tool: just@${{ env.JUST_VERSION }}
 
       - name: Install cargo-nextest
-        uses: taiki-e/install-action@e49978b799e49ff429d162b7a30601a569ab6538 # v2.81.1
+        uses: taiki-e/cache-cargo-install-action@417450f3c33ee20393705369577571770643d4c7 # v3.0.7
         with:
-          tool: nextest@${{ env.NEXTEST_VERSION }}
+          tool: cargo-nextest@${{ env.NEXTEST_VERSION }}
 
       - name: Verify cargo-nextest
         run: cargo nextest --version
@@ -85,25 +87,25 @@ jobs:
 
       - name: Install rumdl (for Markdown linting)
         if: matrix.os != 'windows-latest'
-        uses: taiki-e/install-action@e49978b799e49ff429d162b7a30601a569ab6538 # v2.81.1
+        uses: taiki-e/cache-cargo-install-action@417450f3c33ee20393705369577571770643d4c7 # v3.0.7
         with:
           tool: rumdl@${{ env.RUMDL_VERSION }}
 
       - name: Install dprint (for YAML formatting)
         if: matrix.os != 'windows-latest'
-        uses: taiki-e/install-action@e49978b799e49ff429d162b7a30601a569ab6538 # v2.81.1
+        uses: taiki-e/cache-cargo-install-action@417450f3c33ee20393705369577571770643d4c7 # v3.0.7
         with:
           tool: dprint@${{ env.DPRINT_VERSION }}
 
       - name: Install typos-cli
         if: matrix.os != 'windows-latest'
-        uses: taiki-e/install-action@e49978b799e49ff429d162b7a30601a569ab6538 # v2.81.1
+        uses: taiki-e/cache-cargo-install-action@417450f3c33ee20393705369577571770643d4c7 # v3.0.7
         with:
           tool: typos-cli@${{ env.TYPOS_VERSION }}
 
       - name: Install taplo (for TOML formatting and linting)
         if: matrix.os != 'windows-latest'
-        uses: taiki-e/install-action@e49978b799e49ff429d162b7a30601a569ab6538 # v2.81.1
+        uses: taiki-e/cache-cargo-install-action@417450f3c33ee20393705369577571770643d4c7 # v3.0.7
         with:
           tool: taplo-cli@${{ env.TAPLO_VERSION }}
 

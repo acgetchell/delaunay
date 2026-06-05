@@ -25,7 +25,7 @@ use thiserror::Error;
 ///         message: "facet map invariant failed".to_string(),
 ///     },
 /// };
-/// assert!(matches!(error, TopologyError::FacetMapBuild { .. }));
+/// std::assert_matches!(error, TopologyError::FacetMapBuild { .. });
 /// ```
 #[derive(Clone, Debug, Error, PartialEq, Eq)]
 #[non_exhaustive]

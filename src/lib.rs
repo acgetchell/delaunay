@@ -179,7 +179,7 @@
 //!
 //! // Duplicate coordinates are rejected.
 //! let result = dt.insert(vertex!([0.0, 0.0]));
-//! assert!(matches!(result, Err(InsertionError::DuplicateCoordinates { .. })));
+//! std::assert_matches!(result, Err(InsertionError::DuplicateCoordinates { .. }));
 //!
 //! // On error, the triangulation is unchanged.
 //! assert_eq!(dt.number_of_vertices(), before_vertices);
@@ -666,7 +666,7 @@ pub mod geometry {
         ///     to_type: "u32",
         ///     details: "out of range".to_string(),
         /// };
-        /// assert!(matches!(err, ValueConversionError::ConversionFailed { .. }));
+        /// std::assert_matches!(err, ValueConversionError::ConversionFailed { .. });
         /// ```
         #[derive(Clone, Debug, thiserror::Error, PartialEq, Eq)]
         #[non_exhaustive]
@@ -696,7 +696,7 @@ pub mod geometry {
         ///     min: "1.0".to_string(),
         ///     max: "0.0".to_string(),
         /// };
-        /// assert!(matches!(err, RandomPointGenerationError::InvalidRange { .. }));
+        /// std::assert_matches!(err, RandomPointGenerationError::InvalidRange { .. });
         /// ```
         #[derive(Clone, Debug, thiserror::Error, PartialEq, Eq)]
         #[non_exhaustive]
@@ -737,7 +737,7 @@ pub mod geometry {
         /// use delaunay::prelude::geometry::CircumcenterError;
         ///
         /// let err = CircumcenterError::EmptyPointSet;
-        /// assert!(matches!(err, CircumcenterError::EmptyPointSet));
+        /// std::assert_matches!(err, CircumcenterError::EmptyPointSet);
         /// ```
         #[derive(Clone, Debug, thiserror::Error, PartialEq, Eq)]
         #[non_exhaustive]
@@ -858,7 +858,7 @@ pub mod geometry {
         /// use delaunay::prelude::geometry::{CircumcenterError, SurfaceMeasureError};
         ///
         /// let err = SurfaceMeasureError::GeometryError(CircumcenterError::EmptyPointSet);
-        /// assert!(matches!(err, SurfaceMeasureError::GeometryError(_)));
+        /// std::assert_matches!(err, SurfaceMeasureError::GeometryError(_));
         /// ```
         #[derive(Clone, Debug, thiserror::Error, PartialEq, Eq)]
         #[non_exhaustive]
@@ -1180,10 +1180,10 @@ pub mod tds {
 /// let kernel = AdaptiveKernel::new();
 /// let point = Point::new([0.0, 0.0]);
 ///
-/// assert!(matches!(
+/// std::assert_matches!(
 ///     locate(&tds, &kernel, &point, None),
 ///     Err(LocateError::EmptyTriangulation)
-/// ));
+/// );
 /// ```
 pub mod algorithms {
     #[cfg(any(feature = "diagnostics", all(test, debug_assertions)))]
@@ -1662,10 +1662,10 @@ pub mod prelude {
     /// let kernel = AdaptiveKernel::new();
     /// let point = Point::new([0.0, 0.0]);
     ///
-    /// assert!(matches!(
+    /// std::assert_matches!(
     ///     locate(&tds, &kernel, &point, None),
     ///     Err(LocateError::EmptyTriangulation)
-    /// ));
+    /// );
     /// ```
     pub mod algorithms {
         pub use crate::algorithms::{
@@ -1900,6 +1900,7 @@ mod tests {
         vertex,
     };
     use la_stack::LaError;
+    use std::assert_matches;
 
     #[cfg(feature = "count-allocations")]
     use allocation_counter::measure;
@@ -1989,7 +1990,7 @@ mod tests {
         };
         assert_eq!(outcome.stats.flips_performed, stats.flips_performed);
         let order = RepairQueueOrder::Fifo;
-        assert!(matches!(order, RepairQueueOrder::Fifo));
+        assert_matches!(order, RepairQueueOrder::Fifo);
         assert_eq!(
             DelaunayRepairPolicy::default(),
             DelaunayRepairPolicy::EveryInsertion
@@ -1997,17 +1998,17 @@ mod tests {
         assert_eq!(DelaunayCheckPolicy::default(), DelaunayCheckPolicy::EndOnly);
 
         let err = DelaunayRepairError::from(FlipError::DegenerateSimplex);
-        assert!(matches!(err, DelaunayRepairError::Flip { .. }));
+        assert_matches!(err, DelaunayRepairError::Flip { .. });
         let context_err = FlipContextError::ReplacementPeriodicOffsetCountMismatch {
             simplex_count: 1,
             offset_count: 0,
         };
-        assert!(matches!(
+        assert_matches!(
             context_err,
             FlipContextError::ReplacementPeriodicOffsetCountMismatch { .. }
-        ));
+        );
         let topo = TopologyGuarantee::PLManifold;
-        assert!(matches!(topo, TopologyGuarantee::PLManifold));
+        assert_matches!(topo, TopologyGuarantee::PLManifold);
     }
 
     #[test]

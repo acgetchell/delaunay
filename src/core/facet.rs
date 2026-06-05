@@ -95,7 +95,7 @@ use thiserror::Error;
 /// use delaunay::prelude::tds::FacetError;
 ///
 /// let err = FacetError::FacetNotFoundInTriangulation;
-/// assert!(matches!(err, FacetError::FacetNotFoundInTriangulation));
+/// std::assert_matches!(err, FacetError::FacetNotFoundInTriangulation);
 /// ```
 #[derive(Clone, Debug, Error, PartialEq, Eq)]
 #[non_exhaustive]
@@ -1229,6 +1229,7 @@ mod tests {
     use crate::triangulation::DelaunayTriangulation;
     use crate::vertex;
     use slotmap::SlotMap;
+    use std::assert_matches;
     use std::{collections::HashSet, mem};
 
     // =============================================================================
@@ -1286,10 +1287,10 @@ mod tests {
         let simplex_key = dt.simplices().next().unwrap().0;
 
         // Test invalid facet index (should be 0 or 1 for 1D, facet_index >= 2 is invalid)
-        assert!(matches!(
+        assert_matches!(
             FacetView::new(dt.tds(), simplex_key, 99),
             Err(FacetError::InvalidFacetIndex { .. })
-        ));
+        );
     }
 
     #[test]
@@ -1868,7 +1869,7 @@ mod tests {
 
         // Test invalid facet index
         let result = FacetView::new(dt.tds(), simplex_key, 10);
-        assert!(matches!(result, Err(FacetError::InvalidFacetIndex { .. })));
+        assert_matches!(result, Err(FacetError::InvalidFacetIndex { .. }));
     }
 
     #[test]

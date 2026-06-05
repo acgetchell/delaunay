@@ -171,10 +171,10 @@ impl ValidationCadence {
     /// ```rust
     /// use delaunay::prelude::validation::ValidationCadence;
     ///
-    /// assert!(matches!(
+    /// std::assert_matches!(
     ///     ValidationCadence::from_optional_every(Some(32)),
     ///     ValidationCadence::EveryN(every) if every.get() == 32,
-    /// ));
+    /// );
     /// assert_eq!(
     ///     ValidationCadence::from_optional_every(None),
     ///     ValidationCadence::Never,

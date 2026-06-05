@@ -88,7 +88,7 @@ use uuid::Uuid;
 /// use delaunay::prelude::tds::SimplexValidationError;
 ///
 /// let err = SimplexValidationError::DuplicateVertices;
-/// assert!(matches!(err, SimplexValidationError::DuplicateVertices));
+/// std::assert_matches!(err, SimplexValidationError::DuplicateVertices);
 /// ```
 #[derive(Clone, Debug, Error, PartialEq, Eq)]
 #[non_exhaustive]
@@ -2127,6 +2127,7 @@ mod tests {
     use crate::geometry::util::{circumcenter, circumradius, circumradius_with_center};
     use crate::prelude::DelaunayTriangulation;
     use approx::assert_relative_eq;
+    use std::assert_matches;
     use std::{
         cmp,
         collections::{HashSet, hash_map::DefaultHasher},
@@ -3901,20 +3902,20 @@ mod tests {
         // Too few vertices for a 3D simplex (D+1 = 4)
         let err =
             Simplex::<f64, (), (), 3>::new(vec![vkeys[0], vkeys[1], vkeys[2]], None).unwrap_err();
-        assert!(matches!(
+        assert_matches!(
             err,
             SimplexValidationError::InsufficientVertices {
                 actual: 3,
                 expected: 4,
                 dimension: 3,
             }
-        ));
+        );
 
         // Duplicate vertex keys are rejected
         let err =
             Simplex::<f64, (), (), 3>::new(vec![vkeys[0], vkeys[1], vkeys[2], vkeys[0]], None)
                 .unwrap_err();
-        assert!(matches!(err, SimplexValidationError::DuplicateVertices));
+        assert_matches!(err, SimplexValidationError::DuplicateVertices);
     }
 
     #[test]
@@ -3931,18 +3932,18 @@ mod tests {
         // Insufficient vertices (wrong vertex buffer length)
         let mut wrong_len = simplex_ref.clone();
         wrong_len.vertices.pop();
-        assert!(matches!(
+        assert_matches!(
             wrong_len.is_valid(),
             Err(SimplexValidationError::InsufficientVertices { .. })
-        ));
+        );
 
         // Duplicate vertices
         let mut dup = simplex_ref.clone();
         dup.vertices[1] = dup.vertices[0];
-        assert!(matches!(
+        assert_matches!(
             dup.is_valid(),
             Err(SimplexValidationError::DuplicateVertices)
-        ));
+        );
     }
 
     #[test]
@@ -4017,10 +4018,10 @@ mod tests {
         let slots = simplex.ensure_neighbors_buffer_mut();
         slots[0] = NeighborSlot::Unassigned;
 
-        assert!(matches!(
+        assert_matches!(
             simplex.is_valid(),
             Err(SimplexValidationError::UnassignedNeighborSlot { facet_index: 0 })
-        ));
+        );
     }
 
     #[test]
@@ -4107,24 +4108,24 @@ mod tests {
 
         // Both helpers should fail early (before attempting to build individual FacetViews).
         let err = Simplex::facet_views_from_tds(dt.tds(), simplex_key).unwrap_err();
-        assert!(matches!(
+        assert_matches!(
             err,
             FacetError::InvalidFacetIndex {
                 index: u8::MAX,
                 facet_count,
             } if u8::try_from(facet_count).is_err()
-        ));
+        );
 
         let err = Simplex::facet_view_iter(dt.tds(), simplex_key)
             .err()
             .expect("Expected facet_view_iter to fail on vertex_count overflow");
-        assert!(matches!(
+        assert_matches!(
             err,
             FacetError::InvalidFacetIndex {
                 index: u8::MAX,
                 facet_count,
             } if u8::try_from(facet_count).is_err()
-        ));
+        );
     }
 
     #[test]
@@ -4175,10 +4176,10 @@ mod tests {
         };
         let simplex_err: SimplexValidationError = err.into();
 
-        assert!(matches!(
+        assert_matches!(
             simplex_err,
             SimplexValidationError::CoordinateConversion { .. }
-        ));
+        );
     }
 
     // =============================================================================

@@ -120,7 +120,7 @@ impl fmt::Display for DegenerateSimplexReason {
 ///     from_type: "f64",
 ///     to_type: "f32",
 /// };
-/// assert!(matches!(err, CoordinateConversionError::ConversionFailed { .. }));
+/// std::assert_matches!(err, CoordinateConversionError::ConversionFailed { .. });
 /// ```
 #[derive(Clone, Debug, thiserror::Error, PartialEq, Eq)]
 #[non_exhaustive]
@@ -247,7 +247,7 @@ impl From<StackMatrixDispatchError> for CoordinateConversionError {
 ///     coordinate_value: "NaN".to_string(),
 ///     dimension: 3,
 /// };
-/// assert!(matches!(err, CoordinateValidationError::InvalidCoordinate { .. }));
+/// std::assert_matches!(err, CoordinateValidationError::InvalidCoordinate { .. });
 /// ```
 #[derive(Clone, Debug, thiserror::Error, PartialEq, Eq)]
 #[non_exhaustive]

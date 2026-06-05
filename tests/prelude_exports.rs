@@ -10,6 +10,8 @@
     reason = "tests preserve typed construction, repair, and delaunayize errors"
 )]
 
+use std::assert_matches;
+
 use delaunay::prelude::DelaunayValidationError;
 use delaunay::prelude::algorithms::LocateResult;
 #[cfg(feature = "diagnostics")]
@@ -80,7 +82,6 @@ use delaunay::prelude::validation::{
 use delaunay::prelude::{
     SecureHashMap, SecureHashSet, ValidationConfigurationError as RootValidationConfigurationError,
 };
-
 #[derive(Debug, thiserror::Error)]
 enum RootApiExportTestError {
     #[error(transparent)]
@@ -153,10 +154,10 @@ fn root_exports_cover_flattened_public_api() -> Result<(), RootApiExportTestErro
 
     assert_eq!(dt.topology_guarantee(), TopologyGuarantee::PLManifold);
     assert_eq!(dt.validation_policy(), ValidationPolicy::ExplicitOnly);
-    assert!(matches!(
+    assert_matches!(
         ValidationCadence::from_optional_every(Some(2)),
         ValidationCadence::EveryN(every) if every.get() == 2
-    ));
+    );
     assert_eq!(
         DelaunayRepairPolicy::default(),
         DelaunayRepairPolicy::EveryInsertion
@@ -186,10 +187,10 @@ fn preludes_cover_bench_apis() -> Result<(), PreludeExportTestError> {
     ];
     let options =
         ConstructionOptions::default().with_insertion_order(InsertionOrderStrategy::Input);
-    assert!(matches!(
+    assert_matches!(
         options.batch_repair_policy(),
         DelaunayRepairPolicy::EveryInsertion
-    ));
+    );
     let dt = DelaunayTriangulation::new_with_options(&vertices, options)?;
 
     assert_eq!(dt.topology_guarantee(), TopologyGuarantee::PLManifold);
@@ -203,12 +204,12 @@ fn preludes_cover_bench_apis() -> Result<(), PreludeExportTestError> {
         repair_neighbor_pointers_local(&mut empty_tds, &[], None)?,
         0
     );
-    assert!(matches!(
+    assert_matches!(
         DelaunayConstructionFailure::GeometricDegeneracy {
             message: "synthetic".to_string(),
         },
         DelaunayConstructionFailure::GeometricDegeneracy { .. }
-    ));
+    );
     let unsupported_periodic_dimension =
         DelaunayConstructionFailure::UnsupportedPeriodicDimension {
             dimension: 4,
@@ -237,11 +238,11 @@ fn preludes_cover_bench_apis() -> Result<(), PreludeExportTestError> {
         CavityRepairStage::PrimaryInsertion.to_string(),
         "primary insertion"
     );
-    assert!(matches!(LocateResult::Outside, LocateResult::Outside));
-    assert!(matches!(
+    assert_matches!(LocateResult::Outside, LocateResult::Outside);
+    assert_matches!(
         ValidationCadence::from_optional_every(Some(128)),
         ValidationCadence::EveryN(every) if every.get() == 128
-    ));
+    );
     assert_send_sync_unpin::<TdsMutationError>();
     assert_send_sync_unpin::<NeighborRebuildError>();
     assert_send_sync_unpin::<ConstructionSkipSample>();
@@ -254,14 +255,14 @@ fn preludes_cover_bench_apis() -> Result<(), PreludeExportTestError> {
         DegenerateSimplexReason::ZeroOrientation.to_string(),
         "zero orientation"
     );
-    assert!(matches!(
+    assert_matches!(
         MatrixError::OutOfBounds {
             row: 1,
             column: 2,
             dimension: 3
         },
         MatrixError::OutOfBounds { .. }
-    ));
+    );
     let mut root_secure_map: SecureHashMap<[u64; 2], usize> = SecureHashMap::default();
     root_secure_map.insert([1, 2], 3);
     assert_eq!(root_secure_map.get(&[1, 2]), Some(&3));
@@ -350,26 +351,26 @@ fn validation_prelude_covers_configuration_error() {
             validation_policy: FocusedValidationPolicy::Never,
         };
     let root_error: RootValidationConfigurationError = focused_error;
-    assert!(matches!(
+    assert_matches!(
         root_error,
         RootValidationConfigurationError::IncompatibleTopologyAndValidationPolicy {
             topology_guarantee: FocusedValidationTopologyGuarantee::PLManifold,
             validation_policy: FocusedValidationPolicy::Never,
         }
-    ));
+    );
 
     let triangulation_error =
         TriangulationValidationConfigurationError::IncompatibleTopologyAndValidationPolicy {
             topology_guarantee: TriangulationTopologyGuarantee::PLManifoldStrict,
             validation_policy: TriangulationValidationPolicy::Never,
         };
-    assert!(matches!(
+    assert_matches!(
         triangulation_error,
         TriangulationValidationConfigurationError::IncompatibleTopologyAndValidationPolicy {
             topology_guarantee: TriangulationTopologyGuarantee::PLManifoldStrict,
             validation_policy: TriangulationValidationPolicy::Never,
         }
-    ));
+    );
 }
 
 #[test]
@@ -441,10 +442,10 @@ fn diagnostic_preludes_cover_repair_apis() -> Result<(), PreludeExportTestError>
         queue_order: RepairQueueOrder::Fifo,
     };
     assert!(diagnostics.to_string().contains("checked"));
-    assert!(matches!(
+    assert_matches!(
         DelaunayRepairError::from(FlipError::DegenerateSimplex),
         DelaunayRepairError::Flip { .. }
-    ));
+    );
     assert_send_sync_unpin::<FlipEdgeAdjacencyError>();
     assert_send_sync_unpin::<FlipTriangleAdjacencyError>();
     assert_send_sync_unpin::<FlipVertexAdjacencyError>();

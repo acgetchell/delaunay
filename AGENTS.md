@@ -211,7 +211,7 @@ repository-rule files.
 
 - **Language**: Rust
 - **Project**: d‑dimensional Delaunay triangulation library
-- **MSRV**: 1.95
+- **MSRV**: 1.96.0
 - **Edition**: 2024
 - **Unsafe code**: forbidden (`#![forbid(unsafe_code)]`)
 

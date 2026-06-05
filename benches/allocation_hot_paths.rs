@@ -12,7 +12,6 @@
 //! placeholder so workspace benchmark compile checks remain feature-neutral.
 
 use criterion::{criterion_group, criterion_main};
-
 #[cfg(feature = "count-allocations")]
 #[path = "common/bench_utils.rs"]
 mod bench_utils;
@@ -31,6 +30,7 @@ mod allocation_contracts {
     };
     use delaunay::prelude::query::measure_with_result;
     use delaunay::prelude::tds::{SimplexKey, TdsError, VertexKey, facet_key_from_vertices};
+    use std::assert_matches;
     use std::{hint::black_box, num::NonZeroUsize, time::Duration};
     use thiserror::Error;
 
@@ -417,7 +417,7 @@ mod allocation_contracts {
                     let (location, stats) =
                         bench_result(locate_result, "hinted locate_with_stats should succeed");
 
-                    assert!(matches!(location, LocateResult::InsideSimplex(found) if found == simplex_key));
+                    assert_matches!(location, LocateResult::InsideSimplex(found) if found == simplex_key);
                     assert!(stats.used_hint);
                     assert!(!stats.fell_back_to_scan());
                     assert_allocation_budget(

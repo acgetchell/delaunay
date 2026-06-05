@@ -13,7 +13,7 @@ use uuid::Uuid;
 /// use delaunay::prelude::tds::UuidValidationError;
 ///
 /// let err = UuidValidationError::NilUuid;
-/// assert!(matches!(err, UuidValidationError::NilUuid));
+/// std::assert_matches!(err, UuidValidationError::NilUuid);
 /// ```
 #[derive(Clone, Debug, Error, PartialEq, Eq)]
 #[non_exhaustive]

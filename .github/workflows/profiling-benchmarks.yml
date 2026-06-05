@@ -50,6 +50,8 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
 
       - name: Install Rust toolchain
         uses: actions-rust-lang/setup-rust-toolchain@46268bd060767258de96ed93c1251119784f2ab6 # v1.16.1
@@ -57,28 +59,15 @@ jobs:
           cache: false
           rustflags: ""
 
-      - name: Cache Cargo dependencies
-        uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
-        with:
-          path: |
-            ~/.cargo/bin/
-            ~/.cargo/registry/index/
-            ~/.cargo/registry/cache/
-            ~/.cargo/git/db/
-            target/
-          key: ${{ runner.os }}-cargo-profiling-${{ hashFiles('**/Cargo.lock') }}
-          restore-keys: |
-            ${{ runner.os }}-cargo-profiling-
-            ${{ runner.os }}-cargo-
-
       - name: Install system dependencies
         run: |
           sudo apt-get update
           sudo apt-get install -y build-essential
 
       - name: Set profiling mode
+        env:
+          INPUT_MODE: ${{ github.event.inputs.mode || 'development' }}
         run: |
-          INPUT_MODE="${{ github.event.inputs.mode || 'development' }}"
           # Profiling mode determination:
           # 1. Tag pushes (github.event_name == "push"): Always use development mode
           #    - Avoids CI timeout issues on release tag creation
@@ -88,7 +77,7 @@ jobs:
           # 3. Scheduled runs and manual dispatch with mode="production": Use production mode
           #    - Full large-scale profiling counts, including opt-in 4D 5K/10K
           #    - May take 4-6 hours
-          if [[ "$INPUT_MODE" == "development" ]] || [[ "${{ github.event_name }}" == "push" ]]; then
+          if [[ "$INPUT_MODE" == "development" ]] || [[ "$GITHUB_EVENT_NAME" == "push" ]]; then
             echo "PROFILING_DEV_MODE=1" >> "$GITHUB_ENV"
             echo "Running in development mode (reduced scale)"
             # Smaller, faster dev runs
@@ -121,13 +110,14 @@ jobs:
           cargo build --profile perf --bench profiling_suite
 
       - name: Run comprehensive profiling benchmarks
+        env:
+          BENCH_FILTER_VALUE: ${{ github.event.inputs.benchmark_filter || '' }}
         run: |
           # Create results directory
           mkdir -p profiling-results
 
           # Set benchmark filter if provided. Keep the Criterion separator and
           # filter as separate argv tokens for cargo bench.
-          BENCH_FILTER_VALUE="${{ github.event.inputs.benchmark_filter || '' }}"
           BENCH_FILTER_ARGS=()
           if [[ -n "$BENCH_FILTER_VALUE" ]]; then
             BENCH_FILTER_ARGS=("--" "$BENCH_FILTER_VALUE")
@@ -159,28 +149,43 @@ jobs:
             2>&1 | tee profiling-results/memory_profiling_detailed.log
 
       - name: Generate profiling summary
+        env:
+          BENCH_FILTER_VALUE: ${{ github.event.inputs.benchmark_filter || '' }}
+          SUMMARY_BRANCH: ${{ github.ref_name }}
+          SUMMARY_COMMIT: ${{ github.sha }}
+          SUMMARY_RUNNER_OS: ${{ runner.os }}
+          SUMMARY_TRIGGER: ${{ github.event_name }}
         run: |
+          if [[ "${PROFILING_DEV_MODE:-}" == "1" ]]; then
+            summary_mode="Development"
+            summary_mode_detail="Development (reduced auxiliary profiling for faster iteration)"
+          else
+            summary_mode="Production"
+            summary_mode_detail="Production (large-scale counts plus auxiliary profiling)"
+          fi
+          if [[ "$BENCH_FILTER_VALUE" == *memory* ]]; then
+            summary_memory_tracking="Enabled for memory benchmarks (count-allocations feature)"
+          else
+            summary_memory_tracking="Enabled only for memory-specific runs"
+          fi
+          summary_benchmark_filter="${BENCH_FILTER_VALUE:-All benchmarks}"
+
           # Create a summary of the profiling run
           cat > profiling-results/profiling_summary.md << EOF
           # Comprehensive Profiling Results
 
           **Date**: $(date -u +"%Y-%m-%d %H:%M:%S UTC")
-          **Commit**: ${{ github.sha }}
-          **Branch**: ${{ github.ref_name }}
-          **Trigger**: ${{ github.event_name }}
-          **Mode**: ${{ env.PROFILING_DEV_MODE == '1' && 'Development' || 'Production' }}
-          **Runner**: ${{ runner.os }}
+          **Commit**: ${SUMMARY_COMMIT}
+          **Branch**: ${SUMMARY_BRANCH}
+          **Trigger**: ${SUMMARY_TRIGGER}
+          **Mode**: ${summary_mode}
+          **Runner**: ${SUMMARY_RUNNER_OS}
 
           ## Configuration
 
-          - **Profiling Mode**: ${{ env.PROFILING_DEV_MODE == '1' &&
-            'Development (reduced auxiliary profiling for faster iteration)' ||
-            'Production (large-scale counts plus auxiliary profiling)' }}
-          - **Memory Tracking**: ${{ contains(github.event.inputs.benchmark_filter || '', 'memory') &&
-            'Enabled for memory benchmarks (count-allocations feature)' ||
-            'Enabled only for memory-specific runs' }}
-          - **Benchmark Filter**: ${{ (github.event.inputs.benchmark_filter || '') != '' &&
-            github.event.inputs.benchmark_filter || 'All benchmarks' }}
+          - **Profiling Mode**: ${summary_mode_detail}
+          - **Memory Tracking**: ${summary_memory_tracking}
+          - **Benchmark Filter**: ${summary_benchmark_filter}
 
           ## Benchmark Categories Run
 
@@ -208,10 +213,13 @@ jobs:
 
       - name: Save profiling baseline for tagged release
         if: startsWith(github.ref, 'refs/tags/')
+        env:
+          SAFE_REF_NAME: ${{ github.ref_name }}
         run: |
           # For tagged releases, save as new baseline
           echo "Tagged release detected - this will serve as new profiling baseline"
-          cp -r target/criterion profiling-results/criterion-baseline-${{ github.ref_name }}
+          safe_ref_name="$(printf '%s' "$SAFE_REF_NAME" | tr -c 'A-Za-z0-9._-' '_')"
+          cp -r target/criterion "profiling-results/criterion-baseline-${safe_ref_name}"
 
       - name: Upload profiling results
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
@@ -232,8 +240,10 @@ jobs:
 
       - name: Log completion (if triggered manually)
         if: github.event_name == 'workflow_dispatch'
+        env:
+          SUMMARY_COMMIT: ${{ github.sha }}
         run: |
-          echo "Manual profiling run completed for commit ${{ github.sha }}"
+          echo "Manual profiling run completed for commit $SUMMARY_COMMIT"
           echo "Check the Actions tab for detailed results and artifacts"
 
   memory-stress-test:
@@ -251,23 +261,14 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
 
       - name: Install Rust toolchain
         uses: actions-rust-lang/setup-rust-toolchain@46268bd060767258de96ed93c1251119784f2ab6 # v1.16.1
         with:
           cache: false
           rustflags: ""
-
-      - name: Cache Cargo dependencies
-        uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
-        with:
-          path: |
-            ~/.cargo/bin/
-            ~/.cargo/registry/index/
-            ~/.cargo/registry/cache/
-            ~/.cargo/git/db/
-            target/
-          key: ${{ runner.os }}-cargo-memory-${{ hashFiles('**/Cargo.lock') }}
 
       - name: Run allocation API tests
         run: |

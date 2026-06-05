@@ -142,7 +142,7 @@ impl From<TdsError> for QualitySimplexVerticesError {
 /// let err = QualityError::NumericConversion {
 ///     operation: QualityNumericOperation::EdgeCountConversion,
 /// };
-/// assert!(matches!(err, QualityError::NumericConversion { .. }));
+/// std::assert_matches!(err, QualityError::NumericConversion { .. });
 /// ```
 #[derive(Debug, Clone, PartialEq, Eq, Error)]
 #[non_exhaustive]
@@ -563,6 +563,7 @@ mod tests {
     use crate::triangulation::DelaunayTriangulation;
     use crate::vertex;
     use approx::assert_relative_eq;
+    use std::assert_matches;
 
     // sqrt(3) constant computed at compile time
     // const SQRT_3: f64 = 1.732_050_807_568_877_3;
@@ -750,10 +751,7 @@ let key_translated = dt_translated.simplices().next().unwrap().0;
         if let Ok(ratio) = ratio_result {
             assert!(ratio > 10.0);
         } else {
-            assert!(matches!(
-                ratio_result,
-                Err(QualityError::DegenerateSimplex { .. })
-            ));
+            assert_matches!(ratio_result, Err(QualityError::DegenerateSimplex { .. }));
         }
 
         // Test normalized_volume
@@ -761,10 +759,7 @@ let key_translated = dt_translated.simplices().next().unwrap().0;
         if let Ok(norm_vol) = vol_result {
             assert!(norm_vol < 0.01);
         } else {
-            assert!(matches!(
-                vol_result,
-                Err(QualityError::DegenerateSimplex { .. })
-            ));
+            assert_matches!(vol_result, Err(QualityError::DegenerateSimplex { .. }));
         }
     }
 
@@ -781,35 +776,35 @@ let key_translated = dt_translated.simplices().next().unwrap().0;
             simplex_key,
             context: "quality metric simplex lookup".to_string(),
         });
-        assert!(matches!(
+        assert_matches!(
             missing_simplex,
             QualitySimplexVerticesError::SimplexNotFound {
                 simplex_key: observed,
                 context
             } if observed == simplex_key && context == "quality metric simplex lookup"
-        ));
+        );
 
         let missing_vertex = QualitySimplexVerticesError::from(TdsError::VertexNotFound {
             vertex_key,
             context: "quality metric vertex lookup".to_string(),
         });
-        assert!(matches!(
+        assert_matches!(
             missing_vertex,
             QualitySimplexVerticesError::ReferencedVertexNotFound {
                 vertex_key: observed,
                 context
             } if observed == vertex_key && context == "quality metric vertex lookup"
-        ));
+        );
 
         let unexpected = QualitySimplexVerticesError::from(TdsError::DuplicateSimplices {
             message: "same vertex set appears twice".to_string(),
         });
-        assert!(matches!(
+        assert_matches!(
             unexpected,
             QualitySimplexVerticesError::UnexpectedTdsFailure { message }
                 if message.contains("Duplicate simplices")
                     && message.contains("same vertex set appears twice")
-        ));
+        );
     }
 
     #[test]
@@ -1114,10 +1109,10 @@ let simplex_key = dt.simplices().next().unwrap().0;
         let invalid_key = SimplexKey::from(KeyData::from_ffi(u64::MAX));
 
         let result = radius_ratio(dt.as_triangulation(), invalid_key);
-        assert!(matches!(result, Err(QualityError::SimplexVertices { .. })));
+        assert_matches!(result, Err(QualityError::SimplexVertices { .. }));
 
         let result = normalized_volume(dt.as_triangulation(), invalid_key);
-        assert!(matches!(result, Err(QualityError::SimplexVertices { .. })));
+        assert_matches!(result, Err(QualityError::SimplexVertices { .. }));
     }
 
     #[test]
@@ -1308,7 +1303,7 @@ let simplex_key = dt.simplices().next().unwrap().0;
         let invalid_key = SimplexKey::from(KeyData::from_ffi(u64::MAX));
 
         let result = simplex_points(dt.as_triangulation(), invalid_key);
-        assert!(matches!(result, Err(QualityError::SimplexVertices { .. })));
+        assert_matches!(result, Err(QualityError::SimplexVertices { .. }));
     }
 
     #[test]
@@ -1558,13 +1553,13 @@ let simplex_key = dt.simplices().next().unwrap().0;
                 }) = result
                 {
                     // Should include numeric information when we surface a degenerate simplex
-                    assert!(matches!(
+                    assert_matches!(
                         measure,
                         QualityDegeneracyMeasure::Inradius
                             | QualityDegeneracyMeasure::Volume
                             | QualityDegeneracyMeasure::AverageEdgeLength
                             | QualityDegeneracyMeasure::EdgeLengthPower
-                    ));
+                    );
                     assert!(!observed.is_empty());
                 }
             }

@@ -340,6 +340,7 @@ mod tests {
     use crate::geometry::kernel::FastKernel;
     use crate::geometry::traits::coordinate::Coordinate;
     use crate::vertex;
+    use std::assert_matches;
     use uuid::Uuid;
 
     #[test]
@@ -429,10 +430,10 @@ mod tests {
 
         let result = Triangulation::<FastKernel<f64>, (), (), 3>::build_initial_simplex(&vertices);
 
-        assert!(matches!(
+        assert_matches!(
             result,
             Err(TriangulationConstructionError::InsufficientVertices { dimension: 3, .. })
-        ));
+        );
     }
 
     #[test]
@@ -446,10 +447,10 @@ mod tests {
 
         let result = Triangulation::<FastKernel<f64>, (), (), 2>::build_initial_simplex(&vertices);
 
-        assert!(matches!(
+        assert_matches!(
             result,
             Err(TriangulationConstructionError::InsufficientVertices { .. })
-        ));
+        );
     }
 
     fn invalid_initial_simplex_vertices<const D: usize>() -> Vec<Vertex<f64, (), D>> {
@@ -484,12 +485,12 @@ mod tests {
 
                         let result = Triangulation::<FastKernel<f64>, (), (), $dim>::build_initial_simplex(&vertices);
 
-                        assert!(matches!(
+                        assert_matches!(
                             result,
                             Err(TriangulationConstructionError::Tds(
                                 TdsConstructionError::ValidationError(TdsError::InvalidVertex { .. })
                             ))
-                        ));
+                        );
                     }
                 )+
             }
@@ -544,10 +545,10 @@ mod tests {
 
         let result = Triangulation::<FastKernel<f64>, (), (), 2>::build_initial_simplex(&vertices);
 
-        assert!(matches!(
+        assert_matches!(
             result,
             Err(TriangulationConstructionError::GeometricDegeneracy { .. })
-        ));
+        );
     }
 
     #[test]
@@ -561,9 +562,9 @@ mod tests {
 
         let result = Triangulation::<FastKernel<f64>, (), (), 3>::build_initial_simplex(&vertices);
 
-        assert!(matches!(
+        assert_matches!(
             result,
             Err(TriangulationConstructionError::GeometricDegeneracy { .. })
-        ));
+        );
     }
 }

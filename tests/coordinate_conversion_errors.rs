@@ -3,6 +3,8 @@
 //! This module tests that functions properly handle coordinate conversion errors
 //! when dealing with extreme values, NaN, infinity, etc.
 
+use std::assert_matches;
+
 use delaunay::prelude::geometry::*;
 
 // =============================================================================
@@ -110,12 +112,12 @@ fn test_circumcenter_with_nan_coordinates() {
     // The function should return an error due to NaN coordinate
     let result = circumcenter(&points);
 
-    assert!(matches!(
+    assert_matches!(
         result,
         Err(CircumcenterError::CoordinateConversion {
             source: CoordinateConversionError::NonFiniteValue { .. },
         })
-    ));
+    );
 }
 
 #[test]
@@ -130,12 +132,12 @@ fn test_circumradius_with_infinity_coordinates() {
     // The function should return an error due to infinity coordinate
     let result = circumradius(&points);
 
-    assert!(matches!(
+    assert_matches!(
         result,
         Err(CircumcenterError::CoordinateConversion {
             source: CoordinateConversionError::NonFiniteValue { .. },
         })
-    ));
+    );
 }
 
 #[test]

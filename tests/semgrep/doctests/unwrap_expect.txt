@@ -1,0 +1,32 @@
+// ruleid: delaunay.rust.no-unwrap-expect-in-doctests
+/// let value = Some(1_u32).unwrap();
+
+// ruleid: delaunay.rust.no-unwrap-expect-in-doctests
+//! let value = Ok::<u32, &'static str>(1).expect("doctest should not panic");
+
+// ok: delaunay.rust.no-unwrap-expect-in-doctests
+/// # fn main() -> delaunay::DelaunayResult<()> { Ok(()) }
+
+// ok: delaunay.rust.no-unwrap-expect-in-doctests
+/// Do not use `.unwrap()` in public examples.
+
+// ok: delaunay.rust.no-unwrap-expect-in-doctests
+/// Prefer `?` to `.expect("message")` in public examples.
+
+// ruleid: delaunay.rust.no-box-dyn-error-in-doctests
+/// # Ok::<(), Box<dyn std::error::Error>>(())
+
+// ruleid: delaunay.rust.no-box-dyn-error-in-doctests
+//! # fn main() -> anyhow::Error { anyhow::anyhow!("erased") }
+
+// ok: delaunay.rust.no-box-dyn-error-in-doctests
+/// # fn main() -> delaunay::DelaunayResult<()> { Ok(()) }
+
+// ruleid: delaunay.rust.prefer-assert-matches-in-doctests
+/// assert!(matches!(value, Some(_)));
+
+// ok: delaunay.rust.prefer-assert-matches-in-doctests
+/// std::assert_matches!(value, Some(_));
+
+// ok: delaunay.rust.prefer-assert-matches-in-doctests
+/// assert!(value.is_some());

@@ -37,6 +37,40 @@ Both repositories now share the same core Rust and Python support-tooling loop:
 
 The useful updates ported in this pass are:
 
+- Rust MSRV metadata now follows `causal-triangulations` and `la-stack` at
+  Rust 1.96.0. `Cargo.toml`, `rust-toolchain.toml`, `clippy.toml`, contributor
+  docs, and agent guidance all use the same baseline so the upcoming
+  `la-stack` 0.4.2 dependency update in #424 has no MSRV conflict.
+- The local `cargo-nextest` pin and CI workflow environment variables now use
+  0.9.137, matching both sibling repositories. `cargo-llvm-cov` stays on 0.8.7,
+  which is still shared across the repositories.
+- CI Markdown and spelling tool pins now track the newer sibling-repository
+  versions used by `la-stack`: `rumdl` 0.2.6 and `typos-cli` 1.47.1.
+- Local just helpers now version-check the pinned `cargo-nextest`, `rumdl`,
+  `typos-cli`, and `zizmor` tools instead of accepting any installed version.
+  Delaunay does not currently pin or invoke `cargo-instruments`; no
+  `cargo-instruments` alignment was needed in this pass.
+- GitHub Actions Cargo tool installation now uses
+  `taiki-e/cache-cargo-install-action` where Delaunay previously used
+  `taiki-e/install-action`, matching the sibling workflow pattern for pinned
+  Rust CLI tools while preserving Delaunay's existing matrix shape and
+  platform-specific validation split.
+- `.github/workflows/audit.yml` now installs `cargo-audit` 0.22.1 through the
+  same cached Cargo-tool installer, and `.github/workflows/zizmor.yml` imports
+  the dedicated GitHub Actions security scan from `la-stack`.
+- `semgrep.yaml` now carries the low-noise hardening rules already proven useful
+  in sibling repositories: checkout credential persistence, `pull_request_target`
+  avoidance, `github-script` expression interpolation, locked `uv sync`, direct
+  `subprocess.run` outside the wrapper, public `_unchecked` API exposure,
+  prefixed panic macros, doctest unwrap/expect usage, and erased dynamic-error
+  doctest examples. It also ports the sibling `assert!(matches!(...))` doctest
+  rule and rewrites public documentation examples to `std::assert_matches!` so
+  failing examples show the unmatched value instead of a bare boolean.
+- Delaunay intentionally keeps its lean `rust-toolchain.toml` profile instead
+  of copying the heavier sibling toolchain component and target lists. The
+  minimal profile plus `clippy`, `rustfmt`, and `rust-src` remains the better
+  default for this larger crate because workflows already install additional
+  targets or components when they need them.
 - `just check-fast` for a cheap compile-only check.
 - `just markdown-check` keeps `rumdl` as the Markdown linter and adds a raw
   active-doc line-length guard so table rows and other Markdown constructs that
@@ -102,15 +136,16 @@ The useful updates ported in this pass are:
   UI exposes a separate duplicate-code metric, treat it the same way.
 - CI and local setup pins should track the same supported tool versions when
   practical. The current workflow pins align coverage and test tooling on
-  `cargo-llvm-cov` 0.8.7 and `cargo-nextest` 0.9.136. Both CI and Codecov
-  install the same `cargo-nextest` pin with the repository's pinned binary-tool
-  installer and verify `cargo nextest --version` before nextest-backed recipes
-  run. The CI build matrix also installs and verifies that pin on Windows, where
-  the lightweight direct-Cargo job runs library and integration tests through
-  `cargo nextest run` while keeping doctests on `cargo test --doc`. Local
-  `just setup-tools` uses `cargo install --locked cargo-nextest` and verifies
-  the command is available for developer machines. All uv-backed workflows use
-  uv 0.11.15 to match the local Python tooling bootstrap.
+  `cargo-llvm-cov` 0.8.7 and `cargo-nextest` 0.9.137. Both CI and Codecov
+  install the same `cargo-nextest` pin with the sibling repositories'
+  `taiki-e/cache-cargo-install-action` pattern and verify
+  `cargo nextest --version` before nextest-backed recipes run. The CI build
+  matrix also installs and verifies that pin on Windows, where the lightweight
+  direct-Cargo job runs library and integration tests through `cargo nextest
+  run` while keeping doctests on `cargo test --doc`. Local `just setup-tools`
+  uses `cargo install --locked cargo-nextest` and verifies the pinned version is
+  available for developer machines. All uv-backed workflows use uv 0.11.15 to
+  match the local Python tooling bootstrap.
 - `.config/nextest.toml` keeps `profile.ci` bounded for normal CI while
   `profile.slow` raises the per-test watchdog for `just test-slow`, allowing
   intentional multi-minute correctness regressions to run without making the

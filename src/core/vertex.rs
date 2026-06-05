@@ -71,7 +71,7 @@ use uuid::Uuid;
 /// let err = VertexValidationError::InvalidUuid {
 ///     source: UuidValidationError::NilUuid,
 /// };
-/// assert!(matches!(err, VertexValidationError::InvalidUuid { .. }));
+/// std::assert_matches!(err, VertexValidationError::InvalidUuid { .. });
 /// ```
 #[derive(Clone, Debug, Error, PartialEq, Eq)]
 #[non_exhaustive]
@@ -943,6 +943,7 @@ mod tests {
     use approx::{assert_abs_diff_eq, assert_relative_eq};
     use serde::{Deserialize, Serialize};
     use slotmap::KeyData;
+    use std::assert_matches;
     use std::collections::hash_map::DefaultHasher;
     use std::hash::Hasher;
 
@@ -1610,22 +1611,22 @@ mod tests {
         // Test that equal points result in equal ordering
         assert!(vertex1.partial_cmp(&vertex2) != Some(Ordering::Less));
         assert!(vertex2.partial_cmp(&vertex1) != Some(Ordering::Less));
-        assert!(matches!(
+        assert_matches!(
             vertex1.partial_cmp(&vertex2),
             Some(Ordering::Less | Ordering::Equal)
-        ));
-        assert!(matches!(
+        );
+        assert_matches!(
             vertex2.partial_cmp(&vertex1),
             Some(Ordering::Less | Ordering::Equal)
-        ));
-        assert!(matches!(
+        );
+        assert_matches!(
             vertex1.partial_cmp(&vertex2),
             Some(Ordering::Greater | Ordering::Equal)
-        ));
-        assert!(matches!(
+        );
+        assert_matches!(
             vertex2.partial_cmp(&vertex1),
             Some(Ordering::Greater | Ordering::Equal)
-        ));
+        );
     }
 
     #[test]

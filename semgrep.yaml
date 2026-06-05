@@ -176,6 +176,10 @@ rules:
           - pattern: NumCast::from($VALUE).unwrap_or_else($FALLBACK)
           - pattern: num_traits::NumCast::from($VALUE).unwrap_or($FALLBACK)
           - pattern: num_traits::NumCast::from($VALUE).unwrap_or_else($FALLBACK)
+          - pattern: cast::<$FROM, $TO>($VALUE).unwrap_or($FALLBACK)
+          - pattern: cast::<$FROM, $TO>($VALUE).unwrap_or_else($FALLBACK)
+          - pattern: num_traits::cast::<$FROM, $TO>($VALUE).unwrap_or($FALLBACK)
+          - pattern: num_traits::cast::<$FROM, $TO>($VALUE).unwrap_or_else($FALLBACK)
           - patterns:
               - pattern: $SAFE(...).unwrap_or($FALLBACK)
               - metavariable-regex:
@@ -336,6 +340,8 @@ rules:
       - pattern-either:
           - pattern: $VALUE.unwrap()
           - pattern: panic!(...)
+          - pattern: std::panic!(...)
+          - pattern: core::panic!(...)
           - patterns:
               - pattern: $VALUE.expect($MESSAGE)
               - metavariable-regex:
@@ -395,6 +401,79 @@ rules:
       exclude:
         - "/tests/semgrep/**"
     pattern-regex: '(?m)(?<!#\[non_exhaustive\]\n)^\s*pub\s+enum\s+[A-Za-z0-9_]*Error\b'
+
+  - id: delaunay.rust.no-public-unchecked-apis
+    languages:
+      - generic
+    severity: WARNING
+    message: "Keep *_unchecked APIs private so invalid-state escape hatches do not become public contracts."
+    metadata:
+      category: correctness
+      rationale: >-
+        Unchecked helpers should stay behind validated constructors, parsers, or
+        setters rather than becoming public API contracts.
+    paths:
+      include:
+        - "/src/**/*.rs"
+        - "/src/project_rules/**/*.rs"
+      exclude:
+        - "/tests/semgrep/**"
+    pattern-regex: '^\s*pub(?:\([^)]*\))?\s+(?:const\s+|async\s+|unsafe\s+)?fn\s+[A-Za-z_][A-Za-z0-9_]*_unchecked\s*\(' # yamllint disable-line rule:line-length
+
+  - id: delaunay.rust.no-unwrap-expect-in-doctests
+    languages:
+      - generic
+    severity: WARNING
+    message: "Use fallible doctest flow instead of unwrap() or expect() in public documentation examples."
+    metadata:
+      category: correctness
+      rationale: >-
+        Public Rust documentation examples should model typed error handling
+        with DelaunayResult and ? rather than teaching panic-based control flow.
+    paths:
+      include:
+        - "/src/**/*.rs"
+        - "/tests/semgrep/doctests/**/*.txt"
+      exclude:
+        - "/tests/semgrep/**"
+    pattern-regex: '^\s*//[!/]\s*(?:#\s*)?.*(?:\b[\w:]+|[\]\)])\.(unwrap|expect)\s*\('
+
+  - id: delaunay.rust.no-box-dyn-error-in-doctests
+    languages:
+      - generic
+    severity: WARNING
+    message: "Use DelaunayResult or a typed error in doctests instead of erased dynamic errors."
+    metadata:
+      category: maintainability
+      rationale: >-
+        Public documentation should model the crate's typed error surface rather
+        than Box<dyn Error>, &dyn Error, or anyhow::Error.
+    paths:
+      include:
+        - "/src/**/*.rs"
+        - "/tests/semgrep/doctests/**/*.txt"
+      exclude:
+        - "/tests/semgrep/**"
+    pattern-regex: '^\s*//[!/].*(?:Box\s*<\s*dyn\s+(?:std::error::Error|Error)|&\s*dyn\s+(?:std::error::Error|Error)|anyhow::Error|anyhow::Result)' # yamllint disable-line rule:line-length
+
+  - id: delaunay.rust.prefer-assert-matches-in-doctests
+    languages:
+      - generic
+    severity: WARNING
+    message: "Use std::assert_matches! instead of assert!(matches!(...)) in public documentation examples."
+    metadata:
+      category: maintainability
+      rationale: >-
+        Public Rust documentation examples should teach std::assert_matches!,
+        which reports the unmatched value on failure instead of the bare boolean
+        that assert!(matches!(...)) produces.
+    paths:
+      include:
+        - "/src/**/*.rs"
+        - "/tests/semgrep/doctests/**/*.txt"
+      exclude:
+        - "/tests/semgrep/**"
+    pattern-regex: '^\s*//[!/].*\bassert!\s*\(\s*matches!\s*\('
 
   - id: delaunay.rust.no-env-gated-stdio-diagnostics
     languages:
@@ -661,7 +740,7 @@ rules:
       exclude:
         - "/tests/semgrep/**"
     patterns:
-      - pattern-regex: '(?m)^\s*uses:\s*(?!\./)(?!docker://)(?!(?:actions/checkout|actions/cache|actions/upload-artifact|actions/download-artifact|actions/github-script|actions-rust-lang/setup-rust-toolchain|astral-sh/setup-uv|taiki-e/install-action|github/codeql-action/(?:upload-sarif|init|analyze)|codecov/codecov-action|codacy/codacy-coverage-reporter-action|codacy/codacy-analysis-cli-action)@)[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+(?:/[A-Za-z0-9_.-]+)?@' # yamllint disable-line rule:line-length
+      - pattern-regex: '(?m)^\s*uses:\s*(?!\./)(?!docker://)(?!(?:actions/checkout|actions/cache|actions/upload-artifact|actions/download-artifact|actions/github-script|actions-rust-lang/setup-rust-toolchain|astral-sh/setup-uv|taiki-e/cache-cargo-install-action|github/codeql-action/(?:upload-sarif|init|analyze)|codecov/codecov-action|codacy/codacy-coverage-reporter-action|codacy/codacy-analysis-cli-action|zizmorcore/zizmor-action)@)[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+(?:/[A-Za-z0-9_.-]+)?@' # yamllint disable-line rule:line-length
 
   - id: delaunay.github-actions.external-action-version-comment
     languages:
@@ -680,6 +759,87 @@ rules:
         - "/tests/semgrep/**"
     patterns:
       - pattern-regex: '(?m)^\s*uses:\s*(?!\./)(?!docker://)[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+(?:/[A-Za-z0-9_.-]+)?@[a-fA-F0-9]{40}\s*$' # yamllint disable-line rule:line-length
+
+  - id: delaunay.github-actions.checkout-persist-credentials-false
+    languages:
+      - regex
+    severity: WARNING
+    message: "Set persist-credentials: false on actions/checkout steps."
+    metadata:
+      category: security
+      rationale: >-
+        Checkout credentials should not remain available to later workflow steps
+        unless a job explicitly needs them.
+    paths:
+      include:
+        - "/.github/workflows/**/*.yml"
+        - "/.github/workflows/**/*.yaml"
+        - "/tests/semgrep/.github/workflows/**/*.yml"
+        - "/tests/semgrep/.github/workflows/**/*.yaml"
+      exclude:
+        - "/tests/semgrep/**"
+    patterns:
+      - pattern-regex: '(?m)^[ \t]*(?:-[ \t]*)?uses:[ \t]*actions/checkout@[a-fA-F0-9]{40}[^\n]*\n(?!(?:[ \t]*with:\n)?(?:[ \t]{10,}\S[^\n]*\n){0,8}[ \t]{10,}persist-credentials:[ \t]*false\b)' # yamllint disable-line rule:line-length
+
+  - id: delaunay.github-actions.no-pull-request-target
+    languages:
+      - regex
+    severity: WARNING
+    message: "Avoid pull_request_target; use pull_request unless a workflow has a documented security review."
+    metadata:
+      category: security
+      rationale: >-
+        pull_request_target runs with base-repository privileges and is risky
+        for workflows that touch untrusted PR content.
+    paths:
+      include:
+        - "/.github/workflows/**/*.yml"
+        - "/.github/workflows/**/*.yaml"
+        - "/tests/semgrep/.github/workflows/**/*.yml"
+        - "/tests/semgrep/.github/workflows/**/*.yaml"
+      exclude:
+        - "/tests/semgrep/**"
+    pattern-regex: '(?m)^\s*pull_request_target\s*:'
+
+  - id: delaunay.github-actions.github-script-no-expression-interpolation
+    languages:
+      - regex
+    severity: WARNING
+    message: "Pass GitHub expression values to actions/github-script through env instead of interpolating inside script blocks."
+    metadata:
+      category: security
+      rationale: >-
+        Interpolating ${{ ... }} directly into JavaScript can turn workflow
+        context strings into executable code.
+    paths:
+      include:
+        - "/.github/workflows/**/*.yml"
+        - "/.github/workflows/**/*.yaml"
+        - "/tests/semgrep/.github/workflows/**/*.yml"
+        - "/tests/semgrep/.github/workflows/**/*.yaml"
+      exclude:
+        - "/tests/semgrep/**"
+    patterns:
+      - pattern-regex: '(?ms)^\s*script:\s*\|\n(?:(?!^\s*-\s+(?:name|uses):).)*\$\{\{' # yamllint disable-line rule:line-length
+
+  - id: delaunay.github-actions.uv-sync-locked-in-workflows
+    languages:
+      - regex
+    severity: WARNING
+    message: "Use uv sync --locked in GitHub Actions workflows."
+    metadata:
+      category: reproducibility
+      rationale: "Workflow dependency installs should fail on lockfile drift instead of silently resolving new versions."
+    paths:
+      include:
+        - "/.github/workflows/**/*.yml"
+        - "/.github/workflows/**/*.yaml"
+        - "/tests/semgrep/.github/workflows/**/*.yml"
+        - "/tests/semgrep/.github/workflows/**/*.yaml"
+      exclude:
+        - "/tests/semgrep/**"
+    patterns:
+      - pattern-regex: '(?m)^\s*(?:run:\s*)?uv\s+sync\b(?![^\n]*\s--locked\b)[^\n]*$' # yamllint disable-line rule:line-length
 
   - id: delaunay.python.no-broad-exception
     languages:
@@ -793,6 +953,26 @@ rules:
       - pattern: MagicMock(..., returncode=..., ...)
       - pattern: unittest.mock.MagicMock(..., returncode=..., ...)
       - pattern: mock.MagicMock(..., returncode=..., ...)
+
+  - id: delaunay.python.no-direct-subprocess-run-outside-wrapper
+    languages:
+      - python
+    severity: WARNING
+    message: "Use subprocess_utils command wrappers instead of calling subprocess.run directly."
+    metadata:
+      category: security
+      rationale: >-
+        Support scripts should inherit the repository's subprocess hardening for
+        executable resolution, shell rejection, text output, and timeouts.
+    paths:
+      include:
+        - "/scripts/**/*.py"
+        - "/tests/semgrep/scripts/tests/**/*.py"
+      exclude:
+        - "/scripts/subprocess_utils.py"
+        - "/scripts/tests/**/*.py"
+        - "/tests/semgrep/**"
+    pattern: subprocess.run(...)
 
   - id: delaunay.python.no-untyped-defs-in-scripts
     languages:
