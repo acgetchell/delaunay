@@ -11,7 +11,9 @@ Both repositories now share the same core Rust and Python support-tooling loop:
 - `rust-toolchain.toml`, `rustfmt.toml`, `.taplo.toml`, `clippy.toml`, and
   `ty.toml` pin local tool behavior.
 - `pyproject.toml` owns Ruff, Ty, pytest, uv packaging, and uv-managed
-  development dependencies.
+  development dependencies. The Python support-tooling baseline is Python 3.13
+  through `.python-version`, `requires-python`, and setup-python consumers in
+  CI/Codacy; Ruff and Ty infer their analysis target from `requires-python`.
 - `pyproject.toml`, `dprint.json`, `.yamllint`, and `typos.toml` define local
   and CI documentation/configuration checks. Markdown linting uses Rust-native
   `rumdl`, and YAML/CFF formatting uses `dprint` with the `pretty_yaml` plugin;
@@ -30,6 +32,9 @@ Both repositories now share the same core Rust and Python support-tooling loop:
 - Codacy Python engines are scoped to production scripts and exclude
   `scripts/tests/**`, so Ruff/Bandit feedback stays focused on shipped helper
   code and Bandit does not flag intentional test assertions.
+- The Codacy SARIF splitter uses the same Python 3.13 setup as local tooling
+  before filtering uploads, and parses raw SARIF JSON into a typed boundary
+  model before applying repository-owned rule filtering.
 - `justfile` is the local entry point for formatting, linting, tests,
   coverage, Semgrep, changelog, setup commands, and supported Cargo feature
   surface checks.
@@ -97,11 +102,26 @@ The useful updates ported in this pass are:
   `Closes #N` cleanup.
 - `scripts/tag_release.py` forced-tag replacement that lets git replace the ref
   transactionally instead of deleting the existing tag first.
+- `scripts/archive_changelog.py` uses the la-stack cross-drive fallback for
+  archive-directory links, so Windows-style `os.path.relpath` failures fall back
+  to absolute POSIX links with a warning instead of aborting changelog
+  generation.
 - changelog archive sorting for prerelease labels and POSIX archive paths in
   generated links.
 - changelog postprocessing improvements for breaking-change summary
   deduplication, star-bullet summaries, rumdl-friendly body headings, and final
   rumdl formatting of generated changelog files.
+- `scripts/postprocess_changelog.py` follows the la-stack release-heading
+  model, preserving real semver/Unreleased headings while demoting bracketed
+  entry-local headings that only look like release boundaries.
+- Python support utilities parse invariant-bearing external data at their
+  boundaries: Codacy SARIF is recursively checked as strict JSON, and
+  `ci_performance_suite` metrics are loaded into typed count records before
+  benchmark comparison code consumes them.
+- Repository-owned Semgrep now reinforces those Python boundary invariants:
+  CI JSON filters must reject non-finite JSON constants on load, emit strict
+  JSON with `allow_nan=False`, and keep `ci_performance_suite` construction
+  metric counts positive rather than merely non-negative.
 - Semgrep rule refinements for non-finite fallback patterns, broad Python
   exception catches with bindings, and direct ad hoc subprocess mock
   constructors.

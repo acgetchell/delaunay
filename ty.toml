@@ -6,10 +6,6 @@
 # Restrict analysis strictly to Python tooling.
 include = [ "scripts" ]
 
-[environment]
-# Match the project's minimum supported Python version.
-python-version = "3.11"
-
 [terminal]
 # Keep output concise by default.
 output-format = "concise"
