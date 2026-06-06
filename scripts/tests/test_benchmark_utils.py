@@ -2531,7 +2531,8 @@ Hardware Information:
                 "❌ Error: Benchmark execution timeout\n\n"
                 "Details: Command timed out after 1800 seconds\n\n"
                 "This error prevented the benchmark comparison from completing successfully.\n"
-                "Please check the CI logs for more information.\n"
+                "Please check the CI logs for more information.\n",
+                encoding=UTF8,
             )
 
             env_vars = {
