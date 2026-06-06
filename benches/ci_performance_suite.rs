@@ -12,7 +12,7 @@
 //! 4. Boundary facet traversal
 //! 5. Full validation (Levels 1-4)
 //! 6. Incremental vertex insertion
-//! 7. Explicit bistellar flip roundtrips on a stable 4D PL-manifold case
+//! 7. Explicit bistellar flip workflows on stable 2D-5D PL-manifold cases
 //!
 //! Predicate microbenchmarks, allocation-focused measurements, and large-scale
 //! stress tests live in the dedicated benchmark targets under `benches/`.
@@ -76,7 +76,7 @@ const INSERT_BATCH_COUNT_4D: usize = 6;
 const INSERT_BATCH_COUNT_5D: usize = 4;
 type SeedSearchResult<const D: usize> = Option<(u64, Vec<Point<f64, D>>, Vec<Vertex<f64, (), D>>)>;
 type BenchTriangulation<const D: usize> = DelaunayTriangulation<AdaptiveKernel<f64>, (), (), D>;
-type FlipTriangulation4 = DelaunayTriangulation<RobustKernel<f64>, (), (), 4>;
+type FlipTriangulation<const D: usize> = DelaunayTriangulation<RobustKernel<f64>, (), (), D>;
 
 fn retry_attempts(value: usize) -> NonZeroUsize {
     let Some(attempts) = NonZeroUsize::new(value) else {
@@ -215,12 +215,50 @@ fn api_benchmark_entries() -> Vec<ApiBenchmarkEntry> {
         ApiBenchmarkEntry {
             group: "bistellar_flips",
             public_api: "BistellarFlips::{flip_k1_insert,flip_k1_remove,flip_k2,flip_k2_inverse_from_edge,flip_k3,flip_k3_inverse_from_triangle}",
-            dimensions: "4",
-            benchmark_ids: "bistellar_flips_4d/k1_roundtrip;bistellar_flips_4d/k2_roundtrip;bistellar_flips_4d/k3_roundtrip".to_string(),
-            note: "stable_pl_manifold_roundtrips",
+            dimensions: "2,3,4,5",
+            benchmark_ids: [
+                "bistellar_flips_2d/k1_roundtrip",
+                "bistellar_flips_2d/k2_edge_flip",
+                "bistellar_flips_3d/k1_roundtrip",
+                "bistellar_flips_3d/k2_roundtrip",
+                "bistellar_flips_3d/k3_forward",
+                "bistellar_flips_4d/k1_roundtrip",
+                "bistellar_flips_4d/k2_roundtrip",
+                "bistellar_flips_4d/k3_roundtrip",
+                "bistellar_flips_5d/k1_roundtrip",
+                "bistellar_flips_5d/k2_roundtrip",
+                "bistellar_flips_5d/k3_roundtrip",
+            ]
+            .join(";"),
+            note: "stable_pl_manifold_public_flip_workflows",
         },
     ]
 }
+
+/// Stable 2D PL-manifold configuration used for explicit bistellar flips.
+const STABLE_POINTS_2D: &[[f64; 2]] = &[
+    [0.0, 0.0],
+    [1.0, 0.0],
+    [0.0, 1.0],
+    [1.0, 1.0],
+    [0.20, 0.35],
+    [0.65, 0.25],
+    [0.35, 0.80],
+    [0.85, 0.70],
+];
+
+/// Stable 3D PL-manifold configuration used for explicit bistellar flips.
+const STABLE_POINTS_3D: &[[f64; 3]] = &[
+    [0.0, 0.0, 0.0],
+    [1.0, 0.0, 0.0],
+    [0.0, 1.0, 0.0],
+    [0.0, 0.0, 1.0],
+    [0.20, 0.20, 0.20],
+    [0.75, 0.15, 0.30],
+    [0.20, 0.70, 0.35],
+    [0.30, 0.25, 0.80],
+    [0.65, 0.60, 0.55],
+];
 
 /// Stable 4D PL-manifold configuration used for explicit bistellar flips.
 const STABLE_POINTS_4D: &[[f64; 4]] = &[
@@ -236,6 +274,24 @@ const STABLE_POINTS_4D: &[[f64; 4]] = &[
     [0.12, 0.12, 0.12, 0.12],
     [0.20, 0.15, 0.10, 0.05],
     [0.08, 0.18, 0.12, 0.14],
+];
+
+/// Stable 5D PL-manifold configuration used for explicit bistellar flips.
+const STABLE_POINTS_5D: &[[f64; 5]] = &[
+    [0.0, 0.0, 0.0, 0.0, 0.0],
+    [1.0, 0.0, 0.0, 0.0, 0.0],
+    [0.0, 1.0, 0.0, 0.0, 0.0],
+    [0.0, 0.0, 1.0, 0.0, 0.0],
+    [0.0, 0.0, 0.0, 1.0, 0.0],
+    [0.0, 0.0, 0.0, 0.0, 1.0],
+    [0.10, 0.10, 0.10, 0.10, 0.10],
+    [0.15, 0.10, 0.10, 0.10, 0.10],
+    [0.10, 0.15, 0.10, 0.10, 0.10],
+    [0.10, 0.10, 0.15, 0.10, 0.10],
+    [0.10, 0.10, 0.10, 0.15, 0.10],
+    [0.12, 0.12, 0.12, 0.12, 0.12],
+    [0.20, 0.15, 0.10, 0.05, 0.12],
+    [0.08, 0.18, 0.12, 0.14, 0.16],
 ];
 
 /// Pre-computed seeds for each calibrated (dimension, count) pair.
@@ -501,15 +557,17 @@ fn generate_adv_points<const D: usize>(count: usize, seed: u64) -> Vec<Point<f64
         .collect()
 }
 
-fn stable_vertices_4d() -> Vec<Vertex<f64, (), 4>> {
-    STABLE_POINTS_4D
-        .iter()
-        .map(|coords| vertex!(*coords))
-        .collect()
+/// Converts a stable point fixture into vertices for public flip benchmarks.
+fn stable_vertices<const D: usize>(points: &[[f64; D]]) -> Vec<Vertex<f64, (), D>> {
+    points.iter().map(|coords| vertex!(*coords)).collect()
 }
 
-fn build_flip_dt_4d() -> FlipTriangulation4 {
-    let vertices = stable_vertices_4d();
+/// Builds a deterministic PL-manifold triangulation for bistellar flip coverage.
+///
+/// The benchmark uses input ordering so preselected public flip candidates stay
+/// stable across runs and Criterion measures only the public flip operation.
+fn build_flip_dt<const D: usize>(points: &[[f64; D]]) -> FlipTriangulation<D> {
+    let vertices = stable_vertices(points);
     let options =
         ConstructionOptions::default().with_insertion_order(InsertionOrderStrategy::Input);
     DelaunayTriangulation::with_topology_guarantee_and_options(
@@ -520,26 +578,33 @@ fn build_flip_dt_4d() -> FlipTriangulation4 {
     )
     .unwrap_or_else(|err| {
         abort_benchmark(format_args!(
-            "failed to build stable 4D flip triangulation: {err}"
+            "failed to build stable {D}D flip triangulation: {err}"
         ))
     })
 }
 
-fn simplex_centroid_4d(dt: &FlipTriangulation4, simplex_key: SimplexKey) -> [f64; 4] {
+/// Computes an interior insertion point for a k=1 insert/remove roundtrip.
+///
+/// The centroid stays inside the selected simplex, giving the public k=1 insert
+/// API a deterministic vertex that the matching remove operation can undo.
+fn simplex_centroid<const D: usize>(
+    dt: &FlipTriangulation<D>,
+    simplex_key: SimplexKey,
+) -> [f64; D] {
     let simplex = bench_option(
         dt.tds().simplex(simplex_key),
         "simplex key should exist in benchmark triangulation",
     );
 
-    let mut coords = [0.0_f64; 4];
+    let mut coords = [0.0_f64; D];
     for &vkey in simplex.vertices() {
         let vertex = bench_option(
             dt.tds().vertex(vkey),
             "vertex key should exist in benchmark triangulation",
         );
         let vcoords = vertex.point().coords();
-        for i in 0..4 {
-            coords[i] += vcoords[i];
+        for (coord, vertex_coord) in coords.iter_mut().zip(vcoords) {
+            *coord += *vertex_coord;
         }
     }
 
@@ -554,7 +619,11 @@ fn simplex_centroid_4d(dt: &FlipTriangulation4, simplex_key: SimplexKey) -> [f64
     coords
 }
 
-fn simplex_points_4d(dt: &FlipTriangulation4, simplex_key: SimplexKey) -> Vec<Point<f64, 4>> {
+/// Collects the simplex vertices as points for fixture quality checks.
+fn simplex_points<const D: usize>(
+    dt: &FlipTriangulation<D>,
+    simplex_key: SimplexKey,
+) -> Vec<Point<f64, D>> {
     let simplex = bench_option(
         dt.tds().simplex(simplex_key),
         "simplex key should exist in benchmark triangulation",
@@ -573,10 +642,11 @@ fn simplex_points_4d(dt: &FlipTriangulation4, simplex_key: SimplexKey) -> Vec<Po
         .collect()
 }
 
-fn largest_volume_simplex_4d(dt: &FlipTriangulation4) -> SimplexKey {
+/// Selects a non-degenerate simplex for deterministic k=1 benchmark setup.
+fn largest_volume_simplex<const D: usize>(dt: &FlipTriangulation<D>) -> SimplexKey {
     dt.simplices()
         .filter_map(|(simplex_key, _)| {
-            simplex_volume(&simplex_points_4d(dt, simplex_key))
+            simplex_volume(&simplex_points(dt, simplex_key))
                 .ok()
                 .map(|volume| (simplex_key, volume))
         })
@@ -584,21 +654,22 @@ fn largest_volume_simplex_4d(dt: &FlipTriangulation4) -> SimplexKey {
         .map_or_else(
             || {
                 abort_benchmark(
-                    "stable 4D benchmark triangulation should have a non-degenerate simplex",
+                    "stable flip benchmark triangulation should have a non-degenerate simplex",
                 )
             },
             |(simplex_key, _)| simplex_key,
         )
 }
 
-fn roundtrip_k1_4d(dt: &mut FlipTriangulation4, simplex_key: SimplexKey) {
-    let centroid = simplex_centroid_4d(dt, simplex_key);
+/// Exercises the public k=1 insert and remove APIs as one benchmark workflow.
+fn roundtrip_k1<const D: usize>(dt: &mut FlipTriangulation<D>, simplex_key: SimplexKey) {
+    let centroid = simplex_centroid(dt, simplex_key);
     let new_vertex = vertex!(centroid);
     let new_uuid = new_vertex.uuid();
 
     bench_result(
         dt.flip_k1_insert(simplex_key, new_vertex),
-        "k=1 insert should succeed on stable 4D benchmark triangulation",
+        format!("k=1 insert should succeed on stable {D}D benchmark triangulation"),
     );
 
     let new_key = bench_option(
@@ -608,62 +679,83 @@ fn roundtrip_k1_4d(dt: &mut FlipTriangulation4, simplex_key: SimplexKey) {
 
     bench_result(
         dt.flip_k1_remove(new_key),
-        "k=1 remove should invert k=1 insert",
+        format!("k=1 remove should invert k=1 insert in {D}D"),
     );
 }
 
-fn interior_facets_4d(dt: &FlipTriangulation4) -> Vec<FacetHandle> {
-    let mut facets = Vec::new();
-    for (simplex_key, simplex) in dt.simplices() {
-        if let Some(neighbors) = simplex.neighbors() {
-            for (facet_index, neighbor) in neighbors.enumerate() {
-                if neighbor.is_some() {
-                    let Ok(facet_index) = u8::try_from(facet_index) else {
-                        continue;
-                    };
-                    facets.push(FacetHandle::new(simplex_key, facet_index));
-                }
-            }
-        }
-    }
-    facets
-}
-
-fn flippable_k2_facet_4d(dt: &FlipTriangulation4) -> FacetHandle {
+/// Finds a stable k=2 facet candidate before Criterion opens the timed group.
+///
+/// Some dimensions benchmark only the forward public flip because the inverse
+/// move is not part of that dimension's coverage contract. `require_inverse`
+/// controls whether candidate discovery also proves the inverse public API is
+/// available for the selected facet.
+fn flippable_k2_facet<const D: usize>(
+    dt: &FlipTriangulation<D>,
+    require_inverse: bool,
+) -> FacetHandle {
     let mut last_error = None;
-    for facet in interior_facets_4d(dt) {
-        let mut trial = dt.clone();
-        match trial.flip_k2(facet) {
-            Ok(info) => {
-                assert_eq!(
-                    info.inserted_face_vertices.len(),
-                    2,
-                    "k=2 flip should insert an edge"
-                );
-                let edge = EdgeKey::new(
-                    info.inserted_face_vertices[0],
-                    info.inserted_face_vertices[1],
-                );
-                bench_result(
-                    trial.flip_k2_inverse_from_edge(edge),
-                    "k=2 inverse should succeed after k=2 flip",
-                );
-                return facet;
+    for (simplex_key, simplex) in dt.simplices() {
+        let Some(neighbors) = simplex.neighbors() else {
+            continue;
+        };
+
+        for (facet_index, neighbor) in neighbors.enumerate() {
+            if neighbor.is_none() {
+                continue;
             }
-            Err(err) => last_error = Some(format!("{err}")),
+            let Ok(facet_index) = u8::try_from(facet_index) else {
+                continue;
+            };
+            let facet = FacetHandle::new(simplex_key, facet_index);
+            let mut trial = dt.clone();
+            match trial.flip_k2(facet) {
+                Ok(info) => {
+                    assert_eq!(
+                        info.inserted_face_vertices.len(),
+                        2,
+                        "k=2 flip should insert an edge"
+                    );
+                    let edge = EdgeKey::new(
+                        info.inserted_face_vertices[0],
+                        info.inserted_face_vertices[1],
+                    );
+                    if require_inverse {
+                        bench_result(
+                            trial.flip_k2_inverse_from_edge(edge),
+                            format!("k=2 inverse should succeed after k=2 flip in {D}D"),
+                        );
+                    }
+                    return facet;
+                }
+                Err(err) => last_error = Some(format!("{err}")),
+            }
         }
     }
 
     abort_benchmark(format_args!(
-        "no flippable interior facet found for k=2 benchmark (last error: {})",
+        "no flippable interior facet found for {D}D k=2 benchmark (last error: {})",
         last_error.unwrap_or_else(|| "none".to_string())
     ));
 }
 
-fn roundtrip_k2_4d(dt: &mut FlipTriangulation4, facet: FacetHandle) {
+/// Exercises the public k=2 forward flip API for dimensions without inversion.
+fn forward_k2<const D: usize>(dt: &mut FlipTriangulation<D>, facet: FacetHandle) {
     let info = bench_result(
         dt.flip_k2(facet),
-        "k=2 flip should succeed for preselected 4D benchmark facet",
+        format!("k=2 flip should succeed for preselected {D}D benchmark facet"),
+    );
+    assert_eq!(
+        info.inserted_face_vertices.len(),
+        2,
+        "k=2 flip should insert an edge"
+    );
+}
+
+/// Exercises the public k=2 flip and inverse APIs as one benchmark workflow.
+fn roundtrip_k2<const D: usize>(dt: &mut FlipTriangulation<D>, facet: FacetHandle) {
+    let info = bench_result(
+        dt.flip_k2(facet),
+        format!("k=2 flip should succeed for preselected {D}D benchmark facet"),
     );
     assert_eq!(
         info.inserted_face_vertices.len(),
@@ -676,12 +768,21 @@ fn roundtrip_k2_4d(dt: &mut FlipTriangulation4, facet: FacetHandle) {
     );
     bench_result(
         dt.flip_k2_inverse_from_edge(edge),
-        "k=2 inverse should succeed after k=2 flip",
+        format!("k=2 inverse should succeed after k=2 flip in {D}D"),
     );
 }
 
-fn ridges_4d(dt: &FlipTriangulation4) -> Vec<RidgeHandle> {
-    let mut ridges = Vec::new();
+/// Finds a stable k=3 ridge candidate before Criterion opens the timed group.
+///
+/// Some dimensions benchmark only the forward public flip because the inverse
+/// move is not part of that dimension's coverage contract. `require_inverse`
+/// controls whether candidate discovery also proves the inverse public API is
+/// available for the selected ridge.
+fn flippable_k3_ridge<const D: usize>(
+    dt: &FlipTriangulation<D>,
+    require_inverse: bool,
+) -> RidgeHandle {
+    let mut last_error = None;
     for (simplex_key, simplex) in dt.simplices() {
         let vertex_count = simplex.number_of_vertices();
         for i in 0..vertex_count {
@@ -692,49 +793,58 @@ fn ridges_4d(dt: &FlipTriangulation4) -> Vec<RidgeHandle> {
                 let Ok(omit_b) = u8::try_from(j) else {
                     continue;
                 };
-                ridges.push(RidgeHandle::new(simplex_key, omit_a, omit_b));
+                let ridge = RidgeHandle::new(simplex_key, omit_a, omit_b);
+                let mut trial = dt.clone();
+                match trial.flip_k3(ridge) {
+                    Ok(info) => {
+                        assert_eq!(
+                            info.inserted_face_vertices.len(),
+                            3,
+                            "k=3 flip should insert a triangle"
+                        );
+                        let triangle = TriangleHandle::new(
+                            info.inserted_face_vertices[0],
+                            info.inserted_face_vertices[1],
+                            info.inserted_face_vertices[2],
+                        );
+                        if require_inverse {
+                            bench_result(
+                                trial.flip_k3_inverse_from_triangle(triangle),
+                                format!("k=3 inverse should succeed after k=3 flip in {D}D"),
+                            );
+                        }
+                        return ridge;
+                    }
+                    Err(err) => last_error = Some(format!("{err}")),
+                }
             }
-        }
-    }
-    ridges
-}
-
-fn flippable_k3_ridge_4d(dt: &FlipTriangulation4) -> RidgeHandle {
-    let mut last_error = None;
-    for ridge in ridges_4d(dt) {
-        let mut trial = dt.clone();
-        match trial.flip_k3(ridge) {
-            Ok(info) => {
-                assert_eq!(
-                    info.inserted_face_vertices.len(),
-                    3,
-                    "k=3 flip should insert a triangle"
-                );
-                let triangle = TriangleHandle::new(
-                    info.inserted_face_vertices[0],
-                    info.inserted_face_vertices[1],
-                    info.inserted_face_vertices[2],
-                );
-                bench_result(
-                    trial.flip_k3_inverse_from_triangle(triangle),
-                    "k=3 inverse should succeed after k=3 flip",
-                );
-                return ridge;
-            }
-            Err(err) => last_error = Some(format!("{err}")),
         }
     }
 
     abort_benchmark(format_args!(
-        "no flippable ridge found for k=3 benchmark (last error: {})",
+        "no flippable ridge found for {D}D k=3 benchmark (last error: {})",
         last_error.unwrap_or_else(|| "none".to_string())
     ));
 }
 
-fn roundtrip_k3_4d(dt: &mut FlipTriangulation4, ridge: RidgeHandle) {
+/// Exercises the public k=3 forward flip API for dimensions without inversion.
+fn forward_k3<const D: usize>(dt: &mut FlipTriangulation<D>, ridge: RidgeHandle) {
     let info = bench_result(
         dt.flip_k3(ridge),
-        "k=3 flip should succeed for preselected 4D benchmark ridge",
+        format!("k=3 flip should succeed for preselected {D}D benchmark ridge"),
+    );
+    assert_eq!(
+        info.inserted_face_vertices.len(),
+        3,
+        "k=3 flip should insert a triangle"
+    );
+}
+
+/// Exercises the public k=3 flip and inverse APIs as one benchmark workflow.
+fn roundtrip_k3<const D: usize>(dt: &mut FlipTriangulation<D>, ridge: RidgeHandle) {
+    let info = bench_result(
+        dt.flip_k3(ridge),
+        format!("k=3 flip should succeed for preselected {D}D benchmark ridge"),
     );
     assert_eq!(
         info.inserted_face_vertices.len(),
@@ -748,7 +858,7 @@ fn roundtrip_k3_4d(dt: &mut FlipTriangulation4, ridge: RidgeHandle) {
     );
     bench_result(
         dt.flip_k3_inverse_from_triangle(triangle),
-        "k=3 inverse should succeed after k=3 flip",
+        format!("k=3 inverse should succeed after k=3 flip in {D}D"),
     );
 }
 
@@ -1585,52 +1695,185 @@ fn benchmark_insert(c: &mut Criterion) {
     group.finish();
 }
 
+/// Registers the complete 2D-5D public bistellar flip benchmark matrix.
 fn benchmark_bistellar_flips(c: &mut Criterion) {
     print_manifest_once();
     if discover_seeds_enabled() {
         return;
     }
-    let mut group = c.benchmark_group("bistellar_flips_4d");
-    group.sample_size(10);
-    let base_dt = build_flip_dt_4d();
-    let k1_simplex = largest_volume_simplex_4d(&base_dt);
-    let k2_facet = flippable_k2_facet_4d(&base_dt);
-    let k3_ridge = flippable_k3_ridge_4d(&base_dt);
 
-    group.bench_function("k1_roundtrip", |b| {
+    bench_bistellar_flips_2d(c);
+    bench_bistellar_flips_3d(c);
+    bench_bistellar_flips_4d(c);
+    bench_bistellar_flips_5d(c);
+}
+
+/// Benchmarks 2D public flip coverage: k=1 roundtrip and k=2 edge flip.
+fn bench_bistellar_flips_2d(c: &mut Criterion) {
+    let base_dt_2d = build_flip_dt(STABLE_POINTS_2D);
+    let k1_simplex_2d = largest_volume_simplex(&base_dt_2d);
+    let k2_facet_2d = flippable_k2_facet(&base_dt_2d, false);
+
+    let mut group_2d = c.benchmark_group("bistellar_flips_2d");
+    group_2d.sample_size(10);
+
+    group_2d.bench_function("k1_roundtrip", |b| {
         b.iter_batched(
-            || base_dt.clone(),
+            || base_dt_2d.clone(),
             |mut dt| {
-                roundtrip_k1_4d(&mut dt, k1_simplex);
+                roundtrip_k1(&mut dt, k1_simplex_2d);
                 black_box(dt);
             },
             BatchSize::LargeInput,
         );
     });
 
-    group.bench_function("k2_roundtrip", |b| {
+    group_2d.bench_function("k2_edge_flip", |b| {
         b.iter_batched(
-            || base_dt.clone(),
+            || base_dt_2d.clone(),
             |mut dt| {
-                roundtrip_k2_4d(&mut dt, k2_facet);
+                forward_k2(&mut dt, k2_facet_2d);
+                black_box(dt);
+            },
+            BatchSize::LargeInput,
+        );
+    });
+    group_2d.finish();
+}
+
+/// Benchmarks 3D public flip coverage: k=1/k=2 roundtrips and k=3 forward.
+fn bench_bistellar_flips_3d(c: &mut Criterion) {
+    let base_dt_3d = build_flip_dt(STABLE_POINTS_3D);
+    let k1_simplex_3d = largest_volume_simplex(&base_dt_3d);
+    let k2_facet_3d = flippable_k2_facet(&base_dt_3d, true);
+    let k3_ridge_3d = flippable_k3_ridge(&base_dt_3d, false);
+
+    let mut group_3d = c.benchmark_group("bistellar_flips_3d");
+    group_3d.sample_size(10);
+
+    group_3d.bench_function("k1_roundtrip", |b| {
+        b.iter_batched(
+            || base_dt_3d.clone(),
+            |mut dt| {
+                roundtrip_k1(&mut dt, k1_simplex_3d);
                 black_box(dt);
             },
             BatchSize::LargeInput,
         );
     });
 
-    group.bench_function("k3_roundtrip", |b| {
+    group_3d.bench_function("k2_roundtrip", |b| {
         b.iter_batched(
-            || base_dt.clone(),
+            || base_dt_3d.clone(),
             |mut dt| {
-                roundtrip_k3_4d(&mut dt, k3_ridge);
+                roundtrip_k2(&mut dt, k2_facet_3d);
                 black_box(dt);
             },
             BatchSize::LargeInput,
         );
     });
 
-    group.finish();
+    group_3d.bench_function("k3_forward", |b| {
+        b.iter_batched(
+            || base_dt_3d.clone(),
+            |mut dt| {
+                forward_k3(&mut dt, k3_ridge_3d);
+                black_box(dt);
+            },
+            BatchSize::LargeInput,
+        );
+    });
+    group_3d.finish();
+}
+
+/// Benchmarks 4D public flip coverage: k=1/k=2/k=3 roundtrips.
+fn bench_bistellar_flips_4d(c: &mut Criterion) {
+    let base_dt_4d = build_flip_dt(STABLE_POINTS_4D);
+    let k1_simplex_4d = largest_volume_simplex(&base_dt_4d);
+    let k2_facet_4d = flippable_k2_facet(&base_dt_4d, true);
+    let k3_ridge_4d = flippable_k3_ridge(&base_dt_4d, true);
+
+    let mut group_4d = c.benchmark_group("bistellar_flips_4d");
+    group_4d.sample_size(10);
+
+    group_4d.bench_function("k1_roundtrip", |b| {
+        b.iter_batched(
+            || base_dt_4d.clone(),
+            |mut dt| {
+                roundtrip_k1(&mut dt, k1_simplex_4d);
+                black_box(dt);
+            },
+            BatchSize::LargeInput,
+        );
+    });
+
+    group_4d.bench_function("k2_roundtrip", |b| {
+        b.iter_batched(
+            || base_dt_4d.clone(),
+            |mut dt| {
+                roundtrip_k2(&mut dt, k2_facet_4d);
+                black_box(dt);
+            },
+            BatchSize::LargeInput,
+        );
+    });
+
+    group_4d.bench_function("k3_roundtrip", |b| {
+        b.iter_batched(
+            || base_dt_4d.clone(),
+            |mut dt| {
+                roundtrip_k3(&mut dt, k3_ridge_4d);
+                black_box(dt);
+            },
+            BatchSize::LargeInput,
+        );
+    });
+    group_4d.finish();
+}
+
+/// Benchmarks 5D public flip coverage: k=1/k=2/k=3 roundtrips.
+fn bench_bistellar_flips_5d(c: &mut Criterion) {
+    let base_dt_5d = build_flip_dt(STABLE_POINTS_5D);
+    let k1_simplex_5d = largest_volume_simplex(&base_dt_5d);
+    let k2_facet_5d = flippable_k2_facet(&base_dt_5d, true);
+    let k3_ridge_5d = flippable_k3_ridge(&base_dt_5d, true);
+
+    let mut group_5d = c.benchmark_group("bistellar_flips_5d");
+    group_5d.sample_size(10);
+
+    group_5d.bench_function("k1_roundtrip", |b| {
+        b.iter_batched(
+            || base_dt_5d.clone(),
+            |mut dt| {
+                roundtrip_k1(&mut dt, k1_simplex_5d);
+                black_box(dt);
+            },
+            BatchSize::LargeInput,
+        );
+    });
+
+    group_5d.bench_function("k2_roundtrip", |b| {
+        b.iter_batched(
+            || base_dt_5d.clone(),
+            |mut dt| {
+                roundtrip_k2(&mut dt, k2_facet_5d);
+                black_box(dt);
+            },
+            BatchSize::LargeInput,
+        );
+    });
+
+    group_5d.bench_function("k3_roundtrip", |b| {
+        b.iter_batched(
+            || base_dt_5d.clone(),
+            |mut dt| {
+                roundtrip_k3(&mut dt, k3_ridge_5d);
+                black_box(dt);
+            },
+            BatchSize::LargeInput,
+        );
+    });
+    group_5d.finish();
 }
 
 criterion_group!(
