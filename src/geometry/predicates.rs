@@ -1009,6 +1009,7 @@ mod tests {
     use crate::geometry::traits::coordinate::Coordinate;
     use crate::prelude::circumradius;
     use approx::assert_relative_eq;
+    use std::assert_matches;
     use std::collections::HashMap;
 
     /// Populate a test matrix while keeping production matrix errors loud.
@@ -2255,10 +2256,10 @@ mod tests {
         let matrix = Matrix::<3>::zero();
         let err = try_orientation_from_matrix(&matrix, 4).unwrap_err();
 
-        assert!(matches!(
+        assert_matches!(
             err,
             StackMatrixDispatchError::ActiveBlockDimensionMismatch { k: 4, dim: 3 }
-        ));
+        );
     }
 
     #[test]
@@ -2397,10 +2398,10 @@ mod tests {
         let matrix = Matrix::<3>::zero();
         let err = try_insphere_from_matrix(&matrix, 2, 1).unwrap_err();
 
-        assert!(matches!(
+        assert_matches!(
             err,
             StackMatrixDispatchError::ActiveBlockDimensionMismatch { k: 2, dim: 3 }
-        ));
+        );
     }
 
     // =======================================================================

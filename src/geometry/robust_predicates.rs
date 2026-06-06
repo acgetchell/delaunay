@@ -539,6 +539,7 @@ mod tests {
     use crate::geometry::util::squared_norm;
     use num_traits::NumCast;
     use rand::{RngExt, SeedableRng};
+    use std::assert_matches;
     use std::thread;
 
     fn matrix_block_is_finite<const N: usize>(matrix: &Matrix<N>, k: usize) -> bool {
@@ -772,10 +773,7 @@ mod tests {
         let result = robust_orientation(&points).unwrap();
 
         // Should detect orientation (exact result depends on coordinate system)
-        assert!(matches!(
-            result,
-            Orientation::POSITIVE | Orientation::NEGATIVE
-        ));
+        assert_matches!(result, Orientation::POSITIVE | Orientation::NEGATIVE);
     }
 
     #[test]
@@ -1429,10 +1427,10 @@ mod tests {
         assert!(result.is_ok());
 
         let insphere_result = result.unwrap();
-        assert!(matches!(
+        assert_matches!(
             insphere_result,
             InSphere::INSIDE | InSphere::BOUNDARY | InSphere::OUTSIDE
-        ));
+        );
     }
 
     #[test]
@@ -1713,10 +1711,10 @@ mod tests {
 
         // Verify we get a sensible InSphere result
         let insphere_result = result.unwrap();
-        assert!(matches!(
+        assert_matches!(
             insphere_result,
             InSphere::INSIDE | InSphere::BOUNDARY | InSphere::OUTSIDE
-        ));
+        );
     }
 
     #[test]

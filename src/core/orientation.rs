@@ -509,6 +509,7 @@ mod tests {
     use crate::geometry::kernel::FastKernel;
     use crate::topology::traits::topological_space::{GlobalTopology, ToroidalConstructionMode};
     use crate::vertex;
+    use std::assert_matches;
 
     /// Regression test: a negatively oriented but topologically valid simplex
     /// passes topology-only validation while failing full validation.
@@ -578,11 +579,11 @@ mod tests {
 
         let tri = Triangulation::<FastKernel<f64>, (), (), 2>::new_with_tds(FastKernel::new(), tds);
         let err = tri.is_valid().unwrap_err();
-        assert!(matches!(
+        assert_matches!(
             err,
             InvariantError::Tds(TdsError::Geometric(GeometricError::NegativeOrientation { message }))
                 if message.contains("negative geometric orientation")
-        ));
+        );
     }
 
     #[test]
@@ -691,11 +692,11 @@ mod tests {
             .unwrap()
             .swap_vertex_slots(0, 1);
         let err = tri.validate_geometric_simplex_orientation().unwrap_err();
-        assert!(matches!(
+        assert_matches!(
             err,
             TdsError::Geometric(GeometricError::NegativeOrientation { message })
                 if message.contains("negative geometric orientation")
-        ));
+        );
     }
 
     #[test]
@@ -715,12 +716,12 @@ mod tests {
 
         let tri = Triangulation::<FastKernel<f64>, (), (), 2>::new_with_tds(FastKernel::new(), tds);
         let err = tri.validate_geometric_simplex_orientation().unwrap_err();
-        assert!(matches!(
+        assert_matches!(
             err,
             TdsError::InconsistentDataStructure { message }
                 if message.contains("has periodic offsets")
                     && message.contains("expected periodic-orientation-offset-capable topology")
-        ));
+        );
     }
 
     #[test]
@@ -739,14 +740,14 @@ mod tests {
 
         let tri = Triangulation::<FastKernel<f64>, (), (), 2>::new_with_tds(FastKernel::new(), tds);
         let err = tri.validate_geometric_simplex_orientation().unwrap_err();
-        assert!(matches!(
+        assert_matches!(
             err,
             TdsError::DimensionMismatch {
                 expected: 3,
                 actual: 2,
                 ..
             }
-        ));
+        );
     }
 
     #[test]
@@ -772,11 +773,11 @@ mod tests {
         });
 
         let err = tri.validate_geometric_simplex_orientation().unwrap_err();
-        assert!(matches!(
+        assert_matches!(
             err,
             TdsError::InconsistentDataStructure { message }
                 if message.contains("Failed to lift coordinates")
                     && message.contains("Invalid toroidal period")
-        ));
+        );
     }
 }

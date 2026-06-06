@@ -154,7 +154,7 @@ dependencies.
 The project uses:
 
 - **Edition**: Rust 2024
-- **MSRV**: Rust 1.95.0
+- **MSRV**: Rust 1.96.0
 - **Linting**: Strict clippy pedantic mode
 - **Testing**: Standard `#[test]` with comprehensive coverage
 - **Benchmarking**: Criterion with allocation tracking
@@ -165,7 +165,7 @@ The project uses:
 
 When you enter the project directory, `rustup` will automatically:
 
-- **Install the correct Rust version** (1.95.0) if you don't have it
+- **Install the correct Rust version** (1.96.0) if you don't have it
 - **Switch to the pinned version** for this project
 - **Install required components** (clippy, rustfmt, rust-src)
 - **Keep the host toolchain lean**; workflows install cross-compilation
@@ -181,7 +181,7 @@ When you enter the project directory, `rustup` will automatically:
 **First time in the project?** You'll see:
 
 ```text
-info: syncing channel updates for '1.95.0-<your-platform>'
+info: syncing channel updates for '1.96.0-<your-platform>'
 info: downloading component 'cargo'
 info: downloading component 'clippy'
 ...
@@ -193,7 +193,7 @@ This is normal and only happens once. After that, the correct toolchain is used 
 
 ```bash
 rustup show
-# Should show: active toolchain: 1.95.0-<platform> (overridden by '/path/to/delaunay/rust-toolchain.toml')
+# Should show: active toolchain: 1.96.0-<platform> (overridden by '/path/to/delaunay/rust-toolchain.toml')
 ```
 
 ### Python Development Environment

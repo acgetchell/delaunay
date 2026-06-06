@@ -257,7 +257,7 @@ macro_rules! test_simplex_quality_properties {
                         let i_f64: f64 = safe_usize_to_scalar(i).unwrap();
                         coords[0] = (10.0 + i_f64) * base_scale;
                         let axis = (i + 1) % $dim;
-                        coords[axis] += 0.05 * base_scale;
+                        coords[axis] = 0.05_f64.mul_add(base_scale, coords[axis]);
                         degenerate_points.push(Point::new(coords));
                     }
 

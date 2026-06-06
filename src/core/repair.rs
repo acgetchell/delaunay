@@ -85,6 +85,7 @@ fn quality_error_to_tds_error(simplex_key: SimplexKey, error: QualityError) -> T
 
 /// Internal result from over-shared-facet repair, including the surviving frontier
 /// that should seed local neighbor-pointer repair.
+#[derive(Debug)]
 pub(crate) struct LocalFacetRepairOutcome {
     /// Number of simplices actually removed from the TDS.
     pub(crate) removed_count: usize,
@@ -1232,6 +1233,7 @@ mod tests {
     use crate::core::vertex::Vertex;
     use crate::geometry::kernel::FastKernel;
     use crate::vertex;
+    use std::assert_matches;
 
     use slotmap::KeyData;
 
@@ -1662,14 +1664,14 @@ mod tests {
     #[test]
     fn test_pick_fan_apex_errors_for_empty_facets() {
         let (tri, _, _) = build_single_tet();
-        assert!(matches!(
+        assert_matches!(
             tri.pick_fan_apex(&[]),
             Err(TdsError::DimensionMismatch {
                 expected: 1,
                 actual: 0,
                 ..
             })
-        ));
+        );
     }
 
     #[test]
@@ -1678,13 +1680,13 @@ mod tests {
         let missing_simplex = SimplexKey::from(KeyData::from_ffi(0xBAD));
         let facets = [FacetHandle::new(missing_simplex, 0)];
 
-        assert!(matches!(
+        assert_matches!(
             tri.pick_fan_apex(&facets),
             Err(TdsError::SimplexNotFound {
                 simplex_key,
                 ..
             }) if simplex_key == missing_simplex
-        ));
+        );
     }
 
     #[test]
@@ -1709,13 +1711,13 @@ mod tests {
 
         let result = tri.affected_vertices_for_vertex_removal(&[missing_simplex], v0);
 
-        assert!(matches!(
+        assert_matches!(
             result,
             Err(InvariantError::Tds(TdsError::SimplexNotFound {
                 simplex_key,
                 ..
             })) if simplex_key == missing_simplex
-        ));
+        );
     }
 
     #[test]
@@ -1788,12 +1790,12 @@ mod tests {
         let result =
             tri.repair_affected_vertex_incidence_from_scope(&affected_vertices, &validation_scope);
 
-        assert!(matches!(
+        assert_matches!(
             result,
             Err(InvariantError::Triangulation(
                 TriangulationValidationError::IsolatedVertex { vertex_key, .. }
             )) if vertex_key == v3
-        ));
+        );
     }
 
     #[test]
@@ -1812,12 +1814,12 @@ mod tests {
             &validation_scope,
         );
 
-        assert!(matches!(
+        assert_matches!(
             result,
             Err(InvariantError::Tds(
                 TdsError::InconsistentDataStructure { .. }
             ))
-        ));
+        );
     }
 
     #[test]
@@ -1845,16 +1847,16 @@ mod tests {
                 context: "quality lookup".to_string(),
             },
         };
-        assert!(matches!(
+        assert_matches!(
             quality_error_to_tds_error(simplex_key, simplex_error),
             TdsError::SimplexNotFound { simplex_key: key, .. } if key == simplex_key
-        ));
+        );
 
         let vertex_error = QualityError::VertexNotFound { vertex_key };
-        assert!(matches!(
+        assert_matches!(
             quality_error_to_tds_error(simplex_key, vertex_error),
             TdsError::VertexNotFound { vertex_key: key, .. } if key == vertex_key
-        ));
+        );
     }
 
     #[test]
@@ -1866,14 +1868,14 @@ mod tests {
             dimension: 3,
         };
 
-        assert!(matches!(
+        assert_matches!(
             quality_error_to_tds_error(simplex_key, error),
             TdsError::DimensionMismatch {
                 expected: 4,
                 actual: 3,
                 ..
             }
-        ));
+        );
     }
 
     // =========================================================================
@@ -2108,13 +2110,13 @@ mod tests {
 
         let result = tri.repair_local_facet_issues_with_frontier(&issues, 0);
 
-        assert!(matches!(
+        assert_matches!(
             result,
             Err(InsertionError::MaxSimplicesRemovedExceeded {
                 max_simplices_removed: 0,
                 attempted
             }) if attempted > 0
-        ));
+        );
         assert_eq!(tri.tds.number_of_simplices(), original_simplex_count);
         for simplex_key in original_simplices {
             assert!(
@@ -2140,12 +2142,12 @@ mod tests {
             0,
         );
 
-        assert!(matches!(
+        assert_matches!(
             result,
             Err(InvariantError::Tds(TdsError::InconsistentDataStructure { ref message }))
                 if message.contains("Local facet repair after vertex removal failed")
                     && message.contains("Local facet repair removal budget exceeded")
-        ));
+        );
         assert_eq!(simplices_removed, 0);
         assert!(post_repair_frontier.is_empty());
         assert_eq!(tri.tds.number_of_simplices(), original_simplex_count);
@@ -2221,13 +2223,13 @@ mod tests {
 
         let result = tri.repair_local_facet_issues(&issues, 0);
 
-        assert!(matches!(
+        assert_matches!(
             result,
             Err(InsertionError::MaxSimplicesRemovedExceeded {
                 max_simplices_removed: 0,
                 attempted
             }) if attempted > 0
-        ));
+        );
         assert_eq!(tri.tds.number_of_simplices(), original_simplex_count);
     }
 }

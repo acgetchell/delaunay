@@ -722,6 +722,7 @@ pub fn generate_poisson_points<T: CoordinateScalar + SampleUniform, const D: usi
 mod tests {
     use super::*;
     use approx::assert_relative_eq;
+    use std::assert_matches;
 
     // =============================================================================
     // RANDOM POINT GENERATION TESTS
@@ -958,16 +959,16 @@ mod tests {
     #[test]
     fn test_generate_random_points_periodic_invalid_domain() {
         let zero_period = generate_random_points_periodic::<f64, 2>(10, [1.0, 0.0], 7);
-        assert!(matches!(
+        assert_matches!(
             zero_period,
             Err(RandomPointGenerationError::InvalidRange { .. })
-        ));
+        );
 
         let negative_period = generate_random_points_periodic::<f64, 2>(10, [1.0, -2.0], 7);
-        assert!(matches!(
+        assert_matches!(
             negative_period,
             Err(RandomPointGenerationError::InvalidRange { .. })
-        ));
+        );
     }
 
     #[test]
@@ -992,7 +993,7 @@ mod tests {
             let mut norm_sq = 0.0_f64;
             for &c in &coords {
                 assert!(c >= -radius && c <= radius);
-                norm_sq += c * c;
+                norm_sq = c.mul_add(c, norm_sq);
             }
             assert!(norm_sq <= radius_sq + 1e-12);
         }
@@ -1015,19 +1016,13 @@ mod tests {
     #[test]
     fn test_generate_random_points_in_ball_rejects_zero_radius() {
         let result = generate_random_points_in_ball::<f64, 4>(10, 0.0);
-        assert!(matches!(
-            result,
-            Err(RandomPointGenerationError::InvalidRange { .. })
-        ));
+        assert_matches!(result, Err(RandomPointGenerationError::InvalidRange { .. }));
     }
 
     #[test]
     fn test_generate_random_points_in_ball_rejects_negative_radius() {
         let result = generate_random_points_in_ball::<f64, 4>(10, -1.0);
-        assert!(matches!(
-            result,
-            Err(RandomPointGenerationError::InvalidRange { .. })
-        ));
+        assert_matches!(result, Err(RandomPointGenerationError::InvalidRange { .. }));
     }
 
     #[test]
@@ -1045,19 +1040,13 @@ mod tests {
     #[test]
     fn test_generate_random_points_in_ball_rejects_nan_radius() {
         let result = generate_random_points_in_ball::<f64, 4>(10, f64::NAN);
-        assert!(matches!(
-            result,
-            Err(RandomPointGenerationError::InvalidRange { .. })
-        ));
+        assert_matches!(result, Err(RandomPointGenerationError::InvalidRange { .. }));
     }
 
     #[test]
     fn test_generate_random_points_in_ball_rejects_infinite_radius() {
         let result = generate_random_points_in_ball::<f64, 4>(10, f64::INFINITY);
-        assert!(matches!(
-            result,
-            Err(RandomPointGenerationError::InvalidRange { .. })
-        ));
+        assert_matches!(result, Err(RandomPointGenerationError::InvalidRange { .. }));
     }
 
     #[test]
@@ -1072,7 +1061,7 @@ mod tests {
             let mut norm_sq = 0.0_f32;
             for &c in &coords {
                 assert!(c >= -radius && c <= radius);
-                norm_sq += c * c;
+                norm_sq = c.mul_add(c, norm_sq);
             }
             assert!(norm_sq <= radius_sq + 1e-5);
         }
@@ -1542,17 +1531,11 @@ mod tests {
     fn test_generate_random_points_invalid_range() {
         // Test invalid range (min >= max)
         let result = generate_random_points::<f64, 2>(100, (10.0, 5.0));
-        assert!(matches!(
-            result,
-            Err(RandomPointGenerationError::InvalidRange { .. })
-        ));
+        assert_matches!(result, Err(RandomPointGenerationError::InvalidRange { .. }));
 
         // Test equal min and max
         let result = generate_random_points::<f64, 2>(100, (5.0, 5.0));
-        assert!(matches!(
-            result,
-            Err(RandomPointGenerationError::InvalidRange { .. })
-        ));
+        assert_matches!(result, Err(RandomPointGenerationError::InvalidRange { .. }));
 
         // Test valid range
         let result = generate_random_points::<f64, 2>(10, (0.0, 1.0));
@@ -1564,10 +1547,7 @@ mod tests {
     fn test_generate_random_points_seeded_invalid_range() {
         // Test invalid range with seed
         let result = generate_random_points_seeded::<f64, 3>(50, (100.0, 10.0), 42);
-        assert!(matches!(
-            result,
-            Err(RandomPointGenerationError::InvalidRange { .. })
-        ));
+        assert_matches!(result, Err(RandomPointGenerationError::InvalidRange { .. }));
 
         // Test valid range produces consistent results
         let points1 = generate_random_points_seeded::<f64, 3>(5, (0.0, 1.0), 42).unwrap();

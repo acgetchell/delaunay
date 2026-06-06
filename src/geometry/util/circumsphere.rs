@@ -308,6 +308,7 @@ mod tests {
     use super::*;
     use crate::geometry::point::Point;
     use approx::assert_relative_eq;
+    use std::assert_matches;
 
     #[test]
     fn predicates_circumcenter() {
@@ -773,7 +774,7 @@ mod tests {
         let empty_points: Vec<Point<f64, 3>> = vec![];
         let result = circumcenter(&empty_points);
 
-        assert!(matches!(result, Err(CircumcenterError::EmptyPointSet)));
+        assert_matches!(result, Err(CircumcenterError::EmptyPointSet));
     }
 
     #[test]
@@ -786,10 +787,7 @@ mod tests {
         ];
 
         let result = circumcenter(&points_2d);
-        assert!(matches!(
-            result,
-            Err(CircumcenterError::InvalidSimplex { .. })
-        ));
+        assert_matches!(result, Err(CircumcenterError::InvalidSimplex { .. }));
 
         // Test too many points
         let points_extra = vec![
@@ -800,10 +798,7 @@ mod tests {
         ];
 
         let result = circumcenter(&points_extra);
-        assert!(matches!(
-            result,
-            Err(CircumcenterError::InvalidSimplex { .. })
-        ));
+        assert_matches!(result, Err(CircumcenterError::InvalidSimplex { .. }));
     }
 
     #[test]
@@ -816,10 +811,7 @@ mod tests {
         ];
 
         let result = circumcenter(&collinear_points);
-        assert!(matches!(
-            result,
-            Err(CircumcenterError::MatrixInversionFailed { .. })
-        ));
+        assert_matches!(result, Err(CircumcenterError::MatrixInversionFailed { .. }));
     }
 
     #[test]

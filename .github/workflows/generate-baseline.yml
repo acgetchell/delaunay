@@ -54,11 +54,12 @@ jobs:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
           fetch-depth: 0 # Full history for tag operations
+          persist-credentials: false
 
       - name: Install Rust toolchain
         uses: actions-rust-lang/setup-rust-toolchain@46268bd060767258de96ed93c1251119784f2ab6 # v1.16.1
         with:
-          cache: true
+          cache: false
           cache-bin: false
           # Toolchain from rust-toolchain.toml
 
@@ -66,6 +67,7 @@ jobs:
         uses: astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b # v8.1.0
         with:
           version: ${{ env.UV_VERSION }}
+          enable-cache: false
 
       - name: Verify uv installation
         run: uv --version
@@ -112,6 +114,7 @@ jobs:
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
           fetch-depth: 0
+          persist-credentials: false
           ref: ${{ steps.ref_info.outputs.ref_name }}
           path: bench-target
 
@@ -204,6 +207,7 @@ jobs:
       - name: Display next steps
         env:
           BASELINE_REF: ${{ steps.ref_info.outputs.ref_name }}
+          BASELINE_ARTIFACT_NAME: ${{ steps.safe_name.outputs.artifact_name }}
           SAFE_REF_TYPE: ${{ github.ref_type }}
         run: |
           set -euo pipefail
@@ -213,7 +217,7 @@ jobs:
           echo "📋 Summary:"
           echo "  Ref: $BASELINE_REF"
           echo "  Commit: ${BASELINE_COMMIT:-unknown}"
-          echo "  Artifact: ${{ steps.safe_name.outputs.artifact_name }}"
+          echo "  Artifact: $BASELINE_ARTIFACT_NAME"
           echo ""
           echo "🔄 The benchmark workflow will now use this baseline for:"
           echo "  • Pull request performance testing"

@@ -116,6 +116,8 @@ use delaunay::prelude::repair::{DelaunayCheckPolicy, DelaunayRepairHeuristicConf
 use delaunay::prelude::tds::{InvariantKind, TriangulationValidationReport};
 use delaunay::prelude::validation::ValidationCadence;
 use rand::{SeedableRng, rngs::StdRng, seq::SliceRandom};
+#[cfg(feature = "slow-tests")]
+use std::assert_matches;
 use std::env;
 use std::fmt;
 use std::io::{self, Write};
@@ -1756,26 +1758,26 @@ fn regression_issue_230_4d_100_orientation() {
 #[cfg(feature = "slow-tests")]
 fn debug_large_scale_2d() {
     let outcome = debug_large_case::<2>("2D", 40_000);
-    assert!(matches!(outcome, DebugOutcome::Success), "{outcome}");
+    assert_matches!(outcome, DebugOutcome::Success, "{outcome}");
 }
 
 #[test]
 #[cfg(feature = "slow-tests")]
 fn debug_large_scale_3d() {
     let outcome = debug_large_case::<3>("3D", 7_500);
-    assert!(matches!(outcome, DebugOutcome::Success), "{outcome}");
+    assert_matches!(outcome, DebugOutcome::Success, "{outcome}");
 }
 
 #[test]
 #[cfg(feature = "slow-tests")]
 fn debug_large_scale_4d() {
     let outcome = debug_large_case::<4>("4D", 900);
-    assert!(matches!(outcome, DebugOutcome::Success), "{outcome}");
+    assert_matches!(outcome, DebugOutcome::Success, "{outcome}");
 }
 
 #[test]
 #[cfg(feature = "slow-tests")]
 fn debug_large_scale_5d() {
     let outcome = debug_large_case::<5>("5D", 150);
-    assert!(matches!(outcome, DebugOutcome::Success), "{outcome}");
+    assert_matches!(outcome, DebugOutcome::Success, "{outcome}");
 }

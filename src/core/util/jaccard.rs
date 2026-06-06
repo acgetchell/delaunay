@@ -27,7 +27,7 @@ use thiserror::Error;
 ///     intersection: 1,
 ///     union: 2,
 /// };
-/// assert!(matches!(err, JaccardComputationError::SetSizeTooLarge { .. }));
+/// std::assert_matches!(err, JaccardComputationError::SetSizeTooLarge { .. });
 /// ```
 #[derive(Clone, Debug, Error, PartialEq, Eq)]
 #[non_exhaustive]
@@ -645,6 +645,7 @@ macro_rules! assert_jaccard_gte {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::assert_matches;
 
     use crate::core::tds::{Tds, VertexKey};
     use crate::geometry::traits::coordinate::Coordinate;
@@ -756,10 +757,10 @@ mod tests {
             .push_vertex_key(invalid_vkey);
 
         let err = extract_edge_set(&dt.as_triangulation().tds).unwrap_err();
-        assert!(matches!(
+        assert_matches!(
             err,
             FacetError::VertexKeyNotFoundInTriangulation { key } if key == invalid_vkey
-        ));
+        );
     }
 
     #[test]
@@ -781,10 +782,7 @@ mod tests {
             .push_vertex_key(invalid_vkey);
 
         let err = extract_facet_identifier_set(&dt.as_triangulation().tds).unwrap_err();
-        assert!(matches!(
-            err,
-            FacetError::BoundaryFacetRetrievalFailed { .. }
-        ));
+        assert_matches!(err, FacetError::BoundaryFacetRetrievalFailed { .. });
     }
 
     #[test]

@@ -29,7 +29,7 @@ use thiserror::Error;
 ///
 /// let simplex_key = SimplexKey::from(KeyData::from_ffi(1));
 /// let err = DelaunayValidationError::DelaunayViolation { simplex_key };
-/// assert!(matches!(err, DelaunayValidationError::DelaunayViolation { .. }));
+/// std::assert_matches!(err, DelaunayValidationError::DelaunayViolation { .. });
 /// ```
 #[derive(Clone, Debug, Error, PartialEq, Eq)]
 #[non_exhaustive]
@@ -809,6 +809,7 @@ mod tests {
     use crate::geometry::point::Point;
     use crate::geometry::traits::coordinate::{Coordinate, CoordinateConversionError};
     use crate::triangulation::DelaunayTriangulation;
+    use std::assert_matches;
 
     use crate::vertex;
 
@@ -1144,10 +1145,7 @@ mod tests {
         }
 
         let err = is_delaunay_property_only(&tds).unwrap_err();
-        assert!(matches!(
-            err,
-            DelaunayValidationError::TriangulationState { .. }
-        ));
+        assert_matches!(err, DelaunayValidationError::TriangulationState { .. });
     }
 
     #[test]
@@ -1166,9 +1164,6 @@ mod tests {
         simplex.ensure_neighbors_buffer_mut().truncate(2); // wrong length (expected 3)
 
         let err = is_delaunay_property_only(&tds).unwrap_err();
-        assert!(matches!(
-            err,
-            DelaunayValidationError::InvalidSimplex { .. }
-        ));
+        assert_matches!(err, DelaunayValidationError::InvalidSimplex { .. });
     }
 }

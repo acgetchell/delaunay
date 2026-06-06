@@ -971,10 +971,23 @@ pub(crate) fn batch_local_repair_trigger<const D: usize>(
 
 type VertexBuffer<T, U, const D: usize> = Vec<Vertex<T, U, D>>;
 
+/// Preprocessed vertex ordering state used by batch construction to preserve
+/// deterministic insertion order, retry fallback order, and deduplication-grid
+/// reuse across public construction entry points.
 pub(crate) struct PreprocessVertices<T, U, const D: usize> {
     primary: Option<VertexBuffer<T, U, D>>,
     fallback: Option<VertexBuffer<T, U, D>>,
     grid_cell_size: Option<T>,
+}
+
+impl<T, U, const D: usize> fmt::Debug for PreprocessVertices<T, U, D> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("PreprocessVertices")
+            .field("primary_len", &self.primary.as_ref().map(Vec::len))
+            .field("fallback_len", &self.fallback.as_ref().map(Vec::len))
+            .field("has_grid_cell_size", &self.grid_cell_size.is_some())
+            .finish()
+    }
 }
 
 impl<T, U, const D: usize> PreprocessVertices<T, U, D> {
@@ -4795,6 +4808,7 @@ mod tests {
     use crate::validation::DelaunayTriangulationValidationError;
     use crate::vertex;
     use slotmap::KeyData;
+    use std::assert_matches;
     use std::num::NonZeroUsize;
     use std::sync::Once;
     use std::time::Instant;
@@ -4864,12 +4878,12 @@ mod tests {
             )
             .unwrap_err();
 
-        assert!(matches!(
+        assert_matches!(
             err,
             DelaunayTriangulationConstructionError::Triangulation(
                 DelaunayConstructionFailure::FinalTopologyValidation { .. }
             )
-        ));
+        );
     }
 
     macro_rules! test_incremental_insertion {
@@ -5303,7 +5317,7 @@ mod tests {
         assert_eq!(summary.simplices_removed_total, 4);
         assert_eq!(summary.simplices_removed_max, 4);
         assert_eq!(stats.attempts, 3);
-        assert!(matches!(stats.result, InsertionResult::Inserted));
+        assert_matches!(stats.result, InsertionResult::Inserted);
     }
 
     #[test]
@@ -5978,12 +5992,12 @@ mod tests {
             InitialSimplexStrategy::First,
         );
 
-        assert!(matches!(
+        assert_matches!(
             result,
             Err(DelaunayTriangulationConstructionError::Triangulation(
                 DelaunayConstructionFailure::GeometricDegeneracy { .. }
             ))
-        ));
+        );
     }
 
     #[test]
@@ -6012,10 +6026,10 @@ mod tests {
         assert_eq!(error.statistics.total_skipped(), 0);
         assert_eq!(error.statistics.total_attempts, 0);
         assert!(error.statistics.skip_samples.is_empty());
-        assert!(matches!(
+        assert_matches!(
             error.error,
             DelaunayTriangulationConstructionError::Triangulation(_)
-        ));
+        );
     }
 
     fn vertices_from_coords_permutation_3d(
@@ -6677,10 +6691,10 @@ mod tests {
             reason: CavityFillingError::EmptyFanTriangulation,
         };
         let mapped = TestDelaunay::<3>::map_orientation_canonicalization_error(error);
-        assert!(matches!(
+        assert_matches!(
             mapped,
             TriangulationConstructionError::InternalInconsistency { .. }
-        ));
+        );
     }
 
     #[test]
@@ -6691,10 +6705,10 @@ mod tests {
             },
         };
         let mapped = TestDelaunay::<3>::map_orientation_canonicalization_error(error);
-        assert!(matches!(
+        assert_matches!(
             mapped,
             TriangulationConstructionError::InternalInconsistency { .. }
-        ));
+        );
     }
 
     #[test]
@@ -6704,13 +6718,13 @@ mod tests {
             attempted: 3,
         };
         let mapped = TestDelaunay::<3>::map_orientation_canonicalization_error(error);
-        assert!(matches!(
+        assert_matches!(
             mapped,
             TriangulationConstructionError::LocalRepairBudgetExceeded {
                 max_simplices_removed: 2,
                 attempted: 3,
             }
-        ));
+        );
     }
 
     #[test]
@@ -6720,10 +6734,10 @@ mod tests {
             uuid: Uuid::nil(),
         };
         let mapped = TestDelaunay::<3>::map_orientation_canonicalization_error(error);
-        assert!(matches!(
+        assert_matches!(
             mapped,
             TriangulationConstructionError::InternalInconsistency { .. }
-        ));
+        );
     }
 
     #[test]
@@ -6870,45 +6884,45 @@ mod tests {
             open_simplex: SimplexKey::from(KeyData::from_ffi(1)),
         });
         let mapped = TestDelaunay::<3>::map_insertion_error(conflict);
-        assert!(matches!(
+        assert_matches!(
             mapped,
             TriangulationConstructionError::InsertionConflictRegion {
                 source: ConflictError::OpenBoundary { .. },
             }
-        ));
+        );
 
         let location = InsertionError::Location(LocateError::EmptyTriangulation);
         let mapped = TestDelaunay::<3>::map_insertion_error(location);
-        assert!(matches!(
+        assert_matches!(
             mapped,
             TriangulationConstructionError::InsertionLocation {
                 source: LocateError::EmptyTriangulation,
             }
-        ));
+        );
 
         let non_manifold = InsertionError::NonManifoldTopology {
             facet_hash: 0xab,
             simplex_count: 3,
         };
         let mapped = TestDelaunay::<3>::map_insertion_error(non_manifold);
-        assert!(matches!(
+        assert_matches!(
             mapped,
             TriangulationConstructionError::InsertionNonManifoldTopology {
                 facet_hash: 0xab,
                 simplex_count: 3,
             }
-        ));
+        );
 
         let hull = InsertionError::HullExtension {
             reason: HullExtensionReason::NoVisibleFacets,
         };
         let mapped = TestDelaunay::<3>::map_insertion_error(hull);
-        assert!(matches!(
+        assert_matches!(
             mapped,
             TriangulationConstructionError::InsertionHullExtension {
                 reason: HullExtensionReason::NoVisibleFacets,
             }
-        ));
+        );
 
         let delaunay = InsertionError::DelaunayValidationFailed {
             source: DelaunayTriangulationValidationError::VerificationFailed {
@@ -6916,10 +6930,10 @@ mod tests {
             },
         };
         let mapped = TestDelaunay::<3>::map_insertion_error(delaunay);
-        assert!(matches!(
+        assert_matches!(
             mapped,
             TriangulationConstructionError::InsertionDelaunayValidation { .. }
-        ));
+        );
 
         let topology = InsertionError::TopologyValidationFailed {
             message: "test".to_string(),
@@ -6930,10 +6944,10 @@ mod tests {
             },
         };
         let mapped = TestDelaunay::<3>::map_insertion_error(topology);
-        assert!(matches!(
+        assert_matches!(
             mapped,
             TriangulationConstructionError::InsertionTopologyValidation { .. }
-        ));
+        );
     }
 
     #[test]
@@ -6963,16 +6977,16 @@ mod tests {
             attempted: 3,
         };
         let mapped = TestDelaunay::<3>::map_insertion_error(error);
-        assert!(matches!(
+        assert_matches!(
             mapped,
             TriangulationConstructionError::LocalRepairBudgetExceeded {
                 max_simplices_removed: 2,
                 attempted: 3,
             }
-        ));
+        );
 
         let public_error: DelaunayTriangulationConstructionError = mapped.into();
-        assert!(matches!(
+        assert_matches!(
             public_error,
             DelaunayTriangulationConstructionError::Triangulation(
                 DelaunayConstructionFailure::LocalRepairBudgetExceeded {
@@ -6980,7 +6994,7 @@ mod tests {
                     attempted: 3,
                 }
             )
-        ));
+        );
     }
 
     #[test]

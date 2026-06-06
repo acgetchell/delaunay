@@ -63,6 +63,11 @@ def typed_completed_process() -> subprocess.CompletedProcess[str]:
     return subprocess.CompletedProcess(args=[], returncode=0, stdout="ok", stderr="")
 
 
+def direct_subprocess_run() -> None:
+    # ruleid: delaunay.python.no-direct-subprocess-run-outside-wrapper
+    subprocess.run(["git", "status"], check=False)
+
+
 # ruleid: delaunay.python.no-untyped-defs-in-scripts
 def missing_return_annotation():
     return None

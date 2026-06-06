@@ -77,7 +77,7 @@ fn ridge_fan_dump_enabled() -> bool {
 ///
 /// let vertex = VertexKey::from(KeyData::from_ffi(2));
 /// let result = LocateResult::OnVertex(vertex);
-/// assert!(matches!(result, LocateResult::OnVertex(_)));
+/// std::assert_matches!(result, LocateResult::OnVertex(_));
 /// ```
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum LocateResult {
@@ -101,7 +101,7 @@ pub enum LocateResult {
 /// use delaunay::prelude::algorithms::LocateError;
 ///
 /// let err = LocateError::EmptyTriangulation;
-/// assert!(matches!(err, LocateError::EmptyTriangulation));
+/// std::assert_matches!(err, LocateError::EmptyTriangulation);
 /// ```
 #[derive(Debug, Clone, thiserror::Error, PartialEq, Eq)]
 #[non_exhaustive]
@@ -137,7 +137,7 @@ pub enum LocateError {
 ///
 /// let simplex_key = SimplexKey::from(KeyData::from_ffi(5));
 /// let err = ConflictError::InvalidStartSimplex { simplex_key };
-/// assert!(matches!(err, ConflictError::InvalidStartSimplex { .. }));
+/// std::assert_matches!(err, ConflictError::InvalidStartSimplex { .. });
 /// ```
 #[derive(Debug, Clone, thiserror::Error, PartialEq, Eq)]
 #[non_exhaustive]
@@ -306,12 +306,12 @@ pub enum ConflictError {
 ///     extra_facets_len: 3,
 /// };
 /// let err = ConflictError::InternalInconsistency { site: site.clone() };
-/// assert!(matches!(
+/// std::assert_matches!(
 ///     err,
 ///     ConflictError::InternalInconsistency {
 ///         site: InternalInconsistencySite::RidgeFanExtraFacetOutOfBounds { .. }
 ///     }
-/// ));
+/// );
 /// ```
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[non_exhaustive]
@@ -741,15 +741,15 @@ pub(crate) struct LocateTrace {
 /// // Point inside the 4-simplex
 /// let inside_point = Point::new([0.2, 0.2, 0.2, 0.2]);
 /// let inside = locate(dt.tds(), &kernel, &inside_point, None)?;
-/// assert!(matches!(
+/// std::assert_matches!(
 ///     inside,
 ///     LocateResult::InsideSimplex(simplex_key) if dt.tds().contains_simplex(simplex_key)
-/// ));
+/// );
 ///
 /// // Point outside the convex hull
 /// let outside_point = Point::new([2.0, 2.0, 2.0, 2.0]);
 /// let outside = locate(dt.tds(), &kernel, &outside_point, None)?;
-/// assert!(matches!(outside, LocateResult::Outside));
+/// std::assert_matches!(outside, LocateResult::Outside);
 /// # Ok(())
 /// # }
 /// ```
@@ -789,7 +789,7 @@ pub(crate) struct LocateTrace {
 /// let query_point = Point::new([0.15, 0.15, 0.15, 0.15]);
 ///
 /// let located = locate(dt.tds(), &kernel, &query_point, Some(hint_simplex))?;
-/// assert!(matches!(located, LocateResult::InsideSimplex(_)));
+/// std::assert_matches!(located, LocateResult::InsideSimplex(_));
 /// # Ok(())
 /// # }
 /// ```
@@ -2032,6 +2032,7 @@ mod tests {
     use crate::prelude::DelaunayTriangulation;
     use crate::vertex;
     use slotmap::KeyData;
+    use std::assert_matches;
 
     #[test]
     fn test_internal_inconsistency_site_display_variants() {
@@ -2296,7 +2297,7 @@ mod tests {
         let point = Point::new([0.0, 0.0, 0.0]);
 
         let result = locate(&tds, &kernel, &point, None);
-        assert!(matches!(result, Err(LocateError::EmptyTriangulation)));
+        assert_matches!(result, Err(LocateError::EmptyTriangulation));
     }
 
     #[test]
@@ -2358,7 +2359,7 @@ mod tests {
         let point = Point::new([10.0, 10.0]);
         let result = locate(dt.tds(), &kernel, &point, None);
 
-        assert!(matches!(result, Ok(LocateResult::Outside)));
+        assert_matches!(result, Ok(LocateResult::Outside));
     }
 
     #[test]
@@ -2376,7 +2377,7 @@ mod tests {
         let point = Point::new([2.0, 2.0, 2.0]);
         let result = locate(dt.tds(), &kernel, &point, None);
 
-        assert!(matches!(result, Ok(LocateResult::Outside)));
+        assert_matches!(result, Ok(LocateResult::Outside));
     }
 
     #[test]
@@ -2395,7 +2396,7 @@ mod tests {
         let point = Point::new([0.25, 0.25, 0.25]);
 
         let result = locate(dt.tds(), &kernel, &point, Some(hint_simplex));
-        assert!(matches!(result, Ok(LocateResult::InsideSimplex(_))));
+        assert_matches!(result, Ok(LocateResult::InsideSimplex(_)));
     }
 
     #[test]
@@ -2411,7 +2412,7 @@ mod tests {
         let point = Point::new([0.3, 0.3]);
         let result = locate(dt.tds(), &kernel, &point, None);
 
-        assert!(matches!(result, Ok(LocateResult::InsideSimplex(_))));
+        assert_matches!(result, Ok(LocateResult::InsideSimplex(_)));
     }
 
     #[test]
@@ -2441,18 +2442,18 @@ mod tests {
         let point = Point::new([10.0, 10.0]);
         let (result, stats) = locate_with_stats(dt.tds(), &kernel, &point, None).unwrap();
 
-        assert!(matches!(result, LocateResult::Outside));
+        assert_matches!(result, LocateResult::Outside);
         assert!(stats.fell_back_to_scan());
         assert!(!stats.used_hint);
         assert_eq!(stats.start_simplex, simplex_key);
         assert_eq!(stats.walk_steps, 2);
-        assert!(matches!(
+        assert_matches!(
             stats.fallback,
             Some(LocateFallback {
                 reason: LocateFallbackReason::CycleDetected,
                 steps: 2,
             })
-        ));
+        );
     }
 
     #[test]
@@ -2472,7 +2473,7 @@ mod tests {
         // Test all facets - point should not be outside any of them
         for facet_idx in 0..4 {
             let result = is_point_outside_facet(dt.tds(), &kernel, simplex_key, facet_idx, &point);
-            assert!(matches!(result, Ok(Some(false) | None)));
+            assert_matches!(result, Ok(Some(false) | None));
         }
     }
 
@@ -2840,7 +2841,7 @@ mod tests {
         let (result, stats) =
             locate_with_stats(dt.tds(), &kernel, &point, Some(invalid_hint)).unwrap();
 
-        assert!(matches!(result, LocateResult::InsideSimplex(_)));
+        assert_matches!(result, LocateResult::InsideSimplex(_));
         assert_eq!(stats.start_simplex, expected_start);
         assert!(!stats.used_hint);
         assert!(!stats.fell_back_to_scan());
@@ -2899,13 +2900,13 @@ mod tests {
         conflict_simplices.push(third_simplex);
 
         let err = extract_cavity_boundary(&tds, &conflict_simplices).unwrap_err();
-        assert!(matches!(
+        assert_matches!(
             err,
             ConflictError::NonManifoldFacet {
                 simplex_count: 3,
                 ..
             }
-        ));
+        );
     }
 
     #[test]
@@ -2971,7 +2972,7 @@ mod tests {
 
         let (result, stats) = locate_with_stats(dt.tds(), &kernel, &point, Some(hint)).unwrap();
 
-        assert!(matches!(result, LocateResult::InsideSimplex(_)));
+        assert_matches!(result, LocateResult::InsideSimplex(_));
         assert_eq!(stats.start_simplex, hint);
         assert!(stats.used_hint);
         assert!(!stats.fell_back_to_scan());
@@ -3003,10 +3004,10 @@ mod tests {
         conflict_simplices.push(invalid);
 
         let err = extract_cavity_boundary(dt.tds(), &conflict_simplices).unwrap_err();
-        assert!(matches!(
+        assert_matches!(
             err,
             ConflictError::InvalidStartSimplex { simplex_key } if simplex_key == invalid
-        ));
+        );
     }
 
     /// A simplex with fewer than D+1 vertex keys is detected early by the
@@ -3231,7 +3232,7 @@ mod tests {
 
         let (result, stats) = locate_with_stats(dt.tds(), &kernel, &point, None).unwrap();
 
-        assert!(matches!(result, LocateResult::InsideSimplex(_)));
+        assert_matches!(result, LocateResult::InsideSimplex(_));
         assert!(!stats.used_hint, "None hint should set used_hint = false");
         assert!(!stats.fell_back_to_scan());
     }

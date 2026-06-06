@@ -73,6 +73,7 @@ PUBLIC_API_TITLE = "### Public API Performance Contract (`ci_performance_suite`)
 CIRCUMSPHERE_TITLE = "### Circumsphere Predicate Performance"
 TDS_TITLE = "## Triangulation Data Structure Performance"
 PERFORMANCE_UPDATES_TITLE = "## Performance Data Updates"
+UTF8 = "utf-8"
 
 
 def completed_process(
@@ -473,9 +474,9 @@ malformed api_benchmark_metric benchmark_id=ignored vertices=x simplices=y
             criterion_dir = Path(temp_dir) / "target" / "criterion"
             criterion_dir.mkdir(parents=True)
             metrics_path = criterion_dir / _CI_PERFORMANCE_SUITE_METRICS_FILE
-            metrics_path.write_text("{ invalid json", encoding="utf-8")
+            metrics_path.write_text("{ invalid json", encoding=UTF8)
 
-            with pytest.raises(ValueError, match=str(metrics_path)):
+            with pytest.raises(ValueError, match=re.escape(str(metrics_path))):
                 _load_ci_performance_metrics(criterion_dir)
 
     def test_find_criterion_results_preserves_ci_suite_ids(self) -> None:
@@ -889,7 +890,7 @@ Git commit: abc123
 === 10 Points (2D) ===
 Time: [1.0, 1.0, 1.0] µs
 """
-            baseline_file.write_text(baseline_content)
+            baseline_file.write_text(baseline_content, encoding=UTF8)
 
             # Mock successful cargo command
             mock_cargo.return_value = completed_process(CI_MANIFEST_STDOUT)
@@ -1126,7 +1127,7 @@ Time: [1.0, 1.0, 1.0] µs
             comparator._write_error_file(output_file, "Baseline file not found", baseline_file)
 
             assert output_file.exists()
-            content = output_file.read_text()
+            content = output_file.read_text(encoding=UTF8)
             assert "Comparison Results" in content
             assert "❌ Error: Baseline file not found" in content
             assert str(baseline_file) in content
@@ -1141,7 +1142,7 @@ Time: [1.0, 1.0, 1.0] µs
             comparator._write_error_file(output_file, "Benchmark execution error", error_message)
 
             assert output_file.exists()
-            content = output_file.read_text()
+            content = output_file.read_text(encoding=UTF8)
             assert "❌ Error: Benchmark execution error" in content
             assert error_message in content
             assert "Please check the CI logs for more information" in content
@@ -1155,7 +1156,7 @@ Time: [1.0, 1.0, 1.0] µs
 
             assert output_file.exists()
             assert output_file.parent.exists()
-            content = output_file.read_text()
+            content = output_file.read_text(encoding=UTF8)
             assert "❌ Error: Test error" in content
 
     def test_write_error_file_handles_write_failure(self, comparator) -> None:
@@ -1999,7 +2000,7 @@ Hardware Information:
 === 1000 Points (2D) ===
 Time: [95.0, 100.0, 105.0] µs
 """
-            baseline_file.write_text(baseline_content)
+            baseline_file.write_text(baseline_content, encoding=UTF8)
 
             with tempfile.NamedTemporaryFile(mode="w", delete=False) as env_file:
                 env_path = env_file.name
@@ -2035,7 +2036,7 @@ Time: [95.0, 100.0, 105.0] µs
 Git commit: abc123def456
 Tag: v1.0.0
 """
-            baseline_file.write_text(baseline_content)
+            baseline_file.write_text(baseline_content, encoding=UTF8)
             # Do NOT create baseline_results.txt - this ensures the copy path is taken
 
             with tempfile.NamedTemporaryFile(mode="w", delete=False) as env_file:
@@ -2082,7 +2083,7 @@ Hardware Information:
 === 1000 Points (2D) ===
 Time: [95.0, 100.0, 105.0] µs
 """
-            baseline_file.write_text(baseline_content)
+            baseline_file.write_text(baseline_content, encoding=UTF8)
 
             with tempfile.NamedTemporaryFile(mode="w", delete=False) as env_file:
                 env_path = env_file.name
@@ -2181,7 +2182,7 @@ Git commit: abc123def456
 Hardware Information:
   OS: macOS
 """
-            baseline_file.write_text(baseline_content)
+            baseline_file.write_text(baseline_content, encoding=UTF8)
 
             with tempfile.NamedTemporaryFile(mode="w", delete=False) as env_file:
                 env_path = env_file.name
@@ -2530,7 +2531,8 @@ Hardware Information:
                 "❌ Error: Benchmark execution timeout\n\n"
                 "Details: Command timed out after 1800 seconds\n\n"
                 "This error prevented the benchmark comparison from completing successfully.\n"
-                "Please check the CI logs for more information.\n"
+                "Please check the CI logs for more information.\n",
+                encoding=UTF8,
             )
 
             env_vars = {
@@ -2551,7 +2553,8 @@ Hardware Information:
                 # Should detect error and report failure, not "no regressions"
                 assert "Result:" in captured.out
                 assert "Benchmark comparison failed" in captured.out
-                assert f"(see benches/{MAIN_VS_RELEASE_COMPARISON_RESULTS_FILE} for details)" in captured.out
+                expected_path = str(Path("benches") / MAIN_VS_RELEASE_COMPARISON_RESULTS_FILE)
+                assert f"(see {expected_path} for details)" in captured.out
                 # Should NOT say "no regressions" when there was an error
                 assert "No significant performance regressions" not in captured.out
 
@@ -2660,7 +2663,7 @@ class TestTimeoutHandling:
         with tempfile.TemporaryDirectory() as temp_dir:
             project_root = Path(temp_dir)
             baseline_file = Path(temp_dir) / "baseline.txt"
-            baseline_file.write_text("mock baseline")
+            baseline_file.write_text("mock baseline", encoding=UTF8)
 
             comparator = PerformanceComparator(project_root)
 
@@ -2680,7 +2683,7 @@ class TestTimeoutHandling:
                 # Verify error file contains full exception message with command context
                 error_file = project_root / "benches" / MAIN_VS_RELEASE_COMPARISON_RESULTS_FILE
                 assert error_file.exists()
-                error_content = error_file.read_text()
+                error_content = error_file.read_text(encoding=UTF8)
                 assert "❌ Error: Benchmark execution timeout" in error_content
                 assert "cargo bench" in error_content  # Command from exception
                 assert "timeout after 1800 seconds" in error_content  # Explicit timeout value
@@ -2979,7 +2982,7 @@ Throughput: [8333.3, 9090.9, 10000.0] Kelem/s
             baseline_dir = project_root / "baseline-artifact"
             baseline_dir.mkdir(parents=True)
             baseline_file = baseline_dir / "baseline_results.txt"
-            baseline_file.write_text(baseline_content)
+            baseline_file.write_text(baseline_content, encoding=UTF8)
 
             generator = PerformanceSummaryGenerator(project_root)
             lines = generator._parse_baseline_results()
@@ -3484,7 +3487,7 @@ Benchmark completed.""",
             assert output_file.exists()
 
             # Check file contains expected content
-            content = output_file.read_text()
+            content = output_file.read_text(encoding=UTF8)
             assert "# Delaunay Library Performance Results" in content
             assert "## Performance Results Summary" in content
 
@@ -3644,7 +3647,7 @@ Benchmark completed.""",
                 # Should still succeed
                 assert success
 
-                content = output_file.read_text()
+                content = output_file.read_text(encoding=UTF8)
                 assert "Version unknown" in content
 
     def test_baseline_fallback_behavior_edge_case(self) -> None:
@@ -3663,6 +3666,7 @@ Benchmark completed.""",
                 "=== 1000 Points (3D) ===\n"
                 "Time: [805.0, 810.0, 815.0] µs\n"
                 "Throughput: [1200.0, 1235.0, 1245.0] Kelem/s\n",
+                encoding=UTF8,
             )
 
             # Do NOT create primary baseline file (baseline-artifact/baseline_results.txt)
@@ -3682,7 +3686,7 @@ Benchmark completed.""",
                 success = generator.generate_summary(output_file)
                 assert success
 
-                content = output_file.read_text()
+                content = output_file.read_text(encoding=UTF8)
 
                 # Verify that baseline data was included (meaning fallback worked)
                 assert "Triangulation Data Structure Performance" in content
@@ -3711,11 +3715,12 @@ Benchmark completed.""",
                 "=== 10 Points (2D) ===\n"
                 "Time: [100.0, 110.0, 120.0] µs\n"
                 "Throughput: [8000.0, 9000.0, 10000.0] Kelem/s\n",
+                encoding=UTF8,
             )
 
             # Mock comparison file
             comparison_file = baseline_dir / MAIN_VS_RELEASE_COMPARISON_RESULTS_FILE
-            comparison_file.write_text("✅ OK: All benchmarks within acceptable range\n")
+            comparison_file.write_text("✅ OK: All benchmarks within acceptable range\n", encoding=UTF8)
 
             with (
                 patch("benchmark_utils.get_git_commit_hash") as mock_commit,
@@ -3727,7 +3732,7 @@ Benchmark completed.""",
 
                 assert success
 
-                content = output_file.read_text()
+                content = output_file.read_text(encoding=UTF8)
 
                 # Verify all major sections are present
                 assert "# Delaunay Library Performance Results" in content
@@ -3805,7 +3810,7 @@ Hardware Information:
 === 1000 Points (2D) ===
 Time: [95.0, 100.0, 105.0] µs
 """
-            baseline_file.write_text(baseline_content)
+            baseline_file.write_text(baseline_content, encoding=UTF8)
 
             generator = PerformanceSummaryGenerator(project_root)
             lines = generator._parse_baseline_results()
@@ -3877,7 +3882,7 @@ Hardware Information:
 === 10 Points (2D) ===
 Time: [160.1, 168.18, 177.67] µs
 """
-            tag_baseline_file.write_text(baseline_content)
+            tag_baseline_file.write_text(baseline_content, encoding=UTF8)
 
             with tempfile.NamedTemporaryFile(mode="w", delete=False) as env_file:
                 env_path = env_file.name
@@ -3889,7 +3894,7 @@ Time: [160.1, 168.18, 177.67] µs
                     assert success
 
                     # Check that environment variables were set
-                    with open(env_path, encoding="utf-8") as f:
+                    with open(env_path, encoding=UTF8) as f:
                         env_content = f.read()
                         assert "BASELINE_EXISTS=true" in env_content
                         assert "BASELINE_SOURCE=artifact" in env_content
@@ -3907,7 +3912,7 @@ Time: [160.1, 168.18, 177.67] µs
                     # Check that baseline_results.txt was created
                     standard_file = baseline_dir / "baseline_results.txt"
                     assert standard_file.exists()
-                    assert "Tag: v0.4.3" in standard_file.read_text(encoding="utf-8")
+                    assert "Tag: v0.4.3" in standard_file.read_text(encoding=UTF8)
 
             finally:
                 Path(env_path).unlink(missing_ok=True)
@@ -3928,7 +3933,7 @@ Hardware Information:
 === 100 Points (2D) ===
 Time: [95.0, 100.0, 105.0] µs
 """
-            generic_baseline_file.write_text(baseline_content)
+            generic_baseline_file.write_text(baseline_content, encoding=UTF8)
 
             with tempfile.NamedTemporaryFile(mode="w", delete=False) as env_file:
                 env_path = env_file.name
@@ -3940,7 +3945,7 @@ Time: [95.0, 100.0, 105.0] µs
                     assert success
 
                     # Check that environment variables were set
-                    with open(env_path, encoding="utf-8") as f:
+                    with open(env_path, encoding=UTF8) as f:
                         env_content = f.read()
                         assert "BASELINE_EXISTS=true" in env_content
                         assert "BASELINE_SOURCE=artifact" in env_content
@@ -3954,7 +3959,7 @@ Time: [95.0, 100.0, 105.0] µs
                     # Check that baseline_results.txt was created
                     standard_file = baseline_dir / "baseline_results.txt"
                     assert standard_file.exists()
-                    assert "Test CPU" in standard_file.read_text(encoding="utf-8")
+                    assert "Test CPU" in standard_file.read_text(encoding=UTF8)
 
             finally:
                 Path(env_path).unlink(missing_ok=True)
@@ -3996,7 +4001,7 @@ Time: [95.0, 100.0, 105.0] µs
                     assert " → " not in captured.out  # No conversion arrow
 
                     # Standard file should remain unchanged
-                    assert standard_file.read_text(encoding="utf-8") == standard_content
+                    assert standard_file.read_text(encoding=UTF8) == standard_content
 
             finally:
                 Path(env_path).unlink(missing_ok=True)
@@ -4046,7 +4051,7 @@ Tag: v0.4.3
 Hardware Information:
   OS: macOS
 """
-            tag_baseline_file.write_text(baseline_content)
+            tag_baseline_file.write_text(baseline_content, encoding=UTF8)
 
             with tempfile.NamedTemporaryFile(mode="w", delete=False) as env_file:
                 env_path = env_file.name
@@ -4079,7 +4084,7 @@ Tag: v0.4.3
 Hardware Information:
   OS: macOS
 """
-            tag_baseline_file.write_text(baseline_content)
+            tag_baseline_file.write_text(baseline_content, encoding=UTF8)
 
             # Metadata with commit info
             metadata = {"tag": "v0.4.3", "commit": "fedcba987654321", "generated_at": "2025-09-13T00:00:36Z"}
@@ -4209,7 +4214,7 @@ Git commit: abc123def456
 Hardware Information:
   OS: macOS
 """
-            baseline_file.write_text(baseline_content)
+            baseline_file.write_text(baseline_content, encoding=UTF8)
 
             with tempfile.NamedTemporaryFile(mode="w", delete=False) as env_file:
                 env_path = env_file.name
@@ -4413,7 +4418,7 @@ Tag: v1.0.0; echo "injected"; rm -rf /tmp/test
 Hardware Information:
   OS: macOS
 """
-            baseline_file.write_text(baseline_content)
+            baseline_file.write_text(baseline_content, encoding=UTF8)
 
             with tempfile.NamedTemporaryFile(mode="w", delete=False) as env_file:
                 env_path = env_file.name
@@ -4455,7 +4460,7 @@ Tag: {long_tag}
 Hardware Information:
   OS: macOS
 """
-            baseline_file.write_text(baseline_content)
+            baseline_file.write_text(baseline_content, encoding=UTF8)
 
             with tempfile.NamedTemporaryFile(mode="w", delete=False) as env_file:
                 env_path = env_file.name
@@ -4613,7 +4618,7 @@ Hardware Information:
 === 10 Points (2D) ===
 Time: [160.1, 168.18, 177.67] µs
 """
-            tag_baseline_file.write_text(baseline_content)
+            tag_baseline_file.write_text(baseline_content, encoding=UTF8)
 
             with tempfile.NamedTemporaryFile(mode="w", delete=False) as env_file:
                 env_path = env_file.name

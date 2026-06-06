@@ -353,6 +353,7 @@ mod tests {
     use crate::geometry::util::{CircumcenterError, RandomPointGenerationError};
     use approx::assert_relative_eq;
     use num_traits::cast;
+    use std::assert_matches;
 
     #[test]
     fn test_safe_usize_to_scalar_basic_success() {
@@ -567,24 +568,24 @@ mod tests {
     fn test_safe_cast_to_f64_non_finite() {
         // Test NaN handling
         let result = safe_cast_to_f64(f64::NAN, 0);
-        assert!(matches!(
+        assert_matches!(
             result,
             Err(CoordinateConversionError::NonFiniteValue { .. })
-        ));
+        );
 
         // Test infinity handling
         let result = safe_cast_to_f64(f64::INFINITY, 1);
-        assert!(matches!(
+        assert_matches!(
             result,
             Err(CoordinateConversionError::NonFiniteValue { .. })
-        ));
+        );
 
         // Test negative infinity
         let result = safe_cast_to_f64(f64::NEG_INFINITY, 2);
-        assert!(matches!(
+        assert_matches!(
             result,
             Err(CoordinateConversionError::NonFiniteValue { .. })
-        ));
+        );
 
         // Test valid finite value
         let result = safe_cast_to_f64(42.5f64, 0);
@@ -596,24 +597,24 @@ mod tests {
     fn test_safe_cast_from_f64_non_finite() {
         // Test NaN handling
         let result: Result<f64, _> = safe_cast_from_f64(f64::NAN, 0);
-        assert!(matches!(
+        assert_matches!(
             result,
             Err(CoordinateConversionError::NonFiniteValue { .. })
-        ));
+        );
 
         // Test infinity handling
         let result: Result<f64, _> = safe_cast_from_f64(f64::INFINITY, 1);
-        assert!(matches!(
+        assert_matches!(
             result,
             Err(CoordinateConversionError::NonFiniteValue { .. })
-        ));
+        );
 
         // Test negative infinity
         let result: Result<f64, _> = safe_cast_from_f64(f64::NEG_INFINITY, 2);
-        assert!(matches!(
+        assert_matches!(
             result,
             Err(CoordinateConversionError::NonFiniteValue { .. })
-        ));
+        );
 
         // Test valid conversion
         let result: Result<f32, _> = safe_cast_from_f64(42.5f64, 0);
@@ -625,18 +626,18 @@ mod tests {
         // Test array with NaN
         let coords_nan = [1.0f32, f32::NAN, 3.0f32];
         let result = safe_coords_to_f64(&coords_nan);
-        assert!(matches!(
+        assert_matches!(
             result,
             Err(CoordinateConversionError::NonFiniteValue { .. })
-        ));
+        );
 
         // Test array with infinity
         let coords_inf = [1.0f32, 2.0f32, f32::INFINITY];
         let result = safe_coords_to_f64(&coords_inf);
-        assert!(matches!(
+        assert_matches!(
             result,
             Err(CoordinateConversionError::NonFiniteValue { .. })
-        ));
+        );
 
         // Test successful conversion
         let coords_valid = [1.0f32, 2.0f32, 3.0f32];
@@ -653,18 +654,18 @@ mod tests {
         // Test array with NaN
         let coords_nan = [1.0f64, f64::NAN, 3.0f64];
         let result: Result<[f32; 3], _> = safe_coords_from_f64(&coords_nan);
-        assert!(matches!(
+        assert_matches!(
             result,
             Err(CoordinateConversionError::NonFiniteValue { .. })
-        ));
+        );
 
         // Test array with infinity
         let coords_inf = [1.0f64, 2.0f64, f64::INFINITY];
         let result: Result<[f32; 3], _> = safe_coords_from_f64(&coords_inf);
-        assert!(matches!(
+        assert_matches!(
             result,
             Err(CoordinateConversionError::NonFiniteValue { .. })
-        ));
+        );
 
         // Test successful conversion
         let coords_valid = [1.0f64, 2.0f64, 3.0f64];
@@ -676,17 +677,17 @@ mod tests {
     fn test_safe_scalar_conversion_edge_cases() {
         // Test scalar to f64 with NaN
         let result = safe_scalar_to_f64(f64::NAN);
-        assert!(matches!(
+        assert_matches!(
             result,
             Err(CoordinateConversionError::NonFiniteValue { .. })
-        ));
+        );
 
         // Test scalar from f64 with NaN
         let result: Result<f32, _> = safe_scalar_from_f64(f64::NAN);
-        assert!(matches!(
+        assert_matches!(
             result,
             Err(CoordinateConversionError::NonFiniteValue { .. })
-        ));
+        );
 
         // Test successful conversions
         let result = safe_scalar_to_f64(42.5f32);
@@ -712,10 +713,10 @@ mod tests {
             // Only test on 64-bit platforms
             let large_value = usize::try_from(MAX_PRECISE + 1).unwrap_or(usize::MAX);
             let result: Result<f64, _> = safe_usize_to_scalar(large_value);
-            assert!(matches!(
+            assert_matches!(
                 result,
                 Err(CoordinateConversionError::ConversionFailed { .. })
-            ));
+            );
         }
 
         // Test normal values

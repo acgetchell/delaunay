@@ -161,7 +161,7 @@ macro_rules! gen_insphere_inward_scaling_inside {
                         if let Ok(result) = insphere(&simplex, interior_point) {
                             // Check separation to avoid degenerate case
                             let mut dist_sq = 0.0;
-                            for i in 0..$dim { let d = center_coords[i] - centroid[i]; dist_sq += d * d; }
+                            for i in 0..$dim { let d = center_coords[i] - centroid[i]; dist_sq = d.mul_add(d, dist_sq); }
                             if dist_sq > 1e-6 {
                                 prop_assert!(
                                     result == InSphere::INSIDE || result == InSphere::BOUNDARY,
@@ -193,7 +193,7 @@ macro_rules! gen_insphere_distant_point_outside_by_radius {
                         let center_coords = *center.coords();
                         // Build a direction: normalize center if nonzero; else use e0
                         let mut norm_sq = 0.0;
-                        for i in 0..$dim { norm_sq += center_coords[i] * center_coords[i]; }
+                        for i in 0..$dim { norm_sq = center_coords[i].mul_add(center_coords[i], norm_sq); }
                         let mut dir = [0.0_f64; $dim];
                         if norm_sq > 1e-8 {
                             let inv_norm = norm_sq.sqrt().recip();

@@ -590,12 +590,12 @@ pub fn hilbert_sort_by_unstable<Item, T: CoordinateScalar, const D: usize>(
 ///
 /// // Invalid bits parameter
 /// let result = hilbert_indices_prequantized(&quantized, 0);
-/// assert!(matches!(result, Err(HilbertError::InvalidBitsParameter { bits: 0 })));
+/// std::assert_matches!(result, Err(HilbertError::InvalidBitsParameter { bits: 0 }));
 ///
 /// // Overflow (D=5, bits=26 => 130 > 128)
 /// let quantized_5d = vec![[1_u32, 2, 3, 4, 5]];
 /// let result = hilbert_indices_prequantized(&quantized_5d, 26);
-/// assert!(matches!(result, Err(HilbertError::IndexOverflow { .. })));
+/// std::assert_matches!(result, Err(HilbertError::IndexOverflow { .. }));
 /// ```
 pub fn hilbert_indices_prequantized<const D: usize>(
     quantized: &[[u32; D]],
@@ -680,6 +680,7 @@ pub fn hilbert_sorted_indices<T: CoordinateScalar, const D: usize>(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::assert_matches;
 
     use crate::geometry::point::Point;
     use crate::geometry::traits::coordinate::Coordinate;
@@ -751,14 +752,14 @@ mod tests {
     fn test_scaled_quantize_reports_conversion_error() {
         let result = quantize_with_scale(&[1.0_f64], (0.0, 1.0), 31, u32::MAX, f64::INFINITY);
 
-        assert!(matches!(
+        assert_matches!(
             result,
             Err(HilbertError::QuantizedCoordinateConversionFailed {
                 bits: 31,
                 max_grid_value: u32::MAX,
                 coordinate_index: 0
             })
-        ));
+        );
     }
 
     #[test]
@@ -1019,20 +1020,14 @@ mod tests {
     fn test_hilbert_indices_prequantized_validates_bits_zero() {
         let quantized = vec![[1_u32, 2]];
         let result = hilbert_indices_prequantized(&quantized, 0);
-        assert!(matches!(
-            result,
-            Err(HilbertError::InvalidBitsParameter { bits: 0 })
-        ));
+        assert_matches!(result, Err(HilbertError::InvalidBitsParameter { bits: 0 }));
     }
 
     #[test]
     fn test_hilbert_indices_prequantized_validates_bits_too_large() {
         let quantized = vec![[1_u32, 2]];
         let result = hilbert_indices_prequantized(&quantized, 32);
-        assert!(matches!(
-            result,
-            Err(HilbertError::InvalidBitsParameter { bits: 32 })
-        ));
+        assert_matches!(result, Err(HilbertError::InvalidBitsParameter { bits: 32 }));
     }
 
     #[test]
@@ -1040,14 +1035,14 @@ mod tests {
         // With D=5 and bits=26, total_bits = 130 > 128
         let quantized = vec![[1_u32, 2, 3, 4, 5]];
         let result = hilbert_indices_prequantized(&quantized, 26);
-        assert!(matches!(
+        assert_matches!(
             result,
             Err(HilbertError::IndexOverflow {
                 dimension: 5,
                 bits: 26,
                 total_bits: 130
             })
-        ));
+        );
     }
 
     #[test]

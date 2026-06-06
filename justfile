@@ -7,7 +7,10 @@
 set shell := ["bash", "-euo", "pipefail", "-c"]
 
 cargo_llvm_cov_version := "0.8.7"
-nextest_version := "0.9.136"
+nextest_version := "0.9.137"
+rumdl_version := "0.2.6"
+typos_version := "1.47.1"
+zizmor_version := "1.25.2"
 
 # Common cargo-llvm-cov arguments for all coverage runs.
 # Excludes benches/examples from reports while allowing integration tests to
@@ -20,13 +23,18 @@ _coverage_base_args := '''--ignore-filename-regex '(^|/)(benches|examples)/' \
 _ensure-actionlint:
     #!/usr/bin/env bash
     set -euo pipefail
-    command -v actionlint >/dev/null || { echo "❌ 'actionlint' not found. See 'just setup' or https://github.com/rhysd/actionlint"; exit 1; }
+    command -v uv >/dev/null || { echo "❌ 'uv' not found. See 'just setup' or https://github.com/astral-sh/uv"; exit 1; }
+    uv run actionlint -version >/dev/null
 
 _ensure-cargo-llvm-cov:
     #!/usr/bin/env bash
     set -euo pipefail
-    if ! command -v cargo-llvm-cov >/dev/null; then
-        echo "❌ 'cargo-llvm-cov' not found. See 'just setup-tools' or install:"
+    installed_version=""
+    if command -v cargo-llvm-cov >/dev/null; then
+        installed_version="$(cargo llvm-cov --version 2>/dev/null | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1 || true)"
+    fi
+    if [[ "$installed_version" != "{{ cargo_llvm_cov_version }}" ]]; then
+        echo "❌ 'cargo-llvm-cov' {{ cargo_llvm_cov_version }} not found. See 'just setup-tools' or install:"
         echo "   cargo install --locked cargo-llvm-cov --version {{ cargo_llvm_cov_version }}"
         exit 1
     fi
@@ -34,8 +42,12 @@ _ensure-cargo-llvm-cov:
 _ensure-nextest:
     #!/usr/bin/env bash
     set -euo pipefail
-    if ! command -v cargo-nextest >/dev/null; then
-        echo "❌ 'cargo-nextest' not found. See 'just setup-tools' or install:"
+    installed_version=""
+    if cargo nextest --version >/dev/null 2>&1; then
+        installed_version="$(cargo nextest --version 2>/dev/null | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1 || true)"
+    fi
+    if [[ "$installed_version" != "{{ nextest_version }}" ]]; then
+        echo "❌ 'cargo-nextest' {{ nextest_version }} not found. See 'just setup-tools' or install:"
         echo "   cargo install --locked cargo-nextest --version {{ nextest_version }}"
         exit 1
     fi
@@ -72,17 +84,27 @@ _ensure-dprint:
 _ensure-rumdl:
     #!/usr/bin/env bash
     set -euo pipefail
-    command -v rumdl >/dev/null || { echo "❌ 'rumdl' not found. See 'just setup' or install: cargo install rumdl"; exit 1; }
+    installed_version=""
+    if command -v rumdl >/dev/null; then
+        installed_version="$(rumdl --version 2>/dev/null | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1 || true)"
+    fi
+    if [[ "$installed_version" != "{{ rumdl_version }}" ]]; then
+        echo "❌ 'rumdl' {{ rumdl_version }} not found. See 'just setup-tools' or install:"
+        echo "   cargo install --locked rumdl --version {{ rumdl_version }}"
+        exit 1
+    fi
 
 _ensure-shellcheck:
     #!/usr/bin/env bash
     set -euo pipefail
-    command -v shellcheck >/dev/null || { echo "❌ 'shellcheck' not found. See 'just setup' or https://www.shellcheck.net"; exit 1; }
+    command -v uv >/dev/null || { echo "❌ 'uv' not found. See 'just setup' or https://github.com/astral-sh/uv"; exit 1; }
+    uv run shellcheck --version >/dev/null
 
 _ensure-shfmt:
     #!/usr/bin/env bash
     set -euo pipefail
-    command -v shfmt >/dev/null || { echo "❌ 'shfmt' not found. See 'just setup' or install: brew install shfmt"; exit 1; }
+    command -v uv >/dev/null || { echo "❌ 'uv' not found. See 'just setup' or https://github.com/astral-sh/uv"; exit 1; }
+    uv run shfmt --version >/dev/null
 
 # Internal helper: ensure taplo is installed
 _ensure-taplo:
@@ -94,7 +116,15 @@ _ensure-taplo:
 _ensure-typos:
     #!/usr/bin/env bash
     set -euo pipefail
-    command -v typos >/dev/null || { echo "❌ 'typos' not found. See 'just setup-tools' or install: cargo install typos-cli"; exit 1; }
+    installed_version=""
+    if command -v typos >/dev/null; then
+        installed_version="$(typos --version 2>/dev/null | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1 || true)"
+    fi
+    if [[ "$installed_version" != "{{ typos_version }}" ]]; then
+        echo "❌ 'typos' {{ typos_version }} not found. See 'just setup-tools' or install:"
+        echo "   cargo install --locked typos-cli --version {{ typos_version }}"
+        exit 1
+    fi
 
 # Internal helper: ensure uv is installed
 _ensure-uv:
@@ -105,7 +135,21 @@ _ensure-uv:
 _ensure-yamllint:
     #!/usr/bin/env bash
     set -euo pipefail
-    command -v yamllint >/dev/null || { echo "❌ 'yamllint' not found. See 'just setup' or install: brew install yamllint"; exit 1; }
+    command -v uv >/dev/null || { echo "❌ 'uv' not found. See 'just setup' or https://github.com/astral-sh/uv"; exit 1; }
+    uv run yamllint --version >/dev/null
+
+_ensure-zizmor:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    installed_version=""
+    if command -v zizmor >/dev/null; then
+        installed_version="$(zizmor --version 2>/dev/null | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1 || true)"
+    fi
+    if [[ "$installed_version" != "{{ zizmor_version }}" ]]; then
+        echo "❌ 'zizmor' {{ zizmor_version }} not found. See 'just setup-tools' or install:"
+        echo "   cargo install --locked zizmor --version {{ zizmor_version }}"
+        exit 1
+    fi
 
 # GitHub Actions workflow validation
 action-lint: _ensure-actionlint
@@ -116,7 +160,7 @@ action-lint: _ensure-actionlint
         files+=("$file")
     done < <(git ls-files -z '.github/workflows/*.yml' '.github/workflows/*.yaml')
     if [ "${#files[@]}" -gt 0 ]; then
-        printf '%s\0' "${files[@]}" | xargs -0 actionlint
+        printf '%s\0' "${files[@]}" | xargs -0 uv run actionlint
     else
         echo "No workflow files found to lint."
     fi
@@ -334,7 +378,7 @@ lint: lint-code lint-docs lint-config
 lint-code: fmt-check clippy doc-check semgrep semgrep-test python-lint shell-lint
 
 # Configuration checks: JSON, TOML, YAML/CFF, GitHub Actions workflows
-lint-config: json-check toml-check toml-lint toml-fmt-check yaml-check citation-check action-lint
+lint-config: json-check toml-check toml-lint toml-fmt-check yaml-check citation-check action-lint zizmor
 
 # Documentation linting: Markdown + spell checking
 lint-docs: markdown-check spell-check
@@ -344,15 +388,15 @@ markdown-check: _ensure-rumdl
     set -euo pipefail
     files=()
     while IFS= read -r -d '' file; do
+        case "$file" in
+            CHANGELOG.md|docs/archive/*) continue ;;
+        esac
         files+=("$file")
     done < <(git ls-files -z '*.md')
     if [ "${#files[@]}" -gt 0 ]; then
         printf '%s\0' "${files[@]}" | xargs -0 -n100 rumdl check
         violations=0
         for file in "${files[@]}"; do
-            case "$file" in
-                CHANGELOG.md|docs/archive/*) continue ;;
-            esac
             line_number=0
             while IFS= read -r line || [[ -n "$line" ]]; do
                 line_number=$((line_number + 1))
@@ -376,6 +420,9 @@ markdown-fix: _ensure-rumdl
     set -euo pipefail
     files=()
     while IFS= read -r -d '' file; do
+        case "$file" in
+            CHANGELOG.md|docs/archive/*) continue ;;
+        esac
         files+=("$file")
     done < <(git ls-files -z '*.md')
     if [ "${#files[@]}" -gt 0 ]; then
@@ -445,8 +492,8 @@ perf-help:
     @echo "  CRIT_SAMPLE_SIZE=100 just bench  # Custom sample size"
     @echo "  just bench-ci              # Final optimized CI-suite benchmark run"
     @echo "  just profile v0.7.5        # v0.7.5 code on its declared Rust toolchain"
-    @echo "  just profile 1.95          # Current tree on Rust 1.95"
-    @echo "  just profile 1.95 v0.7.5   # v0.7.5 code on Rust 1.95"
+    @echo "  just profile 1.96.0        # Current tree on Rust 1.96.0"
+    @echo "  just profile 1.96.0 v0.7.5 # v0.7.5 code on Rust 1.96.0"
 
 # Quick pre-push 2D-5D large-scale wall-clock smoke guard.
 perf-large-scale-smoke max_secs="60": _ensure-nextest
@@ -688,8 +735,7 @@ semgrep-test: _ensure-uv
     set -euo pipefail
     config_dir="$(mktemp -d "${TMPDIR:-/tmp}/delaunay-semgrep-config.XXXXXX")"
     cleanup() {
-        find "$config_dir" -type l -exec unlink {} \;
-        find "$config_dir" -depth -type d -exec rmdir {} +
+        rm -rf "$config_dir"
     }
     trap cleanup EXIT
 
@@ -752,10 +798,6 @@ setup-tools:
         install_with_brew taplo
         install_with_brew dprint
         install_with_brew rumdl
-        install_with_brew yamllint
-        install_with_brew shfmt
-        install_with_brew shellcheck
-        install_with_brew actionlint
         echo ""
     else
         echo "⚠️  'brew' not found. Skipping Homebrew installs."
@@ -764,9 +806,17 @@ setup-tools:
         else
             echo "Install required tools via your system package manager, or ensure they are on PATH."
         fi
-        echo "Required tools: uv, jq, taplo, dprint, rumdl, yamllint, shfmt, shellcheck, actionlint, git-cliff, typos"
+        echo "Required standalone tools: uv, jq, taplo, dprint, rumdl, git-cliff, typos, zizmor"
         echo ""
     fi
+
+    echo "Ensuring uv-managed Python tooling..."
+    if ! have uv; then
+        echo "❌ 'uv' not found. Install uv from https://github.com/astral-sh/uv and re-run: just setup-tools"
+        exit 1
+    fi
+    uv sync --group dev
+    echo ""
 
     echo "Ensuring Rust toolchain + components..."
     if ! have rustup; then
@@ -784,11 +834,15 @@ setup-tools:
         echo "  ✓ samply"
     fi
 
-    if ! have typos; then
-        echo "  ⏳ Installing typos-cli (cargo)..."
-        cargo install --locked typos-cli
+    installed_typos_version=""
+    if command -v typos >/dev/null; then
+        installed_typos_version="$(typos --version 2>/dev/null | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1 || true)"
+    fi
+    if [[ "$installed_typos_version" != "{{ typos_version }}" ]]; then
+        echo "  ⏳ Installing typos-cli {{ typos_version }} (cargo)..."
+        cargo install --locked typos-cli --version {{ typos_version }}
     else
-        echo "  ✓ typos"
+        echo "  ✓ typos {{ typos_version }}"
     fi
 
     if ! have git-cliff; then
@@ -805,25 +859,44 @@ setup-tools:
         echo "  ✓ llvm-tools-preview"
     fi
 
-    if ! have cargo-nextest; then
+    installed_nextest_version=""
+    if cargo nextest --version >/dev/null 2>&1; then
+        installed_nextest_version="$(cargo nextest --version 2>/dev/null | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1 || true)"
+    fi
+    if [[ "$installed_nextest_version" != "{{ nextest_version }}" ]]; then
         echo "  ⏳ Installing cargo-nextest {{ nextest_version }} (cargo)..."
         cargo install --locked cargo-nextest --version {{ nextest_version }}
     else
-        echo "  ✓ cargo-nextest"
+        echo "  ✓ cargo-nextest {{ nextest_version }}"
     fi
 
-    if ! have cargo-llvm-cov; then
+    installed_llvm_cov_version=""
+    if command -v cargo-llvm-cov >/dev/null; then
+        installed_llvm_cov_version="$(cargo llvm-cov --version 2>/dev/null | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1 || true)"
+    fi
+    if [[ "$installed_llvm_cov_version" != "{{ cargo_llvm_cov_version }}" ]]; then
         echo "  ⏳ Installing cargo-llvm-cov {{ cargo_llvm_cov_version }} (cargo)..."
         cargo install --locked cargo-llvm-cov --version {{ cargo_llvm_cov_version }}
     else
-        echo "  ✓ cargo-llvm-cov"
+        echo "  ✓ cargo-llvm-cov {{ cargo_llvm_cov_version }}"
+    fi
+
+    installed_zizmor_version=""
+    if command -v zizmor >/dev/null; then
+        installed_zizmor_version="$(zizmor --version 2>/dev/null | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1 || true)"
+    fi
+    if [[ "$installed_zizmor_version" != "{{ zizmor_version }}" ]]; then
+        echo "  ⏳ Installing zizmor {{ zizmor_version }} (cargo)..."
+        cargo install --locked zizmor --version {{ zizmor_version }}
+    else
+        echo "  ✓ zizmor {{ zizmor_version }}"
     fi
 
     echo ""
     echo "Verifying required commands are available..."
     missing=0
 
-    cmds=(uv jq taplo dprint rumdl yamllint shfmt shellcheck actionlint git-cliff typos)
+    cmds=(uv jq taplo dprint rumdl git-cliff typos zizmor)
     cmds+=(cargo-nextest cargo-llvm-cov)
 
     for cmd in "${cmds[@]}"; do
@@ -831,6 +904,15 @@ setup-tools:
             echo "  ✓ $cmd"
         else
             echo "  ✗ $cmd"
+            missing=1
+        fi
+    done
+
+    for cmd in actionlint shellcheck shfmt yamllint; do
+        if uv run "$cmd" --version >/dev/null 2>&1 || uv run "$cmd" -version >/dev/null 2>&1; then
+            echo "  ✓ $cmd (uv)"
+        else
+            echo "  ✗ $cmd (uv)"
             missing=1
         fi
     done
@@ -861,8 +943,8 @@ shell-check: _ensure-shellcheck _ensure-shfmt
         files+=("$file")
     done < <(git ls-files -z '*.sh')
     if [ "${#files[@]}" -gt 0 ]; then
-        printf '%s\0' "${files[@]}" | xargs -0 -n4 shellcheck -x
-        printf '%s\0' "${files[@]}" | xargs -0 shfmt -d
+        printf '%s\0' "${files[@]}" | xargs -0 -n4 uv run shellcheck -x
+        printf '%s\0' "${files[@]}" | xargs -0 uv run shfmt -d
     else
         echo "No shell files found to check."
     fi
@@ -877,7 +959,7 @@ shell-fmt: _ensure-shfmt
     done < <(git ls-files -z '*.sh')
     if [ "${#files[@]}" -gt 0 ]; then
         echo "🧹 shfmt -w (${#files[@]} files)"
-        printf '%s\0' "${files[@]}" | xargs -0 shfmt -w
+        printf '%s\0' "${files[@]}" | xargs -0 uv run shfmt -w
     else
         echo "No shell files found to format."
     fi
@@ -1103,7 +1185,10 @@ yaml-lint: _ensure-yamllint
     done < <(git ls-files -z '*.yml' '*.yaml' 'CITATION.cff')
     if [ "${#files[@]}" -gt 0 ]; then
         echo "🔍 yamllint (${#files[@]} YAML/CFF files)"
-        yamllint --strict -c .yamllint "${files[@]}"
+        uv run yamllint --strict -c .yamllint "${files[@]}"
     else
         echo "No YAML files found to lint."
     fi
+
+zizmor: _ensure-zizmor
+    zizmor .github

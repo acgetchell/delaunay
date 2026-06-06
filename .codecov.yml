@@ -3,9 +3,9 @@ coverage:
   status:
     project:
       default:
-        target: 60%
+        target: 90%
         removed_code_behavior: removals_only
-        threshold: 5%
+        threshold: 1%
     patch:
       default:
         target: 50%

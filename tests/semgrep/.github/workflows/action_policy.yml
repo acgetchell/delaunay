@@ -1,6 +1,8 @@
 name: Action policy fixtures
 on:
   workflow_dispatch:
+  # ruleid: delaunay.github-actions.no-pull-request-target
+  pull_request_target:
 
 jobs:
   fixtures:
@@ -10,6 +12,13 @@ jobs:
         # ok: delaunay.github-actions.external-action-sha-pinned
         # ok: delaunay.github-actions.external-action-approved-allowlist
         # ok: delaunay.github-actions.external-action-version-comment
+        # ok: delaunay.github-actions.checkout-persist-credentials-false
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+
+      - name: Checkout without explicit credential persistence
+        # ruleid: delaunay.github-actions.checkout-persist-credentials-false
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
 
       - name: Moving tag action
@@ -24,8 +33,38 @@ jobs:
         # ruleid: delaunay.github-actions.external-action-version-comment
         uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae
 
+      - name: Allowed setup-python action
+        # ok: delaunay.github-actions.external-action-approved-allowlist
+        # ok: delaunay.github-actions.external-action-sha-pinned
+        # ok: delaunay.github-actions.external-action-version-comment
+        uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6.2.0
+
       - name: Local action
         # ok: delaunay.github-actions.external-action-sha-pinned
         # ok: delaunay.github-actions.external-action-approved-allowlist
         # ok: delaunay.github-actions.external-action-version-comment
         uses: ./.github/actions/local-action
+
+      - name: Interpolated github-script
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
+        with:
+          # ruleid: delaunay.github-actions.github-script-no-expression-interpolation
+          script: |
+            core.info("${{ github.ref_name }}");
+
+      - name: Env-backed github-script
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
+        env:
+          SAFE_REF_NAME: ${{ github.ref_name }}
+        with:
+          # ok: delaunay.github-actions.github-script-no-expression-interpolation
+          script: |
+            core.info(process.env.SAFE_REF_NAME);
+
+      - name: Unlocked uv sync
+        # ruleid: delaunay.github-actions.uv-sync-locked-in-workflows
+        run: uv sync
+
+      - name: Locked uv sync
+        # ok: delaunay.github-actions.uv-sync-locked-in-workflows
+        run: uv sync --locked

@@ -360,6 +360,7 @@ pub fn usize_to_u8(idx: usize, facet_count: usize) -> Result<u8, FacetError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::assert_matches;
 
     use crate::core::simplex::Simplex;
     use crate::core::util::measure_with_result;
@@ -376,13 +377,13 @@ mod tests {
             (VertexKey::null(), [0_i8; 2]),
         ];
         let err = periodic_facet_key_from_lifted_vertices::<2>(&lifted_vertices, 0).unwrap_err();
-        assert!(matches!(
+        assert_matches!(
             err,
             PeriodicFacetKeyDerivationError::InvalidLiftedSimplexArity {
                 expected: 3,
                 actual: 2
             }
-        ));
+        );
     }
 
     #[test]
@@ -393,10 +394,10 @@ mod tests {
             (VertexKey::null(), [127_i8, 0_i8]),
         ];
         let err = periodic_facet_key_from_lifted_vertices::<2>(&lifted_vertices, 1).unwrap_err();
-        assert!(matches!(
+        assert_matches!(
             err,
             PeriodicFacetKeyDerivationError::RelativeOffsetOutOfRange { axis: 0, .. }
-        ));
+        );
     }
     #[test]
     fn periodic_facet_key_happy_path_translation_invariance_and_distinctness() {
@@ -447,13 +448,13 @@ mod tests {
             (VertexKey::null(), [0_i8; 2]),
         ];
         let err = periodic_facet_key_from_lifted_vertices::<2>(&lifted_vertices, 3).unwrap_err();
-        assert!(matches!(
+        assert_matches!(
             err,
             PeriodicFacetKeyDerivationError::FacetIndexOutOfBounds {
                 facet_index: 3,
                 vertex_count: 3
             }
-        ));
+        );
     }
 
     #[test]
@@ -618,16 +619,13 @@ mod tests {
 
         // Error case: facet index out of bounds.
         let err = verify_facet_index_consistency(tds, simplex_key, simplex_key, 99).unwrap_err();
-        assert!(matches!(err, FacetError::InvalidFacetIndex { .. }));
+        assert_matches!(err, FacetError::InvalidFacetIndex { .. });
 
         // Logging: demonstrate behavior for large out-of-bounds facet index
         let err_large =
             verify_facet_index_consistency(tds, simplex_key, simplex_key, 300).unwrap_err();
         println!("    Large facet_idx=300 error: {err_large:?}");
-        assert!(matches!(
-            err_large,
-            FacetError::InvalidFacetIndexOverflow { .. }
-        ));
+        assert_matches!(err_large, FacetError::InvalidFacetIndexOverflow { .. });
 
         // False case: two disjoint triangles in the same TDS share no facet keys.
         let mut tds2: Tds<f64, (), (), 2> = Tds::empty();

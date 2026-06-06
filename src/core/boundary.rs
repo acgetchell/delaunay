@@ -306,6 +306,7 @@ mod tests {
     use crate::core::vertex::Vertex;
     use crate::geometry::{point::Point, traits::coordinate::Coordinate};
     use crate::triangulation::DelaunayTriangulation;
+    use std::assert_matches;
 
     // =============================================================================
     // SINGLE SIMPLEX TESTS
@@ -664,10 +665,10 @@ mod tests {
             .is_boundary_facet_with_map(&facet, &facet_to_simplices)
             .unwrap_err();
 
-        assert!(matches!(
+        assert_matches!(
             err,
             TdsError::FacetError(FacetError::InvalidFacetMultiplicity { found: 3, .. })
-        ));
+        );
     }
 
     #[test]
@@ -686,13 +687,13 @@ mod tests {
 
         let err = number_of_boundary_facets_in_map(&facet_to_simplices).unwrap_err();
 
-        assert!(matches!(
+        assert_matches!(
             err,
             TdsError::FacetError(FacetError::InvalidFacetMultiplicity {
                 facet_key: 0xCAFE,
                 found: 3
             })
-        ));
+        );
     }
 
     #[test]

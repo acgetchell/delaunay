@@ -607,13 +607,13 @@ impl TopologyGuarantee {
 /// let mut tri: Triangulation<FastKernel<f64>, (), (), 2> =
 ///     Triangulation::new_empty(FastKernel::new());
 ///
-/// assert!(matches!(
+/// std::assert_matches!(
 ///     tri.try_set_validation_policy(ValidationPolicy::Never),
 ///     Err(ValidationConfigurationError::IncompatibleTopologyAndValidationPolicy {
 ///         topology_guarantee: TopologyGuarantee::PLManifold,
 ///         validation_policy: ValidationPolicy::Never,
 ///     })
-/// ));
+/// );
 /// ```
 #[derive(Clone, Copy, Debug, Error, PartialEq, Eq)]
 #[non_exhaustive]
@@ -1568,6 +1568,7 @@ mod tests {
     use crate::validation::DelaunayTriangulationValidationError;
     use crate::vertex;
     use slotmap::KeyData;
+    use std::assert_matches;
 
     fn insert_test_vertex_with_coords<const D: usize>(
         tds: &mut Tds<f64, (), (), D>,
@@ -1753,7 +1754,7 @@ mod tests {
             InvariantError::Tds(tds_err)
         );
 
-        assert!(matches!(
+        assert_matches!(
             TriangulationValidationError::try_from(ManifoldError::ManifoldFacetMultiplicity {
                 facet_key: 123,
                 simplex_count: 3
@@ -1763,9 +1764,9 @@ mod tests {
                 facet_key: 123,
                 simplex_count: 3
             }
-        ));
+        );
 
-        assert!(matches!(
+        assert_matches!(
             TriangulationValidationError::try_from(ManifoldError::BoundaryRidgeMultiplicity {
                 ridge_key: 0x00ab_cdef,
                 boundary_facet_count: 4
@@ -1775,9 +1776,9 @@ mod tests {
                 ridge_key: 0x00ab_cdef,
                 boundary_facet_count: 4
             }
-        ));
+        );
 
-        assert!(matches!(
+        assert_matches!(
             TriangulationValidationError::try_from(ManifoldError::RidgeLinkNotManifold {
                 ridge_key: 0x00ab_cdef,
                 link_vertex_count: 7,
@@ -1795,9 +1796,9 @@ mod tests {
                 degree_one_vertices: 2,
                 connected: false
             }
-        ));
+        );
 
-        assert!(matches!(
+        assert_matches!(
             TriangulationValidationError::try_from(ManifoldError::VertexLinkNotManifold {
                 vertex_key: VertexKey::from(KeyData::from_ffi(1)),
                 link_vertex_count: 3,
@@ -1817,7 +1818,7 @@ mod tests {
                 interior_vertex: true,
                 ..
             }
-        ));
+        );
     }
 
     #[test]
@@ -2029,12 +2030,12 @@ mod tests {
                         let mut tri =
                             Triangulation::<FastKernel<f64>, (), (), $dim>::new_with_tds(FastKernel::new(), tds);
 
-                        assert!(matches!(
+                        assert_matches!(
                             tri.validate_at_completion(),
                             Err(InvariantError::Triangulation(
                                 TriangulationValidationError::VertexLinkNotManifold { .. }
                             ))
-                        ));
+                        );
                         assert_eq!(tri.validation_policy(), ValidationPolicy::ExplicitOnly);
                         assert_eq!(
                             tri.try_set_validation_policy(ValidationPolicy::Never),
@@ -2183,7 +2184,7 @@ mod tests {
         });
         let ins =
             Triangulation::<FastKernel<f64>, (), (), 3>::invariant_error_to_insertion_error(inv);
-        assert!(matches!(ins, InsertionError::TopologyValidation(_)));
+        assert_matches!(ins, InsertionError::TopologyValidation(_));
 
         let inv = InvariantError::Triangulation(TriangulationValidationError::IsolatedVertex {
             vertex_key: VertexKey::from(KeyData::from_ffi(1)),
@@ -2191,10 +2192,7 @@ mod tests {
         });
         let ins =
             Triangulation::<FastKernel<f64>, (), (), 3>::invariant_error_to_insertion_error(inv);
-        assert!(matches!(
-            ins,
-            InsertionError::TopologyValidationFailed { .. }
-        ));
+        assert_matches!(ins, InsertionError::TopologyValidationFailed { .. });
 
         let inv =
             InvariantError::Delaunay(DelaunayTriangulationValidationError::VerificationFailed {
@@ -2202,10 +2200,7 @@ mod tests {
             });
         let ins =
             Triangulation::<FastKernel<f64>, (), (), 3>::invariant_error_to_insertion_error(inv);
-        assert!(matches!(
-            ins,
-            InsertionError::DelaunayValidationFailed { .. }
-        ));
+        assert_matches!(ins, InsertionError::DelaunayValidationFailed { .. });
     }
 
     #[test]
@@ -2224,7 +2219,7 @@ mod tests {
             simplex_count: 5,
         };
         let inv = InvariantError::from(err);
-        assert!(matches!(
+        assert_matches!(
             inv,
             InvariantError::Triangulation(
                 TriangulationValidationError::ManifoldFacetMultiplicity {
@@ -2232,7 +2227,7 @@ mod tests {
                     simplex_count: 5
                 }
             )
-        ));
+        );
     }
 
     #[test]
@@ -2471,12 +2466,12 @@ mod tests {
             Triangulation::<FastKernel<f64>, (), (), 2>::new_with_tds(FastKernel::new(), tds);
         tri.set_topology_guarantee(TopologyGuarantee::Pseudomanifold);
 
-        assert!(matches!(
+        assert_matches!(
             tri.is_valid(),
             Err(InvariantError::Triangulation(
                 TriangulationValidationError::Disconnected { .. }
             ))
-        ));
+        );
 
         tri.set_topology_guarantee(TopologyGuarantee::PLManifoldStrict);
 
@@ -2661,12 +2656,12 @@ mod tests {
             .insert_vertex_with_mapping(vertex!([10.0, 10.0, 10.0]))
             .unwrap();
 
-        assert!(matches!(
+        assert_matches!(
             tri.is_valid(),
             Err(InvariantError::Triangulation(
                 TriangulationValidationError::IsolatedVertex { .. }
             ))
-        ));
+        );
     }
 
     #[test]
@@ -2801,12 +2796,12 @@ mod tests {
             .insert_simplex_with_mapping(Simplex::new(vec![v0, v1, v2, v4], None).unwrap())
             .unwrap();
 
-        assert!(matches!(
+        assert_matches!(
             tds.is_valid(),
             Err(TdsError::InvalidNeighbors {
                 reason: NeighborValidationError::InteriorFacetNeighborMismatch { .. },
             })
-        ));
+        );
     }
 
     #[test]
@@ -3070,7 +3065,7 @@ mod tests {
 
         let empty: SimplexKeyBuffer = SimplexKeyBuffer::new();
         let err = tri.validate_connectedness(&empty).unwrap_err();
-        assert!(matches!(err, InsertionError::TopologyValidation(_)));
+        assert_matches!(err, InsertionError::TopologyValidation(_));
     }
 
     #[test]
@@ -3181,7 +3176,7 @@ mod tests {
                 )
                 .unwrap();
 
-            assert!(matches!(detail.outcome, InsertionOutcome::Inserted { .. }));
+            assert_matches!(detail.outcome, InsertionOutcome::Inserted { .. });
             assert!(
                 detail.telemetry.topology_validation_calls > 0,
                 "{guarantee:?} insertion should record required topology validation"

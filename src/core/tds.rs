@@ -367,13 +367,13 @@ use uuid::Uuid;
 /// use delaunay::prelude::tds::TriangulationConstructionState;
 ///
 /// let state = TriangulationConstructionState::Incomplete(2);
-/// assert!(matches!(state, TriangulationConstructionState::Incomplete(2)));
+/// std::assert_matches!(state, TriangulationConstructionState::Incomplete(2));
 ///
 /// let default_state = TriangulationConstructionState::default();
-/// assert!(matches!(
+/// std::assert_matches!(
 ///     default_state,
 ///     TriangulationConstructionState::Incomplete(0)
-/// ));
+/// );
 /// ```
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum TriangulationConstructionState {
@@ -406,7 +406,7 @@ impl Default for TriangulationConstructionState {
 ///     entity: EntityKind::Vertex,
 ///     uuid: Uuid::nil(),
 /// };
-/// assert!(matches!(err, TdsConstructionError::DuplicateUuid { .. }));
+/// std::assert_matches!(err, TdsConstructionError::DuplicateUuid { .. });
 /// ```
 #[derive(Clone, Debug, Error, PartialEq, Eq)]
 #[non_exhaustive]
@@ -457,7 +457,7 @@ pub enum EntityKind {
 /// let err = GeometricError::DegenerateOrientation {
 ///     message: "det=0".to_string(),
 /// };
-/// assert!(matches!(err, GeometricError::DegenerateOrientation { .. }));
+/// std::assert_matches!(err, GeometricError::DegenerateOrientation { .. });
 /// ```
 #[derive(Clone, Debug, Error, PartialEq, Eq)]
 #[non_exhaustive]
@@ -1288,7 +1288,7 @@ pub enum InvariantKind {
 ///         message: "bad neighbors".to_string(),
 ///     },
 /// });
-/// assert!(matches!(err, InvariantError::Tds(_)));
+/// std::assert_matches!(err, InvariantError::Tds(_));
 /// ```
 ///
 /// This is used by [`TriangulationValidationReport`] so that diagnostic reporting can
@@ -5296,7 +5296,7 @@ impl<T, U, V, const D: usize> Tds<T, U, V, D> {
     /// assert_eq!(tds.number_of_vertices(), 0);
     /// assert_eq!(tds.number_of_simplices(), 0);
     /// assert_eq!(tds.dim(), -1);
-    /// assert!(matches!(tds.construction_state, TriangulationConstructionState::Incomplete(0)));
+    /// std::assert_matches!(tds.construction_state, TriangulationConstructionState::Incomplete(0));
     /// ```
     #[must_use]
     pub fn empty() -> Self {
@@ -7683,6 +7683,7 @@ mod tests {
     use crate::validation::DelaunayTriangulationValidationError;
     use crate::vertex;
     use slotmap::KeyData;
+    use std::assert_matches;
     use std::sync::Arc;
 
     // =============================================================================
@@ -8023,12 +8024,12 @@ mod tests {
             .unwrap();
 
         let err = tds.facet_key_for_simplex_facet(simplex_key, 2).unwrap_err();
-        assert!(matches!(
+        assert_matches!(
             err,
             TdsError::InconsistentDataStructure { message }
                 if message.contains("Failed to derive periodic facet key")
                     && message.contains("facet 2")
-        ));
+        );
     }
 
     #[test]
@@ -8735,7 +8736,7 @@ mod tests {
             .push_vertex_key(invalid_vkey);
 
         let err = tds.assign_neighbors().unwrap_err();
-        assert!(matches!(err, TdsError::VertexKeyRetrievalFailed { .. }));
+        assert_matches!(err, TdsError::VertexKeyRetrievalFailed { .. });
     }
 
     #[test]
@@ -8760,7 +8761,7 @@ mod tests {
         .unwrap();
 
         let err = tds.assign_neighbors().unwrap_err();
-        assert!(matches!(err, TdsError::InconsistentDataStructure { .. }));
+        assert_matches!(err, TdsError::InconsistentDataStructure { .. });
     }
 
     #[test]
@@ -9029,7 +9030,7 @@ mod tests {
             .set_neighbors_by_key(simplex1, &[Some(simplex_far), None, None])
             .unwrap_err()
             .0;
-        assert!(matches!(err, TdsError::InvalidNeighbors { .. }));
+        assert_matches!(err, TdsError::InvalidNeighbors { .. });
 
         // A true facet-neighbor (shares {v_a,v_b}) placed at the wrong facet index.
         let simplex2 = tds
@@ -9039,7 +9040,7 @@ mod tests {
             .set_neighbors_by_key(simplex1, &[Some(simplex2), None, None])
             .unwrap_err()
             .0;
-        assert!(matches!(err, TdsError::InvalidNeighbors { .. }));
+        assert_matches!(err, TdsError::InvalidNeighbors { .. });
     }
 
     #[test]
@@ -9094,7 +9095,7 @@ mod tests {
             .set_neighbors_by_key(simplex1, &[None, None, None])
             .unwrap_err()
             .0;
-        assert!(matches!(err, TdsError::InvalidNeighbors { .. }));
+        assert_matches!(err, TdsError::InvalidNeighbors { .. });
         assert!(tds.is_valid().is_ok());
     }
 
@@ -9147,7 +9148,7 @@ mod tests {
             .push_vertex_key(invalid_vkey);
 
         let err = tds.build_simplex_vertex_sets().unwrap_err();
-        assert!(matches!(err, TdsError::VertexNotFound { .. }));
+        assert_matches!(err, TdsError::VertexNotFound { .. });
     }
 
     #[test]
@@ -9213,11 +9214,11 @@ mod tests {
             Tds::validate_shared_facet_count(simplex1, simplex_far, &this_vertices, &far_vertices)
                 .unwrap_err();
 
-        assert!(matches!(
+        assert_matches!(
             err,
             TdsError::NotNeighbors { simplex1: c1, simplex2: c2 }
                 if c1 == simplex1_uuid && c2 == simplex_far_uuid
-        ));
+        );
     }
 
     #[test]
@@ -9271,12 +9272,12 @@ mod tests {
 
         let err = Tds::expected_mirror_facet_index(simplex1, simplex2, &this_vertices).unwrap_err();
 
-        assert!(matches!(
+        assert_matches!(
             err,
             TdsError::InvalidNeighbors {
                 reason: NeighborValidationError::MirrorFacetAmbiguous { .. },
             }
-        ));
+        );
     }
 
     #[test]
@@ -9304,12 +9305,12 @@ mod tests {
 
         let err = Tds::expected_mirror_facet_index(simplex1, simplex2, &this_vertices).unwrap_err();
 
-        assert!(matches!(
+        assert_matches!(
             err,
             TdsError::InvalidNeighbors {
                 reason: NeighborValidationError::MirrorFacetDuplicateSimplices { .. },
             }
-        ));
+        );
     }
 
     #[test]
@@ -9364,12 +9365,12 @@ mod tests {
         let err =
             Tds::verified_mirror_facet_index(simplex1, 0, simplex2, &this_vertices).unwrap_err();
 
-        assert!(matches!(
+        assert_matches!(
             err,
             TdsError::InvalidNeighbors {
                 reason: NeighborValidationError::MirrorFacetMissing { .. },
             }
-        ));
+        );
     }
 
     #[test]
@@ -9398,12 +9399,12 @@ mod tests {
         let err = Tds::verified_mirror_facet_index(simplex1, 2, simplex2, &this_vertices_wrong)
             .unwrap_err();
 
-        assert!(matches!(
+        assert_matches!(
             err,
             TdsError::InvalidNeighbors {
                 reason: NeighborValidationError::MirrorFacetIndexMismatch { .. },
             }
-        ));
+        );
     }
 
     #[test]
@@ -9447,12 +9448,12 @@ mod tests {
             .validate_neighbors_with_precomputed_vertex_sets(&simplex_vertices)
             .unwrap_err();
 
-        assert!(matches!(
+        assert_matches!(
             err,
             TdsError::InvalidNeighbors {
                 reason: NeighborValidationError::MirrorFacetIndexMismatch { .. },
             }
-        ));
+        );
     }
 
     #[test]
@@ -9524,12 +9525,12 @@ mod tests {
         )
         .unwrap_err();
 
-        assert!(matches!(
+        assert_matches!(
             err,
             TdsError::InvalidNeighbors {
                 reason: NeighborValidationError::SharedFacetMissingVertex { .. },
             }
-        ));
+        );
     }
 
     #[test]
@@ -9597,12 +9598,12 @@ mod tests {
         )
         .unwrap_err();
 
-        assert!(matches!(
+        assert_matches!(
             err,
             TdsError::InvalidNeighbors {
                 reason: NeighborValidationError::BackReferenceMismatch { observed: None, .. },
             }
-        ));
+        );
     }
 
     #[test]
@@ -9646,12 +9647,12 @@ mod tests {
         )
         .unwrap_err();
 
-        assert!(matches!(
+        assert_matches!(
             err,
             TdsError::InvalidNeighbors {
                 reason: NeighborValidationError::BackReferenceMismatch { observed: None, .. },
             }
-        ));
+        );
     }
 
     #[test]
@@ -9677,22 +9678,22 @@ mod tests {
         assert!(!Tds::allows_periodic_self_neighbor(simplex));
 
         let err = tds.validate_coherent_orientation().unwrap_err();
-        assert!(matches!(
+        assert_matches!(
             err,
             TdsError::OrientationViolation {
                 simplex1_key,
                 simplex2_key,
                 ..
             } if simplex1_key == simplex_key && simplex2_key == simplex_key
-        ));
+        );
         assert!(!tds.is_coherently_oriented());
 
         let err = tds.normalize_coherent_orientation().unwrap_err();
-        assert!(matches!(
+        assert_matches!(
             err,
             TdsError::InconsistentDataStructure { message }
                 if message.contains("Contradictory orientation constraints")
-        ));
+        );
     }
 
     #[test]
@@ -9760,23 +9761,23 @@ mod tests {
         }
 
         let err = tds.validate_coherent_orientation().unwrap_err();
-        assert!(matches!(
+        assert_matches!(
             err,
             TdsError::InvalidNeighbors {
                 reason: NeighborValidationError::BackReferenceMismatch { observed: None, .. },
             }
-        ));
+        );
         assert!(!tds.is_coherently_oriented());
 
         let err = tds
             .validate_coherent_orientation_for_simplices(&[simplex1_key])
             .unwrap_err();
-        assert!(matches!(
+        assert_matches!(
             err,
             TdsError::InvalidNeighbors {
                 reason: NeighborValidationError::BackReferenceMismatch { observed: None, .. },
             }
-        ));
+        );
     }
 
     #[test]
@@ -9801,7 +9802,7 @@ mod tests {
             .validate_neighbor_pointers_match_facet_to_simplices_map(&facet_to_simplices)
             .unwrap_err();
 
-        assert!(matches!(
+        assert_matches!(
             err,
             TdsError::InvalidNeighbors {
                 reason: NeighborValidationError::UnassignedNeighborSlot {
@@ -9810,7 +9811,7 @@ mod tests {
                     ..
                 },
             } if key == simplex_key
-        ));
+        );
     }
 
     #[test]
@@ -9835,7 +9836,7 @@ mod tests {
             .validate_neighbor_pointers_match_facet_to_simplices_map(&facet_to_simplices)
             .unwrap_err();
 
-        assert!(matches!(
+        assert_matches!(
             err,
             TdsError::InvalidNeighbors {
                 reason: NeighborValidationError::BoundaryFacetHasNonPeriodicSelfNeighbor {
@@ -9844,7 +9845,7 @@ mod tests {
                     ..
                 },
             } if key == simplex_key
-        ));
+        );
     }
 
     #[test]
@@ -9888,12 +9889,12 @@ mod tests {
         }
 
         let err = tds.validate_coherent_orientation().unwrap_err();
-        assert!(matches!(
+        assert_matches!(
             err,
             TdsError::InvalidNeighbors {
                 reason: NeighborValidationError::BackReferenceMismatch { observed: None, .. },
             }
-        ));
+        );
         assert!(!tds.is_coherently_oriented());
     }
 
@@ -9917,7 +9918,7 @@ mod tests {
         let err = tds
             .validate_coherent_orientation_for_simplices(&[simplex1_key])
             .unwrap_err();
-        assert!(matches!(err, TdsError::OrientationViolation { .. }));
+        assert_matches!(err, TdsError::OrientationViolation { .. });
     }
 
     #[test]
@@ -9936,13 +9937,13 @@ mod tests {
         let err = tds
             .validate_coherent_orientation_for_simplices(&[simplex_key])
             .unwrap_err();
-        assert!(matches!(
+        assert_matches!(
             err,
             TdsError::SimplexNotFound {
                 simplex_key: missing_key,
                 ..
             } if missing_key == simplex_key
-        ));
+        );
     }
 
     macro_rules! test_normalize_repairs_incoherent_adjacent_pair {
@@ -9985,7 +9986,7 @@ mod tests {
                 tds.assign_neighbors().unwrap();
 
                 let err = tds.validate_coherent_orientation().unwrap_err();
-                assert!(matches!(err, TdsError::OrientationViolation { .. }));
+                assert_matches!(err, TdsError::OrientationViolation { .. });
                 assert!(!tds.is_coherently_oriented());
 
                 tds.normalize_coherent_orientation().unwrap();
@@ -10056,7 +10057,7 @@ mod tests {
         }
 
         let err = tds.build_facet_to_simplices_map().unwrap_err();
-        assert!(matches!(err, TdsError::IndexOutOfBounds { .. }));
+        assert_matches!(err, TdsError::IndexOutOfBounds { .. });
     }
 
     #[test]
@@ -10076,34 +10077,34 @@ mod tests {
         // Break vertex mapping: remove one uuid entry (len mismatch).
         let uuid_a = tds.vertex(a).unwrap().uuid();
         tds.uuid_to_vertex_key.remove(&uuid_a);
-        assert!(matches!(
+        assert_matches!(
             tds.validate_vertex_mappings(),
             Err(TdsError::MappingInconsistency {
                 entity: EntityKind::Vertex,
                 ..
             })
-        ));
+        );
 
         // Restore length but make the UUID map point at the wrong key.
         tds.uuid_to_vertex_key.insert(uuid_a, b);
-        assert!(matches!(
+        assert_matches!(
             tds.validate_vertex_mappings(),
             Err(TdsError::MappingInconsistency {
                 entity: EntityKind::Vertex,
                 ..
             })
-        ));
+        );
 
         // Break simplex mapping similarly.
         let uuid_simplex = tds.simplex(simplex_key).unwrap().uuid();
         tds.uuid_to_simplex_key.remove(&uuid_simplex);
-        assert!(matches!(
+        assert_matches!(
             tds.validate_simplex_mappings(),
             Err(TdsError::MappingInconsistency {
                 entity: EntityKind::Simplex,
                 ..
             })
-        ));
+        );
     }
 
     #[test]
@@ -10123,12 +10124,12 @@ mod tests {
             .push_vertex_key(invalid_vkey);
 
         let err = tds.validate_simplex_vertex_keys().unwrap_err();
-        assert!(matches!(err, TdsError::VertexNotFound { .. }));
+        assert_matches!(err, TdsError::VertexNotFound { .. });
 
         // Now wired into structural validation: is_valid() should fail early with the
         // more precise "missing vertex key" diagnostic.
         let err = tds.is_valid().unwrap_err();
-        assert!(matches!(err, TdsError::VertexNotFound { .. }));
+        assert_matches!(err, TdsError::VertexNotFound { .. });
     }
 
     // ---- Error variant Display / construction coverage ----
@@ -10215,7 +10216,7 @@ mod tests {
             message: "test".to_string(),
         };
         let inv = InvariantError::from(tds_err);
-        assert!(matches!(inv, InvariantError::Tds(_)));
+        assert_matches!(inv, InvariantError::Tds(_));
 
         let tri_err = TriangulationValidationError::EulerCharacteristicMismatch {
             computed: 1,
@@ -10223,7 +10224,7 @@ mod tests {
             classification: TopologyClassification::Ball(3),
         };
         let inv = InvariantError::from(tri_err);
-        assert!(matches!(inv, InvariantError::Triangulation(_)));
+        assert_matches!(inv, InvariantError::Triangulation(_));
     }
 
     #[test]
@@ -10232,7 +10233,7 @@ mod tests {
             message: "test".to_string(),
         };
         let inv = InvariantError::from(dt_err);
-        assert!(matches!(inv, InvariantError::Delaunay(_)));
+        assert_matches!(inv, InvariantError::Delaunay(_));
     }
 
     #[test]
@@ -10312,7 +10313,7 @@ mod tests {
             }),
         };
         assert_eq!(violation.kind, InvariantKind::NeighborConsistency);
-        assert!(matches!(violation.error, InvariantError::Tds(_)));
+        assert_matches!(violation.error, InvariantError::Tds(_));
     }
 
     #[test]
@@ -10341,10 +10342,10 @@ mod tests {
             message: "det<0".to_string(),
         };
         let tds_err: TdsError = geo.into();
-        assert!(matches!(
+        assert_matches!(
             tds_err,
             TdsError::Geometric(GeometricError::NegativeOrientation { .. })
-        ));
+        );
         // Display propagates via #[error(transparent)].
         assert!(tds_err.to_string().contains("det<0"));
     }
@@ -10619,10 +10620,10 @@ mod tests {
 
         let error = tds.remove_duplicate_simplices().unwrap_err();
 
-        assert!(matches!(
+        assert_matches!(
             error.into_inner(),
             TdsError::InconsistentDataStructure { .. }
-        ));
+        );
         assert_eq!(tds.number_of_simplices(), 4);
         assert_eq!(tds.generation(), generation_before);
         assert_eq!(tds, before);
@@ -10648,7 +10649,7 @@ mod tests {
         tds.simplices.remove(ck);
 
         let err = tds.validate_vertex_incidence().unwrap_err();
-        assert!(matches!(err, TdsError::SimplexNotFound { .. }));
+        assert_matches!(err, TdsError::SimplexNotFound { .. });
     }
 
     #[test]
@@ -10743,7 +10744,7 @@ mod tests {
         .unwrap();
 
         let err = tds.validate_no_duplicate_simplices().unwrap_err();
-        assert!(matches!(err, TdsError::DuplicateSimplices { .. }));
+        assert_matches!(err, TdsError::DuplicateSimplices { .. });
     }
 
     #[test]
@@ -10901,10 +10902,10 @@ mod tests {
 
         let simplex = Simplex::new(vec![v0, v1, stale], None).unwrap();
         let err = tds.insert_simplex_with_mapping(simplex).unwrap_err();
-        assert!(matches!(
+        assert_matches!(
             err,
             TdsConstructionError::ValidationError(TdsError::VertexNotFound { .. })
-        ));
+        );
     }
 
     #[test]
@@ -10918,10 +10919,10 @@ mod tests {
         let err = tds
             .insert_simplex_with_mapping_trusted_vertices(simplex)
             .unwrap_err();
-        assert!(matches!(
+        assert_matches!(
             err,
             TdsConstructionError::ValidationError(TdsError::VertexNotFound { .. })
-        ));
+        );
     }
 
     #[test]
@@ -10939,7 +10940,7 @@ mod tests {
         let mut simplex_b = Simplex::new(vec![v0, v1, v2], None).unwrap();
         simplex_b.set_uuid(uuid_a).unwrap();
         let err = tds.insert_simplex_with_mapping(simplex_b).unwrap_err();
-        assert!(matches!(err, TdsConstructionError::DuplicateUuid { .. }));
+        assert_matches!(err, TdsConstructionError::DuplicateUuid { .. });
     }
 
     #[test]
@@ -10956,14 +10957,14 @@ mod tests {
 
         let err = tds.insert_simplex_with_mapping(candidate).unwrap_err();
 
-        assert!(matches!(
+        assert_matches!(
             err,
             TdsConstructionError::ValidationError(TdsError::DimensionMismatch {
                 expected: 3,
                 actual: 2,
                 ..
             })
-        ));
+        );
         assert_eq!(tds.number_of_simplices(), 0);
         assert_eq!(tds.generation(), generation_before);
         assert_eq!(tds.simplex_key_from_uuid(&candidate_uuid), None);
@@ -10991,12 +10992,12 @@ mod tests {
 
         let err = tds.insert_simplex_with_mapping(candidate).unwrap_err();
 
-        assert!(matches!(
+        assert_matches!(
             err,
             TdsConstructionError::ValidationError(TdsError::InconsistentDataStructure {
                 message
             }) if message.contains("Failed to derive periodic facet key")
-        ));
+        );
         assert_eq!(tds.number_of_simplices(), 1);
         assert_eq!(tds.generation(), generation_before);
         assert_eq!(tds.simplex_key_from_uuid(&candidate_uuid), None);
@@ -11017,10 +11018,10 @@ mod tests {
 
         let err = tds.insert_simplex_with_mapping(candidate).unwrap_err();
 
-        assert!(matches!(
+        assert_matches!(
             err,
             TdsConstructionError::ValidationError(TdsError::DuplicateSimplices { .. })
-        ));
+        );
         assert_eq!(tds.number_of_simplices(), 1);
         assert_eq!(tds.generation(), generation_before);
         assert_eq!(tds.simplex_key_from_uuid(&candidate_uuid), None);
@@ -11117,7 +11118,7 @@ mod tests {
         tds.uuid_to_vertex_key.retain(|_, &mut vk| vk != v2);
 
         let err = tds.simplex_vertices(ck).unwrap_err();
-        assert!(matches!(err, TdsError::VertexNotFound { .. }));
+        assert_matches!(err, TdsError::VertexNotFound { .. });
     }
 
     // =========================================================================
@@ -11144,7 +11145,7 @@ mod tests {
         tds.vertex_mut(v0).unwrap().set_incident_simplex(Some(ck2));
 
         let err = tds.validate_vertex_incidence().unwrap_err();
-        assert!(matches!(err, TdsError::InconsistentDataStructure { .. }));
+        assert_matches!(err, TdsError::InconsistentDataStructure { .. });
     }
 
     #[test]
@@ -11165,7 +11166,7 @@ mod tests {
             .set_incident_simplex(Some(dangling));
 
         let err = tds.validate_vertex_incidence().unwrap_err();
-        assert!(matches!(err, TdsError::SimplexNotFound { .. }));
+        assert_matches!(err, TdsError::SimplexNotFound { .. });
     }
 
     // =========================================================================
@@ -11282,10 +11283,7 @@ mod tests {
         tds.uuid_to_vertex_key.retain(|_, &mut vk| vk != v2);
 
         let err = tds.assign_incident_simplices().unwrap_err();
-        assert!(matches!(
-            err.as_tds_error(),
-            TdsError::VertexNotFound { .. }
-        ));
+        assert_matches!(err.as_tds_error(), TdsError::VertexNotFound { .. });
     }
 
     // =========================================================================
@@ -11463,7 +11461,7 @@ mod tests {
         let err = tds
             .validate_neighbor_topology(ck, &[None, None])
             .unwrap_err();
-        assert!(matches!(err, TdsError::InvalidNeighbors { .. }));
+        assert_matches!(err, TdsError::InvalidNeighbors { .. });
     }
 
     // =========================================================================

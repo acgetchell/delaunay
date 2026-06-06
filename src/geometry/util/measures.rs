@@ -312,7 +312,9 @@ where
         for j in 0..D {
             let mut dot_product = 0.0;
             for k in 0..D {
-                dot_product += matrix_get(&edge_matrix, i, k)? * matrix_get(&edge_matrix, j, k)?;
+                let edge_i = matrix_get(&edge_matrix, i, k)?;
+                let edge_j = matrix_get(&edge_matrix, j, k)?;
+                dot_product = edge_i.mul_add(edge_j, dot_product);
             }
             matrix_set(&mut gram_matrix, i, j, dot_product)?;
         }
@@ -653,7 +655,7 @@ where
                 {
                     let di = ai - a0;
                     let dj = aj - a0;
-                    dot_product += di * dj;
+                    dot_product = di.mul_add(dj, dot_product);
                 }
                 matrix_set(&mut gram_matrix, i, j, dot_product)?;
             }
@@ -1013,7 +1015,7 @@ mod tests {
                 for j in 0..k {
                     let mut dot_product = 0.0;
                     for (&a, &b) in edges[i].iter().zip(edges[j].iter()) {
-                        dot_product += a * b;
+                        dot_product = a.mul_add(b, dot_product);
                     }
                     matrix_set(&mut gram_matrix, i, j, dot_product)?;
                 }

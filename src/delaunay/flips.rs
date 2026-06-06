@@ -377,6 +377,7 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::assert_matches;
 
     use crate::TopologyGuarantee;
     use crate::core::collections::spatial_hash_grid::HashGridIndex;
@@ -461,14 +462,14 @@ mod tests {
             .flip_k2(FacetHandle::new(simplex_key, u8::MAX))
             .unwrap_err();
 
-        assert!(matches!(
+        assert_matches!(
             err,
             FlipError::InvalidFacetIndex {
                 simplex_key: key,
                 facet_index: u8::MAX,
                 vertex_count: 4,
             } if key == simplex_key
-        ));
+        );
     }
 
     #[test]
@@ -483,10 +484,7 @@ mod tests {
             .flip_k3_inverse_from_triangle(TriangleHandle::new(a, b, c))
             .unwrap_err();
 
-        assert!(matches!(
-            err,
-            FlipError::UnsupportedDimension { dimension: 3 }
-        ));
+        assert_matches!(err, FlipError::UnsupportedDimension { dimension: 3 });
     }
 
     #[test]
@@ -501,9 +499,6 @@ mod tests {
             .flip_k3_inverse_from_triangle(TriangleHandle::new(a, b, c))
             .unwrap_err();
 
-        assert!(matches!(
-            err,
-            FlipError::UnsupportedDimension { dimension: 0 }
-        ));
+        assert_matches!(err, FlipError::UnsupportedDimension { dimension: 0 });
     }
 }

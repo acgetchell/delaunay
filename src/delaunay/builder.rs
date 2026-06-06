@@ -772,12 +772,12 @@ impl From<DelaunayTriangulationValidationError> for ExplicitDelaunayValidationEr
 /// let vertices = vec![vertex!([0.0, 0.0]), vertex!([1.0, 0.0]), vertex!([0.0, 1.0])];
 /// let simplices = vec![vec![0, 1]]; // Wrong arity for 2D (needs 3 vertices)
 ///
-/// assert!(matches!(
+/// std::assert_matches!(
 ///     DelaunayTriangulationBuilder::from_vertices_and_simplices(&vertices, &simplices).build::<()>(),
 ///     Err(DelaunayTriangulationConstructionError::ExplicitConstruction(
 ///         ExplicitConstructionError::InvalidSimplexArity { simplex_index: 0, actual: 2, expected: 3 },
 ///     ))
-/// ));
+/// );
 /// ```
 #[derive(Clone, Debug, Error, PartialEq, Eq)]
 #[non_exhaustive]
@@ -1073,12 +1073,12 @@ impl<'v, U, const D: usize> DelaunayTriangulationBuilder<'v, f64, U, D> {
     /// assert_eq!(dt.number_of_simplices(), 2);
     ///
     /// let bad_simplices = vec![vec![0, 1]]; // Wrong arity for a 2D simplex.
-    /// assert!(matches!(
+    /// std::assert_matches!(
     ///     DelaunayTriangulationBuilder::from_vertices_and_simplices(&vertices, &bad_simplices).build::<()>(),
     ///     Err(DelaunayTriangulationConstructionError::ExplicitConstruction(
     ///         ExplicitConstructionError::InvalidSimplexArity { .. },
     ///     ))
-    /// ));
+    /// );
     /// # Ok(())
     /// # }
     /// ```
@@ -3034,6 +3034,7 @@ mod tests {
     use crate::vertex;
     use approx::assert_relative_eq;
     use slotmap::{Key, KeyData};
+    use std::assert_matches;
 
     #[derive(Clone, Copy, Debug)]
     struct ValidationFailureModel;
@@ -3705,13 +3706,13 @@ mod tests {
         assert_eq!(dt.number_of_vertices(), 4);
         assert_eq!(dt.dim(), 2);
         assert!(dt.as_triangulation().validate().is_ok());
-        assert!(matches!(
+        assert_matches!(
             dt.global_topology(),
             GlobalTopology::Toroidal {
                 mode: ToroidalConstructionMode::Canonicalized,
                 ..
             }
-        ));
+        );
     }
 
     #[test]
@@ -3807,13 +3808,13 @@ mod tests {
             .unwrap();
         assert_eq!(dt.number_of_vertices(), n);
         assert!(dt.tds().is_valid().is_ok());
-        assert!(matches!(
+        assert_matches!(
             dt.global_topology(),
             GlobalTopology::Toroidal {
                 mode: ToroidalConstructionMode::PeriodicImagePoint,
                 ..
             }
-        ));
+        );
     }
 
     #[test]

@@ -301,7 +301,7 @@ fn centered_unit_direction<const D: usize>(point: &Point<f64, D>) -> [f64; D] {
 
     for (direction_coord, coordinate) in direction.iter_mut().zip(point.coords()) {
         *direction_coord = coordinate - COSPHERICAL_CENTER;
-        norm_squared += *direction_coord * *direction_coord;
+        norm_squared = (*direction_coord).mul_add(*direction_coord, norm_squared);
     }
 
     if norm_squared <= f64::EPSILON {

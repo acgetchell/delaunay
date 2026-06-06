@@ -2697,6 +2697,7 @@ mod tests {
     };
     use crate::triangulation::DelaunayTriangulation;
     use crate::vertex;
+    use std::assert_matches;
 
     use slotmap::KeyData;
     use std::cell::Cell;
@@ -3093,10 +3094,7 @@ mod tests {
 
         let tol = 1e-10_f64;
         let err = tri.duplicate_coordinates_error(&[0.0, 0.0], tol, Some(&index));
-        assert!(matches!(
-            err,
-            Some(InsertionError::DuplicateCoordinates { .. })
-        ));
+        assert_matches!(err, Some(InsertionError::DuplicateCoordinates { .. }));
     }
 
     #[test]
@@ -3111,10 +3109,7 @@ mod tests {
         let index: HashGridIndex<f64, 2> = HashGridIndex::new(0.0); // unusable
         let tol = 1e-10_f64;
         let err = tri.duplicate_coordinates_error(&[0.0, 0.0], tol, Some(&index));
-        assert!(matches!(
-            err,
-            Some(InsertionError::DuplicateCoordinates { .. })
-        ));
+        assert_matches!(err, Some(InsertionError::DuplicateCoordinates { .. }));
     }
 
     fn duplicate_coordinate_tolerance_scales_down_for_small_features<const D: usize>() {
@@ -3152,10 +3147,10 @@ mod tests {
             tolerance > 1.0e-10,
             "unit-scale hint simplices should preserve near-duplicate filtering"
         );
-        assert!(matches!(
+        assert_matches!(
             tri.duplicate_coordinates_error(&candidate, tolerance, None),
             Some(InsertionError::DuplicateCoordinates { .. })
-        ));
+        );
     }
 
     fn duplicate_index_rebuilds_when_tolerance_exceeds_cell_size<const D: usize>() {
@@ -3264,12 +3259,12 @@ mod tests {
         // Second insertion at same coordinates: insert() returns Err; the internal
         // statistics helper reports Skipped so telemetry can classify the no-op.
         let err = insert(&mut tri, vertex!([0.0, 0.0, 0.0]), None, None).unwrap_err();
-        assert!(matches!(err, InsertionError::DuplicateCoordinates { .. }));
+        assert_matches!(err, InsertionError::DuplicateCoordinates { .. });
 
         let (outcome, stats) =
             insert_with_statistics(&mut tri, vertex!([0.0, 0.0, 0.0]), None, None).unwrap();
         assert!(stats.skipped());
-        assert!(matches!(outcome, InsertionOutcome::Skipped { .. }));
+        assert_matches!(outcome, InsertionOutcome::Skipped { .. });
 
         // No new vertex should have been inserted.
         assert_eq!(tri.number_of_vertices(), 1);
@@ -3312,10 +3307,7 @@ mod tests {
         let (outcome, stats) = insert_with_statistics(&mut tri, vertex!([0.0, 0.0]), None, None)
             .expect("insertion should succeed");
 
-        assert!(matches!(
-            outcome,
-            InsertionOutcome::Inserted { hint: None, .. }
-        ));
+        assert_matches!(outcome, InsertionOutcome::Inserted { hint: None, .. });
         assert_eq!(stats.attempts, 1);
         assert!(!stats.used_perturbation());
         assert!(!stats.skipped());
@@ -3339,21 +3331,15 @@ mod tests {
         for (i, v) in vertices.into_iter().enumerate() {
             let (outcome, stats) = insert_with_statistics(&mut tri, v, None, None).unwrap();
 
-            assert!(matches!(outcome, InsertionOutcome::Inserted { .. }));
+            assert_matches!(outcome, InsertionOutcome::Inserted { .. });
             assert_eq!(stats.attempts, 1);
 
             if i < 3 {
                 // Bootstrap phase - no hint yet
-                assert!(matches!(
-                    outcome,
-                    InsertionOutcome::Inserted { hint: None, .. }
-                ));
+                assert_matches!(outcome, InsertionOutcome::Inserted { hint: None, .. });
             } else {
                 // After D+1 vertices, hint should be available
-                assert!(matches!(
-                    outcome,
-                    InsertionOutcome::Inserted { hint: Some(_), .. }
-                ));
+                assert_matches!(outcome, InsertionOutcome::Inserted { hint: Some(_), .. });
             }
         }
 
@@ -3387,7 +3373,7 @@ mod tests {
             )
             .unwrap();
 
-        assert!(matches!(detail.outcome, InsertionOutcome::Inserted { .. }));
+        assert_matches!(detail.outcome, InsertionOutcome::Inserted { .. });
         assert_eq!(detail.telemetry.global_conflict_scans, 0);
         assert_eq!(detail.telemetry.global_conflict_simplices_scanned, 0);
         assert_eq!(detail.telemetry.global_conflict_simplices_found_total, 0);
@@ -3437,7 +3423,7 @@ mod tests {
             )
             .unwrap();
 
-        assert!(matches!(detail.outcome, InsertionOutcome::Inserted { .. }));
+        assert_matches!(detail.outcome, InsertionOutcome::Inserted { .. });
         assert_eq!(detail.telemetry.global_conflict_scans, 0);
         assert_eq!(detail.telemetry.conflict_region_calls, 1);
         assert_eq!(detail.telemetry.conflict_region_simplices_total, 0);
@@ -3487,7 +3473,7 @@ mod tests {
             )
             .unwrap();
 
-        assert!(matches!(detail.outcome, InsertionOutcome::Inserted { .. }));
+        assert_matches!(detail.outcome, InsertionOutcome::Inserted { .. });
         assert!(
             !detail.delaunay_repair_required,
             "caller-provided conflict simplices should preserve the cavity insertion repair flag"
@@ -3515,10 +3501,7 @@ mod tests {
             insert_with_statistics(&mut tri, vertex!([0.2, 0.2, 0.2, 0.2]), None, hint_simplex)
                 .unwrap();
 
-        assert!(matches!(
-            outcome,
-            InsertionOutcome::Inserted { hint: Some(_), .. }
-        ));
+        assert_matches!(outcome, InsertionOutcome::Inserted { hint: Some(_), .. });
         assert_eq!(stats.attempts, 1);
         assert!(stats.success());
     }
@@ -3534,7 +3517,7 @@ mod tests {
         // Try duplicate - should be skipped
         let result = insert_with_statistics(&mut tri, vertex!([1.0, 2.0, 3.0]), None, None);
 
-        assert!(matches!(
+        assert_matches!(
             result,
             Ok((
                 InsertionOutcome::Skipped {
@@ -3542,7 +3525,7 @@ mod tests {
                 },
                 _
             ))
-        ));
+        );
     }
 
     #[test]
@@ -3612,7 +3595,7 @@ mod tests {
             let (outcome, stats) =
                 insert_with_statistics(&mut tri, vertex!(coords), None, None).unwrap();
 
-            assert!(matches!(outcome, InsertionOutcome::Inserted { .. }));
+            assert_matches!(outcome, InsertionOutcome::Inserted { .. });
             assert_eq!(stats.attempts, 1);
             assert!(stats.success());
         }
@@ -4184,7 +4167,7 @@ mod tests {
             let (outcome, stats) =
                 insert_with_statistics(&mut tri, vertex!(*coords), None, None).unwrap();
             assert!(stats.success());
-            assert!(matches!(outcome, InsertionOutcome::Inserted { .. }));
+            assert_matches!(outcome, InsertionOutcome::Inserted { .. });
             assert_eq!(stats.attempts, 1);
         }
         assert_eq!(tri.number_of_vertices(), 4);
@@ -4207,10 +4190,7 @@ mod tests {
         let tol = 1e-10_f64;
         // No index provided: should fall back to linear scan.
         let err = tri.duplicate_coordinates_error(&[3.0, 4.0], tol, None);
-        assert!(matches!(
-            err,
-            Some(InsertionError::DuplicateCoordinates { .. })
-        ));
+        assert_matches!(err, Some(InsertionError::DuplicateCoordinates { .. }));
 
         // Non-duplicate should return None.
         let no_err = tri.duplicate_coordinates_error(&[99.0, 99.0], tol, None);

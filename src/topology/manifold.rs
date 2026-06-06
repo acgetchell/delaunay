@@ -255,7 +255,7 @@ fn ordered_lifted_edge(a: &LiftedVertexId, b: &LiftedVertexId) -> (LiftedVertexI
 ///     ridge_key: 1,
 ///     boundary_facet_count: 3,
 /// };
-/// assert!(matches!(err, ManifoldError::BoundaryRidgeMultiplicity { .. }));
+/// std::assert_matches!(err, ManifoldError::BoundaryRidgeMultiplicity { .. });
 /// ```
 #[derive(Clone, Debug, Error, PartialEq, Eq)]
 #[non_exhaustive]
@@ -2289,6 +2289,7 @@ fn validate_ridge_link_graph(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::assert_matches;
 
     use crate::core::facet::FacetHandle;
     use crate::core::simplex::Simplex;
@@ -2664,10 +2665,10 @@ mod tests {
         link_simplices.push(simplex(&[b, c]));
         link_simplices.push(simplex(&[c, a]));
 
-        assert!(matches!(
+        assert_matches!(
             validate_vertex_link_d2(vertex_key, false, &link_simplices, 3, 3),
             Err(ManifoldError::VertexLinkNotManifold { .. })
-        ));
+        );
     }
 
     #[test]
@@ -2677,10 +2678,10 @@ mod tests {
         let mut link_simplices: LinkSimplexBuffer = SmallBuffer::new();
         link_simplices.push(simplex(&[vk(1)]));
 
-        assert!(matches!(
+        assert_matches!(
             validate_vertex_link_d2(vertex_key, true, &link_simplices, 1, 1),
             Err(ManifoldError::VertexLinkNotManifold { .. })
-        ));
+        );
     }
 
     #[test]
@@ -2712,10 +2713,10 @@ mod tests {
         tds.insert_simplex_with_mapping(Simplex::new(vec![v0, v1], None).unwrap())
             .unwrap();
 
-        assert!(matches!(
+        assert_matches!(
             validate_single_vertex_link(&tds, v0, true),
             Err(ManifoldError::VertexLinkNotManifold { .. })
-        ));
+        );
     }
 
     #[test]
@@ -2730,10 +2731,10 @@ mod tests {
             .unwrap();
 
         validate_single_vertex_link(&tds, v0, false).unwrap();
-        assert!(matches!(
+        assert_matches!(
             validate_single_vertex_link(&tds, v0, true),
             Err(ManifoldError::VertexLinkNotManifold { .. })
-        ));
+        );
     }
 
     #[test]
@@ -2741,10 +2742,10 @@ mod tests {
         let (tds, [v0, ..]) = build_closed_surface_s2_tds_2d();
 
         validate_single_vertex_link(&tds, v0, true).unwrap();
-        assert!(matches!(
+        assert_matches!(
             validate_single_vertex_link(&tds, v0, false),
             Err(ManifoldError::VertexLinkNotManifold { .. })
-        ));
+        );
     }
 
     #[test]
@@ -2815,14 +2816,14 @@ mod tests {
         validate_vertex_links(&tds, &facet_to_simplices).unwrap();
 
         // And misclassifications should be rejected (guards the interior/boundary distinction).
-        assert!(matches!(
+        assert_matches!(
             validate_single_vertex_link(&tds, va, true),
             Err(ManifoldError::VertexLinkNotManifold { .. })
-        ));
-        assert!(matches!(
+        );
+        assert_matches!(
             validate_single_vertex_link(&tds, center, false),
             Err(ManifoldError::VertexLinkNotManifold { .. })
-        ));
+        );
     }
 
     #[test]

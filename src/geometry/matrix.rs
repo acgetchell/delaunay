@@ -28,7 +28,7 @@ pub type Matrix<const D: usize> = LaMatrix<D>;
 /// use delaunay::prelude::geometry::MatrixError;
 ///
 /// let err = MatrixError::SingularMatrix;
-/// assert!(matches!(err, MatrixError::SingularMatrix));
+/// std::assert_matches!(err, MatrixError::SingularMatrix);
 /// ```
 #[derive(Clone, Debug, Error, PartialEq, Eq)]
 #[non_exhaustive]
@@ -244,6 +244,7 @@ pub fn determinant<const D: usize>(m: &Matrix<D>) -> f64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::assert_matches;
 
     use approx::assert_relative_eq;
 
@@ -252,10 +253,7 @@ mod tests {
         let k = MAX_STACK_MATRIX_DIM + 1;
         let res: Result<(), StackMatrixDispatchError> =
             try_with_la_stack_matrix!(k, |_m| { Ok(()) });
-        assert!(matches!(
-            res,
-            Err(StackMatrixDispatchError::UnsupportedDim { .. })
-        ));
+        assert_matches!(res, Err(StackMatrixDispatchError::UnsupportedDim { .. }));
     }
 
     #[test]

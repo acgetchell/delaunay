@@ -23,12 +23,13 @@ jobs:
     env:
       CARGO_LLVM_COV_VERSION: "0.8.7"
       JUST_VERSION: "1.51.0"
-      NEXTEST_VERSION: "0.9.136"
+      NEXTEST_VERSION: "0.9.137"
     steps:
       - name: Checkout repository
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
           fetch-depth: 0 # Needed for codecov to analyze diff
+          persist-credentials: false
 
       - name: Install Rust toolchain
         uses: actions-rust-lang/setup-rust-toolchain@46268bd060767258de96ed93c1251119784f2ab6 # v1.16.1
@@ -40,35 +41,20 @@ jobs:
       - name: Install LLVM coverage tools
         run: rustup component add llvm-tools-preview
 
-      - name: Cache cargo-llvm-cov
-        uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
-        with:
-          path: ~/.cargo/bin/cargo-llvm-cov
-          key: cargo-llvm-cov-${{ runner.os }}-${{ env.CARGO_LLVM_COV_VERSION }}
-          restore-keys: |
-            cargo-llvm-cov-${{ runner.os }}-
-
       - name: Install cargo-llvm-cov
-        run: |
-          installed_version=""
-          if command -v cargo-llvm-cov &> /dev/null; then
-            installed_version="$(cargo llvm-cov --version)"
-            installed_version="${installed_version#cargo-llvm-cov }"
-          fi
-
-          if [ "${installed_version}" != "${CARGO_LLVM_COV_VERSION}" ]; then
-            cargo install cargo-llvm-cov --locked --force --version "${CARGO_LLVM_COV_VERSION}"
-          fi
+        uses: taiki-e/cache-cargo-install-action@417450f3c33ee20393705369577571770643d4c7 # v3.0.7
+        with:
+          tool: cargo-llvm-cov@${{ env.CARGO_LLVM_COV_VERSION }}
 
       - name: Install just
-        uses: taiki-e/install-action@e49978b799e49ff429d162b7a30601a569ab6538 # v2.81.1
+        uses: taiki-e/cache-cargo-install-action@417450f3c33ee20393705369577571770643d4c7 # v3.0.7
         with:
           tool: just@${{ env.JUST_VERSION }}
 
       - name: Install cargo-nextest
-        uses: taiki-e/install-action@e49978b799e49ff429d162b7a30601a569ab6538 # v2.81.1
+        uses: taiki-e/cache-cargo-install-action@417450f3c33ee20393705369577571770643d4c7 # v3.0.7
         with:
-          tool: nextest@${{ env.NEXTEST_VERSION }}
+          tool: cargo-nextest@${{ env.NEXTEST_VERSION }}
 
       - name: Verify cargo-nextest
         run: cargo nextest --version

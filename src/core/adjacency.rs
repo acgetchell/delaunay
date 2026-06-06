@@ -30,7 +30,7 @@ use thiserror::Error;
 /// let simplex_key = SimplexKey::from(KeyData::from_ffi(1));
 /// let vertex_key = VertexKey::from(KeyData::from_ffi(2));
 /// let err = AdjacencyIndexBuildError::MissingVertexKey { simplex_key, vertex_key };
-/// assert!(matches!(err, AdjacencyIndexBuildError::MissingVertexKey { .. }));
+/// std::assert_matches!(err, AdjacencyIndexBuildError::MissingVertexKey { .. });
 /// ```
 #[derive(Clone, Debug, Error, PartialEq, Eq)]
 #[non_exhaustive]

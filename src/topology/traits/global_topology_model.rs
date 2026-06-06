@@ -590,6 +590,7 @@ impl<const D: usize> GlobalTopologyModel<D> for GlobalTopologyModelAdapter<D> {
 mod tests {
     use super::*;
     use approx::assert_relative_eq;
+    use std::assert_matches;
 
     #[test]
     fn model_adapter_dispatch_matches_global_topology_metadata() {
@@ -621,11 +622,11 @@ mod tests {
         let model = ToroidalModel::<2>::new([2.0, 3.0], ToroidalConstructionMode::Canonicalized);
         let mut coords = [f64::INFINITY, 1.0_f64];
         let err = model.canonicalize_point_in_place(&mut coords).unwrap_err();
-        assert!(matches!(
+        assert_matches!(
             err,
             GlobalTopologyModelError::NonFiniteCoordinate { axis: 0, value }
                 if value.is_infinite() && value.is_sign_positive()
-        ));
+        );
     }
 
     #[test]
@@ -633,11 +634,11 @@ mod tests {
         let model = ToroidalModel::<2>::new([2.0, 3.0], ToroidalConstructionMode::Canonicalized);
         let mut coords = [f64::NAN, 1.0_f64];
         let err = model.canonicalize_point_in_place(&mut coords).unwrap_err();
-        assert!(matches!(
+        assert_matches!(
             err,
             GlobalTopologyModelError::NonFiniteCoordinate { axis: 0, value }
                 if value.is_nan()
-        ));
+        );
     }
 
     #[test]
@@ -658,11 +659,11 @@ mod tests {
         let err = model
             .lift_for_orientation([f64::NAN, 0.5_f64], Some([1, 0]))
             .unwrap_err();
-        assert!(matches!(
+        assert_matches!(
             err,
             GlobalTopologyModelError::NonFiniteCoordinate { axis: 0, value }
                 if value.is_nan()
-        ));
+        );
     }
 
     #[test]
@@ -680,12 +681,12 @@ mod tests {
         let err = model
             .lift_for_orientation([0.5_f64, 0.25_f64], Some([1, 0]))
             .unwrap_err();
-        assert!(matches!(
+        assert_matches!(
             err,
             GlobalTopologyModelError::PeriodicOffsetsUnsupported {
                 kind: TopologyKind::Euclidean,
             }
-        ));
+        );
     }
 
     // =========================================================================
@@ -785,12 +786,12 @@ mod tests {
             Some([1, 0]),
         )
         .unwrap_err();
-        assert!(matches!(
+        assert_matches!(
             err,
             GlobalTopologyModelError::PeriodicOffsetsUnsupported {
                 kind: TopologyKind::Spherical,
             }
-        ));
+        );
     }
 
     #[test]
@@ -826,12 +827,12 @@ mod tests {
             Some([1, 0]),
         )
         .unwrap_err();
-        assert!(matches!(
+        assert_matches!(
             err,
             GlobalTopologyModelError::PeriodicOffsetsUnsupported {
                 kind: TopologyKind::Hyperbolic,
             }
-        ));
+        );
     }
 
     #[test]
@@ -1041,22 +1042,22 @@ mod tests {
     fn toroidal_model_rejects_zero_period() {
         let model = ToroidalModel::<2>::new([0.0, 3.0], ToroidalConstructionMode::Canonicalized);
         let err = model.validate_configuration().unwrap_err();
-        assert!(matches!(
+        assert_matches!(
             err,
             GlobalTopologyModelError::InvalidToroidalPeriod { axis: 0, period }
                 if period.abs() < f64::EPSILON
-        ));
+        );
     }
 
     #[test]
     fn toroidal_model_rejects_negative_period() {
         let model = ToroidalModel::<2>::new([2.0, -1.0], ToroidalConstructionMode::Canonicalized);
         let err = model.validate_configuration().unwrap_err();
-        assert!(matches!(
+        assert_matches!(
             err,
             GlobalTopologyModelError::InvalidToroidalPeriod { axis: 1, period }
                 if period < 0.0
-        ));
+        );
     }
 
     #[test]
@@ -1066,11 +1067,11 @@ mod tests {
             ToroidalConstructionMode::Canonicalized,
         );
         let err = model.validate_configuration().unwrap_err();
-        assert!(matches!(
+        assert_matches!(
             err,
             GlobalTopologyModelError::InvalidToroidalPeriod { axis: 0, period }
                 if period.is_infinite()
-        ));
+        );
     }
 
     #[test]
@@ -1078,11 +1079,11 @@ mod tests {
         let model =
             ToroidalModel::<2>::new([f64::NAN, 3.0], ToroidalConstructionMode::Canonicalized);
         let err = model.validate_configuration().unwrap_err();
-        assert!(matches!(
+        assert_matches!(
             err,
             GlobalTopologyModelError::InvalidToroidalPeriod { axis: 0, period }
                 if period.is_nan()
-        ));
+        );
     }
 
     #[test]
@@ -1090,11 +1091,11 @@ mod tests {
         let model = ToroidalModel::<2>::new([2.0, 3.0], ToroidalConstructionMode::Canonicalized);
         let mut coords = [f64::NEG_INFINITY, 1.0_f64];
         let err = model.canonicalize_point_in_place(&mut coords).unwrap_err();
-        assert!(matches!(
+        assert_matches!(
             err,
             GlobalTopologyModelError::NonFiniteCoordinate { axis: 0, value }
                 if value.is_infinite() && value.is_sign_negative()
-        ));
+        );
     }
 
     // =========================================================================

@@ -55,6 +55,7 @@ jobs:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
           fetch-depth: 0 # required to diff against BASELINE_COMMIT
+          persist-credentials: false
 
       - name: Install Rust toolchain
         uses: actions-rust-lang/setup-rust-toolchain@46268bd060767258de96ed93c1251119784f2ab6 # v1.16.1
@@ -201,13 +202,15 @@ jobs:
             --dev
       - name: Classify benchmark comparison outcome
         if: env.BASELINE_EXISTS == 'true' && env.SKIP_BENCHMARKS == 'false'
+        env:
+          COMPARE_REGRESSION_OUTCOME: ${{ steps.compare_regression.outcome }}
         run: |
           set -euo pipefail
 
           results_file="benches/main_vs_release_compare_results.txt"
 
           # Successful compare step => no regressions beyond configured threshold.
-          if [ "${{ steps.compare_regression.outcome }}" = "success" ]; then
+          if [ "$COMPARE_REGRESSION_OUTCOME" = "success" ]; then
             echo "BENCHMARK_REGRESSION_DETECTED=false" >> "$GITHUB_ENV"
             exit 0
           fi

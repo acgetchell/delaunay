@@ -93,16 +93,16 @@ use num_traits::NumCast;
 ///     hull_generation: 1,
 ///     tds_generation: 2,
 /// };
-/// assert!(matches!(err, ConvexHullValidationError::StaleHull { .. }));
+/// std::assert_matches!(err, ConvexHullValidationError::StaleHull { .. });
 ///
 /// let mismatch = ConvexHullValidationError::IdentityMismatch {
 ///     hull_identity: Uuid::nil(),
 ///     tds_identity: Uuid::new_v4(),
 /// };
-/// assert!(matches!(
+/// std::assert_matches!(
 ///     mismatch,
 ///     ConvexHullValidationError::IdentityMismatch { .. }
-/// ));
+/// );
 /// ```
 #[derive(Clone, Debug, Error, PartialEq, Eq)]
 #[non_exhaustive]
@@ -160,16 +160,16 @@ pub enum ConvexHullValidationError {
 /// let err = ConvexHullConstructionError::InvalidTriangulation {
 ///     message: "empty".to_string(),
 /// };
-/// assert!(matches!(err, ConvexHullConstructionError::InvalidTriangulation { .. }));
+/// std::assert_matches!(err, ConvexHullConstructionError::InvalidTriangulation { .. });
 ///
 /// let mismatch = ConvexHullConstructionError::IdentityMismatch {
 ///     hull_identity: Uuid::nil(),
 ///     tds_identity: Uuid::new_v4(),
 /// };
-/// assert!(matches!(
+/// std::assert_matches!(
 ///     mismatch,
 ///     ConvexHullConstructionError::IdentityMismatch { .. }
-/// ));
+/// );
 /// ```
 #[derive(Clone, Debug, Error, PartialEq, Eq)]
 #[non_exhaustive]
@@ -1978,6 +1978,7 @@ mod tests {
     use crate::geometry::traits::coordinate::CoordinateConversionError;
     use crate::triangulation::DelaunayTriangulation;
     use crate::vertex;
+    use std::assert_matches;
     use std::error::Error;
     use std::sync::atomic::Ordering;
     use std::thread;
@@ -3600,12 +3601,12 @@ mod tests {
             _ => panic!("Expected InsufficientData error for no vertices"),
         }
 
-        // Also test with matches! macro (alternative assertion style)
+        // Also test with assert_matches! for variant diagnostics.
         let result2 = ConvexHull::from_triangulation(empty_dt.as_triangulation());
-        assert!(matches!(
+        assert_matches!(
             result2,
             Err(ConvexHullConstructionError::InsufficientData { .. })
-        ));
+        );
     }
 
     #[test]
@@ -7079,14 +7080,14 @@ mod tests {
             &Point::new([2.0, 2.0, 2.0]),
             dt2.as_triangulation(),
         );
-        assert!(matches!(
+        assert_matches!(
             visibility,
             Err(ConvexHullConstructionError::IdentityMismatch { .. })
-        ));
-        assert!(matches!(
+        );
+        assert_matches!(
             hull.validate(dt2.as_triangulation()),
             Err(ConvexHullValidationError::IdentityMismatch { .. })
-        ));
+        );
     }
 
     #[test]
@@ -7119,14 +7120,14 @@ mod tests {
             &Point::new([2.0, 2.0, 2.0]),
             dt2.as_triangulation(),
         );
-        assert!(matches!(
+        assert_matches!(
             visibility,
             Err(ConvexHullConstructionError::IdentityMismatch { .. })
-        ));
-        assert!(matches!(
+        );
+        assert_matches!(
             hull.validate(dt2.as_triangulation()),
             Err(ConvexHullValidationError::IdentityMismatch { .. })
-        ));
+        );
     }
 
     #[test]
@@ -7174,10 +7175,10 @@ mod tests {
             Vertex::new_with_uuid(Point::new([0.25, 0.25, 0.125]), duplicate_uuid, None);
 
         let result = dt.insert(duplicate_uuid_vertex);
-        assert!(matches!(
+        assert_matches!(
             result,
             Err(InsertionError::DuplicateUuid { uuid, .. }) if uuid == duplicate_uuid
-        ));
+        );
 
         assert_eq!(
             dt.as_triangulation().tds.generation(),

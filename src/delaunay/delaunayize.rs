@@ -763,6 +763,7 @@ mod tests {
     use crate::vertex;
     use crate::{DelaunayTriangulationBuilder, TriangulationConstructionError};
     use slotmap::KeyData;
+    use std::assert_matches;
     use std::error::Error as StdError;
 
     // =============================================================================
@@ -869,12 +870,12 @@ mod tests {
         )
         .unwrap_err();
 
-        assert!(matches!(
+        assert_matches!(
             err,
             DelaunayizeError::TopologyRepairFailed {
                 source: PlManifoldRepairError::BudgetExhausted { .. }
             }
-        ));
+        );
         assert_eq!(dt.number_of_simplices(), before_simplex_count);
 
         let mut after_simplex_uuids = dt
