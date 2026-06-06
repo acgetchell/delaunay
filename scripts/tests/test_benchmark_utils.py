@@ -1268,6 +1268,45 @@ class TestBaselineGenerator:
             assert f"Cargo profile: {TRUSTED_BENCH_PROFILE}" in content
             assert "Criterion sample size: 10" in content
 
+    @patch("benchmark_utils.get_git_commit_hash", return_value="abc123")
+    @patch("benchmark_utils.CriterionParser.find_criterion_results")
+    @patch("benchmark_utils.run_cargo_command")
+    def test_write_baseline_from_existing_results_does_not_rerun_benchmarks(self, mock_cargo, mock_find_results, mock_git) -> None:
+        """Test that existing Criterion results can be packaged as a baseline without rerunning Cargo."""
+        mock_find_results.return_value = self._sample_benchmark_results()
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            project_root = Path(temp_dir)
+            output_file = project_root / "release-artifact" / "baseline_results.txt"
+            generator = BaselineGenerator(project_root, ref_name="v1.2.3")
+
+            with patch.object(generator.hardware, "format_hardware_info", return_value="Hardware Information:\n"):
+                success = generator.write_baseline_from_existing_results(output_file)
+
+            assert success is True
+            mock_cargo.assert_not_called()
+            mock_find_results.assert_called_once_with(project_root / "target")
+            mock_git.assert_called_once()
+            content = output_file.read_text(encoding="utf-8")
+            assert "Ref: v1.2.3" in content
+            assert "Tag: v1.2.3" in content
+            assert "Sampling mode: full" in content
+            assert "=== 10 Points (2D) ===" in content
+
+    @patch("benchmark_utils.CriterionParser.find_criterion_results", return_value=[])
+    def test_write_baseline_from_existing_results_requires_criterion_data(self, mock_find_results, capsys) -> None:
+        """Test that packaging fails loudly when no existing Criterion data is available."""
+        with tempfile.TemporaryDirectory() as temp_dir:
+            project_root = Path(temp_dir)
+            generator = BaselineGenerator(project_root, ref_name="v1.2.3")
+
+            success = generator.write_baseline_from_existing_results(project_root / "baseline_results.txt")
+
+            assert success is False
+            mock_find_results.assert_called_once_with(project_root / "target")
+            captured = capsys.readouterr()
+            assert "No Criterion results found" in captured.err
+
     @patch("benchmark_utils.get_git_commit_hash", return_value="abc123def456")
     @patch("benchmark_utils.get_git_remote_url", return_value="git@github.com:acgetchell/delaunay.git")
     @patch("benchmark_utils.run_git_command")
@@ -2743,6 +2782,16 @@ class TestTimeoutHandling:
         assert args.ref_name == "main"
         assert args.dev
 
+    def test_parser_accepts_existing_results_baseline_packaging(self) -> None:
+        """Test that release workflows can package existing Criterion data as a baseline."""
+        parser = create_argument_parser()
+        args = parser.parse_args(["write-baseline", "--ref", "v1.2.3", "--output", "release/baseline_results.txt"])
+
+        assert args.command == "write-baseline"
+        assert args.ref_name == "v1.2.3"
+        assert args.output == Path("release/baseline_results.txt")
+        assert not args.dev
+
     def test_parser_accepts_cached_local_ref_baseline_commands(self) -> None:
         """Test that cached local ref baseline commands expose reusable CLI options."""
         parser = create_argument_parser()
@@ -3174,7 +3223,7 @@ OK: Time change -1.8% within acceptable range
             content = "\n".join(lines)
 
             assert PERFORMANCE_UPDATES_TITLE in content
-            assert "uv run benchmark-utils generate-baseline" in content
+            assert "uv run benchmark-utils write-baseline" in content
             assert "just bench-perf-summary" in content
             assert "PerformanceSummaryGenerator" in content
 

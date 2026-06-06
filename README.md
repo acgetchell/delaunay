@@ -80,6 +80,10 @@ these as separate utilities.
   PL-manifold validity.
 - Local move system: exposed bistellar flips (`k = 1, 2, 3` and inverses),
   providing the supported [Pachner moves] set in dimensions up to 5D.
+- Local reversibility basis: benchmark-owned flip fixtures include n=1
+  ergodicity checks, where one admissible Pachner move followed by its inverse
+  must recover the same triangulation, not merely another valid triangulation;
+  [Jaccard similarity] is used only as failure-path diagnostics for near misses.
 - Geometric convergence basis in finite-point workflows: Herbert Edelsbrunner
   and Nimish R. Shah, *Incremental Topological Flipping Works for Regular
   Triangulations*, **Algorithmica (1996)**,
@@ -514,25 +518,9 @@ throughout the library, see [REFERENCES.md](REFERENCES.md).
 
 ## 🤖 AI Agents
 
-This repository contains an `AGENTS.md` file, which defines the canonical rules
-and invariants for all AI coding assistants and autonomous agents working on
-this codebase.
-
-AI tools (including ChatGPT, Claude, CodeRabbit, Codex, Cursor, GitHub Copilot,
-KiloCode, Warp, and CI repair agents) are expected to read and follow
-`AGENTS.md` when proposing or applying changes.
-
-Portions of this library were developed with the assistance of these AI tools:
-
-- [ChatGPT]
-- [Claude]
-- [CodeRabbit]
-- [Codex]
-- [GitHub Copilot]
-- [KiloCode]
-- [WARP]
-
-> All code was written and/or reviewed and validated by the author.
+AI coding assistants should read [AGENTS.md](AGENTS.md) before proposing or
+applying changes. See [CONTRIBUTING.md](CONTRIBUTING.md) for the repository's
+AI-assisted development note.
 
 [Rust]: https://rust-lang.org
 [audit-badge]: https://github.com/acgetchell/delaunay/actions/workflows/audit.yml/badge.svg
@@ -558,16 +546,10 @@ Portions of this library were developed with the assistance of these AI tools:
 [Simulation of Simplicity]: docs/numerical_robustness_guide.md#simulation-of-simplicity-sos
 [Secondary maps]: docs/workflows.md#builder-api-auxiliary-vertex-and-simplex-data
 [Validation Guide]: docs/validation.md
-[ChatGPT]: https://openai.com/chatgpt
-[Claude]: https://www.anthropic.com/claude
-[CodeRabbit]: https://coderabbit.ai/
-[Codex]: https://openai.com/codex/
-[GitHub Copilot]: https://github.com/features/copilot
-[KiloCode]: https://kilocode.ai/
-[WARP]: https://www.warp.dev
 [Pseudomanifold]: https://en.wikipedia.org/wiki/Pseudomanifold
 [PL-manifold]: https://en.wikipedia.org/wiki/Piecewise_linear_manifold
 [Delaunay repair]: https://link.springer.com/article/10.1007/BF01975867
 [Pachner moves]: https://en.wikipedia.org/wiki/Pachner_move
+[Jaccard similarity]: https://en.wikipedia.org/wiki/Jaccard_index
 [`DelaunayTriangulationBuilder`]: src/delaunay/builder.rs
 [toroidal construction workflow]: docs/workflows.md#builder-api-toroidal-periodic-triangulations

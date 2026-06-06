@@ -164,6 +164,17 @@ The useful updates ported in this pass are:
   `profile.slow` raises the per-test watchdog for `just test-slow`, allowing
   intentional multi-minute correctness regressions to run without making the
   default suite or CI profile permissive.
+- `.github/workflows/release-benchmarks.yml` ports the durable release-asset
+  benchmark storage pattern used by `la-stack`. Delaunay now packages
+  `baseline_results.txt`, `PERFORMANCE_RESULTS.md`, raw Criterion data, and
+  metadata as `delaunay-$TAG-criterion-baseline.tar.gz` on each published
+  GitHub Release. Release and regression benchmark jobs both use
+  `ubuntu-latest`, and `.github/workflows/benchmarks.yml` downloads the latest
+  stable release asset to compare CI runs against the released-version CI
+  baseline. Local same-machine comparison remains separate through ignored
+  `baseline-artifact/` and `baseline-artifacts/` paths, while
+  `.github/workflows/generate-baseline.yml` remains manual-only for
+  compatibility with ad-hoc CI-runner artifact comparisons.
 
 ## CI Shape Evaluation
 

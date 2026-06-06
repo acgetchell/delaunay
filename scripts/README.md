@@ -43,15 +43,20 @@ create the annotated release tag from the matching changelog section.
 
 ```bash
 uv run benchmark-utils generate-baseline
+uv run benchmark-utils write-baseline --ref vX.Y.Z --output baseline_results.txt
 uv run benchmark-utils compare --baseline baseline-artifact/baseline_results.txt
 uv run benchmark-utils generate-summary --run-benchmarks --profile perf
 ```
 
-`benchmark-utils` handles Criterion baseline generation, comparison, and
-release performance summaries. The default comparison report for release
-baselines is `benches/main_vs_release_compare_results.txt`; the ref-comparison
-guard writes `benches/worktree_vs_<ref>_compare_results.txt` and fails only on
-total matched-time regressions or execution errors.
+`benchmark-utils` handles Criterion baseline generation and packaging,
+comparison, and release performance summaries. Published releases package
+`baseline_results.txt` with raw Criterion data as a GitHub Release asset for
+Ubuntu GitHub Actions comparisons. Local timing records should stay in the
+ignored `baseline-artifact/` or `baseline-artifacts/` directories. The default
+comparison report for release baselines is
+`benches/main_vs_release_compare_results.txt`; the ref-comparison guard writes
+`benches/worktree_vs_<ref>_compare_results.txt` and fails only on total
+matched-time regressions or execution errors.
 
 ### Hardware utilities
 

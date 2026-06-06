@@ -48,7 +48,7 @@ env:
 
 jobs:
   performance-regression:
-    runs-on: macos-15
+    runs-on: ubuntu-latest
     timeout-minutes: 45 # Allow 30min benchmark timeout + 15min for setup/teardown
 
     steps:
@@ -62,7 +62,7 @@ jobs:
         with:
           cache: true
           cache-bin: false
-          # Toolchain from rust-toolchain.toml; no extra target needed on macOS-ARM
+          # Toolchain from rust-toolchain.toml.
 
       - name: Install uv (Python package manager)
         uses: astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b # v8.1.0
@@ -72,102 +72,80 @@ jobs:
       - name: Verify uv installation
         run: uv --version
 
-      - name: Find baseline artifact (base ref baseline)
+      - name: Find latest release benchmark baseline
         id: find_baseline
         uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
-        env:
-          BASELINE_REF: ${{ github.base_ref || 'main' }}
         with:
           script: |
             try {
-              const prefix = 'performance-baseline-';
-              const baselineRef = process.env.BASELINE_REF || 'main';
-              const currentSha = context.sha;
-              const sanitized = baselineRef.replace(/[^a-zA-Z0-9._-]/g, '_');
-              const candidateNames = new Set([
-                `${prefix}${sanitized.replace(/\./g, '_')}`,
-                `${prefix}${sanitized}`
-              ]);
+              const releases = await github.paginate(github.rest.repos.listReleases, {
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                per_page: 100
+              });
 
-              // Fetch successful generate-baseline.yml runs (most recent first)
-              // Note: Each run requires a follow-up listWorkflowRunArtifacts call, so keep this cap conservative
-              // to avoid slowdowns and API rate limits.
-              const MAX_RUNS = 50;
-              console.log(`Fetching recent generate-baseline.yml runs for ${baselineRef} (up to ${MAX_RUNS})...`);
-              let count = 0;
-              const runs = await github.paginate(
-                github.rest.actions.listWorkflowRuns,
-                {
-                  owner: context.repo.owner,
-                  repo: context.repo.repo,
-                  workflow_id: 'generate-baseline.yml',
-                  status: 'completed',
-                  conclusion: 'success',
-                  per_page: 100
-                },
-                (response, done) => {
-                  // Limit to MAX_RUNS runs total across pages (no overshoot)
-                  const remaining = Math.max(0, MAX_RUNS - count);
-                  if (remaining === 0) { done(); return []; }
-                  const slice = response.data.slice(0, remaining);
-                  count += slice.length;
-                  if (count >= MAX_RUNS) done();
-                  return slice;
-                }
-              );
+              const parseStableSemver = (tag) => {
+                const match = /^v([0-9]+)\.([0-9]+)\.([0-9]+)$/.exec(tag);
+                if (!match) return null;
+                return match.slice(1).map((part) => Number.parseInt(part, 10));
+              };
 
-              console.log(`Found ${runs.length} successful generate-baseline runs`);
+              const candidates = [];
+              for (const release of releases) {
+                if (release.draft || release.prerelease) continue;
+                const version = parseStableSemver(release.tag_name);
+                if (!version) continue;
 
-              // Runs are newest-first, so the first non-self matching artifact is the current ref baseline.
-              for (const run of runs) {
-                if (run.head_sha === currentSha) {
-                  console.log(
-                    `Skipping baseline run ${run.id} because it was generated from the current commit ${currentSha}`
-                  );
+                const expectedAsset = `delaunay-${release.tag_name}-criterion-baseline.tar.gz`;
+                const asset = release.assets.find((candidate) => candidate.name === expectedAsset);
+                if (!asset) {
+                  console.log(`Release ${release.tag_name} has no benchmark baseline asset named ${expectedAsset}`);
                   continue;
                 }
 
-                try {
-                  const artifacts = await github.rest.actions.listWorkflowRunArtifacts({
-                    owner: context.repo.owner,
-                    repo: context.repo.repo,
-                    run_id: run.id
-                  });
-
-                  for (const artifact of artifacts.data.artifacts) {
-                    if (artifact.expired === true) continue;
-                    if (!candidateNames.has(artifact.name)) continue;
-
-                    console.log(`Selected baseline ${artifact.name} for ref ${baselineRef} from run ${run.id}`);
-                    core.setOutput('found', 'true');
-                    core.setOutput('artifact_name', artifact.name);
-                    core.setOutput('run_id', run.id.toString());
-                    core.setOutput('ref', baselineRef);
-                    core.setOutput('baseline_commit', run.head_sha || '');
-                    return;
-                  }
-                } catch (error) {
-                  console.log(`Warning: Could not fetch artifacts for run ${run.id}: ${error.message}`);
-                  continue;
-                }
+                candidates.push({ release, asset, version });
               }
 
-              console.log(`No baseline artifact found for ref ${baselineRef}`);
+              candidates.sort((left, right) => {
+                for (const index of [0, 1, 2]) {
+                  const diff = right.version[index] - left.version[index];
+                  if (diff !== 0) return diff;
+                }
+                return Date.parse(right.release.published_at) - Date.parse(left.release.published_at);
+              });
+
+              if (candidates.length > 0) {
+                const selected = candidates[0];
+                console.log(`Selected release benchmark baseline ${selected.asset.name} from ${selected.release.tag_name}`);
+                core.setOutput('found', 'true');
+                core.setOutput('tag', selected.release.tag_name);
+                core.setOutput('asset_name', selected.asset.name);
+                return;
+              }
+
+              console.log('No release benchmark baseline asset found');
               core.setOutput('found', 'false');
             } catch (error) {
-              console.error(`Error searching for baseline artifacts: ${error.message}`);
+              console.error(`Error searching for release benchmark baseline assets: ${error.message}`);
               core.setOutput('found', 'false');
             }
 
-      - name: Download base ref baseline artifact
+      - name: Download latest release benchmark baseline
         if: steps.find_baseline.outputs.found == 'true'
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
-        continue-on-error: true
-        with:
-          name: ${{ steps.find_baseline.outputs.artifact_name }}
-          path: baseline-artifact/
-          run-id: ${{ steps.find_baseline.outputs.run_id }}
-          github-token: ${{ secrets.GITHUB_TOKEN }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          BASELINE_TAG: ${{ steps.find_baseline.outputs.tag }}
+          BASELINE_ASSET: ${{ steps.find_baseline.outputs.asset_name }}
+        run: |
+          set -euo pipefail
+
+          mkdir -p baseline-artifact
+          gh release download "$BASELINE_TAG" \
+            --repo "$GITHUB_REPOSITORY" \
+            --pattern "$BASELINE_ASSET" \
+            --dir baseline-artifact \
+            --clobber
+          tar -xzf "baseline-artifact/$BASELINE_ASSET" -C baseline-artifact
 
       - name: Prepare baseline for comparison
         if: steps.find_baseline.outputs.found == 'true'
@@ -181,7 +159,7 @@ jobs:
         if: env.BASELINE_EXISTS != 'true'
         run: uv run benchmark-utils display-no-baseline
 
-      - name: Run performance regression test (compare vs base ref baseline)
+      - name: Run performance regression test (compare vs latest release baseline)
         id: compare_regression
         if: env.BASELINE_EXISTS == 'true'
         continue-on-error: true
@@ -195,11 +173,9 @@ jobs:
           echo "   Baseline origin: ${BASELINE_ORIGIN:-unknown}"
           echo "   Baseline ref:    ${BASELINE_REF:-unknown}"
 
-          # --dev reduces Criterion sampling while benchmark-utils keeps the perf Cargo profile.
           uv run benchmark-utils compare \
             --baseline "baseline-artifact/baseline_results.txt" \
-            --bench-timeout "${BENCHMARK_TIMEOUT}" \
-            --dev
+            --bench-timeout "${BENCHMARK_TIMEOUT}"
       - name: Classify benchmark comparison outcome
         if: env.BASELINE_EXISTS == 'true' && env.SKIP_BENCHMARKS == 'false'
         env:

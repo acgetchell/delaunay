@@ -85,10 +85,12 @@ just changelog-unreleased "$TAG"
 Unreleased plus the active minor series; older completed minor series live
 under `docs/archive/changelog/`.
 
-4. Refresh generated performance results, if needed
+4. Refresh checked-in performance results, if needed
 
-Run this when the release PR updates public performance claims or
-`benches/PERFORMANCE_RESULTS.md`:
+Per-version benchmark storage is handled by the release-published benchmark
+workflow in Step 2; do not run this only to preserve release benchmark data.
+Run it only when the release PR intentionally updates public performance claims
+or the checked-in human-readable `benches/PERFORMANCE_RESULTS.md` summary:
 
 ```bash
 just bench-perf-summary
@@ -142,8 +144,8 @@ git commit -m "chore(release): release $TAG
 - Refresh release benchmark summary"
 ```
 
-If no benchmark summary changed, omit `benches/PERFORMANCE_RESULTS.md` from
-the staged files and omit the benchmark bullet.
+If no checked-in benchmark summary changed, omit `benches/PERFORMANCE_RESULTS.md`
+from the staged files and omit the benchmark bullet.
 
 7. Push the branch and open a PR
 
@@ -206,29 +208,33 @@ git tag -l --format='%(contents)' "$TAG"
 git push origin "$TAG"
 ```
 
-5. Confirm CI baseline artifact generation
-
-Pushing a version tag triggers `.github/workflows/generate-baseline.yml`,
-which generates a performance baseline artifact named
-`performance-baseline-$TAG` with dots replaced by underscores, for example
-`performance-baseline-v0_6_2`.
-
-If you need to regenerate a missing or expired baseline artifact for a tag:
-
-```bash
-gh workflow run generate-baseline.yml -f tag="$TAG" --ref main
-```
-
-6. Publish to crates.io
+5. Publish to crates.io
 
 ```bash
 cargo publish --locked
 ```
 
-7. Create the GitHub release with notes from the tag annotation
+6. Create the GitHub release with notes from the tag annotation
 
 ```bash
 gh release create "$TAG" --notes-from-tag
+```
+
+Publishing the release triggers `.github/workflows/release-benchmarks.yml`, which
+runs fresh perf-profile `ci_performance_suite` and circumsphere benchmarks on
+`ubuntu-latest`, packages `baseline_results.txt`, `PERFORMANCE_RESULTS.md`, raw
+Criterion data, and metadata, then attaches
+`delaunay-$TAG-criterion-baseline.tar.gz` to the GitHub Release. That release
+asset is for GitHub Actions CI comparisons; keep local same-machine timing
+baselines under the ignored `baseline-artifact/` or `baseline-artifacts/` paths.
+
+7. Confirm release benchmark assets
+
+After the release benchmark workflow completes, verify that the GitHub Release
+has the durable benchmark baseline asset:
+
+```bash
+gh release view "$TAG" --json assets --jq '.assets[].name'
 ```
 
 8. Clean up the release branch

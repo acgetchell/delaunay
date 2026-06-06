@@ -62,6 +62,7 @@ delaunay/
 │   │   ├── codeql.yml
 │   │   ├── generate-baseline.yml
 │   │   ├── profiling-benchmarks.yml
+│   │   ├── release-benchmarks.yml
 │   │   ├── rust-clippy.yml
 │   │   └── semgrep-sarif.yml
 │   ├── CODEOWNERS
@@ -394,10 +395,11 @@ Tag creation (`just tag`, with `just changelog-tag` kept as a compatibility alia
 handles GitHub's tag annotation size limits and automatically falls back to
 archived files when the requested version is no longer in the root changelog.
 
-**Note**: Benchmarks, baselines, and performance summaries are generated via the benchmark utilities CLI:
+**Note**: Benchmarks, local baselines, release baseline packaging, and performance summaries are generated via the benchmark
+utilities CLI:
 
 ```bash
-# Prepare the default GitHub main baseline artifact (used for comparisons)
+# Prepare the default local main baseline artifact (manual same-machine comparisons)
 just perf-baseline
 
 # Generate benches/PERFORMANCE_RESULTS.md (runs benchmarks; longer)
@@ -405,9 +407,15 @@ just bench-perf-summary
 
 # Or use the CLI directly
 uv run benchmark-utils generate-summary --run-benchmarks --profile perf
+uv run benchmark-utils write-baseline --ref vX.Y.Z --output baseline_results.txt
 ```
 
-The `benchmark-utils` CLI provides integrated benchmark workflow functionality, with convenient `just` shortcuts for common workflows.
+The `benchmark-utils` CLI provides integrated benchmark workflow functionality,
+with convenient `just` shortcuts for common workflows. GitHub Actions compares
+PRs and pushes on `ubuntu-latest` against the latest stable GitHub Release
+benchmark asset produced by `.github/workflows/release-benchmarks.yml`; local
+developer-machine runs should use the ignored same-machine baseline artifact
+paths instead.
 
 ### Architecture Overview
 
@@ -640,8 +648,9 @@ just fix           # Apply formatters/auto-fixes after reviewing checks
 ```bash
 just bench         # Run all benchmarks with perf profile (ThinLTO)
 just bench-ci      # CI regression benchmarks with perf profile (~5-10 min)
-just perf-baseline # Prepare dev-mode GitHub main baseline
-just perf-compare  # Compare against a specific dev-mode baseline file
+just perf-baseline # Prepare dev-mode local main baseline
+just perf-compare  # Compare against a specific local baseline file
+just perf-vs-ref   # Compare current tree against a cached same-machine ref baseline
 just perf-no-regressions # Fast pre-PR 2D-5D regression guard
 just bench-smoke   # Smoke-test benchmark harnesses (minimal samples)
 just bench-perf-summary # Generate perf-profile release summary (~30-45 min)
@@ -661,8 +670,9 @@ BENCH_LARGE_SCALE=1 cargo bench --profile perf --bench profiling_suite
 
 ```bash
 just perf-help     # Show performance analysis commands
-just perf-baseline # Prepare dev-mode GitHub main baseline
-just perf-compare  # Compare with a specific dev-mode baseline file
+just perf-baseline # Prepare dev-mode local main baseline
+just perf-compare  # Compare with a specific local baseline file
+just perf-vs-ref   # Compare current tree with a specific release/ref
 just perf-no-regressions # Check for performance regressions
 just profile       # Run ci_performance_suite for a compiler/code pair
 just profile-dev   # Profile 3D construction in profiling_suite

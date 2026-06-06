@@ -39,19 +39,6 @@ _ensure-cargo-llvm-cov:
         exit 1
     fi
 
-_ensure-nextest:
-    #!/usr/bin/env bash
-    set -euo pipefail
-    installed_version=""
-    if cargo nextest --version >/dev/null 2>&1; then
-        installed_version="$(cargo nextest --version 2>/dev/null | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1 || true)"
-    fi
-    if [[ "$installed_version" != "{{ nextest_version }}" ]]; then
-        echo "❌ 'cargo-nextest' {{ nextest_version }} not found. See 'just setup-tools' or install:"
-        echo "   cargo install --locked cargo-nextest --version {{ nextest_version }}"
-        exit 1
-    fi
-
 _ensure-cargo-machete:
     #!/usr/bin/env bash
     set -euo pipefail
@@ -60,6 +47,11 @@ _ensure-cargo-machete:
         echo "   cargo install --locked cargo-machete"
         exit 1
     fi
+
+_ensure-dprint:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    command -v dprint >/dev/null || { echo "❌ 'dprint' not found. See 'just setup' or install: brew install dprint"; exit 1; }
 
 # Internal helpers: ensure external tooling is installed
 _ensure-git-cliff:
@@ -76,10 +68,18 @@ _ensure-jq:
     set -euo pipefail
     command -v jq >/dev/null || { echo "❌ 'jq' not found. See 'just setup' or install: brew install jq"; exit 1; }
 
-_ensure-dprint:
+_ensure-nextest:
     #!/usr/bin/env bash
     set -euo pipefail
-    command -v dprint >/dev/null || { echo "❌ 'dprint' not found. See 'just setup' or install: brew install dprint"; exit 1; }
+    installed_version=""
+    if cargo nextest --version >/dev/null 2>&1; then
+        installed_version="$(cargo nextest --version 2>/dev/null | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1 || true)"
+    fi
+    if [[ "$installed_version" != "{{ nextest_version }}" ]]; then
+        echo "❌ 'cargo-nextest' {{ nextest_version }} not found. See 'just setup-tools' or install:"
+        echo "   cargo install --locked cargo-nextest --version {{ nextest_version }}"
+        exit 1
+    fi
 
 _ensure-rumdl:
     #!/usr/bin/env bash
@@ -169,13 +169,13 @@ action-lint: _ensure-actionlint
 bench:
     cargo bench --workspace --profile perf
 
-# CI regression benchmarks with the perf profile.
-bench-ci:
-    cargo bench --profile perf --bench ci_performance_suite
-
 # Allocation-contract microbenchmarks for public hot paths.
 bench-allocations:
     cargo bench --profile perf --bench allocation_hot_paths --features count-allocations -- --noplot
+
+# CI regression benchmarks with the perf profile.
+bench-ci:
+    cargo bench --profile perf --bench ci_performance_suite
 
 # Compile benchmarks without running them. Manifest lints enforce the warning
 # policy without using RUSTFLAGS that fragment Cargo artifact caches.
@@ -452,6 +452,7 @@ perf-help:
     @echo "Performance Analysis Commands:"
     @echo "  just perf-large-scale-smoke # Quick pre-push 2D-5D wall-clock smoke guard"
     @echo "  just perf-no-regressions   # Fast pre-PR guard with a cached same-machine main baseline"
+    @echo "  just perf-vs-ref <ref> [threshold] # Compare current tree vs a cached same-machine ref baseline"
     @echo "  just perf-baseline [ref]    # Persist/update baseline-artifact for a GitHub ref (default: main)"
     @echo "  just perf-baseline-to <out> [ref] # Generate a scratch baseline artifact without replacing the default"
     @echo "  just perf-compare <file> [threshold] # Compare current tree with a specific dev-mode baseline"
@@ -467,6 +468,7 @@ perf-help:
     @echo "Benchmark System (Delaunay-specific):"
     @echo "  just perf-large-scale-smoke # Pre-push guard using debug-large-scale 2D-5D with a short cap"
     @echo "  just perf-no-regressions   # Reuse cached main baseline, compare current tree"
+    @echo "  just perf-vs-ref <ref>     # Reuse cached ref baseline, compare current tree"
     @echo "  just perf-baseline [ref]   # Persist baseline-artifact/baseline_results.txt from a GitHub ref"
     @echo "  just perf-baseline-to <out> [ref] # Generate an alternate local baseline artifact directory"
     @echo "  just perf-compare <file>   # Compare against a specific dev-mode baseline"
@@ -485,6 +487,7 @@ perf-help:
     @echo "Examples:"
     @echo "  just perf-large-scale-smoke # Run before pushing to catch obvious performance drift"
     @echo "  just perf-no-regressions   # Recommended local PR performance guard"
+    @echo "  just perf-vs-ref v0.7.8    # Compare current branch against the v0.7.8 release locally"
     @echo "  just perf-baseline         # Persist/update default local baseline for GitHub main"
     @echo "  just perf-baseline v0.7.5  # Persist/update default local baseline for a release tag"
     @echo "  just perf-baseline-to /tmp/delaunay-main-baseline"
@@ -550,6 +553,9 @@ perf-large-scale-smoke max_secs="60": _ensure-nextest
 # Fast pre-PR performance guard against a cached same-machine main baseline.
 perf-no-regressions threshold="7.5": _ensure-uv
     uv run benchmark-utils compare-ref --ref main --threshold {{ threshold }} --dev --output benches/worktree_vs_main_compare_results.txt
+
+perf-vs-ref ref threshold="7.5": _ensure-uv
+    uv run benchmark-utils compare-ref --ref "{{ ref }}" --threshold {{ threshold }} --dev
 
 # Run the selected CI benchmark suite for one compiler/code pair.
 profile toolchain="" code_ref="current":
@@ -949,6 +955,8 @@ shell-check: _ensure-shellcheck _ensure-shfmt
         echo "No shell files found to check."
     fi
 
+shell-fix: shell-fmt
+
 # Shell scripts: format (mutating)
 shell-fmt: _ensure-shfmt
     #!/usr/bin/env bash
@@ -966,8 +974,6 @@ shell-fmt: _ensure-shfmt
     # Note: justfiles are not shell scripts and are excluded from shellcheck
 
 shell-lint: shell-check
-
-shell-fix: shell-fmt
 
 # Spell check (typos)
 spell-check: _ensure-typos
@@ -1078,6 +1084,8 @@ toml-check: _ensure-uv
         echo "No TOML files found to check."
     fi
 
+toml-fix: toml-fmt
+
 toml-fmt: _ensure-taplo
     #!/usr/bin/env bash
     set -euo pipefail
@@ -1116,8 +1124,6 @@ toml-lint: _ensure-taplo
     else
         echo "No TOML files found to lint."
     fi
-
-toml-fix: toml-fmt
 
 # Check for unused direct Cargo dependencies.
 unused-deps: _ensure-cargo-machete
