@@ -740,6 +740,7 @@ semgrep-test: _ensure-uv
     #!/usr/bin/env bash
     set -euo pipefail
     config_dir="$(mktemp -d "${TMPDIR:-/tmp}/delaunay-semgrep-config.XXXXXX")"
+    semgrep_settings_file="$config_dir/settings.yml"
     cleanup() {
         rm -rf "$config_dir"
     }
@@ -754,7 +755,7 @@ semgrep-test: _ensure-uv
         ln -s "$PWD/semgrep.yaml" "$config_path"
     done < <(find tests/semgrep -type f ! -name '*.fixed' -print0)
 
-    uv run semgrep scan --test --strict --config "$config_dir" tests/semgrep
+    SEMGREP_SETTINGS_FILE="$semgrep_settings_file" uv run semgrep scan --test --strict --config "$config_dir" tests/semgrep
 
 # Development setup
 setup: setup-tools
