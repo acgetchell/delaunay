@@ -570,6 +570,7 @@ class PerformanceSummaryGenerator:
         run_benchmarks: bool = False,
         generator_name: str | None = None,
         cargo_profile: str | None = None,
+        strict: bool = False,
     ) -> bool:
         """
         Generate performance summary markdown file.
@@ -582,6 +583,9 @@ class PerformanceSummaryGenerator:
                 ``run_benchmarks`` is True and no profile is specified, defaults
                 to :data:`TRUSTED_BENCH_PROFILE` so fresh runs match baseline
                 and comparison measurements.
+            strict: Fail instead of rendering from existing or fallback data
+                when fresh benchmark execution is requested and any benchmark
+                command fails.
 
         Returns:
             True if successful, False otherwise
@@ -604,10 +608,16 @@ class PerformanceSummaryGenerator:
                 if circumsphere_success:
                     self.numerical_accuracy_data = accuracy_data
                 if not ci_success or not circumsphere_success:
+                    if strict:
+                        print("❌ Benchmark run failed; strict summary mode refuses fallback data", file=sys.stderr)
+                        return False
                     print("⚠️ Benchmark run failed, using existing/fallback data")
 
             # Generate markdown content
             content = self._generate_markdown_content(generator_name)
+            if strict and self._contains_fallback_summary_data(content):
+                print("❌ Strict summary mode detected fallback benchmark data", file=sys.stderr)
+                return False
 
             # Write to output file
             with output_path.open("w", encoding="utf-8") as f:
@@ -619,6 +629,17 @@ class PerformanceSummaryGenerator:
         except _RECOVERABLE_CLI_ERRORS as e:
             print(f"❌ Failed to generate performance summary: {e}", file=sys.stderr)
             return False
+
+    @staticmethod
+    def _contains_fallback_summary_data(content: str) -> bool:
+        """Return whether generated summary content used fallback/reference data."""
+        fallback_markers = (
+            "reference data",
+            "No `ci_performance_suite` Criterion results available",
+            "No benchmark results available. Run benchmarks first",
+            "To get current numerical accuracy data",
+        )
+        return any(marker in content for marker in fallback_markers)
 
     def _generate_markdown_content(self, generator_name: str | None = None) -> str:
         """
@@ -1944,8 +1965,8 @@ class PerformanceSummaryGenerator:
             "# Run fresh perf-profile public API and circumsphere benchmarks",
             f"uv run benchmark-utils generate-summary --run-benchmarks --profile {TRUSTED_BENCH_PROFILE}",
             "",
-            "# Generate baseline results for regression testing",
-            "uv run benchmark-utils generate-baseline",
+            "# Package existing ci_performance_suite Criterion results for release-asset comparisons",
+            "uv run benchmark-utils write-baseline --ref vX.Y.Z --output baseline_results.txt",
             "```",
             "",
             "### Customization",
@@ -2344,6 +2365,36 @@ class BaselineGenerator:
             return False
         except _RECOVERABLE_CLI_ERRORS:
             logger.exception("Error in generate_baseline")
+            return False
+
+    def write_baseline_from_existing_results(self, output_file: Path, *, dev_mode: bool = False) -> bool:
+        """
+        Write a baseline file from existing Criterion results.
+
+        This is intended for workflows that already ran `ci_performance_suite`
+        through another command, such as the release performance summary. It
+        avoids a duplicate benchmark run while preserving the baseline file
+        format used by comparison tooling.
+        """
+        try:
+            target_dir = self.project_root / "target"
+            benchmark_results = CriterionParser.find_criterion_results(target_dir)
+
+            if not benchmark_results:
+                print(f"❌ No Criterion results found under {target_dir / 'criterion'}", file=sys.stderr)
+                return False
+
+            benchmark_results = [
+                result for result in benchmark_results if result.benchmark_id and ci_suite_group_key(result.benchmark_id.split("/", maxsplit=1)[0]) is not None
+            ]
+            if not benchmark_results:
+                print(f"❌ No ci_performance_suite Criterion results found under {target_dir / 'criterion'}", file=sys.stderr)
+                return False
+
+            self._write_baseline_file(benchmark_results, output_file, dev_mode=dev_mode)
+            return True
+        except _RECOVERABLE_CLI_ERRORS:
+            logger.exception("Error in write_baseline_from_existing_results")
             return False
 
     def _write_baseline_file(self, benchmark_results: list[BenchmarkData], output_file: Path, *, dev_mode: bool = False) -> None:
@@ -3874,14 +3925,14 @@ class BenchmarkRegressionHelper:
     def display_no_baseline_message() -> None:
         """Display message when no baseline is available."""
         print("⚠️ No performance baseline available for comparison.")
-        print("   - No baseline artifacts found in recent workflow runs")
-        print("   - Performance regression testing requires a baseline")
+        print("   - No GitHub Release benchmark baseline asset was found")
+        print("   - Performance regression testing compares against the latest released baseline")
         print()
         print("💡 To enable performance regression testing:")
-        print("   1. Create a release tag (e.g., v0.4.3), or")
-        print("   2. Manually trigger the 'Generate Performance Baseline' workflow")
-        print("   3. Future PRs and pushes will use that baseline for comparison")
-        print("   4. Baselines use full benchmark settings for accurate comparisons")
+        print("   1. Publish a GitHub Release")
+        print("   2. Wait for release-benchmarks.yml to attach the baseline asset")
+        print("   3. Future PRs and pushes will compare against that release baseline")
+        print("   4. Baselines use full perf-profile benchmark settings for accurate comparisons")
 
     @staticmethod
     def run_regression_test(baseline_path: Path, bench_timeout: int = 1800, dev_mode: bool = False) -> bool:
@@ -4318,6 +4369,18 @@ def _add_benchmark_subcommands(subparsers: "argparse._SubParsersAction[argparse.
     )
     gen_parser.set_defaults(validate_bench_timeout=True)
 
+    write_parser = subparsers.add_parser("write-baseline", help="Write a baseline from existing Criterion results")
+    write_parser.add_argument("--output", type=Path, required=True, help="Output baseline_results.txt path")
+    write_parser.add_argument("--project-root", type=Path, help="Project root containing existing target/criterion results")
+    write_parser.add_argument(
+        "--ref",
+        dest="ref_name",
+        type=str,
+        default=os.getenv("BASELINE_REF") or os.getenv("REF_NAME"),
+        help="Git ref name for this baseline (from BASELINE_REF/REF_NAME env or --ref option)",
+    )
+    write_parser.add_argument("--dev", action="store_true", help="Mark the baseline sampling metadata as dev mode")
+
     ref_parser = subparsers.add_parser("generate-ref-baseline", help="Generate a local baseline for a git ref")
     ref_parser.add_argument("--ref", dest="ref_name", type=str, default="main", help="Git ref to benchmark (default: main)")
     ref_parser.add_argument("--out", dest="out_dir", type=Path, default=Path("baseline-artifact"), help="Output artifact directory")
@@ -4528,6 +4591,11 @@ def _add_performance_summary_subcommands(subparsers: "argparse._SubParsersAction
         default=TRUSTED_BENCH_PROFILE,
         help=f"Cargo profile to use when --run-benchmarks is set (default: {TRUSTED_BENCH_PROFILE})",
     )
+    perf_summary_parser.add_argument(
+        "--strict",
+        action="store_true",
+        help="Fail instead of rendering from existing or fallback data when fresh benchmark execution fails",
+    )
 
 
 def create_argument_parser() -> argparse.ArgumentParser:
@@ -4581,6 +4649,13 @@ def _local_ref_cache_options_from_args(args: argparse.Namespace) -> LocalRefBase
 def _cmd_generate_baseline(args: argparse.Namespace, project_root: Path) -> None:
     generator = BaselineGenerator(project_root, ref_name=args.ref_name)
     success = generator.generate_baseline(dev_mode=args.dev, output_file=args.output, bench_timeout=args.bench_timeout)
+    sys.exit(0 if success else 1)
+
+
+def _cmd_write_baseline(args: argparse.Namespace, project_root: Path) -> None:
+    output_file = args.output if args.output.is_absolute() else project_root / args.output
+    generator = BaselineGenerator(project_root, ref_name=args.ref_name)
+    success = generator.write_baseline_from_existing_results(output_file, dev_mode=args.dev)
     sys.exit(0 if success else 1)
 
 
@@ -4658,6 +4733,7 @@ def execute_baseline_commands(args: argparse.Namespace, project_root: Path) -> N
     """Execute baseline generation and comparison commands."""
     handlers = {
         "generate-baseline": _cmd_generate_baseline,
+        "write-baseline": _cmd_write_baseline,
         "generate-ref-baseline": _cmd_generate_ref_baseline,
         "ensure-ref-baseline": _cmd_ensure_ref_baseline,
         "compare": _cmd_compare,
@@ -4866,7 +4942,7 @@ def execute_regression_commands(args: argparse.Namespace) -> None:
 def execute_command(args: argparse.Namespace, project_root: Path) -> None:
     """Execute the selected command based on parsed arguments."""
     # Try baseline commands first
-    if args.command in ("generate-baseline", "generate-ref-baseline", "ensure-ref-baseline", "compare", "compare-ref"):
+    if args.command in ("generate-baseline", "write-baseline", "generate-ref-baseline", "ensure-ref-baseline", "compare", "compare-ref"):
         execute_baseline_commands(args, project_root)
         return
 
@@ -4888,6 +4964,7 @@ def execute_command(args: argparse.Namespace, project_root: Path) -> None:
             run_benchmarks=args.run_benchmarks,
             generator_name="benchmark_utils.py",
             cargo_profile=args.profile,
+            strict=args.strict,
         )
         sys.exit(0 if success else 1)
 

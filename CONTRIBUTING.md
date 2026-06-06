@@ -1,23 +1,18 @@
 # Contributing to Delaunay
 
-Thank you for your interest in contributing to the [**delaunay**][delaunay-lib] computational geometry library!
-This document provides comprehensive guidelines for contributors, from first-time contributors
-to experienced developers looking to contribute significant features.
+Thank you for your interest in contributing to the [**delaunay**][delaunay-lib]
+computational geometry library. This guide is the contributor-facing entry
+point; detailed project rules live in the canonical documents linked below so
+they do not drift out of sync.
 
 ## Table of Contents
 
 - [Code of Conduct](#code-of-conduct)
 - [Getting Started](#getting-started)
-- [Development Environment Setup](#development-environment-setup)
-- [Project Structure](#project-structure)
-- [Development Workflow](#development-workflow)
-- [Just Command Runner](#just-command-runner)
-- [CI Performance Testing](#ci-performance-testing)
-- [Code Style and Standards](#code-style-and-standards)
-- [Testing](#testing)
-- [Documentation](#documentation)
-- [Citation and References](#citation-and-references)
-- [Performance and Benchmarking](#performance-and-benchmarking)
+- [AI-Assisted Development](#ai-assisted-development)
+- [Contributor Workflow](#contributor-workflow)
+- [Project References](#project-references)
+- [Commit Message Format](#commit-message-format)
 - [Submitting Changes](#submitting-changes)
 - [Types of Contributions](#types-of-contributions)
 - [Release Process](#release-process)
@@ -25,478 +20,75 @@ to experienced developers looking to contribute significant features.
 
 ## Code of Conduct
 
-This project and everyone participating in it is governed by our [Code of Conduct][code-of-conduct].
-By participating, you are expected to uphold these standards.
-Please report unacceptable behavior to the [maintainer][maintainer-email].
+This project and everyone participating in it is governed by our
+[Code of Conduct][code-of-conduct]. By participating, you are expected to uphold
+these standards. Please report unacceptable behavior to the
+[maintainer][maintainer-email].
 
-Our community is built on the principles of:
+Our community is built on:
 
-- **Respectful collaboration** in computational geometry research and development
-- **Inclusive participation** regardless of background or experience level
-- **Excellence in scientific computing** and algorithm implementation
-- **Open knowledge sharing** about Delaunay triangulations and geometric algorithms
+- Respectful collaboration in computational geometry research and development
+- Inclusive participation regardless of background or experience level
+- Excellence in scientific computing and algorithm implementation
+- Open knowledge sharing about Delaunay triangulations and geometric algorithms
 
 ## Getting Started
 
-### Prerequisites
+Install [Rust via rustup][rustup], Git, Python, `uv`, and `just`. The pinned
+Rust toolchain is declared in `rust-toolchain.toml`; Python development tooling
+is described in [docs/dev/python.md][dev-python] and
+[scripts/README.md][scripts-readme].
 
-Before you begin, ensure you have:
-
-1. **Rust** (latest stable version): Install via [rustup.rs][rustup]
-2. **Git** for version control
-3. **Python and uv** (for development scripts and automation):
-   - **Python**: Minimum version specified in `.python-version` (enforced for performance reasons)
-   - **uv**: Fast Python package manager - Install via:
-     - **macOS/Linux**: `curl -LsSf https://astral.sh/uv/install.sh | sh`
-     - **Windows**: `powershell -ExecutionPolicy Bypass -c "irm https://astral.sh/uv/install.ps1 | iex"`
-     - **Alternative**: `pip install uv` (if you prefer using pip)
-   - See [uv installation guide](https://docs.astral.sh/uv/getting-started/installation/) for more options
-4. **System dependencies** (for shell scripts):
-   - **macOS**: `brew install findutils coreutils`
-   - **Ubuntu/Debian**: `sudo apt-get install findutils coreutils`
-   - **Other systems**: Install equivalent packages for `find` and `sort`
-
-**Note**: Many development tasks now use Python utilities (managed by uv)
-instead of traditional shell tools, reducing the number of required system
-dependencies.
-
-### Quick Start
-
-1. **Fork and clone** the repository:
-   - Fork this repository to your GitHub account using the "Fork" button
-   - Clone your fork locally:
-
-   ```bash
-   git clone https://github.com/yourusername/delaunay.git
-   cd delaunay
-   ```
-
-2. **Build the project**:
-
-   ```bash
-   cargo build
-   ```
-
-3. **Run tests**:
-
-   ```bash
-   # Basic tests
-   cargo test                # Rust library tests
-   just python-sync          # Install/update Python dev dependencies
-   just test-python          # Python utility tests
-
-   # Or use just for comprehensive testing:
-   just test                 # Tests + benchmark/release compile smoke
-   just test-all             # Rust + Python tests
-   just test-release         # All tests in release mode (faster performance)
-   ```
-
-4. **Try the examples**:
-
-   ```bash
-   cargo run --release --example triangulation_3d_1000_points
-   ./scripts/run_all_examples.sh  # Run all examples
-   ```
-
-5. **Run benchmarks** (optional):
-
-   ```bash
-   # Compile benchmarks without running (useful for CI)
-   just bench-compile
-
-   # Run the fast pre-PR performance guard when a current baseline artifact is present
-   just perf-no-regressions
-   ```
-
-6. **Code quality checks**:
-
-   ```bash
-   just check           # Non-mutating formatting, lint, docs, and config checks
-   just doc-check       # Focused documentation build check
-   just fix             # Apply formatters/auto-fixes when needed
-   ```
-
-7. **Use Just for comprehensive workflows** (recommended):
-
-   ```bash
-   # Install just command runner
-   cargo install just
-
-   # See all available commands
-   just --list
-   just help-workflows   # Show common workflow patterns
-
-   # Recommended workflow
-   just check           # All non-mutating lints/validators
-   just fix             # Apply formatters/auto-fixes (mutating)
-   just test            # Tests + benchmark/release compile smoke
-   just ci              # Comprehensive checks + tests + examples
-
-   # Granular quality checks
-   just lint            # All linting (code + docs + config)
-   just lint-code       # Code linting only (Rust, Python, Shell)
-   just lint-docs       # Documentation linting only
-   just lint-config     # Configuration validation only
-   ```
-
-> **Tip**: Use `just help-workflows` for workflow guidance and to see all available commands.
-
-## Development Environment Setup
-
-### Recommended Tools
-
-- **IDE/Editor**: Any editor with Rust Language Server (rust-analyzer) support
-- **Linting**: The project uses strict clippy lints - ensure your editor shows clippy warnings
-- **Formatting**: Use `rustfmt` for code formatting (configured in `rustfmt.toml`)
-
-### Project Configuration
-
-The project uses:
-
-- **Edition**: Rust 2024
-- **MSRV**: Rust 1.96.0
-- **Linting**: Strict clippy pedantic mode
-- **Testing**: Standard `#[test]` with comprehensive coverage
-- **Benchmarking**: Criterion with allocation tracking
-
-### Automatic Toolchain Management
-
-**🔧 This project uses automatic Rust toolchain management via `rust-toolchain.toml`**
-
-When you enter the project directory, `rustup` will automatically:
-
-- **Install the correct Rust version** (1.96.0) if you don't have it
-- **Switch to the pinned version** for this project
-- **Install required components** (clippy, rustfmt, rust-src)
-- **Keep the host toolchain lean**; workflows install cross-compilation
-  targets only when they need them
-
-**What this means for contributors:**
-
-1. **No manual setup needed** - Just have `rustup` installed ([rustup.rs][rustup])
-2. **Consistent environment** - Everyone uses the same Rust version automatically
-3. **Reproducible builds** - Eliminates "works on my machine" issues
-4. **CI compatibility** - Your local environment matches our CI exactly
-
-**First time in the project?** You'll see:
-
-```text
-info: syncing channel updates for '1.96.0-<your-platform>'
-info: downloading component 'cargo'
-info: downloading component 'clippy'
-...
-```
-
-This is normal and only happens once. After that, the correct toolchain is used automatically whenever you work on the project.
-
-**Verification:** Run `rustup show` to confirm you're using the pinned toolchain:
+For the current command list and workflow details, use:
 
 ```bash
-rustup show
-# Should show: active toolchain: 1.96.0-<platform> (overridden by '/path/to/delaunay/rust-toolchain.toml')
-```
-
-### Python Development Environment
-
-#### Python Utilities for Development Automation
-
-The project has transitioned from traditional shell scripts to Python-based utilities for better cross-platform compatibility and maintainability.
-
-**Key Python Configuration Files:**
-
-- **`pyproject.toml`**: Defines Python project metadata, dependencies, and tool configurations
-- **`uv.lock`**: Lockfile ensuring reproducible Python environments across different machines
-- **Python utilities** in `scripts/`: Modern replacements for legacy shell scripts
-
-**Python Dependencies Management:**
-
-The project uses `uv` for fast, reliable Python dependency management:
-
-```bash
-# Python dependencies are automatically managed
-# No manual installation required - uv handles everything
-
-# Recommended repository workflow:
-just check            # Non-mutating checks, including Python
-just fix              # Formatters and auto-fixes, including Python
-
-# Focused Python checks:
-just python-check     # Python formatting, linting, and type checking
-just python-typecheck # Python type checking only
-just python-fix       # Python Ruff fixes and formatting
-```
-
-**Integration with Development Workflow:**
-
-- **GitHub Actions**: Python utilities integrate seamlessly with CI/CD
-- **Hardware Detection**: Cross-platform hardware information gathering
-- **Benchmark Processing**: Automated performance regression detection
-- **Changelog Management**: Enhanced changelog generation and git tagging with Python parsing
-
-**Migration from Shell Scripts:**
-
-The project has evolved from shell-based to Python-based automation:
-
-- ✅ **New**: Python utilities (`benchmark-utils`, `hardware-utils`, `postprocess-changelog`,
-  `archive-changelog`, and `tag-release`) accessible via `uv run` with comprehensive benchmark
-  processing, hardware detection, and changelog management functionality
-- ❌ **Legacy**: Old shell scripts like `generate_baseline.sh`, `compare_benchmarks.sh`, `tag-from-changelog.sh` (replaced by Python equivalents)
-- 🔄 **Hybrid**: Some shell scripts remain as simple wrappers (e.g., `run_all_examples.sh`)
-
-**Benefits of Python Utilities:**
-
-- **Cross-platform compatibility** (Windows, macOS, Linux)
-- **Better error handling** and structured data processing
-- **Integration with GitHub Actions** for automated workflows
-- **Easier maintenance** and testing compared to complex shell scripts
-
-## Project Structure
-
-The project follows a standard Rust library structure with additional tooling for computational geometry research:
-
-### Key Directories
-
-- **`src/`** - Core library code
-  - **`core/`** - Triangulation data structures and algorithms (Bowyer-Watson, boundary analysis)
-  - **`geometry/`** - Geometric predicates, point operations, and convex hull algorithms
-- **`examples/`** - Usage examples and demonstrations (see [examples documentation][examples-readme])
-- **`benches/`** - Performance benchmarks with Criterion (see [benchmarks documentation][benches-readme])
-- **`tests/`** - Integration tests and regression test suites
-- **`docs/`** - Additional documentation and guides
-- **`scripts/`** - Development automation (Python utilities, shell scripts)
-
-### Configuration Files
-
-- **`.codacy.yml`** - Code quality analysis configuration
-- **`Cargo.toml`** - Package metadata and Rust tooling configuration
-- **`pyproject.toml`** - Python development tools configuration
-- **`rustfmt.toml`** - Code formatting rules
-- **`rust-toolchain.toml`** - Pinned Rust version for reproducible builds
-
-### Development Resources
-
-- **`AGENTS.md`** - AI development assistant guidance
-- **`CONTRIBUTING.md`** - This file
-- **`REFERENCES.md`** - Academic citations and bibliography
-- **`.github/workflows/`** - CI/CD automation (testing, benchmarks, quality checks)
-
-For detailed code organization patterns and module structure, see [code organization documentation][code-organization].
-
-## CI Performance Testing
-
-### ⚠️ **Important: Rust Code Changes Trigger Lengthy Baseline Comparisons**
-
-**Any changes to Rust code will automatically trigger performance regression testing in CI, which can take 30-45 minutes to complete.**
-
-The benchmark workflow runs on changes to:
-
-- `src/**` - Any core library code
-- `benches/**` - Benchmark code  
-- `Cargo.toml` or `Cargo.lock` - Dependencies
-
-### **Branch Strategy Recommendation**
-
-To avoid triggering lengthy baseline comparisons unnecessarily:
-
-✅ **Recommended**: Keep documentation and Python utility updates in **separate branches/PRs** from Rust code changes
-
-❌ **Avoid**: Mixing documentation updates with Rust code changes in the same commit/PR
-
-### **Examples**
-
-**Good workflow:**
-
-```bash
-# Branch 1: Documentation updates only
-git checkout -b doc/329-readme-guidance
-# Edit README.md, CONTRIBUTING.md, etc.
-git commit -m "docs: update contributing guidelines"
-# → No benchmarks triggered, fast CI
-
-# Branch 2: Rust code changes (separate PR)
-git checkout -b perf/315-algorithm-hot-path
-# Edit src/core/triangulation.rs
-git commit -m "feat: optimize triangulation algorithm"
-# → Benchmarks triggered, but isolated to code changes
-```
-
-**Avoid:**
-
-```bash
-# Mixed changes (triggers benchmarks for trivial doc fixes)
-git add README.md src/core/triangulation.rs
-git commit -m "feat: algorithm improvement + doc updates"
-# → 45-minute benchmark run for a simple doc fix
-```
-
-This strategy helps maintain fast feedback loops for documentation work while ensuring proper performance regression testing for code changes.
-
-## Just Command Runner
-
-### Overview
-
-The project uses [Just](https://github.com/casey/just) as a command runner to provide convenient workflows that combine multiple development tasks.
-Just recipes are defined in the [`justfile`](justfile) in the project root.
-
-### Installation
-
-```bash
-# Install just
-cargo install just
-
-# Verify installation
-just --version
-```
-
-### Common Workflows
-
-```bash
-# See all available commands
 just --list
-just help-workflows   # Show common workflow patterns
-
-# Recommended workflow
-just check            # All non-mutating lints/validators
-just fix              # Apply formatters/auto-fixes (mutating)
-just test             # Tests + benchmark/release compile smoke
-
-# Full CI / pre-push validation
-just ci               # Comprehensive checks + tests + examples
-just ci-slow          # CI + slow tests (100+ vertices)
-just ci-baseline      # CI + persist default performance baseline
-
-# Testing workflows
-just test             # Tests + benchmark/release compile smoke
-just test-unit        # Lib and doc tests only
-just test-integration # All integration tests (includes proptests)
-just test-all         # All tests (lib + doc + integration + Python)
-just test-python      # Python tests only (pytest)
-just test-release     # All tests in release mode
-just test-slow        # Run slow/stress tests with --features slow-tests
-just test-slow-release # Slow tests in release mode (faster)
-just coverage         # Generate HTML coverage report (5-min timeout per test)
-just coverage-ci      # Generate XML coverage for CI (5-min timeout per test)
-
-# Benchmark workflows
-just bench-smoke      # Smoke-test benchmark harnesses (minimal samples)
-just bench            # Run all benchmarks with perf profile
-just bench-ci         # CI regression benchmarks with perf profile (~5-10 min)
-just perf-baseline    # Persist/update the default local baseline artifact
-just perf-baseline-to <out> # Generate a scratch baseline without replacing the default
-just perf-compare     # Compare against a specific dev-mode baseline file
-just perf-no-regressions # Fast pre-PR 2D-5D regression guard
+just help-workflows
 ```
 
-### Individual Task Recipes
-
-#### Code Quality
-
-- `just action-lint` - GitHub Actions workflow validation
-- `just clippy` - Run strict clippy
-- `just doc-check` - Validate documentation builds
-- `just lint` - All linting (code + docs + config)
-- `just lint-code` - Code linting (Rust, Python, Shell)
-- `just lint-config` - Configuration validation (JSON, TOML, YAML, Actions)
-- `just lint-docs` - Documentation linting (Markdown, Spelling)
-- `just markdown-check` - Lint/check Markdown with rumdl (non-mutating)
-- `just python-check` - Format, lint, and type-check Python scripts (non-mutating)
-- `just python-lint` - Lint + typecheck Python scripts (non-mutating)
-- `just shell-lint` - Lint/check shell scripts (non-mutating)
-- `just spell-check` - Check spelling across project files (uses `typos-cli`, configured by `typos.toml`)
-- `just yaml-check` - Check YAML/CFF formatting and YAML style (non-mutating)
-- `just fmt` - Format all code
-- `just markdown-fix` - Auto-fix markdown formatting
-- `just python-fix` - Auto-format / auto-fix Python scripts
-- `just shell-fix` - Format shell scripts
-- `just yaml-fix` - Auto-format YAML/CFF files with dprint
-
-#### Testing
-
-- `just test` - Tests plus benchmark/release compile smoke
-- `just test-unit` - Lib and doc tests only
-- `just test-integration` - All integration tests (includes proptests)
-- `just test-all` - All tests (lib + doc + integration + Python)
-- `just test-python` - Python tests only (pytest)
-- `just test-release` - All tests in release mode
-- `just test-slow` - Run slow/stress tests with --features slow-tests
-- `just test-slow-release` - Slow tests in release mode (faster)
-- `just test-diagnostics` - Diagnostics tools with output
-- `just debug-large-scale-*` - Active large-scale debug harnesses retained
-  while issues #307 and #204 are being fixed
-- `just test-allocation` - Memory allocation profiling
-- `just examples` - Run all examples to verify functionality
-
-#### Validation and Linting
-
-- `just action-lint` - GitHub Actions workflow validation
-- `just json-check` - Validate all JSON files
-- `just markdown-check` - Lint Markdown files
-- `just shell-lint` - Check shell script formatting and lint diagnostics
-- `just spell-check` - Check spelling across project files (uses `typos-cli`, configured by `typos.toml`)
-- `just toml-check` - Validate all TOML files
-- `just yaml-check` - Check YAML/CFF formatting and style
-
-#### Utilities
-
-- `just setup` - Set up development environment
-- `just clean` - Clean build artifacts
-- `just build` - Build the project
-- `just build-release` - Build in release mode
-- `just changelog` - Generate enhanced changelog
-- `just tag <version>` - Create git tag with changelog content
-- `just help-workflows` - Show common workflow patterns
-
-### Workflow Recommendations
-
-**During active development:**
+A typical first local pass is:
 
 ```bash
-just check            # All non-mutating lints/validators
-just fix              # Apply formatters/auto-fixes (mutating)
-just test             # Tests + benchmark/release compile smoke
+just setup
+just check
+just test
 ```
 
-**Before committing/pushing:**
+Run `just ci` before opening or updating a pull request when the change is ready
+for full validation. For command details, see [docs/dev/commands.md][dev-commands].
 
-```bash
-just ci               # Comprehensive checks + tests + examples
-just perf-no-regressions # Fast performance guard for Rust/benchmark changes
-just ci-slow          # Optional: also includes slow/stress tests (100+ vertices)
-```
+## AI-Assisted Development
 
-**When working on performance:**
+This repository contains an [`AGENTS.md`](AGENTS.md) file, which defines the
+canonical rules and invariants for AI coding assistants and autonomous agents
+working on this codebase.
 
-```bash
-just perf-no-regressions # Final dev-mode comparison against a temporary main baseline
-```
+AI tools, including ChatGPT, Claude, CodeRabbit, Codex, GitHub Copilot,
+KiloCode, and WARP, are expected to read and follow `AGENTS.md` when proposing
+or applying changes.
 
-**Testing CI locally:**
+Portions of this library were developed with the assistance of these tools:
 
-```bash
-just ci               # Comprehensive local CI run
-```
+- [ChatGPT](https://openai.com/chatgpt)
+- [Claude](https://www.anthropic.com/claude)
+- [CodeRabbit](https://coderabbit.ai/)
+- [Codex](https://openai.com/codex/)
+- [GitHub Copilot](https://github.com/features/copilot)
+- [KiloCode](https://kilocode.ai/)
+- [WARP](https://www.warp.dev)
 
-**See all available commands:**
+All AI-assisted work must be reviewed and validated by a human maintainer before
+it is merged.
 
-```bash
-just --list           # Show all commands
-just help-workflows   # Show common workflow patterns with descriptions
-```
+For full tool citation metadata, see the
+[AI-Assisted Development Tools](REFERENCES.md#ai-assisted-development-tools)
+section of [`REFERENCES.md`](REFERENCES.md).
 
-## Development Workflow
+## Contributor Workflow
 
-### 1. Issue-Driven Development
-
-Before starting work:
-
-1. **Check existing issues** for similar problems or feature requests
-2. **Create an issue** if none exists, describing:
-   - The problem or feature request
-   - Expected behavior vs. actual behavior
-   - Relevant mathematical/algorithmic context
-   - Proposed solution approach (for features)
-
-### 2. Branch Strategy
+Before starting work, check existing GitHub issues for related bug reports,
+feature requests, or design discussion. Create a new issue when the expected
+behavior, mathematical context, or proposed implementation needs review first.
 
 Create focused branches for your work. Prefer
 `{type}/{issue}-descriptor-or-two`, where `{issue}` is the GitHub issue number
@@ -504,726 +96,101 @@ when one exists. Use a concise type aligned with the change: `fix`, `feat`,
 `perf`, `doc`, `test`, `refactor`, `ci`, `build`, `chore`, or `style`.
 
 ```bash
-# For bug fixes
 git checkout -b fix/307-oriented-flips
-
-# For performance work
 git checkout -b perf/315-bench-profile
-
-# For documentation
 git checkout -b doc/329-branch-guidance
 ```
 
-### 3. Development Process
+Keep changes scoped, update tests and documentation with the behavior they
+support, and check performance impact for Rust algorithm or benchmark changes.
+Automation must stop before version-control mutations; contributors should
+perform commits, pushes, tags, and release operations manually.
 
-1. **Make focused commits** with clear messages (see [Commit Message Format](#commit-message-format))
-2. **Write or update tests** for your changes
-3. **Update documentation** as needed
-4. **Run the full test suite** before pushing
-5. **Check performance impact** for algorithmic changes
-6. **Push to your fork** and create a pull request to the main repository
+## Project References
 
-**Important Note on Git Operations:**
+Use these documents as the source of truth instead of duplicating their content
+in this guide:
 
-Per project rules (see [AGENTS.md](AGENTS.md)), **DO NOT** include `git commit` or `git push` commands in
-development scripts. All git operations should be handled manually by contributors to maintain full control over
-version control operations. This ensures:
-
-- **User control** over commit messages and timing
-- **Prevention of accidental commits** during automated processes
-- **Compliance with project security policies**
-- **Flexibility** in branching and merging strategies
-
-Any automation scripts should stop at the point where git operations would be needed, allowing contributors to handle version control manually.
-
-### 4. Continuous Integration
-
-The project uses comprehensive CI workflows:
-
-- **Main CI** (`.github/workflows/ci.yml`): Build, test, lint on every PR
-- **Benchmarks** (`.github/workflows/benchmarks.yml`): Performance regression testing
-- **CodeQL** (`.github/workflows/codeql.yml`): Security-focused GitHub code scanning for Actions, Python, and Rust
-- **Security** (`.github/workflows/audit.yml`): Dependency vulnerability scanning with SARIF upload
-- **Code Quality** (`.github/workflows/rust-clippy.yml`): Strict linting with SARIF upload
-- **CodeRabbit** (`.coderabbit.yml`): PR review comments for curated quality feedback
-- **Codacy** (`.codacy.yml`): Curated PR quality feedback and duplication/complexity metrics
-- **Codacy SARIF mirror** (`.github/workflows/codacy.yml`): Repository-owned Opengrep SARIF upload
-- **Coverage** (`.github/workflows/codecov.yml`): Test coverage tracking with 5-minute per-test timeout
-
-All PRs must pass CI checks before merging.
-
-### 5. Code Quality Analysis
-
-Non-security quality feedback should surface as PR review comments, normal
-status checks, or CI logs rather than broad GitHub Code Scanning alerts.
-
-The project uses **CodeRabbit** for PR review comments from two surfaces:
-
-- **Native CodeRabbit tools** from `.coderabbit.yml`: Clippy, Ruff,
-  ShellCheck, Markdownlint, actionlint, yamllint, ast-grep, gitleaks, and
-  LanguageTool. CodeRabbit also provides its own security, complexity,
-  refactor, suggestion, labeling, linked-issue, and review-effort feedback.
-- **CI/GitHub summaries**: GitHub check summaries surface the broader
-  workflow results, including `just check` coverage for local-only or
-  environment-specific checks.
-
-The project uses **Codacy** as a second PR-quality surface. Enable and disable
-Codacy tools in the Codacy Code Patterns UI; `.codacy.yml` records path and
-tool configuration, but Codacy does not use that file to turn tools on or off.
-
-- **Configuration**: `.codacy.yml` in the project root
-- **Source of Truth**: Treat the tool lists below as a snapshot; verify current enablement in
-  Codacy project settings -> Tools / Code Patterns or Codacy configuration sync before relying on them
-- **Enabled Tools**: Ruff, bandit, markdownlint, ShellCheck, repository-owned Opengrep, duplication,
-  and advisory Lizard
-- **Disabled Tools**: Prospector, Pylint, broad Opengrep, Trivy, Jackson Linter, and Spectral
-- **Documentation Analysis**: Local and CI Markdown checks use rumdl configured in
-  `pyproject.toml`; Codacy markdownlint is scoped by `.codacy.yml` with MD013 managed in the Codacy UI
-- **Python Analysis**: Ruff and bandit use `.codacy.yml` path scopes and skip `scripts/tests/**`
-- **Local/CI Analysis**: Rust, Python, shell, Markdown, YAML, TOML, JSON, and GitHub Actions checks run through `just check`
-- **Security Analysis**: Uses CodeQL and cargo-audit rather than Codacy's broader engine set
-- **Code Scanning Mirror**: `.github/workflows/codacy.yml` uploads only repository-owned Opengrep
-  findings whose rule IDs start with `delaunay.` so Codacy's default maintainability findings stay in
-  PR feedback instead of GitHub Code Scanning
-
-**Key Benefits:**
-
-- **Reduced Noise**: Avoids duplicate feedback from Bandit, Prospector, Pylint, broad Opengrep, Trivy,
-  Jackson Linter, and Spectral
-- **Uses Project Settings**: Respects repository Markdownlint and Ruff configuration
-- **Review Feedback**: Keeps maintainability comments close to the pull request
-
-**For Contributors:**
-
-- CodeRabbit review feedback runs automatically on all PRs
-- Codacy analysis runs the curated quality tool set above
-- Broader lint and validation checks run locally and in CI via `just check`
-- No additional setup required - uses existing project configurations
+| Topic | Canonical reference |
+|-------|---------------------|
+| Agent rules and repository invariants | [`AGENTS.md`](AGENTS.md) |
+| Command recipes and validation workflow | [docs/dev/commands.md][dev-commands], `just --list` |
+| Rust style, docs, and API expectations | [docs/dev/rust.md][dev-rust] |
+| Testing conventions and adversarial input guidance | [docs/dev/testing.md][dev-testing] |
+| Python tooling and support scripts | [docs/dev/python.md][dev-python], [scripts/README.md][scripts-readme] |
+| Project layout and module architecture | [docs/code_organization.md][code-organization] |
+| Examples | [examples/README.md][examples-readme] |
+| Benchmarks, baselines, and performance workflows | [benches/README.md][benches-readme] |
+| Tooling and CI alignment rationale | [docs/dev/tooling-alignment.md][tooling-alignment] |
+| Validation layers and invariants | [docs/validation.md][validation], [docs/invariants.md][invariants] |
+| Citations and bibliography | [CITATION.cff][citation], [REFERENCES.md][references] |
+| Releases and changelog generation | [docs/RELEASING.md][releasing], [CHANGELOG.md][changelog] |
 
 ## Commit Message Format
 
-This project uses [conventional commits](https://www.conventionalcommits.org/) to generate meaningful changelogs automatically.
-
-### Format
-
-```text
-type(scope): short description (50 chars or less)
-
-Optional longer explanation (wrap at 72 chars)
-- Why this change was made
-- What problem it solves
-- Any side effects or considerations
-
-Reference issues: Fixes #123, Closes #456
-Breaking changes: BREAKING CHANGE: description
-```
-
-### Types
-
-| Type | Description | Appears in Changelog |
-|------|-------------|----------------------|
-| feat | New features | ✅ Yes |
-| fix | Bug fixes | ✅ Yes |
-| perf | Performance improvements | ✅ Yes |
-| refactor | Code refactoring | ✅ Yes |
-| build | Build system changes | ✅ Yes |
-| ci | CI/CD changes | ✅ Yes |
-| revert | Reverting changes | ✅ Yes |
-| chore | Maintenance tasks | ❌ No (filtered) |
-| style | Formatting changes | ❌ No (filtered) |
-| docs | Documentation only | ❌ No (filtered) |
-| test | Test changes only | ❌ No (filtered) |
-
-### Scopes (Optional)
-
-- `core` - Core triangulation structures
-- `geometry` - Geometric algorithms and predicates
-- `benchmarks` - Performance benchmarks
-- `examples` - Usage examples
-- `docs` - Documentation
-
-### Examples
-
-```bash
-# Features
-feat(core): implement d-dimensional boundary analysis
-feat(geometry): add robust circumsphere predicates
-feat: add 4D triangulation support
-
-# Bug fixes
-fix(core): prevent infinite loop in degenerate triangulations
-fix(geometry): handle NaN coordinates in point validation
-fix: resolve memory leak in vertex insertion
-
-# Performance
-perf(core): optimize Bowyer-Watson algorithm with simplex caching
-perf: reduce allocations in neighbor assignment
-
-# Breaking changes
-feat!: redesign Vertex API for better type safety
-fix!: change Point::coordinates() to Point::to_array()
-
-# Maintenance (filtered from changelog)
-chore: update dependencies
-style: fix clippy warnings
-docs: update README examples
-test: add edge case coverage
-```
-
-### PR Titles
-
-Since PR merges appear prominently in the changelog, use the same conventional format for PR titles:
+Use conventional commits so release tooling can generate useful changelog
+entries:
 
 ```text
-feat: implement 4D triangulation support
-fix: resolve edge case in Bowyer-Watson algorithm
-perf: optimize boundary facet detection
+type(scope): short description
+
+- Explain the important behavior or maintenance change.
+- Include issue or PR references when useful.
 ```
 
-## Code Style and Standards
-
-### Rust Style Guidelines
-
-The project follows strict Rust coding standards:
-
-```toml
-# From Cargo.toml - all code must pass these lints
-[lints.clippy]
-pedantic = { level = "warn", priority = -1 }
-extra_unused_type_parameters = "warn"
-```
-
-Key standards:
-
-- **Documentation**: All public APIs must have comprehensive doc comments
-- **Error Handling**: Use proper `Result` types, avoid `unwrap()` in library code
-- **Type Safety**: Leverage Rust's type system for algorithmic correctness
-- **Performance**: Consider algorithmic complexity and memory allocation patterns
-
-### Mathematical Documentation
-
-Given the mathematical nature of computational geometry:
-
-- **Algorithm References**: Cite relevant papers or textbooks
-- **Complexity Analysis**: Document time/space complexity where relevant
-- **Geometric Intuition**: Explain the geometric meaning of operations
-- **Numerical Stability**: Note floating-point considerations
-
-### Code Organization
-
-Follow the patterns documented in [code organization documentation][code-organization]:
-
-1. Module documentation (`//!` comments)
-2. Imports (organized by source)
-3. Error types (using `thiserror`)
-4. Convenience macros and helpers
-5. Struct definitions (with Builder pattern)
-6. Core implementations
-7. Trait implementations
-8. Tests (comprehensive with subsections)
-
-### Public Namespace Policy
-
-`src/core/` is the internal implementation namespace for the low-level TDS and
-algorithm layer. Do not make `crate::core` public or add a broad
-`delaunay::core` facade. The public low-level surface should stay explicit and
-workflow-oriented:
-
-- `delaunay::tds` for simplices, facets, vertex keys, TDS validation, and generic
-  triangulation data structures
-- `delaunay::collections` for collection aliases, small buffers, and secondary
-  maps
-- `delaunay::algorithms` for low-level algorithms such as point location and
-  Hilbert ordering
-- `delaunay::query` for read-only traversal, convex hull extraction, boundary
-  analysis, and diagnostics helpers
-
-Expose new low-level APIs through those curated modules and their focused
-preludes when the item is useful to downstream callers. Keep high-level
-Delaunay construction, repair, validation policy, and workflow APIs separate
-from this layer so imports describe the level of abstraction being used.
-
-During pre-1.0 development, breaking import changes are acceptable when they
-improve correctness, orthogonality, or performance. When changing the public
-surface, update the facade modules in `src/lib.rs`, the focused preludes,
-README import guidance, code-organization docs, doctests, and any
-downstream-style integration tests that demonstrate supported imports.
-
-## Testing
-
-### Test Categories
-
-The project maintains comprehensive test coverage:
-
-```bash
-# Unit tests (embedded in source files)
-cargo test
-
-# Integration tests
-cargo test --tests
-
-# Python utility tests (development scripts)
-just python-sync    # Install/update Python dev dependencies
-just test-python    # Run Python tests
-
-# Example tests (ensure examples compile and run)
-./scripts/run_all_examples.sh
-
-# Benchmark tests (performance verification) - always use the perf profile for
-# consistent ThinLTO + single codegen-unit measurements across local/CI runs
-cargo bench --profile perf
-```
-
-### Writing Tests
-
-Follow these testing patterns:
-
-1. **Unit Tests**: Test individual functions and methods
-
-   ```rust
-   #[cfg(test)]
-   mod tests {
-       use super::*;
-
-       #[test]
-       fn test_specific_functionality() {
-           // Test implementation
-       }
-   }
-   ```
-
-2. **Property-Based Tests**: For geometric algorithms
-
-   ```rust
-   #[test]
-   fn test_geometric_property() {
-       // Test that geometric invariants hold
-   }
-   ```
-
-3. **Edge Case Tests**: Boundary conditions and special cases
-
-   ```rust
-   #[test]
-   fn test_degenerate_cases() {
-       // Test edge cases like collinear points
-   }
-   ```
-
-### Test Data and Reproducibility
-
-- Use **fixed random seeds** for reproducible tests
-- Include tests for **various dimensions** (2D, 3D, 4D, etc.)
-- Test with **different data distributions** (uniform, clustered, etc.)
-- Include **regression tests** for fixed bugs
-
-## Documentation
-
-### Documentation Types
-
-1. **API Documentation**: Rust doc comments on all public items
-2. **Examples**: Comprehensive examples in `examples/` directory
-3. **User Guides**: High-level documentation in `docs/`
-4. **Contributing Guides**: Development-focused documentation
-
-### Writing Good Documentation
-
-- **Start with purpose**: What does this function/struct/module do?
-- **Explain parameters**: What do generic parameters represent?
-- **Provide examples**: Show typical usage patterns
-- **Note constraints**: Preconditions, postconditions, invariants
-- **Reference theory**: Link to relevant mathematical concepts
-
-### Documentation Commands
-
-```bash
-# Generate and view documentation
-cargo doc --open
-
-# Test documentation examples
-just test             # Includes doc tests
-
-# Check documentation coverage and validate
-just doc-check        # Validates documentation builds for crates.io
-```
-
-## Citation and References
-
-### Academic Citations
-
-This library is designed for research and academic use in computational geometry. If you use this library in your research, please cite it appropriately.
-
-#### How to Cite This Library
-
-The project provides standardized citation metadata in [CITATION.cff](CITATION.cff) that can be automatically
-processed by GitHub and academic tools. For the most up-to-date citation information, see [REFERENCES.md](REFERENCES.md).
-
-**Quick citation (ACM format):**
+Common types are `feat`, `fix`, `perf`, `refactor`, `build`, `ci`, `docs`,
+`test`, `style`, and `chore`. Use a breaking-change marker when a public API or
+behavior changes incompatibly:
 
 ```text
-Adam Getchell (https://orcid.org/0000-0002-0797-0021). 2025. delaunay: A d-dimensional Delaunay triangulation library.
-Zenodo. DOI: https://doi.org/10.5281/zenodo.16931097
+feat!: redesign vertex import API
+
+BREAKING CHANGE: callers must now pass validated vertex fixtures.
 ```
 
-**BibTeX:**
-
-```bibtex
-@software{getchell_delaunay_2025,
-  author  = {Adam Getchell},
-  title   = {delaunay: A d-dimensional Delaunay triangulation library},
-  year    = {2025},
-  doi     = {10.5281/zenodo.16931097},
-  url     = {https://doi.org/10.5281/zenodo.16931097},
-  orcid   = {0000-0002-0797-0021}
-}
-```
-
-Note: The canonical citation is maintained in [CITATION.cff](CITATION.cff); prefer that as the source of truth.
-
-#### Adding Academic References
-
-When contributing algorithmic improvements or new features based on academic literature:
-
-1. **Update REFERENCES.md**: Add new citations to the appropriate section
-2. **Follow the existing format**: Use consistent bibliographic style
-3. **Include DOI links**: When available, provide DOI URLs for easy access
-4. **Categorize appropriately**: Place references under relevant sections:
-   - Core Delaunay Triangulation Algorithms and Data Structures
-   - Geometric Predicates and Numerical Robustness
-   - Convex Hull Algorithms
-   - Advanced Computational Geometry Topics
-
-#### Reference Format Guidelines
-
-Use this format for academic papers:
-
-```text
-- Author, A. "Paper Title." *Journal Name* Volume, no. Issue (Year): Pages.
-  DOI: [10.xxxx/xxxx](https://doi.org/10.xxxx/xxxx)
-```
-
-For books:
-
-```text
-- Author, A. "Book Title." Publisher, Year.
-```
-
-For online resources:
-
-```text
-- [Resource Name](URL)
-```
-
-#### Documentation in Code
-
-When implementing algorithms from academic sources:
-
-- **Reference the source** in module or function documentation
-- **Explain the algorithm** in computational geometry terms
-- **Note any modifications** you made from the original
-- **Include complexity analysis** when relevant
-
-Example:
-
-```rust
-/// Implements the Bowyer-Watson algorithm for incremental Delaunay triangulation.
-/// 
-/// Based on:
-/// - Bowyer, A. "Computing Dirichlet tessellations." The Computer Journal 24, no. 2 (1981): 162-166.
-/// - Watson, D.F. "Computing the n-dimensional Delaunay tessellation with application to Voronoi polytopes."
-///   The Computer Journal 24, no. 2 (1981): 167-172.
-///
-/// This implementation extends the original algorithm to d-dimensions and includes
-/// robust geometric predicates for numerical stability.
-```
-
-### Maintaining Academic Standards
-
-As contributors to a computational geometry library:
-
-- **Respect intellectual property**: Always cite sources for algorithms and ideas
-- **Verify mathematical correctness**: Ensure implementations match published algorithms
-- **Test against known results**: Use standard test cases from literature when possible
-- **Document assumptions**: Note any mathematical assumptions or constraints
-
-For comprehensive bibliographic information, see [REFERENCES.md](REFERENCES.md).
-
-## Performance and Benchmarking
-
-Performance is crucial for computational geometry algorithms.
-
-### Benchmark Infrastructure
-
-The project includes comprehensive benchmarking:
-
-- **Location**: `benches/` directory with detailed [README][benches-readme]
-- **Framework**: Criterion, Cargo's `perf` profile, and release-mode debug harnesses
-- **Coverage**: Public 2D-5D workflows, predicate microbenchmarks, large-scale construction, validation, topology guarantees, and profiling
-- **Automated Baselines**: Dev-mode `ci_performance_suite` baselines are generated on version tags (`vX.Y.Z`) as GitHub Actions artifacts
-- **Release summaries**: `just bench-perf-summary` regenerates
-  `benches/PERFORMANCE_RESULTS.md` from fresh perf-profile Criterion data,
-  circumsphere predicate timings, current run metadata, and generated simplex
-  counts
-
-### Performance Testing Workflow
-
-**Before pushing Rust or benchmark changes:**
-
-```bash
-just ci
-just perf-no-regressions
-```
-
-`just perf-no-regressions` runs the calibrated 2D/3D/4D/5D
-`ci_performance_suite` canaries with reduced Criterion sample settings and
-compares them against a temporary same-machine baseline generated from the
-current GitHub `main` ref. The temporary baseline checkout and artifact
-directory are removed after the comparison.
-
-`just perf-baseline` is optional and persistent: use it only when you
-intentionally want to refresh `baseline-artifact/baseline_results.txt` for later
-manual comparisons.
-
-To make a one-off local baseline without replacing the default artifact:
-
-```bash
-just perf-baseline-to /tmp/delaunay-main-baseline
-just perf-compare /tmp/delaunay-main-baseline/baseline_results.txt
-```
-
-**For development and manual testing:**
-
-```bash
-just bench-ci           # Full local run of the CI performance contract
-just perf-no-regressions # Recommended pre-PR performance guard
-just perf-baseline      # Persist/update the default main-ref baseline locally
-just perf-baseline-to /tmp/delaunay-main-baseline
-                         # Generate a scratch main-ref baseline locally
-just perf-compare <file> # Compare against a specific dev-mode baseline file
-just bench-smoke        # Harness smoke test; not performance data
-just bench              # Full benchmark workspace with the perf profile
-just bench-perf-summary # Release summary with current Criterion metadata
-```
-
-**Compare tags using CI baselines (no benchmarking):**
-
-```bash
-# Requires GitHub CLI (gh) and an authenticated session
-uv run benchmark-utils compare-tags --old-tag vX.Y.Z --new-tag vA.B.C
-
-# If a baseline artifact is missing/expired, regenerate via workflow_dispatch and wait
-uv run benchmark-utils compare-tags --old-tag vX.Y.Z --new-tag vA.B.C --regenerate-missing
-```
-
-**Note**: The project uses an **automated performance baseline system**:
-
-- **Automatic baseline generation**: Baselines are created automatically when git tags are pushed via GitHub Actions
-- **CI regression testing**: Performance regressions are detected automatically in PRs against the latest baseline
-- **Hardware compatibility**: The system detects hardware differences and provides warnings when comparing across different configurations
-- **Regression threshold**: CI and `just perf-no-regressions` flag regressions above 7.5% by default
-
-Performance regressions need the same level of explanation as correctness
-changes. Patches that make the 2D-5D public workflow contract materially slower
-are generally not accepted unless the regression is intentional, measured, and
-justified by a higher-priority invariant such as numerical or topological
-correctness.
-
-### Profiling
-
-The project uses `just profile` for compiler/code benchmark comparisons and
-[samply](https://github.com/mstange/samply) for flamegraph-oriented profiling:
-
-```bash
-# Run ci_performance_suite for the current tree/toolchain
-just profile
-
-# Flamegraph 3D construction in profiling_suite
-just profile-dev
-
-# Flamegraph allocation profiling
-just profile-mem
-```
-
-**Profiling workflow:**
-
-1. **Run profiling**: `just profile-dev` or `just profile-mem` generates an interactive flame graph
-2. **Analyze results**: Browser opens automatically with the profiling visualization
-3. **Identify bottlenecks**: Look for hot paths in the flame graph
-4. **Optimize**: Make targeted improvements to high-impact code paths
-5. **Re-profile**: Verify optimizations with another profiling run
-
-`just profile-dev` targets `profiling_suite`'s 3D construction benchmark so
-local flamegraphs stay tied to the real large-scale profiling harness.
-
-**Note**: Profiling requires `samply` to be installed (`cargo install samply`). The `just setup` command installs it automatically.
-
-### Performance Guidelines
-
-- **Algorithmic Complexity**: Document and optimize time/space complexity
-- **Memory Allocation**: Minimize unnecessary allocations
-- **Numerical Stability**: Balance performance with numerical accuracy
-- **Regression Detection**: CI flags/fails on overall average regressions above 7.5% (default)
-- **Hardware Awareness**: Consider performance implications across different hardware configurations
-
-See [scripts documentation][scripts-readme] for detailed benchmarking workflows and the [AGENTS.md](AGENTS.md) file
-for implementation details of the automated baseline system.
+PR titles should use the same conventional format because merge commits appear
+in generated changelogs.
 
 ## Submitting Changes
 
-### Pull Request Process
+Open pull requests with a descriptive conventional title and a concise summary
+of:
 
-1. **Create a descriptive PR title**:
-   - `feat: add 4D triangulation support`
-   - `fix: resolve vertex insertion edge case`
-   - `docs: improve boundary analysis examples`
+- Problem: what issue or behavior the change addresses
+- Solution: how the change handles it
+- Testing: which validators, tests, or benchmarks were run
+- Performance: relevant measurements or rationale for algorithmic changes
 
-2. **Write a comprehensive PR description**:
-   - **Problem**: What issue does this solve?
-   - **Solution**: How does your change address it?
-   - **Testing**: How did you verify the fix?
-   - **Performance**: Any performance implications?
-
-3. **Ensure CI passes**: All checks must be green
-
-4. **Request review**: Tag relevant reviewers
-
-### PR Review Criteria
-
-PRs are evaluated on:
-
-- **Correctness**: Does the code solve the stated problem?
-- **Testing**: Are there adequate tests for the changes?
-- **Documentation**: Is the code properly documented?
-- **Performance**: Are there any performance regressions?
-- **Style**: Does the code follow project conventions?
-- **Mathematical Accuracy**: Are geometric algorithms correct?
-
-### Non-Substantive Changes
-
-PRs that only introduce whitespace churn, blank-line changes, formatting noise, or other
-non-substantive edits may be declined unless they are part of a clearly justified cleanup or
-required by project tooling.
-
-Accepted contributions should materially improve correctness, numerical robustness, topology
-invariants, performance, documentation clarity, tests, maintainability, or user-facing behavior.
-
-### Handling Feedback
-
-- **Respond to all comments**: Address each piece of feedback
-- **Ask for clarification**: If feedback is unclear
-- **Make focused updates**: Address feedback in separate commits
-- **Re-request review**: After making significant changes
+PRs are evaluated for correctness, mathematical accuracy, tests, documentation,
+style, and performance impact. Non-substantive whitespace churn or formatting
+noise may be declined unless it is part of an intentional tooling cleanup.
 
 ## Types of Contributions
 
-We welcome various types of contributions:
-
-### 🐛 Bug Fixes
-
-- Report bugs with minimal reproduction cases
-- Fix algorithmic errors in geometric computations
-- Resolve edge cases in triangulation algorithms
-- Improve numerical stability
-
-### ✨ Features
-
-- New triangulation algorithms or optimizations
-- Additional geometric predicates
-- Higher-dimensional support
-- Performance improvements
-
-### 📚 Documentation
-
-- Improve API documentation
-- Add usage examples (see [examples documentation][examples-readme])
-- Write tutorials or guides
-- Fix typos and improve clarity
-
-### 🧪 Testing
-
-- Add test cases for edge conditions
-- Improve test coverage
-- Add property-based tests
-- Create benchmark tests
-
-### 🚀 Performance
-
-- Algorithmic optimizations
-- Memory usage improvements  
-- Parallel processing support
-- SIMD optimizations
-
-### 🔧 Infrastructure
-
-- CI/CD improvements
-- Build system enhancements
-- Development tooling
-- Script improvements
+We welcome bug fixes, new features, documentation improvements, tests,
+benchmarks, performance work, and infrastructure improvements. For algorithmic
+or numerical work, cite relevant literature in [REFERENCES.md][references] and
+document assumptions, invariants, and known limitations.
 
 ## Release Process
 
-The project follows [semantic versioning][semver] and maintains a detailed [CHANGELOG.md][changelog].
-
-### Version Numbering
-
-- **Major** (X.0.0): Breaking API changes
-- **Minor** (0.X.0): New features, backward compatible
-- **Patch** (0.0.X): Bug fixes, backward compatible
-
-### Release Workflow
-
-For a detailed, copy-pastable, step-by-step workflow (including a clean release PR flow with exact commands), see docs/RELEASING.md.
+The project follows [semantic versioning][semver] and generates changelog files
+from commits. Do not update release artifacts by hand; follow the release
+workflow in [docs/RELEASING.md][releasing].
 
 ## Getting Help
 
-### Communication Channels
+Use GitHub Issues for bug reports and feature requests, GitHub Discussions for
+general questions, and [email][maintainer-email] for direct maintainer contact.
 
-- **GitHub Issues**: Bug reports, feature requests
-- **GitHub Discussions**: General questions and conversations
-- **Email**: [maintainer][maintainer-email] for direct contact
-
-### Resources
-
-- **Documentation**: `cargo doc --open`
-- **Examples**: [examples documentation][examples-readme]
-- **Benchmarks**: [benchmarks documentation][benches-readme]
-- **Scripts**: [scripts documentation][scripts-readme]
-- **Code Organization**: [code organization documentation][code-organization]
-
-### When to Ask for Help
-
-- **Algorithm Questions**: Need help with geometric algorithms
-- **Performance Issues**: Experiencing unexpected performance problems
-- **API Design**: Unsure about API design decisions
-- **Testing Strategy**: Need guidance on testing approaches
-- **Contribution Process**: Confused about the contribution workflow
-
-### Providing Context
-
-When asking for help, please provide:
-
-- **Version information**: Rust version, crate version
-- **Minimal example**: Code that reproduces the issue
-- **Expected vs. actual behavior**
-- **System information**: OS, hardware (for performance issues)
-- **Steps attempted**: What have you tried already?
-
-## Acknowledgments
-
-This project builds upon decades of computational geometry research. We acknowledge:
-
-- The mathematical foundations developed by researchers worldwide
-- The Rust community for providing excellent tools and libraries
-- Contributors who help improve the library through code, documentation, and feedback
-- Users who provide valuable bug reports and feature requests
-
-Thank you for contributing to the advancement of computational geometry in Rust! 🦀
+When asking for help, include the Rust version, crate version, operating system,
+a minimal reproduction when possible, expected behavior, actual behavior, and
+the commands you already tried.
 
 ---
 
-**Questions?** Don't hesitate to ask in GitHub Issues or reach out to the [maintainer][maintainer-email].
-
-*This document is living and evolves with the project. Suggestions for improvements are always welcome!*
+**Questions?** Ask in GitHub Issues or reach out to the
+[maintainer][maintainer-email].
 
 <!-- Links -->
 [delaunay-lib]: https://github.com/acgetchell/delaunay
@@ -1233,6 +200,16 @@ Thank you for contributing to the advancement of computational geometry in Rust!
 [benches-readme]: benches/README.md
 [scripts-readme]: scripts/README.md
 [code-organization]: docs/code_organization.md
+[dev-commands]: docs/dev/commands.md
+[dev-python]: docs/dev/python.md
+[dev-rust]: docs/dev/rust.md
+[dev-testing]: docs/dev/testing.md
+[tooling-alignment]: docs/dev/tooling-alignment.md
+[validation]: docs/validation.md
+[invariants]: docs/invariants.md
+[citation]: CITATION.cff
+[references]: REFERENCES.md
+[releasing]: docs/RELEASING.md
 [maintainer-email]: <mailto:adam@adamgetchell.org>
 [semver]: https://semver.org/
 [rustup]: https://rustup.rs/

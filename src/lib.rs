@@ -1073,7 +1073,8 @@ pub mod topology {
     pub use crate::TopologyGuarantee;
     pub use characteristics::*;
     pub use manifold::{
-        ManifoldError, validate_closed_boundary, validate_facet_degree, validate_ridge_links,
+        ManifoldError, RidgeVertices, RidgeVerticesError, ridge_star_simplices,
+        validate_closed_boundary, validate_facet_degree, validate_ridge_links,
         validate_vertex_links,
     };
     pub use traits::*;
@@ -1840,8 +1841,9 @@ pub mod prelude {
             pub use crate::topology::characteristics::{euler, validation};
             pub use crate::topology::characteristics::{euler::*, validation::*};
             pub use crate::topology::manifold::{
-                ManifoldError, validate_closed_boundary, validate_facet_degree,
-                validate_ridge_links, validate_ridge_links_for_simplices, validate_vertex_links,
+                ManifoldError, RidgeVertices, RidgeVerticesError, ridge_star_simplices,
+                validate_closed_boundary, validate_facet_degree, validate_ridge_links,
+                validate_ridge_links_for_simplices, validate_vertex_links,
             };
             pub use crate::topology::traits::*;
         }

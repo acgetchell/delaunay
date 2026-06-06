@@ -333,6 +333,170 @@ pub enum ManifoldError {
     },
 }
 
+/// Errors returned when parsing raw vertex keys into a ridge vertex set.
+#[derive(Clone, Debug, Error, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum RidgeVerticesError {
+    /// Ridge vertices are only meaningful for dimensions `D >= 2`.
+    #[error("ridge vertices require D >= 2, got D={dimension}")]
+    UnsupportedDimension {
+        /// Requested triangulation dimension.
+        dimension: usize,
+    },
+
+    /// The supplied vertex count does not match the ridge arity `D - 1`.
+    #[error("ridge vertex count mismatch for {dimension}D: expected {expected}, got {actual}")]
+    WrongArity {
+        /// Requested triangulation dimension.
+        dimension: usize,
+        /// Expected number of ridge vertices.
+        expected: usize,
+        /// Actual number of supplied vertices.
+        actual: usize,
+    },
+
+    /// A ridge cannot contain the same vertex more than once.
+    #[error("ridge vertices contain duplicate vertex key {vertex_key:?}")]
+    DuplicateVertex {
+        /// Duplicate vertex key.
+        vertex_key: VertexKey,
+    },
+}
+
+/// Validated vertex keys for a `(D - 2)`-simplex ridge.
+///
+/// This proof-bearing wrapper encodes the arity and uniqueness invariants for
+/// ridge-star queries before they reach topology computation. It stores vertex
+/// keys in canonical sorted order so the same ridge has the same identity
+/// regardless of input order. It does not prove that the vertices exist in a
+/// particular [`Tds`]; that dynamic check remains part of
+/// [`ridge_star_simplices`].
+///
+/// # Examples
+///
+/// ```rust
+/// use delaunay::prelude::construction::{
+///     DelaunayTriangulation, DelaunayTriangulationConstructionError, vertex,
+/// };
+/// use delaunay::prelude::topology::validation::{RidgeVertices, RidgeVerticesError};
+///
+/// # #[derive(Debug, thiserror::Error)]
+/// # enum ExampleError {
+/// #     #[error(transparent)] Construction(#[from] DelaunayTriangulationConstructionError),
+/// #     #[error(transparent)] Ridge(#[from] RidgeVerticesError),
+/// #     #[error("constructed triangulation has no vertex keys")] Empty,
+/// # }
+/// # fn main() -> Result<(), ExampleError> {
+/// let vertices = vec![
+///     vertex!([0.0, 0.0]),
+///     vertex!([1.0, 0.0]),
+///     vertex!([0.0, 1.0]),
+/// ];
+/// let triangulation = DelaunayTriangulation::new(&vertices)?;
+/// let Some(v0) = triangulation.tds().vertex_keys().next() else {
+///     return Err(ExampleError::Empty);
+/// };
+///
+/// // In 2D, a ridge is a vertex, so the validated ridge set has arity 1.
+/// let ridge = RidgeVertices::<2>::try_from_vertices([v0])?;
+/// assert_eq!(ridge.as_slice(), &[v0]);
+/// assert_eq!(ridge.iter().collect::<Vec<_>>(), vec![v0]);
+/// # Ok(())
+/// # }
+/// ```
+#[must_use]
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct RidgeVertices<const D: usize> {
+    vertices: VertexKeyBuffer,
+}
+
+impl<const D: usize> RidgeVertices<D> {
+    /// Parses raw vertex keys into a validated ridge vertex set.
+    ///
+    /// Stored vertex keys are canonicalized into sorted order.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`RidgeVerticesError::UnsupportedDimension`] when `D < 2`,
+    /// [`RidgeVerticesError::WrongArity`] when the input length is not `D - 1`,
+    /// or [`RidgeVerticesError::DuplicateVertex`] when a vertex key is repeated.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use delaunay::prelude::construction::{
+    ///     DelaunayTriangulation, DelaunayTriangulationConstructionError, vertex,
+    /// };
+    /// use delaunay::prelude::topology::validation::{RidgeVertices, RidgeVerticesError};
+    ///
+    /// # #[derive(Debug, thiserror::Error)]
+    /// # enum ExampleError {
+    /// #     #[error(transparent)] Construction(#[from] DelaunayTriangulationConstructionError),
+    /// #     #[error(transparent)] Ridge(#[from] RidgeVerticesError),
+    /// #     #[error("constructed triangulation has fewer than two vertex keys")] TooFewVertices,
+    /// # }
+    /// # fn main() -> Result<(), ExampleError> {
+    /// let vertices = vec![
+    ///     vertex!([0.0, 0.0, 0.0]),
+    ///     vertex!([1.0, 0.0, 0.0]),
+    ///     vertex!([0.0, 1.0, 0.0]),
+    ///     vertex!([0.0, 0.0, 1.0]),
+    /// ];
+    /// let triangulation = DelaunayTriangulation::new(&vertices)?;
+    /// let keys = triangulation.tds().vertex_keys().collect::<Vec<_>>();
+    /// let [v0, v1, ..] = keys.as_slice() else {
+    ///     return Err(ExampleError::TooFewVertices);
+    /// };
+    ///
+    /// // In 3D, a ridge is an edge and therefore has two vertices.
+    /// let ridge = RidgeVertices::<3>::try_from_vertices([*v1, *v0])?;
+    /// let mut expected = vec![*v0, *v1];
+    /// expected.sort_unstable();
+    /// assert_eq!(ridge.as_slice(), expected.as_slice());
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub fn try_from_vertices(
+        vertices: impl IntoIterator<Item = VertexKey>,
+    ) -> Result<Self, RidgeVerticesError> {
+        if D < 2 {
+            return Err(RidgeVerticesError::UnsupportedDimension { dimension: D });
+        }
+
+        let mut vertices: VertexKeyBuffer = vertices.into_iter().collect();
+        let expected = D - 1;
+        if vertices.len() != expected {
+            return Err(RidgeVerticesError::WrongArity {
+                dimension: D,
+                expected,
+                actual: vertices.len(),
+            });
+        }
+
+        vertices.sort_unstable();
+        for duplicate_pair in vertices.windows(2) {
+            if duplicate_pair[0] == duplicate_pair[1] {
+                return Err(RidgeVerticesError::DuplicateVertex {
+                    vertex_key: duplicate_pair[0],
+                });
+            }
+        }
+
+        Ok(Self { vertices })
+    }
+
+    /// Returns the validated ridge vertex keys.
+    #[must_use]
+    pub fn as_slice(&self) -> &[VertexKey] {
+        &self.vertices
+    }
+
+    /// Iterates over the validated ridge vertex keys.
+    pub fn iter(&self) -> impl Iterator<Item = VertexKey> + '_ {
+        self.vertices.iter().copied()
+    }
+}
+
 /// Validates that each (D-1)-facet has degree 1 (boundary) or 2 (interior).
 ///
 /// This enforces the codimension-1 pseudomanifold condition and is not sufficient by itself
@@ -956,33 +1120,51 @@ fn simplex_link_simplices_from_star<T, U, V, const D: usize>(
 ///
 /// This helper does **not** call `tds.is_valid()`; it performs lightweight checks and
 /// returns [`ManifoldError::Tds`] if the underlying TDS is internally inconsistent.
-#[cfg_attr(
-    not(test),
-    expect(
-        dead_code,
-        reason = "Not used yet; intended for reuse by future local topology mutations (e.g. bistellar flips)"
-    )
-)]
-pub(crate) fn ridge_star_simplices<T, U, V, const D: usize>(
+///
+/// # Errors
+///
+/// Returns [`ManifoldError::Tds`] when any ridge vertex is missing from the
+/// [`Tds`] or a candidate star simplex cannot resolve its vertex keys.
+///
+/// # Examples
+///
+/// ```rust
+/// use delaunay::prelude::construction::{
+///     DelaunayTriangulation, DelaunayTriangulationConstructionError, vertex,
+/// };
+/// use delaunay::prelude::topology::validation::{
+///     ManifoldError, RidgeVertices, RidgeVerticesError, ridge_star_simplices,
+/// };
+///
+/// # #[derive(Debug, thiserror::Error)]
+/// # enum ExampleError {
+/// #     #[error(transparent)] Construction(#[from] DelaunayTriangulationConstructionError),
+/// #     #[error(transparent)] Ridge(#[from] RidgeVerticesError),
+/// #     #[error(transparent)] Manifold(#[from] ManifoldError),
+/// #     #[error("constructed triangulation has no vertex keys")] Empty,
+/// # }
+/// # fn main() -> Result<(), ExampleError> {
+/// let vertices = vec![
+///     vertex!([0.0, 0.0]),
+///     vertex!([1.0, 0.0]),
+///     vertex!([0.0, 1.0]),
+/// ];
+/// let triangulation = DelaunayTriangulation::new(&vertices)?;
+/// let Some(v0) = triangulation.tds().vertex_keys().next() else {
+///     return Err(ExampleError::Empty);
+/// };
+///
+/// let ridge = RidgeVertices::<2>::try_from_vertices([v0])?;
+/// let star = ridge_star_simplices(triangulation.tds(), &ridge)?;
+/// assert_eq!(star.len(), 1);
+/// # Ok(())
+/// # }
+/// ```
+pub fn ridge_star_simplices<T, U, V, const D: usize>(
     tds: &Tds<T, U, V, D>,
-    ridge_vertices: &[VertexKey],
+    ridge_vertices: &RidgeVertices<D>,
 ) -> Result<SmallBuffer<SimplexKey, 8>, ManifoldError> {
-    // Ridge stars are only meaningful for D>=2.
-    if D < 2 {
-        return Ok(SmallBuffer::new());
-    }
-
-    let expected_ridge_vertices = D.saturating_sub(1);
-    if ridge_vertices.len() != expected_ridge_vertices {
-        return Err(TdsError::DimensionMismatch {
-            expected: expected_ridge_vertices,
-            actual: ridge_vertices.len(),
-            context: format!("ridge vertex count for {D}D"),
-        }
-        .into());
-    }
-
-    simplex_star_simplices(tds, ridge_vertices)
+    simplex_star_simplices(tds, ridge_vertices.as_slice())
 }
 
 fn ridge_link_edges_from_star<T, U, V, const D: usize>(
@@ -2928,14 +3110,13 @@ mod tests {
     }
 
     #[test]
-    fn test_ridge_star_simplices_noop_for_d_lt_2() {
-        let tds: Tds<f64, (), (), 1> = Tds::empty();
-
-        let star = ridge_star_simplices(&tds, &[]).unwrap();
-        assert!(star.is_empty());
-
-        let star = ridge_star_simplices(&tds, &[VertexKey::from(KeyData::from_ffi(0))]).unwrap();
-        assert!(star.is_empty());
+    fn test_ridge_vertices_rejects_d_lt_2() {
+        match RidgeVertices::<1>::try_from_vertices([VertexKey::from(KeyData::from_ffi(0))]) {
+            Err(RidgeVerticesError::UnsupportedDimension { dimension }) => {
+                assert_eq!(dimension, 1);
+            }
+            other => panic!("Expected UnsupportedDimension for D<2, got {other:?}"),
+        }
     }
 
     #[test]
@@ -2947,34 +3128,17 @@ mod tests {
     }
 
     #[test]
-    fn test_ridge_star_simplices_errors_on_wrong_vertex_count_in_3d() {
-        let mut tds: Tds<f64, (), (), 3> = Tds::empty();
-
-        let v0 = tds
-            .insert_vertex_with_mapping(vertex!([0.0, 0.0, 0.0]))
-            .unwrap();
-        let v1 = tds
-            .insert_vertex_with_mapping(vertex!([1.0, 0.0, 0.0]))
-            .unwrap();
-        let v2 = tds
-            .insert_vertex_with_mapping(vertex!([0.0, 1.0, 0.0]))
-            .unwrap();
-        let v3 = tds
-            .insert_vertex_with_mapping(vertex!([0.0, 0.0, 1.0]))
-            .unwrap();
-
-        let _c = tds
-            .insert_simplex_with_mapping(Simplex::new(vec![v0, v1, v2, v3], None).unwrap())
-            .unwrap();
+    fn test_ridge_vertices_rejects_too_few_vertices_in_3d() {
+        let v0 = VertexKey::from(KeyData::from_ffi(1));
 
         // In 3D, ridges are edges (2 vertices). Passing a single vertex is invalid.
-        match ridge_star_simplices(&tds, &[v0]) {
-            Err(ManifoldError::Tds(TdsError::DimensionMismatch {
+        match RidgeVertices::<3>::try_from_vertices([v0]) {
+            Err(RidgeVerticesError::WrongArity {
+                dimension: 3,
                 expected: 2,
                 actual: 1,
-                ..
-            })) => {}
-            other => panic!("Expected DimensionMismatch(2, 1) for wrong ridge size, got {other:?}"),
+            }) => {}
+            other => panic!("Expected WrongArity(2, 1) for wrong ridge size, got {other:?}"),
         }
     }
 
@@ -3033,10 +3197,51 @@ mod tests {
             .insert_simplex_with_mapping(Simplex::new(vec![v1, v2, v3], None).unwrap())
             .unwrap();
 
-        let star = ridge_star_simplices(&tds, &[v0]).unwrap();
+        let ridge_vertices = RidgeVertices::<2>::try_from_vertices([v0]).unwrap();
+        let star = ridge_star_simplices(&tds, &ridge_vertices).unwrap();
         let star_set: SimplexKeySet = star.iter().copied().collect();
 
         let expected: SimplexKeySet = [c012, c013, c023].into_iter().collect();
+        assert_eq!(star_set, expected);
+    }
+
+    #[test]
+    fn test_ridge_star_simplices_returns_full_edge_star_in_3d() {
+        // In 3D, a ridge is an edge. This regression protects k=3 support
+        // collection from using only the anchor simplex.
+        let mut tds: Tds<f64, (), (), 3> = Tds::empty();
+
+        let v0 = tds
+            .insert_vertex_with_mapping(vertex!([0.0, 0.0, 0.0]))
+            .unwrap();
+        let v1 = tds
+            .insert_vertex_with_mapping(vertex!([1.0, 0.0, 0.0]))
+            .unwrap();
+        let v2 = tds
+            .insert_vertex_with_mapping(vertex!([0.0, 1.0, 0.0]))
+            .unwrap();
+        let v3 = tds
+            .insert_vertex_with_mapping(vertex!([0.0, 0.0, 1.0]))
+            .unwrap();
+        let v4 = tds
+            .insert_vertex_with_mapping(vertex!([0.0, -1.0, 0.0]))
+            .unwrap();
+
+        let c0123 = tds
+            .insert_simplex_with_mapping(Simplex::new(vec![v0, v1, v2, v3], None).unwrap())
+            .unwrap();
+        let c0134 = tds
+            .insert_simplex_with_mapping(Simplex::new(vec![v0, v1, v3, v4], None).unwrap())
+            .unwrap();
+        let c0142 = tds
+            .insert_simplex_with_mapping(Simplex::new(vec![v0, v1, v4, v2], None).unwrap())
+            .unwrap();
+
+        let ridge_vertices = RidgeVertices::<3>::try_from_vertices([v0, v1]).unwrap();
+        let star = ridge_star_simplices(&tds, &ridge_vertices).unwrap();
+        let star_set: SimplexKeySet = star.iter().copied().collect();
+
+        let expected: SimplexKeySet = [c0123, c0134, c0142].into_iter().collect();
         assert_eq!(star_set, expected);
     }
 
@@ -3045,7 +3250,8 @@ mod tests {
         let tds: Tds<f64, (), (), 2> = Tds::empty();
         let missing = VertexKey::from(KeyData::from_ffi(u64::MAX));
 
-        match ridge_star_simplices(&tds, &[missing]) {
+        let ridge_vertices = RidgeVertices::<2>::try_from_vertices([missing]).unwrap();
+        match ridge_star_simplices(&tds, &ridge_vertices) {
             Err(ManifoldError::Tds(TdsError::VertexNotFound { vertex_key, .. })) => {
                 assert_eq!(vertex_key, missing);
             }
@@ -3716,21 +3922,44 @@ mod tests {
     }
 
     #[test]
-    fn test_ridge_star_simplices_rejects_too_many_vertices() {
-        let tds: Tds<f64, (), (), 3> = Tds::empty();
+    fn test_ridge_vertices_rejects_too_many_vertices_in_3d() {
         // For D=3, ridges have D-1=2 vertices; pass 3 vertices instead.
         let v0 = VertexKey::from(KeyData::from_ffi(1));
         let v1 = VertexKey::from(KeyData::from_ffi(2));
         let v2 = VertexKey::from(KeyData::from_ffi(3));
-        match ridge_star_simplices(&tds, &[v0, v1, v2]) {
-            Err(ManifoldError::Tds(TdsError::DimensionMismatch {
+        match RidgeVertices::<3>::try_from_vertices([v0, v1, v2]) {
+            Err(RidgeVerticesError::WrongArity {
                 expected, actual, ..
-            })) => {
+            }) => {
                 assert_eq!(expected, 2);
                 assert_eq!(actual, 3);
             }
-            other => panic!("Expected DimensionMismatch, got {other:?}"),
+            other => panic!("Expected WrongArity, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn test_ridge_vertices_rejects_duplicate_vertices() {
+        let v0 = VertexKey::from(KeyData::from_ffi(1));
+
+        match RidgeVertices::<3>::try_from_vertices([v0, v0]) {
+            Err(RidgeVerticesError::DuplicateVertex { vertex_key }) => {
+                assert_eq!(vertex_key, v0);
+            }
+            other => panic!("Expected DuplicateVertex, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn test_ridge_vertices_canonicalizes_permuted_vertices() {
+        let v0 = VertexKey::from(KeyData::from_ffi(1));
+        let v1 = VertexKey::from(KeyData::from_ffi(2));
+
+        let forward = RidgeVertices::<3>::try_from_vertices([v0, v1]).unwrap();
+        let reversed = RidgeVertices::<3>::try_from_vertices([v1, v0]).unwrap();
+
+        assert_eq!(forward, reversed);
+        assert_eq!(reversed.as_slice(), &[v0, v1]);
     }
 
     #[test]

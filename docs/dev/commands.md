@@ -179,6 +179,7 @@ just bench
 just bench-ci
 just perf-baseline
 just perf-compare
+just perf-vs-ref
 just perf-no-regressions
 just bench-perf-summary
 cargo bench --profile perf --bench ci_performance_suite
@@ -252,19 +253,39 @@ local baseline cache.
 just perf-no-regressions
 ```
 
+To compare the current branch against a specific local release/ref baseline,
+use `just perf-vs-ref`:
+
+```bash
+just perf-vs-ref v0.7.8
+```
+
+It uses the same cached same-machine baseline flow as `just perf-no-regressions`
+but resolves and caches the requested ref, writes a
+`benches/worktree_vs_<ref>_compare_results.txt` report, and treats overall total
+matched-time regressions as failures while keeping individual benchmark
+regressions as report warnings.
+
 `just perf-baseline` is optional and intentionally persistent: use it only when
 you want to create or refresh `baseline-artifact/baseline_results.txt` for later
-manual comparisons. `just perf-compare <file>` uses that release-baseline
-workflow and writes `benches/main_vs_release_compare_results.txt` by default.
-It follows the same terminal-status convention, but remains stricter: individual
-benchmark regressions still make release-style comparisons fail.
+manual same-machine comparisons. `baseline-artifact/` and
+`baseline-artifacts/` are ignored by git so local timing records stay local. CI
+regression checks now download the latest stable GitHub Release asset,
+`delaunay-vX.Y.Z-criterion-baseline.tar.gz`, and compare the current
+`ubuntu-latest` GitHub Actions run against that released-version Ubuntu
+baseline.
+`just perf-compare <file>` still writes
+`benches/main_vs_release_compare_results.txt` by default. It follows the same
+terminal-status convention, but remains stricter: individual benchmark
+regressions still make release-style comparisons fail.
 
 For lower-level workflows, `uv run benchmark-utils ensure-ref-baseline --ref
 <ref> --dev` prints the cached/generated same-machine baseline path for a branch
 or version tag, and `uv run benchmark-utils fetch-baseline --ref <ref>` downloads
-the GitHub Actions artifact instead. Use the generated local baseline for
-same-machine regression checks; use the downloaded artifact when you explicitly
-want CI-runner parity. `uv run benchmark-utils compare-ref --ref <ref>` writes
+the manual compatibility GitHub Actions artifact instead. Use the generated
+local baseline for same-machine regression checks; use the downloaded artifact
+only when you explicitly want CI-runner parity. `uv run benchmark-utils
+compare-ref --ref <ref>` writes
 `benches/worktree_vs_<ref>_compare_results.txt` unless `--output` is supplied.
 
 To generate a scratch baseline without replacing the default artifact, write it

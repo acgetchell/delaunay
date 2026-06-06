@@ -24,6 +24,9 @@ Both repositories now share the same core Rust and Python support-tooling loop:
 - Codacy Markdownlint's MD013 line-length threshold is managed in Codacy's
   Code Patterns UI at 160 columns when that tool is enabled. Local Markdown,
   Python, YAML, and review thresholds are likewise normalized to 160 columns.
+  Codacy Markdownlint excludes `docs/RELEASING.md` because that release
+  checklist intentionally uses stable absolute step numbers across fenced
+  command blocks; local rumdl disables MD029 for the same reason.
 - Codacy Python engines are scoped to production scripts and exclude
   `scripts/tests/**`, so Ruff/Bandit feedback stays focused on shipped helper
   code and Bandit does not flag intentional test assertions.
@@ -59,7 +62,9 @@ The useful updates ported in this pass are:
   install pinned Cargo tools, and run `just ci` for Linux, macOS, and Windows.
   uv-managed wrappers provide `actionlint`, `shellcheck`, `shfmt`, and
   `yamllint`, avoiding platform-specific apt/Homebrew/curl installation paths in
-  the CI job.
+  the CI job. The GitHub selected-actions allowlist includes
+  `taiki-e/cache-cargo-install-action@*`, so the cached Cargo-tool installer is
+  permitted by repository policy.
 - `.github/workflows/audit.yml` now installs `cargo-audit` 0.22.1 through the
   same cached Cargo-tool installer, and `.github/workflows/zizmor.yml` imports
   the dedicated GitHub Actions security scan from `la-stack`.
@@ -162,6 +167,43 @@ The useful updates ported in this pass are:
   `profile.slow` raises the per-test watchdog for `just test-slow`, allowing
   intentional multi-minute correctness regressions to run without making the
   default suite or CI profile permissive.
+- `.github/workflows/release-benchmarks.yml` ports the durable release-asset
+  benchmark storage pattern used by `la-stack`. Delaunay now packages
+  `baseline_results.txt`, `PERFORMANCE_RESULTS.md`, raw Criterion data, and
+  metadata as `delaunay-$TAG-criterion-baseline.tar.gz` on each published
+  GitHub Release. Release and regression benchmark jobs both use
+  `ubuntu-latest`, and `.github/workflows/benchmarks.yml` downloads the latest
+  stable release asset to compare CI runs against the released-version CI
+  baseline. Local same-machine comparison remains separate through ignored
+  `baseline-artifact/` and `baseline-artifacts/` paths, while
+  `.github/workflows/generate-baseline.yml` remains manual-only for
+  compatibility with ad-hoc CI-runner artifact comparisons.
+
+## CI Shape Evaluation
+
+Issue #402 is treated as an evaluation track, not permission to reduce the
+platform matrix. The CI invariant remains that pull requests and pushes run
+the complete local `just ci` recipe on Linux, macOS, and Windows. Future
+wall-clock reductions should preserve that all-platform command unless a later
+design explicitly replaces each lost check with equivalent portability
+coverage.
+
+Use the GitHub Actions job and step duration metadata to compare the first run
+after a tool pin or cache-key change against later warm-cache runs before
+proposing any heavier CI-shape split. That keeps measurement out of the
+workflow itself while still making the cold-cache and warm-cache trade-off
+visible.
+
+Current measurements from the GitHub Actions UI/API:
+
+| Run | Platform | Job duration | `just ci` duration |
+|-----|-----|-----|-----|
+| [`27058331033`](https://github.com/acgetchell/delaunay/actions/runs/27058331033) | Ubuntu | 15m 17s | 14m 47s |
+| [`27058331033`](https://github.com/acgetchell/delaunay/actions/runs/27058331033) | macOS | 13m 55s | 12m 58s |
+| [`27058331033`](https://github.com/acgetchell/delaunay/actions/runs/27058331033) | Windows | 65m 50s | 33m 31s |
+| [`27059628821`](https://github.com/acgetchell/delaunay/actions/runs/27059628821) | Ubuntu | 37m 1s | 16m 33s |
+| [`27059628821`](https://github.com/acgetchell/delaunay/actions/runs/27059628821) | macOS | 41m 20s | 19m 28s |
+| [`27059628821`](https://github.com/acgetchell/delaunay/actions/runs/27059628821) | Windows | 72m 43s | 32m 45s |
 
 ## Intentional Differences
 

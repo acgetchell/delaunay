@@ -1,23 +1,15 @@
 name: Generate Performance Baseline
 
-# Generate performance baselines for main and release refs
+# Manually generate compatibility baseline artifacts for a requested ref.
+#
+# Normal regression checks compare against durable GitHub Release benchmark
+# assets produced by release-benchmarks.yml. This workflow is retained for
+# ad-hoc CI-runner parity checks and older tooling that still fetches
+# performance-baseline-* Actions artifacts.
+#
 # Security: All GitHub context variables are passed through safe environment variables
 # to prevent code injection attacks via malicious branch names or commit data
 on:
-  # Trigger on main updates and release tag creation.
-  push:
-    branches:
-      - main
-    tags:
-      - "v*"
-    paths:
-      - "src/**"
-      - "benches/**"
-      - "Cargo.toml"
-      - "Cargo.lock"
-      - "scripts/benchmark_utils.py"
-
-  # Manual trigger (supports regenerating a baseline for an existing ref)
   workflow_dispatch:
     inputs:
       ref:
@@ -47,7 +39,7 @@ jobs:
     concurrency:
       group: generate-baseline-${{ github.ref }}
       cancel-in-progress: false
-    runs-on: macos-15 # Use same runner as benchmark workflow for consistency
+    runs-on: ubuntu-latest # Use the same runner as the benchmark workflow for consistency
     timeout-minutes: 60
 
     steps:
@@ -147,12 +139,9 @@ jobs:
           echo "🚀 Generating performance baseline for ref ${BASELINE_REF}"
 
           # Generate baseline using fixed tooling (this checkout) against the target checkout.
-          # Use --dev to match the comparison workflow's reduced Criterion settings;
-          # benchmark-utils still runs the benchmark under Cargo's perf profile.
           uv run benchmark-utils generate-baseline \
             --project-root bench-target \
-            --ref "${BASELINE_REF}" \
-            --dev
+            --ref "${BASELINE_REF}"
 
           echo "✅ Baseline generated successfully"
 
@@ -219,10 +208,11 @@ jobs:
           echo "  Commit: ${BASELINE_COMMIT:-unknown}"
           echo "  Artifact: $BASELINE_ARTIFACT_NAME"
           echo ""
-          echo "🔄 The benchmark workflow will now use this baseline for:"
-          echo "  • Pull request performance testing"
-          echo "  • Main branch regression detection"
-          echo "  • Manual performance comparisons"
+          echo "🔄 benchmarks.yml uses the latest GitHub Release benchmark asset,"
+          echo "   not this Actions artifact."
+          echo "  • Use this artifact for ad-hoc CI-runner parity checks"
+          echo "  • Use this artifact for legacy tooling that still fetches performance-baseline-*"
+          echo "  • Publish release baselines through release-benchmarks.yml"
           echo ""
           if [ "$SAFE_REF_TYPE" = "tag" ]; then
             echo "💡 This baseline is now available for tag $BASELINE_REF"

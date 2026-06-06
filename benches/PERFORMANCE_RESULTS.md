@@ -216,8 +216,8 @@ uv run benchmark-utils generate-summary
 # Run fresh perf-profile public API and circumsphere benchmarks
 uv run benchmark-utils generate-summary --run-benchmarks --profile perf
 
-# Generate baseline results for regression testing
-uv run benchmark-utils generate-baseline
+# Package existing ci_performance_suite Criterion results for release-asset comparisons
+uv run benchmark-utils write-baseline --ref vX.Y.Z --output baseline_results.txt
 ```
 
 ### Customization

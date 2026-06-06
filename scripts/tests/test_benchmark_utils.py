@@ -43,6 +43,7 @@ from benchmark_utils import (
     BaselineGenerator,
     BaselineParseError,
     BenchmarkRegressionHelper,
+    CiPerformanceResult,
     CriterionParser,
     LocalRefBaselineCacheOptions,
     LocalRefBaselineCacheResult,
@@ -59,6 +60,7 @@ from benchmark_utils import (
     configure_logging,
     create_argument_parser,
     ensure_cached_ref_baseline,
+    execute_command,
     find_project_root,
     main,
 )
@@ -1211,7 +1213,9 @@ class TestBaselineGenerator:
     @staticmethod
     def _sample_benchmark_results() -> list[BenchmarkData]:
         """Return a minimal parsed benchmark result set."""
-        return [BenchmarkData(10, "2D").with_timing(1.0, 2.0, 3.0, "µs")]
+        benchmark = BenchmarkData(10, "2D").with_timing(1.0, 2.0, 3.0, "µs")
+        benchmark.benchmark_id = "tds_new_2d/tds_new/10"
+        return [benchmark]
 
     @patch("benchmark_utils.get_git_commit_hash", return_value="abc123")
     @patch("benchmark_utils.CriterionParser.find_criterion_results")
@@ -1267,6 +1271,61 @@ class TestBaselineGenerator:
             assert "Sampling mode: dev" in content
             assert f"Cargo profile: {TRUSTED_BENCH_PROFILE}" in content
             assert "Criterion sample size: 10" in content
+
+    @patch("benchmark_utils.get_git_commit_hash", return_value="abc123")
+    @patch("benchmark_utils.CriterionParser.find_criterion_results")
+    @patch("benchmark_utils.run_cargo_command")
+    def test_write_baseline_from_existing_results_does_not_rerun_benchmarks(self, mock_cargo, mock_find_results, mock_git) -> None:
+        """Test that existing Criterion results can be packaged as a baseline without rerunning Cargo."""
+        mock_find_results.return_value = self._sample_benchmark_results()
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            project_root = Path(temp_dir)
+            output_file = project_root / "release-artifact" / "baseline_results.txt"
+            generator = BaselineGenerator(project_root, ref_name="v1.2.3")
+
+            with patch.object(generator.hardware, "format_hardware_info", return_value="Hardware Information:\n"):
+                success = generator.write_baseline_from_existing_results(output_file)
+
+            assert success is True
+            mock_cargo.assert_not_called()
+            mock_find_results.assert_called_once_with(project_root / "target")
+            mock_git.assert_called_once()
+            content = output_file.read_text(encoding="utf-8")
+            assert "Ref: v1.2.3" in content
+            assert "Tag: v1.2.3" in content
+            assert "Sampling mode: full" in content
+            assert "=== 10 Points (2D) ===" in content
+
+    @patch("benchmark_utils.CriterionParser.find_criterion_results", return_value=[])
+    def test_write_baseline_from_existing_results_requires_criterion_data(self, mock_find_results, capsys) -> None:
+        """Test that packaging fails loudly when no existing Criterion data is available."""
+        with tempfile.TemporaryDirectory() as temp_dir:
+            project_root = Path(temp_dir)
+            generator = BaselineGenerator(project_root, ref_name="v1.2.3")
+
+            success = generator.write_baseline_from_existing_results(project_root / "baseline_results.txt")
+
+            assert success is False
+            mock_find_results.assert_called_once_with(project_root / "target")
+            captured = capsys.readouterr()
+            assert "No Criterion results found" in captured.err
+
+    @patch("benchmark_utils.CriterionParser.find_criterion_results")
+    def test_write_baseline_from_existing_results_requires_ci_suite_data(self, mock_find_results, capsys) -> None:
+        """Test that release baseline packaging rejects unrelated Criterion results."""
+        mock_find_results.return_value = [BenchmarkData(10, "2D").with_timing(1.0, 2.0, 3.0, "µs")]
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            project_root = Path(temp_dir)
+            generator = BaselineGenerator(project_root, ref_name="v1.2.3")
+
+            success = generator.write_baseline_from_existing_results(project_root / "baseline_results.txt")
+
+            assert success is False
+            mock_find_results.assert_called_once_with(project_root / "target")
+            captured = capsys.readouterr()
+            assert "No ci_performance_suite Criterion results found" in captured.err
 
     @patch("benchmark_utils.get_git_commit_hash", return_value="abc123def456")
     @patch("benchmark_utils.get_git_remote_url", return_value="git@github.com:acgetchell/delaunay.git")
@@ -2743,6 +2802,59 @@ class TestTimeoutHandling:
         assert args.ref_name == "main"
         assert args.dev
 
+    def test_parser_accepts_existing_results_baseline_packaging(self) -> None:
+        """Test that release workflows can package existing Criterion data as a baseline."""
+        parser = create_argument_parser()
+        args = parser.parse_args(["write-baseline", "--ref", "v1.2.3", "--output", "release/baseline_results.txt"])
+
+        assert args.command == "write-baseline"
+        assert args.ref_name == "v1.2.3"
+        assert args.output == Path("release/baseline_results.txt")
+        assert not args.dev
+
+    def test_parser_accepts_strict_summary_generation(self) -> None:
+        """Test that release workflows can fail summary generation on fallback."""
+        parser = create_argument_parser()
+        args = parser.parse_args(["generate-summary", "--run-benchmarks", "--strict"])
+
+        assert args.command == "generate-summary"
+        assert args.run_benchmarks
+        assert args.strict
+
+    @patch("benchmark_utils.PerformanceSummaryGenerator")
+    def test_execute_command_passes_strict_summary_generation(self, mock_generator_class) -> None:
+        """Test that CLI dispatch passes strict mode and exits nonzero on summary failure."""
+        parser = create_argument_parser()
+        args = parser.parse_args(
+            [
+                "generate-summary",
+                "--run-benchmarks",
+                "--strict",
+                "--profile",
+                "release",
+                "--output",
+                "summary.md",
+            ],
+        )
+        mock_generator = mock_generator_class.return_value
+        mock_generator.generate_summary.return_value = False
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            project_root = Path(temp_dir)
+
+            with pytest.raises(SystemExit) as exc_info:
+                execute_command(args, project_root)
+
+        assert exc_info.value.code == 1
+        mock_generator_class.assert_called_once_with(project_root)
+        mock_generator.generate_summary.assert_called_once_with(
+            output_path=Path("summary.md"),
+            run_benchmarks=True,
+            generator_name="benchmark_utils.py",
+            cargo_profile="release",
+            strict=True,
+        )
+
     def test_parser_accepts_cached_local_ref_baseline_commands(self) -> None:
         """Test that cached local ref baseline commands expose reusable CLI options."""
         parser = create_argument_parser()
@@ -3174,7 +3286,7 @@ OK: Time change -1.8% within acceptable range
             content = "\n".join(lines)
 
             assert PERFORMANCE_UPDATES_TITLE in content
-            assert "uv run benchmark-utils generate-baseline" in content
+            assert "uv run benchmark-utils write-baseline" in content
             assert "just bench-perf-summary" in content
             assert "PerformanceSummaryGenerator" in content
 
@@ -3559,6 +3671,71 @@ Benchmark completed.""",
             # Check warning was printed
             captured = capsys.readouterr()
             assert "Benchmark run failed" in captured.out
+
+    @patch("benchmark_utils.PerformanceSummaryGenerator._run_circumsphere_benchmarks")
+    @patch("benchmark_utils.PerformanceSummaryGenerator._run_ci_performance_suite")
+    def test_generate_summary_strict_benchmark_failure_fails(self, mock_run_ci_suite, mock_run_benchmarks, capsys) -> None:
+        """Test that strict summary generation fails instead of using fallback data."""
+        mock_run_ci_suite.return_value = False
+        mock_run_benchmarks.return_value = (True, None)
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            project_root = Path(temp_dir)
+            generator = PerformanceSummaryGenerator(project_root)
+            output_file = Path(temp_dir) / "test_summary.md"
+
+            success = generator.generate_summary(
+                output_path=output_file,
+                run_benchmarks=True,
+                strict=True,
+            )
+
+            assert success is False
+            assert not output_file.exists()
+            captured = capsys.readouterr()
+            assert "strict summary mode refuses fallback data" in captured.err
+
+    def test_generate_summary_strict_rejects_rendered_fallback_data(self, capsys) -> None:
+        """Test that strict summary generation fails when rendered content uses fallback data."""
+        with tempfile.TemporaryDirectory() as temp_dir:
+            project_root = Path(temp_dir)
+            generator = PerformanceSummaryGenerator(project_root)
+            output_file = Path(temp_dir) / "test_summary.md"
+
+            success = generator.generate_summary(output_path=output_file, strict=True)
+
+            assert success is False
+            assert not output_file.exists()
+            captured = capsys.readouterr()
+            assert "detected fallback benchmark data" in captured.err
+
+    def test_generate_summary_strict_rejects_missing_circumsphere_results(self, capsys) -> None:
+        """Test that strict summary generation fails when circumsphere results are absent."""
+        ci_result = CiPerformanceResult(
+            group_key="construction",
+            benchmark_id="tds_new_2d/tds_new/10",
+            dimension="2D",
+            input_size="10",
+            mean_ns=1_000.0,
+            low_ns=900.0,
+            high_ns=1_100.0,
+        )
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            project_root = Path(temp_dir)
+            generator = PerformanceSummaryGenerator(project_root)
+            output_file = Path(temp_dir) / "test_summary.md"
+
+            with (
+                patch.object(generator, "_parse_ci_performance_suite_results", return_value=[ci_result]),
+                patch.object(generator, "_parse_circumsphere_benchmark_results", return_value=[]),
+            ):
+                success = generator.generate_summary(output_path=output_file, strict=True)
+
+            assert success is False
+            assert not output_file.exists()
+            captured = capsys.readouterr()
+            assert "detected fallback benchmark data" in captured.err
 
     def test_generate_summary_exception_handling(self, capsys) -> None:
         """Test exception handling in generate_summary."""

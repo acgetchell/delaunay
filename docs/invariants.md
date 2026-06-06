@@ -163,6 +163,12 @@ The key assumption behind local repair is that *regular triangulations* (includi
 can be related by sequences of bistellar flips, and that PL-manifoldness keeps those local moves well-defined
 in the combinatorial/PL category.[^edelshah1996][^pachner1991]
 
+The smallest executable check of that move system is the crate’s n=1 ergodicity contract: for a
+selected admissible Pachner move, applying the move and then its inverse must recover the same
+triangulation, including vertex identity and top-dimensional simplex incidence. A merely valid
+post-roundtrip triangulation is not sufficient. Jaccard similarity is useful in the failure path to
+quantify how vertex and simplex-incidence sets diverged, but exact equality is the invariant.
+
 In practice, floating-point degeneracy matters:
 
 - For near-degenerate configurations, robust predicates (and/or retry/repair strategies) may be

@@ -53,6 +53,9 @@ engines:
     include_paths:
       - "**/*.md"
     exclude_paths:
+      # Release checklists use stable absolute step numbers across fenced
+      # command blocks; local rumdl intentionally disables MD029 for this.
+      - "docs/RELEASING.md"
       - "docs/archive/**"
       - "target/**"
       - "node_modules/**"
