@@ -16,7 +16,10 @@ use delaunay::prelude::flips::{
 };
 use delaunay::prelude::geometry::{Point, RobustKernel, simplex_volume};
 use delaunay::prelude::query::{JaccardComputationError, format_jaccard_report};
-use delaunay::prelude::tds::{InvariantError, VertexKey};
+use delaunay::prelude::tds::{InvariantError, TdsError, VertexKey};
+use delaunay::prelude::topology::validation::{
+    ManifoldError, RidgeVertices, RidgeVerticesError, ridge_star_simplices,
+};
 use delaunay::prelude::validation::DelaunayTriangulationValidationError;
 use delaunay::vertex;
 use thiserror::Error;
@@ -58,6 +61,26 @@ pub enum FlipWorkflowError {
     MissingVertex {
         /// Missing vertex key.
         vertex_key: VertexKey,
+    },
+
+    /// Ridge vertices could not be parsed into a valid ridge vertex set.
+    #[error("invalid ridge vertices for {ridge:?}: {source}")]
+    InvalidRidgeVertices {
+        /// Ridge handle being inspected.
+        ridge: RidgeHandle,
+        /// Underlying ridge vertex parsing failure.
+        #[source]
+        source: RidgeVerticesError,
+    },
+
+    /// Ridge-star support collection failed.
+    #[error("failed to collect ridge star for {ridge:?}: {source}")]
+    RidgeStar {
+        /// Ridge handle being inspected.
+        ridge: RidgeHandle,
+        /// Underlying manifold helper failure.
+        #[source]
+        source: Box<ManifoldError>,
     },
 
     /// Snapshot collection found a dangling simplex-to-vertex incidence.
@@ -175,6 +198,23 @@ pub enum FlipWorkflowError {
         "ridge indices ({omit_a}, {omit_b}) out of bounds for support simplex {simplex_key:?} with {vertex_count} vertices"
     )]
     InvalidRidgeSupportIndex {
+        /// Ridge handle.
+        ridge: RidgeHandle,
+        /// First omitted index.
+        omit_a: u8,
+        /// Second omitted index.
+        omit_b: u8,
+        /// Number of vertices in the support simplex.
+        vertex_count: usize,
+        /// Support simplex key.
+        simplex_key: SimplexKey,
+    },
+
+    /// Support-inspection ridge indices repeat the same omitted simplex vertex.
+    #[error(
+        "ridge indices ({omit_a}, {omit_b}) must be distinct for support simplex {simplex_key:?} with {vertex_count} vertices"
+    )]
+    DuplicateRidgeSupportIndex {
         /// Ridge handle.
         ridge: RidgeHandle,
         /// First omitted index.
@@ -1099,12 +1139,13 @@ fn facet_support_points<const D: usize>(
     vertex_points(dt, &keys)
 }
 
-/// Collects the simplex vertices used as the current k=3 ridge support proxy.
+/// Collects the union of simplex vertices across the full k=3 ridge star.
 ///
 /// # Errors
 ///
 /// Returns an error when the ridge simplex is missing, the ridge indices are
-/// invalid for that simplex, or one of its vertices is missing.
+/// invalid for that simplex, ridge-star discovery fails, or one of its vertices
+/// is missing.
 fn ridge_support_points<const D: usize>(
     dt: &FlipTriangulation<D>,
     ridge: RidgeHandle,
@@ -1118,7 +1159,7 @@ fn ridge_support_points<const D: usize>(
     let vertex_count = simplex.number_of_vertices();
     let omit_a = usize::from(ridge.omit_a());
     let omit_b = usize::from(ridge.omit_b());
-    if omit_a >= vertex_count || omit_b >= vertex_count || omit_a == omit_b {
+    if omit_a >= vertex_count || omit_b >= vertex_count {
         return Err(FlipWorkflowError::InvalidRidgeSupportIndex {
             ridge,
             omit_a: ridge.omit_a(),
@@ -1127,7 +1168,56 @@ fn ridge_support_points<const D: usize>(
             simplex_key: ridge.simplex_key(),
         });
     }
-    vertex_points(dt, simplex.vertices())
+    if omit_a == omit_b {
+        return Err(FlipWorkflowError::DuplicateRidgeSupportIndex {
+            ridge,
+            omit_a: ridge.omit_a(),
+            omit_b: ridge.omit_b(),
+            vertex_count,
+            simplex_key: ridge.simplex_key(),
+        });
+    }
+
+    let ridge_vertices = RidgeVertices::<D>::try_from_vertices(
+        simplex
+            .vertices()
+            .iter()
+            .enumerate()
+            .filter(|(index, _)| *index != omit_a && *index != omit_b)
+            .map(|(_, vertex_key)| *vertex_key),
+    )
+    .map_err(|source| FlipWorkflowError::InvalidRidgeVertices { ridge, source })?;
+    let star_simplices = ridge_star_simplices(dt.tds(), &ridge_vertices)
+        .map_err(|source| ridge_star_error(ridge, source))?;
+
+    let mut keys = Vec::new();
+    for simplex_key in star_simplices {
+        let star_simplex = dt
+            .tds()
+            .simplex(simplex_key)
+            .ok_or(FlipWorkflowError::MissingSimplex { simplex_key })?;
+        keys.extend(star_simplex.vertices());
+    }
+    keys.sort_unstable();
+    keys.dedup();
+    vertex_points(dt, &keys)
+}
+
+/// Preserves specific missing-simplex and missing-vertex support errors while
+/// keeping other ridge-star failures attached to the inspected ridge.
+fn ridge_star_error(ridge: RidgeHandle, source: ManifoldError) -> FlipWorkflowError {
+    match source {
+        ManifoldError::Tds(TdsError::SimplexNotFound { simplex_key, .. }) => {
+            FlipWorkflowError::MissingSimplex { simplex_key }
+        }
+        ManifoldError::Tds(TdsError::VertexNotFound { vertex_key, .. }) => {
+            FlipWorkflowError::MissingVertex { vertex_key }
+        }
+        source => FlipWorkflowError::RidgeStar {
+            ridge,
+            source: Box::new(source),
+        },
+    }
 }
 
 /// Resolves vertex keys to points.

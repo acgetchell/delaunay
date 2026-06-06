@@ -77,58 +77,53 @@ jobs:
         uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
         with:
           script: |
-            try {
-              const releases = await github.paginate(github.rest.repos.listReleases, {
-                owner: context.repo.owner,
-                repo: context.repo.repo,
-                per_page: 100
-              });
+            const releases = await github.paginate(github.rest.repos.listReleases, {
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              per_page: 100
+            });
 
-              const parseStableSemver = (tag) => {
-                const match = /^v([0-9]+)\.([0-9]+)\.([0-9]+)$/.exec(tag);
-                if (!match) return null;
-                return match.slice(1).map((part) => Number.parseInt(part, 10));
-              };
+            const parseStableSemver = (tag) => {
+              const match = /^v([0-9]+)\.([0-9]+)\.([0-9]+)$/.exec(tag);
+              if (!match) return null;
+              return match.slice(1).map((part) => Number.parseInt(part, 10));
+            };
 
-              const candidates = [];
-              for (const release of releases) {
-                if (release.draft || release.prerelease) continue;
-                const version = parseStableSemver(release.tag_name);
-                if (!version) continue;
+            const candidates = [];
+            for (const release of releases) {
+              if (release.draft || release.prerelease) continue;
+              const version = parseStableSemver(release.tag_name);
+              if (!version) continue;
 
-                const expectedAsset = `delaunay-${release.tag_name}-criterion-baseline.tar.gz`;
-                const asset = release.assets.find((candidate) => candidate.name === expectedAsset);
-                if (!asset) {
-                  console.log(`Release ${release.tag_name} has no benchmark baseline asset named ${expectedAsset}`);
-                  continue;
-                }
-
-                candidates.push({ release, asset, version });
+              const expectedAsset = `delaunay-${release.tag_name}-criterion-baseline.tar.gz`;
+              const asset = release.assets.find((candidate) => candidate.name === expectedAsset);
+              if (!asset) {
+                console.log(`Release ${release.tag_name} has no benchmark baseline asset named ${expectedAsset}`);
+                continue;
               }
 
-              candidates.sort((left, right) => {
-                for (const index of [0, 1, 2]) {
-                  const diff = right.version[index] - left.version[index];
-                  if (diff !== 0) return diff;
-                }
-                return Date.parse(right.release.published_at) - Date.parse(left.release.published_at);
-              });
-
-              if (candidates.length > 0) {
-                const selected = candidates[0];
-                console.log(`Selected release benchmark baseline ${selected.asset.name} from ${selected.release.tag_name}`);
-                core.setOutput('found', 'true');
-                core.setOutput('tag', selected.release.tag_name);
-                core.setOutput('asset_name', selected.asset.name);
-                return;
-              }
-
-              console.log('No release benchmark baseline asset found');
-              core.setOutput('found', 'false');
-            } catch (error) {
-              console.error(`Error searching for release benchmark baseline assets: ${error.message}`);
-              core.setOutput('found', 'false');
+              candidates.push({ release, asset, version });
             }
+
+            candidates.sort((left, right) => {
+              for (const index of [0, 1, 2]) {
+                const diff = right.version[index] - left.version[index];
+                if (diff !== 0) return diff;
+              }
+              return Date.parse(right.release.published_at) - Date.parse(left.release.published_at);
+            });
+
+            if (candidates.length > 0) {
+              const selected = candidates[0];
+              console.log(`Selected release benchmark baseline ${selected.asset.name} from ${selected.release.tag_name}`);
+              core.setOutput('found', 'true');
+              core.setOutput('tag', selected.release.tag_name);
+              core.setOutput('asset_name', selected.asset.name);
+              return;
+            }
+
+            console.log('No release benchmark baseline asset found');
+            core.setOutput('found', 'false');
 
       - name: Download latest release benchmark baseline
         if: steps.find_baseline.outputs.found == 'true'

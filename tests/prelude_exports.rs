@@ -65,6 +65,9 @@ use delaunay::prelude::repair::{
 #[cfg(feature = "diagnostics")]
 use delaunay::prelude::tds::Tds;
 use delaunay::prelude::tds::{InvariantErrorSummaryDetail, NeighborSlot, TdsErrorKind};
+use delaunay::prelude::topology::validation::{
+    ManifoldError, RidgeVertices, RidgeVerticesError, ridge_star_simplices,
+};
 use delaunay::prelude::triangulation::{
     FacetIssuesMap as TriangulationFacetIssuesMap, FastKernel as TriangulationFastKernel,
     InsertionError as TriangulationInsertionError, QueryError as TriangulationQueryError,
@@ -109,7 +112,11 @@ enum PreludeExportTestError {
     #[error(transparent)]
     Insertion(#[from] InsertionError),
     #[error(transparent)]
+    Manifold(#[from] ManifoldError),
+    #[error(transparent)]
     Query(#[from] QueryError),
+    #[error(transparent)]
+    RidgeVertices(#[from] RidgeVerticesError),
 }
 
 /// Proves the focused flips prelude exports the trait bound expected by benchmarks.
@@ -371,6 +378,35 @@ fn validation_prelude_covers_configuration_error() {
             validation_policy: TriangulationValidationPolicy::Never,
         }
     );
+}
+
+#[test]
+fn topology_validation_prelude_covers_ridge_star_api() -> Result<(), PreludeExportTestError> {
+    let vertices = vec![
+        vertex!([0.0, 0.0]),
+        vertex!([1.0, 0.0]),
+        vertex!([0.0, 1.0]),
+    ];
+    let dt = DelaunayTriangulation::new(&vertices)?;
+    let v0 = dt
+        .tds()
+        .vertex_keys()
+        .next()
+        .expect("triangle fixture should contain at least one vertex");
+
+    let ridge = RidgeVertices::<2>::try_from_vertices([v0])?;
+    let star = ridge_star_simplices(dt.tds(), &ridge)?;
+    assert_eq!(star.len(), 1);
+
+    assert_matches!(
+        RidgeVertices::<3>::try_from_vertices([v0]),
+        Err(RidgeVerticesError::WrongArity {
+            expected: 2,
+            actual: 1,
+            ..
+        })
+    );
+    Ok(())
 }
 
 #[test]

@@ -215,7 +215,7 @@ fn invalid_ridge_support_returns_specific_error() {
     let err = ridge_support_touches_adversarial_feature(&base_dt, duplicate_ridge)
         .expect_err("duplicate ridge support indices should be reported as an error");
     match err {
-        FlipWorkflowError::InvalidRidgeSupportIndex {
+        FlipWorkflowError::DuplicateRidgeSupportIndex {
             ridge,
             omit_a,
             omit_b,

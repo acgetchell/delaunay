@@ -570,6 +570,7 @@ class PerformanceSummaryGenerator:
         run_benchmarks: bool = False,
         generator_name: str | None = None,
         cargo_profile: str | None = None,
+        strict: bool = False,
     ) -> bool:
         """
         Generate performance summary markdown file.
@@ -582,6 +583,9 @@ class PerformanceSummaryGenerator:
                 ``run_benchmarks`` is True and no profile is specified, defaults
                 to :data:`TRUSTED_BENCH_PROFILE` so fresh runs match baseline
                 and comparison measurements.
+            strict: Fail instead of rendering from existing or fallback data
+                when fresh benchmark execution is requested and any benchmark
+                command fails.
 
         Returns:
             True if successful, False otherwise
@@ -604,10 +608,16 @@ class PerformanceSummaryGenerator:
                 if circumsphere_success:
                     self.numerical_accuracy_data = accuracy_data
                 if not ci_success or not circumsphere_success:
+                    if strict:
+                        print("❌ Benchmark run failed; strict summary mode refuses fallback data", file=sys.stderr)
+                        return False
                     print("⚠️ Benchmark run failed, using existing/fallback data")
 
             # Generate markdown content
             content = self._generate_markdown_content(generator_name)
+            if strict and self._contains_fallback_summary_data(content):
+                print("❌ Strict summary mode detected fallback benchmark data", file=sys.stderr)
+                return False
 
             # Write to output file
             with output_path.open("w", encoding="utf-8") as f:
@@ -619,6 +629,17 @@ class PerformanceSummaryGenerator:
         except _RECOVERABLE_CLI_ERRORS as e:
             print(f"❌ Failed to generate performance summary: {e}", file=sys.stderr)
             return False
+
+    @staticmethod
+    def _contains_fallback_summary_data(content: str) -> bool:
+        """Return whether generated summary content used fallback/reference data."""
+        fallback_markers = (
+            "reference data",
+            "No `ci_performance_suite` Criterion results available",
+            "No benchmark results available. Run benchmarks first",
+            "To get current numerical accuracy data",
+        )
+        return any(marker in content for marker in fallback_markers)
 
     def _generate_markdown_content(self, generator_name: str | None = None) -> str:
         """
@@ -2361,6 +2382,13 @@ class BaselineGenerator:
 
             if not benchmark_results:
                 print(f"❌ No Criterion results found under {target_dir / 'criterion'}", file=sys.stderr)
+                return False
+
+            benchmark_results = [
+                result for result in benchmark_results if result.benchmark_id and ci_suite_group_key(result.benchmark_id.split("/", maxsplit=1)[0]) is not None
+            ]
+            if not benchmark_results:
+                print(f"❌ No ci_performance_suite Criterion results found under {target_dir / 'criterion'}", file=sys.stderr)
                 return False
 
             self._write_baseline_file(benchmark_results, output_file, dev_mode=dev_mode)
@@ -4563,6 +4591,11 @@ def _add_performance_summary_subcommands(subparsers: "argparse._SubParsersAction
         default=TRUSTED_BENCH_PROFILE,
         help=f"Cargo profile to use when --run-benchmarks is set (default: {TRUSTED_BENCH_PROFILE})",
     )
+    perf_summary_parser.add_argument(
+        "--strict",
+        action="store_true",
+        help="Fail instead of rendering from existing or fallback data when fresh benchmark execution fails",
+    )
 
 
 def create_argument_parser() -> argparse.ArgumentParser:
@@ -4931,6 +4964,7 @@ def execute_command(args: argparse.Namespace, project_root: Path) -> None:
             run_benchmarks=args.run_benchmarks,
             generator_name="benchmark_utils.py",
             cargo_profile=args.profile,
+            strict=args.strict,
         )
         sys.exit(0 if success else 1)
 

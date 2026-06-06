@@ -63,6 +63,7 @@ jobs:
           mkdir -p release-benchmark-artifacts
           uv run benchmark-utils generate-summary \
             --run-benchmarks \
+            --strict \
             --profile perf \
             --output release-benchmark-artifacts/PERFORMANCE_RESULTS.md
           uv run benchmark-utils write-baseline \
