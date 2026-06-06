@@ -53,8 +53,13 @@ The useful updates ported in this pass are:
 - GitHub Actions Cargo tool installation now uses
   `taiki-e/cache-cargo-install-action` where Delaunay previously used
   `taiki-e/install-action`, matching the sibling workflow pattern for pinned
-  Rust CLI tools while preserving Delaunay's existing matrix shape and
-  platform-specific validation split.
+  Rust CLI tools while preserving Delaunay's existing matrix shape.
+- `.github/workflows/ci.yml` now follows the sibling repository pattern on all
+  three operating systems: set up Python and uv, sync the locked dev tool group,
+  install pinned Cargo tools, and run `just ci` for Linux, macOS, and Windows.
+  uv-managed wrappers provide `actionlint`, `shellcheck`, `shfmt`, and
+  `yamllint`, avoiding platform-specific apt/Homebrew/curl installation paths in
+  the CI job.
 - `.github/workflows/audit.yml` now installs `cargo-audit` 0.22.1 through the
   same cached Cargo-tool installer, and `.github/workflows/zizmor.yml` imports
   the dedicated GitHub Actions security scan from `la-stack`.
@@ -136,16 +141,23 @@ The useful updates ported in this pass are:
   UI exposes a separate duplicate-code metric, treat it the same way.
 - CI and local setup pins should track the same supported tool versions when
   practical. The current workflow pins align coverage and test tooling on
-  `cargo-llvm-cov` 0.8.7 and `cargo-nextest` 0.9.137. Both CI and Codecov
-  install the same `cargo-nextest` pin with the sibling repositories'
-  `taiki-e/cache-cargo-install-action` pattern and verify
-  `cargo nextest --version` before nextest-backed recipes run. The CI build
-  matrix also installs and verifies that pin on Windows, where the lightweight
-  direct-Cargo job runs library and integration tests through `cargo nextest
-  run` while keeping doctests on `cargo test --doc`. Local `just setup-tools`
-  uses `cargo install --locked cargo-nextest` and verifies the pinned version is
-  available for developer machines. All uv-backed workflows use uv 0.11.15 to
-  match the local Python tooling bootstrap.
+  `cargo-llvm-cov` 0.8.7 and `cargo-nextest` 0.9.137. CI, Codecov, and local
+  setup install the same `cargo-nextest` pin with the sibling repositories'
+  `taiki-e/cache-cargo-install-action`/`cargo install --locked` pattern before
+  nextest-backed recipes run. The CI build matrix runs `just ci` on Linux,
+  macOS, and Windows after syncing the locked uv dev group and installing the
+  pinned Cargo tools. All uv-backed workflows use uv 0.11.15 to match the local
+  Python tooling bootstrap.
+- `.codecov.yml` now ratchets Delaunay's coverage policy above the older
+  causal-triangulations baseline without copying la-stack's near-total
+  threshold. Project coverage targets the current 90% line with only 1%
+  tolerated drift. Patch coverage remains at 50% for this cleanup because
+  Codecov attributes the `assert_matches!` test-quality migration as uncovered
+  macro-invocation churn; once that lands, the next coverage-only ratchet should
+  raise the patch target toward 70% without forcing superficial tests.
+- Semgrep now ports the sibling repositories' Rust examples/benchmarks hygiene
+  checks: examples and benchmarks should avoid panic-only `unwrap`/`expect`
+  paths and dynamic error erasure so public usage remains explicit and typed.
 - `.config/nextest.toml` keeps `profile.ci` bounded for normal CI while
   `profile.slow` raises the per-test watchdog for `just test-slow`, allowing
   intentional multi-minute correctness regressions to run without making the
@@ -157,6 +169,9 @@ Some causal-triangulations tooling remains project-specific and was not ported:
 
 - CDT-specific Semgrep rules for geometry-backend isolation, foliation
   validation, CDT error variants, and `causal_triangulations::prelude` imports.
+- CDT's Python test `Path.read_text`/`write_text` encoding rule is deferred to
+  #429 because Delaunay has existing Python fixture cleanup to do before that
+  rule can become low-noise.
 - CDT's `examples-validate` recipe and output-marker checks; Delaunay examples
   are currently validated through `just examples`.
 - CDT's `performance-analysis` script; Delaunay keeps its benchmark helpers and

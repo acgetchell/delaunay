@@ -57,12 +57,12 @@ pub fn deep_crate_path_fixture() {
 }
 
 pub fn public_unwrap_bypass(value: Option<u8>) -> u8 {
-    // ruleid: delaunay.rust.no-production-unwrap-panic, delaunay.rust.no-public-surface-unwrap-panic
+    // ruleid: delaunay.rust.no-production-unwrap-panic, delaunay.rust.no-public-surface-unwrap-panic, delaunay.rust.no-unwrap-expect-in-benches-examples
     value.unwrap()
 }
 
 pub fn public_expect_bypass(value: Option<u8>) -> u8 {
-    // ruleid: delaunay.rust.no-production-unwrap-panic, delaunay.rust.no-public-surface-unwrap-panic
+    // ruleid: delaunay.rust.no-production-unwrap-panic, delaunay.rust.no-public-surface-unwrap-panic, delaunay.rust.no-unwrap-expect-in-benches-examples
     value.expect("public APIs should return typed errors instead")
 }
 
@@ -73,7 +73,7 @@ pub fn public_panic_bypass() {
 
 fn private_documented_invariant(value: Option<u8>) -> u8 {
     // ok: delaunay.rust.no-production-unwrap-panic
-    // ruleid: delaunay.rust.no-public-surface-unwrap-panic
+    // ruleid: delaunay.rust.no-public-surface-unwrap-panic, delaunay.rust.no-unwrap-expect-in-benches-examples
     value.expect("private helper documents an internal invariant")
 }
 
@@ -105,17 +105,17 @@ fn expect_without_reason_fixture() {}
 #[expect(clippy::too_many_lines, reason = "fixture documents the suppression")]
 fn expect_with_reason_fixture() {}
 
-// ruleid: delaunay.rust.no-box-dyn-error-in-src
+// ruleid: delaunay.rust.no-box-dyn-error-in-src, delaunay.rust.no-box-dyn-error-in-examples-benches
 type ProductionBoxedError = Box<dyn std::error::Error>;
 
 trait ProductionDynamicErrors {
-    // ruleid: delaunay.rust.no-box-dyn-error-in-src
+    // ruleid: delaunay.rust.no-box-dyn-error-in-src, delaunay.rust.no-box-dyn-error-in-examples-benches
     fn boxed_error_result(&self) -> Result<(), Box<dyn std::error::Error>>;
 
-    // ruleid: delaunay.rust.no-box-dyn-error-in-src
+    // ruleid: delaunay.rust.no-box-dyn-error-in-src, delaunay.rust.no-box-dyn-error-in-examples-benches
     fn borrowed_error(&self, error: &dyn std::error::Error);
 
-    // ruleid: delaunay.rust.no-box-dyn-error-in-src
+    // ruleid: delaunay.rust.no-box-dyn-error-in-src, delaunay.rust.no-box-dyn-error-in-examples-benches
     fn anyhow_error(&self, error: anyhow::Error);
 }
 

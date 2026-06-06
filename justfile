@@ -23,7 +23,8 @@ _coverage_base_args := '''--ignore-filename-regex '(^|/)(benches|examples)/' \
 _ensure-actionlint:
     #!/usr/bin/env bash
     set -euo pipefail
-    command -v actionlint >/dev/null || { echo "❌ 'actionlint' not found. See 'just setup' or https://github.com/rhysd/actionlint"; exit 1; }
+    command -v uv >/dev/null || { echo "❌ 'uv' not found. See 'just setup' or https://github.com/astral-sh/uv"; exit 1; }
+    uv run actionlint -version >/dev/null
 
 _ensure-cargo-llvm-cov:
     #!/usr/bin/env bash
@@ -96,12 +97,14 @@ _ensure-rumdl:
 _ensure-shellcheck:
     #!/usr/bin/env bash
     set -euo pipefail
-    command -v shellcheck >/dev/null || { echo "❌ 'shellcheck' not found. See 'just setup' or https://www.shellcheck.net"; exit 1; }
+    command -v uv >/dev/null || { echo "❌ 'uv' not found. See 'just setup' or https://github.com/astral-sh/uv"; exit 1; }
+    uv run shellcheck --version >/dev/null
 
 _ensure-shfmt:
     #!/usr/bin/env bash
     set -euo pipefail
-    command -v shfmt >/dev/null || { echo "❌ 'shfmt' not found. See 'just setup' or install: brew install shfmt"; exit 1; }
+    command -v uv >/dev/null || { echo "❌ 'uv' not found. See 'just setup' or https://github.com/astral-sh/uv"; exit 1; }
+    uv run shfmt --version >/dev/null
 
 # Internal helper: ensure taplo is installed
 _ensure-taplo:
@@ -132,7 +135,8 @@ _ensure-uv:
 _ensure-yamllint:
     #!/usr/bin/env bash
     set -euo pipefail
-    command -v yamllint >/dev/null || { echo "❌ 'yamllint' not found. See 'just setup' or install: brew install yamllint"; exit 1; }
+    command -v uv >/dev/null || { echo "❌ 'uv' not found. See 'just setup' or https://github.com/astral-sh/uv"; exit 1; }
+    uv run yamllint --version >/dev/null
 
 _ensure-zizmor:
     #!/usr/bin/env bash
@@ -156,7 +160,7 @@ action-lint: _ensure-actionlint
         files+=("$file")
     done < <(git ls-files -z '.github/workflows/*.yml' '.github/workflows/*.yaml')
     if [ "${#files[@]}" -gt 0 ]; then
-        printf '%s\0' "${files[@]}" | xargs -0 actionlint
+        printf '%s\0' "${files[@]}" | xargs -0 uv run actionlint
     else
         echo "No workflow files found to lint."
     fi
@@ -795,10 +799,6 @@ setup-tools:
         install_with_brew taplo
         install_with_brew dprint
         install_with_brew rumdl
-        install_with_brew yamllint
-        install_with_brew shfmt
-        install_with_brew shellcheck
-        install_with_brew actionlint
         echo ""
     else
         echo "⚠️  'brew' not found. Skipping Homebrew installs."
@@ -807,9 +807,17 @@ setup-tools:
         else
             echo "Install required tools via your system package manager, or ensure they are on PATH."
         fi
-        echo "Required tools: uv, jq, taplo, dprint, rumdl, yamllint, shfmt, shellcheck, actionlint, git-cliff, typos, zizmor"
+        echo "Required standalone tools: uv, jq, taplo, dprint, rumdl, git-cliff, typos, zizmor"
         echo ""
     fi
+
+    echo "Ensuring uv-managed Python tooling..."
+    if ! have uv; then
+        echo "❌ 'uv' not found. Install uv from https://github.com/astral-sh/uv and re-run: just setup-tools"
+        exit 1
+    fi
+    uv sync --group dev
+    echo ""
 
     echo "Ensuring Rust toolchain + components..."
     if ! have rustup; then
@@ -889,7 +897,7 @@ setup-tools:
     echo "Verifying required commands are available..."
     missing=0
 
-    cmds=(uv jq taplo dprint rumdl yamllint shfmt shellcheck actionlint git-cliff typos zizmor)
+    cmds=(uv jq taplo dprint rumdl git-cliff typos zizmor)
     cmds+=(cargo-nextest cargo-llvm-cov)
 
     for cmd in "${cmds[@]}"; do
@@ -897,6 +905,15 @@ setup-tools:
             echo "  ✓ $cmd"
         else
             echo "  ✗ $cmd"
+            missing=1
+        fi
+    done
+
+    for cmd in actionlint shellcheck shfmt yamllint; do
+        if uv run "$cmd" --version >/dev/null 2>&1 || uv run "$cmd" -version >/dev/null 2>&1; then
+            echo "  ✓ $cmd (uv)"
+        else
+            echo "  ✗ $cmd (uv)"
             missing=1
         fi
     done
@@ -927,8 +944,8 @@ shell-check: _ensure-shellcheck _ensure-shfmt
         files+=("$file")
     done < <(git ls-files -z '*.sh')
     if [ "${#files[@]}" -gt 0 ]; then
-        printf '%s\0' "${files[@]}" | xargs -0 -n4 shellcheck -x
-        printf '%s\0' "${files[@]}" | xargs -0 shfmt -d
+        printf '%s\0' "${files[@]}" | xargs -0 -n4 uv run shellcheck -x
+        printf '%s\0' "${files[@]}" | xargs -0 uv run shfmt -d
     else
         echo "No shell files found to check."
     fi
@@ -943,7 +960,7 @@ shell-fmt: _ensure-shfmt
     done < <(git ls-files -z '*.sh')
     if [ "${#files[@]}" -gt 0 ]; then
         echo "🧹 shfmt -w (${#files[@]} files)"
-        printf '%s\0' "${files[@]}" | xargs -0 shfmt -w
+        printf '%s\0' "${files[@]}" | xargs -0 uv run shfmt -w
     else
         echo "No shell files found to format."
     fi
@@ -1169,7 +1186,7 @@ yaml-lint: _ensure-yamllint
     done < <(git ls-files -z '*.yml' '*.yaml' 'CITATION.cff')
     if [ "${#files[@]}" -gt 0 ]; then
         echo "🔍 yamllint (${#files[@]} YAML/CFF files)"
-        yamllint --strict -c .yamllint "${files[@]}"
+        uv run yamllint --strict -c .yamllint "${files[@]}"
     else
         echo "No YAML files found to lint."
     fi

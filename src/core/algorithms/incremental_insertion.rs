@@ -4865,12 +4865,12 @@ mod tests {
         };
 
         assert_matches!(
-            err,
+            &err,
             NeighborWiringError::WrongSimplexArity {
                 simplex_key: key,
                 expected: 3,
                 found: 2,
-            } if key == simplex_key
+            } if *key == simplex_key
         );
         assert!(err.to_string().contains("expected 3"));
         assert!(err.to_string().contains("has 2 vertices"));

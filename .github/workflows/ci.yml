@@ -17,22 +17,19 @@ on:
   pull_request:
     branches:
       - main
+  workflow_dispatch:
 
 env:
   CARGO_TERM_COLOR: always
   RUST_BACKTRACE: 1
-  ACTIONLINT_VERSION: "1.7.12"
+  CARGO_NEXTEST_VERSION: "0.9.137"
   DPRINT_VERSION: "0.54.0"
   JUST_VERSION: "1.51.0"
-  NEXTEST_VERSION: "0.9.137"
   RUMDL_VERSION: "0.2.6"
-  SHFMT_VERSION: "3.13.1"
-  SHFMT_SHA256_DARWIN_AMD64: "6feedafc72915794163114f512348e2437d080d0047ef8b8fa2ec63b575f12af"
-  SHFMT_SHA256_DARWIN_ARM64: "9680526be4a66ea1ffe988ed08af58e1400fe1e4f4aef5bd88b20bb9b3da33f8"
-  SHFMT_SHA256_LINUX_AMD64: "fb096c5d1ac6beabbdbaa2874d025badb03ee07929f0c9ff67563ce8c75398b1"
   TAPLO_VERSION: "0.10.0"
   TYPOS_VERSION: "1.47.1"
   UV_VERSION: "0.11.15"
+  ZIZMOR_VERSION: "1.25.2"
 
 jobs:
   build:
@@ -53,6 +50,13 @@ jobs:
             target: x86_64-pc-windows-msvc
 
     steps:
+      - name: Disable Git autocrlf on Windows
+        if: matrix.os == 'windows-latest'
+        shell: pwsh
+        run: |
+          git config --global core.autocrlf false
+          git config --global core.eol lf
+
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
           persist-credentials: false
@@ -65,8 +69,21 @@ jobs:
           cache-bin: false # Avoid restoring stale rustup/cargo shims from cache.
       # toolchain, components, etc. are specified in rust-toolchain.toml
 
+      - name: Set up Python
+        uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6.2.0
+        with:
+          python-version-file: ".python-version"
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b # v8.1.0
+        with:
+          version: ${{ env.UV_VERSION }}
+          enable-cache: true
+
+      - name: Sync Python tooling
+        run: uv sync --locked --group dev
+
       - name: Install just
-        if: matrix.os != 'windows-latest'
         uses: taiki-e/cache-cargo-install-action@417450f3c33ee20393705369577571770643d4c7 # v3.0.7
         with:
           tool: just@${{ env.JUST_VERSION }}
@@ -74,183 +91,39 @@ jobs:
       - name: Install cargo-nextest
         uses: taiki-e/cache-cargo-install-action@417450f3c33ee20393705369577571770643d4c7 # v3.0.7
         with:
-          tool: cargo-nextest@${{ env.NEXTEST_VERSION }}
-
-      - name: Verify cargo-nextest
-        run: cargo nextest --version
-
-      - name: Install uv (for Python scripts and pytest)
-        if: matrix.os != 'windows-latest'
-        uses: astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b # v8.1.0
-        with:
-          version: ${{ env.UV_VERSION }}
+          tool: cargo-nextest@${{ env.CARGO_NEXTEST_VERSION }}
 
       - name: Install rumdl (for Markdown linting)
-        if: matrix.os != 'windows-latest'
         uses: taiki-e/cache-cargo-install-action@417450f3c33ee20393705369577571770643d4c7 # v3.0.7
         with:
           tool: rumdl@${{ env.RUMDL_VERSION }}
 
       - name: Install dprint (for YAML formatting)
-        if: matrix.os != 'windows-latest'
         uses: taiki-e/cache-cargo-install-action@417450f3c33ee20393705369577571770643d4c7 # v3.0.7
         with:
           tool: dprint@${{ env.DPRINT_VERSION }}
 
       - name: Install typos-cli
-        if: matrix.os != 'windows-latest'
         uses: taiki-e/cache-cargo-install-action@417450f3c33ee20393705369577571770643d4c7 # v3.0.7
         with:
           tool: typos-cli@${{ env.TYPOS_VERSION }}
 
       - name: Install taplo (for TOML formatting and linting)
-        if: matrix.os != 'windows-latest'
+        id: install-taplo
+        continue-on-error: ${{ matrix.os == 'windows-latest' }}
         uses: taiki-e/cache-cargo-install-action@417450f3c33ee20393705369577571770643d4c7 # v3.0.7
         with:
           tool: taplo-cli@${{ env.TAPLO_VERSION }}
 
-      - name: Install actionlint (Linux/macOS)
-        if: matrix.os != 'windows-latest'
-        run: |
-          set -euo pipefail
+      - name: Install taplo on Windows after cached install failure
+        if: matrix.os == 'windows-latest' && steps.install-taplo.outcome == 'failure'
+        shell: pwsh
+        run: cargo install --locked taplo-cli --version $env:TAPLO_VERSION
 
-          # actionlint is published as prebuilt binaries (Go), not a Rust crate.
-          # Install directly from rhysd/actionlint releases to avoid cargo-binstall fallback failures.
-          # Verify SHA256 checksums from the upstream release for supply-chain hardening.
-          OS="$(uname -s)"
-          ARCH="$(uname -m)"
+      - name: Install zizmor
+        uses: taiki-e/cache-cargo-install-action@417450f3c33ee20393705369577571770643d4c7 # v3.0.7
+        with:
+          tool: zizmor@${{ env.ZIZMOR_VERSION }}
 
-          case "$OS" in
-            Linux) ACTIONLINT_OS="linux" ;;
-            Darwin) ACTIONLINT_OS="darwin" ;;
-            *)
-              echo "Unsupported OS for actionlint: $OS" >&2
-              exit 1
-              ;;
-          esac
-
-          case "$ARCH" in
-            x86_64|amd64) ACTIONLINT_ARCH="amd64" ;;
-            arm64|aarch64) ACTIONLINT_ARCH="arm64" ;;
-            *)
-              echo "Unsupported architecture for actionlint: $ARCH" >&2
-              exit 1
-              ;;
-          esac
-
-          verify_sha256() {
-            local checksum_file="$1"
-            if command -v sha256sum >/dev/null 2>&1; then
-              sha256sum -c "$checksum_file"
-            else
-              shasum -a 256 -c "$checksum_file"
-            fi
-          }
-
-          VERSION="${ACTIONLINT_VERSION}"
-          TARBALL="actionlint_${VERSION}_${ACTIONLINT_OS}_${ACTIONLINT_ARCH}.tar.gz"
-          CHECKSUMS_FILE="actionlint_${VERSION}_checksums.txt"
-          BASE_URL="https://github.com/rhysd/actionlint/releases/download/v${VERSION}"
-
-          tmpdir="$(mktemp -d)"
-          trap 'rm -rf "$tmpdir"' EXIT
-
-          curl -fsSL "${BASE_URL}/${TARBALL}" -o "$tmpdir/$TARBALL"
-          curl -fsSL "${BASE_URL}/${CHECKSUMS_FILE}" -o "$tmpdir/$CHECKSUMS_FILE"
-
-          orig_dir="$PWD"
-          cd "$tmpdir"
-          grep -F "  $TARBALL" "$CHECKSUMS_FILE" > checksum.txt
-          verify_sha256 checksum.txt
-          cd "$orig_dir"
-
-          tar -xzf "$tmpdir/$TARBALL" -C "$tmpdir"
-
-          actionlint_path="$(find "$tmpdir" -type f -name actionlint | head -n 1)"
-          if [[ -z "$actionlint_path" ]]; then
-            echo "actionlint binary not found in $TARBALL" >&2
-            exit 1
-          fi
-
-          sudo install -m 0755 "$actionlint_path" /usr/local/bin/actionlint
-
-      - name: actionlint -version
-        if: matrix.os != 'windows-latest'
-        run: actionlint -version
-
-      - name: Install additional tools (Linux)
-        if: matrix.os == 'ubuntu-latest'
-        run: |
-          # Install shellcheck, jq, and yamllint
-          sudo apt-get update
-          sudo apt-get install -y shellcheck jq yamllint
-
-          # Install shfmt (pinned for CI consistency)
-          SHFMT_ASSET="shfmt_v${SHFMT_VERSION}_linux_amd64"
-          SHFMT_BASE_URL="https://github.com/mvdan/sh/releases/download/v${SHFMT_VERSION}"
-          SHFMT_SHA256="${SHFMT_SHA256_LINUX_AMD64}"
-
-          tmpdir="$(mktemp -d)"
-          trap 'rm -rf "$tmpdir"' EXIT
-
-          curl -fsSL \
-            "${SHFMT_BASE_URL}/${SHFMT_ASSET}" \
-            -o "$tmpdir/${SHFMT_ASSET}"
-
-          (
-            cd "$tmpdir"
-            printf '%s  %s\n' "$SHFMT_SHA256" "$SHFMT_ASSET" > checksum.txt
-            sha256sum -c checksum.txt
-          )
-
-          sudo install -m 0755 "$tmpdir/${SHFMT_ASSET}" /usr/local/bin/shfmt
-
-      - name: Install additional tools (macOS)
-        if: matrix.os == 'macos-latest'
-        run: |
-          # Install shellcheck, jq, and yamllint via Homebrew
-          brew install shellcheck jq yamllint
-
-          # Install shfmt (pinned for CI consistency with Linux)
-          SHFMT_ARCH="amd64"
-          if [[ "$(uname -m)" == "arm64" ]]; then
-            SHFMT_ARCH="arm64"
-          fi
-
-          SHFMT_ASSET="shfmt_v${SHFMT_VERSION}_darwin_${SHFMT_ARCH}"
-          SHFMT_BASE_URL="https://github.com/mvdan/sh/releases/download/v${SHFMT_VERSION}"
-          case "$SHFMT_ARCH" in
-            amd64) SHFMT_SHA256="${SHFMT_SHA256_DARWIN_AMD64}" ;;
-            arm64) SHFMT_SHA256="${SHFMT_SHA256_DARWIN_ARM64}" ;;
-            *)
-              echo "Unsupported shfmt architecture: $SHFMT_ARCH" >&2
-              exit 1
-              ;;
-          esac
-
-          tmpdir="$(mktemp -d)"
-          trap 'rm -rf "$tmpdir"' EXIT
-
-          curl -fsSL \
-            "${SHFMT_BASE_URL}/${SHFMT_ASSET}" \
-            -o "$tmpdir/${SHFMT_ASSET}"
-
-          (
-            cd "$tmpdir"
-            printf '%s  %s\n' "$SHFMT_SHA256" "$SHFMT_ASSET" > checksum.txt
-            shasum -a 256 -c checksum.txt
-          )
-
-          sudo install -m 0755 "$tmpdir/${SHFMT_ASSET}" /usr/local/bin/shfmt
-
-      - name: Run CI checks (Linux/macOS)
-        if: matrix.os != 'windows-latest'
+      - name: Run CI checks
         run: just ci
-
-      - name: Build and test (Windows)
-        if: matrix.os == 'windows-latest'
-        run: |
-          cargo build --verbose --all-targets
-          cargo nextest run --profile ci --lib
-          cargo test --doc --verbose
-          cargo nextest run --release --profile ci --tests
