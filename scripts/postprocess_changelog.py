@@ -38,16 +38,28 @@ _TOKEN_RE = re.compile(
 )
 
 
-# Version section heading: ## [X.Y.Z] or ## [Unreleased]
-_VERSION_RE = re.compile(r"^## \[")
-
-# Generated changelog category headings that delimit entries.
-_CATEGORY_HEADING_RE = re.compile(
-    r"^### (?:"
-    r"Merged Pull Requests|Breaking Changes|Added|Changed|Deprecated|"
-    r"Dependencies|Documentation|Fixed|Maintenance|Performance|Removed|Security"
-    r")$"
+# Version section heading: ## [X.Y.Z], ## [vX.Y.Z], or ## [Unreleased]
+_VERSION_RE = re.compile(
+    r"^## \[(?:v?\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?|Unreleased)\]"
+    r"(?:\s+-\s+\d{4}-\d{2}-\d{2})?\s*$"
 )
+
+# Changelog category headings that delimit generated entries.
+_CHANGELOG_SECTION_HEADINGS = {
+    "Added",
+    "Breaking Changes",
+    "Changed",
+    "Deprecated",
+    "Dependencies",
+    "Documentation",
+    "Fixed",
+    "Maintenance",
+    "Merged Pull Requests",
+    "Performance",
+    "Removed",
+    "Security",
+    "⚠️ Breaking Changes",
+}
 
 # PR link: [#123](https://github.com/.../pull/123)
 _PR_LINK_RE = re.compile(r"\[#(\d+)\]\(https://github\.com/[^)]+/pull/\d+\)")
@@ -1045,7 +1057,11 @@ def _normalize_indented_bold_heading(
 
 def _is_changelog_boundary_heading(line: str) -> bool:
     """Return true for root, version, or category headings that end an entry."""
-    return line in {"# Changelog", "## Archives"} or bool(_VERSION_RE.match(line) or _CATEGORY_HEADING_RE.match(line))
+    if line in {"# Changelog", "## Archives"} or _VERSION_RE.match(line):
+        return True
+
+    match = _ATX_HEADING_RE.match(line)
+    return bool(match is not None and match.group("level") == "###" and match.group("title") in _CHANGELOG_SECTION_HEADINGS)
 
 
 def _normalize_entry_heading(line: str, current_entry_summary: str | None) -> str:

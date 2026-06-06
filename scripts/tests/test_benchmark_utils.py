@@ -40,9 +40,11 @@ from benchmark_utils import (
     TRUSTED_BENCH_PROFILE,
     WORKTREE_VS_REF_COMPARISON_RESULTS_TEMPLATE,
     BaselineArtifactMetadata,
+    BaselineFetchOptions,
     BaselineGenerator,
     BaselineParseError,
     BenchmarkRegressionHelper,
+    CiPerformanceMetric,
     CiPerformanceResult,
     CriterionParser,
     LocalRefBaselineCacheOptions,
@@ -444,6 +446,7 @@ class TestCriterionParser:
         stdout = """
 api_benchmark_metric benchmark_id=tds_new_2d/tds_new/2000 vertices=2000 simplices=3995
 api_benchmark_metric benchmark_id=tds_new_3d/tds_new_adversarial/700 vertices=700 simplices=4211
+api_benchmark_metric benchmark_id=tds_new_2d/tds_new/0 vertices=0 simplices=0
 malformed api_benchmark_metric benchmark_id=ignored vertices=x simplices=y
 """
 
@@ -480,6 +483,42 @@ malformed api_benchmark_metric benchmark_id=ignored vertices=x simplices=y
 
             with pytest.raises(ValueError, match=re.escape(str(metrics_path))):
                 _load_ci_performance_metrics(criterion_dir)
+
+    def test_load_ci_performance_metrics_returns_validated_metrics(self) -> None:
+        """Loaded ci_performance_suite metrics carry typed validated counts."""
+        with tempfile.TemporaryDirectory() as temp_dir:
+            criterion_dir = Path(temp_dir) / "target" / "criterion"
+            criterion_dir.mkdir(parents=True)
+            metrics_path = criterion_dir / _CI_PERFORMANCE_SUITE_METRICS_FILE
+            metrics_path.write_text(
+                json.dumps(
+                    {
+                        "tds_new_2d/tds_new/10": {"vertices": 10, "simplices": 17},
+                        "tds_new_2d/tds_new/25": {"vertices": True, "simplices": 45},
+                        "tds_new_2d/tds_new/50": {"vertices": 50, "simplices": -1},
+                        "tds_new_2d/tds_new/0": {"vertices": 0, "simplices": 0},
+                    }
+                ),
+                encoding=UTF8,
+            )
+
+            metrics = _load_ci_performance_metrics(criterion_dir)
+
+            assert metrics == {"tds_new_2d/tds_new/10": CiPerformanceMetric(vertices=10, simplices=17)}
+
+    @pytest.mark.parametrize(
+        ("kwargs", "message"),
+        [
+            ({"vertices": 0, "simplices": 17}, "vertices must be a positive integer"),
+            ({"vertices": True, "simplices": 17}, "vertices must be a positive integer"),
+            ({"vertices": 10, "simplices": 0}, "simplices must be a positive integer"),
+            ({"vertices": 10, "simplices": True}, "simplices must be a positive integer"),
+        ],
+    )
+    def test_ci_performance_metric_rejects_invalid_counts(self, kwargs, message) -> None:
+        """CiPerformanceMetric rejects non-positive and bool counts."""
+        with pytest.raises(ValueError, match=message):
+            CiPerformanceMetric(**kwargs)
 
     def test_find_criterion_results_preserves_ci_suite_ids(self) -> None:
         """Test ci_performance_suite results keep expanded Criterion benchmark IDs."""
@@ -2773,8 +2812,6 @@ class TestTimeoutHandling:
                 parser = create_argument_parser()
                 args = parser.parse_args(["run-regression-test", "--baseline", str(baseline_file), "--bench-timeout", "3600"])
                 assert args.bench_timeout == 3600
-                assert hasattr(args, "validate_bench_timeout")
-                assert args.validate_bench_timeout
 
     def test_parser_accepts_verbose_flag(self) -> None:
         """Test that the CLI parser accepts the shared verbose logging flag."""
@@ -2873,6 +2910,65 @@ class TestTimeoutHandling:
         assert compare_args.threshold == 5.0
         assert compare_args.output == Path("benches/worktree_vs_main_compare_results.txt")
         assert compare_args.dev
+
+    @pytest.mark.parametrize(
+        ("kwargs", "message"),
+        [
+            ({"wait_seconds": 0}, "wait_seconds must be a positive integer"),
+            ({"wait_seconds": -1}, "wait_seconds must be a positive integer"),
+            ({"wait_seconds": True}, "wait_seconds must be a positive integer"),
+            ({"poll_seconds": 0}, "poll_seconds must be a positive integer"),
+            ({"poll_seconds": -1}, "poll_seconds must be a positive integer"),
+            ({"poll_seconds": True}, "poll_seconds must be a positive integer"),
+        ],
+    )
+    def test_baseline_fetch_options_reject_invalid_waits(self, kwargs, message) -> None:
+        """BaselineFetchOptions rejects durations that would break polling."""
+        with pytest.raises(ValueError, match=message):
+            BaselineFetchOptions(**kwargs)
+
+    @pytest.mark.parametrize(
+        ("command", "option", "value"),
+        [
+            ("fetch-baseline", "--wait-seconds", "0"),
+            ("fetch-baseline", "--wait-seconds", "-1"),
+            ("fetch-baseline", "--poll-seconds", "0"),
+            ("fetch-baseline", "--poll-seconds", "-1"),
+            ("compare-tags", "--wait-seconds", "0"),
+            ("compare-tags", "--wait-seconds", "-1"),
+            ("compare-tags", "--poll-seconds", "0"),
+            ("compare-tags", "--poll-seconds", "-1"),
+        ],
+    )
+    def test_cli_rejects_invalid_baseline_fetch_waits(self, monkeypatch, temp_chdir, command: str, option: str, value: str) -> None:
+        """CLI wait/poll validation fails before GitHub workflow dispatch."""
+        with tempfile.TemporaryDirectory() as temp_dir:
+            project_root = Path(temp_dir)
+            (project_root / "Cargo.toml").write_text("[package]\nname = 'test'\n", encoding=UTF8)
+
+            if command == "fetch-baseline":
+                argv = ["benchmark_utils.py", command, "--ref", "main", option, value, "--project-root", str(project_root)]
+            else:
+                argv = [
+                    "benchmark_utils.py",
+                    command,
+                    "--old-tag",
+                    "v1.0.0",
+                    "--new-tag",
+                    "v1.1.0",
+                    option,
+                    value,
+                    "--project-root",
+                    str(project_root),
+                ]
+
+            with temp_chdir(project_root), patch("benchmark_utils.GitHubBaselineFetcher") as fetcher_class:
+                monkeypatch.setattr(sys, "argv", argv)
+                with pytest.raises(SystemExit) as exc_info:
+                    main()
+
+            assert exc_info.value.code == 2
+            fetcher_class.assert_not_called()
 
     def test_configure_logging_uses_debug_when_verbose(self) -> None:
         """Test that verbose mode configures debug-level CLI logging."""

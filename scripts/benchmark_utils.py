@@ -30,7 +30,7 @@ from datetime import UTC, datetime
 from itertools import product
 from pathlib import Path
 from shutil import copy2 as copyfile  # NOTE: Use copy2 (metadata-preserving) under the 'copyfile' alias for tests/patching convenience.
-from typing import TYPE_CHECKING, Literal, NoReturn, TextIO
+from typing import TYPE_CHECKING, Literal, NoReturn, TextIO, TypeIs
 from urllib.parse import urlparse
 from uuid import uuid4
 
@@ -218,6 +218,28 @@ class ComparisonSummaryStats:
     failure_policy: ComparisonFailurePolicy
 
 
+@dataclass(frozen=True)
+class CiPerformanceMetric:
+    """Validated construction metric emitted by ci_performance_suite."""
+
+    vertices: int
+    simplices: int
+
+    def __post_init__(self) -> None:
+        """Keep construction counts positive and integral."""
+        _require_positive_int_field("vertices", self.vertices)
+        _require_positive_int_field("simplices", self.simplices)
+
+
+@dataclass(frozen=True)
+class CriterionEstimate:
+    """Validated Criterion timing estimate in nanoseconds."""
+
+    mean_ns: float
+    low_ns: float
+    high_ns: float
+
+
 def ci_suite_group_key(first_path_part: str) -> str | None:
     """Map a Criterion path prefix to a ci_performance_suite group key."""
     if first_path_part.startswith("tds_new_"):
@@ -273,12 +295,18 @@ def _parse_ci_performance_metrics(stdout: str) -> dict[str, dict[str, int]]:
         if not benchmark_id:
             continue
         try:
-            metrics[benchmark_id] = {
-                "vertices": int(fields["vertices"]),
-                "simplices": int(fields["simplices"]),
-            }
+            vertices = int(fields["vertices"])
+            simplices = int(fields["simplices"])
         except (KeyError, ValueError):
             logger.debug("Skipping malformed ci_performance_suite metric line: %s", line)
+            continue
+        if vertices <= 0 or simplices <= 0:
+            logger.debug("Skipping non-positive ci_performance_suite metric line: %s", line)
+            continue
+        metrics[benchmark_id] = {
+            "vertices": vertices,
+            "simplices": simplices,
+        }
     return metrics
 
 
@@ -376,7 +404,20 @@ def _load_ci_performance_manifest_ids(criterion_dir: Path) -> set[str] | None:
     return manifest_ids or None
 
 
-def _load_ci_performance_metrics(criterion_dir: Path) -> dict[str, Mapping[str, object]]:
+def _parse_ci_performance_metric(benchmark_id: str, values: Mapping[object, object], metrics_path: Path) -> CiPerformanceMetric | None:
+    """Parse one metrics sidecar entry into a validated metric object."""
+    vertices = values.get("vertices")
+    simplices = values.get("simplices")
+    if not isinstance(vertices, int) or isinstance(vertices, bool) or vertices <= 0:
+        logger.debug("Skipping malformed ci_performance_suite metric entry %r from %s", benchmark_id, metrics_path)
+        return None
+    if not isinstance(simplices, int) or isinstance(simplices, bool) or simplices <= 0:
+        logger.debug("Skipping malformed ci_performance_suite metric entry %r from %s", benchmark_id, metrics_path)
+        return None
+    return CiPerformanceMetric(vertices=vertices, simplices=simplices)
+
+
+def _load_ci_performance_metrics(criterion_dir: Path) -> dict[str, CiPerformanceMetric]:
     """Load ci_performance_suite construction metrics when present."""
     metrics_path = _ci_performance_metrics_path(criterion_dir)
     if not metrics_path.exists():
@@ -393,12 +434,14 @@ def _load_ci_performance_metrics(criterion_dir: Path) -> dict[str, Mapping[str, 
         msg = f"malformed ci_performance_suite metrics sidecar {metrics_path}: expected JSON object"
         raise TypeError(msg)
 
-    metrics: dict[str, Mapping[str, object]] = {}
+    metrics: dict[str, CiPerformanceMetric] = {}
     for benchmark_id, values in data.items():
         if not isinstance(benchmark_id, str) or not isinstance(values, dict):
             logger.debug("Skipping malformed ci_performance_suite metric entry %r from %s", benchmark_id, metrics_path)
             continue
-        metrics[benchmark_id] = values
+        metric = _parse_ci_performance_metric(benchmark_id, values, metrics_path)
+        if metric is not None:
+            metrics[benchmark_id] = metric
     return metrics
 
 
@@ -431,6 +474,59 @@ def _ci_performance_sidecar_timestamp(criterion_dir: Path) -> str | None:
 def is_valid_criterion_estimate(mean_ns: float, low_ns: float, high_ns: float) -> bool:
     """Return whether Criterion estimate values are finite and ordered."""
     return all(math.isfinite(value) for value in (mean_ns, low_ns, high_ns)) and mean_ns > 0 and 0 <= low_ns <= mean_ns <= high_ns
+
+
+def _is_object_mapping(value: object) -> TypeIs[Mapping[object, object]]:
+    """Return whether a raw value can be treated as an object-keyed mapping."""
+    return isinstance(value, Mapping)
+
+
+def _require_positive_int_field(name: str, value: object) -> None:
+    """Reject values that are not positive non-bool integers."""
+    if not isinstance(value, int) or isinstance(value, bool) or value <= 0:
+        msg = f"{name} must be a positive integer (got {value!r})"
+        raise ValueError(msg)
+
+
+def _criterion_float(value: object) -> float:
+    """Convert a raw Criterion JSON scalar into a float."""
+    if isinstance(value, bool) or not isinstance(value, str | int | float):
+        msg = f"expected numeric Criterion estimate value, got {value!r}"
+        raise TypeError(msg)
+    return float(value)
+
+
+def _parse_criterion_estimate(data: object) -> CriterionEstimate | None:
+    """Parse raw Criterion estimates.json data into a validated estimate."""
+    if not _is_object_mapping(data):
+        return None
+    mean_data = data.get("mean", {})
+    if not _is_object_mapping(mean_data):
+        return None
+    confidence_interval = mean_data.get("confidence_interval", {})
+    if not _is_object_mapping(confidence_interval):
+        return None
+
+    try:
+        mean_ns = _criterion_float(mean_data["point_estimate"])
+        low_ns = _criterion_float(confidence_interval.get("lower_bound", mean_ns))
+        high_ns = _criterion_float(confidence_interval.get("upper_bound", mean_ns))
+    except (KeyError, TypeError, ValueError):
+        return None
+
+    if not is_valid_criterion_estimate(mean_ns, low_ns, high_ns):
+        return None
+    return CriterionEstimate(mean_ns=mean_ns, low_ns=low_ns, high_ns=high_ns)
+
+
+def _load_criterion_estimate(estimates_path: Path) -> CriterionEstimate | None:
+    """Load and validate a Criterion estimates.json file."""
+    try:
+        with estimates_path.open("r", encoding="utf-8") as f:
+            data = json.load(f)
+    except (OSError, json.JSONDecodeError):
+        return None
+    return _parse_criterion_estimate(data)
 
 
 def _collect_ci_suite_estimates(criterion_dir: Path) -> list[tuple[tuple[str, ...], Path]]:
@@ -1135,27 +1231,9 @@ class PerformanceSummaryGenerator:
             estimates_file = criterion_path / "new" / "estimates.json"
 
         if estimates_file.exists():
-            try:
-                with estimates_file.open(encoding="utf-8") as f:
-                    data = json.load(f)
-
-                if not isinstance(data, dict):
-                    return None
-                mean_data = data.get("mean", {})
-                if not isinstance(mean_data, dict):
-                    return None
-                mean_ns = float(mean_data["point_estimate"])
-                confidence_interval = mean_data.get("confidence_interval", {})
-                if not isinstance(confidence_interval, dict):
-                    return None
-                low_ns = float(confidence_interval.get("lower_bound", mean_ns))
-                high_ns = float(confidence_interval.get("upper_bound", mean_ns))
-                if not is_valid_criterion_estimate(mean_ns, low_ns, high_ns):
-                    return None
-                return CircumspherePerformanceData(method=method_name, time_ns=mean_ns)
-
-            except (OSError, KeyError, TypeError, ValueError, json.JSONDecodeError) as e:
-                print(f"⚠️ Could not parse {estimates_file}: {e}")
+            estimate = _load_criterion_estimate(estimates_file)
+            if estimate is not None:
+                return CircumspherePerformanceData(method=method_name, time_ns=estimate.mean_ns)
 
         return None
 
@@ -1166,123 +1244,32 @@ class PerformanceSummaryGenerator:
         Returns:
             List of CircumsphereTestCase objects with known performance data
         """
+        fallback_rows = (
+            ("Basic 2D", "2D", False, 560, 644, 448),
+            ("Boundary vertex", "2D", True, 570, 644, 451),
+            ("Far vertex", "2D", False, 570, 641, 449),
+            ("Basic 3D", "3D", False, 805, 1463, 637),
+            ("Boundary vertex", "3D", True, 811, 1497, 647),
+            ("Far vertex", "3D", False, 808, 1493, 649),
+            ("Basic 4D", "4D", False, 1200, 1900, 979),
+            ("Boundary vertex", "4D", True, 1300, 1900, 987),
+            ("Far vertex", "4D", False, 1300, 1900, 975),
+            ("Basic 5D", "5D", False, 1800, 3000, 1500),
+            ("Boundary vertex", "5D", True, 1800, 3100, 1500),
+            ("Far vertex", "5D", False, 1800, 3000, 1500),
+        )
         return [
-            # 2D results
             CircumsphereTestCase(
-                "Basic 2D",
-                "2D",
+                name,
+                dimension,
                 {
-                    "insphere": CircumspherePerformanceData("insphere", 560),
-                    "insphere_distance": CircumspherePerformanceData("insphere_distance", 644),
-                    "insphere_lifted": CircumspherePerformanceData("insphere_lifted", 448),
+                    "insphere": CircumspherePerformanceData("insphere", insphere_ns),
+                    "insphere_distance": CircumspherePerformanceData("insphere_distance", distance_ns),
+                    "insphere_lifted": CircumspherePerformanceData("insphere_lifted", lifted_ns),
                 },
-            ),
-            CircumsphereTestCase(
-                "Boundary vertex",
-                "2D",
-                {
-                    "insphere": CircumspherePerformanceData("insphere", 570),
-                    "insphere_distance": CircumspherePerformanceData("insphere_distance", 644),
-                    "insphere_lifted": CircumspherePerformanceData("insphere_lifted", 451),
-                },
-                is_boundary_case=True,
-            ),
-            CircumsphereTestCase(
-                "Far vertex",
-                "2D",
-                {
-                    "insphere": CircumspherePerformanceData("insphere", 570),
-                    "insphere_distance": CircumspherePerformanceData("insphere_distance", 641),
-                    "insphere_lifted": CircumspherePerformanceData("insphere_lifted", 449),
-                },
-            ),
-            # 3D results
-            CircumsphereTestCase(
-                "Basic 3D",
-                "3D",
-                {
-                    "insphere": CircumspherePerformanceData("insphere", 805),
-                    "insphere_distance": CircumspherePerformanceData("insphere_distance", 1463),
-                    "insphere_lifted": CircumspherePerformanceData("insphere_lifted", 637),
-                },
-            ),
-            CircumsphereTestCase(
-                "Boundary vertex",
-                "3D",
-                {
-                    "insphere": CircumspherePerformanceData("insphere", 811),
-                    "insphere_distance": CircumspherePerformanceData("insphere_distance", 1497),
-                    "insphere_lifted": CircumspherePerformanceData("insphere_lifted", 647),
-                },
-                is_boundary_case=True,
-            ),
-            CircumsphereTestCase(
-                "Far vertex",
-                "3D",
-                {
-                    "insphere": CircumspherePerformanceData("insphere", 808),
-                    "insphere_distance": CircumspherePerformanceData("insphere_distance", 1493),
-                    "insphere_lifted": CircumspherePerformanceData("insphere_lifted", 649),
-                },
-            ),
-            # 4D results
-            CircumsphereTestCase(
-                "Basic 4D",
-                "4D",
-                {
-                    "insphere": CircumspherePerformanceData("insphere", 1200),
-                    "insphere_distance": CircumspherePerformanceData("insphere_distance", 1900),
-                    "insphere_lifted": CircumspherePerformanceData("insphere_lifted", 979),
-                },
-            ),
-            CircumsphereTestCase(
-                "Boundary vertex",
-                "4D",
-                {
-                    "insphere": CircumspherePerformanceData("insphere", 1300),
-                    "insphere_distance": CircumspherePerformanceData("insphere_distance", 1900),
-                    "insphere_lifted": CircumspherePerformanceData("insphere_lifted", 987),
-                },
-                is_boundary_case=True,
-            ),
-            CircumsphereTestCase(
-                "Far vertex",
-                "4D",
-                {
-                    "insphere": CircumspherePerformanceData("insphere", 1300),
-                    "insphere_distance": CircumspherePerformanceData("insphere_distance", 1900),
-                    "insphere_lifted": CircumspherePerformanceData("insphere_lifted", 975),
-                },
-            ),
-            # 5D results
-            CircumsphereTestCase(
-                "Basic 5D",
-                "5D",
-                {
-                    "insphere": CircumspherePerformanceData("insphere", 1800),
-                    "insphere_distance": CircumspherePerformanceData("insphere_distance", 3000),
-                    "insphere_lifted": CircumspherePerformanceData("insphere_lifted", 1500),
-                },
-            ),
-            CircumsphereTestCase(
-                "Boundary vertex",
-                "5D",
-                {
-                    "insphere": CircumspherePerformanceData("insphere", 1800),
-                    "insphere_distance": CircumspherePerformanceData("insphere_distance", 3100),
-                    "insphere_lifted": CircumspherePerformanceData("insphere_lifted", 1500),
-                },
-                is_boundary_case=True,
-            ),
-            CircumsphereTestCase(
-                "Far vertex",
-                "5D",
-                {
-                    "insphere": CircumspherePerformanceData("insphere", 1800),
-                    "insphere_distance": CircumspherePerformanceData("insphere_distance", 3000),
-                    "insphere_lifted": CircumspherePerformanceData("insphere_lifted", 1500),
-                },
-            ),
+                is_boundary_case=is_boundary_case,
+            )
+            for name, dimension, is_boundary_case, insphere_ns, distance_ns, lifted_ns in fallback_rows
         ]
 
     @staticmethod
@@ -1306,26 +1293,10 @@ class PerformanceSummaryGenerator:
     @staticmethod
     def _load_criterion_estimate(estimates_path: Path) -> tuple[float, float, float] | None:
         """Load mean and confidence interval values from a Criterion estimates file."""
-        try:
-            with estimates_path.open("r", encoding="utf-8") as f:
-                data = json.load(f)
-
-            if not isinstance(data, dict):
-                return None
-            mean_data = data.get("mean", {})
-            if not isinstance(mean_data, dict):
-                return None
-            mean_ns = float(mean_data["point_estimate"])
-            confidence_interval = mean_data.get("confidence_interval", {})
-            if not isinstance(confidence_interval, dict):
-                return None
-            low_ns = float(confidence_interval.get("lower_bound", mean_ns))
-            high_ns = float(confidence_interval.get("upper_bound", mean_ns))
-            if not is_valid_criterion_estimate(mean_ns, low_ns, high_ns):
-                return None
-            return mean_ns, low_ns, high_ns
-        except (OSError, KeyError, TypeError, ValueError, json.JSONDecodeError):
+        estimate = _load_criterion_estimate(estimates_path)
+        if estimate is None:
             return None
+        return estimate.mean_ns, estimate.low_ns, estimate.high_ns
 
     def _parse_ci_performance_suite_results(self) -> list[CiPerformanceResult]:
         """
@@ -1995,41 +1966,30 @@ class CriterionParser:
         Returns:
             BenchmarkData object or None if parsing fails
         """
-        try:
-            with estimates_path.open(encoding="utf-8") as f:
-                data = json.load(f)
-
-            # Extract timing data (nanoseconds from Criterion)
-            mean_ns = float(data["mean"]["point_estimate"])
-            low_ns = float(data["mean"]["confidence_interval"]["lower_bound"])
-            high_ns = float(data["mean"]["confidence_interval"]["upper_bound"])
-
-            if not is_valid_criterion_estimate(mean_ns, low_ns, high_ns):
-                return None
-
-            # Convert nanoseconds to microseconds
-            mean_us = mean_ns / 1000
-            low_us = low_ns / 1000
-            high_us = high_ns / 1000
-
-            benchmark = BenchmarkData(points, dimension).with_timing(round(low_us, 2), round(mean_us, 2), round(high_us, 2), "µs")
-
-            if points is not None:
-                # Calculate throughput in Kelem/s
-                # Throughput = points / time_in_seconds
-                # For time in microseconds: throughput = points * 1,000,000 / time_us
-                # For Kelem/s: throughput_kelem = (points * 1,000,000 / time_us) / 1000 = points * 1000 / time_us
-                # Guard against division by zero for very fast benchmarks
-                eps = 1e-9  # µs - minimum time to prevent division by zero
-                thrpt_mean = points * 1000 / max(mean_us, eps)
-                thrpt_low = points * 1000 / max(high_us, eps)  # Lower time = higher throughput
-                thrpt_high = points * 1000 / max(low_us, eps)  # Higher time = lower throughput
-                benchmark.with_throughput(round(thrpt_low, 3), round(thrpt_mean, 3), round(thrpt_high, 3), "Kelem/s")
-
-            return benchmark
-
-        except (FileNotFoundError, json.JSONDecodeError, KeyError, TypeError, ZeroDivisionError, ValueError):
+        estimate = _load_criterion_estimate(estimates_path)
+        if estimate is None:
             return None
+
+        # Convert nanoseconds to microseconds
+        mean_us = estimate.mean_ns / 1000
+        low_us = estimate.low_ns / 1000
+        high_us = estimate.high_ns / 1000
+
+        benchmark = BenchmarkData(points, dimension).with_timing(round(low_us, 2), round(mean_us, 2), round(high_us, 2), "µs")
+
+        if points is not None:
+            # Calculate throughput in Kelem/s
+            # Throughput = points / time_in_seconds
+            # For time in microseconds: throughput = points * 1,000,000 / time_us
+            # For Kelem/s: throughput_kelem = (points * 1,000,000 / time_us) / 1000 = points * 1000 / time_us
+            # Guard against division by zero for very fast benchmarks
+            eps = 1e-9  # µs - minimum time to prevent division by zero
+            thrpt_mean = points * 1000 / max(mean_us, eps)
+            thrpt_low = points * 1000 / max(high_us, eps)  # Lower time = higher throughput
+            thrpt_high = points * 1000 / max(low_us, eps)  # Higher time = lower throughput
+            benchmark.with_throughput(round(thrpt_low, 3), round(thrpt_mean, 3), round(thrpt_high, 3), "Kelem/s")
+
+        return benchmark
 
     @staticmethod
     def _ci_suite_input_points(path_parts: tuple[str, ...]) -> int | None:
@@ -2040,7 +2000,7 @@ class CriterionParser:
 
     @staticmethod
     def _ci_suite_metric_simplices(
-        metric: Mapping[str, object] | None,
+        metric: CiPerformanceMetric | None,
         *,
         benchmark_id: str,
         path_parts: tuple[str, ...],
@@ -2057,22 +2017,16 @@ class CriterionParser:
             logger.debug("Skipping stale ci_performance_suite metric for %s", benchmark_id)
             return None
 
-        vertices = metric.get("vertices")
-        simplices = metric.get("simplices")
-        if not isinstance(vertices, int) or isinstance(vertices, bool) or not isinstance(simplices, int) or isinstance(simplices, bool) or simplices < 0:
-            logger.debug("Skipping malformed ci_performance_suite metric for %s", benchmark_id)
-            return None
-
-        if points is None or vertices != points:
+        if points is None or metric.vertices != points:
             logger.debug(
                 "Skipping stale ci_performance_suite metric for %s: vertices=%s, Criterion input=%s",
                 benchmark_id,
-                vertices,
+                metric.vertices,
                 points,
             )
             return None
 
-        return simplices
+        return metric.simplices
 
     @staticmethod
     def _process_ci_performance_suite_results(criterion_dir: Path) -> list[BenchmarkData]:
@@ -4049,9 +4003,10 @@ def get_default_bench_timeout() -> int:
         Timeout in seconds (from BENCHMARK_TIMEOUT env var or 1800 default)
     """
     try:
-        return int(os.getenv("BENCHMARK_TIMEOUT", "1800"))
+        timeout = int(os.getenv("BENCHMARK_TIMEOUT", "1800"))
     except (ValueError, TypeError):
         return 1800
+    return timeout if timeout > 0 else 1800
 
 
 # =============================================================================
@@ -4230,6 +4185,11 @@ class BaselineFetchOptions:
     wait_seconds: int = 3600
     poll_seconds: int = 30
 
+    def __post_init__(self) -> None:
+        """Reject invalid wait/poll durations before workflow dispatch."""
+        _require_positive_int_field("wait_seconds", self.wait_seconds)
+        _require_positive_int_field("poll_seconds", self.poll_seconds)
+
 
 class GitHubBaselineFetcher:
     """Fetch git-ref baselines from GitHub Actions artifacts using the GitHub CLI."""
@@ -4348,12 +4308,70 @@ class GitHubBaselineFetcher:
             raise RuntimeError(msg) from e
 
 
+def _positive_int_arg(value: str) -> int:
+    """Parse a positive integer CLI argument."""
+    try:
+        parsed = int(value)
+    except ValueError as error:
+        msg = f"expected a positive integer, got {value!r}"
+        raise argparse.ArgumentTypeError(msg) from error
+    if parsed <= 0:
+        msg = f"expected a positive integer, got {parsed}"
+        raise argparse.ArgumentTypeError(msg)
+    return parsed
+
+
+def _non_negative_float_arg(value: str) -> float:
+    """Parse a non-negative finite float CLI argument."""
+    try:
+        parsed = float(value)
+    except ValueError as error:
+        msg = f"expected a non-negative number, got {value!r}"
+        raise argparse.ArgumentTypeError(msg) from error
+    if not math.isfinite(parsed) or parsed < 0:
+        msg = f"expected a non-negative finite number, got {value!r}"
+        raise argparse.ArgumentTypeError(msg)
+    return parsed
+
+
+def _add_dev_arg(parser: argparse.ArgumentParser, *, help_text: str | None = None) -> None:
+    parser.add_argument(
+        "--dev",
+        action="store_true",
+        help=help_text or f"Use faster Criterion settings while retaining the {TRUSTED_BENCH_PROFILE} Cargo profile",
+    )
+
+
+def _add_project_root_arg(
+    parser: argparse.ArgumentParser, *, help_text: str = "Project root containing the git repo (directory containing Cargo.toml)"
+) -> None:
+    parser.add_argument("--project-root", type=Path, help=help_text)
+
+
+def _add_bench_timeout_arg(parser: argparse.ArgumentParser, *, help_text: str | None = None) -> None:
+    parser.add_argument(
+        "--bench-timeout",
+        type=_positive_int_arg,
+        default=get_default_bench_timeout(),
+        help=help_text or "Timeout for cargo bench in seconds (from BENCHMARK_TIMEOUT env, default: 1800)",
+    )
+
+
+def _add_fetch_wait_args(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument("--wait-seconds", type=_positive_int_arg, default=3600, help="Max seconds to wait when regenerating (default: 3600)")
+    parser.add_argument("--poll-seconds", type=_positive_int_arg, default=30, help="Polling interval seconds when waiting (default: 30)")
+
+
+def _add_remote_arg(parser: argparse.ArgumentParser, *, help_text: str) -> None:
+    parser.add_argument("--remote", type=str, default="origin", help=help_text)
+
+
 def _add_benchmark_subcommands(subparsers: "argparse._SubParsersAction[argparse.ArgumentParser]") -> None:
     """Add benchmark-running subcommands."""
     gen_parser = subparsers.add_parser("generate-baseline", help="Generate performance baseline")
-    gen_parser.add_argument("--dev", action="store_true", help=f"Use faster Criterion settings while retaining the {TRUSTED_BENCH_PROFILE} Cargo profile")
+    _add_dev_arg(gen_parser)
     gen_parser.add_argument("--output", type=Path, help="Output file path")
-    gen_parser.add_argument("--project-root", type=Path, help="Project root to benchmark (directory containing Cargo.toml)")
+    _add_project_root_arg(gen_parser, help_text="Project root to benchmark (directory containing Cargo.toml)")
     gen_parser.add_argument(
         "--ref",
         dest="ref_name",
@@ -4361,13 +4379,7 @@ def _add_benchmark_subcommands(subparsers: "argparse._SubParsersAction[argparse.
         default=os.getenv("BASELINE_REF") or os.getenv("REF_NAME"),
         help="Git ref name for this baseline (from BASELINE_REF/REF_NAME env or --ref option)",
     )
-    gen_parser.add_argument(
-        "--bench-timeout",
-        type=int,
-        default=get_default_bench_timeout(),
-        help="Timeout for cargo bench in seconds (from BENCHMARK_TIMEOUT env, default: 1800)",
-    )
-    gen_parser.set_defaults(validate_bench_timeout=True)
+    _add_bench_timeout_arg(gen_parser)
 
     write_parser = subparsers.add_parser("write-baseline", help="Write a baseline from existing Criterion results")
     write_parser.add_argument("--output", type=Path, required=True, help="Output baseline_results.txt path")
@@ -4384,20 +4396,14 @@ def _add_benchmark_subcommands(subparsers: "argparse._SubParsersAction[argparse.
     ref_parser = subparsers.add_parser("generate-ref-baseline", help="Generate a local baseline for a git ref")
     ref_parser.add_argument("--ref", dest="ref_name", type=str, default="main", help="Git ref to benchmark (default: main)")
     ref_parser.add_argument("--out", dest="out_dir", type=Path, default=Path("baseline-artifact"), help="Output artifact directory")
-    ref_parser.add_argument("--remote", type=str, default="origin", help="Git remote to fetch the ref from (default: origin)")
-    ref_parser.add_argument("--dev", action="store_true", help=f"Use faster Criterion settings while retaining the {TRUSTED_BENCH_PROFILE} Cargo profile")
-    ref_parser.add_argument(
-        "--bench-timeout",
-        type=int,
-        default=get_default_bench_timeout(),
-        help="Timeout for cargo bench in seconds (from BENCHMARK_TIMEOUT env, default: 1800)",
-    )
-    ref_parser.add_argument("--project-root", type=Path, help="Project root containing the git repo (directory containing Cargo.toml)")
-    ref_parser.set_defaults(validate_bench_timeout=True)
+    _add_remote_arg(ref_parser, help_text="Git remote to fetch the ref from (default: origin)")
+    _add_dev_arg(ref_parser)
+    _add_bench_timeout_arg(ref_parser)
+    _add_project_root_arg(ref_parser)
 
     ensure_ref_parser = subparsers.add_parser("ensure-ref-baseline", help="Ensure a cached same-machine baseline exists for a git ref")
     ensure_ref_parser.add_argument("--ref", dest="ref_name", type=str, default="main", help="Git ref to benchmark/cache (default: main)")
-    ensure_ref_parser.add_argument("--remote", type=str, default="origin", help="Git remote used to resolve/fetch the ref (default: origin)")
+    _add_remote_arg(ensure_ref_parser, help_text="Git remote used to resolve/fetch the ref (default: origin)")
     ensure_ref_parser.add_argument(
         "--cache-root",
         type=Path,
@@ -4408,44 +4414,33 @@ def _add_benchmark_subcommands(subparsers: "argparse._SubParsersAction[argparse.
         default=PERF_NO_REGRESSIONS_REQUIRED_BENCHMARK_ID,
         help=f"Benchmark ID required before reusing a cache entry (default: {PERF_NO_REGRESSIONS_REQUIRED_BENCHMARK_ID})",
     )
-    ensure_ref_parser.add_argument(
-        "--dev", action="store_true", help=f"Use faster Criterion settings while retaining the {TRUSTED_BENCH_PROFILE} Cargo profile"
+    _add_dev_arg(ensure_ref_parser)
+    _add_bench_timeout_arg(
+        ensure_ref_parser,
+        help_text="Timeout for cargo bench in seconds when refreshing the cache (from BENCHMARK_TIMEOUT env, default: 1800)",
     )
-    ensure_ref_parser.add_argument(
-        "--bench-timeout",
-        type=int,
-        default=get_default_bench_timeout(),
-        help="Timeout for cargo bench in seconds when refreshing the cache (from BENCHMARK_TIMEOUT env, default: 1800)",
-    )
-    ensure_ref_parser.add_argument("--project-root", type=Path, help="Project root containing the git repo (directory containing Cargo.toml)")
-    ensure_ref_parser.set_defaults(validate_bench_timeout=True)
+    _add_project_root_arg(ensure_ref_parser)
 
     cmp_parser = subparsers.add_parser("compare", help="Compare current performance against baseline")
     cmp_parser.add_argument("--baseline", type=Path, required=True, help="Path to baseline file")
     cmp_parser.add_argument(
         "--threshold",
-        type=float,
+        type=_non_negative_float_arg,
         default=DEFAULT_REGRESSION_THRESHOLD,
         help=f"Regression threshold percentage for marking regressions (default: {DEFAULT_REGRESSION_THRESHOLD})",
     )
-    cmp_parser.add_argument("--dev", action="store_true", help=f"Use faster Criterion settings while retaining the {TRUSTED_BENCH_PROFILE} Cargo profile")
+    _add_dev_arg(cmp_parser)
     cmp_parser.add_argument(
         "--output",
         type=Path,
         help=f"Output file path (default: benches/{MAIN_VS_RELEASE_COMPARISON_RESULTS_FILE})",
     )
-    cmp_parser.add_argument("--project-root", type=Path, help="Project root to benchmark (directory containing Cargo.toml)")
-    cmp_parser.add_argument(
-        "--bench-timeout",
-        type=int,
-        default=get_default_bench_timeout(),
-        help="Timeout for cargo bench in seconds (from BENCHMARK_TIMEOUT env, default: 1800)",
-    )
-    cmp_parser.set_defaults(validate_bench_timeout=True)
+    _add_project_root_arg(cmp_parser, help_text="Project root to benchmark (directory containing Cargo.toml)")
+    _add_bench_timeout_arg(cmp_parser)
 
     cmp_ref_parser = subparsers.add_parser("compare-ref", help="Compare current performance against a cached same-machine git-ref baseline")
     cmp_ref_parser.add_argument("--ref", dest="ref_name", type=str, default="main", help="Git ref to benchmark/cache (default: main)")
-    cmp_ref_parser.add_argument("--remote", type=str, default="origin", help="Git remote used to resolve/fetch the ref (default: origin)")
+    _add_remote_arg(cmp_ref_parser, help_text="Git remote used to resolve/fetch the ref (default: origin)")
     cmp_ref_parser.add_argument(
         "--cache-root",
         type=Path,
@@ -4458,24 +4453,18 @@ def _add_benchmark_subcommands(subparsers: "argparse._SubParsersAction[argparse.
     )
     cmp_ref_parser.add_argument(
         "--threshold",
-        type=float,
+        type=_non_negative_float_arg,
         default=DEFAULT_REGRESSION_THRESHOLD,
         help=f"Regression threshold percentage for marking regressions (default: {DEFAULT_REGRESSION_THRESHOLD})",
     )
-    cmp_ref_parser.add_argument("--dev", action="store_true", help=f"Use faster Criterion settings while retaining the {TRUSTED_BENCH_PROFILE} Cargo profile")
-    cmp_ref_parser.add_argument(
-        "--bench-timeout",
-        type=int,
-        default=get_default_bench_timeout(),
-        help="Timeout for cargo bench in seconds (from BENCHMARK_TIMEOUT env, default: 1800)",
-    )
+    _add_dev_arg(cmp_ref_parser)
+    _add_bench_timeout_arg(cmp_ref_parser)
     cmp_ref_parser.add_argument(
         "--output",
         type=Path,
         help="Output file path (default: benches/worktree_vs_<ref>_compare_results.txt)",
     )
-    cmp_ref_parser.add_argument("--project-root", type=Path, help="Project root containing the git repo (directory containing Cargo.toml)")
-    cmp_ref_parser.set_defaults(validate_bench_timeout=True)
+    _add_project_root_arg(cmp_ref_parser)
 
 
 def _add_local_baseline_subcommands(subparsers: "argparse._SubParsersAction[argparse.ArgumentParser]") -> None:
@@ -4490,7 +4479,7 @@ def _add_local_baseline_subcommands(subparsers: "argparse._SubParsersAction[argp
     fetch_parser.add_argument("--ref", dest="ref_name", type=str, help="Git ref to fetch (e.g., main or v0.6.2)")
     fetch_parser.add_argument("--out", dest="out_dir", type=Path, help="Output directory for downloaded artifact contents")
     fetch_parser.add_argument("--repo", type=str, help="GitHub repo in OWNER/REPO form (defaults to parsing the git remote)")
-    fetch_parser.add_argument("--remote", type=str, default="origin", help="Git remote name used to infer repo when --repo is not set")
+    _add_remote_arg(fetch_parser, help_text="Git remote name used to infer repo when --repo is not set")
     fetch_parser.add_argument("--regenerate-missing", action="store_true", help="If missing, dispatch generate-baseline.yml and wait for artifact")
     fetch_parser.add_argument(
         "--workflow-ref",
@@ -4498,16 +4487,15 @@ def _add_local_baseline_subcommands(subparsers: "argparse._SubParsersAction[argp
         default="main",
         help="Git ref to run generate-baseline.yml from when regenerating (default: main)",
     )
-    fetch_parser.add_argument("--wait-seconds", type=int, default=3600, help="Max seconds to wait when regenerating (default: 3600)")
-    fetch_parser.add_argument("--poll-seconds", type=int, default=30, help="Polling interval seconds when waiting (default: 30)")
-    fetch_parser.add_argument("--project-root", type=Path, help="Project root containing the git repo (directory containing Cargo.toml)")
+    _add_fetch_wait_args(fetch_parser)
+    _add_project_root_arg(fetch_parser)
 
     tags_parser = subparsers.add_parser("compare-tags", help="Compare two tags by fetching their baselines and comparing locally")
     tags_parser.add_argument("--old-tag", dest="old_tag", type=str, required=True, help="Older tag (e.g., v0.6.1)")
     tags_parser.add_argument("--new-tag", dest="new_tag", type=str, required=True, help="Newer tag (e.g., v0.6.2)")
     tags_parser.add_argument("--output", type=Path, help="Optional path to write the comparison report")
     tags_parser.add_argument("--repo", type=str, help="GitHub repo in OWNER/REPO form (defaults to parsing the git remote)")
-    tags_parser.add_argument("--remote", type=str, default="origin", help="Git remote name used to infer repo when --repo is not set")
+    _add_remote_arg(tags_parser, help_text="Git remote name used to infer repo when --repo is not set")
     tags_parser.add_argument("--regenerate-missing", action="store_true", help="If missing, dispatch generate-baseline.yml and wait for artifacts")
     tags_parser.add_argument(
         "--workflow-ref",
@@ -4515,9 +4503,8 @@ def _add_local_baseline_subcommands(subparsers: "argparse._SubParsersAction[argp
         default="main",
         help="Git ref to run generate-baseline.yml from when regenerating (default: main)",
     )
-    tags_parser.add_argument("--wait-seconds", type=int, default=3600, help="Max seconds to wait when regenerating (default: 3600)")
-    tags_parser.add_argument("--poll-seconds", type=int, default=30, help="Polling interval seconds when waiting (default: 30)")
-    tags_parser.add_argument("--project-root", type=Path, help="Project root containing the git repo (directory containing Cargo.toml)")
+    _add_fetch_wait_args(tags_parser)
+    _add_project_root_arg(tags_parser)
 
 
 def _add_workflow_helper_subcommands(subparsers: "argparse._SubParsersAction[argparse.ArgumentParser]") -> None:
@@ -4557,14 +4544,8 @@ def _add_regression_subcommands(subparsers: "argparse._SubParsersAction[argparse
 
     regress_parser = subparsers.add_parser("run-regression-test", help="Run performance regression test")
     regress_parser.add_argument("--baseline", type=Path, required=True, help="Path to baseline file")
-    regress_parser.add_argument("--dev", action="store_true", help=f"Use faster Criterion settings while retaining the {TRUSTED_BENCH_PROFILE} Cargo profile")
-    regress_parser.add_argument(
-        "--bench-timeout",
-        type=int,
-        default=get_default_bench_timeout(),
-        help="Timeout for cargo bench in seconds (from BENCHMARK_TIMEOUT env, default: 1800)",
-    )
-    regress_parser.set_defaults(validate_bench_timeout=True)
+    _add_dev_arg(regress_parser)
+    _add_bench_timeout_arg(regress_parser)
 
     results_parser = subparsers.add_parser("display-results", help="Display regression test results")
     results_parser.add_argument(
@@ -4861,127 +4842,189 @@ def execute_local_baseline_commands(args: argparse.Namespace, project_root: Path
     handler(args, project_root)
 
 
+def _cmd_determine_ref(_args: argparse.Namespace) -> None:
+    ref_name = WorkflowHelper.determine_ref_name()
+    print(ref_name)
+    sys.exit(0)
+
+
+def _cmd_create_metadata(args: argparse.Namespace) -> None:
+    if not args.ref_name:
+        print("❌ Missing required --ref argument", file=sys.stderr)
+        sys.exit(2)
+    success = WorkflowHelper.create_metadata(args.ref_name, args.output_dir)
+    sys.exit(0 if success else 1)
+
+
+def _cmd_display_summary(args: argparse.Namespace) -> None:
+    success = WorkflowHelper.display_baseline_summary(args.baseline)
+    sys.exit(0 if success else 1)
+
+
+def _cmd_sanitize_artifact_name(args: argparse.Namespace) -> None:
+    if not args.ref_name:
+        print("❌ Missing required --ref argument", file=sys.stderr)
+        sys.exit(2)
+    artifact_name = WorkflowHelper.sanitize_artifact_name(args.ref_name)
+    print(artifact_name)
+    sys.exit(0)
+
+
 def execute_workflow_commands(args: argparse.Namespace) -> None:
     """Execute workflow helper commands."""
-    if args.command == "determine-ref":
-        ref_name = WorkflowHelper.determine_ref_name()
-        print(ref_name)  # Output ref name to stdout
-        sys.exit(0)
+    handlers = {
+        "determine-ref": _cmd_determine_ref,
+        "create-metadata": _cmd_create_metadata,
+        "display-summary": _cmd_display_summary,
+        "sanitize-artifact-name": _cmd_sanitize_artifact_name,
+    }
+    handler = handlers.get(args.command)
+    if handler is None:
+        msg = f"Unknown workflow command: {args.command}"
+        raise ValueError(msg)
+    handler(args)
 
-    if args.command == "create-metadata":
-        if not args.ref_name:
-            print("❌ Missing required --ref argument", file=sys.stderr)
-            sys.exit(2)
-        success = WorkflowHelper.create_metadata(args.ref_name, args.output_dir)
-        sys.exit(0 if success else 1)
 
-    elif args.command == "display-summary":
-        success = WorkflowHelper.display_baseline_summary(args.baseline)
-        sys.exit(0 if success else 1)
+def _cmd_prepare_baseline(args: argparse.Namespace) -> None:
+    success = BenchmarkRegressionHelper.prepare_baseline(args.baseline_dir)
+    sys.exit(0 if success else 1)
 
-    elif args.command == "sanitize-artifact-name":
-        if not args.ref_name:
-            print("❌ Missing required --ref argument", file=sys.stderr)
-            sys.exit(2)
-        artifact_name = WorkflowHelper.sanitize_artifact_name(args.ref_name)
-        print(artifact_name)  # Output sanitized name to stdout
-        sys.exit(0)
+
+def _cmd_set_no_baseline(_args: argparse.Namespace) -> None:
+    BenchmarkRegressionHelper.set_no_baseline_status()
+    sys.exit(0)
+
+
+def _cmd_extract_baseline_commit(args: argparse.Namespace) -> None:
+    commit_sha = BenchmarkRegressionHelper.extract_baseline_commit(args.baseline_dir)
+    print(commit_sha)
+    sys.exit(0)
+
+
+def _cmd_determine_skip(args: argparse.Namespace) -> None:
+    should_skip, reason = BenchmarkRegressionHelper.determine_benchmark_skip(args.baseline_commit, args.current_commit)
+
+    BenchmarkRegressionHelper.write_github_env_vars(
+        {
+            "SKIP_BENCHMARKS": "true" if should_skip else "false",
+            "SKIP_REASON": reason,
+        }
+    )
+
+    print(f"skip={should_skip}")
+    print(f"reason={reason}")
+    sys.exit(0)
+
+
+def _cmd_display_skip_message(args: argparse.Namespace) -> None:
+    BenchmarkRegressionHelper.display_skip_message(args.reason, args.baseline_commit or "")
+    sys.exit(0)
+
+
+def _cmd_display_no_baseline(_args: argparse.Namespace) -> None:
+    BenchmarkRegressionHelper.display_no_baseline_message()
+    sys.exit(0)
+
+
+def _cmd_run_regression_test(args: argparse.Namespace) -> None:
+    success = BenchmarkRegressionHelper.run_regression_test(args.baseline, bench_timeout=args.bench_timeout, dev_mode=args.dev)
+    sys.exit(0 if success else 1)
+
+
+def _cmd_display_results(args: argparse.Namespace) -> None:
+    BenchmarkRegressionHelper.display_results(args.results)
+    sys.exit(0)
+
+
+def _cmd_regression_summary(_args: argparse.Namespace) -> None:
+    BenchmarkRegressionHelper.generate_summary()
+    sys.exit(0)
 
 
 def execute_regression_commands(args: argparse.Namespace) -> None:
     """Execute regression testing commands."""
-    if args.command == "prepare-baseline":
-        success = BenchmarkRegressionHelper.prepare_baseline(args.baseline_dir)
-        sys.exit(0 if success else 1)
+    handlers = {
+        "prepare-baseline": _cmd_prepare_baseline,
+        "set-no-baseline": _cmd_set_no_baseline,
+        "extract-baseline-commit": _cmd_extract_baseline_commit,
+        "determine-skip": _cmd_determine_skip,
+        "display-skip-message": _cmd_display_skip_message,
+        "display-no-baseline": _cmd_display_no_baseline,
+        "run-regression-test": _cmd_run_regression_test,
+        "display-results": _cmd_display_results,
+        "regression-summary": _cmd_regression_summary,
+    }
+    handler = handlers.get(args.command)
+    if handler is None:
+        msg = f"Unknown regression command: {args.command}"
+        raise ValueError(msg)
+    handler(args)
 
-    elif args.command == "set-no-baseline":
-        BenchmarkRegressionHelper.set_no_baseline_status()
-        sys.exit(0)
 
-    elif args.command == "extract-baseline-commit":
-        commit_sha = BenchmarkRegressionHelper.extract_baseline_commit(args.baseline_dir)
-        print(commit_sha)  # Output commit SHA to stdout
-        sys.exit(0)
+def _cmd_generate_summary(args: argparse.Namespace, project_root: Path) -> None:
+    generator = PerformanceSummaryGenerator(project_root)
+    success = generator.generate_summary(
+        output_path=args.output,
+        run_benchmarks=args.run_benchmarks,
+        generator_name="benchmark_utils.py",
+        cargo_profile=args.profile,
+        strict=args.strict,
+    )
+    sys.exit(0 if success else 1)
 
-    elif args.command == "determine-skip":
-        should_skip, reason = BenchmarkRegressionHelper.determine_benchmark_skip(args.baseline_commit, args.current_commit)
 
-        # Set GitHub Actions environment variables
-        BenchmarkRegressionHelper.write_github_env_vars(
-            {
-                "SKIP_BENCHMARKS": "true" if should_skip else "false",
-                "SKIP_REASON": reason,
-            }
-        )
+def execute_performance_summary_commands(args: argparse.Namespace, project_root: Path) -> None:
+    """Execute performance summary commands."""
+    handlers = {
+        "generate-summary": _cmd_generate_summary,
+    }
+    handler = handlers.get(args.command)
+    if handler is None:
+        msg = f"Unknown performance summary command: {args.command}"
+        raise ValueError(msg)
+    handler(args, project_root)
 
-        print(f"skip={should_skip}")
-        print(f"reason={reason}")
-        sys.exit(0)
 
-    elif args.command == "display-skip-message":
-        BenchmarkRegressionHelper.display_skip_message(args.reason, args.baseline_commit or "")
-        sys.exit(0)
+def _execute_workflow_commands_with_root(args: argparse.Namespace, _project_root: Path) -> None:
+    execute_workflow_commands(args)
 
-    elif args.command == "display-no-baseline":
-        BenchmarkRegressionHelper.display_no_baseline_message()
-        sys.exit(0)
 
-    elif args.command == "run-regression-test":
-        success = BenchmarkRegressionHelper.run_regression_test(args.baseline, bench_timeout=args.bench_timeout, dev_mode=args.dev)
-        sys.exit(0 if success else 1)
-
-    elif args.command == "display-results":
-        BenchmarkRegressionHelper.display_results(args.results)
-        sys.exit(0)
-
-    elif args.command == "regression-summary":
-        BenchmarkRegressionHelper.generate_summary()
-        sys.exit(0)
+def _execute_regression_commands_with_root(args: argparse.Namespace, _project_root: Path) -> None:
+    execute_regression_commands(args)
 
 
 def execute_command(args: argparse.Namespace, project_root: Path) -> None:
     """Execute the selected command based on parsed arguments."""
-    # Try baseline commands first
-    if args.command in ("generate-baseline", "write-baseline", "generate-ref-baseline", "ensure-ref-baseline", "compare", "compare-ref"):
-        execute_baseline_commands(args, project_root)
-        return
-
-    # Try local baseline commands
-    if args.command in ("compare-baselines", "fetch-baseline", "compare-tags"):
-        execute_local_baseline_commands(args, project_root)
-        return
-
-    # Try workflow commands
-    if args.command in ("determine-ref", "create-metadata", "display-summary", "sanitize-artifact-name"):
-        execute_workflow_commands(args)
-        return
-
-    # Try performance summary commands
-    if args.command == "generate-summary":
-        generator = PerformanceSummaryGenerator(project_root)
-        success = generator.generate_summary(
-            output_path=args.output,
-            run_benchmarks=args.run_benchmarks,
-            generator_name="benchmark_utils.py",
-            cargo_profile=args.profile,
-            strict=args.strict,
-        )
-        sys.exit(0 if success else 1)
-
-    # Try regression commands
-    if args.command in (
-        "prepare-baseline",
-        "set-no-baseline",
-        "extract-baseline-commit",
-        "determine-skip",
-        "display-skip-message",
-        "display-no-baseline",
-        "run-regression-test",
-        "display-results",
-        "regression-summary",
-    ):
-        execute_regression_commands(args)
-        return
+    handlers = {
+        "generate-baseline": execute_baseline_commands,
+        "write-baseline": execute_baseline_commands,
+        "generate-ref-baseline": execute_baseline_commands,
+        "ensure-ref-baseline": execute_baseline_commands,
+        "compare": execute_baseline_commands,
+        "compare-ref": execute_baseline_commands,
+        "compare-baselines": execute_local_baseline_commands,
+        "fetch-baseline": execute_local_baseline_commands,
+        "compare-tags": execute_local_baseline_commands,
+        "determine-ref": _execute_workflow_commands_with_root,
+        "create-metadata": _execute_workflow_commands_with_root,
+        "display-summary": _execute_workflow_commands_with_root,
+        "sanitize-artifact-name": _execute_workflow_commands_with_root,
+        "generate-summary": execute_performance_summary_commands,
+        "prepare-baseline": _execute_regression_commands_with_root,
+        "set-no-baseline": _execute_regression_commands_with_root,
+        "extract-baseline-commit": _execute_regression_commands_with_root,
+        "determine-skip": _execute_regression_commands_with_root,
+        "display-skip-message": _execute_regression_commands_with_root,
+        "display-no-baseline": _execute_regression_commands_with_root,
+        "run-regression-test": _execute_regression_commands_with_root,
+        "display-results": _execute_regression_commands_with_root,
+        "regression-summary": _execute_regression_commands_with_root,
+    }
+    handler = handlers.get(args.command)
+    if handler is None:
+        msg = f"Unknown command: {args.command}"
+        raise ValueError(msg)
+    handler(args, project_root)
 
 
 def main() -> None:
@@ -4993,14 +5036,6 @@ def main() -> None:
     if not args.command:
         parser.print_help()
         sys.exit(1)
-
-    # Validate bench_timeout if present
-    if hasattr(args, "validate_bench_timeout") and args.validate_bench_timeout and args.bench_timeout <= 0:
-        parser.error(f"--bench-timeout must be positive (got {args.bench_timeout})")
-
-    # Validate threshold if present
-    if hasattr(args, "threshold") and args.threshold < 0:
-        parser.error(f"--threshold must be non-negative (got {args.threshold})")
 
     try:
         project_root: Path

@@ -7,7 +7,7 @@ directly.
 
 ## Prerequisites
 
-- Python 3.12+
+- Python 3.13+
 - `uv`
 
 Install dev dependencies:

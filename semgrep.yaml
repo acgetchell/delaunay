@@ -1013,3 +1013,66 @@ rules:
     # Regex catches obvious unannotated definitions while avoiding a custom
     # Python parser rule that would duplicate ty.
     pattern-regex: '^( {0,4}|\t)(async\s+)?def\s+[A-Za-z_][A-Za-z0-9_]*\([^#\n]*\)\s*:'
+
+  - id: delaunay.python.ci-json-loads-reject-nonfinite-constants
+    languages:
+      - python
+    severity: WARNING
+    message: "Decode CI-owned JSON with parse_constant so NaN and infinity cannot enter boundary models."
+    metadata:
+      category: correctness
+      tracking_issue: "https://github.com/acgetchell/delaunay/issues/429"
+      rationale: >-
+        Python's json decoder accepts NaN and infinity by default. CI filters
+        that forward SARIF or other JSON artifacts should reject those tokens
+        before constructing typed boundary models.
+    paths:
+      include:
+        - "/scripts/ci/**/*.py"
+        - "/tests/semgrep/scripts/tests/python_parse_boundaries.py"
+    patterns:
+      - pattern-either:
+          - pattern: json.loads(...)
+          - pattern: json.load(...)
+      - pattern-not: json.loads(..., parse_constant=..., ...)
+      - pattern-not: json.load(..., parse_constant=..., ...)
+
+  - id: delaunay.python.ci-json-dumps-forbid-nonfinite-output
+    languages:
+      - python
+    severity: WARNING
+    message: "Encode CI-owned JSON with allow_nan=False so NaN and infinity cannot be emitted."
+    metadata:
+      category: correctness
+      tracking_issue: "https://github.com/acgetchell/delaunay/issues/429"
+      rationale: >-
+        CI filters that emit SARIF or other JSON artifacts should preserve
+        strict JSON on output and fail instead of serializing NaN or infinity.
+    paths:
+      include:
+        - "/scripts/ci/**/*.py"
+        - "/tests/semgrep/scripts/tests/python_parse_boundaries.py"
+    patterns:
+      - pattern-either:
+          - pattern: json.dumps(...)
+          - pattern: json.dump(...)
+      - pattern-not: json.dumps(..., allow_nan=False, ...)
+      - pattern-not: json.dump(..., allow_nan=False, ...)
+
+  - id: delaunay.python.ci-performance-metrics-require-positive-counts
+    languages:
+      - python
+    severity: WARNING
+    message: "Reject non-positive ci_performance_suite counts with <= 0, not only negative counts."
+    metadata:
+      category: correctness
+      tracking_issue: "https://github.com/acgetchell/delaunay/issues/429"
+      rationale: >-
+        Construction metric sidecars are count-bearing boundary data. Zero
+        vertices or zero simplices are invalid benchmark metrics, not
+        meaningful baseline inputs.
+    paths:
+      include:
+        - "/scripts/benchmark_utils.py"
+        - "/tests/semgrep/scripts/tests/python_parse_boundaries.py"
+    pattern-regex: '\b(?:vertices|simplices)\s*<\s*0\b'

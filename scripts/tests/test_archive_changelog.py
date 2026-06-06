@@ -441,6 +441,34 @@ class TestArchiveChangelog:
         assert changelog.read_text(encoding="utf-8") == first_root
         assert (archive_dir / "0.6.md").read_text(encoding="utf-8") == first_a06
 
+    def test_archive_dir_relpath_value_error_uses_absolute_fallback(
+        self,
+        tmp_path: Path,
+        caplog: pytest.LogCaptureFixture,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """Archive splitting survives Windows-style relpath failures across drives."""
+        changelog_dir = tmp_path / "repo"
+        changelog_dir.mkdir()
+        changelog = changelog_dir / "CHANGELOG.md"
+        changelog.write_text(_full_changelog(), encoding="utf-8")
+        archive_dir = tmp_path / "outside" / "archive"
+
+        def raise_cross_drive_value_error(_path: Path, _start: Path) -> str:
+            msg = "path is on mount 'D:', start on mount 'C:'"
+            raise ValueError(msg)
+
+        monkeypatch.setattr("archive_changelog.os.path.relpath", raise_cross_drive_value_error)
+
+        with caplog.at_level(logging.WARNING, logger="archive_changelog"):
+            archive_changelog(changelog, archive_dir)
+
+        root = changelog.read_text(encoding="utf-8")
+        assert f"- [0.6.x]({archive_dir.as_posix()}/0.6.md)" in root
+        assert "path is on mount 'D:', start on mount 'C:'" in caplog.text
+        assert str(archive_dir) in caplog.text
+        assert str(changelog_dir) in caplog.text
+
 
 # ---------------------------------------------------------------------------
 # tag_release archive fallback

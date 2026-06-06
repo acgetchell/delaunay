@@ -312,6 +312,32 @@ def build_root(
     return postprocess_text("\n".join(parts))
 
 
+def _archive_dir_link_prefix(archive_dir: Path, changelog_parent: Path) -> str:
+    """Return the Markdown link prefix from a changelog to its archive directory."""
+    try:
+        return archive_dir.relative_to(changelog_parent).as_posix()
+    except ValueError:
+        try:
+            archive_dir_rel = Path(os.path.relpath(archive_dir, changelog_parent)).as_posix()
+        except ValueError as err:
+            archive_dir_rel = archive_dir.as_posix()
+            LOGGER.warning(
+                "Could not compute relative archive directory: %s; archive_dir=%s changelog_parent=%s; generated Markdown links use %s",
+                err,
+                archive_dir,
+                changelog_parent,
+                archive_dir_rel,
+            )
+        if archive_dir_rel == ".." or archive_dir_rel.startswith("../") or Path(archive_dir_rel).is_absolute():
+            LOGGER.warning(
+                "Archive directory %s is outside changelog directory %s; generated Markdown links use %s",
+                archive_dir,
+                changelog_parent,
+                archive_dir_rel,
+            )
+        return archive_dir_rel
+
+
 # ---------------------------------------------------------------------------
 # Orchestrator
 # ---------------------------------------------------------------------------
@@ -359,18 +385,7 @@ def archive_changelog(
         _postprocess_existing_archives(archive_dir)
         return  # only one minor series — nothing to archive yet
 
-    # Compute relative path from changelog location to archive dir.
-    try:
-        archive_dir_rel = archive_dir.relative_to(changelog_path.parent).as_posix()
-    except ValueError:
-        archive_dir_rel = Path(os.path.relpath(archive_dir, changelog_path.parent)).as_posix()
-        if archive_dir_rel == ".." or archive_dir_rel.startswith("../") or Path(archive_dir_rel).is_absolute():
-            LOGGER.warning(
-                "Archive directory %s is outside changelog directory %s; generated Markdown links use %s",
-                archive_dir,
-                changelog_path.parent,
-                archive_dir_rel,
-            )
+    archive_dir_rel = _archive_dir_link_prefix(archive_dir, changelog_path.parent)
 
     root_text = build_root(
         preamble,

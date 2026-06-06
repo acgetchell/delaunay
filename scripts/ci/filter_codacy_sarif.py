@@ -6,13 +6,62 @@ from __future__ import annotations
 import argparse
 import copy
 import json
+import math
 import os
 import re
 import sys
+from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, cast
+from typing import TypeIs
 
 REPOSITORY_RULE_PREFIX = "delaunay."
+
+type JsonScalar = str | int | float | bool | None
+type JsonValue = JsonScalar | list[JsonValue] | dict[str, JsonValue]
+type JsonObject = dict[str, JsonValue]
+
+
+@dataclass(frozen=True, slots=True)
+class SarifDocument:
+    """Validated SARIF root object with a parsed top-level runs array."""
+
+    root: JsonObject
+    runs: list[JsonValue]
+
+    def metadata_without_runs(self) -> JsonObject:
+        """Return a deep copy of the SARIF metadata used for split outputs."""
+        return {key: copy.deepcopy(value) for key, value in self.root.items() if key != "runs"}
+
+
+@dataclass(frozen=True, slots=True)
+class CliArgs:
+    """Parsed CLI arguments for filtering a Codacy SARIF file."""
+
+    source: Path
+    out_dir: Path
+    github_env: Path | None
+
+
+def is_json_object(value: object) -> TypeIs[JsonObject]:
+    """Return whether a JSON value is an object with string keys."""
+    return isinstance(value, dict) and all(isinstance(key, str) and is_json_value(item) for key, item in value.items())
+
+
+def is_json_value(value: object) -> TypeIs[JsonValue]:
+    """Return whether a value can be represented as strict JSON."""
+    if value is None or isinstance(value, str | bool | int):
+        return True
+    if isinstance(value, float):
+        return math.isfinite(value)
+    if isinstance(value, list):
+        return all(is_json_value(item) for item in value)
+    return is_json_object(value)
+
+
+def reject_json_constant(value: str) -> object:
+    """Reject non-standard JSON constants accepted by Python's decoder."""
+    message = f"Codacy SARIF contains non-standard JSON constant: {value}"
+    raise ValueError(message)
 
 
 def slug(value: str) -> str:
@@ -21,35 +70,33 @@ def slug(value: str) -> str:
     return normalized.strip("-") or "unknown"
 
 
-def result_rule_id(result: object) -> str:
+def result_rule_id(result: JsonValue) -> str:
     """Return the SARIF rule ID referenced by a result, if present."""
-    if not isinstance(result, dict):
+    if not is_json_object(result):
         return ""
-    result_map = cast("dict[str, Any]", result)
-    rule_id = result_map.get("ruleId")
+    rule_id = result.get("ruleId")
     if isinstance(rule_id, str):
         return rule_id
-    rule = result_map.get("rule")
-    if isinstance(rule, dict):
-        rule_map = cast("dict[str, Any]", rule)
-        nested_rule_id = rule_map.get("id")
+    rule = result.get("rule")
+    if is_json_object(rule):
+        nested_rule_id = rule.get("id")
         if isinstance(nested_rule_id, str):
             return nested_rule_id
     return ""
 
 
-def run_driver(run: dict[str, Any]) -> dict[str, Any]:
+def run_driver(run: JsonObject) -> JsonObject:
     """Return the SARIF run driver object, or an empty mapping."""
     tool = run.get("tool")
-    if not isinstance(tool, dict):
+    if not is_json_object(tool):
         return {}
     driver = tool.get("driver")
-    if not isinstance(driver, dict):
+    if not is_json_object(driver):
         return {}
     return driver
 
 
-def keep_repository_owned_opengrep_rules(run: dict[str, Any]) -> None:
+def keep_repository_owned_opengrep_rules(run: JsonObject) -> None:
     """Drop default Codacy/OpenGrep results that do not come from semgrep.yaml."""
     driver = run_driver(run)
     tool_name = driver.get("name")
@@ -66,32 +113,41 @@ def keep_repository_owned_opengrep_rules(run: dict[str, Any]) -> None:
     used_rule_ids = {result_rule_id(result) for result in filtered_results}
     rules = driver.get("rules")
     if isinstance(rules, list):
-        driver["rules"] = [rule for rule in rules if isinstance(rule, dict) and rule.get("id") in used_rule_ids]
+        driver["rules"] = [rule for rule in rules if is_json_object(rule) and rule.get("id") in used_rule_ids]
 
 
-def load_sarif(source: Path) -> dict[str, Any]:
+def parse_sarif_document(raw: object) -> SarifDocument:
+    """Parse raw JSON into the SARIF shape this splitter requires."""
+    if not is_json_object(raw):
+        message = "Codacy SARIF root must be a JSON object"
+        raise SystemExit(message)
+
+    runs = raw.get("runs")
+    if not isinstance(runs, list):
+        message = "Codacy SARIF did not contain a runs array"
+        raise SystemExit(message)
+
+    return SarifDocument(root=raw, runs=runs)
+
+
+def load_sarif(source: Path) -> SarifDocument:
     """Load a SARIF document from disk."""
     if not source.is_file() or source.stat().st_size == 0:
         raise SystemExit(f"Codacy did not produce a SARIF file at {source}")
 
     try:
-        sarif = json.loads(source.read_text(encoding="utf-8"))
+        sarif: object = json.loads(source.read_text(encoding="utf-8"), parse_constant=reject_json_constant)
     except json.JSONDecodeError as exc:
         raise SystemExit(f"Codacy produced invalid SARIF JSON: {exc}") from exc
+    except ValueError as exc:
+        raise SystemExit(str(exc)) from exc
 
-    if not isinstance(sarif, dict):
-        message = "Codacy SARIF root must be a JSON object"
-        raise SystemExit(message)
-    return sarif
+    return parse_sarif_document(sarif)
 
 
-def split_sarif_runs(sarif: dict[str, Any], out_dir: Path) -> int:
+def split_sarif_runs(sarif: SarifDocument, out_dir: Path) -> int:
     """Write one uploadable SARIF file per non-empty run and return the count."""
-    runs = sarif.get("runs")
-    if not isinstance(runs, list):
-        message = "Codacy SARIF did not contain a runs array"
-        raise SystemExit(message)
-    if not runs:
+    if not sarif.runs:
         print("Codacy SARIF did not contain any runs to upload")
 
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -100,12 +156,12 @@ def split_sarif_runs(sarif: dict[str, Any], out_dir: Path) -> int:
 
     seen_categories: dict[str, int] = {}
     uploadable_count = 0
-    for index, run in enumerate(runs, start=1):
-        if not isinstance(run, dict):
+    for index, run in enumerate(sarif.runs, start=1):
+        if not is_json_object(run):
             print(f"Skipping malformed SARIF run {index}")
             continue
 
-        run_copy = cast("dict[str, Any]", copy.deepcopy(run))
+        run_copy = copy.deepcopy(run)
         keep_repository_owned_opengrep_rules(run_copy)
 
         rules = run_driver(run_copy).get("rules")
@@ -120,19 +176,18 @@ def split_sarif_runs(sarif: dict[str, Any], out_dir: Path) -> int:
         suffix = seen_categories[base_category]
         category = base_category if suffix == 1 else f"{base_category}-{suffix}"
 
-        automation = run_copy.get("automationDetails")
-        if not isinstance(automation, dict):
-            automation = {}
+        automation_value = run_copy.get("automationDetails")
+        automation: JsonObject = automation_value if is_json_object(automation_value) else {}
         automation["id"] = category
         run_copy["automationDetails"] = automation
 
-        split_sarif = {key: value for key, value in sarif.items() if key != "runs"}
+        split_sarif = sarif.metadata_without_runs()
         split_sarif.setdefault("$schema", "https://json.schemastore.org/sarif-2.1.0.json")
         split_sarif.setdefault("version", "2.1.0")
         split_sarif["runs"] = [run_copy]
 
         out_file = out_dir / f"{index:02d}-{category}.sarif"
-        out_file.write_text(json.dumps(split_sarif, indent=2), encoding="utf-8")
+        out_file.write_text(json.dumps(split_sarif, indent=2, allow_nan=False) + "\n", encoding="utf-8")
         print(f"Wrote {out_file} with category {category}")
         uploadable_count += 1
 
@@ -150,7 +205,7 @@ def write_github_env(out_dir: Path, uploadable_count: int, env_file: Path | None
         file.write(f"CODACY_HAS_UPLOADABLE_SARIF={'true' if uploadable_count else 'false'}\n")
 
 
-def parse_args(argv: list[str]) -> argparse.Namespace:
+def parse_args(argv: list[str]) -> CliArgs:
     """Parse command-line arguments."""
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("source", type=Path, help="Codacy SARIF file to filter and split")
@@ -161,7 +216,8 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
         default=Path(os.environ["GITHUB_ENV"]) if "GITHUB_ENV" in os.environ else None,
         help="GitHub Actions environment file to update; defaults to $GITHUB_ENV when set",
     )
-    return parser.parse_args(argv)
+    args = parser.parse_args(argv)
+    return CliArgs(source=args.source, out_dir=args.out_dir, github_env=args.github_env)
 
 
 def main(argv: list[str] | None = None) -> int:
