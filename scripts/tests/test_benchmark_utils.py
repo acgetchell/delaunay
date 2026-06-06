@@ -2553,7 +2553,8 @@ Hardware Information:
                 # Should detect error and report failure, not "no regressions"
                 assert "Result:" in captured.out
                 assert "Benchmark comparison failed" in captured.out
-                assert f"(see benches/{MAIN_VS_RELEASE_COMPARISON_RESULTS_FILE} for details)" in captured.out
+                expected_path = str(Path("benches") / MAIN_VS_RELEASE_COMPARISON_RESULTS_FILE)
+                assert f"(see {expected_path} for details)" in captured.out
                 # Should NOT say "no regressions" when there was an error
                 assert "No significant performance regressions" not in captured.out
 
