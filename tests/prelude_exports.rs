@@ -64,7 +64,7 @@ use delaunay::prelude::repair::{
 };
 #[cfg(feature = "diagnostics")]
 use delaunay::prelude::tds::Tds;
-use delaunay::prelude::tds::{InvariantErrorSummaryDetail, NeighborSlot, TdsErrorKind};
+use delaunay::prelude::tds::{InvariantErrorSummaryDetail, NeighborSlot, TdsErrorKind, VertexKey};
 use delaunay::prelude::topology::validation::{
     ManifoldError, RidgeVertices, RidgeVerticesError, ridge_star_simplices,
 };
@@ -380,32 +380,117 @@ fn validation_prelude_covers_configuration_error() {
     );
 }
 
+fn simplex_prelude_vertices<const D: usize>(origin: f64, scale: f64) -> Vec<Vertex<f64, (), D>> {
+    let mut vertices = Vec::with_capacity(D + 1);
+    vertices.push(vertex!([origin; D]));
+
+    for axis in 0..D {
+        let mut coords = [origin; D];
+        coords[axis] = origin + scale;
+        vertices.push(vertex!(coords));
+    }
+
+    vertices
+}
+
+fn cospherical_prelude_vertices<const D: usize>() -> Vec<Vertex<f64, (), D>> {
+    let mut vertices = Vec::with_capacity(D + 2);
+
+    for axis in 0..D {
+        let mut coords = [0.0; D];
+        coords[axis] = 1.0;
+        vertices.push(vertex!(coords));
+    }
+
+    let mut negative_first_axis = [0.0; D];
+    negative_first_axis[0] = -1.0;
+    vertices.push(vertex!(negative_first_axis));
+
+    let mut negative_second_axis = [0.0; D];
+    negative_second_axis[1] = -1.0;
+    vertices.push(vertex!(negative_second_axis));
+
+    vertices
+}
+
+fn degenerate_prelude_vertices<const D: usize>() -> Vec<Vertex<f64, (), D>> {
+    let mut vertices = Vec::with_capacity(D + 1);
+    let mut coordinate = 0.0;
+    for _ in 0..=D {
+        let mut coords = [0.0; D];
+        coords[0] = coordinate;
+        vertices.push(vertex!(coords));
+        coordinate += 1.0;
+    }
+    vertices
+}
+
+fn assert_single_simplex_ridge_star<const D: usize>(
+    vertices: &[Vertex<f64, (), D>],
+) -> Result<(), PreludeExportTestError> {
+    let dt = DelaunayTriangulation::new(vertices)?;
+    let ridge = RidgeVertices::<D>::try_from_vertices(dt.tds().vertex_keys().take(D - 1))?;
+    let star = ridge_star_simplices(dt.tds(), &ridge)?;
+
+    assert_eq!(star.len(), 1);
+    Ok(())
+}
+
+fn assert_cospherical_ridge_star<const D: usize>() -> Result<(), PreludeExportTestError> {
+    let vertices = cospherical_prelude_vertices::<D>();
+    let dt = DelaunayTriangulation::new(&vertices)?;
+    let ridge = RidgeVertices::<D>::try_from_vertices(dt.tds().vertex_keys().take(D - 1))?;
+    let star = ridge_star_simplices(dt.tds(), &ridge)?;
+
+    assert!(!star.is_empty());
+    Ok(())
+}
+
+fn assert_ridge_vertices_reject_adversarial_keys<const D: usize>(keys: &[VertexKey]) {
+    assert_matches!(
+        RidgeVertices::<D>::try_from_vertices(keys.iter().take(D.saturating_sub(2)).copied()),
+        Err(RidgeVerticesError::WrongArity {
+            expected,
+            actual,
+            ..
+        }) if expected == D - 1 && actual == D.saturating_sub(2)
+    );
+
+    if D >= 3 {
+        assert_matches!(
+            RidgeVertices::<D>::try_from_vertices(std::iter::repeat_n(keys[0], D - 1)),
+            Err(RidgeVerticesError::DuplicateVertex { vertex_key }) if vertex_key == keys[0]
+        );
+    }
+}
+
+fn assert_topology_prelude_dimension<const D: usize>() -> Result<(), PreludeExportTestError> {
+    let simplex_vertices = simplex_prelude_vertices::<D>(0.0, 1.0);
+    assert_single_simplex_ridge_star(&simplex_vertices)?;
+
+    let near_boundary_vertices = simplex_prelude_vertices::<D>(f64::EPSILON, 1.0);
+    assert_single_simplex_ridge_star(&near_boundary_vertices)?;
+
+    let dt = DelaunayTriangulation::new(&simplex_vertices)?;
+    let keys = dt.tds().vertex_keys().collect::<Vec<_>>();
+    assert_ridge_vertices_reject_adversarial_keys::<D>(&keys);
+
+    assert_cospherical_ridge_star::<D>()?;
+    assert_matches!(
+        DelaunayTriangulation::new(&degenerate_prelude_vertices::<D>()),
+        Err(DelaunayTriangulationConstructionError::Triangulation(
+            DelaunayConstructionFailure::GeometricDegeneracy { .. }
+        ))
+    );
+    Ok(())
+}
+
 #[test]
 fn topology_validation_prelude_covers_ridge_star_api() -> Result<(), PreludeExportTestError> {
-    let vertices = vec![
-        vertex!([0.0, 0.0]),
-        vertex!([1.0, 0.0]),
-        vertex!([0.0, 1.0]),
-    ];
-    let dt = DelaunayTriangulation::new(&vertices)?;
-    let v0 = dt
-        .tds()
-        .vertex_keys()
-        .next()
-        .expect("triangle fixture should contain at least one vertex");
-
-    let ridge = RidgeVertices::<2>::try_from_vertices([v0])?;
-    let star = ridge_star_simplices(dt.tds(), &ridge)?;
-    assert_eq!(star.len(), 1);
-
-    assert_matches!(
-        RidgeVertices::<3>::try_from_vertices([v0]),
-        Err(RidgeVerticesError::WrongArity {
-            expected: 2,
-            actual: 1,
-            ..
-        })
-    );
+    assert_topology_prelude_dimension::<2>()?;
+    assert_topology_prelude_dimension::<3>()?;
+    assert_topology_prelude_dimension::<4>()?;
+    assert_topology_prelude_dimension::<5>()?;
     Ok(())
 }
 
