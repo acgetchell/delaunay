@@ -474,17 +474,18 @@ fn is_geometric_repair_error(repair_err: &DelaunayRepairError) -> bool {
 
 /// Returns true for flip errors caused by geometric predicates or degenerate
 /// replacement simplices rather than deterministic topology/simplex-key failures.
-const fn is_geometric_flip_error(error: &FlipError) -> bool {
-    matches!(
-        error,
+fn is_geometric_flip_error(error: &FlipError) -> bool {
+    match error {
         FlipError::PredicateFailure { .. }
-            | FlipError::DegenerateSimplex
-            | FlipError::NegativeOrientation { .. }
-            | FlipError::SimplexCreation(
-                SimplexValidationError::DegenerateSimplex
-                    | SimplexValidationError::CoordinateConversion { .. },
-            )
-    )
+        | FlipError::DegenerateSimplex
+        | FlipError::NegativeOrientation { .. } => true,
+        FlipError::SimplexCreation(source) => matches!(
+            source.as_ref(),
+            SimplexValidationError::DegenerateSimplex
+                | SimplexValidationError::CoordinateConversion { .. }
+        ),
+        _ => false,
+    }
 }
 
 /// Strategy used to order input vertices before batch construction.
@@ -6495,7 +6496,7 @@ mod tests {
         let verification_error = DelaunayRepairError::VerificationFailed {
             context: DelaunayRepairVerificationContext::LocalK3PostconditionVerification,
             source: Box::new(FlipError::InvalidFlipContext {
-                reason: FlipContextError::MissingRemovedSimplexFrame,
+                reason: Box::new(FlipContextError::MissingRemovedSimplexFrame),
             }),
         };
         assert!(!TestDelaunay::<4>::can_soft_fail(&verification_error));
@@ -6558,7 +6559,7 @@ mod tests {
         let predicate_verification = DelaunayRepairError::VerificationFailed {
             context: DelaunayRepairVerificationContext::StrictValidation,
             source: Box::new(FlipError::PredicateFailure {
-                reason: FlipPredicateError::CoordinateConversion {
+                reason: Box::new(FlipPredicateError::CoordinateConversion {
                     operation: FlipPredicateOperation::K2SimplexAInSphere,
                     source: CoordinateConversionError::ConversionFailed {
                         coordinate_index: 0,
@@ -6566,7 +6567,7 @@ mod tests {
                         from_type: "f64",
                         to_type: "f64",
                     },
-                },
+                }),
             }),
         };
         let mapped_predicate = TestDelaunay::<4>::map_hard_repair_error(26, predicate_verification);
@@ -6785,7 +6786,7 @@ mod tests {
             source: Box::new(DelaunayRepairError::VerificationFailed {
                 context: DelaunayRepairVerificationContext::LocalK3PostconditionVerification,
                 source: Box::new(FlipError::InvalidFlipContext {
-                    reason: FlipContextError::MissingRemovedSimplexFrame,
+                    reason: Box::new(FlipContextError::MissingRemovedSimplexFrame),
                 }),
             }),
             context: DelaunayRepairFailureContext::OrientationCanonicalization,

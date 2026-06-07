@@ -135,6 +135,40 @@ enum PrivateFixtureError {
     Invalid,
 }
 
+#[non_exhaustive]
+pub enum FlipContextError {
+    Invalid,
+}
+
+#[non_exhaustive]
+pub enum SimplexValidationError {
+    Invalid,
+}
+
+#[non_exhaustive]
+pub enum FlipError {
+    BadUnboxedContext {
+        // ruleid: delaunay.rust.flip-error-nested-payloads-boxed
+        reason: FlipContextError,
+    },
+    BadUnboxedSimplex(
+        // ruleid: delaunay.rust.flip-error-nested-payloads-boxed
+        SimplexValidationError,
+    ),
+    BadBoxedContextMissingSource {
+        // ruleid: delaunay.rust.flip-error-boxed-payloads-are-sources
+        reason: Box<FlipContextError>,
+    },
+    GoodBoxedContext {
+        // ok: delaunay.rust.flip-error-boxed-payloads-are-sources
+        #[source]
+        reason: Box<FlipContextError>,
+    },
+    // ok: delaunay.rust.flip-error-boxed-payloads-are-sources
+    GoodBoxedSimplex(#[from] Box<SimplexValidationError>),
+    ScalarDiagnostic { found: usize },
+}
+
 /// // ruleid: delaunay.rust.no-box-dyn-error-in-doctests
 /// # Ok::<(), Box<dyn std::error::Error>>(())
 fn doctest_style_error_is_ignored() {}

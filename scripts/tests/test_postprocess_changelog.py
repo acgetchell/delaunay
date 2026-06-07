@@ -411,6 +411,9 @@ class TestIndentedHeadingNormalization:
     def test_column_zero_category_heading_is_preserved(self) -> None:
         assert _normalize_entry_heading("### Fixed", "parent") == "### Fixed"
 
+    def test_padded_column_zero_category_heading_is_preserved(self) -> None:
+        assert _normalize_entry_heading("### Fixed ###", "parent") == "### Fixed ###"
+
     def test_archives_heading_is_preserved(self) -> None:
         assert _normalize_entry_heading("## Archives", "parent") == "## Archives"
 

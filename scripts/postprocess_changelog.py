@@ -1061,7 +1061,11 @@ def _is_changelog_boundary_heading(line: str) -> bool:
         return True
 
     match = _ATX_HEADING_RE.match(line)
-    return bool(match is not None and match.group("level") == "###" and match.group("title") in _CHANGELOG_SECTION_HEADINGS)
+    if match is None:
+        return False
+
+    title = match.group("title").strip()
+    return match.group("level") == "###" and title in _CHANGELOG_SECTION_HEADINGS
 
 
 def _normalize_entry_heading(line: str, current_entry_summary: str | None) -> str:
