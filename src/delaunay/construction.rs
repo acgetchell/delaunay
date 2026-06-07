@@ -6542,13 +6542,35 @@ mod tests {
             "geometric hard D>=4 repair failures should remain retryable degeneracies: {mapped_geometric:?}"
         );
 
-        let mapped_verification = TestDelaunay::<4>::map_hard_repair_error(25, verification_error);
+        let simplex_creation =
+            DelaunayRepairError::from(FlipError::from(SimplexValidationError::DegenerateSimplex));
+        let mapped_simplex_creation =
+            TestDelaunay::<4>::map_hard_repair_error(25, simplex_creation);
+        assert!(
+            matches!(
+                mapped_simplex_creation,
+                DelaunayTriangulationConstructionError::Triangulation(
+                    DelaunayConstructionFailure::GeometricDegeneracy { ref message }
+                ) if message.contains("per-insertion Delaunay repair failed at index 25")
+                    && message.contains("Degenerate simplex")
+            ),
+            "geometric simplex creation failures should remain retryable degeneracies: {mapped_simplex_creation:?}"
+        );
+
+        let duplicate_simplex_creation =
+            DelaunayRepairError::from(FlipError::from(SimplexValidationError::DuplicateVertices));
+        assert!(
+            !TestDelaunay::<4>::can_soft_fail(&duplicate_simplex_creation),
+            "non-geometric simplex creation failures should remain hard repair errors"
+        );
+
+        let mapped_verification = TestDelaunay::<4>::map_hard_repair_error(26, verification_error);
         assert!(
             matches!(
                 mapped_verification,
                 DelaunayTriangulationConstructionError::Triangulation(
                     DelaunayConstructionFailure::DelaunayRepair {
-                        phase: DelaunayConstructionRepairPhase::BatchLocal { index: 25 },
+                        phase: DelaunayConstructionRepairPhase::BatchLocal { index: 26 },
                         ref source,
                     }
                 ) if matches!(**source, DelaunayRepairError::VerificationFailed { .. })
@@ -6570,13 +6592,13 @@ mod tests {
                 }),
             }),
         };
-        let mapped_predicate = TestDelaunay::<4>::map_hard_repair_error(26, predicate_verification);
+        let mapped_predicate = TestDelaunay::<4>::map_hard_repair_error(27, predicate_verification);
         assert!(
             matches!(
                 mapped_predicate,
                 DelaunayTriangulationConstructionError::Triangulation(
                     DelaunayConstructionFailure::GeometricDegeneracy { ref message }
-                ) if message.contains("per-insertion Delaunay repair failed at index 26")
+                ) if message.contains("per-insertion Delaunay repair failed at index 27")
                     && message.contains("in_sphere failed")
             ),
             "verification predicate failures should remain geometric: {mapped_predicate:?}"
