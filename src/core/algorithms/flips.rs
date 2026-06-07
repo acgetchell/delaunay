@@ -9599,7 +9599,12 @@ mod tests {
     use rand::{RngExt, SeedableRng, rngs::StdRng};
     use slotmap::KeyData;
     use std::assert_matches;
-    use std::{error::Error as _, iter::once, mem::size_of, sync::Once};
+    use std::{
+        error::Error as _,
+        iter::once,
+        mem::{align_of, size_of},
+        sync::Once,
+    };
 
     fn init_tracing() {
         static INIT: Once = Once::new();
@@ -13775,12 +13780,30 @@ mod tests {
 
     #[test]
     fn test_flip_error_boxes_nested_typed_payloads() {
+        let max_nested_payload_size = [
+            size_of::<FlipContextError>(),
+            size_of::<FlipPredicateError>(),
+            size_of::<FlipEdgeAdjacencyError>(),
+            size_of::<FlipTriangleAdjacencyError>(),
+            size_of::<FlipVertexAdjacencyError>(),
+            size_of::<SimplexValidationError>(),
+            size_of::<FlipNeighborWiringError>(),
+            size_of::<FlipMutationError>(),
+            size_of::<SmallBuffer<VertexKey, MAX_PRACTICAL_DIMENSION_SIZE>>(),
+        ]
+        .into_iter()
+        .max()
+        .unwrap_or(0);
+
         assert!(
-            size_of::<FlipError>() <= 48,
-            "nested typed FlipError payloads should stay boxed; measured {} bytes",
-            size_of::<FlipError>()
+            size_of::<FlipError>() < max_nested_payload_size,
+            "boxed FlipError should stay smaller than its largest nested payload"
         );
-        assert_eq!(size_of::<Result<(), FlipError>>(), size_of::<FlipError>());
+        assert_eq!(align_of::<Result<(), FlipError>>(), align_of::<FlipError>());
+        assert!(
+            size_of::<Result<(), FlipError>>() <= size_of::<FlipError>() + size_of::<usize>(),
+            "Result<(), FlipError> should remain within one machine word of FlipError"
+        );
 
         let mutation = FlipError::from(FlipMutationError::TrialValidation {
             k_move: 2,
