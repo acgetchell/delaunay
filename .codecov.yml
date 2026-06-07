@@ -8,7 +8,7 @@ coverage:
         threshold: 1%
     patch:
       default:
-        target: 50%
+        target: 70%
 
 ignore:
   - "src/lib.rs"

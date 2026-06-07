@@ -773,9 +773,7 @@ where
                     }
                     Err(FlipError::NeighborWiring { reason }) => {
                         return Err(TdsError::InvalidNeighbors {
-                            reason: NeighborValidationError::FlipNeighborWiring {
-                                reason: Box::new(reason),
-                            },
+                            reason: NeighborValidationError::FlipNeighborWiring { reason },
                         }
                         .into());
                     }

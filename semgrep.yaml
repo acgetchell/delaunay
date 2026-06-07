@@ -400,6 +400,48 @@ rules:
         - "/tests/semgrep/**"
     pattern-regex: '(?m)(?<!#\[non_exhaustive\]\n)^\s*pub\s+enum\s+[A-Za-z0-9_]*Error\b'
 
+  - id: delaunay.rust.flip-error-nested-payloads-boxed
+    languages:
+      - generic
+    severity: WARNING
+    message: "Box nested typed FlipError payloads and expose them with #[source]."
+    metadata:
+      category: maintainability
+      tracking_issue: "https://github.com/acgetchell/delaunay/issues/406"
+      rationale: >-
+        FlipError should keep scalar/key diagnostics inline while nested typed
+        error payloads are boxed sources so the public enum size remains stable
+        as subordinate error enums evolve.
+    paths:
+      include:
+        - "/src/core/algorithms/flips.rs"
+        - "/tests/semgrep/src/project_rules/**/*.rs"
+    pattern-either:
+      - pattern-regex: '^\s*(?:(?:reason|source):\s*|(?:#\[[^\]]+\]\s*)?)(?:Flip[A-Za-z0-9_]+Error|SimplexValidationError)\s*,'
+      - pattern-regex: '^\s*[A-Za-z0-9_]+\s*\(\s*(?:#\[[^\]]+\]\s*)?(?:Flip[A-Za-z0-9_]+Error|SimplexValidationError)\s*\),'
+
+  - id: delaunay.rust.flip-error-boxed-payloads-are-sources
+    languages:
+      - generic
+    severity: WARNING
+    message: >-
+      Mark boxed nested FlipError fields with #[source] so callers can traverse
+      the typed error chain.
+    metadata:
+      category: maintainability
+      tracking_issue: "https://github.com/acgetchell/delaunay/issues/406"
+      rationale: >-
+        Boxed nested flip errors should remain visible through the standard
+        Error::source chain instead of becoming display-only diagnostics.
+    paths:
+      include:
+        - "/src/core/algorithms/flips.rs"
+        - "/tests/semgrep/src/project_rules/**/*.rs"
+    # yamllint disable rule:line-length
+    pattern-regex: >-
+      (?m)(?<!    #\[source\]\n)(?<!        #\[source\]\n)(?<!            #\[source\]\n)^\s*(?:reason|source):\s*Box<(?:Flip[A-Za-z0-9_]+Error|SimplexValidationError)>\s*,
+    # yamllint enable rule:line-length
+
   - id: delaunay.rust.no-public-unchecked-apis
     languages:
       - generic

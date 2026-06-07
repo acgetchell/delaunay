@@ -427,7 +427,7 @@ where
         }
         return Err(FlipError::InsertedSimplexAlreadyExists {
             k_move,
-            simplex_vertices: inserted_face_vertices.iter().copied().collect(),
+            simplex_vertices: Box::new(inserted_face_vertices.iter().copied().collect()),
             existing_simplex,
         });
     }
@@ -1028,9 +1028,12 @@ where
             mirror_idx,
         ) {
             Ok(parity) => parity,
-            Err(FlipError::InvalidFlipContext {
-                reason: FlipContextError::FacetOrderParityUnavailable,
-            }) => {
+            Err(FlipError::InvalidFlipContext { reason })
+                if matches!(
+                    reason.as_ref(),
+                    FlipContextError::FacetOrderParityUnavailable
+                ) =>
+            {
                 return Err(TdsValidationFailure::InconsistentDataStructure {
                     message: format!(
                         "Could not derive facet-order permutation parity between simplices {:?} and {:?}",
@@ -3467,13 +3470,29 @@ pub enum FlipVertexAdjacencyError {
 
 /// Errors that can occur during bistellar flips or repair.
 ///
+/// The enum keeps small scalar, key, and short [`Vec`] diagnostics inline, but
+/// boxes nested typed error payloads and exposes them as `#[source]` values.
+/// Constructors and pattern matches for those variants use [`Box`], while typed
+/// inspection remains available through `reason.as_ref()`, `source.as_ref()`,
+/// [`Error::source`](std::error::Error::source), or the boxed [`SmallBuffer`]
+/// witness directly without string parsing.
+///
 /// # Examples
 ///
 /// ```rust
-/// use delaunay::prelude::flips::FlipError;
+/// use delaunay::prelude::flips::{FlipContextError, FlipError};
 ///
 /// let err = FlipError::UnsupportedDimension { dimension: 1 };
 /// std::assert_matches!(err, FlipError::UnsupportedDimension { .. });
+///
+/// let err = FlipError::InvalidFlipContext {
+///     reason: Box::new(FlipContextError::OverlappingFaces),
+/// };
+/// std::assert_matches!(
+///     err,
+///     FlipError::InvalidFlipContext { reason }
+///         if matches!(reason.as_ref(), FlipContextError::OverlappingFaces)
+/// );
 /// ```
 #[derive(Clone, Debug, Error, PartialEq, Eq)]
 #[non_exhaustive]
@@ -3588,13 +3607,15 @@ pub enum FlipError {
     #[error("Edge adjacency mismatch: {reason}")]
     InvalidEdgeAdjacency {
         /// Structured edge-adjacency reason.
-        reason: FlipEdgeAdjacencyError,
+        #[source]
+        reason: Box<FlipEdgeAdjacencyError>,
     },
     /// Triangle adjacency information is inconsistent.
     #[error("Triangle adjacency mismatch: {reason}")]
     InvalidTriangleAdjacency {
         /// Structured triangle-adjacency reason.
-        reason: FlipTriangleAdjacencyError,
+        #[source]
+        reason: Box<FlipTriangleAdjacencyError>,
     },
     /// Vertex star has an invalid multiplicity for inverse k=1 flips.
     #[error("Vertex star has invalid multiplicity {found}, expected {expected}")]
@@ -3608,21 +3629,22 @@ pub enum FlipError {
     #[error("Vertex adjacency mismatch: {reason}")]
     InvalidVertexAdjacency {
         /// Structured vertex-adjacency reason.
-        reason: FlipVertexAdjacencyError,
+        #[source]
+        reason: Box<FlipVertexAdjacencyError>,
     },
     /// Flip context is inconsistent with the requested move.
     #[error("Flip context invalid: {reason}")]
     InvalidFlipContext {
         /// Structured invalid-context reason.
         #[source]
-        reason: FlipContextError,
+        reason: Box<FlipContextError>,
     },
     /// Geometric predicate failed.
     #[error("Geometric predicate failed: {reason}")]
     PredicateFailure {
         /// Structured predicate failure.
         #[source]
-        reason: FlipPredicateError,
+        reason: Box<FlipPredicateError>,
     },
     /// Flip would create a degenerate simplex (zero orientation).
     #[error("Flip would create a degenerate simplex (zero orientation)")]
@@ -3652,50 +3674,88 @@ pub enum FlipError {
         /// k for the attempted move.
         k_move: usize,
         /// Vertex keys of the inserted simplex.
-        simplex_vertices: SmallBuffer<VertexKey, MAX_PRACTICAL_DIMENSION_SIZE>,
+        simplex_vertices: Box<SmallBuffer<VertexKey, MAX_PRACTICAL_DIMENSION_SIZE>>,
         /// A witness simplex key that already contains the inserted simplex.
         existing_simplex: SimplexKey,
     },
     /// Simplex creation failed.
     #[error(transparent)]
-    SimplexCreation(#[from] SimplexValidationError),
+    SimplexCreation(#[from] Box<SimplexValidationError>),
     /// Neighbor wiring failed during flip application.
     #[error("Neighbor wiring failed: {reason}")]
     NeighborWiring {
         /// Structured neighbor-wiring failure.
         #[source]
-        reason: FlipNeighborWiringError,
+        reason: Box<FlipNeighborWiringError>,
     },
     /// TDS mutation failed.
     #[error("TDS mutation failed: {reason}")]
     TdsMutation {
         /// Structured TDS mutation failure.
         #[source]
-        reason: FlipMutationError,
+        reason: Box<FlipMutationError>,
     },
 }
 
 impl From<FlipContextError> for FlipError {
     fn from(reason: FlipContextError) -> Self {
-        Self::InvalidFlipContext { reason }
+        Self::InvalidFlipContext {
+            reason: Box::new(reason),
+        }
     }
 }
 
 impl From<FlipPredicateError> for FlipError {
     fn from(reason: FlipPredicateError) -> Self {
-        Self::PredicateFailure { reason }
+        Self::PredicateFailure {
+            reason: Box::new(reason),
+        }
+    }
+}
+
+impl From<FlipEdgeAdjacencyError> for FlipError {
+    fn from(reason: FlipEdgeAdjacencyError) -> Self {
+        Self::InvalidEdgeAdjacency {
+            reason: Box::new(reason),
+        }
+    }
+}
+
+impl From<FlipTriangleAdjacencyError> for FlipError {
+    fn from(reason: FlipTriangleAdjacencyError) -> Self {
+        Self::InvalidTriangleAdjacency {
+            reason: Box::new(reason),
+        }
+    }
+}
+
+impl From<FlipVertexAdjacencyError> for FlipError {
+    fn from(reason: FlipVertexAdjacencyError) -> Self {
+        Self::InvalidVertexAdjacency {
+            reason: Box::new(reason),
+        }
+    }
+}
+
+impl From<SimplexValidationError> for FlipError {
+    fn from(source: SimplexValidationError) -> Self {
+        Self::SimplexCreation(Box::new(source))
     }
 }
 
 impl From<FlipNeighborWiringError> for FlipError {
     fn from(reason: FlipNeighborWiringError) -> Self {
-        Self::NeighborWiring { reason }
+        Self::NeighborWiring {
+            reason: Box::new(reason),
+        }
     }
 }
 
 impl From<FlipMutationError> for FlipError {
     fn from(reason: FlipMutationError) -> Self {
-        Self::TdsMutation { reason }
+        Self::TdsMutation {
+            reason: Box::new(reason),
+        }
     }
 }
 
@@ -3727,7 +3787,7 @@ impl From<&FlipError> for FlipFailureKind {
             FlipError::NonManifoldFacet => Self::NonManifoldFacet,
             FlipError::InsertedSimplexAlreadyExists { .. } => Self::InsertedSimplexAlreadyExists,
             FlipError::SimplexCreation(_) => Self::SimplexCreation,
-            FlipError::NeighborWiring { reason } => match reason {
+            FlipError::NeighborWiring { reason } => match reason.as_ref() {
                 FlipNeighborWiringError::TopologyValidation { .. }
                 | FlipNeighborWiringError::DelaunayValidation { .. }
                 | FlipNeighborWiringError::TopologyValidationFailed { .. } => {
@@ -3736,9 +3796,11 @@ impl From<&FlipError> for FlipFailureKind {
                 FlipNeighborWiringError::DelaunayRepair { .. } => Self::DelaunayRepairFailed,
                 _ => Self::NeighborWiring,
             },
-            FlipError::TdsMutation {
-                reason: FlipMutationError::TrialValidation { .. },
-            } => Self::TrialValidation,
+            FlipError::TdsMutation { reason }
+                if matches!(reason.as_ref(), FlipMutationError::TrialValidation { .. }) =>
+            {
+                Self::TrialValidation
+            }
             FlipError::TdsMutation { .. } => Self::TdsMutation,
         }
     }
@@ -4595,9 +4657,7 @@ where
 
     let (v0, v1) = edge.endpoints();
     if v0 == v1 {
-        return Err(FlipError::InvalidEdgeAdjacency {
-            reason: FlipEdgeAdjacencyError::DuplicateEndpoints { vertex_key: v0 },
-        });
+        return Err(FlipEdgeAdjacencyError::DuplicateEndpoints { vertex_key: v0 }.into());
     }
 
     if tds.vertex(v0).is_none() {
@@ -4631,13 +4691,12 @@ where
             .simplex(simplex_key)
             .ok_or(FlipError::MissingSimplex { simplex_key })?;
         if !simplex.contains_vertex(v0) || !simplex.contains_vertex(v1) {
-            return Err(FlipError::InvalidEdgeAdjacency {
-                reason: FlipEdgeAdjacencyError::SimplexMissingEdgeVertices {
-                    simplex_key,
-                    v0,
-                    v1,
-                },
-            });
+            return Err(FlipEdgeAdjacencyError::SimplexMissingEdgeVertices {
+                simplex_key,
+                v0,
+                v1,
+            }
+            .into());
         }
         for &vk in simplex.vertices() {
             if vk != v0 && vk != v1 {
@@ -4647,13 +4706,12 @@ where
     }
 
     if counts.len() != D || !counts.iter().all(|(_vertex, count)| *count == D - 1) {
-        return Err(FlipError::InvalidEdgeAdjacency {
-            reason: FlipEdgeAdjacencyError::InvalidOppositeVertexIncidence {
-                expected_vertices: D,
-                found_vertices: counts.len(),
-                expected_occurrences: D - 1,
-            },
-        });
+        return Err(FlipEdgeAdjacencyError::InvalidOppositeVertexIncidence {
+            expected_vertices: D,
+            found_vertices: counts.len(),
+            expected_occurrences: D - 1,
+        }
+        .into());
     }
 
     let mut inserted_face_vertices: SmallBuffer<VertexKey, MAX_PRACTICAL_DIMENSION_SIZE> =
@@ -4751,12 +4809,11 @@ where
             .simplex(simplex_key)
             .ok_or(FlipError::MissingSimplex { simplex_key })?;
         if !simplex.contains_vertex(vertex_key) {
-            return Err(FlipError::InvalidVertexAdjacency {
-                reason: FlipVertexAdjacencyError::SimplexMissingVertex {
-                    simplex_key,
-                    vertex_key,
-                },
-            });
+            return Err(FlipVertexAdjacencyError::SimplexMissingVertex {
+                simplex_key,
+                vertex_key,
+            }
+            .into());
         }
         removed_simplices_buf.push(simplex_key);
         for &vk in simplex.vertices() {
@@ -4767,13 +4824,12 @@ where
     }
 
     if counts.len() != expected || !counts.values().all(|&count| count == D) {
-        return Err(FlipError::InvalidVertexAdjacency {
-            reason: FlipVertexAdjacencyError::InvalidLinkVertexIncidence {
-                expected_vertices: expected,
-                found_vertices: counts.len(),
-                expected_occurrences: D,
-            },
-        });
+        return Err(FlipVertexAdjacencyError::InvalidLinkVertexIncidence {
+            expected_vertices: expected,
+            found_vertices: counts.len(),
+            expected_occurrences: D,
+        }
+        .into());
     }
 
     let mut inserted_face_vertices: SmallBuffer<VertexKey, MAX_PRACTICAL_DIMENSION_SIZE> =
@@ -5339,14 +5395,13 @@ where
             .ok_or(FlipError::MissingSimplex { simplex_key })?;
         if !simplex.contains_vertex(a) || !simplex.contains_vertex(b) || !simplex.contains_vertex(c)
         {
-            return Err(FlipError::InvalidTriangleAdjacency {
-                reason: FlipTriangleAdjacencyError::SimplexMissingTriangleVertices {
-                    simplex_key,
-                    a,
-                    b,
-                    c,
-                },
-            });
+            return Err(FlipTriangleAdjacencyError::SimplexMissingTriangleVertices {
+                simplex_key,
+                a,
+                b,
+                c,
+            }
+            .into());
         }
         for &vk in simplex.vertices() {
             if vk != a && vk != b && vk != c {
@@ -5356,13 +5411,12 @@ where
     }
 
     if counts.len() != expected || !counts.iter().all(|(_vertex, count)| *count == expected - 1) {
-        return Err(FlipError::InvalidTriangleAdjacency {
-            reason: FlipTriangleAdjacencyError::InvalidRidgeVertexIncidence {
-                expected_vertices: expected,
-                found_vertices: counts.len(),
-                expected_occurrences: expected - 1,
-            },
-        });
+        return Err(FlipTriangleAdjacencyError::InvalidRidgeVertexIncidence {
+            expected_vertices: expected,
+            found_vertices: counts.len(),
+            expected_occurrences: expected - 1,
+        }
+        .into());
     }
 
     let mut inserted_face_vertices: SmallBuffer<VertexKey, MAX_PRACTICAL_DIMENSION_SIZE> =
@@ -9545,7 +9599,12 @@ mod tests {
     use rand::{RngExt, SeedableRng, rngs::StdRng};
     use slotmap::KeyData;
     use std::assert_matches;
-    use std::{error::Error as _, iter::once, sync::Once};
+    use std::{
+        error::Error as _,
+        iter::once,
+        mem::{align_of, size_of},
+        sync::Once,
+    };
 
     fn init_tracing() {
         static INIT: Once = Once::new();
@@ -10515,13 +10574,15 @@ mod tests {
                     assert!(
                         matches!(
                             result,
-                            Err(FlipError::InvalidFlipContext {
-                                reason: FlipContextError::ConflictingReplacementPeriodicFrameTranslation {
-                                    source_simplex_key,
-                                    target_simplex_index: 0,
-                                    ..
-                                }
-                            }) if source_simplex_key == external_simplex_key
+                            Err(FlipError::InvalidFlipContext { ref reason })
+                                if matches!(
+                                    reason.as_ref(),
+                                    FlipContextError::ConflictingReplacementPeriodicFrameTranslation {
+                                        source_simplex_key,
+                                        target_simplex_index: 0,
+                                        ..
+                                    } if *source_simplex_key == external_simplex_key
+                                )
                         ),
                         "conflicting periodic external facet translations should fail before mutation: {result:?}"
                     );
@@ -10544,12 +10605,14 @@ mod tests {
                     assert!(
                         matches!(
                             result,
-                            Err(FlipError::InvalidFlipContext {
-                                reason: FlipContextError::ReplacementPeriodicOffsetCountMismatch {
-                                    simplex_count: 1,
-                                    offset_count: 0,
-                                }
-                            })
+                            Err(FlipError::InvalidFlipContext { ref reason })
+                                if matches!(
+                                    reason.as_ref(),
+                                    FlipContextError::ReplacementPeriodicOffsetCountMismatch {
+                                        simplex_count: 1,
+                                        offset_count: 0,
+                                    }
+                                )
                         ),
                         "replacement offset sidecar length mismatch should fail explicitly: {result:?}"
                     );
@@ -10578,11 +10641,13 @@ mod tests {
                     assert!(
                         matches!(
                             result,
-                            Err(FlipError::InvalidFlipContext {
-                                reason: FlipContextError::MissingReplacementPeriodicOffsets {
-                                    simplex_index: 0,
-                                }
-                            })
+                            Err(FlipError::InvalidFlipContext { ref reason })
+                                if matches!(
+                                    reason.as_ref(),
+                                    FlipContextError::MissingReplacementPeriodicOffsets {
+                                        simplex_index: 0,
+                                    }
+                                )
                         ),
                         "periodic external parity should require replacement offsets: {result:?}"
                     );
@@ -10613,13 +10678,15 @@ mod tests {
                     assert!(
                         matches!(
                             result,
-                            Err(FlipError::InvalidFlipContext {
-                                reason: FlipContextError::ReplacementPeriodicOffsetLengthMismatch {
-                                    simplex_index: 0,
-                                    offset_count: $dim,
-                                    vertex_count,
-                                }
-                            }) if vertex_count == $dim + 1
+                            Err(FlipError::InvalidFlipContext { ref reason })
+                                if matches!(
+                                    reason.as_ref(),
+                                    FlipContextError::ReplacementPeriodicOffsetLengthMismatch {
+                                        simplex_index: 0,
+                                        offset_count: $dim,
+                                        vertex_count,
+                                    } if *vertex_count == $dim + 1
+                                )
                         ),
                         "replacement periodic offsets should stay slot-aligned with vertices: {result:?}"
                     );
@@ -10686,12 +10753,14 @@ mod tests {
                     assert!(
                         matches!(
                             facet_order(&source, source.len()),
-                            Err(FlipError::InvalidFlipContext {
-                                reason: FlipContextError::ReplacementFacetIndexOutOfRange {
-                                    facet_index,
-                                    vertex_count,
-                                }
-                            }) if facet_index == source.len() && vertex_count == source.len()
+                            Err(FlipError::InvalidFlipContext { ref reason })
+                                if matches!(
+                                    reason.as_ref(),
+                                    FlipContextError::ReplacementFacetIndexOutOfRange {
+                                        facet_index,
+                                        vertex_count,
+                                    } if *facet_index == source.len() && *vertex_count == source.len()
+                                )
                         ),
                         "out-of-range facet indices should be rejected"
                     );
@@ -10732,22 +10801,26 @@ mod tests {
                     assert!(
                         matches!(
                             set_flip_assignment(&mut assignments, 0, false),
-                            Err(FlipError::InvalidFlipContext {
-                                reason: FlipContextError::ConflictingReplacementOrientationForSimplex {
-                                    simplex_index: 0,
-                                }
-                            })
+                            Err(FlipError::InvalidFlipContext { ref reason })
+                                if matches!(
+                                    reason.as_ref(),
+                                    FlipContextError::ConflictingReplacementOrientationForSimplex {
+                                        simplex_index: 0,
+                                    }
+                                )
                         ),
                         "conflicting parity assignments should fail"
                     );
                     assert!(
                         matches!(
                             set_flip_assignment(&mut assignments, 1, false),
-                            Err(FlipError::InvalidFlipContext {
-                                reason: FlipContextError::ReplacementOrientationIndexOutOfRange {
-                                    simplex_index: 1,
-                                }
-                            })
+                            Err(FlipError::InvalidFlipContext { reason })
+                                if matches!(
+                                    reason.as_ref(),
+                                    FlipContextError::ReplacementOrientationIndexOutOfRange {
+                                        simplex_index: 1,
+                                    }
+                                )
                         ),
                         "out-of-range parity assignments should fail"
                     );
@@ -11252,9 +11325,8 @@ mod tests {
 
         let result = apply_bistellar_flip_k1(&mut tds, first_simplex, new_vertex);
         match result {
-            Err(FlipError::TdsMutation {
-                reason: FlipMutationError::TrialValidation { .. },
-            }) => {}
+            Err(FlipError::TdsMutation { reason })
+                if matches!(reason.as_ref(), FlipMutationError::TrialValidation { .. }) => {}
             other => panic!("expected FlipMutationError::TrialValidation, got {other:?}"),
         }
 
@@ -11937,21 +12009,25 @@ mod tests {
 
         assert_matches!(
             apply_bistellar_flip_dynamic(&mut tds, 0, &valid_shape),
-            Err(FlipError::InvalidFlipContext {
-                reason: FlipContextError::InvalidMoveSize {
-                    k_move: 0,
-                    dimension,
-                }
-            }) if dimension == D
+            Err(FlipError::InvalidFlipContext { reason })
+                if matches!(
+                    reason.as_ref(),
+                    FlipContextError::InvalidMoveSize {
+                        k_move: 0,
+                        dimension,
+                    } if *dimension == D
+                )
         );
         assert_matches!(
             apply_bistellar_flip_dynamic(&mut tds, D + 2, &valid_shape),
-            Err(FlipError::InvalidFlipContext {
-                reason: FlipContextError::InvalidMoveSize {
-                    k_move,
-                    dimension,
-                }
-            }) if k_move == D + 2 && dimension == D
+            Err(FlipError::InvalidFlipContext { reason })
+                if matches!(
+                    reason.as_ref(),
+                    FlipContextError::InvalidMoveSize {
+                        k_move,
+                        dimension,
+                    } if *k_move == D + 2 && *dimension == D
+                )
         );
 
         let wrong_removed_face = FlipContextDyn {
@@ -11960,12 +12036,14 @@ mod tests {
         };
         assert_matches!(
             apply_bistellar_flip_dynamic(&mut tds, 2, &wrong_removed_face),
-            Err(FlipError::InvalidFlipContext {
-                reason: FlipContextError::WrongRemovedFaceArity {
-                    expected,
-                    found,
-                }
-            }) if expected == D && found == D - 1
+            Err(FlipError::InvalidFlipContext { reason })
+                if matches!(
+                    reason.as_ref(),
+                    FlipContextError::WrongRemovedFaceArity {
+                        expected,
+                        found,
+                    } if *expected == D && *found == D - 1
+                )
         );
 
         let wrong_inserted_face = FlipContextDyn {
@@ -11974,13 +12052,15 @@ mod tests {
         };
         assert_matches!(
             apply_bistellar_flip_dynamic(&mut tds, 2, &wrong_inserted_face),
-            Err(FlipError::InvalidFlipContext {
-                reason: FlipContextError::WrongInsertedFaceArity {
-                    k_move: 2,
-                    expected: 2,
-                    found: 1,
-                }
-            })
+            Err(FlipError::InvalidFlipContext { reason })
+                if matches!(
+                    reason.as_ref(),
+                    FlipContextError::WrongInsertedFaceArity {
+                        k_move: 2,
+                        expected: 2,
+                        found: 1,
+                    }
+                )
         );
 
         let wrong_removed_simplices = FlipContextDyn {
@@ -11989,12 +12069,14 @@ mod tests {
         };
         assert_matches!(
             apply_bistellar_flip_dynamic(&mut tds, 2, &wrong_removed_simplices),
-            Err(FlipError::InvalidFlipContext {
-                reason: FlipContextError::WrongRemovedSimplexCount {
-                    expected: 2,
-                    found: 1,
-                }
-            })
+            Err(FlipError::InvalidFlipContext { reason })
+                if matches!(
+                    reason.as_ref(),
+                    FlipContextError::WrongRemovedSimplexCount {
+                        expected: 2,
+                        found: 1,
+                    }
+                )
         );
 
         let overlapping_faces = FlipContextDyn {
@@ -12003,9 +12085,8 @@ mod tests {
         };
         assert_matches!(
             apply_bistellar_flip_dynamic(&mut tds, 2, &overlapping_faces),
-            Err(FlipError::InvalidFlipContext {
-                reason: FlipContextError::OverlappingFaces,
-            })
+            Err(FlipError::InvalidFlipContext { reason })
+                if matches!(reason.as_ref(), FlipContextError::OverlappingFaces)
         );
         assert_eq!(tds.number_of_vertices(), 0);
         assert_eq!(tds.number_of_simplices(), 0);
@@ -13680,8 +13761,8 @@ mod tests {
     #[test]
     fn test_delaunay_repair_error_boxes_large_flip_sources() {
         assert!(
-            std::mem::size_of::<DelaunayRepairError>() < std::mem::size_of::<FlipError>(),
-            "DelaunayRepairError should box large FlipError payloads"
+            std::mem::size_of::<DelaunayRepairError>() <= std::mem::size_of::<FlipError>(),
+            "DelaunayRepairError should box FlipError payloads without exceeding FlipError size"
         );
 
         let err = DelaunayRepairError::from(FlipError::DegenerateSimplex);
@@ -13695,6 +13776,164 @@ mod tests {
             panic!("expected boxed flip source");
         };
         assert_matches!(source.as_ref(), FlipError::DegenerateSimplex);
+    }
+
+    #[test]
+    fn test_flip_error_boxes_nested_typed_payloads() {
+        let max_nested_payload_size = [
+            size_of::<FlipContextError>(),
+            size_of::<FlipPredicateError>(),
+            size_of::<FlipEdgeAdjacencyError>(),
+            size_of::<FlipTriangleAdjacencyError>(),
+            size_of::<FlipVertexAdjacencyError>(),
+            size_of::<SimplexValidationError>(),
+            size_of::<FlipNeighborWiringError>(),
+            size_of::<FlipMutationError>(),
+            size_of::<SmallBuffer<VertexKey, MAX_PRACTICAL_DIMENSION_SIZE>>(),
+        ]
+        .into_iter()
+        .max()
+        .unwrap_or(0);
+
+        assert!(
+            size_of::<FlipError>() < max_nested_payload_size,
+            "boxed FlipError should stay smaller than its largest nested payload"
+        );
+        assert_eq!(align_of::<Result<(), FlipError>>(), align_of::<FlipError>());
+        assert!(
+            size_of::<Result<(), FlipError>>() <= size_of::<FlipError>() + size_of::<usize>(),
+            "Result<(), FlipError> should remain within one machine word of FlipError"
+        );
+
+        let mutation = FlipError::from(FlipMutationError::TrialValidation {
+            k_move: 2,
+            direction: FlipDirection::Forward,
+            source: sample_tds_validation_failure(),
+        });
+        let source = mutation
+            .source()
+            .expect("boxed mutation source should be exposed")
+            .downcast_ref::<Box<FlipMutationError>>()
+            .expect("source should remain a typed boxed FlipMutationError");
+        assert_matches!(
+            source.as_ref(),
+            FlipMutationError::TrialValidation {
+                k_move: 2,
+                direction: FlipDirection::Forward,
+                ..
+            }
+        );
+
+        let FlipError::TdsMutation { reason } = mutation else {
+            panic!("expected boxed TDS mutation reason");
+        };
+        assert_matches!(
+            reason.as_ref(),
+            FlipMutationError::TrialValidation {
+                k_move: 2,
+                direction: FlipDirection::Forward,
+                ..
+            }
+        );
+
+        let mut simplex_vertices = SmallBuffer::new();
+        simplex_vertices.push(VertexKey::from(KeyData::from_ffi(1)));
+        simplex_vertices.push(VertexKey::from(KeyData::from_ffi(2)));
+        let duplicate = FlipError::InsertedSimplexAlreadyExists {
+            k_move: 2,
+            simplex_vertices: Box::new(simplex_vertices),
+            existing_simplex: SimplexKey::from(KeyData::from_ffi(3)),
+        };
+
+        let FlipError::InsertedSimplexAlreadyExists {
+            simplex_vertices, ..
+        } = duplicate
+        else {
+            panic!("expected boxed simplex witness");
+        };
+        assert_eq!(simplex_vertices.as_ref().len(), 2);
+    }
+
+    #[test]
+    fn test_flip_error_boxes_adjacency_payload_sources() {
+        let edge_vertex = VertexKey::from(KeyData::from_ffi(4));
+        let edge = FlipError::from(FlipEdgeAdjacencyError::DuplicateEndpoints {
+            vertex_key: edge_vertex,
+        });
+        let source = edge
+            .source()
+            .expect("boxed edge-adjacency source should be exposed")
+            .downcast_ref::<Box<FlipEdgeAdjacencyError>>()
+            .expect("source should remain a typed boxed FlipEdgeAdjacencyError");
+        assert_matches!(
+            source.as_ref(),
+            FlipEdgeAdjacencyError::DuplicateEndpoints { vertex_key }
+                if *vertex_key == edge_vertex
+        );
+
+        let FlipError::InvalidEdgeAdjacency { reason } = edge else {
+            panic!("expected boxed edge-adjacency reason");
+        };
+        assert_matches!(
+            reason.as_ref(),
+            FlipEdgeAdjacencyError::DuplicateEndpoints { vertex_key }
+                if *vertex_key == edge_vertex
+        );
+
+        let simplex_key = SimplexKey::from(KeyData::from_ffi(5));
+        let triangle_a = VertexKey::from(KeyData::from_ffi(6));
+        let triangle_b = VertexKey::from(KeyData::from_ffi(7));
+        let triangle_c = VertexKey::from(KeyData::from_ffi(8));
+        let triangle =
+            FlipError::from(FlipTriangleAdjacencyError::SimplexMissingTriangleVertices {
+                simplex_key,
+                a: triangle_a,
+                b: triangle_b,
+                c: triangle_c,
+            });
+        let source = triangle
+            .source()
+            .expect("boxed triangle-adjacency source should be exposed")
+            .downcast_ref::<Box<FlipTriangleAdjacencyError>>()
+            .expect("source should remain a typed boxed FlipTriangleAdjacencyError");
+        assert_matches!(
+            source.as_ref(),
+            FlipTriangleAdjacencyError::SimplexMissingTriangleVertices { a, b, c, .. }
+                if *a == triangle_a && *b == triangle_b && *c == triangle_c
+        );
+
+        let FlipError::InvalidTriangleAdjacency { reason } = triangle else {
+            panic!("expected boxed triangle-adjacency reason");
+        };
+        assert_matches!(
+            reason.as_ref(),
+            FlipTriangleAdjacencyError::SimplexMissingTriangleVertices { a, b, c, .. }
+                if *a == triangle_a && *b == triangle_b && *c == triangle_c
+        );
+
+        let vertex = FlipError::from(FlipVertexAdjacencyError::SimplexMissingVertex {
+            simplex_key,
+            vertex_key: edge_vertex,
+        });
+        let source = vertex
+            .source()
+            .expect("boxed vertex-adjacency source should be exposed")
+            .downcast_ref::<Box<FlipVertexAdjacencyError>>()
+            .expect("source should remain a typed boxed FlipVertexAdjacencyError");
+        assert_matches!(
+            source.as_ref(),
+            FlipVertexAdjacencyError::SimplexMissingVertex { vertex_key, .. }
+                if *vertex_key == edge_vertex
+        );
+
+        let FlipError::InvalidVertexAdjacency { reason } = vertex else {
+            panic!("expected boxed vertex-adjacency reason");
+        };
+        assert_matches!(
+            reason.as_ref(),
+            FlipVertexAdjacencyError::SimplexMissingVertex { vertex_key, .. }
+                if *vertex_key == edge_vertex
+        );
     }
 
     #[test]
@@ -14041,9 +14280,11 @@ mod tests {
                     assert!(
                         matches!(
                             result,
-                            Err(FlipError::InvalidFlipContext {
-                                reason: FlipContextError::ConflictingPeriodicFrameTranslation { .. }
-                            })
+                            Err(FlipError::InvalidFlipContext { ref reason })
+                                if matches!(
+                                    reason.as_ref(),
+                                    FlipContextError::ConflictingPeriodicFrameTranslation { .. }
+                                )
                         ),
                         "conflicting shared translations should be rejected: {result:?}"
                     );

@@ -122,6 +122,11 @@ The useful updates ported in this pass are:
   CI JSON filters must reject non-finite JSON constants on load, emit strict
   JSON with `allow_nan=False`, and keep `ci_performance_suite` construction
   metric counts positive rather than merely non-negative.
+- Repository-owned Semgrep now enforces the #406 `FlipError` layout policy:
+  scalar/key diagnostics stay inline, while nested typed error payloads in the
+  public flip error enum must be boxed sources so future subordinate error-enum
+  growth does not silently bloat `Result<_, FlipError>` or hide typed causes
+  from `Error::source`.
 - Semgrep rule refinements for non-finite fallback patterns, broad Python
   exception catches with bindings, and direct ad hoc subprocess mock
   constructors.

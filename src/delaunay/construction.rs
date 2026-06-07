@@ -474,17 +474,18 @@ fn is_geometric_repair_error(repair_err: &DelaunayRepairError) -> bool {
 
 /// Returns true for flip errors caused by geometric predicates or degenerate
 /// replacement simplices rather than deterministic topology/simplex-key failures.
-const fn is_geometric_flip_error(error: &FlipError) -> bool {
-    matches!(
-        error,
+fn is_geometric_flip_error(error: &FlipError) -> bool {
+    match error {
         FlipError::PredicateFailure { .. }
-            | FlipError::DegenerateSimplex
-            | FlipError::NegativeOrientation { .. }
-            | FlipError::SimplexCreation(
-                SimplexValidationError::DegenerateSimplex
-                    | SimplexValidationError::CoordinateConversion { .. },
-            )
-    )
+        | FlipError::DegenerateSimplex
+        | FlipError::NegativeOrientation { .. } => true,
+        FlipError::SimplexCreation(source) => matches!(
+            source.as_ref(),
+            SimplexValidationError::DegenerateSimplex
+                | SimplexValidationError::CoordinateConversion { .. }
+        ),
+        _ => false,
+    }
 }
 
 /// Strategy used to order input vertices before batch construction.
@@ -6495,7 +6496,7 @@ mod tests {
         let verification_error = DelaunayRepairError::VerificationFailed {
             context: DelaunayRepairVerificationContext::LocalK3PostconditionVerification,
             source: Box::new(FlipError::InvalidFlipContext {
-                reason: FlipContextError::MissingRemovedSimplexFrame,
+                reason: Box::new(FlipContextError::MissingRemovedSimplexFrame),
             }),
         };
         assert!(!TestDelaunay::<4>::can_soft_fail(&verification_error));
@@ -6541,13 +6542,35 @@ mod tests {
             "geometric hard D>=4 repair failures should remain retryable degeneracies: {mapped_geometric:?}"
         );
 
-        let mapped_verification = TestDelaunay::<4>::map_hard_repair_error(25, verification_error);
+        let simplex_creation =
+            DelaunayRepairError::from(FlipError::from(SimplexValidationError::DegenerateSimplex));
+        let mapped_simplex_creation =
+            TestDelaunay::<4>::map_hard_repair_error(25, simplex_creation);
+        assert!(
+            matches!(
+                mapped_simplex_creation,
+                DelaunayTriangulationConstructionError::Triangulation(
+                    DelaunayConstructionFailure::GeometricDegeneracy { ref message }
+                ) if message.contains("per-insertion Delaunay repair failed at index 25")
+                    && message.contains("Degenerate simplex")
+            ),
+            "geometric simplex creation failures should remain retryable degeneracies: {mapped_simplex_creation:?}"
+        );
+
+        let duplicate_simplex_creation =
+            DelaunayRepairError::from(FlipError::from(SimplexValidationError::DuplicateVertices));
+        assert!(
+            !TestDelaunay::<4>::can_soft_fail(&duplicate_simplex_creation),
+            "non-geometric simplex creation failures should remain hard repair errors"
+        );
+
+        let mapped_verification = TestDelaunay::<4>::map_hard_repair_error(26, verification_error);
         assert!(
             matches!(
                 mapped_verification,
                 DelaunayTriangulationConstructionError::Triangulation(
                     DelaunayConstructionFailure::DelaunayRepair {
-                        phase: DelaunayConstructionRepairPhase::BatchLocal { index: 25 },
+                        phase: DelaunayConstructionRepairPhase::BatchLocal { index: 26 },
                         ref source,
                     }
                 ) if matches!(**source, DelaunayRepairError::VerificationFailed { .. })
@@ -6558,7 +6581,7 @@ mod tests {
         let predicate_verification = DelaunayRepairError::VerificationFailed {
             context: DelaunayRepairVerificationContext::StrictValidation,
             source: Box::new(FlipError::PredicateFailure {
-                reason: FlipPredicateError::CoordinateConversion {
+                reason: Box::new(FlipPredicateError::CoordinateConversion {
                     operation: FlipPredicateOperation::K2SimplexAInSphere,
                     source: CoordinateConversionError::ConversionFailed {
                         coordinate_index: 0,
@@ -6566,16 +6589,16 @@ mod tests {
                         from_type: "f64",
                         to_type: "f64",
                     },
-                },
+                }),
             }),
         };
-        let mapped_predicate = TestDelaunay::<4>::map_hard_repair_error(26, predicate_verification);
+        let mapped_predicate = TestDelaunay::<4>::map_hard_repair_error(27, predicate_verification);
         assert!(
             matches!(
                 mapped_predicate,
                 DelaunayTriangulationConstructionError::Triangulation(
                     DelaunayConstructionFailure::GeometricDegeneracy { ref message }
-                ) if message.contains("per-insertion Delaunay repair failed at index 26")
+                ) if message.contains("per-insertion Delaunay repair failed at index 27")
                     && message.contains("in_sphere failed")
             ),
             "verification predicate failures should remain geometric: {mapped_predicate:?}"
@@ -6785,7 +6808,7 @@ mod tests {
             source: Box::new(DelaunayRepairError::VerificationFailed {
                 context: DelaunayRepairVerificationContext::LocalK3PostconditionVerification,
                 source: Box::new(FlipError::InvalidFlipContext {
-                    reason: FlipContextError::MissingRemovedSimplexFrame,
+                    reason: Box::new(FlipContextError::MissingRemovedSimplexFrame),
                 }),
             }),
             context: DelaunayRepairFailureContext::OrientationCanonicalization,
