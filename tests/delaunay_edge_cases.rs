@@ -18,6 +18,12 @@ use delaunay::prelude::generators::generate_random_points_in_ball_seeded;
 use delaunay::prelude::geometry::RobustKernel;
 use rand::SeedableRng;
 use rand::seq::SliceRandom;
+use std::num::NonZeroUsize;
+
+const fn nonzero(value: usize) -> NonZeroUsize {
+    NonZeroUsize::new(value).expect("test point count must be non-zero")
+}
+
 fn init_tracing() {
     static INIT: std::sync::Once = std::sync::Once::new();
     INIT.call_once(|| {
@@ -465,7 +471,8 @@ test_regression_config!(
 #[test]
 fn test_regression_non_manifold_3d_seed123_50pts() {
     // Exact configuration from CI failure (matches ci_performance_suite.rs)
-    let n_points = 50;
+    let n_points = nonzero(50);
+    let raw_n_points = n_points.get();
     let result = delaunay::geometry::util::generate_random_triangulation_with_topology_guarantee::<
         f64,
         (),
@@ -491,10 +498,10 @@ fn test_regression_non_manifold_3d_seed123_50pts() {
     // Verify basic properties
     // Note: Some vertices may be skipped due to geometric degeneracy
     let num_vertices = dt.number_of_vertices();
-    let min_vertices = (n_points / 6).max(4);
+    let min_vertices = (raw_n_points / 6).max(4);
     assert!(
-        num_vertices <= n_points,
-        "Should have ≤{n_points} vertices, got {num_vertices}"
+        num_vertices <= raw_n_points,
+        "Should have ≤{raw_n_points} vertices, got {num_vertices}"
     );
     assert!(
         num_vertices >= min_vertices,
@@ -518,8 +525,9 @@ fn test_regression_non_manifold_3d_seed123_50pts() {
 #[test]
 fn test_regression_non_manifold_nearby_seeds() {
     let test_seeds = [120, 121, 122, 123, 124, 125, 126];
-    let n_points = 50;
-    let min_vertices = (n_points / 6).max(4);
+    let n_points = nonzero(50);
+    let raw_n_points = n_points.get();
+    let min_vertices = (raw_n_points / 6).max(4);
 
     for seed in test_seeds {
         let result =
@@ -547,7 +555,7 @@ fn test_regression_non_manifold_nearby_seeds() {
 
         let num_vertices = dt.number_of_vertices();
         assert!(
-            num_vertices <= n_points,
+            num_vertices <= raw_n_points,
             "Seed {seed}: too many vertices ({num_vertices})"
         );
         assert!(

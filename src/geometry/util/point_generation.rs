@@ -12,6 +12,7 @@ use crate::geometry::traits::coordinate::{Coordinate, CoordinateScalar};
 use rand::distr::uniform::SampleUniform;
 use rand::rngs::StdRng;
 use rand::{RngExt, SeedableRng};
+use std::num::NonZeroUsize;
 
 // Re-export error type
 pub use super::RandomPointGenerationError;
@@ -471,7 +472,7 @@ pub fn generate_random_points_in_ball_seeded<
 ///
 /// # Arguments
 ///
-/// * `points_per_dim` - Number of points along each dimension
+/// * `points_per_dim` - Non-zero number of points along each dimension
 /// * `spacing` - Distance between adjacent grid points
 /// * `offset` - Translation offset for the entire grid
 ///
@@ -481,7 +482,8 @@ pub fn generate_random_points_in_ball_seeded<
 ///
 /// # Errors
 ///
-/// * `RandomPointGenerationError::InvalidPointCount` if `points_per_dim` is zero
+/// Returns [`RandomPointGenerationError::RandomGenerationFailed`] if the requested
+/// grid size overflows `usize` or exceeds the grid allocation safety cap.
 ///
 /// # References
 ///
@@ -494,30 +496,39 @@ pub fn generate_random_points_in_ball_seeded<
 /// use delaunay::prelude::generators::{
 ///     RandomPointGenerationError, generate_grid_points,
 /// };
+/// use std::num::NonZeroUsize;
 ///
 /// # fn main() -> Result<(), RandomPointGenerationError> {
+/// let Some(four) = NonZeroUsize::new(4) else {
+///     return Ok(());
+/// };
+/// let Some(three) = NonZeroUsize::new(3) else {
+///     return Ok(());
+/// };
+/// let Some(two) = NonZeroUsize::new(2) else {
+///     return Ok(());
+/// };
+///
 /// // Generate 2D grid: 4x4 = 16 points with unit spacing
-/// let grid_2d = generate_grid_points::<f64, 2>(4, 1.0, [0.0, 0.0])?;
+/// let grid_2d = generate_grid_points::<f64, 2>(four, 1.0, [0.0, 0.0])?;
 /// assert_eq!(grid_2d.len(), 16);
 ///
 /// // Generate 3D grid: 3x3x3 = 27 points with spacing 2.0
-/// let grid_3d = generate_grid_points::<f64, 3>(3, 2.0, [0.0, 0.0, 0.0])?;
+/// let grid_3d = generate_grid_points::<f64, 3>(three, 2.0, [0.0, 0.0, 0.0])?;
 /// assert_eq!(grid_3d.len(), 27);
 ///
 /// // Generate 4D grid centered at origin
-/// let grid_4d = generate_grid_points::<f64, 4>(2, 1.0, [-0.5, -0.5, -0.5, -0.5])?;
+/// let grid_4d = generate_grid_points::<f64, 4>(two, 1.0, [-0.5, -0.5, -0.5, -0.5])?;
 /// assert_eq!(grid_4d.len(), 16); // 2^4 = 16 points
 /// # Ok(())
 /// # }
 /// ```
 pub fn generate_grid_points<T: CoordinateScalar, const D: usize>(
-    points_per_dim: usize,
+    points_per_dim: NonZeroUsize,
     spacing: T,
     offset: [T; D],
 ) -> Result<Vec<Point<T, D>>, RandomPointGenerationError> {
-    if points_per_dim == 0 {
-        return Err(RandomPointGenerationError::InvalidPointCount { n_points: 0 });
-    }
+    let points_per_dim = points_per_dim.get();
 
     // Compute total_points with overflow checking (avoids debug panic or release wrap)
     let mut total_points: usize = 1;
@@ -723,6 +734,11 @@ mod tests {
     use super::*;
     use approx::assert_relative_eq;
     use std::assert_matches;
+
+    /// Builds non-zero test literals so grid-generation tests exercise the typed boundary.
+    const fn nonzero(value: usize) -> NonZeroUsize {
+        NonZeroUsize::new(value).expect("test point count must be non-zero")
+    }
 
     // =============================================================================
     // RANDOM POINT GENERATION TESTS
@@ -1172,7 +1188,7 @@ mod tests {
     #[test]
     fn test_generate_grid_points_2d() {
         // Test 2D grid generation
-        let grid = generate_grid_points::<f64, 2>(3, 1.0, [0.0, 0.0]).unwrap();
+        let grid = generate_grid_points::<f64, 2>(nonzero(3), 1.0, [0.0, 0.0]).unwrap();
 
         assert_eq!(grid.len(), 9); // 3^2 = 9 points
 
@@ -1205,7 +1221,7 @@ mod tests {
     #[test]
     fn test_generate_grid_points_3d() {
         // Test 3D grid generation
-        let grid = generate_grid_points::<f64, 3>(2, 2.0, [1.0, 1.0, 1.0]).unwrap();
+        let grid = generate_grid_points::<f64, 3>(nonzero(2), 2.0, [1.0, 1.0, 1.0]).unwrap();
 
         assert_eq!(grid.len(), 8); // 2^3 = 8 points
 
@@ -1221,7 +1237,8 @@ mod tests {
     #[test]
     fn test_generate_grid_points_4d() {
         // Test 4D grid generation
-        let grid = generate_grid_points::<f32, 4>(2, 0.5, [-0.5, -0.5, -0.5, -0.5]).unwrap();
+        let grid =
+            generate_grid_points::<f32, 4>(nonzero(2), 0.5, [-0.5, -0.5, -0.5, -0.5]).unwrap();
 
         assert_eq!(grid.len(), 16); // 2^4 = 16 points
 
@@ -1237,7 +1254,8 @@ mod tests {
     #[test]
     fn test_generate_grid_points_5d() {
         // Test 5D grid generation
-        let grid = generate_grid_points::<f64, 5>(2, 1.0, [0.0, 0.0, 0.0, 0.0, 0.0]).unwrap();
+        let grid =
+            generate_grid_points::<f64, 5>(nonzero(2), 1.0, [0.0, 0.0, 0.0, 0.0, 0.0]).unwrap();
 
         assert_eq!(grid.len(), 32); // 2^5 = 32 points
 
@@ -1253,7 +1271,7 @@ mod tests {
     #[test]
     fn test_generate_grid_points_edge_cases() {
         // Test single point grid
-        let grid = generate_grid_points::<f64, 3>(1, 1.0, [0.0, 0.0, 0.0]).unwrap();
+        let grid = generate_grid_points::<f64, 3>(nonzero(1), 1.0, [0.0, 0.0, 0.0]).unwrap();
         assert_eq!(grid.len(), 1);
         let coords = *grid[0].coords();
         // Use approx for floating point comparison
@@ -1262,7 +1280,7 @@ mod tests {
         }
 
         // Test zero spacing
-        let grid = generate_grid_points::<f64, 2>(2, 0.0, [5.0, 5.0]).unwrap();
+        let grid = generate_grid_points::<f64, 2>(nonzero(2), 0.0, [5.0, 5.0]).unwrap();
         assert_eq!(grid.len(), 4);
         for point in &grid {
             let coords = *point.coords();
@@ -1275,18 +1293,11 @@ mod tests {
 
     #[test]
     fn test_generate_grid_points_error_handling() {
-        // Test zero points per dimension
-        let result = generate_grid_points::<f64, 2>(0, 1.0, [0.0, 0.0]);
-        assert!(result.is_err());
-        match result {
-            Err(RandomPointGenerationError::InvalidPointCount { n_points }) => {
-                assert_eq!(n_points, 0);
-            }
-            _ => panic!("Expected InvalidPointCount error"),
-        }
+        // Zero points per dimension cannot cross the typed API boundary.
+        assert_eq!(NonZeroUsize::new(0), None);
 
         // Test safety cap for excessive points (prevents OOM)
-        let result = generate_grid_points::<f64, 3>(1000, 1.0, [0.0, 0.0, 0.0]);
+        let result = generate_grid_points::<f64, 3>(nonzero(1000), 1.0, [0.0, 0.0, 0.0]);
         assert!(result.is_err());
         let error_msg = format!("{}", result.unwrap_err());
         assert!(error_msg.contains("cap"));
@@ -1306,7 +1317,7 @@ mod tests {
         let spacing = 0.1; // This would require 10^64 points which overflows usize
         let points_per_dim = 10;
 
-        let result = generate_grid_points::<f64, LARGE_D>(points_per_dim, spacing, offset);
+        let result = generate_grid_points::<f64, LARGE_D>(nonzero(points_per_dim), spacing, offset);
         assert!(result.is_err(), "Expected error due to usize overflow");
 
         if let Err(RandomPointGenerationError::RandomGenerationFailed {
@@ -1563,11 +1574,11 @@ mod tests {
     fn test_generate_grid_points_overflow_detection_edge_cases() {
         // Test cases that would cause potential memory issues in grid point calculation
         // Generate small grid to test the function works
-        let result = generate_grid_points::<f64, 2>(10, 0.1, [0.0, 0.0]);
+        let result = generate_grid_points::<f64, 2>(nonzero(10), 0.1, [0.0, 0.0]);
         assert!(result.is_ok());
 
         // Test very fine spacing which would generate lots of points
-        let result = generate_grid_points::<f64, 2>(1000, 0.0001, [0.0, 0.0]);
+        let result = generate_grid_points::<f64, 2>(nonzero(1000), 0.0001, [0.0, 0.0]);
         // Should either succeed or fail gracefully
         if let Ok(points) = result {
             assert!(!points.is_empty());

@@ -20,6 +20,7 @@ use delaunay::geometry::util::generate_random_triangulation_with_topology_guaran
 use delaunay::prelude::construction::{DelaunayTriangulation, TopologyGuarantee, vertex};
 use delaunay::topology::characteristics::{euler, validation};
 use proptest::prelude::*;
+use std::num::NonZeroUsize;
 
 // =============================================================================
 // TEST CONFIGURATION
@@ -28,6 +29,11 @@ use proptest::prelude::*;
 /// Strategy for generating finite f64 coordinates
 fn finite_coordinate() -> impl Strategy<Value = f64> {
     (-100.0..100.0).prop_filter("must be finite", |x: &f64| x.is_finite())
+}
+
+/// Builds non-zero point-count literals for deterministic generator checks.
+const fn nonzero(value: usize) -> NonZeroUsize {
+    NonZeroUsize::new(value).expect("test point count must be non-zero")
 }
 
 // =============================================================================
@@ -166,7 +172,7 @@ macro_rules! test_euler_properties {
 #[test]
 fn test_seeded_random_generator_euler_consistent() {
     let dt_2d = generate_random_triangulation_with_topology_guarantee::<f64, (), (), 2>(
-        15,
+        nonzero(15),
         (0.0, 10.0),
         None,
         Some(555),
@@ -185,7 +191,7 @@ fn test_seeded_random_generator_euler_consistent() {
     );
 
     let dt_3d = generate_random_triangulation_with_topology_guarantee::<f64, (), (), 3>(
-        20,
+        nonzero(20),
         (-3.0, 3.0),
         None,
         Some(666),

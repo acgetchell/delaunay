@@ -15,7 +15,9 @@ use delaunay::prelude::geometry::{Point, RobustKernel};
 use delaunay::prelude::insertion::{
     HullExtensionReason, InsertionError, InsertionErrorKind, InsertionErrorSummary,
 };
-use delaunay::prelude::ordering::{hilbert_indices_prequantized, hilbert_quantize};
+use delaunay::prelude::ordering::{
+    HilbertBitDepth, hilbert_indices_prequantized, hilbert_quantize,
+};
 
 /// Replays a full Hilbert ordering while keeping only the prefix that first
 /// exposed issue #307, so the regression stays fast and deterministic.
@@ -24,7 +26,7 @@ fn hilbert_ordered_prefix<const D: usize>(
     prefix_len: usize,
 ) -> Vec<Vertex<f64, (), D>> {
     let (min, max) = coordinate_bounds(&points);
-    let bits_per_coord = 31;
+    let bits_per_coord = HilbertBitDepth::try_new(31).expect("test bit depth must be valid");
     let quantized: Vec<[u32; D]> = points
         .iter()
         .map(|point| {

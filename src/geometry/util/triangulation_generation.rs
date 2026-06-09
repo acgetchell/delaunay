@@ -23,6 +23,7 @@ use rand::SeedableRng;
 use rand::distr::uniform::SampleUniform;
 use rand::rngs::StdRng;
 use rand::seq::SliceRandom;
+use std::num::NonZeroUsize;
 
 const RANDOM_TRIANGULATION_MAX_SHUFFLE_ATTEMPTS: usize = 6;
 const RANDOM_TRIANGULATION_MAX_POINTSET_ATTEMPTS: usize = 6;
@@ -174,7 +175,7 @@ where
 ///
 /// # Arguments
 ///
-/// * `n_points` - Number of random points to generate
+/// * `n_points` - Non-zero number of random points to generate
 /// * `bounds` - Coordinate bounds as `(min, max)` tuple
 /// * `vertex_data` - Optional data to attach to each generated vertex
 /// * `seed` - Optional seed for reproducible results. If `None`, uses thread-local RNG
@@ -196,12 +197,8 @@ where
 ///   error variant for API simplicity. Consider validating bounds before calling
 ///   if you need to distinguish parameter errors from geometric issues.
 ///
-/// **Empty triangulation** (special case):
-/// - When `n_points = 0`, returns an empty triangulation with 0 vertices and `dim()` = -1
-/// - This is not an error; use incremental insertion to add vertices later
-///
 /// **Insufficient vertices** (`InsufficientVertices`):
-/// - When `0 < n_points < D + 1` (need at least D+1 points for a D-dimensional simplex)
+/// - When `n_points < D + 1` (need at least D+1 points for a D-dimensional simplex)
 /// - Example: 1-2 points in 2D, 1-3 points in 3D
 ///
 /// **Geometric degeneracy** (`GeometricDegeneracy`):
@@ -221,11 +218,21 @@ where
 /// ```no_run
 /// use delaunay::prelude::construction::DelaunayTriangulationConstructionError;
 /// use delaunay::prelude::generators::generate_random_triangulation;
+/// use std::num::NonZeroUsize;
 ///
 /// # fn main() -> Result<(), DelaunayTriangulationConstructionError> {
+/// # let Some(fifty) = NonZeroUsize::new(50) else {
+/// #     return Ok(());
+/// # };
+/// # let Some(thirty) = NonZeroUsize::new(30) else {
+/// #     return Ok(());
+/// # };
+/// # let Some(twenty) = NonZeroUsize::new(20) else {
+/// #     return Ok(());
+/// # };
 /// // Generate a 2D triangulation with 50 points, no seed (random each time)
 /// let triangulation_2d = generate_random_triangulation::<f64, (), (), 2>(
-///     50,
+///     fifty,
 ///     (-10.0, 10.0),
 ///     None,
 ///     None
@@ -233,7 +240,7 @@ where
 ///
 /// // Generate a 3D triangulation with 30 points, seeded for reproducibility  
 /// let triangulation_3d = generate_random_triangulation::<f64, (), (), 3>(
-///     30,
+///     thirty,
 ///     (-5.0, 5.0),
 ///     None,
 ///     Some(42)
@@ -241,7 +248,7 @@ where
 ///
 /// // Generate a 4D triangulation with custom vertex data
 /// let triangulation_4d = generate_random_triangulation::<f64, i32, (), 4>(
-///     20,
+///     twenty,
 ///     (0.0, 1.0),
 ///     Some(123),
 ///     Some(456)
@@ -249,7 +256,7 @@ where
 ///
 /// // For string-like data, use fixed-size character arrays (Copy types)
 /// let triangulation_with_strings = generate_random_triangulation::<f64, [char; 8], (), 2>(
-///     20,
+///     twenty,
 ///     (0.0, 1.0),
 ///     Some(['v', 'e', 'r', 't', 'e', 'x', '_', 'A']),
 ///     Some(789)
@@ -285,7 +292,7 @@ where
 /// - [`DelaunayTriangulationBuilder`](crate::DelaunayTriangulationBuilder) - For creating triangulations from existing vertices
 /// - [`RandomTriangulationBuilder`] - For more control over construction options
 pub fn generate_random_triangulation<T, U, V, const D: usize>(
-    n_points: usize,
+    n_points: NonZeroUsize,
     bounds: (T, T),
     vertex_data: Option<U>,
     seed: Option<u64>,
@@ -298,7 +305,7 @@ where
     #[cfg(debug_assertions)]
     if std::env::var_os("DELAUNAY_DEBUG_UNUSED_IMPORTS").is_some() {
         tracing::debug!(
-            n_points,
+            n_points = n_points.get(),
             dimension = D,
             seed = ?seed,
             "triangulation_generation::generate_random_triangulation called"
@@ -338,10 +345,14 @@ where
 /// use delaunay::prelude::construction::DelaunayTriangulationConstructionError;
 /// use delaunay::prelude::generators::generate_random_triangulation_with_topology_guarantee;
 /// use delaunay::prelude::TopologyGuarantee;
+/// use std::num::NonZeroUsize;
 ///
 /// # fn main() -> Result<(), DelaunayTriangulationConstructionError> {
+/// # let Some(twenty) = NonZeroUsize::new(20) else {
+/// #     return Ok(());
+/// # };
 /// let dt = generate_random_triangulation_with_topology_guarantee::<f64, (), (), 3>(
-///     20,
+///     twenty,
 ///     (-1.0, 1.0),
 ///     None,
 ///     Some(123),
@@ -352,7 +363,7 @@ where
 /// # }
 /// ```
 pub fn generate_random_triangulation_with_topology_guarantee<T, U, V, const D: usize>(
-    n_points: usize,
+    n_points: NonZeroUsize,
     bounds: (T, T),
     vertex_data: Option<U>,
     seed: Option<u64>,
@@ -363,15 +374,7 @@ where
     U: DataType,
     V: DataType,
 {
-    // Handle empty triangulation case (0 points)
-    if n_points == 0 {
-        return Ok(
-            DelaunayTriangulation::with_empty_kernel_and_topology_guarantee(
-                make_adaptive_kernel::<T>(),
-                topology_guarantee,
-            ),
-        );
-    }
+    let n_points = n_points.get();
 
     if n_points < D + 1 {
         return Err(TriangulationConstructionError::InsufficientVertices {
@@ -477,16 +480,23 @@ where
 /// use delaunay::prelude::generators::RandomTriangulationBuilder;
 /// use delaunay::prelude::generators::InsertionOrderStrategy;
 /// use delaunay::prelude::TopologyGuarantee;
+/// use std::num::NonZeroUsize;
 ///
 /// # fn main() -> Result<(), DelaunayTriangulationConstructionError> {
+/// # let Some(twenty) = NonZeroUsize::new(20) else {
+/// #     return Ok(());
+/// # };
+/// # let Some(one_hundred) = NonZeroUsize::new(100) else {
+/// #     return Ok(());
+/// # };
 /// // Override the default `Hilbert` ordering with `Input` ordering.
-/// let dt = RandomTriangulationBuilder::new(20, (-3.0, 3.0))
+/// let dt = RandomTriangulationBuilder::new(twenty, (-3.0, 3.0))
 ///     .seed(666)
 ///     .insertion_order(InsertionOrderStrategy::Input)
 ///     .build::<(), (), 3>()?;
 ///
 /// // Build with PLManifold guarantee
-/// let dt_manifold = RandomTriangulationBuilder::new(100, (-10.0, 10.0))
+/// let dt_manifold = RandomTriangulationBuilder::new(one_hundred, (-10.0, 10.0))
 ///     .seed(777)
 ///     .topology_guarantee(TopologyGuarantee::PLManifold)
 ///     .build::<(), (), 4>()?;
@@ -494,7 +504,7 @@ where
 /// # }
 /// ```
 pub struct RandomTriangulationBuilder<T> {
-    n_points: usize,
+    n_points: NonZeroUsize,
     bounds: (T, T),
     seed: Option<u64>,
     topology_guarantee: TopologyGuarantee,
@@ -506,7 +516,7 @@ impl<T> RandomTriangulationBuilder<T> {
     ///
     /// # Arguments
     ///
-    /// * `n_points` - Number of random points to generate
+    /// * `n_points` - Non-zero number of random points to generate
     /// * `bounds` - Coordinate bounds as `(min, max)` tuple
     ///
     /// # Defaults
@@ -523,12 +533,16 @@ impl<T> RandomTriangulationBuilder<T> {
     ///
     /// ```no_run
     /// use delaunay::prelude::generators::RandomTriangulationBuilder;
+    /// use std::num::NonZeroUsize;
     ///
-    /// let builder = RandomTriangulationBuilder::new(10, (-1.0, 1.0)).seed(42);
+    /// # let Some(ten) = NonZeroUsize::new(10) else {
+    /// #     return;
+    /// # };
+    /// let builder = RandomTriangulationBuilder::new(ten, (-1.0, 1.0)).seed(42);
     /// let _ = builder;
     /// ```
     #[must_use]
-    pub fn new(n_points: usize, bounds: (T, T)) -> Self {
+    pub fn new(n_points: NonZeroUsize, bounds: (T, T)) -> Self {
         Self {
             n_points,
             bounds,
@@ -562,10 +576,14 @@ impl<T> RandomTriangulationBuilder<T> {
     /// use delaunay::prelude::construction::DelaunayTriangulationConstructionError;
     /// use delaunay::prelude::generators::RandomTriangulationBuilder;
     /// use delaunay::prelude::generators::InsertionOrderStrategy;
+    /// use std::num::NonZeroUsize;
     ///
     /// # fn main() -> Result<(), DelaunayTriangulationConstructionError> {
+    /// # let Some(twenty) = NonZeroUsize::new(20) else {
+    /// #     return Ok(());
+    /// # };
     /// // Override the default `Hilbert` ordering with `Input` ordering.
-    /// let dt = RandomTriangulationBuilder::new(20, (-3.0, 3.0))
+    /// let dt = RandomTriangulationBuilder::new(twenty, (-3.0, 3.0))
     ///     .seed(666)
     ///     .insertion_order(InsertionOrderStrategy::Input)
     ///     .build::<(), (), 3>()?;
@@ -613,9 +631,13 @@ where
     /// ```no_run
     /// use delaunay::prelude::construction::DelaunayTriangulationConstructionError;
     /// use delaunay::prelude::generators::RandomTriangulationBuilder;
+    /// use std::num::NonZeroUsize;
     ///
     /// # fn main() -> Result<(), DelaunayTriangulationConstructionError> {
-    /// let dt = RandomTriangulationBuilder::new(12, (-2.0, 2.0))
+    /// # let Some(twelve) = NonZeroUsize::new(12) else {
+    /// #     return Ok(());
+    /// # };
+    /// let dt = RandomTriangulationBuilder::new(twelve, (-2.0, 2.0))
     ///     .seed(7)
     ///     .build::<(), (), 3>()?;
     /// assert_eq!(dt.dim(), 3);
@@ -650,9 +672,13 @@ where
     /// ```no_run
     /// use delaunay::prelude::construction::DelaunayTriangulationConstructionError;
     /// use delaunay::prelude::generators::RandomTriangulationBuilder;
+    /// use std::num::NonZeroUsize;
     ///
     /// # fn main() -> Result<(), DelaunayTriangulationConstructionError> {
-    /// let dt = RandomTriangulationBuilder::new(12, (-2.0, 2.0))
+    /// # let Some(twelve) = NonZeroUsize::new(12) else {
+    /// #     return Ok(());
+    /// # };
+    /// let dt = RandomTriangulationBuilder::new(twelve, (-2.0, 2.0))
     ///     .seed(7)
     ///     .build_with_vertex_data::<(), (), 3>(None)?;
     /// assert_eq!(dt.dim(), 3);
@@ -670,21 +696,13 @@ where
         U: DataType,
         V: DataType,
     {
-        // Handle empty triangulation case (0 points)
-        if self.n_points == 0 {
-            return Ok(
-                DelaunayTriangulation::with_empty_kernel_and_topology_guarantee(
-                    make_adaptive_kernel::<T>(),
-                    self.topology_guarantee,
-                ),
-            );
-        }
+        let n_points = self.n_points.get();
 
-        if self.n_points < D + 1 {
+        if n_points < D + 1 {
             return Err(TriangulationConstructionError::InsufficientVertices {
                 dimension: D,
                 source: SimplexValidationError::InsufficientVertices {
-                    actual: self.n_points,
+                    actual: n_points,
                     expected: D + 1,
                     dimension: D,
                 },
@@ -694,14 +712,11 @@ where
 
         // Generate random points
         let points: Vec<Point<T, D>> = match self.seed {
-            Some(seed_value) => {
-                generate_random_points_seeded(self.n_points, self.bounds, seed_value).map_err(
-                    |e| TriangulationConstructionError::GeometricDegeneracy {
-                        message: format!("Random point generation failed: {e}"),
-                    },
-                )?
-            }
-            None => generate_random_points(self.n_points, self.bounds).map_err(|e| {
+            Some(seed_value) => generate_random_points_seeded(n_points, self.bounds, seed_value)
+                .map_err(|e| TriangulationConstructionError::GeometricDegeneracy {
+                    message: format!("Random point generation failed: {e}"),
+                })?,
+            None => generate_random_points(n_points, self.bounds).map_err(|e| {
                 TriangulationConstructionError::GeometricDegeneracy {
                     message: format!("Random point generation failed: {e}"),
                 }
@@ -715,7 +730,7 @@ where
         #[cfg(debug_assertions)]
         if std::env::var_os("DELAUNAY_DEBUG_RANDOM_BUILDER").is_some() {
             tracing::debug!(
-                n_points = self.n_points,
+                n_points,
                 topology_guarantee = ?self.topology_guarantee,
                 insertion_order = ?self.construction_options.insertion_order(),
                 dedup_policy = ?self.construction_options.dedup_policy(),
@@ -737,6 +752,12 @@ where
 mod tests {
     use super::*;
     use crate::vertex;
+
+    /// Builds non-zero point-count literals for random triangulation tests.
+    const fn nonzero(value: usize) -> NonZeroUsize {
+        NonZeroUsize::new(value).expect("test point count must be non-zero")
+    }
+
     // =============================================================================
     // RANDOM TRIANGULATION GENERATION TESTS
     // =============================================================================
@@ -744,9 +765,13 @@ mod tests {
     #[test]
     fn test_generate_random_triangulation_basic() {
         // Test 2D triangulation creation
-        let triangulation_2d =
-            generate_random_triangulation::<f64, (), (), 2>(10, (-5.0, 5.0), None, Some(42))
-                .unwrap();
+        let triangulation_2d = generate_random_triangulation::<f64, (), (), 2>(
+            nonzero(10),
+            (-5.0, 5.0),
+            None,
+            Some(42),
+        )
+        .unwrap();
 
         assert!(
             triangulation_2d.number_of_vertices() >= 3,
@@ -761,9 +786,13 @@ mod tests {
         assert!(valid_2d.is_ok());
 
         // Test 3D triangulation creation with data
-        let triangulation_3d =
-            generate_random_triangulation::<f64, i32, (), 3>(8, (0.0, 1.0), Some(123), Some(456))
-                .unwrap();
+        let triangulation_3d = generate_random_triangulation::<f64, i32, (), 3>(
+            nonzero(8),
+            (0.0, 1.0),
+            Some(123),
+            Some(456),
+        )
+        .unwrap();
 
         assert!(
             triangulation_3d.number_of_vertices() >= 4,
@@ -778,13 +807,21 @@ mod tests {
         assert!(valid_3d.is_ok());
 
         // Exercise repeatable construction with two deterministic seeds.
-        let triangulation_seeded =
-            generate_random_triangulation::<f64, (), (), 2>(5, (-1.0, 1.0), None, Some(789))
-                .unwrap();
+        let triangulation_seeded = generate_random_triangulation::<f64, (), (), 2>(
+            nonzero(5),
+            (-1.0, 1.0),
+            None,
+            Some(789),
+        )
+        .unwrap();
 
-        let triangulation_different_seed =
-            generate_random_triangulation::<f64, (), (), 2>(5, (-1.0, 1.0), None, Some(790))
-                .unwrap();
+        let triangulation_different_seed = generate_random_triangulation::<f64, (), (), 2>(
+            nonzero(5),
+            (-1.0, 1.0),
+            None,
+            Some(790),
+        )
+        .unwrap();
 
         // Both should be valid
         let valid_seeded = triangulation_seeded.is_valid();
@@ -818,32 +855,35 @@ mod tests {
     fn test_generate_random_triangulation_error_cases() {
         // Test invalid bounds
         let result = generate_random_triangulation::<f64, (), (), 2>(
-            10,
+            nonzero(10),
             (5.0, 1.0), // min > max
             None,
             Some(42),
         );
         assert!(result.is_err());
 
-        // Test zero points - should succeed with empty triangulation
-        let result =
-            generate_random_triangulation::<f64, (), (), 2>(0, (-1.0, 1.0), None, Some(42));
-        assert!(result.is_ok());
-        let triangulation = result.unwrap();
-        assert_eq!(triangulation.number_of_vertices(), 0);
-        assert_eq!(triangulation.dim(), -1);
+        // Zero points cannot cross the typed API boundary.
+        assert_eq!(NonZeroUsize::new(0), None);
     }
 
     #[test]
     fn test_generate_random_triangulation_reproducibility() {
         // Same seed should produce identical triangulations
-        let triangulation1 =
-            generate_random_triangulation::<f64, (), (), 3>(6, (-2.0, 2.0), None, Some(12345))
-                .unwrap();
+        let triangulation1 = generate_random_triangulation::<f64, (), (), 3>(
+            nonzero(6),
+            (-2.0, 2.0),
+            None,
+            Some(12345),
+        )
+        .unwrap();
 
-        let triangulation2 =
-            generate_random_triangulation::<f64, (), (), 3>(6, (-2.0, 2.0), None, Some(12345))
-                .unwrap();
+        let triangulation2 = generate_random_triangulation::<f64, (), (), 3>(
+            nonzero(6),
+            (-2.0, 2.0),
+            None,
+            Some(12345),
+        )
+        .unwrap();
 
         // Should have same structural properties
         assert_eq!(
@@ -885,30 +925,46 @@ mod tests {
         // point sets in each dimension.
 
         // 2D with sufficient points for full triangulation
-        let tri_2d =
-            generate_random_triangulation::<f64, (), (), 2>(15, (0.0, 10.0), None, Some(555))
-                .unwrap();
+        let tri_2d = generate_random_triangulation::<f64, (), (), 2>(
+            nonzero(15),
+            (0.0, 10.0),
+            None,
+            Some(555),
+        )
+        .unwrap();
         assert_eq!(tri_2d.dim(), 2);
         assert!(tri_2d.number_of_simplices() > 0);
 
         // 3D with sufficient points for full triangulation
-        let tri_3d =
-            generate_random_triangulation::<f64, (), (), 3>(20, (-3.0, 3.0), None, Some(666))
-                .unwrap();
+        let tri_3d = generate_random_triangulation::<f64, (), (), 3>(
+            nonzero(20),
+            (-3.0, 3.0),
+            None,
+            Some(666),
+        )
+        .unwrap();
         assert_eq!(tri_3d.dim(), 3);
         assert!(tri_3d.number_of_simplices() > 0);
 
         // 4D with sufficient points for full triangulation
-        let tri_4d =
-            generate_random_triangulation::<f64, (), (), 4>(12, (-1.0, 1.0), None, Some(777))
-                .unwrap();
+        let tri_4d = generate_random_triangulation::<f64, (), (), 4>(
+            nonzero(12),
+            (-1.0, 1.0),
+            None,
+            Some(777),
+        )
+        .unwrap();
         assert_eq!(tri_4d.dim(), 4);
         assert!(tri_4d.number_of_simplices() > 0);
 
         // 5D with sufficient points for full triangulation
-        let tri_5d =
-            generate_random_triangulation::<f64, (), (), 5>(10, (0.0, 5.0), None, Some(888))
-                .unwrap();
+        let tri_5d = generate_random_triangulation::<f64, (), (), 5>(
+            nonzero(10),
+            (0.0, 5.0),
+            None,
+            Some(888),
+        )
+        .unwrap();
         assert_eq!(tri_5d.dim(), 5);
         assert!(tri_5d.number_of_simplices() > 0);
     }
@@ -921,7 +977,7 @@ mod tests {
         // NOTE: This is a workaround for the DataType trait requiring Copy, which
         // prevents using String or &str directly due to lifetime/ownership constraints
         let tri_with_char_array = generate_random_triangulation::<f64, [char; 8], (), 2>(
-            6,
+            nonzero(6),
             (-2.0, 2.0),
             Some(['v', 'e', 'r', 't', 'e', 'x', '_', 'd']),
             Some(888),
@@ -953,7 +1009,7 @@ mod tests {
         let mut last_err: Option<String> = None;
         for seed in seeds {
             match generate_random_triangulation::<f64, u32, (), 3>(
-                8,
+                nonzero(8),
                 (0.0, 5.0),
                 Some(42u32),
                 Some(seed),
@@ -985,9 +1041,13 @@ mod tests {
         assert!(valid_int.is_ok());
 
         // Test without data (None)
-        let tri_no_data =
-            generate_random_triangulation::<f64, (), (), 2>(5, (-1.0, 1.0), None, Some(111))
-                .unwrap();
+        let tri_no_data = generate_random_triangulation::<f64, (), (), 2>(
+            nonzero(5),
+            (-1.0, 1.0),
+            None,
+            Some(111),
+        )
+        .unwrap();
 
         assert!(
             tri_no_data.number_of_vertices() >= 3,

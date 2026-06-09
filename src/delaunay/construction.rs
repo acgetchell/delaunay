@@ -69,8 +69,8 @@ use crate::core::tds::{TdsConstructionError, TdsError};
 use crate::core::traits::data_type::DataType;
 use crate::core::triangulation::Triangulation;
 use crate::core::util::{
-    coords_equal_exact, coords_within_epsilon, hilbert_indices_prequantized, hilbert_quantize,
-    stable_hash_u64_slice,
+    HilbertBitDepth, coords_equal_exact, coords_within_epsilon, hilbert_indices_prequantized,
+    hilbert_quantize, stable_hash_u64_slice,
 };
 use crate::core::validation::{TopologyGuarantee, ValidationPolicy};
 use crate::core::vertex::Vertex;
@@ -1779,7 +1779,7 @@ where
 
 /// Computes the largest per-axis Hilbert precision that still fits in the
 /// u128-backed index.
-fn hilbert_bits_per_coord<const D: usize>() -> Option<u32> {
+fn hilbert_bits_per_coord<const D: usize>() -> Option<HilbertBitDepth> {
     if D == 0 {
         return None;
     }
@@ -1791,11 +1791,7 @@ fn hilbert_bits_per_coord<const D: usize>() -> Option<u32> {
     // `hilbert_index` encodes D coordinates with `bits` bits each into a `u128`.
     // Use as many bits as possible (up to the `hilbert` module's `bits <= 31` bound).
     let bits_per_coord = (128_u32 / d_u32).min(31);
-    if bits_per_coord == 0 {
-        return None;
-    }
-
-    Some(bits_per_coord)
+    HilbertBitDepth::try_new(bits_per_coord).ok()
 }
 
 /// Converts vertex coordinates for diagnostics without synthesizing sentinel values.
