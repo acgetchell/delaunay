@@ -647,9 +647,8 @@ pub mod geometry {
     pub mod sos;
     /// Geometric utility functions for d-dimensional geometry calculations
     pub mod util {
-        use crate::geometry::matrix::{MatrixError, StackMatrixDispatchError};
+        use crate::geometry::matrix::{LaError, MatrixError, StackMatrixDispatchError};
         use crate::geometry::traits::coordinate::CoordinateConversionError;
-        use la_stack::LaError;
 
         // Error types defined here and re-exported from submodules
 
@@ -739,7 +738,7 @@ pub mod geometry {
         /// let err = CircumcenterError::EmptyPointSet;
         /// std::assert_matches!(err, CircumcenterError::EmptyPointSet);
         /// ```
-        #[derive(Clone, Debug, thiserror::Error, PartialEq, Eq)]
+        #[derive(Clone, Debug, thiserror::Error, PartialEq)]
         #[non_exhaustive]
         pub enum CircumcenterError {
             /// Empty point set provided
@@ -794,7 +793,7 @@ pub mod geometry {
             #[error("Linear algebra failure: {source}")]
             LinearAlgebraFailure {
                 /// Typed source error from the linear algebra backend.
-                #[from]
+                #[source]
                 source: LaError,
             },
 
@@ -850,6 +849,12 @@ pub mod geometry {
             }
         }
 
+        impl From<LaError> for CircumcenterError {
+            fn from(source: LaError) -> Self {
+                Self::from(StackMatrixDispatchError::from(source))
+            }
+        }
+
         /// Error type for surface measure computation operations.
         ///
         /// # Examples
@@ -860,7 +865,7 @@ pub mod geometry {
         /// let err = SurfaceMeasureError::GeometryError(CircumcenterError::EmptyPointSet);
         /// std::assert_matches!(err, SurfaceMeasureError::GeometryError(_));
         /// ```
-        #[derive(Clone, Debug, thiserror::Error, PartialEq, Eq)]
+        #[derive(Clone, Debug, thiserror::Error, PartialEq)]
         #[non_exhaustive]
         pub enum SurfaceMeasureError {
             /// Error retrieving vertices from a facet.
@@ -1876,6 +1881,7 @@ pub const fn is_normal<T: Send + Sync + Unpin>() -> bool {
 
 #[cfg(test)]
 mod tests {
+    use crate::geometry::matrix::LaError;
     use crate::{
         DelaunayTriangulation,
         core::{
@@ -1901,7 +1907,6 @@ mod tests {
         prelude::*,
         vertex,
     };
-    use la_stack::LaError;
     use std::assert_matches;
 
     #[cfg(feature = "count-allocations")]
@@ -1936,11 +1941,45 @@ mod tests {
 
     #[test]
     fn circumcenter_error_clones_linear_algebra_source() {
-        let source = LaError::Overflow { index: Some(2) };
+        let source = LaError::NonFinite {
+            row: Some(1),
+            col: 2,
+        };
         let error = CircumcenterError::LinearAlgebraFailure { source };
 
         assert_eq!(error.clone(), error);
         assert!(error.to_string().contains("Linear algebra"));
+    }
+
+    #[test]
+    fn la_errors_map_to_public_circumcenter_errors() {
+        let unsupported = CircumcenterError::from(LaError::UnsupportedDimension {
+            requested: 9,
+            max: 7,
+        });
+        assert_eq!(
+            unsupported,
+            CircumcenterError::UnsupportedMatrixDimension {
+                requested: 9,
+                max: 7,
+            }
+        );
+
+        let index_error = CircumcenterError::from(LaError::IndexOutOfBounds {
+            row: 3,
+            col: 4,
+            dim: 2,
+        });
+        assert_eq!(
+            index_error,
+            CircumcenterError::MatrixError {
+                source: MatrixError::OutOfBounds {
+                    row: 3,
+                    column: 4,
+                    dimension: 2,
+                },
+            }
+        );
     }
 
     #[test]

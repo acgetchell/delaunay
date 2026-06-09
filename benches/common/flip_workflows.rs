@@ -37,7 +37,7 @@ pub type FlipWorkflowResult<T> = Result<T, FlipWorkflowError>;
 /// These errors are crate-private to the benchmark/test harness, but they keep
 /// fixture setup and n=1 ergodicity failures structured so tests can assert the
 /// failing contract without parsing display text.
-#[derive(Clone, Debug, Error, PartialEq, Eq)]
+#[derive(Clone, Debug, Error, PartialEq)]
 pub enum FlipWorkflowError {
     /// Fixture triangulation construction failed.
     #[error("failed to build {dimension}D flip fixture triangulation: {source}")]
@@ -320,7 +320,7 @@ impl fmt::Display for FlipMoveKind {
 /// and [`FlipWorkflowError::NoFlippableRidge`] so failed fixture setup reports
 /// the last concrete reason without treating one rejected support as the whole
 /// selector failure.
-#[derive(Clone, Debug, Error, PartialEq, Eq)]
+#[derive(Clone, Debug, Error, PartialEq)]
 pub enum FlipCandidateError {
     /// A candidate flip failed.
     #[error("{move_kind} candidate flip failed: {source}")]

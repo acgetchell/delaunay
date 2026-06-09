@@ -104,7 +104,7 @@ use num_traits::NumCast;
 ///     ConvexHullValidationError::IdentityMismatch { .. }
 /// );
 /// ```
-#[derive(Clone, Debug, Error, PartialEq, Eq)]
+#[derive(Clone, Debug, Error, PartialEq)]
 #[non_exhaustive]
 pub enum ConvexHullValidationError {
     /// A facet has invalid structure.
@@ -171,7 +171,7 @@ pub enum ConvexHullValidationError {
 ///     ConvexHullConstructionError::IdentityMismatch { .. }
 /// );
 /// ```
-#[derive(Clone, Debug, Error, PartialEq, Eq)]
+#[derive(Clone, Debug, Error, PartialEq)]
 #[non_exhaustive]
 pub enum ConvexHullConstructionError {
     /// Failed to extract boundary facets from the triangulation.

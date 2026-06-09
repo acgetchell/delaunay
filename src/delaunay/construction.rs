@@ -189,7 +189,7 @@ pub(crate) mod test_hooks {
 }
 
 /// Errors that can occur during Delaunay triangulation construction.
-#[derive(Clone, Debug, Error, PartialEq, Eq)]
+#[derive(Clone, Debug, Error, PartialEq)]
 #[non_exhaustive]
 pub enum DelaunayTriangulationConstructionError {
     /// Lower-layer construction failure summarized for Delaunay construction.
@@ -230,7 +230,7 @@ impl fmt::Display for DelaunayConstructionRepairPhase {
 }
 
 /// Pattern-matchable summary of a lower-layer construction failure.
-#[derive(Clone, Debug, Error, PartialEq, Eq)]
+#[derive(Clone, Debug, Error, PartialEq)]
 #[non_exhaustive]
 pub enum DelaunayConstructionFailure {
     /// Lower-layer TDS construction failed.
@@ -1859,7 +1859,7 @@ where
 
     let bounds = (min_t, max_t);
 
-    // Phase 1: Quantize all coordinates
+    // Quantize all coordinates.
     let quantized: Result<Vec<[u32; D]>, ()> = vertices
         .iter()
         .map(|vertex| {
@@ -1872,12 +1872,12 @@ where
         return order_vertices_lexicographic(vertices);
     };
 
-    // Phase 2: Compute all indices in bulk
+    // Compute all indices in bulk.
     let Ok(indices) = hilbert_indices_prequantized(&quantized, bits_per_coord) else {
         // On bulk index computation error, fall back to true lexicographic ordering
         return order_vertices_lexicographic(vertices);
     };
-    // Phase 3: Pair indices with vertices, quantized coords, and input indices
+    // Pair indices with vertices, quantized coords, and input indices.
     let mut keyed: Vec<HilbertSortKey<T, U, D>> = vertices
         .into_iter()
         .enumerate()

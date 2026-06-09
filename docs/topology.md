@@ -184,7 +184,7 @@ construct toroidal triangulations using `DelaunayTriangulationBuilder`:
 ```rust
 use delaunay::prelude::construction::{DelaunayTriangulationBuilder, vertex};
 
-// 2D periodic triangulation
+// 2D canonicalized toroidal triangulation
 let vertices = vec![
     vertex!([0.1, 0.1]),
     vertex!([0.9, 0.9]),
@@ -192,17 +192,18 @@ let vertices = vec![
 ];
 
 let dt = DelaunayTriangulationBuilder::new(&vertices)
-    .toroidal([1.0, 1.0]) // Phase 1: canonicalized toroidal construction
+    .canonicalized_toroidal([1.0, 1.0]) // Canonicalized toroidal construction
     .build::<()>()
     .unwrap();
 ```
 
-Toroidal triangulations handle point canonicalization (wrapping coordinates to the
-fundamental domain) and distance computations across periodic boundaries. The
-implementation supports canonicalized 2D and 3D toroidal spaces. For true
-periodic image-point construction, use `.toroidal_periodic([..])`; the validated
-periodic quotient path currently covers 2D and compact 3D fixtures. 4D/5D
-periodic quotients fail fast pending scalable construction work in issue #416.
+Canonicalized toroidal construction wraps coordinates into the fundamental
+domain before building the Euclidean triangulation. Topology-aware operations can
+use the toroidal domain for periodic distances, but `.canonicalized_toroidal([..])` does not
+rewire opposite boundary facets. For a true periodic quotient, use
+`.toroidal([..])`; the validated image-point path currently covers 2D
+and compact 3D fixtures. 4D/5D periodic quotients fail fast pending scalable
+construction work in issue #416.
 
 For more examples, see the toroidal section in the main `README.md`.
 

@@ -31,7 +31,7 @@ use thiserror::Error;
 /// let err = DelaunayValidationError::DelaunayViolation { simplex_key };
 /// std::assert_matches!(err, DelaunayValidationError::DelaunayViolation { .. });
 /// ```
-#[derive(Clone, Debug, Error, PartialEq, Eq)]
+#[derive(Clone, Debug, Error, PartialEq)]
 #[non_exhaustive]
 pub enum DelaunayValidationError {
     /// A simplex violates the Delaunay property (has an external vertex inside its circumsphere).

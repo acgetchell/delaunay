@@ -103,7 +103,7 @@ pub enum LocateResult {
 /// let err = LocateError::EmptyTriangulation;
 /// std::assert_matches!(err, LocateError::EmptyTriangulation);
 /// ```
-#[derive(Debug, Clone, thiserror::Error, PartialEq, Eq)]
+#[derive(Debug, Clone, thiserror::Error, PartialEq)]
 #[non_exhaustive]
 pub enum LocateError {
     /// Triangulation has no simplices.
@@ -139,7 +139,7 @@ pub enum LocateError {
 /// let err = ConflictError::InvalidStartSimplex { simplex_key };
 /// std::assert_matches!(err, ConflictError::InvalidStartSimplex { .. });
 /// ```
-#[derive(Debug, Clone, thiserror::Error, PartialEq, Eq)]
+#[derive(Debug, Clone, thiserror::Error, PartialEq)]
 #[non_exhaustive]
 pub enum ConflictError {
     /// Starting simplex is invalid

@@ -64,7 +64,7 @@ use std::hash::{Hash, Hasher};
 /// let reason = HullExtensionReason::NoVisibleFacets;
 /// std::assert_matches!(reason, HullExtensionReason::NoVisibleFacets);
 /// ```
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 #[non_exhaustive]
 pub enum HullExtensionReason {
     /// No visible boundary facets (coplanar with hull surface).
@@ -111,7 +111,7 @@ impl fmt::Display for HullExtensionReason {
 }
 
 /// Compact, typed summary of a [`TdsError`] used inside insertion-stage errors.
-#[derive(Debug, Clone, thiserror::Error, PartialEq, Eq)]
+#[derive(Debug, Clone, thiserror::Error, PartialEq)]
 #[non_exhaustive]
 pub enum TdsValidationFailure {
     /// The triangulation contains an invalid vertex.
@@ -426,7 +426,7 @@ impl From<TdsError> for TdsValidationFailure {
 }
 
 /// Compact, typed summary of a [`TdsConstructionError`].
-#[derive(Debug, Clone, thiserror::Error, PartialEq, Eq)]
+#[derive(Debug, Clone, thiserror::Error, PartialEq)]
 #[non_exhaustive]
 pub enum TdsConstructionFailure {
     /// TDS validation failed during construction.
@@ -461,7 +461,7 @@ impl From<TdsConstructionError> for TdsConstructionFailure {
 }
 
 /// Structured reason why initial-simplex construction failed during insertion.
-#[derive(Debug, Clone, thiserror::Error, PartialEq, Eq)]
+#[derive(Debug, Clone, thiserror::Error, PartialEq)]
 #[non_exhaustive]
 pub enum InitialSimplexConstructionError {
     /// TDS validation failed while assembling the bootstrap simplex.
@@ -990,7 +990,7 @@ impl fmt::Display for DelaunayRepairFailureContext {
 /// };
 /// std::assert_matches!(err, NeighborRebuildError::Wiring { .. });
 /// ```
-#[derive(Debug, Clone, thiserror::Error, PartialEq, Eq)]
+#[derive(Debug, Clone, thiserror::Error, PartialEq)]
 #[non_exhaustive]
 pub enum NeighborRebuildError {
     /// Neighbor wiring failed while repairing neighbor pointers.
@@ -1050,7 +1050,7 @@ pub enum NeighborRebuildError {
 /// };
 /// std::assert_matches!(err, CavityFillingError::InvalidFacetIndex { .. });
 /// ```
-#[derive(Debug, Clone, thiserror::Error, PartialEq, Eq)]
+#[derive(Debug, Clone, thiserror::Error, PartialEq)]
 #[non_exhaustive]
 pub enum CavityFillingError {
     /// A boundary facet references a simplex that is no longer present.
@@ -1217,7 +1217,7 @@ impl fmt::Display for CavityRepairStage {
 /// let err = NeighborWiringError::MissingSimplex { simplex_key };
 /// std::assert_matches!(err, NeighborWiringError::MissingSimplex { .. });
 /// ```
-#[derive(Debug, Clone, thiserror::Error, PartialEq, Eq)]
+#[derive(Debug, Clone, thiserror::Error, PartialEq)]
 #[non_exhaustive]
 pub enum NeighborWiringError {
     /// A simplex required for neighbor wiring was not found.
@@ -1346,7 +1346,7 @@ pub enum NeighborWiringError {
 /// };
 /// std::assert_matches!(err, InsertionError::DuplicateCoordinates { .. });
 /// ```
-#[derive(Debug, Clone, thiserror::Error, PartialEq, Eq)]
+#[derive(Debug, Clone, thiserror::Error, PartialEq)]
 #[non_exhaustive]
 pub enum InsertionError {
     /// Conflict region finding failed

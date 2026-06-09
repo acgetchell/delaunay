@@ -251,10 +251,12 @@ fn main() -> Result<(), RepairExampleError> {
 }
 ```
 
-## Builder API: toroidal (periodic) triangulations
+## Builder API: toroidal construction modes
 
-Toroidal triangulations handle periodic boundary conditions. Use
-`DelaunayTriangulationBuilder` to construct them:
+Toroidal construction has two modes. `.canonicalized_toroidal([..])` wraps vertices into the
+fundamental domain before Euclidean construction. `.toroidal([..])`
+uses the image-point method to build a true periodic quotient in the validated
+2D and compact 3D cases.
 
 ```rust
 use delaunay::prelude::construction::{
@@ -263,15 +265,15 @@ use delaunay::prelude::construction::{
 use delaunay::prelude::insertion::InsertionError;
 
 #[derive(Debug, thiserror::Error)]
-enum PeriodicExampleError {
+enum ToroidalExampleError {
     #[error(transparent)]
     Construction(#[from] DelaunayTriangulationConstructionError),
     #[error(transparent)]
     Insertion(#[from] InsertionError),
 }
 
-fn main() -> Result<(), PeriodicExampleError> {
-    // 2D periodic triangulation with unit square domain
+fn main() -> Result<(), ToroidalExampleError> {
+    // 2D canonicalized toroidal triangulation with unit square domain
     let vertices = vec![
         vertex!([0.1, 0.1]),
         vertex!([0.9, 0.9]),
@@ -279,7 +281,7 @@ fn main() -> Result<(), PeriodicExampleError> {
     ];
 
     let mut dt = DelaunayTriangulationBuilder::new(&vertices)
-        .toroidal([1.0, 1.0]) // canonicalized toroidal construction
+        .canonicalized_toroidal([1.0, 1.0]) // canonicalized toroidal construction
         .build::<()>()?;
 
     // Insert more points - they'll be wrapped to [0,1)×[0,1)
@@ -293,11 +295,11 @@ fn main() -> Result<(), PeriodicExampleError> {
 
 - **Domain wrapping**: Vertex coordinates are automatically canonicalized (wrapped) to the
   fundamental domain `[0, period)` for each dimension
-- **Distance computation**: Distances are computed accounting for periodic boundaries (toroidal
-  metric)
+- **Distance computation**: Topology-aware operations can use the toroidal metric when the
+  triangulation carries toroidal domain metadata
 - **Construction modes**:
-  - `.toroidal([..])`: canonicalized construction (wrap into fundamental domain)
-  - `.toroidal_periodic([..])`: periodic image-point construction; currently validated as a true
+  - `.canonicalized_toroidal([..])`: canonicalized construction (wrap into fundamental domain)
+  - `.toroidal([..])`: periodic image-point construction; currently validated as a true
     toroidal quotient in 2D and compact 3D; 4D/5D fail fast pending issue #416
 
 For more details, see `docs/topology.md` and the toroidal section in the main `README.md`.

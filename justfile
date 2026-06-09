@@ -6,10 +6,18 @@
 # Use bash with strict error handling for all recipes
 set shell := ["bash", "-euo", "pipefail", "-c"]
 
+home_dir := env_var_or_default("HOME", env_var_or_default("USERPROFILE", ""))
+cargo_home := env_var_or_default("CARGO_HOME", home_dir + "/.cargo")
+path_separator := if os_family() == "windows" { ";" } else { ":" }
+export PATH := cargo_home + "/bin" + path_separator + env_var("PATH")
+
 cargo_llvm_cov_version := "0.8.7"
+dprint_version := "0.54.0"
+just_version := "1.52.0"
 nextest_version := "0.9.137"
-rumdl_version := "0.2.6"
-typos_version := "1.47.1"
+rumdl_version := "0.2.10"
+taplo_version := "0.10.0"
+typos_version := "1.47.2"
 zizmor_version := "1.25.2"
 
 # Common cargo-llvm-cov arguments for all coverage runs.
@@ -51,22 +59,30 @@ _ensure-cargo-machete:
 _ensure-dprint:
     #!/usr/bin/env bash
     set -euo pipefail
-    command -v dprint >/dev/null || { echo "❌ 'dprint' not found. See 'just setup' or install: brew install dprint"; exit 1; }
+    installed_version=""
+    if command -v dprint >/dev/null; then
+        installed_version="$(dprint --version 2>/dev/null | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1 || true)"
+    fi
+    if [[ "$installed_version" != "{{ dprint_version }}" ]]; then
+        echo "❌ 'dprint' {{ dprint_version }} not found. See 'just setup-tools' or install:"
+        echo "   cargo install --locked dprint --version {{ dprint_version }}"
+        exit 1
+    fi
 
 # Internal helpers: ensure external tooling is installed
 _ensure-git-cliff:
     #!/usr/bin/env bash
     set -euo pipefail
     command -v git-cliff >/dev/null || {
-        echo "❌ 'git-cliff' not found. Install via Homebrew: brew install git-cliff"
-        echo "   Or via Cargo: cargo install git-cliff"
+        echo "❌ 'git-cliff' not found. Install with:"
+        echo "   cargo install --locked git-cliff"
         exit 1
     }
 
 _ensure-jq:
     #!/usr/bin/env bash
     set -euo pipefail
-    command -v jq >/dev/null || { echo "❌ 'jq' not found. See 'just setup' or install: brew install jq"; exit 1; }
+    command -v jq >/dev/null || { echo "❌ 'jq' not found. Install jq and ensure it is on PATH."; exit 1; }
 
 _ensure-nextest:
     #!/usr/bin/env bash
@@ -110,7 +126,15 @@ _ensure-shfmt:
 _ensure-taplo:
     #!/usr/bin/env bash
     set -euo pipefail
-    command -v taplo >/dev/null || { echo "❌ 'taplo' not found. See 'just setup' or install: brew install taplo (or: cargo install taplo-cli)"; exit 1; }
+    installed_version=""
+    if command -v taplo >/dev/null; then
+        installed_version="$(taplo --version 2>/dev/null | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1 || true)"
+    fi
+    if [[ "$installed_version" != "{{ taplo_version }}" ]]; then
+        echo "❌ 'taplo' {{ taplo_version }} not found. See 'just setup-tools' or install:"
+        echo "   cargo install --locked taplo-cli --version {{ taplo_version }}"
+        exit 1
+    fi
 
 # Internal helper: ensure typos-cli is installed
 _ensure-typos:
@@ -778,7 +802,7 @@ setup: setup-tools
 # Development tooling installation (best-effort)
 #
 # Note: this recipe is intentionally self-contained. If it grows further, consider splitting
-# it into smaller helper recipes (e.g. brew installs, cargo tool installs, verification).
+# it into smaller helper recipes (e.g. cargo tool installs, verification).
 setup-tools:
     #!/usr/bin/env bash
     set -euo pipefail
@@ -786,40 +810,11 @@ setup-tools:
     echo "🔧 Ensuring tooling required by just recipes is installed..."
     echo ""
 
-    os="$(uname -s || true)"
-
     have() { command -v "$1" >/dev/null 2>&1; }
 
-    install_with_brew() {
-        local formula="$1"
-        if brew list --versions "$formula" >/dev/null 2>&1; then
-            echo "  ✓ $formula (brew)"
-        else
-            echo "  ⏳ Installing $formula (brew)..."
-            HOMEBREW_NO_AUTO_UPDATE=1 brew install "$formula"
-        fi
-    }
-
-    brew_available=0
-    if have brew; then
-        brew_available=1
-        echo "Using Homebrew (brew) to install missing tools..."
-        install_with_brew uv
-        install_with_brew jq
-        install_with_brew taplo
-        install_with_brew dprint
-        install_with_brew rumdl
-        echo ""
-    else
-        echo "⚠️  'brew' not found. Skipping Homebrew installs."
-        if [[ "$os" == "Darwin" ]]; then
-            echo "Install Homebrew from https://brew.sh, or ensure required tools are on PATH."
-        else
-            echo "Install required tools via your system package manager, or ensure they are on PATH."
-        fi
-        echo "Required standalone tools: uv, jq, taplo, dprint, rumdl, git-cliff, typos, zizmor"
-        echo ""
-    fi
+    echo "This recipe installs pinned Rust CLI tools through cargo."
+    echo "External prerequisites that must already be on PATH: uv, jq, rustup, cargo."
+    echo ""
 
     echo "Ensuring uv-managed Python tooling..."
     if ! have uv; then
@@ -838,11 +833,55 @@ setup-tools:
     echo ""
 
     echo "Ensuring cargo tools..."
+    installed_just_version=""
+    if command -v just >/dev/null; then
+        installed_just_version="$(just --version 2>/dev/null | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1 || true)"
+    fi
+    if [[ "$installed_just_version" != "{{ just_version }}" ]]; then
+        echo "  ⏳ Installing just {{ just_version }} (cargo)..."
+        cargo install --locked just --version {{ just_version }}
+    else
+        echo "  ✓ just {{ just_version }}"
+    fi
+
     if ! have samply; then
         echo "  ⏳ Installing samply (cargo)..."
         cargo install --locked samply
     else
         echo "  ✓ samply"
+    fi
+
+    installed_taplo_version=""
+    if command -v taplo >/dev/null; then
+        installed_taplo_version="$(taplo --version 2>/dev/null | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1 || true)"
+    fi
+    if [[ "$installed_taplo_version" != "{{ taplo_version }}" ]]; then
+        echo "  ⏳ Installing taplo-cli {{ taplo_version }} (cargo)..."
+        cargo install --locked taplo-cli --version {{ taplo_version }}
+    else
+        echo "  ✓ taplo {{ taplo_version }}"
+    fi
+
+    installed_dprint_version=""
+    if command -v dprint >/dev/null; then
+        installed_dprint_version="$(dprint --version 2>/dev/null | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1 || true)"
+    fi
+    if [[ "$installed_dprint_version" != "{{ dprint_version }}" ]]; then
+        echo "  ⏳ Installing dprint {{ dprint_version }} (cargo)..."
+        cargo install --locked dprint --version {{ dprint_version }}
+    else
+        echo "  ✓ dprint {{ dprint_version }}"
+    fi
+
+    installed_rumdl_version=""
+    if command -v rumdl >/dev/null; then
+        installed_rumdl_version="$(rumdl --version 2>/dev/null | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1 || true)"
+    fi
+    if [[ "$installed_rumdl_version" != "{{ rumdl_version }}" ]]; then
+        echo "  ⏳ Installing rumdl {{ rumdl_version }} (cargo)..."
+        cargo install --locked rumdl --version {{ rumdl_version }}
+    else
+        echo "  ✓ rumdl {{ rumdl_version }}"
     fi
 
     installed_typos_version=""
@@ -930,15 +969,7 @@ setup-tools:
     if [ "$missing" -ne 0 ]; then
         echo ""
         echo "❌ Some required tools are still missing."
-        if [ "$brew_available" -ne 0 ]; then
-            echo "Fix the installs above (brew) and re-run: just setup-tools"
-        else
-            if [[ "$os" == "Darwin" ]]; then
-                echo "Install Homebrew (https://brew.sh) or install the missing tools manually, then re-run: just setup-tools"
-            else
-                echo "Install the missing tools via your system package manager, then re-run: just setup-tools"
-            fi
-        fi
+        echo "Install the missing prerequisites or cargo tools, then re-run: just setup-tools"
         exit 1
     fi
 

@@ -63,7 +63,7 @@ use thiserror::Error;
 /// # Ok(())
 /// # }
 /// ```
-#[derive(Clone, Debug, Error, PartialEq, Eq)]
+#[derive(Clone, Debug, Error, PartialEq)]
 #[non_exhaustive]
 pub enum DelaunayTriangulationValidationError {
     /// Lower-layer element or TDS structural validation error (Levels 1–2).

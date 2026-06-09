@@ -197,7 +197,7 @@ pub use std::collections::hash_map::Entry;
 /// set.insert(Uuid::new_v4());
 /// ```
 ///
-/// **Phase 1**: Internal operations (key-based for performance):
+/// Internal operations (key-based for performance):
 /// ```rust
 /// use delaunay::prelude::collections::{SimplexKeySet, FastHashSet};
 /// use delaunay::prelude::tds::SimplexKey;

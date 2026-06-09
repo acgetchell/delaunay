@@ -27,7 +27,7 @@ use thiserror::Error;
 /// };
 /// std::assert_matches!(error, TopologyError::FacetMapBuild { .. });
 /// ```
-#[derive(Clone, Debug, Error, PartialEq, Eq)]
+#[derive(Clone, Debug, Error, PartialEq)]
 #[non_exhaustive]
 pub enum TopologyError {
     /// Failed to build the facet-to-simplices incidence map.
@@ -129,14 +129,14 @@ pub enum TopologyKind {
 /// Construction mode metadata for toroidal triangulations.
 ///
 /// This distinguishes between:
-/// - Phase 1 canonicalized builds (`.toroidal(...)`) and
-/// - Phase 2 true periodic quotient builds (`.toroidal_periodic(...)`).
+/// - canonicalized builds (`.canonicalized_toroidal(...)`) and
+/// - true periodic quotient builds (`.toroidal(...)`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ToroidalConstructionMode {
-    /// Phase 1 toroidal mode: coordinates are wrapped into the fundamental domain
+    /// Canonicalized toroidal mode: coordinates are wrapped into the fundamental domain
     /// before Euclidean triangulation construction.
     Canonicalized,
-    /// Phase 2 toroidal mode: 3^D image-point construction with periodic quotient
+    /// Periodic toroidal mode: 3^D image-point construction with periodic quotient
     /// neighbor rewiring.
     PeriodicImagePoint,
     /// Explicit simplex construction: the caller provided combinatorial connectivity

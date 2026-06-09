@@ -1,11 +1,21 @@
-//! Matrix operations.
+//! Stack-allocated matrix operations.
 //!
-//! This module provides small, stack-allocated linear algebra helpers used by
-//! geometric predicates and utilities.
+//! This module is Delaunay's boundary around the stack-allocated linear algebra
+//! functionality provided by `la-stack`.  Geometry code should depend on the
+//! local [`Matrix`] alias, checked access helpers, determinant wrappers, and
+//! error conversions here rather than reaching into `la-stack` internals
+//! directly.
+//!
+//! Keeping that shim in one file preserves a narrow API boundary: `la-stack`
+//! can evolve its dispatch macros, exact-arithmetic fallbacks, tolerance names,
+//! and diagnostic variants while the rest of Delaunay keeps speaking in
+//! geometry-level concepts such as predicate matrices, checked active blocks,
+//! and public construction errors.
 
 #![forbid(unsafe_code)]
 
-use la_stack::{LaError, Matrix as LaMatrix};
+use la_stack::Matrix as LaMatrix;
+pub(crate) use la_stack::{DEFAULT_SINGULAR_TOL, LaError, Vector as LaVector};
 use thiserror::Error;
 
 /// Stack-matrix dispatch limit.
@@ -15,7 +25,7 @@ use thiserror::Error;
 /// - insphere: (D+2)×(D+2)
 ///
 /// With `MAX_STACK_MATRIX_DIM = 7`, we support up to `D = 5` for insphere.
-pub const MAX_STACK_MATRIX_DIM: usize = 7;
+pub const MAX_STACK_MATRIX_DIM: usize = la_stack::MAX_STACK_MATRIX_DISPATCH_DIM;
 
 /// Internal linear algebra matrix type used by this crate for fixed-size operations.
 pub type Matrix<const D: usize> = LaMatrix<D>;
@@ -49,7 +59,7 @@ pub enum MatrixError {
 }
 
 /// Error type for stack-matrix dispatch and active-block access.
-#[derive(Clone, Debug, Error, PartialEq, Eq)]
+#[derive(Clone, Debug, Error, PartialEq)]
 #[non_exhaustive]
 pub(crate) enum StackMatrixDispatchError {
     /// The requested matrix size is not supported by the stack-matrix dispatcher.
@@ -72,7 +82,6 @@ pub(crate) enum StackMatrixDispatchError {
     #[error(transparent)]
     La {
         /// Typed source error from the linear algebra backend.
-        #[from]
         source: LaError,
     },
     /// A matrix access failed inside a dispatched stack-matrix operation.
@@ -84,59 +93,22 @@ pub(crate) enum StackMatrixDispatchError {
     },
 }
 
-/// Default tolerance for matrix singularity checks.
-///
-/// This value is chosen to be appropriately small for typical geometric computations
-/// while being large enough to handle floating-point precision issues.
-pub const SINGULARITY_TOLERANCE: f64 = 1e-12;
-
-/// Internal dispatch shared by fallible production matrix creation and tests.
-macro_rules! dispatch_la_stack_matrix {
-    ($k:expr, |$m:ident| $body:block, $unsupported:expr) => {{
-        match $k {
-            0 => {
-                #[allow(unused_mut)]
-                let mut $m = $crate::geometry::matrix::Matrix::<0>::zero();
-                $body
+impl From<LaError> for StackMatrixDispatchError {
+    fn from(source: LaError) -> Self {
+        match source {
+            LaError::UnsupportedDimension { requested, max } => {
+                Self::UnsupportedDim { k: requested, max }
             }
-            1 => {
-                #[allow(unused_mut)]
-                let mut $m = $crate::geometry::matrix::Matrix::<1>::zero();
-                $body
-            }
-            2 => {
-                #[allow(unused_mut)]
-                let mut $m = $crate::geometry::matrix::Matrix::<2>::zero();
-                $body
-            }
-            3 => {
-                #[allow(unused_mut)]
-                let mut $m = $crate::geometry::matrix::Matrix::<3>::zero();
-                $body
-            }
-            4 => {
-                #[allow(unused_mut)]
-                let mut $m = $crate::geometry::matrix::Matrix::<4>::zero();
-                $body
-            }
-            5 => {
-                #[allow(unused_mut)]
-                let mut $m = $crate::geometry::matrix::Matrix::<5>::zero();
-                $body
-            }
-            6 => {
-                #[allow(unused_mut)]
-                let mut $m = $crate::geometry::matrix::Matrix::<6>::zero();
-                $body
-            }
-            7 => {
-                #[allow(unused_mut)]
-                let mut $m = $crate::geometry::matrix::Matrix::<7>::zero();
-                $body
-            }
-            _ => $unsupported,
+            LaError::IndexOutOfBounds { row, col, dim } => Self::Matrix {
+                source: MatrixError::OutOfBounds {
+                    row,
+                    column: col,
+                    dimension: dim,
+                },
+            },
+            source => Self::La { source },
         }
-    }};
+    }
 }
 
 /// Dispatch a runtime `k` (matrix dimension) to a stack-allocated `la_stack::Matrix<k>`.
@@ -147,36 +119,19 @@ macro_rules! dispatch_la_stack_matrix {
 #[cfg(test)]
 macro_rules! with_la_stack_matrix {
     ($k:expr, |$m:ident| $body:block) => {{
-        dispatch_la_stack_matrix!(
-            $k,
-            |$m| $body,
-            panic!(
-                "unsupported stack matrix size: {k} (max {max})",
-                k = $k,
-                max = $crate::geometry::matrix::MAX_STACK_MATRIX_DIM
-            )
-        )
+        la_stack::try_with_stack_matrix!($k, |mut $m| -> Result<_, la_stack::LaError> { Ok($body) })
+            .expect("test requested an unsupported stack matrix size")
     }};
 }
 
 /// Dispatch a runtime matrix dimension to a stack matrix, returning an error if unsupported.
 ///
-/// The provided block must evaluate to `Result<_, E>`, where `E` can be constructed from
-/// [`StackMatrixDispatchError`].
+/// Unsupported upstream dispatch dimensions are converted from [`LaError`], so callers
+/// may return [`StackMatrixDispatchError`] directly or a public error type that implements
+/// `From<LaError>` and `From<StackMatrixDispatchError>`.
 macro_rules! try_with_la_stack_matrix {
     ($k:expr, |$m:ident| $body:block) => {{
-        let k = $k;
-        dispatch_la_stack_matrix!(
-            k,
-            |$m| $body,
-            Err(
-                $crate::geometry::matrix::StackMatrixDispatchError::UnsupportedDim {
-                    k,
-                    max: $crate::geometry::matrix::MAX_STACK_MATRIX_DIM,
-                }
-                .into(),
-            )
-        )
+        la_stack::try_with_stack_matrix!($k, |mut $m| -> _ $body)
     }};
 }
 
@@ -190,38 +145,70 @@ pub(crate) fn matrix_zero_like<const D: usize>(_template: &Matrix<D>) -> Matrix<
     Matrix::<D>::zero()
 }
 
+/// Read one entry from a stack matrix, preserving backend index diagnostics.
+///
+/// This wrapper keeps predicate and geometry helper code on the checked
+/// `la-stack` access path while mapping backend index errors into the crate's
+/// existing matrix-error vocabulary.
 #[inline]
 pub(crate) fn matrix_get<const D: usize>(
     m: &Matrix<D>,
     row: usize,
     column: usize,
-) -> Result<f64, MatrixError> {
-    m.get(row, column).ok_or(MatrixError::OutOfBounds {
-        row,
-        column,
-        dimension: D,
-    })
+) -> Result<f64, StackMatrixDispatchError> {
+    m.get_checked(row, column).map_err(Into::into)
 }
 
+/// Write one finite entry into a stack matrix, preserving backend diagnostics.
+///
+/// This wrapper is the boundary where predicate matrix construction rejects
+/// non-finite values and out-of-bounds indices before later determinant stages
+/// can accidentally classify invalid matrix state as geometric degeneracy.
 #[inline]
 pub(crate) fn matrix_set<const D: usize>(
     m: &mut Matrix<D>,
     row: usize,
     column: usize,
     value: f64,
-) -> Result<(), MatrixError> {
-    if m.set(row, column, value) {
-        return Ok(());
-    }
-
-    Err(MatrixError::OutOfBounds {
-        row,
-        column,
-        dimension: D,
-    })
+) -> Result<(), StackMatrixDispatchError> {
+    m.set_checked(row, column, value).map_err(Into::into)
 }
 
-/// Compute an LU-based determinant, returning 0.0 for singular matrices.
+/// Return a finite determinant and error-bound pair when the f64 fast filter supports the matrix size.
+///
+/// `Ok(None)` means the closed-form direct determinant path is unavailable or
+/// inconclusive for this matrix size, including cases where the direct
+/// determinant overflowed to a non-finite value; callers should continue to
+/// exact arithmetic when the active matrix block is finite.
+#[inline]
+pub(crate) fn matrix_fast_filter<const D: usize>(
+    m: &Matrix<D>,
+) -> Result<Option<(f64, f64)>, StackMatrixDispatchError> {
+    match (m.det_direct(), m.det_errbound()) {
+        (Ok(Some(det)), Ok(Some(errbound))) if det.is_finite() && errbound.is_finite() => {
+            Ok(Some((det, errbound)))
+        }
+        (Ok(_), Ok(_))
+        | (Err(LaError::NonFinite { row: None, .. }), _)
+        | (_, Err(LaError::NonFinite { row: None, .. })) => Ok(None),
+        (Err(source), _) | (_, Err(source)) => Err(source.into()),
+    }
+}
+
+/// Return whether the direct determinant is finite when the direct formula is available.
+///
+/// Predicate code uses this to decide whether a finite direct determinant has
+/// already established that the active matrix entries are safe for exact
+/// fallback.
+#[inline]
+pub(crate) fn matrix_direct_det_is_finite<const D: usize>(m: &Matrix<D>) -> bool {
+    matches!(m.det_direct(), Ok(Some(det)) if det.is_finite())
+}
+
+/// Compute a determinant, returning `0.0` for singular matrices.
+///
+/// Backend errors other than singularity are surfaced as `NaN` to preserve the
+/// historical infallible return type.
 ///
 /// # Examples
 ///
@@ -234,7 +221,7 @@ pub(crate) fn matrix_set<const D: usize>(
 #[inline]
 #[must_use]
 pub fn determinant<const D: usize>(m: &Matrix<D>) -> f64 {
-    match m.det(0.0) {
+    match m.det() {
         Ok(det) => det,
         Err(LaError::Singular { .. }) => 0.0,
         Err(_) => f64::NAN,
@@ -253,7 +240,33 @@ mod tests {
         let k = MAX_STACK_MATRIX_DIM + 1;
         let res: Result<(), StackMatrixDispatchError> =
             try_with_la_stack_matrix!(k, |_m| { Ok(()) });
-        assert_matches!(res, Err(StackMatrixDispatchError::UnsupportedDim { .. }));
+        assert_matches!(
+            res,
+            Err(StackMatrixDispatchError::UnsupportedDim {
+                k: requested,
+                max
+            }) if requested == k && max == MAX_STACK_MATRIX_DIM
+        );
+    }
+
+    #[test]
+    fn la_index_error_maps_to_matrix_error_with_context() {
+        let err = StackMatrixDispatchError::from(LaError::IndexOutOfBounds {
+            row: 3,
+            col: 4,
+            dim: 2,
+        });
+
+        assert_eq!(
+            err,
+            StackMatrixDispatchError::Matrix {
+                source: MatrixError::OutOfBounds {
+                    row: 3,
+                    column: 4,
+                    dimension: 2,
+                },
+            }
+        );
     }
 
     #[test]
@@ -319,10 +332,12 @@ mod tests {
         let err = matrix_get(&matrix, 2, 0).unwrap_err();
         assert_eq!(
             err,
-            MatrixError::OutOfBounds {
-                row: 2,
-                column: 0,
-                dimension: 2,
+            StackMatrixDispatchError::Matrix {
+                source: MatrixError::OutOfBounds {
+                    row: 2,
+                    column: 0,
+                    dimension: 2,
+                },
             }
         );
     }
@@ -333,10 +348,12 @@ mod tests {
         let err = matrix_set(&mut matrix, 0, 2, 1.0).unwrap_err();
         assert_eq!(
             err,
-            MatrixError::OutOfBounds {
-                row: 0,
-                column: 2,
-                dimension: 2,
+            StackMatrixDispatchError::Matrix {
+                source: MatrixError::OutOfBounds {
+                    row: 0,
+                    column: 2,
+                    dimension: 2,
+                },
             }
         );
     }

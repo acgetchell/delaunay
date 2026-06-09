@@ -90,7 +90,7 @@ use uuid::Uuid;
 /// let err = SimplexValidationError::DuplicateVertices;
 /// std::assert_matches!(err, SimplexValidationError::DuplicateVertices);
 /// ```
-#[derive(Clone, Debug, Error, PartialEq, Eq)]
+#[derive(Clone, Debug, Error, PartialEq)]
 #[non_exhaustive]
 pub enum SimplexValidationError {
     /// The simplex has an invalid vertex.

@@ -148,7 +148,7 @@ impl<T, U, V, const D: usize> Default for PlManifoldRepairStats<T, U, V, D> {
 /// };
 /// assert!(err.to_string().contains("budget exhausted"));
 /// ```
-#[derive(Clone, Debug, Error, PartialEq, Eq)]
+#[derive(Clone, Debug, Error, PartialEq)]
 #[non_exhaustive]
 pub enum PlManifoldRepairError {
     /// The underlying TDS is structurally inconsistent.

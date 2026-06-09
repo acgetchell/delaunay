@@ -200,7 +200,7 @@ impl<const D: usize> GlobalTopologyModel<D> for EuclideanModel {
 pub struct ToroidalModel<const D: usize> {
     /// Fundamental-domain periods.
     pub domain: [f64; D],
-    /// Construction mode (Phase 1 canonicalized vs Phase 2 periodic image-point).
+    /// Construction mode (canonicalized vs periodic image-point).
     pub mode: ToroidalConstructionMode,
 }
 
@@ -928,11 +928,11 @@ mod tests {
         assert!(!toroidal_canon.supports_periodic_facet_signatures());
 
         // PeriodicImagePoint mode supports periodic facet signatures
-        let toroidal_periodic = GlobalTopologyModelAdapter::<2>::Toroidal(ToroidalModel::new(
+        let toroidal = GlobalTopologyModelAdapter::<2>::Toroidal(ToroidalModel::new(
             [2.0, 3.0],
             ToroidalConstructionMode::PeriodicImagePoint,
         ));
-        assert!(toroidal_periodic.supports_periodic_facet_signatures());
+        assert!(toroidal.supports_periodic_facet_signatures());
     }
 
     #[test]
@@ -948,11 +948,11 @@ mod tests {
         assert!(!toroidal_canon.supports_periodic_orientation_offsets());
 
         // PeriodicImagePoint mode supports periodic orientation offsets
-        let toroidal_periodic = GlobalTopologyModelAdapter::<2>::Toroidal(ToroidalModel::new(
+        let toroidal = GlobalTopologyModelAdapter::<2>::Toroidal(ToroidalModel::new(
             [2.0, 3.0],
             ToroidalConstructionMode::PeriodicImagePoint,
         ));
-        assert!(toroidal_periodic.supports_periodic_orientation_offsets());
+        assert!(toroidal.supports_periodic_orientation_offsets());
     }
 
     #[test]

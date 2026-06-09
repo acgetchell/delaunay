@@ -301,9 +301,9 @@ facets are expected unless the simplex complex represents a closed manifold by c
 
 Toroidal workflows are integrated as first-class topology options:
 
-- `.toroidal()` canonicalizes coordinates into the fundamental domain and uses toroidal topology
-  metadata for validation.
-- `.toroidal_periodic(...)` constructs a periodic image-point triangulation over neighboring
+- `.canonicalized_toroidal()` canonicalizes coordinates into the fundamental domain and uses
+  toroidal topology metadata for validation.
+- `.toroidal(...)` constructs a periodic image-point triangulation over neighboring
   fundamental domains. The 2D and compact 3D paths are validated periodic quotients; 4D/5D
   periodic construction fails fast until quotient selection scales to routine release validation
   under issue #416.

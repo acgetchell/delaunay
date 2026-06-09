@@ -62,8 +62,7 @@
 
 #![forbid(unsafe_code)]
 
-use crate::geometry::matrix::{MatrixError, StackMatrixDispatchError};
-use la_stack::LaError;
+use crate::geometry::matrix::{LaError, MatrixError, StackMatrixDispatchError};
 use num_traits::{Float, Zero};
 use ordered_float::OrderedFloat;
 use serde::{Serialize, de::DeserializeOwned};
@@ -122,7 +121,7 @@ impl fmt::Display for DegenerateSimplexReason {
 /// };
 /// std::assert_matches!(err, CoordinateConversionError::ConversionFailed { .. });
 /// ```
-#[derive(Clone, Debug, thiserror::Error, PartialEq, Eq)]
+#[derive(Clone, Debug, thiserror::Error, PartialEq)]
 #[non_exhaustive]
 pub enum CoordinateConversionError {
     /// Coordinate conversion failed during matrix operations
@@ -205,7 +204,7 @@ pub enum CoordinateConversionError {
     #[error("Linear algebra failure: {source}")]
     LinearAlgebraFailure {
         /// Typed source error from the linear algebra backend.
-        #[from]
+        #[source]
         source: LaError,
     },
     /// Matrix operation failed while building or inspecting a predicate matrix.
@@ -232,6 +231,12 @@ impl From<StackMatrixDispatchError> for CoordinateConversionError {
             StackMatrixDispatchError::La { source } => Self::LinearAlgebraFailure { source },
             StackMatrixDispatchError::Matrix { source } => Self::MatrixError { source },
         }
+    }
+}
+
+impl From<LaError> for CoordinateConversionError {
+    fn from(source: LaError) -> Self {
+        Self::from(StackMatrixDispatchError::from(source))
     }
 }
 
@@ -1033,6 +1038,37 @@ mod tests {
 
         assert_eq!(converted.clone(), converted);
         assert!(converted.source().is_some());
+    }
+
+    #[test]
+    fn la_errors_map_to_public_coordinate_conversion_errors() {
+        let unsupported = CoordinateConversionError::from(LaError::UnsupportedDimension {
+            requested: 9,
+            max: 7,
+        });
+        assert_eq!(
+            unsupported,
+            CoordinateConversionError::UnsupportedMatrixDimension {
+                requested: 9,
+                max: 7,
+            }
+        );
+
+        let index_error = CoordinateConversionError::from(LaError::IndexOutOfBounds {
+            row: 3,
+            col: 4,
+            dim: 2,
+        });
+        assert_eq!(
+            index_error,
+            CoordinateConversionError::MatrixError {
+                source: MatrixError::OutOfBounds {
+                    row: 3,
+                    column: 4,
+                    dimension: 2,
+                },
+            }
+        );
     }
 
     #[test]

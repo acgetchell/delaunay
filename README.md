@@ -118,10 +118,10 @@ complete technical background.
   orientation and in-sphere configurations
 - [x]  [PL-manifold] topology validation by default, with [Pseudomanifold]
   available as an explicit opt-out
-- [x]  Toroidal (periodic) triangulations via [`DelaunayTriangulationBuilder`]:
-  `.toroidal(...)` canonicalizes points into the fundamental domain, while
-  `.toroidal_periodic(...)` builds a validated periodic image-point quotient
-  in 2D and compact 3D
+- [x]  Toroidal triangulations via [`DelaunayTriangulationBuilder`]:
+  `.toroidal(...)` builds a validated periodic image-point quotient in 2D and
+  compact 3D, while `.canonicalized_toroidal(...)` canonicalizes points into the
+  fundamental domain without quotient rewiring
 - [x]  Geometry quality metrics for simplices: radius ratio and normalized
   volume (dimension-agnostic)
 - [x]  Serialization/deserialization of all data structures to/from [JSON]
@@ -254,7 +254,7 @@ fn main() -> Result<(), DelaunayTriangulationConstructionError> {
     ];
 
     let dt = DelaunayTriangulationBuilder::new(&vertices)
-        .toroidal([1.0, 1.0])
+        .canonicalized_toroidal([1.0, 1.0])
         .build::<()>()?;
 
     assert_eq!(dt.topology_kind(), TopologyKind::Toroidal);
@@ -263,7 +263,7 @@ fn main() -> Result<(), DelaunayTriangulationConstructionError> {
 ```
 
 For boundary-facet identification and periodic neighbor pointers, use
-`.toroidal_periodic([..])` in 2D or compact 3D; see the
+`.toroidal([..])` in 2D or compact 3D; see the
 [toroidal construction workflow] for the full recipe and current 4D/5D
 guardrails.
 
@@ -363,10 +363,11 @@ For reproducible checks in CI/local runs, use `just check`, `just test`,
   in-sphere is available through D=5. For D≥6, in-sphere classification relies
   on symbolic perturbation and deterministic tie-breaking because the
   `(D+2)×(D+2)` determinant exceeds the stack matrix limit.
-- **Periodic domains:** `.toroidal()` canonicalizes coordinates into the
-  fundamental domain. `.toroidal_periodic()` uses the periodic image-point
-  method and is release-validated in 2D and compact 3D. 4D/5D periodic
-  quotients fail fast pending scalable construction work in issue #416.
+- **Periodic domains:** `.toroidal()` uses the periodic image-point method and
+  is release-validated in 2D and compact 3D. `.canonicalized_toroidal()`
+  canonicalizes coordinates into the fundamental domain without quotient
+  rewiring. 4D/5D periodic quotients fail fast pending scalable construction
+  work in issue #416.
 - **Large 4D+ batches:** thousands of 4D points can be expensive to
   investigate. Use release mode and the large-scale debug harness for
   characterization.

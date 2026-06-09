@@ -97,7 +97,7 @@ use thiserror::Error;
 /// let err = FacetError::FacetNotFoundInTriangulation;
 /// std::assert_matches!(err, FacetError::FacetNotFoundInTriangulation);
 /// ```
-#[derive(Clone, Debug, Error, PartialEq, Eq)]
+#[derive(Clone, Debug, Error, PartialEq)]
 #[non_exhaustive]
 pub enum FacetError {
     /// The simplex does not contain the vertex.
@@ -373,13 +373,13 @@ impl FacetHandle {
 }
 
 // =============================================================================
-// LIGHTWEIGHT FACET VIEW (Phase 3 Optimization)
+// LIGHTWEIGHT FACET VIEW
 // =============================================================================
 
 /// Lightweight facet representation as a view into a triangulation data structure.
 ///
-/// **Phase 3 Optimization**: This is the new lightweight facet implementation that
-/// replaces the heavyweight `Facet` struct with an ~18x memory reduction.
+/// Lightweight facet implementation that replaces the heavyweight `Facet` struct
+/// with an ~18x memory reduction.
 ///
 /// `FacetView` represents a facet (d-1 dimensional face) of a d-dimensional simplex
 /// without storing any data directly. Instead, it maintains references to the TDS

@@ -169,7 +169,7 @@ fn regression_periodic_neighbor_validation_uses_lifted_vertex_offsets() {
     let kernel = RobustKernel::<f64>::new();
 
     let dt = DelaunayTriangulationBuilder::new(&vertices)
-        .toroidal_periodic([1.0_f64; 2])
+        .toroidal([1.0_f64; 2])
         .build_with_kernel::<_, ()>(&kernel)
         .expect("periodic 2D build should succeed");
 
