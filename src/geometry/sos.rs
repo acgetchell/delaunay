@@ -34,7 +34,7 @@
 #![forbid(unsafe_code)]
 
 use crate::core::collections::{GeometricPointBuffer, MAX_PRACTICAL_DIMENSION_SIZE, SmallBuffer};
-use crate::geometry::matrix::{Matrix, matrix_set};
+use crate::geometry::matrix::{Matrix, matrix_fast_filter, matrix_set};
 use crate::geometry::point::Point;
 use crate::geometry::traits::coordinate::{CoordinateConversionError, DegenerateSimplexReason};
 
@@ -303,8 +303,8 @@ fn orientation_cofactor_det<const D: usize>(
         return Ok(1); // 0×0 determinant = 1
     }
 
-    // D is a const generic, so we use Matrix::<D>::zero() directly instead
-    // of the runtime dispatch macro, which panics for D > MAX_STACK_MATRIX_DIM.
+    // D is a const generic, so use Matrix::<D>::zero() directly; runtime
+    // dispatch is only needed when the matrix dimension is not statically known.
     let mut matrix = Matrix::<D>::zero();
     let mut r = 0;
     for (i, coord_row) in coords.iter().enumerate() {
@@ -346,8 +346,8 @@ fn insphere_cofactor_det<const D: usize>(
     let num_rows = D + 1;
     let num_cols = D + 1;
 
-    // D is a const generic, so we use Matrix::<D>::zero() directly instead
-    // of the runtime dispatch macro, which panics for D > MAX_STACK_MATRIX_DIM.
+    // D is a const generic, so use Matrix::<D>::zero() directly; runtime
+    // dispatch is only needed when the matrix dimension is not statically known.
     let mut matrix = Matrix::<D>::zero();
     let mut r = 0;
     for i in 0..num_rows {
@@ -387,10 +387,7 @@ fn insphere_cofactor_det<const D: usize>(
 /// Returns -1, 0, or +1.
 pub(crate) fn exact_det_sign<const N: usize>(matrix: &Matrix<N>) -> i32 {
     // Stage 1: fast filter with provable error bound (D ≤ 4).
-    if let (Some(det), Some(bound)) = (matrix.det_direct(), matrix.det_errbound())
-        && det.is_finite()
-        && bound.is_finite()
-    {
+    if let Ok(Some((det, bound))) = matrix_fast_filter(matrix) {
         if det > bound {
             return 1;
         }
@@ -629,19 +626,19 @@ mod tests {
 
     #[test]
     fn test_exact_det_sign_identity_2x2() {
-        let m = Matrix::<2>::from_rows([[1.0, 0.0], [0.0, 1.0]]);
+        let m = Matrix::<2>::try_from_rows([[1.0, 0.0], [0.0, 1.0]]).unwrap();
         assert_eq!(exact_det_sign(&m), 1);
     }
 
     #[test]
     fn test_exact_det_sign_singular_2x2() {
-        let m = Matrix::<2>::from_rows([[1.0, 2.0], [2.0, 4.0]]);
+        let m = Matrix::<2>::try_from_rows([[1.0, 2.0], [2.0, 4.0]]).unwrap();
         assert_eq!(exact_det_sign(&m), 0);
     }
 
     #[test]
     fn test_exact_det_sign_negative_2x2() {
-        let m = Matrix::<2>::from_rows([[0.0, 1.0], [1.0, 0.0]]);
+        let m = Matrix::<2>::try_from_rows([[0.0, 1.0], [1.0, 0.0]]).unwrap();
         assert_eq!(exact_det_sign(&m), -1);
     }
 
@@ -651,25 +648,28 @@ mod tests {
 
     #[test]
     fn test_exact_det_sign_identity_3x3() {
-        let m = Matrix::<3>::from_rows([[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]]);
+        let m = Matrix::<3>::try_from_rows([[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]])
+            .unwrap();
         assert_eq!(exact_det_sign(&m), 1);
     }
 
     #[test]
     fn test_exact_det_sign_negative_3x3() {
         // Swapping two rows of the identity negates the determinant.
-        let m = Matrix::<3>::from_rows([[0.0, 1.0, 0.0], [1.0, 0.0, 0.0], [0.0, 0.0, 1.0]]);
+        let m = Matrix::<3>::try_from_rows([[0.0, 1.0, 0.0], [1.0, 0.0, 0.0], [0.0, 0.0, 1.0]])
+            .unwrap();
         assert_eq!(exact_det_sign(&m), -1);
     }
 
     #[test]
     fn test_exact_det_sign_identity_4x4() {
-        let m = Matrix::<4>::from_rows([
+        let m = Matrix::<4>::try_from_rows([
             [1.0, 0.0, 0.0, 0.0],
             [0.0, 1.0, 0.0, 0.0],
             [0.0, 0.0, 1.0, 0.0],
             [0.0, 0.0, 0.0, 1.0],
-        ]);
+        ])
+        .unwrap();
         assert_eq!(exact_det_sign(&m), 1);
     }
 
@@ -677,13 +677,14 @@ mod tests {
     fn test_exact_det_sign_identity_5x5_bareiss_only() {
         // D ≥ 5: det_direct() and det_errbound() return None.
         // Only the Bareiss exact path runs.
-        let m = Matrix::<5>::from_rows([
+        let m = Matrix::<5>::try_from_rows([
             [1.0, 0.0, 0.0, 0.0, 0.0],
             [0.0, 1.0, 0.0, 0.0, 0.0],
             [0.0, 0.0, 1.0, 0.0, 0.0],
             [0.0, 0.0, 0.0, 1.0, 0.0],
             [0.0, 0.0, 0.0, 0.0, 1.0],
-        ]);
+        ])
+        .unwrap();
         assert_eq!(exact_det_sign(&m), 1);
     }
 
@@ -698,11 +699,12 @@ mod tests {
         // This is much smaller than the error bound (~8e-13), so the fast
         // filter is inconclusive and Bareiss resolves the sign exactly.
         let perturbation = f64::from_bits(0x3CD0_0000_0000_0000); // 2^-50
-        let m = Matrix::<3>::from_rows([
+        let m = Matrix::<3>::try_from_rows([
             [1.0 + perturbation, 2.0, 3.0],
             [4.0, 5.0, 6.0],
             [7.0, 8.0, 9.0],
-        ]);
+        ])
+        .unwrap();
         assert_eq!(exact_det_sign(&m), -1);
     }
 
@@ -714,15 +716,13 @@ mod tests {
     fn test_exact_det_sign_overflow_det_recovered_by_bareiss() {
         // Entries are finite but det_direct overflows to infinity.
         // The is_finite() guard skips Stage 1; Bareiss computes exactly.
-        let m = Matrix::<2>::from_rows([[1e200, 0.0], [0.0, 1e200]]);
+        let m = Matrix::<2>::try_from_rows([[1e200, 0.0], [0.0, 1e200]]).unwrap();
         assert_eq!(exact_det_sign(&m), 1);
     }
 
     #[test]
-    fn test_exact_det_sign_nan_entry_returns_zero() {
-        // Non-finite entry → det_sign_exact returns Err → map_or gives 0.
-        let m = Matrix::<2>::from_rows([[f64::NAN, 0.0], [0.0, 1.0]]);
-        assert_eq!(exact_det_sign(&m), 0);
+    fn test_exact_det_sign_rejects_nan_entry_at_matrix_boundary() {
+        assert!(Matrix::<2>::try_from_rows([[f64::NAN, 0.0], [0.0, 1.0]]).is_err());
     }
 
     // =========================================================================

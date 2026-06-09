@@ -47,17 +47,19 @@ The useful updates ported in this pass are:
 
 - Rust MSRV metadata now follows `causal-triangulations` and `la-stack` at
   Rust 1.96.0. `Cargo.toml`, `rust-toolchain.toml`, `clippy.toml`, contributor
-  docs, and agent guidance all use the same baseline so the upcoming
-  `la-stack` 0.4.2 dependency update in #424 has no MSRV conflict.
+  docs, and agent guidance all use the same baseline so the `la-stack` 0.4.3
+  dependency update in #424 has no MSRV conflict.
 - The local `cargo-nextest` pin and CI workflow environment variables now use
   0.9.137, matching both sibling repositories. `cargo-llvm-cov` stays on 0.8.7,
   which is still shared across the repositories.
-- CI Markdown and spelling tool pins now track the newer sibling-repository
-  versions used by `la-stack`: `rumdl` 0.2.6 and `typos-cli` 1.47.1.
-- Local just helpers now version-check the pinned `cargo-nextest`, `rumdl`,
-  `typos-cli`, and `zizmor` tools instead of accepting any installed version.
-  Delaunay does not currently pin or invoke `cargo-instruments`; no
-  `cargo-instruments` alignment was needed in this pass.
+- CI command-runner, Markdown, and spelling tool pins now track the newer
+  sibling-repository versions used by `la-stack`: `just` 1.52.0, `rumdl`
+  0.2.10, and `typos-cli` 1.47.2.
+- Local just helpers now version-check the pinned `just`, `cargo-nextest`,
+  `taplo-cli`, `dprint`, `rumdl`, `typos-cli`, and `zizmor` tools instead of
+  accepting any installed version. Delaunay does not currently pin or invoke
+  `cargo-instruments`; no `cargo-instruments` alignment was needed in this
+  pass.
 - GitHub Actions Cargo tool installation now uses
   `taiki-e/cache-cargo-install-action` where Delaunay previously used
   `taiki-e/install-action`, matching the sibling workflow pattern for pinned
@@ -174,10 +176,11 @@ The useful updates ported in this pass are:
   `cargo-llvm-cov` 0.8.7 and `cargo-nextest` 0.9.137. CI, Codecov, and local
   setup install the same `cargo-nextest` pin with the sibling repositories'
   `taiki-e/cache-cargo-install-action`/`cargo install --locked` pattern before
-  nextest-backed recipes run. The CI build matrix runs `just ci` on Linux,
-  macOS, and Windows after syncing the locked uv dev group and installing the
-  pinned Cargo tools. All uv-backed workflows use uv 0.11.15 to match the local
-  Python tooling bootstrap.
+  nextest-backed recipes run. Pinned Rust CLI tools are installed through Cargo
+  rather than Homebrew so local setup cannot drift from CI pins. The CI build
+  matrix runs `just ci` on Linux, macOS, and Windows after syncing the locked uv
+  dev group and installing the pinned Cargo tools. All uv-backed workflows use
+  uv 0.11.15 to match the local Python tooling bootstrap.
 - `.codecov.yml` now ratchets Delaunay's coverage policy above the older
   causal-triangulations baseline without copying la-stack's near-total
   threshold. Project coverage targets the current 90% line with only 1%

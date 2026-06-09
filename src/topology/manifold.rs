@@ -257,7 +257,7 @@ fn ordered_lifted_edge(a: &LiftedVertexId, b: &LiftedVertexId) -> (LiftedVertexI
 /// };
 /// std::assert_matches!(err, ManifoldError::BoundaryRidgeMultiplicity { .. });
 /// ```
-#[derive(Clone, Debug, Error, PartialEq, Eq)]
+#[derive(Clone, Debug, Error, PartialEq)]
 #[non_exhaustive]
 pub enum ManifoldError {
     /// The underlying triangulation data structure is internally inconsistent.

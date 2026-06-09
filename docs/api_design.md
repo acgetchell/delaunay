@@ -121,7 +121,7 @@ enum ExampleError {
 }
 
 fn main() -> Result<(), ExampleError> {
-    // Toroidal (periodic) triangulation in 2D
+    // Canonicalized toroidal triangulation in 2D
     let vertices = vec![
         vertex!([0.1, 0.1]),
         vertex!([0.9, 0.9]),
@@ -129,7 +129,7 @@ fn main() -> Result<(), ExampleError> {
     ];
 
     let mut dt = DelaunayTriangulationBuilder::new(&vertices)
-        .toroidal([1.0, 1.0]) // Phase 1: canonicalized toroidal construction
+        .canonicalized_toroidal([1.0, 1.0]) // Canonicalized toroidal construction
         .topology_guarantee(TopologyGuarantee::PLManifoldStrict)
         .build::<()>()?;
 
@@ -143,8 +143,8 @@ fn main() -> Result<(), ExampleError> {
 
 **When to use the Builder:**
 
-- **Toroidal/periodic triangulations**: Use `.toroidal()` (Phase 1 canonicalized) or
-  `.toroidal_periodic()` (Phase 2 periodic image-point) with explicit domain periods.
+- **Toroidal construction**: Use `.toroidal()` for periodic image-point construction or
+  `.canonicalized_toroidal()` for canonicalized construction with explicit domain periods.
   The periodic image-point path is release-validated in 2D and compact 3D; 4D/5D
   fail fast pending scalable quotient construction in issue #416.
 - **Custom topology guarantees**: Set stricter or more relaxed manifold checks

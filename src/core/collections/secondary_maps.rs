@@ -24,7 +24,7 @@ use slotmap::SparseSecondaryMap;
 ///
 /// # Use Cases
 ///
-/// - **Phase 3 algorithms**: Conflict region finding, cavity extraction
+/// - **Triangulation algorithms**: Conflict region finding, cavity extraction
 /// - **Algorithm state**: Marking simplices as "visited", "in conflict", "processed"
 /// - **Temporary data**: Associating algorithm-specific data with simplices
 ///

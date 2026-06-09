@@ -885,9 +885,9 @@ fn test_collinear_points_2d() {
 /// Constructs a 3D triangulation from 16 random ball-distributed points using
 /// `AdaptiveKernel` (the default; exact+SoS predicates) and verifies the
 /// Delaunay property. This exercises:
-/// - `det_errbound()` fast filter in orientation/insphere predicates (Phase 2)
-/// - Unified kernel predicates in flip repair (Phase 1)
-/// - `solve_exact_f64` circumcenter fallback for near-singular simplices (Phase 3)
+/// - `det_errbound()` fast filter in orientation/insphere predicates
+/// - Unified kernel predicates in flip repair
+/// - `solve_exact_rounded_f64` circumcenter fallback for near-singular simplices
 ///
 /// Unlike the slow-tests gated 1000-point test in `large_scale_debug.rs`, this
 /// runs in normal CI (seconds in debug, sub-second in release).

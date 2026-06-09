@@ -52,7 +52,7 @@ pub fn fast_hash_map_with_capacity<K, V>(capacity: usize) -> FastHashMap<K, V> {
 /// // Can insert up to ~375 UUIDs without rehashing
 /// ```
 ///
-/// **Phase 1**: Internal operations (key-based for better performance):
+/// Internal operations (key-based for better performance):
 /// ```rust
 /// use delaunay::prelude::collections::fast_hash_set_with_capacity;
 /// use delaunay::prelude::tds::SimplexKey;

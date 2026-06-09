@@ -65,7 +65,8 @@ fn distance<const D: usize>(a: &[f64; D], b: &[f64; D]) -> f64 {
 }
 
 fn matrix_set<const D: usize>(m: &mut Matrix<D>, r: usize, c: usize, value: f64) {
-    assert!(m.set(r, c, value), "matrix index out of bounds: ({r}, {c})");
+    m.set(r, c, value)
+        .unwrap_or_else(|_| panic!("matrix index out of bounds: ({r}, {c})"));
 }
 
 fn matrix_get<const D: usize>(m: &Matrix<D>, r: usize, c: usize) -> f64 {
@@ -961,7 +962,7 @@ fn build_and_analyze_matrix(simplex_vertices: &[Vertex<f64, i32, 3>]) -> (f64, b
         );
     }
 
-    let det = determinant(&matrix);
+    let det = determinant(&matrix).expect("manual in-sphere matrix determinant should be finite");
     println!();
     println!("Determinant: {det:.6}");
 

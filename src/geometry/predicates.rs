@@ -8,7 +8,8 @@
 
 use crate::core::simplex::SimplexValidationError;
 use crate::geometry::matrix::{
-    Matrix, StackMatrixDispatchError, matrix_get, matrix_set, matrix_zero_like,
+    Matrix, StackMatrixDispatchError, matrix_direct_det_is_finite, matrix_fast_filter, matrix_get,
+    matrix_set, matrix_zero_like,
 };
 use crate::geometry::point::Point;
 use crate::geometry::sos::exact_det_sign;
@@ -229,10 +230,7 @@ where
 
     try_with_la_stack_matrix!(k, |matrix| {
         fill_relative_insphere_matrix(&mut matrix, simplex_points, test_point)?;
-        if let (Some(det), Some(errbound)) = (matrix.det_direct(), matrix.det_errbound())
-            && det.is_finite()
-            && errbound.is_finite()
-        {
+        if let Some((det, errbound)) = matrix_fast_filter(&matrix)? {
             if det > errbound {
                 return Ok(1);
             }
@@ -274,10 +272,8 @@ pub(crate) fn try_insphere_from_matrix<const N: usize>(
     // determinant clearly exceeds the bound, the sign is guaranteed correct
     // without allocating.  For D ≥ 5, `det_errbound()` returns `None` and
     // we skip directly to exact arithmetic.
-    let det_direct = matrix.det_direct();
-    if let (Some(det), Some(errbound)) = (det_direct, matrix.det_errbound())
-        && det.is_finite()
-    {
+    let direct_det_is_finite = matrix_direct_det_is_finite(matrix);
+    if let Some((det, errbound)) = matrix_fast_filter(matrix)? {
         let det_norm = det * f64::from(orient_sign);
         if det_norm > errbound {
             return Ok(InSphere::INSIDE);
@@ -292,8 +288,7 @@ pub(crate) fn try_insphere_from_matrix<const N: usize>(
     // keep Stage 1 lean; for D ≤ 4 with well-separated inputs, the vast
     // majority of calls return before reaching this point.
     cold_path();
-    let exact_is_safe =
-        det_direct.is_some_and(f64::is_finite) || active_matrix_block_is_finite(matrix, k)?;
+    let exact_is_safe = direct_det_is_finite || active_matrix_block_is_finite(matrix, k)?;
     if exact_is_safe && let Ok(sign) = matrix.det_sign_exact() {
         return Ok(sign_to_insphere(sign, orient_sign));
     }
@@ -321,10 +316,8 @@ pub(crate) fn try_orientation_from_matrix<const N: usize>(
 
     // Stage 1: provable f64 fast filter for D ≤ 4.
     // See `insphere_from_matrix` for detailed explanation of the error bound.
-    let det_direct = matrix.det_direct();
-    if let (Some(det), Some(errbound)) = (det_direct, matrix.det_errbound())
-        && det.is_finite()
-    {
+    let direct_det_is_finite = matrix_direct_det_is_finite(matrix);
+    if let Some((det, errbound)) = matrix_fast_filter(matrix)? {
         if det > errbound {
             return Ok(Orientation::POSITIVE);
         }
@@ -337,8 +330,7 @@ pub(crate) fn try_orientation_from_matrix<const N: usize>(
     // (D ≤ 4) or always for D ≥ 5.  See `insphere_from_matrix` for why this
     // is annotated cold.
     cold_path();
-    let exact_is_safe =
-        det_direct.is_some_and(f64::is_finite) || active_matrix_block_is_finite(matrix, k)?;
+    let exact_is_safe = direct_det_is_finite || active_matrix_block_is_finite(matrix, k)?;
     if exact_is_safe && let Ok(sign) = matrix.det_sign_exact() {
         return Ok(sign_to_orientation(sign));
     }
@@ -531,10 +523,7 @@ where
             matrix_set(&mut matrix, i, D, 1.0)?;
         }
 
-        if let (Some(det), Some(errbound)) = (matrix.det_direct(), matrix.det_errbound())
-            && det.is_finite()
-            && errbound.is_finite()
-        {
+        if let Some((det, errbound)) = matrix_fast_filter(&matrix)? {
             if det > errbound {
                 return Ok(Some(1));
             }
@@ -853,14 +842,8 @@ where
                 dimension: D,
                 reason: DegenerateSimplexReason::ZeroOrientation,
             }),
-            Orientation::POSITIVE | Orientation::NEGATIVE => {
-                let orient_sign: i8 = if matches!(orientation, Orientation::POSITIVE) {
-                    1
-                } else {
-                    -1
-                };
-                Ok(try_insphere_from_matrix(&matrix, k, orient_sign)?)
-            }
+            Orientation::POSITIVE => Ok(try_insphere_from_matrix(&matrix, k, 1)?),
+            Orientation::NEGATIVE => Ok(try_insphere_from_matrix(&matrix, k, -1)?),
         }
     })
 }
@@ -1005,7 +988,7 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::geometry::matrix::matrix_set as try_matrix_set;
+    use crate::geometry::matrix::{LaError, matrix_set as try_matrix_set};
     use crate::geometry::traits::coordinate::Coordinate;
     use crate::prelude::circumradius;
     use approx::assert_relative_eq;
@@ -2222,31 +2205,18 @@ mod tests {
     }
 
     #[test]
-    fn test_orientation_from_matrix_nonfinite_entry_falls_to_stage3() {
-        // A 4×4 matrix with a NaN entry.  `det_direct()` returns NaN
-        // (non-finite) and the entry check finds NaN at (3,3), so
-        // `exact_is_safe = false`.  Stage 1 also fails (NaN determinant).
-        // Falls through to Stage 3 → DEGENERATE.
+    fn test_orientation_matrix_rejects_nonfinite_entry_at_set_boundary() {
         let k = 4;
         with_la_stack_matrix!(k, |m| {
-            set_test_matrix_entry(&mut m, 0, 0, 0.0);
-            set_test_matrix_entry(&mut m, 0, 1, 0.0);
-            set_test_matrix_entry(&mut m, 0, 2, 1.0);
-            set_test_matrix_entry(&mut m, 1, 0, 1.0);
-            set_test_matrix_entry(&mut m, 1, 1, 0.0);
-            set_test_matrix_entry(&mut m, 1, 2, 1.0);
-            set_test_matrix_entry(&mut m, 2, 0, 0.0);
-            set_test_matrix_entry(&mut m, 2, 1, 1.0);
-            set_test_matrix_entry(&mut m, 2, 2, 1.0);
-
-            // NaN inside the k×k block.
-            set_test_matrix_entry(&mut m, 3, 3, f64::NAN);
-
-            let result = try_orientation_from_matrix(&m, k).unwrap();
-            assert_eq!(
-                result,
-                Orientation::DEGENERATE,
-                "non-finite entry in matrix should fall to Stage 3 → DEGENERATE"
+            let err = try_matrix_set(&mut m, 3, 3, f64::NAN).unwrap_err();
+            assert_matches!(
+                err,
+                StackMatrixDispatchError::La {
+                    source: LaError::NonFinite {
+                        row: Some(3),
+                        col: 3
+                    }
+                }
             );
         });
     }
@@ -2377,18 +2347,18 @@ mod tests {
     }
 
     #[test]
-    fn test_insphere_from_matrix_stage3_nan() {
-        // Stage 3: NaN entry prevents both Stage 1 (det is NaN) and Stage 2
-        // (exact_is_safe = false).  Falls through to Stage 3 → BOUNDARY.
+    fn test_insphere_matrix_rejects_nonfinite_entry_at_set_boundary() {
         let k = 3;
         with_la_stack_matrix!(k, |m| {
-            set_test_matrix_entry(&mut m, 0, 0, 1.0);
-            set_test_matrix_entry(&mut m, 1, 1, 1.0);
-            set_test_matrix_entry(&mut m, 2, 2, f64::NAN);
-
-            assert_eq!(
-                try_insphere_from_matrix(&m, k, 1).unwrap(),
-                InSphere::BOUNDARY
+            let err = try_matrix_set(&mut m, 2, 2, f64::NAN).unwrap_err();
+            assert_matches!(
+                err,
+                StackMatrixDispatchError::La {
+                    source: LaError::NonFinite {
+                        row: Some(2),
+                        col: 2
+                    }
+                }
             );
         });
     }

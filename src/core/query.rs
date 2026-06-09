@@ -54,7 +54,7 @@ static VERTEX_TO_SIMPLICES_SPILL_EVENTS: AtomicU64 = AtomicU64::new(0);
 /// # Ok(())
 /// # }
 /// ```
-#[derive(Debug, Clone, thiserror::Error, PartialEq, Eq)]
+#[derive(Debug, Clone, thiserror::Error, PartialEq)]
 #[non_exhaustive]
 pub enum QueryError {
     /// The triangulation could not build a facet map for a read-only query.

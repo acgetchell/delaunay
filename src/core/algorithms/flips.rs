@@ -2570,7 +2570,7 @@ pub enum FlipPredicateOperation {
 }
 
 /// Structured reason a geometric predicate failed during a flip.
-#[derive(Clone, Debug, Error, PartialEq, Eq)]
+#[derive(Clone, Debug, Error, PartialEq)]
 #[non_exhaustive]
 pub enum FlipPredicateError {
     /// A coordinate-conversion or exact-predicate helper failed.
@@ -3193,7 +3193,7 @@ pub enum FlipNeighborRepairFailure {
 }
 
 /// Structured reason neighbor wiring failed during flip application.
-#[derive(Clone, Debug, Error, PartialEq, Eq)]
+#[derive(Clone, Debug, Error, PartialEq)]
 #[non_exhaustive]
 pub enum FlipNeighborWiringError {
     /// Boundary extraction failed before replacement simplices were created.
@@ -3346,7 +3346,7 @@ impl From<InsertionError> for FlipNeighborWiringError {
 }
 
 /// Structured reason a TDS mutation failed while applying a flip.
-#[derive(Clone, Debug, Error, PartialEq, Eq)]
+#[derive(Clone, Debug, Error, PartialEq)]
 #[non_exhaustive]
 pub enum FlipMutationError {
     /// Vertex insertion failed before a k=1 flip.
@@ -3494,7 +3494,7 @@ pub enum FlipVertexAdjacencyError {
 ///         if matches!(reason.as_ref(), FlipContextError::OverlappingFaces)
 /// );
 /// ```
-#[derive(Clone, Debug, Error, PartialEq, Eq)]
+#[derive(Clone, Debug, Error, PartialEq)]
 #[non_exhaustive]
 pub enum FlipError {
     /// Flips are not supported for this dimension.
@@ -4396,7 +4396,7 @@ impl fmt::Display for DelaunayRepairVerificationContext {
 ///         if matches!(source.as_ref(), FlipError::DegenerateSimplex)
 /// );
 /// ```
-#[derive(Clone, Debug, Error, PartialEq, Eq)]
+#[derive(Clone, Debug, Error, PartialEq)]
 #[non_exhaustive]
 pub enum DelaunayRepairError {
     /// Repair did not converge within the flip budget.
@@ -14082,7 +14082,7 @@ mod tests {
     gen_align_periodic_offset_tests!(4);
     gen_align_periodic_offset_tests!(5);
 
-    fn toroidal_periodic_model<const D: usize>() -> GlobalTopologyModelAdapter<D> {
+    fn toroidal_model<const D: usize>() -> GlobalTopologyModelAdapter<D> {
         GlobalTopology::Toroidal {
             domain: [1.0; D],
             mode: ToroidalConstructionMode::PeriodicImagePoint,
@@ -14157,7 +14157,7 @@ mod tests {
                     offsets[0][0] = 1;
                     let simplex_key =
                         insert_periodic_simplex_with_offsets(&mut tds, simplex_vertices.clone(), offsets);
-                    let topology_model = toroidal_periodic_model::<$dim>();
+                    let topology_model = toroidal_model::<$dim>();
 
                     let direct = vertex_point_with_optional_lift(
                         &tds,
@@ -14217,7 +14217,7 @@ mod tests {
                         $dim - 1,
                     ));
                     let source_simplex = insert_plain_simplex(&mut tds, source_vertices);
-                    let topology_model = toroidal_periodic_model::<$dim>();
+                    let topology_model = toroidal_model::<$dim>();
 
                     let result = vertex_point_lifted_into_simplex(
                         &tds,
@@ -14268,7 +14268,7 @@ mod tests {
                     let source_offsets = vec![[0_i8; $dim]; source_vertices.len()];
                     let source_simplex =
                         insert_periodic_simplex_with_offsets(&mut tds, source_vertices, source_offsets);
-                    let topology_model = toroidal_periodic_model::<$dim>();
+                    let topology_model = toroidal_model::<$dim>();
 
                     let result = vertex_point_lifted_into_simplex(
                         &tds,
@@ -14408,7 +14408,7 @@ mod tests {
                         "inverse k=2 target simplex should require explicit frame alignment",
                     );
 
-                    let topology_model = toroidal_periodic_model::<$dim>();
+                    let topology_model = toroidal_model::<$dim>();
                     let frame_simplex = removed_simplex_frame(&removed_simplices).unwrap();
                     let lifted = vertex_point_lifted_into_simplex(
                         &tds,
@@ -14457,7 +14457,7 @@ mod tests {
                         "inverse k=3 target simplex should require explicit frame alignment",
                     );
 
-                    let topology_model = toroidal_periodic_model::<$dim>();
+                    let topology_model = toroidal_model::<$dim>();
                     let frame_simplex = removed_simplex_frame(&removed_simplices).unwrap();
                     let lifted = vertex_point_lifted_into_simplex(
                         &tds,
@@ -14537,7 +14537,7 @@ mod tests {
     fn test_periodic_inverse_k2_alignment_failure_is_error() {
         let (tds, face_vertices, opposite_a, opposite_b, removed_simplices) =
             periodic_inverse_k2_fixture::<4>();
-        let topology_model = toroidal_periodic_model::<4>();
+        let topology_model = toroidal_model::<4>();
         let frame_simplex = removed_simplex_frame(&removed_simplices).unwrap();
         let truncated_removed_simplices: SimplexKeyBuffer =
             std::iter::once(frame_simplex).collect();

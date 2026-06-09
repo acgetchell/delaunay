@@ -270,7 +270,7 @@ pub struct DelaunayizeOutcome<T, U, V, const D: usize> {
 /// };
 /// assert!(err.to_string().contains("Delaunay repair failed"));
 /// ```
-#[derive(Clone, Debug, Error, PartialEq, Eq)]
+#[derive(Clone, Debug, Error, PartialEq)]
 #[non_exhaustive]
 pub enum DelaunayizeError {
     /// PL-manifold topology repair failed; no fallback rebuild was attempted
@@ -467,7 +467,7 @@ where
     Ok(())
 }
 
-#[derive(Clone, Debug, Error, PartialEq, Eq)]
+#[derive(Clone, Debug, Error, PartialEq)]
 enum FallbackRebuildError {
     #[error("fallback rebuild failed: {source}")]
     Construction {

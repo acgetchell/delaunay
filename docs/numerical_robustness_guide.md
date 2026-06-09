@@ -241,9 +241,9 @@ see `docs/validation.md`.
 
 Circumcenter computation falls back to exact arithmetic when the simplex is
 near-singular (ill-conditioned linear system). This uses
-`la_stack::Matrix::solve_exact_f64()` — BigRational Gaussian elimination that
-returns exact `f64`-rounded results. This replaces the previous zero-tolerance LU
-fallback which could fail on degenerate simplices.
+`la_stack::Matrix::solve_exact_rounded_f64()` — BigRational Gaussian elimination
+with explicit finite `f64` rounding. This replaces the previous zero-tolerance
+LU fallback which could fail on degenerate simplices.
 
 ## Duplicate vertex handling
 

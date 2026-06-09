@@ -200,7 +200,7 @@ drive repair, but replacement-simplex orientation itself uses `robust_orientatio
   the TDS, calls `normalize_and_promote_positive_orientation()`, validates TDS
   structure/topology, rejects geometrically degenerate simplices, and then enforces
   the Delaunay property.
-- `.toroidal_periodic([..])` builds an image-point triangulation and then runs
+- `.toroidal([..])` builds an image-point triangulation and then runs
   orientation normalization, lifted geometric orientation validation, final
   Levels 1-3 topology validation, and final Level 4 Delaunay validation before
   returning the quotient triangulation.

@@ -81,7 +81,7 @@ pub enum QualityDegeneracyMeasure {
 }
 
 /// Failure while extracting simplex vertices for quality metric evaluation.
-#[derive(Debug, Clone, PartialEq, Eq, Error)]
+#[derive(Debug, Clone, PartialEq, Error)]
 #[non_exhaustive]
 pub enum QualitySimplexVerticesError {
     /// The requested simplex key was not present in the TDS.
@@ -144,7 +144,7 @@ impl From<TdsError> for QualitySimplexVerticesError {
 /// };
 /// std::assert_matches!(err, QualityError::NumericConversion { .. });
 /// ```
-#[derive(Debug, Clone, PartialEq, Eq, Error)]
+#[derive(Debug, Clone, PartialEq, Error)]
 #[non_exhaustive]
 pub enum QualityError {
     /// Failed to fetch a simplex's vertex keys from the TDS.

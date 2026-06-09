@@ -7,11 +7,10 @@
 
 use super::conversions::{safe_coords_to_f64, safe_scalar_from_f64, safe_scalar_to_f64};
 use super::norms::{hypot, squared_norm};
-use crate::geometry::matrix::{Matrix, matrix_set};
+use crate::geometry::matrix::{DEFAULT_SINGULAR_TOL, LaError, LaVector, Matrix, matrix_set};
 use crate::geometry::point::Point;
 use crate::geometry::traits::coordinate::{Coordinate, CoordinateScalar};
 use core::hint::cold_path;
-use la_stack::{DEFAULT_PIVOT_TOL, LaError, Vector as LaVector};
 
 // Re-export error type
 pub use super::CircumcenterError;
@@ -150,16 +149,14 @@ where
     //
     // Fast path: LU factorization with la-stack's default pivot tolerance.
     // Exact fallback: when LU rejects the matrix as near-singular, use
-    // `solve_exact_f64` (BigRational Gaussian elimination) for a provably
-    // correct result.  This replaces the old `lu(0.0)` zero-tolerance
-    // fallback, which could silently accept truly singular matrices.
-    let b_vec = LaVector::<D>::new(b_arr);
-    let x = match a.lu(DEFAULT_PIVOT_TOL) {
+    // `solve_exact_rounded_f64` (BigRational Gaussian elimination, then explicit
+    // finite f64 rounding) for a robust result. This replaces the old `lu(0.0)`
+    // zero-tolerance fallback, which could silently accept truly singular matrices.
+    let b_vec = LaVector::<D>::try_new(b_arr)?;
+    let x = match a.lu(DEFAULT_SINGULAR_TOL) {
         Ok(lu) => lu
-            .solve_vec(b_vec)
-            .map_err(|e| CircumcenterError::MatrixInversionFailed {
-                details: format!("LU solve failed: {e}"),
-            })?
+            .solve(b_vec)
+            .map_err(CircumcenterError::from)?
             .into_array(),
         Err(LaError::Singular { .. }) => {
             // Exact-arithmetic fallback: LU rejected the system as
@@ -169,21 +166,19 @@ where
             // LCOV_EXCL_START
             #[cfg(debug_assertions)]
             if std::env::var_os("DELAUNAY_DEBUG_LU_FALLBACK").is_some() {
-                tracing::debug!("circumcenter<{D}>: LU near-singular, using solve_exact_f64");
+                tracing::debug!(
+                    "circumcenter<{D}>: LU near-singular, using solve_exact_rounded_f64"
+                );
             }
             // LCOV_EXCL_STOP
 
-            a.solve_exact_f64(b_vec)
-                .map_err(|e| CircumcenterError::MatrixInversionFailed {
-                    details: format!("exact circumcenter solve failed: {e}"),
-                })?
+            a.solve_exact_rounded_f64(b_vec)
+                .map_err(CircumcenterError::from)?
                 .into_array()
         }
         Err(e) => {
             cold_path();
-            return Err(CircumcenterError::MatrixInversionFailed {
-                details: format!("LU factorization failed: {e}"),
-            });
+            return Err(e.into());
         }
     };
 
@@ -811,15 +806,20 @@ mod tests {
         ];
 
         let result = circumcenter(&collinear_points);
-        assert_matches!(result, Err(CircumcenterError::MatrixInversionFailed { .. }));
+        assert_matches!(
+            result,
+            Err(CircumcenterError::LinearAlgebraFailure {
+                source: LaError::Singular { .. }
+            })
+        );
     }
 
     #[test]
     fn test_circumcenter_exact_fallback_near_singular_3d() {
         // Near-degenerate tetrahedron: three vertices nearly coplanar with a
         // tiny perturbation off the plane.  The resulting linear system is
-        // ill-conditioned enough to trip DEFAULT_PIVOT_TOL, exercising the
-        // solve_exact_f64 fallback path.
+        // ill-conditioned enough to trip DEFAULT_SINGULAR_TOL, exercising the
+        // solve_exact_rounded_f64 fallback path.
         let eps = 1e-14; // Perturbation small enough to make LU reject
         let points: Vec<Point<f64, 3>> = vec![
             Point::new([0.0, 0.0, 0.0]),
@@ -863,7 +863,7 @@ mod tests {
     fn test_circumcenter_exact_fallback_near_singular_2d() {
         // Near-degenerate triangle: two vertices very close together.
         // The system matrix has a row with tiny entries, likely tripping
-        // DEFAULT_PIVOT_TOL.
+        // DEFAULT_SINGULAR_TOL.
         let eps = 1e-15;
         let points: Vec<Point<f64, 2>> = vec![
             Point::new([0.0, 0.0]),

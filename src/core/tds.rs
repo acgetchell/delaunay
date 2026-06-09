@@ -408,7 +408,7 @@ impl Default for TriangulationConstructionState {
 /// };
 /// std::assert_matches!(err, TdsConstructionError::DuplicateUuid { .. });
 /// ```
-#[derive(Clone, Debug, Error, PartialEq, Eq)]
+#[derive(Clone, Debug, Error, PartialEq)]
 #[non_exhaustive]
 pub enum TdsConstructionError {
     /// Validation error during construction.
@@ -540,7 +540,7 @@ pub enum SharedFacetMismatchSide {
 }
 
 /// Structured reason why neighbor relationships failed validation.
-#[derive(Clone, Debug, Error, PartialEq, Eq)]
+#[derive(Clone, Debug, Error, PartialEq)]
 #[non_exhaustive]
 pub enum NeighborValidationError {
     /// A neighbor buffer has the wrong arity for the triangulation dimension.
@@ -900,7 +900,7 @@ pub enum NeighborValidationError {
 }
 
 /// Errors that can occur during triangulation validation (post-construction).
-#[derive(Clone, Debug, Error, PartialEq, Eq)]
+#[derive(Clone, Debug, Error, PartialEq)]
 #[non_exhaustive]
 pub enum TdsError {
     /// The triangulation contains an invalid vertex.
@@ -1200,7 +1200,7 @@ impl From<&TdsError> for TdsErrorKind {
 /// let round_trip: TdsError = mutation.clone().into();
 /// assert_eq!(round_trip, err);
 /// ```
-#[derive(Clone, Debug, Error, PartialEq, Eq)]
+#[derive(Clone, Debug, Error, PartialEq)]
 #[error(transparent)]
 #[must_use]
 pub struct TdsMutationError(TdsError);
@@ -1294,7 +1294,7 @@ pub enum InvariantKind {
 /// This is used by [`TriangulationValidationReport`] so that diagnostic reporting can
 /// preserve structured errors from each layer (TDS / topology / Delaunay) without
 /// stringification.
-#[derive(Clone, Debug, Error, PartialEq, Eq)]
+#[derive(Clone, Debug, Error, PartialEq)]
 #[non_exhaustive]
 pub enum InvariantError {
     /// Level 1–2 (elements + TDS structure).
@@ -3646,7 +3646,7 @@ impl<T, U, V, const D: usize> Tds<T, U, V, D> {
     }
 
     // =========================================================================
-    // KEY-BASED ACCESS METHODS (Phase 2 Optimization)
+    // KEY-BASED ACCESS METHODS
     // =========================================================================
     // These methods work directly with keys to avoid UUID lookups in hot paths.
     // They complement the existing UUID-based methods for internal algorithm use.
@@ -4497,7 +4497,7 @@ impl<T, U, V, const D: usize> Tds<T, U, V, D> {
     }
 
     // =========================================================================
-    // KEY-BASED NEIGHBOR OPERATIONS (Phase 2 Optimization)
+    // KEY-BASED NEIGHBOR OPERATIONS
     // =========================================================================
 
     /// Finds neighbor simplex keys for a given simplex without UUID lookups.
@@ -5827,8 +5827,8 @@ impl<T, U, V, const D: usize> Tds<T, U, V, D> {
             });
         }
 
-        // Phase 1: Optimize validation by checking key-to-UUID direction first (direct storage map access)
-        // then only doing UUID-to-key lookup verification when needed
+        // Check the key-to-UUID direction first (direct storage map access),
+        // then only do UUID-to-key lookup verification when needed.
         for (vertex_key, vertex) in &self.vertices {
             let vertex_uuid = vertex.uuid();
 
@@ -5895,8 +5895,8 @@ impl<T, U, V, const D: usize> Tds<T, U, V, D> {
             });
         }
 
-        // Phase 1: Optimize validation by checking key-to-UUID direction first (direct storage map access)
-        // then only doing UUID-to-key lookup verification when needed
+        // Check the key-to-UUID direction first (direct storage map access),
+        // then only do UUID-to-key lookup verification when needed.
         for (simplex_key, simplex) in &self.simplices {
             let simplex_uuid = simplex.uuid();
 

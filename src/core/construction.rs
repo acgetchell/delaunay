@@ -41,7 +41,7 @@ use thiserror::Error;
 ///     Triangulation::<FastKernel<f64>, (), (), 2>::build_initial_simplex(&vertices);
 /// assert!(result.is_ok());
 /// ```
-#[derive(Clone, Debug, Error, PartialEq, Eq)]
+#[derive(Clone, Debug, Error, PartialEq)]
 #[non_exhaustive]
 pub enum TriangulationConstructionError {
     /// Lower-layer construction error in the TDS.

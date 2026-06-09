@@ -9,6 +9,7 @@ module patterns.
 - [Project Structure](#project-structure)
 - [Directory Tree Snapshot](#directory-tree-snapshot)
   - [Architecture Overview](#architecture-overview)
+  - [Focused Prelude Reference](#focused-prelude-reference)
   - [Architectural Principles](#architectural-principles)
 - [Module Organization Patterns](#module-organization-patterns)
   - [Canonical Section Sequence](#canonical-section-sequence)
@@ -463,6 +464,32 @@ exposed through curated modules and focused preludes (`delaunay::tds`,
 `delaunay::collections`, `delaunay::algorithms`, `delaunay::query`, and their
 `delaunay::prelude::*` counterparts) rather than a broad public
 `delaunay::core` module.
+
+### Focused Prelude Reference
+
+Use the narrowest prelude that matches the workflow. This keeps examples,
+benchmarks, and tests clear about which part of the API they exercise.
+
+| Task | Import |
+|---|---|
+| Bistellar flips / Edit API | `use delaunay::prelude::flips::*` |
+| Collection aliases and small buffers | `use delaunay::prelude::collections::*` |
+| Construct/configure a Delaunay triangulation | `use delaunay::prelude::construction::*` |
+| Construction telemetry diagnostics | `use delaunay::prelude::diagnostics::*` |
+| Construction validation cadence/policy | `use delaunay::prelude::validation::*` |
+| Delaunay repair diagnostics and policies | `use delaunay::prelude::repair::*` |
+| Delaunayize workflow | `use delaunay::prelude::delaunayize::*` |
+| Hilbert ordering and quantization utilities | `use delaunay::prelude::ordering::*` |
+| Low-level incremental insertion building blocks | `use delaunay::prelude::insertion::*` |
+| Low-level TDS simplices, facets, keys, and validation reports | `use delaunay::prelude::tds::*` |
+| Points, kernels, predicates, and geometric measures | `use delaunay::prelude::geometry::*` |
+| Random points or triangulations for examples, tests, and benchmarks | `use delaunay::prelude::generators::*` |
+| Read-only traversal, adjacency, convex hulls, and comparison helpers | `use delaunay::prelude::query::*` |
+| Topological spaces and topology traits | `use delaunay::prelude::topology::spaces::*` |
+| Topology validation and Euler characteristic helpers | `use delaunay::prelude::topology::validation::*` |
+
+`use delaunay::prelude::*` remains available for quick experiments and broad
+interactive use, but repository examples and benchmarks prefer focused preludes.
 
 **`src/geometry/`** - Geometric algorithms and predicates:
 
