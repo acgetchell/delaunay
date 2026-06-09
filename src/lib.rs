@@ -1627,7 +1627,7 @@ pub mod prelude {
     pub mod geometry {
         pub use crate::geometry::{
             kernel::{AdaptiveKernel, ExactPredicates, FastKernel, Kernel, RobustKernel},
-            matrix::{Matrix, MatrixError, determinant},
+            matrix::{LaError, Matrix, MatrixError, determinant},
             point::Point,
             predicates::{
                 InSphere, Orientation, insphere, insphere_distance, insphere_lifted,

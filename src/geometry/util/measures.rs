@@ -9,7 +9,7 @@ use super::conversions::{safe_coords_to_f64, safe_scalar_from_f64, safe_usize_to
 use super::norms::hypot;
 use crate::core::facet::FacetView;
 use crate::core::traits::data_type::DataType;
-use crate::geometry::matrix::{DEFAULT_SINGULAR_TOL, LaError, Matrix, matrix_get, matrix_set};
+use crate::geometry::matrix::{DEFAULT_SINGULAR_TOL, Matrix, matrix_get, matrix_set};
 use crate::geometry::point::Point;
 use crate::geometry::traits::coordinate::{Coordinate, CoordinateScalar};
 use num_traits::Float;
@@ -260,22 +260,15 @@ fn factorial_f64(n: usize) -> Result<f64, CircumcenterError> {
     Ok(value)
 }
 
-/// Compute a Gram determinant using la-stack's stack-allocated LDLT factorization.
+/// Compute a Gram determinant using `la-stack`'s stack-allocated LDLT factorization.
 ///
-/// This mirrors the existing `crate::geometry::matrix::determinant` behavior:
-/// - singular/degenerate => 0.0
-/// - non-finite => NaN
+/// This helper preserves typed backend failures so public measure APIs can
+/// distinguish invalid linear-algebra state from geometric degeneracy reported
+/// by [`validate_gram_determinant`].
 #[inline]
-fn gram_determinant_ldlt<const D: usize>(gram_matrix: Matrix<D>) -> f64 {
-    match gram_matrix.ldlt(DEFAULT_SINGULAR_TOL) {
-        Ok(ldlt) => match ldlt.det() {
-            Ok(det) => det,
-            Err(LaError::Singular { .. }) => 0.0,
-            Err(_) => f64::NAN,
-        },
-        Err(LaError::Singular { .. }) => 0.0,
-        Err(_) => f64::NAN,
-    }
+fn gram_determinant_ldlt<const D: usize>(gram_matrix: Matrix<D>) -> Result<f64, CircumcenterError> {
+    let ldlt = gram_matrix.ldlt(DEFAULT_SINGULAR_TOL)?;
+    ldlt.det().map_err(CircumcenterError::from)
 }
 
 /// Calculate the volume of a D-dimensional simplex using the Gram matrix method.
@@ -324,7 +317,7 @@ where
     }
 
     // Compute Gram determinant with validation (LDLT exploits symmetry / PSD structure).
-    let det = validate_gram_determinant(gram_determinant_ldlt(gram_matrix))?;
+    let det = validate_gram_determinant(gram_determinant_ldlt(gram_matrix)?)?;
 
     let volume_f64 = {
         let sqrt_det = det.sqrt();
@@ -664,7 +657,7 @@ where
             }
         }
 
-        validate_gram_determinant(gram_determinant_ldlt(gram_matrix))
+        validate_gram_determinant(gram_determinant_ldlt(gram_matrix)?)
     })?;
 
     let volume_f64 = {
@@ -762,8 +755,11 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::assert_matches;
+
     use crate::core::traits::boundary_analysis::BoundaryAnalysis;
     use crate::core::vertex::Vertex;
+    use crate::geometry::matrix::LaError;
     use crate::geometry::point::Point;
     use crate::triangulation::DelaunayTriangulation;
     use crate::vertex;
@@ -1024,7 +1020,7 @@ mod tests {
                 }
             }
 
-            validate_gram_determinant(gram_determinant_ldlt(gram_matrix))
+            validate_gram_determinant(gram_determinant_ldlt(gram_matrix)?)
         })
     }
 
@@ -1032,8 +1028,27 @@ mod tests {
     fn test_gram_determinant_ldlt_known_spd() {
         // Symmetric positive-definite matrix with known determinant.
         let gram = Matrix::<2>::try_from_rows([[4.0, 2.0], [2.0, 3.0]]).unwrap();
-        let det = gram_determinant_ldlt(gram);
+        let det = gram_determinant_ldlt(gram).unwrap();
         assert_relative_eq!(det, 8.0, epsilon = 1e-12);
+    }
+
+    #[test]
+    fn gram_determinant_ldlt_preserves_determinant_overflow_error() {
+        let gram = Matrix::<5>::try_from_rows([
+            [1.0e100, 0.0, 0.0, 0.0, 0.0],
+            [0.0, 1.0e100, 0.0, 0.0, 0.0],
+            [0.0, 0.0, 1.0e100, 0.0, 0.0],
+            [0.0, 0.0, 0.0, 1.0e100, 0.0],
+            [0.0, 0.0, 0.0, 0.0, 1.0e100],
+        ])
+        .unwrap();
+
+        assert_matches!(
+            gram_determinant_ldlt(gram),
+            Err(CircumcenterError::LinearAlgebraFailure {
+                source: LaError::NonFinite { .. }
+            })
+        );
     }
 
     #[test]

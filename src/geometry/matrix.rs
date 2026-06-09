@@ -14,8 +14,14 @@
 
 #![forbid(unsafe_code)]
 
+/// Typed errors from the stack-allocated linear algebra backend.
+///
+/// Delaunay re-exports this backend error type at the matrix boundary so public
+/// wrappers such as [`determinant`] can preserve exact failure context without
+/// exposing the rest of `la-stack` to downstream callers.
+pub use la_stack::LaError;
 use la_stack::Matrix as LaMatrix;
-pub(crate) use la_stack::{DEFAULT_SINGULAR_TOL, LaError, Vector as LaVector};
+pub(crate) use la_stack::{DEFAULT_SINGULAR_TOL, Vector as LaVector};
 use thiserror::Error;
 
 /// Stack-matrix dispatch limit.
@@ -27,7 +33,11 @@ use thiserror::Error;
 /// With `MAX_STACK_MATRIX_DIM = 7`, we support up to `D = 5` for insphere.
 pub const MAX_STACK_MATRIX_DIM: usize = la_stack::MAX_STACK_MATRIX_DISPATCH_DIM;
 
-/// Internal linear algebra matrix type used by this crate for fixed-size operations.
+/// Stack-allocated matrix type used by this crate for fixed-size linear algebra.
+///
+/// This alias is Delaunay's public matrix boundary around `la-stack`: callers
+/// can build small matrices for diagnostics and helper APIs without depending
+/// on backend module paths.
 pub type Matrix<const D: usize> = LaMatrix<D>;
 
 /// Error type for matrix operations.
@@ -205,26 +215,30 @@ pub(crate) fn matrix_direct_det_is_finite<const D: usize>(m: &Matrix<D>) -> bool
     matches!(m.det_direct(), Ok(Some(det)) if det.is_finite())
 }
 
-/// Compute a determinant, returning `0.0` for singular matrices.
+/// Compute a determinant, returning `Ok(0.0)` for singular matrices.
 ///
-/// Backend errors other than singularity are surfaced as `NaN` to preserve the
-/// historical infallible return type.
+/// Other backend failures are returned as typed [`LaError`] values.
+///
+/// # Errors
+///
+/// Returns [`LaError`] for non-singular backend failures such as non-finite
+/// intermediate determinant computations.
 ///
 /// # Examples
 ///
 /// ```rust
-/// use delaunay::prelude::geometry::{determinant, Matrix};
+/// use delaunay::prelude::geometry::{LaError, Matrix, determinant};
 ///
 /// let m = Matrix::<2>::zero();
-/// assert_eq!(determinant(&m), 0.0);
+/// assert_eq!(determinant(&m)?, 0.0);
+/// # Ok::<(), LaError>(())
 /// ```
 #[inline]
-#[must_use]
-pub fn determinant<const D: usize>(m: &Matrix<D>) -> f64 {
+pub fn determinant<const D: usize>(m: &Matrix<D>) -> Result<f64, LaError> {
     match m.det() {
-        Ok(det) => det,
-        Err(LaError::Singular { .. }) => 0.0,
-        Err(_) => f64::NAN,
+        Ok(det) => Ok(det),
+        Err(LaError::Singular { .. }) => Ok(0.0),
+        Err(source) => Err(source),
     }
 }
 
@@ -356,5 +370,26 @@ mod tests {
                 },
             }
         );
+    }
+
+    #[test]
+    fn determinant_returns_finite_value_for_regular_matrix() {
+        let matrix = Matrix::<2>::try_from_rows([[4.0, 2.0], [1.0, 3.0]]).unwrap();
+
+        assert_relative_eq!(determinant(&matrix).unwrap(), 10.0);
+    }
+
+    #[test]
+    fn determinant_returns_zero_for_singular_matrix() {
+        let matrix = Matrix::<2>::try_from_rows([[1.0, 2.0], [2.0, 4.0]]).unwrap();
+
+        assert_relative_eq!(determinant(&matrix).unwrap(), 0.0);
+    }
+
+    #[test]
+    fn determinant_preserves_nonfinite_backend_error() {
+        let matrix = Matrix::<2>::try_from_rows([[1.0e200, 0.0], [0.0, 1.0e200]]).unwrap();
+
+        assert_matches!(determinant(&matrix), Err(LaError::NonFinite { .. }));
     }
 }

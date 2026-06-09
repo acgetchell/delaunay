@@ -31,38 +31,21 @@ serializable/deserializable. Written in safe Rust with no unsafe code.
 
 ## 📐 Introduction
 
-This library implements dimension-generic [Delaunay triangulations] in [Rust]
-for computational geometry and scientific workflows. It is inspired by [CGAL],
-which is a [C++] library for computational geometry, and [Spade], a [Rust]
-library focused on 2D triangulations. The goal is to provide a lightweight but
-rigorous Rust-native option for workflows that need explicit topology settings,
-validation levels, deterministic construction controls, and repair behavior.
-
-The core idea is an implemented and validated algorithmic framework for robust
-Delaunay construction, PL-manifold-aware local moves, and bistellar repair. The
-software artifact is part of the contribution: public APIs, examples,
-property-based tests, diagnostics, and generated performance summaries are kept
-together so the library can be inspected, reused, and benchmarked rather than
-treated as a one-off implementation.
+This library is for computational geometry and scientific workflows that need
+more than a set of triangles: explicit topology settings, deterministic
+construction controls, typed diagnostics, validation levels, and repair
+behavior. It is inspired by [CGAL] and [Spade], but focuses on a safe,
+inspectable, d-dimensional Rust API.
 
 Use this crate when you want:
 
 - Delaunay triangulations or convex hulls in 2D through 5D.
-- A Rust-native bistellar flip / Pachner move API for topological editing and
-  Delaunay repair.
-- Exact predicates and deterministic Simulation of Simplicity (SoS) handling
-  for degenerate inputs.
-- PL-manifold checks and explicit topology guarantees for triangulations that
-  need more than a bag of simplices.
-- Typed construction, insertion, validation, topology, and repair diagnostics
-  instead of stringly error handling.
+- Exact predicates and deterministic SoS handling for degenerate inputs.
+- PL-manifold checks and explicit topology guarantees.
+- PL-manifold-aware editing via bistellar flips and bounded Delaunay repair.
 - Validation reports that separate element, structure, topology, and Delaunay
   failures.
-- Batch construction controls for insertion order, deduplication, repair
-  cadence, and retry behavior.
-- Release-mode 3D construction through 10,000 vertices with final Levels 1–4
-  validation in the current large-scale characterization harness.
-- PL-manifold-aware editing via bistellar flips.
+- Typed construction, insertion, validation, topology, and repair diagnostics.
 
 This is not a replacement for full meshing packages such as CGAL, TetGen, or
 Gmsh when you need constrained Delaunay triangulations, out-of-core meshing,
@@ -70,34 +53,11 @@ GPU/parallel meshing, or production-scale dynamic remeshing.
 
 ## 🧪 Scientific Basis
 
-This crate models triangulations of finite point sets in `R^d` as oriented
-simplicial complexes with explicit combinatorial and geometric checks. The
-framework couples robust predicates, topology-aware local moves, repair
-policies, validation reports, and benchmarked workflows instead of treating
-these as separate utilities.
-
-- Core operational invariant for editing/repair: coherent orientation +
-  PL-manifold validity.
-- Local move system: exposed bistellar flips (`k = 1, 2, 3` and inverses),
-  providing the supported [Pachner moves] set in dimensions up to 5D.
-- Local reversibility basis: benchmark-owned flip fixtures include n=1
-  ergodicity checks, where one admissible Pachner move followed by its inverse
-  must recover the same triangulation, not merely another valid triangulation;
-  [Jaccard similarity] is used only as failure-path diagnostics for near misses.
-- Geometric convergence basis in finite-point workflows: Herbert Edelsbrunner
-  and Nimish R. Shah, *Incremental Topological Flipping Works for Regular
-  Triangulations*, **Algorithmica (1996)**,
-  <https://doi.org/10.1007/BF01975867>.
-- Robust predicate basis: Shewchuk-style floating-point filters with exact
-  fallback, plus deterministic Simulation of Simplicity for exact degeneracies.
-- Topology basis: Level 3 validation checks PL-manifold structure, links, and
-  Euler/topological consistency before Level 4 Delaunay predicates are trusted.
-- Artifact basis: unit tests, integration tests, property tests, examples,
-  release benchmark summaries, and docs.rs documentation exercise the same
-  public APIs users copy.
-- Scope of claims: guarantees apply to supported library workflows
-  (construction, flip-based repair, and validation APIs), not arbitrary external
-  mutation of internal structures.
+The crate models finite point-set triangulations as oriented simplicial
+complexes with separate combinatorial and geometric checks. Its robustness story
+comes from Shewchuk-style floating-point filters, exact arithmetic fallback,
+deterministic Simulation of Simplicity, and topology validation before Delaunay
+predicates are trusted.
 
 See [REFERENCES.md](REFERENCES.md), [Invariants](docs/invariants.md), and the
 [Numerical Robustness Guide](docs/numerical_robustness_guide.md) for the
@@ -105,68 +65,47 @@ complete technical background.
 
 ## ✨ Features
 
-- [x]  Copyable data types associated with vertices and simplices (integers,
-  floats, chars, custom enums), plus `SimplexSecondaryMap` and
-  `VertexSecondaryMap` aliases for caller-owned key-indexed algorithm state
-- [x]  D-dimensional [Delaunay triangulations]
-- [x]  D-dimensional [Convex hulls]
-- [x]  Bistellar flip / [Pachner moves] Edit API up to 5D: k-flips for
-  k = 1, 2, 3 plus inverse moves
-- [x]  [Delaunay repair] using bistellar flips for k=2/k=3 with inverse
-  edge/triangle queues in 4D/5D
-- [x]  Simulation of Simplicity (SoS) for deterministic handling of degenerate
-  orientation and in-sphere configurations
-- [x]  [PL-manifold] topology validation by default, with [Pseudomanifold]
-  available as an explicit opt-out
-- [x]  Toroidal triangulations via [`DelaunayTriangulationBuilder`]:
-  `.toroidal(...)` builds a validated periodic image-point quotient in 2D and
-  compact 3D, while `.canonicalized_toroidal(...)` canonicalizes points into the
-  fundamental domain without quotient rewiring
-- [x]  Geometry quality metrics for simplices: radius ratio and normalized
-  volume (dimension-agnostic)
-- [x]  Serialization/deserialization of all data structures to/from [JSON]
-- [x]  Tested for 2-, 3-, 4-, and 5-dimensional triangulations
-- [x]  Focused public preludes for construction, insertion, repair, validation,
-  topology, query, geometry, generators, ordering, collections, TDS, and
-  diagnostics workflows
-- [x]  Configurable predicate kernels: `AdaptiveKernel` (default; exact
-  arithmetic + SoS), `RobustKernel` (exact, preserves degeneracy signals),
-  `FastKernel` (raw floating-point predicates for well-conditioned exploratory
-  work; not accepted by explicit repair APIs)
-- [x]  Bulk insertion ordering (`InsertionOrderStrategy`): [Hilbert curve]
-  (default) or input order
-- [x]  Batch construction options (`ConstructionOptions`): optional
-  deduplication, configurable local Delaunay repair cadence, and deterministic
-  retries
-- [x]  Incremental construction APIs: insertion, insertion statistics, and
-  transactional vertex removal (`remove_vertex`)
-- [x]  4-level validation hierarchy (element validity → TDS structural
-  validity → manifold topology → Delaunay property), including full
-  diagnostics via `validation_report`
-- [x]  Coherent combinatorial orientation validation/normalization for simplices,
-  maintaining oriented simplicial complexes
-- [x]  Typed construction, insertion, TDS, topology, validation, and repair
-  errors that preserve source context for callers and diagnostics
-- [x]  Reusable research software artifact: public examples, property tests,
-  diagnostics, docs.rs landing-page documentation, and benchmark summaries
-  generated from checked public workflows
-- [x]  Release performance summaries generated from the public API benchmark
-  contract, current Criterion run metadata, and generated simplex counts
-- [x]  10,000-vertex 3D large-scale characterization run: zero skipped
-  vertices, final flip repair clean, and `validation_report` OK for Levels 1–4
-  in roughly 100 seconds on maintainer Apple M4 Max hardware
-- [x]  Safe Rust: `#![forbid(unsafe_code)]`
+- [x] Batch construction controls for insertion order, deduplication, repair
+  cadence, and deterministic retries.
+- [x] Complete set of bistellar flip / [Pachner moves] through D=5 via the Edit
+  API, plus bounded Delaunay repair.
+- [x] Configurable predicate kernels: `AdaptiveKernel` by default,
+  `RobustKernel` for exact degeneracy-preserving predicates, and `FastKernel`
+  for well-conditioned exploratory work.
+- [x] D-dimensional [Convex hulls] and [Delaunay triangulations].
+- [x] Euclidean and toroidal construction through
+  [`DelaunayTriangulationBuilder`]: `.toroidal(...)` builds the periodic
+  image-point quotient in validated dimensions, while
+  `.canonicalized_toroidal(...)` wraps coordinates without quotient rewiring.
+- [x] Exact predicates, stack-allocated linear algebra through [la-stack], and
+  deterministic SoS degeneracy handling.
+- [x] Focused public preludes for common construction, query, geometry, repair,
+  topology, and diagnostic workflows.
+- [x] Geometry measures and simplex quality metrics such as simplex volume,
+  inradius, radius ratio, and normalized volume, plus Jaccard set-similarity
+  diagnostics.
+- [x] Incremental insertion, insertion statistics, and transactional
+  `remove_vertex` rollback on failed repair/canonicalization.
+- [x] Optional Cargo feature gates for allocation counting, diagnostics,
+  benchmark logging, and slow correctness tests.
+- [x] PL-manifold validation by default, with pseudomanifold checks available
+  as an explicit opt-out.
+- [x] Safe Rust: `#![forbid(unsafe_code)]`.
+- [x] Serialization/deserialization through [JSON].
+- [x] Vertex/simplex payloads plus secondary maps for caller-owned algorithm
+  state.
 
 See [CHANGELOG.md](CHANGELOG.md) for release details. Older releases are
 archived under [docs/archive/changelog/](docs/archive/changelog/).
 
 ## 🟢 Minimal Construction Example
 
-The construction API has two entry points:
+For ordinary point-cloud construction, start with one of two common entry
+points:
 
-- [`DelaunayTriangulationBuilder`] - primary construction interface for the common case and advanced configuration (custom options,
-  toroidal topology, custom kernels)
-- `DelaunayTriangulation::new(&vertices)` - legacy convenience constructor
+- [`DelaunayTriangulationBuilder`] - primary construction interface for common
+  and advanced configuration.
+- `DelaunayTriangulation::new(&vertices)` - convenience constructor.
 
 Add the library to your crate:
 
@@ -174,39 +113,9 @@ Add the library to your crate:
 cargo add delaunay
 ```
 
-Choose the smallest prelude that matches the task:
-
-| Task | Import |
-|---|---|
-| Construct/configure a Delaunay triangulation | `use delaunay::prelude::construction::*` |
-| Read-only traversal, adjacency, convex hulls, and comparison helpers | `use delaunay::prelude::query::*` |
-| Points, kernels, predicates, and geometric measures | `use delaunay::prelude::geometry::*` |
-| Random points or triangulations for examples, tests, and benchmarks | `use delaunay::prelude::generators::*` |
-| Low-level incremental insertion building blocks | `use delaunay::prelude::insertion::*` |
-| Bistellar flips / Edit API | `use delaunay::prelude::flips::*` |
-| Delaunay repair diagnostics and policies | `use delaunay::prelude::repair::*` |
-| Delaunayize workflow | `use delaunay::prelude::delaunayize::*` |
-| Construction telemetry diagnostics | `use delaunay::prelude::diagnostics::*` |
-| Construction validation cadence/policy | `use delaunay::prelude::validation::*` |
-| Hilbert ordering and quantization utilities | `use delaunay::prelude::ordering::*` |
-| Low-level TDS simplices, facets, keys, and validation reports | `use delaunay::prelude::tds::*` |
-| Collection aliases and small buffers | `use delaunay::prelude::collections::*` |
-| Topology validation and Euler characteristic helpers | `use delaunay::prelude::topology::validation::*` |
-| Topological spaces and topology traits | `use delaunay::prelude::topology::spaces::*` |
-
-`use delaunay::prelude::*` remains available for quick experiments, but examples
-and benchmarks in this repository prefer focused preludes so imports document
-intent. The broad `delaunay::prelude::*` import is retained for
-compatibility, but new docs and tests should prefer the narrow workflow preludes
-above.
-
-### Low-level imports
-
-`delaunay::core` is an internal implementation namespace. Public low-level APIs
-are exposed through `delaunay::tds`, `delaunay::collections`,
-`delaunay::algorithms`, and `delaunay::query`, plus the matching focused
-preludes. Contributors should follow the namespace policy in
-[CONTRIBUTING.md](CONTRIBUTING.md) and [docs/code_organization.md](docs/code_organization.md).
+Examples prefer focused preludes so imports document intent. For the full
+prelude map and namespace policy, see the
+[Focused Prelude Reference](docs/code_organization.md#focused-prelude-reference).
 
 ```rust
 use delaunay::prelude::construction::{
@@ -236,9 +145,10 @@ fn main() -> Result<(), DelaunayTriangulationConstructionError> {
 }
 ```
 
-### Toroidal (Periodic) Triangulations
+### Toroidal Triangulations
 
-For periodic boundary conditions, use `DelaunayTriangulationBuilder`:
+For coordinate wrapping on a toroidal domain, use
+`DelaunayTriangulationBuilder::canonicalized_toroidal`:
 
 ```rust
 use delaunay::prelude::construction::{
@@ -275,27 +185,27 @@ guardrails.
 - **Flip-based Delaunay repair**, including the heuristic rebuild fallback
   (`repair_delaunay_with_flips*`):
   see [`docs/workflows.md`](docs/workflows.md).
-- **Repair diagnostics and mutating-operation rollback**:
-  `remove_vertex` rolls back if post-removal repair or orientation
-  canonicalization fails, and repair failures preserve typed source errors for
-  debugging.
 - **Insertion outcomes and statistics** (`insert_with_statistics`,
   `insert_best_effort_with_statistics`, `InsertionOutcome`,
   `InsertionStatistics`):
   see [`docs/workflows.md`](docs/workflows.md) and
   [`docs/numerical_robustness_guide.md`](docs/numerical_robustness_guide.md).
-- **Topology guarantees** (`TopologyGuarantee`) and **automatic topology
-  validation** (`ValidationPolicy`):
-  see [`docs/validation.md`](docs/validation.md) and [`docs/topology.md`](docs/topology.md).
 - **Release benchmark summaries**:
   see [`benches/README.md`](benches/README.md) and
   [`benches/PERFORMANCE_RESULTS.md`](benches/PERFORMANCE_RESULTS.md).
+- **Repair diagnostics and mutating-operation rollback**:
+  `remove_vertex` rolls back if post-removal repair or orientation
+  canonicalization fails, and repair failures preserve typed source errors for
+  debugging.
+- **Topology guarantees** (`TopologyGuarantee`) and **automatic topology
+  validation** (`ValidationPolicy`):
+  see [`docs/validation.md`](docs/validation.md) and [`docs/topology.md`](docs/topology.md).
 
 ## ✅ Validation and Guarantees
 
 | Level | What is validated | Primary API |
 |---|---|---|
-| 1 | Element validity (vertex/simplex primitives) | `dt.validate()` / `dt.validation_report()` |
+| 1 | Element validity (vertex/simplex primitives) | `vertex.is_valid()` / `simplex.is_valid()` |
 | 2 | TDS structural validity (keys, incidences, neighbors) | `dt.tds().is_valid()` |
 | 3 | Manifold topology (link checks, Euler/topological consistency) | `dt.as_triangulation().is_valid()` |
 | 4 | Delaunay property (empty-circumsphere via local predicates) | `dt.is_valid()` |
@@ -312,72 +222,39 @@ caller-owned full-validation checkpoints with the default PL-manifold guarantee.
 The construction pipeline exposes deterministic controls for experiments and
 regression testing:
 
-- Deterministic insertion ordering via `InsertionOrderStrategy`:
-  `Hilbert` (default) or `Input`
-  (use `Input` to preserve caller-provided order exactly)
-- Deterministic preprocessing via `DedupPolicy`
-- Deterministic retry behavior via `RetryPolicy` (including seeded shuffled
-  retries) or `RetryPolicy::Disabled`
-- Cadenced batch repair behavior via `ConstructionOptions` when large batch
-  construction should repair local Delaunay fronts during insertion
-- Explicit topology/validation configuration via `TopologyGuarantee` and
-  `ValidationPolicy`
-
-```rust
-use delaunay::prelude::construction::{
-    ConstructionOptions, DedupPolicy, DelaunayTriangulationBuilder, InsertionOrderStrategy,
-    RetryPolicy, TopologyGuarantee, DelaunayTriangulationConstructionError, vertex,
-};
-use delaunay::prelude::validation::ValidationPolicy;
-
-fn main() -> Result<(), DelaunayTriangulationConstructionError> {
-    let vertices = vec![
-        vertex!([0.0, 0.0]),
-        vertex!([1.0, 0.0]),
-        vertex!([0.0, 1.0]),
-    ];
-
-    let options = ConstructionOptions::default()
-        .with_insertion_order(InsertionOrderStrategy::Input)
-        .with_dedup_policy(DedupPolicy::Exact)
-        .with_retry_policy(RetryPolicy::Disabled);
-
-    let mut dt = DelaunayTriangulationBuilder::new(&vertices)
-        .topology_guarantee(TopologyGuarantee::PLManifold)
-        .construction_options(options)
-        .build::<()>()?;
-
-    dt.set_validation_policy(ValidationPolicy::Always);
-    assert!(dt.validate().is_ok());
-    Ok(())
-}
-```
+- `ConstructionOptions` for repair cadence and batch-construction behavior.
+- `DedupPolicy` for preprocessing duplicate coordinates.
+- `InsertionOrderStrategy` for Hilbert ordering or caller-provided input order.
+- `RetryPolicy` for deterministic retry behavior.
+- `TopologyGuarantee` and `ValidationPolicy` for topology/validation policy.
 
 For reproducible checks in CI/local runs, use `just check`, `just test`,
 `just doc-check`, or `just ci`.
 
 ## ⚠️ Limitations
 
+- **3D scale:** the default `just debug-large-scale-3d` helper uses 7,500
+  vertices for the near-one-minute acceptance path. The 10,000-vertex run has
+  also passed full Levels 1–4 validation as a heavier characterization probe;
+  use `just debug-large-scale-3d 10000 1` for local numbers.
 - **Dimension coverage:** CI and property-test coverage target 2D–5D.
 - **Exact predicate limits:** exact orientation is available through D=6; exact
   in-sphere is available through D=5. For D≥6, in-sphere classification relies
   on symbolic perturbation and deterministic tie-breaking because the
   `(D+2)×(D+2)` determinant exceeds the stack matrix limit.
+- **Feature gaps:** [Constrained Delaunay triangulations], [Voronoi diagrams],
+  built-in visualization, GPU/parallel meshing, and out-of-core construction
+  are out of scope today.
+- **Large 4D+ batches:** `just debug-large-scale-4d 900 1` is the current
+  release-mode acceptance harness; the documented 2026-05-14 local run inserted
+  all 900 vertices, skipped none, and passed `validation_report` in about
+  60 seconds. The 3,000-point 4D harness remains a manual characterization probe
+  for issue #340 rather than routine CI.
 - **Periodic domains:** `.toroidal()` uses the periodic image-point method and
   is release-validated in 2D and compact 3D. `.canonicalized_toroidal()`
   canonicalizes coordinates into the fundamental domain without quotient
   rewiring. 4D/5D periodic quotients fail fast pending scalable construction
   work in issue #416.
-- **Large 4D+ batches:** thousands of 4D points can be expensive to
-  investigate. Use release mode and the large-scale debug harness for
-  characterization.
-- **3D scale:** the default `just debug-large-scale-3d` helper uses 7,500
-  vertices for the near-one-minute acceptance path. The 10,000-vertex run has
-  also passed full Levels 1–4 validation as a heavier characterization probe;
-  use `just debug-large-scale-3d 10000 1` for local numbers.
-- **Feature gaps:** [Constrained Delaunay triangulations], [Voronoi diagrams],
-  built-in visualization, GPU/parallel meshing, and out-of-core construction
-  are out of scope today.
 - **Validation/repair guarantees** assume the library-managed
   construction/editing pipeline.
 
@@ -401,44 +278,27 @@ research applications.
 
 ## 🤝 How to Contribute
 
-We welcome contributions! Here's a quickstart:
+We welcome contributions. Start with the contributor guide, then use `just` for
+the common local workflows:
 
 ```bash
-# Clone and setup
 git clone https://github.com/acgetchell/delaunay.git
 cd delaunay
-
-# Setup development environment (installs tools, builds project)
-cargo install just
-just setup            # Installs all development tools and dependencies
-
-# Development workflow
-just check            # All non-mutating lints/validators
-just fix              # Apply formatters/auto-fixes (mutating)
-just test             # Tests + benchmark/release compile smoke
-just ci               # Comprehensive checks + tests + examples
-just --list           # See all available commands
-just help-workflows   # Show common workflow patterns
+cargo install --locked just
+just setup
+just help-workflows
+just check
+just test
 ```
 
-Benchmark commands that produce performance data use the `perf` Cargo profile
-for consistent ThinLTO settings. `just ci` remains the comprehensive validation
-path: it runs checks, the test workflow, and examples, but it does not pay the
-`perf` profile cost unless measuring performance.
-
-For release performance documentation, run `just bench-perf-summary` from the
-release PR branch after version and documentation updates. It refreshes
-`benches/PERFORMANCE_RESULTS.md` from the public API Criterion suite,
-circumsphere predicate benchmarks, current run metadata, and generated simplex
-counts.
-
-**Try the examples:**
+See [CONTRIBUTING.md](CONTRIBUTING.md) for development setup, testing,
+benchmarks, style, and pull-request guidance. Run `just ci` before opening or
+updating a pull request.
 
 ```bash
-just examples         # Run all examples
-# Or run specific examples:
-cargo run --release --example triangulation_and_hull
+just examples
 cargo run --release --example delaunayize_repair
+cargo run --release --example triangulation_and_hull
 ```
 
 ## 📋 Examples
@@ -460,20 +320,8 @@ The `examples/` directory contains several demonstrations:
 - **`triangulation_and_hull`**: Seeded 3D and 4D triangulations, boundary
   traversal, convex hull extraction, and hull containment/visibility queries
 
-For detailed documentation, sample output, and usage instructions for each
-example, see [examples/README.md](examples/README.md).
-
-For comprehensive guidelines on development environment setup, testing,
-benchmarking, performance analysis, and development workflow, please see
-[CONTRIBUTING.md](CONTRIBUTING.md).
-
-This includes information about:
-
-- Building and testing the library
-- Running benchmarks and performance analysis
-- Code style and standards
-- Submitting changes and pull requests
-- Project structure and development tools
+For sample output and usage notes for each example, see
+[examples/README.md](examples/README.md).
 
 ## 📖 Documentation
 
@@ -482,10 +330,10 @@ This includes information about:
 - **[Code Organization](docs/code_organization.md)** - Project structure and module patterns
 - **[Diagnostics](docs/diagnostics.md)** - Diagnostic helpers, structured reports, telemetry, and debug switches
 - **[Invariants](docs/invariants.md)** - Theoretical background and rationale for the topological and geometric invariants
+- **[Limitations and Scope](docs/limitations.md)** - Supported dimensions, predicate limits, and feature gaps
 - **[Numerical Robustness Guide](docs/numerical_robustness_guide.md)** - Robustness strategies, kernels, and retry/repair behavior
 - **[Orientation Spec](docs/ORIENTATION_SPEC.md)** - Coherent combinatorial and geometric orientation rules
 - **[Property Testing Summary](docs/property_testing_summary.md)** - Property-based testing with proptest (where tests live, how to run)
-- **[Limitations and Scope](docs/limitations.md)** - Supported dimensions, predicate limits, and feature gaps
 - **[Releasing](docs/RELEASING.md)** - Release workflow (changelog + benchmarks + publish)
 - **[Roadmap](docs/roadmap.md)** - Current follow-up work and deferred features
 - **[Topology](docs/topology.md)** - Level 3 topology validation (manifoldness + Euler characteristic) and module overview
@@ -535,9 +383,9 @@ AI-assisted development note.
 [codeql-badge]: https://github.com/acgetchell/delaunay/actions/workflows/codeql.yml/badge.svg
 [codeql-workflow]: https://github.com/acgetchell/delaunay/actions/workflows/codeql.yml
 [CGAL]: https://www.cgal.org/
-[C++]: https://isocpp.org
 [Spade]: https://crates.io/crates/spade
 [JSON]: https://www.json.org/json-en.html
+[la-stack]: https://crates.io/crates/la-stack
 [Delaunay triangulations]: https://en.wikipedia.org/wiki/Delaunay_triangulation
 [Constrained Delaunay triangulations]: https://en.wikipedia.org/wiki/Constrained_Delaunay_triangulation
 [Voronoi diagrams]: https://en.wikipedia.org/wiki/Voronoi_diagram
@@ -549,8 +397,6 @@ AI-assisted development note.
 [Validation Guide]: docs/validation.md
 [Pseudomanifold]: https://en.wikipedia.org/wiki/Pseudomanifold
 [PL-manifold]: https://en.wikipedia.org/wiki/Piecewise_linear_manifold
-[Delaunay repair]: https://link.springer.com/article/10.1007/BF01975867
 [Pachner moves]: https://en.wikipedia.org/wiki/Pachner_move
-[Jaccard similarity]: https://en.wikipedia.org/wiki/Jaccard_index
 [`DelaunayTriangulationBuilder`]: src/delaunay/builder.rs
 [toroidal construction workflow]: docs/workflows.md#builder-api-toroidal-periodic-triangulations

@@ -36,6 +36,10 @@ work intentionally deferred from v0.7.8 cleanup:
 - **Pachner/Edit API shape (#252/#253/#350/#337):** unify the Pachner move API,
   expand public flip benchmark coverage, add Monte-Carlo stress benchmarks, and
   support periodic external-simplex parity constraints in bistellar flips.
+- **Linear algebra and API boundaries (#424):** keep `la-stack` details behind
+  `src/geometry/matrix.rs`, preserve typed backend errors in geometry helpers,
+  and keep README/API guidance aligned with the focused prelude reference in
+  `docs/code_organization.md`.
 - **Topology and incidence surface (#359/#304):** add stable incidence queries
   for simplex-local topology and dedicated targeted topology repair stages for
   ridge and vertex-link failures.

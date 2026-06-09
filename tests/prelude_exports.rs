@@ -44,7 +44,7 @@ use delaunay::prelude::generators::{RandomPointGenerationError, generate_random_
 #[cfg(feature = "diagnostics")]
 use delaunay::prelude::geometry::{AdaptiveKernel, Coordinate};
 use delaunay::prelude::geometry::{
-    CoordinateConversionError, DegenerateSimplexReason, MatrixError, Point,
+    CoordinateConversionError, DegenerateSimplexReason, LaError, MatrixError, Point,
 };
 use delaunay::prelude::insertion::{
     InsertionError, NeighborRebuildError, Tds as InsertionTds, TdsMutationError,
@@ -256,6 +256,7 @@ fn preludes_cover_bench_apis() -> Result<(), PreludeExportTestError> {
     assert_send_sync_unpin::<ConstructionSlowInsertionSample>();
     assert_send_sync_unpin::<CoordinateConversionError>();
     assert_send_sync_unpin::<DegenerateSimplexReason>();
+    assert_send_sync_unpin::<LaError>();
     assert_send_sync_unpin::<MatrixError>();
     assert!(NeighborSlot::Boundary.is_boundary());
     assert_eq!(
