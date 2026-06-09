@@ -102,6 +102,23 @@ pub enum HilbertError {
         /// The coordinate index whose rounded scaled value could not be converted.
         coordinate_index: usize,
     },
+
+    /// A pre-quantized coordinate exceeded the grid range implied by the bit depth.
+    #[error(
+        "pre-quantized Hilbert coordinate at point {point_index}, coordinate {coordinate_index} has value {coordinate}, which exceeds the maximum {max_grid_value} for {bits} bits"
+    )]
+    PrequantizedCoordinateOutOfRange {
+        /// The requested number of Hilbert bits per coordinate.
+        bits: u32,
+        /// The computed grid maximum, `2^bits - 1`.
+        max_grid_value: u32,
+        /// The point index whose pre-quantized coordinate was out of range.
+        point_index: usize,
+        /// The coordinate index whose value was out of range.
+        coordinate_index: usize,
+        /// The out-of-range pre-quantized coordinate value.
+        coordinate: u32,
+    },
 }
 
 /// Validated Hilbert bit depth per coordinate.
@@ -200,7 +217,7 @@ fn quantization_scale<T: CoordinateScalar>(
     bits: HilbertBitDepth,
 ) -> Result<(u32, T), HilbertError> {
     let bits_value = bits.get();
-    let max_grid_value = (1_u32 << bits_value) - 1;
+    let max_grid_value = max_quantized_coordinate(bits);
     let Some(max_grid_value_scalar): Option<T> = cast(max_grid_value) else {
         return Err(HilbertError::QuantizationScaleConversionFailed {
             bits: bits_value,
@@ -208,6 +225,14 @@ fn quantization_scale<T: CoordinateScalar>(
         });
     };
     Ok((max_grid_value, max_grid_value_scalar))
+}
+
+/// Returns the largest coordinate accepted by Hilbert APIs for the selected grid.
+///
+/// Keeping this calculation shared prevents the quantization and pre-quantized
+/// validation paths from drifting on the inclusive `0..=2^bits - 1` contract.
+const fn max_quantized_coordinate(bits: HilbertBitDepth) -> u32 {
+    (1_u32 << bits.get()) - 1
 }
 
 /// Computes encoded index width once so overflow errors report consistent context.
@@ -618,17 +643,47 @@ pub fn hilbert_sort_by_unstable<Item, T: CoordinateScalar, const D: usize>(
     Ok(())
 }
 
+/// Validates that caller-supplied pre-quantized coordinates fit the selected grid.
+///
+/// This protects [`hilbert_indices_prequantized`] from passing high-bit values
+/// into [`index_from_quantized`], where bits above the selected depth are
+/// intentionally ignored by the Hilbert interleaving loop.
+fn validate_prequantized_coordinates<const D: usize>(
+    quantized: &[[u32; D]],
+    bits: HilbertBitDepth,
+) -> Result<(), HilbertError> {
+    let max_grid_value = max_quantized_coordinate(bits);
+    for (point_index, point) in quantized.iter().enumerate() {
+        for (coordinate_index, &coordinate) in point.iter().enumerate() {
+            if coordinate > max_grid_value {
+                return Err(HilbertError::PrequantizedCoordinateOutOfRange {
+                    bits: bits.get(),
+                    max_grid_value,
+                    point_index,
+                    coordinate_index,
+                    coordinate,
+                });
+            }
+        }
+    }
+
+    Ok(())
+}
+
 /// Compute Hilbert indices for a batch of pre-quantized coordinates.
 ///
 /// This is a bulk API that avoids recomputing quantization parameters for large
 /// insertion batches. When inserting many points, quantize them once using
 /// [`hilbert_quantize`] and then call this function to compute all indices in bulk.
+/// Pre-quantized coordinates must be in the inclusive range `0..=2^bits - 1`;
+/// values outside that grid are rejected instead of being truncated.
 ///
 /// # Performance
 ///
-/// This function validates parameters once and then maps each quantized coordinate
-/// through the internal Hilbert index computation. For large batches, this is significantly
-/// faster than calling [`hilbert_index`] individually for each point.
+/// This function validates index width and pre-quantized coordinate ranges, then
+/// maps each quantized coordinate through the internal Hilbert index computation.
+/// For large batches, this is significantly faster than calling [`hilbert_index`]
+/// individually for each point.
 ///
 /// # Errors
 ///
@@ -636,6 +691,9 @@ pub fn hilbert_sort_by_unstable<Item, T: CoordinateScalar, const D: usize>(
 ///
 /// Returns [`HilbertError::DimensionTooLarge`] if the dimension `D` exceeds `u32::MAX`
 /// (extremely unlikely in practice).
+///
+/// Returns [`HilbertError::PrequantizedCoordinateOutOfRange`] if any pre-quantized
+/// coordinate exceeds `2^bits - 1`.
 ///
 /// # Examples
 ///
@@ -680,6 +738,14 @@ pub fn hilbert_sort_by_unstable<Item, T: CoordinateScalar, const D: usize>(
 /// let quantized_5d = vec![[1_u32, 2, 3, 4, 5]];
 /// let result = hilbert_indices_prequantized(&quantized_5d, HilbertBitDepth::try_new(26)?);
 /// std::assert_matches!(result, Err(HilbertError::IndexOverflow { .. }));
+///
+/// // Pre-quantized coordinates must fit the selected grid.
+/// let out_of_range = vec![[4_u32, 1]];
+/// let result = hilbert_indices_prequantized(&out_of_range, HilbertBitDepth::try_new(2)?);
+/// std::assert_matches!(
+///     result,
+///     Err(HilbertError::PrequantizedCoordinateOutOfRange { .. })
+/// );
 /// # Ok(())
 /// # }
 /// ```
@@ -693,6 +759,8 @@ pub fn hilbert_indices_prequantized<const D: usize>(
     if D == 0 {
         return Ok(vec![0_u128; quantized.len()]);
     }
+
+    validate_prequantized_coordinates(quantized, bits)?;
 
     Ok(quantized
         .iter()
@@ -773,6 +841,26 @@ mod tests {
         HilbertBitDepth::try_new(value).expect("test bit depth must be valid")
     }
 
+    /// Asserts that the bulk pre-quantized API matches per-point Hilbert indexing.
+    fn assert_prequantized_matches_hilbert_index<const D: usize>(
+        coords: &[[f64; D]],
+        bounds: (f64, f64),
+        bits: HilbertBitDepth,
+    ) {
+        let quantized: Vec<[u32; D]> = coords
+            .iter()
+            .map(|c| hilbert_quantize(c, bounds, bits).unwrap())
+            .collect();
+        let indices_bulk =
+            hilbert_indices_prequantized(&quantized, bits).expect("valid quantized points");
+        let indices_individual: Vec<u128> = coords
+            .iter()
+            .map(|c| hilbert_index(c, bounds, bits).unwrap())
+            .collect();
+
+        assert_eq!(indices_bulk, indices_individual);
+    }
+
     #[test]
     fn test_hilbert_bit_depth_boundaries_and_traits() {
         let min_bits = HilbertBitDepth::try_new(1).expect("minimum bit depth should be valid");
@@ -820,6 +908,34 @@ mod tests {
         let corner = hilbert_index(&[1.0_f64, 1.0, 1.0], (-1.0, 1.0), bits).unwrap();
         assert_ne!(origin, corner);
     }
+
+    macro_rules! gen_prequantized_matches_hilbert_index_tests {
+        ($dim:literal, $coords:expr, $bounds:expr, $bits:expr) => {
+            pastey::paste! {
+                #[test]
+                fn [<test_hilbert_indices_prequantized_matches_hilbert_index_ $dim d>]() {
+                    let coords: [[f64; $dim]; 4] = $coords;
+                    assert_prequantized_matches_hilbert_index(
+                        &coords,
+                        $bounds,
+                        bit_depth($bits),
+                    );
+                }
+            }
+        };
+    }
+
+    gen_prequantized_matches_hilbert_index_tests!(
+        5,
+        [
+            [-2.0, -1.0, 0.0, 1.0, 2.0],
+            [-1.5, 0.25, 1.75, 2.5, -0.5],
+            [0.1, -0.7, 2.2, -1.8, 1.4],
+            [3.0, 3.0, -2.0, -2.0, 0.5],
+        ],
+        (-2.0_f64, 3.0_f64),
+        8
+    );
 
     #[test]
     fn test_hilbert_sorted_indices_and_sort_helpers() {
@@ -1184,6 +1300,24 @@ mod tests {
                 dimension: 5,
                 bits: 26,
                 total_bits: 130
+            })
+        );
+    }
+
+    #[test]
+    fn test_hilbert_indices_prequantized_validates_coordinate_range() {
+        let bits = bit_depth(2);
+        let quantized = vec![[0_u32, 3], [4, 1]];
+        let result = hilbert_indices_prequantized(&quantized, bits);
+
+        assert_matches!(
+            result,
+            Err(HilbertError::PrequantizedCoordinateOutOfRange {
+                bits: 2,
+                max_grid_value: 3,
+                point_index: 1,
+                coordinate_index: 0,
+                coordinate: 4
             })
         );
     }

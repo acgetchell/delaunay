@@ -5,10 +5,12 @@
 
 #![forbid(unsafe_code)]
 
-use super::point_generation::{generate_random_points, generate_random_points_seeded};
+use super::point_generation::{
+    RandomPointGenerationError, generate_random_points, generate_random_points_seeded,
+};
 use crate::construction::{
-    ConstructionOptions, DelaunayTriangulationConstructionError, InsertionOrderStrategy,
-    RetryPolicy,
+    ConstructionOptions, DelaunayConstructionFailure, DelaunayTriangulationConstructionError,
+    InsertionOrderStrategy, RetryPolicy,
 };
 use crate::core::construction::TriangulationConstructionError;
 use crate::core::simplex::SimplexValidationError;
@@ -28,6 +30,42 @@ use std::num::NonZeroUsize;
 const RANDOM_TRIANGULATION_MAX_SHUFFLE_ATTEMPTS: usize = 6;
 const RANDOM_TRIANGULATION_MAX_POINTSET_ATTEMPTS: usize = 6;
 const RANDOM_TRIANGULATION_POINTSET_SEED_MIX: u64 = 0x9E37_79B9_7F4A_7C15;
+
+/// Wraps random point generation failures in the construction error hierarchy.
+///
+/// Keeping this mapping centralized preserves the public contract that invalid
+/// random-generation parameters remain distinguishable from geometric
+/// degeneracy during triangulation construction.
+const fn random_point_generation_error(
+    source: RandomPointGenerationError,
+) -> DelaunayTriangulationConstructionError {
+    DelaunayTriangulationConstructionError::Triangulation(
+        DelaunayConstructionFailure::RandomPointGeneration { source },
+    )
+}
+
+/// Generates random points through the seeded or unseeded public generator path.
+///
+/// This helper keeps all random triangulation entry points on the same typed
+/// error boundary: generation failures become
+/// [`DelaunayConstructionFailure::RandomPointGeneration`] before construction
+/// or validation can reinterpret them as geometric failures.
+fn random_points_with_seed<T, const D: usize>(
+    n_points: usize,
+    bounds: (T, T),
+    seed: Option<u64>,
+) -> Result<Vec<Point<T, D>>, DelaunayTriangulationConstructionError>
+where
+    T: CoordinateScalar + SampleUniform,
+{
+    seed.map_or_else(
+        || generate_random_points(n_points, bounds).map_err(random_point_generation_error),
+        |seed_value| {
+            generate_random_points_seeded(n_points, bounds, seed_value)
+                .map_err(random_point_generation_error)
+        },
+    )
+}
 
 fn validate_random_triangulation<K, U, V, const D: usize>(
     dt: DelaunayTriangulation<K, U, V, D>,
@@ -190,12 +228,9 @@ where
 ///
 /// Returns `DelaunayTriangulationConstructionError` with different variants depending on the failure:
 ///
-/// **Invalid parameters** (mapped to `GeometricDegeneracy`):
+/// **Random point generation** (`RandomPointGeneration`):
 /// - Point generation fails due to invalid bounds (e.g., `min > max`)
 /// - Random number generator initialization fails
-/// - **Note**: These are not strictly geometric degeneracy but are mapped to this
-///   error variant for API simplicity. Consider validating bounds before calling
-///   if you need to distinguish parameter errors from geometric issues.
 ///
 /// **Insufficient vertices** (`InsufficientVertices`):
 /// - When `n_points < D + 1` (need at least D+1 points for a D-dimensional simplex)
@@ -327,17 +362,11 @@ where
 /// # Errors
 ///
 /// Returns `Err(DelaunayTriangulationConstructionError)` if:
-/// - Random point generation fails (invalid bounds or RNG issues), mapped to
-///   `TriangulationConstructionError::GeometricDegeneracy`.
+/// - Random point generation fails (invalid bounds or RNG issues).
 /// - Triangulation construction fails due to geometric degeneracy, insertion errors, or the
 ///   requested topology guarantee not being satisfiable.
 /// - Validation fails after the robust fallback attempts.
-///
-/// # Errors
-///
-/// Returns `DelaunayTriangulationConstructionError` if internal point-set bookkeeping
-/// is inconsistent (initial point set unexpectedly consumed), point generation fails,
-/// or all construction attempts fail validation.
+/// - Internal point-set bookkeeping is inconsistent (initial point set unexpectedly consumed).
 ///
 /// # Examples
 ///
@@ -388,22 +417,7 @@ where
         .into());
     }
 
-    // Generate random points (seeded or unseeded)
-    // Note: GeometricDegeneracy error wraps both point generation failures (invalid bounds, RNG issues)
-    // and actual geometric degeneracy. This is a semantic approximation - point generation failures
-    // are not strictly geometric degeneracy, but map to this error for API simplicity.
-    let points: Vec<Point<T, D>> =
-        match seed {
-            Some(seed_value) => generate_random_points_seeded(n_points, bounds, seed_value)
-                .map_err(|e| TriangulationConstructionError::GeometricDegeneracy {
-                    message: format!("Random point generation failed: {e}"),
-                })?,
-            None => generate_random_points(n_points, bounds).map_err(|e| {
-                TriangulationConstructionError::GeometricDegeneracy {
-                    message: format!("Random point generation failed: {e}"),
-                }
-            })?,
-        };
+    let points: Vec<Point<T, D>> = random_points_with_seed(n_points, bounds, seed)?;
 
     let min_vertices = (n_points / 6).max(D + 1);
 
@@ -435,17 +449,7 @@ where
                 )
             })?
         } else {
-            match point_seed {
-                Some(seed_value) => generate_random_points_seeded(n_points, bounds, seed_value)
-                    .map_err(|e| TriangulationConstructionError::GeometricDegeneracy {
-                        message: format!("Random point generation failed: {e}"),
-                    })?,
-                None => generate_random_points(n_points, bounds).map_err(|e| {
-                    TriangulationConstructionError::GeometricDegeneracy {
-                        message: format!("Random point generation failed: {e}"),
-                    }
-                })?,
-            }
+            random_points_with_seed(n_points, bounds, point_seed)?
         };
 
         let vertices = random_triangulation_build_vertices(points, vertex_data);
@@ -710,18 +714,7 @@ where
             .into());
         }
 
-        // Generate random points
-        let points: Vec<Point<T, D>> = match self.seed {
-            Some(seed_value) => generate_random_points_seeded(n_points, self.bounds, seed_value)
-                .map_err(|e| TriangulationConstructionError::GeometricDegeneracy {
-                    message: format!("Random point generation failed: {e}"),
-                })?,
-            None => generate_random_points(n_points, self.bounds).map_err(|e| {
-                TriangulationConstructionError::GeometricDegeneracy {
-                    message: format!("Random point generation failed: {e}"),
-                }
-            })?,
-        };
+        let points: Vec<Point<T, D>> = random_points_with_seed(n_points, self.bounds, self.seed)?;
 
         // Convert to vertices
         let vertices = random_triangulation_build_vertices(points, vertex_data);
@@ -853,17 +846,90 @@ mod tests {
 
     #[test]
     fn test_generate_random_triangulation_error_cases() {
-        // Test invalid bounds
         let result = generate_random_triangulation::<f64, (), (), 2>(
             nonzero(10),
             (5.0, 1.0), // min > max
             None,
             Some(42),
         );
-        assert!(result.is_err());
+        let Err(DelaunayTriangulationConstructionError::Triangulation(
+            DelaunayConstructionFailure::RandomPointGeneration { source },
+        )) = result
+        else {
+            panic!("expected RandomPointGeneration error");
+        };
+        assert_eq!(
+            source,
+            RandomPointGenerationError::InvalidRange {
+                min: "5.0".to_string(),
+                max: "1.0".to_string(),
+            }
+        );
 
         // Zero points cannot cross the typed API boundary.
         assert_eq!(NonZeroUsize::new(0), None);
+    }
+
+    #[test]
+    fn test_random_triangulation_builder_success_and_error_paths() {
+        let triangulation = RandomTriangulationBuilder::new(nonzero(10), (-5.0, 5.0))
+            .seed(42)
+            .build::<(), (), 2>()
+            .unwrap();
+        assert_eq!(triangulation.dim(), 2);
+        assert!(triangulation.number_of_vertices() >= 3);
+        assert!(triangulation.is_valid().is_ok());
+
+        let too_few_vertices =
+            RandomTriangulationBuilder::new(nonzero(2), (-1.0, 1.0)).build::<(), (), 2>();
+        let Err(DelaunayTriangulationConstructionError::Triangulation(
+            DelaunayConstructionFailure::InsufficientVertices { dimension, source },
+        )) = too_few_vertices
+        else {
+            panic!("expected InsufficientVertices error");
+        };
+        assert_eq!(dimension, 2);
+        assert_eq!(
+            source,
+            SimplexValidationError::InsufficientVertices {
+                actual: 2,
+                expected: 3,
+                dimension: 2,
+            }
+        );
+
+        let invalid_bounds =
+            RandomTriangulationBuilder::new(nonzero(10), (5.0, 1.0)).build::<(), (), 2>();
+        let Err(DelaunayTriangulationConstructionError::Triangulation(
+            DelaunayConstructionFailure::RandomPointGeneration { source },
+        )) = invalid_bounds
+        else {
+            panic!("expected RandomPointGeneration error");
+        };
+        assert_eq!(
+            source,
+            RandomPointGenerationError::InvalidRange {
+                min: "5.0".to_string(),
+                max: "1.0".to_string(),
+            }
+        );
+
+        let seeded_invalid_bounds = RandomTriangulationBuilder::new(nonzero(10), (5.0, 1.0))
+            .seed(42)
+            .build::<(), (), 2>();
+        let Err(DelaunayTriangulationConstructionError::Triangulation(
+            DelaunayConstructionFailure::RandomPointGeneration { source },
+        )) = seeded_invalid_bounds
+        else {
+            panic!("expected seeded RandomPointGeneration error");
+        };
+        assert_eq!(
+            source,
+            RandomPointGenerationError::InvalidRange {
+                min: "5.0".to_string(),
+                max: "1.0".to_string(),
+            }
+        );
     }
 
     #[test]

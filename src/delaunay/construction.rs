@@ -266,6 +266,14 @@ pub enum DelaunayConstructionFailure {
         source: SimplexValidationError,
     },
 
+    /// Random point generation failed before construction could begin.
+    #[error("random point generation failed: {source}")]
+    RandomPointGeneration {
+        /// Structured random point generation failure.
+        #[source]
+        source: crate::geometry::util::RandomPointGenerationError,
+    },
+
     /// Geometric degeneracy prevented construction.
     #[error("geometric degeneracy encountered during construction: {message}")]
     GeometricDegeneracy {

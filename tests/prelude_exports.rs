@@ -26,7 +26,8 @@ use delaunay::prelude::construction::{
     ExplicitDelaunayValidationError, ExplicitDelaunayValidationErrorKind,
     ExplicitDelaunayValidationSourceKind, ExplicitInsertionError, ExplicitInsertionErrorKind,
     ExplicitInvariantError, ExplicitInvariantErrorKind, ExplicitTdsError, ExplicitTdsErrorKind,
-    InsertionOrderStrategy, SimplexValidationError, TopologyGuarantee, Vertex, vertex,
+    InsertionOrderStrategy, RandomPointGenerationError, SimplexValidationError, TopologyGuarantee,
+    Vertex, vertex,
 };
 use delaunay::prelude::delaunayize::{
     DelaunayTriangulationBuilder as DelaunayizeDelaunayTriangulationBuilder, DelaunayizeConfig,
@@ -40,7 +41,7 @@ use delaunay::prelude::diagnostics::{
     verify_conflict_region_completeness,
 };
 use delaunay::prelude::flips::BistellarFlips;
-use delaunay::prelude::generators::{RandomPointGenerationError, generate_random_points_seeded};
+use delaunay::prelude::generators::generate_random_points_seeded;
 #[cfg(feature = "diagnostics")]
 use delaunay::prelude::geometry::{AdaptiveKernel, Coordinate};
 use delaunay::prelude::geometry::{
@@ -527,6 +528,19 @@ fn triangulation_prelude_covers_generic_layer() -> Result<(), GenericTriangulati
     assert_send_sync_unpin::<TriangulationQueryError>();
     assert_send_sync_unpin::<TriangulationTdsError>();
     Ok(())
+}
+
+#[test]
+fn construction_prelude_covers_random_point_generation_failure_variant() {
+    assert_matches!(
+        DelaunayConstructionFailure::RandomPointGeneration {
+            source: RandomPointGenerationError::InvalidRange {
+                min: "1.0".to_string(),
+                max: "0.0".to_string(),
+            },
+        },
+        DelaunayConstructionFailure::RandomPointGeneration { .. }
+    );
 }
 
 #[test]

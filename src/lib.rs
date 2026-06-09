@@ -1376,6 +1376,7 @@ pub mod prelude {
             DelaunayTriangulationConstructionErrorWithStatistics, InitialSimplexStrategy,
             InsertionOrderStrategy, RetryPolicy,
         };
+        pub use crate::geometry::util::RandomPointGenerationError;
         pub use crate::repair::DelaunayRepairPolicy;
         pub use crate::tds::{
             SimplexValidationError, Vertex, VertexBuilder, VertexBuilderError,
