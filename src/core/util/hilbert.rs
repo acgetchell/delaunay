@@ -926,6 +926,34 @@ mod tests {
     }
 
     gen_prequantized_matches_hilbert_index_tests!(
+        2,
+        [[-2.0, -1.0], [-1.5, 0.25], [0.1, -0.7], [3.0, 3.0]],
+        (-2.0_f64, 3.0_f64),
+        8
+    );
+    gen_prequantized_matches_hilbert_index_tests!(
+        3,
+        [
+            [-2.0, -1.0, 0.0],
+            [-1.5, 0.25, 1.75],
+            [0.1, -0.7, 2.2],
+            [3.0, 3.0, -2.0],
+        ],
+        (-2.0_f64, 3.0_f64),
+        8
+    );
+    gen_prequantized_matches_hilbert_index_tests!(
+        4,
+        [
+            [-2.0, -1.0, 0.0, 1.0],
+            [-1.5, 0.25, 1.75, 2.5],
+            [0.1, -0.7, 2.2, -1.8],
+            [3.0, 3.0, -2.0, -2.0],
+        ],
+        (-2.0_f64, 3.0_f64),
+        8
+    );
+    gen_prequantized_matches_hilbert_index_tests!(
         5,
         [
             [-2.0, -1.0, 0.0, 1.0, 2.0],

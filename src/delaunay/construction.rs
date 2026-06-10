@@ -4821,6 +4821,41 @@ mod tests {
 
     type TestDelaunay<const D: usize> = DelaunayTriangulation<AdaptiveKernel<f64>, (), (), D>;
 
+    #[test]
+    fn test_random_point_generation_error_variant_preserved() {
+        let source = crate::geometry::util::RandomPointGenerationError::InvalidRange {
+            min: "5.0".to_string(),
+            max: "1.0".to_string(),
+        };
+        let err = DelaunayTriangulationConstructionError::Triangulation(
+            DelaunayConstructionFailure::RandomPointGeneration {
+                source: source.clone(),
+            },
+        );
+
+        assert!(!matches!(
+            &err,
+            DelaunayTriangulationConstructionError::Triangulation(
+                DelaunayConstructionFailure::GeometricDegeneracy { .. }
+            )
+        ));
+
+        let mut current_source = std::error::Error::source(&err);
+        let mut preserved_source = None;
+        while let Some(source_error) = current_source {
+            if let Some(random_source) =
+                source_error.downcast_ref::<crate::geometry::util::RandomPointGenerationError>()
+            {
+                preserved_source = Some(random_source);
+                break;
+            }
+            current_source = source_error.source();
+        }
+        let preserved_source =
+            preserved_source.expect("RandomPointGeneration should preserve its typed source");
+        assert_eq!(preserved_source, &source);
+    }
+
     fn init_tracing() {
         static INIT: Once = Once::new();
         INIT.call_once(|| {
