@@ -483,7 +483,8 @@ pub fn generate_random_points_in_ball_seeded<
 /// # Errors
 ///
 /// Returns [`RandomPointGenerationError::RandomGenerationFailed`] if the requested
-/// grid size overflows `usize` or exceeds the grid allocation safety cap.
+/// grid size overflows `usize`, exceeds the grid allocation safety cap, or a
+/// grid index cannot be represented exactly by the coordinate scalar type.
 ///
 /// # References
 ///
@@ -565,13 +566,7 @@ pub fn generate_grid_points<T: CoordinateScalar, const D: usize>(
     for _ in 0..total_points {
         let mut coords = [T::zero(); D];
         for d in 0..D {
-            let index_as_scalar = safe_usize_to_scalar::<T>(idx[d]).map_err(|_| {
-                RandomPointGenerationError::RandomGenerationFailed {
-                    min: "0".to_string(),
-                    max: format!("{}", points_per_dim - 1),
-                    details: format!("Failed to convert grid index {idx:?} to coordinate type"),
-                }
-            })?;
+            let index_as_scalar = grid_index_as_scalar::<T, D>(&idx, d, points_per_dim)?;
             coords[d] = offset[d] + index_as_scalar * spacing;
         }
         points.push(Point::new(coords));
@@ -587,6 +582,24 @@ pub fn generate_grid_points<T: CoordinateScalar, const D: usize>(
     }
 
     Ok(points)
+}
+
+/// Converts one mixed-radix grid index component into the coordinate scalar type.
+///
+/// This keeps [`generate_grid_points`] from silently rounding large grid indices
+/// when a scalar type such as `f32` cannot represent every `usize` exactly.
+fn grid_index_as_scalar<T: CoordinateScalar, const D: usize>(
+    idx: &[usize; D],
+    coordinate_index: usize,
+    points_per_dim: usize,
+) -> Result<T, RandomPointGenerationError> {
+    safe_usize_to_scalar::<T>(idx[coordinate_index]).map_err(|_| {
+        RandomPointGenerationError::RandomGenerationFailed {
+            min: "0".to_string(),
+            max: format!("{}", points_per_dim - 1),
+            details: format!("Failed to convert grid index {idx:?} to coordinate type"),
+        }
+    })
 }
 
 /// Generate points using Poisson disk sampling for uniform distribution.
@@ -1333,6 +1346,25 @@ mod tests {
         } else {
             panic!("Expected RandomGenerationFailed error due to overflow");
         }
+    }
+
+    #[test]
+    fn test_generate_grid_points_index_conversion_failure() {
+        let first_inexact_f32_index = 1_usize << f32::MANTISSA_DIGITS;
+        let idx = [first_inexact_f32_index];
+        let result =
+            grid_index_as_scalar::<f32, 1>(&idx, 0, first_inexact_f32_index.saturating_add(1));
+
+        assert_matches!(
+            result,
+            Err(RandomPointGenerationError::RandomGenerationFailed {
+                min,
+                max,
+                details
+            }) if min == "0"
+                && max == first_inexact_f32_index.to_string()
+                && details.contains("Failed to convert grid index [16777216] to coordinate type")
+        );
     }
 
     // =============================================================================
