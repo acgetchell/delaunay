@@ -1279,8 +1279,9 @@ pub mod prelude {
     // In particular, exporting a local `uuid` module conflicts with the external `uuid`
     // crate name, making `use uuid::Uuid;` ambiguous for downstream users.
     pub use self::ordering::{
-        HilbertError, hilbert_index, hilbert_indices_prequantized, hilbert_quantize,
-        hilbert_sort_by_stable, hilbert_sort_by_unstable, hilbert_sorted_indices,
+        HilbertBitDepth, HilbertError, MAX_HILBERT_BITS, hilbert_index,
+        hilbert_indices_prequantized, hilbert_quantize, hilbert_sort_by_stable,
+        hilbert_sort_by_unstable, hilbert_sorted_indices,
     };
     pub use crate::core::util::{
         DeduplicationError, DelaunayValidationError, dedup_vertices_epsilon, dedup_vertices_exact,
@@ -1375,6 +1376,7 @@ pub mod prelude {
             DelaunayTriangulationConstructionErrorWithStatistics, InitialSimplexStrategy,
             InsertionOrderStrategy, RetryPolicy,
         };
+        pub use crate::geometry::util::RandomPointGenerationError;
         pub use crate::repair::DelaunayRepairPolicy;
         pub use crate::tds::{
             SimplexValidationError, Vertex, VertexBuilder, VertexBuilderError,
@@ -1823,18 +1825,20 @@ pub mod prelude {
     /// # Examples
     ///
     /// ```rust
-    /// use delaunay::prelude::ordering::{hilbert_sorted_indices, HilbertError};
+    /// use delaunay::prelude::ordering::{HilbertBitDepth, HilbertError, hilbert_sorted_indices};
     ///
     /// let coords = [[0.9_f64, 0.9], [0.1, 0.1], [0.5, 0.5]];
-    /// let order = hilbert_sorted_indices(&coords, (0.0, 1.0), 8)?;
+    /// let bits = HilbertBitDepth::try_new(8)?;
+    /// let order = hilbert_sorted_indices(&coords, (0.0, 1.0), bits)?;
     ///
     /// assert_eq!(order.len(), coords.len());
     /// # Ok::<(), HilbertError>(())
     /// ```
     pub mod ordering {
         pub use crate::core::util::{
-            HilbertError, hilbert_index, hilbert_indices_prequantized, hilbert_quantize,
-            hilbert_sort_by_stable, hilbert_sort_by_unstable, hilbert_sorted_indices,
+            HilbertBitDepth, HilbertError, MAX_HILBERT_BITS, hilbert_index,
+            hilbert_indices_prequantized, hilbert_quantize, hilbert_sort_by_stable,
+            hilbert_sort_by_unstable, hilbert_sorted_indices,
         };
     }
 

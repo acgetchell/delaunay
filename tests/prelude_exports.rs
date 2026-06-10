@@ -26,7 +26,8 @@ use delaunay::prelude::construction::{
     ExplicitDelaunayValidationError, ExplicitDelaunayValidationErrorKind,
     ExplicitDelaunayValidationSourceKind, ExplicitInsertionError, ExplicitInsertionErrorKind,
     ExplicitInvariantError, ExplicitInvariantErrorKind, ExplicitTdsError, ExplicitTdsErrorKind,
-    InsertionOrderStrategy, SimplexValidationError, TopologyGuarantee, Vertex, vertex,
+    InsertionOrderStrategy, RandomPointGenerationError, SimplexValidationError, TopologyGuarantee,
+    Vertex, vertex,
 };
 use delaunay::prelude::delaunayize::{
     DelaunayTriangulationBuilder as DelaunayizeDelaunayTriangulationBuilder, DelaunayizeConfig,
@@ -40,7 +41,7 @@ use delaunay::prelude::diagnostics::{
     verify_conflict_region_completeness,
 };
 use delaunay::prelude::flips::BistellarFlips;
-use delaunay::prelude::generators::{RandomPointGenerationError, generate_random_points_seeded};
+use delaunay::prelude::generators::generate_random_points_seeded;
 #[cfg(feature = "diagnostics")]
 use delaunay::prelude::geometry::{AdaptiveKernel, Coordinate};
 use delaunay::prelude::geometry::{
@@ -51,8 +52,8 @@ use delaunay::prelude::insertion::{
     repair_neighbor_pointers_local,
 };
 use delaunay::prelude::ordering::{
-    HilbertError, hilbert_index, hilbert_indices_prequantized, hilbert_quantize,
-    hilbert_sort_by_stable, hilbert_sort_by_unstable, hilbert_sorted_indices,
+    HilbertBitDepth, HilbertError, MAX_HILBERT_BITS, hilbert_index, hilbert_indices_prequantized,
+    hilbert_quantize, hilbert_sort_by_stable, hilbert_sort_by_unstable, hilbert_sorted_indices,
 };
 use delaunay::prelude::query::{ConvexHull, QueryError};
 use delaunay::prelude::repair::{
@@ -530,6 +531,19 @@ fn triangulation_prelude_covers_generic_layer() -> Result<(), GenericTriangulati
 }
 
 #[test]
+fn construction_prelude_covers_random_point_generation_failure_variant() {
+    assert_matches!(
+        DelaunayConstructionFailure::RandomPointGeneration {
+            source: RandomPointGenerationError::InvalidRange {
+                min: "1.0".to_string(),
+                max: "0.0".to_string(),
+            },
+        },
+        DelaunayConstructionFailure::RandomPointGeneration { .. }
+    );
+}
+
+#[test]
 fn diagnostic_preludes_cover_repair_apis() -> Result<(), PreludeExportTestError> {
     let vertices: Vec<Vertex<f64, (), 3>> = vec![
         vertex!([0.0, 0.0, 0.0]),
@@ -612,25 +626,27 @@ fn diagnostics_prelude_covers_opt_in_helpers() -> Result<(), PreludeExportTestEr
 #[test]
 fn ordering_prelude_covers_hilbert_apis() -> Result<(), HilbertError> {
     let coords = [[0.9_f64, 0.9], [0.1, 0.1], [0.5, 0.5]];
-    let order = hilbert_sorted_indices(&coords, (0.0, 1.0), 8)?;
+    assert_eq!(MAX_HILBERT_BITS, 31);
+    let bits = HilbertBitDepth::try_new(8)?;
+    let order = hilbert_sorted_indices(&coords, (0.0, 1.0), bits)?;
     assert_eq!(order.len(), coords.len());
 
     let quantized: Vec<[u32; 2]> = coords
         .iter()
-        .map(|coord| hilbert_quantize(coord, (0.0, 1.0), 8))
+        .map(|coord| hilbert_quantize(coord, (0.0, 1.0), bits))
         .collect::<Result<_, _>>()?;
-    let indices = hilbert_indices_prequantized(&quantized, 8)?;
+    let indices = hilbert_indices_prequantized(&quantized, bits)?;
     assert_eq!(indices.len(), coords.len());
 
-    let index = hilbert_index(&coords[0], (0.0, 1.0), 8)?;
+    let index = hilbert_index(&coords[0], (0.0, 1.0), bits)?;
     assert_eq!(index, indices[0]);
 
     let mut stable_payload = vec![0_usize, 1, 2];
-    hilbert_sort_by_stable(&mut stable_payload, (0.0, 1.0), 8, |&i| coords[i])?;
+    hilbert_sort_by_stable(&mut stable_payload, (0.0, 1.0), bits, |&i| coords[i])?;
     assert_eq!(stable_payload, order);
 
     let mut unstable_payload = vec![0_usize, 1, 2];
-    hilbert_sort_by_unstable(&mut unstable_payload, (0.0, 1.0), 8, |&i| coords[i])?;
+    hilbert_sort_by_unstable(&mut unstable_payload, (0.0, 1.0), bits, |&i| coords[i])?;
     assert_eq!(unstable_payload, order);
 
     Ok(())
