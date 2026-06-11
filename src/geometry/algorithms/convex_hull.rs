@@ -377,7 +377,7 @@ pub enum ConvexHullConstructionError {
 ///
 /// # Type Parameters
 ///
-/// * `T` - The coordinate scalar type (e.g., f64, f32)
+/// * `T` - The coordinate scalar type (`f64` in this crate)
 /// * `U` - The vertex data type
 /// * `V` - The simplex data type  
 /// * `D` - The dimension of the triangulation
@@ -1493,8 +1493,7 @@ where
             return Ok(false);
         }
         // Add epsilon-based bound to avoid false positives from numeric noise
-        // Use the type-specific default tolerance (1e-6 for f32, 1e-15 for f64)
-        // to handle near-surface points. This adapts automatically to coordinate precision.
+        // Use the f64 default tolerance to handle near-surface points.
         let epsilon_factor = K::Scalar::default_tolerance();
         let adjusted_threshold = max_edge_sq + max_edge_sq * epsilon_factor;
 
@@ -1975,7 +1974,9 @@ mod tests {
     use crate::core::traits::facet_cache::FacetCacheProvider;
     use crate::core::util::{checked_facet_key_from_vertex_keys, facet_view_to_vertices};
     use crate::geometry::kernel::AdaptiveKernel;
-    use crate::geometry::traits::coordinate::CoordinateConversionError;
+    use crate::geometry::traits::coordinate::{
+        CoordinateConversionError, CoordinateConversionValue, InvalidCoordinateValue,
+    };
     use crate::triangulation::DelaunayTriangulation;
     use crate::vertex;
     use std::assert_matches;
@@ -3860,7 +3861,7 @@ mod tests {
         let coord_error = ConvexHullConstructionError::CoordinateConversion(
             CoordinateConversionError::NonFiniteValue {
                 coordinate_index: 0,
-                coordinate_value: "NaN".to_string(),
+                coordinate_value: InvalidCoordinateValue::Nan,
             },
         );
         let display = format!("{coord_error}");
@@ -5323,7 +5324,7 @@ mod tests {
         let coord_error = ConvexHullConstructionError::CoordinateConversion(
             CoordinateConversionError::NonFiniteValue {
                 coordinate_index: 2,
-                coordinate_value: "Infinity".to_string(),
+                coordinate_value: InvalidCoordinateValue::PositiveInfinity,
             },
         );
         let coord_msg = format!("{coord_error}");
@@ -5350,7 +5351,7 @@ mod tests {
         // Test coordinate conversion error propagation
         let coord_conv_error = CoordinateConversionError::NonFiniteValue {
             coordinate_index: 0,
-            coordinate_value: "NaN".to_string(),
+            coordinate_value: InvalidCoordinateValue::Nan,
         };
         let hull_error: ConvexHullConstructionError = coord_conv_error.into();
         match hull_error {
@@ -5365,7 +5366,9 @@ mod tests {
             context: "visibility test".to_string(),
             source: CoordinateConversionError::ConversionFailed {
                 coordinate_index: 0,
-                coordinate_value: "degenerate simplex".to_string(),
+                coordinate_value: CoordinateConversionValue::Other(
+                    "degenerate simplex".to_string(),
+                ),
                 from_type: "predicate",
                 to_type: "orientation",
             },

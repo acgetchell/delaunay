@@ -65,18 +65,24 @@ delaunay/
 │   │   ├── profiling-benchmarks.yml
 │   │   ├── release-benchmarks.yml
 │   │   ├── rust-clippy.yml
-│   │   └── semgrep-sarif.yml
+│   │   ├── semgrep-sarif.yml
+│   │   └── zizmor.yml
 │   ├── CODEOWNERS
 │   └── dependabot.yml
 ├── benches/
 │   ├── common/
-│   │   └── bench_utils.rs
+│   │   ├── bench_utils.rs
+│   │   ├── flip_fixtures.rs
+│   │   └── flip_workflows.rs
 │   ├── PERFORMANCE_RESULTS.md
 │   ├── README.md
+│   ├── allocation_hot_paths.rs
+│   ├── boundary_uuid_iter.rs
 │   ├── ci_performance_suite.rs
 │   ├── circumsphere_containment.rs
 │   ├── cold_path_predicates.rs
 │   ├── profiling_suite.rs
+│   ├── remove_vertex.rs
 │   ├── tds_clone.rs
 │   └── topology_guarantee_construction.rs
 ├── docs/
@@ -92,6 +98,7 @@ delaunay/
 │   │   ├── invariant_validation_plan.md
 │   │   ├── issue_120_investigation.md
 │   │   ├── issue_204_investigation.md
+│   │   ├── issue_341_n1_repair_plan.md
 │   │   ├── jaccard.md
 │   │   ├── known_issues_4d_2026-04-23.md
 │   │   ├── optimization_recommendations_historical.md
@@ -117,9 +124,11 @@ delaunay/
 │   ├── RELEASING.md
 │   ├── api_design.md
 │   ├── code_organization.md
+│   ├── diagnostics.md
 │   ├── invariants.md
 │   ├── limitations.md
 │   ├── numerical_robustness_guide.md
+│   ├── production_review_remediation_checklist.md
 │   ├── property_testing_summary.md
 │   ├── roadmap.md
 │   ├── topology.md
@@ -136,13 +145,15 @@ delaunay/
 │   └── triangulation_and_hull.rs
 ├── scripts/
 │   ├── ci/
-│   │   └── capture_profiling_metadata.sh
+│   │   ├── capture_profiling_metadata.sh
+│   │   └── filter_codacy_sarif.py
 │   ├── tests/
 │   │   ├── __init__.py
 │   │   ├── conftest.py
 │   │   ├── test_archive_changelog.py
 │   │   ├── test_benchmark_models.py
 │   │   ├── test_benchmark_utils.py
+│   │   ├── test_filter_codacy_sarif.py
 │   │   ├── test_hardware_utils.py
 │   │   ├── test_postprocess_changelog.py
 │   │   ├── test_subprocess_utils.py
@@ -213,6 +224,7 @@ delaunay/
 │   │   │   ├── norms.rs
 │   │   │   ├── point_generation.rs
 │   │   │   └── triangulation_generation.rs
+│   │   ├── coordinate_range.rs
 │   │   ├── kernel.rs
 │   │   ├── matrix.rs
 │   │   ├── point.rs
@@ -254,9 +266,12 @@ delaunay/
 │   │   │       └── action_policy.yml
 │   │   ├── docs/
 │   │   │   └── command_order.sh
+│   │   ├── doctests/
+│   │   │   └── unwrap_expect.txt
 │   │   ├── scripts/
 │   │   │   └── tests/
-│   │   │       └── python_exceptions.py
+│   │   │       ├── python_exceptions.py
+│   │   │       └── python_parse_boundaries.py
 │   │   └── src/
 │   │       ├── core/
 │   │       │   └── algorithms/
@@ -266,6 +281,7 @@ delaunay/
 │   ├── COVERAGE.md
 │   ├── README.md
 │   ├── allocation_api.rs
+│   ├── benchmark_flip_fixtures.rs
 │   ├── circumsphere_debug_tools.rs
 │   ├── coordinate_conversion_errors.rs
 │   ├── dedup_batch_construction.rs
@@ -274,8 +290,10 @@ delaunay/
 │   ├── delaunay_repair_fallback.rs
 │   ├── delaunayize_workflow.rs
 │   ├── euler_characteristic.rs
+│   ├── example_workflows.rs
 │   ├── insert_with_statistics.rs
 │   ├── large_scale_debug.rs
+│   ├── pachner_roundtrip.rs
 │   ├── prelude_exports.rs
 │   ├── proptest_convex_hull.rs
 │   ├── proptest_delaunay_triangulation.proptest-regressions
@@ -482,7 +500,7 @@ benchmarks, and tests clear about which part of the API they exercise.
 | Hilbert ordering and quantization utilities | `use delaunay::prelude::ordering::*` |
 | Low-level incremental insertion building blocks | `use delaunay::prelude::insertion::*` |
 | Low-level TDS simplices, facets, keys, and validation reports | `use delaunay::prelude::tds::*` |
-| Points, kernels, predicates, and geometric measures | `use delaunay::prelude::geometry::*` |
+| Points, coordinate ranges, kernels, predicates, and geometric measures | `use delaunay::prelude::geometry::*` |
 | Random points or triangulations for examples, tests, and benchmarks | `use delaunay::prelude::generators::*` |
 | Read-only traversal, adjacency, convex hulls, and comparison helpers | `use delaunay::prelude::query::*` |
 | Topological spaces and topology traits | `use delaunay::prelude::topology::spaces::*` |
@@ -493,6 +511,9 @@ interactive use, but repository examples and benchmarks prefer focused preludes.
 
 **`src/geometry/`** - Geometric algorithms and predicates:
 
+- `coordinate_range.rs` - Validated coordinate-range value type used by random
+  point and triangulation generator APIs; external tuple inputs are parsed at
+  constructor boundaries and internal generation code consumes `CoordinateRange`
 - `kernel.rs` - Kernel abstraction (`AdaptiveKernel` default, `RobustKernel`, `FastKernel`) and `ExactPredicates` marker trait
 - `point.rs` - NaN-aware Point operations
 - `predicates.rs`, `robust_predicates.rs` - Geometric tests (see [Numerical Robustness Guide](numerical_robustness_guide.md))
@@ -501,13 +522,20 @@ interactive use, but repository examples and benchmarks prefer focused preludes.
   poorly-shaped simplices (supports 2D-6D)
 - `matrix.rs` - Linear algebra support
 - `algorithms/convex_hull.rs` - Hull extraction
-- `traits/coordinate.rs` - Coordinate abstractions
+- `traits/coordinate.rs` - Coordinate abstractions and typed coordinate
+  diagnostic payloads (`FiniteCoordinateValue`, `CoordinateConversionValue`,
+  `CoordinateValues`)
 - `util/` - Geometric utility functions organized by functionality
-  - `conversions.rs` - Safe coordinate type conversions with finite-value checking
+  - `conversions.rs` - Safe coordinate type conversions with finite-value
+    checking and `ValueConversionError`
   - `norms.rs` - Vector norms and distance computations (squared_norm, hypot)
-  - `circumsphere.rs` - Circumcenter and circumradius calculations for simplices
-  - `measures.rs` - Simplex volume, inradius, facet measure, surface measure computations
-  - `point_generation.rs` - Random point generation (uniform, grid, Poisson disk sampling)
+  - `circumsphere.rs` - Circumcenter and circumradius calculations for
+    simplices, plus `CircumcenterError`
+  - `measures.rs` - Simplex volume, inradius, facet measure, surface measure
+    computations, plus `SurfaceMeasureError`
+  - `point_generation.rs` - Random point generation (uniform, grid, Poisson
+    disk sampling), generator-specific range/count errors, and
+    `InvalidPositiveScalar`
   - `triangulation_generation.rs` - Random triangulation generation with topology guarantees
 
 **`src/delaunay/`** - Delaunay-facing implementation modules:
@@ -582,7 +610,7 @@ than through a `delaunay::delaunay` or `delaunay::triangulation` facade.
 The project structure reflects several key architectural decisions:
 
 1. **Separation of Concerns**: Clear boundaries between data structures (`core/`) and algorithms (`geometry/`)
-2. **Generic Design**: Extensive use of generics for coordinate types, data associations, and dimensionality
+2. **Generic Design**: Extensive use of generics for data associations and dimensionality, with `f64` as the only currently supported coordinate scalar
 3. **Trait-Based Architecture**: Heavy use of traits for extensibility and code reuse
 4. **Performance Focus**: Dedicated benchmarking infrastructure, performance regression detection, and memory allocation profiling
 5. **Memory Profiling**: Comprehensive allocation tracking with `count-allocations` feature for detailed memory analysis
@@ -1151,11 +1179,25 @@ mod tests {
 - Use consistent indentation and spacing
 - Include inline comments for complex logic
 
+#### Coordinate Scalar Policy
+
+The currently supported caller-visible coordinate scalar is `f64`. Core types may
+remain generic over `T` so combinatorial topology, payload data, and geometric
+operations stay orthogonal, but the supported construction, predicate,
+validation, and generator APIs use `f64` coordinates. This is intentional: the
+crate prioritizes topology, manifoldness, and strict geometric correctness over
+surface-level numeric generality.
+
+Exact arithmetic is already used internally by robust predicate fallbacks. If
+exact coordinates become caller-visible input in a future release, they should be
+introduced as an explicit documented coordinate model/API rather than by
+loosening `CoordinateScalar` to arbitrary numeric types.
+
 #### Testing Patterns
 
 - Comprehensive edge case coverage
 - Both positive and negative test cases
-- Type parameter variation testing (f32, f64, different dimensions)
+- Dimension variation testing for f64 coordinates
 - Serialization round-trip testing
 - Error message validation
 

@@ -12,6 +12,7 @@
 
 use std::assert_matches;
 
+use delaunay::geometry::CoordinateRange as GeometryCoordinateRange;
 use delaunay::prelude::DelaunayValidationError;
 use delaunay::prelude::algorithms::LocateResult;
 #[cfg(feature = "diagnostics")]
@@ -21,13 +22,17 @@ use delaunay::prelude::collections::{
 };
 use delaunay::prelude::construction::{
     CavityFillingError, CavityRepairStage, ConstructionOptions, ConstructionSkipSample,
-    ConstructionSlowInsertionSample, DelaunayConstructionFailure, DelaunayRepairPolicy,
-    DelaunayTriangulation, DelaunayTriangulationConstructionError, ExplicitConstructionError,
-    ExplicitDelaunayValidationError, ExplicitDelaunayValidationErrorKind,
-    ExplicitDelaunayValidationSourceKind, ExplicitInsertionError, ExplicitInsertionErrorKind,
-    ExplicitInvariantError, ExplicitInvariantErrorKind, ExplicitTdsError, ExplicitTdsErrorKind,
-    InsertionOrderStrategy, RandomPointGenerationError, SimplexValidationError, TopologyGuarantee,
-    Vertex, vertex,
+    ConstructionSlowInsertionSample, CoordinateRangeError as ConstructionCoordinateRangeError,
+    CoordinateRangeOrdering as ConstructionCoordinateRangeOrdering, DelaunayConstructionFailure,
+    DelaunayRepairPolicy, DelaunayTriangulation, DelaunayTriangulationConstructionError,
+    DelaunayTriangulationValidationError as ConstructionDelaunayTriangulationValidationError,
+    ExplicitConstructionError, ExplicitDelaunayValidationError,
+    ExplicitDelaunayValidationErrorKind, ExplicitDelaunayValidationSourceKind,
+    ExplicitInsertionError, ExplicitInsertionErrorKind, ExplicitInvariantError,
+    ExplicitInvariantErrorKind, ExplicitTdsError, ExplicitTdsErrorKind, InsertionOrderStrategy,
+    InvalidCoordinateValue as ConstructionInvalidCoordinateValue,
+    InvalidPositiveScalar as ConstructionInvalidPositiveScalar, RandomPointGenerationError,
+    SimplexValidationError, TopologyGuarantee, Vertex, vertex,
 };
 use delaunay::prelude::delaunayize::{
     DelaunayTriangulationBuilder as DelaunayizeDelaunayTriangulationBuilder, DelaunayizeConfig,
@@ -41,15 +46,19 @@ use delaunay::prelude::diagnostics::{
     verify_conflict_region_completeness,
 };
 use delaunay::prelude::flips::BistellarFlips;
-use delaunay::prelude::generators::generate_random_points_seeded;
+use delaunay::prelude::generators::{
+    CoordinateRange, CoordinateRangeError, generate_random_points_in_range_seeded,
+    generate_random_points_seeded,
+};
 #[cfg(feature = "diagnostics")]
 use delaunay::prelude::geometry::{AdaptiveKernel, Coordinate};
 use delaunay::prelude::geometry::{
     CoordinateConversionError, DegenerateSimplexReason, LaError, MatrixError, Point,
+    QualitySimplexVerticesError, SurfaceMeasureError,
 };
 use delaunay::prelude::insertion::{
-    InsertionError, NeighborRebuildError, Tds as InsertionTds, TdsMutationError,
-    repair_neighbor_pointers_local,
+    InitialSimplexConstructionError, InitialSimplexUnexpectedInsertionStage, InsertionError,
+    NeighborRebuildError, Tds as InsertionTds, TdsMutationError, repair_neighbor_pointers_local,
 };
 use delaunay::prelude::ordering::{
     HilbertBitDepth, HilbertError, MAX_HILBERT_BITS, hilbert_index, hilbert_indices_prequantized,
@@ -65,7 +74,9 @@ use delaunay::prelude::repair::{
 };
 #[cfg(feature = "diagnostics")]
 use delaunay::prelude::tds::Tds;
-use delaunay::prelude::tds::{InvariantErrorSummaryDetail, NeighborSlot, TdsErrorKind, VertexKey};
+use delaunay::prelude::tds::{
+    FacetError, InvariantErrorSummaryDetail, NeighborSlot, TdsError, TdsErrorKind, VertexKey,
+};
 use delaunay::prelude::topology::validation::{
     ManifoldError, RidgeVertices, RidgeVerticesError, ridge_star_simplices,
 };
@@ -84,7 +95,8 @@ use delaunay::prelude::validation::{
     ValidationPolicy as FocusedValidationPolicy,
 };
 use delaunay::prelude::{
-    SecureHashMap, SecureHashSet, ValidationConfigurationError as RootValidationConfigurationError,
+    CoordinateRange as RootCoordinateRange, SecureHashMap, SecureHashSet,
+    ValidationConfigurationError as RootValidationConfigurationError,
 };
 #[derive(Debug, thiserror::Error)]
 enum RootApiExportTestError {
@@ -100,6 +112,8 @@ enum RootApiExportTestError {
 
 #[derive(Debug, thiserror::Error)]
 enum PreludeExportTestError {
+    #[error(transparent)]
+    CoordinateRange(#[from] CoordinateRangeError),
     #[error(transparent)]
     RandomPointGeneration(#[from] RandomPointGenerationError),
     #[error(transparent)]
@@ -144,6 +158,7 @@ fn root_exports_cover_flattened_public_api() -> Result<(), RootApiExportTestErro
     use delaunay::validation::{DelaunayTriangulationValidationError, ValidationCadence};
     use delaunay::{
         ConstructionOptions, DelaunayTriangulation, DelaunayTriangulationBuilder,
+        InitialSimplexUnexpectedInsertionStage as RootInitialSimplexUnexpectedInsertionStage,
         TopologyGuarantee, ValidationPolicy,
     };
 
@@ -162,6 +177,16 @@ fn root_exports_cover_flattened_public_api() -> Result<(), RootApiExportTestErro
 
     assert_eq!(dt.topology_guarantee(), TopologyGuarantee::PLManifold);
     assert_eq!(dt.validation_policy(), ValidationPolicy::ExplicitOnly);
+    assert_matches!(
+        RootInitialSimplexUnexpectedInsertionStage::NonManifoldTopology {
+            facet_hash: 0x00C0_FFEE,
+            simplex_count: 3,
+        },
+        RootInitialSimplexUnexpectedInsertionStage::NonManifoldTopology {
+            facet_hash: 0x00C0_FFEE,
+            simplex_count: 3
+        }
+    );
     assert_matches!(
         ValidationCadence::from_optional_every(Some(2)),
         ValidationCadence::EveryN(every) if every.get() == 2
@@ -203,8 +228,8 @@ fn preludes_cover_bench_apis() -> Result<(), PreludeExportTestError> {
 
     assert_eq!(dt.topology_guarantee(), TopologyGuarantee::PLManifold);
     assert!(dt.boundary_facets()?.count() > 0);
-    assert!(ConvexHull::from_triangulation(dt.as_triangulation()).is_ok());
-    assert!(dt.validate().is_ok());
+    let _hull = ConvexHull::from_triangulation(dt.as_triangulation()).unwrap();
+    dt.validate().unwrap();
     assert_bistellar_flips(&dt);
 
     let mut empty_tds: InsertionTds<f64, (), (), 2> = InsertionTds::empty();
@@ -224,24 +249,23 @@ fn preludes_cover_bench_apis() -> Result<(), PreludeExportTestError> {
             max_validated_dimension: 3,
             tracking_issue: 416,
         };
-    let DelaunayConstructionFailure::UnsupportedPeriodicDimension {
-        dimension,
-        max_validated_dimension,
-        tracking_issue,
-    } = unsupported_periodic_dimension
-    else {
-        unreachable!("constructed unsupported periodic dimension variant should match");
-    };
-    assert_eq!(dimension, 4);
-    assert_eq!(max_validated_dimension, 3);
-    assert_eq!(tracking_issue, 416);
+    assert_matches!(
+        unsupported_periodic_dimension,
+        DelaunayConstructionFailure::UnsupportedPeriodicDimension {
+            dimension: 4,
+            max_validated_dimension: 3,
+            tracking_issue: 416,
+        }
+    );
     let cavity_failure = DelaunayConstructionFailure::InsertionCavityFilling {
         source: CavityFillingError::EmptyFanTriangulation,
     };
-    let DelaunayConstructionFailure::InsertionCavityFilling { source } = cavity_failure else {
-        unreachable!("constructed cavity-filling failure should match its own variant");
-    };
-    assert_eq!(source, CavityFillingError::EmptyFanTriangulation);
+    assert_matches!(
+        cavity_failure,
+        DelaunayConstructionFailure::InsertionCavityFilling {
+            source: CavityFillingError::EmptyFanTriangulation,
+        }
+    );
     assert_eq!(
         CavityRepairStage::PrimaryInsertion.to_string(),
         "primary insertion"
@@ -295,6 +319,71 @@ fn preludes_cover_bench_apis() -> Result<(), PreludeExportTestError> {
 }
 
 #[test]
+fn insertion_prelude_covers_initial_simplex_stage_errors() {
+    let stage = InitialSimplexUnexpectedInsertionStage::NonManifoldTopology {
+        facet_hash: 0xABCD,
+        simplex_count: 3,
+    };
+    let error = InitialSimplexConstructionError::UnexpectedInsertionStage {
+        reason: Box::new(stage),
+    };
+
+    assert_matches!(
+        error,
+        InitialSimplexConstructionError::UnexpectedInsertionStage { reason }
+            if matches!(
+                *reason,
+                InitialSimplexUnexpectedInsertionStage::NonManifoldTopology {
+                    facet_hash: 0xABCD,
+                    simplex_count: 3,
+                }
+            )
+    );
+}
+
+#[test]
+fn geometry_prelude_covers_typed_error_variants() {
+    let quality_error = QualitySimplexVerticesError::UnexpectedTdsFailure {
+        source: Box::new(TdsError::DuplicateSimplices {
+            message: "same vertex set appears twice".to_string(),
+        }),
+    };
+    assert_matches!(
+        quality_error,
+        QualitySimplexVerticesError::UnexpectedTdsFailure { source }
+            if matches!(
+                *source,
+                TdsError::DuplicateSimplices { ref message }
+                    if message == "same vertex set appears twice"
+            )
+    );
+
+    let surface_error = SurfaceMeasureError::FacetVertices {
+        source: FacetError::SimplexNotFoundInTriangulation,
+    };
+    assert_matches!(
+        surface_error,
+        SurfaceMeasureError::FacetVertices {
+            source: FacetError::SimplexNotFoundInTriangulation
+        }
+    );
+}
+
+#[test]
+fn generator_prelude_covers_validated_coordinate_ranges() -> Result<(), PreludeExportTestError> {
+    let generated_range = CoordinateRange::try_new(0.0_f64, 1.0)?;
+    let range_points: Vec<Point<f64, 2>> =
+        generate_random_points_in_range_seeded(3, generated_range, 42);
+
+    let root_range = RootCoordinateRange::try_new(-1.0_f64, 1.0)?;
+    assert_eq!(root_range.bounds(), (-1.0, 1.0));
+    let geometry_range = GeometryCoordinateRange::try_new(-2.0_f64, -1.0)?;
+    assert_eq!(geometry_range.bounds(), (-2.0, -1.0));
+    assert_eq!(range_points.len(), 3);
+    Ok(())
+}
+
+#[test]
 fn construction_prelude_covers_explicit_error_summaries() {
     let explicit_tds = ExplicitTdsError {
         kind: ExplicitTdsErrorKind::FacetSharingViolation,
@@ -303,24 +392,27 @@ fn construction_prelude_covers_explicit_error_summaries() {
     let explicit_construction = ExplicitConstructionError::StructuralValidation {
         source: explicit_tds,
     };
-    let ExplicitConstructionError::StructuralValidation { source } = explicit_construction else {
-        unreachable!("constructed structural validation variant should match");
-    };
-    assert_eq!(source.kind, ExplicitTdsErrorKind::FacetSharingViolation);
+    assert_matches!(
+        explicit_construction,
+        ExplicitConstructionError::StructuralValidation {
+            source: ExplicitTdsError {
+                kind: ExplicitTdsErrorKind::FacetSharingViolation,
+                ..
+            }
+        }
+    );
 
     let simplex_creation = ExplicitConstructionError::SimplexCreation {
         simplex_index: 3,
         source: SimplexValidationError::DuplicateVertices,
     };
-    let ExplicitConstructionError::SimplexCreation {
-        simplex_index,
-        source,
-    } = simplex_creation
-    else {
-        unreachable!("constructed simplex creation variant should match");
-    };
-    assert_eq!(simplex_index, 3);
-    assert_eq!(source, SimplexValidationError::DuplicateVertices);
+    assert_matches!(
+        simplex_creation,
+        ExplicitConstructionError::SimplexCreation {
+            simplex_index: 3,
+            source: SimplexValidationError::DuplicateVertices,
+        }
+    );
 
     let explicit_insertion = ExplicitInsertionError {
         kind: ExplicitInsertionErrorKind::TopologyValidation,
@@ -515,7 +607,7 @@ fn triangulation_prelude_covers_generic_layer() -> Result<(), GenericTriangulati
         GenericTriangulation::new_empty(TriangulationFastKernel::new());
     tri.set_topology_guarantee(TriangulationTopologyGuarantee::Pseudomanifold);
     tri.set_validation_policy(TriangulationValidationPolicy::Never);
-    assert!(tri.validate().is_ok());
+    tri.validate().unwrap();
 
     let empty_issues = TriangulationFacetIssuesMap::default();
     let removed = tri
@@ -534,12 +626,39 @@ fn triangulation_prelude_covers_generic_layer() -> Result<(), GenericTriangulati
 fn construction_prelude_covers_random_point_generation_failure_variant() {
     assert_matches!(
         DelaunayConstructionFailure::RandomPointGeneration {
-            source: RandomPointGenerationError::InvalidRange {
-                min: "1.0".to_string(),
-                max: "0.0".to_string(),
+            source: RandomPointGenerationError::InvalidCoordinateRange {
+                source: ConstructionCoordinateRangeError::NonIncreasing {
+                    ordering: ConstructionCoordinateRangeOrdering::Decreasing,
+                    min: 1.0,
+                    max: 0.0,
+                },
             },
         },
         DelaunayConstructionFailure::RandomPointGeneration { .. }
+    );
+
+    assert_matches!(
+        DelaunayConstructionFailure::RandomPointGeneration {
+            source: RandomPointGenerationError::InvalidBallRadius {
+                reason: ConstructionInvalidPositiveScalar::NonFinite {
+                    value: ConstructionInvalidCoordinateValue::Nan,
+                },
+            },
+        },
+        DelaunayConstructionFailure::RandomPointGeneration { .. }
+    );
+
+    assert_matches!(
+        DelaunayConstructionFailure::FinalDelaunayValidation {
+            source: ConstructionDelaunayTriangulationValidationError::VerificationFailed {
+                message: "synthetic final Level 4 failure".to_string(),
+            },
+        },
+        DelaunayConstructionFailure::FinalDelaunayValidation {
+            source: ConstructionDelaunayTriangulationValidationError::VerificationFailed {
+                message,
+            },
+        } if message == "synthetic final Level 4 failure"
     );
 }
 

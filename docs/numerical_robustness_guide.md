@@ -17,6 +17,19 @@ For a runnable companion, see
 cargo run --release --example numerical_robustness
 ```
 
+## Coordinate input model
+
+The currently supported caller-visible coordinate scalar is `f64`. This is a
+deliberate correctness boundary: the crate's linear algebra backend and
+geometric predicates are designed around f64 fast filters with exact-arithmetic
+fallbacks, while topology and manifold validation stay combinatorial where
+possible.
+
+Exact arithmetic is already part of the predicate pipeline, but exact
+coordinates are not currently a public input type. If exact-coordinate input is
+supported in the future, it should be introduced as an explicit documented
+coordinate model/API rather than as arbitrary scalar genericity.
+
 ## Robustness toolbox
 
 ### Exact predicates (v0.7.1+)
@@ -170,7 +183,7 @@ Some geometric degeneracies are retryable via a small deterministic perturbation
 **progressive magnitude**: each retry multiplies the perturbation by ×10, spanning
 several orders of magnitude across the retry budget. The base magnitude is
 scale-invariant — it is proportional to the local feature size (nearest-vertex distance)
-and uses ≈√machine_epsilon as the base factor (`1e-8` for `f64`, `1e-4` for `f32`).
+and uses ≈√machine_epsilon as the base factor (`1e-8` for `f64`).
 With the default 3 retries, the ladder is:
 
 - attempt 1: `1e-7 × local_scale`
@@ -287,7 +300,7 @@ available and its simplex size covers the current tolerance, this is an amortize
 local lookup; otherwise it falls back to a linear scan.
 
 The check uses a scale-aware **distance** tolerance, not a fixed squared-distance
-threshold. For `f64`, the relative factor is `1e-10`; for `f32`, it is `1e-6`.
+threshold. For `f64`, the relative factor is `1e-10`.
 The actual tolerance is estimated from a nearby simplex span or local feature
 scale, with a small ULP-scaled floor for translated coordinate systems. The
 comparison is overflow-safe: it compares squared distances against

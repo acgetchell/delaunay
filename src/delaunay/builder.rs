@@ -483,10 +483,11 @@ pub enum ExplicitInsertionErrorKind {
 /// use delaunay::prelude::construction::{
 ///     ExplicitInsertionError, ExplicitInsertionErrorKind,
 /// };
+/// use delaunay::prelude::geometry::CoordinateValues;
 /// use delaunay::prelude::insertion::InsertionError;
 ///
 /// let source = InsertionError::DuplicateCoordinates {
-///     coordinates: "[0.0, 0.0]".to_string(),
+///     coordinates: CoordinateValues::from([0.0, 0.0]),
 /// };
 /// let summary = ExplicitInsertionError::from(source);
 ///
@@ -1129,10 +1130,10 @@ impl<'v, T, U, const D: usize> DelaunayTriangulationBuilder<'v, T, U, D> {
     /// #     Construction(#[from] delaunay::prelude::construction::DelaunayTriangulationConstructionError),
     /// # }
     /// # fn main() -> Result<(), ExampleError> {
-    /// let vertices: Vec<Vertex<f32, (), 2>> = vec![
-    ///     VertexBuilder::default().point(Point::new([0.0_f32, 0.0])).build()?,
-    ///     VertexBuilder::default().point(Point::new([1.0_f32, 0.0])).build()?,
-    ///     VertexBuilder::default().point(Point::new([0.0_f32, 1.0])).build()?,
+    /// let vertices: Vec<Vertex<f64, (), 2>> = vec![
+    ///     VertexBuilder::default().point(Point::new([0.0, 0.0])).build()?,
+    ///     VertexBuilder::default().point(Point::new([1.0, 0.0])).build()?,
+    ///     VertexBuilder::default().point(Point::new([0.0, 1.0])).build()?,
     /// ];
     /// let simplices = vec![vec![0, 1, 2]];
     ///
@@ -1160,11 +1161,11 @@ impl<'v, T, U, const D: usize> DelaunayTriangulationBuilder<'v, T, U, D> {
         }
     }
 
-    /// Creates a builder from a vertex slice of any scalar type `T` and user data type `U`.
+    /// Creates a builder from a vertex slice.
     ///
-    /// For `f64` coordinates, prefer [`new`](DelaunayTriangulationBuilder::new) which
+    /// For raw coordinate arrays, prefer [`new`](DelaunayTriangulationBuilder::new) which
     /// infers all type parameters without explicit annotations. Use `from_vertices`
-    /// when `T ≠ f64` (e.g. `f32`).
+    /// when callers already have validated [`Vertex`] values.
     ///
     /// # Examples
     ///
@@ -1182,11 +1183,10 @@ impl<'v, T, U, const D: usize> DelaunayTriangulationBuilder<'v, T, U, D> {
     /// #     Construction(#[from] delaunay::prelude::construction::DelaunayTriangulationConstructionError),
     /// # }
     /// # fn main() -> Result<(), ExampleError> {
-    /// // f32 vertices — new() is f64-only, so from_vertices is required here.
-    /// let vertices: Vec<Vertex<f32, (), 2>> = vec![
-    ///     VertexBuilder::default().point(Point::new([0.0_f32, 0.0])).build()?,
-    ///     VertexBuilder::default().point(Point::new([1.0_f32, 0.0])).build()?,
-    ///     VertexBuilder::default().point(Point::new([0.0_f32, 1.0])).build()?,
+    /// let vertices: Vec<Vertex<f64, (), 2>> = vec![
+    ///     VertexBuilder::default().point(Point::new([0.0, 0.0])).build()?,
+    ///     VertexBuilder::default().point(Point::new([1.0, 0.0])).build()?,
+    ///     VertexBuilder::default().point(Point::new([0.0, 1.0])).build()?,
     /// ];
     ///
     /// let dt = DelaunayTriangulationBuilder::from_vertices(&vertices)
@@ -3015,6 +3015,7 @@ mod tests {
     use crate::core::vertex::VertexBuilder;
     use crate::core::vertex::VertexValidationError;
     use crate::geometry::kernel::RobustKernel;
+    use crate::geometry::traits::coordinate::CoordinateValues;
     use crate::repair::DelaunayRepairOperation;
     use crate::topology::traits::global_topology_model::{
         EuclideanModel, GlobalTopologyModel, GlobalTopologyModelError, ToroidalModel,
@@ -3410,7 +3411,7 @@ mod tests {
         );
         assert_explicit_insertion_error(
             InsertionError::DuplicateCoordinates {
-                coordinates: "[0.0, 0.0]".to_string(),
+                coordinates: CoordinateValues::from([0.0, 0.0]),
             },
             ExplicitInsertionErrorKind::DuplicateCoordinates,
             None,

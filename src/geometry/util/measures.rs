@@ -5,18 +5,61 @@
 
 #![forbid(unsafe_code)]
 
-use super::conversions::{safe_coords_to_f64, safe_scalar_from_f64, safe_usize_to_scalar};
+use super::circumsphere::{
+    CircumcenterError, CircumcenterFailureReason, DegenerateGeometry, DegenerateMeasure,
+};
+use super::conversions::{
+    ValueConversionError, ValueConversionFailureReason, safe_coords_to_f64, safe_scalar_from_f64,
+    safe_usize_to_scalar,
+};
 use super::norms::hypot;
 use crate::core::facet::FacetView;
 use crate::core::traits::data_type::DataType;
 use crate::geometry::matrix::{DEFAULT_SINGULAR_TOL, Matrix, matrix_get, matrix_set};
 use crate::geometry::point::Point;
-use crate::geometry::traits::coordinate::{Coordinate, CoordinateScalar};
+use crate::geometry::traits::coordinate::{
+    Coordinate, CoordinateConversionValue, CoordinateScalar,
+};
+use crate::tds::FacetError;
 use num_traits::Float;
 use std::ops::AddAssign;
 
-// Re-export error types
-pub use super::{CircumcenterError, SurfaceMeasureError, ValueConversionError};
+/// Error type for surface measure computation operations.
+///
+/// # Examples
+///
+/// ```rust
+/// use delaunay::prelude::geometry::{CircumcenterError, SurfaceMeasureError};
+///
+/// let err = SurfaceMeasureError::from(CircumcenterError::EmptyPointSet);
+/// std::assert_matches!(err, SurfaceMeasureError::GeometryError { .. });
+/// ```
+#[derive(Clone, Debug, thiserror::Error, PartialEq)]
+#[non_exhaustive]
+pub enum SurfaceMeasureError {
+    /// Error retrieving vertices from a facet.
+    #[error("Failed to retrieve facet vertices: {source}")]
+    FacetVertices {
+        /// Underlying facet lookup error.
+        #[from]
+        source: FacetError,
+    },
+    /// Error computing geometry measure.
+    #[error("Geometry computation failed: {source}")]
+    GeometryError {
+        /// Underlying geometry error.
+        #[source]
+        source: Box<CircumcenterError>,
+    },
+}
+
+impl From<CircumcenterError> for SurfaceMeasureError {
+    fn from(source: CircumcenterError) -> Self {
+        Self::GeometryError {
+            source: Box::new(source),
+        }
+    }
+}
 
 const DEGENERACY_EPSILON_FACTOR: f64 = 64.0;
 
@@ -128,7 +171,10 @@ where
             // Check for degeneracy (coincident points).
             if length == T::zero() {
                 return Err(CircumcenterError::MatrixInversionFailed {
-                    details: "Degenerate simplex with zero volume (coincident points)".to_string(),
+                    reason: CircumcenterFailureReason::DegenerateSimplex {
+                        measure: DegenerateMeasure::Volume,
+                        degeneracy: DegenerateGeometry::CoincidentPoints,
+                    },
                 });
             }
 
@@ -153,7 +199,10 @@ where
             let cross_scale = Float::abs(v1[0] * v2[1]) + Float::abs(v1[1] * v2[0]);
             if is_zero_or_roundoff(cross_z, cross_scale)? {
                 return Err(CircumcenterError::MatrixInversionFailed {
-                    details: "Degenerate simplex with zero volume (collinear points)".to_string(),
+                    reason: CircumcenterFailureReason::DegenerateSimplex {
+                        measure: DegenerateMeasure::Volume,
+                        degeneracy: DegenerateGeometry::CollinearPoints,
+                    },
                 });
             }
 
@@ -192,7 +241,10 @@ where
                 + Float::abs(v1[2] * v2[1] * v3[0]);
             if is_zero_or_roundoff(triple_product, triple_scale)? {
                 return Err(CircumcenterError::MatrixInversionFailed {
-                    details: "Degenerate simplex with zero volume (coplanar points)".to_string(),
+                    reason: CircumcenterFailureReason::DegenerateSimplex {
+                        measure: DegenerateMeasure::Volume,
+                        degeneracy: DegenerateGeometry::CoplanarPoints,
+                    },
                 });
             }
 
@@ -221,21 +273,23 @@ where
 fn validate_gram_determinant(det: f64) -> Result<f64, CircumcenterError> {
     if !det.is_finite() {
         return Err(CircumcenterError::MatrixInversionFailed {
-            details: "Gram determinant is non-finite".to_string(),
+            reason: CircumcenterFailureReason::NonFiniteGramDeterminant,
         });
     }
 
     if det < 0.0 {
         return Err(CircumcenterError::MatrixInversionFailed {
-            details: "Gram matrix has negative determinant (degenerate simplex)".to_string(),
+            reason: CircumcenterFailureReason::NegativeGramDeterminant,
         });
     }
 
     // Degenerate case: zero determinant means no volume
     if det == 0.0 {
         return Err(CircumcenterError::MatrixInversionFailed {
-            details: "Degenerate simplex with zero volume (collinear or coplanar points)"
-                .to_string(),
+            reason: CircumcenterFailureReason::DegenerateSimplex {
+                measure: DegenerateMeasure::Volume,
+                degeneracy: DegenerateGeometry::CollinearOrCoplanarPoints,
+            },
         });
     }
 
@@ -248,12 +302,12 @@ fn factorial_f64(n: usize) -> Result<f64, CircumcenterError> {
     for k in 2..=n {
         let k_f64 =
             safe_usize_to_scalar::<f64>(k).map_err(|e| CircumcenterError::ValueConversion {
-                source: ValueConversionError::ConversionFailed {
-                    value: k.to_string(),
+                source: Box::new(ValueConversionError::CoordinateConversion {
+                    value: CoordinateConversionValue::from_usize(k),
                     from_type: "usize",
                     to_type: "f64",
-                    details: e.to_string(),
-                },
+                    source: Box::new(e),
+                }),
             })?;
         value *= k_f64;
     }
@@ -395,7 +449,10 @@ where
 
     if volume <= T::zero() {
         return Err(CircumcenterError::MatrixInversionFailed {
-            details: format!("Degenerate simplex with volume ≈ {volume:?}"),
+            reason: CircumcenterFailureReason::NonPositiveSimplexMeasure {
+                measure: DegenerateMeasure::Volume,
+                value: CoordinateConversionValue::from_numeric_debug(&volume),
+            },
         });
     }
 
@@ -421,18 +478,21 @@ where
     // Check for degenerate surface area.
     if surface_area <= T::zero() {
         return Err(CircumcenterError::MatrixInversionFailed {
-            details: format!("Degenerate simplex with surface_area ≈ {surface_area:?}"),
+            reason: CircumcenterFailureReason::NonPositiveSimplexMeasure {
+                measure: DegenerateMeasure::SurfaceArea,
+                value: CoordinateConversionValue::from_numeric_debug(&surface_area),
+            },
         });
     }
 
     // inradius = D * volume / surface_area
     let d_scalar = T::from(D).ok_or_else(|| CircumcenterError::ValueConversion {
-        source: ValueConversionError::ConversionFailed {
-            value: D.to_string(),
+        source: Box::new(ValueConversionError::ConversionFailed {
+            value: CoordinateConversionValue::from_usize(D),
             from_type: "usize",
             to_type: std::any::type_name::<T>(),
-            details: "Failed to convert dimension to coordinate type".to_string(),
-        },
+            reason: ValueConversionFailureReason::TargetTypeRejected,
+        }),
     })?;
 
     let inradius = (d_scalar * volume) / surface_area;
@@ -527,7 +587,10 @@ where
             // Check for degeneracy (coincident points).
             if length == T::zero() {
                 return Err(CircumcenterError::MatrixInversionFailed {
-                    details: "Degenerate facet with zero length (coincident points)".to_string(),
+                    reason: CircumcenterFailureReason::DegenerateFacet {
+                        measure: DegenerateMeasure::Length,
+                        degeneracy: DegenerateGeometry::CoincidentPoints,
+                    },
                 });
             }
 
@@ -564,7 +627,10 @@ where
                 + Float::abs(v1[1] * v2[0]);
             if is_zero_or_roundoff(cross_magnitude, cross_scale)? {
                 return Err(CircumcenterError::MatrixInversionFailed {
-                    details: "Degenerate facet with zero area (collinear points)".to_string(),
+                    reason: CircumcenterFailureReason::DegenerateFacet {
+                        measure: DegenerateMeasure::Area,
+                        degeneracy: DegenerateGeometry::CollinearPoints,
+                    },
                 });
             }
 
@@ -738,14 +804,14 @@ where
 
         // Convert vertices to Points for measure calculation
         let points: Vec<Point<T, D>> = facet_vertices
-            .map_err(SurfaceMeasureError::FacetError)?
+            .map_err(SurfaceMeasureError::from)?
             .map(|v| {
                 let coords = *v.point().coords();
                 Point::new(coords)
             })
             .collect();
 
-        let measure = facet_measure(&points).map_err(SurfaceMeasureError::GeometryError)?;
+        let measure = facet_measure(&points).map_err(SurfaceMeasureError::from)?;
         total_measure += measure;
     }
 
@@ -764,6 +830,14 @@ mod tests {
     use crate::triangulation::DelaunayTriangulation;
     use crate::vertex;
     use approx::assert_relative_eq;
+
+    #[test]
+    fn surface_measure_error_display_names_variants() {
+        let error = SurfaceMeasureError::from(CircumcenterError::EmptyPointSet);
+        let display = format!("{error}");
+        assert!(display.contains("Geometry computation failed"));
+        assert!(display.contains("Empty point set"));
+    }
 
     // =============================================================================
     // SIMPLEX VOLUME TESTS
@@ -848,7 +922,16 @@ mod tests {
             Point::new([2.0, 2.0]),
         ];
         let result = simplex_volume(&collinear);
-        assert!(result.is_err(), "Degenerate simplex should return an error");
+        assert_matches!(
+            result,
+            Err(CircumcenterError::MatrixInversionFailed {
+                reason: CircumcenterFailureReason::DegenerateSimplex {
+                    measure: DegenerateMeasure::Volume,
+                    degeneracy: DegenerateGeometry::CollinearPoints,
+                },
+            }),
+            "Degenerate simplex should return a typed collinearity error"
+        );
     }
 
     #[test]
@@ -860,7 +943,16 @@ mod tests {
             Point::new([0.25, 0.25, 0.0]),
         ];
         let result = simplex_volume(&coplanar);
-        assert!(result.is_err(), "coplanar tetrahedron should be degenerate");
+        assert_matches!(
+            result,
+            Err(CircumcenterError::MatrixInversionFailed {
+                reason: CircumcenterFailureReason::DegenerateSimplex {
+                    measure: DegenerateMeasure::Volume,
+                    degeneracy: DegenerateGeometry::CoplanarPoints,
+                },
+            }),
+            "coplanar tetrahedron should be a typed degeneracy"
+        );
     }
 
     #[test]
@@ -1065,13 +1157,28 @@ mod tests {
 
     #[test]
     fn gram_determinant_nonfinite_errors() {
-        assert!(validate_gram_determinant(f64::NAN).is_err());
-        assert!(validate_gram_determinant(f64::INFINITY).is_err());
+        assert_matches!(
+            validate_gram_determinant(f64::NAN),
+            Err(CircumcenterError::MatrixInversionFailed {
+                reason: CircumcenterFailureReason::NonFiniteGramDeterminant,
+            })
+        );
+        assert_matches!(
+            validate_gram_determinant(f64::INFINITY),
+            Err(CircumcenterError::MatrixInversionFailed {
+                reason: CircumcenterFailureReason::NonFiniteGramDeterminant,
+            })
+        );
     }
 
     #[test]
     fn test_validate_gram_determinant_tiny_negative_errors() {
-        assert!(validate_gram_determinant(-1e-13).is_err());
+        assert_matches!(
+            validate_gram_determinant(-1e-13),
+            Err(CircumcenterError::MatrixInversionFailed {
+                reason: CircumcenterFailureReason::NegativeGramDeterminant,
+            })
+        );
     }
 
     // Macro to test orthogonal edges across dimensions
@@ -1556,36 +1663,6 @@ mod tests {
         let measure = facet_measure(&points).unwrap();
         // Triangle with base=3, height=4, area=6
         assert_relative_eq!(measure, 6.0, epsilon = 1e-10);
-    }
-
-    // =============================================================================
-    // COORDINATE TYPE TESTS (f32 vs f64)
-    // =============================================================================
-
-    #[test]
-    fn test_facet_measure_f32_vs_f64_consistency() {
-        // Test that f32 and f64 give similar results (within tolerance)
-        let points_f64 = vec![
-            Point::new([0.0_f64, 0.0_f64, 0.0_f64]),
-            Point::new([3.0_f64, 0.0_f64, 0.0_f64]),
-            Point::new([0.0_f64, 4.0_f64, 0.0_f64]),
-        ];
-        let points_f32 = vec![
-            Point::new([0.0_f32, 0.0_f32, 0.0_f32]),
-            Point::new([3.0_f32, 0.0_f32, 0.0_f32]),
-            Point::new([0.0_f32, 4.0_f32, 0.0_f32]),
-        ];
-
-        let measure_f64 = facet_measure(&points_f64).unwrap();
-        let measure_f32 = facet_measure(&points_f32).unwrap();
-
-        // Convert f32 result to f64 for comparison
-        let measure_f32_as_f64 = f64::from(measure_f32);
-
-        // Should be approximately equal (within f32 precision)
-        assert_relative_eq!(measure_f64, measure_f32_as_f64, epsilon = 1e-6);
-        assert_relative_eq!(measure_f64, 6.0, epsilon = 1e-10);
-        assert_relative_eq!(measure_f32_as_f64, 6.0, epsilon = 1e-6);
     }
 
     // =============================================================================

@@ -400,6 +400,87 @@ rules:
         - "/tests/semgrep/**"
     pattern-regex: '(?m)(?<!#\[non_exhaustive\]\n)^\s*pub\s+enum\s+[A-Za-z0-9_]*Error\b'
 
+  - id: delaunay.rust.no-stringly-generator-error-payloads
+    languages:
+      - generic
+    severity: WARNING
+    message: >-
+      Store generator scalar/range/count error payloads as coordinate types,
+      CoordinateRange<T>, or numeric count/index types, not preformatted Strings.
+    metadata:
+      category: correctness
+      rationale: >-
+        Random generator errors should preserve validated coordinate values and
+        discrete count/index values for callers to pattern-match; Display
+        formatting belongs at presentation time, not in the error payload.
+    paths:
+      include:
+        - "/src/geometry/util/point_generation.rs"
+        - "/tests/semgrep/src/project_rules/**/*.rs"
+    pattern-either:
+      - pattern-regex: >-
+          (?s)pub\s+enum\s+InvalidPositiveScalar(?:\s*<[^>{}]*>)?\s*\{.*?\bNonPositive\s*\{[^}]*\bvalue\s*:\s*String\s*,
+      - pattern-regex: '^\s*(?:min_distance|bounds_min|bounds_max|bounds)\s*:\s*String\s*,'
+      - pattern-regex: >-
+          (?s)\bCoordinateConversionFailed\s*\{[^}]*\bvalue\s*:\s*String\s*,
+
+  - id: delaunay.rust.no-stringly-coordinate-range-error-payloads
+    languages:
+      - generic
+    severity: WARNING
+    message: "Store non-increasing coordinate range bounds as coordinate scalars, not preformatted Strings."
+    metadata:
+      category: correctness
+      rationale: >-
+        CoordinateRangeError::NonIncreasing is produced after finite raw bounds
+        have been parsed far enough to preserve their scalar values. Formatting
+        those values into Strings discards typed validation evidence.
+    paths:
+      include:
+        - "/src/geometry/coordinate_range.rs"
+        - "/tests/semgrep/src/project_rules/**/*.rs"
+    pattern-regex: >-
+      (?s)\bNonIncreasing\s*\{[^}]*\b(?:min|max)\s*:\s*String\s*,
+
+  - id: delaunay.rust.no-stringly-numeric-error-payloads
+    languages:
+      - generic
+    severity: WARNING
+    message: >-
+      Store coordinate, conversion, quality, and measure diagnostic payloads as
+      typed numeric/enumerated values, not preformatted Strings.
+    metadata:
+      category: correctness
+      rationale: >-
+        Numeric and non-finite diagnostics are parse-don't-validate boundaries:
+        callers should be able to match CoordinateConversionValue,
+        InvalidCoordinateValue, and domain reason enums without parsing Display
+        text.
+    paths:
+      include:
+        - "/src/geometry/traits/coordinate.rs"
+        - "/src/geometry/util/conversions.rs"
+        - "/src/geometry/util/circumsphere.rs"
+        - "/src/geometry/quality.rs"
+        - "/src/core/construction.rs"
+        - "/src/core/algorithms/incremental_insertion.rs"
+        - "/src/core/algorithms/flips.rs"
+        - "/src/delaunay/construction.rs"
+        - "/tests/semgrep/src/project_rules/**/*.rs"
+    pattern-either:
+      - pattern-regex: >-
+          (?s)\b(?:ConversionFailed|NonFiniteValue|InvalidCoordinate)\s*\{[^}]*\bcoordinate_value\s*:\s*String\s*,
+      - pattern-regex: >-
+          (?s)\b(?:ConversionFailed|ValueConversionFailed)\s*\{[^}]*\bvalue\s*:\s*String\s*,[^}]*\b(?:details|reason)\s*:\s*String\s*,
+      - pattern-regex: >-
+          (?s)\bDegenerateSimplex\s*\{[^}]*\b(?:observed|epsilon|avg_edge_length)\s*:\s*(?:Option\s*<\s*)?String\s*,
+      - pattern-regex: >-
+          (?s)\bMatrixInversionFailed\s*\{[^}]*\bdetails\s*:\s*String\s*,
+      - pattern-regex: >-
+          (?s)\bPerturbationScaleConversion\s*\{[^}]*\bvalue\s*:\s*String\s*,
+      - pattern-regex: >-
+          (?s)\bDuplicateCoordinates\s*\{[^}]*\bcoordinates\s*:\s*String\s*,
+
   - id: delaunay.rust.flip-error-nested-payloads-boxed
     languages:
       - generic

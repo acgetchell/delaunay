@@ -18,6 +18,7 @@
 use std::assert_matches;
 
 use delaunay::prelude::construction::{DelaunayTriangulation, TopologyGuarantee, vertex};
+use delaunay::prelude::geometry::CoordinateValues;
 use delaunay::prelude::insertion::{InsertionError, InsertionOutcome};
 
 // =============================================================================
@@ -170,11 +171,12 @@ fn delaunay_insert_with_statistics_duplicate_coordinates_2d() {
     // The strict statistics API reports skipped insertions as errors so callers
     // using `?` cannot miss them.
     let result = dt.insert_with_statistics(vertex!([1.0, 2.0]));
+    let duplicate_coordinates = CoordinateValues::from([1.0, 2.0]);
     assert!(
         matches!(
             result,
             Err(InsertionError::DuplicateCoordinates { ref coordinates })
-                if coordinates.contains('1') && coordinates.contains('2')
+                if coordinates == &duplicate_coordinates
         ),
         "expected duplicate coordinate error, got: {result:?}"
     );
@@ -189,8 +191,7 @@ fn delaunay_insert_with_statistics_duplicate_coordinates_2d() {
             },
             stats,
         )) => {
-            assert!(coordinates.contains('1'));
-            assert!(coordinates.contains('2'));
+            assert_eq!(coordinates, duplicate_coordinates);
             assert!(stats.skipped_duplicate());
             assert_eq!(stats.attempts, 1);
         }

@@ -807,7 +807,9 @@ mod tests {
     use crate::core::vertex::Vertex;
     use crate::geometry::kernel::FastKernel;
     use crate::geometry::point::Point;
-    use crate::geometry::traits::coordinate::{Coordinate, CoordinateConversionError};
+    use crate::geometry::traits::coordinate::{
+        Coordinate, CoordinateConversionError, InvalidCoordinateValue,
+    };
     use crate::triangulation::DelaunayTriangulation;
     use std::assert_matches;
 
@@ -991,7 +993,7 @@ mod tests {
         let vertex_key = VertexKey::from(slotmap::KeyData::from_ffi(2));
         let source = CoordinateConversionError::NonFiniteValue {
             coordinate_index: 0,
-            coordinate_value: "NaN".to_string(),
+            coordinate_value: InvalidCoordinateValue::Nan,
         };
         let err = DelaunayValidationError::NumericPredicateError {
             simplex_key,

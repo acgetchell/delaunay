@@ -8,7 +8,7 @@
 //!
 //! - **Geometry when you need it**: the `Vertex` type does not require `T: CoordinateScalar`
 //!   at the type level, but geometric operations, validation, and serialization are only
-//!   available when `T: CoordinateScalar` (e.g. `f32`, `f64`)
+//!   available when `T: CoordinateScalar` (`f64` in this crate)
 //! - **Unique Identification**: Each vertex has a UUID for consistent identification
 //! - **Optional Data Storage**: [`Vertex`] and [`VertexBuilder`] support arbitrary
 //!   user data `U`; serialization adds [`DataSerialize`] / [`DataDeserialize`]
@@ -122,7 +122,7 @@ pub enum VertexBuilderError {
 ///
 /// # Generic Parameters
 ///
-/// * `T` - The coordinate scalar type
+/// * `T` - The coordinate scalar type (`f64` for supported geometric operations)
 /// * `U` - User data type. [`VertexBuilder`] accepts arbitrary metadata; serialization
 ///   requires [`DataSerialize`] / [`DataDeserialize`] when serializing or deserializing
 ///   a [`Vertex`].
@@ -214,7 +214,7 @@ impl<T, U, const D: usize> VertexBuilder<T, U, D> {
 /// # Returns
 ///
 /// Returns `Vertex<T, U, D>` where:
-/// - `T` is the coordinate scalar type
+/// - `T` is the coordinate scalar type (`f64` for supported geometric operations)
 /// - `U` is the user data type (use `()` for no data)
 /// - `D` is the spatial dimension
 ///
@@ -270,7 +270,7 @@ pub use crate::vertex;
 ///
 /// # Generic Parameters
 ///
-/// * `T` - The scalar coordinate type (typically `f32` or `f64`)
+/// * `T` - The scalar coordinate type (`f64` in this crate)
 /// * `U` - User data type stored with the vertex (use `()` for no data)
 /// * `D` - The spatial dimension (compile-time constant)
 ///
@@ -284,7 +284,8 @@ pub use crate::vertex;
 ///
 /// # Constraints
 ///
-/// - `T` must implement `CoordinateScalar` for geometric operations, validation, and serialization
+/// - `T` must implement `CoordinateScalar` for geometric operations, validation, and serialization;
+///   the only currently supported caller-visible coordinate scalar is `f64`
 ///   (the struct itself does not require it, enabling purely combinatorial use)
 /// - `U` has no bound for standalone [`Vertex`] and [`VertexBuilder`] construction
 ///   or access. Serialization uses [`DataSerialize`] / [`DataDeserialize`]; TDS and
@@ -939,7 +940,9 @@ mod tests {
     use crate::core::traits::DataType;
     use crate::core::util::{UuidValidationError, make_uuid, usize_to_u8};
     use crate::geometry::point::Point;
-    use crate::geometry::traits::coordinate::Coordinate;
+    use crate::geometry::traits::coordinate::{
+        Coordinate, CoordinateValidationError, InvalidCoordinateValue,
+    };
     use approx::{assert_abs_diff_eq, assert_relative_eq};
     use serde::{Deserialize, Serialize};
     use slotmap::KeyData;
@@ -1747,14 +1750,10 @@ mod tests {
     // =============================================================================
 
     #[test]
-    #[expect(clippy::too_many_lines, reason = "Comprehensive validation test")]
     fn test_vertex_validation() {
-        // Test valid vertices with various coordinate types and dimensions
+        // Test valid vertices with f64 coordinates and various dimensions
         let valid_f64: Vertex<f64, (), 3> = vertex!([1.0, 2.0, 3.0]);
         assert!(valid_f64.is_valid().is_ok());
-
-        let valid_f32: Vertex<f32, (), 2> = vertex!([1.5f32, 2.5f32]);
-        assert!(valid_f32.is_valid().is_ok());
 
         let valid_negative: Vertex<f64, (), 3> = vertex!([-1.0, -2.0, -3.0]);
         assert!(valid_negative.is_valid().is_ok());
@@ -1785,14 +1784,6 @@ mod tests {
             data: None,
         };
         assert!(invalid_all_nan.is_valid().is_err());
-
-        let invalid_nan_f32: Vertex<f32, (), 2> = Vertex {
-            point: Point::new([1.0f32, f32::NAN]),
-            uuid: make_uuid(),
-            incident_simplex: None,
-            data: None,
-        };
-        assert!(invalid_nan_f32.is_valid().is_err());
 
         let invalid_1d_nan: Vertex<f64, (), 1> = Vertex {
             point: Point::new([f64::NAN]),
@@ -1826,14 +1817,6 @@ mod tests {
             data: None,
         };
         assert!(invalid_neg_inf.is_valid().is_err());
-
-        let invalid_inf_f32: Vertex<f32, (), 2> = Vertex {
-            point: Point::new([f32::INFINITY, 2.0f32]),
-            uuid: make_uuid(),
-            incident_simplex: None,
-            data: None,
-        };
-        assert!(invalid_inf_f32.is_valid().is_err());
 
         let invalid_mixed: Vertex<f64, (), 3> = Vertex {
             point: Point::new([f64::NAN, f64::INFINITY, 1.0]),
@@ -2147,12 +2130,11 @@ mod tests {
     #[test]
     fn test_vertex_validation_error_display() {
         // Test error display formatting
-        let point_error =
-            crate::geometry::traits::coordinate::CoordinateValidationError::InvalidCoordinate {
-                coordinate_index: 1,
-                coordinate_value: "NaN".to_string(),
-                dimension: 3,
-            };
+        let point_error = CoordinateValidationError::InvalidCoordinate {
+            coordinate_index: 1,
+            coordinate_value: InvalidCoordinateValue::Nan,
+            dimension: 3,
+        };
         let vertex_error = VertexValidationError::InvalidPoint {
             source: point_error,
         };
@@ -2177,12 +2159,11 @@ mod tests {
         };
         assert_eq!(error1, error2);
 
-        let point_error =
-            crate::geometry::traits::coordinate::CoordinateValidationError::InvalidCoordinate {
-                coordinate_index: 1,
-                coordinate_value: "NaN".to_string(),
-                dimension: 3,
-            };
+        let point_error = CoordinateValidationError::InvalidCoordinate {
+            coordinate_index: 1,
+            coordinate_value: InvalidCoordinateValue::Nan,
+            dimension: 3,
+        };
         let error3 = VertexValidationError::InvalidPoint {
             source: point_error.clone(),
         };

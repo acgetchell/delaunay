@@ -46,7 +46,9 @@ Notes:
 - This repository does not use `mod.rs`; module declarations live in `src/lib.rs`.
 - Topology is combinatorial: core types (`Tds`, `Simplex`, `Vertex`) do not require
   `T: CoordinateScalar` at the type level; geometric operations/validation are
-  gated behind `T: CoordinateScalar`.
+  gated behind `T: CoordinateScalar`. The currently supported caller-visible
+  coordinate scalar is `f64`; exact-coordinate input, if added in the future,
+  should be an explicit documented API rather than incidental generic support.
 
 ## Level 3 topology validation (`Triangulation::is_valid()`)
 

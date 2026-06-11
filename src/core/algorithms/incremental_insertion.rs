@@ -38,8 +38,9 @@ use crate::core::construction::TriangulationConstructionError;
 use crate::core::facet::{FacetError, FacetHandle};
 use crate::core::simplex::{NeighborSlot, Simplex, SimplexValidationError};
 use crate::core::tds::{
-    DelaunayValidationErrorKind, EntityKind, GeometricError, NeighborValidationError, SimplexKey,
-    Tds, TdsConstructionError, TdsError, TdsErrorKind, TriangulationValidationErrorKind, VertexKey,
+    DelaunayValidationErrorKind, EntityKind, GeometricError, InvariantErrorSummary,
+    NeighborValidationError, SimplexKey, Tds, TdsConstructionError, TdsError, TdsErrorKind,
+    TriangulationValidationErrorKind, VertexKey,
 };
 use crate::core::traits::boundary_analysis::BoundaryAnalysis;
 use crate::core::traits::data_type::DataType;
@@ -49,7 +50,9 @@ use crate::geometry::kernel::Kernel;
 use crate::geometry::point::Point;
 use crate::geometry::predicates::Orientation;
 use crate::geometry::robust_predicates::robust_orientation;
-use crate::geometry::traits::coordinate::{CoordinateConversionError, CoordinateScalar};
+use crate::geometry::traits::coordinate::{
+    CoordinateConversionError, CoordinateConversionValue, CoordinateScalar, CoordinateValues,
+};
 use crate::validation::DelaunayTriangulationValidationError;
 use std::fmt;
 use std::hash::{Hash, Hasher};
@@ -460,6 +463,75 @@ impl From<TdsConstructionError> for TdsConstructionFailure {
     }
 }
 
+/// Typed insertion-stage failure that should not occur while bootstrapping an initial simplex.
+#[derive(Debug, Clone, thiserror::Error, PartialEq)]
+#[non_exhaustive]
+pub enum InitialSimplexUnexpectedInsertionStage {
+    /// Cavity filling escaped initial-simplex construction.
+    #[error("cavity filling failed during insertion: {source}")]
+    CavityFilling {
+        /// Underlying cavity filling error.
+        #[source]
+        source: Box<CavityFillingError>,
+    },
+
+    /// Conflict-region extraction escaped initial-simplex construction.
+    #[error("conflict region failed during insertion: {source}")]
+    ConflictRegion {
+        /// Underlying conflict-region error.
+        #[source]
+        source: ConflictError,
+    },
+
+    /// Point location escaped initial-simplex construction.
+    #[error("point location failed during insertion: {source}")]
+    Location {
+        /// Underlying point-location error.
+        #[source]
+        source: LocateError,
+    },
+
+    /// Insertion detected non-manifold topology before incremental insertion began.
+    #[error("facet {facet_hash:#x} shared by {simplex_count} simplices during initial simplex")]
+    NonManifoldTopology {
+        /// Hash of the over-shared facet.
+        facet_hash: u64,
+        /// Number of incident simplices sharing the facet.
+        simplex_count: usize,
+    },
+
+    /// Hull extension escaped initial-simplex construction.
+    #[error("hull extension failed during insertion: {reason}")]
+    HullExtension {
+        /// Structured hull-extension failure reason.
+        reason: HullExtensionReason,
+    },
+
+    /// Delaunay validation escaped initial-simplex construction.
+    #[error("Delaunay validation failed during insertion: {source}")]
+    DelaunayValidation {
+        /// Underlying Delaunay validation error.
+        #[source]
+        source: DelaunayTriangulationValidationError,
+    },
+
+    /// Topology validation escaped initial-simplex construction.
+    #[error("topology validation failed during insertion: {source}")]
+    TopologyValidation {
+        /// Underlying topology validation error.
+        #[source]
+        source: Box<TriangulationValidationError>,
+    },
+
+    /// Final topology validation escaped initial-simplex construction.
+    #[error("final topology validation failed after construction: {source}")]
+    FinalTopologyValidation {
+        /// Underlying final topology validation summary.
+        #[source]
+        source: InvariantErrorSummary,
+    },
+}
+
 /// Structured reason why initial-simplex construction failed during insertion.
 #[derive(Debug, Clone, thiserror::Error, PartialEq)]
 #[non_exhaustive]
@@ -515,8 +587,8 @@ pub enum InitialSimplexConstructionError {
     /// Duplicate coordinates were detected in the bootstrap simplex.
     #[error("duplicate coordinates while building initial simplex: {coordinates}")]
     DuplicateCoordinates {
-        /// Duplicate coordinate tuple.
-        coordinates: String,
+        /// Duplicate coordinate tuple stored as typed coordinate payloads.
+        coordinates: CoordinateValues,
     },
 
     /// Local repair would remove more simplices than the active budget allowed.
@@ -545,11 +617,12 @@ pub enum InitialSimplexConstructionError {
 
     /// An insertion-stage-only construction error escaped initial-simplex construction.
     #[error(
-        "unexpected insertion-stage construction error while building initial simplex: {message}"
+        "unexpected insertion-stage construction error while building initial simplex: {reason}"
     )]
     UnexpectedInsertionStage {
-        /// Display form of the unexpected insertion-stage error.
-        message: String,
+        /// Structured insertion-stage failure that escaped bootstrap construction.
+        #[source]
+        reason: Box<InitialSimplexUnexpectedInsertionStage>,
     },
 }
 
@@ -575,7 +648,9 @@ impl From<TriangulationConstructionError> for InitialSimplexConstructionError {
             }
             TriangulationConstructionError::InsertionCavityFilling { source } => {
                 Self::UnexpectedInsertionStage {
-                    message: format!("cavity filling failed during insertion: {source}"),
+                    reason: Box::new(InitialSimplexUnexpectedInsertionStage::CavityFilling {
+                        source: Box::new(source),
+                    }),
                 }
             }
             TriangulationConstructionError::InsufficientVertices { dimension, source } => {
@@ -601,35 +676,46 @@ impl From<TriangulationConstructionError> for InitialSimplexConstructionError {
             }
             TriangulationConstructionError::InsertionConflictRegion { source } => {
                 Self::UnexpectedInsertionStage {
-                    message: source.to_string(),
+                    reason: Box::new(InitialSimplexUnexpectedInsertionStage::ConflictRegion {
+                        source,
+                    }),
                 }
             }
             TriangulationConstructionError::InsertionLocation { source } => {
                 Self::UnexpectedInsertionStage {
-                    message: source.to_string(),
+                    reason: Box::new(InitialSimplexUnexpectedInsertionStage::Location { source }),
                 }
             }
             TriangulationConstructionError::InsertionNonManifoldTopology {
                 facet_hash,
                 simplex_count,
             } => Self::UnexpectedInsertionStage {
-                message: format!(
-                    "facet {facet_hash:#x} shared by {simplex_count} simplices during initial simplex"
+                reason: Box::new(
+                    InitialSimplexUnexpectedInsertionStage::NonManifoldTopology {
+                        facet_hash,
+                        simplex_count,
+                    },
                 ),
             },
             TriangulationConstructionError::InsertionHullExtension { reason } => {
                 Self::UnexpectedInsertionStage {
-                    message: reason.to_string(),
+                    reason: Box::new(InitialSimplexUnexpectedInsertionStage::HullExtension {
+                        reason,
+                    }),
                 }
             }
             TriangulationConstructionError::InsertionDelaunayValidation { source } => {
                 Self::UnexpectedInsertionStage {
-                    message: source.to_string(),
+                    reason: Box::new(InitialSimplexUnexpectedInsertionStage::DelaunayValidation {
+                        source,
+                    }),
                 }
             }
             TriangulationConstructionError::InsertionTopologyValidation { source, .. } => {
                 Self::UnexpectedInsertionStage {
-                    message: source.to_string(),
+                    reason: Box::new(InitialSimplexUnexpectedInsertionStage::TopologyValidation {
+                        source: Box::new(source),
+                    }),
                 }
             }
             TriangulationConstructionError::LocalRepairBudgetExceeded {
@@ -641,7 +727,9 @@ impl From<TriangulationConstructionError> for InitialSimplexConstructionError {
             },
             TriangulationConstructionError::FinalTopologyValidation { source, .. } => {
                 Self::UnexpectedInsertionStage {
-                    message: source.to_string(),
+                    reason: Box::new(
+                        InitialSimplexUnexpectedInsertionStage::FinalTopologyValidation { source },
+                    ),
                 }
             }
         }
@@ -1158,8 +1246,8 @@ pub enum CavityFillingError {
     /// Bootstrap perturbation scale could not be represented in the scalar type.
     #[error("failed to convert perturbation scale {value} into scalar type")]
     PerturbationScaleConversion {
-        /// Value that could not be converted.
-        value: String,
+        /// Requested perturbation scale stored as a typed coordinate-conversion payload.
+        value: CoordinateConversionValue,
     },
 
     /// The locate result lies on a lower-dimensional feature that insertion does not support yet.
@@ -1341,8 +1429,10 @@ pub enum NeighborWiringError {
 /// ```rust
 /// use delaunay::prelude::insertion::InsertionError;
 ///
+/// use delaunay::prelude::geometry::CoordinateValues;
+///
 /// let err = InsertionError::DuplicateCoordinates {
-///     coordinates: "[0.0, 0.0, 0.0]".to_string(),
+///     coordinates: CoordinateValues::from([0.0, 0.0, 0.0]),
 /// };
 /// std::assert_matches!(err, InsertionError::DuplicateCoordinates { .. });
 /// ```
@@ -1426,8 +1516,8 @@ pub enum InsertionError {
         "Duplicate coordinates: vertex with coordinates {coordinates} already exists in the triangulation"
     )]
     DuplicateCoordinates {
-        /// String representation of the duplicate coordinates.
-        coordinates: String,
+        /// Duplicate coordinate tuple stored as typed coordinate payloads.
+        coordinates: CoordinateValues,
     },
 
     /// Attempted to insert an entity with a UUID that already exists.
@@ -1552,8 +1642,10 @@ impl InsertionError {
     /// };
     /// assert!(retryable.is_retryable());
     ///
+    /// use delaunay::prelude::geometry::CoordinateValues;
+    ///
     /// let not_retryable = InsertionError::DuplicateCoordinates {
-    ///     coordinates: "[0.0, 0.0, 0.0]".to_string(),
+    ///     coordinates: CoordinateValues::from([0.0, 0.0, 0.0]),
     /// };
     /// assert!(!not_retryable.is_retryable());
     ///
@@ -4275,7 +4367,9 @@ mod tests {
     use crate::core::tds::GeometricError;
     use crate::core::validation::TopologyGuarantee;
     use crate::geometry::kernel::FastKernel;
-    use crate::geometry::traits::coordinate::{Coordinate, CoordinateConversionError};
+    use crate::geometry::traits::coordinate::{
+        Coordinate, CoordinateConversionError, CoordinateConversionValue,
+    };
     use crate::topology::characteristics::euler::TopologyClassification;
     use crate::vertex;
     use slotmap::KeyData;
@@ -4879,7 +4973,7 @@ mod tests {
     #[test]
     fn test_neighbor_rebuild_error_unexpected_preserves_source_summary() {
         let source = InsertionError::DuplicateCoordinates {
-            coordinates: "[0.0, 0.0]".to_string(),
+            coordinates: CoordinateValues::from([0.0, 0.0]),
         };
 
         let err = NeighborRebuildError::from(source.clone());
@@ -5443,7 +5537,7 @@ mod tests {
             !InsertionError::ConflictRegion(ConflictError::PredicateError {
                 source: CoordinateConversionError::ConversionFailed {
                     coordinate_index: 0,
-                    coordinate_value: "test".to_string(),
+                    coordinate_value: CoordinateConversionValue::Other("test".to_string()),
                     from_type: "f64",
                     to_type: "f64",
                 },
@@ -5518,7 +5612,7 @@ mod tests {
 
         assert!(
             !InsertionError::DuplicateCoordinates {
-                coordinates: "0,0,0".to_string()
+                coordinates: CoordinateValues::from([0.0, 0.0, 0.0])
             }
             .is_retryable()
         );
@@ -5579,7 +5673,7 @@ mod tests {
                 reason: HullExtensionReason::PredicateFailed(
                     CoordinateConversionError::ConversionFailed {
                         coordinate_index: 0,
-                        coordinate_value: "test".to_string(),
+                        coordinate_value: CoordinateConversionValue::Other("test".to_string()),
                         from_type: "f64",
                         to_type: "f64",
                     }

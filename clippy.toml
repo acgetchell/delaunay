@@ -4,8 +4,6 @@
 # Minimum Supported Rust Version - matches Cargo.toml and rust-toolchain.toml
 msrv = "1.96.0"
 
-# Note: Lint levels are controlled via command-line flags in AGENTS.md:
-# cargo clippy --workspace --all-targets --all-features -- -D warnings -W clippy::pedantic -W clippy::nursery -W clippy::cargo
-#
-# This file contains configuration options that Clippy supports.
-# For IDE consistency, configure rust-analyzer with the same command-line flags.
+# Lint levels are controlled by Cargo.toml plus the `just clippy` / CI
+# invocation flags. This file contains Clippy configuration options that are
+# not lint levels.

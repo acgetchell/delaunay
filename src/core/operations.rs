@@ -367,11 +367,12 @@ impl DelaunayInsertionState {
 ///
 /// ```rust
 /// use delaunay::prelude::insertion::InsertionError;
+/// use delaunay::prelude::geometry::CoordinateValues;
 /// use delaunay::prelude::operations::InsertionOutcome;
 ///
 /// let outcome = InsertionOutcome::Skipped {
 ///     error: InsertionError::DuplicateCoordinates {
-///         coordinates: "[0.0, 0.0, 0.0]".to_string(),
+///         coordinates: CoordinateValues::from([0.0, 0.0, 0.0]),
 ///     },
 /// };
 /// std::assert_matches!(outcome, InsertionOutcome::Skipped { .. });

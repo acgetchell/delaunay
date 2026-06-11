@@ -54,7 +54,7 @@ use crate::geometry::predicates::simplex_orientation;
 use crate::geometry::predicates::{Orientation, simplex_orientation_fast_filter_sign};
 use crate::geometry::robust_predicates::robust_orientation;
 use crate::geometry::traits::coordinate::{
-    Coordinate, CoordinateConversionError, CoordinateScalar,
+    Coordinate, CoordinateConversionError, CoordinateScalar, CoordinateValues,
 };
 use crate::topology::traits::global_topology_model::{
     GlobalTopologyModel, GlobalTopologyModelAdapter,
@@ -3267,8 +3267,8 @@ pub enum FlipNeighborWiringError {
     /// Duplicate coordinates reached flip neighbor wiring.
     #[error("duplicate coordinates reached flip neighbor wiring: {coordinates}")]
     DuplicateCoordinates {
-        /// Duplicate coordinate tuple.
-        coordinates: String,
+        /// Duplicate coordinate tuple stored as typed coordinate payloads.
+        coordinates: CoordinateValues,
     },
     /// Duplicate UUID reached flip neighbor wiring.
     #[error("duplicate UUID reached flip neighbor wiring: {entity:?} {uuid}")]

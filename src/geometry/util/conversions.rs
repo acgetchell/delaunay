@@ -6,11 +6,66 @@
 
 #![forbid(unsafe_code)]
 
-use crate::geometry::traits::coordinate::{CoordinateConversionError, CoordinateScalar};
+use crate::geometry::traits::coordinate::{
+    CoordinateConversionError, CoordinateConversionValue, CoordinateScalar, InvalidCoordinateValue,
+};
 use num_traits::cast;
 
-// Re-export error type
-pub use super::ValueConversionError;
+/// Structured reason why a direct value conversion failed.
+#[derive(Clone, Debug, thiserror::Error, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum ValueConversionFailureReason {
+    /// The target coordinate type rejected the input value.
+    #[error("target type rejected value")]
+    TargetTypeRejected,
+}
+
+/// Errors that can occur during value type conversions.
+///
+/// # Examples
+///
+/// ```rust
+/// use delaunay::prelude::geometry::{
+///     CoordinateConversionValue, ValueConversionError, ValueConversionFailureReason,
+/// };
+///
+/// let err = ValueConversionError::ConversionFailed {
+///     value: CoordinateConversionValue::from_f64(1.0),
+///     from_type: "f64",
+///     to_type: "u32",
+///     reason: ValueConversionFailureReason::TargetTypeRejected,
+/// };
+/// std::assert_matches!(err, ValueConversionError::ConversionFailed { .. });
+/// ```
+#[derive(Clone, Debug, thiserror::Error, PartialEq)]
+#[non_exhaustive]
+pub enum ValueConversionError {
+    /// Failed to convert a value from one type to another.
+    #[error("Cannot convert {value} from {from_type} to {to_type}: {reason}")]
+    ConversionFailed {
+        /// The value that failed to convert.
+        value: CoordinateConversionValue,
+        /// Source type name.
+        from_type: &'static str,
+        /// Target type name.
+        to_type: &'static str,
+        /// Structured reason for the conversion failure.
+        reason: ValueConversionFailureReason,
+    },
+    /// A lower-level coordinate conversion failed while converting a derived value.
+    #[error("Cannot convert {value} from {from_type} to {to_type}: {source}")]
+    CoordinateConversion {
+        /// The value that failed to convert.
+        value: CoordinateConversionValue,
+        /// Source type name.
+        from_type: &'static str,
+        /// Target type name.
+        to_type: &'static str,
+        /// Structured source conversion failure.
+        #[source]
+        source: Box<CoordinateConversionError>,
+    },
+}
 
 /// Safely convert a coordinate value from type T to f64.
 /// This function provides proper error handling for coordinate type conversions,
@@ -38,13 +93,13 @@ pub(in crate::geometry::util) fn safe_cast_to_f64<T: CoordinateScalar>(
     if !value.is_finite_generic() {
         return Err(CoordinateConversionError::NonFiniteValue {
             coordinate_index,
-            coordinate_value: format!("{value:?}"),
+            coordinate_value: InvalidCoordinateValue::from_debug(&value),
         });
     }
 
     cast(value).ok_or_else(|| CoordinateConversionError::ConversionFailed {
         coordinate_index,
-        coordinate_value: format!("{value:?}"),
+        coordinate_value: CoordinateConversionValue::from_numeric_debug(&value),
         from_type: std::any::type_name::<T>(),
         to_type: "f64",
     })
@@ -77,13 +132,13 @@ pub(in crate::geometry::util) fn safe_cast_from_f64<T: CoordinateScalar>(
     if !value.is_finite() {
         return Err(CoordinateConversionError::NonFiniteValue {
             coordinate_index,
-            coordinate_value: format!("{value:?}"),
+            coordinate_value: InvalidCoordinateValue::from_debug(&value),
         });
     }
 
     cast(value).ok_or_else(|| CoordinateConversionError::ConversionFailed {
         coordinate_index,
-        coordinate_value: format!("{value:?}"),
+        coordinate_value: CoordinateConversionValue::from_f64(value),
         from_type: "f64",
         to_type: std::any::type_name::<T>(),
     })
@@ -112,15 +167,15 @@ pub(in crate::geometry::util) fn safe_cast_from_f64<T: CoordinateScalar>(
 /// use delaunay::prelude::geometry::{CoordinateConversionError, safe_coords_to_f64};
 ///
 /// # fn main() -> Result<(), CoordinateConversionError> {
-/// // Convert f32 coordinates to f64
-/// let coords_f32 = [1.5f32, 2.5f32, 3.5f32];
-/// let coords_f64 = safe_coords_to_f64(&coords_f32)?;
-/// assert_eq!(coords_f64, [1.5f64, 2.5f64, 3.5f64]);
+/// // Convert f64 coordinates to f64 after validation
+/// let coords = [1.5, 2.5, 3.5];
+/// let coords_f64 = safe_coords_to_f64(&coords)?;
+/// assert_eq!(coords_f64, [1.5, 2.5, 3.5]);
 ///
 /// // Works with different array sizes - 4D example
-/// let coords_4d = [1.0f32, 2.0f32, 3.0f32, 4.0f32];
+/// let coords_4d = [1.0, 2.0, 3.0, 4.0];
 /// let result_4d = safe_coords_to_f64(&coords_4d)?;
-/// assert_eq!(result_4d, [1.0f64, 2.0f64, 3.0f64, 4.0f64]);
+/// assert_eq!(result_4d, [1.0, 2.0, 3.0, 4.0]);
 /// # Ok(())
 /// # }
 /// ```
@@ -157,15 +212,15 @@ pub fn safe_coords_to_f64<T: CoordinateScalar, const D: usize>(
 /// use delaunay::prelude::geometry::{CoordinateConversionError, safe_coords_from_f64};
 ///
 /// # fn main() -> Result<(), CoordinateConversionError> {
-/// // Convert f64 coordinates to f32
-/// let coords_f64 = [1.5f64, 2.5f64, 3.5f64];
-/// let coords_f32: [f32; 3] = safe_coords_from_f64(&coords_f64)?;
-/// assert_eq!(coords_f32, [1.5f32, 2.5f32, 3.5f32]);
+/// // Convert f64 coordinates to validated f64 coordinates
+/// let coords_f64 = [1.5, 2.5, 3.5];
+/// let coords_checked: [f64; 3] = safe_coords_from_f64(&coords_f64)?;
+/// assert_eq!(coords_checked, [1.5, 2.5, 3.5]);
 ///
 /// // Works with different array sizes - 4D example
-/// let coords_4d = [1.0f64, 2.0f64, 3.0f64, 4.0f64];
-/// let result_4d: [f32; 4] = safe_coords_from_f64(&coords_4d)?;
-/// assert_eq!(result_4d, [1.0f32, 2.0f32, 3.0f32, 4.0f32]);
+/// let coords_4d = [1.0, 2.0, 3.0, 4.0];
+/// let result_4d: [f64; 4] = safe_coords_from_f64(&coords_4d)?;
+/// assert_eq!(result_4d, [1.0, 2.0, 3.0, 4.0]);
 /// # Ok(())
 /// # }
 /// ```
@@ -204,9 +259,9 @@ pub fn safe_coords_from_f64<T: CoordinateScalar, const D: usize>(
 /// use delaunay::prelude::geometry::{CoordinateConversionError, safe_scalar_to_f64};
 ///
 /// # fn main() -> Result<(), CoordinateConversionError> {
-/// let value_f32 = 42.5f32;
-/// let value_f64 = safe_scalar_to_f64(value_f32)?;
-/// assert_eq!(value_f64, 42.5f64);
+/// let value = 42.5;
+/// let value_f64 = safe_scalar_to_f64(value)?;
+/// assert_eq!(value_f64, 42.5);
 /// # Ok(())
 /// # }
 /// ```
@@ -236,14 +291,9 @@ pub fn safe_scalar_to_f64<T: CoordinateScalar>(value: T) -> Result<f64, Coordina
 /// use delaunay::prelude::geometry::{CoordinateConversionError, safe_scalar_from_f64};
 ///
 /// # fn main() -> Result<(), CoordinateConversionError> {
-/// // Convert f64 to f32
-/// let value_f64 = 123.456f64;
-/// let value_f32: f32 = safe_scalar_from_f64(value_f64)?;
-/// assert!((value_f32 - 123.456f32).abs() < 1e-6);
-///
 /// // Convert f64 to f64 (identity)
-/// let value: f64 = safe_scalar_from_f64(42.0f64)?;
-/// assert_eq!(value, 42.0f64);
+/// let value: f64 = safe_scalar_from_f64(42.0)?;
+/// assert_eq!(value, 42.0);
 /// # Ok(())
 /// # }
 /// ```
@@ -253,13 +303,12 @@ pub fn safe_scalar_from_f64<T: CoordinateScalar>(
     safe_cast_from_f64(value, 0)
 }
 
-/// Safely convert a `usize` value to a coordinate scalar type T.
+/// Safely convert a `usize` value to the supported coordinate scalar type.
 ///
-/// This function handles the conversion from `usize` to coordinate scalar types
-/// with proper precision checking. The conversion goes through `f64` as an intermediate,
-/// so we must guard against precision loss in both the f64 conversion and the final
-/// conversion to type T. The function uses the minimum mantissa bits of f64 (53 bits)
-/// and the target type T to determine the safe conversion limit.
+/// This function handles the conversion from `usize` to `T: CoordinateScalar`
+/// with proper precision checking. The currently supported caller-visible
+/// coordinate scalar is `f64`; the generic return type exists to share the
+/// coordinate-scalar contract across APIs.
 ///
 /// # Arguments
 ///
@@ -300,11 +349,8 @@ pub fn safe_scalar_from_f64<T: CoordinateScalar>(
 ///
 /// The function uses the minimum mantissa bits between f64 and the target type:
 /// - `f64` integers are exact up to 2^53 − 1 (9,007,199,254,740,991)
-/// - `f32` integers are exact up to 2^24 − 1 (16,777,215)
-/// - For f32 targets: `usize` values larger than 2^24 − 1 will cause an error
 /// - For f64 targets: `usize` values larger than 2^53 − 1 will cause an error
-/// - On 32-bit platforms, `usize` is only 32 bits, so f32 precision loss is possible
-/// - On 64-bit platforms, `usize` can be up to 64 bits, so both f32 and f64 precision loss is possible
+/// - On 64-bit platforms, `usize` can be up to 64 bits, so f64 precision loss is possible
 pub fn safe_usize_to_scalar<T: CoordinateScalar>(
     value: usize,
 ) -> Result<T, CoordinateConversionError> {
@@ -319,7 +365,7 @@ pub fn safe_usize_to_scalar<T: CoordinateScalar>(
     let value_u64 =
         u64::try_from(value).map_err(|_| CoordinateConversionError::ConversionFailed {
             coordinate_index: 0,
-            coordinate_value: format!("{value}"),
+            coordinate_value: CoordinateConversionValue::from_usize(value),
             from_type: "usize",
             to_type: std::any::type_name::<T>(),
         })?;
@@ -327,7 +373,7 @@ pub fn safe_usize_to_scalar<T: CoordinateScalar>(
     if u128::from(value_u64) > max_precise_u128 {
         return Err(CoordinateConversionError::ConversionFailed {
             coordinate_index: 0,
-            coordinate_value: format!("{value}"),
+            coordinate_value: CoordinateConversionValue::from_usize(value),
             from_type: "usize",
             to_type: std::any::type_name::<T>(),
         });
@@ -338,7 +384,7 @@ pub fn safe_usize_to_scalar<T: CoordinateScalar>(
     let f64_value: f64 =
         cast(value).ok_or_else(|| CoordinateConversionError::ConversionFailed {
             coordinate_index: 0,
-            coordinate_value: format!("{value}"),
+            coordinate_value: CoordinateConversionValue::from_usize(value),
             from_type: "usize",
             to_type: "f64",
         })?;
@@ -350,7 +396,6 @@ pub fn safe_usize_to_scalar<T: CoordinateScalar>(
 mod tests {
     use super::*;
     use crate::geometry::traits::coordinate::CoordinateConversionError;
-    use crate::geometry::util::{CircumcenterError, RandomPointGenerationError};
     use approx::assert_relative_eq;
     use num_traits::cast;
     use std::assert_matches;
@@ -362,11 +407,6 @@ mod tests {
         let result: Result<f64, _> = safe_usize_to_scalar(small_value);
         assert!(result.is_ok());
         assert_relative_eq!(result.unwrap(), 42.0f64, epsilon = 1e-15);
-
-        // Test with f32 target type
-        let result_f32: Result<f32, _> = safe_usize_to_scalar(small_value);
-        assert!(result_f32.is_ok());
-        assert_relative_eq!(result_f32.unwrap(), 42.0f32, epsilon = 1e-6);
     }
 
     #[test]
@@ -451,7 +491,10 @@ mod tests {
                 }) = result
                 {
                     assert_eq!(coordinate_index, 0);
-                    assert_eq!(coordinate_value, format!("{value}"));
+                    assert_eq!(
+                        coordinate_value,
+                        CoordinateConversionValue::from_usize(value)
+                    );
                     assert_eq!(from_type, "usize");
                     assert_eq!(to_type, "f64");
                 } else {
@@ -484,43 +527,6 @@ mod tests {
                 assert!(error_message.contains("f64"));
             }
         }
-    }
-
-    #[test]
-    fn test_safe_usize_to_scalar_f32_precision_limit() {
-        // Test that f32 precision limit is correctly detected
-        // f32 has 24 mantissa bits, so max exact integer is 2^24 - 1 = 16,777,215
-        const F32_MAX_EXACT_INT: usize = 16_777_215;
-        const F32_FIRST_INEXACT_INT: usize = 16_777_216;
-
-        // This should succeed
-        let result_within: Result<f32, _> = safe_usize_to_scalar(F32_MAX_EXACT_INT);
-        assert!(
-            result_within.is_ok(),
-            "Value {F32_MAX_EXACT_INT} should be within f32 precision"
-        );
-        // Convert the expected value properly using num_traits::cast
-        let expected_f32: f32 =
-            cast(F32_MAX_EXACT_INT).expect("This value should be exactly representable in f32");
-        assert_relative_eq!(result_within.unwrap(), expected_f32, epsilon = 1e-6);
-
-        // This should fail precision check
-        let result_beyond: Result<f32, _> = safe_usize_to_scalar(F32_FIRST_INEXACT_INT);
-        assert!(
-            result_beyond.is_err(),
-            "Value {F32_FIRST_INEXACT_INT} should exceed f32 precision"
-        );
-
-        // For f64, the same value should still work since f64 has higher precision
-        let result_f64: Result<f64, _> = safe_usize_to_scalar(F32_FIRST_INEXACT_INT);
-        assert!(
-            result_f64.is_ok(),
-            "Value {F32_FIRST_INEXACT_INT} should be within f64 precision"
-        );
-        // Convert the expected value properly using num_traits::cast
-        let expected_f64: f64 =
-            cast(F32_FIRST_INEXACT_INT).expect("This value should be exactly representable in f64");
-        assert_relative_eq!(result_f64.unwrap(), expected_f64, epsilon = 1e-15);
     }
 
     #[test]
@@ -617,14 +623,14 @@ mod tests {
         );
 
         // Test valid conversion
-        let result: Result<f32, _> = safe_cast_from_f64(42.5f64, 0);
+        let result: Result<f64, _> = safe_cast_from_f64(42.5, 0);
         assert!(result.is_ok());
     }
 
     #[test]
     fn test_safe_coords_conversion_with_non_finite() {
         // Test array with NaN
-        let coords_nan = [1.0f32, f32::NAN, 3.0f32];
+        let coords_nan = [1.0, f64::NAN, 3.0];
         let result = safe_coords_to_f64(&coords_nan);
         assert_matches!(
             result,
@@ -632,7 +638,7 @@ mod tests {
         );
 
         // Test array with infinity
-        let coords_inf = [1.0f32, 2.0f32, f32::INFINITY];
+        let coords_inf = [1.0, 2.0, f64::INFINITY];
         let result = safe_coords_to_f64(&coords_inf);
         assert_matches!(
             result,
@@ -640,7 +646,7 @@ mod tests {
         );
 
         // Test successful conversion
-        let coords_valid = [1.0f32, 2.0f32, 3.0f32];
+        let coords_valid = [1.0, 2.0, 3.0];
         let result = safe_coords_to_f64(&coords_valid);
         assert!(result.is_ok());
         assert_relative_eq!(
@@ -653,7 +659,7 @@ mod tests {
     fn test_safe_coords_from_f64_with_non_finite() {
         // Test array with NaN
         let coords_nan = [1.0f64, f64::NAN, 3.0f64];
-        let result: Result<[f32; 3], _> = safe_coords_from_f64(&coords_nan);
+        let result: Result<[f64; 3], _> = safe_coords_from_f64(&coords_nan);
         assert_matches!(
             result,
             Err(CoordinateConversionError::NonFiniteValue { .. })
@@ -661,7 +667,7 @@ mod tests {
 
         // Test array with infinity
         let coords_inf = [1.0f64, 2.0f64, f64::INFINITY];
-        let result: Result<[f32; 3], _> = safe_coords_from_f64(&coords_inf);
+        let result: Result<[f64; 3], _> = safe_coords_from_f64(&coords_inf);
         assert_matches!(
             result,
             Err(CoordinateConversionError::NonFiniteValue { .. })
@@ -669,7 +675,7 @@ mod tests {
 
         // Test successful conversion
         let coords_valid = [1.0f64, 2.0f64, 3.0f64];
-        let result: Result<[f32; 3], _> = safe_coords_from_f64(&coords_valid);
+        let result: Result<[f64; 3], _> = safe_coords_from_f64(&coords_valid);
         assert!(result.is_ok());
     }
 
@@ -683,18 +689,18 @@ mod tests {
         );
 
         // Test scalar from f64 with NaN
-        let result: Result<f32, _> = safe_scalar_from_f64(f64::NAN);
+        let result: Result<f64, _> = safe_scalar_from_f64(f64::NAN);
         assert_matches!(
             result,
             Err(CoordinateConversionError::NonFiniteValue { .. })
         );
 
         // Test successful conversions
-        let result = safe_scalar_to_f64(42.5f32);
+        let result = safe_scalar_to_f64(42.5);
         assert!(result.is_ok());
         assert_relative_eq!(result.unwrap(), 42.5f64);
 
-        let result: Result<f32, _> = safe_scalar_from_f64(42.5f64);
+        let result: Result<f64, _> = safe_scalar_from_f64(42.5);
         assert!(result.is_ok());
     }
 
@@ -731,48 +737,15 @@ mod tests {
     }
 
     #[test]
-    fn test_error_types_display() {
-        // Test ValueConversionError display
+    fn value_conversion_error_display_names_conversion() {
         let value_error = ValueConversionError::ConversionFailed {
-            value: "42".to_string(),
+            value: CoordinateConversionValue::from_usize(42),
             from_type: "i32",
             to_type: "u32",
-            details: "overflow".to_string(),
+            reason: ValueConversionFailureReason::TargetTypeRejected,
         };
         let display = format!("{value_error}");
         assert!(display.contains("Cannot convert 42 from i32 to u32"));
-
-        // Test RandomPointGenerationError display
-        let range_error = RandomPointGenerationError::InvalidRange {
-            min: "10.0".to_string(),
-            max: "5.0".to_string(),
-        };
-        let display = format!("{range_error}");
-        assert!(display.contains("Invalid coordinate range"));
-
-        let gen_error = RandomPointGenerationError::RandomGenerationFailed {
-            min: "0.0".to_string(),
-            max: "1.0".to_string(),
-            details: "test error".to_string(),
-        };
-        let display = format!("{gen_error}");
-        assert!(display.contains("Failed to generate random value"));
-
-        let count_error = RandomPointGenerationError::InvalidPointCount { n_points: -5 };
-        let display = format!("{count_error}");
-        assert!(display.contains("Invalid number of points: -5"));
-
-        // Test CircumcenterError variants
-        let empty_error = CircumcenterError::EmptyPointSet;
-        let display = format!("{empty_error}");
-        assert!(display.contains("Empty point set"));
-
-        let simplex_error = CircumcenterError::InvalidSimplex {
-            actual: 2,
-            expected: 3,
-            dimension: 2,
-        };
-        let display = format!("{simplex_error}");
-        assert!(display.contains("Points do not form a valid simplex"));
+        assert!(display.contains("target type rejected value"));
     }
 }

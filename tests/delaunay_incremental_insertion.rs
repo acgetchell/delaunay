@@ -630,18 +630,18 @@ fn test_minimal_simplex_then_insert() {
 }
 
 // =========================================================================
-// Coordinate Type Tests
+// Coordinate Tests
 // =========================================================================
 
 #[test]
-fn test_f32_coordinates() {
+fn test_f64_coordinates() {
     let vertices = vec![
-        vertex!([0.0f32, 0.0f32]),
-        vertex!([1.0f32, 0.0f32]),
-        vertex!([0.0f32, 1.0f32]),
+        vertex!([0.0, 0.0]),
+        vertex!([1.0, 0.0]),
+        vertex!([0.0, 1.0]),
     ];
 
-    let mut dt: DelaunayTriangulation<AdaptiveKernel<f32>, (), (), 2> =
+    let mut dt: DelaunayTriangulation<AdaptiveKernel<f64>, (), (), 2> =
         DelaunayTriangulation::with_topology_guarantee(
             &AdaptiveKernel::new(),
             &vertices,
@@ -649,7 +649,7 @@ fn test_f32_coordinates() {
         )
         .unwrap();
 
-    dt.insert(vertex!([0.3f32, 0.3f32])).unwrap();
+    dt.insert(vertex!([0.3, 0.3])).unwrap();
 
     assert_eq!(dt.number_of_vertices(), 4);
     assert_eq!(dt.number_of_simplices(), 3);

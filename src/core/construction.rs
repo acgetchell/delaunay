@@ -19,6 +19,7 @@ use crate::geometry::kernel::Kernel;
 use crate::geometry::point::Point;
 use crate::geometry::predicates::Orientation;
 use crate::geometry::robust_predicates::robust_orientation;
+use crate::geometry::traits::coordinate::CoordinateValues;
 use crate::validation::DelaunayTriangulationValidationError;
 use num_traits::NumCast;
 use thiserror::Error;
@@ -173,8 +174,8 @@ pub enum TriangulationConstructionError {
         "Duplicate coordinates: vertex with coordinates {coordinates} already exists in the triangulation"
     )]
     DuplicateCoordinates {
-        /// String representation of the duplicate coordinates.
-        coordinates: String,
+        /// Duplicate coordinate tuple stored as typed coordinate payloads.
+        coordinates: CoordinateValues,
     },
 
     /// Internal bookkeeping state became inconsistent during construction.

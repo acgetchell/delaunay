@@ -80,7 +80,11 @@ where
 
         let duplicate_tolerance: K::Scalar =
             <K::Scalar as NumCast>::from(1e-10_f64).unwrap_or_else(K::Scalar::default_tolerance);
-        let mut index: HashGridIndex<K::Scalar, D> = HashGridIndex::new(duplicate_tolerance);
+        let Ok(mut index): Result<HashGridIndex<K::Scalar, D>, _> =
+            HashGridIndex::try_new(duplicate_tolerance)
+        else {
+            return;
+        };
 
         for (vkey, vertex) in self.tri.tds.vertices() {
             index.insert_vertex(vkey, vertex.point().coords());
@@ -930,7 +934,7 @@ mod tests {
         let simplex_count_before = dt.number_of_simplices();
         let hint_simplex_before = dt.simplices().next().map(|(key, _)| key);
         dt.insertion_state.last_inserted_simplex = hint_simplex_before;
-        let mut spatial_index = HashGridIndex::<f64, D>::new(1.0);
+        let mut spatial_index = HashGridIndex::<f64, D>::try_new(1.0).unwrap();
         for (vertex_key, vertex) in dt.vertices() {
             spatial_index.insert_vertex(vertex_key, vertex.point().coords());
         }
@@ -1152,7 +1156,7 @@ mod tests {
         let vertex_key = dt.insert(vertex!([0.25, 0.25])).unwrap();
         let hint_simplex = dt.simplices().next().map(|(key, _)| key);
         dt.insertion_state.last_inserted_simplex = hint_simplex;
-        let mut spatial_index = HashGridIndex::<f64, 2>::new(1.0);
+        let mut spatial_index = HashGridIndex::<f64, 2>::try_new(1.0).unwrap();
         for (vertex_key, vertex) in dt.vertices() {
             spatial_index.insert_vertex(vertex_key, vertex.point().coords());
         }

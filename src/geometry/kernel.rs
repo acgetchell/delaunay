@@ -19,6 +19,12 @@
 //!
 //! **`FastKernel`** — raw f64 arithmetic, no robustness guarantees.
 //! Only suitable for 2D with well-conditioned input.
+//!
+//! Kernels remain generic over `T` to compose with the crate's combinatorial
+//! storage types, but the only currently supported caller-visible coordinate
+//! scalar is `f64`. Exact arithmetic is used internally by robust predicates;
+//! exact-coordinate input would be introduced as an explicit documented API if
+//! supported in a future release.
 
 #![forbid(unsafe_code)]
 
@@ -34,7 +40,8 @@ use crate::geometry::robust_predicates::{
 };
 use crate::geometry::sos::{sos_insphere_sign, sos_orientation_sign};
 use crate::geometry::traits::coordinate::{
-    Coordinate, CoordinateConversionError, CoordinateScalar, DegenerateSimplexReason,
+    Coordinate, CoordinateConversionError, CoordinateConversionValue, CoordinateScalar,
+    DegenerateSimplexReason,
 };
 use crate::geometry::util::safe_coords_to_f64;
 use core::marker::PhantomData;
@@ -82,6 +89,8 @@ const fn insphere_to_i32(result: InSphere) -> i32 {
 /// ```
 pub trait Kernel<const D: usize>: Clone {
     /// The scalar type used for coordinates.
+    ///
+    /// The currently supported caller-visible scalar is `f64`.
     type Scalar: CoordinateScalar;
 
     /// Compute the orientation of a simplex.
@@ -443,7 +452,7 @@ where
                 }
                 _ => CoordinateConversionError::ConversionFailed {
                     coordinate_index: 0,
-                    coordinate_value: format!("{e}"),
+                    coordinate_value: CoordinateConversionValue::Other(e.to_string()),
                     from_type: "insphere_lifted",
                     to_type: "in_sphere",
                 },
@@ -1317,16 +1326,12 @@ mod tests {
     fn test_adaptive_kernel_implements_exact_predicates() {
         assert_exact_predicates::<AdaptiveKernel<f64>, 2>();
         assert_exact_predicates::<AdaptiveKernel<f64>, 5>();
-        assert_exact_predicates::<AdaptiveKernel<f32>, 2>();
-        assert_exact_predicates::<AdaptiveKernel<f32>, 5>();
     }
 
     #[test]
     fn test_robust_kernel_implements_exact_predicates() {
         assert_exact_predicates::<RobustKernel<f64>, 2>();
         assert_exact_predicates::<RobustKernel<f64>, 5>();
-        assert_exact_predicates::<RobustKernel<f32>, 2>();
-        assert_exact_predicates::<RobustKernel<f32>, 5>();
     }
 
     /// Negative compile-time assertion: `FastKernel` must NOT implement

@@ -56,13 +56,7 @@ fn quality_error_to_tds_error(simplex_key: SimplexKey, error: QualityError) -> T
                 vertex_key,
                 context,
             },
-            QualitySimplexVerticesError::UnexpectedTdsFailure { message } => {
-                TdsError::InconsistentDataStructure {
-                    message: format!(
-                        "Quality evaluation failed for simplex {simplex_key:?}: {message}"
-                    ),
-                }
-            }
+            QualitySimplexVerticesError::UnexpectedTdsFailure { source } => *source,
         },
         QualityError::VertexNotFound { vertex_key } => TdsError::VertexNotFound {
             vertex_key,

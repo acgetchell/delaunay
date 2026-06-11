@@ -43,9 +43,9 @@ Use this crate when you want:
 - Exact predicates and deterministic SoS handling for degenerate inputs.
 - PL-manifold checks and explicit topology guarantees.
 - PL-manifold-aware editing via bistellar flips and bounded Delaunay repair.
+- Typed construction, insertion, validation, topology, and repair diagnostics.
 - Validation reports that separate element, structure, topology, and Delaunay
   failures.
-- Typed construction, insertion, validation, topology, and repair diagnostics.
 
 This is not a replacement for full meshing packages such as CGAL, TetGen, or
 Gmsh when you need constrained Delaunay triangulations, out-of-core meshing,
@@ -216,6 +216,13 @@ and `ValidationPolicy` controls when Level 3 checks run automatically during
 incremental insertion. Incompatible combinations are rejected by the fallible
 `try_set_*` policy setters; use `ValidationPolicy::ExplicitOnly` for
 caller-owned full-validation checkpoints with the default PL-manifold guarantee.
+
+### Coordinate Input Type
+
+The default supported coordinate input type is `f64`, matching the crate's
+current linear algebra backend and geometric-primitive correctness guarantees.
+Exact arithmetic is already used internally for robust predicate fallbacks, and
+exact coordinate input may be supported explicitly in the future.
 
 ## 🔬 Reproducibility
 

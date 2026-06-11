@@ -36,7 +36,9 @@
 use crate::core::collections::{GeometricPointBuffer, MAX_PRACTICAL_DIMENSION_SIZE, SmallBuffer};
 use crate::geometry::matrix::{Matrix, matrix_fast_filter, matrix_set};
 use crate::geometry::point::Point;
-use crate::geometry::traits::coordinate::{CoordinateConversionError, DegenerateSimplexReason};
+use crate::geometry::traits::coordinate::{
+    CoordinateConversionError, DegenerateSimplexReason, InvalidCoordinateValue,
+};
 
 // =============================================================================
 // PUBLIC API
@@ -101,7 +103,7 @@ pub fn sos_orientation_sign<const D: usize>(
             if !val.is_finite() {
                 return Err(CoordinateConversionError::NonFiniteValue {
                     coordinate_index: point_idx * D + coord_idx,
-                    coordinate_value: val.to_string(),
+                    coordinate_value: InvalidCoordinateValue::from_debug(&val),
                 });
             }
         }
@@ -212,7 +214,7 @@ pub fn sos_insphere_sign<const D: usize>(
             if !val.is_finite() {
                 return Err(CoordinateConversionError::NonFiniteValue {
                     coordinate_index: point_idx * D + coord_idx,
-                    coordinate_value: val.to_string(),
+                    coordinate_value: InvalidCoordinateValue::from_debug(&val),
                 });
             }
         }
@@ -221,7 +223,7 @@ pub fn sos_insphere_sign<const D: usize>(
         if !val.is_finite() {
             return Err(CoordinateConversionError::NonFiniteValue {
                 coordinate_index: (D + 1) * D + coord_idx,
-                coordinate_value: val.to_string(),
+                coordinate_value: InvalidCoordinateValue::from_debug(&val),
             });
         }
     }

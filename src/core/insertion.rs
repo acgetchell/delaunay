@@ -31,7 +31,9 @@ use crate::core::triangulation::Triangulation;
 use crate::core::vertex::Vertex;
 use crate::geometry::kernel::Kernel;
 use crate::geometry::point::Point;
-use crate::geometry::traits::coordinate::{Coordinate, CoordinateScalar};
+use crate::geometry::traits::coordinate::{
+    Coordinate, CoordinateConversionValue, CoordinateScalar, CoordinateValues,
+};
 use crate::locality::{
     append_live_unique_simplex_seeds, collect_local_exterior_conflict_seed_simplices,
     replace_simplices_and_record_removed, retain_simplices_and_record_removed,
@@ -41,7 +43,6 @@ use crate::topology::manifold::validate_ridge_links;
 use num_traits::{Float, NumCast, One, Zero};
 use std::borrow::Cow;
 use std::env;
-use std::fmt::Write as _;
 use std::sync::{
     OnceLock,
     atomic::{AtomicBool, AtomicU64, Ordering},
@@ -553,13 +554,13 @@ where
                 else {
                     // We failed to convert the perturbation scale into the scalar type.
                     //
-                    // This should not happen for our supported scalar types (`f32`, `f64`), but if it
+                    // This should not happen for the supported scalar type (`f64`), but if it
                     // does (e.g. with a custom scalar), we degrade gracefully by skipping this vertex
                     // rather than aborting the whole insertion.
                     stats.result = InsertionResult::SkippedDegeneracy;
                     let error = last_retryable_error.unwrap_or_else(|| {
                         CavityFillingError::PerturbationScaleConversion {
-                            value: epsilon_value.to_string(),
+                            value: CoordinateConversionValue::from_f64(epsilon_value),
                         }
                         .into()
                     });
@@ -953,7 +954,9 @@ where
             return;
         }
 
-        let mut rebuilt = HashGridIndex::new(tolerance);
+        let Ok(mut rebuilt) = HashGridIndex::try_new(tolerance) else {
+            return;
+        };
         for (vkey, vertex) in self.tds.vertices() {
             rebuilt.insert_vertex(vkey, vertex.point().coords());
         }
@@ -981,14 +984,7 @@ where
     ) -> Option<InsertionError> {
         let mut duplicate_found = false;
         let make_duplicate_error = || {
-            let mut coordinates = String::from("[");
-            for (idx, coord) in coords.iter().enumerate() {
-                if idx != 0 {
-                    coordinates.push_str(", ");
-                }
-                let _ = write!(&mut coordinates, "{coord:?}");
-            }
-            coordinates.push(']');
+            let coordinates = CoordinateValues::from_numeric_slice(coords);
             InsertionError::DuplicateCoordinates { coordinates }
         };
 
@@ -2693,7 +2689,7 @@ mod tests {
     use crate::geometry::kernel::{AdaptiveKernel, FastKernel};
     use crate::geometry::point::Point;
     use crate::geometry::traits::coordinate::{
-        Coordinate, CoordinateConversionError, CoordinateScalar,
+        Coordinate, CoordinateConversionError, CoordinateConversionValue, CoordinateScalar,
     };
     use crate::triangulation::DelaunayTriangulation;
     use crate::vertex;
@@ -2942,9 +2938,9 @@ mod tests {
         let predicate = ConflictError::PredicateError {
             source: CoordinateConversionError::ConversionFailed {
                 coordinate_index: 2,
-                coordinate_value: "NaN".to_string(),
+                coordinate_value: CoordinateConversionValue::from_f64(f64::NAN),
                 from_type: "f64",
-                to_type: "f32",
+                to_type: "f64",
             },
         };
         assert!(
@@ -3051,7 +3047,7 @@ mod tests {
         let tri = Triangulation::<FastKernel<f64>, (), (), 2>::new_with_tds(FastKernel::new(), tds);
         let simplex_key = tri.tds.simplex_keys().next().unwrap();
 
-        let mut index: HashGridIndex<f64, 2> = HashGridIndex::new(1.0);
+        let mut index: HashGridIndex<f64, 2> = HashGridIndex::try_new(1.0).unwrap();
         for (vkey, vertex) in tri.tds.vertices() {
             index.insert_vertex(vkey, vertex.point().coords());
         }
@@ -3073,7 +3069,7 @@ mod tests {
             vertex.set_incident_simplex(Some(SimplexKey::default()));
         }
 
-        let mut index: HashGridIndex<f64, 2> = HashGridIndex::new(1.0);
+        let mut index: HashGridIndex<f64, 2> = HashGridIndex::try_new(1.0).unwrap();
         index.insert_vertex(vkey, &[0.0, 0.0]);
 
         let hint = tri.select_locate_hint_from_hash_grid(&[0.0, 0.0], &index);
@@ -3089,7 +3085,7 @@ mod tests {
             .insert_vertex_with_mapping(vertex!([0.0, 0.0]))
             .unwrap();
 
-        let mut index: HashGridIndex<f64, 2> = HashGridIndex::new(1.0);
+        let mut index: HashGridIndex<f64, 2> = HashGridIndex::try_new(1.0).unwrap();
         index.insert_vertex(vkey, &[0.0, 0.0]);
 
         let tol = 1e-10_f64;
@@ -3106,7 +3102,8 @@ mod tests {
             .insert_vertex_with_mapping(vertex!([0.0, 0.0]))
             .unwrap();
 
-        let index: HashGridIndex<f64, 2> = HashGridIndex::new(0.0); // unusable
+        let mut index: HashGridIndex<f64, 2> = HashGridIndex::try_new(1.0).unwrap();
+        index.remove_vertex(&VertexKey::default(), &[f64::NAN, 0.0]);
         let tol = 1e-10_f64;
         let err = tri.duplicate_coordinates_error(&[0.0, 0.0], tol, Some(&index));
         assert_matches!(err, Some(InsertionError::DuplicateCoordinates { .. }));
@@ -3161,7 +3158,7 @@ mod tests {
         let hint = tri.tds.simplex_keys().next();
         let candidate = [1.0_f64; D];
         let tolerance = tri.estimate_duplicate_coordinate_tolerance(&candidate, hint);
-        let mut index: HashGridIndex<f64, D> = HashGridIndex::new(1.0e-10);
+        let mut index: HashGridIndex<f64, D> = HashGridIndex::try_new(1.0e-10).unwrap();
         for (vkey, vertex) in tri.tds.vertices() {
             index.insert_vertex(vkey, vertex.point().coords());
         }
@@ -4275,52 +4272,20 @@ mod tests {
         );
     }
 
-    /// Verify the mantissa-based epsilon selection (`1e-4` for f32, `1e-8` for f64)
-    /// and exercise the perturbation retry path with a near-degenerate simplex.
+    /// Verify the mantissa-based epsilon selection and exercise the perturbation retry path
+    /// with a near-degenerate simplex.
     #[test]
     fn test_perturbation_epsilon_selection_and_retry() {
-        // Assert the mantissa-digits → epsilon branching for each scalar type.
-        // insert_transactional uses: `if K::Scalar::mantissa_digits() <= 24 { 1e-4 } else { 1e-8 }`
-        assert_eq!(
-            f32::mantissa_digits(),
-            24,
-            "f32 should take the 1e-4 epsilon path"
-        );
+        // Assert the supported scalar's mantissa-digits branch.
         assert_eq!(
             f64::mantissa_digits(),
             53,
             "f64 should take the 1e-8 epsilon path"
         );
 
-        // f32 path: build a 2D triangulation, then insert a point exactly on an
-        // existing edge.  This near-degenerate configuration exercises the full
-        // insert_transactional path including epsilon_value computation.
-        let initial_f32: Vec<Vertex<f32, (), 2>> = vec![
-            vertex!([0.0_f32, 0.0]),
-            vertex!([1.0_f32, 0.0]),
-            vertex!([0.0_f32, 1.0]),
-        ];
-        let tds_f32 =
-            Triangulation::<AdaptiveKernel<f32>, (), (), 2>::build_initial_simplex(&initial_f32)
-                .unwrap();
-        let mut tri_f32 = Triangulation::<AdaptiveKernel<f32>, (), (), 2>::new_with_tds(
-            AdaptiveKernel::<f32>::new(),
-            tds_f32,
-        );
-
-        // Point on edge [0,0]→[1,0]: collinear, exercises degeneracy handling.
-        let (outcome_f32, stats_f32) =
-            insert_with_statistics(&mut tri_f32, vertex!([0.5_f32, 0.0]), None, None).unwrap();
-        // Should succeed (SoS resolves) or be gracefully skipped.
-        assert!(
-            stats_f32.attempts >= 1,
-            "f32 insertion must execute at least 1 attempt"
-        );
-        if let InsertionOutcome::Inserted { .. } = outcome_f32 {
-            assert_eq!(tri_f32.tds.number_of_vertices(), 4);
-        }
-
-        // f64 path: same exercise with double precision.
+        // Build a 2D triangulation, then insert a point exactly on an existing edge.
+        // This near-degenerate configuration exercises the full insert_transactional path
+        // including epsilon_value computation.
         let initial_f64: Vec<Vertex<f64, (), 2>> = vec![
             vertex!([0.0_f64, 0.0]),
             vertex!([1.0_f64, 0.0]),

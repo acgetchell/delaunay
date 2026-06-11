@@ -41,9 +41,10 @@ use crate::core::{
 use crate::geometry::{
     kernel::Kernel,
     point::Point,
-    traits::coordinate::CoordinateScalar,
+    traits::coordinate::{CoordinateConversionValue, CoordinateScalar},
     util::{CircumcenterError, circumradius, hypot, inradius as simplex_inradius, simplex_volume},
 };
+use core::fmt;
 use num_traits::{NumCast, One};
 use std::ops::{AddAssign, Div};
 use thiserror::Error;
@@ -66,6 +67,19 @@ pub enum QualityNumericOperation {
     Volume,
 }
 
+impl fmt::Display for QualityNumericOperation {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::EpsilonFloorConversion => f.write_str("epsilon floor conversion"),
+            Self::EdgeCountConversion => f.write_str("edge count conversion"),
+            Self::RelativeFactorConversion => f.write_str("relative factor conversion"),
+            Self::Circumradius => f.write_str("circumradius computation"),
+            Self::Inradius => f.write_str("inradius computation"),
+            Self::Volume => f.write_str("simplex volume computation"),
+        }
+    }
+}
+
 /// Geometric quantity that revealed a degenerate simplex.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[non_exhaustive]
@@ -78,6 +92,17 @@ pub enum QualityDegeneracyMeasure {
     AverageEdgeLength,
     /// Average edge length raised to the dimension underflowed below epsilon.
     EdgeLengthPower,
+}
+
+impl fmt::Display for QualityDegeneracyMeasure {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Inradius => f.write_str("inradius"),
+            Self::Volume => f.write_str("volume"),
+            Self::AverageEdgeLength => f.write_str("average edge length"),
+            Self::EdgeLengthPower => f.write_str("edge length power"),
+        }
+    }
 }
 
 /// Failure while extracting simplex vertices for quality metric evaluation.
@@ -101,10 +126,11 @@ pub enum QualitySimplexVerticesError {
         context: String,
     },
     /// The TDS reported an unexpected lookup failure.
-    #[error("{message}")]
+    #[error("Unexpected TDS failure while extracting quality metric simplex vertices: {source}")]
     UnexpectedTdsFailure {
-        /// Full TDS diagnostic text.
-        message: String,
+        /// Underlying typed TDS error.
+        #[source]
+        source: Box<TdsError>,
     },
 }
 
@@ -126,7 +152,7 @@ impl From<TdsError> for QualitySimplexVerticesError {
                 context,
             },
             other => Self::UnexpectedTdsFailure {
-                message: other.to_string(),
+                source: Box::new(other),
             },
         }
     }
@@ -173,7 +199,7 @@ pub enum QualityError {
         dimension: usize,
     },
     /// Conversion of a numeric constant or count into the coordinate scalar failed.
-    #[error("Numeric conversion failed during {operation:?}")]
+    #[error("Numeric conversion failed during {operation}")]
     NumericConversion {
         /// Operation whose scalar conversion failed.
         operation: QualityNumericOperation,
@@ -183,35 +209,35 @@ pub enum QualityError {
     Circumradius {
         /// Underlying geometry error.
         #[source]
-        source: CircumcenterError,
+        source: Box<CircumcenterError>,
     },
     /// Inradius computation failed.
     #[error("Inradius computation failed: {source}")]
     Inradius {
         /// Underlying geometry error.
         #[source]
-        source: CircumcenterError,
+        source: Box<CircumcenterError>,
     },
     /// Simplex volume computation failed.
     #[error("Volume computation failed: {source}")]
     Volume {
         /// Underlying geometry error.
         #[source]
-        source: CircumcenterError,
+        source: Box<CircumcenterError>,
     },
     /// Simplex is degenerate (zero or near-zero volume).
     #[error(
-        "Degenerate simplex: {measure:?} observed={observed}, epsilon={epsilon}, avg_edge_length={avg_edge_length:?}"
+        "Degenerate simplex: {measure} observed={observed}, epsilon={epsilon}, avg_edge_length={avg_edge_length:?}"
     )]
     DegenerateSimplex {
         /// Quantity that failed the degeneracy threshold.
         measure: QualityDegeneracyMeasure,
         /// Observed quantity value.
-        observed: String,
+        observed: CoordinateConversionValue,
         /// Scale-aware epsilon used for comparison.
-        epsilon: String,
+        epsilon: CoordinateConversionValue,
         /// Average edge length context, when applicable.
-        avg_edge_length: Option<String>,
+        avg_edge_length: Option<CoordinateConversionValue>,
     },
 }
 
@@ -390,12 +416,14 @@ where
     }
 
     // Compute circumradius using utility function
-    let circumradius_val =
-        circumradius(&points).map_err(|source| QualityError::Circumradius { source })?;
+    let circumradius_val = circumradius(&points).map_err(|source| QualityError::Circumradius {
+        source: Box::new(source),
+    })?;
 
     // Compute inradius using utility function
-    let inradius_val =
-        simplex_inradius(&points).map_err(|source| QualityError::Inradius { source })?;
+    let inradius_val = simplex_inradius(&points).map_err(|source| QualityError::Inradius {
+        source: Box::new(source),
+    })?;
 
     // Check for near-zero inradius (degenerate simplex) using scale-aware tolerance
     let (avg_edge_length, epsilon) = scale_aware_epsilon(&points)?;
@@ -403,9 +431,11 @@ where
     if inradius_val < epsilon {
         return Err(QualityError::DegenerateSimplex {
             measure: QualityDegeneracyMeasure::Inradius,
-            observed: format!("{inradius_val:?}"),
-            epsilon: format!("{epsilon:?}"),
-            avg_edge_length: Some(format!("{avg_edge_length:?}")),
+            observed: CoordinateConversionValue::from_numeric_debug(&inradius_val),
+            epsilon: CoordinateConversionValue::from_numeric_debug(&epsilon),
+            avg_edge_length: Some(CoordinateConversionValue::from_numeric_debug(
+                &avg_edge_length,
+            )),
         });
     }
 
@@ -496,7 +526,9 @@ where
     }
 
     // Compute volume using utility function
-    let volume = simplex_volume(&points).map_err(|source| QualityError::Volume { source })?;
+    let volume = simplex_volume(&points).map_err(|source| QualityError::Volume {
+        source: Box::new(source),
+    })?;
 
     // Compute scale-aware epsilon and average edge length
     let (avg_edge_length, epsilon) = scale_aware_epsilon(&points)?;
@@ -509,9 +541,11 @@ where
     if volume < epsilon_pow {
         return Err(QualityError::DegenerateSimplex {
             measure: QualityDegeneracyMeasure::Volume,
-            observed: format!("{volume:?}"),
-            epsilon: format!("{epsilon_pow:?}"),
-            avg_edge_length: Some(format!("{avg_edge_length:?}")),
+            observed: CoordinateConversionValue::from_numeric_debug(&volume),
+            epsilon: CoordinateConversionValue::from_numeric_debug(&epsilon_pow),
+            avg_edge_length: Some(CoordinateConversionValue::from_numeric_debug(
+                &avg_edge_length,
+            )),
         });
     }
 
@@ -519,9 +553,11 @@ where
     if avg_edge_length < epsilon {
         return Err(QualityError::DegenerateSimplex {
             measure: QualityDegeneracyMeasure::AverageEdgeLength,
-            observed: format!("{avg_edge_length:?}"),
-            epsilon: format!("{epsilon:?}"),
-            avg_edge_length: Some(format!("{avg_edge_length:?}")),
+            observed: CoordinateConversionValue::from_numeric_debug(&avg_edge_length),
+            epsilon: CoordinateConversionValue::from_numeric_debug(&epsilon),
+            avg_edge_length: Some(CoordinateConversionValue::from_numeric_debug(
+                &avg_edge_length,
+            )),
         });
     }
 
@@ -538,9 +574,11 @@ where
     if edge_length_power < epsilon_pow {
         return Err(QualityError::DegenerateSimplex {
             measure: QualityDegeneracyMeasure::EdgeLengthPower,
-            observed: format!("{edge_length_power:?}"),
-            epsilon: format!("{epsilon_pow:?}"),
-            avg_edge_length: Some(format!("{avg_edge_length:?}")),
+            observed: CoordinateConversionValue::from_numeric_debug(&edge_length_power),
+            epsilon: CoordinateConversionValue::from_numeric_debug(&epsilon_pow),
+            avg_edge_length: Some(CoordinateConversionValue::from_numeric_debug(
+                &avg_edge_length,
+            )),
         });
     }
 
@@ -558,7 +596,7 @@ mod tests {
     use crate::core::simplex::Simplex;
     use crate::core::tds::Tds;
     use crate::core::triangulation::Triangulation;
-    use crate::geometry::kernel::{AdaptiveKernel, FastKernel};
+    use crate::geometry::kernel::FastKernel;
     use crate::geometry::traits::coordinate::Coordinate;
     use crate::triangulation::DelaunayTriangulation;
     use crate::vertex;
@@ -568,6 +606,14 @@ mod tests {
     // sqrt(3) constant computed at compile time
     // const SQRT_3: f64 = 1.732_050_807_568_877_3;
     use slotmap::KeyData;
+
+    /// Extracts an f64 scalar payload from a typed diagnostic value for assertions.
+    fn scalar_payload(value: &CoordinateConversionValue) -> f64 {
+        let CoordinateConversionValue::Scalar(value) = value else {
+            panic!("expected scalar diagnostic payload, got {value:?}");
+        };
+        value.get()
+    }
 
     // =============================================================================
     // DIMENSIONAL MACRO TESTS (2D-5D)
@@ -801,9 +847,12 @@ let key_translated = dt_translated.simplices().next().unwrap().0;
         });
         assert_matches!(
             unexpected,
-            QualitySimplexVerticesError::UnexpectedTdsFailure { message }
-                if message.contains("Duplicate simplices")
-                    && message.contains("same vertex set appears twice")
+            QualitySimplexVerticesError::UnexpectedTdsFailure { source }
+                if matches!(
+                    *source,
+                    TdsError::DuplicateSimplices { ref message }
+                        if message == "same vertex set appears twice"
+                )
         );
     }
 
@@ -830,17 +879,57 @@ let key_translated = dt_translated.simplices().next().unwrap().0;
 
         let err = QualityError::DegenerateSimplex {
             measure: QualityDegeneracyMeasure::Volume,
-            observed: "0.0".to_string(),
-            epsilon: "1e-12".to_string(),
-            avg_edge_length: Some("1.0".to_string()),
+            observed: CoordinateConversionValue::from_f64(0.0),
+            epsilon: CoordinateConversionValue::from_f64(1e-12),
+            avg_edge_length: Some(CoordinateConversionValue::from_f64(1.0)),
         };
         assert!(format!("{err}").contains("Degenerate"));
+        assert!(format!("{err}").contains("volume observed"));
         assert!(format!("{err}").contains("0.0"));
 
         let err = QualityError::NumericConversion {
             operation: QualityNumericOperation::EdgeCountConversion,
         };
         assert!(format!("{err}").contains("Numeric conversion failed"));
+        assert!(format!("{err}").contains("edge count conversion"));
+    }
+
+    #[test]
+    fn quality_diagnostic_enums_display_without_debug_variant_names() {
+        assert_eq!(
+            QualityNumericOperation::EpsilonFloorConversion.to_string(),
+            "epsilon floor conversion"
+        );
+        assert_eq!(
+            QualityNumericOperation::EdgeCountConversion.to_string(),
+            "edge count conversion"
+        );
+        assert_eq!(
+            QualityNumericOperation::RelativeFactorConversion.to_string(),
+            "relative factor conversion"
+        );
+        assert_eq!(
+            QualityNumericOperation::Circumradius.to_string(),
+            "circumradius computation"
+        );
+        assert_eq!(
+            QualityNumericOperation::Inradius.to_string(),
+            "inradius computation"
+        );
+        assert_eq!(
+            QualityNumericOperation::Volume.to_string(),
+            "simplex volume computation"
+        );
+        assert_eq!(QualityDegeneracyMeasure::Inradius.to_string(), "inradius");
+        assert_eq!(QualityDegeneracyMeasure::Volume.to_string(), "volume");
+        assert_eq!(
+            QualityDegeneracyMeasure::AverageEdgeLength.to_string(),
+            "average edge length"
+        );
+        assert_eq!(
+            QualityDegeneracyMeasure::EdgeLengthPower.to_string(),
+            "edge length power"
+        );
     }
 
     // =============================================================================
@@ -881,34 +970,6 @@ let key_translated = dt_translated.simplices().next().unwrap().0;
         // Good triangle: lower ratio, higher normalized volume
         assert!(ratio_good < ratio_poor);
         assert!(norm_vol_good > norm_vol_poor);
-    }
-
-    // =============================================================================
-    // f32 COMPATIBILITY TESTS
-    // =============================================================================
-
-    #[test]
-    fn test_quality_metrics_f32_compatibility() {
-        // Test that quality metrics work with f32 coordinate type
-        // 2D equilateral triangle
-        let vertices = vec![
-            vertex!([0.0f32, 0.0f32]),
-            vertex!([1.0f32, 0.0f32]),
-            vertex!([0.5f32, 0.866f32]), // approximately sqrt(3)/2
-        ];
-        let dt: DelaunayTriangulation<_, (), (), 2> =
-            DelaunayTriangulation::new(&vertices).unwrap();
-        let simplex_key = dt.simplices().next().unwrap().0;
-
-        // Test radius_ratio
-        let ratio = radius_ratio(dt.as_triangulation(), simplex_key).unwrap();
-        // For equilateral triangle: R/r = 2
-        assert!(ratio > 1.5 && ratio < 2.5, "ratio={ratio}");
-
-        // Test normalized_volume
-        let norm_vol = normalized_volume(dt.as_triangulation(), simplex_key).unwrap();
-        // For 2D equilateral: sqrt(3)/4 ≈ 0.433
-        assert!(norm_vol > 0.3 && norm_vol < 0.6, "norm_vol={norm_vol}");
     }
 
     // =============================================================================
@@ -1128,8 +1189,8 @@ let simplex_key = dt.simplices().next().unwrap().0;
 
         let err3 = QualityError::DegenerateSimplex {
             measure: QualityDegeneracyMeasure::Volume,
-            observed: "0".to_string(),
-            epsilon: "1e-12".to_string(),
+            observed: CoordinateConversionValue::from_f64(0.0),
+            epsilon: CoordinateConversionValue::from_f64(1e-12),
             avg_edge_length: None,
         };
         let err4 = err3.clone();
@@ -1237,38 +1298,6 @@ let simplex_key = dt.simplices().next().unwrap().0;
     // =============================================================================
     // PRECISION TESTS
     // =============================================================================
-
-    #[test]
-    fn test_quality_precision_f32_vs_f64() {
-        // Compare f32 and f64 precision for same simplex
-        let vertices_f32 = vec![
-            vertex!([0.0f32, 0.0f32]),
-            vertex!([1.0f32, 0.0f32]),
-            vertex!([0.5f32, 0.866f32]),
-        ];
-        let dt_f32: DelaunayTriangulation<AdaptiveKernel<f32>, (), (), 2> =
-            DelaunayTriangulation::with_kernel(&AdaptiveKernel::new(), &vertices_f32).unwrap();
-        let key_f32 = dt_f32.simplices().next().unwrap().0;
-
-        let vertices_f64 = vec![
-            vertex!([0.0f64, 0.0f64]),
-            vertex!([1.0f64, 0.0f64]),
-            vertex!([0.5f64, 0.866_025f64]),
-        ];
-        let dt_f64: DelaunayTriangulation<_, (), (), 2> =
-            DelaunayTriangulation::new(&vertices_f64).unwrap();
-        let key_f64 = dt_f64.simplices().next().unwrap().0;
-
-        let ratio_f32 = radius_ratio(dt_f32.as_triangulation(), key_f32).unwrap();
-        let ratio_f64 = radius_ratio(dt_f64.as_triangulation(), key_f64).unwrap();
-
-        // f32 and f64 should give similar results
-        let ratio_diff = (<f64 as std::convert::From<f32>>::from(ratio_f32) - ratio_f64).abs();
-        assert!(
-            ratio_diff < 0.1,
-            "f32/f64 precision difference too large: {ratio_diff}"
-        );
-    }
 
     // =============================================================================
     // HELPER FUNCTION TESTS
@@ -1510,8 +1539,8 @@ let simplex_key = dt.simplices().next().unwrap().0;
         };
 
         assert_eq!(measure, QualityDegeneracyMeasure::Volume);
-        let epsilon: f64 = epsilon.parse().unwrap();
-        let avg_edge_length: f64 = avg_edge_length.unwrap().parse().unwrap();
+        let epsilon = scalar_payload(&epsilon);
+        let avg_edge_length = scalar_payload(&avg_edge_length.unwrap());
         let linear_epsilon = 1.0e-12_f64.max(avg_edge_length * 1.0e-8);
         let expected_area_epsilon = linear_epsilon * linear_epsilon;
         assert!(
@@ -1560,7 +1589,7 @@ let simplex_key = dt.simplices().next().unwrap().0;
                             | QualityDegeneracyMeasure::AverageEdgeLength
                             | QualityDegeneracyMeasure::EdgeLengthPower
                     );
-                    assert!(!observed.is_empty());
+                    assert_matches!(observed, CoordinateConversionValue::Scalar(_));
                 }
             }
             Err(DelaunayTriangulationConstructionError::Triangulation(
