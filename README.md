@@ -252,10 +252,10 @@ For reproducible checks in CI/local runs, use `just check`, `just test`,
 - **Feature gaps:** [Constrained Delaunay triangulations], [Voronoi diagrams],
   built-in visualization, GPU/parallel meshing, and out-of-core construction
   are out of scope today.
-- **Large 4D+ batches:** `just debug-large-scale-4d 900 1` is the current
-  release-mode acceptance harness; the documented 2026-05-14 local run inserted
-  all 900 vertices, skipped none, and passed `validation_report` in about
-  60 seconds. The 3,000-point 4D harness remains a manual characterization probe
+- **Large 4D+ batches:** `just debug-large-scale-4d 800 1` is the current
+  release-mode acceptance harness; a recent local run inserted all 800 vertices,
+  skipped none, ran final repair, and passed `validation_report` in about
+  52 seconds. The 3,000-point 4D harness remains a manual characterization probe
   for issue #340 rather than routine CI.
 - **Periodic domains:** `.toroidal()` uses the periodic image-point method and
   is release-validated in 2D and compact 3D. `.canonicalized_toroidal()`

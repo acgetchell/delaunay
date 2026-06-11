@@ -348,8 +348,8 @@ pub fn safe_scalar_from_f64<T: CoordinateScalar>(
 /// # Precision Limits
 ///
 /// The function uses the minimum mantissa bits between f64 and the target type:
-/// - `f64` integers are exact up to 2^53 − 1 (9,007,199,254,740,991)
-/// - For f64 targets: `usize` values larger than 2^53 − 1 will cause an error
+/// - `f64` integers are exact up to and including 2^53 (9,007,199,254,740,992)
+/// - For f64 targets: `usize` values larger than 2^53 will cause an error
 /// - On 64-bit platforms, `usize` can be up to 64 bits, so f64 precision loss is possible
 pub fn safe_usize_to_scalar<T: CoordinateScalar>(
     value: usize,
@@ -359,7 +359,7 @@ pub fn safe_usize_to_scalar<T: CoordinateScalar>(
     const F64_MANTISSA_BITS: u32 = 53;
     let t_mantissa_bits: u32 = T::mantissa_digits();
     let max_precise_bits = core::cmp::min(F64_MANTISSA_BITS, t_mantissa_bits);
-    let max_precise_u128: u128 = (1u128 << max_precise_bits) - 1;
+    let max_precise_u128: u128 = 1u128 << max_precise_bits;
 
     // Use try_from to safely convert usize to u64 for comparison
     let value_u64 =
@@ -415,7 +415,7 @@ mod tests {
         let safe_large_values = [
             usize::try_from(1_u64 << 50).unwrap_or(usize::MAX), // 2^50, well within f64 precision
             usize::try_from(1_u64 << 51).unwrap_or(usize::MAX), // 2^51, still safe
-            usize::try_from((1_u64 << 53) - 2).unwrap_or(usize::MAX), // Just under 2^53-1, should be safe
+            usize::try_from(1_u64 << 53).unwrap_or(usize::MAX), // 2^53 is still exactly representable
         ];
 
         for &value in &safe_large_values {
@@ -435,17 +435,14 @@ mod tests {
 
     #[test]
     fn test_safe_usize_to_scalar_precision_boundary() {
-        // Test the exact boundary value: 2^53-1
-        const MAX_PRECISE_USIZE_IN_F64: u64 = (1_u64 << 53) - 1;
+        // Test the exact boundary value: 2^53.
+        const MAX_PRECISE_USIZE_IN_F64: u64 = 1_u64 << 53;
 
         // This should succeed (exactly at the boundary)
         if usize::try_from(MAX_PRECISE_USIZE_IN_F64).is_ok() {
             let boundary_value = usize::try_from(MAX_PRECISE_USIZE_IN_F64).unwrap();
             let result: Result<f64, _> = safe_usize_to_scalar(boundary_value);
-            assert!(
-                result.is_ok(),
-                "Boundary value 2^53-1 should be convertible"
-            );
+            assert!(result.is_ok(), "Boundary value 2^53 should be convertible");
 
             let converted = result.unwrap();
             let back_converted: usize =
@@ -459,14 +456,14 @@ mod tests {
 
     #[test]
     fn test_safe_usize_to_scalar_precision_loss_detection() {
-        // Test values that would lose precision (only on 64-bit platforms where usize can exceed 2^53-1)
-        const MAX_PRECISE_USIZE_IN_F64: u64 = (1_u64 << 53) - 1;
+        // Test values that would lose precision (only on 64-bit platforms where usize can exceed 2^53)
+        const MAX_PRECISE_USIZE_IN_F64: u64 = 1_u64 << 53;
 
         if std::mem::size_of::<usize>() >= 8 {
             // On 64-bit platforms, test values that would lose precision
             let precision_loss_values = [
-                usize::try_from(MAX_PRECISE_USIZE_IN_F64 + 1).unwrap_or(usize::MAX), // Just over 2^53-1
-                usize::try_from(MAX_PRECISE_USIZE_IN_F64 + 100).unwrap_or(usize::MAX), // Well over 2^53-1
+                usize::try_from(MAX_PRECISE_USIZE_IN_F64 + 1).unwrap_or(usize::MAX), // Just over 2^53
+                usize::try_from(MAX_PRECISE_USIZE_IN_F64 + 100).unwrap_or(usize::MAX), // Well over 2^53
             ];
 
             for &value in &precision_loss_values {
@@ -482,35 +479,23 @@ mod tests {
                     "Value {value} should fail conversion due to precision loss"
                 );
 
-                // Verify error details
-                if let Err(CoordinateConversionError::ConversionFailed {
-                    coordinate_index,
-                    coordinate_value,
-                    from_type,
-                    to_type,
-                }) = result
-                {
-                    assert_eq!(coordinate_index, 0);
-                    assert_eq!(
+                assert_matches!(
+                    result,
+                    Err(CoordinateConversionError::ConversionFailed {
+                        coordinate_index: 0,
                         coordinate_value,
-                        CoordinateConversionValue::from_usize(value)
-                    );
-                    assert_eq!(from_type, "usize");
-                    assert_eq!(to_type, "f64");
-                } else {
-                    panic!("Expected ConversionFailed error for value {value}");
-                }
+                        from_type: "usize",
+                        to_type: "f64",
+                    }) if coordinate_value == CoordinateConversionValue::from_usize(value)
+                );
             }
-        } else {
-            // On 32-bit platforms, usize cannot exceed 2^53-1, so all values should succeed
-            println!("Skipping precision loss test on 32-bit platform");
         }
     }
 
     #[test]
     fn test_safe_usize_to_scalar_error_message_format() {
         // Test that error messages are properly formatted
-        const MAX_PRECISE_USIZE_IN_F64: u64 = (1_u64 << 53) - 1;
+        const MAX_PRECISE_USIZE_IN_F64: u64 = 1_u64 << 53;
 
         if std::mem::size_of::<usize>() >= 8 {
             let large_value = usize::try_from(MAX_PRECISE_USIZE_IN_F64 + 1).unwrap_or(usize::MAX);
@@ -553,7 +538,7 @@ mod tests {
             std::mem::size_of::<usize>()
         );
         println!("usize::MAX = {}", usize::MAX);
-        println!("2^53-1 = {}", (1_u64 << 53) - 1);
+        println!("2^53 = {}", 1_u64 << 53);
 
         // Values that should work on any platform
         let universal_safe_values = [0, 1, 100, 10000];
@@ -707,7 +692,7 @@ mod tests {
     #[test]
     fn test_safe_usize_to_scalar_precision_boundary_extended() {
         // Test values at the precision boundary (additional edge cases)
-        const MAX_PRECISE: u64 = (1_u64 << 53) - 1;
+        const MAX_PRECISE: u64 = 1_u64 << 53;
 
         // Test maximum precise value (should work)
         let result: Result<f64, _> =

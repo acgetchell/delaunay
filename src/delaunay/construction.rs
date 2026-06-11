@@ -50,7 +50,8 @@ use crate::core::algorithms::flips::{
     repair_delaunay_with_flips_k2_k3,
 };
 use crate::core::algorithms::incremental_insertion::{
-    CavityFillingError, HullExtensionReason, InsertionError, TdsConstructionFailure,
+    CavityFillingError, HullExtensionReason, InsertionError, SpatialIndexConstructionFailure,
+    TdsConstructionFailure,
 };
 use crate::core::algorithms::locate::{ConflictError, LocateError};
 use crate::core::collections::spatial_hash_grid::HashGridIndex;
@@ -321,6 +322,14 @@ pub enum DelaunayConstructionFailure {
         coordinates: CoordinateValues,
     },
 
+    /// Spatial index construction failed during construction.
+    #[error("spatial index construction failed during construction: {reason}")]
+    SpatialIndexConstruction {
+        /// Structured spatial-index construction failure.
+        #[source]
+        reason: SpatialIndexConstructionFailure,
+    },
+
     /// Conflict-region extraction failed during insertion.
     #[error("conflict region failed during insertion: {source}")]
     InsertionConflictRegion {
@@ -435,6 +444,9 @@ impl From<TriangulationConstructionError> for DelaunayConstructionFailure {
             }
             TriangulationConstructionError::DuplicateCoordinates { coordinates } => {
                 Self::DuplicateCoordinates { coordinates }
+            }
+            TriangulationConstructionError::SpatialIndexConstruction { reason } => {
+                Self::SpatialIndexConstruction { reason }
             }
             TriangulationConstructionError::InsertionConflictRegion { source } => {
                 Self::InsertionConflictRegion { source }
@@ -1125,7 +1137,7 @@ pub(crate) fn default_duplicate_tolerance<T: CoordinateScalar>() -> T {
 /// This preserves the parse-don't-validate boundary between public
 /// construction inputs and the internal duplicate index: a failure here means
 /// an upstream construction invariant was broken after validation, so it is
-/// surfaced as an internal construction inconsistency.
+/// surfaced as a typed spatial-index construction failure.
 fn hash_grid_from_validated_cell_size<T, const D: usize, I>(
     cell_size: T,
 ) -> Result<HashGridIndex<T, D, I>, DelaunayTriangulationConstructionError>
@@ -1134,8 +1146,8 @@ where
 {
     HashGridIndex::try_new(cell_size).map_err(|error| {
         DelaunayTriangulationConstructionError::from(
-            TriangulationConstructionError::InternalInconsistency {
-                message: format!("validated grid cell size rejected by spatial hash grid: {error}"),
+            TriangulationConstructionError::SpatialIndexConstruction {
+                reason: error.into(),
             },
         )
     })
@@ -1949,16 +1961,15 @@ where
         // after sorting, we can eliminate duplicates without re-quantizing.
         let input_len = keyed.len();
         let mut prev_q: Option<[u32; D]> = None;
-        let deduped: Vec<Vertex<T, U, D>> = keyed
-            .into_iter()
-            .filter_map(|(_, q, v, _)| {
-                if prev_q == Some(q) {
-                    return None;
-                }
-                prev_q = Some(q);
-                Some(v)
-            })
-            .collect();
+        let mut deduped = Vec::with_capacity(input_len);
+
+        for (_, q, vertex, _) in keyed {
+            if prev_q == Some(q) {
+                continue;
+            }
+            prev_q = Some(q);
+            deduped.push(vertex);
+        }
 
         let removed = input_len - deduped.len();
         if removed > 0 {
@@ -4531,6 +4542,9 @@ where
                     ),
                 }
             }
+            InsertionError::SpatialIndexConstruction { reason } => {
+                TriangulationConstructionError::SpatialIndexConstruction { reason }
+            }
             InsertionError::MaxSimplicesRemovedExceeded {
                 max_simplices_removed,
                 attempted,
@@ -4627,6 +4641,9 @@ where
                 max_simplices_removed,
                 attempted,
             },
+            InsertionError::SpatialIndexConstruction { reason } => {
+                TriangulationConstructionError::SpatialIndexConstruction { reason }
+            }
         }
     }
 
@@ -4840,6 +4857,7 @@ mod tests {
     };
     use crate::core::algorithms::incremental_insertion::{
         DelaunayRepairFailureContext, HullExtensionReason, NeighborWiringError,
+        SpatialIndexConstructionFailure,
     };
     use crate::core::algorithms::locate::{ConflictError, LocateError};
     use crate::core::tds::{EntityKind, GeometricError, InvariantError, SimplexKey, VertexKey};
@@ -5758,8 +5776,10 @@ mod tests {
         assert_matches!(
             error,
             DelaunayTriangulationConstructionError::Triangulation(
-                DelaunayConstructionFailure::InternalInconsistency { message }
-            ) if message.contains("validated grid cell size rejected by spatial hash grid")
+                DelaunayConstructionFailure::SpatialIndexConstruction {
+                    reason: SpatialIndexConstructionFailure::NonPositiveCellSize { value }
+                }
+            ) if value == CoordinateConversionValue::from_f64(0.0)
         );
     }
 
@@ -7164,6 +7184,22 @@ mod tests {
                     attempted: 3,
                 }
             )
+        );
+    }
+
+    #[test]
+    fn test_map_insertion_error_spatial_index_construction_is_typed() {
+        let error = InsertionError::SpatialIndexConstruction {
+            reason: SpatialIndexConstructionFailure::NonPositiveCellSize {
+                value: CoordinateConversionValue::from_f64(0.0),
+            },
+        };
+        let mapped = TestDelaunay::<3>::map_insertion_error(error);
+        assert_matches!(
+            mapped,
+            TriangulationConstructionError::SpatialIndexConstruction {
+                reason: SpatialIndexConstructionFailure::NonPositiveCellSize { value }
+            } if value == CoordinateConversionValue::from_f64(0.0)
         );
     }
 

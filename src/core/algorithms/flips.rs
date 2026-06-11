@@ -29,8 +29,8 @@
 
 use crate::core::algorithms::incremental_insertion::{
     CavityFillingError, HullExtensionReason, InsertionError, NeighborWiringError,
-    TdsConstructionFailure, TdsValidationFailure, external_facets_for_boundary,
-    wire_cavity_neighbors,
+    SpatialIndexConstructionFailure, TdsConstructionFailure, TdsValidationFailure,
+    external_facets_for_boundary, wire_cavity_neighbors,
 };
 use crate::core::algorithms::locate::{ConflictError, LocateError, extract_cavity_boundary};
 use crate::core::collections::{
@@ -3297,6 +3297,13 @@ pub enum FlipNeighborWiringError {
         /// Number of simplices selected for removal.
         attempted: usize,
     },
+    /// Spatial index construction failed before insertion.
+    #[error("spatial index construction reached flip neighbor wiring: {reason}")]
+    SpatialIndexConstruction {
+        /// Structured spatial-index construction failure.
+        #[source]
+        reason: SpatialIndexConstructionFailure,
+    },
 }
 
 impl From<InsertionError> for FlipNeighborWiringError {
@@ -3341,6 +3348,9 @@ impl From<InsertionError> for FlipNeighborWiringError {
                 max_simplices_removed,
                 attempted,
             },
+            InsertionError::SpatialIndexConstruction { reason } => {
+                Self::SpatialIndexConstruction { reason }
+            }
         }
     }
 }
@@ -9591,6 +9601,7 @@ mod tests {
     use crate::core::collections::Uuid;
     use crate::core::validation::TopologyGuarantee;
     use crate::geometry::kernel::{AdaptiveKernel, FastKernel};
+    use crate::geometry::traits::coordinate::CoordinateConversionValue;
     use crate::repair::DelaunayRepairOperation;
     use crate::topology::traits::topological_space::ToroidalConstructionMode;
     use crate::vertex;
@@ -13652,6 +13663,21 @@ mod tests {
             FlipNeighborWiringError::MaxSimplicesRemovedExceeded {
                 max_simplices_removed: 2,
                 attempted: 3,
+            }
+        );
+
+        let spatial_index_wiring =
+            FlipNeighborWiringError::from(InsertionError::SpatialIndexConstruction {
+                reason: SpatialIndexConstructionFailure::NonPositiveCellSize {
+                    value: CoordinateConversionValue::from_f64(0.0),
+                },
+            });
+        assert_eq!(
+            spatial_index_wiring,
+            FlipNeighborWiringError::SpatialIndexConstruction {
+                reason: SpatialIndexConstructionFailure::NonPositiveCellSize {
+                    value: CoordinateConversionValue::from_f64(0.0),
+                },
             }
         );
     }

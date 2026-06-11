@@ -10,8 +10,9 @@
     reason = "tests preserve typed construction, repair, and delaunayize errors"
 )]
 
-use std::assert_matches;
+use std::{assert_matches, num::NonZeroUsize};
 
+use approx::assert_relative_eq;
 use delaunay::geometry::CoordinateRange as GeometryCoordinateRange;
 use delaunay::prelude::DelaunayValidationError;
 use delaunay::prelude::algorithms::LocateResult;
@@ -32,7 +33,9 @@ use delaunay::prelude::construction::{
     ExplicitInvariantErrorKind, ExplicitTdsError, ExplicitTdsErrorKind, InsertionOrderStrategy,
     InvalidCoordinateValue as ConstructionInvalidCoordinateValue,
     InvalidPositiveScalar as ConstructionInvalidPositiveScalar, RandomPointGenerationError,
-    SimplexValidationError, TopologyGuarantee, Vertex, vertex,
+    SimplexValidationError,
+    SpatialIndexConstructionFailure as ConstructionSpatialIndexConstructionFailure,
+    TopologyGuarantee, Vertex, vertex,
 };
 use delaunay::prelude::delaunayize::{
     DelaunayTriangulationBuilder as DelaunayizeDelaunayTriangulationBuilder, DelaunayizeConfig,
@@ -47,14 +50,17 @@ use delaunay::prelude::diagnostics::{
 };
 use delaunay::prelude::flips::BistellarFlips;
 use delaunay::prelude::generators::{
-    CoordinateRange, CoordinateRangeError, generate_random_points_in_range_seeded,
-    generate_random_points_seeded,
+    CoordinateRange, CoordinateRangeError, InvalidPositiveScalar, RandomTriangulationBuilder,
+    generate_grid_points, generate_random_points_in_range_seeded, generate_random_points_seeded,
 };
 #[cfg(feature = "diagnostics")]
 use delaunay::prelude::geometry::{AdaptiveKernel, Coordinate};
 use delaunay::prelude::geometry::{
-    CoordinateConversionError, DegenerateSimplexReason, LaError, MatrixError, Point,
-    QualitySimplexVerticesError, SurfaceMeasureError,
+    ArrayConversionFailureReason, CircumcenterError, CircumcenterFailureReason,
+    CoordinateConversionError, CoordinateConversionValue, DegenerateGeometry, DegenerateMeasure,
+    DegenerateSimplexReason, FiniteCoordinateValue, InvalidCoordinateValue, LaError, MatrixError,
+    Point, QualitySimplexVerticesError, SurfaceMeasureError, ValueConversionError,
+    ValueConversionFailureReason,
 };
 use delaunay::prelude::insertion::{
     InitialSimplexConstructionError, InitialSimplexUnexpectedInsertionStage, InsertionError,
@@ -83,6 +89,7 @@ use delaunay::prelude::topology::validation::{
 use delaunay::prelude::triangulation::{
     FacetIssuesMap as TriangulationFacetIssuesMap, FastKernel as TriangulationFastKernel,
     InsertionError as TriangulationInsertionError, QueryError as TriangulationQueryError,
+    SpatialIndexConstructionFailure as GenericSpatialIndexConstructionFailure,
     TdsError as TriangulationTdsError, TopologyGuarantee as TriangulationTopologyGuarantee,
     Triangulation as GenericTriangulation,
     TriangulationConstructionError as GenericTriangulationConstructionError,
@@ -343,6 +350,57 @@ fn insertion_prelude_covers_initial_simplex_stage_errors() {
 
 #[test]
 fn geometry_prelude_covers_typed_error_variants() {
+    let finite = FiniteCoordinateValue::try_new(1.5).expect("1.5 is finite");
+    assert_relative_eq!(finite.get(), 1.5, epsilon = f64::EPSILON);
+    assert_eq!(
+        CoordinateConversionValue::from_f64(f64::NAN),
+        CoordinateConversionValue::NonFinite(InvalidCoordinateValue::Nan)
+    );
+    assert_eq!(
+        CoordinateConversionValue::from_usize(7),
+        CoordinateConversionValue::UnsignedInteger(7)
+    );
+    assert_eq!(DegenerateMeasure::SurfaceArea.to_string(), "surface area");
+    assert_eq!(
+        DegenerateGeometry::CollinearOrCoplanarPoints.to_string(),
+        "collinear or coplanar points"
+    );
+
+    let circumcenter_error = CircumcenterError::MatrixInversionFailed {
+        reason: CircumcenterFailureReason::DegenerateSimplex {
+            measure: DegenerateMeasure::Volume,
+            degeneracy: DegenerateGeometry::CoplanarPoints,
+        },
+    };
+    assert_matches!(
+        circumcenter_error,
+        CircumcenterError::MatrixInversionFailed {
+            reason: CircumcenterFailureReason::DegenerateSimplex {
+                measure: DegenerateMeasure::Volume,
+                degeneracy: DegenerateGeometry::CoplanarPoints,
+            },
+        }
+    );
+
+    let conversion_error = ValueConversionError::ConversionFailed {
+        value: CoordinateConversionValue::Scalar(finite),
+        from_type: "f64",
+        to_type: "usize",
+        reason: ValueConversionFailureReason::TargetTypeRejected,
+    };
+    assert_matches!(
+        conversion_error,
+        ValueConversionError::ConversionFailed {
+            reason: ValueConversionFailureReason::TargetTypeRejected,
+            ..
+        }
+    );
+
+    assert_matches!(
+        ArrayConversionFailureReason::LengthMismatch,
+        ArrayConversionFailureReason::LengthMismatch
+    );
+
     let quality_error = QualitySimplexVerticesError::UnexpectedTdsFailure {
         source: Box::new(TdsError::DuplicateSimplices {
             message: "same vertex set appears twice".to_string(),
@@ -374,12 +432,22 @@ fn generator_prelude_covers_validated_coordinate_ranges() -> Result<(), PreludeE
     let generated_range = CoordinateRange::try_new(0.0_f64, 1.0)?;
     let range_points: Vec<Point<f64, 2>> =
         generate_random_points_in_range_seeded(3, generated_range, 42);
+    let grid_points: Vec<Point<f64, 2>> = generate_grid_points(NonZeroUsize::MIN, 1.0, [0.0, 0.0])?;
+    let builder = RandomTriangulationBuilder::try_new(NonZeroUsize::MIN, (-1.0_f64, 1.0))?
+        .seed(7)
+        .insertion_order(InsertionOrderStrategy::Input);
+    let _ = builder;
 
     let root_range = RootCoordinateRange::try_new(-1.0_f64, 1.0)?;
     assert_eq!(root_range.bounds(), (-1.0, 1.0));
     let geometry_range = GeometryCoordinateRange::try_new(-2.0_f64, -1.0)?;
     assert_eq!(geometry_range.bounds(), (-2.0, -1.0));
     assert_eq!(range_points.len(), 3);
+    assert_eq!(grid_points.len(), 1);
+    assert_matches!(
+        InvalidPositiveScalar::NonPositive { value: 0.0_f64 },
+        InvalidPositiveScalar::NonPositive { value: 0.0 }
+    );
     Ok(())
 }
 
@@ -619,6 +687,19 @@ fn triangulation_prelude_covers_generic_layer() -> Result<(), GenericTriangulati
     assert_send_sync_unpin::<TriangulationInsertionError>();
     assert_send_sync_unpin::<TriangulationQueryError>();
     assert_send_sync_unpin::<TriangulationTdsError>();
+    let generic_spatial_failure = GenericTriangulationConstructionError::SpatialIndexConstruction {
+        reason: GenericSpatialIndexConstructionFailure::NonFiniteCellSize {
+            value: ConstructionInvalidCoordinateValue::Nan,
+        },
+    };
+    assert_matches!(
+        generic_spatial_failure,
+        GenericTriangulationConstructionError::SpatialIndexConstruction {
+            reason: GenericSpatialIndexConstructionFailure::NonFiniteCellSize {
+                value: ConstructionInvalidCoordinateValue::Nan,
+            },
+        }
+    );
     Ok(())
 }
 
@@ -646,6 +727,18 @@ fn construction_prelude_covers_random_point_generation_failure_variant() {
             },
         },
         DelaunayConstructionFailure::RandomPointGeneration { .. }
+    );
+
+    let spatial_failure = DelaunayConstructionFailure::SpatialIndexConstruction {
+        reason: ConstructionSpatialIndexConstructionFailure::NonPositiveCellSize {
+            value: CoordinateConversionValue::from_f64(0.0),
+        },
+    };
+    assert_matches!(
+        spatial_failure,
+        DelaunayConstructionFailure::SpatialIndexConstruction {
+            reason: ConstructionSpatialIndexConstructionFailure::NonPositiveCellSize { value },
+        } if value == CoordinateConversionValue::from_f64(0.0)
     );
 
     assert_matches!(

@@ -33,6 +33,8 @@ pub enum CoordinateRangeOrdering {
     Equal,
     /// The minimum bound is greater than the maximum bound.
     Decreasing,
+    /// The bounds cannot be ordered.
+    Incomparable,
 }
 
 impl fmt::Display for CoordinateRangeOrdering {
@@ -40,6 +42,7 @@ impl fmt::Display for CoordinateRangeOrdering {
         match self {
             Self::Equal => f.write_str("equal"),
             Self::Decreasing => f.write_str("decreasing"),
+            Self::Incomparable => f.write_str("incomparable"),
         }
     }
 }
@@ -49,7 +52,8 @@ impl fmt::Display for CoordinateRangeOrdering {
 /// Non-finite bounds are reported as [`InvalidCoordinateValue`] categories.
 /// Finite but non-increasing bounds preserve their typed `min` and `max`
 /// values so callers can inspect the rejected range without parsing a display
-/// string.
+/// string. Bounds that cannot be compared are rejected as
+/// [`CoordinateRangeOrdering::Incomparable`].
 ///
 /// # Examples
 ///
@@ -124,7 +128,8 @@ where
     /// # Errors
     ///
     /// Returns [`CoordinateRangeError::NonFiniteBound`] if either bound is
-    /// non-finite, or [`CoordinateRangeError::NonIncreasing`] if `min >= max`.
+    /// non-finite, or [`CoordinateRangeError::NonIncreasing`] if the bounds are
+    /// equal, decreasing, or incomparable.
     ///
     /// # Examples
     ///
@@ -152,16 +157,14 @@ where
             });
         }
 
-        if min >= max {
-            let ordering = if min == max {
-                CoordinateRangeOrdering::Equal
-            } else {
-                CoordinateRangeOrdering::Decreasing
-            };
-            return Err(CoordinateRangeError::NonIncreasing { ordering, min, max });
-        }
+        let ordering = match min.partial_cmp(&max) {
+            Some(core::cmp::Ordering::Less) => return Ok(Self { min, max }),
+            Some(core::cmp::Ordering::Equal) => CoordinateRangeOrdering::Equal,
+            Some(core::cmp::Ordering::Greater) => CoordinateRangeOrdering::Decreasing,
+            None => CoordinateRangeOrdering::Incomparable,
+        };
 
-        Ok(Self { min, max })
+        Err(CoordinateRangeError::NonIncreasing { ordering, min, max })
     }
 }
 
@@ -280,6 +283,21 @@ mod tests {
         }
     }
 
+    #[derive(Debug, PartialEq)]
+    struct IncomparableFiniteScalar(i32);
+
+    impl PartialOrd for IncomparableFiniteScalar {
+        fn partial_cmp(&self, _other: &Self) -> Option<core::cmp::Ordering> {
+            None
+        }
+    }
+
+    impl FiniteCheck for IncomparableFiniteScalar {
+        fn is_finite_generic(&self) -> bool {
+            true
+        }
+    }
+
     /// Asserts that finite raw coordinate bounds are rejected with the exact diagnostic payload.
     fn assert_non_increasing_bounds(
         result: &Result<CoordinateRange<f64>, CoordinateRangeError>,
@@ -333,6 +351,18 @@ mod tests {
 
         assert_eq!(min, NonCopyFiniteScalar(1));
         assert_eq!(max, NonCopyFiniteScalar(2));
+    }
+
+    #[test]
+    fn rejects_incomparable_finite_bounds() {
+        assert_matches!(
+            CoordinateRange::try_new(IncomparableFiniteScalar(0), IncomparableFiniteScalar(1)),
+            Err(CoordinateRangeError::NonIncreasing {
+                ordering: CoordinateRangeOrdering::Incomparable,
+                min: IncomparableFiniteScalar(0),
+                max: IncomparableFiniteScalar(1),
+            })
+        );
     }
 
     #[test]

@@ -22,7 +22,8 @@ use std::{any::type_name, env, num::NonZeroUsize};
 /// Reason a scalar that must be finite and positive failed validation.
 ///
 /// This error is used by public generators whose raw scalar inputs are parsed
-/// into positive internal values before sampling starts.
+/// into positive internal values before sampling starts, such as grid spacing,
+/// periodic-domain periods, and ball radii.
 ///
 /// # Examples
 ///
@@ -55,7 +56,8 @@ pub enum InvalidPositiveScalar<T = f64> {
 ///
 /// ```rust
 /// use delaunay::prelude::generators::{
-///     CoordinateRangeError, CoordinateRangeOrdering, RandomPointGenerationError,
+///     CoordinateRangeError, CoordinateRangeOrdering, InvalidPositiveScalar,
+///     RandomPointGenerationError,
 /// };
 ///
 /// let err = RandomPointGenerationError::InvalidCoordinateRange {
@@ -68,6 +70,14 @@ pub enum InvalidPositiveScalar<T = f64> {
 /// std::assert_matches!(
 ///     err,
 ///     RandomPointGenerationError::InvalidCoordinateRange { .. }
+/// );
+///
+/// let grid_err = RandomPointGenerationError::InvalidGridSpacing {
+///     reason: InvalidPositiveScalar::NonPositive { value: 0.0 },
+/// };
+/// std::assert_matches!(
+///     grid_err,
+///     RandomPointGenerationError::InvalidGridSpacing { .. }
 /// );
 /// ```
 #[derive(Clone, Debug, thiserror::Error, PartialEq)]
@@ -106,6 +116,13 @@ pub enum RandomPointGenerationError<T = f64> {
         reason: InvalidPositiveScalar<T>,
     },
 
+    /// Squaring a validated finite ball radius produced a non-finite value.
+    #[error("Invalid squared ball radius: {value}; squared radius must be finite")]
+    InvalidBallRadiusSquared {
+        /// The non-finite squared radius value.
+        value: InvalidCoordinateValue,
+    },
+
     /// Failed to convert a discrete count, index, or scalar into a numeric target type.
     #[error("Failed to convert {value} to {target_type}: {source}")]
     CoordinateConversionFailed {
@@ -137,11 +154,11 @@ pub enum RandomPointGenerationError<T = f64> {
         cap_bytes: usize,
     },
 
-    /// Grid spacing was non-finite.
-    #[error("Invalid grid spacing: {value}; spacing must be finite")]
+    /// Grid spacing was non-finite or non-positive.
+    #[error("Invalid grid spacing: {reason}; spacing must be finite and positive")]
     InvalidGridSpacing {
-        /// The non-finite spacing value.
-        value: InvalidCoordinateValue,
+        /// Why the spacing failed validation.
+        reason: InvalidPositiveScalar<T>,
     },
 
     /// Grid offset was non-finite.
@@ -150,6 +167,15 @@ pub enum RandomPointGenerationError<T = f64> {
         /// Axis whose offset coordinate failed validation.
         axis: usize,
         /// The non-finite offset value.
+        value: InvalidCoordinateValue,
+    },
+
+    /// A generated grid coordinate was non-finite.
+    #[error("Invalid generated grid coordinate at axis {axis}: {value}")]
+    InvalidGeneratedGridCoordinate {
+        /// Axis whose generated coordinate failed validation.
+        axis: usize,
+        /// The non-finite generated coordinate value.
         value: InvalidCoordinateValue,
     },
 
@@ -291,9 +317,9 @@ enum PoissonSpacing<T> {
 
 /// Scalar proven to be finite and strictly positive.
 ///
-/// This private proof type backs public periodic-domain and ball-radius error
-/// contracts so sampling code can consume positive values without repeating
-/// raw scalar validation.
+/// This private proof type backs public grid-spacing, periodic-domain, and
+/// ball-radius error contracts so sampling code can consume positive values
+/// without repeating raw scalar validation.
 #[derive(Clone, Copy, Debug, PartialEq)]
 struct PositiveScalar<T>(T);
 
@@ -384,7 +410,7 @@ const fn poisson_max_attempts(n_points: usize, dimension: usize) -> usize {
 /// # Errors
 ///
 /// * [`RandomPointGenerationError::InvalidCoordinateRange`] if either bound is
-///   non-finite or if `min >= max`.
+///   non-finite, equal, decreasing, or incomparable.
 ///
 /// # Examples
 ///
@@ -487,7 +513,7 @@ pub fn generate_random_points_in_range<T: CoordinateScalar + SampleUniform, cons
 /// # Errors
 ///
 /// * [`RandomPointGenerationError::InvalidCoordinateRange`] if either bound is
-///   non-finite or if `min >= max`.
+///   non-finite, equal, decreasing, or incomparable.
 ///
 /// # Examples
 ///
@@ -621,15 +647,11 @@ pub fn generate_random_points_periodic<T: CoordinateScalar + SampleUniform, cons
     seed: u64,
 ) -> Result<Vec<Point<T, D>>, RandomPointGenerationError<T>> {
     // Parse domain periods before sampling so later code consumes only positive periods.
-    let periods: Vec<_> = domain
-        .into_iter()
-        .enumerate()
-        .map(|(axis, period)| {
-            PositiveScalar::try_new(period).map_err(|reason| {
-                RandomPointGenerationError::InvalidPeriodicDomain { axis, reason }
-            })
-        })
-        .collect::<Result<_, _>>()?;
+    let mut periods = [PositiveScalar(T::one()); D];
+    for (axis, period) in domain.into_iter().enumerate() {
+        periods[axis] = PositiveScalar::try_new(period)
+            .map_err(|reason| RandomPointGenerationError::InvalidPeriodicDomain { axis, reason })?;
+    }
 
     let mut rng = StdRng::seed_from_u64(seed);
     let mut points = Vec::with_capacity(n_points);
@@ -666,6 +688,11 @@ where
     let bounds = radius.symmetric_range();
     let radius = radius.get();
     let radius_sq = radius * radius;
+    if !radius_sq.is_finite_generic() {
+        return Err(RandomPointGenerationError::InvalidBallRadiusSquared {
+            value: InvalidCoordinateValue::from_debug(&radius_sq),
+        });
+    }
 
     let mut points = Vec::with_capacity(n_points);
 
@@ -699,7 +726,9 @@ where
 /// # Errors
 ///
 /// Returns [`RandomPointGenerationError::InvalidBallRadius`] if `radius` is
-/// non-finite or non-positive.
+/// non-finite or non-positive, or
+/// [`RandomPointGenerationError::InvalidBallRadiusSquared`] if squaring a
+/// finite radius overflows to a non-finite value.
 ///
 /// # Examples
 ///
@@ -736,7 +765,9 @@ pub fn generate_random_points_in_ball<T: CoordinateScalar + SampleUniform, const
 /// # Errors
 ///
 /// Returns [`RandomPointGenerationError::InvalidBallRadius`] if `radius` is
-/// non-finite or non-positive.
+/// non-finite or non-positive, or
+/// [`RandomPointGenerationError::InvalidBallRadiusSquared`] if squaring a
+/// finite radius overflows to a non-finite value.
 ///
 /// # Examples
 ///
@@ -778,7 +809,7 @@ pub fn generate_random_points_in_ball_seeded<
 /// # Arguments
 ///
 /// * `points_per_dim` - Non-zero number of points along each dimension
-/// * `spacing` - Distance between adjacent grid points
+/// * `spacing` - Positive distance between adjacent grid points
 /// * `offset` - Translation offset for the entire grid
 ///
 /// # Returns
@@ -791,9 +822,12 @@ pub fn generate_random_points_in_ball_seeded<
 /// grid size overflows `usize`,
 /// [`RandomPointGenerationError::GridAllocationTooLarge`] if the grid exceeds
 /// the allocation safety cap, or
-/// [`RandomPointGenerationError::InvalidGridSpacing`] or
+/// [`RandomPointGenerationError::InvalidGridSpacing`] if `spacing` is
+/// non-finite or non-positive,
 /// [`RandomPointGenerationError::InvalidGridOffset`] if the grid parameters
-/// would produce non-finite coordinates, or
+/// contain non-finite offsets,
+/// [`RandomPointGenerationError::InvalidGeneratedGridCoordinate`] if a generated
+/// coordinate overflows to a non-finite value, or
 /// [`RandomPointGenerationError::CoordinateConversionFailed`] if a grid index
 /// cannot be represented exactly by the supported coordinate scalar.
 ///
@@ -842,11 +876,9 @@ pub fn generate_grid_points<T: CoordinateScalar, const D: usize>(
 ) -> Result<Vec<Point<T, D>>, RandomPointGenerationError<T>> {
     let points_per_dim = points_per_dim.get();
 
-    if !spacing.is_finite_generic() {
-        return Err(RandomPointGenerationError::InvalidGridSpacing {
-            value: InvalidCoordinateValue::from_debug(&spacing),
-        });
-    }
+    let spacing = PositiveScalar::try_new(spacing)
+        .map_err(|reason| RandomPointGenerationError::InvalidGridSpacing { reason })?
+        .get();
 
     for (axis, coordinate) in offset.iter().enumerate() {
         if !coordinate.is_finite_generic() {
@@ -888,6 +920,12 @@ pub fn generate_grid_points<T: CoordinateScalar, const D: usize>(
         for d in 0..D {
             let index_as_scalar = grid_index_as_scalar::<T, D>(&idx, d, points_per_dim)?;
             coords[d] = offset[d] + index_as_scalar * spacing;
+            if !coords[d].is_finite_generic() {
+                return Err(RandomPointGenerationError::InvalidGeneratedGridCoordinate {
+                    axis: d,
+                    value: InvalidCoordinateValue::from_debug(&coords[d]),
+                });
+            }
         }
         points.push(Point::new(coords));
 
@@ -954,7 +992,7 @@ fn grid_index_as_scalar<T: CoordinateScalar, const D: usize>(
 /// # Errors
 ///
 /// * [`RandomPointGenerationError::InvalidCoordinateRange`] if either bound is
-///   non-finite or if `min >= max` in `bounds`.
+///   non-finite, equal, decreasing, or incomparable in `bounds`.
 /// * [`RandomPointGenerationError::InvalidMinimumDistance`] if `min_distance`
 ///   is non-finite.
 /// * [`RandomPointGenerationError::PoissonSamplingFailed`] if `min_distance`
@@ -1147,13 +1185,21 @@ mod tests {
         let display = format!("{range_error}");
         assert!(display.contains("Invalid coordinate range"));
 
-        let grid_error: RandomPointGenerationError<f64> =
+        let grid_allocation_error: RandomPointGenerationError<f64> =
             RandomPointGenerationError::GridAllocationTooLarge {
                 required_bytes: 8_589_934_592,
                 cap_bytes: 4_294_967_296,
             };
-        let display = format!("{grid_error}");
+        let display = format!("{grid_allocation_error}");
         assert!(display.contains("exceeds safety cap"));
+
+        let grid_spacing_error: RandomPointGenerationError<f64> =
+            RandomPointGenerationError::InvalidGridSpacing {
+                reason: InvalidPositiveScalar::NonPositive { value: 0.0 },
+            };
+        let display = format!("{grid_spacing_error}");
+        assert!(display.contains("Invalid grid spacing"));
+        assert!(display.contains("non-positive"));
 
         let radius_error: RandomPointGenerationError<f64> =
             RandomPointGenerationError::InvalidBallRadius {
@@ -1164,6 +1210,23 @@ mod tests {
         let display = format!("{radius_error}");
         assert!(display.contains("Invalid ball radius"));
         assert!(display.contains("NaN"));
+
+        let squared_radius_error: RandomPointGenerationError<f64> =
+            RandomPointGenerationError::InvalidBallRadiusSquared {
+                value: InvalidCoordinateValue::PositiveInfinity,
+            };
+        let display = format!("{squared_radius_error}");
+        assert!(display.contains("Invalid squared ball radius"));
+        assert!(display.contains("inf"));
+
+        let generated_grid_coordinate_error: RandomPointGenerationError<f64> =
+            RandomPointGenerationError::InvalidGeneratedGridCoordinate {
+                axis: 2,
+                value: InvalidCoordinateValue::PositiveInfinity,
+            };
+        let display = format!("{generated_grid_coordinate_error}");
+        assert!(display.contains("Invalid generated grid coordinate at axis 2"));
+        assert!(display.contains("inf"));
 
         let poisson_error = RandomPointGenerationError::PoissonSamplingFailed {
             requested_points: 10,
@@ -1398,7 +1461,7 @@ mod tests {
 
     #[test]
     fn test_generate_random_points_error_handling() {
-        // Test invalid range (min >= max) across all dimensions
+        // Test invalid range (non-increasing bounds) across all dimensions
 
         // 2D
         let result = generate_random_points::<f64, 2>(100, (10.0, -10.0));
@@ -1707,6 +1770,16 @@ mod tests {
     }
 
     #[test]
+    fn test_generate_random_points_in_ball_rejects_overflowing_radius_squared() {
+        let result = generate_random_points_in_ball::<f64, 2>(1, f64::MAX);
+        assert_matches!(
+            result,
+            Err(RandomPointGenerationError::InvalidBallRadiusSquared { value })
+                if value == InvalidCoordinateValue::PositiveInfinity
+        );
+    }
+
+    #[test]
     fn test_generate_random_points_in_ball_seeded_in_ball_constraints_4d() {
         let radius = 1.25;
         let points = generate_random_points_in_ball_seeded::<f64, 4>(100, radius, 99).unwrap();
@@ -1920,16 +1993,23 @@ mod tests {
             assert!((actual - expected).abs() < 1e-15);
         }
 
-        // Test zero spacing
-        let grid = generate_grid_points::<f64, 2>(nonzero(2), 0.0, [5.0, 5.0]).unwrap();
-        assert_eq!(grid.len(), 4);
-        for point in &grid {
-            let coords = *point.coords();
-            // Use approx for floating point comparison
-            for (actual, expected) in coords.iter().zip([5.0, 5.0].iter()) {
-                assert!((actual - expected).abs() < 1e-15);
-            }
-        }
+        let zero_spacing = generate_grid_points::<f64, 2>(nonzero(2), 0.0, [5.0, 5.0]);
+        let Err(RandomPointGenerationError::InvalidGridSpacing {
+            reason: InvalidPositiveScalar::NonPositive { value },
+        }) = zero_spacing
+        else {
+            panic!("expected non-positive grid spacing error for zero spacing");
+        };
+        assert_relative_eq!(value, 0.0, epsilon = f64::EPSILON);
+
+        let negative_spacing = generate_grid_points::<f64, 2>(nonzero(2), -1.0, [5.0, 5.0]);
+        let Err(RandomPointGenerationError::InvalidGridSpacing {
+            reason: InvalidPositiveScalar::NonPositive { value },
+        }) = negative_spacing
+        else {
+            panic!("expected non-positive grid spacing error for negative spacing");
+        };
+        assert_relative_eq!(value, -1.0, epsilon = f64::EPSILON);
     }
 
     #[test]
@@ -1940,8 +2020,9 @@ mod tests {
         let nan_spacing = generate_grid_points::<f64, 2>(nonzero(2), f64::NAN, [0.0, 0.0]);
         assert_matches!(
             nan_spacing,
-            Err(RandomPointGenerationError::InvalidGridSpacing { value })
-                if value == InvalidCoordinateValue::Nan
+            Err(RandomPointGenerationError::InvalidGridSpacing {
+                reason: InvalidPositiveScalar::NonFinite { value }
+            }) if value == InvalidCoordinateValue::Nan
         );
 
         let infinite_offset =
@@ -1960,6 +2041,17 @@ mod tests {
                 required_bytes,
                 cap_bytes,
             }) if required_bytes > cap_bytes
+        );
+    }
+
+    #[test]
+    fn test_generate_grid_points_rejects_non_finite_generated_coordinate() {
+        let result = generate_grid_points::<f64, 1>(nonzero(2), f64::MAX, [f64::MAX]);
+
+        assert_matches!(
+            result,
+            Err(RandomPointGenerationError::InvalidGeneratedGridCoordinate { axis, value })
+                if axis == 0 && value == InvalidCoordinateValue::PositiveInfinity
         );
     }
 
@@ -1984,7 +2076,7 @@ mod tests {
 
     #[test]
     fn test_generate_grid_points_index_conversion_failure() {
-        let first_inexact_f64_index = 1_usize << f64::MANTISSA_DIGITS;
+        let first_inexact_f64_index = (1_usize << f64::MANTISSA_DIGITS) + 1;
         let idx = [first_inexact_f64_index];
         let result =
             grid_index_as_scalar::<f64, 1>(&idx, 0, first_inexact_f64_index.saturating_add(1));
@@ -2218,7 +2310,7 @@ mod tests {
 
     #[test]
     fn test_generate_random_points_invalid_range() {
-        // Test invalid range (min >= max)
+        // Test invalid range (non-increasing bounds)
         let result = generate_random_points::<f64, 2>(100, (10.0, 5.0));
         assert_matches!(
             result,

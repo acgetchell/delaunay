@@ -467,6 +467,8 @@ pub enum ExplicitInsertionErrorKind {
     TopologyValidationFailed,
     /// Local repair would exceed its simplex-removal budget.
     MaxSimplicesRemovedExceeded,
+    /// Spatial index construction failed.
+    SpatialIndexConstruction,
 }
 
 /// Compact summary of an [`InsertionError`] used by explicit construction.
@@ -533,6 +535,9 @@ impl From<InsertionError> for ExplicitInsertionError {
             }
             InsertionError::MaxSimplicesRemovedExceeded { .. } => {
                 ExplicitInsertionErrorKind::MaxSimplicesRemovedExceeded
+            }
+            InsertionError::SpatialIndexConstruction { .. } => {
+                ExplicitInsertionErrorKind::SpatialIndexConstruction
             }
         };
         let source_kind = match &source {
@@ -3002,6 +3007,7 @@ mod tests {
     use crate::core::algorithms::flips::DelaunayRepairError;
     use crate::core::algorithms::incremental_insertion::{
         CavityFillingError, DelaunayRepairFailureContext, HullExtensionReason, NeighborWiringError,
+        SpatialIndexConstructionFailure,
     };
     use crate::core::algorithms::locate::{ConflictError, LocateError};
     use crate::core::facet::FacetError;
@@ -3015,7 +3021,7 @@ mod tests {
     use crate::core::vertex::VertexBuilder;
     use crate::core::vertex::VertexValidationError;
     use crate::geometry::kernel::RobustKernel;
-    use crate::geometry::traits::coordinate::CoordinateValues;
+    use crate::geometry::traits::coordinate::{CoordinateConversionValue, CoordinateValues};
     use crate::repair::DelaunayRepairOperation;
     use crate::topology::traits::global_topology_model::{
         EuclideanModel, GlobalTopologyModel, GlobalTopologyModelError, ToroidalModel,
@@ -3422,6 +3428,15 @@ mod tests {
                 uuid,
             },
             ExplicitInsertionErrorKind::DuplicateUuid,
+            None,
+        );
+        assert_explicit_insertion_error(
+            InsertionError::SpatialIndexConstruction {
+                reason: SpatialIndexConstructionFailure::NonPositiveCellSize {
+                    value: CoordinateConversionValue::from_f64(0.0),
+                },
+            },
+            ExplicitInsertionErrorKind::SpatialIndexConstruction,
             None,
         );
     }

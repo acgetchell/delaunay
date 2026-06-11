@@ -30,6 +30,7 @@ use crate::core::algorithms::flips::DelaunayRepairError;
 use crate::core::algorithms::locate::{
     ConflictError, LocateError, LocateResult, extract_cavity_boundary,
 };
+use crate::core::collections::spatial_hash_grid::HashGridIndexError;
 use crate::core::collections::{
     FastHashMap, FastHashSet, FastHasher, MAX_PRACTICAL_DIMENSION_SIZE, SimplexKeyBuffer,
     SmallBuffer, VertexKeyBuffer,
@@ -39,8 +40,8 @@ use crate::core::facet::{FacetError, FacetHandle};
 use crate::core::simplex::{NeighborSlot, Simplex, SimplexValidationError};
 use crate::core::tds::{
     DelaunayValidationErrorKind, EntityKind, GeometricError, InvariantErrorSummary,
-    NeighborValidationError, SimplexKey, Tds, TdsConstructionError, TdsError, TdsErrorKind,
-    TriangulationValidationErrorKind, VertexKey,
+    InvariantErrorSummaryDetail, NeighborValidationError, SimplexKey, Tds, TdsConstructionError,
+    TdsError, TdsErrorKind, TriangulationValidationErrorKind, VertexKey,
 };
 use crate::core::traits::boundary_analysis::BoundaryAnalysis;
 use crate::core::traits::data_type::DataType;
@@ -52,6 +53,7 @@ use crate::geometry::predicates::Orientation;
 use crate::geometry::robust_predicates::robust_orientation;
 use crate::geometry::traits::coordinate::{
     CoordinateConversionError, CoordinateConversionValue, CoordinateScalar, CoordinateValues,
+    InvalidCoordinateValue,
 };
 use crate::validation::DelaunayTriangulationValidationError;
 use std::fmt;
@@ -530,6 +532,14 @@ pub enum InitialSimplexUnexpectedInsertionStage {
         #[source]
         source: InvariantErrorSummary,
     },
+
+    /// Spatial index construction escaped initial-simplex construction.
+    #[error("spatial index construction failed during insertion: {reason}")]
+    SpatialIndexConstruction {
+        /// Structured spatial-index construction failure.
+        #[source]
+        reason: SpatialIndexConstructionFailure,
+    },
 }
 
 /// Structured reason why initial-simplex construction failed during insertion.
@@ -673,6 +683,13 @@ impl From<TriangulationConstructionError> for InitialSimplexConstructionError {
             }
             TriangulationConstructionError::DuplicateCoordinates { coordinates } => {
                 Self::DuplicateCoordinates { coordinates }
+            }
+            TriangulationConstructionError::SpatialIndexConstruction { reason } => {
+                Self::UnexpectedInsertionStage {
+                    reason: Box::new(
+                        InitialSimplexUnexpectedInsertionStage::SpatialIndexConstruction { reason },
+                    ),
+                }
             }
             TriangulationConstructionError::InsertionConflictRegion { source } => {
                 Self::UnexpectedInsertionStage {
@@ -857,6 +874,8 @@ pub enum InsertionErrorKind {
     TopologyValidationFailed,
     /// Local repair would exceed its simplex-removal budget.
     MaxSimplicesRemovedExceeded,
+    /// Spatial index construction failed.
+    SpatialIndexConstruction,
 }
 
 /// Nested discriminant preserved by an [`InsertionErrorSummary`].
@@ -1000,6 +1019,9 @@ impl From<InsertionError> for InsertionErrorSummary {
             }
             InsertionError::MaxSimplicesRemovedExceeded { .. } => {
                 InsertionErrorKind::MaxSimplicesRemovedExceeded
+            }
+            InsertionError::SpatialIndexConstruction { .. } => {
+                InsertionErrorKind::SpatialIndexConstruction
             }
         };
         let source_kind = match &source {
@@ -1422,6 +1444,66 @@ pub enum NeighborWiringError {
     },
 }
 
+/// Typed reason a spatial insertion index could not be constructed.
+///
+/// # Examples
+///
+/// ```rust
+/// use delaunay::prelude::geometry::{
+///     CoordinateConversionValue, FiniteCoordinateValue, InvalidCoordinateValue,
+/// };
+/// use delaunay::prelude::insertion::SpatialIndexConstructionFailure;
+///
+/// let non_finite = SpatialIndexConstructionFailure::NonFiniteCellSize {
+///     value: InvalidCoordinateValue::Nan,
+/// };
+/// std::assert_matches!(
+///     non_finite,
+///     SpatialIndexConstructionFailure::NonFiniteCellSize { .. }
+/// );
+///
+/// let finite = FiniteCoordinateValue::try_new(0.0)?;
+/// let non_positive = SpatialIndexConstructionFailure::NonPositiveCellSize {
+///     value: CoordinateConversionValue::Scalar(finite),
+/// };
+/// std::assert_matches!(
+///     non_positive,
+///     SpatialIndexConstructionFailure::NonPositiveCellSize { .. }
+/// );
+/// # Ok::<(), InvalidCoordinateValue>(())
+/// ```
+#[derive(Debug, Clone, thiserror::Error, PartialEq)]
+#[non_exhaustive]
+pub enum SpatialIndexConstructionFailure {
+    /// Hash-grid cell size was non-finite.
+    #[error("hash-grid cell size is non-finite: {value}")]
+    NonFiniteCellSize {
+        /// Non-finite cell-size category.
+        value: InvalidCoordinateValue,
+    },
+
+    /// Hash-grid cell size was finite but non-positive.
+    #[error("hash-grid cell size must be positive, got {value}")]
+    NonPositiveCellSize {
+        /// Rejected cell-size value.
+        value: CoordinateConversionValue,
+    },
+}
+
+impl<T> From<HashGridIndexError<T>> for SpatialIndexConstructionFailure
+where
+    T: CoordinateScalar,
+{
+    fn from(source: HashGridIndexError<T>) -> Self {
+        match source {
+            HashGridIndexError::NonFiniteCellSize { value } => Self::NonFiniteCellSize { value },
+            HashGridIndexError::NonPositiveCellSize { value } => Self::NonPositiveCellSize {
+                value: CoordinateConversionValue::from_numeric_debug(&value),
+            },
+        }
+    }
+}
+
 /// Error during incremental insertion.
 ///
 /// # Examples
@@ -1563,6 +1645,25 @@ pub enum InsertionError {
         /// Number of simplices selected for removal.
         attempted: usize,
     },
+
+    /// Spatial index construction failed before insertion.
+    #[error("Spatial index construction failed: {reason}")]
+    SpatialIndexConstruction {
+        /// Structured spatial-index construction failure.
+        #[source]
+        reason: SpatialIndexConstructionFailure,
+    },
+}
+
+impl<T> From<HashGridIndexError<T>> for InsertionError
+where
+    T: CoordinateScalar,
+{
+    fn from(source: HashGridIndexError<T>) -> Self {
+        Self::SpatialIndexConstruction {
+            reason: source.into(),
+        }
+    }
 }
 
 impl From<CavityFillingError> for InsertionError {
@@ -1710,7 +1811,8 @@ impl InsertionError {
             | Self::DelaunayRepairFailed { .. }
             | Self::DuplicateCoordinates { .. }
             | Self::DuplicateUuid { .. }
-            | Self::MaxSimplicesRemovedExceeded { .. } => false,
+            | Self::MaxSimplicesRemovedExceeded { .. }
+            | Self::SpatialIndexConstruction { .. } => false,
         }
     }
 
@@ -1760,8 +1862,10 @@ impl InsertionError {
                 | InitialSimplexConstructionError::InternalInconsistency { .. }
                 | InitialSimplexConstructionError::DuplicateCoordinates { .. }
                 | InitialSimplexConstructionError::LocalRepairBudgetExceeded { .. }
-                | InitialSimplexConstructionError::UnsupportedPeriodicDimension { .. }
-                | InitialSimplexConstructionError::UnexpectedInsertionStage { .. } => false,
+                | InitialSimplexConstructionError::UnsupportedPeriodicDimension { .. } => false,
+                InitialSimplexConstructionError::UnexpectedInsertionStage { reason } => {
+                    Self::is_unexpected_initial_simplex_stage_retryable(reason)
+                }
             },
             CavityFillingError::NeighborRebuild { reason } => match reason {
                 NeighborRebuildError::NonManifoldTopology { .. } => true,
@@ -1782,6 +1886,64 @@ impl InsertionError {
             | CavityFillingError::PerturbationScaleConversion { .. }
             | CavityFillingError::UnsupportedDegenerateLocation { .. }
             | CavityFillingError::EmptyFanTriangulation => false,
+        }
+    }
+
+    /// Check whether an insertion-stage error that escaped bootstrap construction is retryable.
+    const fn is_unexpected_initial_simplex_stage_retryable(
+        err: &InitialSimplexUnexpectedInsertionStage,
+    ) -> bool {
+        match err {
+            InitialSimplexUnexpectedInsertionStage::CavityFilling { source } => {
+                Self::is_cavity_filling_error_retryable(source)
+            }
+            InitialSimplexUnexpectedInsertionStage::ConflictRegion { source } => {
+                matches!(
+                    source,
+                    ConflictError::NonManifoldFacet { .. }
+                        | ConflictError::RidgeFan { .. }
+                        | ConflictError::DisconnectedBoundary { .. }
+                        | ConflictError::OpenBoundary { .. }
+                )
+            }
+            InitialSimplexUnexpectedInsertionStage::NonManifoldTopology { .. } => true,
+            InitialSimplexUnexpectedInsertionStage::HullExtension { reason } => {
+                matches!(
+                    reason,
+                    HullExtensionReason::NoVisibleFacets | HullExtensionReason::InvalidPatch { .. }
+                )
+            }
+            InitialSimplexUnexpectedInsertionStage::TopologyValidation { source } => {
+                Self::is_level3_error_retryable(source)
+            }
+            InitialSimplexUnexpectedInsertionStage::FinalTopologyValidation { source } => {
+                Self::is_invariant_error_summary_retryable(source)
+            }
+            InitialSimplexUnexpectedInsertionStage::Location { .. }
+            | InitialSimplexUnexpectedInsertionStage::DelaunayValidation { .. }
+            | InitialSimplexUnexpectedInsertionStage::SpatialIndexConstruction { .. } => false,
+        }
+    }
+
+    /// Check whether a compact final validation summary is perturbation-retryable.
+    const fn is_invariant_error_summary_retryable(err: &InvariantErrorSummary) -> bool {
+        match err.detail {
+            InvariantErrorSummaryDetail::Tds(kind) => matches!(
+                kind,
+                TdsErrorKind::Geometric
+                    | TdsErrorKind::OrientationViolation
+                    | TdsErrorKind::FacetSharingViolation
+            ),
+            InvariantErrorSummaryDetail::Triangulation(kind) => matches!(
+                kind,
+                TriangulationValidationErrorKind::ManifoldFacetMultiplicity
+                    | TriangulationValidationErrorKind::BoundaryRidgeMultiplicity
+                    | TriangulationValidationErrorKind::RidgeLinkNotManifold
+                    | TriangulationValidationErrorKind::VertexLinkNotManifold
+                    | TriangulationValidationErrorKind::OrientationPromotionNonConvergence
+                    | TriangulationValidationErrorKind::IsolatedVertex
+            ),
+            InvariantErrorSummaryDetail::Delaunay(_) => false,
         }
     }
 
@@ -4986,6 +5148,50 @@ mod tests {
             }
             other => panic!("expected unexpected neighbor repair error, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn spatial_index_construction_error_preserves_typed_reason() {
+        let err = InsertionError::from(HashGridIndexError::NonPositiveCellSize { value: 0.0 });
+
+        assert_matches!(
+            err,
+            InsertionError::SpatialIndexConstruction {
+                reason: SpatialIndexConstructionFailure::NonPositiveCellSize {
+                    value: CoordinateConversionValue::Scalar(value),
+                },
+            } if value.get() == 0.0
+        );
+
+        let summary = InsertionErrorSummary::from(err);
+        assert_eq!(summary.kind, InsertionErrorKind::SpatialIndexConstruction);
+        assert!(!summary.is_retryable());
+    }
+
+    #[test]
+    fn initial_simplex_unexpected_stage_preserves_retryability() {
+        let reason = CavityFillingError::InitialSimplexConstruction {
+            reason: InitialSimplexConstructionError::UnexpectedInsertionStage {
+                reason: Box::new(InitialSimplexUnexpectedInsertionStage::ConflictRegion {
+                    source: ConflictError::NonManifoldFacet {
+                        facet_hash: 0xabc,
+                        simplex_count: 3,
+                    },
+                }),
+            },
+        };
+        assert!(InsertionError::CavityFilling { reason }.is_retryable());
+
+        let reason = CavityFillingError::InitialSimplexConstruction {
+            reason: InitialSimplexConstructionError::UnexpectedInsertionStage {
+                reason: Box::new(InitialSimplexUnexpectedInsertionStage::Location {
+                    source: LocateError::InvalidSimplex {
+                        simplex_key: SimplexKey::from(KeyData::from_ffi(7)),
+                    },
+                }),
+            },
+        };
+        assert!(!InsertionError::CavityFilling { reason }.is_retryable());
     }
 
     fn sample_delaunay_repair_diagnostics_for_summary() -> DelaunayRepairDiagnostics {

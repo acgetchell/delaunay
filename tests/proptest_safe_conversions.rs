@@ -33,9 +33,9 @@ fn non_finite_f64() -> impl Strategy<Value = f64> {
 }
 
 /// Strategy for generating safe usize values (within f64 precision)
-/// f64 can represent integers exactly up to 2^53 - 1
+/// f64 can represent integers exactly up to and including 2^53.
 fn safe_usize() -> impl Strategy<Value = usize> {
-    0..=9_007_199_254_740_991_usize // 2^53 - 1
+    0..=9_007_199_254_740_992_usize // 2^53
 }
 
 // =============================================================================

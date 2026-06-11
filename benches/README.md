@@ -288,7 +288,7 @@ dimension:
 |-----------|------------------|---------------------|-----------------|
 | 2D | 36,000 | 71,887 | ~48.1 s |
 | 3D | 7,500 | Recomputed by harness | Near one minute |
-| 4D | 900 | 21,620 | ~57.4 s |
+| 4D | 800 | 19,141 | ~51.8 s |
 | 5D | 140 | 8,296 | ~51.8 s |
 
 For 5D, the debug default is 140 vertices: 150 vertices measured about

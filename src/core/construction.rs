@@ -6,7 +6,9 @@
 //! over. Mutation-heavy insertion and repair orchestration remain implemented
 //! with the triangulation type until they can be split into narrower modules.
 
-use crate::core::algorithms::incremental_insertion::{CavityFillingError, HullExtensionReason};
+use crate::core::algorithms::incremental_insertion::{
+    CavityFillingError, HullExtensionReason, SpatialIndexConstructionFailure,
+};
 use crate::core::algorithms::locate::{ConflictError, LocateError};
 use crate::core::collections::{MAX_PRACTICAL_DIMENSION_SIZE, SmallBuffer};
 use crate::core::simplex::{Simplex, SimplexValidationError};
@@ -176,6 +178,14 @@ pub enum TriangulationConstructionError {
     DuplicateCoordinates {
         /// Duplicate coordinate tuple stored as typed coordinate payloads.
         coordinates: CoordinateValues,
+    },
+
+    /// Spatial index construction failed during triangulation construction.
+    #[error("Spatial index construction failed during construction: {reason}")]
+    SpatialIndexConstruction {
+        /// Structured spatial-index construction failure.
+        #[source]
+        reason: SpatialIndexConstructionFailure,
     },
 
     /// Internal bookkeeping state became inconsistent during construction.

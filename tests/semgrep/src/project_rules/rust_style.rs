@@ -165,14 +165,12 @@ pub enum InvalidPositiveScalar<T = f64> {
 
 #[non_exhaustive]
 pub enum RandomPointGenerationError<T = f64> {
+    // ruleid: delaunay.rust.no-stringly-generator-error-payloads
     PoissonSamplingFailed {
         requested_points: usize,
         generated_points: usize,
-        // ruleid: delaunay.rust.no-stringly-generator-error-payloads
         min_distance: String,
-        // ruleid: delaunay.rust.no-stringly-generator-error-payloads
         bounds_min: String,
-        // ruleid: delaunay.rust.no-stringly-generator-error-payloads
         bounds_max: String,
         attempts: usize,
     },

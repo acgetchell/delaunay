@@ -265,7 +265,8 @@ where
 /// Returns `DelaunayTriangulationConstructionError` with different variants depending on the failure:
 ///
 /// **Random point generation** (`RandomPointGeneration`):
-/// - Coordinate range parsing fails because a bound is non-finite or `min >= max`
+/// - Coordinate range parsing fails because a bound is non-finite, equal,
+///   decreasing, or incomparable
 ///
 /// **Insufficient vertices** (`InsufficientVertices`):
 /// - When `n_points < D + 1` (need at least D+1 points for a D-dimensional simplex)
@@ -738,6 +739,7 @@ where
 /// # Ok(())
 /// # }
 /// ```
+#[must_use]
 pub struct RandomTriangulationBuilder<T> {
     n_points: NonZeroUsize,
     bounds: CoordinateRange<T>,
@@ -757,7 +759,8 @@ impl<T> RandomTriangulationBuilder<T> {
     /// # Errors
     ///
     /// Returns [`CoordinateRangeError::NonFiniteBound`] if either bound is
-    /// non-finite, or [`CoordinateRangeError::NonIncreasing`] if `min >= max`.
+    /// non-finite, or [`CoordinateRangeError::NonIncreasing`] if the bounds are
+    /// equal, decreasing, or incomparable.
     ///
     /// # Defaults
     ///
@@ -828,7 +831,6 @@ impl<T> RandomTriangulationBuilder<T> {
     /// # Ok(())
     /// # }
     /// ```
-    #[must_use]
     pub fn new_in_range(n_points: NonZeroUsize, bounds: CoordinateRange<T>) -> Self {
         Self {
             n_points,
@@ -859,7 +861,6 @@ impl<T> RandomTriangulationBuilder<T> {
     /// # Ok(())
     /// # }
     /// ```
-    #[must_use]
     pub const fn seed(mut self, seed: u64) -> Self {
         self.seed = Some(seed);
         self
@@ -888,7 +889,6 @@ impl<T> RandomTriangulationBuilder<T> {
     /// # Ok(())
     /// # }
     /// ```
-    #[must_use]
     pub const fn topology_guarantee(mut self, topology_guarantee: TopologyGuarantee) -> Self {
         self.topology_guarantee = topology_guarantee;
         self
@@ -929,7 +929,6 @@ impl<T> RandomTriangulationBuilder<T> {
     /// # Ok(())
     /// # }
     /// ```
-    #[must_use]
     pub const fn insertion_order(mut self, strategy: InsertionOrderStrategy) -> Self {
         self.construction_options = self.construction_options.with_insertion_order(strategy);
         self
@@ -958,7 +957,6 @@ impl<T> RandomTriangulationBuilder<T> {
     /// # Ok(())
     /// # }
     /// ```
-    #[must_use]
     pub const fn construction_options(mut self, options: ConstructionOptions) -> Self {
         self.construction_options = options;
         self

@@ -744,8 +744,8 @@ pub use crate::core::algorithms::incremental_insertion::{
     DelaunayRepairFailureContext, HullExtensionReason, InitialSimplexConstructionError,
     InitialSimplexUnexpectedInsertionStage, InsertionError, InsertionErrorKind,
     InsertionErrorSourceKind, InsertionErrorSummary, NeighborRebuildError, NeighborWiringError,
-    TdsConstructionFailure, TdsValidationFailure, extend_hull, fill_cavity,
-    repair_neighbor_pointers, repair_neighbor_pointers_local, wire_cavity_neighbors,
+    SpatialIndexConstructionFailure, TdsConstructionFailure, TdsValidationFailure, extend_hull,
+    fill_cavity, repair_neighbor_pointers, repair_neighbor_pointers_local, wire_cavity_neighbors,
 };
 pub use crate::core::algorithms::pl_manifold_repair::{
     PlManifoldRepairError, PlManifoldRepairStats,
@@ -1094,7 +1094,7 @@ pub mod prelude {
         DelaunayRepairFailureContext, HullExtensionReason, InitialSimplexConstructionError,
         InitialSimplexUnexpectedInsertionStage, InsertionError, InsertionErrorKind,
         InsertionErrorSourceKind, InsertionErrorSummary, NeighborRebuildError, NeighborWiringError,
-        TdsConstructionFailure, TdsValidationFailure,
+        SpatialIndexConstructionFailure, TdsConstructionFailure, TdsValidationFailure,
     };
     pub use crate::{InsertionOutcome, InsertionStatistics, SuspicionFlags};
 
@@ -1174,8 +1174,9 @@ pub mod prelude {
         pub use crate::topology::traits::{GlobalTopology, TopologyKind, ToroidalConstructionMode};
         pub use crate::validation::DelaunayTriangulationValidationError;
         pub use crate::{
-            CavityFillingError, CavityRepairStage, DelaunayTriangulation, TopologyGuarantee,
-            Triangulation, TriangulationConstructionError,
+            CavityFillingError, CavityRepairStage, DelaunayTriangulation,
+            SpatialIndexConstructionFailure, TopologyGuarantee, Triangulation,
+            TriangulationConstructionError,
         };
         // Convenience macro (commonly used in docs/examples).
         pub use crate::vertex;
@@ -1227,8 +1228,9 @@ pub mod prelude {
             TriangulationValidationErrorKind, Vertex, VertexBuilder, VertexBuilderError, VertexKey,
         };
         pub use crate::{
-            InsertionError, TopologyGuarantee, Triangulation, TriangulationConstructionError,
-            TriangulationValidationError, ValidationConfigurationError, ValidationPolicy,
+            InsertionError, SpatialIndexConstructionFailure, TopologyGuarantee, Triangulation,
+            TriangulationConstructionError, TriangulationValidationError,
+            ValidationConfigurationError, ValidationPolicy,
         };
 
         // Convenience macro for generic triangulation examples and tests.
@@ -1277,9 +1279,9 @@ pub mod prelude {
             DelaunayRepairErrorSummary, DelaunayRepairFailureContext, HullExtensionReason,
             InitialSimplexConstructionError, InitialSimplexUnexpectedInsertionStage,
             InsertionError, InsertionErrorKind, InsertionErrorSourceKind, InsertionErrorSummary,
-            NeighborRebuildError, NeighborWiringError, TdsConstructionFailure,
-            TdsValidationFailure, extend_hull, fill_cavity, repair_neighbor_pointers,
-            repair_neighbor_pointers_local, wire_cavity_neighbors,
+            NeighborRebuildError, NeighborWiringError, SpatialIndexConstructionFailure,
+            TdsConstructionFailure, TdsValidationFailure, extend_hull, fill_cavity,
+            repair_neighbor_pointers, repair_neighbor_pointers_local, wire_cavity_neighbors,
         };
         pub use crate::{InsertionOutcome, InsertionResult, InsertionStatistics};
     }

@@ -416,11 +416,13 @@ rules:
     paths:
       include:
         - "/src/geometry/util/point_generation.rs"
+        - "/src/geometry/util/triangulation_generation.rs"
         - "/tests/semgrep/src/project_rules/**/*.rs"
     pattern-either:
       - pattern-regex: >-
           (?s)pub\s+enum\s+InvalidPositiveScalar(?:\s*<[^>{}]*>)?\s*\{.*?\bNonPositive\s*\{[^}]*\bvalue\s*:\s*String\s*,
-      - pattern-regex: '^\s*(?:min_distance|bounds_min|bounds_max|bounds)\s*:\s*String\s*,'
+      - pattern-regex: >-
+          (?s)\b[A-Za-z0-9_]+\s*\{[^}]*\b(?:min_distance|bounds_min|bounds_max|bounds)\s*:\s*String\s*,
       - pattern-regex: >-
           (?s)\bCoordinateConversionFailed\s*\{[^}]*\bvalue\s*:\s*String\s*,
 

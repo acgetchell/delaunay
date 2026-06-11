@@ -1430,6 +1430,27 @@ mod tests {
     }
 
     #[test]
+    fn finite_coordinate_value_try_from_parses_at_raw_boundary() {
+        assert_relative_eq!(
+            FiniteCoordinateValue::try_from(-3.5).unwrap().get(),
+            -3.5,
+            epsilon = f64::EPSILON
+        );
+        assert_eq!(
+            FiniteCoordinateValue::try_from(f64::NEG_INFINITY),
+            Err(InvalidCoordinateValue::NegativeInfinity)
+        );
+    }
+
+    #[test]
+    fn invalid_coordinate_value_display_preserves_custom_payload() {
+        assert_eq!(
+            InvalidCoordinateValue::Other("not finite".to_owned()).to_string(),
+            "not finite"
+        );
+    }
+
+    #[test]
     fn coordinate_conversion_value_parses_raw_f64_at_boundary() {
         assert_matches!(
             CoordinateConversionValue::from_f64(2.5),
