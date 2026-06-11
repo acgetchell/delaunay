@@ -1116,13 +1116,14 @@ const BATCH_DEDUP_MAX_DIMENSION: usize = 5;
 fn order_vertices_by_strategy<T, U, const D: usize>(
     vertices: Vec<Vertex<T, U, D>>,
     insertion_order: InsertionOrderStrategy,
+    dedup_quantized: bool,
 ) -> Vec<Vertex<T, U, D>>
 where
     T: CoordinateScalar,
 {
     match insertion_order {
         InsertionOrderStrategy::Input => vertices,
-        InsertionOrderStrategy::Hilbert => order_vertices_hilbert(vertices, true),
+        InsertionOrderStrategy::Hilbert => order_vertices_hilbert(vertices, dedup_quantized),
     }
 }
 
@@ -4311,6 +4312,10 @@ where
 
     /// Applies deduplication, insertion ordering, and initial-simplex selection
     /// before any topology is created.
+    #[expect(
+        clippy::too_many_lines,
+        reason = "preprocessing keeps dedup, ordering, and initial-simplex selection in one boundary"
+    )]
     pub(crate) fn preprocess_vertices_for_construction(
         vertices: &[Vertex<K::Scalar, U, D>],
         dedup_policy: DedupPolicy,
@@ -4383,6 +4388,7 @@ where
             _ => Some(order_vertices_by_strategy(
                 owned_vertices.unwrap_or_else(|| vertices.to_vec()),
                 insertion_order,
+                dedup_policy != DedupPolicy::Off,
             )),
         };
 
@@ -4441,6 +4447,7 @@ where
                         | TdsConstructionFailure::Validation { .. },
                 } | DelaunayConstructionFailure::InternalInconsistency { .. }
                     | DelaunayConstructionFailure::UnsupportedPeriodicDimension { .. }
+                    | DelaunayConstructionFailure::SpatialIndexConstruction { .. }
                     | DelaunayConstructionFailure::DelaunayRepair { .. }
                     | DelaunayConstructionFailure::InsertionTopologyValidation { .. }
                     | DelaunayConstructionFailure::LocalRepairBudgetExceeded { .. }
@@ -5603,9 +5610,30 @@ mod tests {
         ];
         let expected = coord_sequence_2d(&vertices);
 
-        let ordered = order_vertices_by_strategy(vertices, InsertionOrderStrategy::Input);
+        let ordered = order_vertices_by_strategy(vertices, InsertionOrderStrategy::Input, false);
 
         assert_eq!(coord_sequence_2d(&ordered), expected);
+    }
+
+    #[test]
+    fn preprocess_hilbert_with_dedup_off_preserves_duplicate_vertices() {
+        init_tracing();
+        let vertices: Vec<Vertex<f64, (), 2>> = vec![
+            vertex!([0.0, 0.0]),
+            vertex!([1.0, 0.0]),
+            vertex!([0.0, 1.0]),
+            vertex!([1.0, 0.0]),
+        ];
+
+        let preprocess = TestDelaunay::<2>::preprocess_vertices_for_construction(
+            &vertices,
+            DedupPolicy::Off,
+            InsertionOrderStrategy::Hilbert,
+            InitialSimplexStrategy::First,
+        )
+        .expect("preprocessing with dedup off should preserve duplicate vertices");
+
+        assert_eq!(preprocess.primary_slice(&vertices).len(), vertices.len());
     }
 
     #[test]
@@ -7282,6 +7310,21 @@ mod tests {
         assert!(
             TestDelaunay::<3>::is_non_retryable_construction_error(&err),
             "Local repair budget exhaustion should be non-retryable"
+        );
+    }
+
+    #[test]
+    fn test_is_non_retryable_construction_error_spatial_index_construction() {
+        let err: DelaunayTriangulationConstructionError =
+            TriangulationConstructionError::SpatialIndexConstruction {
+                reason: SpatialIndexConstructionFailure::NonPositiveCellSize {
+                    value: CoordinateConversionValue::from_f64(0.0),
+                },
+            }
+            .into();
+        assert!(
+            TestDelaunay::<3>::is_non_retryable_construction_error(&err),
+            "Spatial index construction failures should be non-retryable"
         );
     }
 

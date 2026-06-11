@@ -5155,7 +5155,7 @@ mod tests {
         let err = InsertionError::from(HashGridIndexError::NonPositiveCellSize { value: 0.0 });
 
         assert_matches!(
-            err,
+            &err,
             InsertionError::SpatialIndexConstruction {
                 reason: SpatialIndexConstructionFailure::NonPositiveCellSize {
                     value: CoordinateConversionValue::Scalar(value),
