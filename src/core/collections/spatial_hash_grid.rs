@@ -19,7 +19,7 @@
 
 use super::{SecureHashMap, SmallBuffer};
 use crate::core::tds::VertexKey;
-use crate::geometry::traits::coordinate::CoordinateScalar;
+use crate::geometry::traits::coordinate::{CoordinateScalar, InvalidCoordinateValue};
 use std::hash::{Hash, Hasher};
 
 /// Maximum dimension supported by the hash-grid neighborhood walk.
@@ -29,11 +29,34 @@ const MAX_HASH_GRID_DIMENSION: usize = 5;
 
 const BUCKET_INLINE_CAPACITY: usize = 8;
 
+/// Errors that can occur while constructing a spatial hash-grid index.
+///
+/// Cell size is parsed at construction so [`HashGridIndex`] never stores a
+/// non-finite or non-positive divisor. Unsupported dimensions are not
+/// construction errors; they create an unusable index that callers can detect
+/// with [`HashGridIndex::is_usable`] and treat as a linear-scan fallback.
+#[derive(Clone, Debug, thiserror::Error, PartialEq)]
+#[non_exhaustive]
+pub enum HashGridIndexError<T = f64> {
+    /// The cell size is non-finite.
+    #[error("invalid hash-grid cell size: {value}; cell size must be finite and positive")]
+    NonFiniteCellSize {
+        /// The non-finite cell size category.
+        value: InvalidCoordinateValue,
+    },
+    /// The finite cell size is zero or negative.
+    #[error("invalid hash-grid cell size {value:?}; cell size must be positive")]
+    NonPositiveCellSize {
+        /// The finite non-positive cell size.
+        value: T,
+    },
+}
+
 /// Hashable grid-cell key for a D-dimensional grid.
 ///
 /// Internally, this stores integer-valued cell coordinates as the same scalar
 /// type used for points. We avoid casting to an integer type to keep the index
-/// generic over coordinate scalar types.
+/// aligned with the crate's `CoordinateScalar` contract (`f64` today).
 #[derive(Clone, Copy, Debug)]
 struct GridKey<T, const D: usize>([T; D]);
 
@@ -62,10 +85,12 @@ where
     }
 }
 
-/// A simple spatial hash grid mapping grid cells to nearby keys.
+/// Spatial hash grid mapping grid cells to nearby keys.
 ///
 /// The grid uses a fixed `cell_size` and indexes vertices by the floored cell
-/// coordinates `floor(coord / cell_size)`.
+/// coordinates `floor(coord / cell_size)`. [`HashGridIndex::try_new`] validates
+/// that the stored cell size is finite and strictly positive, so lookup methods
+/// only need to handle dimensional support and coordinate keyability.
 #[derive(Clone, Debug)]
 pub struct HashGridIndex<T, const D: usize, K = VertexKey> {
     cell_size: T,
@@ -78,6 +103,11 @@ pub struct HashGridIndex<T, const D: usize, K = VertexKey> {
 
 impl<T, const D: usize, K> HashGridIndex<T, D, K> {
     /// Returns whether the index is usable for accelerated lookup.
+    ///
+    /// This is `false` when `D` exceeds the bounded neighborhood walk supported
+    /// by the grid, or after a coordinate could not be converted into a stable
+    /// grid key. A `false` result tells callers to use the conservative
+    /// linear-scan path.
     pub const fn is_usable(&self) -> bool {
         self.usable
     }
@@ -87,7 +117,11 @@ impl<T, const D: usize, K> HashGridIndex<T, D, K> {
         D <= MAX_HASH_GRID_DIMENSION
     }
 
-    /// Return the configured grid cell size.
+    /// Returns the configured grid cell size.
+    ///
+    /// The returned value was parsed by [`HashGridIndex::try_new`] and is
+    /// guaranteed to be finite and strictly positive for supported
+    /// [`CoordinateScalar`] implementations.
     pub const fn cell_size(&self) -> T
     where
         T: Copy,
@@ -113,14 +147,33 @@ impl<T, const D: usize, K> HashGridIndex<T, D, K>
 where
     T: CoordinateScalar,
 {
-    /// Create a new grid index with the given cell size.
-    pub fn new(cell_size: T) -> Self {
-        let usable = D <= MAX_HASH_GRID_DIMENSION && cell_size.is_finite() && cell_size > T::zero();
-        Self {
-            cell_size,
-            usable,
-            cells: SecureHashMap::default(),
+    /// Creates a new grid index with a finite, positive cell size.
+    ///
+    /// Unsupported dimensions produce an unusable index, but invalid cell sizes
+    /// are rejected before storage. This keeps all later grid-key arithmetic on
+    /// validated scalar state.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`HashGridIndexError::NonFiniteCellSize`] if `cell_size` is
+    /// `NaN` or infinite, or [`HashGridIndexError::NonPositiveCellSize`] if it
+    /// is finite and not strictly positive.
+    pub fn try_new(cell_size: T) -> Result<Self, HashGridIndexError<T>> {
+        if !cell_size.is_finite() {
+            return Err(HashGridIndexError::NonFiniteCellSize {
+                value: InvalidCoordinateValue::from_debug(&cell_size),
+            });
         }
+
+        if cell_size <= T::zero() {
+            return Err(HashGridIndexError::NonPositiveCellSize { value: cell_size });
+        }
+
+        Ok(Self {
+            cell_size,
+            usable: D <= MAX_HASH_GRID_DIMENSION,
+            cells: SecureHashMap::default(),
+        })
     }
 
     #[cfg(test)]
@@ -237,11 +290,6 @@ where
             return None;
         }
 
-        // Guard against non-finite or non-positive cell sizes.
-        if !self.cell_size.is_finite() || self.cell_size <= T::zero() {
-            return None;
-        }
-
         let mut key = [T::zero(); D];
         let one = T::one();
 
@@ -295,7 +343,43 @@ mod tests {
     use super::*;
     use crate::core::collections::FastHashSet;
     use crate::core::tds::VertexKey;
+    use crate::geometry::traits::coordinate::InvalidCoordinateValue;
+    use approx::assert_abs_diff_eq;
     use slotmap::SlotMap;
+
+    #[test]
+    fn test_hash_grid_index_try_new_rejects_invalid_cell_size() {
+        let grid: HashGridIndex<f64, 2> = HashGridIndex::try_new(1.0).unwrap();
+        assert!(grid.is_usable());
+        assert_abs_diff_eq!(grid.cell_size(), 1.0, epsilon = f64::EPSILON);
+
+        assert!(matches!(
+            HashGridIndex::<f64, 2>::try_new(0.0),
+            Err(HashGridIndexError::NonPositiveCellSize { value: 0.0 })
+        ));
+        assert!(matches!(
+            HashGridIndex::<f64, 2>::try_new(-1.0),
+            Err(HashGridIndexError::NonPositiveCellSize { value: -1.0 })
+        ));
+        assert!(matches!(
+            HashGridIndex::<f64, 2>::try_new(f64::NAN),
+            Err(HashGridIndexError::NonFiniteCellSize {
+                value: InvalidCoordinateValue::Nan
+            })
+        ));
+        assert!(matches!(
+            HashGridIndex::<f64, 2>::try_new(f64::INFINITY),
+            Err(HashGridIndexError::NonFiniteCellSize {
+                value: InvalidCoordinateValue::PositiveInfinity
+            })
+        ));
+        assert!(matches!(
+            HashGridIndex::<f64, 2>::try_new(f64::NEG_INFINITY),
+            Err(HashGridIndexError::NonFiniteCellSize {
+                value: InvalidCoordinateValue::NegativeInfinity
+            })
+        ));
+    }
 
     #[test]
     fn test_hash_grid_index_keying_and_candidate_lookup_2d() {
@@ -303,7 +387,7 @@ mod tests {
         let v1 = slots.insert(1);
         let v2 = slots.insert(2);
 
-        let mut grid: HashGridIndex<f64, 2> = HashGridIndex::new(1.0);
+        let mut grid: HashGridIndex<f64, 2> = HashGridIndex::try_new(1.0).unwrap();
 
         grid.insert_vertex(v1, &[0.2, 0.2]);
         grid.insert_vertex(v2, &[-0.2, 0.2]);
@@ -322,7 +406,7 @@ mod tests {
     #[test]
     fn test_hash_grid_index_candidate_visit_counts_2d() {
         let mut slots: SlotMap<VertexKey, i32> = SlotMap::default();
-        let mut grid: HashGridIndex<f64, 2> = HashGridIndex::new(1.0);
+        let mut grid: HashGridIndex<f64, 2> = HashGridIndex::try_new(1.0).unwrap();
 
         let mut expected: FastHashSet<VertexKey> = FastHashSet::default();
 
@@ -352,7 +436,7 @@ mod tests {
         let mut slots: SlotMap<VertexKey, i32> = SlotMap::default();
         let v1 = slots.insert(1);
         let v2 = slots.insert(2);
-        let mut grid: HashGridIndex<f64, 2> = HashGridIndex::new(1.0);
+        let mut grid: HashGridIndex<f64, 2> = HashGridIndex::try_new(1.0).unwrap();
 
         grid.insert_vertex(v1, &[0.25, 0.25]);
         grid.insert_vertex(v2, &[0.25, 0.25]);
@@ -383,12 +467,12 @@ mod tests {
         let v1 = slots.insert(1);
         let v2 = slots.insert(2);
 
-        let mut unsupported: HashGridIndex<f64, 6> = HashGridIndex::new(1.0);
+        let mut unsupported: HashGridIndex<f64, 6> = HashGridIndex::try_new(1.0).unwrap();
         assert!(!unsupported.is_usable());
         unsupported.remove_vertex(&v1, &[0.0; 6]);
         assert!(!unsupported.is_usable());
 
-        let mut grid: HashGridIndex<f64, 2> = HashGridIndex::new(1.0);
+        let mut grid: HashGridIndex<f64, 2> = HashGridIndex::try_new(1.0).unwrap();
         grid.insert_vertex(v1, &[0.25, 0.25]);
         grid.remove_vertex(&v2, &[20.25, 20.25]);
 
@@ -405,7 +489,7 @@ mod tests {
     fn test_hash_grid_index_remove_vertex_disables_on_unkeyable_coordinates() {
         let mut slots: SlotMap<VertexKey, i32> = SlotMap::default();
         let v = slots.insert(1);
-        let mut grid: HashGridIndex<f64, 2> = HashGridIndex::new(1.0);
+        let mut grid: HashGridIndex<f64, 2> = HashGridIndex::try_new(1.0).unwrap();
 
         grid.insert_vertex(v, &[0.25, 0.25]);
         assert!(grid.is_usable());
@@ -419,7 +503,7 @@ mod tests {
     #[test]
     fn test_hash_grid_index_candidate_visit_counts_5d() {
         let mut slots: SlotMap<VertexKey, i32> = SlotMap::default();
-        let mut grid: HashGridIndex<f64, 5> = HashGridIndex::new(1.0);
+        let mut grid: HashGridIndex<f64, 5> = HashGridIndex::try_new(1.0).unwrap();
 
         let mut expected: FastHashSet<VertexKey> = FastHashSet::default();
 

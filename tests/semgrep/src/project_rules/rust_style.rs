@@ -136,6 +136,123 @@ enum PrivateFixtureError {
 }
 
 #[non_exhaustive]
+pub enum CoordinateRangeError<T = f64> {
+    // ruleid: delaunay.rust.no-stringly-coordinate-range-error-payloads
+    NonIncreasing {
+        min: String,
+        max: String,
+    },
+    TypedNonIncreasing {
+        // ok: delaunay.rust.no-stringly-coordinate-range-error-payloads
+        min: T,
+        // ok: delaunay.rust.no-stringly-coordinate-range-error-payloads
+        max: T,
+    },
+}
+
+#[non_exhaustive]
+// ruleid: delaunay.rust.no-stringly-generator-error-payloads
+pub enum InvalidPositiveScalar<T = f64> {
+    NonFinite,
+    NonPositive {
+        value: String,
+    },
+    TypedNonPositive {
+        // ok: delaunay.rust.no-stringly-generator-error-payloads
+        value: T,
+    },
+}
+
+#[non_exhaustive]
+pub enum RandomPointGenerationError<T = f64> {
+    // ruleid: delaunay.rust.no-stringly-generator-error-payloads
+    PoissonSamplingFailed {
+        requested_points: usize,
+        generated_points: usize,
+        min_distance: String,
+        bounds_min: String,
+        bounds_max: String,
+        attempts: usize,
+    },
+    TypedPoissonSamplingFailed {
+        requested_points: usize,
+        generated_points: usize,
+        // ok: delaunay.rust.no-stringly-generator-error-payloads
+        min_distance: T,
+        // ok: delaunay.rust.no-stringly-generator-error-payloads
+        bounds: CoordinateRange<T>,
+        attempts: usize,
+    },
+    // ruleid: delaunay.rust.no-stringly-generator-error-payloads
+    CoordinateConversionFailed {
+        value: String,
+    },
+    TypedCoordinateConversionFailed {
+        // ok: delaunay.rust.no-stringly-generator-error-payloads
+        value: usize,
+    },
+}
+
+#[non_exhaustive]
+pub enum NumericDiagnosticError {
+    // ruleid: delaunay.rust.no-stringly-numeric-error-payloads
+    ConversionFailed {
+        coordinate_value: String,
+    },
+    // ruleid: delaunay.rust.no-stringly-numeric-error-payloads
+    NonFiniteValue {
+        coordinate_value: String,
+    },
+    // ruleid: delaunay.rust.no-stringly-numeric-error-payloads
+    InvalidCoordinate {
+        coordinate_value: String,
+    },
+    // ruleid: delaunay.rust.no-stringly-numeric-error-payloads
+    ValueConversionFailed {
+        value: String,
+        details: String,
+    },
+    // ruleid: delaunay.rust.no-stringly-numeric-error-payloads
+    DegenerateSimplex {
+        observed: String,
+        epsilon: String,
+        avg_edge_length: Option<String>,
+    },
+    // ruleid: delaunay.rust.no-stringly-numeric-error-payloads
+    MatrixInversionFailed {
+        details: String,
+    },
+    // ruleid: delaunay.rust.no-stringly-numeric-error-payloads
+    PerturbationScaleConversion {
+        value: String,
+    },
+    // ruleid: delaunay.rust.no-stringly-numeric-error-payloads
+    DuplicateCoordinates {
+        coordinates: String,
+    },
+    TypedConversionFailed {
+        // ok: delaunay.rust.no-stringly-numeric-error-payloads
+        coordinate_value: CoordinateConversionValue,
+    },
+    TypedQualityDegeneracy {
+        // ok: delaunay.rust.no-stringly-numeric-error-payloads
+        observed: CoordinateConversionValue,
+        // ok: delaunay.rust.no-stringly-numeric-error-payloads
+        epsilon: CoordinateConversionValue,
+        // ok: delaunay.rust.no-stringly-numeric-error-payloads
+        avg_edge_length: Option<CoordinateConversionValue>,
+    },
+    TypedPerturbationScaleConversion {
+        // ok: delaunay.rust.no-stringly-numeric-error-payloads
+        value: CoordinateConversionValue,
+    },
+    TypedDuplicateCoordinates {
+        // ok: delaunay.rust.no-stringly-numeric-error-payloads
+        coordinates: CoordinateValues,
+    },
+}
+
+#[non_exhaustive]
 pub enum FlipContextError {
     Invalid,
 }

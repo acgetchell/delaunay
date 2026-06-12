@@ -1167,12 +1167,12 @@ mod tests {
     }
 
     #[test]
-    fn toroidal_model_works_with_f32() {
+    fn toroidal_model_works_with_f64() {
         let model = ToroidalModel::<2>::new([2.0, 3.0], ToroidalConstructionMode::Canonicalized);
-        let mut coords = [2.5_f32, -1.0_f32];
+        let mut coords = [2.5, -1.0];
         model.canonicalize_point_in_place(&mut coords).unwrap();
-        assert!((coords[0] - 0.5).abs() < 1e-6);
-        assert!((coords[1] - 2.0).abs() < 1e-6);
+        assert_relative_eq!(coords[0], 0.5);
+        assert_relative_eq!(coords[1], 2.0);
     }
 
     #[test]
@@ -1351,7 +1351,7 @@ mod tests {
     #[test]
     fn scalar_conversion_error_includes_axis_context() {
         // This test verifies the error structure for scalar conversion failures.
-        // In practice, conversion failures are rare with f64/f32, but the error
+        // In practice, conversion failures are rare with f64, but the error
         // variant exists for completeness and custom scalar types.
         let err = GlobalTopologyModelError::ScalarConversion {
             axis: 2,
@@ -1370,20 +1370,13 @@ mod tests {
     }
 
     // =========================================================================
-    // Trait bounds and scalar type tests
+    // Trait bounds and scalar tests
     // =========================================================================
 
     #[test]
-    fn toroidal_model_works_with_different_float_types() {
+    fn toroidal_model_canonicalizes_f64_coordinates() {
         let model = ToroidalModel::<2>::new([2.0, 3.0], ToroidalConstructionMode::Canonicalized);
 
-        // Test with f32
-        let mut coords_f32 = [2.5_f32, -1.0_f32];
-        model.canonicalize_point_in_place(&mut coords_f32).unwrap();
-        assert!((coords_f32[0] - 0.5).abs() < 1e-6);
-        assert!((coords_f32[1] - 2.0).abs() < 1e-6);
-
-        // Test with f64
         let mut coords_f64 = [2.5_f64, -1.0_f64];
         model.canonicalize_point_in_place(&mut coords_f64).unwrap();
         assert_relative_eq!(coords_f64[0], 0.5);
@@ -1391,16 +1384,9 @@ mod tests {
     }
 
     #[test]
-    fn euclidean_model_works_with_different_float_types() {
+    fn euclidean_model_lifts_f64_coordinates() {
         let model = EuclideanModel;
 
-        // Test with f32
-        let coords_f32 = [1.5_f32, 2.5_f32];
-        let lifted = model.lift_for_orientation(coords_f32, None).unwrap();
-        assert!((lifted[0] - 1.5).abs() < 1e-6);
-        assert!((lifted[1] - 2.5).abs() < 1e-6);
-
-        // Test with f64
         let coords_f64 = [1.5_f64, 2.5_f64];
         let lifted = model.lift_for_orientation(coords_f64, None).unwrap();
         assert_relative_eq!(lifted[0], 1.5);
@@ -1408,18 +1394,10 @@ mod tests {
     }
 
     #[test]
-    fn toroidal_model_lift_works_with_different_float_types() {
+    fn toroidal_model_lifts_f64_coordinates() {
         let model =
             ToroidalModel::<2>::new([2.0, 3.0], ToroidalConstructionMode::PeriodicImagePoint);
 
-        // Test with f32
-        let lifted_f32 = model
-            .lift_for_orientation([0.5_f32, 0.25_f32], Some([1, -1]))
-            .unwrap();
-        assert!((lifted_f32[0] - 2.5).abs() < 1e-6);
-        assert!((lifted_f32[1] - (-2.75)).abs() < 1e-6);
-
-        // Test with f64
         let lifted_f64 = model
             .lift_for_orientation([0.5_f64, 0.25_f64], Some([1, -1]))
             .unwrap();

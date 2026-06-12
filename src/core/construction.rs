@@ -6,7 +6,9 @@
 //! over. Mutation-heavy insertion and repair orchestration remain implemented
 //! with the triangulation type until they can be split into narrower modules.
 
-use crate::core::algorithms::incremental_insertion::{CavityFillingError, HullExtensionReason};
+use crate::core::algorithms::incremental_insertion::{
+    CavityFillingError, HullExtensionReason, SpatialIndexConstructionFailure,
+};
 use crate::core::algorithms::locate::{ConflictError, LocateError};
 use crate::core::collections::{MAX_PRACTICAL_DIMENSION_SIZE, SmallBuffer};
 use crate::core::simplex::{Simplex, SimplexValidationError};
@@ -19,6 +21,7 @@ use crate::geometry::kernel::Kernel;
 use crate::geometry::point::Point;
 use crate::geometry::predicates::Orientation;
 use crate::geometry::robust_predicates::robust_orientation;
+use crate::geometry::traits::coordinate::CoordinateValues;
 use crate::validation::DelaunayTriangulationValidationError;
 use num_traits::NumCast;
 use thiserror::Error;
@@ -173,8 +176,16 @@ pub enum TriangulationConstructionError {
         "Duplicate coordinates: vertex with coordinates {coordinates} already exists in the triangulation"
     )]
     DuplicateCoordinates {
-        /// String representation of the duplicate coordinates.
-        coordinates: String,
+        /// Duplicate coordinate tuple stored as typed coordinate payloads.
+        coordinates: CoordinateValues,
+    },
+
+    /// Spatial index construction failed during triangulation construction.
+    #[error("Spatial index construction failed during construction: {reason}")]
+    SpatialIndexConstruction {
+        /// Structured spatial-index construction failure.
+        #[source]
+        reason: SpatialIndexConstructionFailure,
     },
 
     /// Internal bookkeeping state became inconsistent during construction.

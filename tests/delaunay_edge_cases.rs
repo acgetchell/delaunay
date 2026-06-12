@@ -474,7 +474,6 @@ fn test_regression_non_manifold_3d_seed123_50pts() {
     let n_points = nonzero(50);
     let raw_n_points = n_points.get();
     let result = delaunay::geometry::util::generate_random_triangulation_with_topology_guarantee::<
-        f64,
         (),
         (),
         3,
@@ -532,7 +531,6 @@ fn test_regression_non_manifold_nearby_seeds() {
     for seed in test_seeds {
         let result =
             delaunay::geometry::util::generate_random_triangulation_with_topology_guarantee::<
-                f64,
                 (),
                 (),
                 3,

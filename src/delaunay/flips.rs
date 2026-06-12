@@ -427,7 +427,7 @@ mod tests {
 
         let simplex_key = dt.simplices().next().unwrap().0;
         dt.insertion_state.last_inserted_simplex = Some(simplex_key);
-        let mut spatial_index = HashGridIndex::<f64, 3>::new(1.0);
+        let mut spatial_index = HashGridIndex::<f64, 3>::try_new(1.0).unwrap();
         for (vertex_key, vertex) in dt.vertices() {
             spatial_index.insert_vertex(vertex_key, vertex.point().coords());
         }

@@ -180,7 +180,7 @@ The useful updates ported in this pass are:
   rather than Homebrew so local setup cannot drift from CI pins. The CI build
   matrix runs `just ci` on Linux, macOS, and Windows after syncing the locked uv
   dev group and installing the pinned Cargo tools. All uv-backed workflows use
-  uv 0.11.15 to match the local Python tooling bootstrap.
+  uv 0.11.20 to match the local Python tooling bootstrap.
 - `.codecov.yml` now ratchets Delaunay's coverage policy above the older
   causal-triangulations baseline without copying la-stack's near-total
   threshold. Project coverage targets the current 90% line with only 1%

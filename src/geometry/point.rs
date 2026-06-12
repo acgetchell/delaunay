@@ -19,7 +19,8 @@
 #![forbid(unsafe_code)]
 
 use crate::geometry::traits::coordinate::{
-    Coordinate, CoordinateConversionError, CoordinateScalar, CoordinateValidationError,
+    Coordinate, CoordinateConversionError, CoordinateConversionValue, CoordinateScalar,
+    CoordinateValidationError, InvalidCoordinateValue,
 };
 use num_traits::cast;
 use serde::de::{Error, SeqAccess, Visitor};
@@ -37,8 +38,7 @@ use std::marker::PhantomData;
 // =============================================================================
 
 #[derive(Clone, Copy, Debug)]
-/// The [Point] struct represents a point in a D-dimensional space, where the
-/// coordinates are of generic type `T`.
+/// The [Point] struct represents a point in a D-dimensional space.
 ///
 /// # Generic Type Support
 ///
@@ -49,7 +49,11 @@ use std::marker::PhantomData;
 /// bounds at the type level.
 ///
 /// Most geometric APIs (construction via [`Coordinate`], validation, hashing/ordering,
-/// and serialization) are only available when `T: CoordinateScalar`.
+/// and serialization) are only available when `T: CoordinateScalar`. The only
+/// currently supported caller-visible coordinate scalar is `f64`; the generic
+/// parameter keeps storage and geometry concerns separate. Future exact-coordinate
+/// support, if added, will be exposed through an explicit documented API rather than
+/// arbitrary scalar implementations.
 ///
 /// # Properties
 ///
@@ -141,7 +145,7 @@ where
             if !coord.is_finite_generic() {
                 return Err(CoordinateValidationError::InvalidCoordinate {
                     coordinate_index: index,
-                    coordinate_value: format!("{coord:?}"),
+                    coordinate_value: InvalidCoordinateValue::from_debug(&coord),
                     dimension: D,
                 });
             }
@@ -352,7 +356,7 @@ where
 // TYPE CONVERSION IMPLEMENTATIONS
 // =============================================================================
 
-/// Fallible conversions for Point from arrays with potentially different scalar types.
+/// Fallible conversions for [Point] from arrays into supported coordinate scalars.
 ///
 /// This replaces the previous infallible From<[T; D]> which silently defaulted on
 /// cast failures. Now, conversions will return an error if any coordinate cannot be
@@ -368,13 +372,12 @@ where
     fn try_from(coords: [T; D]) -> Result<Self, Self::Error> {
         let mut out: [U; D] = [U::zero(); D];
         for (i, c) in coords.into_iter().enumerate() {
-            // Store debug representation before moving c
-            let c_debug = format!("{c:?}");
+            let coordinate_value = CoordinateConversionValue::from_numeric_debug(&c);
             // Attempt numeric cast
             let v: U =
                 cast::cast(c).ok_or_else(|| CoordinateConversionError::ConversionFailed {
                     coordinate_index: i,
-                    coordinate_value: c_debug,
+                    coordinate_value,
                     from_type: any::type_name::<T>(),
                     to_type: any::type_name::<U>(),
                 })?;
@@ -382,7 +385,7 @@ where
             if !v.is_finite_generic() {
                 return Err(CoordinateConversionError::NonFiniteValue {
                     coordinate_index: i,
-                    coordinate_value: format!("{v:?}"),
+                    coordinate_value: InvalidCoordinateValue::from_debug(&v),
                 });
             }
             out[i] = v;
@@ -807,14 +810,6 @@ mod tests {
             epsilon = 1e-9
         );
 
-        // Test with f32
-        let point_f32 = Point::new([1.0f32, 2.0f32, 3.0f32]);
-        assert_relative_eq!(
-            point_f32.coords().as_slice(),
-            [1.0f32, 2.0f32, 3.0f32].as_slice(),
-            epsilon = 1e-6
-        );
-
         // Test with 5D
         let point_5d = Point::new([1.0, 2.0, 3.0, 4.0, 5.0]);
         assert_relative_eq!(
@@ -832,14 +827,14 @@ mod tests {
     // point_serialization removed - basic cases covered by point_serialization_dimensional
 
     #[test]
-    fn point_from_array_f32_to_f64() {
-        let coords = [1.5f32, 2.5f32, 3.5f32, 4.5f32];
+    fn point_from_integer_array_to_f64() {
+        let coords = [1, 2, 3, 4];
         let point: Point<f64, 4> = Point::new(coords.map(Into::into));
 
         let result_coords = point.to_array();
         assert_relative_eq!(
             result_coords.as_slice(),
-            [1.5, 2.5, 3.5, 4.5].as_slice(),
+            [1.0, 2.0, 3.0, 4.0].as_slice(),
             epsilon = 1e-9
         );
         assert_eq!(point.dim(), 4);
@@ -847,54 +842,16 @@ mod tests {
 
     #[test]
     fn point_type_conversions() {
-        // Test same-type conversion (f32 to f32)
-        let coords_f32 = [1.5f32, 2.5f32, 3.5f32];
-        let point_f32: Point<f32, 3> = Point::new(coords_f32);
-        let result_f32 = point_f32.to_array();
-        assert_relative_eq!(
-            result_f32.as_slice(),
-            [1.5f32, 2.5f32, 3.5f32].as_slice(),
-            epsilon = 1e-9
-        );
-
-        // Test safe upcast conversion (f32 to f64)
-        let coords_f32_upcast = [1.5f32, 2.5f32];
-        let point_f64: Point<f64, 2> = Point::new(coords_f32_upcast.map(Into::into));
+        // Test same-type conversion.
+        let coords_f64 = [1.5, 2.5];
+        let point_f64: Point<f64, 2> = Point::new(coords_f64);
         let result_f64 = point_f64.to_array();
-        assert_relative_eq!(
-            result_f64.as_slice(),
-            [1.5f64, 2.5f64].as_slice(),
-            epsilon = 1e-9
-        );
+        assert_relative_eq!(result_f64.as_slice(), [1.5, 2.5].as_slice(), epsilon = 1e-9);
     }
 
     // =============================================================================
     // HASH AND EQUALITY TESTS
     // =============================================================================
-
-    // point_hash, point_hash_in_hashmap, point_partial_eq, point_partial_ord
-    // removed - covered by point_hashing_dimensional, point_hashmap_dimensional,
-    // point_equality_dimensional, and point_ordering_dimensional
-
-    // point_multidimensional_comprehensive removed - covered by dimensional macro tests
-    // (point_creation_dimensional, point_origin_dimensional)
-
-    #[test]
-    fn point_with_f32() {
-        let point: Point<f32, 2> = Point::new([1.5, 2.5]);
-
-        let coords = point.to_array();
-        assert_relative_eq!(coords.as_slice(), [1.5, 2.5].as_slice(), epsilon = 1e-9);
-        assert_eq!(point.dim(), 2);
-
-        let origin: Point<f32, 2> = Point::origin();
-        let origin_coords = origin.to_array();
-        assert_relative_eq!(
-            origin_coords.as_slice(),
-            [0.0, 0.0].as_slice(),
-            epsilon = 1e-9
-        );
-    }
 
     #[test]
     fn point_debug_format() {
@@ -1034,14 +991,6 @@ mod tests {
 
         assert_eq!(point_f64_1, point_f64_2);
         assert_ne!(point_f64_1, point_f64_3);
-
-        // Test Eq for f32
-        let point_f32_1 = Point::new([1.5f32, 2.5f32]);
-        let point_f32_2 = Point::new([1.5f32, 2.5f32]);
-        let point_f32_3 = Point::new([1.5f32, 2.6f32]);
-
-        assert_eq!(point_f32_1, point_f32_2);
-        assert_ne!(point_f32_1, point_f32_3);
     }
 
     #[test]
@@ -1050,11 +999,6 @@ mod tests {
         let point1 = Point::new([1.0, 2.0, 3.5]);
         let point2 = Point::new([1.0, 2.0, 3.5]);
         test_point_equality_and_hash(point1, point2, true);
-
-        // Test with f32
-        let point_f32_1 = Point::new([1.5f32, 2.5f32]);
-        let point_f32_2 = Point::new([1.5f32, 2.5f32]);
-        test_point_equality_and_hash(point_f32_1, point_f32_2, true);
     }
 
     #[test]
@@ -1121,40 +1065,6 @@ mod tests {
         // Test mixed invalid cases
         let invalid_nan_and_inf = Point::new([f64::NAN, f64::INFINITY, 1.0]);
         assert!(invalid_nan_and_inf.validate().is_err());
-    }
-
-    #[test]
-    fn point_is_valid_f32() {
-        // Test valid f32 points
-        let valid_point = Point::new([1.0f32, 2.0f32, 3.0f32]);
-        assert!(valid_point.validate().is_ok());
-
-        let valid_negative = Point::new([-1.5f32, -2.5f32]);
-        assert!(valid_negative.validate().is_ok());
-
-        let valid_zero = Point::new([0.0f32]);
-        assert!(valid_zero.validate().is_ok());
-
-        // Test invalid f32 points with NaN
-        let invalid_nan = Point::new([1.0f32, f32::NAN]);
-        assert!(invalid_nan.validate().is_err());
-
-        let invalid_all_nan = Point::new([f32::NAN, f32::NAN, f32::NAN, f32::NAN]);
-        assert!(invalid_all_nan.validate().is_err());
-
-        // Test invalid f32 points with infinity
-        let invalid_pos_inf = Point::new([f32::INFINITY, 2.0f32]);
-        assert!(invalid_pos_inf.validate().is_err());
-
-        let invalid_neg_inf = Point::new([1.0f32, f32::NEG_INFINITY]);
-        assert!(invalid_neg_inf.validate().is_err());
-
-        // Test edge cases with very small and large values (but finite)
-        let valid_small = Point::new([f32::MIN_POSITIVE, -f32::MIN_POSITIVE]);
-        assert!(valid_small.validate().is_ok());
-
-        let valid_large = Point::new([f32::MAX, -f32::MAX]);
-        assert!(valid_large.validate().is_ok());
     }
 
     #[test]
@@ -1260,11 +1170,6 @@ mod tests {
         assert_eq!(map.get(&point_nan_lookup), Some(&100));
         assert_eq!(map.get(&point_inf_lookup), Some(&200));
         assert_eq!(map.len(), 2);
-
-        // Test with f32 types
-        let point_f32_nan1 = Point::new([f32::NAN, 1.0f32]);
-        let point_f32_nan2 = Point::new([f32::NAN, 1.0f32]);
-        assert_eq!(hash_of(&point_f32_nan1), hash_of(&point_f32_nan2));
     }
 
     #[test]
@@ -1286,11 +1191,6 @@ mod tests {
         let point_nan_diff1 = Point::new([f64::NAN, 2.0, 3.0]);
         let point_nan_diff2 = Point::new([1.0, f64::NAN, 3.0]);
         assert_ne!(point_nan_diff1, point_nan_diff2);
-
-        // f32 NaN comparisons
-        let point_f32_nan1 = Point::new([f32::NAN, 1.5f32]);
-        let point_f32_nan2 = Point::new([f32::NAN, 1.5f32]);
-        assert_eq!(point_f32_nan1, point_f32_nan2);
 
         // Mixed NaN and normal values
         let point_mixed1 = Point::new([1.0, f64::NAN, 3.0, 4.0]);
@@ -1314,13 +1214,6 @@ mod tests {
         assert_ne!(point_normal, point_nan_all);
         assert_ne!(point_nan, point_normal);
         assert_ne!(point_nan_all, point_normal);
-
-        // Test with f32
-        let point_f32_normal = Point::new([1.0f32, 2.0f32]);
-        let point_f32_nan = Point::new([f32::NAN, 2.0f32]);
-
-        assert_ne!(point_f32_normal, point_f32_nan);
-        assert_ne!(point_f32_nan, point_f32_normal);
     }
 
     #[test]
@@ -1344,14 +1237,6 @@ mod tests {
         let point_normal = Point::new([1.0, 2.0]);
         assert_ne!(point_pos_inf1, point_normal);
         assert_ne!(point_neg_inf1, point_normal);
-
-        // Test with f32
-        let point_f32_pos_inf1 = Point::new([f32::INFINITY]);
-        let point_f32_pos_inf2 = Point::new([f32::INFINITY]);
-        let point_f32_neg_inf = Point::new([f32::NEG_INFINITY]);
-
-        assert_eq!(point_f32_pos_inf1, point_f32_pos_inf2);
-        assert_ne!(point_f32_pos_inf1, point_f32_neg_inf);
     }
 
     #[test]
@@ -1400,12 +1285,6 @@ mod tests {
         assert_eq!(point_a, point_b);
         assert_eq!(point_b, point_c);
         assert_eq!(point_a, point_c);
-
-        // Test with f32 types
-        let point_f32_a = Point::new([f32::NAN, 1.0f32, f32::NEG_INFINITY]);
-        let point_f32_b = Point::new([f32::NAN, 1.0f32, f32::NEG_INFINITY]);
-        assert_eq!(point_f32_a, point_f32_b);
-        assert_eq!(point_f32_b, point_f32_a);
     }
 
     #[test]
@@ -1435,19 +1314,6 @@ mod tests {
         assert_eq!(point1, point2);
         assert_eq!(point2, point3);
         assert_eq!(point1, point3);
-
-        // Test with f32 as well
-        let f32_nan1 = f32::NAN;
-        #[expect(
-            clippy::zero_divided_by_zero,
-            reason = "test deliberately constructs an alternate NaN bit pattern"
-        )]
-        let f32_nan2 = 0.0f32 / 0.0f32;
-
-        let point_f32_1 = Point::new([f32_nan1]);
-        let point_f32_2 = Point::new([f32_nan2]);
-
-        assert_eq!(point_f32_1, point_f32_2);
     }
 
     #[test]
@@ -1520,15 +1386,6 @@ mod tests {
         assert_eq!(point_pos_zero, point_neg_zero);
         assert_eq!(point_pos_zero, point_mixed_zero);
         assert_eq!(point_neg_zero, point_mixed_zero);
-
-        // Test with f32
-        let point_f32_nan = Point::new([f32::NAN]);
-        let point_f32_zero = Point::new([0.0f32]);
-        let point_f32_neg_zero = Point::new([-0.0f32]);
-
-        assert_ne!(point_f32_nan, point_f32_zero);
-        assert_ne!(point_f32_nan, point_f32_neg_zero);
-        assert_eq!(point_f32_zero, point_f32_neg_zero);
     }
 
     #[test]
@@ -1599,10 +1456,6 @@ mod tests {
         let subnormal = f64::MIN_POSITIVE / 2.0;
         let subnormal_point = Point::new([subnormal, -subnormal, 0.0]);
         assert!(subnormal_point.validate().is_ok());
-
-        // Test f32 extremes
-        let extreme_f32_point = Point::new([f32::MAX, f32::MIN, f32::MIN_POSITIVE]);
-        assert!(extreme_f32_point.validate().is_ok());
     }
 
     #[test]
@@ -1626,11 +1479,6 @@ mod tests {
         // Original should still be accessible after copy
         assert_eq!(original.dim(), 3);
         assert_eq!(copied.dim(), 3);
-
-        // Test with f32
-        let f32_point = Point::new([1.5f32, 2.5f32, 3.5f32, 4.5f32]);
-        let f32_copied = f32_point;
-        assert_eq!(f32_point, f32_copied);
     }
 
     #[test]
@@ -1751,15 +1599,6 @@ mod tests {
             point_mixed3.partial_cmp(&point_mixed4),
             Some(Ordering::Less)
         ); // -inf in first coordinate
-
-        // Test with f32 as well
-        let point_f32_nan = Point::new([f32::NAN, 1.0f32]);
-        let point_f32_normal = Point::new([1.0f32, 1.0f32]);
-        assert_eq!(
-            point_f32_nan.partial_cmp(&point_f32_normal),
-            Some(Ordering::Greater)
-        );
-        assert!(point_f32_nan > point_f32_normal);
     }
 
     #[test]
@@ -1768,7 +1607,6 @@ mod tests {
         // Point should be the same size as its coordinate array
 
         assert_eq!(mem::size_of::<Point<f64, 3>>(), mem::size_of::<[f64; 3]>());
-        assert_eq!(mem::size_of::<Point<f32, 4>>(), mem::size_of::<[f32; 4]>());
 
         // Test alignment
         assert_eq!(
@@ -1780,9 +1618,6 @@ mod tests {
         assert_eq!(mem::size_of::<Point<f64, 1>>(), 8); // 1 * 8 bytes
         assert_eq!(mem::size_of::<Point<f64, 2>>(), 16); // 2 * 8 bytes
         assert_eq!(mem::size_of::<Point<f64, 10>>(), 80); // 10 * 8 bytes
-
-        assert_eq!(mem::size_of::<Point<f32, 1>>(), 4); // 1 * 4 bytes
-        assert_eq!(mem::size_of::<Point<f32, 2>>(), 8); // 2 * 4 bytes
     }
 
     #[test]
@@ -1845,19 +1680,6 @@ mod tests {
         let point_all_special = Point::new([f64::NAN, f64::INFINITY, f64::NEG_INFINITY]);
         let json_all_special = serde_json::to_string(&point_all_special).unwrap();
         assert_eq!(json_all_special, "[null,\"Infinity\",\"-Infinity\"]");
-    }
-
-    #[test]
-    fn point_serialize_f32_nan_infinity() {
-        // Test f32 NaN and infinity serialization
-
-        let point_f32_nan = Point::new([f32::NAN, 1.0f32]);
-        let json_f32_nan = serde_json::to_string(&point_f32_nan).unwrap();
-        assert_eq!(json_f32_nan, "[null,1.0]");
-
-        let point_f32_inf = Point::new([f32::INFINITY, f32::NEG_INFINITY]);
-        let json_f32_inf = serde_json::to_string(&point_f32_inf).unwrap();
-        assert_eq!(json_f32_inf, "[\"Infinity\",\"-Infinity\"]");
     }
 
     #[test]
@@ -1930,12 +1752,7 @@ mod tests {
         );
         assert_relative_eq!(orig_coords[4], deser_coords[4]);
 
-        // Test 6: Test with different numeric types to verify NumCast improvement
-        let json_f32 = "[1.5, 2.5]";
-        let point_f32: Point<f32, 2> = serde_json::from_str(json_f32).unwrap();
-        assert_relative_eq!(point_f32.to_array().as_slice(), [1.5f32, 2.5f32].as_slice());
-
-        // Test 7: Invalid special string should fail gracefully
+        // Test 6: Invalid special string should fail gracefully
         let json_invalid = "[1.0, \"NotASpecialValue\", 2.0]";
         let result: Result<Point<f64, 3>, _> = serde_json::from_str(json_invalid);
         assert!(result.is_err());
@@ -2090,8 +1907,8 @@ mod tests {
         );
 
         // Test conversion from array reference
-        let coords_ref = &[1.0f32, 2.0f32, 3.0f32];
-        let point_from_ref: Point<f64, 3> = Point::new(coords_ref.map(Into::into));
+        let coords_ref = &[1.0, 2.0, 3.0];
+        let point_from_ref: Point<f64, 3> = Point::new(*coords_ref);
         assert_relative_eq!(
             point_from_ref.to_array().as_slice(),
             [1.0f64, 2.0f64, 3.0f64].as_slice()
@@ -2117,14 +1934,14 @@ mod tests {
     fn point_cast_conversions() {
         // Test the cast()-based TryFrom<[T; D]> implementation
 
-        // Test f32 to f64 conversion (safe upcast) using TryFrom
-        let coords_f32: [f32; 3] = [1.5, 2.5, 3.5];
-        let point_f64: Point<f64, 3> = Point::try_from(coords_f32).unwrap();
+        // Test integer to f64 conversion using TryFrom
+        let coords_i16: [i16; 3] = [1, 2, 3];
+        let point_f64: Point<f64, 3> = Point::try_from(coords_i16).unwrap();
 
         // Verify the conversion worked correctly
         assert_relative_eq!(
             point_f64.to_array().as_slice(),
-            [1.5f64, 2.5f64, 3.5f64].as_slice(),
+            [1.0, 2.0, 3.0].as_slice(),
             epsilon = 1e-9
         );
 
@@ -2155,11 +1972,11 @@ mod tests {
         );
 
         // Test with mixed typical values
-        let coords_mixed: [f32; 3] = [0.0, 1.5, -3.5];
+        let coords_mixed: [i16; 3] = [0, 15, -35];
         let point_mixed: Point<f64, 3> = Point::try_from(coords_mixed).unwrap();
         assert_relative_eq!(
             point_mixed.to_array().as_slice(),
-            [0.0, 1.5, -3.5].as_slice(),
+            [0.0, 15.0, -35.0].as_slice(),
             epsilon = 1e-9
         );
     }
@@ -2309,7 +2126,7 @@ mod tests {
         {
             assert_eq!(coordinate_index, 1);
             assert_eq!(dimension, 3);
-            assert!(coordinate_value.contains("NaN"));
+            assert_eq!(coordinate_value, InvalidCoordinateValue::Nan);
         } else {
             panic!("Expected InvalidCoordinate error");
         }
@@ -2325,7 +2142,7 @@ mod tests {
         {
             assert_eq!(coordinate_index, 0);
             assert_eq!(dimension, 4);
-            assert!(coordinate_value.contains("inf"));
+            assert_eq!(coordinate_value, InvalidCoordinateValue::PositiveInfinity);
         } else {
             panic!("Expected InvalidCoordinate error");
         }
@@ -2341,21 +2158,7 @@ mod tests {
         {
             assert_eq!(coordinate_index, 2);
             assert_eq!(dimension, 3);
-            assert!(coordinate_value.contains("inf"));
-        }
-
-        // Test f32 validation errors
-        let invalid_f32_point = Point::new([1.0f32, f32::NAN, 3.0f32]);
-        let result = invalid_f32_point.validate();
-        if let Err(CoordinateValidationError::InvalidCoordinate {
-            coordinate_index,
-            coordinate_value,
-            dimension,
-        }) = result
-        {
-            assert_eq!(coordinate_index, 1);
-            assert_eq!(dimension, 3);
-            assert!(coordinate_value.contains("NaN"));
+            assert_eq!(coordinate_value, InvalidCoordinateValue::NegativeInfinity);
         }
     }
 
@@ -2414,13 +2217,8 @@ mod tests {
     }
 
     #[test]
-    fn point_validation_all_coordinate_types() {
-        // Test validation with different coordinate types
-
-        // Floating point types can be invalid
-        assert!(Point::new([1.0f32, 2.0f32]).validate().is_ok());
+    fn point_validation_accepts_finite_f64_and_rejects_nan() {
         assert!(Point::new([1.0f64, 2.0f64]).validate().is_ok());
-        assert!(Point::new([f32::NAN, 2.0f32]).validate().is_err());
         assert!(Point::new([f64::NAN, 2.0f64]).validate().is_err());
     }
 
@@ -2535,76 +2333,8 @@ mod tests {
     // =============================================================================
 
     #[test]
-    fn point_try_from_overflow_f64_to_f32() {
-        // Test that overflow during f64 to f32 conversion produces NonFiniteValue error
-        let large_coords = [f64::MAX, 1.0];
-        let result: Result<Point<f32, 2>, _> = Point::try_from(large_coords);
-
-        assert!(result.is_err(), "f64::MAX should overflow when cast to f32");
-
-        if let Err(CoordinateConversionError::NonFiniteValue {
-            coordinate_index,
-            coordinate_value,
-        }) = result
-        {
-            assert_eq!(coordinate_index, 0);
-            assert!(coordinate_value.contains("inf") || coordinate_value.contains("Inf"));
-        } else {
-            panic!("Expected NonFiniteValue error, got: {result:?}");
-        }
-    }
-
-    #[test]
-    fn point_try_from_negative_overflow_f64_to_f32() {
-        // Test negative overflow
-        let large_negative_coords = [f64::MIN, 1.0];
-        let result: Result<Point<f32, 2>, _> = Point::try_from(large_negative_coords);
-
-        assert!(result.is_err(), "f64::MIN should overflow when cast to f32");
-
-        if let Err(CoordinateConversionError::NonFiniteValue {
-            coordinate_index,
-            coordinate_value,
-        }) = result
-        {
-            assert_eq!(coordinate_index, 0);
-            assert!(coordinate_value.contains("inf") || coordinate_value.contains("Inf"));
-        } else {
-            panic!("Expected NonFiniteValue error");
-        }
-    }
-
-    #[test]
-    fn point_try_from_multiple_overflow_coordinates() {
-        // Test that the first overflowing coordinate is reported
-        let coords = [1.0, f64::MAX, f64::MIN, f64::MAX];
-        let result: Result<Point<f32, 4>, _> = Point::try_from(coords);
-
-        assert!(result.is_err());
-
-        if let Err(CoordinateConversionError::NonFiniteValue {
-            coordinate_index, ..
-        }) = result
-        {
-            // Should report the first overflow at index 1
-            assert_eq!(coordinate_index, 1);
-        } else {
-            panic!("Expected NonFiniteValue error");
-        }
-    }
-
-    #[test]
     fn point_try_from_successful_conversions() {
         // Test successful conversions that don't overflow
-
-        // f32 to f64 (safe upcast)
-        let coords_f32: [f32; 3] = [1.5, -2.5, 3.5];
-        let point_f64: Point<f64, 3> = Point::try_from(coords_f32).unwrap();
-        assert_relative_eq!(
-            point_f64.to_array().as_slice(),
-            [1.5f64, -2.5f64, 3.5f64].as_slice(),
-            epsilon = 1e-9
-        );
 
         // i32 to f64
         let coords_i32: [i32; 4] = [1, -2, 3, -4];
@@ -2623,21 +2353,15 @@ mod tests {
 
     #[test]
     fn point_try_from_edge_case_values() {
-        // Test with values close to f32 limits (should succeed)
-        let coords_near_f32_max: [f64; 2] = [f64::from(f32::MAX), f64::from(f32::MIN)];
-        let result: Result<Point<f32, 2>, _> = Point::try_from(coords_near_f32_max);
-        assert!(result.is_ok(), "Values within f32 range should convert");
-
         // Test with zero and negative zero
         let coords_zero: [f64; 2] = [0.0, -0.0];
-        let point_zero: Point<f32, 2> = Point::try_from(coords_zero).unwrap();
-        assert_relative_eq!(point_zero.to_array()[0], 0.0f32);
-        assert_relative_eq!(point_zero.to_array()[1], -0.0f32);
+        let point_zero: Point<f64, 2> = Point::try_from(coords_zero).unwrap();
+        assert_relative_eq!(point_zero.to_array()[0], 0.0);
+        assert_relative_eq!(point_zero.to_array()[1], -0.0);
 
         // Test with very small values
         let coords_small: [f64; 2] = [1e-10, -1e-10];
-        let point_small: Point<f32, 2> = Point::try_from(coords_small).unwrap();
-        // These may underflow to zero in f32, but should still be finite
+        let point_small: Point<f64, 2> = Point::try_from(coords_small).unwrap();
         assert!(point_small.to_array()[0].is_finite());
         assert!(point_small.to_array()[1].is_finite());
     }
@@ -2655,13 +2379,13 @@ mod tests {
             epsilon = 1e-9
         );
 
-        // i16 to f32
+        // i16 to f64
         let coords_i16: [i16; 2] = [-100, 200];
-        let point_i16: Point<f32, 2> = Point::try_from(coords_i16).unwrap();
+        let point_i16: Point<f64, 2> = Point::try_from(coords_i16).unwrap();
         assert_relative_eq!(
             point_i16.to_array().as_slice(),
-            [-100.0f32, 200.0f32].as_slice(),
-            epsilon = 1e-6
+            [-100.0, 200.0].as_slice(),
+            epsilon = 1e-9
         );
 
         // Large but representable integers
@@ -2679,17 +2403,14 @@ mod tests {
         // Test that all coordinates are validated during conversion
 
         // Valid conversion - all finite
-        let valid_coords: [f32; 3] = [1.0, 2.0, 3.0];
+        let valid_coords: [i32; 3] = [1, 2, 3];
         let result: Result<Point<f64, 3>, _> = Point::try_from(valid_coords);
         assert!(result.is_ok());
 
-        // Invalid - produces infinity after conversion
-        let invalid_coords = [1.0, f64::MAX, 3.0];
-        let result: Result<Point<f32, 3>, _> = Point::try_from(invalid_coords);
-        assert!(
-            result.is_err(),
-            "Should fail if any coordinate becomes non-finite"
-        );
+        // Invalid - input contains infinity
+        let invalid_coords = [1.0, f64::INFINITY, 3.0];
+        let result: Result<Point<f64, 3>, _> = Point::try_from(invalid_coords);
+        assert!(result.is_err());
     }
 
     // =============================================================================
@@ -2720,12 +2441,7 @@ mod tests {
     }
 
     #[test]
-    fn point_dim_with_different_types() {
-        // Test dim() with different coordinate types
-
-        let point_f32: Point<f32, 3> = Point::new([1.0, 2.0, 3.0]);
-        assert_eq!(point_f32.dim(), 3);
-
+    fn point_dim_with_f64() {
         let point_f64: Point<f64, 4> = Point::new([1.0, 2.0, 3.0, 4.0]);
         assert_eq!(point_f64.dim(), 4);
     }
@@ -2938,39 +2654,6 @@ mod tests {
     }
 
     #[test]
-    fn point_numeric_types_f32() {
-        // Test f32 points
-        let point_f32_1 = Point::new([1.5f32, 2.5f32]);
-        let point_f32_2 = Point::new([1.5f32, 2.5f32]);
-        let point_f32_nan = Point::new([f32::NAN, 2.5f32]);
-        let point_f32_nan2 = Point::new([f32::NAN, 2.5f32]);
-
-        assert_eq!(point_f32_1, point_f32_2);
-        assert_eq!(point_f32_nan, point_f32_nan2);
-
-        // Test f32 infinity
-        let point_f32_inf1 = Point::new([f32::INFINITY, 1.0f32]);
-        let point_f32_inf2 = Point::new([f32::INFINITY, 1.0f32]);
-        let point_f32_neg_inf = Point::new([f32::NEG_INFINITY, 1.0f32]);
-
-        assert_eq!(point_f32_inf1, point_f32_inf2);
-        assert_ne!(point_f32_inf1, point_f32_neg_inf);
-
-        // Test f32 in HashMap
-        let mut f32_map: HashMap<Point<f32, 2>, &str> = HashMap::new();
-        f32_map.insert(point_f32_1, "f32 point");
-        f32_map.insert(point_f32_nan, "f32 NaN point");
-
-        let lookup_f32 = Point::new([1.5f32, 2.5f32]);
-        let lookup_f32_nan = Point::new([f32::NAN, 2.5f32]);
-
-        assert!(f32_map.contains_key(&lookup_f32));
-        assert!(f32_map.contains_key(&lookup_f32_nan));
-        assert_eq!(f32_map.get(&lookup_f32), Some(&"f32 point"));
-        assert_eq!(f32_map.get(&lookup_f32_nan), Some(&"f32 NaN point"));
-    }
-
-    #[test]
     fn point_integer_like_values() {
         // Test integer-like values using f64
         let point_int_1 = Point::new([10.0, 20.0, 30.0]);
@@ -3111,15 +2794,15 @@ mod tests {
 
     #[test]
     fn point_try_from_conversion_errors() {
-        // Test non-finite value errors (NaN after cast)
+        // Test non-finite value errors (NaN)
         let coords_with_nan = [f64::NAN, 1.0, 2.0];
-        let result: Result<Point<f32, 3>, _> = Point::try_from(coords_with_nan);
+        let result: Result<Point<f64, 3>, _> = Point::try_from(coords_with_nan);
         let error = result.unwrap_err();
         assert_non_finite_coordinate_index(&error, 0);
 
-        // Test non-finite value errors (infinity after cast)
+        // Test non-finite value errors (infinity)
         let coords_with_inf = [1.0, f64::INFINITY, 2.0];
-        let result: Result<Point<f32, 3>, _> = Point::try_from(coords_with_inf);
+        let result: Result<Point<f64, 3>, _> = Point::try_from(coords_with_inf);
         let error = result.unwrap_err();
         assert_non_finite_coordinate_index(&error, 1);
 
@@ -3132,17 +2815,6 @@ mod tests {
     #[test]
     fn point_try_from_success_cases() {
         // Test successful conversions that should work fine
-
-        // f32 to f64 (upcast)
-        let coords_f32 = [1.5f32, 2.5f32, 3.5f32];
-        let result: Result<Point<f64, 3>, _> = Point::try_from(coords_f32);
-        assert!(result.is_ok());
-        let point = result.unwrap();
-        assert_relative_eq!(
-            point.to_array().as_slice(),
-            [1.5f64, 2.5f64, 3.5f64].as_slice(),
-            epsilon = 1e-9
-        );
 
         // i32 to f64
         let coords_i32 = [1i32, -2i32, 3i32];
@@ -3171,7 +2843,7 @@ mod tests {
     fn point_try_from_error_details() {
         // Test error message formatting for NonFiniteValue with NaN
         let coords_with_nan = [f64::NAN, 1.0];
-        let result: Result<Point<f32, 2>, _> = Point::try_from(coords_with_nan);
+        let result: Result<Point<f64, 2>, _> = Point::try_from(coords_with_nan);
         assert!(result.is_err());
 
         let error = result.unwrap_err();
@@ -3182,24 +2854,10 @@ mod tests {
 
         // Test error cloning and equality with infinity
         let coords_with_inf = [f64::INFINITY, 2.0];
-        let result2: Result<Point<f32, 2>, _> = Point::try_from(coords_with_inf);
+        let result2: Result<Point<f64, 2>, _> = Point::try_from(coords_with_inf);
         let error2 = result2.unwrap_err();
         let error2_clone = error2.clone();
         assert_eq!(error2, error2_clone);
-
-        // Test overflow error details (f64::MAX overflows to f32)
-        let coords_overflow = [f64::MAX, 1.0];
-        let result3: Result<Point<f32, 2>, _> = Point::try_from(coords_overflow);
-        let Err(CoordinateConversionError::NonFiniteValue {
-            coordinate_index,
-            coordinate_value,
-        }) = result3
-        else {
-            panic!("Expected NonFiniteValue error for overflow");
-        };
-        assert_eq!(coordinate_index, 0);
-        assert!(!coordinate_value.is_empty());
-        assert!(coordinate_value.contains("inf") || coordinate_value.contains("Inf"));
     }
 
     #[test]
@@ -3213,7 +2871,7 @@ mod tests {
         ];
 
         for &(coords, expected_index) in &test_cases {
-            let result: Result<Point<f32, 4>, _> = Point::try_from(coords);
+            let result: Result<Point<f64, 4>, _> = Point::try_from(coords);
             let error = result.unwrap_err();
             assert_non_finite_coordinate_index(&error, expected_index);
         }
@@ -3223,7 +2881,7 @@ mod tests {
     fn point_try_from_first_error_reported() {
         // When multiple coordinates have errors, the first one should be reported
         let coords_multi_error = [f64::NAN, f64::INFINITY, f64::NEG_INFINITY];
-        let result: Result<Point<f32, 3>, _> = Point::try_from(coords_multi_error);
+        let result: Result<Point<f64, 3>, _> = Point::try_from(coords_multi_error);
         let error = result.unwrap_err();
         assert_non_finite_coordinate_index(&error, 0);
     }
@@ -3257,16 +2915,6 @@ mod tests {
         assert!(coords_multi[0].is_nan());
         assert!(coords_multi[1].is_nan());
         assert_relative_eq!(coords_multi[2], 3.0);
-
-        // Test with f32
-        let json_f32_null = "[null,1.5]";
-        let result_f32: Result<Point<f32, 2>, _> = serde_json::from_str(json_f32_null);
-        assert!(result_f32.is_ok());
-        let point_f32 = result_f32.unwrap();
-
-        let coords_f32 = point_f32.to_array();
-        assert!(coords_f32[0].is_nan());
-        assert_relative_eq!(coords_f32[1], 1.5);
     }
 
     #[test]

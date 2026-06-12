@@ -43,9 +43,9 @@ Use this crate when you want:
 - Exact predicates and deterministic SoS handling for degenerate inputs.
 - PL-manifold checks and explicit topology guarantees.
 - PL-manifold-aware editing via bistellar flips and bounded Delaunay repair.
+- Typed construction, insertion, validation, topology, and repair diagnostics.
 - Validation reports that separate element, structure, topology, and Delaunay
   failures.
-- Typed construction, insertion, validation, topology, and repair diagnostics.
 
 This is not a replacement for full meshing packages such as CGAL, TetGen, or
 Gmsh when you need constrained Delaunay triangulations, out-of-core meshing,
@@ -217,6 +217,13 @@ incremental insertion. Incompatible combinations are rejected by the fallible
 `try_set_*` policy setters; use `ValidationPolicy::ExplicitOnly` for
 caller-owned full-validation checkpoints with the default PL-manifold guarantee.
 
+### Coordinate Input Type
+
+The default supported coordinate input type is `f64`, matching the crate's
+current linear algebra backend and geometric-primitive correctness guarantees.
+Exact arithmetic is already used internally for robust predicate fallbacks, and
+exact coordinate input may be supported explicitly in the future.
+
 ## 🔬 Reproducibility
 
 The construction pipeline exposes deterministic controls for experiments and
@@ -245,10 +252,10 @@ For reproducible checks in CI/local runs, use `just check`, `just test`,
 - **Feature gaps:** [Constrained Delaunay triangulations], [Voronoi diagrams],
   built-in visualization, GPU/parallel meshing, and out-of-core construction
   are out of scope today.
-- **Large 4D+ batches:** `just debug-large-scale-4d 900 1` is the current
-  release-mode acceptance harness; the documented 2026-05-14 local run inserted
-  all 900 vertices, skipped none, and passed `validation_report` in about
-  60 seconds. The 3,000-point 4D harness remains a manual characterization probe
+- **Large 4D+ batches:** `just debug-large-scale-4d 800 1` is the current
+  release-mode acceptance harness; a recent local run inserted all 800 vertices,
+  skipped none, ran final repair, and passed `validation_report` in about
+  52 seconds. The 3,000-point 4D harness remains a manual characterization probe
   for issue #340 rather than routine CI.
 - **Periodic domains:** `.toroidal()` uses the periodic image-point method and
   is release-validated in 2D and compact 3D. `.canonicalized_toroidal()`

@@ -42,7 +42,7 @@ concurrency:
 env:
   CARGO_TERM_COLOR: always
   RUST_BACKTRACE: 1
-  UV_VERSION: "0.11.15"
+  UV_VERSION: "0.11.20"
   BENCHMARK_TIMEOUT: 1800 # 30 min; pre-computed seeds + reduced 5D counts keep runtime well under this
   DELAUNAY_BENCH_DISCOVER_SEEDS_LIMIT: 256 # fallback only; ci_performance_suite uses pre-computed seeds
 
@@ -65,7 +65,7 @@ jobs:
           # Toolchain from rust-toolchain.toml.
 
       - name: Install uv (Python package manager)
-        uses: astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b # v8.1.0
+        uses: astral-sh/setup-uv@fac544c07dec837d0ccb6301d7b5580bf5edae39 # v8.2.0
         with:
           version: ${{ env.UV_VERSION }}
 

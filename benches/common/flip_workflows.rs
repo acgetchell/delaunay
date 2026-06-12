@@ -46,7 +46,7 @@ pub enum FlipWorkflowError {
         dimension: usize,
         /// Underlying triangulation construction failure.
         #[source]
-        source: DelaunayTriangulationConstructionError,
+        source: Box<DelaunayTriangulationConstructionError>,
     },
 
     /// A simplex key referenced by the workflow was not live.
@@ -423,7 +423,7 @@ pub fn build_flip_dt<const D: usize>(
     )
     .map_err(|source| FlipWorkflowError::Construction {
         dimension: D,
-        source,
+        source: Box::new(source),
     })
 }
 

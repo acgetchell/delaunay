@@ -5,15 +5,274 @@
 
 #![forbid(unsafe_code)]
 
-use super::conversions::{safe_coords_to_f64, safe_scalar_from_f64, safe_scalar_to_f64};
+use super::conversions::{
+    ValueConversionError, safe_coords_to_f64, safe_scalar_from_f64, safe_scalar_to_f64,
+};
 use super::norms::{hypot, squared_norm};
-use crate::geometry::matrix::{DEFAULT_SINGULAR_TOL, LaError, LaVector, Matrix, matrix_set};
+use crate::geometry::matrix::{
+    DEFAULT_SINGULAR_TOL, LaError, LaVector, Matrix, MatrixError, StackMatrixDispatchError,
+    matrix_set,
+};
 use crate::geometry::point::Point;
-use crate::geometry::traits::coordinate::{Coordinate, CoordinateScalar};
-use core::hint::cold_path;
+use crate::geometry::traits::coordinate::{
+    Coordinate, CoordinateConversionError, CoordinateConversionValue, CoordinateScalar,
+};
+use core::{fmt, hint::cold_path};
 
-// Re-export error type
-pub use super::CircumcenterError;
+/// Geometric measure involved in a degenerate simplex or facet calculation.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[non_exhaustive]
+pub enum DegenerateMeasure {
+    /// One-dimensional length.
+    Length,
+    /// Two-dimensional area.
+    Area,
+    /// Full-dimensional volume.
+    Volume,
+    /// Sum of boundary facet measures.
+    SurfaceArea,
+}
+
+impl fmt::Display for DegenerateMeasure {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Length => f.write_str("length"),
+            Self::Area => f.write_str("area"),
+            Self::Volume => f.write_str("volume"),
+            Self::SurfaceArea => f.write_str("surface area"),
+        }
+    }
+}
+
+/// Geometric degeneracy category for simplex and facet measure failures.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[non_exhaustive]
+pub enum DegenerateGeometry {
+    /// Points coincide, producing zero length.
+    CoincidentPoints,
+    /// Points are collinear.
+    CollinearPoints,
+    /// Points are coplanar.
+    CoplanarPoints,
+    /// Points are collinear or coplanar; the Gram determinant cannot distinguish which.
+    CollinearOrCoplanarPoints,
+}
+
+impl fmt::Display for DegenerateGeometry {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::CoincidentPoints => f.write_str("coincident points"),
+            Self::CollinearPoints => f.write_str("collinear points"),
+            Self::CoplanarPoints => f.write_str("coplanar points"),
+            Self::CollinearOrCoplanarPoints => f.write_str("collinear or coplanar points"),
+        }
+    }
+}
+
+/// Structured reason for matrix-inversion or measure-degeneracy failures.
+#[derive(Clone, Debug, PartialEq)]
+#[non_exhaustive]
+pub enum CircumcenterFailureReason {
+    /// A simplex has zero measure because its points are degenerate.
+    DegenerateSimplex {
+        /// Measure that collapsed to zero.
+        measure: DegenerateMeasure,
+        /// Geometric degeneracy category.
+        degeneracy: DegenerateGeometry,
+    },
+    /// A facet has zero measure because its points are degenerate.
+    DegenerateFacet {
+        /// Measure that collapsed to zero.
+        measure: DegenerateMeasure,
+        /// Geometric degeneracy category.
+        degeneracy: DegenerateGeometry,
+    },
+    /// A Gram determinant was NaN or infinite.
+    NonFiniteGramDeterminant,
+    /// A Gram determinant was negative.
+    NegativeGramDeterminant,
+    /// A derived simplex measure was non-positive.
+    NonPositiveSimplexMeasure {
+        /// Measure that was expected to be positive.
+        measure: DegenerateMeasure,
+        /// Rejected measure value.
+        value: CoordinateConversionValue,
+    },
+    /// A derived simplex or facet measure was NaN or infinite.
+    NonFiniteMeasure {
+        /// Measure that was expected to be finite.
+        measure: DegenerateMeasure,
+        /// Rejected measure value.
+        value: CoordinateConversionValue,
+    },
+}
+
+impl fmt::Display for CircumcenterFailureReason {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::DegenerateSimplex {
+                measure,
+                degeneracy,
+            } => write!(f, "degenerate simplex with zero {measure} ({degeneracy})"),
+            Self::DegenerateFacet {
+                measure,
+                degeneracy,
+            } => write!(f, "degenerate facet with zero {measure} ({degeneracy})"),
+            Self::NonFiniteGramDeterminant => f.write_str("Gram determinant is non-finite"),
+            Self::NegativeGramDeterminant => {
+                f.write_str("Gram matrix has negative determinant (degenerate simplex)")
+            }
+            Self::NonPositiveSimplexMeasure { measure, value } => {
+                write!(f, "degenerate simplex with {measure} ≈ {value}")
+            }
+            Self::NonFiniteMeasure { measure, value } => {
+                write!(f, "{measure} calculation produced non-finite value {value}")
+            }
+        }
+    }
+}
+
+/// Structured reason for array conversion failures.
+#[derive(Clone, Copy, Debug, thiserror::Error, Eq, PartialEq)]
+#[non_exhaustive]
+pub enum ArrayConversionFailureReason {
+    /// The input length did not match the fixed-size target array.
+    #[error("array length mismatch")]
+    LengthMismatch,
+}
+
+/// Errors that can occur during circumcenter calculation.
+///
+/// # Examples
+///
+/// ```rust
+/// use delaunay::prelude::geometry::CircumcenterError;
+///
+/// let err = CircumcenterError::EmptyPointSet;
+/// std::assert_matches!(err, CircumcenterError::EmptyPointSet);
+/// ```
+#[derive(Clone, Debug, thiserror::Error, PartialEq)]
+#[non_exhaustive]
+pub enum CircumcenterError {
+    /// Empty point set provided.
+    #[error("Empty point set")]
+    EmptyPointSet,
+
+    /// Points do not form a valid simplex.
+    #[error(
+        "Points do not form a valid simplex: expected {expected} points for dimension {dimension}, got {actual}"
+    )]
+    InvalidSimplex {
+        /// Number of points provided.
+        actual: usize,
+        /// Number of points expected (`D + 1`).
+        expected: usize,
+        /// Dimension.
+        dimension: usize,
+    },
+
+    /// Matrix inversion failed (degenerate simplex).
+    #[error("Matrix inversion failed: {reason}")]
+    MatrixInversionFailed {
+        /// Structured reason for the matrix inversion failure.
+        reason: CircumcenterFailureReason,
+    },
+
+    /// Runtime-dispatched stack matrix dimension is unsupported.
+    #[error("Unsupported stack matrix dimension {requested} (maximum supported is {max})")]
+    UnsupportedMatrixDimension {
+        /// Requested matrix dimension.
+        requested: usize,
+        /// Maximum supported matrix dimension.
+        max: usize,
+    },
+
+    /// Internal matrix dispatch requested an active block whose size does not
+    /// match the concrete stack matrix.
+    ///
+    /// Public geometry APIs surface this as a typed error rather than silently
+    /// classifying structurally invalid predicate state as degenerate geometry.
+    #[error(
+        "Active matrix block size {active} does not match concrete matrix dimension {matrix_dimension}"
+    )]
+    MatrixDimensionMismatch {
+        /// Requested active matrix dimension.
+        active: usize,
+        /// Concrete matrix dimension.
+        matrix_dimension: usize,
+    },
+
+    /// Linear algebra backend operation failed.
+    #[error("Linear algebra failure: {source}")]
+    LinearAlgebraFailure {
+        /// Typed source error from the linear algebra backend.
+        #[source]
+        source: LaError,
+    },
+
+    /// Matrix operation failed while building or solving a geometry helper matrix.
+    #[error("Matrix error: {source}")]
+    MatrixError {
+        /// Typed source error from matrix operations.
+        #[from]
+        source: MatrixError,
+    },
+
+    /// Array conversion failed.
+    #[error("Array conversion failed: {reason}")]
+    ArrayConversionFailed {
+        /// Structured reason for the array conversion failure.
+        reason: ArrayConversionFailureReason,
+    },
+
+    /// Coordinate conversion failed while preparing predicate or measure inputs.
+    #[error("Coordinate conversion error: {source}")]
+    CoordinateConversion {
+        /// Typed source error from coordinate conversion.
+        #[from]
+        source: CoordinateConversionError,
+    },
+
+    /// Scalar value conversion failed while converting dimensions or derived measures.
+    #[error("Value conversion error: {source}")]
+    ValueConversion {
+        /// Typed source error from value conversion.
+        #[source]
+        source: Box<ValueConversionError>,
+    },
+}
+
+impl From<ValueConversionError> for CircumcenterError {
+    fn from(source: ValueConversionError) -> Self {
+        Self::ValueConversion {
+            source: Box::new(source),
+        }
+    }
+}
+
+impl From<StackMatrixDispatchError> for CircumcenterError {
+    fn from(source: StackMatrixDispatchError) -> Self {
+        match source {
+            StackMatrixDispatchError::UnsupportedDim { k, max } => {
+                Self::UnsupportedMatrixDimension { requested: k, max }
+            }
+            StackMatrixDispatchError::ActiveBlockDimensionMismatch { k, dim } => {
+                Self::MatrixDimensionMismatch {
+                    active: k,
+                    matrix_dimension: dim,
+                }
+            }
+            StackMatrixDispatchError::La { source } => Self::LinearAlgebraFailure { source },
+            StackMatrixDispatchError::Matrix { source } => Self::MatrixError { source },
+        }
+    }
+}
+
+impl From<LaError> for CircumcenterError {
+    fn from(source: LaError) -> Self {
+        Self::from(StackMatrixDispatchError::from(source))
+    }
+}
 
 /// Calculate the circumcenter of a set of points forming a simplex.
 ///
@@ -302,8 +561,132 @@ where
 mod tests {
     use super::*;
     use crate::geometry::point::Point;
+    use crate::geometry::util::conversions::ValueConversionFailureReason;
     use approx::assert_relative_eq;
     use std::assert_matches;
+
+    #[test]
+    fn circumcenter_error_display_names_variants() {
+        let empty_error = CircumcenterError::EmptyPointSet;
+        let display = format!("{empty_error}");
+        assert!(display.contains("Empty point set"));
+
+        let simplex_error = CircumcenterError::InvalidSimplex {
+            actual: 2,
+            expected: 3,
+            dimension: 2,
+        };
+        let display = format!("{simplex_error}");
+        assert!(display.contains("Points do not form a valid simplex"));
+    }
+
+    #[test]
+    fn degenerate_measure_display_names_all_variants() {
+        assert_eq!(DegenerateMeasure::Length.to_string(), "length");
+        assert_eq!(DegenerateMeasure::Area.to_string(), "area");
+        assert_eq!(DegenerateMeasure::Volume.to_string(), "volume");
+        assert_eq!(DegenerateMeasure::SurfaceArea.to_string(), "surface area");
+    }
+
+    #[test]
+    fn degenerate_geometry_display_names_all_variants() {
+        assert_eq!(
+            DegenerateGeometry::CoincidentPoints.to_string(),
+            "coincident points"
+        );
+        assert_eq!(
+            DegenerateGeometry::CollinearPoints.to_string(),
+            "collinear points"
+        );
+        assert_eq!(
+            DegenerateGeometry::CoplanarPoints.to_string(),
+            "coplanar points"
+        );
+        assert_eq!(
+            DegenerateGeometry::CollinearOrCoplanarPoints.to_string(),
+            "collinear or coplanar points"
+        );
+    }
+
+    #[test]
+    fn circumcenter_failure_reason_display_preserves_typed_payloads() {
+        let degenerate_simplex = CircumcenterFailureReason::DegenerateSimplex {
+            measure: DegenerateMeasure::Volume,
+            degeneracy: DegenerateGeometry::CoplanarPoints,
+        };
+        assert_eq!(
+            degenerate_simplex.to_string(),
+            "degenerate simplex with zero volume (coplanar points)"
+        );
+
+        let degenerate_facet = CircumcenterFailureReason::DegenerateFacet {
+            measure: DegenerateMeasure::Length,
+            degeneracy: DegenerateGeometry::CoincidentPoints,
+        };
+        assert_eq!(
+            degenerate_facet.to_string(),
+            "degenerate facet with zero length (coincident points)"
+        );
+
+        assert_eq!(
+            CircumcenterFailureReason::NonFiniteGramDeterminant.to_string(),
+            "Gram determinant is non-finite"
+        );
+        assert_eq!(
+            CircumcenterFailureReason::NegativeGramDeterminant.to_string(),
+            "Gram matrix has negative determinant (degenerate simplex)"
+        );
+        assert_eq!(
+            CircumcenterFailureReason::NonPositiveSimplexMeasure {
+                measure: DegenerateMeasure::SurfaceArea,
+                value: CoordinateConversionValue::from_f64(0.0),
+            }
+            .to_string(),
+            "degenerate simplex with surface area ≈ 0.0"
+        );
+        assert_eq!(
+            CircumcenterFailureReason::NonFiniteMeasure {
+                measure: DegenerateMeasure::Volume,
+                value: CoordinateConversionValue::from_f64(f64::INFINITY),
+            }
+            .to_string(),
+            "volume calculation produced non-finite value inf"
+        );
+    }
+
+    #[test]
+    fn circumcenter_error_conversions_preserve_typed_payloads() {
+        let value_error = ValueConversionError::ConversionFailed {
+            value: CoordinateConversionValue::from_usize(4),
+            from_type: "usize",
+            to_type: "f64",
+            reason: ValueConversionFailureReason::TargetTypeRejected,
+        };
+        assert_matches!(
+            CircumcenterError::from(value_error),
+            CircumcenterError::ValueConversion { source }
+                if matches!(
+                    *source,
+                    ValueConversionError::ConversionFailed {
+                        value: CoordinateConversionValue::UnsignedInteger(4),
+                        from_type: "usize",
+                        to_type: "f64",
+                        reason: ValueConversionFailureReason::TargetTypeRejected,
+                    }
+                )
+        );
+
+        assert_eq!(
+            CircumcenterError::from(StackMatrixDispatchError::ActiveBlockDimensionMismatch {
+                k: 4,
+                dim: 3,
+            }),
+            CircumcenterError::MatrixDimensionMismatch {
+                active: 4,
+                matrix_dimension: 3,
+            }
+        );
+    }
 
     #[test]
     fn predicates_circumcenter() {

@@ -50,9 +50,10 @@ use crate::core::algorithms::flips::{
     repair_delaunay_with_flips_k2_k3,
 };
 use crate::core::algorithms::incremental_insertion::{
-    CavityFillingError, InsertionError, TdsConstructionFailure,
+    CavityFillingError, HullExtensionReason, InsertionError, SpatialIndexConstructionFailure,
+    TdsConstructionFailure,
 };
-use crate::core::algorithms::locate::LocateError;
+use crate::core::algorithms::locate::{ConflictError, LocateError};
 use crate::core::collections::spatial_hash_grid::HashGridIndex;
 use crate::core::collections::{
     FastHashSet, FastHasher, MAX_PRACTICAL_DIMENSION_SIZE, SecureHashMap, SmallBuffer,
@@ -72,19 +73,22 @@ use crate::core::util::{
     HilbertBitDepth, coords_equal_exact, coords_within_epsilon, hilbert_indices_prequantized,
     hilbert_quantize, stable_hash_u64_slice,
 };
-use crate::core::validation::{TopologyGuarantee, ValidationPolicy};
+use crate::core::validation::{TopologyGuarantee, TriangulationValidationError, ValidationPolicy};
 use crate::core::vertex::Vertex;
 use crate::diagnostics::{BatchLocalRepairTrigger, ConstructionTelemetry, LocalRepairSample};
 use crate::geometry::kernel::{AdaptiveKernel, Kernel};
 use crate::geometry::point::Point;
-use crate::geometry::traits::coordinate::{Coordinate, CoordinateScalar};
-use crate::geometry::util::{safe_coords_to_f64, safe_usize_to_scalar, simplex_volume};
+use crate::geometry::traits::coordinate::{Coordinate, CoordinateScalar, CoordinateValues};
+use crate::geometry::util::{
+    RandomPointGenerationError, safe_coords_to_f64, safe_usize_to_scalar, simplex_volume,
+};
 use crate::locality::{
     accumulate_live_simplex_seeds, clear_simplex_seed_set, retain_live_simplex_seeds,
 };
 use crate::repair::DelaunayRepairPolicy;
 use crate::topology::traits::topological_space::GlobalTopology;
 use crate::triangulation::DelaunayTriangulation;
+use crate::validation::DelaunayTriangulationValidationError;
 use core::{cmp::Ordering, fmt};
 use num_traits::{NumCast, ToPrimitive, Zero};
 use rand::SeedableRng;
@@ -271,7 +275,7 @@ pub enum DelaunayConstructionFailure {
     RandomPointGeneration {
         /// Structured random point generation failure.
         #[source]
-        source: crate::geometry::util::RandomPointGenerationError,
+        source: RandomPointGenerationError,
     },
 
     /// Geometric degeneracy prevented construction.
@@ -308,21 +312,30 @@ pub enum DelaunayConstructionFailure {
         phase: DelaunayConstructionRepairPhase,
         /// Underlying typed repair failure.
         #[source]
-        source: Box<crate::core::algorithms::flips::DelaunayRepairError>,
+        source: Box<DelaunayRepairError>,
     },
 
     /// Duplicate coordinates were detected.
     #[error("duplicate coordinates detected: {coordinates}")]
     DuplicateCoordinates {
-        /// Duplicate coordinate tuple.
-        coordinates: String,
+        /// Duplicate coordinate tuple stored as typed coordinate payloads.
+        coordinates: CoordinateValues,
+    },
+
+    /// Spatial index construction failed during construction.
+    #[error("spatial index construction failed during construction: {reason}")]
+    SpatialIndexConstruction {
+        /// Structured spatial-index construction failure.
+        #[source]
+        reason: SpatialIndexConstructionFailure,
     },
 
     /// Conflict-region extraction failed during insertion.
-    #[error("conflict region failed during insertion: {message}")]
+    #[error("conflict region failed during insertion: {source}")]
     InsertionConflictRegion {
-        /// Conflict-region failure detail.
-        message: String,
+        /// Structured conflict-region failure.
+        #[source]
+        source: ConflictError,
     },
 
     /// Point location failed during insertion.
@@ -345,24 +358,28 @@ pub enum DelaunayConstructionFailure {
     },
 
     /// Hull extension failed during insertion.
-    #[error("hull extension failed during insertion: {message}")]
+    #[error("hull extension failed during insertion: {reason}")]
     InsertionHullExtension {
-        /// Hull-extension failure detail.
-        message: String,
+        /// Structured hull-extension failure reason.
+        reason: HullExtensionReason,
     },
 
     /// Level 4 Delaunay validation failed during insertion.
-    #[error("Delaunay validation failed during insertion: {message}")]
+    #[error("Delaunay validation failed during insertion: {source}")]
     InsertionDelaunayValidation {
-        /// Validation failure detail.
-        message: String,
+        /// Underlying Delaunay validation error.
+        #[source]
+        source: DelaunayTriangulationValidationError,
     },
 
     /// Level 3 topology validation failed during insertion.
-    #[error("topology validation failed during insertion: {message}")]
+    #[error("topology validation failed during insertion: {message}: {source}")]
     InsertionTopologyValidation {
-        /// Validation failure detail.
+        /// High-level insertion context.
         message: String,
+        /// Underlying topology validation error.
+        #[source]
+        source: TriangulationValidationError,
     },
 
     /// Local facet repair would remove more simplices than the active budget allowed.
@@ -384,6 +401,14 @@ pub enum DelaunayConstructionFailure {
         /// Underlying validation error.
         #[source]
         source: crate::core::tds::InvariantErrorSummary,
+    },
+
+    /// Final Delaunay-property validation failed after construction.
+    #[error("final Delaunay validation failed after construction: {source}")]
+    FinalDelaunayValidation {
+        /// Underlying Delaunay validation error.
+        #[source]
+        source: DelaunayTriangulationValidationError,
     },
 }
 
@@ -420,10 +445,11 @@ impl From<TriangulationConstructionError> for DelaunayConstructionFailure {
             TriangulationConstructionError::DuplicateCoordinates { coordinates } => {
                 Self::DuplicateCoordinates { coordinates }
             }
+            TriangulationConstructionError::SpatialIndexConstruction { reason } => {
+                Self::SpatialIndexConstruction { reason }
+            }
             TriangulationConstructionError::InsertionConflictRegion { source } => {
-                Self::InsertionConflictRegion {
-                    message: source.to_string(),
-                }
+                Self::InsertionConflictRegion { source }
             }
             TriangulationConstructionError::InsertionLocation { source } => {
                 Self::InsertionLocation { source }
@@ -436,19 +462,13 @@ impl From<TriangulationConstructionError> for DelaunayConstructionFailure {
                 simplex_count,
             },
             TriangulationConstructionError::InsertionHullExtension { reason } => {
-                Self::InsertionHullExtension {
-                    message: reason.to_string(),
-                }
+                Self::InsertionHullExtension { reason }
             }
             TriangulationConstructionError::InsertionDelaunayValidation { source } => {
-                Self::InsertionDelaunayValidation {
-                    message: source.to_string(),
-                }
+                Self::InsertionDelaunayValidation { source }
             }
             TriangulationConstructionError::InsertionTopologyValidation { message, source } => {
-                Self::InsertionTopologyValidation {
-                    message: format!("{message}: {source}"),
-                }
+                Self::InsertionTopologyValidation { message, source }
             }
             TriangulationConstructionError::LocalRepairBudgetExceeded {
                 max_simplices_removed,
@@ -1096,13 +1116,14 @@ const BATCH_DEDUP_MAX_DIMENSION: usize = 5;
 fn order_vertices_by_strategy<T, U, const D: usize>(
     vertices: Vec<Vertex<T, U, D>>,
     insertion_order: InsertionOrderStrategy,
+    dedup_quantized: bool,
 ) -> Vec<Vertex<T, U, D>>
 where
     T: CoordinateScalar,
 {
     match insertion_order {
         InsertionOrderStrategy::Input => vertices,
-        InsertionOrderStrategy::Hilbert => order_vertices_hilbert(vertices, true),
+        InsertionOrderStrategy::Hilbert => order_vertices_hilbert(vertices, dedup_quantized),
     }
 }
 
@@ -1110,6 +1131,27 @@ where
 /// size even under exact duplicate policy.
 pub(crate) fn default_duplicate_tolerance<T: CoordinateScalar>() -> T {
     <T as NumCast>::from(1e-10_f64).unwrap_or_else(T::default_tolerance)
+}
+
+/// Builds a hash-grid index after construction has validated its tolerance.
+///
+/// This preserves the parse-don't-validate boundary between public
+/// construction inputs and the internal duplicate index: a failure here means
+/// an upstream construction invariant was broken after validation, so it is
+/// surfaced as a typed spatial-index construction failure.
+fn hash_grid_from_validated_cell_size<T, const D: usize, I>(
+    cell_size: T,
+) -> Result<HashGridIndex<T, D, I>, DelaunayTriangulationConstructionError>
+where
+    T: CoordinateScalar,
+{
+    HashGridIndex::try_new(cell_size).map_err(|error| {
+        DelaunayTriangulationConstructionError::from(
+            TriangulationConstructionError::SpatialIndexConstruction {
+                reason: error.into(),
+            },
+        )
+    })
 }
 
 /// Verifies the hash grid can represent every input coordinate before choosing
@@ -1857,6 +1899,14 @@ where
         }
     }
 
+    if min.total_cmp(&max).is_eq() {
+        return if dedup_quantized {
+            dedup_vertices_exact_sorted(vertices)
+        } else {
+            order_vertices_lexicographic(vertices)
+        };
+    }
+
     let (Some(min_t), Some(max_t)) = (NumCast::from(min), NumCast::from(max)) else {
         return order_vertices_lexicographic(vertices);
     };
@@ -1912,16 +1962,15 @@ where
         // after sorting, we can eliminate duplicates without re-quantizing.
         let input_len = keyed.len();
         let mut prev_q: Option<[u32; D]> = None;
-        let deduped: Vec<Vertex<T, U, D>> = keyed
-            .into_iter()
-            .filter_map(|(_, q, v, _)| {
-                if prev_q == Some(q) {
-                    return None;
-                }
-                prev_q = Some(q);
-                Some(v)
-            })
-            .collect();
+        let mut deduped = Vec::with_capacity(input_len);
+
+        for (_, q, vertex, _) in keyed {
+            if prev_q == Some(q) {
+                continue;
+            }
+            prev_q = Some(q);
+            deduped.push(vertex);
+        }
 
         let removed = input_len - deduped.len();
         if removed > 0 {
@@ -2706,8 +2755,10 @@ where
             success = delaunay_result.is_ok(),
             "post-construction: Delaunay validation (build) completed"
         );
-        delaunay_result.map_err(|err| TriangulationConstructionError::GeometricDegeneracy {
-            message: format!("Delaunay property violated after construction: {err}"),
+        delaunay_result.map_err(|source| {
+            DelaunayTriangulationConstructionError::Triangulation(
+                DelaunayConstructionFailure::FinalDelaunayValidation { source },
+            )
         })?;
 
         Ok(dt)
@@ -2757,10 +2808,9 @@ where
         );
         if let Err(err) = delaunay_result {
             return Err(DelaunayTriangulationConstructionErrorWithStatistics {
-                error: TriangulationConstructionError::GeometricDegeneracy {
-                    message: format!("Delaunay property violated after construction: {err}"),
-                }
-                .into(),
+                error: DelaunayTriangulationConstructionError::Triangulation(
+                    DelaunayConstructionFailure::FinalDelaunayValidation { source: err },
+                ),
                 statistics: stats,
             });
         }
@@ -3194,7 +3244,10 @@ where
         pending_repair_seeds: &mut Vec<SimplexKey>,
         soft_fail_seeds: &mut Vec<SimplexKey>,
     ) -> Result<(), DelaunayTriangulationConstructionError> {
-        let mut grid_index = grid_cell_size.map(HashGridIndex::new);
+        let mut grid_index: Option<HashGridIndex<K::Scalar, D>> = match grid_cell_size {
+            Some(cell_size) => Some(hash_grid_from_validated_cell_size(cell_size)?),
+            None => None,
+        };
         if let Some(grid) = grid_index.as_mut()
             && !grid.is_usable()
         {
@@ -3832,7 +3885,7 @@ where
         Self {
             tri: Triangulation::new_empty(kernel),
             insertion_state: DelaunayInsertionState::new(),
-            spatial_index: Some(HashGridIndex::new(duplicate_tolerance)),
+            spatial_index: HashGridIndex::try_new(duplicate_tolerance).ok(),
         }
     }
 
@@ -3864,7 +3917,7 @@ where
         Self {
             tri,
             insertion_state: DelaunayInsertionState::new(),
-            spatial_index: Some(HashGridIndex::new(duplicate_tolerance)),
+            spatial_index: HashGridIndex::try_new(duplicate_tolerance).ok(),
         }
     }
 
@@ -4259,6 +4312,10 @@ where
 
     /// Applies deduplication, insertion ordering, and initial-simplex selection
     /// before any topology is created.
+    #[expect(
+        clippy::too_many_lines,
+        reason = "preprocessing keeps dedup, ordering, and initial-simplex selection in one boundary"
+    )]
     pub(crate) fn preprocess_vertices_for_construction(
         vertices: &[Vertex<K::Scalar, U, D>],
         dedup_policy: DedupPolicy,
@@ -4299,7 +4356,8 @@ where
             } else {
                 default_tolerance
             };
-        let mut grid: HashGridIndex<K::Scalar, D, usize> = HashGridIndex::new(grid_cell_size_value);
+        let mut grid =
+            hash_grid_from_validated_cell_size::<K::Scalar, D, usize>(grid_cell_size_value)?;
 
         // Deduplicate first to reduce work for ordering strategies.
         let mut owned_vertices: Option<Vec<Vertex<K::Scalar, U, D>>> = match dedup_policy {
@@ -4330,6 +4388,7 @@ where
             _ => Some(order_vertices_by_strategy(
                 owned_vertices.unwrap_or_else(|| vertices.to_vec()),
                 insertion_order,
+                dedup_policy != DedupPolicy::Off,
             )),
         };
 
@@ -4388,10 +4447,12 @@ where
                         | TdsConstructionFailure::Validation { .. },
                 } | DelaunayConstructionFailure::InternalInconsistency { .. }
                     | DelaunayConstructionFailure::UnsupportedPeriodicDimension { .. }
+                    | DelaunayConstructionFailure::SpatialIndexConstruction { .. }
                     | DelaunayConstructionFailure::DelaunayRepair { .. }
                     | DelaunayConstructionFailure::InsertionTopologyValidation { .. }
                     | DelaunayConstructionFailure::LocalRepairBudgetExceeded { .. }
-                    | DelaunayConstructionFailure::FinalTopologyValidation { .. },
+                    | DelaunayConstructionFailure::FinalTopologyValidation { .. }
+                    | DelaunayConstructionFailure::FinalDelaunayValidation { .. },
             )
         )
     }
@@ -4487,6 +4548,9 @@ where
                         "Failed to canonicalize orientation after post-construction repair: {error}"
                     ),
                 }
+            }
+            InsertionError::SpatialIndexConstruction { reason } => {
+                TriangulationConstructionError::SpatialIndexConstruction { reason }
             }
             InsertionError::MaxSimplicesRemovedExceeded {
                 max_simplices_removed,
@@ -4584,6 +4648,9 @@ where
                 max_simplices_removed,
                 attempted,
             },
+            InsertionError::SpatialIndexConstruction { reason } => {
+                TriangulationConstructionError::SpatialIndexConstruction { reason }
+            }
         }
     }
 
@@ -4797,6 +4864,7 @@ mod tests {
     };
     use crate::core::algorithms::incremental_insertion::{
         DelaunayRepairFailureContext, HullExtensionReason, NeighborWiringError,
+        SpatialIndexConstructionFailure,
     };
     use crate::core::algorithms::locate::{ConflictError, LocateError};
     use crate::core::tds::{EntityKind, GeometricError, InvariantError, SimplexKey, VertexKey};
@@ -4805,9 +4873,13 @@ mod tests {
     };
     use crate::core::vertex::VertexBuilder;
     use crate::diagnostics::BatchLocalRepairTrigger;
+    use crate::geometry::coordinate_range::{CoordinateRangeError, CoordinateRangeOrdering};
     use crate::geometry::kernel::{AdaptiveKernel, FastKernel, RobustKernel};
     use crate::geometry::point::Point;
-    use crate::geometry::traits::coordinate::CoordinateConversionError;
+    use crate::geometry::traits::coordinate::{
+        CoordinateConversionError, CoordinateConversionValue,
+    };
+    use crate::geometry::util::RandomPointGenerationError;
     use crate::repair::DelaunayRepairPolicy;
     use crate::topology::characteristics::euler::TopologyClassification;
     use crate::validation::DelaunayTriangulationValidationError;
@@ -4823,9 +4895,12 @@ mod tests {
 
     #[test]
     fn test_random_point_generation_error_variant_preserved() {
-        let source = crate::geometry::util::RandomPointGenerationError::InvalidRange {
-            min: "5.0".to_string(),
-            max: "1.0".to_string(),
+        let source = RandomPointGenerationError::InvalidCoordinateRange {
+            source: CoordinateRangeError::NonIncreasing {
+                ordering: CoordinateRangeOrdering::Decreasing,
+                min: 5.0,
+                max: 1.0,
+            },
         };
         let err = DelaunayTriangulationConstructionError::Triangulation(
             DelaunayConstructionFailure::RandomPointGeneration {
@@ -4843,9 +4918,7 @@ mod tests {
         let mut current_source = std::error::Error::source(&err);
         let mut preserved_source = None;
         while let Some(source_error) = current_source {
-            if let Some(random_source) =
-                source_error.downcast_ref::<crate::geometry::util::RandomPointGenerationError>()
-            {
+            if let Some(random_source) = source_error.downcast_ref::<RandomPointGenerationError>() {
                 preserved_source = Some(random_source);
                 break;
             }
@@ -5116,22 +5189,6 @@ mod tests {
             ) => assert_eq!(dimension, 3),
             other => panic!("Expected InsufficientVertices error, got {other:?}"),
         }
-    }
-
-    #[test]
-    fn test_with_kernel_f32_coordinates() {
-        init_tracing();
-        let vertices = vec![
-            vertex!([0.0f32, 0.0f32]),
-            vertex!([1.0f32, 0.0f32]),
-            vertex!([0.0f32, 1.0f32]),
-        ];
-
-        let dt: DelaunayTriangulation<AdaptiveKernel<f32>, (), (), 2> =
-            DelaunayTriangulation::with_kernel(&AdaptiveKernel::new(), &vertices).unwrap();
-
-        assert_eq!(dt.number_of_vertices(), 3);
-        assert_eq!(dt.number_of_simplices(), 1);
     }
 
     #[test]
@@ -5524,14 +5581,6 @@ mod tests {
     }
 
     #[test]
-    fn test_vertex_coords_f64_converts_f32_vertex_coords() {
-        init_tracing();
-        let vertex: Vertex<f32, (), 3> = vertex!([1.25f32, -2.5f32, 3.75f32]);
-
-        assert_eq!(vertex_coords_f64(&vertex), Some(vec![1.25, -2.5, 3.75]));
-    }
-
-    #[test]
     fn test_vertex_coords_f64_rejects_non_finite_coords() {
         init_tracing();
         let nan_vertex: Vertex<f64, (), 3> = VertexBuilder::default()
@@ -5561,9 +5610,30 @@ mod tests {
         ];
         let expected = coord_sequence_2d(&vertices);
 
-        let ordered = order_vertices_by_strategy(vertices, InsertionOrderStrategy::Input);
+        let ordered = order_vertices_by_strategy(vertices, InsertionOrderStrategy::Input, false);
 
         assert_eq!(coord_sequence_2d(&ordered), expected);
+    }
+
+    #[test]
+    fn preprocess_hilbert_with_dedup_off_preserves_duplicate_vertices() {
+        init_tracing();
+        let vertices: Vec<Vertex<f64, (), 2>> = vec![
+            vertex!([0.0, 0.0]),
+            vertex!([1.0, 0.0]),
+            vertex!([0.0, 1.0]),
+            vertex!([1.0, 0.0]),
+        ];
+
+        let preprocess = TestDelaunay::<2>::preprocess_vertices_for_construction(
+            &vertices,
+            DedupPolicy::Off,
+            InsertionOrderStrategy::Hilbert,
+            InitialSimplexStrategy::First,
+        )
+        .expect("preprocessing with dedup off should preserve duplicate vertices");
+
+        assert_eq!(preprocess.primary_slice(&vertices).len(), vertices.len());
     }
 
     #[test]
@@ -5592,7 +5662,7 @@ mod tests {
             vertex!([1.0, 0.0]),
             vertex!([0.0, 0.0]),
         ];
-        let mut grid = HashGridIndex::<f64, 2, usize>::new(1.0e-10);
+        let mut grid = HashGridIndex::<f64, 2, usize>::try_new(1.0e-10).unwrap();
 
         let unique = dedup_vertices_exact_hash_grid(vertices, &mut grid);
 
@@ -5602,7 +5672,7 @@ mod tests {
             vertex!([1.0, 0.0, 0.0, 0.0, 0.0, 0.0]),
             vertex!([1.0, 0.0, 0.0, 0.0, 0.0, 0.0]),
         ];
-        let mut unusable_grid = HashGridIndex::<f64, 6, usize>::new(1.0e-10);
+        let mut unusable_grid = HashGridIndex::<f64, 6, usize>::try_new(1.0e-10).unwrap();
 
         let fallback_unique = dedup_vertices_exact_hash_grid(vertices_6d, &mut unusable_grid);
 
@@ -5649,14 +5719,15 @@ mod tests {
             vertex!([0.05, 0.0]),
             vertex!([0.25, 0.0]),
         ];
-        let mut grid = HashGridIndex::<f64, 2, usize>::new(0.1);
+        let mut grid = HashGridIndex::<f64, 2, usize>::try_new(0.1).unwrap();
 
         let unique = dedup_vertices_epsilon_hash_grid(vertices, 0.1, &mut grid);
 
         assert_eq!(coord_sequence_2d(&unique), vec![[0.0, 0.0], [0.25, 0.0]]);
 
         let fallback_vertices = vec![vertex!([0.0, 0.0]), vertex!([0.05, 0.0])];
-        let mut unusable_grid = HashGridIndex::<f64, 2, usize>::new(0.0);
+        let mut unusable_grid = HashGridIndex::<f64, 2, usize>::try_new(0.1).unwrap();
+        unusable_grid.remove_vertex(&0, &[f64::NAN, 0.0]);
 
         let fallback_unique =
             dedup_vertices_epsilon_hash_grid(fallback_vertices, 0.1, &mut unusable_grid);
@@ -5722,6 +5793,22 @@ mod tests {
         assert!(preprocess.grid_cell_size().is_some());
         assert_eq!(preprocess.primary_slice(&vertices).len(), vertices.len());
         assert!(preprocess.fallback_slice().is_none());
+    }
+
+    #[test]
+    fn hash_grid_from_validated_cell_size_rejects_invalid_internal_tolerance() {
+        init_tracing();
+        let error = hash_grid_from_validated_cell_size::<f64, 3, usize>(0.0)
+            .expect_err("invalid internal hash-grid tolerance should fail");
+
+        assert_matches!(
+            error,
+            DelaunayTriangulationConstructionError::Triangulation(
+                DelaunayConstructionFailure::SpatialIndexConstruction {
+                    reason: SpatialIndexConstructionFailure::NonPositiveCellSize { value }
+                }
+            ) if value == CoordinateConversionValue::from_f64(0.0)
+        );
     }
 
     #[test]
@@ -6624,7 +6711,9 @@ mod tests {
                     operation: FlipPredicateOperation::K2SimplexAInSphere,
                     source: CoordinateConversionError::ConversionFailed {
                         coordinate_index: 0,
-                        coordinate_value: "in_sphere failed".to_string(),
+                        coordinate_value: CoordinateConversionValue::Other(
+                            "in_sphere failed".to_string(),
+                        ),
                         from_type: "f64",
                         to_type: "f64",
                     },
@@ -6825,7 +6914,7 @@ mod tests {
                 context: DelaunayRepairFailureContext::LocalRepair,
             },
             InsertionError::DuplicateCoordinates {
-                coordinates: "[0,0,0]".to_string(),
+                coordinates: CoordinateValues::from([0.0, 0.0, 0.0]),
             },
         ];
         for error in geometry_errors {
@@ -6926,7 +7015,7 @@ mod tests {
     #[test]
     fn test_map_insertion_error_duplicate_coordinates() {
         let error = InsertionError::DuplicateCoordinates {
-            coordinates: "[1,2,3]".to_string(),
+            coordinates: CoordinateValues::from([1.0, 2.0, 3.0]),
         };
         let mapped = TestDelaunay::<3>::map_insertion_error(error);
         assert!(
@@ -7013,6 +7102,73 @@ mod tests {
     }
 
     #[test]
+    fn test_delaunay_construction_failure_preserves_typed_generic_sources() {
+        let conflict_source = ConflictError::OpenBoundary {
+            facet_count: 2,
+            ridge_vertex_count: 1,
+            open_simplex: SimplexKey::from(KeyData::from_ffi(1)),
+        };
+        let failure = DelaunayConstructionFailure::from(
+            TriangulationConstructionError::InsertionConflictRegion {
+                source: conflict_source,
+            },
+        );
+        assert_matches!(
+            failure,
+            DelaunayConstructionFailure::InsertionConflictRegion {
+                source: ConflictError::OpenBoundary { .. },
+            }
+        );
+
+        let failure = DelaunayConstructionFailure::from(
+            TriangulationConstructionError::InsertionHullExtension {
+                reason: HullExtensionReason::NoVisibleFacets,
+            },
+        );
+        assert_matches!(
+            failure,
+            DelaunayConstructionFailure::InsertionHullExtension {
+                reason: HullExtensionReason::NoVisibleFacets,
+            }
+        );
+
+        let failure = DelaunayConstructionFailure::from(
+            TriangulationConstructionError::InsertionDelaunayValidation {
+                source: DelaunayTriangulationValidationError::VerificationFailed {
+                    message: "delaunay check".to_string(),
+                },
+            },
+        );
+        assert_matches!(
+            failure,
+            DelaunayConstructionFailure::InsertionDelaunayValidation {
+                source: DelaunayTriangulationValidationError::VerificationFailed { .. },
+            }
+        );
+
+        let vertex_key = VertexKey::from(KeyData::from_ffi(2));
+        let failure = DelaunayConstructionFailure::from(
+            TriangulationConstructionError::InsertionTopologyValidation {
+                message: "post-insertion".to_string(),
+                source: TriangulationValidationError::IsolatedVertex {
+                    vertex_key,
+                    vertex_uuid: Uuid::nil(),
+                },
+            },
+        );
+        assert_matches!(
+            failure,
+            DelaunayConstructionFailure::InsertionTopologyValidation {
+                message,
+                source: TriangulationValidationError::IsolatedVertex {
+                    vertex_key: preserved_key,
+                    ..
+                },
+            } if message == "post-insertion" && preserved_key == vertex_key
+        );
+    }
+
+    #[test]
     fn test_map_insertion_error_hard_repair_is_internal() {
         let error = InsertionError::DelaunayRepairFailed {
             source: Box::new(DelaunayRepairError::from(FlipError::UnsupportedDimension {
@@ -7056,6 +7212,22 @@ mod tests {
                     attempted: 3,
                 }
             )
+        );
+    }
+
+    #[test]
+    fn test_map_insertion_error_spatial_index_construction_is_typed() {
+        let error = InsertionError::SpatialIndexConstruction {
+            reason: SpatialIndexConstructionFailure::NonPositiveCellSize {
+                value: CoordinateConversionValue::from_f64(0.0),
+            },
+        };
+        let mapped = TestDelaunay::<3>::map_insertion_error(error);
+        assert_matches!(
+            mapped,
+            TriangulationConstructionError::SpatialIndexConstruction {
+                reason: SpatialIndexConstructionFailure::NonPositiveCellSize { value }
+            } if value == CoordinateConversionValue::from_f64(0.0)
         );
     }
 
@@ -7142,6 +7314,21 @@ mod tests {
     }
 
     #[test]
+    fn test_is_non_retryable_construction_error_spatial_index_construction() {
+        let err: DelaunayTriangulationConstructionError =
+            TriangulationConstructionError::SpatialIndexConstruction {
+                reason: SpatialIndexConstructionFailure::NonPositiveCellSize {
+                    value: CoordinateConversionValue::from_f64(0.0),
+                },
+            }
+            .into();
+        assert!(
+            TestDelaunay::<3>::is_non_retryable_construction_error(&err),
+            "Spatial index construction failures should be non-retryable"
+        );
+    }
+
+    #[test]
     fn test_is_non_retryable_construction_error_tds_validation() {
         let err: DelaunayTriangulationConstructionError = TriangulationConstructionError::Tds(
             TdsConstructionError::ValidationError(TdsError::InconsistentDataStructure {
@@ -7179,6 +7366,13 @@ mod tests {
                 .into(),
             }
             .into();
+        let final_delaunay_err = DelaunayTriangulationConstructionError::Triangulation(
+            DelaunayConstructionFailure::FinalDelaunayValidation {
+                source: DelaunayTriangulationValidationError::VerificationFailed {
+                    message: "final Level 4 check failed".to_string(),
+                },
+            },
+        );
 
         assert!(
             TestDelaunay::<3>::is_non_retryable_construction_error(&insertion_err),
@@ -7187,6 +7381,10 @@ mod tests {
         assert!(
             TestDelaunay::<3>::is_non_retryable_construction_error(&final_err),
             "FinalTopologyValidation should be non-retryable"
+        );
+        assert!(
+            TestDelaunay::<3>::is_non_retryable_construction_error(&final_delaunay_err),
+            "FinalDelaunayValidation should be non-retryable"
         );
     }
 

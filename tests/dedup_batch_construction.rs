@@ -1,8 +1,8 @@
 //! Integration tests for batch construction with duplicate vertices.
 //!
 //! These tests verify that:
-//! - Hilbert-sort dedup (unconditional) removes exact duplicates during batch construction
-//! - Hilbert-sort dedup collapses quantization-resolution collisions
+//! - Explicit batch dedup removes exact duplicates during batch construction
+//! - Explicit Hilbert-sort dedup collapses quantization-resolution collisions
 //! - The resulting triangulations are valid (Levels 1–4)
 //! - Simplex-level coordinate uniqueness validation catches no violations post-dedup
 //! - Explicit `DedupPolicy::Exact` works for non-Hilbert orderings
@@ -11,8 +11,7 @@
 
 use delaunay::prelude::construction::{
     ConstructionOptions, DedupPolicy, DelaunayConstructionFailure, DelaunayTriangulation,
-    DelaunayTriangulationConstructionError, InsertionOrderStrategy, TopologyGuarantee, Vertex,
-    vertex,
+    DelaunayTriangulationConstructionError, InsertionOrderStrategy, Vertex, vertex,
 };
 
 // =============================================================================
@@ -67,6 +66,11 @@ fn all_identical_vertices<const D: usize>(count: usize) -> Vec<Vertex<f64, (), D
     (0..count).map(|_| vertex!([1.0; D])).collect()
 }
 
+/// Select exact preprocessing dedup so tests opt into duplicate collapse explicitly.
+fn exact_dedup_options() -> ConstructionOptions {
+    ConstructionOptions::default().with_dedup_policy(DedupPolicy::Exact)
+}
+
 /// Build simplex vertices plus an interior point, then one duplicate of the
 /// origin. Returns `(vertices, distinct_count)`.
 #[expect(
@@ -90,8 +94,9 @@ fn simplex_with_one_duplicate<const D: usize>() -> (Vec<Vertex<f64, (), D>>, usi
 
 /// Generate batch construction dedup tests for a given dimension:
 ///
-/// - Hilbert dedup removes exact duplicates (unconditional)
-/// - All-identical input fails gracefully
+/// - Explicit Hilbert dedup removes exact duplicates
+/// - All-identical input fails gracefully, with explicit dedup reporting too few
+///   unique vertices and default construction reporting geometric degeneracy
 /// - `DedupPolicy::Exact` with `Input` ordering removes duplicates
 /// - Many-duplicate stress test collapses correctly
 macro_rules! gen_dedup_batch_tests {
@@ -103,11 +108,9 @@ macro_rules! gen_dedup_batch_tests {
                 let (vertices, distinct) = simplex_with_interior_and_duplicates::<$dim>();
                 assert!(vertices.len() > distinct);
 
+                let opts = exact_dedup_options();
                 let dt: DelaunayTriangulation<_, (), (), $dim> =
-                    DelaunayTriangulation::new_with_topology_guarantee(
-                        &vertices,
-                        TopologyGuarantee::PLManifold,
-                    )
+                    DelaunayTriangulation::new_with_options(&vertices, opts)
                     .expect(concat!(
                         stringify!($dim), "D construction with duplicates should succeed"
                     ));
@@ -115,7 +118,7 @@ macro_rules! gen_dedup_batch_tests {
                 assert_eq!(
                     dt.number_of_vertices(),
                     distinct,
-                    "{}D: duplicates should be removed by Hilbert-sort dedup",
+                    "{}D: duplicates should be removed by explicit dedup",
                     $dim
                 );
                 assert!(dt.number_of_simplices() > 0);
@@ -130,13 +133,33 @@ macro_rules! gen_dedup_batch_tests {
             }
 
             #[test]
-            fn [<test_batch_construction_all_duplicates_fails_ $dim d>]() {
+            fn [<test_batch_construction_all_duplicates_fails_without_hidden_dedup_ $dim d>]() {
+                init_tracing();
+                let vertices = all_identical_vertices::<$dim>($dim + 2);
+
+                let result: Result<DelaunayTriangulation<_, (), (), $dim>, _> =
+                    DelaunayTriangulation::new(&vertices);
+
+                assert!(
+                    matches!(
+                        result,
+                        Err(DelaunayTriangulationConstructionError::Triangulation(
+                            DelaunayConstructionFailure::GeometricDegeneracy { .. }
+                        ))
+                    ),
+                    "{}D: all-duplicate input without explicit dedup should fail as degenerate",
+                    $dim
+                );
+            }
+
+            #[test]
+            fn [<test_batch_construction_all_duplicates_with_exact_dedup_fails_ $dim d>]() {
                 init_tracing();
                 // D+2 identical vertices → collapses to 1 → insufficient for simplex
                 let vertices = all_identical_vertices::<$dim>($dim + 2);
 
                 let result: Result<DelaunayTriangulation<_, (), (), $dim>, _> =
-                    DelaunayTriangulation::new(&vertices);
+                    DelaunayTriangulation::new_with_options(&vertices, exact_dedup_options());
 
                 assert!(
                     matches!(
@@ -195,7 +218,7 @@ macro_rules! gen_dedup_batch_tests {
                 assert_eq!(vertices.len(), distinct_count * 5);
 
                 let dt: DelaunayTriangulation<_, (), (), $dim> =
-                    DelaunayTriangulation::new(&vertices)
+                    DelaunayTriangulation::new_with_options(&vertices, exact_dedup_options())
                         .expect(concat!(
                             stringify!($dim),
                             "D: many-duplicate construction should succeed"
@@ -220,12 +243,11 @@ gen_dedup_batch_tests!(3);
 gen_dedup_batch_tests!(4);
 gen_dedup_batch_tests!(5);
 
-/// Verify that Hilbert-sort dedup collapses geometrically distinct points
+/// Verify that explicit Hilbert-sort dedup collapses geometrically distinct points
 /// that quantize to the same Hilbert grid cell.
 ///
 /// For D=2, bits=31, grid spacing ≈ 1/(2³¹ − 1) ≈ 4.66×10⁻¹⁰.
 /// Two points differing by ~1×10⁻¹⁰ will collide at quantization resolution.
-/// Hilbert dedup is unconditional and does not require any `DedupPolicy`.
 #[test]
 fn test_hilbert_dedup_quantized_collision_2d() {
     init_tracing();
@@ -234,14 +256,15 @@ fn test_hilbert_dedup_quantized_collision_2d() {
     vertices.push(vertex!([0.5 + 1e-10, 0.5])); // quantizes to same simplex
     let total = vertices.len();
 
-    let dt: DelaunayTriangulation<_, (), (), 2> = DelaunayTriangulation::new(&vertices)
-        .expect("2D construction with quantized-collision should succeed");
+    let dt: DelaunayTriangulation<_, (), (), 2> =
+        DelaunayTriangulation::new_with_options(&vertices, exact_dedup_options())
+            .expect("2D construction with quantized-collision should succeed");
 
     // Hilbert dedup should collapse the near-coincident pair.
-    assert!(
-        dt.number_of_vertices() < total,
-        "expected Hilbert dedup to collapse quantized-collision pair (got {} of {total})",
+    assert_eq!(
         dt.number_of_vertices(),
+        total - 1,
+        "expected Hilbert dedup to collapse exactly the quantized-collision pair"
     );
     assert!(dt.validate().is_ok());
 }

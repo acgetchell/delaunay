@@ -83,7 +83,7 @@ fn empty_flip_fixture_returns_construction_error() {
     match err {
         FlipWorkflowError::Construction { dimension, source } => {
             assert_eq!(dimension, 2);
-            match source {
+            match *source {
                 DelaunayTriangulationConstructionError::Triangulation(
                     DelaunayConstructionFailure::InsufficientVertices { dimension, .. },
                 ) => assert_eq!(dimension, 2),

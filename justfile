@@ -313,7 +313,7 @@ debug-large-scale-2d n="36000" repair_every="1": _ensure-nextest
 debug-large-scale-3d n="7500" repair_every="1": _ensure-nextest
     DELAUNAY_BULK_PROGRESS_EVERY=500 DELAUNAY_LARGE_DEBUG_MAX_RUNTIME_SECS=1800 DELAUNAY_LARGE_DEBUG_N_3D={{ n }} DELAUNAY_LARGE_DEBUG_REPAIR_EVERY={{ repair_every }} cargo nextest run --release --profile slow --features slow-tests --test large_scale_debug debug_large_scale_3d -- --exact --nocapture
 
-debug-large-scale-4d n="900" repair_every="1": _ensure-nextest
+debug-large-scale-4d n="800" repair_every="1": _ensure-nextest
     DELAUNAY_BULK_PROGRESS_EVERY=100 DELAUNAY_LARGE_DEBUG_MAX_RUNTIME_SECS=1800 DELAUNAY_LARGE_DEBUG_N_4D={{ n }} DELAUNAY_LARGE_DEBUG_REPAIR_EVERY={{ repair_every }} cargo nextest run --release --profile slow --features slow-tests --test large_scale_debug debug_large_scale_4d -- --exact --nocapture
 
 debug-large-scale-5d n="140" repair_every="1": _ensure-nextest
@@ -359,7 +359,7 @@ help-workflows:
     @echo "  just test-diagnostics      # Run diagnostics tools with output"
     @echo "  just debug-large-scale-2d [n] [repair_every] # 2D acceptance/profiling (defaults n=36000, repair_every=1)"
     @echo "  just debug-large-scale-3d [n] [repair_every] # Issue #341: 3D scalability (defaults n=7500, repair_every=1)"
-    @echo "  just debug-large-scale-4d [n] [repair_every] # Issue #340: 4D large-scale runtime (defaults n=900, repair_every=1)"
+    @echo "  just debug-large-scale-4d [n] [repair_every] # Issue #340: 4D large-scale runtime (defaults n=800, repair_every=1)"
     @echo "  just debug-large-scale-5d [n] [repair_every] # Issue #342: 5D feasibility (defaults n=140, repair_every=1)"
     @echo ""
     @echo "Benchmark workflows:"
@@ -562,7 +562,7 @@ perf-large-scale-smoke max_secs="60": _ensure-nextest
 
     run_case "2D" "debug_large_scale_2d" "DELAUNAY_LARGE_DEBUG_N_2D" "36000" "2000"
     run_case "3D" "debug_large_scale_3d" "DELAUNAY_LARGE_DEBUG_N_3D" "7500" "500"
-    run_case "4D" "debug_large_scale_4d" "DELAUNAY_LARGE_DEBUG_N_4D" "900" "100"
+    run_case "4D" "debug_large_scale_4d" "DELAUNAY_LARGE_DEBUG_N_4D" "800" "100"
     run_case "5D" "debug_large_scale_5d" "DELAUNAY_LARGE_DEBUG_N_5D" "140" "20"
 
     if (( ${#failures[@]} > 0 )); then

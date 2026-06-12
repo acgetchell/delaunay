@@ -73,20 +73,21 @@ where
 {
     /// Lazily seeds the spatial index from existing vertices so incremental
     /// insertion can start from deserialized or manually constructed TDS state.
-    fn ensure_spatial_index_seeded(&mut self) {
+    fn ensure_spatial_index_seeded(&mut self) -> Result<(), InsertionError> {
         if self.spatial_index.is_some() {
-            return;
+            return Ok(());
         }
 
         let duplicate_tolerance: K::Scalar =
             <K::Scalar as NumCast>::from(1e-10_f64).unwrap_or_else(K::Scalar::default_tolerance);
-        let mut index: HashGridIndex<K::Scalar, D> = HashGridIndex::new(duplicate_tolerance);
+        let mut index = HashGridIndex::try_new(duplicate_tolerance)?;
 
         for (vkey, vertex) in self.tri.tds.vertices() {
             index.insert_vertex(vkey, vertex.point().coords());
         }
 
         self.spatial_index = Some(index);
+        Ok(())
     }
 
     /// Insert a vertex into the Delaunay triangulation using incremental cavity-based algorithm.
@@ -114,6 +115,7 @@ where
     /// - Duplicate UUID detected
     /// - Initial simplex construction fails (when reaching D+1 vertices)
     /// - Point is on a facet, edge, or vertex (degenerate cases not yet implemented)
+    /// - Spatial index construction fails while seeding duplicate-detection and locate hints
     /// - Conflict region computation fails
     /// - Cavity boundary extraction fails
     /// - Cavity filling or neighbor wiring fails
@@ -186,7 +188,7 @@ where
     /// # }
     /// ```
     pub fn insert(&mut self, vertex: Vertex<K::Scalar, U, D>) -> Result<VertexKey, InsertionError> {
-        self.ensure_spatial_index_seeded();
+        self.ensure_spatial_index_seeded()?;
 
         // Fully delegate to Triangulation layer
         // Triangulation handles:
@@ -276,7 +278,8 @@ where
     /// # Errors
     ///
     /// Returns [`InsertionError`] for structural failures, duplicate coordinates,
-    /// and retryable geometric degeneracies that exhaust all attempts.
+    /// retryable geometric degeneracies that exhaust all attempts, and spatial
+    /// index construction failures while seeding duplicate-detection and locate hints.
     ///
     /// # Examples
     ///
@@ -322,7 +325,9 @@ where
     /// # Errors
     ///
     /// Returns [`InsertionError`] for non-skip structural failures that cannot
-    /// be represented as an [`InsertionOutcome::Skipped`] value.
+    /// be represented as an [`InsertionOutcome::Skipped`] value, including
+    /// spatial index construction failures while seeding duplicate-detection
+    /// and locate hints.
     ///
     /// # Examples
     ///
@@ -353,7 +358,7 @@ where
         &mut self,
         vertex: Vertex<K::Scalar, U, D>,
     ) -> Result<(InsertionOutcome, InsertionStatistics), InsertionError> {
-        self.ensure_spatial_index_seeded();
+        self.ensure_spatial_index_seeded()?;
 
         // Transactional guard: post-steps (flip repair and/or global Delaunay checks) can fail.
         // If they do, rollback to leave the triangulation unchanged.
@@ -930,7 +935,7 @@ mod tests {
         let simplex_count_before = dt.number_of_simplices();
         let hint_simplex_before = dt.simplices().next().map(|(key, _)| key);
         dt.insertion_state.last_inserted_simplex = hint_simplex_before;
-        let mut spatial_index = HashGridIndex::<f64, D>::new(1.0);
+        let mut spatial_index = HashGridIndex::<f64, D>::try_new(1.0).unwrap();
         for (vertex_key, vertex) in dt.vertices() {
             spatial_index.insert_vertex(vertex_key, vertex.point().coords());
         }
@@ -1152,7 +1157,7 @@ mod tests {
         let vertex_key = dt.insert(vertex!([0.25, 0.25])).unwrap();
         let hint_simplex = dt.simplices().next().map(|(key, _)| key);
         dt.insertion_state.last_inserted_simplex = hint_simplex;
-        let mut spatial_index = HashGridIndex::<f64, 2>::new(1.0);
+        let mut spatial_index = HashGridIndex::<f64, 2>::try_new(1.0).unwrap();
         for (vertex_key, vertex) in dt.vertices() {
             spatial_index.insert_vertex(vertex_key, vertex.point().coords());
         }

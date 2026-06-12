@@ -284,11 +284,11 @@ mod tests {
     }
 
     #[test]
-    fn test_wrap_coord_f32() {
+    fn test_wrap_coord_f64() {
         let space = ToroidalSpace::<2>::new([1.0, 1.0]);
-        let wrapped = space.wrap_coord::<f32>(0, 1.5_f32);
+        let wrapped = space.wrap_coord::<f64>(0, 1.5);
         assert!(wrapped.is_some());
-        assert_relative_eq!(wrapped.unwrap(), 0.5_f32, epsilon = 1e-6);
+        assert_relative_eq!(wrapped.unwrap(), 0.5, epsilon = 1e-12);
     }
 
     #[test]

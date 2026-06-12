@@ -20,7 +20,7 @@
 //! ## Key Features
 //!
 //! - **Generic dimensions**: Supports arbitrary dimensions via `const D: usize`
-//! - **Multiple scalar types**: Works with `f32`, `f64`, and other floating-point types
+//! - **Scalar type contract**: Coordinate geometry currently supports `f64` scalars only.
 //! - **Storage abstraction**: Abstracts arrays, vectors, and other storage mechanisms
 //! - **Special value handling**: Proper handling of NaN, infinity, and zero values
 //! - **Serialization support**: Built-in serde serialization/deserialization
@@ -57,8 +57,12 @@
 //! ```
 //!
 //! The coordinate trait system enables geometric structures (`Point`, `Vertex`,
-//! `Simplex`, etc.) to work consistently across different scalar types and storage
-//! mechanisms while maintaining mathematical correctness and type safety.
+//! `Simplex`, etc.) to keep storage and geometric operations orthogonal while
+//! maintaining mathematical correctness and type safety. The public coordinate
+//! scalar contract is intentionally narrow today: `f64` is the only supported
+//! caller-visible coordinate scalar. Exact arithmetic is used internally for
+//! predicate fallbacks, and any future exact-coordinate input support will be added
+//! through an explicit documented API rather than implicit arbitrary scalar support.
 
 #![forbid(unsafe_code)]
 
@@ -67,11 +71,154 @@ use num_traits::{Float, Zero};
 use ordered_float::OrderedFloat;
 use serde::{Serialize, de::DeserializeOwned};
 use std::{
-    fmt::{self, Debug},
+    fmt::{self, Debug, Display},
     hash::{Hash, Hasher},
     iter::Sum,
     ops::{AddAssign, SubAssign},
 };
+
+/// A non-finite coordinate value category.
+///
+/// This keeps recognized non-finite coordinate diagnostics typed while
+/// preserving a fallback for future/custom scalar representations whose debug
+/// form is outside the built-in floating-point spellings.
+///
+/// # Examples
+///
+/// ```rust
+/// use delaunay::prelude::geometry::{FiniteCoordinateValue, InvalidCoordinateValue};
+///
+/// assert_eq!(
+///     FiniteCoordinateValue::try_new(f64::NAN),
+///     Err(InvalidCoordinateValue::Nan)
+/// );
+/// assert_eq!(
+///     FiniteCoordinateValue::try_new(f64::INFINITY),
+///     Err(InvalidCoordinateValue::PositiveInfinity)
+/// );
+/// ```
+#[derive(Clone, Debug, Eq, PartialEq)]
+#[non_exhaustive]
+pub enum InvalidCoordinateValue {
+    /// Not-a-number.
+    Nan,
+    /// Positive infinity.
+    PositiveInfinity,
+    /// Negative infinity.
+    NegativeInfinity,
+    /// A custom non-finite value representation.
+    Other(String),
+}
+
+impl InvalidCoordinateValue {
+    /// Classifies a non-finite coordinate from its debug representation.
+    pub(crate) fn from_debug<T: Debug>(value: &T) -> Self {
+        let value = format!("{value:?}");
+        match value.as_str() {
+            "NaN" => Self::Nan,
+            "inf" => Self::PositiveInfinity,
+            "-inf" => Self::NegativeInfinity,
+            _ => Self::Other(value),
+        }
+    }
+}
+
+impl fmt::Display for InvalidCoordinateValue {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Nan => f.write_str("NaN"),
+            Self::PositiveInfinity => f.write_str("inf"),
+            Self::NegativeInfinity => f.write_str("-inf"),
+            Self::Other(value) => f.write_str(value),
+        }
+    }
+}
+
+/// A finite `f64` coordinate diagnostic value.
+///
+/// This is the finite-scalar proof carried by
+/// [`CoordinateConversionValue::Scalar`]. Construct it with [`Self::try_new`]
+/// at raw numeric boundaries; after construction, [`Self::get`] is infallible.
+///
+/// # Examples
+///
+/// ```rust
+/// use delaunay::prelude::geometry::{FiniteCoordinateValue, InvalidCoordinateValue};
+///
+/// let value = FiniteCoordinateValue::try_new(1.25)?;
+/// assert_eq!(value.get(), 1.25);
+/// assert_eq!(
+///     FiniteCoordinateValue::try_new(f64::NAN),
+///     Err(InvalidCoordinateValue::Nan)
+/// );
+///
+/// # Ok::<(), InvalidCoordinateValue>(())
+/// ```
+#[derive(Clone, Copy, Debug, PartialEq, PartialOrd)]
+#[must_use]
+pub struct FiniteCoordinateValue(f64);
+
+impl FiniteCoordinateValue {
+    /// Parses a raw `f64` into a finite coordinate diagnostic value.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`InvalidCoordinateValue`] when `value` is `NaN` or infinite.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use delaunay::prelude::geometry::{FiniteCoordinateValue, InvalidCoordinateValue};
+    ///
+    /// let value = FiniteCoordinateValue::try_new(4.0)?;
+    /// assert_eq!(value.get(), 4.0);
+    ///
+    /// assert_eq!(
+    ///     FiniteCoordinateValue::try_new(f64::INFINITY),
+    ///     Err(InvalidCoordinateValue::PositiveInfinity)
+    /// );
+    ///
+    /// # Ok::<(), InvalidCoordinateValue>(())
+    /// ```
+    pub fn try_new(value: f64) -> Result<Self, InvalidCoordinateValue> {
+        if value.is_finite() {
+            Ok(Self(value))
+        } else {
+            Err(InvalidCoordinateValue::from_debug(&value))
+        }
+    }
+
+    /// Returns the validated finite scalar.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use delaunay::prelude::geometry::{FiniteCoordinateValue, InvalidCoordinateValue};
+    ///
+    /// let value = FiniteCoordinateValue::try_new(-2.5)?;
+    /// assert_eq!(value.get(), -2.5);
+    ///
+    /// # Ok::<(), InvalidCoordinateValue>(())
+    /// ```
+    #[must_use]
+    pub const fn get(self) -> f64 {
+        self.0
+    }
+}
+
+impl TryFrom<f64> for FiniteCoordinateValue {
+    type Error = InvalidCoordinateValue;
+
+    fn try_from(value: f64) -> Result<Self, Self::Error> {
+        Self::try_new(value)
+    }
+}
+
+impl fmt::Display for FiniteCoordinateValue {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{:?}", self.0)
+    }
+}
 
 /// Structured reason why a predicate classified a simplex as geometrically degenerate.
 ///
@@ -106,18 +253,223 @@ impl fmt::Display for DegenerateSimplexReason {
     }
 }
 
+/// Typed value payload for coordinate conversion diagnostics.
+///
+/// Conversion errors use this instead of preformatted scalar strings so callers
+/// can match finite scalar values and discrete counts directly. Formatting is
+/// deferred to [`Display`].
+///
+/// # Examples
+///
+/// ```rust
+/// use delaunay::prelude::geometry::{
+///     CoordinateConversionValue, FiniteCoordinateValue, InvalidCoordinateValue,
+/// };
+///
+/// assert_eq!(
+///     CoordinateConversionValue::from_f64(2.5),
+///     CoordinateConversionValue::Scalar(FiniteCoordinateValue::try_new(2.5)?)
+/// );
+/// assert_eq!(
+///     CoordinateConversionValue::from_f64(f64::INFINITY),
+///     CoordinateConversionValue::NonFinite(InvalidCoordinateValue::PositiveInfinity)
+/// );
+///
+/// # Ok::<(), InvalidCoordinateValue>(())
+/// ```
+#[derive(Clone, Debug, PartialEq)]
+#[non_exhaustive]
+pub enum CoordinateConversionValue {
+    /// A finite scalar value represented in the supported `f64` coordinate model.
+    Scalar(FiniteCoordinateValue),
+    /// A discrete unsigned count or index value.
+    UnsignedInteger(usize),
+    /// A non-finite coordinate category.
+    NonFinite(InvalidCoordinateValue),
+    /// Non-scalar diagnostic context.
+    Other(String),
+}
+
+impl CoordinateConversionValue {
+    /// Builds a typed payload from a supported coordinate scalar.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use delaunay::prelude::geometry::{CoordinateConversionValue, InvalidCoordinateValue};
+    ///
+    /// std::assert_matches!(
+    ///     CoordinateConversionValue::from_f64(1.0),
+    ///     CoordinateConversionValue::Scalar(_)
+    /// );
+    /// assert_eq!(
+    ///     CoordinateConversionValue::from_f64(f64::NAN),
+    ///     CoordinateConversionValue::NonFinite(InvalidCoordinateValue::Nan)
+    /// );
+    /// ```
+    #[must_use]
+    pub fn from_f64(value: f64) -> Self {
+        FiniteCoordinateValue::try_new(value).map_or_else(Self::NonFinite, Self::Scalar)
+    }
+
+    /// Builds a typed payload from a discrete unsigned integer.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use delaunay::prelude::geometry::CoordinateConversionValue;
+    ///
+    /// assert_eq!(
+    ///     CoordinateConversionValue::from_usize(7),
+    ///     CoordinateConversionValue::UnsignedInteger(7)
+    /// );
+    /// ```
+    #[must_use]
+    pub const fn from_usize(value: usize) -> Self {
+        Self::UnsignedInteger(value)
+    }
+
+    /// Builds a best-effort typed payload from a numeric value.
+    pub(crate) fn from_numeric_debug<T>(value: &T) -> Self
+    where
+        T: Debug + num_traits::ToPrimitive,
+    {
+        value
+            .to_f64()
+            .map_or_else(|| Self::Other(format!("{value:?}")), Self::from_f64)
+    }
+}
+
+impl Display for CoordinateConversionValue {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Scalar(value) => write!(f, "{value}"),
+            Self::UnsignedInteger(value) => write!(f, "{value}"),
+            Self::NonFinite(value) => write!(f, "{value}"),
+            Self::Other(value) => f.write_str(value),
+        }
+    }
+}
+
+/// A coordinate tuple captured as typed diagnostic values.
+///
+/// This is used by error variants that need to report coordinates without
+/// collapsing scalar values into display-oriented strings. Today supported
+/// caller-visible coordinates are `f64`; exact coordinate payloads can be added
+/// here later without changing every downstream error enum.
+///
+/// # Examples
+///
+/// ```rust
+/// use delaunay::prelude::geometry::{
+///     CoordinateConversionValue, CoordinateValues, InvalidCoordinateValue,
+/// };
+///
+/// let coordinates = CoordinateValues::from([1.0, f64::NAN]);
+/// std::assert_matches!(
+///     coordinates.as_slice()[0],
+///     CoordinateConversionValue::Scalar(_)
+/// );
+/// assert_eq!(
+///     coordinates.as_slice()[1],
+///     CoordinateConversionValue::NonFinite(InvalidCoordinateValue::Nan)
+/// );
+/// ```
+#[derive(Clone, Debug, PartialEq)]
+#[must_use]
+pub struct CoordinateValues(Vec<CoordinateConversionValue>);
+
+impl CoordinateValues {
+    /// Builds a duplicate-coordinate diagnostic tuple from numeric coordinate values.
+    ///
+    /// This supports public duplicate-coordinate errors by preserving typed
+    /// coordinate payloads after duplicate detection instead of preformatting
+    /// them as display strings.
+    pub(crate) fn from_numeric_slice<T>(values: &[T]) -> Self
+    where
+        T: Debug + num_traits::ToPrimitive,
+    {
+        Self(
+            values
+                .iter()
+                .map(CoordinateConversionValue::from_numeric_debug)
+                .collect(),
+        )
+    }
+
+    /// Returns the typed coordinate payloads.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use delaunay::prelude::geometry::{CoordinateConversionValue, CoordinateValues};
+    ///
+    /// let coordinates = CoordinateValues::from([0.0, 1.0]);
+    /// std::assert_matches!(
+    ///     coordinates.as_slice(),
+    ///     [CoordinateConversionValue::Scalar(_), CoordinateConversionValue::Scalar(_)]
+    /// );
+    /// ```
+    #[must_use]
+    pub fn as_slice(&self) -> &[CoordinateConversionValue] {
+        &self.0
+    }
+
+    /// Consumes the wrapper and returns the underlying typed payloads.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use delaunay::prelude::geometry::{CoordinateConversionValue, CoordinateValues};
+    ///
+    /// let payloads = CoordinateValues::from([0.0, 1.0]).into_vec();
+    /// std::assert_matches!(
+    ///     payloads.as_slice(),
+    ///     [CoordinateConversionValue::Scalar(_), CoordinateConversionValue::Scalar(_)]
+    /// );
+    /// ```
+    #[must_use]
+    pub fn into_vec(self) -> Vec<CoordinateConversionValue> {
+        self.0
+    }
+}
+
+impl<const D: usize> From<[f64; D]> for CoordinateValues {
+    fn from(values: [f64; D]) -> Self {
+        Self(
+            values
+                .into_iter()
+                .map(CoordinateConversionValue::from_f64)
+                .collect(),
+        )
+    }
+}
+
+impl fmt::Display for CoordinateValues {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str("[")?;
+        for (idx, value) in self.0.iter().enumerate() {
+            if idx != 0 {
+                f.write_str(", ")?;
+            }
+            write!(f, "{value}")?;
+        }
+        f.write_str("]")
+    }
+}
+
 /// Errors that can occur during coordinate conversion in geometric predicates.
 ///
 /// # Examples
 ///
 /// ```rust
-/// use delaunay::prelude::geometry::CoordinateConversionError;
+/// use delaunay::prelude::geometry::{CoordinateConversionError, CoordinateConversionValue};
 ///
 /// let err = CoordinateConversionError::ConversionFailed {
 ///     coordinate_index: 0,
-///     coordinate_value: "NaN".to_string(),
-///     from_type: "f64",
-///     to_type: "f32",
+///     coordinate_value: CoordinateConversionValue::from_usize(9_007_199_254_740_992),
+///     from_type: "usize",
+///     to_type: "f64",
 /// };
 /// std::assert_matches!(err, CoordinateConversionError::ConversionFailed { .. });
 /// ```
@@ -131,8 +483,8 @@ pub enum CoordinateConversionError {
     ConversionFailed {
         /// Index of the coordinate that failed to convert.
         coordinate_index: usize,
-        /// String representation of the problematic coordinate value
-        coordinate_value: String,
+        /// Problematic coordinate, count, or index value.
+        coordinate_value: CoordinateConversionValue,
         /// Source type name
         from_type: &'static str,
         /// Target type name
@@ -145,8 +497,8 @@ pub enum CoordinateConversionError {
     NonFiniteValue {
         /// Index of the coordinate that contains the non-finite value
         coordinate_index: usize,
-        /// String representation of the non-finite coordinate value
-        coordinate_value: String,
+        /// Non-finite coordinate value.
+        coordinate_value: InvalidCoordinateValue,
     },
     /// A predicate received the wrong number of points for a D-dimensional simplex.
     #[error(
@@ -245,11 +597,11 @@ impl From<LaError> for CoordinateConversionError {
 /// # Examples
 ///
 /// ```rust
-/// use delaunay::prelude::geometry::CoordinateValidationError;
+/// use delaunay::prelude::geometry::{CoordinateValidationError, InvalidCoordinateValue};
 ///
 /// let err = CoordinateValidationError::InvalidCoordinate {
 ///     coordinate_index: 1,
-///     coordinate_value: "NaN".to_string(),
+///     coordinate_value: InvalidCoordinateValue::Nan,
 ///     dimension: 3,
 /// };
 /// std::assert_matches!(err, CoordinateValidationError::InvalidCoordinate { .. });
@@ -264,18 +616,12 @@ pub enum CoordinateValidationError {
     InvalidCoordinate {
         /// Index of the invalid coordinate.
         coordinate_index: usize,
-        /// Value of the invalid coordinate, as a string.
-        coordinate_value: String,
+        /// Non-finite coordinate value.
+        coordinate_value: InvalidCoordinateValue,
         /// The dimensionality of the coordinate system.
         dimension: usize,
     },
 }
-
-/// Default tolerance for f32 floating-point comparisons.
-///
-/// This value is set to 1e-6, which is appropriate for f32 precision and provides
-/// a reasonable margin for floating-point comparison errors.
-pub const DEFAULT_TOLERANCE_F32: f32 = 1e-6;
 
 /// Default tolerance for f64 floating-point comparisons.
 ///
@@ -310,9 +656,9 @@ pub const DEFAULT_TOLERANCE_F64: f64 = 1e-15;
 pub trait FiniteCheck {
     /// Returns true if the value is finite (not NaN or infinite).
     ///
-    /// This method provides a consistent way to check finiteness across
-    /// different numeric types, particularly floating-point types where
-    /// NaN and infinity values are possible.
+    /// This method provides a consistent way to check finiteness for the
+    /// supported floating-point coordinate scalar, where `NaN` and infinity
+    /// values are possible.
     ///
     /// # Returns
     ///
@@ -326,7 +672,7 @@ pub trait FiniteCheck {
     ///
     /// // Valid finite values
     /// assert!(1.0f64.is_finite_generic());
-    /// assert!((-42.5f32).is_finite_generic());
+    /// assert!((-42.5f64).is_finite_generic());
     /// assert!(0.0f64.is_finite_generic());
     /// assert!(f64::MAX.is_finite_generic());
     /// assert!(f64::MIN.is_finite_generic());
@@ -335,8 +681,6 @@ pub trait FiniteCheck {
     /// assert!(!f64::NAN.is_finite_generic());
     /// assert!(!f64::INFINITY.is_finite_generic());
     /// assert!(!f64::NEG_INFINITY.is_finite_generic());
-    /// assert!(!f32::NAN.is_finite_generic());
-    /// assert!(!f32::INFINITY.is_finite_generic());
     /// ```
     fn is_finite_generic(&self) -> bool;
 }
@@ -355,8 +699,8 @@ macro_rules! impl_finite_check {
     };
 }
 
-// Implement FiniteCheck for standard floating-point types
-impl_finite_check!(float: f32, f64);
+// Implement FiniteCheck for the supported coordinate scalar.
+impl_finite_check!(float: f64);
 
 /// Helper trait for OrderedFloat-based equality comparison that handles NaN properly.
 ///
@@ -430,8 +774,8 @@ macro_rules! impl_ordered_eq {
     };
 }
 
-// Implement OrderedEq for standard floating-point types
-impl_ordered_eq!(float: f32, f64);
+// Implement OrderedEq for the supported coordinate scalar.
+impl_ordered_eq!(float: f64);
 
 /// Helper trait for OrderedFloat-based partial comparison that handles NaN properly.
 ///
@@ -513,10 +857,10 @@ macro_rules! impl_ordered_cmp {
     };
 }
 
-// Implement OrderedCmp for standard floating-point types
-impl_ordered_cmp!(float: f32, f64);
+// Implement OrderedCmp for the supported coordinate scalar.
+impl_ordered_cmp!(float: f64);
 
-/// Helper trait for hashing individual coordinates for non-hashable types like f32 and f64.
+/// Helper trait for hashing individual coordinates for non-hashable coordinate scalars.
 ///
 /// This trait provides consistent hashing of floating-point coordinate values,
 /// including proper handling of special values like NaN and infinity. It uses
@@ -542,9 +886,10 @@ pub trait HashCoordinate {
     /// Hashes a single coordinate value using the provided hasher.
     ///
     /// This method provides a consistent way to hash coordinate values,
-    /// including floating-point types that don't normally implement Hash.
-    /// For floating-point types, this uses `OrderedFloat` to ensure consistent
-    /// hashing behavior, including proper handling of NaN values.
+    /// including the supported floating-point coordinate scalar, which does not
+    /// normally implement [`Hash`]. For `f64`, this uses [`OrderedFloat`] to
+    /// ensure consistent hashing behavior, including proper handling of `NaN`
+    /// values.
     ///
     /// # Arguments
     ///
@@ -595,14 +940,17 @@ macro_rules! impl_hash_coordinate {
     };
 }
 
-// Implement HashCoordinate for standard floating-point types
-impl_hash_coordinate!(float: f32, f64);
+// Implement HashCoordinate for the supported coordinate scalar.
+impl_hash_coordinate!(float: f64);
 
-/// Consolidated trait for the scalar type requirements in coordinate systems.
+/// Consolidated trait for the supported coordinate scalar requirements.
 ///
-/// This trait captures all the trait bounds required for a scalar type `T` to be used
-/// in coordinate systems. It consolidates the requirements from the `Coordinate` trait
-/// definition to reduce code duplication.
+/// This trait captures the bounds required by coordinate algorithms while keeping
+/// the current public scalar contract explicit: `f64` is the only supported
+/// caller-visible coordinate scalar. The trait remains generic at call sites to
+/// keep storage and geometry APIs orthogonal, not to promise arbitrary numeric
+/// coordinate support. Future exact-coordinate support, if added, will use a
+/// deliberate documented API.
 ///
 /// # Required Traits
 ///
@@ -647,35 +995,27 @@ pub trait CoordinateScalar:
 {
     /// Returns the appropriate default tolerance for this coordinate scalar type.
     ///
-    /// This method provides type-specific tolerance values that are appropriate
-    /// for floating-point comparisons and geometric computations. The tolerance
-    /// values are chosen to account for the precision limitations of each
-    /// floating-point type.
+    /// This method provides the tolerance value used for `f64` floating-point
+    /// comparisons and geometric computations.
     ///
     /// # Returns
     ///
-    /// The default tolerance value for this type:
-    /// - For `f32`: `1e-6` (appropriate for single precision)
-    /// - For `f64`: `1e-15` (appropriate for double precision)
+    /// The default tolerance value for `f64` coordinates.
     ///
     /// # Examples
     ///
     /// ```
     /// use delaunay::prelude::geometry::CoordinateScalar;
     ///
-    /// // Get appropriate tolerance for f32
-    /// let tolerance_f32 = f32::default_tolerance();
-    /// assert_eq!(tolerance_f32, 1e-6_f32);
-    ///
-    /// // Get appropriate tolerance for f64
+    /// // Get appropriate tolerance for f64 coordinates.
     /// let tolerance_f64 = f64::default_tolerance();
     /// assert_eq!(tolerance_f64, 1e-15_f64);
     /// ```
     ///
     /// # Usage in Generic Functions
     ///
-    /// This method is particularly useful in generic functions that need
-    /// appropriate tolerance values for the specific type being used:
+    /// This method is particularly useful in functions generic over
+    /// [`CoordinateScalar`] while the supported implementation is `f64`:
     ///
     /// ```
     /// use delaunay::prelude::geometry::CoordinateScalar;
@@ -686,25 +1026,19 @@ pub trait CoordinateScalar:
     /// ```
     fn default_tolerance() -> Self;
 
-    /// Returns the number of mantissa digits for this floating-point type.
+    /// Returns the number of mantissa digits for `f64`.
     ///
-    /// This method provides the number of mantissa bits available for precision
-    /// in the floating-point representation. This is useful for determining
-    /// the maximum integer value that can be represented exactly.
+    /// This is useful for determining the maximum integer value that can be
+    /// represented exactly by the supported coordinate scalar.
     ///
     /// # Returns
     ///
-    /// The number of mantissa digits:
-    /// - For `f32`: `24` bits (including implicit bit)
-    /// - For `f64`: `53` bits (including implicit bit)
+    /// The number of mantissa digits for `f64` coordinates.
     ///
     /// # Examples
     ///
     /// ```
     /// use delaunay::prelude::geometry::CoordinateScalar;
-    ///
-    /// // f32 has 24 mantissa bits
-    /// assert_eq!(f32::mantissa_digits(), 24);
     ///
     /// // f64 has 53 mantissa bits
     /// assert_eq!(f64::mantissa_digits(), 53);
@@ -712,17 +1046,7 @@ pub trait CoordinateScalar:
     fn mantissa_digits() -> u32;
 }
 
-// Specific implementations for f32 and f64
-impl CoordinateScalar for f32 {
-    fn default_tolerance() -> Self {
-        DEFAULT_TOLERANCE_F32
-    }
-
-    fn mantissa_digits() -> u32 {
-        Self::MANTISSA_DIGITS
-    }
-}
-
+// Supported coordinate scalar implementation.
 impl CoordinateScalar for f64 {
     fn default_tolerance() -> Self {
         DEFAULT_TOLERANCE_F64
@@ -758,7 +1082,7 @@ impl<T> CoordinateIdentity for T where T: Eq + Hash + PartialOrd {}
 
 /// A comprehensive trait that encapsulates all coordinate functionality.
 ///
-/// This trait combines all the necessary traits for coordinate types used in
+/// This trait combines all the necessary traits for coordinate containers used in
 /// geometric computations, providing a single unified interface for coordinate
 /// storage and operations. It abstracts the storage mechanism, allowing for
 /// different implementations (arrays, vectors, hash maps, etc.) while ensuring
@@ -766,7 +1090,7 @@ impl<T> CoordinateIdentity for T where T: Eq + Hash + PartialOrd {}
 ///
 /// # Type Parameters
 ///
-/// * `T` - The scalar type for coordinates (typically f32 or f64)
+/// * `T` - The scalar type for coordinates (`f64` in this crate)
 /// * `const D: usize` - The dimension of the coordinate system
 ///
 /// # Required Functionality
@@ -788,7 +1112,7 @@ impl<T> CoordinateIdentity for T where T: Eq + Hash + PartialOrd {}
 /// let coord1: Point<f64, 3> = Coordinate::new([1.0, 2.0, 3.0]);
 /// let coord2: Point<f64, 3> = Coordinate::new([1.0, 2.0, 3.0]);
 ///
-/// // All coordinate types implement the same trait
+/// // f64 coordinates implement the coordinate trait
 /// assert_eq!(coord1.dim(), 3);
 /// assert_eq!(coord1.to_array(), [1.0, 2.0, 3.0]);
 /// assert_eq!(coord1, coord2);
@@ -962,6 +1286,7 @@ mod tests {
     use super::*;
     use crate::geometry::point::Point;
     use approx::assert_relative_eq;
+    use std::assert_matches;
     use std::collections::{HashSet, hash_map::DefaultHasher};
     use std::error::Error;
     use std::hash::Hasher;
@@ -1084,8 +1409,93 @@ mod tests {
     }
 
     #[test]
+    fn finite_coordinate_value_rejects_non_finite_input() {
+        assert_relative_eq!(
+            FiniteCoordinateValue::try_new(1.25).unwrap().get(),
+            1.25,
+            epsilon = f64::EPSILON
+        );
+        assert_eq!(
+            FiniteCoordinateValue::try_new(f64::NAN),
+            Err(InvalidCoordinateValue::Nan)
+        );
+        assert_eq!(
+            FiniteCoordinateValue::try_new(f64::INFINITY),
+            Err(InvalidCoordinateValue::PositiveInfinity)
+        );
+        assert_eq!(
+            FiniteCoordinateValue::try_new(f64::NEG_INFINITY),
+            Err(InvalidCoordinateValue::NegativeInfinity)
+        );
+    }
+
+    #[test]
+    fn finite_coordinate_value_try_from_parses_at_raw_boundary() {
+        assert_relative_eq!(
+            FiniteCoordinateValue::try_from(-3.5).unwrap().get(),
+            -3.5,
+            epsilon = f64::EPSILON
+        );
+        assert_eq!(
+            FiniteCoordinateValue::try_from(f64::NEG_INFINITY),
+            Err(InvalidCoordinateValue::NegativeInfinity)
+        );
+    }
+
+    #[test]
+    fn invalid_coordinate_value_display_preserves_custom_payload() {
+        assert_eq!(
+            InvalidCoordinateValue::Other("not finite".to_owned()).to_string(),
+            "not finite"
+        );
+    }
+
+    #[test]
+    fn coordinate_conversion_value_parses_raw_f64_at_boundary() {
+        assert_matches!(
+            CoordinateConversionValue::from_f64(2.5),
+            CoordinateConversionValue::Scalar(value)
+                if (value.get() - 2.5).abs() < f64::EPSILON
+        );
+        assert_matches!(
+            CoordinateConversionValue::from_f64(f64::NAN),
+            CoordinateConversionValue::NonFinite(InvalidCoordinateValue::Nan)
+        );
+        assert_matches!(
+            CoordinateConversionValue::from_f64(f64::INFINITY),
+            CoordinateConversionValue::NonFinite(InvalidCoordinateValue::PositiveInfinity)
+        );
+    }
+
+    #[test]
+    fn coordinate_values_preserve_typed_payloads() {
+        let coordinates = CoordinateValues::from([2.5, f64::NEG_INFINITY]);
+
+        assert_matches!(
+            coordinates.as_slice(),
+            [
+                CoordinateConversionValue::Scalar(value),
+                CoordinateConversionValue::NonFinite(InvalidCoordinateValue::NegativeInfinity)
+            ] if (value.get() - 2.5).abs() < f64::EPSILON
+        );
+        assert_eq!(coordinates.to_string(), "[2.5, -inf]");
+
+        assert_eq!(
+            CoordinateConversionValue::from_usize(3),
+            CoordinateConversionValue::UnsignedInteger(3)
+        );
+        assert_eq!(
+            coordinates.into_vec(),
+            vec![
+                CoordinateConversionValue::from_f64(2.5),
+                CoordinateConversionValue::NonFinite(InvalidCoordinateValue::NegativeInfinity),
+            ]
+        );
+    }
+
+    #[test]
     fn coordinate_trait_basic_functionality() {
-        // Test through Point implementation of Coordinate trait with multiple dimensions and types
+        // Test through Point implementation of Coordinate trait with multiple dimensions.
         let coord: Point<f64, 3> = Point::new([1.0, 2.0, 3.0]);
         assert_eq!(coord.dim(), 3);
         assert_relative_eq!(
@@ -1098,16 +1508,6 @@ mod tests {
         assert_relative_eq!(coord.get(2).unwrap(), 3.0, epsilon = DEFAULT_TOLERANCE_F64);
         assert_eq!(coord.get(3), None);
         assert_eq!(coord.get(10), None);
-
-        // Test with f32
-        let coord_f32: Point<f32, 3> = Point::new([1.5f32, 2.5f32, 3.5f32]);
-        assert_eq!(coord_f32.dim(), 3);
-        assert_relative_eq!(
-            coord_f32.to_array().as_slice(),
-            [1.5f32, 2.5f32, 3.5f32].as_slice(),
-            epsilon = DEFAULT_TOLERANCE_F32
-        );
-        assert!(coord_f32.validate().is_ok());
 
         // Test with different dimensions
         let coord_single: Point<f64, 1> = Point::new([42.0]);
@@ -1158,7 +1558,7 @@ mod tests {
 
     #[test]
     fn coordinate_trait_origin() {
-        // Test origin for different dimensions and types
+        // Test origin for different dimensions.
         let origin_single: Point<f64, 1> = Point::origin();
         assert_relative_eq!(
             origin_single.to_array().as_slice(),
@@ -1171,14 +1571,6 @@ mod tests {
             origin_triple.to_array().as_slice(),
             [0.0, 0.0, 0.0].as_slice(),
             epsilon = DEFAULT_TOLERANCE_F64
-        );
-
-        // Test with f32
-        let origin_f32: Point<f32, 3> = Point::origin();
-        assert_relative_eq!(
-            origin_f32.to_array().as_slice(),
-            [0.0f32, 0.0f32, 0.0f32].as_slice(),
-            epsilon = DEFAULT_TOLERANCE_F32
         );
 
         // Test zero-dimensional edge case
@@ -1370,7 +1762,7 @@ mod tests {
         // Test CoordinateValidationError properties
         let error = CoordinateValidationError::InvalidCoordinate {
             coordinate_index: 1,
-            coordinate_value: "NaN".to_string(),
+            coordinate_value: InvalidCoordinateValue::Nan,
             dimension: 3,
         };
 
@@ -1390,7 +1782,7 @@ mod tests {
 
         let different_error = CoordinateValidationError::InvalidCoordinate {
             coordinate_index: 2,
-            coordinate_value: "inf".to_string(),
+            coordinate_value: InvalidCoordinateValue::PositiveInfinity,
             dimension: 3,
         };
         assert_ne!(error, different_error);
@@ -1403,34 +1795,20 @@ mod tests {
             (a - b).abs() < T::default_tolerance()
         }
 
-        // Test that default_tolerance returns the expected values
-        assert_relative_eq!(
-            f32::default_tolerance(),
-            DEFAULT_TOLERANCE_F32,
-            epsilon = f32::EPSILON
-        );
+        // Test that default_tolerance returns the expected value
         assert_relative_eq!(
             f64::default_tolerance(),
             DEFAULT_TOLERANCE_F64,
             epsilon = f64::EPSILON
         );
 
-        // Test that the tolerance values are reasonable
-        assert_relative_eq!(f32::default_tolerance(), 1e-6_f32, epsilon = f32::EPSILON);
+        // Test that the tolerance value is reasonable
         assert_relative_eq!(f64::default_tolerance(), 1e-15_f64, epsilon = f64::EPSILON);
-
-        // Test with f32
-        let a_f32 = 1.0f32;
-        let b_f32 = 1.0f32 + f32::default_tolerance() / 2.0;
-        assert!(test_tolerance(a_f32, b_f32));
 
         // Test with f64
         let a_f64 = 1.0f64;
         let b_f64 = 1.0f64 + f64::default_tolerance() / 2.0;
         assert!(test_tolerance(a_f64, b_f64));
-
-        // Test that tolerance values are different for different types
-        assert!(f64::from(f32::default_tolerance()) > f64::default_tolerance());
     }
 
     #[test]
@@ -1468,14 +1846,9 @@ mod tests {
     fn coordinate_constants_correctness() {
         // Test that the tolerance constants are reasonable
         // (These are compile-time constants, so the assertions are about correctness, not runtime behavior)
-        const _F32_POSITIVE: () = assert!(DEFAULT_TOLERANCE_F32 > 0.0);
         const _F64_POSITIVE: () = assert!(DEFAULT_TOLERANCE_F64 > 0.0);
 
-        // Test relative ordering of tolerances
-        assert!(f64::from(DEFAULT_TOLERANCE_F32) > DEFAULT_TOLERANCE_F64);
-
         // Test exact values using relative comparison to avoid float_cmp clippy warnings
-        assert_relative_eq!(DEFAULT_TOLERANCE_F32, 1e-6, epsilon = f32::EPSILON);
         assert_relative_eq!(DEFAULT_TOLERANCE_F64, 1e-15, epsilon = f64::EPSILON);
     }
 
@@ -1496,14 +1869,11 @@ mod tests {
             assert!(T::mantissa_digits() > 0);
         }
 
-        // Test both scalar types
-        test_bounds::<f32>();
+        // Test the supported scalar type.
         test_bounds::<f64>();
 
         // Verify expected values
-        assert_eq!(f32::mantissa_digits(), 24);
         assert_eq!(f64::mantissa_digits(), 53);
-        assert_relative_eq!(f32::default_tolerance(), 1e-6_f32, epsilon = f32::EPSILON);
         assert_relative_eq!(f64::default_tolerance(), 1e-15_f64, epsilon = f64::EPSILON);
     }
 
@@ -1512,7 +1882,7 @@ mod tests {
         // Test that CoordinateValidationError implements source() from std::error::Error
         let error = CoordinateValidationError::InvalidCoordinate {
             coordinate_index: 1,
-            coordinate_value: "NaN".to_string(),
+            coordinate_value: InvalidCoordinateValue::Nan,
             dimension: 3,
         };
 
@@ -1530,7 +1900,7 @@ mod tests {
         const DIM_1D: usize = 1;
         const DIM_7D: usize = 7;
 
-        // Test that dimension methods are consistent across different coordinate types
+        // Test that dimension methods are consistent across supported coordinate dimensions.
 
         // Test various dimensions to ensure const generic consistency
         let coord_1d: Point<f64, 1> = Point::new([42.0]);

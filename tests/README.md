@@ -388,7 +388,7 @@ or one of the active large-scale helpers:
 
 - `just debug-large-scale-2d [n] [repair_every]` — default `n=36000`
 - `just debug-large-scale-3d [n] [repair_every]` — issue #341, default `n=7500`
-- `just debug-large-scale-4d [n] [repair_every]` — issue #340, default `n=900`
+- `just debug-large-scale-4d [n] [repair_every]` — issue #340, default `n=800`
 - `just debug-large-scale-5d [n] [repair_every]` — issue #342, default `n=140`
 
 The `just` defaults are calibrated as roughly one-minute release-mode

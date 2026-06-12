@@ -276,7 +276,7 @@ where
 /// Check if two coordinate arrays are exactly equal.
 ///
 /// Uses `OrderedEq` which provides NaN-aware equality comparison.
-/// For f32/f64, this ensures consistent comparison including special values.
+/// For f64, this ensures consistent comparison including special values.
 #[inline]
 pub(crate) fn coords_equal_exact<T: CoordinateScalar, const D: usize>(
     a: &[T; D],

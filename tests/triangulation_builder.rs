@@ -624,36 +624,6 @@ fn test_explicit_toroidal_torus_euler_mismatch_without_override() {
 }
 
 // =============================================================================
-// Non-f64 scalar: from_vertices()
-// =============================================================================
-
-/// `from_vertices()` with f32 scalars constructs a valid triangulation.
-#[test]
-fn test_builder_from_vertices_f32() {
-    let vertices: Vec<Vertex<f32, (), 2>> = vec![
-        VertexBuilder::default()
-            .point(Point::new([0.0_f32, 0.0]))
-            .build()
-            .unwrap(),
-        VertexBuilder::default()
-            .point(Point::new([1.0_f32, 0.0]))
-            .build()
-            .unwrap(),
-        VertexBuilder::default()
-            .point(Point::new([0.0_f32, 1.0]))
-            .build()
-            .unwrap(),
-    ];
-
-    let dt = DelaunayTriangulationBuilder::from_vertices(&vertices)
-        .build::<()>()
-        .expect("f32 from_vertices build should succeed");
-
-    assert_eq!(dt.number_of_vertices(), 3);
-    assert_eq!(dt.number_of_simplices(), 1);
-}
-
-// =============================================================================
 // Explicit construction (from_vertices_and_simplices)
 // =============================================================================
 

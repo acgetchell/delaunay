@@ -103,11 +103,12 @@ release characterization, not a portable performance promise:
   for Levels 1–4.
 - The `just` helper defaults are dimension-aware rather than identical: 2D
   defaults to 36,000 vertices, 3D defaults to 7,500 vertices, 4D defaults to
-  900 vertices, and 5D defaults to 140 vertices. Pass `n` explicitly when a
+  800 vertices, and 5D defaults to 140 vertices. Pass `n` explicitly when a
   run must match a documented scale exactly.
 - The raw `slow-tests` harness defaults use slightly heavier defaults for some
-  dimensions (currently 40,000 vertices in 2D and 150 vertices in 5D). Prefer
-  the `just` helpers for routine acceptance/profiling runs.
+  dimensions (currently 40,000 vertices in 2D, 900 vertices in 4D, and
+  150 vertices in 5D). Prefer the `just` helpers for routine
+  acceptance/profiling runs.
 
 Current 2D scale envelope:
 
@@ -134,10 +135,10 @@ Current 3D scale envelope:
 
 Current 4D scale envelope:
 
-- `just debug-large-scale-4d 900 1` is the current release-mode acceptance
-  harness for the 900-vertex 4D path. The 2026-05-14 local run inserted all
-  900 vertices with zero skips, final repair performed 0 flips, and
-  `validation_report` passed in about 60 seconds total wall time.
+- `just debug-large-scale-4d 800 1` is the current release-mode acceptance
+  harness for the 800-vertex 4D path. A recent local run inserted all
+  800 vertices with zero skips, final repair performed 0 flips, and
+  `validation_report` passed in about 52 seconds total wall time.
 - `just debug-large-scale-4d 3000 1` remains a manual characterization scale for
   #340 rather than a default acceptance run.
 - Keep 4D thousands-point runs out of routine CI unless they are reduced to a
