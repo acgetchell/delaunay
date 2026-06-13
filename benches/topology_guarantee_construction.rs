@@ -16,7 +16,8 @@
 
 use criterion::{BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
 use delaunay::prelude::construction::{DelaunayTriangulation, TopologyGuarantee};
-use delaunay::prelude::generators::generate_random_points_seeded;
+use delaunay::prelude::generators::generate_random_points_in_range_seeded;
+use delaunay::prelude::geometry::CoordinateRange;
 use delaunay::prelude::repair::DelaunayRepairPolicy;
 use delaunay::prelude::validation::ValidationPolicy;
 use delaunay::vertex;
@@ -28,8 +29,14 @@ use std::time::Duration;
 pub mod bench_utils;
 use bench_utils::{abort_benchmark, bench_result};
 
-const BOUNDS: (f64, f64) = (-100.0, 100.0);
 const SEED_SALT: u64 = 0x9E37_79B9_7F4A_7C15;
+
+fn benchmark_bounds() -> CoordinateRange<f64> {
+    bench_result(
+        CoordinateRange::try_new(-100.0_f64, 100.0),
+        "topology-guarantee benchmark bounds must be valid",
+    )
+}
 
 fn bench_dimension<const D: usize>(
     c: &mut Criterion,
@@ -48,10 +55,8 @@ fn bench_dimension<const D: usize>(
 
         // Deterministic input per (dimension, count).
         let seed = seed_base ^ (n_points as u64).wrapping_mul(SEED_SALT);
-        let points = bench_result(
-            generate_random_points_seeded::<f64, D>(n_points, BOUNDS, seed),
-            "failed to generate benchmark points",
-        );
+        let points =
+            generate_random_points_in_range_seeded::<f64, D>(n_points, benchmark_bounds(), seed);
         let vertices = points.into_iter().map(|p| vertex!(p)).collect::<Vec<_>>();
 
         group.bench_with_input(

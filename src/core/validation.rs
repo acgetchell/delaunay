@@ -1561,8 +1561,9 @@ mod tests {
     use crate::core::tds::{GeometricError, NeighborValidationError, Tds};
     use crate::core::vertex::Vertex;
     use crate::core::vertex::VertexBuilder;
+    use crate::geometry::coordinate_range::CoordinateRange;
     use crate::geometry::kernel::FastKernel;
-    use crate::geometry::util::generate_random_points_seeded;
+    use crate::geometry::util::generate_random_points_in_range_seeded;
     use crate::repair::DelaunayRepairPolicy;
     use crate::triangulation::DelaunayTriangulation;
     use crate::validation::DelaunayTriangulationValidationError;
@@ -3118,7 +3119,8 @@ mod tests {
 
     #[test]
     fn pl_manifold_insertion_keeps_valid_topology_with_explicit_only_validation() {
-        let points = generate_random_points_seeded::<f64, 3>(25, (-100.0, 100.0), 123).unwrap();
+        let bounds = CoordinateRange::try_new(-100.0_f64, 100.0).unwrap();
+        let points = generate_random_points_in_range_seeded::<f64, 3>(25, bounds, 123);
 
         let mut dt: DelaunayTriangulation<_, (), (), 3> =
             DelaunayTriangulation::empty_with_topology_guarantee(TopologyGuarantee::PLManifold);

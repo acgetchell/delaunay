@@ -11,12 +11,13 @@ use delaunay::prelude::construction::{
 #[cfg(feature = "diagnostics")]
 use delaunay::prelude::diagnostics::debug_print_first_delaunay_violation;
 use delaunay::prelude::generators::generate_random_points_in_ball_seeded;
-use delaunay::prelude::geometry::{Point, RobustKernel};
+use delaunay::prelude::geometry::{Coordinate, CoordinateRange, Point, RobustKernel};
 use delaunay::prelude::insertion::{
     HullExtensionReason, InsertionError, InsertionErrorKind, InsertionErrorSummary,
 };
 use delaunay::prelude::ordering::{
-    HilbertBitDepth, hilbert_indices_prequantized, hilbert_quantize,
+    HilbertBitDepth, hilbert_indices_prequantized, hilbert_quantize_batch_in_range,
+    hilbert_quantize_in_range,
 };
 
 /// Replays a full Hilbert ordering while keeping only the prefix that first
@@ -25,12 +26,12 @@ fn hilbert_ordered_prefix<const D: usize>(
     points: Vec<Point<f64, D>>,
     prefix_len: usize,
 ) -> Vec<Vertex<f64, (), D>> {
-    let (min, max) = coordinate_bounds(&points);
+    let bounds = coordinate_bounds(&points);
     let bits_per_coord = HilbertBitDepth::try_new(31).expect("test bit depth must be valid");
     let quantized: Vec<[u32; D]> = points
         .iter()
         .map(|point| {
-            hilbert_quantize(point.coords(), (min, max), bits_per_coord)
+            hilbert_quantize_in_range(point.coords(), bounds, bits_per_coord)
                 .expect("finite generated points should quantize")
         })
         .collect();
@@ -73,13 +74,82 @@ fn hilbert_ordered_prefix<const D: usize>(
 
 /// Computes the scalar range used by batch Hilbert ordering so regression
 /// prefixes match the original full construction order.
-fn coordinate_bounds<const D: usize>(points: &[Point<f64, D>]) -> (f64, f64) {
-    points
+fn coordinate_bounds<const D: usize>(points: &[Point<f64, D>]) -> CoordinateRange<f64> {
+    let (min, max) = points
         .iter()
         .flat_map(Point::coords)
         .fold((f64::INFINITY, f64::NEG_INFINITY), |(min, max), &coord| {
             (min.min(coord), max.max(coord))
-        })
+        });
+    CoordinateRange::try_new(min, max)
+        .expect("generated regression points should span a finite non-empty range")
+}
+
+/// Locks the equivalence between the single-pass proof-carrying batch quantizer
+/// used by Hilbert construction ordering and the original two-step
+/// `quantize` + `hilbert_indices_prequantized` path.
+///
+/// `order_vertices_hilbert` switched to `hilbert_quantize_batch_in_range` to
+/// drop a redundant per-coordinate range rescan (and a per-point quantization
+/// scale recompute). This regression guards that the change does not alter the
+/// quantized cells or Hilbert indices — and therefore the deterministic
+/// insertion order — across representative dimensions and adversarial inputs.
+#[test]
+fn regression_hilbert_batch_quantize_matches_two_step_path() {
+    fn assert_paths_match<const D: usize>(points: &[Point<f64, D>]) {
+        let bounds = coordinate_bounds(points);
+        // Mirror `order_vertices_hilbert`'s per-dimension precision so the
+        // `D * bits <= 128` index-width invariant holds for every D.
+        let bits_per_coord = (128_u32 / u32::try_from(D).expect("dimension fits in u32")).min(31);
+        let bits = HilbertBitDepth::try_new(bits_per_coord).expect("test bit depth must be valid");
+
+        // Original two-step path: per-point quantize, then bulk index.
+        let two_step_quantized: Vec<[u32; D]> = points
+            .iter()
+            .map(|point| {
+                hilbert_quantize_in_range(point.coords(), bounds, bits)
+                    .expect("finite points should quantize")
+            })
+            .collect();
+        let two_step_indices = hilbert_indices_prequantized(&two_step_quantized, bits)
+            .expect("indices should fit in u128");
+
+        // New single-pass proof-carrying batch path.
+        let batch = hilbert_quantize_batch_in_range(points, bounds, bits, |point| *point.coords())
+            .expect("finite points should quantize");
+        let (batch_indices, batch_quantized) = batch.into_indices_and_coordinates();
+
+        assert_eq!(
+            batch_quantized, two_step_quantized,
+            "batch quantizer must produce identical quantized cells in {D}D"
+        );
+        assert_eq!(
+            batch_indices, two_step_indices,
+            "batch quantizer must produce identical Hilbert indices in {D}D"
+        );
+    }
+
+    // Adversarial mixes: negative/asymmetric ranges, clamping at both ends,
+    // duplicate cells, and exact endpoints.
+    assert_paths_match::<2>(&[
+        Point::new([-2.0, -1.0]),
+        Point::new([-1.5, 0.25]),
+        Point::new([0.1, -0.7]),
+        Point::new([3.0, 3.0]),
+        Point::new([3.0, 3.0]),
+    ]);
+    assert_paths_match::<3>(&[
+        Point::new([-2.0, -1.0, 0.0]),
+        Point::new([-1.5, 0.25, 1.75]),
+        Point::new([0.1, -0.7, 2.2]),
+        Point::new([3.0, 3.0, -2.0]),
+    ]);
+    assert_paths_match::<5>(&[
+        Point::new([-2.0, -1.0, 0.0, 1.0, 2.0]),
+        Point::new([-1.5, 0.25, 1.75, 2.5, -0.5]),
+        Point::new([0.1, -0.7, 2.2, -1.8, 1.4]),
+        Point::new([3.0, 3.0, -2.0, -2.0, 0.5]),
+    ]);
 }
 
 #[test]

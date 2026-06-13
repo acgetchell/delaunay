@@ -24,9 +24,9 @@ mod allocation_contracts {
     use delaunay::prelude::construction::{
         ConstructionOptions, DelaunayTriangulation, RetryPolicy, Vertex, vertex,
     };
-    use delaunay::prelude::generators::generate_random_points_seeded;
+    use delaunay::prelude::generators::generate_random_points_in_range_seeded;
     use delaunay::prelude::geometry::{
-        AdaptiveKernel, Coordinate, FastKernel, Point, simplex_volume,
+        AdaptiveKernel, Coordinate, CoordinateRange, FastKernel, Point, simplex_volume,
     };
     use delaunay::prelude::query::measure_with_result;
     use delaunay::prelude::tds::{SimplexKey, TdsError, VertexKey, facet_key_from_vertices};
@@ -89,11 +89,16 @@ mod allocation_contracts {
         attempts
     }
 
+    fn benchmark_bounds() -> CoordinateRange<f64> {
+        bench_result(
+            CoordinateRange::try_new(-100.0_f64, 100.0),
+            "allocation benchmark bounds must be valid",
+        )
+    }
+
     fn canary_vertices<const D: usize>(count: usize, seed: u64) -> Vec<Vertex<f64, (), D>> {
-        let points = bench_result(
-            generate_random_points_seeded::<f64, D>(count, (-100.0, 100.0), seed),
-            format!("failed to generate {D}D allocation benchmark points"),
-        );
+        let points =
+            generate_random_points_in_range_seeded::<f64, D>(count, benchmark_bounds(), seed);
         points.into_iter().map(|point| vertex!(point)).collect()
     }
 

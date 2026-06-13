@@ -35,7 +35,8 @@
 //! ```
 
 use criterion::{BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
-use delaunay::prelude::generators::generate_random_points_seeded;
+use delaunay::prelude::generators::generate_random_points_in_range_seeded;
+use delaunay::prelude::geometry::CoordinateRange;
 use delaunay::prelude::query::*;
 use std::hint::black_box;
 
@@ -43,6 +44,10 @@ use std::hint::black_box;
 #[path = "common/bench_utils.rs"]
 pub mod bench_utils;
 use bench_utils::{abort_benchmark, bench_result};
+
+fn coordinate_range(min: f64, max: f64, context: &'static str) -> CoordinateRange<f64> {
+    bench_result(CoordinateRange::try_new(min, max), context)
+}
 
 /// Deterministic seed for query-point generation in the hot path.
 const HOT_SEED: u64 = 0xC01D_BEEF_0000_CAFE_u64;
@@ -72,9 +77,10 @@ fn standard_simplex<const D: usize>() -> Vec<Point<f64, D>> {
 /// Uses the range `[-10, 10]` against a unit simplex so that the Shewchuk
 /// errbound comfortably resolves the sign in Stage 1.
 fn hot_queries<const D: usize>() -> Vec<Point<f64, D>> {
-    bench_result(
-        generate_random_points_seeded(HOT_QUERIES, (-10.0, 10.0), HOT_SEED),
-        "failed to generate hot-path query points",
+    generate_random_points_in_range_seeded(
+        HOT_QUERIES,
+        coordinate_range(-10.0, 10.0, "hot-path query bounds must be valid"),
+        HOT_SEED,
     )
 }
 
@@ -86,9 +92,10 @@ fn near_boundary_queries<const D: usize>() -> Vec<Point<f64, D>> {
     // Centered near the circumsphere radius of the standard simplex (~0.5 for
     // the D = 3 unit case); the exact value is unimportant — we just want a
     // high rate of errbound-ambiguous inputs.
-    bench_result(
-        generate_random_points_seeded(NEAR_BOUNDARY_QUERIES, (0.40, 0.60), NEAR_BOUNDARY_SEED),
-        "failed to generate near-boundary query points",
+    generate_random_points_in_range_seeded(
+        NEAR_BOUNDARY_QUERIES,
+        coordinate_range(0.40, 0.60, "near-boundary query bounds must be valid"),
+        NEAR_BOUNDARY_SEED,
     )
 }
 

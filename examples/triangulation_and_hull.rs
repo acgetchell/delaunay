@@ -18,8 +18,8 @@ use delaunay::prelude::construction::{
     ConstructionOptions, DelaunayTriangulation, DelaunayTriangulationConstructionError,
     RetryPolicy, vertex,
 };
-use delaunay::prelude::generators::{RandomPointGenerationError, generate_random_points_seeded};
-use delaunay::prelude::geometry::AdaptiveKernel;
+use delaunay::prelude::generators::generate_random_points_in_range_seeded;
+use delaunay::prelude::geometry::{AdaptiveKernel, CoordinateRange, CoordinateRangeError};
 use delaunay::prelude::query::{
     AdjacencyIndexBuildError, ConvexHull, ConvexHullConstructionError, Coordinate, Point,
     QueryError,
@@ -30,7 +30,7 @@ type WorkflowTriangulation<const D: usize> = DelaunayTriangulation<AdaptiveKerne
 #[derive(Debug, thiserror::Error)]
 enum WorkflowExampleError {
     #[error(transparent)]
-    PointGeneration(#[from] RandomPointGenerationError),
+    CoordinateRange(#[from] CoordinateRangeError),
     #[error(transparent)]
     Construction(#[from] DelaunayTriangulationConstructionError),
     #[error(transparent)]
@@ -57,9 +57,10 @@ impl From<ConvexHullConstructionError> for WorkflowExampleError {
 }
 
 fn main() -> Result<(), WorkflowExampleError> {
-    run_case::<3>("3D", 750, 873, (-100.0, 100.0))?;
+    let bounds = CoordinateRange::try_new(-100.0_f64, 100.0)?;
+    run_case::<3>("3D", 750, 873, bounds)?;
     println!();
-    run_case::<4>("4D", 75, 531, (-100.0, 100.0))?;
+    run_case::<4>("4D", 75, 531, bounds)?;
     Ok(())
 }
 
@@ -67,9 +68,9 @@ fn run_case<const D: usize>(
     label: &str,
     point_count: usize,
     seed: u64,
-    bounds: (f64, f64),
+    bounds: CoordinateRange<f64>,
 ) -> Result<(), WorkflowExampleError> {
-    let points = generate_random_points_seeded::<f64, D>(point_count, bounds, seed)?;
+    let points = generate_random_points_in_range_seeded::<f64, D>(point_count, bounds, seed);
     let vertices = points
         .iter()
         .map(|point| vertex!(*point))
@@ -95,7 +96,7 @@ fn run_case<const D: usize>(
     println!("  hull facets: {}", hull.number_of_facets());
 
     let inside = centroid_point(&points)?;
-    let outside = Point::new([bounds.1 * 2.5; D]);
+    let outside = Point::new([bounds.max() * 2.5; D]);
 
     println!(
         "  hull query: centroid outside? {}",
