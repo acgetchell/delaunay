@@ -36,7 +36,7 @@ proptest! {
     /// Canonicalized coordinates always lie in `[0, L_i)` for every axis.
     #[test]
     fn prop_canonicalize_in_domain(domain in domain_2d(), mut coords in coords_2d()) {
-        let space = ToroidalSpace::<2>::new(domain);
+        let space = ToroidalSpace::<2>::try_new(domain).unwrap();
         space.canonicalize_point(&mut coords);
         for (i, &period) in domain.iter().enumerate() {
             prop_assert!(
@@ -50,7 +50,7 @@ proptest! {
     /// `canonicalize_point` is idempotent: applying it twice is the same as once.
     #[test]
     fn prop_canonicalize_idempotent(domain in domain_2d(), mut coords in coords_2d()) {
-        let space = ToroidalSpace::<2>::new(domain);
+        let space = ToroidalSpace::<2>::try_new(domain).unwrap();
         space.canonicalize_point(&mut coords);
         let once = coords;
         space.canonicalize_point(&mut coords);

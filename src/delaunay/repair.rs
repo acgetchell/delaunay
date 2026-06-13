@@ -1093,10 +1093,9 @@ mod tests {
         ];
         let mut dt: DelaunayTriangulation<_, (), (), 2> =
             DelaunayTriangulation::new(&vertices).unwrap();
-        let global_topology = GlobalTopology::Toroidal {
-            domain: [1.0, 1.0],
-            mode: ToroidalConstructionMode::PeriodicImagePoint,
-        };
+        let global_topology =
+            GlobalTopology::try_toroidal([1.0, 1.0], ToroidalConstructionMode::PeriodicImagePoint)
+                .unwrap();
         dt.set_global_topology(global_topology);
 
         let _guard = ForceHeuristicRebuildGuard::enable();

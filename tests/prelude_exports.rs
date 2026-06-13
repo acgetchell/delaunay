@@ -83,6 +83,9 @@ use delaunay::prelude::tds::Tds;
 use delaunay::prelude::tds::{
     FacetError, InvariantErrorSummaryDetail, NeighborSlot, TdsError, TdsErrorKind, VertexKey,
 };
+use delaunay::prelude::topology::spaces::{
+    GlobalTopology, ToroidalConstructionMode, ToroidalDomain, ToroidalDomainError,
+};
 use delaunay::prelude::topology::validation::{
     ManifoldError, RidgeVertices, RidgeVerticesError, ridge_star_simplices,
 };
@@ -139,6 +142,8 @@ enum PreludeExportTestError {
     Query(#[from] QueryError),
     #[error(transparent)]
     RidgeVertices(#[from] RidgeVerticesError),
+    #[error(transparent)]
+    ToroidalDomain(#[from] ToroidalDomainError),
 }
 
 /// Proves the focused flips prelude exports the trait bound expected by benchmarks.
@@ -653,6 +658,23 @@ fn topology_validation_prelude_covers_ridge_star_api() -> Result<(), PreludeExpo
     assert_topology_prelude_dimension::<3>()?;
     assert_topology_prelude_dimension::<4>()?;
     assert_topology_prelude_dimension::<5>()?;
+    Ok(())
+}
+
+#[test]
+fn topology_spaces_prelude_covers_toroidal_domain_api() -> Result<(), PreludeExportTestError> {
+    let domain = ToroidalDomain::<3>::try_new([1.0, 2.0, 3.0])?;
+    assert_relative_eq!(domain.periods()[0], 1.0);
+    assert_relative_eq!(domain.periods()[1], 2.0);
+    assert_relative_eq!(domain.periods()[2], 3.0);
+    assert_eq!(domain.period(1), Some(2.0));
+
+    let topology = GlobalTopology::try_toroidal(
+        [1.0, 2.0, 3.0],
+        ToroidalConstructionMode::PeriodicImagePoint,
+    )?;
+    assert!(topology.is_toroidal());
+    assert_send_sync_unpin::<ToroidalDomainError>();
     Ok(())
 }
 

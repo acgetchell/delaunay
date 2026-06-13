@@ -1171,7 +1171,10 @@ pub mod prelude {
             SimplexValidationError, Vertex, VertexBuilder, VertexBuilderError,
             VertexValidationError,
         };
-        pub use crate::topology::traits::{GlobalTopology, TopologyKind, ToroidalConstructionMode};
+        pub use crate::topology::traits::{
+            GlobalTopology, TopologyKind, ToroidalConstructionMode, ToroidalDomain,
+            ToroidalDomainError,
+        };
         pub use crate::validation::DelaunayTriangulationValidationError;
         pub use crate::{
             CavityFillingError, CavityRepairStage, DelaunayTriangulation,
@@ -1661,7 +1664,10 @@ pub mod prelude {
                 validate_closed_boundary, validate_facet_degree, validate_ridge_links,
                 validate_ridge_links_for_simplices, validate_vertex_links,
             };
-            pub use crate::topology::traits::*;
+            pub use crate::topology::traits::{
+                GlobalTopology, TopologicalSpace, TopologyError, TopologyKind,
+                ToroidalConstructionMode,
+            };
         }
 
         /// Topological space models and traits.
@@ -1669,7 +1675,7 @@ pub mod prelude {
             pub use crate::topology::spaces::*;
             pub use crate::topology::traits::{
                 GlobalTopology, TopologicalSpace, TopologyError, TopologyKind,
-                ToroidalConstructionMode,
+                ToroidalConstructionMode, ToroidalDomain, ToroidalDomainError,
             };
         }
     }
