@@ -14109,11 +14109,9 @@ mod tests {
     gen_align_periodic_offset_tests!(5);
 
     fn toroidal_model<const D: usize>() -> GlobalTopologyModelAdapter<D> {
-        GlobalTopology::Toroidal {
-            domain: [1.0; D],
-            mode: ToroidalConstructionMode::PeriodicImagePoint,
-        }
-        .model()
+        GlobalTopology::try_toroidal([1.0; D], ToroidalConstructionMode::PeriodicImagePoint)
+            .unwrap()
+            .model()
     }
 
     fn insert_periodic_simplex_with_lifted_vertex<const D: usize>(

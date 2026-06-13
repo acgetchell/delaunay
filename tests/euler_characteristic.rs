@@ -262,11 +262,10 @@ fn test_2d_toroidal_explicit_construction_rejected() {
         }
     }
 
+    let topology =
+        GlobalTopology::try_toroidal([1.0, 1.0], ToroidalConstructionMode::Explicit).unwrap();
     let err = DelaunayTriangulationBuilder::from_vertices_and_simplices(&vertices, &simplices)
-        .global_topology(GlobalTopology::Toroidal {
-            domain: [1.0, 1.0],
-            mode: ToroidalConstructionMode::Explicit,
-        })
+        .global_topology(topology)
         .topology_guarantee(TopologyGuarantee::Pseudomanifold)
         .build::<()>()
         .expect_err("explicit toroidal connectivity requires a Level 4 quotient validator");
@@ -344,11 +343,10 @@ fn test_3d_toroidal_explicit_construction_rejected() {
         }
     }
 
+    let topology =
+        GlobalTopology::try_toroidal([1.0, 1.0, 1.0], ToroidalConstructionMode::Explicit).unwrap();
     let err = DelaunayTriangulationBuilder::from_vertices_and_simplices(&vertices, &simplices)
-        .global_topology(GlobalTopology::Toroidal {
-            domain: [1.0, 1.0, 1.0],
-            mode: ToroidalConstructionMode::Explicit,
-        })
+        .global_topology(topology)
         .topology_guarantee(TopologyGuarantee::Pseudomanifold)
         .build::<()>()
         .expect_err("explicit toroidal connectivity requires a Level 4 quotient validator");

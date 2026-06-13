@@ -139,12 +139,11 @@ use crate::geometry::point::Point;
 use crate::geometry::traits::coordinate::{Coordinate, CoordinateScalar};
 use crate::geometry::util::circumcenter;
 use crate::repair::DelaunayRepairPolicy;
-use crate::topology::spaces::toroidal::ToroidalSpace;
 use crate::topology::traits::global_topology_model::{
     GlobalTopologyModel, GlobalTopologyModelError,
 };
 use crate::topology::traits::topological_space::{
-    GlobalTopology, TopologyKind, ToroidalConstructionMode,
+    GlobalTopology, TopologyKind, ToroidalConstructionMode, ToroidalDomainError,
 };
 use crate::triangulation::DelaunayTriangulation;
 use crate::validation::DelaunayTriangulationValidationError;
@@ -961,7 +960,7 @@ pub struct DelaunayTriangulationBuilder<'v, T, U, const D: usize> {
     ///
     /// When set, all input vertices are canonicalized into the fundamental domain
     /// `[0, L_i)` before the selected toroidal construction mode runs.
-    topology: Option<ToroidalSpace<D>>,
+    topology: Option<[f64; D]>,
     topology_guarantee: TopologyGuarantee,
     construction_options: ConstructionOptions,
     /// When `true` (set by [`.toroidal()`](Self::toroidal)), the
@@ -1257,7 +1256,7 @@ impl<'v, T, U, const D: usize> DelaunayTriangulationBuilder<'v, T, U, D> {
     /// ```
     #[must_use]
     pub const fn toroidal(mut self, domain: [f64; D]) -> Self {
-        self.topology = Some(ToroidalSpace::new(domain));
+        self.topology = Some(domain);
         self.use_image_point_method = true;
         self
     }
@@ -1299,7 +1298,7 @@ impl<'v, T, U, const D: usize> DelaunayTriangulationBuilder<'v, T, U, D> {
     /// ```
     #[must_use]
     pub const fn canonicalized_toroidal(mut self, domain: [f64; D]) -> Self {
-        self.topology = Some(ToroidalSpace::new(domain));
+        self.topology = Some(domain);
         self.use_image_point_method = false;
         self
     }
@@ -1369,11 +1368,13 @@ impl<'v, T, U, const D: usize> DelaunayTriangulationBuilder<'v, T, U, D> {
     /// ];
     /// let simplices = vec![vec![0, 1, 2]];
     ///
+    /// let topology = GlobalTopology::try_toroidal(
+    ///     [1.0, 1.0],
+    ///     ToroidalConstructionMode::Explicit,
+    /// )
+    /// .expect("example domain is finite and strictly positive");
     /// let result = DelaunayTriangulationBuilder::from_vertices_and_simplices(&vertices, &simplices)
-    ///     .global_topology(GlobalTopology::Toroidal {
-    ///         domain: [1.0, 1.0],
-    ///         mode: ToroidalConstructionMode::Explicit,
-    ///     })
+    ///     .global_topology(topology)
     ///     .build::<()>();
     ///
     /// assert!(result.is_err());
@@ -1471,6 +1472,26 @@ where
             }
             .into(),
         })
+    }
+
+    /// Maps raw toroidal-domain parse failures into the builder's public construction error.
+    ///
+    /// This keeps `.toroidal([...])` and `.canonicalized_toroidal([...])` ergonomic while
+    /// preserving the public contract that invalid periods fail during `build()` with the
+    /// same geometric-degeneracy message shape used by topology-model validation.
+    fn invalid_toroidal_domain(
+        error: ToroidalDomainError,
+    ) -> DelaunayTriangulationConstructionError {
+        match error {
+            ToroidalDomainError::InvalidPeriod { axis, period } => {
+                TriangulationConstructionError::GeometricDegeneracy {
+                    message: format!(
+                        "Invalid toroidal domain at axis {axis}: period {period:?}; expected finite value > 0",
+                    ),
+                }
+                .into()
+            }
+        }
     }
 
     /// Derives a periodic facet key from a lifted simplex and maps derivation
@@ -1696,10 +1717,9 @@ where
                 Ok(dt)
             }
             (Some(space), false) => {
-                let topology = GlobalTopology::Toroidal {
-                    domain: space.domain,
-                    mode: ToroidalConstructionMode::Canonicalized,
-                };
+                let topology =
+                    GlobalTopology::try_toroidal(space, ToroidalConstructionMode::Canonicalized)
+                        .map_err(Self::invalid_toroidal_domain)?;
                 let topology_model = topology.model();
                 Self::validate_topology_model(&topology_model)?;
                 // Canonicalized toroidal construction: canonicalize then delegate.
@@ -1714,10 +1734,11 @@ where
                 Ok(dt)
             }
             (Some(space), true) => {
-                let topology = GlobalTopology::Toroidal {
-                    domain: space.domain,
-                    mode: ToroidalConstructionMode::PeriodicImagePoint,
-                };
+                let topology = GlobalTopology::try_toroidal(
+                    space,
+                    ToroidalConstructionMode::PeriodicImagePoint,
+                )
+                .map_err(Self::invalid_toroidal_domain)?;
                 let topology_model = topology.model();
                 Self::validate_topology_model(&topology_model)?;
                 if !topology_model.supports_periodic_facet_signatures() {
@@ -3034,6 +3055,39 @@ mod tests {
     use slotmap::{Key, KeyData};
     use std::assert_matches;
 
+    fn toroidal_model<const D: usize>(
+        domain: [f64; D],
+        mode: ToroidalConstructionMode,
+    ) -> ToroidalModel<D> {
+        ToroidalModel::try_new(domain, mode).unwrap()
+    }
+
+    fn assert_invalid_toroidal_domain_error(
+        err: DelaunayTriangulationConstructionError,
+        expected_axis: usize,
+        expected_period_fragment: &str,
+    ) {
+        let DelaunayTriangulationConstructionError::Triangulation(
+            DelaunayConstructionFailure::GeometricDegeneracy { message },
+        ) = err
+        else {
+            panic!("expected GeometricDegeneracy mapping, got: {err:?}");
+        };
+
+        assert!(
+            message.contains("Invalid toroidal domain"),
+            "Error message should mention invalid toroidal domain: {message}"
+        );
+        assert!(
+            message.contains(&format!("axis {expected_axis}")),
+            "Error message should mention axis {expected_axis}: {message}"
+        );
+        assert!(
+            message.contains(expected_period_fragment),
+            "Error message should mention period {expected_period_fragment}: {message}"
+        );
+    }
+
     #[derive(Clone, Copy, Debug)]
     struct ValidationFailureModel;
 
@@ -3775,7 +3829,7 @@ mod tests {
             .canonicalized_toroidal([0.0, 1.0])
             .build::<()>();
         let err = result.expect_err("zero period should be rejected");
-        assert!(format!("{err}").contains("Invalid toroidal domain"));
+        assert_invalid_toroidal_domain_error(err, 0, "0.0");
     }
 
     #[test]
@@ -3793,7 +3847,7 @@ mod tests {
             .toroidal([1.0, 0.0])
             .build::<()>();
         let err = result.expect_err("zero period should be rejected");
-        assert!(format!("{err}").contains("Invalid toroidal domain"));
+        assert_invalid_toroidal_domain_error(err, 1, "0.0");
     }
 
     #[test]
@@ -3915,7 +3969,7 @@ mod tests {
 
     #[test]
     fn test_validate_topology_model_accepts_valid_toroidal() {
-        let model = ToroidalModel::<2>::new([2.0, 3.0], ToroidalConstructionMode::Canonicalized);
+        let model = toroidal_model::<2>([2.0, 3.0], ToroidalConstructionMode::Canonicalized);
         let result = DelaunayTriangulationBuilder::<f64, (), 2>::validate_topology_model(&model);
         assert!(result.is_ok());
     }
@@ -3948,72 +4002,59 @@ mod tests {
             1,
         )
         .unwrap_err();
-        match err {
-            DelaunayTriangulationConstructionError::Triangulation(
-                DelaunayConstructionFailure::GeometricDegeneracy { message },
-            ) => {
-                assert!(
-                    message.contains(
-                        "Failed to derive periodic candidate facet signature for index 1"
-                    ),
-                    "unexpected message prefix: {message}"
-                );
-                assert!(
-                    message.contains("out of encodable range"),
-                    "expected wrapped derivation detail in message: {message}"
-                );
-            }
-            other => panic!("expected GeometricDegeneracy mapping, got: {other:?}"),
-        }
-    }
+        let DelaunayTriangulationConstructionError::Triangulation(
+            DelaunayConstructionFailure::GeometricDegeneracy { message },
+        ) = err
+        else {
+            panic!("expected GeometricDegeneracy mapping, got: {err:?}");
+        };
 
-    #[test]
-    fn test_validate_topology_model_rejects_zero_period() {
-        let model = ToroidalModel::<2>::new([0.0, 3.0], ToroidalConstructionMode::Canonicalized);
-        let result = DelaunayTriangulationBuilder::<f64, (), 2>::validate_topology_model(&model);
-        assert!(result.is_err());
-        let err_str = format!("{}", result.unwrap_err());
         assert!(
-            err_str.contains("Invalid toroidal domain"),
-            "Error message should mention invalid toroidal domain: {err_str}"
+            message.contains("Failed to derive periodic candidate facet signature for index 1"),
+            "unexpected message prefix: {message}"
         );
         assert!(
-            err_str.contains("axis 0"),
-            "Error message should mention axis: {err_str}"
+            message.contains("out of encodable range"),
+            "expected wrapped derivation detail in message: {message}"
         );
     }
 
     #[test]
-    fn test_validate_topology_model_rejects_negative_period() {
-        let model =
-            ToroidalModel::<3>::new([2.0, -1.0, 3.0], ToroidalConstructionMode::Canonicalized);
-        let result = DelaunayTriangulationBuilder::<f64, (), 3>::validate_topology_model(&model);
-        assert!(result.is_err());
-        let err_str = format!("{}", result.unwrap_err());
-        assert!(err_str.contains("Invalid toroidal domain"));
-        assert!(err_str.contains("axis 1"));
+    fn test_invalid_toroidal_domain_maps_zero_period() {
+        let source =
+            ToroidalModel::<2>::try_new([0.0, 3.0], ToroidalConstructionMode::Canonicalized)
+                .unwrap_err();
+        let err = DelaunayTriangulationBuilder::<f64, (), 2>::invalid_toroidal_domain(source);
+        assert_invalid_toroidal_domain_error(err, 0, "0.0");
     }
 
     #[test]
-    fn test_validate_topology_model_rejects_infinite_period() {
-        let model = ToroidalModel::<2>::new(
+    fn test_invalid_toroidal_domain_maps_negative_period() {
+        let source =
+            ToroidalModel::<3>::try_new([2.0, -1.0, 3.0], ToroidalConstructionMode::Canonicalized)
+                .unwrap_err();
+        let err = DelaunayTriangulationBuilder::<f64, (), 3>::invalid_toroidal_domain(source);
+        assert_invalid_toroidal_domain_error(err, 1, "-1.0");
+    }
+
+    #[test]
+    fn test_invalid_toroidal_domain_maps_infinite_period() {
+        let source = ToroidalModel::<2>::try_new(
             [f64::INFINITY, 3.0],
             ToroidalConstructionMode::Canonicalized,
-        );
-        let result = DelaunayTriangulationBuilder::<f64, (), 2>::validate_topology_model(&model);
-        assert!(result.is_err());
-        let err_str = format!("{}", result.unwrap_err());
-        assert!(err_str.contains("Invalid toroidal domain"));
+        )
+        .unwrap_err();
+        let err = DelaunayTriangulationBuilder::<f64, (), 2>::invalid_toroidal_domain(source);
+        assert_invalid_toroidal_domain_error(err, 0, "inf");
     }
 
     #[test]
-    fn test_validate_topology_model_rejects_nan_period() {
-        let model =
-            ToroidalModel::<2>::new([f64::NAN, 3.0], ToroidalConstructionMode::Canonicalized);
-        let result = DelaunayTriangulationBuilder::<f64, (), 2>::validate_topology_model(&model);
-        assert!(result.is_err());
-        let err_str = format!("{}", result.unwrap_err());
-        assert!(err_str.contains("Invalid toroidal domain"));
+    fn test_invalid_toroidal_domain_maps_nan_period() {
+        let source =
+            ToroidalModel::<2>::try_new([f64::NAN, 3.0], ToroidalConstructionMode::Canonicalized)
+                .unwrap_err();
+        let err = DelaunayTriangulationBuilder::<f64, (), 2>::invalid_toroidal_domain(source);
+        assert_invalid_toroidal_domain_error(err, 0, "NaN");
     }
 
     #[test]
@@ -4041,7 +4082,7 @@ mod tests {
             vertex!([0.5, 0.7]),
         ];
         let original_uuids: Vec<_> = vertices.iter().map(Vertex::uuid).collect();
-        let model = ToroidalModel::<2>::new([2.0, 3.0], ToroidalConstructionMode::Canonicalized);
+        let model = toroidal_model::<2>([2.0, 3.0], ToroidalConstructionMode::Canonicalized);
         let canonical =
             DelaunayTriangulationBuilder::<f64, (), 2>::canonicalize_vertices(&vertices, &model)
                 .unwrap();
@@ -4070,7 +4111,7 @@ mod tests {
                 .build()
                 .unwrap(),
         ];
-        let model = ToroidalModel::<2>::new([2.0, 3.0], ToroidalConstructionMode::Canonicalized);
+        let model = toroidal_model::<2>([2.0, 3.0], ToroidalConstructionMode::Canonicalized);
         let canonical =
             DelaunayTriangulationBuilder::<f64, i32, 2>::canonicalize_vertices(&vertices, &model)
                 .unwrap();
@@ -4088,7 +4129,7 @@ mod tests {
             vertex!([1.8, -0.5]), // → (1.8, 2.5)
             vertex!([0.3, 0.2]),  // → (0.3, 0.2)
         ];
-        let model = ToroidalModel::<2>::new([2.0, 3.0], ToroidalConstructionMode::Canonicalized);
+        let model = toroidal_model::<2>([2.0, 3.0], ToroidalConstructionMode::Canonicalized);
         let canonical =
             DelaunayTriangulationBuilder::<f64, (), 2>::canonicalize_vertices(&vertices, &model)
                 .unwrap();
@@ -4173,7 +4214,7 @@ mod tests {
                 .build()
                 .unwrap(),
         ];
-        let model = ToroidalModel::<2>::new([2.0, 3.0], ToroidalConstructionMode::Canonicalized);
+        let model = toroidal_model::<2>([2.0, 3.0], ToroidalConstructionMode::Canonicalized);
         let result =
             DelaunayTriangulationBuilder::<f64, (), 2>::canonicalize_vertices(&vertices, &model);
 
@@ -4205,7 +4246,7 @@ mod tests {
                 .build()
                 .unwrap(),
         ];
-        let model = ToroidalModel::<2>::new([2.0, 3.0], ToroidalConstructionMode::Canonicalized);
+        let model = toroidal_model::<2>([2.0, 3.0], ToroidalConstructionMode::Canonicalized);
         let result =
             DelaunayTriangulationBuilder::<f64, (), 2>::canonicalize_vertices(&vertices, &model);
 
@@ -4223,7 +4264,7 @@ mod tests {
                 .build()
                 .unwrap(),
         ];
-        let model = ToroidalModel::<2>::new([2.0, 3.0], ToroidalConstructionMode::Canonicalized);
+        let model = toroidal_model::<2>([2.0, 3.0], ToroidalConstructionMode::Canonicalized);
         let result =
             DelaunayTriangulationBuilder::<f64, (), 2>::canonicalize_vertices(&vertices, &model);
 

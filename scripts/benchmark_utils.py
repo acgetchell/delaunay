@@ -3761,7 +3761,7 @@ class BenchmarkRegressionHelper:
             with metadata_file.open("r", encoding="utf-8") as f:
                 data: object = json.load(f)
 
-            if not isinstance(data, dict):
+            if not _is_object_mapping(data):
                 return None
 
             potential_sha = data.get("commit")

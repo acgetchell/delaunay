@@ -2327,6 +2327,64 @@ Hardware Information:
             finally:
                 Path(env_path).unlink(missing_ok=True)
 
+    @pytest.mark.parametrize(
+        "metadata",
+        [
+            [],
+            "metadata",
+            {"commit": None},
+            {"commit": 12345},
+            {"commit": "not-a-sha"},
+        ],
+    )
+    def test_extract_baseline_commit_ignores_malformed_metadata(self, metadata: Any) -> None:
+        """Test that malformed metadata.json content does not produce a baseline commit."""
+        with tempfile.TemporaryDirectory() as temp_dir:
+            baseline_dir = Path(temp_dir)
+            metadata_file = baseline_dir / "metadata.json"
+
+            with metadata_file.open("w", encoding=UTF8) as f:
+                json.dump(metadata, f)
+
+            with tempfile.NamedTemporaryFile(mode="w", delete=False) as env_file:
+                env_path = env_file.name
+
+            try:
+                with patch.dict(os.environ, {"GITHUB_ENV": env_path}):
+                    commit_sha = BenchmarkRegressionHelper.extract_baseline_commit(baseline_dir)
+
+                    assert commit_sha == "unknown"
+
+                    with open(env_path, encoding=UTF8) as f:
+                        env_content = f.read()
+                        assert "BASELINE_COMMIT=unknown" in env_content
+                        assert "BASELINE_COMMIT_SOURCE=unknown" in env_content
+            finally:
+                Path(env_path).unlink(missing_ok=True)
+
+    def test_extract_baseline_commit_ignores_invalid_metadata_json(self) -> None:
+        """Test that invalid metadata.json syntax does not produce a baseline commit."""
+        with tempfile.TemporaryDirectory() as temp_dir:
+            baseline_dir = Path(temp_dir)
+            metadata_file = baseline_dir / "metadata.json"
+            metadata_file.write_text("{", encoding=UTF8)
+
+            with tempfile.NamedTemporaryFile(mode="w", delete=False) as env_file:
+                env_path = env_file.name
+
+            try:
+                with patch.dict(os.environ, {"GITHUB_ENV": env_path}):
+                    commit_sha = BenchmarkRegressionHelper.extract_baseline_commit(baseline_dir)
+
+                    assert commit_sha == "unknown"
+
+                    with open(env_path, encoding=UTF8) as f:
+                        env_content = f.read()
+                        assert "BASELINE_COMMIT=unknown" in env_content
+                        assert "BASELINE_COMMIT_SOURCE=unknown" in env_content
+            finally:
+                Path(env_path).unlink(missing_ok=True)
+
     def test_extract_baseline_commit_unknown(self) -> None:
         """Test extracting commit SHA when no valid SHA is found."""
         with tempfile.TemporaryDirectory() as temp_dir:

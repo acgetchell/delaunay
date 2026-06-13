@@ -551,11 +551,10 @@ fn test_explicit_toroidal_heawood_torus_rejected() {
         simplices.push(vec![i, (i + 2) % 7, (i + 3) % 7]);
     }
 
+    let topology =
+        GlobalTopology::try_toroidal([2.0, 2.0], ToroidalConstructionMode::Explicit).unwrap();
     let err = DelaunayTriangulationBuilder::from_vertices_and_simplices(&vertices, &simplices)
-        .global_topology(GlobalTopology::Toroidal {
-            domain: [2.0, 2.0],
-            mode: ToroidalConstructionMode::Explicit,
-        })
+        .global_topology(topology)
         .build::<()>()
         .expect_err("explicit toroidal connectivity requires a Level 4 quotient validator");
 

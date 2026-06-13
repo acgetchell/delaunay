@@ -222,11 +222,11 @@ line-length = 160
 [dependency-groups]
 dev = [
     "actionlint-py==1.7.12.24",
-    "pytest>=9.0.3",
-    "ruff>=0.12.11",
-    "semgrep>=1.152.0",
+    "pytest==9.0.3",
+    "ruff==0.15.14",
+    "semgrep==1.164.0",
     "shellcheck-py==0.11.0.1",
     "shfmt-py==4.0.0",
-    "ty>=0.0.8",
+    "ty==0.0.40",
     "yamllint==1.38.0",
 ]

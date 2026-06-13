@@ -507,7 +507,9 @@ mod tests {
     use super::*;
     use crate::core::tds::InvariantError;
     use crate::geometry::kernel::FastKernel;
-    use crate::topology::traits::topological_space::{GlobalTopology, ToroidalConstructionMode};
+    use crate::topology::traits::topological_space::{
+        GlobalTopology, ToroidalConstructionMode, ToroidalDomainError,
+    };
     use crate::vertex;
     use std::assert_matches;
 
@@ -680,10 +682,10 @@ mod tests {
 
         let mut tri =
             Triangulation::<FastKernel<f64>, (), (), 2>::new_with_tds(FastKernel::new(), tds);
-        tri.set_global_topology(GlobalTopology::Toroidal {
-            domain: [1.0, 1.0],
-            mode: ToroidalConstructionMode::PeriodicImagePoint,
-        });
+        tri.set_global_topology(
+            GlobalTopology::try_toroidal([1.0, 1.0], ToroidalConstructionMode::PeriodicImagePoint)
+                .unwrap(),
+        );
 
         assert!(tri.validate_geometric_simplex_orientation().is_ok());
 
@@ -751,33 +753,16 @@ mod tests {
     }
 
     #[test]
-    fn periodic_geometric_orientation_validation_maps_lift_errors() {
-        let vertices = vec![
-            vertex!([0.0, 0.0]),
-            vertex!([0.8, 0.0]),
-            vertex!([0.0, 0.8]),
-        ];
-        let mut tds =
-            Triangulation::<FastKernel<f64>, (), (), 2>::build_initial_simplex(&vertices).unwrap();
-        let simplex_key = tds.simplex_keys().next().unwrap();
-        tds.simplex_mut(simplex_key)
-            .unwrap()
-            .set_periodic_vertex_offsets(vec![[0, 0], [0, 0], [1, 0]])
-            .unwrap();
-
-        let mut tri =
-            Triangulation::<FastKernel<f64>, (), (), 2>::new_with_tds(FastKernel::new(), tds);
-        tri.set_global_topology(GlobalTopology::Toroidal {
-            domain: [0.0, 1.0],
-            mode: ToroidalConstructionMode::PeriodicImagePoint,
-        });
-
-        let err = tri.validate_geometric_simplex_orientation().unwrap_err();
+    fn periodic_geometric_orientation_rejects_invalid_domain_at_parse_boundary() {
+        let err = GlobalTopology::<2>::try_toroidal(
+            [0.0, 1.0],
+            ToroidalConstructionMode::PeriodicImagePoint,
+        )
+        .unwrap_err();
         assert_matches!(
             err,
-            TdsError::InconsistentDataStructure { message }
-                if message.contains("Failed to lift coordinates")
-                    && message.contains("Invalid toroidal period")
+            ToroidalDomainError::InvalidPeriod { axis: 0, period }
+                if period.abs() < f64::EPSILON
         );
     }
 }
