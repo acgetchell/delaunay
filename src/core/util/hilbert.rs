@@ -1820,30 +1820,102 @@ mod tests {
         );
     }
 
-    #[test]
-    fn test_quantize_in_range_matches_tuple_boundary() {
-        let bits = bit_depth(8);
-        let range = CoordinateRange::try_new(0.0_f64, 1.0).unwrap();
+    macro_rules! gen_in_range_quantization_tests {
+        ($dim:literal, $points:expr, $sample:expr) => {
+            pastey::paste! {
+                #[test]
+                fn [<test_quantize_in_range_matches_tuple_boundary_ $dim d>]() {
+                    let bits = bit_depth(8);
+                    let range = CoordinateRange::try_new(-2.0_f64, 3.0).unwrap();
+                    let coords: [f64; $dim] = $sample;
 
-        let parsed = try_hilbert_quantize(&[0.25_f64, 0.75], range.bounds(), bits).unwrap();
-        let prevalidated = hilbert_quantize_in_range(&[0.25_f64, 0.75], range, bits).unwrap();
+                    let parsed = try_hilbert_quantize(&coords, range.bounds(), bits).unwrap();
+                    let prevalidated = hilbert_quantize_in_range(&coords, range, bits).unwrap();
 
-        assert_eq!(prevalidated, parsed);
+                    assert_eq!(prevalidated, parsed);
+                }
+
+                #[test]
+                fn [<test_quantized_batch_carries_prequantized_validation_ $dim d>]() {
+                    let bits = bit_depth(8);
+                    let range = CoordinateRange::try_new(-2.0_f64, 3.0).unwrap();
+                    let points: [[f64; $dim]; 4] = $points;
+                    let quantized: Vec<[u32; $dim]> = points
+                        .iter()
+                        .map(|point| hilbert_quantize_in_range(point, range, bits).unwrap())
+                        .collect();
+                    let batch = HilbertQuantizedBatch::try_new(&quantized, bits).unwrap();
+
+                    assert_eq!(batch.coordinates(), quantized.as_slice());
+                    assert_eq!(batch.bits(), bits);
+
+                    let checked = hilbert_indices_prequantized(&quantized, bits).unwrap();
+                    assert_eq!(batch.indices(), checked);
+                    assert_eq!(hilbert_indices_for_quantized_batch(batch), checked);
+                }
+
+                #[test]
+                fn [<test_quantize_batch_in_range_matches_two_step_path_ $dim d>]() {
+                    let bits = bit_depth(8);
+                    let bounds = CoordinateRange::try_new(-2.0_f64, 3.0).unwrap();
+                    let points: [[f64; $dim]; 4] = $points;
+
+                    let two_step: Vec<[u32; $dim]> = points
+                        .iter()
+                        .map(|point| hilbert_quantize_in_range(point, bounds, bits).unwrap())
+                        .collect();
+                    let two_step_indices = hilbert_indices_prequantized(&two_step, bits).unwrap();
+
+                    let batch = hilbert_quantize_batch_in_range(&points, bounds, bits, |point| *point)
+                        .unwrap();
+                    assert_eq!(batch.coordinates(), two_step.as_slice());
+                    assert_eq!(batch.bits(), bits);
+                    assert_eq!(batch.len(), points.len());
+                    assert!(!batch.is_empty());
+
+                    let (indices, quantized) = batch.into_indices_and_coordinates();
+                    assert_eq!(quantized, two_step);
+                    assert_eq!(indices, two_step_indices);
+                }
+            }
+        };
     }
 
-    #[test]
-    fn test_quantized_batch_carries_prequantized_validation() {
-        let bits = bit_depth(2);
-        let quantized = [[0_u32, 0], [1, 2], [3, 3]];
-        let batch = HilbertQuantizedBatch::try_new(&quantized, bits).unwrap();
-
-        assert_eq!(batch.coordinates(), quantized.as_slice());
-        assert_eq!(batch.bits(), bits);
-
-        let checked = hilbert_indices_prequantized(&quantized, bits).unwrap();
-        assert_eq!(batch.indices(), checked);
-        assert_eq!(hilbert_indices_for_quantized_batch(batch), checked);
-    }
+    gen_in_range_quantization_tests!(
+        2,
+        [[-2.0_f64, -1.0], [-1.5, 0.25], [0.1, -0.7], [3.0, 3.0]],
+        [0.25_f64, 0.75]
+    );
+    gen_in_range_quantization_tests!(
+        3,
+        [
+            [-2.0_f64, -1.0, 0.0],
+            [-1.5, 0.25, 1.75],
+            [0.1, -0.7, 2.2],
+            [3.0, 3.0, -2.0]
+        ],
+        [0.25_f64, 0.75, -1.0]
+    );
+    gen_in_range_quantization_tests!(
+        4,
+        [
+            [-2.0_f64, -1.0, 0.0, 1.0],
+            [-1.5, 0.25, 1.75, 2.5],
+            [0.1, -0.7, 2.2, -1.8],
+            [3.0, 3.0, -2.0, -2.0],
+        ],
+        [0.25_f64, 0.75, -1.0, 2.5]
+    );
+    gen_in_range_quantization_tests!(
+        5,
+        [
+            [-2.0_f64, -1.0, 0.0, 1.0, 2.0],
+            [-1.5, 0.25, 1.75, 2.5, -0.5],
+            [0.1, -0.7, 2.2, -1.8, 1.4],
+            [3.0, 3.0, -2.0, -2.0, 0.5],
+        ],
+        [0.25_f64, 0.75, -1.0, 2.5, 0.0]
+    );
 
     #[test]
     fn test_quantized_batch_rejects_out_of_range_coordinate() {
@@ -1894,30 +1966,6 @@ mod tests {
     }
 
     #[test]
-    fn test_quantize_batch_in_range_matches_two_step_path() {
-        let bits = bit_depth(8);
-        let bounds = CoordinateRange::try_new(-2.0_f64, 3.0).unwrap();
-        let points = [[-2.0_f64, -1.0], [-1.5, 0.25], [0.1, -0.7], [3.0, 3.0]];
-
-        // Original two-step path: per-point quantize, then bulk index.
-        let two_step: Vec<[u32; 2]> = points
-            .iter()
-            .map(|p| hilbert_quantize_in_range(p, bounds, bits).unwrap())
-            .collect();
-        let two_step_indices = hilbert_indices_prequantized(&two_step, bits).unwrap();
-
-        let batch = hilbert_quantize_batch_in_range(&points, bounds, bits, |p| *p).unwrap();
-        assert_eq!(batch.coordinates(), two_step.as_slice());
-        assert_eq!(batch.bits(), bits);
-        assert_eq!(batch.len(), points.len());
-        assert!(!batch.is_empty());
-
-        let (indices, quantized) = batch.into_indices_and_coordinates();
-        assert_eq!(quantized, two_step);
-        assert_eq!(indices, two_step_indices);
-    }
-
-    #[test]
     fn test_quantize_batch_in_range_handles_zero_dimension() {
         let bits = bit_depth(8);
         let bounds = CoordinateRange::try_new(0.0_f64, 1.0).unwrap();
@@ -1929,6 +1977,18 @@ mod tests {
         assert!(!batch.is_empty());
         assert_eq!(batch.indices(), vec![0_u128, 0_u128, 0_u128]);
         assert_eq!(batch.into_coordinates(), vec![[0_u32; 0]; 3]);
+    }
+
+    #[test]
+    fn test_quantize_in_range_handles_zero_dimension() {
+        let bits = bit_depth(8);
+        let bounds = CoordinateRange::try_new(0.0_f64, 1.0).unwrap();
+        let coords = [0.0_f64; 0];
+
+        assert_eq!(
+            hilbert_quantize_in_range(&coords, bounds, bits).unwrap(),
+            [0_u32; 0]
+        );
     }
 
     #[test]
