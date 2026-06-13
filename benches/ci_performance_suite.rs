@@ -47,8 +47,8 @@ use delaunay::prelude::construction::{
     ConstructionOptions, DelaunayTriangulation, RetryPolicy, Vertex,
 };
 use delaunay::prelude::flips::{FacetHandle, RidgeHandle, SimplexKey};
-use delaunay::prelude::generators::generate_random_points_seeded;
-use delaunay::prelude::geometry::{AdaptiveKernel, Coordinate, Point};
+use delaunay::prelude::generators::generate_random_points_in_range_seeded;
+use delaunay::prelude::geometry::{AdaptiveKernel, Coordinate, CoordinateRange, Point};
 use delaunay::prelude::query::ConvexHull;
 use delaunay::vertex;
 use std::{env, hint::black_box, num::NonZeroUsize, sync::Once};
@@ -321,7 +321,7 @@ fn print_manifest_once() {
 fn prepare_data<const D: usize>(
     dim_seed: u64,
     count: usize,
-    bounds: (f64, f64),
+    bounds: CoordinateRange<f64>,
     attempts: NonZeroUsize,
 ) -> (u64, Vec<Point<f64, D>>, Vec<Vertex<f64, (), D>>) {
     // Fast path: use the pre-computed seed (single verification construction)
@@ -340,7 +340,7 @@ fn prepare_data<const D: usize>(
         find_seed_vertices::<D>(base_seed, count, bounds, search_limit, attempts),
         format_args!(
             "No stable benchmark seed found for {D}D/{count}: \
-                 start_seed={base_seed}; search_limit={search_limit}; bounds={bounds:?}"
+                 start_seed={base_seed}; search_limit={search_limit}; bounds={bounds}"
         ),
     )
 }
@@ -366,7 +366,10 @@ fn warn_known_seed_failed<const D: usize>(seed: u64, count: usize, dataset: Data
 }
 
 fn prepare_dt<const D: usize>(dim_seed: u64, count: usize) -> BenchTriangulation<D> {
-    let bounds = (-100.0, 100.0);
+    let bounds = bench_result(
+        CoordinateRange::try_new(-100.0_f64, 100.0),
+        "well-conditioned benchmark bounds must be valid",
+    );
     let attempts = retry_attempts(6);
     let (seed, _, vertices) = prepare_data::<D>(dim_seed, count, bounds, attempts);
     let options = ConstructionOptions::default().with_retry_policy(RetryPolicy::Shuffled {
@@ -404,9 +407,13 @@ fn prepare_inserts<const D: usize>(
         seed ^= 0xA5A5_A5A5;
     }
     let points = match dataset {
-        Dataset::WellConditioned => bench_result(
-            generate_random_points_seeded::<f64, D>(count, (-50.0, 50.0), seed),
-            format!("insert point generation failed for {D}D"),
+        Dataset::WellConditioned => generate_random_points_in_range_seeded::<f64, D>(
+            count,
+            bench_result(
+                CoordinateRange::try_new(-50.0_f64, 50.0),
+                "insert benchmark bounds must be valid",
+            ),
+            seed,
         ),
         Dataset::Adversarial => generate_adv_points::<D>(count, seed),
     };
@@ -416,16 +423,14 @@ fn prepare_inserts<const D: usize>(
 fn find_seed_vertices<const D: usize>(
     start_seed: u64,
     count: usize,
-    bounds: (f64, f64),
+    bounds: CoordinateRange<f64>,
     limit: usize,
     attempts: NonZeroUsize,
 ) -> SeedSearchResult<D> {
     for offset in 0..limit {
         let candidate_seed = start_seed.wrapping_add(offset as u64);
-        let points = bench_result(
-            generate_random_points_seeded::<f64, D>(count, bounds, candidate_seed),
-            format!("generate_random_points_seeded failed for {D}D"),
-        );
+        let points =
+            generate_random_points_in_range_seeded::<f64, D>(count, bounds, candidate_seed);
         let vertices = points.iter().map(|p| vertex!(*p)).collect::<Vec<_>>();
 
         let options = ConstructionOptions::default().with_retry_policy(RetryPolicy::Shuffled {
@@ -496,9 +501,13 @@ fn prepare_adv_data<const D: usize>(
 }
 
 fn generate_adv_points<const D: usize>(count: usize, seed: u64) -> Vec<Point<f64, D>> {
-    let base_points = bench_result(
-        generate_random_points_seeded::<f64, D>(count, (-1.0, 1.0), seed),
-        format!("generate_random_points_seeded failed for adversarial {D}D"),
+    let base_points = generate_random_points_in_range_seeded::<f64, D>(
+        count,
+        bench_result(
+            CoordinateRange::try_new(-1.0_f64, 1.0),
+            "adversarial benchmark bounds must be valid",
+        ),
+        seed,
     );
 
     base_points
@@ -900,7 +909,10 @@ macro_rules! benchmark_tds_new_dimension {
             // We avoid `std::process::exit` here so that destructors run and Criterion
             // can clean up state on both success and failure.
             if discover_seeds_enabled() {
-                let bounds = (-100.0, 100.0);
+                let bounds = bench_result(
+                    CoordinateRange::try_new(-100.0_f64, 100.0),
+                    "well-conditioned benchmark bounds must be valid",
+                );
                 let filters = criterion_filters();
 
                 let bench_id = format!("tds_new_{}d/tds_new/{count}", stringify!($dim));
@@ -945,7 +957,10 @@ macro_rules! benchmark_tds_new_dimension {
                     format!("tds_new_{}d/tds_new_adversarial/{count}", stringify!($dim));
 
                 if benchmark_selected(&filters, &bench_id) {
-                    let bounds = (-100.0, 100.0);
+                    let bounds = bench_result(
+                        CoordinateRange::try_new(-100.0_f64, 100.0),
+                        "well-conditioned benchmark bounds must be valid",
+                    );
                     let attempts = retry_attempts(6);
                     let (seed, _, vertices) = prepare_data::<$dim>($seed, count, bounds, attempts);
                     let options = ConstructionOptions::default().with_retry_policy(
@@ -985,7 +1000,10 @@ macro_rules! benchmark_tds_new_dimension {
             group.bench_with_input(BenchmarkId::new("tds_new", count), &count, |b, &count| {
                     // Reduce variance: pre-generate deterministic inputs outside the measured loop,
                     // then benchmark only triangulation construction.
-                    let bounds = (-100.0, 100.0);
+                    let bounds = bench_result(
+                        CoordinateRange::try_new(-100.0_f64, 100.0),
+                        "well-conditioned benchmark bounds must be valid",
+                    );
                     let attempts = retry_attempts(6);
                     let (seed, points, vertices) =
                         prepare_data::<$dim>($seed, count, bounds, attempts);

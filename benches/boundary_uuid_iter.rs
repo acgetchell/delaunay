@@ -8,7 +8,8 @@
 
 use criterion::{BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
 use delaunay::prelude::construction::{DelaunayTriangulation, Vertex, vertex};
-use delaunay::prelude::generators::generate_random_points_seeded;
+use delaunay::prelude::generators::generate_random_points_in_range_seeded;
+use delaunay::prelude::geometry::CoordinateRange;
 use delaunay::prelude::query::BoundaryAnalysis;
 use uuid::Uuid;
 
@@ -20,19 +21,22 @@ use std::hint::black_box;
 pub mod bench_utils;
 use bench_utils::{bench_option, bench_result};
 
-const BOUNDS: (f64, f64) = (-100.0, 100.0);
 const BOUNDARY_COUNTS_3D: &[usize] = &[20, 40, 60, 80];
+
+fn benchmark_bounds() -> CoordinateRange<f64> {
+    bench_result(
+        CoordinateRange::try_new(-100.0_f64, 100.0),
+        "boundary benchmark bounds must be valid",
+    )
+}
 
 fn boundary_triangulation_3d(
     requested_vertices: usize,
 ) -> DelaunayTriangulation<delaunay::prelude::geometry::AdaptiveKernel<f64>, (), (), 3> {
-    let points = bench_result(
-        generate_random_points_seeded::<f64, 3>(
-            requested_vertices,
-            BOUNDS,
-            0xB0DA_FACE_0000_0000 ^ requested_vertices as u64,
-        ),
-        "failed to generate 3D boundary benchmark points",
+    let points = generate_random_points_in_range_seeded::<f64, 3>(
+        requested_vertices,
+        benchmark_bounds(),
+        0xB0DA_FACE_0000_0000 ^ requested_vertices as u64,
     );
     let vertices = Vertex::from_points(&points);
     bench_result(

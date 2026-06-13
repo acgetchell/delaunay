@@ -100,15 +100,17 @@
 #![forbid(unsafe_code)]
 
 use delaunay::geometry::kernel::{ExactPredicates, Kernel, RobustKernel};
-use delaunay::geometry::util::{
-    generate_random_points_in_ball_seeded, generate_random_points_seeded, safe_usize_to_scalar,
-};
+use delaunay::geometry::util::safe_usize_to_scalar;
 use delaunay::prelude::construction::{
     ConstructionOptions, ConstructionStatistics, DelaunayRepairPolicy, DelaunayTriangulation,
     DelaunayTriangulationConstructionErrorWithStatistics, InitialSimplexStrategy,
     TopologyGuarantee, Vertex, vertex,
 };
 use delaunay::prelude::diagnostics::ConstructionTelemetry;
+use delaunay::prelude::generators::{
+    generate_random_points_in_ball_seeded, generate_random_points_in_range_seeded,
+};
+use delaunay::prelude::geometry::CoordinateRange;
 #[cfg(feature = "diagnostics")]
 use delaunay::prelude::insertion::InsertionResult;
 use delaunay::prelude::insertion::{InsertionOutcome, InsertionStatistics};
@@ -1264,10 +1266,9 @@ where
                 })
         }
         PointDistribution::Box => {
-            let range = (-box_half_width, box_half_width);
-            generate_random_points_seeded::<f64, D>(n_points, range, seed).unwrap_or_else(|e| {
-                panic!("failed to generate deterministic box points (range={range:?}): {e}")
-            })
+            let range = CoordinateRange::try_new(-box_half_width, box_half_width)
+                .expect("box half-width should define a finite non-empty coordinate range");
+            generate_random_points_in_range_seeded::<f64, D>(n_points, range, seed)
         }
     };
     println!("Generated {} points in {:?}", points.len(), t_gen.elapsed());

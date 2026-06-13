@@ -291,7 +291,7 @@ where
 ///
 /// ```no_run
 /// use delaunay::prelude::construction::DelaunayTriangulationConstructionError;
-/// use delaunay::prelude::generators::generate_random_triangulation;
+/// use delaunay::prelude::generators::try_generate_random_triangulation;
 /// use std::num::NonZeroUsize;
 ///
 /// # fn main() -> Result<(), DelaunayTriangulationConstructionError> {
@@ -305,7 +305,7 @@ where
 /// #     return Ok(());
 /// # };
 /// // Generate a 2D triangulation with 50 points, no seed (random each time)
-/// let triangulation_2d = generate_random_triangulation::<(), (), 2>(
+/// let triangulation_2d = try_generate_random_triangulation::<(), (), 2>(
 ///     fifty,
 ///     (-10.0, 10.0),
 ///     None,
@@ -313,7 +313,7 @@ where
 /// );
 ///
 /// // Generate a 3D triangulation with 30 points, seeded for reproducibility  
-/// let triangulation_3d = generate_random_triangulation::<(), (), 3>(
+/// let triangulation_3d = try_generate_random_triangulation::<(), (), 3>(
 ///     thirty,
 ///     (-5.0, 5.0),
 ///     None,
@@ -321,7 +321,7 @@ where
 /// );
 ///
 /// // Generate a 4D triangulation with custom vertex data
-/// let triangulation_4d = generate_random_triangulation::<i32, (), 4>(
+/// let triangulation_4d = try_generate_random_triangulation::<i32, (), 4>(
 ///     twenty,
 ///     (0.0, 1.0),
 ///     Some(123),
@@ -329,7 +329,7 @@ where
 /// );
 ///
 /// // For string-like data, use fixed-size character arrays (Copy types)
-/// let triangulation_with_strings = generate_random_triangulation::<[char; 8], (), 2>(
+/// let triangulation_with_strings = try_generate_random_triangulation::<[char; 8], (), 2>(
 ///     twenty,
 ///     (0.0, 1.0),
 ///     Some(['v', 'e', 'r', 't', 'e', 'x', '_', 'A']),
@@ -361,11 +361,11 @@ where
 ///
 /// # See Also
 ///
-/// - [`generate_random_points`](crate::geometry::util::generate_random_points) - For generating points without triangulation
-/// - [`generate_random_points_seeded`](crate::geometry::util::generate_random_points_seeded) - For seeded random point generation only
+/// - [`try_generate_random_points`](crate::geometry::util::try_generate_random_points) - For generating points without triangulation from raw bounds
+/// - [`try_generate_random_points_seeded`](crate::geometry::util::try_generate_random_points_seeded) - For seeded random point generation from raw bounds
 /// - [`DelaunayTriangulationBuilder`](crate::DelaunayTriangulationBuilder) - For creating triangulations from existing vertices
 /// - [`RandomTriangulationBuilder`] - For more control over construction options
-pub fn generate_random_triangulation<U, V, const D: usize>(
+pub fn try_generate_random_triangulation<U, V, const D: usize>(
     n_points: NonZeroUsize,
     bounds: (f64, f64),
     vertex_data: Option<U>,
@@ -384,7 +384,7 @@ where
             n_points = n_points.get(),
             dimension = D,
             seed = ?seed,
-            "triangulation_generation::generate_random_triangulation called"
+            "triangulation_generation::try_generate_random_triangulation called"
         );
     }
     let bounds = CoordinateRange::try_from(bounds)
@@ -419,7 +419,7 @@ where
 ///
 /// ```no_run
 /// use delaunay::prelude::construction::DelaunayTriangulationConstructionError;
-/// use delaunay::prelude::generators::generate_random_triangulation_with_topology_guarantee;
+/// use delaunay::prelude::generators::try_generate_random_triangulation_with_topology_guarantee;
 /// use delaunay::prelude::TopologyGuarantee;
 /// use std::num::NonZeroUsize;
 ///
@@ -427,7 +427,7 @@ where
 /// # let Some(twenty) = NonZeroUsize::new(20) else {
 /// #     return Ok(());
 /// # };
-/// let dt = generate_random_triangulation_with_topology_guarantee::<(), (), 3>(
+/// let dt = try_generate_random_triangulation_with_topology_guarantee::<(), (), 3>(
 ///     twenty,
 ///     (-1.0, 1.0),
 ///     None,
@@ -438,7 +438,7 @@ where
 /// # Ok(())
 /// # }
 /// ```
-pub fn generate_random_triangulation_with_topology_guarantee<U, V, const D: usize>(
+pub fn try_generate_random_triangulation_with_topology_guarantee<U, V, const D: usize>(
     n_points: NonZeroUsize,
     bounds: (f64, f64),
     vertex_data: Option<U>,
@@ -691,7 +691,7 @@ where
 ///
 /// This builder provides a fluent API for constructing random triangulations with control over:
 /// - Insertion order strategy (`Input`, `Hilbert`)
-/// - Topology guarantee (`None`, `PLManifold`)
+/// - Topology guarantee (`Pseudomanifold`, `PLManifold`, `PLManifoldStrict`)
 /// - Construction options (deduplication, retry policy)
 /// - Topology/Euler validation (the final triangulation must pass Level-3 checks)
 ///
@@ -1150,9 +1150,13 @@ mod tests {
     #[test]
     fn test_generate_random_triangulation_basic() {
         // Test 2D triangulation creation
-        let triangulation_2d =
-            generate_random_triangulation::<(), (), 2>(nonzero(10), (-5.0, 5.0), None, Some(42))
-                .unwrap();
+        let triangulation_2d = try_generate_random_triangulation::<(), (), 2>(
+            nonzero(10),
+            (-5.0, 5.0),
+            None,
+            Some(42),
+        )
+        .unwrap();
 
         assert!(
             triangulation_2d.number_of_vertices() >= 3,
@@ -1163,7 +1167,7 @@ mod tests {
         triangulation_2d.is_valid().unwrap();
 
         // Test 3D triangulation creation with data
-        let triangulation_3d = generate_random_triangulation::<i32, (), 3>(
+        let triangulation_3d = try_generate_random_triangulation::<i32, (), 3>(
             nonzero(8),
             (0.0, 1.0),
             Some(123),
@@ -1180,13 +1184,21 @@ mod tests {
         triangulation_3d.is_valid().unwrap();
 
         // Exercise repeatable construction with two deterministic seeds.
-        let triangulation_seeded =
-            generate_random_triangulation::<(), (), 2>(nonzero(5), (-1.0, 1.0), None, Some(789))
-                .unwrap();
+        let triangulation_seeded = try_generate_random_triangulation::<(), (), 2>(
+            nonzero(5),
+            (-1.0, 1.0),
+            None,
+            Some(789),
+        )
+        .unwrap();
 
-        let triangulation_different_seed =
-            generate_random_triangulation::<(), (), 2>(nonzero(5), (-1.0, 1.0), None, Some(790))
-                .unwrap();
+        let triangulation_different_seed = try_generate_random_triangulation::<(), (), 2>(
+            nonzero(5),
+            (-1.0, 1.0),
+            None,
+            Some(790),
+        )
+        .unwrap();
 
         triangulation_seeded.is_valid().unwrap();
         triangulation_different_seed.is_valid().unwrap();
@@ -1204,7 +1216,7 @@ mod tests {
 
     #[test]
     fn test_generate_random_triangulation_error_cases() {
-        let result = generate_random_triangulation::<(), (), 2>(
+        let result = try_generate_random_triangulation::<(), (), 2>(
             nonzero(10),
             (5.0, 1.0), // min > max
             None,
@@ -1233,7 +1245,7 @@ mod tests {
 
     #[test]
     fn test_generate_random_triangulation_rejects_nonfinite_bounds_as_generation_error() {
-        let nan_bounds = generate_random_triangulation::<(), (), 2>(
+        let nan_bounds = try_generate_random_triangulation::<(), (), 2>(
             nonzero(10),
             (f64::NAN, 1.0),
             None,
@@ -1353,27 +1365,33 @@ mod tests {
         assert_relative_eq!(min, 5.0, epsilon = f64::EPSILON);
         assert_relative_eq!(max, 1.0, epsilon = f64::EPSILON);
 
-        let seeded_invalid_bounds =
-            RandomTriangulationBuilder::<f64>::try_new(nonzero(10), (5.0, 1.0));
-        let Err(CoordinateRangeError::NonIncreasing { ordering, min, max }) = seeded_invalid_bounds
-        else {
-            panic!("expected seeded invalid bounds to fail");
+        let equal_bounds = RandomTriangulationBuilder::<f64>::try_new(nonzero(10), (2.0, 2.0));
+        let Err(CoordinateRangeError::NonIncreasing { ordering, min, max }) = equal_bounds else {
+            panic!("expected equal bounds to fail");
         };
-        assert_eq!(ordering, CoordinateRangeOrdering::Decreasing);
-        assert_relative_eq!(min, 5.0, epsilon = f64::EPSILON);
-        assert_relative_eq!(max, 1.0, epsilon = f64::EPSILON);
+        assert_eq!(ordering, CoordinateRangeOrdering::Equal);
+        assert_relative_eq!(min, 2.0, epsilon = f64::EPSILON);
+        assert_relative_eq!(max, 2.0, epsilon = f64::EPSILON);
     }
 
     #[test]
     fn test_generate_random_triangulation_reproducibility() {
         // Same seed should produce identical triangulations
-        let triangulation1 =
-            generate_random_triangulation::<(), (), 3>(nonzero(6), (-2.0, 2.0), None, Some(12345))
-                .unwrap();
+        let triangulation1 = try_generate_random_triangulation::<(), (), 3>(
+            nonzero(6),
+            (-2.0, 2.0),
+            None,
+            Some(12345),
+        )
+        .unwrap();
 
-        let triangulation2 =
-            generate_random_triangulation::<(), (), 3>(nonzero(6), (-2.0, 2.0), None, Some(12345))
-                .unwrap();
+        let triangulation2 = try_generate_random_triangulation::<(), (), 3>(
+            nonzero(6),
+            (-2.0, 2.0),
+            None,
+            Some(12345),
+        )
+        .unwrap();
 
         // Should have same structural properties
         assert_eq!(
@@ -1415,30 +1433,46 @@ mod tests {
         // point sets in each dimension.
 
         // 2D with sufficient points for full triangulation
-        let tri_2d =
-            generate_random_triangulation::<(), (), 2>(nonzero(15), (0.0, 10.0), None, Some(555))
-                .unwrap();
+        let tri_2d = try_generate_random_triangulation::<(), (), 2>(
+            nonzero(15),
+            (0.0, 10.0),
+            None,
+            Some(555),
+        )
+        .unwrap();
         assert_eq!(tri_2d.dim(), 2);
         assert!(tri_2d.number_of_simplices() > 0);
 
         // 3D with sufficient points for full triangulation
-        let tri_3d =
-            generate_random_triangulation::<(), (), 3>(nonzero(20), (-3.0, 3.0), None, Some(666))
-                .unwrap();
+        let tri_3d = try_generate_random_triangulation::<(), (), 3>(
+            nonzero(20),
+            (-3.0, 3.0),
+            None,
+            Some(666),
+        )
+        .unwrap();
         assert_eq!(tri_3d.dim(), 3);
         assert!(tri_3d.number_of_simplices() > 0);
 
         // 4D with sufficient points for full triangulation
-        let tri_4d =
-            generate_random_triangulation::<(), (), 4>(nonzero(12), (-1.0, 1.0), None, Some(777))
-                .unwrap();
+        let tri_4d = try_generate_random_triangulation::<(), (), 4>(
+            nonzero(12),
+            (-1.0, 1.0),
+            None,
+            Some(777),
+        )
+        .unwrap();
         assert_eq!(tri_4d.dim(), 4);
         assert!(tri_4d.number_of_simplices() > 0);
 
         // 5D with sufficient points for full triangulation
-        let tri_5d =
-            generate_random_triangulation::<(), (), 5>(nonzero(10), (0.0, 5.0), None, Some(888))
-                .unwrap();
+        let tri_5d = try_generate_random_triangulation::<(), (), 5>(
+            nonzero(10),
+            (0.0, 5.0),
+            None,
+            Some(888),
+        )
+        .unwrap();
         assert_eq!(tri_5d.dim(), 5);
         assert!(tri_5d.number_of_simplices() > 0);
     }
@@ -1450,7 +1484,7 @@ mod tests {
         // Test with fixed-size character array (Copy type that can represent strings)
         // NOTE: This is a workaround for the DataType trait requiring Copy, which
         // prevents using String or &str directly due to lifetime/ownership constraints
-        let tri_with_char_array = generate_random_triangulation::<[char; 8], (), 2>(
+        let tri_with_char_array = try_generate_random_triangulation::<[char; 8], (), 2>(
             nonzero(6),
             (-2.0, 2.0),
             Some(['v', 'e', 'r', 't', 'e', 'x', '_', 'd']),
@@ -1476,7 +1510,7 @@ mod tests {
             None;
         let mut last_err: Option<String> = None;
         for seed in seeds {
-            match generate_random_triangulation::<u32, (), 3>(
+            match try_generate_random_triangulation::<u32, (), 3>(
                 nonzero(8),
                 (0.0, 5.0),
                 Some(42u32),
@@ -1503,9 +1537,13 @@ mod tests {
         tri_with_int_data.tds().is_valid().unwrap();
 
         // Test without data (None)
-        let tri_no_data =
-            generate_random_triangulation::<(), (), 2>(nonzero(5), (-1.0, 1.0), None, Some(111))
-                .unwrap();
+        let tri_no_data = try_generate_random_triangulation::<(), (), 2>(
+            nonzero(5),
+            (-1.0, 1.0),
+            None,
+            Some(111),
+        )
+        .unwrap();
 
         assert!(
             tri_no_data.number_of_vertices() >= 3,

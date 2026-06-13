@@ -17,8 +17,8 @@
 
 use criterion::{BatchSize, BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
 use delaunay::prelude::construction::{DelaunayTriangulation, Vertex};
-use delaunay::prelude::generators::generate_random_points_seeded;
-use delaunay::prelude::geometry::{AdaptiveKernel, Coordinate, Point};
+use delaunay::prelude::generators::generate_random_points_in_range_seeded;
+use delaunay::prelude::geometry::{AdaptiveKernel, Coordinate, CoordinateRange, Point};
 use delaunay::prelude::tds::VertexKey;
 use std::hint::black_box;
 use std::time::Duration;
@@ -28,7 +28,6 @@ use std::time::Duration;
 pub mod bench_utils;
 use bench_utils::{bench_option, bench_result};
 
-const INTERIOR_BOUNDS: (f64, f64) = (0.0, 1.0);
 const INTERIOR_RADIUS_MIN: f64 = 0.15;
 const INTERIOR_RADIUS_SPAN: f64 = 0.70;
 const NEAR_BOUNDARY_EPSILON: f64 = 1.0e-9;
@@ -36,6 +35,13 @@ const NEAR_DEGENERATE_EPSILON: f64 = 1.0e-10;
 const COSPHERICAL_CENTER: f64 = 0.5;
 const COSPHERICAL_RADIUS: f64 = 0.25;
 const LARGE_COORDINATE_SCALE: f64 = 1.0e6;
+
+fn interior_bounds() -> CoordinateRange<f64> {
+    bench_result(
+        CoordinateRange::try_new(0.0_f64, 1.0),
+        "interior benchmark bounds must be valid",
+    )
+}
 const LARGE_COORDINATE_JITTER: f64 = 1.0e3;
 const SEED_SALT: u64 = 0x9E37_79B9_7F4A_7C15;
 const SEED_SEARCH_ATTEMPTS: usize = 64;
@@ -139,10 +145,8 @@ fn generate_vertices<const D: usize>(
 
 /// Generate well-conditioned interior points inside the canonical simplex.
 fn generate_interior_points<const D: usize>(count: usize, seed: u64) -> Vec<Point<f64, D>> {
-    let raw_points = bench_result(
-        generate_random_points_seeded::<f64, D>(count, INTERIOR_BOUNDS, seed),
-        format!("failed to generate {D}D interior benchmark points"),
-    );
+    let raw_points =
+        generate_random_points_in_range_seeded::<f64, D>(count, interior_bounds(), seed);
     let mut points = Vec::with_capacity(count);
 
     for (index, raw_point) in raw_points.iter().enumerate() {
@@ -160,10 +164,8 @@ fn generate_interior_points<const D: usize>(count: usize, seed: u64) -> Vec<Poin
 
 /// Generate points close to coordinate-boundary facets of the canonical simplex.
 fn generate_near_boundary_points<const D: usize>(count: usize, seed: u64) -> Vec<Point<f64, D>> {
-    let raw_points = bench_result(
-        generate_random_points_seeded::<f64, D>(count, INTERIOR_BOUNDS, seed),
-        format!("failed to generate {D}D near-boundary benchmark points"),
-    );
+    let raw_points =
+        generate_random_points_in_range_seeded::<f64, D>(count, interior_bounds(), seed);
     let mut points = Vec::with_capacity(count);
 
     for (index, raw_point) in raw_points.iter().enumerate() {
@@ -183,10 +185,8 @@ fn generate_near_boundary_points<const D: usize>(count: usize, seed: u64) -> Vec
 
 /// Generate points on a shared sphere to stress cospherical predicates.
 fn generate_cospherical_points<const D: usize>(count: usize, seed: u64) -> Vec<Point<f64, D>> {
-    let raw_points = bench_result(
-        generate_random_points_seeded::<f64, D>(count, INTERIOR_BOUNDS, seed),
-        format!("failed to generate {D}D cospherical benchmark points"),
-    );
+    let raw_points =
+        generate_random_points_in_range_seeded::<f64, D>(count, interior_bounds(), seed);
     let mut points = Vec::with_capacity(count);
 
     for raw_point in &raw_points {
@@ -227,10 +227,8 @@ fn generate_near_degenerate_simplex<const D: usize>(count: usize, seed: u64) -> 
 
 /// Generate finite points with large coordinates to stress scale-sensitive paths.
 fn generate_large_coordinate_points<const D: usize>(count: usize, seed: u64) -> Vec<Point<f64, D>> {
-    let raw_points = bench_result(
-        generate_random_points_seeded::<f64, D>(count, INTERIOR_BOUNDS, seed),
-        format!("failed to generate {D}D large-coordinate benchmark points"),
-    );
+    let raw_points =
+        generate_random_points_in_range_seeded::<f64, D>(count, interior_bounds(), seed);
     let mut points = Vec::with_capacity(count);
 
     for (index, raw_point) in raw_points.iter().enumerate() {

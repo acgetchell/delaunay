@@ -79,8 +79,8 @@ use delaunay::prelude::collections::SmallBuffer;
 use delaunay::prelude::construction::{
     ConstructionOptions, DelaunayTriangulation, DelaunayTriangulationBuilder, RetryPolicy, Vertex,
 };
-use delaunay::prelude::generators::generate_random_points_seeded;
-use delaunay::prelude::geometry::{AdaptiveKernel, Coordinate, Point};
+use delaunay::prelude::generators::generate_random_points_in_range_seeded;
+use delaunay::prelude::geometry::{AdaptiveKernel, Coordinate, CoordinateRange, Point};
 use delaunay::prelude::query::*;
 use delaunay::vertex;
 use sysinfo::{ProcessRefreshKind, ProcessesToUpdate, RefreshKind, System, get_current_pid};
@@ -95,6 +95,18 @@ fn retry_attempts(value: usize) -> NonZeroUsize {
         unreachable!("hard-coded retry attempt count must be non-zero");
     };
     attempts
+}
+
+fn coordinate_range(min: f64, max: f64, context: &'static str) -> CoordinateRange<f64> {
+    bench_result(CoordinateRange::try_new(min, max), context)
+}
+
+fn wide_bounds() -> CoordinateRange<f64> {
+    coordinate_range(-100.0, 100.0, "wide benchmark bounds must be valid")
+}
+
+fn adversarial_bounds() -> CoordinateRange<f64> {
+    coordinate_range(-1.0, 1.0, "adversarial benchmark bounds must be valid")
 }
 
 #[cfg(feature = "bench-logging")]
@@ -292,10 +304,7 @@ fn vertices_from_points<const D: usize>(points: Vec<Point<f64, D>>) -> Vec<Verte
 /// Measure memory delta during triangulation construction.
 fn measure_construction_with_memory<const D: usize>(n_points: usize, seed: u64) -> MemoryInfo {
     let mem_before = memory_usage_kib();
-    let points = bench_result(
-        generate_random_points_seeded::<f64, D>(n_points, (-100.0, 100.0), seed),
-        "failed to generate points",
-    );
+    let points = generate_random_points_in_range_seeded::<f64, D>(n_points, wide_bounds(), seed);
     let vertices = vertices_from_points(points);
 
     let mem_before_tds = memory_usage_kib();
@@ -349,17 +358,13 @@ fn gen_points<const D: usize>(
     seed: u64,
 ) -> Vec<Point<f64, D>> {
     match distribution {
-        PointDistribution::Random => bench_result(
-            generate_random_points_seeded(count, (-100.0, 100.0), seed),
-            "random point generation failed",
-        ),
-        PointDistribution::Adversarial => bench_result(
-            generate_random_points_seeded::<f64, D>(
-                count,
-                (-1.0, 1.0),
-                seed ^ 0xA5A5_A5A5_A5A5_A5A5,
-            ),
-            "adversarial base point generation failed",
+        PointDistribution::Random => {
+            generate_random_points_in_range_seeded(count, wide_bounds(), seed)
+        }
+        PointDistribution::Adversarial => generate_random_points_in_range_seeded::<f64, D>(
+            count,
+            adversarial_bounds(),
+            seed ^ 0xA5A5_A5A5_A5A5_A5A5,
         )
         .iter()
         .enumerate()
@@ -404,10 +409,8 @@ fn bench_construction<const D: usize>(c: &mut Criterion, dimension_name: &str, n
     group.bench_function("construct", |b| {
         b.iter_batched(
             || {
-                let points = bench_result(
-                    generate_random_points_seeded::<f64, D>(n_points, (-100.0, 100.0), seed),
-                    "failed to generate points",
-                );
+                let points =
+                    generate_random_points_in_range_seeded::<f64, D>(n_points, wide_bounds(), seed);
                 vertices_from_points(points)
             },
             |vertices| {
@@ -470,10 +473,7 @@ fn bench_validation<const D: usize>(c: &mut Criterion, dimension_name: &str, n_p
     }
 
     let seed = seed_for_case::<D>(n_points);
-    let points = bench_result(
-        generate_random_points_seeded::<f64, D>(n_points, (-100.0, 100.0), seed),
-        "failed to generate points",
-    );
+    let points = generate_random_points_in_range_seeded::<f64, D>(n_points, wide_bounds(), seed);
     let vertices = vertices_from_points(points);
     let dt = construct_triangulation::<D>(&vertices, seed);
     let tri = dt.as_triangulation();
@@ -509,10 +509,7 @@ fn bench_neighbor_queries<const D: usize>(
     }
 
     let seed = seed_for_case::<D>(n_points);
-    let points = bench_result(
-        generate_random_points_seeded::<f64, D>(n_points, (-100.0, 100.0), seed),
-        "failed to generate points",
-    );
+    let points = generate_random_points_in_range_seeded::<f64, D>(n_points, wide_bounds(), seed);
     let vertices = vertices_from_points(points);
     let dt = construct_triangulation::<D>(&vertices, seed);
     let tds = dt.tds();
@@ -549,10 +546,7 @@ fn bench_vertex_iteration<const D: usize>(
     }
 
     let seed = seed_for_case::<D>(n_points);
-    let points = bench_result(
-        generate_random_points_seeded::<f64, D>(n_points, (-100.0, 100.0), seed),
-        "failed to generate points",
-    );
+    let points = generate_random_points_in_range_seeded::<f64, D>(n_points, wide_bounds(), seed);
     let vertices = vertices_from_points(points);
     let dt = construct_triangulation::<D>(&vertices, seed);
     let tds = dt.tds();
@@ -587,10 +581,7 @@ fn bench_simplex_iteration<const D: usize>(
     }
 
     let seed = seed_for_case::<D>(n_points);
-    let points = bench_result(
-        generate_random_points_seeded::<f64, D>(n_points, (-100.0, 100.0), seed),
-        "failed to generate points",
-    );
+    let points = generate_random_points_in_range_seeded::<f64, D>(n_points, wide_bounds(), seed);
     let vertices = vertices_from_points(points);
     let dt = construct_triangulation::<D>(&vertices, seed);
     let tds = dt.tds();

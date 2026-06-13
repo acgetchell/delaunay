@@ -16,8 +16,8 @@
 
 use criterion::{BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
 use delaunay::prelude::construction::{DelaunayTriangulation, Vertex};
-use delaunay::prelude::generators::generate_random_points_seeded;
-use delaunay::prelude::geometry::AdaptiveKernel;
+use delaunay::prelude::generators::generate_random_points_in_range_seeded;
+use delaunay::prelude::geometry::{AdaptiveKernel, CoordinateRange};
 use delaunay::prelude::tds::Tds;
 use std::hint::black_box;
 use std::time::Duration;
@@ -27,13 +27,19 @@ use std::time::Duration;
 pub mod bench_utils;
 use bench_utils::bench_result;
 
-const BOUNDS: (f64, f64) = (-100.0, 100.0);
 const SEED_SALT: u64 = 0x9E37_79B9_7F4A_7C15;
 const SAMPLE_SIZE: usize = 10;
 const WARM_UP_TIME: Duration = Duration::from_millis(500);
 const MEASUREMENT_TIME: Duration = Duration::from_secs(2);
 
 type BenchTriangulation<const D: usize> = DelaunayTriangulation<AdaptiveKernel<f64>, (), (), D>;
+
+fn benchmark_bounds() -> CoordinateRange<f64> {
+    bench_result(
+        CoordinateRange::try_new(-100.0_f64, 100.0),
+        "clone benchmark bounds must be valid",
+    )
+}
 
 struct CloneSource<const D: usize> {
     vertex_count: usize,
@@ -56,9 +62,10 @@ fn generate_vertices<const D: usize>(
     requested_vertices: usize,
     seed: u64,
 ) -> Vec<Vertex<f64, (), D>> {
-    let points = bench_result(
-        generate_random_points_seeded::<f64, D>(requested_vertices, BOUNDS, seed),
-        format!("failed to generate {D}D benchmark points"),
+    let points = generate_random_points_in_range_seeded::<f64, D>(
+        requested_vertices,
+        benchmark_bounds(),
+        seed,
     );
     Vertex::from_points(&points)
 }

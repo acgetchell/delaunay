@@ -14,7 +14,8 @@
 //! - Numerical consistency validation between all three algorithms
 
 use criterion::{Criterion, criterion_group, criterion_main};
-use delaunay::prelude::generators::generate_random_points_seeded;
+use delaunay::prelude::generators::generate_random_points_in_range_seeded;
+use delaunay::prelude::geometry::CoordinateRange;
 use delaunay::prelude::query::*;
 use std::hint::black_box;
 
@@ -22,6 +23,10 @@ use std::hint::black_box;
 #[path = "common/bench_utils.rs"]
 pub mod bench_utils;
 use bench_utils::{abort_benchmark, bench_option, bench_result};
+
+fn coordinate_range(min: f64, max: f64, context: &'static str) -> CoordinateRange<f64> {
+    bench_result(CoordinateRange::try_new(min, max), context)
+}
 
 /// Generate a standard D-dimensional simplex (D+1 vertices)
 ///
@@ -46,17 +51,19 @@ fn standard_simplex<const D: usize>() -> Vec<Point<f64, D>> {
 
 /// Generate a random 3D simplex (tetrahedron) for benchmarking using seeded generation
 fn generate_random_simplex_3d(seed: u64) -> Vec<Point<f64, 3>> {
-    bench_result(
-        generate_random_points_seeded(4, (-10.0, 10.0), seed),
-        "failed to generate random simplex points",
+    generate_random_points_in_range_seeded(
+        4,
+        coordinate_range(-10.0, 10.0, "random simplex bounds must be valid"),
+        seed,
     )
 }
 
 /// Generate a random 3D test point using seeded generation
 fn generate_random_test_point_3d(seed: u64) -> Point<f64, 3> {
-    let points = bench_result(
-        generate_random_points_seeded(1, (-5.0, 5.0), seed),
-        "failed to generate random test point",
+    let points = generate_random_points_in_range_seeded(
+        1,
+        coordinate_range(-5.0, 5.0, "random test point bounds must be valid"),
+        seed,
     );
     bench_option(points.into_iter().next(), "expected exactly one test point")
 }
@@ -67,9 +74,10 @@ fn benchmark_random_queries(c: &mut Criterion) {
     let simplex_points = generate_random_simplex_3d(42);
 
     // Generate many test points using seeded generation for reproducible results
-    let test_points = bench_result(
-        generate_random_points_seeded(1000, (-5.0, 5.0), 123),
-        "failed to generate random test points",
+    let test_points = generate_random_points_in_range_seeded(
+        1000,
+        coordinate_range(-5.0, 5.0, "random query bounds must be valid"),
+        123,
     );
 
     c.bench_function("random/insphere_1000_queries", |b| {

@@ -129,6 +129,39 @@ pub enum HilbertError {
         /// The out-of-range pre-quantized coordinate value.
         coordinate: u32,
     },
+
+    /// An internally constructed Hilbert sort permutation had the wrong length.
+    #[error(
+        "Hilbert sort permutation length mismatch: item count {item_count}, permutation count {permutation_count}"
+    )]
+    InvalidSortPermutationLength {
+        /// Number of items being sorted.
+        item_count: usize,
+        /// Number of indices in the permutation.
+        permutation_count: usize,
+    },
+
+    /// An internally constructed Hilbert sort permutation referenced an invalid item index.
+    #[error(
+        "Hilbert sort permutation index {permutation_index} has value {item_index}, which is outside item count {item_count}"
+    )]
+    InvalidSortPermutationIndex {
+        /// Position in the permutation whose value was invalid.
+        permutation_index: usize,
+        /// Invalid source item index.
+        item_index: usize,
+        /// Number of items being sorted.
+        item_count: usize,
+    },
+
+    /// An internally constructed Hilbert sort permutation referenced the same item twice.
+    #[error("Hilbert sort permutation index {permutation_index} repeats item index {item_index}")]
+    InvalidSortPermutationDuplicate {
+        /// Position in the permutation whose value repeated an earlier item.
+        permutation_index: usize,
+        /// Repeated source item index.
+        item_index: usize,
+    },
 }
 
 /// Validated Hilbert bit depth per coordinate.
@@ -221,6 +254,305 @@ impl fmt::Display for HilbertBitDepth {
     }
 }
 
+/// Pre-quantized Hilbert coordinates proven to fit a selected bit-depth grid.
+///
+/// This borrowed wrapper carries the validation evidence for a batch of
+/// caller-supplied quantized coordinates. Use [`Self::try_new`] at the boundary,
+/// then call [`Self::indices`] or [`hilbert_indices_for_quantized_batch`] for an
+/// infallible mapping to Hilbert indices.
+///
+/// # Examples
+///
+/// ```rust
+/// use delaunay::prelude::ordering::{
+///     HilbertBitDepth, HilbertError, HilbertQuantizedBatch,
+/// };
+///
+/// let quantized = [[0_u32, 0], [3, 3]];
+/// let bits = HilbertBitDepth::try_new(2)?;
+/// let batch = HilbertQuantizedBatch::try_new(&quantized, bits)?;
+///
+/// let indices = batch.indices();
+/// assert_eq!(indices.len(), quantized.len());
+/// # Ok::<(), HilbertError>(())
+/// ```
+#[derive(Clone, Copy, Debug)]
+#[must_use]
+pub struct HilbertQuantizedBatch<'a, const D: usize> {
+    quantized: &'a [[u32; D]],
+    index_mode: HilbertIndexMode<D>,
+}
+
+impl<'a, const D: usize> HilbertQuantizedBatch<'a, D> {
+    /// Parses pre-quantized coordinates into a validated Hilbert batch.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`HilbertError::IndexOverflow`] if `D * bits > 128` (index would not fit in `u128`).
+    /// Returns [`HilbertError::DimensionTooLarge`] if the dimension `D` exceeds `u32::MAX`.
+    /// Returns [`HilbertError::PrequantizedCoordinateOutOfRange`] if any pre-quantized
+    /// coordinate exceeds `2^bits - 1`.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use delaunay::prelude::ordering::{
+    ///     HilbertBitDepth, HilbertError, HilbertQuantizedBatch,
+    /// };
+    ///
+    /// let quantized = [[0_u32, 0], [1, 2], [3, 3]];
+    /// let bits = HilbertBitDepth::try_new(2)?;
+    ///
+    /// let batch = HilbertQuantizedBatch::try_new(&quantized, bits)?;
+    /// assert_eq!(batch.coordinates(), quantized.as_slice());
+    /// # Ok::<(), HilbertError>(())
+    /// ```
+    pub fn try_new(quantized: &'a [[u32; D]], bits: HilbertBitDepth) -> Result<Self, HilbertError> {
+        let index_mode = HilbertIndexMode::try_new(bits)?;
+
+        if D != 0 {
+            validate_prequantized_coordinates(quantized, bits)?;
+        }
+
+        Ok(Self {
+            quantized,
+            index_mode,
+        })
+    }
+
+    /// Returns the validated pre-quantized coordinates.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use delaunay::prelude::ordering::{
+    ///     HilbertBitDepth, HilbertError, HilbertQuantizedBatch,
+    /// };
+    ///
+    /// let quantized = [[0_u32, 0], [3, 3]];
+    /// let bits = HilbertBitDepth::try_new(2)?;
+    /// let batch = HilbertQuantizedBatch::try_new(&quantized, bits)?;
+    ///
+    /// assert_eq!(batch.coordinates(), quantized.as_slice());
+    /// # Ok::<(), HilbertError>(())
+    /// ```
+    #[must_use]
+    pub const fn coordinates(self) -> &'a [[u32; D]] {
+        self.quantized
+    }
+
+    /// Returns the bit depth whose grid bounds were checked.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use delaunay::prelude::ordering::{
+    ///     HilbertBitDepth, HilbertError, HilbertQuantizedBatch,
+    /// };
+    ///
+    /// let quantized = [[0_u32, 0], [3, 3]];
+    /// let bits = HilbertBitDepth::try_new(2)?;
+    /// let batch = HilbertQuantizedBatch::try_new(&quantized, bits)?;
+    ///
+    /// assert_eq!(batch.bits(), bits);
+    /// # Ok::<(), HilbertError>(())
+    /// ```
+    pub const fn bits(self) -> HilbertBitDepth {
+        self.index_mode.bits()
+    }
+
+    /// Computes Hilbert indices without revalidating the batch.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use delaunay::prelude::ordering::{
+    ///     HilbertBitDepth, HilbertError, HilbertQuantizedBatch,
+    /// };
+    ///
+    /// let quantized = [[0_u32, 0], [3, 3]];
+    /// let bits = HilbertBitDepth::try_new(2)?;
+    /// let batch = HilbertQuantizedBatch::try_new(&quantized, bits)?;
+    ///
+    /// let indices = batch.indices();
+    /// assert_eq!(indices.len(), quantized.len());
+    /// # Ok::<(), HilbertError>(())
+    /// ```
+    #[must_use]
+    pub fn indices(self) -> Vec<u128> {
+        hilbert_indices_for_quantized_batch(self)
+    }
+}
+
+/// Owned, pre-quantized Hilbert coordinates proven in-grid by the quantizer
+/// that produced them.
+///
+/// Unlike [`HilbertQuantizedBatch`], which borrows caller-supplied coordinates
+/// and revalidates them at the boundary, this type is only constructed by
+/// [`hilbert_quantize_batch_in_range`]. That constructor clamps every
+/// coordinate into the selected bit-depth grid, so the in-grid invariant is
+/// carried structurally by the stored, validated index mode and
+/// [`Self::indices`] is infallible — no second per-coordinate scan is needed.
+///
+/// # Examples
+///
+/// ```rust
+/// use delaunay::prelude::geometry::CoordinateRange;
+/// use delaunay::prelude::ordering::{
+///     HilbertBitDepth, HilbertError, hilbert_quantize_batch_in_range,
+/// };
+///
+/// # fn main() -> Result<(), HilbertError> {
+/// let points = [[0.1_f64, 0.2], [0.9, 0.8], [0.5, 0.5]];
+/// # let Ok(bounds) = CoordinateRange::try_new(0.0_f64, 1.0) else {
+/// #     return Ok(());
+/// # };
+/// let bits = HilbertBitDepth::try_new(8)?;
+///
+/// let batch = hilbert_quantize_batch_in_range(&points, bounds, bits, |p| *p)?;
+/// assert_eq!(batch.indices().len(), points.len());
+/// # Ok(())
+/// # }
+/// ```
+#[derive(Clone, Debug, PartialEq, Eq)]
+#[must_use]
+pub struct HilbertQuantizedVec<const D: usize> {
+    quantized: Vec<[u32; D]>,
+    index_mode: HilbertIndexMode<D>,
+}
+
+impl<const D: usize> HilbertQuantizedVec<D> {
+    /// Returns the validated pre-quantized coordinates.
+    #[must_use]
+    pub fn coordinates(&self) -> &[[u32; D]] {
+        &self.quantized
+    }
+
+    /// Returns the bit depth whose grid the coordinates were quantized to.
+    pub const fn bits(&self) -> HilbertBitDepth {
+        self.index_mode.bits()
+    }
+
+    /// Returns the number of quantized points in the batch.
+    #[must_use]
+    pub const fn len(&self) -> usize {
+        self.quantized.len()
+    }
+
+    /// Returns `true` when the batch contains no points.
+    #[must_use]
+    pub const fn is_empty(&self) -> bool {
+        self.quantized.is_empty()
+    }
+
+    /// Computes Hilbert indices without revalidating the batch.
+    ///
+    /// This is infallible: the constructor already validated the index width
+    /// and clamped every coordinate into the selected bit-depth grid.
+    #[must_use]
+    pub fn indices(&self) -> Vec<u128> {
+        indices_for_mode(&self.quantized, self.index_mode)
+    }
+
+    /// Consumes the batch, returning its Hilbert indices alongside the owned
+    /// quantized coordinates.
+    ///
+    /// This fuses the two products batch callers usually need — the per-point
+    /// Hilbert index and the quantized cell used as a sort tie-break — without
+    /// an extra allocation or a per-coordinate revalidation pass.
+    #[must_use]
+    pub fn into_indices_and_coordinates(self) -> (Vec<u128>, Vec<[u32; D]>) {
+        let indices = self.indices();
+        (indices, self.quantized)
+    }
+
+    /// Consumes the batch, returning only the owned quantized coordinates.
+    #[must_use]
+    pub fn into_coordinates(self) -> Vec<[u32; D]> {
+        self.quantized
+    }
+}
+
+/// Quantizes a batch of items into an owned, proof-bearing Hilbert batch.
+///
+/// Coordinates are extracted with `coords_of`, normalized against `bounds`
+/// (already parsed at an upstream boundary), and clamped into the
+/// `0..=2^bits - 1` grid. The index width and quantization scale are validated
+/// once for the whole batch, after which [`HilbertQuantizedVec::indices`] is
+/// infallible.
+///
+/// This is the single-pass bulk entry point preferred by construction
+/// preprocessing: it avoids both the per-item bound parsing of
+/// [`try_hilbert_quantize`] and the per-coordinate revalidation that
+/// [`hilbert_indices_prequantized`] performs on caller-supplied grids.
+///
+/// # Errors
+///
+/// Returns [`HilbertError::IndexOverflow`] if `D * bits > 128` (index would not fit in `u128`).
+/// Returns [`HilbertError::DimensionTooLarge`] if the dimension `D` exceeds `u32::MAX`.
+/// Returns [`HilbertError::QuantizationScaleConversionFailed`] if the quantization
+/// grid maximum cannot be represented by the coordinate scalar type. Returns
+/// [`HilbertError::NonFiniteBoundsExtent`], [`HilbertError::NonFiniteCoordinate`],
+/// [`HilbertError::NonFiniteNormalizedCoordinate`], or
+/// [`HilbertError::QuantizedCoordinateConversionFailed`] if coordinate
+/// quantization fails.
+///
+/// # Examples
+///
+/// ```rust
+/// use delaunay::prelude::geometry::CoordinateRange;
+/// use delaunay::prelude::ordering::{
+///     HilbertBitDepth, HilbertError, hilbert_quantize_batch_in_range,
+/// };
+///
+/// # fn main() -> Result<(), HilbertError> {
+/// let points = [[0.0_f64, 0.0], [1.0, 1.0]];
+/// # let Ok(bounds) = CoordinateRange::try_new(0.0_f64, 1.0) else {
+/// #     return Ok(());
+/// # };
+/// let batch =
+///     hilbert_quantize_batch_in_range(&points, bounds, HilbertBitDepth::try_new(4)?, |p| *p)?;
+///
+/// let (indices, quantized) = batch.into_indices_and_coordinates();
+/// assert_eq!(indices.len(), 2);
+/// assert_eq!(quantized.len(), 2);
+/// # Ok(())
+/// # }
+/// ```
+pub fn hilbert_quantize_batch_in_range<Item, T, const D: usize>(
+    items: &[Item],
+    bounds: CoordinateRange<T>,
+    bits: HilbertBitDepth,
+    mut coords_of: impl FnMut(&Item) -> [T; D],
+) -> Result<HilbertQuantizedVec<D>, HilbertError>
+where
+    T: CoordinateScalar,
+{
+    let index_mode = HilbertIndexMode::try_new(bits)?;
+
+    if D == 0 {
+        return Ok(HilbertQuantizedVec {
+            quantized: vec![[0_u32; D]; items.len()],
+            index_mode,
+        });
+    }
+
+    let (max_val_u32, max_val_t) = quantization_scale::<T>(bits)?;
+
+    let quantized = items
+        .iter()
+        .map(|item| {
+            let coords = coords_of(item);
+            quantize_with_scale(&coords, bounds, bits, max_val_u32, max_val_t)
+        })
+        .collect::<Result<Vec<[u32; D]>, HilbertError>>()?;
+
+    Ok(HilbertQuantizedVec {
+        quantized,
+        index_mode,
+    })
+}
+
 /// Converts a validated bit depth into a scalar grid maximum so Hilbert
 /// ordering cannot silently collapse when a coordinate type cannot represent it.
 fn quantization_scale<T: CoordinateScalar>(
@@ -251,8 +583,45 @@ fn total_bits<const D: usize>(bits: HilbertBitDepth) -> Result<u128, HilbertErro
     Ok(u128::from(d_u32) * u128::from(bits.get()))
 }
 
+/// Positive-dimensional Hilbert index parameters after width validation.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct HilbertIndexParams<const D: usize> {
+    bits: HilbertBitDepth,
+}
+
+impl<const D: usize> HilbertIndexParams<D> {
+    const fn bits(self) -> u32 {
+        self.bits.get()
+    }
+}
+
+/// Validated Hilbert indexing mode, including the zero-dimensional special case.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum HilbertIndexMode<const D: usize> {
+    ZeroDimensional { bits: HilbertBitDepth },
+    Positive(HilbertIndexParams<D>),
+}
+
+impl<const D: usize> HilbertIndexMode<D> {
+    fn try_new(bits: HilbertBitDepth) -> Result<Self, HilbertError> {
+        validate_index_width::<D>(bits)?;
+        if D == 0 {
+            Ok(Self::ZeroDimensional { bits })
+        } else {
+            Ok(Self::Positive(HilbertIndexParams { bits }))
+        }
+    }
+
+    const fn bits(self) -> HilbertBitDepth {
+        match self {
+            Self::ZeroDimensional { bits } => bits,
+            Self::Positive(params) => params.bits,
+        }
+    }
+}
+
 /// Centralizes index-width validation shared by indexing and ordering APIs.
-fn validate_index_params<const D: usize>(bits: HilbertBitDepth) -> Result<(), HilbertError> {
+fn validate_index_width<const D: usize>(bits: HilbertBitDepth) -> Result<(), HilbertError> {
     let total_bits = total_bits::<D>(bits)?;
     if total_bits > 128 {
         return Err(HilbertError::IndexOverflow {
@@ -304,16 +673,62 @@ fn parse_hilbert_bounds<T: CoordinateScalar>(
 /// # Examples
 ///
 /// ```rust
-/// use delaunay::prelude::ordering::{HilbertBitDepth, HilbertError, hilbert_quantize};
+/// use delaunay::prelude::ordering::{HilbertBitDepth, HilbertError, try_hilbert_quantize};
 ///
 /// let coords = [0.5_f64, 0.25];
-/// let q = hilbert_quantize(&coords, (0.0, 1.0), HilbertBitDepth::try_new(2)?)?;
+/// let q = try_hilbert_quantize(&coords, (0.0, 1.0), HilbertBitDepth::try_new(2)?)?;
 /// assert!(q[0] <= 3 && q[1] <= 3);
 /// # Ok::<(), HilbertError>(())
 /// ```
-pub fn hilbert_quantize<T: CoordinateScalar, const D: usize>(
+pub fn try_hilbert_quantize<T: CoordinateScalar, const D: usize>(
     coords: &[T; D],
     bounds: (T, T),
+    bits: HilbertBitDepth,
+) -> Result<[u32; D], HilbertError> {
+    let bounds = parse_hilbert_bounds(bounds)?;
+
+    if D == 0 {
+        return Ok([0_u32; D]);
+    }
+
+    let (max_val_u32, max_val_t) = quantization_scale::<T>(bits)?;
+
+    quantize_with_scale(coords, bounds, bits, max_val_u32, max_val_t)
+}
+
+/// Quantizes coordinates against bounds already parsed by an upstream boundary.
+///
+/// # Errors
+///
+/// Returns [`HilbertError::QuantizationScaleConversionFailed`] if the
+/// quantization grid maximum cannot be represented by the coordinate scalar
+/// type. Returns [`HilbertError::NonFiniteBoundsExtent`] if the validated bounds
+/// produce a non-finite extent. Returns [`HilbertError::NonFiniteCoordinate`] or
+/// [`HilbertError::NonFiniteNormalizedCoordinate`] if a coordinate or its
+/// normalized value is non-finite. Returns
+/// [`HilbertError::QuantizedCoordinateConversionFailed`] if a rounded scaled
+/// coordinate cannot be represented as `u32`.
+///
+/// # Examples
+///
+/// ```rust
+/// use delaunay::prelude::geometry::CoordinateRange;
+/// use delaunay::prelude::ordering::{
+///     HilbertBitDepth, HilbertError, hilbert_quantize_in_range,
+/// };
+///
+/// # fn main() -> Result<(), HilbertError> {
+/// # let Ok(bounds) = CoordinateRange::try_new(0.0_f64, 1.0) else {
+/// #     return Ok(());
+/// # };
+/// let q = hilbert_quantize_in_range(&[0.5_f64, 0.25], bounds, HilbertBitDepth::try_new(2)?)?;
+/// assert!(q[0] <= 3 && q[1] <= 3);
+/// # Ok(())
+/// # }
+/// ```
+pub fn hilbert_quantize_in_range<T: CoordinateScalar, const D: usize>(
+    coords: &[T; D],
+    bounds: CoordinateRange<T>,
     bits: HilbertBitDepth,
 ) -> Result<[u32; D], HilbertError> {
     if D == 0 {
@@ -321,8 +736,6 @@ pub fn hilbert_quantize<T: CoordinateScalar, const D: usize>(
     }
 
     let (max_val_u32, max_val_t) = quantization_scale::<T>(bits)?;
-    let bounds = parse_hilbert_bounds(bounds)?;
-
     quantize_with_scale(coords, bounds, bits, max_val_u32, max_val_t)
 }
 
@@ -378,21 +791,60 @@ fn quantize_with_scale<T: CoordinateScalar, const D: usize>(
 
 /// Applies a prevalidated permutation after key construction succeeds so sort
 /// helpers never partially reorder items before returning a Hilbert error.
-fn apply_order<Item>(items: &mut [Item], order: Vec<usize>) {
-    debug_assert_eq!(items.len(), order.len());
-
-    let mut ranks = vec![0_usize; order.len()];
-    for (new_index, old_index) in order.into_iter().enumerate() {
-        ranks[old_index] = new_index;
+fn apply_order<Item>(
+    items: &mut [Item],
+    order: impl ExactSizeIterator<Item = usize>,
+) -> Result<(), HilbertError> {
+    let item_len = items.len();
+    let permutation_count = order.len();
+    if item_len != permutation_count {
+        return Err(HilbertError::InvalidSortPermutationLength {
+            item_count: item_len,
+            permutation_count,
+        });
     }
 
-    for index in 0..items.len() {
+    let mut ranks = vec![usize::MAX; item_len];
+    let mut observed_count = 0_usize;
+    for (new_index, old_index) in order.into_iter().enumerate() {
+        observed_count = new_index + 1;
+        if new_index >= item_len {
+            return Err(HilbertError::InvalidSortPermutationLength {
+                item_count: item_len,
+                permutation_count: observed_count,
+            });
+        }
+        if old_index >= item_len {
+            return Err(HilbertError::InvalidSortPermutationIndex {
+                permutation_index: new_index,
+                item_index: old_index,
+                item_count: item_len,
+            });
+        }
+        if ranks[old_index] != usize::MAX {
+            return Err(HilbertError::InvalidSortPermutationDuplicate {
+                permutation_index: new_index,
+                item_index: old_index,
+            });
+        }
+        ranks[old_index] = new_index;
+    }
+    if observed_count != item_len {
+        return Err(HilbertError::InvalidSortPermutationLength {
+            item_count: item_len,
+            permutation_count: observed_count,
+        });
+    }
+
+    for index in 0..item_len {
         while ranks[index] != index {
             let target = ranks[index];
             items.swap(index, target);
             ranks.swap(index, target);
         }
     }
+
+    Ok(())
 }
 
 /// Compute the Hilbert curve index for a point in D-dimensional space.
@@ -423,25 +875,61 @@ fn apply_order<Item>(items: &mut [Item], order: Vec<usize>) {
 /// # Examples
 ///
 /// ```rust
-/// use delaunay::prelude::ordering::{HilbertBitDepth, HilbertError, hilbert_index};
+/// use delaunay::prelude::ordering::{HilbertBitDepth, HilbertError, try_hilbert_index};
 ///
-/// let idx = hilbert_index(&[0.0_f64, 0.0], (0.0, 1.0), HilbertBitDepth::try_new(4)?)?;
+/// let idx = try_hilbert_index(&[0.0_f64, 0.0], (0.0, 1.0), HilbertBitDepth::try_new(4)?)?;
 /// assert_eq!(idx, 0);
 /// # Ok::<(), HilbertError>(())
 /// ```
-pub fn hilbert_index<T: CoordinateScalar, const D: usize>(
+pub fn try_hilbert_index<T: CoordinateScalar, const D: usize>(
     coords: &[T; D],
     bounds: (T, T),
     bits: HilbertBitDepth,
 ) -> Result<u128, HilbertError> {
-    validate_index_params::<D>(bits)?;
+    let bounds = parse_hilbert_bounds(bounds)?;
+    hilbert_index_in_range(coords, bounds, bits)
+}
 
-    if D == 0 {
+/// Computes a Hilbert index against bounds already parsed by an upstream boundary.
+///
+/// # Errors
+///
+/// Returns [`HilbertError::IndexOverflow`] if `D * bits > 128` (index would not fit in `u128`).
+/// Returns [`HilbertError::DimensionTooLarge`] if the dimension `D` exceeds `u32::MAX`.
+/// Returns [`HilbertError::QuantizationScaleConversionFailed`] if the quantization
+/// grid maximum cannot be represented by the coordinate scalar type. Returns
+/// [`HilbertError::NonFiniteBoundsExtent`], [`HilbertError::NonFiniteCoordinate`],
+/// [`HilbertError::NonFiniteNormalizedCoordinate`], or
+/// [`HilbertError::QuantizedCoordinateConversionFailed`] if coordinate
+/// quantization fails.
+///
+/// # Examples
+///
+/// ```rust
+/// use delaunay::prelude::geometry::CoordinateRange;
+/// use delaunay::prelude::ordering::{HilbertBitDepth, HilbertError, hilbert_index_in_range};
+///
+/// # fn main() -> Result<(), HilbertError> {
+/// # let Ok(bounds) = CoordinateRange::try_new(0.0_f64, 1.0) else {
+/// #     return Ok(());
+/// # };
+/// let idx = hilbert_index_in_range(&[0.0_f64, 0.0], bounds, HilbertBitDepth::try_new(4)?)?;
+/// assert_eq!(idx, 0);
+/// # Ok(())
+/// # }
+/// ```
+pub fn hilbert_index_in_range<T: CoordinateScalar, const D: usize>(
+    coords: &[T; D],
+    bounds: CoordinateRange<T>,
+    bits: HilbertBitDepth,
+) -> Result<u128, HilbertError> {
+    let index_mode = HilbertIndexMode::try_new(bits)?;
+    let HilbertIndexMode::Positive(index_params) = index_mode else {
         return Ok(0);
-    }
+    };
 
-    let q = hilbert_quantize(coords, bounds, bits)?;
-    Ok(index_from_quantized(&q, bits))
+    let q = hilbert_quantize_in_range(coords, bounds, bits)?;
+    Ok(index_from_quantized(&q, index_params))
 }
 
 /// Compute Hilbert index from pre-quantized integer coordinates.
@@ -452,17 +940,8 @@ pub fn hilbert_index<T: CoordinateScalar, const D: usize>(
 /// The resulting ordering is continuous on the integer grid (successive indices move to
 /// adjacent cells).
 #[must_use]
-fn index_from_quantized<const D: usize>(coords: &[u32; D], bits: HilbertBitDepth) -> u128 {
-    let bits = bits.get();
-    debug_assert!(D > 0, "caller should handle D==0");
-    debug_assert!(
-        bits > 0 && bits <= 31,
-        "bits must be in range [1, 31], got {bits}"
-    );
-    debug_assert!(
-        (D as u128) * u128::from(bits) <= 128,
-        "Hilbert index would overflow u128 for D={D} and bits={bits}"
-    );
+fn index_from_quantized<const D: usize>(coords: &[u32; D], params: HilbertIndexParams<D>) -> u128 {
+    let bits = params.bits();
 
     // Work on a local copy in "transposed" form.
     let mut transposed = *coords;
@@ -554,30 +1033,82 @@ fn index_from_quantized<const D: usize>(coords: &[u32; D], bits: HilbertBitDepth
 /// Returns [`HilbertError::QuantizedCoordinateConversionFailed`] if a rounded
 /// scaled coordinate cannot be represented as `u32`.
 ///
+/// Returns [`HilbertError::InvalidSortPermutationLength`],
+/// [`HilbertError::InvalidSortPermutationIndex`], or
+/// [`HilbertError::InvalidSortPermutationDuplicate`] if an internally
+/// constructed permutation is inconsistent.
+///
 /// # Examples
 ///
 /// ```rust
-/// use delaunay::prelude::ordering::{HilbertBitDepth, HilbertError, hilbert_sort_by_stable};
+/// use delaunay::prelude::ordering::{HilbertBitDepth, HilbertError, try_hilbert_sort_by_stable};
 ///
 /// let mut points = vec![[0.9_f64, 0.9], [0.1, 0.1], [0.5, 0.5]];
-/// hilbert_sort_by_stable(&mut points, (0.0, 1.0), HilbertBitDepth::try_new(8)?, |p| *p)?;
+/// try_hilbert_sort_by_stable(&mut points, (0.0, 1.0), HilbertBitDepth::try_new(8)?, |p| *p)?;
 /// assert_eq!(points[0], [0.1, 0.1]);
 /// # Ok::<(), HilbertError>(())
 /// ```
-pub fn hilbert_sort_by_stable<Item, T: CoordinateScalar, const D: usize>(
+pub fn try_hilbert_sort_by_stable<Item, T: CoordinateScalar, const D: usize>(
     items: &mut [Item],
     bounds: (T, T),
     bits: HilbertBitDepth,
+    coords_of: impl FnMut(&Item) -> [T; D],
+) -> Result<(), HilbertError> {
+    let bounds = parse_hilbert_bounds(bounds)?;
+    hilbert_sort_by_stable_in_range(items, bounds, bits, coords_of)
+}
+
+/// Stable sort helper using bounds already parsed by an upstream boundary.
+///
+/// This is equivalent to [`try_hilbert_sort_by_stable`], but accepts a
+/// [`CoordinateRange`] so callers can carry range validation evidence inward.
+///
+/// # Errors
+///
+/// Returns [`HilbertError::IndexOverflow`] if `D * bits > 128` (index would not fit in `u128`).
+/// Returns [`HilbertError::DimensionTooLarge`] if the dimension `D` exceeds `u32::MAX`.
+/// Returns [`HilbertError::QuantizationScaleConversionFailed`] if the quantization
+/// grid maximum cannot be represented by the coordinate scalar type. Returns
+/// [`HilbertError::NonFiniteBoundsExtent`], [`HilbertError::NonFiniteCoordinate`],
+/// [`HilbertError::NonFiniteNormalizedCoordinate`], or
+/// [`HilbertError::QuantizedCoordinateConversionFailed`] if coordinate
+/// quantization fails.
+///
+/// Returns [`HilbertError::InvalidSortPermutationLength`],
+/// [`HilbertError::InvalidSortPermutationIndex`], or
+/// [`HilbertError::InvalidSortPermutationDuplicate`] if an internally
+/// constructed permutation is inconsistent.
+///
+/// # Examples
+///
+/// ```rust
+/// use delaunay::prelude::geometry::CoordinateRange;
+/// use delaunay::prelude::ordering::{
+///     HilbertBitDepth, HilbertError, hilbert_sort_by_stable_in_range,
+/// };
+///
+/// # fn main() -> Result<(), HilbertError> {
+/// let mut points = vec![[0.9_f64, 0.9], [0.1, 0.1], [0.5, 0.5]];
+/// # let Ok(bounds) = CoordinateRange::try_new(0.0_f64, 1.0) else {
+/// #     return Ok(());
+/// # };
+/// hilbert_sort_by_stable_in_range(&mut points, bounds, HilbertBitDepth::try_new(8)?, |p| *p)?;
+/// assert_eq!(points[0], [0.1, 0.1]);
+/// # Ok(())
+/// # }
+/// ```
+pub fn hilbert_sort_by_stable_in_range<Item, T: CoordinateScalar, const D: usize>(
+    items: &mut [Item],
+    bounds: CoordinateRange<T>,
+    bits: HilbertBitDepth,
     mut coords_of: impl FnMut(&Item) -> [T; D],
 ) -> Result<(), HilbertError> {
-    validate_index_params::<D>(bits)?;
-
-    if D == 0 {
+    let index_mode = HilbertIndexMode::try_new(bits)?;
+    let HilbertIndexMode::Positive(index_params) = index_mode else {
         return Ok(());
-    }
+    };
 
     let (max_val_u32, max_val_t) = quantization_scale::<T>(bits)?;
-    let bounds = parse_hilbert_bounds(bounds)?;
 
     let mut keyed: Vec<((u128, [u32; D]), usize)> = items
         .iter()
@@ -585,13 +1116,13 @@ pub fn hilbert_sort_by_stable<Item, T: CoordinateScalar, const D: usize>(
         .map(|(i, item)| {
             let c = coords_of(item);
             let q = quantize_with_scale(&c, bounds, bits, max_val_u32, max_val_t)?;
-            let idx = index_from_quantized(&q, bits);
+            let idx = index_from_quantized(&q, index_params);
             Ok(((idx, q), i))
         })
         .collect::<Result<_, HilbertError>>()?;
 
     keyed.sort_by_key(|(key, _)| *key);
-    apply_order(items, keyed.into_iter().map(|(_, i)| i).collect());
+    apply_order(items, keyed.into_iter().map(|(_, i)| i))?;
 
     Ok(())
 }
@@ -599,7 +1130,7 @@ pub fn hilbert_sort_by_stable<Item, T: CoordinateScalar, const D: usize>(
 /// Unstable sort helper: sort items by Hilbert index + quantized-coordinate tie-break.
 ///
 /// This precomputes fallible Hilbert keys once, then applies an unstable ordering.
-/// Prefer [`hilbert_sort_by_stable`] when equal-key items must preserve their
+/// Prefer [`try_hilbert_sort_by_stable`] when equal-key items must preserve their
 /// original relative order.
 ///
 /// When `D == 0`, all items are considered equivalent (index 0) and the sort order is
@@ -625,30 +1156,82 @@ pub fn hilbert_sort_by_stable<Item, T: CoordinateScalar, const D: usize>(
 /// Returns [`HilbertError::QuantizedCoordinateConversionFailed`] if a rounded
 /// scaled coordinate cannot be represented as `u32`.
 ///
+/// Returns [`HilbertError::InvalidSortPermutationLength`],
+/// [`HilbertError::InvalidSortPermutationIndex`], or
+/// [`HilbertError::InvalidSortPermutationDuplicate`] if an internally
+/// constructed permutation is inconsistent.
+///
 /// # Examples
 ///
 /// ```rust
-/// use delaunay::prelude::ordering::{HilbertBitDepth, HilbertError, hilbert_sort_by_unstable};
+/// use delaunay::prelude::ordering::{HilbertBitDepth, HilbertError, try_hilbert_sort_by_unstable};
 ///
 /// let mut points = vec![[0.9_f64, 0.9], [0.1, 0.1], [0.5, 0.5]];
-/// hilbert_sort_by_unstable(&mut points, (0.0, 1.0), HilbertBitDepth::try_new(8)?, |p| *p)?;
+/// try_hilbert_sort_by_unstable(&mut points, (0.0, 1.0), HilbertBitDepth::try_new(8)?, |p| *p)?;
 /// assert_eq!(points[0], [0.1, 0.1]);
 /// # Ok::<(), HilbertError>(())
 /// ```
-pub fn hilbert_sort_by_unstable<Item, T: CoordinateScalar, const D: usize>(
+pub fn try_hilbert_sort_by_unstable<Item, T: CoordinateScalar, const D: usize>(
     items: &mut [Item],
     bounds: (T, T),
     bits: HilbertBitDepth,
+    coords_of: impl FnMut(&Item) -> [T; D],
+) -> Result<(), HilbertError> {
+    let bounds = parse_hilbert_bounds(bounds)?;
+    hilbert_sort_by_unstable_in_range(items, bounds, bits, coords_of)
+}
+
+/// Unstable sort helper using bounds already parsed by an upstream boundary.
+///
+/// This is equivalent to [`try_hilbert_sort_by_unstable`], but accepts a
+/// [`CoordinateRange`] so callers can carry range validation evidence inward.
+///
+/// # Errors
+///
+/// Returns [`HilbertError::IndexOverflow`] if `D * bits > 128` (index would not fit in `u128`).
+/// Returns [`HilbertError::DimensionTooLarge`] if the dimension `D` exceeds `u32::MAX`.
+/// Returns [`HilbertError::QuantizationScaleConversionFailed`] if the quantization
+/// grid maximum cannot be represented by the coordinate scalar type. Returns
+/// [`HilbertError::NonFiniteBoundsExtent`], [`HilbertError::NonFiniteCoordinate`],
+/// [`HilbertError::NonFiniteNormalizedCoordinate`], or
+/// [`HilbertError::QuantizedCoordinateConversionFailed`] if coordinate
+/// quantization fails.
+///
+/// Returns [`HilbertError::InvalidSortPermutationLength`],
+/// [`HilbertError::InvalidSortPermutationIndex`], or
+/// [`HilbertError::InvalidSortPermutationDuplicate`] if an internally
+/// constructed permutation is inconsistent.
+///
+/// # Examples
+///
+/// ```rust
+/// use delaunay::prelude::geometry::CoordinateRange;
+/// use delaunay::prelude::ordering::{
+///     HilbertBitDepth, HilbertError, hilbert_sort_by_unstable_in_range,
+/// };
+///
+/// # fn main() -> Result<(), HilbertError> {
+/// let mut points = vec![[0.9_f64, 0.9], [0.1, 0.1], [0.5, 0.5]];
+/// # let Ok(bounds) = CoordinateRange::try_new(0.0_f64, 1.0) else {
+/// #     return Ok(());
+/// # };
+/// hilbert_sort_by_unstable_in_range(&mut points, bounds, HilbertBitDepth::try_new(8)?, |p| *p)?;
+/// assert_eq!(points[0], [0.1, 0.1]);
+/// # Ok(())
+/// # }
+/// ```
+pub fn hilbert_sort_by_unstable_in_range<Item, T: CoordinateScalar, const D: usize>(
+    items: &mut [Item],
+    bounds: CoordinateRange<T>,
+    bits: HilbertBitDepth,
     mut coords_of: impl FnMut(&Item) -> [T; D],
 ) -> Result<(), HilbertError> {
-    validate_index_params::<D>(bits)?;
-
-    if D == 0 {
+    let index_mode = HilbertIndexMode::try_new(bits)?;
+    let HilbertIndexMode::Positive(index_params) = index_mode else {
         return Ok(());
-    }
+    };
 
     let (max_val_u32, max_val_t) = quantization_scale::<T>(bits)?;
-    let bounds = parse_hilbert_bounds(bounds)?;
 
     let mut keyed: Vec<((u128, [u32; D]), usize)> = items
         .iter()
@@ -656,13 +1239,13 @@ pub fn hilbert_sort_by_unstable<Item, T: CoordinateScalar, const D: usize>(
         .map(|(i, item)| {
             let c = coords_of(item);
             let q = quantize_with_scale(&c, bounds, bits, max_val_u32, max_val_t)?;
-            let idx = index_from_quantized(&q, bits);
+            let idx = index_from_quantized(&q, index_params);
             Ok(((idx, q), i))
         })
         .collect::<Result<_, HilbertError>>()?;
 
     keyed.sort_unstable_by_key(|(key, _)| *key);
-    apply_order(items, keyed.into_iter().map(|(_, i)| i).collect());
+    apply_order(items, keyed.into_iter().map(|(_, i)| i))?;
 
     Ok(())
 }
@@ -698,7 +1281,7 @@ fn validate_prequantized_coordinates<const D: usize>(
 ///
 /// This is a bulk API that avoids recomputing quantization parameters for large
 /// insertion batches. When inserting many points, quantize them once using
-/// [`hilbert_quantize`] and then call this function to compute all indices in bulk.
+/// [`try_hilbert_quantize`] and then call this function to compute all indices in bulk.
 /// Pre-quantized coordinates must be in the inclusive range `0..=2^bits - 1`;
 /// values outside that grid are rejected instead of being truncated.
 ///
@@ -706,8 +1289,10 @@ fn validate_prequantized_coordinates<const D: usize>(
 ///
 /// This function validates index width and pre-quantized coordinate ranges, then
 /// maps each quantized coordinate through the internal Hilbert index computation.
-/// For large batches, this is significantly faster than calling [`hilbert_index`]
+/// For large batches, this is significantly faster than calling [`try_hilbert_index`]
 /// individually for each point.
+/// If the same pre-quantized batch is reused, construct a [`HilbertQuantizedBatch`]
+/// once and call [`HilbertQuantizedBatch::indices`] to avoid repeated validation.
 ///
 /// # Errors
 ///
@@ -723,7 +1308,7 @@ fn validate_prequantized_coordinates<const D: usize>(
 ///
 /// ```rust
 /// use delaunay::prelude::ordering::{
-///     HilbertBitDepth, HilbertError, hilbert_indices_prequantized, hilbert_quantize,
+///     HilbertBitDepth, HilbertError, hilbert_indices_prequantized, try_hilbert_quantize,
 /// };
 ///
 /// let coords = vec![[0.1_f64, 0.2], [0.5, 0.5], [0.9, 0.8]];
@@ -733,7 +1318,7 @@ fn validate_prequantized_coordinates<const D: usize>(
 /// // Quantize once
 /// let quantized: Vec<[u32; 2]> = coords
 ///     .iter()
-///     .map(|c| hilbert_quantize(c, bounds, bits))
+///     .map(|c| try_hilbert_quantize(c, bounds, bits))
 ///     .collect::<Result<_, _>>()?;
 ///
 /// // Compute all indices in bulk
@@ -777,19 +1362,55 @@ pub fn hilbert_indices_prequantized<const D: usize>(
     quantized: &[[u32; D]],
     bits: HilbertBitDepth,
 ) -> Result<Vec<u128>, HilbertError> {
-    validate_index_params::<D>(bits)?;
+    Ok(HilbertQuantizedBatch::try_new(quantized, bits)?.indices())
+}
 
-    // Handle D == 0 case: zero-dimensional space has only one point, all map to index 0
-    if D == 0 {
-        return Ok(vec![0_u128; quantized.len()]);
+/// Computes Hilbert indices from a validated pre-quantized batch.
+///
+/// This is the infallible companion to [`hilbert_indices_prequantized`]. The
+/// [`HilbertQuantizedBatch`] constructor has already checked both the Hilbert
+/// index width and every coordinate against the selected bit-depth grid.
+///
+/// # Examples
+///
+/// ```rust
+/// use delaunay::prelude::ordering::{
+///     HilbertBitDepth, HilbertError, HilbertQuantizedBatch,
+///     hilbert_indices_for_quantized_batch,
+/// };
+///
+/// let quantized = [[0_u32, 0], [3, 3]];
+/// let bits = HilbertBitDepth::try_new(2)?;
+/// let batch = HilbertQuantizedBatch::try_new(&quantized, bits)?;
+///
+/// let indices = hilbert_indices_for_quantized_batch(batch);
+/// assert_eq!(indices.len(), quantized.len());
+/// # Ok::<(), HilbertError>(())
+/// ```
+#[must_use]
+pub fn hilbert_indices_for_quantized_batch<const D: usize>(
+    batch: HilbertQuantizedBatch<'_, D>,
+) -> Vec<u128> {
+    indices_for_mode(batch.quantized, batch.index_mode)
+}
+
+/// Maps validated quantized coordinates to Hilbert indices for a known index
+/// mode.
+///
+/// Both [`HilbertQuantizedBatch`] and [`HilbertQuantizedVec`] carry a validated
+/// [`HilbertIndexMode`], so neither revalidates coordinates before computing
+/// indices.
+fn indices_for_mode<const D: usize>(
+    quantized: &[[u32; D]],
+    index_mode: HilbertIndexMode<D>,
+) -> Vec<u128> {
+    match index_mode {
+        HilbertIndexMode::ZeroDimensional { .. } => vec![0_u128; quantized.len()],
+        HilbertIndexMode::Positive(index_params) => quantized
+            .iter()
+            .map(|q| index_from_quantized(q, index_params))
+            .collect(),
     }
-
-    validate_prequantized_coordinates(quantized, bits)?;
-
-    Ok(quantized
-        .iter()
-        .map(|q| index_from_quantized(q, bits))
-        .collect())
 }
 
 /// Return the indices that would sort `coords` by Hilbert order.
@@ -820,33 +1441,74 @@ pub fn hilbert_indices_prequantized<const D: usize>(
 /// # Examples
 ///
 /// ```rust
-/// use delaunay::prelude::ordering::{HilbertBitDepth, HilbertError, hilbert_sorted_indices};
+/// use delaunay::prelude::ordering::{HilbertBitDepth, HilbertError, try_hilbert_sorted_indices};
 ///
 /// let coords = vec![[0.9_f64, 0.9], [0.1, 0.1], [0.5, 0.5]];
-/// let order = hilbert_sorted_indices(&coords, (0.0, 1.0), HilbertBitDepth::try_new(8)?)?;
+/// let order = try_hilbert_sorted_indices(&coords, (0.0, 1.0), HilbertBitDepth::try_new(8)?)?;
 /// assert_eq!(order.len(), coords.len());
 /// # Ok::<(), HilbertError>(())
 /// ```
-pub fn hilbert_sorted_indices<T: CoordinateScalar, const D: usize>(
+pub fn try_hilbert_sorted_indices<T: CoordinateScalar, const D: usize>(
     coords: &[[T; D]],
     bounds: (T, T),
     bits: HilbertBitDepth,
 ) -> Result<Vec<usize>, HilbertError> {
-    validate_index_params::<D>(bits)?;
+    let bounds = parse_hilbert_bounds(bounds)?;
+    hilbert_sorted_indices_in_range(coords, bounds, bits)
+}
 
-    if D == 0 {
+/// Return the indices that would sort `coords` by Hilbert order using validated bounds.
+///
+/// This is equivalent to [`try_hilbert_sorted_indices`], but accepts a
+/// [`CoordinateRange`] so callers can carry range validation evidence inward.
+///
+/// # Errors
+///
+/// Returns [`HilbertError::IndexOverflow`] if `D * bits > 128` (index would not fit in `u128`).
+/// Returns [`HilbertError::DimensionTooLarge`] if the dimension `D` exceeds `u32::MAX`.
+/// Returns [`HilbertError::QuantizationScaleConversionFailed`] if the quantization
+/// grid maximum cannot be represented by the coordinate scalar type. Returns
+/// [`HilbertError::NonFiniteBoundsExtent`], [`HilbertError::NonFiniteCoordinate`],
+/// [`HilbertError::NonFiniteNormalizedCoordinate`], or
+/// [`HilbertError::QuantizedCoordinateConversionFailed`] if coordinate
+/// quantization fails.
+///
+/// # Examples
+///
+/// ```rust
+/// use delaunay::prelude::geometry::CoordinateRange;
+/// use delaunay::prelude::ordering::{
+///     HilbertBitDepth, HilbertError, hilbert_sorted_indices_in_range,
+/// };
+///
+/// # fn main() -> Result<(), HilbertError> {
+/// let coords = vec![[0.9_f64, 0.9], [0.1, 0.1], [0.5, 0.5]];
+/// # let Ok(bounds) = CoordinateRange::try_new(0.0_f64, 1.0) else {
+/// #     return Ok(());
+/// # };
+/// let order = hilbert_sorted_indices_in_range(&coords, bounds, HilbertBitDepth::try_new(8)?)?;
+/// assert_eq!(order.len(), coords.len());
+/// # Ok(())
+/// # }
+/// ```
+pub fn hilbert_sorted_indices_in_range<T: CoordinateScalar, const D: usize>(
+    coords: &[[T; D]],
+    bounds: CoordinateRange<T>,
+    bits: HilbertBitDepth,
+) -> Result<Vec<usize>, HilbertError> {
+    let index_mode = HilbertIndexMode::try_new(bits)?;
+    let HilbertIndexMode::Positive(index_params) = index_mode else {
         return Ok((0..coords.len()).collect());
-    }
+    };
 
     let (max_val_u32, max_val_t) = quantization_scale::<T>(bits)?;
-    let bounds = parse_hilbert_bounds(bounds)?;
 
     let mut keyed: Vec<((u128, [u32; D]), usize)> = coords
         .iter()
         .enumerate()
         .map(|(i, c)| {
             let q = quantize_with_scale(c, bounds, bits, max_val_u32, max_val_t)?;
-            let idx = index_from_quantized(&q, bits);
+            let idx = index_from_quantized(&q, index_params);
             Ok(((idx, q), i))
         })
         .collect::<Result<_, HilbertError>>()?;
@@ -867,6 +1529,43 @@ mod tests {
         HilbertBitDepth::try_new(value).expect("test bit depth must be valid")
     }
 
+    fn positive_index_params<const D: usize>(bits: HilbertBitDepth) -> HilbertIndexParams<D> {
+        let HilbertIndexMode::Positive(params) =
+            HilbertIndexMode::<D>::try_new(bits).expect("test index parameters must be valid")
+        else {
+            panic!("test index parameters must be positive-dimensional");
+        };
+        params
+    }
+
+    struct LyingOrder {
+        values: std::vec::IntoIter<usize>,
+        reported_len: usize,
+    }
+
+    impl LyingOrder {
+        fn new(values: Vec<usize>, reported_len: usize) -> Self {
+            Self {
+                values: values.into_iter(),
+                reported_len,
+            }
+        }
+    }
+
+    impl Iterator for LyingOrder {
+        type Item = usize;
+
+        fn next(&mut self) -> Option<Self::Item> {
+            self.values.next()
+        }
+    }
+
+    impl ExactSizeIterator for LyingOrder {
+        fn len(&self) -> usize {
+            self.reported_len
+        }
+    }
+
     /// Asserts that the bulk pre-quantized API matches per-point Hilbert indexing.
     fn assert_prequantized_matches_hilbert_index<const D: usize>(
         coords: &[[f64; D]],
@@ -875,13 +1574,13 @@ mod tests {
     ) {
         let quantized: Vec<[u32; D]> = coords
             .iter()
-            .map(|c| hilbert_quantize(c, bounds, bits).unwrap())
+            .map(|c| try_hilbert_quantize(c, bounds, bits).unwrap())
             .collect();
         let indices_bulk =
             hilbert_indices_prequantized(&quantized, bits).expect("valid quantized points");
         let indices_individual: Vec<u128> = coords
             .iter()
-            .map(|c| hilbert_index(c, bounds, bits).unwrap())
+            .map(|c| try_hilbert_index(c, bounds, bits).unwrap())
             .collect();
 
         assert_eq!(indices_bulk, indices_individual);
@@ -918,9 +1617,9 @@ mod tests {
     #[test]
     fn test_hilbert_index_2d() {
         let bits = bit_depth(4);
-        let origin = hilbert_index(&[0.0_f64, 0.0], (0.0, 1.0), bits).unwrap();
-        let corner = hilbert_index(&[1.0_f64, 1.0], (0.0, 1.0), bits).unwrap();
-        let center = hilbert_index(&[0.5_f64, 0.5], (0.0, 1.0), bits).unwrap();
+        let origin = try_hilbert_index(&[0.0_f64, 0.0], (0.0, 1.0), bits).unwrap();
+        let corner = try_hilbert_index(&[1.0_f64, 1.0], (0.0, 1.0), bits).unwrap();
+        let center = try_hilbert_index(&[0.5_f64, 0.5], (0.0, 1.0), bits).unwrap();
 
         assert_eq!(origin, 0);
         assert_ne!(origin, center);
@@ -930,8 +1629,8 @@ mod tests {
     #[test]
     fn test_hilbert_index_3d() {
         let bits = bit_depth(8);
-        let origin = hilbert_index(&[0.0_f64, 0.0, 0.0], (-1.0, 1.0), bits).unwrap();
-        let corner = hilbert_index(&[1.0_f64, 1.0, 1.0], (-1.0, 1.0), bits).unwrap();
+        let origin = try_hilbert_index(&[0.0_f64, 0.0, 0.0], (-1.0, 1.0), bits).unwrap();
+        let corner = try_hilbert_index(&[1.0_f64, 1.0, 1.0], (-1.0, 1.0), bits).unwrap();
         assert_ne!(origin, corner);
     }
 
@@ -996,16 +1695,16 @@ mod tests {
         let coords: Vec<[f64; 2]> =
             vec![[0.9, 0.9], [0.1, 0.1], [0.5, 0.5], [0.1, 0.9], [0.9, 0.1]];
         let bits = bit_depth(16);
-        let order = hilbert_sorted_indices(&coords, (0.0, 1.0), bits).unwrap();
+        let order = try_hilbert_sorted_indices(&coords, (0.0, 1.0), bits).unwrap();
         assert_eq!(order.len(), coords.len());
 
         // Apply the ordering to a parallel payload.
         let mut payload: Vec<usize> = (0..coords.len()).collect();
-        hilbert_sort_by_stable(&mut payload, (0.0_f64, 1.0), bits, |&i| coords[i]).unwrap();
+        try_hilbert_sort_by_stable(&mut payload, (0.0_f64, 1.0), bits, |&i| coords[i]).unwrap();
 
         // Sorting by stable helper should be deterministic.
         let mut payload2: Vec<usize> = (0..coords.len()).collect();
-        hilbert_sort_by_stable(&mut payload2, (0.0_f64, 1.0), bits, |&i| coords[i]).unwrap();
+        try_hilbert_sort_by_stable(&mut payload2, (0.0_f64, 1.0), bits, |&i| coords[i]).unwrap();
         assert_eq!(payload, order);
         assert_eq!(payload, payload2);
     }
@@ -1014,11 +1713,11 @@ mod tests {
     fn test_sort_helpers_accept_stateful_coordinate_closures() {
         let coords: Vec<[f64; 2]> = vec![[0.9, 0.9], [0.1, 0.1], [0.5, 0.5]];
         let bits = bit_depth(8);
-        let expected_order = hilbert_sorted_indices(&coords, (0.0, 1.0), bits).unwrap();
+        let expected_order = try_hilbert_sorted_indices(&coords, (0.0, 1.0), bits).unwrap();
 
         let mut stable_calls = 0_usize;
         let mut stable_payload: Vec<usize> = (0..coords.len()).collect();
-        hilbert_sort_by_stable(&mut stable_payload, (0.0_f64, 1.0), bits, |&i| {
+        try_hilbert_sort_by_stable(&mut stable_payload, (0.0_f64, 1.0), bits, |&i| {
             stable_calls += 1;
             coords[i]
         })
@@ -1028,7 +1727,7 @@ mod tests {
 
         let mut unstable_calls = 0_usize;
         let mut unstable_payload: Vec<usize> = (0..coords.len()).collect();
-        hilbert_sort_by_unstable(&mut unstable_payload, (0.0_f64, 1.0), bits, |&i| {
+        try_hilbert_sort_by_unstable(&mut unstable_payload, (0.0_f64, 1.0), bits, |&i| {
             unstable_calls += 1;
             coords[i]
         })
@@ -1042,10 +1741,10 @@ mod tests {
         let coords: Vec<[f64; 2]> =
             vec![[0.9, 0.9], [0.1, 0.1], [0.5, 0.5], [0.1, 0.9], [0.9, 0.1]];
         let bits = bit_depth(16);
-        let expected_order = hilbert_sorted_indices(&coords, (0.0, 1.0), bits).unwrap();
+        let expected_order = try_hilbert_sorted_indices(&coords, (0.0, 1.0), bits).unwrap();
 
         let mut payload: Vec<usize> = (0..coords.len()).collect();
-        hilbert_sort_by_unstable(&mut payload, (0.0_f64, 1.0), bits, |&i| coords[i]).unwrap();
+        try_hilbert_sort_by_unstable(&mut payload, (0.0_f64, 1.0), bits, |&i| coords[i]).unwrap();
 
         assert_eq!(payload, expected_order);
     }
@@ -1054,16 +1753,51 @@ mod tests {
     fn test_zero_dim_sort_helpers_noop() {
         let coords: Vec<[f64; 0]> = vec![[], [], []];
         let bits = bit_depth(8);
-        let order = hilbert_sorted_indices(&coords, (0.0, 1.0), bits).unwrap();
+        let order = try_hilbert_sorted_indices(&coords, (0.0, 1.0), bits).unwrap();
         assert_eq!(order, vec![0, 1, 2]);
 
         let mut stable_payload = vec![3, 2, 1];
-        hilbert_sort_by_stable(&mut stable_payload, (0.0_f64, 1.0), bits, |_| []).unwrap();
+        try_hilbert_sort_by_stable(&mut stable_payload, (0.0_f64, 1.0), bits, |_| []).unwrap();
         assert_eq!(stable_payload, vec![3, 2, 1]);
 
         let mut unstable_payload = vec![3, 2, 1];
-        hilbert_sort_by_unstable(&mut unstable_payload, (0.0_f64, 1.0), bits, |_| []).unwrap();
+        try_hilbert_sort_by_unstable(&mut unstable_payload, (0.0_f64, 1.0), bits, |_| []).unwrap();
         assert_eq!(unstable_payload, vec![3, 2, 1]);
+    }
+
+    #[test]
+    fn test_zero_dim_raw_bound_apis_reject_invalid_bounds() {
+        let bits = bit_depth(8);
+        let coords = [0.0_f64; 0];
+        let coordinate_batch = vec![coords; 3];
+        let mut payload = vec![3, 2, 1];
+
+        assert_matches!(
+            try_hilbert_quantize(&coords, (f64::NAN, 1.0), bits),
+            Err(HilbertError::NonFiniteBounds {
+                lower_bound_finite: false,
+                upper_bound_finite: true
+            })
+        );
+        assert_matches!(
+            try_hilbert_index(&coords, (1.0, 1.0), bits),
+            Err(HilbertError::NonIncreasingBounds {
+                ordering: CoordinateRangeOrdering::Equal
+            })
+        );
+        assert_matches!(
+            try_hilbert_sorted_indices(&coordinate_batch, (1.0, 0.0), bits),
+            Err(HilbertError::NonIncreasingBounds {
+                ordering: CoordinateRangeOrdering::Decreasing
+            })
+        );
+        assert_matches!(
+            try_hilbert_sort_by_stable(&mut payload, (f64::NEG_INFINITY, 1.0), bits, |_| coords),
+            Err(HilbertError::NonFiniteBounds {
+                lower_bound_finite: false,
+                upper_bound_finite: true
+            })
+        );
     }
 
     #[test]
@@ -1087,8 +1821,135 @@ mod tests {
     }
 
     #[test]
+    fn test_quantize_in_range_matches_tuple_boundary() {
+        let bits = bit_depth(8);
+        let range = CoordinateRange::try_new(0.0_f64, 1.0).unwrap();
+
+        let parsed = try_hilbert_quantize(&[0.25_f64, 0.75], range.bounds(), bits).unwrap();
+        let prevalidated = hilbert_quantize_in_range(&[0.25_f64, 0.75], range, bits).unwrap();
+
+        assert_eq!(prevalidated, parsed);
+    }
+
+    #[test]
+    fn test_quantized_batch_carries_prequantized_validation() {
+        let bits = bit_depth(2);
+        let quantized = [[0_u32, 0], [1, 2], [3, 3]];
+        let batch = HilbertQuantizedBatch::try_new(&quantized, bits).unwrap();
+
+        assert_eq!(batch.coordinates(), quantized.as_slice());
+        assert_eq!(batch.bits(), bits);
+
+        let checked = hilbert_indices_prequantized(&quantized, bits).unwrap();
+        assert_eq!(batch.indices(), checked);
+        assert_eq!(hilbert_indices_for_quantized_batch(batch), checked);
+    }
+
+    #[test]
+    fn test_quantized_batch_rejects_out_of_range_coordinate() {
+        let bits = bit_depth(2);
+        let quantized = [[0_u32, 0], [4, 1]];
+        let result = HilbertQuantizedBatch::try_new(&quantized, bits);
+
+        assert_matches!(
+            result,
+            Err(HilbertError::PrequantizedCoordinateOutOfRange {
+                bits: 2,
+                max_grid_value: 3,
+                point_index: 1,
+                coordinate_index: 0,
+                coordinate: 4
+            })
+        );
+    }
+
+    #[test]
+    fn test_quantized_batch_rejects_index_overflow() {
+        let quantized = [[1_u32, 2, 3, 4, 5]];
+        let result = HilbertQuantizedBatch::try_new(&quantized, bit_depth(26));
+
+        assert_matches!(
+            result,
+            Err(HilbertError::IndexOverflow {
+                dimension: 5,
+                bits: 26,
+                total_bits: 130
+            })
+        );
+    }
+
+    #[test]
+    fn test_quantized_batch_handles_zero_dimension() {
+        let bits = bit_depth(8);
+        let quantized = [[], [], []];
+        let batch = HilbertQuantizedBatch::try_new(&quantized, bits).unwrap();
+
+        assert_eq!(batch.coordinates(), quantized.as_slice());
+        assert_eq!(batch.bits(), bits);
+        assert_eq!(batch.indices(), vec![0_u128, 0_u128, 0_u128]);
+        assert_eq!(
+            hilbert_indices_for_quantized_batch(batch),
+            vec![0_u128, 0_u128, 0_u128]
+        );
+    }
+
+    #[test]
+    fn test_quantize_batch_in_range_matches_two_step_path() {
+        let bits = bit_depth(8);
+        let bounds = CoordinateRange::try_new(-2.0_f64, 3.0).unwrap();
+        let points = [[-2.0_f64, -1.0], [-1.5, 0.25], [0.1, -0.7], [3.0, 3.0]];
+
+        // Original two-step path: per-point quantize, then bulk index.
+        let two_step: Vec<[u32; 2]> = points
+            .iter()
+            .map(|p| hilbert_quantize_in_range(p, bounds, bits).unwrap())
+            .collect();
+        let two_step_indices = hilbert_indices_prequantized(&two_step, bits).unwrap();
+
+        let batch = hilbert_quantize_batch_in_range(&points, bounds, bits, |p| *p).unwrap();
+        assert_eq!(batch.coordinates(), two_step.as_slice());
+        assert_eq!(batch.bits(), bits);
+        assert_eq!(batch.len(), points.len());
+        assert!(!batch.is_empty());
+
+        let (indices, quantized) = batch.into_indices_and_coordinates();
+        assert_eq!(quantized, two_step);
+        assert_eq!(indices, two_step_indices);
+    }
+
+    #[test]
+    fn test_quantize_batch_in_range_handles_zero_dimension() {
+        let bits = bit_depth(8);
+        let bounds = CoordinateRange::try_new(0.0_f64, 1.0).unwrap();
+        let items = [(), (), ()];
+
+        let batch =
+            hilbert_quantize_batch_in_range(&items, bounds, bits, |()| [0.0_f64; 0]).unwrap();
+        assert_eq!(batch.len(), 3);
+        assert!(!batch.is_empty());
+        assert_eq!(batch.indices(), vec![0_u128, 0_u128, 0_u128]);
+        assert_eq!(batch.into_coordinates(), vec![[0_u32; 0]; 3]);
+    }
+
+    #[test]
+    fn test_quantize_batch_in_range_rejects_index_overflow() {
+        let bits = bit_depth(26);
+        let bounds = CoordinateRange::try_new(0.0_f64, 1.0).unwrap();
+        let items = [[0.0_f64; 5]];
+
+        assert_matches!(
+            hilbert_quantize_batch_in_range(&items, bounds, bits, |p| *p),
+            Err(HilbertError::IndexOverflow {
+                dimension: 5,
+                bits: 26,
+                total_bits: 130
+            })
+        );
+    }
+
+    #[test]
     fn test_quantize_rejects_nonfinite_bounds() {
-        let result = hilbert_quantize(&[0.5_f64], (f64::NAN, 1.0), bit_depth(8));
+        let result = try_hilbert_quantize(&[0.5_f64], (f64::NAN, 1.0), bit_depth(8));
 
         assert_eq!(
             result,
@@ -1098,7 +1959,8 @@ mod tests {
             })
         );
 
-        let both_non_finite = hilbert_quantize(&[0.5_f64], (f64::NAN, f64::INFINITY), bit_depth(8));
+        let both_non_finite =
+            try_hilbert_quantize(&[0.5_f64], (f64::NAN, f64::INFINITY), bit_depth(8));
         assert_eq!(
             both_non_finite,
             Err(HilbertError::NonFiniteBounds {
@@ -1110,14 +1972,14 @@ mod tests {
 
     #[test]
     fn test_quantize_rejects_nonfinite_extent() {
-        let result = hilbert_quantize(&[0.0_f64], (-f64::MAX, f64::MAX), bit_depth(8));
+        let result = try_hilbert_quantize(&[0.0_f64], (-f64::MAX, f64::MAX), bit_depth(8));
 
         assert_eq!(result, Err(HilbertError::NonFiniteBoundsExtent {}));
     }
 
     #[test]
     fn test_quantize_rejects_nonfinite_coordinate() {
-        let result = hilbert_quantize(&[0.25_f64, f64::INFINITY], (0.0, 1.0), bit_depth(8));
+        let result = try_hilbert_quantize(&[0.25_f64, f64::INFINITY], (0.0, 1.0), bit_depth(8));
 
         assert_eq!(
             result,
@@ -1129,7 +1991,8 @@ mod tests {
 
     #[test]
     fn test_quantize_rejects_nonfinite_normalized() {
-        let result = hilbert_quantize(&[f64::MAX], (-f64::MAX / 2.0, f64::MAX / 2.0), bit_depth(8));
+        let result =
+            try_hilbert_quantize(&[f64::MAX], (-f64::MAX / 2.0, f64::MAX / 2.0), bit_depth(8));
 
         assert_eq!(
             result,
@@ -1144,7 +2007,8 @@ mod tests {
         let coords = [[0.5_f64], [f64::NAN], [0.25]];
         let mut payload = vec![0_usize, 1, 2];
 
-        let result = hilbert_sort_by_stable(&mut payload, (0.0, 1.0), bit_depth(8), |&i| coords[i]);
+        let result =
+            try_hilbert_sort_by_stable(&mut payload, (0.0, 1.0), bit_depth(8), |&i| coords[i]);
 
         assert_eq!(
             result,
@@ -1156,8 +2020,84 @@ mod tests {
     }
 
     #[test]
+    fn test_apply_order_rejects_length_mismatch_without_reordering() {
+        let mut payload = vec![10, 20, 30];
+        let result = apply_order(&mut payload, [0_usize, 1].into_iter());
+
+        assert_eq!(payload, vec![10, 20, 30]);
+        assert_matches!(
+            result,
+            Err(HilbertError::InvalidSortPermutationLength {
+                item_count: 3,
+                permutation_count: 2
+            })
+        );
+    }
+
+    #[test]
+    fn test_apply_order_rejects_out_of_range_index_without_reordering() {
+        let mut payload = vec![10, 20, 30];
+        let result = apply_order(&mut payload, [0_usize, 3, 1].into_iter());
+
+        assert_eq!(payload, vec![10, 20, 30]);
+        assert_matches!(
+            result,
+            Err(HilbertError::InvalidSortPermutationIndex {
+                permutation_index: 1,
+                item_index: 3,
+                item_count: 3
+            })
+        );
+    }
+
+    #[test]
+    fn test_apply_order_rejects_duplicate_index_without_reordering() {
+        let mut payload = vec![10, 20, 30];
+        let result = apply_order(&mut payload, [0_usize, 1, 1].into_iter());
+
+        assert_eq!(payload, vec![10, 20, 30]);
+        assert_matches!(
+            result,
+            Err(HilbertError::InvalidSortPermutationDuplicate {
+                permutation_index: 2,
+                item_index: 1
+            })
+        );
+    }
+
+    #[test]
+    fn test_apply_order_rejects_short_iterator_length_lie_without_reordering() {
+        let mut payload = vec![10, 20, 30];
+        let result = apply_order(&mut payload, LyingOrder::new(vec![0, 1], 3));
+
+        assert_eq!(payload, vec![10, 20, 30]);
+        assert_matches!(
+            result,
+            Err(HilbertError::InvalidSortPermutationLength {
+                item_count: 3,
+                permutation_count: 2
+            })
+        );
+    }
+
+    #[test]
+    fn test_apply_order_rejects_long_iterator_length_lie_without_reordering() {
+        let mut payload = vec![10, 20, 30];
+        let result = apply_order(&mut payload, LyingOrder::new(vec![0, 1, 2, 0], 3));
+
+        assert_eq!(payload, vec![10, 20, 30]);
+        assert_matches!(
+            result,
+            Err(HilbertError::InvalidSortPermutationLength {
+                item_count: 3,
+                permutation_count: 4
+            })
+        );
+    }
+
+    #[test]
     fn test_quantize_clamps_f64_endpoint() {
-        let q = hilbert_quantize(&[1.0], (0.0, 1.0), bit_depth(31)).unwrap();
+        let q = try_hilbert_quantize(&[1.0], (0.0, 1.0), bit_depth(31)).unwrap();
 
         assert_eq!(q, [(1_u32 << 31) - 1]);
     }
@@ -1170,10 +2110,11 @@ mod tests {
         let n: u32 = 1_u32 << bits;
 
         let mut points: Vec<([u32; 2], u128)> = Vec::with_capacity((n * n) as usize);
+        let params = positive_index_params::<2>(bit_depth(bits));
         for x in 0..n {
             for y in 0..n {
                 let q = [x, y];
-                let idx = index_from_quantized(&q, bit_depth(bits));
+                let idx = index_from_quantized(&q, params);
                 points.push((q, idx));
             }
         }
@@ -1204,12 +2145,13 @@ mod tests {
         let n: u32 = 1_u32 << bits;
 
         let mut points: Vec<([u32; 4], u128)> = Vec::with_capacity((n * n * n * n) as usize);
+        let params = positive_index_params::<4>(bit_depth(bits));
         for x in 0..n {
             for y in 0..n {
                 for z in 0..n {
                     for w in 0..n {
                         let q = [x, y, z, w];
-                        let idx = index_from_quantized(&q, bit_depth(bits));
+                        let idx = index_from_quantized(&q, params);
                         points.push((q, idx));
                     }
                 }
@@ -1239,22 +2181,22 @@ mod tests {
     #[test]
     fn test_point_coords_work_with_hilbert() {
         let p: Point<f64, 2> = Point::new([0.25, 0.75]);
-        let idx = hilbert_index(p.coords(), (0.0, 1.0), bit_depth(16)).unwrap();
+        let idx = try_hilbert_index(p.coords(), (0.0, 1.0), bit_depth(16)).unwrap();
         assert!(idx > 0);
     }
 
     #[test]
     fn test_hilbert_bits_boundaries() {
         let coarsest_bits = bit_depth(1);
-        let origin = hilbert_index(&[0.0_f64, 0.0], (0.0, 1.0), coarsest_bits).unwrap();
-        let corner = hilbert_index(&[1.0_f64, 1.0], (0.0, 1.0), coarsest_bits).unwrap();
+        let origin = try_hilbert_index(&[0.0_f64, 0.0], (0.0, 1.0), coarsest_bits).unwrap();
+        let corner = try_hilbert_index(&[1.0_f64, 1.0], (0.0, 1.0), coarsest_bits).unwrap();
         tracing::debug!(origin, corner, "bits=1 boundaries");
         assert_eq!(origin, 0, "bits=1 origin should map to 0");
         assert_ne!(origin, corner, "bits=1 should distinguish corners");
 
         let finest_bits = bit_depth(31);
-        let origin_31 = hilbert_index(&[0.0_f64, 0.0], (0.0, 1.0), finest_bits).unwrap();
-        let corner_31 = hilbert_index(&[1.0_f64, 1.0], (0.0, 1.0), finest_bits).unwrap();
+        let origin_31 = try_hilbert_index(&[0.0_f64, 0.0], (0.0, 1.0), finest_bits).unwrap();
+        let corner_31 = try_hilbert_index(&[1.0_f64, 1.0], (0.0, 1.0), finest_bits).unwrap();
         tracing::debug!(origin_31, corner_31, "bits=31 boundaries");
         assert_eq!(origin_31, 0, "bits=31 origin should map to 0");
         assert_ne!(origin_31, corner_31, "bits=31 should distinguish corners");
@@ -1264,10 +2206,10 @@ mod tests {
     fn test_hilbert_index_1d_monotonic() {
         let bounds = (0.0_f64, 1.0_f64);
         let bits = bit_depth(8);
-        let a = hilbert_index(&[0.0_f64], bounds, bits).unwrap();
-        let b = hilbert_index(&[0.25_f64], bounds, bits).unwrap();
-        let c = hilbert_index(&[0.5_f64], bounds, bits).unwrap();
-        let d = hilbert_index(&[1.0_f64], bounds, bits).unwrap();
+        let a = try_hilbert_index(&[0.0_f64], bounds, bits).unwrap();
+        let b = try_hilbert_index(&[0.25_f64], bounds, bits).unwrap();
+        let c = try_hilbert_index(&[0.5_f64], bounds, bits).unwrap();
+        let d = try_hilbert_index(&[1.0_f64], bounds, bits).unwrap();
         tracing::debug!(a, b, c, d, "1d indices");
         assert!(
             a < b && b < c && c < d,
@@ -1282,13 +2224,13 @@ mod tests {
         let bits = bit_depth(8);
 
         assert_matches!(
-            hilbert_quantize(&coords, bounds, bits),
+            try_hilbert_quantize(&coords, bounds, bits),
             Err(HilbertError::NonIncreasingBounds {
                 ordering: CoordinateRangeOrdering::Equal
             })
         );
         assert_matches!(
-            hilbert_index(&coords, bounds, bits),
+            try_hilbert_index(&coords, bounds, bits),
             Err(HilbertError::NonIncreasingBounds {
                 ordering: CoordinateRangeOrdering::Equal
             })
@@ -1302,7 +2244,7 @@ mod tests {
         let bits = bit_depth(8);
 
         assert_matches!(
-            hilbert_quantize(&coords, bounds, bits),
+            try_hilbert_quantize(&coords, bounds, bits),
             Err(HilbertError::NonIncreasingBounds {
                 ordering: CoordinateRangeOrdering::Decreasing
             })
@@ -1314,7 +2256,7 @@ mod tests {
         let bounds = (0.0_f64, 1.0_f64);
         let bits = bit_depth(4);
         let coords = [-1.0_f64, 2.0_f64];
-        let q = hilbert_quantize(&coords, bounds, bits).unwrap();
+        let q = try_hilbert_quantize(&coords, bounds, bits).unwrap();
         let max_val = (1_u32 << bits.get()) - 1;
         tracing::debug!(?q, max_val, "clamp quantize");
         assert_eq!(
@@ -1323,8 +2265,8 @@ mod tests {
             "out-of-range coords should clamp to bounds"
         );
 
-        let idx = hilbert_index(&coords, bounds, bits).unwrap();
-        let idx_clamped = hilbert_index(&[0.0_f64, 1.0_f64], bounds, bits).unwrap();
+        let idx = try_hilbert_index(&coords, bounds, bits).unwrap();
+        let idx_clamped = try_hilbert_index(&[0.0_f64, 1.0_f64], bounds, bits).unwrap();
         tracing::debug!(idx, idx_clamped, "clamp index");
         assert_eq!(
             idx, idx_clamped,
@@ -1347,7 +2289,7 @@ mod tests {
         // Quantize all coordinates
         let quantized: Vec<[u32; 3]> = coords
             .iter()
-            .map(|c| hilbert_quantize(c, bounds, bits).unwrap())
+            .map(|c| try_hilbert_quantize(c, bounds, bits).unwrap())
             .collect();
 
         // Compute indices via bulk API
@@ -1357,7 +2299,7 @@ mod tests {
         // Compute indices individually
         let indices_individual: Vec<u128> = coords
             .iter()
-            .map(|c| hilbert_index(c, bounds, bits).unwrap())
+            .map(|c| try_hilbert_index(c, bounds, bits).unwrap())
             .collect();
 
         assert_eq!(indices_bulk.len(), coords.len());
@@ -1444,7 +2386,7 @@ mod tests {
         ];
 
         for (coord, expected_cell) in test_cases {
-            let q = hilbert_quantize(&[coord], bounds, bits).unwrap();
+            let q = try_hilbert_quantize(&[coord], bounds, bits).unwrap();
             assert_eq!(
                 q[0], expected_cell,
                 "coordinate {coord} should quantize to cell {expected_cell}, got {}",
@@ -1463,7 +2405,7 @@ mod tests {
         let mut cell_counts = [0_usize; 4];
         for i in 0..samples {
             let coord = f64::from(i) / f64::from(samples);
-            let q = hilbert_quantize(&[coord], bounds, bits).unwrap();
+            let q = try_hilbert_quantize(&[coord], bounds, bits).unwrap();
             cell_counts[q[0] as usize] += 1;
         }
 

@@ -1063,9 +1063,12 @@ pub mod prelude {
     // In particular, exporting a local `uuid` module conflicts with the external `uuid`
     // crate name, making `use uuid::Uuid;` ambiguous for downstream users.
     pub use self::ordering::{
-        HilbertBitDepth, HilbertError, MAX_HILBERT_BITS, hilbert_index,
-        hilbert_indices_prequantized, hilbert_quantize, hilbert_sort_by_stable,
-        hilbert_sort_by_unstable, hilbert_sorted_indices,
+        HilbertBitDepth, HilbertError, HilbertQuantizedBatch, HilbertQuantizedVec,
+        MAX_HILBERT_BITS, hilbert_index_in_range, hilbert_indices_for_quantized_batch,
+        hilbert_indices_prequantized, hilbert_quantize_batch_in_range, hilbert_quantize_in_range,
+        hilbert_sort_by_stable_in_range, hilbert_sort_by_unstable_in_range,
+        hilbert_sorted_indices_in_range, try_hilbert_index, try_hilbert_quantize,
+        try_hilbert_sort_by_stable, try_hilbert_sort_by_unstable, try_hilbert_sorted_indices,
     };
     pub use crate::core::util::{
         DeduplicationError, DelaunayValidationError, dedup_vertices_epsilon, dedup_vertices_exact,
@@ -1615,14 +1618,14 @@ pub mod prelude {
         };
         pub use crate::geometry::util::{
             InvalidPositiveScalar, RandomPointGenerationError, RandomTriangulationBuilder,
-            generate_grid_points, generate_poisson_points, generate_poisson_points_in_range,
-            generate_random_points, generate_random_points_in_ball,
+            generate_grid_points, generate_poisson_points_in_range, generate_random_points_in_ball,
             generate_random_points_in_ball_seeded, generate_random_points_in_range,
             generate_random_points_in_range_seeded, generate_random_points_periodic,
-            generate_random_points_seeded, generate_random_triangulation,
             generate_random_triangulation_in_range,
             generate_random_triangulation_in_range_with_topology_guarantee,
-            generate_random_triangulation_with_topology_guarantee, scaled_bounds_by_point_count,
+            scaled_bounds_by_point_count, try_generate_poisson_points, try_generate_random_points,
+            try_generate_random_points_seeded, try_generate_random_triangulation,
+            try_generate_random_triangulation_with_topology_guarantee,
         };
     }
 
@@ -1635,20 +1638,24 @@ pub mod prelude {
     /// # Examples
     ///
     /// ```rust
-    /// use delaunay::prelude::ordering::{HilbertBitDepth, HilbertError, hilbert_sorted_indices};
+    /// use delaunay::prelude::ordering::{HilbertBitDepth, HilbertError, try_hilbert_sorted_indices};
     ///
     /// let coords = [[0.9_f64, 0.9], [0.1, 0.1], [0.5, 0.5]];
     /// let bits = HilbertBitDepth::try_new(8)?;
-    /// let order = hilbert_sorted_indices(&coords, (0.0, 1.0), bits)?;
+    /// let order = try_hilbert_sorted_indices(&coords, (0.0, 1.0), bits)?;
     ///
     /// assert_eq!(order.len(), coords.len());
     /// # Ok::<(), HilbertError>(())
     /// ```
     pub mod ordering {
         pub use crate::core::util::{
-            HilbertBitDepth, HilbertError, MAX_HILBERT_BITS, hilbert_index,
-            hilbert_indices_prequantized, hilbert_quantize, hilbert_sort_by_stable,
-            hilbert_sort_by_unstable, hilbert_sorted_indices,
+            HilbertBitDepth, HilbertError, HilbertQuantizedBatch, HilbertQuantizedVec,
+            MAX_HILBERT_BITS, hilbert_index_in_range, hilbert_indices_for_quantized_batch,
+            hilbert_indices_prequantized, hilbert_quantize_batch_in_range,
+            hilbert_quantize_in_range, hilbert_sort_by_stable_in_range,
+            hilbert_sort_by_unstable_in_range, hilbert_sorted_indices_in_range, try_hilbert_index,
+            try_hilbert_quantize, try_hilbert_sort_by_stable, try_hilbert_sort_by_unstable,
+            try_hilbert_sorted_indices,
         };
     }
 

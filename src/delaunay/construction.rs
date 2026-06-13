@@ -70,12 +70,13 @@ use crate::core::tds::{TdsConstructionError, TdsError};
 use crate::core::traits::data_type::DataType;
 use crate::core::triangulation::Triangulation;
 use crate::core::util::{
-    HilbertBitDepth, coords_equal_exact, coords_within_epsilon, hilbert_indices_prequantized,
-    hilbert_quantize, stable_hash_u64_slice,
+    HilbertBitDepth, coords_equal_exact, coords_within_epsilon, hilbert_quantize_batch_in_range,
+    stable_hash_u64_slice,
 };
 use crate::core::validation::{TopologyGuarantee, TriangulationValidationError, ValidationPolicy};
 use crate::core::vertex::Vertex;
 use crate::diagnostics::{BatchLocalRepairTrigger, ConstructionTelemetry, LocalRepairSample};
+use crate::geometry::coordinate_range::CoordinateRange;
 use crate::geometry::kernel::{AdaptiveKernel, Kernel};
 use crate::geometry::point::Point;
 use crate::geometry::traits::coordinate::{Coordinate, CoordinateScalar, CoordinateValues};
@@ -1838,7 +1839,7 @@ fn hilbert_bits_per_coord<const D: usize>() -> Option<HilbertBitDepth> {
         return None;
     };
 
-    // `hilbert_index` encodes D coordinates with `bits` bits each into a `u128`.
+    // Hilbert indexing encodes D coordinates with `bits` bits each into a `u128`.
     // Use as many bits as possible (up to the `hilbert` module's `bits <= 31` bound).
     let bits_per_coord = (128_u32 / d_u32).min(31);
     HilbertBitDepth::try_new(bits_per_coord).ok()
@@ -1861,7 +1862,7 @@ where
         .collect()
 }
 
-/// Sort key for Hilbert ordering: `(hilbert_index, quantized_coords, vertex, input_index)`.
+/// Sort key for Hilbert ordering: `(Hilbert index, quantized coords, vertex, input index)`.
 type HilbertSortKey<T, U, const D: usize> = (u128, [u32; D], Vertex<T, U, D>, usize);
 
 /// Orders vertices along a Hilbert curve to improve insertion locality while
@@ -1911,39 +1912,34 @@ where
         return order_vertices_lexicographic(vertices);
     };
 
-    let bounds = (min_t, max_t);
-
-    // Quantize all coordinates.
-    let quantized: Result<Vec<[u32; D]>, ()> = vertices
-        .iter()
-        .map(|vertex| {
-            hilbert_quantize(vertex.point().coords(), bounds, bits_per_coord).map_err(|_| ())
-        })
-        .collect();
-
-    let Ok(quantized) = quantized else {
-        // On quantization error, fall back to true lexicographic ordering of original coordinates
+    let Ok(bounds) = CoordinateRange::try_new(min_t, max_t) else {
         return order_vertices_lexicographic(vertices);
     };
 
-    // Compute all indices in bulk.
-    let Ok(indices) = hilbert_indices_prequantized(&quantized, bits_per_coord) else {
-        // On bulk index computation error, fall back to true lexicographic ordering
+    // Quantize all coordinates and compute Hilbert indices in one
+    // proof-carrying pass. `hilbert_quantize_batch_in_range` validates the
+    // index width and quantization scale once, clamps every coordinate into
+    // the bit-depth grid, and returns a batch whose indices are infallible, so
+    // no per-coordinate range rescan is repeated here.
+    let Ok(batch) = hilbert_quantize_batch_in_range(&vertices, bounds, bits_per_coord, |vertex| {
+        *vertex.point().coords()
+    }) else {
+        // On quantization error, fall back to true lexicographic ordering.
         return order_vertices_lexicographic(vertices);
     };
+
+    let (indices, quantized) = batch.into_indices_and_coordinates();
+    if vertices.len() != quantized.len() || vertices.len() != indices.len() {
+        return order_vertices_lexicographic(vertices);
+    }
+
     // Pair indices with vertices, quantized coords, and input indices.
     let mut keyed: Vec<HilbertSortKey<T, U, D>> = vertices
         .into_iter()
+        .zip(quantized)
+        .zip(indices)
         .enumerate()
-        .map(|(input_index, vertex)| {
-            let idx = indices
-                .get(input_index)
-                .copied()
-                // Fallback to input index directly as u128 (no u32 truncation)
-                .unwrap_or(input_index as u128);
-            let q = quantized[input_index];
-            (idx, q, vertex, input_index)
-        })
+        .map(|(input_index, ((vertex, q), idx))| (idx, q, vertex, input_index))
         .collect();
 
     keyed.sort_by(

@@ -666,6 +666,7 @@ pub trait TopologicalSpace {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use approx::assert_relative_eq;
     use std::assert_matches;
 
     #[test]
@@ -917,6 +918,26 @@ mod tests {
             infinite,
             ToroidalDomainError::InvalidPeriod { axis: 1, period }
                 if period.is_infinite()
+        );
+    }
+
+    #[test]
+    fn test_toroidal_domain_try_from_and_into_periods_preserve_validation() {
+        let domain = ToroidalDomain::<3>::try_from([1.0, 2.0, 4.0]).unwrap();
+        assert_relative_eq!(domain.periods()[0], 1.0);
+        assert_relative_eq!(domain.periods()[1], 2.0);
+        assert_relative_eq!(domain.periods()[2], 4.0);
+
+        let periods = domain.into_periods();
+        assert_relative_eq!(periods[0], 1.0);
+        assert_relative_eq!(periods[1], 2.0);
+        assert_relative_eq!(periods[2], 4.0);
+
+        let invalid = ToroidalDomain::<3>::try_from([1.0, f64::NEG_INFINITY, 4.0]).unwrap_err();
+        assert_matches!(
+            invalid,
+            ToroidalDomainError::InvalidPeriod { axis: 1, period }
+                if period.is_infinite() && period.is_sign_negative()
         );
     }
 

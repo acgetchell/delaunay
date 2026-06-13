@@ -35,7 +35,7 @@ use delaunay::prelude::construction::{
     InvalidPositiveScalar as ConstructionInvalidPositiveScalar, RandomPointGenerationError,
     SimplexValidationError,
     SpatialIndexConstructionFailure as ConstructionSpatialIndexConstructionFailure,
-    TopologyGuarantee, Vertex, vertex,
+    TopologyGuarantee, ToroidalDomain as ConstructionToroidalDomain, Vertex, vertex,
 };
 use delaunay::prelude::delaunayize::{
     DelaunayTriangulationBuilder as DelaunayizeDelaunayTriangulationBuilder, DelaunayizeConfig,
@@ -51,7 +51,8 @@ use delaunay::prelude::diagnostics::{
 use delaunay::prelude::flips::BistellarFlips;
 use delaunay::prelude::generators::{
     CoordinateRange, CoordinateRangeError, InvalidPositiveScalar, RandomTriangulationBuilder,
-    generate_grid_points, generate_random_points_in_range_seeded, generate_random_points_seeded,
+    generate_grid_points, generate_random_points_in_range_seeded,
+    try_generate_random_points_seeded,
 };
 #[cfg(feature = "diagnostics")]
 use delaunay::prelude::geometry::{AdaptiveKernel, Coordinate};
@@ -67,8 +68,11 @@ use delaunay::prelude::insertion::{
     NeighborRebuildError, Tds as InsertionTds, TdsMutationError, repair_neighbor_pointers_local,
 };
 use delaunay::prelude::ordering::{
-    HilbertBitDepth, HilbertError, MAX_HILBERT_BITS, hilbert_index, hilbert_indices_prequantized,
-    hilbert_quantize, hilbert_sort_by_stable, hilbert_sort_by_unstable, hilbert_sorted_indices,
+    HilbertBitDepth, HilbertError, HilbertQuantizedBatch, MAX_HILBERT_BITS, hilbert_index_in_range,
+    hilbert_indices_for_quantized_batch, hilbert_indices_prequantized, hilbert_quantize_in_range,
+    hilbert_sort_by_stable_in_range, hilbert_sort_by_unstable_in_range,
+    hilbert_sorted_indices_in_range, try_hilbert_index, try_hilbert_quantize,
+    try_hilbert_sort_by_stable, try_hilbert_sort_by_unstable, try_hilbert_sorted_indices,
 };
 use delaunay::prelude::query::{ConvexHull, QueryError};
 use delaunay::prelude::repair::{
@@ -87,7 +91,8 @@ use delaunay::prelude::topology::spaces::{
     GlobalTopology, ToroidalConstructionMode, ToroidalDomain, ToroidalDomainError,
 };
 use delaunay::prelude::topology::validation::{
-    ManifoldError, RidgeVertices, RidgeVerticesError, ridge_star_simplices,
+    GlobalTopology as TopologyValidationGlobalTopology, ManifoldError, RidgeVertices,
+    RidgeVerticesError, ridge_star_simplices,
 };
 use delaunay::prelude::triangulation::{
     FacetIssuesMap as TriangulationFacetIssuesMap, FastKernel as TriangulationFastKernel,
@@ -222,7 +227,8 @@ fn root_exports_cover_flattened_public_api() -> Result<(), RootApiExportTestErro
 
 #[test]
 fn preludes_cover_bench_apis() -> Result<(), PreludeExportTestError> {
-    let _generated_points: Vec<Point<f64, 2>> = generate_random_points_seeded(3, (0.0, 1.0), 42)?;
+    let _generated_points: Vec<Point<f64, 2>> =
+        try_generate_random_points_seeded(3, (0.0, 1.0), 42)?;
 
     let vertices: Vec<Vertex<f64, (), 3>> = vec![
         vertex!([0.0, 0.0, 0.0]),
@@ -669,6 +675,12 @@ fn topology_spaces_prelude_covers_toroidal_domain_api() -> Result<(), PreludeExp
     assert_relative_eq!(domain.periods()[2], 3.0);
     assert_eq!(domain.period(1), Some(2.0));
 
+    let construction_domain = ConstructionToroidalDomain::<3>::try_new([1.0, 2.0, 3.0])?;
+    assert_relative_eq!(construction_domain.periods()[2], 3.0);
+
+    let validation_topology = TopologyValidationGlobalTopology::<3>::default();
+    assert!(validation_topology.is_euclidean());
+
     let topology = GlobalTopology::try_toroidal(
         [1.0, 2.0, 3.0],
         ToroidalConstructionMode::PeriodicImagePoint,
@@ -862,26 +874,47 @@ fn ordering_prelude_covers_hilbert_apis() -> Result<(), HilbertError> {
     let coords = [[0.9_f64, 0.9], [0.1, 0.1], [0.5, 0.5]];
     assert_eq!(MAX_HILBERT_BITS, 31);
     let bits = HilbertBitDepth::try_new(8)?;
-    let order = hilbert_sorted_indices(&coords, (0.0, 1.0), bits)?;
+    let order = try_hilbert_sorted_indices(&coords, (0.0, 1.0), bits)?;
     assert_eq!(order.len(), coords.len());
+    let bounds = CoordinateRange::try_new(0.0_f64, 1.0).expect("test bounds should be valid");
+    let range_order = hilbert_sorted_indices_in_range(&coords, bounds, bits)?;
+    assert_eq!(range_order, order);
 
     let quantized: Vec<[u32; 2]> = coords
         .iter()
-        .map(|coord| hilbert_quantize(coord, (0.0, 1.0), bits))
+        .map(|coord| try_hilbert_quantize(coord, (0.0, 1.0), bits))
         .collect::<Result<_, _>>()?;
+    let range_quantized = hilbert_quantize_in_range(&coords[0], bounds, bits)?;
+    assert_eq!(range_quantized, quantized[0]);
     let indices = hilbert_indices_prequantized(&quantized, bits)?;
     assert_eq!(indices.len(), coords.len());
+    let quantized_batch = HilbertQuantizedBatch::try_new(&quantized, bits)?;
+    assert_eq!(quantized_batch.coordinates(), quantized.as_slice());
+    assert_eq!(quantized_batch.bits(), bits);
+    assert_eq!(quantized_batch.indices(), indices);
+    assert_eq!(
+        hilbert_indices_for_quantized_batch(quantized_batch),
+        indices
+    );
 
-    let index = hilbert_index(&coords[0], (0.0, 1.0), bits)?;
+    let index = try_hilbert_index(&coords[0], (0.0, 1.0), bits)?;
     assert_eq!(index, indices[0]);
+    let range_index = hilbert_index_in_range(&coords[0], bounds, bits)?;
+    assert_eq!(range_index, index);
 
     let mut stable_payload = vec![0_usize, 1, 2];
-    hilbert_sort_by_stable(&mut stable_payload, (0.0, 1.0), bits, |&i| coords[i])?;
+    try_hilbert_sort_by_stable(&mut stable_payload, (0.0, 1.0), bits, |&i| coords[i])?;
     assert_eq!(stable_payload, order);
+    let mut range_stable_payload = vec![0_usize, 1, 2];
+    hilbert_sort_by_stable_in_range(&mut range_stable_payload, bounds, bits, |&i| coords[i])?;
+    assert_eq!(range_stable_payload, order);
 
     let mut unstable_payload = vec![0_usize, 1, 2];
-    hilbert_sort_by_unstable(&mut unstable_payload, (0.0, 1.0), bits, |&i| coords[i])?;
+    try_hilbert_sort_by_unstable(&mut unstable_payload, (0.0, 1.0), bits, |&i| coords[i])?;
     assert_eq!(unstable_payload, order);
+    let mut range_unstable_payload = vec![0_usize, 1, 2];
+    hilbert_sort_by_unstable_in_range(&mut range_unstable_payload, bounds, bits, |&i| coords[i])?;
+    assert_eq!(range_unstable_payload, order);
 
     Ok(())
 }
