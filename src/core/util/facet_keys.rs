@@ -126,9 +126,9 @@ pub(crate) enum PeriodicFacetKeyDerivationError {
 /// Computes a translation-invariant periodic facet key from lifted simplex vertices.
 ///
 /// `lifted_vertices` must represent one full lifted simplex as `(vertex_key, lattice_offset)` pairs.
-/// The facet opposite `facet_index` is selected keys are sorted for permutation
-/// invariance, and offsets are normalized against the first facet vertex so equivalent
-/// periodic facets hash identically.
+/// The facet opposite `facet_index` is selected first. Keys are sorted for
+/// permutation invariance, and offsets are normalized against the first facet
+/// vertex so equivalent periodic facets hash identically.
 pub(crate) fn periodic_facet_key_from_lifted_vertices<const D: usize>(
     lifted_vertices: &[(VertexKey, [i8; D])],
     facet_index: usize,

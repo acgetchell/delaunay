@@ -694,9 +694,7 @@ impl<U, const D: usize> PartialEq for Vertex<U, D> {
 }
 
 impl<U, const D: usize> PartialOrd for Vertex<U, D> {
-    /// Order of vertices is based on lexicographic order of coordinates using Point's `partial_cmp`.
-    /// This ensures consistent ordering with special floating-point values (NaN, infinity)
-    /// through `OrderedFloat` semantics.
+    /// Order of vertices is based on lexicographic order of their validated finite coordinates.
     #[inline]
     fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
         self.point.partial_cmp(&other.point)

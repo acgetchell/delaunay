@@ -31,9 +31,7 @@ use crate::core::triangulation::Triangulation;
 use crate::core::vertex::Vertex;
 use crate::geometry::kernel::Kernel;
 use crate::geometry::point::Point;
-use crate::geometry::traits::coordinate::{
-    CoordinateValues, DEFAULT_TOLERANCE_F64, F64_MANTISSA_DIGITS,
-};
+use crate::geometry::traits::coordinate::{CoordinateValues, DEFAULT_TOLERANCE_F64};
 use crate::locality::{
     append_live_unique_simplex_seeds, collect_local_exterior_conflict_seed_simplices,
     replace_simplices_and_record_removed, retain_simplices_and_record_removed,
@@ -182,6 +180,22 @@ fn cavity_conflict_error_summary(error: &ConflictError) -> String {
             message,
         } => {
             format!("simplex_data_access_failed simplex_key={simplex_key:?} message={message}")
+        }
+        ConflictError::InvalidSimplexArity {
+            simplex_key,
+            expected,
+            found,
+        } => {
+            format!(
+                "invalid_simplex_arity simplex_key={simplex_key:?} expected={expected} \
+                 found={found}"
+            )
+        }
+        ConflictError::MissingSimplexVertex {
+            simplex_key,
+            vertex_key,
+        } => {
+            format!("missing_simplex_vertex simplex_key={simplex_key:?} vertex_key={vertex_key:?}")
         }
         ConflictError::InternalInconsistency { site } => {
             format!("internal_inconsistency site={site}")
@@ -520,12 +534,8 @@ where
             self.estimate_duplicate_coordinate_tolerance(&original_coords, hint);
         self.ensure_duplicate_index_cell_size(index.as_deref_mut(), duplicate_tolerance);
 
-        // Base perturbation epsilon: ≈ √machine_epsilon for the scalar type.
-        let epsilon_value: f64 = if F64_MANTISSA_DIGITS <= 24 {
-            1e-4
-        } else {
-            1e-8
-        };
+        // Base perturbation epsilon: ≈ √machine_epsilon for f64.
+        let epsilon_value: f64 = 1e-8;
 
         for attempt in 0..=max_perturbation_attempts {
             stats.attempts = attempt + 1;
@@ -805,13 +815,9 @@ where
         best.map(|(_, simplex_key)| simplex_key)
     }
 
-    /// Chooses the relative duplicate-coordinate tolerance for the scalar precision.
+    /// Returns the f64 relative tolerance used for duplicate-coordinate detection.
     const fn duplicate_relative_tolerance() -> f64 {
-        if F64_MANTISSA_DIGITS <= 24 {
-            1e-6_f64
-        } else {
-            1e-10_f64
-        }
+        1e-10_f64
     }
 
     /// Keeps duplicate-scale estimates tied to existing geometry rather than

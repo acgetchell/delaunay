@@ -391,7 +391,8 @@ and per-insertion checks handle any remaining cases.
 - If you see retryable insertion errors, frequent perturbation retries, or skipped vertices,
   preprocess your input (dedup / rescale if appropriate).
 - Treat `InsertionOutcome::Skipped { .. }` from the best-effort API as an expected outcome on
-  pathological data; decide at the application level whether to drop the perturb/rescale your point set, or re-run with a different kernel.
+  pathological data; decide at the application level whether to drop the skipped point,
+  perturb or rescale your point set, or re-run with a different kernel.
 
 ## Current limitations
 

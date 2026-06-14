@@ -252,6 +252,7 @@ where
         if removal_candidates.is_empty() {
             // We had violations but couldn't pick any simplex — no progress.
             let remaining = facet_map.values().filter(|h| h.len() > 2).count();
+            prepare_error_return_topology(tds);
             return Err(PlManifoldRepairError::NoProgress {
                 over_shared_facets: remaining,
                 iterations: stats.iterations,
@@ -262,6 +263,7 @@ where
         // Check simplex-removal budget.
         let batch_size = removal_candidates.len();
         if stats.simplices_removed + batch_size > config.max_simplices_removed {
+            prepare_error_return_topology(tds);
             return Err(PlManifoldRepairError::BudgetExhausted {
                 iterations: stats.iterations,
                 simplices_removed: stats.simplices_removed,
@@ -297,19 +299,59 @@ where
         if validate_facet_degree(&facet_map).is_ok() {
             stats.succeeded = true;
             // Rebuild full neighbor/incidence pointers before returning.
-            tds.assign_neighbors().map_err(PlManifoldRepairError::Tds)?;
-            tds.assign_incident_simplices()
-                .map_err(|e| PlManifoldRepairError::Tds(e.into()))?;
+            rebuild_success_topology(tds)?;
             return Ok(stats);
         }
     }
 
+    prepare_error_return_topology(tds);
     Err(PlManifoldRepairError::BudgetExhausted {
         iterations: stats.iterations,
         simplices_removed: stats.simplices_removed,
         max_iterations: config.max_iterations,
         max_simplices_removed: config.max_simplices_removed,
     })
+}
+
+/// Rebuilds topology metadata before a successful PL-manifold repair result is observed.
+///
+/// Successful repair has restored the facet-degree invariant, so neighbor and
+/// incident-simplex metadata can be rebuilt strictly and any failure should be
+/// surfaced to the caller.
+///
+/// # Errors
+///
+/// Returns [`PlManifoldRepairError::Tds`] if neighbor assignment or
+/// incident-simplex assignment fails while restoring topology metadata.
+fn rebuild_success_topology<U, V, const D: usize>(
+    tds: &mut Tds<U, V, D>,
+) -> Result<(), PlManifoldRepairError> {
+    tds.assign_neighbors().map_err(PlManifoldRepairError::Tds)?;
+    tds.assign_incident_simplices()
+        .map_err(|e| PlManifoldRepairError::Tds(e.into()))
+}
+
+/// Best-effort topology metadata repair before returning a non-convergence error.
+///
+/// Error exits may still contain over-shared facets, so strict neighbor assignment
+/// can fail even though the intended public result is `NoProgress` or
+/// `BudgetExhausted`. This helper preserves that primary repair outcome while
+/// still repairing incident simplices and rebuilding neighbors when the remaining
+/// topology permits it.
+fn prepare_error_return_topology<U, V, const D: usize>(tds: &mut Tds<U, V, D>) {
+    if let Err(error) = tds.assign_incident_simplices() {
+        tracing::debug!(
+            ?error,
+            "PL-manifold repair could not rebuild incident simplices before error return"
+        );
+    }
+
+    if let Err(error) = tds.assign_neighbors() {
+        tracing::debug!(
+            ?error,
+            "PL-manifold repair could not rebuild neighbors before error return"
+        );
+    }
 }
 
 /// Deterministic quality score for a simplex: lower = better quality.
@@ -456,6 +498,7 @@ fn remove_orphaned_vertices<U, V, const D: usize>(
 mod tests {
     use super::*;
     use crate::triangulation::DelaunayTriangulation;
+    use slotmap::KeyData;
 
     // =============================================================================
     // HELPER FUNCTIONS
@@ -634,6 +677,48 @@ mod tests {
         tds
     }
 
+    /// Create a TDS that cannot be fully repaired in a single iteration.
+    fn make_multi_duplicate_overshared_tds() -> Tds<(), (), 3> {
+        let mut tds = make_overshared_tds();
+        let simplex_key = tds.simplex_keys().next().unwrap();
+        let vkeys = tds.simplex_vertices(simplex_key).unwrap();
+
+        for _ in 0..5 {
+            let dup_simplex = Simplex::try_new_with_data(vkeys.to_vec(), None).unwrap();
+            tds.insert_simplex_bypassing_topology_checks_for_test(dup_simplex)
+                .unwrap();
+        }
+
+        tds
+    }
+
+    /// Set every vertex incident pointer to a dangling key so repair must rebuild them.
+    fn poison_incident_simplices(tds: &mut Tds<(), (), 3>) {
+        let dangling = SimplexKey::from(KeyData::from_ffi(u64::MAX));
+        let vertex_keys: Vec<_> = tds.vertex_keys().collect();
+        for vertex_key in vertex_keys {
+            tds.vertex_mut(vertex_key)
+                .unwrap()
+                .set_incident_simplex(Some(dangling));
+        }
+    }
+
+    /// Assert that every present incident pointer references a containing simplex.
+    fn assert_incident_simplices_are_coherent(tds: &Tds<(), (), 3>) {
+        for (vertex_key, vertex) in tds.vertices() {
+            let Some(simplex_key) = vertex.incident_simplex() else {
+                continue;
+            };
+            let simplex = tds
+                .simplex(simplex_key)
+                .expect("incident simplex should exist");
+            assert!(
+                simplex.contains_vertex(vertex_key),
+                "incident simplex {simplex_key:?} should contain vertex {vertex_key:?}"
+            );
+        }
+    }
+
     /// Create a TDS with over-shared facets and verify that repair removes
     /// simplices until the facet-degree invariant is satisfied.
     #[test]
@@ -689,6 +774,31 @@ mod tests {
             matches!(result, Err(PlManifoldRepairError::BudgetExhausted { .. })),
             "Expected BudgetExhausted from iteration limit, got: {result:?}"
         );
+    }
+
+    #[test]
+    fn test_repair_budget_exhausted_after_mutation_rebuilds_incident_simplices() {
+        init_tracing();
+        let mut tds = make_multi_duplicate_overshared_tds();
+        poison_incident_simplices(&mut tds);
+
+        let config = PlManifoldRepairConfig {
+            max_iterations: 1,
+            max_simplices_removed: 10_000,
+        };
+        let result = repair_facet_oversharing(&mut tds, &config);
+
+        let Err(PlManifoldRepairError::BudgetExhausted {
+            simplices_removed, ..
+        }) = result
+        else {
+            panic!("Expected BudgetExhausted after partial repair, got: {result:?}");
+        };
+        assert!(
+            simplices_removed > 0,
+            "test should exercise an error return after simplex removal"
+        );
+        assert_incident_simplices_are_coherent(&tds);
     }
 
     // =============================================================================

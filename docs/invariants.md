@@ -229,7 +229,7 @@ via `TopologyGuarantee`, re-exported at the crate root and in
 
 - `TopologyGuarantee::Pseudomanifold`
   checks the codimension-1 incidence conditions (plus boundary consistency, connectedness,
-  isolated-and Euler characteristic checks).
+  isolated-vertex checks, and Euler characteristic checks).
 - `TopologyGuarantee::PLManifold` and
   `TopologyGuarantee::PLManifoldStrict`
   add **link-based** conditions (ridge links and/or vertex links) that are characteristic of
@@ -249,7 +249,7 @@ and intuition.
 
 A **vertex link** is the simplicial complex formed by taking all simplices incident
 to a given vertex and removing that vertex from each simplex. Intuitively, the
-vertex link represents the local neighborhood “around” the abstracted
+vertex link represents the local neighborhood around the vertex, abstracted
 away from the embedding space.
 
 For a PL-manifold, the link of every interior vertex must be homeomorphic to a

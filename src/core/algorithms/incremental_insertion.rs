@@ -1449,6 +1449,21 @@ pub enum NeighborWiringError {
     },
 }
 
+fn ensure_neighbor_wiring_simplex_arity<const D: usize>(
+    simplex_key: SimplexKey,
+    vertex_count: usize,
+) -> Result<(), NeighborWiringError> {
+    if vertex_count == D + 1 {
+        return Ok(());
+    }
+
+    Err(NeighborWiringError::WrongSimplexArity {
+        simplex_key,
+        expected: D + 1,
+        found: vertex_count,
+    })
+}
+
 /// Typed reason a spatial insertion index could not be constructed.
 ///
 /// # Examples
@@ -1780,7 +1795,7 @@ impl InsertionError {
             Self::TopologyValidation(tds_err) => Self::is_tds_error_retryable(tds_err),
             // Conflict region errors: only geometry-degeneracy variants are retryable.
             // Structural variants (InvalidStartSimplex, PredicateError, SimplexDataAccessFailed,
-            // InternalInconsistency — regardless of which typed
+            // InvalidSimplexArity, MissingSimplexVertex, InternalInconsistency — regardless of which typed
             // `InternalInconsistencySite` carries the failure context) represent caller
             // or implementation errors that perturbation cannot fix, and so fall
             // through to non-retryable by omission.
@@ -2469,15 +2484,7 @@ where
             .simplex(simplex_key)
             .ok_or(NeighborWiringError::MissingSimplex { simplex_key })?;
         let vertex_count = simplex.number_of_vertices();
-        let expected = D + 1;
-        if vertex_count != expected {
-            return Err(NeighborWiringError::WrongSimplexArity {
-                simplex_key,
-                expected,
-                found: vertex_count,
-            }
-            .into());
-        }
+        ensure_neighbor_wiring_simplex_arity::<D>(simplex_key, vertex_count)?;
 
         for facet_idx in 0..vertex_count {
             let mut facet_vkeys = SmallBuffer::<VertexKey, MAX_PRACTICAL_DIMENSION_SIZE>::new();
@@ -3120,15 +3127,7 @@ where
             .ok_or(NeighborWiringError::MissingSimplex { simplex_key })?;
 
         let vertex_count = simplex.number_of_vertices();
-        let expected = D + 1;
-        if vertex_count != expected {
-            return Err(NeighborWiringError::WrongSimplexArity {
-                simplex_key,
-                expected,
-                found: vertex_count,
-            }
-            .into());
-        }
+        ensure_neighbor_wiring_simplex_arity::<D>(simplex_key, vertex_count)?;
 
         for facet_idx in 0..vertex_count {
             let facet_hash = facet_hash_for_simplex(simplex, facet_idx);
@@ -3334,6 +3333,8 @@ where
             .ok_or(NeighborWiringError::MissingSimplex { simplex_key })?;
 
         let vertex_count = simplex.number_of_vertices();
+        ensure_neighbor_wiring_simplex_arity::<D>(simplex_key, vertex_count)?;
+
         let mut neighbors = SmallBuffer::with_capacity(vertex_count);
         neighbors.resize(vertex_count, None);
         neighbors_by_simplex.insert(simplex_key, neighbors);
@@ -4524,7 +4525,8 @@ mod tests {
     use crate::core::validation::TopologyGuarantee;
     use crate::geometry::kernel::FastKernel;
     use crate::geometry::traits::coordinate::{
-        CoordinateConversionError, CoordinateConversionValue,
+        CoordinateConversionError, CoordinateConversionValue, CoordinateValidationError,
+        InvalidCoordinateValue,
     };
     use crate::topology::characteristics::euler::TopologyClassification;
     use slotmap::KeyData;
@@ -5284,6 +5286,24 @@ mod tests {
     }
 
     #[test]
+    fn perturbed_coordinate_error_summary_preserves_kind_and_retryability() {
+        let source = CoordinateValidationError::InvalidCoordinate {
+            coordinate_index: 0,
+            coordinate_value: InvalidCoordinateValue::Nan,
+            dimension: 2,
+        };
+        let err = InsertionError::PerturbedCoordinateInvalid { source };
+
+        let summary = InsertionErrorSummary::from(err.clone());
+
+        assert_eq!(summary.kind, InsertionErrorKind::PerturbedCoordinateInvalid);
+        assert_eq!(summary.source_kind, None);
+        assert_eq!(summary.message, err.to_string());
+        assert!(!summary.is_retryable());
+        assert!(!err.is_retryable());
+    }
+
+    #[test]
     fn initial_simplex_unexpected_stage_preserves_retryability() {
         let reason = CavityFillingError::InitialSimplexConstruction {
             reason: InitialSimplexConstructionError::UnexpectedInsertionStage {
@@ -5869,6 +5889,21 @@ mod tests {
             !InsertionError::ConflictRegion(ConflictError::SimplexDataAccessFailed {
                 simplex_key: SimplexKey::from(KeyData::from_ffi(1)),
                 message: "test".to_string(),
+            })
+            .is_retryable()
+        );
+        assert!(
+            !InsertionError::ConflictRegion(ConflictError::InvalidSimplexArity {
+                simplex_key: SimplexKey::from(KeyData::from_ffi(1)),
+                expected: 3,
+                found: 2,
+            })
+            .is_retryable()
+        );
+        assert!(
+            !InsertionError::ConflictRegion(ConflictError::MissingSimplexVertex {
+                simplex_key: SimplexKey::from(KeyData::from_ffi(1)),
+                vertex_key: VertexKey::from(KeyData::from_ffi(999)),
             })
             .is_retryable()
         );

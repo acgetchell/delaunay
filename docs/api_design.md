@@ -250,7 +250,7 @@ fn main() -> Result<(), ExampleError> {
   - Removed face: the entire simplex (D-simplex)
   - Inserted face: the new vertex (0-simplex)
 
-- **Inverse (`flip_k1_remove`)**: Remove a collapsing its star
+- **Inverse (`flip_k1_remove`)**: Remove a vertex, collapsing its star
   - Requires the vertex star to be collapsible (star of D+1 simplices forming a ball)
   - Replaces D+1 simplices with 1 simplex
 

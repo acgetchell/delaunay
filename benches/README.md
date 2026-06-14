@@ -248,7 +248,7 @@ large-scale scaling workload and the deeper profiling diagnostics:
 - construction through the default batch construction path
 - process RSS deltas during construction
 - memory allocation profiling with the optional `count-allocations` feature
-- neighbor queries iteration, and simplex iteration
+- neighbor queries, vertex iteration, and simplex iteration
 - circumsphere query latency
 - algorithmic bottlenecks
 - validation component costs

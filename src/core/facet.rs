@@ -1211,7 +1211,7 @@ mod tests {
     use crate::construction::{
         ConstructionOptions, InitialSimplexStrategy, InsertionOrderStrategy,
     };
-    use crate::core::tds::VertexKey;
+    use crate::core::tds::{Tds, VertexKey};
     use crate::core::validation::TopologyGuarantee;
     use crate::core::vertex::Vertex;
     use crate::geometry::kernel::AdaptiveKernel;
@@ -1630,6 +1630,22 @@ mod tests {
 
         // Facet of 1D edge is a point (0D) with 1 vertex
         assert_eq!(facet.vertices().unwrap().count(), 1);
+    }
+
+    #[test]
+    fn all_facets_iter_rejects_dimension_above_u8_facet_index_capacity() {
+        let tds: Tds<(), (), 256> = Tds::empty();
+        let Err(err) = AllFacetsIter::try_new(&tds) else {
+            panic!("D=256 cannot fit facet indices in u8");
+        };
+
+        assert_matches!(
+            err,
+            FacetError::FacetIndexCapacityExceeded {
+                dimension: 256,
+                max_dimension: 255,
+            }
+        );
     }
 
     // =============================================================================

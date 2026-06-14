@@ -26,7 +26,9 @@ use crate::core::collections::{
 use crate::core::facet::FacetHandle;
 use crate::core::tds::{SimplexKey, Tds, VertexKey};
 use crate::core::traits::data_type::DataType;
-use crate::core::util::canonical_points::{sorted_facet_points_with_extra, sorted_simplex_points};
+use crate::core::util::canonical_points::{
+    CanonicalSimplexPointError, sorted_facet_points_with_extra, sorted_simplex_points,
+};
 use crate::geometry::kernel::Kernel;
 use crate::geometry::point::Point;
 use crate::geometry::traits::coordinate::CoordinateConversionError;
@@ -170,6 +172,30 @@ pub enum ConflictError {
         simplex_key: SimplexKey,
         /// Human-readable details about what data could not be accessed.
         message: String,
+    },
+
+    /// A conflict-region simplex has the wrong number of vertices for this dimension.
+    #[error(
+        "simplex {simplex_key:?} has {found} vertices for conflict-region predicates; expected {expected}"
+    )]
+    InvalidSimplexArity {
+        /// Simplex with invalid arity.
+        simplex_key: SimplexKey,
+        /// Expected simplex vertex count.
+        expected: usize,
+        /// Observed simplex vertex count.
+        found: usize,
+    },
+
+    /// A conflict-region simplex references a vertex missing from the TDS.
+    #[error(
+        "simplex {simplex_key:?} references missing vertex {vertex_key:?} for conflict-region predicates"
+    )]
+    MissingSimplexVertex {
+        /// Simplex containing the missing vertex reference.
+        simplex_key: SimplexKey,
+        /// Missing vertex key.
+        vertex_key: VertexKey,
     },
 
     /// Internal invariant violation during cavity-boundary extraction.
@@ -1062,7 +1088,7 @@ where
 
     // Build facet simplex + opposite vertex in canonical key order.
     // If any facet vertex is unresolvable, treat as degenerate.
-    let Some(canonical_simplex) = sorted_facet_points_with_extra(tds, &facet_keys, opposite_point)
+    let Ok(canonical_simplex) = sorted_facet_points_with_extra(tds, &facet_keys, opposite_point)
     else {
         return Ok(None);
     };
@@ -1081,6 +1107,27 @@ where
     // opposite sides of the facet → point is "outside" (should cross)
     // If orientations match, they're on the same side → point is "inside" (should not cross)
     Ok(Some(simplex_orientation * query_orientation < 0))
+}
+
+const fn conflict_simplex_points_error(
+    simplex_key: SimplexKey,
+    error: CanonicalSimplexPointError,
+) -> ConflictError {
+    match error {
+        CanonicalSimplexPointError::InvalidArity { expected, found } => {
+            ConflictError::InvalidSimplexArity {
+                simplex_key,
+                expected,
+                found,
+            }
+        }
+        CanonicalSimplexPointError::MissingVertex { vertex_key } => {
+            ConflictError::MissingSimplexVertex {
+                simplex_key,
+                vertex_key,
+            }
+        }
+    }
 }
 
 /// Find all simplices whose circumspheres contain the query point (conflict region).
@@ -1236,19 +1283,8 @@ where
 
         // Collect simplex vertex points in canonical VertexKey order for consistent
         // SoS perturbation priority.
-        let simplex_points = sorted_simplex_points(tds, simplex).ok_or_else(|| {
-            ConflictError::SimplexDataAccessFailed {
-                simplex_key,
-                message: format!("Failed to resolve all {} simplex vertices", D + 1),
-            }
-        })?;
-
-        if simplex_points.len() != D + 1 {
-            return Err(ConflictError::SimplexDataAccessFailed {
-                simplex_key,
-                message: format!("Expected {} vertices, got {}", D + 1, simplex_points.len()),
-            });
-        }
+        let simplex_points = sorted_simplex_points(tds, simplex)
+            .map_err(|error| conflict_simplex_points_error(simplex_key, error))?;
 
         #[cfg(debug_assertions)]
         if debug_config.log_conflict {
@@ -1403,20 +1439,19 @@ where
     let mut predicate_errors = 0usize;
 
     for (simplex_key, simplex) in tds.simplices() {
-        let Some(simplex_points) = sorted_simplex_points(tds, simplex) else {
-            malformed_simplices += 1;
-            tracing::debug!(
-                simplex_key = ?simplex_key,
-                vertex_keys = ?simplex.vertices(),
-                "verify_conflict_region: skipping malformed simplex (sorted_simplex_points returned None)"
-            );
-            continue;
+        let simplex_points = match sorted_simplex_points(tds, simplex) {
+            Ok(points) => points,
+            Err(error) => {
+                malformed_simplices += 1;
+                tracing::debug!(
+                    simplex_key = ?simplex_key,
+                    vertex_keys = ?simplex.vertices(),
+                    error = %error,
+                    "verify_conflict_region: skipping malformed simplex"
+                );
+                continue;
+            }
         };
-        if simplex_points.len() != D + 1 {
-            malformed_simplices += 1;
-            continue;
-        }
-
         let Ok(sign) = kernel.in_sphere(&simplex_points, point) else {
             predicate_errors += 1;
             tracing::debug!(
@@ -3200,7 +3235,7 @@ mod tests {
 
     /// `is_point_outside_facet` resolves vertex points via the canonical ordering
     /// helper `sorted_facet_points_with_extra`.  A simplex whose vertex-key list
-    /// contains a key absent from the TDS causes the helper to return `None`,
+    /// contains a key absent from the TDS causes the helper to return an error,
     /// which the function converts to `Ok(None)` (degenerate/unresolvable simplex).
     #[test]
     fn test_is_point_outside_facet_degenerate_simplex_missing_vertex_returns_none() {
@@ -3240,7 +3275,7 @@ mod tests {
         let kernel = FastKernel::<f64>::new();
         let point = Point::from_validated_coords([0.3_f64, 0.3_f64]);
 
-        // Only 2 of the 3 vertices exist → simplex_vertices.len() (2) != D+1 (3) → Ok(None).
+        // One facet vertex is missing from the TDS, so canonical point collection fails.
         let result = is_point_outside_facet(&tds, &kernel, simplex_key, 0, &point);
         assert!(
             matches!(result, Ok(None)),
@@ -3299,11 +3334,10 @@ mod tests {
         );
     }
 
-    /// When a simplex in the BFS has fewer than D+1 vertex keys (all resolvable),
-    /// `sorted_simplex_points` returns a short buffer and the vertex-count guard
-    /// fires `SimplexDataAccessFailed`.
+    /// When a simplex in the BFS has fewer than D+1 vertex keys, canonical point
+    /// collection rejects it before predicate evaluation.
     #[test]
-    fn test_find_conflict_region_underdimensioned_simplex_returns_simplex_data_access_failed() {
+    fn test_find_conflict_region_underdimensioned_simplex_returns_invalid_simplex_arity() {
         let mut tds: Tds<(), (), 2> = Tds::empty();
         let v0 = tds
             .insert_vertex_with_mapping(
@@ -3341,17 +3375,21 @@ mod tests {
         assert!(
             matches!(
                 result,
-                Err(ConflictError::SimplexDataAccessFailed { simplex_key: ck, .. }) if ck == simplex_key
+                Err(ConflictError::InvalidSimplexArity {
+                    simplex_key: ck,
+                    expected: 3,
+                    found: 2,
+                }) if ck == simplex_key
             ),
-            "expected SimplexDataAccessFailed for underdimensioned simplex, got {result:?}"
+            "expected InvalidSimplexArity for underdimensioned simplex, got {result:?}"
         );
     }
 
     /// `find_conflict_region` uses `sorted_simplex_points` in the BFS loop;
     /// a conflict simplex whose vertex-key list contains a key absent from the TDS
-    /// causes the helper to return `None`, yielding `Err(SimplexDataAccessFailed)`.
+    /// causes the helper to return an error, yielding `Err(MissingSimplexVertex)`.
     #[test]
-    fn test_find_conflict_region_degenerate_simplex_returns_simplex_data_access_failed() {
+    fn test_find_conflict_region_degenerate_simplex_returns_missing_simplex_vertex() {
         let mut tds: Tds<(), (), 2> = Tds::empty();
         let v0 = tds
             .insert_vertex_with_mapping(
@@ -3388,11 +3426,17 @@ mod tests {
         let kernel = FastKernel::<f64>::new();
         let point = Point::from_validated_coords([0.3_f64, 0.3_f64]);
 
-        // BFS visits the simplex; simplex_points.len() == 2 != D+1 == 3 → SimplexDataAccessFailed.
+        // BFS visits the simplex; canonical point collection rejects the missing vertex.
         let result = find_conflict_region(&tds, &kernel, &point, simplex_key);
         assert!(
-            matches!(result, Err(ConflictError::SimplexDataAccessFailed { simplex_key: ck, .. }) if ck == simplex_key),
-            "expected SimplexDataAccessFailed for degenerate simplex, got {result:?}"
+            matches!(
+                result,
+                Err(ConflictError::MissingSimplexVertex {
+                    simplex_key: ck,
+                    vertex_key,
+                }) if ck == simplex_key && vertex_key == missing
+            ),
+            "expected MissingSimplexVertex for degenerate simplex, got {result:?}"
         );
     }
 

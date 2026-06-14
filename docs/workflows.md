@@ -326,8 +326,8 @@ fn main() -> Result<(), DelaunayTriangulationConstructionError> {
     let mut dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
 
     // Read vertex data
-    for (_key) in dt.vertices() {
-        println!("data = {:?}".data()); // Some(10), Some(20), or Some(30)
+    for (_key, vertex) in dt.vertices() {
+        println!("data = {:?}", vertex.data()); // Some(10), Some(20), or Some(30)
     }
 
     // Modify vertex data (O(1), does not affect geometry or topology)

@@ -56,7 +56,7 @@ pub trait BoundaryAnalysis<U, V, const D: usize> {
     ///
     /// # Returns
     ///
-    /// A `Result<BoundaryFacetsIter<'_, T, U, V, D>, TdsError>` containing an iterator over boundary facets.
+    /// A `Result<BoundaryFacetsIter<'_, U, V, D>, TdsError>` containing an iterator over boundary facets.
     /// The iterator yields facets lazily without pre-allocating a vector, providing better performance.
     ///
     /// # Errors

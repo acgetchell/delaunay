@@ -56,7 +56,7 @@ impl<U, V, const D: usize> BoundaryAnalysis<U, V, D> for Tds<U, V, D> {
     ///
     /// # Returns
     ///
-    /// A `Result<BoundaryFacetsIter<'_, T, U, V, D>, TdsError>` containing an iterator over boundary facets.
+    /// A `Result<BoundaryFacetsIter<'_, U, V, D>, TdsError>` containing an iterator over boundary facets.
     /// The iterator yields facets lazily without pre-allocating vectors, providing better performance.
     ///
     /// # Errors

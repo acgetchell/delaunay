@@ -80,7 +80,11 @@ where
 
     #[cfg(test)]
     #[inline]
-    pub(crate) const fn new_with_tds(kernel: K, tds: Tds<U, V, D>) -> Self {
+    #[expect(
+        clippy::missing_const_for_fn,
+        reason = "test-only constructor is not a pure math helper"
+    )]
+    pub(crate) fn new_with_tds(kernel: K, tds: Tds<U, V, D>) -> Self {
         Self {
             kernel,
             tds,
