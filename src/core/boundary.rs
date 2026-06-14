@@ -652,9 +652,9 @@ mod tests {
         facet_to_simplices.insert(
             facet_key,
             [
-                FacetHandle::new(facet.simplex_key(), 0),
-                FacetHandle::new(facet.simplex_key(), 1),
-                FacetHandle::new(facet.simplex_key(), 2),
+                FacetHandle::from_validated(facet.simplex_key(), 0),
+                FacetHandle::from_validated(facet.simplex_key(), 1),
+                FacetHandle::from_validated(facet.simplex_key(), 2),
             ]
             .into_iter()
             .collect(),
@@ -677,9 +677,9 @@ mod tests {
         facet_to_simplices.insert(
             0xCAFE,
             [
-                FacetHandle::new(SimplexKey::default(), 0),
-                FacetHandle::new(SimplexKey::default(), 1),
-                FacetHandle::new(SimplexKey::default(), 2),
+                FacetHandle::from_validated(SimplexKey::default(), 0),
+                FacetHandle::from_validated(SimplexKey::default(), 1),
+                FacetHandle::from_validated(SimplexKey::default(), 2),
             ]
             .into_iter()
             .collect(),

@@ -560,14 +560,15 @@ rules:
     languages:
       - generic
     severity: WARNING
-    message: "Use try_new for fallible facet views and iterators so validation and dimension-capacity errors are explicit."
+    message: "Use try_new for fallible facet handles, views, and iterators so validation and dimension-capacity errors are explicit."
     metadata:
       category: correctness
       tracking_issue: "https://github.com/acgetchell/delaunay/issues/442"
       rationale: >-
-        FacetView validates simplex presence and facet index bounds, while facet
-        iterators can fail when the dimension exceeds the u8 facet-index
-        representation. Constructor names must expose those fallible boundaries.
+        FacetHandle and FacetView validate simplex presence and facet index
+        bounds, while facet iterators can fail when the dimension exceeds the
+        u8 facet-index representation. Constructor names must expose those
+        fallible boundaries.
     paths:
       include:
         - "/src/**/*.rs"
@@ -576,21 +577,43 @@ rules:
         - "/examples/**/*.rs"
     pattern-either:
       - pattern-regex: '\bFacetView\s*::\s*new\s*\('
+      - pattern-regex: '\bFacetHandle\s*::\s*new\s*\('
       - pattern-regex: '\bAllFacetsIter\s*::\s*new\s*\('
       - pattern-regex: '\bBoundaryFacetsIter\s*::\s*new\s*\('
+
+  - id: delaunay.rust.no-ridgehandle-new-constructor
+    languages:
+      - generic
+    severity: WARNING
+    message: "Use RidgeHandle::try_new for raw omitted indices, or the crate-private validated constructor after bounds are already proven."
+    metadata:
+      category: correctness
+      tracking_issue: "https://github.com/acgetchell/delaunay/issues/442"
+      rationale: >-
+        A RidgeHandle must identify a valid codimension-2 face in a live simplex.
+        Public raw index construction must reject duplicate or out-of-range
+        omitted indices instead of storing invalid ridge selectors for later
+        validation.
+    paths:
+      include:
+        - "/src/**/*.rs"
+        - "/tests/**/*.rs"
+        - "/benches/**/*.rs"
+        - "/examples/**/*.rs"
+    pattern-regex: '\bRidgeHandle\s*::\s*new\s*\('
 
   - id: delaunay.rust.no-edgekey-new-constructor
     languages:
       - generic
     severity: WARNING
-    message: "Use EdgeKey::try_new for raw endpoints, or the crate-private validated constructor after distinctness is already proven."
+    message: "Use EdgeKey::try_new with a live TDS for raw endpoints, or the crate-private validated constructor after edge incidence is already proven."
     metadata:
       category: correctness
       tracking_issue: "https://github.com/acgetchell/delaunay/issues/442"
       rationale: >-
-        An EdgeKey must identify a real edge, so public raw endpoint construction
-        needs to reject duplicate vertex keys instead of storing a degenerate
-        self-edge.
+        An EdgeKey must identify a real edge in a live TDS, so public raw
+        endpoint construction needs to reject duplicate, missing, or non-incident
+        vertex keys instead of storing an invalid edge selector.
     paths:
       include:
         - "/src/**/*.rs"
@@ -598,6 +621,26 @@ rules:
         - "/benches/**/*.rs"
         - "/examples/**/*.rs"
     pattern-regex: '\bEdgeKey\s*::\s*new\s*\('
+
+  - id: delaunay.rust.no-edgekey-try-new-without-tds
+    languages:
+      - generic
+    severity: WARNING
+    message: "Pass a live TDS to EdgeKey::try_new so the edge can be proven to exist."
+    metadata:
+      category: correctness
+      tracking_issue: "https://github.com/acgetchell/delaunay/issues/442"
+      rationale: >-
+        EdgeKey::try_new must parse raw endpoint keys against live topology.
+        A two-argument call can only check distinctness and cannot prove that the
+        endpoints form a real edge.
+    paths:
+      include:
+        - "/src/**/*.rs"
+        - "/tests/**/*.rs"
+        - "/benches/**/*.rs"
+        - "/examples/**/*.rs"
+    pattern-regex: '\bEdgeKey\s*::\s*try_new\s*\(\s*[^,\n()]+,\s*[^,\n()]+\s*\)'
 
   - id: delaunay.rust.no-tds-storage-map-serde
     languages:

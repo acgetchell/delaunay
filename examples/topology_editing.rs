@@ -473,6 +473,7 @@ fn edit_api_3d_k2() -> ExampleResult {
                 // Try inverse
                 println!("\nApplying k=2 inverse:");
                 let edge = EdgeKey::try_new(
+                    dt.tds(),
                     flip_info.inserted_face_vertices[0],
                     flip_info.inserted_face_vertices[1],
                 )?;
@@ -584,7 +585,7 @@ fn find_interior_facet_2d<K: Kernel<2, Scalar = f64>>(
                     let Ok(facet_idx) = u8::try_from(facet_idx) else {
                         continue;
                     };
-                    return Some(FacetHandle::new(simplex_key, facet_idx));
+                    return FacetHandle::try_new(dt.tds(), simplex_key, facet_idx).ok();
                 }
             }
         }
@@ -602,7 +603,7 @@ fn find_interior_facet_3d<K: Kernel<3, Scalar = f64>>(
                     let Ok(facet_idx) = u8::try_from(facet_idx) else {
                         continue;
                     };
-                    return Some(FacetHandle::new(simplex_key, facet_idx));
+                    return FacetHandle::try_new(dt.tds(), simplex_key, facet_idx).ok();
                 }
             }
         }
@@ -627,7 +628,9 @@ fn find_flippable_ridge_3d<K: Kernel<3, Scalar = f64>>(
             let Ok(omit_b) = u8::try_from(i + 1) else {
                 continue;
             };
-            let ridge = RidgeHandle::new(simplex_key, omit_a, omit_b);
+            let Ok(ridge) = RidgeHandle::try_new(dt.tds(), simplex_key, omit_a, omit_b) else {
+                continue;
+            };
 
             // Just return the first one we find
             // (In practice, you'd want to check if it's actually flippable)

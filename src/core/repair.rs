@@ -1684,7 +1684,7 @@ mod tests {
     fn test_pick_fan_apex_preserves_missing_boundary_simplex() {
         let (tri, _, _) = build_single_tet();
         let missing_simplex = SimplexKey::from(KeyData::from_ffi(0xBAD));
-        let facets = [FacetHandle::new(missing_simplex, 0)];
+        let facets = [FacetHandle::from_validated(missing_simplex, 0)];
 
         assert_matches!(
             tri.pick_fan_apex(&facets),
@@ -1734,7 +1734,7 @@ mod tests {
         candidate_simplices.push(simplex_key);
         candidate_simplices.push(missing_simplex);
         candidate_simplices.push(simplex_key);
-        let external_facets = [FacetHandle::new(simplex_key, 0)];
+        let external_facets = [FacetHandle::from_validated(simplex_key, 0)];
 
         let live_simplices = tri.live_simplices_from(&candidate_simplices);
         let validation_scope = tri.vertex_removal_validation_scope(
@@ -1831,14 +1831,18 @@ mod tests {
     #[test]
     fn test_fan_boundary_facets_excluding_apex_keeps_only_facets_without_apex() {
         let (tri, vkeys, simplex_key) = build_single_tet();
-        let boundary_facets: CavityBoundaryBuffer =
-            (0..=3).map(|i| FacetHandle::new(simplex_key, i)).collect();
+        let boundary_facets: CavityBoundaryBuffer = (0..=3)
+            .map(|i| FacetHandle::from_validated(simplex_key, i))
+            .collect();
 
         let fan_facets = tri
             .fan_boundary_facets_excluding_apex(vkeys[0], &boundary_facets)
             .unwrap();
 
-        assert_eq!(fan_facets.as_slice(), &[FacetHandle::new(simplex_key, 0)]);
+        assert_eq!(
+            fan_facets.as_slice(),
+            &[FacetHandle::from_validated(simplex_key, 0)]
+        );
     }
 
     #[test]
@@ -1958,8 +1962,9 @@ mod tests {
         // Use vkeys[0] as apex; construct boundary facets that ALL include vkeys[0].
         // In a tet, facet 0 is opposite vkeys[0] (does NOT include it),
         // but facets 1,2,3 each include vkeys[0].
-        let boundary_facets: CavityBoundaryBuffer =
-            (1..=3).map(|i| FacetHandle::new(ck, i)).collect();
+        let boundary_facets: CavityBoundaryBuffer = (1..=3)
+            .map(|i| FacetHandle::from_validated(ck, i))
+            .collect();
 
         let result = tri.fan_fill_cavity(vkeys[0], &boundary_facets);
         // All facets include vkeys[0], so no simplices should be created.

@@ -17,7 +17,7 @@ use delaunay::prelude::flips::{
 };
 use delaunay::prelude::geometry::{CoordinateConversionError, Point, RobustKernel, simplex_volume};
 use delaunay::prelude::query::{JaccardComputationError, format_jaccard_report};
-use delaunay::prelude::tds::{InvariantError, TdsError, VertexKey};
+use delaunay::prelude::tds::{FacetError, InvariantError, TdsError, VertexKey};
 use delaunay::prelude::topology::validation::{
     ManifoldError, RidgeVertices, RidgeVerticesError, ridge_star_simplices,
 };
@@ -65,6 +65,32 @@ pub enum FlipWorkflowError {
     MissingVertex {
         /// Missing vertex key.
         vertex_key: VertexKey,
+    },
+
+    /// Facet handle construction failed before candidate inspection.
+    #[error("failed to construct facet handle {simplex_key:?}:{facet_index}: {source}")]
+    FacetHandleConstruction {
+        /// Candidate simplex key.
+        simplex_key: SimplexKey,
+        /// Candidate facet index.
+        facet_index: u8,
+        /// Underlying facet-handle construction failure.
+        #[source]
+        source: FacetError,
+    },
+
+    /// Ridge handle construction failed before candidate inspection.
+    #[error("failed to construct ridge handle {simplex_key:?}:({omit_a}, {omit_b}): {source}")]
+    RidgeHandleConstruction {
+        /// Candidate simplex key.
+        simplex_key: SimplexKey,
+        /// First omitted index.
+        omit_a: u8,
+        /// Second omitted index.
+        omit_b: u8,
+        /// Underlying ridge-handle construction failure.
+        #[source]
+        source: Box<FlipError>,
     },
 
     /// Ridge vertices could not be parsed into a valid ridge vertex set.
@@ -648,7 +674,14 @@ pub fn flippable_k2_facet<const D: usize>(
             let Ok(facet_index) = u8::try_from(facet_index) else {
                 continue;
             };
-            let facet = FacetHandle::new(simplex_key, facet_index);
+            let facet =
+                FacetHandle::try_new(dt.tds(), simplex_key, facet_index).map_err(|source| {
+                    FlipWorkflowError::FacetHandleConstruction {
+                        simplex_key,
+                        facet_index,
+                        source,
+                    }
+                })?;
             let support = facet_support_points(dt, facet)?;
             if !filter.accepts(&support) {
                 continue;
@@ -668,6 +701,7 @@ pub fn flippable_k2_facet<const D: usize>(
                         continue;
                     }
                     let edge = match EdgeKey::try_new(
+                        trial.tds(),
                         info.inserted_face_vertices[0],
                         info.inserted_face_vertices[1],
                     ) {
@@ -740,7 +774,14 @@ pub fn flippable_k3_ridge<const D: usize>(
                 let Ok(omit_b) = u8::try_from(j) else {
                     continue;
                 };
-                let ridge = RidgeHandle::new(simplex_key, omit_a, omit_b);
+                let ridge = RidgeHandle::try_new(dt.tds(), simplex_key, omit_a, omit_b).map_err(
+                    |source| FlipWorkflowError::RidgeHandleConstruction {
+                        simplex_key,
+                        omit_a,
+                        omit_b,
+                        source: Box::new(source),
+                    },
+                )?;
                 let support = ridge_support_points(dt, ridge)?;
                 if !filter.accepts(&support) {
                     continue;
@@ -903,6 +944,7 @@ pub fn roundtrip_k2<const D: usize>(
         });
     }
     let edge = EdgeKey::try_new(
+        dt.tds(),
         info.inserted_face_vertices[0],
         info.inserted_face_vertices[1],
     )

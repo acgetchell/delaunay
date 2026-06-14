@@ -23,6 +23,8 @@ use delaunay::prelude::flips::*;
 #[cfg(feature = "diagnostics")]
 use delaunay::prelude::geometry::{AdaptiveKernel, CoordinateConversionError};
 #[cfg(feature = "diagnostics")]
+use delaunay::prelude::tds::FacetError;
+#[cfg(feature = "diagnostics")]
 use delaunay::prelude::validation::DelaunayTriangulationValidationError;
 #[cfg(feature = "diagnostics")]
 #[derive(Debug, thiserror::Error)]
@@ -33,6 +35,8 @@ enum DiagnosticsExampleError {
     DelaunayValidation(#[from] DelaunayValidationError),
     #[error(transparent)]
     CoordinateConversion(#[from] CoordinateConversionError),
+    #[error(transparent)]
+    Facet(#[from] FacetError),
     #[error("expected at least one public k=2 flip to produce a Delaunay violation")]
     NoDelaunayViolatingFlip,
 }
@@ -138,7 +142,7 @@ fn build_non_delaunay_triangulation_2d()
                 let Ok(facet_index) = u8::try_from(facet_index) else {
                     continue;
                 };
-                let facet = FacetHandle::new(simplex_key, facet_index);
+                let facet = FacetHandle::try_new(dt.tds(), simplex_key, facet_index)?;
                 let mut trial = dt.clone();
                 if trial.flip_k2(facet).is_ok()
                     && trial.as_triangulation().validate().is_ok()

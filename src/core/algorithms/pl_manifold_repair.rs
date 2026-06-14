@@ -86,6 +86,7 @@ impl Default for PlManifoldRepairConfig {
 /// assert!(!stats.succeeded);
 /// ```
 #[derive(Debug, Clone)]
+#[must_use]
 pub struct PlManifoldRepairStats<U, V, const D: usize> {
     /// Number of repair iterations executed.
     pub iterations: usize,

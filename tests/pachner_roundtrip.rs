@@ -160,10 +160,14 @@ fn interior_facets(dt: &Dt4) -> Vec<FacetHandle> {
         };
         for (facet_index, neighbor) in neighbors.enumerate() {
             if neighbor.is_some() {
-                facets.push(FacetHandle::new(
-                    simplex_key,
-                    u8::try_from(facet_index).expect("facet index should fit in u8"),
-                ));
+                facets.push(
+                    FacetHandle::try_new(
+                        dt.tds(),
+                        simplex_key,
+                        u8::try_from(facet_index).expect("facet index should fit in u8"),
+                    )
+                    .expect("interior facet index should be valid"),
+                );
             }
         }
     }
@@ -174,7 +178,7 @@ fn flippable_k2_facet(dt: &Dt4) -> FacetHandle {
     for facet in interior_facets(dt) {
         let mut trial = dt.clone();
         if let Ok(info) = trial.flip_k2(facet) {
-            let edge = inserted_edge(&info.inserted_face_vertices);
+            let edge = inserted_edge(&trial, &info.inserted_face_vertices);
             if trial.flip_k2_inverse_from_edge(edge).is_ok() && trial.validate().is_ok() {
                 return facet;
             }
@@ -187,13 +191,16 @@ fn roundtrip_k2(dt: &mut Dt4, facet: FacetHandle) {
     let info = dt
         .flip_k2(facet)
         .expect("k=2 flip should succeed on selected stable 4D facet");
-    dt.flip_k2_inverse_from_edge(inserted_edge(&info.inserted_face_vertices))
+    let edge = inserted_edge(dt, &info.inserted_face_vertices);
+    dt.flip_k2_inverse_from_edge(edge)
         .expect("k=2 inverse should succeed after k=2 flip");
 }
 
-fn inserted_edge(vertices: &[VertexKey]) -> EdgeKey {
+fn inserted_edge(dt: &Dt4, vertices: &[VertexKey]) -> EdgeKey {
     match vertices {
-        [a, b] => EdgeKey::try_new(*a, *b).expect("k=2 flip should report a real inserted edge"),
+        [a, b] => {
+            EdgeKey::try_new(dt.tds(), *a, *b).expect("k=2 flip should report a real inserted edge")
+        }
         _ => panic!("k=2 flip should report an inserted edge"),
     }
 }
@@ -203,11 +210,15 @@ fn ridges(dt: &Dt4) -> Vec<RidgeHandle> {
     for (simplex_key, simplex) in dt.simplices() {
         for i in 0..simplex.number_of_vertices() {
             for j in (i + 1)..simplex.number_of_vertices() {
-                ridges.push(RidgeHandle::new(
-                    simplex_key,
-                    u8::try_from(i).expect("ridge index should fit in u8"),
-                    u8::try_from(j).expect("ridge index should fit in u8"),
-                ));
+                ridges.push(
+                    RidgeHandle::try_new(
+                        dt.tds(),
+                        simplex_key,
+                        u8::try_from(i).expect("ridge index should fit in u8"),
+                        u8::try_from(j).expect("ridge index should fit in u8"),
+                    )
+                    .expect("ridge indices should be valid"),
+                );
             }
         }
     }

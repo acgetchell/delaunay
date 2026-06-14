@@ -268,7 +268,7 @@ pub enum FacetError {
 /// };
 ///
 /// // Create a facet handle
-/// let handle = FacetHandle::new(simplex_key, 0);
+/// let handle = FacetHandle::try_new(dt.tds(), simplex_key, 0)?;
 ///
 /// // Use it to create a FacetView
 /// let facet = FacetView::try_new(dt.tds(), handle.simplex_key(), handle.facet_index())?;
@@ -284,7 +284,7 @@ pub struct FacetHandle {
 }
 
 impl FacetHandle {
-    /// Creates a new facet handle.
+    /// Creates a new facet handle after validating it against a TDS.
     ///
     /// # Arguments
     ///
@@ -294,15 +294,60 @@ impl FacetHandle {
     /// # Examples
     ///
     /// ```rust
-    /// use delaunay::prelude::tds::{FacetHandle, SimplexKey};
-    /// use slotmap::KeyData;
+    /// use delaunay::prelude::*;
+    /// use delaunay::prelude::tds::FacetHandle;
     ///
-    /// let simplex_key = SimplexKey::from(KeyData::from_ffi(1));
-    /// let handle = FacetHandle::new(simplex_key, 0);
-    /// assert_eq!(handle.simplex_key(), simplex_key);
+    /// # #[derive(Debug, thiserror::Error)]
+    /// # enum ExampleError {
+    /// #     #[error(transparent)]
+    /// #     Construction(#[from] DelaunayTriangulationConstructionError),
+    /// #     #[error(transparent)]
+    /// #     Facet(#[from] delaunay::prelude::tds::FacetError),
+    /// # }
+    /// # fn main() -> Result<(), ExampleError> {
+    /// let vertices = [
+    ///     Vertex::<(), _>::try_new([0.0, 0.0]).expect("finite vertex coordinates"),
+    ///     Vertex::<(), _>::try_new([1.0, 0.0]).expect("finite vertex coordinates"),
+    ///     Vertex::<(), _>::try_new([0.0, 1.0]).expect("finite vertex coordinates"),
+    /// ];
+    /// let dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
+    /// let Some((simplex_key, _)) = dt.simplices().next() else {
+    ///     return Ok(());
+    /// };
+    /// let handle = FacetHandle::try_new(dt.tds(), simplex_key, 0)?;
     /// assert_eq!(handle.facet_index(), 0);
+    /// # Ok(())
+    /// # }
     /// ```
-    pub const fn new(simplex_key: SimplexKey, facet_index: u8) -> Self {
+    ///
+    /// # Errors
+    ///
+    /// Returns [`FacetError::SimplexNotFoundInTriangulation`] if `simplex_key`
+    /// is not present in `tds`, or [`FacetError::InvalidFacetIndex`] if
+    /// `facet_index` is outside the simplex facet range.
+    pub fn try_new<U, V, const D: usize>(
+        tds: &Tds<U, V, D>,
+        simplex_key: SimplexKey,
+        facet_index: u8,
+    ) -> Result<Self, FacetError> {
+        let simplex = tds
+            .simplex(simplex_key)
+            .ok_or(FacetError::SimplexNotFoundInTriangulation)?;
+        let facet_count = simplex.number_of_vertices();
+        if usize::from(facet_index) >= facet_count {
+            return Err(FacetError::InvalidFacetIndex {
+                index: facet_index,
+                facet_count,
+            });
+        }
+
+        Ok(Self::from_validated(simplex_key, facet_index))
+    }
+
+    /// Creates a facet handle from a simplex key and facet index already
+    /// proven valid by the caller.
+    #[inline]
+    pub(crate) const fn from_validated(simplex_key: SimplexKey, facet_index: u8) -> Self {
         Self {
             simplex_key,
             facet_index,
@@ -314,12 +359,30 @@ impl FacetHandle {
     /// # Examples
     ///
     /// ```rust
-    /// use delaunay::prelude::tds::{FacetHandle, SimplexKey};
-    /// use slotmap::KeyData;
+    /// use delaunay::prelude::*;
+    /// use delaunay::prelude::tds::FacetHandle;
     ///
-    /// let simplex_key = SimplexKey::from(KeyData::from_ffi(1));
-    /// let handle = FacetHandle::new(simplex_key, 0);
+    /// # #[derive(Debug, thiserror::Error)]
+    /// # enum ExampleError {
+    /// #     #[error(transparent)]
+    /// #     Construction(#[from] DelaunayTriangulationConstructionError),
+    /// #     #[error(transparent)]
+    /// #     Facet(#[from] delaunay::prelude::tds::FacetError),
+    /// # }
+    /// # fn main() -> Result<(), ExampleError> {
+    /// let vertices = [
+    ///     Vertex::<(), _>::try_new([0.0, 0.0]).expect("finite vertex coordinates"),
+    ///     Vertex::<(), _>::try_new([1.0, 0.0]).expect("finite vertex coordinates"),
+    ///     Vertex::<(), _>::try_new([0.0, 1.0]).expect("finite vertex coordinates"),
+    /// ];
+    /// let dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
+    /// let Some((simplex_key, _)) = dt.simplices().next() else {
+    ///     return Ok(());
+    /// };
+    /// let handle = FacetHandle::try_new(dt.tds(), simplex_key, 0)?;
     /// assert_eq!(handle.simplex_key(), simplex_key);
+    /// # Ok(())
+    /// # }
     /// ```
     #[must_use]
     pub const fn simplex_key(&self) -> SimplexKey {
@@ -331,12 +394,30 @@ impl FacetHandle {
     /// # Examples
     ///
     /// ```rust
-    /// use delaunay::prelude::tds::{FacetHandle, SimplexKey};
-    /// use slotmap::KeyData;
+    /// use delaunay::prelude::*;
+    /// use delaunay::prelude::tds::FacetHandle;
     ///
-    /// let simplex_key = SimplexKey::from(KeyData::from_ffi(1));
-    /// let handle = FacetHandle::new(simplex_key, 1);
+    /// # #[derive(Debug, thiserror::Error)]
+    /// # enum ExampleError {
+    /// #     #[error(transparent)]
+    /// #     Construction(#[from] DelaunayTriangulationConstructionError),
+    /// #     #[error(transparent)]
+    /// #     Facet(#[from] delaunay::prelude::tds::FacetError),
+    /// # }
+    /// # fn main() -> Result<(), ExampleError> {
+    /// let vertices = [
+    ///     Vertex::<(), _>::try_new([0.0, 0.0]).expect("finite vertex coordinates"),
+    ///     Vertex::<(), _>::try_new([1.0, 0.0]).expect("finite vertex coordinates"),
+    ///     Vertex::<(), _>::try_new([0.0, 1.0]).expect("finite vertex coordinates"),
+    /// ];
+    /// let dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
+    /// let Some((simplex_key, _)) = dt.simplices().next() else {
+    ///     return Ok(());
+    /// };
+    /// let handle = FacetHandle::try_new(dt.tds(), simplex_key, 1)?;
     /// assert_eq!(handle.facet_index(), 1);
+    /// # Ok(())
+    /// # }
     /// ```
     #[must_use]
     pub const fn facet_index(&self) -> u8 {

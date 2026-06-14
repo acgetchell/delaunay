@@ -317,9 +317,24 @@ pub fn facet_try_new_constructors_ok<TdsType, SimplexKeyType>(
     let _boundary_facets = BoundaryFacetsIter::try_new(tds, facet_map);
 }
 
-pub fn facet_handle_new_constructor_stays_ok(simplex_key: SimplexKey) {
-    // ok: delaunay.rust.no-facet-new-constructors
+pub fn facet_handle_new_constructor_bad(simplex_key: SimplexKey) {
+    // ruleid: delaunay.rust.no-facet-new-constructors
     let _handle = FacetHandle::new(simplex_key, 0);
+}
+
+pub fn facet_handle_try_new_constructor_ok<TdsType>(tds: &TdsType, simplex_key: SimplexKey) {
+    // ok: delaunay.rust.no-facet-new-constructors
+    let _handle = FacetHandle::try_new(tds, simplex_key, 0);
+}
+
+pub fn ridge_handle_new_constructor_bad(simplex_key: SimplexKey) {
+    // ruleid: delaunay.rust.no-ridgehandle-new-constructor
+    let _handle = RidgeHandle::new(simplex_key, 0, 1);
+}
+
+pub fn ridge_handle_try_new_constructor_ok<TdsType>(tds: &TdsType, simplex_key: SimplexKey) {
+    // ok: delaunay.rust.no-ridgehandle-new-constructor
+    let _handle = RidgeHandle::try_new(tds, simplex_key, 0, 1);
 }
 
 pub fn edgekey_new_constructor_bad(a: VertexKey, b: VertexKey) {
@@ -327,9 +342,15 @@ pub fn edgekey_new_constructor_bad(a: VertexKey, b: VertexKey) {
     let _edge = EdgeKey::new(a, b);
 }
 
-pub fn edgekey_try_new_constructor_ok(a: VertexKey, b: VertexKey) {
-    // ok: delaunay.rust.no-edgekey-new-constructor
+pub fn edgekey_try_new_without_tds_bad(a: VertexKey, b: VertexKey) {
+    // ruleid: delaunay.rust.no-edgekey-try-new-without-tds
     let _edge = EdgeKey::try_new(a, b);
+}
+
+pub fn edgekey_try_new_constructor_ok<TdsType>(tds: &TdsType, a: VertexKey, b: VertexKey) {
+    // ok: delaunay.rust.no-edgekey-new-constructor
+    // ok: delaunay.rust.no-edgekey-try-new-without-tds
+    let _edge = EdgeKey::try_new(tds, a, b);
 }
 
 impl PublicVertexUuidConstructorFixture {

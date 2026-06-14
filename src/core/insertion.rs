@@ -1233,7 +1233,7 @@ where
     fn star_split_boundary_facets(start_simplex: SimplexKey) -> CavityBoundaryBuffer {
         (0..=D)
             .map(|i| {
-                FacetHandle::new(
+                FacetHandle::from_validated(
                     start_simplex,
                     u8::try_from(i).expect("facet index must fit in u8"),
                 )

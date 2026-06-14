@@ -24,6 +24,7 @@ use delaunay::prelude::construction::DelaunayTriangulationConstructionError;
 use delaunay::prelude::delaunayize::*;
 use delaunay::prelude::flips::*;
 use delaunay::prelude::geometry::CoordinateConversionError;
+use delaunay::prelude::tds::FacetError;
 use delaunay::prelude::validation::DelaunayTriangulationValidationError;
 
 // For the generic print_outcome helper.
@@ -39,6 +40,8 @@ enum DelaunayizeRepairExampleError {
     Validation(#[from] DelaunayTriangulationValidationError),
     #[error(transparent)]
     Flip(#[from] FlipError),
+    #[error(transparent)]
+    Facet(#[from] FacetError),
     #[error(transparent)]
     CoordinateConversion(#[from] CoordinateConversionError),
 }
@@ -167,7 +170,7 @@ fn flip_then_repair_2d() -> Result<(), DelaunayizeRepairExampleError> {
         if let Some(neighbors) = simplex.neighbors() {
             for (i, n) in neighbors.enumerate() {
                 if let (Some(_), Ok(idx)) = (n, u8::try_from(i)) {
-                    facets.push(FacetHandle::new(ck, idx));
+                    facets.push(FacetHandle::try_new(dt.tds(), ck, idx)?);
                 }
             }
         }

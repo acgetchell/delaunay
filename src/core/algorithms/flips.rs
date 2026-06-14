@@ -2385,7 +2385,7 @@ where
         let facet_vertices = facet_vertices_from_simplex(simplex, candidate_idx);
         if facet_key_from_vertices(&facet_vertices) == key {
             let facet_index = u8::try_from(candidate_idx).ok()?;
-            return Some(FacetHandle::new(simplex_key, facet_index));
+            return Some(FacetHandle::from_validated(simplex_key, facet_index));
         }
     }
 
@@ -2432,7 +2432,7 @@ where
             if facet_key_from_vertices(&ridge_vertices) == key {
                 let omit_a = u8::try_from(i).ok()?;
                 let omit_b = u8::try_from(j).ok()?;
-                return Some(RidgeHandle::new(simplex_key, omit_a, omit_b));
+                return Some(RidgeHandle::from_validated(simplex_key, omit_a, omit_b));
             }
         }
     }
@@ -4004,14 +4004,32 @@ impl TryFrom<[VertexKey; 3]> for TriangleHandle {
 /// # Examples
 ///
 /// ```rust
+/// use delaunay::prelude::*;
 /// use delaunay::prelude::flips::RidgeHandle;
-/// use delaunay::prelude::tds::SimplexKey;
-/// use slotmap::KeyData;
 ///
-/// let simplex_key = SimplexKey::from(KeyData::from_ffi(7));
-/// let handle = RidgeHandle::new(simplex_key, 2, 0);
+/// # #[derive(Debug, thiserror::Error)]
+/// # enum ExampleError {
+/// #     #[error(transparent)]
+/// #     Construction(#[from] DelaunayTriangulationConstructionError),
+/// #     #[error(transparent)]
+/// #     Flip(#[from] delaunay::prelude::flips::FlipError),
+/// # }
+/// # fn main() -> Result<(), ExampleError> {
+/// let vertices = [
+///     Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).expect("finite vertex coordinates"),
+///     Vertex::<(), _>::try_new([1.0, 0.0, 0.0]).expect("finite vertex coordinates"),
+///     Vertex::<(), _>::try_new([0.0, 1.0, 0.0]).expect("finite vertex coordinates"),
+///     Vertex::<(), _>::try_new([0.0, 0.0, 1.0]).expect("finite vertex coordinates"),
+/// ];
+/// let dt = DelaunayTriangulationBuilder::new(&vertices).build::<()>()?;
+/// let Some((simplex_key, _)) = dt.simplices().next() else {
+///     return Ok(());
+/// };
+/// let handle = RidgeHandle::try_new(dt.tds(), simplex_key, 2, 0)?;
 /// assert_eq!(handle.omit_a(), 0);
 /// assert_eq!(handle.omit_b(), 2);
+/// # Ok(())
+/// # }
 /// ```
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct RidgeHandle {
@@ -4021,9 +4039,48 @@ pub struct RidgeHandle {
 }
 
 impl RidgeHandle {
-    /// Creates a new ridge handle by specifying the two omitted vertex indices.
-    #[must_use]
-    pub const fn new(simplex_key: SimplexKey, omit_a: u8, omit_b: u8) -> Self {
+    /// Creates a new ridge handle by validating the omitted vertex indices
+    /// against a live TDS simplex.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`FlipError::UnsupportedDimension`] for dimensions below 3,
+    /// [`FlipError::MissingSimplex`] if `simplex_key` is not present in `tds`,
+    /// or [`FlipError::InvalidRidgeIndex`] if either omitted index is out of
+    /// bounds or both indices are the same.
+    pub fn try_new<U, V, const D: usize>(
+        tds: &Tds<U, V, D>,
+        simplex_key: SimplexKey,
+        omit_a: u8,
+        omit_b: u8,
+    ) -> Result<Self, FlipError> {
+        if D < 3 {
+            return Err(FlipError::UnsupportedDimension { dimension: D });
+        }
+
+        let simplex = tds
+            .simplex(simplex_key)
+            .ok_or(FlipError::MissingSimplex { simplex_key })?;
+        let vertex_count = simplex.number_of_vertices();
+        let first_omit_index = usize::from(omit_a);
+        let second_omit_index = usize::from(omit_b);
+        if first_omit_index >= vertex_count || second_omit_index >= vertex_count || omit_a == omit_b
+        {
+            return Err(FlipError::InvalidRidgeIndex {
+                simplex_key,
+                omit_a,
+                omit_b,
+                vertex_count,
+            });
+        }
+
+        Ok(Self::from_validated(simplex_key, omit_a, omit_b))
+    }
+
+    /// Creates a ridge handle from omitted vertex indices already proven valid
+    /// by the caller.
+    #[inline]
+    pub(crate) const fn from_validated(simplex_key: SimplexKey, omit_a: u8, omit_b: u8) -> Self {
         if omit_a <= omit_b {
             Self {
                 simplex_key,
@@ -5744,7 +5801,7 @@ where
         }
     } else {
         for facet in AllFacetsIter::try_new(tds)? {
-            let handle = FacetHandle::new(facet.simplex_key(), facet.facet_index());
+            let handle = FacetHandle::from_validated(facet.simplex_key(), facet.facet_index());
             enqueue_facet(
                 tds,
                 handle,
@@ -7688,7 +7745,7 @@ where
         }
     } else {
         for facet in AllFacetsIter::try_new(tds)? {
-            let handle = FacetHandle::new(facet.simplex_key(), facet.facet_index());
+            let handle = FacetHandle::from_validated(facet.simplex_key(), facet.facet_index());
             enqueue_facet(
                 tds,
                 handle,
@@ -9364,7 +9421,7 @@ where
         return Ok(());
     };
     for facet_index in 0..simplex.number_of_vertices() {
-        let handle = FacetHandle::new(
+        let handle = FacetHandle::from_validated(
             simplex_key,
             u8::try_from(facet_index).map_err(|_| FlipError::InvalidFacetIndex {
                 simplex_key,
@@ -9534,7 +9591,7 @@ where
     let vertex_count = simplex.number_of_vertices();
     for i in 0..vertex_count {
         for j in (i + 1)..vertex_count {
-            let handle = RidgeHandle::new(
+            let handle = RidgeHandle::from_validated(
                 simplex_key,
                 u8::try_from(i).map_err(|_| FlipError::InvalidRidgeIndex {
                     simplex_key,
@@ -9986,7 +10043,7 @@ mod tests {
         }
 
         fn ridge_handle_abcd(&self) -> RidgeHandle {
-            RidgeHandle::new(self.upper_tetrahedron, 2, 3)
+            RidgeHandle::from_validated(self.upper_tetrahedron, 2, 3)
         }
 
         fn last_applied_flip(&self) -> LastAppliedFlip {
@@ -10096,7 +10153,7 @@ mod tests {
 
         let ridge_summary = predecessor_flip_summary(
             &fixture.tds,
-            RidgeHandle::new(fixture.lower_neighbor, 2, 3),
+            RidgeHandle::from_validated(fixture.lower_neighbor, 2, 3),
             &[fixture.lower_neighbor],
             &last,
         );
@@ -10134,7 +10191,7 @@ mod tests {
         let missing_simplex = SimplexKey::from(KeyData::from_ffi(999_903));
         debug_ridge_context(
             &fixture.tds,
-            RidgeHandle::new(missing_simplex, 0, 1),
+            RidgeHandle::from_validated(missing_simplex, 0, 1),
             None,
             &mut diagnostics,
             None,
@@ -10143,7 +10200,7 @@ mod tests {
 
         debug_ridge_context(
             &fixture.tds,
-            RidgeHandle::new(fixture.upper_tetrahedron, 0, 0),
+            RidgeHandle::from_validated(fixture.upper_tetrahedron, 0, 0),
             None,
             &mut diagnostics,
             None,
@@ -10190,7 +10247,7 @@ mod tests {
 
         debug_postcondition_facet_context(
             &fixture.tds,
-            FacetHandle::new(fixture.upper_tetrahedron, 3),
+            FacetHandle::from_validated(fixture.upper_tetrahedron, 3),
             &context,
             &mut diagnostics,
             Some(&last),
@@ -10289,7 +10346,7 @@ mod tests {
                 Simplex::try_new_with_data(vec![v0, v1, v2], None).unwrap(),
             )
             .unwrap();
-        let stale_handle = FacetHandle::new(simplex_key, 0);
+        let stale_handle = FacetHandle::from_validated(simplex_key, 0);
         let stable_key = {
             let simplex = tds.simplex(simplex_key).unwrap();
             let facet_vertices =
@@ -10345,7 +10402,7 @@ mod tests {
                 Simplex::try_new_with_data(vec![v0, v1, v2, v3], None).unwrap(),
             )
             .unwrap();
-        let stale_handle = RidgeHandle::new(simplex_key, 0, 1);
+        let stale_handle = RidgeHandle::from_validated(simplex_key, 0, 1);
         let stable_key = {
             let simplex = tds.simplex(simplex_key).unwrap();
             let ridge_vertices = ridge_vertices_from_simplex(
@@ -10438,7 +10495,7 @@ mod tests {
             facet_index_for_edge_2d(&tds, simplex_cavity_left, v_left_bottom, v_right_bottom);
         let ctx = build_k2_flip_context(
             &tds,
-            FacetHandle::new(simplex_cavity_left, facet_idx_flip_edge),
+            FacetHandle::from_validated(simplex_cavity_left, facet_idx_flip_edge),
         )
         .unwrap();
 
@@ -10553,7 +10610,7 @@ mod tests {
             facet_index_for_edge_2d(&tds, simplex_cavity_left, v_left_bottom, v_right_bottom);
         let ctx = build_k2_flip_context(
             &tds,
-            FacetHandle::new(simplex_cavity_left, facet_idx_flip_edge),
+            FacetHandle::from_validated(simplex_cavity_left, facet_idx_flip_edge),
         )
         .unwrap();
 
@@ -10640,7 +10697,7 @@ mod tests {
                         &tds,
                         &mut replacement_simplices,
                         &mut replacement_offsets,
-                        &[FacetHandle::new(external_simplex_key, 0)],
+                        &[FacetHandle::from_validated(external_simplex_key, 0)],
                     )
                     .unwrap();
 
@@ -10681,7 +10738,7 @@ mod tests {
                         &tds,
                         &mut replacement_simplices,
                         &mut replacement_offsets,
-                        &[FacetHandle::new(external_simplex_key, 0)],
+                        &[FacetHandle::from_validated(external_simplex_key, 0)],
                     );
 
                     assert!(
@@ -10748,7 +10805,7 @@ mod tests {
                         &tds,
                         &mut replacement_simplices,
                         &mut replacement_offsets,
-                        &[FacetHandle::new(external_simplex_key, 0)],
+                        &[FacetHandle::from_validated(external_simplex_key, 0)],
                     );
 
                     assert!(
@@ -10785,7 +10842,7 @@ mod tests {
                         &tds,
                         &mut replacement_simplices,
                         &mut replacement_offsets,
-                        &[FacetHandle::new(external_simplex_key, 0)],
+                        &[FacetHandle::from_validated(external_simplex_key, 0)],
                     );
 
                     assert!(
@@ -10821,7 +10878,7 @@ mod tests {
                         &tds,
                         &mut replacement_simplices,
                         &mut replacement_offsets,
-                        &[FacetHandle::new(external_simplex_key, 0)],
+                        &[FacetHandle::from_validated(external_simplex_key, 0)],
                     );
 
                     assert!(
@@ -10955,7 +11012,7 @@ mod tests {
                         &tds,
                         &mut external_aligned,
                         &mut external_offsets,
-                        &[FacetHandle::new(external_simplex_key, 0)],
+                        &[FacetHandle::from_validated(external_simplex_key, 0)],
                     )
                     .unwrap();
                     let mut expected_external = simplex_vertices.clone();
@@ -11133,7 +11190,7 @@ mod tests {
 
         // In `simplex_around_edge_0`, the ridge is the edge (v_edge_start, v_edge_end).
         // We omitted the two non-ridge vertices by construction (indices 2 and 3).
-        let ridge = RidgeHandle::new(simplex_around_edge_0, 2, 3);
+        let ridge = RidgeHandle::from_validated(simplex_around_edge_0, 2, 3);
         let ctx = build_k3_flip_context(&tds, ridge).unwrap();
         assert_eq!(ctx.removed_simplices.len(), 3);
         assert!(
@@ -11235,8 +11292,8 @@ mod tests {
         let v1 = VertexKey::from(KeyData::from_ffi(102));
         let v2 = VertexKey::from(KeyData::from_ffi(103));
         let edge = EdgeKey::from_validated_endpoints(v0, v1);
-        let facet = FacetHandle::new(simplex, 0);
-        let ridge = RidgeHandle::new(simplex, 0, 1);
+        let facet = FacetHandle::from_validated(simplex, 0);
+        let ridge = RidgeHandle::from_validated(simplex, 0, 1);
         let triangle = TriangleHandle::try_new(v0, v1, v2).unwrap();
 
         let first_inserted_sample = InsertedSimplexSkipSample {
@@ -11269,7 +11326,7 @@ mod tests {
         };
         diagnostics.record_invalid_ridge_multiplicity_skip(first_ridge_sample);
         diagnostics.record_invalid_ridge_multiplicity_skip(RidgeMultiplicitySkipSample {
-            ridge: RidgeHandle::new(simplex, 1, 2),
+            ridge: RidgeHandle::from_validated(simplex, 1, 2),
             multiplicity: 4,
         });
         assert_eq!(diagnostics.invalid_ridge_multiplicity_skips, 2);
@@ -11301,8 +11358,8 @@ mod tests {
         let v0 = VertexKey::from(KeyData::from_ffi(101));
         let v1 = VertexKey::from(KeyData::from_ffi(102));
         let v2 = VertexKey::from(KeyData::from_ffi(103));
-        let facet = FacetHandle::new(simplex, 0);
-        let ridge = RidgeHandle::new(simplex, 0, 1);
+        let facet = FacetHandle::from_validated(simplex, 0);
+        let ridge = RidgeHandle::from_validated(simplex, 0, 1);
         let triangle = TriangleHandle::try_new(v0, v1, v2).unwrap();
 
         let removed_face: VertexKeyList = [v0, v1].into_iter().collect();
@@ -11614,7 +11671,7 @@ mod tests {
             .map_err(|err| TestCaseError::fail(format!("neighbor repair failed: {err:?}")))?;
 
         let before = snapshot_topology(&tds);
-        let facet = FacetHandle::new(
+        let facet = FacetHandle::from_validated(
             simplex_a,
             u8::try_from(D).map_err(|err| {
                 TestCaseError::fail(format!("facet index conversion failed: {err:?}"))
@@ -11639,7 +11696,7 @@ mod tests {
                         .iter()
                         .position(|&vertex| vertex != opposite_a && vertex != opposite_b)
                         .ok_or_else(|| TestCaseError::fail("missing inverse k=2 facet vertex"))?;
-                    inverse_facet = Some(FacetHandle::new(
+                    inverse_facet = Some(FacetHandle::from_validated(
                         simplex_key,
                         u8::try_from(facet_index).map_err(|err| {
                             TestCaseError::fail(format!(
@@ -11769,7 +11826,7 @@ mod tests {
             .map_err(|err| TestCaseError::fail(format!("neighbor repair failed: {err:?}")))?;
 
         let before = snapshot_topology(&tds);
-        let ridge = RidgeHandle::new(
+        let ridge = RidgeHandle::from_validated(
             first_simplex,
             u8::try_from(ridge_vertex_count).map_err(|err| {
                 TestCaseError::fail(format!("ridge index conversion failed: {err:?}"))
@@ -11800,7 +11857,7 @@ mod tests {
                         .iter()
                         .position(|&vertex| vertex != a && vertex != b && vertex != c)
                         .ok_or_else(|| TestCaseError::fail("missing inverse k=3 facet vertex"))?;
-                    inverse_facet = Some(FacetHandle::new(
+                    inverse_facet = Some(FacetHandle::from_validated(
                         simplex_key,
                         u8::try_from(facet_index).map_err(|err| {
                             TestCaseError::fail(format!(
@@ -11991,7 +12048,7 @@ mod tests {
 
                     let before = snapshot_topology(&tds);
 
-                    let facet = FacetHandle::new(simplex_a, u8::try_from($dim).unwrap());
+                    let facet = FacetHandle::from_validated(simplex_a, u8::try_from($dim).unwrap());
                     let context = build_k2_flip_context(&tds, facet).unwrap();
                     let info = apply_bistellar_flip_k2(&mut tds, &context).unwrap();
                     assert!(tds.is_valid().is_ok());
@@ -12006,7 +12063,7 @@ mod tests {
                                     .iter()
                                     .position(|&v| v != opposite_a && v != opposite_b)
                                     .expect("missing shared vertex for inverse k=2");
-                                inverse_facet = Some(FacetHandle::new(
+                                inverse_facet = Some(FacetHandle::from_validated(
                                     simplex_key,
                                     u8::try_from(facet_index).unwrap(),
                                 ));
@@ -12082,7 +12139,7 @@ mod tests {
 
                     let before = snapshot_topology(&tds);
 
-                    let ridge = RidgeHandle::new(
+                    let ridge = RidgeHandle::from_validated(
                         c1,
                         u8::try_from($dim - 1).unwrap(),
                         u8::try_from($dim).unwrap(),
@@ -12104,7 +12161,7 @@ mod tests {
                                     .iter()
                                     .position(|&v| v != a && v != b && v != c)
                                     .expect("missing ridge vertex for inverse k=3");
-                                inverse_facet = Some(FacetHandle::new(
+                                inverse_facet = Some(FacetHandle::from_validated(
                                     simplex_key,
                                     u8::try_from(facet_index).unwrap(),
                                 ));
@@ -12335,7 +12392,7 @@ mod tests {
 
         repair_neighbor_pointers(&mut tds).unwrap();
 
-        let facet = FacetHandle::new(c1, 2); // facet opposite vertex index 2 (edge AB)
+        let facet = FacetHandle::from_validated(c1, 2); // facet opposite vertex index 2 (edge AB)
         let context = build_k2_flip_context(&tds, facet).unwrap();
         let info = apply_bistellar_flip_k2(&mut tds, &context).unwrap();
 
@@ -12394,7 +12451,7 @@ mod tests {
 
         repair_neighbor_pointers(&mut tds).unwrap();
 
-        let facet = FacetHandle::new(c1, 2); // facet opposite vertex index 2 (edge AB)
+        let facet = FacetHandle::from_validated(c1, 2); // facet opposite vertex index 2 (edge AB)
         let context = build_k2_flip_context(&tds, facet).unwrap();
         let result = apply_bistellar_flip_k2(&mut tds, &context);
 
@@ -12472,7 +12529,7 @@ mod tests {
         assert!(tds.is_valid().is_ok());
 
         // Face (v_x, v_y, v_z) is opposite v_a in `simplex_a` (index 0 by construction).
-        let facet = FacetHandle::new(simplex_a, 0);
+        let facet = FacetHandle::from_validated(simplex_a, 0);
         let ctx = build_k2_flip_context(&tds, facet).unwrap();
 
         let result = apply_bistellar_flip_k2(&mut tds, &ctx);
@@ -12531,7 +12588,7 @@ mod tests {
 
         repair_neighbor_pointers(&mut tds).unwrap();
 
-        let facet = FacetHandle::new(c1, 2); // facet opposite vertex index 2 (edge AB)
+        let facet = FacetHandle::from_validated(c1, 2); // facet opposite vertex index 2 (edge AB)
         let context = build_k2_flip_context(&tds, facet).unwrap();
         let result = apply_bistellar_flip_k2(&mut tds, &context);
 
@@ -12582,7 +12639,7 @@ mod tests {
 
         repair_neighbor_pointers(&mut tds).unwrap();
 
-        let facet = FacetHandle::new(c1, 3); // facet opposite vertex d (ABC)
+        let facet = FacetHandle::from_validated(c1, 3); // facet opposite vertex d (ABC)
         let context = build_k2_flip_context(&tds, facet).unwrap();
         let info = apply_bistellar_flip_k2(&mut tds, &context).unwrap();
 
@@ -12638,7 +12695,7 @@ mod tests {
 
         repair_neighbor_pointers(&mut tds).unwrap();
 
-        let ridge = RidgeHandle::new(c1, 2, 3);
+        let ridge = RidgeHandle::from_validated(c1, 2, 3);
         let context = build_k3_flip_context(&tds, ridge).unwrap();
         let info = apply_bistellar_flip_k3(&mut tds, &context).unwrap();
 
@@ -12701,7 +12758,7 @@ mod tests {
 
         repair_neighbor_pointers(&mut tds).unwrap();
 
-        let ridge = RidgeHandle::new(c1, 3, 4);
+        let ridge = RidgeHandle::from_validated(c1, 3, 4);
         let context = build_k3_flip_context(&tds, ridge).unwrap();
         let info = apply_bistellar_flip_k3(&mut tds, &context).unwrap();
 
@@ -12769,7 +12826,7 @@ mod tests {
 
         repair_neighbor_pointers(&mut tds).unwrap();
 
-        let ridge = RidgeHandle::new(c1, 4, 5);
+        let ridge = RidgeHandle::from_validated(c1, 4, 5);
         let context = build_k3_flip_context(&tds, ridge).unwrap();
         let info = apply_bistellar_flip_k3(&mut tds, &context).unwrap();
 
@@ -12803,7 +12860,7 @@ mod tests {
             .unwrap();
 
         let before = snapshot_topology(&tds);
-        let facet = FacetHandle::new(simplex, 0);
+        let facet = FacetHandle::from_validated(simplex, 0);
         let err = build_k2_flip_context(&tds, facet).unwrap_err();
         assert_matches!(err, FlipError::BoundaryFacet { .. });
         assert_eq!(snapshot_topology(&tds), before);
@@ -12839,7 +12896,7 @@ mod tests {
             )
             .unwrap();
 
-        let ridge = RidgeHandle::new(simplex, 0, 1);
+        let ridge = RidgeHandle::from_validated(simplex, 0, 1);
         let err = build_k3_flip_context(&tds, ridge).unwrap_err();
         assert_matches!(err, FlipError::InvalidRidgeMultiplicity { found: 1 });
     }
@@ -12898,7 +12955,7 @@ mod tests {
             .set_neighbors_from_keys([Some(dangling_neighbor), None, None, None])
             .unwrap();
 
-        let ridge = RidgeHandle::new(simplex, 0, 1);
+        let ridge = RidgeHandle::from_validated(simplex, 0, 1);
         let err = build_k3_flip_context(&tds, ridge).unwrap_err();
         assert_eq!(
             err,
@@ -13070,7 +13127,7 @@ mod tests {
 
         repair_neighbor_pointers(&mut tds).unwrap();
 
-        let facet = FacetHandle::new(simplex_a, 4);
+        let facet = FacetHandle::from_validated(simplex_a, 4);
         let context = build_k2_flip_context(&tds, facet).unwrap();
         let context_dyn = to_dynamic(context);
         let info = apply_bistellar_flip_dynamic(&mut tds, 2, &context_dyn).unwrap();
@@ -13139,7 +13196,7 @@ mod tests {
 
         repair_neighbor_pointers(&mut tds).unwrap();
 
-        let ridge = RidgeHandle::new(c1, 4, 5);
+        let ridge = RidgeHandle::from_validated(c1, 4, 5);
         let context = build_k3_flip_context(&tds, ridge).unwrap();
         let context_dyn = to_dynamic(context);
         let info = apply_bistellar_flip_dynamic(&mut tds, 3, &context_dyn).unwrap();
@@ -13206,7 +13263,7 @@ mod tests {
             repair_neighbor_pointers(&mut tds).unwrap();
 
             let before = snapshot_topology(&tds);
-            let facet = FacetHandle::new(c1, 3);
+            let facet = FacetHandle::from_validated(c1, 3);
             let context = build_k2_flip_context(&tds, facet).unwrap();
             let info = apply_bistellar_flip_k2(&mut tds, &context).unwrap();
             assert!(tds.is_valid().is_ok());
@@ -13569,7 +13626,7 @@ mod tests {
 
         repair_neighbor_pointers(&mut tds).unwrap();
 
-        let facet = FacetHandle::new(c1, 2);
+        let facet = FacetHandle::from_validated(c1, 2);
         let context = build_k2_flip_context(&tds, facet).unwrap();
         let _info = apply_bistellar_flip_k2(&mut tds, &context).unwrap();
 
@@ -13613,7 +13670,7 @@ mod tests {
 
         repair_neighbor_pointers(&mut tds).unwrap();
 
-        let facet = FacetHandle::new(c1, 2);
+        let facet = FacetHandle::from_validated(c1, 2);
         let context = build_k2_flip_context(&tds, facet).unwrap();
 
         let degenerate = k2_flip_would_create_degenerate_simplex(&tds, &context).unwrap();
@@ -13659,7 +13716,7 @@ mod tests {
 
         repair_neighbor_pointers(&mut tds).unwrap();
 
-        let facet = FacetHandle::new(c1, 2);
+        let facet = FacetHandle::from_validated(c1, 2);
         let context = build_k2_flip_context(&tds, facet).unwrap();
 
         assert_context_has_nonzero_robust_orientation(&tds, &context);
@@ -13711,7 +13768,7 @@ mod tests {
 
         repair_neighbor_pointers(&mut tds).unwrap();
 
-        let facet = FacetHandle::new(simplex_a, 4);
+        let facet = FacetHandle::from_validated(simplex_a, 4);
         let context = build_k2_flip_context(&tds, facet).unwrap();
         let _info = apply_bistellar_flip_k2(&mut tds, &context).unwrap();
 
@@ -13825,7 +13882,7 @@ mod tests {
 
         repair_neighbor_pointers(&mut tds).unwrap();
 
-        let ridge = RidgeHandle::new(c1, 4, 5);
+        let ridge = RidgeHandle::from_validated(c1, 4, 5);
         let context = build_k3_flip_context(&tds, ridge).unwrap();
         let info = apply_bistellar_flip_k3(&mut tds, &context).unwrap();
 
@@ -13891,7 +13948,7 @@ mod tests {
 
         repair_neighbor_pointers(&mut tds).unwrap();
 
-        let facet = FacetHandle::new(simplex_a, 5);
+        let facet = FacetHandle::from_validated(simplex_a, 5);
         let context = build_k2_flip_context(&tds, facet).unwrap();
         let _info = apply_bistellar_flip_k2(&mut tds, &context).unwrap();
 
@@ -14031,7 +14088,7 @@ mod tests {
 
         repair_neighbor_pointers(&mut tds).unwrap();
 
-        let facet = FacetHandle::new(simplex_a, 4);
+        let facet = FacetHandle::from_validated(simplex_a, 4);
         let context = build_k2_flip_context(&tds, facet).unwrap();
         let info = apply_bistellar_flip_k2(&mut tds, &context).unwrap();
 
@@ -14107,7 +14164,7 @@ mod tests {
 
         repair_neighbor_pointers(&mut tds).unwrap();
 
-        let ridge = RidgeHandle::new(c1, 4, 5);
+        let ridge = RidgeHandle::from_validated(c1, 4, 5);
         let context = build_k3_flip_context(&tds, ridge).unwrap();
         let info = apply_bistellar_flip_k3(&mut tds, &context).unwrap();
 

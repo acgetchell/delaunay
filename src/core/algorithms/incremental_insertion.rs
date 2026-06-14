@@ -2883,7 +2883,7 @@ where
                     facet_index: facet_idx,
                     max: u8::MAX,
                 })?;
-            external_facets.push(FacetHandle::new(simplex_key, facet_idx_u8));
+            external_facets.push(FacetHandle::from_validated(simplex_key, facet_idx_u8));
         }
     }
 
@@ -3903,7 +3903,7 @@ where
             && p[1] <= max_y + tol;
 
         if on_segment {
-            let handle = FacetHandle::new(simplex_key, facet_index);
+            let handle = FacetHandle::from_validated(simplex_key, facet_index);
             if match_facet.is_some() {
                 return Err(InsertionError::HullExtension {
                     reason: HullExtensionReason::Other {
@@ -4135,7 +4135,7 @@ where
         }
         #[cfg(debug_assertions)]
         if log_enabled && orientation_with_opposite == 0 && degenerate_facets.len() < 10 {
-            degenerate_facets.push(FacetHandle::new(simplex_key, facet_index));
+            degenerate_facets.push(FacetHandle::from_validated(simplex_key, facet_index));
         }
         #[cfg(debug_assertions)]
         if detail_enabled {
@@ -4151,7 +4151,7 @@ where
         }
 
         if is_visible {
-            visible_facets.push(FacetHandle::new(simplex_key, facet_index));
+            visible_facets.push(FacetHandle::from_validated(simplex_key, facet_index));
         }
     }
 
@@ -4578,7 +4578,7 @@ mod tests {
                     // Find the single simplex and create boundary facets (one per face)
                     let simplex_key = tds.simplex_keys().next().unwrap();
                     let boundary_facets: Vec<FacetHandle> = (0..=$dim)
-                        .map(|i| FacetHandle::new(simplex_key, i))
+                        .map(|i| FacetHandle::from_validated(simplex_key, i))
                         .collect();
 
                     // Verify expected number of facets
@@ -4685,8 +4685,9 @@ mod tests {
 
         let invalid_vkey = VertexKey::from(KeyData::from_ffi(u64::MAX));
         let simplex_key = tds.simplex_keys().next().unwrap();
-        let boundary_facets: Vec<FacetHandle> =
-            (0..=2).map(|i| FacetHandle::new(simplex_key, i)).collect();
+        let boundary_facets: Vec<FacetHandle> = (0..=2)
+            .map(|i| FacetHandle::from_validated(simplex_key, i))
+            .collect();
 
         let result = fill_cavity(tds, invalid_vkey, &boundary_facets);
         assert!(
@@ -4717,7 +4718,7 @@ mod tests {
             .unwrap();
         let invalid_simplex_key = SimplexKey::from(KeyData::from_ffi(u64::MAX));
         let invalid_boundary_facets: Vec<FacetHandle> = (0..=2)
-            .map(|i| FacetHandle::new(invalid_simplex_key, i))
+            .map(|i| FacetHandle::from_validated(invalid_simplex_key, i))
             .collect();
 
         let result = fill_cavity(tds, new_vkey, &invalid_boundary_facets);
@@ -4747,7 +4748,7 @@ mod tests {
             .unwrap();
         let simplex_key = tds.simplex_keys().next().unwrap();
         let original_simplex_count = tds.number_of_simplices();
-        let invalid_boundary_facets = vec![FacetHandle::new(simplex_key, 3)];
+        let invalid_boundary_facets = vec![FacetHandle::from_validated(simplex_key, 3)];
 
         let result = fill_cavity(tds, new_vkey, &invalid_boundary_facets);
 
@@ -4840,7 +4841,7 @@ mod tests {
         let err = wire_cavity_neighbors(
             &mut tds,
             &new_simplices,
-            [FacetHandle::new(external_simplex, 0)],
+            [FacetHandle::from_validated(external_simplex, 0)],
             None,
         )
         .unwrap_err();
@@ -4910,7 +4911,7 @@ mod tests {
         let err = wire_cavity_neighbors(
             &mut tds,
             &new_simplices,
-            [FacetHandle::new(external_simplex, 2)],
+            [FacetHandle::from_validated(external_simplex, 2)],
             None,
         )
         .unwrap_err();
@@ -4934,7 +4935,7 @@ mod tests {
         let missing_simplex = SimplexKey::from(KeyData::from_ffi(u64::MAX));
         let mut internal_simplices = SimplexKeyBuffer::new();
         internal_simplices.push(missing_simplex);
-        let boundary_facets = [FacetHandle::new(missing_simplex, 0)];
+        let boundary_facets = [FacetHandle::from_validated(missing_simplex, 0)];
 
         let err =
             external_facets_for_boundary(&tds, &internal_simplices, &boundary_facets).unwrap_err();
@@ -4979,7 +4980,7 @@ mod tests {
 
         let mut internal_simplices = SimplexKeyBuffer::new();
         internal_simplices.push(simplex_key);
-        let boundary_facets = [FacetHandle::new(simplex_key, 0)];
+        let boundary_facets = [FacetHandle::from_validated(simplex_key, 0)];
 
         let err =
             external_facets_for_boundary(&tds, &internal_simplices, &boundary_facets).unwrap_err();
@@ -5035,7 +5036,9 @@ mod tests {
         internal_simplices.push(c1);
 
         // Internal set has a single simplex, so all its facets are boundary facets.
-        let boundary_facets: Vec<FacetHandle> = (0..=2).map(|i| FacetHandle::new(c1, i)).collect();
+        let boundary_facets: Vec<FacetHandle> = (0..=2)
+            .map(|i| FacetHandle::from_validated(c1, i))
+            .collect();
 
         let external_facets =
             external_facets_for_boundary(&tds, &internal_simplices, &boundary_facets).unwrap();
@@ -5104,7 +5107,7 @@ mod tests {
             .unwrap()
             .push_vertex_key(extra_vkey);
 
-        let boundary_facets = vec![FacetHandle::new(simplex_key, 0)];
+        let boundary_facets = vec![FacetHandle::from_validated(simplex_key, 0)];
         let err = fill_cavity(tds, new_vkey, &boundary_facets).unwrap_err();
 
         assert_matches!(

@@ -169,7 +169,14 @@ pub trait BistellarFlips<const D: usize> {
     /// use delaunay::prelude::construction::DelaunayTriangulationBuilder;
     /// use delaunay::prelude::flips::*;
     ///
-    /// # fn main() -> Result<(), delaunay::DelaunayTriangulationConstructionError> {
+    /// # #[derive(Debug, thiserror::Error)]
+    /// # enum ExampleError {
+    /// #     #[error(transparent)]
+    /// #     Construction(#[from] delaunay::DelaunayTriangulationConstructionError),
+    /// #     #[error(transparent)]
+    /// #     Facet(#[from] delaunay::prelude::tds::FacetError),
+    /// # }
+    /// # fn main() -> Result<(), ExampleError> {
     /// let vertices = vec![
     ///     delaunay::prelude::Vertex::<(), _>::try_new([0.0, 0.0, 0.0]).expect("finite vertex coordinates"),
     ///     delaunay::prelude::Vertex::<(), _>::try_new([1.0, 0.0, 0.0]).expect("finite vertex coordinates"),
@@ -188,7 +195,7 @@ pub trait BistellarFlips<const D: usize> {
     ///         .map(|mut neighbors| neighbors.any(|n| n.is_some()))
     ///         .unwrap_or(false);
     ///     if has_neighbor {
-    ///         let facet = FacetHandle::new(key, 0);
+    ///         let facet = FacetHandle::try_new(dt.tds(), key, 0)?;
     ///         let _ = dt.flip_k2(facet);  // May succeed or fail depending on configuration
     ///     }
     /// }
@@ -455,20 +462,17 @@ mod tests {
                 TopologyGuarantee::PLManifold,
             )
             .unwrap();
-        let mut tri = dt.as_triangulation().clone();
+        let tri = dt.as_triangulation().clone();
         let simplex_key = tri.simplices().next().unwrap().0;
 
-        let err = tri
-            .flip_k2(FacetHandle::new(simplex_key, u8::MAX))
-            .unwrap_err();
+        let err = FacetHandle::try_new(&tri.tds, simplex_key, u8::MAX).unwrap_err();
 
         assert_matches!(
             err,
-            FlipError::InvalidFacetIndex {
-                simplex_key: key,
-                facet_index: u8::MAX,
-                vertex_count: 4,
-            } if key == simplex_key
+            crate::prelude::tds::FacetError::InvalidFacetIndex {
+                index: u8::MAX,
+                facet_count: 4,
+            }
         );
     }
 

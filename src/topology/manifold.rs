@@ -817,7 +817,7 @@ fn facet_incident_handles<U, V, const D: usize>(
                 }
                 .into());
             };
-            handles.push(FacetHandle::new(simplex_key, facet_index));
+            handles.push(FacetHandle::from_validated(simplex_key, facet_index));
         }
     }
 
@@ -2747,7 +2747,7 @@ mod tests {
         // Synthesize an invalid boundary facet handle: facet indices must be < D+1.
         let mut facet_to_simplices: FacetToSimplicesMap = FacetToSimplicesMap::default();
         let mut handles: SmallBuffer<FacetHandle, 2> = SmallBuffer::new();
-        handles.push(FacetHandle::new(simplex_key, u8::MAX));
+        handles.push(FacetHandle::from_validated(simplex_key, u8::MAX));
         facet_to_simplices.insert(0_u64, handles);
 
         match validate_closed_boundary(&tds, &facet_to_simplices) {
@@ -4327,7 +4327,7 @@ mod tests {
 
         let mut facet_to_simplices: FacetToSimplicesMap = FacetToSimplicesMap::default();
         let mut handles: SmallBuffer<FacetHandle, 2> = SmallBuffer::new();
-        handles.push(FacetHandle::new(simplex_key, 0));
+        handles.push(FacetHandle::from_validated(simplex_key, 0));
         facet_to_simplices.insert(0_u64, handles);
 
         match validate_closed_boundary(&tds, &facet_to_simplices) {

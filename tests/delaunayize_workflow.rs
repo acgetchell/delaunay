@@ -283,7 +283,10 @@ fn test_flip_breaks_delaunay_then_delaunayize_restores() {
         if let Some(neighbors) = simplex.neighbors() {
             for (i, n) in neighbors.enumerate() {
                 if let (Some(_), Ok(idx)) = (n, u8::try_from(i)) {
-                    candidate_facets.push(FacetHandle::new(ck, idx));
+                    candidate_facets.push(
+                        FacetHandle::try_new(dt.tds(), ck, idx)
+                            .expect("interior facet index should be valid"),
+                    );
                 }
             }
         }
@@ -538,7 +541,10 @@ fn test_flip_breaks_then_delaunayize_with_budget_restores_3d() {
         if let Some(neighbors) = simplex.neighbors() {
             for (i, n) in neighbors.enumerate() {
                 if let (Some(_), Ok(idx)) = (n, u8::try_from(i)) {
-                    candidate_facets.push(FacetHandle::new(ck, idx));
+                    candidate_facets.push(
+                        FacetHandle::try_new(dt.tds(), ck, idx)
+                            .expect("interior facet index should be valid"),
+                    );
                 }
             }
         }

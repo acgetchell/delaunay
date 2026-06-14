@@ -17,11 +17,13 @@ mod flip_fixtures;
 #[path = "../benches/common/flip_workflows.rs"]
 mod flip_workflows;
 
+use std::assert_matches;
+
 use delaunay::prelude::construction::{
     DelaunayConstructionFailure, DelaunayTriangulationConstructionError,
 };
 use delaunay::prelude::flips::{FacetHandle, FlipError, RidgeHandle};
-use delaunay::prelude::tds::SimplexKey;
+use delaunay::prelude::tds::{FacetError, SimplexKey};
 use slotmap::KeyData;
 
 use flip_fixtures::{
@@ -29,7 +31,7 @@ use flip_fixtures::{
     STABLE_POINTS_2D, STABLE_POINTS_3D, STABLE_POINTS_4D, STABLE_POINTS_5D,
 };
 use flip_workflows::{
-    CandidateFilter, FlipMoveKind, FlipWorkflowError, assert_same_topology, build_flip_dt,
+    CandidateFilter, FlipWorkflowError, assert_same_topology, build_flip_dt,
     facet_support_touches_adversarial_feature, flippable_k2_facet, flippable_k3_ridge, forward_k2,
     forward_k3, largest_volume_simplex, ridge_support_touches_adversarial_feature, roundtrip_k1,
     simplex_touches_adversarial_feature, snapshot_topology, verify_k1_roundtrip,
@@ -162,24 +164,15 @@ fn invalid_facet_support_returns_specific_error() {
         .simplices()
         .next()
         .expect("stable 2D fixture should contain a simplex");
-    let invalid_facet = FacetHandle::new(simplex_key, u8::MAX);
-
-    let err = facet_support_touches_adversarial_feature(&base_dt, invalid_facet)
-        .expect_err("invalid facet support should be reported as an error");
-    match err {
-        FlipWorkflowError::InvalidFacetSupportIndex {
-            facet,
-            facet_index,
-            vertex_count,
-            simplex_key: observed_simplex,
-        } => {
-            assert_eq!(facet, invalid_facet);
-            assert_eq!(facet_index, u8::MAX);
-            assert_eq!(vertex_count, 3);
-            assert_eq!(observed_simplex, simplex_key);
+    let err = FacetHandle::try_new(base_dt.tds(), simplex_key, u8::MAX)
+        .expect_err("invalid facet index should be rejected at construction");
+    assert_eq!(
+        err,
+        FacetError::InvalidFacetIndex {
+            index: u8::MAX,
+            facet_count: 3,
         }
-        other => panic!("unexpected invalid facet error: {other}"),
-    }
+    );
 }
 
 /// Verifies that invalid ridge support inspection reports a specific error.
@@ -190,82 +183,48 @@ fn invalid_ridge_support_returns_specific_error() {
         .simplices()
         .next()
         .expect("stable 3D fixture should contain a simplex");
-    let invalid_ridge = RidgeHandle::new(simplex_key, u8::MAX, u8::MAX);
-
-    let err = ridge_support_touches_adversarial_feature(&base_dt, invalid_ridge)
-        .expect_err("invalid ridge support should be reported as an error");
-    match err {
-        FlipWorkflowError::InvalidRidgeSupportIndex {
-            ridge,
-            omit_a,
-            omit_b,
-            vertex_count,
+    let err = RidgeHandle::try_new(base_dt.tds(), simplex_key, u8::MAX, u8::MAX)
+        .expect_err("invalid ridge indices should be rejected at construction");
+    assert_matches!(
+        err,
+        FlipError::InvalidRidgeIndex {
             simplex_key: observed_simplex,
-        } => {
-            assert_eq!(ridge, invalid_ridge);
-            assert_eq!(omit_a, u8::MAX);
-            assert_eq!(omit_b, u8::MAX);
-            assert_eq!(vertex_count, 4);
-            assert_eq!(observed_simplex, simplex_key);
-        }
-        other => panic!("unexpected invalid ridge error: {other}"),
-    }
+            omit_a: u8::MAX,
+            omit_b: u8::MAX,
+            vertex_count: 4,
+        } if observed_simplex == simplex_key
+    );
 
-    let duplicate_ridge = RidgeHandle::new(simplex_key, 0, 0);
-    let err = ridge_support_touches_adversarial_feature(&base_dt, duplicate_ridge)
-        .expect_err("duplicate ridge support indices should be reported as an error");
-    match err {
-        FlipWorkflowError::DuplicateRidgeSupportIndex {
-            ridge,
-            omit_a,
-            omit_b,
-            vertex_count,
+    let err = RidgeHandle::try_new(base_dt.tds(), simplex_key, 0, 0)
+        .expect_err("duplicate ridge indices should be rejected at construction");
+    assert_matches!(
+        err,
+        FlipError::InvalidRidgeIndex {
             simplex_key: observed_simplex,
-        } => {
-            assert_eq!(ridge, duplicate_ridge);
-            assert_eq!(omit_a, 0);
-            assert_eq!(omit_b, 0);
-            assert_eq!(vertex_count, 4);
-            assert_eq!(observed_simplex, simplex_key);
-        }
-        other => panic!("unexpected duplicate ridge error: {other}"),
-    }
+            omit_a: 0,
+            omit_b: 0,
+            vertex_count: 4,
+        } if observed_simplex == simplex_key
+    );
 }
 
 /// Verifies that failed public flips preserve the typed [`FlipError`] source.
 #[test]
 fn forward_flip_failure_preserves_typed_source() {
-    let mut base_dt = build_flip_dt(STABLE_POINTS_2D).expect("stable 2D fixture should build");
+    let base_dt = build_flip_dt(STABLE_POINTS_2D).expect("stable 2D fixture should build");
     let (simplex_key, _) = base_dt
         .simplices()
         .next()
         .expect("stable 2D fixture should contain a simplex");
-    let invalid_facet = FacetHandle::new(simplex_key, u8::MAX);
-
-    let err = forward_k2(&mut base_dt, invalid_facet)
-        .expect_err("invalid k=2 facet should be reported as a flip failure");
-    match err {
-        FlipWorkflowError::FlipFailed {
-            dimension,
-            move_kind,
-            source,
-        } => {
-            assert_eq!(dimension, 2);
-            assert_eq!(move_kind, FlipMoveKind::K2);
-            match *source {
-                FlipError::InvalidFacetIndex {
-                    simplex_key: observed_simplex,
-                    facet_index,
-                    ..
-                } => {
-                    assert_eq!(observed_simplex, simplex_key);
-                    assert_eq!(facet_index, u8::MAX);
-                }
-                other => panic!("unexpected flip source: {other}"),
-            }
+    let err = FacetHandle::try_new(base_dt.tds(), simplex_key, u8::MAX)
+        .expect_err("invalid k=2 facet should fail before flip execution");
+    assert_eq!(
+        err,
+        FacetError::InvalidFacetIndex {
+            index: u8::MAX,
+            facet_count: 3,
         }
-        other => panic!("unexpected forward flip error: {other}"),
-    }
+    );
 }
 
 /// Verifies that topology mismatches include Jaccard diagnostics in the fail path.

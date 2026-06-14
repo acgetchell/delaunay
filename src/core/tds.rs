@@ -5630,7 +5630,7 @@ impl<U, V, const D: usize> Tds<U, V, D> {
                 facet_to_simplices
                     .entry(facet_key)
                     .or_default()
-                    .push(FacetHandle::new(simplex_id, facet_index_u8));
+                    .push(FacetHandle::from_validated(simplex_id, facet_index_u8));
             }
         }
 

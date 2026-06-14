@@ -27,7 +27,8 @@ use crate::core::facet::FacetHandle;
 use crate::core::tds::{SimplexKey, Tds, VertexKey};
 use crate::core::traits::data_type::DataType;
 use crate::core::util::canonical_points::{
-    CanonicalSimplexPointError, sorted_facet_points_with_extra, sorted_simplex_points,
+    CanonicalFacetPointError, CanonicalSimplexPointError, sorted_facet_points_with_extra,
+    sorted_simplex_points,
 };
 use crate::geometry::kernel::Kernel;
 use crate::geometry::point::Point;
@@ -117,6 +118,39 @@ pub enum LocateError {
     InvalidSimplex {
         /// The invalid simplex key.
         simplex_key: SimplexKey,
+    },
+
+    /// A simplex has the wrong number of vertices for this dimension.
+    #[error("simplex {simplex_key:?} has {found} vertices for point location; expected {expected}")]
+    InvalidSimplexArity {
+        /// Simplex with invalid arity.
+        simplex_key: SimplexKey,
+        /// Expected simplex vertex count.
+        expected: usize,
+        /// Observed simplex vertex count.
+        found: usize,
+    },
+
+    /// A facet index is outside the simplex's facet range.
+    #[error(
+        "facet index {facet_index} is invalid for simplex {simplex_key:?} with {facet_count} facets"
+    )]
+    InvalidFacetIndex {
+        /// Simplex containing the requested facet.
+        simplex_key: SimplexKey,
+        /// Requested facet index.
+        facet_index: usize,
+        /// Number of facets available on the simplex.
+        facet_count: usize,
+    },
+
+    /// A simplex references a vertex missing from the TDS.
+    #[error("simplex {simplex_key:?} references missing vertex {vertex_key:?} for point location")]
+    MissingSimplexVertex {
+        /// Simplex containing the missing vertex reference.
+        simplex_key: SimplexKey,
+        /// Missing vertex key.
+        vertex_key: VertexKey,
     },
 
     /// Geometric predicate failed.
@@ -953,11 +987,11 @@ where
             })?;
 
         let facet_count = simplex.number_of_vertices();
+        ensure_locate_simplex_arity::<D>(current_simplex, facet_count)?;
         let mut found_outside_facet = false;
 
         for facet_idx in 0..facet_count {
-            if is_point_outside_facet(tds, kernel, current_simplex, facet_idx, point)? == Some(true)
-            {
+            if is_point_outside_facet(tds, kernel, current_simplex, facet_idx, point)? {
                 if let Some(neighbor_key) = simplex.neighbor_key(facet_idx).flatten() {
                     current_simplex = neighbor_key;
                     found_outside_facet = true;
@@ -1005,9 +1039,10 @@ where
     for (simplex_key, simplex) in tds.simplices() {
         let mut found_outside_facet = false;
         let facet_count = simplex.number_of_vertices();
+        ensure_locate_simplex_arity::<D>(simplex_key, facet_count)?;
 
         for facet_idx in 0..facet_count {
-            if is_point_outside_facet(tds, kernel, simplex_key, facet_idx, point)? == Some(true) {
+            if is_point_outside_facet(tds, kernel, simplex_key, facet_idx, point)? {
                 found_outside_facet = true;
                 break;
             }
@@ -1043,17 +1078,19 @@ where
 /// This correspondence is essential for the canonical ordering used in orientation tests.
 /// If this invariant is violated, point location will produce incorrect results.
 ///
-/// Returns:
-/// - `Some(true)` if point is outside (should cross facet)
-/// - `Some(false)` if point is inside (should not cross facet)  
-/// - `None` for degenerate cases
+/// Returns `true` if the point is outside the facet and `false` otherwise.
+///
+/// # Errors
+///
+/// Returns [`LocateError`] if the simplex or facet cannot provide valid
+/// orientation predicate input.
 fn is_point_outside_facet<K, U, V, const D: usize>(
     tds: &Tds<U, V, D>,
     kernel: &K,
     simplex_key: SimplexKey,
     facet_idx: usize,
     query_point: &Point<D>,
-) -> Result<Option<bool>, LocateError>
+) -> Result<bool, LocateError>
 where
     K: Kernel<D, Scalar = f64>,
     U: DataType,
@@ -1064,19 +1101,26 @@ where
         .ok_or(LocateError::InvalidSimplex { simplex_key })?;
 
     let simplex_vertex_keys = simplex.vertices();
-    if simplex_vertex_keys.len() != D + 1 {
-        return Ok(None); // Degenerate simplex
-    }
+    let vertex_count = simplex_vertex_keys.len();
+    ensure_locate_simplex_arity::<D>(simplex_key, vertex_count)?;
 
-    if facet_idx > D {
-        return Ok(None); // Out-of-range facet index
+    if facet_idx >= vertex_count {
+        return Err(LocateError::InvalidFacetIndex {
+            simplex_key,
+            facet_index: facet_idx,
+            facet_count: vertex_count,
+        });
     }
 
     // The vertex at facet_idx is opposite the facet
     let opposite_key = simplex_vertex_keys[facet_idx];
-    let Some(opposite_point) = tds.vertex(opposite_key).map(|v| *v.point()) else {
-        return Ok(None); // Unresolvable vertex → degenerate simplex
-    };
+    let opposite_point = *tds
+        .vertex(opposite_key)
+        .ok_or(LocateError::MissingSimplexVertex {
+            simplex_key,
+            vertex_key: opposite_key,
+        })?
+        .point();
 
     // Facet keys: all vertex keys except the one at facet_idx
     let facet_keys: SmallBuffer<VertexKey, MAX_PRACTICAL_DIMENSION_SIZE> = simplex_vertex_keys
@@ -1087,11 +1131,8 @@ where
         .collect();
 
     // Build facet simplex + opposite vertex in canonical key order.
-    // If any facet vertex is unresolvable, treat as degenerate.
-    let Ok(canonical_simplex) = sorted_facet_points_with_extra(tds, &facet_keys, opposite_point)
-    else {
-        return Ok(None);
-    };
+    let canonical_simplex = sorted_facet_points_with_extra(tds, &facet_keys, opposite_point)
+        .map_err(|error| locate_facet_points_error(simplex_key, error))?;
 
     let simplex_orientation = kernel.orientation(&canonical_simplex)?;
 
@@ -1106,7 +1147,43 @@ where
     // If orientations differ, query point and opposite vertex are on
     // opposite sides of the facet → point is "outside" (should cross)
     // If orientations match, they're on the same side → point is "inside" (should not cross)
-    Ok(Some(simplex_orientation * query_orientation < 0))
+    Ok(simplex_orientation * query_orientation < 0)
+}
+
+const fn ensure_locate_simplex_arity<const D: usize>(
+    simplex_key: SimplexKey,
+    vertex_count: usize,
+) -> Result<(), LocateError> {
+    if vertex_count == D + 1 {
+        return Ok(());
+    }
+
+    Err(LocateError::InvalidSimplexArity {
+        simplex_key,
+        expected: D + 1,
+        found: vertex_count,
+    })
+}
+
+const fn locate_facet_points_error(
+    simplex_key: SimplexKey,
+    error: CanonicalFacetPointError,
+) -> LocateError {
+    match error {
+        CanonicalFacetPointError::InvalidArity { expected, found } => {
+            LocateError::InvalidSimplexArity {
+                simplex_key,
+                expected: expected + 1,
+                found: found + 1,
+            }
+        }
+        CanonicalFacetPointError::MissingVertex { vertex_key } => {
+            LocateError::MissingSimplexVertex {
+                simplex_key,
+                vertex_key,
+            }
+        }
+    }
 }
 
 const fn conflict_simplex_points_error(
@@ -1719,7 +1796,7 @@ where
             facet_to_conflict
                 .entry(facet_hash)
                 .or_default()
-                .push(FacetHandle::new(simplex_key, facet_idx_u8));
+                .push(FacetHandle::from_validated(simplex_key, facet_idx_u8));
         }
     }
 
@@ -1741,7 +1818,7 @@ where
                 let facet_idx_u8 = handle.facet_index();
 
                 let boundary_facet_idx = boundary_facets.len();
-                boundary_facets.push(FacetHandle::new(simplex_key, facet_idx_u8));
+                boundary_facets.push(FacetHandle::from_validated(simplex_key, facet_idx_u8));
                 #[cfg(debug_assertions)]
                 {
                     boundary_facet_count = boundary_facet_count.saturating_add(1);
@@ -2121,7 +2198,7 @@ mod tests {
         let formatted_missing = format_vertex_refs(tds, &[missing_vertex]);
         assert!(formatted_missing.contains("missing"));
 
-        let facet = FacetHandle::new(simplex_key, 0);
+        let facet = FacetHandle::from_validated(simplex_key, 0);
         let formatted_facet = format_facet_vertices(tds, facet);
         assert!(formatted_facet.contains("VertexKey"));
 
@@ -2130,7 +2207,7 @@ mod tests {
 
         let missing_simplex = SimplexKey::from(KeyData::from_ffi(999_999));
         assert_eq!(
-            format_facet_vertices(tds, FacetHandle::new(missing_simplex, 0)),
+            format_facet_vertices(tds, FacetHandle::from_validated(missing_simplex, 0)),
             "<missing-simplex>"
         );
         assert_eq!(
@@ -2146,11 +2223,11 @@ mod tests {
         let simplex_c = SimplexKey::from(KeyData::from_ffi(3));
         let simplex_d = SimplexKey::from(KeyData::from_ffi(4));
         let boundary_facets: CavityBoundaryBuffer = [
-            FacetHandle::new(simplex_a, 0),
-            FacetHandle::new(simplex_b, 1),
-            FacetHandle::new(simplex_c, 2),
-            FacetHandle::new(simplex_c, 3),
-            FacetHandle::new(simplex_d, 0),
+            FacetHandle::from_validated(simplex_a, 0),
+            FacetHandle::from_validated(simplex_b, 1),
+            FacetHandle::from_validated(simplex_c, 2),
+            FacetHandle::from_validated(simplex_c, 3),
+            FacetHandle::from_validated(simplex_d, 0),
         ]
         .into_iter()
         .collect();
@@ -2340,7 +2417,7 @@ mod tests {
         for facet_idx in 0..3 {
             let result =
                 is_point_outside_facet(dt.tds(), &kernel, simplex_key, facet_idx, &query_inside);
-            let is_outside = result.unwrap() == Some(true);
+            let is_outside = result.unwrap();
 
             println!("Facet {facet_idx} (opposite to vertex {facet_idx}): is_outside={is_outside}");
 
@@ -2358,7 +2435,7 @@ mod tests {
         for facet_idx in 0..3 {
             let result =
                 is_point_outside_facet(dt.tds(), &kernel, simplex_key, facet_idx, &query_outside);
-            let is_outside = result.unwrap() == Some(true);
+            let is_outside = result.unwrap();
 
             println!("Outside point - Facet {facet_idx}: is_outside={is_outside}");
 
@@ -2557,7 +2634,7 @@ mod tests {
         // Test all facets - point should not be outside any of them
         for facet_idx in 0..4 {
             let result = is_point_outside_facet(dt.tds(), &kernel, simplex_key, facet_idx, &point);
-            assert_matches!(result, Ok(Some(false) | None));
+            assert_matches!(result, Ok(false));
         }
     }
 
@@ -2580,7 +2657,7 @@ mod tests {
         for facet_idx in 0..4 {
             if matches!(
                 is_point_outside_facet(dt.tds(), &kernel, simplex_key, facet_idx, &point),
-                Ok(Some(true))
+                Ok(true)
             ) {
                 found_outside = true;
                 break;
@@ -3140,10 +3217,9 @@ mod tests {
         );
     }
 
-    /// A simplex with fewer than D+1 vertex keys is detected early by the
-    /// `simplex_vertex_keys.len() != D + 1` guard and returns `Ok(None)`.
+    /// A simplex with fewer than D+1 vertex keys is rejected before orientation.
     #[test]
-    fn test_is_point_outside_facet_underdimensioned_simplex_returns_none() {
+    fn test_is_point_outside_facet_underdimensioned_simplex_returns_invalid_arity() {
         let mut tds: Tds<(), (), 2> = Tds::empty();
         let v0 = tds
             .insert_vertex_with_mapping(
@@ -3179,16 +3255,65 @@ mod tests {
         let point = Point::from_validated_coords([0.3, 0.3]);
         let result = is_point_outside_facet(&tds, &kernel, simplex_key, 0, &point);
         assert!(
-            matches!(result, Ok(None)),
-            "underdimensioned simplex should return Ok(None), got {result:?}"
+            matches!(
+                result,
+                Err(LocateError::InvalidSimplexArity {
+                    simplex_key: key,
+                    expected: 3,
+                    found: 2,
+                }) if key == simplex_key
+            ),
+            "underdimensioned simplex should return InvalidSimplexArity, got {result:?}"
+        );
+    }
+
+    #[test]
+    fn test_is_point_outside_facet_invalid_facet_index_returns_invalid_facet_index() {
+        let mut tds: Tds<(), (), 2> = Tds::empty();
+        let v0 = tds
+            .insert_vertex_with_mapping(
+                crate::core::vertex::Vertex::<(), _>::try_new([0.0, 0.0]).unwrap(),
+            )
+            .unwrap();
+        let v1 = tds
+            .insert_vertex_with_mapping(
+                crate::core::vertex::Vertex::<(), _>::try_new([1.0, 0.0]).unwrap(),
+            )
+            .unwrap();
+        let v2 = tds
+            .insert_vertex_with_mapping(
+                crate::core::vertex::Vertex::<(), _>::try_new([0.0, 1.0]).unwrap(),
+            )
+            .unwrap();
+
+        let simplex_key = tds
+            .insert_simplex_with_mapping(
+                Simplex::try_new_with_data(vec![v0, v1, v2], None).unwrap(),
+            )
+            .unwrap();
+
+        let kernel = FastKernel::<f64>::new();
+        let point = Point::from_validated_coords([0.3, 0.3]);
+        let result = is_point_outside_facet(&tds, &kernel, simplex_key, 3, &point);
+
+        assert!(
+            matches!(
+                result,
+                Err(LocateError::InvalidFacetIndex {
+                    simplex_key: key,
+                    facet_index: 3,
+                    facet_count: 3,
+                }) if key == simplex_key
+            ),
+            "invalid facet index should return InvalidFacetIndex, got {result:?}"
         );
     }
 
     /// When the vertex at `facet_idx` (the opposite vertex) is unresolvable,
-    /// `is_point_outside_facet` returns `Ok(None)` before reaching the
+    /// `is_point_outside_facet` returns a typed error before reaching the
     /// canonical ordering helpers.
     #[test]
-    fn test_is_point_outside_facet_unresolvable_opposite_vertex_returns_none() {
+    fn test_is_point_outside_facet_unresolvable_opposite_vertex_returns_missing_vertex() {
         let mut tds: Tds<(), (), 2> = Tds::empty();
         let v0 = tds
             .insert_vertex_with_mapping(
@@ -3225,20 +3350,26 @@ mod tests {
 
         let kernel = FastKernel::<f64>::new();
         let point = Point::from_validated_coords([0.3, 0.3]);
-        // facet_idx=0 → opposite_key = missing → unresolvable → Ok(None)
+        // facet_idx=0 → opposite_key = missing → unresolvable.
         let result = is_point_outside_facet(&tds, &kernel, simplex_key, 0, &point);
         assert!(
-            matches!(result, Ok(None)),
-            "unresolvable opposite vertex should return Ok(None), got {result:?}"
+            matches!(
+                result,
+                Err(LocateError::MissingSimplexVertex {
+                    simplex_key: key,
+                    vertex_key,
+                }) if key == simplex_key && vertex_key == missing
+            ),
+            "unresolvable opposite vertex should return MissingSimplexVertex, got {result:?}"
         );
     }
 
     /// `is_point_outside_facet` resolves vertex points via the canonical ordering
     /// helper `sorted_facet_points_with_extra`.  A simplex whose vertex-key list
     /// contains a key absent from the TDS causes the helper to return an error,
-    /// which the function converts to `Ok(None)` (degenerate/unresolvable simplex).
+    /// which the function preserves as a typed locate error.
     #[test]
-    fn test_is_point_outside_facet_degenerate_simplex_missing_vertex_returns_none() {
+    fn test_is_point_outside_facet_degenerate_simplex_missing_vertex_returns_missing_vertex() {
         let mut tds: Tds<(), (), 2> = Tds::empty();
         let v0 = tds
             .insert_vertex_with_mapping(
@@ -3278,8 +3409,14 @@ mod tests {
         // One facet vertex is missing from the TDS, so canonical point collection fails.
         let result = is_point_outside_facet(&tds, &kernel, simplex_key, 0, &point);
         assert!(
-            matches!(result, Ok(None)),
-            "degenerate simplex with missing vertex should return Ok(None), got {result:?}"
+            matches!(
+                result,
+                Err(LocateError::MissingSimplexVertex {
+                    simplex_key: key,
+                    vertex_key,
+                }) if key == simplex_key && vertex_key == missing
+            ),
+            "degenerate simplex with missing vertex should return MissingSimplexVertex, got {result:?}"
         );
     }
 

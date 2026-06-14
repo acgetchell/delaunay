@@ -1055,7 +1055,9 @@ where
         // Collect facet handles (SimplexKey, facet_index) for storage
         // These can be used to reconstruct FacetViews when needed
         let hull_facets: Vec<_> = hull_facets_iter
-            .map(|facet_view| FacetHandle::new(facet_view.simplex_key(), facet_view.facet_index()))
+            .map(|facet_view| {
+                FacetHandle::from_validated(facet_view.simplex_key(), facet_view.facet_index())
+            })
             .collect();
 
         // Additional validation: ensure we have at least one boundary facet

@@ -64,7 +64,10 @@ fn repair_fallback_produces_valid_triangulation() {
             for (index, neighbor) in neighbors.enumerate() {
                 if neighbor.is_some() {
                     let facet_index = u8::try_from(index).expect("2D facet index fits in u8");
-                    candidate_facets.push(FacetHandle::new(simplex_key, facet_index));
+                    candidate_facets.push(
+                        FacetHandle::try_new(dt.tds(), simplex_key, facet_index)
+                            .expect("interior facet index should be valid"),
+                    );
                 }
             }
         }
